@@ -24,7 +24,7 @@ pub(crate) struct SubmitDone {
 pub(crate) const BAKE_LANES: u32 = 64;
 
 /// Workgroups a dispatch row holds (`BAKE_ROW` in bake.wgsl): the entries span x then y.
-pub(super) const BAKE_ROW: u32 = 32_768;
+pub(crate) const BAKE_ROW: u32 = 32_768;
 
 /// Submits a loop holds unread at most ([`JobLoop::dispatch`]).
 pub(crate) const IN_FLIGHT: usize = 2;

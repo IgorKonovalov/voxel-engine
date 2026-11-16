@@ -99,6 +99,8 @@ pub(crate) struct Run {
     pub(crate) recorder: Option<Recorder>,
     /// The adapter the device was created on, for the report.
     pub(crate) adapter: Option<wgpu::AdapterInfo>,
+    /// The surface's format and colour space, for the report.
+    pub(crate) surface: Option<(wgpu::TextureFormat, Option<wgpu::SurfaceColorSpace>)>,
     /// `--tester`'s help panel (`F1`) is shown.
     pub(crate) help: bool,
     /// Start-up still stepping behind loading frames; `None` once the first world frame may
@@ -169,6 +171,7 @@ impl Run {
     /// loading screen is on, else the whole load here.
     pub(crate) fn init(&mut self, gpu: &Gpu, splash: Option<LoadingScreen>) {
         self.adapter = Some(gpu.adapter.get_info());
+        self.surface = Some((gpu.surface_format, gpu.surface_color_space));
         let output = self.args.render.unwrap_or(gpu.size);
         let timer = PassTimer::with_passes(&gpu.device, &gpu.queue, FRAME_PASSES.len() as u32);
         println!("device ready after {:.0} ms", ms_since(self.start));
@@ -182,6 +185,10 @@ impl Run {
             "frame created, {} B of targets",
             frame.frame_bytes()
         ));
+        // A walker may be placed on any frame, so the entity pipelines are built now, inside
+        // the start-up, and the frame that draws the first part builds none.
+        frame.prepare_entities(&gpu.device);
+        diag(format_args!("entity pipelines built"));
         frame.set_probe_spacing(&gpu.device, self.args.light.probe_spacing);
         frame.set_jitter(&gpu.device, jitter);
         frame.set_upscaler_kind(&gpu.device, kind);

@@ -118,9 +118,10 @@ struct Params {
     _pad9: u32,
     // FSR 2's tone pass's static dither (`Fsr2Settings::dither`, 1 on), 0 without FSR 2.
     dither: u32,
-    _tail0: u32,
-    _tail1: u32,
-    _tail2: u32,
+    // The chunk of view 0's origin (`Params::cam_chunk`), which the LOD walk measures from.
+    cam_chunk_x: i32,
+    cam_chunk_y: i32,
+    cam_chunk_z: i32,
     // The headlamp as the CPU builds it (`Params::lamp`); the shaders read `lights`.
     _lamp: array<vec4<u32>, 4>,
 };

@@ -65,15 +65,6 @@ pub(crate) enum Res<'a> {
     Buf(&'a wgpu::Buffer),
 }
 
-pub(crate) fn bind_io(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    res: &[Res<'_>],
-) -> wgpu::BindGroup {
-    let at: Vec<u32> = (0..res.len() as u32).collect();
-    bind_io_at(device, layout, &at, res)
-}
-
 /// A group-2 bind group of `res` at the binding numbers `at`.
 pub(crate) fn bind_io_at(
     device: &wgpu::Device,
@@ -108,10 +99,134 @@ pub(crate) fn bind_io_at(
     })
 }
 
-pub(crate) fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
-    wgpu::BindGroupEntry {
-        binding,
-        resource: buffer.as_entire_binding(),
+/// What a cached bind group binds, one per binding: the resource itself, so a replaced
+/// texture or buffer misses.
+enum Bound {
+    Tex(wgpu::Texture),
+    Buf(wgpu::Buffer),
+}
+
+impl Bound {
+    fn is(&self, r: &Res<'_>) -> bool {
+        match (self, r) {
+            (Bound::Tex(a), Res::Tex(b)) => a == *b,
+            (Bound::Buf(a), Res::Buf(b)) => a == *b,
+            _ => false,
+        }
+    }
+}
+
+struct Cached {
+    layout: wgpu::BindGroupLayout,
+    at: Vec<u32>,
+    bound: Vec<Bound>,
+    group: wgpu::BindGroup,
+    /// The [`BindCache::tick`] that last took it.
+    used: u64,
+}
+
+#[derive(Default)]
+struct CacheState {
+    entries: Vec<Cached>,
+    tick: u64,
+    groups: u64,
+    views: u64,
+}
+
+/// Bind groups kept with the layout and the resources they bind: a pass that binds the same
+/// textures and buffers again takes its group back, and a group and its texture views are
+/// created only on a miss. A group no [`BindCache::tick`] of the last [`BindCache::KEEP`] took
+/// is dropped, so a replaced resource is not held past them, and a group per history parity
+/// survives the frame that does not bind it.
+#[derive(Default)]
+pub(crate) struct BindCache {
+    state: std::sync::Mutex<CacheState>,
+}
+
+impl BindCache {
+    /// Ticks a group outlives its last use.
+    pub(crate) const KEEP: u64 = 2;
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, CacheState> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Starts a frame's use: drops the groups the last [`BindCache::KEEP`] ticks did not take.
+    pub(crate) fn tick(&self) {
+        let mut s = self.lock();
+        s.tick += 1;
+        let oldest = s.tick.saturating_sub(Self::KEEP);
+        s.entries.retain(|e| e.used >= oldest);
+    }
+
+    /// Drops every group (the resources they bind were replaced).
+    pub(crate) fn clear(&self) {
+        self.lock().entries.clear();
+    }
+
+    /// Bind groups and texture views created so far.
+    pub(crate) fn built(&self) -> (u64, u64) {
+        let s = self.lock();
+        (s.groups, s.views)
+    }
+
+    /// [`BindCache::io_at`] at the binding numbers `0, 1, ..` in turn.
+    pub(crate) fn io(
+        &self,
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        res: &[Res<'_>],
+    ) -> wgpu::BindGroup {
+        const AT: [u32; 32] = {
+            let mut a = [0; 32];
+            let mut i = 0;
+            while i < 32 {
+                a[i] = i as u32;
+                i += 1;
+            }
+            a
+        };
+        self.io_at(device, layout, &AT[..res.len()], res)
+    }
+
+    /// [`bind_io_at`] through the cache.
+    pub(crate) fn io_at(
+        &self,
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        at: &[u32],
+        res: &[Res<'_>],
+    ) -> wgpu::BindGroup {
+        let mut s = self.lock();
+        let tick = s.tick;
+        if let Some(e) = s.entries.iter_mut().find(|e| {
+            e.layout == *layout
+                && e.at == at
+                && e.bound.len() == res.len()
+                && e.bound.iter().zip(res).all(|(b, r)| b.is(r))
+        }) {
+            e.used = tick;
+            return e.group.clone();
+        }
+        let group = bind_io_at(device, layout, at, res);
+        s.groups += 1;
+        s.views += res.iter().filter(|r| matches!(r, Res::Tex(_))).count() as u64;
+        s.entries.push(Cached {
+            layout: layout.clone(),
+            at: at.to_vec(),
+            bound: res
+                .iter()
+                .map(|r| match r {
+                    Res::Tex(t) => Bound::Tex((*t).clone()),
+                    Res::Buf(b) => Bound::Buf((*b).clone()),
+                })
+                .collect(),
+            group: group.clone(),
+            used: tick,
+        });
+        group
     }
 }
 
@@ -166,6 +281,16 @@ pub(crate) fn compute_pipeline(
     compute_pipeline_with(device, label, source, layouts, entry, &[])
 }
 
+/// Compute pipelines [`compute_pipeline_with`] has created in this process (every compute
+/// pipeline of the crate goes through it).
+static COMPUTE_PIPELINES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The count of compute pipelines this process has created, for a reading or a test that a
+/// stretch of frames builds none.
+pub fn compute_pipelines_created() -> u64 {
+    COMPUTE_PIPELINES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// [`compute_pipeline`] with the pipeline-overridable constants `constants`.
 pub(crate) fn compute_pipeline_with(
     device: &wgpu::Device,
@@ -175,6 +300,7 @@ pub(crate) fn compute_pipeline_with(
     entry: &str,
     constants: &[(&str, f64)],
 ) -> wgpu::ComputePipeline {
+    COMPUTE_PIPELINES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(label),
         source: wgpu::ShaderSource::Wgsl(source.into()),

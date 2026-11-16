@@ -77,6 +77,14 @@ pub struct AdapterLine {
     pub backend: String,
 }
 
+/// The surface a run presented to, as `wgpu` names it: the format (`Bgra8Unorm`) and the
+/// colour space it was configured with (`Srgb`, `Auto`); `None` colour space headless.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SurfaceLine {
+    pub format: String,
+    pub color_space: Option<String>,
+}
+
 /// One run's report, the contents of `run.json`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RunReport {
@@ -93,6 +101,8 @@ pub struct RunReport {
     /// A tour without `--tester` can switch it with `F7`; a benchmark cannot.
     pub lamp: bool,
     pub adapter: Option<AdapterLine>,
+    /// The surface the run presented to; `None` before the device exists.
+    pub surface: Option<SurfaceLine>,
     /// The path's length in seconds.
     pub path_s: f32,
     /// Frames measured: the run's frames after the warm-up.
@@ -444,6 +454,20 @@ impl RunReport {
                     write_json_string(&mut o, name);
                     o.push_str(": ");
                     write_json_string(&mut o, v);
+                }
+                o.push('}');
+            }
+        }
+        field(&mut o, "surface");
+        match &self.surface {
+            None => o.push_str("null"),
+            Some(s) => {
+                o.push_str("{\"format\": ");
+                write_json_string(&mut o, &s.format);
+                o.push_str(", \"color_space\": ");
+                match &s.color_space {
+                    None => o.push_str("null"),
+                    Some(c) => write_json_string(&mut o, c),
                 }
                 o.push('}');
             }
@@ -881,6 +905,10 @@ mod tests {
                 driver_info: "1.2.3".to_owned(),
                 backend: "Vulkan".to_owned(),
             }),
+            surface: Some(SurfaceLine {
+                format: "Bgra8Unorm".to_owned(),
+                color_space: Some("Srgb".to_owned()),
+            }),
             path_s: 37.4,
             frames: 0,
             warmup_frames: 0,
@@ -1005,6 +1033,13 @@ mod tests {
                 .and_then(Value::as_str),
             Some("Test \"GPU\" \\ v2\nline")
         );
+        let surface = |k: &str| {
+            v.get("surface")
+                .and_then(|s| s.get(k))
+                .and_then(Value::as_str)
+        };
+        assert_eq!(surface("format"), Some("Bgra8Unorm"));
+        assert_eq!(surface("color_space"), Some("Srgb"));
     }
 
     #[test]
@@ -1023,11 +1058,25 @@ mod tests {
         let r = RunReport {
             peak_rss_bytes: None,
             adapter: None,
+            surface: None,
             ..report()
         };
         let v = parse(&r.to_json()).expect("parses");
         assert_eq!(v.get("peak_rss_bytes"), Some(&Value::Null));
         assert_eq!(v.get("adapter"), Some(&Value::Null));
+        assert_eq!(v.get("surface"), Some(&Value::Null));
+        let headless = RunReport {
+            surface: Some(SurfaceLine {
+                format: "Rgba8Unorm".to_owned(),
+                color_space: None,
+            }),
+            ..report()
+        };
+        let v = parse(&headless.to_json()).expect("parses");
+        assert_eq!(
+            v.get("surface").and_then(|s| s.get("color_space")),
+            Some(&Value::Null)
+        );
     }
 
     /// Past its capacity a series keeps its newest frames, and the hitch counts keep every

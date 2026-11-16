@@ -42,11 +42,11 @@ pub(crate) const SHADING_CHANGE_MIP: i32 = 4;
 /// `Fsr2InputTuning` in `input.wgsl`.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub(super) struct InputUniform {
-    pub(super) near: f32,
-    pub(super) reactive_translucent: f32,
-    pub(super) reactive_light: f32,
-    pub(super) _pad: f32,
+pub(crate) struct InputUniform {
+    pub(crate) near: f32,
+    pub(crate) reactive_translucent: f32,
+    pub(crate) reactive_light: f32,
+    pub(crate) _pad: f32,
 }
 
 /// The frame's targets FSR reads and writes: this frame's hit buffer and translucent layers,
@@ -67,6 +67,8 @@ pub(crate) struct FrameInputs<'a> {
     pub cur: usize,
     /// The frame's step in seconds ([`crate::Frame::set_dt`]).
     pub dt: f32,
+    /// The frame's bind groups, which FSR's join.
+    pub binds: &'a BindCache,
 }
 
 impl Fsr2 {
@@ -193,7 +195,8 @@ impl Fsr2 {
         );
     }
 
-    /// Writes this frame's constants and builds its bind groups from the frame's targets.
+    /// Writes this frame's constants and takes its bind groups over the frame's targets from
+    /// the frame's cache, built on a miss.
     pub(crate) fn prepare(
         &self,
         device: &wgpu::Device,
@@ -205,8 +208,8 @@ impl Fsr2 {
         let r = &self.res;
         let (w, q) = (f.cur, f.cur ^ 1);
         use Res::{Buf, Tex};
-        let cb = bind_io(device, &self.cb_layout, &[Buf(&self.cb)]);
-        let input = bind_io(
+        let cb = f.binds.io(device, &self.cb_layout, &[Buf(&self.cb)]);
+        let input = f.binds.io(
             device,
             &self.input.layout,
             &[
@@ -222,12 +225,12 @@ impl Fsr2 {
                 Tex(f.emissive),
             ],
         );
-        let spd_mips = bind_io(
+        let spd_mips = f.binds.io(
             device,
             &self.spd_mips.layout,
             &[Tex(&r.colour), Tex(&r.luma_mip), Tex(&r.luma_mip5)],
         );
-        let spd_tail = bind_io_at(
+        let spd_tail = f.binds.io_at(
             device,
             &self.spd_tail.layout,
             &[3, 4, 5],
@@ -237,7 +240,7 @@ impl Fsr2 {
                 Tex(&r.auto_exposure[q]),
             ],
         );
-        let reconstruct = bind_io(
+        let reconstruct = f.binds.io(
             device,
             &self.reconstruct.layout,
             &[
@@ -251,7 +254,7 @@ impl Fsr2 {
                 Tex(&r.lock_luma),
             ],
         );
-        let depth_clip = bind_io(
+        let depth_clip = f.binds.io(
             device,
             &self.depth_clip.layout,
             &[
@@ -268,12 +271,12 @@ impl Fsr2 {
                 Tex(&r.dilated_reactive),
             ],
         );
-        let lock = bind_io(
+        let lock = f.binds.io(
             device,
             &self.lock.layout,
             &[Tex(&r.lock_luma), Buf(&r.new_locks), Buf(&r.reconstructed)],
         );
-        let accumulate = bind_io(
+        let accumulate = f.binds.io(
             device,
             &self.accumulate.layout,
             &[
@@ -296,7 +299,7 @@ impl Fsr2 {
         let sharpening = self.sharpens();
         let rcas = sharpening.then(|| {
             (
-                bind_io(
+                f.binds.io(
                     device,
                     &self.rcas.layout,
                     &[
@@ -314,7 +317,9 @@ impl Fsr2 {
         } else {
             &r.upscaled[w]
         };
-        let tone = bind_io(device, &self.tone.layout, &[Tex(tone_in), Tex(f.output)]);
+        let tone = f
+            .binds
+            .io(device, &self.tone.layout, &[Tex(tone_in), Tex(f.output)]);
         let [rw, rh] = r.render;
         Fsr2Binds {
             cb,

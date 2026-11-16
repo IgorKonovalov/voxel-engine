@@ -18,11 +18,15 @@ mod fsr2;
 mod gpu_util;
 mod gpu_world;
 mod hud;
+#[cfg(test)]
+mod layout_tests;
 mod light;
 mod loading;
 mod present;
 mod probes;
 mod readback;
+#[cfg(feature = "test-support")]
+pub mod test_support;
 
 /// Readings: the readbacks of a texture or buffer, the march's step histogram, the bake
 /// queue step's stages and regimes, and the light summaries a getter returns. For tools and
@@ -31,6 +35,7 @@ pub mod debug {
     pub use crate::bake::{
         LightSummaries, ParentTable, Regime, STEP_STAGES, StepStages, StepTally,
     };
+    pub use crate::gpu_util::compute_pipelines_created;
     pub use crate::probes::ProbeRead;
     pub use crate::readback::{
         StepHistogram, f16_to_f32, read_buffer, read_float, read_rgba8, read_rgba16f, read_rgba16u,
@@ -96,10 +101,10 @@ pub use frame::{
     Upscaler,
 };
 pub use frame::{
-    CrackShares, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, LightWeights, Lighting,
-    LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher,
+    CrackShares, EntityLight, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, LightWeights,
+    Lighting, LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher,
     NormalMode, PassTimer, RenderScale, ShadowWalk, StoreRead, SurfaceTuning, ToneMap, ViewMode,
-    jitter_at,
+    YoungFilter, jitter_at,
 };
 pub use fsr2::{Fsr2, Fsr2Settings, UpscalerKind};
 pub use gpu_world::{

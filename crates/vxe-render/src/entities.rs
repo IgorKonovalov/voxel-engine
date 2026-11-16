@@ -8,7 +8,7 @@
 //!   its box's minimum and maximum in world voxels (six `f32`), then for an inner node its two
 //!   children's indices, for a leaf its first instance with [`LEAF_BIT`] set and its instance
 //!   count, with [`LEAF_MOVED`] set when any of the entity's parts moved. The last node's
-//!   slot is the header ([`HEADER_WORD`]): the entities drawn, the nodes, the instances, and
+//!   slot is the header ([`TREE_HEADER_WORD`]): the entities drawn, the nodes, the instances, and
 //!   whether any instance moved.
 //! - the instances from [`INSTANCE_WORD`]: [`MAX_ENTITY_PARTS`] of [`INSTANCE_WORDS`] words. An
 //!   instance is its world-to-part transform (3 x 4 `f32`, row-major, model voxels from world
@@ -39,7 +39,7 @@ pub(crate) const ENTITY_NODES: usize = 2 * MAX_ENTITIES;
 /// Words of a tree node.
 pub(crate) const NODE_WORDS: usize = 8;
 /// The header's first word: the last node's slot.
-pub(crate) const HEADER_WORD: usize = (ENTITY_NODES - 1) * NODE_WORDS;
+pub(crate) const TREE_HEADER_WORD: usize = (ENTITY_NODES - 1) * NODE_WORDS;
 /// A leaf's first-instance word carries this bit.
 pub(crate) const LEAF_BIT: u32 = 1 << 31;
 /// A leaf's count word carries this bit when any of its entity's parts moved since the call
@@ -227,10 +227,27 @@ pub struct EntityMirror {
     models: Vec<Vec<Volume>>,
     /// Each drawn part's part-to-world of the last [`EntityMirror::set_entities`].
     prev: HashMap<(EntityId, usize), [[f32; 4]; 3]>,
+    /// [`EntityMirror::set_entities`]'s buffers, cleared and refilled each call so the frame
+    /// path allocates only when a list outgrows every list before it.
+    scratch: Scratch,
     drawn: usize,
     parts: usize,
     over: usize,
     moved: bool,
+}
+
+/// The working buffers of one [`EntityMirror::set_entities`] call. `prev` fills with this
+/// call's transforms and is swapped with the mirror's map at the end, so the two maps trade
+/// places each frame instead of one being built fresh.
+#[derive(Default)]
+struct Scratch {
+    inst: Vec<u32>,
+    boxes: Vec<([[f32; 3]; 2], u32, u32)>,
+    prev: HashMap<(EntityId, usize), [[f32; 4]; 3]>,
+    xfs: Vec<PartXform>,
+    nodes: Vec<[u32; NODE_WORDS]>,
+    order: Vec<usize>,
+    tree: Vec<u32>,
 }
 
 impl EntityMirror {
@@ -250,6 +267,7 @@ impl EntityMirror {
             volumes: HashMap::new(),
             models: Vec::new(),
             prev: HashMap::new(),
+            scratch: Scratch::default(),
             drawn: 0,
             parts: 0,
             over: 0,
@@ -340,9 +358,22 @@ impl EntityMirror {
         set: &EntitySet,
         list: &[(EntityId, ModelHandle)],
     ) {
-        let mut inst: Vec<u32> = Vec::new();
-        let mut boxes: Vec<([[f32; 3]; 2], u32, u32)> = Vec::new();
-        let mut prev = HashMap::new();
+        // Taken out of `self` for the call so `self.models` and `self.prev` stay readable;
+        // `mem::take` of the empty default allocates nothing, and the buffers go back below.
+        let mut s = std::mem::take(&mut self.scratch);
+        let Scratch {
+            inst,
+            boxes,
+            prev,
+            xfs,
+            nodes,
+            order,
+            tree,
+        } = &mut s;
+        inst.clear();
+        boxes.clear();
+        prev.clear();
+        nodes.clear();
         let mut over = 0;
         let mut moved = false;
         for &(id, handle) in list {
@@ -360,13 +391,15 @@ impl EntityMirror {
                 over += 1;
                 continue;
             }
-            let Some(xfs) = (0..n)
-                .map(|k| PartXform::of(model, pose, k))
-                .collect::<Option<Vec<_>>>()
-            else {
+            xfs.clear();
+            if !(0..n).all(|k| {
+                PartXform::of(model, pose, k)
+                    .map(|xf| xfs.push(xf))
+                    .is_some()
+            }) {
                 over += 1;
                 continue;
-            };
+            }
             let first = (inst.len() / INSTANCE_WORDS) as u32;
             let mut entity_moved = false;
             let mut bx = [[f32::MAX; 3], [f32::MIN; 3]];
@@ -403,35 +436,37 @@ impl EntityMirror {
             let count = n as u32 | if entity_moved { LEAF_MOVED } else { 0 };
             boxes.push((bx, first, count));
         }
-        let mut nodes: Vec<[u32; NODE_WORDS]> = Vec::new();
         if !boxes.is_empty() {
-            let mut order: Vec<usize> = (0..boxes.len()).collect();
-            build(&boxes, &mut order, &mut nodes);
+            order.clear();
+            order.extend(0..boxes.len());
+            build(boxes, order, nodes);
         }
-        let mut tree = vec![0u32; INSTANCE_WORD];
+        tree.clear();
+        tree.resize(INSTANCE_WORD, 0);
         for (i, n) in nodes.iter().enumerate() {
             tree[i * NODE_WORDS..(i + 1) * NODE_WORDS].copy_from_slice(n);
         }
         let parts = inst.len() / INSTANCE_WORDS;
-        tree[HEADER_WORD..HEADER_WORD + 4].copy_from_slice(&[
+        tree[TREE_HEADER_WORD..TREE_HEADER_WORD + 4].copy_from_slice(&[
             boxes.len() as u32,
             nodes.len() as u32,
             parts as u32,
             u32::from(moved),
         ]);
-        queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&tree));
+        queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(tree));
         if !inst.is_empty() {
             queue.write_buffer(
                 &self.buffer,
                 (INSTANCE_WORD * 4) as u64,
-                bytemuck::cast_slice(&inst),
+                bytemuck::cast_slice(inst),
             );
         }
-        self.prev = prev;
+        std::mem::swap(&mut self.prev, prev);
         self.drawn = boxes.len();
         self.parts = parts;
         self.over = over;
         self.moved = moved;
+        self.scratch = s;
     }
 
     /// Entities the last [`EntityMirror::set_entities`] drew.

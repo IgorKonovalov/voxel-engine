@@ -1,12 +1,13 @@
 # 0044: The hot-path and defect pass: what the frame, the sync, the walk, the edits and the audio callback do for nothing
 
-> **Status:** in-progress (2026-11-10, side lane: Phases 1, 6, 7); approved 2026-10-22, amended
-> 2026-11-10 (review pass)
+> **Status:** done (closed 2026-11-16, v0.55.0: every phase done or struck to the plan that ran
+> it, goldens and hashes unchanged, encode CPU down about 4 to 6 times, the march at or under its
+> base on both adapters); approved 2026-10-22, amended 2026-11-10 (review pass)
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
 > `hud.rs`). Read each through "Where things moved" in
-> [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
+> [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
 > phases re-cut their Files touched at their start.
 > **Created:** 2026-10-22
 > **Milestone:** cross-cutting (code health). No milestone owns it: it serves the M1 to M4
@@ -53,7 +54,7 @@
 > **Review note (2026-11-10, the static performance review at `50b637a`; the owner approved
 > Plans 0064 and 0065 the same day):**
 > - **Phase 2 (the HUD's timers) has moved whole to
->   [Plan 0064](done/0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md), Phase 3.**
+>   [Plan 0064](0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md), Phase 3.**
 >   It claims no golden and its fix is worth little behind three plans. Its text stays below
 >   as that phase's reference; `dev` does not run it here.
 > - **Phase 4's premise is weaker than written.** `docs/nfr.md` section 5 notes (2026-11-04)
@@ -63,7 +64,7 @@
 > - **Phase 5 (the walk) has a case for running before Plans 0061 and 0058**, which decide by
 >   hit and light readings that include the material read it removes. It collides with their
 >   shader files and forces a re-bake, so it stays where it is (owner, 2026-11-10).
->   [Plan 0065](done/0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)'s
+>   [Plan 0065](0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)'s
 >   Phase 4 takes the far normal's 27 bits from the brick's mask; whichever lands second keeps
 >   the other's path.
 
@@ -564,15 +565,15 @@ Readings, attempts and resume notes go to `docs/plans/logs/0044.md`, not here.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 0: the inventory at the start commit | dev | side-lane rows only (Phases 1, 6, 7); the render rows wait for Phases 2-5, 8 | e1388e1 |
+| 0: the inventory at the start commit | dev | side-lane rows (Phases 1, 6, 7) at `5274772`; the render rows (Phases 2, 3, 5, 8, the bake, probes and light inventory) at `371fa7a`, in the readings log | e1388e1, 194a126 |
 | 1: the audio callback frees nothing and zeroes nothing large | dev | done; deviations: `lib.rs` exports `Recycler` and `ReverbClears` (not in Files touched); the FDN clear swaps with a third spare set of lines (+1.8 MB); the paired mixer bench reads +0.2 to +0.8 % (kept: it removes the counted frees) | ab366e7 |
-| 2: the HUD measures without stalling, and its allocation test covers the HUD | dev | not started | |
-| 3: the frame builds its bind groups once per size | dev | not started | |
+| 2: the HUD measures without stalling, and its allocation test covers the HUD | dev | struck: run as Plan 0064's Phase 3 (moved there 2026-11-10); nothing rebuilt here | Plan 0064 (373beb9) |
+| 3: the frame builds its bind groups once per size | dev | done; deviations: groups are cached by what they bind (`BindCache`, kept 2 encodes past their last use, cleared by `set_sizes`), built on first use rather than per parity in `set_sizes`, and `Targets` holds no views; the exposure and field passes keep caches of their own; `Dispatch` moved to a new `frame/dispatch.rs`; `exposure.rs`, `frame/{mod,state,dispatch}.rs` and `gpu_util.rs` are outside Files touched (the split of `marcher.rs`); encode CPU p50 0.20 to 0.03 ms (RTX), 0.22 to 0.06 ms (RADV) | 2056310 |
 | 4: the sync sizes only what it uploads | dev | struck into Plan 0070 (owner, 2026-11-12). There: `place_lights` walks only when a light chunk or its focus changed (`ef0b55c`), and the emitter rescan set is a `[u64; 8]` (`297e7a9`). Not built: the deferral ahead of `need()`, the masks carried to `upload`, `upload_set` as a bitset (still a `Vec<bool>`), the scratch `Vec`s; the `sized_chunks` property for a prepared chunk left with ADR-0056's worker packing, deferred | Plan 0070 |
-| 5: the march walks without reading what it discards | dev | not started | |
+| 5: the march walks without reading what it discards | dev | done; deviations: `Cell` carries the Full entry (its unused `slot` renamed `full`) and `cell_material` resolves it; the camera chunk is three `i32` words where `Params._tail` was (no size change), set in `encode.rs` from `views[0]`; the steps view's counting variants are lazy (hit pass: `Marcher::get`, `HitPipe`; light pass: `P_LIGHT_STEPS`); `field_walk.wgsl` (Plan 0045's split of `field.wgsl`), `common.wgsl`, `mirror.wgsl`, `walk.wgsl`, `frame/{encode,pipelines,settings,compose}.rs`, `layout_tests.rs` and `bake/pipeline.rs` are the split files of Files touched; the shift test is in `frame/compose.rs` | 777abc0 |
 | 6: the world reads a chunk once per run of steps | dev | done; deviations: `support::measure` by chunk reverted (read +2.4 %); the crush clears with a `Carve` kernel call, not a `Fill`; `Cargo.toml` gains the `raycast` bench entry | ebd54e3 |
 | 7: the controller and the server stop repeating work | dev | done; deviations: the box list is per-thread scratch with a recollect past its region, and covers the usual sweeps only; the counting test is in `vxe-sim/tests/controller.rs`; inputs are logged after the logic's tick | 2ede457 |
-| 8: the guards that were missing | dev | not started | |
+| 8: the guards that were missing | dev | done, run ahead of Phases 3 and 5 (its Order line); deviations: the helpers take `(pool_bytes, features)` and an adapter-level form, `VXE_TEST_ADAPTER_FILTER` is the name filter; the layout test is `src/layout_tests.rs` (a unit test), with visibility raised to `pub(crate)` on six mirrored structs (`frame/{state,lights,upscale}.rs`, `fsr2/prepare.rs`, `field.rs`, `hud.rs`) and three constants (`bake/`) outside Files touched; it lists eight same-named literal constants it compares rather than moving them | 194a126 |
 
 ### Notes
 
@@ -585,8 +586,34 @@ Readings, attempts and resume notes go to `docs/plans/logs/0044.md`, not here.
   a clear that finds the spare dirty parks its network until the spare is clean; the
   per-block clearing bound is `2 x BLOCK` frames a line (owner answer 3), and the ring-out
   test's bar moved with it. Commit: c1e3665.
+- Phase 5: the committed `castle_gate.png`, `look_gradient27.png` and `look_trilinear8.png`
+  differ in a few pixels from what this machine's lavapipe renders at both `371fa7a` and the
+  tip (base and tip byte-equal; readings log, Phase 5). The steps view's light-pass,
+  cutaway and field-look counts lose the material reads Phase 5 removes; no test pins them.
+- Phase 4's unbuilt items stay with Plan 0070's row above.
 
 ### Close triggers
+
+- Tip gate at `777abc0`'s code (dev box, `CARGO_BUILD_JOBS=12`, 16 GiB scope; readings log,
+  Phase 5): `scripts/build-guests.sh` exit 0; `cargo nextest run --workspace --profile gate
+  --no-fail-fast`, exclusive perf lock, lavapipe, load 9.77 (loaded): exit 0, 903 run, 903
+  passed, 91 skipped, 688 s; `cargo test --workspace --doc` 10 passed; `cargo clippy
+  --workspace --all-targets -- -D warnings` exit 0; `cargo fmt --all --check` exit 0; `cargo
+  deny check` ok; `check-test-tiers`, `check-file-size`, `check-comment-hygiene`,
+  `check-doc-links`, `check-index-rows`, `check-plan-size` exit 0.
+- Determinism (section 6): every pinned hash test in the gate passed unchanged.
+- Section 2 at the defaults, headless autopilot, two rounds, base `371fa7a` / tip `777abc0`,
+  p50 ms, exclusive perf lock, load at start 2.00 or less (readings log, Close): RTX 3080
+  Laptop march GPU 1.574, 2.397 / 1.478, 1.436; hit pass 0.084, 0.127 / 0.081, 0.084; light
+  pass 0.109, 0.191 / 0.089, 0.090. RADV RENOIR march GPU 9.047, 8.799 / 8.941, 8.972; hit
+  pass 0.906, 0.946 / 0.925, 0.852; light pass 0.644, 0.639 / 0.640, 0.641.
+- Encode CPU (Phase 3, loaded 3.7 to 9.5): p50 0.20 to 0.03 ms RTX, 0.22 to 0.06 ms RADV.
+- Sections 4 and 9 (Phases 1, 6, 7): the side lane's readings, readings log Phases 1, 6, 7 and
+  the fix passes.
+- Close review (architect, fresh session, 2026-11-16, at `ea45d02`): gate tier re-run, exclusive
+  perf lock, 12 jobs, 16 GiB scope, lavapipe, load 4.50 at the start (loaded): 903 run, 903
+  passed, 91 skipped, 691 s. Clean; the minor findings and the followups below are in
+  `docs/backlog.md` ("Plan 0044's leftovers").
 
 ## Followups
 

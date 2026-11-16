@@ -71,7 +71,7 @@ mod summary;
 pub use self::budget::*;
 pub use self::faces::*;
 pub use self::job::*;
-use self::job_loop::*;
+pub(crate) use self::job_loop::*;
 pub use self::order::*;
 pub use self::pipeline::*;
 pub use self::pre_roll::*;

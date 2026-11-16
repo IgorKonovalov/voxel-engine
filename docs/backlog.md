@@ -39,7 +39,18 @@ the owner is away; the owner may overturn it).
 
 ### The streamed benches on Windows: CPU frames of 20 to 256 ms on a desktop
 
-Read 2026-11-15 from an outside tester's archive (v0.51.0, before Plan 0070's and 0074's sync cuts; Windows 10.0.26200, Ryzen 5 7600X 6 cores / 12 threads, 32 GB, desktop RTX 3080 on Vulkan, 1920 x 1080, upscaler off; the files kept in the main checkout at `live/tester-2026-11-15/`). `showcase`: wall p50 3.0 ms, p99 4.5, CPU p50 0.76. `cave`: wall p50 20.8 ms, p95 271, p99 402, CPU-bound (CPU p50 20.3, GPU 4.5), 217 of 1073 frames over 100 ms. `castle`: 97 frames in 31.5 s, CPU p50 256 ms, max 3295, GPU p50 30.2. Our Linux headless benches at the matching base read `update + poll + sync` p99 43 to 47 ms, so the castle is about 5x to 70x worse there, and the tester called it "massive stutters". Unknown: whether it is Windows (timer and sleep granularity, the allocator, thread scheduling on 6 cores), the CPU's core count, or the build. What it takes: the owed Plan 0068 Windows run on today's main with the sync's stage lines, then a plan. Pick up before the next tester archive goes out.
+Read 2026-11-15 from an outside tester's archive (v0.51.0, before Plan 0070's and 0074's sync cuts; Windows 10.0.26200, Ryzen 5 7600X 6 cores / 12 threads, 32 GB, desktop RTX 3080 on Vulkan, 1920 x 1080, upscaler off; the files kept in the main checkout at `live/tester-2026-11-15/`). `showcase`: wall p50 3.0 ms, p99 4.5, CPU p50 0.76. `cave`: wall p50 20.8 ms, p95 271, p99 402, CPU-bound (CPU p50 20.3, GPU 4.5), 217 of 1073 frames over 100 ms. `castle`: 97 frames in 31.5 s, CPU p50 256 ms, max 3295, GPU p50 30.2. Our Linux headless benches at the matching base read `update + poll + sync` p99 43 to 47 ms, so the castle is about 5x to 70x worse there, and the tester called it "massive stutters". Unknown: whether it is Windows (timer and sleep granularity, the allocator, thread scheduling on 6 cores), the CPU's core count, or the build. What it takes: the owed Plan 0068 Windows run on today's main with the sync's stage lines, then a plan. Pick up before the next tester archive goes out. **The owner's run (2026-11-15, v0.54.0, Windows 10.0.19045, Ryzen 9 5900HS 8 cores / 16 threads, RTX 3080 Laptop on Vulkan, FSR 2 at 1.5; files in `live/windows-run-2026-11-15/`) did not reproduce it:** CPU p50 cave 8.8 ms, showcase 1.4, castle 7.2; castle wall p95 28.2 ms, 87 frames over 33 ms, 2 over 100, the sync's p95 mostly `alloc`. Still open for the tester's machine; the next archive's `--workers 4` run tells starvation apart. **The tester's rerun (2026-11-16, v0.54.0, same machine; files in `live/tester-2026-11-16/`) settles it: the 0.51.0 stutters were the build, not Windows.** Default workers: cave wall p50 4.1 ms, p99 25.5, 32 frames over 33 ms, 1 over 100; showcase p50 2.8, p99 3.7; castle p50 4.2, p99 30.1, max 90, 20 over 33 ms, none over 100 (from p50 256 ms on 0.51.0). `--workers 4` on the castle: p99 17.6, max 66, 2 over 33 ms; the sync's p99 7.3 ms to 3.8 and light's 2.1 to 0.8. So more workers than physical cores (11 on 6 cores) still costs the tail. What it takes now: a default worker count capped at the physical cores minus one (or a measured sweep on a 6-core part), as a small chore; the entry closes with it. **Done 2026-11-16 (chore `chore-default-workers`):** the fly-through's default `--workers` is now half the logical cores, at least 1 (6 on the tester's 12 threads, where `--workers 4` read the best castle tail; no sweep between 4 and 6 was taken); the tester's next archive reads it.
+
+### Windows draws the whole image two to three times darker than Linux
+
+Noted 2026-11-15 from the owner's Windows run (same laptop, v0.54.0, RTX on Vulkan, the window
+on the AMD iGPU's display): every scene, the overall brightness down by about 2 to 3x, not only
+the dark tones. A decode without its encode (`pow(x, 2.2)`: 0.5 to 0.22) would fit; by a code
+read the present pass matches the surface format, but the format picked is not logged. Also
+suspected: the panel's backlight on Windows (AMD Vari-Bright, power plan). What it takes: log
+the surface format and colour space at start (and into `system.json`/`run.json`), compare a
+Windows and a Linux screenshot of the same pose by pixel values, and swap `fs_srgb`'s
+`pow 2.2` for the exact sRGB decode. Pick up before the next tester archive. **Code side done 2026-11-16** (chore-surface-format: the format and colour space logged and in `run.json`, 8-bit UNORM preferred, the exact decode): by code read the Windows run used `Bgra8Unorm` and a straight copy, so no code path explains a uniform 2-3x drop. Left: a Windows screenshot and a Linux one of the same pose compared by pixel values (equal bytes: the display or OS, e.g. HDR's SDR brightness, Vari-Bright).
 
 ### The sync's `alloc` stage: the sync plan after the eviction scan
 
@@ -88,6 +99,24 @@ released over a pit lands as the same pile with the same hash on both CI arms) a
 reading against a new `nfr.md` line.
 
 Pick up when the lighting base is settled: Plans 0056, 0057 and 0058 closed.
+
+### Hundreds or thousands of entities
+
+Parked 2026-11-16 by the owner ("minecraft can have thousands of entities"). Today: `MAX_ENTITIES` 64, `MAX_ENTITY_PARTS` 512 (`vxe-render` `entities.rs`), 6 instance bits in the hit record. The cost is the trace, not the caps: Plan 0062 Phase 4 (`docs/plans/logs/0062.md`) read 64 walkers at +3.4 to 4.4 ms on the RTX 3080 Laptop and +32 to 34 ms on the Radeon iGPU, growing with screen cover and shadowing lights. **Hundreds:** wider caps and hit bits, the instance tree built on the GPU, coarse far models, shadow rays testing only entities near their light (one or two plans, no ADR). **Thousands:** entities rasterized into the hit buffer beside the traced world, which reverses ADR-0050's choice: an ADR and a spike first. **The owner's direction (2026-11-16): trace only the near ones, merge the crowded ones.** Distance tiers: near entities traced in full; mid ones traced on a coarse merged model (parts folded into one volume at detail 1); far ones as one box or impostor, or dropped below a pixel. Clusters: entities sharing a spot re-voxelized together at low resolution on the GPU each frame (or every few) into one cluster volume, walked once per ray instead of once per overlapping entity. Shadow rays test the near tier only. The server's ray query stays exact per entity; the tiers are render-only. Pick up when a consumer needs more than 64 on screen.
+
+### Jelly entities: see-through glowing voxels, and true soft bodies
+
+Parked 2026-11-16 by the owner's question "jelly-like entities, slimes - will it be possible?". The part taken: Plan 0082, a scale per axis per part in the pose and the clips (squash and stretch; ADR-0064). Two parts left. **See-through glowing jelly:** an entity voxel is an opaque honest cube (Plan 0062 draws a translucent material on an entity opaque); it waits for Plan 0034's translucent voxels and then an amendment that runs the entity walk inside the translucent march. **True soft bodies:** a blob that bends round a corner, splits or merges needs the voxels themselves to move (a lattice or field over the part's volume, sampled by the ray), which the pool (one volume per model), the regular grid walk and the query's determinism all rest against; ADR-0064's Alternative C names it. What it takes: an ADR and a spike that reads the walk's cost under a deformation field on both adapters. Pick up when a consumer asks for a creature that bends, splits, merges or is seen through.
+
+### Darker scenes, and light intensity varied by seed
+
+Noted 2026-11-15, the owner, after the darker Windows image: "it was a nice scene, we should
+make lights darker, or random in darkness as well". Two parts: the test scenes' lights
+(fly-through, consumer side) set dimmer, and a seeded per-light intensity spread so some
+lights are dim and some dark. The engine side is the scale over the table (ADR-0045) and the
+light list's per-light intensity (ADR-0044); the randomness belongs to the scene's seed, not
+the engine. Pick up after the Windows brightness entry is explained, so "darker" is judged on
+a correct image.
 
 ### Per-source indirect light
 
@@ -153,6 +182,14 @@ Parked 2026-11-05 at Plan 0057's close; taken by Plan 0058's Phase 3 (the furnac
 
 Read 2026-11-11 in Plan 0060's Phase 4 window (`docs/plans/logs/0060.md`): the far caves stay coarse on the RTX and black on the Radeon, because the bake's slice is per frame and a brick with no light value renders black. Taken by [Plan 0067](plans/done/0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md) (approved 2026-11-11) and ADR-0052 and ADR-0053.
 
+### A CPU-drawn first frame before the device
+
+Parked 2026-11-16 by the owner at Plan 0075's Phase 6b (`docs/plans/logs/0075.md`). Since 6b the window shows a static loading frame 0.3 to 0.4 s after process start on the RTX (0.2 to 0.3 s on the Radeon iGPU), drawn by the GPU right after the device. What is left before it is the instance (78 to 244 ms), the device and the surface's configure. In two runs, the first launch after a pause, the instance took about 1.6 s (a guess: the NVIDIA dGPU waking; not confirmed). On Wayland nothing shows until a buffer is attached, so a frame before the device needs a CPU-filled buffer: the `softbuffer` crate (rust-windowing, winit's org; wl_shm on Linux, GDI on Windows), or the same by hand per platform. Windows already paints a window's class background at once. Cost: a dependency and its ADR, about 100 lines in `vxe-app`'s shell, and the window's surface handed from the CPU buffer to wgpu's swapchain, read on both platforms. What it takes: a reading of how often the slow instance happens on testers' machines (the `start-up:` lines in run logs), then a small plan. Pick up if a tester reports a blank window at start.
+
+### The pre-roll never settles at small residencies
+
+Seen 2026-11-15 by Plan 0075's lane while sizing its streamed test (`docs/plans/logs/0075.md`): with `--residency 2,3` or `4,6` and `--near 0`, the start-up pre-roll runs to its 120 s cap, with the loading screen on or off; the camera's chunk never reports its light settled. Not read further. A guess, not isolated: the pre-roll's "near chunks hold their light" condition waits on a chunk the small window never makes resident, or keeps evicting and reloading. What it takes: a headless repro at main with the pre-roll's wait condition logged per chunk, then a fix in that condition. Pick up before a consumer runs small residencies.
+
 ### A dug chunk's settled light differs from a one-shot bake
 
 Read 2026-11-10 in Plan 0060 Phase 3 (`docs/plans/logs/0060.md`, `a_dig_is_never_withdrawn`). In that test's rig, after the dig settles, chunk [2, 0, 0] differs from a one-shot bake of the edited world. Chunks 0, 1 and 3 to 7 match, and so does the dug chunk the test now compares. The difference reads the same under the score order with withdrawal on, under `distance` with withdrawal off, and at the default `edit_ms` (the lane's `live/p3-digexp.log` and `p3-digexp2.log`, untracked). So it is not the withdrawal and not the order. It predates Plan 0060 by that reading, but it was not read at the base. A guess, not isolated: a neighbour chunk whose light reads the dug chunk is not re-baked after the dig, or is re-baked before the dig's own job lands. What it takes: a headless test that digs, settles and compares every chunk with a one-shot bake, read at main first, then a fix in the live queue's dirty-neighbour rule. Added at the owner's call (2026-11-11).
@@ -187,7 +224,7 @@ Parked 2026-11-15 from Plan 0058's re-window (step 1b, the plan-0058 worktree's 
 
 ### The hall's headless render went dark: `showcase_hall_golden_is_lit_by_its_four_ores`
 
-Read 2026-11-11 at Plan 0060's close review: the soak test failed with 98.6927 % of pixels over 2/255, the same on the base a8b1a2c. Re-blessed 2026-11-11 at Plan 0061's close (fix pass 6287e88): the new golden pins today's render, which Plan 0061's defaults do not move (the library's read and weights give the same pixels), but it is not a correct hall. Mean sRGB luma fell from 11.97 (Plan 0057's image, 2de29c6) to 2.73; the walls are black and only the ores' faces are lit; ember covers 0 pixels. The test still fails its hue assert (`[336, 0, 209, 121]`) and would fail its luma band (11..40). The owner's window at Plan 0061 saw a lit hall, so the likely cause is the headless rig (`gpu_golden.rs`'s `showcase_hall`: its bake or settle state under the baked light since Plan 0059), not the look; unverified. What it takes: bisect the rig's render between 2de29c6 and today, fix the rig, re-bless after a look, and keep the hue and luma asserts as they are. The weekly soak fails on it until then.
+Read 2026-11-11 at Plan 0060's close review: the soak test failed with 98.6927 % of pixels over 2/255, the same on the base a8b1a2c. Re-blessed 2026-11-11 at Plan 0061's close (fix pass 6287e88): the new golden pins today's render, which Plan 0061's defaults do not move (the library's read and weights give the same pixels), but it is not a correct hall. Mean sRGB luma fell from 11.97 (Plan 0057's image, 2de29c6) to 2.73; the walls are black and only the ores' faces are lit; ember covers 0 pixels. The test still fails its hue assert (`[336, 0, 209, 121]`) and would fail its luma band (11..40). The owner's window at Plan 0061 saw a lit hall, so the likely cause is the headless rig (`gpu_golden.rs`'s `showcase_hall`: its bake or settle state under the baked light since Plan 0059), not the look; unverified. What it takes: bisect the rig's render between 2de29c6 and today, fix the rig, re-bless after a look, and keep the hue and luma asserts as they are. The weekly soak fails on it until then. **Done 2026-11-16 (chore `chore-showcase-golden`, b09e018):** the rig, not the look. `showcase_hall` synced the mirror and stepped frames but never baked the light store, which the fly-through's pre-roll and coarse pass fill before its first frame; since Plan 0059 the cube faces read only that store, so unbaked walls read no light and only the ores' own emission showed. The rig now bakes the whole showcase world (64 samples a brick direction, as the dark cave and castle goldens do) before its 64 frames. On lavapipe: mean sRGB luma 14.4/255, hue shares amber 4.31 %, ember 0.26 %, cyan 4.55 %, violet 0.36 %, 0 pixels over 2/255 with the emission off; every assert as written passes. `showcase_hall.png` re-blessed; it matches Plan 0057's image (2de29c6) by eye.
 
 ### Automatic extremity bounds from declarative noise layers
 
@@ -281,7 +318,33 @@ walk-speed spike below.
 `FLAG_SKIPS`, `FLAG_MASKS`, `FLAG_CUTAWAY`, `FLAG_FIELD_SPLIT`, `coarse_span`, `forced_level`,
 the view-mode chains in the composite and `LIGHTING_GRADIENT` are tested per step or per pixel
 from a uniform and are fixed for a pipeline's life in production. `override` constants would
-let the compiler drop them. Small each; fits Plan 0044's Phase 5 or the shader toolchain spike.
+let the compiler drop them. Small each. Plan 0044's Phase 5 (closed 2026-11-16) did only the step
+counters (`override COUNT_STEPS`, the pattern to copy); the rest fits the shader toolchain spike.
+
+### Plan 0044's leftovers (close review, 2026-11-16)
+
+Owed by nobody yet; none blocks anything.
+- **The plan's four followups:** workgroup-tiled upscale and a-trous with a decoded guide texture
+  (a measured plan); one blue-noise load per pixel for `rand` (changes the noise, needs the
+  owner's eye); whether the residency pressure rule (`RadiusRule`, `Deferrals`) becomes an engine
+  type (an architect interview); a per-update ray budget for the audio probes.
+- **`a_frame_after_the_second_builds_no_bind_group` cycles six lighting variations under three
+  upscalers**, not the exposure modes, the full lighting tier, the store read, the shadow walk
+  or the debug views. A mode that rebuilds a group every frame there would not be caught.
+  Widen the test when Plan 0069's settings surface lists the modes.
+- **`frame/encode.rs` is at 1190 of the 1200-line cap.** The next pass that adds to the encode
+  splits it first.
+- **The committed `castle_gate.png`, `look_gradient27.png` and `look_trilinear8.png`** differ by
+  a few pixels from the dev box's lavapipe (within the 0.1 % tolerance), at the plan's base and
+  tip alike; CI's lavapipe blesses them. Re-bless on CI if one ever drifts past the tolerance.
+- **The soak test `a_shown_hud_and_the_queue_line_wait_on_the_gpu_nowhere` failed, unrelated to
+  Plan 0044 (fixed 2026-11-16 on branch chore-soak-frames: the test now matches `frames: {FRAMES} frames;`,
+  accepts frame 0's `store reads not counted` queue line, and reads the age as the last item of
+  the line's parenthesis; it passes in 8.9 s on lavapipe).** Its `find(|l| l.starts_with("frames: "))` takes the queue step's tally line
+  (`frames: queue step A: ...`, printed first since 87bf0d2, Plan 0067 Phase 1) instead of the run's
+  `frames: N frames; ...` line. Fix: match `frames: {FRAMES} frames;` in the test. Read at the
+  close review's soak run (whole workspace, 73 run, 71 passed; the other failure is the hall
+  entry above).
 
 ### Slot words packed on the workers
 
@@ -361,12 +424,53 @@ so the fly-through's wiring (the frame calls the ring's reads, not the waiting o
 no gate; the gate holds only the ring's own test. A variant of about 120 frames with the
 queue line due at least once, or a CPU test on the call sites, would bring it under the 10 s
 line. Pick up as a dev chore with the next plan that touches the frame's read-backs.
-**It fails** (read 2026-11-14 at Plan 0074's close review, soak tier of the changed crates,
+**It failed** (fixed 2026-11-16 on branch chore-soak-frames: the test matches the run's line, accepts frame
+0's `store reads not counted` queue line, which prints before the frame turns the count on, and
+reads the age as the last item of the parenthesis, which now names the missing light and store
+bytes first) (read 2026-11-14 at Plan 0074's close review, soak tier of the changed crates,
 not this plan's code): the exit's queue tally prints `frames: queue step ...` lines
 (`run/mod.rs`, `Drop for Run`) before the `frames: N frames;` line, and the test takes the
 first line starting `frames: `. Match `frames: {FRAMES} frames;` instead.
 
 ## Tooling and process
+
+### The tester mode's key filter is structural, not tested in the frame loop
+
+Owed 2026-11-15 from Plan 0068's close (its phase review's M2). Under `--tester` the frame loop
+(`apps/flythrough/src/run/frame.rs`) skips `handle_input` and calls
+`flythrough::path::tester_action` only for keys it already chose (`F1`, the left click), so the
+unit test of `tester_action` cannot catch a debug key read outside `handle_input`, as `F2` is.
+What it takes: route every key the frame loop reads under `--tester` through `tester_action`, or a
+test that drives the loop's input handling with the filter on. Taken 2026-11-16 by
+[Plan 0080](plans/0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md)
+Phase 2 (a test drives the loop's input step with the filter on; `Tab` and `Start` map to
+nothing); the entry leaves when that plan closes.
+
+### Mouse pointing and text events for the apps' menu
+
+Parked 2026-11-16 from Plan 0080's draft (owner question 4, recommended later; ADR-0061's
+negatives). `vxe_app::Input` reports no cursor position and no text events, so the menu is keys,
+wheel and clicks, and its palette types from `KeyCode` (wrong letters on a non-QWERTY layout).
+What it takes: `Input::cursor` from winit's `CursorMoved`, the cursor unlocked and shown while
+the menu is open (the shell's `lock_cursor` toggled at run time, with the Wayland grab quirks
+the dev box has shown), a hit test per row (one division on the overlay's cell grid), and
+`KeyEvent::text` passed through as bytes for the filter. Pick up when the owner asks to point
+at the menu, or when a non-QWERTY layout types wrong.
+
+### A radial or hold menu for the pad
+
+Parked 2026-11-16 from Plan 0080's draft (owner question 5). The pad walks the same tree as the
+keyboard (`Start`, the D-pad, `South`, `East`). A radial menu held on a button, or a hold-to-open
+wheel for the entries used most, is a second view over the same `menu::entries()`, drawn on the
+overlay's cell grid as a ring of labels. Pick up after Plan 0080's window, if the owner plays
+with the pad and the tree is too slow.
+
+### Plan 0068's leftovers from the owner's runs
+
+Noted 2026-11-15 at Plan 0068's close. Not seen in either release run: "run all benchmarks" from
+the Linux archive (only a castle tour; the three-run zip was read twice from local release
+builds) and a free flight in each scene (the Windows report holds the three benchmarks). The next
+tester archive's own run covers both; no work unless it fails.
 
 ### The HUD paints a bounded level's full record reservation as mirror pressure
 

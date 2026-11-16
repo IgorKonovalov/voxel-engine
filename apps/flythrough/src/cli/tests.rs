@@ -36,14 +36,14 @@ fn the_pace_flag_parses_both_words() {
     assert!(parse_args_from(argv(&["--pace"])).is_err());
 }
 
-/// `--workers N` sets the streamer's workers (unset: `default_workers`, one fewer than
-/// the logical cores and at least 1); 0, a non-number or a missing value is refused.
+/// `--workers N` sets the streamer's workers (unset: `default_workers`, half the logical
+/// cores and at least 1); 0, a non-number or a missing value is refused.
 #[test]
 fn the_workers_flag_parses_and_refuses_zero() {
     let a = parse_args_from(argv(&[])).expect("no flags parse");
     assert_eq!(a.workers, None);
     let cores = std::thread::available_parallelism().map_or(1, usize::from);
-    assert_eq!(default_workers(), cores.saturating_sub(1).max(1));
+    assert_eq!(default_workers(), (cores / 2).max(1));
     let a = parse_args_from(argv(&["--workers", "14"])).expect("--workers 14 parses");
     assert_eq!(a.workers, Some(14));
     let a = parse_args_from(argv(&["--workers", "1"])).expect("--workers 1 parses");
@@ -517,7 +517,30 @@ fn lighting_flags_parse_and_refuse_unknown_values() {
     // The line the fly-through prints at the start with no lighting flags, and under the table.
     assert_eq!(
         d.start_modes(0.0).line(),
-        "lighting half, store read normal, weights face, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter 4, ore pulse off, exposure auto eye +0.00 EV"
+        "lighting half, store read normal, weights face, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter 4, young luma, entity light world, ore pulse off, exposure auto eye +0.00 EV"
+    );
+    // `--young-filter` reaches the frame's lighting; luma by default.
+    assert_eq!(
+        d.start_lighting().young_filter,
+        vxe_render::YoungFilter::Luma
+    );
+    assert_eq!(
+        parse(&["--young-filter", "edges"])
+            .unwrap()
+            .start_lighting()
+            .young_filter,
+        vxe_render::YoungFilter::Edges
+    );
+    assert_eq!(
+        parse(&["--entity-light", "own"])
+            .unwrap()
+            .start_lighting()
+            .entity_light,
+        vxe_render::EntityLight::Own
+    );
+    assert_eq!(
+        d.start_lighting().entity_light,
+        vxe_render::EntityLight::World
     );
     for (flag, err) in [
         ("--emissive-ore", "--emissive-ore takes on or off, not x"),
@@ -534,6 +557,11 @@ fn lighting_flags_parse_and_refuse_unknown_values() {
         ("--shadow-walk", "--shadow-walk takes full or coarse, not x"),
         ("--history", "--history takes edits or gradient, not x"),
         ("--lighting", "--lighting takes full or half, not x"),
+        (
+            "--young-filter",
+            "--young-filter takes luma or edges, not x",
+        ),
+        ("--entity-light", "--entity-light takes own or world, not x"),
         (
             "--light-radius",
             "--light-radius takes 0 to 64 chunks, not x",

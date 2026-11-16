@@ -7,22 +7,7 @@ use vxe_render::{
 use vxe_world::*;
 
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        force_fallback_adapter: true,
-        ..Default::default()
-    }))
-    .or_else(|_| pollster::block_on(instance.request_adapter(&Default::default())));
-    let Ok(adapter) = adapter else {
-        println!("skipped: no adapter");
-        return None;
-    };
-    let limits = vxe_render::limits_for(&adapter, 16 << 20).expect("the frame's limits");
-    let desc = wgpu::DeviceDescriptor {
-        required_limits: limits,
-        ..Default::default()
-    };
-    Some(pollster::block_on(adapter.request_device(&desc)).expect("device"))
+    vxe_render::test_support::any_device(16 << 20, wgpu::Features::empty())
 }
 
 /// Material 1: opaque grey, albedo 0.5. Material 2: translucent red, opacity 0.5.

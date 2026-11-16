@@ -36,6 +36,7 @@ vxe-entity.workspace = true
 windows-sys.workspace = true
 
 [dev-dependencies]
+vxe-render = { workspace = true, features = ["test-support"] }
 criterion.workspace = true
 png.workspace = true
 pollster.workspace = true

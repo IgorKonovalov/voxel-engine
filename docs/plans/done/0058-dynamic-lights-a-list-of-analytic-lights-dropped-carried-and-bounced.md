@@ -34,7 +34,7 @@
 > **Starts after:** [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md)'s
 > merge (owner, 2026-11-11: 0045 moves ahead of this plan; before that, Plans 0061, 0067 and
 > 0068 merge). The order is Plans 0061, 0067, 0045, this plan, then
-> [Plan 0044](../0044-hot-path-and-defect-pass.md)'s render phases and Plan 0069. Plan 0061 edits
+> [Plan 0044](0044-hot-path-and-defect-pass.md)'s render phases and Plan 0069. Plan 0061 edits
 > `temporal.wgsl` (the store read), `composite.wgsl` (the emitter cap) and `Lighting` (one bit),
 > the files Phases 1 and 2 here change, and 0045 moves `marcher.rs` and the shaders apart.
 > **Before the lane starts the architect re-reads Phases 1 and 2 against Plan 0045's tip** and

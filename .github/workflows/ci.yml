@@ -152,8 +152,6 @@ jobs:
           cargo clippy -p flythrough-logic --features component --target wasm32-wasip2 \
             -- -D warnings
       - run: cargo fmt --all --check
-      - name: Hook bite tests
-        run: node --test ".claude/hooks/*.test.mjs"
       - name: Script tests
         run: node --test "scripts/*.test.mjs"
       - name: Doc links

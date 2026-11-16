@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0059.**
+**Next free number: 0065.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -64,15 +64,21 @@ the status.
 | [0047](0047-translucent-solids-filter-by-path-length-with-a-baked-reflected-share.md) | Translucent solids filter what is behind by path length, and reflect a small share of their baked face light | accepted (Plan 0059), Outcome: the face light is the brick's record |
 | [0048](0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md) | The live queue orders by one score of distance and angle to the view, and withdraws the work a flight has passed | accepted 2026-11-11, Outcomes (Plans 0060, 0067); amends ADR-0046's queue clause |
 | [0049](0049-the-baked-light-is-read-by-the-far-shading-normal.md) | Where a voxel is small on screen, the baked light is read by the far shading normal, a squared-cosine blend of the store's direction values | accepted, Outcome (Plan 0061): the fly-through's default |
-| [0050](0050-entities-are-posed-voxel-volumes-in-their-own-pool-traced-after-the-world-march.md) | An entity is a set of posed voxel volumes in a pool of its own, traced after the world march, poses in fixed point | proposed (Plan 0062) |
+| [0050](0050-entities-are-posed-voxel-volumes-in-their-own-pool-traced-after-the-world-march.md) | An entity is a set of posed voxel volumes in a pool of its own, traced after the world march, poses in fixed point | accepted, Outcome (Plan 0062) |
 | [0051](0051-rigs-and-clips-are-text-files-sampled-in-fixed-point-by-tick.md) | Rigs and clips are small text files, and a clip is sampled in fixed point by tick | proposed (Plan 0063) |
 | [0052](0052-the-live-queues-bake-budget-is-time-per-second-not-a-slice-per-frame.md) | The live queue's bake budget is milliseconds of GPU time per second of wall time, capped per frame, not a slice per frame | accepted 2026-11-11; Outcome (Plan 0067): default stays frame:1.5 |
 | [0053](0053-a-light-summary-per-block-and-a-two-level-parent-table-light-a-brick-with-no-value.md) | A light summary per block and a two-level parent table light a brick with no baked value | accepted 2026-11-11 (Plan 0067); Outcome 2026-11-12: `chain` default |
-| [0054](0054-the-tester-build-is-a-launcher-that-runs-the-flythrough-per-scene.md) | The tester build is a launcher that runs the fly-through once per scene as a child process | proposed (Plan 0068) |
+| [0054](0054-the-tester-build-is-a-launcher-that-runs-the-flythrough-per-scene.md) | The tester build is a launcher that runs the fly-through once per scene as a child process | accepted (Plan 0068, 2026-11-15) |
 | [0055](0055-render-settings-are-one-struct-with-an-apply-class-per-field-and-profiles-are-named-values.md) | Render settings are one struct with an apply class per field, and a profile is a named value of it | proposed (Plan 0069) |
 | [0056](0056-the-mirrors-slot-image-is-packed-on-the-stream-workers-and-the-render-thread-only-allocates-and-copies.md) | The mirror's slot image is packed on the stream workers; the render thread only allocates and copies | accepted (Plan 0070); deferred by reading 2026-11-13, see Outcome |
 | [0057](0057-the-render-api-is-three-objects-and-a-settings-struct-with-a-compiled-example-as-the-contract.md) | The render API is three objects and a settings struct, with a compiled example as the contract | accepted (Plan 0071) |
 | [0058](0058-the-apps-keep-render-settings-in-a-toml-file-layered-over-a-profile-through-an-app-side-field-table.md) | The apps keep render settings in a TOML file in the user's config directory, layered over a profile through an app-side field table | accepted (Plan 0073) |
+| [0059](0059-loading-runs-as-time-sliced-steps-on-the-apps-frame-loop-behind-an-engine-loading-frame.md) | Loading runs as time-sliced steps on the app's frame loop, behind an engine loading frame the app can replace | proposed |
+| [0060](0060-entity-volumes-are-freed-by-handle-into-a-coalescing-free-list-and-never-moved.md) | Entity volumes are freed by handle into a coalescing free list of word ranges, never moved; queue order makes a freed range reusable at once | proposed (Plan 0078) |
+| [0061](0061-the-apps-input-is-menu-first-a-minimal-fixed-key-set-one-overlay-menu-with-a-palette-from-one-key-table.md) | The apps' input is menu-first: a minimal fixed key set, one overlay menu with a palette, one key table driving menu, help and shortcuts; apps only, no UI library | proposed (Plan 0080) |
+| [0062](0062-surface-locomotion-is-a-kinematic-sphere-attached-to-a-contact-normal-in-vxe-sim.md) | Surface locomotion is a kinematic sphere attached to a contact normal in `vxe-sim`, with the smoothed normal a world query; ground locomotion keeps the cylinder controller | proposed (Plan 0079) |
+| [0063](0063-surface-detail-is-a-procedural-shell-marched-at-the-hit-described-per-material-on-the-render-side.md) | Surface detail is a procedural shell marched at the hit, described per material on the render side, cosmetic and client-only | proposed (Plan 0081) |
+| [0064](0064-a-parts-scale-is-per-axis-in-its-own-frame-and-moves-its-childrens-pivots-not-their-shapes.md) | A part's scale is per axis in its own frame, about its pivot; it moves its children's pivots and never changes their shapes | proposed (Plan 0082) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded

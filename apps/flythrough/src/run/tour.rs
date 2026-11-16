@@ -1,7 +1,7 @@
 //! The camera path in the run: the path step and `--report`'s `run.json`.
 
 use crate::app::peak_rss_bytes;
-use crate::report::{AdapterLine, RunReport};
+use crate::report::{AdapterLine, RunReport, SurfaceLine};
 use crate::run::Run;
 use vxe_app::{Flow, Input};
 
@@ -63,6 +63,10 @@ impl Run {
                 driver: a.driver.clone(),
                 driver_info: a.driver_info.clone(),
                 backend: vxe_app::backend_label(a.backend),
+            }),
+            surface: self.surface.map(|(format, space)| SurfaceLine {
+                format: format!("{format:?}"),
+                color_space: space.map(|c| format!("{c:?}")),
             }),
             path_s: p.path.duration_s(),
             frames: 0,

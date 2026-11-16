@@ -19,6 +19,9 @@ pub struct Gpu {
     pub queue: wgpu::Queue,
     /// Format of the surface textures handed to [`App::frame`].
     pub surface_format: wgpu::TextureFormat,
+    /// The colour space the surface was configured with; `None` headless, where no display
+    /// reads the target. `Auto` when the surface offers no `Srgb` space for the format.
+    pub surface_color_space: Option<wgpu::SurfaceColorSpace>,
     /// Surface size in physical pixels.
     pub size: [u32; 2],
 }
@@ -85,7 +88,8 @@ pub struct ShellConfig {
     /// `power_preference`.
     pub adapter: Option<String>,
     /// Pick an sRGB surface format, where the hardware encodes on write. `false` picks a
-    /// non-sRGB format, for an app that writes display-encoded values itself.
+    /// non-sRGB format, for an app that writes display-encoded values itself;
+    /// [`pick_surface_format`] orders the offered formats.
     pub prefer_srgb: bool,
     /// When the next frame starts; the default, [`Pacing::Unthrottled`], asks the compositor
     /// for no frame callback.
@@ -353,6 +357,7 @@ pub fn run_headless<A: App>(mut app: A, config: HeadlessConfig) -> Result<(), Sh
         device,
         queue,
         surface_format: config.format,
+        surface_color_space: None,
         size: config.size,
     };
     app.init(&gpu);
@@ -398,6 +403,68 @@ pub fn run_headless<A: App>(mut app: A, config: HeadlessConfig) -> Result<(), Sh
     stage("device", || drop(device));
     stage("adapter", || drop(adapter));
     Ok(())
+}
+
+/// The surface format the window configures, from `offered` in the surface's order of
+/// preference; `None` when nothing is offered. The present pass writes display-encoded values
+/// (`fs_main`) to a non-sRGB format and decodes them first (`fs_srgb`) for an sRGB one, which
+/// only a fixed-point format with the `Srgb` colour space shows as written. So the order is:
+///
+/// 1. `Bgra8Unorm` or `Rgba8Unorm` (their `Srgb` forms with `prefer_srgb`), the first offered;
+/// 2. the other encoding's 8-bit pair, the first offered;
+/// 3. any other format that is not floating point, encoding as preferred first (a 10-bit
+///    `Rgb10a2Unorm` shows display-encoded values as an 8-bit one does);
+/// 4. the first offered.
+///
+/// A floating-point format comes last because `wgpu` configures `Rgba16Float` with `Auto`
+/// as scRGB, whose values are linear: display-encoded values written there would show too
+/// bright (0.5 shows as 0.73 encoded).
+pub fn pick_surface_format(
+    offered: &[wgpu::TextureFormat],
+    prefer_srgb: bool,
+) -> Option<wgpu::TextureFormat> {
+    use wgpu::TextureFormat as F;
+    let eight_bit = |srgb: bool| {
+        if srgb {
+            [F::Bgra8UnormSrgb, F::Rgba8UnormSrgb]
+        } else {
+            [F::Bgra8Unorm, F::Rgba8Unorm]
+        }
+    };
+    let fixed = |f: &F| !is_float_format(*f);
+    let first = |want: &dyn Fn(&F) -> bool| offered.iter().copied().find(|f| want(f));
+    first(&|f| eight_bit(prefer_srgb).contains(f))
+        .or_else(|| first(&|f| eight_bit(!prefer_srgb).contains(f)))
+        .or_else(|| first(&|f| fixed(f) && f.is_srgb() == prefer_srgb))
+        .or_else(|| first(&|f| fixed(f)))
+        .or_else(|| offered.first().copied())
+}
+
+/// Whether `f` stores floating-point channels (`Rgba16Float`, `Rg11b10Ufloat`, ...).
+fn is_float_format(f: wgpu::TextureFormat) -> bool {
+    use wgpu::TextureFormat as F;
+    matches!(
+        f,
+        F::R16Float
+            | F::Rg16Float
+            | F::Rgba16Float
+            | F::R32Float
+            | F::Rg32Float
+            | F::Rgba32Float
+            | F::Rg11b10Ufloat
+            | F::Rgb9e5Ufloat
+    )
+}
+
+/// The colour space the window configures for a format whose surface offers `spaces`: `Srgb`
+/// when offered, so a non-sRGB format's values are read as sRGB-encoded and an sRGB format's
+/// as encoded on write; else `Auto`, the backend's choice.
+pub fn surface_color_space(spaces: wgpu::SurfaceColorSpaces) -> wgpu::SurfaceColorSpace {
+    if spaces.contains(wgpu::SurfaceColorSpaces::SRGB) {
+        wgpu::SurfaceColorSpace::Srgb
+    } else {
+        wgpu::SurfaceColorSpace::Auto
+    }
 }
 
 /// The index of the first of `names` that contains `want`, as `--adapter` picks in a window and
@@ -541,18 +608,26 @@ impl<A: App> Shell<A> {
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
             .ok_or("the surface does not support this adapter")?;
-        // The first offered format whose encoding matches `prefer_srgb`, else the default.
         let caps = surface.get_capabilities(&adapter);
-        if let Some(&f) = caps
-            .formats
-            .iter()
-            .find(|f| f.is_srgb() == self.config.prefer_srgb)
-        {
+        if let Some(f) = pick_surface_format(&caps.formats, self.config.prefer_srgb) {
             config.format = f;
         }
+        config.color_space = surface_color_space(caps.color_spaces(config.format));
         config.present_mode = self.config.present_mode;
         surface.configure(&device, &config);
         self.mark("surface configured");
+        log::info!(
+            "surface: format {:?}, colour space {:?}, alpha {:?}; offered formats {:?}, colour spaces {:?}, alpha modes {:?}",
+            config.format,
+            config.color_space,
+            config.alpha_mode,
+            caps.formats,
+            caps.format_capabilities
+                .iter()
+                .map(|c| (c.format, c.color_spaces))
+                .collect::<Vec<_>>(),
+            caps.alpha_modes
+        );
         log::info!(
             "present mode: requested {:?}, granted {}, offered {:?}",
             self.config.present_mode,
@@ -578,6 +653,7 @@ impl<A: App> Shell<A> {
             device,
             queue,
             surface_format: config.format,
+            surface_color_space: Some(config.color_space),
             size: [config.width, config.height],
         };
         Ok(State {
@@ -800,5 +876,68 @@ mod tests {
         );
         assert_eq!(granted_present_mode(P::Mailbox, &[P::Fifo]), None);
         assert_eq!(granted_present_mode(P::Fifo, &[P::Fifo]), Some(P::Fifo));
+    }
+
+    /// An 8-bit UNORM format of the preferred encoding wins wherever it is offered, ahead of
+    /// a 10-bit or a half-float format listed first; without one, the other encoding's 8-bit
+    /// pair, then a fixed-point format, and a float format only when nothing else is offered.
+    #[test]
+    fn the_surface_format_prefers_8_bit_unorm_of_the_preferred_encoding() {
+        use wgpu::TextureFormat as F;
+        let windows_like = [
+            F::Rgba16Float,
+            F::Rgb10a2Unorm,
+            F::Bgra8UnormSrgb,
+            F::Bgra8Unorm,
+        ];
+        assert_eq!(
+            pick_surface_format(&windows_like, false),
+            Some(F::Bgra8Unorm)
+        );
+        assert_eq!(
+            pick_surface_format(&windows_like, true),
+            Some(F::Bgra8UnormSrgb)
+        );
+        let linux_like = [F::Bgra8UnormSrgb, F::Bgra8Unorm, F::Rgba8Unorm];
+        assert_eq!(pick_surface_format(&linux_like, false), Some(F::Bgra8Unorm));
+        assert_eq!(
+            pick_surface_format(&[F::Rgba8Unorm], false),
+            Some(F::Rgba8Unorm)
+        );
+        assert_eq!(
+            pick_surface_format(&[F::Rgba16Float, F::Rgba8UnormSrgb], false),
+            Some(F::Rgba8UnormSrgb)
+        );
+        assert_eq!(
+            pick_surface_format(&[F::Rgba16Float, F::Rgb10a2Unorm], false),
+            Some(F::Rgb10a2Unorm)
+        );
+        assert_eq!(
+            pick_surface_format(&[F::Rgba16Float, F::Rgb10a2Unorm], true),
+            Some(F::Rgb10a2Unorm)
+        );
+        assert_eq!(
+            pick_surface_format(&[F::Rgba16Float], false),
+            Some(F::Rgba16Float)
+        );
+        assert_eq!(pick_surface_format(&[], false), None);
+    }
+
+    /// `Srgb` is asked for whenever the format offers it; otherwise the backend picks.
+    #[test]
+    fn the_colour_space_is_srgb_when_offered() {
+        use wgpu::SurfaceColorSpaces as S;
+        assert_eq!(
+            surface_color_space(S::SRGB | S::EXTENDED_SRGB_LINEAR),
+            wgpu::SurfaceColorSpace::Srgb
+        );
+        assert_eq!(
+            surface_color_space(S::EXTENDED_SRGB_LINEAR),
+            wgpu::SurfaceColorSpace::Auto
+        );
+        assert_eq!(
+            surface_color_space(S::empty()),
+            wgpu::SurfaceColorSpace::Auto
+        );
     }
 }

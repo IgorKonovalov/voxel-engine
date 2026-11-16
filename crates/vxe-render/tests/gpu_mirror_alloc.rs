@@ -479,14 +479,7 @@ fn the_record_capacity_follows_the_limits() {
 /// fit, nearest first, and the next, with nothing freed, fails before writing anything.
 #[test]
 fn records_past_the_binding_fail_and_leave_the_mirror_untouched() {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        force_fallback_adapter: true,
-        ..Default::default()
-    }))
-    .or_else(|_| pollster::block_on(instance.request_adapter(&Default::default())));
-    let Ok(adapter) = adapter else {
-        println!("skipped: no adapter");
+    let Some(adapter) = vxe_render::test_support::any_adapter() else {
         return;
     };
     let mut required = vxe_render::limits_for(&adapter, 16 << 20).expect("the frame's limits");

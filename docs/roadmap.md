@@ -300,7 +300,9 @@ throughput, not the order, limits the far light (Plan 0067 takes it). Amended 20
 0045 moves ahead of Plan 0058 and the rest of Plan 0044, once Plans 0061, 0067 and 0068 have merged. Plan
 0045 closed 2026-11-13 (v0.50.0): the mega files are directories of owned parts, `vxe-render`'s
 surface is a curated root with `debug` and `internals`, and two gates cap file and function size;
-no behaviour changed.
+no behaviour changed. Plan 0044 closed 2026-11-16 (v0.55.0): the audio callback frees nothing, the frame keeps its
+bind groups by what they bind, the march reads a material only at its hit, the render tests share one
+device rule and a naga layout test pins the uniform structs; images, hashes and samples unchanged.
 
 Plan 0055, the clarity pass, closed 2026-11-03 (v0.40.0, ADR-0042 accepted; Outcomes on ADR-0011,
 ADR-0024, ADR-0034 and ADR-0041): procedural detail is removed, so ADR-0011 has nothing left in the
@@ -643,7 +645,7 @@ a cheap query.
 - **ADRs:** ADR-0007 (log, channel, client modes) and ADR-0010 (logic as a component), both
   accepted at their plans' closes.
 
-### M6: Entities as voxel models (Plan 0008 closed the `.vox` import; the render half is Plans 0062 and 0063, in progress: 0062's Phase 1 (the `vxe-entity` crate) and 0063's Phases 1-2 (clips, the `.rig` file, voxels from text) merged; the rest after Plan 0058)
+### M6: Entities as voxel models (Plan 0008 closed the `.vox` import; Plan 0062 closed the render half's entities, v0.56.0: posed voxel models traced with the world, lit and shadowed by the list lights, a headless ray query; Plan 0063, rigs and clips, in progress: its Phases 1-2 merged, Phases 3-4 next)
 
 - `vxe-assets`: `.vox` import with material mapping. Done in Plan 0008 (v0.6.0).
 - `vxe-render`: instanced voxel volumes with transforms traced in the same pipeline (a small
@@ -651,9 +653,12 @@ a cheap query.
   shadows, emissive entities. Plan 0024's temporal pass reprojects by hit position, so a
   moving entity ghosts until this milestone's entities write motion vectors into it.
 - **Visible proof:** a golden image of an animated model casting a shadow on the world.
-- **ADRs:** ADR-0050 (entity representation) and ADR-0051 (rigs and clips), proposed with Plans 0062 and 0063.
+- Squash and stretch: a scale per axis per part in the pose and the clips, so a slime reads
+  soft without a soft body (Plan 0082, drafted 2026-11-16, awaits go; ADR-0064). See-through
+  jelly and true soft bodies stay out (`docs/backlog.md`).
+- **ADRs:** ADR-0050 (entity representation; accepted at Plan 0062's close, with an Outcome), ADR-0051 (rigs and clips, proposed with Plan 0063); ADR-0064 (a part's scale and its children) with Plan 0082.
 
-### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0, and Plan 0016 its allocation-free refresh, v0.13.0; Plan 0025 closed the cutaway view, v0.20.0; the other debug views and the profiler across passes remain, and the benchmark lane is Plan 0068 (in progress: the tester build, Phases 1-5 merged, the Windows run owed); Plan 0026 closed gamepad flight, v0.21.0; Plan 0043 closed the test tiers, v0.29.1; Plan 0042 closed the generated castle, v0.30.0; Plan 0066 closed the 10 s soak line, 2026-11-11)
+### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0, and Plan 0016 its allocation-free refresh, v0.13.0; Plan 0025 closed the cutaway view, v0.20.0; the other debug views and the profiler across passes remain, and Plan 0068 closed the benchmark lane's first form, the tester build (camera paths, run reports, Linux and Windows archives; shipped in v0.54.0, the first release, 2026-11-15); Plan 0026 closed gamepad flight, v0.21.0; Plan 0043 closed the test tiers, v0.29.1; Plan 0042 closed the generated castle, v0.30.0; Plan 0066 closed the 10 s soak line, 2026-11-11)
 
 - Prefab stamping with rotation and masks; debug views (material ids, acoustic properties,
   coarse grids, flags); an in-app profiler overlay with GPU timestamps; a benchmark lane
@@ -740,16 +745,24 @@ is a render-profile plan, the owner's parked settings and profiles idea, which h
 the budget and comes before Plan 0032. Drafted 2026-11-11 as [Plan 0069](plans/0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md) with ADR-0055, approved the same day with every recommendation taken.
 
 **Order (owner, 2026-11-10; amended 2026-11-11 and 2026-11-12):** Plans 0060, 0061, 0067, 0045, 0070, 0058,
-the rest of 0044, the render-profile plan (Plan 0069), Plan 0071, Plan 0073 (the settings menu and file), then the plan that removes the `own` upscaler (owed,
+the rest of 0044, the render-profile plan (Plan 0069), Plan 0071, Plan 0073 (the settings menu and file, as pages of Plan 0080's menu; 0080 itself runs beside, after 0062 and 0075 merge, amended 2026-11-16 pending owner), then the plan that removes the `own` upscaler (owed,
 `docs/backlog.md`), then M6 (Plans 0062, 0063), then this milestone in plan order,
-0032 to 0037, each on main after the one before it closes. The six plans were rewritten on 2026-11-10
+0032 to 0037, each on main after the one before it closes. **Reordered 2026-11-16 (owner):** Plan 0069, then 0032, start once Plans 0062 and 0063 merge, beside Plans 0077 to 0080; Plan 0071, Plan 0073 and the `own` removal no longer hold M10. The six plans were rewritten on 2026-11-10
 against the baked store: no probe or store term takes sun or sky light.
 
 - **Sun and sky** (Plan 0032; ADR-0026, ADR-0027): Hillaire's atmosphere LUTs built on the GPU,
   a time of day the game sets, the sun or moon as one dedicated directional sample with a
   per-pixel shadow ray in the light pass, sky light from a sky ray; both land in Plan 0058's
   direct target, with no probe or store term and no sunlight bounce (redesigned 2026-11-10).
-  Auto exposure. After Plan 0058 and the render-profile plan.
+  Auto exposure. After Plan 0058 and the render-profile plan. Its testbed trees are prefabs
+  stamped at generation time (amended 2026-11-16, owner).
+- **A surface detail layer** ([Plan 0081](plans/0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md),
+  drafted 2026-11-16, awaits the owner's go; ADR-0063 proposed): grass, moss, strands,
+  fungus caps, flowers, pebbles and snow tufts as a procedural shell marched in the hit pass
+  where a ray meets a face whose material has a style, lit as a hit, faded to the face's
+  albedo by the voxel's size on screen, swayed by a wind the game sets; a render-side table
+  per material id, cosmetic and client-only, nothing in the world, the op log, the queries or
+  the bake. After Plan 0032, before Plan 0033; it takes Plan 0036's wind when that lands.
 - **The far field** (Plan 0033; ADR-0028, the founding interview's far-field clipmap): up to
   three coarse chunk levels to about 1 km, generated by the source directly, edits folded in
   from full detail; the sun's shadow ray continues into it. The level rule is per caller: the

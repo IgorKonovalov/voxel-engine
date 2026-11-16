@@ -20,15 +20,12 @@ use vxe_world::*;
 
 const DROP_BOUND: Duration = Duration::from_secs(5);
 
-/// The fly-through's streamer: the cave at seed 1, residency 16/24/1, one worker per core
-/// but one, no spill directory.
+/// The fly-through's streamer: the cave at seed 1, residency 16/24/1, half the logical cores
+/// as workers (at least 1), no spill directory.
 fn streaming_world(seed: u64) -> (World, Streamer, VoxelCoord) {
     let source = CaveSource::unbounded(seed);
     let spawn = source.spawn();
-    let workers = std::thread::available_parallelism()
-        .map_or(1, usize::from)
-        .saturating_sub(1)
-        .max(1);
+    let workers = (std::thread::available_parallelism().map_or(1, usize::from) / 2).max(1);
     let world = World::new(&cave_materials());
     let streamer = Streamer::new(
         Arc::new(source),

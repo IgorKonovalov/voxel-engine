@@ -179,13 +179,13 @@ pub(crate) struct FieldItem {
 /// The field pass's uniform: `field.wgsl`'s `Params`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
-struct Params {
-    window_min: [i32; 3],
-    units_per_shard: u32,
-    window_size: [i32; 3],
-    items: u32,
-    groups_x: u32,
-    _pad: [u32; 3],
+pub(crate) struct Params {
+    pub(crate) window_min: [i32; 3],
+    pub(crate) units_per_shard: u32,
+    pub(crate) window_size: [i32; 3],
+    pub(crate) items: u32,
+    pub(crate) groups_x: u32,
+    pub(crate) _pad: [u32; 3],
 }
 
 /// The field pass: its pipeline and the buffers it keeps between calls.
@@ -194,6 +194,8 @@ pub(crate) struct FieldPass {
     layout: wgpu::BindGroupLayout,
     uniform: wgpu::Buffer,
     work: Option<(wgpu::Buffer, usize)>,
+    /// The pass's bind group, built again only when a buffer it binds changes.
+    binds: crate::gpu_util::BindCache,
 }
 
 impl FieldPass {
@@ -231,6 +233,7 @@ impl FieldPass {
             layout,
             uniform,
             work: None,
+            binds: crate::gpu_util::BindCache::default(),
         }
     }
 
@@ -272,37 +275,25 @@ impl FieldPass {
         }
         let work = &self.work.as_ref().expect("built above").0;
         queue.write_buffer(work, 0, bytemuck::cast_slice(items));
-        let mut entries = vec![wgpu::BindGroupEntry {
-            binding: 0,
-            resource: self.uniform.as_entire_binding(),
-        }];
-        for (k, b) in mirror.shards.iter().enumerate() {
-            entries.push(wgpu::BindGroupEntry {
-                binding: 1 + k as u32,
-                resource: b.as_entire_binding(),
-            });
-        }
-        entries.push(wgpu::BindGroupEntry {
-            binding: 5,
-            resource: mirror.records.as_entire_binding(),
-        });
-        entries.push(wgpu::BindGroupEntry {
-            binding: 6,
-            resource: mirror.table.as_entire_binding(),
-        });
-        entries.push(wgpu::BindGroupEntry {
-            binding: 11,
-            resource: work.as_entire_binding(),
-        });
-        entries.push(wgpu::BindGroupEntry {
-            binding: 12,
-            resource: mirror.materials.as_entire_binding(),
-        });
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("field"),
-            layout: &self.layout,
-            entries: &entries,
-        });
+        use crate::gpu_util::Res::Buf;
+        self.binds.tick();
+        let [s0, s1, s2, s3] = mirror.shards;
+        let group = self.binds.io_at(
+            device,
+            &self.layout,
+            &[0, 1, 2, 3, 4, 5, 6, 11, 12],
+            &[
+                Buf(&self.uniform),
+                Buf(s0),
+                Buf(s1),
+                Buf(s2),
+                Buf(s3),
+                Buf(mirror.records),
+                Buf(mirror.table),
+                Buf(work),
+                Buf(mirror.materials),
+            ],
+        );
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("field"),
             timestamp_writes: timestamps,

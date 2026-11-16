@@ -9,8 +9,9 @@ Thumbs.db
 .idea/
 
 # Claude Code local overrides and in-repo plan lanes
-.claude/settings.local.json
-.claude/worktrees/
+# The agent harness is kept out of the public repo (owner, 2026-11-16).
+.claude/
+CLAUDE.md
 
 # Render output and benchmark readings kept locally. Golden baselines that a
 # test asserts against ARE committed, under crates/*/tests/golden/.
