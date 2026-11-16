@@ -592,7 +592,7 @@ fn differing(a: &[u8], b: &[u8], tol: u8) -> Vec<usize> {
 /// with a model of the same voxels (new prefabs of equal content share the volumes; a new
 /// handle): every pixel of the next frame equals the frame before within 1/255. `replace`
 /// with the torso's material changed: pixels of the torso (slot 0) change and none of the
-/// legs' (slots 2 and 3) do.
+/// legs' (slots 2 and 3) do. The a-trous filter is off (Plan 0078 Phase 3, amended).
 #[test]
 fn a_reload_keeps_the_picture_steady() {
     let Some((mut rig, red)) = rig() else {
@@ -602,6 +602,12 @@ fn a_reload_keeps_the_picture_steady() {
     let (body, eye) = walker::rows(&t).expect("the walker's rows");
     rig.frame
         .set_lights(&[Light::point([100.0, 32.0, 30.0], 1200.0)]);
+    // The a-trous filter off: a pixel whose history the material change restarts takes its
+    // variance from its neighbourhood, which widens the luminance weights of the shadowed leg
+    // pixels next to it; the claim here is history and instance identity, not the filter.
+    let mut lighting = rig.frame.lighting();
+    lighting.filter = false;
+    rig.frame.set_lighting(lighting);
     let walker_model = Arc::new(walker::model(body, eye));
     let camera = level_camera(86.0, 9.0);
     let feet = [106.0, 32.0, 2.0];
@@ -669,21 +675,6 @@ fn a_reload_keeps_the_picture_steady() {
         changed.len(),
         legs.len()
     );
-    for &&i in &legs {
-        let (x, y) = ((i % W as usize) as i64, (i / W as usize) as i64);
-        let mut near_torso = i64::MAX;
-        for j in 0..(W * H) as usize {
-            if slot(j) == Some(0) {
-                let (u, v) = ((j % W as usize) as i64, (j / W as usize) as i64);
-                near_torso = near_torso.min((u - x).abs().max((v - y).abs()));
-            }
-        }
-        println!(
-            "leg pixel ({x}, {y}): {:?} then {:?}, the nearest torso pixel {near_torso} away",
-            &n1[4 * i..4 * i + 3],
-            &n2[4 * i..4 * i + 3]
-        );
-    }
     assert!(torso > 0, "the torso's pixels change");
     assert!(legs.is_empty(), "{} leg pixels change", legs.len());
 }
