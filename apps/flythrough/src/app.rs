@@ -14,7 +14,7 @@ use crate::path::PathPlayer;
 use crate::report::Recorder;
 use crate::run::Run;
 use crate::run::hud_feed::{HUD_SCALE, Hud};
-use crate::run::loading::scene_title;
+use crate::run::loading::{draw_view, scene_title};
 use crate::run::queue::QueueRun;
 use crate::setup::{castle_banner, shell_config};
 use crate::streaming::{STREAM_POOL_BYTES, Stream};
@@ -260,14 +260,10 @@ impl App for Flythrough {
         }
         let mut screen = LoadingScreen::new(&gpu.device, gpu.surface_format, HUD_SCALE);
         let title = format!("loading {}", scene_title(&self.args));
-        let mut enc = gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        screen.encode(
-            &gpu.queue,
-            &mut enc,
+        draw_view(
+            gpu,
             surface,
-            gpu.size,
+            &mut screen,
             &LoadingView {
                 title: &title,
                 stage: "starting",
@@ -277,7 +273,6 @@ impl App for Flythrough {
                 alpha: 1.0,
             },
         );
-        gpu.queue.submit([enc.finish()]);
         diag(format_args!("splash drawn"));
         self.splash = Some(screen);
         true

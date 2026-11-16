@@ -2,7 +2,9 @@
 //! fraction, a second frame with new rows allocates nothing, and the frame matches its golden
 //! (`tests/golden/loading_screen.png`; `VXE_BLESS=1` rewrites it).
 
-use vxe_render::{LoadingScreen, LoadingView, loading_bar_inner, loading_bar_rect, wgpu};
+use vxe_render::{
+    LoadingScreen, LoadingView, loading_bar_inner, loading_bar_rect, loading_layout, wgpu,
+};
 
 /// A device on the software Vulkan adapter, or `None` with a printed skip when the machine has
 /// none. With `VXE_REQUIRE_SOFTWARE_ADAPTER=1` a missing adapter panics instead.
@@ -124,6 +126,74 @@ fn the_bar_fills_to_its_fraction() {
         wrong.is_empty(),
         "pixels off their side of {mid}: {wrong:?}"
     );
+}
+
+/// The first frame after the device (stage `starting`, no count) and a stage frame (`lighting
+/// the near chunks: 31 / 49 chunks`), both at progress 0 and `seconds` 0, at 640 x 360 and at
+/// 1024 x 562 (the 1280 x 720 window and a tiled 2048 x 1124 one, halved): below the cube's
+/// top (the text rows above it) the two frames are the same pixels, and the cube's drawn
+/// extent is centred on half the width to within a tenth of its radius (its silhouette under
+/// the pinhole eye is not exactly symmetric).
+#[test]
+fn the_first_and_a_stage_frame_are_one_centred_picture() {
+    let Some((device, queue)) = software_device() else {
+        return;
+    };
+    let mut screen = LoadingScreen::new(&device, wgpu::TextureFormat::Rgba8Unorm, 1);
+    for size in [[640, 360], [1024, 562]] {
+        let tex = target(&device, size);
+        let frame = |screen: &mut LoadingScreen, stage: &str, detail: &str| {
+            let v = LoadingView {
+                title: "loading castle",
+                stage,
+                detail,
+                progress: 0.0,
+                seconds: 0.0,
+                alpha: 1.0,
+            };
+            draw(&device, &queue, screen, &tex, &v)
+        };
+        let first = frame(&mut screen, "starting", "");
+        let stage = frame(&mut screen, "lighting the near chunks", "31 / 49 chunks");
+        let l = loading_layout(size);
+        let w = size[0] as usize;
+        let top = (l.cube_centre[1] - l.cube_px).floor() as usize;
+        let row = w * 4;
+        let differing = first[top * row..]
+            .iter()
+            .zip(&stage[top * row..])
+            .filter(|(a, b)| a != b)
+            .count();
+        assert_eq!(differing, 0, "{size:?}: bytes differ below row {top}");
+        // The cube: pixels in its band that differ from the background at the row's left edge
+        // (the background varies with the row only).
+        let bottom = (l.cube_centre[1] + l.cube_px).ceil() as usize;
+        let (mut x0, mut x1) = (usize::MAX, 0);
+        for y in top..bottom {
+            let bg = &first[y * row..y * row + 3];
+            for x in 0..w {
+                let i = y * row + x * 4;
+                let d: i32 = (0..3)
+                    .map(|k| (i32::from(first[i + k]) - i32::from(bg[k])).abs())
+                    .sum();
+                if d > 24 {
+                    x0 = x0.min(x);
+                    x1 = x1.max(x);
+                }
+            }
+        }
+        assert!(x0 < x1, "{size:?}: no cube drawn");
+        let mid = (x0 + x1 + 1) as f32 * 0.5;
+        println!(
+            "{size:?}: cube x {x0}..={x1}, middle {mid}, half width {}, radius {}",
+            size[0] as f32 / 2.0,
+            l.cube_px
+        );
+        assert!(
+            (mid - size[0] as f32 / 2.0).abs() <= 0.1 * l.cube_px,
+            "{size:?}: the cube's middle {mid} off half the width"
+        );
+    }
 }
 
 /// A second frame with different rows grows none of the overlay's CPU buffers.

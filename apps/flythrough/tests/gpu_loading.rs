@@ -116,7 +116,7 @@ fn loading_frames(stderr: &str) -> Vec<(String, f32)> {
 
 /// The streamed cave headless on lavapipe at the default residency, the pre-roll's near ring
 /// at 0 and a coarse pass of 16, the screen on with a 0.05 ms slice (one step a loading
-/// frame): the loading frames name the entity pipelines' build, then the near residency, then
+/// frame): the loading frames name the pipelines' build, then the near residency, then
 /// the near chunks' light, then the coarse pass, each at least once and in that order; their fractions never decrease; the
 /// last reads 1. About 21 s on lavapipe here (2026-11-16), so it runs in the soak tier.
 #[test]
@@ -159,7 +159,7 @@ fn the_streamed_load_reports_its_stages_in_order_and_ends_at_one() {
     }
     println!("{} loading frames, stages {order:?}", frames.len());
     let want = [
-        "building the entity pipelines",
+        "building the pipelines",
         "streaming the near chunks",
         "lighting the near chunks",
         "lighting the coarse pass",

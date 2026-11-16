@@ -223,6 +223,33 @@ pub fn loading_bar_inner(size: [u32; 2]) -> [f32; 4] {
     ]
 }
 
+/// Where a `size` target's loading frame puts its parts, in target pixels: a function of the
+/// size alone, so every loading frame drawn at one size (the first after the device and each
+/// stage's) is the same picture, the cube and the bar centred across the width.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LoadingLayout {
+    /// The bar's outer rect, `[x0, y0, x1, y1]` ([`loading_bar_rect`]).
+    pub bar: [f32; 4],
+    /// The bar's border width.
+    pub border: f32,
+    /// The cube's centre: half the width, at 45 % of the height.
+    pub cube_centre: [f32; 2],
+    /// The cube's bounding radius on screen: 9 % of the height, at least 16 px.
+    pub cube_px: f32,
+}
+
+/// The layout of a `size` target's loading frame.
+pub fn loading_layout(size: [u32; 2]) -> LoadingLayout {
+    let (bar, border) = loading_bar_rect(size);
+    let [w, h] = [size[0] as f32, size[1] as f32];
+    LoadingLayout {
+        bar,
+        border,
+        cube_centre: [0.5 * w, (h * 0.45).round()],
+        cube_px: (h * 0.09).round().max(16.0),
+    }
+}
+
 impl LoadingScreen {
     /// A loading frame for targets of `format`, its rows drawn at the overlay's `scale`.
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, scale: u32) -> Self {
@@ -329,17 +356,16 @@ impl LoadingScreen {
         if size[0] == 0 || size[1] == 0 {
             return;
         }
-        let (bar, border) = loading_bar_rect(size);
-        let h = size[1] as f32;
+        let layout = loading_layout(size);
         let params = Params {
-            size: [size[0] as f32, h],
+            size: [size[0] as f32, size[1] as f32],
             seconds: view.seconds,
             progress: view.progress.clamp(0.0, 1.0),
-            bar,
+            bar: layout.bar,
             alpha: view.alpha.clamp(0.0, 1.0),
-            border,
-            cube_px: (h * 0.09).round().max(16.0),
-            cube_y: (h * 0.45).round(),
+            border: layout.border,
+            cube_px: layout.cube_px,
+            cube_y: layout.cube_centre[1],
         };
         queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&params));
         {
@@ -419,6 +445,30 @@ mod tests {
         assert!((0.6 - last).abs() <= 0.01, "{last} at {t} s");
         assert_eq!(bar.update(0.3, dt), last, "a lower target holds the bar");
         assert_eq!(bar.snap(), 1.0);
+    }
+
+    /// At 1280 x 720 (the window's first size) and 2048 x 1124 (the size a tiling compositor
+    /// gave it on a 2560 x 1440 screen at scale 1.25), the cube's centre is half the width
+    /// and the bar's rect is symmetric about it, both inside the target.
+    #[test]
+    fn the_loading_layout_is_centred_at_two_sizes() {
+        for size in [[1280, 720], [2048, 1124]] {
+            let l = loading_layout(size);
+            let [w, h] = [size[0] as f32, size[1] as f32];
+            assert_eq!(l.cube_centre[0], w / 2.0, "{size:?}");
+            assert_eq!(
+                l.bar[0] + l.bar[2],
+                w,
+                "the bar centred at {size:?}: {:?}",
+                l.bar
+            );
+            assert!(l.bar[0] > 0.0 && l.bar[3] < h, "{size:?}: {:?}", l.bar);
+            assert!(
+                l.cube_centre[1] - l.cube_px > 0.0 && l.cube_centre[1] + l.cube_px < l.bar[1],
+                "the cube above the bar at {size:?}: {l:?}"
+            );
+        }
+        assert_ne!(loading_layout([1280, 720]), loading_layout([2048, 1124]));
     }
 
     fn close(a: f32, b: f32) -> bool {

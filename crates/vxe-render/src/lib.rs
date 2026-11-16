@@ -115,8 +115,8 @@ pub use gpu_world::{
 pub use hud::{HudColour, HudOverlay};
 pub use light::LightParams;
 pub use loading::{
-    BAR_EASE_S, EasedBar, LOADING_WGSL, LoadProgress, LoadStage, LoadingScreen, LoadingView,
-    loading_bar_inner, loading_bar_rect,
+    BAR_EASE_S, EasedBar, LOADING_WGSL, LoadProgress, LoadStage, LoadingLayout, LoadingScreen,
+    LoadingView, loading_bar_inner, loading_bar_rect, loading_layout,
 };
 pub use present::Presenter;
 pub use probes::{DEFAULT_H_MOVE, DEFAULT_PROBE_SPACING, ProbeVolume};

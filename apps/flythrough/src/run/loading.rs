@@ -1,22 +1,27 @@
-//! Start-up as stages of steps (ADR-0059): the entity pipelines built ahead of the first
-//! frame that draws a part ([`vxe_render::Frame::prepare_entities`], one blocking step), the
-//! level's first upload or the streamed world's near residency, the light pre-roll
+//! Start-up as stages of steps (ADR-0059): the pipelines built ahead of the first world frame
+//! (the frame's own and the entity set, [`vxe_render::Frame::prepare_entities`]), the level's
+//! first upload or the streamed world's near residency, the light pre-roll
 //! ([`vxe_render::PreRoll`]) and the field's initial fill.
 //! Under `--loading-screen off` [`Run::load_all`] steps them to the end inside `init`; under
-//! `on` each frame spends `--load-slice` of wall time on steps, then draws a loading frame and
-//! returns without touching any per-frame world path (the frame counter, the path player, the
-//! recorder, the HUD's wall times). The bar reads a [`LoadProgress`] of the stages below,
-//! weighted by their share of the loading time read on the RTX 3080 Laptop.
+//! `on` the pipelines build on a worker thread ([`Build`]) while the frame loop keeps drawing,
+//! and each frame spends `--load-slice` of wall time on steps (or waiting on the worker), then
+//! draws a loading frame and returns without touching any per-frame world path (the frame
+//! counter, the path player, the recorder, the HUD's wall times). The bar reads a
+//! [`LoadProgress`] of the stages below, weighted by their share of the loading time read on
+//! the RTX 3080 Laptop.
 
 use crate::app::{diag, ms_since};
 use crate::cli::{Args, RunMode};
 use crate::edits::{ball, voxel_of};
 use crate::now;
-use crate::run::Run;
 use crate::run::hud_feed::{HUD_SCALE, band_census_line, field_line, field_pass_line};
 use crate::run::queue::{COARSE_PRE_ROLL_MS, PRE_ROLL_SAMPLES, queue_view_angles};
+use crate::run::{BUILD_UNITS, GfxPlan, Run, build_gfx};
 use crate::setup::{Gfx, castle_banner, start_camera};
 use crate::streaming::NEAR_D2;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use vxe_app::{Flow, Gpu, Input, KeyCode};
 use vxe_render::{
@@ -29,7 +34,7 @@ use vxe_world::ChunkCoord;
 pub(crate) const PRE_ROLL_CAP_MS: f64 = 120_000.0;
 
 /// The stages' names, as the loading frame and the `loading frame` diag lines show them.
-pub(crate) const PIPELINES: &str = "building the entity pipelines";
+pub(crate) const PIPELINES: &str = "building the pipelines";
 pub(crate) const UPLOAD: &str = "uploading the level";
 pub(crate) const RESIDENCY: &str = "streaming the near chunks";
 pub(crate) const NEAR: &str = "lighting the near chunks";
@@ -40,16 +45,20 @@ pub(crate) const FIELD: &str = "filling the field";
 /// 1280 x 720: the streamed cave's and the castle's near residency about 5 % and the
 /// showcase's upload 2 %, the near chunks' light 23 to 30 % (63 % on the showcase), the coarse
 /// pass 66 to 72 % (boxed at 5 s; 28 % on the showcase), the field's fill under 1 % in the
-/// default look. Ahead of them the entity pipelines: 5.7 to 9.8 s when the driver compiles
-/// them (about 45 % of the castle's and the cave's loading, 75 % of the showcase's), 70 to
-/// 110 ms from a warm shader cache; the weight is the compiled case's, so the bar's jump at
-/// the stage's end matches the wait it follows (the weights below sum to about 1).
-pub(crate) const PIPELINES_WEIGHT: f32 = 0.8;
+/// default look. Ahead of them the pipelines: under the screen the frame's creation and the
+/// entity set, about 6 s each when the driver compiles them (together about 60 % of the
+/// castle's loading), 0.2 to 0.3 s from a warm shader cache; the weight is the compiled
+/// case's, against the other stages' sum of about 1.
+pub(crate) const PIPELINES_WEIGHT: f32 = 1.6;
 pub(crate) const UPLOAD_WEIGHT: f32 = 0.03;
 pub(crate) const RESIDENCY_WEIGHT: f32 = 0.05;
 pub(crate) const NEAR_WEIGHT: f32 = 0.30;
 pub(crate) const COARSE_WEIGHT: f32 = 0.63;
 pub(crate) const FIELD_WEIGHT: f32 = 0.02;
+
+/// A loading frame that starts longer than this after the one before logs a `loading gap`
+/// diag line naming the stage, in ms.
+const GAP_LOG_MS: f64 = 50.0;
 
 /// The coarse stage's count: thousandths of the larger of its chunks passed and its box spent.
 const COARSE_UNITS: u64 = 1000;
@@ -83,10 +92,72 @@ pub(crate) struct PreRollRun {
     longest_ms: f64,
 }
 
+/// The run's GPU objects building on a worker thread ([`build_gfx`], the entity pipelines
+/// included): pipeline creation is synchronous on the calling thread and takes seconds when
+/// the driver compiles, so under the loading screen it runs off the event loop. Nothing reads
+/// the frame or the mirror until [`Build::join`] hands them back: `Run::gfx` is `None` until
+/// then, so a resize has nothing to size and the hand-back sizes the frame to the window.
+pub(crate) struct Build {
+    worker: Option<JoinHandle<Gfx>>,
+    /// Units of the build done, of [`BUILD_UNITS`].
+    built: Arc<AtomicU64>,
+    /// When the worker started: the stage's time is the worker's wall time.
+    began: Instant,
+}
+
+impl Build {
+    /// Starts the build of `plan` on a worker thread over clones of the device and the queue.
+    pub(crate) fn spawn(gpu: &Gpu, plan: GfxPlan) -> Self {
+        let built = Arc::new(AtomicU64::new(0));
+        let (device, queue, done) = (gpu.device.clone(), gpu.queue.clone(), built.clone());
+        let worker = std::thread::Builder::new()
+            .name("start-up build".to_owned())
+            .spawn(move || build_gfx(&device, &queue, plan, true, &done))
+            .expect("the start-up build's thread starts");
+        Self {
+            worker: Some(worker),
+            built,
+            began: now(),
+        }
+    }
+
+    /// Whether the worker has ended (its objects wait in [`Build::join`]).
+    fn finished(&self) -> bool {
+        self.worker.as_ref().is_none_or(JoinHandle::is_finished)
+    }
+
+    /// Waits up to `limit` for the worker to end, checking every millisecond.
+    fn wait(&self, limit: Duration) {
+        let until = now() + limit;
+        while !self.finished() && now() < until {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    /// The units done so far, of [`BUILD_UNITS`].
+    fn units(&self) -> u64 {
+        self.built.load(Ordering::Relaxed)
+    }
+
+    /// The worker's objects, blocking until it ends; `None` once taken. A panic on the worker
+    /// resumes here.
+    fn join(&mut self) -> Option<Gfx> {
+        let worker = self.worker.take()?;
+        Some(
+            worker
+                .join()
+                .unwrap_or_else(|e| std::panic::resume_unwind(e)),
+        )
+    }
+}
+
 /// The stage being stepped.
 pub(crate) enum Stage {
-    /// The entity pipelines' build, one step that blocks for its whole time (pipeline
-    /// creation is synchronous on the device), then the stage it holds.
+    /// The pipelines on a worker under the loading screen ([`Build`]); the next stage starts
+    /// when it hands the objects back.
+    Build(Box<Build>),
+    /// The entity pipelines' build without the screen, one step that blocks for its whole
+    /// time, then the stage it holds.
     Pipelines(Box<Stage>),
     Upload(Upload),
     Residency(Residency),
@@ -107,6 +178,9 @@ pub(crate) struct Loading {
     fade_ms: f64,
     /// When the last loading frame was drawn: the fade runs from there.
     ended: Option<Instant>,
+    /// `Esc` (or `--quit-at-loading-frame`) came while the worker built: the run ends once it
+    /// hands its objects back, the loading frames drawn meanwhile.
+    quitting: bool,
     /// Wall time a frame spends on steps, in ms.
     slice_ms: f64,
     /// When loading began (device ready).
@@ -129,10 +203,26 @@ impl Loading {
         matches!(self.stage, Stage::Done)
     }
 
+    /// Whether the worker is still building.
+    fn building(&self) -> bool {
+        matches!(&self.stage, Stage::Build(b) if !b.finished())
+    }
+
+    /// The worker's objects, when loading still holds it; blocks until it ends. For the run's
+    /// teardown.
+    pub(crate) fn take_built(&mut self) -> Option<Gfx> {
+        let Stage::Build(b) = &mut self.stage else {
+            return None;
+        };
+        let gfx = b.join();
+        diag(format_args!("start-up build joined at the run's end"));
+        gfx
+    }
+
     /// The current stage's name.
     fn stage_name(&self) -> &'static str {
         match &self.stage {
-            Stage::Pipelines(_) => PIPELINES,
+            Stage::Build(_) | Stage::Pipelines(_) => PIPELINES,
             Stage::Upload(_) => UPLOAD,
             Stage::Residency(_) => RESIDENCY,
             Stage::PreRoll(p) => match p.pre.state() {
@@ -154,7 +244,7 @@ impl Loading {
                 PreRollState::Coarse { passed, of } => format!("{passed} / {of} chunks"),
                 PreRollState::Done(s) => format!("{} chunks", s.baked),
             },
-            Stage::Pipelines(_) | Stage::Field | Stage::Done => String::new(),
+            Stage::Build(_) | Stage::Pipelines(_) | Stage::Field | Stage::Done => String::new(),
         }
     }
 
@@ -198,7 +288,7 @@ pub(crate) fn scene_title(args: &Args) -> String {
     }
 }
 
-/// The stages a run loads through, with their weights: the entity pipelines, the level's
+/// The stages a run loads through, with their weights: the pipelines, the level's
 /// upload or the streamed near residency, the pre-roll's two, and the field's fill when the run starts in the field.
 pub(crate) fn load_stages(streamed: bool, field: bool) -> Vec<(&'static str, f32)> {
     let mut v = vec![(PIPELINES, PIPELINES_WEIGHT)];
@@ -216,60 +306,37 @@ pub(crate) fn load_stages(streamed: bool, field: bool) -> Vec<(&'static str, f32
 }
 
 impl Run {
-    /// Loading's start: the entity pipelines, then the level's upload or the streamed near
-    /// residency.
-    /// Under the screen the first stage's syncs take a time budget of the slice, so no step
-    /// holds a loading frame for a whole upload; the run's own budget is restored when the
-    /// pre-roll starts.
+    /// Loading's start under the screen: the worker's `build` first, drawn with `drawn` (the
+    /// screen the first frame was drawn with, else a new one).
     pub(crate) fn start_loading(
         &mut self,
         gpu: &Gpu,
         drawn: Option<LoadingScreen>,
-        screen: bool,
+        build: Build,
     ) -> Loading {
-        let slice_ms = self.args.loading.slice_ms;
+        let screen =
+            drawn.unwrap_or_else(|| LoadingScreen::new(&gpu.device, gpu.surface_format, HUD_SCALE));
+        self.new_loading(Stage::Build(Box::new(build)), Some(screen))
+    }
+
+    /// Loading's start without the screen, the run's GPU objects built: the entity pipelines,
+    /// then the level's upload or the streamed near residency.
+    pub(crate) fn start_loading_unscreened(&mut self) -> Loading {
+        let next = self.first_stage(false);
+        self.new_loading(Stage::Pipelines(Box::new(next)), None)
+    }
+
+    fn new_loading(&self, stage: Stage, screen: Option<LoadingScreen>) -> Loading {
         let streamed = self.stream.is_some();
-        if let Some(gfx) = self.gfx.as_mut() {
-            gfx.mirror.set_focus(self.spawn);
-            if screen {
-                gfx.mirror
-                    .set_sync_budget_time(Some(Duration::from_secs_f64(slice_ms * 1e-3)));
-            }
-        }
-        let field = self.gfx.as_ref().is_some_and(|g| g.mirror.field_surface());
-        let stage = if streamed {
-            let spawn = self.spawn.chunk();
-            let near: Vec<ChunkCoord> = ball(NEAR_D2)
-                .into_iter()
-                .map(|o| ChunkCoord([0, 1, 2].map(|k| spawn.0[k] + o[k])))
-                .collect();
-            diag(format_args!(
-                "mirror created, streaming {} near chunks",
-                near.len()
-            ));
-            Stage::Residency(Residency {
-                near,
-                first_light: None,
-                light_us: 0,
-                syncs: 0,
-                mirrored: 0,
-                diag_next: now(),
-            })
-        } else {
-            Stage::Upload(Upload::default())
-        };
         Loading {
-            stage: Stage::Pipelines(Box::new(stage)),
-            progress: LoadProgress::new(&load_stages(streamed, field)),
-            screen: screen.then(|| {
-                drawn.unwrap_or_else(|| {
-                    LoadingScreen::new(&gpu.device, gpu.surface_format, HUD_SCALE)
-                })
-            }),
+            stage,
+            progress: LoadProgress::new(&load_stages(streamed, self.args.field_surface())),
+            screen,
             bar: EasedBar::default(),
             fade_ms: self.args.loading.fade_ms,
             ended: None,
-            slice_ms,
+            quitting: false,
+            slice_ms: self.args.loading.slice_ms,
             began: now(),
             title: scene_title(&self.args),
             frames: 0,
@@ -278,6 +345,54 @@ impl Run {
             longest: Vec::new(),
             stage_ms: Vec::new(),
         }
+    }
+
+    /// The stage after the pipelines, once the run holds its GPU objects: the level's upload
+    /// or the streamed near residency. Under the screen (`sliced`) the first stage's syncs
+    /// take a time budget of the slice, so no step holds a loading frame for a whole upload;
+    /// the run's own budget is restored when the pre-roll starts.
+    fn first_stage(&mut self, sliced: bool) -> Stage {
+        if let Some(gfx) = self.gfx.as_mut() {
+            gfx.mirror.set_focus(self.spawn);
+            if sliced {
+                gfx.mirror
+                    .set_sync_budget_time(Some(Duration::from_secs_f64(
+                        self.args.loading.slice_ms * 1e-3,
+                    )));
+            }
+        }
+        if self.stream.is_none() {
+            return Stage::Upload(Upload::default());
+        }
+        let spawn = self.spawn.chunk();
+        let near: Vec<ChunkCoord> = ball(NEAR_D2)
+            .into_iter()
+            .map(|o| ChunkCoord([0, 1, 2].map(|k| spawn.0[k] + o[k])))
+            .collect();
+        diag(format_args!(
+            "mirror created, streaming {} near chunks",
+            near.len()
+        ));
+        Stage::Residency(Residency {
+            near,
+            first_light: None,
+            light_us: 0,
+            syncs: 0,
+            mirrored: 0,
+            diag_next: now(),
+        })
+    }
+
+    /// The worker's objects handed to the run (blocking until it ends): the frame sized to the
+    /// window as it is now, then the next stage.
+    fn hand_back(&mut self, gpu: &Gpu, mut build: Build, loading: &mut Loading) -> Stage {
+        let Some(gfx) = build.join() else {
+            return Stage::Done;
+        };
+        self.gfx = Some(gfx);
+        self.resized(gpu);
+        loading.progress.next();
+        self.first_stage(true)
     }
 
     /// Every stage stepped to its end, in one call: `--loading-screen off`.
@@ -293,12 +408,23 @@ impl Run {
     pub(crate) fn load_step(&mut self, gpu: &Gpu, loading: &mut Loading) {
         let name = loading.stage_name();
         let t = now();
+        if matches!(loading.stage, Stage::Build(_)) {
+            let Stage::Build(build) = std::mem::replace(&mut loading.stage, Stage::Done) else {
+                unreachable!("matched above");
+            };
+            let worked = ms_since(build.began);
+            loading.stage = self.hand_back(gpu, *build, loading);
+            loading.note_step(name, worked.max(ms_since(t)));
+            return;
+        }
         let Some(mut gfx) = self.gfx.take() else {
             loading.stage = Stage::Done;
             return;
         };
         let stage = std::mem::replace(&mut loading.stage, Stage::Done);
         loading.stage = match stage {
+            // Handled above, before the run's objects are taken.
+            Stage::Build(_) => Stage::Done,
             Stage::Pipelines(next) => {
                 // A walker may be placed on any frame, so the entity pipelines are built
                 // before the first world frame, and the frame that draws the first part
@@ -707,6 +833,11 @@ impl Run {
             return Flow::Exit;
         };
         if input.pressed(KeyCode::Escape) || self.args.loading.quit_at == Some(loading.frames) {
+            loading.quitting = true;
+        }
+        // A quit while the worker builds waits for it behind loading frames, so the window
+        // stays live and the teardown finds no build in flight.
+        if loading.quitting && !loading.building() {
             println!("loading: ended at loading frame {}", loading.frames);
             self.loading = Some(loading);
             return Flow::Exit;
@@ -716,12 +847,30 @@ impl Run {
         let dt = loading.last.replace(t0).map_or(0.0, |last| {
             let ms = (t0 - last).as_secs_f64() * 1e3;
             loading.intervals.push(ms);
+            if ms > GAP_LOG_MS {
+                diag(format_args!(
+                    "loading gap {ms:.1} ms before loading frame {} ({})",
+                    loading.frames,
+                    loading.stage_name()
+                ));
+            }
             ms * 1e-3
         });
-        // The pipelines' one blocking step waits for a loading frame that names it, so the
-        // screen shows what the start-up is waiting on.
-        let named = loading.frames > 0 || !matches!(loading.stage, Stage::Pipelines(_));
-        while named && !loading.done() && ms_since(t0) < loading.slice_ms {
+        while !loading.done() && ms_since(t0) < loading.slice_ms {
+            if let Stage::Build(b) = &loading.stage {
+                // The worker's wait spends the rest of the slice, so the loading frames keep
+                // the slice's cadence while it builds.
+                b.wait(Duration::from_secs_f64(
+                    (loading.slice_ms - ms_since(t0)).max(0.0) * 1e-3,
+                ));
+                if !b.finished() {
+                    loading.progress.set(b.units(), Some(BUILD_UNITS));
+                    break;
+                }
+            }
+            if loading.quitting {
+                break;
+            }
             self.load_step(gpu, &mut loading);
         }
         if self.failure.is_some() {
@@ -742,13 +891,10 @@ impl Run {
         loading.frames += 1;
         if loading.done() {
             self.end_loading(&loading);
-            if loading.fade_ms > 0.0 {
-                loading.ended = Some(now());
-                self.loading = Some(loading);
-            }
-        } else {
-            self.loading = Some(loading);
+            // Kept to the first world frame even without a fade, which logs its gap.
+            loading.ended = Some(now());
         }
+        self.loading = Some(loading);
         Flow::Continue
     }
 
@@ -768,7 +914,17 @@ pub(crate) fn fade_loading(slot: &mut Option<Loading>, gpu: &Gpu, surface: &wgpu
     let Some(ended) = loading.ended else {
         return;
     };
-    let alpha = 1.0 - (now() - ended).as_secs_f64() * 1e3 / loading.fade_ms;
+    if let Some(last) = loading.last.take() {
+        diag(format_args!(
+            "first world frame drawn {:.1} ms after the last loading frame began",
+            (now() - last).as_secs_f64() * 1e3
+        ));
+    }
+    let alpha = if loading.fade_ms > 0.0 {
+        1.0 - (now() - ended).as_secs_f64() * 1e3 / loading.fade_ms
+    } else {
+        0.0
+    };
     if alpha <= 0.0 {
         *slot = None;
         return;
@@ -804,14 +960,10 @@ fn draw_loading(gpu: &Gpu, surface: &wgpu::TextureView, loading: &mut Loading, a
     let Some(screen) = loading.screen.as_mut() else {
         return;
     };
-    let mut enc = gpu
-        .device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-    screen.encode(
-        &gpu.queue,
-        &mut enc,
+    draw_view(
+        gpu,
         surface,
-        gpu.size,
+        screen,
         &LoadingView {
             title: &title,
             stage,
@@ -821,6 +973,22 @@ fn draw_loading(gpu: &Gpu, surface: &wgpu::TextureView, loading: &mut Loading, a
             alpha,
         },
     );
+}
+
+/// Draws `view` with `screen` over `surface` at the window's current size (`gpu.size`, the
+/// surface's): the one route of every loading frame, the first frame after the device
+/// ([`crate::app::Flythrough`]'s splash) included, so each is the same picture centred in
+/// the window as it is when drawn.
+pub(crate) fn draw_view(
+    gpu: &Gpu,
+    surface: &wgpu::TextureView,
+    screen: &mut LoadingScreen,
+    view: &LoadingView<'_>,
+) {
+    let mut enc = gpu
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    screen.encode(&gpu.queue, &mut enc, surface, gpu.size, view);
     gpu.queue.submit([enc.finish()]);
 }
 

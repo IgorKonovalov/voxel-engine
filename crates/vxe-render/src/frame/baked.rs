@@ -187,6 +187,18 @@ impl Frame {
         self.baked.queue = Some(crate::bake::BakeQueue::new(settings, slice_ms));
     }
 
+    /// Builds the light bake's pipeline unless it is built, so the first bake step (the
+    /// pre-roll's, the live queue's or a dig's) builds none: a driver that compiles it takes
+    /// hundreds of ms. Call it during start-up; without it the first bake builds it.
+    pub fn prepare_bake(&mut self, device: &wgpu::Device) {
+        if self.baked.pipeline.is_none() {
+            self.baked.pipeline = Some(crate::bake::BakePipeline::new(
+                device,
+                &self.pipes.world_layout,
+            ));
+        }
+    }
+
     /// The lighting grid's pixels: what the store's missing count is a share of.
     pub fn light_pixels(&self) -> u32 {
         let [w, h] = self.targets.light_size();
