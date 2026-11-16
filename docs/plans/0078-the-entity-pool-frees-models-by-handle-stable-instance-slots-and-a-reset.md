@@ -1,6 +1,6 @@
 # 0078: The entity pool frees models: free by handle into a coalescing free list, stable instance slots with a generation, and a reset
 
-> **Status:** approved (2026-11-16, the owner: every recommended answer under "Owner questions")
+> **Status:** in-progress (approved 2026-11-16, the owner: every recommended answer under "Owner questions")
 > **Created:** 2026-11-16
 > **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md), the engine side (`vxe-render`,
 > `vxe-entity`), with the fly-through's reload as its first consumer.
@@ -483,9 +483,11 @@ tests assert.
 > notes go to the plan's readings log, `docs/plans/logs/0078.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
+Readings, gate counts and the plan-to-tree names: [`logs/0078.md`](logs/0078.md).
+
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the range allocator and the pool's free | dev | not started | |
+| 1: the range allocator and the pool's free | dev | done | committed with this row |
 | 2: the fly-through frees on reload, and the pool on the HUD | dev | not started | |
 | 3: stable instance slots, generations, ghost leaves, no scratch | dev | not started | |
 | 4: the waste reading, the docs and the tip | dev | not started | |

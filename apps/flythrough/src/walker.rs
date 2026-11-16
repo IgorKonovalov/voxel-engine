@@ -866,7 +866,12 @@ mod tests {
         for i in 0..8 {
             assert!(w.place(&table, [i as f32 * 20.0, 0.0, 2.0], [0.0, -9.0, 2.0]));
         }
-        w.handle = Some(ModelHandle(0));
+        // Two handles of a pool of the walker's model and one of the viewer's.
+        let mut pool = vxe_render::internals::VolumePool::new(1 << 20);
+        let (body, eye) = rows(&table).unwrap();
+        let mut handle = || pool.upload(&model(body, eye), &table).unwrap().handle;
+        let (h0, h1) = (handle(), handle());
+        w.handle = Some(h0);
         w.toggle_walk();
         let mut bytes = Vec::new();
         for _ in 0..4 {
@@ -880,7 +885,7 @@ mod tests {
         assert_eq!(w.displays().len(), 8);
         for (p, (id, h, d)) in w.placed.iter().zip(w.displays()) {
             let (model, pose) = w.set.get(p.id).unwrap();
-            assert_eq!((*id, *h), (p.id, ModelHandle(0)));
+            assert_eq!((*id, *h), (p.id, h0));
             assert_eq!(Some(d), DisplayPose::of(model, pose).as_ref());
         }
 
@@ -888,7 +893,7 @@ mod tests {
             .join("assets/entities/walker/walker.rig");
         let mut viewer = crate::viewer::Viewer::open(&path, Some("walk".into())).expect("opens");
         assert_eq!(viewer.build_pending(&table), None);
-        viewer.handle = Some(ModelHandle(1));
+        viewer.handle = Some(h1);
         let mut w = Walkers::default().with_viewer(Some(viewer));
         let refresh = |w: &mut Walkers| {
             w.step(1.0 / 45.0);
