@@ -609,6 +609,7 @@ fn main() -> Result<(), String> {
         resolution: args.light.resolution,
     }
     .frame(&device, &queue, &mut gpu, &world)?;
+    frame.prepare_entities(&device);
     let handle = frame
         .entity_mirror_mut()
         .upload_model(&queue, &loaded.model, world.materials())
