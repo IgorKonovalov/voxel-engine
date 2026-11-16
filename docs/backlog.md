@@ -100,6 +100,21 @@ reading against a new `nfr.md` line.
 
 Pick up when the lighting base is settled: Plans 0056, 0057 and 0058 closed.
 
+### The first near-lighting step stalls 130 to 210 ms on a cold driver cache
+
+Noted 2026-11-16 from Plan 0075 Phase 7b (`docs/plans/logs/0075.md`, session 75c; RTX host). With
+every pipeline built on the start-up worker, one loading gap stays at the first "lighting the near
+chunks" frames, cold only (warm max 87 ms). Every `vxe-render` compute pipeline exists before it,
+so the time is something else the driver does on first use. The owner noticed no hitch and
+accepted it. Pick up when a start-up or first-frame plan needs the bar, with a driver trace.
+
+### A wgpu pipeline cache owned by the engine
+
+Noted 2026-11-16 from the NVIDIA GLCache overflow (over 1 GB, so nothing new was kept and every
+start recompiled). `wgpu::PipelineCache` on Vulkan, saved under the game's cache directory, would
+make a warm start independent of the driver's own cache size and eviction. Pick up with the next
+start-up time plan, or when a tester reports long starts.
+
 ### `.vox` import: down-scaling, a traced preview, a row's class changed live
 
 Parked 2026-11-16 at the drafting of Plans 0083 and 0084 (the owner's "import nearly anything

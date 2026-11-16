@@ -287,6 +287,12 @@ first world frame (Plan 0062 Phase 6d's first amendment, overturned).
   that the loading picture's layout is centred at two window sizes and the same for the first and
   a stage frame; headless runs unchanged; the stage times read as before (the work is the same,
   only off the event loop).
+- **Amended 2026-11-16 (owner):** at the session 75c window (castle and showcase, each on a new
+  empty driver cache) the owner saw the cube turn throughout, no notice and a centred picture,
+  and noticed no hitch. One gap of 130 to 210 ms stays, cold only, at the first "lighting the
+  near chunks" frames (warm max 87 ms; cause not found, every compute pipeline is built before
+  it). The owner accepts it as a reading: the 100 ms bar holds for every other loading frame,
+  and that one cold gap is recorded in the readings log and the backlog, not fixed in this plan.
 
 ### Phase 7: after the window
 - **Owner skill:** dev
