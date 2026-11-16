@@ -219,8 +219,7 @@ has a test that needs no window. [`ci.yml`](.github/workflows/ci.yml) is the ful
 Work is plan-driven. A design question becomes an ADR when there is a rejected alternative worth
 remembering, then a phased plan in [`docs/plans/`](docs/plans/README.md), then code. Decisions
 are recorded once and cited by number; a closed plan moves to `docs/plans/done/` and gets a
-changelog entry and a version bump. [`CLAUDE.md`](CLAUDE.md) is the orientation map for anyone,
-human or tool, working in the tree.
+changelog entry and a version bump.
 
 The engine is being built alongside a first consumer game, but **nothing under `crates/` names
 that game or any gameplay concept**. A game-specific need arrives as a requirement and is met

@@ -1,34 +1,36 @@
 # 0062: Entities: voxel models on rigid parts, traced with the world, lit and shadowed by the list lights, and hit by a headless ray query
 
-> **Status:** in-progress (owner go 2026-11-10; Phase 1 may start now, Phases 2 to 6 start after
-> Plans 0058 and 0045 close and the architect's re-read below)
+> **Status:** done (closed 2026-11-16, v0.56.0: entities traced with the world, lit and shadowed
+> by the list lights, the baked world light their default emissive part, the entity pipelines
+> built at start-up by `Frame::prepare_entities`; the walker costs over the plan's guesses,
+> accepted by the owner as measured); owner go 2026-11-10
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
 > `hud.rs`). Read each through "Where things moved" in
-> [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
+> [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
 > phases re-cut their Files touched at their start.
 > **Created:** 2026-11-10
-> **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md) (the render half; Plan 0008 closed the
+> **Milestone:** M6 in [`docs/roadmap.md`](../../roadmap.md) (the render half; Plan 0008 closed the
 > `.vox` import)
-> **Related ADRs:** [ADR-0050](../adrs/0050-entities-are-posed-voxel-volumes-in-their-own-pool-traced-after-the-world-march.md)
+> **Related ADRs:** [ADR-0050](../../adrs/0050-entities-are-posed-voxel-volumes-in-their-own-pool-traced-after-the-world-march.md)
 > (proposed; the representation), accepted at this plan's close. Rests on
-> [ADR-0044](../adrs/0044-direct-light-from-a-fixed-list-of-analytic-lights-one-shadow-ray-each.md)
+> [ADR-0044](../../adrs/0044-direct-light-from-a-fixed-list-of-analytic-lights-one-shadow-ray-each.md)
 > (the light list and its shadow rays), on
-> [ADR-0043](../adrs/0043-emissive-light-from-a-world-space-per-face-table-and-a-lamp-bounce-probe-channel.md)
+> [ADR-0043](../../adrs/0043-emissive-light-from-a-world-space-per-face-table-and-a-lamp-bounce-probe-channel.md)
 > (the fallback a hit with no cube face takes) and on
-> [ADR-0014](../adrs/0014-prefab-identity-in-the-op-log.md) (a prefab's content id).
+> [ADR-0014](../../adrs/0014-prefab-identity-in-the-op-log.md) (a prefab's content id).
 > **Source:** the owner, 2026-11-10: "we need a plan for voxel model entity ... with possibility
 > of emissive light (gloving eyes for example) - we place model on a level", and the answers
 > under Owner answers.
-> **Starts after:** [Plan 0058](done/0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md)'s
+> **Starts after:** [Plan 0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md)'s
 > close for Phases 2 to 6 (they read its light list, its direct target and its change rule),
-> and after [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md) by the
+> and after [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) by the
 > order in the plans index. **Phase 1 adds a crate and edits no existing source file**; it may
 > run as a side lane at any point. Before the Phase 2 lane starts the architect re-reads Phases 2 to
 > 4 against the tip (Plans 0058 and 0045 move the files they name). Bit and binding numbers
 > are "the next free at the start commit".
-> **Followed by:** [Plan 0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
+> **Followed by:** [Plan 0063](../0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
 > (rig files, clips, the model viewer).
 
 ## TL;DR
@@ -483,6 +485,42 @@ setting, off (it costs nothing when off, owner 2026-11-12).
   (16 and 64 walking, eye lights off, both upscalers) and the vein walker, with the owner's
   words and pick in the log.
 
+### Phase 6d: the entity pipelines built with the frame, behind the start-up
+Amended 2026-11-16 (owner): in Plan 0063's window the first walker placed froze the app for about
+12 s ("Application Not Responding"); the same single long frame is in this plan's own Phase 6 log
+(`live/session62.log`, frame 210 to 211, 7.9 s). Phase 5's zero-entity fix builds the entity
+variants of the hit set (`Marcher::get`'s `OnceLock`, three pipelines) and the light pass
+(`P_LIGHT`, lazy) on the first frame that draws a part; the NVIDIA Vulkan driver compiles the four
+in 6 to 12 s (RADV 2.5 s cold, 45 ms cached), naga only 8 to 14 ms each (the diagnosis,
+2026-11-16). The owner: "its fine to wait for entities on startup when we have a loader in place"
+(Plan 0075's loading screen covers the start). Taken: build them eagerly with the frame. Rejected:
+a background compile (a first stretch with entities not drawn, a shared-slot handoff to test; the
+orchestrator's first amendment 88799532, overturned), dropping the specialisation (Phase 5's
+zero-entity frame cost back; both sets are built, the no-entity set is still used when no part is
+drawn), a disk pipeline cache alone (helps only a second start of the same build; backlog).
+Amended 2026-11-16 (owner), after aa48c105: building them in `Frame::new` doubled frame
+creation on lavapipe (1.7 s to 3.3 s), paid by every GPU test that makes a frame and by every
+consumer with no entities. Taken: an explicit call on the frame that builds the entity set
+ahead of time; the fly-through makes it right after creating its frame, and a frame that never
+gets the call builds the set lazily as before. Rejected: always at creation (the test and
+consumer cost above); eager by default with a test-only switch off (a consumer with no entities
+still pays the start).
+- **Owner skill:** dev
+- **What:** one call on the frame builds the entity hit set and the entity light pipeline; the
+  fly-through makes it right after creating its frame, so no frame of the fly-through builds a
+  pipeline; a frame without the call keeps Phase 5's lazy build. `Frame::new` builds only what it
+  built before this phase. The frame still picks the no-entity set while no part is drawn. When
+  Plan 0075 lands on this code, the call is one of its start-up stages (its lane's merge of main
+  does that, not this phase).
+- **Files touched:** `crates/vxe-render/src/frame/marcher.rs`, `frame/pipelines.rs`, a test,
+  this plan's log.
+- **Done when:** a test asserts no pipeline is created after the call when the first entity
+  is drawn, and `Frame::new`'s lavapipe time is back at Phase 5's (a creation counter, lavapipe, under 10 s); the window reading on the RTX: the longest
+  frame within 2 s of the first placement under 100 ms (`--source showcase --shot hall`, place with
+  `` ` `` at about 20 s), and frame creation's time with and without the eager set logged (the
+  startup cost, expected +6 to 12 s on NVIDIA); the zero-entity hit and light times unchanged from
+  Phase 5 within noise.
+
 ## Data shapes
 
 ```rust
@@ -603,7 +641,7 @@ The "go" is given (owner, 2026-11-10: "move all draft plans to approved").
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: `vxe-entity`: models, poses in fixed point, and the ray query | dev | done; names and readings in [logs/0062.md](logs/0062.md) | bc80246 |
+| 1: `vxe-entity`: models, poses in fixed point, and the ray query | dev | done; names and readings in [logs/0062.md](../logs/0062.md) | bc80246 |
 | 2: The mirror and the primary hit | dev | done; names, packing and keys in the readings log | 70bdec7 |
 | 3: Light, shadow and emission | dev | done; readings in the readings log | 31c7540 |
 | 4: Motion | dev | done; the fresh bit's place, the keys and the readings in the readings log | 12f1a62 |
@@ -611,7 +649,11 @@ The "go" is given (owner, 2026-11-10: "move all draft plans to approved").
 | 6: The owner's window | human | done 2026-11-16; (a)-(d), (f)-(h) yes; (e) grain in a crowd, a walk-start jump; words in the readings log | |
 | 6b: young pixels filtered harder (dev half) | dev | done; `YoungFilter` behind `Delete` and `--young-filter`, off by default; readings in the readings log | 80d7def5 |
 | 6b: the second window | human | skipped by the owner on the readings (2026-11-16); option B picked (Phase 6c); `--young-filter` stays an off setting | |
-| 6c: the baked face read for the walkers' fallback (dev half) | dev | done; `EntityLight` behind `Insert` and `--entity-light`, `own` by default; readings in the readings log; the owner's window (`live/session62c.sh`) owed | committed with this row |
+| 6c: the baked face read for the walkers' fallback (dev half) | dev | done; `EntityLight` behind `Insert` and `--entity-light`, `own` by default; readings in the readings log; the owner's window (`live/session62c.sh`) owed | 0fe6a257 |
+| 6c: the owner's window | human | done 2026-11-16; 16 and 64 walkers and the vein walker read fine under `world`; pick: `world` the default, `own` stays a setting; words in the readings log | |
+| 6c: the default follows the pick | dev | done; `EntityLight::World` the default of the setting and of `--entity-light`; `mode_banner.png` re-blessed after the merge of main (the banner's default line) | 6a50566c, 88b309a0 |
+| Close review fix pass | dev | done; findings 1 to 4; readings in the readings log | 54edd6f1, 818357d4, ff514132 |
+| 6d: the entity pipelines built ahead of the first entity frame | dev | done; `Frame::prepare_entities`, called by the fly-through after its frame; `Frame::new` back at Phase 5's 15 pipelines; the owner's window 2026-11-16: no freeze or hitch at placement (base: the freeze); readings in the readings log | aa48c105, then committed with this row |
 
 ### Notes
 
@@ -647,6 +689,8 @@ each. Empty is fine.)_
   other views while no part is drawn.
 - Phase 6b: the age line is `VARIANCE_AGE` (4); a young pixel under `edges` skips the a-trous zero-input early-out; the shadow-edge reading is in `gpu_dynamic_lights.rs` (outside Files touched); `cli/tests.rs`, `hud/modes.rs` and `docs/flythrough.md` carry the key and flag. The filter's GPU time was read from the fly-through's `F1` line, not a `PassTimer` reading.
 - Phase 6c: the read lives in `temporal.wgsl` and `hitrec.wgsl` (the store is bound to the temporal pass, not the light pass); the nearest world face is the first of up to 4 cells behind the hit along its normal's dominant axis that holds a face of that direction, else the missing-light chain; the lamp-off store branch now writes the fresh flag; the shading-lost reading is beside the grain rig's emitter, not the vein; no band was stated in advance; the light pass's time came from the fly-through's `F1` line; `cli/flags.rs` splits the shared lighting rows in two (`entity_filter_flags`) for clippy's line limit.
+- Close review fix pass: finding 1, `an_entity_reads_the_baked_light_of_the_world_face_behind_it` (this row's commit); finding 2, `docs/flythrough.md` (54edd6f1); finding 3, the two FSR 2 tests reuse the rig's frame (this row's commit; 8.7 s and 4.7 s); finding 4, the mirror's scratch buffers (818357d4). The 16-frame trail variant stays `soak`. The file's `reading` module moved to `tests/gpu_entities/reading.rs` (`include!`d since Phase 6d's commit, for `check-test-tiers`) for the 2000-line cap.
+- Phase 6d: the set is built by `Frame::prepare_entities` (`frame/mod.rs`, `frame/encode.rs`, `apps/flythrough/src/run/mod.rs`, outside Files touched), which builds the no-entity light pipeline (`P_LIGHT_BARE`) too, so after it a frame builds no pipeline outside the steps view and the store counters; `debug::compute_pipelines_created` (`gpu_util.rs`, `lib.rs`, outside Files touched) is the creation counter; `reading::the_frame_creation_time` reads `Frame::new` with and without the call. The test pins the call's five pipelines over the frame's own, not Phase 5's absolute count (15). The tip window's max frame (252.2 ms) is not placed by the log; the per-second frame counts put a shortfall of about that size in the first second after the frame was made, none in the placement's second.
 - Phase 5: `Frame::frame_bytes` is in `frame/mod.rs` (the plan's `marcher.rs`); `gpu_look_field.rs`
   (outside Files touched) adds the mirror's bytes to its pinned figure.
 

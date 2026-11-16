@@ -1013,7 +1013,7 @@ mod tests {
         let start = m.banner(0.0).expect("the banner shows at the start");
         assert_eq!(
             start,
-            "lighting half, store read face\nweights normal, shadow walk coarse\nhistory edits, lamp on\nlamp bounce off at 64 rays 1/8, filter 4\nyoung luma, entity light own\nore pulse off, exposure manual +0.00 EV"
+            "lighting half, store read face\nweights normal, shadow walk coarse\nhistory edits, lamp on\nlamp bounce off at 64 rays 1/8, filter 4\nyoung luma, entity light world\nore pulse off, exposure manual +0.00 EV"
         );
         assert!(start.lines().all(|l| l.len() <= BANNER_COLS));
         let mut t = 1000.0;
@@ -1031,8 +1031,8 @@ mod tests {
             (ModeKey::LightWeights, "weights normal"),
             (ModeKey::YoungFilter, "young edges"),
             (ModeKey::YoungFilter, "young luma"),
-            (ModeKey::EntityLight, "entity light world"),
             (ModeKey::EntityLight, "entity light own"),
+            (ModeKey::EntityLight, "entity light world"),
         ] {
             m.press(key, t);
             let now = m.banner(t).expect("a change shows the banner");

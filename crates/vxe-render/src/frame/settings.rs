@@ -522,12 +522,12 @@ named_enum!(YoungFilter {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum EntityLight {
     /// Its own per-frame sample of the emitter candidates, a running mean over the pixel's
-    /// history. The default.
-    #[default]
+    /// history.
     Own,
     /// The baked store, read as a cube face reads it, at the cell of the voxel just behind the
     /// hit along its shading normal's dominant axis, mixed by that normal: the light the world
-    /// faces around it facing the same way hold. No sample and no random stream.
+    /// faces around it facing the same way hold. No sample and no random stream. The default.
+    #[default]
     World,
 }
 
@@ -683,7 +683,7 @@ pub struct Lighting {
     pub light_weights: LightWeights,
     /// The a-trous weights at a young pixel ([`YoungFilter`]; default `Luma`).
     pub young_filter: YoungFilter,
-    /// Where an entity hit's emissive light comes from ([`EntityLight`]; default `Own`).
+    /// Where an entity hit's emissive light comes from ([`EntityLight`]; default `World`).
     pub entity_light: EntityLight,
 }
 
@@ -708,7 +708,7 @@ impl Default for Lighting {
             store_read: StoreRead::Face,
             light_weights: LightWeights::Normal,
             young_filter: YoungFilter::Luma,
-            entity_light: EntityLight::Own,
+            entity_light: EntityLight::World,
             light_floor: DEFAULT_LIGHT_FLOOR,
         }
     }

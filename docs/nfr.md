@@ -55,6 +55,12 @@ Plan 0058's list of lights (2026-11-15, 71b4478, headless, 1920 x 1080, FSR 2 at
 0.175 ms of light pass per light in reach on the RTX 3080 Laptop and 1.54 ms on the RADV RENOIR. At
 sixteen lights the RENOIR's light pass reads 24.8 ms, over the 6.0 ms lighting line. The cap per
 profile is Plan 0069's.
+Plan 0062's entities (c872cb1, the same conditions, quiet) draw on the headroom line: 16 walkers
+with their eye lights add 1.8 to 2.2 ms to the RTX 3080 Laptop's frame and 15 to 23 ms to the
+RADV RENOIR's, mostly light pass; with no part drawn the frame is within noise of its base. The
+owner accepted the costs as measured (2026-11-16); the outdoor plans' claim on the same line is
+the render-profile plan's to arbitrate. Readings in
+[`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md), table 2.
 
 Two lines inside the streaming line (Plan 0067, 2026-11-12; RTX 3080 Laptop and RADV RENOIR,
 headless, quiet, against the start commit 4bc8100):

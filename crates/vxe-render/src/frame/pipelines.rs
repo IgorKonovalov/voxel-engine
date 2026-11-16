@@ -143,7 +143,8 @@ pub(crate) const PASSES: [PassSpec; 15] = [
         groups: &[W, E, Group::SharedWith(P_TEMPORAL)],
         lazy: true,
     },
-    // The light pass (`shade`), built on the first encode that runs it.
+    // The light pass (`shade`) that walks the entities, built by
+    // [`Pipelines::prepare_entities`] or else on the first encode that runs it.
     PassSpec {
         label: "light",
         modules: LIGHT_MODULES,
@@ -322,7 +323,8 @@ pub(crate) const PASSES: [PassSpec; 15] = [
         lazy: false,
     },
     // The light pass with `ENTITIES` false (`entity.wgsl`): the frame's light pass while no
-    // entity part is drawn ([`Frame::light_pipeline`]).
+    // entity part is drawn ([`Frame::light_pipeline`]), built on its first use or by
+    // [`Pipelines::prepare_entities`].
     PassSpec {
         label: "light (no entities)",
         modules: LIGHT_MODULES,
@@ -379,6 +381,15 @@ impl Pipelines {
             }
         }
         pipes
+    }
+
+    /// Builds the hit pass's `ENTITIES`-true set and both light pipelines (`P_LIGHT` and
+    /// `P_LIGHT_BARE`) unless they are built, so no later frame, with entities or without,
+    /// builds a pipeline outside the steps view and the store counters.
+    pub(super) fn prepare_entities(&self, device: &wgpu::Device) {
+        self.hit.prepare_entities(device, &self.world_layout);
+        self.pipeline(device, P_LIGHT);
+        self.pipeline(device, P_LIGHT_BARE);
     }
 
     /// Pass `p`'s own group layout, or the layout it shares.

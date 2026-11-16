@@ -17,9 +17,10 @@ struct HitPipes {
 /// `FIELD_SURFACE`, which walks the field surface, or with the split walk
 /// ([`FLAG_FIELD_SPLIT`]) the plain pipeline and then `field_resume` over the rays it handed
 /// on. Each comes twice: with `ENTITIES` false (`entity.wgsl`), built with the frame and
-/// dispatched while no entity part is drawn, and with it true, built on the first frame that
-/// draws one. The steps view takes each with `COUNT_STEPS` on ([`Marcher::get`]), which keeps
-/// `ENTITIES` at its default.
+/// dispatched while no entity part is drawn, and with it true, built by
+/// [`Marcher::prepare_entities`] or else on the first frame that draws a part (a driver may
+/// take seconds over the entity walk). The steps view takes each with `COUNT_STEPS` on
+/// ([`Marcher::get`]), which keeps `ENTITIES` at its default.
 pub struct Marcher {
     bare: HitPipes,
     entities: OnceLock<HitPipes>,
@@ -89,15 +90,7 @@ impl Marcher {
             return self.counting(device, world_layout, which);
         }
         let pipes = if entities {
-            self.entities.get_or_init(|| {
-                Self::build(
-                    device,
-                    world_layout,
-                    &self.out_layout,
-                    &self.resume_layout,
-                    true,
-                )
-            })
+            self.entity_pipes(device, world_layout)
         } else {
             &self.bare
         };
@@ -106,6 +99,32 @@ impl Marcher {
             HitPipe::Field => &pipes.field,
             HitPipe::Resume => &pipes.resume,
         }
+    }
+
+    /// Builds the `ENTITIES`-true set over `world_layout` unless it is built.
+    pub(super) fn prepare_entities(
+        &self,
+        device: &wgpu::Device,
+        world_layout: &wgpu::BindGroupLayout,
+    ) {
+        self.entity_pipes(device, world_layout);
+    }
+
+    /// The `ENTITIES`-true set, built over `world_layout` on its first use.
+    fn entity_pipes(
+        &self,
+        device: &wgpu::Device,
+        world_layout: &wgpu::BindGroupLayout,
+    ) -> &HitPipes {
+        self.entities.get_or_init(|| {
+            Self::build(
+                device,
+                world_layout,
+                &self.out_layout,
+                &self.resume_layout,
+                true,
+            )
+        })
     }
 
     fn counting(

@@ -74,7 +74,7 @@ the same rows.
 | `,` | Toggle how a cube face reads the light store: normal (default) or face (ADR-0049) |
 | `;` | Toggle the normal the light's filters compare: face (default) or normal |
 | `Delete` | Toggle the a-trous weights at a pixel younger than 4 frames: luma (all weights, default) or edges (plane and normal only); the lighting row names `young <mode>` |
-| `Insert` | Toggle where an entity's emissive light comes from: own (its own sample, default) or world (the baked light of the world faces around it); the lighting row names `entity light <mode>` |
+| `Insert` | Toggle where an entity's emissive light comes from: own (its own sample) or world (the baked light of the world faces around it, default); the lighting row names `entity light <mode>` |
 | `M` | Pulse the ore's emission (a render-side scale) |
 
 ### Dynamic lights
@@ -84,9 +84,17 @@ the same rows.
 | `1` | Drop a point light of the picked colour (intensity 600) 2 voxels off the looked-at surface (20 voxels ahead on a miss); the banner names `lights <n>/16`. Sixteen slots, the headlamp's among them while it is on; a drop into a full list prints a line and adds nothing |
 | `2` | Toggle carry: the newest light rides 2 m ahead and 0.3 m below the eye until `2` again sets it down |
 | `3` | Pick the next colour (white, warm, red, green, blue) and recolour the newest light, in flight or still; later drops and shots take it |
-| `4` | Remove the newest light |
+| `4` | Remove the newest light or walker, whichever was added last |
 | `5` | Flip the newest light's bounce flag: with `--lamp-bounce on` a flagged light feeds the probe channel; the `lights` row marks each flagged light `*` |
 | `6` | Fire a point light of the picked colour (intensity 600) along the view ray at 20 m/s; it stops 2 voxels short of the first surface (or after 40 m) and stays there as a dropped light |
+
+### Walkers
+
+| Key | Does |
+|-----|------|
+| `` ` `` | Place a walker (a voxel-model entity) on the looked-at surface; the banner names the walker count. A world whose table has no walker rows prints a line and places nothing |
+| `F11` | Toggle whether the walkers walk or hold still |
+| `F12` | Toggle the walkers' eye lights |
 
 ### The light queue
 
@@ -155,7 +163,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--bench-at F,..` | A bench input at each of these frames |
 | `--sync-budget MIB` | The mirror's upload bytes a frame |
 | `--sync-ms MS` | The mirror's upload time a frame [none; 0 is none] |
-| `--workers N` | The streamer's generation workers, at least 1 [one fewer than the logical cores] |
+| `--workers N` | The streamer's generation workers, at least 1 [half the logical cores] |
 | `--residency R_FULL,R_LOD` | The streamed full and LOD radii in chunks, hysteresis 1 [16,24] |
 | `--mirror-budget MIB` | The VRAM the mirror reserves at startup [3072 streamed; on the level what it needs plus dig headroom]. While streaming, the full radius drops a chunk after 30 frames with the mirror's pressure over 0.9 and returns after 300 frames under 0.7, down to 6 |
 
@@ -225,7 +233,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--store-read face\|normal` | How a cube face reads the store, ADR-0049 [normal] |
 | `--light-weights normal\|face` | The normal the light's filters compare [face] |
 | `--young-filter luma\|edges` | The a-trous weights at a pixel younger than 4 frames: all, or plane and normal only (`Delete`) [luma] |
-| `--entity-light own\|world` | An entity's emissive light: its own sample, or the baked light of the world faces around it (`Insert`) [own] |
+| `--entity-light own\|world` | An entity's emissive light: its own sample, or the baked light of the world faces around it (`Insert`) [world] |
 | `--filter on\|off` | The a-trous filter runs [on] |
 | `--light-radius N` | Chunks whose emitters light the frame, 0 to 64 [4; 19 on the showcase] |
 | `--history edits\|gradient` | What kills the temporal history [edits] |
@@ -235,6 +243,8 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--probe-slices N` | The probes refreshed a frame, one in N: 8, 16 or 32 [8] |
 | `--emissive-ore on\|off` | The ore glows and lights the cave [on] |
 | `--lamp-toggle N` | Switch the lamp every `N` frames |
+| `--entities N` | Start with `N` walkers (voxel-model entities) on a 3 m ring around the spawn [0] |
+| `--entities-walk on\|off` | The walkers start walking, as `F11` sets them [off] |
 | `--fade-reading` | Headless: dig, settle, switch the lamp off and print how the light fades |
 | `--exposure auto\|E` | Adapt like an eye, or a fixed exposure [auto] |
 | `--adaptation eye\|symmetric\|instant` | The auto exposure's preset [eye] |

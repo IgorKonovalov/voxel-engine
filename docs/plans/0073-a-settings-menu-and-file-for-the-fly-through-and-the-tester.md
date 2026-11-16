@@ -22,6 +22,28 @@
 > its picked default, and the menu shows them grouped, each with its value and apply class, a
 > profile pick on top and edits over the profile; the fly-through's key toggles and the tester's
 > quality menu keep working.
+> **Amended 2026-11-16 (architect; the owner approved it 2026-11-16 with Plan 0080):** the owner asked the same day for a menu
+> system in place of a full keyboard. ADR-0061 and
+> [Plan 0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) give
+> the apps one menu component (pages, live values, a palette, one input-capture rule, the key
+> table as the source), and this plan **builds on it** instead of writing `SettingsMenu`'s
+> drawing and routing: **Starts after** gains Plan 0080 beside Plans 0069 and 0071. Open
+> question 4 (the menu key) closes: the key is 0080's (`Tab`, pending the owner), and the
+> settings are reached as pages of that menu. Phase 3 shrinks to the settings' **rows and
+> layers**: a `settings` page per `RenderSettings` group as a dynamic page of 0080's `Menu`,
+> each field a `Value` row (`< value >`, its class, `*` when it differs from the profile, red
+> `restart` for a pending `Rebuild`), the profile row, the reset, save and close rows, and the
+> footer naming the field's source, flag and the file's path; `Backspace` on a field resets it to
+> the layers below (the page's `Erase` handling, since the filter is empty on a group page).
+> Phase 3's `key_routing_with_the_menu_open` becomes a case of 0080's `the_route_is_one_function`;
+> `the_menu_draws_its_rows`, `the_menu_keys_edit_the_window_layer` and
+> `a_key_toggle_shows_in_the_menu` stand, written over the component's `write` and `route`.
+> After 0080 the fly-through's render toggles are entries whose `flip` writes the window layer,
+> so "a key toggle that changes a `RenderSettings` field writes the window layer" is the entries'
+> `act`, in one place. Phase 5 moves the **tester's launcher menu** (`apps/tester/src/menu.rs`)
+> onto the same component (its rows as entries, number keys as shortcuts), so the apps have one
+> menu; its text test is rewritten to the component's rows. Phase 6 (a) asks about the pages'
+> reading, not the key. The phases below are left as written; the lane reads this note first.
 
 ## TL;DR
 
@@ -302,6 +324,12 @@ All answered by the owner on 2026-11-12, each with its recommendation (first opt
    Plan 0069's `F4` shipped dropping edits, Phase 3 aligns it and the log says so.
 4. **`Tab` opens the menu?** Recommended: yes; it is unbound in the fly-through, unlike `Escape`
    and `F1` to `F10`. The window confirms (Phase 6 a).
+   Amended 2026-11-16 (orchestrator): `Tab` is bound (the live queue's angle key), found while
+   drafting Plan 0076, which also moves `F1` to the key help and the frame readings to `Enter`.
+   The menu's key is reopened: pick a free one from Plan 0076's key table before this lane starts.
+   Amended 2026-11-16 (architect; the owner approved it 2026-11-16 with Plan 0080): closed by Plan 0080, whose menu this plan's
+   pages live in; the key is 0080's (`Tab` recommended there), and the queue's angle key goes
+   menu-only, so `Tab` frees itself.
 5. **No menu in a `--tester` child?** Recommended: none. A benchmark's settings are the
    launcher's, and the child's report would no longer match its `settings.toml`.
 6. **Keep a hand-written comment across a save?** Recommended: no for now; the header says the
