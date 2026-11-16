@@ -12,6 +12,10 @@ use vxe_render::{
 };
 use vxe_world::*;
 
+/// The entity mirror's bytes in `frame_bytes` at its default pool (ADR-0050): the tree 4096 B,
+/// the instances 65 536 B and the pool 8 MiB.
+const ENTITY_MIRROR: u64 = 4096 + 65_536 + (8 << 20);
+
 /// `world` mirrored over its extent on the software adapter, with a frame of `internal`
 /// pixels for an `output` image, lighting at full resolution; `None` without the adapter.
 fn rig(world: &World, internal: [u32; 2], output: [u32; 2]) -> Option<LookRig> {
@@ -637,10 +641,11 @@ fn frame_bytes_add_the_histories_and_the_output_target() {
 /// ADR-0043, less the `rgba32float` accumulation pair's excess over `rgba16float` (2 x 8 B x
 /// 640 x 360 = 3 686 400 B, ADR-0036's figure), less the two `rgba32uint` reservoir textures
 /// (2 x 16 B x 640 x 360 = 7 372 800 B), plus the direct target and its accumulation pair
-/// (3 x 8 B x 640 x 360 = 5 529 600 B, ADR-0044): 124 737 616 B before the store's pool is
-/// allocated. The live queue's start allocates the pool
-/// at `Lighting::bake_pool_bytes` (256 MiB) under the adapter's storage binding, 128 MiB on
-/// lavapipe (134 217 728 B; the chunk table and every block lie in it): 258 955 344 B.
+/// (3 x 8 B x 640 x 360 = 5 529 600 B, ADR-0044): 124 737 616 B, plus the entity mirror
+/// (8 458 240 B, ADR-0050), before the store's pool is allocated. The live queue's start
+/// allocates the pool at `Lighting::bake_pool_bytes` (256 MiB) under the adapter's storage
+/// binding, 128 MiB on lavapipe (134 217 728 B; the chunk table and every block lie in it):
+/// 258 955 344 B plus the entity mirror.
 #[test]
 fn frame_bytes_hold_the_store_and_no_emissive_history() {
     let Some((device, queue)) = software_device(64 << 20) else {
@@ -655,6 +660,7 @@ fn frame_bytes_hold_the_store_and_no_emissive_history() {
     let pool = 128u64 << 20;
     println!("frame_bytes at the default: {before} B before the store, pool {pool} B");
     assert_eq!(base, 124_737_616);
+    let base = base + ENTITY_MIRROR;
     assert_eq!(before, base);
     let world = World::generate(
         ChunkExtent::new([0, 0, 0], [1, 1, 1]),
@@ -674,7 +680,7 @@ fn frame_bytes_hold_the_store_and_no_emissive_history() {
     let after = frame.frame_bytes();
     println!("frame_bytes with the store: {after} B");
     assert_eq!(after, base + pool);
-    assert_eq!(after, 258_955_344);
+    assert_eq!(after, 258_955_344 + ENTITY_MIRROR);
 }
 
 /// The direct target and its accumulation pair (ADR-0044) in `frame_bytes`: at 1280 x 720
@@ -693,7 +699,8 @@ fn frame_bytes_hold_the_direct_pair() {
     // The inventory at the half tier: the hit buffers twice and the layers, transmittance; the
     // output; the half grid's hit buffers twice; the irradiance, direct, two accumulations, two
     // direct accumulations, two moments, two filters, the indirect; the strata; the tiles; the
-    // split walk's stub (32 B) and dispatch (16 B); and the exposure's buffers (928 B).
+    // split walk's stub (32 B) and dispatch (16 B); the exposure's buffers (928 B); and the
+    // entity mirror.
     let strata = 640u64.div_ceil(3) * 360u64.div_ceil(3);
     let tiles = 8 * u64::from(1280u32.div_ceil(8) * 720u32.div_ceil(8));
     let without_direct = px * (2 * (16 + 8) + 8)
@@ -703,7 +710,8 @@ fn frame_bytes_hold_the_direct_pair() {
         + tiles
         + 32
         + 16
-        + 928;
+        + 928
+        + ENTITY_MIRROR;
     let direct = 3 * 8 * lit;
     println!(
         "frame_bytes at 1280x720, half tier: {} B, the direct pair {direct} B",

@@ -664,11 +664,24 @@ impl Run {
             fwd.to_array(),
             up.to_array(),
         );
-        let lights = self.modes.lights.list();
+        // The walkers walk before their eye lights are read, so a light rides with its head.
+        self.modes.walkers.step(step);
+        let mut lights = self.modes.lights.list();
+        // The walkers' eye lights take the list's free slots, newest walkers last.
+        let free =
+            crate::lights::TestLights::cap(self.modes.lighting.lamp).saturating_sub(lights.len());
+        lights.extend(self.modes.walkers.eye_lights().into_iter().take(free));
         let Some(gfx) = self.gfx.as_mut() else {
             return;
         };
         gfx.frame.set_lights(&lights);
+        crate::walker::feed(
+            &mut self.modes.walkers,
+            &self.world,
+            self.fly.camera.position.to_array(),
+            &mut gfx.frame,
+            &gpu.queue,
+        );
         if std::mem::take(&mut self.upscaler_changed) {
             let (kind, scale, jitter) = self.args.upscaler_settings(self.modes.upscaler.mode);
             let output = gfx.frame.output_size();

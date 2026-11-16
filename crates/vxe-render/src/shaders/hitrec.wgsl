@@ -10,6 +10,12 @@ const HIT_TRANSLUCENT: u32 = 4u;
 
 const HIT_AXIS_SHIFT: u32 = 3u;
 
+// An entity's voxel (entity.wgsl): no cube face (axis bits 0), the instance from bit
+// HIT_INSTANCE_SHIFT.
+const HIT_ENTITY: u32 = 32u;
+
+const HIT_INSTANCE_SHIFT: u32 = 6u;
+
 // The store's words (`bake::Store`): three unused words, the window's origin and size in
 // chunks, the flags, then a word per window chunk, its block's first word or 0. A block is 512
 // directory words (a brick's offset from the block's start just past its record << 11; 0 none),
@@ -89,6 +95,10 @@ fn octa16_decode(e: vec2<u32>) -> vec3<f32> {
 // How far off the hit the shadow ray starts, in voxels, along `shadow_normal`.
 const SHADOW_OFFSET: f32 = 0.5;
 
+// SHADOW_OFFSET's scale for the hit being shaded: 1, or an entity part's `1 / detail`
+// (`entity_shadow_scale`), so a shadow ray leaves a small voxel by the same share of it.
+var<private> shadow_scale: f32 = 1.0;
+
 // The field normal `n` of a field-surface hit whose stored shading normal is `m`, the face mix
 // of `n` toward its entry face's normal `f`: `(1 - k) n = l m - k f` with `l = |mix|` the root
 // of `l^2 - 2 l k (m.f) + k^2 - (1 - k)^2 = 0`, real for `k <= 1/2`; `m` itself at 0.
@@ -103,7 +113,8 @@ fn face_unmixed(m: vec3<f32>, f: vec3<f32>) -> vec3<f32> {
 }
 
 // One pixel's hit record, decoded from the hit buffer: `n` is the shading normal,
-// `axis` the entry face's axis (-1: the ray started inside rock).
+// `axis` the entry face's axis (-1: the ray started inside rock, or an entity's voxel, whose
+// faces are not on the world's grid); `entity` an entity hit and `instance` its part's instance.
 struct HitRecord {
     found: bool,
     field: bool,
@@ -113,6 +124,8 @@ struct HitRecord {
     p: vec3<f32>,
     t: f32,
     n: vec3<f32>,
+    entity: bool,
+    instance: u32,
 };
 
 fn unpack_hit(pos: vec4<f32>, info: vec4<u32>) -> HitRecord {
@@ -126,12 +139,18 @@ fn unpack_hit(pos: vec4<f32>, info: vec4<u32>) -> HitRecord {
         pos.xyz,
         pos.w,
         octa16_decode(info.xy),
+        (flags & HIT_ENTITY) != 0u,
+        flags >> HIT_INSTANCE_SHIFT,
     );
 }
 
-// The shadow normal of a hit seen along `d`: a field-surface hit's field normal, unmixed
+// The shadow normal of a hit seen along `d`: an entity hit's turned face normal; a
+// field-surface hit's field normal, unmixed
 // (`face_unmixed`); else the entry face's normal, `-d` for a ray that started inside rock.
 fn shadow_normal_of(rec: HitRecord, d: vec3<f32>) -> vec3<f32> {
+    if (rec.entity) {
+        return rec.n;
+    }
     if (rec.axis < 0) {
         return select(-d, rec.n, rec.field);
     }
@@ -142,12 +161,12 @@ fn shadow_normal_of(rec: HitRecord, d: vec3<f32>) -> vec3<f32> {
     return face;
 }
 
-// Where the shadow rays of a hit at `p` with shadow normal `ns` start: SHADOW_OFFSET along
-// `ns`. The shadow rays walk the voxels (`march`), crisp and smooth alike solid, and a
+// Where the shadow rays of a hit at `p` with shadow normal `ns` start: SHADOW_OFFSET (times
+// `shadow_scale`) along `ns`. The shadow rays walk the voxels (`march`), crisp and smooth alike solid, and a
 // field-surface hit lies up to half a voxel off its voxels' faces, so the offset is a step out
 // of the voxels' rock as much as off the surface.
 fn shadow_origin(p: vec3<f32>, ns: vec3<f32>) -> vec3<f32> {
-    return p + ns * SHADOW_OFFSET;
+    return p + ns * (SHADOW_OFFSET * shadow_scale);
 }
 
 // `p` projected through previous view `v` to a fractional pixel of the target (pixel
@@ -196,6 +215,13 @@ fn reads_store(rec: HitRecord) -> bool {
     return rec.found && rec.axis >= 0 && !rec.field;
 }
 
+// Whether an entity hit's emissive part is the store's (Params.lighting LIGHTING_ENTITY_WORLD,
+// `EntityLight::World`): the light pass draws no emissive sample for it, and the temporal pass
+// reads the store at the world faces around it (temporal.wgsl).
+fn entity_reads_store(rec: HitRecord) -> bool {
+    return rec.found && rec.entity && (params.lighting & LIGHTING_ENTITY_WORLD) != 0u;
+}
+
 // The voxel behind hit point `p` with face normal `nf`.
 fn store_voxel(p: vec3<f32>, nf: vec3<f32>) -> vec3<i32> {
     return vec3<i32>(floor(p - 0.5 * nf));
@@ -232,6 +258,21 @@ fn emission_lands(emissive: texture_2d<f32>, px: vec2<i32>, rec: HitRecord) -> b
     for (var i = 0; i < 4; i++) {
         let q = base + vec2<i32>(i & 1, i >> 1);
         if (on_light_grid(q) && any(textureLoad(emissive, q, 0).xyz > vec3<f32>(0.0))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Whether a fresh pixel (light.wgsl: a shadow ray crossed a moving entity's box, or the hit is
+// a moved part's) lies at internal pixel `px`: the temporal pass's accumulation `accum` carries
+// 1 in a at any of the lighting texels around it. The upscalers mark such a pixel changed.
+fn fresh_lands(accum: texture_2d<f32>, px: vec2<i32>) -> bool {
+    let o = vec2<f32>(unpack_offset(params.light_offset));
+    let base = vec2<i32>(floor((vec2<f32>(px) - o) / f32(params.light_scale)));
+    for (var i = 0; i < 4; i++) {
+        let q = base + vec2<i32>(i & 1, i >> 1);
+        if (on_light_grid(q) && textureLoad(accum, q, 0).w > 0.5) {
             return true;
         }
     }

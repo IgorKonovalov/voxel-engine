@@ -1,6 +1,7 @@
 // The upscale pass (ADR-0024): a temporal upscaler from the composite's internal pixels to the
-// output size, one invocation per output pixel. Compiled after common.wgsl, hitrec.wgsl and edits.wgsl, whose bindings
-// (group 0), views, hit-record helpers and reprojection it uses.
+// output size, one invocation per output pixel. Compiled after common.wgsl, hitrec.wgsl,
+// entity.wgsl and edits.wgsl, whose bindings (group 0), views, hit-record helpers, entity
+// transforms and reprojection it uses.
 //
 // Bindings, group 2 of `upscale`:
 //   0  texture_2d<f32>   up_pos_in       this frame's hit positions (internal size)
@@ -18,7 +19,8 @@
 //   8  uniform           up_tuning       the kernel width, blend weights, clip and light
 //                                        change tuning (`Upscaler` in frame/upscale.rs)
 //   9  texture_2d<f32>   up_emissive_in  the temporal pass's emissive part (rgb, lighting
-//                                        grid): where an emission change lands
+//                                        grid): where an emission change lands; a: where a
+//                                        fresh pixel lies
 //
 // Coordinates: internal pixel `i` spans `[i, i + 1)` and this frame's sample of it lies at
 // `i + 0.5 + jitter`; output pixel `o`'s centre is at internal `(o + 0.5) size / output_size`.
@@ -28,8 +30,9 @@
 // weighted mean of the 3 x 3 samples around the nearest (a narrow Gaussian at each sample's
 // jittered position, distances in output pixels), clamped to their range. History is taken when `Params.history` bit 1 says it is valid, `rec`
 // hit outside every edit box dilated by one voxel, and last frame's hit buffer agrees with
-// `rec` at one of the 3 x 3 pixels around where `rec.p` reprojects through the previous view:
-// a hit, the same material, a normal within UP_HISTORY_COS, a position within
+// `rec` at one of the 3 x 3 pixels around where `rec` was in the frame before (`prev_world`)
+// reprojects through the previous view: a hit of the same thing (`same_thing`), the same
+// material, a normal within UP_HISTORY_COS, a position within
 // `UP_HISTORY_DIST + UP_HISTORY_DIST_PER_T t` voxels (temporal.wgsl's thresholds). The history
 // is read by Catmull-Rom where the output centre moved with the sample's motion, clipped
 // toward the centre of the YCoCg box of the 3 x 3 samples (their mean plus and minus
@@ -94,8 +97,12 @@ const EXPOSURE_MOVE: f32 = 1.0 / 64.0;
 // lands (`emission_lands`), the exposure moved by more than EXPOSURE_MOVE EV
 // since the last frame (the history is display-encoded, so it cannot be rescaled: ADR-0033),
 // or the list's summed term (each light inside its reach and window) moved past the
-// thresholds; with the list now equal to the older list (`lights.changed` 0) it did not.
+// thresholds; with the list now equal to the older list (`lights.changed` 0) it did not; or a
+// fresh pixel lies there (`fresh_lands`: a moving entity's shadow or a moved part).
 fn up_light_changed(px: vec2<i32>, rec: HitRecord) -> bool {
+    if (fresh_lands(up_emissive_in, px)) {
+        return true;
+    }
     if ((params.lighting & LIGHTING_EMISSION_CHANGED) != 0u && emission_lands(up_emissive_in, px, rec)) {
         return true;
     }
@@ -154,10 +161,11 @@ fn history_at(h: vec2<f32>) -> vec3<f32> {
 }
 
 // Whether last frame saw `rec`'s surface around internal pixel `k`: any of the 3 x 3 pixels
-// around it hit with `rec`'s material, a normal within UP_HISTORY_COS and a position within
-// the distance tolerance. A jittered sample beside a face's edge reprojects onto the
-// neighbouring face as often as onto its own, so one pixel alone would reject every edge.
-fn prev_surface_seen(k: vec2<i32>, rec: HitRecord) -> bool {
+// around it hit the same thing with `rec`'s material, a normal within UP_HISTORY_COS and a
+// position within the distance tolerance of `pp`, where `rec` was in the frame before. A
+// jittered sample beside a face's edge reprojects onto the neighbouring face as often as onto
+// its own, so one pixel alone would reject every edge.
+fn prev_surface_seen(k: vec2<i32>, rec: HitRecord, pp: vec3<f32>) -> bool {
     let last = vec2<i32>(params.size) - vec2<i32>(1);
     let tol = UP_HISTORY_DIST + UP_HISTORY_DIST_PER_T * rec.t;
     for (var dy = -1; dy <= 1; dy++) {
@@ -167,8 +175,8 @@ fn prev_surface_seen(k: vec2<i32>, rec: HitRecord) -> bool {
                 continue;
             }
             let prev = unpack_hit(textureLoad(up_prev_pos_in, tap, 0), textureLoad(up_prev_info_in, tap, 0));
-            if (prev.found && prev.material == rec.material && dot(prev.n, rec.n) >= UP_HISTORY_COS
-                && distance(prev.p, rec.p) <= tol) {
+            if (prev.found && same_thing(prev, rec) && prev.material == rec.material
+                && dot(prev.n, rec.n) >= UP_HISTORY_COS && distance(prev.p, pp) <= tol) {
                 return true;
             }
         }
@@ -237,11 +245,12 @@ fn upscale(@builtin(global_invocation_id) gid: vec3<u32>) {
     var alpha = 1.0;
     if ((params.history & 2u) != 0u && rec.found && !in_edit(rec.p)) {
         let pv = params.prev_views[vi];
-        let y = project_prev(pv, rec.p);
+        let pp = prev_world(rec);
+        let y = project_prev(pv, pp);
         // As the temporal pass: the previous pixel as if both rays went through centres.
         let k = vec2<i32>(floor(y - v.jitter));
         if (y.x >= 0.0 && all(k >= vec2<i32>(0)) && all(k <= last)) {
-            if (prev_surface_seen(k, rec)) {
+            if (prev_surface_seen(k, rec, pp)) {
                 // The sample's motion in unjittered internal pixels moves the output centre.
                 let moved = centre + y - (vec2<f32>(near) + 0.5 + v.jitter);
                 let h = moved / ratio;

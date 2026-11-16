@@ -19,6 +19,7 @@ test-support = ["dep:pollster"]
 bytemuck.workspace = true
 glam.workspace = true
 pollster = { workspace = true, optional = true }
+vxe-entity.workspace = true
 vxe-world.workspace = true
 wgpu.workspace = true
 

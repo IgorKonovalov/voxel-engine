@@ -17,7 +17,8 @@ pub const BANNER_COLS: usize = 40;
 /// Rows the banner wraps into at most: the look's words in three (the look and the view) and the modes' line in six.
 pub const BANNER_ROWS: usize = 9;
 
-/// A key that changes the lighting mode: `F3` to `F8`, `M` and `Q`.
+/// A key that changes the lighting mode: `F3` to `F8`, `M`, `Q`, `Comma`, `Semicolon`, `Delete`
+/// and `Insert`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModeKey {
     /// `F3`: full or coarse shadow walk.
@@ -40,6 +41,10 @@ pub enum ModeKey {
     StoreRead,
     /// `Semicolon`: the light's filters weigh by the shading normal or the face normal.
     LightWeights,
+    /// `Delete`: the a-trous filter's weights at a young pixel, with or without luminance.
+    YoungFilter,
+    /// `Insert`: an entity's emissive light, its own sample or the store's.
+    EntityLight,
 }
 
 /// The auto exposure's preset, as `--adaptation` names it.
@@ -137,6 +142,8 @@ pub struct Modes {
     pub lights: crate::lights::TestLights,
     /// The banner's lights row after the last light key (`lights 3/16`, `carry on`).
     lights_words: Option<String>,
+    /// The testbed's walkers: `` ` `` places one, `4` removes the newest thing placed.
+    pub walkers: crate::walker::Walkers,
 }
 
 /// The live queue's modes the keys step: `F` the order, `Tab` and `Slash` the score's angle
@@ -267,12 +274,18 @@ impl Modes {
             queue: QueueModes::default(),
             lights: crate::lights::TestLights::default(),
             lights_words: None,
+            walkers: crate::walker::Walkers::default(),
         }
     }
 
     /// These modes with the testbed's lights `lights` (`--lights N`'s ring).
     pub fn with_lights(self, lights: crate::lights::TestLights) -> Self {
         Self { lights, ..self }
+    }
+
+    /// These modes with the testbed's walkers `walkers` (`--entities N`'s ring).
+    pub fn with_walkers(self, walkers: crate::walker::Walkers) -> Self {
+        Self { walkers, ..self }
     }
 
     /// Shows the banner from `now_ms` with `words` as its lights row (`lights 3/16`,
@@ -290,10 +303,15 @@ impl Modes {
         }
     }
 
-    /// Writes the mode block, one row per [`HudRow`] in order, each ending in a line break.
+    /// Writes the mode block, one row per [`HudRow`] in order, each ending in a line break,
+    /// then the walkers' row while one is placed.
     pub fn write_rows(&self, out: &mut String) {
         for row in HudRow::ALL {
             self.write_row(row, out);
+            out.push('\n');
+        }
+        if !self.walkers.placed.is_empty() {
+            self.walkers.write_row(out);
             out.push('\n');
         }
     }
@@ -480,6 +498,18 @@ impl Modes {
                     vxe_render::LightWeights::Face => vxe_render::LightWeights::Normal,
                 }
             }
+            ModeKey::YoungFilter => {
+                l.young_filter = match l.young_filter {
+                    vxe_render::YoungFilter::Luma => vxe_render::YoungFilter::Edges,
+                    vxe_render::YoungFilter::Edges => vxe_render::YoungFilter::Luma,
+                }
+            }
+            ModeKey::EntityLight => {
+                l.entity_light = match l.entity_light {
+                    vxe_render::EntityLight::Own => vxe_render::EntityLight::World,
+                    vxe_render::EntityLight::World => vxe_render::EntityLight::Own,
+                }
+            }
             ModeKey::Lamp => l.lamp = !l.lamp,
             ModeKey::LampBounce => l.lamp_bounce = !l.lamp_bounce,
             ModeKey::Pulse => self.pulse = !self.pulse,
@@ -588,7 +618,13 @@ impl Modes {
         }
         out.push_str(", ");
         self.write_filter_count(out);
-        let _ = write!(out, ", ore pulse {}, exposure ", on(self.pulse));
+        let _ = write!(
+            out,
+            ", young {}, entity light {}, ore pulse {}, exposure ",
+            l.young_filter.name(),
+            l.entity_light.name(),
+            on(self.pulse)
+        );
         self.write_exposure_mode(out);
         let _ = write!(out, " {:+.2} EV", self.exposure_ev());
     }
@@ -961,7 +997,7 @@ mod tests {
         }
     }
 
-    /// Each of `F3`, `F5` to `F8`, `M`, `Comma` and `Semicolon` changes the banner's text to the new mode; the banner is
+    /// Each of `F3`, `F5` to `F8`, `M`, `Comma`, `Semicolon`, `Delete` and `Insert` changes the banner's text to the new mode; the banner is
     /// empty 3 s after the last change and shows again on the next one.
     #[test]
     fn the_banner_names_each_change_and_fades_after_three_seconds() {
@@ -973,7 +1009,7 @@ mod tests {
         let start = m.banner(0.0).expect("the banner shows at the start");
         assert_eq!(
             start,
-            "lighting half, store read face\nweights normal, shadow walk coarse\nhistory edits, lamp on\nlamp bounce off at 64 rays 1/8, filter 4\nore pulse off, exposure manual +0.00 EV"
+            "lighting half, store read face\nweights normal, shadow walk coarse\nhistory edits, lamp on\nlamp bounce off at 64 rays 1/8, filter 4\nyoung luma, entity light world\nore pulse off, exposure manual +0.00 EV"
         );
         assert!(start.lines().all(|l| l.len() <= BANNER_COLS));
         let mut t = 1000.0;
@@ -989,6 +1025,10 @@ mod tests {
             (ModeKey::LightWeights, "weights face"),
             (ModeKey::StoreRead, "store read face"),
             (ModeKey::LightWeights, "weights normal"),
+            (ModeKey::YoungFilter, "young edges"),
+            (ModeKey::YoungFilter, "young luma"),
+            (ModeKey::EntityLight, "entity light own"),
+            (ModeKey::EntityLight, "entity light world"),
         ] {
             m.press(key, t);
             let now = m.banner(t).expect("a change shows the banner");

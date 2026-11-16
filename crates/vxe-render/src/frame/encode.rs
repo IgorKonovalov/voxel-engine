@@ -109,7 +109,7 @@ impl Frame {
         self.binds.io_at(
             device,
             &self.pipes.world_layout,
-            &[0, 1, 7, 8, 9, 2, 3, 4, 10, 11, 12, 13, 14],
+            &[0, 1, 7, 8, 9, 2, 3, 4, 10, 11, 12, 13, 14, 15],
             &[
                 Res::Buf(&self.state.params),
                 Res::Buf(world.pool_shard(0)),
@@ -124,6 +124,7 @@ impl Frame {
                 Res::Tex(&self.state.blue_noise),
                 Res::Buf(self.exposure.state_uniform()),
                 Res::Buf(&self.state.lights.buffer),
+                Res::Buf(self.entities.buffer()),
             ],
         )
     }
@@ -139,27 +140,36 @@ impl Frame {
         self.pipes.pipeline(device, pass)
     }
 
-    /// The light pass's pipeline (`shade`), built on its first use: in the steps view the one
-    /// whose `COUNT_STEPS` is true.
+    /// The light pass's pipeline (`shade`), built on its first use unless
+    /// [`Frame::prepare_entities`] built it: in the steps view the one whose `COUNT_STEPS` is
+    /// true, otherwise while no entity part is drawn the one whose `ENTITIES` is false, which
+    /// walks no entity.
     pub(super) fn light_pipeline(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
         let pass = if self.state.look.view == ViewMode::Steps {
             P_LIGHT_STEPS
-        } else {
+        } else if self.entities.parts_drawn() > 0 {
             P_LIGHT
+        } else {
+            P_LIGHT_BARE
         };
         self.pipes.pipeline(device, pass)
     }
 
-    /// The hit pass's pipeline `which`, in the steps view (`count`) its counting variant.
+    /// The hit pass's pipeline `which`, in the steps view (`count`) its counting variant, and
+    /// while no entity part is drawn the one whose `ENTITIES` is false.
     pub(super) fn hit_pipeline(
         &self,
         device: &wgpu::Device,
         which: HitPipe,
         count: bool,
     ) -> &wgpu::ComputePipeline {
-        self.pipes
-            .hit
-            .get(device, &self.pipes.world_layout, which, count)
+        self.pipes.hit.get(
+            device,
+            &self.pipes.world_layout,
+            which,
+            count,
+            self.entities.parts_drawn() > 0,
+        )
     }
 
     /// The uniform block for `camera` over `world`, lit by `light`: one view filling the

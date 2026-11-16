@@ -9,8 +9,9 @@
 //                                      snorm16 octahedral coordinates (exact for the six axis
 //                                      normals), the material id, and flags: bit 0 hit, bit 1
 //                                      field-surface hit, bit 2 translucent layers in front,
-//                                      bits 3..5 the entry face's axis plus one (0: the ray
-//                                      started inside rock)
+//                                      bits 3..4 the entry face's axis plus one (0: the ray
+//                                      started inside rock, or an entity hit), bit 5 an entity
+//                                      hit (HIT_ENTITY, entity.wgsl), bits 6..15 its instance
 //   2  storage texture  layer_out      rgba16float: the translucent solid in front of the hit
 //                                      (ADR-0047): its reflected light `R * face_light` before
 //                                      exposure in rgb, the luminance of its transmittance in a
@@ -229,7 +230,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Read before the normal modes' lookups touch the walk and the counters.
     let translucent_seen = walk.saw_translucent && params.translucent_layers > 0u;
     let counts = vec3<u32>(min(walk_steps, 255u), min(counted_loads(), 255u), min(counted_pool_reads(), 255u));
-    let t_end = select(BIG, h.t, h.found);
+    // The entities, limited by the world's hit: the nearer of the two is the pixel's hit.
+    let e = entity_march(o, d, select(BIG, h.t, h.found));
+    let t_end = select(select(BIG, h.t, h.found), e.t, e.found);
     let view = view_mode();
     let px = vec2<i32>(gid.xy);
     var pos = vec4<f32>(0.0, 0.0, 0.0, BIG);
@@ -239,6 +242,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let flags = HIT_FOUND | (u32(h.axis + 1) << HIT_AXIS_SHIFT);
         pos = vec4<f32>(o + d * h.t, h.t);
         info = vec4<u32>(octa16_encode(n), h.material, flags);
+    }
+    if (e.found) {
+        pos = entity_pos(o, d, e);
+        info = entity_info(e);
     }
     var layer = vec4<f32>(0.0, 0.0, 0.0, 1.0);
     var transmit = vec3<f32>(1.0);
@@ -296,6 +303,11 @@ fn split_pixel(gid: vec2<u32>) {
         let flags = HIT_FOUND | (u32(h.axis + 1) << HIT_AXIS_SHIFT);
         pos = vec4<f32>(ray.o + d * h.t, h.t);
         info = vec4<u32>(octa16_encode(face_normal(d, h)), h.material, flags);
+    }
+    let e = entity_march(ray.o, d, select(BIG, h.t, h.found));
+    if (e.found) {
+        pos = entity_pos(ray.o, d, e);
+        info = entity_info(e);
     }
     let px = vec2<i32>(gid);
     textureStore(hit_pos_out, px, pos);

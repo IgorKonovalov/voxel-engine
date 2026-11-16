@@ -19,8 +19,12 @@
 //   8 over four dispatches): each tap weighs `exp(-plane distance / SIGMA_PLANE)`,
 //   `max(n.n', 0)^128` (on `filter_normal`'s normals, hitrec.wgsl) and
 //   `exp(-|l - l'| / (SIGMA_LUM sqrt(var) + eps))`, `var` the pixel's variance blurred by a
-//   3 x 3 Gaussian; the variance is carried with squared weights. A miss keeps its input. With LIGHTING_DIRECT clear, a hit whose input is zero and whose
-//   blurred variance is zero writes its input (zero), plus the store's part on the last
+//   3 x 3 Gaussian; the variance is carried with squared weights. With LIGHTING_YOUNG_EDGES set,
+//   a pixel whose age (the temporal moments' z) is under VARIANCE_AGE drops the luminance
+//   factor: its taps weigh by plane and normal alone. A miss keeps its input. With
+//   LIGHTING_DIRECT clear, a young pixel under LIGHTING_YOUNG_EDGES aside, a hit whose input
+//   is zero and whose blurred variance is zero writes its input (zero), plus the store's part
+//   on the last
 //   iteration, without the 25 taps: its sigma is the epsilon, so only taps of luminance within
 //   about 1e-3 of zero weigh, and with no light shaded those are zero (a store's pixel's input
 //   is its direct part). With a light shaded, taps lit faintly by it would weigh, so every hit
@@ -44,7 +48,8 @@
 //                                        the last
 //   7  texture_2d<f32>   accum_pass_in   the temporal pass's accumulation, read by the last
 //                                        iteration for the store's emissive part
-//   8  texture_2d<f32>   moments_pass_in the temporal pass's moments (w: the part is the store's)
+//   8  texture_2d<f32>   moments_pass_in the temporal pass's moments (z: the age; w: the part is
+//                                        the store's)
 
 @group(2) @binding(0) var hit_pos_in: texture_2d<f32>;
 @group(2) @binding(1) var hit_info_in: texture_2d<u32>;
@@ -163,11 +168,14 @@ fn atrous(@builtin(global_invocation_id) gid: vec3<u32>) {
         textureStore(filter_out_atrous, px, centre);
         return;
     }
+    let mp = textureLoad(moments_pass_in, px, 0);
     // The store's emissive part, added back after the last iteration.
     var passed = vec3<f32>(0.0);
-    if (step.last != 0u && textureLoad(moments_pass_in, px, 0).w > 0.5) {
+    if (step.last != 0u && mp.w > 0.5) {
         passed = textureLoad(accum_pass_in, px, 0).xyz;
     }
+    // A young pixel under LIGHTING_YOUNG_EDGES weighs its taps by plane and normal only.
+    let edges_only = (params.lighting & LIGHTING_YOUNG_EDGES) != 0u && mp.z < VARIANCE_AGE;
     // The pixel's variance under a 3 x 3 Gaussian.
     var var_sum = 0.0;
     var var_w = 0.0;
@@ -181,7 +189,7 @@ fn atrous(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
         }
     }
-    if ((params.lighting & LIGHTING_DIRECT) == 0u && var_sum == 0.0 && all(centre.xyz == vec3<f32>(0.0))) {
+    if (!edges_only && (params.lighting & LIGHTING_DIRECT) == 0u && var_sum == 0.0 && all(centre.xyz == vec3<f32>(0.0))) {
         textureStore(filter_out_atrous, px, min(vec4<f32>(centre.xyz + passed, centre.w), vec4<f32>(HDR_MAX)));
         return;
     }
@@ -204,7 +212,10 @@ fn atrous(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
             let tap = textureLoad(src_in, q, 0);
             let k = KERNEL[x + 2] * KERNEL[y + 2];
-            let w = k * edge_weight(rec, other, eye) * exp(-abs(luminance(tap.xyz) - l) / sigma);
+            var w = k * edge_weight(rec, other, eye);
+            if (!edges_only) {
+                w *= exp(-abs(luminance(tap.xyz) - l) / sigma);
+            }
             w_sum += w;
             c_sum += w * tap.xyz;
             v_sum += w * w * tap.w;

@@ -29,6 +29,7 @@ flythrough-logic = { path = "logic" }
 vxe-script-wasm = { workspace = true, features = ["host"], optional = true }
 vxe-audio.workspace = true
 vxe-assets.workspace = true
+vxe-entity.workspace = true
 
 # The peak working set behind `run.json`'s `peak_rss_bytes` on Windows.
 [target.'cfg(windows)'.dependencies]

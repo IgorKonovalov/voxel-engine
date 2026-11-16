@@ -824,17 +824,17 @@ figure, itself a guess until that plan's close reads it; "guess" means no plan e
 |---|---|---|---|---|
 | light quality: the per-face table, its guard and fill, the lamp channel | 0.1 to 0.3 | 0.4 to 1.7 | guess | Plan 0057 (ADR-0043; its Budgets guess the default at `b --indirect off` plus 0.3 ms RTX, 2.0 ms Radeon, lamp on) reads it at its close; Plan 0048's bar 6 is moot under ADR-0043 and Plan 0049's guesses were dropped. Plan 0051 read its opt-in arms (loaded, indicative, c9ce8c9, spawn, 1080p from 720p): at rest on the RTX `a` probes 0.016 ms and light + gradient + temporal 0.424 ms (`off` 1.058, 0.973); `b --indirect off` light 0.122 ms, no probes, frame 3.255 ms against 5.224; in flight the light pass falls only 0.14 to 0.16 ms under `b`. No default moved, so nothing is counted until the verdict plan reads its mechanism |
 | liquids | 0.9 to 1.2 | 5.9 to 7.8 (6.5x) | budgeted | Plan 0034, ADR-0029: a half-screen lake in `Trace`, refraction walk 0.4 plus the liquid pass 0.5 to 0.8; under 0.5 in `Sky`; lava adds none |
-| voxel-model entities (creatures) | 0.3 to 0.8 | 2.0 to 5.2 (6.5x) | guess | M6 (`roadmap.md`): a top-level structure of AABBs per ray, a model walk on the pixels they cover; no plan or ADR yet |
-| entity shadows and motion vectors | 0.2 to 0.5 | 1.3 to 3.3 (6.5x) | guess | M6: shadow rays and probe rays test the same structure; the temporal pass's motion vectors |
+| voxel-model entities (creatures), with their shadows and motion | 0.5 to 2.2 | 4.6 to 23.0 | measured | Plan 0062 Phase 5 (c872cb1, `--level --seed 1`, spawn, 1920 x 1080, FSR 2 at 1.5, quiet): the frame's growth at 4 to 16 walkers, still to walking, their eye lights in the list, RTX 3080 Laptop and RADV RENOIR; most of it the light pass's shadow rays through the tree. 64 walkers: 3.5 to 4.5 RTX, 31 to 33 Radeon. Accepted by the owner as measured (2026-11-16) |
+| entity shadows and motion vectors | in the row above | in the row above | measured | Plan 0062 read them in one frame with the entities; probe and bake rays see no entity (ADR-0050) |
 | volumetrics: dust, fog, smoke | 0.3 to 0.6 | 2.0 to 3.9 (6.5x) | guess | M8 (`roadmap.md`): a coarse volume marched at half resolution with a fixed step count; scaled from Plan 0035's cloud march |
 | effects: debris particles | 0.1 to 0.3 | 0.7 to 2.0 (6.5x) | guess | M8, no plan |
-| **cave frame subtotal** (the first consumer's) | **1.9 to 3.7** | **12.3 to 23.9** | | the six rows above |
+| **cave frame subtotal** (the first consumer's) | **1.9 to 4.6** | **13.6 to 38.4** | | the six rows above (the entity rows measured at 4 to 16 walkers, Plan 0062) |
 | sun and sky | 0.85 to 1.9 | 5.2 to 11.4 | budgeted | Plan 0032 (redesigned 2026-11-10), ADR-0026, ADR-0027: sky LUTs, the directional ray and the sky ray into Plan 0058's direct target, the composite's sky. The row is the 2026-10-22 budget, kept so the totals below stand; the redesign drops the probes' sun rays and the gradient re-shade and guesses 0.5 to 1.0 and 3 to 6 at one sky ray, unmeasured |
 | far field | 0.3 to 1.0 | 2.0 to 6.5 (6.5x) | budgeted | Plan 0033, ADR-0028: outdoor horizon view, primary rays; the sun ray's growth is unprojected |
 | clouds and aerial perspective | 0.5 to 1.0 | 3.6 to 7.7 | budgeted | Plan 0035, ADR-0030; it proposes a 1.0 ms sub-line on the floor |
 | weather | 0.25 to 0.8 | 0.75 to 8.0 | budgeted | Plan 0036, ADR-0031: fall map, precipitation, composite terms |
 | night sky | 0.25 to 0.65 | 2.0 to 5.2 | budgeted | Plan 0037, ADR-0032: aurora and the composite's stars and bodies; it proposes a 0.3 ms cap on the floor |
-| **outdoor frame total** (cave rows plus M10) | **4.05 to 9.05** | **25.9 to 62.7** | | all rows |
+| **outdoor frame total** (cave rows plus M10) | **4.05 to 9.95** | **27.2 to 77.2** | | all rows |
 
 Game work is the consumer's CPU, outside this GPU ledger; today's frame CPU (table 1) runs
 beside the GPU.

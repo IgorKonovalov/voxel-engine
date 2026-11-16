@@ -17,7 +17,7 @@
 > **Source:** the owner, 2026-11-10: "flow is I create a model, or you help me create it, with
 > possibility of emissive light (gloving eyes for example) - we place model on a level", and
 > the answer "Engine plays keyframe clips".
-> **Starts after:** [Plan 0062](0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md).
+> **Starts after:** [Plan 0062](done/0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md).
 > Phases 1 and 2 are headless and need only its Phase 1 (`vxe-entity`); they may run as a
 > side lane once that has merged. Phases 3 and 4 need Plan 0062 closed.
 

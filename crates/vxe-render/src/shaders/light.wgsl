@@ -1,8 +1,8 @@
 // The light pass: direct irradiance at each pixel's hit, read from the hit buffer, from the
 // list of lights (`lights`, ADR-0044; the headlamp is slot 0 while it is on) and from one
 // emissive voxel face. Compiled after the walk's modules, whose bindings
-// (group 0), walk, hit-record helpers and random numbers it uses; every shadow ray is
-// `march`.
+// (group 0), walk, hit-record helpers and random numbers it uses, and entity.wgsl; every
+// shadow ray is `march`, and with ENTITY_SHADOWS the entity walk after it.
 //
 // Bindings, group 0 beyond common.wgsl's:
 //  10  storage  light_samples  the mirror's light samples (see common.wgsl)
@@ -13,10 +13,11 @@
 //   2  storage texture   irradiance_out  rgba16float: the irradiance E at the hit (light
 //                                        per unit area arriving over the hemisphere of the
 //                                        shading normal), this frame's emissive sample in rgb
-//                                        (0 on a cube face, whose light the store holds), 0 in
-//                                        a, pre-exposed (`exposure_now`, clamped at HDR_MAX); 0
-//                                        on a miss. In the steps view the list's shadow rays'
-//                                        counters instead (see `shade`)
+//                                        (0 on a cube face, whose light the store holds),
+//                                        pre-exposed (`exposure_now`, clamped at HDR_MAX); in a
+//                                        1 at a fresh pixel, else 0; 0 on a miss. In the steps
+//                                        view the list's shadow rays' counters instead (see
+//                                        `shade`)
 //   3  storage texture   direct_out      rgba16float: the direct part, the list's exact terms
 //                                        each times its colour summed in rgb and their
 //                                        luminance (`colour_weight`) in a, pre-exposed and
@@ -28,6 +29,11 @@
 // light in reach with LIGHT_SHADOWS set, from SHADOW_OFFSET off the surface along the shadow
 // normal toward the light.
 //
+// A pixel is fresh (ADR-0050) when one of its shadow rays entered the box of an entity with a
+// moved part (`entity_fresh`), or its hit is a moved part's voxel: its direct light may differ
+// from the frame before's at the same surface point, so the temporal pass takes this frame's
+// direct sample as it is and the upscalers mark it changed.
+//
 // In the cutaway view a hit takes the hemisphere term `PI (0.3 + 0.7 (0.5 + 0.5 n.z))`
 // instead, with no lamp, no emission and no shadow ray. Every shadow ray takes the frame's
 // shadow walk (`shadowed`): the full walk, or the coarse walk that treats any 2^3 block with a
@@ -35,6 +41,10 @@
 // steps view reads its shadow-ray counters; every other view skips the pass.
 
 @group(0) @binding(10) var<storage, read> light_samples: array<vec4<i32>>;
+
+// Whether the list's shadow rays also walk the entities (ADR-0050): on in the light and
+// gradient passes, off in the probe rays and the bake, which see no entity.
+override ENTITY_SHADOWS: bool = false;
 
 @group(2) @binding(0) var hit_pos_in: texture_2d<f32>;
 
@@ -65,6 +75,7 @@ fn shade_px(gid: vec3<u32>) {
     }
     let px = vec2<i32>(gid.xy);
     let rec = unpack_hit(textureLoad(hit_pos_in, px, 0), textureLoad(hit_info_in, px, 0));
+    shadow_scale = entity_shadow_scale(rec);
     if (view == VIEW_STEPS) {
         // The cost of each hit's shadow rays toward the lights in reach, lit or not, in the
         // frame's shadow walk: their loop iterations, storage loads and pool loads summed
@@ -101,6 +112,7 @@ fn shade_px(gid: vec3<u32>) {
     // The direct part: rgb, and its luminance in w.
     var e = vec4<f32>(0.0);
     var emissive = vec3<f32>(0.0);
+    entity_fresh = false;
     if (rec.found) {
         let ray = pixel_ray(full_px(gid.xy));
         let n = rec.n;
@@ -110,8 +122,8 @@ fn shade_px(gid: vec3<u32>) {
             let ns = shadow_normal_of(rec, ray.d);
             e = PI * lights_lit_rgb(rec.p, n, ns);
             // A cube face's emissive light is the store's (temporal.wgsl): no sample, no shadow
-            // ray. Any other hit draws its own.
-            if (!reads_store(rec)) {
+            // ray; so is an entity hit's under LIGHTING_ENTITY_WORLD. Any other hit draws its own.
+            if (!reads_store(rec) && !entity_reads_store(rec)) {
                 emissive = resolve_emissive(draw_candidates(gid.xy, rec.p, n), rec.p, ns);
             }
         }
@@ -119,7 +131,8 @@ fn shade_px(gid: vec3<u32>) {
     // The emissive sample in rgb; the list's (or the cutaway's hemisphere) in the direct
     // target. Stored pre-exposed: times this frame's exposure, at most HDR_MAX (ADR-0033).
     let ex = exposure_now();
-    textureStore(irradiance_out, px, min(vec4<f32>(emissive * ex, 0.0), vec4<f32>(HDR_MAX)));
+    let fresh = rec.found && (entity_fresh || entity_moved(rec));
+    textureStore(irradiance_out, px, vec4<f32>(min(emissive * ex, vec3<f32>(HDR_MAX)), select(0.0, 1.0, fresh)));
     textureStore(direct_out, px, min(e * ex, vec4<f32>(HDR_MAX)));
 }
 
@@ -142,7 +155,7 @@ fn face_centre(v: vec3<i32>, face: u32) -> vec3<f32> {
 // origin (`p` offset along `ns`) aimed at the light itself, as the emissive and baked rays do:
 // a ray along the direction from `p` would run parallel to the true one, half a voxel off the
 // surface, and clear the edge of a step that shadows a face next to a near light. Out of its
-// reach no ray is cast.
+// reach no ray is cast. With ENTITY_SHADOWS the ray then walks the entities to the light.
 fn light_lit(li: Light, p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>) -> f32 {
     var lit = light_term(li, p, n);
     if ((li.flags & LIGHT_SHADOWS) != 0u && lit > 0.0) {
@@ -150,7 +163,8 @@ fn light_lit(li: Light, p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>) -> f32 {
         let to_light = li.pos - o;
         let dist2 = max(dot(to_light, to_light), 1e-4);
         let l = to_light * inverseSqrt(dist2);
-        if (shadowed(o, l, sqrt(dist2))) {
+        let dist = sqrt(dist2);
+        if (shadowed(o, l, dist) || (ENTITY_SHADOWS && entity_march(o, l, dist).found)) {
             lit = 0.0;
         }
     }

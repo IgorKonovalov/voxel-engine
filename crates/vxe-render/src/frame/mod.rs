@@ -82,6 +82,8 @@ pub struct Frame {
     /// A copy of the composite's image at the internal size, taken right after the composite
     /// pass ([`Frame::set_composite_capture`]); `None` unless a test or tool asked for it.
     composite_capture: Option<wgpu::Texture>,
+    /// The entities' pool, instances and tree (ADR-0050), group 0's binding 15.
+    entities: crate::entities::EntityMirror,
 }
 
 impl Frame {
@@ -117,6 +119,10 @@ impl Frame {
             dt: 1.0 / 60.0,
             reset_exposure: std::sync::atomic::AtomicBool::new(true),
             composite_capture: None,
+            entities: crate::entities::EntityMirror::new(
+                device,
+                crate::entities::DEFAULT_ENTITY_POOL_BYTES,
+            ),
         }
     }
 
@@ -417,8 +423,10 @@ impl Frame {
         &self.targets.transmit
     }
 
-    /// The light pass's irradiance (rgba16float: the emissive sample in rgb, 0 in a; in the
-    /// steps view the list's shadow rays' counters, the rays cast in a).
+    /// The light pass's irradiance (rgba16float: the emissive sample in rgb; in a 1 at a fresh
+    /// pixel, one whose shadow ray entered the box of an entity with a moved part or whose hit
+    /// is a moved part's voxel, else 0; in the steps view the list's shadow rays' counters, the
+    /// rays cast in a).
     pub fn irradiance(&self) -> &wgpu::Texture {
         &self.targets.irradiance
     }
@@ -446,8 +454,8 @@ impl Frame {
         self.composite_capture.as_ref()
     }
 
-    /// The temporal pass's accumulated irradiance (rgba16float: the emissive part in rgb, 0 in
-    /// a).
+    /// The temporal pass's accumulated irradiance (rgba16float: the emissive part in rgb; in a
+    /// 1 at a fresh pixel, as [`Frame::irradiance`], else 0).
     pub fn accumulated(&self) -> &wgpu::Texture {
         &self.targets.accum[self.cur]
     }
@@ -483,10 +491,60 @@ impl Frame {
         &self.targets.moments[self.cur]
     }
 
-    /// Bytes the frame's targets, its probe volume (once built), FSR 2's resources and the store's
-    /// pool (once allocated) occupy.
+    /// The entity mirror the frame draws (ADR-0050): its pool takes models
+    /// ([`crate::EntityMirror::upload_model`]).
+    pub fn entity_mirror(&self) -> &crate::EntityMirror {
+        &self.entities
+    }
+
+    pub fn entity_mirror_mut(&mut self) -> &mut crate::EntityMirror {
+        &mut self.entities
+    }
+
+    /// Builds every pipeline a frame that draws entities uses (the hit pass's and the light
+    /// pass's entity variants, and the no-entity light pass), so the first frame that draws
+    /// a part builds none: a driver may take seconds over the entity walk. Call it once,
+    /// during start-up, after creating the frame; without it each is built on the first frame
+    /// that uses it.
+    pub fn prepare_entities(&self, device: &wgpu::Device) {
+        self.pipes.prepare_entities(device);
+    }
+
+    /// Replaces the entity mirror (a pool of another size); the next frames draw no entity
+    /// until [`Frame::set_entities`].
+    pub fn set_entity_mirror(&mut self, mirror: crate::EntityMirror) {
+        self.entities = mirror;
+    }
+
+    /// The entities the next frames draw: one instance a part of each entity of `list` as
+    /// `set` poses it, within the caps ([`crate::EntityMirror::set_entities`]). Call once a
+    /// frame while anything moves: the transforms of the call before are the frame before's.
+    pub fn set_entities(
+        &mut self,
+        queue: &wgpu::Queue,
+        set: &vxe_entity::EntitySet,
+        list: &[(vxe_entity::EntityId, crate::ModelHandle)],
+    ) {
+        self.entities.set_entities(queue, set, list);
+    }
+
+    /// Entities the last [`Frame::set_entities`] was given and did not draw.
+    pub fn entities_over_cap(&self) -> usize {
+        self.entities.entities_over_cap()
+    }
+
+    /// Whether any part the last [`Frame::set_entities`] drew moved since the call before: its
+    /// transform differs, so its pixels and the pixels whose shadow rays cross its entity's box
+    /// are fresh ([`Frame::irradiance`]).
+    pub fn entities_moved(&self) -> bool {
+        self.entities.entities_moved()
+    }
+
+    /// Bytes the frame's targets, its probe volume (once built), FSR 2's resources, the store's
+    /// pool (once allocated) and the entity mirror ([`crate::EntityMirror::bytes`]) occupy.
     pub fn frame_bytes(&self) -> u64 {
         self.targets.bytes()
+            + self.entities.bytes()
             + self.probe.volume.get().map_or(0, ProbeVolume::bytes)
             + self.exposure.bytes()
             + self.up.fsr.as_ref().map_or(0, Fsr2::bytes)

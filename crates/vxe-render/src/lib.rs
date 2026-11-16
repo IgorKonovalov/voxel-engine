@@ -9,6 +9,7 @@
 
 mod bake;
 mod camera;
+mod entities;
 mod exposure;
 mod field;
 mod font8x8;
@@ -33,6 +34,7 @@ pub mod debug {
     pub use crate::bake::{
         LightSummaries, ParentTable, Regime, STEP_STAGES, StepStages, StepTally,
     };
+    pub use crate::gpu_util::compute_pipelines_created;
     pub use crate::probes::ProbeRead;
     pub use crate::readback::{
         StepHistogram, f16_to_f32, read_buffer, read_float, read_rgba8, read_rgba16f, read_rgba16u,
@@ -85,6 +87,10 @@ pub use bake::{
     QueueStats, QueueView, ReachMode, Refine, Store, StoreStats, queue_settings,
 };
 pub use camera::{Camera, View};
+pub use entities::{
+    DEFAULT_ENTITY_POOL_BYTES, EntityMirror, EntityUploadError, MAX_ENTITIES, MAX_ENTITY_PARTS,
+    ModelHandle,
+};
 pub use exposure::{
     AutoExposure, EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState, Metering,
 };
@@ -93,10 +99,10 @@ pub use frame::{
     Upscaler,
 };
 pub use frame::{
-    CrackShares, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, LightWeights, Lighting,
-    LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher,
+    CrackShares, EntityLight, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, LightWeights,
+    Lighting, LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher,
     NormalMode, PassTimer, RenderScale, ShadowWalk, StoreRead, SurfaceTuning, ToneMap, ViewMode,
-    jitter_at,
+    YoungFilter, jitter_at,
 };
 pub use fsr2::{Fsr2, Fsr2Settings, UpscalerKind};
 pub use gpu_world::{
@@ -166,7 +172,7 @@ impl std::fmt::Display for LimitsError {
 impl std::error::Error for LimitsError {}
 
 /// Storage buffers one shader stage of the frame binds at most: four pool shards
-/// (`gpu_world::MAX_SHARDS`), the six other bindings (`OTHER_STORAGE_BUFFERS`) and the probe
+/// (`gpu_world::MAX_SHARDS`), the seven other bindings (`OTHER_STORAGE_BUFFERS`) and the probe
 /// passes' two (`probes::PROBE_STORAGE_BUFFERS`).
 pub const STORAGE_BUFFERS_NEEDED: u32 =
     gpu_world::MAX_SHARDS + gpu_world::OTHER_STORAGE_BUFFERS + probes::PROBE_STORAGE_BUFFERS;
@@ -228,13 +234,13 @@ mod tests {
     #[test]
     fn the_limits_are_capped_at_the_offer() {
         let l = limits_within(&offer(16, 1 << 30), 4 << 30).expect("16 storage buffers");
-        assert_eq!(l.max_storage_buffers_per_shader_stage, 12);
+        assert_eq!(l.max_storage_buffers_per_shader_stage, 13);
         assert_eq!(l.max_storage_buffer_binding_size, 1 << 30);
         assert_eq!(l.max_buffer_size, 1 << 30);
-        let l = limits_within(&offer(12, 1 << 30), 16 << 20).expect("12 storage buffers");
-        assert_eq!(l.max_storage_buffers_per_shader_stage, 12);
+        let l = limits_within(&offer(13, 1 << 30), 16 << 20).expect("13 storage buffers");
+        assert_eq!(l.max_storage_buffers_per_shader_stage, 13);
         assert_eq!(l.max_storage_buffer_binding_size, STORE_BINDING_BYTES);
-        let l = limits_within(&offer(12, 128 << 20), 16 << 20).expect("12 storage buffers");
+        let l = limits_within(&offer(13, 128 << 20), 16 << 20).expect("13 storage buffers");
         assert_eq!(l.max_storage_buffer_binding_size, 128 << 20);
     }
 
@@ -242,11 +248,11 @@ mod tests {
     fn an_offer_below_the_shaders_bindings_is_refused_by_name() {
         let e = limits_within(&offer(8, 1 << 30), 16 << 20).expect_err("8 storage buffers");
         assert_eq!(e.limit, "max_storage_buffers_per_shader_stage");
-        assert_eq!((e.needed, e.offered), (12, 8));
-        assert_eq!(e.requested.max_storage_buffers_per_shader_stage, 12);
+        assert_eq!((e.needed, e.offered), (13, 8));
+        assert_eq!(e.requested.max_storage_buffers_per_shader_stage, 13);
         assert_eq!(
             e.to_string(),
-            "the adapter offers 8 max_storage_buffers_per_shader_stage, the frame's shaders need 12"
+            "the adapter offers 8 max_storage_buffers_per_shader_stage, the frame's shaders need 13"
         );
     }
 }

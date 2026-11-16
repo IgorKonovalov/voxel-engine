@@ -946,8 +946,10 @@ fn the_split_walk_moves_no_hit_record() {
 /// whose pool no bake has allocated (STORE_LESS: - 3 686 400 - 7 372 800, `gpu_upscale.rs`'s
 /// `frame_bytes_hold_the_store_and_no_emissive_history`), and the direct pair: the direct
 /// target and its two accumulations, 8 B each a lighting pixel at 640 x 360 (DIRECT_PAIR,
-/// `gpu_upscale.rs`'s `frame_bytes_hold_the_direct_pair`).
-const DEFAULT_FRAME_BYTES: u64 = 124_737_616;
+/// `gpu_upscale.rs`'s `frame_bytes_hold_the_direct_pair`), and the entity mirror at its default
+/// pool (ENTITY_MIRROR: the tree, 512 instances and 8 MiB, ADR-0050).
+const DEFAULT_FRAME_BYTES: u64 = 124_737_616 + ENTITY_MIRROR;
+const ENTITY_MIRROR: u64 = 4096 + 65_536 + (8 << 20);
 const DEFAULT_MAIN: u64 = 130_267_168;
 const STORE_LESS: u64 = 3_686_400 + 7_372_800;
 const DIRECT_PAIR: u64 = 3 * 8 * 640 * 360;
@@ -985,7 +987,10 @@ fn only_a_split_frame_allocates_the_split_list() {
     );
     assert_eq!(before, default, "a render without the split walk");
     assert_eq!(default, DEFAULT_FRAME_BYTES);
-    assert_eq!(default, DEFAULT_MAIN + 32 + 16 - STORE_LESS + DIRECT_PAIR);
+    assert_eq!(
+        default,
+        DEFAULT_MAIN + 32 + 16 - STORE_LESS + DIRECT_PAIR + ENTITY_MIRROR
+    );
 
     let mut rig = field_rig_on(device.clone(), queue.clone(), &wood, THIN_SIZE);
     let field = preset_look(flythrough::LookPreset::FIELD, ViewMode::Shaded);
