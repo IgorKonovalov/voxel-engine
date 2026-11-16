@@ -389,8 +389,8 @@ Readings and the name mapping: [`logs/0063.md`](logs/0063.md).
 | 1: Clips in `vxe-entity` | dev | done | 7aed6b7 |
 | 2: The `.rig` file and voxels from text | dev | done | 5c87d16 |
 | 3: The viewer, display interpolation and a sample model | dev | done | aa097bf3 |
-| 3b: The pose composed once, not once per part point | dev | done | committed with this row |
-| 4: The owner's window | human | not started | |
+| 3b: The pose composed once, not once per part point | dev | done | c5c655ad |
+| 4: The owner's window | human | done 2026-11-16; (a) yes, (b) typed keys enough for now, keep a timeline open, (c) smooth, no blend between clips, (d) no banner seen, (e) yes after the palette-185 mapping; words in the readings log | committed with this row |
 
 ### Notes
 
@@ -424,6 +424,15 @@ each. Empty is fine.)_
   formerly named `compose` is `frames`; `Pose::part_point` now goes through `compose`.
   `DisplayPose::between` reads 0.50 ms for 64 sixteen-part entities (from 15.12 ms), still
   above Phase 3's guessed 0.05 ms; readings in the log.
+- Phase 4 (owner's window, 2026-11-16, at c5c655ad): (b) is not a "no"; the stop rule did not
+  fire. Followup noticed, not built: a crossfade between clips (the owner, (c): a switch from
+  walk to the head turn jumps). (d): the owner saw no banner when the `.vox` reload was refused;
+  stdout printed "rig line 12: part `head` uses palette indices [185] with no `material` line"
+  twice, through the same `poll_viewer` words path as the rig error "rig line 9: expected a
+  material name after `2`"; not diagnosed. The first placement froze about 12 s (frames 1545 to
+  1578, 34.8 s to 47.8 s); Plan 0062's Phase 6d (`Frame::prepare_entities`) arrives with the
+  main merge. The owner's window assets (longer legs, 45-degree walk, a `turn` clip; a spider
+  rig) are in the untracked `live/*.window-edits` and `live/*.window-final`, not committed.
 
 ### Close triggers
 
