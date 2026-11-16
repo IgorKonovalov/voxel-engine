@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0083** (ADRs are a separate sequence; next free there is **0065**).
+**Next free number: 0085** (ADRs are a separate sequence; next free there is **0068**).
 
 ## Active roster
 
@@ -28,6 +28,8 @@ state from `git log`. Completed plans move to `done/`.
 | [0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) | The fly-through's menu: one overlay component, a search palette, and the minimal key set | approved | ADR-0061 (proposed). Apps only. After 0062 and 0075; before 0077, 0073. |
 | [0081](0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md) | A surface detail layer: blades, caps and pebbles marched above styled faces, lit as hits, faded by size on screen | draft | M10, ADR-0063 (proposed). Drafted 2026-11-16, awaits go. After 0032, before 0033. |
 | [0082](0082-squash-and-stretch-a-scale-per-part-in-the-pose-and-the-clips.md) | Squash and stretch: a scale per axis per part in the pose and the clips, a slime in the library with a bounce | draft | M6, ADR-0064 (proposed). Drafted 2026-11-16, awaits go. After 0063, the clip chore, 0078 and 0079 P1-3. |
+| [0083](0083-anything-from-a-vox-palette-materials-a-material-file-and-large-scenes-stamped-into-the-world.md) | Anything from a `.vox`: palette materials, a material file, brick prefabs, far placements, a Structures page | draft | M7, ADR-0065, ADR-0066. After 0063 and the clip chore; Phase 6 after 0080 and 0077. |
+| [0084](0084-staged-structures-stages-from-a-vox-a-stamp-with-a-write-policy-and-a-region-a-reveal-and-a-demolish.md) | Staged structures: stages from a `.vox`'s layers, a stamp with a write policy and a region, a reveal over ticks, a demolish | draft | M7, ADR-0067. Awaits go. After Plan 0083 closes. |
 <!-- roster:end -->
 
 ## Sequence
@@ -101,6 +103,19 @@ Plan 0044's Phase 4; **Plan 0072** (development speed), closed 2026-11-13 (v0.51
 **Plan 0079** (entities aware of the floor and the walls: a sphere surface mover beside the cylinder controller in `vxe-sim`, the solid-count gradient as the smoothed normal in `vxe-world`, `Quat::from_frame` in `vxe-entity`, a `body` and a clip `stride` in the `.rig`, a seeded wander in the fly-through; drafted 2026-11-16 from the owner's request, awaits go; ADR-0062 proposed): Phases 1 to 3 (`crates/` and the two library rigs) as a side lane once Plan 0063 and the clip-recorder chore merge, beside 0077; Phase 4 (the fly-through) after Plan 0077 merges, with the architect's re-read.
 
 **Plan 0082** (squash and stretch: a scale per axis per part in `PartPose` and in a clip's keys, `key 10 body scale 1.2 0.8 1.2` in the `.rig`, a slime with a bounce in the entities library; drafted 2026-11-16 from the owner's "jelly-like entities, slimes" question, awaits go; ADR-0064 proposed, a parent's scale moves its children's pivots and not their shapes): after Plan 0063, the clip-recorder chore, Plan 0078 and Plan 0079's Phases 1 to 3 merge (the owner's recommendation agreed: "squash-and-stretch plan after 0079"); it may run beside 0079's Phase 4 and 0077.
+**Plan 0083** (anything from a `.vox`: every palette entry a material row, the material table as a text
+file in the `.rig` grammar hot-reloaded in the window, prefabs stored as bricks, a stamp past the
+residency sphere kept as a placement the world finishes as chunks arrive, layers, hidden nodes,
+mirrors and an integer scale read from the scene graph, a Structures page of Plan 0080's menu;
+drafted 2026-11-16 from the owner's "import nearly anything that can be created as a .vox file",
+awaits go; ADR-0065 and ADR-0066 proposed): Phases 1 to 5 (`crates/` and `--vox`) once Plan 0063
+and the clip-recorder chore merge, beside Plans 0078 and 0080; Phase 6 after Plans 0080 and 0077
+merge, with the architect's re-read. It holds nothing of M10.
+
+**Plan 0084** (staged structures: a stamp with a write policy and a region, stages from a `.vox`'s
+layers, a pure reveal planner, a demolish that the support query follows; drafted 2026-11-16 from
+the owner's "a castle being built... part of the map", awaits go; ADR-0067 proposed): after Plan
+0083 closes.
 
 Every active plan is approved (owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Approval accepts the design; a plan's lane

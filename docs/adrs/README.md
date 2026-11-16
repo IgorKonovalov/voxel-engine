@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0065.**
+**Next free number: 0068.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -79,6 +79,9 @@ the status.
 | [0062](0062-surface-locomotion-is-a-kinematic-sphere-attached-to-a-contact-normal-in-vxe-sim.md) | Surface locomotion is a kinematic sphere attached to a contact normal in `vxe-sim`, with the smoothed normal a world query; ground locomotion keeps the cylinder controller | proposed (Plan 0079) |
 | [0063](0063-surface-detail-is-a-procedural-shell-marched-at-the-hit-described-per-material-on-the-render-side.md) | Surface detail is a procedural shell marched at the hit, described per material on the render side, cosmetic and client-only | proposed (Plan 0081) |
 | [0064](0064-a-parts-scale-is-per-axis-in-its-own-frame-and-moves-its-childrens-pivots-not-their-shapes.md) | A part's scale is per axis in its own frame, about its pivot; it moves its children's pivots and never changes their shapes | proposed (Plan 0082) |
+| [0065](0065-materials-are-data-a-table-file-in-the-rig-grammar-and-every-vox-palette-entry-becomes-a-row.md) | Materials are data: a table file in the `.rig` line grammar, and every `.vox` palette entry becomes a row | proposed (Plan 0083) |
+| [0066](0066-a-large-prefab-is-stored-as-bricks-and-its-stamp-is-a-placement-the-world-finishes-as-chunks-arrive.md) | A large prefab is stored as bricks, and its stamp is a placement the world finishes as chunks arrive | proposed (Plan 0083) |
+| [0067](0067-a-staged-structure-is-a-sequence-of-logged-stamps-over-the-map-with-a-write-policy-not-an-entity.md) | A staged structure is a sequence of logged stamps over the map with a write policy, not an entity | proposed (Plan 0084) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded
