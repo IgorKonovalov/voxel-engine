@@ -479,3 +479,38 @@ fn a_tick_on_a_flat_course_collects_its_boxes_once() {
     assert_eq!(steps.len(), 60);
     assert_eq!(CharacterController::box_collections() - before, 60);
 }
+
+/// A crater wider than the body, dug under it while it stands, drops it in: the controller
+/// reads the world each tick, with no notification path. The depth is read, not asserted.
+#[test]
+fn a_walker_falls_into_the_hole_dug_under_it() {
+    let world = f1();
+    let mut st = CharacterState::new(Fixed3(S));
+    idle_tick(&world, &mut st);
+    assert!(st.grounded);
+    world
+        .apply(&EditOp::sphere(
+            Fixed3([2688, 2688, -128]),
+            1024,
+            Mode::Carve,
+        ))
+        .expect("the carve applies");
+    // The grounded state ticks on, each tick checked for overlap as `run` checks it.
+    let cc = CharacterController::new(params());
+    let rs: Vec<MoveResult> = (1..=30)
+        .map(|t| {
+            let r = cc.tick(&world, &mut st, &MoveInput::default());
+            assert!(!overlaps(&world, &body_at(st.foot.0)), "tick {t}");
+            r
+        })
+        .collect();
+    assert!(!rs[0].grounded);
+    let landed = rs.iter().position(|r| r.landed.is_some());
+    eprintln!(
+        "landed on tick {:?}, foot {:?}",
+        landed.map(|i| i + 1),
+        st.foot
+    );
+    assert!(landed.is_some());
+    assert!(st.foot.0[2] <= -256);
+}

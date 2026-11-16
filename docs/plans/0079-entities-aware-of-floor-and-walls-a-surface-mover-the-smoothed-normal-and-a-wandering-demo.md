@@ -657,7 +657,7 @@ unchanged (ADR-0050).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the surface mover in `vxe-sim` | dev | wip, stopped at done-when 4 (owner question); readings in [`logs/0079.md`](logs/0079.md) | committed with this row |
+| 1: the surface mover in `vxe-sim` | dev | done; readings in [`logs/0079.md`](logs/0079.md) | committed with this row |
 | 2: the smoothed normal in `vxe-world`, the frame in `vxe-entity` | dev | not started | |
 | 3: the body and the stride in the `.rig` | dev | not started | |
 | 4: the fly-through's demo | dev | not started | |
@@ -669,6 +669,14 @@ unchanged (ADR-0050).
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- Phase 1 (43adce43 and its phase commit): the move step glides over a contact whose normal is the body's own: the rest of the move is swept once more, lifted `rest / 64 + 1` along the normal.
+- Phase 1: the forward is carried by the shortest arc at a convex edge too; on landing it is projected onto the new surface only.
+- Phase 1: the half turn for antiparallel directions is about `e_k` made perpendicular to `a`, not `e_k` itself (the same for axis directions).
+- Phase 1: the sphere's depenetration takes the controller's candidate order with both limits at twice the radius; a failed attach leaves the centre where the move put it; a tick that detaches and lands reports `Detached`.
+- Phase 1 done-when 2: the event tick slides the rest of its move up the wall, so `(4864, 2560, 6656)` is read on tick 136 (event tick plus 99).
+- Phase 1 done-when 4: radius 768 does not drop the body; amended to 1024 (22d62f05, owner).
+- Phase 1: the `CLAUDE.md` line for `vxe-sim` is not in the worktree; the orchestrator adds it in the main checkout's `.claude/` repo.
 
 ### Close triggers
 
