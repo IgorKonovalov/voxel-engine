@@ -1,6 +1,6 @@
 # 0080: The fly-through's menu: one overlay component, a search palette, and the minimal key set
 
-> **Status:** approved (2026-11-16, the owner: every recommended answer under "Owner questions")
+> **Status:** in-progress (approved 2026-11-16, the owner: every recommended answer under "Owner questions")
 > **Created:** 2026-11-16
 > **Milestone:** none of its own. The testbed (`apps/flythrough`) and, through Plan 0073, the
 > tester; nothing under `crates/` changes unless Phase 5's window asks for the overlay backdrop.
@@ -470,15 +470,26 @@ No `docs/nfr.md` figure moves; every figure here is a **guess** until Phase 2 re
 > notes go to the plan's readings log, `docs/plans/logs/0080.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
+Readings and gate counts: [`logs/0080.md`](logs/0080.md).
+
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the table and the tree, printed by `--keys` | dev | not started | |
+| 1: the table and the tree, printed by `--keys` | dev | done | committed with this row |
 | 2: the component, the palette and the Keys page | dev | not started | |
 | 3: the minimal key set and the pad | dev | not started | |
 | 4: the owner's window | human | not started | |
 | 5: the owner's picks, and the tip | dev | not started | |
 
 ### Notes
+
+- Phase 1: `--keys`' flag row is built in `cli/parse.rs` (`keys_flag`) and listed from
+  `cli/flags.rs`' Run section (one line; the file is at the 1200-line cap, so `--check-args`'
+  closure went to one line); `Args::keys` in `cli/mod.rs`. Both files are outside Phase 1's list.
+- Phase 1: `Delete` (young filter) and `Insert` (entity light) are bound on main and missing
+  from "The keys"; they are Lighting entries.
+- Phase 1: `T` is both the tour's resume and, outside a path, the audio's pulse; the pulse
+  entry names no bind, the resume entry names `T`.
+- Phase 1: `parse_args_from` is `pub` (was `pub(crate)`) for `tests/menu.rs`.
 
 ### Close triggers
 

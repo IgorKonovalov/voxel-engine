@@ -22,6 +22,10 @@ fn main() {
         print!("{}", flythrough::cli::help());
         return;
     }
+    if args.keys {
+        print!("{}", flythrough::hud::menu::keys_text(&args));
+        return;
+    }
     if args.check_args {
         println!("flythrough: arguments ok");
         return;

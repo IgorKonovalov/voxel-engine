@@ -3,18 +3,15 @@
 //! (`run::keys`), the HUD's mode block shows each toggle's mode in the row the table names
 //! ([`hud::Modes::write_rows`]), and a press prints that row.
 //!
-//! The keys that are actions with no mode are not rows: the dig and the fill (the mouse
-//! buttons, `R2` and `L2`), `B` (the bench), `P` (a stamp), `G` (walk mode, which needs the
-//! world for its body; the HUD's position row names `fly` or `walk`), `K` (prints the coarse
-//! grid), `R` (a crumble input), `I` (the next castle shot, a camera move), `F1` (the frame
-//! readings), `F2` (the stats HUD), `T` (resumes a path) and the audio's keys (`H`, `T`, `J`
-//! play sounds; `E`, `Y`, `O`, `U` and the trims change the mix and print its line, with no
-//! HUD row while the audio has none), and the lights' `1` (drop), `4` (remove) and `6` (fire),
-//! which name the count in the banner and the `lights` row. [`ACTION_KEYS`] lists every
-//! action key, so no key is bound twice.
+//! The keys that are actions with no mode are [`ACTIONS`]: binds, a label, a menu page, an
+//! optional mode in words and the [`Act`] the run calls. Both tables are the menu's source
+//! (`hud::menu::entries`): its pages, its palette, its Keys page and `flythrough --keys`.
+//! `T` is the tour's resume in a path run and the audio's pulse outside one, so the pulse's
+//! entry names no bind of its own.
 
 use crate::cli::next_far_normal;
 use crate::edits::{DIG_RANGE, DIG_STEP};
+use crate::hud::menu::{AudioView, Group, RunView};
 use crate::hud::{self, HudRow, Modes};
 use vxe_app::{Input, KeyCode, PadButton};
 
@@ -33,6 +30,8 @@ pub enum Press {
 pub struct Toggle {
     pub press: Press,
     pub name: &'static str,
+    /// The menu's page the toggle is an entry of.
+    pub group: Group,
     pub row: HudRow,
     pub get: fn(&Modes) -> String,
     pub flip: fn(&mut Modes, f64),
@@ -59,6 +58,7 @@ macro_rules! lighting {
         Toggle {
             press: Press::Key(KeyCode::$key, None),
             name: $name,
+            group: Group::Lighting,
             row: HudRow::Lighting,
             get: $get,
             flip: |m, now| m.press(hud::ModeKey::$mode, now),
@@ -135,50 +135,291 @@ pub const KEY_CLIP_ON: KeyCode = KeyCode::ArrowRight;
 /// `Down`: the viewer's clip paused or playing.
 pub const KEY_CLIP_PAUSE: KeyCode = KeyCode::ArrowDown;
 
-/// Every key `run::keys` binds to an action with no mode (the toggles' keys are in
-/// [`TOGGLES`]): the bench, the stamp, walking, the coarse grid, the crumble, the castle shot,
-/// the readings, the lights' drop, removal and shot, the viewer's clip keys, and the audio's
-/// keys and trims; then the frame's `Esc` and `F2` (`run::frame`) and the flight's keys
-/// (`fly`). The path's `T` (resume) is the audio's pulse outside a path.
-pub const ACTION_KEYS: &[KeyCode] = &[
-    KeyCode::KeyB,
-    KeyCode::KeyP,
-    KeyCode::KeyG,
-    KeyCode::KeyK,
-    KeyCode::KeyR,
-    KeyCode::KeyI,
-    KeyCode::F1,
-    KEY_DROP,
-    KEY_REMOVE,
-    KEY_FIRE,
-    KEY_WALKER,
-    KEY_EYE_LIGHTS,
-    KEY_WALK,
-    KEY_CLIP_BACK,
-    KEY_CLIP_ON,
-    KEY_CLIP_PAUSE,
-    KeyCode::KeyH,
-    KeyCode::KeyT,
-    KeyCode::KeyE,
-    KeyCode::KeyY,
-    KeyCode::KeyJ,
-    KeyCode::BracketLeft,
-    KeyCode::BracketRight,
-    KeyCode::Minus,
-    KeyCode::Equal,
-    KeyCode::Digit9,
-    KeyCode::Digit0,
-    KeyCode::KeyO,
-    KeyCode::KeyU,
-    KeyCode::Escape,
-    KeyCode::F2,
-    KeyCode::KeyW,
-    KeyCode::KeyA,
-    KeyCode::KeyS,
-    KeyCode::KeyD,
-    KeyCode::Space,
-    KeyCode::KeyC,
-    KeyCode::ShiftLeft,
+/// What an action does: the run's method its entry and its binds call (`Run::act`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Act {
+    /// Toggles walk mode (the body under the camera) or flight.
+    Walk,
+    /// Resumes a tour path from its point nearest the camera (`crate::path`).
+    ResumePath,
+    /// Moves the camera to the next castle shot.
+    CastleShot,
+    /// Drops a light at the looked-at surface.
+    DropLight,
+    /// Removes the newest light or walker.
+    Remove,
+    /// Fires a light along the view ray.
+    FireLight,
+    /// Places a walker (or `--model`'s model) at the looked-at surface.
+    PlaceWalker,
+    /// The walkers walk or hold still.
+    WalkersWalk,
+    /// The walkers' eye lights on or off.
+    EyeLights,
+    /// The viewer's clip before.
+    ClipBack,
+    /// The viewer's clip after.
+    ClipOn,
+    /// The viewer's clip paused or playing.
+    ClipPause,
+    /// Plays a knock at the dig point.
+    Knock,
+    /// Plays a looping pulse.
+    Pulse,
+    /// Plays a looping hum, the next note each time.
+    Hum,
+    /// The early reflections on or off.
+    Echoes,
+    /// The reverb tail on or off.
+    Tail,
+    /// The echoes' trim, 3 dB down or up.
+    EchoTrim(i8),
+    /// The tail's trim, 3 dB down or up.
+    TailTrim(i8),
+    /// The tail's pre-delay, 10 ms down or up.
+    PreDelay(i8),
+    /// The tail's lines: glide or handover.
+    Glide,
+    /// The direct path's propagation delay on or off.
+    DirectDelay,
+    /// Takes the frame readings over the next frames and prints their line.
+    Readings,
+    /// Runs the dig benchmark.
+    Bench,
+    /// Stamps the castle prefab at the looked-at surface.
+    Stamp,
+    /// Sends a crumble input to the collapse.
+    Crumble,
+    /// Prints the coarse grid's line.
+    CoarsePrint,
+}
+
+/// A bind of an action: a key, or the pad button that does the same.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Bind {
+    Key(KeyCode),
+    Pad(PadButton),
+}
+
+/// One action: its binds (none for a menu-only one), its label, its menu page, its mode in
+/// words when it has one (read from the modes and the few run flags in [`RunView`]), and the
+/// run's method it calls.
+pub struct Action {
+    pub binds: &'static [Bind],
+    pub label: &'static str,
+    pub group: Group,
+    pub mode: Option<fn(&Modes, &RunView) -> String>,
+    pub act: Act,
+}
+
+impl Action {
+    /// Whether `input` presses one of this action's binds this frame.
+    pub fn pressed(&self, input: &Input) -> bool {
+        self.binds.iter().any(|b| match *b {
+            Bind::Key(k) => input.pressed(k),
+            Bind::Pad(p) => input.pad_pressed(p),
+        })
+    }
+}
+
+/// The audio's mode in words, or `no audio` in a run without it.
+fn audio_words(v: &RunView, words: fn(&AudioView) -> String) -> String {
+    v.audio
+        .as_ref()
+        .map_or_else(|| "no audio".to_owned(), words)
+}
+
+/// An action with no mode, bound to `binds`.
+macro_rules! action {
+    ($label:literal, $group:ident, $act:expr, [$($bind:expr),*]) => {
+        Action {
+            binds: &[$($bind),*],
+            label: $label,
+            group: Group::$group,
+            mode: None,
+            act: $act,
+        }
+    };
+}
+
+/// Every action of the fly-through, in its pages' order: walking, the paths and the castle
+/// shot, the lights' drop, removal and shot, the walkers and the viewer's clips, the audio's
+/// sounds and mix, the readings, and the debug actions. The run dispatches the binds
+/// (`run::keys`); the menu calls the same [`Act`]. The movement keys, `Esc` and `F2` are the
+/// fixed keys (`hud::menu::FIXED_KEYS`), not actions.
+pub static ACTIONS: &[Action] = &[
+    Action {
+        binds: &[Bind::Key(KeyCode::KeyG), Bind::Pad(PadButton::North)],
+        label: "walk",
+        group: Group::Moving,
+        mode: Some(|_, v| if v.walking { "walk" } else { "fly" }.to_owned()),
+        act: Act::Walk,
+    },
+    action!(
+        "resume the tour",
+        Camera,
+        Act::ResumePath,
+        [Bind::Key(KeyCode::KeyT)]
+    ),
+    action!(
+        "next castle shot",
+        Camera,
+        Act::CastleShot,
+        [Bind::Key(KeyCode::KeyI)]
+    ),
+    action!(
+        "drop a light",
+        Lights,
+        Act::DropLight,
+        [Bind::Key(KEY_DROP)]
+    ),
+    action!(
+        "remove the newest",
+        Lights,
+        Act::Remove,
+        [Bind::Key(KEY_REMOVE)]
+    ),
+    action!(
+        "fire a light",
+        Lights,
+        Act::FireLight,
+        [Bind::Key(KEY_FIRE)]
+    ),
+    action!(
+        "place a walker",
+        Entities,
+        Act::PlaceWalker,
+        [Bind::Key(KEY_WALKER)]
+    ),
+    Action {
+        binds: &[Bind::Key(KEY_WALK)],
+        label: "walkers walk",
+        group: Group::Entities,
+        mode: Some(|m, _| format!("walkers walk {}", on(m.walkers.walking))),
+        act: Act::WalkersWalk,
+    },
+    Action {
+        binds: &[Bind::Key(KEY_EYE_LIGHTS)],
+        label: "eye lights",
+        group: Group::Entities,
+        mode: Some(|m, _| format!("eye lights {}", on(!m.walkers.eye_lights_off))),
+        act: Act::EyeLights,
+    },
+    action!(
+        "clip before",
+        Entities,
+        Act::ClipBack,
+        [Bind::Key(KEY_CLIP_BACK)]
+    ),
+    action!(
+        "clip after",
+        Entities,
+        Act::ClipOn,
+        [Bind::Key(KEY_CLIP_ON)]
+    ),
+    action!(
+        "clip pause",
+        Entities,
+        Act::ClipPause,
+        [Bind::Key(KEY_CLIP_PAUSE)]
+    ),
+    action!(
+        "knock",
+        Audio,
+        Act::Knock,
+        [Bind::Key(KeyCode::KeyH), Bind::Pad(PadButton::East)]
+    ),
+    action!("pulse", Audio, Act::Pulse, []),
+    action!("hum", Audio, Act::Hum, [Bind::Key(KeyCode::KeyJ)]),
+    Action {
+        binds: &[Bind::Key(KeyCode::KeyE)],
+        label: "echoes",
+        group: Group::Audio,
+        mode: Some(|_, v| audio_words(v, |a| format!("echoes {}", on(a.echoes)))),
+        act: Act::Echoes,
+    },
+    Action {
+        binds: &[Bind::Key(KeyCode::KeyY)],
+        label: "tail",
+        group: Group::Audio,
+        mode: Some(|_, v| audio_words(v, |a| format!("tail {}", on(a.tail)))),
+        act: Act::Tail,
+    },
+    Action {
+        binds: &[Bind::Key(KeyCode::BracketLeft)],
+        label: "echo trim down",
+        group: Group::Audio,
+        mode: Some(|_, v| audio_words(v, |a| format!("echo trim {:+.0} dB", a.echo_db))),
+        act: Act::EchoTrim(-1),
+    },
+    Action {
+        binds: &[Bind::Key(KeyCode::BracketRight)],
+        label: "echo trim up",
+        group: Group::Audio,
+        mode: Some(|_, v| audio_words(v, |a| format!("echo trim {:+.0} dB", a.echo_db))),
+        act: Act::EchoTrim(1),
+    },
+    Action {
+        binds: &[Bind::Key(KeyCode::Minus)],
+        label: "tail trim down",
+        group: Group::Audio,
+        mode: Some(|_, v| audio_words(v, |a| format!("tail trim {:+.0} dB", a.tail_db))),
+        act: Act::TailTrim(-1),
+    },
+    Action {
+        binds: &[Bind::Key(KeyCode::Equal)],
+        label: "tail trim up",
+        group: Group::Audio,
+        mode: Some(|_, v| audio_words(v, |a| format!("tail trim {:+.0} dB", a.tail_db))),
+        act: Act::TailTrim(1),
+    },
+    Action {
+        binds: &[Bind::Key(KeyCode::Digit9)],
+        label: "pre-delay down",
+        group: Group::Audio,
+        mode: Some(|_, v| audio_words(v, |a| format!("pre-delay {:.0} ms", a.predelay_ms))),
+        act: Act::PreDelay(-1),
+    },
+    Action {
+        binds: &[Bind::Key(KeyCode::Digit0)],
+        label: "pre-delay up",
+        group: Group::Audio,
+        mode: Some(|_, v| audio_words(v, |a| format!("pre-delay {:.0} ms", a.predelay_ms))),
+        act: Act::PreDelay(1),
+    },
+    Action {
+        binds: &[Bind::Key(KeyCode::KeyO)],
+        label: "tail lines",
+        group: Group::Audio,
+        mode: Some(|_, v| {
+            audio_words(v, |a| {
+                format!("tail lines {}", if a.glide { "glide" } else { "handover" })
+            })
+        }),
+        act: Act::Glide,
+    },
+    Action {
+        binds: &[Bind::Key(KeyCode::KeyU)],
+        label: "direct delay",
+        group: Group::Audio,
+        mode: Some(|_, v| audio_words(v, |a| format!("direct delay {}", on(a.direct_delay)))),
+        act: Act::DirectDelay,
+    },
+    action!(
+        "frame readings",
+        Readings,
+        Act::Readings,
+        [Bind::Key(KeyCode::F1)]
+    ),
+    action!("bench", Debug, Act::Bench, [Bind::Key(KeyCode::KeyB)]),
+    action!("stamp", Debug, Act::Stamp, [Bind::Key(KeyCode::KeyP)]),
+    action!("crumble", Debug, Act::Crumble, [Bind::Key(KeyCode::KeyR)]),
+    action!(
+        "coarse print",
+        Debug,
+        Act::CoarsePrint,
+        [Bind::Key(KeyCode::KeyK)]
+    ),
 ];
 
 /// The `lights` row in words.
@@ -240,6 +481,7 @@ pub static TOGGLES: &[Toggle] = &[
     Toggle {
         press: Press::Key(KeyCode::KeyN, None),
         name: "look",
+        group: Group::Look,
         row: HudRow::Look,
         get: |m| format!("look {}", m.preset.name),
         flip: next_look,
@@ -247,6 +489,7 @@ pub static TOGGLES: &[Toggle] = &[
     Toggle {
         press: Press::Key(KeyCode::KeyV, None),
         name: "far normal",
+        group: Group::Look,
         row: HudRow::Look,
         get: |m| crate::LookPreset::far_normal_words(m.look.normal_mode, m.look.far_normal),
         flip: |m, now| {
@@ -257,6 +500,7 @@ pub static TOGGLES: &[Toggle] = &[
     Toggle {
         press: Press::Key(KeyCode::F9, None),
         name: "view",
+        group: Group::Debug,
         row: HudRow::Look,
         get: |m| format!("view {}", m.look.view.name()),
         flip: |m, now| {
@@ -267,6 +511,7 @@ pub static TOGGLES: &[Toggle] = &[
     Toggle {
         press: Press::Key(KeyCode::F10, None),
         name: "upscaler",
+        group: Group::Upscaler,
         row: HudRow::Upscaler,
         get: |m| format!("upscaler {}", m.upscaler.mode.name()),
         flip: |m, now| {
@@ -282,6 +527,7 @@ pub static TOGGLES: &[Toggle] = &[
     Toggle {
         press: Press::Key(KeyCode::KeyZ, None),
         name: "sharpen",
+        group: Group::Upscaler,
         row: HudRow::Upscaler,
         get: |m| format!("sharpen {:.2}", m.upscaler.sharpen),
         flip: |m, now| {
@@ -292,6 +538,7 @@ pub static TOGGLES: &[Toggle] = &[
     Toggle {
         press: Press::Key(KeyCode::Period, None),
         name: "pan",
+        group: Group::Upscaler,
         row: HudRow::Upscaler,
         get: |m| format!("pan {}", m.pan.as_ref().map_or("none", |p| on(p.on))),
         flip: |m, now| {
@@ -303,6 +550,7 @@ pub static TOGGLES: &[Toggle] = &[
     Toggle {
         press: Press::Key(KeyCode::KeyF, None),
         name: "queue order",
+        group: Group::Queue,
         row: HudRow::Queue,
         get: order_words,
         flip: |m, _| {
@@ -317,6 +565,7 @@ pub static TOGGLES: &[Toggle] = &[
     Toggle {
         press: Press::Key(KeyCode::Tab, None),
         name: "queue angle halved",
+        group: Group::Queue,
         row: HudRow::Queue,
         get: order_words,
         flip: |m, _| m.queue.angle *= 0.5,
@@ -324,6 +573,7 @@ pub static TOGGLES: &[Toggle] = &[
     Toggle {
         press: Press::Key(KeyCode::Slash, None),
         name: "queue angle doubled",
+        group: Group::Queue,
         row: HudRow::Queue,
         get: order_words,
         flip: |m, _| {
@@ -334,6 +584,7 @@ pub static TOGGLES: &[Toggle] = &[
     Toggle {
         press: Press::Key(KeyCode::Quote, None),
         name: "queue withdraw",
+        group: Group::Queue,
         row: HudRow::Queue,
         get: |m| format!("withdraw {}", on(m.queue.withdraw)),
         flip: |m, _| m.queue.withdraw = !m.queue.withdraw,
@@ -341,6 +592,7 @@ pub static TOGGLES: &[Toggle] = &[
     Toggle {
         press: Press::Key(KeyCode::Backspace, None),
         name: "bake budget",
+        group: Group::Queue,
         row: HudRow::Queue,
         get: |m| format!("budget {}", m.queue.budget),
         flip: |m, _| m.queue.budget = next_budget(m.queue.budget),
@@ -348,6 +600,7 @@ pub static TOGGLES: &[Toggle] = &[
     Toggle {
         press: Press::Key(KeyCode::Backslash, None),
         name: "full-first",
+        group: Group::Queue,
         row: HudRow::Queue,
         get: |m| match m.queue.full_first {
             Some(r) => format!("full-first {r}"),
@@ -363,6 +616,7 @@ pub static TOGGLES: &[Toggle] = &[
     Toggle {
         press: Press::Key(KeyCode::Digit7, None),
         name: "missing light",
+        group: Group::Queue,
         row: HudRow::Queue,
         get: |m| format!("missing light {}", m.queue.missing_light.name()),
         flip: |m, _| m.queue.missing_light = next_missing_light(m.queue.missing_light),
@@ -370,6 +624,7 @@ pub static TOGGLES: &[Toggle] = &[
     Toggle {
         press: Press::Key(KeyCode::Digit8, None),
         name: "reach",
+        group: Group::Queue,
         row: HudRow::Queue,
         get: |m| format!("reach {}", m.queue.reach.name()),
         flip: |m, _| m.queue.reach = next_reach(m.queue.reach),
@@ -377,6 +632,7 @@ pub static TOGGLES: &[Toggle] = &[
     Toggle {
         press: Press::Key(KeyCode::Digit2, None),
         name: "carry",
+        group: Group::Lights,
         row: HudRow::Lights,
         get: lights_words,
         flip: |m, now| {
@@ -388,6 +644,7 @@ pub static TOGGLES: &[Toggle] = &[
     Toggle {
         press: Press::Key(KeyCode::Digit3, None),
         name: "colour",
+        group: Group::Lights,
         row: HudRow::Lights,
         get: lights_words,
         flip: |m, now| {
@@ -398,6 +655,7 @@ pub static TOGGLES: &[Toggle] = &[
     Toggle {
         press: Press::Key(KeyCode::Digit5, None),
         name: "bounce",
+        group: Group::Lights,
         row: HudRow::Lights,
         get: lights_words,
         flip: |m, now| {
@@ -411,6 +669,7 @@ pub static TOGGLES: &[Toggle] = &[
     Toggle {
         press: Press::Key(KeyCode::KeyX, Some(PadButton::West)),
         name: "cutaway",
+        group: Group::Debug,
         row: HudRow::Controls,
         get: |m| format!("cutaway {}", m.cutaway.name()),
         flip: |m, _| m.cutaway = m.cutaway.next(),
@@ -418,6 +677,7 @@ pub static TOGGLES: &[Toggle] = &[
     Toggle {
         press: Press::Key(KeyCode::KeyL, None),
         name: "shadow ray",
+        group: Group::Debug,
         row: HudRow::Controls,
         get: |m| format!("shadow ray {}", on(m.shadow_ray)),
         flip: |m, _| m.shadow_ray = !m.shadow_ray,
@@ -425,6 +685,7 @@ pub static TOGGLES: &[Toggle] = &[
     Toggle {
         press: Press::Scroll,
         name: "dig radius",
+        group: Group::Moving,
         row: HudRow::Controls,
         get: |m| {
             format!(

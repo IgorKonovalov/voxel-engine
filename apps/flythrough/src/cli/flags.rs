@@ -270,12 +270,11 @@ fn run_flags() -> Vec<Flag<Parsing>> {
             "print this help and exit",
             |p: &mut Parsing| p.args.help = true,
         ),
+        super::parse::keys_flag(),
         Flag::switch(
             &["--check-args"],
             "parse the arguments, print `arguments ok` and exit",
-            |p: &mut Parsing| {
-                p.args.check_args = true;
-            },
+            |p: &mut Parsing| p.args.check_args = true,
         ),
         Flag::value(
             &["--seed"],

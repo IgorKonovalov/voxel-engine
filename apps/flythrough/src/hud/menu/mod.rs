@@ -1,0 +1,146 @@
+//! The fly-through's menu (ADR-0061): one view over the key tables ([`entries`]), grouped
+//! into pages. The toggles ([`crate::toggles::TOGGLES`]) and the actions
+//! ([`crate::toggles::ACTIONS`]) are its entries; the fixed keys ([`FIXED_KEYS`]) stay bound
+//! and are not entries. `flythrough --keys` prints the tree ([`write_tree`]).
+
+mod entries;
+
+pub use entries::*;
+
+use vxe_app::{KeyCode, PadButton};
+
+/// A page of the menu: the entries of one group, in the order the root page lists them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Group {
+    Moving,
+    Camera,
+    Look,
+    Upscaler,
+    Lighting,
+    Lights,
+    Queue,
+    Entities,
+    Audio,
+    Readings,
+    Debug,
+}
+
+impl Group {
+    /// The groups in the root page's order.
+    pub const ALL: [Self; 11] = [
+        Self::Moving,
+        Self::Camera,
+        Self::Look,
+        Self::Upscaler,
+        Self::Lighting,
+        Self::Lights,
+        Self::Queue,
+        Self::Entities,
+        Self::Audio,
+        Self::Readings,
+        Self::Debug,
+    ];
+
+    /// The group's name as its page title and the palette's prefix show it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Moving => "moving",
+            Self::Camera => "camera and paths",
+            Self::Look => "look",
+            Self::Upscaler => "upscaler",
+            Self::Lighting => "lighting",
+            Self::Lights => "lights",
+            Self::Queue => "light queue",
+            Self::Entities => "entities",
+            Self::Audio => "audio",
+            Self::Readings => "readings",
+            Self::Debug => "debug",
+        }
+    }
+}
+
+/// The keys that stay bound and are no entry: movement and look's keys, the stats overlay and
+/// the quit. The fly-through reads them by hand (`fly`, `run::frame`).
+pub const FIXED_KEYS: &[KeyCode] = &[
+    KeyCode::KeyW,
+    KeyCode::KeyA,
+    KeyCode::KeyS,
+    KeyCode::KeyD,
+    KeyCode::Space,
+    KeyCode::KeyC,
+    KeyCode::ShiftLeft,
+    KeyCode::F2,
+    KeyCode::Escape,
+];
+
+/// The fixed binds in words, the Keys page's header block and `--keys`' first group: the
+/// binds, then what they do.
+pub const FIXED_ROWS: &[(&str, &str)] = &[
+    ("W A S D", "move"),
+    ("Space C", "up and down"),
+    ("Shift", "faster"),
+    ("mouse", "look"),
+    ("left click / R2", "dig"),
+    ("right click / L2", "fill"),
+    ("F2 / pad Start", "the stats overlay"),
+    ("Esc", "quit"),
+];
+
+/// The few run flags an action's mode reads, beside the modes: whether the body walks, and
+/// the audio's switches and mix when the run has audio.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RunView {
+    pub walking: bool,
+    pub audio: Option<AudioView>,
+}
+
+/// The audio's switches and mix as the audio entries show them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AudioView {
+    pub echoes: bool,
+    pub tail: bool,
+    pub echo_db: f32,
+    pub tail_db: f32,
+    pub predelay_ms: f32,
+    pub glide: bool,
+    pub direct_delay: bool,
+}
+
+/// A key's name as the menu shows it: `F7`, `A`, `1`, `,`, `Backspace`, `Left`. Read from the
+/// key's `Debug` name, so this names no key of its own.
+pub fn key_name(key: KeyCode) -> String {
+    let debug = format!("{key:?}");
+    let short = match debug.as_str() {
+        "Comma" => ",",
+        "Period" => ".",
+        "Semicolon" => ";",
+        "Quote" => "'",
+        "Slash" => "/",
+        "Backslash" => "\\",
+        "BracketLeft" => "[",
+        "BracketRight" => "]",
+        "Minus" => "-",
+        "Equal" => "=",
+        "Backquote" => "`",
+        "Escape" => "Esc",
+        "ShiftLeft" => "Shift",
+        "ArrowLeft" => "Left",
+        "ArrowRight" => "Right",
+        "ArrowUp" => "Up",
+        "ArrowDown" => "Down",
+        d => {
+            let d = d.strip_prefix("Key").unwrap_or(d);
+            return d.strip_prefix("Digit").unwrap_or(d).to_owned();
+        }
+    };
+    short.to_owned()
+}
+
+/// A pad button's name as the menu shows it: `pad West`, `pad D-pad up`.
+pub fn pad_name(button: PadButton) -> String {
+    let debug = format!("{button:?}");
+    match debug.strip_prefix("Dpad") {
+        Some(dir) => format!("pad D-pad {}", dir.to_lowercase()),
+        None => format!("pad {debug}"),
+    }
+}

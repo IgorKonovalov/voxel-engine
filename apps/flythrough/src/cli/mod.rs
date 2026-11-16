@@ -657,6 +657,8 @@ pub struct Args {
     pub check_args: bool,
     /// `--help`: print the flag table ([`help`]) and exit 0.
     pub help: bool,
+    /// `--keys`: print the key tree at the start modes (`hud::menu::keys_text`) and exit 0.
+    pub keys: bool,
     /// `--tester`: only movement, look, the dig, `F1`, `T` and `Esc` act
     /// (`flythrough::path::tester_action`), and the banner shows the path's mode alone.
     pub(crate) tester: bool,

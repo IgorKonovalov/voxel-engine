@@ -92,23 +92,29 @@ fn every_toggle_shows_its_mode_in_the_hud_grid() {
     }
 }
 
-/// No two inputs share a key: every key of the toggle table and of the run's action keys
-/// (`toggles::ACTION_KEYS`) is bound once. `1` to `6` are the lights' (drop, carry, colour,
-/// remove, bounce, fire); the bake queue's six toggles sit on `F`, `Tab`, `Slash`, `Quote`,
-/// `Backspace` and `Backslash` (the owner, 2026-11-13: the laptop has no `Home`, `End`, `Page`
-/// or `Delete` keys), each changing the `queue` row's words.
+/// No two inputs share a key: every key and pad button of the toggle table, of the actions
+/// (`toggles::ACTIONS`) and of the fixed set (`hud::menu::FIXED_KEYS`) is bound once. `1` to
+/// `6` are the lights' (drop, carry, colour, remove, bounce, fire); the bake queue's six
+/// toggles sit on `F`, `Tab`, `Slash`, `Quote`, `Backspace` and `Backslash` (the owner,
+/// 2026-11-13: the laptop has no `Home`, `End`, `Page` or `Delete` keys), each changing the
+/// `queue` row's words.
 #[test]
 fn no_two_inputs_share_a_key() {
-    use flythrough::toggles::{ACTION_KEYS, KEY_DROP, KEY_FIRE, KEY_REMOVE, Press};
+    use flythrough::hud::menu::FIXED_KEYS;
+    use flythrough::toggles::{ACTIONS, Bind, KEY_DROP, KEY_FIRE, KEY_REMOVE, Press};
     use vxe_app::KeyCode;
-    let mut keys: Vec<KeyCode> = TOGGLES
+    let mut keys: Vec<Bind> = TOGGLES
         .iter()
-        .filter_map(|t| match t.press {
-            Press::Key(k, _) => Some(k),
-            Press::Scroll => None,
+        .flat_map(|t| match t.press {
+            Press::Key(k, pad) => std::iter::once(Bind::Key(k))
+                .chain(pad.map(Bind::Pad))
+                .collect(),
+            Press::Scroll => Vec::new(),
         })
         .collect();
-    keys.extend_from_slice(ACTION_KEYS);
+    keys.extend(ACTIONS.iter().flat_map(|a| a.binds.iter().copied()));
+    keys.extend(FIXED_KEYS.iter().map(|&k| Bind::Key(k)));
+    assert!(keys.len() > TOGGLES.len() + ACTIONS.len(), "{keys:?}");
     for (i, k) in keys.iter().enumerate() {
         assert!(!keys[i + 1..].contains(k), "{k:?} is bound twice");
     }
