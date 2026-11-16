@@ -1,7 +1,6 @@
 # 0076: A key help overlay for the fly-through, written from the key table
 
-> **Status:** approved (2026-11-16, the owner's go: `F1` is the help key everywhere and the frame
-> readings move to `Enter`; the other questions take the recommendations)
+> **Status:** superseded by Plan 0080 (2026-11-16, the owner approved the fold: Phase 1 is 0080's Phase 1, Phase 2 sits in 0080's Phase 3, the panel is the menu's Keys page)
 > **Created:** 2026-11-16
 > **Milestone:** none of its own. The testbed (`apps/flythrough`); nothing under `crates/` changes.
 > **Related ADRs:** none new. Rests on ADR-0009 (the text overlay, no UI library) and ADR-0054
@@ -9,6 +8,19 @@
 > **Starts after:** Plans 0062 and 0075 have merged. Both edit `apps/flythrough/src/toggles.rs`
 > (0062 adds `` ` ``, `F11` and `F12` and gives `4` a second meaning; 0075 binds `Esc` while
 > loading), so this lane branches from the main that holds both and lists their keys.
+> **Amended 2026-11-16 (architect; the owner approved it 2026-11-16 with Plan 0080):** the owner asked the same day for a menu
+> system in place of a full keyboard ("keep using keys to minimal"). ADR-0061 and
+> [Plan 0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) answer
+> it, and the recommendation (0080's owner question 6) is to **fold this plan into Plan 0080**:
+> its Phase 1 (the `ACTIONS` table, the groups, `--keys`, the source scan) is 0080's Phase 1 as
+> written here; its Phase 2 (`F1` opens the help, `Enter` takes the readings, the `F1` renames)
+> is inside 0080's Phase 3; its panel becomes the menu's flat **Keys page** (every entry with its
+> binds and live value, the fixed keys on top), which `F1` opens, instead of a two-column overlay
+> of its own; its Phase 4 backdrop facility is 0080's Phase 5. The owner's answers of 2026-11-16
+> (`F1` is help everywhere, the readings move to `Enter`, no backdrop until a window asks, `Esc`
+> keeps quitting with the menu closed) carry over unchanged. On the owner's go this plan's status
+> becomes `superseded by Plan 0080` and no lane starts on it; if the owner keeps it, it runs first
+> as approved and 0080 replaces its panel.
 
 ## TL;DR
 

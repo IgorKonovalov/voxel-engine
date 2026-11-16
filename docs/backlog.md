@@ -100,6 +100,10 @@ reading against a new `nfr.md` line.
 
 Pick up when the lighting base is settled: Plans 0056, 0057 and 0058 closed.
 
+### Hundreds or thousands of entities
+
+Parked 2026-11-16 by the owner ("minecraft can have thousands of entities"). Today: `MAX_ENTITIES` 64, `MAX_ENTITY_PARTS` 512 (`vxe-render` `entities.rs`), 6 instance bits in the hit record. The cost is the trace, not the caps: Plan 0062 Phase 4 (`docs/plans/logs/0062.md`) read 64 walkers at +3.4 to 4.4 ms on the RTX 3080 Laptop and +32 to 34 ms on the Radeon iGPU, growing with screen cover and shadowing lights. **Hundreds:** wider caps and hit bits, the instance tree built on the GPU, coarse far models, shadow rays testing only entities near their light (one or two plans, no ADR). **Thousands:** entities rasterized into the hit buffer beside the traced world, which reverses ADR-0050's choice: an ADR and a spike first. **The owner's direction (2026-11-16): trace only the near ones, merge the crowded ones.** Distance tiers: near entities traced in full; mid ones traced on a coarse merged model (parts folded into one volume at detail 1); far ones as one box or impostor, or dropped below a pixel. Clusters: entities sharing a spot re-voxelized together at low resolution on the GPU each frame (or every few) into one cluster volume, walked once per ray instead of once per overlapping entity. Shadow rays test the near tier only. The server's ray query stays exact per entity; the tiers are render-only. Pick up when a consumer needs more than 64 on screen.
+
 ### Darker scenes, and light intensity varied by seed
 
 Noted 2026-11-15, the owner, after the darker Windows image: "it was a nice scene, we should
@@ -216,7 +220,7 @@ Parked 2026-11-15 from Plan 0058's re-window (step 1b, the plan-0058 worktree's 
 
 ### The hall's headless render went dark: `showcase_hall_golden_is_lit_by_its_four_ores`
 
-Read 2026-11-11 at Plan 0060's close review: the soak test failed with 98.6927 % of pixels over 2/255, the same on the base a8b1a2c. Re-blessed 2026-11-11 at Plan 0061's close (fix pass 6287e88): the new golden pins today's render, which Plan 0061's defaults do not move (the library's read and weights give the same pixels), but it is not a correct hall. Mean sRGB luma fell from 11.97 (Plan 0057's image, 2de29c6) to 2.73; the walls are black and only the ores' faces are lit; ember covers 0 pixels. The test still fails its hue assert (`[336, 0, 209, 121]`) and would fail its luma band (11..40). The owner's window at Plan 0061 saw a lit hall, so the likely cause is the headless rig (`gpu_golden.rs`'s `showcase_hall`: its bake or settle state under the baked light since Plan 0059), not the look; unverified. What it takes: bisect the rig's render between 2de29c6 and today, fix the rig, re-bless after a look, and keep the hue and luma asserts as they are. The weekly soak fails on it until then.
+Read 2026-11-11 at Plan 0060's close review: the soak test failed with 98.6927 % of pixels over 2/255, the same on the base a8b1a2c. Re-blessed 2026-11-11 at Plan 0061's close (fix pass 6287e88): the new golden pins today's render, which Plan 0061's defaults do not move (the library's read and weights give the same pixels), but it is not a correct hall. Mean sRGB luma fell from 11.97 (Plan 0057's image, 2de29c6) to 2.73; the walls are black and only the ores' faces are lit; ember covers 0 pixels. The test still fails its hue assert (`[336, 0, 209, 121]`) and would fail its luma band (11..40). The owner's window at Plan 0061 saw a lit hall, so the likely cause is the headless rig (`gpu_golden.rs`'s `showcase_hall`: its bake or settle state under the baked light since Plan 0059), not the look; unverified. What it takes: bisect the rig's render between 2de29c6 and today, fix the rig, re-bless after a look, and keep the hue and luma asserts as they are. The weekly soak fails on it until then. **Done 2026-11-16 (chore `chore-showcase-golden`, b09e018):** the rig, not the look. `showcase_hall` synced the mirror and stepped frames but never baked the light store, which the fly-through's pre-roll and coarse pass fill before its first frame; since Plan 0059 the cube faces read only that store, so unbaked walls read no light and only the ores' own emission showed. The rig now bakes the whole showcase world (64 samples a brick direction, as the dark cave and castle goldens do) before its 64 frames. On lavapipe: mean sRGB luma 14.4/255, hue shares amber 4.31 %, ember 0.26 %, cyan 4.55 %, violet 0.36 %, 0 pixels over 2/255 with the emission off; every assert as written passes. `showcase_hall.png` re-blessed; it matches Plan 0057's image (2de29c6) by eye.
 
 ### Automatic extremity bounds from declarative noise layers
 
@@ -433,8 +437,29 @@ Owed 2026-11-15 from Plan 0068's close (its phase review's M2). Under `--tester`
 `flythrough::path::tester_action` only for keys it already chose (`F1`, the left click), so the
 unit test of `tester_action` cannot catch a debug key read outside `handle_input`, as `F2` is.
 What it takes: route every key the frame loop reads under `--tester` through `tester_action`, or a
-test that drives the loop's input handling with the filter on. Pick up with the next change to
-the fly-through's input or with Plan 0073's settings menu.
+test that drives the loop's input handling with the filter on. Taken 2026-11-16 by
+[Plan 0080](plans/0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md)
+Phase 2 (a test drives the loop's input step with the filter on; `Tab` and `Start` map to
+nothing); the entry leaves when that plan closes.
+
+### Mouse pointing and text events for the apps' menu
+
+Parked 2026-11-16 from Plan 0080's draft (owner question 4, recommended later; ADR-0061's
+negatives). `vxe_app::Input` reports no cursor position and no text events, so the menu is keys,
+wheel and clicks, and its palette types from `KeyCode` (wrong letters on a non-QWERTY layout).
+What it takes: `Input::cursor` from winit's `CursorMoved`, the cursor unlocked and shown while
+the menu is open (the shell's `lock_cursor` toggled at run time, with the Wayland grab quirks
+the dev box has shown), a hit test per row (one division on the overlay's cell grid), and
+`KeyEvent::text` passed through as bytes for the filter. Pick up when the owner asks to point
+at the menu, or when a non-QWERTY layout types wrong.
+
+### A radial or hold menu for the pad
+
+Parked 2026-11-16 from Plan 0080's draft (owner question 5). The pad walks the same tree as the
+keyboard (`Start`, the D-pad, `South`, `East`). A radial menu held on a button, or a hold-to-open
+wheel for the entries used most, is a second view over the same `menu::entries()`, drawn on the
+overlay's cell grid as a ring of labels. Pick up after Plan 0080's window, if the owner plays
+with the pad and the tree is too slow.
 
 ### Plan 0068's leftovers from the owner's runs
 
