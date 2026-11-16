@@ -1,10 +1,13 @@
 # 0075: A loading screen: steppable start-up, a progress signal and a default loading frame
 
-> **Status:** in-progress (approved 2026-11-15; a lane stacked on plan-0062, started 2026-11-16)
+> **Status:** done 2026-11-16 (v0.58.0): a window live from the first frame after the device, every
+> start-up stage stepped behind the engine's loading frame and the pipelines built on a worker;
+> the owner's windows passed, the streamed worlds' stutter and one cold first-lighting gap kept as
+> readings. (Approved 2026-11-15; a lane stacked on plan-0062, started 2026-11-16.)
 > **Created:** 2026-11-15
 > **Milestone:** none of its own. The testbed and the tester build (M7, Plan 0068); the engine
 > side serves any consumer's start-up.
-> **Related ADRs:** [ADR-0059](../adrs/0059-loading-runs-as-time-sliced-steps-on-the-apps-frame-loop-behind-an-engine-loading-frame.md)
+> **Related ADRs:** [ADR-0059](../../adrs/0059-loading-runs-as-time-sliced-steps-on-the-apps-frame-loop-behind-an-engine-loading-frame.md)
 > (proposed): loading as time-sliced steps on the app's frame loop, the engine's pieces and the
 > app's sequence. Rests on ADR-0001 (the game owns its loop), ADR-0009 (the text overlay, no UI
 > library) and ADR-0054 (the tester runs the fly-through as a child).
@@ -385,7 +388,7 @@ Answered by the owner at the go, 2026-11-15 (Amended 2026-11-15 (owner)):
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. Readings,
-> attempts and resume notes go to [`docs/plans/logs/0075.md`](logs/0075.md).
+> attempts and resume notes go to [`docs/plans/logs/0075.md`](../logs/0075.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
@@ -397,7 +400,7 @@ Answered by the owner at the go, 2026-11-15 (Amended 2026-11-15 (owner)):
 | 6: the owner's window | human | done 2026-11-16 06:49 to 07:05, Linux, the RTX; the fade and the 25 ms slice picked; the cost and interval misses of Phase 5 accepted at the window; the streamed worlds' stutter to Followups; the owner asked for a frame right after start (Phase 6b) | 43f76669 |
 | 6b: a frame before the device | dev | done; the first present is the new `App::splash` frame after the device; the castle's prefabs build on a thread joined in `init`; the bounded level's join stays before the device (its limits and shard layout read its content); the instance's backends unchanged (only Vulkan and DX12 are built); outside `Files touched`: `apps/flythrough/src/setup.rs` (the castle's thread); `vxe-app` gained `ShellConfig::start` and the `start-up:` lines; item 3 not built (window to first frame 278 to 394 ms on the RTX); the owner accepted the current behaviour (option c, 2026-11-16), the CPU-drawn frame parked in the backlog | 6801cc13 |
 | 7: after the window | dev | done; every pick was already the default (fade 250, slice 25, the screen on in a window and off headless), no flag changed; the 0.3 ms loading-pass budget counts on the RTX only (owner); the golden blessed on lavapipe; outside `Files touched`: `crates/vxe-render/Cargo.toml` (`png` as a dev-dependency) and `Cargo.lock`; the close block waits for the merge of plan-0062 and main | 3b0510fc |
-| 7b: nothing blocks the window, and one centred picture | dev | done; under the screen the frame's creation, its settings, the mirror, the presenter, the overlay, the timers, the entity pipelines and (outside the plan's list, a 280 ms compile the readings showed) the light bake's pipeline build on a worker thread (`build_gfx`); the stage is renamed `building the pipelines`, weight 1.6; the screen off builds in `init` as before; outside `Files touched`: `crates/vxe-render/src/frame/baked.rs` (`Frame::prepare_bake`), `crates/vxe-render/src/lib.rs` (`LoadingLayout`), the fly-through's `tests/gpu_loading.rs` (the stage's name); not met as stated: with the driver compiling, one or two gaps of 144 to 207 ms at the first `lighting the near chunks` frames (headless on the RTX; warm cache max 87 ms); the windowed reading is the owner's runner `live/session75c.sh` | committed with this row |
+| 7b: nothing blocks the window, and one centred picture | dev | done; under the screen the frame's creation, its settings, the mirror, the presenter, the overlay, the timers, the entity pipelines and (outside the plan's list, a 280 ms compile the readings showed) the light bake's pipeline build on a worker thread (`build_gfx`); the stage is renamed `building the pipelines`, weight 1.6; the screen off builds in `init` as before; outside `Files touched`: `crates/vxe-render/src/frame/baked.rs` (`Frame::prepare_bake`), `crates/vxe-render/src/lib.rs` (`LoadingLayout`), the fly-through's `tests/gpu_loading.rs` (the stage's name); not met as stated: with the driver compiling, one or two gaps of 144 to 207 ms at the first `lighting the near chunks` frames (headless on the RTX; warm cache max 87 ms); the windowed reading is the owner's runner `live/session75c.sh` | 90acb176 |
 
 ### Notes
 
@@ -428,6 +431,16 @@ Answered by the owner at the go, 2026-11-15 (Amended 2026-11-15 (owner)):
   not turn during it (5.7 to 9.8 s on the RTX when the driver compiles, 70 to 110 ms cached).
 
 ### Close triggers
+
+Closed 2026-11-16 by a fresh-session review on 2324bc08 (main e6deab71 merged): clean, v0.58.0.
+Every named test exists and asserts its claim; the gate tier 981 run, 981 passed, 101 skipped,
+1074.7 s (`--test-threads 2`, three lanes, 1-minute load 15.6 at the start, 5.4 at the end,
+loaded), clippy, fmt, doctests, `cargo deny` and the doc gates 0. ADR-0059 accepted with an
+Outcome (the pipelines on a worker, the splash through `vxe-app`). Readings: `docs/nfr.md`
+section 7. Misses accepted by the owner at the windows: the cost on the streamed worlds (+8 to
++10 % against 3 %), the interval p95 near 100 ms there, the cold first-lighting gap (130 to
+210 ms against 100 ms), the loading pass on lavapipe (the 0.3 ms line counts on the RTX). The
+followup and the parked rebuild are in `docs/backlog.md`.
 
 ## Followups
 

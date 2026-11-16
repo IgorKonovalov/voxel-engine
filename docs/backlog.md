@@ -224,6 +224,22 @@ Read 2026-11-11 in Plan 0060's Phase 4 window (`docs/plans/logs/0060.md`): the f
 
 Parked 2026-11-16 by the owner at Plan 0075's Phase 6b (`docs/plans/logs/0075.md`). Since 6b the window shows a static loading frame 0.3 to 0.4 s after process start on the RTX (0.2 to 0.3 s on the Radeon iGPU), drawn by the GPU right after the device. What is left before it is the instance (78 to 244 ms), the device and the surface's configure. In two runs, the first launch after a pause, the instance took about 1.6 s (a guess: the NVIDIA dGPU waking; not confirmed). On Wayland nothing shows until a buffer is attached, so a frame before the device needs a CPU-filled buffer: the `softbuffer` crate (rust-windowing, winit's org; wl_shm on Linux, GDI on Windows), or the same by hand per platform. Windows already paints a window's class background at once. Cost: a dependency and its ADR, about 100 lines in `vxe-app`'s shell, and the window's surface handed from the CPU buffer to wgpu's swapchain, read on both platforms. What it takes: a reading of how often the slow instance happens on testers' machines (the `start-up:` lines in run logs), then a small plan. Pick up if a tester reports a blank window at start.
 
+### The loading frames stutter on the streamed worlds
+
+Noted 2026-11-16 at Plan 0075's close (its Followups; `docs/plans/logs/0075.md`, Phases 5 and 6).
+On the cave and the castle the loading frames run near 24 fps (interval p95 96 to 104 ms on the
+RTX); the owner saw it ("like fps in 30-40") and accepted it. A pre-roll bake step runs 70 to 140
+ms against the 25 ms slice, and each loading frame waits for the previous slice's GPU work. What
+it takes: a bake step split under the slice (fewer samples a step, or a step bounded by time),
+read on the castle. Pick up with the next start-up plan, or when a tester reports a jerky load.
+
+### Rebuild the world live behind the loading screen
+
+Parked 2026-11-15 by Plan 0075 ("What this plan does NOT do"). A settings change of Plan 0069's
+`Rebuild` class could drop to the loading screen, rebuild, and step back in, instead of a restart.
+What it takes: the run's stages re-entered from a live run, the world and mirror torn down in
+place. Pick up after Plan 0069 lands, if a rebuild-class setting proves common.
+
 ### The pre-roll never settles at small residencies
 
 Seen 2026-11-15 by Plan 0075's lane while sizing its streamed test (`docs/plans/logs/0075.md`): with `--residency 2,3` or `4,6` and `--near 0`, the start-up pre-roll runs to its 120 s cap, with the loading screen on or off; the camera's chunk never reports its light settled. Not read further. A guess, not isolated: the pre-roll's "near chunks hold their light" condition waits on a chunk the small window never makes resident, or keeps evicting and reloading. What it takes: a headless repro at main with the pre-roll's wait condition logged per chunk, then a fix in that condition. Pick up before a consumer runs small residencies.
