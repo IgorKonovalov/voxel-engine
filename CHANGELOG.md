@@ -6,6 +6,8 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+- **Fixed (render): the present pass decodes for an sRGB surface with the exact sRGB curve, not `pow(c, 2.2)`, so every 8-bit value of the marcher's target reaches an sRGB surface as the same byte (`pow 2.2` moved 216 of 256, dark ones by up to 9 steps: 16 to 7).**
+
 ## [0.55.0] - 2026-11-16
 
 Plan 0044 (a minor bump: `Params` gains `cam_chunk` where its tail padding was, `Frame` gains two counters, and `vxe-render` gains a `test-support` feature). The hot-path and defect pass. Each fix keeps its mechanism and removes waste or a defect: every golden, pinned hash, controller course and mixer sample is unchanged. The audio callback frees no `Source` and zeroes no delay network in one block (the side lane, merged earlier). The frame keeps its bind groups and views while what they bind is unchanged, so an encode after the first two builds none; encode CPU p50 falls from 0.20 to 0.03 ms on the RTX 3080 Laptop and from 0.22 to 0.06 ms on the RADV RENOIR. The march reads a voxel's material only at its final hit, divides by shifts, and counts its steps only in the steps view; at the defaults the march GPU p50 reads 1.44 to 1.48 ms (base 1.57 to 2.40) on the RTX and 8.94 to 8.97 ms (base 8.80 to 9.05) on the RENOIR. The world's raycast reads a chunk once per run of steps, and the controller collects its boxes once per tick (the side lane). The render tests share one adapter rule, so `VXE_REQUIRE_SOFTWARE_ADAPTER=1` fails rather than skips without lavapipe, and a naga layout test pins every uniform struct and same-named constant against Rust. Phase 2 ran as Plan 0064's Phase 3, and Phase 4 as Plan 0070.
