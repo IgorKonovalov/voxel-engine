@@ -302,7 +302,31 @@ walk-speed spike below.
 `FLAG_SKIPS`, `FLAG_MASKS`, `FLAG_CUTAWAY`, `FLAG_FIELD_SPLIT`, `coarse_span`, `forced_level`,
 the view-mode chains in the composite and `LIGHTING_GRADIENT` are tested per step or per pixel
 from a uniform and are fixed for a pipeline's life in production. `override` constants would
-let the compiler drop them. Small each; fits Plan 0044's Phase 5 or the shader toolchain spike.
+let the compiler drop them. Small each. Plan 0044's Phase 5 (closed 2026-11-16) did only the step
+counters (`override COUNT_STEPS`, the pattern to copy); the rest fits the shader toolchain spike.
+
+### Plan 0044's leftovers (close review, 2026-11-16)
+
+Owed by nobody yet; none blocks anything.
+- **The plan's four followups:** workgroup-tiled upscale and a-trous with a decoded guide texture
+  (a measured plan); one blue-noise load per pixel for `rand` (changes the noise, needs the
+  owner's eye); whether the residency pressure rule (`RadiusRule`, `Deferrals`) becomes an engine
+  type (an architect interview); a per-update ray budget for the audio probes.
+- **`a_frame_after_the_second_builds_no_bind_group` cycles six lighting variations under three
+  upscalers**, not the exposure modes, the full lighting tier, the store read, the shadow walk
+  or the debug views. A mode that rebuilds a group every frame there would not be caught.
+  Widen the test when Plan 0069's settings surface lists the modes.
+- **`frame/encode.rs` is at 1190 of the 1200-line cap.** The next pass that adds to the encode
+  splits it first.
+- **The committed `castle_gate.png`, `look_gradient27.png` and `look_trilinear8.png`** differ by
+  a few pixels from the dev box's lavapipe (within the 0.1 % tolerance), at the plan's base and
+  tip alike; CI's lavapipe blesses them. Re-bless on CI if one ever drifts past the tolerance.
+- **The soak test `a_shown_hud_and_the_queue_line_wait_on_the_gpu_nowhere` fails, unrelated to
+  Plan 0044.** Its `find(|l| l.starts_with("frames: "))` takes the queue step's tally line
+  (`frames: queue step A: ...`, printed first since 87bf0d2, Plan 0067 Phase 1) instead of the run's
+  `frames: N frames; ...` line. Fix: match `frames: {FRAMES} frames;` in the test. Read at the
+  close review's soak run (whole workspace, 73 run, 71 passed; the other failure is the hall
+  entry above).
 
 ### Slot words packed on the workers
 

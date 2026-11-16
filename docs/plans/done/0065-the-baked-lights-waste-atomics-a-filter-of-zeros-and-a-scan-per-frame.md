@@ -5,7 +5,7 @@
 > far normal reads a Full brick's mask, RCAS tone maps; every golden byte-identical. FSR 2 and the
 > lamp-on full-tier a-trous stay over their lines, as the plan expected.
 > **Created:** 2026-11-10
-> **Milestone:** cross-cutting (code health), like [Plan 0044](../0044-hot-path-and-defect-pass.md).
+> **Milestone:** cross-cutting (code health), like [Plan 0044](0044-hot-path-and-defect-pass.md).
 > It serves `docs/nfr.md` section 2's lighting, denoise and upscale lines.
 > **Related ADRs:** none. Each fix keeps its mechanism and removes work whose result is
 > discarded or already known. It rests on

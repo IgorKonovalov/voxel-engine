@@ -300,7 +300,9 @@ throughput, not the order, limits the far light (Plan 0067 takes it). Amended 20
 0045 moves ahead of Plan 0058 and the rest of Plan 0044, once Plans 0061, 0067 and 0068 have merged. Plan
 0045 closed 2026-11-13 (v0.50.0): the mega files are directories of owned parts, `vxe-render`'s
 surface is a curated root with `debug` and `internals`, and two gates cap file and function size;
-no behaviour changed.
+no behaviour changed. Plan 0044 closed 2026-11-16 (v0.55.0): the audio callback frees nothing, the frame keeps its
+bind groups by what they bind, the march reads a material only at its hit, the render tests share one
+device rule and a naga layout test pins the uniform structs; images, hashes and samples unchanged.
 
 Plan 0055, the clarity pass, closed 2026-11-03 (v0.40.0, ADR-0042 accepted; Outcomes on ADR-0011,
 ADR-0024, ADR-0034 and ADR-0041): procedural detail is removed, so ADR-0011 has nothing left in the

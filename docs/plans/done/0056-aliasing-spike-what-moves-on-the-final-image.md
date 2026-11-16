@@ -16,7 +16,7 @@
 > ([`LIGHT-FEEDBACK.md`](../../../LIGHT-FEEDBACK.md), "What the owner wants" and "The hero that never
 > settled".)
 > **Starts after:** [Plan 0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md)'s
-> Phase 4 verdict, and before [Plan 0044](../0044-hot-path-and-defect-pass.md). See "Where it sits".
+> Phase 4 verdict, and before [Plan 0044](0044-hot-path-and-defect-pass.md). See "Where it sits".
 
 ## TL;DR
 

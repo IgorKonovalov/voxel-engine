@@ -1,12 +1,13 @@
 # 0044: The hot-path and defect pass: what the frame, the sync, the walk, the edits and the audio callback do for nothing
 
-> **Status:** in-progress (2026-11-15, Phases 2, 3, 5, 8 from `371fa7a`; side lane Phases 1, 6,
-> 7 merged at `d6d2dfa`); approved 2026-10-22, amended 2026-11-10 (review pass)
+> **Status:** done (closed 2026-11-16, v0.55.0: every phase done or struck to the plan that ran
+> it, goldens and hashes unchanged, encode CPU down about 4 to 6 times, the march at or under its
+> base on both adapters); approved 2026-10-22, amended 2026-11-10 (review pass)
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
 > `hud.rs`). Read each through "Where things moved" in
-> [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
+> [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
 > phases re-cut their Files touched at their start.
 > **Created:** 2026-10-22
 > **Milestone:** cross-cutting (code health). No milestone owns it: it serves the M1 to M4
@@ -53,7 +54,7 @@
 > **Review note (2026-11-10, the static performance review at `50b637a`; the owner approved
 > Plans 0064 and 0065 the same day):**
 > - **Phase 2 (the HUD's timers) has moved whole to
->   [Plan 0064](done/0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md), Phase 3.**
+>   [Plan 0064](0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md), Phase 3.**
 >   It claims no golden and its fix is worth little behind three plans. Its text stays below
 >   as that phase's reference; `dev` does not run it here.
 > - **Phase 4's premise is weaker than written.** `docs/nfr.md` section 5 notes (2026-11-04)
@@ -63,7 +64,7 @@
 > - **Phase 5 (the walk) has a case for running before Plans 0061 and 0058**, which decide by
 >   hit and light readings that include the material read it removes. It collides with their
 >   shader files and forces a re-bake, so it stays where it is (owner, 2026-11-10).
->   [Plan 0065](done/0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)'s
+>   [Plan 0065](0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md)'s
 >   Phase 4 takes the far normal's 27 bits from the brick's mask; whichever lands second keeps
 >   the other's path.
 
@@ -609,6 +610,10 @@ Readings, attempts and resume notes go to `docs/plans/logs/0044.md`, not here.
 - Encode CPU (Phase 3, loaded 3.7 to 9.5): p50 0.20 to 0.03 ms RTX, 0.22 to 0.06 ms RADV.
 - Sections 4 and 9 (Phases 1, 6, 7): the side lane's readings, readings log Phases 1, 6, 7 and
   the fix passes.
+- Close review (architect, fresh session, 2026-11-16, at `ea45d02`): gate tier re-run, exclusive
+  perf lock, 12 jobs, 16 GiB scope, lavapipe, load 4.50 at the start (loaded): 903 run, 903
+  passed, 91 skipped, 691 s. Clean; the minor findings and the followups below are in
+  `docs/backlog.md` ("Plan 0044's leftovers").
 
 ## Followups
 
