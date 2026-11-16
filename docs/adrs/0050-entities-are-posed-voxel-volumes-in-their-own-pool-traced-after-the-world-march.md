@@ -1,8 +1,9 @@
 # ADR-0050: An entity is a set of posed voxel volumes in a pool of its own, traced after the world march, with poses in fixed point
 
-> **Status:** proposed
+> **Status:** accepted (2026-11-16, Plan 0062 closed; see Outcome: the emissive part's default
+> and the costs differ from the decision as written)
 > **Date:** 2026-11-10
-> **Related plan(s):** [Plan 0062](../plans/0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md)
+> **Related plan(s):** [Plan 0062](../plans/done/0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md)
 > (builds it), [Plan 0063](../plans/0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
 > (clips over it)
 
@@ -94,3 +95,26 @@ cheap, and a flat walk remains the tree with one leaf.
 ### Alternative D: floating-point poses and a render-only entity
 Shorter code, and `glam` does the math. It lost because the consumer's server decides hits, and
 a float pose composed on two platforms is not guaranteed bit-identical.
+
+## Outcome
+
+2026-11-16, at Plan 0062's close (v0.56.0). The model, the fixed-point pose, the ray query, the
+pool, the tree and the tracing order shipped as decided. Three points differ from the text above:
+
+- **The emissive light of the world.** The owner's window (Plan 0062 Phase 6c) picked
+  `EntityLight::World` as the default: an entity's emissive part is the baked light of the
+  nearest world face behind its hit, of its normal's direction (up to 4 cells back along the
+  dominant axis), read in the temporal pass with no random sample; the ADR-0043 fallback named
+  in the Decision is `EntityLight::Own`, kept as a setting. The owner's window read 16 and 64
+  walkers without the grain this ADR's Negative list expects; the light still ignores the
+  entity's own occlusion of the world.
+- **The cost.** The walk is paid mostly in the light pass (the list lights' shadow rays through
+  the tree), 3 to 10 times the plan's guesses: at 16 walkers at the spawn, 1920 x 1080 under
+  FSR 2 at 1.5, with their eye lights in the list,
+  the frame grows by about 1.8 to 2.2 ms on the RTX 3080 Laptop and 15 to 23 ms on
+  the RADV RENOIR (readings in `docs/nfr/02-frame-budget.md`). The owner accepted them as
+  measured. With no part drawn the frame dispatches variants built with `ENTITIES` false, so
+  the zero-entity frame is within noise of the frame before entities.
+- **The pipelines.** The entity variants compile slowly on the NVIDIA driver (about 6 s for the
+  set). `Frame::prepare_entities` builds them at start-up; a frame without the call builds them
+  on the first frame that draws a part.

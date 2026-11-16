@@ -14,7 +14,7 @@
 > [Plan 0077](0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md)'s
 > owner question 6 (answered "not now" there, with a backlog entry promised; none exists on main
 > at b4e72e35, so this plan is that entry).
-> **Starts after:** [Plan 0062](0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md)
+> **Starts after:** [Plan 0062](done/0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md)
 > and [Plan 0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
 > have merged into main (both edit `crates/vxe-render/src/entities.rs`, `entity.wgsl`,
 > `apps/flythrough/src/viewer.rs` and `walker.rs`). **Before Plan 0077's lane** (owner question

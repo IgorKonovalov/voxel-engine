@@ -1,34 +1,36 @@
 # 0062: Entities: voxel models on rigid parts, traced with the world, lit and shadowed by the list lights, and hit by a headless ray query
 
-> **Status:** in-progress (owner go 2026-11-10; Phase 1 may start now, Phases 2 to 6 start after
-> Plans 0058 and 0045 close and the architect's re-read below)
+> **Status:** done (closed 2026-11-16, v0.56.0: entities traced with the world, lit and shadowed
+> by the list lights, the baked world light their default emissive part, the entity pipelines
+> built at start-up by `Frame::prepare_entities`; the walker costs over the plan's guesses,
+> accepted by the owner as measured); owner go 2026-11-10
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
 > `hud.rs`). Read each through "Where things moved" in
-> [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
+> [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
 > phases re-cut their Files touched at their start.
 > **Created:** 2026-11-10
-> **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md) (the render half; Plan 0008 closed the
+> **Milestone:** M6 in [`docs/roadmap.md`](../../roadmap.md) (the render half; Plan 0008 closed the
 > `.vox` import)
-> **Related ADRs:** [ADR-0050](../adrs/0050-entities-are-posed-voxel-volumes-in-their-own-pool-traced-after-the-world-march.md)
+> **Related ADRs:** [ADR-0050](../../adrs/0050-entities-are-posed-voxel-volumes-in-their-own-pool-traced-after-the-world-march.md)
 > (proposed; the representation), accepted at this plan's close. Rests on
-> [ADR-0044](../adrs/0044-direct-light-from-a-fixed-list-of-analytic-lights-one-shadow-ray-each.md)
+> [ADR-0044](../../adrs/0044-direct-light-from-a-fixed-list-of-analytic-lights-one-shadow-ray-each.md)
 > (the light list and its shadow rays), on
-> [ADR-0043](../adrs/0043-emissive-light-from-a-world-space-per-face-table-and-a-lamp-bounce-probe-channel.md)
+> [ADR-0043](../../adrs/0043-emissive-light-from-a-world-space-per-face-table-and-a-lamp-bounce-probe-channel.md)
 > (the fallback a hit with no cube face takes) and on
-> [ADR-0014](../adrs/0014-prefab-identity-in-the-op-log.md) (a prefab's content id).
+> [ADR-0014](../../adrs/0014-prefab-identity-in-the-op-log.md) (a prefab's content id).
 > **Source:** the owner, 2026-11-10: "we need a plan for voxel model entity ... with possibility
 > of emissive light (gloving eyes for example) - we place model on a level", and the answers
 > under Owner answers.
-> **Starts after:** [Plan 0058](done/0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md)'s
+> **Starts after:** [Plan 0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md)'s
 > close for Phases 2 to 6 (they read its light list, its direct target and its change rule),
-> and after [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md) by the
+> and after [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) by the
 > order in the plans index. **Phase 1 adds a crate and edits no existing source file**; it may
 > run as a side lane at any point. Before the Phase 2 lane starts the architect re-reads Phases 2 to
 > 4 against the tip (Plans 0058 and 0045 move the files they name). Bit and binding numbers
 > are "the next free at the start commit".
-> **Followed by:** [Plan 0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
+> **Followed by:** [Plan 0063](../0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
 > (rig files, clips, the model viewer).
 
 ## TL;DR
@@ -639,7 +641,7 @@ The "go" is given (owner, 2026-11-10: "move all draft plans to approved").
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: `vxe-entity`: models, poses in fixed point, and the ray query | dev | done; names and readings in [logs/0062.md](logs/0062.md) | bc80246 |
+| 1: `vxe-entity`: models, poses in fixed point, and the ray query | dev | done; names and readings in [logs/0062.md](../logs/0062.md) | bc80246 |
 | 2: The mirror and the primary hit | dev | done; names, packing and keys in the readings log | 70bdec7 |
 | 3: Light, shadow and emission | dev | done; readings in the readings log | 31c7540 |
 | 4: Motion | dev | done; the fresh bit's place, the keys and the readings in the readings log | 12f1a62 |
