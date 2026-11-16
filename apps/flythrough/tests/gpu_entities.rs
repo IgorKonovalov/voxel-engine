@@ -804,7 +804,8 @@ fn walker_walk_golden() {
         pitch: -0.35,
         vfov: 1.2,
     };
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/entities/walker/walker.rig");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/entities/walker/walker.rig");
     let mut viewer = flythrough::viewer::Viewer::open(&path, Some("walk".into())).expect("opens");
     assert_eq!(viewer.build_pending(rig.world.materials()), None);
     let l = viewer.loaded.clone().expect("built");
