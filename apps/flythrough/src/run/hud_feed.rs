@@ -508,6 +508,21 @@ pub(crate) fn look_line(look: &LookParams, preset: &LookPreset) -> String {
     )
 }
 
+/// A banner row's colour: red for the model viewer's error row, yellow otherwise.
+pub(crate) fn banner_colour(line: &str) -> HudColour {
+    if crate::viewer::is_error_row(line) {
+        HudColour::Red
+    } else {
+        HudColour::Yellow
+    }
+}
+
+/// Each of `banner`'s rows' colours into `colours`, cleared first ([`banner_colour`]).
+pub(crate) fn banner_colours(banner: &str, colours: &mut Vec<HudColour>) {
+    colours.clear();
+    colours.extend(banner.lines().map(banner_colour));
+}
+
 /// Appends the banner's pacing row, `pace free`, to `out` as a banner row (`hud::start_row`)
 /// for [`hud::BANNER_MS`] after the start (`now_ms` on the frame loop's clock); `false`, and
 /// nothing written, after that.
@@ -770,7 +785,21 @@ impl Run {
         for line in h.banner.lines() {
             h.text.push_str(line);
             h.text.push('\n');
-            h.colours.push(HudColour::Yellow);
+            h.colours.push(banner_colour(line));
+        }
+    }
+
+    /// The model viewer's first build and its reload once a second, at `now_ms` by the frame
+    /// loop's clock: the words it gives are printed and shown in the banner. An error also
+    /// stays on screen until a reload builds ([`crate::viewer::Viewer::error`]).
+    pub(crate) fn poll_viewer(&mut self, now_ms: f64) {
+        if let Some(words) = self
+            .modes
+            .walkers
+            .poll_viewer(now_ms / 1000.0, self.world.materials())
+        {
+            println!("{words}");
+            self.modes.show_lights(words, now_ms);
         }
     }
 
@@ -813,8 +842,17 @@ impl Run {
     }
 
     /// Appends the banner's rows to `out`, the live queue's order and withdrawal in `words`.
+    /// With the stats HUD hidden the model viewer's standing error is its first row, drawn in
+    /// red ([`banner_colours`]); with the HUD shown the viewer's own row carries it.
     pub(crate) fn compose_banner(&self, out: &mut String, words: &str) {
         let now = ms_since(self.start);
+        if !self.hud.visible
+            && let Some(v) = &self.modes.walkers.viewer
+            && v.error.is_some()
+        {
+            hud::start_row(out);
+            v.write_row(out);
+        }
         if let Some(p) = &self.player {
             hud::write_path_row(out, p, self.args.tester);
             if self.args.tester {

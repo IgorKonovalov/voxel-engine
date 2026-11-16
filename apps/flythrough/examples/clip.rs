@@ -633,7 +633,7 @@ fn main() -> Result<(), String> {
         let display =
             DisplayPose::between(&loaded.model, &pose_at(tick), &pose_at(tick + 1), alpha)
                 .ok_or("the clip's pose does not fit the model")?;
-        frame.set_entity_displays(&queue, &[(id, handle, &display)]);
+        frame.set_entity_displays(&queue, [(id, handle, &display)]);
         let steps = args.settle.max(1) + if n == 0 { args.warmup } else { 0 };
         for _ in 0..steps {
             frame.step(&device, &queue, &gpu, &camera, &lamp);

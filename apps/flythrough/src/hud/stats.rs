@@ -616,7 +616,13 @@ impl HudStats {
             row(out, HudColour::White, format_args!("{q}"))?;
         }
         for m in self.modes.lines() {
-            row(out, HudColour::White, format_args!("{m}"))?;
+            // The model viewer's standing error is the one red mode row.
+            let c = if crate::viewer::is_error_row(m) {
+                HudColour::Red
+            } else {
+                HudColour::White
+            };
+            row(out, c, format_args!("{m}"))?;
         }
         self.memory_rows(out, &mut row)?;
         let [x, y, z] = self.camera;

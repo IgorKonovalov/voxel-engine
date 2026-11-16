@@ -99,21 +99,40 @@ impl Pose {
     /// Every part of `model` placed by this pose, composed once, parents before children, so
     /// points on many parts cost one composition. `None` when the pose does not fit the model.
     pub fn compose<'m>(&self, model: &'m Model) -> Option<ComposedPose<'m>> {
-        self.check(model).ok()?;
-        Some(ComposedPose {
-            model,
-            frames: self.frames(model),
-        })
+        self.compose_with(model, ComposeScratch::default()).ok()
+    }
+
+    /// [`Pose::compose`] into `scratch`'s storage, so a caller composing every frame
+    /// allocates only while the storage grows: [`ComposedPose::into_scratch`] hands it back.
+    /// `Err` gives `scratch` back when the pose does not fit the model.
+    pub fn compose_with<'m>(
+        &self,
+        model: &'m Model,
+        scratch: ComposeScratch,
+    ) -> Result<ComposedPose<'m>, ComposeScratch> {
+        if self.check(model).is_err() {
+            return Err(scratch);
+        }
+        let mut frames = scratch.frames;
+        self.frames_into(model, &mut frames);
+        Ok(ComposedPose { model, frames })
     }
 
     /// Every part's placement, parents before children. The pose must fit the model.
     pub(crate) fn frames(&self, model: &Model) -> Vec<PartFrame> {
+        let mut frames = Vec::with_capacity(model.parts().len());
+        self.frames_into(model, &mut frames);
+        frames
+    }
+
+    /// [`Pose::frames`] into `frames`, cleared first.
+    fn frames_into(&self, model: &Model, frames: &mut Vec<PartFrame>) {
+        frames.clear();
         let root = PartFrame {
             pivot: self.root.0,
             q: self.root_q.normalised(),
             m: self.root_q.matrix(),
         };
-        let mut frames: Vec<PartFrame> = Vec::with_capacity(model.parts().len());
         for (part, pp) in model.parts().iter().zip(&self.parts) {
             let parent = match part.parent {
                 Some(i) => frames[usize::from(i)],
@@ -127,8 +146,14 @@ impl Pose {
                 m: q.matrix(),
             });
         }
-        frames
     }
+}
+
+/// The storage a [`ComposedPose`] keeps its parts' placements in, reused across calls of
+/// [`Pose::compose_with`]. Empty by default, which allocates nothing.
+#[derive(Clone, Debug, Default)]
+pub struct ComposeScratch {
+    frames: Vec<PartFrame>,
 }
 
 /// A pose composed down its model's parts: each part's world pivot and rotation, from
@@ -140,6 +165,13 @@ pub struct ComposedPose<'m> {
 }
 
 impl ComposedPose<'_> {
+    /// This composition's storage, for the next [`Pose::compose_with`].
+    pub fn into_scratch(self) -> ComposeScratch {
+        ComposeScratch {
+            frames: self.frames,
+        }
+    }
+
     /// The model the pose was composed for.
     pub fn model(&self) -> &Model {
         self.model

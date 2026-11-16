@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime};
 use flythrough::viewer::Viewer;
 use flythrough::{cave_materials, walker};
 use vxe_assets::{Rig, VoxText, encode};
-use vxe_entity::sample;
+use vxe_entity::{blend, sample};
 use vxe_world::MaterialTable;
 
 fn assets() -> PathBuf {
@@ -218,6 +218,45 @@ fn the_viewer_row_shows_the_clip_and_the_pause() {
     assert_eq!(v.cycle(-1), "clip turn", "and back");
     let (a, b, alpha) = v.poses().expect("built");
     assert_eq!((a.parts.len(), b.parts.len(), alpha), (6, 6, 0.0));
+}
+
+/// A clip change fades into the new clip over `CLIP_FADE_TICKS`: right after the change the
+/// drawn pose is the one drawn just before it (blended between its two ticks at 1/256), with
+/// no fraction left; half way it is the blend of that pose and the new clip's; from the fade's
+/// end on it is the new clip's from its tick 0. A change during the fade starts from the
+/// blend drawn then.
+#[test]
+fn a_clip_change_fades_into_the_new_clip() {
+    use flythrough::viewer::CLIP_FADE_TICKS;
+    assert_eq!(CLIP_FADE_TICKS, 8);
+    let mut v = built();
+    let l = v.loaded.clone().expect("built");
+    let (idle, walk) = (l.clips[0].1.clone(), l.clips[1].1.clone());
+    // 15.5 ticks into idle at 30 a second.
+    v.advance(0.5 + 0.5 / 30.0);
+    let (a, b, alpha) = v.poses().expect("built");
+    assert!((alpha - 0.5).abs() < 1e-3, "{alpha}");
+    assert_eq!(a, sample(&l.model, &l.rest, &idle, 15));
+    let drawn = blend(&a, &b, 128);
+    assert_eq!(v.cycle(1), "clip walk");
+    let (a, _, alpha) = v.poses().expect("built");
+    assert_eq!((a, alpha), (drawn.clone(), 0.0), "no jump at the change");
+    v.advance(4.5 / 30.0);
+    let (a, _, _) = v.poses().expect("built");
+    assert_eq!(a, blend(&drawn, &sample(&l.model, &l.rest, &walk, 4), 128));
+    assert_ne!(a, sample(&l.model, &l.rest, &walk, 4));
+    v.advance(4.0 / 30.0);
+    let (a, b, _) = v.poses().expect("built");
+    assert_eq!(a, sample(&l.model, &l.rest, &walk, 8), "the fade is over");
+    assert_eq!(b, sample(&l.model, &l.rest, &walk, 9));
+
+    // A change half way through a fade starts from the blend drawn then.
+    v.cycle(-1);
+    v.advance(4.0 / 30.0);
+    let (a, b, alpha) = v.poses().expect("built");
+    let shown = blend(&a, &b, (alpha * 256.0).round() as u16);
+    v.cycle(1);
+    assert_eq!(v.poses().expect("built").0, shown);
 }
 
 /// Done-when 5: a missing `--model` file and a `--clip` the rig lacks are errors that name
