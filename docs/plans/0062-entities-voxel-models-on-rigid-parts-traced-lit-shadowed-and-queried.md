@@ -562,7 +562,7 @@ The "go" is given (owner, 2026-11-10: "move all draft plans to approved").
 | 3: Light, shadow and emission | dev | done; readings in the readings log | 31c7540 |
 | 4: Motion | dev | done; the fresh bit's place, the keys and the readings in the readings log | 12f1a62 |
 | 5: The costs and the caps | dev | done; readings in the readings log, the zero-entity variants and their re-read after the amendment | c872cb1, then committed with this row |
-| 6: The owner's window | human | not started | |
+| 6: The owner's window | human | done 2026-11-16; (a)-(d), (f)-(h) yes; (e) grain in a crowd, a walk-start jump; words in the readings log | |
 
 ### Notes
 
