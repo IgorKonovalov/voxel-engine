@@ -325,8 +325,10 @@ Owed by nobody yet; none blocks anything.
 - **The committed `castle_gate.png`, `look_gradient27.png` and `look_trilinear8.png`** differ by
   a few pixels from the dev box's lavapipe (within the 0.1 % tolerance), at the plan's base and
   tip alike; CI's lavapipe blesses them. Re-bless on CI if one ever drifts past the tolerance.
-- **The soak test `a_shown_hud_and_the_queue_line_wait_on_the_gpu_nowhere` fails, unrelated to
-  Plan 0044.** Its `find(|l| l.starts_with("frames: "))` takes the queue step's tally line
+- **The soak test `a_shown_hud_and_the_queue_line_wait_on_the_gpu_nowhere` failed, unrelated to
+  Plan 0044 (fixed 2026-11-16 on branch chore-soak-frames: the test now matches `frames: {FRAMES} frames;`,
+  accepts frame 0's `store reads not counted` queue line, and reads the age as the last item of
+  the line's parenthesis; it passes in 8.9 s on lavapipe).** Its `find(|l| l.starts_with("frames: "))` takes the queue step's tally line
   (`frames: queue step A: ...`, printed first since 87bf0d2, Plan 0067 Phase 1) instead of the run's
   `frames: N frames; ...` line. Fix: match `frames: {FRAMES} frames;` in the test. Read at the
   close review's soak run (whole workspace, 73 run, 71 passed; the other failure is the hall
@@ -410,7 +412,10 @@ so the fly-through's wiring (the frame calls the ring's reads, not the waiting o
 no gate; the gate holds only the ring's own test. A variant of about 120 frames with the
 queue line due at least once, or a CPU test on the call sites, would bring it under the 10 s
 line. Pick up as a dev chore with the next plan that touches the frame's read-backs.
-**It fails** (read 2026-11-14 at Plan 0074's close review, soak tier of the changed crates,
+**It failed** (fixed 2026-11-16 on branch chore-soak-frames: the test matches the run's line, accepts frame
+0's `store reads not counted` queue line, which prints before the frame turns the count on, and
+reads the age as the last item of the parenthesis, which now names the missing light and store
+bytes first) (read 2026-11-14 at Plan 0074's close review, soak tier of the changed crates,
 not this plan's code): the exit's queue tally prints `frames: queue step ...` lines
 (`run/mod.rs`, `Drop for Run`) before the `frames: N frames;` line, and the test takes the
 first line starting `frames: `. Match `frames: {FRAMES} frames;` instead.
