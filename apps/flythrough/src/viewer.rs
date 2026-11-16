@@ -57,6 +57,9 @@ pub struct Viewer {
     /// The model uploaded to the frame's entity mirror; `None` until uploaded and after a
     /// reload.
     pub handle: Option<ModelHandle>,
+    /// The handle a reload replaced, for [`crate::walker::sync_models`] to free once the new
+    /// model is uploaded.
+    pub stale: Option<ModelHandle>,
     /// The playing clip's index in [`Loaded::clips`].
     pub clip: usize,
     /// The playing clip and the fade into it, in the viewer's ticks ([`Viewer::ticks`]);
@@ -125,6 +128,7 @@ impl Viewer {
             pending: Some((text, bytes)),
             loaded: None,
             handle: None,
+            stale: None,
             clip: 0,
             player: None,
             want_clip: clip,
@@ -137,8 +141,8 @@ impl Viewer {
 
     /// The reload step: builds the rig `rig_text` over the `.vox` `vox_bytes` against `table`
     /// and, when it builds, swaps the model in (the playing clip kept by name, else the first,
-    /// with no fade) and drops the uploaded handle. On an error the old model stays, the
-    /// error is kept ([`Viewer::error`]) and the banner's words come back
+    /// with no fade) and moves the uploaded handle to [`Viewer::stale`]. On an error the old
+    /// model stays, the error is kept ([`Viewer::error`]) and the banner's words come back
     /// (`rig line <n>: <message>`); a build clears the kept error.
     pub fn reload(
         &mut self,
@@ -200,7 +204,11 @@ impl Viewer {
             clips,
             rate: rig.rate,
         });
-        self.handle = None;
+        // Between two uploads `stale` holds at most one handle: an upload frees it, and
+        // `handle` is `None` until the next upload.
+        if let Some(h) = self.handle.take() {
+            self.stale = Some(h);
+        }
         Ok(())
     }
 

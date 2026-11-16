@@ -98,6 +98,14 @@ the same rows.
 | `Left`, `Right` | With `--model`: the clip before and after |
 | `Down` | With `--model`: pause or play the clip |
 
+The HUD's entities row reads `entities <n>/64 parts <m>/512 over <k> pool <used>/<total> KB`
+(`walk` after it while they walk): the entity pool's bytes in use, rounded up to whole KB,
+against its size. A `--model` reload frees the replaced model, so the figure holds still over
+saves that keep the model's size. When an upload is refused although the pool's free bytes
+would hold it (no hole is large enough), the pool is cleared and every placed model uploaded
+again, and the banner reads `entity pool reset`; a `--model` model refused after that keeps
+its error on screen in red until a reload builds.
+
 ### The light queue
 
 | Key | Does |

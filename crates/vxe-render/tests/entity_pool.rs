@@ -175,7 +175,8 @@ impl Mix {
     }
 }
 
-/// The volume sizes the plan reads the pool with, in words.
+/// The volume sizes the sequence draws from, in words: a one-voxel part, the walker's leg, head
+/// and torso, a 16-voxel cube and a 64-voxel cube.
 const SIZES: [u32; 6] = [
     1068 / 4,
     1144 / 4,

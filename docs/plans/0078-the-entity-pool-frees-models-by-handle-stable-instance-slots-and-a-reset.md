@@ -487,8 +487,8 @@ Readings, gate counts and the plan-to-tree names: [`logs/0078.md`](logs/0078.md)
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the range allocator and the pool's free | dev | done | committed with this row |
-| 2: the fly-through frees on reload, and the pool on the HUD | dev | not started | |
+| 1: the range allocator and the pool's free | dev | done | e985fd16 (e7e6b467 the file move alone) |
+| 2: the fly-through frees on reload, and the pool on the HUD | dev | done | committed with this row |
 | 3: stable instance slots, generations, ghost leaves, no scratch | dev | not started | |
 | 4: the waste reading, the docs and the tip | dev | not started | |
 
