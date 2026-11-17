@@ -722,6 +722,7 @@ impl Run {
         s.format_us = h.format_us;
         self.modes
             .fill_exposure_row(s.exposure.get_or_insert_with(Default::default));
+        s.sky = sky_row(&self.modes, h.pass_ms.as_deref());
         let args = &self.args;
         let words = h
             .queue_words
@@ -986,6 +987,32 @@ impl Run {
             println!("{}", c.query_line());
         }
     }
+}
+
+/// The sky's HUD row while a sky is set and the passes were timed: the sky passes' GPU time
+/// summed, the light pass's, the exposure and the body [`vxe_render::sky::Sky::key_light`]
+/// names; `None` otherwise.
+fn sky_row(modes: &crate::hud::Modes, pass_ms: Option<&[f64]>) -> Option<hud::SkyRow> {
+    let passes = pass_ms.filter(|_| modes.sky)?;
+    let ms = |pred: &dyn Fn(&str) -> bool| -> f32 {
+        FRAME_PASSES
+            .iter()
+            .zip(passes)
+            .filter(|(n, _)| pred(n))
+            .map(|(_, &v)| v as f32)
+            .sum()
+    };
+    let body = match modes.clock.sky(crate::outdoor::BASE_Z as f32).key_light() {
+        Some((vxe_render::sky::KeyBody::Sun, _)) => "sun",
+        Some((vxe_render::sky::KeyBody::Moon, _)) => "moon",
+        None => "none",
+    };
+    Some(hud::SkyRow {
+        sky_ms: ms(&|n| n.starts_with("sky ")),
+        light_ms: ms(&|n| n == "light"),
+        ev: modes.exposure_ev(),
+        body,
+    })
 }
 
 #[cfg(test)]

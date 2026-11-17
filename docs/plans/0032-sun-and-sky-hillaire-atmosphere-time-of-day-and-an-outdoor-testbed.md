@@ -1089,8 +1089,8 @@ Readings and gate counts: [`logs/0032.md`](logs/0032.md).
 | 3: The outdoor source, the source switch and the time of day in the fly-through | dev | done; bar 6 soak only (Notes); keys differ (Notes) | ce2a8fa9 |
 | 4: The outdoor exposure | dev | done; bar 2 landed with Phase 5; the preset's code in ce2a8fa9 | 33fb5abd |
 | 5: The sun and the moon as the light pass's directional sample | dev | done; bars 3, 6's settle and 7 are readings (exploration); tests in `gpu_sun.rs` (Notes) | 9bff6e8f |
-| 6: Sky light: one cosine-weighted sky ray, its stillness measured first | dev | done; default 1 ray; bars 2 to 4 are readings (exploration); bar 6 one run each (Notes) | committed with this row |
-| 7: The four goldens, the HUD rows and the readings | dev | not started | |
+| 6: Sky light: one cosine-weighted sky ray, its stillness measured first | dev | done; default 1 ray; bars 2 to 4 are readings (exploration); bar 6 one run each (Notes) | d261667c |
+| 7: The four goldens, the HUD rows and the readings | dev | done; goldens and bars 1, 2 wait for Phase 10; bars 3, 4 read (Notes) | committed with this row |
 | 8: Trees, the shadow that travels with the sun, and the forest at low sun | dev | not started | |
 | 9: The owner's windowed check | human | not started | |
 | 10: The picks as tests | dev | not started | |
@@ -1191,6 +1191,16 @@ Readings and gate counts: [`logs/0032.md`](logs/0032.md).
   uniform sky) gives the sky ray no variance, so the stop rule's comparison reads 0 against
   the lamp's 1; bar 4's regression test and bars 2 and 3 wait for Phase 10. Bar 6 is one run a
   configuration, not three.
+- Phase 7: the HUD row is `hud::SkyRow` in `hud/stats.rs`, fed in `run/hud_feed.rs`; it reads
+  the light pass with the sky in use only (`(sky on)`): the fly-through has no in-process sky
+  toggle, so the light pass with the sky off is the readings' `--sky off` runs. The autopilot's
+  dig rule is in `run/pilot.rs` and `autopilot.rs` (not `main.rs`): outdoors, with no solid
+  voxel within 30 m along +x, it digs straight down. The hero's outdoor world is a bounded
+  extent (`still::outdoor_extent`), so a still's horizon can show the extent's edge. The
+  stillness reading's world and run are `outdoor_level_on` and `run_under_sky` in
+  `support/stillness.rs`. The `--look face` run is the noon run (face is the default look).
+  Bar 3's runs are all loaded (the flights' workers) and, at 300 frames, all but two streamed
+  runs unsettled; the base is 356b32a1 (Plan 0069's tip), not main.
 
 ### Close triggers
 

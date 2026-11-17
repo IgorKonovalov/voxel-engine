@@ -305,7 +305,7 @@ pub mod table;
 
 pub use flags::{GONE_SINCE_0057, gone_since_0057, help, lighting_flags};
 pub(crate) use loading::LoadingArgs;
-pub use outdoor::{OutdoorArgs, SOURCES, next_source};
+pub use outdoor::{OUTDOOR_MAX, OUTDOOR_MIN, OutdoorArgs, SOURCES, next_source};
 pub use parse::*;
 pub use settings::settings_lines;
 

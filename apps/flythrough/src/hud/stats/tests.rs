@@ -582,3 +582,31 @@ fn rss_reads_on_linux() {
         assert!(rss_bytes(page).is_some_and(|b| b > 0));
     }
 }
+
+/// The sky row appears only while a sky is set, and reads the sky passes' and the light
+/// pass's GPU time, the exposure in EV and the body lighting the frame.
+#[test]
+fn the_sky_row_reads_its_passes_exposure_and_body() {
+    let stats = HudStats {
+        sky: Some(SkyRow {
+            sky_ms: 0.125,
+            light_ms: 1.75,
+            ev: -9.8125,
+            body: "moon",
+        }),
+        ..HudStats::default()
+    };
+    assert!(
+        stats.to_string().lines().any(
+            |l| l == "sky passes 0.12 ms  light 1.75 ms (sky on)  exposure -9.81 EV  body moon"
+        ),
+        "{stats}"
+    );
+    assert!(
+        !HudStats::default()
+            .to_string()
+            .lines()
+            .any(|l| l.starts_with("sky passes")),
+        "no row without a sky"
+    );
+}

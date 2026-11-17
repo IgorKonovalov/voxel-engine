@@ -283,6 +283,14 @@ Every reading against these budgets, with its machine and commit, is in
 - **After Plan 0070 (ef0b55c against bdca60a, 2026-11-13, `hpet` clocksource, `--seed 1` at 1280
   x 720, RTX, three alternated rounds loaded by the flights' workers to 6.8 to 8.9):** residency
   p95 212 to 213 ms, max 303 to 321, against 311 to 333 and 376 to 413 at the base.
+- **The outdoor hills (Plan 0032 Phase 7, a68f2659 plus Phase 7's tree, `flythrough --source
+  outdoor --autopilot --headless --seed 1 --render 1280x720`, one run per adapter, exclusive
+  perf lock, loaded by the flight's workers):** the flight 30 m over the `outside` spawn, the
+  dig 1 m at the hill along +x (`return: 4 chunks, hash match` on both). RTX 3080 Laptop GPU
+  (driver 615.78.08, start load 2.7): streaming CPU per frame p50 1.857 ms, p99 18.915 ms over
+  2640 frames; residency p95 125 ms, max 248 over 77 115 chunks; 4 unready-near frames. RADV
+  RENOIR (Mesa 26.2.5, `--adapter AMD`, start load 5.9): p50 13.029 ms, p99 23.535 ms over 787
+  frames; residency p95 233 ms, max 672; 2 unready-near frames.
 
 ## 6. Determinism and headless operation
 

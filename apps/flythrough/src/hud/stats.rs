@@ -372,6 +372,8 @@ pub struct HudStats {
     pub lighting: Option<LightingRow>,
     /// The exposure; `None` hides its row.
     pub exposure: Option<ExposureRow>,
+    /// The sky's row while a sky is set ([`SkyRow`]); `None` hides it.
+    pub sky: Option<SkyRow>,
     /// The aliasing toggles' row ([`aliasing_row`]); `None` hides it.
     pub aliasing: Option<String>,
     /// The live queue's row ([`queue_row`]); `None` hides it.
@@ -431,6 +433,28 @@ impl fmt::Display for ExposureRow {
             write!(f, "  settles {t:+.2} EV")?;
         }
         Ok(())
+    }
+}
+
+/// The sky's row: the three sky passes' GPU time summed, the light pass's (which casts the sky
+/// rays and the key light's shadow ray while a sky is set), the exposure in EV and the body
+/// lighting the frame (`sun`, `moon` or `none` under the horizon):
+/// `sky passes 0.12 ms  light 1.85 ms (sky on)  exposure -9.81 EV  body sun`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SkyRow {
+    pub sky_ms: f32,
+    pub light_ms: f32,
+    pub ev: f32,
+    pub body: &'static str,
+}
+
+impl fmt::Display for SkyRow {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "sky passes {:.2} ms  light {:.2} ms (sky on)  exposure {:+.2} EV  body {}",
+            self.sky_ms, self.light_ms, self.ev, self.body
+        )
     }
 }
 
@@ -541,6 +565,7 @@ impl HudStats {
             pressure: None,
             pad: None,
             lighting: None,
+            sky: None,
             exposure: None,
             aliasing: None,
             queue: None,
@@ -608,6 +633,9 @@ impl HudStats {
         }
         if let Some(e) = &self.exposure {
             row(out, HudColour::White, format_args!("{e}"))?;
+        }
+        if let Some(sky) = &self.sky {
+            row(out, HudColour::White, format_args!("{sky}"))?;
         }
         if let Some(a) = &self.aliasing {
             row(out, HudColour::White, format_args!("{a}"))?;

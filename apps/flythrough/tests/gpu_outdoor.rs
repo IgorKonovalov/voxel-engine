@@ -1,9 +1,12 @@
 //! The outdoor source's bars that open a device: the in-process source switch leaves nothing
-//! of the outdoor world behind. Headless runs of the fly-through binary on lavapipe.
+//! of the outdoor world behind. Headless runs of the fly-through binary on lavapipe. The
+//! readings in `mod reading` run by hand.
 #![allow(
     clippy::disallowed_methods,
     reason = "the runs are bounded by wall-clock time"
 )]
+
+mod support;
 
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -107,4 +110,65 @@ fn a_source_switch_leaves_nothing_behind() {
 #[ignore = "soak"]
 fn a_source_switch_leaves_nothing_behind_in_60_frames() {
     switch_leaves_nothing_behind(20, 60);
+}
+
+mod reading {
+    use super::support;
+    use support::stillness::{Pose, SIZE, outdoor_level_on, run_under_sky};
+    use vxe_render::{AutoExposure, Exposure, Frame, LightParams, Lighting};
+
+    /// Plan 0032 Phase 7 bar 4: the stillness rig's statistics at `outdoor_noon`'s pose (the
+    /// `outside` spawn facing the mouth, 12:00, the day cycle off, the lamp off) under a manual
+    /// exposure pinned at what the outdoor auto exposure (instant adaptation, the outdoor
+    /// floor and ceiling) reads after 64 frames of the same pose. Prints them; no bar.
+    /// `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    #[test]
+    #[ignore = "reading"]
+    fn outdoor_noon_stillness() {
+        let Some((mut level, eye)) = outdoor_level_on(support::reading_device) else {
+            return;
+        };
+        let sky = flythrough::daylight::Clock::default().sky(flythrough::outdoor::BASE_Z as f32);
+        let base = flythrough::default_lighting();
+        let pose = |exposure: f32| Pose {
+            name: "outdoor_noon",
+            position: eye.0.map(|v| v as f32 + 0.5),
+            yaw_deg: 0.0,
+            pitch_deg: 0.0,
+            exposure,
+        };
+        // The exposure to pin: the outdoor auto exposure's after 64 frames.
+        let mut frame = Frame::new(&level.device, SIZE[0], SIZE[1]);
+        frame.set_lighting(Lighting {
+            lamp: false,
+            exposure: Exposure::Auto(AutoExposure {
+                min: flythrough::cli::OUTDOOR_MIN,
+                max: flythrough::cli::OUTDOOR_MAX,
+                ..AutoExposure::instant()
+            }),
+            ..base
+        });
+        frame.set_sky(Some(sky));
+        frame.set_dt(1.0 / 60.0);
+        let camera = pose(1.0).camera();
+        for _ in 0..64 {
+            frame.step(
+                &level.device,
+                &level.queue,
+                &level.gpu,
+                &camera,
+                &LightParams::headlamp(),
+            );
+        }
+        let exposure = frame
+            .exposure_readout(&level.device)
+            .expect("the exposure read back")
+            .exposure;
+        println!(
+            "reading: outdoor_noon on {}, pinned exposure {exposure:.6e} (auto after 64 frames)",
+            level.adapter
+        );
+        let r = run_under_sky(&mut level, &pose(exposure), base, SIZE, sky);
+        r.print("outdoor_noon");
+    }
 }

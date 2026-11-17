@@ -15,7 +15,8 @@ store read by the shading normal, the light filters weighted by the face normal)
 3080 Laptop GPU at 1920x1080, rendered 2026-11-13 at v0.52.0.
 Regenerate with
 `cargo run --release -p flythrough --example hero -- --exposure 8 --frames 8192 --out docs/images/hero.png`
-(every other setting above is the example's default).</sub>
+(every other setting above is the example's default; `--source outdoor --time 17:45` frames
+the outdoor hills under the sky instead).</sub>
 
 ![A large dark voxel spider walking in place on the showcase cavern's floor, its eight legs stepping each on its own phase, glowing leg tips and eyes, silhouetted against a cluster of cyan crystals under a red dome](docs/images/spider-walk.gif)
 
