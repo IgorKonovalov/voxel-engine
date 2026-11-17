@@ -322,6 +322,17 @@ Every reading against these budgets, with its machine and commit, is in
   2640 frames; residency p95 125 ms, max 248 over 77 115 chunks; 4 unready-near frames. RADV
   RENOIR (Mesa 26.2.5, `--adapter AMD`, start load 5.9): p50 13.029 ms, p99 23.535 ms over 787
   frames; residency p95 233 ms, max 672; 2 unready-near frames.
+- **The outdoor tester benchmark (Plan 0088 Phase 2, 2026-11-17, release at fa8394ea, before
+  Plan 0086; the tester's outdoor bench flags at 1280 x 720 in the Floor profile, headless, one
+  run per adapter, exclusive perf lock, loaded: start load 19.5 and 25.6 with two other lanes
+  building):** `update + poll + sync` p99 23.1 ms on the RTX 3080 Laptop and 17.5 ms on RADV
+  RENOIR, against the 16.6 ms line; `run.json`'s `streaming` `sync_us` p99 19.2 and 16.0 ms,
+  `light_us` p99 1.23 and 1.27 ms, `alloc_us` p99 9.0 and 7.7 ms (the cave's tester readings:
+  18.0 to 23.7 ms). Sparse against forest, a 40 s glide north from the `forest` spawn at 30
+  voxels a second on the RTX (`--spawn forest --glide 30 --frames 2400`, no path; start load
+  13.3 and 25.6): `update + poll + sync` p99 18.3 and 15.7 ms, sync p99 15.5 and 14.5 ms, the
+  sync's light p99 1.07 and 1.01 ms. Every figure: [Plan 0088's readings
+  log](plans/logs/0088.md), Phase 2.
 
 ## 6. Determinism and headless operation
 

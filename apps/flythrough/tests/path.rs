@@ -195,6 +195,13 @@ fn the_outdoor_path_flies_in_air() {
     );
 }
 
+/// The outdoor path flies 60 to 75 s, the cave path's scale.
+#[test]
+fn the_outdoor_path_is_a_minute_or_more() {
+    let d = OUTDOOR.duration_s();
+    assert!((60.0..=75.0).contains(&d), "the outdoor path flies {d} s");
+}
+
 /// Each path names its scene, and the castle's cut keys hold the leg's last pose until the cut.
 #[test]
 fn every_scene_has_one_path_and_a_cut_holds_the_pose_before_it() {

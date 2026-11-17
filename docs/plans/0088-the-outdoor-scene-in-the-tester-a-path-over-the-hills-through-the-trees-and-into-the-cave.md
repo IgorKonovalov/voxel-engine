@@ -366,8 +366,8 @@ Readings, gate counts and the route's attempts: [`logs/0088.md`](logs/0088.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: `Scene::Outdoor`, the parse rule and a first path | dev | done | committed with this row |
-| 2: The route, the tester's rows, the README and the readings | dev | not started | |
+| 1: `Scene::Outdoor`, the parse rule and a first path | dev | done | fa8394ea |
+| 2: The route, the tester's rows, the README and the readings | dev | done | committed with this row |
 | 3: The owner's window | human | not started | |
 | 4: The picks and the tip | dev | not started | |
 
@@ -378,6 +378,11 @@ Readings, gate counts and the route's attempts: [`logs/0088.md`](logs/0088.md).
 - The forest waypoint is the nearest 2.2 m-clear cell 40 voxels over the `forest` spawn's column (`[0, 636, 594]`), not its eye (Phase 1 commit).
 - `--path outdoor` also refuses a `--leaf-fill` other than the default (Phase 1 commit).
 - The `--path` help row lives in `cli/flags.rs`, outside Phase 1's files touched (Phase 1 commit).
+- `apps/flythrough/tests/gpu_path.rs` is new in Phase 2 though not in its files touched; it reads 140.2 s on lavapipe (debug, loaded) and stays `#[ignore = "soak"]` (Phase 2 commit).
+- `test-changed.mjs --profile soak --binaries gpu_path` is refused by the script; the soak test ran as `cargo nextest run -p flythrough --test gpu_path --profile soak --run-ignored only` (Phase 2 commit).
+- `each_choice_gives_its_exact_flag_list`'s rows are one space-separated string each, split in the loop (clippy's line limit with the sixth row) (Phase 2 commit).
+- The forest stress reading is a 40 s glide from the `forest` spawn, not a path run: `--path outdoor` refuses `--trees forest` by Phase 1's rule (Phase 2 commit).
+- Not read in Phase 2: the windowed RTX run (lane rule: no window; moved to Phase 3) and the CPU p50 of the first 10 s after the load (no headless line carries it).
 
 ### Close triggers
 
