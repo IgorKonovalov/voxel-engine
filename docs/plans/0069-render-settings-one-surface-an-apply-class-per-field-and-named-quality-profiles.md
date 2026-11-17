@@ -374,7 +374,7 @@ the readings cannot see. No determinism risk: nothing here reaches `vxe-world`'s
 | 2: the classes, proved, and the setter gate | dev | done; the `cargo doc` done-when closed by the 2026-11-17 amendment (Notes) | code 0335bc30; row f0c8a109 |
 | 3: the profiles, in the fly-through and the tester | dev | done; `Default` = Floor for `RenderSettings` only, as the 2026-11-17 amendment reads (Notes) | code e0c75597, e73cf935; row 55e62a13 |
 | 4: readings of each profile on both adapters | dev | done; most cells loaded, not quiet; RENOIR portable hall hit pass 10.5 ms, accepted by the 2026-11-17 amendment (Notes) | 356b32a1 |
-| 5: the owner's window | human | not started | |
+| 5: the owner's window | human | done 2026-11-17 09:20-09:38; the owner's words in the readings log, Phase 5; High offered as a fourth profile | committed with this row |
 | 6: the picks into the profiles | dev | not started | |
 | 7: image tests against the picks, and the tip's readings | dev | not started | |
 
