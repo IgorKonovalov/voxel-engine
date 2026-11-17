@@ -1,9 +1,9 @@
 # ADR-0071: The engine takes a name: one word that is the project, the crate prefix, the repository and the archive
 
-> **Status:** proposed (the owner picks the word from the shortlist below; the Decision's first
-> sentence is filled in before acceptance)
+> **Status:** accepted (owner, 2026-11-17: "for renaming, I think svet is the best")
 > **Date:** 2026-11-17
-> **Related plan(s):** a rename plan, drafted after the pick (none yet)
+> **Related plan(s):** [Plan 0087](../plans/0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md),
+> the rename (draft, awaits the owner's go)
 
 ## Context
 
@@ -59,21 +59,34 @@ and the redirect dies if a new repository takes the old name
 
 ## Decision
 
-We give the engine one word, and that word is the project name, the crate prefix, the
-repository name, the environment-variable prefix, the WIT package namespace and the tester
-archive's name, changed together in one plan. **The word is the owner's pick from the three
-shortlists below; the recommendation is `karst`, with `svet` as the runner-up.** Until the
-pick, the project keeps `voxel-engine` and `vxe-`.
+**The engine is `svet`**: Slavic *svet* / свет, "light", and in the same languages "the world"
+(Russian *весь свет*, Czech *svět*, Slovene and Serbo-Croatian *svet*); one syllable, four
+letters, said the same in every language the criteria name. The owner picked it on 2026-11-17
+from the three shortlists below, in his words: "for renaming, I think svet is the best". The
+one word is the project name, the crate prefix (`svet-world`, `svet-render`, `svet-app`,
+`svet-sim`, `svet-assets`, `svet-net`, `svet-script-wasm`, `svet-audio`, `svet-entity`), the
+repository (`IgorKonovalov/svet`), the environment-variable prefix (`SVET_*`), the WIT package
+namespace (`svet:logic`) and the tester archive's name (`svet-tester-<version>-<os>-x86_64`),
+changed together in Plan 0087. Until that plan merges, the tree keeps `voxel-engine` and
+`vxe-`.
+
+What `svet` costs, stated plainly. It is one letter from `svelte`, and a web developer's eye
+will read it so; it is a near-homophone of Swedish and Norwegian *svett*, "sweat"; `svet.dev`,
+`svet.io`, `svet.org` and `svet.rs` were all registered on the day of the check, so **no domain
+claim is made** and none is planned; the word belongs to Slavic readers, who will hear "light"
+or "world" where others hear a coinage. On crates.io the bare `svet` and all nine prefix
+forms were free as of the check (2026-11-17); a check is a snapshot, and Plan 0087's first
+phase re-runs it on the rename day before a file moves.
 
 Three sweeps fed the shortlists. The first (Appendix A) worked from rock, hollows and carving;
 the second (Appendix C), asked for by the owner, from light, ray marching, entities, cave
 animals, spiders and rock types; the third (Appendix D), also asked for, from famous caves,
-mountains and karst features, with eight names the owner marked and `antrum`. No sweep found
-a word that beats `karst` on meaning and pronunciation together, and every famous mountain is
-already a crate or a brand. The clean alternatives, for an owner who weighs `karst`'s held bare
-crate above the word's reach: `svet` (Slavic "light" and "the world"), `naica` (the crystal
-cave; one small game shares it), `antrum` (Latin "cave"; a film and a sinus share it),
-`doline` and `zarevo` (nobody has touched either).
+mountains and karst features, with eight names the owner marked and `antrum`. The
+architect's recommendation was `karst`, with `svet` the runner-up; the owner weighed
+`svet`'s reach (the only word checked that says both "light" and "world") and its clean
+registry above `karst`'s better-known meaning and its held bare crate. The other clean
+alternatives were `naica` (the crystal cave; one small game shares it), `antrum` (Latin
+"cave"; a film and a sinus share it), `doline` and `zarevo` (nobody has touched either).
 
 The criteria, in the order they were applied:
 
@@ -92,46 +105,49 @@ The criteria, in the order they were applied:
 6. **A domain is a hint only.** `.dev` and `.org` are registered for almost every real word; a
    free `.io` or `.rs` is a bonus.
 
-The shape after the pick, with `karst` as the worked example:
+The shape after the rename:
 
 | Today | After |
 |---|---|
-| `IgorKonovalov/voxel-engine` | `IgorKonovalov/karst`, the old URL redirecting |
-| `crates/vxe-world`, `vxe_world::` | `crates/karst-world`, `karst_world::` |
-| `VXE_COMMIT`, `VXE_*` | `KARST_COMMIT`, `KARST_*`, a clean cut, no aliases |
-| `package vxe:logic@0.1.0` | `package karst:logic@0.1.0`, bumped with the components |
-| `vxe-tester-0.59.0-linux-x86_64.tar.gz` | `karst-tester-0.60.0-linux-x86_64.tar.gz` from the next tag |
+| `IgorKonovalov/voxel-engine` | `IgorKonovalov/svet`, the old URL redirecting |
+| `crates/vxe-world`, `vxe_world::` | `crates/svet-world`, `svet_world::` |
+| `VXE_COMMIT`, `VXE_*` | `SVET_COMMIT`, `SVET_*`, a clean cut, no aliases |
+| `package vxe:logic@0.1.0` | `package svet:logic@0.1.0`; the components are rebuilt |
+| `vxe-tester-0.59.0-linux-x86_64.tar.gz` | `svet-tester-<next minor>-linux-x86_64.tar.gz` from the next tag |
 | `apps/flythrough`, `flythrough` | unchanged: the testbed keeps its own name |
-| window title `vxe` | `karst` |
+| window title `vxe` | `svet` |
 
-**What the rename plan covers**, in phases a `dev` lane can run in a day, each a commit:
+**What the rename plan covers** is Plan 0087's business: the workspace, the environment
+variables and the WIT package, the tester and its archive, the documents and the harness, the
+owner's GitHub rename, a minor version bump, and a final grep. The four smaller choices below
+are **the architect's recommendations, taken into the plan as written; the owner overturns any
+of them by saying so**, and the plan's phase changes with it:
 
-1. **The workspace**: directory moves (`git mv`), `Cargo.toml` package names and path
-   dependencies, `use` paths, the WIT package and the guest components, the environment
-   variables and the gates that count them, the window title; `cargo build`, the gate tier and
-   `scripts/build-guests.sh` green. This is the phase that touches 250 Rust files; it is one
-   substitution and a rebuild, not a redesign.
-2. **The repository**: the GitHub rename (an owner step), the `repository` field, the badge and
-   every `github.com/IgorKonovalov/voxel-engine` URL, the consumer's remotes and path
-   dependencies in `~/Work/voxel-roguelite`, the local worktrees' remotes.
-3. **The release**: archive and artifact names in `release.yml` and `package-tester.sh`,
-   `dist/README-TESTER.txt`, the release title; old releases keep their `vxe-tester-*` files
-   and are not re-published.
-4. **The documents**: `README.md`, `CLAUDE.md`, `docs/roadmap.md`, `docs/nfr.md`,
-   `docs/flythrough.md`, the active plans and this index. **Accepted ADRs and closed plans are
-   not rewritten**: they are records, and `vxe-` in them is the prefix the engine had when they
-   were written. One sentence at the top of `docs/adrs/README.md` and `docs/plans/README.md`
-   says so.
-5. **Harness**: `.claude/` skills, hooks and settings, in their own repository.
-6. **The version**: a minor bump at the plan's close, since a crate rename is a breaking change
-   in `0.x`; the CHANGELOG entry names the old and new prefixes once.
-
-**crates.io.** We publish nothing to reserve the name: a placeholder is against the policy
-quoted above. If the owner wants the prefix held, the way to hold it is to publish the real
-crates at their `0.x` version, which brings docs.rs builds, semver expectations and a
-`cargo publish` step per crate into every close; the recommendation is to defer that until a
-second consumer asks, and accept the risk that someone registers a `<name>-world` meanwhile
-(low: the `-world` and `-render` forms of every one of ninety checked words were free).
+1. **crates.io: nothing is published until a second consumer asks** (recommended). A
+   placeholder is against the policy quoted above. If the owner wants the prefix held, the way
+   to hold it is to publish the real crates at their `0.x` version, which brings docs.rs builds,
+   semver expectations and a `cargo publish` step per crate into every close; deferring accepts
+   the risk that someone registers `svet-world` meanwhile (low: the `-world` and `-render`
+   forms of every one of the words checked across three sweeps were free). **Plan 0087 re-runs
+   the crates.io check for `svet` and its nine forms on the rename day**, before the first
+   `git mv`; a form taken by then is reported to the owner before the lane goes on.
+2. **The environment variables are cut clean: `VXE_*` becomes `SVET_*`, no aliases**
+   (recommended). An alias layer would read both names in every consumer of the variable
+   (the fly-through, the tester, `check-test-tiers.mjs`, CI) for a handful of testers'
+   scripts; the release notes carry one line for the change instead. The 84 distinct names
+   on `main` at 778fac63 are substituted, and the gate that counts `VXE_*` names per test
+   file counts `SVET_*`.
+3. **Accepted ADRs, closed plans, their readings logs, the dated reviews and the CHANGELOG's
+   entries are not rewritten** (recommended). They are records, and `vxe-` in them is the
+   prefix the engine had when they were written; rewriting them would make `git blame` on a
+   decision lie about its date. One sentence at the top of `docs/adrs/README.md` and of
+   `docs/plans/README.md` maps the old prefix to the new. Proposed ADRs and active plans are
+   not records yet and are rewritten with the rest of the documents (a proposed ADR whose
+   file name carries `vxe` is moved, and its links repaired).
+4. **Old releases stay as they are, and no repository is kept under the old name**
+   (recommended). The `vxe-tester-*` archives on the tagged releases are not re-published;
+   GitHub's redirect carries the old clone URL, and it lives as long as no new repository
+   takes `IgorKonovalov/voxel-engine`, so none is made.
 
 **A docs site is not this decision**, but its timing follows from it: the rename goes first, so
 no URL is published under the old name. Rustdoc to GitHub Pages fits right after the
@@ -143,8 +159,11 @@ owner asks.
 
 ### Positive
 
-- A name a reader can search for, say aloud and type as a prefix; `karst` returns caves and
-  limestone, not a Vue table.
+- A name a reader can search for, say aloud and type as a prefix; `svet` is four letters and
+  one syllable, and a search for `svet-world` or `svet-render` returns nothing of anyone
+  else's, not a Vue table.
+- The word says what the engine is after: light that holds still, in a world. No other word
+  checked carried both.
 - One word everywhere: repo, crates, env vars, archive. No "the project is X but the crates are
   `vxe-`" sentence in the README.
 - Done before the first publish, before a docs site and before a second consumer, which is the
@@ -158,13 +177,13 @@ owner asks.
   prefix once. The release notes carry one line for it.
 - Historical records keep the old prefix forever (by design), so a reader of ADR-0002 meets
   `vxe-world` and needs the index's sentence to map it.
-- The bare `karst` crate is not ours (see the shortlist); if its holder ships a volume renderer
-  under it, two volumetric projects share a word on crates.io. `svet`, `zarevo`, `doline` and
-  `saxum` avoid this at the price of a word fewer readers know.
 - `svet` is one letter from `svelte` in the eyes of a web developer, and a near-homophone of
-  Swedish and Norwegian "svett" (sweat); neither is the word, both will be heard.
-- The name is picked from words that are free today; a check is a snapshot, and the ADR's
-  acceptance re-runs the crates.io sweep for the picked word on the day of the rename.
+  Swedish and Norwegian "svett" (sweat); neither is the word, both will be heard. Outside the
+  Slavic languages the word means nothing until the README says so.
+- Every `svet.*` domain checked is registered, so the project has no domain and the
+  repository URL is its address.
+- The name is picked from words that were free on 2026-11-17; a check is a snapshot, and Plan
+  0087 re-runs the crates.io check for `svet` on the rename day.
 
 ## Alternatives considered
 
@@ -191,9 +210,11 @@ not be the renderer forever (the field surface is already an opt-in look, ADR-00
 
 ### Alternative D: the other shortlisted words
 
-Each is a real alternative with its own evidence in the tables below (Appendix A and C); none
-lost on a rule, only on the ordering of criteria 1 and 4. The owner may pick any of them, and
-this ADR is accepted with that word.
+Each is a real alternative with its own evidence in the tables below (Appendices A, C and D);
+none lost on a rule, only on the ordering of criteria 1 and 4. `karst`, the architect's
+recommendation, lost to the owner's weighing: its bare crate is held by a volume-imaging
+placeholder, and `svet` says more of the engine (light, and the world) in fewer letters. The
+rest are recorded so that a later reader knows they were seen.
 
 ## Appendix A: the shortlist, with evidence
 
@@ -502,5 +523,17 @@ Arabic markets; the Tarahumara etymology of Naica and the Svan one of Ushba.
 
 ## Outcome
 
-_(Added at acceptance: the picked word, the day's re-run of the crates.io sweep for it, and the
-rename plan's number.)_
+**2026-11-17, accepted with `svet`** (owner: "for renaming, I think svet is the best"). On the
+day of the pick the bare `svet` and `svet-world`, `svet-render`, `svet-app`, `svet-sim`,
+`svet-assets`, `svet-net`, `svet-script-wasm`, `svet-audio` and `svet-entity` were free on
+crates.io (Appendix C's sweep); the four domains were registered. The rename is Plan 0087
+(draft, awaits the owner's go), which runs when no lane is open. Its scope re-measured on
+`main` at 778fac63 the same day, case-insensitive: `vxe` appears 5130 times in 466 tracked
+files; of those, 2310 occurrences in 137 files are the records this ADR keeps (every file
+under `docs/adrs/`, `docs/plans/done/`, `docs/plans/logs/` and `CHANGELOG.md`; the proposed
+ADRs among them, about 55 occurrences in 10 files, are rewritten) and 2820 occurrences in 329
+files are the live tree the plan substitutes (257 `.rs`, the active plans and `docs/`, 22
+`.toml` and the lockfile, the three workflows, the scripts, `dist/`, two `.voxtext` headers,
+the WIT file, one WGSL comment). `VXE_*` names: 84 distinct. The harness repository under
+`.claude/` carries 41 more in 9 files. The first consumer's checkout (`~/Work/voxel-roguelite`)
+holds no `vxe` at all today, so there is nothing to update there.
