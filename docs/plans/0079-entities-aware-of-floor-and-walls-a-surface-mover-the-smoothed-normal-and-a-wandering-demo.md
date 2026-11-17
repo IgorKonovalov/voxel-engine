@@ -664,8 +664,8 @@ unchanged (ADR-0050).
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: the surface mover in `vxe-sim` | dev | done; readings in [`logs/0079.md`](logs/0079.md) | bc04beb4 |
-| 2: the smoothed normal in `vxe-world`, the frame in `vxe-entity` | dev | awaiting the owner on done-when 8; the rest done (wip 26f63d9b) | 7661676e |
-| 3: the body and the stride in the `.rig` | dev | done | committed with this row |
+| 2: the smoothed normal in `vxe-world`, the frame in `vxe-entity` | dev | done; done-when 8 per the 2026-11-17 amendment | 7661676e, committed with this row |
+| 3: the body and the stride in the `.rig` | dev | done | 8c0b26d4 |
 | 4: the fly-through's demo | dev | not started | |
 | 5: the owner's window | human | not started | |
 | 6: the owner's picks, and the tip | dev | not started | |
@@ -682,7 +682,7 @@ each. Empty is fine.)_
 - Phase 1: the sphere's depenetration takes the controller's candidate order with both limits at twice the radius; a failed attach leaves the centre where the move put it; a tick that detaches and lands reports `Detached`.
 - Phase 1 done-when 2: the event tick slides the rest of its move up the wall, so `(4864, 2560, 6656)` is read on tick 136 (event tick plus 99).
 - Phase 1 done-when 4: radius 768 does not drop the body; amended to 1024 (22d62f05, owner).
-- Phase 2 done-when 8 not met as stated: a radius-512 sphere on F6 rests on the step corners, contact `(-192, 0, 170)`, not `(0, 0, 256)`; the test is left out pending the owner (readings log).
+- Phase 2 done-when 8 not met as first stated: a radius-512 sphere on F6 rests on the step corners, contact `(-192, 0, 170)`, not `(0, 0, 256)`; closed by the 2026-11-17 amendment (0835fa97, owner): the test commits with radius 128 (`half` 1).
 - Phase 2: `normalise` takes the length at 256 times the scale (the floor root of a short vector read `(-6, 0, 6)` as `(-192, 0, 192)`); the Phase 1 surface course hash is re-pinned to `0x0a07_c86c_51f9_8d3c` with `smooth_normal` in it.
 - Phase 3: the walker's `body ground radius 4 height 26 step 4` is the phase's line as written; the tree's walker has its torso at 12, not 8, so its top is 30 model voxels, 4 above the body's height (readings log).
 - Phase 1: the `CLAUDE.md` line for `vxe-sim` is not in the worktree; the orchestrator adds it in the main checkout's `.claude/` repo.

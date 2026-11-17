@@ -226,3 +226,38 @@ fn the_sim_and_entity_arcs_agree() {
         h.finish()
     );
 }
+
+/// A one-voxel crawler on F6's one-voxel staircase leans with the slope: resting on the tread
+/// at x = 70 its contact normal is the tread's `(0, 0, 256)`, while its smoothed normal (the
+/// gradient `(-6, 0, 6)` at `half` 1) is the staircase's 45 degrees. With `smooth` off the
+/// smoothed normal is the contact normal.
+#[test]
+fn a_crawler_on_the_staircase_leans_with_it() {
+    let world = f6();
+    let params = SurfaceParams {
+        radius: 128,
+        attach_reach: 512,
+        smooth: true,
+        ..surface_params()
+    };
+    // Over the tread at x = 70 (its top at z = 10 voxels), a little clear of it; one tick
+    // attaches it.
+    let start = SurfaceState::new(Fixed3([18048, 2688, 2760]), [0, 0, 256], [256, 0, 0]);
+    let mut on = start;
+    SurfaceMover::new(params).tick(&world, &mut on, &SurfaceInput::default());
+    assert!(on.attached, "{on:?}");
+    assert_eq!(on.normal, [0, 0, 256], "{on:?}");
+    let s = on.smooth_normal;
+    assert!(
+        (s[0] + 181).abs() <= 3 && s[1] == 0 && (s[2] - 181).abs() <= 3,
+        "{s:?}"
+    );
+    let mut off = start;
+    SurfaceMover::new(SurfaceParams {
+        smooth: false,
+        ..params
+    })
+    .tick(&world, &mut off, &SurfaceInput::default());
+    assert!(off.attached, "{off:?}");
+    assert_eq!(off.smooth_normal, off.normal);
+}
