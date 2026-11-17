@@ -104,8 +104,10 @@ lock, quiet box, 1-minute load 0.99 to 1.86, tip dbb59413 alternated with the de
 7.9 µs against 1.03 ms (a uniform prefab brick into a uniform world brick is one word);
 `prefab256_castle_tile` (a 256³ castle-shaped tile, about 12 % of its voxels written, on a
 4³-chunk world) 18.95 to 18.99 ms. On the same box today the base reads `prefab64_mixed` at
-3.80 ms, against the 2.07 ms above; whether the budget is re-read against today's base is
-open (`docs/plans/logs/0083.md`, Phase 3).
+3.80 ms, against the 2.07 ms above. **Owner, 2026-11-17:** Plan 0083's `prefab64_mixed` bar is
+within 10 % of the pre-change base on the same box under the same lock, base and tip
+alternated, not of the 2.07 ms reading; the 3.80 ms base and the +1.4 % tip are that bar's
+reading. The 5 ms proposal above stands as the budget.
 
 **Stamps past residency (Plan 0083 Phase 5, ADR-0066).** A stamp writes the resident chunks its
 box meets and keeps one pending placement for the chunks it writes into that are not resident;

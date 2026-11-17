@@ -213,6 +213,10 @@ only and may run before Plans 0080 and 0077 merge; Phase 6 needs both.
   4. Readings: the castle's kept prefabs (`--castle`, printed as today) in bytes against
      343 566 464 (guess: under a third); `prefab64_mixed` within 10 % of 2.07 ms,
      `prefab64_uniform` under 1.455 ms, `prefab256_castle_tile` read, no proposal.
+     **Amended 2026-11-17 (owner):** the `prefab64_mixed` bar is within 10 % of the pre-change
+     base on the same box under the same lock (today 3.80 ms on the Ryzen 9 5900HS at
+     26a76ef7; the tip read +1.4 % quiet at dbb59413), not of the 2.07 ms the bench read on the
+     earlier tree.
 
 ### Phase 4: the scene: layers, hidden nodes, mirrors, scale, and `--vox` at start
 - **Owner skill:** dev
@@ -409,7 +413,7 @@ material ore
 |---|---|---|---|
 | Prefab RAM, the castle's kept tiles | section 3 | 343 566 464 B dense; brick form a guess under a third | Printed by `--castle`, asserted in Phase 3's log, Phase 8 writes it |
 | World in RAM with the castle | section 3, 4 GB | down by the prefab saving; otherwise as Plan 0042 read (+0.3 GB RSS) | `VmHWM` at `--frames 3000`, with and without `--castle`, as Plan 0042 |
-| Stamp cost | section 4 | `prefab64_mixed` within 10 % of 2.07 ms; `prefab64_uniform` under 1.455 ms; a 256³ tile read, no proposal | `cargo bench -p vxe-world --bench stamp`, dev reference, perf lock |
+| Stamp cost | section 4 | `prefab64_mixed` within 10 % of the pre-change base on the same box (amended 2026-11-17, owner; 3.80 ms today); `prefab64_uniform` under 1.455 ms; a 256³ tile read, no proposal | `cargo bench -p vxe-world --bench stamp`, dev reference, perf lock, base and tip alternated |
 | Runtime castle placement | section 4 (new line) | the call under 500 ms on the dev box, a guess; pending placements, settle time read | Phase 5's rig, `docs/plans/logs/0083.md` |
 | First frame with `--vox chapel` | section 7 | within 100 ms of the plain cave's | the start-up lines, three runs |
 | Material rows on the GPU | section 3, everything else | 64 B a row; 1000 rows 64 KB | `GpuWorld::mirror_bytes`'s material term |
