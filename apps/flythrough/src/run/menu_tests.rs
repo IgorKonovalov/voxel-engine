@@ -652,8 +652,9 @@ fn a_cycle_keeps_enter_as_next() {
     assert!(!run.menu.editing());
 }
 
-/// The entries a bare run cannot act on, each with its reason: grey, the footer naming the
-/// reason while selected, `Enter` changing nothing and saying the reason in the notice; the
+/// The entries a bare run cannot act on, each with its reason: grey with the reason on its
+/// own row, in the palette and on its group's page (selected or not), the footer naming the
+/// page's keys only, `Enter` changing nothing and saying the reason in the notice; the
 /// root's `audio` row grey with `needs --audio`; `--keys` printing `unavailable: needs --pan`
 /// on the pan row. With `--pan 10` the pan acts (`pan off`). A streamed run without the
 /// coarse grid refuses `coarse print`, `crumble` and `walk` with `needs --level`; the bare
@@ -683,10 +684,29 @@ fn an_unavailable_entry_says_why() {
             Err(why),
             "{label}"
         );
+        run.menu.open_at(crate::hud::menu::PageId::Group(e.group));
+        let words = format!("{}  {why}", e.words(&run.modes, &run.run_view()));
+        let (rows, colours) = menu_text(&mut run);
+        let i = rows
+            .iter()
+            .position(|r| r.get(2..).is_some_and(|r| r.starts_with(&words)))
+            .unwrap_or_else(|| panic!("{label} on its page: {rows:?}"));
+        assert_eq!(
+            colours[i],
+            vxe_render::HudColour::Grey,
+            "{label}: {}",
+            rows[i]
+        );
+        run.menu.close();
         select(&mut run, &e);
         let (row, colour) = selected_row(&mut run);
         assert_eq!(colour, vxe_render::HudColour::Grey, "{label}: {row}");
-        assert!(footer_row(&mut run).starts_with(why), "{label}");
+        assert!(
+            row.starts_with(&format!("> {}  ", e.group.name()))
+                && row.contains(&format!("  {why}")),
+            "{label}: the palette row {row}"
+        );
+        assert!(!footer_row(&mut run).contains(why), "{label}");
         let before = state(&mut run);
         frame_keys(&mut run, &pressed(KeyCode::Enter));
         assert_eq!(state(&mut run), before, "{label} acted");

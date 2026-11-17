@@ -151,8 +151,8 @@ impl Menu {
 
     /// [`Menu::write`] with `notice` (the last action's line, yellow) in the row above the
     /// footer. An unavailable entry's row, and a group's on the root whose entries are all
-    /// unavailable for one reason, is grey (selected or not), the group's with its reason in
-    /// the key column; while one is selected the footer names its reason. A number being
+    /// unavailable for one reason, is grey (selected or not) with its reason on the row: an
+    /// entry's after its words, a group's in the key column. A number being
     /// edited reads `label  < value >  range` and the footer `Up Down change  Enter Esc
     /// done`.
     pub fn write_with(
@@ -200,16 +200,12 @@ impl Menu {
             colours.push(HudColour::White);
         }
         let mut pick = 0;
-        let mut why = None;
         for (i, row) in rows.iter().enumerate() {
             let selected = row.selectable() && pick == sel;
             if row.selectable() {
                 pick += 1;
             }
             let unavailable = unavailable(row, m, v);
-            if selected {
-                why = unavailable;
-            }
             if i < top || i >= top + LIST_ROWS {
                 continue;
             }
@@ -254,8 +250,6 @@ impl Menu {
         let start = text.len();
         if self.editing() {
             text.push_str("Up Down change  Enter Esc done");
-        } else if let Some(why) = why {
-            let _ = write!(text, "{why}  Esc back  Tab closes  type to search");
         } else {
             text.push_str(footer(page, searching));
         }
@@ -298,7 +292,8 @@ fn cut_row(text: &mut String, start: usize) {
 }
 
 /// One row's text after its selection mark: a group's name, an entry's words and binds
-/// (the palette's prefixed with the group), or a Keys page row (binds first).
+/// (the palette's prefixed with the group), or a Keys page row (binds first). An
+/// unavailable entry shows its reason two cells after its words, the words cut first.
 fn write_row(
     text: &mut String,
     start: usize,
@@ -308,6 +303,7 @@ fn write_row(
     m: &Modes,
     v: &RunView,
 ) {
+    let why = unavailable(row, m, v);
     match *row {
         Row::Group(g) => text.push_str(g.name()),
         Row::Header(g) => text.push_str(g.name()),
@@ -318,16 +314,29 @@ fn write_row(
             let keys = e.keys();
             let keys = if keys.is_empty() { "menu" } else { &keys };
             let _ = write!(text, "  {keys:<18}");
-            push_cut(text, &e.words(m, v), MENU_COLS - 22);
+            push_words(text, &e.words(m, v), why, MENU_COLS - 22);
         }
         Row::Entry(e) => {
             if searching {
                 let _ = write!(text, "{}  ", e.group.name());
             }
             let room = (KEY_COL - 2).saturating_sub(text.len() - start);
-            push_cut(text, &e.words(m, v), room);
+            push_words(text, &e.words(m, v), why, room);
             pad_to(text, start, KEY_COL);
             text.push_str(&e.keys());
+        }
+    }
+}
+
+/// Appends an entry's `words` and, when it is unavailable, `  <why>`, within `width` bytes:
+/// the words are cut to leave the reason whole.
+fn push_words(text: &mut String, words: &str, why: Option<&str>, width: usize) {
+    match why {
+        None => push_cut(text, words, width),
+        Some(why) => {
+            push_cut(text, words, width.saturating_sub(why.len() + 2));
+            text.push_str("  ");
+            text.push_str(why);
         }
     }
 }

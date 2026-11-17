@@ -41,9 +41,10 @@ window's top-right corner reads `fps <n>  frame <median> ms p99 <ms>` while it i
   between `<` and `>`, its range after. `Up` and `Down` (the pad's D-pad) step it, held they
   repeat after 275 ms every 50 ms, and it stops at its range's ends; `Enter` or `Esc` (the
   pad's `South` or `East`) keep the value and leave the edit.
-- **A grey row** is an entry the run cannot act on, with the reason in the footer while it is
-  selected (`needs --audio`, `needs --pan`, `needs --path`, `needs --castle`, `needs --model`,
-  `needs --level`); `Enter` on it changes nothing and says the reason. A group whose entries
+- **A grey row** is an entry the run cannot act on, with the reason on its own row after its
+  value, on its page and in the search (`needs --audio`, `needs --pan`, `needs --path`,
+  `needs --castle`, `needs --model`, `needs --level`); `Enter` on it changes nothing and says
+  the reason. A group whose entries
   all need the same flag is grey on the root with the reason beside it. `--keys` prints
   `unavailable: <reason>` on those rows.
 - **The notice row**, above the footer, holds the last line an action printed for 3 s, in

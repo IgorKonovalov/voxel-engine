@@ -684,8 +684,8 @@ Readings and gate counts: [`logs/0080.md`](logs/0080.md).
 | 4: the owner's window | human | run 1 done 2026-11-17, verdict in the readings log; the rerun is Phase 7 | |
 | 5: the panel: scale, place, backdrop, grey, readout (amended 2026-11-17) | dev | done | 295ed11e |
 | 6: stepped values, unavailable entries, every action answers (amended 2026-11-17) | dev | done, one count differs (Notes) | 677fb8db |
-| 7: the owner's window, run 2 (amended 2026-11-17) | human | done 2026-11-17, verdict in the readings log; the pad's step not run (no pad) | committed with this row |
-| 8: the owner's picks, and the tip (the former Phase 5) | dev | not started | |
+| 7: the owner's window, run 2 (amended 2026-11-17) | human | done 2026-11-17, verdict in the readings log; the pad's step not run (no pad) | e210343b |
+| 8: the owner's picks, and the tip (the former Phase 5) | dev | done | committed with this row |
 
 ### Notes
 
@@ -763,6 +763,9 @@ Readings and gate counts: [`logs/0080.md`](logs/0080.md).
   `app.rs`, `test_support.rs`, `run/mod.rs` (`Run::notice`), `run/tests.rs` (the queue angle's
   steps), `cli/mod.rs`' module docs, `tests/gpu_hud_golden.rs` and `menu.png` re-blessed (the
   audio row is grey).
+- Phase 8: an unavailable entry's reason is on its own row after its words (its page, the
+  palette, the Keys page), the words cut first; the footer no longer names it (the plan's
+  Decisions had the footer name it while selected).
 - Phase 2: `path::TesterInput` gained `Pad`; under `--tester` the triggers and the wheel are
   dropped by the filter (`R2` no longer frees a tour).
 
