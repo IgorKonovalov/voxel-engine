@@ -171,7 +171,8 @@ fn entry_row(words: &str, keys: &str) -> String {
 }
 
 /// With the lamp off and the filter at 2 iterations, `Tab` draws the root page: the title, a
-/// row per group with the first selected (yellow), a blank row and the footer. `Down` four
+/// row per group with the first selected (yellow) and `audio` grey with `needs --audio` (the
+/// run has no audio), a blank row and the footer. `Down` four
 /// times and `Enter` open `lighting`: its twelve toggles' words and binds, `lamp off` and
 /// `filter 2` among them, `F7` in the lamp's key column and the menu-only rows with none.
 #[test]
@@ -182,12 +183,17 @@ fn the_root_and_a_group_draw_their_rows() {
     key(&mut menu, &m, KeyCode::Tab);
     assert_eq!(menu.page(), Some(PageId::Root));
     let (text, colours) = drawn(&menu, &m);
-    let want = "menu\n> moving\n  camera and paths\n  look\n  upscaler\n  lighting\n  lights\n  \
-                light queue\n  entities\n  audio\n  readings\n  debug\n\nEnter opens  Esc closes  \
-                Tab closes  type to search";
+    // With no audio in the run the audio group is grey with its reason in the key column.
+    let audio = entry_row("audio", "needs --audio");
+    let want = format!(
+        "menu\n> moving\n  camera and paths\n  look\n  upscaler\n  lighting\n  lights\n  \
+         light queue\n  entities\n{audio}\n  readings\n  debug\n\nEnter opens  Esc closes  \
+         Tab closes  type to search"
+    );
     assert_eq!(text, want);
     let mut want_colours = vec![HudColour::White; 14];
     want_colours[1] = HudColour::Yellow;
+    want_colours[9] = HudColour::Grey;
     assert_eq!(colours, want_colours);
     for _ in 0..4 {
         key(&mut menu, &m, KeyCode::ArrowDown);
@@ -205,7 +211,7 @@ fn the_root_and_a_group_draw_their_rows() {
         ("ore pulse off", ""),
         ("exposure manual", ""),
         ("store read face", ""),
-        ("light weights: weights normal", ""),
+        ("light weights normal", ""),
         ("young filter: young luma", ""),
         ("entity light world", ""),
     ];
@@ -525,28 +531,61 @@ fn the_shortcuts_are_the_table() {
         } else {
             keys
         };
+        let row = row.split("  unavailable: ").next().unwrap_or(row);
         assert!(row.trim_end().ends_with(&format!(" {keys}")), "{row}");
     }
 }
 
+/// A view of a run that has everything an entry can need: audio, a path, the castle, a
+/// model, a bounded world with its coarse grid.
+fn full_view() -> RunView {
+    RunView {
+        audio: Some(flythrough::hud::menu::AudioView {
+            echoes: true,
+            tail: true,
+            echo_db: 0.0,
+            tail_db: 0.0,
+            predelay_ms: 0.0,
+            glide: false,
+            direct_delay: false,
+            echo_range: (-24.0, 12.0),
+            tail_range: (-24.0, 12.0),
+        }),
+        path: true,
+        castle: true,
+        model: true,
+        coarse: true,
+        ..RunView::default()
+    }
+}
+
+/// One frame with `key` pressed through the menu's step at `m` and `v`.
+fn key_in(menu: &mut Menu, m: &Modes, v: &RunView, k: KeyCode) -> Vec<Activated> {
+    let mut input = Input::default();
+    input.key_down(k);
+    step(menu, &input, m, v).acts
+}
+
 /// Every menu-only entry is reached from a closed menu by `Tab`, its label typed and `Down`
-/// to it among the matches, and `Enter` hands the run that entry's own flip or action, the
-/// change its former key made.
+/// to it among the matches (in a run that has what every entry needs: `--pan` among the
+/// modes, the rest in the view), and `Enter` hands the run that entry's own flip or action,
+/// the change its former key made; on a number `Enter` opens its edit mode and `Up` hands the
+/// run its step up.
 #[test]
 fn every_menu_only_entry_is_reached_by_its_words() {
     use flythrough::hud::menu::{EntryKind, Row, typed};
-    let m = modes(true);
-    let v = RunView::default();
+    let m = modes(true).with_pan(10.0, 0.0);
+    let v = full_view();
     let keys: Vec<KeyCode> = flythrough::hud::menu::all_keys();
     for e in entries().filter(|e| e.keys().is_empty()) {
         let mut menu = Menu::default();
-        key(&mut menu, &m, KeyCode::Tab);
+        key_in(&mut menu, &m, &v, KeyCode::Tab);
         for c in e.label.chars() {
             let k = *keys
                 .iter()
                 .find(|&&k| typed(k) == Some(c))
                 .unwrap_or_else(|| panic!("{}: {c:?} types", e.label));
-            key(&mut menu, &m, k);
+            key_in(&mut menu, &m, &v, k);
         }
         assert_eq!(menu.filter(), e.label);
         let at = menu
@@ -556,10 +595,17 @@ fn every_menu_only_entry_is_reached_by_its_words() {
             .position(|r| matches!(r, Row::Entry(x) if x.label == e.label && x.group == e.group))
             .unwrap_or_else(|| panic!("{} matches its label", e.label));
         for _ in 0..at {
-            key(&mut menu, &m, KeyCode::ArrowDown);
+            key_in(&mut menu, &m, &v, KeyCode::ArrowDown);
         }
-        let acts = key(&mut menu, &m, KeyCode::Enter);
+        let mut acts = key_in(&mut menu, &m, &v, KeyCode::Enter);
+        if e.is_number() {
+            assert!(acts.is_empty() && menu.editing(), "{}", e.label);
+            acts = key_in(&mut menu, &m, &v, KeyCode::ArrowUp);
+        }
         match (e.kind, &acts[..]) {
+            (EntryKind::Toggle(t), [Activated::Step(got, 1)]) => {
+                assert!(std::ptr::eq(t, *got) && t.number.is_some(), "{}", e.label);
+            }
             (EntryKind::Toggle(t), [Activated::Toggle(got)]) => {
                 assert!(std::ptr::eq(t, *got), "{}", e.label);
                 let (mut a, mut b) = (modes(true), modes(true));
@@ -636,4 +682,51 @@ fn the_panel_is_centred() {
             rows: used as u32 + 1,
         }
     );
+}
+
+/// In a number's edit mode, `Up` held from 0 to 600 ms in 60 Hz frames steps once at the
+/// press and once at 275 ms and every 50 ms after (`REPEAT_DELAY_MS`, `REPEAT_RATE_MS`):
+/// 275, 325, ..., 575, eight steps in all; released and pressed again it steps at once.
+#[test]
+fn a_held_arrow_repeats() {
+    use flythrough::hud::menu::{REPEAT_DELAY_MS, REPEAT_RATE_MS, step_at};
+    assert_eq!((REPEAT_DELAY_MS, REPEAT_RATE_MS), (275.0, 50.0));
+    let m = modes(true);
+    let v = RunView::default();
+    let mut menu = Menu::default();
+    key(&mut menu, &m, KeyCode::Tab);
+    key(&mut menu, &m, KeyCode::Enter);
+    assert_eq!(menu.page(), Some(PageId::Group(Group::Moving)));
+    assert!(key(&mut menu, &m, KeyCode::Enter).is_empty());
+    assert!(menu.editing(), "Enter on the dig radius edits it");
+    let steps = |acts: &[Activated]| {
+        acts.iter()
+            .filter(|a| matches!(a, Activated::Step(t, 1) if t.name == "dig radius"))
+            .count()
+    };
+    let mut press = Input::default();
+    press.key_down(KeyCode::ArrowUp);
+    let mut total = steps(&step_at(&mut menu, &press, &m, &v, 0.0).acts);
+    assert_eq!(total, 1, "the press steps");
+    let mut held = Input::default();
+    held.key_down(KeyCode::ArrowUp);
+    held.end_frame();
+    let mut at = Vec::new();
+    for frame in 1..=36 {
+        let t = f64::from(frame) * 1000.0 / 60.0;
+        let n = steps(&step_at(&mut menu, &held, &m, &v, t).acts);
+        if n > 0 {
+            at.push(frame);
+        }
+        total += n;
+    }
+    assert_eq!(total, 8);
+    // The frames whose time first passes 275, 325, ..., 575 ms.
+    assert_eq!(at, [17, 20, 23, 26, 29, 32, 35]);
+    assert_eq!(
+        steps(&step_at(&mut menu, &Input::default(), &m, &v, 616.7).acts),
+        0
+    );
+    assert_eq!(steps(&step_at(&mut menu, &press, &m, &v, 700.0).acts), 1);
+    assert!(menu.editing());
 }

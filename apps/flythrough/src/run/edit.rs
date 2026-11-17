@@ -141,7 +141,7 @@ impl Run {
         }
     }
 
-    /// One server tick and the client's events: prints the logic's lines, keeps the coarse
+    /// One server tick and the client's events: says the logic's lines (`Run::say`), keeps the coarse
     /// grid and the frame's history current with every applied op (those a logic line names
     /// and those none does, such as the ops a logic applied in a tick it then failed), and
     /// returns the benches completed, their refused carves and the tick's milliseconds.
@@ -152,12 +152,15 @@ impl Run {
         let t = now();
         let report = net.server.tick();
         let ms = ms_since(t);
-        for e in [report.restart, report.logic_error].into_iter().flatten() {
-            if let Some(line) = net.logic_failure(&e) {
-                println!("{line}");
-            }
-        }
+        let failures: Vec<String> = [report.restart, report.logic_error]
+            .into_iter()
+            .flatten()
+            .filter_map(|e| net.logic_failure(&e))
+            .collect();
         let events = net.client.poll();
+        for line in failures {
+            self.say(line);
+        }
 
         // The tick's ops in the order they arrived, each taken when the logic's event names
         // it, and each one's tick.
@@ -182,11 +185,11 @@ impl Run {
                             if let Some(c) = self.coarse.as_mut() {
                                 c.query = Some(c.query.map_or(1, |n| n + 1));
                             }
-                            println!("{l}");
+                            self.say(l);
                         }
                         None => match wedged_terminal_line(self.world.materials(), line) {
-                            Some(l) => println!("{l}"),
-                            None => println!("{line}"),
+                            Some(l) => self.say(l),
+                            None => self.say(line),
                         },
                     }
                     continue;

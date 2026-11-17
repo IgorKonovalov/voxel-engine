@@ -1,4 +1,5 @@
-//! The menu's state: a stack of pages with a selection each, and the palette's filter. A page
+//! The menu's state: a stack of pages with a selection each, the palette's filter, and the
+//! edit mode of a number (`Enter` on it; the arrows step it, `Enter` or `Esc` leave). A page
 //! is a list of rows built from the key tables when it is shown, so its values are live.
 
 use super::filter::palette;
@@ -37,11 +38,15 @@ impl Row {
     }
 }
 
-/// What the menu hands the run to do: a toggle's flip or an action.
+/// What the menu hands the run to do: a toggle's flip, an action (a number's step of an
+/// action is its [`Act::signed`]), a toggle's number stepped up (`1`) or down (`-1`), or the
+/// reason an unavailable entry did nothing.
 #[derive(Clone, Copy)]
 pub enum Activated {
     Toggle(&'static Toggle),
     Action(Act),
+    Step(&'static Toggle, i32),
+    Refused(&'static str),
 }
 
 impl std::fmt::Debug for Activated {
@@ -49,6 +54,8 @@ impl std::fmt::Debug for Activated {
         match self {
             Self::Toggle(t) => write!(f, "Toggle({})", t.name),
             Self::Action(a) => write!(f, "Action({a:?})"),
+            Self::Step(t, d) => write!(f, "Step({}, {d})", t.name),
+            Self::Refused(why) => write!(f, "Refused({why})"),
         }
     }
 }
@@ -85,6 +92,11 @@ pub struct Menu {
     stack: Vec<(PageId, usize)>,
     filter: String,
     found: usize,
+    /// Whether the selected number is being edited.
+    edit: bool,
+    /// The arrow held in the edit mode: its direction, when it was pressed (the run's clock,
+    /// ms) and the repeats it has given (`route::step_at`).
+    pub(crate) hold: Option<(i32, f64, u32)>,
 }
 
 impl Menu {
@@ -99,6 +111,11 @@ impl Menu {
 
     pub fn filter(&self) -> &str {
         &self.filter
+    }
+
+    /// Whether a number is being edited: the arrows step it.
+    pub fn editing(&self) -> bool {
+        self.edit
     }
 
     /// Opens the menu on `page`, with no filter: a group's page over the root, so `Esc` goes
@@ -116,6 +133,8 @@ impl Menu {
         self.stack.clear();
         self.filter.clear();
         self.found = 0;
+        self.edit = false;
+        self.hold = None;
     }
 
     /// The rows shown at `m` and `v`: the palette's matches while a filter is typed, else the
@@ -186,6 +205,31 @@ impl Menu {
         let picks: Vec<Row> = rows.into_iter().filter(Row::selectable).collect();
         let n = picks.len();
         let s = self.selected().min(n.saturating_sub(1));
+        if self.edit {
+            let number = match picks.get(s) {
+                Some(Row::Entry(e)) if e.is_number() => Some(*e),
+                _ => None,
+            };
+            match (i, number) {
+                (MenuInput::Up | MenuInput::Down, Some(e)) => {
+                    let d = if i == MenuInput::Up { 1 } else { -1 };
+                    return Some(match e.kind {
+                        EntryKind::Toggle(t) => Activated::Step(t, d),
+                        EntryKind::Action(a) => Activated::Action(a.act.signed(d)),
+                    });
+                }
+                (MenuInput::Activate | MenuInput::Back, _) => {
+                    self.edit = false;
+                    self.hold = None;
+                    return None;
+                }
+                _ => {
+                    // Anything else leaves the mode and then does what it does on the page.
+                    self.edit = false;
+                    self.hold = None;
+                }
+            }
+        }
         match i {
             MenuInput::Up => self.select(s.saturating_sub(1)),
             MenuInput::Down => self.select((s + 1).min(n.saturating_sub(1))),
@@ -196,6 +240,13 @@ impl Menu {
             MenuInput::Activate | MenuInput::Right => match picks.get(s) {
                 Some(Row::Group(g)) => self.stack.push((PageId::Group(*g), 0)),
                 Some(Row::Entry(e)) if i == MenuInput::Activate => {
+                    if let Err(why) = e.available(m, v) {
+                        return Some(Activated::Refused(why));
+                    }
+                    if e.is_number() {
+                        self.edit = true;
+                        return None;
+                    }
                     return Some(match e.kind {
                         EntryKind::Toggle(t) => Activated::Toggle(t),
                         EntryKind::Action(a) => Activated::Action(a.act),

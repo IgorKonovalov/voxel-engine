@@ -855,8 +855,19 @@ impl Run {
     pub(crate) fn write_menu(&mut self) {
         let t = now();
         let v = self.run_view();
-        self.menu
-            .write(&self.modes, &v, &mut self.hud.text, &mut self.hud.colours);
+        let at_ms = ms_since(self.start);
+        let notice = self
+            .notice
+            .as_ref()
+            .filter(|(_, at)| at_ms - at < hud::BANNER_MS)
+            .map(|(l, _)| l.as_str());
+        self.menu.write_with(
+            &self.modes,
+            &v,
+            notice,
+            &mut self.hud.text,
+            &mut self.hud.colours,
+        );
         self.hud.format_us = ((now() - t).as_secs_f64() * 1e6) as u32;
     }
 

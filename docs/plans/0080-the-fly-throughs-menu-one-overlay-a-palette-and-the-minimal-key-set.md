@@ -682,8 +682,8 @@ Readings and gate counts: [`logs/0080.md`](logs/0080.md).
 | 2: the component, the palette and the Keys page | dev | done | 47b0bd28 |
 | 3: the minimal key set and the pad | dev | done, one done-when clause unmet (Notes) | b80cd4d4 |
 | 4: the owner's window | human | run 1 done 2026-11-17, verdict in the readings log; the rerun is Phase 7 | |
-| 5: the panel: scale, place, backdrop, grey, readout (amended 2026-11-17) | dev | done | committed with this row |
-| 6: stepped values, unavailable entries, every action answers (amended 2026-11-17) | dev | not started | |
+| 5: the panel: scale, place, backdrop, grey, readout (amended 2026-11-17) | dev | done | 295ed11e |
+| 6: stepped values, unavailable entries, every action answers (amended 2026-11-17) | dev | done, one count differs (Notes) | committed with this row |
 | 7: the owner's window, run 2 (amended 2026-11-17) | human | not started | |
 | 8: the owner's picks, and the tip (the former Phase 5) | dev | not started | |
 
@@ -737,6 +737,32 @@ Readings and gate counts: [`logs/0080.md`](logs/0080.md).
 - Phase 5: `the_readout_shows_with_the_menu_open` is in `run/menu_tests.rs` (it drives a
   `Run`); the golden is `tests/golden/menu.png`, drawn at scale 1 on the 320 x 180 golden view
   (40 x 22 cells, the page cut at column 40), placed at (0, 0) with a fixed readout.
+- Phase 6, **count differs:** `a_held_arrow_repeats` asserts 8 steps over 0 to 600 ms, not 7:
+  the rule as written (one at the press, then every 50 ms from 275 ms) steps at the press and
+  at 275, 325, ..., 575 ms. The test is in `tests/menu.rs` on `Menu` through `menu::step_at`
+  (an explicit clock); the run calls `step_at` with its clock, `menu::step` is `step_at` at 0.
+- Phase 6: the range after an edited number is in the row's colour, not grey (a colour is per
+  row). An unavailable row is grey while selected too (`>` marks it). A group grey on the root
+  shows its reason in the key column.
+- Phase 6: the audio group has ten entries after the merge (thirteen before); the test names
+  ten. `every_live_entry_answers` presses `Up` after `Enter` on a number (`Down` at its top).
+- Phase 6: `Entry::words` puts the label's first words before a value that starts with its
+  last (`queue angle 4`); `light weights: weights normal` reads `light weights normal`. The
+  queue angle steps up to `QUEUE_ANGLE_MAX` (8, new) and down to 0 under 1/64.
+- Phase 6: `stamp`, `bench` and `crumble` say `<name>: sent to the logic` at once; the logic's
+  lines (`stamped: ...`) replace it after the tick. The dig, fill and bench result lines
+  (`record_edit`, `bench_sync`) still print only. A menu flip that leaves its own words as they
+  were (`bounce` with no light) says its line in the notice. `Audio::play` gives its line
+  instead of printing it. "The full line is printed" is not asserted (stdout is not captured);
+  `Run::file_samples` is split from `push_samples` for the test.
+- Phase 6: `carry`, `colour` and `bounce` keep the lights row as their value
+  (`every_toggle_shows_its_mode_in_the_hud_grid` reads each value in its HUD row, and the row
+  shows `carry over 0`, not `carry on`).
+- Phase 6: `RunView` gained `path`, `castle`, `model`, `streaming`, `coarse`, `AudioView` the
+  trims' ranges; `walk` is unavailable on the streamed cave (`needs --level`). Outside the list:
+  `app.rs`, `test_support.rs`, `run/mod.rs` (`Run::notice`), `run/tests.rs` (the queue angle's
+  steps), `cli/mod.rs`' module docs, `tests/gpu_hud_golden.rs` and `menu.png` re-blessed (the
+  audio row is grey).
 - Phase 2: `path::TesterInput` gained `Pad`; under `--tester` the triggers and the wheel are
   dropped by the filter (`R2` no longer frees a tour).
 

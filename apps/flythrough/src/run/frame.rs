@@ -8,6 +8,7 @@ use crate::hud::menu::{self, Passed, all_keys, keep};
 use crate::hud::{self};
 use crate::now;
 use crate::path::{TesterAction, TesterInput, tester_action};
+use crate::percentile;
 use crate::run::Run;
 use crate::run::fade::{FADE_DIGS, FADE_END, FadeSample, fade_lamp, fade_report};
 use crate::run::hud_feed::Overlay;
@@ -245,7 +246,8 @@ impl Run {
             Passed::Filtered(Box::new(tester_filter(input)))
         } else {
             let v = self.run_view();
-            let routed = menu::step(&mut self.menu, input, &self.modes, &v);
+            let now = ms_since(self.start);
+            let routed = menu::step_at(&mut self.menu, input, &self.modes, &v, now);
             for a in routed.acts {
                 self.menu_act(a);
             }
@@ -823,8 +825,8 @@ impl Run {
         println!("hud:\n{stats}");
     }
 
-    /// Files this frame's times into the readings' samples (`Enter`), when they are being taken, and prints
-    /// their report once they hold `SAMPLES` frames.
+    /// Files this frame's times into the readings' samples (`Enter`), when they are being
+    /// taken, and prints their report once they hold `SAMPLES` frames.
     fn push_samples(
         &mut self,
         gpu: &Gpu,
@@ -833,6 +835,21 @@ impl Run {
         pass_ms: Option<&[f64]>,
         hud_ms: Option<f64>,
     ) {
+        if let Some(s) = self.file_samples(cpu_ms, gpu_ms, pass_ms, hud_ms) {
+            self.report(gpu, s);
+        }
+    }
+
+    /// Files one frame's times into the readings' samples; once they hold `SAMPLES` frames,
+    /// takes them, sets the notice to `frame: cpu X ms, gpu Y ms (median of 30)` (`gpu n/a`
+    /// with no GPU times) and gives them for the full line.
+    pub(crate) fn file_samples(
+        &mut self,
+        cpu_ms: f64,
+        gpu_ms: Option<f64>,
+        pass_ms: Option<&[f64]>,
+        hud_ms: Option<f64>,
+    ) -> Option<Samples> {
         if let Some(s) = self.samples.as_mut() {
             s.cpu_ms.push(cpu_ms);
             if let Some(ms) = gpu_ms {
@@ -849,9 +866,18 @@ impl Run {
             }
             if s.cpu_ms.len() == SAMPLES {
                 let s = self.samples.take().unwrap_or_default();
-                self.report(gpu, s);
+                let cpu = percentile(&mut s.cpu_ms.clone(), 50.0);
+                let gpu = if s.gpu_ms.is_empty() {
+                    "n/a".to_owned()
+                } else {
+                    format!("{:.3} ms", percentile(&mut s.gpu_ms.clone(), 50.0))
+                };
+                let line = format!("frame: cpu {cpu:.3} ms, gpu {gpu} (median of {SAMPLES})");
+                self.notice = Some((line, ms_since(self.start)));
+                return Some(s);
             }
         }
+        None
     }
 }
 

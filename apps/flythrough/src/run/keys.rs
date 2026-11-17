@@ -50,19 +50,17 @@ impl Run {
     /// `G`: walk mode with the body under the camera, or back to flight.
     pub(crate) fn toggle_walk(&mut self) {
         if self.walk.take().is_some() {
-            println!("fly mode");
-            return;
+            return self.say("fly mode");
         }
         if let Err(e) = walk_allowed(self.stream.is_some()) {
-            println!("walk: {e}; still flying");
-            return;
+            return self.say(format!("walk: {e}; still flying"));
         }
         match Walk::at_camera(&self.world, &self.fly.camera) {
             Some(w) => {
                 self.walk = Some(w);
-                println!("walk mode");
+                self.say("walk mode");
             }
-            None => println!("walk: no room for the body here; still flying"),
+            None => self.say("walk: no room for the body here; still flying"),
         }
     }
 
@@ -119,32 +117,58 @@ impl Run {
         }
     }
 
-    /// What the menu hands the run: a toggle flipped as its key flips it, or an action run as
-    /// its bind runs it.
+    /// What the menu hands the run: a toggle flipped as its key flips it (its row answers; a
+    /// flip that leaves the row as it was says its line in the notice), a number stepped, an
+    /// action run as its bind runs it, or an unavailable entry's reason said.
     pub(crate) fn menu_act(&mut self, a: Activated) {
         match a {
             Activated::Toggle(t) => {
                 let before = self.modes.clone();
-                println!("{}", press(t, &mut self.modes, ms_since(self.start)));
+                let line = press(t, &mut self.modes, ms_since(self.start));
+                if (t.get)(&self.modes) == (t.get)(&before) {
+                    self.say(line);
+                } else {
+                    println!("{line}");
+                }
+                self.apply_modes(&before);
+            }
+            Activated::Step(t, d) => {
+                let before = self.modes.clone();
+                if let Some(n) = t.number {
+                    (n.step)(&mut self.modes, d);
+                }
+                println!("{}", self.modes.row(t.row));
                 self.apply_modes(&before);
             }
             Activated::Action(act) => self.act(act),
+            Activated::Refused(why) => self.say(why),
         }
+    }
+
+    /// Prints `line` and shows it in the menu's notice row from now: what an action answers
+    /// in the window.
+    pub(crate) fn say(&mut self, line: impl Into<String>) {
+        let line = line.into();
+        println!("{line}");
+        self.notice = Some((line, ms_since(self.start)));
     }
 
     /// The flags an action's mode reads beside the modes.
     pub(crate) fn run_view(&self) -> RunView {
         RunView {
             walking: self.walk.is_some(),
-            audio: self.audio.as_ref().map(|a| AudioView {
-                echoes: a.acoustics.reflections_on(),
-                tail: a.acoustics.reverb_on(),
-                echo_db: a.mix.echo_db,
-                tail_db: a.mix.tail_db,
-                predelay_ms: a.mix.predelay_ms,
-                glide: a.mix.glide,
-                direct_delay: a.mix.direct_delay,
+            audio: self.audio.as_ref().map(|a| {
+                AudioView::of(
+                    &a.mix,
+                    a.acoustics.reflections_on(),
+                    a.acoustics.reverb_on(),
+                )
             }),
+            path: self.player.is_some(),
+            castle: self.castle_shot.is_some(),
+            model: self.modes.walkers.viewer.is_some(),
+            streaming: self.stream.is_some(),
+            coarse: self.coarse.is_some(),
         }
     }
 
@@ -192,8 +216,8 @@ impl Run {
             | Act::ClipOn
             | Act::ClipPause => {
                 if let Some(words) = self.light_act(act) {
-                    println!("{words}");
-                    self.modes.show_lights(words, ms_since(self.start));
+                    self.modes.show_lights(words.clone(), ms_since(self.start));
+                    self.say(words);
                 }
             }
             Act::Knock
@@ -206,14 +230,29 @@ impl Run {
             | Act::PreDelay(_)
             | Act::Glide
             | Act::DirectDelay => self.audio_act(act),
-            Act::Readings => self.samples = Some(Samples::default()),
-            Act::Bench => self.bench(),
-            Act::Stamp => self.stamp(),
+            Act::Readings => {
+                self.samples = Some(Samples::default());
+                self.say(format!(
+                    "readings: sampling {} frames",
+                    crate::run::hud_feed::SAMPLES
+                ));
+            }
+            Act::Bench => {
+                self.bench();
+                self.say("bench: sent to the logic");
+            }
+            Act::Stamp => {
+                self.stamp();
+                self.say("stamp: sent to the logic");
+            }
             Act::Crumble => match self.coarse {
-                Some(_) => self.send(DigInput::Crumble),
-                None => println!("collapse: not kept while streaming"),
+                Some(_) => {
+                    self.send(DigInput::Crumble);
+                    self.say("crumble: sent to the logic");
+                }
+                None => self.say("collapse: not kept while streaming"),
             },
-            Act::CoarsePrint => println!("{}", self.coarse_line()),
+            Act::CoarsePrint => self.say(self.coarse_line()),
         }
     }
 
@@ -221,19 +260,21 @@ impl Run {
     /// the path's own step.
     fn resume_path(&mut self) {
         let eye = self.fly.camera.position.to_array();
-        if let Some(p) = self.player.as_mut()
-            && p.drive == Drive::Free
-        {
-            p.drive = Drive::Path {
-                t_s: p.path.nearest_time(eye),
-            };
+        let Some(p) = self.player.as_mut() else {
+            return self.say("tour: no path in this run");
+        };
+        if p.drive != Drive::Free {
+            return self.say("tour: already on the path");
         }
+        let t_s = p.path.nearest_time(eye);
+        p.drive = Drive::Path { t_s };
+        self.say(format!("tour: resumed at {t_s:.1} s"));
     }
 
     /// The camera at the next castle shot, its banner shown.
     fn next_castle_shot(&mut self) {
         let Some(shot) = self.castle_shot.map(castle::CastleShot::next) else {
-            return;
+            return self.say("castle: no castle in this run");
         };
         self.castle_shot = Some(shot);
         self.fly.camera = Camera {
@@ -241,7 +282,7 @@ impl Run {
             ..castle_camera(shot)
         };
         let line = castle_banner(shot);
-        println!("{line}");
+        self.say(line.clone());
         self.scene = Some((line, ms_since(self.start)));
     }
 
@@ -339,32 +380,31 @@ impl Run {
     /// change sent to the output and printed.
     fn audio_act(&mut self, act: Act) {
         let Some(audio) = self.audio.as_mut() else {
-            return;
+            return self.say("needs --audio");
         };
         let mut mix = audio.mix;
         match act {
-            Act::Knock => return audio.play("knock", PlayParams::at),
-            Act::Pulse => {
-                return audio.play("pulse", |p| PlayParams {
-                    looping: true,
-                    ..PlayParams::at(p)
-                });
+            Act::Knock => {
+                let line = audio.play("knock", PlayParams::at);
+                return self.say(line);
             }
-            Act::Hum => {
-                return audio.play("hum", |p| PlayParams {
+            Act::Pulse | Act::Hum => {
+                let name = if act == Act::Hum { "hum" } else { "pulse" };
+                let line = audio.play(name, |p| PlayParams {
                     looping: true,
                     ..PlayParams::at(p)
                 });
+                return self.say(line);
             }
             Act::Echoes => {
                 let on = !audio.acoustics.reflections_on();
                 audio.acoustics.set_reflections(on);
-                return println!("echoes {}", if on { "on" } else { "off" });
+                return self.say(format!("echoes {}", if on { "on" } else { "off" }));
             }
             Act::Tail => {
                 let on = !audio.acoustics.reverb_on();
                 audio.acoustics.set_reverb(on);
-                return println!("tail {}", if on { "on" } else { "off" });
+                return self.say(format!("tail {}", if on { "on" } else { "off" }));
             }
             Act::EchoTrim(d) => mix = mix.step(3.0 * f32::from(d), 0.0, 0.0),
             Act::TailTrim(d) => mix = mix.step(0.0, 3.0 * f32::from(d), 0.0),
@@ -378,7 +418,7 @@ impl Run {
         if let Err(e) = audio.output.send(Command::SetMix(mix.settings())) {
             println!("mix: {e}");
         }
-        println!("{}", mix.line());
+        self.say(mix.line());
     }
 }
 

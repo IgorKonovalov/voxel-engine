@@ -107,6 +107,9 @@ pub(crate) struct Run {
     pub(crate) help: bool,
     /// The menu (`Tab`, `F1`); never opened under `--tester`.
     pub(crate) menu: crate::hud::menu::Menu,
+    /// The last line an action said (`Run::say`) and when (the run's clock, ms): the menu's
+    /// notice row, for `hud::BANNER_MS`.
+    pub(crate) notice: Option<(String, f64)>,
     /// Start-up still stepping behind loading frames; `None` once the first world frame may
     /// draw.
     pub(crate) loading: Option<loading::Loading>,

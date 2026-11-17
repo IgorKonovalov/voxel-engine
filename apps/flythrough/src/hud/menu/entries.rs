@@ -38,14 +38,53 @@ impl Entry {
         }
     }
 
-    /// The words the entry's row shows: its mode in words when they begin with its label,
-    /// else `label: words`; the label alone for an action with no mode.
+    /// The words the entry's row shows: its mode in words when they begin with its label;
+    /// the label's first words before them when they begin with its last (`queue` and `angle
+    /// 8` for `queue angle`); else `label: words`; the label alone for an action with no mode.
     pub fn words(&self, m: &Modes, v: &RunView) -> String {
         match self.value(m, v) {
             Some(w) if w.starts_with(self.label) => w,
-            Some(w) => format!("{}: {w}", self.label),
+            Some(w) => match self.label.rsplit_once(' ') {
+                Some((head, last)) if w.starts_with(last) => format!("{head} {w}"),
+                _ => format!("{}: {w}", self.label),
+            },
             None => self.label.to_owned(),
         }
+    }
+
+    /// `Ok` when the entry acts at `m` and `v`, else why not in words (`needs --audio`): an
+    /// unavailable entry shows grey with its reason and `Enter` on it changes nothing.
+    pub fn available(&self, m: &Modes, v: &RunView) -> Result<(), &'static str> {
+        let needs = match self.kind {
+            EntryKind::Toggle(t) => t.needs,
+            EntryKind::Action(a) => a.needs,
+        };
+        needs.map_or(Ok(()), |n| n.check(m, v))
+    }
+
+    /// Whether the entry is a number, which `Enter` edits with the arrows.
+    pub fn is_number(&self) -> bool {
+        match self.kind {
+            EntryKind::Toggle(t) => t.number.is_some(),
+            EntryKind::Action(a) => a.range.is_some(),
+        }
+    }
+
+    /// A number's range in words at `m` and `v`; `None` for any other entry.
+    pub fn range(&self, m: &Modes, v: &RunView) -> Option<String> {
+        match self.kind {
+            EntryKind::Toggle(t) => t.number.map(|n| (n.range)(m, v)),
+            EntryKind::Action(a) => a.range.map(|r| r(m, v)),
+        }
+    }
+
+    /// A number's value in words without its label: `0.5 m` of `dig radius 0.5 m`.
+    pub fn number_words(&self, m: &Modes, v: &RunView) -> String {
+        let words = self.words(m, v);
+        words
+            .strip_prefix(self.label)
+            .map_or(words.as_str(), str::trim_start)
+            .to_owned()
     }
 
     /// The entry's binds in words, `F7`, `X / pad West`, `wheel / pad D-pad up down`; empty
@@ -100,8 +139,9 @@ pub fn group_entries(group: Group) -> impl Iterator<Item = Entry> {
 }
 
 /// The tree `--keys` prints at `m` and `v`: the fixed keys (what they do, then the keys in
-/// the key column), then a header per group and a row per entry, its label, its mode in words (`-` for none) and its binds (`menu` for
-/// none).
+/// the key column), then a header per group and a row per entry, its label, its mode in
+/// words (`-` for none), its binds (`menu` for none) and, for an entry the run cannot act on,
+/// `unavailable: <reason>`.
 pub fn write_tree(m: &Modes, v: &RunView, out: &mut String) {
     let _ = writeln!(out, "fixed");
     for (keys, does) in FIXED_ROWS {
@@ -113,7 +153,11 @@ pub fn write_tree(m: &Modes, v: &RunView, out: &mut String) {
             let value = e.value(m, v).unwrap_or_else(|| "-".to_owned());
             let keys = e.keys();
             let keys = if keys.is_empty() { "menu" } else { &keys };
-            let _ = writeln!(out, "  {:<22} {value:<44} {keys}", e.label);
+            let _ = write!(out, "  {:<22} {value:<44} {keys}", e.label);
+            if let Err(why) = e.available(m, v) {
+                let _ = write!(out, "  unavailable: {why}");
+            }
+            out.push('\n');
         }
     }
 }
@@ -121,20 +165,18 @@ pub fn write_tree(m: &Modes, v: &RunView, out: &mut String) {
 /// `flythrough --keys`' text: the tree at the modes and run flags `args` start with.
 pub fn keys_text(args: &crate::cli::Args) -> String {
     let m = args.start_modes(0.0);
+    let streaming = args.mode == crate::cli::RunMode::Cave;
     let v = RunView {
         walking: args.walk,
-        audio: args.audio.on.then(|| {
-            let mix = args.audio.mix;
-            super::AudioView {
-                echoes: true,
-                tail: true,
-                echo_db: mix.echo_db,
-                tail_db: mix.tail_db,
-                predelay_ms: mix.predelay_ms,
-                glide: mix.glide,
-                direct_delay: mix.direct_delay,
-            }
-        }),
+        audio: args
+            .audio
+            .on
+            .then(|| super::AudioView::of(&args.audio.mix, true, true)),
+        path: args.path.is_some(),
+        castle: args.castle,
+        model: args.model.is_some(),
+        streaming,
+        coarse: !streaming,
     };
     let mut out = String::new();
     write_tree(&m, &v, &mut out);

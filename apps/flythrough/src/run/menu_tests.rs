@@ -3,10 +3,11 @@
 
 use super::*;
 use crate::hud::HudRow;
-use crate::hud::menu::{PageId, all_keys};
+use crate::hud::menu::{Activated, PageId, RunView, all_keys};
 use crate::path::{TesterInput, tester_action};
 use crate::run::hud_feed::Overlay;
 use crate::test_support::{bare_run, carved_rock};
+use crate::toggles::Act;
 use vxe_app::{Flow, Input, KeyCode, MouseButton};
 use vxe_world::OpResult;
 
@@ -474,3 +475,374 @@ fn the_readout_shows_with_the_menu_open() {
     run.write_banner();
     assert!(!run.hud.banner.contains("fps"), "{}", run.hud.banner);
 }
+
+// The menu's numbers, unavailable entries and answers. The keys these tests press are the open
+// menu's text and navigation, not binds.
+// keys:typed-begin
+
+/// One frame with the pad button `b` pressed.
+fn pad(b: vxe_app::PadButton) -> Input {
+    let mut i = Input::default();
+    i.pad_down(b);
+    i
+}
+
+/// The key that types `c` into the palette.
+fn key_for(c: char) -> KeyCode {
+    *all_keys()
+        .iter()
+        .find(|&&k| crate::hud::menu::typed(k) == Some(c))
+        .unwrap_or_else(|| panic!("{c:?} types"))
+}
+
+/// `Tab` (when closed) and `words` typed: the palette at `words`.
+fn search(run: &mut Run, words: &str) {
+    if !run.menu.is_open() {
+        frame_keys(run, &pressed(KeyCode::Tab));
+    }
+    for c in words.chars() {
+        frame_keys(run, &pressed(key_for(c)));
+    }
+    assert_eq!(run.menu.filter(), words);
+}
+
+/// The palette at `e`'s label with the selection on `e`.
+fn select(run: &mut Run, e: &crate::hud::menu::Entry) {
+    use crate::hud::menu::Row;
+    search(run, e.label);
+    let v = run.run_view();
+    let at = run
+        .menu
+        .rows(&run.modes, &v)
+        .iter()
+        .filter(|r| r.selectable())
+        .position(|r| matches!(r, Row::Entry(x) if x.label == e.label && x.group == e.group))
+        .unwrap_or_else(|| panic!("{} matches its label", e.label));
+    for _ in 0..at {
+        frame_keys(run, &pressed(KeyCode::ArrowDown));
+    }
+}
+
+/// The open menu's text: its rows and their colours.
+fn menu_text(run: &mut Run) -> (Vec<String>, Vec<vxe_render::HudColour>) {
+    run.write_menu();
+    let rows = run.hud.text.lines().map(str::to_owned).collect();
+    (rows, run.hud.colours.clone())
+}
+
+/// The selected row's text and colour.
+fn selected_row(run: &mut Run) -> (String, vxe_render::HudColour) {
+    let (rows, colours) = menu_text(run);
+    let i = rows
+        .iter()
+        .position(|r| r.starts_with("> "))
+        .expect("a selected row");
+    (rows[i].clone(), colours[i])
+}
+
+/// The menu's footer: its last row.
+fn footer_row(run: &mut Run) -> String {
+    menu_text(run).0.last().cloned().unwrap_or_default()
+}
+
+/// `dig radius` in metres as its row shows it.
+fn dig_m(run: &Run) -> i64 {
+    run.modes.dig_radius / vxe_world::FIXED_ONE
+}
+
+/// `Tab`, `dig`, `Enter` edits the dig radius: its row reads `< 0.5 m >` and its range, the
+/// footer names the arrows; `Up` twice gives 0.7 m (7 voxels), `Down` 0.6 m; `Esc` leaves the
+/// mode with 0.6 m kept, and on the `moving` page the next `Down` moves the selection. At
+/// 3.0 m `Up` holds. Outside the mode `Right` on the row changes nothing and `Left` goes back
+/// to the root; the wheel scrolls the page.
+#[test]
+fn enter_edits_a_number_and_the_arrows_step_it() {
+    let mut run = bare_run(carved_rock());
+    search(&mut run, "dig");
+    frame_keys(&mut run, &pressed(KeyCode::Enter));
+    assert!(run.menu.editing());
+    let (row, colour) = selected_row(&mut run);
+    assert_eq!(row, "> dig radius  < 0.5 m >  0.1..3.0 m");
+    assert_eq!(colour, vxe_render::HudColour::Yellow);
+    assert_eq!(footer_row(&mut run), "Up Down change  Enter Esc done");
+    frame_keys(&mut run, &pressed(KeyCode::ArrowUp));
+    frame_keys(&mut run, &pressed(KeyCode::ArrowUp));
+    assert_eq!(dig_m(&run), 7);
+    assert!(run.modes.row(HudRow::Controls).contains("dig radius 0.7 m"));
+    frame_keys(&mut run, &pressed(KeyCode::ArrowDown));
+    assert_eq!(dig_m(&run), 6);
+    assert_eq!(
+        selected_row(&mut run).0,
+        "> dig radius  < 0.6 m >  0.1..3.0 m"
+    );
+    frame_keys(&mut run, &pressed(KeyCode::Escape));
+    assert!(!run.menu.editing() && run.menu.is_open());
+    assert_eq!(run.menu.filter(), "dig", "Esc leaves the mode first");
+    assert_eq!(dig_m(&run), 6);
+    assert!(!selected_row(&mut run).0.contains('<'));
+
+    // On the `moving` page: the dig radius, then `walk`.
+    frame_keys(&mut run, &pressed(KeyCode::Escape));
+    frame_keys(&mut run, &pressed(KeyCode::Enter));
+    assert_eq!(
+        run.menu.page(),
+        Some(PageId::Group(crate::hud::menu::Group::Moving))
+    );
+    assert_eq!(run.menu.selected(), 0);
+    frame_keys(&mut run, &pressed(KeyCode::ArrowDown));
+    assert_eq!(
+        run.menu.selected(),
+        1,
+        "Down outside the mode moves the selection"
+    );
+    assert_eq!(dig_m(&run), 6);
+    frame_keys(&mut run, &pressed(KeyCode::ArrowUp));
+    frame_keys(&mut run, &pressed(KeyCode::Enter));
+    for _ in 0..30 {
+        frame_keys(&mut run, &pressed(KeyCode::ArrowUp));
+    }
+    assert_eq!(dig_m(&run), 30, "3.0 m");
+    frame_keys(&mut run, &pressed(KeyCode::ArrowUp));
+    assert_eq!(dig_m(&run), 30, "Up holds at the top");
+    frame_keys(&mut run, &pressed(KeyCode::Enter));
+    assert!(!run.menu.editing(), "Enter leaves the mode");
+
+    let before = (rows(&run), run.menu.page(), run.menu.selected());
+    frame_keys(&mut run, &pressed(KeyCode::ArrowRight));
+    assert_eq!((rows(&run), run.menu.page(), run.menu.selected()), before);
+    frame_keys(&mut run, &pressed(KeyCode::ArrowLeft));
+    assert_eq!(run.menu.page(), Some(PageId::Root));
+    let mut wheel = Input::default();
+    wheel.add_scroll(-2.0);
+    frame_keys(&mut run, &wheel);
+    assert_eq!(run.menu.selected(), 2, "the wheel scrolls the page");
+    assert_eq!(dig_m(&run), 30);
+}
+
+/// On `missing light` `Enter` gives the next of `MissingLight::ALL` and opens no edit mode
+/// (the footer is the palette's, the row has no `<` `>`); the arrows leave it so; on `lamp`
+/// `Enter` flips it.
+#[test]
+fn a_cycle_keeps_enter_as_next() {
+    let mut run = bare_run(carved_rock());
+    let start = run.modes.queue.missing_light;
+    search(&mut run, "missing");
+    frame_keys(&mut run, &pressed(KeyCode::Enter));
+    let next = crate::toggles::next_missing_light(start);
+    assert_eq!(run.modes.queue.missing_light, next);
+    assert!(!run.menu.editing());
+    assert!(footer_row(&mut run).starts_with("Enter acts  Backspace erases"));
+    for k in [
+        KeyCode::ArrowUp,
+        KeyCode::ArrowDown,
+        KeyCode::ArrowLeft,
+        KeyCode::ArrowRight,
+    ] {
+        frame_keys(&mut run, &pressed(k));
+        assert!(!run.menu.editing(), "{k:?}");
+        assert_eq!(run.modes.queue.missing_light, next, "{k:?}");
+    }
+    let (row, _) = selected_row(&mut run);
+    assert!(!row[2..].contains(['<', '>']), "{row}");
+    frame_keys(&mut run, &pressed(KeyCode::Escape));
+    search(&mut run, "lamp");
+    let lamp = run.modes.lighting.lamp;
+    frame_keys(&mut run, &pressed(KeyCode::Enter));
+    assert_eq!(run.modes.lighting.lamp, !lamp);
+    assert!(!run.menu.editing());
+}
+
+/// The entries a bare run cannot act on, each with its reason: grey, the footer naming the
+/// reason while selected, `Enter` changing nothing and saying the reason in the notice; the
+/// root's `audio` row grey with `needs --audio`; `--keys` printing `unavailable: needs --pan`
+/// on the pan row. With `--pan 10` the pan acts (`pan off`). A streamed run without the
+/// coarse grid refuses `coarse print`, `crumble` and `walk` with `needs --level`; the bare
+/// (bounded) run walks.
+#[test]
+fn an_unavailable_entry_says_why() {
+    use crate::hud::menu::{Group, entries};
+    let mut want: Vec<(&str, &str)> = vec![
+        ("resume the tour", "needs --path"),
+        ("next castle shot", "needs --castle"),
+        ("pan", "needs --pan"),
+        ("clip before", "needs --model"),
+        ("clip after", "needs --model"),
+        ("clip pause", "needs --model"),
+    ];
+    let audio: Vec<&str> = entries()
+        .filter(|e| e.group == Group::Audio)
+        .map(|e| e.label)
+        .collect();
+    assert_eq!(audio.len(), 10, "{audio:?}");
+    want.extend(audio.iter().map(|&l| (l, "needs --audio")));
+    for (label, why) in want {
+        let e = entries().find(|e| e.label == label).unwrap();
+        let mut run = bare_run(carved_rock());
+        assert_eq!(
+            e.available(&run.modes, &run.run_view()),
+            Err(why),
+            "{label}"
+        );
+        select(&mut run, &e);
+        let (row, colour) = selected_row(&mut run);
+        assert_eq!(colour, vxe_render::HudColour::Grey, "{label}: {row}");
+        assert!(footer_row(&mut run).starts_with(why), "{label}");
+        let before = state(&mut run);
+        frame_keys(&mut run, &pressed(KeyCode::Enter));
+        assert_eq!(state(&mut run), before, "{label} acted");
+        assert!(!run.menu.editing(), "{label}");
+        assert_eq!(run.notice.as_ref().map(|(l, _)| l.as_str()), Some(why));
+        let (rows, colours) = menu_text(&mut run);
+        let n = rows.len();
+        assert_eq!(
+            (rows[n - 2].as_str(), colours[n - 2]),
+            (why, vxe_render::HudColour::Yellow),
+            "{label}: the notice row"
+        );
+    }
+
+    let mut run = bare_run(carved_rock());
+    frame_keys(&mut run, &pressed(KeyCode::Tab));
+    let (rows, colours) = menu_text(&mut run);
+    let i = rows
+        .iter()
+        .position(|r| r.trim_start().starts_with("audio"))
+        .unwrap();
+    assert!(rows[i].ends_with("needs --audio"), "{}", rows[i]);
+    assert_eq!(colours[i], vxe_render::HudColour::Grey);
+    let tree = crate::hud::menu::keys_text(
+        &crate::cli::parse_args_from(vec!["--keys".to_owned()]).unwrap(),
+    );
+    let pan_row = tree
+        .lines()
+        .find(|l| l.trim_start().starts_with("pan "))
+        .unwrap();
+    assert!(pan_row.ends_with("unavailable: needs --pan"), "{pan_row}");
+    let tree = crate::hud::menu::keys_text(
+        &crate::cli::parse_args_from(["--keys", "--pan", "10"].map(str::to_owned).to_vec())
+            .unwrap(),
+    );
+    let pan_row = tree
+        .lines()
+        .find(|l| l.trim_start().starts_with("pan "))
+        .unwrap();
+    assert!(!pan_row.contains("unavailable"), "{pan_row}");
+
+    let mut run = bare_run(carved_rock());
+    run.modes = run.modes.clone().with_pan(10.0, 0.0);
+    let pan = entries().find(|e| e.label == "pan").unwrap();
+    assert_eq!(pan.available(&run.modes, &run.run_view()), Ok(()));
+    select(&mut run, &pan);
+    frame_keys(&mut run, &pressed(KeyCode::Enter));
+    assert!(run.modes.row(HudRow::Upscaler).contains("pan off"));
+
+    let run = bare_run(carved_rock());
+    let bounded = run.run_view();
+    let streamed = RunView {
+        streaming: true,
+        coarse: false,
+        ..bounded
+    };
+    for label in ["coarse print", "crumble", "walk"] {
+        let e = entries().find(|e| e.label == label).unwrap();
+        assert_eq!(
+            e.available(&run.modes, &streamed),
+            Err("needs --level"),
+            "{label}"
+        );
+    }
+    let walk = entries().find(|e| e.label == "walk").unwrap();
+    assert_eq!(walk.available(&run.modes, &bounded), Ok(()));
+}
+
+/// No entry is a silent no-op: on a bare run each available entry, reached by `Tab`, its
+/// words and `Enter` (a number then `Up`, or `Down` at its top), changes `state` (the HUD's
+/// rows, the lighting, the readings, walking, the walkers, the world) or says a line in the
+/// notice in the same key step.
+#[test]
+fn every_live_entry_answers() {
+    use crate::hud::menu::entries;
+    let mut live = 0;
+    for e in entries() {
+        let mut run = bare_run(carved_rock());
+        if e.available(&run.modes, &run.run_view()).is_err() {
+            continue;
+        }
+        live += 1;
+        select(&mut run, &e);
+        let before = state(&mut run);
+        run.notice = None;
+        frame_keys(&mut run, &pressed(KeyCode::Enter));
+        if e.is_number() {
+            assert!(run.menu.editing(), "{}", e.label);
+            frame_keys(&mut run, &pressed(KeyCode::ArrowUp));
+            if state(&mut run) == before {
+                frame_keys(&mut run, &pressed(KeyCode::ArrowDown));
+            }
+        }
+        let said = run.notice.as_ref().is_some_and(|(l, _)| !l.is_empty());
+        assert!(
+            said || state(&mut run) != before,
+            "{} is a silent no-op",
+            e.label
+        );
+    }
+    assert!(live > 30, "{live} live entries");
+}
+
+/// `frame readings` says `readings: sampling 30 frames` at once and, after 30 frames with no
+/// GPU times, `frame: cpu 1.000 ms, gpu n/a (median of 30)`; `stamp` looking out of the world
+/// says the logic's `stamped: no surface within 10 m` after one server tick; `coarse print`
+/// with the coarse grid built says the coarse line.
+#[test]
+fn an_action_answers_in_the_window() {
+    let mut run = bare_run(carved_rock());
+    run.menu_act(Activated::Action(Act::Readings));
+    let notice = |run: &Run| run.notice.as_ref().map(|(l, _)| l.clone());
+    assert_eq!(
+        notice(&run).as_deref(),
+        Some("readings: sampling 30 frames")
+    );
+    for i in 0..30 {
+        let done = run.file_samples(1.0, None, None, None);
+        assert_eq!(done.is_some(), i == 29, "frame {i}");
+    }
+    assert_eq!(
+        notice(&run).as_deref(),
+        Some("frame: cpu 1.000 ms, gpu n/a (median of 30)")
+    );
+    assert!(run.samples.is_none());
+
+    run.fly.camera.position = vxe_render::glam::Vec3::new(5000.0, 5000.0, 5000.0);
+    run.menu_act(Activated::Action(Act::Stamp));
+    assert_eq!(notice(&run).as_deref(), Some("stamp: sent to the logic"));
+    run.tick_server();
+    assert_eq!(
+        notice(&run).as_deref(),
+        Some("stamped: no surface within 10 m")
+    );
+
+    run.coarse = Some(crate::edits::Coarse::build(&run.world));
+    run.menu_act(Activated::Action(Act::CoarsePrint));
+    assert_eq!(notice(&run), Some(run.coarse_line()));
+}
+
+/// On a pad: `Start`, `South` on `moving`, `South` on the dig radius edits it; `DpadUp` steps
+/// to 0.6 m; `East` leaves the mode; `DpadRight` on the row outside it changes nothing.
+#[test]
+fn the_pad_edits_a_number() {
+    use vxe_app::PadButton;
+    let mut run = bare_run(carved_rock());
+    frame_keys(&mut run, &pad(PadButton::Start));
+    frame_keys(&mut run, &pad(PadButton::South));
+    frame_keys(&mut run, &pad(PadButton::South));
+    assert!(run.menu.editing());
+    frame_keys(&mut run, &pad(PadButton::DpadUp));
+    assert_eq!(dig_m(&run), 6);
+    frame_keys(&mut run, &pad(PadButton::East));
+    assert!(!run.menu.editing() && run.menu.is_open());
+    let before = (rows(&run), run.menu.page(), run.menu.selected());
+    frame_keys(&mut run, &pad(PadButton::DpadRight));
+    assert_eq!((rows(&run), run.menu.page(), run.menu.selected()), before);
+}
+// keys:typed-end

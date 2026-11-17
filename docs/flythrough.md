@@ -28,6 +28,28 @@ missing light). `F1` opens the Keys page: every entry with its binds. `flythroug
 prints the same tree with every entry's start value and key, from the tables in
 `apps/flythrough/src/toggles.rs`; this section is that output's fixed and shortcut rows.
 
+### In the menu
+
+The menu draws as a panel of 80 x 45 cells at the largest whole glyph scale that fits the
+window (2 at 1280 x 720, 3 at 1920 x 1080), centred, over a dimmed box behind its rows; the
+window's top-right corner reads `fps <n>  frame <median> ms p99 <ms>` while it is open.
+
+- **A switch or a cycle** (the lamp, the missing light, the view): `Enter` flips it or steps
+  it to its next state; its row shows the new value.
+- **A number** (the dig radius, the queue's angle weight, the echo and tail trims, the
+  pre-delay): `Enter` edits it. The row reads `dig radius  < 0.5 m >  0.1..3.0 m`: the value
+  between `<` and `>`, its range after. `Up` and `Down` (the pad's D-pad) step it, held they
+  repeat after 275 ms every 50 ms, and it stops at its range's ends; `Enter` or `Esc` (the
+  pad's `South` or `East`) keep the value and leave the edit.
+- **A grey row** is an entry the run cannot act on, with the reason in the footer while it is
+  selected (`needs --audio`, `needs --pan`, `needs --path`, `needs --castle`, `needs --model`,
+  `needs --level`); `Enter` on it changes nothing and says the reason. A group whose entries
+  all need the same flag is grey on the root with the reason beside it. `--keys` prints
+  `unavailable: <reason>` on those rows.
+- **The notice row**, above the footer, holds the last line an action printed for 3 s, in
+  yellow: `readings: sampling 30 frames` and then the frame line, the logic's `stamped: ...`,
+  a refused entry's reason.
+
 ### Fixed
 
 | Key | Does |
@@ -92,7 +114,7 @@ its error on screen in red until a reload builds.
 | `R3` | Latch boost |
 | `South` | Walking: jump; in the menu: `Enter` |
 | `R2` / `L2` | Dig / fill |
-| D-pad up / down | Step the dig radius; in the menu: move the selection |
+| D-pad up / down | Step the dig radius; in the menu: move the selection, or step the number being edited |
 | `North` | Toggle walk mode |
 | `West` | Cycle the cutaway |
 | `East` | Knock (with `--audio`); in the menu: back |

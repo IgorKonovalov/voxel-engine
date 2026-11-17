@@ -37,6 +37,54 @@ pub struct Toggle {
     pub row: HudRow,
     pub get: fn(&Modes) -> String,
     pub flip: fn(&mut Modes, f64),
+    /// What the toggle needs of the run to act; `None` for always.
+    pub needs: Option<Needs>,
+    /// A number's step and range: `Enter` edits it with the arrows instead of `flip`
+    /// (`hud::menu`); `None` for a switch or a cycle, which `Enter` flips.
+    pub number: Option<Number>,
+}
+
+/// A number an entry edits: one step up (`1`) or down (`-1`), held in its range, and the
+/// range in words as the edited row shows it after the value.
+#[derive(Clone, Copy)]
+pub struct Number {
+    pub step: fn(&mut Modes, i32),
+    pub range: fn(&Modes, &RunView) -> String,
+}
+
+/// What an entry needs of the run to act, and the flag that gives it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Needs {
+    /// `--audio`: the output, the mixer and its trims.
+    Audio,
+    /// `--pan DEG`: the pan to switch.
+    Pan,
+    /// `--path NAME`: a camera path to resume.
+    Path,
+    /// `--castle`: the castle's shots.
+    Castle,
+    /// `--model PATH`: the viewer's clips.
+    Model,
+    /// A bounded world (`--level`): walking, which a streamed world refuses.
+    Bounded,
+    /// A bounded world (`--level`): the coarse grid and the collapse it feeds.
+    Coarse,
+}
+
+impl Needs {
+    /// `Ok` when the run at `m` and `v` has what is needed, else the reason in words.
+    pub fn check(self, m: &Modes, v: &RunView) -> Result<(), &'static str> {
+        let (ok, why) = match self {
+            Self::Audio => (v.audio.is_some(), "needs --audio"),
+            Self::Pan => (m.pan.is_some(), "needs --pan"),
+            Self::Path => (v.path, "needs --path"),
+            Self::Castle => (v.castle, "needs --castle"),
+            Self::Model => (v.model, "needs --model"),
+            Self::Bounded => (!v.streaming, "needs --level"),
+            Self::Coarse => (v.coarse, "needs --level"),
+        };
+        if ok { Ok(()) } else { Err(why) }
+    }
 }
 
 impl Toggle {
@@ -78,6 +126,8 @@ macro_rules! lighting {
             row: HudRow::Lighting,
             get: $get,
             flip: |m, now| m.press(hud::ModeKey::$mode, now),
+            needs: None,
+            number: None,
         }
     };
 }
@@ -184,11 +234,11 @@ pub enum Act {
     Echoes,
     /// The reverb tail on or off.
     Tail,
-    /// The echoes' trim, 3 dB down or up.
+    /// The echoes' trim, 3 dB down (`-1`) or up (`1`): a number the menu edits.
     EchoTrim(i8),
-    /// The tail's trim, 3 dB down or up.
+    /// The tail's trim, 3 dB down or up: a number.
     TailTrim(i8),
-    /// The tail's pre-delay, 10 ms down or up.
+    /// The tail's pre-delay, 10 ms down or up: a number.
     PreDelay(i8),
     /// The tail's lines: glide or handover.
     Glide,
@@ -204,6 +254,20 @@ pub enum Act {
     Crumble,
     /// Prints the coarse grid's line.
     CoarsePrint,
+}
+
+impl Act {
+    /// The step of a number's act in direction `sign` (`1` up, `-1` down); any other act as
+    /// it is.
+    pub fn signed(self, sign: i32) -> Self {
+        let d = if sign < 0 { -1 } else { 1 };
+        match self {
+            Self::EchoTrim(_) => Self::EchoTrim(d),
+            Self::TailTrim(_) => Self::TailTrim(d),
+            Self::PreDelay(_) => Self::PreDelay(d),
+            a => a,
+        }
+    }
 }
 
 /// A bind of an action: a key, or the pad button that does the same.
@@ -222,6 +286,11 @@ pub struct Action {
     pub group: Group,
     pub mode: Option<fn(&Modes, &RunView) -> String>,
     pub act: Act,
+    /// What the action needs of the run to act; `None` for always.
+    pub needs: Option<Needs>,
+    /// A number's range in words: `Enter` edits it with the arrows, each step the act
+    /// [`Act::signed`]; `None` for an action `Enter` runs.
+    pub range: Option<fn(&Modes, &RunView) -> String>,
 }
 
 impl Action {
@@ -244,12 +313,17 @@ fn audio_words(v: &RunView, words: fn(&AudioView) -> String) -> String {
 /// An action with no mode, bound to `binds`.
 macro_rules! action {
     ($label:literal, $group:ident, $act:expr, [$($bind:expr),*]) => {
+        action!($label, $group, $act, [$($bind),*], None)
+    };
+    ($label:literal, $group:ident, $act:expr, [$($bind:expr),*], $needs:expr) => {
         Action {
             binds: &[$($bind),*],
             label: $label,
             group: Group::$group,
             mode: None,
             act: $act,
+            needs: $needs,
+            range: None,
         }
     };
 }
@@ -266,14 +340,23 @@ pub static ACTIONS: &[Action] = &[
         group: Group::Moving,
         mode: Some(|_, v| if v.walking { "walk" } else { "fly" }.to_owned()),
         act: Act::Walk,
+        needs: Some(Needs::Bounded),
+        range: None,
     },
     action!(
         "resume the tour",
         Camera,
         Act::ResumePath,
-        [Bind::Key(KeyCode::KeyT)]
+        [Bind::Key(KeyCode::KeyT)],
+        Some(Needs::Path)
     ),
-    action!("next castle shot", Camera, Act::CastleShot, []),
+    action!(
+        "next castle shot",
+        Camera,
+        Act::CastleShot,
+        [],
+        Some(Needs::Castle)
+    ),
     action!(
         "drop a light",
         Lights,
@@ -304,6 +387,8 @@ pub static ACTIONS: &[Action] = &[
         group: Group::Entities,
         mode: Some(|m, _| format!("walkers walk {}", on(m.walkers.walking))),
         act: Act::WalkersWalk,
+        needs: None,
+        range: None,
     },
     Action {
         binds: &[],
@@ -311,34 +396,47 @@ pub static ACTIONS: &[Action] = &[
         group: Group::Entities,
         mode: Some(|m, _| format!("eye lights {}", on(!m.walkers.eye_lights_off))),
         act: Act::EyeLights,
+        needs: None,
+        range: None,
     },
     action!(
         "clip before",
         Entities,
         Act::ClipBack,
-        [Bind::Key(KEY_CLIP_BACK)]
+        [Bind::Key(KEY_CLIP_BACK)],
+        Some(Needs::Model)
     ),
     action!(
         "clip after",
         Entities,
         Act::ClipOn,
-        [Bind::Key(KEY_CLIP_ON)]
+        [Bind::Key(KEY_CLIP_ON)],
+        Some(Needs::Model)
     ),
     action!(
         "clip pause",
         Entities,
         Act::ClipPause,
-        [Bind::Key(KEY_CLIP_PAUSE)]
+        [Bind::Key(KEY_CLIP_PAUSE)],
+        Some(Needs::Model)
     ),
-    action!("knock", Audio, Act::Knock, [Bind::Pad(PadButton::East)]),
-    action!("pulse", Audio, Act::Pulse, []),
-    action!("hum", Audio, Act::Hum, []),
+    action!(
+        "knock",
+        Audio,
+        Act::Knock,
+        [Bind::Pad(PadButton::East)],
+        Some(Needs::Audio)
+    ),
+    action!("pulse", Audio, Act::Pulse, [], Some(Needs::Audio)),
+    action!("hum", Audio, Act::Hum, [], Some(Needs::Audio)),
     Action {
         binds: &[],
         label: "echoes",
         group: Group::Audio,
         mode: Some(|_, v| audio_words(v, |a| format!("echoes {}", on(a.echoes)))),
         act: Act::Echoes,
+        needs: Some(Needs::Audio),
+        range: None,
     },
     Action {
         binds: &[],
@@ -346,48 +444,38 @@ pub static ACTIONS: &[Action] = &[
         group: Group::Audio,
         mode: Some(|_, v| audio_words(v, |a| format!("tail {}", on(a.tail)))),
         act: Act::Tail,
+        needs: Some(Needs::Audio),
+        range: None,
     },
     Action {
         binds: &[],
-        label: "echo trim down",
-        group: Group::Audio,
-        mode: Some(|_, v| audio_words(v, |a| format!("echo trim {:+.0} dB", a.echo_db))),
-        act: Act::EchoTrim(-1),
-    },
-    Action {
-        binds: &[],
-        label: "echo trim up",
+        label: "echo trim",
         group: Group::Audio,
         mode: Some(|_, v| audio_words(v, |a| format!("echo trim {:+.0} dB", a.echo_db))),
         act: Act::EchoTrim(1),
+        needs: Some(Needs::Audio),
+        range: Some(|_, v| audio_words(v, |a| db_range(a.echo_range))),
     },
     Action {
         binds: &[],
-        label: "tail trim down",
-        group: Group::Audio,
-        mode: Some(|_, v| audio_words(v, |a| format!("tail trim {:+.0} dB", a.tail_db))),
-        act: Act::TailTrim(-1),
-    },
-    Action {
-        binds: &[],
-        label: "tail trim up",
+        label: "tail trim",
         group: Group::Audio,
         mode: Some(|_, v| audio_words(v, |a| format!("tail trim {:+.0} dB", a.tail_db))),
         act: Act::TailTrim(1),
+        needs: Some(Needs::Audio),
+        range: Some(|_, v| audio_words(v, |a| db_range(a.tail_range))),
     },
     Action {
         binds: &[],
-        label: "pre-delay down",
-        group: Group::Audio,
-        mode: Some(|_, v| audio_words(v, |a| format!("pre-delay {:.0} ms", a.predelay_ms))),
-        act: Act::PreDelay(-1),
-    },
-    Action {
-        binds: &[],
-        label: "pre-delay up",
+        label: "pre-delay",
         group: Group::Audio,
         mode: Some(|_, v| audio_words(v, |a| format!("pre-delay {:.0} ms", a.predelay_ms))),
         act: Act::PreDelay(1),
+        needs: Some(Needs::Audio),
+        range: Some(|_, _| {
+            let r = crate::audio::Mix::PREDELAY_MS;
+            format!("{:.0}..{:.0} ms", r.start(), r.end())
+        }),
     },
     Action {
         binds: &[],
@@ -399,6 +487,8 @@ pub static ACTIONS: &[Action] = &[
             })
         }),
         act: Act::Glide,
+        needs: Some(Needs::Audio),
+        range: None,
     },
     Action {
         binds: &[],
@@ -406,6 +496,8 @@ pub static ACTIONS: &[Action] = &[
         group: Group::Audio,
         mode: Some(|_, v| audio_words(v, |a| format!("direct delay {}", on(a.direct_delay)))),
         act: Act::DirectDelay,
+        needs: Some(Needs::Audio),
+        range: None,
     },
     action!(
         "frame readings",
@@ -415,13 +507,44 @@ pub static ACTIONS: &[Action] = &[
     ),
     action!("bench", Debug, Act::Bench, []),
     action!("stamp", Debug, Act::Stamp, []),
-    action!("crumble", Debug, Act::Crumble, []),
-    action!("coarse print", Debug, Act::CoarsePrint, []),
+    action!("crumble", Debug, Act::Crumble, [], Some(Needs::Coarse)),
+    action!(
+        "coarse print",
+        Debug,
+        Act::CoarsePrint,
+        [],
+        Some(Needs::Coarse)
+    ),
 ];
+
+/// A trim's range in words, `-24..+12 dB`.
+fn db_range((lo, hi): (f32, f32)) -> String {
+    format!("{lo:+.0}..{hi:+.0} dB")
+}
 
 /// The `lights` row in words.
 fn lights_words(m: &Modes) -> String {
     m.row(HudRow::Lights)
+}
+
+/// The largest angle weight `queue angle` steps up to.
+pub const QUEUE_ANGLE_MAX: f32 = 8.0;
+
+/// The queue's angle weight one step up (doubled, from 0 to 1/4, at most
+/// [`QUEUE_ANGLE_MAX`]) or down (halved, to 0 under 1/64).
+fn step_queue_angle(m: &mut Modes, d: i32) {
+    let a = m.queue.angle;
+    m.queue.angle = if d > 0 {
+        if a > 0.0 {
+            (a * 2.0).min(QUEUE_ANGLE_MAX)
+        } else {
+            0.25
+        }
+    } else if a * 0.5 < 1.0 / 64.0 {
+        0.0
+    } else {
+        a * 0.5
+    };
 }
 
 /// The toggle table: every key of the fly-through that switches a mode.
@@ -476,6 +599,8 @@ pub static TOGGLES: &[Toggle] = &[
         press: Press::Menu,
         name: "look",
         group: Group::Look,
+        needs: None,
+        number: None,
         row: HudRow::Look,
         get: |m| format!("look {}", m.preset.name),
         flip: next_look,
@@ -484,6 +609,8 @@ pub static TOGGLES: &[Toggle] = &[
         press: Press::Menu,
         name: "far normal",
         group: Group::Look,
+        needs: None,
+        number: None,
         row: HudRow::Look,
         get: |m| crate::LookPreset::far_normal_words(m.look.normal_mode, m.look.far_normal),
         flip: |m, now| {
@@ -495,6 +622,8 @@ pub static TOGGLES: &[Toggle] = &[
         press: Press::Key(KeyCode::F9, None),
         name: "view",
         group: Group::Debug,
+        needs: None,
+        number: None,
         row: HudRow::Look,
         get: |m| format!("view {}", m.look.view.name()),
         flip: |m, now| {
@@ -506,6 +635,8 @@ pub static TOGGLES: &[Toggle] = &[
         press: Press::Key(KeyCode::F10, None),
         name: "upscaler",
         group: Group::Upscaler,
+        needs: None,
+        number: None,
         row: HudRow::Upscaler,
         get: |m| format!("upscaler {}", m.upscaler.mode.name()),
         flip: |m, now| {
@@ -522,6 +653,8 @@ pub static TOGGLES: &[Toggle] = &[
         press: Press::Menu,
         name: "sharpen",
         group: Group::Upscaler,
+        needs: None,
+        number: None,
         row: HudRow::Upscaler,
         get: |m| format!("sharpen {:.2}", m.upscaler.sharpen),
         flip: |m, now| {
@@ -533,6 +666,8 @@ pub static TOGGLES: &[Toggle] = &[
         press: Press::Menu,
         name: "pan",
         group: Group::Upscaler,
+        needs: Some(Needs::Pan),
+        number: None,
         row: HudRow::Upscaler,
         get: |m| format!("pan {}", m.pan.as_ref().map_or("none", |p| on(p.on))),
         flip: |m, now| {
@@ -545,6 +680,8 @@ pub static TOGGLES: &[Toggle] = &[
         press: Press::Menu,
         name: "queue order",
         group: Group::Queue,
+        needs: None,
+        number: None,
         row: HudRow::Queue,
         get: order_words,
         flip: |m, _| {
@@ -558,27 +695,23 @@ pub static TOGGLES: &[Toggle] = &[
     },
     Toggle {
         press: Press::Menu,
-        name: "queue angle halved",
+        name: "queue angle",
         group: Group::Queue,
+        needs: None,
+        number: Some(Number {
+            step: step_queue_angle,
+            range: |_, _| format!("0..{QUEUE_ANGLE_MAX}, doubled or halved"),
+        }),
         row: HudRow::Queue,
-        get: order_words,
-        flip: |m, _| m.queue.angle *= 0.5,
-    },
-    Toggle {
-        press: Press::Menu,
-        name: "queue angle doubled",
-        group: Group::Queue,
-        row: HudRow::Queue,
-        get: order_words,
-        flip: |m, _| {
-            let a = m.queue.angle;
-            m.queue.angle = if a > 0.0 { a * 2.0 } else { 0.25 };
-        },
+        get: |m| format!("angle {}", m.queue.angle),
+        flip: |m, _| step_queue_angle(m, 1),
     },
     Toggle {
         press: Press::Menu,
         name: "queue withdraw",
         group: Group::Queue,
+        needs: None,
+        number: None,
         row: HudRow::Queue,
         get: |m| format!("withdraw {}", on(m.queue.withdraw)),
         flip: |m, _| m.queue.withdraw = !m.queue.withdraw,
@@ -587,6 +720,8 @@ pub static TOGGLES: &[Toggle] = &[
         press: Press::Menu,
         name: "bake budget",
         group: Group::Queue,
+        needs: None,
+        number: None,
         row: HudRow::Queue,
         get: |m| format!("budget {}", m.queue.budget),
         flip: |m, _| m.queue.budget = next_budget(m.queue.budget),
@@ -595,6 +730,8 @@ pub static TOGGLES: &[Toggle] = &[
         press: Press::Menu,
         name: "full-first",
         group: Group::Queue,
+        needs: None,
+        number: None,
         row: HudRow::Queue,
         get: |m| match m.queue.full_first {
             Some(r) => format!("full-first {r}"),
@@ -611,6 +748,8 @@ pub static TOGGLES: &[Toggle] = &[
         press: Press::Menu,
         name: "missing light",
         group: Group::Queue,
+        needs: None,
+        number: None,
         row: HudRow::Queue,
         get: |m| format!("missing light {}", m.queue.missing_light.name()),
         flip: |m, _| m.queue.missing_light = next_missing_light(m.queue.missing_light),
@@ -619,6 +758,8 @@ pub static TOGGLES: &[Toggle] = &[
         press: Press::Menu,
         name: "reach",
         group: Group::Queue,
+        needs: None,
+        number: None,
         row: HudRow::Queue,
         get: |m| format!("reach {}", m.queue.reach.name()),
         flip: |m, _| m.queue.reach = next_reach(m.queue.reach),
@@ -627,6 +768,8 @@ pub static TOGGLES: &[Toggle] = &[
         press: Press::Menu,
         name: "carry",
         group: Group::Lights,
+        needs: None,
+        number: None,
         row: HudRow::Lights,
         get: lights_words,
         flip: |m, now| {
@@ -639,6 +782,8 @@ pub static TOGGLES: &[Toggle] = &[
         press: Press::Menu,
         name: "colour",
         group: Group::Lights,
+        needs: None,
+        number: None,
         row: HudRow::Lights,
         get: lights_words,
         flip: |m, now| {
@@ -650,6 +795,8 @@ pub static TOGGLES: &[Toggle] = &[
         press: Press::Menu,
         name: "bounce",
         group: Group::Lights,
+        needs: None,
+        number: None,
         row: HudRow::Lights,
         get: lights_words,
         flip: |m, now| {
@@ -664,6 +811,8 @@ pub static TOGGLES: &[Toggle] = &[
         press: Press::Key(KeyCode::KeyX, Some(PadButton::West)),
         name: "cutaway",
         group: Group::Debug,
+        needs: None,
+        number: None,
         row: HudRow::Controls,
         get: |m| format!("cutaway {}", m.cutaway.name()),
         flip: |m, _| m.cutaway = m.cutaway.next(),
@@ -672,6 +821,8 @@ pub static TOGGLES: &[Toggle] = &[
         press: Press::Menu,
         name: "shadow ray",
         group: Group::Debug,
+        needs: None,
+        number: None,
         row: HudRow::Controls,
         get: |m| format!("shadow ray {}", on(m.shadow_ray)),
         flip: |m, _| m.shadow_ray = !m.shadow_ray,
@@ -680,6 +831,17 @@ pub static TOGGLES: &[Toggle] = &[
         press: Press::Scroll,
         name: "dig radius",
         group: Group::Moving,
+        needs: None,
+        number: Some(Number {
+            step: |m, d| {
+                m.dig_radius =
+                    (m.dig_radius + i64::from(d) * DIG_STEP).clamp(DIG_RANGE.0, DIG_RANGE.1);
+            },
+            range: |_, _| {
+                let m = |r: i64| r as f64 / (10 * vxe_world::FIXED_ONE) as f64;
+                format!("{:.1}..{:.1} m", m(DIG_RANGE.0), m(DIG_RANGE.1))
+            },
+        }),
         row: HudRow::Controls,
         get: |m| {
             format!(

@@ -132,8 +132,7 @@ fn no_two_inputs_share_a_key() {
     }
     for name in [
         "queue order",
-        "queue angle halved",
-        "queue angle doubled",
+        "queue angle",
         "queue withdraw",
         "bake budget",
         "full-first",

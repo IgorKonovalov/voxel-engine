@@ -146,6 +146,23 @@ impl Menu {
     /// `n/m` when the rows do not fit), the rows with the selected one yellow, a blank row and
     /// the footer. Writes nothing while closed.
     pub fn write(&self, m: &Modes, v: &RunView, text: &mut String, colours: &mut Vec<HudColour>) {
+        self.write_with(m, v, None, text, colours);
+    }
+
+    /// [`Menu::write`] with `notice` (the last action's line, yellow) in the row above the
+    /// footer. An unavailable entry's row, and a group's on the root whose entries are all
+    /// unavailable for one reason, is grey (selected or not), the group's with its reason in
+    /// the key column; while one is selected the footer names its reason. A number being
+    /// edited reads `label  < value >  range` and the footer `Up Down change  Enter Esc
+    /// done`.
+    pub fn write_with(
+        &self,
+        m: &Modes,
+        v: &RunView,
+        notice: Option<&str>,
+        text: &mut String,
+        colours: &mut Vec<HudColour>,
+    ) {
         text.clear();
         colours.clear();
         let Some(page) = self.page() else { return };
@@ -183,10 +200,15 @@ impl Menu {
             colours.push(HudColour::White);
         }
         let mut pick = 0;
+        let mut why = None;
         for (i, row) in rows.iter().enumerate() {
             let selected = row.selectable() && pick == sel;
             if row.selectable() {
                 pick += 1;
+            }
+            let unavailable = unavailable(row, m, v);
+            if selected {
+                why = unavailable;
             }
             if i < top || i >= top + LIST_ROWS {
                 continue;
@@ -194,20 +216,72 @@ impl Menu {
             text.push('\n');
             let start = text.len();
             text.push_str(if selected { "> " } else { "  " });
-            write_row(text, start, row, page, searching, m, v);
+            match row {
+                Row::Entry(e) if selected && self.editing() && e.is_number() => {
+                    let _ = write!(
+                        text,
+                        "{}  < {} >  {}",
+                        e.label,
+                        e.number_words(m, v),
+                        e.range(m, v).unwrap_or_default()
+                    );
+                }
+                _ => write_row(text, start, row, page, searching, m, v),
+            }
+            if let (Row::Group(_), Some(why)) = (row, unavailable) {
+                pad_to(text, start, KEY_COL);
+                text.push_str(why);
+            }
             cut_row(text, start);
-            colours.push(if selected {
+            colours.push(if unavailable.is_some() {
+                HudColour::Grey
+            } else if selected {
                 HudColour::Yellow
             } else {
                 HudColour::White
             });
         }
-        text.push_str("\n\n");
-        colours.push(HudColour::White);
+        text.push('\n');
+        if let Some(line) = notice {
+            let start = text.len();
+            text.push_str(line);
+            cut_row(text, start);
+            colours.push(HudColour::Yellow);
+        } else {
+            colours.push(HudColour::White);
+        }
+        text.push('\n');
         let start = text.len();
-        text.push_str(footer(page, searching));
+        if self.editing() {
+            text.push_str("Up Down change  Enter Esc done");
+        } else if let Some(why) = why {
+            let _ = write!(text, "{why}  Esc back  Tab closes  type to search");
+        } else {
+            text.push_str(footer(page, searching));
+        }
         cut_row(text, start);
         colours.push(HudColour::White);
+    }
+}
+
+/// Why `row` does nothing at `m` and `v`: an unavailable entry's reason, or a group's
+/// whose entries are all unavailable for the same reason; `None` for any other row.
+fn unavailable(row: &Row, m: &Modes, v: &RunView) -> Option<&'static str> {
+    match row {
+        Row::Entry(e) => e.available(m, v).err(),
+        Row::Group(g) => {
+            let mut why = None;
+            for e in super::group_entries(*g) {
+                match (e.available(m, v), why) {
+                    (Ok(()), _) => return None,
+                    (Err(w), None) => why = Some(w),
+                    (Err(w), Some(x)) if w != x => return None,
+                    (Err(_), Some(_)) => {}
+                }
+            }
+            why
+        }
+        Row::Fixed(..) | Row::Header(_) => None,
     }
 }
 

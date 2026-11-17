@@ -199,6 +199,7 @@ impl Flythrough {
             surface: None,
             help: false,
             menu: Default::default(),
+            notice: None,
             loading: None,
         });
     }

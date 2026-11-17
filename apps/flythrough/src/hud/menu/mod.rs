@@ -99,12 +99,19 @@ pub const FIXED_ROWS: &[(&str, &str)] = &[
     ("Esc", "back, close; with the menu closed, quit"),
 ];
 
-/// The few run flags an action's mode reads, beside the modes: whether the body walks, and
-/// the audio's switches and mix when the run has audio.
+/// The few run flags an entry reads beside the modes: whether the body walks, the audio's
+/// switches and mix when the run has audio, and what the run has for the entries that need
+/// it (`toggles::Needs`): a camera path, the castle's shots, a model in the viewer, a streamed
+/// world, the coarse grid.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RunView {
     pub walking: bool,
     pub audio: Option<AudioView>,
+    pub path: bool,
+    pub castle: bool,
+    pub model: bool,
+    pub streaming: bool,
+    pub coarse: bool,
 }
 
 /// The audio's switches and mix as the audio entries show them.
@@ -117,6 +124,27 @@ pub struct AudioView {
     pub predelay_ms: f32,
     pub glide: bool,
     pub direct_delay: bool,
+    /// The trims' ranges in dB, low and high.
+    pub echo_range: (f32, f32),
+    pub tail_range: (f32, f32),
+}
+
+impl AudioView {
+    /// The view of `mix` with the echoes and the tail on or off.
+    pub(crate) fn of(mix: &crate::audio::Mix, echoes: bool, tail: bool) -> Self {
+        let (e, t) = (mix.echo_range(), mix.tail_range());
+        Self {
+            echoes,
+            tail,
+            echo_db: mix.echo_db,
+            tail_db: mix.tail_db,
+            predelay_ms: mix.predelay_ms,
+            glide: mix.glide,
+            direct_delay: mix.direct_delay,
+            echo_range: (*e.start(), *e.end()),
+            tail_range: (*t.start(), *t.end()),
+        }
+    }
 }
 
 /// A key's name as the menu shows it: `F7`, `A`, `1`, `,`, `Backspace`, `Left`. Read from the

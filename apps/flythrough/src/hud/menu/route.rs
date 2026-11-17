@@ -373,11 +373,73 @@ pub struct Routed<'a> {
 /// on. A menu open at the frame's start captures this frame's input by [`taken`]; one opened
 /// this frame does not.
 pub fn step<'a>(menu: &mut Menu, input: &'a Input, m: &Modes, v: &RunView) -> Routed<'a> {
+    step_at(menu, input, m, v, 0.0)
+}
+
+/// Milliseconds an arrow is held in a number's edit mode before it repeats, and between two
+/// repeats (Dear ImGui's defaults).
+pub const REPEAT_DELAY_MS: f64 = 275.0;
+pub const REPEAT_RATE_MS: f64 = 50.0;
+
+/// The repeats an arrow held for `held_ms` has given: one at [`REPEAT_DELAY_MS`] and one every
+/// [`REPEAT_RATE_MS`] after, the press's own step not counted.
+pub fn repeats_due(held_ms: f64) -> u32 {
+    if held_ms < REPEAT_DELAY_MS {
+        0
+    } else {
+        ((held_ms - REPEAT_DELAY_MS) / REPEAT_RATE_MS) as u32 + 1
+    }
+}
+
+/// [`step`] at `now_ms` on the run's clock: in a number's edit mode an arrow (or the D-pad's
+/// up or down) held past [`REPEAT_DELAY_MS`] steps again every [`REPEAT_RATE_MS`], each step
+/// due by `now_ms` given once; released, the hold ends, and the next press steps at once.
+pub fn step_at<'a>(
+    menu: &mut Menu,
+    input: &'a Input,
+    m: &Modes,
+    v: &RunView,
+    now_ms: f64,
+) -> Routed<'a> {
     let open = menu.is_open();
     let mut acts = Vec::new();
     for i in menu_inputs(input, open) {
+        let arrow = match i {
+            MenuInput::Up => Some(1),
+            MenuInput::Down => Some(-1),
+            _ => None,
+        };
+        let editing = menu.editing();
         if let Some(a) = menu.input(i, m, v) {
             acts.push(a);
+        }
+        if let Some(d) = arrow.filter(|_| editing && menu.editing()) {
+            menu.hold = Some((d, now_ms, 0));
+        }
+    }
+    if let Some((d, since, given)) = menu.hold {
+        // keys:typed-begin
+        let held = if d > 0 {
+            input.held(KeyCode::ArrowUp) || input.pad_held(PadButton::DpadUp)
+        } else {
+            input.held(KeyCode::ArrowDown) || input.pad_held(PadButton::DpadDown)
+        };
+        // keys:typed-end
+        if held && menu.editing() {
+            let due = repeats_due(now_ms - since);
+            let step = if d > 0 {
+                MenuInput::Up
+            } else {
+                MenuInput::Down
+            };
+            for _ in given..due {
+                if let Some(a) = menu.input(step, m, v) {
+                    acts.push(a);
+                }
+            }
+            menu.hold = Some((d, since, due.max(given)));
+        } else {
+            menu.hold = None;
         }
     }
     let pass = if open {

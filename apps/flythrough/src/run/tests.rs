@@ -505,14 +505,21 @@ fn the_banner_names_the_queue_order_and_its_weights() {
     ] {
         check(shown(&mut run, Some("queue order")), want);
     }
+    // `queue angle` is a number: one step down halves the weight, one up doubles it.
+    let angle = crate::toggles::TOGGLES
+        .iter()
+        .find(|t| t.name == "queue angle")
+        .expect("queue angle is a toggle");
+    run.menu_act(crate::hud::menu::Activated::Step(angle, -1));
     check(
-        shown(&mut run, Some("queue angle halved")),
+        shown(&mut run, None),
         format!("order score, angle {}, refine {R}", A / 2.0),
     );
-    for angle in [A, A * 2.0] {
+    for a in [A, A * 2.0] {
+        run.menu_act(crate::hud::menu::Activated::Step(angle, 1));
         check(
-            shown(&mut run, Some("queue angle doubled")),
-            format!("order score, angle {angle}, refine {R}"),
+            shown(&mut run, None),
+            format!("order score, angle {a}, refine {R}"),
         );
     }
     use vxe_render::{QueueOrder, Refine};

@@ -244,7 +244,8 @@ fn mode_banner_golden_shows_the_modes_with_the_hud_off() {
 
 /// `menu.png`: the menu's root page at the start's modes over the carved view, at scale 1
 /// (40 x 22 cells), placed by `menu::place` at the window's top-left with a fixed readout
-/// on its title row: the backdrop dims the page's rows plus one row below the footer, the
+/// on its title row (the `audio` group grey: the run has no audio): the backdrop dims the
+/// page's rows plus one row below the footer, the
 /// whole width. Only those rows change; on the padding row below the footer (clear of the
 /// footer's shadow) every pixel is the march target's at `1 - BACKDROP_ALPHA` within 1/255.
 #[test]
@@ -321,6 +322,11 @@ fn menu_over_the_carved_view() {
     assert!(outside > 0 && dimmed > 0);
     let yellow = img.chunks(4).filter(|p| p[..3] == [255, 204, 0]).count();
     assert!(yellow > 0, "the selected group is yellow");
+    let grey = img.chunks(4).filter(|p| p[..3] == [153, 153, 153]).count();
+    assert!(
+        grey > 0,
+        "the audio group, with no audio in the run, is grey"
+    );
 }
 
 /// Readings run by hand (`--run-ignored only -E 'test(=reading::<name>)'`).

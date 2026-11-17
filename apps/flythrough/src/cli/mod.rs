@@ -241,8 +241,8 @@
 //! off, so it is heard only off the walls and in the tail; wear headphones.
 //!
 //! The balance (`vxe_audio::MixSettings`) is live. The mixer sets the echo and tail levels by
-//! the room's mean free path through its default room curves; the menu's echo trims step a trim on the
-//! echoes by 3 dB, its tail trims one on the tail (each -24 to +12 dB), its pre-delay entries the tail's
+//! the room's mean free path through its default room curves; the menu's `echo trim` steps a trim on
+//! the echoes by 3 dB, `tail trim` one on the tail (each -24 to +12 dB), `pre-delay` the tail's
 //! pre-delay by 10 ms (0 to 200 ms), `tail lines` switches the tail's lines between handing over and
 //! gliding, and `direct delay` switches the direct path's propagation delay. Each prints a line
 //! `mix: echoes <trim> dB (room <curve> dB at mfp <m> m), tail <trim> dB (room <curve> dB),
