@@ -312,6 +312,32 @@ impl Frame {
         self.set_emission_scales(queue, material, scale, scale);
     }
 
+    /// The render-side style word of each material id (`styles[m]` for material `m`, 0 for the
+    /// ids past its end; bits: [`SHADOW_AS_BRICK`]), from the next frame on: how the renderer
+    /// treats the material, leaving the world untouched. Writes only when the words change.
+    pub fn set_material_styles(&mut self, queue: &wgpu::Queue, styles: &[u32]) {
+        let len = styles.iter().rposition(|&w| w != 0).map_or(0, |i| i + 1);
+        let styles = &styles[..len.min(EMISSION_ROWS)];
+        if styles == self.state.styles.as_slice() {
+            return;
+        }
+        let rows = styles.len().max(self.state.styles.len());
+        let words: Vec<f32> = (0..rows)
+            .map(|i| styles.get(i).map_or(0.0, |&w| w as f32))
+            .collect();
+        queue.write_buffer(
+            &self.state.emission_scale,
+            (2 * EMISSION_ROWS * 4) as u64,
+            bytemuck::cast_slice(&words),
+        );
+        self.state.styles = styles.to_vec();
+    }
+
+    /// The style words [`Frame::set_material_styles`] last set, trailing zeros dropped.
+    pub fn material_styles(&self) -> &[u32] {
+        &self.state.styles
+    }
+
     /// Scales material `material`'s emission by `pixels` in the light the frame's pixels
     /// sample (the light pass, the composite) and by `probes` in the light the probe rays
     /// sample. An emitter that varies over time passes its current scale and its time

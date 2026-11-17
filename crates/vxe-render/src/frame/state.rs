@@ -203,9 +203,12 @@ pub(super) struct FrameState {
     pub(super) hooks: LightHooks,
     /// The per-material emission scales, 1.0 unless set: an `f32` per material id for the
     /// light the frame's pixels sample, then [`EMISSION_ROWS`] more for the light the probe
-    /// rays sample.
+    /// rays sample; then [`EMISSION_ROWS`] style words ([`Frame::set_material_styles`]), each
+    /// an integer as `f32`, 0 unless set.
     pub(super) emission_scale: wgpu::Buffer,
     pub(super) emission_cpu: Vec<f32>,
+    /// The style words as last set, trailing zeros dropped.
+    pub(super) styles: Vec<u32>,
     /// The blue-noise texture, uploaded by the first `encode`.
     pub(super) blue_noise: wgpu::Texture,
     pub(super) blue_noise_written: std::sync::atomic::AtomicBool,
@@ -223,6 +226,14 @@ pub(super) struct FrameState {
     pub(super) atrous_dispatches: std::sync::atomic::AtomicU32,
     /// The light table's chunks, chosen again only when what they are chosen from changes.
     pub(super) light_near: std::sync::Mutex<LightNear>,
+}
+
+/// The emission-scale buffer's first contents: the two blocks of scales at 1.0, then the style
+/// words at 0.
+fn initial_emission_rows() -> Vec<f32> {
+    let mut v = vec![1.0f32; 3 * EMISSION_ROWS];
+    v[2 * EMISSION_ROWS..].fill(0.0);
+    v
 }
 
 impl FrameState {
@@ -265,11 +276,12 @@ impl FrameState {
                 device,
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("emission scale"),
-                    contents: bytemuck::cast_slice(&vec![1.0f32; 2 * EMISSION_ROWS]),
+                    contents: bytemuck::cast_slice(&initial_emission_rows()),
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 },
             ),
             emission_cpu: vec![1.0; 2 * EMISSION_ROWS],
+            styles: Vec::new(),
             blue_noise: device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("blue noise"),
                 size: wgpu::Extent3d {

@@ -26,6 +26,8 @@ pub struct OutdoorArgs {
     pub(crate) trees: TreeDensity,
     /// `--leaf-fill N`: a canopy voxel is kept under this of 256; unset, [`LEAF_FILL`].
     pub(crate) leaf_fill: Option<u32>,
+    /// `--leaf-shadow brick|voxel`: how the canopy shadows.
+    pub(crate) leaf_shadow: crate::LeafShadow,
 }
 
 impl OutdoorArgs {
@@ -40,6 +42,10 @@ impl OutdoorArgs {
 
     pub fn spawn(&self) -> Spawn {
         self.spawn
+    }
+
+    pub fn leaf_shadow(&self) -> crate::LeafShadow {
+        self.leaf_shadow
     }
 }
 
@@ -116,6 +122,17 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
                 |p: &mut Parsing, v| {
                     p.args.outdoor.leaf_fill =
                         Some(v.parse_if(|n: &u32| (1..=256).contains(n), "1 to 256")?);
+                    Ok(())
+                },
+            ),
+            Flag::value(
+                &["--leaf-shadow"],
+                "brick|voxel",
+                "how a canopy shadows the sun and the sky: as its 8^3 bricks (no fleck through \
+                 it) or voxel by voxel [brick]",
+                |p: &mut Parsing, v| {
+                    let names = crate::LeafShadow::ALL.map(|d| (d.name(), d));
+                    p.args.outdoor.leaf_shadow = v.word(&names, "brick or voxel")?;
                     Ok(())
                 },
             ),

@@ -101,7 +101,7 @@ pub use exposure::{
 };
 pub use frame::{
     ATROUS_ITERATIONS, DEFAULT_LIGHT_FLOOR, DEFAULT_PROBE_FREEZE, DEFAULT_SKY_RAYS, Light,
-    MAX_LIGHTS, MAX_SKY_RAYS, Params, Upscaler,
+    MAX_LIGHTS, MAX_SKY_RAYS, Params, SHADOW_AS_BRICK, Upscaler,
 };
 pub use frame::{
     CrackShares, EntityLight, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, LightHooks,

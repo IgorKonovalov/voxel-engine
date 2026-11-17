@@ -721,6 +721,13 @@ impl Run {
             .sky
             .then(|| self.modes.clock.sky(crate::outdoor::BASE_Z as f32));
         gfx.frame.set_sky(sky);
+        // The outdoor testbed's canopy style (`--leaf-shadow`); other sources style nothing.
+        let styles = if self.args.mode.is_outdoor() {
+            crate::outdoor_styles(self.modes.leaf_shadow)
+        } else {
+            Vec::new()
+        };
+        gfx.frame.set_material_styles(&gpu.queue, &styles);
         gfx.frame.set_resolution(&gpu.device, self.modes.resolution);
         gfx.frame.set_look(self.modes.look);
         // The temporal pass counts the store's reads only for a reader of them: the HUD's

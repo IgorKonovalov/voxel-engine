@@ -786,6 +786,8 @@ mod reading {
         /// The history's material and normal tests hooked off.
         pub any_history: bool,
         pub fsr2: bool,
+        /// The testbed's `leaf` shadows as its bricks (`--leaf-shadow brick`).
+        pub leaf_brick: bool,
     }
 
     /// What a cell read over its 64 still frames.
@@ -833,6 +835,12 @@ mod reading {
             any_history: cell.any_history,
         });
         f.set_count_store(true);
+        if cell.leaf_brick {
+            f.set_material_styles(
+                &rig.queue,
+                &flythrough::outdoor_styles(flythrough::LeafShadow::Brick),
+            );
+        }
         f.set_lighting(Lighting {
             exposure: Exposure::Auto(AutoExposure {
                 min: flythrough::cli::OUTDOOR_MIN,
@@ -894,6 +902,7 @@ mod reading {
                             filter,
                             any_history,
                             fsr2,
+                            leaf_brick: false,
                         });
                     }
                 }
@@ -1025,6 +1034,104 @@ mod reading {
                 let r = run_cell(&rig, &cam, sky, cell);
                 print_row("forest", cell, &r, &[("ground", &hit)]);
             }
+        }
+    }
+
+    /// The defaults' cell: both terms, the filter on, the history as built, FSR 2 at 1.5.
+    pub(super) fn default_cell(leaf_brick: bool) -> Cell {
+        Cell {
+            term: "both",
+            filter: true,
+            any_history: false,
+            fsr2: true,
+            leaf_brick,
+        }
+    }
+
+    /// The key light's shadow ray's steps in the steps view at `cam` under `sky` (native 320 x
+    /// 180, the defaults, the lamp off), over the lighting pixels that cast one: the mean and the
+    /// 99th percentile, over 4 frames.
+    pub(super) fn key_steps(
+        rig: &Rig,
+        cam: &vxe_render::Camera,
+        sky: vxe_render::sky::Sky,
+        leaf_brick: bool,
+    ) -> (f64, f32) {
+        use vxe_render::{LookParams, ViewMode};
+        let mut f = Frame::new(&rig.device, 320, 180);
+        f.set_lighting(Lighting {
+            lamp: false,
+            ..flythrough::default_lighting()
+        });
+        f.set_look(LookParams {
+            view: ViewMode::Steps,
+            ..LookParams::default()
+        });
+        if leaf_brick {
+            f.set_material_styles(
+                &rig.queue,
+                &flythrough::outdoor_styles(flythrough::LeafShadow::Brick),
+            );
+        }
+        f.set_sky(Some(sky));
+        let mut steps: Vec<f32> = Vec::new();
+        for _ in 0..4 {
+            f.step(
+                &rig.device,
+                &rig.queue,
+                &rig.gpu,
+                cam,
+                &LightParams::headlamp(),
+            );
+            let d = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, f.direct());
+            steps.extend(d.iter().filter(|p| p[3] > 0.5).map(|p| p[0]));
+        }
+        steps.sort_by(f32::total_cmp);
+        let mean = steps.iter().map(|&v| f64::from(v)).sum::<f64>() / steps.len().max(1) as f64;
+        (
+            mean,
+            steps.get(steps.len() * 99 / 100).copied().unwrap_or(0.0),
+        )
+    }
+
+    /// Plan 0086 Phase 2 bar 5: in the forest, the key ray's steps at `--sun 10,180` and the
+    /// stillness at `60,180` (the defaults' cell) with the leaf's SHADOW_AS_BRICK set and clear.
+    /// `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    #[test]
+    #[ignore = "reading"]
+    fn forest_leaf_shadow() {
+        let sky_at = |sun: [f32; 2]| {
+            flythrough::daylight::Clock {
+                fixed_sun: Some(sun),
+                ..Default::default()
+            }
+            .sky(flythrough::outdoor::BASE_Z as f32)
+        };
+        let Some((rig, cam)) = forest_rig() else {
+            return;
+        };
+        let (rate, gw) = hit_rates(&rig, &cam);
+        let gh = rate.len() / gw;
+        let hit = |x: usize, y: usize| rate[(y * gh / 180) * gw + x * gw / 320].is_some();
+        println!("reading: forest_leaf_shadow on {}", rig.adapter);
+        for leaf_brick in [true, false] {
+            let (mean, p99) = key_steps(&rig, &cam, sky_at([10.0, 180.0]), leaf_brick);
+            println!(
+                "reading: forest 10/180 leaf {}: key ray steps mean {mean:.2} p99 {p99}",
+                if leaf_brick { "brick" } else { "voxel" }
+            );
+            let cell = default_cell(leaf_brick);
+            let r = run_cell(&rig, &cam, sky_at([60.0, 180.0]), cell);
+            print_row(
+                if leaf_brick {
+                    "leaf brick"
+                } else {
+                    "leaf voxel"
+                },
+                cell,
+                &r,
+                &[("ground", &hit)],
+            );
         }
     }
 }

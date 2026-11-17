@@ -108,6 +108,8 @@ struct Walk {
     saw_translucent: bool,
     // With `split_walk`: `brick` is a field brick (a band brick without BAND_CUBES_BIT).
     brick_field: bool,
+    // With `shadow_styles`: `brick` holds a material whose style word has SHADOW_AS_BRICK.
+    brick_styled: bool,
 };
 
 var<private> walk: Walk;
@@ -118,6 +120,48 @@ var<private> walk: Walk;
 var<private> split_walk: bool = false;
 
 var<private> split_entered: bool;
+
+// Set by `shadowed_styled` around its walk while some material's style word is set
+// (LIGHTING_SHADOW_STYLES): a brick holding a material with SHADOW_AS_BRICK is solid from where
+// the ray enters it, except the brick `styled_from` (the ray's origin's, world bricks of 8
+// voxels), which the ray leaves rather than enters. Clear for every other walk.
+var<private> shadow_styles: bool = false;
+
+var<private> styled_from: vec3<i32>;
+
+// The material style word's bit (`frame::SHADOW_AS_BRICK`): a shadow ray stops at a brick
+// holding the material.
+const STYLE_SHADOW_AS_BRICK: u32 = 1u;
+
+// Material `m`'s style word: the third block of the emission-scale buffer, an integer as f32.
+fn material_style(m: u32) -> u32 {
+    return u32(emission_scale[2u * EMISSION_ROWS + m]);
+}
+
+// Whether the brick with record entry `entry` (not 0) holds a material whose style has
+// SHADOW_AS_BRICK: a uniform brick's material, or any id of a planar Full brick's palette (its
+// 2^planes entries in the header); a Wide brick (no palette) never.
+fn brick_styled(entry: u32) -> bool {
+    if ((entry & FULL_BIT) == 0u) {
+        return (material_style(entry & MATERIAL_MASK) & STYLE_SHADOW_AS_BRICK) != 0u;
+    }
+    let cls = (entry >> CLASS_SHIFT) & 7u;
+    if (cls == CLASS_WIDE) {
+        return false;
+    }
+    let unit = entry & UNIT_MASK;
+    let n = 1u << class_planes(cls);
+    for (var j = 0u; j < (n + 1u) / 2u; j++) {
+        let pair = pool_word(unit, HEADER_WORD + j);
+        let a = pair & 0xFFFFu;
+        let b = pair >> 16u;
+        if ((a != 0u && (material_style(a) & STYLE_SHADOW_AS_BRICK) != 0u)
+            || (2u * j + 1u < n && b != 0u && (material_style(b) & STYLE_SHADOW_AS_BRICK) != 0u)) {
+            return true;
+        }
+    }
+    return false;
+}
 
 // The stretch of the ray parameter over which `march` takes the coarse shadow walk's cells
 // (`lookup_walk`); empty (BIG, -BIG) for the full walk. The light pass sets it around a
@@ -370,6 +414,7 @@ fn descend(v: vec3<i32>) -> Descent {
             record_word(walk.base + ENTRY_WORD + walk.first + u32(b.x + e * (b.y + e * b.z)));
         walk.saw_translucent = walk.saw_translucent || (walk.brick_entry & TRANSLUCENT_BIT) != 0u;
         walk.brick_field = false;
+        walk.brick_styled = shadow_styles && walk.brick_entry != 0u && brick_styled(walk.brick_entry);
         if (split_walk && level == 0u && (walk.brick_entry & FULL_BIT) != 0u) {
             let h = pool_word(walk.brick_entry & UNIT_MASK, HEADER_WORD + HEADER_BAND_WORD);
             walk.brick_field = (h & (HEADER_BAND_BIT | BAND_CUBES_BIT)) == HEADER_BAND_BIT;
@@ -448,6 +493,9 @@ fn lookup_walk(v: vec3<i32>, coarse: bool) -> Cell {
     let skips = (params.flags & FLAG_SKIPS) != 0u;
     let entry = dsc.entry;
     let cell = dsc.cell;
+    if (shadow_styles && walk.brick_styled && any((v >> vec3<u32>(3u)) != styled_from)) {
+        return Cell(0, 0u, ABSENT, 0u, cell, false);
+    }
     if ((entry & FULL_BIT) == 0u) {
         let brick = select(cell, 8 * cell, skips);
         if ((entry & TRANSLUCENT_BIT) != 0u) {

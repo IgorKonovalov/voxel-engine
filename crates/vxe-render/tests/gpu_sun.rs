@@ -853,4 +853,149 @@ mod reading {
             }
         }
     }
+
+    /// The canopy rig's leaf material.
+    const LEAF: MaterialId = 2;
+    /// The canopy's centre column and height above the floor, and its radius.
+    const CANOPY: [i32; 3] = [64, 64, 80];
+    const CANOPY_R: i32 = 12;
+    /// The canopy's kept voxels, of 256 (the testbed's `LEAF_FILL`).
+    const FILL: u64 = 64;
+
+    /// Whether `p` is a kept canopy voxel: inside the sphere and its hash under FILL of 256.
+    fn canopy_at(p: [i32; 3]) -> bool {
+        let d = [0, 1, 2].map(|k| i64::from(p[k] - [CANOPY[0], CANOPY[1], FLOOR + CANOPY[2]][k]));
+        if d.iter().map(|v| v * v).sum::<i64>() > i64::from(CANOPY_R * CANOPY_R) {
+            return false;
+        }
+        let mut h = (p[0] as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            ^ (p[1] as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
+            ^ (p[2] as u64).wrapping_mul(0x1656_67B1_9E37_79F9);
+        h ^= h >> 31;
+        h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        h ^= h >> 29;
+        h & 255 < FILL
+    }
+
+    /// Per floor pixel of the canopy rig (a floating canopy of radius 12 at `leaf_fill` 64, 80
+    /// voxels over a 128 x 128 rock floor; the camera 40 voxels over the floor under it looking
+    /// straight down, 256 x 256 at 4 pixels a voxel; a zenith sun of `E = (1, 1, 1)` at the real
+    /// radius, the key light alone, the coarse walk, lighting at full resolution): the direct
+    /// target's luminance, a 16-frame mean, and the hit's floor voxel (x, y). `canopy` false
+    /// drops the canopy; `styled` sets SHADOW_AS_BRICK on its material.
+    fn canopy_floor(canopy: bool, styled: bool) -> Option<Vec<(f32, [i32; 2])>> {
+        let (device, queue) = device()?;
+        let table: MaterialTable = [Material::named("rock"), Material::named("leaf")]
+            .into_iter()
+            .collect();
+        let f = move |p: [i32; 3]| {
+            if p[2] < FLOOR {
+                ROCK
+            } else if canopy && canopy_at(p) {
+                LEAF
+            } else {
+                AIR
+            }
+        };
+        let world = World::generate(ChunkExtent::new([0, 0, 0], [2, 2, 2]), &FnSource(f), &table);
+        let gpu = mirror(&device, &queue, &world, None);
+        let mut frame = super::frame(&device, [256, 256], ShadowWalk::Coarse);
+        frame.set_sky(Some(sky(
+            dir(90.0, 0.0),
+            dir(-90.0, 0.0),
+            [[1.0; 3], [0.0; 3]],
+        )));
+        if styled {
+            let mut styles = vec![0; usize::from(LEAF) + 1];
+            styles[usize::from(LEAF)] = vxe_render::SHADOW_AS_BRICK;
+            frame.set_material_styles(&queue, &styles);
+        }
+        // tan(hfov / 2) = 32 / 40: 64 voxels across 256 pixels at the floor.
+        let cam = Camera {
+            position: Vec3::new(64.0, 64.0, FLOOR as f32 + 40.0),
+            yaw: 0.0,
+            pitch: -FRAC_PI_2 + 1e-4,
+            vfov: 2.0 * 0.8f32.atan(),
+        };
+        let mut sum: Vec<f64> = Vec::new();
+        for _ in 0..16 {
+            frame.step(&device, &queue, &gpu, &cam, &LightParams::headlamp());
+            let d = vxe_render::debug::read_rgba16f(&device, &queue, frame.direct());
+            sum.resize(d.len(), 0.0);
+            for (s, p) in sum.iter_mut().zip(&d) {
+                *s += f64::from(p[3]) / 16.0;
+            }
+        }
+        let hits = vxe_render::debug::read_rgba32f(&device, &queue, frame.light_hit_positions());
+        Some(
+            sum.iter()
+                .zip(&hits)
+                .filter(|(_, h)| h[3] < 1.0e30 && (h[2] - FLOOR as f32).abs() < 1e-2)
+                .map(|(s, h)| (*s as f32, [h[0].floor() as i32, h[1].floor() as i32]))
+                .collect(),
+        )
+    }
+
+    /// Plan 0086 Phase 2 bars 1 and 2, as readings: on the canopy rig, the floor pixels inside
+    /// the projection of the canopy's occupied bricks, with SHADOW_AS_BRICK set and clear: the
+    /// share over 1 % and over 50 % of the open value (the same pose with no canopy); and with
+    /// it set, of the floor pixels more than 8 voxels outside that projection, the share off the
+    /// open value by more than 1 %. Prints them.
+    #[test]
+    #[ignore = "reading"]
+    fn a_flagged_canopy_shadows_as_its_bricks() {
+        let Some(open) = canopy_floor(false, false) else {
+            return;
+        };
+        let open_v = open.iter().map(|p| f64::from(p.0)).sum::<f64>() / open.len() as f64;
+        // The canopy's occupied bricks, projected down: (x >> 3, y >> 3).
+        let mut bricks = std::collections::HashSet::new();
+        for z in CANOPY[2] - CANOPY_R..=CANOPY[2] + CANOPY_R {
+            for y in CANOPY[1] - CANOPY_R..=CANOPY[1] + CANOPY_R {
+                for x in CANOPY[0] - CANOPY_R..=CANOPY[0] + CANOPY_R {
+                    if canopy_at([x, y, FLOOR + z]) {
+                        bricks.insert([x >> 3, y >> 3]);
+                    }
+                }
+            }
+        }
+        let inside = |v: [i32; 2]| bricks.contains(&[v[0] >> 3, v[1] >> 3]);
+        // Over 8 voxels from every projected brick's square.
+        let far_out = |v: [i32; 2]| {
+            bricks.iter().all(|b| {
+                let dx = (b[0] * 8 - v[0]).max(v[0] - (b[0] * 8 + 7)).max(0);
+                let dy = (b[1] * 8 - v[1]).max(v[1] - (b[1] * 8 + 7)).max(0);
+                dx.max(dy) > 8
+            })
+        };
+        println!(
+            "reading: canopy rig, {} occupied brick columns, open value {open_v:.4} over {} px",
+            bricks.len(),
+            open.len()
+        );
+        for styled in [true, false] {
+            let px = canopy_floor(true, styled).expect("the adapter");
+            let ins: Vec<f64> = px
+                .iter()
+                .filter(|p| inside(p.1))
+                .map(|p| f64::from(p.0) / open_v)
+                .collect();
+            let over =
+                |r: f64| ins.iter().filter(|&&v| v > r).count() as f64 / ins.len().max(1) as f64;
+            let outs: Vec<f64> = px
+                .iter()
+                .filter(|p| far_out(p.1))
+                .map(|p| f64::from(p.0) / open_v)
+                .collect();
+            let off = outs.iter().filter(|&&v| (v - 1.0).abs() > 0.01).count();
+            println!(
+                "reading: SHADOW_AS_BRICK {}: inside {} px, over 1 % {:.4}, over 50 % {:.4}; outside by 8 {} px, off open by 1 % {off}",
+                if styled { "set" } else { "clear" },
+                ins.len(),
+                over(0.01),
+                over(0.5),
+                outs.len(),
+            );
+        }
+    }
 }

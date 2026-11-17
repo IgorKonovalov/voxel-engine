@@ -109,6 +109,7 @@ pub(crate) const PRELUDE: &[(&str, u32)] = &[
     ("LIGHTING_ENTITY_WORLD", LIGHTING_ENTITY_WORLD),
     ("LIGHTING_HOOK_KEY_OFF", LIGHTING_HOOK_KEY_OFF),
     ("LIGHTING_HOOK_ANY_HISTORY", LIGHTING_HOOK_ANY_HISTORY),
+    ("LIGHTING_SHADOW_STYLES", LIGHTING_SHADOW_STYLES),
     // The list of lights (`frame/lights.rs`).
     ("MAX_LIGHTS", MAX_LIGHTS as u32),
     ("LIGHT_ON", Light::ON),

@@ -225,6 +225,11 @@ impl Frame {
             },
             lighting: self.state.lighting.flags()
                 | self.state.hooks.bits()
+                | if self.state.styles.is_empty() {
+                    0
+                } else {
+                    LIGHTING_SHADOW_STYLES
+                }
                 | if self
                     .state
                     .emission_changed_at

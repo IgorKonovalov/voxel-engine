@@ -511,6 +511,22 @@ fn the_outdoor_source_and_its_flags_parse() {
             "{bad}"
         );
     }
+    // --leaf-shadow: brick by default, the canopy style on `leaf`, the banner names it.
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert_eq!(r.outdoor.leaf_shadow(), crate::LeafShadow::Brick);
+    assert!(!r.start_modes(0.0).line().contains("leaf"));
+    let r = parse_args_from(argv(&["--source", "outdoor", "--leaf-shadow", "voxel"])).unwrap();
+    assert_eq!(r.outdoor.leaf_shadow(), crate::LeafShadow::Voxel);
+    assert!(r.start_modes(0.0).line().contains("leaf voxel"));
+    assert!(parse_args_from(argv(&["--leaf-shadow", "solid"])).is_err());
+    let styles = crate::outdoor_styles(crate::LeafShadow::Brick);
+    assert_eq!(styles.len(), usize::from(crate::outdoor::LEAF) + 1);
+    assert_eq!(
+        styles[usize::from(crate::outdoor::LEAF)],
+        vxe_render::SHADOW_AS_BRICK
+    );
+    assert_eq!(styles.iter().filter(|&&w| w != 0).count(), 1);
+    assert!(crate::outdoor_styles(crate::LeafShadow::Voxel).is_empty());
     for flag in ["--sun-radius", "--moon-radius"] {
         for bad in ["0", "11", "x"] {
             assert!(parse_args_from(argv(&[flag, bad])).is_err(), "{flag} {bad}");

@@ -192,6 +192,17 @@ pub(crate) const LIGHTING_HOOK_KEY_OFF: u32 = 1 << 16;
 /// tests still hold).
 pub(crate) const LIGHTING_HOOK_ANY_HISTORY: u32 = 1 << 17;
 
+/// `Params::lighting` bit: some material's style word has [`SHADOW_AS_BRICK`]
+/// ([`Frame::set_material_styles`]), so a light's shadow ray reads the styles of the bricks it
+/// enters; clear, it reads none.
+pub(crate) const LIGHTING_SHADOW_STYLES: u32 = 1 << 18;
+
+/// A material style word's bit ([`Frame::set_material_styles`]): a light's shadow ray (the
+/// key light's, a sky ray, the lamp's and the list's) stops where it enters a brick holding
+/// the material, so a sparse canopy shadows as its bricks. A primary ray, the bake's rays and
+/// the emissive samples' rays see the voxels.
+pub const SHADOW_AS_BRICK: u32 = 1;
+
 /// The light passes' reading hooks ([`Frame::set_light_hooks`]): switches that take a term or a
 /// test out of the frame to attribute what the image does to it. All off by default; each is
 /// a uniform branch on a `Params::lighting` bit.

@@ -66,7 +66,7 @@ fn light_lit(li: Light, p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>) -> f32 {
         let dist2 = max(dot(to_light, to_light), 1e-4);
         let l = to_light * inverseSqrt(dist2);
         let dist = sqrt(dist2);
-        if (shadowed(o, l, dist) || (ENTITY_SHADOWS && entity_march(o, l, dist).found)) {
+        if (shadowed_styled(o, l, dist) || (ENTITY_SHADOWS && entity_march(o, l, dist).found)) {
             lit = 0.0;
         }
     }
@@ -106,6 +106,21 @@ fn shadowed(o: vec3<f32>, d: vec3<f32>, len: f32) -> bool {
     march_material = true;
     coarse_span = vec2<f32>(BIG, -BIG);
     return s.found;
+}
+
+// `shadowed` for a light's shadow ray (the list's, the lamp's, the key light's, a sky ray):
+// while some material's style word has SHADOW_AS_BRICK (LIGHTING_SHADOW_STYLES), a brick
+// holding such a material stops the ray where it enters it, the brick of `o` aside. The
+// bake's and the emissive samples' rays take `shadowed`.
+fn shadowed_styled(o: vec3<f32>, d: vec3<f32>, len: f32) -> bool {
+    if ((params.lighting & LIGHTING_SHADOW_STYLES) == 0u) {
+        return shadowed(o, d, len);
+    }
+    shadow_styles = true;
+    styled_from = voxel_at(o, d) >> vec3<u32>(3u);
+    let s = shadowed(o, d, len);
+    shadow_styles = false;
+    return s;
 }
 
 // The unit normal of face `f` (2 k toward -k, 2 k + 1 toward +k).

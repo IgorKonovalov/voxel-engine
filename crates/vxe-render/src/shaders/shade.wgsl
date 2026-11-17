@@ -69,7 +69,7 @@ fn shade_px(gid: vec3<u32>) {
                 let dist = max(length(to_light), 1e-2);
                 walk_steps = 0u;
                 loads = 0u;
-                shadowed(o, to_light / dist, dist);
+                shadowed_styled(o, to_light / dist, dist);
                 steps += walk_steps;
                 storage += counted_loads();
                 pool += counted_pool_reads();

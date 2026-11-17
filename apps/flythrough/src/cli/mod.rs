@@ -828,6 +828,7 @@ impl Args {
             .with_probe_spacing(self.light.probe_spacing);
         m.sky = self.sky_on();
         m.clock = self.outdoor.clock;
+        m.leaf_shadow = self.outdoor.leaf_shadow;
         m.profile = self.profile_row(&self.render_settings(), &[]);
         m.set_auto(self.light.adaptation, self.start_auto());
         m.show_look(&self.look.preset, self.look.preset.far_normal, now_ms);

@@ -30,7 +30,7 @@ fn disc_direction(l: vec3<f32>, r: f32, u: f32, v: f32) -> vec3<f32> {
 // Whether a lighting ray from `o` along `d` finds rock (or, with ENTITY_SHADOWS, an entity)
 // before the sky.
 fn sky_shadowed(o: vec3<f32>, d: vec3<f32>, len: f32) -> bool {
-    return shadowed(o, d, len) || (ENTITY_SHADOWS && entity_march(o, d, len).found);
+    return shadowed_styled(o, d, len) || (ENTITY_SHADOWS && entity_march(o, d, len).found);
 }
 
 // The key light's sample at a hit at `p`, normal `n`, shadow normal `ns`, lighting pixel `px`:

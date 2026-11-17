@@ -561,8 +561,8 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The attribution reading | dev | done | committed with this row |
-| 2: A canopy shadows as its brick | dev | not started | |
+| 1: The attribution reading | dev | done | 851f7c72 |
+| 2: A canopy shadows as its brick | dev | done (readings with Phase 3) | committed with this row |
 | 3: History across a stair in the far-normal regime | dev | not started | |
 | 4: The sky visibility baked per brick direction | dev | not started | |
 | 5: The rays' own long history, the sky ray only where stale | dev | not started | |
@@ -582,6 +582,11 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
   (`LightHooks`), two `Params::lighting` bits. The tunnel's regions are chosen per lighting pixel
   by the sky ray's hit rate (as Plan 0032's `the_tunnel_under_one_sky_ray`), not by a pinned
   rectangle; the rectangles are printed. The forest region is every hit.
+- Phase 2: the style word lives in a third block of the emission-scale buffer, not a new
+  binding beside the material upload; a brick is styled by any id of its palette, not one
+  voxel's. The banner names only the non-default `leaf voxel` (the start banner is at its
+  9-row cap); the parse test pins that. Bars 1 and 2 run as `reading::a_flagged_canopy_shadows_as_its_bricks`
+  in `gpu_sun.rs` (exploration); bar 3's goldens run at the tip's gpu tier.
 
 ### Close triggers
 

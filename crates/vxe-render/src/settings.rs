@@ -561,6 +561,10 @@ impl RenderSettings {
             "a reading hook: counts the store's reads for the HUD and readings",
         ),
         (
+            "set_material_styles",
+            "a per-material input: the consumer's render-side style of each material (SHADOW_AS_BRICK)",
+        ),
+        (
             "set_light_hooks",
             "a reading hook: takes the key light or the history's material and normal tests out",
         ),
