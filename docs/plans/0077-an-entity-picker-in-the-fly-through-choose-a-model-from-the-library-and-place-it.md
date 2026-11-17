@@ -1,6 +1,6 @@
 # 0077: An entity picker in the fly-through: choose a model from the entities library, see it at the crosshair, place it
 
-> **Status:** approved (2026-11-16, the owner: all eight recommended answers under "Owner questions"); amended 2026-11-17 (orchestrator re-read against Plans 0078, 0069 and 0080 as landed; owner questions 9 to 11 open, each with a recommendation)
+> **Status:** approved (2026-11-16, the owner: all eight recommended answers under "Owner questions"); amended 2026-11-17 (orchestrator re-read against Plans 0078, 0069 and 0080 as landed; owner questions 9 to 11 answered 2026-11-17: the recommended option each, `Delete` removes, `Enter` places and stays open, a page like any other)
 > **Created:** 2026-11-16
 > **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md), the testbed side. Apps only
 > (`apps/flythrough`); nothing under `crates/` changes.
@@ -166,6 +166,8 @@ where this section says otherwise; the dev reads this section as the phases' err
 - **Phase 5** unchanged.
 
 ### Owner questions added 2026-11-17 (each with a recommendation)
+
+Answered 2026-11-17 (owner): the recommended option on all three.
 
 9. **The remove key.** `Backspace` is the filter's while the menu is open (0080), so the
    plan's `Backspace` removes nothing. Recommended: **`Delete`**, free since 0080 Phase 3, as
