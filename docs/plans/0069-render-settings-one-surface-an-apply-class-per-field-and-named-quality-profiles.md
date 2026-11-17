@@ -34,10 +34,15 @@
 >   (the review's section 2.2 list is the first draft) is removed, not documented.
 > - `Floor` equals the fly-through's defaults, and every settings struct's `Default`
 >   (`Lighting::default()` included) equals `Floor`, with a CPU test that says so.
+>   **Amended 2026-11-17 (owner):** only `RenderSettings::default()` equals `Floor`; the
+>   per-struct defaults (`Lighting::default()` and the others) stay the neutral library
+>   baseline the render tests build on. Phase 3's CPU test is the proof.
 > - Phase 2's setter gate counts the existing setters, not only new ones.
 > - Phase 4 reads the hit pass alone at `Portable`'s internal size on the RADV RENOIR before the
 >   profile values are set. Over 10 ms there, the backlog's walk-speed spike runs before
 >   Phase 6, not after M10.
+>   **Amended 2026-11-17 (owner):** the hall's 10.53 ms (Phase 4, readings log) is accepted
+>   ("0.5 ms doesn't matter"); the walk-speed spike is not required before Phase 6.
 > **Amended 2026-11-16 (architect; the owner approved it 2026-11-16 with Plan 0080):** `F4` is bound today (the a-trous filter's
 > iterations, `toggles::TOGGLES`), so "`F4` cycling the profiles" collides. Under ADR-0061 and
 > [Plan 0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) the
@@ -176,6 +181,8 @@ figures (a hand-built box on lavapipe renders a few dozen frames at 192 x 108 in
     found in the crate's source files (read at test time from `CARGO_MANIFEST_DIR`) is the
     setter of a `FIELDS` row or in `NOT_SETTINGS`; the failure names the setter (under 1 s).
   - Every field's rustdoc states its class; `cargo doc -p vxe-render` builds without warnings.
+    **Amended 2026-11-17 (owner):** without new warnings from this plan's files; the 64
+    pre-existing `private_intra_doc_links` warnings are a separate chore (`docs/backlog.md`).
 
 ### Phase 3: the profiles, in the fly-through and the tester
 - **Owner skill:** dev
