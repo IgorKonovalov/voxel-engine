@@ -395,8 +395,9 @@ fn a_roof_slab_casts_a_soft_shadow() {
 
 /// Bar 6's settle: the floor beside a pillar under a sun turned by 10 degrees in one frame,
 /// filter on, the real radius: every pixel that left the shadow reads at least 90 % of its
-/// lit value 11 frames after the turn (the reset puts it there on the first; without it
-/// the blend leaves `0.8^11 = 0.086`); the share on frame 1 is printed.
+/// settled lit value (32 more frames under the turned sun) on frame 1 after the turn, the
+/// reset taking the frame's sample, and on frame 11, the bar (without the reset the blend
+/// leaves `0.8^11 = 0.086` of the old value). Both shares are printed.
 #[test]
 fn a_sun_jump_resets_the_direct_part() {
     let Some((device, queue)) = device() else {
@@ -434,24 +435,29 @@ fn a_sun_jump_resets_the_direct_part() {
             f.direct_accumulated(),
         ));
     }
-    let lit = reads[10].iter().map(|c| c[0]).fold(0.0f32, f32::max);
+    for _ in 0..32 {
+        f.step(&device, &queue, &gpu, &cam, &light);
+    }
+    let settled = vxe_render::debug::read_rgba16f(&device, &queue, f.direct_accumulated());
+    let lit = settled.iter().map(|c| c[0]).fold(0.0f32, f32::max);
     let left: Vec<usize> = (0..before.len())
-        .filter(|&i| before[i][0] < 0.1 * lit && reads[10][i][0] > 0.9 * lit)
+        .filter(|&i| before[i][0] < 0.1 * lit && settled[i][0] > 0.9 * lit)
         .collect();
-    let mut at_11 = 0;
-    for (k, r) in [(1, &reads[0]), (11, &reads[10])] {
+    assert!(!left.is_empty(), "the turn moves the shadow");
+    let counts = [(1, &reads[0]), (11, &reads[10])].map(|(k, r)| {
         let ok = left
             .iter()
-            .filter(|&&i| r[i][0] >= 0.9 * reads[10][i][0])
+            .filter(|&&i| r[i][0] >= 0.9 * settled[i][0])
             .count();
         println!(
             "frame {k} after the turn: {ok} of {} pixels that left the shadow at 90 %",
             left.len()
         );
-        at_11 = ok;
+        (k, ok)
+    });
+    for (k, ok) in counts {
+        assert_eq!(ok, left.len(), "frame {k}");
     }
-    assert!(!left.is_empty(), "the turn moves the shadow");
-    assert_eq!(at_11, left.len());
 }
 
 /// Bar 7: FSR 2 at 1.5 over the floor beside a pillar, the coarse walk: on the frame of a
