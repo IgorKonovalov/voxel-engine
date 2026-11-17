@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0089** (ADRs are a separate sequence, see `../adrs/README.md` for its
+**Next free number: 0090** (ADRs are a separate sequence, see `../adrs/README.md` for its
 next free number).
 
 ## Active roster
@@ -30,6 +30,7 @@ next free number).
 | [0086](0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md) | Still outdoor light: baked sky visibility, a long history for the sky and key rays, solid canopy shadows, stair history, a penumbra spike | approved | M10, ADR-0070. After Plan 0032, before Plan 0081. |
 | [0087](0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md) | The rename to `svet`: crates, `SVET_*`, the WIT package, the tester archive, docs, the repository, a minor bump | approved | ADR-0071. Alone, last: after 0032, 0080, 0077, 0079, 0083 and 0086 merge. |
 | [0088](0088-the-outdoor-scene-in-the-tester-a-path-over-the-hills-through-the-trees-and-into-the-cave.md) | The outdoor scene in the tester: a path over the hills, through the trees and down the tunnel; a fourth menu row | approved | M7, ADR-0054, no new ADR. After 0080 merges; not after 0086. Before 0087. |
+| [0089](0089-deterministic-simulation-testing-seeded-scenarios-a-simulated-channel-a-mirror-oracle-and-gates.md) | Deterministic simulation testing: seeded scenarios, a shrinker, a simulated channel, a mirror oracle, determinism gates | draft | ADR-0073 (proposed). P1-3 now, P4-7 after 0087 (recommended). Awaits go. |
 <!-- roster:end -->
 
 ## Sequence
@@ -144,6 +145,17 @@ it now" after an outside Linux report read CPU spikes in the streamed scenes; no
 0080 merges (both edit `path.rs`, `tests/path.rs`, `cli/parse.rs` and `docs/flythrough.md`); it
 does not wait for Plan 0086 and merges before Plan 0087 starts. Approved 2026-11-17 ("go 88") with the
 recommended answer to all five owner questions.
+
+**Plan 0089** (deterministic simulation testing: a dev-only crate `vxe-dst` that draws a scenario
+from one seed, checks invariants after every step, shrinks a failing scenario by delta debugging
+and writes it as a text file and a JSON line; a message-level `SimNet` channel in `vxe-net` with
+seeded drops, delays, duplicates, partitions and clogs and the owned client's `Lost` rule; a GPU
+mirror oracle against a fresh upload; a `SpillIo` seam with a simulated disk; `iter_over_hash_type`
+and a `check-determinism.mjs` gate; drafted 2026-11-17 from the owner's "yes draft it" on the
+article "Deterministic Simulation Testing"; ADR-0073 proposed): draft, awaiting the owner's go
+and the answers to its six questions. Recommended: Phases 1 to 3 (the new crate and
+`docs/nfr.md` only) as a side lane now, beside the open lanes; Phases 4 to 7 (four engine crates,
+`vxe-render`'s tests, the fly-through's save, `ci.yml`) after Plan 0087 merges. No new dependency.
 
 Every active plan is approved (Plans 0087 and 0088 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Approval accepts the design; a plan's lane
