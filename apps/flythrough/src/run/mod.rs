@@ -457,4 +457,6 @@ impl Drop for Run {
 #[cfg(test)]
 mod menu_tests;
 #[cfg(test)]
+mod picker_tests;
+#[cfg(test)]
 mod tests;

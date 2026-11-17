@@ -131,7 +131,7 @@ fn upload_needed(
     table: &MaterialTable,
 ) -> Result<(), (Option<usize>, EntityUploadError)> {
     if walkers.handle.is_none()
-        && walkers.placed.iter().any(|p| p.entry.is_none())
+        && walkers.all().any(|p| p.entry.is_none())
         && let Some(model) = walkers.model(table)
     {
         walkers.handle =
@@ -140,7 +140,7 @@ fn upload_needed(
     for i in 0..walkers.library.entries.len() {
         let e = &walkers.library.entries[i];
         let Some(v) = e.viewer() else { continue };
-        let used = e.flagged || walkers.placed.iter().any(|p| p.entry == Some(i));
+        let used = e.flagged || walkers.all().any(|p| p.entry == Some(i));
         let Some(l) = v.loaded.as_ref().filter(|_| v.handle.is_none() && used) else {
             continue;
         };
@@ -215,6 +215,9 @@ pub fn sync_models(
 /// Removes entry `i`'s placed instances, which the pool refused: the set is as it was before
 /// they were placed, and `4`'s list loses as many entities from its newest end.
 fn refuse_entry(walkers: &mut Walkers, i: usize) {
+    if walkers.preview.as_ref().is_some_and(|p| p.entry == Some(i)) {
+        walkers.clear_preview();
+    }
     let mut gone = 0;
     while let Some(k) = walkers.placed.iter().rposition(|p| p.entry == Some(i)) {
         walkers.remove_at(k);
@@ -256,6 +259,7 @@ pub fn feed(
     // A removal leaves a ghost leaf until the next write, so the frames keep writing while the
     // mirror still walks one.
     if walkers.placed.is_empty()
+        && walkers.preview.is_none()
         && walkers.drawn == 0
         && walkers.over == 0
         && !frame.entity_mirror().walks_entities()

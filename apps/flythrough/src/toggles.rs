@@ -201,10 +201,13 @@ pub const KEY_DROP: KeyCode = KeyCode::Digit1;
 pub const KEY_REMOVE: KeyCode = KeyCode::Digit4;
 /// `6`: fire a light along the view ray.
 pub const KEY_FIRE: KeyCode = KeyCode::Digit6;
-/// `` ` `` (Backquote): place a walker on the looked-at surface (`crate::walker`).
+/// `` ` `` (Backquote): the entities page; on it, place the selected entry and close
+/// (`crate::entities::picker`).
 pub const KEY_WALKER: KeyCode = KeyCode::Backquote;
 /// `F4`: the next render profile (`run::profile`).
 pub const KEY_PROFILE: KeyCode = KeyCode::F4;
+/// `Delete`: remove the placed entity under the crosshair.
+pub const KEY_REMOVE_AIMED: KeyCode = KeyCode::Delete;
 /// `Left` and `Right`: the aimed (else the newest) placed entity's clip before and after
 /// (`crate::entities`).
 pub const KEY_CLIP_BACK: KeyCode = KeyCode::ArrowLeft;
@@ -227,8 +230,10 @@ pub enum Act {
     Remove,
     /// Fires a light along the view ray.
     FireLight,
-    /// Places the library's selected entry at the looked-at surface.
-    PlaceWalker,
+    /// Opens the entities page: the library's entries, the preview at the crosshair.
+    Picker,
+    /// Removes the placed entity under the crosshair.
+    RemoveAimed,
     /// The walkers walk or hold still.
     WalkersWalk,
     /// The walkers' eye lights on or off.
@@ -434,10 +439,17 @@ pub static ACTIONS: &[Action] = &[
         [Bind::Key(KEY_FIRE)]
     ),
     action!(
-        "place a walker",
+        "entity picker",
         Entities,
-        Act::PlaceWalker,
+        Act::Picker,
         [Bind::Key(KEY_WALKER)]
+    ),
+    action!(
+        "remove aimed entity",
+        Entities,
+        Act::RemoveAimed,
+        [Bind::Key(KEY_REMOVE_AIMED)],
+        Some(Needs::Placed)
     ),
     Action {
         binds: &[],

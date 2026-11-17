@@ -186,6 +186,7 @@ impl Menu {
                 let _ = write!(text, "  >  {}", g.name());
             }
             PageId::Keys => text.push_str("  >  keys"),
+            PageId::Entities => text.push_str("  >  entities"),
         }
         if searching {
             let _ = write!(text, "  search: {}", self.filter());
@@ -229,7 +230,9 @@ impl Menu {
                 text.push_str(why);
             }
             cut_row(text, start);
-            colours.push(if unavailable.is_some() {
+            let in_error =
+                matches!(row, Row::Item(i) if crate::entities::picker::item_error(m, *i).is_some());
+            colours.push(if unavailable.is_some() || in_error {
                 HudColour::Grey
             } else if selected {
                 HudColour::Yellow
@@ -275,7 +278,7 @@ fn unavailable(row: &Row, m: &Modes, v: &RunView) -> Option<&'static str> {
             }
             why
         }
-        Row::Fixed(..) | Row::Header(_) => None,
+        Row::Fixed(..) | Row::Header(_) | Row::Item(_) | Row::Clip => None,
     }
 }
 
@@ -307,6 +310,8 @@ fn write_row(
     match *row {
         Row::Group(g) => text.push_str(g.name()),
         Row::Header(g) => text.push_str(g.name()),
+        Row::Item(i) => crate::entities::picker::write_item(m, i, text, MENU_COLS - 2),
+        Row::Clip => crate::entities::picker::write_clip(m, text),
         Row::Fixed(keys, does) => {
             let _ = write!(text, "  {keys:<18}{does}");
         }
@@ -350,5 +355,6 @@ fn footer(page: PageId, searching: bool) -> &'static str {
         PageId::Root => "Enter opens  Esc closes  Tab closes  type to search",
         PageId::Group(_) => "Enter acts  Esc back  Tab closes  type to search",
         PageId::Keys => "F1 closes  Tab the menu  Enter acts  type to search",
+        PageId::Entities => "Enter places  ` places, closes  Delete removes  Esc closes",
     }
 }

@@ -79,6 +79,9 @@ pub struct Walkers {
     /// The placed entity under the crosshair, as the frame last read it: the clip keys act on
     /// it, else on the newest.
     pub aimed: Option<EntityId>,
+    /// The entities page's preview: the selected entry standing at the crosshair, in the set
+    /// and drawn as any placement but not one of [`Walkers::placed`] (`super::picker`).
+    pub preview: Option<Placed>,
     /// The frame's drawn parts, kept across frames ([`Walkers::refresh_displays`]): the first
     /// `shown` are this frame's, the rest storage kept for later frames.
     displays: Vec<(EntityId, ModelHandle, vxe_render::DisplayPose)>,
@@ -263,7 +266,9 @@ impl Walkers {
             else {
                 continue;
             };
-            for p in self.placed.iter_mut().filter(|p| p.entry == Some(i)) {
+            for p in (self.placed.iter_mut().chain(self.preview.iter_mut()))
+                .filter(|p| p.entry == Some(i))
+            {
                 let name = p.play.clip_name(&old).map(str::to_owned);
                 p.play.rebind(name.as_deref(), l);
                 let pose = placed(&p.play.poses(l).0, p.feet, p.yaw);
@@ -292,6 +297,11 @@ impl Walkers {
         Some(p.id)
     }
 
+    /// The placements and then the preview, when there is one.
+    pub fn all(&self) -> impl Iterator<Item = &Placed> {
+        self.placed.iter().chain(self.preview.iter())
+    }
+
     /// The uploaded handle placement `p` is drawn under: its entry's, or the built-in
     /// walker's.
     fn handle_of(&self, p: &Placed) -> Option<ModelHandle> {
@@ -304,8 +314,7 @@ impl Walkers {
     /// The frame's list: every placed entity under its model's uploaded handle, those whose
     /// model is not uploaded left out.
     pub fn list(&self) -> Vec<(EntityId, ModelHandle)> {
-        self.placed
-            .iter()
+        self.all()
             .filter_map(|p| Some((p.id, self.handle_of(p)?)))
             .collect()
     }
@@ -317,8 +326,13 @@ impl Walkers {
     /// its own two poses.
     pub fn refresh_displays(&mut self) {
         let mut n = 0;
-        for k in 0..self.placed.len() {
-            let p = &self.placed[k];
+        let total = self.placed.len() + usize::from(self.preview.is_some());
+        for k in 0..total {
+            let p = self
+                .placed
+                .get(k)
+                .or(self.preview.as_ref())
+                .expect("k < total");
             let Some((model, pose)) = self.set.get(p.id) else {
                 continue;
             };
@@ -435,7 +449,7 @@ impl Walkers {
                 v.advance(dt);
             }
         }
-        for p in &mut self.placed {
+        for p in self.placed.iter_mut().chain(self.preview.iter_mut()) {
             let Some(i) = p.entry else { continue };
             let Some(l) = self.library.entries[i]
                 .viewer()

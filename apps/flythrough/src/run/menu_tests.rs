@@ -165,9 +165,10 @@ fn the_overlay_is_chosen_by_tester_menu_and_stats() {
 
 /// The keys the menu-only entries had before the minimal key set (ADR-0061's table, the Menu
 /// rows; the profile's `PageDown`, the source's `Home`, the hour's `PageUp`, the day cycle's
-/// `End` and the trees' `CapsLock`): text here, bound to nothing now.
+/// `End` and the trees' `CapsLock`): text here, bound to nothing now (`Delete` is bound again,
+/// to the remove key of the entities).
 // keys:typed-begin
-const FORMER_KEYS: [KeyCode; 45] = [
+const FORMER_KEYS: [KeyCode; 44] = [
     KeyCode::F3,
     KeyCode::PageDown,
     KeyCode::Home,
@@ -181,7 +182,6 @@ const FORMER_KEYS: [KeyCode; 45] = [
     KeyCode::KeyQ,
     KeyCode::Comma,
     KeyCode::Semicolon,
-    KeyCode::Delete,
     KeyCode::Insert,
     KeyCode::KeyN,
     KeyCode::KeyV,
@@ -311,8 +311,13 @@ fn a_shortcut_still_acts_and_shows() {
     frame_keys(&mut run, &pressed(KeyCode::Digit4));
     assert_eq!(count(&run), dropped, "4 removes the newest");
     frame_keys(&mut run, &pressed(KeyCode::Backquote));
-    let banner = run.banner().unwrap();
-    assert!(banner.contains("walker"), "` places a walker: {banner}");
+    assert_eq!(
+        run.menu.page(),
+        Some(PageId::Entities),
+        "` opens the entities page"
+    );
+    frame_keys(&mut run, &pressed(KeyCode::Escape));
+    assert!(!run.menu.is_open(), "Esc closes it");
     frame_keys(&mut run, &pressed(KeyCode::Enter));
     assert!(run.samples.is_some(), "Enter starts the readings");
     run.samples = None;

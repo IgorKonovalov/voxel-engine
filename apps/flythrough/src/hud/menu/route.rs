@@ -1,7 +1,8 @@
 //! The one capture rule (ADR-0061): what the menu takes from a frame's input and what passes
 //! on to the run. Closed, everything passes and only the menu's keys (`Tab`, `F1`, the pad's
 //! `Start`) open it.
-//! Open, the arrows, `Enter`, `Backspace`, `Esc`, the typed keys, the wheel, both clicks, the
+//! Open, the arrows, `Enter`, `Backspace`, `Esc`, the typed keys and the punctuation (`` ` ``
+//! shows the entities' page, and places from it), the wheel, both clicks, the
 //! D-pad, `South`, `East` and `Start` are the menu's; the movement keys, the look, the
 //! function keys and the other pad buttons pass, so a function-key shortcut acts in place and
 //! its row follows. The movement letters and `Space` do both: their press types, their hold
@@ -210,6 +211,9 @@ pub fn menu_inputs(input: &Input, open: bool) -> Vec<MenuInput> {
             .filter(|(k, _)| input.pressed(*k))
             .map(|&(_, i)| i),
     );
+    if input.pressed(crate::toggles::KEY_WALKER) {
+        out.push(MenuInput::Entities);
+    }
     out.extend(
         pads.iter()
             .filter(|(b, _)| input.pad_pressed(*b))

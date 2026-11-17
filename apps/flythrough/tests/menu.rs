@@ -463,7 +463,7 @@ fn f1_opens_the_keys_page() {
 /// The shortcut rows of ADR-0061's key table as the owner answered it (Plan 0080's "The
 /// keys"), and the render profile's `F4` (ADR-0055): each entry that keeps a bind and its
 /// binds as the menu shows them.
-const SHORTCUTS: [(&str, &str); 16] = [
+const SHORTCUTS: [(&str, &str); 17] = [
     ("profile", "F4"),
     ("dig radius", "wheel / pad D-pad up down"),
     ("walk", "G / pad North"),
@@ -473,7 +473,8 @@ const SHORTCUTS: [(&str, &str); 16] = [
     ("drop a light", "1"),
     ("remove the newest", "4"),
     ("fire a light", "6"),
-    ("place a walker", "`"),
+    ("entity picker", "`"),
+    ("remove aimed entity", "Delete"),
     ("clip before", "Left"),
     ("clip after", "Right"),
     ("clip pause", "Down"),

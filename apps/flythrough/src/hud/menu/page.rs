@@ -16,6 +16,21 @@ pub enum PageId {
     Group(Group),
     /// Every entry of every group with its binds, under the fixed keys (`F1`).
     Keys,
+    /// A dynamic page, its rows built each frame from the run: the entities library's
+    /// entries, the selected entry's clip, then the `entities` group's entries
+    /// (`crate::entities::picker`). The root's `entities` row and `` ` `` open it.
+    Entities,
+}
+
+impl Group {
+    /// The page the root's row of the group opens: the entities' dynamic page for
+    /// [`Group::Entities`], else the group's page.
+    pub fn page(self) -> PageId {
+        match self {
+            Self::Entities => PageId::Entities,
+            g => PageId::Group(g),
+        }
+    }
 }
 
 /// One row of a page.
@@ -29,12 +44,19 @@ pub enum Row {
     /// headers (a group, no binds).
     Fixed(&'static str, &'static str),
     Header(Group),
+    /// The entities library's entry of that index: `Enter` places it at the crosshair.
+    Item(usize),
+    /// The selected entry's clip: `Enter` gives the next.
+    Clip,
 }
 
 impl Row {
     /// Whether the selection can rest on the row.
     pub fn selectable(&self) -> bool {
-        matches!(self, Self::Group(_) | Self::Entry(_))
+        matches!(
+            self,
+            Self::Group(_) | Self::Entry(_) | Self::Item(_) | Self::Clip
+        )
     }
 }
 
@@ -47,6 +69,14 @@ pub enum Activated {
     Action(Act),
     Step(&'static Toggle, i32),
     Refused(&'static str),
+    /// Places the library's entry `entry` at the crosshair (the preview, when it stands
+    /// there), the menu closed after when `close`.
+    Place {
+        entry: usize,
+        close: bool,
+    },
+    /// The selected entry's next clip.
+    Clip,
 }
 
 impl std::fmt::Debug for Activated {
@@ -56,6 +86,8 @@ impl std::fmt::Debug for Activated {
             Self::Action(a) => write!(f, "Action({a:?})"),
             Self::Step(t, d) => write!(f, "Step({}, {d})", t.name),
             Self::Refused(why) => write!(f, "Refused({why})"),
+            Self::Place { entry, close } => write!(f, "Place({entry}, close {close})"),
+            Self::Clip => write!(f, "Clip"),
         }
     }
 }
@@ -81,6 +113,8 @@ pub enum MenuInput {
     Type(char),
     /// `Backspace`: the filter's last letter.
     Erase,
+    /// `` ` `` while open: on the entities' page places and closes, elsewhere shows that page.
+    Entities,
     /// Wheel lines, positive away from the user (up the list).
     Scroll(i32),
 }
@@ -118,6 +152,24 @@ impl Menu {
         self.edit
     }
 
+    /// Opens the entities' page alone (so `Esc` closes it), its selection on `selected` (the
+    /// library's selected entry).
+    pub fn open_entities(&mut self, selected: usize) {
+        self.close();
+        self.stack.push((PageId::Entities, selected));
+    }
+
+    /// The selected row shown at `m` and `v`, when one is.
+    pub fn selected_row(&self, m: &Modes, v: &RunView) -> Option<Row> {
+        let picks: Vec<Row> = self
+            .rows(m, v)
+            .into_iter()
+            .filter(Row::selectable)
+            .collect();
+        let s = self.selected().min(picks.len().saturating_sub(1));
+        picks.get(s).copied()
+    }
+
     /// Opens the menu on `page`, with no filter: a group's page over the root, so `Esc` goes
     /// back to it; the root or the Keys page alone.
     pub fn open_at(&mut self, page: PageId) {
@@ -150,6 +202,17 @@ impl Menu {
             None => Vec::new(),
             Some(PageId::Root) => Group::ALL.into_iter().map(Row::Group).collect(),
             Some(PageId::Group(g)) => group_entries(g).map(Row::Entry).collect(),
+            Some(PageId::Entities) => {
+                let n = m.walkers.library.entries.len().max(1);
+                let mut rows: Vec<Row> = (0..n).map(Row::Item).collect();
+                rows.push(Row::Clip);
+                rows.extend(
+                    group_entries(Group::Entities)
+                        .filter(|e| !matches!(e.kind, EntryKind::Action(a) if a.act == Act::Picker))
+                        .map(Row::Entry),
+                );
+                rows
+            }
             Some(PageId::Keys) => {
                 let mut rows: Vec<Row> = FIXED_ROWS
                     .iter()
@@ -199,6 +262,17 @@ impl Menu {
                 return None;
             }
             _ if !self.is_open() => return None,
+            MenuInput::Entities => {
+                if self.page() == Some(PageId::Entities) && self.filter.is_empty() {
+                    let entry = match self.selected_row(m, v) {
+                        Some(Row::Item(i)) => i,
+                        _ => m.walkers.library.selected,
+                    };
+                    return Some(Activated::Place { entry, close: true });
+                }
+                self.open_entities(m.walkers.library.selected);
+                return None;
+            }
             _ => {}
         }
         let rows = self.rows(m, v);
@@ -238,7 +312,21 @@ impl Menu {
                 self.select(to.clamp(0, n.saturating_sub(1) as i64) as usize);
             }
             MenuInput::Activate | MenuInput::Right => match picks.get(s) {
-                Some(Row::Group(g)) => self.stack.push((PageId::Group(*g), 0)),
+                Some(Row::Group(g)) => {
+                    let at = if *g == Group::Entities {
+                        m.walkers.library.selected
+                    } else {
+                        0
+                    };
+                    self.stack.push((g.page(), at));
+                }
+                Some(Row::Item(entry)) if i == MenuInput::Activate => {
+                    return Some(Activated::Place {
+                        entry: *entry,
+                        close: false,
+                    });
+                }
+                Some(Row::Clip) if i == MenuInput::Activate => return Some(Activated::Clip),
                 Some(Row::Entry(e)) if i == MenuInput::Activate => {
                     if let Err(why) = e.available(m, v) {
                         return Some(Activated::Refused(why));
@@ -268,7 +356,7 @@ impl Menu {
                 self.filter.pop();
                 self.found = 0;
             }
-            MenuInput::Menu | MenuInput::Keys => {}
+            MenuInput::Menu | MenuInput::Keys | MenuInput::Entities => {}
         }
         None
     }

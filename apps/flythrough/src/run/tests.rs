@@ -1098,7 +1098,7 @@ fn a_benchmark_path_runs_with_the_lamp_off_and_its_report_says_so() {
     assert_eq!(v.get("mode").and_then(Value::as_str), Some("bench"));
 }
 
-/// Under `--model`, `` ` `` places the model and `Right` and `Left` cycle the placed entity's
+/// Under `--model`, the entities page places the model and `Right` and `Left` cycle the placed entity's
 /// clips and `Down` pauses it, each named in the banner; the HUD's mode block carries the
 /// entity's clip row and the viewer's own row, which the keys leave on its first clip.
 #[test]
@@ -1118,7 +1118,12 @@ fn the_clip_keys_name_the_clip_and_the_pause() {
         run.handle_input(&input);
         run.banner().expect("a press shows the banner")
     };
-    assert!(press(&mut run, KeyCode::Backquote).contains("entities 1/64"));
+    run.act(crate::toggles::Act::Picker);
+    run.menu_act(crate::hud::menu::Activated::Place {
+        entry: 0,
+        close: true,
+    });
+    assert!(run.banner().unwrap().contains("placed walker #1 (idle)"));
     assert!(press(&mut run, KeyCode::ArrowRight).contains("walker #1 clip walk"));
     assert!(press(&mut run, KeyCode::ArrowDown).contains("walker #1 paused"));
     let mut rows = String::new();

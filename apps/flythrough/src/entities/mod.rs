@@ -4,6 +4,7 @@
 //! knows none of them: these are the testbed's.
 
 pub mod library;
+pub mod picker;
 pub mod placed;
 pub mod pool;
 pub mod walker;

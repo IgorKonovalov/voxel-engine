@@ -4,8 +4,10 @@ use crate::app::ms_since;
 use crate::castle;
 use crate::cli::walk_allowed;
 use crate::edits::scroll_dig_radius;
+use crate::entities::Pick;
+use crate::entities::picker::full_words;
 use crate::fly::Walk;
-use crate::hud::menu::{Activated, AudioView, RunView};
+use crate::hud::menu::{Activated, AudioView, PageId, Row, RunView};
 use crate::hud::{self};
 use crate::lights;
 use crate::logic::DigInput;
@@ -146,6 +148,11 @@ impl Run {
             }
             Activated::Action(act) => self.act(act),
             Activated::Refused(why) => self.say(why),
+            Activated::Place { entry, close } => self.place_from_page(entry, close),
+            Activated::Clip => {
+                let words = self.modes.walkers.next_clip();
+                self.say(words);
+            }
         }
     }
 
@@ -211,10 +218,14 @@ impl Run {
             Act::Walk => self.toggle_walk(),
             Act::ResumePath => self.resume_path(),
             Act::CastleShot => self.next_castle_shot(),
+            Act::Picker => {
+                self.menu.open_entities(self.modes.walkers.library.selected);
+                self.sync_preview();
+            }
             Act::DropLight
             | Act::Remove
             | Act::FireLight
-            | Act::PlaceWalker
+            | Act::RemoveAimed
             | Act::WalkersWalk
             | Act::EyeLights
             | Act::ClipBack
@@ -342,7 +353,98 @@ impl Run {
             .flatten()
             .map_or(reach, |h| h.t);
         let w = &mut self.modes.walkers;
-        w.aimed = w.set.raycast(origin, dir, max_t).map(|h| h.entity);
+        let preview = w.preview.as_ref().map(|p| p.id);
+        w.aimed = w
+            .set
+            .raycast(origin, dir, max_t)
+            .map(|h| h.entity)
+            .filter(|&id| Some(id) != preview);
+    }
+
+    /// Where a placement stands: the crosshair's world surface within the dig's reach, else
+    /// [`lights::MISS_DROP`] voxels along the view; and the eye it faces. The one place the
+    /// entities page's preview, its `Enter` and `` ` `` all stand an entity.
+    pub(crate) fn aim_feet(&self) -> ([f32; 3], [f32; 3]) {
+        let c = &self.fly.camera;
+        let (eye, fwd) = (c.position.to_array(), c.basis().0.to_array());
+        let hit = self.surface_along_view(REACH as f32 / FIXED_ONE as f32);
+        let at = hit.map_or(lights::MISS_DROP, |(t, _)| t);
+        (std::array::from_fn(|k| eye[k] + fwd[k] * at), eye)
+    }
+
+    /// The entities page's preview kept in step with the menu: on the page (no filter typed)
+    /// the selected entry stands at [`Run::aim_feet`], the library's selection following the
+    /// page's; anywhere else there is none. A refusal (an entry in error, a full set) says its
+    /// words once.
+    pub(crate) fn sync_preview(&mut self) {
+        let on = self.menu.page() == Some(PageId::Entities) && self.menu.filter().is_empty();
+        if !on {
+            self.modes.walkers.clear_preview();
+            return;
+        }
+        let v = self.run_view();
+        if let Some(Row::Item(i)) = self.menu.selected_row(&self.modes, &v)
+            && i < self.modes.walkers.library.entries.len()
+        {
+            self.modes.walkers.library.selected = i;
+        }
+        self.stand_preview();
+    }
+
+    /// The library's selected entry's preview stood at [`Run::aim_feet`], or none when the
+    /// entry is in error; a full set says so once.
+    fn stand_preview(&mut self) {
+        let entry = match self.modes.walkers.pick() {
+            Pick::Builtin => None,
+            Pick::Rig(i) => Some(i),
+            Pick::Refused(_) => return self.modes.walkers.clear_preview(),
+        };
+        let (feet, eye) = self.aim_feet();
+        let table = self.world.materials();
+        if let Err(words) = self.modes.walkers.show_preview(table, entry, feet, eye)
+            && self.notice.as_ref().is_none_or(|(l, _)| *l != words)
+        {
+            self.say(words);
+        }
+    }
+
+    /// The entities page's `Enter` (or `` ` `` on it, with `close`): library entry `entry`
+    /// placed where the preview stands, under the preview's id, and the notice names it
+    /// (`placed spider #3 (rear)`); the page stays open unless `close`.
+    fn place_from_page(&mut self, entry: usize, close: bool) {
+        let w = &mut self.modes.walkers;
+        if entry < w.library.entries.len() {
+            w.library.selected = entry;
+        }
+        self.stand_preview();
+        let w = &mut self.modes.walkers;
+        let words = match w.pick() {
+            Pick::Refused(why) => why,
+            _ if w.placed.len() >= vxe_render::MAX_ENTITIES => full_words(),
+            _ => match w.place_preview() {
+                Some(_) => {
+                    w.newest.push(true);
+                    let p = w.placed.last().expect("just placed");
+                    let e = p.entry.and_then(|i| w.library.entries.get(i));
+                    let name = e.map_or(crate::entities::library::BUILTIN_NAME, |e| &e.name);
+                    let clip = e
+                        .and_then(|e| e.viewer())
+                        .and_then(|v| p.play.clip_name(v.loaded.as_ref()?));
+                    let n = w.placed.len();
+                    match clip {
+                        Some(c) => format!("placed {name} #{n} ({c})"),
+                        None => format!("placed {name} #{n}"),
+                    }
+                }
+                None => "nothing placed".to_owned(),
+            },
+        };
+        self.modes.show_lights(words.clone(), ms_since(self.start));
+        self.say(words);
+        if close {
+            self.menu.close();
+            self.modes.walkers.clear_preview();
+        }
     }
 
     /// The lights' and walkers' actions: a drop at the looked-at surface, a walker placed
@@ -366,19 +468,7 @@ impl Run {
                     Err(line) => line.to_owned(),
                 }
             }
-            Act::PlaceWalker => {
-                let hit = self.surface_along_view(REACH as f32 / FIXED_ONE as f32);
-                let at = hit.map_or(lights::MISS_DROP, |(t, _)| t);
-                let feet = std::array::from_fn(|k| eye[k] + fwd[k] * at);
-                let table = self.world.materials();
-                match self.modes.walkers.place_selected(table, feet, eye) {
-                    Ok(_) => {
-                        self.modes.walkers.newest.push(true);
-                        self.modes.walkers.count_words()
-                    }
-                    Err(why) => why,
-                }
-            }
+            Act::RemoveAimed => self.modes.walkers.remove_aimed(),
             Act::ClipBack => self.modes.walkers.cycle_clip(-1),
             Act::ClipOn => self.modes.walkers.cycle_clip(1),
             Act::ClipPause => self.modes.walkers.toggle_pause(),

@@ -253,6 +253,7 @@ impl Run {
             for a in routed.acts {
                 self.menu_act(a);
             }
+            self.sync_preview();
             routed.pass
         };
         let i = pass.input();

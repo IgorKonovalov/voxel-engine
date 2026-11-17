@@ -86,7 +86,8 @@ row showing the new value.
 | lights | `1` | Drop a point light of the picked colour (intensity 600) 2 voxels off the looked-at surface (20 voxels ahead on a miss); the banner names `lights <n>/16`. Sixteen slots, the headlamp's among them while it is on; a drop into a full list prints a line and adds nothing |
 | lights | `4` | Remove the newest light or walker, whichever was added last |
 | lights | `6` | Fire a point light of the picked colour (intensity 600) along the view ray at 20 m/s; it stops 2 voxels short of the first surface (or after 40 m) and stays there as a dropped light |
-| entities | `` ` `` | Place the library's selected entry (a voxel-model entity) on the looked-at surface, on its own clip; the banner names the entity count. An entry in error says why and places nothing |
+| entities | `` ` `` | The entities page (also the root's `entities` row): one row per library entry (parts and size, an entry in error grey with its error), the selected entry's clip (`Enter` cycles it) and the group's entries. The selected entry stands at the crosshair as a live preview; `Enter` (or the left click, or the pad's `South`) places it there and the page stays open, `` ` `` on the page places and closes, `Esc` closes. With 64 placed the notice reads `entities 64/64 full` |
+| entities | `Delete` | Remove the placed entity under the crosshair, the page open or not |
 | entities | `Left`, `Right` | The aimed (else the newest) placed entity's clip before and after (menu closed) |
 | entities | `Down` | Pause or play that entity's clip (menu closed) |
 | readings | `Enter` | Sample the next frames and print frame-time readings (menu closed) |
