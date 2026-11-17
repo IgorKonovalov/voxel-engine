@@ -1,6 +1,6 @@
 # 0088: The outdoor scene in the tester: a camera path over the hills, through the trees and down the tunnel, a fourth row in the menu and the report
 
-> **Status:** draft (awaits the owner's go; the owner's picks on the questions below)
+> **Status:** draft (awaits the owner's go; questions 1 to 5 answered 2026-11-17, the recommended option each: the sun 10,180, sparse trees, the full 60 to 75 s route, the 2 s warm-up, a computed path)
 > **Created:** 2026-11-17
 > **Milestone:** M7 in [`docs/roadmap.md`](../roadmap.md) (the benchmark lane, whose first form
 > was Plan 0068)
@@ -310,6 +310,8 @@ This plan moves no budget line; it adds readings.
   test on both CI arms. No GPU feature, no threading, no new memory.
 
 ### Owner questions (each with a recommendation)
+
+Answered 2026-11-17 (owner): the recommended option on all five.
 
 1. **The sun.** The clock is paused unless `End` runs it, so both choices are repeatable; the
    question is which fixed sun the benchmark reads. (a) **Recommended:** `--sun 10,180`, the
