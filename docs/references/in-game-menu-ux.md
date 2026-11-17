@@ -102,9 +102,10 @@ has no written source behind it, the section says so rather than inventing one.
   user tries to move on; stacking controls vertically lets "left and right move the Slider
   handle, as expected", and B disengages. What we take: this is exactly the owner's request
   (`Enter` enters an edit mode, the arrows change the value, `Esc` or `Enter` leaves it), and
-  it is the console platform's own model, not an idiosyncrasy. Our rows are a vertical list,
-  so `Left` and `Right` are free to step a value in place as well, which is the second half of
-  the same page's advice.
+  it is the console platform's own model, not an idiosyncrasy. The same page's second half,
+  `Left` and `Right` stepping a value in place on a vertical list, was offered and struck by
+  the owner (Plan 0080 owner question 9, 2026-11-17): outside the edit mode the arrows only
+  move the selection.
 - **Dear ImGui, `imgui.cpp` "CONTROLS GUIDE", `imgui.h` `ImGuiKey` comments,
   `imgui_widgets.cpp` `SliderBehaviorT`.** <https://github.com/ocornut/imgui/blob/master/imgui.cpp>,
   <https://github.com/ocornut/imgui/blob/master/imgui.h>,
@@ -116,7 +117,9 @@ has no written source behind it, the section says so rather than inventing one.
   edit mode); a float steps 1 % of its range a press, an integer within a range of 100 steps
   one unit, fast is x10 and slow x0.1. Repeat: `KeyRepeatDelay = 0.275` s, `KeyRepeatRate =
   0.050` s, with navigation tweaks repeating faster (delay x0.72, rate x0.30). What we take:
-  the edit mode's keys match ImGui's; our step is the value's own unit (0.1 m for the dig
+  the edit mode's keys match ImGui's (`Enter` activates, `Up`/`Down` tweak, `Esc`
+  deactivates; the in-place arrow tweak is not taken, owner question 9); our step is the
+  value's own unit (0.1 m for the dig
   radius, 3 dB for a trim, 10 ms for the pre-delay, one iteration), since every number here
   has a natural unit; the repeat delay and rate are ImGui's 275 and 50 ms. Slow and fast
   modifiers are not taken: no number here has a range that needs them.
@@ -143,8 +146,8 @@ has no written source behind it, the section says so rather than inventing one.
 - **Nielsen Norman Group, Alita Kendrick, "Toggle-Switch Guidelines".**
   <https://www.nngroup.com/articles/toggle-switch-guidelines/> "Toggle switches should take
   immediate effect" with no save step; the label says what the control does when on; state is
-  shown by more than colour. What we take: a toggle flips on `Enter` (and on `Left` or
-  `Right`) and its row reads the new state at once, as the rows already do.
+  shown by more than colour. What we take: a toggle flips on `Enter` and its row reads the
+  new state at once, as the rows already do.
 - **Apple, Human Interface Guidelines, "Game controls".**
   <https://developer.apple.com/design/human-interface-guidelines/game-controls> Outside
   gameplay: "A: Activates a control", "Directional pad: Moves selection"; "Map controller
@@ -154,7 +157,8 @@ has no written source behind it, the section says so rather than inventing one.
   <https://learn.microsoft.com/en-us/gaming/accessibility/xbox-accessibility-guidelines/114>
   Labels sit beside their control; Forza's accessibility menu cycles a row's options with the
   current one shown on the row. What we take: a cycle shows its current state on its row and
-  `<` `>` while selected, so the arrows' meaning is on screen.
+  `Enter` is the next state, one press per state, with no edit mode (the owner's call); the
+  `<` `>` marker is a number's, while it is being edited.
 - **Dear ImGui, `imgui_internal.h`, `ImGuiNavMoveFlags_LoopX` and `WrapX`.**
   <https://github.com/ocornut/imgui/blob/master/imgui_internal.h> Wrapping the selection is an
   opt-in flag, off by default. **Not found:** a guideline on whether a cycle wraps. We wrap a
@@ -235,7 +239,8 @@ has no written source behind it, the section says so rather than inventing one.
   pad tables are one table in `route.rs`; no back row in the menu.
 - **Dear ImGui, `imgui.h`** (above): FaceDown is "A (Xbox) | B (Switch) | Cross (PS)" and
   `io.ConfigNavSwapGamepadButtons` swaps activate and cancel for a Nintendo layout. What we
-  take: `vxe_app::PadButton::South` and `East` are positional, so a Switch pad activates on
+  take: the D-pad's up and down tweak a number only inside the edit mode, left and right keep
+  their page meaning; `vxe_app::PadButton::South` and `East` are positional, so a Switch pad activates on
   its B as the layout expects; a swap setting is not taken (a backlog item if a Switch pad is
   ever plugged in). **Not found:** an official Nintendo statement of the layout; the fact is
   from ImGui's table.

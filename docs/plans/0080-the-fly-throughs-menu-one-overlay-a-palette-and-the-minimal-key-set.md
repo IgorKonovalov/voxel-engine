@@ -375,29 +375,32 @@ for one value, as are the `echo trim`, `tail trim` and `pre-delay` down/up pairs
   it, which is why the panel grows with the window. The panel is centred horizontally; its top
   row is the top of the centred 80 x 45 box and it grows down with the page (a palette anchors
   at the top, like a command palette, so the rows do not jump as the matches change)
-  [Placement]. The stats HUD and the loading screen keep `HUD_SCALE`; the overlay's scale is
+  [Placement] (owner question 11, answered 2026-11-17: "Fixed top, grows down"). The stats HUD and the loading screen keep `HUD_SCALE`; the overlay's scale is
   set when the menu opens and restored when it closes.
 - **The backdrop** is a dim box behind the panel only: black at alpha 0.7 under the rows the
   page uses plus one row and one column of padding, drawn by a **backdrop bit** in the cell
   word (bit 16; bits 16..32 are unused) that `hud.wgsl` reads where no glyph bit is set. Not
   a whole-screen dim: the menu exists to watch the scene change as a row flips, and white on
   70 % black over any scene clears XAG 102's 4.5:1 measured against the brightest patch
-  [Backdrop].
+  [Backdrop] (owner question 10, answered 2026-11-17: "Panel only").
 - **Numbers are edited after `Enter`** (the owner's call, and the console "engagement" model):
   `Enter` on a number row enters an edit mode where `Up` and `Down` (the pad's D-pad) step the
   value, holding repeats after `REPEAT_DELAY_MS` with one step every `REPEAT_RATE_MS` (275
   and 50 ms, Dear ImGui's defaults), `Enter` or `Esc` leave the mode keeping the value, the
   value clamps at its range (no wrap), and the row reads `< 0.5 m >` with its range in grey
-  after it; the footer reads `Up Down change  Enter Esc done`. **Also**, the convention of
-  every controller menu and of ImGui's navigation: `Left` and `Right` on a stepped row step it
-  in place without entering the mode (the pad's D-pad left and right the same) [Numbers]. The
-  owner may strike the `Left`/`Right` stepping (owner question 9).
+  after it; the footer reads `Up Down change  Enter Esc done`. Outside the mode the arrows
+  only move the selection (`Left` back a page, `Right` into a group, as today): the owner
+  struck the `Left`/`Right` stepping in place that controller menus and ImGui offer (owner
+  question 9, answered 2026-11-17: "No, Enter-edit only") [Numbers].
 - **Cycles** (a mode with three or more states: look, far normal, view, upscaler, exposure,
   store read, weights, young filter, entity light, history, shadow walk, resolution, queue
-  order, bake budget, missing light, reach, colour, cutaway) keep `Enter` as the next state and
-  gain `Left` as the state before; a selected cycle or number row shows `<` and `>` around its
-  value so the arrows' meaning is on screen [Enums]. Two-state toggles flip on `Enter`, `Left`
-  and `Right` alike.
+  order, bake budget, missing light, reach, colour, cutaway) keep `Enter` as the next state,
+  with no edit mode and no arrow stepping: one press per state, as the keys always worked and
+  as Phase 2's tests and Plan 0073 build on it; a cycle wraps, so the state before is at most
+  `n - 1` presses away [Enums]. The edit mode is the numbers' alone: the owner's words were
+  "up and down numbers", and `Enter`, `Up`, `Enter` for a three-state cycle would be slower
+  than today's one `Enter`. Two-state toggles flip on `Enter`. A number row alone shows `<`
+  and `>` around its value, while it is being edited.
 - **An unavailable entry is grey with its reason, not hidden** [Unavailable]: `Entry::
   available(&Modes, &RunView) -> Result<(), &'static str>` (`needs --audio`, `needs --pan`,
   `needs --path`, `needs --castle`, `needs --model`, `needs --level`), the row grey
@@ -405,7 +408,8 @@ for one value, as are the `echo trim`, `tail trim` and `pre-delay` down/up pairs
   changing nothing but showing the reason in the notice row (grey plus words: never colour
   alone, XAG 103); a group whose entries are all unavailable is grey on the root with the
   shared reason; the palette lists them grey; `--keys` appends `  unavailable: <reason>` to the
-  row. The owner learns the flag instead of wondering.
+  row. The owner learns the flag instead of wondering (owner question 12, answered
+  2026-11-17: "Grey, with the reason").
 - **Every activation answers in the window in the same frame** [Feedback]: a toggle, cycle or
   number by its row; an action by the **notice row**, the row above the footer, yellow for
   `hud::BANNER_MS`, holding the last line the action printed. One `Run::say(line)` prints the
@@ -418,7 +422,7 @@ for one value, as are the `echo trim`, `tail trim` and `pre-delay` down/up pairs
   whether or not `F2`'s stats show; it reads `hud.frames`, which the frame loop records every
   frame. With the menu closed nothing changes: `F2` is the stats [Readout].
 - **The pad** in edit mode: D-pad up and down step, `South` enters and leaves the mode,
-  `East` leaves it; D-pad left and right step in place as the arrows do [Pad].
+  `East` leaves it; D-pad left and right keep their page meaning, as the arrows do [Pad].
 - **`Esc`** leaves the edit mode first, then clears a filter, then a page, then the menu, and
   quits only with it closed, as before [Esc].
 - **In `vxe-render`** (general facilities, Plan 0076 Phase 4's bit as foreseen under
@@ -458,8 +462,7 @@ for one value, as are the `echo trim`, `tail trim` and `pre-delay` down/up pairs
 ### Phase 6: stepped values, unavailable entries with their reason, every action answers
 - **Owner skill:** dev
 - **What:** the entry kinds (toggle, cycle, number, action, page) in the tables, the edit mode
-  with its repeat, `Left`/`Right` stepping in place, `available` with its reasons and the grey
-  rows, the notice row and `Run::say`, the paired entries merged (`queue angle`; `echo trim`,
+  with its repeat, `available` with its reasons and the grey rows, the notice row and `Run::say`, the paired entries merged (`queue angle`; `echo trim`,
   `tail trim`, `pre-delay` as one number each), `--keys` and `docs/flythrough.md` updated.
 - **Files touched:** `apps/flythrough/src/toggles.rs`, `apps/flythrough/src/hud/menu/{entries,page,route,write}.rs`,
   `apps/flythrough/src/run/{keys,edit,frame,hud_feed,menu_tests}.rs`, `apps/flythrough/src/audio.rs`
@@ -470,14 +473,15 @@ for one value, as are the `echo trim`, `tail trim` and `pre-delay` down/up pairs
     the row reads `> dig radius  < 0.5 m >  0.1..3.0 m`, the footer `Up Down change  Enter Esc
     done`; `Up` twice gives `0.7 m` and `Modes::dig_radius` of 7 voxels, `Down` gives `0.6 m`,
     `Esc` leaves the mode with `0.6 m` kept and the next `Down` moves the selection; at `3.0 m`
-    `Up` holds; outside the mode `Right` on the row steps once as `Up` does and `Left` once
-    back; the wheel while open still scrolls the page.
+    `Up` holds; outside the mode `Right` on the row changes nothing and `Left` goes back to the
+    root, as today; the wheel while open still scrolls the page.
   - `a_held_arrow_repeats`: in the edit mode, `Up` held from 0 to 600 ms in 60 Hz frames steps
     7 times (one at the press, then every 50 ms from 275 ms); released and pressed again it
     steps at once.
-  - `a_cycle_steps_both_ways`: on `missing light`, `Right` gives the next of
-    `MissingLight::ALL`, `Left` the one before, `Enter` the next; the selected row shows
-    `< missing light chain >`; on `lamp`, `Left`, `Right` and `Enter` each flip it.
+  - `a_cycle_keeps_enter_as_next`: on `missing light`, `Enter` gives the next of
+    `MissingLight::ALL` and no edit mode opens (the footer is the page's); `Up`, `Down`, `Left`
+    and `Right` leave the mode unchanged and act on the selection or the page as today; the
+    row shows no `<` `>`; on `lamp`, `Enter` flips it.
   - `an_unavailable_entry_says_why`: `resume the tour`, `next castle shot`, `pan`, the
     thirteen audio entries, `clip before`, `clip after` and `clip pause` are unavailable with
     `needs --path`, `needs --castle`, `needs --pan`, `needs --audio` and `needs --model`; their
@@ -500,7 +504,8 @@ for one value, as are the `echo trim`, `tail trim` and `pre-delay` down/up pairs
     logic's lines go through `Run::say`); `coarse print` on a run with `coarse` built sets it
     to the coarse line.
   - `the_pad_edits_a_number`: `Start`, `South` on `moving`, `South` on the dig radius enters
-    the mode; `DpadUp` steps to `0.6 m`; `East` leaves it; `DpadRight` on the row steps once.
+    the mode; `DpadUp` steps to `0.6 m`; `East` leaves it; `DpadRight` on the row outside the
+    mode changes nothing.
   - `every_toggle_and_action_is_an_entry` holds with the pairs merged (four entries fewer) and
     `the_route_is_one_function` holds with `Left` and `Right` the menu's while open, as today.
   - `docs/flythrough.md`'s menu section says how a number is edited, what `<` `>` mean, what a
@@ -511,15 +516,13 @@ for one value, as are the `echo trim`, `tail trim` and `pre-delay` down/up pairs
 - **What:** `live/session80.sh` rebuilt at Phase 6's tip, on Linux: run 1 again at the window's
   default size and the laptop's, judging the panel's size and place, the backdrop over the dark
   cave and over a lit wall (`F7` lamp, near rock), the dig radius edited (`Enter`, `Up`, `Up`,
-  `Esc`; then `Right` on the row), `missing light` with `Left` and `Right`, a grey entry and
-  its reason (`pan`, the `audio` group), `stamp` looking at a wall within 10 m and then at the
+  `Esc`; `Up` held), `missing light` cycled by `Enter`, a grey entry and its reason (`pan`, the `audio` group), `stamp` looking at a wall within 10 m and then at the
   dark (the notice row), `frame readings` (the notice at once and 30 frames later), the fps
   readout top-right with `F2` on and off, and the Keys page's scale; then `--pan 10`,
   `--audio`, `--castle`, `--level` and `--model` runs to see the formerly grey entries act;
   the script's runs 2 (the showcase), 3 (the pad, including the edit mode) and 4 (`--tester`).
 - **Done when:** the owner's verdict on each point is in the readings log, with the key
-  table's final strikes and moves, the answers to owner questions 9 to 12 and any wording or
-  grouping change named for Phase 8.
+  table's final strikes and moves and any wording or grouping change named for Phase 8.
 
 ### Phase 8: the owner's picks, and the tip
 - **Owner skill:** dev
@@ -531,21 +534,16 @@ for one value, as are the `echo trim`, `tail trim` and `pre-delay` down/up pairs
   the Phase 1 to 6 tests hold the changed rows; `cargo nextest run --profile gate`, clippy,
   fmt, deny and the doc gates exit 0 at the tip.
 
-### Owner questions added 2026-11-17 (each with a recommendation; Phase 7 answers them)
+### Owner questions added 2026-11-17 (answered the same day; the Decisions above carry them)
 
-9. **`Left`/`Right` step a number or cycle in place**, beside the `Enter` edit mode.
-   Recommended: yes; it is the convention of every controller menu and of ImGui's navigation,
-   costs nothing when unused, and the edit mode stays the owner's way. Alternative: the arrows
-   only move the selection outside the mode.
-10. **The backdrop's extent.** Recommended: the panel only, alpha 0.7, so the scene stays
-    visible beside it and a flipped row is seen to act. Alternative: a whole-screen dim (the
-    console "smoke" layer; the scene's change is harder to judge).
-11. **The panel's vertical anchor.** Recommended: the top of the centred 80 x 45 box, growing
-    down with the page, so the rows stay put as a palette filters. Alternative: each page
-    centred on its own height (the panel jumps between pages).
-12. **Unavailable entries.** Recommended: grey with the reason, everywhere they would be
-    listed, so the owner learns the flag. Alternative: hidden in a run that lacks the flag
-    (shorter pages; the Keys page and `--keys` then disagree with the binary's full tree).
+9. **`Left`/`Right` step a number or cycle in place**, beside the `Enter` edit mode?
+   Recommended yes (the controller convention). **Owner: "No, Enter-edit only."** The arrows
+   only move the selection outside the mode; cycles keep `Enter` as next, with no edit mode.
+10. **The backdrop's extent.** Recommended the panel only, alpha 0.7. **Owner: "Panel only."**
+11. **The panel's vertical anchor.** Recommended the top of the centred box, growing down.
+    **Owner: "Fixed top, grows down."**
+12. **Unavailable entries.** Recommended grey with the reason. **Owner: "Grey, with the
+    reason."**
 
 ## Interface for Plans 0073 and 0077
 
