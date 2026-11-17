@@ -1,4 +1,4 @@
-//! The in-process source switch (`Home`, `--switch-at`): the run is torn down (its server and
+//! The in-process source switch (the menu's `source` and `trees` entries, `--switch-at`): the run is torn down (its server and
 //! logic, its stream and its world, and the GPU mirror) and the next `--source` value's run is
 //! built as `--source NAME` with the run's other flags would start it, while the window, the
 //! `Frame` (its pipelines, targets and LUTs) and the sky's clock are kept. The frame's
@@ -219,7 +219,9 @@ impl Flythrough {
             self.run = Some(old);
             return;
         };
+        let (menu, notice) = (std::mem::take(&mut old.menu), old.notice.take());
         let (Some(gfx), clock) = (old.gfx.take(), old.modes.clock) else {
+            (old.menu, old.notice) = (menu, notice);
             self.run = Some(old);
             return;
         };
@@ -245,19 +247,21 @@ impl Flythrough {
         };
         run.modes.clock = clock;
         run.modes.banner_at = now;
+        // The menu stays as it was, so its world page can switch again.
+        (run.menu, run.notice) = (menu, notice);
         let ops = run.net.as_ref().map_or(0, |n| n.server.ops().len());
-        if retree {
-            println!(
+        run.say(if retree {
+            format!(
                 "switch: trees {} after {frame} frames, op log {ops}",
                 self.args.outdoor.trees().name()
-            );
+            )
         } else {
-            println!(
+            format!(
                 "switch: source {} to {} after {frame} frames, op log {ops}",
                 from.source_name().unwrap_or("?"),
                 self.args.mode.source_name().unwrap_or("?"),
-            );
-        }
+            )
+        });
         run.init_switched(gpu, gfx);
     }
 }

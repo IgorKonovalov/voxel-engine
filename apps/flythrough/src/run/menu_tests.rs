@@ -164,11 +164,16 @@ fn the_overlay_is_chosen_by_tester_menu_and_stats() {
 }
 
 /// The keys the menu-only entries had before the minimal key set (ADR-0061's table, the Menu
-/// rows): text here, bound to nothing now.
+/// rows; the profile's `PageDown`, the source's `Home`, the hour's `PageUp`, the day cycle's
+/// `End` and the trees' `CapsLock`): text here, bound to nothing now.
 // keys:typed-begin
-const FORMER_KEYS: [KeyCode; 41] = [
+const FORMER_KEYS: [KeyCode; 45] = [
     KeyCode::F3,
-    KeyCode::F4,
+    KeyCode::PageDown,
+    KeyCode::Home,
+    KeyCode::PageUp,
+    KeyCode::End,
+    KeyCode::CapsLock,
     KeyCode::F5,
     KeyCode::F6,
     KeyCode::F8,
@@ -212,11 +217,9 @@ const FORMER_KEYS: [KeyCode; 41] = [
 // keys:typed-end
 
 /// Everything a menu-only entry's former key could change: the rows and lighting, the menu,
-/// the readings, walking, the castle shot, the walkers' switches, the lights' count and the
-/// world (an edit).
-fn state(
-    run: &mut Run,
-) -> (
+/// the readings, walking, the castle shot, the walkers' switches, the lights' count, the world
+/// (an edit), the profile and a source or trees switch asked for.
+type State = (
     Vec<String>,
     bool,
     bool,
@@ -224,7 +227,10 @@ fn state(
     Option<&'static str>,
     [bool; 2],
     u32,
-) {
+    (String, bool, bool),
+);
+
+fn state(run: &mut Run) -> State {
     let w = [run.modes.walkers.walking, run.modes.walkers.eye_lights_off];
     (
         rows(run),
@@ -234,6 +240,7 @@ fn state(
         run.castle_shot.map(|c| c.name()),
         w,
         tick_ops(run) as u32,
+        (run.modes.profile.clone(), run.switch, run.retree),
     )
 }
 
@@ -274,7 +281,7 @@ fn a_menu_only_entry_has_no_key() {
 }
 
 /// The keys that stay: closed, `F7` flips the lamp, `F9` the view, `F10` the upscaler, `X`
-/// the cutaway, `1` drops a light, `6` fires one, `4` removes the newest, `` ` `` tries a
+/// the cutaway, `F4` cycles the profile, `1` drops a light, `6` fires one, `4` removes the newest, `` ` `` tries a
 /// walker, `T` resumes a tour in free flight and `Enter` starts the readings. Open, the
 /// function keys still act and the open page's row shows the new value; a letter or digit
 /// shortcut is the filter's and acts on nothing.
@@ -293,6 +300,7 @@ fn a_shortcut_still_acts_and_shows() {
         assert_ne!(after, before, "{k:?} closed");
         assert!(after.contains(closed_word), "{k:?}: {after}");
     }
+    assert_eq!(run.modes.profile, "profile: floor");
     let count = |run: &Run| run.modes.lights.count_words(true);
     let start = count(&run);
     frame_keys(&mut run, &pressed(KeyCode::Digit1));
@@ -363,6 +371,21 @@ fn a_shortcut_still_acts_and_shows() {
     assert_eq!(run.menu.filter(), "lax1");
     frame_keys(&mut run, &pressed(KeyCode::Enter));
     assert!(run.samples.is_none(), "Enter acts on the menu while open");
+    // `F4` is a function key: it cycles the profile open, and closed.
+    frame_keys(&mut run, &pressed(KeyCode::F4));
+    assert!(
+        run.modes.profile.starts_with("profile: portable"),
+        "F4 cycles the profile while open: {}",
+        run.modes.profile
+    );
+    frame_keys(&mut run, &pressed(KeyCode::Tab));
+    assert!(!run.menu.is_open());
+    frame_keys(&mut run, &pressed(KeyCode::F4));
+    assert!(
+        run.modes.profile.starts_with("profile: performance"),
+        "F4 cycles the profile closed: {}",
+        run.modes.profile
+    );
 }
 
 /// On a pad: `Start` opens the root; `DpadDown` and `South` open the second group; `East`

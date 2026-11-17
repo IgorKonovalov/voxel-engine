@@ -110,10 +110,10 @@ pub(crate) struct Run {
     /// The last line an action said (`Run::say`) and when (the run's clock, ms): the menu's
     /// notice row, for `hud::BANNER_MS`.
     pub(crate) notice: Option<(String, f64)>,
-    /// `Home` or `--switch-at` asked for the next world source: the app rebuilds the run
+    /// The menu's `source` entry or `--switch-at` asked for the next world source: the app rebuilds the run
     /// after this frame (`run::switch`).
     pub(crate) switch: bool,
-    /// `CapsLock` asked for the outdoor hills' next `--trees`: the app rebuilds the run after
+    /// The menu's `trees` entry asked for the outdoor hills' next `--trees`: the app rebuilds the run after
     /// this frame through the switch's path (`run::switch`).
     pub(crate) retree: bool,
     /// Start-up still stepping behind loading frames; `None` once the first world frame may

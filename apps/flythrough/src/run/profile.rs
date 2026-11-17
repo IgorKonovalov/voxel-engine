@@ -1,5 +1,5 @@
 //! The render profile in a running fly-through (ADR-0055): the settings it runs with now, and
-//! `PageDown` cycling the profiles, applying each one's `Live` and `Settle` fields.
+//! `F4` or the menu's `profile` entry cycling the profiles, applying each one's `Live` and `Settle` fields.
 
 use super::Run;
 use vxe_render::{Profile, RenderSettings, UpscalerChoice};
@@ -51,6 +51,6 @@ impl Run {
         }
         let pending = to.changed_fields(&self.live_settings());
         self.modes.profile = self.args.profile_row(&self.live_settings(), &pending);
-        println!("{}", self.modes.profile);
+        self.say(self.modes.profile.clone());
     }
 }

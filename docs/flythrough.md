@@ -43,7 +43,8 @@ window's top-right corner reads `fps <n>  frame <median> ms p99 <ms>` while it i
   pad's `South` or `East`) keep the value and leave the edit.
 - **A grey row** is an entry the run cannot act on, with the reason on its own row after its
   value, on its page and in the search (`needs --audio`, `needs --pan`, `needs --path`,
-  `needs --castle`, `needs --model`, `needs --level`); `Enter` on it changes nothing and says
+  `needs --castle`, `needs --model`, `needs --level`, `needs --sky on`,
+  `needs --source outdoor`); `Enter` on it changes nothing and says
   the reason. A group whose entries
   all need the same flag is grey on the root with the reason beside it. `--keys` prints
   `unavailable: <reason>` on those rows.
@@ -80,6 +81,7 @@ row showing the new value.
 | moving | `G` | Toggle fly and walk mode (bounded worlds only) |
 | camera and paths | `T` | On a `--path ... --path-mode tour` run: resume the path from its nearest point after a key took the camera |
 | upscaler | `F10` | Cycle the upscaler: off, own, fsr2 |
+| upscaler | `F4` | The next render profile: floor, portable, performance, high (`--profile`) |
 | lighting | `F7` | Toggle the headlamp |
 | lights | `1` | Drop a point light of the picked colour (intensity 600) 2 voxels off the looked-at surface (20 voxels ahead on a miss); the banner names `lights <n>/16`. Sixteen slots, the headlamp's among them while it is on; a drop into a full list prints a line and adds nothing |
 | lights | `4` | Remove the newest light or walker, whichever was added last |
@@ -95,7 +97,13 @@ Everything else is an entry of the menu (`Tab`) with no key: the look presets an
 the sharpening and pan, the lighting modes but the lamp, the lights' carry, colour and bounce
 flag, the light queue's order, weights, withdrawal, budget, full-first, missing light and
 reach, the walkers' walking and eye lights, the audio's sounds and mix, the bench, the stamp,
-the crumble, the coarse print, the castle shot and the shadow ray.
+the crumble, the coarse print, the castle shot and the shadow ray, and the world and sky page:
+the time of day (a number, an hour a step, held between 00:00 and 23:59) and the day cycle
+(`--day-length`) and the sky rays (1 to 4) under a sky, the next world source (`--source`'s
+order: cave, level, showcase, outdoor, and back, rebuilt in process with that source's start
+settings; the window, the frame, the clock and the menu stay; a source that refuses the run's
+other flags is passed over), and on the outdoor hills the next `--trees` (none, sparse, forest,
+and back), rebuilt in process as the source is.
 
 The HUD's entities row reads `entities <n>/64 parts <m>/512 over <k> pool <used>/<total> KB`
 (`walk` after it while they walk): the entity pool's bytes in use, rounded up to whole KB,
@@ -177,14 +185,14 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--spawn outside\|inside\|forest` | Where `--source outdoor` starts: 30 m before the cave mouth facing it, 2 m up [default], 3 m inside the tunnel facing out, or 64 m north of the mouth facing north, 2 m up, 10 degrees down |
 | `--trees none\|sparse\|forest` | Trees on the outdoor hills: about 9 % or 94 % of the 48-voxel cells of a 3072-voxel box between the mouth and the forest spawn; the banner's source reads `outdoor, trees NAME` [sparse] |
 | `--leaf-fill N` | The canopy voxels kept, of 256, 1 to 256 [64] |
-| `--sun EL,AZ` | Fix the sun at this elevation and azimuth in degrees (clockwise from north, 180 south), the moon opposite; `PageUp` and `End` leave it, and the banner reads `sun EL/AZ fixed` in place of the time |
+| `--sun EL,AZ` | Fix the sun at this elevation and azimuth in degrees (clockwise from north, 180 south), the moon opposite; the menu's `time` and `day cycle` leave it, and the banner reads `sun EL/AZ fixed` in place of the time |
 | `--time HH:MM` | The time of day the sky starts at, latitude 45 at an equinox [12:00]; the banner names it while a sky is set |
-| `--day-length S` | Seconds for a whole day while the cycle runs (`End`) [1200] |
+| `--day-length S` | Seconds for a whole day while the cycle runs (the menu's `day cycle`) [1200] |
 | `--sun-radius DEG` | The sun's angular radius, 0.05 to 10 degrees: a wider disc softens every sun shadow (the real sun's is 0.2665) [3] |
 | `--moon-radius DEG` | The moon's angular radius, 0.05 to 10 degrees: its disc in the sky and its shadows' softness [3] |
 | `--sky-rays N` | Cosine-weighted sky rays a lighting pixel casts while a sky is set, 1 to 4; the banner names the count [1] |
 | `--sky on\|off` | A sky over the world [on for `--source outdoor`, else off] |
-| `--switch-at F,..` | Switch the source at these frames, as `Home` does, and print the spawn's hash at the end |
+| `--switch-at F,..` | Switch the source at these frames, as the menu's `source` entry does, and print the spawn's hash at the end |
 | `--spawn-hash` | Print the voxel hash of the chunks within 2 of the spawn's chunk at the end |
 | `--level` | The bounded level (as `--source level`) |
 | `--thin-rig` | A bounded scene of thin features for the field look |
@@ -310,11 +318,10 @@ stage's step time).
 | `--profile floor\|portable\|performance\|high` | The render profile (`vxe_render::Profile`) the other flags edit, whatever their order: floor (1080p, FSR 2 at 1.5), portable (720p, FSR 2 at 1.5, fewer layers and lights, no lamp bounce, a smaller residency), performance (the window's size, FSR 2 at 2) or high (1080p, FSR 2 at 1; not for the slow adapter); its output hint sizes a headless run with no `--render`. The HUD's first mode row reads `profile: portable +1` with one field edited [floor] |
 | `--light-cap N` | Slots of the list of lights shaded, the headlamp's included, 1 to 16 [the profile's] |
 
-`PageDown` cycles the profiles in the window: the next one's translucent layers, lamp bounce,
-light cap, internal scale and bake budget apply from the next frame, and the profile row names
-the fields that wait for a restart with `--profile` (`restart for: lod.r_full,
-build.mirror_budget_bytes, build.residency`). `F4` takes the cycle once the menu frees it
-(ADR-0061).
+`F4` (or the menu's `profile` entry, on the upscaler page) cycles the profiles in the window:
+the next one's translucent layers, lamp bounce, light cap, internal scale and bake budget apply
+from the next frame, and the profile row names the fields that wait for a restart with
+`--profile` (`restart for: lod.r_full, build.mirror_budget_bytes, build.residency`).
 
 ### Diagnostics
 

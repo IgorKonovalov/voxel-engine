@@ -768,6 +768,21 @@ Readings and gate counts: [`logs/0080.md`](logs/0080.md).
   Decisions had the footer name it while selected).
 - Phase 2: `path::TesterInput` gained `Pad`; under `--tester` the triggers and the wheel are
   dropped by the filter (`R2` no longer frees a tour).
+- Merge of main 8afce1bc (Plans 0069 and 0032), merge items in their own commit: Plan 0069's
+  profile cycle is the `profile` action on the upscaler page with `F4` (was `PageDown`). Plan
+  0032's keys are menu-only entries of a new root group, `world and sky` (`Group::World`,
+  after `camera and paths`): `source` (was `Home`), `trees` (was `CapsLock`, grey `needs
+  --source outdoor`), `time` (was `PageUp`, `Shift` back; a number, an hour a step, held at
+  00:00 and 23:59, not wrapping as the key did), `day cycle` (was `End`); the two clock
+  entries grey `needs --sky on`. Added beside them: `sky rays` (a number, 1 to 4, `needs --sky
+  on`). `daylight::KEY_*` and `clock_keys` are gone; `Modes::sky` is `pub`. The menu and its
+  notice are carried across the in-process switch, which says its line through `Run::say`.
+  Left out of the menu: `--light-cap` (the profile cycle sets it), `--day-length`, `--sun`,
+  `--sun-radius`, `--moon-radius`, `--leaf-fill`, `--spawn`, `--spawn-hash`, `--switch-at`,
+  `--settings`, and the profile's restart-only fields. `menu.png` re-blessed (the root's new
+  row); `tests/toggles.rs`' `row_of` also finds the lighting row after a comma (under a sky it
+  starts `time ...`). `vxe-render`'s `RenderSettings::NOT_SETTINGS` lists `set_scale` and
+  `set_lines_over` (0069's setter scan). Readings log, "Merge of main".
 
 ### Close triggers
 

@@ -69,6 +69,10 @@ pub enum Needs {
     Bounded,
     /// A bounded world (`--level`): the coarse grid and the collapse it feeds.
     Coarse,
+    /// A sky over the world (`--sky on`, the outdoor source's default): the clock.
+    Sky,
+    /// The outdoor hills (`--source outdoor`): their trees.
+    Outdoor,
 }
 
 impl Needs {
@@ -82,6 +86,11 @@ impl Needs {
             Self::Model => (v.model, "needs --model"),
             Self::Bounded => (!v.streaming, "needs --level"),
             Self::Coarse => (v.coarse, "needs --level"),
+            Self::Sky => (m.sky, "needs --sky on"),
+            Self::Outdoor => (
+                m.source.is_some_and(|s| s.starts_with("outdoor")),
+                "needs --source outdoor",
+            ),
         };
         if ok { Ok(()) } else { Err(why) }
     }
@@ -191,9 +200,8 @@ pub const KEY_REMOVE: KeyCode = KeyCode::Digit4;
 pub const KEY_FIRE: KeyCode = KeyCode::Digit6;
 /// `` ` `` (Backquote): place a walker on the looked-at surface (`crate::walker`).
 pub const KEY_WALKER: KeyCode = KeyCode::Backquote;
-/// `PageDown`: the next render profile (`run::profile`). `F4` takes it once the menu frees
-/// that key (ADR-0061).
-pub const KEY_PROFILE: KeyCode = KeyCode::PageDown;
+/// `F4`: the next render profile (`run::profile`).
+pub const KEY_PROFILE: KeyCode = KeyCode::F4;
 /// `Left` and `Right`: the viewer's clip before and after (`--model`, `crate::viewer`).
 pub const KEY_CLIP_BACK: KeyCode = KeyCode::ArrowLeft;
 pub const KEY_CLIP_ON: KeyCode = KeyCode::ArrowRight;
@@ -257,6 +265,12 @@ pub enum Act {
     Crumble,
     /// Prints the coarse grid's line.
     CoarsePrint,
+    /// The next render profile (ADR-0055).
+    Profile,
+    /// The next world source, rebuilt in process (`run::switch`).
+    NextSource,
+    /// The outdoor hills' next tree density, rebuilt in process as the source switch is.
+    Trees,
 }
 
 impl Act {
@@ -360,6 +374,43 @@ pub static ACTIONS: &[Action] = &[
         [],
         Some(Needs::Castle)
     ),
+    Action {
+        binds: &[],
+        label: "source",
+        group: Group::World,
+        mode: Some(|m, _| {
+            let s = m
+                .source
+                .map_or("none", |s| s.split(',').next().unwrap_or(s));
+            format!("source {s}")
+        }),
+        act: Act::NextSource,
+        needs: None,
+        range: None,
+    },
+    Action {
+        binds: &[],
+        label: "trees",
+        group: Group::World,
+        mode: Some(|m, _| {
+            m.source
+                .and_then(|s| s.split_once(", "))
+                .map_or("trees none", |(_, t)| t)
+                .to_owned()
+        }),
+        act: Act::Trees,
+        needs: Some(Needs::Outdoor),
+        range: None,
+    },
+    Action {
+        binds: &[Bind::Key(KEY_PROFILE)],
+        label: "profile",
+        group: Group::Upscaler,
+        mode: Some(|m, _| m.profile.clone()),
+        act: Act::Profile,
+        needs: None,
+        range: None,
+    },
     action!(
         "drop a light",
         Lights,
@@ -829,6 +880,55 @@ pub static TOGGLES: &[Toggle] = &[
         row: HudRow::Controls,
         get: |m| format!("shadow ray {}", on(m.shadow_ray)),
         flip: |m, _| m.shadow_ray = !m.shadow_ray,
+    },
+    Toggle {
+        press: Press::Menu,
+        name: "time",
+        group: Group::World,
+        needs: Some(Needs::Sky),
+        number: Some(Number {
+            step: |m, d| m.clock.step_hours_held(d),
+            range: |_, _| "00:00..23:59, an hour a step".to_owned(),
+        }),
+        row: HudRow::Lighting,
+        get: |m| {
+            let mut out = String::new();
+            m.clock.write_time(&mut out);
+            out
+        },
+        flip: |m, _| m.clock.step_hours_held(1),
+    },
+    Toggle {
+        press: Press::Menu,
+        name: "day cycle",
+        group: Group::World,
+        needs: Some(Needs::Sky),
+        number: None,
+        row: HudRow::Lighting,
+        get: |m| format!("day cycle {}", on(m.clock.running)),
+        flip: |m, now| {
+            m.clock.running = !m.clock.running;
+            m.banner_at = now;
+        },
+    },
+    Toggle {
+        press: Press::Menu,
+        name: "sky rays",
+        group: Group::World,
+        needs: Some(Needs::Sky),
+        number: Some(Number {
+            step: |m, d| {
+                let max = vxe_render::MAX_SKY_RAYS as i64;
+                m.lighting.sky_rays =
+                    (i64::from(m.lighting.sky_rays) + i64::from(d)).clamp(1, max) as u32;
+            },
+            range: |_, _| format!("1..{}", vxe_render::MAX_SKY_RAYS),
+        }),
+        row: HudRow::Lighting,
+        get: |m| format!("sky rays {}", m.lighting.sky_rays),
+        flip: |m, _| {
+            m.lighting.sky_rays = m.lighting.sky_rays % vxe_render::MAX_SKY_RAYS + 1;
+        },
     },
     Toggle {
         press: Press::Scroll,

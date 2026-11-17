@@ -5,10 +5,11 @@ use flythrough::hud::{HudRow, HudStats, Modes};
 use flythrough::toggles::{TOGGLES, Toggle};
 use vxe_render::{Lighting, LightingResolution};
 
-/// The modes a run starts with, a pan running so `Period` has one to stop, and one dropped
-/// light so `5` has one to flag.
+/// The modes a run starts with, a pan running so `Period` has one to stop, a sky so the clock
+/// and the sky rays show, and one dropped light so `5` has one to flag.
 fn start() -> Modes {
     let mut m = Modes::new(Lighting::default(), LightingResolution::Half, 0.0).with_pan(10.0, 0.0);
+    m.sky = true;
     m.lights
         .drop_at(true, [0.0; 3], [1.0, 0.0, 0.0], None)
         .unwrap();
@@ -26,11 +27,13 @@ fn grid(modes: &Modes) -> Vec<String> {
 }
 
 /// The HUD row `row` names in `grid`: the one row of the mode block that starts with its
-/// prefix.
+/// prefix, or (the lighting row under a sky, which names the clock first) has it after a
+/// comma.
 fn row_of(grid: &[String], row: HudRow) -> &str {
+    let after_comma = format!(", {}", row.prefix());
     let rows: Vec<&String> = grid
         .iter()
-        .filter(|l| l.starts_with(row.prefix()))
+        .filter(|l| l.starts_with(row.prefix()) || l.contains(&after_comma))
         .collect();
     assert_eq!(rows.len(), 1, "{row:?}: {grid:#?}");
     rows[0]

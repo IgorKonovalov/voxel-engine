@@ -11,7 +11,7 @@
 //! `--autopilot`, `--room` or `--castle`. `--source outdoor` streams the outdoor hills
 //! (`flythrough::outdoor`) under a sky whose time of day the run's clock keeps
 //! (`flythrough::daylight`): `--spawn`, `--time`, `--day-length`, `--sky`; it does not take
-//! `--level`, `--castle`, `--vault`, `--room` or a rig. `Home` switches the source in process,
+//! `--level`, `--castle`, `--vault`, `--room` or a rig. The menu's `source` entry switches it in process,
 //! through `cave`, `level`, `showcase` and `outdoor`, each with its own start settings. The
 //! banner's line starts `source NAME` on every source.
 //! `--shot hall|chasm|crystals` (with the showcase) starts at that shot's pose and exposure
@@ -706,7 +706,7 @@ pub struct Args {
     /// The flags as given, which the in-process source switch parses again under the next
     /// `--source` (`run::switch`).
     pub(crate) argv: Vec<String>,
-    /// `--switch-at`: frames at which the source switches, as `Home` does.
+    /// `--switch-at`: frames at which the source switches, as the menu's `source` entry does.
     pub(crate) switch_at: Vec<u32>,
     /// `--spawn-hash`: print the hash of the chunks within 2 of the spawn's at the end.
     pub(crate) spawn_hash: bool,

@@ -107,7 +107,7 @@ pub struct Modes {
     /// The world source the line names first (`source showcase`), when it names one.
     pub source: Option<&'static str>,
     /// A sky is set: the line names the clock's time and cycle after the source.
-    pub(crate) sky: bool,
+    pub sky: bool,
     pub(crate) clock: crate::daylight::Clock,
     pub(crate) banner_at: f64,
     /// The auto exposure `Q` returns to, under its preset's name.
@@ -421,7 +421,6 @@ impl Modes {
     pub fn with_source(self, source: Option<&'static str>) -> Self {
         Self { source, ..self }
     }
-
     /// These modes with the probe volume's spacing `spacing` voxels (`probes N` in the line).
     pub fn with_probe_spacing(self, spacing: u32) -> Self {
         Self {

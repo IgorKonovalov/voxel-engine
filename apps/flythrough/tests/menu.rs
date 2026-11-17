@@ -172,7 +172,7 @@ fn entry_row(words: &str, keys: &str) -> String {
 
 /// With the lamp off and the filter at 2 iterations, `Tab` draws the root page: the title, a
 /// row per group with the first selected (yellow) and `audio` grey with `needs --audio` (the
-/// run has no audio), a blank row and the footer. `Down` four
+/// run has no audio), a blank row and the footer. `Down` five
 /// times and `Enter` open `lighting`: its twelve toggles' words and binds, `lamp off` and
 /// `filter 2` among them, `F7` in the lamp's key column and the menu-only rows with none.
 #[test]
@@ -186,16 +186,16 @@ fn the_root_and_a_group_draw_their_rows() {
     // With no audio in the run the audio group is grey with its reason in the key column.
     let audio = entry_row("audio", "needs --audio");
     let want = format!(
-        "menu\n> moving\n  camera and paths\n  look\n  upscaler\n  lighting\n  lights\n  \
+        "menu\n> moving\n  camera and paths\n  world and sky\n  look\n  upscaler\n  lighting\n  lights\n  \
          light queue\n  entities\n{audio}\n  readings\n  debug\n\nEnter opens  Esc closes  \
          Tab closes  type to search"
     );
     assert_eq!(text, want);
-    let mut want_colours = vec![HudColour::White; 14];
+    let mut want_colours = vec![HudColour::White; 15];
     want_colours[1] = HudColour::Yellow;
-    want_colours[9] = HudColour::Grey;
+    want_colours[10] = HudColour::Grey;
     assert_eq!(colours, want_colours);
-    for _ in 0..4 {
+    for _ in 0..5 {
         key(&mut menu, &m, KeyCode::ArrowDown);
     }
     assert!(key(&mut menu, &m, KeyCode::Enter).is_empty());
@@ -461,8 +461,10 @@ fn f1_opens_the_keys_page() {
 }
 
 /// The shortcut rows of ADR-0061's key table as the owner answered it (Plan 0080's "The
-/// keys"): each entry that keeps a bind and its binds as the menu shows them.
-const SHORTCUTS: [(&str, &str); 15] = [
+/// keys"), and the render profile's `F4` (ADR-0055): each entry that keeps a bind and its
+/// binds as the menu shows them.
+const SHORTCUTS: [(&str, &str); 16] = [
+    ("profile", "F4"),
     ("dig radius", "wheel / pad D-pad up down"),
     ("walk", "G / pad North"),
     ("resume the tour", "T"),
@@ -567,14 +569,17 @@ fn key_in(menu: &mut Menu, m: &Modes, v: &RunView, k: KeyCode) -> Vec<Activated>
 }
 
 /// Every menu-only entry is reached from a closed menu by `Tab`, its label typed and `Down`
-/// to it among the matches (in a run that has what every entry needs: `--pan` among the
-/// modes, the rest in the view), and `Enter` hands the run that entry's own flip or action,
+/// to it among the matches (in a run that has what every entry needs: `--pan`, the outdoor
+/// source and a sky among the modes, the rest in the view), and `Enter` hands the run that entry's own flip or action,
 /// the change its former key made; on a number `Enter` opens its edit mode and `Up` hands the
 /// run its step up.
 #[test]
 fn every_menu_only_entry_is_reached_by_its_words() {
     use flythrough::hud::menu::{EntryKind, Row, typed};
-    let m = modes(true).with_pan(10.0, 0.0);
+    let mut m = modes(true)
+        .with_pan(10.0, 0.0)
+        .with_source(Some("outdoor, trees sparse"));
+    m.sky = true;
     let v = full_view();
     let keys: Vec<KeyCode> = flythrough::hud::menu::all_keys();
     for e in entries().filter(|e| e.keys().is_empty()) {

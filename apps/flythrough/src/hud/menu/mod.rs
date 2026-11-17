@@ -22,6 +22,7 @@ use vxe_app::{KeyCode, PadButton};
 pub enum Group {
     Moving,
     Camera,
+    World,
     Look,
     Upscaler,
     Lighting,
@@ -35,9 +36,10 @@ pub enum Group {
 
 impl Group {
     /// The groups in the root page's order.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Moving,
         Self::Camera,
+        Self::World,
         Self::Look,
         Self::Upscaler,
         Self::Lighting,
@@ -54,6 +56,7 @@ impl Group {
         match self {
             Self::Moving => "moving",
             Self::Camera => "camera and paths",
+            Self::World => "world and sky",
             Self::Look => "look",
             Self::Upscaler => "upscaler",
             Self::Lighting => "lighting",

@@ -27,8 +27,8 @@ fn sections() -> Vec<Section<Parsing>> {
             Flag::value(
                 &["--profile"],
                 "floor|portable|performance|high",
-                "the render profile (vxe_render::Profile) every other flag edits; PageDown \
-                 cycles it, applying its live and settle fields [floor]",
+                "the render profile (vxe_render::Profile) every other flag edits; F4 (or \
+                 the menu's profile entry) cycles it, applying its live and settle fields [floor]",
                 |p: &mut Parsing, v| {
                     p.args.profile = v.named(Profile::from_name, PROFILE_NAMES)?;
                     Ok(())
