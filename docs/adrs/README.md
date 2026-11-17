@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0071.**
+**Next free number: 0072.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -69,12 +69,12 @@ the status.
 | [0052](0052-the-live-queues-bake-budget-is-time-per-second-not-a-slice-per-frame.md) | The live queue's bake budget is milliseconds of GPU time per second of wall time, capped per frame, not a slice per frame | accepted 2026-11-11; Outcome (Plan 0067): default stays frame:1.5 |
 | [0053](0053-a-light-summary-per-block-and-a-two-level-parent-table-light-a-brick-with-no-value.md) | A light summary per block and a two-level parent table light a brick with no baked value | accepted 2026-11-11 (Plan 0067); Outcome 2026-11-12: `chain` default |
 | [0054](0054-the-tester-build-is-a-launcher-that-runs-the-flythrough-per-scene.md) | The tester build is a launcher that runs the fly-through once per scene as a child process | accepted (Plan 0068, 2026-11-15) |
-| [0055](0055-render-settings-are-one-struct-with-an-apply-class-per-field-and-profiles-are-named-values.md) | Render settings are one struct with an apply class per field, and a profile is a named value of it | proposed (Plan 0069) |
+| [0055](0055-render-settings-are-one-struct-with-an-apply-class-per-field-and-profiles-are-named-values.md) | Render settings are one struct with an apply class per field, and a profile is a named value of it | accepted 2026-11-17, Outcome (Plan 0069): four profiles, High added |
 | [0056](0056-the-mirrors-slot-image-is-packed-on-the-stream-workers-and-the-render-thread-only-allocates-and-copies.md) | The mirror's slot image is packed on the stream workers; the render thread only allocates and copies | accepted (Plan 0070); deferred by reading 2026-11-13, see Outcome |
 | [0057](0057-the-render-api-is-three-objects-and-a-settings-struct-with-a-compiled-example-as-the-contract.md) | The render API is three objects and a settings struct, with a compiled example as the contract | accepted (Plan 0071) |
 | [0058](0058-the-apps-keep-render-settings-in-a-toml-file-layered-over-a-profile-through-an-app-side-field-table.md) | The apps keep render settings in a TOML file in the user's config directory, layered over a profile through an app-side field table | accepted (Plan 0073) |
 | [0059](0059-loading-runs-as-time-sliced-steps-on-the-apps-frame-loop-behind-an-engine-loading-frame.md) | Loading runs as time-sliced steps on the app's frame loop, behind an engine loading frame the app can replace | accepted (Plan 0075), Outcome: the pipelines on one worker, a splash before init |
-| [0060](0060-entity-volumes-are-freed-by-handle-into-a-coalescing-free-list-and-never-moved.md) | Entity volumes are freed by handle into a coalescing free list of word ranges, never moved; queue order makes a freed range reusable at once | proposed (Plan 0078) |
+| [0060](0060-entity-volumes-are-freed-by-handle-into-a-coalescing-free-list-and-never-moved.md) | Entity volumes are freed by handle into a coalescing free list of word ranges, never moved; queue order makes a freed range reusable at once | accepted 2026-11-16, Outcome (Plan 0078) |
 | [0061](0061-the-apps-input-is-menu-first-a-minimal-fixed-key-set-one-overlay-menu-with-a-palette-from-one-key-table.md) | The apps' input is menu-first: a minimal fixed key set, one overlay menu with a palette, one key table driving menu, help and shortcuts; apps only, no UI library | proposed (Plan 0080) |
 | [0062](0062-surface-locomotion-is-a-kinematic-sphere-attached-to-a-contact-normal-in-vxe-sim.md) | Surface locomotion is a kinematic sphere attached to a contact normal in `vxe-sim`, with the smoothed normal a world query; ground locomotion keeps the cylinder controller | proposed (Plan 0079) |
 | [0063](0063-surface-detail-is-a-procedural-shell-marched-at-the-hit-described-per-material-on-the-render-side.md) | Surface detail is a procedural shell marched at the hit, described per material on the render side, cosmetic and client-only | proposed (Plan 0081) |
@@ -85,6 +85,7 @@ the status.
 | [0068](0068-an-entitys-variants-are-recipes-in-its-model-a-volume-per-part-and-a-palette-per-variant-picked-per-instance.md) | An entity's variants are recipes in its model: a volume per part and a palette per variant, picked per instance by one index | proposed (Plan 0085) |
 | [0069](0069-a-posed-entity-enters-the-world-as-a-baked-prefab-clipped-to-air-through-the-stamp-op.md) | A posed entity enters the world as a baked prefab, clipped to air on the server, through the stamp op | proposed (Plan 0085) |
 | [0070](0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md) | Sky light is a visibility baked per brick direction, coloured by the sky at read; a long-history ray covers what the bake has not caught | proposed (Plan 0086) |
+| [0071](0071-the-engine-takes-a-name-one-word-for-the-project-the-crate-prefix-the-repository-and-the-archive.md) | The engine takes a name: one word that is the project, the crate prefix, the repository and the archive | accepted (owner, 2026-11-17: `svet`; Plan 0087, draft) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded

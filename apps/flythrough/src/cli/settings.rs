@@ -26,7 +26,7 @@ fn sections() -> Vec<Section<Parsing>> {
             ),
             Flag::value(
                 &["--profile"],
-                "floor|portable|performance",
+                "floor|portable|performance|high",
                 "the render profile (vxe_render::Profile) every other flag edits; PageDown \
                  cycles it, applying its live and settle fields [floor]",
                 |p: &mut Parsing, v| {
@@ -52,7 +52,7 @@ fn sections() -> Vec<Section<Parsing>> {
 }
 
 /// The names `--profile` takes.
-const PROFILE_NAMES: &str = "floor, portable or performance";
+const PROFILE_NAMES: &str = "floor, portable, performance or high";
 
 /// The profile `argv` names with `--profile NAME`, the last one given; `None` without one.
 /// The parser seeds the other flags' defaults from it before it reads them.
@@ -73,7 +73,8 @@ pub(super) fn profile_in(argv: &[String]) -> Result<Option<Profile>, String> {
 impl Args {
     /// Sets every flag's default that `p` gives a value of its own: the translucent layers,
     /// the lamp's bounce, the internal scale, the residency, the bake budget, the light cap
-    /// and the output hint. The mirror budget of a streamed run follows the profile too
+    /// and the output hint, and at internal scale 1 the upscaler (the fly-through's own
+    /// default there is `off`). The mirror budget of a streamed run follows the profile too
     /// (`Args::stream_mirror_budget`).
     pub(crate) fn seed_profile(&mut self, p: Profile) {
         let s = RenderSettings::profile(p);
@@ -81,6 +82,12 @@ impl Args {
         self.look.translucent_layers = s.look.translucent_layers;
         self.light.lamp_bounce = s.lighting.lamp_bounce;
         self.look.internal_scale = s.scale;
+        self.look.upscaler =
+            (s.scale == vxe_render::RenderScale::One).then_some(match s.upscaler {
+                UpscalerChoice::Off => crate::hud::UpscalerMode::Off,
+                UpscalerChoice::Own => crate::hud::UpscalerMode::Own,
+                UpscalerChoice::Fsr2 => crate::hud::UpscalerMode::Fsr2,
+            });
         self.residency = s.build.residency;
         self.bake.budget = s.bake.budget;
         self.light_cap = s.light_cap;
@@ -268,9 +275,43 @@ mod tests {
             perf.render_settings(),
             fly_through(Profile::Performance, true)
         );
+        let high = parse_args_from(argv(&["--profile", "high"])).expect("parses");
+        assert_eq!(high.render_settings(), fly_through(Profile::High, true));
+        assert_eq!(
+            high.profile_row(&high.render_settings(), &[]),
+            "profile: high"
+        );
         let Err(e) = parse_args_from(argv(&["--profile", "fast"])) else {
             panic!("--profile fast parsed");
         };
-        assert!(e.contains("floor, portable or performance"), "{e}");
+        assert!(e.contains("floor, portable, performance or high"), "{e}");
+    }
+
+    /// `--settings --profile P` prints each profile's picks (`RenderSettings::PROFILE_PICKS`,
+    /// the readings log's Phase 5 table), and the floor's value in every other field but the
+    /// fly-through's own records.
+    #[test]
+    fn the_settings_flag_prints_each_profiles_picks() {
+        let floor = settings_lines(&fly_through(Profile::Floor, true));
+        for (i, p) in Profile::ALL.into_iter().enumerate() {
+            let a = parse_args_from(argv(&["--settings", "--profile", p.name()])).expect("parses");
+            let text = settings_lines(&a.render_settings());
+            for (line, floor_line) in text.lines().zip(floor.lines()) {
+                let name = line.split_whitespace().next().expect("a name");
+                let value = line
+                    .split_once(name)
+                    .and_then(|(_, rest)| rest.trim_start().split_once(' '))
+                    .map(|(_, v)| v.trim());
+                match RenderSettings::PROFILE_PICKS
+                    .iter()
+                    .find(|(n, _)| *n == name)
+                {
+                    Some((_, picks)) => assert_eq!(value, Some(picks[i]), "{} {line}", p.name()),
+                    // The fly-through sizes its records to the profile's residency.
+                    None if name == "build.record_chunks" => {}
+                    None => assert_eq!(line, floor_line, "{} differs from the floor", p.name()),
+                }
+            }
+        }
     }
 }

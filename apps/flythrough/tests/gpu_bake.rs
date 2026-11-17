@@ -1128,6 +1128,11 @@ fn a_glass_pane_filters_by_path_length() {
             v.sort_by(f64::total_cmp);
             v.get(v.len() / 2).copied().unwrap_or(0.0)
         };
+        let mut records = BTreeMap::new();
+        for r in &info {
+            *records.entry((r[3], r[2])).or_insert(0usize) += 1;
+        }
+        println!("{name} records (flags, material): count {records:?}");
         let (n1, n2) = (by_half[0].len(), by_half[1].len());
         let (l1, l2) = (median(&mut by_half[0]), median(&mut by_half[1]));
         println!(
@@ -1191,6 +1196,15 @@ fn a_glass_pane_filters_by_path_length() {
     println!(
         "lit pane: {} pixels over the black wall, {dark} with E 0; worst |reflected / (R E / PI) - 1| {worst:.4}; worst |pixel - display(reflected)| {worst_shown:.2} levels",
         lit.len()
+    );
+    // What the lit view's hit records hold, by (flags, material): the selection above takes
+    // flags with bits 0 and 2 over the black wall's material only.
+    let mut records = BTreeMap::new();
+    for r in &info {
+        *records.entry((r[3], r[2])).or_insert(0usize) += 1;
+    }
+    println!(
+        "lit view records (flags, material): count {records:?}; glass {glass_id}, black {black_id}"
     );
     assert!(lit.len() > 1000, "{} lit pane pixels", lit.len());
     assert_eq!(dark, 0, "pane pixels whose entry face's record reads 0");

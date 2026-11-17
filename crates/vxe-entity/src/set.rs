@@ -100,6 +100,24 @@ impl EntitySet {
         Ok(())
     }
 
+    /// Swaps an entity's model and pose under its id: a reloaded model keeps the entity, so a
+    /// renderer keeping state per entity keeps it too. Refused when the entity is not in the
+    /// set or the pose does not fit `model`; the entity is unchanged then.
+    pub fn replace(
+        &mut self,
+        entity: EntityId,
+        model: Arc<Model>,
+        pose: Pose,
+    ) -> Result<(), PoseError> {
+        let e = self
+            .entries
+            .get_mut(&entity)
+            .ok_or(PoseError::UnknownEntity { entity })?;
+        pose.check(&model)?;
+        *e = Entry::new(model, pose);
+        Ok(())
+    }
+
     /// Takes an entity out, returning its model and pose.
     pub fn remove(&mut self, entity: EntityId) -> Option<(Arc<Model>, Pose)> {
         self.entries.remove(&entity).map(|e| (e.model, e.pose))

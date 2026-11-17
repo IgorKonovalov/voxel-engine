@@ -9,7 +9,7 @@
 > (proposed): the field table, the precedence, where the file lives, which runs read it, when it
 > is written. Rests on [ADR-0055](../adrs/0055-render-settings-are-one-struct-with-an-apply-class-per-field-and-profiles-are-named-values.md)
 > (the engine stays file-free) and ADR-0009 (the HUD is the 8 x 8 font overlay, no UI library).
-> **Starts after:** [Plan 0069](0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md)
+> **Starts after:** [Plan 0069](done/0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md)
 > has merged (`RenderSettings`, `FIELDS` with the apply classes, the profiles, `F4`, the
 > tester's profile choice). The architect re-reads Phases 1, 3 and 5 against that tip before the
 > lane starts: the args module and the HUD files may have moved under Plan 0045, and how 0069's

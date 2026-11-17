@@ -23,7 +23,7 @@
 > **Starts after:** [Plan 0063](done/0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
 > (the clips, `Pose::compose`, the viewer), the clip-recorder chore (the entities library under
 > `apps/flythrough/assets/entities/`, `docs/entities.md`) and
-> [Plan 0078](0078-the-entity-pool-frees-models-by-handle-stable-instance-slots-and-a-reset.md)
+> [Plan 0078](done/0078-the-entity-pool-frees-models-by-handle-stable-instance-slots-and-a-reset.md)
 > (it rewrites `entities.rs`'s instance write and gives the handle its generation) have merged
 > into main. It edits the files [Plan 0079](0079-entities-aware-of-floor-and-walls-a-surface-mover-the-smoothed-normal-and-a-wandering-demo.md)'s
 > Phase 3 and [Plan 0082](0082-squash-and-stretch-a-scale-per-part-in-the-pose-and-the-clips.md)

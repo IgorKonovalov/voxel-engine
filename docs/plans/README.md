@@ -3,7 +3,8 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0087** (ADRs are a separate sequence; next free there is **0071**).
+**Next free number: 0088** (ADRs are a separate sequence, see `../adrs/README.md` for its
+next free number).
 
 ## Active roster
 
@@ -16,12 +17,10 @@ state from `git log`. Completed plans move to `done/`.
 | [0035](0035-aerial-perspective-and-volumetric-clouds-with-cloud-shadows.md) | Aerial perspective over the near and far field, and volumetric clouds that shadow the ground | approved | M10, ADR-0030 (proposed). Amended 2026-11-10. After Plan 0034. |
 | [0036](0036-weather-rain-snow-wind-wet-surfaces-snow-cover-lightning.md) | Weather: rain, snow, wind, wet surfaces and snow cover, lightning | approved | M10, ADR-0031 (proposed). Amended 2026-11-10. After Plan 0035. |
 | [0037](0037-night-sky-stars-moon-phases-sky-bodies-and-aurora.md) | The night sky: stars, the moon's phases, sky bodies, an aurora that lights the ground, a night tint | approved | M10, ADR-0032 (proposed). Amended 2026-11-10. After Plan 0036. |
-| [0069](0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md) | Render settings: one surface, an apply class per field, and named quality profiles | approved | M10's first, ADR-0055 (proposed). Approved 2026-11-11, recommendations taken. After 0045, 0058, 0044. |
 | [0071](0071-the-consumers-path-a-render-example-a-renderer-tested-alone-names-and-errors.md) | The consumer's path: a render example as the contract, a renderer tested alone, one name per thing, errors | approved | Cross-cutting, ADR-0057. From the 2026-11-12 review. After 0045, 0069 and 0044's Phase 8. |
 | [0073](0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md) | A settings menu and a settings file for the fly-through and the tester | approved | ADR-0058. Apps only. After 0069, 0071 and 0080; amended 2026-11-16 (owner). |
 | [0076](0076-a-key-help-overlay-for-the-fly-through-from-the-key-table.md) | A key help overlay for the fly-through: `F1` (readings move to `Enter`), written from the key tables, modes live, 80 x 45 | superseded | Apps only, no ADR. Folded into 0080 (owner, 2026-11-16). |
 | [0077](0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md) | An entity picker: `` ` `` lists the entities library, a live preview at the crosshair, a clip per placed entity | approved | Apps only, no ADR. After 0063, the clip chore and 0080; amended 2026-11-16 (owner). |
-| [0078](0078-the-entity-pool-frees-models-by-handle-stable-instance-slots-and-a-reset.md) | The entity pool frees models: free by handle into a coalescing free list, stable instance slots with a generation, a reset | approved | M6, ADR-0060 (proposed). Approved 2026-11-16. After 0062 and 0063 merge, before 0077. |
 | [0079](0079-entities-aware-of-floor-and-walls-a-surface-mover-the-smoothed-normal-and-a-wandering-demo.md) | Entities aware of the floor and the walls: a surface mover, the smoothed normal, a body in the `.rig`, a wander | approved | M6, ADR-0062 (proposed). Phases 1-3 after 0063 and the chore; Phase 4 after 0077. |
 | [0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) | The fly-through's menu: one overlay component, a search palette, and the minimal key set | approved | ADR-0061 (proposed). Apps only. After 0062 and 0075; before 0077, 0073. |
 | [0081](0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md) | A surface detail layer: blades, caps and pebbles marched above styled faces, lit as hits, faded by size on screen | approved | M10, ADR-0063 (proposed). Approved 2026-11-16. After 0032, before 0033. |
@@ -30,6 +29,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0084](0084-staged-structures-stages-from-a-vox-a-stamp-with-a-write-policy-and-a-region-a-reveal-and-a-demolish.md) | Staged structures: stages from a `.vox`'s layers, a stamp with a write policy and a region, a reveal over ticks, a demolish | approved | M7, ADR-0067. Approved 2026-11-16. After Plan 0083 closes. |
 | [0085](0085-entity-variants-holding-clips-and-an-entity-stamped-into-the-world.md) | Entity variants (hide, swap, remap) from the `.rig`, a clip that holds, a posed entity stamped into the world | approved | M6, ADR-0068, ADR-0069 (proposed). Approved 2026-11-16. After 0063, the chore, 0078 and 0082. |
 | [0086](0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md) | Still outdoor light: baked sky visibility, a long history for the sky and key rays, solid canopy shadows, stair history, a penumbra spike | approved | M10, ADR-0070. After Plan 0032, before Plan 0081. |
+| [0087](0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md) | The rename to `svet`: crates, `SVET_*`, the WIT package, the tester archive, docs, the repository, a minor bump | draft | ADR-0071. Awaits the owner's go. Alone: after 0069, 0032, 0080 merge; before 0086. |
 <!-- roster:end -->
 
 ## Sequence
@@ -64,8 +64,8 @@ Each starts on main after the one before it closes, unless its line says otherwi
    per-profile light cap is a field at or under its `MAX_LIGHTS` (16).
 5. **Plan 0044**, the hot-path pass: closed 2026-11-16 (v0.55.0); Phase 2 ran as Plan 0064's
    Phase 3, Phase 4 as Plan 0070.
-6. **Plan 0069, render settings and profiles** (approved 2026-11-11, every recommendation
-   taken), then the owed plan removing the `own` upscaler (not drafted; owner, 2026-11-11:
+6. **Plan 0069, render settings and profiles**: closed 2026-11-17 (v0.60.0; ADR-0055 accepted with
+   an Outcome), then the owed plan removing the `own` upscaler (not drafted; owner, 2026-11-11:
    Portable takes FSR 2, so the removal goes ahead).
 7. **M6, entities: Plan 0062, then Plan 0063** (owner, 2026-11-10: ahead of M10,
    because the first consumer is a cave game). Plan 0062 closed 2026-11-16 (v0.56.0; ADR-0050
@@ -99,7 +99,7 @@ Plan 0044's Phase 4; **Plan 0072** (development speed), closed 2026-11-13 (v0.51
 
 **Plan 0077** (an entity picker over the entities library, drafted and approved 2026-11-16, every recommendation taken): after Plan 0063 closes, the clip-recorder chore and Plan 0080 merge; its picker is a dynamic page of 0080's menu (amended 2026-11-16, the owner's go; `ListMenu` is not written).
 
-**Plan 0078** (the entity pool frees models, drafted 2026-11-16 from the owner's "proper reset" on Plan 0077's question 6; ADR-0060): after Plans 0062 and 0063 merge, before Plan 0077's lane, which is re-read against it.
+**Plan 0078** (the entity pool frees models): closed 2026-11-16 (v0.59.0), ADR-0060 accepted. Plan 0077 is re-read against it before its lane: its reload calls `free_model` and `EntitySet::replace`, and its HUD pool figure is 0078's.
 
 **Plan 0081** (a surface detail layer: a style table per material id on the render side, a procedural shell marched in the hit pass where a ray meets a styled face, lit as a hit, faded by the voxel's size on screen, swayed by a wind the game sets; drafted 2026-11-16 from the owner's "outdoors needs trees, grass and water" and "maybe this new layer can be used for something else as well", approved 2026-11-16 with every recommendation; ADR-0063 proposed): after Plan 0032 closes and merges, before Plan 0033; it does not wait for Plan 0036, whose wind it takes when 0036 lands. Plan 0032 was amended the same day: its trees are prefabs stamped at generation time.
 
@@ -123,7 +123,9 @@ the owner's "a castle being built... part of the map", approved 2026-11-16 with 
 
 **Plan 0085** (entity variants: `variant` blocks in the `.rig` that hide a part, swap its volume for another `.vox` node or remap a material, picked per instance by one index and honoured by the picture and the headless query; `Playback::ended` on a one-shot clip that already holds; a posed entity baked onto the world grid in integers, clipped to air on the server and stamped through op kind 2; the spider gains `damaged` and `dead`; drafted 2026-11-16 from the owner's "healthy, damaged, dead: three entities or one with modes?", approved 2026-11-16 with every recommendation; ADR-0068 and ADR-0069 proposed): after Plan 0063, the clip-recorder chore and Plan 0078 merge, and after Plan 0082 (recommended; it edits the same files), beside Plans 0077 and 0079's Phase 4. Per-entity voxel damage is parked in `docs/backlog.md`.
 
-Every active plan is approved (owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
+**Plan 0087** (the rename to `svet`, ADR-0071 accepted 2026-11-17 on the owner's "for renaming, I think svet is the best": `crates/svet-*`, `SVET_*` with no aliases, `svet:logic`, `svet-tester` and its archive, the documents and the harness, the owner's GitHub rename, a minor bump, a final grep; accepted ADRs, closed plans, logs, reviews and past CHANGELOG entries keep `vxe`; drafted 2026-11-17, **awaits the owner's go**): it touches every crate directory, so it runs **alone, when no lane is open**: after Plans 0069, 0032 and 0080 (and any other lane `git worktree list` shows then) merge, and before Plan 0086, drafted on branch `plan-0032`, starts.
+
+Every active plan but 0087 is approved (owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Approval accepts the design; a plan's lane
 starts only when the plans its "Starts after" line names have closed and merged, and where that
 line asks for it, after the architect has re-read the plan against the new tip. The approved
@@ -135,6 +137,8 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0069](done/0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md) | Render settings: one struct, an apply class per field, a setter gate; profiles Floor, Portable, Performance, High | 2026-11-17, v0.60.0 |
+| [0078](done/0078-the-entity-pool-frees-models-by-handle-stable-instance-slots-and-a-reset.md) | The entity pool frees models by handle into a coalescing free list; stable instance slots with a generation; ghost leaves; a reset | 2026-11-16, v0.59.0 |
 | [0075](done/0075-a-loading-screen-steppable-start-up-a-progress-signal-and-a-default-loading-frame.md) | A loading screen: start-up stepped behind a turning cube and a bar, pipelines on a worker, a splash after the device; streamed stutter kept | 2026-11-16, v0.58.0 |
 | [0063](done/0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md) | Rigs and clips: Q14 clips by tick, a `.rig` beside the `.vox`, the fly-through as viewer, `.voxtext`; between 0.50 ms at 64x16 parts; crossfade and error row to backlog | 2026-11-16, v0.57.0 |
 | [0062](done/0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md) | Entities: posed voxel models traced with the world, list-lit and shadowed, baked world light by default, a headless ray query | 2026-11-16, v0.56.0 |

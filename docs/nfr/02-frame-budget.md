@@ -990,3 +990,29 @@ per-run figures are in `docs/plans/logs/0032.md`, Phase 7.
 | RADV RENOIR | forest, fill 128, `--shadow-walk full` | 15.135 | 41.984 | over | over | 24.17 / 95 |
 
 Ratios of the light pass: forest/open at fill 128 1.04 (RTX) and 1.17 (RADV), at fill 64 0.99 and 1.18; fill 64/128 0.95 and 1.00; full/coarse at fill 128 1.20 and 1.21. The `--look face` configuration is the default look. Per-run figures in `docs/plans/logs/0032.md`, Phase 8.
+
+**The render profiles (Plan 0069 Phase 7, 2026-11-17, release `flythrough` at the code of
+9390b033, `--headless --hud --frames 600 --adapter NVIDIA|Radeon --profile P`, the vein
+`--level --seed 1 --pose vein`, the hall `--source showcase --shot hall`, the castle `--castle
+--castle-shot gate --seed 1`, the frame line's `march GPU p50` (FSR 2's passes included, the
+bake slice not), the median of three alternated rounds, one exclusive perf lock per run; most
+rounds read a 1-minute load over 2, so every figure is loaded (indicative)).** Every pass and
+round: [Plan 0069's readings log](../plans/logs/0069.md), Phase 7. Frame GPU in ms, vein /
+hall / castle; the line each profile is held to is the owner's pick at Plan 0069's window.
+
+- *Floor, RTX 3080 Laptop* (1920 x 1080 from 1280 x 720, FSR 2): 2.92 / 4.25 / 4.19; FSR 2
+  1.32 to 1.34; hit 0.37 / 2.44 / 1.49. Inside the 16.6 ms line.
+- *Floor, RADV RENOIR*: 19.81 / 34.82 / 30.71; FSR 2 9.38 to 9.52; hit 3.20 / 21.62 / 13.51.
+  Over the 16.6 ms line, as expected below the floor's class.
+- *Portable, RTX 3080 Laptop* (1280 x 720 from 853 x 480, FSR 2, 2 translucent layers, light
+  cap 4, no lamp bounce, residency 12, 18, 1): 1.21 / 1.99 / 1.84; FSR 2 0.60 to 0.61.
+  The `own` arm: 1.10 / 1.63 / 1.48.
+- *Portable, RADV RENOIR*: 8.14 / 16.30 / 13.88; FSR 2 4.06 to 4.08; hit 1.44 / 10.52 / 6.74.
+  Inside the 33.3 ms column. The `own` arm: 5.77 / 13.80 / 11.68.
+- *Performance, RTX 3080 Laptop* (2530 x 1378 from 1265 x 689, FSR 2): 3.39 / 4.72 / 4.63;
+  FSR 2 1.80 to 1.84. No gate.
+- *Performance, RADV RENOIR*: 22.59 / 36.80 / 34.18; FSR 2 12.43 to 12.59. No gate.
+- *High, RTX 3080 Laptop* (1920 x 1080 at internal scale 1, FSR 2): 5.31 / 8.25 / 7.77; FSR 2
+  2.01 to 2.04; hit 0.82 / 5.25 / 3.27. No gate.
+- *High, RADV RENOIR*: 38.64 / 68.46 / 60.07; FSR 2 15.34 to 15.82. Not a profile for this
+  adapter (owner, Plan 0069's window: "no"). No gate.
