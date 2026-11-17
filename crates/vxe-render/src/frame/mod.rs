@@ -539,8 +539,12 @@ impl Frame {
     }
 
     /// The entities the next frames draw: one instance a part of each entity of `list` as
-    /// `set` poses it, within the caps ([`crate::EntityMirror::set_entities`]). Call once a
-    /// frame while anything moves: the transforms of the call before are the frame before's.
+    /// `set` poses it, within the caps ([`crate::EntityMirror::set_entities`]). Call at most
+    /// once a frame (the hit record holds one bit of a slot's generation, so two calls between
+    /// frames can hide a slot's new occupant), and every frame while anything moves: the
+    /// transforms of the call before are the frame before's. An entity left out of `list`
+    /// stays in the tree as a ghost leaf until the next call, so make one more call after the
+    /// list last changed ([`crate::EntityMirror::walks_entities`] is true until then).
     pub fn set_entities(
         &mut self,
         queue: &wgpu::Queue,
@@ -552,7 +556,7 @@ impl Frame {
 
     /// [`Frame::set_entities`] with each entity's parts placed by a [`crate::DisplayPose`]
     /// (between two ticks, say) in place of a pose in a set
-    /// ([`crate::EntityMirror::set_entity_displays`]).
+    /// ([`crate::EntityMirror::set_entity_displays`]), under the same call rules.
     pub fn set_entity_displays<'a>(
         &mut self,
         queue: &wgpu::Queue,

@@ -12,8 +12,15 @@
 // and its per-hit lookups fold away, and the pass does the work it did before entities.
 override ENTITIES: bool = true;
 
-// An entity hit: the instance, the ray parameter, the face normal in world space and the
-// material. `found` false on a miss.
+// An instance's word 25 is `slot | generation << 9` (`entities/instances.rs`,
+// INSTANCE_SLOT_BITS); the hit record keeps its low ENTITY_RECORD_BITS: the slot and the
+// generation's low bit, which differs between two consecutive frames whenever the slot's
+// occupant changed. A reader of the instance's words masks the slot out with ENTITY_SLOT_MASK.
+const ENTITY_SLOT_MASK: u32 = 511u;
+const ENTITY_RECORD_BITS: u32 = 10u;
+
+// An entity hit: the instance's slot and generation (word 25), the ray parameter, the face
+// normal in world space and the material. `found` false on a miss.
 struct EntityHit {
     found: bool,
     t: f32,
@@ -108,7 +115,7 @@ fn entity_part(k: u32, o: vec3<f32>, d: vec3<f32>, limit: f32) -> EntityHit {
                 let np = select(vec3<f32>(0.0), vec3<f32>(-sign(pd[axis])), axis_mask(axis));
                 n = normalize(entity_xform_t(base, np));
             }
-            return EntityHit(true, t, k, n, entity_data[pal + pi]);
+            return EntityHit(true, t, entity_data[base + 25u], n, entity_data[pal + pi]);
         }
         // Leave the cell: the 4-voxel block when it is empty, else the voxel.
         let s = select(1, 4, !full);
@@ -187,13 +194,15 @@ fn entity_march(o: vec3<f32>, d: vec3<f32>, t_limit: f32) -> EntityHit {
 }
 
 // The hit buffer's record of entity hit `e` on the ray `o + d t`: its point and `t`, and the
-// info word with HIT_ENTITY, the instance and no cube face (axis bits 0).
+// info word with HIT_ENTITY, the instance's slot and generation bit and no cube face (axis
+// bits 0).
 fn entity_pos(o: vec3<f32>, d: vec3<f32>, e: EntityHit) -> vec4<f32> {
     return vec4<f32>(o + d * e.t, e.t);
 }
 
 fn entity_info(e: EntityHit) -> vec4<u32> {
-    let flags = HIT_FOUND | HIT_ENTITY | (e.instance << HIT_INSTANCE_SHIFT);
+    let field = e.instance & ((1u << ENTITY_RECORD_BITS) - 1u);
+    let flags = HIT_FOUND | HIT_ENTITY | (field << HIT_INSTANCE_SHIFT);
     return vec4<u32>(octa16_encode(e.n), e.material, flags);
 }
 
@@ -203,7 +212,7 @@ fn entity_moved(rec: HitRecord) -> bool {
     if (!ENTITIES || !rec.entity) {
         return false;
     }
-    let base = ENTITY_INSTANCE_WORD + rec.instance * ENTITY_INSTANCE_WORDS;
+    let base = ENTITY_INSTANCE_WORD + (rec.instance & ENTITY_SLOT_MASK) * ENTITY_INSTANCE_WORDS;
     return (entity_data[base + 26u] & ENTITY_MOVED) != 0u;
 }
 
@@ -220,12 +229,13 @@ fn prev_world(rec: HitRecord) -> vec3<f32> {
     if (!entity_moved(rec)) {
         return rec.p;
     }
-    let base = ENTITY_INSTANCE_WORD + rec.instance * ENTITY_INSTANCE_WORDS;
+    let base = ENTITY_INSTANCE_WORD + (rec.instance & ENTITY_SLOT_MASK) * ENTITY_INSTANCE_WORDS;
     return entity_xform(base + 12u, entity_xform(base, rec.p, 1.0), 1.0);
 }
 
 // Whether two hit records can share history: both world hits, or both the voxels of the same
-// instance.
+// instance slot under the same generation bit (a slot whose occupant changed between the two
+// frames differs in that bit).
 fn same_thing(a: HitRecord, b: HitRecord) -> bool {
     return a.entity == b.entity && a.instance == b.instance;
 }
@@ -235,5 +245,6 @@ fn entity_shadow_scale(rec: HitRecord) -> f32 {
     if (!ENTITIES || !rec.entity) {
         return 1.0;
     }
-    return entity_f(ENTITY_INSTANCE_WORD + rec.instance * ENTITY_INSTANCE_WORDS + 27u);
+    let base = ENTITY_INSTANCE_WORD + (rec.instance & ENTITY_SLOT_MASK) * ENTITY_INSTANCE_WORDS;
+    return entity_f(base + 27u);
 }

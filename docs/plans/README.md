@@ -21,7 +21,6 @@ state from `git log`. Completed plans move to `done/`.
 | [0073](0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md) | A settings menu and a settings file for the fly-through and the tester | approved | ADR-0058. Apps only. After 0069, 0071 and 0080; amended 2026-11-16 (owner). |
 | [0076](0076-a-key-help-overlay-for-the-fly-through-from-the-key-table.md) | A key help overlay for the fly-through: `F1` (readings move to `Enter`), written from the key tables, modes live, 80 x 45 | superseded | Apps only, no ADR. Folded into 0080 (owner, 2026-11-16). |
 | [0077](0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md) | An entity picker: `` ` `` lists the entities library, a live preview at the crosshair, a clip per placed entity | approved | Apps only, no ADR. After 0063, the clip chore and 0080; amended 2026-11-16 (owner). |
-| [0078](0078-the-entity-pool-frees-models-by-handle-stable-instance-slots-and-a-reset.md) | The entity pool frees models: free by handle into a coalescing free list, stable instance slots with a generation, a reset | approved | M6, ADR-0060 (proposed). Approved 2026-11-16. After 0062 and 0063 merge, before 0077. |
 | [0079](0079-entities-aware-of-floor-and-walls-a-surface-mover-the-smoothed-normal-and-a-wandering-demo.md) | Entities aware of the floor and the walls: a surface mover, the smoothed normal, a body in the `.rig`, a wander | approved | M6, ADR-0062 (proposed). Phases 1-3 after 0063 and the chore; Phase 4 after 0077. |
 | [0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) | The fly-through's menu: one overlay component, a search palette, and the minimal key set | approved | ADR-0061 (proposed). Apps only. After 0062 and 0075; before 0077, 0073. |
 | [0081](0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md) | A surface detail layer: blades, caps and pebbles marched above styled faces, lit as hits, faded by size on screen | approved | M10, ADR-0063 (proposed). Approved 2026-11-16. After 0032, before 0033. |
@@ -95,7 +94,7 @@ Plan 0044's Phase 4; **Plan 0072** (development speed), closed 2026-11-13 (v0.51
 
 **Plan 0077** (an entity picker over the entities library, drafted and approved 2026-11-16, every recommendation taken): after Plan 0063 closes, the clip-recorder chore and Plan 0080 merge; its picker is a dynamic page of 0080's menu (amended 2026-11-16, the owner's go; `ListMenu` is not written).
 
-**Plan 0078** (the entity pool frees models, drafted 2026-11-16 from the owner's "proper reset" on Plan 0077's question 6; ADR-0060): after Plans 0062 and 0063 merge, before Plan 0077's lane, which is re-read against it.
+**Plan 0078** (the entity pool frees models): closed 2026-11-16 (v0.59.0), ADR-0060 accepted. Plan 0077 is re-read against it before its lane: its reload calls `free_model` and `EntitySet::replace`, and its HUD pool figure is 0078's.
 
 **Plan 0081** (a surface detail layer: a style table per material id on the render side, a procedural shell marched in the hit pass where a ray meets a styled face, lit as a hit, faded by the voxel's size on screen, swayed by a wind the game sets; drafted 2026-11-16 from the owner's "outdoors needs trees, grass and water" and "maybe this new layer can be used for something else as well", approved 2026-11-16 with every recommendation; ADR-0063 proposed): after Plan 0032 closes and merges, before Plan 0033; it does not wait for Plan 0036, whose wind it takes when 0036 lands. Plan 0032 was amended the same day: its trees are prefabs stamped at generation time.
 
@@ -131,6 +130,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0078](done/0078-the-entity-pool-frees-models-by-handle-stable-instance-slots-and-a-reset.md) | The entity pool frees models by handle into a coalescing free list; stable instance slots with a generation; ghost leaves; a reset | 2026-11-16, v0.59.0 |
 | [0075](done/0075-a-loading-screen-steppable-start-up-a-progress-signal-and-a-default-loading-frame.md) | A loading screen: start-up stepped behind a turning cube and a bar, pipelines on a worker, a splash after the device; streamed stutter kept | 2026-11-16, v0.58.0 |
 | [0063](done/0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md) | Rigs and clips: Q14 clips by tick, a `.rig` beside the `.vox`, the fly-through as viewer, `.voxtext`; between 0.50 ms at 64x16 parts; crossfade and error row to backlog | 2026-11-16, v0.57.0 |
 | [0062](done/0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md) | Entities: posed voxel models traced with the world, list-lit and shadowed, baked world light by default, a headless ray query | 2026-11-16, v0.56.0 |

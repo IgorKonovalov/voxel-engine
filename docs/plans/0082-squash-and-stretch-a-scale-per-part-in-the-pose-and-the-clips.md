@@ -15,7 +15,7 @@
 > clips. See-through glowing jelly and true soft bodies are out of scope (below).
 > **Starts after:** [Plan 0063](done/0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
 > (the clips, `Pose::compose`, the viewer), the clip-recorder chore (the entities library under
-> `apps/flythrough/assets/entities/`), [Plan 0078](0078-the-entity-pool-frees-models-by-handle-stable-instance-slots-and-a-reset.md)
+> `apps/flythrough/assets/entities/`), [Plan 0078](done/0078-the-entity-pool-frees-models-by-handle-stable-instance-slots-and-a-reset.md)
 > (it rewrites `entities.rs`'s instance write) and [Plan 0079](0079-entities-aware-of-floor-and-walls-a-surface-mover-the-smoothed-normal-and-a-wandering-demo.md)'s
 > Phases 1 to 3 (they edit `clip.rs`, `rig.rs` and both library rigs) have merged into main; the
 > owner's recommendation agreed 2026-11-16: "squash-and-stretch plan after 0079". It may run

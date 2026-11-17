@@ -55,6 +55,7 @@ pub mod internals {
         angle_term, dig_ring, face_classes, in_near_shell, list_world_chunk, rgb9e5_unpack,
         tone_level, view_half_angle, view_half_angles,
     };
+    pub use crate::entities::{EntityInstances, PoolUpload, RangeAlloc, VolumePool};
     pub use crate::exposure::{METER_LOG2_LIMIT, STATE_HELD};
     pub use crate::field::{
         BAND_CUBES_BIT, CRISP_COUNT_BIT, MAX_BAND_UNITS, SMOOTH_COUNT_BIT, band_index,
@@ -91,8 +92,8 @@ pub use bake::{
 };
 pub use camera::{Camera, View};
 pub use entities::{
-    DEFAULT_ENTITY_POOL_BYTES, DisplayPose, EntityMirror, EntityUploadError, MAX_ENTITIES,
-    MAX_ENTITY_PARTS, ModelHandle,
+    DEFAULT_ENTITY_POOL_BYTES, DisplayPose, EntityMirror, EntityUploadError, FreedBytes,
+    MAX_ENTITIES, MAX_ENTITY_PARTS, ModelHandle,
 };
 pub use exposure::{
     AutoExposure, EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState, Metering,
