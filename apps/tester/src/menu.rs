@@ -1,4 +1,4 @@
-//! The launcher's menu: four choices (scene, mode, output, internal scale) and five actions,
+//! The launcher's menu: four choices (scene, mode, output, render profile) and five actions,
 //! driven by the arrow keys and Enter, or a number key that selects and activates its row. The
 //! menu holds no window; [`Menu::key`] turns a key into a [`Command`] and [`Menu::write`] lays
 //! the rows out as the text overlay draws them.
@@ -7,7 +7,7 @@ use flythrough::path::{PathMode, Scene};
 use vxe_app::KeyCode;
 use vxe_render::HudColour;
 
-use crate::run::{Output, RunSpec, Scale};
+use crate::run::{Output, Profile, RunSpec};
 
 /// What a menu key asks the launcher to do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -15,7 +15,7 @@ pub enum Command {
     /// Run the chosen scene in the chosen mode.
     Run(RunSpec),
     /// Run every scene's benchmark in order at the chosen quality.
-    RunAll(Output, Scale),
+    RunAll(Output, Profile),
     SaveReport,
     OpenFolder,
     Quit,
@@ -27,7 +27,7 @@ enum Row {
     Scene,
     Mode,
     Output,
-    Scale,
+    Profile,
     Run,
     RunAll,
     Save,
@@ -39,7 +39,7 @@ const ROWS: [Row; 9] = [
     Row::Scene,
     Row::Mode,
     Row::Output,
-    Row::Scale,
+    Row::Profile,
     Row::Run,
     Row::RunAll,
     Row::Save,
@@ -56,11 +56,11 @@ pub struct Menu {
     pub scene: Scene,
     pub mode: PathMode,
     pub output: Output,
-    pub scale: Scale,
+    pub profile: Profile,
 }
 
 impl Default for Menu {
-    /// The showcase, benchmark, 1280 x 720 at the fly-through's default scale of 1.5; the run
+    /// The showcase, benchmark, 1280 x 720 in the floor profile (the fly-through's default); the run
     /// row selected.
     fn default() -> Self {
         Self {
@@ -68,7 +68,7 @@ impl Default for Menu {
             scene: Scene::Showcase,
             mode: PathMode::Bench,
             output: Output::Hd720,
-            scale: Scale::OneHalf,
+            profile: Profile::Floor,
         }
     }
 }
@@ -87,7 +87,7 @@ impl Menu {
             scene: self.scene,
             mode: self.mode,
             output: self.output,
-            scale: self.scale,
+            profile: self.profile,
         }
     }
 
@@ -129,19 +129,19 @@ impl Menu {
             Row::Scene => self.scene = cycle(&Scene::ALL, self.scene, back),
             Row::Mode => self.mode = cycle(&MODES, self.mode, back),
             Row::Output => self.output = cycle(&Output::ALL, self.output, back),
-            Row::Scale => self.scale = cycle(&Scale::ALL, self.scale, back),
+            Row::Profile => self.profile = cycle(&Profile::ALL, self.profile, back),
             _ => {}
         }
     }
 
     fn activate(&mut self) -> Option<Command> {
         match ROWS[self.selected] {
-            Row::Scene | Row::Mode | Row::Output | Row::Scale => {
+            Row::Scene | Row::Mode | Row::Output | Row::Profile => {
                 self.change(false);
                 None
             }
             Row::Run => Some(Command::Run(self.spec())),
-            Row::RunAll => Some(Command::RunAll(self.output, self.scale)),
+            Row::RunAll => Some(Command::RunAll(self.output, self.profile)),
             Row::Save => Some(Command::SaveReport),
             Row::Open => Some(Command::OpenFolder),
             Row::Quit => Some(Command::Quit),
@@ -162,7 +162,7 @@ impl Menu {
                     }
                 ),
                 Row::Output => format!("output   < {} >", self.output.name()),
-                Row::Scale => format!("internal scale < {} >", self.scale.name()),
+                Row::Profile => format!("profile < {} >", self.profile.name()),
                 Row::Run => "run".to_owned(),
                 Row::RunAll => "run all benchmarks".to_owned(),
                 Row::Save => "save report".to_owned(),

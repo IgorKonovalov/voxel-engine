@@ -1,6 +1,6 @@
 // The FSR 2 input pass (ours, ADR-0034): FSR 2's depth, motion-vector and reactive inputs from
 // the hit buffer, at the internal size, one invocation per internal pixel. Compiled after
-// common.wgsl, hitrec.wgsl, entity.wgsl and edits.wgsl, whose bindings (group 0), views, entity
+// common.wgsl, hitrec.wgsl, entity.wgsl, edits.wgsl and the sky's modules, whose bindings (group 0), views, entity
 // transforms and reprojection it uses.
 //
 // Bindings, group 2:
@@ -37,7 +37,8 @@
 // upscale pass's light-change signal, which it too applies to still pixels alone: the hit moved
 // less than CLIP_STILL output pixels, and an emission scale changed where an emitter's light lands or the list of lights'
 // summed unshadowed term moved past the thresholds since the list of `change_frames` frames
-// before). A moving
+// before, or the sky's key light or scale moved past them since the frame before:
+// `sky_light_changed`, which a jump trips and a drift does not). A moving
 // pixel's lamp term changes with the camera that carries the lamp; FSR's rectification takes
 // that, where the mask would take its history. A fresh pixel (light.wgsl: a shadow ray crossed
 // a moving entity's box, or the hit is a moved part's; `fresh_lands`) takes
@@ -91,6 +92,9 @@ fn same_view(a: View, b: View) -> bool {
 // upscale.wgsl's `up_light_changed` at internal pixel `px`.
 fn light_changed(px: vec2<i32>, rec: HitRecord) -> bool {
     if ((params.lighting & LIGHTING_EMISSION_CHANGED) != 0u && emission_lands(in_emissive, px, rec)) {
+        return true;
+    }
+    if (sky_light_changed(rec.p, rec.n, in_lamp.change_abs, in_lamp.change_rel)) {
         return true;
     }
     if (lights.changed == 0u) {

@@ -1,8 +1,8 @@
 //! Renders the README's still: by default the showcase cavern's `hall` shot, lit by its four
 //! ores alone (the lamp off), with the fly-through's lighting and upscaler defaults.
 //!
-//! `cargo run --release -p flythrough --example hero -- [--source showcase|level]
-//! [--shot hall|chasm|crystals|all] [--seed N] [--size WxH] [--at X,Y,Z] [--yaw DEG]
+//! `cargo run --release -p flythrough --example hero -- [--source showcase|level|outdoor]
+//! [--time HH:MM] [--shot hall|chasm|crystals|all] [--seed N] [--size WxH] [--at X,Y,Z] [--yaw DEG]
 //! [--pitch DEG] [--exposure auto|E] [--carve R] [--out PATH] [--out-dir DIR] [--frames N]
 //! [--lamp-bounce on|off] [--probe-spacing N] [--internal-scale 1|1.5|2] [--jitter on|off]
 //! [--sharpen S] [--light-radius N] [--adapter SUBSTRING] [--lighting full|half]
@@ -15,7 +15,11 @@
 //! first frame's meter), and a number is a manual exposure (each shot's own by default). `--shot all` writes `hero-<name>.png` for every shot into `--out-dir`
 //! (default `target/hero/`), and `hall` again at the fly-through's probe spacing (16) as
 //! `hero-hall-spacing16.png`, the review set. `--source level` frames the bounded level from
-//! its spawn (`--at`, `--yaw`, `--pitch`), with no shots. `--carve R` digs a sphere of radius
+//! its spawn (`--at`, `--yaw`, `--pitch`), with no shots. `--source outdoor` frames the
+//! outdoor hills (`still::outdoor_extent` of them) from the `outside` spawn facing the mouth,
+//! under the sky at `--time` (12:00 by default; the flag is refused for the other sources),
+//! with the fly-through's outdoor auto exposure (its floor and ceiling, jumping to the first
+//! frame's meter) unless `--exposure` gives a number. `--carve R` digs a sphere of radius
 //! `R` voxels where the view ray meets rock before the frame is drawn. The lamp is off by
 //! default for both sources; the lamp's bounce is off (`--lamp-bounce on`, or its alias
 //! `--indirect on`, runs ADR-0043's lamp channel with the lamp on at the hero's probe spacing,
@@ -61,6 +65,8 @@ enum Shots {
 struct Args {
     seed: u64,
     source: Source,
+    /// `--time`: minutes after midnight of the outdoor sky; unset, 12:00.
+    time: Option<f64>,
     shots: Shots,
     size: [u32; 2],
     at: Option<[i32; 3]>,
@@ -257,13 +263,26 @@ fn table() -> Table<Parsing> {
                     ),
                     Flag::value(
                         &["--source"],
-                        "showcase|level",
+                        "showcase|level|outdoor",
                         "the world the still frames",
                         |p: &mut Parsing, v| {
                             p.args.source = v.word(
-                                &[("showcase", Source::Showcase), ("level", Source::Level)],
-                                "showcase or level",
+                                &[
+                                    ("showcase", Source::Showcase),
+                                    ("level", Source::Level),
+                                    ("outdoor", Source::Outdoor),
+                                ],
+                                "showcase, level or outdoor",
                             )?;
+                            Ok(())
+                        },
+                    ),
+                    Flag::value(
+                        &["--time"],
+                        "HH:MM",
+                        "the outdoor sky's time of day (12:00)",
+                        |p: &mut Parsing, v| {
+                            p.args.time = Some(flythrough::daylight::parse_time(v.text)?);
                             Ok(())
                         },
                     ),
@@ -338,6 +357,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         args: Args {
             seed: 1,
             source: Source::Showcase,
+            time: None,
             shots: Shots::One(SHOTS[0]),
             size: [1920, 1080],
             at: None,
@@ -360,8 +380,14 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     };
     table().parse_into(argv, &mut p)?;
     let args = p.args;
-    if args.source == Source::Level && p.shot_given {
-        return Err("--shot frames the showcase; the level takes --at, --yaw and --pitch".into());
+    if args.source != Source::Showcase && p.shot_given {
+        return Err(
+            "--shot frames the showcase; the level and the hills take --at, --yaw and --pitch"
+                .into(),
+        );
+    }
+    if args.source != Source::Outdoor && args.time.is_some() {
+        return Err("--time sets the outdoor sky; it takes --source outdoor".into());
     }
     if args.shots == Shots::All && args.out.is_some() {
         return Err("--shot all writes into --out-dir, not --out".into());
@@ -381,6 +407,18 @@ struct Still {
 }
 
 impl Args {
+    /// The outdoor sky at `--time`, altitude 0 at the hills' mean height; `None` for the other
+    /// sources.
+    fn sky(&self) -> Option<vxe_render::sky::Sky> {
+        (self.source == Source::Outdoor).then(|| {
+            flythrough::daylight::Clock {
+                minutes: self.time.unwrap_or(flythrough::daylight::DEFAULT_TIME_MIN),
+                ..Default::default()
+            }
+            .sky(flythrough::outdoor::BASE_Z as f32)
+        })
+    }
+
     /// The stills this run writes.
     fn stills(&self, level_spawn: VoxelCoord) -> Vec<Still> {
         let exposure = self.exposure.unwrap_or(self.lighting().exposure);
@@ -405,6 +443,27 @@ impl Args {
             }
         };
         match (self.source, self.shots) {
+            (Source::Outdoor, _) => {
+                let auto = AutoExposure {
+                    min: flythrough::cli::OUTDOOR_MIN,
+                    max: flythrough::cli::OUTDOOR_MAX,
+                    ..AutoExposure::eye()
+                };
+                let exposure = match self.exposure {
+                    Some(Exposure::Manual(e)) => Exposure::Manual(e),
+                    _ => Exposure::Auto(auto),
+                };
+                vec![Still {
+                    path: self.out_path(),
+                    camera: camera_at(
+                        self.at.unwrap_or(level_spawn.0),
+                        self.yaw.unwrap_or(0.0),
+                        self.pitch.unwrap_or(0.0),
+                    ),
+                    exposure,
+                    probe_spacing: self.light.probe_spacing,
+                }]
+            }
             (Source::Level, _) => vec![Still {
                 path: self.out_path(),
                 camera: camera_at(
@@ -490,6 +549,7 @@ fn render_still(
         },
         look: args.look,
         resolution: args.light.resolution,
+        sky: args.sky(),
     }
     .frame(device, queue, gpu, world)?;
     for _ in 0..frames {
@@ -638,8 +698,28 @@ mod tests {
         assert_eq!(parse(&["--source", "level"]).unwrap().source, Source::Level);
         assert_eq!(
             parse(&["--source", "cave"]).err().as_deref(),
-            Some("--source takes showcase or level, not cave")
+            Some("--source takes showcase, level or outdoor, not cave")
         );
+        // The hills: the sky at `--time` (12:00 unset), the outdoor auto exposure unless a
+        // number is given, and `--time` refused off them.
+        let o = parse(&["--source", "outdoor", "--time", "17:45"]).unwrap();
+        assert_eq!(o.source, Source::Outdoor);
+        assert_eq!(o.time, Some(17.0 * 60.0 + 45.0));
+        assert!(o.sky().is_some() && d.sky().is_none());
+        match o.stills(VoxelCoord([0; 3]))[0].exposure {
+            Exposure::Auto(a) => assert_eq!(
+                (a.min, a.max),
+                (flythrough::cli::OUTDOOR_MIN, flythrough::cli::OUTDOOR_MAX)
+            ),
+            e => panic!("outdoor exposure {e:?}"),
+        }
+        let fixed = parse(&["--source", "outdoor", "--exposure", "0.001"]).unwrap();
+        assert_eq!(
+            fixed.stills(VoxelCoord([0; 3]))[0].exposure,
+            Exposure::Manual(0.001)
+        );
+        assert!(parse(&["--time", "12:00"]).is_err());
+        assert!(parse(&["--source", "outdoor", "--shot", "hall"]).is_err());
         assert!(parse(&["--source", "level", "--shot", "hall"]).is_err());
         assert!(parse(&["--shot", "all", "--out", "x.png"]).is_err());
         let o = parse(&["--shot", "chasm", "--yaw", "45", "--exposure", "2"]).unwrap();

@@ -829,12 +829,12 @@ figure, itself a guess until that plan's close reads it; "guess" means no plan e
 | volumetrics: dust, fog, smoke | 0.3 to 0.6 | 2.0 to 3.9 (6.5x) | guess | M8 (`roadmap.md`): a coarse volume marched at half resolution with a fixed step count; scaled from Plan 0035's cloud march |
 | effects: debris particles | 0.1 to 0.3 | 0.7 to 2.0 (6.5x) | guess | M8, no plan |
 | **cave frame subtotal** (the first consumer's) | **1.9 to 4.6** | **13.6 to 38.4** | | the six rows above (the entity rows measured at 4 to 16 walkers, Plan 0062) |
-| sun and sky | 0.85 to 1.9 | 5.2 to 11.4 | budgeted | Plan 0032 (redesigned 2026-11-10), ADR-0026, ADR-0027: sky LUTs, the directional ray and the sky ray into Plan 0058's direct target, the composite's sky. The row is the 2026-10-22 budget, kept so the totals below stand; the redesign drops the probes' sun rays and the gradient re-shade and guesses 0.5 to 1.0 and 3 to 6 at one sky ray, unmeasured |
+| sun and sky | 0.87 to 0.92 | 7.8 to 9.6 | measured | Plan 0032 Phase 7 (a68f2659 plus its tree, loaded, indicative; the table under "The sun and the sky on the outdoor hills" below), ADR-0026, ADR-0027: the light pass's growth over `--sky off` plus the three sky passes, at noon, midnight and inside the cave mouth, one sky ray, 1080p from FSR 2 at 1.5. RTX 3080 Laptop and RADV RENOIR; most of it the key ray and the sky ray in the light pass. Read before Plan 0086 (ADR-0070), which moves the sky ray's cost |
 | far field | 0.3 to 1.0 | 2.0 to 6.5 (6.5x) | budgeted | Plan 0033, ADR-0028: outdoor horizon view, primary rays; the sun ray's growth is unprojected |
 | clouds and aerial perspective | 0.5 to 1.0 | 3.6 to 7.7 | budgeted | Plan 0035, ADR-0030; it proposes a 1.0 ms sub-line on the floor |
 | weather | 0.25 to 0.8 | 0.75 to 8.0 | budgeted | Plan 0036, ADR-0031: fall map, precipitation, composite terms |
 | night sky | 0.25 to 0.65 | 2.0 to 5.2 | budgeted | Plan 0037, ADR-0032: aurora and the composite's stars and bodies; it proposes a 0.3 ms cap on the floor |
-| **outdoor frame total** (cave rows plus M10) | **4.05 to 9.95** | **27.2 to 77.2** | | all rows |
+| **outdoor frame total** (cave rows plus M10) | **4.07 to 8.97** | **29.8 to 75.4** | | all rows (sun and sky measured, Plan 0032's close) |
 
 Game work is the consumer's CPU, outside this GPU ledger; today's frame CPU (table 1) runs
 beside the GPU.
@@ -951,3 +951,68 @@ per-pass lines are in `docs/plans/logs/0056.md`.
 **The list of analytic lights (Plan 0058, the Phase 3 cost table at a616204 and Phase 5g at 71b4478, release, headless, `--level --seed 1`, 1920 x 1080, FSR 2 at 1.5, the frame line's median of 30 timed frames after 900, exclusive perf lock, each run started at a 1-minute load of 2 or less except one 8-light arm at 9.4 that was rerun at 15.3, one round each against the plan's three).** RTX 3080 Laptop GPU, lamp off, at the spawn: the light pass reads 0.031 ms with no light, then 0.142, 0.328, 0.730, 1.430 and 2.699 ms at 1, 2, 4, 8 and 16 list lights. That is 0.167 to 0.175 ms per light in reach, against the plan's projection of 0.08 to 0.12. At the vein it reads 0.031 ms with none, 0.556 at 8 and 1.050 at 16. The GPU frame is 2.181 ms with none and 5.314 ms with sixteen (5.406 with the lamp and fifteen). RADV RENOIR at the spawn: the light pass reads 0.221 ms with none and 24.790 ms at sixteen, 1.54 ms per light, and the GPU frame 17.072 against 43.882 ms. At the vein it reads 8.974 ms at sixteen and the frame 26.900. **The RENOIR's light pass at sixteen is over section 2's 6.0 ms lighting line**. The plan claims no line, and Plan 0069's Portable profile caps the count (4, a guess). Denoise: any shaded light switches off Plan 0065's lamp-off skips, so with one light or more the a-trous at 4 iterations reads 0.537 to 0.562 ms (0.164 with none) on the RTX, 0.296 to 0.310 at 2 and 0.176 to 0.186 at 1. The RENOIR reads 3.220 to 3.243 ms at 4 with any light or the lamp, over the 3.0 ms denoise line. Temporal: 0.088 to 0.096 ms on the RTX against 0.055. Probes and gather with the lamp's bounce on: 0.006 and 0.126 to 0.161 ms with 0, 1 or 4 flagged lights at 900 frames, which is the frozen channel (0.138 ms probes at 300 frames). The steps view counts exactly one shadow ray per light in reach per casting pixel. The sync's stages are unmoved: the list never reaches the mirror. Rows in `docs/plans/logs/0058.md`, Phase 3 and Phase 5g.
 
 **The frame's bind groups kept and the march's discarded reads removed (Plan 0044 Phases 3 and 5, base 371fa7a, Phase 3 2056310, tip 777abc0, release, headless, `flythrough --autopilot --headless --seed 1`, the defaults: 1280 x 720 output, FSR 2 from 853 x 480, half lighting, streamed level; the three binaries alternated over two rounds, exclusive perf lock, each run started at a 1-minute load of 2.00 or less, 1.63 to 2.36 at the lock, 2026-11-15/16).** p50 in ms, base then tip, per round. RTX 3080 Laptop GPU: march GPU 1.574, 2.397 against 1.478, 1.436 (the base's rounds swing with the flight's frame count, 3434 and 2457 frames; the tip's read 4082 and 3969); hit pass 0.084, 0.127 against 0.081, 0.084; light pass 0.109, 0.191 against 0.089, 0.090. RADV RENOIR: march GPU 9.047, 8.799 against 8.941, 8.972; hit pass 0.906, 0.946 against 0.925, 0.852; light pass 0.644, 0.639 against 0.640, 0.641; the Phase 3 binary alone read 9.427 and 9.195 there, inside the flight-to-flight swing. Encode CPU (`gpu_frame.rs` `reading::encode_cpu_time_at_the_default_sizes`, 853 x 480 to 1280 x 720 under FSR 2, 300 encodes, loaded 3.7 to 9.5): p50 0.20 to 0.03 ms on the RTX and 0.22 to 0.06 ms on the RENOIR. The hit and light passes are far under the 3.0 and 6.0 ms lines here; the upscale line stays over under FSR 2 (above). Rows in `docs/plans/logs/0044.md`, Phase 3 and Close.
+
+**The sun and the sky on the outdoor hills (Plan 0032 Phase 7, a68f2659 plus Phase 7's tree, release, headless, `flythrough --source outdoor --headless --seed 1 --render 1920x1080 --frames 300` at main's defaults: FSR 2 at 1.5, the far normal 2..6, the coarse shadow walk, half lighting, one sky ray; median of the last 30 frames, three runs each, the median of the three; exclusive perf lock).** NVIDIA GeForce RTX 3080 Laptop GPU (driver 615.78.08, the default adapter, dev reference) and AMD Radeon Graphics, RADV RENOIR (Mesa 26.2.5, `--adapter AMD`, the slow adapter). The base rows are the level's and the cave's spawns with no sky at 356b32a1 (Plan 0069's tip, this branch's base). Every run's 1-minute load was 3.2 to 36.6 (the flights' own workers), so each reading is loaded (indicative). Every streamed run but one AMD noon and one AMD noon sky-off run reached full residency after its frame 270 (the ready time plus 270 median frames), so those are unsettled; the level is not streamed. Times in ms; "sky" sums the three sky passes.
+
+| adapter | run | GPU frame | sky | light | temporal | atrous | composite | exposure |
+|---|---|---|---|---|---|---|---|---|
+| RTX 3080 Laptop | outside, 12:00 | 5.593 | 0.079 | 1.040 | 0.086 | 0.415 | 0.145 | 0.032 |
+| RTX 3080 Laptop | outside, 12:00, `--sky off` | 4.851 | 0 | 0.203 | 0.088 | 0.431 | 0.142 | 0.033 |
+| RTX 3080 Laptop | outside, 00:00 | 5.463 | 0.077 | 1.010 | 0.085 | 0.407 | 0.145 | 0.032 |
+| RTX 3080 Laptop | outside, 00:00, `--sky off` | 5.030 | 0 | 0.211 | 0.091 | 0.446 | 0.144 | 0.034 |
+| RTX 3080 Laptop | inside, 12:00 | 5.053 | 0.084 | 0.893 | 0.084 | 0.470 | 0.147 | 0.034 |
+| RTX 3080 Laptop | inside, 12:00, `--sky off` | 4.217 | 0 | 0.111 | 0.083 | 0.478 | 0.145 | 0.034 |
+| RTX 3080 Laptop | base, level | 3.310 | 0 | 0.099 | 0.098 | 0.623 | 0.164 | 0.036 |
+| RTX 3080 Laptop | base, cave | 5.940 | 0 | 0.261 | 0.153 | 1.041 | 0.231 | 0.053 |
+| RADV RENOIR | outside, 12:00 | 45.810 | 0.316 | 10.515 | 0.640 | 2.542 | 1.320 | 0.029 |
+| RADV RENOIR | outside, 12:00, `--sky off` | 37.292 | 0 | 1.223 | 0.685 | 2.692 | 1.453 | 0.029 |
+| RADV RENOIR | outside, 00:00 | 45.716 | 0.315 | 10.512 | 0.626 | 2.539 | 1.313 | 0.029 |
+| RADV RENOIR | outside, 00:00, `--sky off` | 36.032 | 0 | 1.206 | 0.631 | 2.538 | 1.305 | 0.029 |
+| RADV RENOIR | inside, 12:00 | 37.519 | 0.315 | 8.224 | 0.641 | 2.630 | 1.398 | 0.029 |
+| RADV RENOIR | inside, 12:00, `--sky off` | 29.423 | 0 | 0.768 | 0.627 | 2.604 | 1.331 | 0.029 |
+| RADV RENOIR | base, level | 20.802 | 0 | 0.621 | 0.718 | 3.298 | 1.433 | 0.029 |
+| RADV RENOIR | base, cave | 22.927 | 0 | 0.860 | 0.712 | 3.306 | 1.437 | 0.029 |
+
+The default look is `face`, so the noon run is also the `--look face` reading. The runs and the
+per-run figures are in `docs/plans/logs/0032.md`, Phase 7.
+
+**The forest at a low sun (Plan 0032 Phase 8, a66a9463 plus Phase 8's tree, release, headless, `flythrough --source outdoor --headless --seed 1 --render 1920x1080 --frames 300 --spawn forest --sun 10,180 --trees T` at main's defaults, median of the last 30 frames, three runs each and their median; exclusive perf lock; every run loaded by its own workers (start load 3.6 to 15.8) and unsettled at its frame 270).** NVIDIA GeForce RTX 3080 Laptop GPU (driver 615.78.08, dev reference) and AMD Radeon Graphics, RADV RENOIR (Mesa 26.2.5, `--adapter AMD`, the slow adapter). Times in ms; against §2's lighting line (6.0 ms in the HUD) and 16.6 ms a frame.
+
+| adapter | trees | light | GPU frame | light vs 6.0 | frame vs 16.6 | key ray steps mean / p99 (`--view steps`) |
+|---|---|---|---|---|---|---|
+| RTX 3080 Laptop | none | 1.334 | 5.640 | under | under | 22.72 / 57 |
+| RTX 3080 Laptop | forest, fill 128 | 1.392 | 5.425 | under | under | 19.21 / 79 |
+| RTX 3080 Laptop | forest, fill 64 | 1.318 | 5.201 | under | under | 19.28 / 89 |
+| RTX 3080 Laptop | forest, fill 128, `--shadow-walk full` | 1.667 | 5.649 | under | under | 24.12 / 92 |
+| RADV RENOIR | none | 10.641 | 38.096 | over | over | 23.23 / 61 |
+| RADV RENOIR | forest, fill 128 | 12.481 | 39.307 | over | over | 19.24 / 80 |
+| RADV RENOIR | forest, fill 64 | 12.521 | 39.624 | over | over | 19.31 / 92 |
+| RADV RENOIR | forest, fill 128, `--shadow-walk full` | 15.135 | 41.984 | over | over | 24.17 / 95 |
+
+Ratios of the light pass: forest/open at fill 128 1.04 (RTX) and 1.17 (RADV), at fill 64 0.99 and 1.18; fill 64/128 0.95 and 1.00; full/coarse at fill 128 1.20 and 1.21. The `--look face` configuration is the default look. Per-run figures in `docs/plans/logs/0032.md`, Phase 8.
+
+**The render profiles (Plan 0069 Phase 7, 2026-11-17, release `flythrough` at the code of
+9390b033, `--headless --hud --frames 600 --adapter NVIDIA|Radeon --profile P`, the vein
+`--level --seed 1 --pose vein`, the hall `--source showcase --shot hall`, the castle `--castle
+--castle-shot gate --seed 1`, the frame line's `march GPU p50` (FSR 2's passes included, the
+bake slice not), the median of three alternated rounds, one exclusive perf lock per run; most
+rounds read a 1-minute load over 2, so every figure is loaded (indicative)).** Every pass and
+round: [Plan 0069's readings log](../plans/logs/0069.md), Phase 7. Frame GPU in ms, vein /
+hall / castle; the line each profile is held to is the owner's pick at Plan 0069's window.
+
+- *Floor, RTX 3080 Laptop* (1920 x 1080 from 1280 x 720, FSR 2): 2.92 / 4.25 / 4.19; FSR 2
+  1.32 to 1.34; hit 0.37 / 2.44 / 1.49. Inside the 16.6 ms line.
+- *Floor, RADV RENOIR*: 19.81 / 34.82 / 30.71; FSR 2 9.38 to 9.52; hit 3.20 / 21.62 / 13.51.
+  Over the 16.6 ms line, as expected below the floor's class.
+- *Portable, RTX 3080 Laptop* (1280 x 720 from 853 x 480, FSR 2, 2 translucent layers, light
+  cap 4, no lamp bounce, residency 12, 18, 1): 1.21 / 1.99 / 1.84; FSR 2 0.60 to 0.61.
+  The `own` arm: 1.10 / 1.63 / 1.48.
+- *Portable, RADV RENOIR*: 8.14 / 16.30 / 13.88; FSR 2 4.06 to 4.08; hit 1.44 / 10.52 / 6.74.
+  Inside the 33.3 ms column. The `own` arm: 5.77 / 13.80 / 11.68.
+- *Performance, RTX 3080 Laptop* (2530 x 1378 from 1265 x 689, FSR 2): 3.39 / 4.72 / 4.63;
+  FSR 2 1.80 to 1.84. No gate.
+- *Performance, RADV RENOIR*: 22.59 / 36.80 / 34.18; FSR 2 12.43 to 12.59. No gate.
+- *High, RTX 3080 Laptop* (1920 x 1080 at internal scale 1, FSR 2): 5.31 / 8.25 / 7.77; FSR 2
+  2.01 to 2.04; hit 0.82 / 5.25 / 3.27. No gate.
+- *High, RADV RENOIR*: 38.64 / 68.46 / 60.07; FSR 2 15.34 to 15.82. Not a profile for this
+  adapter (owner, Plan 0069's window: "no"). No gate.

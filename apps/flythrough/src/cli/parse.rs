@@ -34,8 +34,14 @@ pub fn parse_args() -> Result<Args, String> {
 
 /// The arguments after the program name.
 pub fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, String> {
+    let argv: Vec<String> = argv.into_iter().collect();
+    let mut args = Args::defaults();
+    args.argv = argv.clone();
+    if let Some(p) = super::settings::profile_in(&argv)? {
+        args.seed_profile(p);
+    }
     let mut p = Parsing {
-        args: Args::defaults(),
+        args,
         given: Given::default(),
     };
     table().parse_into(argv, &mut p)?;
@@ -45,7 +51,7 @@ pub fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, S
 
 impl Args {
     /// Every flag's default.
-    fn defaults() -> Self {
+    pub(super) fn defaults() -> Self {
         let lighting = crate::default_lighting();
         Args {
             seed: 1,
@@ -89,6 +95,10 @@ impl Args {
             check_args: false,
             help: false,
             keys: false,
+            settings: false,
+            profile: vxe_render::Profile::Floor,
+            light_cap: vxe_render::MAX_LIGHTS as u32,
+            output_hint: None,
             audio: AudioArgs {
                 on: false,
                 debug: false,
@@ -135,6 +145,10 @@ impl Args {
                 read_missing: false,
             },
             loading: LoadingArgs::default(),
+            argv: Vec::new(),
+            switch_at: Vec::new(),
+            spawn_hash: false,
+            outdoor: super::OutdoorArgs::default(),
         }
     }
 }
@@ -153,6 +167,9 @@ fn run_mode(g: &Given) -> Result<RunMode, String> {
     if (g.thin_rig || g.seam_rig) && (g.level || g.showcase || g.room.is_some()) {
         return Err(RIGS_REFUSE.to_owned());
     }
+    if g.outdoor && (g.level || g.room.is_some() || g.thin_rig || g.seam_rig) {
+        return Err(super::outdoor::OUTDOOR_REFUSES.to_owned());
+    }
     Ok(if g.thin_rig {
         RunMode::ThinRig
     } else if g.seam_rig {
@@ -161,6 +178,8 @@ fn run_mode(g: &Given) -> Result<RunMode, String> {
         RunMode::Room(edge)
     } else if g.showcase {
         RunMode::Showcase
+    } else if g.outdoor {
+        RunMode::Outdoor
     } else if g.level {
         RunMode::Level
     } else {
@@ -208,6 +227,10 @@ fn settle(args: &mut Args, given: &Given) -> Result<(), String> {
     if mode.is_showcase() && (saves || args.vault || args.autopilot || args.castle) {
         return Err(SHOWCASE_REFUSES.to_owned());
     }
+    args.outdoor.auto = mode.is_outdoor() && !given.exposure && !given.adaptation;
+    if mode.is_outdoor() && (saves || args.vault || args.castle) {
+        return Err(super::outdoor::OUTDOOR_REFUSES.to_owned());
+    }
     args.look.preset.tuning.face_mix = given.face_mix.unwrap_or(args.look.preset.tuning.face_mix);
     args.look.preset.far_normal = given.far_normal.unwrap_or(args.look.preset.far_normal);
     if args.autopilot && mode.is_level() {
@@ -229,7 +252,7 @@ fn settle(args: &mut Args, given: &Given) -> Result<(), String> {
         );
     }
     if args.walk {
-        walk_allowed(mode == RunMode::Cave).map_err(|e| format!("--walk: {e}"))?;
+        walk_allowed(mode.streams()).map_err(|e| format!("--walk: {e}"))?;
     }
     if saves && !mode.is_level() {
         return Err(SAVE_NEEDS_LEVEL.to_owned());
@@ -268,6 +291,7 @@ pub(crate) fn check_path(args: &Args, path_mode_flag: bool) -> Result<(), String
     } else if args.mode.is_showcase() {
         Some(Scene::Showcase)
     } else if args.mode.is_level()
+        || args.mode.is_outdoor()
         || args.mode.room().is_some()
         || args.mode.is_thin_rig()
         || args.mode.is_seam_rig()

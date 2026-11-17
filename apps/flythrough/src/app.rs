@@ -109,7 +109,7 @@ pub struct Flythrough {
 
 impl Flythrough {
     /// The run over `world`, streamed when `stream` is given, built from the app's arguments.
-    fn start_run(&mut self, world: World, stream: Option<Stream>) {
+    pub(crate) fn start_run(&mut self, world: World, stream: Option<Stream>) {
         let pilot = self
             .args
             .autopilot
@@ -201,11 +201,13 @@ impl Flythrough {
             menu: Default::default(),
             notice: None,
             loading: None,
+            switch: false,
+            retree: false,
         });
     }
 
     /// The streamed run, its world's build joined first when it is still on its thread.
-    fn start_streamed_run(&mut self, pending: Pending) {
+    pub(crate) fn start_streamed_run(&mut self, pending: Pending) {
         let boxed = match pending {
             Pending::Stream(boxed) => boxed,
             Pending::StreamBuilding(build) => build
@@ -319,10 +321,14 @@ impl App for Flythrough {
         if self.failure.is_some() {
             return Flow::Exit;
         }
-        match self.run.as_mut() {
+        let flow = match self.run.as_mut() {
             Some(run) => run.frame(gpu, input, dt, surface),
             None => Flow::Exit,
+        };
+        if flow == Flow::Continue && self.run.as_ref().is_some_and(|r| r.switch || r.retree) {
+            self.switch_source(gpu);
         }
+        flow
     }
 }
 
@@ -336,7 +342,11 @@ pub fn start_clock() -> Instant {
 /// Runs `app` in a window, or on an offscreen target with no window under `--headless`, at
 /// `--render`'s size (1280 x 720 by default), and gives the session's outcome.
 pub fn run(app: Flythrough) -> Result<(), String> {
-    let size = app.args.render.unwrap_or([1280, 720]);
+    let size = app
+        .args
+        .render
+        .or(app.args.output_hint)
+        .unwrap_or([1280, 720]);
     let failure = app.failure.clone();
     if app.args.headless {
         // On the high-performance adapter, or with `--adapter` the first whose name contains

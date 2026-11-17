@@ -25,6 +25,8 @@ mod loading;
 mod present;
 mod probes;
 mod readback;
+mod settings;
+pub mod sky;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 
@@ -98,8 +100,8 @@ pub use exposure::{
     AutoExposure, EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState, Metering,
 };
 pub use frame::{
-    ATROUS_ITERATIONS, DEFAULT_LIGHT_FLOOR, DEFAULT_PROBE_FREEZE, Light, MAX_LIGHTS, Params,
-    Upscaler,
+    ATROUS_ITERATIONS, DEFAULT_LIGHT_FLOOR, DEFAULT_PROBE_FREEZE, DEFAULT_SKY_RAYS, Light,
+    MAX_LIGHTS, MAX_SKY_RAYS, Params, Upscaler,
 };
 pub use frame::{
     CrackShares, EntityLight, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, LightWeights,
@@ -121,6 +123,9 @@ pub use loading::{
 };
 pub use present::Presenter;
 pub use probes::{DEFAULT_H_MOVE, DEFAULT_PROBE_SPACING, ProbeVolume};
+pub use settings::{
+    ApplyClass, BakeKnobs, BuildSettings, Profile, RenderSettings, SettingsChange, UpscalerChoice,
+};
 pub use {glam, wgpu};
 
 /// The hit pass's modules (`common`, `mirror`, `walk`, `hitrec`, `field_walk`, `hit`), which

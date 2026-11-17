@@ -18,6 +18,7 @@ use crate::{
 };
 use vxe_world::ChunkCoord;
 
+mod apply;
 mod baked;
 mod compose;
 mod dispatch;
@@ -28,6 +29,7 @@ mod pipelines;
 mod probe_channel;
 mod readback_ring;
 mod settings;
+mod sky;
 mod state;
 mod targets;
 mod timer;
@@ -43,6 +45,8 @@ pub(crate) use self::pipelines::*;
 use self::probe_channel::*;
 use self::readback_ring::*;
 pub use self::settings::*;
+use self::sky::SkyState;
+pub(crate) use self::sky::{SKY_ATMOSPHERE_WGSL, SKY_PASSES, SKY_WGSL};
 pub(crate) use self::state::*;
 use self::targets::*;
 pub use self::timer::*;
@@ -84,6 +88,16 @@ pub struct Frame {
     composite_capture: Option<wgpu::Texture>,
     /// The entities' pool, instances and tree (ADR-0050), group 0's binding 15.
     entities: crate::entities::EntityMirror,
+    /// The scale [`Frame::apply_settings`] last applied; [`Frame::settings`] reads it while
+    /// the sizes still match it.
+    scale: RenderScale,
+    /// The `Rebuild` values the caller last built with ([`Frame::built_with`]).
+    build: crate::settings::BuildSettings,
+    output_hint: Option<[u32; 2]>,
+    /// [`Frame::history_restarts`].
+    restarts: u64,
+    /// The sky, its uniform and LUTs ([`Frame::set_sky`]).
+    sky: SkyState,
 }
 
 impl Frame {
@@ -123,6 +137,11 @@ impl Frame {
                 device,
                 crate::entities::DEFAULT_ENTITY_POOL_BYTES,
             ),
+            scale: RenderScale::One,
+            build: crate::settings::BuildSettings::default(),
+            output_hint: None,
+            restarts: 0,
+            sky: SkyState::new(device),
         }
     }
 
@@ -257,7 +276,16 @@ impl Frame {
 
     /// Drops all history: the next encoded frame starts every pixel afresh.
     pub fn reset_history(&mut self) {
+        self.restarts += 1;
         self.history().valid = false;
+    }
+
+    /// The restarts of the temporal history so far: each [`Frame::reset_history`] (a size, an
+    /// upscaler, a jitter or a lighting resolution change makes one) and each drop of the
+    /// upscaler's history alone ([`Frame::reset_upscaler_history`], a change of view). An
+    /// edit's history kill is not one.
+    pub fn history_restarts(&self) -> u64 {
+        self.restarts
     }
 
     /// Encodes and submits one frame of `camera` over `world` with history, after advancing
@@ -341,7 +369,7 @@ impl Frame {
     /// upscaler's history (not the lighting's).
     pub fn set_look(&mut self, look: LookParams) {
         if look.view != self.state.look.view {
-            self.history().view_changed = true;
+            self.reset_upscaler_history();
         }
         self.state.look = look;
     }
@@ -568,6 +596,7 @@ impl Frame {
             + self.entities.bytes()
             + self.probe.volume.get().map_or(0, ProbeVolume::bytes)
             + self.exposure.bytes()
+            + self.sky.bytes()
             + self.up.fsr.as_ref().map_or(0, Fsr2::bytes)
             + if self.baked.store.pool().size() > crate::bake::MINIMAL_POOL_BYTES {
                 self.baked.store.pool().size()

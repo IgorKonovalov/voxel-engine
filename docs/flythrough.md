@@ -173,7 +173,19 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 
 | Flag | Does |
 |------|------|
-| `--source cave\|level\|showcase` | The world: the streamed noise cave [default], the bounded level, or the showcase cavern (a bounded 72 m hall lit by four ores; the lamp off, light radius 19 and its `hall` shot unless told otherwise; no `--save`, `--replay`, `--vault`, `--autopilot`, `--room` or `--castle`) |
+| `--source cave\|level\|showcase\|outdoor` | The world: the streamed noise cave [default], the bounded level, the showcase cavern (a bounded 72 m hall lit by four ores; the lamp off, light radius 19 and its `hall` shot unless told otherwise; no `--save`, `--replay`, `--vault`, `--autopilot`, `--room` or `--castle`), or the streamed outdoor hills with a cave mouth under a sky (no `--level`, `--castle`, `--vault`, `--room`, a rig, `--save` or `--replay`). The banner's line starts `source NAME` |
+| `--spawn outside\|inside\|forest` | Where `--source outdoor` starts: 30 m before the cave mouth facing it, 2 m up [default], 3 m inside the tunnel facing out, or 64 m north of the mouth facing north, 2 m up, 10 degrees down |
+| `--trees none\|sparse\|forest` | Trees on the outdoor hills: about 9 % or 94 % of the 48-voxel cells of a 3072-voxel box between the mouth and the forest spawn; the banner's source reads `outdoor, trees NAME` [sparse] |
+| `--leaf-fill N` | The canopy voxels kept, of 256, 1 to 256 [64] |
+| `--sun EL,AZ` | Fix the sun at this elevation and azimuth in degrees (clockwise from north, 180 south), the moon opposite; `PageUp` and `End` leave it, and the banner reads `sun EL/AZ fixed` in place of the time |
+| `--time HH:MM` | The time of day the sky starts at, latitude 45 at an equinox [12:00]; the banner names it while a sky is set |
+| `--day-length S` | Seconds for a whole day while the cycle runs (`End`) [1200] |
+| `--sun-radius DEG` | The sun's angular radius, 0.05 to 10 degrees: a wider disc softens every sun shadow (the real sun's is 0.2665) [3] |
+| `--moon-radius DEG` | The moon's angular radius, 0.05 to 10 degrees: its disc in the sky and its shadows' softness [3] |
+| `--sky-rays N` | Cosine-weighted sky rays a lighting pixel casts while a sky is set, 1 to 4; the banner names the count [1] |
+| `--sky on\|off` | A sky over the world [on for `--source outdoor`, else off] |
+| `--switch-at F,..` | Switch the source at these frames, as `Home` does, and print the spawn's hash at the end |
+| `--spawn-hash` | Print the voxel hash of the chunks within 2 of the spawn's chunk at the end |
 | `--level` | The bounded level (as `--source level`) |
 | `--thin-rig` | A bounded scene of thin features for the field look |
 | `--seam-rig` | A bounded scene of seams for the field look |
@@ -202,7 +214,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--internal-scale 1\|1.5\|2` | The output size over the internal size [1.5] |
 | `--jitter on\|off` | The primary rays' sub-pixel jitter (selects the `own` upscaler) |
 | `--sharpen S` | The upscaler's sharpening, 0 to 1 [0.5] |
-| `--upscaler off\|own\|fsr2` | The upscaler [fsr2, or own with `--jitter`, or off at scale 1] |
+| `--upscaler off\|own\|fsr2` | The upscaler [fsr2, or own with `--jitter`, or off at scale 1 but under `--profile high`] |
 | `--pan DEG_PER_S` | Turn the camera at a constant yaw rate (`.` stops and starts it) |
 | `--jitter-phases N` | FSR 2's jitter phase count, 1 to 1024 |
 | `--dither on\|off` | FSR 2's static one-level dither [off] |
@@ -289,6 +301,20 @@ benchmark so ended reports `ended: "aborted"` with 0 frames. Under `--tester` th
 frame's title is the path's scene and mode (`castle - benchmark`). `run.json` is schema 2:
 `load_ms` (device ready to the first world frame) and `load_stages` (`[{name, ms}]`, each
 stage's step time).
+
+### Render settings
+
+| Flag | Does |
+|------|------|
+| `--settings` | Print every render setting the flags give (`vxe_render::RenderSettings`, ADR-0055), one line per field: its name, its apply class (`live`, `settle`, `rebuild`) and its value; then exit |
+| `--profile floor\|portable\|performance\|high` | The render profile (`vxe_render::Profile`) the other flags edit, whatever their order: floor (1080p, FSR 2 at 1.5), portable (720p, FSR 2 at 1.5, fewer layers and lights, no lamp bounce, a smaller residency), performance (the window's size, FSR 2 at 2) or high (1080p, FSR 2 at 1; not for the slow adapter); its output hint sizes a headless run with no `--render`. The HUD's first mode row reads `profile: portable +1` with one field edited [floor] |
+| `--light-cap N` | Slots of the list of lights shaded, the headlamp's included, 1 to 16 [the profile's] |
+
+`PageDown` cycles the profiles in the window: the next one's translucent layers, lamp bounce,
+light cap, internal scale and bake budget apply from the next frame, and the profile row names
+the fields that wait for a restart with `--profile` (`restart for: lod.r_full,
+build.mirror_budget_bytes, build.residency`). `F4` takes the cycle once the menu frees it
+(ADR-0061).
 
 ### Diagnostics
 

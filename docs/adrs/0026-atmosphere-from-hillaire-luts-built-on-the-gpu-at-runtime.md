@@ -1,10 +1,12 @@
 # ADR-0026: The atmosphere is Hillaire's LUTs, built on the GPU at runtime from parameters the game sets
 
-> **Status:** proposed; redrafted 2026-11-10 with Plan 0032's redesign: no probe ray reads the
+> **Status:** accepted (2026-11-17, Plan 0032's close), with an Outcome: the sky-view LUT is
+> rgba32float, the LUTs are tapped by `textureLoad`, and the deep-twilight residue of the
+> multiple-scattering term is a reading. Redrafted 2026-11-10 with Plan 0032's redesign: no probe ray reads the
 > sky (the probe volume is the lamp's bounce channel, ADR-0043); the sky's light on a surface is
 > ADR-0027's sky ray
 > **Date:** 2026-10-22
-> **Related plan(s):** [Plan 0032](../plans/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
+> **Related plan(s):** [Plan 0032](../plans/done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
 > (builds it); Plan 0035 (adds the aerial-perspective volume and the clouds on top of it);
 > Plan 0036 (weather changes the atmosphere's parameters)
 
@@ -108,5 +110,20 @@ decisive reason is the frame budget: outdoors, a large share of pixels miss.
 
 ## Outcome
 
-_(Added only at acceptance if implementation falsified something above. Dated. Never rewrite the
-body.)_
+**2026-11-17, Plan 0032's close.** Built as decided: the transmittance, multiple-scattering and
+sky-view LUTs are three passes at the front of the frame, rebuilt from the `Sky` the game sets,
+and a miss pixel reads the sky-view LUT. Three details differ from the body.
+
+- **The sky-view LUT is rgba32float (192 x 108 at 16 B, 331 776 B), not half float like the
+  transmittance LUT.** The night sky's
+  radiance at the day's view scale falls under rgba16float's normal range (Plan 0032 Phase 2).
+- **No filtering sampler.** Group 0 holds the sky uniform and the two LUTs the frame reads;
+  `sky.wgsl` taps them bilinear with `textureLoad`, so the frame's bind layout gains no sampler.
+- **Deep twilight is not exactly 0 with the multiple-scattering term on.** The LUT's rays reach
+  points around the planet under another horizon, so the zenith reads 4.08e-8 to 1.98e-10 of
+  the sun's illuminance between -12 and -18 degrees. The exact 0 holds under single
+  scattering, which a test asserts; the default sky's residue is a reading
+  (`docs/plans/logs/0032.md`, Phase 2).
+
+The sky passes read 0.08 ms on the RTX 3080 Laptop and 0.32 ms on the RADV RENOIR at 1080p
+(Plan 0032 Phase 7, loaded, `docs/nfr/02-frame-budget.md`).

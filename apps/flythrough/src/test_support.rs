@@ -153,6 +153,8 @@ pub(crate) fn bare_run(world: World) -> Run {
         menu: Default::default(),
         notice: None,
         loading: None,
+        switch: false,
+        retree: false,
     }
 }
 

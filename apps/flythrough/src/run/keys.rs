@@ -179,6 +179,11 @@ impl Run {
     /// the D-pad's up and down step the dig radius as a scroll line does.
     pub(crate) fn handle_input(&mut self, input: &Input) {
         self.toggle_keys(input);
+        if crate::daylight::clock_keys(input, &mut self.modes, ms_since(self.start)) {
+            println!("{}", self.modes.row(hud::HudRow::Lighting));
+        }
+        self.switch |= input.pressed(crate::daylight::KEY_SOURCE);
+        self.retree |= self.args.mode.is_outdoor() && input.pressed(crate::daylight::KEY_TREES);
         let scroll = input.scroll() + f32::from(u8::from(input.pad_pressed(PadButton::DpadUp)))
             - f32::from(u8::from(input.pad_pressed(PadButton::DpadDown)));
         if scroll != 0.0
@@ -197,6 +202,9 @@ impl Run {
         }
         for a in ACTIONS.iter().filter(|a| a.pressed(input)) {
             self.act(a.act);
+        }
+        if input.pressed(crate::toggles::KEY_PROFILE) {
+            self.cycle_profile();
         }
     }
 

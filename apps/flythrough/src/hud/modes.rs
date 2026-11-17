@@ -97,13 +97,19 @@ impl ModeKey {
 /// so a test drives it without a window.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Modes {
+    /// The render profile's row (`profile: portable +2`, then `restart for: ...` while a
+    /// rebuild is pending), written by the run when it changes; empty writes no row.
+    pub profile: String,
     pub lighting: vxe_render::Lighting,
     pub resolution: vxe_render::LightingResolution,
     /// The ore's emission scale pulses.
     pub pulse: bool,
     /// The world source the line names first (`source showcase`), when it names one.
     pub source: Option<&'static str>,
-    banner_at: f64,
+    /// A sky is set: the line names the clock's time and cycle after the source.
+    pub(crate) sky: bool,
+    pub(crate) clock: crate::daylight::Clock,
+    pub(crate) banner_at: f64,
     /// The auto exposure `Q` returns to, under its preset's name.
     auto: (Adaptation, vxe_render::AutoExposure),
     /// The exposure state as last read back.
@@ -249,10 +255,13 @@ impl Modes {
         now_ms: f64,
     ) -> Self {
         Self {
+            profile: String::new(),
             lighting,
             resolution,
             pulse: false,
             source: None,
+            sky: false,
+            clock: crate::daylight::Clock::default(),
             banner_at: now_ms,
             auto: match lighting.exposure {
                 vxe_render::Exposure::Auto(a) => (Adaptation::Eye, a),
@@ -303,9 +312,14 @@ impl Modes {
         }
     }
 
-    /// Writes the mode block, one row per [`HudRow`] in order, each ending in a line break,
-    /// then the walkers' row while one is placed and the viewer's under `--model`.
+    /// Writes the mode block: the profile row when set, then one row per [`HudRow`] in order,
+    /// each ending in a line break, then the walkers' row while one is placed and the
+    /// viewer's under `--model`.
     pub fn write_rows(&self, out: &mut String) {
+        if !self.profile.is_empty() {
+            out.push_str(&self.profile);
+            out.push('\n');
+        }
         for row in HudRow::ALL {
             self.write_row(row, out);
             out.push('\n');
@@ -603,6 +617,10 @@ impl Modes {
         let on = |b: bool| if b { "on" } else { "off" };
         if let Some(s) = self.source {
             let _ = write!(out, "source {s}, ");
+        }
+        if self.sky {
+            self.clock.write_words(out);
+            let _ = write!(out, ", sky rays {}, ", l.sky_rays);
         }
         let _ = write!(
             out,

@@ -51,15 +51,10 @@ pub fn jitter_at(frame: u32, phases: u32) -> [f32; 2] {
 /// blended as a moving one (ADR-0024).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Upscaler {
-    /// The reconstruction kernel's width.
-    pub width: f32,
     /// The current colour's weight in the blend where the history held still.
     pub alpha: f32,
     /// [`Upscaler::alpha`] where the history moved by 0.01 output pixels or more.
     pub alpha_moving: f32,
-    /// The clip box around the 3 x 3 samples' YCoCg mean, in standard deviations (inside
-    /// their minimum and maximum).
-    pub clip_gamma: f32,
     /// A light change: the lamp's term moved by more than this share of the larger of the
     /// two.
     pub change_rel: f32,
@@ -68,6 +63,13 @@ pub struct Upscaler {
     /// The frames between the lamps compared, 1 to [`LAMP_FRAMES`].
     pub change_frames: u32,
 }
+
+/// The upscale pass's reconstruction kernel width ([`Upscaler`]).
+pub(crate) const UPSCALE_WIDTH: f32 = 0.6;
+
+/// The upscale pass's clip box around the 3 x 3 samples' YCoCg mean, in standard deviations
+/// (inside their minimum and maximum).
+pub(crate) const UPSCALE_CLIP_GAMMA: f32 = 1.0;
 
 /// Frames of light lists the frame keeps for [`Upscaler::change_frames`].
 pub(crate) const LAMP_FRAMES: usize = 32;
@@ -78,10 +80,8 @@ impl Default for Upscaler {
     /// (ADR-0024).
     fn default() -> Self {
         Self {
-            width: 0.6,
             alpha: 0.1,
             alpha_moving: 0.2,
-            clip_gamma: 1.0,
             change_rel: 0.1,
             change_abs: 0.01,
             change_frames: 24,
@@ -107,7 +107,7 @@ impl Upscaler {
     /// The reconstruction kernel at offset `(x, y)` output pixels, 1 at the centre
     /// (`up_kernel` in `upscale.wgsl`).
     pub(super) fn kernel(&self, x: f32, y: f32) -> f32 {
-        (-2.29 * (x * x + y * y) / (self.width * self.width)).exp()
+        (-2.29 * (x * x + y * y) / (UPSCALE_WIDTH * UPSCALE_WIDTH)).exp()
     }
 
     /// The nearest sample's mean kernel weight at `scale` output pixels per internal pixel:
@@ -126,10 +126,10 @@ impl Upscaler {
 
     pub(super) fn uniform(&self, scale: f32) -> UpscaleUniform {
         UpscaleUniform {
-            width: self.width,
+            width: UPSCALE_WIDTH,
             alpha: self.alpha,
             alpha_moving: self.alpha_moving,
-            clip_gamma: self.clip_gamma,
+            clip_gamma: UPSCALE_CLIP_GAMMA,
             w_mean: self.mean_weight(scale),
             change_rel: self.change_rel,
             change_abs: self.change_abs,
@@ -156,10 +156,16 @@ pub fn composite_hdr_source() -> String {
         )
 }
 
-/// [`composite_hdr_source`] composed as the composite is: the prelude, `common.wgsl` and
-/// `hitrec.wgsl` first.
+/// [`composite_hdr_source`] composed as the composite is: the prelude, `common.wgsl`,
+/// `hitrec.wgsl` and the sky's modules first.
 pub(crate) fn composite_hdr_compose() -> String {
-    compose(&[COMMON_WGSL, HITREC_WGSL, &composite_hdr_source()])
+    compose(&[
+        COMMON_WGSL,
+        HITREC_WGSL,
+        SKY_ATMOSPHERE_WGSL,
+        SKY_WGSL,
+        &composite_hdr_source(),
+    ])
 }
 
 /// The composite's FSR 2 variant: its layout (the composite's, the target rgba32float) and
@@ -253,6 +259,7 @@ impl Frame {
             UpscalerKind::Off => self.up.jitter = false,
             UpscalerKind::Own(u) => self.up.upscaler = u,
             UpscalerKind::Fsr2(s) => {
+                self.up.fsr2 = s;
                 if let Some(f) = self.up.fsr.as_mut() {
                     f.set_settings(s);
                 } else {
@@ -301,6 +308,7 @@ impl Frame {
     /// Drops the upscaler's history alone in the next encoded frame (the lighting's is kept),
     /// as a change of view does.
     pub fn reset_upscaler_history(&mut self) {
+        self.restarts += 1;
         self.history().view_changed = true;
     }
 
@@ -325,6 +333,8 @@ pub(super) struct UpscaleState {
     /// The upscaler the frame runs; with FSR 2, its context and the composite's variant
     /// that stores linear radiance (`HDR_TARGET` in composite.wgsl), built with it.
     pub(super) kind: UpscalerKind,
+    /// FSR 2's settings as last selected, kept while another upscaler runs.
+    pub(super) fsr2: crate::Fsr2Settings,
     pub(super) fsr: Option<Fsr2>,
     pub(super) composite_hdr: Option<(wgpu::BindGroupLayout, wgpu::ComputePipeline)>,
 }
@@ -352,6 +362,7 @@ impl UpscaleState {
             upscaler: Upscaler::default(),
             jitter: false,
             kind: UpscalerKind::Off,
+            fsr2: crate::Fsr2Settings::default(),
             fsr: None,
             composite_hdr: None,
         }

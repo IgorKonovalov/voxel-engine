@@ -191,6 +191,9 @@ pub const KEY_REMOVE: KeyCode = KeyCode::Digit4;
 pub const KEY_FIRE: KeyCode = KeyCode::Digit6;
 /// `` ` `` (Backquote): place a walker on the looked-at surface (`crate::walker`).
 pub const KEY_WALKER: KeyCode = KeyCode::Backquote;
+/// `PageDown`: the next render profile (`run::profile`). `F4` takes it once the menu frees
+/// that key (ADR-0061).
+pub const KEY_PROFILE: KeyCode = KeyCode::PageDown;
 /// `Left` and `Right`: the viewer's clip before and after (`--model`, `crate::viewer`).
 pub const KEY_CLIP_BACK: KeyCode = KeyCode::ArrowLeft;
 pub const KEY_CLIP_ON: KeyCode = KeyCode::ArrowRight;

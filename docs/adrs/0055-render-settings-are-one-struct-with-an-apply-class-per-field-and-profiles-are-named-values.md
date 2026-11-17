@@ -1,8 +1,8 @@
 # ADR-0055: Render settings are one struct with an apply class per field, and a profile is a named value of it
 
-> **Status:** proposed
+> **Status:** accepted 2026-11-17 (Plan 0069's close), with an Outcome
 > **Date:** 2026-11-11
-> **Related plan(s):** [Plan 0069](../plans/0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md)
+> **Related plan(s):** [Plan 0069](../plans/done/0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md)
 
 ## Context
 
@@ -94,4 +94,20 @@ for three weeks), and the cost of the M10 product has no row to sit in.
 
 ## Outcome
 
-_(Added only at acceptance if implementation falsified something above.)_
+Accepted 2026-11-17 at Plan 0069's close (v0.60.0). The decision stands; three points differ
+from the text above.
+
+- **Four profiles, not three.** The owner's window (Plan 0069 Phase 5) added `Profile::High`,
+  the floor with FSR 2 at internal scale 1, for capable GPUs and not for the slow adapter.
+  `Profile::ALL` cycles floor, portable, performance, high.
+- **"The default settings are the floor profile's" holds for `RenderSettings::default()`
+  only.** The per-struct defaults (`Lighting::default()`, `LookParams::default()` and the
+  others) stay the neutral library baseline the render tests build on (owner, 2026-11-17).
+- **The setter gate reads the whole crate, not only `Frame`.** Every `pub fn set_` in
+  `crates/vxe-render/src` is either a setter in `RenderSettings::SETTERS` or listed with its
+  reason in `RenderSettings::NOT_SETTINGS`, so per-frame inputs, test hooks and other types'
+  methods are named as well. A fourth, transient class, `Delete`, removed the fields and
+  setters that had no caller (`Upscaler::{width, clip_gamma}`, `Frame::set_bake_slice`).
+  The fly-through's profile cycle still edits its own flags and modes rather than calling
+  `Frame::apply_settings`, which is the drift risk named under Negative; folding the setters
+  in is Plan 0069's followup.

@@ -37,6 +37,25 @@ fn small_box() -> (World, Camera) {
     (world, camera)
 }
 
+/// The bake takes no sky term (Plan 0032 Phase 5, ADR-0027): the store's blocks after a bake of
+/// the small box are equal with no sky and with a noon sky set, the sun at the zenith.
+#[test]
+fn a_baked_face_ignores_the_sky() {
+    let (world, _) = small_box();
+    let Some(mut rig) = rig_on(world, [16, 16], None) else {
+        return;
+    };
+    let counts = test_counts(256);
+    rig.bake(&counts);
+    let none = rig.blocks();
+    let sun = vxe_render::sky::Body::sun([0.0, 0.0, 1.0]);
+    let moon = vxe_render::sky::Body::moon([0.0, 0.0, -1.0]);
+    rig.frame
+        .set_sky(Some(vxe_render::sky::Sky::new(sun, moon)));
+    rig.bake(&counts);
+    assert_eq!(rig.blocks(), none, "a noon sky changed the store");
+}
+
 /// The records depend on each face's own samples alone: one batch, batches of 7 faces and the
 /// jobs reversed read bit-identical; and [`four_ways`].
 #[test]
@@ -1109,6 +1128,11 @@ fn a_glass_pane_filters_by_path_length() {
             v.sort_by(f64::total_cmp);
             v.get(v.len() / 2).copied().unwrap_or(0.0)
         };
+        let mut records = BTreeMap::new();
+        for r in &info {
+            *records.entry((r[3], r[2])).or_insert(0usize) += 1;
+        }
+        println!("{name} records (flags, material): count {records:?}");
         let (n1, n2) = (by_half[0].len(), by_half[1].len());
         let (l1, l2) = (median(&mut by_half[0]), median(&mut by_half[1]));
         println!(
@@ -1172,6 +1196,15 @@ fn a_glass_pane_filters_by_path_length() {
     println!(
         "lit pane: {} pixels over the black wall, {dark} with E 0; worst |reflected / (R E / PI) - 1| {worst:.4}; worst |pixel - display(reflected)| {worst_shown:.2} levels",
         lit.len()
+    );
+    // What the lit view's hit records hold, by (flags, material): the selection above takes
+    // flags with bits 0 and 2 over the black wall's material only.
+    let mut records = BTreeMap::new();
+    for r in &info {
+        *records.entry((r[3], r[2])).or_insert(0usize) += 1;
+    }
+    println!(
+        "lit view records (flags, material): count {records:?}; glass {glass_id}, black {black_id}"
     );
     assert!(lit.len() > 1000, "{} lit pane pixels", lit.len());
     assert_eq!(dark, 0, "pane pixels whose entry face's record reads 0");

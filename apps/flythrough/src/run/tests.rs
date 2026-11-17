@@ -355,8 +355,8 @@ fn the_default_look_is_the_windows_pick() {
         rows[..3],
         [
             "look face, far normal 2..6",
-            "lighting half, store read normal",
-            "weights face, shadow walk coarse"
+            "source cave, lighting half",
+            "store read normal, weights face"
         ]
     );
     let run = bare_run(carved_rock());
@@ -887,7 +887,12 @@ fn the_showcase_banner_names_its_source_and_the_lamp() {
         "{banner}"
     );
     let level = parse_args_from(argv(&["--level"])).expect("parses");
-    assert!(level.start_modes(0.0).line().starts_with("lighting "));
+    assert!(
+        level
+            .start_modes(0.0)
+            .line()
+            .starts_with("source level, lighting ")
+    );
 }
 
 /// While the lamp's bounce is on (the default) the banner names it and the probe spacing,
@@ -946,7 +951,7 @@ fn the_start_banner_names_the_look_and_n_cycles() {
     let a = parse_args_from(argv(&[])).unwrap();
     let banner = a.start_modes(0.0).banner(0.0).expect("the start shows it");
     let mut bare = hud::Modes::new(a.start_lighting(), a.light.resolution, 0.0)
-        .with_source(a.mode.is_showcase().then_some("showcase"))
+        .with_source(a.mode.source_name())
         .with_probe_spacing(a.light.probe_spacing);
     bare.set_auto(a.light.adaptation, a.start_auto());
     let lighting = bare.banner(0.0).expect("the start shows it");

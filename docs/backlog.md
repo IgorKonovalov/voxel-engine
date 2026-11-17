@@ -37,9 +37,36 @@ fit's free-range walks and the victim scans' chunk walks, so split them first. *
 plan, ahead of `alloc`** (Plan 0074's close review, 2026-11-14, the orchestrator's default while
 the owner is away; the owner may overturn it).
 
+### The CPU settle outdoors: the bake queue's step on a world with no emitter, and the forest's sync p99
+
+Noted 2026-11-17 from Plan 0032's Phase 9 window (`docs/plans/logs/0032.md`, Phase 9; the
+review `docs/reviews/2026-11-17-plan-0032-window.md`, E). The owner's "performance lacks" on
+the RTX 3080 Laptop was the CPU, not the GPU: for the 7 to 10 s after every load the runs read
+a frame CPU p50 of 10 to 17.6 ms (against 1.3 to 2.9 after the settle) and the `bake queue:`
+lines a `step CPU p50` of 7.9 to 15.0 ms, max up to 38, on a world whose reach holds `lights
+0` and whose store ends all zeros (step 1: 3285 chunks by 13.7 s, 8.8 MB); after the queue
+drains the step reads 0.05 ms. The forest at leaf fill 128 also read a sync p99 of 11.0 ms
+(`alloc` 5.3) and `update + poll + sync` max 150 ms; fill 64 read 3.1 ms. Both are readings
+for Plan 0067's regime rule (the step on an emitter-free world should cost near nothing) and
+for the sync's `alloc` entry above. What it takes: a chore that reads the step's parts on the
+outdoor source (listing, summaries, fades on a store that bakes to zero) and skips what a
+reach with no emitter does not need; Plan 0086 Phase 4 adds a sky channel to the same jobs,
+so read it after that lands. Owner's pick 2026-11-17 (E3): a backlog entry, not a phase.
+
 ### The streamed benches on Windows: CPU frames of 20 to 256 ms on a desktop
 
 Read 2026-11-15 from an outside tester's archive (v0.51.0, before Plan 0070's and 0074's sync cuts; Windows 10.0.26200, Ryzen 5 7600X 6 cores / 12 threads, 32 GB, desktop RTX 3080 on Vulkan, 1920 x 1080, upscaler off; the files kept in the main checkout at `live/tester-2026-11-15/`). `showcase`: wall p50 3.0 ms, p99 4.5, CPU p50 0.76. `cave`: wall p50 20.8 ms, p95 271, p99 402, CPU-bound (CPU p50 20.3, GPU 4.5), 217 of 1073 frames over 100 ms. `castle`: 97 frames in 31.5 s, CPU p50 256 ms, max 3295, GPU p50 30.2. Our Linux headless benches at the matching base read `update + poll + sync` p99 43 to 47 ms, so the castle is about 5x to 70x worse there, and the tester called it "massive stutters". Unknown: whether it is Windows (timer and sleep granularity, the allocator, thread scheduling on 6 cores), the CPU's core count, or the build. What it takes: the owed Plan 0068 Windows run on today's main with the sync's stage lines, then a plan. Pick up before the next tester archive goes out. **The owner's run (2026-11-15, v0.54.0, Windows 10.0.19045, Ryzen 9 5900HS 8 cores / 16 threads, RTX 3080 Laptop on Vulkan, FSR 2 at 1.5; files in `live/windows-run-2026-11-15/`) did not reproduce it:** CPU p50 cave 8.8 ms, showcase 1.4, castle 7.2; castle wall p95 28.2 ms, 87 frames over 33 ms, 2 over 100, the sync's p95 mostly `alloc`. Still open for the tester's machine; the next archive's `--workers 4` run tells starvation apart. **The tester's rerun (2026-11-16, v0.54.0, same machine; files in `live/tester-2026-11-16/`) settles it: the 0.51.0 stutters were the build, not Windows.** Default workers: cave wall p50 4.1 ms, p99 25.5, 32 frames over 33 ms, 1 over 100; showcase p50 2.8, p99 3.7; castle p50 4.2, p99 30.1, max 90, 20 over 33 ms, none over 100 (from p50 256 ms on 0.51.0). `--workers 4` on the castle: p99 17.6, max 66, 2 over 33 ms; the sync's p99 7.3 ms to 3.8 and light's 2.1 to 0.8. So more workers than physical cores (11 on 6 cores) still costs the tail. What it takes now: a default worker count capped at the physical cores minus one (or a measured sweep on a 6-core part), as a small chore; the entry closes with it. **Done 2026-11-16 (chore `chore-default-workers`):** the fly-through's default `--workers` is now half the logical cores, at least 1 (6 on the tester's 12 threads, where `--workers 4` read the best castle tail; no sweep between 4 and 6 was taken); the tester's next archive reads it.
+
+Beside it, 2026-11-17, an outside tester's Linux archive (v0.54.0 at 5efd884d; Ubuntu 26.04,
+Wayland, Ryzen 7 5700X 8 cores / 16 threads, 32 GB, desktop RTX 3060 on Vulkan, 1920 x 1080
+display, benches at 1280 x 720 with FSR 2 at 1.5, lamp off; kept at `live/tester-2026-11-17/`).
+GPU p50 2.3 to 2.4 ms in every scene. `showcase`: wall p50 2.7 ms, p99 3.2, max 16. `cave`: wall
+p50 4.5 ms, p95 8.1, p99 23.0, max 65, 38 of 12 887 frames over 33 ms, CPU p99 22.1 with
+`sync_us` p99 9.5 ms (max 20.9) and `light_us` p99 2.6 ms (max 10.3). `castle`: wall p50 4.3 ms,
+p95 10.7, p99 24.5, max 95, 24 of 5 572 frames over 33 ms, CPU p99 24.2, `sync_us` p99 9.0 ms.
+So on Linux the streamed scenes are CPU-spike bound (the sync and light stages, the alloc entry
+below), not the Windows-scale stall; whether Windows is the OS or the older base stays open.
+`holds_pool` reads false only because the RTX 3060's binding limit is 4 bytes under 2 GiB.
 
 ### Windows draws the whole image two to three times darker than Linux
 
@@ -67,6 +94,39 @@ stagger is a different stage, the eviction scan.
 ### Done: test tiers by marks, not by copied lists
 
 Done 2026-11-10 (50b2193, 4a15e60): GPU test files are `tests/gpu_*.rs`, long series `#[ignore = "soak"]`, kept by `scripts/check-test-tiers.mjs`.
+
+### A headless run at `--residency 3,4` hangs before its first frame
+
+Noted 2026-11-17 by the Plan 0032 lane (`docs/plans/logs/0032.md`, Phase 3): a headless
+fly-through with `--residency 3,4` hangs after the live queue starts and before frame 1, on the
+plain cave as well as the outdoor source, so it predates that plan; `6,8` and `8,12` run. Not
+yet bisected. Take it as a chore when a small residency is next needed (a test rig or the
+Portable profile's floor), starting from which stage waits.
+
+### `--adapter NAME` that matches nothing falls back silently
+
+Noted 2026-11-17 by the Plan 0032 lane (Phase 6 readings): `--adapter radeon` and `--adapter rtx`
+match no adapter name on the dev box and the fly-through runs on the RTX without a word; the
+iGPU needs `--adapter AMD`. A reading taken that way is labelled with the wrong machine. Fix as a
+chore: refuse (or print the adapters and exit) when no adapter matches, and accept the short
+names the tests' `VXE_TEST_ADAPTER` takes.
+
+### `StampedSource` shares its prefabs across placements
+
+Noted 2026-11-17 by the Plan 0032 lane (Phase 8, `docs/plans/logs/0032.md`): `vxe_world::StampedSource`
+keeps its own rotated copy of the prefab for every placement, so a forest of about 3,850 trees
+would hold 3,850 copies (estimated 1 to 2 GB, not measured). The lane wrote a fly-through
+`ForestSource` over 64 shared prefabs instead. Engine follow-up: placements reference a shared
+prefab and rotation (an `Arc` and an orientation), so a dense generation-time scatter costs its
+distinct prefabs, not its placements. Pick up at Plan 0032's close or before the next scatter.
+
+### The menu with a gamepad, in a window
+
+Noted 2026-11-17 (owner): Plan 0080 closes without its window's pad step (no pad was at hand;
+`docs/plans/logs/0080.md`, Phase 7). The headless tests `the_pad_walks_the_menu` and
+`the_pad_edits_a_number` cover the mapping. Owed: one windowed run with a pad connected, Start
+through the tree, South into the dig radius's edit mode, the D-pad stepping and repeating, East
+back, Select for the stats; at the next window session that has a pad.
 
 ### The live queue's order and cancellation, after Plan 0059
 
@@ -487,6 +547,15 @@ not this plan's code): the exit's queue tally prints `frames: queue step ...` li
 first line starting `frames: `. Match `frames: {FRAMES} frames;` instead.
 
 ## Tooling and process
+
+### The 64 private-intra-doc-link warnings in `cargo doc -p vxe-render`
+
+Noted 2026-11-17 from Plan 0069 Phase 2 (`docs/plans/logs/0069.md`): `cargo doc -p vxe-render
+--no-deps` prints 64 `private_intra_doc_links` warnings (cargo's count), none on a line that plan
+wrote; its done-when was amended to "no new warnings from this plan's files". Owner 2026-11-17: fix
+them in a separate chore later. What it takes: make each linked item `pub` or `pub(crate)`-doc it
+with a plain code span, then a CI step or `RUSTDOCFLAGS=-D warnings` doc build so the count cannot
+grow again. Pick up after Plan 0069 merges, so the chore reads the settled `settings.rs`.
 
 ### The tester mode's key filter is structural, not tested in the frame loop
 

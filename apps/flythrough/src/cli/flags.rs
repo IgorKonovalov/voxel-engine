@@ -30,12 +30,14 @@ pub(crate) struct Parsing {
 pub(crate) struct Given {
     pub(crate) level: bool,
     pub(crate) showcase: bool,
+    pub(crate) outdoor: bool,
     pub(crate) thin_rig: bool,
     pub(crate) seam_rig: bool,
     /// `--room`: the cube's edge in voxels.
     pub(crate) room: Option<i32>,
     pub(crate) shot: bool,
     pub(crate) exposure: bool,
+    pub(crate) adaptation: bool,
     pub(crate) path_mode: bool,
     pub(crate) face_mix: Option<f32>,
     pub(crate) far_normal: Option<[f32; 2]>,
@@ -253,7 +255,7 @@ fn entity_filter_flags<T: 'static>(part: fn(&mut T) -> &mut LightingArgs) -> Vec
 }
 
 /// A comma-separated list of frame numbers.
-fn frames(v: &Val<'_>) -> Result<Vec<u32>, String> {
+pub(super) fn frames(v: &Val<'_>) -> Result<Vec<u32>, String> {
     v.text
         .split(',')
         .map(str::parse::<u32>)
@@ -508,22 +510,6 @@ fn session_flags() -> Vec<Flag<Parsing>> {
 /// start.
 fn scene_flags() -> Vec<Flag<Parsing>> {
     vec![
-        Flag::value(
-            &["--source"],
-            "cave|level|showcase",
-            "the world: the streamed cave, the level or the showcase",
-            |p: &mut Parsing, v| {
-                (p.given.level, p.given.showcase) = v.word(
-                    &[
-                        ("cave", (false, false)),
-                        ("level", (true, false)),
-                        ("showcase", (false, true)),
-                    ],
-                    "cave, level or showcase",
-                )?;
-                Ok(())
-            },
-        ),
         Flag::switch(
             &["--level"],
             "the bounded level (as --source level)",
@@ -856,6 +842,7 @@ fn light_flags() -> Vec<Flag<Parsing>> {
             "eye|symmetric|instant",
             "the auto exposure's preset",
             |p: &mut Parsing, v| {
+                p.given.adaptation = true;
                 p.args.light.adaptation =
                     v.named(hud::Adaptation::from_name, "eye, symmetric or instant")?;
                 Ok(())
@@ -1157,7 +1144,10 @@ pub(crate) fn table() -> Table<Parsing> {
         },
         Section {
             title: "World",
-            flags: scene_flags(),
+            flags: super::outdoor::source_flags()
+                .into_iter()
+                .chain(scene_flags())
+                .collect(),
         },
         Section {
             title: "Look",
@@ -1180,7 +1170,8 @@ pub(crate) fn table() -> Table<Parsing> {
             flags: audio_flags(),
         },
     ];
-    sections.extend(super::loading::sections());
+    sections.splice(3..3, super::outdoor::sections());
+    sections.extend(super::settings::late_sections());
     sections.push(Section {
         title: "Removed",
         flags: removed_flags(),

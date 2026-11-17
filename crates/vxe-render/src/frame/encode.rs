@@ -6,7 +6,10 @@ use super::*;
 /// timestamps `2 i` and `2 i + 1` of the timer it is given.
 /// The nine before the last are FSR 2's ([`crate::fsr2::FSR2_PASSES`]); in FSR mode `upscale`
 /// and `sharpen` are empty, and otherwise FSR's are. `exposure` runs last, after either.
-pub const FRAME_PASSES: [&str; 20] = [
+pub const FRAME_PASSES: [&str; 23] = [
+    "sky transmittance",
+    "sky multiscatter",
+    "sky view",
     "hit",
     "gradient",
     "light",
@@ -105,30 +108,6 @@ fn frame_pass<'a>(
 }
 
 impl Frame {
-    pub(super) fn world_bind(&self, device: &wgpu::Device, world: &GpuWorld) -> wgpu::BindGroup {
-        self.binds.io_at(
-            device,
-            &self.pipes.world_layout,
-            &[0, 1, 7, 8, 9, 2, 3, 4, 10, 11, 12, 13, 14, 15],
-            &[
-                Res::Buf(&self.state.params),
-                Res::Buf(world.pool_shard(0)),
-                Res::Buf(world.pool_shard(1)),
-                Res::Buf(world.pool_shard(2)),
-                Res::Buf(world.pool_shard(3)),
-                Res::Buf(world.records()),
-                Res::Buf(world.table()),
-                Res::Buf(world.materials()),
-                Res::Buf(world.light_buffer()),
-                Res::Buf(&self.state.emission_scale),
-                Res::Tex(&self.state.blue_noise),
-                Res::Buf(self.exposure.state_uniform()),
-                Res::Buf(&self.state.lights.buffer),
-                Res::Buf(self.entities.buffer()),
-            ],
-        )
-    }
-
     /// The temporal pass's pipeline: with [`Frame::set_count_store`] on, the one whose
     /// `COUNT_STORE` is true, built on its first use.
     pub(super) fn temporal_pipeline(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
@@ -382,6 +361,9 @@ impl Frame {
             if lights_changed {
                 p.lighting |= LIGHTING_LIGHTS_CHANGED;
             }
+            if self.sky.step() {
+                p.lighting |= LIGHTING_SKY_CHANGED;
+            }
             self.state
                 .lamp_changed
                 .store(lamp_changed, std::sync::atomic::Ordering::Relaxed);
@@ -424,7 +406,7 @@ impl Frame {
         } else {
             p.history = 0;
         }
-        if now.count > 0 {
+        if now.count > 0 || self.sky.lights_direct(self.state.lighting.sky_rays) {
             p.lighting |= LIGHTING_DIRECT;
         }
         self.state.lights.write(
@@ -821,7 +803,18 @@ impl Frame {
             .map(|(f, b)| b.passes(f, world))
             .unwrap_or_default();
         let out = &binds.out;
+        let sky_groups = self.sky.prepare(
+            device,
+            queue,
+            &self.binds,
+            p.views[0].origin[2],
+            &self.state,
+        );
+        let [sky_t, sky_m, sky_v] = self.sky.dispatches(device, sky_groups.as_ref());
         let passes = [
+            sky_t,
+            sky_m,
+            sky_v,
             hit,
             gradient,
             Dispatches::one(frame_pass(

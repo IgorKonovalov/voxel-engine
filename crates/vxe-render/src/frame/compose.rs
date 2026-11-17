@@ -5,7 +5,8 @@
 //! (the views, `Params`, group 0, the pixel helpers), `mirror.wgsl` (the mirror's decode),
 //! `walk.wgsl` (the voxel walk), `hitrec.wgsl` (the hit record and the store's taps),
 //! `entity.wgsl` (the entity walk), `field_walk.wgsl` and `hit.wgsl` (the hit pass alone), `emissive.wgsl` (the emissive
-//! estimator, after `light.wgsl`) and `edits.wgsl` (the edit boxes). A module's identifiers are
+//! estimator, after `light.wgsl`), `sky_light.wgsl` and `shade.wgsl` (the light pass's sky
+//! terms and its entry, after the sky's modules) and `edits.wgsl` (the edit boxes). A module's identifiers are
 //! global to every pass that joins it, so a clash is a naga error, which
 //! [`shader_sources`]'s validation finds headless.
 
@@ -22,6 +23,7 @@ use crate::gpu_world::{
     MATERIAL_MASK, RECORD_MASK, RECORD_WORDS, TRANSLUCENT_BIT, UNIT_MASK, UNIT_WORDS,
 };
 use crate::probes::{MOVED_BIT, TOUCHED_BIT};
+use crate::sky::{SKY_KEY, SKY_MULTISCATTER, SKY_ON, SKY_PREV_KEY, SKY_UNIFORM};
 use vxe_world::MaterialFlags;
 
 pub(crate) const COMMON_WGSL: &str = include_str!("../shaders/common.wgsl");
@@ -33,6 +35,8 @@ pub(crate) const HIT_WGSL: &str = include_str!("../shaders/hit.wgsl");
 pub(crate) const EMISSIVE_WGSL: &str = include_str!("../shaders/emissive.wgsl");
 pub(crate) const EDITS_WGSL: &str = include_str!("../shaders/edits.wgsl");
 pub(crate) const ENTITY_WGSL: &str = include_str!("../shaders/entity.wgsl");
+pub(crate) const SKY_LIGHT_WGSL: &str = include_str!("../shaders/sky_light.wgsl");
+pub(crate) const SHADE_WGSL: &str = include_str!("../shaders/shade.wgsl");
 
 /// The hit pass's modules.
 pub(crate) const HIT_MODULES: &[&str] = &[
@@ -96,6 +100,7 @@ pub(crate) const PRELUDE: &[(&str, u32)] = &[
     ("LIGHTING_IDENTITY_TONE_MAP", LIGHTING_IDENTITY_TONE_MAP),
     ("LIGHTING_EMISSION_CHANGED", LIGHTING_EMISSION_CHANGED),
     ("LIGHTING_LIGHTS_CHANGED", LIGHTING_LIGHTS_CHANGED),
+    ("LIGHTING_SKY_CHANGED", LIGHTING_SKY_CHANGED),
     ("LIGHTING_INDIRECT", LIGHTING_INDIRECT),
     ("LIGHTING_AUTO_EXPOSURE", LIGHTING_AUTO_EXPOSURE),
     ("LIGHTING_STORE_BY_NORMAL", LIGHTING_STORE_BY_NORMAL),
@@ -137,6 +142,18 @@ pub(crate) const PRELUDE: &[(&str, u32)] = &[
     ("EX_METER", EX_METER),
     ("EX_RESET", EX_RESET),
     ("STATE_HELD", STATE_HELD),
+    // The sky (`sky.rs`, `frame/sky.rs`): the uniform's flags and the LUTs' sizes.
+    ("SKY_ON", SKY_ON),
+    ("SKY_UNIFORM", SKY_UNIFORM),
+    ("SKY_MULTISCATTER", SKY_MULTISCATTER),
+    ("SKY_KEY", SKY_KEY),
+    ("SKY_PREV_KEY", SKY_PREV_KEY),
+    ("SKY_TRANSMITTANCE_W", super::sky::TRANSMITTANCE_SIZE[0]),
+    ("SKY_TRANSMITTANCE_H", super::sky::TRANSMITTANCE_SIZE[1]),
+    ("SKY_MULTISCATTER_W", super::sky::MULTISCATTER_SIZE[0]),
+    ("SKY_MULTISCATTER_H", super::sky::MULTISCATTER_SIZE[1]),
+    ("SKY_VIEW_W", super::sky::SKY_VIEW_SIZE[0]),
+    ("SKY_VIEW_H", super::sky::SKY_VIEW_SIZE[1]),
 ];
 
 /// [`PRELUDE`] as WGSL, one `const` a line.
@@ -185,6 +202,11 @@ pub fn shader_sources() -> Vec<ShaderSource> {
     ];
     out.extend(PASSES.iter().map(|p| s(p.label, p.source(), p.entry)));
     out.push(s("composite hdr", composite_hdr_compose(), "composite"));
+    out.extend(
+        SKY_PASSES
+            .iter()
+            .map(|(label, modules, entry)| s(label, compose(modules), entry)),
+    );
     out.extend(
         crate::fsr2::FSR2_PIPES
             .iter()
