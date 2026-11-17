@@ -11,7 +11,7 @@ const HIT_TRANSLUCENT: u32 = 4u;
 const HIT_AXIS_SHIFT: u32 = 3u;
 
 // An entity's voxel (entity.wgsl): no cube face (axis bits 0), the instance from bit
-// HIT_INSTANCE_SHIFT.
+// HIT_INSTANCE_SHIFT: its slot (9 bits) and its slot's generation's low bit.
 const HIT_ENTITY: u32 = 32u;
 
 const HIT_INSTANCE_SHIFT: u32 = 6u;

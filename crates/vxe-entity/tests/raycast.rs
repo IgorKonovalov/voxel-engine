@@ -257,3 +257,44 @@ fn model_new_refuses_a_cycle_a_seventeenth_part_and_an_oversized_volume() {
     );
     assert!(Model::new(vec![cube_part(64, 4, None)]).is_ok());
 }
+
+/// Plan 0078 Phase 3: `replace` swaps the model and the pose under the same id, and the ray
+/// query reads the new model at once (a 4-voxel cube's near face at x 102, not the 8-voxel
+/// cube's at 100); an unknown entity and a pose of the wrong part count are refused, the
+/// entity unchanged.
+#[test]
+fn replace_keeps_the_id_and_refuses_what_does_not_fit() {
+    use vxe_entity::{EntityId, PoseError};
+
+    let (mut set, eight) = placed(
+        Model::new(vec![cube_part(8, 1, None)]).unwrap(),
+        Quat::IDENTITY,
+    );
+    let id = set.iter().next().unwrap().0;
+    assert_eq!(
+        set.raycast(ORIGIN, PLUS_X, 20 * 256).unwrap().t,
+        NINE_AND_A_HALF
+    );
+    let four = Arc::new(Model::new(vec![cube_part(4, 1, None)]).unwrap());
+    let pose = set.get(id).unwrap().1.clone();
+    set.replace(id, four.clone(), pose.clone()).unwrap();
+    assert_eq!(set.len(), 1);
+    assert!(Arc::ptr_eq(set.get(id).unwrap().0, &four));
+    let hit = set.raycast(ORIGIN, PLUS_X, 20 * 256).unwrap();
+    assert_eq!((hit.entity, hit.t), (id, NINE_AND_A_HALF + 2 * 256));
+
+    let ghost = EntityId(id.0 + 1);
+    assert_eq!(
+        set.replace(ghost, eight.clone(), pose.clone()),
+        Err(PoseError::UnknownEntity { entity: ghost })
+    );
+    let two = Arc::new(Model::new(vec![cube_part(4, 1, None), cube_part(2, 1, Some(0))]).unwrap());
+    assert_eq!(
+        set.replace(id, two, pose),
+        Err(PoseError::PartCount {
+            expected: 2,
+            got: 1
+        })
+    );
+    assert!(Arc::ptr_eq(set.get(id).unwrap().0, &four), "unchanged");
+}
