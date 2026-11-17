@@ -35,8 +35,8 @@
 > **Order (owner, 2026-11-10):** Plans 0060, 0061, 0058, 0044, 0045, the `own`-removal plan and
 > the render-profile plan (both owed, see [`docs/backlog.md`](../backlog.md)), then M10 in a
 > line: 0032, 0033, 0034, 0035, 0036, 0037.
-> **Starts after:** [Plan 0036](0036-weather-rain-snow-wind-wet-surfaces-snow-cover-lightning.md)
-> closes. The base is main after that close. It builds on
+> **Starts after:** [Plan 0035](0035-aerial-perspective-and-volumetric-clouds-with-cloud-shadows.md)
+> closes (owner, 2026-11-17, Plan 0036's question 2: the night sky before the weather). The base is main after that close. It builds on
 > [Plan 0032](done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
 > through that plan's section "Interface for Plans 0033 to 0037", on
 > [Plan 0034](0034-water-surface-waves-reflection-refraction-underwater-fog.md)'s liquid
@@ -141,8 +141,8 @@ on it; nothing else of the plan moves.**
 
 ### Interface changes
 
-- **Starts after:** Plan 0036's owner question 2: as approved, after Plan 0036 closes and
-  merges; recommended there, after Plan 0035 and before 0036. The base is main after that
+- **Starts after:** Plan 0035 closes and merges, before Plan 0036 (Plan 0036's owner
+  question 2, answered 2026-11-17). The base is main after that
   merge. The plan relies on 0034 and 0035 either way.
 - **Settings, not flags alone** (Plan 0069, ADR-0055): `RenderSettings` gains
   `night.aurora_update: CloudUpdate` (`Settle`), `night.star_psf_px: f32` (`Settle`, Phase 2's

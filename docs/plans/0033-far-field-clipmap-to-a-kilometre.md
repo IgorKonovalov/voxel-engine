@@ -214,6 +214,8 @@ pair, is computed in `key_sample` where this plan's far occluder enters, before 
 
 ### Owner questions added 2026-11-17 (each with a recommendation)
 
+Answered 2026-11-17 (owner): the recommended option on both (no far sky ray, `far_field.sky_ray` off by default; the canopy envelope as solid `leaf` at levels 2 and 3).
+
 1. **The sky term at a clip hit under Plan 0086.** Recommended: **`E_sky(n)` unoccluded, no
    ray**, as a setting `far_field.sky_ray` (`off` by default; a `Live` row): far terrain is
    open ground whose sky visibility is near 1, the store cannot hold a value for it, and the

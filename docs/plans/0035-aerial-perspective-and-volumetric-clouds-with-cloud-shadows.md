@@ -183,6 +183,8 @@ mirror does not hold multiplies `v` or leaves it. For this plan:
 
 ### Owner questions added 2026-11-17 (each with a recommendation)
 
+Answered 2026-11-17 (owner): the recommended option on both (the cloud shadow at the read, after the history; the clouds kept whole and scaled by profile, the window deciding the defaults).
+
 1. **Where the cloud shadow multiplies the key light under Plan 0086.** Recommended: **at the
    read, after the history** (the visibility pair keeps the geometric visibility; the map's
    transmittance multiplies where the pair is read, so a moving shadow follows on the next

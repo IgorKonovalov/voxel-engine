@@ -35,8 +35,8 @@
 > the game through a small API, cosmetic client-side, no wall clock), of 2026-11-03 (a stable
 > image without flicker or aliasing comes first; snow cover reads the 27-count gradient) and of
 > 2026-11-10 (the order below).
-> **Starts after:** [Plan 0035](0035-aerial-perspective-and-volumetric-clouds-with-cloud-shadows.md)
-> closes. M10 is linear: Plans 0060, 0061, 0058, 0044, 0045, the plan that removes the `own`
+> **Starts after:** [Plan 0037](0037-night-sky-stars-moon-phases-sky-bodies-and-aurora.md)
+> closes (owner, 2026-11-17, question 2: the night sky first). As drafted, after Plan 0035. M10 is linear: Plans 0060, 0061, 0058, 0044, 0045, the plan that removes the `own`
 > upscaler and the render-profile plan (the last two are owed), then Plans 0032, 0033, 0034,
 > 0035, this plan, 0037. **The base commit** in every bar is main after Plan 0035's close.
 > [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md) splits
@@ -91,8 +91,7 @@ merged first they read `svet-*` through its map.
 
 ### Interface changes
 
-- **Starts after:** owner question 2 (the order of Plans 0036 and 0037). As approved, after
-  Plan 0035 closes and merges; recommended, after Plan 0037. The base is main after that merge.
+- **Starts after:** Plan 0037 closes and merges (owner question 2, answered 2026-11-17). The base is main after that merge.
 - **The cover's normal (Phase 4).** The record's payload bits are spoken for (Plans 0062,
   0081, 0033, 0034), so the gradient is not carried from the hit pass: the composite composes
   `mirror.wgsl` and reads the 27 counts itself where snow cover is above 0 (group 0 already
@@ -150,6 +149,8 @@ merged first they read `svet-*` through its map.
 - **Phase 8** unchanged.
 
 ### Owner questions added 2026-11-17 (each with a recommendation)
+
+Answered 2026-11-17 (owner): the recommended option on both (snow on the layer is a followup; Plan 0037 runs before this plan).
 
 1. **Snow on Plan 0081's layer.** Recommended: **a followup, not a phase here**: at cover 1 the
    layer's blades under snow read as green blades on white ground, which Phase 7 sees; if the
