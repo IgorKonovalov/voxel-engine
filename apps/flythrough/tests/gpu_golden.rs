@@ -434,7 +434,6 @@ fn render_walk(
 fn forced(level: u32) -> LodParams {
     LodParams {
         r_full: 1,
-        r_lod: None,
         forced_level: Some(level),
     }
 }
@@ -528,7 +527,6 @@ fn the_lod_level_follows_the_distance_to_the_camera_chunk() {
     let light = [LightParams::at_eye()];
     let auto = |r_full| LodParams {
         r_full,
-        r_lod: None,
         forced_level: None,
     };
     let differing = |a: &[u8], b: &[u8]| a.iter().zip(b).filter(|(x, y)| x != y).count();

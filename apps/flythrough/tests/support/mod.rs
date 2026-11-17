@@ -433,7 +433,6 @@ pub fn lod_scene() -> World {
 pub fn lod_forced_1() -> LodParams {
     LodParams {
         r_full: 1,
-        r_lod: None,
         forced_level: Some(1),
     }
 }

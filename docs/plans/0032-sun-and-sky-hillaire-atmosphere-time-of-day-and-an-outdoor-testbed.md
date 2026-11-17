@@ -1235,7 +1235,7 @@ Readings and gate counts: [`logs/0032.md`](logs/0032.md).
 | 7: The four goldens, the HUD rows and the readings | dev | done; goldens and bars 1, 2 wait for Phase 10; bars 3, 4 read (Notes) | a66a9463 |
 | 8: Trees, the shadow that travels with the sun, and the forest at low sun | dev | done; bar 5 a reading, bar 6 waits for Phase 10; ForestSource for StampedSource (Notes) | 4cad9482 |
 | 9: The owner's windowed check | human | done 2026-11-17; the verdict in the log, the picks in the amendment of 2026-11-17 | 9c5d6ef9 |
-| 10: Lit by default: an absent chunk is sky to the lighting rays | dev | not started | |
+| 10: Lit by default: an absent chunk is sky to the lighting rays | dev | done; bar 3 a reading, both trees in the log; bar 2's test lands with Phase 11 (Notes) | committed with this row |
 | 11: The picks as tests | dev | not started | |
 
 ### Notes
@@ -1358,6 +1358,12 @@ Readings and gate counts: [`logs/0032.md`](logs/0032.md).
   are written by `shade.wgsl` into the direct target, which the steps view leaves unused; no
   `marcher.rs` change. The `--look face` configuration of bar 7 is the default look, so it was
   not run apart.
+- Phase 10: `LodParams::r_lod` went with the rule (nothing else read it), and with it the
+  `lod.r_lod` settings row; the second `set_lod` call site is `run/frame.rs`, outside the
+  phase's list. Bar 3's reading streams in process (no fly-through flag reads the direct
+  target), the spawn's block first; its Phase 9 row is read from 97b7de56 extracted under the
+  untracked `live/`. Bar 4: the tree has no `--bake-file` store (the flag is refused), so the
+  changed bake source re-bakes nothing on disk.
 
 ### Close triggers
 

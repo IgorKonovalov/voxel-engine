@@ -330,4 +330,120 @@ mod reading {
             );
         }
     }
+
+    /// Plan 0032 Phase 10 bar 3, as a reading: the outdoor hills of seed 1 streamed in
+    /// process at residency 6 and 8 chunks (hysteresis 1, 4 workers, a following window of
+    /// side 19) around the `outside` spawn, facing the mouth at noon (the cycle off, the lamp
+    /// off, manual exposure 1, otherwise the fly-through's default lighting), 320 x 180. The
+    /// spawn's block (the chunks within 1 of its chunk) is streamed and mirrored first, as the
+    /// binary's loading screen waits for it; from frame 0 the radii are 6 and 8 and each frame
+    /// updates, polls and syncs the stream with no time budget, then renders. At
+    /// frames 2, 30 and 120 it prints the direct target's mean luminance over the farthest
+    /// third of the lighting grid's hit pixels (by `t`), with the mirrored chunk count. No
+    /// bar. `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    #[test]
+    #[ignore = "reading"]
+    fn the_far_ground_is_lit_while_the_stream_fills() {
+        use flythrough::outdoor::{OutdoorSource, Spawn};
+        use std::sync::Arc;
+        use support::SyncNow;
+        use vxe_render::{GpuWorld, LodParams, MirrorConfig, Window};
+        use vxe_world::{PersistConfig, Residency, StreamConfig, Streamer, World};
+        const SIZE: [u32; 2] = [320, 180];
+        const READS: [u32; 3] = [2, 30, 120];
+        let residency = Residency {
+            r_full: 6,
+            r_lod: 8,
+            hysteresis: 1,
+        };
+        let side = 2 * (residency.r_lod + residency.hysteresis) + 1;
+        let budget = 256u64 << 20;
+        let Some((device, queue, adapter)) = support::reading_device(budget) else {
+            return;
+        };
+        let source = OutdoorSource::new(1);
+        let (eye, _) = source.spawn(Spawn::Outside);
+        let world = World::new(&flythrough::outdoor_materials());
+        let mut streamer = Streamer::new(
+            Arc::new(source),
+            StreamConfig {
+                residency,
+                workers: 4,
+                persist: PersistConfig::default(),
+            },
+        );
+        let mut gpu = GpuWorld::with_config(
+            &device,
+            MirrorConfig {
+                budget_bytes: budget,
+                ..MirrorConfig::new(Window::Follow { side })
+            },
+        );
+        // The spawn's block first (radius 1, as the loading screen waits for it), then the
+        // full radii from frame 0, so the frames see the shell arrive.
+        streamer.set_radii(1, 1);
+        streamer.update(&world, &[eye]);
+        let ev = streamer.wait_idle(&world);
+        gpu.apply_events(&ev);
+        gpu.set_focus(eye);
+        gpu.sync_now(&world, &device, &queue).expect("the mirror fits");
+        streamer.set_radii(residency.r_full, residency.r_lod);
+        let mut stream = |gpu: &mut GpuWorld| {
+            streamer.update(&world, &[eye]);
+            let ev = streamer.poll(&world);
+            gpu.apply_events(&ev);
+            gpu.set_focus(eye);
+            let mut enc = device.create_command_encoder(&Default::default());
+            gpu.sync(&world, &queue, &mut enc).expect("the mirror fits");
+            queue.submit([enc.finish()]);
+        };
+        let mut frame = Frame::new(&device, SIZE[0], SIZE[1]);
+        frame.set_lod(LodParams {
+            r_full: residency.r_full,
+            forced_level: None,
+        });
+        frame.set_lighting(Lighting {
+            lamp: false,
+            exposure: Exposure::Manual(1.0),
+            ..flythrough::default_lighting()
+        });
+        frame.set_sky(Some(
+            flythrough::daylight::Clock::default().sky(flythrough::outdoor::BASE_Z as f32),
+        ));
+        frame.set_dt(1.0 / 60.0);
+        let camera = flythrough::Pose {
+            name: "outside",
+            position: eye.0.map(|v| v as f32 + 0.5),
+            yaw_deg: 0.0,
+            pitch_deg: 0.0,
+            exposure: 1.0,
+        }
+        .camera();
+        for f in 0..=READS[2] {
+            stream(&mut gpu);
+            frame.step(&device, &queue, &gpu, &camera, &LightParams::headlamp());
+            if !READS.contains(&f) {
+                continue;
+            }
+            let d = vxe_render::debug::read_rgba16f(&device, &queue, frame.direct());
+            let h = vxe_render::debug::read_rgba32f(&device, &queue, frame.light_hit_positions());
+            let mut ground: Vec<(f32, f32)> = h
+                .iter()
+                .zip(&d)
+                .filter(|(h, _)| h[3] < 1.0e30)
+                .map(|(h, p)| (h[3], 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]))
+                .collect();
+            ground.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let far = &ground[ground.len() * 2 / 3..];
+            let mean = far.iter().map(|g| f64::from(g.1)).sum::<f64>() / far.len().max(1) as f64;
+            println!(
+                "reading: far ground on {adapter}, frame {f}: mean luminance {mean:.4} over {} of {} hit pixels (t {:.0} to {:.0}), {} chunks mirrored",
+                far.len(),
+                ground.len(),
+                far.first().map_or(0.0, |g| g.0),
+                far.last().map_or(0.0, |g| g.0),
+                gpu.mirrored_chunks(),
+            );
+        }
+    }
 }

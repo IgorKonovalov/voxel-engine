@@ -428,18 +428,6 @@ pub struct LodParams {
     pub r_full: i32,
     /// Walks every LOD-only chunk at this level instead (1 to 3), for tests.
     pub forced_level: Option<u32>,
-    /// The streamer's LOD radius in chunks, on a streamed mirror: the sky's lighting rays
-    /// then treat an absent chunk within `max(r_full, r_lod)` chunks of the camera's chunk as
-    /// solid (an unknown chunk is not sky). `None` (a mirror that is not streamed): no chunk
-    /// is.
-    pub r_lod: Option<i32>,
-}
-
-impl LodParams {
-    /// The lighting rays' squared ball radius in chunks, -1 with no `r_lod`.
-    pub(crate) fn ball_r2(&self) -> i32 {
-        self.r_lod.map_or(-1, |r| r.max(self.r_full).pow(2))
-    }
 }
 
 impl Default for LodParams {
@@ -447,7 +435,6 @@ impl Default for LodParams {
         Self {
             r_full: 16,
             forced_level: None,
-            r_lod: None,
         }
     }
 }

@@ -140,7 +140,6 @@ impl Args {
             lod: vxe_render::LodParams {
                 r_full: self.residency.r_full,
                 forced_level: None,
-                r_lod: None,
             },
             lighting_resolution: self.light.resolution,
             scale,

@@ -196,8 +196,8 @@ impl SkyState {
             .is_some_and(|s| sky_rays > 0 || s.key_light().is_some())
     }
 
-    /// Writes the uniform for a camera at world z `camera_z`, with the lighting rays' ball
-    /// (`LodParams::r_lod`) and the sky rays' count from `state`, and returns the LUT
+    /// Writes the uniform for a camera at world z `camera_z`, with the sky rays' count from
+    /// `state`, and returns the LUT
     /// passes' bind groups, `None` with no sky.
     pub(super) fn prepare(
         &self,
@@ -216,7 +216,6 @@ impl SkyState {
         let u = SkyUniform::of(self.sky.as_ref(), camera_z, self.multiscatter).with_keys(
             &now,
             prev.as_ref(),
-            state.lod.ball_r2(),
             state.lighting.sky_rays.min(MAX_SKY_RAYS),
         );
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));

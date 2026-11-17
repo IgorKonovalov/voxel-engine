@@ -131,7 +131,6 @@ impl Run {
             gfx.frame.set_lod(LodParams {
                 r_full,
                 forced_level: None,
-                r_lod: Some(r.r_lod),
             });
             stream.radius_changes += 1;
             println!(

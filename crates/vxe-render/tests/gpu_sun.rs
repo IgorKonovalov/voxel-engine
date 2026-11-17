@@ -1,6 +1,6 @@
 //! The sun and the moon as the light pass's directional sample (ADR-0027): a floor of rock
-//! under a key light, read from the light pass's direct target, and the lighting rays' rule
-//! that an absent chunk inside the residency ball is not sky. Lavapipe, lamp off, no list
+//! under a key light, read from the light pass's direct target, and an absent chunk read as
+//! sky by the lighting rays. Lavapipe, lamp off, no list
 //! light, no sky ray, filter off, manual exposure 1.0, the full shadow walk, lighting at full
 //! resolution.
 //! The image bars (the penumbra, the settle after a jump, the upscaler's mask) are readings in
@@ -10,8 +10,8 @@ use std::f32::consts::FRAC_PI_2;
 
 use vxe_render::sky::{Body, SUN_ANGULAR_RADIUS, Sky};
 use vxe_render::{
-    Camera, Exposure, Frame, GpuWorld, LightParams, Lighting, LightingResolution, LodParams,
-    MirrorConfig, ShadowWalk, Window, glam::Vec3, wgpu,
+    Camera, Exposure, Frame, GpuWorld, LightParams, Lighting, LightingResolution, MirrorConfig,
+    ShadowWalk, Window, glam::Vec3, wgpu,
 };
 use vxe_world::*;
 
@@ -178,12 +178,14 @@ fn the_moon_lights_the_floor_at_night() {
     assert_eq!(dark, [0.0; 3], "both bodies down");
 }
 
-/// Bar 5: on a mirror whose window holds the chunk above the floor's but whose world does not
-/// (absent, never synced), with the residency ball set (`LodParams::r_lod`) the floor under a
-/// noon sun reads 0; with no ball it reads the noon value of bar 1, as it does where that
-/// chunk is synced as all-air (`EMPTY_BIT`) with the ball set.
+/// Plan 0032 Phase 10 bar 1, an absent chunk is sky: on a mirror whose window holds the chunk
+/// above the floor's but whose world does not (absent, never synced), the floor under a noon
+/// sun reads the noon value of bar 1 within 1 %, as it does where that chunk is synced as
+/// all-air (`EMPTY_BIT`); under `Sky::uniform(1.0)` with one sky ray and the key light off the
+/// same floor reads `pi` (the cosine integral of a radiance of 1) within 10 % with the upper
+/// chunk absent. 16-frame means for the sun, 64 for the sky ray.
 #[test]
-fn an_absent_chunk_blocks_the_sun() {
+fn an_absent_chunk_is_sky_to_the_sun() {
     let Some((device, queue)) = device() else {
         return;
     };
@@ -193,27 +195,30 @@ fn an_absent_chunk_blocks_the_sun() {
         ..camera([0.0, 0.0])
     };
     let noon = sky(dir(90.0, 0.0), dir(-90.0, 0.0), [[1.0; 3], [0.0; 3]]);
-    let ball = LodParams {
-        r_full: 1,
-        r_lod: Some(1),
-        ..LodParams::default()
+    let uniform = Sky {
+        altitude_zero_z: FLOOR as f32,
+        ..Sky::uniform(1.0)
     };
-    let read = |world: &World, lod: LodParams| {
+    let read = |world: &World, s: Sky, rays: u32, frames: u32| {
         let gpu = mirror(&device, &queue, world, Some(window));
         let mut f = frame(&device, SIZE, ShadowWalk::Full);
-        f.set_lod(lod);
-        f.set_sky(Some(noon));
-        centre_direct(&device, &queue, &mut f, &gpu, &cam, 4)
+        f.set_lighting(Lighting {
+            sky_rays: rays,
+            ..f.lighting()
+        });
+        f.set_sky(Some(s));
+        centre_direct(&device, &queue, &mut f, &gpu, &cam, frames)
     };
     let half = floor_world([1, 1, 1], |_| false);
     let whole = floor_world([1, 1, 2], |_| false);
-    let absent = read(&half, ball);
-    let no_ball = read(&half, LodParams::default());
-    let synced = read(&whole, ball);
-    println!("absent {absent:?}, no ball {no_ball:?}, synced air {synced:?}");
-    assert_eq!(absent, [0.0; 3], "an absent chunk in the ball is not sky");
-    assert!(within(no_ball, T_ZENITH, 0.01), "{no_ball:?}");
+    let absent = read(&half, noon, 0, 16);
+    let synced = read(&whole, noon, 0, 16);
+    let sky_ray = read(&half, uniform, 1, 64);
+    println!("sun: absent {absent:?}, synced air {synced:?}; sky ray, absent {sky_ray:?}");
+    assert!(within(absent, T_ZENITH, 0.01), "{absent:?}");
     assert!(within(synced, T_ZENITH, 0.01), "{synced:?}");
+    let pi = [std::f32::consts::PI; 3];
+    assert!(within(sky_ray, pi, 0.10), "{sky_ray:?}");
 }
 
 /// Bar 6's flags: turning the sun by 10 degrees in one frame raises the sky-change bit on that

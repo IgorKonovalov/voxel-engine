@@ -4,8 +4,8 @@
 // and sky.wgsl; never into the bake, which takes no sky term, nor the probe or gradient
 // passes.
 //
-// A lighting ray walks with the residency ball set (`absent_ball_r2`, walk.wgsl): an absent
-// chunk inside it is solid; a ray that leaves the ball or the window has reached the sky.
+// An absent chunk is air to a lighting ray, as to every ray: a ray that leaves the resident
+// world or the window has reached the sky.
 
 // The random-number dimensions of the key light's disc sample, above the candidates'.
 const KEY_DIM: u32 = 1000u;
@@ -28,12 +28,9 @@ fn disc_direction(l: vec3<f32>, r: f32, u: f32, v: f32) -> vec3<f32> {
 }
 
 // Whether a lighting ray from `o` along `d` finds rock (or, with ENTITY_SHADOWS, an entity)
-// before the sky, with the residency ball set.
+// before the sky.
 fn sky_shadowed(o: vec3<f32>, d: vec3<f32>, len: f32) -> bool {
-    absent_ball_r2 = sky.ball_r2;
-    let hit = shadowed(o, d, len);
-    absent_ball_r2 = -1;
-    return hit || (ENTITY_SHADOWS && entity_march(o, d, len).found);
+    return shadowed(o, d, len) || (ENTITY_SHADOWS && entity_march(o, d, len).found);
 }
 
 // The key light's sample at a hit at `p`, normal `n`, shadow normal `ns`, lighting pixel `px`:
@@ -69,10 +66,10 @@ fn cosine_direction(n: vec3<f32>, u: f32, v: f32) -> vec3<f32> {
 
 // The sky's light at a hit at `p`, normal `n`, shadow normal `ns`, lighting pixel `px`: the
 // mean over `sky.sky_rays` cosine-weighted rays about `n` of `pi sky_radiance(d)` where the
-// ray reaches the sky above the horizon (no rock within SKY_RAY_VOXELS, the residency ball
-// set), and 0 where it does not or points below the horizon (the ground there is unknown,
-// and it is rock more often than lit sky). With density `cos / pi` the mean estimates the
-// irradiance `E = integral L cos dw`. 0 with no sky.
+// ray reaches the sky above the horizon (no rock within SKY_RAY_VOXELS), and 0 where it does
+// not or points below the horizon (the ground there is unknown, and it is rock more often
+// than lit sky). With density `cos / pi` the mean estimates the irradiance
+// `E = integral L cos dw`. 0 with no sky.
 fn sky_ray_sample(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>, px: vec2<u32>) -> vec3<f32> {
     let count = sky.sky_rays;
     if (!sky_on() || count == 0u) {

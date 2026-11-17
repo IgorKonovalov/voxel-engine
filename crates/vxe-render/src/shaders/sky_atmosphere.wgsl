@@ -36,8 +36,7 @@ struct SkyUniform {
     key_dir: vec3<f32>,
     key_radius: f32,
     key_e: vec3<f32>,
-    // The lighting rays' residency ball, squared chunks around the camera's chunk; -1 none.
-    ball_r2: i32,
+    _pad: u32,
     // The frame before's key light (SKY_PREV_KEY), and the sky's scale now and then.
     prev_key_dir: vec3<f32>,
     sky_scale: f32,

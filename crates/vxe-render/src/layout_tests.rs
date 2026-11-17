@@ -151,7 +151,6 @@ fn mirror_of(label: &str, name: &str) -> Option<Mirror> {
             key_dir,
             key_radius,
             key_e,
-            ball_r2,
             prev_key_dir,
             sky_scale,
             prev_key_e,
