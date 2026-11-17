@@ -683,8 +683,8 @@ Readings and gate counts: [`logs/0080.md`](logs/0080.md).
 | 3: the minimal key set and the pad | dev | done, one done-when clause unmet (Notes) | b80cd4d4 |
 | 4: the owner's window | human | run 1 done 2026-11-17, verdict in the readings log; the rerun is Phase 7 | |
 | 5: the panel: scale, place, backdrop, grey, readout (amended 2026-11-17) | dev | done | 295ed11e |
-| 6: stepped values, unavailable entries, every action answers (amended 2026-11-17) | dev | done, one count differs (Notes) | committed with this row |
-| 7: the owner's window, run 2 (amended 2026-11-17) | human | not started | |
+| 6: stepped values, unavailable entries, every action answers (amended 2026-11-17) | dev | done, one count differs (Notes) | 677fb8db |
+| 7: the owner's window, run 2 (amended 2026-11-17) | human | done 2026-11-17, verdict in the readings log; the pad's step not run (no pad) | committed with this row |
 | 8: the owner's picks, and the tip (the former Phase 5) | dev | not started | |
 
 ### Notes
