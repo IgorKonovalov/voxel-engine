@@ -1,18 +1,21 @@
 # 0069: Render settings: one surface, an apply class per field, and named quality profiles
 
-> **Status:** implemented 2026-11-17, awaits the fresh-session close review (approved by the owner 2026-11-11: "go with recommended on all"; every
-> open question took its recommendation, recorded under "Owner answers")
+> **Status:** done (closed 2026-11-17, v0.60.0: `RenderSettings` with an apply class per field,
+> `Frame::apply_settings`, the setter gate, and four profiles, Floor, Portable, Performance and
+> High, held to the owner's window picks; clean review, no findings). Approved by the owner
+> 2026-11-11: "go with recommended on all"; every open question took its recommendation,
+> recorded under "Owner answers".
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
 > `hud.rs`). Read each through "Where things moved" in
-> [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
+> [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
 > phases re-cut their Files touched at their start.
 > **Created:** 2026-11-11
 > **Milestone:** M10's first plan (`docs/roadmap.md`, M10 "Order": the render-profile plan that
 > holds M10 against the budget), and the roadmap's decisions row "Floor, profiles and scene
 > scale" (the floor, portable and performance profiles). It serves `docs/nfr.md` sections 1 and 2.
-> **Related ADRs:** [ADR-0055](../adrs/0055-render-settings-are-one-struct-with-an-apply-class-per-field-and-profiles-are-named-values.md)
+> **Related ADRs:** [ADR-0055](../../adrs/0055-render-settings-are-one-struct-with-an-apply-class-per-field-and-profiles-are-named-values.md)
 > (proposed): the surface's shape and what a profile is.
 > **Source:** the owner's parked idea of 2026-10-22 (`docs/backlog.md`, "Render settings surface
 > and named quality profiles"); the static performance review of 2026-11-10, which asked for this
@@ -45,7 +48,7 @@
 >   ("0.5 ms doesn't matter"); the walk-speed spike is not required before Phase 6.
 > **Amended 2026-11-16 (architect; the owner approved it 2026-11-16 with Plan 0080):** `F4` is bound today (the a-trous filter's
 > iterations, `toggles::TOGGLES`), so "`F4` cycling the profiles" collides. Under ADR-0061 and
-> [Plan 0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) the
+> [Plan 0080](../0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) the
 > iteration toggle goes menu-only and the profile cycle is an entry of the menu's Upscaler or
 > Settings page with `F4` as its shortcut once 0080 has freed it; if this lane starts before
 > 0080's Phase 3 lands, the profile cycle is reached through the menu alone and takes `F4` after.
@@ -370,7 +373,7 @@ the readings cannot see. No determinism risk: nothing here reaches `vxe-world`'s
 ## Implementation log
 
 > Written by `dev`: one row per phase, then the close block. Readings, sweeps and resume notes
-> go to [`docs/plans/logs/0069.md`](logs/0069.md).
+> go to [`docs/plans/logs/0069.md`](../logs/0069.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
