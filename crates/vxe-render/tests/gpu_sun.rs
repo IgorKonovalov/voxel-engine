@@ -127,7 +127,8 @@ fn within(got: [f32; 3], want: [f32; 3], rel: f32) -> bool {
 /// Bars 1 and 2: with `E_sun = (1, 1, 1)` at the zenith a floor pixel reads the transmittance
 /// from altitude 0, `(0.9404, 0.8677, 0.7623)`, within 1 %; at elevation 30 degrees
 /// `0.5 exp(-2 (0.0614, 0.1420, 0.2714)) = (0.4422, 0.3764, 0.2906)` within 1 % (the flat
-/// air mass of 2 is within 0.2 % of the curved one's transmittance). Mean over 16 frames.
+/// air mass of 2 is within 0.2 % of the curved one's transmittance). Mean over 16 frames, on
+/// one frame whose history is dropped between the two suns.
 #[test]
 fn the_noon_sun_reads_the_transmittance() {
     let Some((device, queue)) = device() else {
@@ -137,12 +138,13 @@ fn the_noon_sun_reads_the_transmittance() {
     let gpu = mirror(&device, &queue, &world, None);
     let cam = camera([64.0, 40.0]);
     let below = dir(-45.0, 0.0);
+    let mut f = frame(&device, SIZE, ShadowWalk::Full);
     for (sun, want) in [
         (dir(90.0, 0.0), T_ZENITH),
         (dir(30.0, 90.0), [0.4422, 0.3764, 0.2906]),
     ] {
-        let mut f = frame(&device, SIZE, ShadowWalk::Full);
         f.set_sky(Some(sky(sun, below, [[1.0; 3], [0.0; 3]])));
+        f.reset_history();
         let got = centre_direct(&device, &queue, &mut f, &gpu, &cam, 16);
         println!("sun {sun:?}: {got:?} against {want:?}");
         assert!(within(got, want, 0.01), "{got:?} against {want:?}");
@@ -178,47 +180,65 @@ fn the_moon_lights_the_floor_at_night() {
     assert_eq!(dark, [0.0; 3], "both bodies down");
 }
 
-/// Plan 0032 Phase 10 bar 1, an absent chunk is sky: on a mirror whose window holds the chunk
-/// above the floor's but whose world does not (absent, never synced), the floor under a noon
-/// sun reads the noon value of bar 1 within 1 %, as it does where that chunk is synced as
-/// all-air (`EMPTY_BIT`); under `Sky::uniform(1.0)` with one sky ray and the key light off the
-/// same floor reads `pi` (the cosine integral of a radiance of 1) within 10 % with the upper
-/// chunk absent. 16-frame means.
+/// Plan 0032 Phase 10 bar 1, an absent chunk is sky, the sun's half: on a mirror whose window
+/// holds the chunk above the floor's but whose world does not (absent, never synced), the floor
+/// under a noon sun reads the noon value of bar 1 within 1 %, as it does where that chunk is
+/// synced as all-air (`EMPTY_BIT`). 16-frame means.
 #[test]
 fn an_absent_chunk_is_sky_to_the_sun() {
     let Some((device, queue)) = device() else {
         return;
     };
+    let noon = sky(dir(90.0, 0.0), dir(-90.0, 0.0), [[1.0; 3], [0.0; 3]]);
+    let absent = upper_chunk_read(&device, &queue, &floor_world([1, 1, 1], |_| false), noon, 0);
+    let synced = upper_chunk_read(&device, &queue, &floor_world([1, 1, 2], |_| false), noon, 0);
+    println!("sun: absent {absent:?}, synced air {synced:?}");
+    assert!(within(absent, T_ZENITH, 0.01), "{absent:?}");
+    assert!(within(synced, T_ZENITH, 0.01), "{synced:?}");
+}
+
+/// Plan 0032 Phase 10 bar 1, an absent chunk is sky, the sky ray's half: under
+/// `Sky::uniform(1.0)` with one sky ray and the key light off, the floor of
+/// [`an_absent_chunk_is_sky_to_the_sun`] reads `pi` (the cosine integral of a radiance of 1)
+/// within 10 % with the upper chunk absent. A 16-frame mean.
+#[test]
+fn an_absent_chunk_is_sky_to_the_sky_ray() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let uniform = Sky {
+        altitude_zero_z: FLOOR as f32,
+        ..Sky::uniform(1.0)
+    };
+    let half = floor_world([1, 1, 1], |_| false);
+    let sky_ray = upper_chunk_read(&device, &queue, &half, uniform, 1);
+    println!("sky ray, absent {sky_ray:?}");
+    let pi = [std::f32::consts::PI; 3];
+    assert!(within(sky_ray, pi, 0.10), "{sky_ray:?}");
+}
+
+/// The floor's centre direct value under `s` at `rays` sky rays, a 16-frame mean, through a
+/// mirror whose window holds the chunk above the floor's whether `world` has it or not.
+fn upper_chunk_read(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    world: &World,
+    s: Sky,
+    rays: u32,
+) -> [f32; 3] {
     let window = ChunkExtent::new([0, 0, 0], [1, 1, 2]);
     let cam = Camera {
         position: Vec3::new(32.0, 8.0, FLOOR as f32 + 30.0),
         ..camera([0.0, 0.0])
     };
-    let noon = sky(dir(90.0, 0.0), dir(-90.0, 0.0), [[1.0; 3], [0.0; 3]]);
-    let uniform = Sky {
-        altitude_zero_z: FLOOR as f32,
-        ..Sky::uniform(1.0)
-    };
-    let read = |world: &World, s: Sky, rays: u32, frames: u32| {
-        let gpu = mirror(&device, &queue, world, Some(window));
-        let mut f = frame(&device, SIZE, ShadowWalk::Full);
-        f.set_lighting(Lighting {
-            sky_rays: rays,
-            ..f.lighting()
-        });
-        f.set_sky(Some(s));
-        centre_direct(&device, &queue, &mut f, &gpu, &cam, frames)
-    };
-    let half = floor_world([1, 1, 1], |_| false);
-    let whole = floor_world([1, 1, 2], |_| false);
-    let absent = read(&half, noon, 0, 16);
-    let synced = read(&whole, noon, 0, 16);
-    let sky_ray = read(&half, uniform, 1, 16);
-    println!("sun: absent {absent:?}, synced air {synced:?}; sky ray, absent {sky_ray:?}");
-    assert!(within(absent, T_ZENITH, 0.01), "{absent:?}");
-    assert!(within(synced, T_ZENITH, 0.01), "{synced:?}");
-    let pi = [std::f32::consts::PI; 3];
-    assert!(within(sky_ray, pi, 0.10), "{sky_ray:?}");
+    let gpu = mirror(device, queue, world, Some(window));
+    let mut f = frame(device, SIZE, ShadowWalk::Full);
+    f.set_lighting(Lighting {
+        sky_rays: rays,
+        ..f.lighting()
+    });
+    f.set_sky(Some(s));
+    centre_direct(device, queue, &mut f, &gpu, &cam, 16)
 }
 
 /// Bar 6's flags: turning the sun by 10 degrees in one frame raises the sky-change bit on that
@@ -531,27 +551,9 @@ fn a_sun_jump_marks_the_reactive_mask_and_a_drift_does_not() {
     assert_eq!(differing, 0);
 }
 
-/// Step A's rig at `rays` sky rays under `Sky::uniform(1.0)` (`None`: the headlamp and no
-/// sky), filter on, the default lighting tier, manual `exposure`, native 320 x 180 or (`fsr`)
-/// FSR 2 at 1.5 to 480 x 270: after `frames` settle frames, the mean and the 99th percentile of
-/// the per-pixel change of the displayed image (the largest channel, in levels of 255) between
-/// consecutive frames over `frames` frames, and the first frame's mean green level.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the rig's parts and the run's four settings"
-)]
-fn still_change(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    gpu: &GpuWorld,
-    cam: &Camera,
-    rays: Option<u32>,
-    fsr: bool,
-    exposure: f32,
-    frames: u32,
-) -> (f64, f64, f64) {
-    let light = LightParams::headlamp();
-    let mut f = if fsr {
+/// Step A's frame: native 320 x 180, or (`fsr`) FSR 2 at 1.5 to 480 x 270.
+fn still_frame(device: &wgpu::Device, fsr: bool) -> Frame {
+    if fsr {
         let mut f = Frame::with_sizes(device, [320, 180], [480, 270]);
         f.set_upscaler_kind(
             device,
@@ -560,7 +562,30 @@ fn still_change(
         f
     } else {
         Frame::new(device, 320, 180)
-    };
+    }
+}
+
+/// Step A's rig on `f` ([`still_frame`]) at `rays` sky rays under `Sky::uniform(1.0)` (`None`:
+/// the headlamp and no sky), filter on, the default lighting tier, manual `exposure`, the
+/// history and the upscaler's dropped first: after `frames` settle frames, the mean and the
+/// 99th percentile of the per-pixel change of the displayed image (the largest channel, in
+/// levels of 255) between consecutive frames over `frames` frames, and the first frame's mean
+/// green level.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the rig's parts, its frame and the run's three settings"
+)]
+fn still_change(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    gpu: &GpuWorld,
+    cam: &Camera,
+    f: &mut Frame,
+    rays: Option<u32>,
+    exposure: f32,
+    frames: u32,
+) -> (f64, f64, f64) {
+    let light = LightParams::headlamp();
     f.set_lighting(Lighting {
         lamp: rays.is_none(),
         exposure: Exposure::Manual(exposure),
@@ -571,16 +596,18 @@ fn still_change(
         altitude_zero_z: FLOOR as f32,
         ..Sky::uniform(1.0)
     }));
+    f.reset_history();
+    f.reset_upscaler_history();
     for _ in 0..frames {
         f.step(device, queue, gpu, cam, &light);
     }
     let read = |f: &Frame| vxe_render::debug::read_rgba8(device, queue, f.target());
-    let mut last = read(&f);
+    let mut last = read(f);
     let mean_level = last.chunks(4).map(|p| f64::from(p[1])).sum::<f64>() / (last.len() / 4) as f64;
     let mut changes = Vec::new();
     for _ in 0..frames {
         f.step(device, queue, gpu, cam, &light);
-        let now = read(&f);
+        let now = read(f);
         for (a, b) in now.chunks(4).zip(last.chunks(4)) {
             let d = (0..3).map(|k| a[k].abs_diff(b[k])).max().unwrap_or(0);
             changes.push(f64::from(d));
@@ -632,18 +659,29 @@ fn sky_lit_against_lamp_lit(fsr: bool, exposure: [f32; 2], frames: u32) {
     let gpu = mirror(&device, &queue, &world, None);
     let cam = still_camera();
     let rays = vxe_render::DEFAULT_SKY_RAYS;
+    // One frame for both arms, the lamp's first: a leftover of the lamp's run in the sky's
+    // could only raise the sky's change.
+    let mut f = still_frame(&device, fsr);
+    let (lamp_mean, lamp_p99, lamp_level) = still_change(
+        &device,
+        &queue,
+        &gpu,
+        &cam,
+        &mut f,
+        None,
+        exposure[1],
+        frames,
+    );
     let (sky_mean, sky_p99, sky_level) = still_change(
         &device,
         &queue,
         &gpu,
         &cam,
+        &mut f,
         Some(rays),
-        fsr,
         exposure[0],
         frames,
     );
-    let (lamp_mean, lamp_p99, lamp_level) =
-        still_change(&device, &queue, &gpu, &cam, None, fsr, exposure[1], frames);
     println!(
         "{rays} sky ray: level {sky_level:.1}, change mean {sky_mean:.3}, p99 {sky_p99}; headlamp: level {lamp_level:.1}, change mean {lamp_mean:.3}, p99 {lamp_p99}"
     );
@@ -796,7 +834,8 @@ mod reading {
             vfov: 60f32.to_radians(),
         };
         let run = |rays, fsr, exposure| {
-            still_change(&device, &queue, &gpu, &cam, rays, fsr, exposure, 64)
+            let mut f = still_frame(&device, fsr);
+            still_change(&device, &queue, &gpu, &cam, &mut f, rays, exposure, 64)
         };
         for fsr in [false, true] {
             let name = if fsr { "FSR 2 at 1.5" } else { "native" };
