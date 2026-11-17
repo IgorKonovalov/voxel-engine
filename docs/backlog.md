@@ -76,6 +76,14 @@ plain cave as well as the outdoor source, so it predates that plan; `6,8` and `8
 yet bisected. Take it as a chore when a small residency is next needed (a test rig or the
 Portable profile's floor), starting from which stage waits.
 
+### `--adapter NAME` that matches nothing falls back silently
+
+Noted 2026-11-17 by the Plan 0032 lane (Phase 6 readings): `--adapter radeon` and `--adapter rtx`
+match no adapter name on the dev box and the fly-through runs on the RTX without a word; the
+iGPU needs `--adapter AMD`. A reading taken that way is labelled with the wrong machine. Fix as a
+chore: refuse (or print the adapters and exit) when no adapter matches, and accept the short
+names the tests' `VXE_TEST_ADAPTER` takes.
+
 ### The live queue's order and cancellation, after Plan 0059
 
 Taken 2026-11-10 by [Plan 0060](plans/done/0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md) and [ADR-0048](adrs/0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md); the hall's aliasing goes to the antialiasing plan below.
