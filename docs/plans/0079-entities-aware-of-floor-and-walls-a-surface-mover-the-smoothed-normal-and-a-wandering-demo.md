@@ -345,6 +345,10 @@ between two ticks the done-when says so and the log states which.
      reads `(-183, 0, 183)`; any air voxel on the slope's face gives the same gradient, since
      the staircase repeats along `(1, 0, 1)`) while the contact normal is `(0, 0, 256)`; with
      `smooth` off, `smooth_normal == normal`.
+     **Amended 2026-11-17 (owner):** the body is radius 128 (`half` 1), which rests on the
+     tread's face; radius 512 rests on the step corners and reads a diagonal contact (readings
+     log). The contact normal reads `(0, 0, 256)` and the smoothed normal the slope, `(-181, 0,
+     181)` within 3, from the gradient `(-6, 0, 6)`.
   9. The determinism vectors of `vxe-entity` and `vxe-sim` pass unchanged; the surface course
      hash of Phase 1 is re-pinned if `smooth_normal` joins the hash (the dev states which).
   10. The bench reads `solid_gradient` at `half` 2 and `half` 6 on a `Full`-brick world into
@@ -367,7 +371,9 @@ between two ticks the done-when says so and the log states which.
   - **The library.** `walker.rig`: `body ground radius 4 height 26 step 4` (2 world voxels of
     radius, 13 tall: the torso's pivot is 8 model voxels up, the head's 12 above it, the head 6
     tall) and `clip walk ticks 30 loop stride 16` (8 world voxels a cycle, two strides of
-    0.4 m). `spider.rig`: `body surface radius 12 reach 3` (6 world voxels, the body's
+    0.4 m; **amended 2026-11-17 (owner):** the walker body stays `height 26` as written,
+    though the tree's walker tops out at 30 model voxels; either figure is fine).
+    `spider.rig`: `body surface radius 12 reach 3` (6 world voxels, the body's
     clearance; 1.5 voxels of reach) and `clip walk ticks 48 loop stride 24` (12 world voxels a
     cycle). The figures are the architect's first cut; the window re-reads them.
   - `Rig::write` prints both statements; `the_parser_never_panics` covers them through the
