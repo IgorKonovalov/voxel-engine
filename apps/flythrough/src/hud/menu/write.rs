@@ -1,13 +1,15 @@
 //! The menu's text on the HUD's grid: a title row, the page's rows (scrolled to keep the
 //! selection in view) and a footer naming the keys that act on the page, written into the
 //! HUD's reused buffers. A row is at most [`MENU_COLS`] bytes and the text at most
-//! [`MENU_ROWS`] rows: the overlay's 80 x 45 cells at 1280 x 720.
+//! [`MENU_ROWS`] rows: the overlay's 80 x 45 cells at 1280 x 720. [`place`] puts that text
+//! in the window's panel ([`Panel`]: centred, at the menu's glyph scale) with the frame-rate
+//! readout on the window's top row, and gives the backdrop's box.
 
 use super::RunView;
 use super::page::{Menu, PageId, Row};
 use crate::hud::Modes;
 use std::fmt::Write as _;
-use vxe_render::HudColour;
+use vxe_render::{HudBox, HudColour};
 
 /// The widest row, in cells.
 pub const MENU_COLS: usize = 80;
@@ -17,6 +19,104 @@ pub const MENU_ROWS: usize = 45;
 pub const LIST_ROWS: usize = MENU_ROWS - 3;
 /// The column the binds start at.
 pub const KEY_COL: usize = 60;
+
+/// The menu's glyph scale for a `width` x `height` window: the largest integer scale at which
+/// [`MENU_COLS`] x [`MENU_ROWS`] cells of 8 x 8 glyph pixels fit, at least 2.
+pub fn panel_scale(width: u32, height: u32) -> u32 {
+    let w = width / (8 * MENU_COLS as u32);
+    let h = height / (8 * MENU_ROWS as u32);
+    w.min(h).max(2)
+}
+
+/// Where the menu's text sits in the window, in cells at [`panel_scale`]: the panel's
+/// top-left cell (`col`, `row`) and the cells wholly inside the window (`cols` x `rows`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Panel {
+    pub scale: u32,
+    pub col: usize,
+    pub row: usize,
+    pub cols: usize,
+    pub rows: usize,
+}
+
+impl Panel {
+    /// The panel of a `width` x `height` window: [`MENU_COLS`] x [`MENU_ROWS`] cells centred
+    /// on the window's whole cells (rounding left and up), at the top-left when they do not
+    /// fit. The page grows down from its top row.
+    pub fn of(width: u32, height: u32) -> Self {
+        let scale = panel_scale(width, height);
+        let cols = (width / (8 * scale)) as usize;
+        let rows = (height / (8 * scale)) as usize;
+        Self {
+            scale,
+            col: cols.saturating_sub(MENU_COLS) / 2,
+            row: rows.saturating_sub(MENU_ROWS) / 2,
+            cols,
+            rows,
+        }
+    }
+}
+
+/// Writes `page` (the menu's rows from [`Menu::write`], at the top-left) into `text` and
+/// `colours`, which it clears, moved to `panel`'s cell, with `readout` on the window's top
+/// row ending at its last whole column (white; on the title row when the panel starts at row
+/// 0, the title cut to leave two cells before it). Gives the backdrop's box: the panel's
+/// [`MENU_COLS`] columns plus one on each side, from the title row through one row below the
+/// page's last, cut to the window's whole cells.
+pub fn place(
+    page: &str,
+    page_colours: &[HudColour],
+    panel: Panel,
+    readout: &str,
+    text: &mut String,
+    colours: &mut Vec<HudColour>,
+) -> HudBox {
+    text.clear();
+    colours.clear();
+    let readout_at = panel.cols.saturating_sub(readout.len());
+    let mut n = 0;
+    if panel.row > 0 {
+        if !readout.is_empty() {
+            pad_to(text, 0, readout_at);
+            text.push_str(readout);
+        }
+        colours.push(HudColour::White);
+        n = 1;
+    }
+    for _ in n..panel.row {
+        text.push('\n');
+        colours.push(HudColour::White);
+    }
+    for (i, line) in page.lines().enumerate() {
+        if panel.row + i > 0 {
+            text.push('\n');
+        }
+        let start = text.len();
+        pad_to(text, start, panel.col);
+        text.push_str(line);
+        if panel.row + i == 0 && !readout.is_empty() {
+            let room = readout_at.saturating_sub(2);
+            if text.len() - start > room {
+                let row = text[start..].to_owned();
+                text.truncate(start);
+                push_cut(text, &row, room);
+            }
+            pad_to(text, start, readout_at);
+            text.push_str(readout);
+        }
+        colours.push(page_colours.get(i).copied().unwrap_or_default());
+    }
+    let used = page.lines().count();
+    let col = panel.col.saturating_sub(1);
+    let end_col = (panel.col + MENU_COLS + 1).min(panel.cols);
+    let end_row = (panel.row + used + 1).min(panel.rows);
+    HudBox {
+        col: col as u32,
+        row: panel.row as u32,
+        cols: end_col.saturating_sub(col) as u32,
+        rows: end_row.saturating_sub(panel.row) as u32,
+    }
+}
 
 /// Appends `s` to `out` cut to `width` bytes, a `~` in the last cell when cut.
 fn push_cut(out: &mut String, s: &str, width: usize) {

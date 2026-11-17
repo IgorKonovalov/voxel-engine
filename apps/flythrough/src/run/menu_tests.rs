@@ -431,3 +431,46 @@ fn the_start_banner_names_the_menu_keys() {
     ));
     assert!(!has(&tester), "{}", tester.banner().unwrap());
 }
+
+/// With sixty 16.7 ms frames recorded and the menu open, the overlay's row 0 ends at the
+/// window's last whole column with `fps 59.9  frame 16.7 ms p99 16.7`, white, whether the
+/// stats are shown or hidden, and the panel's title is on row 6 at 2530 x 1378; at 1280 x
+/// 720 the readout shares row 0 with the title. With the menu closed and the stats off the
+/// overlay is the banner, which has no readout.
+#[test]
+fn the_readout_shows_with_the_menu_open() {
+    const READOUT: &str = "fps 59.9  frame 16.7 ms p99 16.7";
+    for stats in [true, false] {
+        let mut run = bare_run(carved_rock());
+        run.hud = super::hud_feed::Hud::new(stats);
+        for _ in 0..60 {
+            run.hud.frames.record(0.0167);
+        }
+        frame_keys(&mut run, &pressed(KeyCode::Tab));
+        assert_eq!(
+            Overlay::of(false, run.menu.is_open(), run.hud.visible),
+            Overlay::Menu
+        );
+        run.write_menu();
+        run.place_menu([2530, 1378]);
+        let row0 = run.hud.overlay.lines().next().unwrap();
+        assert!(row0.ends_with(READOUT), "{row0:?}");
+        assert_eq!(row0.len(), 105, "ends at the last whole column: {row0:?}");
+        assert_eq!(row0.trim_start(), READOUT);
+        assert_eq!(run.hud.overlay_colours[0], vxe_render::HudColour::White);
+        assert_eq!(
+            run.hud.overlay.lines().nth(6).map(str::trim_start),
+            Some("menu")
+        );
+        run.place_menu([1280, 720]);
+        let row0 = run.hud.overlay.lines().next().unwrap();
+        assert!(row0.starts_with("menu "), "{row0:?}");
+        assert!(row0.ends_with(READOUT), "{row0:?}");
+        assert_eq!(row0.len(), 80);
+    }
+    let mut run = bare_run(carved_rock());
+    run.hud = super::hud_feed::Hud::new(false);
+    assert_eq!(Overlay::of(false, false, false), Overlay::Banner);
+    run.write_banner();
+    assert!(!run.hud.banner.contains("fps"), "{}", run.hud.banner);
+}

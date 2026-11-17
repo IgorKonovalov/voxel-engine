@@ -14,8 +14,8 @@ use std::fmt::Write as _;
 use vxe_app::{Gpu, Pacing};
 use vxe_render::debug::StepHistogram;
 use vxe_render::{
-    BELT_CHUNK_BYTES, FRAME_PASSES, GpuWorld, HudColour, LookParams, NormalMode, ShadowWalk,
-    SyncStats,
+    BELT_CHUNK_BYTES, FRAME_PASSES, GpuWorld, HudBox, HudColour, LookParams, NormalMode,
+    ShadowWalk, SyncStats,
 };
 
 /// Frames the readings (`Enter`) average over.
@@ -320,6 +320,11 @@ pub(crate) struct Hud {
     pub(crate) colours: Vec<HudColour>,
     pub(crate) strip: Vec<f32>,
     pub(crate) banner: String,
+    /// Reused buffers: the open menu placed in the window (its rows from `text` and
+    /// `colours`, moved to the panel, the readout on the top row) and the readout's words.
+    pub(crate) overlay: String,
+    pub(crate) overlay_colours: Vec<HudColour>,
+    pub(crate) readout: String,
     /// The far normal's words and the live queue's order and withdrawal in words, remade
     /// only when what they name changes.
     pub(crate) far_normal_words: Cached<(NormalMode, [f32; 2])>,
@@ -400,6 +405,9 @@ impl Hud {
             colours: Vec::new(),
             strip: Vec::with_capacity(hud::RING),
             banner: String::new(),
+            overlay: String::new(),
+            overlay_colours: Vec::new(),
+            readout: String::new(),
             far_normal_words: Cached::default(),
             queue_words: Cached::default(),
             run: RunTimes::default(),
@@ -850,6 +858,34 @@ impl Run {
         self.menu
             .write(&self.modes, &v, &mut self.hud.text, &mut self.hud.colours);
         self.hud.format_us = ((now() - t).as_secs_f64() * 1e6) as u32;
+    }
+
+    /// The page `write_menu` wrote, placed in a `size` window's panel with the readout
+    /// (`fps 59.9  frame 16.7 ms p99 18.2`: the frame window's fps, median and p99) on the
+    /// window's top row, into the HUD's reused `overlay` buffers; its formatting is added to
+    /// `format_us`. Gives the backdrop's box.
+    pub(crate) fn place_menu(&mut self, size: [u32; 2]) -> HudBox {
+        let t = now();
+        let h = &mut self.hud;
+        h.readout.clear();
+        let _ = write!(
+            h.readout,
+            "fps {:.1}  frame {:.1} ms p99 {:.1}",
+            h.frames.fps(),
+            h.frames.frame_ms_p50(),
+            h.frames.frame_ms_p99()
+        );
+        let panel = crate::hud::menu::Panel::of(size[0], size[1]);
+        let backdrop = crate::hud::menu::place(
+            &h.text,
+            &h.colours,
+            panel,
+            &h.readout,
+            &mut h.overlay,
+            &mut h.overlay_colours,
+        );
+        h.format_us += ((now() - t).as_secs_f64() * 1e6) as u32;
+        backdrop
     }
 
     /// The banner at the frame loop's clock: `--pose`'s row until the camera first moves, the

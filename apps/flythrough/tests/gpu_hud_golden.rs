@@ -10,7 +10,7 @@ mod support;
 
 use flythrough::hud::{CEILING_MS, HudStats, RING};
 use support::*;
-use vxe_render::{GpuWorld, HudColour, HudOverlay, LightParams, wgpu};
+use vxe_render::{GpuWorld, HudBox, HudColour, HudOverlay, LightParams, wgpu};
 
 /// Glyph cells are 8 pixels; the overlay is drawn at scale 1.
 const CELL: u32 = 8;
@@ -53,12 +53,16 @@ struct Frame {
 }
 
 fn render(hud: bool) -> Option<Frame> {
-    render_overlay(hud, None)
+    render_overlay(hud, None, None)
 }
 
+/// The menu's text as the overlay draws it: the rows, their colours and the backdrop's box.
+type MenuText<'a> = (&'a str, &'a [HudColour], HudBox);
+
 /// [`render`], or with `banner` the overlay drawing that one line alone, yellow, with no
-/// strip: the fly-through's mode banner with the stats HUD off.
-fn render_overlay(hud: bool, banner: Option<&str>) -> Option<Frame> {
+/// strip: the fly-through's mode banner with the stats HUD off; with `menu` the overlay
+/// drawing the menu's rows over their backdrop, with no strip.
+fn render_overlay(hud: bool, banner: Option<&str>, menu: Option<MenuText<'_>>) -> Option<Frame> {
     let world = carved_world();
     let full = world.stats().full_bricks as u64;
     let (device, queue) = software_device((full + 4096) * 512)?;
@@ -111,6 +115,10 @@ fn render_overlay(hud: bool, banner: Option<&str>) -> Option<Frame> {
         );
         overlay.set_samples(&queue, &[], 0.0);
     }
+    if let Some((text, colours, backdrop)) = menu {
+        overlay.set_lines_over(&queue, text, colours, backdrop);
+        overlay.set_samples(&queue, &[], 0.0);
+    }
 
     let mut encoder = device.create_command_encoder(&Default::default());
     encoder.copy_texture_to_texture(
@@ -118,7 +126,7 @@ fn render_overlay(hud: bool, banner: Option<&str>) -> Option<Frame> {
         target.as_image_copy(),
         size,
     );
-    if hud || banner.is_some() {
+    if hud || banner.is_some() || menu.is_some() {
         let view = target.create_view(&Default::default());
         overlay.encode(&mut encoder, &view, WIDTH, HEIGHT);
     }
@@ -206,7 +214,7 @@ fn mode_banner_golden_shows_the_modes_with_the_hud_off() {
     )
     .banner(0.0)
     .expect("the banner shows at the start");
-    let Some(frame) = render_overlay(false, Some(&line)) else {
+    let Some(frame) = render_overlay(false, Some(&line), None) else {
         return;
     };
     let img = &frame.composed;
@@ -234,15 +242,98 @@ fn mode_banner_golden_shows_the_modes_with_the_hud_off() {
     assert!(changed > 0);
 }
 
+/// `menu.png`: the menu's root page at the start's modes over the carved view, at scale 1
+/// (40 x 22 cells), placed by `menu::place` at the window's top-left with a fixed readout
+/// on its title row: the backdrop dims the page's rows plus one row below the footer, the
+/// whole width. Only those rows change; on the padding row below the footer (clear of the
+/// footer's shadow) every pixel is the march target's at `1 - BACKDROP_ALPHA` within 1/255.
+#[test]
+fn menu_over_the_carved_view() {
+    use flythrough::hud::menu::{Menu, Panel, RunView, place, step};
+    let m = flythrough::hud::Modes::new(
+        vxe_render::Lighting::default(),
+        vxe_render::LightingResolution::default(),
+        0.0,
+    );
+    let mut menu = Menu::default();
+    let mut input = vxe_app::Input::default();
+    input.key_down(vxe_app::KeyCode::Tab);
+    step(&mut menu, &input, &m, &RunView::default());
+    let (mut page, mut page_colours) = (String::new(), Vec::new());
+    menu.write(&m, &RunView::default(), &mut page, &mut page_colours);
+    let panel = Panel {
+        scale: 1,
+        col: 0,
+        row: 0,
+        cols: (WIDTH / CELL) as usize,
+        rows: (HEIGHT / CELL) as usize,
+    };
+    let (mut text, mut colours) = (String::new(), Vec::new());
+    let backdrop = place(
+        &page,
+        &page_colours,
+        panel,
+        "fps 59.9  frame 16.7 ms p99 16.7",
+        &mut text,
+        &mut colours,
+    );
+    let rows = page.lines().count() as u32;
+    assert_eq!(
+        backdrop,
+        HudBox {
+            col: 0,
+            row: 0,
+            cols: WIDTH / CELL,
+            rows: rows + 1,
+        }
+    );
+    let Some(frame) = render_overlay(false, None, Some((&text, &colours, backdrop))) else {
+        return;
+    };
+    let img = &frame.composed;
+    let path = golden_path("menu.png");
+    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+        write_png(&path, img, WIDTH, HEIGHT);
+        println!("blessed {path:?}");
+    } else {
+        let differing = differing_bytes(img, &read_png(&path).0);
+        assert_eq!(differing, 0, "menu.png: {differing} bytes differ");
+    }
+    let pad = rows * CELL + 1..(rows + 1) * CELL;
+    let (mut outside, mut dimmed) = (0, 0);
+    for (i, (p, q)) in img.chunks(4).zip(frame.march.chunks(4)).enumerate() {
+        let y = i as u32 / WIDTH;
+        if y >= (rows + 1) * CELL {
+            assert_eq!(p, q, "pixel row {y} below the backdrop changed");
+            outside += 1;
+        } else if pad.contains(&y) {
+            for k in 0..3 {
+                let want = f32::from(q[k]) * (1.0 - vxe_render::BACKDROP_ALPHA);
+                assert!(
+                    (f32::from(p[k]) - want).abs() <= 1.0,
+                    "row {y}: {p:?} over {q:?}"
+                );
+            }
+            dimmed += 1;
+        }
+    }
+    println!("{rows} rows; {dimmed} dimmed padding pixels, {outside} untouched");
+    assert!(outside > 0 && dimmed > 0);
+    let yellow = img.chunks(4).filter(|p| p[..3] == [255, 204, 0]).count();
+    assert!(yellow > 0, "the selected group is yellow");
+}
+
 /// Readings run by hand (`--run-ignored only -E 'test(=reading::<name>)'`).
 mod reading {
     use super::*;
-    use flythrough::hud::menu::{Menu, PageId, RunView};
+    use flythrough::hud::menu::{Menu, PageId, Panel, RunView, place};
 
     /// The open menu's rows through the overlay over 61 frames, on the root page and on the
-    /// palette with one letter typed: the overlay's allocation count after the first frame
-    /// and after the last, and each page's formatting time (`Menu::write`, as the HUD's
-    /// `format_us` times it) as the median of the 60 later frames, in microseconds.
+    /// palette with one letter typed, placed in a 2530 x 1378 window's panel with the
+    /// readout and drawn over their backdrop at the panel's scale: the overlay's allocation
+    /// count after the first frame and after the last, and each page's formatting time
+    /// (`Menu::write` and `menu::place`, as the HUD's `format_us` times them) as the median
+    /// of the 60 later frames, in microseconds.
     #[test]
     #[ignore = "reading: the menu's overlay allocations and format time"]
     fn menu_allocations_and_format_time() {
@@ -257,6 +348,10 @@ mod reading {
         );
         let v = RunView::default();
         let (mut text, mut colours) = (String::new(), Vec::new());
+        let (mut placed, mut placed_colours) = (String::new(), Vec::new());
+        let panel = Panel::of(2530, 1378);
+        overlay.set_scale(&queue, panel.scale);
+        let readout = "fps 59.9  frame 16.7 ms p99 16.7";
         for (name, filter) in [("root", ""), ("palette l", "l")] {
             let mut menu = Menu::default();
             menu.open_at(PageId::Root);
@@ -268,8 +363,16 @@ mod reading {
             for frame in 0..61 {
                 let t = flythrough::now();
                 menu.write(&m, &v, &mut text, &mut colours);
+                let backdrop = place(
+                    &text,
+                    &colours,
+                    panel,
+                    readout,
+                    &mut placed,
+                    &mut placed_colours,
+                );
                 let took = (flythrough::now() - t).as_secs_f64() * 1e6;
-                overlay.set_lines(&queue, &text, &colours);
+                overlay.set_lines_over(&queue, &placed, &placed_colours, backdrop);
                 if frame == 0 {
                     first = overlay.allocations();
                 } else {

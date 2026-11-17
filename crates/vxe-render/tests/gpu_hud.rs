@@ -292,6 +292,69 @@ fn no_line_at_a_low_ceiling_and_no_strip_without_samples() {
     assert!(img.chunks(4).all(|p| p == CLEAR));
 }
 
+/// The grey palette entry, `0.6` of white.
+const GREY: [u8; 3] = [153, 153, 153];
+
+/// A 4 x 2 block of cells with the backdrop and `ab` in grey on its first row, at scale 1
+/// and then at scale 3 after `set_scale` with the cells unchanged: a block pixel no glyph or
+/// shadow reaches (the middle of cell (3, 1)) is `mix(clear, black, 0.7)` within 1/255, each
+/// set bit of `a` is the grey entry, and every pixel right of or below the block is the clear
+/// colour.
+#[test]
+fn a_backdrop_cell_dims_and_a_grey_row_reads() {
+    let Some((device, queue)) = software_device() else {
+        return;
+    };
+    let (w, h) = (192, 96);
+    let mut hud = HudOverlay::new(&device, wgpu::TextureFormat::Rgba8Unorm, 1);
+    let block = vxe_render::HudBox {
+        col: 0,
+        row: 0,
+        cols: 4,
+        rows: 2,
+    };
+    hud.set_lines_over(&queue, "ab", &[HudColour::Grey], block);
+    let a = FONT[usize::from(b'a' - 32)];
+    for scale in [1u32, 3] {
+        hud.set_scale(&queue, scale);
+        assert_eq!(hud.scale(), scale);
+        let img = draw(
+            &device,
+            &queue,
+            &hud,
+            &cleared_target(&device, &queue, w, h),
+        );
+        let px = |x: u32, y: u32| &img[((y * w + x) * 4) as usize..][..4];
+        let cell = 8 * scale;
+        let dim = px(3 * cell + cell / 2, cell + cell / 2);
+        for k in 0..3 {
+            let want = f32::from(CLEAR[k]) * (1.0 - vxe_render::BACKDROP_ALPHA);
+            assert!(
+                (f32::from(dim[k]) - want).abs() <= 1.0,
+                "scale {scale}: backdrop pixel {dim:?}, channel {k} wants {want}"
+            );
+        }
+        let mut glyph = 0;
+        for (gy, row) in a.iter().enumerate() {
+            for gx in 0..8u32 {
+                if row >> gx & 1 == 1 {
+                    let p = px(gx * scale, gy as u32 * scale);
+                    assert_eq!(p[..3], GREY, "scale {scale}: bit ({gx}, {gy}) of a");
+                    glyph += 1;
+                }
+            }
+        }
+        assert!(glyph > 0);
+        for y in 0..h {
+            for x in 0..w {
+                if x >= 4 * cell || y >= 2 * cell {
+                    assert_eq!(px(x, y), CLEAR, "scale {scale}: pixel ({x}, {y})");
+                }
+            }
+        }
+    }
+}
+
 /// Readings: measurement tests that print numbers and assert nothing a tier runs. Each is
 /// `#[ignore]`d and run by hand, `cargo nextest run -p <package> --run-ignored only -E
 /// 'test(=reading::<name>)'`; the soak and full tiers leave this module out by its name.

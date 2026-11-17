@@ -680,9 +680,9 @@ Readings and gate counts: [`logs/0080.md`](logs/0080.md).
 |---|---|---|---|
 | 1: the table and the tree, printed by `--keys` | dev | done | f432c14a |
 | 2: the component, the palette and the Keys page | dev | done | 47b0bd28 |
-| 3: the minimal key set and the pad | dev | done, one done-when clause unmet (Notes) | committed with this row |
+| 3: the minimal key set and the pad | dev | done, one done-when clause unmet (Notes) | b80cd4d4 |
 | 4: the owner's window | human | run 1 done 2026-11-17, verdict in the readings log; the rerun is Phase 7 | |
-| 5: the panel: scale, place, backdrop, grey, readout (amended 2026-11-17) | dev | not started | |
+| 5: the panel: scale, place, backdrop, grey, readout (amended 2026-11-17) | dev | done | committed with this row |
 | 6: stepped values, unavailable entries, every action answers (amended 2026-11-17) | dev | not started | |
 | 7: the owner's window, run 2 (amended 2026-11-17) | human | not started | |
 | 8: the owner's picks, and the tip (the former Phase 5) | dev | not started | |
@@ -726,6 +726,17 @@ Readings and gate counts: [`logs/0080.md`](logs/0080.md).
   menu-only presses), `run/menu_tests.rs`, `cli/flags.rs`.
 - Phase 3: "no line printed" for a former key is not asserted (stdout is not captured); the
   state it would change is.
+- Phase 5: `vxe-render`'s `lib.rs` (the exports `HudBox`, `BACKDROP_ALPHA`) and
+  `layout_tests.rs` (`BACKDROP_BIT` and `BACKDROP_ALPHA` listed as constants both sides name)
+  are outside the list. The backdrop's API is `HudOverlay::set_lines_over(.., HudBox)`.
+- Phase 5: "columns 11..92" read as 11 to 92 inclusive (one padding column each side of the
+  80); the rows are the title row through one row below the footer, no row above the title.
+- Phase 5: the readout's `frame` figure is the window's median; the placing is
+  `hud::menu::place`, fed by `Run::place_menu` into new `Hud::overlay` buffers, so
+  `Hud::text` keeps the page at the top-left as Phase 2's tests read it.
+- Phase 5: `the_readout_shows_with_the_menu_open` is in `run/menu_tests.rs` (it drives a
+  `Run`); the golden is `tests/golden/menu.png`, drawn at scale 1 on the 320 x 180 golden view
+  (40 x 22 cells, the page cut at column 40), placed at (0, 0) with a fixed readout.
 - Phase 2: `path::TesterInput` gained `Pad`; under `--tester` the triggers and the wheel are
   dropped by the filter (`R2` no longer frees a tour).
 

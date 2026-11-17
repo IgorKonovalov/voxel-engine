@@ -4,14 +4,15 @@
 
 use flythrough::cli::parse_args_from;
 use flythrough::hud::menu::{
-    Activated, MENU_COLS, MENU_ROWS, Menu, PageId, RouteInput, RunView, matches, step, taken,
+    Activated, MENU_COLS, MENU_ROWS, Menu, PageId, Panel, RouteInput, RunView, matches,
+    panel_scale, place, step, taken,
 };
 use flythrough::hud::menu::{Group, entries, keys_text, unlisted_keys};
 use flythrough::hud::{HudRow, Modes};
 use flythrough::toggles::{ACTIONS, TOGGLES};
 use flythrough::toggles::{Press, Toggle, press};
 use vxe_app::{Axis, Input, KeyCode, MouseButton, PadButton};
-use vxe_render::{HudColour, Lighting, LightingResolution};
+use vxe_render::{HudBox, HudColour, Lighting, LightingResolution};
 
 fn argv(args: &[&str]) -> Vec<String> {
     args.iter().map(|s| (*s).to_owned()).collect()
@@ -568,4 +569,71 @@ fn every_menu_only_entry_is_reached_by_its_words() {
             _ => panic!("{}: {acts:?}", e.label),
         }
     }
+}
+
+/// The menu's glyph scale is the largest at which its 80 x 45 cells fit the window, at least
+/// 2.
+#[test]
+fn the_panel_scale_fits_the_window() {
+    for (w, h, want) in [
+        (1280, 720, 2),
+        (1920, 1080, 3),
+        (2530, 1378, 3),
+        (2560, 1440, 4),
+        (800, 600, 2),
+    ] {
+        assert_eq!(panel_scale(w, h), want, "{w} x {h}");
+        assert_eq!(Panel::of(w, h).scale, want, "{w} x {h}");
+    }
+}
+
+/// At 2530 x 1378 (105 x 57 whole cells at scale 3) the root page's title starts at column
+/// 12, row 6, and the backdrop covers columns 11 to 92 of the title row through one row
+/// below the footer and no cell outside; at 1280 x 720 the panel starts at (0, 0) and the
+/// backdrop covers the page's rows, cut to the window's 80 x 45 cells.
+#[test]
+fn the_panel_is_centred() {
+    let m = modes(true);
+    let mut menu = Menu::default();
+    key(&mut menu, &m, KeyCode::Tab);
+    let (page, colours) = drawn(&menu, &m);
+    let used = page.lines().count();
+
+    let panel = Panel::of(2530, 1378);
+    assert_eq!((panel.cols, panel.rows), (105, 57));
+    let (mut text, mut out) = (String::new(), Vec::new());
+    let b = place(&page, &colours, panel, "", &mut text, &mut out);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 6 + used, "{text}");
+    assert_eq!(out.len(), lines.len());
+    assert!(lines[..6].iter().all(|l| l.trim().is_empty()), "{text}");
+    assert_eq!(lines[6].find("menu"), Some(12), "{text}");
+    for (i, l) in page.lines().enumerate() {
+        assert_eq!(lines[6 + i].get(12..).unwrap_or(""), l, "row {i}");
+        assert_eq!(out[6 + i], colours[i], "row {i}");
+    }
+    let footer = 6 + used - 1;
+    for row in 0..57u32 {
+        for col in 0..105u32 {
+            let want = (11..=92).contains(&col) && (6..=footer as u32 + 1).contains(&row);
+            assert_eq!(b.contains(col, row), want, "cell ({col}, {row}) in {b:?}");
+        }
+    }
+
+    let panel = Panel::of(1280, 720);
+    assert_eq!(
+        (panel.col, panel.row, panel.cols, panel.rows),
+        (0, 0, 80, 45)
+    );
+    let b = place(&page, &colours, panel, "", &mut text, &mut out);
+    assert_eq!(text, page);
+    assert_eq!(
+        b,
+        HudBox {
+            col: 0,
+            row: 0,
+            cols: 80,
+            rows: used as u32 + 1,
+        }
+    );
 }

@@ -649,13 +649,26 @@ impl Run {
         {
             self.hud.cracks = Some(crack_shares(gpu, &gfx.frame));
         }
+        // The menu draws at its panel's glyph scale; the stats and the banner at the HUD's.
+        let scale = match overlay {
+            Overlay::Menu => menu::panel_scale(gpu.size[0], gpu.size[1]),
+            Overlay::Stats | Overlay::Banner => crate::run::hud_feed::HUD_SCALE,
+        };
+        if let Some(gfx) = self.gfx.as_mut() {
+            gfx.hud.set_scale(&gpu.queue, scale);
+        }
         match overlay {
             Overlay::Stats => self.update_hud(gpu),
             Overlay::Menu => {
                 self.write_menu();
+                let backdrop = self.place_menu(gpu.size);
                 if let Some(gfx) = self.gfx.as_mut() {
-                    gfx.hud
-                        .set_lines(&gpu.queue, &self.hud.text, &self.hud.colours);
+                    gfx.hud.set_lines_over(
+                        &gpu.queue,
+                        &self.hud.overlay,
+                        &self.hud.overlay_colours,
+                        backdrop,
+                    );
                     gfx.hud.set_samples(&gpu.queue, &[], 0.0);
                 }
             }
