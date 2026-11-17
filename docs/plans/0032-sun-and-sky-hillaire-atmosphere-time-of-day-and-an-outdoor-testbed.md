@@ -631,6 +631,11 @@ README says which.
      drift of 0.15 radius per frame over 64 frames sets the bit on no frame, and
      `LIGHTING_LIGHTS_CHANGED` and `LIGHTING_EMISSION_CHANGED` are set on no frame of either
      run.
+     **Amended 2026-11-17 (architect, close review):** the frame-11 clause cannot fail on a
+     missing reset (the blend alone leaves `0.8^11 = 0.086`, so 91.4 % arrives anyway). The
+     settle bar also asserts the reset itself: on the first frame after the turn every such
+     pixel reads at least 90 % of its new lit value, the value taken from a read of the
+     settled pose after the 11 frames, not from the frames under test.
   7. **The upscaler is told of a jump and not of a drift.**
      `a_sun_jump_marks_the_reactive_mask_and_a_drift_does_not` in `gpu_fsr2.rs` (FSR 2 at
      1.5, lamp off, no list light; about 8 s): on the frame of bar 6's 10-degree turn, every
@@ -987,9 +992,11 @@ README says which.
     as built ("8-10 no big difference, we need to use what is faster").
   - **The canopy:** `LEAF_FILL` 64 ("14 these trees looks better"); `--leaf-fill` keeps its
     range with 64 the default; `forest_vector`'s hash is re-pinned at 64 and
-    `a_tree_is_what_the_formula_says` reads three quarters of the lattice points within 3 %
-    (the binomial standard deviation of a 0.75 keep at 24 400 points is about 73, 0.4 % of
-    18 300). The outdoor default `--trees` is `sparse` (amended 2026-11-17, owner): the parse
+    `a_tree_is_what_the_formula_says` reads a quarter of the lattice points within 3 %
+    (the builder keeps a voxel when `hash & 255 < leaf_fill`, so 64 keeps 64 / 256, the fill
+    the owner saw in the window; the binomial standard deviation of a 0.25 keep at 24 400
+    points is about 68, 1.1 % of 6100. Corrected at the close review, 2026-11-17: this line
+    read "three quarters" and 18 300, a slip). The outdoor default `--trees` is `sparse` (amended 2026-11-17, owner): the parse
     test pins it, the banner names it, and an outdoor golden or hash taken without `--trees`
     either passes `--trees none` explicitly or is re-pinned at `sparse` as a disclosed change.
 - **Files touched:** `apps/flythrough/src/daylight.rs`, `cli/outdoor.rs`, `cli/tests.rs`,
@@ -1417,6 +1424,72 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   comment hygiene, test tiers, file size, plan size, index rows exit 0.
 - **Outstanding `human` phases:** none (Phase 9 ran 2026-11-17; the owner agreed the plan
   closes without another window after Phase 10).
+
+## Close review (architect, 2026-11-17)
+
+Fresh-session close at `70463c97` (main `a0ad0783` merged at `a89567d1`). **Verdict: one
+major and one minor go back to `dev`; the plan does not close yet.** Everything else holds: the
+sky, the key light, the sky ray, the change rule, the testbed and the window's picks are built
+as planned and amended, and every named test was read.
+
+- **Gate tier on this tree:** `cargo nextest run --workspace --profile gate --no-fail-fast`
+  1067 run, 1067 passed, 123 skipped, 1214.3 s (exclusive perf lock, 16G scope, 12 jobs, guests
+  built, load 0.94 at the start and 2.24 at the end). Over the 12 min proposal, as the tier has
+  been at recent closes (Plan 0069's tip 1065.6 s); this plan's gate tests add about 150 s of
+  it. Not re-run here: build, clippy, fmt, quick and the doc gates (the lane ran them at
+  `a89567d1`; `70463c97` changes the log only), the soak tier (each soak test passed once by
+  name in the lane, Phase 11 of the readings log).
+- **Layering:** nothing under `crates/` names a tree, leaf, bark, grass or forest;
+  `vxe-world` is untouched; the outdoor source and the trees are integer-only; no
+  `absent_ball_r2` or `ball_r2` is left in the tree; the bake's source takes no sky term
+  (`sky_light.wgsl`, `shade.wgsl` compile into the light pass alone).
+
+**M1 (major). Phase 5 bar 6's settle test asserts nothing.**
+`crates/vxe-render/tests/gpu_sun.rs`, `a_sun_jump_resets_the_direct_part`: `left` keeps the
+pixels whose frame-11 read exceeds 90 % of the lit maximum, and the frame-11 check then compares
+that read with 90 % of itself, true for any non-negative value; frame 1 is printed, never
+asserted. No gate test asserts that the direct accumulation takes the frame's sample on
+`LIGHTING_SKY_CHANGED` (the flag test asserts the bit, bar 7 the mask). Fix: take the new lit
+value from a read of the settled pose after the 11 frames, choose the pixels from `before` and
+that read, and assert frame 1 and frame 11 against it (bar 6 is amended above: a frame-11 clause
+alone cannot fail on a missing reset). The readings log's 28 of 28 at frames 1 and 11 says the
+mechanism works; the test does not defend it.
+
+**m1 (minor). Four gate GPU tests over the 10 s line in this run:** `gpu_sun
+an_absent_chunk_is_sky_to_the_sun` 16.6 s, `gpu_sun
+the_sky_lit_floor_is_as_still_as_the_lamp_lit_one_natively` 14.3 s, `gpu_bake
+a_baked_face_ignores_the_sky` 13.7 s, `gpu_sun the_noon_sun_reads_the_transmittance` 10.2 s.
+Trim each under the line or mark it soak (`docs/nfr.md` section 7). The CPU test
+`outdoor the_mouth_leads_in_and_the_chamber_is_roofed` read 15.8 s and stays in the gate (the
+CPU rule).
+
+**The lane's notes, judged.**
+- *The leaf fill is a quarter.* A slip in the amendment, corrected above: the builder keeps
+  `hash & 255 < leaf_fill` since Phase 8, so 64 keeps a quarter, which is what the owner picked
+  by eye; "three quarters" and its 18 300 were the architect's arithmetic on the wrong side.
+  The test's quarter within 3 % is right.
+- *Phase 7 bar 2 in the covered bore.* Accepted. The `inside` spawn stands in an open cut, so a
+  seal there tests nothing; sealing a stretch of covered bore with the camera past it and
+  facing the mouth defends the bar's claim (the sky does not leak into a sealed cave), and the
+  log keeps both failed first forms.
+- *Phase 8 bar 6 at one exposure.* Accepted, a wording gap: "lower in the forest image" read
+  under each pose's own auto exposure compares the meter (1.314, the forest lifted), not the
+  light; one pinned exposure reads the trees' shade (0.319). Both figures stay in the log.
+- *Outdoor rigs sync until nothing is pending.* A consequence of Phase 10's rule, not a
+  deviation: an absent chunk is now sky to a lighting ray, so a rig that renders before its
+  world is resident lights what should be shaded.
+
+**Bookkeeping owed at the close ceremony** (after the fix pass): Status closed and the move to
+`done/` with links repaired (Plan 0086, the window review, the ADRs and the roadmap); ADR-0026
+accepted with an Outcome (the sky-view LUT is rgba32float, 331 776 B; no filtering sampler,
+`textureLoad` taps; the deep-twilight residue of the multiple-scattering term is a reading);
+ADR-0027 accepted with its 2026-11-17 Outcome; ADR-0070 stays proposed (Plan 0086 builds it);
+ADR-0028's line on "ADR-0027's rule, moved outward" flagged for Plan 0033's refresh; the
+ledger row "sun and sky" in `docs/nfr/02-frame-budget.md` replaced with Phase 7's readings
+(light-pass delta plus the sky passes: about 0.86 to 0.92 ms RTX, 7.8 to 9.6 ms RADV) and its
+totals; the indexes, roadmap M10, `CHANGELOG.md` and v0.61.0. Velocity: 804 commits over 15
+active days in the last 14, 0.99x the window before. `loc.mjs` totals: Rust code 68 100, Rust
+test 59 674, comments 26 340, WGSL 6373, markdown 94 834.
 
 ## Followups
 
