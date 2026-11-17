@@ -124,10 +124,13 @@ pub fn outdoor_level_on(
     };
     let mut gpu = GpuWorld::with_config(&device, cfg);
     gpu.set_focus(eye);
-    for _ in 0..4 {
-        gpu.sync_now(&world, &device, &queue)
-            .expect("mirror fits the adapter");
-    }
+    // Until every chunk is mirrored: an absent chunk is air, and sky to a lighting ray.
+    while gpu
+        .sync_now(&world, &device, &queue)
+        .expect("mirror fits the adapter")
+        .pending_chunks
+        > 0
+    {}
     Some((
         VeinLevel {
             device,

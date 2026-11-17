@@ -398,7 +398,7 @@ fn forest_vector() {
     });
 }
 
-const FOREST_HASH: u64 = 0xdb7f_c196_99e7_f8cd;
+const FOREST_HASH: u64 = 0x8d4e_d858_7460_a302;
 const OUTDOOR_HASH: u64 = 0x0cfd_7df8_3d1c_2955;
 const SHOWCASE_HASH: u64 = 0xb2ed_b827_7dc9_3e82;
 const CASTLE_VOX_HASH: u64 = 0x35a8_89ee_81c4_17e9;

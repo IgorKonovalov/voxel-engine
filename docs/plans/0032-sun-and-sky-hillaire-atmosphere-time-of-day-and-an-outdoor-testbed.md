@@ -1235,8 +1235,8 @@ Readings and gate counts: [`logs/0032.md`](logs/0032.md).
 | 7: The four goldens, the HUD rows and the readings | dev | done; goldens and bars 1, 2 wait for Phase 10; bars 3, 4 read (Notes) | a66a9463 |
 | 8: Trees, the shadow that travels with the sun, and the forest at low sun | dev | done; bar 5 a reading, bar 6 waits for Phase 10; ForestSource for StampedSource (Notes) | 4cad9482 |
 | 9: The owner's windowed check | human | done 2026-11-17; the verdict in the log, the picks in the amendment of 2026-11-17 | 9c5d6ef9 |
-| 10: Lit by default: an absent chunk is sky to the lighting rays | dev | done; bar 3 a reading, both trees in the log; bar 2's test lands with Phase 11 (Notes) | committed with this row |
-| 11: The picks as tests | dev | not started | |
+| 10: Lit by default: an absent chunk is sky to the lighting rays | dev | done; bar 3 a reading, both trees in the log; bar 2's test lands with Phase 11 (Notes) | 667ca478 |
+| 11: The picks as tests | dev | done; six tests soak with gate variants for two; rigs moved (Notes); a tree's canopy keeps a quarter at 64 (Notes) | committed with this row |
 
 ### Notes
 
@@ -1364,6 +1364,29 @@ Readings and gate counts: [`logs/0032.md`](logs/0032.md).
   target), the spawn's block first; its Phase 9 row is read from 97b7de56 extracted under the
   untracked `live/`. Bar 4: the tree has no `--bake-file` store (the flag is refused), so the
   changed bake source re-bakes nothing on disk.
+- Phase 11: the goldens are in a new `tests/gpu_outdoor_golden.rs` (`gpu_golden.rs` is at 1836
+  of 2000 lines); the empty sky's discs use the testbed's 3 degrees and each is metered to put
+  the zenith at mid-grey (auto, read back, two digits); the outdoor goldens render a fixed
+  extent around the spawn (6 chunks, not streamed) at the new default `--trees sparse`, baked
+  one chunk around the eye.
+- Phase 11, Phase 7 bar 2: the regions are the opening's sky and the shaded left wall (the
+  right wall at the spawn is sunlit). The `inside` spawn stands in an open cut, so the sealed
+  half runs 40 voxels past the point from which the bore's roof stays covered (389 voxels in),
+  facing the mouth, at manual exposure 1 (the pre-exposed direct target follows the meter),
+  with the seal across that stretch, not at the spawn. The unsealed walls read 1.66e-3.
+- Phase 11, Phase 8 bar 6: the ground comparison is at one manual exposure (the bare pose's
+  auto); under each pose's own auto exposure the forest's ground reads brighter (1.314).
+- Phase 11, Phase 8 bar 2: at `LEAF_FILL` 64 the builder keeps `64 / 256`, a quarter of the
+  canopy's points; the test asserts within 3 % of a quarter, not the "three quarters" the
+  amendment names (its 18 300 is a quarter of 73 199).
+- Phase 11 tests not where the plan names them: bar 7 (Phase 5) and Phase 6 bar 4 in
+  `gpu_sun.rs` (the rigs are there), bar 6's settle as `a_sun_jump_resets_the_direct_part`
+  beside the flags test. Phase 6 bar 3's second box stands 400 voxels along +x with the camera
+  inside each box. Phase 8 bar 5's floor is 512 x 384 (the view's span), one frame reused.
+- Phase 11 soak (over 10 s): Phase 7 bars 1 and 2, Phase 8 bars 5 (gate variant at 320 x 180,
+  3 voxels) and 6, Phase 5 bar 7, Phase 6 bar 4 (gate variant native, 32 frames).
+- Phase 11: the outdoor rigs (`support/stillness.rs`'s `outdoor_level_on`, the readings) sync
+  until no chunk is pending, since an absent chunk is now sky to a lighting ray.
 
 ### Close triggers
 

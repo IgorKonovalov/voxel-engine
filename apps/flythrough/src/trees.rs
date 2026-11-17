@@ -38,7 +38,7 @@ pub const TREE_CELL: i32 = 48;
 /// The trees built per seed.
 pub const TREE_VARIANTS: usize = 16;
 /// `--leaf-fill` by default: a canopy voxel is kept when its hash's low byte is under this.
-pub const LEAF_FILL: u32 = 128;
+pub const LEAF_FILL: u32 = 64;
 /// The trunk reaches this many voxels under the base, so no tree floats on a slope.
 pub const TRUNK_SINK: i32 = 12;
 /// The forest box's edge in voxels, square in xy ([`tree_box`]).
@@ -62,9 +62,9 @@ const LEAF_SALT: u64 = 0x7EE5_0000_0000_0003;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TreeDensity {
     /// Bare hills.
-    #[default]
     None,
-    /// About 9 % of the cells.
+    /// About 9 % of the cells; the outdoor source's default.
+    #[default]
     Sparse,
     /// About 94 % of the cells.
     Forest,

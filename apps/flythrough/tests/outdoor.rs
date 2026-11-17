@@ -149,10 +149,12 @@ fn the_chunk_short_cuts_match_the_voxel_function() {
     }
 }
 
-/// Plan 0032 Phase 8 bar 2: for 16 seeded shapes at leaf fill 128, on the single-tree
-/// builder: the trunk's axis column from the base to `base + height - 1` is bark, the voxel
-/// `rc + 1` over the canopy's centre is left unwritten (air over air), and the canopy's leaf
-/// count is within 3 % of half its sphere's lattice points outside the trunk.
+/// Plan 0032 Phase 8 bar 2: for 16 seeded shapes at the default leaf fill (`LEAF_FILL`, 64),
+/// on the single-tree builder: the trunk's axis column from the base to `base + height - 1`
+/// is bark, the voxel `rc + 1` over the canopy's centre is left unwritten (air over air), and
+/// the canopy's leaf count is within 3 % of `LEAF_FILL / 256` (a quarter) of its sphere's
+/// lattice points outside the trunk: at the smallest canopy, about 24 400 points, the
+/// binomial standard deviation of a quarter keep is about 68, 1.1 % of the expected 6100.
 #[test]
 fn a_tree_is_what_the_formula_says() {
     use flythrough::trees::{LEAF_FILL, TRUNK_SINK, TreeShape, build_tree};
@@ -179,10 +181,10 @@ fn a_tree_is_what_the_formula_says() {
                 }
             }
         }
-        let half = points as f64 / 2.0;
-        let off = (leaves as f64 - half).abs() / half;
+        let want = points as f64 * f64::from(LEAF_FILL) / 256.0;
+        let off = (leaves as f64 - want).abs() / want;
         println!(
-            "{shape:?}: {leaves} leaves of {points} points, {:.2} % off half",
+            "{shape:?}: {leaves} leaves of {points} points, {:.2} % off {want:.0}",
             100.0 * off
         );
         assert!(off <= 0.03, "{shape:?}: {leaves} of {points}");

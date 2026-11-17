@@ -1,6 +1,6 @@
 //! The outdoor source's bars that open a device: the in-process source switch leaves nothing
-//! of the outdoor world behind. Headless runs of the fly-through binary on lavapipe. The
-//! readings in `mod reading` run by hand.
+//! of the outdoor world behind (headless runs of the fly-through binary on lavapipe), and a
+//! tree's shadow travels with the sun. The readings in `mod reading` run by hand.
 #![allow(
     clippy::disallowed_methods,
     reason = "the runs are bounded by wall-clock time"
@@ -11,9 +11,10 @@ mod support;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-/// The stdout of a headless run on lavapipe at 320 x 180 with the live queue's pre-roll at
-/// its smallest, the residency at 6 and 8 chunks (the spawn's block of 2 inside it) and `extra` arguments, or `None` with a printed skip when there is no such
-/// adapter. Panics past `bound` or on a failed exit, with both streams.
+/// The stdout of a headless run on lavapipe at 320 x 180 with the live queue's pre-roll at its
+/// smallest, the residency at 6 and 8 chunks (the spawn's block of 2 inside it) and `extra`
+/// arguments, or `None` with a printed skip when there is no such adapter. Panics past `bound` or
+/// on a failed exit, with both streams.
 fn run(extra: &[&str], bound: Duration) -> Option<String> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_flythrough"))
         .args([
@@ -112,6 +113,39 @@ fn a_source_switch_leaves_nothing_behind_in_60_frames() {
     switch_leaves_nothing_behind(20, 60);
 }
 
+/// Plan 0032 Phase 8 bar 5: one tree from the builder (trunk radius 2 to z = 80, a solid
+/// canopy of radius 12 at z = 80) over a rock floor at z = 0, the camera straight down from
+/// z = 250.5 at 640 x 360, Phase 5's conditions (lamp off, no list light, the sky rays and the
+/// filter off, manual exposure 1, `E_sun = (1, 1, 1)` at the real radius, 16-frame means, the
+/// full walk): the centroid of the occlusion `w = 1 - I / I_open` away from the shadow's axis
+/// lies at (0.5, 46.98) under a sun at 60/180 and at (139.93, 0.5) under one at 30/270, each
+/// within 1.5 voxels on each axis, and the sum of `w` at 30 over 60 is `sin 60 / sin 30 =
+/// 1.732` within 10 %. Over the soak line; the gate keeps the 320 x 180 variant.
+#[test]
+#[ignore = "soak"]
+fn a_tree_shadow_travels_with_the_sun() {
+    tree_shadow_bar([640, 360], 1.5);
+}
+
+/// Bar 5 at 320 x 180 (1.52 voxels a pixel at the floor), each centroid within 3 voxels.
+#[test]
+fn a_tree_shadow_travels_with_the_sun_at_320x180() {
+    tree_shadow_bar([320, 180], 3.0);
+}
+
+fn tree_shadow_bar(size: [u32; 2], tolerance: f64) {
+    let Some(r) = reading::tree_shadow(&[vxe_render::ShadowWalk::Full], size) else {
+        return;
+    };
+    for (got, want) in [(r[0], [0.5, 46.98]), (r[1], [139.93, 0.5])] {
+        assert!(
+            (0..2).all(|k| (got[k] - want[k]).abs() <= tolerance),
+            "{got:?} against {want:?}"
+        );
+    }
+    assert!((r[2][0] / 1.732 - 1.0).abs() <= 0.10, "ratio {}", r[2][0]);
+}
+
 mod reading {
     use super::support;
     use support::stillness::{Pose, SIZE, outdoor_level_on, run_under_sky};
@@ -172,20 +206,22 @@ mod reading {
         r.print("outdoor_noon");
     }
 
-    /// Plan 0032 Phase 8 bar 5, as a reading: a 1024 x 1024 rock floor whose lit plane is z
-    /// = 0 and one tree from the builder (trunk radius 2 on column (0, 0) up to z = 80, a
-    /// solid canopy of radius 12 on voxel (0, 0, 80)), the camera at (0.5, 0.5, 250.5) looking
-    /// straight down at 640 x 360; lamp off, no list light, the sky rays and the filter off,
+    /// Plan 0032 Phase 8 bar 5's rig: a 512 x 384 rock floor (what the view's floor spans) whose
+    /// lit plane is z = 0 and one tree from the builder (trunk radius 2 on column (0, 0) up to z =
+    /// 80, a solid canopy of radius 12 on voxel (0, 0, 80)), the camera at (0.5, 0.5, 250.5)
+    /// looking straight down at `size`; lamp off, no list light, the sky rays and the filter off,
     /// manual exposure 1, `E_sun = (1, 1, 1)` at the real angular radius, the direct target's
     /// luminance a 16-frame mean per lighting pixel. Each floor pixel's occlusion `w = 1 - I /
-    /// I_open` against the same pose without the tree; the centroid of `w`, at the pixels'
-    /// hit positions, over floor pixels at least 4 voxels to either side of the shadow's axis;
-    /// at 60/180 against (0.5, 46.98) and 30/270 against (139.93, 0.5); and the sum of `w` at
-    /// 30 over 60 against `sin 60 / sin 30 = 1.732`. Under the full walk and the coarse walk.
-    /// `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
-    #[test]
-    #[ignore = "reading"]
-    fn a_tree_shadow_travels_with_the_sun() {
+    /// I_open` against the same pose without the tree; the centroid of `w`, at the pixels' hit
+    /// positions, over floor pixels at least 4 voxels to either side of the shadow's axis; at
+    /// 60/180 against (0.5, 46.98) and 30/270 against (139.93, 0.5); and the sum of `w` at 30 over
+    /// 60 against `sin 60 / sin 30 = 1.732`, under each of `walks`: per walk the two centroids,
+    /// then `[ratio, 0]`. `None` without an adapter. `VXE_TEST_ADAPTER` picks the adapter (unset:
+    /// lavapipe).
+    pub(super) fn tree_shadow(
+        walks: &[vxe_render::ShadowWalk],
+        size: [u32; 2],
+    ) -> Option<Vec<[f64; 2]>> {
         use flythrough::trees::{TRUNK_SINK, TreeShape, build_tree};
         use support::SyncNow;
         use vxe_render::sky::{Body, SUN_ANGULAR_RADIUS, Sky};
@@ -194,7 +230,6 @@ mod reading {
             glam::Vec3,
         };
         use vxe_world::{AIR, ChunkExtent, FnSource, World};
-        const SIZE: [u32; 2] = [640, 360];
         let shape = TreeShape {
             trunk_r: 2,
             height: 80,
@@ -215,7 +250,8 @@ mod reading {
                 }
             };
             World::generate(
-                ChunkExtent::new([-8, -8, -1], [8, 8, 4]),
+                // The view's floor (half-extents of 243 and 137 voxels) and the tree.
+                ChunkExtent::new([-4, -3, -1], [4, 3, 2]),
                 &FnSource(f),
                 &flythrough::outdoor_materials(),
             )
@@ -223,17 +259,18 @@ mod reading {
         let worlds = [world_of(false), world_of(true)];
         let pool =
             flythrough::level_pool_units(&worlds[1], false) * vxe_render::internals::UNIT_BYTES;
-        let Some((device, queue, adapter)) = support::reading_device(pool) else {
-            return;
-        };
+        let (device, queue, adapter) = support::reading_device(pool)?;
         let gpus: Vec<GpuWorld> = worlds
             .iter()
             .map(|w| {
                 let mut gpu =
                     GpuWorld::with_config(&device, MirrorConfig::new(Window::Fixed(w.extent())));
-                for _ in 0..4 {
-                    gpu.sync_now(w, &device, &queue).expect("the mirror fits");
-                }
+                while gpu
+                    .sync_now(w, &device, &queue)
+                    .expect("the mirror fits")
+                    .pending_chunks
+                    > 0
+                {}
                 gpu
             })
             .collect();
@@ -249,9 +286,10 @@ mod reading {
             [e.cos() * a.sin(), e.cos() * a.cos(), e.sin()]
         };
         // Per lighting pixel: the 16-frame mean luminance of the direct target and the hit.
-        let read = |gpu: &GpuWorld, sun: [f32; 3], walk: ShadowWalk| {
-            let mut frame = Frame::new(&device, SIZE[0], SIZE[1]);
-            frame.set_resolution(&device, LightingResolution::Full);
+        // One frame for every run: its pipelines are built once.
+        let mut frame = Frame::new(&device, size[0], size[1]);
+        frame.set_resolution(&device, LightingResolution::Full);
+        let mut read = |gpu: &GpuWorld, sun: [f32; 3], walk: ShadowWalk| {
             frame.set_lighting(Lighting {
                 lamp: false,
                 filter: false,
@@ -269,7 +307,7 @@ mod reading {
                 altitude_zero_z: 0.0,
                 ..Sky::new(body(sun), body(sun.map(|c| -c)))
             }));
-            let n = (SIZE[0] * SIZE[1]) as usize;
+            let n = (size[0] * size[1]) as usize;
             let mut sum = vec![0.0f64; n];
             for _ in 0..16 {
                 frame.step(&device, &queue, gpu, &camera, &LightParams::headlamp());
@@ -282,7 +320,8 @@ mod reading {
                 vxe_render::debug::read_rgba32f(&device, &queue, frame.light_hit_positions());
             (sum, hits)
         };
-        for walk in [ShadowWalk::Full, ShadowWalk::Coarse] {
+        let mut out = Vec::new();
+        for &walk in walks {
             let mut w_sums = Vec::new();
             for (el, az, want) in [
                 (60.0f32, 180.0f32, [0.5, 46.98]),
@@ -322,13 +361,24 @@ mod reading {
                     c[1] - want[1],
                 );
                 w_sums.push(sw);
+                out.push(c);
             }
             println!(
                 "reading: tree shadow, {} walk: sum of w at 30 over 60 {:.3}, want 1.732",
                 walk.name(),
                 w_sums[1] / w_sums[0]
             );
+            out.push([w_sums[1] / w_sums[0], 0.0]);
         }
+        Some(out)
+    }
+
+    /// Plan 0032 Phase 8 bar 5 under the coarse walk, printed (the bar is on the full walk).
+    /// `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    #[test]
+    #[ignore = "reading"]
+    fn a_tree_shadow_travels_with_the_sun_under_the_coarse_walk() {
+        tree_shadow(&[vxe_render::ShadowWalk::Coarse], [640, 360]);
     }
 
     /// Plan 0032 Phase 10 bar 3, as a reading: the outdoor hills of seed 1 streamed in
@@ -386,7 +436,8 @@ mod reading {
         let ev = streamer.wait_idle(&world);
         gpu.apply_events(&ev);
         gpu.set_focus(eye);
-        gpu.sync_now(&world, &device, &queue).expect("the mirror fits");
+        gpu.sync_now(&world, &device, &queue)
+            .expect("the mirror fits");
         streamer.set_radii(residency.r_full, residency.r_lod);
         let mut stream = |gpu: &mut GpuWorld| {
             streamer.update(&world, &[eye]);
@@ -444,6 +495,165 @@ mod reading {
                 far.last().map_or(0.0, |g| g.0),
                 gpu.mirrored_chunks(),
             );
+        }
+    }
+
+    /// Plan 0032 Phase 6's restated stop rule, read on the tunnel (the bar is Plan 0086's): the
+    /// outdoor hills of seed 1 around the `inside` spawn and the whole tunnel, facing out and
+    /// facing in. The sky ray's hit rate per lighting pixel is the 64-frame mean of the direct
+    /// target over `pi` under `Sky::uniform(1.0)` (one ray, the filter off, the lamp off, exposure
+    /// 1); the rim band is the hits at a rate of 0.3 to 0.6, the far floor the hits under 0.05.
+    /// Then FSR 2 at 1.5 (320 x 180 to 480 x 270), the default lighting: at 12:00 with the lamp
+    /// off, and with no sky and the lamp on, each settled 64 frames under its auto exposure
+    /// (instant; the outdoor floor and ceiling under the sky) and then pinned there for 64 frames:
+    /// the 99th percentile over each region of the per-pixel change of the displayed image between
+    /// consecutive frames (the largest channel, levels of 255). Prints them. `VXE_TEST_ADAPTER`
+    /// picks the adapter (unset: lavapipe).
+    #[test]
+    #[ignore = "reading"]
+    fn the_tunnel_under_one_sky_ray() {
+        use flythrough::outdoor::{BASE_Z, OutdoorSource, Spawn};
+        use support::SyncNow;
+        use vxe_render::sky::Sky;
+        use vxe_render::{Camera, GpuWorld, MirrorConfig, UpscalerKind, Window};
+        use vxe_world::{ChunkExtent, World};
+        let source = OutdoorSource::new(1);
+        let (eye, facing) = source.spawn(Spawn::Inside);
+        // 3 chunks around the spawn's chunk, and on to 10 along +x and 4 down: the whole tunnel
+        // and its chamber are resident (a lighting ray that leaves the world is sky).
+        let c = eye.chunk().0;
+        let extent = ChunkExtent::new(
+            [c[0] - 3, c[1] - 3, c[2] - 4],
+            [c[0] + 11, c[1] + 4, c[2] + 2],
+        );
+        let world = World::generate(extent, &source, &flythrough::outdoor_materials());
+        let pool = flythrough::level_pool_units(&world, false) * vxe_render::internals::UNIT_BYTES;
+        let Some((device, queue, adapter)) = support::reading_device(pool) else {
+            return;
+        };
+        let mut gpu = GpuWorld::with_config(&device, MirrorConfig::new(Window::Fixed(extent)));
+        gpu.set_focus(eye);
+        // Until every chunk is mirrored: an absent chunk is air, and sky to a lighting ray.
+        while gpu
+            .sync_now(&world, &device, &queue)
+            .expect("the mirror fits")
+            .pending_chunks
+            > 0
+        {}
+        let light = LightParams::headlamp();
+        let p = eye.0.map(|v| v as f32 + 0.5);
+        let d = facing.map(|v| v as f32);
+        let out = flythrough::camera_looking_at(p, [p[0] + d[0], p[1] + d[1], p[2] + d[2]]);
+        let inward = flythrough::camera_looking_at(p, [p[0] - d[0], p[1] - d[1], p[2] - d[2]]);
+        // The hit rate per lighting pixel, and the grid's width.
+        let hit_rate = |cam: &Camera| {
+            let mut f = Frame::new(&device, 320, 180);
+            f.set_lighting(Lighting {
+                lamp: false,
+                filter: false,
+                exposure: Exposure::Manual(1.0),
+                sky_rays: 1,
+                ..flythrough::default_lighting()
+            });
+            f.set_sky(Some(Sky {
+                altitude_zero_z: BASE_Z as f32,
+                ..Sky::uniform(1.0)
+            }));
+            let mut sum: Vec<f64> = Vec::new();
+            for _ in 0..64 {
+                f.step(&device, &queue, &gpu, cam, &light);
+                let px = vxe_render::debug::read_rgba16f(&device, &queue, f.direct());
+                sum.resize(px.len(), 0.0);
+                for (s, p) in sum.iter_mut().zip(&px) {
+                    *s += f64::from(p[1]) / 64.0 / std::f64::consts::PI;
+                }
+            }
+            let hits = vxe_render::debug::read_rgba32f(&device, &queue, f.light_hit_positions());
+            let rate: Vec<Option<f64>> = sum
+                .iter()
+                .zip(&hits)
+                .map(|(s, h)| (h[3] < 1.0e30).then_some(*s))
+                .collect();
+            (rate, f.direct().width() as usize)
+        };
+        // The per-pixel changes of the displayed image over 64 still frames, by display pixel.
+        let changes = |cam: &Camera, sky: bool| {
+            let mut f = Frame::with_sizes(&device, [320, 180], [480, 270]);
+            f.set_upscaler_kind(
+                &device,
+                UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default()),
+            );
+            let auto = if sky {
+                AutoExposure {
+                    min: flythrough::cli::OUTDOOR_MIN,
+                    max: flythrough::cli::OUTDOOR_MAX,
+                    ..AutoExposure::instant()
+                }
+            } else {
+                AutoExposure::instant()
+            };
+            let base = Lighting {
+                lamp: !sky,
+                ..flythrough::default_lighting()
+            };
+            f.set_lighting(Lighting {
+                exposure: Exposure::Auto(auto),
+                ..base
+            });
+            f.set_sky(sky.then(|| flythrough::daylight::Clock::default().sky(BASE_Z as f32)));
+            f.set_dt(1.0 / 60.0);
+            for _ in 0..64 {
+                f.step(&device, &queue, &gpu, cam, &light);
+            }
+            let e = f.exposure_readout(&device).expect("the exposure").exposure;
+            f.set_lighting(Lighting {
+                exposure: Exposure::Manual(e),
+                ..base
+            });
+            let read = |f: &Frame| vxe_render::debug::read_rgba8(&device, &queue, f.target());
+            let mut last = read(&f);
+            let mut per_px: Vec<Vec<u8>> = vec![Vec::new(); last.len() / 4];
+            for _ in 0..64 {
+                f.step(&device, &queue, &gpu, cam, &light);
+                let now = read(&f);
+                for (i, (a, b)) in now.chunks(4).zip(last.chunks(4)).enumerate() {
+                    per_px[i].push((0..3).map(|k| a[k].abs_diff(b[k])).max().unwrap_or(0));
+                }
+                last = now;
+            }
+            (per_px, e)
+        };
+        for (view, cam) in [("facing out", &out), ("facing in", &inward)] {
+            let (rate, gw) = hit_rate(cam);
+            let gh = rate.len() / gw;
+            let rate = &rate;
+            let region = |lo: f64, hi: f64| {
+                move |x: usize, y: usize| {
+                    let (gx, gy) = (x * gw / 480, y * gh / 270);
+                    rate[gy * gw + gx].is_some_and(|r| r >= lo && r < hi)
+                }
+            };
+            let (sky_px, sky_e) = changes(cam, true);
+            let (lamp_px, lamp_e) = changes(cam, false);
+            for (name, lo, hi) in [
+                ("rim band 0.3..0.6", 0.3, 0.6),
+                ("far floor < 0.05", 0.0, 0.05),
+            ] {
+                let inside = region(lo, hi);
+                let p99 = |px: &[Vec<u8>]| {
+                    let mut v: Vec<u8> = (0..px.len())
+                        .filter(|&i| inside(i % 480, i / 480))
+                        .flat_map(|i| px[i].iter().copied())
+                        .collect();
+                    v.sort_unstable();
+                    (v.get(v.len() * 99 / 100).copied(), v.len() / 64)
+                };
+                let (s, n) = p99(&sky_px);
+                let (l, _) = p99(&lamp_px);
+                println!(
+                    "reading: tunnel on {adapter}, {view}, {name}: {n} display pixels; p99 change sky {s:?} (exposure {sky_e:.3e}), headlamp {l:?} (exposure {lamp_e:.3e})"
+                );
+            }
         }
     }
 }

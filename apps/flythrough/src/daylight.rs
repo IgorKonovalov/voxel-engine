@@ -22,6 +22,10 @@ pub const DEFAULT_DAY_LENGTH_S: f32 = 1200.0;
 /// `--time` by default: 12:00, in minutes after midnight.
 pub const DEFAULT_TIME_MIN: f64 = 720.0;
 const DAY_MIN: f64 = 1440.0;
+/// `--sun-radius` and `--moon-radius` by default, in degrees: the testbed draws both bodies
+/// wider than the real ones (`vxe_render::sky::SUN_ANGULAR_RADIUS`, the engine's default) so
+/// their discs read on screen and their shadows are soft.
+pub const BODY_RADIUS_DEG: f32 = 3.0;
 
 /// `Home`: the next world source, rebuilt in process (`run::switch`).
 pub const KEY_SOURCE: KeyCode = KeyCode::Home;
@@ -43,6 +47,8 @@ pub struct Clock {
     pub day_length_s: f32,
     /// The sun's angular radius in radians (`--sun-radius`).
     pub sun_radius: f32,
+    /// The moon's angular radius in radians (`--moon-radius`).
+    pub moon_radius: f32,
     /// `--sun EL,AZ`: the sun's elevation and azimuth in degrees (azimuth clockwise from
     /// north), fixed whatever the time; the moon stands opposite.
     pub fixed_sun: Option<[f32; 2]>,
@@ -54,7 +60,8 @@ impl Default for Clock {
             minutes: DEFAULT_TIME_MIN,
             running: false,
             day_length_s: DEFAULT_DAY_LENGTH_S,
-            sun_radius: vxe_render::sky::SUN_ANGULAR_RADIUS,
+            sun_radius: BODY_RADIUS_DEG.to_radians(),
+            moon_radius: BODY_RADIUS_DEG.to_radians(),
             fixed_sun: None,
         }
     }
@@ -86,7 +93,10 @@ impl Clock {
             angular_radius: self.sun_radius,
             ..Body::sun(sun_dir)
         };
-        let moon = Body::moon(moon_dir);
+        let moon = Body {
+            angular_radius: self.moon_radius,
+            ..Body::moon(moon_dir)
+        };
         Sky {
             altitude_zero_z,
             ..Sky::new(sun, moon)
@@ -241,7 +251,7 @@ mod tests {
         let row = |b: &str| b.replace('\n', ", ");
         assert!(
             row(&m.banner(0.0).expect("at the start"))
-                .contains("source outdoor, trees none, time 12:00, day cycle off, sky rays 1")
+                .contains("source outdoor, trees sparse, time 12:00, day cycle off, sky rays 1")
         );
         let (_, b) = press(&mut m, &[KEY_HOUR], 5000.0);
         assert!(row(&b).contains("time 13:00"), "{b}");

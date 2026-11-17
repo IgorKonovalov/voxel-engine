@@ -102,7 +102,7 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
                 &["--trees"],
                 "none|sparse|forest",
                 "trees on the outdoor hills, about 9 % or 94 % of the 4.8 m cells of a 307 m \
-                 box; CapsLock cycles them in process [none]",
+                 box; CapsLock cycles them in process [sparse]",
                 |p: &mut Parsing, v| {
                     let names = TreeDensity::ALL.map(|d| (d.name(), d));
                     p.args.outdoor.trees = v.word(&names, "none, sparse or forest")?;
@@ -112,7 +112,7 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
             Flag::value(
                 &["--leaf-fill"],
                 "N",
-                "the canopy voxels kept, of 256, 1 to 256 [128]",
+                "the canopy voxels kept, of 256, 1 to 256 [64]",
                 |p: &mut Parsing, v| {
                     p.args.outdoor.leaf_fill =
                         Some(v.parse_if(|n: &u32| (1..=256).contains(n), "1 to 256")?);
@@ -154,10 +154,21 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
                 &["--sun-radius"],
                 "DEG",
                 "the sun's angular radius in degrees, 0.05 to 10: a wider disc softens every \
-                 sun shadow [0.2665, the real sun's]",
+                 sun shadow (the real sun's is 0.2665) [3]",
                 |p: &mut Parsing, v| {
                     let deg: f32 = v.parse_if(|d: &f32| (0.05..=10.0).contains(d), "0.05 to 10")?;
                     p.args.outdoor.clock.sun_radius = deg.to_radians();
+                    Ok(())
+                },
+            ),
+            Flag::value(
+                &["--moon-radius"],
+                "DEG",
+                "the moon's angular radius in degrees, 0.05 to 10: its disc in the sky and its \
+                 shadows' softness [3]",
+                |p: &mut Parsing, v| {
+                    let deg: f32 = v.parse_if(|d: &f32| (0.05..=10.0).contains(d), "0.05 to 10")?;
+                    p.args.outdoor.clock.moon_radius = deg.to_radians();
                     Ok(())
                 },
             ),
