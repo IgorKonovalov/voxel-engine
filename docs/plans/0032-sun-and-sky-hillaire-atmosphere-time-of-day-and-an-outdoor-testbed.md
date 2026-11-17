@@ -1,6 +1,6 @@
 # 0032: Sun and sky: a Hillaire atmosphere, a time of day the game sets, the sun and moon as a directional sample, sky light from a sky ray, an outdoor testbed source
 
-> **Status:** in-progress (lane plan-0032 from 2026-11-16, stacked on plan-0069); approved (2026-10-22), redesigned 2026-11-10 (review pass; owner chose the redesign); amended 2026-11-17 (owner, after the Phase 9 window: Phases 10 and 11 below)
+> **Status:** implemented (2026-11-17, every dev phase on lane plan-0032, stacked on plan-0069; awaits the fresh-session close review); approved (2026-10-22), redesigned 2026-11-10 (review pass; owner chose the redesign); amended 2026-11-17 (owner, after the Phase 9 window: Phases 10 and 11 below)
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
@@ -1236,7 +1236,7 @@ Readings and gate counts: [`logs/0032.md`](logs/0032.md).
 | 8: Trees, the shadow that travels with the sun, and the forest at low sun | dev | done; bar 5 a reading, bar 6 waits for Phase 10; ForestSource for StampedSource (Notes) | 4cad9482 |
 | 9: The owner's windowed check | human | done 2026-11-17; the verdict in the log, the picks in the amendment of 2026-11-17 | 9c5d6ef9 |
 | 10: Lit by default: an absent chunk is sky to the lighting rays | dev | done; bar 3 a reading, both trees in the log; bar 2's test lands with Phase 11 (Notes) | 667ca478 |
-| 11: The picks as tests | dev | done; six tests soak with gate variants for two; rigs moved (Notes); a tree's canopy keeps a quarter at 64 (Notes) | committed with this row |
+| 11: The picks as tests | dev | done; six tests soak with gate variants for two; rigs moved (Notes); a tree's canopy keeps a quarter at 64 (Notes) | 3a954d73 |
 
 ### Notes
 
@@ -1392,11 +1392,31 @@ Readings and gate counts: [`logs/0032.md`](logs/0032.md).
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature.
+- **Public API changed:** `vxe_render::sky` (`Atmosphere`, `Body`, `Sky`, `KeyBody`,
+  `body_direction`, `SUN_ANGULAR_RADIUS`, `MOON_OVER_SUN`, `SUN_ILLUMINANCE`),
+  `Frame::set_sky`, `Frame::set_sky_multiscatter`, `Frame::sky_changed`, `Lighting::sky_rays`
+  with `MAX_SKY_RAYS` and `DEFAULT_SKY_RAYS`, three LUT passes at the front of
+  `FRAME_PASSES` (23 names), the `lighting.sky_rays` settings row; `LodParams` is as at the base
+  (its Phase 5 `r_lod` removed in Phase 10). Shaders: `sky.wgsl`, `sky_atmosphere.wgsl`,
+  `sky_transmittance.wgsl`, `sky_multiscatter.wgsl`, `sky_view.wgsl`, `sky_light.wgsl`,
+  `shade.wgsl`; group 0 slots 16 to 18. Fly-through: `--source outdoor`, `--spawn`, `--time`,
+  `--day-length`, `--sky`, `--sun-radius`, `--moon-radius`, `--sky-rays`, `--trees` (default
+  `sparse`), `--leaf-fill` (default 64), `--sun`, `--switch-at`, `--spawn-hash`; keys `Home`,
+  `PageUp`, `End`, `CapsLock`.
+- **Budget readings:** Phase 6 bar 6, Phase 7 bar 3 and Phase 8 bar 7 in the readings log and
+  `docs/nfr/02-frame-budget.md` and `docs/nfr/03-memory.md`, each with adapter, driver and
+  commit, all loaded; the RADV light pass over section 2's lighting line and the frame over
+  16.6 ms in every configuration (Phase 8 bar 7). No reading was retaken after the window's
+  picks.
+- **Gate at the tip** (tree of 3a954d73; lavapipe, exclusive perf lock, load 2.2 at the end):
+  `cargo build` exit 0; `cargo nextest run --workspace --profile gate --no-fail-fast` 1042
+  run, 1042 passed, 117 skipped, 1284.4 s, exit 0; `cargo test --doc --workspace` 10 passed,
+  1 ignored; `cargo clippy --workspace --all-targets -- -D warnings` exit 0; `cargo fmt --all
+  --check` clean; `cargo deny check` advisories, bans, licenses, sources ok; doc links,
+  comment hygiene, test tiers, file size, plan size, index rows exit 0.
+- **Outstanding `human` phases:** none (Phase 9 ran 2026-11-17; the owner agreed the plan
+  closes without another window after Phase 10).
 
 ## Followups
 
