@@ -303,7 +303,8 @@ pub(crate) struct SkyUniform {
     pub key_dir: [f32; 3],
     pub key_radius: f32,
     pub key_e: [f32; 3],
-    pub _pad: u32,
+    /// [`crate::Lighting::sky_history`]: the visibility pair's cap in frames.
+    pub sky_history: u32,
     /// The key light of the frame before ([`SKY_PREV_KEY`]), and the sky's scale this frame
     /// and the frame before ([`Sky::scale`]).
     pub prev_key_dir: [f32; 3],
@@ -359,7 +360,13 @@ impl SkyUniform {
 
     /// Adds the key light of this frame (`now`) and of the frame before (`prev`, `None`
     /// before the first frame with history: then the frame's own) and the sky rays' count.
-    pub(crate) fn with_keys(mut self, now: &SkyKey, prev: Option<&SkyKey>, sky_rays: u32) -> Self {
+    pub(crate) fn with_keys(
+        mut self,
+        now: &SkyKey,
+        prev: Option<&SkyKey>,
+        sky_rays: u32,
+        sky_history: u32,
+    ) -> Self {
         if self.flags & SKY_ON == 0 {
             return self;
         }
@@ -376,6 +383,7 @@ impl SkyUniform {
             self.prev_key_e = b.illuminance;
         }
         self.sky_rays = sky_rays;
+        self.sky_history = sky_history;
         self.sky_scale = now.scale;
         self.prev_sky_scale = prev.scale;
         self
@@ -514,7 +522,7 @@ mod tests {
             Body::moon(at_elevation(30.0)),
         );
         let (now, then) = (SkyKey::of(Some(&s)), SkyKey::of(Some(&night)));
-        let u = SkyUniform::of(Some(&s), 0.0, true).with_keys(&now, Some(&then), 1);
+        let u = SkyUniform::of(Some(&s), 0.0, true).with_keys(&now, Some(&then), 1, 64);
         assert_eq!(u.flags & (SKY_KEY | SKY_PREV_KEY), SKY_KEY | SKY_PREV_KEY);
         assert_eq!(
             (u.key_dir, u.key_e, u.key_radius),
@@ -524,7 +532,7 @@ mod tests {
             (u.prev_key_dir, u.prev_key_e),
             (night.moon.direction, night.moon.illuminance)
         );
-        let off = SkyUniform::of(None, 0.0, true).with_keys(&SkyKey::of(None), None, 1);
+        let off = SkyUniform::of(None, 0.0, true).with_keys(&SkyKey::of(None), None, 1, 64);
         assert_eq!(off, SkyUniform::default(), "no sky stays the zero uniform");
     }
 }

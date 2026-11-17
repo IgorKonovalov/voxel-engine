@@ -921,6 +921,10 @@ impl Args {
                 .outdoor
                 .sky_rays
                 .unwrap_or(vxe_render::DEFAULT_SKY_RAYS),
+            sky_history: self
+                .outdoor
+                .sky_history
+                .unwrap_or(vxe_render::DEFAULT_SKY_HISTORY),
             ..crate::default_lighting()
         })
     }

@@ -505,9 +505,30 @@ fn the_outdoor_source_and_its_flags_parse() {
             .sky_rays,
         1
     );
-    for bad in ["0", "5", "x"] {
+    // --sky-rays 0 is bake only, and the banner names it.
+    let r = parse_args_from(argv(&["--source", "outdoor", "--sky-rays", "0"])).unwrap();
+    assert_eq!(r.start_lighting().sky_rays, 0);
+    let line = r.start_modes(0.0).line();
+    assert!(line.contains("sky rays 0,"), "{line}");
+    for bad in ["5", "x"] {
         assert!(
             parse_args_from(argv(&["--sky-rays", bad])).is_err(),
+            "{bad}"
+        );
+    }
+    // --sky-history: the visibility pair's cap, 64 by default.
+    let r = parse_args_from(argv(&["--source", "outdoor", "--sky-history", "128"])).unwrap();
+    assert_eq!(r.start_lighting().sky_history, 128);
+    assert_eq!(
+        parse_args_from(argv(&["--source", "outdoor"]))
+            .unwrap()
+            .start_lighting()
+            .sky_history,
+        64
+    );
+    for bad in ["0", "1025", "x"] {
+        assert!(
+            parse_args_from(argv(&["--sky-history", bad])).is_err(),
             "{bad}"
         );
     }

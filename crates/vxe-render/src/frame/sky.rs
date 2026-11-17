@@ -237,6 +237,7 @@ impl SkyState {
             &now,
             prev.as_ref(),
             state.lighting.sky_rays.min(MAX_SKY_RAYS),
+            state.lighting.sky_history.clamp(1, MAX_SKY_HISTORY),
         );
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
         let (_, luts) = (self.sky.as_ref()?, self.luts.as_ref()?);

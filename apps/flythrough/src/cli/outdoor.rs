@@ -22,6 +22,8 @@ pub struct OutdoorArgs {
     pub(crate) auto: bool,
     /// `--sky-rays N`: the sky rays a lighting pixel casts; unset, the renderer's default.
     pub(crate) sky_rays: Option<u32>,
+    /// `--sky-history N`: the visibility pair's cap in frames; unset, the renderer's default.
+    pub(crate) sky_history: Option<u32>,
     /// `--trees none|sparse|forest`: the trees stood on the hills.
     pub(crate) trees: TreeDensity,
     /// `--leaf-fill N`: a canopy voxel is kept under this of 256; unset, [`LEAF_FILL`].
@@ -192,11 +194,23 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
             Flag::value(
                 &["--sky-rays"],
                 "N",
-                "cosine-weighted sky rays a lighting pixel casts while a sky is set, 1 to 4 [1]",
+                "cosine-weighted sky rays a lighting pixel casts where no baked sky visibility \
+                 is fresh, 0 (bake only) to 4 [1]",
                 |p: &mut Parsing, v| {
                     let max = vxe_render::MAX_SKY_RAYS;
                     p.args.outdoor.sky_rays =
-                        Some(v.parse_if(|n: &u32| (1..=max).contains(n), "1 to 4")?);
+                        Some(v.parse_if(|n: &u32| (0..=max).contains(n), "0 to 4")?);
+                    Ok(())
+                },
+            ),
+            Flag::value(
+                &["--sky-history"],
+                "N",
+                "frames the sky rays' running mean holds at most, 1 to 1024 [64]",
+                |p: &mut Parsing, v| {
+                    let max = vxe_render::MAX_SKY_HISTORY;
+                    p.args.outdoor.sky_history =
+                        Some(v.parse_if(|n: &u32| (1..=max).contains(n), "1 to 1024")?);
                     Ok(())
                 },
             ),

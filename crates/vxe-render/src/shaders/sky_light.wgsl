@@ -1,5 +1,6 @@
 // The sky's light at a hit (ADR-0027): the key light's directional sample, one shadow ray
-// toward a point of its disc, and the sky rays, cosine-weighted about the shading normal.
+// toward a point of its disc, and the sky rays' visibility, cosine-weighted about the shading
+// normal (ADR-0070).
 // Compiled into the light pass alone, after light.wgsl (the shadow walk), sky_atmosphere.wgsl
 // and sky.wgsl; never into the bake, which takes no sky term, nor the probe or gradient
 // passes.
@@ -85,25 +86,24 @@ const SKY_DIM: u32 = 1002u;
 // A sky ray's length cap in voxels: past it the ray counts as having reached the sky.
 const SKY_RAY_VOXELS: f32 = 512.0;
 
-// The sky's light at a hit at `p`, normal `n`, shadow normal `ns`, lighting pixel `px`: the
-// mean over `sky.sky_rays` cosine-weighted rays about `n` of `pi sky_radiance(d)` where the
-// ray reaches the sky above the horizon (no rock within SKY_RAY_VOXELS), and 0 where it does
-// not or points below the horizon (the ground there is unknown, and it is rock more often
-// than lit sky). With density `cos / pi` the mean estimates the irradiance
-// `E = integral L cos dw`. 0 with no sky.
-fn sky_ray_sample(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>, px: vec2<u32>) -> vec3<f32> {
+// The sky rays' visibility at a hit at `p`, normal `n`, shadow normal `ns`, lighting pixel
+// `px` (ADR-0070): the share of `sky.sky_rays` cosine-weighted rays about `n` that reach the
+// sky above the horizon (no rock within SKY_RAY_VOXELS); a ray below the horizon counts as
+// blocked (the ground there is unknown, and it is rock more often than lit sky). Its
+// expectation is the visibility the bake stores, so the temporal pass colours it as the baked
+// one: times the sky's irradiance above the horizon about the normal. 0 with no ray.
+fn sky_visibility_sample(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>, px: vec2<u32>) -> f32 {
     let count = sky.sky_rays;
-    if (!sky_on() || count == 0u) {
-        return vec3<f32>(0.0);
+    if (count == 0u) {
+        return 0.0;
     }
     let o = sky_origin(p, ns);
-    var sum = vec3<f32>(0.0);
+    var open = 0u;
     for (var i = 0u; i < count; i++) {
         let d = cosine_direction(n, rand(px, SKY_DIM + 2u * i), rand(px, SKY_DIM + 2u * i + 1u));
-        if (d.z <= 0.0 || sky_shadowed(o, d, SKY_RAY_VOXELS)) {
-            continue;
+        if (d.z > 0.0 && !sky_shadowed(o, d, SKY_RAY_VOXELS)) {
+            open += 1u;
         }
-        sum += sky_radiance(d);
     }
-    return PI * sum / f32(count);
+    return f32(open) / f32(count);
 }

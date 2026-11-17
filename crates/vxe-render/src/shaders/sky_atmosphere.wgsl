@@ -36,7 +36,8 @@ struct SkyUniform {
     key_dir: vec3<f32>,
     key_radius: f32,
     key_e: vec3<f32>,
-    _pad: u32,
+    // The visibility pair's running mean's cap in frames (temporal.wgsl).
+    sky_history: u32,
     // The frame before's key light (SKY_PREV_KEY), and the sky's scale now and then.
     prev_key_dir: vec3<f32>,
     sky_scale: f32,

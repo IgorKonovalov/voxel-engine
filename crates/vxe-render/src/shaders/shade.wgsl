@@ -16,13 +16,18 @@
 //                                        `shade`)
 //   3  storage texture   direct_out      rgba16float: the direct part, the list's exact terms
 //                                        each times its colour, and the key light's
-//                                        sample, summed in rgb and their
+//                                        sample (the sky's term is the temporal pass's), summed in rgb and their
 //                                        luminance (`colour_weight`) in a, pre-exposed and
 //                                        clamped as above; 0 on a miss. In the steps view the
 //                                        key light's shadow ray's counters instead (see
 //                                        `shade`)
 //   4  storage, read      light_store     the store (`bake::Store`, temporal.wgsl's `store`),
 //                                        read for `sky_baked`
+//   5  storage texture   vis_out         rgba8unorm: the sky rays' visibility sample (ADR-0070,
+//                                        `sky_visibility_sample`) in r, 0 in g and b, and 1 in a
+//                                        where the sky rays were cast; 0 where none was (no
+//                                        sky, `sky_rays` 0, a miss, the cutaway, the steps view,
+//                                        or a face with a fresh baked visibility, `sky_baked`)
 //
 @group(2) @binding(0) var hit_pos_in: texture_2d<f32>;
 
@@ -34,10 +39,12 @@
 
 @group(2) @binding(4) var<storage, read> light_store: array<u32>;
 
-// Whether the store holds a sky visibility baked under a sky for face `face` of voxel `v`
-// (ADR-0070): its cell's record has the direction and VIS_BAKED. temporal.wgsl's
-// `store_sky_visibility` makes the same test on its own cell and adds the baked sky term at
-// exactly these faces, so the sky ray's sample is not added there.
+@group(2) @binding(5) var vis_out: texture_storage_2d<rgba8unorm, write>;
+
+// Whether the store holds a fresh sky visibility for face `face` of voxel `v` (ADR-0070): its
+// cell's record has the direction and VIS_BAKED, and no SKY_STALE (a dig's ring before its
+// re-bake lands). The sky rays are cast everywhere else; the temporal pass reads `vis_out`'s
+// a to take the visibility pair's mean where they were and the baked term where not.
 fn sky_baked(v: vec3<i32>, face: u32) -> bool {
     let shift = select(3u, 2u, (light_store[STORE_FLAGS] & 2u) != 0u);
     let per = 3u - shift;
@@ -71,8 +78,9 @@ fn sky_baked(v: vec3<i32>, face: u32) -> bool {
     let sub = u32(l.x + n * (l.y + n * l.z));
     let cells = u32(n * n * n);
     let rec = block + (dir >> 11u) - BRICK_WORDS * cells + BRICK_WORDS * sub;
+    let vis = light_store[rec + VIS_WORD + 1u];
     return ((light_store[rec + 6u] >> (16u + face)) & 1u) != 0u
-        && (light_store[rec + VIS_WORD + 1u] & VIS_BAKED) != 0u;
+        && (vis & VIS_BAKED) != 0u && (vis & SKY_STALE) == 0u;
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -132,11 +140,13 @@ fn shade_px(gid: vec3<u32>) {
         }
         textureStore(irradiance_out, px, counts);
         textureStore(direct_out, px, key);
+        textureStore(vis_out, px, vec4<f32>(0.0));
         return;
     }
     // The direct part: rgb, and its luminance in w.
     var e = vec4<f32>(0.0);
     var emissive = vec3<f32>(0.0);
+    var vis = vec4<f32>(0.0);
     entity_fresh = false;
     if (rec.found) {
         let ray = pixel_ray(full_px(gid.xy));
@@ -147,15 +157,16 @@ fn shade_px(gid: vec3<u32>) {
             let ns = shadow_normal_of(rec, ray.d);
             e = PI * lights_lit_rgb(rec.p, n, ns);
             set_ray_lift(rec, params.views[view_of(full_px(gid.xy))]);
-            // The key light's directional sample and the sky rays (sky_light.wgsl), with the
-            // list's. The sky rays run everywhere; at a face whose store holds a baked sky
-            // visibility the temporal pass adds the sky's term instead of their sample.
-            var k = key_sample(rec.p, n, ns, gid.xy);
-            let sky_k = sky_ray_sample(rec.p, n, ns, gid.xy);
-            if (!(reads_store(rec) && sky_baked(store_voxel(rec.p, ns), store_face(rec.axis, ns)))) {
-                k += sky_k;
-            }
+            // The key light's directional sample (sky_light.wgsl), with the list's. The sky rays
+            // run where the hit's face holds no fresh baked visibility; their share that
+            // reached the sky goes to the temporal pass, which keeps its running mean.
+            let k = key_sample(rec.p, n, ns, gid.xy);
             e += vec4<f32>(k, luminance(k));
+            let baked = reads_store(rec) && sky_baked(store_voxel(rec.p, ns), store_face(rec.axis, ns))
+                && (params.lighting & LIGHTING_HOOK_SKY_RAY_ALWAYS) == 0u;
+            if (!baked && sky_on() && sky.sky_rays > 0u) {
+                vis = vec4<f32>(sky_visibility_sample(rec.p, n, ns, gid.xy), 0.0, 0.0, 1.0);
+            }
             // A cube face's emissive light is the store's (temporal.wgsl): no sample, no shadow
             // ray; so is an entity hit's under LIGHTING_ENTITY_WORLD. Any other hit draws its own.
             if (!reads_store(rec) && !entity_reads_store(rec)) {
@@ -169,4 +180,5 @@ fn shade_px(gid: vec3<u32>) {
     let fresh = rec.found && (entity_fresh || entity_moved(rec));
     textureStore(irradiance_out, px, vec4<f32>(min(emissive * ex, vec3<f32>(HDR_MAX)), select(0.0, 1.0, fresh)));
     textureStore(direct_out, px, min(e * ex, vec4<f32>(HDR_MAX)));
+    textureStore(vis_out, px, vis);
 }

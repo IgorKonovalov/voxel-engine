@@ -25,6 +25,7 @@ mod dispatch;
 mod encode;
 mod lights;
 mod marcher;
+mod output_binds;
 mod pipelines;
 mod probe_channel;
 mod readback_ring;
@@ -525,6 +526,18 @@ impl Frame {
     /// The temporal pass's accumulated direct part (rgba16float: as [`Frame::direct`]).
     pub fn direct_accumulated(&self) -> &wgpu::Texture {
         &self.targets.direct_accum[self.cur]
+    }
+
+    /// The light pass's visibility samples (rgba8unorm, ADR-0070): the sky rays' share that
+    /// reached the sky in r, and 1 in a where the sky rays were cast this frame, else 0.
+    pub fn visibility_samples(&self) -> &wgpu::Texture {
+        &self.targets.vis
+    }
+
+    /// The temporal pass's visibility pair (rgba16float, ADR-0070): the sky visibility's
+    /// running mean in r, the key light's in g (0), the sky's short mean in b, its age in a.
+    pub fn visibility_pair(&self) -> &wgpu::Texture {
+        &self.targets.pair[self.cur]
     }
 
     /// The filter's output, the irradiance the composite shades with when the filter runs

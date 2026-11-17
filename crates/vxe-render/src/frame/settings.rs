@@ -208,6 +208,15 @@ pub const SHADOW_AS_BRICK: u32 = 1;
 /// and sky rays are not lifted).
 pub(crate) const LIGHTING_HOOK_NO_STAIR: u32 = 1 << 19;
 
+/// `Params::lighting` bit, a reading hook ([`LightHooks::sky_ray_always`]): the light pass
+/// casts the sky rays at every hit, a face with a fresh baked sky visibility too, and the
+/// temporal pass takes the visibility pair's mean there instead of the baked value.
+pub(crate) const LIGHTING_HOOK_SKY_RAY_ALWAYS: u32 = 1 << 20;
+
+/// `Params::lighting` bit, a reading hook ([`LightHooks::no_clamp`]): the visibility pair's
+/// firefly clamp is off.
+pub(crate) const LIGHTING_HOOK_NO_CLAMP: u32 = 1 << 21;
+
 /// The light passes' reading hooks ([`Frame::set_light_hooks`]): switches that take a term or a
 /// test out of the frame to attribute what the image does to it. All off by default; each is
 /// a uniform branch on a `Params::lighting` bit.
@@ -220,6 +229,11 @@ pub struct LightHooks {
     /// The far normal's stair rules are off: the history test and the key and sky rays'
     /// origins as at a near hit.
     pub no_stair: bool,
+    /// The sky rays run at every hit, a face with a fresh baked sky visibility too, and the
+    /// sky term there is the visibility pair's.
+    pub sky_ray_always: bool,
+    /// The visibility pair's firefly clamp is off.
+    pub no_clamp: bool,
 }
 
 impl LightHooks {
@@ -235,6 +249,14 @@ impl LightHooks {
             0
         } | if self.no_stair {
             LIGHTING_HOOK_NO_STAIR
+        } else {
+            0
+        } | if self.sky_ray_always {
+            LIGHTING_HOOK_SKY_RAY_ALWAYS
+        } else {
+            0
+        } | if self.no_clamp {
+            LIGHTING_HOOK_NO_CLAMP
         } else {
             0
         }
@@ -748,12 +770,22 @@ pub struct Lighting {
     pub young_filter: YoungFilter,
     /// Where an entity hit's emissive light comes from ([`EntityLight`]; default `World`).
     pub entity_light: EntityLight,
-    /// Cosine-weighted sky rays a lighting pixel casts while a sky is set, 0 (none: the
-    /// sky lights through its key light alone) to [`MAX_SKY_RAYS`] (default
-    /// [`DEFAULT_SKY_RAYS`]): their mean of `pi sky_radiance(d)`
-    /// over the rays that reach the sky above the horizon joins the direct part.
+    /// Cosine-weighted sky rays a lighting pixel casts while a sky is set where its face holds
+    /// no fresh baked sky visibility (ADR-0070), 0 (none: bake only) to [`MAX_SKY_RAYS`]
+    /// (default [`DEFAULT_SKY_RAYS`]): the share that reaches the sky above the horizon feeds
+    /// the visibility pair, whose mean is coloured by the sky's irradiance about the normal.
     pub sky_rays: u32,
+    /// The visibility pair's running mean's cap in frames (ADR-0070), 1 to
+    /// [`MAX_SKY_HISTORY`] (default [`DEFAULT_SKY_HISTORY`]): the sky rays' visibility at a
+    /// pixel with no fresh baked value is their mean over up to this many frames.
+    pub sky_history: u32,
 }
+
+/// [`Lighting::sky_history`]' largest value: the pair's age is a half, exact to 2048.
+pub const MAX_SKY_HISTORY: u32 = 1024;
+/// [`Lighting::sky_history`] by default (Plan 0086's readings log, Phase 1: the rim's relative
+/// spread at the hit rates read there).
+pub const DEFAULT_SKY_HISTORY: u32 = 64;
 
 /// [`Lighting::sky_rays`]' largest value.
 pub const MAX_SKY_RAYS: u32 = 4;
@@ -784,6 +816,7 @@ impl Default for Lighting {
             entity_light: EntityLight::World,
             light_floor: DEFAULT_LIGHT_FLOOR,
             sky_rays: DEFAULT_SKY_RAYS,
+            sky_history: DEFAULT_SKY_HISTORY,
         }
     }
 }

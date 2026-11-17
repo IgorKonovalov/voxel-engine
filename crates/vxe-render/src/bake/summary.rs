@@ -613,9 +613,32 @@ pub(super) fn fill_directions(r: &mut [u32]) {
     if !vis.is_empty() {
         let mean = vis.iter().sum::<f32>() / vis.len() as f32;
         let v: [f32; 6] = std::array::from_fn(|f| record_visibility(r, f).unwrap_or(mean));
+        let stale = r[VIS_WORD + 1] & SKY_STALE;
         r[VIS_WORD..VIS_WORD + 2].copy_from_slice(&visibility_words(v));
+        r[VIS_WORD + 1] |= stale;
     }
     r[6] = (r[6] & 0xFFFF) | 0x3F << 16;
+}
+
+/// Sets [`SKY_STALE`] on every cell record of `slots` in `block` that holds a baked
+/// visibility; returns whether any was set.
+pub(super) fn mark_sky_stale(block: &mut [u32], slots: &[u16], record: usize) -> bool {
+    let mut any = false;
+    for &slot in slots {
+        let dir = block[usize::from(slot)];
+        if dir == 0 {
+            continue;
+        }
+        let run = (dir >> 11) as usize;
+        for cell in (run - record..run).step_by(BRICK_WORDS) {
+            let w = &mut block[cell + VIS_WORD + 1];
+            if *w & VIS_BAKED != 0 && *w & SKY_STALE == 0 {
+                *w |= SKY_STALE;
+                any = true;
+            }
+        }
+    }
+    any
 }
 
 /// Whether `slot`'s record in `block` holds light in any direction, emissive or a sky visibility
@@ -826,6 +849,43 @@ mod tests {
         let mut d = a;
         fill_directions(&mut d);
         assert!((record_visibility(&d, 1).expect("filled") - 0.5).abs() <= 1.0 / 255.0);
+    }
+
+    /// A dig's ring marks its bricks' baked visibilities stale (ADR-0070): every cell record
+    /// of the listed slots that holds one, no other slot, and no record baked with no sky; the
+    /// mark holds through a dug brick's filled directions and leaves the values readable.
+    #[test]
+    fn a_dig_ring_marks_its_baked_visibilities_stale() {
+        let mut lit = cell_record(&[(5, [0.0; 3])], 1);
+        lit[VIS_WORD..VIS_WORD + 2]
+            .copy_from_slice(&visibility_words([0.0, 0.0, 0.0, 0.0, 0.0, 0.6]));
+        let dark = cell_record(&[(5, [0.0; 3])], 1);
+        // A block of three bricks at slots 0, 1 and 2, records of one cell, slot 2 with no sky.
+        let mut block = vec![0u32; BLOCK_HEAD_WORDS as usize];
+        let mut at = BLOCK_HEAD_WORDS as u32;
+        for (slot, r) in [(0usize, &lit), (1, &lit), (2, &dark)] {
+            block.extend_from_slice(r);
+            at += BRICK_WORDS as u32;
+            block[slot] = at << 11;
+        }
+        let stale = |b: &[u32], slot: usize| {
+            let run = (b[slot] >> 11) as usize;
+            b[run - BRICK_WORDS + VIS_WORD + 1] & SKY_STALE != 0
+        };
+        assert!(mark_sky_stale(&mut block, &[1, 2], BRICK_WORDS));
+        assert!(!stale(&block, 0), "a slot outside the ring");
+        assert!(stale(&block, 1), "a ring slot with a baked visibility");
+        assert!(!stale(&block, 2), "a ring slot baked with no sky");
+        assert!(
+            !mark_sky_stale(&mut block, &[1, 2], BRICK_WORDS),
+            "already marked"
+        );
+        let run = (block[1] >> 11) as usize;
+        let mut r = block[run - BRICK_WORDS..run].to_vec();
+        assert!((record_visibility(&r, 5).expect("readable") - 0.6).abs() <= 1.0 / 255.0);
+        fill_directions(&mut r);
+        assert_ne!(r[VIS_WORD + 1] & SKY_STALE, 0, "kept through the fill");
+        assert!((record_visibility(&r, 0).expect("filled") - 0.6).abs() <= 1.0 / 255.0);
     }
 
     #[test]

@@ -214,7 +214,8 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--day-length S` | Seconds for a whole day while the cycle runs (`End`) [1200] |
 | `--sun-radius DEG` | The sun's angular radius, 0.05 to 10 degrees: a wider disc softens every sun shadow (the real sun's is 0.2665) [3] |
 | `--moon-radius DEG` | The moon's angular radius, 0.05 to 10 degrees: its disc in the sky and its shadows' softness [3] |
-| `--sky-rays N` | Cosine-weighted sky rays a lighting pixel casts while a sky is set, 1 to 4; the banner names the count [1] |
+| `--sky-rays N` | Cosine-weighted sky rays a lighting pixel casts where no baked sky visibility is fresh, 0 (bake only) to 4; the banner names the count [1] |
+| `--sky-history N` | Frames the sky rays' running mean (the visibility pair) holds at most, 1 to 1024 [64] |
 | `--sky on\|off` | A sky over the world [on for `--source outdoor`, else off] |
 | `--switch-at F,..` | Switch the source at these frames, as `Home` does, and print the spawn's hash at the end |
 | `--spawn-hash` | Print the voxel hash of the chunks within 2 of the spawn's chunk at the end |

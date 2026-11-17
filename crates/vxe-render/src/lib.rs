@@ -100,8 +100,9 @@ pub use exposure::{
     AutoExposure, EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState, Metering,
 };
 pub use frame::{
-    ATROUS_ITERATIONS, DEFAULT_LIGHT_FLOOR, DEFAULT_PROBE_FREEZE, DEFAULT_SKY_RAYS, Light,
-    MAX_LIGHTS, MAX_SKY_RAYS, Params, SHADOW_AS_BRICK, Upscaler,
+    ATROUS_ITERATIONS, DEFAULT_LIGHT_FLOOR, DEFAULT_PROBE_FREEZE, DEFAULT_SKY_HISTORY,
+    DEFAULT_SKY_RAYS, Light, MAX_LIGHTS, MAX_SKY_HISTORY, MAX_SKY_RAYS, Params, SHADOW_AS_BRICK,
+    Upscaler,
 };
 pub use frame::{
     CrackShares, EntityLight, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, LightHooks,

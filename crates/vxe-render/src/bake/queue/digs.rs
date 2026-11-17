@@ -37,6 +37,9 @@ impl BakeQueue {
         let mut lit = false;
         let mut dug = Vec::new();
         for (c, slots) in dig_ring(&boxes, piece) {
+            // The ring's visibilities predate the edit: the light pass casts the sky rays at
+            // their faces until the re-bake lands.
+            store.mark_sky_stale(run.queue, ChunkCoord(c), &slots, record);
             let near: Vec<u16> = slots.iter().copied().filter(|&s| touches(c, s)).collect();
             if !lit && let Some(block) = store.words.get(&c) {
                 lit = near.iter().any(|&s| brick_lit(block, s, record));

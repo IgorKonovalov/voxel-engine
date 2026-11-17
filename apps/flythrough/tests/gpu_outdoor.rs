@@ -562,10 +562,11 @@ mod reading {
             let mut sum: Vec<f64> = Vec::new();
             for _ in 0..64 {
                 f.step(&device, &queue, &gpu, cam, &light);
-                let px = vxe_render::debug::read_rgba16f(&device, &queue, f.direct());
-                sum.resize(px.len(), 0.0);
-                for (s, p) in sum.iter_mut().zip(&px) {
-                    *s += f64::from(p[1]) / 64.0 / std::f64::consts::PI;
+                // The sky rays' share that reached the sky (ADR-0070), in r of 255.
+                let px = vxe_render::debug::read_rgba8(&device, &queue, f.visibility_samples());
+                sum.resize(px.len() / 4, 0.0);
+                for (s, p) in sum.iter_mut().zip(px.chunks(4)) {
+                    *s += f64::from(p[0]) / 255.0 / 64.0;
                 }
             }
             let hits = vxe_render::debug::read_rgba32f(&device, &queue, f.light_hit_positions());
@@ -763,10 +764,11 @@ mod reading {
                 cam,
                 &LightParams::headlamp(),
             );
-            let px = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, f.direct());
-            sum.resize(px.len(), 0.0);
-            for (s, p) in sum.iter_mut().zip(&px) {
-                *s += f64::from(p[1]) / 64.0 / std::f64::consts::PI;
+            // The sky rays' share that reached the sky (ADR-0070), in r of 255.
+            let px = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, f.visibility_samples());
+            sum.resize(px.len() / 4, 0.0);
+            for (s, p) in sum.iter_mut().zip(px.chunks(4)) {
+                *s += f64::from(p[0]) / 255.0 / 64.0;
             }
         }
         let hits =
@@ -843,6 +845,7 @@ mod reading {
             key_off: cell.term == "sky",
             any_history: cell.any_history,
             no_stair: cell.no_stair,
+            ..LightHooks::default()
         });
         f.set_count_store(true);
         // The fly-through's default look: cubes with the far normal at [2, 6].
@@ -1279,6 +1282,84 @@ mod reading {
                     region_level(&r, &far)
                 );
             }
+        }
+    }
+
+    /// Plan 0086 Phase 5 bar 4: an open rock floor (4 x 4 chunks, rock below z 16) under
+    /// `Sky::uniform(1.0)` through the live queue (`support::queue`'s rig at its counts), a
+    /// camera 40 voxels up looking down at 60 degrees. Settled, then a 10-voxel box dug into the
+    /// floor ahead: per frame, the lighting pixels where the sky rays were cast, until three
+    /// frames in a row read none (or 240 frames). Then the same with `sky_rays` 0, where the
+    /// count stays 0, and the dug floor's centre pixel's stored part per frame. Printed.
+    #[test]
+    #[ignore = "reading"]
+    fn the_sky_ray_runs_only_where_stale() {
+        use support::queue::{Setup, box_op, fill, rig, world_of};
+        use vxe_world::{AIR, Mode};
+        let floor = |rays: u32| {
+            let world = world_of([4, 4, 1], AIR);
+            fill(&world, [0, 0, 0], [255, 255, 15], flythrough::cave::ROCK);
+            let eye = [80.0, 128.0, 56.0];
+            let mut q = rig(world, &Setup::at(eye))?;
+            q.camera.pitch = -60f32.to_radians();
+            q.frame.set_lighting(Lighting {
+                sky_rays: rays,
+                ..q.frame.lighting()
+            });
+            q.frame.set_sky(Some(vxe_render::sky::Sky {
+                altitude_zero_z: 16.0,
+                ..vxe_render::sky::Sky::uniform(1.0)
+            }));
+            Some(q)
+        };
+        for rays in [1u32, 0] {
+            let Some(mut q) = floor(rays) else {
+                return;
+            };
+            let settled = q.settle();
+            let cast = |q: &mut support::queue::Q| {
+                q.step();
+                q.render();
+                let v = vxe_render::debug::read_rgba8(
+                    &q.device,
+                    &q.queue,
+                    q.frame.visibility_samples(),
+                );
+                let n = v.chunks(4).filter(|p| p[3] > 0).count();
+                let a = vxe_render::debug::read_rgba16f(&q.device, &q.queue, q.frame.accumulated());
+                let (w, h) = (
+                    q.frame.accumulated().width() as usize,
+                    q.frame.accumulated().height() as usize,
+                );
+                (n, a[(h / 2) * w + w / 2][1])
+            };
+            let at_rest: Vec<usize> = (0..4).map(|_| cast(&mut q).0).collect();
+            println!(
+                "reading: sky rays {rays}: settled in {settled} steps; at rest {at_rest:?} pixels cast"
+            );
+            // The camera's centre ray meets the floor about 23 voxels ahead: dig 10 voxels there.
+            q.edit(&box_op(
+                [98, 123, 6],
+                [107, 132, 15],
+                Mode::Replace {
+                    from: flythrough::cave::ROCK,
+                    to: AIR,
+                },
+            ));
+            let mut row = Vec::new();
+            let mut quiet = 0;
+            for f in 1..=240 {
+                let (n, centre) = cast(&mut q);
+                row.push(format!("{f}:{n}:{centre:.3}"));
+                quiet = if n == 0 { quiet + 1 } else { 0 };
+                if quiet >= 3 && f > 8 {
+                    break;
+                }
+            }
+            println!(
+                "reading: sky rays {rays}: after the dig, frame:cast pixels:centre stored g {}",
+                row.join(" ")
+            );
         }
     }
 }

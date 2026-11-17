@@ -564,8 +564,8 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
 | 1: The attribution reading | dev | done | 851f7c72 |
 | 2: A canopy shadows as its brick | dev | done | 2b5fff92 |
 | 3: History across a stair in the far-normal regime | dev | done | 7a3c6d72 |
-| 4: The sky visibility baked per brick direction | dev | done | committed with this row |
-| 5: The rays' own long history, the sky ray only where stale | dev | not started | |
+| 4: The sky visibility baked per brick direction | dev | done | b8a23a9c |
+| 5: The rays' own long history, the sky ray only where stale | dev | done | committed with this row |
 | 6: The key light on the long history, after a reading | dev | not started | |
 | 7: A spike: a deterministic penumbra from the closest approach | dev | not started | |
 | 8: The owner's windowed check | human | not started | |
@@ -601,6 +601,17 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
   visibility before the edit, not after. Bars 2, 3, 4 and 6 run as readings; bar 7 is partial
   (the log lists what is owed); bar 6 reports Phase 1's change statistics and mean levels, not
   patches a step. One GPU reading ran while a live session runner was up.
+- Phase 5: the light pass hands the sky rays' share to the temporal pass through a third
+  target (`rgba8unorm`), so `frame_bytes` grows by 20 B a lighting pixel, not the pair's 16.
+  The age falls in proportion to the band's breach (at least 2) rather than to 8, and the clamp
+  is at `FIREFLY_K` times the larger of the long and short means. No fade from the pair's mean
+  to the stored value; the pair is seeded with the baked visibility where no ray is cast. With
+  `sky_rays` 0 a stale ring brick shows its stale value (bar 4's "nothing before" not taken).
+  `LightHooks::sky_ray_always` and `no_clamp` are reading hooks. Bars 1 to 4 run as readings;
+  bar 3's rig selects one pixel; bar 5 is a gpu-tier test not yet run; bar 6's light pass during
+  a dig is not read. `FRAME_PASSES` gained `sky irradiance` (fixes Phase 4's shifted pass names).
+  `encode.rs`'s output binds moved to `frame/output_binds.rs`. `docs/flythrough.md` rows for
+  `--sky-rays` and `--sky-history`.
 
 ### Close triggers
 

@@ -118,6 +118,32 @@ fn centre_direct(
     sum.map(|v| (v / f64::from(frames)) as f32)
 }
 
+/// The light at the centre pixel, mean over `frames` frames: the direct target's rgb plus the
+/// accumulated stored part's, which at a cube face holds the sky's term (ADR-0070: the baked
+/// visibility's, or the visibility pair's where the sky rays run) and no emissive light here.
+fn centre_lit(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    frame: &mut Frame,
+    gpu: &GpuWorld,
+    camera: &Camera,
+    frames: u32,
+) -> [f32; 3] {
+    let mut sum = [0.0f64; 3];
+    for _ in 0..frames {
+        frame.step(device, queue, gpu, camera, &LightParams::headlamp());
+        let w = frame.direct().width() as usize;
+        let h = frame.direct().height() as usize;
+        let d = vxe_render::debug::read_rgba16f(device, queue, frame.direct());
+        let a = vxe_render::debug::read_rgba16f(device, queue, frame.accumulated());
+        let i = (h / 2) * w + w / 2;
+        for k in 0..3 {
+            sum[k] += f64::from(d[i][k]) + f64::from(a[i][k]);
+        }
+    }
+    sum.map(|v| (v / f64::from(frames)) as f32)
+}
+
 fn within(got: [f32; 3], want: [f32; 3], rel: f32) -> bool {
     got.iter()
         .zip(&want)
@@ -217,7 +243,7 @@ fn an_absent_chunk_is_sky_to_the_sky_ray() {
     assert!(within(sky_ray, pi, 0.10), "{sky_ray:?}");
 }
 
-/// The floor's centre direct value under `s` at `rays` sky rays, a 16-frame mean, through a
+/// The floor's centre light (`centre_lit`) under `s` at `rays` sky rays, a 16-frame mean, through a
 /// mirror whose window holds the chunk above the floor's whether `world` has it or not.
 fn upper_chunk_read(
     device: &wgpu::Device,
@@ -238,7 +264,7 @@ fn upper_chunk_read(
         ..f.lighting()
     });
     f.set_sky(Some(s));
-    centre_direct(device, queue, &mut f, &gpu, &cam, 16)
+    centre_lit(device, queue, &mut f, &gpu, &cam, 16)
 }
 
 /// Bar 6's flags: turning the sun by 10 degrees in one frame raises the sky-change bit on that
@@ -689,7 +715,7 @@ fn sky_lit_against_lamp_lit(fsr: bool, exposure: [f32; 2], frames: u32) {
 }
 
 /// Under `Sky::uniform(1.0)`, one sky ray, filter off, exposure 1, the coarse walk: the
-/// 64-frame mean of the direct target at the centre pixel of `cam` over `world`.
+/// 64-frame mean of the light at the centre pixel of `cam` over `world` (`centre_lit`).
 fn under_uniform_sky(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -706,7 +732,7 @@ fn under_uniform_sky(
         altitude_zero_z: FLOOR as f32,
         ..Sky::uniform(1.0)
     }));
-    centre_direct(device, queue, &mut f, &gpu, cam, 64)
+    centre_lit(device, queue, &mut f, &gpu, cam, 64)
 }
 
 /// A camera at `pos` facing +y at `pitch` degrees.
@@ -1283,6 +1309,314 @@ mod reading {
                 open.len(),
                 band.len(),
                 leak as f64 / band.len().max(1) as f64
+            );
+        }
+    }
+
+    /// The visibility pair's rig (ADR-0070): `world` mirrored, a frame of SIZE at full lighting
+    /// resolution with no jitter, filter off, exposure 1, one sky ray, the coarse walk,
+    /// `hooks`, under `Sky::uniform(1.0)` (no key light). `frames` frames of `cam`, `edit`
+    /// called before each with the frame's index, the world and the mirror (it returns an edit
+    /// box to invalidate); per frame, the pair and the visibility sample at every lighting pixel.
+    fn pair_run(
+        world: &World,
+        cam: &Camera,
+        frames: u32,
+        hooks: vxe_render::LightHooks,
+        edit: &mut dyn FnMut(u32, &World) -> Option<[[i32; 3]; 2]>,
+    ) -> Option<Vec<(Vec<[f32; 4]>, Vec<[u8; 4]>)>> {
+        let (device, queue) = device()?;
+        let mut gpu = mirror(&device, &queue, world, None);
+        let mut f = frame(&device, SIZE, ShadowWalk::Coarse);
+        f.set_jitter(&device, false);
+        f.set_lighting(Lighting {
+            sky_rays: 1,
+            ..f.lighting()
+        });
+        f.set_light_hooks(hooks);
+        f.set_sky(Some(Sky {
+            altitude_zero_z: FLOOR as f32,
+            ..Sky::uniform(1.0)
+        }));
+        let mut out = Vec::new();
+        for i in 0..frames {
+            if let Some([min, max]) = edit(i, world) {
+                let mut enc =
+                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+                gpu.sync(world, &queue, &mut enc).expect("the mirror fits");
+                queue.submit([enc.finish()]);
+                f.invalidate(min, max);
+            }
+            f.step(&device, &queue, &gpu, cam, &LightParams::headlamp());
+            let pair = vxe_render::debug::read_rgba16f(&device, &queue, f.visibility_pair());
+            let vis = vxe_render::debug::read_rgba8(&device, &queue, f.visibility_samples());
+            let vis = vis.chunks(4).map(|c| [c[0], c[1], c[2], c[3]]).collect();
+            out.push((pair, vis));
+        }
+        Some(out)
+    }
+
+    /// The centre lighting pixel's index of a SIZE frame.
+    fn centre() -> usize {
+        let [w, h] = SIZE.map(|v| v as usize);
+        (h / 2) * w + w / 2
+    }
+
+    /// Plan 0086 Phase 5 bar 1: a floor point at the foot of a half-plane roof's edge 20 voxels
+    /// up (the roof over y >= 512 across the 1024 x 1024 floor, a hit rate of 0.5), under
+    /// `Sky::uniform(1.0)`, the ray forced on: the pair's mean at the centre pixel after frame
+    /// 64, and its largest frame-to-frame change over frames 65 to 128 against the running
+    /// mean's step at the cap, 1 / 64. Printed.
+    #[test]
+    #[ignore = "reading"]
+    fn the_visibility_pairs_mean_holds_still() {
+        let roof = |p: [i32; 3]| p[2] == FLOOR + 20 && p[1] >= 512;
+        let world = floor_world([16, 16, 1], roof);
+        let cam = looking(
+            [512.0, 470.0, FLOOR as f32 + 10.0],
+            [512.0, 512.0, FLOOR as f32],
+        );
+        let hooks = vxe_render::LightHooks {
+            sky_ray_always: true,
+            ..Default::default()
+        };
+        let Some(run) = pair_run(&world, &cam, 128, hooks, &mut |_, _| None) else {
+            return;
+        };
+        let c = centre();
+        let r: Vec<f32> = run.iter().map(|(p, _)| p[c][0]).collect();
+        let hits = run.iter().filter(|(_, v)| v[c][0] > 127).count();
+        let late = &r[64..];
+        let mean = late.iter().sum::<f32>() / late.len() as f32;
+        let step = late
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0f32, f32::max);
+        println!(
+            "reading: half-plane edge: hit rate over 128 frames {:.3}; pair mean at frame 64 \
+             {:.4}, over 65..128 {mean:.4}; largest change a frame {step:.4} (1/64 = {:.4}); age \
+             {}",
+            hits as f32 / 128.0,
+            r[63],
+            1.0 / 64.0,
+            run[127].0[c][3]
+        );
+    }
+
+    /// Plan 0086 Phase 5 bar 2: a floor point under a roof 20 voxels up with a 6 x 6 hole
+    /// straight above it (the form factor `36 / (400 pi) = 0.029`), the ray forced on: the
+    /// pair's largest mean over frames 9 to 128 and its mean over them (the clamp's dark bias
+    /// against 0.029), with the clamp and without it. Printed.
+    #[test]
+    #[ignore = "reading"]
+    fn a_rare_hit_is_clamped() {
+        let (cx, cy) = (512, 512);
+        let roof = move |p: [i32; 3]| {
+            p[2] == FLOOR + 20
+                && !((cx - 3..cx + 3).contains(&p[0]) && (cy - 3..cy + 3).contains(&p[1]))
+        };
+        let world = floor_world([16, 16, 1], roof);
+        let cam = looking(
+            [512.0, 480.0, FLOOR as f32 + 10.0],
+            [512.0, 512.0, FLOOR as f32],
+        );
+        for no_clamp in [false, true] {
+            let hooks = vxe_render::LightHooks {
+                sky_ray_always: true,
+                no_clamp,
+                ..Default::default()
+            };
+            let Some(run) = pair_run(&world, &cam, 128, hooks, &mut |_, _| None) else {
+                return;
+            };
+            let c = centre();
+            let r: Vec<f32> = run.iter().map(|(p, _)| p[c][0]).collect();
+            let hits = run.iter().filter(|(_, v)| v[c][0] > 127).count();
+            let tail = &r[8..];
+            let max = tail.iter().copied().fold(0f32, f32::max);
+            let mean = tail.iter().sum::<f32>() / tail.len() as f32;
+            println!(
+                "reading: 6 x 6 hole, clamp {}: {hits} hits in 128 frames; pair over frames 9..128: \
+                 largest {max:.4}, mean {mean:.4} ({:.3} of 0.029)",
+                if no_clamp { "off" } else { "on" },
+                mean / 0.029
+            );
+        }
+    }
+
+    /// Plan 0086 Phase 5 bar 3: Plan 0032 Phase 5's 4 x 4 pillar, 30 voxels tall, moved one
+    /// voxel a frame along +x across the open floor under `Sky::uniform(1.0)` (an edit a frame,
+    /// its box invalidated), the ray forced on: for every lighting pixel the pillar's sky
+    /// shadow leaves (its pair mean under 0.9 at frame 32 and its sample open from frame 33 on
+    /// within the open band), the frames until the mean reads at least 0.9 of the open floor's.
+    /// The distribution, printed.
+    #[test]
+    #[ignore = "reading"]
+    fn a_moving_shadow_edge_resets_the_history() {
+        let world = floor_world([4, 4, 1], |_| false);
+        let x0 = 100i64;
+        let pillar = |x: i64, m: MaterialId| {
+            EditOp::box_(
+                Fixed3([x, 126, i64::from(FLOOR)].map(|v| v * FIXED_ONE)),
+                Fixed3([x + 3, 129, i64::from(FLOOR) + 29].map(|v| v * FIXED_ONE)),
+                Mode::Fill(m),
+            )
+        };
+        world.apply(&pillar(x0, ROCK)).expect("resident");
+        let cam = looking(
+            [120.0, 80.0, FLOOR as f32 + 60.0],
+            [120.0, 128.0, FLOOR as f32],
+        );
+        let hooks = vxe_render::LightHooks {
+            sky_ray_always: true,
+            ..Default::default()
+        };
+        let mut edit = |i: u32, w: &World| {
+            if i < 32 || i >= 64 {
+                return None;
+            }
+            let x = x0 + i64::from(i - 32);
+            w.apply(&pillar(x, AIR)).expect("resident");
+            let r = w.apply(&pillar(x + 1, ROCK)).expect("resident");
+            let (min, max) = r.aabb.expect("a change");
+            Some([[min.0[0] - 1, min.0[1], min.0[2]], max.0])
+        };
+        let Some(run) = pair_run(&world, &cam, 128, hooks, &mut edit) else {
+            return;
+        };
+        let n = run[0].0.len();
+        let mut frames = Vec::new();
+        let mut never = 0;
+        for i in 0..n {
+            // Shadowed at frame 31 (the pillar still) and open at the end.
+            let before = run[31].0[i][0];
+            let after = run[127].0[i][0];
+            if !(before < 0.9 && after > 0.97) {
+                continue;
+            }
+            // The first frame from which the sample stays open.
+            let Some(open) = (32..128)
+                .rev()
+                .find(|&f| run[f].1[i][0] < 255)
+                .map(|f| f + 1)
+            else {
+                continue;
+            };
+            if open >= 120 {
+                continue;
+            }
+            match (open..128).find(|&f| run[f].0[i][0] >= 0.9) {
+                Some(f) => frames.push(f - open + 1),
+                None => never += 1,
+            }
+        }
+        frames.sort_unstable();
+        let q = |p: usize| frames.get(frames.len() * p / 100).copied().unwrap_or(0);
+        println!(
+            "reading: moving pillar: {} pixels the shadow left; frames to 0.9 of open: median {}, \
+             p90 {}, max {}, within 12 {}; never {never}",
+            frames.len(),
+            q(50),
+            q(90),
+            frames.last().copied().unwrap_or(0),
+            frames.iter().filter(|&&f| f <= 12).count()
+        );
+    }
+
+    /// The slab rig's frame-to-frame change in the penumbra band (Plan 0086 Phase 6's
+    /// reading): Plan 0032 Phase 5 bar 3's 16 x 16 slab 20 voxels over the floor, the camera 8
+    /// voxels up looking straight down, 128 x 128 internal under FSR 2 at 1.5 to 192 x 192 (6
+    /// display pixels a voxel), filter on, the defaults otherwise. Under a zenith sun of
+    /// `radius_deg` (`Some`), or the headlamp and no sky (`None`), at manual `exposure`: after 64
+    /// settle frames, over 64 frames, the mean and 99th percentile of the display's per-pixel
+    /// change (the largest channel, levels of 255) over the band within 1.5 voxels of the
+    /// slab's +x edge (x 40) along its middle 12 voxels, and the band's mean green level.
+    fn penumbra_band(radius_deg: Option<f32>, exposure: f32) -> Option<(f64, f64, f64)> {
+        let (device, queue) = device()?;
+        let slab = |p: [i32; 3]| {
+            p[2] == FLOOR + 20 && (24..40).contains(&p[0]) && (24..40).contains(&p[1])
+        };
+        let world = floor_world([1, 1, 1], slab);
+        let gpu = mirror(&device, &queue, &world, None);
+        let cam = Camera {
+            position: Vec3::new(40.0, 32.0, FLOOR as f32 + 8.0),
+            yaw: FRAC_PI_2,
+            pitch: -FRAC_PI_2 + 1e-4,
+            vfov: 2.0 * 2f32.atan(),
+        };
+        let mut f = Frame::with_sizes(&device, [128, 128], [192, 192]);
+        f.set_upscaler_kind(
+            &device,
+            vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default()),
+        );
+        f.set_lighting(Lighting {
+            lamp: radius_deg.is_none(),
+            exposure: Exposure::Manual(exposure),
+            sky_rays: 0,
+            ..Lighting::default()
+        });
+        f.set_sky(radius_deg.map(|r| {
+            let mut s = sky(dir(90.0, 0.0), dir(-90.0, 0.0), [[1.0; 3], [0.0; 3]]);
+            s.sun.angular_radius = r.to_radians();
+            s
+        }));
+        let light = LightParams::headlamp();
+        for _ in 0..64 {
+            f.step(&device, &queue, &gpu, &cam, &light);
+        }
+        // The band's display pixels: 6 a voxel about the centre (x 40, y 32).
+        let band: Vec<usize> = (0..192usize * 192)
+            .filter(|&i| {
+                let (x, y) = ((i % 192) as f32, (i / 192) as f32);
+                let (vx, vy) = (40.0 + (x + 0.5 - 96.0) / 6.0, 32.0 + (y + 0.5 - 96.0) / 6.0);
+                (vx - 40.0).abs() <= 1.5 && (26.0..38.0).contains(&vy)
+            })
+            .collect();
+        let read = |f: &Frame| vxe_render::debug::read_rgba8(&device, &queue, f.target());
+        let mut last = read(&f);
+        let level = band
+            .iter()
+            .map(|&i| f64::from(last[4 * i + 1]))
+            .sum::<f64>()
+            / band.len() as f64;
+        let mut changes = Vec::new();
+        for _ in 0..64 {
+            f.step(&device, &queue, &gpu, &cam, &light);
+            let now = read(&f);
+            for &i in &band {
+                let d = (0..3)
+                    .map(|k| now[4 * i + k].abs_diff(last[4 * i + k]))
+                    .max()
+                    .unwrap_or(0);
+                changes.push(f64::from(d));
+            }
+            last = now;
+        }
+        changes.sort_by(f64::total_cmp);
+        let mean = changes.iter().sum::<f64>() / changes.len() as f64;
+        Some((mean, changes[changes.len() * 99 / 100], level))
+    }
+
+    /// Plan 0086 Phase 6's reading: the penumbra band's change at 3 degrees (and 5) against
+    /// the lamp's on the same floor, each exposure pinned so the band's mean level is near 118
+    /// (two passes, the second scaled by the display's gamma of 2.2). Printed.
+    #[test]
+    #[ignore = "reading"]
+    fn the_penumbra_against_the_lamp() {
+        for r in [Some(3.0), Some(5.0), None] {
+            let mut ex = 1.0f32;
+            let Some((_, _, level)) = penumbra_band(r, ex) else {
+                return;
+            };
+            ex *= ((118.0 / level.max(1.0)) as f32).powf(2.2);
+            let Some((mean, p99, level)) = penumbra_band(r, ex) else {
+                return;
+            };
+            let what = r.map_or("the headlamp, no sky".to_string(), |d| {
+                format!("sun {d} degrees")
+            });
+            println!(
+                "reading: penumbra band, {what}: exposure {ex:.4}, mean level {level:.1}, change mean {mean:.3}, p99 {p99}"
             );
         }
     }

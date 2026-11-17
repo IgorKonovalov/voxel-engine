@@ -14,7 +14,9 @@ use std::fmt::Write as _;
 
 use super::settings::SPLIT_GROUP;
 use super::*;
-use crate::bake::{BRICK_WORDS, STORE_FLAGS, STORE_TABLE, TABLE_COARSE, VIS_BAKED, VIS_WORD};
+use crate::bake::{
+    BRICK_WORDS, SKY_STALE, STORE_FLAGS, STORE_TABLE, TABLE_COARSE, VIS_BAKED, VIS_WORD,
+};
 use crate::exposure::STATE_HELD;
 use crate::field::{BAND_CUBES_BIT, CRISP_COUNT_BIT, SMOOTH_COUNT_BIT};
 use crate::gpu_world::{
@@ -111,6 +113,8 @@ pub(crate) const PRELUDE: &[(&str, u32)] = &[
     ("LIGHTING_HOOK_ANY_HISTORY", LIGHTING_HOOK_ANY_HISTORY),
     ("LIGHTING_SHADOW_STYLES", LIGHTING_SHADOW_STYLES),
     ("LIGHTING_HOOK_NO_STAIR", LIGHTING_HOOK_NO_STAIR),
+    ("LIGHTING_HOOK_SKY_RAY_ALWAYS", LIGHTING_HOOK_SKY_RAY_ALWAYS),
+    ("LIGHTING_HOOK_NO_CLAMP", LIGHTING_HOOK_NO_CLAMP),
     // The list of lights (`frame/lights.rs`).
     ("MAX_LIGHTS", MAX_LIGHTS as u32),
     ("LIGHT_ON", Light::ON),
@@ -140,6 +144,7 @@ pub(crate) const PRELUDE: &[(&str, u32)] = &[
     ("TABLE_COARSE", TABLE_COARSE),
     ("VIS_WORD", VIS_WORD as u32),
     ("VIS_BAKED", VIS_BAKED),
+    ("SKY_STALE", SKY_STALE),
     // The probe slots' flags (`probes`).
     ("TOUCHED_BIT", TOUCHED_BIT),
     ("MOVED_BIT", MOVED_BIT),

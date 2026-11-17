@@ -85,6 +85,11 @@ pub(crate) const VIS_WORD: usize = 7;
 /// The second sky visibility word's flag: the record's visibilities were baked under a sky.
 pub(crate) const VIS_BAKED: u32 = 1 << 16;
 
+/// The second sky visibility word's flag: a dig's ring holds the brick (ADR-0070), so its
+/// visibilities predate the edit until its re-bake lands, whose record clears it. The light
+/// pass casts the sky rays at a face of a record with it.
+pub(crate) const SKY_STALE: u32 = 1 << 17;
+
 /// Sky rays a brick direction draws at most in the bake (ADR-0070's `SKY_BAKE_RAYS`, a guess:
 /// the binomial standard deviation at a half open sky is 1/32).
 pub const SKY_BAKE_RAYS: u32 = 256;
