@@ -37,6 +37,7 @@ pub(crate) mod loading;
 pub(crate) mod pilot;
 pub(crate) mod profile;
 pub(crate) mod queue;
+pub(crate) mod switch;
 pub(crate) mod tour;
 
 /// The running fly-through, once the world exists.
@@ -104,6 +105,12 @@ pub(crate) struct Run {
     pub(crate) surface: Option<(wgpu::TextureFormat, Option<wgpu::SurfaceColorSpace>)>,
     /// `--tester`'s help panel (`F1`) is shown.
     pub(crate) help: bool,
+    /// `Home` or `--switch-at` asked for the next world source: the app rebuilds the run
+    /// after this frame (`run::switch`).
+    pub(crate) switch: bool,
+    /// `CapsLock` asked for the outdoor hills' next `--trees`: the app rebuilds the run after
+    /// this frame through the switch's path (`run::switch`).
+    pub(crate) retree: bool,
     /// Start-up still stepping behind loading frames; `None` once the first world frame may
     /// draw.
     pub(crate) loading: Option<loading::Loading>,
@@ -173,19 +180,11 @@ pub(crate) fn build_gfx(
         frame.frame_bytes()
     ));
     built.fetch_add(FRAME_UNITS, Ordering::Relaxed);
-    frame.set_probe_spacing(device, plan.probe_spacing);
-    frame.set_jitter(device, plan.jitter);
-    frame.set_upscaler_kind(device, plan.kind);
-    frame.set_sharpness(queue, plan.sharpen);
-    frame.set_lighting(plan.lighting);
-    frame.set_resolution(device, plan.resolution);
+    set_plan(&mut frame, device, queue, &plan);
     diag(format_args!(
         "lighting set, {} B of targets",
         frame.frame_bytes()
     ));
-    if let Some(lod) = plan.lod {
-        frame.set_lod(lod);
-    }
     let mut mirror = reserve_mirror(device, plan.mirror, plan.field);
     if let Some(focus) = plan.focus {
         mirror.set_focus(focus);
@@ -210,6 +209,18 @@ pub(crate) fn build_gfx(
     }
     built.store(BUILD_UNITS, Ordering::Relaxed);
     gfx
+}
+
+/// `plan`'s settings on `frame`: the probe spacing, the jitter, the upscaler and its
+/// sharpening, the lighting and its resolution, and the LOD rule (the default on a level).
+fn set_plan(frame: &mut Frame, device: &wgpu::Device, queue: &wgpu::Queue, plan: &GfxPlan) {
+    frame.set_probe_spacing(device, plan.probe_spacing);
+    frame.set_jitter(device, plan.jitter);
+    frame.set_upscaler_kind(device, plan.kind);
+    frame.set_sharpness(queue, plan.sharpen);
+    frame.set_lighting(plan.lighting);
+    frame.set_resolution(device, plan.resolution);
+    frame.set_lod(plan.lod.unwrap_or_default());
 }
 
 /// A mirror under `cfg`, with the field's band slots when `field`. Prints what it reserved
@@ -417,6 +428,9 @@ impl Drop for Run {
             println!("{line}");
         }
         self.write_report();
+        if self.args.spawn_hash || !self.args.switch_at.is_empty() {
+            println!("{}", switch::spawn_hash_line(&self.world, self.spawn));
+        }
         if self.args.census {
             println!("{}", self.world.brick_census());
             println!("packed: {:?}", self.world.packed_stats());

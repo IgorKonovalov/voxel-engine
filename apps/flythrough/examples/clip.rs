@@ -607,6 +607,7 @@ fn main() -> Result<(), String> {
         },
         look: args.look,
         resolution: args.light.resolution,
+        sky: None,
     }
     .frame(&device, &queue, &mut gpu, &world)?;
     frame.prepare_entities(&device);

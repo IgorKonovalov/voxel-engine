@@ -26,6 +26,7 @@ mod present;
 mod probes;
 mod readback;
 mod settings;
+pub mod sky;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 
@@ -99,8 +100,8 @@ pub use exposure::{
     AutoExposure, EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState, Metering,
 };
 pub use frame::{
-    ATROUS_ITERATIONS, DEFAULT_LIGHT_FLOOR, DEFAULT_PROBE_FREEZE, Light, MAX_LIGHTS, Params,
-    Upscaler,
+    ATROUS_ITERATIONS, DEFAULT_LIGHT_FLOOR, DEFAULT_PROBE_FREEZE, DEFAULT_SKY_RAYS, Light,
+    MAX_LIGHTS, MAX_SKY_RAYS, Params, Upscaler,
 };
 pub use frame::{
     CrackShares, EntityLight, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, LightWeights,

@@ -156,10 +156,16 @@ pub fn composite_hdr_source() -> String {
         )
 }
 
-/// [`composite_hdr_source`] composed as the composite is: the prelude, `common.wgsl` and
-/// `hitrec.wgsl` first.
+/// [`composite_hdr_source`] composed as the composite is: the prelude, `common.wgsl`,
+/// `hitrec.wgsl` and the sky's modules first.
 pub(crate) fn composite_hdr_compose() -> String {
-    compose(&[COMMON_WGSL, HITREC_WGSL, &composite_hdr_source()])
+    compose(&[
+        COMMON_WGSL,
+        HITREC_WGSL,
+        SKY_ATMOSPHERE_WGSL,
+        SKY_WGSL,
+        &composite_hdr_source(),
+    ])
 }
 
 /// The composite's FSR 2 variant: its layout (the composite's, the target rgba32float) and

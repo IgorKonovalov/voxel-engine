@@ -1,6 +1,6 @@
 # ADR-0046: Static emissive light is baked per chunk when the chunk loads or changes, into a store of per-face cells over per-brick values
 
-> **Status:** accepted (2026-11-09, Plan 0059's close), with an Outcome: the store is the brick level alone; a second Outcome at Plan 0067's close (2026-11-12): a partial reach is a setting
+> **Status:** accepted (2026-11-09, Plan 0059's close), with an Outcome: the store is the brick level alone; a second Outcome at Plan 0067's close (2026-11-12): a partial reach is a setting; a third Outcome 2026-11-17 (ADR-0070): a sky-visibility channel beside the emissive words
 > **Date:** 2026-11-05
 > **Related plan(s):** [Plan
 > 0059](../plans/done/0059-loaded-light-a-per-chunk-store-baked-at-load-and-at-edit.md)
@@ -374,3 +374,19 @@ costs nothing when off stays (`docs/plans/logs/0067.md`, Phases 5 and 6). The ch
 leaves waiting are lit meanwhile by ADR-0053's missing-light chain. The live queue's near shell
 still takes full jobs within Chebyshev 2 (`full_first`, owner "keep 2"); `off`, a coarse pass first
 everywhere, is a setting.
+
+## Outcome (2026-11-17, ADR-0070 proposed with Plan 0086)
+
+**The store carries a geometry channel beside the emissive light.** The owner's window of
+2026-11-17 on Plan 0032 read the per-frame sky ray as flicker in the tunnel, and ADR-0070 bakes
+a sky visibility per brick direction (six `u8`, the cosine-weighted fraction of the hemisphere
+that reaches the sky, eight bytes a record with two spare) into this store's records, by the
+same job, under the same reach rule (the bake's sky rays are capped at the chunk's reach, so no
+absent chunk lies inside the cap), re-baked in the same rings at a dig (the third ring opens
+also when a touched brick's visibility was over zero before or after the edit). The channel is
+baked only while the frame holds a `Sky`; with none its words are zero and the emissive words
+are byte-equal with the sky on and off, so "static emissive light" in the title stays true of
+the emissive words and the first consumer pays nothing. The value is read as the emissive part
+is read, bilinear over the 2 x 2 cells with no screen history, times the sky's irradiance about
+the face normal at read; Alternative E's leak inside a brick applies to it. The record's growth
+and the extra rays per brick are Plan 0086's readings against `docs/nfr.md` sections 2, 3 and 4.

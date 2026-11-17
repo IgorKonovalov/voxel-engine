@@ -3,17 +3,15 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0088** (0086 is taken by the still-outdoor-light plan drafted on the
-unmerged branch `plan-0032`, 0087 by the rename below; ADRs are a separate sequence, see
-`../adrs/README.md` for its next free number).
+**Next free number: 0088** (ADRs are a separate sequence, see `../adrs/README.md` for its
+next free number).
 
 ## Active roster
 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Status | Live constraint |
 |------|-------|--------|-----------------|
-| [0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md) | Sun and sky: a Hillaire atmosphere, a time of day, sun and sky ray into the direct target, an outdoor testbed | approved | M10, ADR-0026, ADR-0027. Redesigned 2026-11-10. After 0058 and the render-profile plan. |
-| [0033](0033-far-field-clipmap-to-a-kilometre.md) | The far field: a clipmap of three coarse chunk levels to about 1 km | approved | M10, ADR-0028 (proposed). Amended 2026-11-10. After Plan 0032. |
+| [0033](0033-far-field-clipmap-to-a-kilometre.md) | The far field: a clipmap of three coarse chunk levels to about 1 km | approved | M10, ADR-0028 (proposed). Amended 2026-11-10; refresh owed (absent is sky, Plan 0032's close). After Plan 0032. |
 | [0034](0034-water-surface-waves-reflection-refraction-underwater-fog.md) | Liquid surfaces: analytic waves, traced reflection and refraction, absorption under the surface | approved | M10, ADR-0029 (proposed). Amended 2026-11-10. After Plan 0033. |
 | [0035](0035-aerial-perspective-and-volumetric-clouds-with-cloud-shadows.md) | Aerial perspective over the near and far field, and volumetric clouds that shadow the ground | approved | M10, ADR-0030 (proposed). Amended 2026-11-10. After Plan 0034. |
 | [0036](0036-weather-rain-snow-wind-wet-surfaces-snow-cover-lightning.md) | Weather: rain, snow, wind, wet surfaces and snow cover, lightning | approved | M10, ADR-0031 (proposed). Amended 2026-11-10. After Plan 0035. |
@@ -29,6 +27,7 @@ unmerged branch `plan-0032`, 0087 by the rename below; ADRs are a separate seque
 | [0083](0083-anything-from-a-vox-palette-materials-a-material-file-and-large-scenes-stamped-into-the-world.md) | Anything from a `.vox`: palette materials, a material file, brick prefabs, far placements | approved | M7, ADR-0065, ADR-0066. Approved 2026-11-16. After 0063 and the chore; P6 after 0080, 0077. |
 | [0084](0084-staged-structures-stages-from-a-vox-a-stamp-with-a-write-policy-and-a-region-a-reveal-and-a-demolish.md) | Staged structures: stages from a `.vox`'s layers, a stamp with a write policy and a region, a reveal over ticks, a demolish | approved | M7, ADR-0067. Approved 2026-11-16. After Plan 0083 closes. |
 | [0085](0085-entity-variants-holding-clips-and-an-entity-stamped-into-the-world.md) | Entity variants (hide, swap, remap) from the `.rig`, a clip that holds, a posed entity stamped into the world | approved | M6, ADR-0068, ADR-0069 (proposed). Approved 2026-11-16. After 0063, the chore, 0078 and 0082. |
+| [0086](0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md) | Still outdoor light: baked sky visibility, a long history for the sky and key rays, solid canopy shadows, stair history, a penumbra spike | approved | M10, ADR-0070. After Plan 0032, before Plan 0081. |
 | [0087](0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md) | The rename to `svet`: crates, `SVET_*`, the WIT package, the tester archive, docs, the repository, a minor bump | approved | ADR-0071. Alone, last: after 0032, 0080, 0077, 0079, 0083 and 0086 merge. |
 <!-- roster:end -->
 
@@ -77,6 +76,10 @@ Each starts on main after the one before it closes, unless its line says otherwi
    **Reordered 2026-11-16 (owner):** Plan 0069 starts once Plans 0062 and 0063 have merged, and
    Plan 0032 follows it directly, both beside Plans 0080, 0078, 0077 and 0079. Plan 0071, Plan
    0073 and the `own` removal no longer hold M10; they follow 0069 in their own order.
+   Plan 0032 closed 2026-11-17 (v0.61.0; ADR-0026 and ADR-0027 accepted).
+   **Added 2026-11-17 (architect, from the owner's picks at Plan 0032's window):** Plan 0086
+   (the flicker's fixes, ADR-0070) starts when Plan 0032 closes and merges, recommended ahead
+   of Plan 0081 (the still image first); the owner's go and the order are owed.
 
 **Plans from the architecture review of 2026-11-12** (`../reviews/2026-11-12-architecture-review.md`),
 approved by the owner on 2026-11-12 ("45 after 67, 70 after 45. all draft plans can be
@@ -120,9 +123,9 @@ the owner's "a castle being built... part of the map", approved 2026-11-16 with 
 
 **Plan 0085** (entity variants: `variant` blocks in the `.rig` that hide a part, swap its volume for another `.vox` node or remap a material, picked per instance by one index and honoured by the picture and the headless query; `Playback::ended` on a one-shot clip that already holds; a posed entity baked onto the world grid in integers, clipped to air on the server and stamped through op kind 2; the spider gains `damaged` and `dead`; drafted 2026-11-16 from the owner's "healthy, damaged, dead: three entities or one with modes?", approved 2026-11-16 with every recommendation; ADR-0068 and ADR-0069 proposed): after Plan 0063, the clip-recorder chore and Plan 0078 merge, and after Plan 0082 (recommended; it edits the same files), beside Plans 0077 and 0079's Phase 4. Per-entity voxel damage is parked in `docs/backlog.md`.
 
-**Plan 0087** (the rename to `svet`, ADR-0071 accepted 2026-11-17 on the owner's "for renaming, I think svet is the best": `crates/svet-*`, `SVET_*` with no aliases, `svet:logic`, `svet-tester` and its archive, the documents and the harness, the owner's GitHub rename, a minor bump, a final grep; accepted ADRs, closed plans, logs, reviews and past CHANGELOG entries keep `vxe`; drafted 2026-11-17, **awaits the owner's go**): it touches every crate directory, so it runs **alone, when no lane is open**: after Plans 0069, 0032 and 0080 (and any other lane `git worktree list` shows then) merge, and after Plans 0077, 0079, 0083 and 0086 merge too (owner, 2026-11-17: "86 finish before").
+**Plan 0087** (the rename to `svet`, ADR-0071 accepted 2026-11-17 on the owner's "for renaming, I think svet is the best": `crates/svet-*`, `SVET_*` with no aliases, `svet:logic`, `svet-tester` and its archive, the documents and the harness, the owner's GitHub rename, a minor bump, a final grep; accepted ADRs, closed plans, logs, reviews and past CHANGELOG entries keep `vxe`; drafted 2026-11-17, approved 2026-11-17 on the owner's "Approve rename"): it touches every crate directory, so it runs **alone, when no lane is open**: after Plans 0069, 0032 and 0080 (and any other lane `git worktree list` shows then) merge, and after Plans 0077, 0079, 0083 and 0086 merge too (owner, 2026-11-17: "86 finish before").
 
-Every active plan but 0087 is approved (owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
+Every active plan is approved (Plan 0087 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Approval accepts the design; a plan's lane
 starts only when the plans its "Starts after" line names have closed and merged, and where that
 line asks for it, after the architect has re-read the plan against the new tip. The approved
@@ -134,6 +137,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0032](done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md) | Sun and sky: Hillaire LUTs, a time of day, the sun or moon and one sky ray into the direct target, absent is sky, an outdoor testbed | 2026-11-17, v0.61.0 |
 | [0069](done/0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md) | Render settings: one struct, an apply class per field, a setter gate; profiles Floor, Portable, Performance, High | 2026-11-17, v0.60.0 |
 | [0078](done/0078-the-entity-pool-frees-models-by-handle-stable-instance-slots-and-a-reset.md) | The entity pool frees models by handle into a coalescing free list; stable instance slots with a generation; ghost leaves; a reset | 2026-11-16, v0.59.0 |
 | [0075](done/0075-a-loading-screen-steppable-start-up-a-progress-signal-and-a-default-loading-frame.md) | A loading screen: start-up stepped behind a turning cube and a bar, pipelines on a worker, a splash after the device; streamed stutter kept | 2026-11-16, v0.58.0 |

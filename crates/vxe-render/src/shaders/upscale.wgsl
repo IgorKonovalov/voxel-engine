@@ -1,7 +1,7 @@
 // The upscale pass (ADR-0024): a temporal upscaler from the composite's internal pixels to the
 // output size, one invocation per output pixel. Compiled after common.wgsl, hitrec.wgsl,
-// entity.wgsl and edits.wgsl, whose bindings (group 0), views, hit-record helpers, entity
-// transforms and reprojection it uses.
+// entity.wgsl, edits.wgsl and the sky's modules, whose bindings (group 0), views, hit-record
+// helpers, entity transforms, reprojection and key light it uses.
 //
 // Bindings, group 2 of `upscale`:
 //   0  texture_2d<f32>   up_pos_in       this frame's hit positions (internal size)
@@ -97,7 +97,8 @@ const EXPOSURE_MOVE: f32 = 1.0 / 64.0;
 // lands (`emission_lands`), the exposure moved by more than EXPOSURE_MOVE EV
 // since the last frame (the history is display-encoded, so it cannot be rescaled: ADR-0033),
 // or the list's summed term (each light inside its reach and window) moved past the
-// thresholds; with the list now equal to the older list (`lights.changed` 0) it did not; or a
+// thresholds; with the list now equal to the older list (`lights.changed` 0) it did not; the
+// sky's key light or scale moved past them since the frame before (`sky_light_changed`); or a
 // fresh pixel lies there (`fresh_lands`: a moving entity's shadow or a moved part).
 fn up_light_changed(px: vec2<i32>, rec: HitRecord) -> bool {
     if (fresh_lands(up_emissive_in, px)) {
@@ -107,6 +108,9 @@ fn up_light_changed(px: vec2<i32>, rec: HitRecord) -> bool {
         return true;
     }
     if (abs(log2(exposure_ratio())) > EXPOSURE_MOVE) {
+        return true;
+    }
+    if (sky_light_changed(rec.p, rec.n, up_tuning.change_abs, up_tuning.change_rel)) {
         return true;
     }
     if (lights.changed == 0u) {

@@ -738,7 +738,7 @@ a cheap query.
   positional voice as an audio source through M4's occlusion.
 - **ADRs expected:** transport; voice codec.
 
-### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0)
+### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0; Plan 0032 closed 2026-11-17, v0.61.0)
 
 The open-sky half of the "Floor, profiles and scene scale" decision, as general engine
 mechanisms: the first consumer is underground, so nothing here is on its P0 list, and terrain
@@ -761,12 +761,22 @@ the rest of 0044, the render-profile plan (Plan 0069), Plan 0071, Plan 0073 (the
 0032 to 0037, each on main after the one before it closes. **Reordered 2026-11-16 (owner):** Plan 0069, then 0032, start once Plans 0062 and 0063 merge, beside Plans 0077 to 0080; Plan 0071, Plan 0073 and the `own` removal no longer hold M10. The six plans were rewritten on 2026-11-10
 against the baked store: no probe or store term takes sun or sky light.
 
-- **Sun and sky** (Plan 0032; ADR-0026, ADR-0027): Hillaire's atmosphere LUTs built on the GPU,
+- **Sun and sky** ([Plan 0032](plans/done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md),
+  closed 2026-11-17, v0.61.0; ADR-0026 and ADR-0027 accepted with Outcomes): Hillaire's atmosphere LUTs built on the GPU,
   a time of day the game sets, the sun or moon as one dedicated directional sample with a
   per-pixel shadow ray in the light pass, sky light from a sky ray; both land in Plan 0058's
   direct target, with no probe or store term and no sunlight bounce (redesigned 2026-11-10).
   Auto exposure. After Plan 0058 and the render-profile plan. Its testbed trees are prefabs
-  stamped at generation time (amended 2026-11-16, owner).
+  stamped at generation time (amended 2026-11-16, owner). Its Phase 9 window (2026-11-17)
+  picked the defaults and reversed "an absent chunk is solid": unknown is lit (ADR-0027's
+  Outcome).
+- **Still outdoor light** ([Plan 0086](plans/0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md),
+  drafted 2026-11-17 from the owner's picks at that window, awaits the go; ADR-0070
+  proposed): a sky visibility baked per brick direction into the per-chunk store and coloured
+  by the sky at read, the sky ray only where the bake is stale on a long running mean with a
+  firefly clamp, the key light on that history after a reading, a canopy that shadows as its
+  brick, history kept across a stair in the far-normal regime, and a spike on a
+  deterministic penumbra. After Plan 0032; recommended ahead of Plan 0081.
 - **A surface detail layer** ([Plan 0081](plans/0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md),
   drafted 2026-11-16, awaits the owner's go; ADR-0063 proposed): grass, moss, strands,
   fungus caps, flowers, pebbles and snow tufts as a procedural shell marched in the hit pass

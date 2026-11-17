@@ -18,6 +18,9 @@
 //! between consecutive frames over the tiles full in both, and for the composite the display
 //! luma's mean |d| per frame in /255.
 //!
+//! [`outdoor_level_on`] and [`run_under_sky`] read the same statistics on the outdoor hills
+//! under a sky, the lamp off from the first frame (the window's frames are counted as above).
+//!
 //! With `STILL_FILMSTRIP` set to a tag, each run also writes contact sheets of its window
 //! (`filmstrip`) under the worktree's `live/filmstrip/<tag>/`; unset or empty, it writes
 //! nothing.
@@ -97,6 +100,51 @@ pub fn vein_level_on(
         adapter,
     })
 }
+
+/// The outdoor hills of seed 1 over the chunks within `OUTDOOR_REACH` of the `outside`
+/// spawn's chunk (in z, half of it), mirrored before the run, with the spawn's eye.
+pub fn outdoor_level_on(
+    device: impl FnOnce(u64) -> Option<(wgpu::Device, wgpu::Queue, String)>,
+) -> Option<(VeinLevel, VoxelCoord)> {
+    use flythrough::outdoor::{OutdoorSource, Spawn};
+    let source = OutdoorSource::new(1);
+    let (eye, _) = source.spawn(Spawn::Outside);
+    let c = eye.chunk().0;
+    let r = OUTDOOR_REACH;
+    let extent = ChunkExtent::new(
+        [c[0] - r, c[1] - r, c[2] - r / 2],
+        [c[0] + r + 1, c[1] + r + 1, c[2] + r / 2 + 1],
+    );
+    let world = World::generate(extent, &source, &flythrough::outdoor_materials());
+    let pool = flythrough::level_pool_units(&world, false) * vxe_render::internals::UNIT_BYTES;
+    let (device, queue, adapter) = device(pool)?;
+    let cfg = MirrorConfig {
+        budget_bytes: 256 << 20,
+        ..MirrorConfig::new(Window::Fixed(world.extent()))
+    };
+    let mut gpu = GpuWorld::with_config(&device, cfg);
+    gpu.set_focus(eye);
+    // Until every chunk is mirrored: an absent chunk is air, and sky to a lighting ray.
+    while gpu
+        .sync_now(&world, &device, &queue)
+        .expect("mirror fits the adapter")
+        .pending_chunks
+        > 0
+    {}
+    Some((
+        VeinLevel {
+            device,
+            queue,
+            gpu,
+            world,
+            adapter,
+        },
+        eye,
+    ))
+}
+
+/// The chunks [`outdoor_level_on`] generates on each side of the spawn's chunk in x and y.
+pub const OUTDOOR_REACH: i32 = 6;
 
 /// One part's statistics over the window.
 #[derive(Clone, Debug)]
@@ -250,7 +298,22 @@ fn stats(tiles: &[Tiles], full: &[Vec<bool>], images: Option<&[Vec<u8>]>) -> Sta
 /// One run at `pose` with `lighting` (indirect light on and the pose's manual exposure
 /// imposed), `size` internal pixels, the lamp switched off after `LAMP_ON` frames.
 pub fn run(level: &mut VeinLevel, pose: &Pose, lighting: Lighting, size: [u32; 2]) -> Reading {
-    run_inner(level, pose, lighting, size, None)
+    run_inner(level, pose, lighting, size, None, None)
+}
+
+/// `run` under `sky` with the lamp off from the first frame.
+pub fn run_under_sky(
+    level: &mut VeinLevel,
+    pose: &Pose,
+    lighting: Lighting,
+    size: [u32; 2],
+    sky: vxe_render::sky::Sky,
+) -> Reading {
+    let dark = Lighting {
+        lamp: false,
+        ..lighting
+    };
+    run_inner(level, pose, dark, size, None, Some(sky))
 }
 
 /// `run` that halves every emissive material's emission just before off frame `off`.
@@ -261,7 +324,7 @@ pub fn run_halved_at(
     size: [u32; 2],
     off: usize,
 ) -> Reading {
-    run_inner(level, pose, lighting, size, Some(off))
+    run_inner(level, pose, lighting, size, Some(off), None)
 }
 
 fn run_inner(
@@ -270,6 +333,7 @@ fn run_inner(
     lighting: Lighting,
     size: [u32; 2],
     halve_at: Option<usize>,
+    sky: Option<vxe_render::sky::Sky>,
 ) -> Reading {
     let (device, queue) = (&level.device, &level.queue);
     let lit = Lighting {
@@ -279,6 +343,7 @@ fn run_inner(
     };
     let mut frame = Frame::new(device, size[0], size[1]);
     frame.set_lighting(lit);
+    frame.set_sky(sky);
     frame.set_dt(1.0 / 60.0);
     let camera = pose.camera();
     // The store the cube faces read: the chunks around the camera's.

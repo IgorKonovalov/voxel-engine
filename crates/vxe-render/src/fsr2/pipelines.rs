@@ -1,7 +1,9 @@
 //! FSR 2's pipelines and their layouts, and the bind groups and dispatches of one frame.
 
 use super::*;
-use crate::frame::{COMMON_WGSL, EDITS_WGSL, ENTITY_WGSL, HITREC_WGSL, compose};
+use crate::frame::{
+    COMMON_WGSL, EDITS_WGSL, ENTITY_WGSL, HITREC_WGSL, SKY_ATMOSPHERE_WGSL, SKY_WGSL, compose,
+};
 
 /// One FSR pass: its group-1 layout (group 2 for ours) and pipeline.
 pub(super) struct Pass {
@@ -144,7 +146,14 @@ pub(crate) const FSR2_PIPES: [FsrPassSpec; 9] = [
         label: "fsr2 input",
         source: FSR2_INPUT_WGSL,
         entry: "fsr2_input",
-        side: Side::Ours(&[COMMON_WGSL, HITREC_WGSL, ENTITY_WGSL, EDITS_WGSL]),
+        side: Side::Ours(&[
+            COMMON_WGSL,
+            HITREC_WGSL,
+            ENTITY_WGSL,
+            EDITS_WGSL,
+            SKY_ATMOSPHERE_WGSL,
+            SKY_WGSL,
+        ]),
         io: &[
             (0, Io::Float),
             (1, Io::Uint),

@@ -468,6 +468,36 @@ pub(crate) fn shadow_steps_line(texels: &[[f32; 4]], walk: ShadowWalk) -> String
     )
 }
 
+/// The key light's shadow ray in the steps view, from the light pass's direct target (one
+/// texel per hit, alpha 1 where the ray was cast): the pixels that cast it, its mean steps,
+/// p99 steps, mean storage loads and mean pool reads; `None` where no pixel cast it.
+pub(crate) fn key_ray_steps(texels: &[[f32; 4]]) -> Option<(usize, [f64; 4])> {
+    let rays: Vec<&[f32; 4]> = texels.iter().filter(|t| t[3] > 0.5).collect();
+    if rays.is_empty() {
+        return None;
+    }
+    let n = rays.len() as f64;
+    let mean = |k: usize| rays.iter().map(|t| f64::from(t[k])).sum::<f64>() / n;
+    let mut steps: Vec<f64> = rays.iter().map(|t| f64::from(t[0])).collect();
+    Some((
+        rays.len(),
+        [mean(0), percentile(&mut steps, 99.0), mean(1), mean(2)],
+    ))
+}
+
+/// The steps view's reading of the key light's shadow ray ([`key_ray_steps`]): `key light ray
+/// (coarse walk, 1 234 567 pixels cast): steps mean 8.12, p99 64, loads mean 20.31, pool reads
+/// mean 3.10`, or `key light ray: none cast`.
+pub(crate) fn key_steps_line(texels: &[[f32; 4]], walk: ShadowWalk) -> String {
+    match key_ray_steps(texels) {
+        Some((n, [mean, p99, loads, pool])) => format!(
+            "key light ray ({} walk, {n} pixels cast): steps mean {mean:.2}, p99 {p99:.0}, loads mean {loads:.2}, pool reads mean {pool:.2}",
+            walk.name()
+        ),
+        None => "key light ray: none cast".to_owned(),
+    }
+}
+
 /// The steps view's reading of one frame: `steps per ray (2073600 rays): mean 41.27, p99 133,
 /// block-max mean 88.10; loads mean 12.40, p99 61; pool reads mean 3.02, p99 18`. Counts clamp
 /// at 255 as the view does; the block-max mean is over 8 × 8 pixel blocks of each block's
@@ -722,6 +752,7 @@ impl Run {
         s.format_us = h.format_us;
         self.modes
             .fill_exposure_row(s.exposure.get_or_insert_with(Default::default));
+        s.sky = sky_row(&self.modes, h.pass_ms.as_deref());
         let args = &self.args;
         let words = h
             .queue_words
@@ -986,6 +1017,32 @@ impl Run {
             println!("{}", c.query_line());
         }
     }
+}
+
+/// The sky's HUD row while a sky is set and the passes were timed: the sky passes' GPU time
+/// summed, the light pass's, the exposure and the body [`vxe_render::sky::Sky::key_light`]
+/// names; `None` otherwise.
+fn sky_row(modes: &crate::hud::Modes, pass_ms: Option<&[f64]>) -> Option<hud::SkyRow> {
+    let passes = pass_ms.filter(|_| modes.sky)?;
+    let ms = |pred: &dyn Fn(&str) -> bool| -> f32 {
+        FRAME_PASSES
+            .iter()
+            .zip(passes)
+            .filter(|(n, _)| pred(n))
+            .map(|(_, &v)| v as f32)
+            .sum()
+    };
+    let body = match modes.clock.sky(crate::outdoor::BASE_Z as f32).key_light() {
+        Some((vxe_render::sky::KeyBody::Sun, _)) => "sun",
+        Some((vxe_render::sky::KeyBody::Moon, _)) => "moon",
+        None => "none",
+    };
+    Some(hud::SkyRow {
+        sky_ms: ms(&|n| n.starts_with("sky ")),
+        light_ms: ms(&|n| n == "light"),
+        ev: modes.exposure_ev(),
+        body,
+    })
 }
 
 #[cfg(test)]

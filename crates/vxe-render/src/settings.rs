@@ -426,6 +426,7 @@ impl RenderSettings {
         ("lighting.light_weights", Live),
         ("lighting.young_filter", Live),
         ("lighting.entity_light", Live),
+        ("lighting.sky_rays", Live),
         ("look.normal_mode", Live),
         ("look.view", Settle),
         ("look.translucent_layers", Live),
@@ -511,6 +512,14 @@ impl RenderSettings {
     /// Each `pub fn set_*` of the crate that is not a setting, and why.
     pub const NOT_SETTINGS: &'static [(&'static str, &'static str)] = &[
         ("set_dt", "a per-frame input: the frame's step in seconds"),
+        (
+            "set_sky",
+            "a per-frame input: the game's sky, its bodies moved by the game's clock",
+        ),
+        (
+            "set_sky_multiscatter",
+            "a test hook: the sky-view LUT without its multiple-scattering term",
+        ),
         (
             "set_frame_index",
             "a per-frame input: the frame index the noise seeds with",
@@ -799,6 +808,7 @@ fn lighting_test_value(l: &mut Lighting, name: &str) -> bool {
         }
         "tone_map" => other(&mut l.tone_map, ToneMap::Aces, ToneMap::Identity),
         "lamp" => flip(&mut l.lamp),
+        "sky_rays" => l.sky_rays = (l.sky_rays + 1) % (super::MAX_SKY_RAYS + 1),
         "candidates" => l.candidates = if l.candidates == 4 { 8 } else { 4 },
         "shadow_walk" => other(&mut l.shadow_walk, ShadowWalk::Full, ShadowWalk::Coarse),
         "filter" => flip(&mut l.filter),

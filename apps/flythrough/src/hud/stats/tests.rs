@@ -212,6 +212,7 @@ fn the_steps_row_prints_the_last_frame_s_sample() {
             block_max_mean: 31.2,
             mean_loads: 12.4,
             mean_pool_reads: 2.45,
+            key: None,
         }),
         ..HudStats::default()
     };
@@ -581,4 +582,63 @@ fn rss_reads_on_linux() {
         assert!(page.is_power_of_two() && page >= 4096, "page {page}");
         assert!(rss_bytes(page).is_some_and(|b| b > 0));
     }
+}
+
+/// The sky row appears only while a sky is set, and reads the sky passes' and the light
+/// pass's GPU time, the exposure in EV and the body lighting the frame.
+#[test]
+fn the_sky_row_reads_its_passes_exposure_and_body() {
+    let stats = HudStats {
+        sky: Some(SkyRow {
+            sky_ms: 0.125,
+            light_ms: 1.75,
+            ev: -9.8125,
+            body: "moon",
+        }),
+        ..HudStats::default()
+    };
+    assert!(
+        stats.to_string().lines().any(
+            |l| l == "sky passes 0.12 ms  light 1.75 ms (sky on)  exposure -9.81 EV  body moon"
+        ),
+        "{stats}"
+    );
+    assert!(
+        !HudStats::default()
+            .to_string()
+            .lines()
+            .any(|l| l.starts_with("sky passes")),
+        "no row without a sky"
+    );
+}
+
+/// With the key light's ray read, the steps row ends with its mean and p99 steps; the
+/// direct target's texels that cast it (alpha 1) give those figures.
+#[test]
+fn the_steps_row_names_the_key_light_s_ray() {
+    let texels = [
+        [10.0, 20.0, 2.0, 1.0],
+        [30.0, 40.0, 4.0, 1.0],
+        [99.0, 99.0, 9.0, 0.0],
+    ];
+    let (n, [mean, p99, loads, pool]) =
+        crate::run::hud_feed::key_ray_steps(&texels).expect("two rays cast");
+    assert_eq!((n, mean, loads, pool), (2, 20.0, 30.0, 3.0));
+    assert!((10.0..=30.0).contains(&p99), "{p99}");
+    assert!(crate::run::hud_feed::key_ray_steps(&[[5.0, 5.0, 5.0, 0.0]]).is_none());
+    let stats = HudStats {
+        steps: Some(StepsSample {
+            key: Some([20.0, 30.0]),
+            ..StepsSample::default()
+        }),
+        ..HudStats::default()
+    };
+    assert!(
+        stats
+            .to_string()
+            .lines()
+            .any(|l| l.starts_with("steps per ray")
+                && l.ends_with("; key ray steps mean 20.00 p99 30")),
+        "{stats}"
+    );
 }

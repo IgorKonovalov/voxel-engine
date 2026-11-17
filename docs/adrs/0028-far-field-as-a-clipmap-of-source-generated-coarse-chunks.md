@@ -1,7 +1,10 @@
 # ADR-0028: The far field is a clipmap of coarse chunk levels that the source generates directly, with edits folded in from full detail
 
 > **Status:** proposed (redrafted 2026-11-10 against ADR-0046's baked store: the level rule is
-> per caller, the bake and the probe rays take no far field, a clip hit reads no store)
+> per caller, the bake and the probe rays take no far field, a clip hit reads no store).
+> **Flagged 2026-11-17 at Plan 0032's close:** "ADR-0027's rule, moved outward" (an absent chunk
+> inside the ball occludes a lighting ray) no longer holds; ADR-0027's Outcome reversed it, an
+> absent chunk is sky. Plan 0033's refresh rewrites that clause before its go.
 > **Date:** 2026-10-22
 > **Related plan(s):** [Plan 0033](../plans/0033-far-field-clipmap-to-a-kilometre.md)
 > **Claims:** the founding-interview decision "Far-field clipmap (coarser rings beyond the

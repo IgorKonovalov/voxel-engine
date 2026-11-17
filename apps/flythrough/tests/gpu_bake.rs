@@ -37,6 +37,25 @@ fn small_box() -> (World, Camera) {
     (world, camera)
 }
 
+/// The bake takes no sky term (Plan 0032 Phase 5, ADR-0027): the store's blocks after a bake of
+/// the small box are equal with no sky and with a noon sky set, the sun at the zenith.
+#[test]
+fn a_baked_face_ignores_the_sky() {
+    let (world, _) = small_box();
+    let Some(mut rig) = rig_on(world, [16, 16], None) else {
+        return;
+    };
+    let counts = test_counts(256);
+    rig.bake(&counts);
+    let none = rig.blocks();
+    let sun = vxe_render::sky::Body::sun([0.0, 0.0, 1.0]);
+    let moon = vxe_render::sky::Body::moon([0.0, 0.0, -1.0]);
+    rig.frame
+        .set_sky(Some(vxe_render::sky::Sky::new(sun, moon)));
+    rig.bake(&counts);
+    assert_eq!(rig.blocks(), none, "a noon sky changed the store");
+}
+
 /// The records depend on each face's own samples alone: one batch, batches of 7 faces and the
 /// jobs reversed read bit-identical; and [`four_ways`].
 #[test]

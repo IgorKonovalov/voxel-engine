@@ -37,6 +37,22 @@ fit's free-range walks and the victim scans' chunk walks, so split them first. *
 plan, ahead of `alloc`** (Plan 0074's close review, 2026-11-14, the orchestrator's default while
 the owner is away; the owner may overturn it).
 
+### The CPU settle outdoors: the bake queue's step on a world with no emitter, and the forest's sync p99
+
+Noted 2026-11-17 from Plan 0032's Phase 9 window (`docs/plans/logs/0032.md`, Phase 9; the
+review `docs/reviews/2026-11-17-plan-0032-window.md`, E). The owner's "performance lacks" on
+the RTX 3080 Laptop was the CPU, not the GPU: for the 7 to 10 s after every load the runs read
+a frame CPU p50 of 10 to 17.6 ms (against 1.3 to 2.9 after the settle) and the `bake queue:`
+lines a `step CPU p50` of 7.9 to 15.0 ms, max up to 38, on a world whose reach holds `lights
+0` and whose store ends all zeros (step 1: 3285 chunks by 13.7 s, 8.8 MB); after the queue
+drains the step reads 0.05 ms. The forest at leaf fill 128 also read a sync p99 of 11.0 ms
+(`alloc` 5.3) and `update + poll + sync` max 150 ms; fill 64 read 3.1 ms. Both are readings
+for Plan 0067's regime rule (the step on an emitter-free world should cost near nothing) and
+for the sync's `alloc` entry above. What it takes: a chore that reads the step's parts on the
+outdoor source (listing, summaries, fades on a store that bakes to zero) and skips what a
+reach with no emitter does not need; Plan 0086 Phase 4 adds a sky channel to the same jobs,
+so read it after that lands. Owner's pick 2026-11-17 (E3): a backlog entry, not a phase.
+
 ### The streamed benches on Windows: CPU frames of 20 to 256 ms on a desktop
 
 Read 2026-11-15 from an outside tester's archive (v0.51.0, before Plan 0070's and 0074's sync cuts; Windows 10.0.26200, Ryzen 5 7600X 6 cores / 12 threads, 32 GB, desktop RTX 3080 on Vulkan, 1920 x 1080, upscaler off; the files kept in the main checkout at `live/tester-2026-11-15/`). `showcase`: wall p50 3.0 ms, p99 4.5, CPU p50 0.76. `cave`: wall p50 20.8 ms, p95 271, p99 402, CPU-bound (CPU p50 20.3, GPU 4.5), 217 of 1073 frames over 100 ms. `castle`: 97 frames in 31.5 s, CPU p50 256 ms, max 3295, GPU p50 30.2. Our Linux headless benches at the matching base read `update + poll + sync` p99 43 to 47 ms, so the castle is about 5x to 70x worse there, and the tester called it "massive stutters". Unknown: whether it is Windows (timer and sleep granularity, the allocator, thread scheduling on 6 cores), the CPU's core count, or the build. What it takes: the owed Plan 0068 Windows run on today's main with the sync's stage lines, then a plan. Pick up before the next tester archive goes out. **The owner's run (2026-11-15, v0.54.0, Windows 10.0.19045, Ryzen 9 5900HS 8 cores / 16 threads, RTX 3080 Laptop on Vulkan, FSR 2 at 1.5; files in `live/windows-run-2026-11-15/`) did not reproduce it:** CPU p50 cave 8.8 ms, showcase 1.4, castle 7.2; castle wall p95 28.2 ms, 87 frames over 33 ms, 2 over 100, the sync's p95 mostly `alloc`. Still open for the tester's machine; the next archive's `--workers 4` run tells starvation apart. **The tester's rerun (2026-11-16, v0.54.0, same machine; files in `live/tester-2026-11-16/`) settles it: the 0.51.0 stutters were the build, not Windows.** Default workers: cave wall p50 4.1 ms, p99 25.5, 32 frames over 33 ms, 1 over 100; showcase p50 2.8, p99 3.7; castle p50 4.2, p99 30.1, max 90, 20 over 33 ms, none over 100 (from p50 256 ms on 0.51.0). `--workers 4` on the castle: p99 17.6, max 66, 2 over 33 ms; the sync's p99 7.3 ms to 3.8 and light's 2.1 to 0.8. So more workers than physical cores (11 on 6 cores) still costs the tail. What it takes now: a default worker count capped at the physical cores minus one (or a measured sweep on a 6-core part), as a small chore; the entry closes with it. **Done 2026-11-16 (chore `chore-default-workers`):** the fly-through's default `--workers` is now half the logical cores, at least 1 (6 on the tester's 12 threads, where `--workers 4` read the best castle tail; no sweep between 4 and 6 was taken); the tester's next archive reads it.

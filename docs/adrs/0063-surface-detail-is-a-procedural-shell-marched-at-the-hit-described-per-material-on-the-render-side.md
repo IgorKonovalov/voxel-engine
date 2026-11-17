@@ -3,7 +3,7 @@
 > **Status:** proposed
 > **Date:** 2026-11-16
 > **Related plan(s):** [Plan 0081](../plans/0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md)
-> (builds it); [Plan 0032](../plans/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
+> (builds it); [Plan 0032](../plans/done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
 > (the outdoor source whose `grass` row is its first user);
 > [Plan 0036](../plans/0036-weather-rain-snow-wind-wet-surfaces-snow-cover-lightning.md)
 > (the wind that will drive its sway)

@@ -151,6 +151,8 @@ pub(crate) fn bare_run(world: World) -> Run {
         surface: None,
         help: false,
         loading: None,
+        switch: false,
+        retree: false,
     }
 }
 

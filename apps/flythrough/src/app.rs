@@ -109,7 +109,7 @@ pub struct Flythrough {
 
 impl Flythrough {
     /// The run over `world`, streamed when `stream` is given, built from the app's arguments.
-    fn start_run(&mut self, world: World, stream: Option<Stream>) {
+    pub(crate) fn start_run(&mut self, world: World, stream: Option<Stream>) {
         let pilot = self
             .args
             .autopilot
@@ -199,11 +199,13 @@ impl Flythrough {
             surface: None,
             help: false,
             loading: None,
+            switch: false,
+            retree: false,
         });
     }
 
     /// The streamed run, its world's build joined first when it is still on its thread.
-    fn start_streamed_run(&mut self, pending: Pending) {
+    pub(crate) fn start_streamed_run(&mut self, pending: Pending) {
         let boxed = match pending {
             Pending::Stream(boxed) => boxed,
             Pending::StreamBuilding(build) => build
@@ -317,10 +319,14 @@ impl App for Flythrough {
         if self.failure.is_some() {
             return Flow::Exit;
         }
-        match self.run.as_mut() {
+        let flow = match self.run.as_mut() {
             Some(run) => run.frame(gpu, input, dt, surface),
             None => Flow::Exit,
+        };
+        if flow == Flow::Continue && self.run.as_ref().is_some_and(|r| r.switch || r.retree) {
+            self.switch_source(gpu);
         }
+        flow
     }
 }
 

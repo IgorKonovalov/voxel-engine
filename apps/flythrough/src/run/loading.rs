@@ -282,6 +282,7 @@ pub(crate) fn scene_title(args: &Args) -> String {
         RunMode::Cave => "cave".to_owned(),
         RunMode::Level => "level".to_owned(),
         RunMode::Showcase => "showcase".to_owned(),
+        RunMode::Outdoor => "outdoor hills".to_owned(),
         RunMode::Room(edge) => format!("room of {edge} voxels"),
         RunMode::ThinRig => "thin rig".to_owned(),
         RunMode::SeamRig => "seam rig".to_owned(),

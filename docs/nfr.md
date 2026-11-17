@@ -114,6 +114,18 @@ autopilot (RTX, 1280 x 720) the streaming CPU per frame reads p50 0.038 to 0.039
 buffer fills and the light placement's eviction scan reads up to 1.2 s a sync (not seen
 headless); the backlog carries it.
 
+**The outdoor light pass on the slow adapter is over the lighting line as read** (Plan 0032
+Phases 7 and 8, 2026-11-16/17, headless 1920 x 1080 at the defaults: FSR 2 at 1.5, half
+lighting, the coarse shadow walk, one sky ray; loaded runs, indicative): the RADV RENOIR's
+light pass reads 10.5 ms on the hills at noon (1.2 with the sky off), 8.2 inside the cave
+mouth and 12.5 in the forest at a 10-degree sun, against the 6.0 ms line, and its frame 37.5
+to 45.8 ms against 16.6; the RTX 3080 Laptop reads 0.9 to 1.4 ms of light pass (0.1 to 0.2
+with the sky off) and a 5.1 to 5.6 ms frame. Phase 6's table reads the sky ray at about 4.8 ms
+a ray on the RENOIR and about 0.25 on the RTX. The owner's picks of 2026-11-17 (one sky ray,
+the half tier, leaf fill 64) move none of these; ADR-0070 (Plan 0086) takes the sky ray off at
+rest inside the bake radius, and its close replaces this paragraph with the reading. Tables in
+[`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md).
+
 Every reading against this budget, with its machine, scene and commit, is in
 [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md); new readings go there.
 
@@ -302,6 +314,14 @@ Every reading against these budgets, with its machine and commit, is in
 - **After Plan 0070 (ef0b55c against bdca60a, 2026-11-13, `hpet` clocksource, `--seed 1` at 1280
   x 720, RTX, three alternated rounds loaded by the flights' workers to 6.8 to 8.9):** residency
   p95 212 to 213 ms, max 303 to 321, against 311 to 333 and 376 to 413 at the base.
+- **The outdoor hills (Plan 0032 Phase 7, a68f2659 plus Phase 7's tree, `flythrough --source
+  outdoor --autopilot --headless --seed 1 --render 1280x720`, one run per adapter, exclusive
+  perf lock, loaded by the flight's workers):** the flight 30 m over the `outside` spawn, the
+  dig 1 m at the hill along +x (`return: 4 chunks, hash match` on both). RTX 3080 Laptop GPU
+  (driver 615.78.08, start load 2.7): streaming CPU per frame p50 1.857 ms, p99 18.915 ms over
+  2640 frames; residency p95 125 ms, max 248 over 77 115 chunks; 4 unready-near frames. RADV
+  RENOIR (Mesa 26.2.5, `--adapter AMD`, start load 5.9): p50 13.029 ms, p99 23.535 ms over 787
+  frames; residency p95 233 ms, max 672; 2 unready-near frames.
 
 ## 6. Determinism and headless operation
 

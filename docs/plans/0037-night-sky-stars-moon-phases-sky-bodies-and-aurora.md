@@ -34,7 +34,7 @@
 > line: 0032, 0033, 0034, 0035, 0036, 0037.
 > **Starts after:** [Plan 0036](0036-weather-rain-snow-wind-wet-surfaces-snow-cover-lightning.md)
 > closes. The base is main after that close. It builds on
-> [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
+> [Plan 0032](done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
 > through that plan's section "Interface for Plans 0033 to 0037", on
 > [Plan 0034](0034-water-surface-waves-reflection-refraction-underwater-fog.md)'s liquid
 > shader and its secondary-ray miss lookup, and on

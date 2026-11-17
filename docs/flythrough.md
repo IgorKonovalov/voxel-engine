@@ -96,6 +96,10 @@ the same rows.
 | `F11` | Toggle whether the walkers walk or hold still |
 | `F12` | Toggle the walkers' eye lights |
 | `PageDown` | The next render profile: floor, portable, performance, high (`--profile`) |
+| `Home` | The next world source, rebuilt in process (`--source`'s order: cave, level, showcase, outdoor, and back), with that source's start settings; the window, the frame and the clock stay. A source that refuses the run's other flags is passed over |
+| `PageUp` | Under a sky: the time of day an hour on; with `Shift`, an hour back |
+| `End` | Under a sky: run or pause the day cycle (`--day-length`) |
+| `CapsLock` | On the outdoor hills: the next `--trees` (none, sparse, forest, and back), rebuilt in process as `Home` rebuilds a source; the window, the frame and the clock stay |
 | `Left`, `Right` | With `--model`: the clip before and after |
 | `Down` | With `--model`: pause or play the clip |
 
@@ -200,7 +204,19 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 
 | Flag | Does |
 |------|------|
-| `--source cave\|level\|showcase` | The world: the streamed noise cave [default], the bounded level, or the showcase cavern (a bounded 72 m hall lit by four ores; the lamp off, light radius 19 and its `hall` shot unless told otherwise; no `--save`, `--replay`, `--vault`, `--autopilot`, `--room` or `--castle`) |
+| `--source cave\|level\|showcase\|outdoor` | The world: the streamed noise cave [default], the bounded level, the showcase cavern (a bounded 72 m hall lit by four ores; the lamp off, light radius 19 and its `hall` shot unless told otherwise; no `--save`, `--replay`, `--vault`, `--autopilot`, `--room` or `--castle`), or the streamed outdoor hills with a cave mouth under a sky (no `--level`, `--castle`, `--vault`, `--room`, a rig, `--save` or `--replay`). The banner's line starts `source NAME` |
+| `--spawn outside\|inside\|forest` | Where `--source outdoor` starts: 30 m before the cave mouth facing it, 2 m up [default], 3 m inside the tunnel facing out, or 64 m north of the mouth facing north, 2 m up, 10 degrees down |
+| `--trees none\|sparse\|forest` | Trees on the outdoor hills: about 9 % or 94 % of the 48-voxel cells of a 3072-voxel box between the mouth and the forest spawn; the banner's source reads `outdoor, trees NAME` [sparse] |
+| `--leaf-fill N` | The canopy voxels kept, of 256, 1 to 256 [64] |
+| `--sun EL,AZ` | Fix the sun at this elevation and azimuth in degrees (clockwise from north, 180 south), the moon opposite; `PageUp` and `End` leave it, and the banner reads `sun EL/AZ fixed` in place of the time |
+| `--time HH:MM` | The time of day the sky starts at, latitude 45 at an equinox [12:00]; the banner names it while a sky is set |
+| `--day-length S` | Seconds for a whole day while the cycle runs (`End`) [1200] |
+| `--sun-radius DEG` | The sun's angular radius, 0.05 to 10 degrees: a wider disc softens every sun shadow (the real sun's is 0.2665) [3] |
+| `--moon-radius DEG` | The moon's angular radius, 0.05 to 10 degrees: its disc in the sky and its shadows' softness [3] |
+| `--sky-rays N` | Cosine-weighted sky rays a lighting pixel casts while a sky is set, 1 to 4; the banner names the count [1] |
+| `--sky on\|off` | A sky over the world [on for `--source outdoor`, else off] |
+| `--switch-at F,..` | Switch the source at these frames, as `Home` does, and print the spawn's hash at the end |
+| `--spawn-hash` | Print the voxel hash of the chunks within 2 of the spawn's chunk at the end |
 | `--level` | The bounded level (as `--source level`) |
 | `--thin-rig` | A bounded scene of thin features for the field look |
 | `--seam-rig` | A bounded scene of seams for the field look |

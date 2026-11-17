@@ -8,13 +8,18 @@
 //! emissive ores, started at its `hall` shot with the lamp off (`--lamp on` or `F7` turns it on)
 //! and a light radius of 19 chunks unless `--light-radius` is given; it walks, digs and
 //! collapses as the level does, and does not take `--save`, `--replay`, `--vault`,
-//! `--autopilot`, `--room` or `--castle`. The banner's line then starts `source showcase`.
+//! `--autopilot`, `--room` or `--castle`. `--source outdoor` streams the outdoor hills
+//! (`flythrough::outdoor`) under a sky whose time of day the run's clock keeps
+//! (`flythrough::daylight`): `--spawn`, `--time`, `--day-length`, `--sky`; it does not take
+//! `--level`, `--castle`, `--vault`, `--room` or a rig. `Home` switches the source in process,
+//! through `cave`, `level`, `showcase` and `outdoor`, each with its own start settings. The
+//! banner's line starts `source NAME` on every source.
 //! `--shot hall|chasm|crystals` (with the showcase) starts at that shot's pose and exposure
 //! instead of `hall`'s. `--pose vein|patch` (with `--level`) starts at the settle rig's still
 //! camera of that name (`flythrough::VEIN_POSE`, `PATCH_POSE`) on auto exposure unless
 //! `--exposure` is given; the banner shows `pose vein` until the camera first moves.
 //!
-//! `flythrough [--seed N] [--level] [--pose vein|patch] [--source cave|level|showcase] [--shot NAME] [--vault] [--castle] [--castle-out PATH]
+//! `flythrough [--seed N] [--level] [--pose vein|patch] [--source cave|level|showcase|outdoor] [--spawn outside|inside] [--time HH:MM] [--day-length S] [--sky on|off] [--shot NAME] [--vault] [--castle] [--castle-out PATH]
 //! [--castle-shot gate|nave|window|dungeon] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--census] [--sync-budget MIB] [--sync-ms MS] [--workers N] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
 //! [--headless] [--look PRESET] [--face-mix K] [--far-normal LO,HI] [--band-census] [--view VIEW]
@@ -293,12 +298,14 @@ use vxe_world::Residency;
 pub mod flags;
 mod loading;
 mod model;
+mod outdoor;
 mod parse;
 mod settings;
 pub mod table;
 
 pub use flags::{GONE_SINCE_0057, gone_since_0057, help, lighting_flags};
 pub(crate) use loading::LoadingArgs;
+pub use outdoor::{OUTDOOR_MAX, OUTDOOR_MIN, OutdoorArgs, SOURCES, next_source};
 pub use parse::*;
 pub use settings::settings_lines;
 
@@ -312,6 +319,8 @@ pub enum RunMode {
     Level,
     /// The bounded showcase cavern.
     Showcase,
+    /// The streamed outdoor hills (`flythrough::outdoor`).
+    Outdoor,
     /// A closed cube of air of this edge in voxels inside 2 m of rock.
     Room(i32),
     /// The bounded thin-feature scene.
@@ -327,6 +336,26 @@ impl RunMode {
 
     pub(crate) fn is_showcase(self) -> bool {
         self == RunMode::Showcase
+    }
+
+    pub(crate) fn is_outdoor(self) -> bool {
+        self == RunMode::Outdoor
+    }
+
+    /// The world streams around the camera: the cave and the outdoor hills.
+    pub(crate) fn streams(self) -> bool {
+        matches!(self, RunMode::Cave | RunMode::Outdoor)
+    }
+
+    /// The `--source` value naming this world; `None` for a room or a rig.
+    pub fn source_name(self) -> Option<&'static str> {
+        match self {
+            RunMode::Cave => Some("cave"),
+            RunMode::Level => Some("level"),
+            RunMode::Showcase => Some("showcase"),
+            RunMode::Outdoor => Some("outdoor"),
+            RunMode::Room(_) | RunMode::ThinRig | RunMode::SeamRig => None,
+        }
     }
 
     pub(crate) fn is_thin_rig(self) -> bool {
@@ -672,6 +701,14 @@ pub struct Args {
     /// `--tester`: only movement, look, the dig, `F1`, `T` and `Esc` act
     /// (`flythrough::path::tester_action`), and the banner shows the path's mode alone.
     pub(crate) tester: bool,
+    /// The flags as given, which the in-process source switch parses again under the next
+    /// `--source` (`run::switch`).
+    pub(crate) argv: Vec<String>,
+    /// `--switch-at`: frames at which the source switches, as `Home` does.
+    pub(crate) switch_at: Vec<u32>,
+    /// `--spawn-hash`: print the hash of the chunks within 2 of the spawn's at the end.
+    pub(crate) spawn_hash: bool,
+    pub(crate) outdoor: OutdoorArgs,
     pub(crate) audio: AudioArgs,
     pub(crate) light: LightingArgs,
     pub(crate) look: LookArgs,
@@ -719,7 +756,8 @@ impl Args {
         self.pad && !self.headless && !self.autopilot
     }
 
-    /// The auto exposure of `--adaptation`, `--adapt` and `--metering`.
+    /// The auto exposure of `--adaptation`, `--adapt` and `--metering`, with the outdoor
+    /// source's floor and ceiling unless `--exposure` or `--adaptation` is given.
     pub(crate) fn start_auto(&self) -> AutoExposure {
         let mut a = self.light.adaptation.preset();
         if let Some([light, cone, rod, floor]) = self.light.adapt {
@@ -729,7 +767,15 @@ impl Args {
             a.cone_floor = floor;
         }
         a.metering = self.light.metering;
+        if self.outdoor.auto {
+            (a.min, a.max) = (outdoor::OUTDOOR_MIN, outdoor::OUTDOOR_MAX);
+        }
         a
+    }
+
+    /// A sky is set: `--sky`, else on for the outdoor source alone.
+    pub(crate) fn sky_on(&self) -> bool {
+        self.outdoor.sky.unwrap_or(self.mode.is_outdoor())
     }
 
     /// The live queue's full-first radius: `--full-first`, else `--near`'s.
@@ -769,12 +815,19 @@ impl Args {
     }
 
     /// Every toggle's mode at the start (`toggles::TOGGLES`), the banner shown from `now_ms`, the auto exposure's
-    /// slot `start_auto` under `--adaptation`'s name; the line names the showcase source first
+    /// slot `start_auto` under `--adaptation`'s name; the line names the world's source first, then
+    /// the clock while a sky is set,
     /// and the probe spacing while the lamp's bounce is on, and the look's rows `--view`'s view.
     pub(crate) fn start_modes(&self, now_ms: f64) -> hud::Modes {
         let mut m = hud::Modes::new(self.start_lighting(), self.light.resolution, now_ms)
-            .with_source(self.mode.is_showcase().then_some("showcase"))
+            .with_source(if self.mode.is_outdoor() {
+                Some(self.outdoor.trees().source_words())
+            } else {
+                self.mode.source_name()
+            })
             .with_probe_spacing(self.light.probe_spacing);
+        m.sky = self.sky_on();
+        m.clock = self.outdoor.clock;
         m.profile = self.profile_row(&self.render_settings(), &[]);
         m.set_auto(self.light.adaptation, self.start_auto());
         m.show_look(&self.look.preset, self.look.preset.far_normal, now_ms);
@@ -863,6 +916,10 @@ impl Args {
                 Some(e) => Exposure::Manual(e),
                 None => Exposure::Auto(self.start_auto()),
             },
+            sky_rays: self
+                .outdoor
+                .sky_rays
+                .unwrap_or(vxe_render::DEFAULT_SKY_RAYS),
             ..crate::default_lighting()
         })
     }
