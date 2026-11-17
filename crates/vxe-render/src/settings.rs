@@ -251,12 +251,16 @@ pub enum Profile {
     Portable,
     /// A fast machine past 60 fps: the floor at internal scale 2.
     Performance,
+    /// A capable GPU at 1080p output: the floor with FSR 2 at internal scale 1. Not for the
+    /// slow adapter (`docs/nfr.md` section 1).
+    High,
 }
 
 crate::frame::named_enum!(Profile {
     Floor => "floor",
     Portable => "portable",
     Performance => "performance",
+    High => "high",
 });
 
 /// Bytes the fly-through's streamed mirror reserves for the floor's residency of 16 chunks
@@ -267,17 +271,18 @@ impl RenderSettings {
     /// `p`'s settings. Every profile keeps the floor's image-stability choices (the far
     /// normal, the shadow walk, the filter, the temporal and FSR 2's settings).
     ///
-    /// | field | Floor | Portable | Performance |
-    /// |---|---|---|---|
-    /// | `output_hint` | 1920 x 1080 | 1280 x 720 | none |
-    /// | `scale` | 1.5 | 1.5 | 2 |
-    /// | `look.translucent_layers` | 4 | 2 | 4 |
-    /// | `light_cap` | 16 | 4 | 16 |
-    /// | `lighting.lamp_bounce` | on | off | on |
-    /// | `build.residency` | 16, 24, 1 | 12, 18, 1 | 16, 24, 1 |
-    /// | `lod.r_full` | 16 | 12 | 16 |
-    /// | `build.mirror_budget_bytes` | 3 GiB | 3 GiB x (12 / 16)^3 | 3 GiB |
-    /// | `bake.budget` | 1.5 ms a frame | 0.75 ms a frame | 1.5 ms a frame |
+    /// | field | Floor | Portable | Performance | High |
+    /// |---|---|---|---|---|
+    /// | `output_hint` | 1920 x 1080 | 1280 x 720 | none | 1920 x 1080 |
+    /// | `scale` | 1.5 | 1.5 | 2 | 1 |
+    /// | `upscaler` | FSR 2 | FSR 2 | FSR 2 | FSR 2 |
+    /// | `look.translucent_layers` | 4 | 2 | 4 | 4 |
+    /// | `light_cap` | 16 | 4 | 16 | 16 |
+    /// | `lighting.lamp_bounce` | on | off | on | on |
+    /// | `build.residency` | 16, 24, 1 | 12, 18, 1 | 16, 24, 1 | 16, 24, 1 |
+    /// | `lod.r_full` | 16 | 12 | 16 | 16 |
+    /// | `build.mirror_budget_bytes` | 3 GiB | 3 GiB x (12 / 16)^3 | 3 GiB | 3 GiB |
+    /// | `bake.budget` | 1.5 ms a frame | 0.75 ms a frame | 1.5 ms a frame | 1.5 ms a frame |
     pub fn profile(p: Profile) -> Self {
         let floor = Self {
             lighting: Lighting {
@@ -342,6 +347,10 @@ impl RenderSettings {
                 output_hint: None,
                 ..floor
             },
+            Profile::High => Self {
+                scale: RenderScale::One,
+                ..floor
+            },
         }
     }
 }
@@ -349,6 +358,51 @@ impl RenderSettings {
 use ApplyClass::{Live, Rebuild, Settle};
 
 impl RenderSettings {
+    /// The owner's picks (Plan 0069 Phase 5), one row per field a profile sets, each value
+    /// as [`RenderSettings::table`] prints it, in [`Profile::ALL`]'s order. Every field not
+    /// listed is the floor's in every profile. The profiles' tests and the fly-through's
+    /// `--settings` test read it.
+    #[doc(hidden)]
+    pub const PROFILE_PICKS: &'static [(&'static str, [&'static str; Profile::ALL.len()])] = &[
+        ("scale", ["OneHalf", "OneHalf", "Two", "One"]),
+        ("upscaler", ["Fsr2", "Fsr2", "Fsr2", "Fsr2"]),
+        ("look.translucent_layers", ["4", "2", "4", "4"]),
+        ("light_cap", ["16", "4", "16", "16"]),
+        ("lighting.lamp_bounce", ["true", "false", "true", "true"]),
+        ("lod.r_full", ["16", "12", "16", "16"]),
+        (
+            "build.residency",
+            [
+                "Residency { r_full: 16, r_lod: 24, hysteresis: 1 }",
+                "Residency { r_full: 12, r_lod: 18, hysteresis: 1 }",
+                "Residency { r_full: 16, r_lod: 24, hysteresis: 1 }",
+                "Residency { r_full: 16, r_lod: 24, hysteresis: 1 }",
+            ],
+        ),
+        (
+            "build.mirror_budget_bytes",
+            ["3221225472", "1358954496", "3221225472", "3221225472"],
+        ),
+        (
+            "bake.budget",
+            [
+                "PerFrame { ms: 1.5 }",
+                "PerFrame { ms: 0.75 }",
+                "PerFrame { ms: 1.5 }",
+                "PerFrame { ms: 1.5 }",
+            ],
+        ),
+        (
+            "output_hint",
+            [
+                "Some([1920, 1080])",
+                "Some([1280, 720])",
+                "None",
+                "Some([1920, 1080])",
+            ],
+        ),
+    ];
+
     /// Each setting's name, a leaf of the struct (an enum, an `Option` or an array counts as
     /// one), and its apply class.
     pub const FIELDS: &'static [(&'static str, ApplyClass)] = &[
@@ -922,8 +976,46 @@ mod tests {
             floor.changed_fields(&RenderSettings::profile(Profile::Performance)),
             ["scale", "output_hint"]
         );
+        assert_eq!(
+            floor.changed_fields(&RenderSettings::profile(Profile::High)),
+            ["scale"]
+        );
         for p in Profile::ALL {
             assert_eq!(Profile::from_name(p.name()), Some(p));
+        }
+    }
+
+    /// Each profile's values equal the owner's picks field by field, and it differs from the
+    /// floor in no field outside them.
+    #[test]
+    fn the_profiles_hold_the_owners_picks() {
+        assert_eq!(
+            Profile::ALL,
+            [
+                Profile::Floor,
+                Profile::Portable,
+                Profile::Performance,
+                Profile::High
+            ]
+        );
+        let floor = RenderSettings::profile(Profile::Floor);
+        for (i, p) in Profile::ALL.into_iter().enumerate() {
+            let s = RenderSettings::profile(p);
+            let table = s.table();
+            for (field, values) in RenderSettings::PROFILE_PICKS {
+                let (_, _, v) = table
+                    .iter()
+                    .find(|(n, _, _)| n == field)
+                    .unwrap_or_else(|| panic!("no row {field}"));
+                assert_eq!(v, values[i], "{} {field}", p.name());
+            }
+            for f in floor.changed_fields(&s) {
+                assert!(
+                    RenderSettings::PROFILE_PICKS.iter().any(|(n, _)| *n == f),
+                    "{} differs from the floor in {f}, not a pick",
+                    p.name()
+                );
+            }
         }
     }
 

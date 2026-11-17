@@ -374,8 +374,8 @@ the readings cannot see. No determinism risk: nothing here reaches `vxe-world`'s
 | 2: the classes, proved, and the setter gate | dev | done; the `cargo doc` done-when closed by the 2026-11-17 amendment (Notes) | code 0335bc30; row f0c8a109 |
 | 3: the profiles, in the fly-through and the tester | dev | done; `Default` = Floor for `RenderSettings` only, as the 2026-11-17 amendment reads (Notes) | code e0c75597, e73cf935; row 55e62a13 |
 | 4: readings of each profile on both adapters | dev | done; most cells loaded, not quiet; RENOIR portable hall hit pass 10.5 ms, accepted by the 2026-11-17 amendment (Notes) | 356b32a1 |
-| 5: the owner's window | human | done 2026-11-17 09:20-09:38; the owner's words in the readings log, Phase 5; High offered as a fourth profile | committed with this row |
-| 6: the picks into the profiles | dev | not started | |
+| 5: the owner's window | human | done 2026-11-17 09:20-09:38; the owner's words in the readings log, Phase 5; High offered as a fourth profile | cae1935f |
+| 6: the picks into the profiles | dev | done; `Profile::High` added (Notes) | committed with this row |
 | 7: image tests against the picks, and the tip's readings | dev | not started | |
 
 ### Notes
@@ -419,6 +419,14 @@ the readings cannot see. No determinism risk: nothing here reaches `vxe-world`'s
   Portable's internal size reads 10.53 ms in the hall, over the 2026-11-12 amendment's 10 ms
   line; the 2026-11-17 amendment (3903f104, owner) accepts it, and the walk-speed spike is
   not required before Phase 6.
+- Phase 5: `PageDown` has no key of its own on the owner's laptop (readings log, Phase 5); the
+  cycle moves to `F4` with Plan 0080.
+- Phase 6 deviations: the files touched beyond `settings.rs` are
+  `apps/flythrough/src/cli/settings.rs` (`--profile high`, the name list, the done-when's
+  `--settings` test, and `seed_profile` setting the upscaler at internal scale 1, where the
+  fly-through's own default is `off`) and `docs/flythrough.md`; `hud.rs` is unchanged (no row
+  moves). The tester's quality menu (`apps/tester/src/run.rs`, its own `Profile`) still offers
+  floor, portable and performance, not high. `High` is last in the cycle.
 
 ### Close triggers
 
