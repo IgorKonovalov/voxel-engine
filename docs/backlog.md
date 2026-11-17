@@ -84,6 +84,15 @@ iGPU needs `--adapter AMD`. A reading taken that way is labelled with the wrong 
 chore: refuse (or print the adapters and exit) when no adapter matches, and accept the short
 names the tests' `VXE_TEST_ADAPTER` takes.
 
+### `StampedSource` shares its prefabs across placements
+
+Noted 2026-11-17 by the Plan 0032 lane (Phase 8, `docs/plans/logs/0032.md`): `vxe_world::StampedSource`
+keeps its own rotated copy of the prefab for every placement, so a forest of about 3,850 trees
+would hold 3,850 copies (estimated 1 to 2 GB, not measured). The lane wrote a fly-through
+`ForestSource` over 64 shared prefabs instead. Engine follow-up: placements reference a shared
+prefab and rotation (an `Arc` and an orientation), so a dense generation-time scatter costs its
+distinct prefabs, not its placements. Pick up at Plan 0032's close or before the next scatter.
+
 ### The live queue's order and cancellation, after Plan 0059
 
 Taken 2026-11-10 by [Plan 0060](plans/done/0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md) and [ADR-0048](adrs/0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md); the hall's aliasing goes to the antialiasing plan below.
