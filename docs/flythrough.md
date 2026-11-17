@@ -103,7 +103,10 @@ the time of day (a number, an hour a step, held between 00:00 and 23:59) and the
 order: cave, level, showcase, outdoor, and back, rebuilt in process with that source's start
 settings; the window, the frame, the clock and the menu stay; a source that refuses the run's
 other flags is passed over), and on the outdoor hills the next `--trees` (none, sparse, forest,
-and back), rebuilt in process as the source is.
+and back), rebuilt in process as the source is. Under `--loading-screen on` a rebuild shows the
+loading screen at once, naming what loads (`loading outdoor, trees sparse`, `switching from
+cave`), and loads behind it as start-up does; the run then comes back with the menu and the
+switch's notice.
 
 The HUD's entities row reads `entities <n>/64 parts <m>/512 over <k> pool <used>/<total> KB`
 (`walk` after it while they walk): the entity pool's bytes in use, rounded up to whole KB,
@@ -296,7 +299,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 
 | Flag | Does |
 |------|------|
-| `--loading-screen on\|off` | Step the start-up (the entity pipelines, the level's upload or the streamed near residency, the light pre-roll, the field's fill) from the frame loop behind loading frames: a turning voxel cube, a bar that only moves forward, the scene, the stage and its count; off runs it all before the first frame [on in a window, off headless] |
+| `--loading-screen on\|off` | Step the start-up (the entity pipelines, the level's upload or the streamed near residency, the light pre-roll, the field's fill) from the frame loop behind loading frames: a turning voxel cube, a bar that only moves forward, the scene, the stage and its count; the menu's in-process rebuilds (`source`, `trees`, `--switch-at`) load the same way; off runs it all before the first frame [on in a window, off headless] |
 | `--loading-fade MS` | Fade the loading frame out over the first world frames; 0 cuts [250] |
 
 With the screen on, the window's first frame is a still loading frame (the background, the

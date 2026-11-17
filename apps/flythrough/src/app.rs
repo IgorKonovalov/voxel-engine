@@ -105,6 +105,9 @@ pub struct Flythrough {
     /// The loading screen [`App::splash`] drew the first frame with, handed to the run's
     /// loading frames.
     pub(crate) splash: Option<LoadingScreen>,
+    /// A switch begun after the last frame ([`Flythrough::begin_switch`]): the next run's
+    /// arguments and whether only the trees changed; done at the start of the next frame.
+    pub(crate) switching: Option<(Args, bool)>,
 }
 
 impl Flythrough {
@@ -321,12 +324,18 @@ impl App for Flythrough {
         if self.failure.is_some() {
             return Flow::Exit;
         }
+        if let Some((args, retree)) = self.switching.take() {
+            self.switch_source(gpu, args, retree);
+            if self.failure.is_some() {
+                return Flow::Exit;
+            }
+        }
         let flow = match self.run.as_mut() {
             Some(run) => run.frame(gpu, input, dt, surface),
             None => Flow::Exit,
         };
         if flow == Flow::Continue && self.run.as_ref().is_some_and(|r| r.switch || r.retree) {
-            self.switch_source(gpu);
+            self.begin_switch(gpu, surface);
         }
         flow
     }

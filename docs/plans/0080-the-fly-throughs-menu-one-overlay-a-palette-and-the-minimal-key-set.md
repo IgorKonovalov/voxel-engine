@@ -686,6 +686,7 @@ Readings and gate counts: [`logs/0080.md`](logs/0080.md).
 | 6: stepped values, unavailable entries, every action answers (amended 2026-11-17) | dev | done, one count differs (Notes) | 677fb8db |
 | 7: the owner's window, run 2 (amended 2026-11-17) | human | done 2026-11-17, verdict in the readings log; the pad's step not run (no pad) | e210343b |
 | 8: the owner's picks, and the tip (the former Phase 5) | dev | done | 4ff74bb6 |
+| fix, owner window 80c run 2: the menu's rebuilds behind the loading screen | dev | done | committed with this row |
 
 ### Notes
 
@@ -783,6 +784,11 @@ Readings and gate counts: [`logs/0080.md`](logs/0080.md).
   row); `tests/toggles.rs`' `row_of` also finds the lighting row after a comma (under a sky it
   starts `time ...`). `vxe-render`'s `RenderSettings::NOT_SETTINGS` lists `set_scale` and
   `set_lines_over` (0069's setter scan). Readings log, "Merge of main".
+- Fix after window 80c run 2 (`source` and `trees` froze the window silently): under the
+  screen a switch presents a loading frame naming the next world, then loads behind Plan
+  0075's loading frames; teardown, the level's generation join and `rebuild_gfx` still block
+  behind that first frame. The outdoor title reads the trees. Readings log, "Fix: the menu's
+  rebuilds behind the loading screen".
 
 ### Close triggers
 
