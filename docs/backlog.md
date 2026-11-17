@@ -881,3 +881,26 @@ swap, machine-readable run output) carry a recommendation each and six owner que
 dynamics entry above, M8, M10's liquids) and the current polish. Pick up with a spike plan, as
 the ADR's "What a first plan would be" describes; the owner questions are answered then.
 
+
+### A second consumer in mind: a user-built, multiplayer game platform
+
+Parked 2026-11-17 (owner asked whether the engine could carry a Roblox-style game). Already fits:
+runtime edits as logged deterministic ops, sandboxed logic components (fuel, memory cap,
+deterministic clocks), `vxe-net`'s server tick and op logs, voxel-model entities and prefabs,
+ADR-0072's authoring stack. Missing in the engine: rigid bodies (they conflict with ADR-0008 and
+need an ADR), the network at scale (QUIC, interest management, dozens of players per server),
+platforms beyond Linux and Windows (next entry). The platform itself (accounts, avatars,
+publishing, moderation, a marketplace) is a consumer product, never `crates/`. Use: a second
+consumer to test the physics, networking and authoring designs against; no plan of its own.
+
+### Mobile and tablet targets: Android and iOS
+
+Parked 2026-11-17 (owner, "a distant and theoretic idea"). `wgpu` and `winit` reach both, so the
+port itself is small; the cost is elsewhere. **A render profile for tile GPUs** (the Radeon iGPU
+already reads 22 ms of GPU on Plan 0088's outdoor bench; a phone has less and throttles): lower
+internal resolution, baked light only, smaller residency. **A WGSL limits audit** against mobile
+`wgpu` limits (storage buffers per stage, workgroup size, missing atomics and subgroups). **Touch
+input and the app lifecycle** (suspend, surface loss). **Wasmtime on iOS** has no JIT: Pulley
+(its interpreter) or ahead-of-time components. **aarch64 determinism vectors in CI.** A new
+target is an ADR (ADR-0001 names Linux and Windows) and about a milestone's work; the cheap first
+step is the limits audit, which says what the rest costs. Tablets before phones.
