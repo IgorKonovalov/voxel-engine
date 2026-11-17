@@ -85,16 +85,6 @@ const SKY_DIM: u32 = 1002u;
 // A sky ray's length cap in voxels: past it the ray counts as having reached the sky.
 const SKY_RAY_VOXELS: f32 = 512.0;
 
-// A unit direction about unit `n` drawn with density `cos / pi` from `u` and `v` in [0, 1).
-fn cosine_direction(n: vec3<f32>, u: f32, v: f32) -> vec3<f32> {
-    let r = sqrt(u);
-    let phi = 2.0 * PI * v;
-    let a = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), abs(n.x) > 0.9);
-    let t = normalize(cross(a, n));
-    let b = cross(n, t);
-    return normalize(t * (r * cos(phi)) + b * (r * sin(phi)) + n * sqrt(max(1.0 - u, 0.0)));
-}
-
 // The sky's light at a hit at `p`, normal `n`, shadow normal `ns`, lighting pixel `px`: the
 // mean over `sky.sky_rays` cosine-weighted rays about `n` of `pi sky_radiance(d)` where the
 // ray reaches the sky above the horizon (no rock within SKY_RAY_VOXELS), and 0 where it does

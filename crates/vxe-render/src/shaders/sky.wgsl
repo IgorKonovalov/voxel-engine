@@ -33,20 +33,7 @@ fn sky_radiance(d: vec3<f32>) -> vec3<f32> {
     if (!sky_on()) {
         return vec3<f32>(0.0);
     }
-    if ((sky.flags & SKY_UNIFORM) != 0u) {
-        return select(vec3<f32>(0.0), sky.uniform_l, d.z > 0.0);
-    }
-    let r = sky_camera_r();
-    let zen = acos(clamp(d.z, -1.0, 1.0));
-    var az = atan2(d.y, d.x);
-    if (az < 0.0) {
-        az += 2.0 * SKY_PI;
-    }
-    let uv = vec2<f32>(
-        az / (2.0 * SKY_PI),
-        unit_to_uv(sky_view_v(zen, r), f32(vec2<u32>(SKY_VIEW_W, SKY_VIEW_H).y)),
-    );
-    return lut_tap(sky_view_lut, uv, true).xyz / sky.view_scale;
+    return sky_view_radiance(sky_view_lut, d);
 }
 
 // The sun's and the moon's discs as radiance from unit world direction `d`: inside a body's

@@ -21,6 +21,8 @@
 //                                        clamped as above; 0 on a miss. In the steps view the
 //                                        key light's shadow ray's counters instead (see
 //                                        `shade`)
+//   4  storage, read      light_store     the store (`bake::Store`, temporal.wgsl's `store`),
+//                                        read for `sky_baked`
 //
 @group(2) @binding(0) var hit_pos_in: texture_2d<f32>;
 
@@ -29,6 +31,49 @@
 @group(2) @binding(2) var irradiance_out: texture_storage_2d<rgba16float, write>;
 
 @group(2) @binding(3) var direct_out: texture_storage_2d<rgba16float, write>;
+
+@group(2) @binding(4) var<storage, read> light_store: array<u32>;
+
+// Whether the store holds a sky visibility baked under a sky for face `face` of voxel `v`
+// (ADR-0070): its cell's record has the direction and VIS_BAKED. temporal.wgsl's
+// `store_sky_visibility` makes the same test on its own cell and adds the baked sky term at
+// exactly these faces, so the sky ray's sample is not added there.
+fn sky_baked(v: vec3<i32>, face: u32) -> bool {
+    let shift = select(3u, 2u, (light_store[STORE_FLAGS] & 2u) != 0u);
+    let per = 3u - shift;
+    let c = v >> vec3<u32>(shift);
+    let b = c >> vec3<u32>(per);
+    let origin = vec3<i32>(
+        i32(light_store[STORE_ORIGIN]),
+        i32(light_store[STORE_ORIGIN + 1u]),
+        i32(light_store[STORE_ORIGIN + 2u]),
+    );
+    let size = vec3<i32>(
+        i32(light_store[STORE_SIZE]),
+        i32(light_store[STORE_SIZE + 1u]),
+        i32(light_store[STORE_SIZE + 2u]),
+    );
+    let w = (b >> vec3<u32>(3u)) - origin;
+    if (any(w < vec3<i32>(0)) || any(w >= size)) {
+        return false;
+    }
+    let block = light_store[STORE_TABLE + u32(w.x + size.x * (w.y + size.y * w.z))] & ~TABLE_COARSE;
+    if (block == 0u) {
+        return false;
+    }
+    let s = b & vec3<i32>(7);
+    let dir = light_store[block + u32(s.x + 8 * (s.y + 8 * s.z))];
+    if (dir == 0u) {
+        return false;
+    }
+    let n = 1 << per;
+    let l = c & vec3<i32>(n - 1);
+    let sub = u32(l.x + n * (l.y + n * l.z));
+    let cells = u32(n * n * n);
+    let rec = block + (dir >> 11u) - BRICK_WORDS * cells + BRICK_WORDS * sub;
+    return ((light_store[rec + 6u] >> (16u + face)) & 1u) != 0u
+        && (light_store[rec + VIS_WORD + 1u] & VIS_BAKED) != 0u;
+}
 
 @compute @workgroup_size(8, 8, 1)
 fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -102,8 +147,14 @@ fn shade_px(gid: vec3<u32>) {
             let ns = shadow_normal_of(rec, ray.d);
             e = PI * lights_lit_rgb(rec.p, n, ns);
             set_ray_lift(rec, params.views[view_of(full_px(gid.xy))]);
-            // The key light's directional sample and the sky rays (sky_light.wgsl), with the list's.
-            let k = key_sample(rec.p, n, ns, gid.xy) + sky_ray_sample(rec.p, n, ns, gid.xy);
+            // The key light's directional sample and the sky rays (sky_light.wgsl), with the
+            // list's. The sky rays run everywhere; at a face whose store holds a baked sky
+            // visibility the temporal pass adds the sky's term instead of their sample.
+            var k = key_sample(rec.p, n, ns, gid.xy);
+            let sky_k = sky_ray_sample(rec.p, n, ns, gid.xy);
+            if (!(reads_store(rec) && sky_baked(store_voxel(rec.p, ns), store_face(rec.axis, ns)))) {
+                k += sky_k;
+            }
             e += vec4<f32>(k, luminance(k));
             // A cube face's emissive light is the store's (temporal.wgsl): no sample, no shadow
             // ray; so is an entity hit's under LIGHTING_ENTITY_WORLD. Any other hit draws its own.

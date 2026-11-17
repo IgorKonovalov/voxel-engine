@@ -526,6 +526,7 @@ impl Frame {
                 Res::Tex(t.lit_info(c)),
                 Res::Tex(&t.irradiance),
                 Res::Tex(&t.direct),
+                Res::Buf(self.baked.store.pool()),
             ],
         );
         let temporal_bind = self.binds.io(
@@ -548,6 +549,7 @@ impl Frame {
                 Res::Tex(&t.direct),
                 Res::Tex(&t.direct_accum[q]),
                 Res::Tex(&t.direct_accum[c]),
+                Res::Buf(&self.sky.irradiance),
             ],
         );
         // The filter runs in the shaded and cracks views unless switched off; the variance pass
@@ -816,42 +818,40 @@ impl Frame {
             p.views[0].origin[2],
             &self.state,
         );
-        let [sky_t, sky_m, sky_v] = self.sky.dispatches(device, sky_groups.as_ref());
-        let passes = [
-            sky_t,
-            sky_m,
-            sky_v,
-            hit,
-            gradient,
-            Dispatches::one(frame_pass(
-                world,
-                self.light_pipeline(device),
-                &binds.light_bind,
-                2,
-                lw,
-            )),
-            Dispatches::one(frame_pass(
-                world,
-                self.temporal_pipeline(device),
-                &binds.temporal_bind,
-                2,
-                lw,
-            )),
-            atrous,
-            probes,
-            gather,
-            Dispatches::one(frame_pass(
-                world,
-                out.composite,
-                &out.composite_bind,
-                2,
-                full,
-            )),
-            upscale,
-            sharpen,
-        ]
-        .into_iter()
-        .chain(fsr_passes);
+        let sky = self.sky.dispatches(device, sky_groups.as_ref());
+        let passes = sky
+            .into_iter()
+            .chain([
+                hit,
+                gradient,
+                Dispatches::one(frame_pass(
+                    world,
+                    self.light_pipeline(device),
+                    &binds.light_bind,
+                    2,
+                    lw,
+                )),
+                Dispatches::one(frame_pass(
+                    world,
+                    self.temporal_pipeline(device),
+                    &binds.temporal_bind,
+                    2,
+                    lw,
+                )),
+                atrous,
+                probes,
+                gather,
+                Dispatches::one(frame_pass(
+                    world,
+                    out.composite,
+                    &out.composite_bind,
+                    2,
+                    full,
+                )),
+                upscale,
+                sharpen,
+            ])
+            .chain(fsr_passes);
         self.record_passes(device, queue, encoder, passes, &p, timer);
     }
 

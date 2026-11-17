@@ -172,6 +172,7 @@ impl Frame {
             world_bind: &world_bind,
             params_buffer: &self.state.params,
             params,
+            sky: self.bake_sky(),
         };
         crate::bake::run(&run, &mut self.baked.store, extent, settings, progress)
     }
@@ -362,9 +363,30 @@ impl Frame {
             world_bind: &world_bind,
             params_buffer: &self.state.params,
             params,
+            sky: self.bake_sky(),
         };
         let q = self.baked.queue.as_mut()?;
         Some(q.step(&run, &mut self.baked.store, view, t0))
+    }
+
+    /// The bake's sky-ray bits ([`crate::bake::BakeRun::sky`]): none with no sky set, else on
+    /// with the frame's coarse shadow walk and shadow styles.
+    pub(super) fn bake_sky(&self) -> u32 {
+        use crate::bake::{BAKE_SKY_COARSE, BAKE_SKY_ON, BAKE_SKY_STYLES};
+        if self.sky.sky.is_none() {
+            return 0;
+        }
+        BAKE_SKY_ON
+            | if self.state.lighting.shadow_walk == ShadowWalk::Coarse {
+                BAKE_SKY_COARSE
+            } else {
+                0
+            }
+            | if self.state.styles.is_empty() {
+                0
+            } else {
+                BAKE_SKY_STYLES
+            }
     }
 
     /// The frame parameters a bake dispatches with: no view but the LOD walk's camera chunk,
@@ -432,6 +454,7 @@ impl Frame {
             world_bind: &world_bind,
             params_buffer: &self.state.params,
             params,
+            sky: self.bake_sky(),
         };
         Some(crate::bake::rebake(
             &run,

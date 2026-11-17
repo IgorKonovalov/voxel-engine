@@ -772,6 +772,123 @@ fn a_closed_box_takes_no_sky_light() {
 mod reading {
     use super::*;
 
+    /// Plan 0086 Phase 4 bar 3: the baked sky term (ADR-0070) against the ray. Under
+    /// `Sky::uniform(1.0)`, filter off, exposure 1, one sky ray, the coarse walk: `world`'s
+    /// bricks within two of `brick` baked alone at 256 samples a brick direction (the bake's
+    /// face filter), then four frames: the centre pixel's emissive part (`accumulated`, the
+    /// store's term with no history) and direct part (the ray's sample where the store holds
+    /// no visibility). Returns `(baked, direct)`.
+    fn baked_term(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        world: &World,
+        cam: &Camera,
+        brick: [i32; 3],
+    ) -> ([f32; 4], [f32; 4]) {
+        let mut gpu = mirror(device, queue, world, None);
+        let mut f = frame(device, SIZE, ShadowWalk::Coarse);
+        f.set_lighting(Lighting {
+            sky_rays: 1,
+            ..f.lighting()
+        });
+        f.set_sky(Some(Sky {
+            altitude_zero_z: FLOOR as f32,
+            ..Sky::uniform(1.0)
+        }));
+        let settings = vxe_render::BakeSettings {
+            round: 64,
+            brick_samples: 256,
+            filter: Some(std::sync::Arc::new(move |v: [i32; 3], _| {
+                (0..3).all(|k| (v[k].div_euclid(8) - brick[k]).abs() <= 2)
+            })),
+            ..vxe_render::BakeSettings::default()
+        };
+        let report = f
+            .bake_until(
+                device,
+                queue,
+                &mut gpu,
+                world,
+                world.extent(),
+                &settings,
+                &mut |_| {},
+            )
+            .expect("the store fits");
+        println!(
+            "  bake: {} faces, {} sky rays",
+            report.faces, report.sky_rays
+        );
+        for _ in 0..4 {
+            f.step(device, queue, &gpu, cam, &LightParams::headlamp());
+        }
+        let at = |t: &wgpu::Texture| {
+            let d = vxe_render::debug::read_rgba16f(device, queue, t);
+            let (w, h) = (t.width() as usize, t.height() as usize);
+            d[(h / 2) * w + w / 2]
+        };
+        (at(f.accumulated()), at(f.direct()))
+    }
+
+    /// Plan 0086 Phase 4 bar 3: the open floor's baked sky term against `pi` (Plan 0032 Phase 6
+    /// bar 2's ray read 3.1406), a wall's outward face in the open against `pi / 2`, the closed
+    /// box's floor against 0; each beside the ray's 64-frame mean on the same pixel with no
+    /// bake. Printed.
+    #[test]
+    #[ignore = "reading"]
+    fn the_baked_sky_term_matches_the_ray() {
+        let Some((device, queue)) = device() else {
+            return;
+        };
+        let walls = |p: [i32; 3]| {
+            let inside = |k: usize, lo: i32, hi: i32| (lo..hi).contains(&p[k]);
+            let outer = inside(0, 100, 140) && inside(1, 100, 140) && inside(2, FLOOR, FLOOR + 30);
+            let inner = inside(0, 105, 135) && inside(1, 105, 135) && inside(2, FLOOR, FLOOR + 25);
+            let wall = inside(0, 192, 200) && inside(1, 40, 216) && inside(2, FLOOR, FLOOR + 80);
+            (outer && !inner) || wall
+        };
+        let world = floor_world([4, 4, 1], walls);
+        let pi = std::f32::consts::PI;
+        let rigs = [
+            // About 40 voxels ahead of the camera on the open floor.
+            (
+                "open floor",
+                north_at([40.0, 20.0, FLOOR as f32 + 40.0], -45.0),
+                [5, 7, 1],
+                pi,
+            ),
+            // The wall's +x face at x 200, looking -x at z FLOOR + 30.
+            (
+                "wall +x",
+                Camera {
+                    position: Vec3::new(230.0, 128.0, FLOOR as f32 + 30.0),
+                    yaw: std::f32::consts::PI,
+                    pitch: 0.0,
+                    vfov: 60f32.to_radians(),
+                },
+                [24, 16, 5],
+                pi / 2.0,
+            ),
+            (
+                "closed box",
+                north_at([120.0, 110.0, FLOOR as f32 + 12.0], -45.0),
+                [15, 14, 1],
+                0.0,
+            ),
+        ];
+        for (name, cam, brick, want) in rigs {
+            let (baked, direct) = baked_term(&device, &queue, &world, &cam, brick);
+            let ray = under_uniform_sky(&device, &queue, &world, &cam);
+            println!(
+                "{name}: baked {:.4} ({:.4} of the expected {want:.4}), direct with the bake \
+                 {:.4}, the ray's 64-frame mean {:.4}",
+                baked[1],
+                baked[1] / want.max(1e-6),
+                direct[1],
+                ray[1]
+            );
+        }
+    }
+
     /// Bar 3 under the coarse walk, printed (the bar is on the full walk).
     #[test]
     #[ignore = "reading"]

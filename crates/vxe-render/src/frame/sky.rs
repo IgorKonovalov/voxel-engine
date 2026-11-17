@@ -13,6 +13,10 @@ pub(crate) const SKY_WGSL: &str = include_str!("../shaders/sky.wgsl");
 const SKY_TRANSMITTANCE_WGSL: &str = include_str!("../shaders/sky_transmittance.wgsl");
 const SKY_MULTISCATTER_WGSL: &str = include_str!("../shaders/sky_multiscatter.wgsl");
 const SKY_VIEW_WGSL: &str = include_str!("../shaders/sky_view.wgsl");
+const SKY_IRRADIANCE_WGSL: &str = include_str!("../shaders/sky_irradiance.wgsl");
+
+/// Bytes of `E_sky` (ADR-0070): six `vec4<f32>`, the sky's irradiance about each axis.
+pub(crate) const SKY_E_BYTES: u64 = 6 * 16;
 
 /// The LUTs' sizes, as `sky_atmosphere.wgsl` declares them.
 pub(crate) const TRANSMITTANCE_SIZE: [u32; 2] = [256, 64];
@@ -21,8 +25,9 @@ pub(crate) const SKY_VIEW_SIZE: [u32; 2] = [192, 108];
 
 const F16: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
-/// The LUT passes: label, modules after the prelude, entry point.
-pub(crate) const SKY_PASSES: [(&str, &[&str], &str); 3] = [
+/// The LUT passes and the irradiance reduction after them: label, modules after the prelude,
+/// entry point.
+pub(crate) const SKY_PASSES: [(&str, &[&str], &str); 4] = [
     (
         "sky transmittance",
         &[SKY_ATMOSPHERE_WGSL, SKY_TRANSMITTANCE_WGSL],
@@ -37,6 +42,11 @@ pub(crate) const SKY_PASSES: [(&str, &[&str], &str); 3] = [
         "sky view",
         &[SKY_ATMOSPHERE_WGSL, SKY_VIEW_WGSL],
         "sky_view",
+    ),
+    (
+        "sky irradiance",
+        &[SKY_ATMOSPHERE_WGSL, SKY_IRRADIANCE_WGSL],
+        "sky_irradiance",
     ),
 ];
 
@@ -102,6 +112,9 @@ struct SkyPipes {
 pub(super) struct SkyState {
     pub(super) sky: Option<Sky>,
     pub(super) uniform: wgpu::Buffer,
+    /// `E_sky` ([`SKY_E_BYTES`]), written by the irradiance pass after the sky view's each
+    /// frame a sky is set; the temporal pass reads it (`sky_e`). Zero before the first sky.
+    pub(super) irradiance: wgpu::Buffer,
     pub(super) luts: Option<SkyLuts>,
     placeholder: wgpu::Texture,
     /// The atmosphere changed since the transmittance and multiple-scattering LUTs were built.
@@ -126,6 +139,12 @@ impl SkyState {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
+            irradiance: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("sky irradiance"),
+                size: SKY_E_BYTES,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            }),
             luts: None,
             placeholder: lut(device, "sky lut placeholder", [1, 1]),
             dirty: AtomicBool::new(false),
@@ -138,9 +157,9 @@ impl SkyState {
 
     /// The bytes of the LUTs and the uniform, 0 while no sky was ever set.
     pub(super) fn bytes(&self) -> u64 {
-        self.luts
-            .as_ref()
-            .map_or(0, |l| l.bytes() + size_of::<SkyUniform>() as u64)
+        self.luts.as_ref().map_or(0, |l| {
+            l.bytes() + size_of::<SkyUniform>() as u64 + SKY_E_BYTES
+        })
     }
 
     /// The textures group 0 binds at 17 and 18: the LUTs, or the placeholder.
@@ -153,10 +172,11 @@ impl SkyState {
 
     fn pipes(&self, device: &wgpu::Device) -> &SkyPipes {
         self.pipes.get_or_init(|| {
-            let ios: [&[Io]; 3] = [
+            let ios: [&[Io]; 4] = [
                 &[Io::Uniform, Io::Store(F16)],
                 &[Io::Uniform, Io::Float, Io::Store(F16)],
                 &[Io::Uniform, Io::Float, Io::Float, Io::Store(F32)],
+                &[Io::Uniform, Io::Float, Io::Storage],
             ];
             let layouts: Vec<_> = SKY_PASSES
                 .iter()
@@ -206,7 +226,7 @@ impl SkyState {
         binds: &BindCache,
         camera_z: f32,
         state: &FrameState,
-    ) -> Option<[wgpu::BindGroup; 3]> {
+    ) -> Option<[wgpu::BindGroup; 4]> {
         let prev = self
             .keys
             .lock()
@@ -246,23 +266,38 @@ impl SkyState {
                     Res::Tex(&luts.view),
                 ],
             ),
+            binds.io(
+                device,
+                &p.layouts[3],
+                &[
+                    Res::Buf(&self.uniform),
+                    Res::Tex(&luts.view),
+                    Res::Buf(&self.irradiance),
+                ],
+            ),
         ])
     }
 
     /// The LUT passes' dispatches over `groups` ([`SkyState::prepare`]): the transmittance and
     /// multiple-scattering LUTs' when the atmosphere changed (the flag then cleared), the sky
-    /// view's every frame; empty with no sky.
+    /// view's and the irradiance reduction's (one workgroup a direction) every frame; empty
+    /// with no sky.
     pub(super) fn dispatches<'a>(
         &'a self,
         device: &wgpu::Device,
-        groups: Option<&'a [wgpu::BindGroup; 3]>,
-    ) -> [Dispatches<'a>; 3] {
-        let mut out = [Dispatches::default(); 3];
+        groups: Option<&'a [wgpu::BindGroup; 4]>,
+    ) -> [Dispatches<'a>; 4] {
+        let mut out = [Dispatches::default(); 4];
         let Some(groups) = groups else {
             return out;
         };
         let p = self.pipes(device);
-        let sizes = [TRANSMITTANCE_SIZE, MULTISCATTER_SIZE, SKY_VIEW_SIZE];
+        let sizes = [
+            TRANSMITTANCE_SIZE,
+            MULTISCATTER_SIZE,
+            SKY_VIEW_SIZE,
+            [6 * WORKGROUP, WORKGROUP],
+        ];
         let rebuild = self.dirty.swap(false, Ordering::Relaxed);
         for (i, slot) in out.iter_mut().enumerate() {
             if i < 2 && !rebuild {
@@ -313,6 +348,13 @@ impl Frame {
     /// illuminance, its scale changed, or it was set or cleared). A drift raises nothing.
     pub fn sky_changed(&self) -> bool {
         self.sky.changed.load(Ordering::Relaxed)
+    }
+
+    /// `E_sky` (ADR-0070): six `vec4<f32>`, the sky's cosine-weighted irradiance about each
+    /// axis in face order (2 k toward -k, 2 k + 1 toward +k) in xyz, written by the last encode
+    /// with a sky set; zero before the first.
+    pub fn sky_irradiance(&self) -> &wgpu::Buffer {
+        &self.sky.irradiance
     }
 
     /// The sky [`Frame::set_sky`] last set.

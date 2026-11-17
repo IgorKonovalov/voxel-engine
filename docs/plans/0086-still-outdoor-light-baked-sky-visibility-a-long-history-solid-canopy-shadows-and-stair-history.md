@@ -563,8 +563,8 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
 |---|---|---|---|
 | 1: The attribution reading | dev | done | 851f7c72 |
 | 2: A canopy shadows as its brick | dev | done | 2b5fff92 |
-| 3: History across a stair in the far-normal regime | dev | done | committed with this row |
-| 4: The sky visibility baked per brick direction | dev | not started | |
+| 3: History across a stair in the far-normal regime | dev | done | 7a3c6d72 |
+| 4: The sky visibility baked per brick direction | dev | done | committed with this row |
 | 5: The rays' own long history, the sky ray only where stale | dev | not started | |
 | 6: The key light on the long history, after a reading | dev | not started | |
 | 7: A spike: a deterministic penumbra from the closest approach | dev | not started | |
@@ -593,6 +593,14 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
   bars 1 and 2 run as readings (`reading::a_far_staircase_keeps_its_history`,
   `reading::a_thin_far_wall_does_not_leak`); `LIFT` 2 is not read. Bar 1's rig reads 0.05 %
   resets with the rules off: at the far normal's full weight the stored normals already agree.
+- Phase 4: `E_sky` lives in a 96 B storage buffer the temporal pass binds (`Frame::sky_irradiance`),
+  written by a new pass `sky_irradiance.wgsl`, not in the sky uniform. The baked term is
+  `v E_sky / h`, `h` the hemisphere's cosine share above the horizon (1 for `+z`, a half
+  sideways), not `v E_sky`: bars 2 to 4 hold together only so. The switch is per lighting pixel
+  on the hit face's own cell (`VIS_BAKED`), with no fade. Ring 3 opens on a touched brick's
+  visibility before the edit, not after. Bars 2, 3, 4 and 6 run as readings; bar 7 is partial
+  (the log lists what is owed); bar 6 reports Phase 1's change statistics and mean levels, not
+  patches a step. One GPU reading ran while a live session runner was up.
 
 ### Close triggers
 

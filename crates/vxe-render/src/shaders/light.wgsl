@@ -98,7 +98,12 @@ const COARSE_MARGIN: f32 = 3.5;
 // Whether rock lies on `o + d t` for `0 <= t <= len`: the full walk, or with
 // `Params.lighting` bit 1 the coarse walk between COARSE_MARGIN of either end.
 fn shadowed(o: vec3<f32>, d: vec3<f32>, len: f32) -> bool {
-    if ((params.lighting & LIGHTING_COARSE_SHADOW) != 0u) {
+    return shadowed_walk(o, d, len, (params.lighting & LIGHTING_COARSE_SHADOW) != 0u);
+}
+
+// `shadowed` with the coarse walk on where `coarse`, whatever `Params.lighting` says.
+fn shadowed_walk(o: vec3<f32>, d: vec3<f32>, len: f32, coarse: bool) -> bool {
+    if (coarse) {
         coarse_span = vec2<f32>(COARSE_MARGIN, len - COARSE_MARGIN);
     }
     march_material = false;
@@ -111,16 +116,38 @@ fn shadowed(o: vec3<f32>, d: vec3<f32>, len: f32) -> bool {
 // `shadowed` for a light's shadow ray (the list's, the lamp's, the key light's, a sky ray):
 // while some material's style word has SHADOW_AS_BRICK (LIGHTING_SHADOW_STYLES), a brick
 // holding such a material stops the ray where it enters it, the brick of `o` aside. The
-// bake's and the emissive samples' rays take `shadowed`.
+// bake's emissive samples' rays take `shadowed`.
 fn shadowed_styled(o: vec3<f32>, d: vec3<f32>, len: f32) -> bool {
-    if ((params.lighting & LIGHTING_SHADOW_STYLES) == 0u) {
-        return shadowed(o, d, len);
+    return shadowed_styled_walk(
+        o,
+        d,
+        len,
+        (params.lighting & LIGHTING_COARSE_SHADOW) != 0u,
+        (params.lighting & LIGHTING_SHADOW_STYLES) != 0u,
+    );
+}
+
+// `shadowed_styled` with the coarse walk and the styles on where `coarse` and `styles`
+// (the bake's sky rays, which take the frame's choice from their job).
+fn shadowed_styled_walk(o: vec3<f32>, d: vec3<f32>, len: f32, coarse: bool, styles: bool) -> bool {
+    if (!styles) {
+        return shadowed_walk(o, d, len, coarse);
     }
     shadow_styles = true;
     styled_from = voxel_at(o, d) >> vec3<u32>(3u);
-    let s = shadowed(o, d, len);
+    let s = shadowed_walk(o, d, len, coarse);
     shadow_styles = false;
     return s;
+}
+
+// A unit direction about unit `n` drawn with density `cos / pi` from `u` and `v` in [0, 1).
+fn cosine_direction(n: vec3<f32>, u: f32, v: f32) -> vec3<f32> {
+    let r = sqrt(u);
+    let phi = 2.0 * PI * v;
+    let a = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), abs(n.x) > 0.9);
+    let t = normalize(cross(a, n));
+    let b = cross(n, t);
+    return normalize(t * (r * cos(phi)) + b * (r * sin(phi)) + n * sqrt(max(1.0 - u, 0.0)));
 }
 
 // The unit normal of face `f` (2 k toward -k, 2 k + 1 toward +k).

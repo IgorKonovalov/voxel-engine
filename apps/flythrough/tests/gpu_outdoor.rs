@@ -664,6 +664,7 @@ mod reading {
         pub queue: vxe_render::wgpu::Queue,
         pub gpu: vxe_render::GpuWorld,
         pub adapter: String,
+        pub world: vxe_world::World,
     }
 
     /// `world` mirrored whole (an absent chunk is sky to a lighting ray) with the focus at `eye`.
@@ -689,6 +690,7 @@ mod reading {
             queue,
             gpu,
             adapter,
+            world,
         })
     }
 
@@ -790,6 +792,9 @@ mod reading {
         pub leaf_brick: bool,
         /// The far normal's stair rules hooked off.
         pub no_stair: bool,
+        /// The store baked whole (ADR-0046's one-off bake at the defaults, the sky's channel
+        /// with it) before the first frame.
+        pub bake: bool,
     }
 
     /// What a cell read over its 64 still frames.
@@ -804,13 +809,15 @@ mod reading {
         pub samples: Vec<Vec<f32>>,
         pub grid_width: usize,
         pub exposure: f32,
+        /// The last frame's display (rgba8).
+        pub last: Vec<u8>,
     }
 
     /// `cell` at `cam` under `sky` (the key light and the sky rays at the defaults otherwise, the
     /// lamp off): 64 frames under the outdoor auto exposure (instant), then 64 at that exposure
     /// pinned, reading the display's changes, the history counters and the direct samples.
     pub(super) fn run_cell(
-        rig: &Rig,
+        rig: &mut Rig,
         cam: &vxe_render::Camera,
         sky: vxe_render::sky::Sky,
         cell: Cell,
@@ -858,6 +865,28 @@ mod reading {
             ..base
         });
         f.set_sky(Some(sky));
+        if cell.bake {
+            let t = std::time::Instant::now();
+            let report = f
+                .bake_until(
+                    &rig.device,
+                    &rig.queue,
+                    &mut rig.gpu,
+                    &rig.world,
+                    rig.world.extent(),
+                    &vxe_render::BakeSettings::default(),
+                    &mut |_| {},
+                )
+                .expect("the store fits");
+            println!(
+                "reading: bake {} chunks, {} faces, {} samples, {} sky rays in {:.1} s",
+                report.chunks,
+                report.faces,
+                report.samples,
+                report.sky_rays,
+                t.elapsed().as_secs_f64()
+            );
+        }
         f.set_dt(1.0 / 60.0);
         let light = LightParams::headlamp();
         for _ in 0..64 {
@@ -888,6 +917,7 @@ mod reading {
             samples.push(d.iter().map(|p| p[3]).collect());
         }
         CellReading {
+            last,
             width: f.target().width() as usize,
             changes,
             rejections,
@@ -912,6 +942,7 @@ mod reading {
                             fsr2,
                             leaf_brick: false,
                             no_stair: false,
+                            bake: false,
                         });
                     }
                 }
@@ -991,7 +1022,7 @@ mod reading {
     #[ignore = "reading"]
     fn flicker_by_term() {
         let noon = flythrough::daylight::Clock::default().sky(flythrough::outdoor::BASE_Z as f32);
-        if let Some((rig, views)) = tunnel_rig() {
+        if let Some((mut rig, views)) = tunnel_rig() {
             println!("reading: flicker_by_term on {}", rig.adapter);
             for (pose, cam) in &views {
                 let (rate, gw) = hit_rates(&rig, cam);
@@ -1025,7 +1056,7 @@ mod reading {
                     );
                 }
                 for cell in cells() {
-                    let r = run_cell(&rig, cam, noon, cell);
+                    let r = run_cell(&mut rig, cam, noon, cell);
                     print_row(pose, cell, &r, &[("rim", &rim), ("far", &far)]);
                 }
             }
@@ -1035,12 +1066,12 @@ mod reading {
             ..Default::default()
         };
         let sky = clock.sky(flythrough::outdoor::BASE_Z as f32);
-        if let Some((rig, cam)) = forest_rig() {
+        if let Some((mut rig, cam)) = forest_rig() {
             let (rate, gw) = hit_rates(&rig, &cam);
             let gh = rate.len() / gw;
             let hit = |x: usize, y: usize| rate[(y * gh / 180) * gw + x * gw / 320].is_some();
             for cell in cells() {
-                let r = run_cell(&rig, &cam, sky, cell);
+                let r = run_cell(&mut rig, &cam, sky, cell);
                 print_row("forest", cell, &r, &[("ground", &hit)]);
             }
         }
@@ -1055,6 +1086,7 @@ mod reading {
             fsr2: true,
             leaf_brick,
             no_stair: false,
+            bake: false,
         }
     }
 
@@ -1117,7 +1149,7 @@ mod reading {
             }
             .sky(flythrough::outdoor::BASE_Z as f32)
         };
-        let Some((rig, cam)) = forest_rig() else {
+        let Some((mut rig, cam)) = forest_rig() else {
             return;
         };
         let (rate, gw) = hit_rates(&rig, &cam);
@@ -1131,7 +1163,7 @@ mod reading {
                 if leaf_brick { "brick" } else { "voxel" }
             );
             let cell = default_cell(leaf_brick);
-            let r = run_cell(&rig, &cam, sky_at([60.0, 180.0]), cell);
+            let r = run_cell(&mut rig, &cam, sky_at([60.0, 180.0]), cell);
             print_row(
                 if leaf_brick {
                     "leaf brick"
@@ -1156,7 +1188,7 @@ mod reading {
             ..Default::default()
         }
         .sky(flythrough::outdoor::BASE_Z as f32);
-        let Some((rig, cam)) = forest_rig() else {
+        let Some((mut rig, cam)) = forest_rig() else {
             return;
         };
         let (rate, gw) = hit_rates(&rig, &cam);
@@ -1168,13 +1200,85 @@ mod reading {
                 no_stair,
                 ..default_cell(true)
             };
-            let r = run_cell(&rig, &cam, sky, cell);
+            let r = run_cell(&mut rig, &cam, sky, cell);
             print_row(
                 if no_stair { "stair off" } else { "stair on" },
                 cell,
                 &r,
                 &[("ground", &hit)],
             );
+        }
+    }
+
+    /// The mean display level (largest channel, levels of 255) of `r`'s last frame over the
+    /// pixels of `inside` (at 320 x 180).
+    fn region_level(r: &CellReading, inside: &dyn Fn(usize, usize) -> bool) -> f64 {
+        let height = r.last.len() / 4 / r.width;
+        let (mut sum, mut n) = (0.0, 0usize);
+        for (i, p) in r.last.chunks(4).enumerate() {
+            if inside(i % r.width * 320 / r.width, i / r.width * 180 / height) {
+                sum += f64::from(p[0].max(p[1]).max(p[2]));
+                n += 1;
+            }
+        }
+        sum / n.max(1) as f64
+    }
+
+    /// Plan 0086 Phase 4 bar 6: the tunnel at rest under the bake. The tunnel (`inside`, seed
+    /// 1, 12:00, lamp off) out of and into it, Phase 1's regions (the rim band and the far
+    /// end by the sky ray's hit rate), the defaults' cell (FSR 2 at 1.5, the filter on): the
+    /// ray alone as before (no bake), the store baked whole with `sky_rays` 0 (the bake only),
+    /// and baked with the ray on (cast, and dropped where the store holds a visibility). Per
+    /// row Phase 1's statistics and each region's mean display level. `VXE_TEST_ADAPTER`
+    /// picks the adapter (unset: lavapipe).
+    #[test]
+    #[ignore = "reading"]
+    fn the_tunnel_at_rest_under_the_bake() {
+        let noon = flythrough::daylight::Clock::default().sky(flythrough::outdoor::BASE_Z as f32);
+        let Some((mut rig, views)) = tunnel_rig() else {
+            return;
+        };
+        println!(
+            "reading: the_tunnel_at_rest_under_the_bake on {}",
+            rig.adapter
+        );
+        for (pose, cam) in &views {
+            let (rate, gw) = hit_rates(&rig, cam);
+            let gh = rate.len() / gw;
+            let at = |x: usize, y: usize| rate[(y * gh / 180) * gw + x * gw / 320];
+            let rim = |x: usize, y: usize| at(x, y).is_some_and(|r| (0.3..0.6).contains(&r));
+            let far = |x: usize, y: usize| at(x, y).is_some_and(|r| r < 0.05);
+            for (name, cell) in [
+                ("ray", default_cell(true)),
+                (
+                    "bake only",
+                    Cell {
+                        term: "key",
+                        bake: true,
+                        ..default_cell(true)
+                    },
+                ),
+                (
+                    "bake + ray",
+                    Cell {
+                        bake: true,
+                        ..default_cell(true)
+                    },
+                ),
+            ] {
+                let r = run_cell(&mut rig, cam, noon, cell);
+                print_row(
+                    &format!("{pose} {name}"),
+                    cell,
+                    &r,
+                    &[("rim", &rim), ("far", &far)],
+                );
+                println!(
+                    "reading: {pose} {name}: mean level rim {:.1} far {:.1}",
+                    region_level(&r, &rim),
+                    region_level(&r, &far)
+                );
+            }
         }
     }
 }

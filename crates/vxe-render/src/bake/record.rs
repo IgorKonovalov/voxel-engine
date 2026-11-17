@@ -73,9 +73,39 @@ pub fn rgb9e5_unpack(w: u32) -> [f32; 3] {
 
 /// Words of a brick-level cell's record: six direction values in [`rgb9e5_pack`], face order, then
 /// `material | direction mask << 16`, the mask's bit `face` set where the cell has a face
-/// of that direction. A brick's record is its cells' records in cell order ([`record_words`]):
-/// one cell of 8 voxels, or eight of 4 (`x + 2 y + 4 z`).
-pub const BRICK_WORDS: usize = 7;
+/// of that direction, then two words of sky visibility (ADR-0070): direction `face`'s `u8` at
+/// byte `face % 4` of word `7 + face / 4`, and [`VIS_BAKED`] in the second. A brick's record
+/// is its cells' records in cell order ([`record_words`]): one cell of 8 voxels, or eight of 4
+/// (`x + 2 y + 4 z`).
+pub const BRICK_WORDS: usize = 9;
+
+/// A record's first sky visibility word.
+pub(crate) const VIS_WORD: usize = 7;
+
+/// The second sky visibility word's flag: the record's visibilities were baked under a sky.
+pub(crate) const VIS_BAKED: u32 = 1 << 16;
+
+/// Sky rays a brick direction draws at most in the bake (ADR-0070's `SKY_BAKE_RAYS`, a guess:
+/// the binomial standard deviation at a half open sky is 1/32).
+pub const SKY_BAKE_RAYS: u32 = 256;
+
+/// Direction `face`'s sky visibility in [0, 1] of record `r`, `None` where it was baked with no
+/// sky or lacks the direction.
+pub fn record_visibility(r: &[u32], face: usize) -> Option<f32> {
+    if r[VIS_WORD + 1] & VIS_BAKED == 0 || (r[6] >> (16 + face)) & 1 == 0 {
+        return None;
+    }
+    Some(((r[VIS_WORD + face / 4] >> (8 * (face % 4))) & 255) as f32 / 255.0)
+}
+
+/// The two visibility words of six fractions in [0, 1] (rounded to `u8`), with [`VIS_BAKED`].
+pub(crate) fn visibility_words(v: [f32; 6]) -> [u32; 2] {
+    let b = v.map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u32);
+    [
+        b[0] | b[1] << 8 | b[2] << 16 | b[3] << 24,
+        b[4] | b[5] << 8 | VIS_BAKED,
+    ]
+}
 
 /// The store header's flags word: bit 1 ([`FLAG_CELL4`]) where the records' cells are 4 voxels.
 pub(crate) const STORE_FLAGS: u64 = 12;
@@ -104,13 +134,14 @@ pub(crate) const FLAG_MISSING_SHIFT: u32 = 2;
 /// A brick's record from its faces' states, one [`BRICK_WORDS`] record a cell of `cell` voxels in
 /// cell order: each direction the mean of the cell's baked faces' values, the mask of the
 /// directions it has, and the material of the sample that read the largest luminance over the
-/// cell.
-pub(super) fn brick_record(states: &[FaceState], clamp: bool, cell: u32) -> Vec<u32> {
+/// cell; under `sky` each direction's visibility the mean of its faces' open fractions.
+pub(super) fn brick_record(states: &[FaceState], clamp: bool, cell: u32, sky: bool) -> Vec<u32> {
     let side = (8 / cell) as usize;
     let cells = side * side * side;
     let mut sums = vec![[[0f64; 3]; 6]; cells];
     let mut counts = vec![[0u32; 6]; cells];
     let mut best = vec![(-1f32, 0u16); cells];
+    let mut vis = vec![[(0f64, 0u32); 6]; cells];
     for s in states {
         let l = s.voxel.map(|x| (x.rem_euclid(8) as u32 / cell) as usize);
         let c = l[0] + side * (l[1] + side * l[2]);
@@ -126,6 +157,10 @@ pub(super) fn brick_record(states: &[FaceState], clamp: bool, cell: u32) -> Vec<
             sums[c][f][k] += f64::from(v[k]);
         }
         counts[c][f] += 1;
+        if let Some(open) = s.sky_fraction() {
+            vis[c][f].0 += open;
+            vis[c][f].1 += 1;
+        }
     }
     let mut out = vec![0u32; BRICK_WORDS * cells];
     for c in 0..cells {
@@ -139,6 +174,16 @@ pub(super) fn brick_record(states: &[FaceState], clamp: bool, cell: u32) -> Vec<
             }
         }
         r[6] = u32::from(best[c].1) | mask << 16;
+        if sky {
+            let v = vis[c].map(|(sum, n)| {
+                if n > 0 {
+                    (sum / f64::from(n)) as f32
+                } else {
+                    0.0
+                }
+            });
+            r[VIS_WORD..VIS_WORD + 2].copy_from_slice(&visibility_words(v));
+        }
     }
     out
 }
@@ -165,6 +210,29 @@ mod tests {
         }
         assert_eq!(rgb9e5_pack([0.0; 3]), 0);
         assert_eq!(rgb9e5_unpack(0), [0.0; 3]);
+    }
+
+    #[test]
+    fn the_visibility_words_round_trip_by_direction() {
+        let mut r = [0u32; BRICK_WORDS];
+        r[6] = 0b11_1111 << 16;
+        let v = [0.0, 0.5, 1.0, 0.25, 0.75, 0.2];
+        r[VIS_WORD..VIS_WORD + 2].copy_from_slice(&visibility_words(v));
+        for (f, x) in v.iter().enumerate() {
+            let got = record_visibility(&r, f).expect("baked with a sky");
+            assert!((got - x).abs() <= 0.5 / 255.0 + 1e-6, "{f}: {got} {x}");
+        }
+        r[6] = 1 << 16;
+        assert_eq!(
+            record_visibility(&r, 1),
+            None,
+            "the mask lacks the direction"
+        );
+        assert_eq!(
+            record_visibility(&[0; BRICK_WORDS], 0),
+            None,
+            "no sky baked"
+        );
     }
 
     #[test]

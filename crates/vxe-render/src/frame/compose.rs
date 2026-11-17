@@ -14,7 +14,7 @@ use std::fmt::Write as _;
 
 use super::settings::SPLIT_GROUP;
 use super::*;
-use crate::bake::{BRICK_WORDS, STORE_FLAGS, STORE_TABLE, TABLE_COARSE};
+use crate::bake::{BRICK_WORDS, STORE_FLAGS, STORE_TABLE, TABLE_COARSE, VIS_BAKED, VIS_WORD};
 use crate::exposure::STATE_HELD;
 use crate::field::{BAND_CUBES_BIT, CRISP_COUNT_BIT, SMOOTH_COUNT_BIT};
 use crate::gpu_world::{
@@ -138,6 +138,8 @@ pub(crate) const PRELUDE: &[(&str, u32)] = &[
     ("STORE_TABLE", STORE_TABLE as u32),
     ("BRICK_WORDS", BRICK_WORDS as u32),
     ("TABLE_COARSE", TABLE_COARSE),
+    ("VIS_WORD", VIS_WORD as u32),
+    ("VIS_BAKED", VIS_BAKED),
     // The probe slots' flags (`probes`).
     ("TOUCHED_BIT", TOUCHED_BIT),
     ("MOVED_BIT", MOVED_BIT),

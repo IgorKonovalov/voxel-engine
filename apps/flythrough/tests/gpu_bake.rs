@@ -13,7 +13,8 @@ use std::collections::{BTreeMap, HashMap};
 use flythrough::cave::{ORE, ROCK};
 use support::bake::{
     Rig, StairArm, StairFrame, air_world, brick_value, by_normal, cells_of, fill, hit_face, luma,
-    new_frame, rgb, rig_on, stair_cameras, stair_frame, staircase, test_counts, within,
+    new_frame, rgb, rig_on, sky_cells_of, stair_cameras, stair_frame, staircase, test_counts,
+    within,
 };
 use support::cave_table;
 use support::rigs::tone_bytes;
@@ -37,8 +38,10 @@ fn small_box() -> (World, Camera) {
     (world, camera)
 }
 
-/// The bake takes no sky term (Plan 0032 Phase 5, ADR-0027): the store's blocks after a bake of
-/// the small box are equal with no sky and with a noon sky set, the sun at the zenith.
+/// The bake's emissive words take no sky term (Plan 0032 Phase 5, ADR-0027): the brick records'
+/// emissive values and tails after a bake of the small box are equal with no sky and with a
+/// noon sky set, the sun at the zenith; with no sky every record's two sky visibility words
+/// (ADR-0070) are zero, and with the sky every record carries them.
 #[test]
 fn a_baked_face_ignores_the_sky() {
     let (world, _) = small_box();
@@ -47,13 +50,25 @@ fn a_baked_face_ignores_the_sky() {
     };
     let counts = test_counts(256);
     rig.bake(&counts);
-    let none = rig.blocks();
+    let none = rig.cells();
+    let (vis, raw) = sky_cells_of(&rig.blocks());
+    assert!(!raw.is_empty());
+    assert!(
+        raw.iter().all(|w| *w == [0, 0]),
+        "visibility words with no sky"
+    );
+    assert!(vis.values().all(Option::is_none));
     let sun = vxe_render::sky::Body::sun([0.0, 0.0, 1.0]);
     let moon = vxe_render::sky::Body::moon([0.0, 0.0, -1.0]);
     rig.frame
         .set_sky(Some(vxe_render::sky::Sky::new(sun, moon)));
     rig.bake(&counts);
-    assert_eq!(rig.blocks(), none, "a noon sky changed the store");
+    assert_eq!(rig.cells(), none, "a noon sky changed the emissive words");
+    let (vis, _) = sky_cells_of(&rig.blocks());
+    assert!(
+        vis.values().all(Option::is_some),
+        "a record with no visibility under a sky"
+    );
 }
 
 /// The records depend on each face's own samples alone: one batch, batches of 7 faces and the
@@ -65,6 +80,8 @@ fn a_bake_does_not_depend_on_its_slicing_or_order() {
     let Some(mut rig) = rig_on(world, [16, 16], None) else {
         return;
     };
+    // Under a sky, so the records' sky visibility words (ADR-0070) are compared too.
+    rig.frame.set_sky(Some(vxe_render::sky::Sky::uniform(1.0)));
     let one = BakeSettings {
         batch_faces: 65_536,
         ..test_counts(1024)
@@ -1591,6 +1608,68 @@ fn the_face_weights_leave_near_faces_alone() {
             );
             assert!(lit > 0, "camera {c}, {name}: a black frame");
             assert_eq!(bytes, 0, "camera {c}, {name}");
+        }
+    }
+}
+
+/// Readings run by hand (`--run-ignored only -E 'test(=reading::<name>)'`): the exploration
+/// phases' bars before the owner's window (Plan 0086).
+mod reading {
+    use super::*;
+
+    /// Plan 0086 Phase 4 bar 2: the sky channel (ADR-0070) reads the open fraction. One world of
+    /// chunks `[0, 4) x [0, 4) x [0, 2)` with a rock floor under z 16 holds four rigs, each
+    /// brick baked alone (the bake's face filter) at 256 samples a brick direction, under
+    /// `Sky::uniform(1.0)`, at the rig's default reach: the open floor's `+z` (expected 1), a
+    /// wall's outward `+x` in the open (0.5 by symmetry), the floor brick centred under a 16 x 16 slab 20 voxels up (0.83
+    /// by the form factor) and the floor of a closed rock box with 5-voxel walls (0). Prints
+    /// each brick's visibility and the bake's sky rays.
+    #[test]
+    #[ignore = "reading"]
+    fn the_sky_channel_reads_the_open_fraction() {
+        let world = air_world([4, 4, 2], &cave_table());
+        fill(&world, [0, 0, 0], [256, 256, 16], ROCK);
+        // The wall: x 240..248 up to z 100; its +x faces at x 247 look out of the window.
+        fill(&world, [240, 200, 16], [248, 250, 100], ROCK);
+        // The slab: 16 x 16 centred on (92, 92), its underside at z 36.
+        fill(&world, [84, 84, 36], [100, 100, 38], ROCK);
+        // The closed box: 5-voxel walls and roof about the floor x 185..215, y 185..215.
+        fill(&world, [180, 180, 16], [220, 220, 60], ROCK);
+        world
+            .apply(&EditOp::box_(
+                Fixed3([185, 185, 16].map(|v| v * FIXED_ONE)),
+                Fixed3([215, 215, 55].map(|v| v * FIXED_ONE)),
+                Mode::Replace {
+                    from: ROCK,
+                    to: vxe_world::AIR,
+                },
+            ))
+            .expect("the box is resident");
+        let rigs: [(&str, [i32; 3], u8, f32); 4] = [
+            ("open floor +z", [3, 3, 1], 5, 1.0),
+            ("wall +x", [30, 28, 6], 1, 0.5),
+            ("under the slab +z", [11, 11, 1], 5, 0.83),
+            ("closed box floor +z", [25, 25, 1], 5, 0.0),
+        ];
+        let Some(mut rig) = rig_on(world, [16, 16], None) else {
+            return;
+        };
+        rig.frame.set_sky(Some(vxe_render::sky::Sky::uniform(1.0)));
+        let wanted: Vec<([i32; 3], u8)> = rigs.iter().map(|r| (r.1, r.2)).collect();
+        let report = rig.bake(&BakeSettings {
+            filter: Some(std::sync::Arc::new(move |v: [i32; 3], f: u8| {
+                wanted.contains(&(v.map(|x| x.div_euclid(8)), f))
+            })),
+            ..test_counts(256)
+        });
+        let (vis, _) = sky_cells_of(&rig.blocks());
+        println!(
+            "{} faces, {} samples, {} sky rays",
+            report.faces, report.samples, report.sky_rays
+        );
+        for (name, brick, face, expected) in rigs {
+            let v = vis.get(&(brick, face)).copied().flatten();
+            println!("{name:<22} brick {brick:?} face {face}: {v:?} (expected {expected})");
         }
     }
 }

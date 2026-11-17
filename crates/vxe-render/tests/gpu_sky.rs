@@ -355,6 +355,76 @@ fn twilight_darkens_to_zero() {
 mod reading {
     use super::*;
 
+    /// `E_sky` read back after one frame of `sky` ([`Frame::sky_irradiance`]), and the
+    /// sky-view LUT with its width.
+    fn e_sky(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        gpu: &GpuWorld,
+        sky: Sky,
+    ) -> ([[f32; 3]; 6], Vec<[f32; 4]>, usize) {
+        let mut f = frame(device, [64, 36], 1.0);
+        f.set_sky(Some(sky));
+        f.render(device, queue, gpu, &south(), &LightParams::at_eye());
+        let bytes = vxe_render::debug::read_buffer(device, queue, f.sky_irradiance(), 0, 96);
+        let w: Vec<f32> = bytes
+            .chunks(4)
+            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .collect();
+        let e = std::array::from_fn(|i| [w[4 * i], w[4 * i + 1], w[4 * i + 2]]);
+        let (t, width) = lut(device, queue, &f, 1);
+        (e, t, width)
+    }
+
+    /// Plan 0086 Phase 4 bar 4: `E_sky` is the LUT's cosine integral. Under the noon sky the
+    /// `+z` value against `pi` times the cosine-weighted mean of the read-back sky-view LUT over
+    /// the upper hemisphere (a 256 x 256 midpoint grid in the zenith angle and the azimuth,
+    /// weighted `cos sin`, over the LUT's scale), and every axis's value; under
+    /// `Sky::uniform(2.0)` the six values against `2 pi` for `+z`, `pi` sideways, 0 for `-z`.
+    /// Printed.
+    #[test]
+    #[ignore = "reading"]
+    fn e_sky_is_the_cosine_mean_of_the_lut() {
+        let Some((device, queue)) = device() else {
+            return;
+        };
+        let gpu = empty(&device, &queue);
+        let sky = noon();
+        let (e, t, w) = e_sky(&device, &queue, &gpu, sky);
+        // The LUT's scale: one over the brighter body's largest channel (`Sky::view_scale`).
+        let scale = 1.0
+            / sky
+                .sun
+                .illuminance
+                .iter()
+                .chain(&sky.moon.illuminance)
+                .fold(0.0f32, |a, &b| a.max(b));
+        let n = 256;
+        let (mut sum, mut weight) = ([0.0f64; 3], 0.0f64);
+        for i in 0..n {
+            let th = (i as f32 + 0.5) / n as f32 * FRAC_PI_2;
+            for j in 0..n {
+                let ph = (j as f32 + 0.5) / n as f32 * 2.0 * PI;
+                let d = Vec3::new(th.sin() * ph.cos(), th.sin() * ph.sin(), th.cos());
+                let l = sky_view_at(&t, w, d);
+                let wt = f64::from(th.cos() * th.sin());
+                for k in 0..3 {
+                    sum[k] += wt * f64::from(l[k] / scale);
+                }
+                weight += wt;
+            }
+        }
+        let want = sum.map(|s| std::f64::consts::PI * s / weight);
+        println!("noon: +z {:?} against the LUT's integral {want:?}", e[5]);
+        for (f, v) in e.iter().enumerate() {
+            println!("noon: face {f} {v:?}");
+        }
+        let (u, ..) = e_sky(&device, &queue, &gpu, Sky::uniform(2.0));
+        for (f, v) in u.iter().enumerate() {
+            println!("uniform 2: face {f} {v:?}");
+        }
+    }
+
     /// The twilight zenith with the multiple-scattering term on, printed.
     #[test]
     #[ignore = "reading"]

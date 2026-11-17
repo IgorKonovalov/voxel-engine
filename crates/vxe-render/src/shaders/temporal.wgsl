@@ -45,6 +45,14 @@
 //  14  texture_2d<f32>   prev_direct_in  last frame's accumulated direct part
 //  15  storage texture   direct_out      rgba16float: the accumulated direct part, the list's
 //                                        rgb and its luminance in a
+//  16  storage, read      sky_e           `E_sky`, the sky's cosine-weighted irradiance about
+//                                        each axis in face order (`sky_irradiance.wgsl`), xyz
+//
+// A cube face's stored part also carries the sky's term (ADR-0070, `baked_sky_term`): its
+// brick record's sky visibility for its direction, read bilinear as the emissive value, times
+// the sky's irradiance above the horizon about its normal now, with no screen history, where
+// its own cell's record holds a visibility baked under a sky; the light pass drops its sky ray
+// there.
 //
 // A cube face's emissive part (`reads_store`) is its brick record's value for its direction
 // (`store_brick_value`; with Params.lighting bit 14, where the shading normal is not the face
@@ -127,6 +135,7 @@ const ENTITY_STORE_CELLS: u32 = 4u;
 @group(2) @binding(13) var direct_in: texture_2d<f32>;
 @group(2) @binding(14) var prev_direct_in: texture_2d<f32>;
 @group(2) @binding(15) var direct_out: texture_storage_2d<rgba16float, write>;
+@group(2) @binding(16) var<storage, read> sky_e: array<vec4<f32>, 6>;
 
 // Whether this pipeline counts the store's reads into `counters` (the HUD's and
 // `--read-missing`'s pipeline); off, `counters` is never written.
@@ -172,33 +181,113 @@ fn store_table(head: StoreHead, c: vec3<i32>) -> u32 {
     return store[STORE_TABLE + u32(w.x + head.size.x * (w.y + head.size.y * w.z))];
 }
 
-// Cell `c`'s (world cells of 1 << `head.shift` voxels) value for direction `face` times its
-// material's emission scale now in rgb, with a 1 in a; 0 where its brick has no record or the cell
-// no face of that direction. A brick's record is its cells' BRICK_WORDS records, `x + n (y + n z)`
-// with n cells a side, just before its run.
-fn store_cell(head: StoreHead, c: vec3<i32>, face: u32) -> vec4<f32> {
+// Cell `c`'s (world cells of 1 << `head.shift` voxels) record's first word; 0 where its brick
+// has no record. A brick's record is its cells' BRICK_WORDS records, `x + n (y + n z)` with n
+// cells a side, just before its run.
+fn store_cell_record(head: StoreHead, c: vec3<i32>) -> u32 {
     let per = 3u - head.shift;
     let b = c >> vec3<u32>(per);
     let block = store_table(head, b >> vec3<u32>(3u)) & ~TABLE_COARSE;
     if (block == 0u) {
-        return vec4<f32>(0.0);
+        return 0u;
     }
     let s = b & vec3<i32>(7);
     let dir = store[block + u32(s.x + 8 * (s.y + 8 * s.z))];
     if (dir == 0u) {
-        return vec4<f32>(0.0);
+        return 0u;
     }
     let n = 1 << per;
     let l = c & vec3<i32>(n - 1);
     let sub = u32(l.x + n * (l.y + n * l.z));
     let cells = u32(n * n * n);
-    let rec = block + (dir >> 11u) - BRICK_WORDS * cells + BRICK_WORDS * sub;
+    return block + (dir >> 11u) - BRICK_WORDS * cells + BRICK_WORDS * sub;
+}
+
+// Cell `c`'s value for direction `face` times its material's emission scale now in rgb, with a
+// 1 in a; 0 where its brick has no record or the cell no face of that direction.
+fn store_cell(head: StoreHead, c: vec3<i32>, face: u32) -> vec4<f32> {
+    let rec = store_cell_record(head, c);
+    if (rec == 0u) {
+        return vec4<f32>(0.0);
+    }
     let tail = store[rec + 6u];
     if (((tail >> (16u + face)) & 1u) == 0u) {
         return vec4<f32>(0.0);
     }
     let x = rgb9e5_decode(store[rec + face]);
     return vec4<f32>(x * emission_scale[tail & 0xFFFFu], 1.0);
+}
+
+// Cell `c`'s sky visibility for direction `face` (ADR-0070) in x, with a 1 in y; 0 where its
+// record lacks the direction or was baked with no sky (VIS_BAKED clear).
+fn store_sky_cell(head: StoreHead, c: vec3<i32>, face: u32) -> vec2<f32> {
+    let rec = store_cell_record(head, c);
+    if (rec == 0u || ((store[rec + 6u] >> (16u + face)) & 1u) == 0u
+        || (store[rec + VIS_WORD + 1u] & VIS_BAKED) == 0u) {
+        return vec2<f32>(0.0);
+    }
+    let byte = (store[rec + VIS_WORD + face / 4u] >> (8u * (face % 4u))) & 255u;
+    return vec2<f32>(f32(byte) / 255.0, 1.0);
+}
+
+// Face `face` of voxel `v`'s sky visibility: the 2 x 2 cells' (`store_tap`) bilinear over
+// those that hold it, as `store_brick_value`; the voxel's own cell's where none does with
+// weight. 0 in y where its own cell holds none: the light pass casts the sky ray there
+// (shade.wgsl's `sky_baked`, the same test).
+fn store_sky_visibility(head: StoreHead, v: vec3<i32>, face: u32) -> vec2<f32> {
+    let own = store_sky_cell(head, v >> vec3<u32>(head.shift), face);
+    if (own.y == 0.0) {
+        return own;
+    }
+    var sum = 0.0;
+    var weight = 0.0;
+    for (var i = 0; i < 4; i++) {
+        let tap = store_tap(v, face, head.shift, i);
+        let r = store_sky_cell(head, tap.cell, face);
+        sum += r.x * (tap.w * r.y);
+        weight += tap.w * r.y;
+    }
+    if (weight > 0.0) {
+        return vec2<f32>(sum / weight, 1.0);
+    }
+    return own;
+}
+
+// The sky's mean irradiance over the part above the horizon of the hemisphere about direction
+// `dir`'s axis: `E_sky` over that part's cosine-weighted share, 1 for +z, a half sideways and
+// 0 for -z (`E_sky` is 0 there). A visibility counts a ray below the horizon blocked, so the
+// face's sky term is its visibility times this, which is the sky ray's expectation.
+fn sky_open_irradiance(dir: u32) -> vec3<f32> {
+    if (dir == 4u) {
+        return vec3<f32>(0.0);
+    }
+    return sky_e[dir].xyz * select(2.0, 1.0, dir == 5u);
+}
+
+// The baked sky term (ADR-0070) at face `face` of voxel `v` with shading normal `n`: its
+// visibility (`store_sky_visibility`) times `sky_open_irradiance` of the face's direction, or
+// for a shading normal off the face's, of the directions `n` leans toward mixed by `n_a^2`.
+// 0 in a where the store holds no visibility for the face, or with no sky.
+fn baked_sky_term(head: StoreHead, v: vec3<i32>, face: u32, n: vec3<f32>, nf: vec3<f32>) -> vec4<f32> {
+    if (!sky_on()) {
+        return vec4<f32>(0.0);
+    }
+    let vis = store_sky_visibility(head, v, face);
+    if (vis.y == 0.0) {
+        return vec4<f32>(0.0);
+    }
+    var e = sky_open_irradiance(face);
+    if (any(n != nf)) {
+        e = vec3<f32>(0.0);
+        var weight = 0.0;
+        for (var a = 0u; a < 3u; a++) {
+            let w = n[a] * n[a];
+            e += sky_open_irradiance(2u * a + select(0u, 1u, n[a] > 0.0)) * w;
+            weight += w;
+        }
+        e /= max(weight, 1e-6);
+    }
+    return vec4<f32>(vis.x * e, 1.0);
 }
 
 // Face `face` of voxel `v` at the brick level: the direction values of the 2 x 2 cells around the
@@ -502,7 +591,13 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (((params.lighting & LIGHTING_STORE_BY_NORMAL) != 0u || on_entity) && any(rec.n != nf)) {
             e = store_value_by_normal(head, voxel, face, value, rec.n);
         }
-        sample = vec4<f32>(e.xyz * exposure_now(), 0.0);
+        // The sky's term (ADR-0070): a face's baked visibility coloured by the sky now; an
+        // entity keeps its sky ray.
+        var sky_term = vec4<f32>(0.0);
+        if (!on_entity) {
+            sky_term = baked_sky_term(head, store_voxel(rec.p, nf), face, rec.n, nf);
+        }
+        sample = vec4<f32>((e.xyz + sky_term.xyz) * exposure_now(), 0.0);
         if ((params.lighting & LIGHTING_DIRECT) == 0u && (params.flags & FLAG_CUTAWAY) == 0u
             && view_mode() != VIEW_STEPS) {
             var held = 0.0;

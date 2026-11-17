@@ -228,6 +228,38 @@ pub fn cells_of(blocks: &BTreeMap<[i32; 3], Vec<u32>>) -> HashMap<([i32; 3], u8)
     out
 }
 
+/// Sky visibilities by brick and face ([`sky_cells_of`]).
+pub type SkyCells = HashMap<([i32; 3], u8), Option<f32>>;
+
+/// Every held direction's sky visibility (ADR-0070) by brick and face, `None` where its record
+/// was baked with no sky; and the records' raw visibility words, by brick.
+pub fn sky_cells_of(blocks: &BTreeMap<[i32; 3], Vec<u32>>) -> (SkyCells, Vec<[u32; 2]>) {
+    let w = vxe_render::internals::BRICK_WORDS;
+    let mut out = HashMap::new();
+    let mut raw = Vec::new();
+    for (&c, block) in blocks {
+        for slot in 0..512usize {
+            let dir = block[slot];
+            if dir == 0 {
+                continue;
+            }
+            let rec = &block[(dir >> 11) as usize - w..(dir >> 11) as usize];
+            raw.push([rec[7], rec[8]]);
+            let b = vxe_world::brick_of_slot(slot);
+            let g = [0, 1, 2].map(|k| c[k] * 8 + b[k]);
+            for f in 0..6u8 {
+                if rec[6] >> (16 + f) & 1 != 0 {
+                    out.insert(
+                        (g, f),
+                        vxe_render::internals::record_visibility(rec, usize::from(f)),
+                    );
+                }
+            }
+        }
+    }
+    (out, raw)
+}
+
 /// The brick level's value of face `face` of voxel `v` (temporal.wgsl's `store_brick_value` at
 /// cells of 8 voxels, emission scale 1): the 2 x 2 bricks around the voxel's centre in the face's
 /// plane, bilinear over those that hold the direction; its own brick's alone where none has weight.

@@ -24,6 +24,13 @@
 // only by the order of its float sums (the round's largest luminance is the earliest sample's on a
 // tie, as in turn). The entries span the dispatch's x then y: entry = y * BAKE_ROW + x.
 //
+// Under a sky (`job.sky` bit 0, ADR-0070) a face's samples below `sky_n` each also draw one
+// cosine-weighted ray about the face's normal from the sample's point, through the frame's
+// shadow walk (its coarse mode and shadow styles from `job.sky`'s bits 1 and 2), capped at
+// `job.radius`: a ray that finds no rock within it, or leaves the window, reached the sky; one
+// pointing below the horizon is blocked. The sky ray draws its own dimensions, so the emissive
+// sums are the same with the sky on and off. `sky_open` returns the round's open rays.
+//
 // Each sample is the light pass's estimate at a uniform point of the face with the face's normal, times the window `(1 - (d / L)^4)^2`, d the distance from the point to the kept
 // emitter point and L `job.radius` in voxels: it falls to 0 at L, so the table's edge is no seam.
 
@@ -33,7 +40,8 @@ struct BakeJob {
     radius: f32,
     // 1: the second moment and the kept emitter read the clamped estimate.
     clamp: u32,
-    _pad0: u32,
+    // The sky rays' bits (`bake::BAKE_SKY_ON`, `_COARSE`, `_STYLES`); 0 draws none.
+    sky: u32,
     _pad1: u32,
     _pad2: u32,
     _pad3: u32,
@@ -62,9 +70,14 @@ struct BakeFace {
     ray_len: f32,
     // In: the entry's job slot in `tables`.
     slot: u32,
-    _pad1: u32,
-    _pad2: u32,
+    // Out: the round's sky rays that reached the sky.
+    sky_open: u32,
+    // In: the face's samples below this index draw a sky ray.
+    sky_n: u32,
 };
+
+// The random-number dimensions of a sample's sky ray, two, above the candidates'.
+const BAKE_SKY_DIM: u32 = 1002u;
 
 @group(3) @binding(0) var<uniform> job: BakeJob;
 @group(3) @binding(1) var<storage, read_write> faces: array<BakeFace>;
@@ -100,6 +113,7 @@ var<workgroup> red_best_at: array<u32, 64>;
 var<workgroup> red_material: array<u32, 64>;
 var<workgroup> red_rays: array<u32, 64>;
 var<workgroup> red_len: array<f32, 64>;
+var<workgroup> red_sky: array<u32, 64>;
 var<workgroup> red_samples: u32;
 
 @compute @workgroup_size(64, 1, 1)
@@ -131,9 +145,19 @@ fn bake_round(
     var best_material = 0u;
     var rays = 0u;
     var ray_len = 0.0;
+    var sky_open = 0u;
+    let sky_coarse = (job.sky & 2u) != 0u;
+    let sky_styles = (job.sky & 4u) != 0u;
     for (var s = lane; s < samples; s += BAKE_LANES) {
         let px = vec2<u32>(stream, f.first + s);
         let p = face_point(v, f.face, px);
+        if ((job.sky & 1u) != 0u && f.first + s < f.sky_n) {
+            let d = cosine_direction(nf, rand(px, BAKE_SKY_DIM), rand(px, BAKE_SKY_DIM + 1u));
+            if (d.z > 0.0
+                && !shadowed_styled_walk(shadow_origin(p, nf), d, job.radius, sky_coarse, sky_styles)) {
+                sky_open += 1u;
+            }
+        }
         let r = draw_candidates(px, p, nf);
         if (!(r.w_sum > 0.0 && r.target_pdf > 0.0 && r.m > 0.0)) {
             continue;
@@ -174,6 +198,7 @@ fn bake_round(
     red_material[lane] = best_material;
     red_rays[lane] = rays;
     red_len[lane] = ray_len;
+    red_sky[lane] = sky_open;
     for (var stride = BAKE_LANES / 2u; stride > 0u; stride >>= 1u) {
         workgroupBarrier();
         if (lane < stride) {
@@ -183,6 +208,7 @@ fn bake_round(
             red_lum2[lane] += red_lum2[o];
             red_rays[lane] += red_rays[o];
             red_len[lane] += red_len[o];
+            red_sky[lane] += red_sky[o];
             let b = red_best[o];
             let b_at = red_best_at[o];
             if (b > red_best[lane] || (b == red_best[lane] && b_at < red_best_at[lane])) {
@@ -206,5 +232,6 @@ fn bake_round(
     f.best_material = red_material[0];
     f.rays = red_rays[0];
     f.ray_len = red_len[0];
+    f.sky_open = red_sky[0];
     faces[at] = f;
 }
