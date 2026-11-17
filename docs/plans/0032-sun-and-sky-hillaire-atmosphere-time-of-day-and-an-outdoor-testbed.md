@@ -85,7 +85,8 @@
 >   exposure as Phase 4 set it, one sky ray and the half lighting tier, `LEAF_FILL` 64.
 >   **Phase 11** (Phase 10 before this amendment) writes the tests, goldens and bars at these
 >   values; Phase 8's forest hash is re-pinned and its goldens blessed at 64 as a disclosed
->   change. `--trees` stays `none` (the owner did not ask).
+>   change. **Amended 2026-11-17 (owner):** the outdoor source's default `--trees` is `sparse`
+>   ("sparse forest as default"); Phase 11 moves the default and pins it.
 > - **Phase 6's stop rule** is restated on an occluded rig (the tunnel), where it fires: see
 >   the amendment under Phase 6. Its amendment is the plan below, not a fifth ray.
 > - **The flicker's mechanisms** (the review's C1 and C2, both; D1 to D4, all four) go to
@@ -988,7 +989,9 @@ README says which.
     range with 64 the default; `forest_vector`'s hash is re-pinned at 64 and
     `a_tree_is_what_the_formula_says` reads three quarters of the lattice points within 3 %
     (the binomial standard deviation of a 0.75 keep at 24 400 points is about 73, 0.4 % of
-    18 300). `--trees` stays `none`.
+    18 300). The outdoor default `--trees` is `sparse` (amended 2026-11-17, owner): the parse
+    test pins it, the banner names it, and an outdoor golden or hash taken without `--trees`
+    either passes `--trees none` explicitly or is re-pinned at `sparse` as a disclosed change.
 - **Files touched:** `apps/flythrough/src/daylight.rs`, `cli/outdoor.rs`, `cli/tests.rs`,
   `trees.rs`, `tests/determinism.rs`, `tests/outdoor.rs`, the `gpu_*` test files and
   `golden/` images Phases 1 to 8 name, `docs/flythrough.md`, `docs/plans/logs/0032.md`.

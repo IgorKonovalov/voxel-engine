@@ -1,7 +1,7 @@
 # 0086: Still outdoor light: a sky visibility baked per brick, a long history for the sky and key rays, canopies that shadow as bricks, stairs that keep their history, and a penumbra spike
 
-> **Status:** draft (the mechanisms are the owner's picks of 2026-11-17; the plan awaits the
-> owner's go)
+> **Status:** approved (the owner's go, 2026-11-17; it runs before Plan 0081, and Phase 6 is
+> conditional on its reading as drafted)
 > **Created:** 2026-11-17
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0070](../adrs/0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md)
