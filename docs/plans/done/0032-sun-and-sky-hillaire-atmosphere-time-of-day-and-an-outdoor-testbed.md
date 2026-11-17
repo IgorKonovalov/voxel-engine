@@ -1,31 +1,34 @@
 # 0032: Sun and sky: a Hillaire atmosphere, a time of day the game sets, the sun and moon as a directional sample, sky light from a sky ray, an outdoor testbed source
 
-> **Status:** implemented (2026-11-17, every dev phase on lane plan-0032, stacked on plan-0069; awaits the fresh-session close review); approved (2026-10-22), redesigned 2026-11-10 (review pass; owner chose the redesign); amended 2026-11-17 (owner, after the Phase 9 window: Phases 10 and 11 below)
+> **Status:** done (closed 2026-11-17, v0.61.0: Hillaire's sky LUTs, a time of day the game
+> sets, the sun or moon as the light pass's directional sample, one sky ray, an absent chunk lit
+> as sky, the outdoor testbed with trees; closed after one fix pass on the review's M1 and m1).
+> Implemented 2026-11-17 on lane plan-0032, stacked on plan-0069; approved (2026-10-22), redesigned 2026-11-10 (review pass; owner chose the redesign); amended 2026-11-17 (owner, after the Phase 9 window: Phases 10 and 11 below)
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
 > `hud.rs`). Read each through "Where things moved" in
-> [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
+> [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
 > phases re-cut their Files touched at their start.
 > **Created:** 2026-10-22
-> **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
-> **Related ADRs:** [ADR-0026](../adrs/0026-atmosphere-from-hillaire-luts-built-on-the-gpu-at-runtime.md)
+> **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../../roadmap.md)
+> **Related ADRs:** [ADR-0026](../../adrs/0026-atmosphere-from-hillaire-luts-built-on-the-gpu-at-runtime.md)
 > (proposed with this plan: the atmosphere model),
-> [ADR-0027](../adrs/0027-the-sun-shadow-is-one-per-pixel-ray-in-the-light-pass.md) (proposed
+> [ADR-0027](../../adrs/0027-the-sun-shadow-is-one-per-pixel-ray-in-the-light-pass.md) (proposed
 > with this plan: the sun's shadow, and where the directional and sky terms are stored),
-> [ADR-0044](../adrs/0044-direct-light-from-a-fixed-list-of-analytic-lights-one-shadow-ray-each.md)
+> [ADR-0044](../../adrs/0044-direct-light-from-a-fixed-list-of-analytic-lights-one-shadow-ray-each.md)
 > (proposed with Plan 0058: the coloured direct-light target the sun and the sky ray are added to),
-> [ADR-0046](../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
+> [ADR-0046](../../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
 > (the baked emissive store, which takes no sun or sky term),
-> [ADR-0043](../adrs/0043-emissive-light-from-a-world-space-per-face-table-and-a-lamp-bounce-probe-channel.md)
+> [ADR-0043](../../adrs/0043-emissive-light-from-a-world-space-per-face-table-and-a-lamp-bounce-probe-channel.md)
 > (the probes are a lamp-only bounce channel, so they carry no sky light),
-> [ADR-0018](../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
+> [ADR-0018](../../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
 > (the light pass, the temporal pass and the composite this plan extends),
-> [ADR-0033](../adrs/0033-eye-adaptation-as-an-asymmetric-two-stage-exposure-on-the-gpu.md)
+> [ADR-0033](../../adrs/0033-eye-adaptation-as-an-asymmetric-two-stage-exposure-on-the-gpu.md)
 > (the exposure this plan's sky is metered by),
-> [ADR-0034](../adrs/0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md) (FSR 2 at
+> [ADR-0034](../../adrs/0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md) (FSR 2 at
 > 1.5, the default upscaler the sky and the sun's shadow pass through),
-> [ADR-0032](../adrs/0032-night-sky-drawn-analytically-on-miss-pixels-with-a-marched-aurora-shell.md)
+> [ADR-0032](../../adrs/0032-night-sky-drawn-analytically-on-miss-pixels-with-a-marched-aurora-shell.md)
 > (Plan 0037's night sky, which draws on this plan's miss pixels)
 > **Source:** the owner's answers of 2026-10-22 (outdoors is a general engine capability; the
 > time of day is a parameter the game sets; Hillaire 2020 with per-frame LUTs; the sun's shadow
@@ -33,9 +36,9 @@
 > of 2026-11-03 (a stable image without flicker or aliasing comes first) and of 2026-11-10
 > (redesign this plan on the lighting base as it stands; the order below).
 > **Starts after:** Plan 0060, Plan 0061,
-> [Plan 0058](done/0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md),
-> [Plan 0044](done/0044-hot-path-and-defect-pass.md),
-> [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md), the plan that
+> [Plan 0058](0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md),
+> [Plan 0044](0044-hot-path-and-defect-pass.md),
+> [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md), the plan that
 > removes the `own` upscaler and the render-profile plan (the last two are owed and take their
 > numbers when drafted). **The base commit** in every bar is main after the last of those
 > merges. Plan 0045 splits `marcher.rs`, `gpu_world.rs`, `march.wgsl` and the fly-through's
@@ -67,13 +70,13 @@
 > tree floats on a slope; the voxel formulas, the exclusion zones, the flags and the bars are
 > unchanged except bar 3's second clause, below. Beyond `TREE_BOX` the hills are bare, which a
 > testbed accepts. Grass is not a voxel at 10 cm: it and every swaying thing go to
-> [Plan 0081](0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md),
+> [Plan 0081](../0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md),
 > which starts after this plan and styles this plan's `grass` row. The default `--trees` stays
 > `none` until Phase 9's verdict (the owner may ask for `sparse` there).
 
 > **Amended 2026-11-17 (owner).** Phase 9 ran on 2026-11-17; the verdict is in the readings
 > log and the diagnosis and options in
-> [the review of 2026-11-17](../reviews/2026-11-17-plan-0032-window.md). The owner's picks,
+> [the review of 2026-11-17](../../reviews/2026-11-17-plan-0032-window.md). The owner's picks,
 > and what this plan takes of them:
 > - **Lit by default** (the review's B1): an absent chunk is sky to the lighting rays. The
 >   residency-ball rule of Decision 2 and Phase 5 is dropped; "leaving the ball or the window
@@ -90,8 +93,8 @@
 > - **Phase 6's stop rule** is restated on an occluded rig (the tunnel), where it fires: see
 >   the amendment under Phase 6. Its amendment is the plan below, not a fifth ray.
 > - **The flicker's mechanisms** (the review's C1 and C2, both; D1 to D4, all four) go to
->   [Plan 0086](0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md)
->   with [ADR-0070](../adrs/0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md),
+>   [Plan 0086](../0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md)
+>   with [ADR-0070](../../adrs/0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md),
 >   which starts when this plan has closed and merged, each mechanism behind the attribution
 >   reading the review names. This plan does not grow a bake channel or a history pair: its
 >   close reviews the sky, the testbed and the defaults, and Plan 0086's reviews the fixes.
@@ -1229,7 +1232,7 @@ apply: the guard and the long emissive history are gone, and Plan 0048 was dropp
 > resume notes go to the plan's readings log, `docs/plans/logs/0032.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
-Readings and gate counts: [`logs/0032.md`](logs/0032.md).
+Readings and gate counts: [`logs/0032.md`](../logs/0032.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
@@ -1490,6 +1493,36 @@ ledger row "sun and sky" in `docs/nfr/02-frame-budget.md` replaced with Phase 7'
 totals; the indexes, roadmap M10, `CHANGELOG.md` and v0.61.0. Velocity: 804 commits over 15
 active days in the last 14, 0.99x the window before. `loc.mjs` totals: Rust code 68 100, Rust
 test 59 674, comments 26 340, WGSL 6373, markdown 94 834.
+
+**Second pass (architect, 2026-11-17, fresh session, at `50bd163e`).** **Verdict: clean; the
+plan closes.** The fix pass is read in full: `deb39d17` (M1) and `50bd163e` (m1).
+
+- **M1 fixed.** `a_sun_jump_resets_the_direct_part` steps 32 more frames under the turned sun,
+  reads that settled value apart, chooses the pixels from the value before the turn (under 10 %
+  of the settled maximum) and the settled read (over 90 %), and asserts frame 1 and frame 11
+  each against 90 % of the settled value, every chosen pixel. Without the reset frame 1 holds
+  at most `0.2 x settled + 0.8 x 0.1 x max`, under 0.9 of the settled value for every chosen
+  pixel, so the test fails on a missing reset; the empty set is asserted against.
+- **m1 fixed, no bar weakened.** The absent-chunk test splits into its sun and sky-ray halves
+  (same worlds, rays, frames and tolerances); the noon test reads both suns on one `Frame` with
+  `reset_history` between (same 16-frame means, same 1 %); the stillness bar runs the lamp arm
+  first on a fresh frame (its reference is as before) and the sky arm on the same frame after
+  `reset_history` and `reset_upscaler_history`, with the same settle and read counts and the
+  same `sky_p99 <= lamp_p99`. The bake test is unchanged (its 13.7 s was contention). The fix
+  pass's gate over the changed crates read the five tests at 6.1, 3.5, 6.0, 9.1 and 3.5 s
+  (`docs/plans/logs/0032.md`, Phase 11); the flythrough tests over the line in that loaded run
+  (1193 s) were under it in the first review's run and are not this plan's.
+- **The native stillness variant passes as 0 <= 0 at p99: a reading, not a finding.** The bar
+  is the plan's (the sky's 99th percentile no higher than the lamp's), and a lamp p99 of 0
+  makes it the strictest form: a sky change of one level in over 1 % of pixels fails. That the
+  sky arm reads 0 is the rig's (an open floor under a uniform sky gives the ray no variance;
+  the soak FSR 2 variant reads 0 against the lamp's 1), recorded in Phase 6's Notes and
+  ADR-0027's Outcome; the tunnel, where the ray does vary, is Plan 0086's (ADR-0070).
+- **Rerun here:** `node scripts/test-changed.mjs --profile gpu --binaries gpu_sun` on the tip
+  (lavapipe, exclusive perf lock, 16G scope, load 1.2 at the start): 11 run, 11 passed, 5
+  skipped, 56.2 s; every test under 10 s, the longest 9.07 s (`a_closed_box_takes_no_sky_light`).
+  The full gate is not re-run: the merged tree's ran clean at the first pass and the fix pass
+  touches `gpu_sun.rs` and the readings log alone.
 
 ## Followups
 

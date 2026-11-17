@@ -22,7 +22,7 @@
 > [the review of 2026-11-17](../reviews/2026-11-17-plan-0032-window.md), and the owner's
 > picks of the same day: C1 and C2 both, D1 to D4 all four, each behind the attribution
 > reading the review names; stable image first, performance considered.
-> **Starts after:** [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
+> **Starts after:** [Plan 0032](done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
 > closes and merges (its Phase 10 makes an absent chunk sky, its Phase 11 sets the defaults
 > this plan's readings stand on). The architect recommends it ahead of Plan 0081 (the owner's
 > priority is the still image; Phase 2 names the merge item if 0081 runs beside).

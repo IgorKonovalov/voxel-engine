@@ -58,7 +58,7 @@
 > the probe update's schedule, the emissive path and the young pixels, and may add settle, dot and
 > shimmer tests this plan must hold; dev re-reads the names there. It changes the same probe and lighting code (`probe_update.wgsl`, `probes.rs`,
 > `light.wgsl`, `marcher.rs`), and its stillness rig, its slice hash, its furnace test form
-> and its Phase 5 defaults are this plan's "before". **Before [Plan 0032](../0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)**,
+> and its Phase 5 defaults are this plan's "before". **Before [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)**,
 > which waits for this plan (owner, 2026-10-28): 0032 adds the sun's sample and sky light to
 > the probe rays and reads its bars on the probes, so it reads them once, on an unbiased probe
 > direct term, against this plan's furnace at pi and its re-blessed goldens. Plans 0044 and 0045 land first and also touch

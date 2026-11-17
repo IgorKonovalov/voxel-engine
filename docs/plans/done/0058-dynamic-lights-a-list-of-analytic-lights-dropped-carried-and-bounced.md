@@ -908,7 +908,7 @@ struct Lights {
 ```
 
 **The direct target, for the plans that add a term to it.**
-[Plan 0032](../0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)'s sun is
+[Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)'s sun is
 not a list entry (the list has no directional kind and ADR-0044 adds none); its sun and sky
 terms are added to this plan's direct target. What that target is at this plan's close:
 

@@ -1,6 +1,9 @@
 # 0033: The far field: a clipmap of three coarse chunk levels to about 1 km
 
-> **Status:** approved (2026-10-22), amended 2026-11-10 (review pass)
+> **Status:** approved (2026-10-22), amended 2026-11-10 (review pass). **Refresh owed
+> (architect, 2026-11-17, at Plan 0032's close):** Phase 6's "Plan 0032's lighting-ray rule
+> moves outward" and ADR-0028's matching clause assume an absent chunk occludes; ADR-0027's
+> Outcome made it sky. Rewrite both before the go.
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
@@ -37,7 +40,7 @@
 > **Order (owner, 2026-11-10):** Plans 0060, 0061, 0058, 0044, 0045, the `own`-removal plan and
 > the render-profile plan (both owed, not drafted), then M10 in a line: 0032, 0033, 0034,
 > 0035, 0036, 0037.
-> **Starts after:** [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
+> **Starts after:** [Plan 0032](done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
 > closes. The base is main after that close. This plan relies on Plan 0032's section
 > "Interface for Plans 0033 to 0037" and on nothing else of it: `OutdoorSource`, the flags
 > `--source outdoor`, `--spawn`, `--sun`, `--trees` and `--leaf-fill`, the column `FOREST`, the

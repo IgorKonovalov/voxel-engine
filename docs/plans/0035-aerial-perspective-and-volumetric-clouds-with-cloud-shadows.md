@@ -38,7 +38,7 @@
 > base commit is main after Plan 0034's close. Plan 0045 splits `marcher.rs`, `march.wgsl`
 > and the fly-through's `main.rs` before M10 starts, so every "Files touched" below names
 > today's files and `dev` re-reads the paths at the base commit.
-> **Written against:** [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)'s
+> **Written against:** [Plan 0032](done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)'s
 > section "Interface for Plans 0033 to 0037" and nothing else of that plan, Plan 0058's
 > direct target (its Data shapes), and the tree at main 82ea836. The probe volume is the
 > lamp's bounce channel (ADR-0043) and takes no sky, sun or cloud term; nothing here touches

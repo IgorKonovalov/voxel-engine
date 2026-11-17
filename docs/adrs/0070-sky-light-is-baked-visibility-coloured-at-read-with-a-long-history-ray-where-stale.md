@@ -3,7 +3,7 @@
 > **Status:** proposed
 > **Date:** 2026-11-17
 > **Related plan(s):** [Plan 0086](../plans/0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md)
-> (builds it); [Plan 0032](../plans/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
+> (builds it); [Plan 0032](../plans/done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
 > (whose sky ray this replaces at rest; its Phase 6 stop rule fired at the owner's window of
 > 2026-11-17)
 > **Builds on:** [ADR-0046](0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)

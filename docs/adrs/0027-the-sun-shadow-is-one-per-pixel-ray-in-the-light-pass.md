@@ -1,12 +1,13 @@
 # ADR-0027: The sun's shadow is one per-pixel ray in the light pass, a dedicated directional sample beside the emissive one
 
-> **Status:** proposed; redrafted 2026-11-10 with Plan 0032's redesign: the directional sample
+> **Status:** accepted (2026-11-17, Plan 0032's close), with the Outcome of 2026-11-17 below;
+> redrafted 2026-11-10 with Plan 0032's redesign: the directional sample
 > and the sky ray are stored in Plan 0058's direct target on its short blend, the probe volume
 > and the baked store take no sun or sky term, and a drifting sun raises no change bit;
 > Outcome 2026-11-17 (the owner's window): the absent-chunk rule reversed, the sky ray at
 > rest replaced by ADR-0070's baked visibility
 > **Date:** 2026-10-22
-> **Related plan(s):** [Plan 0032](../plans/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
+> **Related plan(s):** [Plan 0032](../plans/done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
 > (builds it); Plan 0033 (continues the ray into the far-field clipmap)
 > **Builds on:** [ADR-0018](0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
 > (the light pass, its shadow rays and the temporal pass),

@@ -26,7 +26,7 @@
 > 2026-11-03 (a stable image without flicker or aliasing comes first) and of 2026-11-12
 > (cheap unpicked arms stay as settings). The first consumer's needs are in
 > `.claude/skills/architect/references/project-context.md`.
-> **Starts after:** [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
+> **Starts after:** [Plan 0032](done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
 > closes and merges (the outdoor source with its `grass` row, the sun and the sky ray),
 > which itself follows Plan 0069 (the settings surface this plan's knobs join). **Before Plan
 > 0033** (the far field draws the face albedo this layer fades to; settling the near look first
