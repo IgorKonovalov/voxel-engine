@@ -1091,7 +1091,7 @@ Readings and gate counts: [`logs/0032.md`](logs/0032.md).
 | 5: The sun and the moon as the light pass's directional sample | dev | done; bars 3, 6's settle and 7 are readings (exploration); tests in `gpu_sun.rs` (Notes) | 9bff6e8f |
 | 6: Sky light: one cosine-weighted sky ray, its stillness measured first | dev | done; default 1 ray; bars 2 to 4 are readings (exploration); bar 6 one run each (Notes) | d261667c |
 | 7: The four goldens, the HUD rows and the readings | dev | done; goldens and bars 1, 2 wait for Phase 10; bars 3, 4 read (Notes) | a66a9463 |
-| 8: Trees, the shadow that travels with the sun, and the forest at low sun | dev | done; bar 5 a reading, bar 6 waits for Phase 10; ForestSource for StampedSource (Notes) | committed with this row |
+| 8: Trees, the shadow that travels with the sun, and the forest at low sun | dev | done; bar 5 a reading, bar 6 waits for Phase 10; ForestSource for StampedSource (Notes) | 4cad9482 |
 | 9: The owner's windowed check | human | not started | |
 | 10: The picks as tests | dev | not started | |
 
