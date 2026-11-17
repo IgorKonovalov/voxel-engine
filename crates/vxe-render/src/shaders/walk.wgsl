@@ -129,6 +129,11 @@ var<private> shadow_styles: bool = false;
 
 var<private> styled_from: vec3<i32>;
 
+// Set around a key or sky ray lifted off a far hit (sky_light.wgsl's `ray_lift`): `march` steps
+// out of the voxel its origin lies in when that voxel is solid, rather than hitting it, so a
+// stair smaller than a pixel casts no shadow on its own tread.
+var<private> skip_origin_cell: bool = false;
+
 // The material style word's bit (`frame::SHADOW_AS_BRICK`): a shadow ray stops at a brick
 // holding the material.
 const STYLE_SHADOW_AS_BRICK: u32 = 1u;
@@ -727,6 +732,9 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
             } else if (c.air) {
                 passing = false;
             }
+        }
+        if (size == 0 && skip_origin_cell && step == 0u) {
+            size = 1;
         }
         if (size == 0) {
             var m = 0u;

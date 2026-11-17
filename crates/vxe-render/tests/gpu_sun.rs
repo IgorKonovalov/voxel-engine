@@ -998,4 +998,175 @@ mod reading {
             );
         }
     }
+
+    /// Per frame the history counters, then the direct accumulation's luminance and the lighting
+    /// grid's hit positions.
+    type FarRun = (Vec<[u32; 4]>, Vec<f32>, Vec<[f32; 4]>);
+
+    /// A far frame of `world` at `cam`: 320 x 180 under FSR 2 at 1.5 (480 x 270), half lighting,
+    /// the store counters on, the key light alone (lamp off, no sky ray, filter on), manual
+    /// exposure 1, `sky`, the stair rules hooked off with `no_stair`; `frames` frames, then per
+    /// frame of 64 more the history counters and, at the last, the direct accumulation's
+    /// luminance and the lighting grid's hit positions.
+    fn far_run(world: &World, cam: &Camera, sky_: Sky, no_stair: bool) -> Option<FarRun> {
+        let (device, queue) = device()?;
+        let gpu = mirror(&device, &queue, world, None);
+        let mut frame = Frame::with_sizes(&device, [320, 180], [480, 270]);
+        frame.set_upscaler_kind(
+            &device,
+            vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default()),
+        );
+        frame.set_lighting(Lighting {
+            lamp: false,
+            exposure: Exposure::Manual(1.0),
+            sky_rays: 0,
+            ..Lighting::default()
+        });
+        frame.set_light_hooks(vxe_render::LightHooks {
+            no_stair,
+            ..Default::default()
+        });
+        frame.set_count_store(true);
+        frame.set_resolution(&device, LightingResolution::Full);
+        // The fly-through's default far normal.
+        frame.set_look(vxe_render::LookParams {
+            far_normal: [2.0, 6.0],
+            ..vxe_render::LookParams::default()
+        });
+        frame.set_sky(Some(sky_));
+        let light = LightParams::headlamp();
+        for _ in 0..16 {
+            frame.step(&device, &queue, &gpu, cam, &light);
+        }
+        let mut counts = Vec::new();
+        for _ in 0..64 {
+            frame.step(&device, &queue, &gpu, cam, &light);
+            counts.push(frame.read_history_rejections(&device, &queue));
+        }
+        let lum = vxe_render::debug::read_rgba16f(&device, &queue, frame.direct_accumulated())
+            .iter()
+            .map(|p| p[3])
+            .collect();
+        let hits = vxe_render::debug::read_rgba32f(&device, &queue, frame.light_hit_positions());
+        Some((counts, lum, hits))
+    }
+
+    /// A camera at `eye` looking at `at`.
+    fn looking(eye: [f32; 3], at: [f32; 3]) -> Camera {
+        let d = Vec3::from(at) - Vec3::from(eye);
+        Camera {
+            position: Vec3::from(eye),
+            yaw: d.y.atan2(d.x),
+            pitch: (d.z / d.length()).asin(),
+            vfov: 60f32.to_radians(),
+        }
+    }
+
+    /// Plan 0086 Phase 3 bar 1, as a reading: a staircase of 64 one-voxel steps up along +x
+    /// (rock under `z = FLOOR + clamp(x - 160, 0, 64)` over a 384 x 192 floor) seen from about
+    /// 220 voxels (0.7 pixels a voxel at 320 wide, the far normal's full weight), FSR 2 at 1.5,
+    /// a still camera, a zenith sun: the share of the history test's hits whose history reset per
+    /// frame over 64 frames, by cause, with the stair rules hooked off and on. Prints them.
+    #[test]
+    #[ignore = "reading"]
+    fn a_far_staircase_keeps_its_history() {
+        let f = |p: [i32; 3]| {
+            if p[2] < FLOOR + (p[0] - 160).clamp(0, 64) {
+                ROCK
+            } else {
+                AIR
+            }
+        };
+        let world = World::generate(
+            ChunkExtent::new([0, 0, 0], [6, 3, 2]),
+            &FnSource(f),
+            &table(),
+        );
+        let cam = looking(
+            [40.0, 96.0, FLOOR as f32 + 120.0],
+            [192.0, 96.0, FLOOR as f32 + 32.0],
+        );
+        let s = sky(dir(90.0, 0.0), dir(-90.0, 0.0), [[1.0; 3], [0.0; 3]]);
+        for no_stair in [true, false] {
+            let Some((counts, _, _)) = far_run(&world, &cam, s, no_stair) else {
+                return;
+            };
+            let t: [u64; 4] = std::array::from_fn(|k| counts.iter().map(|w| u64::from(w[k])).sum());
+            let max = counts
+                .iter()
+                .map(|w| f64::from(w[1] + w[2] + w[3]) / f64::from(w[0].max(1)))
+                .fold(0.0, f64::max);
+            println!(
+                "reading: far staircase, stair rules {}: tested {} a frame, reset {:.4} (material {:.4} normal {:.4} other {:.4}), worst frame {max:.4}",
+                if no_stair { "off" } else { "on" },
+                t[0] / 64,
+                (t[1] + t[2] + t[3]) as f64 / t[0].max(1) as f64,
+                t[1] as f64 / t[0].max(1) as f64,
+                t[2] as f64 / t[0].max(1) as f64,
+                t[3] as f64 / t[0].max(1) as f64,
+            );
+        }
+    }
+
+    /// Plan 0086 Phase 3 bar 2, as a reading: a one-voxel wall 40 voxels tall (x = 256, y 32 to
+    /// 160) on a 384 x 192 floor, seen from about 220 voxels on its -x side (0.7 pixels a voxel),
+    /// the sun 20 degrees up on its +x side (its shadow falls toward the camera), lighting at
+    /// full resolution: of the floor pixels 1 to 3 rows under the wall's lowest pixel in each
+    /// column, the share whose key light reads over 10 % of the open floor's (the floor behind
+    /// the wall, x over 262), with the stair rules (the lift) hooked off and on. Prints them.
+    #[test]
+    #[ignore = "reading"]
+    fn a_thin_far_wall_does_not_leak() {
+        let f = |p: [i32; 3]| {
+            let wall = p[0] == 256 && (32..160).contains(&p[1]) && p[2] < FLOOR + 40;
+            if p[2] < FLOOR || wall { ROCK } else { AIR }
+        };
+        let world = World::generate(
+            ChunkExtent::new([0, 0, 0], [6, 3, 2]),
+            &FnSource(f),
+            &table(),
+        );
+        let cam = looking(
+            [56.0, 96.0, FLOOR as f32 + 90.0],
+            [256.0, 96.0, FLOOR as f32],
+        );
+        let s = sky(dir(20.0, 90.0), dir(-20.0, 270.0), [[1.0; 3], [0.0; 3]]);
+        for no_stair in [true, false] {
+            let Some((_, lum, hits)) = far_run(&world, &cam, s, no_stair) else {
+                return;
+            };
+            let floor = |h: &[f32; 4]| h[3] < 1.0e30 && (h[2] - FLOOR as f32).abs() < 1e-2;
+            let wall = |h: &[f32; 4]| h[3] < 1.0e30 && h[2] > FLOOR as f32 + 0.5 && h[0] < 257.5;
+            // Open: the lit floor behind the wall.
+            let open: Vec<f32> = lum
+                .iter()
+                .zip(&hits)
+                .filter(|(_, h)| floor(h) && h[0] > 262.0)
+                .map(|(l, _)| *l)
+                .collect();
+            let open_v = open.iter().sum::<f32>() / open.len().max(1) as f32;
+            // Per column, the floor pixels 1 to 3 rows under the wall's lowest pixel.
+            let (w, h) = (320usize, 180usize);
+            let mut band: Vec<f32> = Vec::new();
+            for x in 0..w {
+                let Some(base) = (0..h).rev().find(|&y| wall(&hits[y * w + x])) else {
+                    continue;
+                };
+                for y in base + 1..=(base + 3).min(h - 1) {
+                    let i = y * w + x;
+                    if floor(&hits[i]) && hits[i][0] < 256.0 {
+                        band.push(lum[i] / open_v);
+                    }
+                }
+            }
+            let leak = band.iter().filter(|&&v| v > 0.1).count();
+            println!(
+                "reading: thin far wall, stair rules {}: open {open_v:.4} over {} px; band {} px, over 10 % {leak} ({:.4})",
+                if no_stair { "off" } else { "on" },
+                open.len(),
+                band.len(),
+                leak as f64 / band.len().max(1) as f64
+            );
+        }
+    }
 }

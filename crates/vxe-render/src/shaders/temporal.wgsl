@@ -366,9 +366,32 @@ fn gradient_at(q: vec2<f32>) -> f32 {
     return sum / max(count, 1.0);
 }
 
+// The far normal's blend weight of this frame's hit where it is over one half (ADR-0042: a voxel
+// smaller on screen than the blend's lower bound): set per pixel by `temporal` for a world
+// cube-face hit, else 0. Over one half, the history test is the stair test (`history_agrees`).
+var<private> stair_w: f32 = 0.0;
+
+// The smoothed normal `g` of a cube-face hit whose stored shading normal `n` is the far normal's
+// blend `normalize(mix(f, g, w))` toward it from face normal `f` (the hit's axis, signed as `n`
+// leans): `w g = l n - (1 - w) f` with `l = |mix|` the root of
+// `l^2 - 2 l (1 - w) (n.f) + (1 - w)^2 - w^2 = 0`, real for `w >= 1/2`; `n` itself at 1.
+fn far_unmixed(rec: HitRecord, w: f32) -> vec3<f32> {
+    if (w >= 1.0 || rec.axis < 0) {
+        return rec.n;
+    }
+    let f = select(vec3<f32>(0.0), vec3<f32>(select(-1.0, 1.0, rec.n[rec.axis] >= 0.0)), axis_mask(rec.axis));
+    let k = 1.0 - w;
+    let nf = dot(rec.n, f);
+    let l = k * nf + sqrt(max(k * k * nf * nf - k * k + w * w, 0.0));
+    return normalize(l * rec.n - k * f);
+}
+
 // Whether previous hit `prev` agrees with this frame's hit `rec` (reprojected to `pp`) within
 // `tol` voxels: a hit of the same thing, with the same material and a normal within
-// HISTORY_COS, or with LIGHTING_HOOK_ANY_HISTORY whatever the material and normal.
+// HISTORY_COS, or with LIGHTING_HOOK_ANY_HISTORY whatever the material and normal. Where
+// `stair_w` is over one half (the stair test) the smoothed normals (`far_unmixed`, both at this
+// hit's weight) are compared within HISTORY_COS and the material is not: a tread and its
+// riser under the jitter share the irradiance history, which is before albedo.
 fn history_agrees(prev: HitRecord, rec: HitRecord, pp: vec3<f32>, tol: f32) -> bool {
     if (!prev.found || !same_thing(prev, rec) || distance(prev.p, pp) > tol) {
         return false;
@@ -376,15 +399,24 @@ fn history_agrees(prev: HitRecord, rec: HitRecord, pp: vec3<f32>, tol: f32) -> b
     if ((params.lighting & LIGHTING_HOOK_ANY_HISTORY) != 0u) {
         return true;
     }
+    if (stair_w > 0.5) {
+        return dot(far_unmixed(prev, stair_w), far_unmixed(rec, stair_w)) >= HISTORY_COS;
+    }
     return prev.material == rec.material && dot(prev.n, rec.n) >= HISTORY_COS;
 }
 
 // Counts a reset pixel's cause into `counters` (COUNT_STORE only): the first test previous
-// hit `prev` fails, in the order material (word 6), normal (word 7), anything else (word 8).
+// hit `prev` fails, in the order material (word 6; not under the stair test), normal (word 7;
+// the smoothed normals under it), anything else (word 8).
 fn count_rejection(prev: HitRecord, rec: HitRecord) {
-    if (prev.found && same_thing(prev, rec) && prev.material != rec.material) {
+    let stair = stair_w > 0.5;
+    var cos = dot(prev.n, rec.n);
+    if (stair) {
+        cos = dot(far_unmixed(prev, stair_w), far_unmixed(rec, stair_w));
+    }
+    if (prev.found && same_thing(prev, rec) && !stair && prev.material != rec.material) {
         atomicAdd(&counters[6], 1u);
-    } else if (prev.found && same_thing(prev, rec) && dot(prev.n, rec.n) < HISTORY_COS) {
+    } else if (prev.found && same_thing(prev, rec) && cos < HISTORY_COS) {
         atomicAdd(&counters[7], 1u);
     } else {
         atomicAdd(&counters[8], 1u);
@@ -493,6 +525,10 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     var age = 0.0;
     if (rec.found && (params.history & 1u) != 0u && !in_edit(rec.p)) {
         let vi = view_of(full_px(gid.xy));
+        if (!rec.entity && !rec.field && rec.axis >= 0 && normal_mode() == NORMAL_FACE
+            && (params.lighting & LIGHTING_HOOK_NO_STAIR) == 0u) {
+            stair_w = far_normal_weight(params.views[vi], rec.t);
+        }
         let pp = prev_world(rec);
         let full = reproject_centred(params.prev_views[vi], params.views[vi].jitter, pp);
         let q = select(prev_light_grid(full), full, full.x < 0.0) - 0.5;

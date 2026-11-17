@@ -788,6 +788,8 @@ mod reading {
         pub fsr2: bool,
         /// The testbed's `leaf` shadows as its bricks (`--leaf-shadow brick`).
         pub leaf_brick: bool,
+        /// The far normal's stair rules hooked off.
+        pub no_stair: bool,
     }
 
     /// What a cell read over its 64 still frames.
@@ -833,8 +835,14 @@ mod reading {
         f.set_light_hooks(LightHooks {
             key_off: cell.term == "sky",
             any_history: cell.any_history,
+            no_stair: cell.no_stair,
         });
         f.set_count_store(true);
+        // The fly-through's default look: cubes with the far normal at [2, 6].
+        f.set_look(vxe_render::LookParams {
+            far_normal: flythrough::LookPreset::DEFAULT.far_normal,
+            ..vxe_render::LookParams::default()
+        });
         if cell.leaf_brick {
             f.set_material_styles(
                 &rig.queue,
@@ -903,6 +911,7 @@ mod reading {
                             any_history,
                             fsr2,
                             leaf_brick: false,
+                            no_stair: false,
                         });
                     }
                 }
@@ -1045,6 +1054,7 @@ mod reading {
             any_history: false,
             fsr2: true,
             leaf_brick,
+            no_stair: false,
         }
     }
 
@@ -1128,6 +1138,39 @@ mod reading {
                 } else {
                     "leaf voxel"
                 },
+                cell,
+                &r,
+                &[("ground", &hit)],
+            );
+        }
+    }
+
+    /// Plan 0086 Phase 3 bar 4: the forest's statistics at `60,180` with the leaf's
+    /// SHADOW_AS_BRICK set, with the far normal's stair rules hooked off (before the phase) and
+    /// on. `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    #[test]
+    #[ignore = "reading"]
+    fn forest_stairs() {
+        let sky = flythrough::daylight::Clock {
+            fixed_sun: Some([60.0, 180.0]),
+            ..Default::default()
+        }
+        .sky(flythrough::outdoor::BASE_Z as f32);
+        let Some((rig, cam)) = forest_rig() else {
+            return;
+        };
+        let (rate, gw) = hit_rates(&rig, &cam);
+        let gh = rate.len() / gw;
+        let hit = |x: usize, y: usize| rate[(y * gh / 180) * gw + x * gw / 320].is_some();
+        println!("reading: forest_stairs on {}", rig.adapter);
+        for no_stair in [true, false] {
+            let cell = Cell {
+                no_stair,
+                ..default_cell(true)
+            };
+            let r = run_cell(&rig, &cam, sky, cell);
+            print_row(
+                if no_stair { "stair off" } else { "stair on" },
                 cell,
                 &r,
                 &[("ground", &hit)],

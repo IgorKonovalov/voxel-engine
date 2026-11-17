@@ -78,9 +78,10 @@ fn shade_px(gid: vec3<u32>) {
             counts = vec4<f32>(f32(steps), f32(storage), f32(pool), f32(rays));
             if (any(key_light_at(rec.p, rec.n) > vec3<f32>(0.0))) {
                 let d = disc_direction(sky.key_dir, sky.key_radius, rand(gid.xy, KEY_DIM), rand(gid.xy, KEY_DIM + 1u));
+                set_ray_lift(rec, params.views[view_of(full_px(gid.xy))]);
                 walk_steps = 0u;
                 loads = 0u;
-                sky_shadowed(o, d, KEY_RAY_LEN);
+                sky_shadowed(o + ray_lift, d, KEY_RAY_LEN);
                 key = vec4<f32>(f32(walk_steps), f32(counted_loads()), f32(counted_pool_reads()), 1.0);
             }
         }
@@ -100,6 +101,7 @@ fn shade_px(gid: vec3<u32>) {
         } else {
             let ns = shadow_normal_of(rec, ray.d);
             e = PI * lights_lit_rgb(rec.p, n, ns);
+            set_ray_lift(rec, params.views[view_of(full_px(gid.xy))]);
             // The key light's directional sample and the sky rays (sky_light.wgsl), with the list's.
             let k = key_sample(rec.p, n, ns, gid.xy) + sky_ray_sample(rec.p, n, ns, gid.xy);
             e += vec4<f32>(k, luminance(k));

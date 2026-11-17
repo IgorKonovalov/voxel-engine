@@ -562,8 +562,8 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The attribution reading | dev | done | 851f7c72 |
-| 2: A canopy shadows as its brick | dev | done (readings with Phase 3) | committed with this row |
-| 3: History across a stair in the far-normal regime | dev | not started | |
+| 2: A canopy shadows as its brick | dev | done | 2b5fff92 |
+| 3: History across a stair in the far-normal regime | dev | done | committed with this row |
 | 4: The sky visibility baked per brick direction | dev | not started | |
 | 5: The rays' own long history, the sky ray only where stale | dev | not started | |
 | 6: The key light on the long history, after a reading | dev | not started | |
@@ -587,6 +587,12 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
   voxel's. The banner names only the non-default `leaf voxel` (the start banner is at its
   9-row cap); the parse test pins that. Bars 1 and 2 run as `reading::a_flagged_canopy_shadows_as_its_bricks`
   in `gpu_sun.rs` (exploration); bar 3's goldens run at the tip's gpu tier.
+- Phase 2 commit 2b5fff92 left `hud/modes.rs` at 1205 lines (over the 1200 cap); Phase 3's
+  commit brings it to 1200. Phase 1's matrix ran without the fly-through's far normal.
+- Phase 3: a reading hook `LightHooks::no_stair` reads the rig before and after in one build;
+  bars 1 and 2 run as readings (`reading::a_far_staircase_keeps_its_history`,
+  `reading::a_thin_far_wall_does_not_leak`); `LIFT` 2 is not read. Bar 1's rig reads 0.05 %
+  resets with the rules off: at the far normal's full weight the stored normals already agree.
 
 ### Close triggers
 

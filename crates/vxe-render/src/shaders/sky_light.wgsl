@@ -27,10 +27,41 @@ fn disc_direction(l: vec3<f32>, r: f32, u: f32, v: f32) -> vec3<f32> {
     return normalize(l * (1.0 - omc) + (t * cos(phi) + b * sin(phi)) * sin_t);
 }
 
+// The key and sky rays' origin offset at the light pass's pixel beyond its shadow origin:
+// `LIFT` voxels along the shading normal times the far normal's blend weight where that is over
+// one half, else 0 (`set_ray_lift`). A nonzero lift also sets the walk's `skip_origin_cell`.
+var<private> ray_lift: vec3<f32> = vec3<f32>(0.0);
+
+// The key and sky rays' lift in voxels at a far normal's full weight; an estimate.
+const LIFT: f32 = 1.0;
+
+// Sets `ray_lift` for a world cube-face hit `rec` seen by view `v` in the face normal mode: its
+// shading normal times LIFT and the far normal's weight, where the weight is over one half.
+fn set_ray_lift(rec: HitRecord, v: View) {
+    ray_lift = vec3<f32>(0.0);
+    if (rec.entity || rec.field || rec.axis < 0 || normal_mode() != NORMAL_FACE
+        || (params.lighting & LIGHTING_HOOK_NO_STAIR) != 0u) {
+        return;
+    }
+    let w = far_normal_weight(v, rec.t);
+    if (w > 0.5) {
+        ray_lift = rec.n * (LIFT * w);
+    }
+}
+
+// Where the key and sky rays of a hit at `p` with shadow normal `ns` start: its shadow origin,
+// lifted by `ray_lift`.
+fn sky_origin(p: vec3<f32>, ns: vec3<f32>) -> vec3<f32> {
+    return shadow_origin(p, ns) + ray_lift;
+}
+
 // Whether a lighting ray from `o` along `d` finds rock (or, with ENTITY_SHADOWS, an entity)
-// before the sky.
+// before the sky. A lifted ray (`ray_lift`) steps out of a solid voxel it starts in.
 fn sky_shadowed(o: vec3<f32>, d: vec3<f32>, len: f32) -> bool {
-    return shadowed_styled(o, d, len) || (ENTITY_SHADOWS && entity_march(o, d, len).found);
+    skip_origin_cell = any(ray_lift != vec3<f32>(0.0));
+    let s = shadowed_styled(o, d, len);
+    skip_origin_cell = false;
+    return s || (ENTITY_SHADOWS && entity_march(o, d, len).found);
 }
 
 // The key light's sample at a hit at `p`, normal `n`, shadow normal `ns`, lighting pixel `px`:
@@ -42,7 +73,7 @@ fn key_sample(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>, px: vec2<u32>) -> vec3<
         return vec3<f32>(0.0);
     }
     let d = disc_direction(sky.key_dir, sky.key_radius, rand(px, KEY_DIM), rand(px, KEY_DIM + 1u));
-    if (sky_shadowed(shadow_origin(p, ns), d, KEY_RAY_LEN)) {
+    if (sky_shadowed(sky_origin(p, ns), d, KEY_RAY_LEN)) {
         return vec3<f32>(0.0);
     }
     return k;
@@ -75,7 +106,7 @@ fn sky_ray_sample(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>, px: vec2<u32>) -> v
     if (!sky_on() || count == 0u) {
         return vec3<f32>(0.0);
     }
-    let o = shadow_origin(p, ns);
+    let o = sky_origin(p, ns);
     var sum = vec3<f32>(0.0);
     for (var i = 0u; i < count; i++) {
         let d = cosine_direction(n, rand(px, SKY_DIM + 2u * i), rand(px, SKY_DIM + 2u * i + 1u));

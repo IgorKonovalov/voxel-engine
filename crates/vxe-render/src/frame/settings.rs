@@ -203,6 +203,11 @@ pub(crate) const LIGHTING_SHADOW_STYLES: u32 = 1 << 18;
 /// the emissive samples' rays see the voxels.
 pub const SHADOW_AS_BRICK: u32 = 1;
 
+/// `Params::lighting` bit, a reading hook ([`LightHooks::no_stair`]): the far normal's stair
+/// rules are off (the history test keeps its material and face-blend normal tests, and the key
+/// and sky rays are not lifted).
+pub(crate) const LIGHTING_HOOK_NO_STAIR: u32 = 1 << 19;
+
 /// The light passes' reading hooks ([`Frame::set_light_hooks`]): switches that take a term or a
 /// test out of the frame to attribute what the image does to it. All off by default; each is
 /// a uniform branch on a `Params::lighting` bit.
@@ -212,6 +217,9 @@ pub struct LightHooks {
     pub key_off: bool,
     /// The temporal pass's history test drops its material and normal tests.
     pub any_history: bool,
+    /// The far normal's stair rules are off: the history test and the key and sky rays'
+    /// origins as at a near hit.
+    pub no_stair: bool,
 }
 
 impl LightHooks {
@@ -223,6 +231,10 @@ impl LightHooks {
             0
         }) | if self.any_history {
             LIGHTING_HOOK_ANY_HISTORY
+        } else {
+            0
+        } | if self.no_stair {
+            LIGHTING_HOOK_NO_STAIR
         } else {
             0
         }

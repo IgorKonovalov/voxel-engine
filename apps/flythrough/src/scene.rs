@@ -340,6 +340,15 @@ impl LeafShadow {
             Self::Voxel => "voxel",
         }
     }
+
+    /// The banner's words after the sky rays: `leaf voxel, `, and none for the default (the
+    /// outdoor start banner is at its row cap).
+    pub fn words(self) -> &'static str {
+        match self {
+            Self::Brick => "",
+            Self::Voxel => "leaf voxel, ",
+        }
+    }
 }
 
 /// The renderer's style words for [`outdoor_materials`] (`Frame::set_material_styles`):

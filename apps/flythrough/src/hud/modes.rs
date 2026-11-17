@@ -109,8 +109,6 @@ pub struct Modes {
     /// A sky is set: the line names the clock's time and cycle after the source.
     pub(crate) sky: bool,
     pub(crate) clock: crate::daylight::Clock,
-    /// How the outdoor canopy shadows: the line names it after the sky rays (`leaf voxel`) when
-    /// it is not the default.
     pub(crate) leaf_shadow: crate::LeafShadow,
     pub(crate) banner_at: f64,
     /// The auto exposure `Q` returns to, under its preset's name.
@@ -625,10 +623,7 @@ impl Modes {
         if self.sky {
             self.clock.write_words(out);
             let _ = write!(out, ", sky rays {}, ", l.sky_rays);
-            // The default (`brick`) goes unnamed: the banner is at its row cap.
-            if self.leaf_shadow != crate::LeafShadow::default() {
-                let _ = write!(out, "leaf {}, ", self.leaf_shadow.name());
-            }
+            out.push_str(self.leaf_shadow.words());
         }
         let _ = write!(
             out,
