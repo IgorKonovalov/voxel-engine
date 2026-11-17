@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0088** (ADRs are a separate sequence, see `../adrs/README.md` for its
+**Next free number: 0089** (ADRs are a separate sequence, see `../adrs/README.md` for its
 next free number).
 
 ## Active roster
@@ -29,6 +29,7 @@ next free number).
 | [0085](0085-entity-variants-holding-clips-and-an-entity-stamped-into-the-world.md) | Entity variants (hide, swap, remap) from the `.rig`, a clip that holds, a posed entity stamped into the world | approved | M6, ADR-0068, ADR-0069 (proposed). Approved 2026-11-16. After 0063, the chore, 0078 and 0082. |
 | [0086](0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md) | Still outdoor light: baked sky visibility, a long history for the sky and key rays, solid canopy shadows, stair history, a penumbra spike | approved | M10, ADR-0070. After Plan 0032, before Plan 0081. |
 | [0087](0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md) | The rename to `svet`: crates, `SVET_*`, the WIT package, the tester archive, docs, the repository, a minor bump | approved | ADR-0071. Alone, last: after 0032, 0080, 0077, 0079, 0083 and 0086 merge. |
+| [0088](0088-the-outdoor-scene-in-the-tester-a-path-over-the-hills-through-the-trees-and-into-the-cave.md) | The outdoor scene in the tester: a path over the hills, through the trees and down the tunnel; a fourth menu row | draft | M7, ADR-0054, no new ADR. After 0080 merges; not after 0086. Before 0087. |
 <!-- roster:end -->
 
 ## Sequence
@@ -125,7 +126,16 @@ the owner's "a castle being built... part of the map", approved 2026-11-16 with 
 
 **Plan 0087** (the rename to `svet`, ADR-0071 accepted 2026-11-17 on the owner's "for renaming, I think svet is the best": `crates/svet-*`, `SVET_*` with no aliases, `svet:logic`, `svet-tester` and its archive, the documents and the harness, the owner's GitHub rename, a minor bump, a final grep; accepted ADRs, closed plans, logs, reviews and past CHANGELOG entries keep `vxe`; drafted 2026-11-17, approved 2026-11-17 on the owner's "Approve rename"): it touches every crate directory, so it runs **alone, when no lane is open**: after Plans 0069, 0032 and 0080 (and any other lane `git worktree list` shows then) merge, and after Plans 0077, 0079, 0083 and 0086 merge too (owner, 2026-11-17: "86 finish before").
 
-Every active plan is approved (Plan 0087 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
+**Plan 0088** (the outdoor scene in the tester: `Scene::Outdoor` with `--source outdoor --spawn
+outside --trees sparse --sun EL,AZ`, a 60 to 75 s path laid by computation from the heightfield
+and the trees and guarded by the air test, the tester's fourth row through `Scene::ALL`, the
+README's text, dev-box readings of the outdoor bench; drafted 2026-11-17 from the owner's "plan
+it now" after an outside Linux report read CPU spikes in the streamed scenes; no ADR): after Plan
+0080 merges (both edit `path.rs`, `tests/path.rs`, `cli/parse.rs` and `docs/flythrough.md`); it
+does not wait for Plan 0086 and merges before Plan 0087 starts. Five owner questions (the sun,
+the trees, the route, the warm-up, how the path is laid) await the go.
+
+Every active plan but Plan 0088 (a draft) is approved (Plan 0087 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Approval accepts the design; a plan's lane
 starts only when the plans its "Starts after" line names have closed and merged, and where that
 line asks for it, after the architect has re-read the plan against the new tip. The approved
