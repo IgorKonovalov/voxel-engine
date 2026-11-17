@@ -892,13 +892,14 @@ mod reading {
         }
         f.set_dt(1.0 / 60.0);
         let light = LightParams::headlamp();
+        // The readout is read every frame: its ring's slots are freed only by a read, so one
+        // read after the loop would return one of the first frames' states.
+        let mut readout = None;
         for _ in 0..64 {
             f.step(&rig.device, &rig.queue, &rig.gpu, cam, &light);
+            readout = f.exposure_readout(&rig.device).or(readout);
         }
-        let exposure = f
-            .exposure_readout(&rig.device)
-            .expect("the exposure")
-            .exposure;
+        let exposure = readout.expect("the exposure").exposure;
         f.set_lighting(Lighting {
             exposure: Exposure::Manual(exposure),
             ..base

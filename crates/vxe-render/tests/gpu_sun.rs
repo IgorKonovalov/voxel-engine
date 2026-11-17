@@ -1313,6 +1313,12 @@ mod reading {
         }
     }
 
+    /// One frame of [`pair_run`]: the pair and the visibility sample per lighting pixel.
+    type PairFrame = (Vec<[f32; 4]>, Vec<[u8; 4]>);
+
+    /// [`pair_run`]'s edit: per frame index, the box it changed in the world, if any.
+    type PairEdit<'a> = dyn FnMut(u32, &World) -> Option<[[i32; 3]; 2]> + 'a;
+
     /// The visibility pair's rig (ADR-0070): `world` mirrored, a frame of SIZE at full lighting
     /// resolution with no jitter, filter off, exposure 1, one sky ray, the coarse walk,
     /// `hooks`, under `Sky::uniform(1.0)` (no key light). `frames` frames of `cam`, `edit`
@@ -1323,8 +1329,8 @@ mod reading {
         cam: &Camera,
         frames: u32,
         hooks: vxe_render::LightHooks,
-        edit: &mut dyn FnMut(u32, &World) -> Option<[[i32; 3]; 2]>,
-    ) -> Option<Vec<(Vec<[f32; 4]>, Vec<[u8; 4]>)>> {
+        edit: &mut PairEdit<'_>,
+    ) -> Option<Vec<PairFrame>> {
         let (device, queue) = device()?;
         let mut gpu = mirror(&device, &queue, world, None);
         let mut f = frame(&device, SIZE, ShadowWalk::Coarse);
@@ -1472,7 +1478,7 @@ mod reading {
             ..Default::default()
         };
         let mut edit = |i: u32, w: &World| {
-            if i < 32 || i >= 64 {
+            if !(32..64).contains(&i) {
                 return None;
             }
             let x = x0 + i64::from(i - 32);

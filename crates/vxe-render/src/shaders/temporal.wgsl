@@ -65,8 +65,7 @@
 // with the direct part's taps and reset where the direct part resets and on the sky-change
 // bit, a sample clamped at FIREFLY_K times the larger of the long and short means once the
 // age passes SKY_SHORT, and the age falling toward SKY_FALL_MIN where the short mean leaves
-// the long mean's band. A cube face adds it to its stored part, any other hit to its direct
-// sample before the direct part's blend.
+// the long mean's band. Every hit adds it to its direct sample before the direct part's blend.
 //
 // A cube face's emissive part (`reads_store`) is its brick record's value for its direction
 // (`store_brick_value`; with Params.lighting bit 14, where the shading normal is not the face
@@ -815,19 +814,16 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             m_hist = m.xy;
         }
     }
-    // The visibility pair, and its sky term where the rays were cast: a cube face's stored
-    // part takes it, any other hit's direct part as if its sample had held it.
+    // The visibility pair, and its sky term where the rays were cast: the direct part takes it
+    // as if its sample had held it, a cube face's too, so the filter smooths what the pair's
+    // per-pixel mean of rare hits leaves.
     let pair = select(seed, pair_step(vis.x, hp, accepted), sky_cast);
     if (sky_cast && sky_on()) {
         let t = pair.x * sky_open_by_normal(rec.n) * exposure_now();
-        if (stored) {
-            accum = vec4<f32>(accum.xyz + t, accum.w);
-        } else {
-            let tl = vec4<f32>(t, luminance(t));
-            acc_direct += a_direct * tl;
-            let l2 = min(l + tl.w, MOMENT_LUM_MAX);
-            moments = mix(m_hist, vec2<f32>(l2, l2 * l2), a_mom);
-        }
+        let tl = vec4<f32>(t, luminance(t));
+        acc_direct += a_direct * tl;
+        let l2 = min(l + tl.w, MOMENT_LUM_MAX);
+        moments = mix(m_hist, vec2<f32>(l2, l2 * l2), a_mom);
     }
     textureStore(pair_out, px, pair);
     accum.w = select(0.0, 1.0, fresh);

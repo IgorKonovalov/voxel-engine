@@ -612,6 +612,11 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
   a dig is not read. `FRAME_PASSES` gained `sky irradiance` (fixes Phase 4's shifted pass names).
   `encode.rs`'s output binds moved to `frame/output_binds.rs`. `docs/flythrough.md` rows for
   `--sky-rays` and `--sky-history`.
+- Phase 5 follow-up (a `fix` commit before Phase 6): the pair's term goes to the direct part at
+  every hit, a cube face's too (Phase 5 put a face's into the unfiltered stored part; the far
+  end of the unbaked tunnel read 90 p99 and metered dark for about 90 frames). The readings'
+  `run_cell` pinned a stale exposure (one readout after the loop); it reads every frame now.
+  Two clippy lints in Phase 5's `gpu_sun.rs` fixed.
 
 ### Close triggers
 
