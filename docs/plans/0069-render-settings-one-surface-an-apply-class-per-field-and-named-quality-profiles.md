@@ -255,6 +255,10 @@ figures (a hand-built box on lavapipe renders a few dozen frames at 192 x 108 in
   differs from `Floor`'s image at the same pose by more than that floor (so the profile is
   applied); `docs/nfr/02-frame-budget.md` gains a dated ledger paragraph per profile per
   adapter from the tip's reading.
+  **Amended 2026-11-17 (owner):** `portable_profile_golden` renders the castle gate (the pose
+  of `castle_gate_golden`, torches and the lamp in view) in place of the hall, beside `Floor`'s
+  image at that pose: the hall holds no glass and too few lights for Portable's cuts to move a
+  pixel (readings log, Phase 7). The floor and the "differs" bar are unchanged.
 
 ## Data shapes
 
