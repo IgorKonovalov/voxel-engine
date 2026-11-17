@@ -507,9 +507,9 @@ Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
 |---|---|---|---|
 | 1: palette rows and `MATL` | dev | done | d853afc3 |
 | 2: the material file, hot-reloaded | dev | done | 26a76ef7 |
-| 3: prefabs as bricks | dev | done | a8a53e7a |
+| 3: prefabs as bricks | dev | done; `prefab64_mixed` +1.4 % over the base, met under the 2026-11-17 amendment (Notes) | a8a53e7a |
 | 4: the scene: layers, mirrors, scale, `--vox` | dev | done | a221e764 |
-| 5: placements past residency | dev | done | committed with this row |
+| 5: placements past residency | dev | done | 7a7a6f19 |
 | 6: the Structures page | dev | not started | |
 | 7: the owner's window | human | not started | |
 | 8: picks, goldens, readings, tip | dev | not started | |
@@ -584,7 +584,8 @@ Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
 
 - Fix dbb59413: `prefab64_mixed` read 15 % over the dense-form base (quiet A/B at 764f0d18); the
   stamp now reads a prefab brick once per sub-box instead of `Prefab::cell` per voxel (+1.4 %
-  in the quiet A/B at dbb59413).
+  in the quiet A/B at dbb59413). Under the 2026-11-17 amendment (0ef2b8fe, owner: within 10 %
+  of the pre-change base on the same box and lock, 3.80 ms) that reading meets Phase 3's bar.
 
 ### Close triggers
 
