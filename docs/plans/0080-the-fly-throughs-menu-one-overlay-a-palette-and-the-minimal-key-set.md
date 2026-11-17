@@ -305,6 +305,9 @@ any machine unless named.
   - `a_shortcut_still_acts_and_shows`: for every Shortcut row, the key acts closed and open
     (function keys and the arrows) or closed only (letters and digits, which are the filter's
     while open), and the entry's row shows the new value; `--keys` prints the key in its column.
+    **Amended 2026-11-17 (owner):** the arrows act as the clip keys with the menu closed only;
+    open, the menu owns them, as Phase 2's key table ("outside the menu") and
+    `the_route_is_one_function` say. Closed and open is the function keys' claim alone.
   - `the_pad_walks_the_menu`: `Start` opens the root; `DpadDown`, `South` opens the second
     group; `East` returns; `Start` closes; closed, `Select` toggles the stats overlay and
     `DpadUp` steps the dig radius as today.
