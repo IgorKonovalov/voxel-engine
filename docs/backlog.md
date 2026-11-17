@@ -513,6 +513,15 @@ first line starting `frames: `. Match `frames: {FRAMES} frames;` instead.
 
 ## Tooling and process
 
+### The 64 private-intra-doc-link warnings in `cargo doc -p vxe-render`
+
+Noted 2026-11-17 from Plan 0069 Phase 2 (`docs/plans/logs/0069.md`): `cargo doc -p vxe-render
+--no-deps` prints 64 `private_intra_doc_links` warnings (cargo's count), none on a line that plan
+wrote; its done-when was amended to "no new warnings from this plan's files". Owner 2026-11-17: fix
+them in a separate chore later. What it takes: make each linked item `pub` or `pub(crate)`-doc it
+with a plain code span, then a CI step or `RUSTDOCFLAGS=-D warnings` doc build so the count cannot
+grow again. Pick up after Plan 0069 merges, so the chore reads the settled `settings.rs`.
+
 ### The tester mode's key filter is structural, not tested in the frame loop
 
 Owed 2026-11-15 from Plan 0068's close (its phase review's M2). Under `--tester` the frame loop
