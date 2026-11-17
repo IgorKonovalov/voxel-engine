@@ -29,6 +29,16 @@ A game-agnostic voxel engine, as a Rust library workspace (ADR-0001):
 What the engine is not: a framework. No ECS, no scene editor, no asset pipeline beyond voxel
 model import. A game owns its loop and composes the crates it needs.
 
+**Two workflows, both first class (owner, 2026-11-17).** The engine aims to be best in class and
+to be worked with by a person alone or by an agent alone, neither a port of the other: "I want
+this engine be best in class, and with possibility to work with it for both pure human workflow,
+and agentic workflow as well". For a person: readable text formats, a window that shows every
+mode it is in, clear errors. For an agent: text it writes reliably, a headless build, run and
+check loop with machine-readable output (run reports, diagnostics with file and line, rendered
+stills, deterministic replay). A plan's review checks both. The authoring direction that follows
+from it (level and logic text compiled to a logic component, a visual editor optional on top) is
+ADR-0072, proposed and unscheduled.
+
 ## Decisions from the founding interview
 
 Settled on 2026-10-16. The first three are recorded in ADR-0001; the rest get their ADR with the
