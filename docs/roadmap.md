@@ -766,7 +766,16 @@ against the baked store: no probe or store term takes sun or sky light.
   per-pixel shadow ray in the light pass, sky light from a sky ray; both land in Plan 0058's
   direct target, with no probe or store term and no sunlight bounce (redesigned 2026-11-10).
   Auto exposure. After Plan 0058 and the render-profile plan. Its testbed trees are prefabs
-  stamped at generation time (amended 2026-11-16, owner).
+  stamped at generation time (amended 2026-11-16, owner). Its Phase 9 window (2026-11-17)
+  picked the defaults and reversed "an absent chunk is solid": unknown is lit (ADR-0027's
+  Outcome).
+- **Still outdoor light** ([Plan 0086](plans/0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md),
+  drafted 2026-11-17 from the owner's picks at that window, awaits the go; ADR-0070
+  proposed): a sky visibility baked per brick direction into the per-chunk store and coloured
+  by the sky at read, the sky ray only where the bake is stale on a long running mean with a
+  firefly clamp, the key light on that history after a reading, a canopy that shadows as its
+  brick, history kept across a stair in the far-normal regime, and a spike on a
+  deterministic penumbra. After Plan 0032; recommended ahead of Plan 0081.
 - **A surface detail layer** ([Plan 0081](plans/0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md),
   drafted 2026-11-16, awaits the owner's go; ADR-0063 proposed): grass, moss, strands,
   fungus caps, flowers, pebbles and snow tufts as a procedural shell marched in the hit pass

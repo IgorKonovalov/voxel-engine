@@ -3,14 +3,14 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0086** (ADRs are a separate sequence; next free there is **0070**).
+**Next free number: 0087** (ADRs are a separate sequence; next free there is **0071**).
 
 ## Active roster
 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Status | Live constraint |
 |------|-------|--------|-----------------|
-| [0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md) | Sun and sky: a Hillaire atmosphere, a time of day, sun and sky ray into the direct target, an outdoor testbed | approved | M10, ADR-0026, ADR-0027. Redesigned 2026-11-10. After 0058 and the render-profile plan. |
+| [0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md) | Sun and sky: a Hillaire atmosphere, a time of day, sun and sky ray into the direct target, an outdoor testbed | in-progress | M10, ADR-0026, ADR-0027. Amended 2026-11-17 after its window; Phases 10 and 11 left. |
 | [0033](0033-far-field-clipmap-to-a-kilometre.md) | The far field: a clipmap of three coarse chunk levels to about 1 km | approved | M10, ADR-0028 (proposed). Amended 2026-11-10. After Plan 0032. |
 | [0034](0034-water-surface-waves-reflection-refraction-underwater-fog.md) | Liquid surfaces: analytic waves, traced reflection and refraction, absorption under the surface | approved | M10, ADR-0029 (proposed). Amended 2026-11-10. After Plan 0033. |
 | [0035](0035-aerial-perspective-and-volumetric-clouds-with-cloud-shadows.md) | Aerial perspective over the near and far field, and volumetric clouds that shadow the ground | approved | M10, ADR-0030 (proposed). Amended 2026-11-10. After Plan 0034. |
@@ -29,6 +29,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0083](0083-anything-from-a-vox-palette-materials-a-material-file-and-large-scenes-stamped-into-the-world.md) | Anything from a `.vox`: palette materials, a material file, brick prefabs, far placements | approved | M7, ADR-0065, ADR-0066. Approved 2026-11-16. After 0063 and the chore; P6 after 0080, 0077. |
 | [0084](0084-staged-structures-stages-from-a-vox-a-stamp-with-a-write-policy-and-a-region-a-reveal-and-a-demolish.md) | Staged structures: stages from a `.vox`'s layers, a stamp with a write policy and a region, a reveal over ticks, a demolish | approved | M7, ADR-0067. Approved 2026-11-16. After Plan 0083 closes. |
 | [0085](0085-entity-variants-holding-clips-and-an-entity-stamped-into-the-world.md) | Entity variants (hide, swap, remap) from the `.rig`, a clip that holds, a posed entity stamped into the world | approved | M6, ADR-0068, ADR-0069 (proposed). Approved 2026-11-16. After 0063, the chore, 0078 and 0082. |
+| [0086](0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md) | Still outdoor light: baked sky visibility, a long history for the sky and key rays, solid canopy shadows, stair history, a penumbra spike | draft | M10, ADR-0070. Awaits go. After Plan 0032. |
 <!-- roster:end -->
 
 ## Sequence
@@ -76,6 +77,9 @@ Each starts on main after the one before it closes, unless its line says otherwi
    **Reordered 2026-11-16 (owner):** Plan 0069 starts once Plans 0062 and 0063 have merged, and
    Plan 0032 follows it directly, both beside Plans 0080, 0078, 0077 and 0079. Plan 0071, Plan
    0073 and the `own` removal no longer hold M10; they follow 0069 in their own order.
+   **Added 2026-11-17 (architect, from the owner's picks at Plan 0032's window):** Plan 0086
+   (the flicker's fixes, ADR-0070) starts when Plan 0032 closes and merges, recommended ahead
+   of Plan 0081 (the still image first); the owner's go and the order are owed.
 
 **Plans from the architecture review of 2026-11-12** (`../reviews/2026-11-12-architecture-review.md`),
 approved by the owner on 2026-11-12 ("45 after 67, 70 after 45. all draft plans can be
