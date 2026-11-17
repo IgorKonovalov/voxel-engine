@@ -1,6 +1,6 @@
 # 0086: Still outdoor light: a sky visibility baked per brick, a long history for the sky and key rays, canopies that shadow as bricks, stairs that keep their history, and a penumbra spike
 
-> **Status:** approved (the owner's go, 2026-11-17; it runs before Plan 0081, and Phase 6 is
+> **Status:** in-progress (the owner's go, 2026-11-17; it runs before Plan 0081, and Phase 6 is
 > conditional on its reading as drafted)
 > **Created:** 2026-11-17
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
@@ -557,9 +557,11 @@ section 2 records the result at the close.
 > resume notes go to the plan's readings log, `docs/plans/logs/0086.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
+Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
+
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The attribution reading | dev | not started | |
+| 1: The attribution reading | dev | done | committed with this row |
 | 2: A canopy shadows as its brick | dev | not started | |
 | 3: History across a stair in the far-normal regime | dev | not started | |
 | 4: The sky visibility baked per brick direction | dev | not started | |
@@ -571,9 +573,15 @@ section 2 records the result at the close.
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Tree names (main since the draft): Plan 0069's surface is `RenderSettings` in
+  `crates/vxe-render/src/settings.rs` (`FIELDS`, `NOT_SETTINGS`); `frame/settings.rs` holds
+  `Lighting`. Plan 0081 has not landed.
+- Phase 1: the rejection counter is four words after the store's five in the temporal pass's
+  counter buffer, written under the `COUNT_STORE` override (`Frame::set_count_store`), read by
+  `Frame::read_history_rejections`, not a steps-view output. The hooks are `Frame::set_light_hooks`
+  (`LightHooks`), two `Params::lighting` bits. The tunnel's regions are chosen per lighting pixel
+  by the sky ray's hit rate (as Plan 0032's `the_tunnel_under_one_sky_ray`), not by a pinned
+  rectangle; the rectangles are printed. The forest region is every hit.
 
 ### Close triggers
 

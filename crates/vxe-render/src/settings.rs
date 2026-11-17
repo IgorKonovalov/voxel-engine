@@ -561,6 +561,10 @@ impl RenderSettings {
             "a reading hook: counts the store's reads for the HUD and readings",
         ),
         (
+            "set_light_hooks",
+            "a reading hook: takes the key light or the history's material and normal tests out",
+        ),
+        (
             "set_bypass",
             "a test hook on Fsr2: skips its passes at equal sizes",
         ),

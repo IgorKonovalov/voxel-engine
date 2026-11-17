@@ -199,6 +199,8 @@ pub(super) struct FrameState {
     /// Whether the field look takes the split walk ([`FLAG_FIELD_SPLIT`]); on by default.
     pub(super) field_split: bool,
     pub(super) lighting: Lighting,
+    /// The reading hooks ([`Frame::set_light_hooks`]).
+    pub(super) hooks: LightHooks,
     /// The per-material emission scales, 1.0 unless set: an `f32` per material id for the
     /// light the frame's pixels sample, then [`EMISSION_ROWS`] more for the light the probe
     /// rays sample.
@@ -258,6 +260,7 @@ impl FrameState {
             look: LookParams::default(),
             field_split: true,
             lighting: Lighting::default(),
+            hooks: LightHooks::default(),
             emission_scale: wgpu::util::DeviceExt::create_buffer_init(
                 device,
                 &wgpu::util::BufferInitDescriptor {

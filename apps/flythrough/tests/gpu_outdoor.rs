@@ -656,4 +656,375 @@ mod reading {
             }
         }
     }
+
+    /// A world mirrored whole for the term matrix: the device, the mirror and the adapter's
+    /// name.
+    pub(super) struct Rig {
+        pub device: vxe_render::wgpu::Device,
+        pub queue: vxe_render::wgpu::Queue,
+        pub gpu: vxe_render::GpuWorld,
+        pub adapter: String,
+    }
+
+    /// `world` mirrored whole (an absent chunk is sky to a lighting ray) with the focus at `eye`.
+    pub(super) fn mirrored(world: vxe_world::World, eye: vxe_world::VoxelCoord) -> Option<Rig> {
+        use support::SyncNow;
+        use vxe_render::{GpuWorld, MirrorConfig, Window};
+        let pool = flythrough::level_pool_units(&world, false) * vxe_render::internals::UNIT_BYTES;
+        let (device, queue, adapter) = support::reading_device(pool)?;
+        let cfg = MirrorConfig {
+            budget_bytes: 512 << 20,
+            ..MirrorConfig::new(Window::Fixed(world.extent()))
+        };
+        let mut gpu = GpuWorld::with_config(&device, cfg);
+        gpu.set_focus(eye);
+        while gpu
+            .sync_now(&world, &device, &queue)
+            .expect("the mirror fits")
+            .pending_chunks
+            > 0
+        {}
+        Some(Rig {
+            device,
+            queue,
+            gpu,
+            adapter,
+        })
+    }
+
+    /// The tunnel of seed 1 (`--source outdoor --spawn inside`): 3 chunks around the spawn's
+    /// chunk and on to 10 along +x and 4 down, the eye and its view out of the tunnel and into
+    /// it.
+    pub(super) fn tunnel_rig() -> Option<(Rig, [(&'static str, vxe_render::Camera); 2])> {
+        use flythrough::outdoor::{OutdoorSource, Spawn};
+        use vxe_world::{ChunkExtent, World};
+        let source = OutdoorSource::new(1);
+        let (eye, facing) = source.spawn(Spawn::Inside);
+        let c = eye.chunk().0;
+        let extent = ChunkExtent::new(
+            [c[0] - 3, c[1] - 3, c[2] - 4],
+            [c[0] + 11, c[1] + 4, c[2] + 2],
+        );
+        let world = World::generate(extent, &source, &flythrough::outdoor_materials());
+        let rig = mirrored(world, eye)?;
+        let p = eye.0.map(|v| v as f32 + 0.5);
+        let d = facing.map(|v| v as f32);
+        let out = flythrough::camera_looking_at(p, [p[0] + d[0], p[1] + d[1], p[2] + d[2]]);
+        let inward = flythrough::camera_looking_at(p, [p[0] - d[0], p[1] - d[1], p[2] - d[2]]);
+        Some((rig, [("tunnel out", out), ("tunnel in", inward)]))
+    }
+
+    /// The forest of seed 1 at `LEAF_FILL` (`--spawn forest --trees forest`): the chunks within
+    /// 4 of the spawn's (2 in z), the spawn's camera.
+    pub(super) fn forest_rig() -> Option<(Rig, vxe_render::Camera)> {
+        use flythrough::outdoor::{OutdoorSource, Spawn};
+        use flythrough::trees::{ForestSource, LEAF_FILL, TreeDensity};
+        use vxe_world::{ChunkExtent, World};
+        let source = ForestSource::new(OutdoorSource::new(1), TreeDensity::Forest, LEAF_FILL);
+        let (eye, facing) = source.base().spawn(Spawn::Forest);
+        let c = eye.chunk().0;
+        let extent = ChunkExtent::new(
+            [c[0] - 4, c[1] - 4, c[2] - 2],
+            [c[0] + 5, c[1] + 5, c[2] + 3],
+        );
+        let world = World::generate(extent, &source, &flythrough::outdoor_materials());
+        let rig = mirrored(world, eye)?;
+        let p = eye.0.map(|v| v as f32 + 0.5);
+        let d = facing.map(|v| v as f32);
+        let cam = flythrough::camera_looking_at(p, [p[0] + d[0], p[1] + d[1], p[2] + d[2]]);
+        Some((rig, cam))
+    }
+
+    /// The sky ray's hit rate per lighting pixel of a native 320 x 180 frame of `cam` (64 frames
+    /// under `Sky::uniform(1.0)`, the filter and the key light off, exposure 1), `None` at a
+    /// miss, and the grid's width.
+    pub(super) fn hit_rates(rig: &Rig, cam: &vxe_render::Camera) -> (Vec<Option<f64>>, usize) {
+        use vxe_render::sky::Sky;
+        let mut f = Frame::new(&rig.device, 320, 180);
+        f.set_lighting(Lighting {
+            lamp: false,
+            filter: false,
+            exposure: Exposure::Manual(1.0),
+            sky_rays: 1,
+            ..flythrough::default_lighting()
+        });
+        f.set_sky(Some(Sky {
+            altitude_zero_z: flythrough::outdoor::BASE_Z as f32,
+            ..Sky::uniform(1.0)
+        }));
+        let mut sum: Vec<f64> = Vec::new();
+        for _ in 0..64 {
+            f.step(
+                &rig.device,
+                &rig.queue,
+                &rig.gpu,
+                cam,
+                &LightParams::headlamp(),
+            );
+            let px = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, f.direct());
+            sum.resize(px.len(), 0.0);
+            for (s, p) in sum.iter_mut().zip(&px) {
+                *s += f64::from(p[1]) / 64.0 / std::f64::consts::PI;
+            }
+        }
+        let hits =
+            vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, f.light_hit_positions());
+        let rate = sum
+            .iter()
+            .zip(&hits)
+            .map(|(s, h)| (h[3] < 1.0e30).then_some(*s))
+            .collect();
+        (rate, f.direct().width() as usize)
+    }
+
+    /// One cell of the term matrix.
+    #[derive(Clone, Copy, Debug)]
+    pub(super) struct Cell {
+        /// "key": `sky_rays` 0; "sky": the key light hooked off; "both".
+        pub term: &'static str,
+        pub filter: bool,
+        /// The history's material and normal tests hooked off.
+        pub any_history: bool,
+        pub fsr2: bool,
+    }
+
+    /// What a cell read over its 64 still frames.
+    pub(super) struct CellReading {
+        /// Per display pixel, its frame-to-frame changes (levels of 255, largest channel).
+        pub changes: Vec<Vec<u8>>,
+        /// The display's width.
+        pub width: usize,
+        /// Per frame, the history counters: tested, material, normal, other.
+        pub rejections: Vec<[u32; 4]>,
+        /// The light pass's direct samples' luminance per frame and lighting pixel.
+        pub samples: Vec<Vec<f32>>,
+        pub grid_width: usize,
+        pub exposure: f32,
+    }
+
+    /// `cell` at `cam` under `sky` (the key light and the sky rays at the defaults otherwise, the
+    /// lamp off): 64 frames under the outdoor auto exposure (instant), then 64 at that exposure
+    /// pinned, reading the display's changes, the history counters and the direct samples.
+    pub(super) fn run_cell(
+        rig: &Rig,
+        cam: &vxe_render::Camera,
+        sky: vxe_render::sky::Sky,
+        cell: Cell,
+    ) -> CellReading {
+        use vxe_render::{LightHooks, UpscalerKind};
+        let mut f = if cell.fsr2 {
+            let mut f = Frame::with_sizes(&rig.device, [320, 180], [480, 270]);
+            f.set_upscaler_kind(
+                &rig.device,
+                UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default()),
+            );
+            f
+        } else {
+            Frame::new(&rig.device, 320, 180)
+        };
+        let base = Lighting {
+            lamp: false,
+            filter: cell.filter,
+            sky_rays: if cell.term == "key" { 0 } else { 1 },
+            ..flythrough::default_lighting()
+        };
+        f.set_light_hooks(LightHooks {
+            key_off: cell.term == "sky",
+            any_history: cell.any_history,
+        });
+        f.set_count_store(true);
+        f.set_lighting(Lighting {
+            exposure: Exposure::Auto(AutoExposure {
+                min: flythrough::cli::OUTDOOR_MIN,
+                max: flythrough::cli::OUTDOOR_MAX,
+                ..AutoExposure::instant()
+            }),
+            ..base
+        });
+        f.set_sky(Some(sky));
+        f.set_dt(1.0 / 60.0);
+        let light = LightParams::headlamp();
+        for _ in 0..64 {
+            f.step(&rig.device, &rig.queue, &rig.gpu, cam, &light);
+        }
+        let exposure = f
+            .exposure_readout(&rig.device)
+            .expect("the exposure")
+            .exposure;
+        f.set_lighting(Lighting {
+            exposure: Exposure::Manual(exposure),
+            ..base
+        });
+        let read = |f: &Frame| vxe_render::debug::read_rgba8(&rig.device, &rig.queue, f.target());
+        let mut last = read(&f);
+        let mut changes: Vec<Vec<u8>> = vec![Vec::new(); last.len() / 4];
+        let mut rejections = Vec::new();
+        let mut samples = Vec::new();
+        for _ in 0..64 {
+            f.step(&rig.device, &rig.queue, &rig.gpu, cam, &light);
+            let now = read(&f);
+            for (i, (a, b)) in now.chunks(4).zip(last.chunks(4)).enumerate() {
+                changes[i].push((0..3).map(|k| a[k].abs_diff(b[k])).max().unwrap_or(0));
+            }
+            last = now;
+            rejections.push(f.read_history_rejections(&rig.device, &rig.queue));
+            let d = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, f.direct());
+            samples.push(d.iter().map(|p| p[3]).collect());
+        }
+        CellReading {
+            width: f.target().width() as usize,
+            changes,
+            rejections,
+            samples,
+            grid_width: f.direct().width() as usize,
+            exposure,
+        }
+    }
+
+    /// Every cell of the matrix: the term (key, sky, both) by the filter (off, on) by the history
+    /// (as built, any) by the upscaler (native, FSR 2 at 1.5).
+    pub(super) fn cells() -> Vec<Cell> {
+        let mut v = Vec::new();
+        for fsr2 in [false, true] {
+            for term in ["key", "sky", "both"] {
+                for filter in [false, true] {
+                    for any_history in [false, true] {
+                        v.push(Cell {
+                            term,
+                            filter,
+                            any_history,
+                            fsr2,
+                        });
+                    }
+                }
+            }
+        }
+        v
+    }
+
+    /// A named region of a 320 x 180 frame's pixels.
+    pub(super) type Region<'a> = (&'a str, &'a dyn Fn(usize, usize) -> bool);
+
+    /// One table row: the cell, then per region its p99 and mean change, then the region's
+    /// firefly rate (direct samples over four times the region's mean sample), then the
+    /// history's reset share by cause over the frame's tested hits.
+    pub(super) fn print_row(pose: &str, cell: Cell, r: &CellReading, regions: &[Region<'_>]) {
+        use support::stillness::change_stats;
+        let mut line = format!(
+            "{pose:10} | {:4} | filter {:3} | history {:5} | {:6}",
+            cell.term,
+            if cell.filter { "on" } else { "off" },
+            if cell.any_history { "any" } else { "built" },
+            if cell.fsr2 { "fsr2" } else { "native" },
+        );
+        let height = r.changes.len() / r.width;
+        let gh = r.samples[0].len() / r.grid_width;
+        for (name, inside) in regions {
+            let (p99, mean, n) = change_stats(&r.changes, |i| {
+                inside(i % r.width * 320 / r.width, i / r.width * 180 / height)
+            });
+            // The region's direct samples on the lighting grid.
+            let grid: Vec<usize> = (0..r.grid_width * gh)
+                .filter(|&i| {
+                    inside(
+                        i % r.grid_width * 320 / r.grid_width,
+                        i / r.grid_width * 180 / gh,
+                    )
+                })
+                .collect();
+            let all: Vec<f32> = r
+                .samples
+                .iter()
+                .flat_map(|s| grid.iter().map(|&i| s[i]))
+                .collect();
+            let m = all.iter().map(|&v| f64::from(v)).sum::<f64>() / all.len().max(1) as f64;
+            let ff = all
+                .iter()
+                .filter(|&&v| f64::from(v) > 4.0 * m && m > 0.0)
+                .count() as f64
+                / all.len().max(1) as f64;
+            line += &format!(
+                " | {name} p99 {} mean {mean:.2} ({n} px) ff {ff:.4}",
+                p99.map_or("-".into(), |v| v.to_string())
+            );
+        }
+        let t: [u64; 4] =
+            std::array::from_fn(|k| r.rejections.iter().map(|w| u64::from(w[k])).sum());
+        let share = |k: usize| t[k] as f64 / t[0].max(1) as f64;
+        line += &format!(
+            " | reset {:.4} (material {:.4} normal {:.4} other {:.4}) | exposure {:.3e}",
+            share(1) + share(2) + share(3),
+            share(1),
+            share(2),
+            share(3),
+            r.exposure
+        );
+        println!("reading: {line}");
+    }
+
+    /// Plan 0086 Phase 1: the flicker split by term. The tunnel (`inside`, seed 1, 12:00, lamp
+    /// off) out of and into the tunnel, and the forest (`--trees forest`, `--sun 60,180`), each
+    /// through `cells()`: per region (in the tunnel the rim band, the hits at a sky-ray rate of
+    /// 0.3 to 0.6, and the far end, under 0.05; in the forest every hit) the p99 and mean
+    /// frame-to-frame change of the display, the firefly rate, and the history's reset share
+    /// by cause. Prints the table and each region's hit rate. `VXE_TEST_ADAPTER` picks the
+    /// adapter (unset: lavapipe).
+    #[test]
+    #[ignore = "reading"]
+    fn flicker_by_term() {
+        let noon = flythrough::daylight::Clock::default().sky(flythrough::outdoor::BASE_Z as f32);
+        if let Some((rig, views)) = tunnel_rig() {
+            println!("reading: flicker_by_term on {}", rig.adapter);
+            for (pose, cam) in &views {
+                let (rate, gw) = hit_rates(&rig, cam);
+                let gh = rate.len() / gw;
+                let at = |x: usize, y: usize| rate[(y * gh / 180) * gw + x * gw / 320];
+                let rim = |x: usize, y: usize| at(x, y).is_some_and(|r| (0.3..0.6).contains(&r));
+                let far = |x: usize, y: usize| at(x, y).is_some_and(|r| r < 0.05);
+                for (name, inside) in [
+                    ("rim", &rim as &dyn Fn(usize, usize) -> bool),
+                    ("far", &far),
+                ] {
+                    let rs: Vec<f64> = rate
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| inside(i % gw * 320 / gw, i / gw * 180 / gh))
+                        .filter_map(|(_, r)| *r)
+                        .collect();
+                    // The region's bounding rectangle at 320 x 180.
+                    let (mut x0, mut y0, mut x1, mut y1) = (320, 180, 0, 0);
+                    for y in 0..180 {
+                        for x in 0..320 {
+                            if inside(x, y) {
+                                (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+                            }
+                        }
+                    }
+                    println!(
+                        "reading: {pose} {name}: {} lighting px, mean hit rate {:.4}, rect [{x0}, {y0}, {x1}, {y1}]",
+                        rs.len(),
+                        rs.iter().sum::<f64>() / rs.len().max(1) as f64
+                    );
+                }
+                for cell in cells() {
+                    let r = run_cell(&rig, cam, noon, cell);
+                    print_row(pose, cell, &r, &[("rim", &rim), ("far", &far)]);
+                }
+            }
+        }
+        let clock = flythrough::daylight::Clock {
+            fixed_sun: Some([60.0, 180.0]),
+            ..Default::default()
+        };
+        let sky = clock.sky(flythrough::outdoor::BASE_Z as f32);
+        if let Some((rig, cam)) = forest_rig() {
+            let (rate, gw) = hit_rates(&rig, &cam);
+            let gh = rate.len() / gw;
+            let hit = |x: usize, y: usize| rate[(y * gh / 180) * gw + x * gw / 320].is_some();
+            for cell in cells() {
+                let r = run_cell(&rig, &cam, sky, cell);
+                print_row("forest", cell, &r, &[("ground", &hit)]);
+            }
+        }
+    }
 }

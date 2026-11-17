@@ -7,6 +7,10 @@ use super::*;
 /// (missing, brick reads, coarse reads, fallback, still black).
 pub(super) const STORE_STATS_BYTES: u64 = 20;
 
+/// Bytes of the temporal pass's counter buffer: the store's five words, then the history
+/// test's four ([`Frame::read_history_rejections`]).
+pub(super) const COUNTER_BYTES: u64 = 36;
+
 /// Holds the light-sample ranges out to every chunk of `extent`'s reach (its farthest corner from
 /// the focus chunk, plus the light radius and one, for a job's box) and syncs until they settle.
 pub(super) fn hold_reach(
@@ -84,7 +88,7 @@ impl BakeLink {
             count_store: false,
             counters: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("store counters"),
-                size: STORE_STATS_BYTES,
+                size: COUNTER_BYTES,
                 usage: wgpu::BufferUsages::STORAGE
                     | wgpu::BufferUsages::COPY_SRC
                     | wgpu::BufferUsages::COPY_DST,
@@ -454,6 +458,35 @@ impl Frame {
     /// Whether the temporal pass counts the store's reads ([`Frame::set_count_store`]).
     pub fn counts_store(&self) -> bool {
         self.baked.count_store
+    }
+
+    /// The temporal pass's history test over the last submitted encode, a blocking read (zeros
+    /// with [`Frame::set_count_store`] off): the hits it tested (a hit with history on, outside
+    /// an edit box), then of those whose history reset (no tap accepted, by the bilinear four
+    /// or the 3 x 3 search), the nearest previous pixel's first failing test in the order
+    /// material, normal, position (any other: no hit there, another thing, or a pixel off the
+    /// grid).
+    pub fn read_history_rejections(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> [u32; 4] {
+        let bytes = crate::readback::read_buffer(
+            device,
+            queue,
+            &self.baked.counters,
+            STORE_STATS_BYTES,
+            COUNTER_BYTES - STORE_STATS_BYTES,
+        );
+        std::array::from_fn(|i| {
+            u32::from_le_bytes([
+                bytes[4 * i],
+                bytes[4 * i + 1],
+                bytes[4 * i + 2],
+                bytes[4 * i + 3],
+            ])
+        })
+    }
+
+    /// The light passes' reading hooks ([`LightHooks`]; all off by default).
+    pub fn set_light_hooks(&mut self, hooks: LightHooks) {
+        self.state.hooks = hooks;
     }
 
     /// The store's counters; `missing` is a blocking read of the last submitted encode's

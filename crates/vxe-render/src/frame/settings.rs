@@ -183,6 +183,41 @@ pub(crate) const LIGHTING_YOUNG_EDGES: u32 = 1 << 4;
 /// around it ([`EntityLight::World`]).
 pub(crate) const LIGHTING_ENTITY_WORLD: u32 = 1 << 7;
 
+/// `Params::lighting` bit, a reading hook ([`LightHooks::key_off`]): the light pass adds no key
+/// light sample, so the direct part's sky term is the sky rays' alone.
+pub(crate) const LIGHTING_HOOK_KEY_OFF: u32 = 1 << 16;
+
+/// `Params::lighting` bit, a reading hook ([`LightHooks::any_history`]): the temporal pass
+/// accepts a reprojected tap whatever its material and normal (the thing and the position
+/// tests still hold).
+pub(crate) const LIGHTING_HOOK_ANY_HISTORY: u32 = 1 << 17;
+
+/// The light passes' reading hooks ([`Frame::set_light_hooks`]): switches that take a term or a
+/// test out of the frame to attribute what the image does to it. All off by default; each is
+/// a uniform branch on a `Params::lighting` bit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LightHooks {
+    /// The light pass adds no key light sample.
+    pub key_off: bool,
+    /// The temporal pass's history test drops its material and normal tests.
+    pub any_history: bool,
+}
+
+impl LightHooks {
+    /// The hooks' `Params::lighting` bits.
+    pub(super) fn bits(self) -> u32 {
+        (if self.key_off {
+            LIGHTING_HOOK_KEY_OFF
+        } else {
+            0
+        }) | if self.any_history {
+            LIGHTING_HOOK_ANY_HISTORY
+        } else {
+            0
+        }
+    }
+}
+
 /// `Params::flags` bit: trace the shadow ray.
 pub(crate) const FLAG_SHADOWS: u32 = 1;
 

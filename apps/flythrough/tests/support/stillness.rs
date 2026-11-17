@@ -527,3 +527,20 @@ fn filmstrip(
         }
     );
 }
+
+/// Over the display pixels `inside` keeps, of per-pixel frame-to-frame changes `per_px` (levels
+/// of 255, the largest channel): the 99th percentile, the mean, and the pixels kept. `None`
+/// for the percentile with no pixel.
+pub fn change_stats(
+    per_px: &[Vec<u8>],
+    inside: impl Fn(usize) -> bool,
+) -> (Option<u8>, f64, usize) {
+    let mut v: Vec<u8> = (0..per_px.len())
+        .filter(|&i| inside(i))
+        .flat_map(|i| per_px[i].iter().copied())
+        .collect();
+    let n = (0..per_px.len()).filter(|&i| inside(i)).count();
+    let mean = v.iter().map(|&c| f64::from(c)).sum::<f64>() / v.len().max(1) as f64;
+    v.sort_unstable();
+    (v.get(v.len() * 99 / 100).copied(), mean, n)
+}

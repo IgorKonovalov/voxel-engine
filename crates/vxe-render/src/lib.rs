@@ -104,10 +104,10 @@ pub use frame::{
     MAX_LIGHTS, MAX_SKY_RAYS, Params, Upscaler,
 };
 pub use frame::{
-    CrackShares, EntityLight, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, LightWeights,
-    Lighting, LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher,
-    NormalMode, PassTimer, RenderScale, ShadowWalk, StoreRead, SurfaceTuning, ToneMap, ViewMode,
-    YoungFilter, jitter_at,
+    CrackShares, EntityLight, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, LightHooks,
+    LightWeights, Lighting, LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS,
+    MarchTimer, Marcher, NormalMode, PassTimer, RenderScale, ShadowWalk, StoreRead, SurfaceTuning,
+    ToneMap, ViewMode, YoungFilter, jitter_at,
 };
 pub use fsr2::{Fsr2, Fsr2Settings, UpscalerKind};
 pub use gpu_world::{

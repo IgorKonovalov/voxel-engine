@@ -38,7 +38,7 @@ fn sky_shadowed(o: vec3<f32>, d: vec3<f32>, len: f32) -> bool {
 // sky, else 0; 0 with no key light. No firefly clamp: the term is bounded.
 fn key_sample(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>, px: vec2<u32>) -> vec3<f32> {
     let k = key_light_at(p, n);
-    if (all(k <= vec3<f32>(0.0))) {
+    if (all(k <= vec3<f32>(0.0)) || (params.lighting & LIGHTING_HOOK_KEY_OFF) != 0u) {
         return vec3<f32>(0.0);
     }
     let d = disc_direction(sky.key_dir, sky.key_radius, rand(px, KEY_DIM), rand(px, KEY_DIM + 1u));

@@ -224,6 +224,7 @@ impl Frame {
                 [self.targets.width, self.targets.height]
             },
             lighting: self.state.lighting.flags()
+                | self.state.hooks.bits()
                 | if self
                     .state
                     .emission_changed_at

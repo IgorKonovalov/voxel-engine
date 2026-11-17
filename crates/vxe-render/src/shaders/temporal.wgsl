@@ -29,14 +29,18 @@
 //                                        over the 3 x 3 strata around the reprojected pixel's
 //                                        (clamped to 1), and the age falls by that fraction
 //  11  storage, read      store           the store (ADR-0046, `bake::Store`)
-//  12  storage           counters        five words, written only where the pipeline's
+//  12  storage           counters        nine words, written only where the pipeline's
 //                                        COUNT_STORE is true: word 0 counts this frame's
 //                                        cube-face hits with no brick record value
 //                                        (`store_missing`), word 1 those that read one, word 2
 //                                        those whose voxel's chunk holds a coarse block
 //                                        (TABLE_COARSE); of word 0's, word 3 those the
 //                                        missing-light chain gave a value, word 4 those it left
-//                                        black (every one of them under `black`)
+//                                        black (every one of them under `black`); word 5 the
+//                                        hits the history test ran on, and of those whose
+//                                        history reset, the nearest previous pixel's first
+//                                        failing test: word 6 the material, word 7 the
+//                                        normal, word 8 any other (`count_rejection`)
 //  13  texture_2d<f32>   direct_in       this frame's direct part from the light pass
 //  14  texture_2d<f32>   prev_direct_in  last frame's accumulated direct part
 //  15  storage texture   direct_out      rgba16float: the accumulated direct part, the list's
@@ -119,7 +123,7 @@ const ENTITY_STORE_CELLS: u32 = 4u;
 @group(2) @binding(9) var<uniform> edits: Edits;
 @group(2) @binding(10) var strata_in: texture_2d<f32>;
 @group(2) @binding(11) var<storage, read> store: array<u32>;
-@group(2) @binding(12) var<storage, read_write> counters: array<atomic<u32>, 5>;
+@group(2) @binding(12) var<storage, read_write> counters: array<atomic<u32>, 9>;
 @group(2) @binding(13) var direct_in: texture_2d<f32>;
 @group(2) @binding(14) var prev_direct_in: texture_2d<f32>;
 @group(2) @binding(15) var direct_out: texture_storage_2d<rgba16float, write>;
@@ -362,6 +366,31 @@ fn gradient_at(q: vec2<f32>) -> f32 {
     return sum / max(count, 1.0);
 }
 
+// Whether previous hit `prev` agrees with this frame's hit `rec` (reprojected to `pp`) within
+// `tol` voxels: a hit of the same thing, with the same material and a normal within
+// HISTORY_COS, or with LIGHTING_HOOK_ANY_HISTORY whatever the material and normal.
+fn history_agrees(prev: HitRecord, rec: HitRecord, pp: vec3<f32>, tol: f32) -> bool {
+    if (!prev.found || !same_thing(prev, rec) || distance(prev.p, pp) > tol) {
+        return false;
+    }
+    if ((params.lighting & LIGHTING_HOOK_ANY_HISTORY) != 0u) {
+        return true;
+    }
+    return prev.material == rec.material && dot(prev.n, rec.n) >= HISTORY_COS;
+}
+
+// Counts a reset pixel's cause into `counters` (COUNT_STORE only): the first test previous
+// hit `prev` fails, in the order material (word 6), normal (word 7), anything else (word 8).
+fn count_rejection(prev: HitRecord, rec: HitRecord) {
+    if (prev.found && same_thing(prev, rec) && prev.material != rec.material) {
+        atomicAdd(&counters[6], 1u);
+    } else if (prev.found && same_thing(prev, rec) && dot(prev.n, rec.n) < HISTORY_COS) {
+        atomicAdd(&counters[7], 1u);
+    } else {
+        atomicAdd(&counters[8], 1u);
+    }
+}
+
 const ALPHA: f32 = 0.2;
 // The age at which a fallback's emissive mean stops taking samples: 64 samples, its noise an
 // eighth of one sample's, then held until the pixel resets.
@@ -485,8 +514,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 continue;
             }
             let prev = unpack_hit(textureLoad(prev_pos_in, tap, 0), textureLoad(prev_info_in, tap, 0));
-            if (!prev.found || !same_thing(prev, rec) || prev.material != rec.material
-                || dot(prev.n, rec.n) < HISTORY_COS || distance(prev.p, pp) > tol) {
+            if (!history_agrees(prev, rec, pp, tol)) {
                 continue;
             }
             let wx = select(1.0 - f.x, f.x, o.x == 1);
@@ -524,8 +552,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 }
                 let prev = unpack_hit(textureLoad(prev_pos_in, tap, 0), textureLoad(prev_info_in, tap, 0));
                 let d = distance(prev.p, pp);
-                if (!prev.found || !same_thing(prev, rec) || prev.material != rec.material
-                    || dot(prev.n, rec.n) < HISTORY_COS || d > best) {
+                if (!history_agrees(prev, rec, pp, best)) {
                     continue;
                 }
                 best = d;
@@ -535,6 +562,16 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 best_w = 1.0;
                 best_h = h.xyz;
                 m = textureLoad(prev_moments_in, tap, 0).xyz;
+            }
+        }
+        if (COUNT_STORE) {
+            atomicAdd(&counters[5], 1u);
+            if (w_sum <= 1e-3) {
+                var prev = HitRecord();
+                if (on_light_grid(near)) {
+                    prev = unpack_hit(textureLoad(prev_pos_in, near, 0), textureLoad(prev_info_in, near, 0));
+                }
+                count_rejection(prev, rec);
             }
         }
         if (w_sum > 1e-3) {
