@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0070.**
+**Next free number: 0072.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -84,6 +84,7 @@ the status.
 | [0067](0067-a-staged-structure-is-a-sequence-of-logged-stamps-over-the-map-with-a-write-policy-not-an-entity.md) | A staged structure is a sequence of logged stamps over the map with a write policy, not an entity | proposed (Plan 0084) |
 | [0068](0068-an-entitys-variants-are-recipes-in-its-model-a-volume-per-part-and-a-palette-per-variant-picked-per-instance.md) | An entity's variants are recipes in its model: a volume per part and a palette per variant, picked per instance by one index | proposed (Plan 0085) |
 | [0069](0069-a-posed-entity-enters-the-world-as-a-baked-prefab-clipped-to-air-through-the-stamp-op.md) | A posed entity enters the world as a baked prefab, clipped to air on the server, through the stamp op | proposed (Plan 0085) |
+| [0071](0071-the-engine-takes-a-name-one-word-for-the-project-the-crate-prefix-the-repository-and-the-archive.md) | The engine takes a name: one word that is the project, the crate prefix, the repository and the archive | accepted (owner, 2026-11-17: `svet`; Plan 0087, draft) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded
