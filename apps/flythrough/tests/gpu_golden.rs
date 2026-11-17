@@ -1551,12 +1551,6 @@ fn profile_hall_golden(p: vxe_render::Profile) {
 
 #[test]
 #[ignore = "soak"]
-fn portable_profile_golden() {
-    profile_hall_golden(vxe_render::Profile::Portable);
-}
-
-#[test]
-#[ignore = "soak"]
 fn performance_profile_golden() {
     profile_hall_golden(vxe_render::Profile::Performance);
 }

@@ -379,8 +379,8 @@ the readings cannot see. No determinism risk: nothing here reaches `vxe-world`'s
 | 3: the profiles, in the fly-through and the tester | dev | done; `Default` = Floor for `RenderSettings` only, as the 2026-11-17 amendment reads (Notes) | code e0c75597, e73cf935; row 55e62a13 |
 | 4: readings of each profile on both adapters | dev | done; most cells loaded, not quiet; RENOIR portable hall hit pass 10.5 ms, accepted by the 2026-11-17 amendment (Notes) | 356b32a1 |
 | 5: the owner's window | human | done 2026-11-17 09:20-09:38; the owner's words in the readings log, Phase 5; High offered as a fourth profile | cae1935f |
-| 6: the picks into the profiles | dev | done; `Profile::High` added (Notes) | committed with this row |
-| 7: image tests against the picks, and the tip's readings | dev | not started | |
+| 6: the picks into the profiles | dev | done; `Profile::High` added (Notes) | 22e1fc2d; tester 9390b033 |
+| 7: image tests against the picks, and the tip's readings | dev | done; portable's golden at the castle gate (the 2026-11-17 amendment); a high golden added (Notes) | committed with this row |
 
 ### Notes
 
@@ -432,6 +432,11 @@ the readings cannot see. No determinism risk: nothing here reaches `vxe-world`'s
   moves). `High` is last in the cycle (owner: "yes"). The tester's quality menu offers high
   (owner: "yes"), an edit outside Phase 6's files: `apps/tester/src/run.rs`,
   `apps/tester/tests/run.rs`, `dist/README-TESTER.txt`.
+- Phase 7 deviations: `high_profile_golden` (the hall) is a third profile golden beside the
+  plan's two; `portable_profile_golden` is in `gpu_castle_golden.rs` at the gate pose (the
+  2026-11-17 amendment, 8fafd02c), sharing `gate_image` with `castle_gate_golden`; all three
+  are born `#[ignore = "soak"]` (15 to 48 s on lavapipe). The tip's readings are loaded
+  (indicative) in most cells, and were taken with the release binary of 9390b033's code.
 
 ### Close triggers
 

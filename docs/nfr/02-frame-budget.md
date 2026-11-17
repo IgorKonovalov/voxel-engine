@@ -951,3 +951,29 @@ per-pass lines are in `docs/plans/logs/0056.md`.
 **The list of analytic lights (Plan 0058, the Phase 3 cost table at a616204 and Phase 5g at 71b4478, release, headless, `--level --seed 1`, 1920 x 1080, FSR 2 at 1.5, the frame line's median of 30 timed frames after 900, exclusive perf lock, each run started at a 1-minute load of 2 or less except one 8-light arm at 9.4 that was rerun at 15.3, one round each against the plan's three).** RTX 3080 Laptop GPU, lamp off, at the spawn: the light pass reads 0.031 ms with no light, then 0.142, 0.328, 0.730, 1.430 and 2.699 ms at 1, 2, 4, 8 and 16 list lights. That is 0.167 to 0.175 ms per light in reach, against the plan's projection of 0.08 to 0.12. At the vein it reads 0.031 ms with none, 0.556 at 8 and 1.050 at 16. The GPU frame is 2.181 ms with none and 5.314 ms with sixteen (5.406 with the lamp and fifteen). RADV RENOIR at the spawn: the light pass reads 0.221 ms with none and 24.790 ms at sixteen, 1.54 ms per light, and the GPU frame 17.072 against 43.882 ms. At the vein it reads 8.974 ms at sixteen and the frame 26.900. **The RENOIR's light pass at sixteen is over section 2's 6.0 ms lighting line**. The plan claims no line, and Plan 0069's Portable profile caps the count (4, a guess). Denoise: any shaded light switches off Plan 0065's lamp-off skips, so with one light or more the a-trous at 4 iterations reads 0.537 to 0.562 ms (0.164 with none) on the RTX, 0.296 to 0.310 at 2 and 0.176 to 0.186 at 1. The RENOIR reads 3.220 to 3.243 ms at 4 with any light or the lamp, over the 3.0 ms denoise line. Temporal: 0.088 to 0.096 ms on the RTX against 0.055. Probes and gather with the lamp's bounce on: 0.006 and 0.126 to 0.161 ms with 0, 1 or 4 flagged lights at 900 frames, which is the frozen channel (0.138 ms probes at 300 frames). The steps view counts exactly one shadow ray per light in reach per casting pixel. The sync's stages are unmoved: the list never reaches the mirror. Rows in `docs/plans/logs/0058.md`, Phase 3 and Phase 5g.
 
 **The frame's bind groups kept and the march's discarded reads removed (Plan 0044 Phases 3 and 5, base 371fa7a, Phase 3 2056310, tip 777abc0, release, headless, `flythrough --autopilot --headless --seed 1`, the defaults: 1280 x 720 output, FSR 2 from 853 x 480, half lighting, streamed level; the three binaries alternated over two rounds, exclusive perf lock, each run started at a 1-minute load of 2.00 or less, 1.63 to 2.36 at the lock, 2026-11-15/16).** p50 in ms, base then tip, per round. RTX 3080 Laptop GPU: march GPU 1.574, 2.397 against 1.478, 1.436 (the base's rounds swing with the flight's frame count, 3434 and 2457 frames; the tip's read 4082 and 3969); hit pass 0.084, 0.127 against 0.081, 0.084; light pass 0.109, 0.191 against 0.089, 0.090. RADV RENOIR: march GPU 9.047, 8.799 against 8.941, 8.972; hit pass 0.906, 0.946 against 0.925, 0.852; light pass 0.644, 0.639 against 0.640, 0.641; the Phase 3 binary alone read 9.427 and 9.195 there, inside the flight-to-flight swing. Encode CPU (`gpu_frame.rs` `reading::encode_cpu_time_at_the_default_sizes`, 853 x 480 to 1280 x 720 under FSR 2, 300 encodes, loaded 3.7 to 9.5): p50 0.20 to 0.03 ms on the RTX and 0.22 to 0.06 ms on the RENOIR. The hit and light passes are far under the 3.0 and 6.0 ms lines here; the upscale line stays over under FSR 2 (above). Rows in `docs/plans/logs/0044.md`, Phase 3 and Close.
+
+**The render profiles (Plan 0069 Phase 7, 2026-11-17, release `flythrough` at the code of
+9390b033, `--headless --hud --frames 600 --adapter NVIDIA|Radeon --profile P`, the vein
+`--level --seed 1 --pose vein`, the hall `--source showcase --shot hall`, the castle `--castle
+--castle-shot gate --seed 1`, the frame line's `march GPU p50` (FSR 2's passes included, the
+bake slice not), the median of three alternated rounds, one exclusive perf lock per run; most
+rounds read a 1-minute load over 2, so every figure is loaded (indicative)).** Every pass and
+round: [Plan 0069's readings log](../plans/logs/0069.md), Phase 7. Frame GPU in ms, vein /
+hall / castle; the line each profile is held to is the owner's pick at Plan 0069's window.
+
+- *Floor, RTX 3080 Laptop* (1920 x 1080 from 1280 x 720, FSR 2): 2.92 / 4.25 / 4.19; FSR 2
+  1.32 to 1.34; hit 0.37 / 2.44 / 1.49. Inside the 16.6 ms line.
+- *Floor, RADV RENOIR*: 19.81 / 34.82 / 30.71; FSR 2 9.38 to 9.52; hit 3.20 / 21.62 / 13.51.
+  Over the 16.6 ms line, as expected below the floor's class.
+- *Portable, RTX 3080 Laptop* (1280 x 720 from 853 x 480, FSR 2, 2 translucent layers, light
+  cap 4, no lamp bounce, residency 12, 18, 1): 1.21 / 1.99 / 1.84; FSR 2 0.60 to 0.61.
+  The `own` arm: 1.10 / 1.63 / 1.48.
+- *Portable, RADV RENOIR*: 8.14 / 16.30 / 13.88; FSR 2 4.06 to 4.08; hit 1.44 / 10.52 / 6.74.
+  Inside the 33.3 ms column. The `own` arm: 5.77 / 13.80 / 11.68.
+- *Performance, RTX 3080 Laptop* (2530 x 1378 from 1265 x 689, FSR 2): 3.39 / 4.72 / 4.63;
+  FSR 2 1.80 to 1.84. No gate.
+- *Performance, RADV RENOIR*: 22.59 / 36.80 / 34.18; FSR 2 12.43 to 12.59. No gate.
+- *High, RTX 3080 Laptop* (1920 x 1080 at internal scale 1, FSR 2): 5.31 / 8.25 / 7.77; FSR 2
+  2.01 to 2.04; hit 0.82 / 5.25 / 3.27. No gate.
+- *High, RADV RENOIR*: 38.64 / 68.46 / 60.07; FSR 2 15.34 to 15.82. Not a profile for this
+  adapter (owner, Plan 0069's window: "no"). No gate.
