@@ -61,9 +61,17 @@ and the redirect dies if a new repository takes the old name
 
 We give the engine one word, and that word is the project name, the crate prefix, the
 repository name, the environment-variable prefix, the WIT package namespace and the tester
-archive's name, changed together in one plan. **The word is the owner's pick from the
-shortlist below; the recommendation is `karst`, with `doline` as the runner-up.** Until the
-pick, the project keeps `voxel-engine` and `vxe-`.
+archive's name, changed together in one plan. **The word is the owner's pick from the two
+shortlists below; the recommendation is `karst`, with `svet` as the runner-up and `doline`
+third.** Until the pick, the project keeps `voxel-engine` and `vxe-`.
+
+Two sweeps fed the shortlists. The first (Appendix A) worked from rock, hollows and carving;
+the second (Appendix C), asked for by the owner, from light and its physics, ray marching,
+entities and animated figures, cave and night animals, spiders, and rock and mineral types.
+The second sweep found no word that beats `karst` on meaning and pronunciation together, but
+it found two with a clean registry where `karst`'s bare crate is held by someone else:
+`svet` (Slavic "light", and "the world") and `zarevo` (Russian "the glow of a fire on the
+sky"). An owner who weighs the bare-crate collision above the word's reach picks `svet`.
 
 The criteria, in the order they were applied:
 
@@ -149,8 +157,10 @@ owner asks.
 - Historical records keep the old prefix forever (by design), so a reader of ADR-0002 meets
   `vxe-world` and needs the index's sentence to map it.
 - The bare `karst` crate is not ours (see the shortlist); if its holder ships a volume renderer
-  under it, two volumetric projects share a word on crates.io. `doline` and `saxum` avoid this
-  at the price of a less known word.
+  under it, two volumetric projects share a word on crates.io. `svet`, `zarevo`, `doline` and
+  `saxum` avoid this at the price of a word fewer readers know.
+- `svet` is one letter from `svelte` in the eyes of a web developer, and a near-homophone of
+  Swedish and Norwegian "svett" (sweat); neither is the word, both will be heard.
 - The name is picked from words that are free today; a check is a snapshot, and the ADR's
   acceptance re-runs the crates.io sweep for the picked word on the day of the rename.
 
@@ -179,9 +189,9 @@ not be the renderer forever (the field surface is already an opt-in look, ADR-00
 
 ### Alternative D: the other shortlisted words
 
-Each is a real alternative with its own evidence in the table below; none lost on a rule, only
-on the ordering of criteria 1 and 4. The owner may pick any of them, and this ADR is accepted
-with that word.
+Each is a real alternative with its own evidence in the tables below (Appendix A and C); none
+lost on a rule, only on the ordering of criteria 1 and 4. The owner may pick any of them, and
+this ADR is accepted with that word.
 
 ## Appendix A: the shortlist, with evidence
 
@@ -196,7 +206,7 @@ Meanings from Wiktionary and Wikipedia. "Collisions" lists what a search for the
 | Name | Meaning, sound | crates.io | GitHub | Collisions | Domains | Verdict |
 |---|---|---|---|---|---|---|
 | **karst** | Landscape of caves, sinkholes and underground rivers dissolved out of limestone; the word is German from Slovene *kras*, written `Karst` in German, `karst` in French and Spanish, карст in Russian; one syllable, no ambiguity | bare **taken**: `0.0.0-reserved`, "A library for high-performance rendering of massive volumetric images", published 2024-09-15, no repository, 1224 downloads; owner LDeakin, whose GitHub carries a Vulkan volume renderer (`VkVolume`, 35 stars). **All nine prefix forms free.** | 703 repos; top `karstnet/karstnet` (22, Python karst networks), `aparis69/Karst-Synthesis` (20, a CGF paper's code). No engine | Two small games: *Karst* (3D first-person cave puzzle, itch.io and Steam, indie) and *KARST: Speed the Void* (web speedrun, beta 2026); Karst Games LLC (mobile puzzles, Missouri). No software product | `.dev` and `.org` registered, `.io` and `.rs` free | **Recommended.** Best fit to criterion 1, perfect on 2 and 5; the bare crate is a two-year placeholder in an adjacent field (scientific volume imaging), contestable under the squatting policy or simply left alone |
-| **doline** | A hollow in karst where the roof gave way: a sinkhole; from Slavic *dolina* "valley", German `Doline`, French `doline`, Spanish `dolina`; English "DOH-leen" or "doh-LEEN" | bare **free**; all nine prefix forms free | 73 repos, none above 3 stars (`rok/dolines`, a map of Slovenian dolines) | Nothing found for software, engine, game or company | `.dev`, `.io`, `.rs` free; `.org` registered | **Runner-up.** Karst's family with no collision at all; the collapse ops make it apt; less known than karst, and the pronunciation forks |
+| **doline** | A hollow in karst where the roof gave way: a sinkhole; from Slavic *dolina* "valley", German `Doline`, French `doline`, Spanish `dolina`; English "DOH-leen" or "doh-LEEN" | bare **free**; all nine prefix forms free | 73 repos, none above 3 stars (`rok/dolines`, a map of Slovenian dolines) | Nothing found for software, engine, game or company | `.dev`, `.io`, `.rs` free; `.org` registered | **Third overall** (runner-up of this sweep). Karst's family with no collision at all; the collapse ops make it apt; less known than karst, and the pronunciation forks |
 | **saxum** | Latin "a rock, a large rough stone" (Lewis & Short); "SAK-sum"; no modern-language meaning | bare **free**; all nine prefix forms free | 44 repos, none above 1 star (a student marble-puzzle game, a Mexican landing page); GitHub organisation `Saxum` exists, empty | A 2014/15 student game at RWTH Aachen; trademarks held by a vineyard, a PR firm, a real-estate partnership and an engineering contractor, all outside software | `.dev` and `.org` registered, `.io` and `.rs` free | Clean coinage-like option; says only "stone", nothing of hollows, light or sound; reads close to "Saxon" |
 | **grotto** | A small cave, natural or made; Italian *grotta*, from Greek *kryptē*; every European language has a cognate; "GROT-oh" | bare **free**; all nine prefix forms free | 487 repos; top a 2D platformer asset pack (33), `GrottoCenter` (a caving database, 19) | *Grotto* (a narrative game published by Digerati), Grotto (an Avalanche indie-game platform with a runtime SDK, 2026), Secret Grotto Game Engine (SourceForge, SFML), `jacksery/grotto` (a hobby OpenGL engine) | `.dev` and `.org` registered, `.io` and `.rs` free | The friendliest word on the list; loses on criterion 4 (two hobby engines and a game platform) and reads soft for a stone engine |
 | **grike** | A deep fissure between the blocks of a limestone pavement (British English, /ɡɹaɪk/); appears in *Ulysses* | bare **free**; `-world` and `-render` free | 6 repos, none above 0 stars | Nothing found | `.dev`, `.io`, `.org`, `.rs` all free | The only word with every namespace free; obscure outside Britain and reads close to "gripe" |
@@ -288,6 +298,107 @@ noise), `tellus` (taken), `brokkr` (Norse smith; taken: a task queue), `svarog` 
 smith-god; taken: an SVG library; two Svarog games and a Svarog Studios). Cut before the
 registry: `vulcan` (Vulkan), `wayland` (the display protocol), `gaia`, `nyx`, `sampo` (a
 Finnish financial group), `durin`, `mimir`.
+
+## Appendix C: the second sweep: light, rays, entities, animals, spiders, rocks
+
+Asked for by the owner on 2026-11-17 after the first shortlist: "something related to light,
+ray tracing, entities", then "animals, spiders, types of rocks". The same bar as Appendix A,
+run the same day: 199 more words through crates.io (bare, `-world`, `-render`) and the GitHub
+search, the survivors through the nine prefix forms, `rdap.org` and a web search. One finding
+shapes this whole sweep: **the light and ray words are the most crowded namespace on crates.io
+and GitHub.** `lambent`, `glim`, `lueur` ("shadowy game and graphics library"), `luma` ("lazy
+GPU arrays on wgpu"), `lumo` ("CPU based rendering engine"), `valo` ("a 2D render engine on
+wgpu", published 2026-11-17), `albedo`, `radiance`, `irradiance`, `photon`, `lumen`, `umbra`,
+`penumbra`, `glint`, `wick`, `candela`, `ember`, `phos`, `beam`, `flare`, `halo`, `nimbus`,
+`corona`, `candle`, `taper`, `dusk`, `dawn` (a reserved placeholder since 2019) are all
+registered; so are `golem` ("a library for graphics programming"), `karakuri` ("an automata
+framework"), `homunculus` ("3D modeling library"), `anima`, `animus`, `automaton`, `puppet`,
+`marionette`, `eidolon`, `tulpa` (a 2026-09 placeholder) and `theia`; and of the rocks and
+minerals, 37 of the 49 checked, among them `feldspar` (a 2015 placeholder, "Nothing Yet"; on GitHub
+`bonsairobo/feldspar` is "procedural voxel worlds for Bevy"), `hematite` (the Piston Minecraft clone), `basalt` (a
+Vulkan UI), `granite` (also Themaister's Vulkan renderer on GitHub), `pyrite` (also an N64
+engine), `galena`, `gneiss`, `schist`, `obsidian`, `slate`, `quartz`, `onyx`, `marble`,
+`agate`, `geode`, `tuff`, `gabbro`, `scoria`, `kyanite`, `rutile`, `skarn`, `tephra`,
+`moraine`, `syenite` (a placeholder) and `spinel`. Among spiders and cave animals, every web
+or crawling word belongs to a crawler (`anansi` is a Rust web framework, `ragno`, `kumo` and
+`recluse` are Rust crawlers, `pholcus` a Go one; `gossamer`, `weft`, `skein`, `clew`, `weaver`,
+`spinneret`, `nema`, `filum` are taken), `arachne` is a Nix framework crate, `portia` was
+published on 2026-11-08 and `luciola` on 2026-11-16, `talpa`, `tyto`, `strix`, `noctua`, `firefly`,
+`glowworm`, `owl`, `newt`, `mole`, `moth`, `badger`, `wombat` and `pangolin` are all gone, and
+`olm` is unsearchable next to AllenAI's OLMo (6737 stars) and olmocr (19829).
+
+The finalists. Every one has the bare crate and all nine prefix forms free on crates.io
+(swept 2026-11-17); the "Domains" column is `.dev/.io/.org/.rs` from `rdap.org`, and the
+GitHub user of the same name is noted when it exists.
+
+| Name | Angle; meaning, sound | GitHub | Collisions | Domains | Verdict |
+|---|---|---|---|---|---|
+| **svet** | Light. Slavic *svet* / свет: "light", and in the same languages "the world" (Russian *весь свет*, Czech *svět*, Slovene and Serbo-Croatian *svet*); one syllable, four letters, said the same everywhere | 6216 repos match, almost all Svelte-adjacent (`svetch`); none is a product; user `svet` (12 repos) | None found for software, engine or game. One letter from `svelte`; near-homophone of Swedish and Norwegian *svett*, "sweat" | `.io`, `.rs` free; `.dev`, `.org` registered | **Recommended in this sweep, runner-up overall.** The only word checked that says both "light" and "world"; clean registry; the price is the svelte/svett echo and a word Slavic readers own |
+| **zarevo** | Light. Russian зарево: the glow of a distant fire or of dawn on the sky; "za-RE-vo", three syllables, no diacritics | 11 repos, none above 1 star; GitHub organisation `zarevo` exists, empty | None found | `.dev`, `.io`, `.rs` free; `.org` registered | **Runner-up in this sweep.** The look the engine is after (a steady glow in the dark) in one word, every namespace empty; meaning opaque outside Slavic languages, and the longest word on either list |
+| **aktis** | Ray. Greek ἀκτίς, "ray, beam" (modern *aktina*); "AK-tis" | 49 repos; `cfr/aktis` (a toy path tracer, 3 stars), `timlittle/aktis` (a raycasting game engine, 1 star) | Czech software firm Actis (actis.cz) by sound only; no product | `.io`, `.rs` free; `.dev`, `.org` registered | The ray-tracing word that is still free; says the renderer and nothing else; two one-person hobby tracers already picked it, which shows the fit and the risk |
+| **candor** | Light. Latin *candor*, "dazzling whiteness, radiance", whence English "candour/candor": frankness. Light and honest cubes in one word; "KAN-dor" | 625 repos; `indutny/candor` (an experimental language VM, 176 stars) | Candor Technology (mortgage AI), Candor (YC W25), CandorIQ: business software, not graphics. The US/UK spelling fork | `.io`, `.rs` free; `.dev`, `.org` registered | The strongest double meaning after `svet`; loses on being a common English word (unsearchable) owned by several companies |
+| **raylith** | Ray + stone. Coinage from *ray* and Greek *lithos*; "RAY-lith" | 3 repos, a student's; user `raylith` exists (3 repos) | None found. One letter-pair from `raylib`, the C game library, which a reader will see | `.dev`, `.io`, `.org`, `.rs` all free | Says exactly what the renderer does (rays through rock), every namespace free, no meaning to misread; a coinage, and the `raylib` shadow is real |
+| **haniwa** | Entities. 埴輪, the hollow clay figures that stood guard on Japanese tombs: cylinders, simple faces, holes for eyes; "HA-ni-wa" | 79 repos, none above 1 star | A six-year-old itch.io game *Haniwa Face*; Animal Crossing's gyroids are called haniwa in the Japanese versions, so Japanese players know the word | `.dev`, `.io`, `.rs` free; `.org` registered | The entity angle's best word: clay figures that stand in the world is what `vxe-entity` ships; says nothing of light or rock, and names one crate's concern |
+| **myotis** | Animals. The mouse-eared bats, the largest bat genus: cave roosts, night, echolocation (the engine probes sound through the same voxels); "my-OH-tis" | 25 repos; `biafra23/myotis` (a wallet engine, 37 stars) | None found | `.io`, `.rs` free; `.dev`, `.org` registered | Cave, dark and echo in one animal; an English ear hears *myositis*, and a Latin genus name reads as biology |
+| **iktomi** | Spiders. The Lakota spider trickster, a shape-shifter and culture hero; "ik-TOH-mi" | 20 repos; `SmartTeleMax/iktomi` (a Python web library, 24 stars) | None found | `.dev`, `.io`, `.rs` free; `.org` registered | The spider angle's free myth name (`anansi` and `arachne` are taken); a sacred figure of a living people, which the owner should weigh before using it as a brand |
+| **pumice** | Rocks. The light, porous volcanic rock that floats; "PUM-iss" | 79 repos; `zksecurity/pumice` (a prover port, 20 stars) | None found; the everyday association is the foot stone | `.io`, `.rs` free; `.dev`, `.org` registered | The one common rock name still free with a clean picture; the association is bathroom, not cave |
+
+Also free and checked, but not finalists: `lumbre` (Spanish "firelight"; empty), `blask`
+(Polish "glare"; a Flask blog engine), `blesk` (Czech "lightning", Russian "gleam"; BleskOS, and
+the largest Czech tabloid), `gloaming` (Scots "dusk"; eight letters), `nitor` (Latin "sheen";
+Nitor Infotech), `strahl` (German "ray"; `StuckiSimon/strahl` is a WebGPU path tracer),
+`selas` (Greek "glow"; `schuttejoe/Selas` is an offline renderer, 109 stars), `solas` (Irish
+"light"; a Minecraft shader pack and `Grokmoo/sulis`, a Rust RPG, next door), `luch` (Russian
+"ray"; unreadable in Latin letters), `geisli` (Icelandic "ray"; a consulting firm), `kiir`
+(Estonian "ray"; odd spelling), `onibi` and `hitodama` (Japanese ghost-lights; a developer and
+a game of those names), `foxfire` (reads as Firefox), `lumbra` and `umbrix` (coinages;
+`lumbra` reads as *lumbar*), `lumarch` and `marchstone` (coinages; weaker than `raylith`),
+`raymarch`, `marcher`, `raycast` and `dda` (free but generic; `MarbleMarcher` and Cataclysm-DDA
+own the searches), `xoanon` (Greek, an archaic carved image; six letters, "ZOH-a-non"; empty,
+and the carve-plus-entity meaning is good, but nobody can say it), `ushabti` and `shabti`
+(Egyptian "answerer" figurines that animate to work; `shabti` has a 196-star security repo),
+`tanagra` (Greek figurines; a Vulkan binding generator), `dogu` (Japanese figurines; a test
+automation company), `poppet`, `effigy` (Effigy Softworks, a 266-star asset generator),
+`domovoi` (Slavic house spirit; an AWS Lambda tool, 178 stars), `nisse` and `tomte` (Christmas
+games), `argil` (potter's clay; Argilla noise), `galatea` and `enkidu` (clay made alive; both
+noisy), `belenus` and `yarilo` (gods of light; empty but seven and six letters nobody places),
+`spalax` and `zokor` (blind burrowing rodents; obscure), `fossor` (Latin "digger"; an archived
+LinkedIn tool), `noctule` and `photinus` (a bat and a firefly genus; seven and eight letters),
+`aranea`, `araneus`, `argiope`, `hogna`, `maratus`, `dysdera`, `atypus`, `ummidia`,
+`salticus`, `mygale`, `lycosa` (spider genera and names; `lycosa` was a Razer keyboard,
+`ummidia` the trapdoor spider is the aptest and the least sayable), `huntsman` (a web spider
+and a chemicals group), `dragline` (eight letters), `diorite`, `andesite`, `rhyolite`,
+`dolomite`, `halite`, `olivine`, `porphyry`, `perlite`, `eclogite`, `augite`, `phonolite`
+(rocks; `halite` and `perlite` have 1000-plus-star namesakes, `olivine` a Labs, `phonolite`,
+the rock that rings when struck, is the aptest and nine letters long), `troglobite` and
+`gloaming` (length).
+
+**How the second sweep compares with `karst` and `doline`.** On criterion 1 `svet` and
+`candor` reach further than `karst` (light and world; light and honesty), `zarevo` and
+`raylith` about as far, the rest less. On criterion 2 `svet` wins outright, `aktis` and
+`karst` tie, `zarevo` and `raylith` trail. On criterion 3 every finalist here beats `karst`,
+whose bare crate is held. On criterion 4 `karst`, `svet`, `zarevo`, `raylith` and `haniwa`
+are clean; `candor` and `iktomi` are not. On criterion 5 `karst`, `zarevo`, `aktis`, `haniwa`
+and `pumice` are clean; `svet` has the svelte/svett echo, `myotis` the *myositis* one. Summed
+with the criteria in their stated order, `karst` stays first on the strength of 1, 2 and 5;
+`svet` takes the runner-up place from `doline` because it says more and its registry is
+cleaner; `zarevo` is the pick for an owner who wants a word nobody else has touched.
+
+Sources for this appendix: the crates.io and GitHub sweeps of 2026-11-17 as above;
+https://en.wiktionary.org/wiki/свет, https://en.wiktionary.org/wiki/svet,
+https://en.wiktionary.org/wiki/зарево, https://en.wiktionary.org/wiki/ἀκτίς,
+https://en.wiktionary.org/wiki/candor#Latin, https://en.wikipedia.org/wiki/Haniwa,
+https://en.wikipedia.org/wiki/Myotis, https://en.wikipedia.org/wiki/Iktomi,
+https://en.wikipedia.org/wiki/Pumice; https://github.com/cfr/aktis;
+https://github.com/timlittle/aktis; https://github.com/indutny/candor;
+https://www.ycombinator.com/companies/candor; https://craft.co/candor-technology;
+https://lib.rs/crates/wisp-rs; https://docs.rs/crate/lueur/latest;
+https://github.com/StuckiSimon/strahl; https://github.com/schuttejoe/Selas;
+https://github.com/bonsairobo/feldspar; https://github.com/Themaister/Granite;
+https://github.com/HailToDodongo/pyrite64. Not verified: trademark registers for any finalist
+(a US aggregator search was run only for `candor`, which has several owners in other
+classes); the Japanese market's use of `haniwa` as a brand; Lakota views on `iktomi` as a
+product name.
 
 ## Outcome
 
