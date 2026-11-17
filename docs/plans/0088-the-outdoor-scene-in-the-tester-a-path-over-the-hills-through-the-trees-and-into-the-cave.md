@@ -1,6 +1,6 @@
 # 0088: The outdoor scene in the tester: a camera path over the hills, through the trees and down the tunnel, a fourth row in the menu and the report
 
-> **Status:** in-progress (the owner's go, 2026-11-17: "go 88"; questions 1 to 5 answered 2026-11-17, the recommended option each: the sun 10,180, sparse trees, the full 60 to 75 s route, the 2 s warm-up, a computed path)
+> **Status:** implemented (the owner's go, 2026-11-17: "go 88"; questions 1 to 5 answered 2026-11-17, the recommended option each: the sun 10,180, sparse trees, the full 60 to 75 s route, the 2 s warm-up, a computed path)
 > **Created:** 2026-11-17
 > **Milestone:** M7 in [`docs/roadmap.md`](../roadmap.md) (the benchmark lane, whose first form
 > was Plan 0068)
@@ -367,9 +367,9 @@ Readings, gate counts and the route's attempts: [`logs/0088.md`](logs/0088.md).
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: `Scene::Outdoor`, the parse rule and a first path | dev | done | fa8394ea |
-| 2: The route, the tester's rows, the README and the readings | dev | done | committed with this row |
-| 3: The owner's window | human | not started | |
-| 4: The picks and the tip | dev | not started | |
+| 2: The route, the tester's rows, the README and the readings | dev | done | 0abe991a |
+| 3: The owner's window | human | done (orchestrator's session, 2026-11-17; verdicts in the log, no moves) | committed with row 4 |
+| 4: The picks and the tip | dev | done: no moves (the owner's "leave it" on every point), the tip gate | committed with this row |
 
 ### Notes
 
@@ -383,16 +383,17 @@ Readings, gate counts and the route's attempts: [`logs/0088.md`](logs/0088.md).
 - `each_choice_gives_its_exact_flag_list`'s rows are one space-separated string each, split in the loop (clippy's line limit with the sixth row) (Phase 2 commit).
 - The forest stress reading is a 40 s glide from the `forest` spawn, not a path run: `--path outdoor` refuses `--trees forest` by Phase 1's rule (Phase 2 commit).
 - Not read in Phase 2: the windowed RTX run (lane rule: no window; moved to Phase 3) and the CPU p50 of the first 10 s after the load (no headless line carries it).
+- Phase 3's window judged the first-10-s CPU "ok" by eye; no figure was read, so the backlog's "CPU settle outdoors" has the headless percentiles as its before figure, not a first-10-s p50 (Phase 3 row).
+- Phase 4 changed no code (no picks to apply); its row, the Phase 3 verdicts and the close block land in one `docs(plans)` commit.
+- Phase 4's soak run uses `cargo nextest run -p flythrough --test gpu_path --profile soak --run-ignored only`, as in Phase 2.
 
 ### Close triggers
 
-_(Facts for the architect. No recommendations, and no suggested version bump.)_
-
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature. The tester's fourth scene, `outdoor`: `Scene::Outdoor`, the 73.4 s `outdoor` camera path, `--path outdoor`'s parse rule, the tester's README.
+- **Public API changed:** `flythrough::path::Scene` gains `Outdoor` (`Scene::ALL` is `[Scene; 4]`); `flythrough::path::OUTDOOR`; `PATHS` is `[CameraPath; 4]`; the fly-through's `--path` takes `outdoor` and refuses it without `--source outdoor` at the `outside` spawn, the sparse trees and the default leaf fill. No `run.json` field or schema change.
+- **Budget readings** (no `nfr.md` line moved; readings added, all loaded, before Plan 0086): section 2, the outdoor bench at 1280 x 720 Floor, release at fa8394ea, headless: RTX 3080 Laptop wall p50/p95/p99 20.4/57.0/114.0 ms, GPU 4.61/10.90/13.00; RADV RENOIR wall 29.5/54.7/77.5, GPU 22.34/25.14/26.33. Section 5: `update + poll + sync` p99 23.1 ms (RTX) and 17.5 (RADV), `sync_us` p99 19.2 and 16.0 ms, `light_us` p99 1.23 and 1.27 ms; the RTX glide sparse/forest `update + poll + sync` p99 18.3/15.7 ms. Windowed (Phase 3, RTX, 0abe991a, load 7 to 9): outdoor bench wall p50/p95 15.6/33.0 and 10.0/28.3 ms. Section 7: `the_outdoor_path_flies_in_air` 0.67 to 0.75 s in the gate; `a_path_run_writes_its_report` 130.2 to 140.2 s, soak. Tables in [`logs/0088.md`](logs/0088.md).
+- **Gate at the tip** (0abe991a's code): `cargo nextest run --workspace --profile gate` exit 0, 1105 run, 1105 passed, 125 skipped, 1136.7 s; doctests 10 passed; `cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny check` 0; the doc and tier scripts 0; the soak test by name 1 passed.
+- **Outstanding `human` phases:** none (Phase 3 done in the orchestrator's session, 2026-11-17).
 
 ## Followups
 
