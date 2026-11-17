@@ -10,7 +10,7 @@
 > loading), so this lane branches from the main that holds both and lists their keys.
 > **Amended 2026-11-16 (architect; the owner approved it 2026-11-16 with Plan 0080):** the owner asked the same day for a menu
 > system in place of a full keyboard ("keep using keys to minimal"). ADR-0061 and
-> [Plan 0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) answer
+> [Plan 0080](done/0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) answer
 > it, and the recommendation (0080's owner question 6) is to **fold this plan into Plan 0080**:
 > its Phase 1 (the `ACTIONS` table, the groups, `--keys`, the source scan) is 0080's Phase 1 as
 > written here; its Phase 2 (`F1` opens the help, `Enter` takes the readings, the `F1` renames)

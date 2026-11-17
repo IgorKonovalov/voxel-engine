@@ -1,11 +1,11 @@
 # 0080: The fly-through's menu: one overlay component, a search palette, and the minimal key set
 
-> **Status:** implemented 2026-11-17, awaits the fresh-session close review (approved 2026-11-16, the owner: every recommended answer under "Owner questions"; amended 2026-11-17 (owner) after the window's run 1: Phases 5 to 8 replace the former Phase 5)
+> **Status:** done (closed 2026-11-17, v0.62.0: the fly-through's menu over one key table, the palette, the Keys page, the minimal key set and the pad, numbers edited after `Enter`, grey entries with their reason, the notice row and the readout; the fresh-session review found no blocker or major. Approved 2026-11-16, the owner: every recommended answer under "Owner questions"; amended 2026-11-17 (owner) after the window's run 1: Phases 5 to 8 replace the former Phase 5)
 > **Created:** 2026-11-16
 > **Milestone:** none of its own. The testbed (`apps/flythrough`) and, through Plan 0073, the
 > tester; nothing under `crates/` changes unless Phase 5's window asks for the overlay backdrop.
-> **Related ADRs:** [ADR-0061](../adrs/0061-the-apps-input-is-menu-first-a-minimal-fixed-key-set-one-overlay-menu-with-a-palette-from-one-key-table.md)
-> (proposed): menu-first input, one component, one capture rule, the key table as the source.
+> **Related ADRs:** [ADR-0061](../../adrs/0061-the-apps-input-is-menu-first-a-minimal-fixed-key-set-one-overlay-menu-with-a-palette-from-one-key-table.md)
+> (accepted 2026-11-17, with an Outcome): menu-first input, one component, one capture rule, the key table as the source.
 > Rests on ADR-0009 (the text overlay, no UI library) and ADR-0054 (the tester runs the
 > fly-through as a child).
 > **Source:** the owner, 2026-11-16: "instead of filling all keyboard with everything we have in
@@ -674,7 +674,7 @@ No `docs/nfr.md` figure moves; every figure here is a **guess** until Phase 2 re
 > notes go to the plan's readings log, `docs/plans/logs/0080.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
-Readings and gate counts: [`logs/0080.md`](logs/0080.md).
+Readings and gate counts: [`logs/0080.md`](../logs/0080.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
@@ -817,3 +817,42 @@ Readings and gate counts: [`logs/0080.md`](logs/0080.md).
   amendment of 2026-11-16).
 - Backlog: mouse pointing (`Input::cursor`, the cursor unlocked while the menu is open), text
   events in `vxe-app`, a radial or hold menu for the pad.
+
+## Close review
+
+Fresh session, 2026-11-17, at ce425b3a (main 8afce1bc merged in at 5629dd54; main's later
+commits are docs only and not merged). No blocker or major.
+
+- **Gate** (exclusive perf lock, lavapipe, 16 GiB scope, 1-minute load 2.25 at start, 3.42 at
+  end): `cargo nextest run --workspace --profile gate --no-fail-fast` 1102 run, 1102 passed,
+  124 skipped, 1396.2 s, exit 0. This covers the merge items' `NOT_SETTINGS` change, which the
+  lane had not gated whole. 29 tests read over the 10 s line, all but one older than this plan
+  and loaded; `docs/backlog.md` ("The gate tier's tests over the 10 s line", on main) owes them
+  and the tier's wall time.
+- **`gpu_loading::a_source_switch_shows_the_loading_frames_before_the_new_world`** (the fix
+  pass's test): 14.6 s in the gate; alone, `--test-threads 1`, under the lock, 12.9 and 12.7 s
+  beside `a_benchmark_warms_up_from_the_first_world_frame`'s 13.1 and 13.1 s, at a 1-minute
+  load near 4 (another lane's GPU reading and other work: not quiet). The bench test read 5.8 to
+  8.7 s quiet (`logs/0075.md`) and the two track each other, so the new test is not shown over
+  the line quiet; it stays in the gate, a candidate for the backlog's test-time chore.
+- **Merge items** (a608034b): the profile on `F4` acts open and closed and its row follows
+  (`a_shortcut_still_acts_and_shows`); the world and sky entries, their `needs --sky on` and
+  `needs --source outdoor`, and the time held at 00:00 and 23:59 are asserted in
+  `daylight::tests::the_world_entries_step_the_clock`; the four freed keys are in
+  `FORMER_KEYS`. The `time` entry stops at its ends where 0032's `PageUp` wrapped: that is this
+  plan's number rule (Decisions: "the value clamps at its range (no wrap)"), not a finding.
+- **Fix pass** (ce425b3a): the switch splash is drawn over the asking frame's surface before
+  the next frame's blocking teardown, and the switched run enters Plan 0075's stepped loading;
+  `the_switch_loading_frame_names_the_next_world` and the gpu test assert the order (splash,
+  at least three loading frames with the bar never moving back, `done 1`, then the new run's
+  frame 0) and the world-frame count. The owner's window 80d: "all good".
+- **Not a finding, to the backlog:** Plan 0069's profile row names live fields under
+  `restart for:` after a toggle (session 80c: `restart for: lighting.lamp, ...` after the lamp
+  was flipped), since `changed_fields` compares the profile with the live settings, toggles
+  included. Existing behaviour from Plan 0069, outside this plan.
+- **Owed, not blocking:** the pad's walk through the tree in a window (backlog, "The menu with
+  a gamepad, in a window").
+- **Bookkeeping readings:** `node scripts/velocity.mjs`: the last 14 days 830 commits over 15
+  active days, 28 plans closed; commits per active day 1.02x the window before.
+  `node scripts/loc.mjs` totals: 70,872 Rust code, 60,684 Rust test, 26,891 comment, 6,388
+  WGSL, 96,006 markdown lines; no file this plan grew is in the largest-files list.

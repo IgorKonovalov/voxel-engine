@@ -1,8 +1,8 @@
 # ADR-0061: The apps' input is menu-first: a minimal fixed key set, one overlay menu with a search palette, and one key table that drives the menu, the palette, the help and the shortcuts
 
-> **Status:** proposed
+> **Status:** accepted 2026-11-17 (Plan 0080 closed, v0.62.0), with an Outcome
 > **Date:** 2026-11-16
-> **Related plan(s):** [Plan 0080](../plans/0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md)
+> **Related plan(s):** [Plan 0080](../plans/done/0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md)
 > (builds it); [Plan 0073](../plans/0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md),
 > [Plan 0076](../plans/0076-a-key-help-overlay-for-the-fly-through-from-the-key-table.md) and
 > [Plan 0077](../plans/0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md)
@@ -132,4 +132,26 @@ and the window has one overlay.
 
 ## Outcome
 
-_(Added only at acceptance if implementation falsified something above.)_
+Added 2026-11-17 at Plan 0080's close. The decision held: one component in the fly-through's
+library (`hud::menu`), one routing function, the key tables (`toggles::TOGGLES`,
+`toggles::ACTIONS`) as the source of the tree, the palette, the Keys page and `--keys`, and
+the source scan and reachability tests. What the owner's windows changed or the build found:
+
+- **`vxe-render` gained three general facilities, not "at most one".** The window's run 1 found
+  the panel too small and the scene showing through, so the overlay took a backdrop bit in the
+  cell word, a run-time glyph scale (`HudOverlay::set_scale`, with `set_lines_over` and
+  `HudBox` placing the panel) and a grey palette entry (`HudColour::Grey`). None names a menu.
+- **Entries have kinds.** A number is edited after `Enter` (`Up` and `Down` step it, held they
+  repeat, it stops at its range's ends); a cycle keeps `Enter` as its next state; the arrows
+  outside the edit only move the selection (the owner struck stepping in place). An entry the
+  run cannot act on is grey with its reason (`needs --audio`), not hidden, and every action
+  answers in the window through a notice row. A readout of the frame rate shows while the menu
+  is open.
+- **The arrows are the menu's while it is open,** so the model viewer's clip keys act with the
+  menu closed only; only the function keys act open and closed.
+- **The keys after Plans 0069 and 0032:** `F4`, freed by the minimal set, cycles the render
+  profiles (ADR-0055); 0032's `Home`, `PageUp`, `End` and `CapsLock` became entries of a world
+  and sky page with no key.
+- **Not done here:** the tester's launcher still has its own menu until Plan 0073 moves it
+  onto the component, and the pad's walk through the tree has not been judged in a window
+  (headless tests only; a backlog entry).

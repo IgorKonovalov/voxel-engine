@@ -120,6 +120,19 @@ would hold 3,850 copies (estimated 1 to 2 GB, not measured). The lane wrote a fl
 prefab and rotation (an `Arc` and an orientation), so a dense generation-time scatter costs its
 distinct prefabs, not its placements. Pick up at Plan 0032's close or before the next scatter.
 
+### The profile row's `restart for:` names live fields
+
+Noted 2026-11-17 at Plan 0080's close review: after a toggle, the render profile row lists live
+fields as waiting for a restart (window session 80c, the lamp flipped off, then `F4`:
+`profile: performance, restart for: lighting.lamp, build.record_chunks`). `Run::cycle_profile`
+(`apps/flythrough/src/run/profile.rs`) takes the pending list from
+`RenderSettings::changed_fields` against the live settings, toggles included, so any `Live` or
+`Settle` field the owner changed reads as restart-only, and `build.record_chunks` (which the
+fly-through sizes itself) shows on every cycle. Plan 0069's behaviour. Fix as a chore: filter
+the pending list to the `Rebuild` class and to fields the fly-through does not set itself, with
+a test that flips the lamp and cycles. Pick up with Plan 0073's settings pages, which show the
+same classes.
+
 ### The menu with a gamepad, in a window
 
 Noted 2026-11-17 (owner): Plan 0080 closes without its window's pad step (no pad was at hand;
@@ -565,7 +578,7 @@ Owed 2026-11-15 from Plan 0068's close (its phase review's M2). Under `--tester`
 unit test of `tester_action` cannot catch a debug key read outside `handle_input`, as `F2` is.
 What it takes: route every key the frame loop reads under `--tester` through `tester_action`, or a
 test that drives the loop's input handling with the filter on. Taken 2026-11-16 by
-[Plan 0080](plans/0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md)
+[Plan 0080](plans/done/0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md)
 Phase 2 (a test drives the loop's input step with the filter on; `Tab` and `Start` map to
 nothing); the entry leaves when that plan closes.
 

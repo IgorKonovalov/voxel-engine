@@ -48,7 +48,7 @@
 >   ("0.5 ms doesn't matter"); the walk-speed spike is not required before Phase 6.
 > **Amended 2026-11-16 (architect; the owner approved it 2026-11-16 with Plan 0080):** `F4` is bound today (the a-trous filter's
 > iterations, `toggles::TOGGLES`), so "`F4` cycling the profiles" collides. Under ADR-0061 and
-> [Plan 0080](../0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) the
+> [Plan 0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) the
 > iteration toggle goes menu-only and the profile cycle is an entry of the menu's Upscaler or
 > Settings page with `F4` as its shortcut once 0080 has freed it; if this lane starts before
 > 0080's Phase 3 lands, the profile cycle is reached through the menu alone and takes `F4` after.
