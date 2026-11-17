@@ -640,5 +640,6 @@ pub fn flythrough(start: Instant, mut args: Args) -> Flythrough {
         pad,
         failure,
         splash: None,
+        switching: None,
     }
 }

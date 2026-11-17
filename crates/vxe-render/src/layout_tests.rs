@@ -425,6 +425,8 @@ fn rust_value(name: &str) -> Option<f64> {
         "GRADIENT_STRATUM" => f64::from(crate::frame::GRADIENT_STRATUM),
         "GRID_COLS" => f64::from(crate::hud::GRID_COLS),
         "GRID_ROWS" => f64::from(crate::hud::GRID_ROWS),
+        "BACKDROP_BIT" => f64::from(crate::hud::BACKDROP_BIT),
+        "BACKDROP_ALPHA" => f64::from(crate::hud::BACKDROP_ALPHA),
         _ => return None,
     })
 }

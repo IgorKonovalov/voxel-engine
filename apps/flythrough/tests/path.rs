@@ -12,7 +12,7 @@ use flythrough::path::{
 };
 use flythrough::report::{Recorder, RunReport, json};
 use flythrough::showcase::ShowcaseSource;
-use vxe_app::{KeyCode, MouseButton};
+use vxe_app::{KeyCode, MouseButton, PadButton};
 use vxe_world::{AIR, Chunk, ChunkCoord, MaterialId, VoxelCoord, WorldSource};
 
 /// Samples the air test reads along a path, seconds apart.
@@ -288,8 +288,23 @@ fn the_tester_filter_leaves_movement_look_help_and_esc() {
         KeyCode::F9,
         KeyCode::Comma,
         KeyCode::Semicolon,
+        KeyCode::Tab,
+        KeyCode::KeyL,
+        KeyCode::Enter,
     ] {
         assert_eq!(tester_action(TesterInput::Key(k)), None, "{k:?}");
+    }
+    // The menu's pad button and the stats' are nothing under `--tester`; `R1`, `L1` and `R3`
+    // move the camera.
+    for b in [PadButton::Start, PadButton::Select, PadButton::South] {
+        assert_eq!(tester_action(TesterInput::Pad(b)), None, "{b:?}");
+    }
+    for b in [PadButton::R1, PadButton::L1, PadButton::R3] {
+        assert_eq!(
+            tester_action(TesterInput::Pad(b)),
+            Some(TesterAction::Move),
+            "{b:?}"
+        );
     }
     assert_eq!(tester_action(TesterInput::Click(MouseButton::Right)), None);
     assert_eq!(

@@ -5,18 +5,17 @@ use crate::castle;
 use crate::cli::walk_allowed;
 use crate::edits::scroll_dig_radius;
 use crate::fly::Walk;
+use crate::hud::menu::{Activated, AudioView, RunView};
 use crate::hud::{self};
 use crate::lights;
 use crate::logic::DigInput;
 use crate::logic::REACH;
+use crate::path::Drive;
 use crate::run::Run;
 use crate::run::hud_feed::Samples;
 use crate::setup::{castle_banner, castle_camera};
-use crate::toggles::{
-    KEY_CLIP_BACK, KEY_CLIP_ON, KEY_CLIP_PAUSE, KEY_DROP, KEY_EYE_LIGHTS, KEY_FIRE, KEY_REMOVE,
-    KEY_WALK, KEY_WALKER, TOGGLES,
-};
-use vxe_app::{Axis, Input, KeyCode, MouseButton, PadButton};
+use crate::toggles::{ACTIONS, Act, TOGGLES, press};
+use vxe_app::{Axis, Input, MouseButton, PadButton};
 use vxe_audio::{Command, PlayParams};
 use vxe_render::Camera;
 use vxe_world::{FIXED_ONE, Face};
@@ -51,19 +50,17 @@ impl Run {
     /// `G`: walk mode with the body under the camera, or back to flight.
     pub(crate) fn toggle_walk(&mut self) {
         if self.walk.take().is_some() {
-            println!("fly mode");
-            return;
+            return self.say("fly mode");
         }
         if let Err(e) = walk_allowed(self.stream.is_some()) {
-            println!("walk: {e}; still flying");
-            return;
+            return self.say(format!("walk: {e}; still flying"));
         }
         match Walk::at_camera(&self.world, &self.fly.camera) {
             Some(w) => {
                 self.walk = Some(w);
-                println!("walk mode");
+                self.say("walk mode");
             }
-            None => println!("walk: no room for the body here; still flying"),
+            None => self.say("walk: no room for the body here; still flying"),
         }
     }
 
@@ -113,26 +110,75 @@ impl Run {
         let now = ms_since(self.start);
         for t in TOGGLES.iter().filter(|t| t.pressed(input)) {
             before.get_or_insert_with(|| self.modes.clone());
-            (t.flip)(&mut self.modes, now);
-            println!("{}", self.modes.row(t.row));
+            println!("{}", press(t, &mut self.modes, now));
         }
         if let Some(before) = before {
             self.apply_modes(&before);
         }
     }
 
+    /// What the menu hands the run: a toggle flipped as its key flips it (its row answers; a
+    /// flip that leaves the row as it was says its line in the notice), a number stepped, an
+    /// action run as its bind runs it, or an unavailable entry's reason said.
+    pub(crate) fn menu_act(&mut self, a: Activated) {
+        match a {
+            Activated::Toggle(t) => {
+                let before = self.modes.clone();
+                let line = press(t, &mut self.modes, ms_since(self.start));
+                if (t.get)(&self.modes) == (t.get)(&before) {
+                    self.say(line);
+                } else {
+                    println!("{line}");
+                }
+                self.apply_modes(&before);
+            }
+            Activated::Step(t, d) => {
+                let before = self.modes.clone();
+                if let Some(n) = t.number {
+                    (n.step)(&mut self.modes, d);
+                }
+                println!("{}", self.modes.row(t.row));
+                self.apply_modes(&before);
+            }
+            Activated::Action(act) => self.act(act),
+            Activated::Refused(why) => self.say(why),
+        }
+    }
+
+    /// Prints `line` and shows it in the menu's notice row from now: what an action answers
+    /// in the window.
+    pub(crate) fn say(&mut self, line: impl Into<String>) {
+        let line = line.into();
+        println!("{line}");
+        self.notice = Some((line, ms_since(self.start)));
+    }
+
+    /// The flags an action's mode reads beside the modes.
+    pub(crate) fn run_view(&self) -> RunView {
+        RunView {
+            walking: self.walk.is_some(),
+            audio: self.audio.as_ref().map(|a| {
+                AudioView::of(
+                    &a.mix,
+                    a.acoustics.reflections_on(),
+                    a.acoustics.reverb_on(),
+                )
+            }),
+            path: self.player.is_some(),
+            castle: self.castle_shot.is_some(),
+            model: self.modes.walkers.viewer.is_some(),
+            streaming: self.stream.is_some(),
+            coarse: self.coarse.is_some(),
+        }
+    }
+
     /// The keys, buttons and pad buttons of interactive flight; the autopilot takes none of
     /// them, so a stray click cannot change the world it measures. The toggles go through
-    /// [`TOGGLES`] ([`Run::toggle_keys`]); the rest are actions. On a pad `R2` digs, `L2`
-    /// fills, the D-pad's up and down step the dig radius as a scroll line does, `North`
-    /// toggles walking, `West` cycles the cutaway as `X` does, and `East` knocks.
+    /// [`TOGGLES`] ([`Run::toggle_keys`]) and the actions through [`ACTIONS`] ([`Run::act`]);
+    /// the dig, the fill and the dig radius are read here. On a pad `R2` digs, `L2` fills and
+    /// the D-pad's up and down step the dig radius as a scroll line does.
     pub(crate) fn handle_input(&mut self, input: &Input) {
         self.toggle_keys(input);
-        if crate::daylight::clock_keys(input, &mut self.modes, ms_since(self.start)) {
-            println!("{}", self.modes.row(hud::HudRow::Lighting));
-        }
-        self.switch |= input.pressed(crate::daylight::KEY_SOURCE);
-        self.retree |= self.args.mode.is_outdoor() && input.pressed(crate::daylight::KEY_TREES);
         let scroll = input.scroll() + f32::from(u8::from(input.pad_pressed(PadButton::DpadUp)))
             - f32::from(u8::from(input.pad_pressed(PadButton::DpadDown)));
         if scroll != 0.0
@@ -149,44 +195,108 @@ impl Run {
         if input.clicked(MouseButton::Right) || l2 {
             self.fill();
         }
-        if input.pressed(KeyCode::KeyB) {
-            self.bench();
+        for a in ACTIONS.iter().filter(|a| a.pressed(input)) {
+            self.act(a.act);
         }
-        if input.pressed(KeyCode::KeyP) {
-            self.stamp();
-        }
-        if input.pressed(KeyCode::KeyG) || input.pad_pressed(PadButton::North) {
-            self.toggle_walk();
-        }
-        if input.pressed(KeyCode::KeyK) {
-            println!("{}", self.coarse_line());
-        }
-        if input.pressed(KeyCode::KeyR) {
-            match self.coarse {
-                Some(_) => self.send(DigInput::Crumble),
-                None => println!("collapse: not kept while streaming"),
+    }
+
+    /// Runs `act`: the run's method an action's bind and its menu entry both call.
+    pub(crate) fn act(&mut self, act: Act) {
+        match act {
+            Act::Walk => self.toggle_walk(),
+            Act::ResumePath => self.resume_path(),
+            Act::CastleShot => self.next_castle_shot(),
+            Act::DropLight
+            | Act::Remove
+            | Act::FireLight
+            | Act::PlaceWalker
+            | Act::WalkersWalk
+            | Act::EyeLights
+            | Act::ClipBack
+            | Act::ClipOn
+            | Act::ClipPause => {
+                if let Some(words) = self.light_act(act) {
+                    self.modes.show_lights(words.clone(), ms_since(self.start));
+                    self.say(words);
+                }
+            }
+            Act::Knock
+            | Act::Pulse
+            | Act::Hum
+            | Act::Echoes
+            | Act::Tail
+            | Act::EchoTrim(_)
+            | Act::TailTrim(_)
+            | Act::PreDelay(_)
+            | Act::Glide
+            | Act::DirectDelay => self.audio_act(act),
+            Act::Readings => {
+                self.samples = Some(Samples::default());
+                self.say(format!(
+                    "readings: sampling {} frames",
+                    crate::run::hud_feed::SAMPLES
+                ));
+            }
+            Act::Bench => {
+                self.bench();
+                self.say("bench: sent to the logic");
+            }
+            Act::Stamp => {
+                self.stamp();
+                self.say("stamp: sent to the logic");
+            }
+            Act::Crumble => match self.coarse {
+                Some(_) => {
+                    self.send(DigInput::Crumble);
+                    self.say("crumble: sent to the logic");
+                }
+                None => self.say("collapse: not kept while streaming"),
+            },
+            Act::CoarsePrint => self.say(self.coarse_line()),
+            Act::Profile => self.cycle_profile(),
+            Act::NextSource => {
+                self.switch = true;
+                self.say("switch: the next source, after this frame");
+            }
+            Act::Trees => {
+                if self.args.mode.is_outdoor() {
+                    self.retree = true;
+                    self.say("switch: the next trees, after this frame");
+                } else {
+                    self.say("trees: needs --source outdoor");
+                }
             }
         }
-        if input.pressed(KeyCode::KeyI)
-            && let Some(shot) = self.castle_shot.map(castle::CastleShot::next)
-        {
-            self.castle_shot = Some(shot);
-            self.fly.camera = Camera {
-                vfov: self.fly.camera.vfov,
-                ..castle_camera(shot)
-            };
-            let line = castle_banner(shot);
-            println!("{line}");
-            self.scene = Some((line, ms_since(self.start)));
+    }
+
+    /// A tour in free flight resumes from the path's time nearest the camera, as `T` does in
+    /// the path's own step.
+    fn resume_path(&mut self) {
+        let eye = self.fly.camera.position.to_array();
+        let Some(p) = self.player.as_mut() else {
+            return self.say("tour: no path in this run");
+        };
+        if p.drive != Drive::Free {
+            return self.say("tour: already on the path");
         }
-        if input.pressed(KeyCode::F1) {
-            self.samples = Some(Samples::default());
-        }
-        if input.pressed(crate::toggles::KEY_PROFILE) {
-            self.cycle_profile();
-        }
-        self.light_keys(input);
-        self.audio_keys(input);
+        let t_s = p.path.nearest_time(eye);
+        p.drive = Drive::Path { t_s };
+        self.say(format!("tour: resumed at {t_s:.1} s"));
+    }
+
+    /// The camera at the next castle shot, its banner shown.
+    fn next_castle_shot(&mut self) {
+        let Some(shot) = self.castle_shot.map(castle::CastleShot::next) else {
+            return self.say("castle: no castle in this run");
+        };
+        self.castle_shot = Some(shot);
+        self.fly.camera = Camera {
+            vfov: self.fly.camera.vfov,
+            ..castle_camera(shot)
+        };
+        let line = castle_banner(shot);
+        self.say(line.clone());
+        self.scene = Some((line, ms_since(self.start)));
     }
 
     /// The camera ray's first surface within `max` voxels: its distance in voxels and the
@@ -209,148 +319,119 @@ impl Run {
         Some((hit.t as f32 / FIXED_ONE as f32, normal))
     }
 
-    /// The lights' and walkers' action keys: `1` drops a light at the looked-at surface, `` ` ``
-    /// places a walker there (`--model`'s model under the viewer), `4` removes the newest of
-    /// the two, `6` fires a light along the view ray; each shows the count in the banner.
-    /// Under `--model`, `Left` and `Right` cycle the clips and `Down` pauses, naming the clip
-    /// or the pause in the banner. A drop or
-    /// a shot into a full list prints [`lights::FULL_LINE`] and adds nothing.
-    pub(crate) fn light_keys(&mut self, input: &Input) {
+    /// The lights' and walkers' actions: a drop at the looked-at surface, a walker placed
+    /// there (`--model`'s model under the viewer), the newest of the two removed, a light
+    /// fired along the view ray, the walkers' walking and eye lights, and under `--model` the
+    /// clips cycled or paused. Gives the words the banner shows: the count, the clip or the
+    /// pause. A drop or a shot into a full list gives [`lights::FULL_LINE`] and adds nothing.
+    fn light_act(&mut self, act: Act) -> Option<String> {
         let lamp = self.modes.lighting.lamp;
         let c = &self.fly.camera;
         let eye = c.position.to_array();
         let fwd = c.basis().0.to_array();
-        let now = ms_since(self.start);
-        let mut shown = None;
-        if input.pressed(KEY_DROP) {
-            let hit = self.surface_along_view(REACH as f32 / FIXED_ONE as f32);
-            shown = Some(match self.modes.lights.drop_at(lamp, eye, fwd, hit) {
-                Ok(()) => {
-                    self.modes.walkers.newest.push(false);
+        Some(match act {
+            Act::DropLight => {
+                let hit = self.surface_along_view(REACH as f32 / FIXED_ONE as f32);
+                match self.modes.lights.drop_at(lamp, eye, fwd, hit) {
+                    Ok(()) => {
+                        self.modes.walkers.newest.push(false);
+                        self.modes.lights.count_words(lamp)
+                    }
+                    Err(line) => line.to_owned(),
+                }
+            }
+            Act::PlaceWalker => {
+                let hit = self.surface_along_view(REACH as f32 / FIXED_ONE as f32);
+                let at = hit.map_or(lights::MISS_DROP, |(t, _)| t);
+                let feet = std::array::from_fn(|k| eye[k] + fwd[k] * at);
+                let table = self.world.materials();
+                if self.modes.walkers.place(table, feet, eye) {
+                    self.modes.walkers.newest.push(true);
+                    self.modes.walkers.count_words()
+                } else if let Some(v) = &self.modes.walkers.viewer {
+                    format!("model {}: not built", v.name)
+                } else {
+                    "walker: no walker rows in this world's table".to_owned()
+                }
+            }
+            Act::ClipBack => self.modes.walkers.viewer.as_mut()?.cycle(-1),
+            Act::ClipOn => self.modes.walkers.viewer.as_mut()?.cycle(1),
+            Act::ClipPause => self
+                .modes
+                .walkers
+                .viewer
+                .as_mut()?
+                .toggle_pause()
+                .to_owned(),
+            Act::EyeLights => self.modes.walkers.toggle_eye_lights().to_owned(),
+            Act::WalkersWalk => self.modes.walkers.toggle_walk().to_owned(),
+            Act::Remove => {
+                if self.modes.walkers.newest.pop() == Some(true) {
+                    self.modes.walkers.remove_newest();
+                    self.modes.walkers.count_words()
+                } else {
+                    self.modes.lights.remove_newest();
                     self.modes.lights.count_words(lamp)
                 }
-                Err(line) => line.to_owned(),
-            });
-        }
-        if input.pressed(KEY_WALKER) {
-            let hit = self.surface_along_view(REACH as f32 / FIXED_ONE as f32);
-            let at = hit.map_or(lights::MISS_DROP, |(t, _)| t);
-            let feet = std::array::from_fn(|k| eye[k] + fwd[k] * at);
-            let table = self.world.materials();
-            shown = Some(if self.modes.walkers.place(table, feet, eye) {
-                self.modes.walkers.newest.push(true);
-                self.modes.walkers.count_words()
-            } else if let Some(v) = &self.modes.walkers.viewer {
-                format!("model {}: not built", v.name)
-            } else {
-                "walker: no walker rows in this world's table".to_owned()
-            });
-        }
-        if let Some(v) = &mut self.modes.walkers.viewer {
-            if input.pressed(KEY_CLIP_BACK) {
-                shown = Some(v.cycle(-1));
             }
-            if input.pressed(KEY_CLIP_ON) {
-                shown = Some(v.cycle(1));
-            }
-            if input.pressed(KEY_CLIP_PAUSE) {
-                shown = Some(v.toggle_pause().to_owned());
-            }
-        }
-        if input.pressed(KEY_EYE_LIGHTS) {
-            shown = Some(self.modes.walkers.toggle_eye_lights().to_owned());
-        }
-        if input.pressed(KEY_WALK) {
-            shown = Some(self.modes.walkers.toggle_walk().to_owned());
-        }
-        if input.pressed(KEY_REMOVE) {
-            if self.modes.walkers.newest.pop() == Some(true) {
-                self.modes.walkers.remove_newest();
-                shown = Some(self.modes.walkers.count_words());
-            } else {
-                self.modes.lights.remove_newest();
-                shown = Some(self.modes.lights.count_words(lamp));
-            }
-        }
-        if input.pressed(KEY_FIRE) {
-            let hit = self.surface_along_view(lights::SHOT_RANGE).map(|(t, _)| t);
-            shown = Some(match self.modes.lights.fire(lamp, eye, fwd, hit) {
-                Ok(()) => {
-                    self.modes.walkers.newest.push(false);
-                    format!("fire, {}", self.modes.lights.count_words(lamp))
+            Act::FireLight => {
+                let hit = self.surface_along_view(lights::SHOT_RANGE).map(|(t, _)| t);
+                match self.modes.lights.fire(lamp, eye, fwd, hit) {
+                    Ok(()) => {
+                        self.modes.walkers.newest.push(false);
+                        format!("fire, {}", self.modes.lights.count_words(lamp))
+                    }
+                    Err(line) => line.to_owned(),
                 }
-                Err(line) => line.to_owned(),
-            });
-        }
-        if let Some(words) = shown {
-            println!("{words}");
-            self.modes.show_lights(words, now);
-        }
+            }
+            _ => return None,
+        })
     }
 
-    /// The audio's keys, when it runs: `H` (or the pad's `East`) knocks, `T` a looping pulse,
-    /// `J` a looping hum, `E` and `Y` the echoes and the tail, and the mix's trims, pre-delay,
-    /// glide and direct delay, each change sent to the output and printed.
-    pub(crate) fn audio_keys(&mut self, input: &Input) {
-        if let Some(audio) = self.audio.as_mut() {
-            if input.pressed(KeyCode::KeyH) || input.pad_pressed(PadButton::East) {
-                audio.play("knock", PlayParams::at);
+    /// The audio's actions, when it runs: a knock, a looping pulse, a looping hum, the echoes
+    /// and the tail on or off, and the mix's trims, pre-delay, glide and direct delay, each
+    /// change sent to the output and printed.
+    fn audio_act(&mut self, act: Act) {
+        let Some(audio) = self.audio.as_mut() else {
+            return self.say("needs --audio");
+        };
+        let mut mix = audio.mix;
+        match act {
+            Act::Knock => {
+                let line = audio.play("knock", PlayParams::at);
+                return self.say(line);
             }
-            if input.pressed(KeyCode::KeyT) {
-                audio.play("pulse", |p| PlayParams {
+            Act::Pulse | Act::Hum => {
+                let name = if act == Act::Hum { "hum" } else { "pulse" };
+                let line = audio.play(name, |p| PlayParams {
                     looping: true,
                     ..PlayParams::at(p)
                 });
+                return self.say(line);
             }
-            if input.pressed(KeyCode::KeyE) {
+            Act::Echoes => {
                 let on = !audio.acoustics.reflections_on();
                 audio.acoustics.set_reflections(on);
-                println!("echoes {}", if on { "on" } else { "off" });
+                return self.say(format!("echoes {}", if on { "on" } else { "off" }));
             }
-            if input.pressed(KeyCode::KeyY) {
+            Act::Tail => {
                 let on = !audio.acoustics.reverb_on();
                 audio.acoustics.set_reverb(on);
-                println!("tail {}", if on { "on" } else { "off" });
+                return self.say(format!("tail {}", if on { "on" } else { "off" }));
             }
-            if input.pressed(KeyCode::KeyJ) {
-                audio.play("hum", |p| PlayParams {
-                    looping: true,
-                    ..PlayParams::at(p)
-                });
-            }
-            let steps = [
-                (KeyCode::BracketLeft, -3.0, 0.0, 0.0),
-                (KeyCode::BracketRight, 3.0, 0.0, 0.0),
-                (KeyCode::Minus, 0.0, -3.0, 0.0),
-                (KeyCode::Equal, 0.0, 3.0, 0.0),
-                (KeyCode::Digit9, 0.0, 0.0, -10.0),
-                (KeyCode::Digit0, 0.0, 0.0, 10.0),
-            ];
-            let mut mix = audio.mix;
-            let mut touched = false;
-            for (key, echo, tail, pre) in steps {
-                if input.pressed(key) {
-                    mix = mix.step(echo, tail, pre);
-                    touched = true;
-                }
-            }
-            if input.pressed(KeyCode::KeyO) {
-                mix.glide = !mix.glide;
-                touched = true;
-            }
-            if input.pressed(KeyCode::KeyU) {
-                mix.direct_delay = !mix.direct_delay;
-                touched = true;
-            }
-            if touched {
-                audio.mix = mix;
-                // A full channel drops it; the next key sends the whole balance again.
-                if let Err(e) = audio.output.send(Command::SetMix(mix.settings())) {
-                    println!("mix: {e}");
-                }
-                println!("{}", mix.line());
-            }
+            Act::EchoTrim(d) => mix = mix.step(3.0 * f32::from(d), 0.0, 0.0),
+            Act::TailTrim(d) => mix = mix.step(0.0, 3.0 * f32::from(d), 0.0),
+            Act::PreDelay(d) => mix = mix.step(0.0, 0.0, 10.0 * f32::from(d)),
+            Act::Glide => mix.glide = !mix.glide,
+            Act::DirectDelay => mix.direct_delay = !mix.direct_delay,
+            _ => return,
         }
+        audio.mix = mix;
+        // A full channel drops it; the next key sends the whole balance again.
+        if let Err(e) = audio.output.send(Command::SetMix(mix.settings())) {
+            println!("mix: {e}");
+        }
+        self.say(mix.line());
     }
 }
 

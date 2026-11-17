@@ -192,19 +192,24 @@ cargo run --release -p flythrough -- --help                   # every flag
 | Mouse, `W` `A` `S` `D`, `Space` / `C` | Look and fly; hold `Shift` to go faster |
 | Left / right click | Dig / fill at the crosshair; the edit result prints to the terminal |
 | Scroll | Change the dig radius |
-| `G` | Toggle fly and walk mode (bounded worlds only); walking, `Space` jumps or climbs a ledge |
+| `Tab` | The menu: every toggle and action by group with its live value; type to search, `Enter` flips or runs |
+| `F1` | The Keys page: every menu entry and its key |
 | `F2` | Toggle the stats overlay |
+| `F4` | The next render profile: floor, portable, performance, high |
 | `F7` | Toggle the headlamp |
 | `F10` | Cycle the upscaler: off, own, fsr2 |
-| `N` | Cycle the look presets |
-| `Esc` | Quit |
+| `G` | Toggle fly and walk mode (bounded worlds only); walking, `Space` jumps or climbs a ledge |
+| `Esc` | Close the menu (a page at a time); with it closed, quit |
 
-[`docs/flythrough.md`](docs/flythrough.md) lists every key (lighting, lights, entities, the
-sky and the world source, views, audio, gamepad) and every flag. Every toggle shows its mode
-in a banner and prints it to stdout. Walking, the coarse grid and collapse run on the bounded
-worlds (`--source level` and `--source showcase`) only. Every run prints a `frames:` line at
-exit: p50, p99 and max of the frame's render-thread CPU, of `update + poll + sync`, and of the
-march's GPU time on the frames it was timed.
+Everything else (the look presets, the lighting modes, the lights, the light queue, the
+entities, the sky and the world source, audio, the debug views) is an entry of the menu, and a
+gamepad walks the same menu (`Start`). [`docs/flythrough.md`](docs/flythrough.md) lists the
+fixed keys, the shortcuts, the gamepad and every flag; `flythrough --keys` prints the whole
+tree. Every toggle shows its mode in a banner and in its menu row and prints it to stdout.
+Walking, the coarse grid and collapse run on the bounded worlds (`--source level` and
+`--source showcase`) only. Every run prints a `frames:` line at exit: p50, p99 and max of the
+frame's render-thread CPU, of `update + poll + sync`, and of the march's GPU time on the
+frames it was timed.
 
 The tester build's launcher, `cargo run --release -p vxe-tester`, opens a menu that runs the
 fly-through once per scene and packs the reports into a zip

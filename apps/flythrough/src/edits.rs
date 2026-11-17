@@ -153,7 +153,7 @@ impl Coarse {
         }
     }
 
-    /// The `F1` collapse line.
+    /// The readings' (`Enter`) collapse line.
     pub(crate) fn query_line(&self) -> String {
         match self.query {
             Some(n) => format!("collapse: last dig's query found {n} regions"),

@@ -5,7 +5,8 @@
 // Bindings, group 0:
 //   0  uniform  params   scale, and the strip's sample count, ceiling and line
 //   1  storage  cells    256 x 128 u32 cells, row-major with a fixed stride of 256:
-//                        bits 0..8 the ASCII byte (below 32 is blank), bits 8..16 the colour
+//                        bits 0..8 the ASCII byte (below 32 is blank), bits 8..16 the colour,
+//                        bit 16 the backdrop
 //   2  storage  font     95 glyphs x 8 row bytes packed little-endian into 190 u32s;
 //                        bit 0 of a row byte is the glyph's leftmost pixel
 //   3  storage  samples  up to 256 f32 strip samples, oldest first
@@ -15,7 +16,8 @@
 // A set glyph bit is opaque in its cell's colour. Otherwise, inside the strip, a sample's
 // bar is opaque white and the line row is opaque red where no bar covers it. Otherwise a
 // pixel whose up-left neighbour (-1, -1) is a set glyph bit is the shadow: black at alpha
-// 0.75. Everything else is transparent.
+// 0.75. Otherwise a pixel in a cell with the backdrop bit is black at alpha 0.7. Everything
+// else is transparent.
 //
 // The strip: sample i is column i, `scale` pixels wide, from the left edge. Its bottom row
 // sits directly above the last text row of the target (8 scale pixels up from the bottom
@@ -41,6 +43,8 @@ const FIRST: u32 = 32u;
 const LAST: u32 = 126u;
 const NONE: u32 = 0xffffffffu;
 const SHADOW_ALPHA: f32 = 0.75;
+const BACKDROP_BIT: u32 = 0x10000u;
+const BACKDROP_ALPHA: f32 = 0.7;
 
 struct VsOut {
     @builtin(position) pos: vec4<f32>,
@@ -111,11 +115,23 @@ fn strip_at(q: vec2<u32>, height: u32) -> u32 {
     return NONE;
 }
 
-// 0 white, 1 yellow, 2 red; anything else white.
+// Whether the cell under `q` carries the backdrop bit.
+fn backdrop_at(q: vec2<u32>) -> bool {
+    let cell_px = 8u * params.scale;
+    let col = q.x / cell_px;
+    let row = q.y / cell_px;
+    if col >= GRID_COLS || row >= GRID_ROWS {
+        return false;
+    }
+    return (cells[row * GRID_COLS + col] & BACKDROP_BIT) != 0u;
+}
+
+// 0 white, 1 yellow, 2 red, 3 grey; anything else white.
 fn palette(c: u32) -> vec3<f32> {
     switch c {
         case 1u: { return vec3<f32>(1.0, 0.8, 0.0); }
         case 2u: { return vec3<f32>(1.0, 0.25, 0.25); }
+        case 3u: { return vec3<f32>(0.6, 0.6, 0.6); }
         default: { return vec3<f32>(1.0, 1.0, 1.0); }
     }
 }
@@ -133,6 +149,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
     if q.x >= 1u && q.y >= 1u && text_at(q - vec2<u32>(1u, 1u)) != NONE {
         return vec4<f32>(0.0, 0.0, 0.0, SHADOW_ALPHA);
+    }
+    if backdrop_at(q) {
+        return vec4<f32>(0.0, 0.0, 0.0, BACKDROP_ALPHA);
     }
     return vec4<f32>(0.0);
 }

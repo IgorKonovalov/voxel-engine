@@ -587,6 +587,14 @@ impl RenderSettings {
         ("set_text", "HudOverlay's own method: the overlay's text"),
         ("set_lines", "HudOverlay's own method: the overlay's lines"),
         (
+            "set_scale",
+            "HudOverlay's own method: the overlay's glyph scale",
+        ),
+        (
+            "set_lines_over",
+            "HudOverlay's own method: the overlay's lines over a dimmed box",
+        ),
+        (
             "set_rows",
             "HudOverlay's own method: the overlay's coloured rows",
         ),

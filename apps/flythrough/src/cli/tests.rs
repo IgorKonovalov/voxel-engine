@@ -1026,7 +1026,7 @@ fn the_model_flags_parse() {
     assert!(e.contains("--clip") && e.contains("--model"), "{e}");
 }
 
-/// Plan 0032 Phase 8 bar 4: `CapsLock`'s rebuild moves the banner through `trees sparse`,
+/// Plan 0032 Phase 8 bar 4: The `trees` entry's rebuild moves the banner through `trees sparse`,
 /// `trees forest`, `trees none` and back; `--trees` (sparse without the flag), `--leaf-fill`
 /// (64 without the flag, refusing 0 and 257), `--spawn forest` and `--sun 10,180` (refusing an elevation outside
 /// [-90, 90] and an azimuth outside [0, 360)) parse; with `--sun` the banner reads `sun

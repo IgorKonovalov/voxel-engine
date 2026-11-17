@@ -556,6 +556,8 @@ impl PathPlayer {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TesterInput {
     Key(KeyCode),
+    /// A pad button.
+    Pad(PadButton),
     /// Mouse motion (or the look stick).
     MouseLook,
     Click(MouseButton),
@@ -587,8 +589,14 @@ pub const TESTER_MOVE_KEYS: [KeyCode; 7] = [
     KeyCode::ShiftLeft,
 ];
 
+/// The pad buttons `--tester` moves the camera with: `R1` and `L1` (up and down), `R3`
+/// (faster).
+pub const TESTER_MOVE_PAD: [PadButton; 3] = [PadButton::R1, PadButton::L1, PadButton::R3];
+
 /// The tester mode's filter: movement, look, the left click's dig, `F1`, `T` and `Esc` map to
-/// their action; every other key and button (the debug keys among them) to none.
+/// their action; every other key and button (the debug keys, the menu's `Tab` and the pad's
+/// `Start` among them) to none. The frame loop passes on only what maps
+/// (`run::frame`'s key step).
 pub fn tester_action(input: TesterInput) -> Option<TesterAction> {
     match input {
         TesterInput::Key(k) if TESTER_MOVE_KEYS.contains(&k) => Some(TesterAction::Move),
@@ -596,6 +604,8 @@ pub fn tester_action(input: TesterInput) -> Option<TesterAction> {
         TesterInput::Key(KeyCode::KeyT) => Some(TesterAction::Resume),
         TesterInput::Key(KeyCode::Escape) => Some(TesterAction::End),
         TesterInput::Key(_) => None,
+        TesterInput::Pad(b) if TESTER_MOVE_PAD.contains(&b) => Some(TesterAction::Move),
+        TesterInput::Pad(_) => None,
         TesterInput::MouseLook => Some(TesterAction::Look),
         TesterInput::Click(MouseButton::Left) => Some(TesterAction::Dig),
         TesterInput::Click(_) => None,

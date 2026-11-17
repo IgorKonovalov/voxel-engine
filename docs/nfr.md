@@ -654,10 +654,11 @@ protocol above. Other benches keep default-flag paired readings unless their pla
 - **Startup:** pack load under 10 ms (proposal). **Reading:** 13.5 to 13.6 ms in the release
   fly-through over three runs (`--seed 1 --audio --headless --frames 10`, a null-ALSA
   device); 7.1 to 8.9 ms in a release test build. Accepted as the reading (D2c): it runs once.
-- **Fly-through `F1`:** the callback times itself (`OutputStats::busy_max_ms`) and `F1` prints
-  the longest callback over the last second, the voices, the active taps and the last
-  acoustics update's time. **Reading by the owner, 2026-10-17, `main` at 7e8b3d2 with 8
-  voices playing:** callback max 0.429 ms, 128 active taps.
+- **Fly-through readings (`Enter`):** the callback times itself (`OutputStats::busy_max_ms`)
+  and the readings line (`Enter`; `F1` before Plan 0080) prints the longest callback over the
+  last second, the voices, the active taps and the last acoustics update's time. **Reading
+  by the owner, 2026-10-17, `main` at 7e8b3d2, taken under `F1`, with 8 voices playing:**
+  callback max 0.429 ms, 128 active taps.
 - **Determinism:** `World::trace_materials` is integer and its 500-ray hash is pinned in
   `crates/vxe-world/tests/queries.rs` on both arms; nothing else in `vxe-audio` is
   deterministic by contract (§6).

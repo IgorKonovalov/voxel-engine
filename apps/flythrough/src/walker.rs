@@ -922,7 +922,6 @@ mod tests {
             vxe_render::LightingResolution::Half,
             0.0,
         );
-        assert_eq!(crate::toggles::KEY_WALK, vxe_app::KeyCode::F11);
         assert!(m.walkers.place(&table, [50.0, 40.0, 2.0], [50.0, 0.0, 8.0]));
         let words = m.walkers.toggle_walk();
         assert_eq!(words, "walk on");
@@ -1066,7 +1065,6 @@ mod tests {
             vxe_render::LightingResolution::Half,
             0.0,
         );
-        assert_eq!(crate::toggles::KEY_EYE_LIGHTS, vxe_app::KeyCode::F12);
         // Facing -y: the eye at -y of the feet.
         assert!(m.walkers.place(&table, [10.0, 20.0, 2.0], [10.0, 0.0, 8.0]));
         let lights = m.walkers.eye_lights();

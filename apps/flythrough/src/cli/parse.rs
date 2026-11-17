@@ -19,12 +19,21 @@ use vxe_app::Pacing;
 use vxe_render::{LookParams, ViewMode};
 use vxe_world::Residency;
 
+/// `--keys`' row: print the key tree ([`crate::hud::menu::keys_text`]) and exit.
+pub(super) fn keys_flag() -> super::table::Flag<Parsing> {
+    super::table::Flag::switch(
+        &["--keys"],
+        "print the keys and the menu's tree at the start modes, and exit",
+        |p: &mut Parsing| p.args.keys = true,
+    )
+}
+
 pub fn parse_args() -> Result<Args, String> {
     parse_args_from(std::env::args().skip(1))
 }
 
 /// The arguments after the program name.
-pub(crate) fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, String> {
+pub fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let argv: Vec<String> = argv.into_iter().collect();
     let mut args = Args::defaults();
     args.argv = argv.clone();
@@ -85,6 +94,7 @@ impl Args {
             tester: false,
             check_args: false,
             help: false,
+            keys: false,
             settings: false,
             profile: vxe_render::Profile::Floor,
             light_cap: vxe_render::MAX_LIGHTS as u32,

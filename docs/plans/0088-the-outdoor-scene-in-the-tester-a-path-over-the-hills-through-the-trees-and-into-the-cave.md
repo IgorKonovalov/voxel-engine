@@ -12,7 +12,7 @@
 > **Source:** the owner, 2026-11-17: "plan it now", on the tester running only the three
 > underground scenes while the outdoor hills ([Plan 0032](done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md),
 > v0.61.0) ship in the archive without a path or a report.
-> **Starts after:** [Plan 0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md)
+> **Starts after:** [Plan 0080](done/0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md)
 > merges: its Phases 2 and 3 edit `apps/flythrough/src/path.rs` (the tester filter),
 > `apps/flythrough/tests/path.rs`, `cli/parse.rs` and `docs/flythrough.md`, the files this plan
 > adds to. It does **not** wait for

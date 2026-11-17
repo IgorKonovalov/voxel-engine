@@ -5,10 +5,11 @@ use flythrough::hud::{HudRow, HudStats, Modes};
 use flythrough::toggles::{TOGGLES, Toggle};
 use vxe_render::{Lighting, LightingResolution};
 
-/// The modes a run starts with, a pan running so `Period` has one to stop, and one dropped
-/// light so `5` has one to flag.
+/// The modes a run starts with, a pan running so `Period` has one to stop, a sky so the clock
+/// and the sky rays show, and one dropped light so `5` has one to flag.
 fn start() -> Modes {
     let mut m = Modes::new(Lighting::default(), LightingResolution::Half, 0.0).with_pan(10.0, 0.0);
+    m.sky = true;
     m.lights
         .drop_at(true, [0.0; 3], [1.0, 0.0, 0.0], None)
         .unwrap();
@@ -26,11 +27,13 @@ fn grid(modes: &Modes) -> Vec<String> {
 }
 
 /// The HUD row `row` names in `grid`: the one row of the mode block that starts with its
-/// prefix.
+/// prefix, or (the lighting row under a sky, which names the clock first) has it after a
+/// comma.
 fn row_of(grid: &[String], row: HudRow) -> &str {
+    let after_comma = format!(", {}", row.prefix());
     let rows: Vec<&String> = grid
         .iter()
-        .filter(|l| l.starts_with(row.prefix()))
+        .filter(|l| l.starts_with(row.prefix()) || l.contains(&after_comma))
         .collect();
     assert_eq!(rows.len(), 1, "{row:?}: {grid:#?}");
     rows[0]
@@ -92,23 +95,27 @@ fn every_toggle_shows_its_mode_in_the_hud_grid() {
     }
 }
 
-/// No two inputs share a key: every key of the toggle table and of the run's action keys
-/// (`toggles::ACTION_KEYS`) is bound once. `1` to `6` are the lights' (drop, carry, colour,
-/// remove, bounce, fire); the bake queue's six toggles sit on `F`, `Tab`, `Slash`, `Quote`,
-/// `Backspace` and `Backslash` (the owner, 2026-11-13: the laptop has no `Home`, `End`, `Page`
-/// or `Delete` keys), each changing the `queue` row's words.
+/// No two inputs share a key: every key and pad button of the toggle table, of the actions
+/// (`toggles::ACTIONS`) and of the fixed set (`hud::menu::FIXED_KEYS`) is bound once. `1` to
+/// `1`, `4` and `6` are the lights' drop, removal and shot; the lights' carry, colour and
+/// bounce and the bake queue's six toggles are the menu's only (no key), each changing its
+/// row's words.
 #[test]
 fn no_two_inputs_share_a_key() {
-    use flythrough::toggles::{ACTION_KEYS, KEY_DROP, KEY_FIRE, KEY_REMOVE, Press};
+    use flythrough::hud::menu::FIXED_KEYS;
+    use flythrough::toggles::{ACTIONS, Bind, KEY_DROP, KEY_FIRE, KEY_REMOVE, Press};
     use vxe_app::KeyCode;
-    let mut keys: Vec<KeyCode> = TOGGLES
+    let mut keys: Vec<Bind> = TOGGLES
         .iter()
-        .filter_map(|t| match t.press {
-            Press::Key(k, _) => Some(k),
-            Press::Scroll => None,
+        .flat_map(|t| match t.press {
+            Press::Key(k, pad) => std::iter::once(Bind::Key(k))
+                .chain(pad.map(Bind::Pad))
+                .collect(),
+            Press::Scroll | Press::Menu => Vec::new(),
         })
         .collect();
-    keys.extend_from_slice(ACTION_KEYS);
+    keys.extend(ACTIONS.iter().flat_map(|a| a.binds.iter().copied()));
+    keys.extend(FIXED_KEYS.iter().map(|&k| Bind::Key(k)));
     for (i, k) in keys.iter().enumerate() {
         assert!(!keys[i + 1..].contains(k), "{k:?} is bound twice");
     }
@@ -116,26 +123,25 @@ fn no_two_inputs_share_a_key() {
         [KEY_DROP, KEY_REMOVE, KEY_FIRE],
         [KeyCode::Digit1, KeyCode::Digit4, KeyCode::Digit6]
     );
-    let by_key = |k: KeyCode| {
+    let named = |name: &str| {
         TOGGLES
             .iter()
-            .find(|t| t.press == Press::Key(k, None))
-            .unwrap_or_else(|| panic!("{k:?} is a toggle"))
+            .find(|t| t.name == name)
+            .unwrap_or_else(|| panic!("{name} is a toggle"))
     };
-    assert_eq!(by_key(KeyCode::Digit2).name, "carry");
-    assert_eq!(by_key(KeyCode::Digit3).name, "colour");
-    assert_eq!(by_key(KeyCode::Digit5).name, "bounce");
-    let queue = [
-        (KeyCode::KeyF, "queue order"),
-        (KeyCode::Tab, "queue angle halved"),
-        (KeyCode::Slash, "queue angle doubled"),
-        (KeyCode::Quote, "queue withdraw"),
-        (KeyCode::Backspace, "bake budget"),
-        (KeyCode::Backslash, "full-first"),
-    ];
-    for (k, name) in queue {
-        let t = by_key(k);
-        assert_eq!(t.name, name);
+    for name in ["carry", "colour", "bounce"] {
+        assert_eq!(named(name).press, Press::Menu, "{name}");
+        assert_eq!(named(name).row, HudRow::Lights, "{name}");
+    }
+    for name in [
+        "queue order",
+        "queue angle",
+        "queue withdraw",
+        "bake budget",
+        "full-first",
+    ] {
+        let t = named(name);
+        assert_eq!(t.press, Press::Menu, "{name}");
         assert_eq!(t.row, HudRow::Queue);
         let mut m = start();
         let before = m.row(HudRow::Queue);

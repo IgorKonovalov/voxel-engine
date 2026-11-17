@@ -105,10 +105,15 @@ pub(crate) struct Run {
     pub(crate) surface: Option<(wgpu::TextureFormat, Option<wgpu::SurfaceColorSpace>)>,
     /// `--tester`'s help panel (`F1`) is shown.
     pub(crate) help: bool,
-    /// `Home` or `--switch-at` asked for the next world source: the app rebuilds the run
+    /// The menu (`Tab`, `F1`); never opened under `--tester`.
+    pub(crate) menu: crate::hud::menu::Menu,
+    /// The last line an action said (`Run::say`) and when (the run's clock, ms): the menu's
+    /// notice row, for `hud::BANNER_MS`.
+    pub(crate) notice: Option<(String, f64)>,
+    /// The menu's `source` entry or `--switch-at` asked for the next world source: the app rebuilds the run
     /// after this frame (`run::switch`).
     pub(crate) switch: bool,
-    /// `CapsLock` asked for the outdoor hills' next `--trees`: the app rebuilds the run after
+    /// The menu's `trees` entry asked for the outdoor hills' next `--trees`: the app rebuilds the run after
     /// this frame through the switch's path (`run::switch`).
     pub(crate) retree: bool,
     /// Start-up still stepping behind loading frames; `None` once the first world frame may
@@ -449,5 +454,7 @@ impl Drop for Run {
     }
 }
 
+#[cfg(test)]
+mod menu_tests;
 #[cfg(test)]
 mod tests;

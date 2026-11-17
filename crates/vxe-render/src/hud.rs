@@ -6,6 +6,8 @@
 //! The cell grid is laid out at its cap, [`GRID_COLS`] x [`GRID_ROWS`] cells, with a fixed row
 //! stride of [`GRID_COLS`]; the part a target shows is `ceil(width / (8 scale))` x
 //! `ceil(height / (8 scale))` cells from the top-left, and the rest is clipped, never wrapped.
+//! A box of cells may carry a dim backdrop ([`HudBox`]): black at alpha [`BACKDROP_ALPHA`]
+//! under the cells' pixels that no glyph covers.
 
 use crate::font8x8::{FONT, printable};
 
@@ -26,6 +28,10 @@ pub(crate) const STRIP_PX: u32 = 64;
 pub(crate) const LINE_MS: f32 = 1000.0 / 60.0;
 /// `Params::line_px` for no line.
 const NO_LINE: u32 = u32::MAX;
+/// The backdrop bit of a cell word (bits 0..8 the byte, 8..16 the colour).
+pub(crate) const BACKDROP_BIT: u32 = 1 << 16;
+/// The backdrop's opacity: a backdrop pixel is `mix(target, black, BACKDROP_ALPHA)`.
+pub const BACKDROP_ALPHA: f32 = 0.7;
 
 /// The colour of a row of text.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -34,6 +40,26 @@ pub enum HudColour {
     White = 0,
     Yellow = 1,
     Red = 2,
+    /// A row that is shown but does not act, such as an unavailable entry.
+    Grey = 3,
+}
+
+/// A box of cells, `cols` x `rows` from cell (`col`, `row`), whose cells carry the dim
+/// backdrop. Cells past the grid's cap are dropped.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HudBox {
+    pub col: u32,
+    pub row: u32,
+    pub cols: u32,
+    pub rows: u32,
+}
+
+impl HudBox {
+    /// Whether cell (`col`, `row`) is inside the box.
+    pub fn contains(&self, col: u32, row: u32) -> bool {
+        (self.col..self.col + self.cols).contains(&col)
+            && (self.row..self.row + self.rows).contains(&row)
+    }
 }
 
 /// The uniform block of `hud.wgsl`, field for field.
@@ -58,6 +84,10 @@ pub struct HudOverlay {
     samples: wgpu::Buffer,
     /// Target pixels per glyph pixel along each axis: a cell covers `8 scale` x `8 scale`.
     scale: u32,
+    /// The strip's samples and ceiling as the last `set_samples` gave them, kept so a
+    /// `set_scale` rewrites the uniform block whole.
+    sample_count: u32,
+    ceiling_ms: f32,
     /// Rows of cells the last `set_text` wrote; the next one clears any it does not reuse.
     rows: u32,
     /// The CPU copy of the rows being written, reused between calls.
@@ -207,15 +237,46 @@ impl HudOverlay {
             cells,
             samples,
             scale,
+            sample_count: 0,
+            ceiling_ms: 0.0,
             rows: 0,
             staging: Vec::new(),
             allocations: 0,
         }
     }
 
-    /// Target pixels per glyph pixel along each axis, as given to [`HudOverlay::new`].
+    /// Target pixels per glyph pixel along each axis, as given to [`HudOverlay::new`] or
+    /// the last [`HudOverlay::set_scale`].
     pub fn scale(&self) -> u32 {
         self.scale
+    }
+
+    /// Draws each glyph pixel as `scale` x `scale` target pixels (at least 1) from the next
+    /// draw on: the cells and the strip grow or shrink about the top-left, and the strip's
+    /// samples and ceiling stay. Writes the uniform block only when the scale changes.
+    pub fn set_scale(&mut self, queue: &wgpu::Queue, scale: u32) {
+        let scale = scale.max(1);
+        if scale == self.scale {
+            return;
+        }
+        self.scale = scale;
+        queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&self.params()));
+    }
+
+    /// The uniform block for the current scale, sample count and ceiling.
+    fn params(&self) -> Params {
+        let shown = self.sample_count > 0;
+        let strip_px = STRIP_PX * self.scale;
+        Params {
+            scale: self.scale,
+            sample_count: self.sample_count,
+            ceiling_ms: if shown { self.ceiling_ms } else { 1.0 },
+            line_px: if shown && self.ceiling_ms > LINE_MS {
+                ((LINE_MS / self.ceiling_ms * strip_px as f32).round() as u32).min(strip_px - 1)
+            } else {
+                NO_LINE
+            },
+        }
     }
 
     /// The CPU allocations the overlay has made: each time its staging copy of the rows grew.
@@ -226,7 +287,7 @@ impl HudOverlay {
 
     /// Replaces the text with `rows`, all white, from the top-left cell.
     pub fn set_text(&mut self, queue: &wgpu::Queue, rows: &[&[u8]]) {
-        self.write_rows(queue, rows.iter().map(|&r| (r, HudColour::White)));
+        self.write_rows(queue, rows.iter().map(|&r| (r, HudColour::White)), None);
     }
 
     /// Replaces the text with the lines of `text`, line `i` in `colours[i]` (white past the
@@ -237,22 +298,42 @@ impl HudOverlay {
             .lines()
             .enumerate()
             .map(|(i, l)| (l.as_bytes(), colour(i)));
-        self.write_rows(queue, Counted(text.lines().count(), rows));
+        self.write_rows(queue, Counted(text.lines().count(), rows), None);
+    }
+
+    /// [`Self::set_lines`] with the cells of `backdrop` dimmed under the text: each pixel of
+    /// a box cell that no glyph covers is black at alpha [`BACKDROP_ALPHA`] over the target
+    /// (a glyph's shadow inside the box stays the shadow).
+    pub fn set_lines_over(
+        &mut self,
+        queue: &wgpu::Queue,
+        text: &str,
+        colours: &[HudColour],
+        backdrop: HudBox,
+    ) {
+        let colour = |i| colours.get(i).copied().unwrap_or_default();
+        let rows = text
+            .lines()
+            .enumerate()
+            .map(|(i, l)| (l.as_bytes(), colour(i)));
+        self.write_rows(queue, Counted(text.lines().count(), rows), Some(backdrop));
     }
 
     /// Replaces the text with `rows`, each in its colour, from the top-left cell. A row past
     /// [`GRID_ROWS`] or a byte past [`GRID_COLS`] is dropped; a byte outside 32 to 126 draws
     /// as `?`.
     pub fn set_rows(&mut self, queue: &wgpu::Queue, rows: &[(&[u8], HudColour)]) {
-        self.write_rows(queue, rows.iter().copied());
+        self.write_rows(queue, rows.iter().copied(), None);
     }
 
     fn write_rows<'a>(
         &mut self,
         queue: &wgpu::Queue,
         rows: impl ExactSizeIterator<Item = (&'a [u8], HudColour)>,
+        backdrop: Option<HudBox>,
     ) {
-        let n = (rows.len() as u32).min(GRID_ROWS);
+        let box_end = backdrop.map_or(0, |b| b.row.saturating_add(b.rows));
+        let n = (rows.len() as u32).max(box_end).min(GRID_ROWS);
         // Rows the previous text used and this one does not are written blank.
         let written = n.max(self.rows);
         let capacity = self.staging.capacity();
@@ -262,6 +343,15 @@ impl HudOverlay {
         for (cells, (bytes, colour)) in self.staging.chunks_mut(GRID_COLS as usize).zip(rows) {
             for (cell, &b) in cells.iter_mut().zip(bytes) {
                 *cell = u32::from(printable(b)) | (colour as u32) << 8;
+            }
+        }
+        if let Some(b) = backdrop {
+            for (row, cells) in self.staging.chunks_mut(GRID_COLS as usize).enumerate() {
+                for (col, cell) in cells.iter_mut().enumerate() {
+                    if b.contains(col as u32, row as u32) {
+                        *cell |= BACKDROP_BIT;
+                    }
+                }
             }
         }
         if written > 0 {
@@ -277,21 +367,12 @@ impl HudOverlay {
     pub fn set_samples(&mut self, queue: &wgpu::Queue, samples: &[f32], ceiling_ms: f32) {
         let samples = &samples[samples.len().saturating_sub(MAX_SAMPLES)..];
         let shown = ceiling_ms > 0.0 && ceiling_ms.is_finite();
-        let strip_px = STRIP_PX * self.scale;
-        let params = Params {
-            scale: self.scale,
-            sample_count: if shown { samples.len() as u32 } else { 0 },
-            ceiling_ms: if shown { ceiling_ms } else { 1.0 },
-            line_px: if shown && ceiling_ms > LINE_MS {
-                ((LINE_MS / ceiling_ms * strip_px as f32).round() as u32).min(strip_px - 1)
-            } else {
-                NO_LINE
-            },
-        };
+        self.sample_count = if shown { samples.len() as u32 } else { 0 };
+        self.ceiling_ms = if shown { ceiling_ms } else { 0.0 };
         if !samples.is_empty() {
             queue.write_buffer(&self.samples, 0, bytemuck::cast_slice(samples));
         }
-        queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&params));
+        queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&self.params()));
     }
 
     /// Records the overlay onto `view`, a `width` x `height` target, into `encoder`; what the

@@ -21,7 +21,6 @@ next free number).
 | [0076](0076-a-key-help-overlay-for-the-fly-through-from-the-key-table.md) | A key help overlay for the fly-through: `F1` (readings move to `Enter`), written from the key tables, modes live, 80 x 45 | superseded | Apps only, no ADR. Folded into 0080 (owner, 2026-11-16). |
 | [0077](0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md) | An entity picker: `` ` `` lists the entities library, a live preview at the crosshair, a clip per placed entity | approved | Apps only, no ADR. After 0080 merges; amended 2026-11-17 (re-read), questions 9-11 answered. |
 | [0079](0079-entities-aware-of-floor-and-walls-a-surface-mover-the-smoothed-normal-and-a-wandering-demo.md) | Entities aware of the floor and the walls: a surface mover, the smoothed normal, a body in the `.rig`, a wander | approved | M6, ADR-0062 (proposed). Phases 1-3 after 0063 and the chore; Phase 4 after 0077. |
-| [0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) | The fly-through's menu: one overlay component, a search palette, and the minimal key set | approved | ADR-0061 (proposed). Apps only. After 0062 and 0075; before 0077, 0073. |
 | [0081](0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md) | A surface detail layer: blades, caps and pebbles marched above styled faces, lit as hits, faded by size on screen | approved | M10, ADR-0063 (proposed). Re-read 2026-11-17. After 0086 and 0080, before 0033. |
 | [0082](0082-squash-and-stretch-a-scale-per-part-in-the-pose-and-the-clips.md) | Squash and stretch: a scale per axis per part in the pose and the clips, a slime in the library with a bounce | approved | M6, ADR-0064 (proposed). Approved 2026-11-16. After 0063, the clip chore, 0078 and 0079 P1-3. |
 | [0083](0083-anything-from-a-vox-palette-materials-a-material-file-and-large-scenes-stamped-into-the-world.md) | Anything from a `.vox`: palette materials, a material file, brick prefabs, far placements | approved | M7, ADR-0065, ADR-0066. Approved 2026-11-16. After 0063 and the chore; P6 after 0080, 0077. |
@@ -101,7 +100,7 @@ Plan 0044's Phase 4; **Plan 0072** (development speed), closed 2026-11-13 (v0.51
 
 **Plan 0073** (a settings menu and file for the fly-through and the tester, approved 2026-11-12 with every recommendation): after Plans 0069 and 0071, and after Plan 0080, whose menu its settings pages live in (amended 2026-11-16, the owner's go).
 
-**Plan 0080** (the fly-through's menu: one overlay component, a palette, the minimal key set; drafted and approved 2026-11-16 with ADR-0061 from the owner's "keep using keys to minimal"): after Plans 0062 and 0075 merge (both edit `toggles.rs`), **before Plans 0076, 0077 and 0073**, which are amended onto its component (notes of 2026-11-16, approved by the owner); it does not wait for Plans 0069 or 0071. Recommended there: Plan 0076 is folded into it (its Keys page), superseded 2026-11-16.
+**Plan 0080** (the fly-through's menu: one overlay component, a palette, the minimal key set; drafted and approved 2026-11-16 with ADR-0061 from the owner's "keep using keys to minimal"; **closed 2026-11-17, v0.62.0**, ADR-0061 accepted with an Outcome): after Plans 0062 and 0075 merge (both edit `toggles.rs`), **before Plans 0076, 0077 and 0073**, which are amended onto its component (notes of 2026-11-16, approved by the owner); it does not wait for Plans 0069 or 0071. Recommended there: Plan 0076 is folded into it (its Keys page), superseded 2026-11-16.
 
 **Plan 0074** (the sync's light stages): closed 2026-11-14 (v0.53.0). The next sync plans are the backlog's head: the light placement's eviction scan, then `alloc`.
 
@@ -168,6 +167,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0080](done/0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) | The fly-through's menu: one key table, a palette, the Keys page, the minimal key set and the pad; numbers edited, grey reasons | 2026-11-17, v0.62.0 |
 | [0032](done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md) | Sun and sky: Hillaire LUTs, a time of day, the sun or moon and one sky ray into the direct target, absent is sky, an outdoor testbed | 2026-11-17, v0.61.0 |
 | [0069](done/0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md) | Render settings: one struct, an apply class per field, a setter gate; profiles Floor, Portable, Performance, High | 2026-11-17, v0.60.0 |
 | [0078](done/0078-the-entity-pool-frees-models-by-handle-stable-instance-slots-and-a-reset.md) | The entity pool frees models by handle into a coalescing free list; stable instance slots with a generation; ghost leaves; a reset | 2026-11-16, v0.59.0 |
