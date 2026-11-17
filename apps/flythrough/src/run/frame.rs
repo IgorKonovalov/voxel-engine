@@ -723,6 +723,7 @@ impl Run {
             up.to_array(),
         );
         self.poll_viewer(ms_since(self.start));
+        self.aim_entities();
         // The walkers walk before their eye lights are read, so a light rides with its head.
         self.modes.walkers.step(step);
         let mut lights = self.modes.lights.list();

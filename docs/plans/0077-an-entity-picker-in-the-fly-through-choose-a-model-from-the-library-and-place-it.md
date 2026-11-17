@@ -594,8 +594,8 @@ Answered 2026-11-16 (owner): every recommended option, 1 to 8.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the library scanned and listed | dev | done; `walker.rs` split into `entities/{mod,walker,placed,pool,library}.rs` here (the amendment puts it in Phase 2); `--library` is a switch beside `--keys` and the directory is `--library-dir DIR` (the plan writes `--library [DIR]`); `Viewer`'s playback moved into `viewer::Play`; `examples/clip.rs`, `tests/gpu_entity_pool.rs` edited for the moved names. Readings: [logs/0077.md](logs/0077.md) | committed with this row |
-| 2: several models at once, a clip per entity | dev | not started | |
+| 1: the library scanned and listed | dev | done; `walker.rs` split into `entities/{mod,walker,placed,pool,library}.rs` here (the amendment puts it in Phase 2); `--library` is a switch beside `--keys` and the directory is `--library-dir DIR` (the plan writes `--library [DIR]`); `Viewer`'s playback moved into `viewer::Play`; `examples/clip.rs`, `tests/gpu_entity_pool.rs` edited for the moved names. Readings: [logs/0077.md](logs/0077.md) | 5666f0e5 |
+| 2: several models at once, a clip per entity | dev | done; `Walkers` holds the `Library` (a `Viewer` per rig entry) and `Placed` its `entry` and own `viewer::Play`; the clip keys act on the aimed (else newest) entity and need `Needs::Placed`; a pool refusal of a non-`--model` entry removes its unuploaded instances and names it (`spider: ...`); the HUD's target row is its own row (`walker #1 walk 0/30`), not appended to the entities row; `refreshing_the_displays_allocates_nothing_per_entity`'s rig half re-derived (`four == 4 * one`, logged); the gpu binaries were queued behind the lock at commit (Phase 3 records them); `src/run/{tests,menu_tests}.rs` and `tests/gpu_entity_pool.rs` edited for the moved names | committed with this row |
 | 3: the picker | dev | not started | |
 | 4: the owner's window | human | not started | |
 | 5: the owner's picks, and the tip | dev | not started | |

@@ -43,6 +43,10 @@ pub(crate) fn ore_pulse(ms: f64) -> f32 {
     (f64::from(ORE_PULSE_MEAN) + 0.75 * (ms / 1500.0 * std::f64::consts::TAU).sin()) as f32
 }
 
+/// How far the crosshair looks for a placed entity with no world surface in the way, in
+/// voxels: 50 m.
+pub(crate) const AIM_RANGE: f32 = 500.0;
+
 /// The ore pulse's time average, the scale the probe rays see the ore at, pulsing or not.
 pub(crate) const ORE_PULSE_MEAN: f32 = 1.0;
 
@@ -166,7 +170,8 @@ impl Run {
             }),
             path: self.player.is_some(),
             castle: self.castle_shot.is_some(),
-            model: self.modes.walkers.viewer.is_some(),
+            model: self.modes.walkers.viewer().is_some(),
+            placed: !self.modes.walkers.placed.is_empty(),
             streaming: self.stream.is_some(),
             coarse: self.coarse.is_some(),
         }
@@ -319,10 +324,31 @@ impl Run {
         Some((hit.t as f32 / FIXED_ONE as f32, normal))
     }
 
+    /// Reads the placed entity under the crosshair into the entities' `aimed`: the first along
+    /// the camera's ray before the world's surface ([`vxe_entity::EntitySet::raycast`] with
+    /// the world hit's distance as its reach; [`AIM_RANGE`] voxels with no hit).
+    pub(crate) fn aim_entities(&mut self) {
+        let w = &mut self.modes.walkers;
+        if w.placed.is_empty() {
+            w.aimed = None;
+            return;
+        }
+        let (origin, dir) = self.camera_ray();
+        let reach = (AIM_RANGE * FIXED_ONE as f32) as i64;
+        let max_t = self
+            .world
+            .raycast(origin, dir, reach)
+            .ok()
+            .flatten()
+            .map_or(reach, |h| h.t);
+        let w = &mut self.modes.walkers;
+        w.aimed = w.set.raycast(origin, dir, max_t).map(|h| h.entity);
+    }
+
     /// The lights' and walkers' actions: a drop at the looked-at surface, a walker placed
-    /// there (`--model`'s model under the viewer), the newest of the two removed, a light
-    /// fired along the view ray, the walkers' walking and eye lights, and under `--model` the
-    /// clips cycled or paused. Gives the words the banner shows: the count, the clip or the
+    /// there (the library's selected entry), the newest of the two removed, a light fired
+    /// along the view ray, the walkers' walking and eye lights, and the aimed (else the
+    /// newest) entity's clip cycled or paused. Gives the words the banner shows: the count, the clip or the
     /// pause. A drop or a shot into a full list gives [`lights::FULL_LINE`] and adds nothing.
     fn light_act(&mut self, act: Act) -> Option<String> {
         let lamp = self.modes.lighting.lamp;
@@ -345,24 +371,17 @@ impl Run {
                 let at = hit.map_or(lights::MISS_DROP, |(t, _)| t);
                 let feet = std::array::from_fn(|k| eye[k] + fwd[k] * at);
                 let table = self.world.materials();
-                if self.modes.walkers.place(table, feet, eye) {
-                    self.modes.walkers.newest.push(true);
-                    self.modes.walkers.count_words()
-                } else if let Some(v) = &self.modes.walkers.viewer {
-                    format!("model {}: not built", v.name)
-                } else {
-                    "walker: no walker rows in this world's table".to_owned()
+                match self.modes.walkers.place_selected(table, feet, eye) {
+                    Ok(_) => {
+                        self.modes.walkers.newest.push(true);
+                        self.modes.walkers.count_words()
+                    }
+                    Err(why) => why,
                 }
             }
-            Act::ClipBack => self.modes.walkers.viewer.as_mut()?.cycle(-1),
-            Act::ClipOn => self.modes.walkers.viewer.as_mut()?.cycle(1),
-            Act::ClipPause => self
-                .modes
-                .walkers
-                .viewer
-                .as_mut()?
-                .toggle_pause()
-                .to_owned(),
+            Act::ClipBack => self.modes.walkers.cycle_clip(-1),
+            Act::ClipOn => self.modes.walkers.cycle_clip(1),
+            Act::ClipPause => self.modes.walkers.toggle_pause(),
             Act::EyeLights => self.modes.walkers.toggle_eye_lights().to_owned(),
             Act::WalkersWalk => self.modes.walkers.toggle_walk().to_owned(),
             Act::Remove => {

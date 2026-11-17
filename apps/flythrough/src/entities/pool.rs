@@ -91,67 +91,84 @@ fn fragmented(e: &EntityUploadError) -> bool {
         if largest < needed && needed <= free)
 }
 
-/// Uploads `model` into `pool`; on `PoolFull` frees `stale` (the viewer's replaced model, when
-/// there is one) and tries once more.
+/// Frees one rig's replaced model (its `stale` handle), when one is held: room a refused
+/// upload may retry into.
+fn free_a_stale(walkers: &mut Walkers, pool: &mut impl ModelPool) -> bool {
+    for e in &mut walkers.library.entries {
+        if let Some(v) = e.viewer_mut()
+            && let Some(s) = v.stale.take()
+        {
+            pool.free(s);
+            return true;
+        }
+    }
+    false
+}
+
+/// Uploads `model` into `pool`; on `PoolFull` frees a rig's replaced model, when one is held,
+/// and tries once more.
 fn upload_or_free_stale(
+    walkers: &mut Walkers,
     pool: &mut impl ModelPool,
     model: &Model,
     table: &MaterialTable,
-    stale: &mut Option<ModelHandle>,
 ) -> Result<ModelHandle, EntityUploadError> {
     match pool.upload(model, table) {
-        Err(EntityUploadError::PoolFull { .. }) if stale.is_some() => {
-            pool.free(stale.take().expect("checked"));
+        Err(EntityUploadError::PoolFull { .. }) if free_a_stale(walkers, pool) => {
             pool.upload(model, table)
         }
         r => r,
     }
 }
 
-/// One pass of [`sync_models`]: the built-in walker's model and the viewer's uploaded when
-/// needed, the viewer's replaced model freed once its new one is in. The first refusal and
-/// whose it was (`true` the viewer's).
+/// One pass of [`sync_models`]: the built-in walker's model while one is placed, and each
+/// entry's rig while an instance of it is placed (`--model`'s once built, placed or not),
+/// uploaded when not yet; then each replaced model freed once its entry's new one is in. The
+/// first refusal and whose it was (`None` the built-in walker's, else the entry's index).
 fn upload_needed(
     walkers: &mut Walkers,
     pool: &mut impl ModelPool,
     table: &MaterialTable,
-) -> Result<(), (bool, EntityUploadError)> {
-    let mut no_stale = None;
+) -> Result<(), (Option<usize>, EntityUploadError)> {
     if walkers.handle.is_none()
-        && walkers.placed.iter().any(|p| !p.rig)
+        && walkers.placed.iter().any(|p| p.entry.is_none())
         && let Some(model) = walkers.model(table)
     {
-        let stale = walkers
-            .viewer
-            .as_mut()
-            .map_or(&mut no_stale, |v| &mut v.stale);
         walkers.handle =
-            Some(upload_or_free_stale(pool, &model, table, stale).map_err(|e| (false, e))?);
+            Some(upload_or_free_stale(walkers, pool, &model, table).map_err(|e| (None, e))?);
     }
-    if let Some(v) = &mut walkers.viewer
-        && v.handle.is_none()
-        && let Some(l) = &v.loaded
-    {
+    for i in 0..walkers.library.entries.len() {
+        let e = &walkers.library.entries[i];
+        let Some(v) = e.viewer() else { continue };
+        let used = e.flagged || walkers.placed.iter().any(|p| p.entry == Some(i));
+        let Some(l) = v.loaded.as_ref().filter(|_| v.handle.is_none() && used) else {
+            continue;
+        };
         let model = l.model.clone();
-        v.handle =
-            Some(upload_or_free_stale(pool, &model, table, &mut v.stale).map_err(|e| (true, e))?);
+        let h = upload_or_free_stale(walkers, pool, &model, table).map_err(|e| (Some(i), e))?;
+        if let Some(v) = walkers.library.entries[i].viewer_mut() {
+            v.handle = Some(h);
+        }
     }
-    if let Some(v) = &mut walkers.viewer
-        && v.handle.is_some()
-        && let Some(s) = v.stale.take()
-    {
-        pool.free(s);
+    for e in &mut walkers.library.entries {
+        if let Some(v) = e.viewer_mut()
+            && v.handle.is_some()
+            && let Some(s) = v.stale.take()
+        {
+            pool.free(s);
+        }
     }
     Ok(())
 }
 
-/// The models the placed walkers need, in `pool`: the built-in walker's on first need, the
-/// viewer's after a build or a reload, then the viewer's replaced model freed. A `PoolFull`
-/// first frees the replaced model and retries; one that stands with the free bytes enough and
-/// no hole large enough clears the pool and uploads every model still placed again (the
-/// banner's [`POOL_RESET`]). A refusal after that keeps the viewer's error on screen (or prints
-/// the walker's). The pool's figures are read for the HUD row. The banner's words when there
-/// are any.
+/// The models the placed entities need, in `pool`: the built-in walker's on first need, each
+/// entry's after a build or a reload, then each replaced model freed. A `PoolFull` first frees
+/// a replaced model and retries; one that stands with the free bytes enough and no hole large
+/// enough clears the pool and uploads every model still placed again (the banner's
+/// [`POOL_RESET`]). A refusal after that: `--model`'s keeps its error on screen, another
+/// entry's instances that have no model in the pool are removed and the banner names the
+/// entry (`spider: entity pool full ...`), and the built-in walker's is printed. The pool's
+/// figures are read for the HUD row. The banner's words when there are any.
 pub fn sync_models(
     walkers: &mut Walkers,
     pool: &mut impl ModelPool,
@@ -164,27 +181,54 @@ pub fn sync_models(
     {
         pool.clear();
         walkers.handle = None;
-        if let Some(v) = &mut walkers.viewer {
-            (v.handle, v.stale) = (None, None);
+        for e in &mut walkers.library.entries {
+            if let Some(v) = e.viewer_mut() {
+                (v.handle, v.stale) = (None, None);
+            }
         }
         words = Some(POOL_RESET.to_owned());
         r = upload_needed(walkers, pool, table);
     }
     match r {
         Ok(()) => {}
-        Err((false, e)) => println!("walker: {e}"),
-        Err((true, e)) => {
-            if let Some(v) = &mut walkers.viewer {
-                // Tried with no model: the next try follows a reload.
-                let err = format!("model {}: {e}", v.name);
-                v.loaded = None;
-                v.error = Some(e.to_string());
-                words = Some(err);
+        Err((None, e)) => println!("walker: {e}"),
+        Err((Some(i), e)) => {
+            let entry = &mut walkers.library.entries[i];
+            let (name, flagged) = (entry.name.clone(), entry.flagged);
+            if flagged {
+                if let Some(v) = entry.viewer_mut() {
+                    // Tried with no model: the next try follows a reload.
+                    v.loaded = None;
+                    v.error = Some(e.to_string());
+                }
+                words = Some(format!("model {name}: {e}"));
+            } else {
+                refuse_entry(walkers, i);
+                words = Some(format!("{name}: {e}"));
             }
         }
     }
     (walkers.pool_used, walkers.pool_total) = (pool.used_bytes(), pool.total_bytes());
     words
+}
+
+/// Removes entry `i`'s placed instances, which the pool refused: the set is as it was before
+/// they were placed, and `4`'s list loses as many entities from its newest end.
+fn refuse_entry(walkers: &mut Walkers, i: usize) {
+    let mut gone = 0;
+    while let Some(k) = walkers.placed.iter().rposition(|p| p.entry == Some(i)) {
+        walkers.remove_at(k);
+        gone += 1;
+    }
+    while gone > 0 {
+        match walkers.newest.iter().rposition(|&e| e) {
+            Some(k) => {
+                walkers.newest.remove(k);
+                gone -= 1;
+            }
+            None => break,
+        }
+    }
 }
 
 /// One frame's walkers into `frame`: the pending ring placed around `eye` on `world`'s floor,

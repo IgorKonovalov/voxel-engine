@@ -313,8 +313,8 @@ impl Modes {
     }
 
     /// Writes the mode block: the profile row when set, then one row per [`HudRow`] in order,
-    /// each ending in a line break, then the walkers' row while one is placed and the
-    /// viewer's under `--model`.
+    /// each ending in a line break, then the entities' row while one is placed, the aimed (or
+    /// newest) rig's clip row, and the viewer's under `--model`.
     pub fn write_rows(&self, out: &mut String) {
         if !self.profile.is_empty() {
             out.push_str(&self.profile);
@@ -328,7 +328,10 @@ impl Modes {
             self.walkers.write_row(out);
             out.push('\n');
         }
-        if let Some(v) = &self.walkers.viewer {
+        if self.walkers.write_target(out) {
+            out.push('\n');
+        }
+        if let Some(v) = self.walkers.viewer() {
             v.write_row(out);
             out.push('\n');
         }

@@ -689,9 +689,9 @@ fn an_unavailable_entry_says_why() {
         ("resume the tour", "needs --path"),
         ("next castle shot", "needs --castle"),
         ("pan", "needs --pan"),
-        ("clip before", "needs --model"),
-        ("clip after", "needs --model"),
-        ("clip pause", "needs --model"),
+        ("clip before", "needs a placed entity"),
+        ("clip after", "needs a placed entity"),
+        ("clip pause", "needs a placed entity"),
     ];
     let audio: Vec<&str> = entries()
         .filter(|e| e.group == Group::Audio)

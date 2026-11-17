@@ -175,6 +175,7 @@ pub fn keys_text(args: &crate::cli::Args) -> String {
         path: args.path.is_some(),
         castle: args.castle,
         model: args.model.is_some(),
+        placed: false,
         streaming,
         coarse: !streaming,
     };

@@ -65,6 +65,8 @@ pub enum Needs {
     Castle,
     /// `--model PATH`: the viewer's clips.
     Model,
+    /// A placed entity: its clip, cycled or paused.
+    Placed,
     /// A bounded world (`--level`): walking, which a streamed world refuses.
     Bounded,
     /// A bounded world (`--level`): the coarse grid and the collapse it feeds.
@@ -84,6 +86,7 @@ impl Needs {
             Self::Path => (v.path, "needs --path"),
             Self::Castle => (v.castle, "needs --castle"),
             Self::Model => (v.model, "needs --model"),
+            Self::Placed => (v.placed, "needs a placed entity"),
             Self::Bounded => (!v.streaming, "needs --level"),
             Self::Coarse => (v.coarse, "needs --level"),
             Self::Sky => (m.sky, "needs --sky on"),
@@ -202,10 +205,11 @@ pub const KEY_FIRE: KeyCode = KeyCode::Digit6;
 pub const KEY_WALKER: KeyCode = KeyCode::Backquote;
 /// `F4`: the next render profile (`run::profile`).
 pub const KEY_PROFILE: KeyCode = KeyCode::F4;
-/// `Left` and `Right`: the viewer's clip before and after (`--model`, `crate::viewer`).
+/// `Left` and `Right`: the aimed (else the newest) placed entity's clip before and after
+/// (`crate::entities`).
 pub const KEY_CLIP_BACK: KeyCode = KeyCode::ArrowLeft;
 pub const KEY_CLIP_ON: KeyCode = KeyCode::ArrowRight;
-/// `Down`: the viewer's clip paused or playing.
+/// `Down`: that entity's clip paused or playing.
 pub const KEY_CLIP_PAUSE: KeyCode = KeyCode::ArrowDown;
 
 /// What an action does: the run's method its entry and its binds call (`Run::act`).
@@ -223,17 +227,17 @@ pub enum Act {
     Remove,
     /// Fires a light along the view ray.
     FireLight,
-    /// Places a walker (or `--model`'s model) at the looked-at surface.
+    /// Places the library's selected entry at the looked-at surface.
     PlaceWalker,
     /// The walkers walk or hold still.
     WalkersWalk,
     /// The walkers' eye lights on or off.
     EyeLights,
-    /// The viewer's clip before.
+    /// The aimed (else the newest) placed entity's clip before.
     ClipBack,
-    /// The viewer's clip after.
+    /// Its clip after.
     ClipOn,
-    /// The viewer's clip paused or playing.
+    /// Its clip paused or playing.
     ClipPause,
     /// Plays a knock at the dig point.
     Knock,
@@ -458,21 +462,21 @@ pub static ACTIONS: &[Action] = &[
         Entities,
         Act::ClipBack,
         [Bind::Key(KEY_CLIP_BACK)],
-        Some(Needs::Model)
+        Some(Needs::Placed)
     ),
     action!(
         "clip after",
         Entities,
         Act::ClipOn,
         [Bind::Key(KEY_CLIP_ON)],
-        Some(Needs::Model)
+        Some(Needs::Placed)
     ),
     action!(
         "clip pause",
         Entities,
         Act::ClipPause,
         [Bind::Key(KEY_CLIP_PAUSE)],
-        Some(Needs::Model)
+        Some(Needs::Placed)
     ),
     action!(
         "knock",

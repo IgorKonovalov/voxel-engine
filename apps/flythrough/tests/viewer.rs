@@ -92,8 +92,8 @@ fn the_sample_assets_are_in_step() {
 
     let mut walkers = entities::Walkers::default().with_viewer(Some(built()));
     assert!(walkers.place(&table(), [10.0, 0.0, 2.0], [0.0, 0.0, 2.0]));
-    let p = walkers.placed[0];
-    assert!(p.rig);
+    let p = walkers.placed[0].clone();
+    assert_eq!(p.entry, Some(0));
     let (model, pose) = walkers.set.get(p.id).expect("placed");
     assert!(Arc::ptr_eq(model, &l.model) || **model == *l.model);
     assert_eq!(
@@ -170,7 +170,7 @@ fn a_saved_rig_reloads_the_placed_instances() {
     save(&rig.replace("leg_l rot x 45", "leg_l rot x 30"), 10);
     assert_eq!(w.poll_viewer(0.5, &t), None, "polled at most once a second");
     assert_eq!(w.poll_viewer(1.0, &t).as_deref(), Some("reloaded"));
-    let v = w.viewer.as_ref().expect("viewer");
+    let v = w.viewer().expect("viewer");
     assert_eq!(v.clip_name(), Some("walk"), "the playing clip is kept");
     let now = v.loaded.as_ref().expect("built").model.clone();
     assert!(!Arc::ptr_eq(&first, &now));
@@ -181,7 +181,7 @@ fn a_saved_rig_reloads_the_placed_instances() {
     save(&with_line(&rig, 9, "material 2"), 20);
     let words = w.poll_viewer(2.0, &t).expect("tried");
     assert!(words.starts_with("rig line 9: "), "{words}");
-    let v = w.viewer.as_ref().expect("viewer");
+    let v = w.viewer().expect("viewer");
     assert!(Arc::ptr_eq(&v.loaded.as_ref().expect("kept").model, &now));
 }
 
@@ -302,7 +302,7 @@ fn a_reload_hands_back_the_old_handle() {
     assert!(w.place(&t, [0.0, 0.0, 2.0], [5.0, 0.0, 2.0]));
     let mut pool = VolumePool::new(DEFAULT_ENTITY_POOL_BYTES);
     assert_eq!(sync_models(&mut w, &mut pool, &t), None);
-    let v = w.viewer.as_mut().expect("viewer");
+    let v = w.viewer_mut().expect("viewer");
     let old = v.handle.expect("uploaded");
     assert_eq!(v.stale, None);
 
@@ -317,7 +317,7 @@ fn a_reload_hands_back_the_old_handle() {
     let live = bytes(&v.loaded.as_ref().expect("built").model);
 
     assert_eq!(sync_models(&mut w, &mut pool, &t), None);
-    let v = w.viewer.as_ref().expect("viewer");
+    let v = w.viewer().expect("viewer");
     let new = v.handle.expect("uploaded");
     assert_ne!(new, old);
     assert_eq!(v.stale, None, "freed after the upload");
@@ -449,4 +449,237 @@ mod reading {
             sampling[100], sampling[0], composing[100], composing[0]
         );
     }
+}
+
+/// The committed library's walker and spider copied under the target's scratch directory
+/// (`tag` names it), and the showcase's table with the walker's rows they build against.
+fn library_copy(tag: &str) -> (PathBuf, MaterialTable) {
+    let from = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/entities");
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("library-{tag}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    for name in ["walker", "spider"] {
+        std::fs::create_dir_all(dir.join(name)).expect("dir");
+        for ext in ["rig", "vox"] {
+            let f = format!("{name}/{name}.{ext}");
+            std::fs::copy(from.join(&f), dir.join(&f)).expect("copied");
+        }
+    }
+    (dir, walker::with_walker(&flythrough::showcase_materials()))
+}
+
+/// The index of the library entry `name`.
+fn entry(w: &entities::Walkers, name: &str) -> usize {
+    w.library
+        .entries
+        .iter()
+        .position(|e| e.name == name)
+        .expect("the entry")
+}
+
+/// Plan 0077 Phase 2 done-when 1: two instances of the library's walker, one placed on
+/// `idle` and one on `walk`, started together: half a second on (15 ticks at 30 a second) each
+/// stands in its own clip's pose at tick 15, placed at its feet, exactly, and their legs'
+/// poses differ.
+#[test]
+fn each_entity_plays_its_own_clip() {
+    let lib =
+        entities::library::scan(&Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/entities"));
+    let t = table();
+    let mut w = entities::Walkers::default().with_library(lib);
+    w.poll_viewer(0.0, &t);
+    let i = entry(&w, "walker");
+    w.library.selected = i;
+    let a = w
+        .place_entry(&t, Some(i), [0.0, 0.0, 2.0], 0.0)
+        .expect("placed");
+    let v = w.library.entries[i].viewer_mut().expect("a rig");
+    assert_eq!(
+        v.cycle(1),
+        "clip walk",
+        "the entry's clip for the next placement"
+    );
+    let b = w
+        .place_entry(&t, Some(i), [30.0, 0.0, 2.0], 0.0)
+        .expect("placed");
+    for _ in 0..30 {
+        w.step(1.0 / 60.0);
+    }
+    let l = w.library.entries[i]
+        .viewer()
+        .and_then(|v| v.loaded.clone())
+        .expect("built");
+    let (idle, walk) = (&l.clips[0].1, &l.clips[1].1);
+    let want_a =
+        flythrough::viewer::placed(&sample(&l.model, &l.rest, idle, 15), [0.0, 0.0, 2.0], 0.0);
+    let want_b =
+        flythrough::viewer::placed(&sample(&l.model, &l.rest, walk, 15), [30.0, 0.0, 2.0], 0.0);
+    let (pa, pb) = (&w.set.get(a).expect("a").1, &w.set.get(b).expect("b").1);
+    assert_eq!(**pa, want_a);
+    assert_eq!(**pb, want_b);
+    let leg = l
+        .part_names
+        .iter()
+        .position(|n| n == "leg_l")
+        .expect("leg_l");
+    assert_ne!(pa.parts[leg], pb.parts[leg]);
+}
+
+/// Plan 0077 Phase 2 done-when 2: with a walker and a spider placed from one library, a saved
+/// change to the walker's rig moves the walker onto the new model under the same id, and
+/// leaves the spider's id, model and pose as they were.
+#[test]
+fn a_reload_moves_only_its_own_entry() {
+    let (dir, t) = library_copy("reload");
+    let mut w = entities::Walkers::default().with_library(entities::library::scan(&dir));
+    assert_eq!(w.poll_viewer(0.0, &t), None, "both build");
+    let (wi, si) = (entry(&w, "walker"), entry(&w, "spider"));
+    let walker_id = w
+        .place_entry(&t, Some(wi), [0.0, 0.0, 2.0], 0.0)
+        .expect("walker");
+    let spider_id = w
+        .place_entry(&t, Some(si), [90.0, 0.0, 2.0], 0.0)
+        .expect("spider");
+    let old_walker = w.set.get(walker_id).expect("walker").0.clone();
+    let (spider_model, spider_pose) = {
+        let (m, p) = w.set.get(spider_id).expect("spider");
+        (m.clone(), p.clone())
+    };
+    let rig_path = dir.join("walker/walker.rig");
+    let text = std::fs::read_to_string(&rig_path).expect("reads");
+    std::fs::write(&rig_path, text.replace("leg_l rot x 45", "leg_l rot x 30")).expect("saved");
+    std::fs::File::options()
+        .write(true)
+        .open(&rig_path)
+        .expect("opens")
+        .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(10))
+        .expect("stamped");
+    assert_eq!(w.poll_viewer(1.0, &t).as_deref(), Some("walker: reloaded"));
+    let (new_walker, _) = w.set.get(walker_id).expect("the same id");
+    assert!(
+        !Arc::ptr_eq(new_walker, &old_walker),
+        "the walker's model is new"
+    );
+    let (m, p) = w.set.get(spider_id).expect("the spider's id");
+    assert!(Arc::ptr_eq(m, &spider_model));
+    assert_eq!(*p, spider_pose);
+    assert_eq!(w.placed.len(), 2);
+}
+
+/// Plan 0077 Phase 2 done-when 3: with the crosshair's ray (the entity set's raycast, as the
+/// frame reads it) on the second of two walkers, the clip key changes its clip and not the
+/// first's; with the ray on none, the newest's.
+#[test]
+fn the_clip_keys_follow_the_aim() {
+    use vxe_world::Fixed3;
+    let lib =
+        entities::library::scan(&Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/entities"));
+    let t = table();
+    let mut w = entities::Walkers::default().with_library(lib);
+    w.poll_viewer(0.0, &t);
+    let i = entry(&w, "walker");
+    for x in [0.0, 30.0, 60.0] {
+        w.place_entry(&t, Some(i), [x, 0.0, 2.0], 0.0)
+            .expect("placed");
+    }
+    // Looking along +y at the second's torso from 20 voxels in front of it.
+    let origin = Fixed3([30 * 256, -20 * 256, 10 * 256]);
+    w.aimed = w
+        .set
+        .raycast(origin, [0, 4096, 0], 1 << 20)
+        .map(|h| h.entity);
+    assert_eq!(w.aimed, Some(w.placed[1].id));
+    let clips = |w: &entities::Walkers| w.placed.iter().map(|p| p.play.clip).collect::<Vec<_>>();
+    assert_eq!(w.cycle_clip(1), "walker #2 clip walk");
+    assert_eq!(clips(&w), [0, 1, 0]);
+    w.aimed = w
+        .set
+        .raycast(origin, [0, -4096, 0], 1 << 20)
+        .map(|h| h.entity);
+    assert_eq!(w.aimed, None);
+    assert_eq!(w.cycle_clip(-1), "walker #3 clip turn");
+    assert_eq!(clips(&w), [0, 1, 2]);
+}
+
+/// Plan 0077 Phase 2 done-when 4: a pool that holds the walker and not the spider: the spider
+/// placed and synced leaves the set and the placements as they were before it, and the
+/// banner's words name `spider`. A pool whose free bytes hold the spider in two holes, none
+/// large enough, is reset first (`entity pool reset`) and then holds both.
+#[test]
+fn a_full_pool_refuses_one_entry_and_keeps_the_rest() {
+    use flythrough::entities::library::pool_bytes;
+    use flythrough::entities::sync_models;
+    use vxe_render::internals::VolumePool;
+    use vxe_world::Prefab;
+
+    let (dir, t) = library_copy("pool");
+    let fresh = || {
+        let mut w = entities::Walkers::default().with_library(entities::library::scan(&dir));
+        w.poll_viewer(0.0, &t);
+        w
+    };
+    let mut w = fresh();
+    let (wi, si) = (entry(&w, "walker"), entry(&w, "spider"));
+    let bytes = |w: &entities::Walkers, i: usize| {
+        pool_bytes(
+            &w.library.entries[i]
+                .viewer()
+                .unwrap()
+                .loaded
+                .as_ref()
+                .unwrap()
+                .model,
+        )
+    };
+    let (wb, sb) = (bytes(&w, wi), bytes(&w, si));
+    assert!(wb < sb, "{wb} {sb}");
+
+    let mut pool = VolumePool::new(wb + sb / 2);
+    w.place_entry(&t, Some(wi), [0.0, 0.0, 2.0], 0.0)
+        .expect("walker");
+    w.newest.push(true);
+    assert_eq!(sync_models(&mut w, &mut pool, &t), None);
+    let before = (w.placed.clone(), w.set.len(), w.newest.clone());
+    w.place_entry(&t, Some(si), [90.0, 0.0, 2.0], 0.0)
+        .expect("spider placed");
+    w.newest.push(true);
+    let words = sync_models(&mut w, &mut pool, &t).expect("the refusal's words");
+    assert!(words.starts_with("spider: "), "{words}");
+    assert_eq!((w.placed.clone(), w.set.len(), w.newest.clone()), before);
+    assert_eq!(pool.used_bytes(), wb);
+
+    // A filler a little over half the spider's bytes ahead of the walker, freed: the free bytes
+    // hold the spider, in two holes that each are smaller.
+    let mut w = fresh();
+    let red = vxe_world::MaterialId::try_from(1usize).unwrap();
+    let mut n = 1;
+    let filler = loop {
+        let p = Prefab::new([n; 3], vec![red; (n * n * n) as usize], None);
+        if 2 * vxe_render::EntityMirror::volume_bytes(&p) > sb {
+            break p;
+        }
+        n += 1;
+    };
+    let fb = vxe_render::EntityMirror::volume_bytes(&filler);
+    let filler = vxe_entity::Model::new(vec![vxe_entity::Part {
+        volume: Arc::new(filler),
+        parent: None,
+        pivot: [0; 3],
+        detail: 1,
+    }])
+    .expect("one part");
+    let tail = sb - fb / 2;
+    let mut pool = VolumePool::new(fb + wb + tail);
+    let h = pool.upload(&filler, &t).expect("room").handle;
+    w.place_entry(&t, Some(wi), [0.0, 0.0, 2.0], 0.0)
+        .expect("walker");
+    assert_eq!(sync_models(&mut w, &mut pool, &t), None);
+    pool.free_model(h).expect("freed");
+    w.place_entry(&t, Some(si), [90.0, 0.0, 2.0], 0.0)
+        .expect("spider");
+    assert_eq!(
+        sync_models(&mut w, &mut pool, &t).as_deref(),
+        Some(entities::POOL_RESET)
+    );
+    assert_eq!(w.placed.len(), 2);
+    assert_eq!(pool.used_bytes(), wb + sb);
 }

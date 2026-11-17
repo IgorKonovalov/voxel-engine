@@ -113,6 +113,8 @@ pub struct RunView {
     pub path: bool,
     pub castle: bool,
     pub model: bool,
+    /// Whether an entity is placed: the clip entries act on it.
+    pub placed: bool,
     pub streaming: bool,
     pub coarse: bool,
 }

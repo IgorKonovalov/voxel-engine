@@ -498,9 +498,9 @@ mod tests {
         );
         let mut run = bare_run(world);
         let viewer = Viewer::open(&dir.join("walker.rig"), None).expect("opens");
-        run.modes.walkers.viewer = Some(viewer);
+        run.modes.walkers = std::mem::take(&mut run.modes.walkers).with_viewer(Some(viewer));
         run.poll_viewer(0.0);
-        let v = run.modes.walkers.viewer.as_ref().expect("viewer");
+        let v = run.modes.walkers.viewer().expect("viewer");
         assert!(v.loaded.is_some() && v.error.is_none(), "{:?}", v.error);
 
         let broken = {
@@ -512,7 +512,7 @@ mod tests {
         save(&broken, 10);
         run.start = now();
         run.poll_viewer(1000.0);
-        let e = run.modes.walkers.viewer.as_ref().unwrap().error.clone();
+        let e = run.modes.walkers.viewer().unwrap().error.clone();
         let e = e.expect("the refusal is kept");
         assert!(e.starts_with("rig line 9: "), "{e}");
         let error_row = format!("model walker error: {e}");
@@ -549,7 +549,7 @@ mod tests {
         save(&rig, 20);
         run.start = now();
         run.poll_viewer(2000.0);
-        let v = run.modes.walkers.viewer.as_ref().unwrap();
+        let v = run.modes.walkers.viewer().unwrap();
         assert_eq!(v.error, None);
         let banner = run.banner().expect("the banner");
         assert!(banner.lines().any(|l| l == "reloaded"), "{banner}");

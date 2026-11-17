@@ -200,8 +200,7 @@ fn twenty_reloads_hold_the_pool_at_one_model() {
         assert_eq!(words, None, "save {k}");
         rig.step(&camera);
         let live = model_bytes(
-            &w.viewer
-                .as_ref()
+            &w.viewer()
                 .expect("viewer")
                 .loaded
                 .as_ref()
@@ -285,10 +284,10 @@ fn a_fragmented_pool_resets_and_the_walkers_stay() {
         rate: built.rate,
     });
     (viewer.handle, viewer.stale) = (None, Some(old));
-    w.viewer = Some(viewer);
+    w = w.with_viewer(Some(viewer));
     let words = entities::feed(&mut w, &rig.world, eye_at, &mut rig.frame, &rig.queue);
     assert_eq!(words.as_deref(), Some(entities::POOL_RESET));
-    let v = w.viewer.as_ref().expect("viewer");
+    let v = w.viewer().expect("viewer");
     assert!(v.handle.is_some(), "the cube is uploaded");
     assert_eq!(v.stale, None);
     let m = rig.frame.entity_mirror();

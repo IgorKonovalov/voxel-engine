@@ -963,7 +963,7 @@ impl Run {
     pub(crate) fn compose_banner(&self, out: &mut String, words: &str) {
         let now = ms_since(self.start);
         if !self.hud.visible
-            && let Some(v) = &self.modes.walkers.viewer
+            && let Some(v) = self.modes.walkers.viewer()
             && v.error.is_some()
         {
             hud::start_row(out);

@@ -86,9 +86,9 @@ row showing the new value.
 | lights | `1` | Drop a point light of the picked colour (intensity 600) 2 voxels off the looked-at surface (20 voxels ahead on a miss); the banner names `lights <n>/16`. Sixteen slots, the headlamp's among them while it is on; a drop into a full list prints a line and adds nothing |
 | lights | `4` | Remove the newest light or walker, whichever was added last |
 | lights | `6` | Fire a point light of the picked colour (intensity 600) along the view ray at 20 m/s; it stops 2 voxels short of the first surface (or after 40 m) and stays there as a dropped light |
-| entities | `` ` `` | Place a walker (a voxel-model entity) on the looked-at surface; the banner names the walker count. A world whose table has no walker rows prints a line and places nothing |
-| entities | `Left`, `Right` | With `--model`: the clip before and after (menu closed) |
-| entities | `Down` | With `--model`: pause or play the clip (menu closed) |
+| entities | `` ` `` | Place the library's selected entry (a voxel-model entity) on the looked-at surface, on its own clip; the banner names the entity count. An entry in error says why and places nothing |
+| entities | `Left`, `Right` | The aimed (else the newest) placed entity's clip before and after (menu closed) |
+| entities | `Down` | Pause or play that entity's clip (menu closed) |
 | readings | `Enter` | Sample the next frames and print frame-time readings (menu closed) |
 | debug | `F9` | Cycle the view: shaded, normals, hitmask, steps, cracks, albedo |
 | debug | `X` | Cycle the cutaway: auto, on, off |
@@ -251,9 +251,9 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--probe-slices N` | The probes refreshed a frame, one in N: 8, 16 or 32 [8] |
 | `--emissive-ore on\|off` | The ore glows and lights the cave [on] |
 | `--lamp-toggle N` | Switch the lamp every `N` frames |
-| `--entities N` | Start with `N` walkers (voxel-model entities) on a 3 m ring around the spawn [0] |
-| `--entities-walk on\|off` | The walkers start walking, as the menu's `walkers walk` sets them [off] |
-| `--model PATH` | View a `.rig` and the `.vox` it names (the library is `apps/flythrough/assets/entities/<name>/<name>.rig`, [entities.md](entities.md)): `` ` `` and `--entities N` place it in place of the walker; a saved change to either file reloads |
+| `--entities N` | Start with `N` of the library's selected entry (voxel-model entities) on a 3 m ring around the spawn [0] |
+| `--entities-walk on\|off` | The built-in walkers start walking, as the menu's `walkers walk` sets them [off] |
+| `--model PATH` | View a `.rig` and the `.vox` it names (the library is `apps/flythrough/assets/entities/<name>/<name>.rig`, [entities.md](entities.md)): it is the library's first entry, selected, so `` ` `` and `--entities N` place it; a saved change to either file reloads its instances only |
 | `--clip NAME` | The `--model` clip to play first [the rig's first] |
 | `--library-dir DIR` | The entities library: every `DIR/<name>/<name>.rig` is an entry, in name order; `--model`'s rig comes first. A missing or empty library gives the built-in walker [`apps/flythrough/assets/entities`] |
 | `--fade-reading` | Headless: dig, settle, switch the lamp off and print how the light fades |
