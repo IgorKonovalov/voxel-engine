@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0070.**
+**Next free number: 0071.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -41,7 +41,7 @@ the status.
 | [0024](0024-own-temporal-upscaler-on-the-hit-buffer.md) | The upscaler is a temporal upscaler of our own, driven by jittered rays and the hit buffer, with a sharpening pass | accepted (Plan 0030); superseded in part by ADR-0034; opt-in since Plan 0055 |
 | [0025](0025-light-candidates-from-a-power-over-distance-table-of-near-emitter-chunks.md) | Light candidates come from a power-over-distance table of the emitter chunks near the camera, and only those chunks hold light samples on the GPU | accepted (Plan 0024) |
 | [0026](0026-atmosphere-from-hillaire-luts-built-on-the-gpu-at-runtime.md) | The atmosphere is Hillaire's LUTs, built on the GPU at runtime from parameters the game sets | proposed (Plan 0032; redrafted 2026-11-10: sky light is a sky ray, no probe term) |
-| [0027](0027-the-sun-shadow-is-one-per-pixel-ray-in-the-light-pass.md) | The sun's shadow is one per-pixel ray in the light pass, a dedicated directional sample beside the emissive one | proposed (Plan 0032; redrafted 2026-11-10: lands in Plan 0058's direct target) |
+| [0027](0027-the-sun-shadow-is-one-per-pixel-ray-in-the-light-pass.md) | The sun's shadow is one per-pixel ray in the light pass, a dedicated directional sample beside the emissive one | proposed (Plan 0032; redrafted 2026-11-10; Outcome 2026-11-17: absent is sky, the sky ray at rest replaced by ADR-0070) |
 | [0028](0028-far-field-as-a-clipmap-of-source-generated-coarse-chunks.md) | The far field is a clipmap of coarse chunk levels that the source generates directly, with edits folded in from full detail | proposed (Plan 0033; redrafted 2026-11-10 against ADR-0046) |
 | [0029](0029-liquid-surfaces-as-analytic-wave-normals-with-traced-reflection-and-refraction.md) | A liquid surface is where a translucent liquid meets air, shaded with an analytic wave normal, one traced reflection ray and one bent refraction ray, absorbed by Beer-Lambert | proposed (Plan 0034; refreshed 2026-11-10) |
 | [0030](0030-volumetric-cloud-shell-amortised-march-and-projected-shadow-map.md) | Clouds are a ray-marched shell of seeded noise, one pixel in four of a quarter-resolution buffer per frame, rebuilt temporally and shadowing the ground through a projected map | proposed (Plan 0035; refreshed 2026-11-10) |
@@ -60,7 +60,7 @@ the status.
 | [0043](0043-emissive-light-from-a-world-space-per-face-table-and-a-lamp-bounce-probe-channel.md) | Emissive light is read from a world-space table of per-face irradiance, and the probe volume becomes a lamp-bounce channel | accepted (Plan 0057), Outcome; table, fill, preload and guard superseded by ADR-0046 |
 | [0044](0044-direct-light-from-a-fixed-list-of-analytic-lights-one-shadow-ray-each.md) | Direct light from dynamic sources comes from a fixed list of analytic lights the consumer hands the frame, shaded exactly with one shadow ray each | accepted 2026-11-15 (Plan 0058), Outcome |
 | [0045](0045-the-per-face-table-stores-irradiance-at-unit-emission-and-the-read-applies-the-scale-now.md) | A per-face table cell stores irradiance at unit emission, and the read multiplies by its kept emitter's emission scale now | withdrawn 2026-11-10, never accepted; ADR-0046 and Plan 0059 built it over the store |
-| [0046](0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md) | Static emissive light is baked per chunk when the chunk loads or changes, into a store of per-face cells over per-brick values | accepted (Plan 0059), Outcomes (0059, 0067); supersedes ADR-0043's table |
+| [0046](0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md) | Static emissive light is baked per chunk when the chunk loads or changes, into a store of per-face cells over per-brick values | accepted (Plan 0059), Outcomes (0059, 0067, ADR-0070's sky channel); supersedes ADR-0043's table |
 | [0047](0047-translucent-solids-filter-by-path-length-with-a-baked-reflected-share.md) | Translucent solids filter what is behind by path length, and reflect a small share of their baked face light | accepted (Plan 0059), Outcome: the face light is the brick's record |
 | [0048](0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md) | The live queue orders by one score of distance and angle to the view, and withdraws the work a flight has passed | accepted 2026-11-11, Outcomes (Plans 0060, 0067); amends ADR-0046's queue clause |
 | [0049](0049-the-baked-light-is-read-by-the-far-shading-normal.md) | Where a voxel is small on screen, the baked light is read by the far shading normal, a squared-cosine blend of the store's direction values | accepted, Outcome (Plan 0061): the fly-through's default |
@@ -84,6 +84,7 @@ the status.
 | [0067](0067-a-staged-structure-is-a-sequence-of-logged-stamps-over-the-map-with-a-write-policy-not-an-entity.md) | A staged structure is a sequence of logged stamps over the map with a write policy, not an entity | proposed (Plan 0084) |
 | [0068](0068-an-entitys-variants-are-recipes-in-its-model-a-volume-per-part-and-a-palette-per-variant-picked-per-instance.md) | An entity's variants are recipes in its model: a volume per part and a palette per variant, picked per instance by one index | proposed (Plan 0085) |
 | [0069](0069-a-posed-entity-enters-the-world-as-a-baked-prefab-clipped-to-air-through-the-stamp-op.md) | A posed entity enters the world as a baked prefab, clipped to air on the server, through the stamp op | proposed (Plan 0085) |
+| [0070](0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md) | Sky light is a visibility baked per brick direction, coloured by the sky at read; a long-history ray covers what the bake has not caught | proposed (Plan 0086) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded
