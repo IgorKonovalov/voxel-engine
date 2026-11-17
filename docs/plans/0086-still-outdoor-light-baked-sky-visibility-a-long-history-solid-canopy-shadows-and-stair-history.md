@@ -565,8 +565,8 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
 | 2: A canopy shadows as its brick | dev | done | 2b5fff92 |
 | 3: History across a stair in the far-normal regime | dev | done | 7a3c6d72 |
 | 4: The sky visibility baked per brick direction | dev | done | b8a23a9c |
-| 5: The rays' own long history, the sky ray only where stale | dev | done | committed with this row |
-| 6: The key light on the long history, after a reading | dev | not started | |
+| 5: The rays' own long history, the sky ray only where stale | dev | done | 012bd208 |
+| 6: The key light on the long history, after a reading | dev | done (reading only: 3-degree p99 1 at the lamp's 1, not built) | committed with this row |
 | 7: A spike: a deterministic penumbra from the closest approach | dev | not started | |
 | 8: The owner's windowed check | human | not started | |
 | 9: The picks as tests | dev | not started | |
@@ -617,6 +617,8 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
   end of the unbaked tunnel read 90 p99 and metered dark for about 90 frames). The readings'
   `run_cell` pinned a stale exposure (one readout after the loop); it reads every frame now.
   Two clippy lints in Phase 5's `gpu_sun.rs` fixed.
+- Phase 6: stopped at its reading (the 3-degree band's p99 1, the lamp's 1); the lamp's
+  calibrated level read 193 rather than 118. No forest lamp reading.
 
 ### Close triggers
 
