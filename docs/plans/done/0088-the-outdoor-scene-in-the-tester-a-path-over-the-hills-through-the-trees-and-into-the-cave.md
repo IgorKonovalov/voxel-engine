@@ -1,26 +1,26 @@
 # 0088: The outdoor scene in the tester: a camera path over the hills, through the trees and down the tunnel, a fourth row in the menu and the report
 
-> **Status:** approved (the owner's go, 2026-11-17: "go 88"; questions 1 to 5 answered 2026-11-17, the recommended option each: the sun 10,180, sparse trees, the full 60 to 75 s route, the 2 s warm-up, a computed path)
+> **Status:** done (closed 2026-11-17, v0.63.0: the tester runs a fourth scene, `outdoor`, a 73.4 s computed path over the hills, between the sparse trees and down the tunnel, held by the air test and judged "all good" in the owner's window; no blocker or major). Approved 2026-11-17 ("go 88"; questions 1 to 5 answered the same day, the recommended option each: the sun 10,180, sparse trees, the full 60 to 75 s route, the 2 s warm-up, a computed path)
 > **Created:** 2026-11-17
-> **Milestone:** M7 in [`docs/roadmap.md`](../roadmap.md) (the benchmark lane, whose first form
+> **Milestone:** M7 in [`docs/roadmap.md`](../../roadmap.md) (the benchmark lane, whose first form
 > was Plan 0068)
-> **Related ADRs:** [ADR-0054](../adrs/0054-the-tester-build-is-a-launcher-that-runs-the-flythrough-per-scene.md)
+> **Related ADRs:** [ADR-0054](../../adrs/0054-the-tester-build-is-a-launcher-that-runs-the-flythrough-per-scene.md)
 > (accepted; the tester is a launcher that runs the fly-through per scene, so a scene is a row
 > in `Scene::ALL`, a path in `PATHS` and nothing in `apps/tester`). No new ADR: the one choice
 > with a named alternative (a path laid by computation or recorded in a window) is a method, not
 > an architecture, and the Decision names what it rejects.
 > **Source:** the owner, 2026-11-17: "plan it now", on the tester running only the three
-> underground scenes while the outdoor hills ([Plan 0032](done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md),
+> underground scenes while the outdoor hills ([Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md),
 > v0.61.0) ship in the archive without a path or a report.
-> **Starts after:** [Plan 0080](done/0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md)
+> **Starts after:** [Plan 0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md)
 > merges: its Phases 2 and 3 edit `apps/flythrough/src/path.rs` (the tester filter),
 > `apps/flythrough/tests/path.rs`, `cli/parse.rs` and `docs/flythrough.md`, the files this plan
 > adds to. It does **not** wait for
-> [Plan 0086](0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md):
+> [Plan 0086](../0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md):
 > the two share no file but `cli/parse.rs` (0086's Phase 7 adds a flag; this plan changes the
 > scene derivation, a different hunk), and an outdoor tester reading taken before 0086 lands is
 > the baseline its close compares against. This plan is a day's lane and merges before
-> [Plan 0087](0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md)
+> [Plan 0087](../0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md)
 > (the rename) starts; 0087's "Starts after" reads `git worktree list`, so this lane counts.
 
 ## TL;DR
@@ -362,30 +362,58 @@ Answered 2026-11-17 (owner): the recommended option on all five.
 > resume notes go to the plan's readings log, `docs/plans/logs/0088.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
+Readings, gate counts and the route's attempts: [`logs/0088.md`](../logs/0088.md).
+
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: `Scene::Outdoor`, the parse rule and a first path | dev | not started | |
-| 2: The route, the tester's rows, the README and the readings | dev | not started | |
-| 3: The owner's window | human | not started | |
-| 4: The picks and the tip | dev | not started | |
+| 1: `Scene::Outdoor`, the parse rule and a first path | dev | done | fa8394ea |
+| 2: The route, the tester's rows, the README and the readings | dev | done | 0abe991a |
+| 3: The owner's window | human | done (orchestrator's session, 2026-11-17; verdicts in the log, no moves) | committed with row 4 |
+| 4: The picks and the tip | dev | done: no moves (the owner's "leave it" on every point), the tip gate | committed with this row |
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1 lands the full computed route, not a provisional one (the Phase 2 route's keys), with this phase's commit.
+- The route's search skips Plan 0068's smoothing pass; the approach to the mouth is lifted 15 voxels and the first tunnel key is 40 voxels inside the mouth, not the axis's start (Phase 1 commit; attempts in the log).
+- The forest waypoint is the nearest 2.2 m-clear cell 40 voxels over the `forest` spawn's column (`[0, 636, 594]`), not its eye (Phase 1 commit).
+- `--path outdoor` also refuses a `--leaf-fill` other than the default (Phase 1 commit).
+- The `--path` help row lives in `cli/flags.rs`, outside Phase 1's files touched (Phase 1 commit).
+- `apps/flythrough/tests/gpu_path.rs` is new in Phase 2 though not in its files touched; it reads 140.2 s on lavapipe (debug, loaded) and stays `#[ignore = "soak"]` (Phase 2 commit).
+- `test-changed.mjs --profile soak --binaries gpu_path` is refused by the script; the soak test ran as `cargo nextest run -p flythrough --test gpu_path --profile soak --run-ignored only` (Phase 2 commit).
+- `each_choice_gives_its_exact_flag_list`'s rows are one space-separated string each, split in the loop (clippy's line limit with the sixth row) (Phase 2 commit).
+- The forest stress reading is a 40 s glide from the `forest` spawn, not a path run: `--path outdoor` refuses `--trees forest` by Phase 1's rule (Phase 2 commit).
+- Not read in Phase 2: the windowed RTX run (lane rule: no window; moved to Phase 3) and the CPU p50 of the first 10 s after the load (no headless line carries it).
+- Phase 3's window judged the first-10-s CPU "ok" by eye; no figure was read, so the backlog's "CPU settle outdoors" has the headless percentiles as its before figure, not a first-10-s p50 (Phase 3 row).
+- Phase 4 changed no code (no picks to apply); its row, the Phase 3 verdicts and the close block land in one `docs(plans)` commit.
+- Phase 4's soak run uses `cargo nextest run -p flythrough --test gpu_path --profile soak --run-ignored only`, as in Phase 2.
 
 ### Close triggers
 
-_(Facts for the architect. No recommendations, and no suggested version bump.)_
+- **What shipped:** feature. The tester's fourth scene, `outdoor`: `Scene::Outdoor`, the 73.4 s `outdoor` camera path, `--path outdoor`'s parse rule, the tester's README.
+- **Public API changed:** `flythrough::path::Scene` gains `Outdoor` (`Scene::ALL` is `[Scene; 4]`); `flythrough::path::OUTDOOR`; `PATHS` is `[CameraPath; 4]`; the fly-through's `--path` takes `outdoor` and refuses it without `--source outdoor` at the `outside` spawn, the sparse trees and the default leaf fill. No `run.json` field or schema change.
+- **Budget readings** (no `nfr.md` line moved; readings added, all loaded, before Plan 0086): section 2, the outdoor bench at 1280 x 720 Floor, release at fa8394ea, headless: RTX 3080 Laptop wall p50/p95/p99 20.4/57.0/114.0 ms, GPU 4.61/10.90/13.00; RADV RENOIR wall 29.5/54.7/77.5, GPU 22.34/25.14/26.33. Section 5: `update + poll + sync` p99 23.1 ms (RTX) and 17.5 (RADV), `sync_us` p99 19.2 and 16.0 ms, `light_us` p99 1.23 and 1.27 ms; the RTX glide sparse/forest `update + poll + sync` p99 18.3/15.7 ms. Windowed (Phase 3, RTX, 0abe991a, load 7 to 9): outdoor bench wall p50/p95 15.6/33.0 and 10.0/28.3 ms. Section 7: `the_outdoor_path_flies_in_air` 0.67 to 0.75 s in the gate; `a_path_run_writes_its_report` 130.2 to 140.2 s, soak. Tables in [`logs/0088.md`](../logs/0088.md).
+- **Gate at the tip** (0abe991a's code): `cargo nextest run --workspace --profile gate` exit 0, 1105 run, 1105 passed, 125 skipped, 1136.7 s; doctests 10 passed; `cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny check` 0; the doc and tier scripts 0; the soak test by name 1 passed.
+- **Outstanding `human` phases:** none (Phase 3 done in the orchestrator's session, 2026-11-17).
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+### Close review (2026-11-17, fresh session)
+
+Verdict: clean, closed. Merged main 343ddce1 into the lane (adfcb463) and reviewed that tree.
+Every phase is done with one owner tag; every named test was read: the air test probes the eye
+and 1 m on six axes every 0.25 s and at every key over `ForestSource` chunks; the duration bar
+is 60 to 75 s; the parse test pins the refusal text for five refused vectors and the free
+`--sun`/`--time`; the flag table pins the outdoor bench's vector word for word; `gpu_path`
+asserts scene, path, mode, lamp, a `streaming` object and 129 world frames. Nothing under
+`crates/` changed. Gate at adfcb463 (lavapipe, exclusive perf lock, 6G cap, `-j4`,
+`--test-threads 2`, guests built, load 1.83 at the start and 3.11 at the end, three lanes open,
+so loaded): 1105 run, 1105 passed, 125 skipped, nextest 1162.5 s; doctests, clippy, fmt, deny 0;
+`gpu_path` by name under soak 1 passed, 130.3 s. The plan's tests add about 1 s to the gate
+(`the_outdoor_path_flies_in_air` 0.67 s); the eleven tests `test-times.mjs` names over the 10 s
+line are none of this plan's. One `minor`, not fixed here: `gpu_path.rs`'s skip on "no adapter"
+does not honour `VXE_REQUIRE_SOFTWARE_ADAPTER=1` as `gpu_loading.rs`'s first helper does, so
+the weekly soak arm would pass it silently without lavapipe (backlog).
 
 ## Followups
 
 - The backlog's "The CPU settle outdoors" chore reads this plan's before figure.
 - A pose recorder for hand-laid paths, if the owner's Phase 3 moves are many.
+- `gpu_path.rs` and `gpu_frame_waits.rs` honour `VXE_REQUIRE_SOFTWARE_ADAPTER` (backlog).

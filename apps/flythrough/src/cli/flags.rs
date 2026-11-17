@@ -460,7 +460,7 @@ fn session_flags() -> Vec<Flag<Parsing>> {
         ),
         Flag::value(
             &["--path"],
-            "cave|showcase|castle",
+            "cave|showcase|castle|outdoor",
             "fly that scene's camera path",
             |p: &mut Parsing, v| {
                 p.args.path =

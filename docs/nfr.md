@@ -322,6 +322,17 @@ Every reading against these budgets, with its machine and commit, is in
   2640 frames; residency p95 125 ms, max 248 over 77 115 chunks; 4 unready-near frames. RADV
   RENOIR (Mesa 26.2.5, `--adapter AMD`, start load 5.9): p50 13.029 ms, p99 23.535 ms over 787
   frames; residency p95 233 ms, max 672; 2 unready-near frames.
+- **The outdoor tester benchmark (Plan 0088 Phase 2, 2026-11-17, release at fa8394ea, before
+  Plan 0086; the tester's outdoor bench flags at 1280 x 720 in the Floor profile, headless, one
+  run per adapter, exclusive perf lock, loaded: start load 19.5 and 25.6 with two other lanes
+  building):** `update + poll + sync` p99 23.1 ms on the RTX 3080 Laptop and 17.5 ms on RADV
+  RENOIR, against the 16.6 ms line; `run.json`'s `streaming` `sync_us` p99 19.2 and 16.0 ms,
+  `light_us` p99 1.23 and 1.27 ms, `alloc_us` p99 9.0 and 7.7 ms (the cave's tester readings:
+  18.0 to 23.7 ms). Sparse against forest, a 40 s glide north from the `forest` spawn at 30
+  voxels a second on the RTX (`--spawn forest --glide 30 --frames 2400`, no path; start load
+  13.3 and 25.6): `update + poll + sync` p99 18.3 and 15.7 ms, sync p99 15.5 and 14.5 ms, the
+  sync's light p99 1.07 and 1.01 ms. Every figure: [Plan 0088's readings
+  log](plans/logs/0088.md), Phase 2.
 
 ## 6. Determinism and headless operation
 
@@ -489,6 +500,7 @@ Every reading against these budgets, with its machine and commit, is in
   **Reading (Plan 0072 close review, 2026-11-13, 4b7f822 with main c1d1d3f merged, dev reference on lavapipe, exclusive perf lock, 6G cap, -j4, built tree, guests built, `--status-level pass`, load 1.46 at the start and 2.16 at the end, a second lane building beside it):** 844 tests, all passed, 78 skipped: nextest **609.8 s, under the 12 min proposal**, the lavapipe group at `max-threads = 1`. Over the 10 s line: `castle_vector` 18.0, `the_castle_path_flies_in_air` 16.5, `showcase_vector` 16.1 (CPU), `a_baked_view_is_final_on_its_first_frame` 12.9, and four more at 10.3 to 11.4 s.
   **Reading (Plan 0063 close, 2026-11-16, 8a6e8434 with main merged, dev reference on lavapipe, perf lock, 6G cap, -j4, `--test-threads 2`, `--status-level pass`, three lanes running, so loaded):** 949 tests, all passed, 99 skipped: nextest **1038.6 s, over the 12 min proposal**, taken from the lane's run on the same tree. The plan's own tests add about 6 s (`walker_walk_golden` 4.5 s, the rest under 0.5 s each). Fifteen tests over the 10 s line, none the plan's: `showcase_vector` 19.5 and `the_castle_path_flies_in_air` 19.4 (CPU, kept in the gate), `a_dig_is_never_withdrawn` 17.4, `a_baked_view_is_final_on_its_first_frame` 17.3, and eleven lavapipe tests at 10.0 to 13.3 s under this load; not re-read quiet.
   **Reading (Plan 0069 close review, 2026-11-17, 11a4d2fb with main merged, dev reference on lavapipe, exclusive perf lock, 16G cap, `scripts/build-guests.sh` first, `--status-level pass`, two lanes, load 16.1 at the queue and 1.3 near the end, so loaded):** 1018 tests, all passed, 107 skipped: nextest **937.0 s, over the 12 min proposal**. The plan's own tests add about 17 s (`gpu_settings` 3.1 to 5.5 s each, the CPU tests under 0.1 s each). Twelve tests over the 10 s line, none the plan's: `castle_vector` 18.7, `the_castle_path_flies_in_air` 17.9 and `showcase_vector` 17.1 (CPU, kept in the gate), `a_baked_view_is_final_on_its_first_frame` 16.4, and eight more at 10.4 to 12.4 s.
+  **Reading (Plan 0088 close review, 2026-11-17, adfcb463 with main merged, dev reference on lavapipe, exclusive perf lock, 6G cap, `-j4`, `--test-threads 2`, `scripts/build-guests.sh` first, `--status-level pass`, three lanes open, load 1.83 at the start and 3.11 at the end, so loaded):** 1105 tests, all passed, 125 skipped: nextest **1162.5 s, over the 12 min proposal**. The plan's own tests add about 1 s (`the_outdoor_path_flies_in_air` 0.67 s, the rest under 0.25 s); its `a_path_run_writes_its_report` is soak, 130.3 s by name. Eleven lavapipe tests over the 10 s line, none the plan's, 10.1 to 13.8 s under this load; not re-read quiet.
   **Reading (CI after Plan 0072, 2026-11-13, GitHub-hosted runners):** run 43377881019 on 9c256bb (cold cache, the profile change): Linux 26 min 29 s, Windows 33 min 9 s; gate on Linux 844 passed, 78 skipped, 437.6 s. Run 43395622401 on 393ed45 (warm): **Linux 15 min 6 s, Windows 18 min 47 s**, over Plan 0072's under-10 and under-15 min proposals. **Accepted by the owner 2026-11-13 ("record this time as accepted, let it be")**: these walls are the CI line; no further cut is owed.
   **Reading (CI run 41332396750 on 929d1b3, 2026-11-01, the Linux arm, lavapipe, 745 tests,
   the `ci` profile before the re-cut):** 5386 s wall for the test step, 354 min of serial

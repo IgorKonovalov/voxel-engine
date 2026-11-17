@@ -35,7 +35,7 @@
 //! [--jitter-phases N] [--dither on|off] [--pace free|compositor]
 //! [--exposure auto|E]
 //! [--adaptation eye|symmetric|instant] [--adapt LIGHT,CONE,ROD,FLOOR] [--metering centre|average]
-//! [--path cave|showcase|castle] [--path-mode bench|tour] [--report DIR] [--tester]`.
+//! [--path cave|showcase|castle|outdoor] [--path-mode bench|tour] [--report DIR] [--tester]`.
 //! `--path NAME` flies that scene's camera path (`flythrough::path`; the scene's own flags and
 //! seed 1 are required): `--path-mode bench` (the default) once by wall time (1/60 s a headless
 //! frame) with the lamp off unless `--lamp on` is given, then exits; `tour` loops it, the first move, look or dig hands the camera to the

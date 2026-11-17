@@ -10,10 +10,12 @@ use crate::cli::{
     walk_allowed,
 };
 use crate::fly::CutawayMode;
+use crate::outdoor::Spawn;
 use crate::path::{PATH_SEED, PathMode, Scene};
 use crate::setup::CrispRows;
 use crate::showcase::SHOTS;
 use crate::streaming::SYNC_BUDGET_MIB;
+use crate::trees::{LEAF_FILL, TreeDensity};
 use crate::{LogicChoice, LookPreset, RESIDENCY};
 use vxe_app::Pacing;
 use vxe_render::{LookParams, ViewMode};
@@ -290,8 +292,13 @@ pub(crate) fn check_path(args: &Args, path_mode_flag: bool) -> Result<(), String
         Some(Scene::Castle)
     } else if args.mode.is_showcase() {
         Some(Scene::Showcase)
+    } else if args.mode.is_outdoor() {
+        // The spawn, the trees and their leaf fill place voxels the path is laid around;
+        // `--sun` and `--time` move none and stay free.
+        let o = &args.outdoor;
+        (o.spawn == Spawn::Outside && o.trees == TreeDensity::Sparse && o.leaf_fill() == LEAF_FILL)
+            .then_some(Scene::Outdoor)
     } else if args.mode.is_level()
-        || args.mode.is_outdoor()
         || args.mode.room().is_some()
         || args.mode.is_thin_rig()
         || args.mode.is_seam_rig()
@@ -305,7 +312,7 @@ pub(crate) fn check_path(args: &Args, path_mode_flag: bool) -> Result<(), String
             "--path {} flies the {} scene; it needs {}",
             path.name,
             path.scene.name(),
-            path.scene.flags().join(" ")
+            needed_flags(path.scene)
         ));
     }
     if args.seed != PATH_SEED {
@@ -321,6 +328,23 @@ pub(crate) fn check_path(args: &Args, path_mode_flag: bool) -> Result<(), String
         );
     }
     Ok(())
+}
+
+/// The flags `--path` requires of `scene`: its [`Scene::flags`] less the `--sun` pair, which
+/// moves no voxel.
+fn needed_flags(scene: Scene) -> String {
+    let flags = scene.flags();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < flags.len() {
+        if flags[i] == "--sun" {
+            i += 2;
+            continue;
+        }
+        out.push(flags[i]);
+        i += 1;
+    }
+    out.join(" ")
 }
 
 /// `R_FULL,R_LOD`: radii in chunks with `1 <= R_FULL <= R_LOD`, hysteresis as

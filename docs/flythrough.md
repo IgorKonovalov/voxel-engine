@@ -174,7 +174,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--save PATH` | Write the session's log file on exit and print the world's hash (with `--level`) |
 | `--replay PATH` | Re-simulate a saved session before the first frame |
 | `--logic native\|wasm[=PATH]` | The server's logic: native [default], or a component (needs `--features wasm` and `scripts/build-guests.sh`) |
-| `--path cave\|showcase\|castle` | Fly that scene's camera path (the scene's own flags and seed 1 required) |
+| `--path cave\|showcase\|castle\|outdoor` | Fly that scene's camera path (the scene's own flags and seed 1 required; `outdoor` needs `--source outdoor` with the `outside` spawn, the sparse trees and the default leaf fill, and takes any `--sun` or `--time`) |
 | `--path-mode bench\|tour` | Fly the path once by wall time with the lamp off, then exit [bench]; or loop it |
 | `--report DIR` | Write `DIR/run.json` at exit (with `--path`) |
 | `--tester` | Only movement, look, the dig, `F1`, `T` and `Esc` act |

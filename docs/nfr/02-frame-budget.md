@@ -992,6 +992,15 @@ per-run figures are in `docs/plans/logs/0032.md`, Phase 7.
 
 Ratios of the light pass: forest/open at fill 128 1.04 (RTX) and 1.17 (RADV), at fill 64 0.99 and 1.18; fill 64/128 0.95 and 1.00; full/coarse at fill 128 1.20 and 1.21. The `--look face` configuration is the default look. Per-run figures in `docs/plans/logs/0032.md`, Phase 8.
 
+**The outdoor tester benchmark (Plan 0088 Phase 2, 2026-11-17, release `flythrough` at fa8394ea, before Plan 0086's outdoor light; the tester's exact outdoor bench flags `--source outdoor --spawn outside --trees sparse --sun 10,180 --lamp off --tester --path outdoor --path-mode bench --render 1280x720 --profile floor` plus `--headless --adapter NVIDIA|RENOIR --report DIR`; one run per adapter, exclusive perf lock; started at a 1-minute load of 19.5 and 25.6 with two other lanes building, so both are loaded (indicative)).** The 73.4 s path at the headless clock's 1/60 s, 4283 measured frames after the 2 s warm-up; `run.json`'s percentiles in ms. Every figure: [Plan 0088's readings log](../plans/logs/0088.md), Phase 2.
+
+| adapter | wall p50 / p95 / p99 | CPU p50 / p95 / p99 | GPU p50 / p95 / p99 | over 33 ms | load |
+|---|---|---|---|---|---|
+| RTX 3080 Laptop (driver 615.78.08) | 20.4 / 57.0 / 114.0 | 14.2 / 48.6 / 102.3 | 4.61 / 10.90 / 13.00 | 837 | 40.1 s |
+| RADV RENOIR (Mesa 26.2.5) | 29.5 / 54.7 / 77.5 | 6.3 / 31.2 / 54.8 | 22.34 / 25.14 / 26.33 | 1331 | 20.1 s |
+
+At 1280 x 720 in the Floor profile (853 x 480 internal, FSR 2) the RTX's GPU frame p50 sits under Plan 0032's 1080p readings above (5.1 to 5.6 ms) and RADV's under its 37.5 to 45.8; the wall and CPU tails on the RTX are the loaded CPU's (the bake queue's step and the sync, section 5).
+
 **The render profiles (Plan 0069 Phase 7, 2026-11-17, release `flythrough` at the code of
 9390b033, `--headless --hud --frames 600 --adapter NVIDIA|Radeon --profile P`, the vein
 `--level --seed 1 --pose vein`, the hall `--source showcase --shot hall`, the castle `--castle
