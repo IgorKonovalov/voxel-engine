@@ -10,7 +10,7 @@
 > **Starts after:** **every open lane has merged into main and no new one has started.** The
 > plan touches every crate directory and most tracked files, so a lane rebased across it pays
 > the whole rename in conflicts. Today that means after
-> [Plan 0069](0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md),
+> [Plan 0069](done/0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md),
 > [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md) and
 > [Plan 0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md)
 > merge (and whichever of Plans 0079 and 0083 has a worktree at the time: `git worktree list`

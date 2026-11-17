@@ -141,14 +141,14 @@ impl LightList {
     /// The slot rule: with `lamp`, it takes slot 0 at floor 0 (no reach) and the first fifteen
     /// of `given` slots 1 to 15; without, the first sixteen of `given` slots 0 to 15. Each list
     /// light's slot carries `floor` ([`Lighting::light_floor`]) in `_pad[0]`.
-    pub(super) fn slots(lamp: Option<Light>, given: &[Light], floor: f32) -> Self {
+    pub(super) fn slots(lamp: Option<Light>, given: &[Light], floor: f32, cap: usize) -> Self {
         let mut s = Self::default();
         let mut n = 0;
         if let Some(l) = lamp {
             s.l[0] = with_floor(l, 0.0);
             n = 1;
         }
-        for l in given.iter().take(MAX_LIGHTS - n) {
+        for l in given.iter().take(cap.min(MAX_LIGHTS).saturating_sub(n)) {
             s.l[n] = with_floor(*l, floor);
             n += 1;
         }
@@ -245,6 +245,8 @@ pub(super) struct LightsState {
     /// given.
     pub(super) given: Vec<Light>,
     pub(super) given_len: usize,
+    /// The slots shaded, the headlamp's included ([`Frame::set_light_cap`]).
+    pub(super) cap: usize,
     /// `lights` (group 0, binding 14).
     pub(super) buffer: wgpu::Buffer,
     /// What the buffer holds, so an unchanged list is not written again.
@@ -258,6 +260,7 @@ impl LightsState {
         Self {
             given: Vec::new(),
             given_len: 0,
+            cap: MAX_LIGHTS,
             buffer: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("lights"),
                 size: size_of::<LightsUniform>() as u64,
@@ -277,7 +280,12 @@ impl LightsState {
         if lamp_bounce {
             headlamp.flags |= Light::BOUNCE;
         }
-        LightList::slots(lamp.then_some(headlamp), &self.given, p.light_floor)
+        LightList::slots(
+            lamp.then_some(headlamp),
+            &self.given,
+            p.light_floor,
+            self.cap,
+        )
     }
 
     /// Writes `u` unless the buffer already holds it.
@@ -308,10 +316,26 @@ impl Frame {
         self.state.lights.given_len = lights.len();
     }
 
+    /// Shades at most `cap` slots of the list, the headlamp's included, from the next encode:
+    /// 1 to [`MAX_LIGHTS`] (clamped; [`MAX_LIGHTS`] by default). The lights past it are counted
+    /// ([`Frame::lights_over_cap`]) and not shaded.
+    pub fn set_light_cap(&mut self, cap: u32) {
+        self.state.lights.cap = (cap as usize).clamp(1, MAX_LIGHTS);
+    }
+
+    /// The slots of the list shaded ([`Frame::set_light_cap`]).
+    pub fn light_cap(&self) -> u32 {
+        self.state.lights.cap as u32
+    }
+
     /// The lights of the last [`Frame::set_lights`] past the cap: past fifteen while the lamp
-    /// is on, past sixteen while it is off.
+    /// is on, past sixteen while it is off, under the default cap ([`Frame::set_light_cap`]).
     pub fn lights_over_cap(&self) -> u32 {
-        let cap = MAX_LIGHTS - usize::from(self.state.lighting.lamp);
+        let cap = self
+            .state
+            .lights
+            .cap
+            .saturating_sub(usize::from(self.state.lighting.lamp));
         self.state.lights.given_len.saturating_sub(cap) as u32
     }
 
@@ -338,27 +362,30 @@ mod tests {
     fn the_slot_rule_keeps_fifteen_beside_the_lamp_and_sixteen_without() {
         let given: Vec<Light> = (1..=17).map(lit).collect();
         let lamp = Light::point([0.0, 0.0, 9.0], 1200.0);
-        let on = LightList::slots(Some(lamp), &given, 0.1);
+        let on = LightList::slots(Some(lamp), &given, 0.1, MAX_LIGHTS);
         assert_eq!(on.count, 16);
         assert_eq!(on.l[0], with_floor(lamp, 0.0));
         let floored: Vec<Light> = given.iter().map(|l| with_floor(*l, 0.1)).collect();
         assert_eq!(on.listed(true), &floored[..15]);
-        let off = LightList::slots(None, &given, 0.1);
+        let off = LightList::slots(None, &given, 0.1, MAX_LIGHTS);
         assert_eq!(off.count, 16);
         assert_eq!(off.listed(false), &floored[..16]);
-        let none = LightList::slots(None, &[], 0.1);
+        let none = LightList::slots(None, &[], 0.1, MAX_LIGHTS);
         assert_eq!(none.count, 0);
+        let capped = LightList::slots(Some(lamp), &given, 0.1, 4);
+        assert_eq!(capped.count, 4);
+        assert_eq!(capped.listed(true), &floored[..3]);
     }
 
     /// The headlamp's slot carries floor 0 (no reach) and every list slot the frame's floor.
     #[test]
     fn the_lamps_slot_has_no_floor() {
         let lamp = Light::point([0.0, 0.0, 9.0], 1200.0);
-        let s = LightList::slots(Some(lamp), &[lit(1), lit(2)], 0.1);
+        let s = LightList::slots(Some(lamp), &[lit(1), lit(2)], 0.1, MAX_LIGHTS);
         assert_eq!(f32::from_bits(s.l[0]._pad[0]), 0.0);
         assert_eq!(f32::from_bits(s.l[1]._pad[0]), 0.1);
         assert_eq!(f32::from_bits(s.l[2]._pad[0]), 0.1);
-        let off = LightList::slots(None, &[lit(1)], 0.1);
+        let off = LightList::slots(None, &[lit(1)], 0.1, MAX_LIGHTS);
         assert_eq!(f32::from_bits(off.l[0]._pad[0]), 0.1);
     }
 
@@ -382,8 +409,8 @@ mod tests {
 
     #[test]
     fn the_uniform_marks_a_list_that_differs_from_the_older_one() {
-        let a = LightList::slots(None, &[lit(1)], 0.1);
-        let b = LightList::slots(None, &[lit(2)], 0.1);
+        let a = LightList::slots(None, &[lit(1)], 0.1, MAX_LIGHTS);
+        let b = LightList::slots(None, &[lit(2)], 0.1, MAX_LIGHTS);
         assert_eq!(LightsUniform::of(&a, &a, false).changed, 0);
         assert_eq!(LightsUniform::of(&b, &a, false).changed, 1);
         assert_eq!(LightsUniform::of(&a, &a, true).lamp, 1);

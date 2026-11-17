@@ -22,6 +22,13 @@ fn main() {
         print!("{}", flythrough::cli::help());
         return;
     }
+    if args.settings {
+        print!(
+            "{}",
+            flythrough::cli::settings_lines(&args.render_settings())
+        );
+        return;
+    }
     if args.check_args {
         println!("flythrough: arguments ok");
         return;

@@ -95,6 +95,7 @@ the same rows.
 | `` ` `` | Place a walker (a voxel-model entity) on the looked-at surface; the banner names the walker count. A world whose table has no walker rows prints a line and places nothing |
 | `F11` | Toggle whether the walkers walk or hold still |
 | `F12` | Toggle the walkers' eye lights |
+| `PageDown` | The next render profile: floor, portable, performance, high (`--profile`) |
 | `Left`, `Right` | With `--model`: the clip before and after |
 | `Down` | With `--model`: pause or play the clip |
 
@@ -228,7 +229,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--internal-scale 1\|1.5\|2` | The output size over the internal size [1.5] |
 | `--jitter on\|off` | The primary rays' sub-pixel jitter (selects the `own` upscaler) |
 | `--sharpen S` | The upscaler's sharpening, 0 to 1 [0.5] |
-| `--upscaler off\|own\|fsr2` | The upscaler [fsr2, or own with `--jitter`, or off at scale 1] |
+| `--upscaler off\|own\|fsr2` | The upscaler [fsr2, or own with `--jitter`, or off at scale 1 but under `--profile high`] |
 | `--pan DEG_PER_S` | Turn the camera at a constant yaw rate (`.` stops and starts it) |
 | `--jitter-phases N` | FSR 2's jitter phase count, 1 to 1024 |
 | `--dither on\|off` | FSR 2's static one-level dither [off] |
@@ -315,6 +316,20 @@ benchmark so ended reports `ended: "aborted"` with 0 frames. Under `--tester` th
 frame's title is the path's scene and mode (`castle - benchmark`). `run.json` is schema 2:
 `load_ms` (device ready to the first world frame) and `load_stages` (`[{name, ms}]`, each
 stage's step time).
+
+### Render settings
+
+| Flag | Does |
+|------|------|
+| `--settings` | Print every render setting the flags give (`vxe_render::RenderSettings`, ADR-0055), one line per field: its name, its apply class (`live`, `settle`, `rebuild`) and its value; then exit |
+| `--profile floor\|portable\|performance\|high` | The render profile (`vxe_render::Profile`) the other flags edit, whatever their order: floor (1080p, FSR 2 at 1.5), portable (720p, FSR 2 at 1.5, fewer layers and lights, no lamp bounce, a smaller residency), performance (the window's size, FSR 2 at 2) or high (1080p, FSR 2 at 1; not for the slow adapter); its output hint sizes a headless run with no `--render`. The HUD's first mode row reads `profile: portable +1` with one field edited [floor] |
+| `--light-cap N` | Slots of the list of lights shaded, the headlamp's included, 1 to 16 [the profile's] |
+
+`PageDown` cycles the profiles in the window: the next one's translucent layers, lamp bounce,
+light cap, internal scale and bake budget apply from the next frame, and the profile row names
+the fields that wait for a restart with `--profile` (`restart for: lod.r_full,
+build.mirror_budget_bytes, build.residency`). `F4` takes the cycle once the menu frees it
+(ADR-0061).
 
 ### Diagnostics
 

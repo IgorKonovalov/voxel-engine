@@ -25,8 +25,13 @@ pub fn parse_args() -> Result<Args, String> {
 
 /// The arguments after the program name.
 pub(crate) fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, String> {
+    let argv: Vec<String> = argv.into_iter().collect();
+    let mut args = Args::defaults();
+    if let Some(p) = super::settings::profile_in(&argv)? {
+        args.seed_profile(p);
+    }
     let mut p = Parsing {
-        args: Args::defaults(),
+        args,
         given: Given::default(),
     };
     table().parse_into(argv, &mut p)?;
@@ -36,7 +41,7 @@ pub(crate) fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<
 
 impl Args {
     /// Every flag's default.
-    fn defaults() -> Self {
+    pub(super) fn defaults() -> Self {
         let lighting = crate::default_lighting();
         Args {
             seed: 1,
@@ -79,6 +84,10 @@ impl Args {
             tester: false,
             check_args: false,
             help: false,
+            settings: false,
+            profile: vxe_render::Profile::Floor,
+            light_cap: vxe_render::MAX_LIGHTS as u32,
+            output_hint: None,
             audio: AudioArgs {
                 on: false,
                 debug: false,

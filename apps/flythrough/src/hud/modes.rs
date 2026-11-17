@@ -97,6 +97,9 @@ impl ModeKey {
 /// so a test drives it without a window.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Modes {
+    /// The render profile's row (`profile: portable +2`, then `restart for: ...` while a
+    /// rebuild is pending), written by the run when it changes; empty writes no row.
+    pub profile: String,
     pub lighting: vxe_render::Lighting,
     pub resolution: vxe_render::LightingResolution,
     /// The ore's emission scale pulses.
@@ -249,6 +252,7 @@ impl Modes {
         now_ms: f64,
     ) -> Self {
         Self {
+            profile: String::new(),
             lighting,
             resolution,
             pulse: false,
@@ -303,9 +307,14 @@ impl Modes {
         }
     }
 
-    /// Writes the mode block, one row per [`HudRow`] in order, each ending in a line break,
-    /// then the walkers' row while one is placed and the viewer's under `--model`.
+    /// Writes the mode block: the profile row when set, then one row per [`HudRow`] in order,
+    /// each ending in a line break, then the walkers' row while one is placed and the
+    /// viewer's under `--model`.
     pub fn write_rows(&self, out: &mut String) {
+        if !self.profile.is_empty() {
+            out.push_str(&self.profile);
+            out.push('\n');
+        }
         for row in HudRow::ALL {
             self.write_row(row, out);
             out.push('\n');

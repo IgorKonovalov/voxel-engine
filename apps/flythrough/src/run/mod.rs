@@ -16,9 +16,7 @@ use crate::run::hud_feed::{HUD_SCALE, Hud, Samples};
 use crate::run::queue::QueueRun;
 use crate::setup::{CrispRows, Gfx};
 use crate::streaming::{STREAM_POOL_BYTES, Stream};
-use crate::{
-    STREAM_MIRROR_BUDGET, ScrollSteps, chunk_ram, level_mirror_budget, level_pool_units, mips_ram,
-};
+use crate::{ScrollSteps, chunk_ram, level_mirror_budget, level_pool_units, mips_ram};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
@@ -37,6 +35,7 @@ pub(crate) mod hud_feed;
 pub(crate) mod keys;
 pub(crate) mod loading;
 pub(crate) mod pilot;
+pub(crate) mod profile;
 pub(crate) mod queue;
 pub(crate) mod tour;
 
@@ -354,7 +353,7 @@ impl Run {
     pub(crate) fn mirror_budget(&self) -> u64 {
         self.args.mirror_budget.unwrap_or_else(|| {
             if self.stream.is_some() {
-                STREAM_MIRROR_BUDGET
+                self.args.stream_mirror_budget()
             } else {
                 let chunks = self
                     .world

@@ -1181,7 +1181,7 @@ pub(crate) fn table() -> Table<Parsing> {
             flags: audio_flags(),
         },
     ];
-    sections.extend(super::loading::sections());
+    sections.extend(super::settings::late_sections());
     sections.push(Section {
         title: "Removed",
         flags: removed_flags(),
