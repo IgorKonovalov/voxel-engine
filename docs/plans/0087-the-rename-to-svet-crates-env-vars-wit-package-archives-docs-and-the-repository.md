@@ -1,6 +1,6 @@
 # 0087: The rename to `svet`: the crates, the environment variables and the WIT package, the tester archive, the documents and the harness, the repository, one minor bump, one final grep
 
-> **Status:** draft (awaits the owner's go; drafted 2026-11-17 from ADR-0071's acceptance)
+> **Status:** approved (the owner's go, 2026-11-17: "Approve rename"; it runs last, see below)
 > **Created:** 2026-11-17
 > **Milestone:** cross-cutting; no milestone in [`docs/roadmap.md`](../roadmap.md) owns it
 > **Related ADRs:** [ADR-0071](../adrs/0071-the-engine-takes-a-name-one-word-for-the-project-the-crate-prefix-the-repository-and-the-archive.md)
@@ -14,8 +14,9 @@
 > [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md) and
 > [Plan 0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md)
 > merge (and whichever of Plans 0079 and 0083 has a worktree at the time: `git worktree list`
-> is the source, not this line), and **before Plan 0086** (drafted on branch `plan-0032`)
-> starts. The rename is one lane, run alone, a day's work; its gate is the full one at the tip.
+> is the source, not this line). **Amended 2026-11-17 (owner):** "lets finish everything that is
+> in progress, then rename" and "86 finish before": it runs after Plans 0032, 0080, 0077, 0079,
+> 0083 and 0086 have all merged, not before 0086 as drafted. The rename is one lane, run alone, a day's work; its gate is the full one at the tip.
 
 ## TL;DR
 
