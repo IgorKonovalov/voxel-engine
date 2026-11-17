@@ -28,6 +28,9 @@ const SHIFT: u32 = 15;
 /// The outdoor rows, appended after the cave's ([`crate::outdoor_materials`]).
 pub const GRASS: MaterialId = 5;
 pub const SOIL: MaterialId = 6;
+/// The trees' rows ([`crate::trees`]), appended after the soil.
+pub const BARK: MaterialId = 7;
+pub const LEAF: MaterialId = 8;
 /// Soil voxels under the grass.
 pub const SOIL_DEPTH: i32 = 8;
 /// Caverns open only deeper than this under the surface.
@@ -52,6 +55,10 @@ const MOUTH_LIFT: i32 = 10;
 pub const OUTSIDE_RUN: i32 = 300;
 /// ... and over the ground there (2 m).
 pub const OUTSIDE_LIFT: i32 = 20;
+/// `--spawn forest`'s column, 640 voxels north of the mouth.
+pub const FOREST: [i32; 2] = [0, 640];
+/// `--spawn forest`: over the ground there (2 m).
+pub const FOREST_LIFT: i32 = 20;
 /// `--spawn inside`: voxels along x into the hill past the tunnel's entrance (about 3 m along
 /// the axis at its slope of about 1 in 4).
 pub const INSIDE_RUN: i32 = 29;
@@ -64,15 +71,18 @@ pub enum Spawn {
     Outside,
     /// In the tunnel, facing out.
     Inside,
+    /// At [`FOREST`], facing north, pitched 10 degrees down.
+    Forest,
 }
 
 impl Spawn {
-    pub const ALL: [Self; 2] = [Self::Outside, Self::Inside];
+    pub const ALL: [Self; 3] = [Self::Outside, Self::Inside, Self::Forest];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Outside => "outside",
             Self::Inside => "inside",
+            Self::Forest => "forest",
         }
     }
 }
@@ -126,7 +136,9 @@ impl OutdoorSource {
     /// The eye voxel of `spawn` and the integer direction it faces: [`Spawn::Outside`]
     /// [`OUTSIDE_RUN`] voxels toward -x from the mouth's column, [`OUTSIDE_LIFT`] over the
     /// ground there, facing +x; [`Spawn::Inside`] on the tunnel's axis [`INSIDE_RUN`] voxels
-    /// along x past the first axis voxel under its column's surface, facing out along the axis.
+    /// along x past the first axis voxel under its column's surface, facing out along the axis;
+    /// [`Spawn::Forest`] [`FOREST_LIFT`] over the ground at [`FOREST`], facing +y pitched 10
+    /// degrees down (`tan 10 deg` is 1763 / 10000).
     pub fn spawn(&self, spawn: Spawn) -> (VoxelCoord, [i64; 3]) {
         let [mx, my] = MOUTH;
         match spawn {
@@ -145,6 +157,11 @@ impl OutdoorSource {
                 let i = (enter + i64::from(INSIDE_RUN)).min(d[0]);
                 let eye = VoxelCoord([x(i), my, axis_z(i) as i32]);
                 (eye, d.map(|v| -v))
+            }
+            Spawn::Forest => {
+                let [fx, fy] = FOREST;
+                let eye = VoxelCoord([fx, fy, self.height(fx, fy) + FOREST_LIFT]);
+                (eye, [0, 10_000, -1_763])
             }
         }
     }

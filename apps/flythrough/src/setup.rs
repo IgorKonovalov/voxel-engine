@@ -530,10 +530,12 @@ fn streamed_world(args: &Args) -> (VoxelCoord, Pending) {
     )
 }
 
-/// The outdoor hills of `args.seed`, streamed around the camera as the cave is.
+/// The outdoor hills of `args.seed`, with `--trees` stood on them, streamed around the camera
+/// as the cave is.
 fn outdoor_world(args: &Args) -> (VoxelCoord, Pending) {
-    let source = OutdoorSource::new(args.seed);
-    let (spawn, _) = source.spawn(args.outdoor.spawn);
+    let hills = OutdoorSource::new(args.seed);
+    let (spawn, _) = hills.spawn(args.outdoor.spawn);
+    let trees = args.outdoor.trees();
     let workers = args.workers.unwrap_or_else(default_workers);
     let world = World::new(&crate::walker::with_walker(&materials(args)));
     let cfg = StreamConfig {
@@ -542,14 +544,21 @@ fn outdoor_world(args: &Args) -> (VoxelCoord, Pending) {
         persist: PersistConfig::default(),
     };
     println!(
-        "streaming the outdoor hills, seed {}: spawn {} at {:?}, r_full {}, r_lod {}, {workers} workers",
+        "streaming the outdoor hills, seed {}, trees {} (leaf fill {}): spawn {} at {:?}, r_full {}, r_lod {}, {workers} workers",
         args.seed,
+        trees.name(),
+        args.outdoor.leaf_fill(),
         args.outdoor.spawn.name(),
         spawn.0,
         args.residency.r_full,
         args.residency.r_lod,
     );
-    let streamer = Streamer::new(Arc::new(source), cfg);
+    let streamer = if trees == crate::trees::TreeDensity::None {
+        Streamer::new(Arc::new(hills), cfg)
+    } else {
+        let forest = crate::trees::ForestSource::new(hills, trees, args.outdoor.leaf_fill());
+        Streamer::new(Arc::new(forest), cfg)
+    };
     (
         spawn,
         Pending::Stream(Box::new(start_streaming(world, streamer, workers, spawn))),

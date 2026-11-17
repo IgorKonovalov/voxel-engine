@@ -200,6 +200,7 @@ impl Flythrough {
             help: false,
             loading: None,
             switch: false,
+            retree: false,
         });
     }
 
@@ -322,7 +323,7 @@ impl App for Flythrough {
             Some(run) => run.frame(gpu, input, dt, surface),
             None => Flow::Exit,
         };
-        if flow == Flow::Continue && self.run.as_ref().is_some_and(|r| r.switch) {
+        if flow == Flow::Continue && self.run.as_ref().is_some_and(|r| r.switch || r.retree) {
             self.switch_source(gpu);
         }
         flow

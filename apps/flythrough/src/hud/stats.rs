@@ -502,6 +502,9 @@ pub struct StepsSample {
     pub block_max_mean: f32,
     pub mean_loads: f32,
     pub mean_pool_reads: f32,
+    /// The key light's shadow ray's mean and p99 steps over the pixels that cast it, while
+    /// one lights the frame.
+    pub key: Option<[f32; 2]>,
 }
 
 impl StepsSample {
@@ -512,6 +515,7 @@ impl StepsSample {
             block_max_mean: h.block_max_mean() as f32,
             mean_loads: h.mean_loads() as f32,
             mean_pool_reads: h.mean_pool_reads() as f32,
+            key: None,
         }
     }
 }
@@ -672,8 +676,13 @@ impl HudStats {
                 out,
                 HudColour::White,
                 format_args!(
-                    "steps per ray mean {:.2} p99 {} block-max mean {:.2}; loads mean {:.2}, pool {:.2}",
-                    s.mean_steps, s.p99_steps, s.block_max_mean, s.mean_loads, s.mean_pool_reads
+                    "steps per ray mean {:.2} p99 {} block-max mean {:.2}; loads mean {:.2}, pool {:.2}{}",
+                    s.mean_steps,
+                    s.p99_steps,
+                    s.block_max_mean,
+                    s.mean_loads,
+                    s.mean_pool_reads,
+                    KeySteps(s.key)
                 ),
             )?;
         }
@@ -769,6 +778,18 @@ impl HudStats {
             None => row(out, HudColour::White, format_args!("no edit yet"))?,
         }
         Ok(())
+    }
+}
+
+/// `; key ray steps mean 12.40 p99 61` when the key light's ray was cast, else nothing.
+struct KeySteps(Option<[f32; 2]>);
+
+impl fmt::Display for KeySteps {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some([mean, p99]) => write!(f, "; key ray steps mean {mean:.2} p99 {p99:.0}"),
+            None => Ok(()),
+        }
     }
 }
 

@@ -108,6 +108,9 @@ pub(crate) struct Run {
     /// `Home` or `--switch-at` asked for the next world source: the app rebuilds the run
     /// after this frame (`run::switch`).
     pub(crate) switch: bool,
+    /// `CapsLock` asked for the outdoor hills' next `--trees`: the app rebuilds the run after
+    /// this frame through the switch's path (`run::switch`).
+    pub(crate) retree: bool,
     /// Start-up still stepping behind loading frames; `None` once the first world frame may
     /// draw.
     pub(crate) loading: Option<loading::Loading>,

@@ -148,3 +148,101 @@ fn the_chunk_short_cuts_match_the_voxel_function() {
         }
     }
 }
+
+/// Plan 0032 Phase 8 bar 2: for 16 seeded shapes at leaf fill 128, on the single-tree
+/// builder: the trunk's axis column from the base to `base + height - 1` is bark, the voxel
+/// `rc + 1` over the canopy's centre is left unwritten (air over air), and the canopy's leaf
+/// count is within 3 % of half its sphere's lattice points outside the trunk.
+#[test]
+fn a_tree_is_what_the_formula_says() {
+    use flythrough::trees::{LEAF_FILL, TRUNK_SINK, TreeShape, build_tree};
+    let mut rng = SplitMix64(0x7EE5);
+    for draw in 0..16 {
+        let shape = TreeShape::from_hash(rng.next_u64());
+        let tree = build_tree(shape, draw, LEAF_FILL);
+        let [ax, ay] = shape.axis();
+        for z in TRUNK_SINK..TRUNK_SINK + shape.height {
+            assert_eq!(tree.get([ax, ay, z]), Some(BARK), "{shape:?} z {z}");
+        }
+        let c = shape.canopy_centre();
+        assert_eq!(tree.get([c[0], c[1], c[2] + shape.canopy_r + 1]), None);
+        let [sx, sy, sz] = tree.size().map(|v| v as i32);
+        let (mut points, mut leaves) = (0u64, 0u64);
+        for z in 0..sz {
+            for y in 0..sy {
+                for x in 0..sx {
+                    let l = [x, y, z];
+                    if shape.in_canopy(l) && !shape.is_trunk(l) {
+                        points += 1;
+                        leaves += u64::from(tree.get(l) == Some(LEAF));
+                    }
+                }
+            }
+        }
+        let half = points as f64 / 2.0;
+        let off = (leaves as f64 - half).abs() / half;
+        println!(
+            "{shape:?}: {leaves} leaves of {points} points, {:.2} % off half",
+            100.0 * off
+        );
+        assert!(off <= 0.03, "{shape:?}: {leaves} of {points}");
+    }
+}
+
+/// Plan 0032 Phase 8 bar 3: with `--trees forest` no bark or leaf voxel lies within 120
+/// voxels of the mouth in xy, over the chunks that square covers from 16 under its lowest
+/// surface to 130 over its highest; and at 16 seeded trees the axis column from `h + 1` to
+/// `base + height - 1` is bark or, where a later tree's canopy covers it, leaf (the leaf share
+/// is printed, with no bar).
+#[test]
+fn no_tree_stands_at_the_mouth() {
+    use flythrough::trees::{ForestSource, LEAF_FILL, TreeDensity};
+    use vxe_world::{CHUNK_EDGE, ChunkExtent, World};
+    let source = ForestSource::new(OutdoorSource::new(1), TreeDensity::Forest, LEAF_FILL);
+    let r = 120;
+    let [mx, my] = MOUTH;
+    let (mut lo, mut hi) = (i32::MAX, i32::MIN);
+    for y in my - r..=my + r {
+        for x in mx - r..=mx + r {
+            let h = source.base().height(x, y);
+            (lo, hi) = (lo.min(h), hi.max(h));
+        }
+    }
+    let c = |v: i32| v.div_euclid(CHUNK_EDGE);
+    let extent = ChunkExtent::new(
+        [c(mx - r), c(my - r), c(lo - 16)],
+        [c(mx + r) + 1, c(my + r) + 1, c(hi + 130) + 1],
+    );
+    let world = World::generate(extent, &source, &flythrough::outdoor_materials());
+    let mut near = 0u64;
+    for y in my - r..=my + r {
+        for x in mx - r..=mx + r {
+            if i64::from(x - mx).pow(2) + i64::from(y - my).pow(2) > i64::from(r).pow(2) {
+                continue;
+            }
+            for z in lo - 16..=hi + 130 {
+                let m = world.material_at(vxe_world::VoxelCoord([x, y, z]));
+                near += u64::from(matches!(m, Some(BARK | LEAF)));
+            }
+        }
+    }
+    assert_eq!(near, 0, "bark or leaf within {r} voxels of the mouth");
+    let trees = source.placements();
+    assert!(trees.len() > 3000, "{} trees", trees.len());
+    let mut rng = SplitMix64(0xF0E5);
+    let (mut column, mut leaf) = (0u64, 0u64);
+    for _ in 0..16 {
+        let t = &trees[(rng.next_u64() % trees.len() as u64) as usize];
+        let h = source.base().height(t.axis[0], t.axis[1]);
+        for z in h + 1..t.base + t.shape.height {
+            let m = source.material([t.axis[0], t.axis[1], z]);
+            assert!(matches!(m, BARK | LEAF), "{:?} z {z}: {m}", t.axis);
+            column += 1;
+            leaf += u64::from(m == LEAF);
+        }
+    }
+    println!(
+        "16 trees' axis columns: {column} voxels, {leaf} leaf ({:.2} %)",
+        100.0 * leaf as f64 / column as f64
+    );
+}

@@ -6,7 +6,7 @@
 //!
 //! The keys: [`KEY_HOUR`] steps the clock an hour forward, and back with Shift held;
 //! [`KEY_DAY_CYCLE`] runs or pauses it at `--day-length`; [`KEY_SOURCE`] switches the world
-//! source in process (`run::switch`), keeping the clock.
+//! source in process (`run::switch`), keeping the clock, and [`KEY_TREES`] the outdoor trees.
 
 use crate::hud::Modes;
 use std::fmt::Write as _;
@@ -29,6 +29,8 @@ pub const KEY_SOURCE: KeyCode = KeyCode::Home;
 pub const KEY_HOUR: KeyCode = KeyCode::PageUp;
 /// `End`: the day cycle runs or pauses.
 pub const KEY_DAY_CYCLE: KeyCode = KeyCode::End;
+/// `CapsLock`: the outdoor hills' next `--trees`, rebuilt in process as [`KEY_SOURCE`] does.
+pub const KEY_TREES: KeyCode = KeyCode::CapsLock;
 
 /// The time of day and whether it runs.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -41,6 +43,9 @@ pub struct Clock {
     pub day_length_s: f32,
     /// The sun's angular radius in radians (`--sun-radius`).
     pub sun_radius: f32,
+    /// `--sun EL,AZ`: the sun's elevation and azimuth in degrees (azimuth clockwise from
+    /// north), fixed whatever the time; the moon stands opposite.
+    pub fixed_sun: Option<[f32; 2]>,
 }
 
 impl Default for Clock {
@@ -50,6 +55,7 @@ impl Default for Clock {
             running: false,
             day_length_s: DEFAULT_DAY_LENGTH_S,
             sun_radius: vxe_render::sky::SUN_ANGULAR_RADIUS,
+            fixed_sun: None,
         }
     }
 }
@@ -61,15 +67,26 @@ impl Clock {
     }
 
     /// The sky at this time: the default atmosphere, the sun at [`Clock::hour_angle`] and
-    /// the full moon 12 hours from it, with altitude 0 at voxel z `altitude_zero_z`.
+    /// the full moon 12 hours from it, with altitude 0 at voxel z `altitude_zero_z`. With
+    /// [`Clock::fixed_sun`] the sun stands there and the moon opposite it.
     pub fn sky(&self, altitude_zero_z: f32) -> Sky {
         let lat = LATITUDE_DEG.to_radians();
         let h = self.hour_angle();
+        let (sun_dir, moon_dir) = match self.fixed_sun {
+            Some(ea) => {
+                let d = fixed_direction(ea);
+                (d, d.map(|c| -c))
+            }
+            None => (
+                body_direction(h, DECLINATION, lat),
+                body_direction(h + std::f32::consts::PI, -DECLINATION, lat),
+            ),
+        };
         let sun = Body {
             angular_radius: self.sun_radius,
-            ..Body::sun(body_direction(h, DECLINATION, lat))
+            ..Body::sun(sun_dir)
         };
-        let moon = Body::moon(body_direction(h + std::f32::consts::PI, -DECLINATION, lat));
+        let moon = Body::moon(moon_dir);
         Sky {
             altitude_zero_z,
             ..Sky::new(sun, moon)
@@ -89,12 +106,37 @@ impl Clock {
         self.minutes = (self.minutes + 60.0 * f64::from(hours)).rem_euclid(DAY_MIN);
     }
 
-    /// `time 12:00, day cycle off`.
+    /// `time 12:00, day cycle off`; with a fixed sun `sun 10/180 fixed, day cycle off`.
     pub fn write_words(&self, out: &mut String) {
         let m = self.minutes.floor() as u32;
         let cycle = if self.running { "on" } else { "off" };
-        let _ = write!(out, "time {:02}:{:02}, day cycle {cycle}", m / 60, m % 60);
+        let _ = match self.fixed_sun {
+            Some([e, a]) => write!(out, "sun {e}/{a} fixed, day cycle {cycle}"),
+            None => write!(out, "time {:02}:{:02}, day cycle {cycle}", m / 60, m % 60),
+        };
     }
+}
+
+/// The unit direction toward elevation `e` and azimuth `a` degrees (clockwise from north),
+/// in world axes (+x east, +y north, +z up).
+pub fn fixed_direction([e, a]: [f32; 2]) -> [f32; 3] {
+    let (e, a) = (f64::from(e).to_radians(), f64::from(a).to_radians());
+    [a.sin() * e.cos(), a.cos() * e.cos(), e.sin()].map(|c| c as f32)
+}
+
+/// `--sun EL,AZ` in degrees: an elevation in [-90, 90] and an azimuth in [0, 360).
+pub fn parse_sun(s: &str) -> Result<[f32; 2], String> {
+    let bad = || {
+        format!(
+            "--sun takes EL,AZ degrees, elevation -90 to 90 and azimuth 0 to under 360, not {s}"
+        )
+    };
+    let (e, a) = s.split_once(',').ok_or_else(bad)?;
+    let (e, a): (f32, f32) = (e.parse().map_err(|_| bad())?, a.parse().map_err(|_| bad())?);
+    if !(-90.0..=90.0).contains(&e) || !(0.0..360.0).contains(&a) {
+        return Err(bad());
+    }
+    Ok([e, a])
 }
 
 /// `--time HH:MM` in minutes after midnight: hours 0 to 23, minutes 0 to 59.
@@ -199,7 +241,7 @@ mod tests {
         let row = |b: &str| b.replace('\n', ", ");
         assert!(
             row(&m.banner(0.0).expect("at the start"))
-                .contains("source outdoor, time 12:00, day cycle off, sky rays 1")
+                .contains("source outdoor, trees none, time 12:00, day cycle off, sky rays 1")
         );
         let (_, b) = press(&mut m, &[KEY_HOUR], 5000.0);
         assert!(row(&b).contains("time 13:00"), "{b}");

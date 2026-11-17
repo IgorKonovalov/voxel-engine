@@ -132,6 +132,7 @@ impl Run {
             println!("{}", self.modes.row(hud::HudRow::Lighting));
         }
         self.switch |= input.pressed(crate::daylight::KEY_SOURCE);
+        self.retree |= self.args.mode.is_outdoor() && input.pressed(crate::daylight::KEY_TREES);
         let scroll = input.scroll() + f32::from(u8::from(input.pad_pressed(PadButton::DpadUp)))
             - f32::from(u8::from(input.pad_pressed(PadButton::DpadDown)));
         if scroll != 0.0

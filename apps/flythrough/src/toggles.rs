@@ -149,6 +149,7 @@ pub const ACTION_KEYS: &[KeyCode] = &[
     crate::daylight::KEY_SOURCE,
     crate::daylight::KEY_HOUR,
     crate::daylight::KEY_DAY_CYCLE,
+    crate::daylight::KEY_TREES,
     KeyCode::KeyB,
     KeyCode::KeyP,
     KeyCode::KeyG,

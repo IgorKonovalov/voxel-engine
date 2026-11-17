@@ -173,6 +173,7 @@ cargo run --release -p flythrough -- --help                   # every flag
 | `Home` | Switch the world source in process: cave, level, showcase, outdoor |
 | `PageUp` / `Shift` + `PageUp` | Under a sky: the time of day an hour on / back |
 | `End` | Under a sky: run or pause the day cycle |
+| `CapsLock` | On the outdoor hills: the trees none, sparse, forest, rebuilt in process |
 | `Esc` | Quit |
 
 [`docs/flythrough.md`](docs/flythrough.md) lists every key (lighting, light queue, views,

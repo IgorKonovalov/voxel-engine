@@ -18,7 +18,9 @@
 //                                        each times its colour, and the key light's
 //                                        sample, summed in rgb and their
 //                                        luminance (`colour_weight`) in a, pre-exposed and
-//                                        clamped as above; 0 on a miss and in the steps view
+//                                        clamped as above; 0 on a miss. In the steps view the
+//                                        key light's shadow ray's counters instead (see
+//                                        `shade`)
 //
 @group(2) @binding(0) var hit_pos_in: texture_2d<f32>;
 
@@ -46,7 +48,11 @@ fn shade_px(gid: vec3<u32>) {
         // The cost of each hit's shadow rays toward the lights in reach, lit or not, in the
         // frame's shadow walk: their loop iterations, storage loads and pool loads summed
         // (unclamped), and in a the rays cast; 0 where none is cast.
+        // The key light's shadow ray, cast as `key_sample` casts it where the key light
+        // reaches the hit: its loop iterations, storage loads and pool loads, and 1 in a; 0
+        // where none is cast.
         var counts = vec4<f32>(0.0);
+        var key = vec4<f32>(0.0);
         if (rec.found && (params.flags & FLAG_CUTAWAY) == 0u) {
             let ray = pixel_ray(full_px(gid.xy));
             let o = shadow_origin(rec.p, shadow_normal_of(rec, ray.d));
@@ -70,9 +76,16 @@ fn shade_px(gid: vec3<u32>) {
                 rays += 1u;
             }
             counts = vec4<f32>(f32(steps), f32(storage), f32(pool), f32(rays));
+            if (any(key_light_at(rec.p, rec.n) > vec3<f32>(0.0))) {
+                let d = disc_direction(sky.key_dir, sky.key_radius, rand(gid.xy, KEY_DIM), rand(gid.xy, KEY_DIM + 1u));
+                walk_steps = 0u;
+                loads = 0u;
+                sky_shadowed(o, d, KEY_RAY_LEN);
+                key = vec4<f32>(f32(walk_steps), f32(counted_loads()), f32(counted_pool_reads()), 1.0);
+            }
         }
         textureStore(irradiance_out, px, counts);
-        textureStore(direct_out, px, vec4<f32>(0.0));
+        textureStore(direct_out, px, key);
         return;
     }
     // The direct part: rgb, and its luminance in w.

@@ -1090,8 +1090,8 @@ Readings and gate counts: [`logs/0032.md`](logs/0032.md).
 | 4: The outdoor exposure | dev | done; bar 2 landed with Phase 5; the preset's code in ce2a8fa9 | 33fb5abd |
 | 5: The sun and the moon as the light pass's directional sample | dev | done; bars 3, 6's settle and 7 are readings (exploration); tests in `gpu_sun.rs` (Notes) | 9bff6e8f |
 | 6: Sky light: one cosine-weighted sky ray, its stillness measured first | dev | done; default 1 ray; bars 2 to 4 are readings (exploration); bar 6 one run each (Notes) | d261667c |
-| 7: The four goldens, the HUD rows and the readings | dev | done; goldens and bars 1, 2 wait for Phase 10; bars 3, 4 read (Notes) | committed with this row |
-| 8: Trees, the shadow that travels with the sun, and the forest at low sun | dev | not started | |
+| 7: The four goldens, the HUD rows and the readings | dev | done; goldens and bars 1, 2 wait for Phase 10; bars 3, 4 read (Notes) | a66a9463 |
+| 8: Trees, the shadow that travels with the sun, and the forest at low sun | dev | done; bar 5 a reading, bar 6 waits for Phase 10; ForestSource for StampedSource (Notes) | committed with this row |
 | 9: The owner's windowed check | human | not started | |
 | 10: The picks as tests | dev | not started | |
 
@@ -1201,6 +1201,20 @@ Readings and gate counts: [`logs/0032.md`](logs/0032.md).
   `support/stillness.rs`. The `--look face` run is the noon run (face is the default look).
   Bar 3's runs are all loaded (the flights' workers) and, at 300 frames, all but two streamed
   runs unsettled; the base is 356b32a1 (Plan 0069's tip), not main.
+- Phase 8: the source is `trees::ForestSource`, not `vxe_world::StampedSource`:
+  `StampedSource::new` rotates and owns one prefab copy a placement, about 3850 copies of
+  roughly 0.2 to 0.9 MB at `forest` (a guess from the box sizes, not measured), so
+  `ForestSource` writes the same placements in the same order (a later one wins, masked
+  voxels only) from 64 shared prefabs (16 variants, 4 turns). Making `StampedSource` share its
+  prefabs is an engine follow-up. A variant's leaf hash runs over its own frame's voxels. The
+  rows are in `scene.rs` (not `lib.rs`); the flags in `cli/outdoor.rs` and the key in
+  `daylight.rs` (`KEY_TREES`), `run/keys.rs` and `run/switch.rs` (not `main.rs`). The key is
+  `CapsLock`, not `\` (merge item for Plan 0080: CapsLock is bound here). `FOREST` is
+  `[0, 640]`. Bar 1 runs in about 0.6 s, not 8. Bar 5 is a reading in `gpu_outdoor.rs`'s
+  `mod reading` and bar 6 waits for Phase 10 (exploration). The steps view's key-ray counters
+  are written by `shade.wgsl` into the direct target, which the steps view leaves unused; no
+  `marcher.rs` change. The `--look face` configuration of bar 7 is the default look, so it was
+  not run apart.
 
 ### Close triggers
 

@@ -11,7 +11,8 @@ use crate::run::Run;
 use crate::run::fade::{FADE_DIGS, FADE_END, FadeSample, fade_lamp, fade_report};
 use crate::run::hud_feed::{
     SAMPLES, Samples, band_census_line, belt_line, bins_line, crack_shares, field_line,
-    print_moving_exposure, probe_passes_ms, shadow_steps_line, steps_line, window_line,
+    key_ray_steps, key_steps_line, print_moving_exposure, probe_passes_ms, shadow_steps_line,
+    steps_line, window_line,
 };
 use crate::run::keys::{ORE_PULSE_MEAN, ore_pulse};
 use crate::run::loading::fade_loading;
@@ -618,7 +619,11 @@ impl Run {
             let px = vxe_render::debug::read_rgba8(&gpu.device, &gpu.queue, gfx.frame.target());
             let width = gfx.frame.target().width() as usize;
             let h = StepHistogram::from_rgba8(&px, width);
-            self.hud.steps = Some(hud::StepsSample::from_histogram(&h));
+            let key = vxe_render::debug::read_rgba16f(&gpu.device, &gpu.queue, gfx.frame.direct());
+            self.hud.steps = Some(hud::StepsSample {
+                key: key_ray_steps(&key).map(|(_, [mean, p99, _, _])| [mean as f32, p99 as f32]),
+                ..hud::StepsSample::from_histogram(&h)
+            });
         }
         self.hud.cracks = None;
         if hud
@@ -769,6 +774,8 @@ impl Run {
                 "{}",
                 shadow_steps_line(&shadow, gfx.frame.lighting().shadow_walk)
             );
+            let key = vxe_render::debug::read_rgba16f(&gpu.device, &gpu.queue, gfx.frame.direct());
+            println!("{}", key_steps_line(&key, gfx.frame.lighting().shadow_walk));
         }
         if let Some(gfx) = &self.gfx {
             println!("mirror: {}", belt_line(&gfx.mirror));

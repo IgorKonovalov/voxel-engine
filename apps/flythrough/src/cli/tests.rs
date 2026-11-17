@@ -1001,3 +1001,67 @@ fn the_model_flags_parse() {
     };
     assert!(e.contains("--clip") && e.contains("--model"), "{e}");
 }
+
+/// Plan 0032 Phase 8 bar 4: `CapsLock`'s rebuild moves the banner through `trees none`,
+/// `trees sparse`, `trees forest` and back; `--trees` (none without the flag), `--leaf-fill`
+/// (refusing 0 and 257), `--spawn forest` and `--sun 10,180` (refusing an elevation outside
+/// [-90, 90] and an azimuth outside [0, 360)) parse; with `--sun` the banner reads `sun
+/// 10/180 fixed` and the clock's keys leave the sun's direction unchanged.
+#[test]
+fn the_trees_and_the_fixed_sun_parse_and_show() {
+    use crate::outdoor::Spawn;
+    use crate::trees::{LEAF_FILL, TreeDensity};
+    let row = |a: &Args| {
+        a.start_modes(0.0)
+            .banner(0.0)
+            .expect("at the start")
+            .replace('\n', ", ")
+    };
+    let mut a = parse_args_from(argv(&["--source", "outdoor"])).expect("parses");
+    assert_eq!(a.outdoor.trees(), TreeDensity::None);
+    assert_eq!(a.outdoor.leaf_fill(), LEAF_FILL);
+    let mut seen = vec![row(&a)];
+    for _ in 0..3 {
+        a = crate::run::switch::retreed_args(&a, 0).expect("parses");
+        seen.push(row(&a));
+    }
+    for (r, t) in seen.iter().zip(["none", "sparse", "forest", "none"]) {
+        assert!(r.contains(&format!("source outdoor, trees {t},")), "{r}");
+    }
+    let f = parse_args_from(argv(&[
+        "--source",
+        "outdoor",
+        "--trees",
+        "forest",
+        "--leaf-fill",
+        "64",
+        "--spawn",
+        "forest",
+    ]))
+    .expect("parses");
+    assert_eq!(
+        (f.outdoor.trees(), f.outdoor.leaf_fill(), f.outdoor.spawn()),
+        (TreeDensity::Forest, 64, Spawn::Forest)
+    );
+    for bad in ["0", "257"] {
+        assert!(
+            parse_args_from(argv(&["--leaf-fill", bad])).is_err(),
+            "{bad}"
+        );
+    }
+    assert!(parse_args_from(argv(&["--trees", "jungle"])).is_err());
+    let s = parse_args_from(argv(&["--source", "outdoor", "--sun", "10,180"])).expect("parses");
+    assert_eq!(s.outdoor.clock.fixed_sun, Some([10.0, 180.0]));
+    assert!(row(&s).contains("sun 10/180 fixed"), "{}", row(&s));
+    for bad in ["91,180", "-91,0", "10,360", "10,-1", "10", "a,b"] {
+        assert!(parse_args_from(argv(&["--sun", bad])).is_err(), "{bad}");
+    }
+    let mut clock = s.outdoor.clock;
+    let before = clock.sky(0.0).sun.direction;
+    clock.step_hours(3);
+    clock.running = true;
+    clock.advance(600.0);
+    assert_eq!(clock.sky(0.0).sun.direction, before);
+    let d = crate::daylight::fixed_direction([10.0, 180.0]);
+    assert!(d[0].abs() < 1e-6 && d[1] < 0.0 && (d[2] - 10f32.to_radians().sin()).abs() < 1e-6);
+}

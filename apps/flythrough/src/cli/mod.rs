@@ -820,7 +820,11 @@ impl Args {
     /// and the probe spacing while the lamp's bounce is on, and the look's rows `--view`'s view.
     pub(crate) fn start_modes(&self, now_ms: f64) -> hud::Modes {
         let mut m = hud::Modes::new(self.start_lighting(), self.light.resolution, now_ms)
-            .with_source(self.mode.source_name())
+            .with_source(if self.mode.is_outdoor() {
+                Some(self.outdoor.trees().source_words())
+            } else {
+                self.mode.source_name()
+            })
             .with_probe_spacing(self.light.probe_spacing);
         m.sky = self.sky_on();
         m.clock = self.outdoor.clock;

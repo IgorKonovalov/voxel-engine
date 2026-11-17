@@ -61,6 +61,44 @@ pub(crate) fn switched_args(args: &Args, frames_run: u32) -> Option<Args> {
     None
 }
 
+/// The flags of `argv` with `--trees` dropped and `--trees NAME` of `trees` appended.
+pub(crate) fn argv_with_trees(argv: &[String], trees: crate::trees::TreeDensity) -> Vec<String> {
+    let mut out = Vec::with_capacity(argv.len() + 2);
+    let mut it = argv.iter();
+    while let Some(a) = it.next() {
+        if a == "--trees" {
+            it.next();
+        } else {
+            out.push(a.clone());
+        }
+    }
+    out.push("--trees".to_owned());
+    out.push(trees.name().to_owned());
+    out
+}
+
+/// The run's arguments with the next `--trees` density, `--frames` and `--switch-at` counted
+/// on from `frames_run` as [`switched_args`] does; `None` when they do not parse.
+pub(crate) fn retreed_args(args: &Args, frames_run: u32) -> Option<Args> {
+    let trees = args.outdoor.trees().next();
+    match parse_args_from(argv_with_trees(&args.argv, trees)) {
+        Ok(mut a) => {
+            a.frames = args.frames.map(|n| n.saturating_sub(frames_run));
+            a.switch_at = args
+                .switch_at
+                .iter()
+                .filter(|&&f| f > frames_run)
+                .map(|f| f - frames_run)
+                .collect();
+            Some(a)
+        }
+        Err(e) => {
+            println!("trees: {} refused: {e}", trees.name());
+            None
+        }
+    }
+}
+
 /// The chunks within 2 of `spawn`'s chunk on each axis, in a fixed order.
 fn spawn_block(spawn: VoxelCoord) -> Vec<ChunkCoord> {
     let c = spawn.chunk().0;
@@ -170,8 +208,14 @@ impl Flythrough {
         let Some(mut old) = self.run.take() else {
             return;
         };
+        let retree = std::mem::take(&mut old.retree) && !old.switch;
         old.switch = false;
-        let Some(args) = switched_args(&old.args, old.frame) else {
+        let next = if retree {
+            retreed_args(&old.args, old.frame)
+        } else {
+            switched_args(&old.args, old.frame)
+        };
+        let Some(args) = next else {
             self.run = Some(old);
             return;
         };
@@ -202,11 +246,18 @@ impl Flythrough {
         run.modes.clock = clock;
         run.modes.banner_at = now;
         let ops = run.net.as_ref().map_or(0, |n| n.server.ops().len());
-        println!(
-            "switch: source {} to {} after {frame} frames, op log {ops}",
-            from.source_name().unwrap_or("?"),
-            self.args.mode.source_name().unwrap_or("?"),
-        );
+        if retree {
+            println!(
+                "switch: trees {} after {frame} frames, op log {ops}",
+                self.args.outdoor.trees().name()
+            );
+        } else {
+            println!(
+                "switch: source {} to {} after {frame} frames, op log {ops}",
+                from.source_name().unwrap_or("?"),
+                self.args.mode.source_name().unwrap_or("?"),
+            );
+        }
         run.init_switched(gpu, gfx);
     }
 }

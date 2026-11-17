@@ -975,3 +975,18 @@ per-pass lines are in `docs/plans/logs/0056.md`.
 
 The default look is `face`, so the noon run is also the `--look face` reading. The runs and the
 per-run figures are in `docs/plans/logs/0032.md`, Phase 7.
+
+**The forest at a low sun (Plan 0032 Phase 8, a66a9463 plus Phase 8's tree, release, headless, `flythrough --source outdoor --headless --seed 1 --render 1920x1080 --frames 300 --spawn forest --sun 10,180 --trees T` at main's defaults, median of the last 30 frames, three runs each and their median; exclusive perf lock; every run loaded by its own workers (start load 3.6 to 15.8) and unsettled at its frame 270).** NVIDIA GeForce RTX 3080 Laptop GPU (driver 615.78.08, dev reference) and AMD Radeon Graphics, RADV RENOIR (Mesa 26.2.5, `--adapter AMD`, the slow adapter). Times in ms; against §2's lighting line (6.0 ms in the HUD) and 16.6 ms a frame.
+
+| adapter | trees | light | GPU frame | light vs 6.0 | frame vs 16.6 | key ray steps mean / p99 (`--view steps`) |
+|---|---|---|---|---|---|---|
+| RTX 3080 Laptop | none | 1.334 | 5.640 | under | under | 22.72 / 57 |
+| RTX 3080 Laptop | forest, fill 128 | 1.392 | 5.425 | under | under | 19.21 / 79 |
+| RTX 3080 Laptop | forest, fill 64 | 1.318 | 5.201 | under | under | 19.28 / 89 |
+| RTX 3080 Laptop | forest, fill 128, `--shadow-walk full` | 1.667 | 5.649 | under | under | 24.12 / 92 |
+| RADV RENOIR | none | 10.641 | 38.096 | over | over | 23.23 / 61 |
+| RADV RENOIR | forest, fill 128 | 12.481 | 39.307 | over | over | 19.24 / 80 |
+| RADV RENOIR | forest, fill 64 | 12.521 | 39.624 | over | over | 19.31 / 92 |
+| RADV RENOIR | forest, fill 128, `--shadow-walk full` | 15.135 | 41.984 | over | over | 24.17 / 95 |
+
+Ratios of the light pass: forest/open at fill 128 1.04 (RTX) and 1.17 (RADV), at fill 64 0.99 and 1.18; fill 64/128 0.95 and 1.00; full/coarse at fill 128 1.20 and 1.21. The `--look face` configuration is the default look. Per-run figures in `docs/plans/logs/0032.md`, Phase 8.

@@ -4,8 +4,9 @@
 use super::RunMode;
 use super::flags::Parsing;
 use super::table::{Flag, Section};
-use crate::daylight::{Clock, parse_time};
+use crate::daylight::{Clock, parse_sun, parse_time};
 use crate::outdoor::Spawn;
+use crate::trees::{LEAF_FILL, TreeDensity};
 
 /// The outdoor testbed's flags.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -21,6 +22,25 @@ pub struct OutdoorArgs {
     pub(crate) auto: bool,
     /// `--sky-rays N`: the sky rays a lighting pixel casts; unset, the renderer's default.
     pub(crate) sky_rays: Option<u32>,
+    /// `--trees none|sparse|forest`: the trees stood on the hills.
+    pub(crate) trees: TreeDensity,
+    /// `--leaf-fill N`: a canopy voxel is kept under this of 256; unset, [`LEAF_FILL`].
+    pub(crate) leaf_fill: Option<u32>,
+}
+
+impl OutdoorArgs {
+    /// `--leaf-fill`, else [`LEAF_FILL`].
+    pub fn leaf_fill(&self) -> u32 {
+        self.leaf_fill.unwrap_or(LEAF_FILL)
+    }
+
+    pub fn trees(&self) -> TreeDensity {
+        self.trees
+    }
+
+    pub fn spawn(&self) -> Spawn {
+        self.spawn
+    }
 }
 
 /// The outdoor start exposure's floor: a sunlit ground reads about 200 to 300 frame radiance
@@ -68,12 +88,44 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
         flags: vec![
             Flag::value(
                 &["--spawn"],
-                "outside|inside",
+                "outside|inside|forest",
                 "where --source outdoor starts: 30 m before the cave mouth facing it, 2 m up, \
-                 or 3 m inside the tunnel facing out [outside]",
+                 3 m inside the tunnel facing out, or 64 m north of the mouth facing north, \
+                 2 m up, 10 degrees down [outside]",
                 |p: &mut Parsing, v| {
                     let names = Spawn::ALL.map(|s| (s.name(), s));
-                    p.args.outdoor.spawn = v.word(&names, "outside or inside")?;
+                    p.args.outdoor.spawn = v.word(&names, "outside, inside or forest")?;
+                    Ok(())
+                },
+            ),
+            Flag::value(
+                &["--trees"],
+                "none|sparse|forest",
+                "trees on the outdoor hills, about 9 % or 94 % of the 4.8 m cells of a 307 m \
+                 box; CapsLock cycles them in process [none]",
+                |p: &mut Parsing, v| {
+                    let names = TreeDensity::ALL.map(|d| (d.name(), d));
+                    p.args.outdoor.trees = v.word(&names, "none, sparse or forest")?;
+                    Ok(())
+                },
+            ),
+            Flag::value(
+                &["--leaf-fill"],
+                "N",
+                "the canopy voxels kept, of 256, 1 to 256 [128]",
+                |p: &mut Parsing, v| {
+                    p.args.outdoor.leaf_fill =
+                        Some(v.parse_if(|n: &u32| (1..=256).contains(n), "1 to 256")?);
+                    Ok(())
+                },
+            ),
+            Flag::value(
+                &["--sun"],
+                "EL,AZ",
+                "fix the sun at this elevation and azimuth in degrees (clockwise from north, \
+                 180 south), the moon opposite; the clock's keys then leave it",
+                |p: &mut Parsing, v| {
+                    p.args.outdoor.clock.fixed_sun = Some(parse_sun(v.text)?);
                     Ok(())
                 },
             ),
