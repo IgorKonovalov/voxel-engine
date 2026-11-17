@@ -60,16 +60,18 @@ pub enum Profile {
     Floor,
     Portable,
     Performance,
+    High,
 }
 
 impl Profile {
-    pub const ALL: [Self; 3] = [Self::Floor, Self::Portable, Self::Performance];
+    pub const ALL: [Self; 4] = [Self::Floor, Self::Portable, Self::Performance, Self::High];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Floor => "floor",
             Self::Portable => "portable",
             Self::Performance => "performance",
+            Self::High => "high",
         }
     }
 }

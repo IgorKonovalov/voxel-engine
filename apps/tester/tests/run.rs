@@ -25,7 +25,7 @@ fn scratch(name: &str) -> PathBuf {
 #[test]
 fn each_choice_gives_its_exact_flag_list() {
     let r = Path::new("R");
-    let table: [(RunSpec, &[&str]); 4] = [
+    let table: [(RunSpec, &[&str]); 5] = [
         (
             RunSpec {
                 scene: Scene::Cave,
@@ -94,6 +94,30 @@ fn each_choice_gives_its_exact_flag_list() {
                 "2560x1440",
                 "--profile",
                 "performance",
+                "--report",
+                "R",
+            ],
+        ),
+        (
+            RunSpec {
+                scene: Scene::Castle,
+                mode: PathMode::Bench,
+                output: Output::Hd1080,
+                profile: Profile::High,
+            },
+            &[
+                "--castle",
+                "--lamp",
+                "off",
+                "--tester",
+                "--path",
+                "castle",
+                "--path-mode",
+                "bench",
+                "--render",
+                "1920x1080",
+                "--profile",
+                "high",
                 "--report",
                 "R",
             ],

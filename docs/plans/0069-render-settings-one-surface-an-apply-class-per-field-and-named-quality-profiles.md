@@ -425,8 +425,9 @@ the readings cannot see. No determinism risk: nothing here reaches `vxe-world`'s
   `apps/flythrough/src/cli/settings.rs` (`--profile high`, the name list, the done-when's
   `--settings` test, and `seed_profile` setting the upscaler at internal scale 1, where the
   fly-through's own default is `off`) and `docs/flythrough.md`; `hud.rs` is unchanged (no row
-  moves). The tester's quality menu (`apps/tester/src/run.rs`, its own `Profile`) still offers
-  floor, portable and performance, not high. `High` is last in the cycle.
+  moves). `High` is last in the cycle (owner: "yes"). The tester's quality menu offers high
+  (owner: "yes"), an edit outside Phase 6's files: `apps/tester/src/run.rs`,
+  `apps/tester/tests/run.rs`, `dist/README-TESTER.txt`.
 
 ### Close triggers
 
