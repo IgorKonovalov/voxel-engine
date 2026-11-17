@@ -128,6 +128,17 @@ Noted 2026-11-17 (owner): Plan 0080 closes without its window's pad step (no pad
 through the tree, South into the dig radius's edit mode, the D-pad stepping and repeating, East
 back, Select for the stats; at the next window session that has a pad.
 
+### The gate tier's tests over the 10 s line, and its wall time
+
+Noted 2026-11-17 (Plan 0032's fix pass): a loaded gate run over flythrough, vxe-render and
+vxe-tester showed 22 tests over the 10 s line, all in flythrough GPU binaries (gpu_golden,
+gpu_fsr2, gpu_queue, gpu_loading and others); the log is archived at
+`~/Work/vxe-live-archive/plan-0032/m1-gate.log`. On lavapipe a `Frame::new` costs 2.4 to 2.8 s
+and a 16-frame mean about 0.08 s, so sharing one Frame across a test's arms cuts more than
+fewer frames (0032's m1 fix). The whole gate tier read 937 to 1214 s at the last closes, over
+the 12-minute proposal in `docs/nfr.md` section 7. Owed: a test-time chore that reads
+`scripts/test-times.mjs` on a quiet gate run and trims or soaks each test over the line.
+
 ### The live queue's order and cancellation, after Plan 0059
 
 Taken 2026-11-10 by [Plan 0060](plans/done/0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md) and [ADR-0048](adrs/0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md); the hall's aliasing goes to the antialiasing plan below.
