@@ -1,7 +1,10 @@
 # 0089: Deterministic simulation testing: a seeded scenario harness with invariants and a shrinker, a simulated channel, a mirror oracle, a simulated disk, and determinism gates
 
-> **Status:** draft, awaiting the owner's go (drafted 2026-11-17 from the owner's "yes draft it"
-> on the architect's proposal after the "Deterministic Simulation Testing" article)
+> **Status:** approved (the owner's go, 2026-11-17; drafted the same day from the owner's "yes
+> draft it" on the architect's proposal after the "Deterministic Simulation Testing" article).
+> Owner answers 2026-11-17: question 1 (b), **all phases after Plan 0087 (the rename) merges**;
+> questions 2 to 6 the recommended option each (the dev-only crate, the hand-rolled `ddmin`, the
+> `Lost` rule in Phase 5, Phase 7 kept, local fixes else a backlog entry with the seed)
 > **Created:** 2026-11-17
 > **Milestone:** cross-cutting in [`docs/roadmap.md`](../roadmap.md): M5's simulation split
 > (the seams it uses), the road to M9 (the simulated channel precedes the transport), and the
@@ -428,6 +431,9 @@ instead run the whole plan after 0087 (owner question 1).
   use; no new threading; the harness's worlds are small.
 
 ### Owner questions (each with a recommendation)
+
+Answered 2026-11-17 (owner): question 1 (b), every phase after Plan 0087 merges; questions 2 to 6
+the recommended option.
 
 1. **When.** (a) **Recommended:** Phases 1 to 3 now as a side lane beside the open lanes (a new
    crate and `docs/nfr.md`, no engine source), checkpoint, Phases 4 to 7 after Plan 0087
