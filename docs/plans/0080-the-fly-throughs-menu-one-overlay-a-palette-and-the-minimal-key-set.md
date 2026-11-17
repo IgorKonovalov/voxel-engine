@@ -1,6 +1,6 @@
 # 0080: The fly-through's menu: one overlay component, a search palette, and the minimal key set
 
-> **Status:** in-progress (approved 2026-11-16, the owner: every recommended answer under "Owner questions")
+> **Status:** in-progress (approved 2026-11-16, the owner: every recommended answer under "Owner questions"; amended 2026-11-17 (owner) after the window's run 1: Phases 5 to 8 replace the former Phase 5)
 > **Created:** 2026-11-16
 > **Milestone:** none of its own. The testbed (`apps/flythrough`) and, through Plan 0073, the
 > tester; nothing under `crates/` changes unless Phase 5's window asks for the overlay backdrop.
@@ -332,18 +332,220 @@ any machine unless named.
 - **Done when:** the owner's verdict on each point is in the readings log, with the key table's
   final strikes and moves and any wording or grouping change named for Phase 5.
 
-### Phase 5: the owner's picks, and the tip
+### Phase 5 (as approved 2026-11-16; replaced by Phases 5 to 8 below, amended 2026-11-17)
+- The former Phase 5 ("the owner's picks, and the tip": the window's picks, the optional
+  backdrop bit, the gate at the tip) is Phase 8 now; its backdrop moved to the new Phase 5.
+
+## Amended 2026-11-17 (owner): the window's verdict, and Phases 5 to 8
+
+Phase 4's run 1 (the streamed cave, no flags, 2530 x 1378) gave the verdict quoted in the
+readings log: the direction is right; the panel is small and top-left with the scene showing
+through; `Enter` on the dig radius only grows it; several entries do nothing with no sign why;
+a number should be edited with the arrows after `Enter`; the frame rate should stay visible.
+The owner asked for the UX research first; it is `docs/references/in-game-menu-ux.md`, and the
+decisions below cite its sections in brackets. Runs 2 to 4 of the script were skipped and are
+Phase 7's.
+
+### The cause of each "does nothing" (read from the code)
+
+| Entry | What `Enter` did (the code) | Why nothing showed | Fix |
+|---|---|---|---|
+| dig radius | `Toggle::flip` adds one `DIG_STEP` (0.1 m), capped at 3.0 m (`toggles.rs`, `edits::DIG_RANGE`); `Up` and `Down` move the selection and the wheel scrolls the page while open | a `Press::Scroll` toggle has one direction as an entry | Phase 6: a number, edited after `Enter` |
+| resume the tour | `Run::resume_path` returns unless `player` is `Some` in `Drive::Free`: a `--path` run in free flight | silent return, no line | Phase 6: unavailable, `needs --path` |
+| next castle shot | `Run::next_castle_shot` returns unless `castle_shot` is `Some`, which `--castle` sets (`app.rs`) | silent return | Phase 6: unavailable, `needs --castle` |
+| pan | `flip` toggles `Modes::pan` only when it is `Some`, which `--pan DEG` sets; the row reads `pan none` | silent | Phase 6: unavailable, `needs --pan` |
+| frame readings | `Act::Readings` sets `Run::samples`; 30 frames later `report` prints the `frame (...)` line to stdout (the log holds four) | acts; stdout only, and the stats HUD is not drawn while the menu is | Phase 5: the readout; Phase 6: the notice row |
+| audio (all 13, not half) | `audio_act` returns at once when `Run::audio` is `None` (no `--audio`); the mix rows read `no audio`; knock, pulse and hum have no mode words | silent; with `--audio` the three sounds play and the rest print and their rows follow | Phase 6: unavailable, `needs --audio`; the group row grey on the root |
+| stamp | sends `DigInput::Stamp`; the logic ray-casts 10 m (`REACH`) and answers `stamped: no surface within 10 m` (twice in the log) or stamps the vault | acts; the logic's line goes to stdout through `tick_server` | Phase 6: the logic's lines reach the notice row |
+| coarse print, crumble | `Run::coarse` is `None` while streaming (`app.rs`, `Coarse::build` on a bounded world only): `coarse: not kept while streaming`, `collapse: not kept while streaming` | stdout only | Phase 6: unavailable, `needs --level` |
+| walk (found reading) | `toggle_walk` refuses while streaming (`cli::walk_allowed`) and prints `walk: ... still flying` | stdout only | Phase 6: unavailable, `needs --level` |
+| clip before, after, pause (found reading) | `light_act` returns `None` without `--model`'s viewer; nothing printed | silent | Phase 6: unavailable, `needs --model` |
+
+Two more findings for Phase 6: `queue angle halved` and `queue angle doubled` are two entries
+for one value, as are the `echo trim`, `tail trim` and `pre-delay` down/up pairs; `carry`,
+`colour` and `bounce` show the whole lights row as their value.
+
+### Decisions (the reference's sections in brackets)
+
+- **The panel** is 80 columns by up to 45 rows at the **menu's glyph scale**: the largest
+  integer scale at which 80 x 45 cells fit the window (`floor(min(w / 640, h / 360))`, at
+  least 2): 2 at 1280 x 720 (the panel is the window), 3 at 1920 x 1080 and at the laptop's
+  2530 x 1378 (a 1920 x 1080 panel with 305 px at each side), 4 at 2560 x 1440. At scale 3 a
+  glyph is 24 px tall, over XAG 101's 18 px floor for PC at 1080p; scale 2 is 16 px, under
+  it, which is why the panel grows with the window. The panel is centred horizontally; its top
+  row is the top of the centred 80 x 45 box and it grows down with the page (a palette anchors
+  at the top, like a command palette, so the rows do not jump as the matches change)
+  [Placement]. The stats HUD and the loading screen keep `HUD_SCALE`; the overlay's scale is
+  set when the menu opens and restored when it closes.
+- **The backdrop** is a dim box behind the panel only: black at alpha 0.7 under the rows the
+  page uses plus one row and one column of padding, drawn by a **backdrop bit** in the cell
+  word (bit 16; bits 16..32 are unused) that `hud.wgsl` reads where no glyph bit is set. Not
+  a whole-screen dim: the menu exists to watch the scene change as a row flips, and white on
+  70 % black over any scene clears XAG 102's 4.5:1 measured against the brightest patch
+  [Backdrop].
+- **Numbers are edited after `Enter`** (the owner's call, and the console "engagement" model):
+  `Enter` on a number row enters an edit mode where `Up` and `Down` (the pad's D-pad) step the
+  value, holding repeats after `REPEAT_DELAY_MS` with one step every `REPEAT_RATE_MS` (275
+  and 50 ms, Dear ImGui's defaults), `Enter` or `Esc` leave the mode keeping the value, the
+  value clamps at its range (no wrap), and the row reads `< 0.5 m >` with its range in grey
+  after it; the footer reads `Up Down change  Enter Esc done`. **Also**, the convention of
+  every controller menu and of ImGui's navigation: `Left` and `Right` on a stepped row step it
+  in place without entering the mode (the pad's D-pad left and right the same) [Numbers]. The
+  owner may strike the `Left`/`Right` stepping (owner question 9).
+- **Cycles** (a mode with three or more states: look, far normal, view, upscaler, exposure,
+  store read, weights, young filter, entity light, history, shadow walk, resolution, queue
+  order, bake budget, missing light, reach, colour, cutaway) keep `Enter` as the next state and
+  gain `Left` as the state before; a selected cycle or number row shows `<` and `>` around its
+  value so the arrows' meaning is on screen [Enums]. Two-state toggles flip on `Enter`, `Left`
+  and `Right` alike.
+- **An unavailable entry is grey with its reason, not hidden** [Unavailable]: `Entry::
+  available(&Modes, &RunView) -> Result<(), &'static str>` (`needs --audio`, `needs --pan`,
+  `needs --path`, `needs --castle`, `needs --model`, `needs --level`), the row grey
+  (`HudColour::Grey`, new), the footer naming the reason while it is selected, `Enter` on it
+  changing nothing but showing the reason in the notice row (grey plus words: never colour
+  alone, XAG 103); a group whose entries are all unavailable is grey on the root with the
+  shared reason; the palette lists them grey; `--keys` appends `  unavailable: <reason>` to the
+  row. The owner learns the flag instead of wondering.
+- **Every activation answers in the window in the same frame** [Feedback]: a toggle, cycle or
+  number by its row; an action by the **notice row**, the row above the footer, yellow for
+  `hud::BANNER_MS`, holding the last line the action printed. One `Run::say(line)` prints the
+  line and sets the notice, and every `println!` an `Act` reaches goes through it, the
+  logic's lines from `tick_server` included (so `stamped: no surface within 10 m` is seen). The
+  readings say `readings: sampling 30 frames` at once and `frame: cpu X ms, gpu Y ms (median
+  of 30)` when the samples are in; the full line stays on stdout.
+- **The readout**: one row, `fps 59.9  frame 16.7 ms p99 18.2`, at the top-right of the
+  window (row 0, right-aligned to the last visible column), whenever the menu is open and
+  whether or not `F2`'s stats show; it reads `hud.frames`, which the frame loop records every
+  frame. With the menu closed nothing changes: `F2` is the stats [Readout].
+- **The pad** in edit mode: D-pad up and down step, `South` enters and leaves the mode,
+  `East` leaves it; D-pad left and right step in place as the arrows do [Pad].
+- **`Esc`** leaves the edit mode first, then clears a filter, then a page, then the menu, and
+  quits only with it closed, as before [Esc].
+- **In `vxe-render`** (general facilities, Plan 0076 Phase 4's bit as foreseen under
+  "Apps only"): `HudOverlay::set_scale(queue, scale)` (the scale is already a uniform), the
+  backdrop bit, and `HudColour::Grey` (palette index 3). Nothing names a menu.
+
+### Phase 5: the panel: its scale and place, the backdrop, the grey and the readout
 - **Owner skill:** dev
-- **What:** the window's picks (the key table's final rows, words, group order, the menu key if
-  changed), then the gate tier at the tip. If the owner finds rows unreadable over bright rock,
-  the fix is the general overlay facility Plan 0076 Phase 4 described: a dim-backdrop bit in
-  `HudOverlay`'s cell word (bits 16..24 are unused) drawn behind a row's cells, with a
-  `gpu_hud_golden` case on lavapipe (under 10 s); otherwise nothing under `crates/` changes.
-- **Files touched:** the Phase 1 to 3 files as the picks need; only with a backdrop,
-  `crates/vxe-render/src/hud.rs`, `crates/vxe-render/src/shaders/hud.wgsl` and the golden.
-- **Done when:** each pick in the readings log names its commit or the owner's "leave it"; the
-  Phase 1 to 3 tests hold the changed rows; `cargo nextest run --profile gate`, clippy, fmt,
-  deny and the doc gates exit 0 at the tip.
+- **What:** the three `vxe-render` facilities above with their test; the menu's glyph scale
+  rule and the centred panel; the backdrop under the used rows; the fps readout row while the
+  menu is open.
+- **Files touched:** `crates/vxe-render/src/hud.rs`, `crates/vxe-render/src/shaders/hud.wgsl`,
+  `crates/vxe-render/tests/gpu_hud.rs`, `apps/flythrough/src/hud/menu/write.rs`,
+  `apps/flythrough/src/run/{frame,hud_feed}.rs`, `apps/flythrough/tests/gpu_hud_golden.rs`
+  and its golden, `apps/flythrough/tests/menu.rs`, `docs/plans/logs/0080.md`.
+- **Done when:**
+  - `a_backdrop_cell_dims_and_a_grey_row_reads` (`gpu_hud.rs`, lavapipe, under 5 s): over a
+    target cleared to one colour, a 4 x 2 block of cells with the backdrop bit and `ab` in
+    grey on its first row: a block pixel with no glyph bit is `mix(clear, black, 0.7)` within
+    1/255, a glyph pixel is the grey palette entry, a pixel outside the block is the clear
+    colour, and the same holds at scale 3 after `set_scale`.
+  - `the_panel_scale_fits_the_window` (`tests/menu.rs`, CPU): the scale rule gives 2 at
+    1280 x 720, 3 at 1920 x 1080 and 2530 x 1378, 4 at 2560 x 1440, 2 at 800 x 600 (the floor).
+  - `the_panel_is_centred` (CPU): at 2530 x 1378 (105 x 57 visible cells at scale 3) the root
+    page's title starts at column 12, row 6; the backdrop bits cover columns 11..92 of the
+    title row through one row below the footer and no cell outside; at 1280 x 720 the panel
+    starts at (0, 0) and the bits cover the used rows.
+  - `the_readout_shows_with_the_menu_open` (CPU): with `hud.frames` fed sixty 16.7 ms frames
+    and the menu open, row 0 of the overlay's text ends at the last visible column with
+    `fps 59.9  frame 16.7 ms p99 16.7`, white, with the stats shown or hidden; with the menu
+    closed and the stats off the text is the banner alone, as today.
+  - `gpu_hud_golden` gains `menu_over_the_carved_view`: the root page with its backdrop over
+    the existing golden's view, pixel exact, blessed on lavapipe, under 10 s.
+  - Reading: the format time and the overlay's allocations as Phase 2 read them, now with the
+    backdrop bits and the readout; into the readings log.
+
+### Phase 6: stepped values, unavailable entries with their reason, every action answers
+- **Owner skill:** dev
+- **What:** the entry kinds (toggle, cycle, number, action, page) in the tables, the edit mode
+  with its repeat, `Left`/`Right` stepping in place, `available` with its reasons and the grey
+  rows, the notice row and `Run::say`, the paired entries merged (`queue angle`; `echo trim`,
+  `tail trim`, `pre-delay` as one number each), `--keys` and `docs/flythrough.md` updated.
+- **Files touched:** `apps/flythrough/src/toggles.rs`, `apps/flythrough/src/hud/menu/{entries,page,route,write}.rs`,
+  `apps/flythrough/src/run/{keys,edit,frame,hud_feed,menu_tests}.rs`, `apps/flythrough/src/audio.rs`
+  (the mix's steps as one function of a sign), `apps/flythrough/tests/{menu,toggles}.rs`,
+  `docs/flythrough.md`, `docs/plans/logs/0080.md`.
+- **Done when** (CPU, `run/menu_tests.rs` on `bare_run(carved_rock())` unless named):
+  - `enter_edits_a_number_and_the_arrows_step_it`: `Tab`, `dig`, `Enter` enters the edit mode:
+    the row reads `> dig radius  < 0.5 m >  0.1..3.0 m`, the footer `Up Down change  Enter Esc
+    done`; `Up` twice gives `0.7 m` and `Modes::dig_radius` of 7 voxels, `Down` gives `0.6 m`,
+    `Esc` leaves the mode with `0.6 m` kept and the next `Down` moves the selection; at `3.0 m`
+    `Up` holds; outside the mode `Right` on the row steps once as `Up` does and `Left` once
+    back; the wheel while open still scrolls the page.
+  - `a_held_arrow_repeats`: in the edit mode, `Up` held from 0 to 600 ms in 60 Hz frames steps
+    7 times (one at the press, then every 50 ms from 275 ms); released and pressed again it
+    steps at once.
+  - `a_cycle_steps_both_ways`: on `missing light`, `Right` gives the next of
+    `MissingLight::ALL`, `Left` the one before, `Enter` the next; the selected row shows
+    `< missing light chain >`; on `lamp`, `Left`, `Right` and `Enter` each flip it.
+  - `an_unavailable_entry_says_why`: `resume the tour`, `next castle shot`, `pan`, the
+    thirteen audio entries, `clip before`, `clip after` and `clip pause` are unavailable with
+    `needs --path`, `needs --castle`, `needs --pan`, `needs --audio` and `needs --model`; their
+    rows are grey, the footer names the reason while one is selected, `Enter` leaves `state()`
+    unchanged and sets the notice to the reason; the root's `audio` row is grey with
+    `needs --audio`; `--keys` prints `unavailable: needs --pan` on the pan row. With `--pan 10`
+    in the fixture's arguments `pan` is available and `Enter` gives `pan off`. On a run with
+    `coarse: None` and a stream, `coarse print`, `crumble` and `walk` are unavailable with
+    `needs --level`; on `bare_run` (bounded, no stream) `walk` is available.
+  - `every_live_entry_answers` (the no-silent-no-op claim): for every entry of `entries()`,
+    either `available` is `Err` and the clause above holds, or `Tab`, its words, `Enter`
+    changes `state()` (the HUD rows, the lighting modes, the dig radius, `Run::samples`,
+    `Run::walk`) or sets `Run::notice` to a non-empty line in the same key step (`stamp`,
+    `bench`, `crumble`, `coarse print`, `frame readings` through the notice; the rest through
+    the state).
+  - `an_action_answers_in_the_window`: `frame readings` sets the notice to `readings: sampling
+    30 frames`; after 30 `push_samples` calls with `gpu_ms` `None` it reads `frame: cpu 1.000
+    ms, gpu n/a (median of 30)` and the full line is printed; `stamp` with no surface within
+    10 m sets the notice to `stamped: no surface within 10 m` after one server tick (the
+    logic's lines go through `Run::say`); `coarse print` on a run with `coarse` built sets it
+    to the coarse line.
+  - `the_pad_edits_a_number`: `Start`, `South` on `moving`, `South` on the dig radius enters
+    the mode; `DpadUp` steps to `0.6 m`; `East` leaves it; `DpadRight` on the row steps once.
+  - `every_toggle_and_action_is_an_entry` holds with the pairs merged (four entries fewer) and
+    `the_route_is_one_function` holds with `Left` and `Right` the menu's while open, as today.
+  - `docs/flythrough.md`'s menu section says how a number is edited, what `<` `>` mean, what a
+    grey row and the notice row are; `node scripts/check-doc-links.mjs` exits 0.
+
+### Phase 7: the owner's window, run 2
+- **Owner skill:** human
+- **What:** `live/session80.sh` rebuilt at Phase 6's tip, on Linux: run 1 again at the window's
+  default size and the laptop's, judging the panel's size and place, the backdrop over the dark
+  cave and over a lit wall (`F7` lamp, near rock), the dig radius edited (`Enter`, `Up`, `Up`,
+  `Esc`; then `Right` on the row), `missing light` with `Left` and `Right`, a grey entry and
+  its reason (`pan`, the `audio` group), `stamp` looking at a wall within 10 m and then at the
+  dark (the notice row), `frame readings` (the notice at once and 30 frames later), the fps
+  readout top-right with `F2` on and off, and the Keys page's scale; then `--pan 10`,
+  `--audio`, `--castle`, `--level` and `--model` runs to see the formerly grey entries act;
+  the script's runs 2 (the showcase), 3 (the pad, including the edit mode) and 4 (`--tester`).
+- **Done when:** the owner's verdict on each point is in the readings log, with the key
+  table's final strikes and moves, the answers to owner questions 9 to 12 and any wording or
+  grouping change named for Phase 8.
+
+### Phase 8: the owner's picks, and the tip
+- **Owner skill:** dev
+- **What:** the former Phase 5: the window's picks (the key table's final rows, words, group
+  order, the menu key if changed, the panel's alpha or anchor if the owner moves them), then
+  the gate tier at the tip.
+- **Files touched:** the Phase 1 to 6 files as the picks need; `docs/flythrough.md`.
+- **Done when:** each pick in the readings log names its commit or the owner's "leave it";
+  the Phase 1 to 6 tests hold the changed rows; `cargo nextest run --profile gate`, clippy,
+  fmt, deny and the doc gates exit 0 at the tip.
+
+### Owner questions added 2026-11-17 (each with a recommendation; Phase 7 answers them)
+
+9. **`Left`/`Right` step a number or cycle in place**, beside the `Enter` edit mode.
+   Recommended: yes; it is the convention of every controller menu and of ImGui's navigation,
+   costs nothing when unused, and the edit mode stays the owner's way. Alternative: the arrows
+   only move the selection outside the mode.
+10. **The backdrop's extent.** Recommended: the panel only, alpha 0.7, so the scene stays
+    visible beside it and a flipped row is seen to act. Alternative: a whole-screen dim (the
+    console "smoke" layer; the scene's change is harder to judge).
+11. **The panel's vertical anchor.** Recommended: the top of the centred 80 x 45 box, growing
+    down with the page, so the rows stay put as a palette filters. Alternative: each page
+    centred on its own height (the panel jumps between pages).
+12. **Unavailable entries.** Recommended: grey with the reason, everywhere they would be
+    listed, so the owner learns the flag. Alternative: hidden in a run that lacks the flag
+    (shorter pages; the Keys page and `--keys` then disagree with the binary's full tree).
 
 ## Interface for Plans 0073 and 0077
 
@@ -451,7 +653,8 @@ No `docs/nfr.md` figure moves; every figure here is a **guess** until Phase 2 re
 
 ## What this plan does NOT do
 
-- **No engine change** beyond the optional backdrop bit (Phase 5): nothing under `crates/` names
+- **No engine change** beyond the overlay's three general facilities (Phase 5, amended
+  2026-11-17: the backdrop bit, a run-time scale, a grey colour): nothing under `crates/` names
   a key, an entry or a menu; a game draws its own UI.
 - **No UI library** (ADR-0061 Alternative B).
 - **No settings file, no layers, no save**: Plan 0073, on this component.
@@ -480,8 +683,11 @@ Readings and gate counts: [`logs/0080.md`](logs/0080.md).
 | 1: the table and the tree, printed by `--keys` | dev | done | f432c14a |
 | 2: the component, the palette and the Keys page | dev | done | 47b0bd28 |
 | 3: the minimal key set and the pad | dev | done, one done-when clause unmet (Notes) | committed with this row |
-| 4: the owner's window | human | not started | |
-| 5: the owner's picks, and the tip | dev | not started | |
+| 4: the owner's window | human | run 1 done 2026-11-17, verdict in the readings log; the rerun is Phase 7 | |
+| 5: the panel: scale, place, backdrop, grey, readout (amended 2026-11-17) | dev | not started | |
+| 6: stepped values, unavailable entries, every action answers (amended 2026-11-17) | dev | not started | |
+| 7: the owner's window, run 2 (amended 2026-11-17) | human | not started | |
+| 8: the owner's picks, and the tip (the former Phase 5) | dev | not started | |
 
 ### Notes
 
