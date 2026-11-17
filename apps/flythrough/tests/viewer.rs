@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use flythrough::viewer::Viewer;
-use flythrough::{cave_materials, walker};
+use flythrough::{cave_materials, entities, walker};
 use vxe_assets::{Rig, VoxText, encode};
 use vxe_entity::{blend, sample};
 use vxe_world::MaterialTable;
@@ -90,7 +90,7 @@ fn the_sample_assets_are_in_step() {
     }
     assert_eq!(untracked, 3, "idle keys the head and the arms only");
 
-    let mut walkers = walker::Walkers::default().with_viewer(Some(built()));
+    let mut walkers = entities::Walkers::default().with_viewer(Some(built()));
     assert!(walkers.place(&table(), [10.0, 0.0, 2.0], [0.0, 0.0, 2.0]));
     let p = walkers.placed[0];
     assert!(p.rig);
@@ -161,7 +161,7 @@ fn a_saved_rig_reloads_the_placed_instances() {
             .expect("stamped");
     };
     let viewer = Viewer::open(&dir.join("walker.rig"), Some("walk".into())).expect("opens");
-    let mut w = walker::Walkers::default().with_viewer(Some(viewer));
+    let mut w = entities::Walkers::default().with_viewer(Some(viewer));
     let t = table();
     assert_eq!(w.poll_viewer(0.0, &t), None, "built, nothing changed");
     assert!(w.place(&t, [0.0, 0.0, 2.0], [5.0, 0.0, 2.0]));
@@ -280,7 +280,7 @@ fn a_missing_model_is_an_error_that_names_it() {
 /// the old handle names nothing).
 #[test]
 fn a_reload_hands_back_the_old_handle() {
-    use flythrough::walker::sync_models;
+    use flythrough::entities::sync_models;
     use vxe_render::internals::VolumePool;
     use vxe_render::{DEFAULT_ENTITY_POOL_BYTES, EntityMirror, EntityUploadError};
 
@@ -298,7 +298,7 @@ fn a_reload_hands_back_the_old_handle() {
         }
         sum
     };
-    let mut w = walker::Walkers::default().with_viewer(Some(built()));
+    let mut w = entities::Walkers::default().with_viewer(Some(built()));
     assert!(w.place(&t, [0.0, 0.0, 2.0], [5.0, 0.0, 2.0]));
     let mut pool = VolumePool::new(DEFAULT_ENTITY_POOL_BYTES);
     assert_eq!(sync_models(&mut w, &mut pool, &t), None);

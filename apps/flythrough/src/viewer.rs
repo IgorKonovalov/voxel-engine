@@ -57,20 +57,14 @@ pub struct Viewer {
     /// The model uploaded to the frame's entity mirror; `None` until uploaded and after a
     /// reload.
     pub handle: Option<ModelHandle>,
-    /// The handle a reload replaced, for [`crate::walker::sync_models`] to free once the new
+    /// The handle a reload replaced, for [`crate::entities::sync_models`] to free once the new
     /// model is uploaded.
     pub stale: Option<ModelHandle>,
-    /// The playing clip's index in [`Loaded::clips`].
-    pub clip: usize,
-    /// The playing clip and the fade into it, in the viewer's ticks ([`Viewer::ticks`]);
-    /// `None` with no clip.
-    pub player: Option<Player>,
+    /// The viewer's own playback: the clip the HUD row names, the one a new placement and
+    /// the picker's preview start on.
+    pub play: Play,
     /// `--clip`'s name, picked at the first build.
     want_clip: Option<String>,
-    pub paused: bool,
-    /// The rig's ticks played since the viewer opened, as a real number: the seconds played
-    /// times the rate. A clip change snaps it down to a whole tick.
-    pub ticks: f64,
     /// The last build's or reload's error, kept until one succeeds.
     pub error: Option<String>,
     stamps: [Option<SystemTime>; 2],
@@ -108,13 +102,18 @@ impl Viewer {
     /// that names the path. The model is built on first use, against the world's table
     /// ([`Viewer::build_pending`]).
     pub fn open(path: &Path, clip: Option<String>) -> Result<Self, String> {
-        let fail = |e: String| format!("--model {}: {e}", path.display());
-        let (text, vox_path, bytes) = read_files(path).map_err(fail)?;
-        VoxFile::parse(&bytes).map_err(|e| fail(format!("{}: {e}", vox_path.display())))?;
+        Self::load(path, clip).map_err(|e| format!("--model {}: {e}", path.display()))
+    }
+
+    /// [`Viewer::open`] with the error as the files give it (`rig line 3: ...`), not
+    /// prefixed with the flag: a library entry's (`crate::entities::library`).
+    pub fn load(path: &Path, clip: Option<String>) -> Result<Self, String> {
+        let (text, vox_path, bytes) = read_files(path)?;
+        VoxFile::parse(&bytes).map_err(|e| format!("{}: {e}", vox_path.display()))?;
         if let Some(c) = &clip {
-            let rig = Rig::parse(&text).map_err(|e| fail(e.to_string()))?;
+            let rig = Rig::parse(&text).map_err(|e| e.to_string())?;
             if !rig.clips.iter().any(|r| &r.name == c) {
-                return Err(fail(format!("no clip `{c}`")));
+                return Err(format!("no clip `{c}`"));
             }
         }
         let name = path
@@ -129,11 +128,8 @@ impl Viewer {
             loaded: None,
             handle: None,
             stale: None,
-            clip: 0,
-            player: None,
+            play: Play::default(),
             want_clip: clip,
-            paused: false,
-            ticks: 0.0,
             error: None,
             polled_at: None,
         })
@@ -179,19 +175,6 @@ impl Viewer {
             .into_iter()
             .map(|(n, c)| (n, Arc::new(c)))
             .collect();
-        self.clip = want
-            .and_then(|w| clips.iter().position(|(n, _)| *n == w))
-            .unwrap_or(0);
-        // The clip goes on from the tick it had reached; a fade from the old model's pose is
-        // dropped, since the new model may have other parts.
-        let start_tick = self.player.as_ref().map_or(0, |p| p.playback.start_tick);
-        self.player = clips.get(self.clip).map(|(_, c)| {
-            Player::new(Playback {
-                clip: c.clone(),
-                start_tick,
-                rate: 256,
-            })
-        });
         self.vox_path = self
             .rig_path
             .parent()
@@ -204,6 +187,8 @@ impl Viewer {
             clips,
             rate: rig.rate,
         });
+        let l = self.loaded.as_ref().expect("just built");
+        self.play.rebind(want.as_deref(), l);
         // Between two uploads `stale` holds at most one handle: an upload frees it, and
         // `handle` is `None` until the next upload.
         if let Some(h) = self.handle.take() {
@@ -245,75 +230,43 @@ impl Viewer {
 
     /// The playing clip's name, once built and when the rig has a clip.
     pub fn clip_name(&self) -> Option<&str> {
-        let l = self.loaded.as_ref()?;
-        l.clips.get(self.clip).map(|(n, _)| n.as_str())
+        self.play.clip_name(self.loaded.as_ref()?)
     }
 
     /// Advances the clip by `dt` seconds at the rig's rate unless paused.
     pub fn advance(&mut self, dt: f32) {
-        if !self.paused {
-            let rate = self.loaded.as_ref().map_or(0, |l| l.rate);
-            self.ticks += f64::from(dt) * f64::from(rate);
-        }
-    }
-
-    /// The whole tick now and the fraction past it.
-    fn tick_now(&self) -> (u64, f32) {
-        let t = self.ticks.max(0.0);
-        (t.floor() as u64, (t - t.floor()) as f32)
+        let rate = self.loaded.as_ref().map_or(0, |l| l.rate);
+        self.play.advance(dt, rate);
     }
 
     /// The pose at the integer tick now and at the next, and the fraction between them, the
-    /// root at the origin, each faded from the last clip's while a fade is under way: the rest
-    /// pose with no clip. `None` before a build.
+    /// root at the origin ([`Play::poses`]). `None` before a build.
     pub fn poses(&self) -> Option<(Pose, Pose, f32)> {
-        let l = self.loaded.as_ref()?;
-        let Some(p) = &self.player else {
-            return Some((l.rest.clone(), l.rest.clone(), 0.0));
-        };
-        let (tick, alpha) = self.tick_now();
-        Some((
-            p.pose(&l.model, &l.rest, tick),
-            p.pose(&l.model, &l.rest, tick + 1),
-            alpha,
-        ))
+        Some(self.play.poses(self.loaded.as_ref()?))
     }
 
-    /// `step` clips on from the playing one (wrapping), from its tick 0, faded into over
-    /// [`CLIP_FADE_TICKS`] from the pose drawn now: the banner's words. The clock snaps down
-    /// to the whole tick, so the fade starts from exactly the drawn pose (its blend between
-    /// the two ticks, in fixed point) at the cost of under a tick of time.
+    /// `step` clips on from the playing one ([`Play::cycle`]): the banner's words.
     pub fn cycle(&mut self, step: i32) -> String {
-        let n = self.loaded.as_ref().map_or(0, |l| l.clips.len());
-        if n == 0 {
-            return format!("model {}: no clip", self.name);
-        }
-        self.clip = (self.clip as i64 + i64::from(step)).rem_euclid(n as i64) as usize;
-        let drawn = self.poses();
-        let (tick, _) = self.tick_now();
-        let l = self.loaded.as_ref().expect("a clip implies a build");
-        let clip = l.clips[self.clip].1.clone();
-        match (&mut self.player, drawn) {
-            (Some(p), Some((a, b, alpha))) => {
-                let from = blend(&a, &b, (alpha * 256.0).round() as u16);
-                p.switch_from(from, tick, clip, CLIP_FADE_TICKS);
+        match &self.loaded {
+            Some(l) if self.play.cycle(l, step) => {
+                format!("clip {}", self.clip_name().unwrap_or(""))
             }
-            (p, _) => {
-                *p = Some(Player::new(Playback {
-                    clip,
-                    start_tick: tick,
-                    rate: 256,
-                }));
-            }
+            _ => format!("model {}: no clip", self.name),
         }
-        self.ticks = tick as f64;
-        format!("clip {}", self.clip_name().unwrap_or(""))
     }
 
     /// Pauses or resumes the clip: the banner's words.
     pub fn toggle_pause(&mut self) -> &'static str {
-        self.paused = !self.paused;
-        if self.paused { "paused" } else { "playing" }
+        self.play.toggle_pause()
+    }
+
+    /// Whether the last build or reload failed with no model built: an entry that cannot be
+    /// placed.
+    pub fn failed(&self) -> Option<&str> {
+        match (&self.loaded, &self.error) {
+            (None, Some(e)) => Some(e),
+            _ => None,
+        }
     }
 
     /// The HUD row: `model <name> clip <clip> <tick>/<length>`, then ` paused` while paused;
@@ -330,10 +283,143 @@ impl Viewer {
             out.push_str(" not built");
             return;
         };
-        match (l.clips.get(self.clip), &self.player) {
-            (Some((name, clip)), Some(p)) => {
-                let tick = clip.clip_tick(p.playback.tick_at(self.tick_now().0));
-                let _ = write!(out, " clip {name} {tick}/{}", clip.length());
+        self.play.write(l, out);
+    }
+}
+
+/// One playback of a built rig's clips: the clip's index in [`Loaded::clips`], the player
+/// (the clip and the fade into it, in this playback's ticks; `None` with no clip), the pause,
+/// and the rig's ticks played, as a real number: the seconds played times the rate. A clip
+/// change snaps the ticks down to a whole tick. The viewer has one; each placed instance of a
+/// rig has its own (`crate::entities::Placed`).
+#[derive(Clone, Debug, Default)]
+pub struct Play {
+    pub clip: usize,
+    pub player: Option<Player>,
+    pub paused: bool,
+    pub ticks: f64,
+}
+
+impl Play {
+    /// `l`'s clip `clip` (the first when it has no such clip) from its tick 0, no fade.
+    pub fn start(l: &Loaded, clip: usize) -> Self {
+        let clip = if clip < l.clips.len() { clip } else { 0 };
+        Self {
+            clip,
+            player: l.clips.get(clip).map(|(_, c)| {
+                Player::new(Playback {
+                    clip: c.clone(),
+                    start_tick: 0,
+                    rate: 256,
+                })
+            }),
+            paused: false,
+            ticks: 0.0,
+        }
+    }
+
+    /// Onto `l` after a reload: the clip named `want` (else the first), going on from the
+    /// tick it had reached; a fade from the old model's pose is dropped, since the new model
+    /// may have other parts.
+    pub fn rebind(&mut self, want: Option<&str>, l: &Loaded) {
+        self.clip = want
+            .and_then(|w| l.clips.iter().position(|(n, _)| n == w))
+            .unwrap_or(0);
+        let start_tick = self.player.as_ref().map_or(0, |p| p.playback.start_tick);
+        self.player = l.clips.get(self.clip).map(|(_, c)| {
+            Player::new(Playback {
+                clip: c.clone(),
+                start_tick,
+                rate: 256,
+            })
+        });
+    }
+
+    /// The playing clip's name in `l`.
+    pub fn clip_name<'a>(&self, l: &'a Loaded) -> Option<&'a str> {
+        l.clips.get(self.clip).map(|(n, _)| n.as_str())
+    }
+
+    /// Advances by `dt` seconds at `rate` ticks a second unless paused.
+    pub fn advance(&mut self, dt: f32, rate: u32) {
+        if !self.paused {
+            self.ticks += f64::from(dt) * f64::from(rate);
+        }
+    }
+
+    /// The whole tick now and the fraction past it.
+    fn tick_now(&self) -> (u64, f32) {
+        let t = self.ticks.max(0.0);
+        (t.floor() as u64, (t - t.floor()) as f32)
+    }
+
+    /// The pose at the integer tick now and at the next, and the fraction between them, the
+    /// root at the origin, each faded from the last clip's while a fade is under way: the rest
+    /// pose with no clip.
+    pub fn poses(&self, l: &Loaded) -> (Pose, Pose, f32) {
+        let Some(p) = &self.player else {
+            return (l.rest.clone(), l.rest.clone(), 0.0);
+        };
+        let (tick, alpha) = self.tick_now();
+        (
+            p.pose(&l.model, &l.rest, tick),
+            p.pose(&l.model, &l.rest, tick + 1),
+            alpha,
+        )
+    }
+
+    /// `step` clips on from the playing one (wrapping), from its tick 0, faded into over
+    /// [`CLIP_FADE_TICKS`] from the pose drawn now; `false` when `l` has no clip. The clock
+    /// snaps down to the whole tick, so the fade starts from exactly the drawn pose (its blend
+    /// between the two ticks, in fixed point) at the cost of under a tick of time.
+    pub fn cycle(&mut self, l: &Loaded, step: i32) -> bool {
+        let n = l.clips.len();
+        if n == 0 {
+            return false;
+        }
+        let drawn = self.poses(l);
+        self.clip = (self.clip as i64 + i64::from(step)).rem_euclid(n as i64) as usize;
+        let (tick, _) = self.tick_now();
+        let clip = l.clips[self.clip].1.clone();
+        match &mut self.player {
+            Some(p) => {
+                let (a, b, alpha) = drawn;
+                let from = blend(&a, &b, (alpha * 256.0).round() as u16);
+                p.switch_from(from, tick, clip, CLIP_FADE_TICKS);
+            }
+            p => {
+                *p = Some(Player::new(Playback {
+                    clip,
+                    start_tick: tick,
+                    rate: 256,
+                }));
+            }
+        }
+        self.ticks = tick as f64;
+        true
+    }
+
+    /// Pauses or resumes: the banner's words.
+    pub fn toggle_pause(&mut self) -> &'static str {
+        self.paused = !self.paused;
+        if self.paused { "paused" } else { "playing" }
+    }
+
+    /// The tick within the playing clip and its length.
+    pub fn clip_tick(&self, l: &Loaded) -> Option<(u32, u32)> {
+        let ((_, clip), p) = (l.clips.get(self.clip)?, self.player.as_ref()?);
+        Some((
+            clip.clip_tick(p.playback.tick_at(self.tick_now().0)),
+            clip.length(),
+        ))
+    }
+
+    /// ` clip <clip> <tick>/<length>`, then ` paused` while paused; ` no clip` without one.
+    pub fn write(&self, l: &Loaded, out: &mut String) {
+        use std::fmt::Write as _;
+        match (self.clip_name(l), self.clip_tick(l)) {
+            (Some(name), Some((tick, len))) => {
+                let _ = write!(out, " clip {name} {tick}/{len}");
             }
             _ => out.push_str(" no clip"),
         }

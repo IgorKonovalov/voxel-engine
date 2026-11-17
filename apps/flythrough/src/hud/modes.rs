@@ -149,7 +149,7 @@ pub struct Modes {
     /// The banner's lights row after the last light key (`lights 3/16`, `carry on`).
     lights_words: Option<String>,
     /// The testbed's walkers: `` ` `` places one, `4` removes the newest thing placed.
-    pub walkers: crate::walker::Walkers,
+    pub walkers: crate::entities::Walkers,
 }
 
 /// The live queue's modes the keys step: `F` the order, `Tab` and `Slash` the score's angle
@@ -283,7 +283,7 @@ impl Modes {
             queue: QueueModes::default(),
             lights: crate::lights::TestLights::default(),
             lights_words: None,
-            walkers: crate::walker::Walkers::default(),
+            walkers: crate::entities::Walkers::default(),
         }
     }
 
@@ -293,7 +293,7 @@ impl Modes {
     }
 
     /// These modes with the testbed's walkers `walkers` (`--entities N`'s ring).
-    pub fn with_walkers(self, walkers: crate::walker::Walkers) -> Self {
+    pub fn with_walkers(self, walkers: crate::entities::Walkers) -> Self {
         Self { walkers, ..self }
     }
 

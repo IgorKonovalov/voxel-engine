@@ -74,6 +74,8 @@ impl Args {
             entities_walk: false,
             model: None,
             clip: None,
+            library_dir: None,
+            library: false,
             sync_budget: SYNC_BUDGET_MIB << 20,
             sync_time: None,
             workers: None,

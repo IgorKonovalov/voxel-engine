@@ -155,7 +155,7 @@ impl Flythrough {
                     .bouncing_all(self.args.light.lights_bounce),
                 )
                 .with_walkers(
-                    crate::walker::Walkers::with_ring_walking(
+                    crate::entities::Walkers::with_ring_walking(
                         self.args.entities,
                         self.args.entities_walk,
                     )

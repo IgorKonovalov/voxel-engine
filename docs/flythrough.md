@@ -148,6 +148,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 |------|------|
 | `--help`, `-h` | Print every flag and exit |
 | `--keys` | Print the keys and the menu's tree at the start modes, and exit |
+| `--library` | Print the entities library (each entry's parts, size in voxels, pool bytes and clips, the first marked `*`, or its error) and exit |
 | `--check-args` | Parse the arguments, print `arguments ok` and exit, opening nothing |
 | `--seed N` | The world's seed [1] |
 | `--render WxH` | Fix the frame's output resolution; the window scales it |
@@ -254,6 +255,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--entities-walk on\|off` | The walkers start walking, as the menu's `walkers walk` sets them [off] |
 | `--model PATH` | View a `.rig` and the `.vox` it names (the library is `apps/flythrough/assets/entities/<name>/<name>.rig`, [entities.md](entities.md)): `` ` `` and `--entities N` place it in place of the walker; a saved change to either file reloads |
 | `--clip NAME` | The `--model` clip to play first [the rig's first] |
+| `--library-dir DIR` | The entities library: every `DIR/<name>/<name>.rig` is an entry, in name order; `--model`'s rig comes first. A missing or empty library gives the built-in walker [`apps/flythrough/assets/entities`] |
 | `--fade-reading` | Headless: dig, settle, switch the lamp off and print how the light fades |
 | `--exposure auto\|E` | Adapt like an eye, or a fixed exposure [auto] |
 | `--adaptation eye\|symmetric\|instant` | The auto exposure's preset [eye] |

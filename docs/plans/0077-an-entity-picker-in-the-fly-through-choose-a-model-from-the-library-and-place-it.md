@@ -1,6 +1,6 @@
 # 0077: An entity picker in the fly-through: choose a model from the entities library, see it at the crosshair, place it
 
-> **Status:** approved (2026-11-16, the owner: all eight recommended answers under "Owner questions"); amended 2026-11-17 (orchestrator re-read against Plans 0078, 0069 and 0080 as landed; owner questions 9 to 11 answered 2026-11-17: the recommended option each, `Delete` removes, `Enter` places and stays open, a page like any other)
+> **Status:** in-progress (dev lane from 2026-11-17); approved (2026-11-16, the owner: all eight recommended answers under "Owner questions"); amended 2026-11-17 (orchestrator re-read against Plans 0078, 0069 and 0080 as landed; owner questions 9 to 11 answered 2026-11-17: the recommended option each, `Delete` removes, `Enter` places and stays open, a page like any other)
 > **Created:** 2026-11-16
 > **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md), the testbed side. Apps only
 > (`apps/flythrough`); nothing under `crates/` changes.
@@ -594,7 +594,7 @@ Answered 2026-11-16 (owner): every recommended option, 1 to 8.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the library scanned and listed | dev | not started | |
+| 1: the library scanned and listed | dev | done; `walker.rs` split into `entities/{mod,walker,placed,pool,library}.rs` here (the amendment puts it in Phase 2); `--library` is a switch beside `--keys` and the directory is `--library-dir DIR` (the plan writes `--library [DIR]`); `Viewer`'s playback moved into `viewer::Play`; `examples/clip.rs`, `tests/gpu_entity_pool.rs` edited for the moved names. Readings: [logs/0077.md](logs/0077.md) | committed with this row |
 | 2: several models at once, a clip per entity | dev | not started | |
 | 3: the picker | dev | not started | |
 | 4: the owner's window | human | not started | |

@@ -735,7 +735,7 @@ impl Run {
         };
         gfx.frame.set_lights(&lights);
         gfx.frame.set_light_cap(self.args.light_cap);
-        if let Some(words) = crate::walker::feed(
+        if let Some(words) = crate::entities::feed(
             &mut self.modes.walkers,
             &self.world,
             self.fly.camera.position.to_array(),

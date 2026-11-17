@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime};
 
 use flythrough::cave::ROCK;
 use flythrough::viewer::{Loaded, Viewer};
-use flythrough::{cave_materials, walker};
+use flythrough::{cave_materials, entities, walker};
 use support::bake::{Rig, rig_on};
 use vxe_assets::{VoxText, encode};
 use vxe_entity::{Model, Part, Pose};
@@ -182,7 +182,7 @@ fn twenty_reloads_hold_the_pool_at_one_model() {
     };
     save(0, 1);
     let viewer = Viewer::open(&dir.join("walker.rig"), None).expect("opens");
-    let mut w = walker::Walkers::default().with_viewer(Some(viewer));
+    let mut w = entities::Walkers::default().with_viewer(Some(viewer));
     let camera = level_camera(86.0, 11.0);
     // Feet on the floor 20 voxels ahead, facing the camera.
     assert!(w.place(&t, [106.0, 32.0, 2.0], [86.0, 32.0, 11.0]));
@@ -196,7 +196,7 @@ fn twenty_reloads_hold_the_pool_at_one_model() {
         } else {
             assert_eq!(w.poll_viewer(0.0, &t), None);
         }
-        let words = walker::feed(&mut w, &rig.world, eye, &mut rig.frame, &rig.queue);
+        let words = entities::feed(&mut w, &rig.world, eye, &mut rig.frame, &rig.queue);
         assert_eq!(words, None, "save {k}");
         rig.step(&camera);
         let live = model_bytes(
@@ -251,11 +251,11 @@ fn a_fragmented_pool_resets_and_the_walkers_stay() {
 
     let camera = level_camera(86.0, 11.0);
     let eye_at = camera.position.to_array();
-    let mut w = walker::Walkers::default();
+    let mut w = entities::Walkers::default();
     assert!(w.place(&t, [106.0, 26.0, 2.0], eye_at));
     assert!(w.place(&t, [106.0, 38.0, 2.0], eye_at));
     assert_eq!(
-        walker::feed(&mut w, &rig.world, eye_at, &mut rig.frame, &rig.queue),
+        entities::feed(&mut w, &rig.world, eye_at, &mut rig.frame, &rig.queue),
         None
     );
     rig.step(&camera);
@@ -286,8 +286,8 @@ fn a_fragmented_pool_resets_and_the_walkers_stay() {
     });
     (viewer.handle, viewer.stale) = (None, Some(old));
     w.viewer = Some(viewer);
-    let words = walker::feed(&mut w, &rig.world, eye_at, &mut rig.frame, &rig.queue);
-    assert_eq!(words.as_deref(), Some(walker::POOL_RESET));
+    let words = entities::feed(&mut w, &rig.world, eye_at, &mut rig.frame, &rig.queue);
+    assert_eq!(words.as_deref(), Some(entities::POOL_RESET));
     let v = w.viewer.as_ref().expect("viewer");
     assert!(v.handle.is_some(), "the cube is uploaded");
     assert_eq!(v.stale, None);
@@ -690,17 +690,17 @@ fn the_last_walkers_ghost_leaves_the_tree() {
     let t = rig.world.materials().clone();
     let camera = level_camera(86.0, 11.0);
     let eye_at = camera.position.to_array();
-    let mut w = walker::Walkers::default();
+    let mut w = entities::Walkers::default();
     assert!(w.place(&t, [106.0, 32.0, 2.0], eye_at));
     for _ in 0..2 {
-        walker::feed(&mut w, &rig.world, eye_at, &mut rig.frame, &rig.queue);
+        entities::feed(&mut w, &rig.world, eye_at, &mut rig.frame, &rig.queue);
         rig.step(&camera);
     }
     assert_eq!(w.drawn, 1);
     w.remove_newest();
     let mut seen = Vec::new();
     for _ in 0..3 {
-        walker::feed(&mut w, &rig.world, eye_at, &mut rig.frame, &rig.queue);
+        entities::feed(&mut w, &rig.world, eye_at, &mut rig.frame, &rig.queue);
         rig.step(&camera);
         let m = rig.frame.entity_mirror();
         seen.push((m.walks_entities(), m.instances().leaves().count()));
