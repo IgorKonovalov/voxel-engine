@@ -834,7 +834,8 @@ figure, itself a guess until that plan's close reads it; "guess" means no plan e
 | clouds and aerial perspective | 0.5 to 1.0 | 3.6 to 7.7 | budgeted | Plan 0035, ADR-0030; it proposes a 1.0 ms sub-line on the floor |
 | weather | 0.25 to 0.8 | 0.75 to 8.0 | budgeted | Plan 0036, ADR-0031: fall map, precipitation, composite terms |
 | night sky | 0.25 to 0.65 | 2.0 to 5.2 | budgeted | Plan 0037, ADR-0032: aurora and the composite's stars and bodies; it proposes a 0.3 ms cap on the floor |
-| **outdoor frame total** (cave rows plus M10) | **4.07 to 8.97** | **29.8 to 75.4** | | all rows (sun and sky measured, Plan 0032's close) |
+| surface detail layer | 0.3 to 0.8 | 2.0 to 5.0 | budgeted | Plan 0081, ADR-0063 (row added 2026-11-17 at the M10 re-read): the hit pass's shell march with `grass` on half the screen at the `[6, 12]` fade, probes off; the slow adapter at about six times the RTX's hit pass, which is why the Portable profile is off. Plan 0086's baked sky visibility (ADR-0070) has no row: its close replaces the "sun and sky" figures |
+| **outdoor frame total** (cave rows plus M10) | **4.37 to 9.77** | **31.8 to 80.4** | | all rows (sun and sky measured, Plan 0032's close; the surface detail row added 2026-11-17) |
 
 Game work is the consumer's CPU, outside this GPU ledger; today's frame CPU (table 1) runs
 beside the GPU.

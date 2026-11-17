@@ -1,6 +1,9 @@
 # 0036: Weather: rain, snow, wind, wet surfaces and snow cover, lightning
 
-> **Status:** approved (2026-10-22), amended 2026-11-10 (review pass)
+> **Status:** approved (2026-10-22), amended 2026-11-10 (review pass); amended 2026-11-17
+> (architect re-read against main 3b3986d0 after Plan 0032's close, Plan 0069, Plan 0080's lane,
+> Plan 0081 and Plan 0086: the section "Amended 2026-11-17 (re-read)" below is the phases'
+> errata and carries two owner questions that await answers before the go)
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
@@ -53,6 +56,113 @@
 > (`test-changed.mjs --binaries`, Plan 0066); a named test over 10 s on lavapipe is born
 > `#[ignore = "soak"]` (`docs/nfr.md` section 7). The mechanisms and bars stand; only when they
 > become tests moves.
+
+## Amended 2026-11-17 (re-read)
+
+Read at main 3b3986d0 (Plan 0032 closed, v0.61.0; Plan 0069 closed, v0.60.0) against the
+`plan-0080` lane (the menu) and Plans 0086, 0081, 0033, 0034 and 0035 (approved, ahead of this
+plan). The lane branches from main once the plan before it in the order has merged (owner
+question 2); the tree's names win. The Decision and the phases stand except where this section
+says otherwise; `dev` reads it as the phases' errata. Crate names are `vxe-*`; if Plan 0087 has
+merged first they read `svet-*` through its map.
+
+### Name mapping (the plan's name, then the tree's)
+
+| The plan says | The tree has |
+|---|---|
+| `marcher.rs` (the `Frame`, the passes) | `frame/mod.rs` (`Frame`, `Frame::invalidate`, `frame_bytes`), `frame/encode.rs` (`FRAME_PASSES`, 23 names, **1193 of 1200 lines**; `fsrs_passes_close_the_frame_passes` in `fsr2/mod.rs` pins the tail, so the fall map's two passes go before `upscale`), `frame/targets.rs` (`Targets`; the output is `rgba8` at the output size with `STORAGE \| TEXTURE \| COPY_SRC` and **no `RENDER_ATTACHMENT`**, which the precip pass adds), `frame/pipelines.rs`. The weather's GPU state goes in a new `frame/weather.rs` on `frame/sky.rs`'s pattern; the CPU `weather` module stays `crates/vxe-render/src/weather.rs` |
+| `gpu_world.rs` "report the chunks a `sync` wrote" | `gpu_world/mod.rs` `GpuWorld::sync` returns `SyncStats` and **no accessor lists the chunks written**; Phase 2 adds one (a `Vec<ChunkCoord>` the sync fills and the frame drains) |
+| `precip.wgsl`, "a render pass on the output target after the frame's last colour pass (`fsr2 tone` under FSR 2)" | no render pipeline exists in `frame/` (the HUD, `present.rs` and `loading.rs` draw on the surface); group 0's `world_layout` is **compute-only** visibility, so the precip pipeline has its own layout (the hit buffer, the fall map, the uniform, the output). **Under FSR 2 with sharpening on (the Floor default, `fsr2.sharpness` 0.5) the last colour pass is `fsr2 rcas`, not `fsr2 tone`**; under `own` it is `sharpen`. `dev` draws after whichever the pass list ends with before `exposure`, read at the base |
+| `composite.wgsl` | the albedo view stores linear albedo straight (no 2.2 encoding; Phase 1 bar 3's "as the albedo view encodes it" means that), the hit's `albedo * lit_at / PI` then emission, the translucent layer `c = layer * ex + T * c`, then `select(display(c), c, HDR_TARGET)` and `meter_of(c / ex)`. "The flash after the meter" takes `meter_of` before the flash is added and stored. **The composite composes no mirror or walk module** (its modules are common, hitrec, the sky's and its own) though group 0 binds the pools; see "the cover's normal" below |
+| `march.wgsl` (`gradient27_normal`) | `walk.wgsl` `gradient27_normal(h, fallback)`, in the hit pass |
+| "one of eight slots", `LightDesc` | `MAX_LIGHTS` is **16** (`frame/lights.rs`); the type is `Light { pos, intensity, dir, cos_inner, colour, cos_outer, flags, _pad }`; `Frame::set_lights`, `lights_changed`. The flash's now-and-then pair follows the `lights.old` pattern both upscalers compare (`fsr2/input.wgsl` `light_changed`, `upscale.wgsl` `up_light_changed`) |
+| `fsr2/input.wgsl` "and any other upscaler input" | `upscale.wgsl` (the `own` upscaler, still in the tree) takes the pair too |
+| `sky_radiance(d)` toward the horizon | under `Sky::uniform` it returns 0 for `d.z <= 0`: the particles' and the veil's horizon read uses a direction with `d.z` just above 0 |
+| `material.rs` `roughness` as porosity | `Material::roughness` exists and the GPU row carries it in lane 3, which **no shader reads today**; every fly-through row is 1.0 but `castle iron` (0.5), so the wet darkening is full on every outdoor row, as Phase 4's bars assume |
+| `splitmix64` | `vxe_world::hash::SplitMix64` |
+| `apps/flythrough/src/main.rs`, `hud.rs` | `cli/outdoor.rs` (`--weather`, `--wind`, `--fall-tiles` beside `--trees`; `cli/flags.rs` is at 1190 lines), `cli/tests.rs`, `toggles.rs` (the entries), `run/frame.rs` (`set_dt`, `set_sky`; `Weather::step` with the frame's ticks goes there), `run/keys.rs`, `hud/modes.rs` (**1197 of 1200 lines**: the weather words go in a new module or a split `dev` makes first; its `Modes` tests likewise), `hud/stats.rs` (`SkyRow` is the model for the weather row), `run/hud_feed.rs`, `docs/flythrough.md` (every key and flag; the root README links it) |
+| `gpu_golden.rs` (the goldens) | at 1885 of 2000 lines: this plan's goldens are synthetic scenes and live in `gpu_weather.rs` (new) with the harness's `assert_golden` from `tests/support/mod.rs` |
+| `gpu_indirect.rs` `the_lamp_furnace_reads_its_albedo_times_the_direct_mean` | exists, soak-marked, as named |
+| Plan 0034's Fresnel and sky-mode functions, `ReflectionMode`, `HIT_REFRACTED`, `HIT_UNDER_LIQUID` | Plan 0034's (bits 10 and 11 of the record's payload); the Fresnel function lives in `liquid.wgsl` and Phase 4 composes it into the composite or moves it to a shared module, as written |
+| Plan 0035's `CloudWeather`, `Clouds::set_weather` | Plan 0035's, in `NOT_SETTINGS` there; the flash's glow is a uniform term of its cloud march, as written |
+| Plan 0033's per-caller origin for `trace` | Plan 0033's walk-scope variables ("takes the far field", the level origin) set around `march`; `trace` sets them per texel with the texel's column as the origin, as the plan asks |
+| the entities | entity hits carry `HIT_ENTITY` and a world material id, so **they would be wet and snowed on** through the composite while the fall map never shelters them: Phase 4's exclusions gain `rec.entity` (an entity stays dry; "wet entities" is a followup) |
+| `templates/readings-log.md` | the architect skill's template, outside the public repo; `dev` starts `docs/plans/logs/0036.md` from an existing log's shape |
+
+### Interface changes
+
+- **Starts after:** owner question 2 (the order of Plans 0036 and 0037). As approved, after
+  Plan 0035 closes and merges; recommended, after Plan 0037. The base is main after that merge.
+- **The cover's normal (Phase 4).** The record's payload bits are spoken for (Plans 0062,
+  0081, 0033, 0034), so the gradient is not carried from the hit pass: the composite composes
+  `mirror.wgsl` and reads the 27 counts itself where snow cover is above 0 (group 0 already
+  binds the pools in every frame pass), and `walk.wgsl` and the bake's source are untouched.
+  The "whichever is cheaper" clause is closed; Phase 6's snow run still names the pass that pays.
+- **The wind to Plan 0081 (its owed amendment, taken here):** Phase 1 passes `WeatherState.wind`
+  to `Frame::set_detail_wind(wind / metres_per_voxel)` whenever the state changes (0081's
+  Interface: voxels a second along world x and y); the sway's response is the style's. A unit
+  test asserts the conversion. **Snow on the layer** (a styled face's style swapped for a
+  white `Cap` set at cover 1, named in 0081) is owner question 1.
+- **Settings, not flags alone** (Plan 0069, ADR-0055): `RenderSettings` gains `weather.
+  fall_tiles: u32` (`Live`) and `weather.particles: f32` (a scale on both counts, `Live`), each
+  a `FIELDS` row with a `with_test_value` arm, a `PROFILE_PICKS` row (Portable `fall_tiles`
+  16 and `particles` 0.5, the Budgets' levers) and the fly-through's `render_settings()`.
+  `Frame::set_weather` (the state and the flash) is a per-frame input in `NOT_SETTINGS`; every
+  `pub fn set_*` the plan adds is in one list or the other, or
+  `every_setter_is_a_setting_or_an_input` fails.
+- **Menu entries, not keys** (ADR-0061, Plan 0080): the preset cycle and the forced strike are
+  `Press::Menu` entries of `toggles.rs` (a toggle and an action, group `Lighting`), no key;
+  the preset's `get` is the banner's word; `--keys` lists them; 0080's
+  `every_toggle_and_action_is_an_entry` and `the_source_reads_no_key_the_tables_miss` pass.
+  Phase 1's and Phase 5's banner bars drive the entries.
+- **The headroom line is 2.6 ms, not 2.1** (`docs/nfr.md` section 2, Plan 0069's close), and
+  Plan 0062's entities read 0.5 to 2.2 ms on it. This plan's 0.8 ms share stands as the
+  dev-box bar; Plan 0035's owner question 2 says how the profiles arbitrate the line. The slow
+  adapter's outdoor frame reads 37.5 to 45.8 ms against 16.6 before this plan (Plan 0032 Phase
+  7), so its readings are recorded against Portable's 33.3 ms line.
+- **Tiers:** the "Tests and tiers" paragraph's 30 s line is **10 s** on lavapipe (60 s on CI;
+  `docs/nfr.md` section 7); a render phase runs `--profile gpu --binaries <names>` with the
+  `gpu_*` binaries it names. Every "soak if over 30 s" reads 10 s.
+- **Plan 0086** (ADR-0070) changes nothing here: the flash is composite-only and the weather
+  adds no term to the sky's visibility or `E_sky`; the fall map walks the mirror as the sky's
+  rays do.
+
+### Phases: what changes
+
+- **Phase 1** files: `frame/weather.rs` (new) beside `weather.rs`; `cli/outdoor.rs`,
+  `cli/tests.rs`, `toggles.rs`, the banner's new module, `run/frame.rs` (the step and the
+  wind hand-off), `settings.rs` (the rows, `NOT_SETTINGS`), `cli/settings.rs`. Bar 3 reads the
+  albedo view as the tree encodes it (linear).
+- **Phase 2** adds the written-chunks accessor to `gpu_world/mod.rs`; `rg32float` reads by four
+  `textureLoad`s stand (not filterable, as the plan says).
+- **Phase 3**: the precip pipeline's own layout; the output gains `RENDER_ATTACHMENT`; the
+  pass draws after the frame's last colour pass as the base's list has it (`fsr2 rcas` with
+  sharpening); the horizon read's `d.z` above 0. The golden lives in `gpu_weather.rs`.
+- **Phase 4**: the exclusions gain entity hits; the cover's normal is read in the composite
+  (above); Plan 0034's Fresnel from `liquid.wgsl`. Goldens in `gpu_weather.rs`.
+- **Phase 5**: `Light`, `MAX_LIGHTS` 16 in the Decision's words; the pair on the `lights.old`
+  pattern in both upscalers; `cloud_coverage` to Plan 0035's `Clouds::set_weather` as written.
+- **Phase 6**: the HUD row on `SkyRow`'s model; the runs' base is the outdoor frame as Plan
+  0032 Phase 7 read it (5.1 to 5.6 ms RTX, 37.5 to 45.8 ms RENOIR at 1080p), re-read at the
+  lane's start; the ledger's "weather" row (0.25 to 0.8 ms RTX, budgeted) is what the close
+  replaces; the slow adapter's rows against Portable's line.
+- **Phase 7**: the owner's window runs on Linux (owner, 2026-11-15).
+- **Phase 8** unchanged.
+
+### Owner questions added 2026-11-17 (each with a recommendation)
+
+1. **Snow on Plan 0081's layer.** Recommended: **a followup, not a phase here**: at cover 1 the
+   layer's blades under snow read as green blades on white ground, which Phase 7 sees; if the
+   owner wants them white, a style swap at cover 1 (the white `Cap` set 0081 named) is one
+   small phase on 0081's table. Alternative: build the swap in Phase 4 now (one more mechanism
+   before the window has asked for it).
+2. **The order of Plans 0036 and 0037.** Recommended: **Plan 0037 (the night sky) runs before
+   this plan.** 0037 depends on 0032, 0034 and 0035 only, costs 0.3 ms of the headroom, and
+   answers the owner's own question of 2026-10-22 (a comet, northern lights); this plan has the
+   largest slow-adapter cost of the three (3 to 10 times its share), no value for the first
+   consumer, and its Phase 7 window is the one most likely to move defaults after Plan 0035's
+   clouds are seen. Alternative: the approved order (0035, 0036, 0037); or this plan deferred to
+   the backlog after the M10 window, with its wind hand-off to 0081 done as a chore.
 
 ## TL;DR
 

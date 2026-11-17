@@ -3,6 +3,12 @@
 > **Status:** proposed; redrafted 2026-11-10 (architect, review pass) against the tree after
 > Plan 0059: the night's light reaches the ground through Plan 0032's sky ray alone, into
 > Plan 0058's direct target; no probe and no baked store takes it (Alternative G)
+> **Re-read 2026-11-17 (architect, Plan 0037's re-read):** under ADR-0070 (Plan 0086) the sky
+> light at a face is a baked visibility times six axis irradiances `E_sky`, so the night's
+> light reaches the ground through `E_sky` (the `night_light` map's cosine integral about each
+> axis), not through a per-pixel sky ray reading the map; the aurora's directional shadowing
+> on the ground is averaged away by design (ADR-0070's Negative), and the mip stop rule is
+> moot. Plan 0037's amendment of that date rewrites its Phase 7; the body stands.
 > **Date:** 2026-10-22
 > **Related plan(s):** [Plan 0037](../plans/0037-night-sky-stars-moon-phases-sky-bodies-and-aurora.md)
 > (builds it)
