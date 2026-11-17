@@ -2,6 +2,11 @@
 
 > **Status:** proposed (refreshed 2026-11-10 with Plan 0036's review pass: the puddle's
 > reflection, the flash's place in the frame, and the lighting base of ADR-0043 and ADR-0046)
+> **Re-read 2026-11-17 (architect, Plan 0036's re-read):** the light list holds sixteen slots
+> (Plan 0058's close), not eight, which changes nothing of the flash's reasoning; entity hits
+> are excluded from wetness and snow cover, since the fall map walks the mirror alone; the
+> cover's gradient is read in the composite, not carried from the hit pass. Plan 0036's
+> amendment of that date carries them; the body stands.
 > **Date:** 2026-10-22
 > **Related plan(s):** [Plan 0036](../plans/0036-weather-rain-snow-wind-wet-surfaces-snow-cover-lightning.md)
 
