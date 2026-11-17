@@ -1093,8 +1093,8 @@ Readings and gate counts: [`logs/0032.md`](logs/0032.md).
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The sky on a miss: transmittance and sky-view LUTs, single scattering | dev | done; golden `sky_empty_noon` waits for Phase 10 | b6c7d986 |
-| 2: Multiple scattering, the moon, the discs and the time-of-day helper | dev | done; bar 4 asserted under single scattering (Notes); goldens wait for Phase 10 | 96c2c991 |
-| 3: The outdoor source, the source switch and the time of day in the fly-through | dev | done; bar 6 soak only (Notes); keys differ (Notes) | ce2a8fa9 |
+| 2: Multiple scattering, the moon, the discs and the time-of-day helper | dev | done; bar 4 asserted under single scattering, as amended 2026-11-17 (Notes); goldens wait for Phase 10 | 96c2c991 |
+| 3: The outdoor source, the source switch and the time of day in the fly-through | dev | done; bar 6 soak only, as amended 2026-11-17 (Notes); keys differ (Notes) | ce2a8fa9 |
 | 4: The outdoor exposure | dev | done; bar 2 landed with Phase 5; the preset's code in ce2a8fa9 | 33fb5abd |
 | 5: The sun and the moon as the light pass's directional sample | dev | done; bars 3, 6's settle and 7 are readings (exploration); tests in `gpu_sun.rs` (Notes) | 9bff6e8f |
 | 6: Sky light: one cosine-weighted sky ray, its stillness measured first | dev | done; default 1 ray; bars 2 to 4 are readings (exploration); bar 6 one run each (Notes) | d261667c |
@@ -1133,8 +1133,8 @@ Readings and gate counts: [`logs/0032.md`](logs/0032.md).
   2000 km around the planet, under another horizon. `twilight_darkens_to_zero` asserts the bar
   with the term off; `reading::twilight_with_multiple_scattering` prints the default's.
 - Phase 2 goldens (`sky_empty_sunset`, `sky_empty_night`) move to Phase 10.
-- Phase 2 bar 4 stays open pending the owner (orchestrator, 2026-11-17): the test asserts it
-  with multiple scattering off and prints the default sky's residue; the term is unchanged.
+- Phase 2 bar 4 closed by the 2026-11-17 amendment (3edbf0f1, owner): the exact 0 is asserted
+  under single scattering and the default sky's residue is a reading, as the tree has it.
 - Phase 3 keys (merge items for Plan 0080): the source switch is `Home` (the plan's `Tab`),
   the hour step `PageUp` with `Shift` + `PageUp` back (the plan's `'` and `;`), the day cycle
   `End` (the plan's `/`). Tab is 0080's menu key; 0080's freed keys are all bound on this
@@ -1158,7 +1158,7 @@ Readings and gate counts: [`logs/0032.md`](logs/0032.md).
   bare modes) besides the plan's `the_showcase_banner_names_its_source_and_the_lamp`.
 - Phase 3 bar 6 not met as stated: the 600-frame run and the 60-frame variant both read over
   the 10 s soak line on lavapipe (28.6 s and 14.2 s) and are `#[ignore = "soak"]`; no variant
-  runs in the gate. The runs use `--residency 6,8` (a `3,4` run hangs before its first frame on
+  runs in the gate. Closed by the 2026-11-17 amendment (3edbf0f1, owner): soak tier, as is. The runs use `--residency 6,8` (a `3,4` run hangs before its first frame on
   the cave too; readings log).
 - Phase 4's start exposure (`OutdoorArgs::auto`, `OUTDOOR_MIN`, `OUTDOOR_MAX`, its parse
   assertions) landed in Phase 3's commit, with the outdoor start settings.
