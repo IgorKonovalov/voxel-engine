@@ -1,6 +1,6 @@
 # 0080: The fly-through's menu: one overlay component, a search palette, and the minimal key set
 
-> **Status:** in-progress (approved 2026-11-16, the owner: every recommended answer under "Owner questions"; amended 2026-11-17 (owner) after the window's run 1: Phases 5 to 8 replace the former Phase 5)
+> **Status:** implemented 2026-11-17, awaits the fresh-session close review (approved 2026-11-16, the owner: every recommended answer under "Owner questions"; amended 2026-11-17 (owner) after the window's run 1: Phases 5 to 8 replace the former Phase 5)
 > **Created:** 2026-11-16
 > **Milestone:** none of its own. The testbed (`apps/flythrough`) and, through Plan 0073, the
 > tester; nothing under `crates/` changes unless Phase 5's window asks for the overlay backdrop.
@@ -685,7 +685,7 @@ Readings and gate counts: [`logs/0080.md`](logs/0080.md).
 | 5: the panel: scale, place, backdrop, grey, readout (amended 2026-11-17) | dev | done | 295ed11e |
 | 6: stepped values, unavailable entries, every action answers (amended 2026-11-17) | dev | done, one count differs (Notes) | 677fb8db |
 | 7: the owner's window, run 2 (amended 2026-11-17) | human | done 2026-11-17, verdict in the readings log; the pad's step not run (no pad) | e210343b |
-| 8: the owner's picks, and the tip (the former Phase 5) | dev | done | committed with this row |
+| 8: the owner's picks, and the tip (the former Phase 5) | dev | done | 4ff74bb6 |
 
 ### Notes
 
@@ -771,11 +771,23 @@ Readings and gate counts: [`logs/0080.md`](logs/0080.md).
 
 ### Close triggers
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** the fly-through's menu (`hud/menu/`: the tree from `TOGGLES` and
+  `ACTIONS`, the palette, the Keys page, `route`, the edit mode, grey entries with their reason
+  on the row, the notice row, the readout), the minimal key set and the pad, `--keys`.
+- **Public API changed:** `vxe-render`: `HudOverlay::set_scale`, `HudOverlay::set_lines_over`,
+  `HudBox`, `BACKDROP_ALPHA`, `HudColour::Grey`; the backdrop bit in `hud.wgsl`'s cell word.
+  `flythrough`: `parse_args_from` is `pub`; `hud::menu` is new.
+- **Budget readings:** the menu's format time and overlay allocations, Phases 2 and 5 of the
+  readings log (lavapipe and RTX 3080 laptop, exclusive perf lock, loaded); no `docs/nfr.md`
+  figure moved.
+- **Gate at the tip (4ff74bb6):** `cargo nextest run --workspace --profile gate
+  --test-threads 2` (exclusive perf lock, lavapipe, 1-minute load 8.87 at start) 1036 run,
+  1036 passed, 105 skipped, 1042 s, exit 0; `cargo test --doc --workspace` 0 failed;
+  `cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0;
+  `cargo deny check` 0; check-doc-links, check-comment-hygiene, check-test-tiers,
+  check-file-size, check-index-rows, check-plan-size 0.
+- **Outstanding `human` phases:** none; Phase 7's step 8 (the pad in a window) was not run (no
+  pad connected) and is owed at a later window.
 
 ## Followups
 
