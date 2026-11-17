@@ -147,6 +147,7 @@ fn mirror_of(label: &str, name: &str) -> Option<Mirror> {
             metres_per_voxel,
             base_altitude_m,
             camera_alt = camera_alt_km,
+            sky_rays,
             key_dir,
             key_radius,
             key_e,

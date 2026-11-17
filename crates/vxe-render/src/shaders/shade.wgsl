@@ -1,6 +1,7 @@
 // The light pass's entry (`shade`): at each lighting pixel's hit, read from the hit buffer,
-// the list's lights and one emissive face (light.wgsl) and the key light's directional
-// sample (sky_light.wgsl). Compiled after light.wgsl, emissive.wgsl and the sky's modules.
+// the list's lights and one emissive face (light.wgsl), the key light's directional sample
+// and the sky rays (sky_light.wgsl). Compiled after light.wgsl, emissive.wgsl and the sky's
+// modules.
 //
 // Bindings, group 2:
 //   0  texture_2d<f32>   hit_pos_in      the hit pass's rgba32float position + t
@@ -86,8 +87,8 @@ fn shade_px(gid: vec3<u32>) {
         } else {
             let ns = shadow_normal_of(rec, ray.d);
             e = PI * lights_lit_rgb(rec.p, n, ns);
-            // The key light's directional sample (sky_light.wgsl), with the list's.
-            let k = key_sample(rec.p, n, ns, gid.xy);
+            // The key light's directional sample and the sky rays (sky_light.wgsl), with the list's.
+            let k = key_sample(rec.p, n, ns, gid.xy) + sky_ray_sample(rec.p, n, ns, gid.xy);
             e += vec4<f32>(k, luminance(k));
             // A cube face's emissive light is the store's (temporal.wgsl): no sample, no shadow
             // ray; so is an entity hit's under LIGHTING_ENTITY_WORLD. Any other hit draws its own.

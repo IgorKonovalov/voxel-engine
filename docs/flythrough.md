@@ -200,6 +200,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--time HH:MM` | The time of day the sky starts at, latitude 45 at an equinox [12:00]; the banner names it while a sky is set |
 | `--day-length S` | Seconds for a whole day while the cycle runs (`End`) [1200] |
 | `--sun-radius DEG` | The sun's angular radius, 0.05 to 10 degrees: a wider disc softens every sun shadow [0.2665] |
+| `--sky-rays N` | Cosine-weighted sky rays a lighting pixel casts while a sky is set, 1 to 4; the banner names the count [1] |
 | `--sky on\|off` | A sky over the world [on for `--source outdoor`, else off] |
 | `--switch-at F,..` | Switch the source at these frames, as `Home` does, and print the spawn's hash at the end |
 | `--spawn-hash` | Print the voxel hash of the chunks within 2 of the spawn's chunk at the end |

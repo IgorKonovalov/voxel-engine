@@ -1,7 +1,8 @@
 //! The sun and the moon as the light pass's directional sample (ADR-0027): a floor of rock
 //! under a key light, read from the light pass's direct target, and the lighting rays' rule
 //! that an absent chunk inside the residency ball is not sky. Lavapipe, lamp off, no list
-//! light, filter off, manual exposure 1.0, the full shadow walk, lighting at full resolution.
+//! light, no sky ray, filter off, manual exposure 1.0, the full shadow walk, lighting at full
+//! resolution.
 //! The image bars (the penumbra, the settle after a jump, the upscaler's mask) are readings in
 //! `mod reading` until the owner's window.
 
@@ -72,6 +73,7 @@ fn frame(device: &wgpu::Device, size: [u32; 2], walk: ShadowWalk) -> Frame {
         filter: false,
         shadow_walk: walk,
         exposure: Exposure::Manual(1.0),
+        sky_rays: 0,
         ..Lighting::default()
     });
     frame
@@ -520,5 +522,142 @@ mod reading {
             differing += usize::from(mask(&f).iter().any(|&m| m > 0));
         }
         println!("drift: {differing} of 64 frames with a marked pixel");
+    }
+
+    /// Plan 0032 Phase 6 Step A: a still camera 40 voxels over a 1024 x 1024 rock floor,
+    /// looking down at 45 degrees, filter on, the default lighting tier, native 320 x 180 and
+    /// FSR 2 at 1.5 to 480 x 270. Under `Sky::uniform(1.0)` at 1, 2 and 4 sky rays, and with
+    /// the headlamp and no sky: after 64 settle frames, the mean and the 99th percentile of
+    /// the per-pixel change of the displayed image (the largest channel, in levels of 255)
+    /// between consecutive frames over 64 frames. The exposure is pinned so the floor's mean
+    /// display level is near 118 (mid-grey, 0.18 linear).
+    #[test]
+    #[ignore = "reading"]
+    fn sky_ray_stillness() {
+        let Some((device, queue)) = device() else {
+            return;
+        };
+        let world = floor_world([16, 16, 1], |_| false);
+        let gpu = mirror(&device, &queue, &world, None);
+        let cam = Camera {
+            position: Vec3::new(512.0, 400.0, FLOOR as f32 + 40.0),
+            yaw: FRAC_PI_2,
+            pitch: -45f32.to_radians(),
+            vfov: 60f32.to_radians(),
+        };
+        let light = LightParams::headlamp();
+        let run = |rays: Option<u32>, fsr: bool, exposure: f32| -> (f64, f64, f64) {
+            let mut f = if fsr {
+                let mut f = Frame::with_sizes(&device, [320, 180], [480, 270]);
+                f.set_upscaler_kind(
+                    &device,
+                    vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default()),
+                );
+                f
+            } else {
+                Frame::new(&device, 320, 180)
+            };
+            f.set_lighting(Lighting {
+                lamp: rays.is_none(),
+                exposure: Exposure::Manual(exposure),
+                sky_rays: rays.unwrap_or(0),
+                ..Lighting::default()
+            });
+            f.set_sky(rays.map(|_| Sky {
+                altitude_zero_z: FLOOR as f32,
+                ..Sky::uniform(1.0)
+            }));
+            for _ in 0..64 {
+                f.step(&device, &queue, &gpu, &cam, &light);
+            }
+            let read = |f: &Frame| vxe_render::debug::read_rgba8(&device, &queue, f.target());
+            let mut last = read(&f);
+            let mean_level =
+                last.chunks(4).map(|p| f64::from(p[1])).sum::<f64>() / (last.len() / 4) as f64;
+            let mut changes = Vec::new();
+            for _ in 0..64 {
+                f.step(&device, &queue, &gpu, &cam, &light);
+                let now = read(&f);
+                for (a, b) in now.chunks(4).zip(last.chunks(4)) {
+                    let d = (0..3).map(|k| a[k].abs_diff(b[k])).max().unwrap_or(0);
+                    changes.push(f64::from(d));
+                }
+                last = now;
+            }
+            changes.sort_by(f64::total_cmp);
+            let mean = changes.iter().sum::<f64>() / changes.len() as f64;
+            let p99 = changes[changes.len() * 99 / 100];
+            (mean, p99, mean_level)
+        };
+        for fsr in [false, true] {
+            let name = if fsr { "FSR 2 at 1.5" } else { "native" };
+            for rays in [None, Some(1), Some(2), Some(4)] {
+                // Two passes: the second's exposure scales the first's toward level 118 by the
+                // display's gamma of 2.2.
+                let mut ex = if rays.is_some() { 0.5 } else { 1.0 };
+                let (_, _, level) = run(rays, fsr, ex);
+                ex *= ((118.0 / level.max(1.0)) as f32).powf(2.2);
+                let (mean, p99, level) = run(rays, fsr, ex);
+                let what = rays.map_or("the headlamp, no sky".into(), |n| format!("{n} sky rays"));
+                println!(
+                    "{name}, {what}: exposure {ex:.4}, mean level {level:.1}, change mean {mean:.3}, p99 {p99}"
+                );
+            }
+        }
+    }
+
+    /// Plan 0032 Phase 6 bars 2 and 3 under `Sky::uniform(1.0)`, one sky ray, filter off,
+    /// exposure 1, 64-frame mean of the direct target at the centre pixel: the open floor 40
+    /// and about 400 voxels from the camera (pi is the bar), and the floor inside a closed rock
+    /// box with 5-voxel walls, the camera inside it (under 2 % of pi is the bar).
+    #[test]
+    #[ignore = "reading"]
+    fn the_open_floor_and_a_closed_box_under_a_uniform_sky() {
+        let Some((device, queue)) = device() else {
+            return;
+        };
+        let walls = |p: [i32; 3]| {
+            let inside = |k: usize, lo: i32, hi: i32| (lo..hi).contains(&p[k]);
+            let outer = inside(0, 100, 140) && inside(1, 100, 140) && inside(2, FLOOR, FLOOR + 30);
+            let inner = inside(0, 105, 135) && inside(1, 105, 135) && inside(2, FLOOR, FLOOR + 25);
+            outer && !inner
+        };
+        let world = floor_world([16, 16, 1], walls);
+        let gpu = mirror(&device, &queue, &world, None);
+        let at = |pos: [f32; 3], pitch: f32| Camera {
+            position: Vec3::from(pos),
+            yaw: FRAC_PI_2,
+            pitch: pitch.to_radians(),
+            vfov: 60f32.to_radians(),
+        };
+        for (name, cam) in [
+            (
+                "open floor, 57 voxels",
+                at([512.0, 300.0, FLOOR as f32 + 40.0], -45.0),
+            ),
+            (
+                "open floor, 400 voxels",
+                at([512.0, 300.0, FLOOR as f32 + 40.0], -5.71),
+            ),
+            (
+                "inside the closed box",
+                at([120.0, 110.0, FLOOR as f32 + 12.0], -45.0),
+            ),
+        ] {
+            let mut f = frame(&device, SIZE, ShadowWalk::Coarse);
+            f.set_lighting(Lighting {
+                sky_rays: 1,
+                ..f.lighting()
+            });
+            f.set_sky(Some(Sky {
+                altitude_zero_z: FLOOR as f32,
+                ..Sky::uniform(1.0)
+            }));
+            let got = centre_direct(&device, &queue, &mut f, &gpu, &cam, 64);
+            println!(
+                "{name}: {got:?}, {:.4} of pi",
+                got[1] / std::f32::consts::PI
+            );
+        }
     }
 }

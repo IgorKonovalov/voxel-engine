@@ -296,7 +296,8 @@ pub(crate) struct SkyUniform {
     /// The camera's altitude above the planet's surface in kilometres, which the sky-view
     /// LUT is built for.
     pub camera_alt_km: f32,
-    pub _pad: f32,
+    /// [`crate::Lighting::sky_rays`]: the sky rays a lighting pixel casts.
+    pub sky_rays: u32,
     /// The key light ([`Sky::key_light`]): its direction, angular radius and illuminance,
     /// zero with none ([`SKY_KEY`] clear).
     pub key_dir: [f32; 3],
@@ -354,14 +355,19 @@ impl SkyUniform {
             camera_alt_km: ((camera_z - s.altitude_zero_z) * s.metres_per_voxel
                 + s.base_altitude_m)
                 / 1000.0,
-            _pad: 0.0,
             ..Self::default()
         }
     }
 
     /// Adds the key light of this frame (`now`) and of the frame before (`prev`, `None`
     /// before the first frame with history: then the frame's own) and the residency ball.
-    pub(crate) fn with_keys(mut self, now: &SkyKey, prev: Option<&SkyKey>, ball_r2: i32) -> Self {
+    pub(crate) fn with_keys(
+        mut self,
+        now: &SkyKey,
+        prev: Option<&SkyKey>,
+        ball_r2: i32,
+        sky_rays: u32,
+    ) -> Self {
         if self.flags & SKY_ON == 0 {
             return self;
         }
@@ -378,6 +384,7 @@ impl SkyUniform {
             self.prev_key_e = b.illuminance;
         }
         self.ball_r2 = ball_r2;
+        self.sky_rays = sky_rays;
         self.sky_scale = now.scale;
         self.prev_sky_scale = prev.scale;
         self
@@ -516,7 +523,7 @@ mod tests {
             Body::moon(at_elevation(30.0)),
         );
         let (now, then) = (SkyKey::of(Some(&s)), SkyKey::of(Some(&night)));
-        let u = SkyUniform::of(Some(&s), 0.0, true).with_keys(&now, Some(&then), 49);
+        let u = SkyUniform::of(Some(&s), 0.0, true).with_keys(&now, Some(&then), 49, 1);
         assert_eq!(u.flags & (SKY_KEY | SKY_PREV_KEY), SKY_KEY | SKY_PREV_KEY);
         assert_eq!(
             (u.key_dir, u.key_e, u.key_radius),
@@ -527,7 +534,7 @@ mod tests {
             (night.moon.direction, night.moon.illuminance)
         );
         assert_eq!(u.ball_r2, 49);
-        let off = SkyUniform::of(None, 0.0, true).with_keys(&SkyKey::of(None), None, 49);
+        let off = SkyUniform::of(None, 0.0, true).with_keys(&SkyKey::of(None), None, 49, 1);
         assert_eq!(off, SkyUniform::default(), "no sky stays the zero uniform");
     }
 }

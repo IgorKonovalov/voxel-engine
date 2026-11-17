@@ -912,6 +912,10 @@ impl Args {
                 Some(e) => Exposure::Manual(e),
                 None => Exposure::Auto(self.start_auto()),
             },
+            sky_rays: self
+                .outdoor
+                .sky_rays
+                .unwrap_or(vxe_render::DEFAULT_SKY_RAYS),
             ..crate::default_lighting()
         })
     }

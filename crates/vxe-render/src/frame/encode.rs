@@ -406,7 +406,7 @@ impl Frame {
         } else {
             p.history = 0;
         }
-        if now.count > 0 || self.sky.lights_direct() {
+        if now.count > 0 || self.sky.lights_direct(self.state.lighting.sky_rays) {
             p.lighting |= LIGHTING_DIRECT;
         }
         self.state.lights.write(
@@ -808,7 +808,7 @@ impl Frame {
             queue,
             &self.binds,
             p.views[0].origin[2],
-            self.state.lod.ball_r2(),
+            &self.state,
         );
         let [sky_t, sky_m, sky_v] = self.sky.dispatches(device, sky_groups.as_ref());
         let passes = [

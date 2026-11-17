@@ -199,7 +199,7 @@ mod tests {
         let row = |b: &str| b.replace('\n', ", ");
         assert!(
             row(&m.banner(0.0).expect("at the start"))
-                .contains("source outdoor, time 12:00, day cycle off")
+                .contains("source outdoor, time 12:00, day cycle off, sky rays 1")
         );
         let (_, b) = press(&mut m, &[KEY_HOUR], 5000.0);
         assert!(row(&b).contains("time 13:00"), "{b}");
@@ -212,7 +212,7 @@ mod tests {
             .expect("parses")
             .start_modes(0.0);
         assert!(!press(&mut cave, &[KEY_HOUR], 5000.0).0);
-        assert!(!cave.line().contains("time"));
+        assert!(!cave.line().contains("time") && !cave.line().contains("sky rays"));
     }
 
     #[test]

@@ -30,7 +30,8 @@ struct SkyUniform {
     base_altitude_m: f32,
     // The camera's altitude above the surface, km.
     camera_alt: f32,
-    _pad: f32,
+    // The sky rays a lighting pixel casts (sky_light.wgsl).
+    sky_rays: u32,
     // The key light (SKY_KEY): direction, angular radius, illuminance.
     key_dir: vec3<f32>,
     key_radius: f32,

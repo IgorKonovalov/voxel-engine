@@ -19,6 +19,8 @@ pub struct OutdoorArgs {
     /// The auto exposure takes [`OUTDOOR_MIN`] and [`OUTDOOR_MAX`]: `--source outdoor` with
     /// neither `--exposure` nor `--adaptation`.
     pub(crate) auto: bool,
+    /// `--sky-rays N`: the sky rays a lighting pixel casts; unset, the renderer's default.
+    pub(crate) sky_rays: Option<u32>,
 }
 
 /// The outdoor start exposure's floor: a sunlit ground reads about 200 to 300 frame radiance
@@ -104,6 +106,17 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
                 |p: &mut Parsing, v| {
                     let deg: f32 = v.parse_if(|d: &f32| (0.05..=10.0).contains(d), "0.05 to 10")?;
                     p.args.outdoor.clock.sun_radius = deg.to_radians();
+                    Ok(())
+                },
+            ),
+            Flag::value(
+                &["--sky-rays"],
+                "N",
+                "cosine-weighted sky rays a lighting pixel casts while a sky is set, 1 to 4 [1]",
+                |p: &mut Parsing, v| {
+                    let max = vxe_render::MAX_SKY_RAYS;
+                    p.args.outdoor.sky_rays =
+                        Some(v.parse_if(|n: &u32| (1..=max).contains(n), "1 to 4")?);
                     Ok(())
                 },
             ),

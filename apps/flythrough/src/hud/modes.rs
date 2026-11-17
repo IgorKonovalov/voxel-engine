@@ -620,7 +620,7 @@ impl Modes {
         }
         if self.sky {
             self.clock.write_words(out);
-            out.push_str(", ");
+            let _ = write!(out, ", sky rays {}, ", l.sky_rays);
         }
         let _ = write!(
             out,

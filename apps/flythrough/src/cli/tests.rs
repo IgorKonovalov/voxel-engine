@@ -471,6 +471,21 @@ fn the_outdoor_source_and_its_flags_parse() {
         crate::daylight::Clock::default().sun_radius,
         vxe_render::sky::SUN_ANGULAR_RADIUS
     );
+    let r = parse_args_from(argv(&["--source", "outdoor", "--sky-rays", "4"])).unwrap();
+    assert_eq!(r.start_lighting().sky_rays, 4);
+    assert_eq!(
+        parse_args_from(argv(&["--source", "outdoor"]))
+            .unwrap()
+            .start_lighting()
+            .sky_rays,
+        1
+    );
+    for bad in ["0", "5", "x"] {
+        assert!(
+            parse_args_from(argv(&["--sky-rays", bad])).is_err(),
+            "{bad}"
+        );
+    }
     for bad in ["0", "11", "x"] {
         assert!(
             parse_args_from(argv(&["--sun-radius", bad])).is_err(),

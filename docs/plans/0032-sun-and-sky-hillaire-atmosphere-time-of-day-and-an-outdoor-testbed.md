@@ -1088,8 +1088,8 @@ Readings and gate counts: [`logs/0032.md`](logs/0032.md).
 | 2: Multiple scattering, the moon, the discs and the time-of-day helper | dev | done; bar 4 asserted under single scattering (Notes); goldens wait for Phase 10 | 96c2c991 |
 | 3: The outdoor source, the source switch and the time of day in the fly-through | dev | done; bar 6 soak only (Notes); keys differ (Notes) | ce2a8fa9 |
 | 4: The outdoor exposure | dev | done; bar 2 landed with Phase 5; the preset's code in ce2a8fa9 | 33fb5abd |
-| 5: The sun and the moon as the light pass's directional sample | dev | done; bars 3, 6's settle and 7 are readings (exploration); tests in `gpu_sun.rs` (Notes) | committed with this row |
-| 6: Sky light: one cosine-weighted sky ray, its stillness measured first | dev | not started | |
+| 5: The sun and the moon as the light pass's directional sample | dev | done; bars 3, 6's settle and 7 are readings (exploration); tests in `gpu_sun.rs` (Notes) | 9bff6e8f |
+| 6: Sky light: one cosine-weighted sky ray, its stillness measured first | dev | done; default 1 ray; bars 2 to 4 are readings (exploration); bar 6 one run each (Notes) | committed with this row |
 | 7: The four goldens, the HUD rows and the readings | dev | not started | |
 | 8: Trees, the shadow that travels with the sun, and the forest at low sun | dev | not started | |
 | 9: The owner's windowed check | human | not started | |
@@ -1181,6 +1181,16 @@ Readings and gate counts: [`logs/0032.md`](logs/0032.md).
   two mirrors (the upper chunk absent, then synced all-air) instead of one chunk arriving.
   Bar 3, bar 6's settle and bar 7 are readings in its `mod reading` (exploration), bar 7 not in
   `gpu_fsr2.rs`. `--sun-radius` takes 0.05 to 10 degrees (a range the plan does not give).
+
+- Phase 6: the count is `Lighting::sky_rays` (0 to `MAX_SKY_RAYS` = 4, 0 for none; the flag
+  takes 1 to 4), carried in the sky uniform's former pad word. The sky ray's code and its
+  readings are in `sky_light.wgsl` and `crates/vxe-render/tests/gpu_sun.rs` (not
+  `light.wgsl`, `gpu_lights.rs` or `gpu_outdoor.rs`); the banner's count is written in
+  `hud/modes.rs` (not `hud.rs`); `--sky-rays` lives in `cli/outdoor.rs` and `cli/mod.rs`, and
+  `settings.rs` gains the `lighting.sky_rays` row. Step A's rig (an open floor under a
+  uniform sky) gives the sky ray no variance, so the stop rule's comparison reads 0 against
+  the lamp's 1; bar 4's regression test and bars 2 and 3 wait for Phase 10. Bar 6 is one run a
+  configuration, not three.
 
 ### Close triggers
 

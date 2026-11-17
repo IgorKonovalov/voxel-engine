@@ -188,21 +188,24 @@ impl SkyState {
         jumped
     }
 
-    /// Whether the sky adds to the direct part: a key light lights the frame.
-    pub(super) fn lights_direct(&self) -> bool {
-        self.sky.as_ref().is_some_and(|s| s.key_light().is_some())
+    /// Whether the sky adds to the direct part at `sky_rays` sky rays: a sky is set and
+    /// casts sky rays, or its key light is up.
+    pub(super) fn lights_direct(&self, sky_rays: u32) -> bool {
+        self.sky
+            .as_ref()
+            .is_some_and(|s| sky_rays > 0 || s.key_light().is_some())
     }
 
-    /// Writes the uniform for a camera at world z `camera_z`, the lighting rays' ball of
-    /// squared chunk radius `ball_r2` (-1 none), and returns the LUT passes' bind groups,
-    /// `None` with no sky.
+    /// Writes the uniform for a camera at world z `camera_z`, with the lighting rays' ball
+    /// (`LodParams::r_lod`) and the sky rays' count from `state`, and returns the LUT
+    /// passes' bind groups, `None` with no sky.
     pub(super) fn prepare(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         binds: &BindCache,
         camera_z: f32,
-        ball_r2: i32,
+        state: &FrameState,
     ) -> Option<[wgpu::BindGroup; 3]> {
         let prev = self
             .keys
@@ -213,7 +216,8 @@ impl SkyState {
         let u = SkyUniform::of(self.sky.as_ref(), camera_z, self.multiscatter).with_keys(
             &now,
             prev.as_ref(),
-            ball_r2,
+            state.lod.ball_r2(),
+            state.lighting.sky_rays.min(MAX_SKY_RAYS),
         );
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
         let (_, luts) = (self.sky.as_ref()?, self.luts.as_ref()?);

@@ -703,7 +703,17 @@ pub struct Lighting {
     pub young_filter: YoungFilter,
     /// Where an entity hit's emissive light comes from ([`EntityLight`]; default `World`).
     pub entity_light: EntityLight,
+    /// Cosine-weighted sky rays a lighting pixel casts while a sky is set, 0 (none: the
+    /// sky lights through its key light alone) to [`MAX_SKY_RAYS`] (default
+    /// [`DEFAULT_SKY_RAYS`]): their mean of `pi sky_radiance(d)`
+    /// over the rays that reach the sky above the horizon joins the direct part.
+    pub sky_rays: u32,
 }
+
+/// [`Lighting::sky_rays`]' largest value.
+pub const MAX_SKY_RAYS: u32 = 4;
+/// [`Lighting::sky_rays`] by default.
+pub const DEFAULT_SKY_RAYS: u32 = 1;
 
 impl Default for Lighting {
     fn default() -> Self {
@@ -728,6 +738,7 @@ impl Default for Lighting {
             young_filter: YoungFilter::Luma,
             entity_light: EntityLight::World,
             light_floor: DEFAULT_LIGHT_FLOOR,
+            sky_rays: DEFAULT_SKY_RAYS,
         }
     }
 }
