@@ -567,7 +567,7 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
 | 4: The sky visibility baked per brick direction | dev | done | b8a23a9c |
 | 5: The rays' own long history, the sky ray only where stale | dev | done | 012bd208 |
 | 6: The key light on the long history, after a reading | dev | done (reading only: 3-degree p99 1 at the lamp's 1, not built) | 12fe6373 |
-| 7: A spike: a deterministic penumbra from the closest approach | dev | done (spike; cost on the RTX approach arm and the RENOIR not read) | committed with this row |
+| 7: A spike: a deterministic penumbra from the closest approach | dev | done (spike; cost on the RTX approach arm and the RENOIR not read) | ed47dc5c |
 | 8: The owner's windowed check | human | not started | |
 | 9: The picks as tests | dev | not started | |
 
@@ -625,6 +625,12 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
   `frame/compose.rs`, `lib.rs` and `docs/flythrough.md`. The approach penumbra is one-sided
   (lit side only). The readings' `run_cell` reads the exposure blocking now. Bar 1's canopy
   profile not read; bar 2's light pass read for the disc on the RTX only.
+- Before Phase 8 (a `fix` commit): the gpu tier's `an_absent_chunk_is_sky_to_the_sky_ray` read
+  0: `centre_lit` (Phase 5) read the per-frame direct target, and the follow-up's fix put the
+  pair's term in the accumulated direct part; `centre_lit` reads `direct_accumulated` now.
+  The soak test `the_cave_mouth_is_lit_from_outside` fails its seal bar at the tip (sealed
+  walls 24.3 % of unsealed after 64 frames, bar 2 %) and at `012bd208` (unsealed 0); not
+  changed.
 
 ### Close triggers
 

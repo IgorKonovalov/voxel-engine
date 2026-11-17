@@ -118,9 +118,11 @@ fn centre_direct(
     sum.map(|v| (v / f64::from(frames)) as f32)
 }
 
-/// The light at the centre pixel, mean over `frames` frames: the direct target's rgb plus the
-/// accumulated stored part's, which at a cube face holds the sky's term (ADR-0070: the baked
-/// visibility's, or the visibility pair's where the sky rays run) and no emissive light here.
+/// The light at the centre pixel, mean over `frames` frames: the temporal pass's accumulated
+/// direct part's rgb (the key light's, plus the visibility pair's sky term where the sky rays
+/// run, which the temporal pass adds to the direct part at every hit) plus the accumulated
+/// stored part's (at a cube face the baked visibility's sky term, ADR-0070; no emissive light
+/// here).
 fn centre_lit(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -132,9 +134,9 @@ fn centre_lit(
     let mut sum = [0.0f64; 3];
     for _ in 0..frames {
         frame.step(device, queue, gpu, camera, &LightParams::headlamp());
-        let w = frame.direct().width() as usize;
-        let h = frame.direct().height() as usize;
-        let d = vxe_render::debug::read_rgba16f(device, queue, frame.direct());
+        let w = frame.direct_accumulated().width() as usize;
+        let h = frame.direct_accumulated().height() as usize;
+        let d = vxe_render::debug::read_rgba16f(device, queue, frame.direct_accumulated());
         let a = vxe_render::debug::read_rgba16f(device, queue, frame.accumulated());
         let i = (h / 2) * w + w / 2;
         for k in 0..3 {
