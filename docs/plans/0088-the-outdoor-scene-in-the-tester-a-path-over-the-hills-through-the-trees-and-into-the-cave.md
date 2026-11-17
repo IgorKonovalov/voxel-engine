@@ -1,6 +1,6 @@
 # 0088: The outdoor scene in the tester: a camera path over the hills, through the trees and down the tunnel, a fourth row in the menu and the report
 
-> **Status:** approved (the owner's go, 2026-11-17: "go 88"; questions 1 to 5 answered 2026-11-17, the recommended option each: the sun 10,180, sparse trees, the full 60 to 75 s route, the 2 s warm-up, a computed path)
+> **Status:** in-progress (the owner's go, 2026-11-17: "go 88"; questions 1 to 5 answered 2026-11-17, the recommended option each: the sun 10,180, sparse trees, the full 60 to 75 s route, the 2 s warm-up, a computed path)
 > **Created:** 2026-11-17
 > **Milestone:** M7 in [`docs/roadmap.md`](../roadmap.md) (the benchmark lane, whose first form
 > was Plan 0068)
@@ -362,18 +362,22 @@ Answered 2026-11-17 (owner): the recommended option on all five.
 > resume notes go to the plan's readings log, `docs/plans/logs/0088.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
+Readings, gate counts and the route's attempts: [`logs/0088.md`](logs/0088.md).
+
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: `Scene::Outdoor`, the parse rule and a first path | dev | not started | |
+| 1: `Scene::Outdoor`, the parse rule and a first path | dev | done | committed with this row |
 | 2: The route, the tester's rows, the README and the readings | dev | not started | |
 | 3: The owner's window | human | not started | |
 | 4: The picks and the tip | dev | not started | |
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1 lands the full computed route, not a provisional one (the Phase 2 route's keys), with this phase's commit.
+- The route's search skips Plan 0068's smoothing pass; the approach to the mouth is lifted 15 voxels and the first tunnel key is 40 voxels inside the mouth, not the axis's start (Phase 1 commit; attempts in the log).
+- The forest waypoint is the nearest 2.2 m-clear cell 40 voxels over the `forest` spawn's column (`[0, 636, 594]`), not its eye (Phase 1 commit).
+- `--path outdoor` also refuses a `--leaf-fill` other than the default (Phase 1 commit).
+- The `--path` help row lives in `cli/flags.rs`, outside Phase 1's files touched (Phase 1 commit).
 
 ### Close triggers
 

@@ -1089,3 +1089,53 @@ fn the_trees_and_the_fixed_sun_parse_and_show() {
     let d = crate::daylight::fixed_direction([10.0, 180.0]);
     assert!(d[0].abs() < 1e-6 && d[1] < 0.0 && (d[2] - 10f32.to_radians().sin()).abs() < 1e-6);
 }
+
+/// `--path outdoor` needs the outdoor source with the `outside` spawn, the sparse trees and
+/// the default leaf fill (the voxels the path is laid around); `--sun` and `--time` are free.
+/// Every refusal names the flags it needs; another scene's path stays refused outdoors.
+#[test]
+fn the_outdoor_path_needs_its_scene_and_leaves_the_sun_free() {
+    let needs = "--path outdoor flies the outdoor scene; it needs --source outdoor --spawn \
+                 outside --trees sparse";
+    let a = parse_args_from(argv(&[
+        "--source", "outdoor", "--spawn", "outside", "--trees", "sparse", "--sun", "10,180",
+        "--path", "outdoor",
+    ]))
+    .expect("the scene's flags parse");
+    assert_eq!(a.path.map(|p| p.name), Some("outdoor"));
+    let a = parse_args_from(argv(&[
+        "--source", "outdoor", "--path", "outdoor", "--time", "12:00",
+    ]))
+    .expect("the defaults and a clock parse");
+    assert_eq!(a.path.map(|p| p.name), Some("outdoor"));
+    for refused in [
+        &["--path", "outdoor"][..],
+        &["--source", "cave", "--path", "outdoor"],
+        &[
+            "--source", "outdoor", "--trees", "forest", "--path", "outdoor",
+        ],
+        &[
+            "--source", "outdoor", "--spawn", "forest", "--path", "outdoor",
+        ],
+        &[
+            "--source",
+            "outdoor",
+            "--leaf-fill",
+            "128",
+            "--path",
+            "outdoor",
+        ],
+    ] {
+        assert_eq!(
+            parse_args_from(argv(refused)).err().as_deref(),
+            Some(needs),
+            "{refused:?}"
+        );
+    }
+    assert_eq!(
+        parse_args_from(argv(&["--source", "outdoor", "--path", "cave"]))
+            .err()
+            .as_deref(),
+        Some("--path cave flies the cave scene; it needs --source cave")
+    );
+}
