@@ -381,6 +381,11 @@ README says which.
      builds, about 6 s; moon off): the zenith's luminance strictly falls for each sun
      elevation from 0 to -10 degrees in steps of 2 degrees, and reads exactly 0 at -12, -14,
      -16 and -18 degrees (bar 3's 10.1-degree dip).
+     **Amended 2026-11-17 (owner):** the exact 0 at -12 degrees and below holds under single
+     scattering (`Frame::set_sky_multiscatter(false)`, the test's setting); with multiple
+     scattering on, the default sky's residue there (under 4.1e-8 of the sun's illuminance,
+     the LUT's rays reaching lit air past another horizon) is a reading, printed by
+     `reading::twilight_with_multiple_scattering`, not a bar.
   5. **Goldens.** `sky_empty_sunset_golden` and `sky_empty_night_golden` in `gpu_golden.rs`
      (about 5 s each): `sky_empty_sunset.png` (the sun at elevation 2.65 degrees in the west,
      camera facing it) and `sky_empty_night.png` (the sun at -45 degrees, the moon at 45
@@ -468,6 +473,9 @@ README says which.
      spawn chunk equals a fresh `--source cave` run's over the same chunks. No resident
      record's palette holds `grass` or `soil`, and the server's op log starts empty at the
      switch.
+     **Amended 2026-11-17 (owner):** both runs (600 frames, 28.6 s; 60 frames, 14.2 s on
+     lavapipe) are over the 10 s soak line and are soak tier, `#[ignore = "soak"]`, run once
+     by name; no variant of this bar runs in the gate.
 
 ### Phase 4: The outdoor exposure
 - **Owner skill:** dev
