@@ -1,6 +1,6 @@
 # 0069: Render settings: one surface, an apply class per field, and named quality profiles
 
-> **Status:** in-progress (approved by the owner 2026-11-11: "go with recommended on all"; every
+> **Status:** implemented 2026-11-17, awaits the fresh-session close review (approved by the owner 2026-11-11: "go with recommended on all"; every
 > open question took its recommendation, recorded under "Owner answers")
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
@@ -380,7 +380,7 @@ the readings cannot see. No determinism risk: nothing here reaches `vxe-world`'s
 | 4: readings of each profile on both adapters | dev | done; most cells loaded, not quiet; RENOIR portable hall hit pass 10.5 ms, accepted by the 2026-11-17 amendment (Notes) | 356b32a1 |
 | 5: the owner's window | human | done 2026-11-17 09:20-09:38; the owner's words in the readings log, Phase 5; High offered as a fourth profile | cae1935f |
 | 6: the picks into the profiles | dev | done; `Profile::High` added (Notes) | 22e1fc2d; tester 9390b033 |
-| 7: image tests against the picks, and the tip's readings | dev | done; portable's golden at the castle gate (the 2026-11-17 amendment); a high golden added (Notes) | committed with this row |
+| 7: image tests against the picks, and the tip's readings | dev | done; portable's golden at the castle gate (the 2026-11-17 amendment); a high golden added (Notes) | 97c1c930 |
 
 ### Notes
 
@@ -439,6 +439,26 @@ the readings cannot see. No determinism risk: nothing here reaches `vxe-world`'s
   (indicative) in most cells, and were taken with the release binary of 9390b033's code.
 
 ### Close triggers
+
+- **Tip gate (97c1c930, 2026-11-17, 2 lanes, CARGO_BUILD_JOBS=12, MemoryMax=16G):** `cargo
+  build` 0; `cargo nextest run --workspace --profile gate --no-fail-fast` under the exclusive
+  perf lock (load 7.14 at the lock): 995 run, 995 passed, 104 skipped, 1065.6 s, exit 0;
+  `cargo test --doc --workspace` 10 passed, 0 failed; `cargo clippy --workspace --all-targets
+  -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny check` ok; doc-links,
+  comment-hygiene, file-size, test-tiers, plan-size, index-rows 0. `cargo doc -p vxe-render`:
+  the 64 pre-existing warnings, none in this plan's files.
+- **Soak goldens (not in the gate; lavapipe, exclusive perf lock):** `portable_profile_golden`
+  pass 15.1 s (load 1.89), 8.61 % differ from Floor at the gate; `performance_profile_golden`
+  pass 41.5 s, 13.24 % differ; `high_profile_golden` pass 47.6 s, 13.11 % differ (load 40.7,
+  loaded); `castle_gate_golden` 0.0382 % against its golden after the shared `gate_image`.
+- **Budget readings:** the readings log's Phase 7 tables (both adapters, every profile, vein,
+  hall and castle, release at 9390b033's code, mostly loaded) and the ledger paragraph "The
+  render profiles" in `docs/nfr/02-frame-budget.md`. Frame GPU p50, hall: RTX Floor 4.25,
+  Portable 1.99, Performance 4.72, High 8.25 ms; RADV RENOIR Floor 34.82, Portable 16.30,
+  Performance 36.80, High 68.46 ms.
+- **The frame lines** (owner's (e), "take as is"): Floor 16.6 ms split as "Budgets" proposes,
+  Portable 33.3 ms at 720p, Performance no gate; writing them into `docs/nfr.md` is the
+  close's.
 
 ## Followups
 
