@@ -95,6 +95,18 @@ autopilot (RTX, 1280 x 720) the streaming CPU per frame reads p50 0.038 to 0.039
 buffer fills and the light placement's eviction scan reads up to 1.2 s a sync (not seen
 headless); the backlog carries it.
 
+**The outdoor light pass on the slow adapter is over the lighting line as read** (Plan 0032
+Phases 7 and 8, 2026-11-16/17, headless 1920 x 1080 at the defaults: FSR 2 at 1.5, half
+lighting, the coarse shadow walk, one sky ray; loaded runs, indicative): the RADV RENOIR's
+light pass reads 10.5 ms on the hills at noon (1.2 with the sky off), 8.2 inside the cave
+mouth and 12.5 in the forest at a 10-degree sun, against the 6.0 ms line, and its frame 37.5
+to 45.8 ms against 16.6; the RTX 3080 Laptop reads 0.9 to 1.4 ms of light pass (0.1 to 0.2
+with the sky off) and a 5.1 to 5.6 ms frame. Phase 6's table reads the sky ray at about 4.8 ms
+a ray on the RENOIR and about 0.25 on the RTX. The owner's picks of 2026-11-17 (one sky ray,
+the half tier, leaf fill 64) move none of these; ADR-0070 (Plan 0086) takes the sky ray off at
+rest inside the bake radius, and its close replaces this paragraph with the reading. Tables in
+[`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md).
+
 Every reading against this budget, with its machine, scene and commit, is in
 [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md); new readings go there.
 

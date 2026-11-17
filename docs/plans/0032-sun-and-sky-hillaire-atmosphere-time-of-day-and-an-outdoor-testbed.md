@@ -1,6 +1,6 @@
 # 0032: Sun and sky: a Hillaire atmosphere, a time of day the game sets, the sun and moon as a directional sample, sky light from a sky ray, an outdoor testbed source
 
-> **Status:** in-progress (lane plan-0032 from 2026-11-16, stacked on plan-0069); approved (2026-10-22), redesigned 2026-11-10 (review pass; owner chose the redesign)
+> **Status:** in-progress (lane plan-0032 from 2026-11-16, stacked on plan-0069); approved (2026-10-22), redesigned 2026-11-10 (review pass; owner chose the redesign); amended 2026-11-17 (owner, after the Phase 9 window: Phases 10 and 11 below)
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
@@ -70,6 +70,33 @@
 > [Plan 0081](0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md),
 > which starts after this plan and styles this plan's `grass` row. The default `--trees` stays
 > `none` until Phase 9's verdict (the owner may ask for `sparse` there).
+
+> **Amended 2026-11-17 (owner).** Phase 9 ran on 2026-11-17; the verdict is in the readings
+> log and the diagnosis and options in
+> [the review of 2026-11-17](../reviews/2026-11-17-plan-0032-window.md). The owner's picks,
+> and what this plan takes of them:
+> - **Lit by default** (the review's B1): an absent chunk is sky to the lighting rays. The
+>   residency-ball rule of Decision 2 and Phase 5 is dropped; "leaving the ball or the window
+>   is sky" stays, and Plan 0033's clipmap (B3) is the end state. Decision 2, the Interface's
+>   "Lighting rays" and Phase 5 bar 5 change below, and the new **Phase 10** builds it.
+>   ADR-0027 carries the Outcome.
+> - **The picks as defaults** (E1): the sun's and the moon's angular radius 3 degrees in the
+>   testbed (one radius per body, A1; the engine's real default stays), the outdoor auto
+>   exposure as Phase 4 set it, one sky ray and the half lighting tier, `LEAF_FILL` 64.
+>   **Phase 11** (Phase 10 before this amendment) writes the tests, goldens and bars at these
+>   values; Phase 8's forest hash is re-pinned and its goldens blessed at 64 as a disclosed
+>   change. `--trees` stays `none` (the owner did not ask).
+> - **Phase 6's stop rule** is restated on an occluded rig (the tunnel), where it fires: see
+>   the amendment under Phase 6. Its amendment is the plan below, not a fifth ray.
+> - **The flicker's mechanisms** (the review's C1 and C2, both; D1 to D4, all four) go to
+>   [Plan 0086](0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md)
+>   with [ADR-0070](../adrs/0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md),
+>   which starts when this plan has closed and merged, each mechanism behind the attribution
+>   reading the review names. This plan does not grow a bake channel or a history pair: its
+>   close reviews the sky, the testbed and the defaults, and Plan 0086's reviews the fixes.
+>   Plan 0086's last phase re-blesses the goldens its mechanisms move, as a disclosed change.
+> - **The CPU settle** (E3: the bake queue's step on a world with no emitter, the forest's
+>   sync p99) is a dated entry in `docs/backlog.md`, not a phase here.
 
 ## TL;DR
 
@@ -152,10 +179,14 @@ the same and no ray is added.
    discs.
 2. **Misses.** The composite shades a primary miss with `sky_radiance(d)` plus the sun's and
    the moon's discs, with the translucent layers over it. A lighting ray (the directional
-   shadow ray or the sky ray) whose walk enters an absent chunk inside the residency ball stops
-   as occluded. A lighting ray that leaves the ball or the window has reached the sky. A sky
-   ray that reaches the sky below the horizon returns 0: the ground there is unknown, and it
-   is rock more often than lit sky.
+   shadow ray or the sky ray) that leaves the ball or the window has reached the sky, and so
+   has one that enters an absent chunk: **unknown is lit** (amended 2026-11-17, owner; the
+   rule before it, "an absent chunk inside the residency ball is solid", shadowed the far
+   ground while the stream filled and at the leading edge of every move, which the owner read
+   as flicker; the leak it prevented is a transient at the ball's edge, far from the camera,
+   and Plan 0033's clipmap reads the coarse cell there instead of guessing). A sky ray that
+   reaches the sky below the horizon returns 0: the ground there is unknown, and it is rock
+   more often than lit sky.
 3. **The directional sample** (ADR-0027). One disc-sampled shadow ray toward the sun, or
    toward the moon at night. Its value is the illuminance times the transmittance at the hit's
    altitude times `max(n.l, 0)` times the ray's visibility. It is added to the light pass's
@@ -164,7 +195,10 @@ the same and no ray is added.
    shading normal, with the frame's shadow walk and a length cap. Its estimate
    `pi sky_radiance(d)` is added to the same direct target. There is no probe term and no
    second mechanism to cross-fade with. Phase 6 measures the estimate's frame-to-frame change
-   before it fixes the number of rays.
+   before it fixes the number of rays. (Amended 2026-11-17: the owner's window read the ray
+   as flicker where the sky is partly occluded; ADR-0070 and Plan 0086 bake a sky visibility
+   per brick direction and keep the ray, on a long history, only where the bake is stale. This
+   plan's ray and its one-ray default stand until Plan 0086 lands.)
 5. **The change rule.** The direct accumulation blends at `max(ALPHA, 1 / (age + 1))`, so a
    drifting sun is followed by the blend alone and raises nothing. A **jump** (the body turns
    by more than its angular radius in one frame, the body in use switches, its illuminance
@@ -244,6 +278,11 @@ does not rename it without an architect amendment.
   albedo. Its accumulation pair blends at `max(ALPHA, 1 / (age + 1))` with the lamp's
   reprojection, edit-box and no-history resets (Plan 0058, Data shapes). No later plan may
   assume a long history there: a term that changes is followed to 90 % within eleven frames.
+  (Amended 2026-11-17: Plan 0086 moves the sky ray's estimate, and after a reading the key
+  light's visibility, to a running mean of their own on a pair of the lighting grid, under
+  ADR-0070; the direct target keeps the lamp and the list. A later plan that attenuates the
+  key light frame to frame, a cloud shadow, reads Plan 0086's Interface for which history its
+  term rides.)
 - **The change rule.** A sky jump (Decision 5) sets this plan's sky-change bit for one frame,
   and every pixel of the direct accumulation then takes that frame's sample. The sky uniform
   holds the key light and the sky's scale for this frame and for one frame older, and the
@@ -251,11 +290,13 @@ does not rename it without an architect amendment.
   whose term changes the direct target frame to frame (a cloud shadow, a lightning flash)
   either stays under that comparison's thresholds or adds its own now-and-then pair there;
   it does not raise `LIGHTING_LIGHTS_CHANGED` or `LIGHTING_EMISSION_CHANGED`.
-- **Lighting rays.** `march` takes a per-call argument that treats an absent chunk inside the
-  residency ball as solid; the directional shadow ray and the sky ray pass it, primary rays
-  and the bake never do. A lighting ray that leaves the ball or the window has reached the
-  sky. `SKY_RAY_VOXELS` caps the sky ray; beyond the cap counts as sky. Plan 0033 replaces
-  "leaving the ball is sky" with its far field.
+- **Lighting rays.** A lighting ray (the directional shadow ray, the sky ray) walks the
+  mirror as a primary ray does: an absent chunk is air to it, and a ray that leaves the ball
+  or the window has reached the sky (amended 2026-11-17, owner; the per-call "absent inside
+  the ball is solid" argument and the sky uniform's `ball_r2` are removed by Phase 10, and no
+  later plan reintroduces them). `SKY_RAY_VOXELS` caps the sky ray; beyond the cap counts as
+  sky. Plan 0033 replaces "leaving the ball is sky" and "an absent chunk is air" with its far
+  field's coarse cells.
 - **Misses.** On a primary miss outside the cutaway the composite sets
   `c = (sky_radiance(d) + body_disc(d)) * exposure_now()` ahead of its variant select, so the
   display variant, FSR 2's HDR variant and the meter all carry it. A plan that draws on miss
@@ -580,6 +621,7 @@ README says which.
      `crates/vxe-render/tests/gpu_mirror.rs` (about 5 s): on a streamed mirror, a floor whose
      chunk column above is absent but inside the residency ball reads 0. After that chunk
      syncs as `EMPTY_BIT` air, the floor reads the noon value of bar 1.
+     **Amended 2026-11-17 (owner):** reversed by Phase 10, whose bar 1 inverts this test.
   6. **A jump resets, a drift does not.** `a_sun_jump_resets_and_a_drift_does_not` in
      `gpu_lights.rs` (filter on, the sun at the real radius; about 10 s): turning the sun by
      10 degrees in one frame sets the sky-change bit on that frame and no other, and every pixel that
@@ -622,6 +664,21 @@ README says which.
     architect amends the plan** before Step B. The named candidate for that amendment is a
     sky-ray target of its own on a longer history (ADR-0027, Alternative F), which costs a
     target pair and a slower answer to an edit; it is not built without that reading.
+    **Amended 2026-11-17 (owner).** Step A's rig had no partial occluder: on the open floor
+    every ray reaches the sky and the variance is exactly 0, so the rule passed at `N` 1
+    without reading the case the window shows. The rule is restated on an occluded rig, the
+    tunnel pose (`--spawn inside --time 12:00`, the lamp off), on two regions the reading
+    names: the mouth's rim band, where the ray's hit rate is about 0.3 to 0.6, and the far
+    end's floor, where it is under 0.05. The statistic is Step A's (the 99th-percentile
+    frame-to-frame change of the displayed image over 64 still frames after 64 settle frames,
+    FSR 2 at 1.5) against the headlamp on the same pose with the sky off. By the owner's eye
+    on 2026-11-17 the rule fails there at `N` 1 ("very much flicker on tunnel edge", "super
+    flickery" at the far end), and a Bernoulli at hit rate 0.03 has a relative standard
+    deviation of 0.71 even on a 64-frame mean, so no `N` up to 4 is tried: the stop clause
+    has fired and its amendment is Plan 0086 under ADR-0070 (the visibility baked per brick
+    direction, the ray on a long history only where the bake is stale). Plan 0086's Phase 1
+    takes the quantified reading and its last phase writes the bar; this plan's Phase 11
+    keeps bar 4 on the open floor and records the tunnel reading beside it.
   - **Step B, the bars.** With the default `N` set, the bars below are asserted, `--sky-rays`
     keeps its flag, and the banner names the count while a sky is set.
 - **Files touched:** `light.wgsl` (or `sky_light.wgsl`), `sky.wgsl`, `marcher.rs` (the count),
@@ -867,18 +924,86 @@ README says which.
   is a one-line commit after it, with Phase 3's pinned hash and Phase 7's goldens re-read
   under it as a disclosed deviation).
 
-### Phase 10: The picks as tests
+### Phase 10: Lit by default: an absent chunk is sky to the lighting rays
 
 - **Owner skill:** dev
-- **What:** the image tests, goldens and bars Phases 1 to 8 name, written now with the
-  values the Phase 9 window settled, and the readings they replace cited from the log.
-- **Files touched:** the `gpu_*` test files and `golden/` images Phases 1 to 8 name,
+- **What** (amended 2026-11-17, owner; the review's B1): the residency-ball rule goes. The
+  sky's lighting rays no longer set `absent_ball_r2` around their `march`; the walk's `ABSENT`
+  branch under it and the variable are removed from `walk.wgsl`, `ball_r2` leaves the sky
+  uniform (`frame/sky.rs`, `sky_atmosphere.wgsl`), and `LodParams::r_lod` with its
+  `settings.rs` row and the two `set_lod` call sites go unless something else in the tree
+  reads them (`dev` greps; the log says which). An absent chunk is air to every ray, and a
+  lighting ray that leaves the ball or the window has reached the sky, as before. The bake's
+  source changes (`walk.wgsl`), so a `--bake-file` store re-bakes once; the log says so. No
+  flag and no setting: the rule is not a mode (its branch cost a test per step, so the owner's
+  "a setting that costs nothing when off stays" does not hold for it), and Plan 0033's
+  clipmap is where unknown reads a coarse cell instead of air.
+- **Files touched:** `crates/vxe-render/src/shaders/walk.wgsl`, `sky_light.wgsl`,
+  `sky_atmosphere.wgsl`, `crates/vxe-render/src/frame/sky.rs`, `frame/settings.rs`,
+  `frame/encode.rs`, `settings.rs`, `crates/vxe-render/tests/gpu_sun.rs` (bar 1),
+  `apps/flythrough/tests/gpu_outdoor.rs` (bar 3), `apps/flythrough/src/run/mod.rs` and
+  `cli/settings.rs` (the `set_lod` calls, if `r_lod` goes), `tests/support/mod.rs` and
+  `tests/gpu_golden.rs` (`LodParams` literals), `docs/flythrough.md` (if a row names it),
   `docs/plans/logs/0032.md`.
+- **Done when:**
+  1. **Unknown is lit.** `an_absent_chunk_is_sky_to_the_sun` in `gpu_sun.rs` (Phase 5 bar
+     5's rig, inverted; about 6 s): the 1 x 1 x 2 window over a 1 x 1 x 1 world whose upper
+     chunk is absent reads the noon value `(0.9404, 0.8677, 0.7623)` within 1 % at the floor
+     pixel, the same as with the upper chunk synced all-air (the Phase 5 reading
+     `(0.94092, 0.86865, 0.76367)`). Under `Sky::uniform(1.0)` on the same rig the sky ray
+     reads `pi` within 10 % with the upper chunk absent.
+  2. **Nothing of the rule is left.** No `absent_ball_r2` or `ball_r2` in
+     `crates/vxe-render/src/shaders/` or `crates/vxe-render/src/` (a grep in the log), and
+     `a_closed_box_takes_no_sky_light`'s claim (Phase 6 bar 3, written in Phase 11) holds: a
+     resident closed box still takes no sky light, because its walls are present, not because
+     anything was absent.
+  3. **The far ground does not wait for the stream.**
+     `reading::the_far_ground_is_lit_while_the_stream_fills` in `gpu_outdoor.rs` (a reading
+     printed to the log, no bar; about 15 s): the outdoor noon pose at `--residency 6,8`
+     from its first frame, the direct target's mean luminance over the farthest third of the
+     ground pixels at frames 2, 30 and 120 of the stream. Before this phase (the Phase 9 tree)
+     it rises as the shell arrives; after it the three readings are within 10 % of one
+     another. Both rows go in the log.
+  4. **The bake re-bakes once.** The bake's source hash differs from Phase 8's and
+     `a_baked_face_ignores_the_sky` (Phase 5 bar 8) still passes: the bake never took the
+     argument, so its values are unchanged but for the hash.
+
+### Phase 11: The picks as tests
+
+- **Owner skill:** dev
+- **What** (Phase 10 before the amendment of 2026-11-17): the image tests, goldens and bars
+  Phases 1 to 8 name, written now at the values the Phase 9 window settled (the review's
+  A1 and E1), under Phase 10's rule, and the readings they replace cited from the log. The
+  picked values, each a default the window chose:
+  - **The bodies' radius:** the testbed's sun and moon at 3 degrees (`daylight.rs`, one
+    `angular_radius` per body; `--sun-radius` keeps its flag at a default of 3, and a
+    `--moon-radius DEG` flag with the same range and default lets the owner tune the moon).
+    The engine's `Sky::sun.angular_radius` default stays the real 0.2665 degrees; the disc
+    (`disc_of` in `sky.wgsl`) and the shadow use the same radius, as built.
+  - **The exposure:** the outdoor preset `AutoExposure { min: 1e-4, max: 4.0, ..eye() }`,
+    as Phase 4 set it ("6 exposure are fine", "7 too dark").
+  - **The rays and the tier:** `DEFAULT_SKY_RAYS` 1 and the half lighting tier, the defaults
+    as built ("8-10 no big difference, we need to use what is faster").
+  - **The canopy:** `LEAF_FILL` 64 ("14 these trees looks better"); `--leaf-fill` keeps its
+    range with 64 the default; `forest_vector`'s hash is re-pinned at 64 and
+    `a_tree_is_what_the_formula_says` reads three quarters of the lattice points within 3 %
+    (the binomial standard deviation of a 0.75 keep at 24 400 points is about 73, 0.4 % of
+    18 300). `--trees` stays `none`.
+- **Files touched:** `apps/flythrough/src/daylight.rs`, `cli/outdoor.rs`, `cli/tests.rs`,
+  `trees.rs`, `tests/determinism.rs`, `tests/outdoor.rs`, the `gpu_*` test files and
+  `golden/` images Phases 1 to 8 name, `docs/flythrough.md`, `docs/plans/logs/0032.md`.
 - **Done when:** every image test Phases 1 to 8 name exists, asserts the picked value or
   the bar the plan states (a bar the window moved says so in the log, with the owner's words),
   and passes in the gpu tier under the lock; each one over 10 s on lavapipe is
-  `#[ignore = "soak"]` and passes once by name. A test for a mechanism the window dropped
-  is not written, and the log names it.
+  `#[ignore = "soak"]` and passes once by name. In particular: Phase 5 bar 3's penumbra (the
+  reading: a rise of 2.75 voxels against 2.8 +- 0.6), bar 6's settle and bar 7's mask; Phase
+  6 bars 2 and 3, and bar 4 on the open floor at `N` 1, with the tunnel pose's two regions
+  read beside it and recorded (the restated stop rule; the bar there is Plan 0086's); Phase
+  7's goldens and bar 2; Phase 8 bar 5 (the readings: centroids within 0.3 and 0.9 voxels,
+  ratio 1.735) and bar 6 at fill 64. The parse test pins the four defaults above and
+  `--moon-radius`. A test for a mechanism the window dropped is not written, and the log
+  names it. The goldens are blessed at these values under Phase 10's rule; Plan 0086
+  re-blesses the ones its mechanisms move.
 
 ## Data shapes
 
@@ -986,10 +1111,13 @@ with Phase 7's readings at the close.
   voxels a frame at 60 fps. At sunset the forest floor's shadow edges are close to one-frame
   noise while the cycle runs. Phase 9 judges it; a per-pixel mark where the directional term
   changed is the followup if the eye asks.
-- **Light leaks into caves.** The rules are: an absent chunk inside the ball is solid for
-  lighting rays; below the horizon is 0; the sky ray is capped. The first consumer sets the
-  sky off. A cave whose open passage reaches the residency ball's edge still sees sky through
-  it. Plan 0033 replaces "leaving the ball" with real far terrain.
+- **Light leaks into caves.** The rules are (amended 2026-11-17): an absent chunk is air to
+  a lighting ray, so a far cave whose roof chunk has not streamed yet sees the sun for the
+  frames until it arrives (the near chunks are resident before the first frame, so this is
+  far from the camera); below the horizon is 0; the sky ray is capped. The first consumer
+  sets the sky off. A cave whose open passage reaches the residency ball's edge still sees
+  sky through it. Plan 0033 replaces "leaving the ball" and "absent is air" with real far
+  terrain.
 - **The ring's edge shows sky.** Beyond `r_lod` nothing is drawn, so outdoors the terrain
   ends about 154 m out and the sky shows beneath the horizon there, until Plan 0033.
 - **Cost of the directional and sky rays.** A sunward ray runs to the edge of the near field.
@@ -1078,6 +1206,9 @@ apply: the guard and the long emissive history are gone, and Plan 0048 was dropp
 - **The sun as a list light.** ADR-0044's list holds point and spot lights and has no directional kind; the sun is ADR-0027's
   dedicated sample and takes no slot.
 - **Baseline-GPU readings.** The card is not on hand.
+- **The flicker's fixes** (amended 2026-11-17): the baked sky visibility and the rays' long
+  history (ADR-0070), the canopy that shadows as its brick, the staircase's history, the
+  penumbra spike. Plan 0086 carries them, after this plan closes.
 
 ## Implementation log
 
@@ -1100,8 +1231,9 @@ Readings and gate counts: [`logs/0032.md`](logs/0032.md).
 | 6: Sky light: one cosine-weighted sky ray, its stillness measured first | dev | done; default 1 ray; bars 2 to 4 are readings (exploration); bar 6 one run each (Notes) | d261667c |
 | 7: The four goldens, the HUD rows and the readings | dev | done; goldens and bars 1, 2 wait for Phase 10; bars 3, 4 read (Notes) | a66a9463 |
 | 8: Trees, the shadow that travels with the sun, and the forest at low sun | dev | done; bar 5 a reading, bar 6 waits for Phase 10; ForestSource for StampedSource (Notes) | 4cad9482 |
-| 9: The owner's windowed check | human | not started | |
-| 10: The picks as tests | dev | not started | |
+| 9: The owner's windowed check | human | done 2026-11-17; the verdict in the log, the picks in the amendment of 2026-11-17 | 9c5d6ef9 |
+| 10: Lit by default: an absent chunk is sky to the lighting rays | dev | not started | |
+| 11: The picks as tests | dev | not started | |
 
 ### Notes
 
