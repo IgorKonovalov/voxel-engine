@@ -217,6 +217,10 @@ pub(crate) const LIGHTING_HOOK_SKY_RAY_ALWAYS: u32 = 1 << 20;
 /// firefly clamp is off.
 pub(crate) const LIGHTING_HOOK_NO_CLAMP: u32 = 1 << 21;
 
+/// `Params::lighting` bit: the key light's shadow ray is the closest-approach penumbra
+/// ([`Penumbra::Approach`]).
+pub(crate) const LIGHTING_PENUMBRA_APPROACH: u32 = 1 << 22;
+
 /// The light passes' reading hooks ([`Frame::set_light_hooks`]): switches that take a term or a
 /// test out of the frame to attribute what the image does to it. All off by default; each is
 /// a uniform branch on a `Params::lighting` bit.
@@ -547,6 +551,26 @@ named_enum!(ShadowWalk {
     Coarse => "coarse",
 });
 
+/// How the key light's shadow ray makes its penumbra (Plan 0086 Phase 7's spike).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Penumbra {
+    /// One ray toward a uniform point of the body's disc a pixel and frame: the penumbra is the
+    /// mean over frames and pixels. The default.
+    #[default]
+    Disc,
+    /// One ray toward the body's centre that keeps, along its walk, the smallest ratio of the
+    /// distance from the ray to a solid 2^3 block beside it (probed two voxels across the ray's
+    /// dominant axis, about every two voxels through cells of a brick's edge or less) to
+    /// `t tan r`, `r` the body's angular radius: the visibility is that ratio clamped to 1, 0
+    /// where the ray hits. The same every frame; a penumbra on the lit side of the edge only.
+    Approach,
+}
+
+named_enum!(Penumbra {
+    Disc => "disc",
+    Approach => "approach",
+});
+
 /// How a cube face's hit reads its emissive part from the store (ADR-0049).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum StoreRead {
@@ -779,6 +803,8 @@ pub struct Lighting {
     /// [`MAX_SKY_HISTORY`] (default [`DEFAULT_SKY_HISTORY`]): the sky rays' visibility at a
     /// pixel with no fresh baked value is their mean over up to this many frames.
     pub sky_history: u32,
+    /// How the key light's shadow ray makes its penumbra ([`Penumbra`]; default `Disc`).
+    pub penumbra: Penumbra,
 }
 
 /// [`Lighting::sky_history`]' largest value: the pair's age is a half, exact to 2048.
@@ -817,6 +843,7 @@ impl Default for Lighting {
             light_floor: DEFAULT_LIGHT_FLOOR,
             sky_rays: DEFAULT_SKY_RAYS,
             sky_history: DEFAULT_SKY_HISTORY,
+            penumbra: Penumbra::Disc,
         }
     }
 }
@@ -889,6 +916,11 @@ impl Lighting {
             }
             | if self.entity_light == EntityLight::World {
                 LIGHTING_ENTITY_WORLD
+            } else {
+                0
+            }
+            | if self.penumbra == Penumbra::Approach {
+                LIGHTING_PENUMBRA_APPROACH
             } else {
                 0
             }

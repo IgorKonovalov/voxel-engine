@@ -925,6 +925,7 @@ impl Args {
                 .outdoor
                 .sky_history
                 .unwrap_or(vxe_render::DEFAULT_SKY_HISTORY),
+            penumbra: self.outdoor.penumbra,
             ..crate::default_lighting()
         })
     }

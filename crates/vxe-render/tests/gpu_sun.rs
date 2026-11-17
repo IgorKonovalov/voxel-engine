@@ -1626,4 +1626,136 @@ mod reading {
             );
         }
     }
+
+    /// The key light's visibility across the slab rig's +x edge (`penumbra_band`'s slab and
+    /// camera, native 128 x 128, the lighting at full resolution, the filter off, exposure 1,
+    /// no sky rays) under a zenith sun of `radius_deg`: per bin of a quarter voxel in x over
+    /// 36..46 (the lighting hits with y in 30..34), the light pass's direct sample over the open
+    /// floor's (x 46..50), with `penumbra`; the disc's as a mean over 64 frames, the approach's
+    /// at frame 1, and the approach's largest change of a bin from frame 1 to frame 2.
+    fn edge_profile(radius_deg: f32, penumbra: vxe_render::Penumbra) -> Option<(Vec<f64>, f64)> {
+        let (device, queue) = device()?;
+        let slab = |p: [i32; 3]| {
+            p[2] == FLOOR + 20 && (24..40).contains(&p[0]) && (24..40).contains(&p[1])
+        };
+        let world = floor_world([1, 1, 1], slab);
+        let gpu = mirror(&device, &queue, &world, None);
+        let cam = Camera {
+            position: Vec3::new(40.0, 32.0, FLOOR as f32 + 8.0),
+            yaw: FRAC_PI_2,
+            pitch: -FRAC_PI_2 + 1e-4,
+            vfov: 2.0 * 2f32.atan(),
+        };
+        let mut f = frame(&device, [128, 128], ShadowWalk::Coarse);
+        f.set_lighting(Lighting {
+            penumbra,
+            ..f.lighting()
+        });
+        let mut s = sky(dir(90.0, 0.0), dir(-90.0, 0.0), [[1.0; 3], [0.0; 3]]);
+        s.sun.angular_radius = radius_deg.to_radians();
+        f.set_sky(Some(s));
+        const BINS: usize = 40;
+        let frames = if penumbra == vxe_render::Penumbra::Disc {
+            64
+        } else {
+            2
+        };
+        let mut runs = Vec::new();
+        let light = LightParams::headlamp();
+        for _ in 0..frames {
+            f.step(&device, &queue, &gpu, &cam, &light);
+            let d = vxe_render::debug::read_rgba16f(&device, &queue, f.direct());
+            let h = vxe_render::debug::read_rgba32f(&device, &queue, f.light_hit_positions());
+            let (mut sum, mut n) = ([0.0f64; BINS], [0u32; BINS]);
+            let (mut open, mut on) = (0.0f64, 0u32);
+            for (p, q) in h.iter().zip(&d) {
+                if p[3] > 1.0e30 || !(30.0..34.0).contains(&p[1]) {
+                    continue;
+                }
+                if (46.0..50.0).contains(&p[0]) {
+                    open += f64::from(q[3]);
+                    on += 1;
+                }
+                let b = ((p[0] - 36.0) * 4.0).floor();
+                if (0.0..BINS as f32).contains(&b) {
+                    sum[b as usize] += f64::from(q[3]);
+                    n[b as usize] += 1;
+                }
+            }
+            let open = open / f64::from(on.max(1));
+            runs.push(
+                (0..BINS)
+                    .map(|i| sum[i] / f64::from(n[i].max(1)) / open.max(1e-9))
+                    .collect::<Vec<f64>>(),
+            );
+        }
+        let mean: Vec<f64> = (0..BINS)
+            .map(|i| runs.iter().map(|r| r[i]).sum::<f64>() / runs.len() as f64)
+            .collect();
+        if penumbra == vxe_render::Penumbra::Disc {
+            return Some((mean, 0.0));
+        }
+        let change = (0..BINS)
+            .map(|i| (runs[1][i] - runs[0][i]).abs())
+            .fold(0.0, f64::max);
+        Some((runs[0].clone(), change))
+    }
+
+    /// The first x (voxels) at which `profile` (bins of a quarter voxel from x 36) reaches
+    /// `level`, linear between bins' centres.
+    fn crossing(profile: &[f64], level: f64) -> Option<f64> {
+        let x = |i: usize| 36.0 + (i as f64 + 0.5) / 4.0;
+        (1..profile.len()).find_map(|i| {
+            let (a, b) = (profile[i - 1], profile[i]);
+            (a < level && b >= level).then(|| x(i - 1) + (level - a) / (b - a) * 0.25)
+        })
+    }
+
+    /// Plan 0086 Phase 7 bar 1: the approach penumbra's profile across the slab's edge at one
+    /// frame against the disc's 64-frame mean, at 5 and 3 degrees: the 5 %, 50 % and 95 %
+    /// crossings of each, the rise's width (5 % to 95 %), the largest gap between the profiles
+    /// and the approach's change from frame 1 to 2. Printed; lavapipe.
+    #[test]
+    #[ignore = "reading"]
+    fn approach_penumbra_against_the_disc() {
+        use vxe_render::Penumbra;
+        for r in [5.0, 3.0] {
+            let Some((disc, _)) = edge_profile(r, Penumbra::Disc) else {
+                return;
+            };
+            let Some((approach, change)) = edge_profile(r, Penumbra::Approach) else {
+                return;
+            };
+            for (name, p) in [("disc", &disc), ("approach", &approach)] {
+                let c: Vec<String> = [0.05, 0.5, 0.95]
+                    .iter()
+                    .map(|&l| crossing(p, l).map_or("-".into(), |x| format!("{x:.2}")))
+                    .collect();
+                let width = crossing(p, 0.05)
+                    .zip(crossing(p, 0.95))
+                    .map_or("-".into(), |(a, b)| format!("{:.2}", b - a));
+                println!(
+                    "reading: edge at {r} degrees, {name}: crossings 5/50/95 % at x {}, width {width}",
+                    c.join(" / ")
+                );
+            }
+            let gap = disc
+                .iter()
+                .zip(&approach)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0, f64::max);
+            let row = |p: &[f64]| {
+                p.iter()
+                    .step_by(2)
+                    .map(|v| format!("{v:.2}"))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+            println!(
+                "reading: edge at {r} degrees: largest gap {gap:.3}, approach change frame 1 to 2 {change:.4}\n  disc     {}\n  approach {}",
+                row(&disc),
+                row(&approach)
+            );
+        }
+    }
 }

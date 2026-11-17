@@ -425,6 +425,18 @@ fn source_showcase_parses_with_the_lamp_off_and_refuses_what_it_cannot_take() {
 /// `--source outdoor` and its flags: the spawn, the time (refusing 25:00), the day's length
 /// and the sky, on by default for the outdoor source alone; the world flags it refuses.
 #[test]
+fn penumbra_is_disc_unless_named() {
+    // Disc by default and unnamed; approach reaches the lighting and the banner.
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert_eq!(r.start_lighting().penumbra, vxe_render::Penumbra::Disc);
+    assert!(!r.start_modes(0.0).line().contains("penumbra"));
+    let r = parse_args_from(argv(&["--source", "outdoor", "--penumbra", "approach"])).unwrap();
+    assert_eq!(r.start_lighting().penumbra, vxe_render::Penumbra::Approach);
+    assert!(r.start_modes(0.0).line().contains("penumbra approach, "));
+    assert!(parse_args_from(argv(&["--penumbra", "soft"])).is_err());
+}
+
+#[test]
 fn the_outdoor_source_and_its_flags_parse() {
     use crate::outdoor::Spawn;
     let a = parse_args_from(argv(&["--source", "outdoor"])).expect("parses");

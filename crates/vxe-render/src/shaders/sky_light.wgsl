@@ -67,11 +67,21 @@ fn sky_shadowed(o: vec3<f32>, d: vec3<f32>, len: f32) -> bool {
 
 // The key light's sample at a hit at `p`, normal `n`, shadow normal `ns`, lighting pixel `px`:
 // `key_light_at(p, n)` where one shadow ray toward a uniform point of its disc reaches the
-// sky, else 0; 0 with no key light. No firefly clamp: the term is bounded.
+// sky, else 0; 0 with no key light. No firefly clamp: the term is bounded. Under
+// LIGHTING_PENUMBRA_APPROACH the ray runs toward the disc's centre and the term is
+// `key_light_at` times its closest-approach visibility (walk.wgsl's `approach_on`).
 fn key_sample(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>, px: vec2<u32>) -> vec3<f32> {
     let k = key_light_at(p, n);
     if (all(k <= vec3<f32>(0.0)) || (params.lighting & LIGHTING_HOOK_KEY_OFF) != 0u) {
         return vec3<f32>(0.0);
+    }
+    if ((params.lighting & LIGHTING_PENUMBRA_APPROACH) != 0u) {
+        approach_on = true;
+        approach_tan = max(tan(sky.key_radius), 1.0e-4);
+        approach_min = 1.0;
+        let hit = sky_shadowed(sky_origin(p, ns), sky.key_dir, KEY_RAY_LEN);
+        approach_on = false;
+        return select(k * clamp(approach_min, 0.0, 1.0), vec3<f32>(0.0), hit);
     }
     let d = disc_direction(sky.key_dir, sky.key_radius, rand(px, KEY_DIM), rand(px, KEY_DIM + 1u));
     if (sky_shadowed(sky_origin(p, ns), d, KEY_RAY_LEN)) {

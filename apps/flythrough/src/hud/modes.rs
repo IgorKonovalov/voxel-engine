@@ -602,11 +602,8 @@ impl Modes {
         );
     }
 
-    /// The modes in words: `lighting half, store read face, weights normal, shadow walk coarse, history edits, lamp on,
-    /// lamp bounce on at 64 rays 1/8, probes 16, filter on, ore pulse off, exposure auto eye +1.53
-    /// EV` (the probe rays per update, the share of probes refreshed a frame, while the lamp's
-    /// bounce is on the voxels between probes, and the exposure in EV, `log2 e`), after
-    /// `source NAME, ` when the modes name a source.
+    /// The modes in words (`lighting half, ..., lamp bounce on at 64 rays 1/8, probes 16, ...,
+    /// exposure auto eye +1.53 EV`), after `source NAME, ` when the modes name a source.
     pub fn line(&self) -> String {
         let mut out = String::new();
         self.write_line(&mut out);
@@ -624,6 +621,9 @@ impl Modes {
             self.clock.write_words(out);
             let _ = write!(out, ", sky rays {}, ", l.sky_rays);
             out.push_str(self.leaf_shadow.words());
+            if l.penumbra != vxe_render::Penumbra::Disc {
+                let _ = write!(out, "penumbra {}, ", l.penumbra.name());
+            }
         }
         let _ = write!(
             out,

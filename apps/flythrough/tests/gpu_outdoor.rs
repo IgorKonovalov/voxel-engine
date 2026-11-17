@@ -797,6 +797,8 @@ mod reading {
         /// The store baked whole (ADR-0046's one-off bake at the defaults, the sky's channel
         /// with it) before the first frame.
         pub bake: bool,
+        /// The key light's penumbra is the closest approach's (`--penumbra approach`).
+        pub approach: bool,
     }
 
     /// What a cell read over its 64 still frames.
@@ -839,6 +841,11 @@ mod reading {
             lamp: false,
             filter: cell.filter,
             sky_rays: if cell.term == "key" { 0 } else { 1 },
+            penumbra: if cell.approach {
+                vxe_render::Penumbra::Approach
+            } else {
+                vxe_render::Penumbra::Disc
+            },
             ..flythrough::default_lighting()
         };
         f.set_light_hooks(LightHooks {
@@ -892,14 +899,13 @@ mod reading {
         }
         f.set_dt(1.0 / 60.0);
         let light = LightParams::headlamp();
-        // The readout is read every frame: its ring's slots are freed only by a read, so one
-        // read after the loop would return one of the first frames' states.
-        let mut readout = None;
         for _ in 0..64 {
             f.step(&rig.device, &rig.queue, &rig.gpu, cam, &light);
-            readout = f.exposure_readout(&rig.device).or(readout);
         }
-        let exposure = readout.expect("the exposure").exposure;
+        // The state buffer read back blocking: the exposure the next frame uses (the readout's
+        // ring returns an older frame's state).
+        let st = vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_state(), 0, 32);
+        let exposure = vxe_render::ExposureState::from_bytes(&st).current;
         f.set_lighting(Lighting {
             exposure: Exposure::Manual(exposure),
             ..base
@@ -947,6 +953,7 @@ mod reading {
                             leaf_brick: false,
                             no_stair: false,
                             bake: false,
+                            approach: false,
                         });
                     }
                 }
@@ -1091,22 +1098,25 @@ mod reading {
             leaf_brick,
             no_stair: false,
             bake: false,
+            approach: false,
         }
     }
 
     /// The key light's shadow ray's steps in the steps view at `cam` under `sky` (native 320 x
-    /// 180, the defaults, the lamp off), over the lighting pixels that cast one: the mean and the
-    /// 99th percentile, over 4 frames.
+    /// 180, the defaults with `penumbra`, the lamp off), over the lighting pixels that cast one:
+    /// the mean and the 99th percentile, and the mean storage loads, over 4 frames.
     pub(super) fn key_steps(
         rig: &Rig,
         cam: &vxe_render::Camera,
         sky: vxe_render::sky::Sky,
         leaf_brick: bool,
-    ) -> (f64, f32) {
+        penumbra: vxe_render::Penumbra,
+    ) -> (f64, f32, f64) {
         use vxe_render::{LookParams, ViewMode};
         let mut f = Frame::new(&rig.device, 320, 180);
         f.set_lighting(Lighting {
             lamp: false,
+            penumbra,
             ..flythrough::default_lighting()
         });
         f.set_look(LookParams {
@@ -1121,6 +1131,7 @@ mod reading {
         }
         f.set_sky(Some(sky));
         let mut steps: Vec<f32> = Vec::new();
+        let mut loads = 0.0f64;
         for _ in 0..4 {
             f.step(
                 &rig.device,
@@ -1131,12 +1142,19 @@ mod reading {
             );
             let d = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, f.direct());
             steps.extend(d.iter().filter(|p| p[3] > 0.5).map(|p| p[0]));
+            loads += d
+                .iter()
+                .filter(|p| p[3] > 0.5)
+                .map(|p| f64::from(p[1]))
+                .sum::<f64>();
         }
         steps.sort_by(f32::total_cmp);
-        let mean = steps.iter().map(|&v| f64::from(v)).sum::<f64>() / steps.len().max(1) as f64;
+        let n = steps.len().max(1) as f64;
+        let mean = steps.iter().map(|&v| f64::from(v)).sum::<f64>() / n;
         (
             mean,
             steps.get(steps.len() * 99 / 100).copied().unwrap_or(0.0),
+            loads / n,
         )
     }
 
@@ -1161,7 +1179,13 @@ mod reading {
         let hit = |x: usize, y: usize| rate[(y * gh / 180) * gw + x * gw / 320].is_some();
         println!("reading: forest_leaf_shadow on {}", rig.adapter);
         for leaf_brick in [true, false] {
-            let (mean, p99) = key_steps(&rig, &cam, sky_at([10.0, 180.0]), leaf_brick);
+            let (mean, p99, _) = key_steps(
+                &rig,
+                &cam,
+                sky_at([10.0, 180.0]),
+                leaf_brick,
+                vxe_render::Penumbra::Disc,
+            );
             println!(
                 "reading: forest 10/180 leaf {}: key ray steps mean {mean:.2} p99 {p99}",
                 if leaf_brick { "brick" } else { "voxel" }
@@ -1361,6 +1385,45 @@ mod reading {
                 "reading: sky rays {rays}: after the dig, frame:cast pixels:centre stored g {}",
                 row.join(" ")
             );
+        }
+    }
+
+    /// Plan 0086 Phase 7 bar 2: the forest at `60,180` and `10,180` with the penumbra as the
+    /// disc's and the closest approach's: the key ray's steps and loads, and the statistics of
+    /// the defaults' cell (the leaf's SHADOW_AS_BRICK set) at `60,180`. `VXE_TEST_ADAPTER` picks
+    /// the adapter (unset: lavapipe).
+    #[test]
+    #[ignore = "reading"]
+    fn forest_approach() {
+        use vxe_render::Penumbra;
+        let sky_at = |sun: [f32; 2]| {
+            flythrough::daylight::Clock {
+                fixed_sun: Some(sun),
+                ..Default::default()
+            }
+            .sky(flythrough::outdoor::BASE_Z as f32)
+        };
+        let Some((mut rig, cam)) = forest_rig() else {
+            return;
+        };
+        let (rate, gw) = hit_rates(&rig, &cam);
+        let gh = rate.len() / gw;
+        let hit = |x: usize, y: usize| rate[(y * gh / 180) * gw + x * gw / 320].is_some();
+        println!("reading: forest_approach on {}", rig.adapter);
+        for penumbra in [Penumbra::Disc, Penumbra::Approach] {
+            for sun in [[60.0, 180.0], [10.0, 180.0]] {
+                let (mean, p99, loads) = key_steps(&rig, &cam, sky_at(sun), true, penumbra);
+                println!(
+                    "reading: forest {sun:?} {}: key ray steps mean {mean:.2} p99 {p99}, loads mean {loads:.1}",
+                    penumbra.name()
+                );
+            }
+            let cell = Cell {
+                approach: penumbra == Penumbra::Approach,
+                ..default_cell(true)
+            };
+            let r = run_cell(&mut rig, &cam, sky_at([60.0, 180.0]), cell);
+            print_row(penumbra.name(), cell, &r, &[("ground", &hit)]);
         }
     }
 }

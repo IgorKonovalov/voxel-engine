@@ -134,6 +134,60 @@ var<private> styled_from: vec3<i32>;
 // stair smaller than a pixel casts no shadow on its own tread.
 var<private> skip_origin_cell: bool = false;
 
+// Set around the key light's centre ray under the approach penumbra (sky_light.wgsl's
+// `key_sample`, LIGHTING_PENUMBRA_APPROACH): in each empty cell of edge at most APPROACH_CELL
+// (a brick's, so the empty brick beside an occupied one is probed), at points about
+// APPROACH_REACH apart along the ray past `t` APPROACH_T0 (at most four a cell), `march`
+// probes the four voxels APPROACH_REACH across `d`'s dominant axis on the coarse walk and
+// keeps in `approach_min` the smallest ratio of the distance from the point to a solid
+// probe's 2^3 block to `t approach_tan`. Clear for every other walk.
+var<private> approach_on: bool = false;
+
+var<private> approach_tan: f32;
+
+var<private> approach_min: f32;
+
+const APPROACH_CELL: i32 = 8;
+const APPROACH_T0: f32 = 4.0;
+const APPROACH_REACH: i32 = 2;
+
+// `march`'s approach probes along the ray `o + d t` over the empty cell it crosses from `t0` to
+// `t1` (see `approach_on`).
+fn approach_cell(o: vec3<f32>, d: vec3<f32>, t0: f32, t1: f32) {
+    let ta = max(t0, APPROACH_T0);
+    if (t1 <= ta) {
+        return;
+    }
+    let n = clamp(ceil((t1 - ta) / f32(APPROACH_REACH)), 1.0, 4.0);
+    for (var j = 0.0; j < n; j += 1.0) {
+        let t = ta + (j + 0.5) * (t1 - ta) / n;
+        let q = o + d * t;
+        approach_probe(vec3<i32>(floor(q)), q, t, d);
+    }
+}
+
+// The approach probes at voxel `v` holding the ray's point `q` at `t`, `d` the ray's direction.
+fn approach_probe(v: vec3<i32>, q: vec3<f32>, t: f32, d: vec3<f32>) {
+    let a = abs(d);
+    let k = select(select(2, 1, a.y >= a.z), 0, a.x >= a.y && a.x >= a.z);
+    let b = (k + 1) % 3;
+    let c = (k + 2) % 3;
+    var eb = vec3<i32>(0);
+    eb[b] = APPROACH_REACH;
+    var ec = vec3<i32>(0);
+    ec[c] = APPROACH_REACH;
+    var probes = array<vec3<i32>, 4>(v + eb, v - eb, v + ec, v - ec);
+    for (var i = 0; i < 4; i++) {
+        let p = probes[i];
+        if (lookup_walk(p, true).size != 0) {
+            continue;
+        }
+        let lo = vec3<f32>(p & vec3<i32>(-2));
+        let gap = max(lo - q, vec3<f32>(0.0)) + max(q - (lo + 2.0), vec3<f32>(0.0));
+        approach_min = min(approach_min, length(gap) / (t * approach_tan));
+    }
+}
+
 // The material style word's bit (`frame::SHADOW_AS_BRICK`): a shadow ray stops at a brick
 // holding the material.
 const STYLE_SHADOW_AS_BRICK: u32 = 1u;
@@ -744,6 +798,9 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
             return Hit(true, v, axis, t, m);
         }
         let exit = exit_cell(o, d, inv, v, size);
+        if (approach_on && size <= APPROACH_CELL) {
+            approach_cell(o, d, t, exit.t);
+        }
         t = exit.t;
         v = exit.v;
         axis = exit.axis;

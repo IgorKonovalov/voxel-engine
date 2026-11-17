@@ -428,6 +428,7 @@ impl RenderSettings {
         ("lighting.entity_light", Live),
         ("lighting.sky_rays", Live),
         ("lighting.sky_history", Live),
+        ("lighting.penumbra", Live),
         ("look.normal_mode", Live),
         ("look.view", Settle),
         ("look.translucent_layers", Live),
@@ -806,7 +807,8 @@ fn flip(b: &mut bool) {
 fn lighting_test_value(l: &mut Lighting, name: &str) -> bool {
     use crate::exposure::Exposure;
     use crate::frame::{
-        EntityLight, HistoryKill, LightWeights, ShadowWalk, StoreRead, ToneMap, YoungFilter,
+        EntityLight, HistoryKill, LightWeights, Penumbra, ShadowWalk, StoreRead, ToneMap,
+        YoungFilter,
     };
     match name {
         "exposure" => {
@@ -821,6 +823,7 @@ fn lighting_test_value(l: &mut Lighting, name: &str) -> bool {
         "sky_history" => l.sky_history = if l.sky_history == 64 { 128 } else { 64 },
         "candidates" => l.candidates = if l.candidates == 4 { 8 } else { 4 },
         "shadow_walk" => other(&mut l.shadow_walk, ShadowWalk::Full, ShadowWalk::Coarse),
+        "penumbra" => other(&mut l.penumbra, Penumbra::Disc, Penumbra::Approach),
         "filter" => flip(&mut l.filter),
         "atrous_iterations" => l.atrous_iterations = if l.atrous_iterations == 2 { 4 } else { 2 },
         "history" => other(&mut l.history, HistoryKill::Edits, HistoryKill::Gradient),

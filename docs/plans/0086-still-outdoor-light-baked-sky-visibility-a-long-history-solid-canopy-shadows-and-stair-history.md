@@ -566,8 +566,8 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
 | 3: History across a stair in the far-normal regime | dev | done | 7a3c6d72 |
 | 4: The sky visibility baked per brick direction | dev | done | b8a23a9c |
 | 5: The rays' own long history, the sky ray only where stale | dev | done | 012bd208 |
-| 6: The key light on the long history, after a reading | dev | done (reading only: 3-degree p99 1 at the lamp's 1, not built) | committed with this row |
-| 7: A spike: a deterministic penumbra from the closest approach | dev | not started | |
+| 6: The key light on the long history, after a reading | dev | done (reading only: 3-degree p99 1 at the lamp's 1, not built) | 12fe6373 |
+| 7: A spike: a deterministic penumbra from the closest approach | dev | done (spike; cost on the RTX approach arm and the RENOIR not read) | committed with this row |
 | 8: The owner's windowed check | human | not started | |
 | 9: The picks as tests | dev | not started | |
 
@@ -619,6 +619,12 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
   Two clippy lints in Phase 5's `gpu_sun.rs` fixed.
 - Phase 6: stopped at its reading (the 3-degree band's p99 1, the lamp's 1); the lamp's
   calibrated level read 193 rather than 118. No forest lamp reading.
+- Phase 7: the probes run in empty cells of edge 8 or less at points about 2 voxels apart
+  (the plan's sketch: each coarse step; the resume sketch: cells of 2 or less), and the steps
+  view's key ray takes the approach too (`shade.wgsl`, outside the phase's files), as do
+  `frame/compose.rs`, `lib.rs` and `docs/flythrough.md`. The approach penumbra is one-sided
+  (lit side only). The readings' `run_cell` reads the exposure blocking now. Bar 1's canopy
+  profile not read; bar 2's light pass read for the disc on the RTX only.
 
 ### Close triggers
 

@@ -102,8 +102,8 @@ fn shade_px(gid: vec3<u32>) {
         // frame's shadow walk: their loop iterations, storage loads and pool loads summed
         // (unclamped), and in a the rays cast; 0 where none is cast.
         // The key light's shadow ray, cast as `key_sample` casts it where the key light
-        // reaches the hit: its loop iterations, storage loads and pool loads, and 1 in a; 0
-        // where none is cast.
+        // reaches the hit (the approach penumbra's probes in its loads): its loop iterations,
+        // storage loads and pool loads, and 1 in a; 0 where none is cast.
         var counts = vec4<f32>(0.0);
         var key = vec4<f32>(0.0);
         if (rec.found && (params.flags & FLAG_CUTAWAY) == 0u) {
@@ -130,11 +130,19 @@ fn shade_px(gid: vec3<u32>) {
             }
             counts = vec4<f32>(f32(steps), f32(storage), f32(pool), f32(rays));
             if (any(key_light_at(rec.p, rec.n) > vec3<f32>(0.0))) {
-                let d = disc_direction(sky.key_dir, sky.key_radius, rand(gid.xy, KEY_DIM), rand(gid.xy, KEY_DIM + 1u));
+                var d = disc_direction(sky.key_dir, sky.key_radius, rand(gid.xy, KEY_DIM), rand(gid.xy, KEY_DIM + 1u));
+                let approach = (params.lighting & LIGHTING_PENUMBRA_APPROACH) != 0u;
+                if (approach) {
+                    d = sky.key_dir;
+                    approach_tan = max(tan(sky.key_radius), 1.0e-4);
+                    approach_min = 1.0;
+                }
                 set_ray_lift(rec, params.views[view_of(full_px(gid.xy))]);
                 walk_steps = 0u;
                 loads = 0u;
+                approach_on = approach;
                 sky_shadowed(o + ray_lift, d, KEY_RAY_LEN);
+                approach_on = false;
                 key = vec4<f32>(f32(walk_steps), f32(counted_loads()), f32(counted_pool_reads()), 1.0);
             }
         }
