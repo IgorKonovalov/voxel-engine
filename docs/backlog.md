@@ -854,3 +854,17 @@ its own app under `apps/`. The fly-through and the native paths never change or 
 for it; any crate support is target-gated. Not before the engine has steady lighting, coloured
 materials, a sky and a way to build interesting architecture.
 
+### Designer authoring: level and logic text, a separate compiler, an editor over the text
+
+Parked 2026-11-17 (owner: "letting non programmer build levels and game logic", "a layered
+architecture and keep the text", "a future idea after everything that we have will be polished").
+ADR-0072 (proposed) records the frame: five layers, text the truth at each, a compiler in
+`tools/` that emits a logic component and baked level data, an optional editor that reads and
+writes the same text, both the human and the agent workflow first class. Its shortlists (the
+rule language against a Lua dialect, the compiler's home, level editing before an editor, the
+engine's mechanisms: a level loader, named regions and their events, a replay-based component
+swap, machine-readable run output) carry a recommendation each and six owner questions.
+**Waits on the engine's own mechanisms:** destruction, physics and water (the chunk-scale
+dynamics entry above, M8, M10's liquids) and the current polish. Pick up with a spike plan, as
+the ADR's "What a first plan would be" describes; the owner questions are answered then.
+
