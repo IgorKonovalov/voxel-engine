@@ -2,14 +2,12 @@
 //! printed lines.
 
 use crate::app::ms_since;
-use crate::edits::voxel_of;
 use crate::now;
 use crate::percentile;
 use crate::run::Run;
 use crate::run::hud_feed::write_queue_banner_row;
-use crate::setup::start_camera;
 use vxe_app::Gpu;
-use vxe_render::{Frame, GpuWorld, wgpu};
+use vxe_render::wgpu;
 use vxe_world::ChunkCoord;
 
 /// Samples a step of the live queue's pre-roll draws: about one chunk's brick level at 4096, so
@@ -244,161 +242,6 @@ pub(crate) fn queue_view_line(
 }
 
 impl Run {
-    /// The pre-roll: the live queue started on an empty store, then synced
-    /// and stepped without a slice until the chunks within `--near` of the camera's hold their
-    /// full blocks (or are known to need none) and, under `--coarse`, every full chunk the mirror
-    /// held at that moment has had its first pass, streaming meanwhile on the streamed world (whose
-    /// later chunks take theirs in the live queue). Prints the two times; the rest is refined a
-    /// slice a frame.
-    pub(crate) fn queue_pre_roll(&mut self, gpu: &Gpu, frame: &mut Frame, mirror: &mut GpuWorld) {
-        let settings = vxe_render::queue_settings();
-        frame.start_bake_queue(
-            &gpu.queue,
-            mirror,
-            settings,
-            vxe_render::DEFAULT_BAKE_SLICE_MS,
-        );
-        frame.set_bake_budget(self.args.bake.budget);
-        frame.set_bake_coarse(self.args.bake.coarse, self.args.bake.near);
-        frame.set_bake_digs(self.args.bake.edit_ms, self.args.bake.dig_reach);
-        frame.set_bake_reach(self.args.bake.reach);
-        if let Some(q) = frame.bake_queue_mut() {
-            q.order = self.args.queue_order();
-            q.withdraw = self.args.bake.queue_withdraw;
-            q.census_every_opening = self.args.bake.queue_census;
-        }
-        println!("{}", self.queue_row());
-        frame.take_prepared(&std::mem::take(&mut self.queue.prepared), &self.world);
-        let camera = start_camera(&self.args, self.spawn);
-        let eye = camera.position.to_array();
-        let (forward, _, _) = camera.basis();
-        let centre = ChunkCoord(eye.map(|v| (v / 64.0).floor() as i32));
-        let r = self.args.bake.near;
-        let near: Vec<ChunkCoord> = (-r..=r)
-            .flat_map(|z| {
-                (-r..=r).flat_map(move |y| {
-                    (-r..=r).map(move |x| {
-                        ChunkCoord([centre.0[0] + x, centre.0[1] + y, centre.0[2] + z])
-                    })
-                })
-            })
-            .collect();
-        let start = now();
-        // The near chunks' moment: the time, the chunks baked and the samples by then, and the
-        // full chunks mirrored then, which the coarse pass covers before the first frame.
-        let mut near_done: Option<(f64, u64, u64)> = None;
-        let mut first_pass: Vec<ChunkCoord> = Vec::new();
-        let mut boxed = false;
-        loop {
-            let mut enc = gpu
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-            if let Some(stream) = self.stream.as_mut() {
-                stream
-                    .streamer
-                    .update(&self.world, &[voxel_of(camera.position)]);
-                // Each tick's time, as the frame loop records it: `track` reads a chunk's
-                // wanted tick through it.
-                stream.tick_ms.push(ms_since(self.start));
-                let ev = stream.streamer.poll(&self.world);
-                mirror.apply_events(&ev);
-                frame.take_prepared(&ev.prepared, &self.world);
-                stream.track(&ev, mirror);
-            }
-            mirror.set_focus(voxel_of(camera.position));
-            if let Err(e) = mirror.sync(&self.world, &gpu.queue, &mut enc) {
-                self.failure.set(format!("mirror sync failed: {e}"));
-                return;
-            }
-            gpu.queue.submit([enc.finish()]);
-            let stream = self.stream.as_ref();
-            let resident_fn = |c: ChunkCoord| {
-                stream.is_some_and(|s| s.streamer.tier(c) == Some(vxe_world::Tier::Full))
-            };
-            let resident: Option<&dyn Fn(ChunkCoord) -> bool> = stream
-                .is_some()
-                .then_some(&resident_fn as &dyn Fn(ChunkCoord) -> bool);
-            let (half_angle, frustum) = queue_view_angles(camera.vfov, frame.output_size());
-            let view = vxe_render::QueueView {
-                eye,
-                forward: forward.to_array(),
-                resident,
-                samples: Some(PRE_ROLL_SAMPLES),
-                interval_s: 0.0,
-                hold: stream.map(|s| s.rule.r_full + self.args.light.radius() + 1),
-                half_angle,
-                frustum: Some(frustum),
-                full_radius: stream.map(|s| s.rule.r_full),
-            };
-            if let Some(Err(e)) =
-                frame.bake_queue_step(&gpu.device, &gpu.queue, mirror, &self.world, &view)
-            {
-                self.failure.set(format!("bake queue: {e}"));
-                return;
-            }
-            let bounded = stream.is_none();
-            if near_done.is_none()
-                && near.iter().all(|&c| {
-                    let absent = bounded && self.world.store().get(c).is_none();
-                    frame.bake_settled(c, absent)
-                })
-            {
-                let st = frame.bake_queue().map(|q| q.stats()).unwrap_or_default();
-                near_done = Some((ms_since(start), st.baked, st.total_samples));
-                first_pass = mirror.full_chunks().collect();
-            }
-            if let Some((near_ms, _, _)) = near_done {
-                if self.args.bake.coarse == 0 || frame.bake_passed(&first_pass) {
-                    break;
-                }
-                if ms_since(start) - near_ms > COARSE_PRE_ROLL_MS {
-                    boxed = true;
-                    break;
-                }
-            }
-            if ms_since(start) > 120_000.0 {
-                println!("bake queue: the pre-roll did not end in 120 s; going on");
-                break;
-            }
-            if stream.is_some() {
-                std::thread::sleep(std::time::Duration::from_millis(1));
-            }
-        }
-        let st = frame.bake_queue().map(|q| q.stats()).unwrap_or_default();
-        let total = ms_since(start);
-        let (near_ms, near_baked, near_samples) =
-            near_done.unwrap_or((total, st.baked, st.total_samples));
-        println!(
-            "bake queue: the camera's chunk {:?} and the {} within {} at 4096 by {:.0} ms ({} chunks, {:.3e} samples); the coarse pass at {} by {:.0} ms (+{:.0} ms, +{} chunks, +{:.3e} samples, {} coarse{}); {} listed from the workers; {:.0} ms since the start",
-            centre.0,
-            near.len(),
-            r,
-            near_ms,
-            near_baked,
-            near_samples as f64,
-            self.args.bake.coarse,
-            total,
-            total - near_ms,
-            st.baked - near_baked,
-            (st.total_samples - near_samples) as f64,
-            st.coarse,
-            if boxed {
-                format!(
-                    ", ended by its {:.0} s box with the rest of the {} chunks to the queue",
-                    COARSE_PRE_ROLL_MS / 1e3,
-                    first_pass.len()
-                )
-            } else {
-                String::new()
-            },
-            st.prepared,
-            ms_since(self.start)
-        );
-        // The pre-roll's near chunks take the full count under `--near`; the live queue's
-        // full-first radius starts here.
-        frame.set_bake_full_first(self.args.full_first());
-    }
-
     /// One frame of the live queue, ahead of the encode: `enc` (the sync's copies) is submitted
     /// first so the bake reads this frame's mirror, and a new encoder returned. Prints a line a
     /// second, and the time the queue first empties.

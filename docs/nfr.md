@@ -372,11 +372,26 @@ Every reading against these budgets, with its machine and commit, is in
   and 701 ms at load 7.12, 6.71 and 6.17 (loaded). Under the 3 s line. The session's first run
   (load 1.50, not one of the six) read 4015 ms, over the line; it was not reproduced in the
   next three (689 to 742 ms) and its cause was not read.
-- The loading screen (Plan 0075, ADR-0059; proposals, unread): loading wall time (device ready
-  to the first world frame) with the screen on within 3 % of off, median of three runs per scene
-  on the RTX 3080 Laptop; the loading pass under 0.3 ms of GPU at 1920 x 1080 there (a guess);
-  loading-frame interval p95 at most 50 ms and max at most 200 ms after the first; the first
-  loading frame within 300 ms of `device ready`.
+- The loading screen (Plan 0075, ADR-0059): loading wall time (device ready to the first world
+  frame) with the screen on within 3 % of off, median of three runs per scene on the RTX 3080
+  Laptop; the loading pass under 0.3 ms of GPU at 1920 x 1080 there; loading-frame interval p95
+  at most 50 ms and max at most 200 ms after the first; the first loading frame within 300 ms
+  of `device ready`.
+  **Reading (Plan 0075 Phase 5, 559b48a4, headless at 1280 x 720, release, exclusive perf lock,
+  1-minute load 7.5 to 16.9, loaded):** cost, screen on against off, median of three: RTX 3080
+  Laptop cave +9.6 %, showcase -0.1 %, castle +8.1 %; RADV RENOIR +6.5, +1.8 and +8.3 %, so the
+  3 % line is **missed on the streamed worlds** (a bake step of 70 to 140 ms against the 25 ms
+  slice, and each frame waits for the previous slice's GPU work). Interval p95 on the RTX 96 to
+  104 ms (cave, castle) and 44 to 46 ms (showcase), max 115 to 134 ms. The loading pass at
+  1920 x 1080: RTX p50 0.079 ms, RENOIR 0.215 ms (lavapipe 1.88 ms; the 0.3 ms line counts on
+  the RTX only, owner). Device ready to the first loading frame 153 to 477 ms on the RTX.
+  **Reading (Plan 0075 Phase 6b, windowed, RTX, three warm runs and one cold per scene, loaded):**
+  the window to the first presented frame (the splash) 278 to 394 ms, against 513 to 10 595 ms
+  before. **Reading (Phase 7b, 90acb176, RTX, castle and showcase on an empty driver cache,
+  headless, loaded):** with the pipelines on a worker every loading gap is under 100 ms but one
+  or two of 130 to 210 ms at the first near-lighting frames, cold only (warm max 87 ms). The
+  owner accepted the cost, the interval and the cold gap at the Phase 6 and 7b windows; the
+  streamed worlds' stutter is Plan 0075's followup and the cold gap is in `docs/backlog.md`.
 - Incremental build of a one-crate change under 10 s on the dev reference; the
   everyday loop does not compile crates a plan does not touch (`default-members`).
   **Reading (Plan 0011 Phase 4, dev reference, AMD Ryzen 9 5900HS, `CARGO_BUILD_JOBS=3`,

@@ -437,7 +437,8 @@ fn the_caps_count_what_they_drop() {
         err,
         EntityUploadError::PoolFull {
             needed: 5672,
-            free: 4096
+            free: 4096,
+            largest: 4096,
         }
     );
     assert_eq!(small.pool_used_bytes(), 0, "nothing written");

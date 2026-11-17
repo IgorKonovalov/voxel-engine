@@ -5,36 +5,37 @@ use crate::audio::{Audio, RoomProbe};
 use crate::autopilot::Autopilot;
 use crate::castle;
 use crate::cli::Args;
-use crate::edits::{Coarse, Failure, Net, ball};
+use crate::edits::{Coarse, Failure, Net};
 use crate::fly::{Fly, Walk};
 use crate::hud::{self};
 use crate::now;
 use crate::path::PathPlayer;
 use crate::report::Recorder;
 use crate::run::fade::FadeSample;
-use crate::run::hud_feed::{
-    HUD_SCALE, Hud, Samples, band_census_line, field_line, field_pass_line,
-};
+use crate::run::hud_feed::{HUD_SCALE, Hud, Samples};
 use crate::run::queue::QueueRun;
 use crate::setup::{CrispRows, Gfx};
-use crate::streaming::{NEAR_D2, STREAM_POOL_BYTES, Stream};
+use crate::streaming::{STREAM_POOL_BYTES, Stream};
 use crate::{
     STREAM_MIRROR_BUDGET, ScrollSteps, chunk_ram, level_mirror_budget, level_pool_units, mips_ram,
 };
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use vxe_app::{Flow, Gpu};
 use vxe_render::{
-    Camera, FRAME_PASSES, Frame, GpuWorld, HudOverlay, LightParams, LodParams, MarchTimer,
-    MirrorConfig, PassTimer, Presenter, SyncStats, Window, wgpu,
+    Camera, FRAME_PASSES, Frame, GpuWorld, HudOverlay, LightParams, Lighting, LightingResolution,
+    LoadingScreen, LodParams, MarchTimer, MirrorConfig, PassTimer, Presenter, UpscalerKind, Window,
+    wgpu,
 };
-use vxe_world::{ChunkCoord, MaterialTable, VoxelCoord, World};
+use vxe_world::{MaterialTable, VoxelCoord, World};
 
 pub(crate) mod edit;
 pub(crate) mod fade;
 pub(crate) mod frame;
 pub(crate) mod hud_feed;
 pub(crate) mod keys;
+pub(crate) mod loading;
 pub(crate) mod pilot;
 pub(crate) mod queue;
 pub(crate) mod tour;
@@ -109,6 +110,135 @@ pub(crate) struct Run {
     pub(crate) materials: Option<crate::materials::Watch>,
     /// `--vox-op`'s ops, until they are submitted.
     pub(crate) vox_ops: Option<crate::structures::VoxOps>,
+    /// Start-up still stepping behind loading frames; `None` once the first world frame may
+    /// draw.
+    pub(crate) loading: Option<loading::Loading>,
+}
+
+/// The features and limits the fly-through asks of `adapter` for a brick pool of
+/// `pool_bytes`: the timestamp queries where offered, and [`vxe_render::limits_for`]'s limits.
+pub(crate) fn device_request_for(
+    adapter: &wgpu::Adapter,
+    pool_bytes: u64,
+) -> (wgpu::Features, wgpu::Limits) {
+    // An adapter below the shaders' floor: name the limit, then request the floor, which the
+    // device request refuses on the same limit and the shell reports as a setup error.
+    let limits = vxe_render::limits_for(adapter, pool_bytes).unwrap_or_else(|e| {
+        eprintln!("flythrough: {e}");
+        *e.requested
+    });
+    (adapter.features() & wgpu::Features::TIMESTAMP_QUERY, limits)
+}
+
+/// What [`build_gfx`] builds the run's GPU objects from: read from the run on the main thread,
+/// so the build itself needs only the device and the queue.
+pub(crate) struct GfxPlan {
+    format: wgpu::TextureFormat,
+    output: [u32; 2],
+    internal: [u32; 2],
+    kind: UpscalerKind,
+    jitter: bool,
+    probe_spacing: u32,
+    sharpen: f32,
+    lighting: Lighting,
+    resolution: LightingResolution,
+    /// The streamed world's LOD rule; `None` on a level.
+    lod: Option<LodParams>,
+    mirror: MirrorConfig,
+    /// The mirror takes the field's band slots.
+    field: bool,
+    /// The level's mirror focus (the spawn); `None` on the streamed world.
+    focus: Option<VoxelCoord>,
+}
+
+/// Units of [`build_gfx`]'s progress, from the stages' times read on the RTX 3080 Laptop with
+/// the driver compiling (`docs/plans/logs/0075.md`): the frame's creation about 6 s (its
+/// compute pipelines), its settings about 0.6 s, the entity pipelines about 6 s.
+pub(crate) const BUILD_UNITS: u64 = 21;
+const FRAME_UNITS: u64 = 10;
+const SETTINGS_UNITS: u64 = 1;
+
+/// The run's GPU objects from `plan`: the frame and its settings, the mirror, the presenter,
+/// the overlay and the timers, then, when `entities` (the loading screen's worker), the
+/// entity pipelines ([`Frame::prepare_entities`]) and the light bake's
+/// ([`Frame::prepare_bake`]). Adds each part's units to `built` as it ends (of
+/// [`BUILD_UNITS`]); safe to run off the main thread (it touches nothing but the device and
+/// the queue).
+pub(crate) fn build_gfx(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    plan: GfxPlan,
+    entities: bool,
+    built: &AtomicU64,
+) -> Gfx {
+    let timer = PassTimer::with_passes(device, queue, FRAME_PASSES.len() as u32);
+    let field_timer = MarchTimer::new(device, queue);
+    let mut frame = Frame::with_sizes(device, plan.internal, plan.output);
+    diag(format_args!(
+        "frame created, {} B of targets",
+        frame.frame_bytes()
+    ));
+    built.fetch_add(FRAME_UNITS, Ordering::Relaxed);
+    frame.set_probe_spacing(device, plan.probe_spacing);
+    frame.set_jitter(device, plan.jitter);
+    frame.set_upscaler_kind(device, plan.kind);
+    frame.set_sharpness(queue, plan.sharpen);
+    frame.set_lighting(plan.lighting);
+    frame.set_resolution(device, plan.resolution);
+    diag(format_args!(
+        "lighting set, {} B of targets",
+        frame.frame_bytes()
+    ));
+    if let Some(lod) = plan.lod {
+        frame.set_lod(lod);
+    }
+    let mut mirror = reserve_mirror(device, plan.mirror, plan.field);
+    if let Some(focus) = plan.focus {
+        mirror.set_focus(focus);
+    }
+    let mut gfx = Gfx {
+        mirror,
+        frame,
+        presenter: Presenter::new(device, plan.format),
+        timer,
+        field_timer,
+        hud: HudOverlay::new(device, plan.format, HUD_SCALE),
+        hud_timer: PassTimer::new(device, queue),
+    };
+    built.fetch_add(SETTINGS_UNITS, Ordering::Relaxed);
+    if entities {
+        // A walker may be placed on any frame, so the entity pipelines are built before the
+        // first world frame, and the frame that draws the first part builds none.
+        gfx.frame.prepare_entities(device);
+        diag(format_args!("entity pipelines built"));
+        gfx.frame.prepare_bake(device);
+        diag(format_args!("bake pipeline built"));
+    }
+    built.store(BUILD_UNITS, Ordering::Relaxed);
+    gfx
+}
+
+/// A mirror under `cfg`, with the field's band slots when `field`. Prints what it reserved
+/// and how long creating its buffers took.
+pub(crate) fn reserve_mirror(device: &wgpu::Device, cfg: MirrorConfig, field: bool) -> GpuWorld {
+    let t = now();
+    let mirror = if field {
+        GpuWorld::with_field_surface(device, cfg)
+    } else {
+        GpuWorld::with_config(device, cfg)
+    };
+    let ms = ms_since(t);
+    diag(format_args!("mirror reserved"));
+    let l = mirror.shard_layout();
+    println!(
+        "mirror: reserved {} B of a {} B budget ({} units over {} shards, {} records) in {ms:.1} ms",
+        mirror.allocated_bytes(),
+        cfg.budget_bytes,
+        l.reserved_units,
+        l.reserved_units.div_ceil(l.units_per_shard),
+        l.reserved_records
+    );
+    mirror
 }
 
 /// Logs a teardown stage before and after it runs, like the shell's, so a hang at exit
@@ -151,100 +281,77 @@ impl Run {
             level_pool_units(&self.world, self.args.field_surface())
                 * vxe_render::internals::UNIT_BYTES
         };
-        // An adapter below the shaders' floor: name the limit, then request the floor, which
-        // the device request refuses on the same limit and the shell reports as a setup error.
-        let limits = vxe_render::limits_for(adapter, pool).unwrap_or_else(|e| {
-            eprintln!("flythrough: {e}");
-            *e.requested
-        });
-        (adapter.features() & wgpu::Features::TIMESTAMP_QUERY, limits)
+        device_request_for(adapter, pool)
     }
 
-    pub(crate) fn init(&mut self, gpu: &Gpu) {
+    /// Reads the device, then builds the frame and the mirror and starts loading. With the
+    /// loading screen on, the build ([`build_gfx`], the entity pipelines included) runs on a
+    /// worker thread and the frame loop draws loading frames with `splash` (the screen the
+    /// first frame was drawn with, else a new one) until it hands the objects back; with it
+    /// off, the build and the whole load run here.
+    pub(crate) fn init(&mut self, gpu: &Gpu, splash: Option<LoadingScreen>) {
         self.adapter = Some(gpu.adapter.get_info());
         self.surface = Some((gpu.surface_format, gpu.surface_color_space));
-        let output = self.args.render.unwrap_or(gpu.size);
-        let timer = PassTimer::with_passes(&gpu.device, &gpu.queue, FRAME_PASSES.len() as u32);
         println!("device ready after {:.0} ms", ms_since(self.start));
-        let field_timer = MarchTimer::new(&gpu.device, &gpu.queue);
-        let (kind, scale, jitter) = self.args.upscaler_settings(self.modes.upscaler.mode);
-        let mut frame = Frame::with_sizes(&gpu.device, scale.internal(output), output);
-        diag(format_args!(
-            "frame created, {} B of targets",
-            frame.frame_bytes()
-        ));
-        // A walker may be placed on any frame, so the entity pipelines are built now, inside
-        // the start-up, and the frame that draws the first part builds none.
-        frame.prepare_entities(&gpu.device);
-        diag(format_args!("entity pipelines built"));
-        frame.set_probe_spacing(&gpu.device, self.args.light.probe_spacing);
-        frame.set_jitter(&gpu.device, jitter);
-        frame.set_upscaler_kind(&gpu.device, kind);
-        frame.set_sharpness(&gpu.queue, self.args.look.sharpen);
+        if let Some(rec) = self.recorder.as_mut() {
+            rec.device_ms = Some(ms_since(self.start));
+        }
+        let plan = self.gfx_plan(gpu);
         println!("{}", self.modes.upscaler.line());
-        frame.set_lighting(self.modes.lighting);
-        frame.set_resolution(&gpu.device, self.modes.resolution);
-        diag(format_args!(
-            "lighting set, {} B of targets",
-            frame.frame_bytes()
-        ));
         println!("{}", self.modes.line());
         println!("{}", CrispRows::line(self.world.materials()));
-        let mirror = if self.stream.is_some() {
-            frame.set_lod(LodParams {
+        let screen = self.args.loading.screen_on(self.args.headless);
+        if screen {
+            let build = loading::Build::spawn(gpu, plan);
+            self.loading = Some(self.start_loading(gpu, splash, build));
+            return;
+        }
+        self.gfx = Some(build_gfx(
+            &gpu.device,
+            &gpu.queue,
+            plan,
+            false,
+            &AtomicU64::new(0),
+        ));
+        let loading = self.start_loading_unscreened();
+        self.load_all(gpu, loading);
+    }
+
+    /// What [`build_gfx`] builds the run's GPU objects from, read from the run and the device.
+    fn gfx_plan(&self, gpu: &Gpu) -> GfxPlan {
+        let output = self.args.render.unwrap_or(gpu.size);
+        let (kind, scale, jitter) = self.args.upscaler_settings(self.modes.upscaler.mode);
+        let streamed = self.stream.is_some();
+        let mirror = if streamed {
+            MirrorConfig {
+                sync_budget_bytes: self.args.sync_budget,
+                sync_budget_time: self.args.sync_time,
+                record_chunks: Some(crate::stream_record_chunks(self.args.residency)),
+                ..MirrorConfig::new(Window::Follow {
+                    side: crate::window_side(self.args.residency),
+                })
+            }
+        } else {
+            MirrorConfig::new(Window::Fixed(self.world.extent()))
+        };
+        GfxPlan {
+            format: gpu.surface_format,
+            output,
+            internal: scale.internal(output),
+            kind,
+            jitter,
+            probe_spacing: self.args.light.probe_spacing,
+            sharpen: self.args.look.sharpen,
+            lighting: self.modes.lighting,
+            resolution: self.modes.resolution,
+            lod: streamed.then_some(LodParams {
                 r_full: self.args.residency.r_full,
                 forced_level: None,
-            });
-            self.init_stream(gpu)
-        } else {
-            let mut mirror =
-                self.new_mirror(gpu, MirrorConfig::new(Window::Fixed(self.world.extent())));
-            mirror.set_focus(self.spawn);
-            let t = now();
-            let mut enc = gpu
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-            let synced = mirror.sync(&self.world, &gpu.queue, &mut enc);
-            let sync_ms = ms_since(t);
-            gpu.queue.submit([enc.finish()]);
-            match synced {
-                Ok(s) => println!(
-                    "mirror: uploaded {} B ({} bricks, {} chunks, {} writes) in {:.0} ms; mirror {} B live, {} B allocated; lights: {} samples from {} bricks in {:.3} ms",
-                    s.bytes,
-                    s.bricks,
-                    s.chunks,
-                    s.writes,
-                    sync_ms,
-                    mirror.mirror_bytes(),
-                    mirror.allocated_bytes(),
-                    s.light_samples,
-                    s.light_bricks,
-                    s.light_us as f64 / 1e3
-                ),
-                Err(e) => self.failure.set(format!("mirror sync failed: {e}")),
-            }
-            mirror
-        };
-        let mut mirror = mirror;
-        self.queue_pre_roll(gpu, &mut frame, &mut mirror);
-        let mut gfx = Gfx {
-            mirror,
-            frame,
-            presenter: Presenter::new(&gpu.device, gpu.surface_format),
-            timer,
-            field_timer,
-            hud: HudOverlay::new(&gpu.device, gpu.surface_format, HUD_SCALE),
-            hud_timer: PassTimer::new(&gpu.device, &gpu.queue),
-        };
-        if gfx.mirror.field_surface() {
-            println!("{}", field_pass_line("initial fill", gfx.timed_field(gpu)));
-            println!("{}", field_line(&gfx.mirror));
+            }),
+            mirror: self.mirror_config(mirror),
+            field: self.args.field_surface(),
+            focus: (!streamed).then_some(self.spawn),
         }
-        if self.args.look.band_census && self.stream.is_none() {
-            println!("{}", band_census_line(&self.world, &gfx.mirror));
-        }
-        self.gfx = Some(gfx);
-        diag(format_args!("init done"));
     }
 
     /// The mirror's VRAM budget: `--mirror-budget`, else the level's from its content and
@@ -266,128 +373,21 @@ impl Run {
         })
     }
 
-    /// A mirror under `cfg` reserving [`Run::mirror_budget`], with the field's band slots when
-    /// the run starts in the field look ([`Args::field_surface`]). Prints what it reserved and how long creating its buffers took.
-    pub(crate) fn new_mirror(&self, gpu: &Gpu, cfg: MirrorConfig) -> GpuWorld {
-        let cfg = MirrorConfig {
+    /// `cfg` reserving [`Run::mirror_budget`] with the run's light radius.
+    pub(crate) fn mirror_config(&self, cfg: MirrorConfig) -> MirrorConfig {
+        MirrorConfig {
             budget_bytes: self.mirror_budget(),
             light_radius: self.args.light.radius(),
             ..cfg
-        };
-        let t = now();
-        let mirror = if self.args.field_surface() {
-            GpuWorld::with_field_surface(&gpu.device, cfg)
-        } else {
-            GpuWorld::with_config(&gpu.device, cfg)
-        };
-        let ms = ms_since(t);
-        let l = mirror.shard_layout();
-        println!(
-            "mirror: reserved {} B of a {} B budget ({} units over {} shards, {} records) in {ms:.1} ms",
-            mirror.allocated_bytes(),
-            cfg.budget_bytes,
-            l.reserved_units,
-            l.reserved_units.div_ceil(l.units_per_shard),
-            l.reserved_records
-        );
-        mirror
+        }
     }
 
-    /// The streaming mirror, returned once the chunks within squared distance `NEAR_D2` of
-    /// the spawn chunk are resident and mirrored full.
-    pub(crate) fn init_stream(&mut self, gpu: &Gpu) -> GpuWorld {
-        let mut mirror = self.new_mirror(
-            gpu,
-            MirrorConfig {
-                sync_budget_bytes: self.args.sync_budget,
-                sync_budget_time: self.args.sync_time,
-                record_chunks: Some(crate::stream_record_chunks(self.args.residency)),
-                ..MirrorConfig::new(Window::Follow {
-                    side: crate::window_side(self.args.residency),
-                })
-            },
-        );
-        let Some(stream) = self.stream.as_mut() else {
-            return mirror;
-        };
-        let spawn = self.spawn.chunk();
-        let near: Vec<ChunkCoord> = ball(NEAR_D2)
-            .into_iter()
-            .map(|o| ChunkCoord([0, 1, 2].map(|k| spawn.0[k] + o[k])))
-            .collect();
-        mirror.set_focus(self.spawn);
-        // The light extraction of the first sync that scanned a brick, and of all of them.
-        let mut first_light: Option<SyncStats> = None;
-        let (mut light_us, mut syncs) = (0u64, 0u32);
-        diag(format_args!(
-            "mirror created, streaming {} near chunks",
-            near.len()
-        ));
-        let mut diag_next = now();
-        loop {
-            if now() >= diag_next {
-                let mirrored = near
-                    .iter()
-                    .filter(|&&c| mirror.is_mirrored(c) && !mirror.is_lod(c))
-                    .count();
-                diag(format_args!(
-                    "streaming, {syncs} syncs, {mirrored} of {} near chunks mirrored",
-                    near.len()
-                ));
-                diag_next = now() + std::time::Duration::from_secs(2);
-            }
-            stream.streamer.update(&self.world, &[self.spawn]);
-            stream.tick_ms.push(ms_since(self.start));
-            let ev = stream.streamer.poll(&self.world);
-            mirror.apply_events(&ev);
-            self.queue.prepared.extend(ev.prepared.iter().cloned());
-            let mut enc = gpu
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-            let synced = mirror.sync(&self.world, &gpu.queue, &mut enc);
-            gpu.queue.submit([enc.finish()]);
-            match synced {
-                Ok(s) => {
-                    syncs += 1;
-                    light_us += s.light_us;
-                    if s.light_bricks > 0 {
-                        first_light.get_or_insert(s);
-                    }
-                }
-                Err(e) => {
-                    self.failure.set(format!("mirror sync failed: {e}"));
-                    break;
-                }
-            }
-            stream.track(&ev, &mirror);
-            if near
-                .iter()
-                .all(|&c| mirror.is_mirrored(c) && !mirror.is_lod(c))
-            {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-        if let Some(s) = first_light {
-            println!(
-                "lights: first sync with bricks extracted {} samples from {} bricks in {:.3} ms; {syncs} syncs to near residency spent {:.3} ms, {} samples live",
-                s.light_samples,
-                s.light_bricks,
-                s.light_us as f64 / 1e3,
-                light_us as f64 / 1e3,
-                mirror.light_samples()
-            );
-        }
-        println!(
-            "near residency ({} chunks resident and mirrored) after {:.0} ms",
-            near.len(),
-            ms_since(self.start)
-        );
-        mirror
-    }
-
+    /// Sizes the frame to the window (`gpu.size`) unless `--render` fixes it. While the
+    /// loading screen's worker holds the frame there is none to size: the hand-back sizes it.
     pub(crate) fn resized(&mut self, gpu: &Gpu) {
-        if let (Some(gfx), None) = (self.gfx.as_mut(), self.args.render) {
+        if let (Some(gfx), None) = (self.gfx.as_mut(), self.args.render)
+            && gfx.frame.output_size() != gpu.size
+        {
             let (_, scale, _) = self.args.upscaler_settings(self.modes.upscaler.mode);
             gfx.frame
                 .set_sizes(&gpu.device, scale.internal(gpu.size), gpu.size);
@@ -408,6 +408,12 @@ impl Drop for Run {
     /// workers, then drops the GPU mirror and passes, then the world (swapped for an empty
     /// one, whose drop is free; the server and client held the other references).
     fn drop(&mut self) {
+        // The loading screen's worker, when the run ends before it handed the GPU objects
+        // back (the window closed during the build): joined, so its objects drop in the
+        // GPU stage below and the device outlives no build.
+        if let Some(gfx) = self.loading.as_mut().and_then(loading::Loading::take_built) {
+            self.gfx = Some(gfx);
+        }
         self.save();
         self.hud.run.blocking_reads = self.gfx.as_ref().map(Gfx::blocking_reads);
         for line in self.queue.tally.summary() {

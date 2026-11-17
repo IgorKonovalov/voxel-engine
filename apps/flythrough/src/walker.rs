@@ -9,7 +9,7 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use vxe_entity::{EntityId, EntitySet, Model, Part, PartPose, Pose, Q14_ONE, Quat};
-use vxe_render::{MAX_ENTITIES, MAX_ENTITY_PARTS, ModelHandle};
+use vxe_render::{EntityUploadError, MAX_ENTITIES, MAX_ENTITY_PARTS, ModelHandle};
 use vxe_world::{AIR, Fixed3, Material, MaterialId, MaterialTable, Prefab};
 
 /// The walker's body row's name in the table ([`with_walker`]).
@@ -189,6 +189,10 @@ pub struct Walkers {
     pub drawn: usize,
     pub parts: usize,
     pub over: usize,
+    /// The entity pool's bytes in use and its size, as the last [`sync_models`] read them; 0
+    /// and 0 before.
+    pub pool_used: u64,
+    pub pool_total: u64,
     /// Whether placed walkers carry their eye lights (`F12` flips it; on by default).
     pub eye_lights_off: bool,
     /// Whether the walkers walk (`F11` flips it; off by default).
@@ -210,6 +214,7 @@ impl PartialEq for Walkers {
         (self.placed == o.placed)
             && (self.handle, self.ring, &self.newest) == (o.handle, o.ring, &o.newest)
             && (self.drawn, self.parts, self.over) == (o.drawn, o.parts, o.over)
+            && (self.pool_used, self.pool_total) == (o.pool_used, o.pool_total)
             && self.eye_lights_off == o.eye_lights_off
             && (self.walking, self.clock) == (o.walking, o.clock)
     }
@@ -286,8 +291,8 @@ impl Walkers {
     }
 
     /// The viewer's reload once a second (`now` in seconds; [`crate::viewer::Viewer::poll`])
-    /// and its first build: on a new model every placed instance of the old is placed again
-    /// with it. The banner's words when anything was tried.
+    /// and its first build: on a new model every placed instance of the old takes it under its
+    /// own id ([`vxe_entity::EntitySet::replace`]). The banner's words when anything was tried.
     pub fn poll_viewer(&mut self, now: f64, table: &MaterialTable) -> Option<String> {
         let v = self.viewer.as_mut()?;
         let built = v.build_pending(table);
@@ -299,12 +304,11 @@ impl Walkers {
         if had.is_some_and(|m| Arc::ptr_eq(&m, &l.model)) {
             return words;
         }
-        for p in self.placed.iter_mut().filter(|p| p.rig) {
-            self.set.remove(p.id);
+        for p in self.placed.iter().filter(|p| p.rig) {
             let pose = crate::viewer::placed(&now_pose, p.feet, p.yaw);
-            if let Ok(id) = self.set.insert(l.model.clone(), pose) {
-                p.id = id;
-            }
+            // The pose is the new model's, so it fits; the entity keeps its id, and with it
+            // the mirror's slots and the pixels' history.
+            let _ = self.set.replace(p.id, l.model.clone(), pose);
         }
         words
     }
@@ -462,13 +466,22 @@ impl Walkers {
         }
     }
 
-    /// The HUD row, `entities <n>/64 parts <m>/512 over <k>`, then ` walk` while they walk.
+    /// The HUD row, `entities <n>/64 parts <m>/512 over <k>`, then, once the pool is read,
+    /// ` pool <used>/<total> KB` (rounded up to whole KB), then ` walk` while they walk.
     pub fn write_row(&self, out: &mut String) {
         let _ = write!(
             out,
             "entities {}/{MAX_ENTITIES} parts {}/{MAX_ENTITY_PARTS} over {}",
             self.drawn, self.parts, self.over
         );
+        if self.pool_total > 0 {
+            let _ = write!(
+                out,
+                " pool {}/{} KB",
+                self.pool_used.div_ceil(1024),
+                self.pool_total.div_ceil(1024)
+            );
+        }
         if self.walking {
             out.push_str(" walk");
         }
@@ -513,16 +526,196 @@ impl Walkers {
     }
 }
 
+/// What [`sync_models`] needs of an entity pool: the frame's mirror with its queue
+/// ([`MirrorPool`]), or the bookkeeping alone ([`vxe_render::internals::VolumePool`]) in a test.
+pub trait ModelPool {
+    fn upload(
+        &mut self,
+        model: &Model,
+        table: &MaterialTable,
+    ) -> Result<ModelHandle, EntityUploadError>;
+    /// Frees `handle`'s model; a handle the pool does not know is ignored.
+    fn free(&mut self, handle: ModelHandle);
+    fn clear(&mut self);
+    fn used_bytes(&self) -> u64;
+    fn total_bytes(&self) -> u64;
+}
+
+impl ModelPool for vxe_render::internals::VolumePool {
+    fn upload(
+        &mut self,
+        model: &Model,
+        table: &MaterialTable,
+    ) -> Result<ModelHandle, EntityUploadError> {
+        vxe_render::internals::VolumePool::upload(self, model, table).map(|u| u.handle)
+    }
+
+    fn free(&mut self, handle: ModelHandle) {
+        let _ = self.free_model(handle);
+    }
+
+    fn clear(&mut self) {
+        vxe_render::internals::VolumePool::clear(self);
+    }
+
+    fn used_bytes(&self) -> u64 {
+        vxe_render::internals::VolumePool::used_bytes(self)
+    }
+
+    fn total_bytes(&self) -> u64 {
+        vxe_render::internals::VolumePool::total_bytes(self)
+    }
+}
+
+/// The frame's entity mirror and the queue its uploads are written through.
+pub struct MirrorPool<'a> {
+    pub mirror: &'a mut vxe_render::EntityMirror,
+    pub queue: &'a vxe_render::wgpu::Queue,
+}
+
+impl ModelPool for MirrorPool<'_> {
+    fn upload(
+        &mut self,
+        model: &Model,
+        table: &MaterialTable,
+    ) -> Result<ModelHandle, EntityUploadError> {
+        self.mirror.upload_model(self.queue, model, table)
+    }
+
+    fn free(&mut self, handle: ModelHandle) {
+        let _ = self.mirror.free_model(handle);
+    }
+
+    fn clear(&mut self) {
+        self.mirror.clear();
+    }
+
+    fn used_bytes(&self) -> u64 {
+        self.mirror.pool_used_bytes()
+    }
+
+    fn total_bytes(&self) -> u64 {
+        self.mirror.pool_total_bytes()
+    }
+}
+
+/// The banner's words for a pool [`sync_models`] cleared and filled again.
+pub const POOL_RESET: &str = "entity pool reset";
+
+/// Whether `e` is a refusal a cleared pool may not repeat: the free bytes hold the model, no
+/// hole does.
+fn fragmented(e: &EntityUploadError) -> bool {
+    matches!(*e, EntityUploadError::PoolFull { needed, free, largest }
+        if largest < needed && needed <= free)
+}
+
+/// Uploads `model` into `pool`; on `PoolFull` frees `stale` (the viewer's replaced model, when
+/// there is one) and tries once more.
+fn upload_or_free_stale(
+    pool: &mut impl ModelPool,
+    model: &Model,
+    table: &MaterialTable,
+    stale: &mut Option<ModelHandle>,
+) -> Result<ModelHandle, EntityUploadError> {
+    match pool.upload(model, table) {
+        Err(EntityUploadError::PoolFull { .. }) if stale.is_some() => {
+            pool.free(stale.take().expect("checked"));
+            pool.upload(model, table)
+        }
+        r => r,
+    }
+}
+
+/// One pass of [`sync_models`]: the built-in walker's model and the viewer's uploaded when
+/// needed, the viewer's replaced model freed once its new one is in. The first refusal and
+/// whose it was (`true` the viewer's).
+fn upload_needed(
+    walkers: &mut Walkers,
+    pool: &mut impl ModelPool,
+    table: &MaterialTable,
+) -> Result<(), (bool, EntityUploadError)> {
+    let mut no_stale = None;
+    if walkers.handle.is_none()
+        && walkers.placed.iter().any(|p| !p.rig)
+        && let Some(model) = walkers.model(table)
+    {
+        let stale = walkers
+            .viewer
+            .as_mut()
+            .map_or(&mut no_stale, |v| &mut v.stale);
+        walkers.handle =
+            Some(upload_or_free_stale(pool, &model, table, stale).map_err(|e| (false, e))?);
+    }
+    if let Some(v) = &mut walkers.viewer
+        && v.handle.is_none()
+        && let Some(l) = &v.loaded
+    {
+        let model = l.model.clone();
+        v.handle =
+            Some(upload_or_free_stale(pool, &model, table, &mut v.stale).map_err(|e| (true, e))?);
+    }
+    if let Some(v) = &mut walkers.viewer
+        && v.handle.is_some()
+        && let Some(s) = v.stale.take()
+    {
+        pool.free(s);
+    }
+    Ok(())
+}
+
+/// The models the placed walkers need, in `pool`: the built-in walker's on first need, the
+/// viewer's after a build or a reload, then the viewer's replaced model freed. A `PoolFull`
+/// first frees the replaced model and retries; one that stands with the free bytes enough and
+/// no hole large enough clears the pool and uploads every model still placed again (the
+/// banner's [`POOL_RESET`]). A refusal after that keeps the viewer's error on screen (or prints
+/// the walker's). The pool's figures are read for the HUD row. The banner's words when there
+/// are any.
+pub fn sync_models(
+    walkers: &mut Walkers,
+    pool: &mut impl ModelPool,
+    table: &MaterialTable,
+) -> Option<String> {
+    let mut words = None;
+    let mut r = upload_needed(walkers, pool, table);
+    if let Err((_, e)) = &r
+        && fragmented(e)
+    {
+        pool.clear();
+        walkers.handle = None;
+        if let Some(v) = &mut walkers.viewer {
+            (v.handle, v.stale) = (None, None);
+        }
+        words = Some(POOL_RESET.to_owned());
+        r = upload_needed(walkers, pool, table);
+    }
+    match r {
+        Ok(()) => {}
+        Err((false, e)) => println!("walker: {e}"),
+        Err((true, e)) => {
+            if let Some(v) = &mut walkers.viewer {
+                // Tried with no model: the next try follows a reload.
+                let err = format!("model {}: {e}", v.name);
+                v.loaded = None;
+                v.error = Some(e.to_string());
+                words = Some(err);
+            }
+        }
+    }
+    (walkers.pool_used, walkers.pool_total) = (pool.used_bytes(), pool.total_bytes());
+    words
+}
+
 /// One frame's walkers into `frame`: the pending ring placed around `eye` on `world`'s floor,
-/// the model uploaded on first need, and the frame's entities set while any walker is placed
-/// or was drawn the frame before; the drawn counts copied back for the HUD.
+/// the models synced ([`sync_models`]), and the frame's entities set while any walker is
+/// placed, was drawn the frame before, or the mirror still walks a ghost leaf; the drawn counts copied back for the HUD. The
+/// banner's words from the sync, when there are any.
 pub fn feed(
     walkers: &mut Walkers,
     world: &vxe_world::World,
     eye: [f32; 3],
     frame: &mut vxe_render::Frame,
     queue: &vxe_render::wgpu::Queue,
-) {
+) -> Option<String> {
     if walkers.ring > 0 {
         let floor_below = |p: [f32; 3], search: i64| {
             let o = Fixed3(p.map(|v| (v * 256.0).round() as i64));
@@ -534,37 +727,23 @@ pub fn feed(
         };
         walkers.place_ring(world.materials(), eye, floor_below);
     }
-    if walkers.placed.is_empty() && walkers.drawn == 0 && walkers.over == 0 {
-        return;
-    }
-    if walkers.handle.is_none()
-        && walkers.placed.iter().any(|p| !p.rig)
-        && let Some(model) = walkers.model(world.materials())
+    // A removal leaves a ghost leaf until the next write, so the frames keep writing while the
+    // mirror still walks one.
+    if walkers.placed.is_empty()
+        && walkers.drawn == 0
+        && walkers.over == 0
+        && !frame.entity_mirror().walks_entities()
     {
-        match frame
-            .entity_mirror_mut()
-            .upload_model(queue, &model, world.materials())
-        {
-            Ok(h) => walkers.handle = Some(h),
-            Err(e) => println!("walker: {e}"),
-        }
+        return None;
     }
-    if let Some(v) = &mut walkers.viewer
-        && v.handle.is_none()
-        && let Some(l) = &v.loaded
-    {
-        match frame
-            .entity_mirror_mut()
-            .upload_model(queue, &l.model, world.materials())
-        {
-            Ok(h) => v.handle = Some(h),
-            Err(e) => {
-                // Retried next frame only after a reload: mark it tried with no model.
-                println!("model {}: {e}", v.name);
-                v.loaded = None;
-            }
-        }
-    }
+    let words = sync_models(
+        walkers,
+        &mut MirrorPool {
+            mirror: frame.entity_mirror_mut(),
+            queue,
+        },
+        world.materials(),
+    );
     walkers.refresh_displays();
     frame.set_entity_displays(
         queue,
@@ -573,6 +752,7 @@ pub fn feed(
     let m = frame.entity_mirror();
     (walkers.drawn, walkers.parts, walkers.over) =
         (m.entities_drawn(), m.parts_drawn(), m.entities_over_cap());
+    words
 }
 
 /// Voxels of the walker's model that are not air, per part, for the readings.
@@ -635,6 +815,66 @@ mod tests {
         w.remove_newest();
         assert_eq!(w.placed.len(), 1);
         assert_eq!(w.set.len(), 1);
+    }
+
+    /// Plan 0078 Phase 3 done-when 4: the instance table's write over 64 walking walkers
+    /// allocates nothing after the first of 101 writes (the walkers' display poses refreshed in
+    /// place between them; the mirror's `set_entity_displays` is this write and two
+    /// `write_buffer` calls).
+    #[test]
+    fn write_allocates_nothing_after_warm_up() {
+        use crate::test_support::counting;
+        use vxe_render::internals::{EntityInstances, VolumePool};
+
+        let table = with_walker(&crate::cave_materials());
+        let mut w = Walkers::default();
+        for i in 0..64 {
+            let feet = [(i % 8) as f32 * 20.0, (i / 8) as f32 * 20.0, 2.0];
+            assert!(w.place(&table, feet, [0.0, -9.0, 2.0]));
+        }
+        let mut pool = VolumePool::new(vxe_render::DEFAULT_ENTITY_POOL_BYTES);
+        assert_eq!(sync_models(&mut w, &mut pool, &table), None);
+        w.toggle_walk();
+        let mut inst = EntityInstances::new();
+        let mut bytes = Vec::with_capacity(101);
+        for _ in 0..101 {
+            w.step(1.0 / 60.0);
+            w.refresh_displays();
+            let before = counting::bytes();
+            inst.write(
+                &pool,
+                w.displays().iter().map(|(id, h, d)| (*id, *h, Some(d))),
+            );
+            bytes.push(counting::bytes() - before);
+        }
+        assert!(bytes[0] > 0, "the first write grows the scratch");
+        assert_eq!(bytes[1..], [0; 100]);
+        assert_eq!((inst.entities_drawn(), inst.parts_drawn()), (64, 256));
+        assert!(inst.entities_moved());
+    }
+
+    /// Plan 0078 Phase 2 done-when 2: with the walker uploaded the row reads `pool 5/8192 KB`
+    /// (4156 B rounded up), and `pool 0/8192 KB` once the pool is cleared and read again.
+    #[test]
+    fn the_hud_row_shows_the_pool() {
+        use vxe_render::internals::VolumePool;
+
+        let table = with_walker(&MaterialTable::new());
+        let mut w = Walkers::default();
+        assert!(w.place(&table, [0.0; 3], [0.0, -9.0, 0.0]));
+        (w.drawn, w.parts, w.over) = (1, 4, 0);
+        let mut pool = VolumePool::new(vxe_render::DEFAULT_ENTITY_POOL_BYTES);
+        assert_eq!(sync_models(&mut w, &mut pool, &table), None);
+        assert_eq!(pool.used_bytes(), 4156);
+        let row = |w: &Walkers| {
+            let mut row = String::new();
+            w.write_row(&mut row);
+            row
+        };
+        assert_eq!(row(&w), "entities 1/64 parts 4/512 over 0 pool 5/8192 KB");
+        pool.clear();
+        assert_eq!(sync_models(&mut w, &mut pool, &table), None);
+        assert_eq!(row(&w), "entities 1/64 parts 4/512 over 0 pool 0/8192 KB");
     }
 
     /// `` ` `` shows the count in the banner (`run::keys` passes it to `show_lights`), and the HUD's
@@ -866,7 +1106,12 @@ mod tests {
         for i in 0..8 {
             assert!(w.place(&table, [i as f32 * 20.0, 0.0, 2.0], [0.0, -9.0, 2.0]));
         }
-        w.handle = Some(ModelHandle(0));
+        // Two handles of a pool of the walker's model and one of the viewer's.
+        let mut pool = vxe_render::internals::VolumePool::new(1 << 20);
+        let (body, eye) = rows(&table).unwrap();
+        let mut handle = || pool.upload(&model(body, eye), &table).unwrap().handle;
+        let (h0, h1) = (handle(), handle());
+        w.handle = Some(h0);
         w.toggle_walk();
         let mut bytes = Vec::new();
         for _ in 0..4 {
@@ -880,7 +1125,7 @@ mod tests {
         assert_eq!(w.displays().len(), 8);
         for (p, (id, h, d)) in w.placed.iter().zip(w.displays()) {
             let (model, pose) = w.set.get(p.id).unwrap();
-            assert_eq!((*id, *h), (p.id, ModelHandle(0)));
+            assert_eq!((*id, *h), (p.id, h0));
             assert_eq!(Some(d), DisplayPose::of(model, pose).as_ref());
         }
 
@@ -888,7 +1133,7 @@ mod tests {
             .join("assets/entities/walker/walker.rig");
         let mut viewer = crate::viewer::Viewer::open(&path, Some("walk".into())).expect("opens");
         assert_eq!(viewer.build_pending(&table), None);
-        viewer.handle = Some(ModelHandle(1));
+        viewer.handle = Some(h1);
         let mut w = Walkers::default().with_viewer(Some(viewer));
         let refresh = |w: &mut Walkers| {
             w.step(1.0 / 45.0);

@@ -21,6 +21,7 @@ mod hud;
 #[cfg(test)]
 mod layout_tests;
 mod light;
+mod loading;
 mod present;
 mod probes;
 mod readback;
@@ -53,6 +54,7 @@ pub mod internals {
         angle_term, dig_ring, face_classes, in_near_shell, list_world_chunk, rgb9e5_unpack,
         tone_level, view_half_angle, view_half_angles,
     };
+    pub use crate::entities::{EntityInstances, PoolUpload, RangeAlloc, VolumePool};
     pub use crate::exposure::{METER_LOG2_LIMIT, STATE_HELD};
     pub use crate::field::{
         BAND_CUBES_BIT, CRISP_COUNT_BIT, MAX_BAND_UNITS, SMOOTH_COUNT_BIT, band_index,
@@ -83,13 +85,14 @@ pub mod internals {
 pub use bake::{
     BakeError, BakeProgress, BakeQueue, BakeReport, BakeSettings, Budget, DEFAULT_BAKE_EDIT_MS,
     DEFAULT_BAKE_SLICE_MS, DEFAULT_COARSE_SAMPLES, DEFAULT_NEAR, DigReport, FaceOutcome,
-    MissingLight, QUEUE_ANGLE_WEIGHT, QUEUE_BRICK_SAMPLES, QUEUE_REFINE_WEIGHT, QueueOrder,
-    QueueStats, QueueView, ReachMode, Refine, Store, StoreStats, queue_settings,
+    MissingLight, PreRoll, PreRollConfig, PreRollError, PreRollState, PreRollSummary,
+    QUEUE_ANGLE_WEIGHT, QUEUE_BRICK_SAMPLES, QUEUE_REFINE_WEIGHT, QueueOrder, QueueStats,
+    QueueView, ReachMode, Refine, Store, StoreStats, queue_settings,
 };
 pub use camera::{Camera, View};
 pub use entities::{
-    DEFAULT_ENTITY_POOL_BYTES, DisplayPose, EntityMirror, EntityUploadError, MAX_ENTITIES,
-    MAX_ENTITY_PARTS, ModelHandle,
+    DEFAULT_ENTITY_POOL_BYTES, DisplayPose, EntityMirror, EntityUploadError, FreedBytes,
+    MAX_ENTITIES, MAX_ENTITY_PARTS, ModelHandle,
 };
 pub use exposure::{
     AutoExposure, EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState, Metering,
@@ -112,6 +115,10 @@ pub use gpu_world::{
 };
 pub use hud::{HudColour, HudOverlay};
 pub use light::LightParams;
+pub use loading::{
+    BAR_EASE_S, EasedBar, LOADING_WGSL, LoadProgress, LoadStage, LoadingLayout, LoadingScreen,
+    LoadingView, loading_bar_inner, loading_bar_rect, loading_layout,
+};
 pub use present::Presenter;
 pub use probes::{DEFAULT_H_MOVE, DEFAULT_PROBE_SPACING, ProbeVolume};
 pub use {glam, wgpu};

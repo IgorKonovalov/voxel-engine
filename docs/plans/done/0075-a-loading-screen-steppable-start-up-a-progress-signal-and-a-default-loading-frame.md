@@ -1,10 +1,13 @@
 # 0075: A loading screen: steppable start-up, a progress signal and a default loading frame
 
-> **Status:** approved (2026-11-15, the owner's go: after Plan 0062 merges; amended the same day, see Open questions)
+> **Status:** done 2026-11-16 (v0.58.0): a window live from the first frame after the device, every
+> start-up stage stepped behind the engine's loading frame and the pipelines built on a worker;
+> the owner's windows passed, the streamed worlds' stutter and one cold first-lighting gap kept as
+> readings. (Approved 2026-11-15; a lane stacked on plan-0062, started 2026-11-16.)
 > **Created:** 2026-11-15
 > **Milestone:** none of its own. The testbed and the tester build (M7, Plan 0068); the engine
 > side serves any consumer's start-up.
-> **Related ADRs:** [ADR-0059](../adrs/0059-loading-runs-as-time-sliced-steps-on-the-apps-frame-loop-behind-an-engine-loading-frame.md)
+> **Related ADRs:** [ADR-0059](../../adrs/0059-loading-runs-as-time-sliced-steps-on-the-apps-frame-loop-behind-an-engine-loading-frame.md)
 > (proposed): loading as time-sliced steps on the app's frame loop, the engine's pieces and the
 > app's sequence. Rests on ADR-0001 (the game owns its loop), ADR-0009 (the text overlay, no UI
 > library) and ADR-0054 (the tester runs the fly-through as a child).
@@ -229,6 +232,71 @@ owner's window.
   noticeably slower.
   Each answer and pick goes to the readings log.
 
+### Phase 6b: a frame before the device
+Amended 2026-11-16 (owner): after the Phase 6 window the owner asked to "try and show at least
+some loading screen right after start, even static is ok". This overturns open question 1's
+"accepted" for the blank; the window readings (`docs/plans/logs/0075.md`, Phase 6) put it at
+0.4 s (showcase) to 3.0 s (castle) on the RTX from process start to `device ready`.
+- **Owner skill:** dev
+- **What:** first, the blank broken down: process start, window created, instance, adapter (and
+  any adapter enumeration), the generation join, `device_request`, the device, the first loading
+  frame, each a `diag` line, on the RTX and the Radeon iGPU, the castle, cave and showcase, cold
+  and warm. Then the cheapest change that puts a visible frame (a plain static loading frame is
+  enough: the background and the scene name, or the background alone) on screen as early as
+  that breakdown allows, in this order of preference:
+  1. Nothing waits that need not: the instance on the primary backends only when no adapter is
+     named, no adapter enumeration on the default path, and the generation join moved after
+     the device (the device's limits sized from what the level needs at most, not from its
+     content, if that is how the join can move; `level_pool_units` read at its use instead).
+  2. The first loading frame drawn and presented right after the device, before anything else
+     the shell or `Run` does at start-up.
+  3. If the readings after 1 and 2 still leave more than about 500 ms from the window's
+     creation to its first frame on the RTX: a frame shown before the device by another route
+     (a CPU-filled buffer on the window's surface, a second lightweight device, or another the
+     readings suggest) goes to the owner as a pick with its cost (a new dependency is an ADR),
+     not built in this phase.
+- **Files touched:** `crates/vxe-app/src/shell.rs`, `apps/flythrough/src/app.rs`,
+  `apps/flythrough/src/scene.rs`, the run files the order touches, `docs/plans/logs/0075.md`.
+- **Done when:** the breakdown before and after is in the readings log, three runs per scene on
+  each adapter with the 1-minute load; the time from process start to the first visible frame
+  is no longer on the RTX for any scene and shorter on the castle (where the generation join
+  sits in it today); the device's limits still admit every level the gate tier loads (the gate
+  tier passes at the phase's tip); headless runs are unchanged (no frame drawn without a
+  window). The owner sees the result at the next window, folded into Phase 7's.
+
+### Phase 7b: nothing blocks the window, and one centred picture
+Amended 2026-11-16 (owner), at the `live/session75b.sh` window (RTX, NVIDIA shader cache just
+cleared, castle): the frame's creation ended at 7.1 s and the entity pipeline stage (Plan 0062
+Phase 6d's `Frame::prepare_entities`) blocked from 7.8 to 14.3 s; the owner: "I see the error
+'device not responding' and nothing moves" (the compositor's not-responding notice: the event loop
+was not pumped), and "image is in the left top corner, and not centered, it should match the
+loader". Taken: pipeline creation (the frame's own and the entity set) runs on a worker thread
+(the device is shared across threads) while the event loop keeps pumping and drawing the loading
+frame. Rejected: one blocking stage (the owner's verdict above); building the entity set after the
+first world frame (Plan 0062 Phase 6d's first amendment, overturned).
+- **Owner skill:** dev
+- **What:** start-up's long GPU steps (the frame's creation and `prepare_entities`, and any other
+  step the readings show over 50 ms) move to a worker; the loading screen polls them, keeps the
+  cube turning, and advances the bar by the stage's share (by pipelines built if the worker reports
+  a count). The loading picture is one picture at every point of start-up: the first frame after
+  the device and every stage frame draw the same layout, centred in the window at its current size
+  (the fly-through's loader is the reference), with no jump between them.
+- **Files touched:** `crates/vxe-render/src/loading.rs`, the frame's creation and `prepare_entities`
+  call sites, `apps/flythrough/src/app.rs` and the run files the stepping touches, `gpu_loading`,
+  `docs/plans/logs/0075.md`.
+- **Done when:** on the RTX with the driver cache cleared, the castle: the loading screen's
+  frame-to-frame gaps logged, none over 100 ms from the first loading frame to the first world
+  frame, and no not-responding notice in the owner's window; the cube turns throughout; a test
+  that the loading picture's layout is centred at two window sizes and the same for the first and
+  a stage frame; headless runs unchanged; the stage times read as before (the work is the same,
+  only off the event loop).
+- **Amended 2026-11-16 (owner):** at the session 75c window (castle and showcase, each on a new
+  empty driver cache) the owner saw the cube turn throughout, no notice and a centred picture,
+  and noticed no hitch. One gap of 130 to 210 ms stays, cold only, at the first "lighting the
+  near chunks" frames (warm max 87 ms; cause not found, every compute pipeline is built before
+  it). The owner accepts it as a reading: the 100 ms bar holds for every other loading frame,
+  and that one cold gap is recorded in the readings log and the backlog, not fixed in this plan.
+
 ### Phase 7: after the window
 - **Owner skill:** dev
 - **What:** the owner's picks applied, the golden written, the docs brought up to date.
@@ -293,7 +361,8 @@ Phase 5 reads them:
 
 Answered by the owner at the go, 2026-11-15 (Amended 2026-11-15 (owner)):
 
-1. **The blank before the device:** accepted, and read in Phase 5 (0.4 to 1.9 s cold on the
+1. **The blank before the device:** accepted at the go, overturned at the Phase 6 window
+   (Amended 2026-11-16 (owner), Phase 6b); first read in Phase 5 (0.4 to 1.9 s cold on the
    RTX, `docs/nfr.md` section 7). A device whose limits do not wait on the level's content
    would be its own plan if the readings say the generation join is long.
 2. **The end of loading:** a 250 ms fade of the loading screen over the first world frames
@@ -307,8 +376,8 @@ Answered by the owner at the go, 2026-11-15 (Amended 2026-11-15 (owner)):
 
 ## What this plan does NOT do
 
-- Show anything before the device exists: the device's limits still wait on the level's
-  generation (open question 1).
+- Build a second route to the screen before the device exists without the owner's pick (Phase 6b,
+  item 3).
 - Load on a thread, or make generation itself report progress (the level generates on its own
   threads; its stage shows the animation without a count).
 - Rebuild the world live behind the loading screen (Plan 0069's `Rebuild` class, a later idea for
@@ -319,20 +388,62 @@ Answered by the owner at the go, 2026-11-15 (Amended 2026-11-15 (owner)):
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. Readings,
-> attempts and resume notes go to `docs/plans/logs/0075.md`.
+> attempts and resume notes go to [`docs/plans/logs/0075.md`](../logs/0075.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the pre-roll stepped behind a plain loading frame | dev | not started | |
-| 2: every stage steps; PreRoll and LoadProgress | dev | not started | |
-| 3: the engine's loading frame | dev | not started | |
-| 4: the fly-through and the tester around it | dev | not started | |
-| 5: the budget readings | dev | not started | |
-| 6: the owner's window | human | not started | |
-| 7: after the window | dev | not started | |
+| 1: the pre-roll stepped behind a plain loading frame | dev | done; readings headless, not windowed (lane rule 10); the test runs `--room 12`; `test_support.rs` gained the `Run` field; the loading flags in a new `cli/loading.rs` with a Loading and a Diagnostics section | 1ff6ffb1 |
+| 2: every stage steps; PreRoll and LoadProgress | dev | done; the streamed stage test is born soak (22 s on lavapipe); the sync's time budget covers the first stage only (an attempt with it through the pre-roll starved the coarse pass); the GPU cap is a `device.poll(wait)` at each loading frame's start; `GpuWorld` gained `set_sync_budget_time` | 3a291c9a |
+| 3: the engine's loading frame | dev | done; the text rows are not drawn while the screen fades (alpha below 1); the loading pass reads 1.70 ms on lavapipe at 1080p against the 0.3 ms budget (1.06 ms without the cube; see Notes); the Phase 1 text bar and clear pass are gone | a6fc3c87 |
+| 4: the fly-through and the tester around it | dev | done; "the title" read as the loading frame's title row (the window's title is unchanged); the warm-up test is a lavapipe run in `gpu_loading.rs`, not CPU in `path.rs`; outside `Files touched`: `run/mod.rs` (the recorder's device-ready time), `run/tour.rs` and `tests/path.rs` (the new `RunReport` fields); `menu.rs` unchanged (the row is `Outcome::row`) | 559b48a4 |
+| 5: the budget readings | dev | done; headless, not windowed (lane rule 10; the windowed readings are the Phase 6 runner's); the cost misses 3 % on the streamed worlds (+9.6 % cave, +8.1 % castle on the RTX) and the interval p95 misses 50 ms there (96 to 104 ms); the slice picks 15 / 25 / 40 read on the castle go to the owner's window; tip gate green | 9c3371dc |
+| 6: the owner's window | human | done 2026-11-16 06:49 to 07:05, Linux, the RTX; the fade and the 25 ms slice picked; the cost and interval misses of Phase 5 accepted at the window; the streamed worlds' stutter to Followups; the owner asked for a frame right after start (Phase 6b) | 43f76669 |
+| 6b: a frame before the device | dev | done; the first present is the new `App::splash` frame after the device; the castle's prefabs build on a thread joined in `init`; the bounded level's join stays before the device (its limits and shard layout read its content); the instance's backends unchanged (only Vulkan and DX12 are built); outside `Files touched`: `apps/flythrough/src/setup.rs` (the castle's thread); `vxe-app` gained `ShellConfig::start` and the `start-up:` lines; item 3 not built (window to first frame 278 to 394 ms on the RTX); the owner accepted the current behaviour (option c, 2026-11-16), the CPU-drawn frame parked in the backlog | 6801cc13 |
+| 7: after the window | dev | done; every pick was already the default (fade 250, slice 25, the screen on in a window and off headless), no flag changed; the 0.3 ms loading-pass budget counts on the RTX only (owner); the golden blessed on lavapipe; outside `Files touched`: `crates/vxe-render/Cargo.toml` (`png` as a dev-dependency) and `Cargo.lock`; the close block waits for the merge of plan-0062 and main | 3b0510fc |
+| 7b: nothing blocks the window, and one centred picture | dev | done; under the screen the frame's creation, its settings, the mirror, the presenter, the overlay, the timers, the entity pipelines and (outside the plan's list, a 280 ms compile the readings showed) the light bake's pipeline build on a worker thread (`build_gfx`); the stage is renamed `building the pipelines`, weight 1.6; the screen off builds in `init` as before; outside `Files touched`: `crates/vxe-render/src/frame/baked.rs` (`Frame::prepare_bake`), `crates/vxe-render/src/lib.rs` (`LoadingLayout`), the fly-through's `tests/gpu_loading.rs` (the stage's name); not met as stated: with the driver compiling, one or two gaps of 144 to 207 ms at the first `lighting the near chunks` frames (headless on the RTX; warm cache max 87 ms); the windowed reading is the owner's runner `live/session75c.sh` | 90acb176 |
 
 ### Notes
 
+- The plan file and ADR-0059 were checked out from main (2cdd89f + fecf6a3) into this lane,
+  which is stacked on plan-0062 (2836bf8) and predates their approval (933b64ec); main is not
+  merged in.
+- No name drift from the tree: `Run::init`, `Run::queue_pre_roll`, `level_pool_units`,
+  `HudOverlay`, `MirrorConfig::sync_budget_time` and `Frame::bake_queue_step` were where the
+  plan names them; `queue_pre_roll` now lives in `run/loading.rs`, its loop body in
+  `vxe_render::PreRoll`.
+- Every Phase 1 and Phase 5 reading is headless, not windowed (lane rule 10, the owner
+  asleep); the windowed ones are Phase 6's runner.
+- The loading pass reads 1.70 to 1.88 ms on lavapipe at 1080p (1.06 ms without the cube) and
+  0.21 ms on the Radeon, 0.079 ms on the RTX; open question 3 names the RTX or lavapipe
+  missing 0.3 ms as the trigger to shrink the cube, and lavapipe misses it without one: an
+  owner question, the cube unchanged.
+- The cost budget (on within 3 % of off) is missed on the streamed worlds: each loading
+  frame waits for the previous slice's GPU work (the plan's cap on work in flight), and the
+  pre-roll's bake step runs 70 to 140 ms on the RTX, over the 25 ms slice, which also puts
+  the interval p95 near 100 ms. The slices 15 and 40 read worse and slightly better on the
+  cost; both go to the owner's window.
+- `--residency 2,3` and `4,6` with `--near 0` run the pre-roll to its 120 s cap with the
+  screen on or off (the camera's chunk never settles); seen while sizing the streamed test,
+  not acted on.
+- The window's title stays `flythrough`; the `--tester` title is the loading frame's row.
+- After the merge of main (Plan 0062), `Frame::prepare_entities` is the first loading stage,
+  one blocking step (`docs/plans/logs/0075.md`, the merge's section); the loading frame does
+  not turn during it (5.7 to 9.8 s on the RTX when the driver compiles, 70 to 110 ms cached).
+
 ### Close triggers
 
+Closed 2026-11-16 by a fresh-session review on 2324bc08 (main e6deab71 merged): clean, v0.58.0.
+Every named test exists and asserts its claim; the gate tier 981 run, 981 passed, 101 skipped,
+1074.7 s (`--test-threads 2`, three lanes, 1-minute load 15.6 at the start, 5.4 at the end,
+loaded), clippy, fmt, doctests, `cargo deny` and the doc gates 0. ADR-0059 accepted with an
+Outcome (the pipelines on a worker, the splash through `vxe-app`). Readings: `docs/nfr.md`
+section 7. Misses accepted by the owner at the windows: the cost on the streamed worlds (+8 to
++10 % against 3 %), the interval p95 near 100 ms there, the cold first-lighting gap (130 to
+210 ms against 100 ms), the loading pass on lavapipe (the 0.3 ms line counts on the RTX). The
+followup and the parked rebuild are in `docs/backlog.md`.
+
 ## Followups
+
+- The loading frames stutter on the streamed worlds (castle, cave): about 24 fps p50, p95
+  near 100 ms, the owner saw it at the Phase 6 window ("like fps in 30-40"); the bake step
+  runs longer than the slice and each frame waits for the previous slice's GPU work.

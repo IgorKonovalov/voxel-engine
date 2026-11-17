@@ -1,8 +1,8 @@
 # ADR-0060: Entity volumes are freed by handle into a coalescing free list, and a volume never moves
 
-> **Status:** proposed
+> **Status:** accepted 2026-11-16 (Plan 0078 closed, v0.59.0; Outcome below)
 > **Date:** 2026-11-16
-> **Related plan(s):** [Plan 0078](../plans/0078-the-entity-pool-frees-models-by-handle-stable-instance-slots-and-a-reset.md)
+> **Related plan(s):** [Plan 0078](../plans/done/0078-the-entity-pool-frees-models-by-handle-stable-instance-slots-and-a-reset.md)
 
 ## Context
 
@@ -91,4 +91,14 @@ re-upload it at the next placement, a hitch the consumer cannot prevent. A refer
 
 ## Outcome
 
-_(Added at acceptance if implementation falsifies something above.)_
+2026-11-16, at Plan 0078's close. The decision held: a free by handle into a coalescing free
+list, first fit from the lowest word, no volume moved, a generation in the handle, `clear()`,
+and `PoolFull { needed, free, largest }`. Two details the body leaves open were settled in the
+tree. A model's new volumes are allocated as **one range**, laid in part order, and each is
+freed on its own, so `needed` is one request. The handle is 16 bits of slot and 16 of
+generation, and a 65 537th live model is refused (`TooManyModels`). The waste on a seeded
+10 000-call sequence over the default pool (`reading::the_waste_of_a_seeded_sequence`): free
+bytes outside the largest hole 0.16 % of the live bytes at the live peak, 14.48 % at worst
+with the pool at least half live; 875 refusals a `clear` answers against 648 of a full pool
+(`docs/nfr/03-memory.md`). The fly-through answers a fragmented refusal with `clear()` and a
+re-upload (`entity pool reset`).

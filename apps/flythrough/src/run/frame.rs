@@ -14,6 +14,7 @@ use crate::run::hud_feed::{
     print_moving_exposure, probe_passes_ms, shadow_steps_line, steps_line, window_line,
 };
 use crate::run::keys::{ORE_PULSE_MEAN, ore_pulse};
+use crate::run::loading::fade_loading;
 use crate::setup::GfxSample;
 use crate::streaming::pressure_terms;
 use std::time::Instant;
@@ -174,6 +175,9 @@ impl Run {
         dt: f32,
         surface: &wgpu::TextureView,
     ) -> Flow {
+        if self.is_loading() {
+            return self.loading_frame(gpu, input, surface);
+        }
         let t0 = now();
         // A path run ends through its player, so its report can say how.
         if input.pressed(KeyCode::Escape) && self.player.is_none() {
@@ -459,6 +463,7 @@ impl Run {
             }
         }
         gpu.queue.submit([enc.finish()]);
+        fade_loading(&mut self.loading, gpu, surface);
         if self.args.headless {
             diag(format_args!("frame {}: submitted", self.frame));
         }
@@ -473,7 +478,7 @@ impl Run {
         );
 
         if self.frame == 0 {
-            wait_first_frame(gpu, self.start);
+            wait_first_frame(gpu, self.start, self.recorder.as_mut());
         }
         // The timers hand over their newest finished set without waiting (a frame or two old),
         // `None` on a frame with nothing new. `--lamp-toggle` and `--fade-reading` file each set
@@ -676,13 +681,16 @@ impl Run {
             return;
         };
         gfx.frame.set_lights(&lights);
-        crate::walker::feed(
+        if let Some(words) = crate::walker::feed(
             &mut self.modes.walkers,
             &self.world,
             self.fly.camera.position.to_array(),
             &mut gfx.frame,
             &gpu.queue,
-        );
+        ) {
+            println!("{words}");
+            self.modes.show_lights(words, ms_since(self.start));
+        }
         if std::mem::take(&mut self.upscaler_changed) {
             let (kind, scale, jitter) = self.args.upscaler_settings(self.modes.upscaler.mode);
             let output = gfx.frame.output_size();
@@ -803,12 +811,16 @@ impl Run {
 }
 
 /// Waits for the GPU to finish the first frame, which counts from then: prints when, from the
-/// session's `start`.
-fn wait_first_frame(gpu: &Gpu, start: Instant) {
+/// session's `start`, and sets the `recorder`'s load time from its device-ready time.
+fn wait_first_frame(gpu: &Gpu, start: Instant, recorder: Option<&mut crate::report::Recorder>) {
     diag(format_args!("frame 0: waiting for the GPU"));
     let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
     diag(format_args!("frame 0: the GPU finished"));
     println!("first frame after {:.0} ms", ms_since(start));
+    // The report's load time: device ready to the first world frame.
+    if let Some(rec) = recorder {
+        rec.load_ms = rec.device_ms.map(|at| ms_since(start) - at);
+    }
 }
 
 impl Run {

@@ -274,6 +274,57 @@ fn a_missing_model_is_an_error_that_names_it() {
     assert!(Viewer::open(&assets().join("walker.rig"), Some("walk".into())).is_ok());
 }
 
+/// Plan 0078 Phase 2 done-when 1: after an upload, a valid reload moves the handle to `stale`
+/// and leaves `handle` `None`; a broken reload leaves both as they were; the sync step uploads
+/// the new model, then frees the stale one (the pool holds the new model's bytes alone, and
+/// the old handle names nothing).
+#[test]
+fn a_reload_hands_back_the_old_handle() {
+    use flythrough::walker::sync_models;
+    use vxe_render::internals::VolumePool;
+    use vxe_render::{DEFAULT_ENTITY_POOL_BYTES, EntityMirror, EntityUploadError};
+
+    let rig = std::fs::read_to_string(assets().join("walker.rig")).expect("rig reads");
+    let vox = std::fs::read(assets().join("walker.vox")).expect("vox reads");
+    let t = table();
+    let bytes = |m: &vxe_entity::Model| {
+        let mut ids: Vec<u64> = Vec::new();
+        let mut sum = 0;
+        for p in m.parts() {
+            if !ids.contains(&p.volume.id()) {
+                ids.push(p.volume.id());
+                sum += EntityMirror::volume_bytes(&p.volume);
+            }
+        }
+        sum
+    };
+    let mut w = walker::Walkers::default().with_viewer(Some(built()));
+    assert!(w.place(&t, [0.0, 0.0, 2.0], [5.0, 0.0, 2.0]));
+    let mut pool = VolumePool::new(DEFAULT_ENTITY_POOL_BYTES);
+    assert_eq!(sync_models(&mut w, &mut pool, &t), None);
+    let v = w.viewer.as_mut().expect("viewer");
+    let old = v.handle.expect("uploaded");
+    assert_eq!(v.stale, None);
+
+    // A changed palette entry for the eyes' index: every part holding an eye is a new prefab.
+    let changed = rig.replace("material 185 walker_eye", "material 185 walker");
+    assert_ne!(changed, rig);
+    v.reload(&changed, &vox, &t).expect("builds");
+    assert_eq!((v.handle, v.stale), (None, Some(old)));
+    let broken = with_line(&rig, 9, "material 2");
+    v.reload(&broken, &vox, &t).expect_err("line 9 is broken");
+    assert_eq!((v.handle, v.stale), (None, Some(old)));
+    let live = bytes(&v.loaded.as_ref().expect("built").model);
+
+    assert_eq!(sync_models(&mut w, &mut pool, &t), None);
+    let v = w.viewer.as_ref().expect("viewer");
+    let new = v.handle.expect("uploaded");
+    assert_ne!(new, old);
+    assert_eq!(v.stale, None, "freed after the upload");
+    assert_eq!(pool.free_model(old), Err(EntityUploadError::UnknownModel));
+    assert_eq!(pool.used_bytes(), live);
+}
+
 /// Readings, run by hand (`--run-ignored only -E 'test(=reading::<name>)'`, under the perf
 /// lock, `--release` for the figure). They print and assert nothing.
 mod reading {
@@ -282,6 +333,46 @@ mod reading {
     use vxe_entity::{Clip, Key, Model, Part, Pose, Quat, Track, sample};
     use vxe_render::DisplayPose;
     use vxe_world::{Fixed3, Prefab};
+
+    /// Plan 0078 Phase 2's reading: the CPU time of a reload's pool step for the sample walker,
+    /// `free_model` of the old model plus the upload of the new (the bookkeeping and the
+    /// volumes' words, no device: the mirror's `write_buffer` copy is not in it); the median of
+    /// 1000, in ms. The two models differ in the parts that hold an eye.
+    #[test]
+    #[ignore]
+    fn the_reload_pool_step_cost() {
+        use vxe_render::DEFAULT_ENTITY_POOL_BYTES;
+        use vxe_render::internals::VolumePool;
+
+        let dir = super::assets();
+        let rig = std::fs::read_to_string(dir.join("walker.rig")).expect("rig reads");
+        let vox = std::fs::read(dir.join("walker.vox")).expect("vox reads");
+        let t = super::table();
+        let build = |text: &str| {
+            let mut v = super::built();
+            v.reload(text, &vox, &t).expect("builds");
+            v.loaded.expect("built").model
+        };
+        let models = [
+            build(&rig),
+            build(&rig.replace("material 185 walker_eye", "material 185 walker")),
+        ];
+        let mut pool = VolumePool::new(DEFAULT_ENTITY_POOL_BYTES);
+        let mut live = pool.upload(&models[0], &t).expect("room").handle;
+        let mut ms = Vec::new();
+        for k in 1..=1000usize {
+            let t0 = flythrough::now();
+            let next = pool.upload(&models[k % 2], &t).expect("room").handle;
+            pool.free_model(live).expect("live");
+            ms.push(flythrough::now().duration_since(t0).as_secs_f64() * 1e3);
+            live = next;
+        }
+        ms.sort_by(f64::total_cmp);
+        println!(
+            "reload pool step, median of 1000: {:.4} ms (min {:.4}, max {:.4})",
+            ms[500], ms[0], ms[999]
+        );
+    }
 
     /// Done-when 6: `sample` at two ticks and `DisplayPose::between` for 64 entities of 16 parts
     /// (a chain, each part on the one before, every part keyed), each entity at its own tick;

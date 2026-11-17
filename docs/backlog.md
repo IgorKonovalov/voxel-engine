@@ -68,6 +68,31 @@ stagger is a different stage, the eviction scan.
 
 Done 2026-11-10 (50b2193, 4a15e60): GPU test files are `tests/gpu_*.rs`, long series `#[ignore = "soak"]`, kept by `scripts/check-test-tiers.mjs`.
 
+### A headless run at `--residency 3,4` hangs before its first frame
+
+Noted 2026-11-17 by the Plan 0032 lane (`docs/plans/logs/0032.md`, Phase 3): a headless
+fly-through with `--residency 3,4` hangs after the live queue starts and before frame 1, on the
+plain cave as well as the outdoor source, so it predates that plan; `6,8` and `8,12` run. Not
+yet bisected. Take it as a chore when a small residency is next needed (a test rig or the
+Portable profile's floor), starting from which stage waits.
+
+### `--adapter NAME` that matches nothing falls back silently
+
+Noted 2026-11-17 by the Plan 0032 lane (Phase 6 readings): `--adapter radeon` and `--adapter rtx`
+match no adapter name on the dev box and the fly-through runs on the RTX without a word; the
+iGPU needs `--adapter AMD`. A reading taken that way is labelled with the wrong machine. Fix as a
+chore: refuse (or print the adapters and exit) when no adapter matches, and accept the short
+names the tests' `VXE_TEST_ADAPTER` takes.
+
+### `StampedSource` shares its prefabs across placements
+
+Noted 2026-11-17 by the Plan 0032 lane (Phase 8, `docs/plans/logs/0032.md`): `vxe_world::StampedSource`
+keeps its own rotated copy of the prefab for every placement, so a forest of about 3,850 trees
+would hold 3,850 copies (estimated 1 to 2 GB, not measured). The lane wrote a fly-through
+`ForestSource` over 64 shared prefabs instead. Engine follow-up: placements reference a shared
+prefab and rotation (an `Arc` and an orientation), so a dense generation-time scatter costs its
+distinct prefabs, not its placements. Pick up at Plan 0032's close or before the next scatter.
+
 ### The live queue's order and cancellation, after Plan 0059
 
 Taken 2026-11-10 by [Plan 0060](plans/done/0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md) and [ADR-0048](adrs/0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md); the hall's aliasing goes to the antialiasing plan below.
@@ -99,6 +124,21 @@ released over a pit lands as the same pile with the same hash on both CI arms) a
 reading against a new `nfr.md` line.
 
 Pick up when the lighting base is settled: Plans 0056, 0057 and 0058 closed.
+
+### The first near-lighting step stalls 130 to 210 ms on a cold driver cache
+
+Noted 2026-11-16 from Plan 0075 Phase 7b (`docs/plans/logs/0075.md`, session 75c; RTX host). With
+every pipeline built on the start-up worker, one loading gap stays at the first "lighting the near
+chunks" frames, cold only (warm max 87 ms). Every `vxe-render` compute pipeline exists before it,
+so the time is something else the driver does on first use. The owner noticed no hitch and
+accepted it. Pick up when a start-up or first-frame plan needs the bar, with a driver trace.
+
+### A wgpu pipeline cache owned by the engine
+
+Noted 2026-11-16 from the NVIDIA GLCache overflow (over 1 GB, so nothing new was kept and every
+start recompiled). `wgpu::PipelineCache` on Vulkan, saved under the game's cache directory, would
+make a warm start independent of the driver's own cache size and eviction. Pick up with the next
+start-up time plan, or when a tester reports long starts.
 
 ### `.vox` import: down-scaling, a traced preview, a row's class changed live
 
@@ -208,6 +248,22 @@ Read 2026-11-11 in Plan 0060's Phase 4 window (`docs/plans/logs/0060.md`): the f
 ### A CPU-drawn first frame before the device
 
 Parked 2026-11-16 by the owner at Plan 0075's Phase 6b (`docs/plans/logs/0075.md`). Since 6b the window shows a static loading frame 0.3 to 0.4 s after process start on the RTX (0.2 to 0.3 s on the Radeon iGPU), drawn by the GPU right after the device. What is left before it is the instance (78 to 244 ms), the device and the surface's configure. In two runs, the first launch after a pause, the instance took about 1.6 s (a guess: the NVIDIA dGPU waking; not confirmed). On Wayland nothing shows until a buffer is attached, so a frame before the device needs a CPU-filled buffer: the `softbuffer` crate (rust-windowing, winit's org; wl_shm on Linux, GDI on Windows), or the same by hand per platform. Windows already paints a window's class background at once. Cost: a dependency and its ADR, about 100 lines in `vxe-app`'s shell, and the window's surface handed from the CPU buffer to wgpu's swapchain, read on both platforms. What it takes: a reading of how often the slow instance happens on testers' machines (the `start-up:` lines in run logs), then a small plan. Pick up if a tester reports a blank window at start.
+
+### The loading frames stutter on the streamed worlds
+
+Noted 2026-11-16 at Plan 0075's close (its Followups; `docs/plans/logs/0075.md`, Phases 5 and 6).
+On the cave and the castle the loading frames run near 24 fps (interval p95 96 to 104 ms on the
+RTX); the owner saw it ("like fps in 30-40") and accepted it. A pre-roll bake step runs 70 to 140
+ms against the 25 ms slice, and each loading frame waits for the previous slice's GPU work. What
+it takes: a bake step split under the slice (fewer samples a step, or a step bounded by time),
+read on the castle. Pick up with the next start-up plan, or when a tester reports a jerky load.
+
+### Rebuild the world live behind the loading screen
+
+Parked 2026-11-15 by Plan 0075 ("What this plan does NOT do"). A settings change of Plan 0069's
+`Rebuild` class could drop to the loading screen, rebuild, and step back in, instead of a restart.
+What it takes: the run's stages re-entered from a live run, the world and mirror torn down in
+place. Pick up after Plan 0069 lands, if a rebuild-class setting proves common.
 
 ### The pre-roll never settles at small residencies
 
