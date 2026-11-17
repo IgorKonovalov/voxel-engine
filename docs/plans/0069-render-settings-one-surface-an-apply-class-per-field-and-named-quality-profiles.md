@@ -371,9 +371,9 @@ the readings cannot see. No determinism risk: nothing here reaches `vxe-world`'s
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: the struct, read back and applied | dev | done; gpu_settings 2/2 at e73cf935 (readings log, Phase 2) | 3a3a3e4b |
-| 2: the classes, proved, and the setter gate | dev | done; the `cargo doc` done-when open pending the owner (Notes) | code 0335bc30; row f0c8a109 |
-| 3: the profiles, in the fly-through and the tester | dev | done; `Default` = Floor for `RenderSettings` only, open pending the owner (Notes) | code e0c75597, e73cf935; row 55e62a13 |
-| 4: readings of each profile on both adapters | dev | done; most cells loaded, not quiet; RENOIR portable hall hit pass 10.5 ms, over the 10 ms line (Notes) | committed with this row |
+| 2: the classes, proved, and the setter gate | dev | done; the `cargo doc` done-when closed by the 2026-11-17 amendment (Notes) | code 0335bc30; row f0c8a109 |
+| 3: the profiles, in the fly-through and the tester | dev | done; `Default` = Floor for `RenderSettings` only, as the 2026-11-17 amendment reads (Notes) | code e0c75597, e73cf935; row 55e62a13 |
+| 4: readings of each profile on both adapters | dev | done; most cells loaded, not quiet; RENOIR portable hall hit pass 10.5 ms, accepted by the 2026-11-17 amendment (Notes) | 356b32a1 |
 | 5: the owner's window | human | not started | |
 | 6: the picks into the profiles | dev | not started | |
 | 7: image tests against the picks, and the tip's readings | dev | not started | |
@@ -396,15 +396,17 @@ the readings cannot see. No determinism risk: nothing here reaches `vxe-world`'s
   `NOT_SETTINGS`; the test values are `RenderSettings::with_test_value` (doc-hidden). The class
   test is split in two by the upscaler (readings log). Done-when not met as written: `cargo doc
   -p vxe-render` prints 64 `private_intra_doc_links` warnings (cargo's count), none on a line
-  this branch wrote; the new docs add none. Open, pending the owner: whether the done-when
-  reads "no new warnings" or the 64 are fixed (outside the plan's Files touched).
+  this branch wrote; the new docs add none. Closed by the 2026-11-17 amendment (3903f104,
+  owner): the done-when reads "no new warnings from this plan's files"; the 64 are a backlog
+  chore.
 - Phase 3 deviations: the profile cycle is on `PageDown` (`toggles::KEY_PROFILE`), not `F4`,
   until Plan 0080 frees `F4` (the 2026-11-16 amendment); Portable's `lod.r_full` is 12, following
   its residency (`r_full` 12), a row the "Data shapes" table does not list; the HUD's profile
   row is written only when set (`Modes::profile` non-empty), so a `Modes` built outside the
   run draws no blank row; the tester's `run::Scale` became `run::Profile` (`--profile NAME`),
   and `dist/README-TESTER.txt` and `docs/flythrough.md` follow.
-- Open, pending the owner (amendment 2026-11-12): "every settings struct's `Default` equals
+- Closed by the 2026-11-17 amendment (3903f104, owner, option (b)); was open since the
+  2026-11-12 amendment: "every settings struct's `Default` equals
   `Floor`, `Lighting::default()` included" is not done. `RenderSettings::default()` equals
   Floor (CPU test); `Lighting::default()` and the other structs keep their library defaults
   (`Exposure::Manual(1.0)`, bounce off, far normal [0, 0]) that the render tests build on.
@@ -415,7 +417,8 @@ the readings cannot see. No determinism risk: nothing here reaches `vxe-world`'s
   above 2 (other lanes building; each cell's loads are in the readings log). The frame's
   reserved VRAM is not printed by the tree; the mirror's is. The RADV RENOIR's hit pass at
   Portable's internal size reads 10.53 ms in the hall, over the 2026-11-12 amendment's 10 ms
-  line, which puts the backlog's walk-speed spike before Phase 6.
+  line; the 2026-11-17 amendment (3903f104, owner) accepts it, and the walk-speed spike is
+  not required before Phase 6.
 
 ### Close triggers
 
