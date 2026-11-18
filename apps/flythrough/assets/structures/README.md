@@ -1,14 +1,18 @@
 # Structures
 
-MagicaVoxel scenes the fly-through places in the cave (Plan 0083). One directory per
+MagicaVoxel scenes the fly-through places in the world (Plan 0083). One directory per
 structure, `<name>/<name>.vox` (`--structures-dir DIR` scans another directory). Each is a
 belt item after the entities, and the generated castle after them: select its slot (the wheel,
-a digit in placement mode, or the menu's `structures` group, `choose a structure`), and a
-marked frame of its box stands where it will go, its near side at the crosshair's hit and the
-box growing away from the camera; `R` turns it a quarter turn and the left click places it as
-logged stamps (a stamp of written air over the box and 1 m around it when `clear box` is on,
-then one stamp per placement). `structure scale` (1 to 4) is in the same group. At the start
-also, from the command line:
+a digit in placement mode, or the menu's `structures` group, `choose a structure`), and its
+ghost stands where it will go: a coarse copy of the structure (voxel for voxel up to 64 voxels
+a side, else one voxel per cube of `k`) inside a marked frame of its box, its near side at the
+crosshair's hit and the box growing away from the camera; `R` turns it a quarter turn and the
+left click places it as logged stamps (a stamp of written air over the box and 1 m around it
+when `clear box` is on, then one stamp per placement). `structure scale` (1 to 4) is in the
+same group. The castle's icon and ghost arrive with its first build, on a worker the first time
+its slot is selected (`castle: building` until then). A structure larger than the cave's rooms
+stands in its cleared box with the cut rock around it: judge a large structure on the outdoor
+hills (`--source outdoor --time 12:00`). At the start also, from the command line:
 
 ```sh
 flythrough --vox apps/flythrough/assets/structures/chapel/chapel.vox          # ahead of the spawn

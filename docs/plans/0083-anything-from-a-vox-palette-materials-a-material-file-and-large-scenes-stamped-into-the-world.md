@@ -995,7 +995,7 @@ Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
 | 5: placements past residency | dev | done | 7a7a6f19 |
 | 6 (amended): a structure in the belt | dev | done; deviations in Notes | c83ebcf8 |
 | 7: the owner's window | human | done 2026-11-18 (83a cave, 83b outdoor); verdict in "Phase 7 verdict" | fd650c02, 0e85862a (fixes between 83a and 83b) |
-| 7b: the coarse ghost, the spider's rows, the docs | dev | not started | |
+| 7b: the coarse ghost, the spider's rows, the docs | dev | done; deviations in Notes (the spider takes belt slot 1) | 4c5b5616, 6a457a07, a4dec4c2, committed with this row |
 | 7c: the owner looks at the ghost | human | not started | |
 | 8: picks, goldens, readings, tip | dev | not started | |
 
@@ -1104,6 +1104,15 @@ Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
   gate; both re-blessed on lavapipe after reading them: the `clear box on, structure scale 1`
   row inserted under the lights row (the rows below it one line down), and `structures` after
   `entities` on the root page.
+- Phase 7b: done-when 4's "slot 2" reads slot 1: a spider that builds leads the walker by
+  name in the library's order; the test asserts that order.
+- Phase 7b: a body over `FRAME_BODY_VOXELS` (2^20 box voxels) is made on a worker of its own,
+  not the icons'; the ghost's key gains whether the body is in.
+- Phase 7b: k follows the formula and done-when 3 (k is the scale at 1 to 3), not the
+  mechanism's "k 1 at scales 1 to 3".
+- Phase 7b: `Model::reach` public, `MAX_COARSE` exported, every model id moved (coarse byte).
+- Phase 7b: files outside the list, the three spider tests, the 9-part scale-2 ghost and the
+  `gpu_entities.rs` path: readings log, Phase 7b.
 
 ### Close triggers
 

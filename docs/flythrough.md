@@ -151,9 +151,13 @@ full set (64) stands no ghost and the banner says why. Under `--tester` there is
 mode.
 
 The belt also holds the structures (`apps/flythrough/assets/structures`, then the generated
-castle), filled after the entities: walker, spider, chapel, castle, slot 5 empty. A
-structure's ghost is a marked frame of its box at the scale and turn (its twelve edges, or its
-eight corners for a box over 64 voxels a side), its name row the structure's size
+castle), filled after the entities: spider, walker, chapel, castle, slot 5 empty (the
+spider's rows join every source's table at the start, `entities: 2 entries, +3 rows`). A
+structure's ghost is a coarse copy of the structure inside a frame of its box at the scale and
+turn, marked as one entity: the copy is the structure voxel for voxel while it is at most 64
+voxels a side, else one voxel for each cube of `k` voxels (the least `k` that fits: 10 for the
+castle), and the frame is its twelve edges, or its eight corners for a box over 64 voxels a
+side. It writes no voxel. Its name row is the structure's size
 (`chapel  4.8 x 3.2 x 4.0 m`, `  x2` after it at scale 2). The box's near side is at the
 crosshair's first world hit within 30 m (on a wall or a ceiling, dropped to the floor below),
 or the view's 3 m point dropped to the floor with no hit; its footprint grows away from the
@@ -163,8 +167,11 @@ turns it a quarter turn. The left click places it as logged stamps through the s
 stamp per placement; a part of the box not resident is written as its chunks arrive. The
 notice reads `placed chapel 4.8 x 3.2 x 4.0 m: 5 ops, 4 chunks now, 0 pending`, and the mode
 stays. The castle builds on a worker the first time its slot is selected (`castle: building`
-in grey until it arrives) and places at scale 1 only; a box past the edit limit (1024 voxels a
-side with its margin) is refused with its size.
+in grey until it arrives; its icon and its ghost arrive with it) and places at scale 1 only; a
+box past the edit limit (1024 voxels a side with its margin) is refused with its size. A
+structure larger than the cave's rooms stands in its cleared box with the cut rock around it:
+the fly-through has no notion of a room, so judge a large structure on the outdoor hills
+(`--source outdoor --time 12:00`).
 
 ### Gamepad (`--pad on`, the default in a window)
 
