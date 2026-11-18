@@ -594,6 +594,204 @@ lands.
    Phase 25 pins the window's values and the counter ratchets from them, so neither can rise
    unseen.
 
+## Amended 2026-11-19, after the seed and Phase 21a were built (the architect's calls; the owner asleep)
+
+The amendment above was built at `5646af8b`, `0f8cde39`, `3a97ca13`, `12c727f4` and `fa5e7331`
+(the readings log: Phases 19 to 21a and the re-stated bar 1a). Phase 21a works alone (the
+castle's `missing` 22 083 / 1742 / 0 at frames 0 / 100 / 200 against 49 375 / 12 568 / 0; the
+queue drains in 1423 paced frames against 2255). The seed's open prior does not: it fails
+`a_closed_box_takes_no_sky_light` (0.232 against 0.063) and
+`an_absent_chunk_below_the_column_top_is_rock_to_the_sky_ray` (0.663 against 0.031), both 0.0
+under (c) alone; it puts the whole hole over 2 times its settled value at the dig's first frame
+(`a_dig_leaves_no_dots`, 1.854 %); and the castle's fresh over-8 mean goes from 2.25 % to 9.04 %,
+9.78 % after 21a. The castle strip (`live/flicker/castle/after21a/fresh/`) shows the keep's
+interior, vault included, lit as if open to the sky at frame 2 and darkened to its enclosed light
+by frame 20: one fade down from a wrong prior over most of the interior, not sparkle. Five calls
+follow. Nothing here changes a default or an ADR.
+
+### 1. The seed's prior is the record, else the column map at the hit's air side; the chain leaves the seed; the band gets a variance floor
+
+**The decision.** A reset pixel under the sky ray seeds the pair at `SEED_AGE` from, in this
+order: its face's record visibility (a stale ring brick's included, as built); else the column
+map's answer at the hit lifted into the air the face looks into: 1 where that point is above its
+column's top of solid (`above_column`, `walk.wgsl`; the map is `column_map`, group 0 binding 19,
+which the temporal pass already binds through the walk's modules), else 0. The lift is along
+the face normal `nf` by `COLUMN_CELL + 0.5` voxels (a half-voxel lift can land in the wall's own
+2-voxel cell and read the wall's height as the air's top); the dev may take it anywhere in
+`[0.5, COLUMN_CELL + 0.5]` to meet the bars and names it in the log. An entity's or a field's
+hit takes the same test (an entity indoors is enclosed). The chain (`store_sky_fallback`) leaves
+the seed's order. **With it, the band test's variance gets a floor:** `pair_step`'s band uses
+`max(r * (1 - r), P_MIN * (1 - P_MIN))` with `P_MIN` 0.02 (the tunnel's own hit rate, Phase 20's
+reading: 0.0195 to 0.0207), so the band is at least 0.168 wide.
+
+**Grounds, the prior.** The column map is ADR-0070's own sky rule (a ray's end is sky iff it
+lies above its column's top) applied to the hit as a zenith ray: the one-bit world-space answer
+that is exact where it matters most and already resident. An interior under a roof (the keep, the
+closed box, the absent chunk's room) reads 0, the truth; open ground and the hole's floor read 1;
+an exterior wall's air side is above the hill, 1. The chain gave the pre-edit neighbourhood's
+openness at both places it answered: the hole's floor (the floor chunk's `+z` summary 1.0, the
+truth about 0.45) and the keep's walls in chunks bordering the hill (the hill's 1.0, an interior).
+A summary describes faces that exist elsewhere in the chunk or next door, never the fresh face,
+so it is the wrong estimate for exactly the pixels that reset. Where the column answer is wrong
+it is wrong by about a half for the frames before the bake lands: a pit's floor and walls (1, the
+truth 0.3 to 0.5) fade down from the pre-dig value, which is rule 3's old to new, and the dig
+job's landing cuts the fade short; a face under an overhang in an unbaked chunk (0, the truth 0.2
+to 0.4) fades up until its bake. The forest's faces hold records, so the turn's young pixels seed
+from them and never reach the column.
+
+**Grounds, the floor.** The band test is why the open prior read 0.232 in the closed box and
+not a 1/9 decay (the log: "age collapsing to 2 out of the band"), and it would do the same to a 0
+prior: at `r = b = 0` the band is `3 * sqrt(0) + 0.02 = 0.02` wide while one sample moves the
+short mean by `1 / SKY_SHORT = 0.125`, so the first disagreeing sample fires the band, the age
+falls to 2 and the mean jumps to a quarter (the clamp passes `4 * 0.125 = 0.5`, halved at age 2):
+a firefly every 1 / p frames on every seeded interior pixel, and today a dark firefly on every
+settled open-floor pixel whose ray hits a leaf or an entity once. A seed with both means equal
+sits on the band's degenerate point by construction. With `P_MIN` 0.02 the band at a 0 or 1
+prior is the band a settled 0.02 pixel has (0.168), one disagreeing sample does not fire it
+(0.125), two in a row do (0.234), and a seeded 0 pixel takes a lone hit as `0.5 / 9 = 0.056` of
+open at age 8, shrinking to `0.5 / 65` at the cap. Goldens with ray-lit pixels at rest may move
+by it: Phase 21 bar 5's clause (re-blessed as a disclosed change with counts).
+
+**Rejected.** (a) 0 everywhere with no-record pixels out of the exposure meter: the open floor
+with no block and every disoccluded open face start black and climb at 1/9 a frame (0.5 after 8
+samples, 0.875 after 56), a dark smear on every fresh open face; the meter exclusion fell in
+call 1 for the held exposure it leaves a block-less rig. (b) The chain's value only, raw samples
+where none: the chain was wrong both times it answered, and the keep's walls next to the hill
+stay bright. (c) No seed where there is no record (raw samples at age 1, the (c)-alone behaviour,
+0.0 on both interior tests): the keep's sparkle for the bake's length is what the owner saw, and
+the column's answer is free and exact there. (d) The open prior kept with `SEED_AGE` lowered: an
+open prior on an interior is wrong at any age, and the clamp needs the age over `SKY_SHORT`. (e)
+The 3 x 3 accepted neighbours' pair as the seed: the disoccluded sliver's upgrade (Followups),
+no help to a wall that resets whole. (f) Exempting the band while the pair is seeded instead of
+the floor: hides a real change for `SKY_SHORT` frames after every reset and leaves the settled
+open floor's degenerate point. **Cost:** one `column_map` texel per reset pixel in the temporal
+pass (a guess: under 0.01 ms RTX, 0 B); the floor is two ALU.
+
+### 2. The dig's bars: rule 3's band on the hole's own faces, the dots on the ring; the rig's centre chunk holds a block
+
+The dots statistic (2 times the settled value) is a sparkle instrument. On the hole's own faces
+at the dig's first frames it flags a fade from the pre-dig floor's value (1.0, which the hole's
+faces also seed under the column) to the hole's (about 0.45): rule 3's old to new, monotonic, and
+the dig job's landing steps it to the baked value. So bar 3 keeps the dots outside the dilated
+box (the ring: under 1 % at every frame after the dig, 0 from frame 16 on) and the hole's own
+faces are read under rule 3's band instead (the re-stated bar 4 below), with the dots on them
+printed, not barred. **The rig is at fault and is fixed first:** the dig rig's centre chunk (1, 1,
+0) holds no block at frame 64 although `dig_run` calls `bake_until` over the world's extent, so
+the floor's hole was ray-lit for the whole run under (c) and the seed, and a whole dig under 21a.
+The real case is a dig into baked ground (the touched bricks as dig slots, the ring stale);
+`dig_run` asserts every chunk of the 3 x 3 holds a block at frame 63 and fails as a rig fault
+otherwise, and the dev names in the log why the chunk had none (`bake_until`'s coverage, the
+coarse setting, the queue's first steps). If the chunk cannot be given a block in this rig, that
+is a finding for the architect, not a re-stated bar.
+
+### 3. Bar 4's +10.4 % is a reading of the seam, not the dig's; the clause reads the landing
+
+Under (c) alone the hole's floor was ray-lit for all 60 frames (the block-less centre chunk, call
+2), so 92.61 against 83.88 is the pair's mean against the baked value with the floor's `+z`
+normal and a zenith sun: no normal arm is involved, and the quantity is Phase 20 bar 1a's seam
+(the ray's estimate against the bake's), read where it is not at issue. Accepted as a reading.
+With the rig fixed the hole's words land as a dig job within frames and bar 4's 10 % clause
+becomes: the hole's floor reads its baked value within one display level from the frame after
+the dig job lands, the landing frame printed. The candidate for the seam's size is named in call 4.
+
+### 4. Phase 20 bar 1a: the reading measured the open prior; re-read with the switches told apart, then (i) and (ii) by the lines
+
+**The decision.** (i) and (ii) are not owed on the `12c727f4` reading. Bar 1a is re-read on the
+tip once call 1 is built, with the rig telling the switches apart, and the lines decide. (i) is
+built as the phase names it (the pair's visibility through `sky_baked_term`'s blend) if the
+pair-to-store relative step is over 10 %; (ii) is built as specified below if the pair-to-store
+band share is over 1 % and the leavers are at the switched pixel itself.
+
+**Grounds.** The reading's 14 131 pixels were all seeded at 1.0 on frame 0 (no record, no chain,
+the open prior) in a tunnel whose hit rate is 0.02; a pair seeded at 1.0 at age 8 reads `(8 + 0.02
+k) / (8 + k)` after `k` samples until the cap and then decays at 1/65, so at the frames the bake
+landed (60 to 120) it sat at 3 to 7 times the baked value, before the band's collapses. The
+relative step 1.579 and most of the 11.31 % are that prior's, which call 1 removes; a reading of
+the seam on the column prior starts from 0 in the tunnel and the pair climbs toward 0.02 from
+below. Two things the re-read must separate, because they decide which fix is right. **First,
+the switch's kind:** the rig counts a pixel cast at `f` and not at `f + 1` as one switch, but the
+pixel may have gone to the chain, not the store (the reading's frame 60: 1599 chained against 18
+baked), and a chain-to-store step later lands a second time; the rig reads the source per frame
+(the store's words, the chain, the pair) and reports pair-to-store, pair-to-chain and
+chain-to-store apart. **Second, what leaves the band:** a step from `old` to `new` cannot leave
+`[min(old, new) - 4, max(old, new) + 4]` at the pixel itself, by construction; the 11.31 % come
+from elsewhere: the two-step chain path (the chain's value outside `[pair, store]`), the a-trous
+coupling a switched pixel to neighbours that switch later, a pixel that casts again within the 16
+frames, or the pair's continued motion. A fade of the step ((ii)) reduces none of these, so (ii)
+is built only if the leavers are at the switched pixel itself: the rig splits them by kind, by
+side (over `max + 4`, under `min - 4`) and by whether the pixel re-casts within the 16 frames,
+and (ii)'s line is the share whose pixel does not re-cast and whose excursion is on the switch's
+frame. **The relative step's denominator** is floored at 8 levels (`|old - new| / max(new, 8)`):
+a tunnel pixel at 2 or 3 display levels has a quantisation of 30 to 50 % and would decide the
+line alone; the absolute mean and p99 stay printed beside it. **A third candidate for the seam's
+size, which neither (i) nor (ii) touches and the re-read reads by sign:** the firefly clamp at a
+low hit rate biases the pair down (a hit enters as `min(1, 4 * max(r, b))` with `b` about 0.14
+after one hit at `r` 0.02, so about 0.5, and the mean settles near `p / 2`); a pair-to-store step
+whose `old` is under `new` by about half is the clamp's, and its fix is the clamp's own (a
+correction of `1 / E[clamp]` on the long mean, or `FIREFLY_K` by hit rate), planned at the next
+amendment if the re-read says so, not built blind. A step with `old` over `new` is the prior's
+remains or the normal arm ((i)).
+
+**(ii), specified** (built only on its line; a plan-level mechanism under ADR-0070, the one
+history clause intact). The pair carries across the switch: on the first frame the store answers
+a pixel whose reprojected, accepted pair has age under `sky_history` (it was ray-lit and had not
+converged), the temporal pass writes the pair as `(prev.x + (sv.x - prev.x) / (sky_history -
+age), 0, same, age + 1)` with the age first set to `sky_history - F` (`F` 16, ADR-0046's `FADE`)
+at the switch, so the mean reaches the baked value exactly as the age reaches the cap: a linear
+ramp over `F` frames in the pair's own channels, no new target; the baked term's visibility is
+`pair.x` instead of `sv.x` while the age is under the cap, in the temporal pass and the filter's
+term alike. At a cast pixel nothing changes; the store-to-ray switch is already continuous (the
+pair starts from the record). Cost: a few ALU in the temporal pass, 0 B.
+
+### 5. Phase 21a bar 3, re-stated
+
+"A dig's ring is unchanged" was written for a dig whose touched chunks all hold blocks, which the
+rig did not provide (call 2). With the rig fixed it holds literally and is kept, with one print
+added: the queue's whole-dig count at the dig's step reads 0. The whole-dig path's test is
+`a_stamp_into_air_is_a_dig`, and the castle strip is its reading. 21a bar 2's 0.5 % stays a
+guess the re-read on the tip replaces; if the re-read lands between 0.5 % and the before's
+2.25 %, the strip's over-8 split (sky ray / young / sky, as the rig prints it) goes in the log
+and the architect sets the bar at the next amendment.
+
+### 6. The order for the dev
+
+1. Call 1: the seed's order (the record, else the column test; the chain out), the band's
+   variance floor; `a_reset_pixel_starts_from_its_record`'s seed computed on the CPU in the new
+   order (the open floor's first frame still reads 1 at age 8); `a_closed_box_takes_no_sky_light`
+   and `an_absent_chunk_below_the_column_top_is_rock_to_the_sky_ray` green on their unchanged
+   bars.
+2. Call 2: the dig rig's block assertion at frame 63 and the cause; then Phase 21 bars 3, 4 and
+   4a as re-stated below, and Phase 21a bar 3 with the whole-dig print.
+3. The castle strip re-read on the tip (`flicker_castle`, the paced rig): 21a bar 2's table row.
+4. Call 4: bar 1a's rig told apart (the switch's kind, the leavers' side and re-cast, the floored
+   relative step), the re-read on the tip; then (i), (ii) or neither by the lines, and the re-read
+   after whichever is built.
+5. Phase 23 (`live/p23-defects.patch`, `live/p23-test.rs`).
+6. The flicker strips' `after21` rows (the hills, the forest, the dig, the paced castle).
+7. The named gpu binaries at the tip (`gpu_sun`, `gpu_outdoor`, `gpu_outdoor_golden`,
+   `--no-fail-fast`; the soak goldens by name for Phase 21 bar 5 and 21a bar 3), then Phase 24's
+   runner and the tip gate.
+
+Call 1 goes first because every later reading (the dig's bars, the castle strip, bar 1a) is
+taken on the seed; the rig fix goes before the dig's bars because the bars as re-stated assume a
+baked floor.
+
+### Owner questions (the dev proceeds on the recommendation)
+
+3. **A fresh face whose column is open but whose sky is partly blocked (a pit's floor and walls,
+   about 0.3 to 0.5 of open) shows the pre-dig brightness for the frames until its dig job lands,
+   a fade down of a few frames; a fresh face under an overhang in an unbaked chunk starts dark and
+   lifts until its bake lands.** Is a wrong-by-half start that fades for the bake's length
+   acceptable, against the alternative of raw samples that sparkle for the same length?
+   Recommended: yes; the column's answer is exact for interiors and open ground, the two cases
+   the owner's scenes hit (the keep, the hills), and the pit's fade is rule 3's own shape. Phase
+   24's run 4b watches a dig and the stamped castle.
+4. **The band test's variance floor (`P_MIN` 0.02) also changes settled ray-lit pixels at a hit
+   rate under 0.02 or over 0.98: one disagreeing sample no longer collapses the age.** Goldens
+   with ray-lit pixels at rest may move by under a level and are re-blessed as a disclosed
+   change. Recommended: accept; the collapse on a lone sample at the extremes is a firefly by the
+   pair's own definition, and the floor is the band the pair already has at 0.02.
+
 ## Implementation phases
 
 Each phase ships as its own commit. `dev` implements all phases in one session with no review
@@ -1458,11 +1656,21 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
      with any frame in `f..f + 16` outside `[min(old, new) - 4, max(old, new) + 4]` levels
      (ADR-0076 rule 3's form, `T_fade` 4 the starting guess), the mean and p99 of `|old -
      new|` in levels (the seam's size: how far the ray's mean sat from the baked value when the
-     bake landed), the mean `|old - new| / new` (bar 1's 10 % re-stated: over it, (i) is built
-     and the reading re-run), and the frame-to-frame p99 over the ray-lit pixels at frames 60
-     and 120 (bar 2 on the transient, the lamp's 2.11 printed beside it). The band share's
+     bake landed), the mean `|old - new| / max(new, 8)` (bar 1's 10 % re-stated: over it, (i) is
+     built and the reading re-run), and the frame-to-frame p99 over the ray-lit pixels at frames
+     60 and 120 (bar 2 on the transient, the lamp's 2.11 printed beside it). The band share's
      line is 1 % (over it, (ii)); the count of switching pixels is printed and is at least
      1000 (the reading's 14 131 at frame 0 drain by frame 300), else the rig is at fault.
+     **Re-stated 2026-11-19 (call 4):** the `12c727f4` reading (relative step 1.579, band
+     share 11.31 %) measured the open prior and owes nothing; the reading is re-taken on the tip
+     with call 1 built, and the rig reports per switch its kind (pair to store, pair to chain,
+     chain to store, from the source read per frame), its leavers by side (over `max + 4`,
+     under `min - 4`) and by whether the pixel casts again within the 16 frames, and the step's
+     sign (`old` under `new`: the clamp's bias, named for the next amendment; over: the prior's
+     remains or (i)). The lines apply to the pair-to-store switches alone: (i) on the floored
+     relative step over 10 %; (ii), as call 4 specifies it, on a band share over 1 % whose
+     leavers do not re-cast and whose excursion is on the switch's frame. Each is followed by the
+     re-read.
   3. **Nothing moves where the store is fresh.** The hills' noon golden is byte-identical
      (every pixel baked); the tunnel goldens that hold ray-lit pixels are re-blessed as a
      disclosed change with counts.
@@ -1489,15 +1697,19 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   filter's output or the pair, never `direct_accumulated`. **(a), built after (c), not
   conditional (amended 2026-11-18, the flicker check's call 1):** a pixel that resets where
   the sky ray is cast (`sky_cast` with no accepted history, an edit box, `LIGHTING_SKY_CHANGED`)
-  seeds the pair at age `SEED_AGE` from the best world-space estimate, in this order: its
-  face's record visibility (a stale ring brick's: the touched brick keeps its words under the
-  stale bit), else the chain's (`store_sky_fallback`), else the open visibility 1; the first
-  samples then blend at `1 / (SEED_AGE + 1)` and the firefly clamp is live from the first
-  frame. `SEED_AGE` is 8 (a guess; the dev may take it anywhere in 4 to 16 to meet bars 3 and
-  4, and the log names the value). The seed is a value, not a second history: the pair stays
-  the term's one screen-side history. This is the castle's sparkle, the dig's dots and the
-  forest's young pixels after a turn in one mechanism; Phase 21a brings the stamped chunk's
-  bake. (b) as before: the ring's coarse re-bake does not write the sky words (`VIS_BAKED` from
+  seeds the pair at age `SEED_AGE` from the best world-space estimate, in this order
+  (**re-stated 2026-11-19, call 1**): its face's record visibility (a stale ring brick's: the
+  touched brick keeps its words under the stale bit), else the column map's answer at the hit
+  lifted along `nf` into the air the face looks into (`above_column`: 1 above the column's top
+  of solid, else 0; the lift `COLUMN_CELL + 0.5` voxels, the dev's within `[0.5, COLUMN_CELL +
+  0.5]`, named in the log); the chain is not consulted. The first samples then blend at `1 /
+  (SEED_AGE + 1)` and the firefly clamp is live from the first frame; `pair_step`'s band floors
+  its variance at `P_MIN (1 - P_MIN)`, `P_MIN` 0.02, so a seed at 0 or 1 is not the band's
+  degenerate point. `SEED_AGE` is 8 (over `SKY_SHORT`, so the clamp holds; the dev may take it
+  to 16 to meet the bars, and the log names the value). The seed is a value, not a second
+  history: the pair stays the term's one screen-side history. This is the castle's sparkle,
+  the dig's dots and the forest's young pixels after a turn in one mechanism; Phase 21a brings
+  the stamped chunk's bake. (b) as before: the ring's coarse re-bake does not write the sky words (`VIS_BAKED` from
   the full pass only, Phase 10's unbuilt item), only if bar 2 fails on a brick-sized patch.
   **Phase 16 (2026-11-18) points at (c):** the stored/direct switch at the stale bit carries
   the area (with the sky alone, half the region moves over 16 levels for two frames; the ray's
@@ -1533,24 +1745,36 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   3. **A dig leaves no dots.** `a_dig_leaves_no_dots` in `gpu_sun.rs` (the open floor of 3 x 3
      chunks baked whole under `Sky::uniform(1.0)`, a zenith sun, the live queue at the
      fly-through's settings so the re-bake takes frames, a 1 m dig at frame 64, 60 frames
-     read; about 8 s): in every frame after the dig, the count of lighting pixels within 64
-     voxels of the box whose display luminance is over 2 times their value at frame 124 and
-     over 2 times the neighbourhood's settled mean is under 1 % of those pixels, and 0 from
-     frame 16 on; the same before this phase is read and printed (the expectation: tens of
-     percent in the first frames on the hole's faces).
-  4. **The hole takes its light.** The same test: 60 frames after the dig the hole's floor
-     reads its baked value within 10 % (Phase 5 bar 4's clause), and no frame between has the
-     share of pixels changing over 16 levels above 5 %; the dots on the hole's own faces (the
-     pixels inside the dilated box) are counted apart and printed, and their share is under
-     1 % on every frame after frame 16 (the bar (a) meets; before (a) it is printed).
-  4a. **A reset pixel starts from its record.** `a_reset_pixel_starts_from_its_record` in
-     `gpu_sun.rs` (bar 3's rig; about 3 s): at the first frame after the dig, over the
-     pixels inside the dilated box whose face holds a stale record, the pair's `x` is within
-     `1 / (SEED_AGE + 1)` of that record's visibility and its age reads `SEED_AGE`; on the open
-     floor under `Sky::uniform(1.0)` with no store block (bar 1's rig) a pixel's first frame
-     reads `x` 1 at age `SEED_AGE`; the mean of the pair's `x` over the box's pixels at frames
-     1, 8, 16 and 60 is printed (monotonic toward the settled value, no overshoot by more than
-     one sample's share).
+     read; about 8 s): **the rig first (2026-11-19, call 2):** at frame 63 every chunk of the
+     3 x 3 holds a store block, asserted, else the test fails as a rig fault (the centre chunk
+     held none at `12c727f4`; the cause goes in the log). Then, in every frame after the dig,
+     the count of lighting pixels within 64 voxels of the box and **outside the dilated box**
+     whose display luminance is over 2 times their value at frame 124 and over 2 times the
+     neighbourhood's settled mean is under 1 % of those pixels, and 0 from frame 16 on; the
+     same before this phase is read and printed. The dots on the hole's own faces (inside the
+     dilated box) are printed per frame, not barred: they read the fade bar 4 defends.
+  4. **The hole takes its light (re-stated 2026-11-19, calls 2 and 3).** The same test, over
+     the pixels inside the dilated box (the hole's own faces): with `old` the display value at
+     frame 63 and `new` at frame 124, every frame from 64 to 124 lies in `[min(old, new) - 4,
+     max(old, new) + 4]` levels (ADR-0076 rule 3's form, `T_fade` 4 the starting guess) and
+     the share of such pixels leaving the band at any frame is 0; the hole's floor reads its
+     baked value within one display level from the frame after its dig job lands (the landing
+     frame printed; the pair's fade from the column's 1 covers the frames before it); and no
+     frame has the share of pixels changing over 16 levels above 5 %. The +10.4 % of
+     `0f8cde39` is a reading of the seam on a block-less floor, accepted, not this bar's.
+  4a. **A reset pixel starts from its record, else the column.** `a_reset_pixel_starts_from_its_record`
+     in `gpu_sun.rs` (bar 3's rig; about 3 s): at the first frame after the dig, every cast pixel
+     inside the dilated box reads age `SEED_AGE`, and on `+z` faces the pair's `x` is within
+     `1 / (SEED_AGE + 1)` of the seed the shader's order takes, computed on the CPU from the
+     store's words and the column map (the record, else `above_column` at the lifted hit; the
+     chain is not in the order); on the open floor under `Sky::uniform(1.0)` with no store block
+     (bar 1's rig) a pixel's first frame reads `x` 1 at age `SEED_AGE`; the mean of the pair's `x`
+     over the box's pixels at frames 1, 8, 16 and 60 is printed (monotonic toward the settled
+     value, no overshoot by more than one sample's share). **The interiors:**
+     `a_closed_box_takes_no_sky_light` and `an_absent_chunk_below_the_column_top_is_rock_to_the_sky_ray`
+     pass on their unchanged bars (both 0.0 under (c) alone; 0.232 and 0.663 under the open
+     prior), and each prints the interior's pair age at its last frame (no collapse: at or over
+     `SEED_AGE`).
   5. **Nothing moves where no ray is cast.** The hills' noon golden and the lamp-lit scenes'
      pinned-exposure goldens are byte-identical (`vis.a` is 0 on every pixel there, so the
      filter adds nothing and the direct part lost nothing); a golden that holds ray-lit pixels
@@ -1574,8 +1798,8 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   a dig job; no provisional block at the edit (the amendment's rejected list says why), no
   change to the dig gate (`open_step`'s two slices) or to the dig budget's `edit_ms`. Ring
   chunks the box does not touch are unchanged. Until the job lands the chunk's faces are
-  ray-lit under Phase 21 (a)'s seed (the chain's value next to a baked neighbour, the open
-  prior elsewhere), and the landing is the step the amendment accepts.
+  ray-lit under Phase 21 (a)'s seed (the column's answer: 0 under the keep's roof, 1 on the
+  outer walls' air side), and the landing is the step the amendment accepts.
 - **Files touched:** `crates/vxe-render/src/bake/queue/digs.rs`, `bake/queue/mod.rs`
   (`DigChunk`), `crates/vxe-render/tests/gpu_sun.rs`,
   `apps/flythrough/tests/gpu_outdoor/flicker.rs`, `docs/plans/logs/0086.md`.
@@ -1594,9 +1818,14 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
      (the keep's chunks, the nearest, open ahead of the ring's far side) and 0 by frame 300;
      the fresh strip's over-8 mean under 0.5 % (a guess; 2.274 % before, with Phase 21 (a)
      carrying most of the cut) and its young share printed against 66.5 %; the settled strip
-     unchanged within noise.
-  3. **A dig's ring is unchanged.** `a_dig_leaves_no_dots` and Phase 21's bars read the same
-     values (the dig's touched chunks all hold blocks, so nothing new enters `digs`); the
+     unchanged within noise. **Re-stated 2026-11-19 (call 5):** the `missing` bar is met
+     (22 083 / 1742 / 0); the over-8 row is re-read on the tip with call 1 built (9.780 % at
+     `12c727f4` under the open prior); between 0.5 % and 2.25 % the strip's over-8 split goes
+     in the log for the architect's bar, over 2.25 % call 1 has not paid and the dev stops.
+  3. **A dig's ring is unchanged (re-stated 2026-11-19, call 5).** With Phase 21 bar 3's rig
+     asserting its blocks, `a_dig_leaves_no_dots` and Phase 21's bars read the same values with
+     this phase's queue code in and out (the dig's touched chunks all hold blocks, so nothing
+     new enters `digs`: the queue's whole-dig count at the dig's step reads 0, printed); the
      hills' noon golden is byte-identical.
   4. **Cost:** the edit's step (`take_boxes`) in ms on the RTX for the castle's 17 boxes,
      before and after; the frames until the queue drains against the before's 2315 paced
