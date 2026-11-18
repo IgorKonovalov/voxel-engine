@@ -278,7 +278,9 @@ impl Frame {
     /// Drops all history: the next encoded frame starts every pixel afresh.
     pub fn reset_history(&mut self) {
         self.restarts += 1;
-        self.history().valid = false;
+        let h = self.history();
+        h.valid = false;
+        h.encoded = false;
     }
 
     /// The restarts of the temporal history so far: each [`Frame::reset_history`] (a size, an

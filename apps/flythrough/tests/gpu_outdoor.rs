@@ -347,9 +347,11 @@ mod reading {
     /// Plan 0086 Phase 19 bar 2 (Phase 6 bar 3): [`tree_rig`] at 320 x 180, the lighting at
     /// full resolution, the conditions of [`tree_shadow`] with the filter on; the sun at azimuth
     /// 180 drifting at the testbed's day (0.005 degrees a frame) from elevation 59.365 over 128
-    /// frames to 60, against the same pose held at 60 for 128 frames: the
-    /// centroid of the occlusion on the last frame's accumulated direct part, each against the
-    /// open floor's, and their distance in voxels (the bar: under 0.5). Printed.
+    /// frames to 60, against the same pose held at 60 for 128 frames: every 16 frames the
+    /// centroid of the occlusion on the accumulated direct part, each against the open floor
+    /// run under the same sun (held or drifting, so the lit floor's own lag reads no
+    /// occlusion), the sun's elevation, and the centroids' distance in voxels (the bar at 60:
+    /// under 0.5). Printed, with the drifting run's centroid against the held open floor.
     /// `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
@@ -371,6 +373,7 @@ mod reading {
                 ..Sky::new(body(sun), body(sun.map(|c| -c)))
             }
         };
+        // Each run's direct part's luminance and hits every 16 frames, and the sun's elevation.
         let run = |gpu: &GpuWorld, drift: bool| {
             let mut f = Frame::new(&device, 320, 180);
             f.set_resolution(&device, LightingResolution::Full);
@@ -381,6 +384,7 @@ mod reading {
                 sky_rays: 0,
                 ..Lighting::default()
             });
+            let mut reads = Vec::new();
             for k in 0..128u32 {
                 let el = if drift {
                     60.0 - 0.005 * (127 - k) as f32
@@ -389,17 +393,23 @@ mod reading {
                 };
                 f.set_sky(Some(sky_at(el)));
                 f.step(&device, &queue, gpu, &camera, &LightParams::headlamp());
+                if k % 16 == 15 {
+                    let d =
+                        vxe_render::debug::read_rgba16f(&device, &queue, f.direct_accumulated());
+                    let h =
+                        vxe_render::debug::read_rgba32f(&device, &queue, f.light_hit_positions());
+                    let lum: Vec<f64> = d
+                        .iter()
+                        .map(|p| f64::from(0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]))
+                        .collect();
+                    reads.push((k, el, lum, h));
+                }
             }
-            let d = vxe_render::debug::read_rgba16f(&device, &queue, f.direct_accumulated());
-            let h = vxe_render::debug::read_rgba32f(&device, &queue, f.light_hit_positions());
-            let lum: Vec<f64> = d
-                .iter()
-                .map(|p| f64::from(0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]))
-                .collect();
-            (lum, h)
+            reads
         };
-        let (open, _) = run(&gpus[0], false);
-        let centroid = |lit: &[f64], hits: &[[f32; 4]]| {
+        // The occlusion's centroid against an open floor run under the same sun's history, so
+        // the lit floor's own lag (a drifting sun's irradiance) reads no occlusion.
+        let centroid = |open: &[f64], lit: &[f64], hits: &[[f32; 4]]| {
             let (mut sw, mut sx, mut sy) = (0.0f64, 0.0f64, 0.0f64);
             for i in 0..open.len() {
                 let h = hits[i];
@@ -413,17 +423,32 @@ mod reading {
             }
             [sx / sw, sy / sw]
         };
-        let (still, hs) = run(&gpus[1], false);
-        let (drift, hd) = run(&gpus[1], true);
-        let (a, b) = (centroid(&still, &hs), centroid(&drift, &hd));
-        let off = ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt();
+        let geometric = |el: f64| 80.0 / el.to_radians().tan();
+        let open_still = run(&gpus[0], false);
+        let open_drift = run(&gpus[0], true);
+        let still = run(&gpus[1], false);
+        let drift = run(&gpus[1], true);
+        let mut off = 0.0;
+        for i in 0..still.len() {
+            let (k, el, ref ld, ref hd) = drift[i];
+            let a = centroid(&open_still[i].2, &still[i].2, &still[i].3);
+            let b = centroid(&open_drift[i].2, ld, hd);
+            let b_held = centroid(&open_still[i].2, ld, hd);
+            off = ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt();
+            println!(
+                "reading: drift on {adapter}, frame {k}, sun {el:.3}: held ({:.2}, {:.2}), drifting ({:.2}, {:.2}) (against the held open floor ({:.2}, {:.2})), off {off:.3} voxels; geometric y offset of the drifting sun from 60's {:.3}",
+                a[0],
+                a[1],
+                b[0],
+                b[1],
+                b_held[0],
+                b_held[1],
+                geometric(f64::from(el)) - geometric(60.0),
+            );
+        }
         println!(
-            "reading: drift on {adapter}: held at 60 ({:.2}, {:.2}), drifted to 60 ({:.2}, {:.2}), off {off:.3} voxels (the geometric move over the drift {:.2})",
-            a[0],
-            a[1],
-            b[0],
-            b[1],
-            80.0 / (60.0f64 - 0.635).to_radians().tan() - 80.0 / 60f64.to_radians().tan()
+            "reading: drift on {adapter}: off {off:.3} voxels at 60 (the geometric move over the drift {:.2})",
+            geometric(60.0 - 0.635) - geometric(60.0)
         );
     }
 
@@ -468,6 +493,9 @@ mod reading {
                 altitude_zero_z: 0.0,
                 ..Sky::new(body(sun), body(sun.map(|c| -c)))
             }));
+            // Each read starts afresh: the open floor's history must not carry into the
+            // tree's, whose key light mean runs over up to `sky_history` frames.
+            frame.reset_history();
             let n = (size[0] * size[1]) as usize;
             let mut sum = vec![0.0f64; n];
             for _ in 0..16 {

@@ -1227,3 +1227,47 @@ fn the_penumbra_holds_still_on_the_long_history() {
         "p99 {p99_sun} against the lamp's {p99_lamp}"
     );
 }
+
+/// Plan 0086 Phase 19 bar 6: `Frame::reset_history` between two `Frame::step` calls restarts
+/// every pixel. The open floor under the noon sun, 8 frames stepped (every hit pixel's age 7),
+/// then a reset: the next step's moments read age 0 at every pixel, and `history_restarts`
+/// counts the reset; the step after reads age 1.
+#[test]
+fn a_reset_between_steps_restarts_the_history() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = floor_world([2, 2, 1], |_| false);
+    let gpu = mirror(&device, &queue, &world, None);
+    let cam = camera([64.0, 40.0]);
+    let mut f = frame(&device, SIZE, ShadowWalk::Full);
+    f.set_sky(Some(sky(
+        dir(90.0, 0.0),
+        dir(-45.0, 0.0),
+        [[1.0; 3], [0.0; 3]],
+    )));
+    let ages = |f: &Frame| -> Vec<f32> {
+        vxe_render::debug::read_rgba16f(&device, &queue, f.moments())
+            .iter()
+            .map(|m| m[2])
+            .collect()
+    };
+    let light = LightParams::headlamp();
+    for _ in 0..8 {
+        f.step(&device, &queue, &gpu, &cam, &light);
+    }
+    let before = ages(&f);
+    let centre = (SIZE[1] as usize / 2) * SIZE[0] as usize + SIZE[0] as usize / 2;
+    println!("centre age before the reset: {}", before[centre]);
+    assert_eq!(before[centre], 7.0, "the history runs before the reset");
+    let restarts = f.history_restarts();
+    f.reset_history();
+    f.step(&device, &queue, &gpu, &cam, &light);
+    let after = ages(&f);
+    let max = after.iter().copied().fold(0.0f32, f32::max);
+    println!("largest age after the reset: {max}");
+    assert!(after.iter().all(|&a| a == 0.0), "largest age {max}");
+    assert_eq!(f.history_restarts(), restarts + 1);
+    f.step(&device, &queue, &gpu, &cam, &light);
+    assert_eq!(ages(&f)[centre], 1.0, "the history runs again");
+}
