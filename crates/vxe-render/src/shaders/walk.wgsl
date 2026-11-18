@@ -221,10 +221,10 @@ fn approach_probe(v: vec3<i32>, q: vec3<f32>, t: f32, d: vec3<f32>) {
     let k = select(select(2, 1, a.y >= a.z), 0, a.x >= a.y && a.x >= a.z);
     let b = (k + 1) % 3;
     let c = (k + 2) % 3;
-    var eb = vec3<i32>(0);
-    eb[b] = APPROACH_REACH;
-    var ec = vec3<i32>(0);
-    ec[c] = APPROACH_REACH;
+    // Whole-vector selects, not `eb[b] = ...`: FXC rejects a store to a runtime-chosen
+    // component.
+    let eb = select(vec3<i32>(0), vec3<i32>(APPROACH_REACH), vec3<i32>(0, 1, 2) == vec3<i32>(b));
+    let ec = select(vec3<i32>(0), vec3<i32>(APPROACH_REACH), vec3<i32>(0, 1, 2) == vec3<i32>(c));
     var probes = array<vec3<i32>, 4>(v + eb, v - eb, v + ec, v - ec);
     for (var i = 0; i < 4; i++) {
         let p = probes[i];
