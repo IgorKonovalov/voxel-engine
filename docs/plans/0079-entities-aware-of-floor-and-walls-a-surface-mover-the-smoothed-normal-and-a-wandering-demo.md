@@ -112,6 +112,8 @@ ghost, the minimal key set (ADR-0061). Nothing under `crates/` changes in Phase 
 
 ### Owner questions added 2026-11-18 (each with a recommendation; Phase 4 starts on them, the Phase 5 window answers them if not before)
 
+**Answered 2026-11-18 (owner, "all recommended"):** 9 no key, 10 yes, 11 `wander`.
+
 9. **A key for the wander toggle.** Recommended: **no key**: the entry `wander` under
    `entities` (`Tab`, two rows; or the palette by typing `wan`), and `--entities-walk on` for a
    run that starts wandering. ADR-0061 empties the keyboard, and a shortcut takes a free key
