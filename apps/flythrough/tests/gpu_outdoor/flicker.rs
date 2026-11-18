@@ -78,11 +78,15 @@ mod flicker {
         }
 
         /// The generated castle (the belt's `castle`, its tiles above the floor) placed on the
-        /// hills at noon after the hills have drained and settled: its box and 1 m around
-        /// carved to air above the ground at its centre, then a stamp a placement, as the belt
-        /// logs them; the camera at the castle's `nave` pose inside the keep the whole run. The
-        /// strip from the frame after the stamps (`fresh`), then frames until the queue drains
-        /// (at most 3000) and 120 more, and another (`settled`).
+        /// hills at noon after the hills have drained (at most 30 000 more frames) and settled:
+        /// its box and 1 m around carved to air above the ground at its centre, then a stamp a
+        /// placement, each op's box invalidated as the belt's run does; the camera at the
+        /// castle's `nave` pose inside the keep the whole run. The strip from the frame after
+        /// the stamps (`fresh`), then frames paced to 60 Hz until the queue drains (at most
+        /// 3000, 50 s) with the lighting grid's missing count read every 100, then 120 more and
+        /// another strip (`settled`). The pacing: the queue's slice is GPU time, so an unpaced
+        /// test frame (about 2.3 ms in a release build) leaves the bake a few submits per
+        /// hundred frames behind the frames' own GPU work.
         #[test]
         #[ignore = "reading"]
         fn flicker_castle() {
@@ -138,20 +142,15 @@ mod flicker {
                     vxe_world::Mode::Carve,
                 ))
                 .expect("the box is resident");
-                let (mut lo, mut hi) = ([i32::MAX; 3], [i32::MIN; 3]);
+                let mut boxes = vec![(
+                    carve.0.map(|v| v as i32),
+                    carve.1.map(|v| v as i32),
+                )];
                 for (p, at, rot) in &placements {
                     let r = w.stamp(p, *at, *rot).expect("the castle is resident");
-                    if let Some((a, b)) = r.aabb {
-                        lo = [0, 1, 2].map(|k| lo[k].min(a.0[k]));
-                        hi = [0, 1, 2].map(|k| hi[k].max(b.0[k]));
-                    }
+                    boxes.extend(r.aabb.map(|(a, b)| (a.0, b.0)));
                 }
-                let c = [0, 1, 2].map(|k| carve.0[k] as i32);
-                let d = [0, 1, 2].map(|k| carve.1[k] as i32);
-                (
-                    [0, 1, 2].map(|k| lo[k].min(c[k])),
-                    [0, 1, 2].map(|k| hi[k].max(d[k])),
-                )
+                boxes
             };
             // The pool the mirror takes is the placed world's.
             let pool = {
@@ -169,28 +168,53 @@ mod flicker {
             let d = [y.cos() * pt.cos(), y.sin() * pt.cos(), pt.sin()];
             let cam = flythrough::camera_looking_at(p, [p[0] + d[0], p[1] + d[1], p[2] + d[2]]);
             let mut s = strip_frame(&mut rig, noon(), &cam);
+            let mut pre = 0;
+            while pre < 30_000 && !s.frame.bake_queue().is_some_and(|q| q.empty()) {
+                queue_step(&mut rig, &mut s.frame, &cam);
+                s.run(&rig, &cam);
+                pre += 1;
+            }
+            println!(
+                "castle: before the stamps the queue drained {} after {pre} more frames",
+                s.frame.bake_queue().is_some_and(|q| q.empty())
+            );
             settle(&mut rig, &mut s, &cam, 240);
             let t = std::time::Instant::now();
-            let (lo, hi) = place(&rig.world);
+            let boxes = place(&rig.world);
             use support::SyncNow;
             rig.gpu
                 .sync_now(&rig.world, &rig.device, &rig.queue)
                 .expect("the mirror fits");
-            s.frame.invalidate(lo, hi);
+            for (a, b) in &boxes {
+                s.frame.invalidate(*a, *b);
+            }
             println!(
-                "castle placed at {o:?} in {:.1} s, box {lo:?}..{hi:?}, eye {p:?}",
-                t.elapsed().as_secs_f64()
+                "castle placed at {o:?} in {:.1} s, {} boxes, the carve {:?}..{:?}, eye {p:?}",
+                t.elapsed().as_secs_f64(),
+                boxes.len(),
+                boxes[0].0,
+                boxes[0].1
             );
             strip(&mut rig, &mut s, &cam, "castle", "fresh");
             let mut n = 0;
+            let mut missing = Vec::new();
+            let t = std::time::Instant::now();
             while n < 3000 && !s.frame.bake_queue().is_some_and(|q| q.empty()) {
+                let tf = std::time::Instant::now();
                 queue_step(&mut rig, &mut s.frame, &cam);
-                s.run(&rig, &cam);
+                if n % 100 == 0 {
+                    missing.push(s.step(&rig, &cam).missing);
+                } else {
+                    s.run(&rig, &cam);
+                }
                 n += 1;
+                let frame = std::time::Duration::from_micros(16_667);
+                std::thread::sleep(frame.saturating_sub(tf.elapsed()));
             }
             println!(
-                "castle: the queue drained {} after {n} frames",
-                s.frame.bake_queue().is_some_and(|q| q.empty())
+                "castle: the queue drained {} after {n} frames, {:.1} s; missing every 100 frames {missing:?}",
+                s.frame.bake_queue().is_some_and(|q| q.empty()),
+                t.elapsed().as_secs_f64()
             );
             settle(&mut rig, &mut s, &cam, 120);
             strip(&mut rig, &mut s, &cam, "castle", "settled");
