@@ -83,6 +83,83 @@ fn sky_baked(v: vec3<i32>, face: u32) -> bool {
         && (vis & VIS_BAKED) != 0u && (vis & SKY_STALE) == 0u;
 }
 
+// Whether face `face` of voxel `v`, whose own cell holds no fresh baked visibility, takes the
+// missing-light chain's sky visibility instead of the sky rays: its cell holds no record of the
+// direction baked under a sky and is not stale, and its chunk's summary, or one of its six face
+// neighbours', holds the direction baked under a sky, under the `neighbour` or `chain` mode.
+// temporal.wgsl's `store_sky_fallback` reads the value by the same test.
+fn sky_chained(v: vec3<i32>, face: u32) -> bool {
+    let mode = (light_store[STORE_FLAGS] >> 2u) & 3u;
+    if (mode == 0u || mode == 2u || sky_stale(v)) {
+        return false;
+    }
+    let c = v >> vec3<u32>(6u);
+    for (var f = 0u; f < 7u; f++) {
+        var o = vec3<i32>(0);
+        if (f < 6u) {
+            let sign = select(1, -1, (f & 1u) == 0u);
+            let axis = f / 2u;
+            o = vec3<i32>(
+                select(0, sign, axis == 0u),
+                select(0, sign, axis == 1u),
+                select(0, sign, axis == 2u),
+            );
+        }
+        let block = light_block(c + o);
+        if (block != 0u) {
+            let rec = block + STORE_SUMMARY_AT;
+            if (((light_store[rec + 6u] >> (16u + face)) & 1u) != 0u
+                && (light_store[rec + VIS_WORD + 1u] & VIS_BAKED) != 0u) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Chunk `c`'s block in the light pass's store binding; 0 for none or outside the table.
+fn light_block(c: vec3<i32>) -> u32 {
+    let origin = vec3<i32>(
+        i32(light_store[STORE_ORIGIN]),
+        i32(light_store[STORE_ORIGIN + 1u]),
+        i32(light_store[STORE_ORIGIN + 2u]),
+    );
+    let size = vec3<i32>(
+        i32(light_store[STORE_SIZE]),
+        i32(light_store[STORE_SIZE + 1u]),
+        i32(light_store[STORE_SIZE + 2u]),
+    );
+    let w = c - origin;
+    if (any(w < vec3<i32>(0)) || any(w >= size)) {
+        return 0u;
+    }
+    return light_store[STORE_TABLE + u32(w.x + size.x * (w.y + size.y * w.z))] & ~TABLE_COARSE;
+}
+
+// Whether voxel `v`'s cell's record holds a visibility marked SKY_STALE (a dig's ring, whose
+// sky rays run until it is baked again).
+fn sky_stale(v: vec3<i32>) -> bool {
+    let shift = select(3u, 2u, (light_store[STORE_FLAGS] & 2u) != 0u);
+    let per = 3u - shift;
+    let c = v >> vec3<u32>(shift);
+    let b = c >> vec3<u32>(per);
+    let block = light_block(b >> vec3<u32>(3u));
+    if (block == 0u) {
+        return false;
+    }
+    let s = b & vec3<i32>(7);
+    let dir = light_store[block + u32(s.x + 8 * (s.y + 8 * s.z))];
+    if (dir == 0u) {
+        return false;
+    }
+    let n = 1 << per;
+    let l = c & vec3<i32>(n - 1);
+    let sub = u32(l.x + n * (l.y + n * l.z));
+    let cells = u32(n * n * n);
+    let rec = block + (dir >> 11u) - BRICK_WORDS * cells + BRICK_WORDS * sub;
+    return (light_store[rec + VIS_WORD + 1u] & SKY_STALE) != 0u;
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
     shade_px(gid);
@@ -170,7 +247,9 @@ fn shade_px(gid: vec3<u32>) {
             // reached the sky goes to the temporal pass, which keeps its running mean.
             let k = key_sample(rec.p, n, ns, gid.xy);
             e += vec4<f32>(k, luminance(k));
-            let baked = reads_store(rec) && sky_baked(store_voxel(rec.p, ns), store_face(rec.axis, ns))
+            let sv = store_voxel(rec.p, ns);
+            let sf = store_face(rec.axis, ns);
+            let baked = reads_store(rec) && (sky_baked(sv, sf) || sky_chained(sv, sf))
                 && (params.lighting & LIGHTING_HOOK_SKY_RAY_ALWAYS) == 0u;
             if (!baked && sky_on() && sky.sky_rays > 0u) {
                 vis = vec4<f32>(sky_visibility_sample(rec.p, n, ns, gid.xy), 0.0, 0.0, 1.0);

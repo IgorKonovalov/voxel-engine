@@ -269,6 +269,73 @@ fn upper_chunk_read(
     centre_lit(device, queue, &mut f, &gpu, &cam, 16)
 }
 
+/// Plan 0086 Phase 10 bar 2: a young chunk reads its neighbours' sky. An open floor of 3 x 3
+/// chunks under `Sky::uniform(1.0)`, one sky ray, the key light off, baked at 64 samples a brick
+/// direction with the centre chunk's faces withheld (the bake's face filter), so the centre
+/// holds no block. On the first frame the centre floor's light is the neighbour floor's within
+/// 10 % (both read at the centre pixel of a camera over each), the light pass casts no sky ray
+/// at the centre's pixel (the missing-light chain's sky visibility stands in), and the store's
+/// black count is 0.
+#[test]
+fn a_young_chunk_reads_its_neighbours_sky() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = floor_world([3, 3, 1], |_| false);
+    let mut gpu = mirror(&device, &queue, &world, None);
+    let uniform = Sky {
+        altitude_zero_z: FLOOR as f32,
+        ..Sky::uniform(1.0)
+    };
+    let mut f = frame(&device, SIZE, ShadowWalk::Full);
+    f.set_lighting(Lighting {
+        sky_rays: 1,
+        ..f.lighting()
+    });
+    f.set_light_hooks(vxe_render::LightHooks {
+        key_off: true,
+        ..Default::default()
+    });
+    f.set_sky(Some(uniform));
+    f.set_count_store(true);
+    let settings = vxe_render::BakeSettings {
+        brick_samples: 64,
+        round: 64,
+        filter: Some(std::sync::Arc::new(|v: [i32; 3], _f: u8| {
+            !(v[0].div_euclid(64) == 1 && v[1].div_euclid(64) == 1)
+        })),
+        ..Default::default()
+    };
+    f.bake_until(
+        &device,
+        &queue,
+        &mut gpu,
+        &world,
+        world.extent(),
+        &settings,
+        &mut |_| {},
+    )
+    .expect("the store fits");
+    let mut read = |at: [f32; 2]| {
+        let lit = centre_lit(&device, &queue, &mut f, &gpu, &camera(at), 1);
+        let vis = vxe_render::debug::read_rgba8(&device, &queue, f.visibility_samples());
+        let w = f.visibility_samples().width() as usize;
+        let h = f.visibility_samples().height() as usize;
+        let cast = vis[4 * ((h / 2) * w + w / 2) + 3] > 0;
+        (lit, cast, f.read_store_stats(&device, &queue))
+    };
+    let (young, young_cast, st) = read([96.0, 96.0]);
+    let (old, old_cast, _) = read([32.0, 96.0]);
+    println!(
+        "centre {young:?} (sky ray cast {young_cast}), neighbour {old:?} (cast {old_cast}); store missing {} fallback {} black {}",
+        st.missing, st.fallback, st.still_black
+    );
+    assert!(within(young, old, 0.10), "{young:?} against {old:?}");
+    assert!(!young_cast, "the chain stands in for the sky ray");
+    assert!(st.missing > 0, "the centre's faces have no block");
+    assert_eq!(st.still_black, 0);
+}
+
 /// Plan 0086 Phase 9 bar 4's twin: the floor of chunk (0, 0, 0) under a resident rock roof
 /// (chunks (0, 0, 1) and (1, 0, 1)), the chunk beside the floor's, (1, 0, 0), held by the
 /// window and absent from the world. Under `Sky::uniform(1.0)` with one sky ray and the key

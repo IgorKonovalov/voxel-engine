@@ -923,7 +923,8 @@ mod tests {
             assert!(l1.iter().all(|&w| w < l2_min), "level 1 before level 2");
         }
         let wgsl = include_str!("../shaders/temporal.wgsl");
-        assert!(wgsl.contains(&format!("const STORE_SUMMARY_AT: u32 = {SUMMARY_AT}u;")));
+        let hitrec = include_str!("../shaders/hitrec.wgsl");
+        assert!(hitrec.contains(&format!("const STORE_SUMMARY_AT: u32 = {SUMMARY_AT}u;")));
         assert!(wgsl.contains("(store[STORE_FLAGS] >> 2u) & 3u"));
         assert_eq!(FLAG_MISSING_SHIFT, 2);
         assert_eq!(MissingLight::Neighbour.bits(), 1);

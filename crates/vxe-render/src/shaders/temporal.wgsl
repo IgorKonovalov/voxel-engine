@@ -269,6 +269,57 @@ fn store_sky_visibility(head: StoreHead, v: vec3<i32>, face: u32) -> vec2<f32> {
     return own;
 }
 
+// Chunk `c`'s summary's sky visibility for `face` in x, with a 1 in y; 0 where the chunk holds
+// no block, or its summary lacks the direction or was baked with no sky.
+fn store_summary_sky(head: StoreHead, c: vec3<i32>, face: u32) -> vec2<f32> {
+    let block = store_table(head, c) & ~TABLE_COARSE;
+    if (block == 0u) {
+        return vec2<f32>(0.0);
+    }
+    let rec = block + STORE_SUMMARY_AT;
+    if (((store[rec + 6u] >> (16u + face)) & 1u) == 0u
+        || (store[rec + VIS_WORD + 1u] & VIS_BAKED) == 0u) {
+        return vec2<f32>(0.0);
+    }
+    let byte = (store[rec + VIS_WORD + face / 4u] >> (8u * (face % 4u))) & 255u;
+    return vec2<f32>(f32(byte) / 255.0, 1.0);
+}
+
+// The missing-light chain's sky visibility (ADR-0053's chain on ADR-0070's channel) for face
+// `face` of voxel `v`, whose own cell holds none: the chunk's own summary's, else the mean of its
+// six face neighbours' summaries that hold it; 0 in y for none, and under the `black` and
+// `parent` modes (the parent records are not read for the sky). shade.wgsl's `sky_chained` is
+// the same test, so the light pass casts no sky ray where this finds a value.
+fn store_sky_fallback(head: StoreHead, v: vec3<i32>, face: u32) -> vec2<f32> {
+    let mode = store_mode();
+    if (mode == 0u || mode == MISSING_PARENT) {
+        return vec2<f32>(0.0);
+    }
+    let c = v >> vec3<u32>(6u);
+    let own = store_summary_sky(head, c, face);
+    if (own.y > 0.0) {
+        return own;
+    }
+    var sum = 0.0;
+    var n = 0.0;
+    for (var f = 0u; f < 6u; f++) {
+        let sign = select(1, -1, (f & 1u) == 0u);
+        let axis = f / 2u;
+        let o = vec3<i32>(
+            select(0, sign, axis == 0u),
+            select(0, sign, axis == 1u),
+            select(0, sign, axis == 2u),
+        );
+        let r = store_summary_sky(head, c + o, face);
+        sum += r.x * r.y;
+        n += r.y;
+    }
+    if (n > 0.0) {
+        return vec2<f32>(sum / n, 1.0);
+    }
+    return vec2<f32>(0.0);
+}
+
 // The sky's mean irradiance over the part above the horizon of the hemisphere about direction
 // `dir`'s axis: `E_sky` over that part's cosine-weighted share, 1 for +z, a half sideways and
 // 0 for -z (`E_sky` is 0 there). A visibility counts a ray below the horizon blocked, so the
@@ -313,8 +364,6 @@ fn store_brick_value(head: StoreHead, v: vec3<i32>, face: u32) -> vec4<f32> {
     return store_cell(head, v >> vec3<u32>(head.shift), face);
 }
 
-// A block's summary record (`bake::SUMMARY_AT`): just past its 512-word directory.
-const STORE_SUMMARY_AT: u32 = 512u;
 // The flags word's missing-light mode, bits 2 and 3 (`bake::MissingLight::bits`): 0 black.
 const MISSING_NEIGHBOUR: u32 = 1u;
 const MISSING_PARENT: u32 = 2u;
@@ -639,11 +688,14 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (((params.lighting & LIGHTING_STORE_BY_NORMAL) != 0u || on_entity) && any(rec.n != nf)) {
             e = store_value_by_normal(head, voxel, face, value, rec.n);
         }
-        // The sky's term (ADR-0070) where no ray was cast: a face's baked visibility coloured
-        // by the sky now. An entity keeps its sky rays.
+        // The sky's term (ADR-0070) where no ray was cast: a face's baked visibility, else the
+        // missing-light chain's, coloured by the sky now. An entity keeps its sky rays.
         var sky_term = vec3<f32>(0.0);
         if (!on_entity && !sky_cast && sky_on()) {
-            let sv = store_sky_visibility(head, store_voxel(rec.p, nf), face);
+            var sv = store_sky_visibility(head, store_voxel(rec.p, nf), face);
+            if (sv.y == 0.0) {
+                sv = store_sky_fallback(head, store_voxel(rec.p, nf), face);
+            }
             if (sv.y > 0.0) {
                 sky_term = sv.x * sky_open_by_normal(rec.n);
                 seed = vec4<f32>(sv.x, 0.0, sv.x, f32(max(sky.sky_history, 1u)));

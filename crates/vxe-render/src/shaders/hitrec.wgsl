@@ -20,6 +20,8 @@ const HIT_INSTANCE_SHIFT: u32 = 6u;
 // chunks, the flags, then a word per window chunk, its block's first word or 0. A block is 512
 // directory words (a brick's offset from the block's start just past its record << 11; 0 none),
 // then each surface brick's record.
+// A block's summary record (`bake::SUMMARY_AT`): just past its 512-word directory.
+const STORE_SUMMARY_AT: u32 = 512u;
 const STORE_ORIGIN: u32 = 4u;
 const STORE_SIZE: u32 = 8u;
 // The prelude's STORE_FLAGS is the flags word (`bake::STORE_FLAGS`): bit 1, the records' cells

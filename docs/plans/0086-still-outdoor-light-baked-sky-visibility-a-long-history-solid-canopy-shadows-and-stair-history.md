@@ -933,8 +933,8 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
 | 6: The key light on the long history, after a reading | dev | done (reading only: 3-degree p99 1 at the lamp's 1, not built) | 12fe6373 |
 | 7: A spike: a deterministic penumbra from the closest approach | dev | done (spike; cost on the RTX approach arm and the RENOIR not read) | ed47dc5c |
 | 8: The owner's windowed check | human | done 2026-11-18, failed on five points (`live/window86a/verdicts.md`; the amendment above) | |
-| 9: The sky rule: the column map, sky only above it | dev | done; bar 5 (the seal) fails as written (24.3 %, the pair's history decaying: 1.1 % at +128 frames); the bake's finality doubles the pre-roll (10.3 to 21.2 s, RTX) | committed with this row |
-| 10: The first seconds after a jump | dev | not started | |
+| 9: The sky rule: the column map, sky only above it | dev | done; bar 5 (the seal) fails as written (24.3 %, the pair's history decaying: 1.1 % at +128 frames); the bake's finality doubles the pre-roll (10.3 to 21.2 s, RTX) | d821e3e2 |
+| 10: The first seconds after a jump | dev | done; bar 1 met by Phase 9 (no band change); built the chain's sky; bar 3's frames not reached in the rig (its queue bakes one chunk in 600 frames) | committed with this row |
 | 11: The window's defaults | dev | not started | |
 | 12: The tunnel's brightness: the eye's ceiling anchored to the sky | dev | not started | |
 | 13: The zebra stripes: the sky term's normal and a bounce floor | dev | not started | |
@@ -1015,6 +1015,12 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
   is outside 0.50 within 0.03, equal to Phase 4's reading. Bar 5's seal bar fails as written
   (24.347 %); bar 5's golden fails (re-blessed at Phase 11). The bake's finality lengthens the
   pre-roll past the risk's fifth (readings log).
+- Phase 10: shrank to one fix, the missing-light chain's sky (`store_sky_fallback`,
+  `sky_chained`; own and neighbour summaries, no parents); the young pair's band and the coarse
+  pass's `VIS_BAKED` not built (bar 1 read 0 at frame 1 after Phase 9). `STORE_SUMMARY_AT` moved
+  to `hitrec.wgsl`, and `bake/summary.rs`'s test with it (outside the phase's files). Bar 3's
+  rig is the streamed test rig, not the fly-through (no headless jump); its frames were not
+  reached. The bar-1 soak test and the forest reading landed in Phase 9's commit.
 
 ### Close triggers
 
