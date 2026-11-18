@@ -422,6 +422,178 @@ pass gives back the same adds, about 0 net; `frame_bytes` unchanged (section 3: 
 variance's and the composite's bind groups gain sampled and uniform bindings only. The
 budgets table's Phase 21 row is updated below.
 
+## Amended 2026-11-18, after the overnight flicker check (the architect's calls; the owner asleep)
+
+The readings log's flicker section (2026-11-18, the fourth agent) attributed two things: the
+castle the owner watched flicker (the Plan 0083 window's 25.png: a freshly placed castle on the
+hills at noon, the eye in the keep) and Phase 19's gate regression. Five calls follow, each
+with its grounds and the options not taken; the phases below are re-written where a call
+touches them. Nothing here changes a default or an ADR. The owner's rule throughout: a flame
+may flicker, nothing else may (ADR-0076, proposed on main; its rule 3: every transition is one
+monotonic fade).
+
+### 1. A stamped chunk is a dig, and a reset pixel under the sky ray starts from an estimate
+
+**The reading.** The castle's chunks were air before the stamp: no block and no provisional
+block, so `take_boxes` skips them (a ring chunk with no block), and the carve's ring of 173
+hill chunks opens as digs ahead of everything; while the dig jobs hold two slices no candidate
+opens (`open_step`), so the stamped chunks wait in the pool until the ring is done. Paced at
+60 Hz on the RTX the keep's interior reads no record for about 5 s (`missing` 49 884 at the
+stamp, 0 from frame 300), about 30 650 of its lighting pixels cast the per-pixel sky ray every
+frame, and of the fresh strip's over-8 pixels 66 % are young and 15 % ray-cast. So the defect
+has two parts. The bake is late. And while it is late every pixel whose history reset (the
+whole wall: a frame before, its pixels saw the hill or the sky) runs the sky ray's mean from
+one raw sample at age 1 (`pair_step` on no history: 0 or 1, at a hit rate near 0.02), which is
+the sparkle; and the exposure meters 50 000 such pixels, which is the whole-frame swing. The
+second part is the dig's dots (Phase 16: about 26 of 50) and the forest's grain after a turn
+(the flicker table: 86.7 % of the forest's fresh over-8 pixels are young) by the same
+mechanism; the castle only makes it a wall wide and five seconds long.
+
+**The decision, two mechanisms.** (i) **Phase 21 (a) is built, not conditional, and widened:**
+a pixel that resets where the sky ray is cast seeds the pair from the best world-space
+estimate at age `SEED_AGE`, in this order: its face's record visibility (a stale ring brick's),
+else the chain's (`store_sky_fallback`: the chunk's or its face neighbours' summaries, which a
+stamped wall next to the hill has), else the open visibility 1; the samples then pull it at
+`1 / (SEED_AGE + 1)` with the firefly clamp live from the first frame. The pair stays the one
+history of the term; the seed is a value, not a second history. (ii) **A new Phase 21a: a
+chunk the edit's box touches that holds no block is a dug chunk whose every brick is a dig
+slot.** It enters `digs` at the edit, opens in `open_digs`' order (near first, then by distance
+from the eye: the keep around the owner first), is listed on the opening thread as a dig with
+no pre-listing is today (a chunk left with no face is faceless, as today), and lands as a dig
+job. The landing of its sky words is a step (the amendment above: rule 3's degenerate case,
+from a mean the seed and the samples have already pulled toward the baked value; Phase 20
+(ii) is its home if the window asks for slower).
+
+**Where the history lives and which fade carries each switch (ADR-0076's binding clause).**
+The stamped face's history is the store's words once baked and the pair before; the switch
+air-to-wall is the edit's own change (the frame the wall exists); wall-under-ray to
+wall-baked is the landing's step. No screen-space history of the term exists but the pair's.
+
+**Why both, and the baseline's rate.** (ii) alone brings the bake sooner at the RTX's rate but
+the frames before it still sparkle, and at the baseline adapter's rate (the bake's slice is a
+share of the frame and its throughput the adapter's) the window is longer, not shorter: the
+sparkle's length is set by the bake, which is the wrong clock for it. (i) alone calms the ray
+but leaves the keep ray-lit for seconds (a per-pixel ray over 30 000 pixels is the light
+pass's cost on the slow adapter, 4.8 ms a ray in Plan 0032's reading) and screen-space (rule 2:
+a turn loses it) until the pool's turn comes. (i) is per frame and does not care what the bake
+costs; (ii) ends the ray region as fast as a dig's.
+
+**Rejected.** (b) Candidate openings running while dig jobs fill the loop: a throughput change
+that shortens the window on the RTX only, slows the digs the gate exists to put first, and
+leaves the sparkle's mechanism in place; the stamped chunks are digs by the rule (an edit
+touched them), so they take the dig's path instead of the pool's. (c) A calmer fallback for
+pixels with no record than the per-pixel ray, or keeping them out of the exposure meter: a
+fallback with no history is a held prior that is wrong for an interior and lands in a step,
+which is what the seed does on its first frame and then corrects; the meter swings because
+the pixels it meters sparkle, so the seed removes the swing at its source; and excluding
+no-record pixels would leave a block-less rig (Phase 21 bar 1's open floor under
+`Sky::uniform`) with no metered pixel and a held exposure. A provisional block for the
+stamped chunk at the edit (the dug chunk's path): its listing on the edit's frame is the
+pool's listing moved onto one frame (the castle's 719 chunks, a guess of over 100 ms), and its
+only gain over the chain's value is a per-brick emissive guess; the seed's chain source covers
+the wall next to the hill and the open prior the rest. A spatial seed (the 3 x 3 accepted
+neighbours' pair, which converges at once for a disoccluded sliver next to settled pixels) is
+the upgrade if the forest's turn strip stays over its bar after (i): in Followups, not built
+here. No ADR: both are plan-level mechanisms under ADR-0070 (the long-history ray's start
+value) and ADR-0046 (the dig path); ADR-0076 is proposed on main and not edited here.
+
+### 2. The tree test: `Frame::reset_history` is fixed and the rig resets; the claim stands
+
+The regression is the rig's carried history (the readings log's attribution: the floor's
+history accepted across the world swap, `key_mean` at age 64 moving 1/65 a frame, the
+shadow's summed weight 27.6 against 96.2) and `Frame::reset_history` undone by `Frame::step`'s
+`advance()`, so the rig's reset did nothing. **(a):** `reset_history` also clears `encoded`
+(`live/reset-history-fix.patch`, a `fix` commit under Phase 19 that touches
+`crates/vxe-render/src/frame/mod.rs`, outside the phase's files, with a unit test that pins
+the claim: after `reset_history` between two `step` calls the next frame's history age reads
+0), and `tree_shadow` resets before each of its reads; the claim as written stands (the dev's
+run with both: ratio 1.733). **Rejected:** (b) 64 settle frames before each read moves the
+reference instead of fixing a public method that is a no-op in the common calling pattern,
+and adds about 190 lavapipe frames to a gate test; (c) a 0.2 floor on `key_mean` is `ALPHA`'s
+five-frame memory again, the mechanism Phase 14 attributed the forest's grain to (the key
+alone p99 13 at `60,180`), so it undoes Phase 19.
+
+**The app's counterpart, accepted for this plan.** A shadow an edit casts outside its edit box
+(a placed castle's on the hill; a removed occluder's lit patch) arrives over up to
+`sky_history` frames (about 1 s at 60 fps) instead of about 16, monotonic, with no overshoot:
+a fade, not a flicker, and longer than ADR-0076's candidate `F` (16, calibrated by the owner's
+eye in Plan 0090 Phase 5; a guess until then). The edit box does not reset the key mean
+outside itself: a sun shadow's influence region is unbounded (a tower's shadow is long), so a
+box dilated by any reach is a guess, and a reset there restarts the grain Phase 19 removed on
+every pixel in it. If the calibrated `F` comes out under the fade's length, the fix is the
+mechanism's own: a band test on the key mean as `pair_step` has for the sky (a short mean
+beside the long one, in a channel to be found) that drops the age when the samples leave the
+band, planned where Plan 0090 reads it. Owner question 1 below.
+
+### 3. Phase 19's other bars: accepted under `T_still`; the drift rig attributed or dropped
+
+- **Bar 1, the penumbra's p99 1 to 2** (the lamp's 1; mean 0.340 to 0.355, exposure 3.13 to
+  3.34): accepted. Two display levels at the 99th percentile is the smallest failure an
+  integer statistic can show and lies under ADR-0076's starting `T_still` (4 levels, Plan
+  0090); the mean moved 4 %. The bar is re-stated as p99 at or under 4 with the lamp's and
+  the mean printed. Rejected: the a-trous lever (the spatial variance at a young age) with
+  nothing attributing the level; Phase 19 allowed it only against bar 4, which is met.
+- **Bar 3 at `60,180`, 3.00 against the lamp's 2.11** (8.16 before): accepted as a reading
+  under `T_still`, not met against the lamp; the lamp stays printed as the reference; Phase
+  25 writes the bar at the value the third window keeps, and Plan 0090's counter ratchets
+  from there. The residual's split (the key mean's reset pixels against the leaf voxel's own
+  jitter) is Plan 0090 Phase 2's per-pixel attribution, not another reading here. Owner
+  question 2.
+- **The drift rig, off about 13.5 voxels on both binaries** against a geometric move of 1.19:
+  the rig, not the mechanism (the same wrong number before and after the phase; `set_sky`
+  raises no sky-change bit on a drift, by `sky_changed`'s contract, so it is not a reset a
+  frame). One bounded reading (30 minutes): both runs' centroids every 16 frames and the sun
+  direction fed, on one binary. A rig fault with a small fix is fixed and the bar read; else
+  the bar is dropped from this plan, the log says so, the property goes to Plan 0090's scene H
+  (the sun sweep, whose stepping count reads the same lag), and
+  `a_sun_jump_resets_the_direct_part` stays as the jump's test.
+
+### 4. Phase 20's bars 1 and 2 read the drain's switch, as a reading
+
+At 19.png's pose at rest no pixel is ray-lit under the default (the reading: 0 from frame
+300), so "the two paths agree" and "the ray side is as still as the lamp" have no pixels at
+rest, and Phase 25 bar 1 reads the rest state. What the owner saw at 19.png was the drain
+(frame 120: 2863 ray-lit, 5373 chained), so the seam is a transition and ADR-0076 rule 3 is
+its form. Bars 1 and 2 become one reading of the switch from the pair to the store per pixel
+as the queue drains, taken after Phases 21 and 21a land (the switch's step is what they
+change), with (i) built only if the relative step is over 10 % and (ii) only if pixels leave
+the band; re-stated in the phase. Rejected: forcing a ray region at rest to keep the bars as
+written (`column_wait on` baked 0 chunks in 600 frames; `LIGHTING_HOOK_SKY_RAY_ALWAYS`), which
+measures a state the default never shows; dropping the bars with nothing read on the drain,
+which is what the owner saw.
+
+### 5. The order for the dev
+
+1. Phase 19's fix pass: `reset_history` (the patch, its unit test), the rig's reset, the gate
+   test green; bar 1 and bar 3 re-stated in the log; the drift rig's bounded reading.
+2. Phase 21 (c): `live/p21-c.patch` and `live/p21-dig.rs` applied, the owed test moves
+   (`centre_lit` and its users to `filtered()` or the pair), bars 1, 2, 5 and 6.
+3. Phase 21 (a), the seed, on top of (c): bars 3, 4 and the seed's own bar; bar 7.
+4. Phase 21a: the touched chunk with no block as a dig; its bars.
+5. Phase 20's re-stated reading.
+6. Phase 23 (`live/p23-defects.patch`, `live/p23-test.rs`).
+7. The flicker strips' `after21` rows (`live/flicker.sh`): the hills, the forest, the dig and
+   the paced castle, in the log's table.
+8. The named gpu binaries at the tip (`gpu_sun`, `gpu_outdoor`, `gpu_outdoor_golden`,
+   `--no-fail-fast`), then Phase 24's runner.
+
+(c) goes before the seed because both edit `temporal.wgsl` and the seed is written on the
+pass as (c) leaves it; the `reset_history` fix goes first because the gate is red until it
+lands.
+
+### Owner questions (the dev proceeds on the recommendation)
+
+1. **A shadow an edit casts outside its edit box fades in over about 1 s at 60 fps (up to 64
+   frames), monotonic, instead of about 16 frames.** Is that fade acceptable under "a flame
+   may flicker, nothing else may" until Plan 0090 calibrates `F`? Recommended: yes; a longer
+   fade is the price of the key light's long mean, which removed the forest's grain, and the
+   band test above is the fix if the calibrated `F` is shorter. (Phase 24 run 4b watches it.)
+2. **Two Phase 19 bars are accepted under ADR-0076's starting `T_still` (4 levels) rather
+   than the lamp's reference the plan wrote** (the penumbra p99 2 against the lamp's 1; the
+   forest floor at `60,180` p99 3.00 against the lamp's 2.11, from 8.16). Recommended: accept;
+   Phase 25 pins the window's values and the counter ratchets from them, so neither can rise
+   unseen.
+
 ## Implementation phases
 
 Each phase ships as its own commit. `dev` implements all phases in one session with no review
@@ -1220,6 +1392,23 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
      or under the lamp's plus 16 (a guess: the mean at age 16 steps by 1/17).
   5. `frame_bytes` is unchanged; `sky_rays` 0 and the pinned-exposure goldens of the lamp-lit
      scenes are byte-identical (no sky, no key light: nothing runs).
+- **Fix pass (amended 2026-11-18, the flicker check's calls 2 and 3).** Files added:
+  `crates/vxe-render/src/frame/mod.rs` (`reset_history` clears `encoded` too, the patch in
+  `live/reset-history-fix.patch`), its unit test beside the frame's, `apps/flythrough/tests/
+  gpu_outdoor.rs` (`tree_shadow` resets before each read; the drift rig's reading). Bars
+  re-stated:
+  1. p99 at or under 4 levels (ADR-0076's starting `T_still`), the lamp's p99 and both means
+     printed; the reading at `37e03683` (2, mean 0.355) is the first value of record.
+  2. The drift clause: one bounded reading (both runs' centroids every 16 frames, the sun
+     direction fed; 30 minutes); fixed and read if the rig's fault is small, else dropped with
+     the log saying so (Plan 0090 scene H takes the property). The jump clauses stand.
+  3. At `60,180`: a reading under `T_still` (3.00 read), the lamp's 2.11 printed beside it;
+     Phase 25 pins the window's value.
+  6. **`reset_history` resets.** `a_reset_between_steps_restarts_the_history` (a unit or
+     `gpu_sun.rs` test, about 1 s): after `Frame::reset_history` between two `step` calls, the
+     next frame's history age reads 0 and `restarts` counts it; the gate test
+     `a_tree_shadow_travels_with_the_sun_at_320x180` passes as written (ratio 1.732 within
+     10 %, each centroid within 3 voxels).
 
 ### Phase 20: The seam between the baked sky term and the ray's
 - **Owner skill:** dev
@@ -1251,15 +1440,29 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
 - **Files touched:** `temporal.wgsl`, `shade.wgsl`, a new `pair_filter.wgsl` and its pass in
   `frame/encode.rs`, `frame/pipelines.rs` (if (iii)), `crates/vxe-render/tests/gpu_sun.rs`,
   `apps/flythrough/tests/gpu_outdoor.rs`, `docs/plans/logs/0086.md`.
+- **Re-stated 2026-11-18 (the flicker check's call 4):** the reading at `44e24090` found no
+  ray-lit pixel at rest under the default, so bars 1 and 2 as written have nothing to measure
+  and are replaced by bar 1a below, taken after Phases 21 and 21a land. (i) is built only if
+  bar 1a's relative step is over 10 %, (ii) only if its band share is over 1 %, (iii) not at
+  all (no ray region at rest to filter). Files: `apps/flythrough/tests/gpu_outdoor/defects.rs`
+  (the rig is `the_tunnel_ray_region`'s), the shaders only if (i) or (ii).
 - **Done when:**
-  1. **The two paths agree.** `the_sky_term_has_no_seam` in `gpu_outdoor.rs` (the tunnel pose,
-     the queue drained, 64 frames at 320 x 180; about 10 s, soak if over): over the ray-lit
-     lighting pixels within 4 voxels of a baked one, the sky term's mean is within 10 % of
-     their baked neighbours' (the normals' arm equal), and the share of edge pixels whose
-     source flips between frames is 0 after frame 16.
-  2. **The ray side is as still as the lamp.** The same test: the ray-lit region's p99
-     frame-to-frame change is at or under the headlamp's on the same pose with the sky off
-     (the plan's reference everywhere).
+  1. ~~The two paths agree~~ and 2. ~~the ray side is as still as the lamp~~: replaced by
+     **1a. The ray region lands within the fade.** `defects::reading::the_ray_region_lands`
+     (19.png's pose streamed at residency 16, 24, the wait off, `full`, 320 x 180, 300 frames
+     on the RTX; a release-run reading outside the gate; Phase 25 writes it as a soak test if
+     its lavapipe wall allows, else it stays a reading named in the log): per lighting pixel
+     each frame the sky term's source (the pair, the chain, the store) and the display value;
+     for every pixel whose source switches from the pair to the store between frames `f` and
+     `f + 1`, `old` its display value at `f` and `new` at `f + 16`: the share of such pixels
+     with any frame in `f..f + 16` outside `[min(old, new) - 4, max(old, new) + 4]` levels
+     (ADR-0076 rule 3's form, `T_fade` 4 the starting guess), the mean and p99 of `|old -
+     new|` in levels (the seam's size: how far the ray's mean sat from the baked value when the
+     bake landed), the mean `|old - new| / new` (bar 1's 10 % re-stated: over it, (i) is built
+     and the reading re-run), and the frame-to-frame p99 over the ray-lit pixels at frames 60
+     and 120 (bar 2 on the transient, the lamp's 2.11 printed beside it). The band share's
+     line is 1 % (over it, (ii)); the count of switching pixels is printed and is at least
+     1000 (the reading's 14 131 at frame 0 drain by frame 300), else the rig is at fault.
   3. **Nothing moves where the store is fresh.** The hills' noon golden is byte-identical
      (every pixel baked); the tunnel goldens that hold ray-lit pixels are re-blessed as a
      disclosed change with counts.
@@ -1283,19 +1486,23 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   branch adds the same term after the direct accumulation, with the same bindings. No new
   target, no storage texture: the temporal pass's four storage textures are
   `Limits::default()`'s four. The debug read-backs that assert the sky term now read the
-  filter's output or the pair, never `direct_accumulated`. (a) and (b) as before: (a) a pixel
-  that resets inside a `SKY_STALE` ring seeds the pair from its face's cell's stale baked
-  visibility (or the chain's) at age `SEED_AGE` (8, a guess), not from one raw sample at age
-  0, so the first samples blend at `1 / 9` and the firefly clamp is live from the first frame
-  (the hole's fresh faces have a record: the touched brick keeps its words under the stale
-  bit); (b) the ring's coarse re-bake does not write the sky words (`VIS_BAKED` from the full
-  pass only, Phase 10's unbuilt item) so no brick-sized patch lands at a low count. **Phase 16
-  (2026-11-18) points at (c):** the stored/direct switch at the stale bit carries the area
-  (with the sky alone, half the region moves over 16 levels for two frames; the ray's young
-  samples about 26 dots of 50, the key light's reset pixels about 24, the clamp 45 against
-  50), so (c) is built first and bars 1 and 4 read before (a) or (b) is touched; (a) only if
-  the dots on the hole's faces stay over bar 4's line after (c); (b) only if bar 2 fails on a
-  brick-sized patch.
+  filter's output or the pair, never `direct_accumulated`. **(a), built after (c), not
+  conditional (amended 2026-11-18, the flicker check's call 1):** a pixel that resets where
+  the sky ray is cast (`sky_cast` with no accepted history, an edit box, `LIGHTING_SKY_CHANGED`)
+  seeds the pair at age `SEED_AGE` from the best world-space estimate, in this order: its
+  face's record visibility (a stale ring brick's: the touched brick keeps its words under the
+  stale bit), else the chain's (`store_sky_fallback`), else the open visibility 1; the first
+  samples then blend at `1 / (SEED_AGE + 1)` and the firefly clamp is live from the first
+  frame. `SEED_AGE` is 8 (a guess; the dev may take it anywhere in 4 to 16 to meet bars 3 and
+  4, and the log names the value). The seed is a value, not a second history: the pair stays
+  the term's one screen-side history. This is the castle's sparkle, the dig's dots and the
+  forest's young pixels after a turn in one mechanism; Phase 21a brings the stamped chunk's
+  bake. (b) as before: the ring's coarse re-bake does not write the sky words (`VIS_BAKED` from
+  the full pass only, Phase 10's unbuilt item), only if bar 2 fails on a brick-sized patch.
+  **Phase 16 (2026-11-18) points at (c):** the stored/direct switch at the stale bit carries
+  the area (with the sky alone, half the region moves over 16 levels for two frames; the ray's
+  young samples about 26 dots of 50, the key light's reset pixels about 24, the clamp 45
+  against 50), so (c) is built first and bars 1 and 2 read, then (a) and bars 3, 4 and 4a.
 - **Files touched:** `crates/vxe-render/src/shaders/temporal.wgsl`, `atrous.wgsl`,
   `composite.wgsl`, `sky.wgsl`, `crates/vxe-render/src/frame/pipelines.rs` and
   `frame/encode.rs` (the variance's and the composite's bind group layouts and groups),
@@ -1334,8 +1541,16 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   4. **The hole takes its light.** The same test: 60 frames after the dig the hole's floor
      reads its baked value within 10 % (Phase 5 bar 4's clause), and no frame between has the
      share of pixels changing over 16 levels above 5 %; the dots on the hole's own faces (the
-     pixels inside the dilated box) are counted apart and printed, and (a) is built only if
-     their share is over 1 % on any frame after frame 16.
+     pixels inside the dilated box) are counted apart and printed, and their share is under
+     1 % on every frame after frame 16 (the bar (a) meets; before (a) it is printed).
+  4a. **A reset pixel starts from its record.** `a_reset_pixel_starts_from_its_record` in
+     `gpu_sun.rs` (bar 3's rig; about 3 s): at the first frame after the dig, over the
+     pixels inside the dilated box whose face holds a stale record, the pair's `x` is within
+     `1 / (SEED_AGE + 1)` of that record's visibility and its age reads `SEED_AGE`; on the open
+     floor under `Sky::uniform(1.0)` with no store block (bar 1's rig) a pixel's first frame
+     reads `x` 1 at age `SEED_AGE`; the mean of the pair's `x` over the box's pixels at frames
+     1, 8, 16 and 60 is printed (monotonic toward the settled value, no overshoot by more than
+     one sample's share).
   5. **Nothing moves where no ray is cast.** The hills' noon golden and the lamp-lit scenes'
      pinned-exposure goldens are byte-identical (`vis.a` is 0 on every pixel there, so the
      filter adds nothing and the direct part lost nothing); a golden that holds ray-lit pixels
@@ -1346,6 +1561,46 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
      variance pass, the same back from the temporal pass).
   7. The fly-through's dig at Phase 16's rig re-read with bar 3's statistic, tip against the
      window's before binary, in the log.
+
+### Phase 21a: A chunk an edit fills from air is a dig
+- **Owner skill:** dev
+- **What (added 2026-11-18, the flicker check's call 1 (ii)):** in `take_boxes`, a chunk the
+  edit's box touches (its bricks within the box dilated by one) that holds no block is no
+  longer skipped: it enters `digs` as a whole-chunk dig (every brick of its listing a slot, no
+  kept bricks; a `DigChunk` flag or an empty kept set says so), `near` set, and leaves
+  `faceless` as a touched chunk does. `open_digs` opens it in its order (near first, then by
+  distance from the eye), lists it on the opening thread as it lists a dig with no pre-listing
+  today, drops it as faceless if the listing has no face (a ring's air chunk), and lands it as
+  a dig job; no provisional block at the edit (the amendment's rejected list says why), no
+  change to the dig gate (`open_step`'s two slices) or to the dig budget's `edit_ms`. Ring
+  chunks the box does not touch are unchanged. Until the job lands the chunk's faces are
+  ray-lit under Phase 21 (a)'s seed (the chain's value next to a baked neighbour, the open
+  prior elsewhere), and the landing is the step the amendment accepts.
+- **Files touched:** `crates/vxe-render/src/bake/queue/digs.rs`, `bake/queue/mod.rs`
+  (`DigChunk`), `crates/vxe-render/tests/gpu_sun.rs`,
+  `apps/flythrough/tests/gpu_outdoor/flicker.rs`, `docs/plans/logs/0086.md`.
+- **Done when:**
+  1. **A stamp into air is a dig.** `a_stamp_into_air_is_a_dig` in `gpu_sun.rs` (one floor
+     chunk baked with a block, a solid box stamped into the air chunk above it, the live queue
+     stepped; about 3 s): after the edit's step the air chunk is in the queue's digs (the
+     `tracks` report names it `digs` or `dig_open`), it opens before a pending candidate
+     listed earlier (the floor's neighbour chunk, added to the pool the same step), and its
+     block lands with `VIS_BAKED` and no `SKY_STALE` on its lit bricks; a box stamped into an
+     air chunk that stays faceless (an empty prefab) lands nothing and the chunk is in
+     `faceless`.
+  2. **The keep fills from the eye out.** `flicker::reading::flicker_castle` re-read on the
+     tip (the paced rig; RTX, release): `missing` at frames 100, 200 and 300 against the
+     before's 49 282 / 17 653 / 0, with the bar `missing` at frame 100 under half the before's
+     (the keep's chunks, the nearest, open ahead of the ring's far side) and 0 by frame 300;
+     the fresh strip's over-8 mean under 0.5 % (a guess; 2.274 % before, with Phase 21 (a)
+     carrying most of the cut) and its young share printed against 66.5 %; the settled strip
+     unchanged within noise.
+  3. **A dig's ring is unchanged.** `a_dig_leaves_no_dots` and Phase 21's bars read the same
+     values (the dig's touched chunks all hold blocks, so nothing new enters `digs`); the
+     hills' noon golden is byte-identical.
+  4. **Cost:** the edit's step (`take_boxes`) in ms on the RTX for the castle's 17 boxes,
+     before and after; the frames until the queue drains against the before's 2315 paced
+     frames; the queue's `digs` and `digs_baked` counters printed.
 
 ### Phase 22: The fired lights' grain under the anchor
 - **Owner skill:** dev
@@ -1404,7 +1659,11 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   arm only if Phase 20's reading says so; (3) the same with five lights
   fired (key `6`) under anchor 4, then `--sky-anchor 0`: the walls where the lights land, the
   light pass's ms read aloud; (4) a dig on the hills at noon and one in the tunnel, watched for
-  the flash, twice each, against Phase 15's binary once; (5) the forest at `60,180` and
+  the flash, twice each, against Phase 15's binary once; (4b, added 2026-11-18) a castle
+  placed on the hills at noon on the belt's binary (`CASTLE_BIN`, as the runner has it), the
+  eye walked into the keep as it fills: the walls' sparkle (gone or not), the exposure's
+  motion (one ramp or swings), and the castle's shadow on the hill as it fades in (owner
+  question 1 of the flicker amendment: about 1 s, acceptable or not); (5) the forest at `60,180` and
   `10,180` under `voxel`, settled, then a fast turn and the settle after it; `absorb` once at
   60 for comparison, its fps read aloud; (6) the forest at 15:00: the treads, then the day to
   sunset; (7) the defaults' look as one scene each: the tunnel's stairs under `smoothed` against
@@ -1498,6 +1757,13 @@ temporal pass 0.10 to 0.12 RTX and 0.9 to 1.6 RENOIR, Phases 9 and 13):
 | §2 the bake queue's step and the pre-roll (Phase 18) | the wait off: the pre-roll back near Phase 9's finality-off reading (10.3 against 21.2 s RTX); the catch-up re-bakes at most one more job per chunk that baked provisional, a guess of 20 to 50 % of the pre-roll's jobs on the hills, behind the first bakes | Phase 18 bars 2 and 5 against Phase 9's table |
 | §3 World in VRAM (the store) | the provisional mark is a bit of the record's spare word: 0 | Phase 18 |
 | the exposure pass (Phases 17, 23) | the anchor's default: 0; a metering or shoulder change, if any: 0 | Phase 23 |
+
+Added 2026-11-18, the flicker check (guesses until read):
+
+| `nfr.md` figure | projection (a guess) | how the close measures it |
+|---|---|---|
+| §2 Lighting, the temporal pass (Phase 21 (a)) | the seed's record and chain reads at a reset pixel only (a few percent of pixels a frame at rest, a wall's worth at an edit): about 0 at rest, under +0.05 ms RTX on the edit's frames | Phase 21 bar 6 |
+| §4 Edits, an edit's step (Phase 21a) | `take_boxes` gains the touched blockless chunks' entries only (their listing moves to `open_digs`' thread, where a dig's already runs): under +1 ms on the edit's frame for the castle's 17 boxes; the queue's dig work grows by the stamped chunks' jobs, which the pool would have baked anyway, moved ahead | Phase 21a bar 4 |
 
 On the slow adapter the outdoor light pass is over section 2's line in every configuration
 Plan 0032 read; this plan's Phase 5 is the first reading that can move it under, and `nfr.md`
@@ -1603,7 +1869,8 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
 | 18: The column wait: off by default, its black region, the catch-up | dev | done in part: the setting, the catch-up (bar 3 passes), `--dump-black`; bar 2 the wait adds no black (0.0000) but 4492 chunks with their reach in the full radius stay unbaked at 1800 under both waits; bar 5 the fly-through opens 0 provisional jobs; bar 6 `partial` 967 black against 1338, not under 1 % | `76eae309` |
 | 19: The key light on the pair's `g`, the grain after a turn | dev | done in part: built; bar 1 fails (p99 2 against the lamp's 1, 1 before); the gate test `a_tree_shadow_travels_with_the_sun_at_320x180` fails (ratio 0.767); bar 3 at `60,180` 3.00 against 2.11; bar 4 met (7 frames); the drift rig off 13.9 voxels before and after | `37e03683`, `fd1e4f2d` |
 | 20: The seam between the baked sky term and the ray's | dev | done (reading only): at 19.png's pose the ray region is 0 from frame 300 under the default and `partial`, 100 % with the wait on (0 chunks baked in 600 frames); none of (i) to (iii) built; bars 1 and 2 not written (no ray-lit pixel at rest) | `44e24090` |
-| 21: The flash around a dig | dev | not started | |
+| 21: The flash around a dig | dev | not started ((c) written in `live/p21-c.patch`, set aside) | |
+| 21a: A chunk an edit fills from air is a dig | dev | not started (added 2026-11-18) | |
 | 22: The fired lights' grain under the anchor | dev | done: no mechanism, the backlog entry; bar 2 read with two auto-exposure arms (anchor 4: at rest p99 10, edge flips 6.09 %; anchor 0: 6, 1.10 %); landed before Phase 21 | committed with this row |
 | 23: The sunlit treads' clip | dev | not started | |
 | 24: The owner's third window | human | not started | |
@@ -1706,3 +1973,9 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - Per-face sky cells near the camera, with the backlog's per-face emissive cells.
 - A render profile (Plan 0069) that sets `sky_rays` 0 on the slow adapter, once Phase 5's
   reading says what the ray costs during a dig there.
+- A spatial seed for the pair (the 3 x 3 accepted neighbours' mean at a reset pixel, before
+  the record's and the chain's): if the forest's turn strip stays over its bar after Phase 21
+  (a) (added 2026-11-18).
+- Plan 0090 gains a stamp scene (a prefab placed on the hills at noon, the eye in it; rules 3,
+  4 and 5) and reads the key mean's fade-in length against the calibrated `F` (the flicker
+  amendment's owner question 1); an architect amendment on main, owed at this plan's close.

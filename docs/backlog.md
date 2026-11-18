@@ -366,6 +366,20 @@ Parked 2026-11-12 (owner, from the video "the voxel rendering tech nobody talks 
 
 Pick up after the current lighting plans close (0058 and those ahead of it).
 
+### Plan 0090 owes a stamp scene and a reading of the key mean's fade-in against `F`
+
+Parked 2026-11-18 by Plan 0086's flicker amendment (the architect, overnight). A freshly
+placed castle on the hills at noon flickered in the Plan 0083 window (25.png): the stamped
+chunks baked behind the carve's dig ring and every reset pixel on the new walls ran the sky
+ray's mean from one raw sample (`docs/plans/logs/0086.md`, the flicker section). Plan 0086
+Phase 21 (a) and Phase 21a take the fix; what is owed on main is (1) a scene in Plan 0090's
+table, a prefab placed on the hills at noon with the eye inside it, read under rules 3, 4 and
+5, so the class cannot return unseen; and (2) a reading of the key light's mean (`key_mean`,
+Plan 0086 Phase 19) at an edit-cast shadow outside its edit box, which fades in over up to
+`sky_history` frames, against the `F` the owner calibrates in Plan 0090 Phase 5; if `F` is
+shorter, the key mean takes a band test as `pair_step` has for the sky. An architect amendment
+to Plan 0090, at Plan 0086's close.
+
 ### A consumer's settings file in the render example
 
 Parked 2026-11-12 (owner, at the settings-menu interview). The fly-through and the tester keep render settings in a TOML file through an app-side field table ([Plan 0073](plans/0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md), ADR-0058); the engine stays file-free (ADR-0055). A later example could show a consumer doing the same, so a game sees how. The natural home is [Plan 0071](plans/0071-the-consumers-path-a-render-example-a-renderer-tested-alone-names-and-errors.md)'s render example, or a second example beside it. Pick up after Plan 0073 closes, if 0071 has not taken it by then.
