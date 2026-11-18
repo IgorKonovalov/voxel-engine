@@ -110,6 +110,50 @@ mod defects {
             })
         }
 
+        /// Plan 0086 Phase 20's reading: the tunnel at noon at 19.png's pose (`--spawn inside`,
+        /// the eye `221 -4.4 493.6`, facing out of the tunnel), streamed as
+        /// [`the_hills_at_dusk_held`]'s rig (residency 16, 24), 600 frames read every 60: per
+        /// lighting pixel the sky term's source (the pair where the ray was cast, the chain's
+        /// fallback, black, the store otherwise) and the cast pixels' mean visibility, under
+        /// the column wait off and on with the reach `full`, and the wait off with `partial`.
+        /// `VXE_TEST_ADAPTER` picks the adapter.
+        #[test]
+        #[ignore = "reading"]
+        fn the_tunnel_ray_region() {
+            use flythrough::outdoor::{OutdoorSource, Spawn};
+            let source = OutdoorSource::new(1);
+            let (eye, facing) = source.spawn(Spawn::Inside);
+            let p = [221.0f32, -4.4, 493.6];
+            let d = facing.map(|v| v as f32);
+            let camera =
+                flythrough::camera_looking_at(p, [p[0] + d[0], p[1] + d[1], p[2] + d[2]]);
+            let noon =
+                flythrough::daylight::Clock::default().sky(flythrough::outdoor::BASE_Z as f32);
+            for (wait, reach) in [
+                (false, vxe_render::ReachMode::Full),
+                (true, vxe_render::ReachMode::Full),
+                (false, vxe_render::ReachMode::Partial),
+            ] {
+                println!("reading: the tunnel ray region, column wait {wait}, reach {reach:?}, spawn eye {eye:?}");
+                support::streamed::streamed(support::streamed::Streamed {
+                    label: "the_tunnel_ray_region",
+                    source: std::sync::Arc::new(OutdoorSource::new(1)),
+                    eye: vxe_world::VoxelCoord([221, -5, 493]),
+                    camera,
+                    sky: noon,
+                    styles: Vec::new(),
+                    r: 16,
+                    rays: 1,
+                    reads: (0..=600).step_by(60).collect(),
+                    hold: Some(support::streamed::Hold {
+                        r_lod: 24,
+                        wait,
+                        reach,
+                    }),
+                });
+            }
+        }
+
         /// A frame on `rig` for Phase 16's readings: 320 x 180 native, the store's counters on, the
         /// fly-through's look, voxel leaves, the lamp off, `lighting` over the defaults, `sky`,
         /// the world baked whole when `bake`.
