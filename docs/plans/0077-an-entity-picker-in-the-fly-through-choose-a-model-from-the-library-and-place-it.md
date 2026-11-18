@@ -506,6 +506,8 @@ superseded: the chooser's `Enter` hands over to the mode, and the mode stays aft
 
 ### Owner questions added 2026-11-18 (each with a recommendation; answered by the window if not before)
 
+**Answered 2026-11-18 (owner), with the go for Phases 5 to 9:** the recommended option for 12, 13, 14, 15, 17 and 18; 16 the alternative: `R` turns the ghost in **22.5 degree** steps about the up axis (Valheim's), the turn kept until the mode ends. Where this plan says 45 degrees for the ghost's turn, read 22.5.
+
 12. **The ghost's mark.** Recommended: an outline **and** a tint toward the same blue at 0.35,
     so the ghost reads as a ghost at a distance where a one-pixel line vanishes, and as a
     border up close. Alternatives: the outline alone (the owner's words, "some form of border");
