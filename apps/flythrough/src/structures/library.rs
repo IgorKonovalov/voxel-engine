@@ -20,8 +20,8 @@ pub const CASTLE_NAME: &str = "castle";
 /// A frame corner's arms, in voxels, for a box over [`MAX_EDGE`] a side.
 pub const CORNER_ARM: u32 = 32;
 
-/// A built scene and its size at scale 1.
-type Built = Result<Arc<VoxScene>, String>;
+/// A built scene at scale 1 and its icon's model ([`icon_model`]).
+type Built = Result<(Arc<VoxScene>, Option<Arc<Model>>), String>;
 
 /// The castle entry's state: asked for or not, building on a worker, or built.
 #[derive(Clone, Default)]
@@ -47,7 +47,7 @@ pub struct Entry {
     pub source: Result<Source, String>,
     pub rows: usize,
     scaled: Vec<(u32, Arc<VoxScene>)>,
-    /// The icon's model ([`scene_model`]) once tried: `Some(None)` for a scene that fits none.
+    /// The icon's model ([`icon_model`]) once tried: `Some(None)` for a scene with none.
     icon: Option<Option<Arc<Model>>>,
 }
 
@@ -278,9 +278,10 @@ impl Library {
             .spawn(move || {
                 let built = map.and_then(|map| {
                     let file = crate::castle::castle_vox();
-                    VoxScene::load(&file, &map, SceneOptions::default())
-                        .map(Arc::new)
-                        .map_err(|e| e.to_string())
+                    let scene = VoxScene::load(&file, &map, SceneOptions::default())
+                        .map_err(|e| e.to_string())?;
+                    let icon = icon_model(&scene).map(Arc::new);
+                    Ok((Arc::new(scene), icon))
                 });
                 let _ = tx.send(built);
             });
@@ -293,7 +294,7 @@ impl Library {
         };
     }
 
-    /// Takes the castle's scene when its worker has made it: the words to say (`castle
+    /// Takes the castle's scene and its icon's model when its worker has made them: the words to say (`castle
     /// built: 21 placements, 600 x 600 x 500 voxels`, or the error).
     pub fn poll(&mut self) -> Option<String> {
         for e in &mut self.entries {
@@ -309,7 +310,7 @@ impl Library {
                 }
             };
             let words = match &built {
-                Ok(s) => {
+                Ok((s, _)) => {
                     let z = s.size();
                     format!(
                         "{} built: {} placements, {} x {} x {} voxels",
@@ -322,7 +323,13 @@ impl Library {
                 }
                 Err(err) => format!("{}: {err}", e.name),
             };
-            e.source = built.map(|s| Source::Castle(Castle::Built(s)));
+            e.source = match built {
+                Ok((s, icon)) => {
+                    e.icon = Some(icon);
+                    Ok(Source::Castle(Castle::Built(s)))
+                }
+                Err(err) => Err(err),
+            };
             return Some(words);
         }
         None
@@ -457,8 +464,72 @@ pub fn scene_model(scene: &VoxScene) -> Option<Model> {
     Model::new(parts).ok()
 }
 
-/// The icons of the entities and of the structures whose scenes fit a model ([`scene_model`],
-/// tried once per entry), each structure's at its tile after the entities'
+/// A model of `scene` for its icon: [`scene_model`] when the scene fits one, else
+/// [`coarse_model`].
+pub fn icon_model(scene: &VoxScene) -> Option<Model> {
+    scene_model(scene).or_else(|| coarse_model(scene))
+}
+
+/// A one-part model of `scene` at most [`MAX_EDGE`] a side, for the icon of a scene over the
+/// model's limits: each voxel stands for a cube of `k` voxels a side of the box (`k` the least
+/// that fits), and holds the material of the first sample point of that cube a placement
+/// writes, the samples `k / 2` apart (at least 1) from the cube's minimum corner, the later
+/// placement first where two overlap; `None` for an empty box.
+pub fn coarse_model(scene: &VoxScene) -> Option<Model> {
+    let size = scene.size();
+    let k = size.iter().map(|&v| v.div_ceil(MAX_EDGE)).max()?;
+    if k == 0 {
+        return None;
+    }
+    let (lo, _) = scene.bounds;
+    // Each placement's prefab, its turned box's minimum corner in the box and size, its turn.
+    let placed: Vec<_> = scene
+        .placed_at([0; 3], 0)
+        .into_iter()
+        .map(|(p, o, r)| {
+            let at = [0, 1, 2].map(|i| o.0[i] - lo[i]);
+            let turned = r.apply_size(p.size());
+            (p, at, turned, r)
+        })
+        .collect();
+    // The material placed at box voxel `v`: the turned voxel read back in the prefab as
+    // `Prefab::rotated` reads it.
+    let at_voxel = |v: [i32; 3]| {
+        placed.iter().rev().find_map(|(p, at, turned, r)| {
+            let d = [0, 1, 2].map(|i| v[i] - at[i]);
+            if (0..3).any(|i| d[i] < 0 || d[i] >= turned[i] as i32) {
+                return None;
+            }
+            let mut src = [0i32; 3];
+            for (i, &di) in d.iter().enumerate() {
+                let (a, neg) = r.row(i);
+                let a = usize::from(a);
+                src[a] = if neg { p.size()[a] as i32 - 1 - di } else { di };
+            }
+            p.get(src).filter(|&m| m != AIR)
+        })
+    };
+    let step = (k / 2).max(1) as usize;
+    let coarse = size.map(|v| v.div_ceil(k));
+    let volume = Prefab::from_fn(coarse, |c| {
+        let base = c.map(|v| v * k);
+        (0..k).step_by(step).find_map(|z| {
+            (0..k).step_by(step).find_map(|y| {
+                (0..k).step_by(step).find_map(|x| {
+                    let v = [base[0] + x, base[1] + y, base[2] + z];
+                    (0..3)
+                        .all(|i| v[i] < size[i])
+                        .then(|| at_voxel(v.map(|n| n as i32)))
+                        .flatten()
+                })
+            })
+        })
+    });
+    Model::new(vec![part(volume, [0; 3])]).ok()
+}
+
+/// The icons of the entities and of the structures ([`icon_model`], made once per entry; the
+/// castle's on its build's worker), each structure's at its tile after the entities'
 /// (`crate::entities::belt::tile_of`), asked of the entities' icon worker.
 pub fn refresh_icons(m: &mut crate::hud::Modes, table: &MaterialTable) {
     m.walkers.refresh_icons(table);
@@ -467,7 +538,7 @@ pub fn refresh_icons(m: &mut crate::hud::Modes, table: &MaterialTable) {
         if e.icon.is_none()
             && let Some(s) = e.scene()
         {
-            e.icon = Some(scene_model(s).map(Arc::new));
+            e.icon = Some(icon_model(s).map(Arc::new));
         }
         if let Some(Some(model)) = &e.icon {
             m.walkers.icons.want(base + j, model, table);

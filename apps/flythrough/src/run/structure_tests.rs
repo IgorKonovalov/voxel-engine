@@ -5,6 +5,7 @@
 //! castle entry left unbuilt.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use super::*;
 use crate::entities::belt::{self, BELT_ROWS, Item};
@@ -13,7 +14,11 @@ use crate::hud::menu::{Activated, Group, PageId, Row};
 use crate::structures::{self as st, CLEAR_MARGIN};
 use crate::test_support::bare_run;
 use vxe_app::{Input, KeyCode, MouseButton};
-use vxe_world::{AIR, ChunkExtent, EditOp, FIXED_ONE, Fixed3, MaterialTable, Mode, Op, World};
+use vxe_assets::VoxScene;
+use vxe_world::{
+    AIR, ChunkExtent, EditOp, FIXED_ONE, Fixed3, MaterialTable, Mode, Op, Prefab, Rot, VoxelCoord,
+    World,
+};
 
 /// The cave's table with the walker's rows: the table before the library's rows.
 fn base_table() -> MaterialTable {
@@ -560,14 +565,137 @@ fn the_cave_and_outdoor_worlds_map_the_structures() {
     assert_maps_the_structures(&["--source", "outdoor"]);
 }
 
-/// `--castle`'s and the showcase's worlds hold the structures library's rows and the
-/// castle's.
+/// `--castle`'s world holds the structures library's rows and the castle's.
 #[test]
-fn the_castle_and_showcase_worlds_map_the_structures() {
+fn the_castle_world_maps_the_structures() {
     assert_maps_the_structures(&["--castle"]);
+}
+
+/// The showcase's world holds the structures library's rows and the castle's.
+#[test]
+fn the_showcase_world_maps_the_structures() {
     assert_maps_the_structures(&["--source", "showcase"]);
 }
 
 fn structure_index(lib: &st::Library, name: &str) -> usize {
     lib.entries.iter().position(|e| e.name == name).expect(name)
+}
+
+/// A scene of `placements` (prefab index, minimum corner, turn) of `prefabs`, its bounds
+/// their turned boxes'.
+fn scene_of(prefabs: Vec<Prefab>, placements: Vec<(usize, [i32; 3], Rot)>) -> VoxScene {
+    let mut hi = [i32::MIN; 3];
+    for &(i, o, r) in &placements {
+        let s = r.apply_size(prefabs[i].size());
+        for k in 0..3 {
+            hi[k] = hi[k].max(o[k] + s[k] as i32 - 1);
+        }
+    }
+    VoxScene {
+        prefabs: prefabs.into_iter().map(Arc::new).collect(),
+        placements: placements
+            .into_iter()
+            .map(|(i, o, r)| (i, VoxelCoord(o), r))
+            .collect(),
+        layers: Vec::new(),
+        bounds: ([0; 3], hi),
+    }
+}
+
+/// The coarse icon model at one voxel a voxel: a 3 x 2 x 2 prefab of twelve materials under
+/// each of the 24 turns, in a 4 x 6 grid 4 voxels apart (24 parts, over the model's 16, so
+/// `scene_model` makes none), reads back every placement's voxels as `Prefab::rotated` turns
+/// them, and nothing else.
+#[test]
+fn the_coarse_icon_turns_as_the_stamp() {
+    let p = Prefab::from_fn([3, 2, 2], |l| Some((1 + l[0] + 3 * l[1] + 6 * l[2]) as u16));
+    let turns: Vec<Rot> = Rot::all().collect();
+    assert_eq!(turns.len(), 24);
+    let placements: Vec<_> = (0..24)
+        .map(|i| (0, [4 * (i % 4), 4 * (i / 4), 0], turns[i as usize]))
+        .collect();
+    let scene = scene_of(vec![p.clone()], placements.clone());
+    assert!(st::scene_model(&scene).is_none(), "24 parts fit no model");
+    let model = st::icon_model(&scene).expect("a coarse model");
+    assert_eq!(model.parts().len(), 1);
+    let v = &model.parts()[0].volume;
+    assert_eq!(v.size(), scene.size());
+    let mut written = 0;
+    for (_, o, r) in placements {
+        let t = p.rotated(r);
+        let s = t.size().map(|n| n as i32);
+        for z in 0..s[2] {
+            for y in 0..s[1] {
+                for x in 0..s[0] {
+                    let at = [o[0] + x, o[1] + y, o[2] + z];
+                    assert_eq!(v.get(at), t.get([x, y, z]), "{r:?} at {at:?}");
+                    written += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(v.written_count(), written, "nothing outside the placements");
+}
+
+/// A scene over [`MAX_EDGE`] a side: a 200 x 10 x 10 bar of material 3 under a 1 x 1 x 1 cube
+/// of material 5 at its far end. Its icon model is one part, 4 voxels a voxel (50 x 3 x 3),
+/// every voxel written: 3 where the bar's samples land, 5 in the cell the cube's sample
+/// (its own corner) leads.
+#[test]
+fn the_coarse_icon_shrinks_a_large_scene() {
+    let bar = Prefab::uniform([200, 10, 10], 3);
+    let cube = Prefab::uniform([1, 1, 1], 5);
+    let scene = scene_of(
+        vec![bar, cube],
+        vec![
+            (0, [0, 0, 0], Rot::IDENTITY),
+            (1, [196, 0, 0], Rot::IDENTITY),
+        ],
+    );
+    assert!(
+        st::scene_model(&scene).is_none(),
+        "200 voxels is over the edge"
+    );
+    let model = st::icon_model(&scene).expect("a coarse model");
+    let v = &model.parts()[0].volume;
+    assert_eq!(v.size(), [50, 3, 3]);
+    assert_eq!(v.written_count(), 50 * 3 * 3);
+    assert_eq!(v.get([49, 0, 0]), Some(5), "the later placement first");
+    assert_eq!(v.get([48, 0, 0]), Some(3));
+    assert_eq!(v.get([49, 1, 0]), Some(3));
+}
+
+/// The castle's build carries its icon: on the run's first selection of the castle the build
+/// starts, and once it arrives the castle's belt slot has an icon, a coarse model of its
+/// 600 x 600 x 500 voxel box (over the model's limits) at 10 voxels a voxel.
+#[test]
+fn the_built_castle_has_an_icon() {
+    let mut run = structure_run();
+    look(&mut run, EYE, -40.0);
+    let castle = structure(&run, st::CASTLE_NAME);
+    run.fill_belt();
+    let slot = run
+        .modes
+        .walkers
+        .belt
+        .slots
+        .iter()
+        .position(|s| *s == Some(Item::Structure(castle)))
+        .expect("the castle in the belt");
+    enter_slot(&mut run, slot);
+    run.modes.structures.wait();
+    let scene = run.modes.structures.entries[castle]
+        .scene()
+        .expect("built")
+        .clone();
+    assert!(st::scene_model(&scene).is_none());
+    let model = st::icon_model(&scene).expect("a coarse model");
+    assert_eq!(
+        model.parts()[0].volume.size(),
+        scene.size().map(|v| v.div_ceil(10))
+    );
+    run.poll_viewer(0.0);
+    run.modes.walkers.icons.wait();
+    let tile = belt::tile_of(&run.modes, Item::Structure(castle));
+    assert!(run.modes.walkers.icons.ready(tile), "the castle's icon");
 }
