@@ -1,6 +1,12 @@
 # ADR-0075: The overlay draws image tiles in its cells, and an entity's icon is a still made once on the CPU through the entity raycast
 
 > **Status:** proposed
+> **Amended 2026-11-18 (architect, at Plan 0077's Phase 5 checkpoint):** the cell word is not
+> full. A tile needs 9 bits (5 for `MAX_TILES` = 32, 4 for the cell's place in its 4 x 4
+> block), so the tile takes bits 17..26 and bits 27..31 stay free; the Decision and the
+> Consequences say so below. The colour was always per cell (bits 8..16, read per cell by
+> `hud.wgsl`); only `HudOverlay`'s CPU API colours whole rows, and Plan 0077 Phase 7 adds a
+> span colour over the written rows beside the tiles, with no new bit.
 > **Date:** 2026-11-18
 > **Related plan(s):** [Plan 0077](../plans/0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md) (Phase 7)
 
@@ -33,7 +39,8 @@ Two facilities, one in the engine and one in the app, and the engine's knows not
 
 `vxe-render`'s overlay gains **image tiles**: `HudOverlay::set_tile(queue, index, &rgba8)`
 writes a 64 x 64 RGBA8 tile into an atlas of `MAX_TILES` = 32 (512 KiB of VRAM), and a cell
-word's free bits 17..31 name a tile and the cell's position in it. A tile covers a 4 x 4 block
+word's free bits from 17 name a tile and the cell's position in it: a tile bit, 5 bits of tile
+index and 4 of position, bits 17..26, with 27..31 still free. A tile covers a 4 x 4 block
 of cells at any glyph scale, so a tile pixel is `scale / 2` output pixels, **nearest-sampled**
 so a voxel model's pixels stay crisp and the overlay stays pixel-exact for the goldens.
 `hud.wgsl` draws the tile's pixel where the cell has the tile bit and no glyph byte, above the
@@ -73,8 +80,10 @@ selected one.
   a later addition to the rig grammar (ADR-0051), not taken now.
 - 32 tiles of 64 x 64 is a cap: a library past it reuses indices, and a larger atlas or a
   second tile size is a settings change.
-- The overlay's cell word is now full (bits 0..16 the glyph, colour and backdrop, 17..31 the
-  tile); the next cell attribute needs a second word per cell.
+- The overlay's cell word is nearly full (bits 0..16 the glyph, colour and backdrop, 17..26
+  the tile): five bits remain for the next cell attribute, and the one after needs a second
+  word per cell. A per-cell colour is not a new attribute: the colour field is per cell
+  already, and the CPU API gains a span colour (Plan 0077 Phase 7).
 - The icon renderer is the app's code to keep right (fit, shading, the face-to-normal map),
   with the fixed vector as its one guard.
 

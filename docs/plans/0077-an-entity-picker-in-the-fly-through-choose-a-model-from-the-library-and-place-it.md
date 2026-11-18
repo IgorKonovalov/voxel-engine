@@ -258,13 +258,16 @@ of Phase 4 are: `` ` `` stays, the rows stay, a clip per entity stays.
   colour-blind guidance names, never green and red [The ghost; Colour]. A refusal (an entry in
   error, a full set, a pool refusal) shows no ghost and says why in the notice row, as today.
   The mark is a **general `vxe-render` facility**: `EntityMirror::set_marks(queue, &[(EntityId,
-  Mark)])` with `Mark { colour: [f32; 3], outline: bool, tint: f32 }` written as one word per
-  instance slot (a 64-word region beside the instances), read by `composite.wgsl`, which
-  already binds `hit_info_in`: a pixel whose hit record is an entity hit of a marked slot mixes
-  its colour by `tint`; a pixel whose four neighbours' instance fields differ from its own, on
-  either side of the edge, with one side a marked slot, is the mark colour (the edge is a
-  change of instance, so two instances touching keep their edge, which a depth mask would
-  lose) [Outlines]. The line is drawn before the upscale, so FSR 2 at 1.5 widens and softens it
+  Mark)])` with `Mark { colour: [f32; 3], outline: bool, tint: f32 }`, kept by the mirror and
+  written at each instances write as two words per **part** slot (the slot's owner, its run's
+  first slot, and its mark; 4 KiB in a marks buffer of its own bound to the composite; ADR-0074
+  as amended 2026-11-18: the hit record names a part, not an entity), read by `composite.wgsl`,
+  which already binds `hit_info_in`: a pixel whose hit record is an entity hit of a marked slot
+  mixes its colour by `tint`; a pixel whose owner differs from any of its four neighbours', on
+  either side of the edge, with one side marked, is the mark colour (the edge is a change of
+  entity, so two entities touching keep their edge, which a depth mask would lose, and a
+  model's own part boundaries draw no line) [Outlines]. The line is drawn before the upscale,
+  so FSR 2 at 1.5 widens and softens it
   by its factor and the entity's motion vectors keep it steady; if the window finds it smeared,
   the alternative is the same test in the present pass over the hit record sampled at the
   internal resolution with the frame's jitter removed. This needs an **ADR** (two rejected
@@ -363,7 +366,10 @@ Phase 9 now; its header says so.
     belt's rows are the last used rows of the overlay, centred, nine slots with their digits,
     slot 1 framed with yellow `+ - |` cells and backdrop bits under the belt; the name row
     reads `walker` for `BANNER_MS` after a wheel step and is blank after; out of the mode the
-    overlay has no belt rows and the stats are as `F2` left them.
+    overlay has no belt rows and the stats are as `F2` left them. *Amended 2026-11-18 at the
+    Phase 5 checkpoint:* the `|` cells are white in this phase, since `HudOverlay` colours
+    whole rows; their yellow is Phase 7's (the span colour there), where this bullet is
+    re-asserted in full.
   - `the_pad_places_from_the_view`: `DpadRight` enters the mode at slot 2, `DpadLeft` back to
     1, `West` turns, `R2` places, `East` ends it; `Start`, `entities`, `choose an entity`,
     `South` on the spider reaches the mode too.
@@ -382,13 +388,17 @@ Phase 9 now; its header says so.
 
 ### Phase 6: the mark: an outline and a tint for an instance (`vxe-render`), the ghost marked
 - **Owner skill:** dev
-- **What:** `EntityMirror::set_marks` and `Mark`, the marks' words beside the instances,
-  `composite.wgsl`'s edge test and tint, the ghost colour and the second colour as render
-  settings (`vxe_render::Settings`, every profile the same; ADR-0055), the ghost marked in the
+- **What:** `EntityMirror::set_marks` and `Mark`, the marks buffer (two words per part slot,
+  the owner and the mark, rewritten at each instances write; ADR-0074 as amended 2026-11-18),
+  its binding in the composite's own group (the pass table in `frame/pipelines.rs` and
+  `frame/compose.rs`, the `Res` list in `frame/encode.rs`), `composite.wgsl`'s edge test over
+  the owners and its tint, the ghost colour and the second colour as render settings
+  (`vxe_render::Settings`, every profile the same; ADR-0055), the ghost marked in the
   fly-through through `Walkers::refresh_displays` (one call per frame, no allocation once
   grown), and ADR-0074 cited in the code by number.
 - **Files touched:** `crates/vxe-render/src/entities/{mod,instances,display}.rs`,
-  `crates/vxe-render/src/frame/{mod,marcher}.rs`, `crates/vxe-render/src/settings.rs`,
+  `crates/vxe-render/src/frame/{mod,marcher,pipelines,compose,encode}.rs`,
+  `crates/vxe-render/src/settings.rs`,
   `crates/vxe-render/src/shaders/{composite,hitrec,common}.wgsl`,
   `crates/vxe-render/tests/gpu_entities.rs` or `apps/flythrough/tests/gpu_entity_library.rs`,
   `apps/flythrough/src/entities/{placed,picker}.rs`, `apps/flythrough/src/run/frame.rs`,
@@ -398,13 +408,16 @@ Phase 9 now; its header says so.
     an estimate): two library walkers side by side on Plan 0062's lit box, the left one
     marked blue with outline and tint 0.35, in the albedo view: at the left walker's centre
     pixel the colour is `mix(unmarked, blue, 0.35)` within 2/255 of the right walker's centre
-    pixel mixed the same; every pixel whose hit record is the left walker's instance and whose
-    four neighbours include a non-entity or another instance's hit is the blue within 2/255,
-    and no such pixel of the right walker is; with the marks cleared both walkers read within
-    1/255 of each other at mirrored pixels.
+    pixel mixed the same; every pixel whose hit record is one of the left walker's parts and
+    whose four neighbours include a non-entity hit or another entity's part is the blue within
+    2/255, and no such pixel of the right walker is; a pixel of the left walker whose four
+    neighbours are all its own parts (the walker has six: pick one on a part boundary, found
+    from the records) is **not** the blue but the tinted colour, so no line is drawn inside a
+    model; with the marks cleared both walkers read within 1/255 of each other at mirrored
+    pixels.
   - `marks_hold_two_touching_instances_apart` (same binary): the two walkers moved to touch,
     one marked: the pixels on their shared edge are the mark colour (the edge is a change of
-    instance, not of depth).
+    entity, not of depth).
   - `the_ghost_is_marked_and_the_placed_are_not` (CPU, `run/picker_tests.rs`): in the mode the
     displays' marks list holds the ghost's id with the ghost colour and no placed id; after a
     click the placed entity's mark is gone and the new ghost's is set; out of the mode the list
@@ -422,10 +435,13 @@ Phase 9 now; its header says so.
 ### Phase 7: the icons: a still picture per entry, as tiles in the overlay, in the chooser and the belt
 - **Owner skill:** dev
 - **What:** `HudOverlay::set_tile` and the tile bits (`vxe-render`, general; ADR-0075 cited
-  by number), the CPU icon renderer in the fly-through (`entities/icon.rs`: the fixed view,
-  the fit, the integer Lambert, a worker thread with a channel), the icons in the chooser's
-  rows and the belt's slots, the words until a tile arrives, a reload remaking its entry's
-  icon.
+  by number), a **span colour** in the overlay's CPU API (a list of `(HudBox, HudColour)`
+  painted over the written rows the way `HudBox` paints the backdrop; the cell word's colour
+  field is per cell already, so no bit is spent: ADR-0075 as amended 2026-11-18), the CPU icon
+  renderer in the fly-through (`entities/icon.rs`: the fixed view, the fit, the integer
+  Lambert, a worker thread with a channel), the icons in the chooser's rows and the belt's
+  slots, the words until a tile arrives, a reload remaking its entry's icon, and the belt's
+  frame yellow on every side (Phase 5's bullet, moved here).
 - **Files touched:** `crates/vxe-render/src/hud.rs`, `crates/vxe-render/src/shaders/hud.wgsl`,
   `crates/vxe-render/tests/gpu_hud.rs`, `apps/flythrough/src/entities/{icon,library,belt,
   picker}.rs`, `apps/flythrough/src/hud/menu/write.rs`, `apps/flythrough/src/run/{frame,
@@ -448,6 +464,12 @@ Phase 9 now; its header says so.
     mode slot 1's tile is unset and the slot shows `walker`; after the worker's message is
     polled the cell words carry the tile bit for its 4 x 4 block; a reload of the walker's rig
     remakes its icon (the tile index reused).
+  - `a_span_colours_its_cells` (`crates/vxe-render/src/hud.rs` tests or `gpu_hud.rs`, under
+    1 s): rows written white with one span of three cells yellow read the yellow colour code
+    in exactly those three cell words and white in the rest of the row; a span past the grid is
+    clipped; the backdrop bit survives the paint.
+  - `the_belt_draws_its_slots` (Phase 5's) asserts the whole frame: the `+ -` rows **and** the
+    `|` cells of the selected slot are yellow, every other belt cell white.
   - `gpu_hud_golden` gains `the_belt_and_the_chooser_over_the_carved_view`: the chooser with
     both icons, and the belt in the mode with slot 1 framed, pixel exact, blessed on lavapipe,
     under 10 s each.
@@ -465,12 +487,18 @@ Phase 9 now; its header says so.
   ceiling aim (the floor drop), `R`, a click and the next ghost, the clip keys on the ghost,
   `Esc` and the right click out, `` ` `` into the chooser with the icons, a digit assigning a
   slot, `Enter` handing over; the pad if one is connected; a run with `--model` and a saved
-  edit (the icon remade). Then the default cave (the spider grey, its slot ghostless).
+  edit (the icon remade). Then the default cave (the spider grey, its slot ghostless). With the
+  menu closed and out of the mode, press each digit once: `1` drops a light and `6` fires a
+  shot (their binds from before), `4` removes the aimed entity, and only `2 3 5 7 8 9` enter
+  the mode (question 19).
 - **Done when:** the owner's words are in the readings log on: (a) the belt, its slots and
-  its frame; (b) the ghost's mark: outline alone, tint alone, or both (question 12); (c) the
-  stand rule's distances and the floor drop (question 13); (d) the clicks (question 14), staying
-  in the mode (15) and `R` (16); (e) the icons' size, view and lighting (17); (f) anything to
-  rename, reorder or drop, named for Phase 9.
+  its frame, and its order (the entries that build first, then those in error; Phase 5's
+  deviation); (b) the ghost's mark: outline alone, tint alone, or both (question 12); (c) the
+  stand rule's distances and the floor drop (question 13; the spider stands at 10.35 m, 1.5 x
+  its measured 6.9 m); (d) the clicks (question 14), staying in the mode (15) and `R` (16);
+  (e) the icons' size, view and lighting (17); (f) the digits outside the mode (question 19:
+  keep `1`, `4` and `6` as they are, or move the lights' keys so every digit enters the mode);
+  (g) anything to rename, reorder or drop, named for Phase 9.
 
 ### Phase 9: the owner's picks, and the tip
 - **Owner skill:** dev
@@ -487,7 +515,10 @@ Phase 9 now; its header says so.
 - **The mark** (Phase 6): four `hit_info_in` taps and one compare per internal pixel in
   `composite.wgsl`, about 0.9 M pixels at 1080p output under FSR 2 at 1.5: under 0.1 ms on the
   RTX 3080 Laptop, under 0.6 ms on the RADV RENOIR, on the headroom line (2.6 ms, `docs/nfr.md`
-  section 2); 256 bytes of marks beside the instances. The outline is drawn before the
+  section 2), plus up to five reads of the owner words from a 4 KiB buffer that stays in
+  cache; 4 KiB of marks (two words per part slot, `MAX_ENTITY_PARTS` x 8 bytes; the first
+  draft's 256 bytes assumed the record named an entity) in a buffer of their own, at most 4 KiB
+  written per instances write beside the instances' 64 KiB. The outline is drawn before the
   upscale; its look under FSR 2 is Phase 8's to judge.
 - **The icons** (Phase 7): 5 to 50 ms of CPU per entry, once, on a worker thread; the tile
   atlas 512 KiB of VRAM (32 tiles of 64 x 64 RGBA8); the overlay's cell words unchanged in
@@ -534,6 +565,14 @@ superseded: the chooser's `Enter` hands over to the mode, and the mode stays aft
     left, on the menu's rows (`Up`/`Down` move, `Left`/`Right` keep their page meaning).
     Alternative: a grid of icons, Minecraft's creative inventory, which needs a grid page kind
     and two-axis navigation in the menu for a library of a few models.
+19. **The digits outside the mode** (added 2026-11-18 at the Phase 5 checkpoint; Phase 8 asks
+    it). Out of placement mode only `2 3 5 7 8 9` enter it: `1` keeps the lights' drop, `6`
+    the lights' shot, and `4` removes the aimed entity (in the mode every digit but `4`
+    selects its slot). Recommended: keep it. The three binds predate the belt and are in the
+    owner's hands; in the mode, where the belt is on screen, the digits are the belt's, and
+    the wheel or any free digit enters it from the view. Alternative: move the drop and the
+    shot to two free keys (the tables name them) so every digit but `4` enters the mode from
+    the view too, one rule in both states; Phase 9 does it if picked.
 
 ## TL;DR
 
