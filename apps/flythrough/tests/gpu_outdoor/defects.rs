@@ -154,6 +154,131 @@ mod defects {
             }
         }
 
+        /// Plan 0086 Phase 20 bar 1a: the ray region lands within the fade. 19.png's pose
+        /// streamed as [`the_tunnel_ray_region`] (residency 16, 24, the wait off, `full`), 300
+        /// frames at 320 x 180, the exposure pinned at -10.75 EV from the first frame: per
+        /// lighting pixel each frame whether it cast the sky ray (the pair is its term) and the
+        /// display's largest channel at its centre. For every pixel that casts at frame `f` and
+        /// not at `f + 1` (its term switches from the pair to the store or the chain), `old` its
+        /// level at `f` and `new` at `f + 16`: the share of such pixels with a frame in
+        /// `f ..= f + 16` outside `[min(old, new) - 4, max(old, new) + 4]`, the mean and p99 of
+        /// `|old - new|`, the mean `|old - new| / new` (over `new` > 0), the switch count, and
+        /// the frame-to-frame p99 over the cast pixels at frames 60 and 120. Printed.
+        /// `VXE_TEST_ADAPTER` picks the adapter.
+        #[test]
+        #[ignore = "reading"]
+        fn the_ray_region_lands() {
+            use flythrough::outdoor::{OutdoorSource, Spawn};
+            const FRAMES: u32 = 300;
+            const FADE: usize = 16;
+            let source = OutdoorSource::new(1);
+            let (_, facing) = source.spawn(Spawn::Inside);
+            let p = [221.0f32, -4.4, 493.6];
+            let d = facing.map(|v| v as f32);
+            let camera =
+                flythrough::camera_looking_at(p, [p[0] + d[0], p[1] + d[1], p[2] + d[2]]);
+            let noon =
+                flythrough::daylight::Clock::default().sky(flythrough::outdoor::BASE_Z as f32);
+            // Per frame: the cast mask (lighting grid) and the level at each lighting pixel.
+            let mut cast: Vec<Vec<bool>> = Vec::new();
+            let mut level: Vec<Vec<u8>> = Vec::new();
+            support::streamed::streamed_with(
+                support::streamed::Streamed {
+                    label: "the_ray_region_lands",
+                    source: std::sync::Arc::new(OutdoorSource::new(1)),
+                    eye: vxe_world::VoxelCoord([221, -5, 493]),
+                    camera,
+                    sky: noon,
+                    styles: Vec::new(),
+                    r: 16,
+                    rays: 1,
+                    reads: vec![0, 60, 120, 300],
+                    hold: Some(support::streamed::Hold {
+                        r_lod: 24,
+                        wait: false,
+                        reach: vxe_render::ReachMode::Full,
+                    }),
+                },
+                |f, device, queue, frame| {
+                    use vxe_render::debug::read_rgba8;
+                    if f == 0 {
+                        frame.set_lighting(vxe_render::Lighting {
+                            exposure: vxe_render::Exposure::Manual((-10.75f32).exp2()),
+                            ..frame.lighting()
+                        });
+                    }
+                    if f > FRAMES {
+                        return;
+                    }
+                    let vis = read_rgba8(device, queue, frame.visibility_samples());
+                    let (lw, lh) = (
+                        frame.visibility_samples().width() as usize,
+                        frame.visibility_samples().height() as usize,
+                    );
+                    let disp = read_rgba8(device, queue, frame.target());
+                    let (dw, dh) = (
+                        frame.target().width() as usize,
+                        frame.target().height() as usize,
+                    );
+                    cast.push(vis.chunks(4).map(|v| v[3] > 127).collect());
+                    level.push(
+                        (0..lw * lh)
+                            .map(|i| {
+                                let (x, y) = (i % lw, i / lw);
+                                let (dx, dy) = ((2 * x + 1) * dw / (2 * lw), (2 * y + 1) * dh / (2 * lh));
+                                let q = &disp[4 * (dy * dw + dx)..4 * (dy * dw + dx) + 3];
+                                q[0].max(q[1]).max(q[2])
+                            })
+                            .collect(),
+                    );
+                },
+            );
+            if cast.len() < FRAMES as usize {
+                return;
+            }
+            let (mut switches, mut out, mut steps, mut rel) = (0usize, 0usize, Vec::new(), Vec::new());
+            for f in 0..cast.len() - FADE - 1 {
+                for i in 0..cast[f].len() {
+                    if !(cast[f][i] && !cast[f + 1][i]) {
+                        continue;
+                    }
+                    switches += 1;
+                    let (old, new) = (i32::from(level[f][i]), i32::from(level[f + FADE][i]));
+                    let (lo, hi) = (old.min(new) - 4, old.max(new) + 4);
+                    if (f..=f + FADE).any(|g| {
+                        let v = i32::from(level[g][i]);
+                        v < lo || v > hi
+                    }) {
+                        out += 1;
+                    }
+                    steps.push((old - new).unsigned_abs());
+                    if new > 0 {
+                        rel.push(f64::from((old - new).abs()) / f64::from(new));
+                    }
+                }
+            }
+            steps.sort_unstable();
+            let p99 = |v: &[u32]| v.get((v.len() * 99 / 100).min(v.len().saturating_sub(1))).copied().unwrap_or(0);
+            let mean = |v: &[u32]| v.iter().map(|&x| f64::from(x)).sum::<f64>() / v.len().max(1) as f64;
+            let still = |f: usize| {
+                let mut c: Vec<u32> = (0..cast[f].len())
+                    .filter(|&i| cast[f][i])
+                    .map(|i| u32::from(level[f][i].abs_diff(level[f - 1][i])))
+                    .collect();
+                c.sort_unstable();
+                (p99(&c), c.len())
+            };
+            println!(
+                "reading: the ray region lands: {switches} switches from the pair, {:.2} % left the band of 4 over {FADE} frames, |old - new| mean {:.2} p99 {} levels, mean relative step {:.3}; frame-to-frame p99 over the cast pixels at 60 {:?} and at 120 {:?} (p99, pixels; the lamp-lit floor 2.11)",
+                100.0 * out as f64 / switches.max(1) as f64,
+                mean(&steps),
+                p99(&steps),
+                rel.iter().sum::<f64>() / rel.len().max(1) as f64,
+                still(60),
+                still(120)
+            );
+        }
+
         /// A frame on `rig` for Phase 16's readings: 320 x 180 native, the store's counters on, the
         /// fly-through's look, voxel leaves, the lamp off, `lighting` over the defaults, `sky`,
         /// the world baked whole when `bake`.

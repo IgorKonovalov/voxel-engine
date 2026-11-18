@@ -60,6 +60,15 @@ pub struct StreamedRead {
 /// store's missing and black counts, the mirrored chunks and the queue's depth. Printed and
 /// returned; empty with no adapter.
 pub fn streamed(s: Streamed) -> Vec<StreamedRead> {
+    streamed_with(s, |_, _, _, _| {})
+}
+
+/// [`streamed`], with `each` called after every frame's step (the frame's index, the device,
+/// the queue and the frame, which it may change).
+pub fn streamed_with(
+    s: Streamed,
+    mut each: impl FnMut(u32, &vxe_render::wgpu::Device, &vxe_render::wgpu::Queue, &mut Frame),
+) -> Vec<StreamedRead> {
     use super::SyncNow;
     use vxe_render::{GpuWorld, MirrorConfig, QueueView, Window};
     use vxe_world::{ChunkCoord, PersistConfig, Residency, StreamConfig, Streamer, Tier, World};
@@ -135,6 +144,7 @@ pub fn streamed(s: Streamed) -> Vec<StreamedRead> {
             .expect("the queue runs")
             .expect("the queue's step");
         frame.step(&device, &queue, &gpu, &camera, &LightParams::headlamp());
+        each(f, &device, &queue, &mut frame);
         if f == last && s.hold.is_some() {
             held_report(&gpu, &frame, &view, eye, residency.r_full);
             held_hits(&device, &queue, &gpu, &frame, &view, &|c| streamer.tier(c));
