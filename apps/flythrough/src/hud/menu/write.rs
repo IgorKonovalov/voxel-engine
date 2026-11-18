@@ -157,9 +157,11 @@ impl Menu {
     /// unavailable for one reason, is grey (selected or not) with its reason on the row: an
     /// entry's after its words, a group's in the key column. A number being
     /// edited reads `label  < value >  range` and the footer `Up Down change  Enter Esc
-    /// done`. A chooser entry whose icon has arrived (`entities::icon::Icons::ready`) takes
-    /// its tile in `tiles` (cleared first) at its first line's third cell, the 4 x 4 cells
-    /// its lines leave before [`ITEM_TEXT_COL`].
+    /// done`. A chooser entry takes [`ITEM_LINES`] lines: a blank one, its words (with the
+    /// selection mark), its clips and a blank one; once its icon has arrived
+    /// (`entities::icon::Icons::ready`) its tile in `tiles` (cleared first) covers the 4 x 4
+    /// cells its lines leave before [`ITEM_TEXT_COL`] from the first line's third cell, so the
+    /// mark, the words and the tile read as one block.
     #[allow(
         clippy::too_many_arguments,
         reason = "the menu's state and the overlay's four outputs"
@@ -235,7 +237,29 @@ impl Menu {
             if line_of[i] < top || line_of[i] + height(row) > top + LIST_ROWS {
                 continue;
             }
+            let in_error =
+                matches!(row, Row::Item(i) if crate::entities::picker::item_error(m, *i).is_some());
+            let colour = if unavailable.is_some() || in_error {
+                HudColour::Grey
+            } else if selected {
+                HudColour::Yellow
+            } else {
+                HudColour::White
+            };
             text.push('\n');
+            if let Row::Item(i) = row {
+                // The entry's block: its tile over all four lines from the third cell, the
+                // words on the second line (the cursor's) and the clips on the third.
+                colours.push(colour);
+                if m.walkers.icons.ready(*i) {
+                    tiles.push(vxe_render::HudTile {
+                        col: 2,
+                        row: (colours.len() - 1) as u32,
+                        index: *i as u32,
+                    });
+                }
+                text.push('\n');
+            }
             let start = text.len();
             text.push_str(if selected { "> " } else { "  " });
             match row {
@@ -255,34 +279,15 @@ impl Menu {
                 text.push_str(why);
             }
             cut_row(text, start);
-            let in_error =
-                matches!(row, Row::Item(i) if crate::entities::picker::item_error(m, *i).is_some());
-            let colour = if unavailable.is_some() || in_error {
-                HudColour::Grey
-            } else if selected {
-                HudColour::Yellow
-            } else {
-                HudColour::White
-            };
             colours.push(colour);
-            if let Row::Item(i) = row
-                && m.walkers.icons.ready(*i)
-            {
-                tiles.push(vxe_render::HudTile {
-                    col: 2,
-                    row: (colours.len() - 1) as u32,
-                    index: *i as u32,
-                });
-            }
             if let Row::Item(i) = row {
-                // The entry's clips and slot beside the tile, then the tile's last two lines.
                 text.push('\n');
                 let start = text.len();
                 pad_to(text, start, ITEM_TEXT_COL);
                 crate::entities::picker::write_item_clips(m, *i, text);
                 cut_row(text, start);
                 colours.push(colour);
-                for _ in 2..ITEM_LINES {
+                for _ in 3..ITEM_LINES {
                     text.push('\n');
                     colours.push(colour);
                 }

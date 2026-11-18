@@ -52,10 +52,13 @@ fn modes_with(lib: library::Library) -> Modes {
     m
 }
 
-/// Phase 5: `a`, `b` (in error) and `spider`, the belt filled in the chooser's order (`a`,
-/// `spider`, then `b` in error), `spider` selected on its second clip: each entry takes four
-/// rows (its words beside a 4 x 4 cell tile, then its clips with the playing one marked and
-/// its slot), `b` grey with its error after its name, and no row past 80 columns or 45 rows.
+/// Phase 5, amended by Phase 9 (3): `a`, `b` (in error) and `spider`, the belt filled in the
+/// chooser's order (`a`, `spider`, then `b` in error), `spider` selected on its second clip:
+/// each entry takes a block of four rows, its 4 x 4 cell tile over all four from the third
+/// cell (`a`'s and `spider`'s once their icons are made; `b` has none), its words (with the
+/// `>` cell when selected) on the block's second row, its clips with the playing one marked
+/// and its slot on the third, and no words beside the tile on the first and fourth; `b` grey
+/// with its error after its name; no row past 80 columns or 45 rows.
 #[test]
 fn the_picker_draws_its_rows() {
     let mut lib = library_abs();
@@ -65,48 +68,63 @@ fn the_picker_draws_its_rows() {
     let order = m.walkers.library.order();
     assert_eq!(order, [0, 2, 1]);
     m.walkers.belt.fill(&order);
+    m.walkers
+        .refresh_icons(&walker::with_walker(&flythrough::showcase_materials()));
+    m.walkers.icons.wait();
     let mut menu = Menu::default();
     menu.open_entities(1);
-    let (mut text, mut colours) = (String::new(), Vec::new());
+    let (mut text, mut colours, mut tiles) = (String::new(), Vec::new(), Vec::new());
     menu.write_with(
         &m,
         &RunView::default(),
         None,
         &mut text,
         &mut colours,
-        &mut Vec::new(),
+        &mut tiles,
     );
     let rows: Vec<&str> = text.lines().collect();
     assert!(rows.len() <= MENU_ROWS && rows.iter().all(|r| r.len() <= MENU_COLS));
     let want: Vec<(&str, HudColour)> = FIXTURE.to_vec();
     let have: Vec<(&str, HudColour)> = rows.iter().copied().zip(colours.iter().copied()).collect();
     assert_eq!(have, want, "{text}");
+    let tile = |row, index| vxe_render::HudTile { col: 2, row, index };
+    assert_eq!(
+        tiles,
+        [tile(1, 0), tile(5, 2)],
+        "a block's first row, the third cell"
+    );
+    for block in [1, 5, 9] {
+        assert!(rows[block].is_empty() && rows[block + 3].is_empty());
+        assert!(rows[block + 1].len() > 8 && rows[block + 2].len() > 8);
+        assert!(rows[block + 1][2..8].trim().is_empty(), "the tile's cells");
+    }
+    assert!(rows[6].starts_with("> "), "the cursor on spider's words");
 }
 
 /// The page of `the_picker_draws_its_rows`: the title, the three entries of four rows each
 /// (`spider` selected, `b` grey), a blank notice row and the footer.
 const FIXTURE: [(&str, HudColour); 15] = [
     ("menu  >  entities", HudColour::White),
+    ("", HudColour::White),
     (
         "        a           6 parts  0.6 x 0.3 x 1.5 m",
         HudColour::White,
     ),
     ("        clips idle* walk turn   slot 1", HudColour::White),
     ("", HudColour::White),
-    ("", HudColour::White),
+    ("", HudColour::Yellow),
     (
         ">       spider     14 parts  6.9 x 4.0 x 2.3 m",
         HudColour::Yellow,
     ),
     ("        clips walk idle* rear   slot 2", HudColour::Yellow),
     ("", HudColour::Yellow),
-    ("", HudColour::Yellow),
+    ("", HudColour::Grey),
     (
         "        b          rig line 3: unknown statement `bogus`",
         HudColour::Grey,
     ),
     ("        no clip   slot 3", HudColour::Grey),
-    ("", HudColour::Grey),
     ("", HudColour::Grey),
     ("", HudColour::White),
     (
