@@ -206,9 +206,10 @@ that can be created as a .vox file"). Three pieces those plans leave out. **Down
 (a majority vote per 2³, or a non-integer scale): Plan 0083 scales up by an integer only, since a
 vote changes thin features and the owner judges detail by eye; pick up if a scene authored at a
 finer grid than 10 cm is wanted. **A traced preview** of a structure at the crosshair before it
-is placed: the entity pool's parts are capped at 64 voxels (ADR-0050), so a castle cannot be
-previewed as an entity; the HUD shows the box's footprint instead. What it takes: a coarse model
-(detail 1 over 8-voxel cells) in the pool, or a wire box drawn by the overlay. **A row's class
+is placed: taken 2026-11-18 by Plan 0083's Phase 7b after the owner's window ("something
+simplified at least to understand what it is"): a coarse grain per entity part and a one-part
+coarse copy of the structure in its marked frame; what stays parked is a full-detail preview,
+which the pool's 64-voxel parts (ADR-0050) cannot hold. **A row's class
 changed live** (stone to glass without a restart): ADR-0065 fixes a row's translucent, emissive
 and opaque class for the world's life because the mirror's slot packing and the bake's emitter
 lists read it at the first sync; lifting it means re-packing every brick that holds the row and
@@ -381,6 +382,17 @@ Pick up after the current lighting plans close (0058 and those ahead of it).
 ### A consumer's settings file in the render example
 
 Parked 2026-11-12 (owner, at the settings-menu interview). The fly-through and the tester keep render settings in a TOML file through an app-side field table ([Plan 0073](plans/0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md), ADR-0058); the engine stays file-free (ADR-0055). A later example could show a consumer doing the same, so a game sees how. The natural home is [Plan 0071](plans/0071-the-consumers-path-a-render-example-a-renderer-tested-alone-names-and-errors.md)'s render example, or a second example beside it. Pick up after Plan 0073 closes, if 0071 has not taken it by then.
+
+### A freshly placed castle's interior under the sky, as a pop-counter scene
+
+Parked 2026-11-18 from Plan 0083's Phase 7 verdict (session 83b, `--source outdoor --time
+12:00`, 25.png): inside a castle placed from the belt a moment before, the walls clipped white
+and blue and the vault was dark and grainy with sparkles ("castle flickers badly"; HUD queue
+depth 10 751, missing 0, scene -4.1 EV, eye +1.34 EV). A freshly stamped large structure under
+a sky is the sky ray's region at rest on a young history with the exposure moving on it: what
+ADR-0076's rules 1 to 3 forbid. Plan 0083 does not fix it. Pick up in Plan 0090 Phase 4 (the
+other stills) or Plan 0086's close: a fixed scene that stamps the castle's hall on the hills
+and counts the pixels that break rules 1 to 3 over its settle, by source.
 
 ### Entity placement extras parked at Plan 0077's amendment
 

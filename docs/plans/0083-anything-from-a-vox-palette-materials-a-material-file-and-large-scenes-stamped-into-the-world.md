@@ -1,6 +1,6 @@
 # 0083: Anything from a `.vox`: palette materials, a material file, and large scenes stamped into the world
 
-> **Status:** in-progress (approved 2026-11-16, the owner's go with every recommended answer; .vox scale 1 world voxel); **amended 2026-11-18 (the Phase 6 re-read after Plans 0077 and 0080 merged): a structure is a belt item of Plan 0077's placement mode, its ghost a marked frame, the cleared box a stamp of written air, the settings a `structures` menu group; owner questions 5 to 8 await answers**
+> **Status:** in-progress (approved 2026-11-16, the owner's go with every recommended answer; .vox scale 1 world voxel); amended 2026-11-18 (the Phase 6 re-read after Plans 0077 and 0080 merged): a structure is a belt item of Plan 0077's placement mode, the cleared box a stamp of written air, the settings a `structures` menu group; questions 5 to 8 answered "all recommended"; **Phase 7's window done 2026-11-18 (83a cave, 83b outdoor): the verdict adds Phase 7b (the ghost is a coarse copy of the structure in its frame, the spider's rows on every source, the docs) and a five-minute owner look (7c) before Phase 8; see "Phase 7 verdict"**
 > **Created:** 2026-11-16
 > **Milestone:** M7 in [`docs/roadmap.md`](../roadmap.md) (stamping at authored-building
 > scale), with M6's `.vox` import; the engine side in `vxe-assets` and `vxe-world`, the testbed
@@ -298,6 +298,215 @@ centred on the hit") is the box rule under question 7.
    the structures (chapel, castle) in the free slots, so the wheel reaches a structure at once.
    Alternative: a structure enters the belt only from its chooser.
 
+## Phase 7 verdict (2026-11-18): a coarse ghost, the spider's rows, the castle on the surface
+
+The owner's window ran twice: session 83a in the cave (`--source cave`, the binary at
+036b5c25) and 83b on the outdoor hills (`--source outdoor --time 12:00`, at 036b5c25 and then
+at 0e85862a). Two fixes landed between them: fd650c02 (the outdoor world's table holds the
+structures library's rows; before it every structure refused to load under `--source outdoor`
+with `model 0 uses palette indices with no mapping`) and 0e85862a (a one-part coarse icon for
+a scene over the model's limits, made on the castle's build worker). 83b ended with "all works
+but castle flickers badly and there is no icon for spider", then "no, done". The owner's words
+are quoted below; Phase 7b copies them, with the HUD readings of the three screenshots, into
+the readings log (the lane's `live/window83a/` is not tracked).
+
+### The verdicts
+
+1. **The ghost.** Owner: "there was no ghost besides box for placing, we should have something
+   simplified at least to understand what it is". This revises question 5: the marked frame
+   alone does not say what will stand there. Decision: **the ghost is a coarse copy of the
+   structure inside its frame**, one marked instance at world scale; the mechanism, its
+   rejected options and its cost are under Phase 7b. The Phase 6 amendment's "a traced preview
+   of the structure itself stays out (backlog)" and the Decision's "the preview is the box's
+   footprint on the HUD" are superseded by it; a full-detail preview stays out.
+2. **The castle in the cave.** Owner: "castle is build without surrounding rocks, and its too
+   big for cave, we should test it on surface" (23.png: the clear box cut a room-sized void and
+   the castle stands in it with the cave's cut faces around; HUD `clear box on, structure scale
+   1`, fps 49.5, queue depth 18 129, missing 4278). Decision: **documented, neither refused nor
+   warned about.** The fly-through has no notion of a room, the clear box is question 4's pick
+   and did what it says, and the engine never judges whether a structure fits its surroundings
+   (a game does, with the edit result's counts). `docs/flythrough.md` and the structures README
+   say that a structure larger than the cave's rooms stands in its cleared box with the cut rock
+   around it, and that a large structure is judged on the outdoor hills. **The window's scene
+   for structures is the outdoor hills** (`--source outdoor --time 12:00`), as 83b ran; the
+   chapel's cave check stays for Phase 8's golden, since a chapel fits a cave.
+3. **The spider's icon.** Owner: "there is no icon for spider" (25.png: the walker, chapel,
+   terrace and castle slots draw icons, slot 2 reads `spider`). The lane's binary read with
+   `--library`: `spider error: rig line 13: unknown material crystal`, on the cave's table and
+   on the outdoor table alike. Not a regression of this plan: the spider's `material` lines
+   name the showcase's `crystal`, `amethyst` and `ember`, and Plan 0077 left it in error on
+   every source but the showcase (`run/picker_tests.rs`'s header, the entities README). It is
+   the class of fd650c02 (an item names rows the world's table lacks) and gets the castle's
+   cure from Phase 6: a rig's `material` line that names a row the scene's selection lacks
+   takes that row from the material file at the start. A bug done-when with a test across the
+   sources, under Phase 7b.
+4. **The castle's icon arrives with its first build** (0e85862a: the castle's `VoxFile` is
+   generated on a worker the first time its slot is selected, its icon with it, so the slot
+   reads `castle` until then). Options: build the castle at every start on a worker (about
+   45 MB of prefabs kept, a transient `VoxFile` several times that and seconds of CPU beside
+   the stream's start, in a run that may never place it); ship a precomputed icon as an asset
+   (a 16 KB image that must track a generator, with a 5 s test to prove it does); accept it.
+   **Recommended and taken: accept it.** The slot's words say `castle`, then `castle:
+   building` in grey, then the icon; the docs say so.
+5. **The castle flickers inside, under the sky.** Owner: "castle flickers badly" (25.png, at
+   0e85862a: inside the placed castle the walls clip white and blue, the vault is dark and
+   grainy with sparkles; HUD queue depth 10 751, missing 0, scene -4.1 EV, eye +1.34 EV, fps
+   71). Reading: a freshly stamped large structure under a sky, that is the sky ray's region at
+   rest with a young history and the exposure moving on it. **Routed, not fixed here:** it is
+   what ADR-0076 (proposed, on main at 53379f0c) rules 1 (a still world gives a still image),
+   2 (view independence) and 3 (one monotonic fade) forbid, Plan 0090's counter measures it,
+   and Plan 0086's lane owns the sky ray's history. The backlog gains the placed castle's
+   interior as a counter scene.
+6. **The questions the owner left blank count as accepted** (the phase's "the picks the phase
+   names stand"): question 8 (the belt starts with the entities, then the structures), the
+   default `structure scale` 1, `clear box` on by default, and the emission factor `k` at
+   `DEFAULT_EMISSION_FACTOR` 0.3. The colours, the glass and the glow were the owner's "yes"
+   in session 83 (readings log) and are not asked again.
+
+### Phase 7b: the ghost is a coarse copy, and the spider builds on every source
+- **Owner skill:** dev
+- **What:** `vxe-entity` gains a coarse grain per part; the structure's ghost becomes one
+  model, its coarse body plus its frame; the entities library's named rows join every world
+  table; the docs and the readings log follow the verdict.
+- **The ghost's mechanism.** A `Part` gains `coarse: u8`, **world voxels per model voxel**,
+  1 to 16 (16 x `MAX_EDGE` is 1024, `edit_axis_max`, the largest box a stamp takes, so every
+  structure that can be placed has a body). `detail` keeps its meaning (model voxels per world
+  voxel, 1, 2 or 4) and a part is fine or coarse, never both (`coarse` over 1 needs `detail`
+  1; `ModelError::BadCoarse`). `MAX_PARTS` and `MAX_EDGE` stay, in model voxels. The factor
+  enters exactly where `detail` enters, as its inverse, in integers: `ComposedPose::part_point`
+  (`m * rel * coarse / (16384 * detail)`), `part_reach` (times `coarse`), `part_raycast` (a
+  local coordinate is carried in units of `1 / (256 * 16384 * coarse)` model voxel, so `l0 =
+  pivot * 16384 * coarse + detail * M^T (world - pivot)` stays an integer; `hi` and the
+  crossing edges scale with it; the header's overflow bound gains four bits and is re-read)
+  and `Model::id` (the coarse byte after the detail byte; no model id is pinned or persisted,
+  the icon cache and the pool are in-process). In `vxe-render` the grain is one float, model
+  voxels per world voxel (`detail / coarse`): `PartXform::from_parts` and `blend_parts` take
+  it where they take `detail`, `instances.rs` writes its inverse in word 27 (the shadow
+  offset's scale, which a coarse part wants larger), and `entity.wgsl` changes only that
+  comment: the part transforms already carry the scale. At `coarse` 1 every pose, hit and
+  transform is bit-identical to today's.
+  The ghost: `structures::ghost_model(scene, quarters, row) -> Model`, part 0 the **body**,
+  `coarse_model`'s volume of the scene at the `structure scale` (k the least with every side at
+  most 64: the chapel k 1 at scales 1 to 3 and 3 at scale 4, the castle 10) turned by the
+  quarter turns (`Prefab::rotated`, exact) at `coarse` k; then the frame's parts as today
+  (twelve edges for a box at most 64 a side, else eight corners): 13 or 9 parts. One instance,
+  marked with the ghost colour (ADR-0074: the outline at the instance's edge, the tint over
+  the body), touching no world voxel, standing by the box rule with the body's corner at the
+  box's corner (the body overhangs the box by under k voxels on a side k does not divide).
+  The body's volume per entry and scale is kept beside the icon's model: the castle's at scale
+  1 is made on its build worker (0e85862a's icon volume is the same one), the others on the
+  frame thread at the first stand; a body that reads over 50 ms there moves to the icons'
+  worker, and the frame stands alone until it arrives. The icon is unchanged.
+- **Rejected:** (a) the structure itself as an entity: ADR-0050's caps (the castle is 800
+  parts at `MAX_EDGE`), and raising them costs every entity's pool and walk; (b) the coarse
+  model drawn at `detail` 1 inside the frame, a 6 m maquette of a 60 m castle: no engine
+  change, but it lies about scale where the owner wants to see what will stand there; (c) a
+  temporary stamp of the structure in a ghost row: it writes voxels the bake, the collision and
+  the log see (ADR-0074's ghost touches nothing); (d) Plan 0082's pose scale: a pose property
+  that animates, capped at 4 and not merged; (e) the overlay drawing each placement's box: the
+  overlay is 2-D text and tiles (ADR-0075), and a wire box is the frame already. ADR-0050
+  fixes `detail` at 1, 2 or 4; the coarse grain extends it, and the close review records it
+  (a dated note on ADR-0050's successor or a short ADR of its own, the architect's call then);
+  this section carries the rejected options until it does.
+- **The spider's rows.** `setup::world_table` appends, **after** the structures library's
+  rows, the rows the entities library's rigs name in their `material` lines that the table
+  lacks, taken from the material file by name (the castle rows' path of Phase 6,
+  `add_library_rows`, generalised); a name the file lacks either stays an error on the entry.
+  Appended last, so no pinned hash moves (the chapel's and the castle's rows keep their ids).
+- **Files touched:** `crates/vxe-entity/src/{model,pose,raycast}.rs`,
+  `crates/vxe-entity/tests/raycast.rs`, `crates/vxe-render/src/entities/{display,instances}.rs`,
+  `crates/vxe-render/src/shaders/entity.wgsl` (the comment),
+  `apps/flythrough/src/structures/library.rs` (`ghost_model`, the body kept per scale, the
+  castle's on its worker), `apps/flythrough/src/entities/{picker,placed}.rs` (the ghost through
+  `ghost_model`; `FrameGhost`'s name is the dev's call), `apps/flythrough/src/setup.rs`
+  (`world_table`), `apps/flythrough/src/entities/library.rs` (the names a rig's `material`
+  lines carry, read without building), `apps/flythrough/src/materials.rs` (a row by name from
+  the file), `apps/flythrough/src/run/structure_tests.rs`, `apps/flythrough/src/run/picker_tests.rs`
+  (its header), `apps/flythrough/tests/entities.rs` (a doc comment),
+  `apps/flythrough/tests/gpu_hud_golden.rs` and its goldens if re-blessed, `docs/flythrough.md`,
+  `apps/flythrough/assets/structures/README.md`, `apps/flythrough/assets/entities/README.md`,
+  `docs/plans/logs/0083.md`.
+- **Done when** (CPU unless named; each under 1 s unless named):
+  1. `a_coarse_part_spans_k_world_voxels_a_voxel` (`crates/vxe-entity/tests/raycast.rs`): a
+     one-part model of a 2 x 2 x 2 volume of material 3 at `coarse` 10, its pivot at its
+     corner and its root at the origin: a ray along +x from (-5, 5, 5) voxels hits the -x face
+     at t 5 voxels in voxel (0, 0, 0); from (-5, 15, 15) in voxel (0, 1, 1); from (-5, 25, 5)
+     it misses (the body ends at 20); `ComposedPose::part_point` of the local corner (2, 2, 2)
+     is the world point (20, 20, 20); the part's reach is the same part's reach at `coarse` 1
+     with its radius ten times over; `Model::new` refuses `coarse` 0 and 17, and `coarse` 2
+     with `detail` 2, as `BadCoarse`; the model's id differs from the same volume's at
+     `coarse` 1. `entity_hits_match_the_fixed_vectors` and `clip_poses_match_the_fixed_vectors`
+     hold unchanged.
+  2. `a_coarse_part_renders_at_world_scale` (`crates/vxe-render/src/entities/display.rs`, a
+     unit test beside the detail-1 cube's): the same cube's `world_box` spans 20 world voxels
+     on each axis and its instance's word 27 reads 10.0; at `coarse` 1 the instance words are
+     byte-identical to today's. The entity goldens hold byte for byte:
+     `crates/vxe-render/tests/gpu_entities.rs`, `apps/flythrough/tests/gpu_entity_library.rs`
+     and `gpu_entity_pool.rs` (the phase's gpu binaries, lavapipe, each under its tier's line
+     as today).
+  3. `the_ghost_is_a_coarse_copy_in_its_frame` (`run/structure_tests.rs`; the castle's half
+     waits for its build as `the_built_castle_has_an_icon` does, under 10 s): the chapel's slot
+     stands one marked ghost of 13 parts: part 0 a 48 x 32 x 40 volume at `coarse` 1 whose
+     written voxels equal the chapel's scene placed at the origin voxel by voxel, parts 1 to 12
+     the edges; at `structure scale` 2 the ghost has 9 parts, part 0 48 x 32 x 40 at `coarse`
+     2 and eight corners; after `R` once part 0 is 32 x 48 x 40 and the frame's extents swap;
+     the castle's ghost has 9 parts, part 0 60 x 60 x 50 at `coarse` 10 equal to its icon's
+     volume; the ghost's corner is the box rule's corner, the instance carries the ghost
+     colour's mark, and the world's voxel hash is unchanged while it stands. `the_belt_holds_a
+     _structure`'s "twelve parts" becomes 13.
+  4. `the_spider_builds_on_every_source` (`run/structure_tests.rs`, one test per heavy source
+     as 0e85862a split them, each under 10 s): for `--source cave`, `--source outdoor`,
+     `--castle` and `--source showcase` the entities library built against the run's world
+     table loads `spider` with no error and its nine `material` lines map to rows named
+     `shell`, `rubble`, `rock`, `ore`, `crystal`, `amethyst`, `ember` and the walker's two; on
+     the first three sources `crystal`, `amethyst` and `ember` are the table's last three rows
+     (after the structures library's), on the showcase its own; `the_chapel_stands_at_the_spawn`
+     and `the_castle_loads_through_the_scene` hold with their pinned hashes; after the icons'
+     wait the spider's tile is ready and the belt's slot 2 draws it; the start-up line names
+     the rows added (`entities: 2 entries, +3 rows`, or the dev's words, asserted).
+     `picker_tests.rs`'s header and `the_spider_has_its_rows_parts_and_clips`'s comment say
+     the spider is in error against the bare `cave_materials()` and builds against a run's
+     table. `the_belt_and_the_chooser_over_the_carved_view` (`gpu_hud_golden`) is re-blessed
+     on lavapipe if its run now draws the spider's tile, and the log says so.
+  5. The words and the docs: `docs/flythrough.md` (the belt's paragraph: the ghost is a coarse
+     copy of the structure in its frame; the castle's icon arrives with its first build; a
+     structure larger than the cave's rooms stands in its cleared box, judge it on the hills),
+     the structures README (the same three), the entities README (the spider's rows join every
+     source's table), `docs/plans/logs/0083.md` (the window's entry: the owner's words from
+     this section, the HUD readings of 23 to 25.png, the `--library` reading);
+     `node scripts/check-doc-links.mjs` exits 0.
+  6. Readings (`docs/plans/logs/0083.md`): the castle's body in pool bytes (guess under
+     300 KB, from the corners frame's 303 872 B for 262 144 voxels) and its make time on the
+     worker; the chapel's body at scales 1 and 4, make time on the frame thread (guess under
+     30 ms; over 50 ms moves it to the worker); the entity term of the frame with the castle's
+     ghost filling the view, from 7c's HUD, no bar (a ghost is transient).
+
+### Phase 7c: the owner looks at the ghost
+- **Owner skill:** human
+- **What:** five minutes on the outdoor hills at noon, batched with another plan's window: the
+  owner selects the castle's slot, sees the coarse castle in its frame where it will stand,
+  turns it with `R`, selects the chapel at scale 2, and finds the spider's tile in slot 2.
+- **Files touched:** `docs/plans/logs/0083.md` (the owner's words, the HUD's entity term).
+- **Done when:** the owner says whether the ghost reads as the structure it stands for. A
+  "yes" sends Phase 8 on; a "no" with words comes back to the architect for the mechanism.
+
+### Phase 8 after the verdict
+
+Phase 8 runs after 7c. Its `chapel_golden` keeps the dark cave; `the_structures_chooser`
+(the addition above) stands; the picks it writes as defaults are the accepted ones under
+verdict 6, so it changes no default.
+
+### Budgets added 2026-11-18 (guesses until Phase 7b reads them)
+
+- **The ghost's body:** one part of at most 64 model voxels a side at `coarse` k in the 8 MiB
+  entity pool while a structure slot is selected, beside the frame's parts: the castle's
+  60 x 60 x 50 (guess under 300 KB), the chapel's 48 x 32 x 40 (guess under 80 KB); freed as
+  the frame is.
+- **Rows at start:** the spider's three rows on the cave, outdoor and castle tables (64 B a
+  row on the GPU), under the Budgets table's "1000 rows 64 KB" line.
+- **The frame with a ghost in view:** the entity term of a 64-voxel-a-side part filling the
+  view, read in 7c, no bar.
+
 ## TL;DR
 
 Today a `.vox` reaches the world only through Rust: its colours are thrown away, every
@@ -594,7 +803,7 @@ only and may run before Plans 0080 and 0077 merge; Phase 6 needs both.
      and `scale` with their values, and after a place the banner's line; `tests/toggles.rs`
      asserts the words.
 
-### Phase 7: the owner's window
+### Phase 7: the owner's window (done 2026-11-18; the verdict and Phases 7b and 7c are under "Phase 7 verdict" above)
 - **Owner skill:** human
 - **What:** the owner makes a scene in MagicaVoxel and places it, then the castle, and judges
   colour, glow, glass, scale and the fill-in.
@@ -785,7 +994,9 @@ Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
 | 4: the scene: layers, mirrors, scale, `--vox` | dev | done | a221e764 |
 | 5: placements past residency | dev | done | 7a7a6f19 |
 | 6 (amended): a structure in the belt | dev | done; deviations in Notes | c83ebcf8 |
-| 7: the owner's window | human | not started | |
+| 7: the owner's window | human | done 2026-11-18 (83a cave, 83b outdoor); verdict in "Phase 7 verdict" | fd650c02, 0e85862a (fixes between 83a and 83b) |
+| 7b: the coarse ghost, the spider's rows, the docs | dev | not started | |
+| 7c: the owner looks at the ghost | human | not started | |
 | 8: picks, goldens, readings, tip | dev | not started | |
 
 ### Notes
