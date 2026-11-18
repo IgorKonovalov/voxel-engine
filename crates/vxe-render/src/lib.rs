@@ -54,7 +54,8 @@ pub mod internals {
         BAKE_ROUND, BRICK_CELL, BRICK_WORDS, ChunkFaces, DIG_FADE, FADE, FacePrep,
         QUEUE_VIEW_MARGIN_DEG, SKY_BAKE_RAYS, STORE_COARSE_READS, SUMMARY_AT, VIEW_IN, VIEW_OUT,
         VIEW_SHELL, angle_term, dig_ring, face_classes, in_near_shell, list_world_chunk,
-        record_visibility, rgb9e5_unpack, tone_level, view_half_angle, view_half_angles,
+        record_sky_stale, record_visibility, rgb9e5_unpack, tone_level, view_half_angle,
+        view_half_angles,
     };
     pub use crate::entities::{EntityInstances, PoolUpload, RangeAlloc, VolumePool};
     pub use crate::exposure::{METER_LOG2_LIMIT, STATE_HELD};

@@ -65,7 +65,9 @@
 // value , with no screen history, and the pair is seeded with it (`seed`).
 // Where the rays were cast, it is the visibility pair's running mean (`pair_step`): reprojected
 // with the direct part's taps and reset where the direct part resets and on the sky-change
-// bit, a sample clamped at FIREFLY_K times the larger of the long and short means once the
+// bit, a reset pair seeded at age SEED_AGE from the best world-space estimate (`sky_estimate`:
+// the face's record visibility, a stale one included, else the missing-light chain's, else the
+// open sky's 1) and this frame's sample left out, a sample clamped at FIREFLY_K times the larger of the long and short means once the
 // age passes SKY_SHORT, and the age falling toward SKY_FALL_MIN where the short mean leaves
 // the long mean's band. The ray's term joins no screen history: its luminance joins the
 // moments, and the filter's input (atrous.wgsl `variance`) or, with the filter off, the
@@ -641,14 +643,18 @@ const SKY_BAND_SIGMAS: f32 = 3.0;
 const SKY_BAND_EPS: f32 = 0.02;
 // Out of the band the age falls to SKY_SHORT times the band over the distance, at least this.
 const SKY_FALL_MIN: f32 = 2.0;
+// The samples a reset pair's seed counts as: the next sample blends at `1 / (SEED_AGE + 1)`,
+// past SKY_SHORT, so the firefly clamp holds from the frame after the reset.
+const SEED_AGE: f32 = 8.0;
 
 // The visibility pair after sample `s` (the sky rays' share this frame) on history `hp`
 // (`accepted`: the direct part's taps agreed and nothing resets it), its cap `sky.sky_history`.
-// A reset pair holds the sample alone at age 1.
-fn pair_step(s: f32, hp: vec4<f32>, accepted: bool) -> vec4<f32> {
+// A reset pair holds the estimate `e` alone in both means at age SEED_AGE; this frame's sample
+// joins from the next frame.
+fn pair_step(s: f32, hp: vec4<f32>, accepted: bool, e: f32) -> vec4<f32> {
     let age = floor(hp.w + 0.5);
     if (!accepted || age < 1.0 || (params.lighting & LIGHTING_SKY_CHANGED) != 0u) {
-        return vec4<f32>(s, 0.0, s, 1.0);
+        return vec4<f32>(e, 0.0, e, SEED_AGE);
     }
     let n0 = min(age + 1.0, f32(max(sky.sky_history, 1u)));
     let b = hp.z + (s - hp.z) / min(n0, SKY_SHORT);
@@ -692,6 +698,9 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     let sky_cast = vis.a > 0.5;
     // The pair where no ray was cast: the baked visibility at age `sky_history`, or none.
     var seed = vec4<f32>(0.0);
+    // A reset pair's seed where the ray was cast (`pair_step`): the face's record visibility,
+    // a stale ring brick's included, else the chain's, else the open sky's.
+    var estimate = 1.0;
     let fresh = sample.w > 0.5 && view_mode() != VIEW_STEPS;
     sample.w = 0.0;
     var stored = false;
@@ -751,12 +760,15 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         // The sky's term (ADR-0070) where no ray was cast: a face's baked visibility, else the
         // missing-light chain's, coloured by the sky now. An entity keeps its sky rays.
         var sky_term = vec3<f32>(0.0);
-        if (!on_entity && !sky_cast && sky_on()) {
+        if (!on_entity && sky_on()) {
             var sv = store_sky_visibility(head, store_voxel(rec.p, nf), face);
             if (sv.y == 0.0) {
                 sv = store_sky_fallback(head, store_voxel(rec.p, nf), face);
             }
             if (sv.y > 0.0) {
+                estimate = sv.x;
+            }
+            if (sv.y > 0.0 && !sky_cast) {
                 sky_term = sky_baked_term(head, store_voxel(rec.p, nf), face, sv.x, rec, nf);
                 seed = vec4<f32>(sv.x, 0.0, sv.x, f32(max(sky.sky_history, 1u)));
             }
@@ -932,7 +944,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     // switch between the stored part and the ray at the stale bit has no second history to lag
     // behind it. Its luminance joins the moments, so the filter's variance counts it. The key
     // light's term, sampled every frame where the key light is on, joins the direct part.
-    var pair = select(seed, pair_step(vis.x, hp, accepted), sky_cast);
+    var pair = select(seed, pair_step(vis.x, hp, accepted, estimate), sky_cast);
     let t_sky = sky_pair_term(sky_e, pair.x, vis.a, rec.n);
     var t_key = vec3<f32>(0.0);
     if (vis.z > 0.5) {

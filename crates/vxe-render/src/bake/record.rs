@@ -103,6 +103,12 @@ pub fn record_visibility(r: &[u32], face: usize) -> Option<f32> {
     Some(((r[VIS_WORD + face / 4] >> (8 * (face % 4))) & 255) as f32 / 255.0)
 }
 
+/// Whether record `r`'s visibilities are marked [`SKY_STALE`] (a dig's ring before its
+/// re-bake lands).
+pub fn record_sky_stale(r: &[u32]) -> bool {
+    r[VIS_WORD + 1] & SKY_STALE != 0
+}
+
 /// The two visibility words of six fractions in [0, 1] (rounded to `u8`), with [`VIS_BAKED`].
 pub(crate) fn visibility_words(v: [f32; 6]) -> [u32; 2] {
     let b = v.map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u32);

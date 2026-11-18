@@ -106,6 +106,14 @@ fn to_dig(h: [f32; 4], d: f32) -> f32 {
 /// (`queue_settings`, the default slice, coarse 8 near 2), [`DIG_AT`] frames, the dig, and
 /// [`DIG_READ`] frames: the shots of frame `DIG_AT - 1` and of every frame after the dig.
 fn dig_run() -> Option<(Vec<DigShot>, World)> {
+    dig_run_with(|_, _, _, _| {})
+}
+
+/// [`dig_run`], with `each` called after every frame's step (its index, the device, the
+/// queue and the frame).
+fn dig_run_with(
+    mut each: impl FnMut(usize, &wgpu::Device, &wgpu::Queue, &Frame),
+) -> Option<(Vec<DigShot>, World)> {
     let (device, queue) = device()?;
     let world = floor_world([3, 3, 1], |_| false);
     let mut gpu = mirror(&device, &queue, &world, None);
@@ -144,6 +152,7 @@ fn dig_run() -> Option<(Vec<DigShot>, World)> {
         }
         dig_queue_step(&device, &queue, &mut f, &mut gpu, &world, &cam);
         f.step(&device, &queue, &gpu, &cam, &LightParams::headlamp());
+        each(i, &device, &queue, &f);
         if i + 1 >= DIG_AT {
             shots.push(dig_shot(&device, &queue, &f));
         }
@@ -357,4 +366,134 @@ fn a_dig_leaves_no_dots() {
         "the hole's floor {got} against {want}"
     );
     assert!(worst_change <= 0.05, "{worst_change}");
+}
+
+/// A reset pair's seed age (temporal.wgsl's `SEED_AGE`).
+const SEED_AGE: f32 = 8.0;
+
+/// The `+z` record of the voxel under floor hit `h` (a face at integral z) in `f`'s store:
+/// its sky visibility for `+z` and whether it is `SKY_STALE`; `None` where no record holds the
+/// direction under a sky.
+fn up_record(f: &Frame, h: [f32; 4]) -> Option<(f32, bool)> {
+    let v = [h[0].floor() as i32, h[1].floor() as i32, h[2].round() as i32 - 1];
+    let block = f.store().block_words(ChunkCoord(v.map(|c| c.div_euclid(64))))?;
+    let l = v.map(|c| c.rem_euclid(64));
+    let b = l.map(|c| c / 8);
+    let dir = block[(b[0] + 8 * (b[1] + 8 * b[2])) as usize];
+    if dir == 0 {
+        return None;
+    }
+    let cell = vxe_render::BakeSettings::default().cell as i32;
+    let n = 8 / cell;
+    let c = l.map(|k| (k % 8) / cell);
+    let sub = (c[0] + n * (c[1] + n * c[2])) as usize;
+    let w = vxe_render::internals::BRICK_WORDS;
+    let end = (dir >> 11) as usize;
+    let at = end - w * (n * n * n) as usize + w * sub;
+    let rec = &block[at..at + w];
+    vxe_render::internals::record_visibility(rec, 5)
+        .map(|vis| (vis, vxe_render::internals::record_sky_stale(rec)))
+}
+
+/// The `+z` seed temporal.wgsl's `sky_estimate` order takes at floor hit `h`: the record's
+/// visibility ([`up_record`]), else the chain's (the chunk's summary, else the mean of its six
+/// face neighbours' summaries that hold `+z` under a sky), else 1.
+fn up_seed(f: &Frame, h: [f32; 4]) -> f32 {
+    if let Some((v, _)) = up_record(f, h) {
+        return v;
+    }
+    let v = [h[0].floor() as i32, h[1].floor() as i32, h[2].round() as i32 - 1];
+    let c = v.map(|k| k.div_euclid(64));
+    let summary = |c: [i32; 3]| {
+        let block = f.store().block_words(ChunkCoord(c))?;
+        let at = vxe_render::internals::SUMMARY_AT as usize;
+        let w = vxe_render::internals::BRICK_WORDS;
+        vxe_render::internals::record_visibility(&block[at..at + w], 5)
+    };
+    if let Some(s) = summary(c) {
+        return s;
+    }
+    let near: Vec<f32> = (0..6)
+        .filter_map(|k| {
+            let mut o = c;
+            o[k / 2] += if k % 2 == 0 { -1 } else { 1 };
+            summary(o)
+        })
+        .collect();
+    if near.is_empty() {
+        1.0
+    } else {
+        near.iter().sum::<f32>() / near.len() as f32
+    }
+}
+
+/// Plan 0086 Phase 21 bar 4a: a reset pixel starts from its estimate. On [`dig_run`]'s rig, at
+/// the first frame after the dig, every lighting pixel inside the dig's box dilated by one
+/// voxel that cast the sky ray (its history reset by the edit) reads the pair's age
+/// `SEED_AGE`, and on a `+z` face its mean lies within `1 / (SEED_AGE + 1)` of the seed
+/// [`up_seed`] takes (the record's, the chain's, or the open sky's). On the open floor under
+/// `Sky::uniform(1.0)` with no store block (bar 1's rig) the centre pixel's first frame reads
+/// the pair's mean 1 at age `SEED_AGE`. The mean of the pair over the box's cast pixels at
+/// frames 1, 8, 16 and 60 after the dig is printed, with the count of `+z` pixels whose face
+/// holds a record (stale) at frame 1.
+#[test]
+fn a_reset_pixel_starts_from_its_record() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    {
+        let world = floor_world([3, 3, 1], |_| false);
+        let gpu = mirror(&device, &queue, &world, None);
+        let mut f = dig_frame(&device);
+        let w = DIG_SIZE[0] as usize;
+        let c = (DIG_SIZE[1] as usize / 2) * w + w / 2;
+        f.step(&device, &queue, &gpu, &camera([96.0, 96.0]), &LightParams::headlamp());
+        let pair = vxe_render::debug::read_rgba16f(&device, &queue, f.visibility_pair())[c];
+        println!("the open floor's first frame: pair {:.4} at age {}", pair[0], pair[3]);
+        assert_eq!((pair[0], pair[3]), (1.0, SEED_AGE));
+    }
+    let (mut plus_z, mut with_record, mut stale_n) = (0usize, 0usize, 0usize);
+    let mut worst = 0.0f32;
+    let mut means = Vec::new();
+    let r = dig_run_with(|i, device, queue, f| {
+        let k = i as i64 - DIG_AT as i64 + 1;
+        if ![1, 8, 16, 60].contains(&k) {
+            return;
+        }
+        let pair = vxe_render::debug::read_rgba16f(device, queue, f.visibility_pair());
+        let vis = vxe_render::debug::read_rgba8(device, queue, f.visibility_samples());
+        let hits = vxe_render::debug::read_rgba32f(device, queue, f.light_hit_positions());
+        let (mut sum, mut n) = (0.0f64, 0usize);
+        for (j, h) in hits.iter().enumerate() {
+            if h[3] >= 1e30 || to_dig(*h, 1.0) > 0.0 || vis[4 * j + 3] <= 127 {
+                continue;
+            }
+            sum += f64::from(pair[j][0]);
+            n += 1;
+            if k != 1 {
+                continue;
+            }
+            assert_eq!(pair[j][3], SEED_AGE, "pixel {j}: age {}", pair[j][3]);
+            if (h[2] - h[2].round()).abs() < 1e-3 {
+                plus_z += 1;
+                if let Some((_, st)) = up_record(f, *h) {
+                    with_record += 1;
+                    stale_n += usize::from(st);
+                }
+                worst = worst.max((pair[j][0] - up_seed(f, *h)).abs());
+            }
+        }
+        means.push((k, sum / n.max(1) as f64, n));
+    });
+    if r.is_none() {
+        return;
+    }
+    println!(
+        "frame 1: {plus_z} cast +z pixels in the box, {with_record} with a record, {stale_n} stale"
+    );
+    println!(
+        "the box's cast pixels' mean pair at frames after the dig (frame, mean, pixels): {means:?}; largest |pair - seed| over the +z pixels at frame 1 {worst:.4}"
+    );
+    assert!(plus_z > 0, "no +z pixel inside the box at frame 1");
+    assert!(worst <= 1.0 / (SEED_AGE + 1.0), "{worst}");
 }
