@@ -1,7 +1,9 @@
 # 0086: Still outdoor light: a sky visibility baked per brick, a long history for the sky and key rays, canopies that shadow as bricks, stairs that keep their history, and a penumbra spike
 
 > **Status:** in-progress (the owner's go, 2026-11-17; it runs before Plan 0081, and Phase 6 is
-> conditional on its reading as drafted)
+> conditional on its reading as drafted; **amended 2026-11-18** after Phase 8's window failed:
+> Phases 9 to 15 added, the picks as tests are Phase 16; the owner questions in the amendment
+> section await answers, and Phase 9 starts without them)
 > **Created:** 2026-11-17
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0070](../adrs/0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md)
@@ -151,14 +153,112 @@ stands.
 - **Settings** (Plan 0069's surface): `lighting.sky_rays` accepts 0 (bake only);
   `lighting.sky_history` (the cap), `lighting.leaf_shadow` is the testbed's A/B, not a
   setting; `lighting.penumbra approach|disc` from the spike, `disc` the default.
+- **The column map** (added 2026-11-18, ADR-0070's amendment): the renderer keeps a
+  camera-centred 2D map of the top of solid per column over the mirror's footprint, built from
+  the resident chunks (a LOD chunk's mips make it conservative). A sky ray that ends with no
+  hit, at its cap, at an absent chunk or at the window's side, has reached the sky only above
+  that column's top. Plan 0036's fall map (ADR-0031) at the vertical fall direction is this map;
+  Plan 0036 extends it to slanted directions rather than building a second one. Plan 0033's far
+  field may raise a column's top from its coarse levels where the mirror has no chunk.
+
+## Amended 2026-11-18 (Phase 8 window)
+
+Phase 8 ran on 2026-11-18 and failed on five points; the owner's words per run and the stills
+are in `live/window86a/verdicts.md` (1.png to 17.png beside it), the orchestrator's summary and
+the owner's picks under it. The diagnosis `dev` ran after it is the readings log's section
+"After Phase 8: the underground leak, a diagnosis" (commit `2fe4598c`). What the window said,
+and what each point is attributed to:
+
+1. **Underground lit with no emitter** (run 12, 17.png: eye at 743 131 15, chunk 11 2 0, noon,
+   scene -2.7 EV, walls lit everywhere). Attributed and measured: a sky ray that meets no rock
+   within its cap counts as sky (the bake's cap 256 voxels, the light pass's 512), and a ray
+   that leaves the window or enters an absent chunk counts as sky too (Plan 0032 Phase 10's
+   rule). In a closed cavern 0.38 % of rays pass 256 voxels, and times the noon sky's irradiance
+   that is a stored part of 0.57 to 2.75 at exposure 1 where the truth is 0 (the open ground
+   reads about 150). ADR-0070's amendment of this date decides what counts as sky; Phase 9
+   builds it. The cave mouth's seal bar (`the_cave_mouth_is_lit_from_outside`, sealed walls at
+   24 % of unsealed against a 2 % bar) is the same leak.
+2. **The tunnel too bright and "lit almost evenly" deep inside** (runs 2, 3 and 12; 2.png,
+   4.png, 16.png; scene -11.9 EV, the auto eye pinned at its +2 EV ceiling). Two causes, one
+   measured: from station 7 on the cap's false sky is 2 to 4 times the true term, so the deep
+   floor stops falling (Phase 9 removes it); nearer the mouth the brightness is the true sky
+   term lifted by the eye's ceiling (`OUTDOOR_MAX` 4, +2 EV, the fly-through's outdoor start
+   exposure), which the owner reads as "should be much much darker". Phase 12 makes the ceiling
+   a call the owner can take by eye.
+3. **Zebra stripes on stepped faces** (treads lit, risers black; 2.png, 11.png). Measured on the
+   bake: one visibility per brick and axis, and in the tunnel `+z` reads 10 to 30 times the
+   horizontal directions near the mouth (station 3: 0.37 against 0.011 to 0.14; 3 to 4 times
+   deep inside), with the cap raised too. A tread reads its brick's `+z`, a riser a horizontal
+   value, and the eye's lift makes the ratio visible. Not the cap. Phase 13 is its design.
+4. **The forest floor's grain at every sun angle, worst at `10,180` and during the day run;
+   too bright with voxel leaves** (runs 5 to 9; 7.png to 10.png, 12.png). Not attributed by a
+   reading in the forest: Phase 6's slab reading (3-degree p99 equal to the lamp's) did not
+   represent a canopy's edges at a low sun, where the penumbra stretches by `1 / sin 10` to
+   about 48 voxels and most of the floor is penumbra under one disc ray on the direct target's
+   eleven-frame blend. The brightness with voxel leaves is a guess too (the sun through the
+   canopy's holes, or the baked sky through them). Phase 14 reads first, then builds.
+5. **Black cells while settling** (runs 9 and 10; 13.png missing 29 638 with 24 074 black,
+   14.png 44 638 with 30 062): faces with no store block whose missing-light chain finds no
+   summary, after a jump, for seconds. The young visibility pair after a jump reads 0.17 to
+   0.19 in its first frames underground (the streamed rig), which is the absent-is-sky rule
+   while the window fills, remembered by the running mean. Phase 10 takes both.
+
+**The owner's picks** (2026-11-18): the route is the diagnosis, then this amendment; leaf
+shadow `voxel` becomes the default (brick stays the setting); the penumbra `disc` stays the
+default and `approach` stays an off-by-default setting (the owner "doesn't see much of a
+change", the approach reads 1.43 times the light pass on the RADV RENOIR, 21.8 against 15.2 ms,
+and run 10's "strange" forest had 44 k black cells, so the difference seen was likely the
+settle); recheck both after the fixes. Phase 11 sets the defaults.
+
+**The order and what may shrink.** Phase 9 lands first: it changes the sky term everywhere a
+ray ends without a hit, so every later reading is taken on top of it. After it, the deep
+tunnel's floor falls by itself (point 2's first cause), the young pair's first frames lose
+their cause (Phase 10 may shrink to its bar), and the stripes deep inside lose the lift that
+made them visible once Phase 12 lowers the eye (Phase 13 may shrink to the near-mouth case).
+The forest (points 4 and 5) stands under open sky and is not expected to move. Phases 12 to
+14 are exploration (lane rules 2b): settings and readings, the owner's second window (Phase 15)
+their gate; Phase 16 writes the picks as tests. The Implementation log's rows for Phases 9 to
+16 were added by this amendment (the architect's, at the renumbering); `dev` fills them.
+
+**Owner questions** (recommended option first; Phase 9 starts without the answers, Phases 12
+to 14 read every arm the window needs and the window picks):
+
+1. **The eye's ceiling outdoors (Phase 12).** (a) Anchor it to the sky: the eye opens at most
+   `N` EV above the exposure the sunlit ground needs, derived each frame from the sky's
+   irradiance, so a noon tunnel stays dark and a night scene still opens; `N` is a setting the
+   window reads at 0, 2, 4 and 6 (recommended: it follows the sun, and the first consumer, with
+   no sky, keeps ADR-0033's eye untouched). (b) A fixed lower ceiling (0 EV instead of +2),
+   one constant, the same at night. (c) Keep +2 EV and darken the tone curve's toe below a
+   luminance (a look change on every scene, lamp-lit ones included).
+2. **The stripes (Phase 13).** (a) The sky term reads its visibility by the smoothed 27-count
+   normal at every distance (the surface stays honest cubes; its sky light becomes continuous
+   across a one-voxel stair, as the far normal already makes it at a distance), and a bounce
+   floor mixes a share of the brick's mean visibility (recommended; both are settings and the
+   window picks). (b) The bounce floor alone (the stripes soften, the tread stays brighter).
+   (c) Leave the stripes to the sunlight bounce, a plan of its own (the backlog's).
+3. **The canopy's third arm (Phase 14).** (a) Build `absorb`: a per-material shadow absorption
+   by path length through the material's bricks, so a canopy shadows as a continuous
+   transmittance with no fleck and a depth the material sets, read beside `brick` and `voxel`
+   in the window (recommended; it is ADR-0047's translucent walk on shadow rays, a second walk
+   through flagged bricks only). (b) Read `brick` and `voxel` only, on the long history, and
+   park `absorb` in the backlog.
+4. **The first second after a jump (Phases 9 and 10).** A column whose chunks have not all
+   arrived has an unknown top. (a) Count its sky as before, from the chunks that are resident
+   (an under-estimate: a brief leak underground that closes as the chunks above arrive, and the
+   far ground stays lit while moving, Plan 0032 Phase 10's rule; recommended: the bake waits
+   for the column to be final either way, and the first consumer sets no sky). (b) Count an
+   absent chunk in the column as solid (conservative: no leak ever, and the open ground after a
+   jump is dark until its columns fill, then brightens).
 
 ## Implementation phases
 
 Each phase ships as its own commit. `dev` implements all phases in one session with no review
 between phases. The architect reviews once at the end, in a fresh session. Phases 1 to 7 are
-**exploration** (lane rules 2b): the owner's window in Phase 8 is their gate. Each lands its
+**exploration** (lane rules 2b): the owner's window in Phase 8 is their gate; Phases 12 to 14
+are exploration too, gated by the second window, Phase 15, while Phases 9 to 11 carry bars
+that bite (the sky rule is a correctness fix, not a look). Each lands its
 CPU tests of data, determinism and API; every bar that judges the image runs as a reading from
-a `mod reading`, recorded in the readings log, and Phase 9 writes it as a test against the
+a `mod reading`, recorded in the readings log, and Phase 16 writes it as a test against the
 picks. The readings log is `docs/plans/logs/0086.md`. Per phase the gpu check runs only the
 `gpu_*` binaries the phase names; a named test over 10 s on lavapipe is born
 `#[ignore = "soak"]`. Every wall time below is an estimate.
@@ -451,10 +551,238 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   on by default if it was built; a go or no-go on the approach penumbra; and on any cost the
   HUD showed that the owner will not pay.
 
-### Phase 9: The picks as tests
+### Phase 9: The sky rule: the column map, and sky only above it, in the bake and the light pass
 - **Owner skill:** dev
-- **What:** the bars Phases 1 to 7 read, written as tests against the window's picks; the
-  defaults the window chose; the goldens Plan 0032 blessed that these mechanisms move
+- **What:** ADR-0070's amendment of 2026-11-18. The renderer keeps a **column map**: a
+  camera-centred 2D map over the mirror's footprint whose texel is the highest solid voxel's
+  `z` in its column, from the resident chunks (a full chunk's bricks exactly; a LOD chunk's
+  mips, conservative by at most `2^L - 1` voxels), `none` where the column holds no solid. A
+  per-chunk column sheet (64 x 64 tops, computed where the chunk is packed or on its upload)
+  feeds it; a chunk's arrival, departure or edit marks its column tile dirty and a small pass
+  takes the max down the column. Texel size and layout are `dev`'s (2-voxel cells over the
+  footprint are about 4.5 MB at the fly-through's residency: a 47-chunk footprint is 3008
+  voxels, `1504^2 x 2 B`; 4-voxel cells a quarter of that). **The rule, one function in
+  `walk.wgsl` used by both the bake and the light pass:** a sky ray that ends with no hit, at
+  its length cap, on entering an absent chunk or on leaving the window's side, has reached the
+  sky iff its end point's `z` is above its column's top (the window's top face is above every
+  top; the side clamps to the edge column); a ray below the horizon stays blocked. A column
+  not yet final (a chunk of it within the window absent) reads the resident chunks' top
+  (question 4 (a), unless the owner picks (b)). **The bake's reach rule gains finality:** a
+  chunk bakes when its reach is resident (as today) and every column tile over the reach's
+  footprint is final, so the bake's input is the same whatever the slicing and the order
+  (ADR-0046's identity). `SKY_RAY_VOXELS` and the bake's cap stay as they are; the longer cap
+  was rejected (the amendment's Alternative C).
+- **Files touched:** `crates/vxe-render/src/shaders/walk.wgsl`, `bake.wgsl`, `sky_light.wgsl`,
+  a new `column_map.wgsl` and `src/column_map.rs` (or inside `mirror/`), `src/mirror/*` (the
+  per-chunk sheet), `bake/queue/mod.rs` (`reach_ready`), `frame/targets.rs`, `frame/encode.rs`,
+  `crates/vxe-render/tests/gpu_sun.rs`, `apps/flythrough/tests/gpu_bake.rs`, `gpu_outdoor.rs`,
+  `gpu_outdoor_golden.rs`, `docs/nfr/03-memory.md`, `docs/plans/logs/0086.md`.
+- **Done when:**
+  1. **The map is the top of solid.** `the_column_map_is_the_top_of_solid` in `gpu_sun.rs`
+     (a 3 x 3 x 3-chunk stepped terrain, every column's top known from the world; about 4 s):
+     every texel over a full chunk equals its column's highest solid `z`; over a LOD-only
+     chunk it is at least that and at most `2^L - 1` more; a column of air reads `none`; a
+     1-voxel dig of a column's top lowers its texel within 8 frames of the edit's upload, and a
+     stamp above it raises it on the frame the stamp uploads.
+  2. **An enclosed pocket longer than the cap reads no sky.**
+     `a_sealed_cavern_wider_than_the_cap_reads_no_sky` in `gpu_bake.rs` (a 288-voxel air cube
+     sealed in rock, a 7 x 7 x 7-chunk world, the floor's central chunk baked under
+     `Sky::uniform(1.0)`; from the floor an upward ray meets the ceiling at 288, past the 256
+     cap; about 10 s, born `#[ignore = "soak"]` if over): every baked visibility of the floor's
+     bricks reads 0 exactly; the same rig under the rule as built is read once and printed
+     (the expectation is near 1 for `+z`).
+  3. **The underground eye reads nothing.** `the_underground_eye` at `VXE_UNDER_R=7`
+     (`gpu_outdoor.rs`, a reading today, over 10 s: the bar is a `#[ignore = "soak"]` test,
+     run once by name under the lock): the near-eye baked visibility's mean per face is under
+     0.001 in every direction, the stored part under 0.02 and the direct part under 0.02 at
+     exposure 1 in all six views (today 0.0063 to 2.75 and 0), with the surface reference's
+     stored and direct parts within 5 % of today's 149.7 and 1345.
+  4. **The open ground does not move.** Phase 4 bar 2's three values (255 within a step, 0.50
+     within 0.03, 0.83 within 0.05), bar 3's `pi` within 3 % and `an_absent_chunk_is_sky_to_
+     the_sky_ray` as written (its absent chunk is above the floor's top) still hold; its twin
+     `an_absent_chunk_below_the_column_top_is_rock_to_the_sky_ray` in `gpu_sun.rs` (the floor
+     under a resident roof chunk, the chunk beside the floor's absent; about 4 s): the floor
+     reads under 1 % of `pi`.
+  5. **The sealed cave stays dark.** `the_cave_mouth_is_lit_from_outside`'s seal bar
+     (`gpu_outdoor_golden.rs`, soak) passes at its 2 % as written, run once by name.
+  6. **Deterministic.** ADR-0046's bake-identity test holds with the map in the bake's input,
+     and a chunk whose reach's columns are not final is not baked (a unit test of
+     `reach_ready` with one absent chunk high in a column; under 1 s).
+  7. **Readings:** the tunnel's stations as the diagnosis read them (`the_tunnel_bake_by_
+     station`: `+z` and `-x` per station against the "as built" and "cap 4096" columns); the
+     light pass on both adapters on the hills at rest and in the forest (Phase 7's runs); the
+     pre-roll's wall time and the queue's step against Phase 4's table (the finality wait);
+     the map's bytes and its pass's time while flying the hills path. In the log and
+     `docs/nfr/03-memory.md`.
+
+### Phase 10: The first seconds after a jump: the young pair and the black cells
+- **Owner skill:** dev
+- **What:** first the reading, after Phase 9: in the streamed underground rig
+  (`the_underground_eye_streamed`) the pair's mean and the direct part per frame for 240
+  frames; in the forest after a jump (`--spawn forest --sun 10,180`, the fly-through headless
+  from frame 0) the HUD's `missing` and `black` counts per frame, and what a black face shows
+  (the sky term's source per lighting pixel: the pair, a stale record, nothing). Then the
+  fixes the reading names, from this list and no further: the variance reset's band at a young
+  age (if the false-sky memory outlives the leak); the missing-light chain carrying the sky
+  channel (a chunk summary's mean visibility per direction, read where a face has no block, so
+  a young chunk shows its neighbours' or parent's sky instead of a black or a raw young ray);
+  the coarse first pass (`coarse 8/256 first`) baking the channel at its sample count with
+  `VIS_BAKED` set only by the full pass.
+- **Files touched:** `temporal.wgsl`, `bake/summary.rs`, `bake/store.rs`, `bake/queue/*`,
+  `apps/flythrough/tests/gpu_outdoor.rs`, `crates/vxe-render/tests/gpu_sun.rs`,
+  `docs/plans/logs/0086.md`.
+- **Done when:**
+  1. **The young pair forgets the leak.** `the_underground_eye_streamed` (soak, by name): the
+     direct part reads under 0.02 at frame 240 (today 0.122) and under 0.05 by frame 60; the
+     frame-1 value is printed (0.194 today; question 4's pick decides whether it falls).
+  2. **A young face is not black for long.** `a_young_chunk_reads_its_neighbours_sky` in
+     `gpu_sun.rs` (an open floor of 3 x 3 chunks, the centre chunk's block withheld by a hook
+     while its neighbours are baked; about 6 s): the centre's faces read the neighbours' sky
+     term within 10 % from the first frame the chain finds them, and the HUD's `black` count
+     for the rig reads 0 once the neighbours' blocks exist.
+  3. **Reading:** the forest after a jump: frames until `black` falls under 1 000 and until
+     `missing` falls under 5 000, before and after this phase, both adapters, in the log.
+
+### Phase 11: The window's defaults
+- **Owner skill:** dev
+- **What:** `LeafShadow::Voxel` is the fly-through's default (`--leaf-shadow brick` stays;
+  the banner names the non-default `leaf shadow brick`); `Penumbra::Disc` stays the default
+  and `approach` stays a setting (it costs nothing with `disc`: a uniform branch, Phase 7's
+  done-when 3); `sky_rays` 1 stays. The goldens these move are re-blessed as a disclosed
+  change with the difference counts in the log, once, after Phase 9 (so the sky rule's
+  change and the leaf default's land in one re-bless).
+- **Files touched:** `apps/flythrough/src/scene.rs`, `cli/outdoor.rs`, `cli/tests.rs`,
+  `hud/modes.rs`, `docs/flythrough.md`, the `golden/` images Phase 9 and this phase move,
+  `docs/plans/logs/0086.md`.
+- **Done when:** the parse test pins `voxel` as the default and `--leaf-shadow brick` as
+  the A/B with its banner word; `outdoor_styles(LeafShadow::Voxel)` sets no bit; every
+  outdoor golden passes at the tip and the log names each re-blessed one with its difference
+  count and the mechanism that moved it (Phase 9's rule or this default).
+
+### Phase 12: The tunnel's brightness: the eye's ceiling anchored to the sky
+- **Owner skill:** dev
+- **What (exploration):** the auto exposure's ceiling becomes a call the owner can take by
+  eye. Today `AutoExposure::max` is a constant (ADR-0033's eye 2^4; the fly-through's outdoor
+  start sets `OUTDOOR_MAX` 4, +2 EV), so a -11.9 EV tunnel is lifted by the whole ceiling and
+  the walls at its mouth read mid-grey. Question 1's arms, all built as settings so the window
+  compares them on one build: (a) `exposure.sky_anchor_ev` `N`: while the frame holds a `Sky`,
+  the ceiling is `2^N` times the exposure that puts a sunlit horizontal face of albedo 0.5 at
+  the key (`key / (0.5 (E_sun cos theta_s + E_sky(+z)) / pi)`, the irradiances from the sky
+  uniform, so at night the anchor falls with the sun and the eye opens); off (`none`) is the
+  constant ceiling; (b) `exposure.max_ev` as a plain setting (the constant, exposed); (c) is
+  not built (a tone-curve toe is a look change on every scene; it goes to the backlog if the
+  owner asks for it). The HUD's exposure line shows the ceiling in force and its source
+  (`ceiling +2.00 EV (anchor 4)`).
+- **Files touched:** `crates/vxe-render/src/exposure.rs`, `shaders/exposure.wgsl`,
+  `frame/sky.rs`, `settings.rs`, `apps/flythrough/src/cli/*`, `hud/stats.rs`,
+  `crates/vxe-render/tests/exposure.rs` (CPU), `docs/flythrough.md`, `docs/plans/logs/0086.md`.
+- **Done when:**
+  1. **The anchor follows the sky.** `the_ceiling_follows_the_sky` (CPU, under 1 s): under
+     `Sky::uniform(L)` with no sun the ceiling at `N` 0 equals `key pi / (0.5 pi L)` within
+     1e-6; doubling `L` halves it; `N` 2 quadruples it; with the sky `None` the ceiling is
+     `AutoExposure::max` unchanged, byte for byte in the exposure state.
+  2. **The tunnel meters at the ceiling and the ceiling is lower.** `reading::the_tunnel_
+     under_each_ceiling` in `gpu_outdoor.rs`: the tunnel pose's metered exposure and the rim
+     band's and far end's mean display luminance at `N` 0, 2, 4, 6 and `none`, and the same
+     on the hills at noon (which must not move: the eye sits under the ceiling there) and at
+     the forest sunset (where the anchor must not clip the eye: the sunset's exposure against
+     Plan 0032's `outdoor_forest_sunset` golden's, within 0.5 EV at `N` 4). Printed; the
+     window picks.
+  3. The settings exist, show their mode, and `none` with `max` 4 renders the tunnel pose
+     byte-identical to before this phase.
+
+### Phase 13: The zebra stripes: the sky term's normal and a bounce floor
+- **Owner skill:** dev
+- **What (exploration):** two settings, both arms of question 2, read on the tunnel's stairs
+  and the hills' foreground treads. `lighting.sky_normal face|smoothed`: with `smoothed` the
+  sky term's six-direction blend uses the 27-count gradient's squared components at every
+  distance, not only past the far normal's lower bound (ADR-0042's blend, extended for this
+  one term; the surface and the key light keep the face normal), so a tread and a riser of a
+  one-voxel stair read the slope's blend; the per-material style word may opt a material out
+  (a cliff of real 1-voxel ledges). `lighting.sky_bounce b` in [0, 1]: the sky term is
+  `(1 - b) v(n) + b mean(v)` with `mean(v)` the brick's six visibilities' cosine-weighted mean
+  about `n` (a crude bounce from the brick's neighbourhood, one more read, no new ray; 0 is
+  today). A stripe metric for the readings: at the stair's contour pixels after 64 frames,
+  the ratio of the treads' mean display luminance to the risers' (today's is printed first).
+- **Files touched:** `temporal.wgsl`, `shade.wgsl` (if the gradient is not at hand near),
+  `frame/settings.rs`, `settings.rs`, `apps/flythrough/src/cli/*`, `hud/modes.rs`,
+  `crates/vxe-render/tests/gpu_sun.rs`, `apps/flythrough/tests/gpu_outdoor.rs`,
+  `docs/flythrough.md`, `docs/plans/logs/0086.md`.
+- **Done when:**
+  1. **A stair reads one slope.** `reading::a_one_voxel_stair_reads_one_slope` in
+     `gpu_sun.rs` (a 45-degree staircase of one-voxel steps under a half-plane roof so `+z`
+     and the horizontal differ by design, `Sky::uniform(1.0)`, the queue drained; about 6 s):
+     the tread-to-riser ratio under `face` (printed; the geometry predicts over 3), under
+     `smoothed` (within 1.2 of 1 is the expectation) and under `sky_bounce` 0.3; a flat open
+     floor's value is unchanged under every setting within 1 %.
+  2. **Readings:** the tunnel's stairs and the hills' foreground at noon under each arm, the
+     stripe metric and Phase 1's stillness statistics; the temporal pass on both adapters
+     under `face` and `smoothed`. The window picks.
+  3. The settings exist, show their mode, and `face` with `sky_bounce` 0 renders every
+     golden byte-identical.
+
+### Phase 14: The forest floor: the grain's attribution, the key light on the pair, the canopy's transmittance
+- **Owner skill:** dev
+- **What (exploration):** first the reading Phase 6's slab did not take: in the forest at
+  `60,180` and `10,180` with voxel leaves after the queue drains, Phase 1's matrix on the
+  floor's lighting pixels (the key light alone by `sky_rays` 0 and a fresh store; the sky
+  alone by the key hook; both), the share of floor pixels whose key sample flips between
+  frames, and the floor's level split into the stored sky part and the key's direct part under
+  `brick` and `voxel`, against the open ground's. Then: **if the key light's flips carry the
+  grain** (the expectation), Phase 6's mechanism is built as it was specified there (the key
+  visibility on the pair's `g`, the same mean, clamp and reset; Phase 6's bars 2 to 4 become
+  this phase's), else the dominant term's fix is named in the log and routed back to the
+  architect. **The canopy's third arm** (question 3 (a)): `--leaf-shadow absorb` sets a
+  per-material shadow absorption in the style word; the shadow walk through a flagged brick
+  runs ADR-0047's translucent walk and attenuates by `exp(-sigma x)` over the path `x` through
+  the material's voxels, a continuous transmittance with no fleck; `sigma` from the testbed's
+  leaf (a guess of 0.15 a voxel: about 5 % through 20 voxels). The bake's sky rays take the
+  same walk, so the baked floor under a canopy darkens with the key light.
+- **Files touched:** `walk.wgsl`, `sky_light.wgsl`, `bake.wgsl`, `temporal.wgsl`,
+  `shade.wgsl`, `frame/settings.rs`, `apps/flythrough/src/scene.rs`, `cli/outdoor.rs`,
+  `hud/modes.rs`, `crates/vxe-render/tests/gpu_sun.rs`, `apps/flythrough/tests/gpu_outdoor.rs`,
+  `docs/flythrough.md`, `docs/plans/logs/0086.md`.
+- **Done when:**
+  1. The attribution table is in the log with the term it names at each sun angle.
+  2. If built: `the_penumbra_holds_still_on_the_long_history` and Phase 6's bars 3 and 4 as
+     written there, plus the forest: `reading::the_forest_floor_at_a_low_sun` (the forest at
+     `10,180`, 128 frames at 320 x 180; about 20 s, soak): the floor's 99th-percentile
+     frame-to-frame change against the lamp's floor, printed, both before and after.
+  3. **The absorb arm transmits by depth.** `a_canopy_absorbs_by_path_length` in `gpu_sun.rs`
+     (Phase 2 bar 1's tree, a zenith sun, the key light alone; about 8 s): the floor under the
+     canopy's centre reads `exp(-sigma x)` of the open value within 15 % for the canopy's
+     mean occupied depth `x` (computed from the world), with no floor pixel over 50 % of the
+     open value inside the brick projection (no fleck), and the silhouette grows by at most a
+     brick as bar 2 asked.
+  4. **Readings:** the floor's stillness and level under `brick`, `voxel` and `absorb` at
+     both sun angles; the light pass on both adapters under each (the translucent walk's
+     cost in the forest is the number that decides whether `absorb` may be a default).
+  5. The arms exist, show their mode, and `voxel` renders byte-identical to Phase 11's tip.
+
+### Phase 15: The owner's second window
+- **Owner skill:** human
+- **What:** a runner mirroring the failed runs, in the same order, on one build at the tip
+  of Phase 14, the fly-through's stdout visible and a ping when ready: (1) the tunnel at noon
+  before and after the sky rays, the rim and the far end, then deeper to 17.png's position
+  (`743 131 15`), the HUD's scene EV read aloud; (2) the same under each ceiling of Phase 12
+  (`N` 0, 2, 4, 6, `none`); (3) the tunnel's stairs and the hills' foreground under Phase 13's
+  `face` and `smoothed`, `sky_bounce` 0 and 0.3; (4) the hills at noon, the far ground while
+  moving, and a jump to a new spawn with the settle watched (Phase 10's `black` count on the
+  HUD); (5) the forest at `60,180` and `10,180` under `brick`, `voxel` and `absorb`, before
+  and after the queue drains; (6) the day from 15:00 to sunset in the forest; (7) the
+  penumbra `disc` against `approach` in the forest once settled, the light pass's ms read
+  aloud; (8) a dug skylight into the chamber. Each run's screenshot and the owner's words go
+  to `live/window86b/verdicts.md` as before.
+- **Files touched:** `docs/plans/logs/0086.md`.
+- **Done when:** the owner has recorded a verdict on the underground's darkness, the tunnel's
+  brightness and the ceiling picked, the stripes and the arm picked, the settle after a jump,
+  the forest floor's grain and brightness and the leaf arm picked, the penumbra's default, and
+  any cost the HUD showed that the owner will not pay; or a no-go that names the run.
+
+### Phase 16: The picks as tests
+- **Owner skill:** dev
+- **What:** the bars Phases 1 to 7 and 9 to 14 read, written as tests against the window's
+  picks; the defaults the window chose; the goldens Plan 0032 blessed that these mechanisms move
   (`outdoor_noon`, `cave_mouth`, `outdoor_forest_sunset`, the sunset and night ones if the
   bake moves them) re-blessed as a disclosed change with the difference counts in the log; a
   mechanism the window dropped stays a setting if it costs nothing when off (owner,
@@ -467,9 +795,10 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
      gate): the 99th-percentile frame-to-frame change over the rim band and the far end is at
      or under the headlamp's on the same pose with the sky off. This is Plan 0032 Phase 6's
      stop rule on the occluded rig, as a regression test.
-  2. Every bar Phases 2 to 7 name that the window kept exists, asserts the picked value, and
-     passes in the gpu tier under the lock; each over 10 s on lavapipe is `#[ignore = "soak"]`
-     and passes once by name.
+  2. Every bar Phases 2 to 7 and 9 to 14 name that the window kept exists, asserts the picked
+     value, and passes in the gpu tier under the lock; each over 10 s on lavapipe is
+     `#[ignore = "soak"]` and passes once by name. Phase 9's bars 2 to 5 stay whatever the
+     window picks: the sky rule is not a look.
   3. The goldens are re-blessed and the log names each with its difference count and the
      mechanism that moved it.
 
@@ -505,6 +834,20 @@ window (844 x 460 lighting pixels) is `2 x 388 240 x 8 = 6.2 MB`; at 1080p's hal
 | §3 Everything else (frame targets) | +6.2 MB at the window, +8.3 at 1080p's half tier; +96 B uniform | `frame_bytes`, Phase 5 |
 | §4 Edits, a dig's re-bake | the rings' jobs carry the channel; the owner's lag bar is the ray's, not the bake's | Phase 5 bar 4's frame count; the dig's settle frames as Plan 0059 read them |
 
+Added 2026-11-18 (every figure a guess until the phase reads it; the Floor profile's Lighting
+line is 4.0 ms since Plan 0069's close, and the RADV RENOIR is the slow adapter below the
+floor's class, not the baseline):
+
+| `nfr.md` figure | projection (a guess) | how the close measures it |
+|---|---|---|
+| §2 Lighting, the light pass (Phase 9) | one texture load per sky ray that ends without a hit: +0.02 ms RTX, +0.2 ms RENOIR; this plan read the outdoor light pass at 1.06 to 1.53 ms RTX and 12.9 to 15.2 ms RENOIR with the queue not drained | Phase 9 bar 7's runs, both adapters |
+| §2 the streaming line, the column map's pass (Phase 9) | the dirty tiles' max per frame while flying: +0.1 ms RTX, +0.5 ms RENOIR on a line that is 1.0 ms and a recorded miss | Phase 9 bar 7, the hills path |
+| §2 the bake queue's step and the pre-roll (Phase 9) | the finality wait lengthens the pre-roll by the columns' upper chunks (empty chunks upload without waiting): +0 to 20 % of Phase 4's 7.3 s | Phase 9 bar 7 against Phase 4's table |
+| §3 Everything else, the column map (Phase 9) | at most 4.5 MB at 2-voxel cells over the fly-through's footprint, about 1.1 MB at 4-voxel cells | the map's bytes in `frame_bytes` or the mirror's live bytes, Phase 9 |
+| §2 Lighting, the temporal pass (Phases 10, 13) | the chain's sky read and the bounce floor's read: +0.02 ms RTX, +0.1 ms RENOIR each; the smoothed normal near, if its gradient is not at hand: +0.05 ms RTX, +0.4 ms RENOIR | Phases 10 and 13's readings, both adapters |
+| §2 Lighting, the light pass (Phase 14) | the key light on the pair adds no ray: about 0; the `absorb` arm's translucent walk through leaf bricks: +0.3 ms RTX, +2.5 ms RENOIR in the forest, off unless picked | Phase 14 bar 4 |
+| the exposure pass (Phase 12) | a few multiplies: 0 | Phase 12 bar 2's runs |
+
 On the slow adapter the outdoor light pass is over section 2's line in every configuration
 Plan 0032 read; this plan's Phase 5 is the first reading that can move it under, and `nfr.md`
 section 2 records the result at the close.
@@ -535,6 +878,19 @@ section 2 records the result at the close.
 - **The spike's cost.** Four to eight loads a coarse step is a guess; the spike reads it and
   ends. A no-go leaves `penumbra approach` as a setting only if it costs nothing with `disc`
   (a uniform branch), else it goes.
+- **The column map's far-field error** (added 2026-11-18). A ray that ends in open air above
+  its column's top counts as sky though a hill beyond the cap may block it; one that ends
+  under an overhang open to the side counts as blocked. Both are errors at the cap's distance
+  or more, the class the far field (Plan 0033) owns, and the same class the rule as built had
+  on open ground. The exact answer, a sky flood from the top of every column through the
+  air, is the upgrade if the window shows an arch or a bore longer than the cap read wrong.
+- **The finality wait** (added 2026-11-18). A chunk whose reach's columns hold an absent chunk
+  high up does not bake until it arrives; the pre-roll may lengthen (Phase 9 reads it). If it
+  lengthens by more than a fifth, the fallback is a per-column finality that counts a chunk
+  above the window's z-extent as empty, which is what the rule assumes already.
+- **The transient after a jump** (added 2026-11-18, question 4). Under (a) the underground
+  reads a brief false sky while its columns fill, remembered by the pair until the variance
+  reset catches it; Phase 10 bar 1 bounds it.
 
 ## What this plan does NOT do
 
@@ -547,6 +903,12 @@ section 2 records the result at the close.
   p99): `docs/backlog.md`, dated 2026-11-17.
 - **The 4-voxel shadow walk everywhere** (D5): the Lego look.
 - **Baseline-GPU readings.** The card is not on hand.
+- **A sky flood** (added 2026-11-18): the exact connectivity of air to the sky, a volumetric
+  flood per edit; ADR-0070's amendment names it as the upgrade past the column map.
+- **A tone-curve toe for dark scenes** (question 1 (c)) and **the sunlight bounce** (question
+  2 (c)): a look plan of their own if the owner asks.
+- **Plan 0036's fall map at slanted directions**: Plan 0036 extends the column map; this plan
+  builds the vertical one only.
 
 ## Implementation log
 
@@ -568,8 +930,15 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
 | 5: The rays' own long history, the sky ray only where stale | dev | done | 012bd208 |
 | 6: The key light on the long history, after a reading | dev | done (reading only: 3-degree p99 1 at the lamp's 1, not built) | 12fe6373 |
 | 7: A spike: a deterministic penumbra from the closest approach | dev | done (spike; cost on the RTX approach arm and the RENOIR not read) | ed47dc5c |
-| 8: The owner's windowed check | human | not started | |
-| 9: The picks as tests | dev | not started | |
+| 8: The owner's windowed check | human | done 2026-11-18, failed on five points (`live/window86a/verdicts.md`; the amendment above) | |
+| 9: The sky rule: the column map, sky only above it | dev | not started | |
+| 10: The first seconds after a jump | dev | not started | |
+| 11: The window's defaults | dev | not started | |
+| 12: The tunnel's brightness: the eye's ceiling anchored to the sky | dev | not started | |
+| 13: The zebra stripes: the sky term's normal and a bounce floor | dev | not started | |
+| 14: The forest floor: attribution, the key light on the pair, the canopy's transmittance | dev | not started | |
+| 15: The owner's second window | human | not started | |
+| 16: The picks as tests | dev | not started | |
 
 ### Notes
 

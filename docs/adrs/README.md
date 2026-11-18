@@ -84,7 +84,7 @@ the status.
 | [0067](0067-a-staged-structure-is-a-sequence-of-logged-stamps-over-the-map-with-a-write-policy-not-an-entity.md) | A staged structure is a sequence of logged stamps over the map with a write policy, not an entity | proposed (Plan 0084) |
 | [0068](0068-an-entitys-variants-are-recipes-in-its-model-a-volume-per-part-and-a-palette-per-variant-picked-per-instance.md) | An entity's variants are recipes in its model: a volume per part and a palette per variant, picked per instance by one index | proposed (Plan 0085) |
 | [0069](0069-a-posed-entity-enters-the-world-as-a-baked-prefab-clipped-to-air-through-the-stamp-op.md) | A posed entity enters the world as a baked prefab, clipped to air on the server, through the stamp op | proposed (Plan 0085) |
-| [0070](0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md) | Sky light is a visibility baked per brick direction, coloured by the sky at read; a long-history ray covers what the bake has not caught | proposed (Plan 0086) |
+| [0070](0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md) | Sky light is a visibility baked per brick direction, coloured by the sky at read; a long-history ray covers what the bake has not caught | proposed (Plan 0086); amended 2026-11-18 (the sky rule) |
 | [0071](0071-the-engine-takes-a-name-one-word-for-the-project-the-crate-prefix-the-repository-and-the-archive.md) | The engine takes a name: one word that is the project, the crate prefix, the repository and the archive | accepted (owner, 2026-11-17: `svet`; Plan 0087, draft) |
 <!-- roster:end -->
 

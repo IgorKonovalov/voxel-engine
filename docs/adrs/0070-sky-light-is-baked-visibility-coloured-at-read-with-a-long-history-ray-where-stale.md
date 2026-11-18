@@ -66,10 +66,13 @@ firefly clamp and a variance reset; at rest inside the bake radius no sky ray is
 
 - **The quantity.** `v_d` in [0, 1] per brick direction `d` of six: the cosine-weighted
   fraction of the hemisphere about `d`, from the direction's faces, from which a ray reaches the
-  sky. A ray that leaves the mirror's window or passes the bake's length cap with no hit has
-  reached the sky; one that would reach it below the horizon (its direction's `z` under 0 when
-  it escapes) counts as blocked, as Plan 0032's ray does. Stored as a `u8` per direction (a
-  step is 0.4 % of the open sky's irradiance), eight bytes a record with two spare.
+  sky. A ray that ends with no hit (at the bake's length cap, at an absent chunk or at the
+  window's side) has reached the sky only above its column's top of solid, by the column map
+  of the amendment of 2026-11-18 below (the draft of 2026-11-17 counted every such ray as sky,
+  which Plan 0086's window falsified); one that would reach it below the horizon (its
+  direction's `z` under 0 when it escapes) counts as blocked, as Plan 0032's ray does. Stored
+  as a `u8` per direction (a step is 0.4 % of the open sky's irradiance), eight bytes a record
+  with two spare.
 - **The bake.** The job that bakes a brick's emissive directions also draws `SKY_BAKE_RAYS`
   cosine-weighted rays per direction (256, a guess: the binomial standard deviation at `p` 0.5
   is 1/32, eight `u8` steps; Plan 0086 reads it) from points on that direction's faces, with
@@ -196,6 +199,117 @@ The backlog's per-face cells (ADR-0046's rejected face level), for the sky chann
 removes the brick-level leak at the camera's feet for a store several times the size and the
 face directory ADR-0046's Outcome deleted. The leak is accepted at the brick level for emissive
 light already; the sky channel takes the same level.
+
+## Amendment 2026-11-18: what counts as sky
+
+Written while the ADR is `proposed`, after Plan 0086's Phase 8 window (2026-11-18) and the
+diagnosis in `docs/plans/logs/0086.md` ("After Phase 8: the underground leak"). It replaces
+the quantity bullet's sentence on rays that end without a hit; the rest of the body stands.
+
+### Context
+
+The draft counted a sky ray as having reached the sky when it ended without a hit for any
+reason: past its length cap (the bake's is the job's reach, `light_radius` x 64 = 256 voxels;
+the light pass's `SKY_RAY_VOXELS` 512), on entering an absent chunk, or on leaving the
+window (Plan 0032 Phase 10's rule, asserted by `an_absent_chunk_is_sky_to_the_sky_ray`). The
+window's run 12 stood in a closed cavern at noon with no emitter and saw every wall lit
+(scene -2.7 EV). The diagnosis measured the cause: in that cavern 0.38 % of cosine rays meet
+no rock within 256 voxels (0.00 % within 512), and times the noon sky's irradiance that is a
+stored part of 0.57 to 2.75 at exposure 1 where the truth is 0 (the open ground reads about
+150); with the bake's cap raised to 4096 by hand the same rig reads 0 to 0.0083. The tunnel's
+deep floor reads 2 to 4 times its true value from its seventh station on for the same reason,
+and the streamed rig after a jump reads 0.19 in its first frames from rays through chunks not
+yet resident. The cave mouth's seal bar (sealed walls at 24 % of unsealed, bar 2 %) is the
+same leak. The cap exists because a ray that walks to the window's edge is the slow adapter's
+whole budget (the sky ray read about 4.8 ms a ray there), and the bake's cap is also what
+makes its result independent of the residency beyond the reach (ADR-0046's identity).
+
+What a ray that ends without a hit should count as is therefore a decision with three sites
+(the cap, an absent chunk, the window's edge) in two passes (the bake and the light pass), and
+every simple rule is wrong somewhere: counting the end as sky lights closed caverns; counting
+it as blocked darkens every open floor, since an upward ray in the open meets nothing within
+any finite cap.
+
+### Decision
+
+**A sky ray that ends without a hit has reached the sky iff its end point lies above the top
+of solid in its column. The renderer keeps that top in a column map: a camera-centred 2D map
+over the mirror's footprint, built from the resident chunks (a full chunk's bricks exactly, a
+LOD chunk's mips conservatively), refreshed as chunks arrive, leave or are edited. One
+function in the shadow walk applies the rule at every end: the length cap, an absent chunk,
+the window's side; the window's top face is above every column's top, so a ray that leaves
+through it is sky, and a ray below the horizon stays blocked.** The bake's cap and the light
+pass's stay what they are. A column whose chunks within the window have not all arrived is
+not final: the light pass reads the resident chunks' top (Plan 0086's question 4; the
+alternative is to count an absent chunk in the column as solid), and the bake's reach rule
+gains finality: a chunk bakes when its reach is resident and every column over the reach's
+footprint is final, so the bake's input is the same whatever the slicing and the job order.
+The map is ADR-0031's fall map at the vertical fall direction; Plan 0036 extends it and does
+not build a second one.
+
+### Consequences
+
+Positive: a closed cavern, a sealed cave and a deep bore read a sky term of 0 to the map's
+precision, whatever their size against the cap, and the open ground reads as before (an
+upward ray's end point is above its column); the rule costs one texture load per ray that
+ends without a hit and no longer ray; the three sites and the two passes share one rule, so
+the bake and the ray still estimate one quantity; the map serves Plan 0036's weather and any
+"under open sky" query a consumer asks. Negative: a 2D map over the footprint (about 4.5 MB at
+2-voxel cells at the fly-through's residency, a guess until read) and a pass over its dirty
+tiles on the streaming line; the bake waits for its columns to be final, which can lengthen
+the pre-roll; the rule's errors are of the far-field class: a hill beyond the cap does not
+block a ray that ends in open air (as before), and an arch or a bore open to the side beyond
+the cap reads blocked where its end point lies under the overhang; a column that is not final
+leaks briefly after a jump underground under question 4's recommended reading.
+
+### Alternatives considered
+
+#### Alternative A: the end of a ray is sky (the draft)
+Measured wrong in a closed cavern (0.57 to 2.75 at exposure 1 against 0) and in the tunnel's
+deep half (2 to 4 times the truth). The decisive reason is the owner's window.
+
+#### Alternative B: the end of a ray is blocked
+Exact in a cavern and wrong on every open floor: an upward ray in the open meets nothing
+within any finite cap, so the open ground's `+z` visibility reads 0. Decisive by arithmetic;
+no reading needed.
+
+#### Alternative C: a longer cap, sky at its end
+The bake's cap at 4096 read 0 to 0.0083 in the whole-world rig. It leaves the absent chunk
+and the window's edge as sky, so the streamed rig still reads 0.168 in its first frame with
+the cap at a million voxels, and a bake whose rays leave the reach depends on the residency
+beyond it (ADR-0046's identity) or waits for a reach that never fills. It also pays the long
+walk per ray in every cavern. Decisive: it does not decide the other two sites.
+
+#### Alternative D: an absent chunk and the window's edge are blocked, the cap stays sky
+The inverse of Plan 0032 Phase 10's rule. It darkens the far ground while moving and every
+column after a jump until its chunks arrive, which is the look that rule was written against,
+and it leaves the cavern's leak through the cap in place. Decisive: it fixes the smaller site
+and breaks the one the owner already accepted.
+
+#### Alternative E: a vertical probe from the end point
+A second ray straight up from where the first ended, sky iff it meets nothing. Exact against
+what is resident, with no map. It doubles the sky ray's walk wherever a ray escapes (every
+upward ray on open ground; the slow adapter's 4.8 ms a ray again during a dig, and the bake's
+256 rays a direction each with a second walk), and it still needs a rule for an absent chunk
+above the end point, with no finality the bake can wait for. The map pays the vertical walk
+once per column instead of once per ray and gives the bake its finality. Decisive: cost.
+
+#### Alternative F: a sky flood
+Flood the air from the top of every column downward and count a ray's end as sky iff its
+cell is flooded: the exact connectivity, right under arches and in bores open to the side
+beyond the cap. A volumetric flood over the window per edit, incrementally maintained, is a
+mechanism of Plan 0033's size. The map's errors are of the far-field class and nothing in the
+window showed them; the flood is the upgrade if a later window does.
+
+#### Alternative G: the source declares each column's top
+A `WorldSource` hint, deterministic and known beyond the window. Every source would carry it
+(a `.vox` level, a save with edits folded in), and a renderer that trusts a hint for a
+correctness rule has no way to check it. The mirror already holds what the map needs; a hint
+may later seed columns the mirror has not seen, as an optimisation, not as the rule.
+
+#### Alternative H: a flat horizon
+Sky iff the end point is above a configured ground height. Wrong on the first hill. Named so
+that it is not proposed again.
 
 ## Outcome
 
