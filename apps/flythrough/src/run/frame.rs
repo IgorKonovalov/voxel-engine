@@ -12,10 +12,10 @@ use crate::percentile;
 use crate::run::Run;
 use crate::run::fade::{FADE_DIGS, FADE_END, FadeSample, fade_lamp, fade_report};
 use crate::run::hud_feed::Overlay;
-use crate::run::hud_feed::{
-    SAMPLES, Samples, band_census_line, belt_line, bins_line, crack_shares, field_line,
-    key_ray_steps, key_steps_line, print_moving_exposure, probe_passes_ms, shadow_steps_line,
-    steps_line, window_line,
+use crate::run::hud_feed::{SAMPLES, Samples, crack_shares, print_moving_exposure};
+use crate::run::hud_lines::{
+    band_census_line, belt_line, bins_line, field_line, key_ray_steps, key_steps_line,
+    probe_passes_ms, shadow_steps_line, steps_line, window_line,
 };
 use crate::run::keys::{ORE_PULSE_MEAN, ore_pulse};
 use crate::run::loading::fade_loading;
@@ -740,7 +740,7 @@ impl Run {
             Overlay::Banner => {
                 self.write_banner();
                 // The stats' colours are free with the HUD off: the banner's go there.
-                crate::run::hud_feed::banner_colours(&self.hud.banner, &mut self.hud.colours);
+                crate::run::hud_lines::banner_colours(&self.hud.banner, &mut self.hud.colours);
                 let belt = self.belt_rows(gpu.size, true);
                 if let Some(gfx) = self.gfx.as_mut() {
                     let (text, colours) = (&self.hud.banner, &self.hud.colours);
@@ -789,6 +789,7 @@ impl Run {
         self.aim_entities();
         // The walkers walk before their eye lights are read, so a light rides with its head.
         self.modes.walkers.step(step);
+        self.modes.walkers.tick_movers(step, &self.world);
         let mut lights = self.modes.lights.list();
         // The walkers' eye lights take the list's free slots, newest walkers last.
         let free =

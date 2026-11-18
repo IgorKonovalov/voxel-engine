@@ -171,3 +171,61 @@ fn the_committed_library_builds() {
     );
     assert_eq!(walk_stride(&spider), Some(3072));
 }
+
+/// Plan 0079 Phase 4 done-when 3: the walker's `walk` (30 ticks, stride 2048) follows the
+/// distance: 2048 units moved is clip tick 0 again, exactly, and 1024 is tick 15; a wandering
+/// walker that stands still fades into `idle` over 8 ticks (weight 32 a tick from the last
+/// walk pose) and at the 8th tick stands in `blend(last walk pose, idle at tick 0, 256)`.
+#[test]
+fn the_walk_clip_follows_the_distance() {
+    use flythrough::entities::mover::{Mover, walk_tick};
+    use flythrough::viewer::Play;
+    use vxe_entity::{blend, sample};
+
+    let path = library().join("walker/walker.rig");
+    let mut v = Viewer::open(&path, Some("walk".into())).expect("opens");
+    assert_eq!(v.build_pending(&showcase_table()), None);
+    let l = v.loaded.clone().expect("built");
+    let clip = |name: &str| {
+        l.clips
+            .iter()
+            .find(|(n, _)| n == name)
+            .expect(name)
+            .1
+            .clone()
+    };
+    let (walk, idle) = (clip("walk"), clip("idle"));
+    let at = |d: i64| walk.clip_tick(walk_tick(d, &walk).expect("a stride"));
+    assert_eq!((at(0), at(1024), at(2048), at(3072)), (0, 15, 0, 15));
+
+    let body = v.body.expect("a body");
+    let play = Play::start(&l, 0);
+    let rest = sample(&l.model, &l.rest, &walk, 0);
+    let mut m = Mover::new(
+        body,
+        [0.0; 3],
+        [0.0, 0.0, 1.0],
+        [0.0, -1.0, 0.0],
+        (1, 0),
+        rest,
+    );
+    // 1024 units in 24 ticks of 43 (and 8 more): the walk at the distance's tick.
+    for _ in 0..24 {
+        m.animate(43, true, true, (&l, &play));
+    }
+    m.animate(8, true, true, (&l, &play));
+    assert_eq!(m.distance, 1040);
+    let last_walk = sample(&l.model, &l.rest, &walk, 1040 * 30 / 2048);
+    assert_eq!(*m.parts(), last_walk);
+    let idle0 = sample(&l.model, &l.rest, &idle, 0);
+    for k in 1..=8u16 {
+        m.animate(0, true, true, (&l, &play));
+        assert_eq!(
+            *m.parts(),
+            blend(&last_walk, &idle0, 32 * k),
+            "still tick {k}"
+        );
+    }
+    assert_eq!(*m.parts(), blend(&last_walk, &idle0, 256));
+    assert_eq!(m.still, 8);
+}

@@ -32,6 +32,7 @@ pub(crate) mod edit;
 pub(crate) mod fade;
 pub(crate) mod frame;
 pub(crate) mod hud_feed;
+pub(crate) mod hud_lines;
 pub(crate) mod keys;
 pub(crate) mod loading;
 pub(crate) mod pilot;

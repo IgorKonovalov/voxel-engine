@@ -251,7 +251,7 @@ pub enum Act {
     Turn,
     /// Removes the placed entity under the crosshair.
     RemoveAimed,
-    /// The walkers walk or hold still.
+    /// The wander on or off: the bodies wander, the built-in walkers walk their circle.
     WalkersWalk,
     /// The walkers' eye lights on or off.
     EyeLights,
@@ -483,9 +483,9 @@ pub static ACTIONS: &[Action] = &[
     ),
     Action {
         binds: &[],
-        label: "walkers walk",
+        label: "wander",
         group: Group::Entities,
-        mode: Some(|m, _| format!("walkers walk {}", on(m.walkers.walking))),
+        mode: Some(|m, _| format!("wander {}", on(m.walkers.walking))),
         act: Act::WalkersWalk,
         needs: None,
         range: None,

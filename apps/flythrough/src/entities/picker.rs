@@ -1,13 +1,14 @@
 //! The chooser (the menu's dynamic page, `hud::menu::PageId::Entities`): each library entry's
 //! rows as the page draws them; and the ghost, placement mode's selected entry standing at
-//! the aim (`super::belt::stand`) facing the camera turned by the belt's turn, a real entity
-//! in the set that a click leaves placed under its own id.
+//! the aim (`super::belt::stand`; a surface body on the aimed face) facing the camera turned
+//! by the belt's turn, a real entity in the set that a click leaves placed under its own id.
 
 use vxe_entity::EntityId;
 use vxe_render::MAX_ENTITIES;
 use vxe_world::MaterialTable;
 
 use super::library::{BUILTIN_NAME, Source, cut, extent, model_of};
+use super::mover::{Mover, Stance};
 use super::walker::pose;
 use super::{Placed, Walkers};
 use crate::hud::Modes;
@@ -84,20 +85,21 @@ pub fn full_words() -> String {
 }
 
 impl Walkers {
-    /// Stands the ghost of `entry` (`None` the built-in walker) at `feet`, turned `yaw`:
-    /// moved there when it already shows that entry, else placed anew (the old one removed).
-    /// With [`MAX_ENTITIES`] placed there is no ghost and the words say the set is full.
+    /// Stands the ghost of `entry` (`None` the built-in walker) at `stance`: moved there when
+    /// it already shows that entry (a body's mover stood anew, its wander kept), else placed
+    /// anew (the old one removed). With [`MAX_ENTITIES`] placed there is no ghost and the
+    /// words say the set is full.
     pub fn show_preview(
         &mut self,
         table: &MaterialTable,
         entry: Option<usize>,
-        feet: [f32; 3],
-        yaw: f32,
+        stance: Stance,
     ) -> Result<(), String> {
         if self.placed.len() >= MAX_ENTITIES {
             self.clear_preview();
             return Err(full_words());
         }
+        let (feet, yaw) = (stance.point, stance.yaw);
         if let Some(p) = &mut self.preview
             && p.entry == entry
         {
@@ -105,17 +107,25 @@ impl Walkers {
                 (p.feet, p.yaw) = (feet, yaw);
                 let rig = entry
                     .and_then(|i| self.library.entries[i].viewer())
-                    .and_then(|v| v.loaded.as_ref());
-                let now = match rig {
-                    Some(l) => placed(&p.play.poses(l).0, feet, yaw),
-                    None => pose(feet, yaw, 0.0),
+                    .and_then(|v| Some((v.loaded.as_ref()?, v.body)));
+                let now = match (rig, &mut p.mover) {
+                    (Some((l, Some(body))), Some(m)) => {
+                        let parts = p.play.poses(l).0;
+                        let wander = m.wander;
+                        let (up, fwd) = (stance.up, stance.forward);
+                        *m = Mover::new(body, feet, up, fwd, (0, 0), parts);
+                        m.wander = wander;
+                        m.now.clone()
+                    }
+                    (Some((l, _)), _) => placed(&p.play.poses(l).0, feet, yaw),
+                    (None, _) => pose(feet, yaw, 0.0),
                 };
                 let _ = self.set.set_pose(p.id, now);
             }
             return Ok(());
         }
         self.clear_preview();
-        self.place_entry(table, entry, feet, yaw)?;
+        self.place_at(table, entry, stance)?;
         self.preview = self.placed.pop();
         Ok(())
     }

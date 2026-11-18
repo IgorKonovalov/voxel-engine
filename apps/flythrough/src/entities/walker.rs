@@ -1,7 +1,7 @@
 //! The built-in walker (ADR-0050): a voxel model of four rigid parts made in code, a torso, a
 //! head with two glowing eyes and two legs, all at detail 2. It is the entry placed when the
 //! entities library is missing or empty (`super::library`), so a run from an unpacked tester
-//! archive still places something; `walkers walk` (or `--entities-walk on`) sets the placed
+//! archive still places something; the menu's `wander` (or `--entities-walk on`) sets the placed
 //! built-in walkers walking, each on a circle from where it stands with its legs swinging,
 //! and `eye lights` lights their eyes. The engine knows no walker: this is the fly-through's
 //! entity.

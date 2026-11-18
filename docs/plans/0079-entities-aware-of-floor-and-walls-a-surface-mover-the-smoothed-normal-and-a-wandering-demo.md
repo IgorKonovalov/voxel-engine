@@ -833,7 +833,7 @@ unchanged (ADR-0050).
 | 1: the surface mover in `vxe-sim` | dev | done; readings in [`logs/0079.md`](logs/0079.md) | bc04beb4 |
 | 2: the smoothed normal in `vxe-world`, the frame in `vxe-entity` | dev | done; done-when 8 per the 2026-11-17 amendment | 7661676e, committed with this row |
 | 3: the body and the stride in the `.rig` | dev | done | 8c0b26d4 |
-| 4: the fly-through's demo | dev | not started | |
+| 4: the fly-through's demo | dev | done; done-whens 1 to 8, readings in the log | committed with this row |
 | 5: the owner's window | human | not started | |
 | 6: the owner's picks, and the tip | dev | not started | |
 
@@ -853,6 +853,11 @@ each. Empty is fine.)_
 - Phase 2: `normalise` takes the length at 256 times the scale (the floor root of a short vector read `(-6, 0, 6)` as `(-192, 0, 192)`); the Phase 1 surface course hash is re-pinned to `0x0a07_c86c_51f9_8d3c` with `smooth_normal` in it.
 - Phase 3: the walker's `body ground radius 4 height 26 step 4` is the phase's line as written; the tree's walker has its torso at 12, not 8, so its top is 30 model voxels, 4 above the body's height (readings log).
 - Phase 1: the `CLAUDE.md` line for `vxe-sim` is not in the worktree; the orchestrator adds it in the main checkout's `.claude/` repo.
+- Phase 4: files outside the phase's list: `app.rs` (`with_seed(args.seed)`, the wander's seed), `entities/walker.rs` (its doc's `walkers walk`), `tests/viewer.rs` (`each_entity_plays_its_own_clip` ticks the movers on a floor world; the library walker's pose is its mover's), and the import lines of `hud_lines`' callers (`setup.rs`, `run/{edit,loading,pilot,tests,mod}.rs`, `cli/tests.rs`, `hud/stats/tests.rs`).
+- Phase 4: `refreshing_the_displays_allocates_nothing_per_entity` now reads 0 bytes for the library walker's instances (they draw their movers' poses); its "four times one's bytes" for rig instances without a body is no longer exercised.
+- Phase 4: the stance's forward on a floor faces the eye (0077's rule); on a wall or a ceiling it is the eye's direction projected onto the face, the camera's up when that is nought (the plan: the camera's forward projected).
+- Phase 4: the room course runs in a world of rock above and below the `64^3` box (chunks `[0,0,-1]..[1,1,2]`), so done-when 5's 1 m carves through the 1-voxel floor and ceiling find rock.
+- Phase 4: Budgets readings over the guesses (loaded): spider x64 tick p50 1.41 ms (room) and 2.84 ms (showcase ring); showcase frame CPU p50 +3.07 ms at 64 spiders against the built-in base. Spiders dwell up to 220 ticks at pillars' vertical edges (the Risks' convex-edge dwell); `crates/` untouched.
 
 ### Close triggers
 

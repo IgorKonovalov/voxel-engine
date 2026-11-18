@@ -930,3 +930,33 @@ fn the_pad_edits_a_number() {
     assert_eq!((rows(&run), run.menu.page(), run.menu.selected()), before);
 }
 // keys:typed-end
+
+/// Plan 0079 Phase 4 done-when 6: the wander is the entry `wander` under `entities` with no
+/// key; `--keys` lists it there as `wander`, `wander off` and `menu` in its key column; `Enter`
+/// on it says `wander on` and sets the wander.
+#[test]
+fn the_wander_is_an_entry_with_no_key() {
+    use crate::hud::menu::{entries, keys_text};
+    let e = entries().find(|e| e.label == "wander").expect("the entry");
+    assert_eq!((e.group.name(), e.keys()), ("entities", String::new()));
+    let tree = keys_text(&crate::cli::parse_args_from(["--keys".to_owned()]).expect("parses"));
+    let row = tree
+        .lines()
+        .skip_while(|l| *l != "entities")
+        .find(|l| l.trim_start().starts_with("wander "))
+        .expect("a wander row under entities");
+    let cells: Vec<&str> = row
+        .split("  ")
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .collect();
+    assert_eq!(cells, ["wander", "wander off", "menu"], "{row}");
+    let mut run = bare_run(carved_rock());
+    select(&mut run, &e);
+    frame_keys(&mut run, &pressed(KeyCode::Enter));
+    assert!(run.modes.walkers.walking);
+    assert_eq!(
+        run.notice.as_ref().map(|(l, _)| l.as_str()),
+        Some("wander on")
+    );
+}

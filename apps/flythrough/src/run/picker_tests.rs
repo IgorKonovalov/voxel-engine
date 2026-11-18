@@ -430,6 +430,59 @@ fn the_ghost_stands_by_the_rule() {
     );
 }
 
+/// Plan 0079 Phase 4 done-when 4: the camera 12 m from a flat `-x` wall face (beyond the
+/// spider's `near` of about 10.4 m), aiming square at it, in placement mode at the spider's
+/// slot (showcase table): the ghost's mover is a surface body attached with normal `(-256, 0,
+/// 0)`, its centre at the hit moved 6 voxels (1536) along `-x`, its turn taking `+z` to `-x`
+/// within 2 per component; the left click leaves that `Placed` with the same state, and the
+/// next tick with the wander off keeps it attached with nothing moved. At the same aim the
+/// walker's ghost stands on the floor below the hit moved back by half its footprint, a
+/// ground body turned about `+z` only.
+#[test]
+fn a_spider_placed_on_a_wall_is_on_the_wall() {
+    let table = crate::walker::with_walker(&crate::showcase_materials());
+    let mut run = run_in(rock_box(&table, 120));
+    assert!(!run.modes.walkers.walking);
+    let hit = [120 * FIXED_ONE, 0, 9 * FIXED_ONE];
+    let feet = ghost_feet(&mut run, "spider", [0.0, 0.0, 9.0], 0.0);
+    assert_eq!(feet, [120.0, 0.0, 9.0]);
+    let g = run.modes.walkers.preview.clone().expect("a ghost");
+    let m = g.mover.as_ref().expect("a mover");
+    let st = *m.surface().expect("a surface body");
+    assert!(st.attached);
+    assert_eq!(st.normal, [-256, 0, 0]);
+    assert_eq!(st.centre.0, [hit[0] - 1536, hit[1], hit[2]]);
+    let up = m.now.root_q.rotate_vector([0, 0, 256]);
+    assert!(
+        (0..3).all(|k| (up[k] - [-256, 0, 0][k]).abs() <= 2),
+        "{up:?}"
+    );
+    frame_keys(&mut run, &click(MouseButton::Left));
+    let w = &run.modes.walkers;
+    let p = w.placed.last().expect("placed");
+    assert_eq!((p.id, &p.mover), (g.id, &g.mover));
+    let steps = run.modes.walkers.tick(&run.world);
+    let (_, s) = steps.iter().find(|(id, _)| *id == g.id).expect("ticked");
+    assert!(s.on_surface && s.moved == Fixed3::default(), "{s:?}");
+
+    let ex = run
+        .modes
+        .walkers
+        .extent_of(Some(entry(&run, "walker")), &table);
+    let feet = ghost_feet(&mut run, "walker", [0.0, 0.0, 9.0], 0.0);
+    let want = [120.0 - 0.5 * ex[0].max(ex[1]), 0.0, -8.0];
+    assert!(
+        (0..3).all(|k| (feet[k] - want[k]).abs() <= 1.0),
+        "{feet:?} {want:?}"
+    );
+    let g = run.modes.walkers.preview.as_ref().expect("a ghost");
+    let m = g.mover.as_ref().expect("a mover");
+    assert!(m.ground().is_some());
+    let q = m.now.root_q.0;
+    assert_eq!((q[1], q[2]), (0, 0), "{q:?}");
+    assert_eq!(m.now.root_q.rotate_vector([0, 0, 256]), [0, 0, 256]);
+}
+
 /// Phase 5 done-when: the left click leaves one placed walker where the ghost stood (same id,
 /// clip and yaw) and a new ghost, and digs nothing; `R` four times (22.5 degree steps, the
 /// owner's answer to question 16) then a click places a walker turned 90 degrees from facing
