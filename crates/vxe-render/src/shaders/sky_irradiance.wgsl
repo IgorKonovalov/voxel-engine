@@ -5,16 +5,20 @@
 // measure (a uniform grid in the disc's area and angle, lifted onto the hemisphere), the
 // radiance read at each stratum's centre from the sky-view LUT (`sky_view_radiance`). Run
 // after the sky-view pass every frame a sky is set; one workgroup a direction. Compiled after
-// the prelude and `sky_atmosphere.wgsl`.
+// the prelude and `sky_atmosphere.wgsl`. `+z`'s w is the key light's irradiance on a
+// horizontal face at the sky's base altitude in luminance (Rec. 709), `E T(base, l.z) l.z`, 0
+// with no key light: the exposure pass's anchored ceiling reads it; every other w is 0.
 //
 // Bindings, group 0:
 //   0  uniform          sky          the sky uniform
 //   1  texture_2d<f32>  sky_view_in  the sky-view LUT
-//   2  storage          sky_e_out    six vec4: `E_sky` in xyz, w 0
+//   2  storage          sky_e_out    six vec4: `E_sky` in xyz, w as above
+//   3  texture_2d<f32>  sky_trans_in the transmittance LUT
 
 @group(0) @binding(0) var<uniform> sky: SkyUniform;
 @group(0) @binding(1) var sky_view_in: texture_2d<f32>;
 @group(0) @binding(2) var<storage, read_write> sky_e_out: array<vec4<f32>, 6>;
+@group(0) @binding(3) var sky_trans_in: texture_2d<f32>;
 
 // Strata a side: IRR_SIDE^2 directions a hemisphere.
 const IRR_SIDE: u32 = 32u;
@@ -61,6 +65,12 @@ fn sky_irradiance(
         }
     }
     if (lane == 0u) {
-        sky_e_out[f] = vec4<f32>(SKY_PI * irr_sum[0] / f32(IRR_SIDE * IRR_SIDE), 0.0);
+        var key = 0.0;
+        if (f == 5u && (sky.flags & SKY_KEY) != 0u && sky.key_dir.z > 0.0) {
+            let r = sky.bottom_radius + max(sky.base_altitude_m, 0.0) / 1000.0;
+            let e = sky.key_e * transmittance_from(sky_trans_in, r, sky.key_dir.z) * sky.key_dir.z;
+            key = dot(e, vec3<f32>(0.2126, 0.7152, 0.0722));
+        }
+        sky_e_out[f] = vec4<f32>(SKY_PI * irr_sum[0] / f32(IRR_SIDE * IRR_SIDE), key);
     }
 }

@@ -94,7 +94,8 @@ fn mirror_of(label: &str, name: &str) -> Option<Mirror> {
             adapted_log2,
             metered_log2,
             frame,
-            flags
+            flags,
+            ceiling
         }),
         (_, "ExUniform") => mirror!(crate::exposure::ExposureUniform {
             tiles,
@@ -111,7 +112,8 @@ fn mirror_of(label: &str, name: &str) -> Option<Mirror> {
             tau_light,
             tau_cone,
             tau_rod,
-            floor_log2
+            floor_log2,
+            anchor
         }),
         (_, "ProbeParams") => mirror!(crate::probes::ProbeUniform {
             origin,

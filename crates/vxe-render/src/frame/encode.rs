@@ -890,7 +890,7 @@ impl Frame {
             device,
             queue,
             encoder,
-            &t.tiles,
+            [&t.tiles, &self.sky.irradiance],
             &self.exposure_uniform(p),
             timer
                 .filter(|t| t.passes() > exposure_pass)
@@ -1029,7 +1029,7 @@ impl Frame {
             ..ExposureUniform::default()
         };
         if let Exposure::Auto(a) = &self.state.lighting.exposure {
-            u.set_auto(a);
+            u.set_auto(a, self.sky.sky.is_some());
         }
         u
     }

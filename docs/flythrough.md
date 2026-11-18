@@ -217,6 +217,8 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--sky-rays N` | Cosine-weighted sky rays a lighting pixel casts where no baked sky visibility is fresh, 0 (bake only) to 4; the banner names the count [1] |
 | `--sky-history N` | Frames the sky rays' running mean (the visibility pair) holds at most, 1 to 1024 [64] |
 | `--penumbra disc\|approach` | The key light's penumbra: one shadow ray a frame toward a random point of the sun's or moon's disc, or (a spike, Plan 0086 Phase 7) one toward its centre that scores how close it passes the rock beside it, the same every frame and on the lit side of an edge only; the banner reads `penumbra approach` with a sky set [disc] |
+| `--sky-anchor N\|none` | While a sky is set, the auto exposure opens at most `N` EV (-4 to 12) over the exposure that puts a sunlit horizontal face of albedo 0.5 at mid-grey (the sky's and the key light's irradiance on it, each frame), so a noon tunnel stays dark and the night still opens; the banner reads `sky anchor N` and the exposure row `ceiling +X EV (anchor N)`. `none` keeps the constant ceiling [none] |
+| `--exposure-max EV` | The auto exposure's constant ceiling in EV, -16 to 8; the exposure row names it as `ceiling +X EV` [+2 for `--source outdoor`, else +4] |
 | `--sky on\|off` | A sky over the world [on for `--source outdoor`, else off] |
 | `--switch-at F,..` | Switch the source at these frames, as `Home` does, and print the spawn's hash at the end |
 | `--spawn-hash` | Print the voxel hash of the chunks within 2 of the spawn's chunk at the end |

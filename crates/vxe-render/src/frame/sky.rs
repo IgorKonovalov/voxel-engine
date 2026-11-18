@@ -113,7 +113,9 @@ pub(super) struct SkyState {
     pub(super) sky: Option<Sky>,
     pub(super) uniform: wgpu::Buffer,
     /// `E_sky` ([`SKY_E_BYTES`]), written by the irradiance pass after the sky view's each
-    /// frame a sky is set; the temporal pass reads it (`sky_e`). Zero before the first sky.
+    /// frame a sky is set; the temporal pass reads it (`sky_e`), the exposure pass its `+z`
+    /// (the anchored ceiling, with the key light's horizontal irradiance in its w). Zero
+    /// before the first sky.
     pub(super) irradiance: wgpu::Buffer,
     pub(super) luts: Option<SkyLuts>,
     placeholder: wgpu::Texture,
@@ -176,7 +178,7 @@ impl SkyState {
                 &[Io::Uniform, Io::Store(F16)],
                 &[Io::Uniform, Io::Float, Io::Store(F16)],
                 &[Io::Uniform, Io::Float, Io::Float, Io::Store(F32)],
-                &[Io::Uniform, Io::Float, Io::Storage],
+                &[Io::Uniform, Io::Float, Io::Storage, Io::Float],
             ];
             let layouts: Vec<_> = SKY_PASSES
                 .iter()
@@ -274,6 +276,7 @@ impl SkyState {
                     Res::Buf(&self.uniform),
                     Res::Tex(&luts.view),
                     Res::Buf(&self.irradiance),
+                    Res::Tex(&luts.transmittance),
                 ],
             ),
         ])
@@ -353,7 +356,8 @@ impl Frame {
 
     /// `E_sky` (ADR-0070): six `vec4<f32>`, the sky's cosine-weighted irradiance about each
     /// axis in face order (2 k toward -k, 2 k + 1 toward +k) in xyz, written by the last encode
-    /// with a sky set; zero before the first.
+    /// with a sky set; zero before the first. `+z`'s w is the key light's irradiance on a
+    /// horizontal face at the base altitude, in luminance (the exposure's anchored ceiling).
     pub fn sky_irradiance(&self) -> &wgpu::Buffer {
         &self.sky.irradiance
     }

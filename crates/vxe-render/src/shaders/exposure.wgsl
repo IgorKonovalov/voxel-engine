@@ -9,6 +9,8 @@
 //   2  storage, read     tiles           the composite's tiles: per 8 x 8 workgroup of the
 //                                        internal target, row-major, the sum of the clamped
 //                                        log2 luminance of its pixels and their count
+//   3  storage, read     sky_e           `E_sky` (sky_irradiance.wgsl): six vec4, `+z`'s w the
+//                                        key light's horizontal irradiance in luminance
 //
 // Tile `i` weighs `w_i = 1 + strength exp(-r_i^2 / (2 sigma^2))`, `r_i` the distance of the
 // tile's centre (its 8 x 8 square's centre, in pixels) from the centre of the view whose
@@ -24,6 +26,10 @@
 // `previous` becomes the exposure this frame's passes used (the state's `current` in auto,
 // else the manual value: `exposure_now` in common.wgsl) and `current` the one the next frame
 // uses: the manual value, or in auto `key 2^compensation / 2^adapted` clamped to the limits.
+// The upper limit is `max_e`, or with `anchor` over 0 (`2^N`: the frame holds a sky and the
+// model anchors its ceiling, `AutoExposure::ceiling`) and the sunlit ground's irradiance `E`
+// over 0, `anchor key / (0.5 E / pi)`; `E` is `E_sky(+z)`'s luminance plus its w. The state's
+// `ceiling` keeps the limit in force.
 
 struct ExUniform {
     tiles: vec2<u32>,
@@ -47,7 +53,8 @@ struct ExUniform {
     tau_cone: f32,
     tau_rod: f32,
     floor_log2: f32,
-    _pad: f32,
+    // `2^N` under the sky anchor, else 0.
+    anchor: f32,
 };
 
 struct ExState {
@@ -57,13 +64,14 @@ struct ExState {
     metered_log2: f32,
     frame: u32,
     flags: u32,
-    _pad0: u32,
-    _pad1: u32,
+    ceiling: f32,
+    _pad: u32,
 };
 
 @group(0) @binding(0) var<uniform> ex: ExUniform;
 @group(0) @binding(1) var<storage, read_write> state: ExState;
 @group(0) @binding(2) var<storage, read> tiles: array<vec2<f32>>;
+@group(0) @binding(3) var<storage, read> sky_e: array<vec4<f32>, 6>;
 
 const TILE: f32 = 8.0;
 
@@ -97,6 +105,19 @@ fn step_adapted(a: f32, t: f32, dt: f32) -> f32 {
         return t + (f - t) * decay(dt - to_floor, ex.tau_rod);
     }
     return t + (a - t) * decay(dt, ex.tau_rod);
+}
+
+// The ceiling in force: `max_e`, or the anchored one (the header).
+fn ceiling() -> f32 {
+    if (ex.anchor <= 0.0) {
+        return ex.max_e;
+    }
+    let up = sky_e[5];
+    let e = dot(up.xyz, vec3<f32>(0.2126, 0.7152, 0.0722)) + up.w;
+    if (e <= 0.0) {
+        return ex.max_e;
+    }
+    return ex.anchor * ex.key / (0.5 * e / 3.14159265358979);
 }
 
 var<workgroup> partial: array<vec2<f32>, 256>;
@@ -155,8 +176,10 @@ fn exposure(@builtin(local_invocation_index) lane: u32) {
         } else if (metered && ex.dt > 0.0) {
             s.adapted_log2 = step_adapted(s.adapted_log2, s.metered_log2, ex.dt);
         }
-        s.current = clamp(ex.key / exp2(s.adapted_log2), ex.min_e, ex.max_e);
+        s.ceiling = ceiling();
+        s.current = clamp(ex.key / exp2(s.adapted_log2), ex.min_e, max(s.ceiling, ex.min_e));
     } else {
+        s.ceiling = ex.max_e;
         s.current = ex.manual;
     }
     s.frame += 1u;

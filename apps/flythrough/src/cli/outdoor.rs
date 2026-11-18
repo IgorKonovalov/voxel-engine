@@ -32,6 +32,12 @@ pub struct OutdoorArgs {
     pub(crate) leaf_shadow: crate::LeafShadow,
     /// `--penumbra disc|approach`: how the key light's shadow ray makes its penumbra.
     pub(crate) penumbra: vxe_render::Penumbra,
+    /// `--sky-anchor N|none`: the auto exposure's ceiling anchored `N` EV over the sunlit
+    /// ground's exposure while a sky is set (`AutoExposure::sky_anchor_ev`); unset, none.
+    pub(crate) sky_anchor: Option<f32>,
+    /// `--exposure-max EV`: the auto exposure's constant ceiling in EV; unset, the start's
+    /// ([`OUTDOOR_MAX`] outdoors, the preset's elsewhere).
+    pub(crate) exposure_max_ev: Option<f32>,
 }
 
 impl OutdoorArgs {
@@ -217,6 +223,7 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
         ),
     ];
     flags.extend(sky_light_flags());
+    flags.extend(ceiling_flags());
     vec![Section {
         title: "Outdoors and the sky",
         flags,
@@ -257,6 +264,37 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
             |p: &mut Parsing, v| {
                 p.args.outdoor.penumbra =
                     v.named(vxe_render::Penumbra::from_name, "disc or approach")?;
+                Ok(())
+            },
+        ),
+    ]
+}
+
+/// The section's flags of the auto exposure's ceiling: anchored to the sky, or a constant.
+fn ceiling_flags() -> Vec<Flag<Parsing>> {
+    vec![
+        Flag::value(
+            &["--sky-anchor"],
+            "N|none",
+            "while a sky is set, the auto exposure opens at most N EV (-4 to 12) over the \
+                 exposure that puts sunlit ground at mid-grey, so a noon tunnel stays dark and \
+                 the night still opens; none keeps the constant ceiling [none]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.sky_anchor = match v.text {
+                    "none" => None,
+                    _ => Some(v.parse_if(|n: &f32| (-4.0..=12.0).contains(n), "-4 to 12 or none")?),
+                };
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--exposure-max"],
+            "EV",
+            "the auto exposure's constant ceiling in EV, -16 to 8 [+2 for --source outdoor, \
+                 else +4]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.exposure_max_ev =
+                    Some(v.parse_if(|n: &f32| (-16.0..=8.0).contains(n), "-16 to 8")?);
                 Ok(())
             },
         ),

@@ -98,6 +98,7 @@ pub use entities::{
 };
 pub use exposure::{
     AutoExposure, EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState, Metering,
+    ground_irradiance,
 };
 pub use frame::{
     ATROUS_ITERATIONS, DEFAULT_LIGHT_FLOOR, DEFAULT_PROBE_FREEZE, DEFAULT_SKY_HISTORY,
