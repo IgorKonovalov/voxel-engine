@@ -227,6 +227,11 @@ fn the_wheel_and_the_digits_enter_the_mode() {
     );
 
     assert_eq!(step(&mut run, &pressed(KeyCode::Escape)), None);
+    assert_eq!(
+        step(&mut run, &pressed(KeyCode::Escape)),
+        None,
+        "asks first"
+    );
     assert_eq!(step(&mut run, &pressed(KeyCode::Escape)), Some(Flow::Exit));
 }
 

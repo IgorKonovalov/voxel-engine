@@ -235,7 +235,8 @@ impl Run {
 
     /// The frame's input step, before anything else reads the input: under `--tester` the
     /// tester's filter (`F1` its help panel), else the menu's step (`menu::step`, its
-    /// activations run here); then `Esc` ends placement mode, else a run with no path player,
+    /// activations run here); then `Esc` ends placement mode, else asks before it ends a run
+    /// with no path player (a second `Esc` within `QUIT_ASK_MS`; under `--tester` the first),
     /// and `F2` (or the pad's
     /// `Select`) shows or hides the stats overlay. Gives what passes on to the rest of the
     /// frame, and `Flow::Exit` when `Esc` ended the run.
@@ -259,11 +260,29 @@ impl Run {
         };
         let i = pass.input();
         // `Esc` with the menu closed ends placement mode first, then the run; a path run ends
-        // through its player, so its report can say how.
-        if i.pressed(KeyCode::Escape) && self.modes.walkers.belt.on {
+        // through its player, so its report can say how. Outside `--tester` the run ends on a
+        // second `Esc` within `QUIT_ASK_MS` of the first, which shows `QUIT_ASK_WORDS`; any
+        // other key, the menu or placement mode drops the question.
+        let now = ms_since(self.start);
+        let esc = i.pressed(KeyCode::Escape);
+        if self.quit_asked.is_some_and(|at| {
+            now - at >= super::QUIT_ASK_MS
+                || self.menu.is_open()
+                || self.modes.walkers.belt.on
+                || all_keys()
+                    .into_iter()
+                    .any(|k| k != KeyCode::Escape && input.pressed(k))
+        }) {
+            self.quit_asked = None;
+        }
+        if esc && self.modes.walkers.belt.on {
             self.end_placement("placement off");
-        } else if i.pressed(KeyCode::Escape) && self.player.is_none() {
-            return (pass, Some(Flow::Exit));
+        } else if esc && self.player.is_none() {
+            if self.args.tester || self.quit_asked.is_some() {
+                return (pass, Some(Flow::Exit));
+            }
+            println!("{}", super::QUIT_ASK_WORDS);
+            self.quit_asked = Some(now);
         }
         if !self.args.tester && (i.pressed(KeyCode::F2) || i.pad_pressed(PadButton::Select)) {
             self.hud.visible = !self.hud.visible;

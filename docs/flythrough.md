@@ -67,7 +67,7 @@ window's top-right corner reads `fps <n>  frame <median> ms p99 <ms>` while it i
 | `Tab` | The menu; type on any page to search |
 | `F1` | The Keys page (with `--tester`: the help panel) |
 | `F2` | Toggle the stats overlay |
-| `Esc` | Clear the search, go back a page, close the menu; with the menu closed, leave placement mode, else quit (on a path run, end it so its report says how) |
+| `Esc` | Clear the search, go back a page, close the menu; with the menu closed, leave placement mode, else ask before quitting: the banner reads `Esc again to quit` for 2 s, a second `Esc` inside that quits, any other key cancels (on a path run, end it so its report says how; under `--tester` and while loading the first `Esc` quits) |
 
 While the menu is open the arrows, `Enter`, `Backspace`, `Esc`, the letters, digits and
 punctuation, the wheel and the clicks are the menu's: the dig, the fill and the belt

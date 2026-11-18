@@ -43,13 +43,14 @@ fn rows(run: &Run) -> Vec<String> {
     out
 }
 
-/// A key step with `Esc` and the menu closed ends the run; with it open `Esc` closes the menu
-/// (a filter first, then a page) and the run goes on. While open the left click does not dig
-/// and the wheel does nothing to the run; closed, the click digs and the wheel enters
-/// placement mode (the dig radius unchanged), which `Esc` ends before it ends the run.
+/// Two key steps with `Esc` and the menu closed end the run; with it open `Esc` closes the
+/// menu (a filter first, then a page) and the run goes on. While open the left click does not
+/// dig and the wheel does nothing to the run; closed, the click digs and the wheel enters
+/// placement mode (the dig radius unchanged), which `Esc` ends before it asks to end the run.
 #[test]
 fn esc_closed_ends_the_run_and_open_never_does() {
     let mut run = bare_run(carved_rock());
+    assert_eq!(frame_keys(&mut run, &pressed(KeyCode::Escape)), None);
     assert_eq!(
         frame_keys(&mut run, &pressed(KeyCode::Escape)),
         Some(Flow::Exit)
@@ -87,6 +88,57 @@ fn esc_closed_ends_the_run_and_open_never_does() {
     );
     assert_eq!(frame_keys(&mut run, &pressed(KeyCode::Escape)), None);
     assert!(!run.modes.walkers.belt.on, "Esc ends placement mode first");
+    assert!(run.quit_asked.is_none(), "leaving the mode asks nothing");
+    assert_eq!(frame_keys(&mut run, &pressed(KeyCode::Escape)), None);
+    assert_eq!(
+        frame_keys(&mut run, &pressed(KeyCode::Escape)),
+        Some(Flow::Exit)
+    );
+}
+
+/// With the menu closed and placement off the first `Esc` shows `Esc again to quit` in the
+/// banner and the run goes on; a second within 2 s ends it. Another key between the two, or
+/// 2 s gone by, drops the question (the banner row with it), so the next `Esc` asks again.
+/// Under `--tester` the first `Esc` ends the run.
+#[test]
+fn esc_asks_before_it_quits() {
+    let words = "Esc again to quit";
+    let asks = |run: &Run| run.banner().unwrap().lines().any(|l| l == words);
+    let mut run = bare_run(carved_rock());
+    assert!(!asks(&run));
+    assert_eq!(frame_keys(&mut run, &pressed(KeyCode::Escape)), None);
+    assert!(asks(&run), "{:?}", run.banner());
+    assert_eq!(
+        frame_keys(&mut run, &Input::default()),
+        None,
+        "no key keeps it"
+    );
+    assert!(asks(&run));
+    assert_eq!(
+        frame_keys(&mut run, &pressed(KeyCode::Escape)),
+        Some(Flow::Exit)
+    );
+
+    // Another key cancels.
+    let mut run = bare_run(carved_rock());
+    assert_eq!(frame_keys(&mut run, &pressed(KeyCode::Escape)), None);
+    assert_eq!(frame_keys(&mut run, &pressed(KeyCode::KeyW)), None);
+    assert!(run.quit_asked.is_none() && !asks(&run));
+    assert_eq!(frame_keys(&mut run, &pressed(KeyCode::Escape)), None);
+    assert!(asks(&run), "the next Esc asks again");
+
+    // The timeout cancels: the question asked 2 s before now.
+    let mut run = bare_run(carved_rock());
+    assert_eq!(frame_keys(&mut run, &pressed(KeyCode::Escape)), None);
+    let at = run.quit_asked.expect("asked");
+    run.quit_asked = Some(at - super::QUIT_ASK_MS);
+    assert!(!asks(&run), "the row goes with the timeout");
+    assert_eq!(frame_keys(&mut run, &pressed(KeyCode::Escape)), None);
+    assert!(asks(&run), "a late second Esc asks again");
+    assert_eq!(super::QUIT_ASK_MS, 2000.0);
+
+    let mut run = bare_run(carved_rock());
+    run.args.tester = true;
     assert_eq!(
         frame_keys(&mut run, &pressed(KeyCode::Escape)),
         Some(Flow::Exit)

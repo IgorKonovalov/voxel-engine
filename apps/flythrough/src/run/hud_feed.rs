@@ -765,6 +765,13 @@ impl Run {
         if let Some((pose, _)) = &self.pose {
             out.push_str(pose);
         }
+        if self
+            .quit_asked
+            .is_some_and(|at| now - at < super::QUIT_ASK_MS)
+        {
+            hud::start_row(out);
+            out.push_str(super::QUIT_ASK_WORDS);
+        }
         write_pace_banner(self.args.pace, now, out);
         hud::start_row(out);
         write_queue_banner_row(out, &self.args, words);
