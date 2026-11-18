@@ -35,9 +35,10 @@ docs/images/walker-walk -- --rig apps/flythrough/assets/entities/walker/walker.r
 The chooser and the belt show each entry as a still 64 x 64 picture (ADR-0075), made on the CPU
 from the model in its rest pose through the entity raycast: an orthographic view 30 degrees down
 from off the model's -x, -y side (so a model facing -y, as the rig grammar has it, shows its
-front and its left flank), the silhouette fitted to 40 of the 64 pixels, each pixel the hit
-voxel's table colour with a fixed light from `(-2, -3, 6) / 7` (the -x, -y and top faces take
-three distinct shades). The icons are made on a worker thread when the library builds and again
+front and its left flank), the silhouette fitted to 56 of the 64 pixels, each pixel the hit
+voxel's table colour with a fixed light from `(-2, -3, 6) / 7`, a face's shade `176 + 80` times
+its cosine to the light in 256ths (the -x, -y and top faces 198, 210 and 244: three distinct
+shades, the darkest at 0.77 of the colour). The icons are made on a worker thread when the library builds and again
 when an entry's rig reloads with a changed model; a row or a slot shows the entry's name until
 its picture arrives. `apps/flythrough/tests/icon.rs` pins the walker's and the spider's icons.
 

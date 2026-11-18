@@ -1,7 +1,7 @@
 //! A still picture per library entry (ADR-0075): the entry's model in its rest pose, traced on
 //! the CPU through `EntitySet::raycast` from a fixed orthographic view 30 degrees down and 225
 //! degrees round (the camera off the model's -x, -y side, so a model facing -y shows its front
-//! and its -x flank), fitted to 5/8 of a [`ICON_PX`]-pixel tile, each pixel the hit voxel's
+//! and its -x flank), fitted to 7/8 of a [`ICON_PX`]-pixel tile, each pixel the hit voxel's
 //! material albedo shaded by a fixed Lambert from the entered face's world normal. Integer
 //! arithmetic from the model to the bytes, so an icon is the same on every platform. Icons are
 //! made on a worker thread ([`Icons`]) and drawn as overlay tiles once they arrive; until then
@@ -15,8 +15,8 @@ use vxe_world::{Face, Fixed3, MaterialTable};
 
 /// An icon's side in pixels: the overlay's tile.
 pub const ICON_PX: u32 = vxe_render::TILE_PX;
-/// The model's larger projected side, in pixels: 5/8 of the tile.
-pub const FIT_PX: i64 = (ICON_PX as i64) * 5 / 8;
+/// The model's larger projected side, in pixels: 7/8 of the tile.
+pub const FIT_PX: i64 = (ICON_PX as i64) * 7 / 8;
 
 /// The view's axes in 1/4096 (`round(4096 x` the unit vector`)`): `FORWARD` from the camera
 /// into the scene, 30 degrees down and toward +x, +y; `RIGHT` horizontal; `UP` their cross.
@@ -26,9 +26,10 @@ const UP: [i64; 3] = [1448, 1448, 3547];
 /// The light toward which a face is lit, `(-2, -3, 6) / 7`: a unit vector in sevenths, so the
 /// three faces the view shows (-x, -y, +z) take three distinct shades.
 const LIGHT: [i64; 3] = [-2, -3, 6];
-/// A face's shade in 256ths: `AMBIENT` plus `DIFFUSE` times its cosine to the light.
-const AMBIENT: i64 = 96;
-const DIFFUSE: i64 = 160;
+/// A face's shade in 256ths: `AMBIENT` plus `DIFFUSE` times its cosine to the light (the
+/// view's three faces 198, 210 and 244: bright beside the overlay's text, still apart).
+const AMBIENT: i64 = 176;
+const DIFFUSE: i64 = 80;
 /// The length, in 1/256 model voxel, along which a face's normal is carried into the world.
 const NORMAL_REACH: i32 = 1 << 12;
 
