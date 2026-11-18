@@ -396,7 +396,13 @@ fn an_absent_chunk_below_the_column_top_is_rock_to_the_sky_ray() {
             ..hooks
         });
         fr.set_sky(Some(uniform));
-        centre_lit(&device, &queue, &mut fr, &gpu, &cam, 16)
+        let lit = centre_lit(&device, &queue, &mut fr, &gpu, &cam, 16);
+        let pair = centre_pair(&device, &queue, &fr);
+        println!(
+            "the centre pixel's visibility pair at the last frame: mean {:.4} at age {}",
+            pair[0], pair[3]
+        );
+        lit
     };
     let rule = read(Default::default());
     let as_built = read(vxe_render::LightHooks {
@@ -976,7 +982,20 @@ fn under_uniform_sky(
         altitude_zero_z: FLOOR as f32,
         ..Sky::uniform(1.0)
     }));
-    centre_lit(device, queue, &mut f, &gpu, cam, 64)
+    let lit = centre_lit(device, queue, &mut f, &gpu, cam, 64);
+    println!(
+        "the centre pixel's visibility pair at the last frame: mean {:.4} at age {}",
+        centre_pair(device, queue, &f)[0],
+        centre_pair(device, queue, &f)[3]
+    );
+    lit
+}
+
+/// The visibility pair at the centre lighting pixel of `f`'s last frame.
+fn centre_pair(device: &wgpu::Device, queue: &wgpu::Queue, f: &Frame) -> [f32; 4] {
+    let w = f.visibility_pair().width() as usize;
+    let h = f.visibility_pair().height() as usize;
+    vxe_render::debug::read_rgba16f(device, queue, f.visibility_pair())[(h / 2) * w + w / 2]
 }
 
 /// A camera at `pos` facing +y at `pitch` degrees.

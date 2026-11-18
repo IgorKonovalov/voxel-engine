@@ -395,35 +395,44 @@ fn up_record(f: &Frame, h: [f32; 4]) -> Option<(f32, bool)> {
         .map(|vis| (vis, vxe_render::internals::record_sky_stale(rec)))
 }
 
-/// The `+z` seed temporal.wgsl's `sky_estimate` order takes at floor hit `h`: the record's
-/// visibility ([`up_record`]), else the chain's (the chunk's summary, else the mean of its six
-/// face neighbours' summaries that hold `+z` under a sky), else 1.
-fn up_seed(f: &Frame, h: [f32; 4]) -> f32 {
+/// The column map's cell edge in voxels (temporal.wgsl's `COLUMN_CELL`) and the seed's lift
+/// along the face normal (`SEED_LIFT`, `COLUMN_CELL + 0.5`).
+const COLUMN_CELL: i32 = 2;
+const SEED_LIFT: f32 = COLUMN_CELL as f32 + 0.5;
+
+/// Whether point `p` lies above the top of solid of its column-map cell in `world`
+/// (walk.wgsl's `above_column`; the scan covers the rig's one chunk layer).
+fn above_column(world: &World, p: [f32; 3]) -> bool {
+    let x = [p[0].floor() as i32, p[1].floor() as i32];
+    let cell = x.map(|k| k.div_euclid(COLUMN_CELL) * COLUMN_CELL);
+    let mut top = i32::MIN;
+    for dx in 0..COLUMN_CELL {
+        for dy in 0..COLUMN_CELL {
+            for z in (0..64).rev() {
+                if world
+                    .material_at([cell[0] + dx, cell[1] + dy, z])
+                    .is_some_and(|m| m != AIR)
+                {
+                    top = top.max(z);
+                    break;
+                }
+            }
+        }
+    }
+    top == i32::MIN || p[2] >= (top + 1) as f32
+}
+
+/// The `+z` seed temporal.wgsl's order takes at floor hit `h`: the record's visibility
+/// ([`up_record`]), else the column test at the hit lifted `SEED_LIFT` voxels up (1 above
+/// the column's top of solid, else 0). The chain is not in the order.
+fn up_seed(f: &Frame, world: &World, h: [f32; 4]) -> f32 {
     if let Some((v, _)) = up_record(f, h) {
         return v;
     }
-    let v = [h[0].floor() as i32, h[1].floor() as i32, h[2].round() as i32 - 1];
-    let c = v.map(|k| k.div_euclid(64));
-    let summary = |c: [i32; 3]| {
-        let block = f.store().block_words(ChunkCoord(c))?;
-        let at = vxe_render::internals::SUMMARY_AT as usize;
-        let w = vxe_render::internals::BRICK_WORDS;
-        vxe_render::internals::record_visibility(&block[at..at + w], 5)
-    };
-    if let Some(s) = summary(c) {
-        return s;
-    }
-    let near: Vec<f32> = (0..6)
-        .filter_map(|k| {
-            let mut o = c;
-            o[k / 2] += if k % 2 == 0 { -1 } else { 1 };
-            summary(o)
-        })
-        .collect();
-    if near.is_empty() {
+    if above_column(world, [h[0], h[1], h[2] + SEED_LIFT]) {
         1.0
     } else {
-        near.iter().sum::<f32>() / near.len() as f32
+        0.0
     }
 }
 
@@ -431,7 +440,7 @@ fn up_seed(f: &Frame, h: [f32; 4]) -> f32 {
 /// the first frame after the dig, every lighting pixel inside the dig's box dilated by one
 /// voxel that cast the sky ray (its history reset by the edit) reads the pair's age
 /// `SEED_AGE`, and on a `+z` face its mean lies within `1 / (SEED_AGE + 1)` of the seed
-/// [`up_seed`] takes (the record's, the chain's, or the open sky's). On the open floor under
+/// [`up_seed`] takes (the record's, else the column test's). On the open floor under
 /// `Sky::uniform(1.0)` with no store block (bar 1's rig) the centre pixel's first frame reads
 /// the pair's mean 1 at age `SEED_AGE`. The mean of the pair over the box's cast pixels at
 /// frames 1, 8, 16 and 60 after the dig is printed, with the count of `+z` pixels whose face
@@ -455,6 +464,14 @@ fn a_reset_pixel_starts_from_its_record() {
     let (mut plus_z, mut with_record, mut stale_n) = (0usize, 0usize, 0usize);
     let mut worst = 0.0f32;
     let mut means = Vec::new();
+    // The rig's world after its dig, for the column test.
+    let dug = floor_world([3, 3, 1], |_| false);
+    dug.apply(&EditOp::box_(
+        Fixed3(DIG_LO.map(|v| i64::from(v) * FIXED_ONE)),
+        Fixed3(DIG_HI.map(|v| i64::from(v) * FIXED_ONE)),
+        Mode::Carve,
+    ))
+    .expect("the dig is resident");
     let r = dig_run_with(|i, device, queue, f| {
         let k = i as i64 - DIG_AT as i64 + 1;
         if ![1, 8, 16, 60].contains(&k) {
@@ -480,7 +497,7 @@ fn a_reset_pixel_starts_from_its_record() {
                     with_record += 1;
                     stale_n += usize::from(st);
                 }
-                worst = worst.max((pair[j][0] - up_seed(f, *h)).abs());
+                worst = worst.max((pair[j][0] - up_seed(f, &dug, *h)).abs());
             }
         }
         means.push((k, sum / n.max(1) as f64, n));

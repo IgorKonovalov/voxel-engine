@@ -65,9 +65,9 @@
 // value , with no screen history, and the pair is seeded with it (`seed`).
 // Where the rays were cast, it is the visibility pair's running mean (`pair_step`): reprojected
 // with the direct part's taps and reset where the direct part resets and on the sky-change
-// bit, a reset pair seeded at age SEED_AGE from the best world-space estimate (`sky_estimate`:
-// the face's record visibility, a stale one included, else the missing-light chain's, else the
-// open sky's 1) and this frame's sample left out, a sample clamped at FIREFLY_K times the larger of the long and short means once the
+// bit, a reset pair seeded at age SEED_AGE from the best world-space estimate (the face's
+// record visibility, a stale one included, else the column map's answer at the hit lifted into
+// the face's air, `column_estimate`) and this frame's sample left out, a sample clamped at FIREFLY_K times the larger of the long and short means once the
 // age passes SKY_SHORT, and the age falling toward SKY_FALL_MIN where the short mean leaves
 // the long mean's band. The ray's term joins no screen history: its luminance joins the
 // moments, and the filter's input (atrous.wgsl `variance`) or, with the filter off, the
@@ -641,11 +641,26 @@ const FIREFLY_K: f32 = 4.0;
 // still pixel's drift).
 const SKY_BAND_SIGMAS: f32 = 3.0;
 const SKY_BAND_EPS: f32 = 0.02;
+// The band's variance is at least a rate of P_MIN's, so a pair at 0 or 1 (a seed, or a
+// settled pixel at the extremes) is not the band's degenerate point: one disagreeing sample
+// (1 / SKY_SHORT) stays inside it, two in a row leave it.
+const P_MIN: f32 = 0.02;
 // Out of the band the age falls to SKY_SHORT times the band over the distance, at least this.
 const SKY_FALL_MIN: f32 = 2.0;
 // The samples a reset pair's seed counts as: the next sample blends at `1 / (SEED_AGE + 1)`,
 // past SKY_SHORT, so the firefly clamp holds from the frame after the reset.
 const SEED_AGE: f32 = 8.0;
+
+// How far a seed's column test lifts the hit along the face normal, in voxels: past the
+// column map's cell, so the point is not read in the wall's own cell (whose top is the wall's).
+const SEED_LIFT: f32 = f32(COLUMN_CELL) + 0.5;
+
+// A reset pair's seed with no record: the column map's answer (ADR-0070's sky rule) at hit `p`
+// lifted SEED_LIFT voxels along `n` into the air the face looks into, 1 above its column's
+// top of solid, else 0.
+fn column_estimate(p: vec3<f32>, n: vec3<f32>) -> f32 {
+    return select(0.0, 1.0, above_column(p + n * SEED_LIFT));
+}
 
 // The visibility pair after sample `s` (the sky rays' share this frame) on history `hp`
 // (`accepted`: the direct part's taps agreed and nothing resets it), its cap `sky.sky_history`.
@@ -659,7 +674,8 @@ fn pair_step(s: f32, hp: vec4<f32>, accepted: bool, e: f32) -> vec4<f32> {
     let n0 = min(age + 1.0, f32(max(sky.sky_history, 1u)));
     let b = hp.z + (s - hp.z) / min(n0, SKY_SHORT);
     let r = hp.x;
-    let band = SKY_BAND_SIGMAS * sqrt(max(r * (1.0 - r), 0.0) / SKY_SHORT) + SKY_BAND_EPS;
+    let band = SKY_BAND_SIGMAS * sqrt(max(r * (1.0 - r), P_MIN * (1.0 - P_MIN)) / SKY_SHORT)
+        + SKY_BAND_EPS;
     let d = abs(b - r);
     var n = n0;
     if (d > band) {
@@ -699,8 +715,11 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     // The pair where no ray was cast: the baked visibility at age `sky_history`, or none.
     var seed = vec4<f32>(0.0);
     // A reset pair's seed where the ray was cast (`pair_step`): the face's record visibility,
-    // a stale ring brick's included, else the chain's, else the open sky's.
-    var estimate = 1.0;
+    // a stale ring brick's included, else the column test at the hit lifted into the air the
+    // face looks into (`column_estimate`). The chain is not consulted.
+    var estimate = -1.0;
+    // The normal the column test lifts the hit along: the store face's, else the shading one.
+    var lift_n = rec.n;
     let fresh = sample.w > 0.5 && view_mode() != VIEW_STEPS;
     sample.w = 0.0;
     var stored = false;
@@ -716,6 +735,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         } else {
             nf = shadow_normal_of(rec, ray.d);
         }
+        lift_n = nf;
         var voxel = store_voxel(rec.p, nf);
         let face = store_face(axis, nf);
         let head = store_head();
@@ -761,12 +781,13 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         // missing-light chain's, coloured by the sky now. An entity keeps its sky rays.
         var sky_term = vec3<f32>(0.0);
         if (!on_entity && sky_on()) {
-            var sv = store_sky_visibility(head, store_voxel(rec.p, nf), face);
+            let rv = store_sky_visibility(head, store_voxel(rec.p, nf), face);
+            if (rv.y > 0.0) {
+                estimate = rv.x;
+            }
+            var sv = rv;
             if (sv.y == 0.0) {
                 sv = store_sky_fallback(head, store_voxel(rec.p, nf), face);
-            }
-            if (sv.y > 0.0) {
-                estimate = sv.x;
             }
             if (sv.y > 0.0 && !sky_cast) {
                 sky_term = sky_baked_term(head, store_voxel(rec.p, nf), face, sv.x, rec, nf);
@@ -944,6 +965,9 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     // switch between the stored part and the ray at the stale bit has no second history to lag
     // behind it. Its luminance joins the moments, so the filter's variance counts it. The key
     // light's term, sampled every frame where the key light is on, joins the direct part.
+    if (estimate < 0.0) {
+        estimate = column_estimate(rec.p, lift_n);
+    }
     var pair = select(seed, pair_step(vis.x, hp, accepted, estimate), sky_cast);
     let t_sky = sky_pair_term(sky_e, pair.x, vis.a, rec.n);
     var t_key = vec3<f32>(0.0);
