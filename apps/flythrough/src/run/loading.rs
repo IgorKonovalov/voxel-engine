@@ -594,6 +594,14 @@ impl Run {
         } else {
             None
         });
+        // The pre-roll's bakes read the sky and the canopy's style as the frame loop sets them,
+        // so a pre-rolled block holds its sky visibility and a column's finality marks it.
+        super::frame::set_sky_and_styles(
+            &self.modes,
+            self.args.mode.is_outdoor(),
+            gpu,
+            &mut gfx.frame,
+        );
         let frame = &mut gfx.frame;
         let settings = vxe_render::queue_settings();
         frame.start_bake_queue(

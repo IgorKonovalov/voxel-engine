@@ -716,18 +716,12 @@ impl Run {
         gfx.frame.set_dt(step);
         // The testbed's clock moves by the loop's step; the engine holds none.
         self.modes.clock.advance(step);
-        let sky = self
-            .modes
-            .sky
-            .then(|| self.modes.clock.sky(crate::outdoor::BASE_Z as f32));
-        gfx.frame.set_sky(sky);
-        // The outdoor testbed's canopy style (`--leaf-shadow`); other sources style nothing.
-        let styles = if self.args.mode.is_outdoor() {
-            crate::outdoor_styles(self.modes.leaf_shadow)
-        } else {
-            Vec::new()
-        };
-        gfx.frame.set_material_styles(&gpu.queue, &styles);
+        set_sky_and_styles(
+            &self.modes,
+            self.args.mode.is_outdoor(),
+            gpu,
+            &mut gfx.frame,
+        );
         gfx.frame.set_resolution(&gpu.device, self.modes.resolution);
         gfx.frame.set_look(self.modes.look);
         // The temporal pass counts the store's reads only for a reader of them: the HUD's
@@ -843,4 +837,25 @@ fn wait_first_frame(gpu: &Gpu, start: Instant, recorder: Option<&mut crate::repo
     if let Some(rec) = recorder {
         rec.load_ms = rec.device_ms.map(|at| ms_since(start) - at);
     }
+}
+
+/// The testbed's sky at `modes`' clock time (none with the sky off) and, on the outdoor source,
+/// its canopy's style (`--leaf-shadow`; other sources style nothing) on `frame`: what the bake
+/// reads, set by every frame and before the pre-roll's first bake.
+pub(super) fn set_sky_and_styles(
+    modes: &crate::hud::Modes,
+    outdoor: bool,
+    gpu: &Gpu,
+    frame: &mut vxe_render::Frame,
+) {
+    let sky = modes
+        .sky
+        .then(|| modes.clock.sky(crate::outdoor::BASE_Z as f32));
+    frame.set_sky(sky);
+    let styles = if outdoor {
+        crate::outdoor_styles(modes.leaf_shadow)
+    } else {
+        Vec::new()
+    };
+    frame.set_material_styles(&gpu.queue, &styles);
 }
