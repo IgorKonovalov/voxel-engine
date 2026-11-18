@@ -345,6 +345,62 @@ fn sky_open_by_normal(n: vec3<f32>) -> vec3<f32> {
     return e / max(weight, 1e-6);
 }
 
+// A cube face's baked sky term (ADR-0070) at hit `rec` of voxel `v`, face `face` (face normal
+// `nf`), whose visibility for its own direction is `vis`: `vis` times the sky's irradiance
+// above the horizon about the shading normal, or under LIGHTING_SKY_SMOOTHED about the 27-count
+// gradient's normal `g`, the mix over the directions `g` leans toward (`g_a^2` above 1e-4) of
+// each direction's visibility (`store_sky_visibility`; the face's own is `vis`) times
+// `sky_open_irradiance` of it, over the directions that hold one (the face's alone where none
+// does). With `params.sky_bounce` `b` over 0 the visibility part is `(1 - b)` of that plus `b`
+// times the face's cell's six visibilities' mean weighted `(1 + n.d) / 2` (`sky_cell_mean`)
+// times the irradiance about the normal.
+fn sky_baked_term(head: StoreHead, v: vec3<i32>, face: u32, vis: f32, rec: HitRecord, nf: vec3<f32>) -> vec3<f32> {
+    var n = rec.n;
+    var term = vis * sky_open_by_normal(n);
+    if ((params.lighting & LIGHTING_SKY_SMOOTHED) != 0u && rec.axis >= 0) {
+        n = gradient27_normal(Hit(true, v, rec.axis, rec.t, rec.material), nf);
+        var sum = vec3<f32>(0.0);
+        var weight = 0.0;
+        for (var a = 0u; a < 3u; a++) {
+            let w = n[a] * n[a];
+            if (w < 1e-4) {
+                continue;
+            }
+            let dir = 2u * a + select(0u, 1u, n[a] > 0.0);
+            var r = vec2<f32>(vis, 1.0);
+            if (dir != face) {
+                r = store_sky_visibility(head, v, dir);
+            }
+            sum += r.x * sky_open_irradiance(dir) * (w * r.y);
+            weight += w * r.y;
+        }
+        if (weight > 0.0) {
+            term = sum / weight;
+        }
+    }
+    let b = params.sky_bounce;
+    if (b > 0.0) {
+        term = (1.0 - b) * term + b * sky_cell_mean(head, v, n) * sky_open_by_normal(n);
+    }
+    return term;
+}
+
+// The six direction visibilities of voxel `v`'s own cell, weighted `(1 + n.d) / 2` about
+// normal `n`, over the directions the cell holds; 0 where it holds none.
+fn sky_cell_mean(head: StoreHead, v: vec3<i32>, n: vec3<f32>) -> f32 {
+    let c = v >> vec3<u32>(head.shift);
+    var sum = 0.0;
+    var weight = 0.0;
+    for (var f = 0u; f < 6u; f++) {
+        let r = store_sky_cell(head, c, f);
+        let d = select(-1.0, 1.0, (f & 1u) == 1u) * n[f / 2u];
+        let w = 0.5 * (1.0 + d) * r.y;
+        sum += r.x * w;
+        weight += w;
+    }
+    return select(0.0, sum / weight, weight > 0.0);
+}
+
 // Face `face` of voxel `v` at the brick level: the direction values of the 2 x 2 cells around the
 // voxel's centre in the face's plane (hitrec.wgsl's `store_tap`), bilinear over those that have
 // the direction; its own cell's alone where none has it with weight. 0 in a where that has none
@@ -697,7 +753,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 sv = store_sky_fallback(head, store_voxel(rec.p, nf), face);
             }
             if (sv.y > 0.0) {
-                sky_term = sv.x * sky_open_by_normal(rec.n);
+                sky_term = sky_baked_term(head, store_voxel(rec.p, nf), face, sv.x, rec, nf);
                 seed = vec4<f32>(sv.x, 0.0, sv.x, f32(max(sky.sky_history, 1u)));
             }
         }

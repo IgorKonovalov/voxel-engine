@@ -32,6 +32,14 @@ pub struct OutdoorArgs {
     pub(crate) leaf_shadow: crate::LeafShadow,
     /// `--penumbra disc|approach`: how the key light's shadow ray makes its penumbra.
     pub(crate) penumbra: vxe_render::Penumbra,
+    /// `--sky-normal face|smoothed`: the normal the baked sky term reads its visibilities by.
+    pub(crate) sky_normal: vxe_render::SkyNormal,
+    /// `--sky-bounce B`: the baked sky term's bounce floor, 0 to 1.
+    pub(crate) sky_bounce: f32,
+    /// `--column-wait on|off` off: the live queue's bake waits for the chunks pending upload
+    /// only, not for every chunk of the streamer's LOD sphere over its columns (a reading
+    /// switch for the pre-roll; the sky rule's tops may then still move under a bake).
+    pub(crate) no_column_wait: bool,
     /// `--sky-anchor N|none`: the auto exposure's ceiling anchored `N` EV over the sunlit
     /// ground's exposure while a sky is set (`AutoExposure::sky_anchor_ev`); unset, none.
     pub(crate) sky_anchor: Option<f32>,
@@ -230,7 +238,8 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
     }]
 }
 
-/// The section's flags of the sky's light at a hit: the sky rays, their history, the penumbra.
+/// The section's flags of the sky's light at a hit: the sky rays, their history, the penumbra,
+/// the baked term's normal and bounce floor.
 fn sky_light_flags() -> Vec<Flag<Parsing>> {
     vec![
         Flag::value(
@@ -267,6 +276,29 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
                 Ok(())
             },
         ),
+        Flag::value(
+            &["--sky-normal"],
+            "face|smoothed",
+            "the normal a face's baked sky light reads its visibilities by: the face's own, \
+                 or the 27-count gradient's at every distance (a one-voxel stair reads one \
+                 slope) [face]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.sky_normal =
+                    v.named(vxe_render::SkyNormal::from_name, "face or smoothed")?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--sky-bounce"],
+            "B",
+            "the baked sky light's bounce floor, 0 to 1: this share of a face's visibility is \
+                 its brick's six visibilities' mean about the normal [0]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.sky_bounce =
+                    v.parse_if(|b: &f32| (0.0..=1.0).contains(b), "0 to 1")?;
+                Ok(())
+            },
+        ),
     ]
 }
 
@@ -284,6 +316,17 @@ fn ceiling_flags() -> Vec<Flag<Parsing>> {
                     "none" => None,
                     _ => Some(v.parse_if(|n: &f32| (-4.0..=12.0).contains(n), "-4 to 12 or none")?),
                 };
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--column-wait"],
+            "on|off",
+            "the live queue bakes a chunk once every column over its reach holds all the \
+                 chunks the streamer will hold; off waits for the pending uploads only (a \
+                 reading switch: faster first light, tops that may still move) [on]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.no_column_wait = !v.on_off()?;
                 Ok(())
             },
         ),

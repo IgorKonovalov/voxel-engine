@@ -936,8 +936,8 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
 | 9: The sky rule: the column map, sky only above it | dev | done; bar 5 (the seal) fails as written (24.3 %, the pair's history decaying: 1.1 % at +128 frames); the bake's finality doubles the pre-roll (10.3 to 21.2 s, RTX) | d821e3e2 |
 | 10: The first seconds after a jump | dev | done; bar 1 met by Phase 9 (no band change); built the chain's sky; bar 3's frames not reached in the rig (its queue bakes one chunk in 600 frames) | ead32aff |
 | 11: The window's defaults | dev | done; five outdoor goldens re-blessed (the leaf default moves none; Phases 9 and 10's share read against the base) | 06269523 |
-| 12: The tunnel's brightness: the eye's ceiling anchored to the sky | dev | done (exploration); the anchor is an `AutoExposure` field; the forest sunset at `N` 4 reads 1.37 EV under `none` (bar 2's 0.5 EV not met); RENOIR not read | committed with this row |
-| 13: The zebra stripes: the sky term's normal and a bounce floor | dev | not started | |
+| 12: The tunnel's brightness: the eye's ceiling anchored to the sky | dev | done (exploration); the anchor is an `AutoExposure` field; the forest sunset at `N` 4 reads 1.37 EV under `none` (bar 2's 0.5 EV not met); RENOIR not read | f05cf2af |
+| 13: The zebra stripes: the sky term's normal and a bounce floor | dev | done (exploration); the arms apply to the baked read only; the stair rig reads face 1.62, smoothed 1.00; the open floor not in view | committed with this row |
 | 14: The forest floor: attribution, the key light on the pair, the canopy's transmittance | dev | not started | |
 | 15: The owner's second window | human | not started | |
 | 16: The picks as tests | dev | not started | |

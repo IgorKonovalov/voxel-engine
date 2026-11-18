@@ -215,6 +215,7 @@ fn frame_params() -> Mirror {
         light_offset,
         prev_light_offset,
         output_size,
+        sky_bounce,
         dither
     });
     let far = offset_of!(Params, far_normal);

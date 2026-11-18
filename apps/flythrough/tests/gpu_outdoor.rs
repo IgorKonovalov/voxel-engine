@@ -1446,4 +1446,136 @@ mod reading {
             }
         }
     }
+
+    /// Plan 0086 Phase 13 bar 2: the stripes under each arm. The defaults' cell (FSR 2 at 1.5,
+    /// the filter on, the store baked whole) with `sky_normal` face and smoothed, each at
+    /// `sky_bounce` 0 and 0.3: the tunnel at noon out of and into it, and the hills at noon
+    /// (`outside`). Per row Phase 1's statistics (`print_row`; the tunnel's rim band and far
+    /// end, the hills' every hit) and the stripe metric: the treads' over the risers' mean
+    /// light within 48 voxels (`CellReading::stripe`). `VXE_TEST_ADAPTER` picks the adapter
+    /// (unset: lavapipe).
+    #[test]
+    #[ignore = "reading"]
+    fn the_stripes_under_each_arm() {
+        use vxe_render::SkyNormal;
+        let noon = flythrough::daylight::Clock::default().sky(flythrough::outdoor::BASE_Z as f32);
+        let arms = [
+            (SkyNormal::Face, 0.0),
+            (SkyNormal::Smoothed, 0.0),
+            (SkyNormal::Face, 0.3),
+            (SkyNormal::Smoothed, 0.3),
+        ];
+        let row = |pose: &str,
+                   (n, b): (SkyNormal, f32),
+                   r: &CellReading,
+                   regions: &[Region<'_>]| {
+            let cell = default_cell(false);
+            print_row(&format!("{pose} {} {b}", n.name()), cell, r, regions);
+            let [t, k] = r.stripe;
+            let mean = |s: (f64, u32)| s.0 / f64::from(s.1.max(1));
+            println!(
+                "reading: {pose} sky normal {}, bounce {b}: tread {:.4} ({} px), riser {:.4} ({} px), stripe ratio {:.3}",
+                n.name(),
+                mean(t),
+                t.1,
+                mean(k),
+                k.1,
+                mean(t) / mean(k).max(1e-9)
+            );
+        };
+        let cell = |(n, b): (SkyNormal, f32)| Cell {
+            bake: true,
+            sky_normal: n,
+            sky_bounce: b,
+            ..default_cell(false)
+        };
+        if let Some((mut rig, views)) = tunnel_rig() {
+            println!("reading: the_stripes_under_each_arm on {}", rig.adapter);
+            for (pose, cam) in &views {
+                let (rate, gw) = hit_rates(&rig, cam);
+                let gh = rate.len() / gw;
+                let at = |x: usize, y: usize| rate[(y * gh / 180) * gw + x * gw / 320];
+                let rim = |x: usize, y: usize| at(x, y).is_some_and(|r| (0.3..0.6).contains(&r));
+                let far = |x: usize, y: usize| at(x, y).is_some_and(|r| r < 0.05);
+                for a in arms {
+                    let r = run_cell(&mut rig, cam, noon, cell(a));
+                    row(pose, a, &r, &[("rim", &rim), ("far", &far)]);
+                }
+            }
+        }
+        if let Some((mut rig, cam)) = hills_rig() {
+            let all = |_: usize, _: usize| true;
+            for a in arms {
+                let r = run_cell(&mut rig, &cam, noon, cell(a));
+                row("hills", a, &r, &[("all", &all)]);
+            }
+        }
+    }
+
+    /// Plan 0086 Phase 14 bar 1: the forest floor's grain by term. The forest (`--trees
+    /// forest`, `LEAF_FILL`) at `--sun 60,180` and `10,180`, the defaults' cell (FSR 2 at 1.5,
+    /// the filter on) with the leaf shadowing voxel by voxel and as its bricks: the key light
+    /// alone (`sky_rays` 0, no bake), the sky alone (the key light hooked off, the store
+    /// baked) and both (baked). Per row Phase 1's statistics over every hit, the share of the
+    /// lighting pixels whose direct sample changes between lit and 0 between two frames at
+    /// least once (the key ray's flips; the key-alone rows), and the last frame's stored and
+    /// direct parts' mean luminance; then the hills (`outside`) under both as the open
+    /// ground's. `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    #[test]
+    #[ignore = "reading"]
+    fn the_forest_floor_by_term() {
+        let sky_at = |el: f32| {
+            flythrough::daylight::Clock {
+                fixed_sun: Some([el, 180.0]),
+                ..Default::default()
+            }
+            .sky(flythrough::outdoor::BASE_Z as f32)
+        };
+        let all = |_: usize, _: usize| true;
+        let report = |pose: &str, cell: Cell, r: &CellReading| {
+            print_row(pose, cell, r, &[("ground", &all)]);
+            let px = r.samples[0].len();
+            let flips = (0..px)
+                .filter(|&i| {
+                    r.samples
+                        .windows(2)
+                        .any(|w| (w[0][i] > 0.0) != (w[1][i] > 0.0))
+                })
+                .count();
+            println!(
+                "reading: {pose} {}: flipping {:.4} of {px} lighting px; stored {:.4} direct {:.4}",
+                cell.term,
+                flips as f64 / px.max(1) as f64,
+                r.parts[0],
+                r.parts[1]
+            );
+        };
+        let cells = |leaf_brick: bool| {
+            [("key", false), ("sky", true), ("both", true)].map(|(term, bake)| Cell {
+                term,
+                bake,
+                ..default_cell(leaf_brick)
+            })
+        };
+        if let Some((mut rig, cam)) = forest_rig() {
+            println!("reading: the_forest_floor_by_term on {}", rig.adapter);
+            for el in [60.0, 10.0] {
+                for leaf_brick in [false, true] {
+                    let pose =
+                        format!("forest {el} {}", if leaf_brick { "brick" } else { "voxel" });
+                    for cell in cells(leaf_brick) {
+                        let r = run_cell(&mut rig, &cam, sky_at(el), cell);
+                        report(&pose, cell, &r);
+                    }
+                }
+            }
+        }
+        if let Some((mut rig, cam)) = hills_rig() {
+            for el in [60.0, 10.0] {
+                let cell = cells(false)[2];
+                let r = run_cell(&mut rig, &cam, sky_at(el), cell);
+                report(&format!("hills {el}"), cell, &r);
+            }
+        }
+    }
 }

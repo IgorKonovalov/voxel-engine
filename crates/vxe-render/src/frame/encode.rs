@@ -196,6 +196,7 @@ impl Frame {
             window_min: e.min.0,
             face_mix: self.state.look.tuning.face_mix,
             far_normal: self.state.look.far_normal,
+            sky_bounce: self.state.lighting.sky_bounce.clamp(0.0, 1.0),
             window_size: e.size(),
             lamp: Light::headlamp(camera, light),
             lamp_pose: [light.offset_right, light.offset_down, light.turn],

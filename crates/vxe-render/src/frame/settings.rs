@@ -97,7 +97,8 @@ pub struct Params {
     pub _pad10: u32,
     /// [`LookParams::far_normal`].
     pub far_normal: [f32; 2],
-    pub _pad9: u32,
+    /// [`Lighting::sky_bounce`] clamped to 0 ..= 1.
+    pub sky_bounce: f32,
     /// 1: [`Fsr2Settings::dither`] while FSR 2 runs unbypassed.
     pub dither: u32,
     /// The chunk of `views[0]`'s origin, which the LOD walk measures its levels from;
@@ -224,6 +225,10 @@ pub(crate) const LIGHTING_PENUMBRA_APPROACH: u32 = 1 << 22;
 /// `Params::lighting` bit, a reading hook ([`LightHooks::sky_end_is_sky`]): a sky ray that ends
 /// without a hit has reached the sky wherever it ends, and an absent chunk is air to it.
 pub(crate) const LIGHTING_HOOK_SKY_END_IS_SKY: u32 = 1 << 23;
+
+/// `Params::lighting` bit: a cube face's baked sky term reads its visibilities by the 27-count
+/// gradient's normal at every distance ([`SkyNormal::Smoothed`]).
+pub(crate) const LIGHTING_SKY_SMOOTHED: u32 = 1 << 24;
 
 /// The light passes' reading hooks ([`Frame::set_light_hooks`]): switches that take a term or a
 /// test out of the frame to attribute what the image does to it. All off by default; each is
@@ -583,6 +588,28 @@ named_enum!(Penumbra {
     Approach => "approach",
 });
 
+/// The normal a cube face's baked sky term (ADR-0070) reads its visibilities by (Plan 0086
+/// Phase 13's arms).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SkyNormal {
+    /// The shading normal: the face's own direction near, the far normal's blend far. The
+    /// default.
+    #[default]
+    Face,
+    /// The 27-count gradient's normal `g` at every distance: the face's term is the mix over
+    /// the directions `g` leans toward, `2a + (g_a > 0)` weighted `g_a^2`, of each direction's
+    /// baked visibility times the sky's irradiance above the horizon about it, over the
+    /// directions whose visibility is held; a tread and a riser of a one-voxel stair read the
+    /// slope's blend. The surface and the key light keep the face normal; a face whose sky
+    /// rays were cast (no fresh bake) keeps the shading normal.
+    Smoothed,
+}
+
+named_enum!(SkyNormal {
+    Face => "face",
+    Smoothed => "smoothed",
+});
+
 /// How a cube face's hit reads its emissive part from the store (ADR-0049).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum StoreRead {
@@ -817,6 +844,14 @@ pub struct Lighting {
     pub sky_history: u32,
     /// How the key light's shadow ray makes its penumbra ([`Penumbra`]; default `Disc`).
     pub penumbra: Penumbra,
+    /// The normal a cube face's baked sky term reads its visibilities by ([`SkyNormal`];
+    /// default `Face`).
+    pub sky_normal: SkyNormal,
+    /// The baked sky term's bounce floor `b`, 0 to 1 (default 0): the visibility is `(1 - b)
+    /// v(n) + b m`, `m` the face's cell's six direction visibilities' mean weighted `(1 +
+    /// n.d) / 2` over those it holds (a crude bounce from the brick's neighbourhood, one more
+    /// record read, no ray). Read where the store holds a baked visibility.
+    pub sky_bounce: f32,
 }
 
 /// [`Lighting::sky_history`]' largest value: the pair's age is a half, exact to 2048.
@@ -856,6 +891,8 @@ impl Default for Lighting {
             sky_rays: DEFAULT_SKY_RAYS,
             sky_history: DEFAULT_SKY_HISTORY,
             penumbra: Penumbra::Disc,
+            sky_normal: SkyNormal::Face,
+            sky_bounce: 0.0,
         }
     }
 }
@@ -933,6 +970,11 @@ impl Lighting {
             }
             | if self.penumbra == Penumbra::Approach {
                 LIGHTING_PENUMBRA_APPROACH
+            } else {
+                0
+            }
+            | if self.sky_normal == SkyNormal::Smoothed {
+                LIGHTING_SKY_SMOOTHED
             } else {
                 0
             }

@@ -115,7 +115,8 @@ struct Params {
     // `far_hi <= far_lo` is off.
     far_lo: f32,
     far_hi: f32,
-    _pad9: u32,
+    // Lighting::sky_bounce: the baked sky term's bounce floor (temporal.wgsl).
+    sky_bounce: f32,
     // FSR 2's tone pass's static dither (`Fsr2Settings::dither`, 1 on), 0 without FSR 2.
     dither: u32,
     // The chunk of view 0's origin (`Params::cam_chunk`), which the LOD walk measures from.

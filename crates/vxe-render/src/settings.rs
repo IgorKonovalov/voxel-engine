@@ -429,6 +429,8 @@ impl RenderSettings {
         ("lighting.sky_rays", Live),
         ("lighting.sky_history", Live),
         ("lighting.penumbra", Live),
+        ("lighting.sky_normal", Live),
+        ("lighting.sky_bounce", Live),
         ("look.normal_mode", Live),
         ("look.view", Settle),
         ("look.translucent_layers", Live),
@@ -807,8 +809,8 @@ fn flip(b: &mut bool) {
 fn lighting_test_value(l: &mut Lighting, name: &str) -> bool {
     use crate::exposure::Exposure;
     use crate::frame::{
-        EntityLight, HistoryKill, LightWeights, Penumbra, ShadowWalk, StoreRead, ToneMap,
-        YoungFilter,
+        EntityLight, HistoryKill, LightWeights, Penumbra, ShadowWalk, SkyNormal, StoreRead,
+        ToneMap, YoungFilter,
     };
     match name {
         "exposure" => {
@@ -824,6 +826,8 @@ fn lighting_test_value(l: &mut Lighting, name: &str) -> bool {
         "candidates" => l.candidates = if l.candidates == 4 { 8 } else { 4 },
         "shadow_walk" => other(&mut l.shadow_walk, ShadowWalk::Full, ShadowWalk::Coarse),
         "penumbra" => other(&mut l.penumbra, Penumbra::Disc, Penumbra::Approach),
+        "sky_normal" => other(&mut l.sky_normal, SkyNormal::Face, SkyNormal::Smoothed),
+        "sky_bounce" => l.sky_bounce = if l.sky_bounce == 0.0 { 0.3 } else { 0.0 },
         "filter" => flip(&mut l.filter),
         "atrous_iterations" => l.atrous_iterations = if l.atrous_iterations == 2 { 4 } else { 2 },
         "history" => other(&mut l.history, HistoryKill::Edits, HistoryKill::Gradient),

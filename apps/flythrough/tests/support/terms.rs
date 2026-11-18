@@ -168,6 +168,9 @@ pub struct Cell {
     /// The auto exposure's ceiling anchored this many EV over the sunlit ground's exposure
     /// (`--sky-anchor N`); `None` keeps `OUTDOOR_MAX`.
     pub anchor: Option<f32>,
+    /// The baked sky term's normal (`--sky-normal`) and bounce floor (`--sky-bounce`).
+    pub sky_normal: vxe_render::SkyNormal,
+    pub sky_bounce: f32,
 }
 
 /// What a cell read over its 64 still frames.
@@ -184,6 +187,14 @@ pub struct CellReading {
     pub exposure: f32,
     /// The ceiling the auto exposure was clamped under at its 64th frame.
     pub ceiling: f32,
+    /// The stripe metric at the last frame: over the lighting pixels whose hit is within 48
+    /// voxels, the mean luminance of the stored and direct accumulations at hits on a
+    /// horizontal face (a tread) and on a vertical one (a riser), and their counts.
+    pub stripe: [(f64, u32); 2],
+    /// The last frame's mean luminance over every hit of the stored accumulation (the
+    /// emissive and the baked sky part) and of the direct one (the key light and the sky
+    /// rays' pair), pre-exposed.
+    pub parts: [f64; 2],
     /// The last frame's display (rgba8).
     pub last: Vec<u8>,
 }
@@ -221,6 +232,8 @@ pub fn run_cell(
         } else {
             vxe_render::Penumbra::Disc
         },
+        sky_normal: cell.sky_normal,
+        sky_bounce: cell.sky_bounce,
         ..flythrough::default_lighting()
     };
     f.set_light_hooks(LightHooks {
@@ -303,6 +316,40 @@ pub fn run_cell(
         let d = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, f.direct());
         samples.push(d.iter().map(|p| p[3]).collect());
     }
+    let parts: [f64; 2];
+    let stripe = {
+        let hits =
+            vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, f.light_hit_positions());
+        let a = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, f.accumulated());
+        let d = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, f.direct_accumulated());
+        let on = |x: f32| (x - x.round()).abs() < 1e-3;
+        let mut s = [(0.0, 0u32); 2];
+        let lum = |p: &[f32; 4]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
+        let (mut pa, mut pd, mut n) = (0.0, 0.0, 0u32);
+        for ((h, a), d) in hits.iter().zip(&a).zip(&d) {
+            if h[3] < 1.0e30 {
+                pa += f64::from(lum(a));
+                pd += f64::from(lum(d));
+                n += 1;
+            }
+        }
+        parts = [pa / f64::from(n.max(1)), pd / f64::from(n.max(1))];
+        for ((h, a), d) in hits.iter().zip(&a).zip(&d) {
+            if h[3] > 48.0 {
+                continue;
+            }
+            let k = if on(h[2]) {
+                0
+            } else if on(h[0]) || on(h[1]) {
+                1
+            } else {
+                continue;
+            };
+            s[k].0 += f64::from(lum(a) + lum(d));
+            s[k].1 += 1;
+        }
+        s
+    };
     CellReading {
         last,
         width: f.target().width() as usize,
@@ -312,6 +359,8 @@ pub fn run_cell(
         grid_width: f.direct().width() as usize,
         exposure,
         ceiling,
+        stripe,
+        parts,
     }
 }
 
@@ -333,6 +382,8 @@ pub fn cells() -> Vec<Cell> {
                         bake: false,
                         approach: false,
                         anchor: None,
+                        sky_normal: vxe_render::SkyNormal::Face,
+                        sky_bounce: 0.0,
                     });
                 }
             }
@@ -411,6 +462,8 @@ pub fn default_cell(leaf_brick: bool) -> Cell {
         bake: false,
         approach: false,
         anchor: None,
+        sky_normal: vxe_render::SkyNormal::Face,
+        sky_bounce: 0.0,
     }
 }
 
