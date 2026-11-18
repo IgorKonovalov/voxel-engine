@@ -544,13 +544,14 @@ fn the_outdoor_source_and_its_flags_parse() {
             "{bad}"
         );
     }
-    // --leaf-shadow: brick by default, the canopy style on `leaf`, the banner names it.
+    // --leaf-shadow: voxel by default, naming nothing; `brick` the A/B, the canopy style on
+    // `leaf`, the banner names it.
     let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
-    assert_eq!(r.outdoor.leaf_shadow(), crate::LeafShadow::Brick);
-    assert!(!r.start_modes(0.0).line().contains("leaf"));
-    let r = parse_args_from(argv(&["--source", "outdoor", "--leaf-shadow", "voxel"])).unwrap();
     assert_eq!(r.outdoor.leaf_shadow(), crate::LeafShadow::Voxel);
-    assert!(r.start_modes(0.0).line().contains("leaf voxel"));
+    assert!(!r.start_modes(0.0).line().contains("leaf"));
+    let r = parse_args_from(argv(&["--source", "outdoor", "--leaf-shadow", "brick"])).unwrap();
+    assert_eq!(r.outdoor.leaf_shadow(), crate::LeafShadow::Brick);
+    assert!(r.start_modes(0.0).line().contains("leaf shadow brick"));
     assert!(parse_args_from(argv(&["--leaf-shadow", "solid"])).is_err());
     let styles = crate::outdoor_styles(crate::LeafShadow::Brick);
     assert_eq!(styles.len(), usize::from(crate::outdoor::LEAF) + 1);

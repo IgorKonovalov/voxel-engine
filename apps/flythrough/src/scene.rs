@@ -324,10 +324,10 @@ pub fn outdoor_materials() -> MaterialTable {
 /// brick holding leaves (the renderer's `SHADOW_AS_BRICK` style), or at a leaf voxel.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LeafShadow {
-    /// The canopy shadows as its bricks: no sun fleck through it. The default.
-    #[default]
+    /// The canopy shadows as its bricks: no sun fleck through it.
     Brick,
-    /// The canopy shadows voxel by voxel.
+    /// The canopy shadows voxel by voxel. The default.
+    #[default]
     Voxel,
 }
 
@@ -341,12 +341,12 @@ impl LeafShadow {
         }
     }
 
-    /// The banner's words after the sky rays: `leaf voxel, `, and none for the default (the
-    /// outdoor start banner is at its row cap).
+    /// The banner's words after the sky rays: `leaf shadow brick, `, and none for the default
+    /// (the outdoor start banner is at its row cap).
     pub fn words(self) -> &'static str {
         match self {
-            Self::Brick => "",
-            Self::Voxel => "leaf voxel, ",
+            Self::Brick => "leaf shadow brick, ",
+            Self::Voxel => "",
         }
     }
 }

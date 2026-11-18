@@ -934,8 +934,8 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
 | 7: A spike: a deterministic penumbra from the closest approach | dev | done (spike; cost on the RTX approach arm and the RENOIR not read) | ed47dc5c |
 | 8: The owner's windowed check | human | done 2026-11-18, failed on five points (`live/window86a/verdicts.md`; the amendment above) | |
 | 9: The sky rule: the column map, sky only above it | dev | done; bar 5 (the seal) fails as written (24.3 %, the pair's history decaying: 1.1 % at +128 frames); the bake's finality doubles the pre-roll (10.3 to 21.2 s, RTX) | d821e3e2 |
-| 10: The first seconds after a jump | dev | done; bar 1 met by Phase 9 (no band change); built the chain's sky; bar 3's frames not reached in the rig (its queue bakes one chunk in 600 frames) | committed with this row |
-| 11: The window's defaults | dev | not started | |
+| 10: The first seconds after a jump | dev | done; bar 1 met by Phase 9 (no band change); built the chain's sky; bar 3's frames not reached in the rig (its queue bakes one chunk in 600 frames) | ead32aff |
+| 11: The window's defaults | dev | done; five outdoor goldens re-blessed (the leaf default moves none; Phases 9 and 10's share read against the base) | committed with this row |
 | 12: The tunnel's brightness: the eye's ceiling anchored to the sky | dev | not started | |
 | 13: The zebra stripes: the sky term's normal and a bounce floor | dev | not started | |
 | 14: The forest floor: attribution, the key light on the pair, the canopy's transmittance | dev | not started | |

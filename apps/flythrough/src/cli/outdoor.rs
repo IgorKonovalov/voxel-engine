@@ -131,7 +131,7 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
             &["--leaf-shadow"],
             "brick|voxel",
             "how a canopy shadows the sun and the sky: as its 8^3 bricks (no fleck through \
-                 it) or voxel by voxel [brick]",
+                 it) or voxel by voxel [voxel]",
             |p: &mut Parsing, v| {
                 let names = crate::LeafShadow::ALL.map(|d| (d.name(), d));
                 p.args.outdoor.leaf_shadow = v.word(&names, "brick or voxel")?;
