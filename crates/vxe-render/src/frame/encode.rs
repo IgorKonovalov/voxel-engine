@@ -646,6 +646,7 @@ impl Frame {
                 Res::Buf(&t.tiles),
                 Res::Tex(&t.transmit),
                 Res::Tex(&t.direct_accum[c]),
+                Res::Buf(self.entities.marks_buffer()),
             ],
         );
         let gradient_bind = self.binds.io(

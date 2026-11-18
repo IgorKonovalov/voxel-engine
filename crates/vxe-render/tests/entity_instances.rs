@@ -115,6 +115,47 @@ fn an_entity_keeps_its_slots_when_another_is_removed() {
     assert_eq!(r.inst.entities_drawn(), 4);
 }
 
+/// Plan 0077 Phase 6 (ADR-0074): the marks words follow the runs. Two entities of 4 and 2
+/// parts, the second marked: each slot's owner word is its run's first slot with the live bit
+/// (512); the second's slots carry the outline bit (1024), the tint 0.35 as 89 from bit 11 and
+/// the colour's bytes; a free slot's words are 0. Removing the first and adding a 3-part
+/// entity in its place moves no mark; clearing the marks leaves the owners alone.
+#[test]
+fn the_marks_follow_the_runs() {
+    let mut r = Rig::new();
+    let a = r.place(&parts(4, 1), 0);
+    let b = r.place(&parts(2, 1), 10);
+    let mark = vxe_render::Mark {
+        colour: [0.35, 0.65, 1.0],
+        outline: true,
+        tint: 0.35,
+    };
+    r.inst.set_marks(&[(b, mark)]);
+    r.write();
+    let words = |r: &Rig, s: usize| {
+        let w = r.inst.mark_words();
+        [w[2 * s], w[2 * s + 1]]
+    };
+    let marked = [4 | 512 | 1024 | 89 << 11, 89 | 166 << 8 | 255 << 16];
+    assert_eq!(r.inst.mark_words().len(), 1024);
+    for s in 0..4 {
+        assert_eq!(words(&r, s), [512, 0], "slot {s}");
+    }
+    for s in 4..6 {
+        assert_eq!(words(&r, s), marked, "slot {s}");
+    }
+    assert_eq!(words(&r, 6), [0, 0]);
+    r.remove(a);
+    let c = r.place(&parts(3, 1), 20);
+    r.write();
+    assert_eq!(r.run(c), (0, 3));
+    assert_eq!(words(&r, 0), [512, 0]);
+    assert_eq!(words(&r, 3), [0, 0]);
+    assert_eq!((words(&r, 4), words(&r, 5)), (marked, marked));
+    r.inst.set_marks(&[]);
+    assert_eq!((words(&r, 4), words(&r, 5)), ([4 | 512, 0], [4 | 512, 0]));
+}
+
 /// Phase 3 done-when 2: 64 entities alternating 4 and 12 parts fill the 512 slots; the 32
 /// four-part ones leave and a sixteen-part entity comes in the same write, so 128 slots are
 /// free in runs of 4: the table compacts. Nothing is over, every twelve-part entity's run moved

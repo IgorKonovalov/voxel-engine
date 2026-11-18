@@ -24,6 +24,10 @@
 //!   palette byte a voxel, and a palette of 256 material ids. A 16-voxel cube is
 //!   `32 + 512 + 8 + 4096 + 1024` = 5672 bytes.
 //!
+//! The marks (ADR-0074) are a buffer of their own, [`MARK_BUFFER_BYTES`], that the composite
+//! binds: two words per instance slot, the slot's owner and its mark ([`Mark::words`]),
+//! rewritten from the runs and the kept marks at each write.
+//!
 //! The pool frees (ADR-0060): the consumer that uploaded a model frees it by its handle
 //! ([`EntityMirror::free_model`], or [`EntityMirror::clear`] for every model), and a volume no
 //! model claims returns its words to a coalescing free list ([`VolumePool`]). A volume never
@@ -80,6 +84,42 @@ pub(crate) const INSTANCE_MOVED: u32 = 1;
 /// A volume's palette entries.
 pub(crate) const PALETTE: usize = 256;
 
+/// The marks buffer's bytes: two words per instance slot.
+pub const MARK_BUFFER_BYTES: u64 = (MAX_ENTITY_PARTS * 2 * 4) as u64;
+/// The colours a consumer reaches for first (ADR-0074): a blue, then an orange, the pair the
+/// colour-blind guidance names. The render settings' default `mark_colours`.
+pub const MARK_COLOURS: [[f32; 3]; 2] = [[0.35, 0.65, 1.0], [1.0, 0.55, 0.15]];
+/// A slot's owner word: its run's first slot in the low 9 bits, then these.
+pub(crate) const MARK_LIVE: u32 = 1 << 9;
+pub(crate) const MARK_OUTLINE: u32 = 1 << 10;
+pub(crate) const MARK_TINT_SHIFT: u32 = 11;
+
+/// How an entity is marked on screen (ADR-0074): its shaded colour mixed toward `colour` by
+/// `tint` (0 to 1), and with `outline` a one-pixel line of `colour` where the entity's
+/// silhouette meets the world or another entity. The renderer gives a mark no meaning.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Mark {
+    pub colour: [f32; 3],
+    pub outline: bool,
+    pub tint: f32,
+}
+
+impl Mark {
+    /// A slot's two words in the marks buffer for an entity whose run starts at `owner`:
+    /// `owner | MARK_LIVE`, the outline bit and the tint in 8 bits from bit 11; then the
+    /// colour's channels in 8 bits each, red lowest. An unmarked entity's slot keeps only its
+    /// owner, which the composite's edge test still compares.
+    pub(crate) fn words(mark: Option<Mark>, owner: u16) -> [u32; 2] {
+        let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
+        let mut w = [u32::from(owner) | MARK_LIVE, 0];
+        if let Some(m) = mark {
+            w[0] |= (u32::from(m.outline) * MARK_OUTLINE) | (q(m.tint) << MARK_TINT_SHIFT);
+            w[1] = q(m.colour[0]) | q(m.colour[1]) << 8 | q(m.colour[2]) << 16;
+        }
+        w
+    }
+}
+
 /// Why [`EntityMirror::upload_model`] refused a model, or [`EntityMirror::free_model`] a
 /// handle. Nothing is written on a refusal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -132,6 +172,7 @@ impl std::error::Error for EntityUploadError {}
 /// (module docs), the pool's bookkeeping, and the instances of the last write.
 pub struct EntityMirror {
     buffer: wgpu::Buffer,
+    marks: wgpu::Buffer,
     pool: VolumePool,
     instances: EntityInstances,
 }
@@ -146,8 +187,15 @@ impl EntityMirror {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let marks = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("entity marks"),
+            size: MARK_BUFFER_BYTES,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         Self {
             buffer,
+            marks,
             pool: VolumePool::new(pool_bytes),
             instances: EntityInstances::new(),
         }
@@ -158,9 +206,32 @@ impl EntityMirror {
         &self.buffer
     }
 
-    /// Bytes the mirror's buffer occupies: the tree, the instances and the pool.
+    /// The marks buffer the composite binds (module docs).
+    pub fn marks_buffer(&self) -> &wgpu::Buffer {
+        &self.marks
+    }
+
+    /// Bytes the mirror's buffer occupies: the tree, the instances and the pool. The marks
+    /// buffer is [`MARK_BUFFER_BYTES`] beside it.
     pub fn bytes(&self) -> u64 {
         self.buffer.size()
+    }
+
+    /// The marks drawn from now on, by entity (ADR-0074), kept across writes: every write
+    /// rewrites each live slot's mark from this list, so an entity's mark follows its slots
+    /// and an entity not listed is drawn unmarked. Written at once from the runs of the last
+    /// write, and again by the next.
+    pub fn set_marks(&mut self, queue: &wgpu::Queue, marks: &[(EntityId, Mark)]) {
+        self.instances.set_marks(marks);
+        self.upload_marks(queue);
+    }
+
+    fn upload_marks(&self, queue: &wgpu::Queue) {
+        queue.write_buffer(
+            &self.marks,
+            0,
+            bytemuck::cast_slice(self.instances.mark_words()),
+        );
     }
 
     /// The pool's bookkeeping: its free list, and each model's words.
@@ -263,6 +334,7 @@ impl EntityMirror {
     }
 
     fn upload_instances(&self, queue: &wgpu::Queue) {
+        self.upload_marks(queue);
         queue.write_buffer(
             &self.buffer,
             0,

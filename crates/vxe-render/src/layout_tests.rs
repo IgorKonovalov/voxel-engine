@@ -427,6 +427,9 @@ fn rust_value(name: &str) -> Option<f64> {
         "GRID_ROWS" => f64::from(crate::hud::GRID_ROWS),
         "BACKDROP_BIT" => f64::from(crate::hud::BACKDROP_BIT),
         "BACKDROP_ALPHA" => f64::from(crate::hud::BACKDROP_ALPHA),
+        "MARK_LIVE" => f64::from(crate::entities::MARK_LIVE),
+        "MARK_OUTLINE" => f64::from(crate::entities::MARK_OUTLINE),
+        "MARK_TINT_SHIFT" => f64::from(crate::entities::MARK_TINT_SHIFT),
         _ => return None,
     })
 }

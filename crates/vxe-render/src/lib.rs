@@ -94,7 +94,7 @@ pub use bake::{
 pub use camera::{Camera, View};
 pub use entities::{
     DEFAULT_ENTITY_POOL_BYTES, DisplayPose, EntityMirror, EntityUploadError, FreedBytes,
-    MAX_ENTITIES, MAX_ENTITY_PARTS, ModelHandle,
+    MARK_BUFFER_BYTES, MARK_COLOURS, MAX_ENTITIES, MAX_ENTITY_PARTS, Mark, ModelHandle,
 };
 pub use exposure::{
     AutoExposure, EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState, Metering,

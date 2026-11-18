@@ -340,6 +340,40 @@ fn a_click_places_and_the_mode_stays() {
     assert_eq!(tick_ops(&mut run), 0, "no fill leaving the mode");
 }
 
+/// Phase 6 done-when: in the mode the displays' marks hold the ghost's id alone, outlined
+/// and tinted 0.35 in the ghost colour (the frame's first mark colour as `feed` hands it);
+/// after a click the placed entity has no mark and the new ghost has it; out of the mode the
+/// list is empty.
+#[test]
+fn the_ghost_is_marked_and_the_placed_are_not() {
+    let mut run = picker_run();
+    look(&mut run, [0.0, 0.0, 9.0], -40.0);
+    frame_keys(&mut run, &wheel_down());
+    let ghost = |run: &Run| run.modes.walkers.preview.as_ref().expect("a ghost").id;
+    let mark = |colour| vxe_render::Mark {
+        colour,
+        outline: true,
+        tint: 0.35,
+    };
+    let g = ghost(&run);
+    run.modes.walkers.refresh_displays();
+    assert_eq!(
+        run.modes.walkers.marks(),
+        [(g, mark(vxe_render::MARK_COLOURS[0]))]
+    );
+    frame_keys(&mut run, &click(MouseButton::Left));
+    let red = [1.0, 0.0, 0.0];
+    run.modes.walkers.ghost_colour = Some(red);
+    run.modes.walkers.refresh_displays();
+    let next = ghost(&run);
+    assert_ne!(next, g);
+    assert_eq!(run.modes.walkers.placed[0].id, g);
+    assert_eq!(run.modes.walkers.marks(), [(next, mark(red))]);
+    frame_keys(&mut run, &click(MouseButton::Right));
+    run.modes.walkers.refresh_displays();
+    assert_eq!(run.modes.walkers.marks(), []);
+}
+
 /// Phase 5 done-when: in the mode at 1280 x 720 (80 x 45 cells at the HUD's scale 2) the
 /// belt's rows are the overlay's last seven, centred: the name row, slot 1's frame top
 /// (yellow), the nine slots' digits, their names, two blank rows, the frame's bottom; slot 1

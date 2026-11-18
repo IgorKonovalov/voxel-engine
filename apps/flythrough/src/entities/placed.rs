@@ -16,6 +16,9 @@ use super::walker::{
     WALK_SPEED, WALK_STRIDES, WALK_SWING, facing, model, pose, rows,
 };
 
+/// How far the ghost's shaded colour mixes toward the ghost colour (ADR-0074).
+pub const GHOST_TINT: f32 = 0.35;
+
 /// One placed entity: its id, where it stands and which way it faces when placed, the walk's
 /// clock then (a built-in walker's), its library entry (`None` for the built-in walker) and
 /// its own playback of that entry's clips.
@@ -88,6 +91,12 @@ pub struct Walkers {
     /// `shown` are this frame's, the rest storage kept for later frames.
     displays: Vec<(EntityId, ModelHandle, vxe_render::DisplayPose)>,
     shown: usize,
+    /// The ghost's mark colour, the frame's first mark colour as the last
+    /// [`super::feed`] read it; `None` before, [`vxe_render::MARK_COLOURS`]' first.
+    pub ghost_colour: Option<[f32; 3]>,
+    /// The marks [`Walkers::refresh_displays`] last refreshed: the ghost's, when there is
+    /// one, kept across frames.
+    marks: Vec<(EntityId, vxe_render::Mark)>,
     /// A rig instance's two poses placed, reused instance to instance.
     rig_scratch: Option<(Pose, Pose)>,
 }
@@ -373,6 +382,24 @@ impl Walkers {
             n += usize::from(fits);
         }
         self.shown = n;
+        self.marks.clear();
+        if let Some(p) = &self.preview {
+            let colour = self.ghost_colour.unwrap_or(vxe_render::MARK_COLOURS[0]);
+            self.marks.push((
+                p.id,
+                vxe_render::Mark {
+                    colour,
+                    outline: true,
+                    tint: GHOST_TINT,
+                },
+            ));
+        }
+    }
+
+    /// The marks [`Walkers::refresh_displays`] last refreshed: the ghost's, outlined and
+    /// tinted ([`GHOST_TINT`]) in the ghost colour, or none.
+    pub fn marks(&self) -> &[(EntityId, vxe_render::Mark)] {
+        &self.marks
     }
 
     /// The drawn parts [`Walkers::refresh_displays`] last refreshed, in placement order.

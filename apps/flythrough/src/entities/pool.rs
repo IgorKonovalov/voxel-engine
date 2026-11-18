@@ -274,7 +274,9 @@ pub fn feed(
         },
         world.materials(),
     );
+    walkers.ghost_colour = Some(frame.mark_colours()[0]);
     walkers.refresh_displays();
+    frame.entity_mirror_mut().set_marks(queue, walkers.marks());
     frame.set_entity_displays(
         queue,
         walkers.displays().iter().map(|(id, h, d)| (*id, *h, d)),
