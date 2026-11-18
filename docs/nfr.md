@@ -576,9 +576,9 @@ the Windows arm confirms it on the first `main` CI run after Plan 0004's merge.
 |---|---|---|
 | Controller tick, one body | 20 µs | `cargo bench -p vxe-sim --bench controller` |
 | Sweep, one body, one contact | 26.3 µs (the Plan 0004 close reading, accepted by the owner 2026-10-17; the proposal was 5 µs); a sweep profile is scheduled only when a scene sweeps more than about 100 bodies a tick | same bench, `1000 sweeps of the F2 wall case` |
-| Surface mover tick, one body, attached on a flat face (ADR-0062) | **proposal: 20 µs** (Plan 0079; unread) | `cargo bench -p vxe-sim --bench surface`, `one surface tick attached on the F1 floor` |
-| `World::solid_gradient` at `half` 6 (13³ voxels, at most 27 bricks) | **proposal: 5 µs** (Plan 0079; unread) | the `vxe-world` gradient bench case |
-| Locomotion of 64 entities a tick in the fly-through (movers, probes, poses) | **guess: 1.5 ms a tick** (Plan 0079; unread) | the HUD's `tick <us>`, `--entities 64 --entities-walk on --headless` |
+| Surface mover tick, one body, attached on a flat face (ADR-0062) | **proposal: 20 µs** (Plan 0079); read 0.43 µs, loaded (below) | `cargo bench -p vxe-sim --bench surface`, `one surface tick attached on the F1 floor` |
+| `World::solid_gradient` at `half` 6 (13³ voxels, at most 27 bricks) | **proposal: 5 µs** (Plan 0079); read 0.92 µs, loaded (below) | the `vxe-world` gradient bench case |
+| Locomotion of 64 entities a tick in the fly-through (movers, probes, poses) | **guess: 1.5 ms a tick** (Plan 0079); read 0.35 ms (walkers) and 1.41 ms (spiders) in the room, 2.84 ms (spiders) on the showcase, loaded (below) | the HUD's `tick <us>`, `--entities 64 --entities-walk on --headless` |
 | Coarse grid update after a radius-1 m carve | 50 µs | `cargo bench -p vxe-world --bench coarse` |
 | Walkable update after that change | 20 µs | same bench |
 | Coarse grid RAM | 4 B per brick, 2048 B per chunk | `world_budget --chunks` |
@@ -619,6 +619,32 @@ criterion median (low, high), exclusive perf lock, load average 1.7 to 2.3 at ea
   fe50d6d). At 32 × 32 × 32 chunks it is 67 108 864 B by the same 2048 B per chunk
   (arithmetic, not read). Grid build at the level, one thread (`world_budget --chunks 20x20x8
   --seed 1`): 156.3 ms at the close review; grid plus walkable map in the fly-through 231 ms.
+
+**Readings for Plan 0079's lines (AMD Ryzen 9 5900HS laptop, Linux, exclusive perf lock, each
+loaded: indicative, not quiet; the plan's readings log `docs/plans/logs/0079.md` has the
+runs):**
+
+- **Surface mover tick** (`cargo bench -p vxe-sim --bench surface`, criterion median (low,
+  high), commit 22d62f05 plus the Phase 1 tree, load 18.7 falling to 9.1): one tick attached on
+  the F1 floor **431.19 ns** (429.17, 433.62); one tick rounding the cube's edge 870.92 ns
+  (837.22, 912.82); one `probe_ahead` on F2 365.36 ns (350.12, 383.26). Under the 20 µs
+  proposal.
+- **`solid_gradient`** (`cargo bench -p vxe-world --bench gradient`, commit 26f63d9b, load 3.64
+  falling to 2.96) on `Full` bricks: at `half` 2 333.92 ns (333.25, 334.61); at `half` 6
+  **917.90 ns** (915.73, 920.44). Under the 5 µs proposal.
+- **Locomotion of 64 entities a tick** (Plan 0079 Phase 4, e1894054, release):
+  `reading::the_tick_cost_at_64` (`apps/flythrough/tests/wander.rs`, 64 bodies in the room
+  course, 300 ticks then 600 timed, load 4.87 falling to 2.31): walkers p50 **351.7 µs** (p99
+  577.8, max 632.8); spiders p50 **1412.8 µs** (p99 1745.2, max 1849.6). In the fly-through
+  (`--headless --render 1920x1080 --frames 2700 --adapter NVIDIA --entities 64 --entities-walk
+  on`, the exit row's `tick`, load 2.5 to 5.8): walkers 367 µs (`--level`) and 397 µs
+  (showcase); spiders on the showcase 2839 µs (36 drawn, 28 over the part cap), over the 1.5 ms
+  guess.
+- **The frame CPU those runs cost** (§2's streaming and CPU line, against the built-in walkers
+  with no mover at the same count and source, same binary): `--level` x16 1.857 to 1.942 ms
+  p50 (+0.09 ms, guess +0.3); `--level` x64 2.156 to 2.577 ms (+0.42 ms); showcase walkers x64
+  2.467 to 2.862 ms (+0.40 ms); showcase spiders x64 2.467 to 5.535 ms (**+3.07 ms**, guess
+  +1.5 ms). The owner's window (2026-11-18) did not notice the cost at either count.
 
 ## 9. Audio
 
