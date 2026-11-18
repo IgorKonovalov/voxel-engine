@@ -361,6 +361,67 @@ setting, off by default, and a chunk baked while a column over its reach was not
 re-baked once when it turns final, so the end state is the decision's. The Implementation log's
 rows for Phases 16 to 25 were added by this amendment; `dev` fills them.
 
+## Amended 2026-11-18, Phase 21's fade (the architect's call, no owner question)
+
+**The decision: the direct part never carries the pair's sky term. The filter adds it from
+this frame's pair.** Phase 16 attributed the dig flash to the stored/direct switch at the
+stale bit, and the dev's resume notes (readings log, Phase 18) named the mechanism: the
+temporal pass adds the pair's sky term to the direct accumulation at the direct part's blend
+weight (`acc_direct += a_direct * t`, `a` 0.2 at a mature pixel), so at the switch to the ray
+the stored part drops the baked term at once while the direct part takes the pair's at a fifth
+(a dip of four fifths of the term for a frame, Phase 16's "half the region over 16 levels"),
+and at the switch back the stored part takes the re-baked term at once while the direct
+history still holds the pair's and decays it over frames (the flash). The pair is already the
+estimate: a long mean to `sky_history`, seeded from the baked value at that age where no ray
+is cast, so its value is continuous across the switch to the ray. The direct part's blend is
+a second history of the same quantity, and the second history is the lag. ADR-0076 rule 2
+says it: a screen-space accumulation carries a world-space estimate, it does not become one.
+So the fix removes the second history instead of flagging it: the temporal pass stops adding
+the sky part of `t` to `acc_direct` (its luminance stays in the moments, so the filter's
+variance still counts it); the a-trous's `variance` step, which already builds the filtered
+quantity as the direct part plus a fallback's emissive part, adds `pair.x * sky_open_by_normal(n)
+* exposure_now()` where this frame's `vis.a` says the ray was cast; the composite's
+`LIGHTING_FILTER_OFF` branch adds the same term. The key light's term (Phase 19, `key_light_at
+x pair.y`) stays in the direct part: it is sampled every frame wherever the key light is on, so
+it has no switch to lag at.
+
+**Where the history lives and which fade carries the switch (ADR-0076's binding clause).** The
+sky term's history is the store's words and the pair (ADR-0070); after this amendment no
+screen-space history of it exists but the pair's. The switch to the ray needs no fade: the pair
+starts at the baked value (the seed at age `sky_history`), and the two read one quantity up to
+Phase 20 (i)'s normal arm. The switch back lands the re-baked value at once, a step of the
+dig's real light change and nothing else (old to new in one frame, monotonic, no overshoot, no
+dip: rule 3's degenerate case). If the third window wants that step slower, Phase 20 (ii) is
+its home (the store's fade over the sky words), not this phase.
+
+**Rejected.** (1) A per-pixel flag "last frame's direct history held the term" in an existing
+channel: every reprojected channel is taken (the pair's four: the sky mean, the key mean, the
+short mean, the age; the moments' `xyz` reprojected and `w` the a-trous's stored flag, not
+reprojected; `direct_accum.w` the luminance the a-trous's `dark_store` and the tests'
+`alpha` readers use; `accum.w` the upscaler's fresh flag). Packing two meanings into one
+channel under bilinear reprojection breaks one of them; a linear share would blend correctly
+across the taps, but there is no free linear channel. (2) A new one-channel target: written
+by the temporal pass it is a fifth storage texture against `Limits::default()`'s four
+(`limits_for` raises storage buffers only), a limit the baseline adapter may not offer; as a
+ping-pong of `vis` (`rgba8unorm`, +921 600 B at the 1080p half tier's 640 x 360) read at the
+taps it adds a per-tap subtraction to the reprojection loop and keeps the second history to
+correct every frame. More state to keep right than removing the state. (3) Putting the pair's
+term into the stored part (`accum`, taken as is, unfiltered): one pass, no binding, but a face
+whose block holds no sky words (a block baked before the sky was set, the ring's coarse
+re-bake) would lose the a-trous over its raw samples, which Phase 20 bar 2 leans on. (4)
+Resetting the direct part (`a` 1) at the switch frames, as `LIGHTING_LIGHTS_CHANGED` does:
+removes the lag and the lights' history on the ring with it (a grain burst, Phase 16's other
+24 dots), and still needs the switch detected per pixel. No ADR: the decision is a plan-level
+mechanism under ADR-0070 (whose Phase 5 clause, "the direct target no longer receives the sky
+ray", this amendment makes literally true) and ADR-0076 (proposed, on main, not edited here).
+
+**Cost (every figure a guess until Phase 21 bar 6 reads it):** the variance step gains two
+texture loads (`vis`, the pair) and the sky's six open irradiances per lighting pixel, about
++0.01 ms RTX and +0.1 ms RENOIR on `nfr.md` section 2's Denoise line (2.0 ms); the temporal
+pass gives back the same adds, about 0 net; `frame_bytes` unchanged (section 3: 0 B); the
+variance's and the composite's bind groups gain sampled and uniform bindings only. The
+budgets table's Phase 21 row is updated below.
+
 ## Implementation phases
 
 Each phase ships as its own commit. `dev` implements all phases in one session with no review
@@ -1169,7 +1230,11 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   2026-11-18 (after Phase 18):** the reading runs a fourth arm, `--reach partial`, beside
   those three (Phase 18 bar 6: the horizon's counted pixels are the ray's, and `partial`
   drains the band at 10 to 16 chunks that `full` never bakes at rest); the ray region's share
-  of the lighting pixels under each arm goes in the table. If `partial` removes the ray region
+  of the lighting pixels under each arm goes in the table. **The reading runs on a binary that
+  holds `1e16a8fd` (Phase 18 bar 5's fix) and no older:** before it no pre-rolled block held
+  sky words, so the shade pass cast the sky ray over every pre-rolled face until the queue
+  re-baked it, a ray region at rest of its own; a reading on an older binary attributes the
+  pre-roll's gap, not the seam, and the log names the binary's commit beside the table. If `partial` removes the ray region
   at 19.png's pose at rest where (i) to (iii) do not, Phase 24's run 2 gains the `--reach
   partial` arm, and whether `Partial` becomes the default under a sky is the owner's at that
   window (a new Outcome on ADR-0046, the architect's); else it stays a setting and the log
@@ -1203,24 +1268,62 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
 
 ### Phase 21: The flash around a dig
 - **Owner skill:** dev
-- **What:** the mechanism Phase 16's split named, fixed from this list and no further: (a) a
-  pixel that resets inside a `SKY_STALE` ring seeds the pair from its face's cell's stale
-  baked visibility (or the chain's) at age `SEED_AGE` (8, a guess), not from one raw sample at
-  age 0, so the first samples blend at `1 / 9` and the firefly clamp is live from the first
-  frame (the hole's fresh faces have a record: the touched brick keeps its words under the
-  stale bit); (b) the ring's coarse re-bake does not write the sky words (`VIS_BAKED` from the
-  full pass only, Phase 10's unbuilt item) so no brick-sized patch lands at a low count; (c)
-  the switch between the stored and direct parts at the stale bit fades (Phase 20's (ii)
-  covers it if built there). **Phase 16 (2026-11-18) points at (c):** the stored/direct switch
-  at the stale bit carries the area (with the sky alone, half the region moves over 16 levels
-  for two frames; the ray's young samples about 26 dots of 50, the key light's reset pixels
-  about 24, the clamp 45 against 50), so (c) is built first and bar 1 re-read before (a) or
-  (b) is touched; (a) only if the dots on the hole's faces stay over the bar after (c).
-- **Files touched:** `temporal.wgsl`, `bake/job.rs`, `bake/queue/*`,
-  `crates/vxe-render/tests/gpu_sun.rs`, `apps/flythrough/tests/gpu_outdoor.rs`,
-  `docs/plans/logs/0086.md`.
+- **What:** the mechanism Phase 16's split named, fixed from this list and no further, (c)
+  first. **(c), decided 2026-11-18 (the amendment above): the pair's sky term leaves the direct
+  part and joins at the filter.** In `temporal.wgsl` the sky part of `t` (`pair.x *
+  sky_open_by_normal(rec.n) * exposure_now()` where `sky_cast`) is no longer added to
+  `acc_direct`; its luminance stays in the moments' blend (`l2`), so the filter's variance
+  counts it; the key light's part of `t` stays as Phase 19 built it. `sky_open_by_normal` and
+  `sky_open_irradiance` move from `temporal.wgsl` to a shader both passes include (`sky.wgsl`,
+  beside `sky_on`). In `atrous.wgsl` the `variance` step binds this frame's `vis`
+  (`texture_2d<f32>`, the shade pass's `rgba8unorm`), the pair written this frame
+  (`texture_2d<f32>`), `sky_e` (`array<vec4<f32>, 6>`, as the temporal pass binds it) and the
+  sky uniform, and adds the same term to the filtered quantity `c` where `vis.a > 0.5` and
+  `sky_on()`; `dark_store` keeps its test. In `composite.wgsl` the `LIGHTING_FILTER_OFF`
+  branch adds the same term after the direct accumulation, with the same bindings. No new
+  target, no storage texture: the temporal pass's four storage textures are
+  `Limits::default()`'s four. The debug read-backs that assert the sky term now read the
+  filter's output or the pair, never `direct_accumulated`. (a) and (b) as before: (a) a pixel
+  that resets inside a `SKY_STALE` ring seeds the pair from its face's cell's stale baked
+  visibility (or the chain's) at age `SEED_AGE` (8, a guess), not from one raw sample at age
+  0, so the first samples blend at `1 / 9` and the firefly clamp is live from the first frame
+  (the hole's fresh faces have a record: the touched brick keeps its words under the stale
+  bit); (b) the ring's coarse re-bake does not write the sky words (`VIS_BAKED` from the full
+  pass only, Phase 10's unbuilt item) so no brick-sized patch lands at a low count. **Phase 16
+  (2026-11-18) points at (c):** the stored/direct switch at the stale bit carries the area
+  (with the sky alone, half the region moves over 16 levels for two frames; the ray's young
+  samples about 26 dots of 50, the key light's reset pixels about 24, the clamp 45 against
+  50), so (c) is built first and bars 1 and 4 read before (a) or (b) is touched; (a) only if
+  the dots on the hole's faces stay over bar 4's line after (c); (b) only if bar 2 fails on a
+  brick-sized patch.
+- **Files touched:** `crates/vxe-render/src/shaders/temporal.wgsl`, `atrous.wgsl`,
+  `composite.wgsl`, `sky.wgsl`, `crates/vxe-render/src/frame/pipelines.rs` and
+  `frame/encode.rs` (the variance's and the composite's bind group layouts and groups),
+  `bake/job.rs`, `bake/queue/*` (only if (a) or (b)), `crates/vxe-render/tests/gpu_sun.rs`,
+  `apps/flythrough/tests/gpu_outdoor.rs`, `docs/plans/logs/0086.md`.
 - **Done when:**
-  1. **A dig leaves no dots.** `a_dig_leaves_no_dots` in `gpu_sun.rs` (the open floor of 3 x 3
+  1. **The direct part holds no sky term.** `the_direct_part_holds_no_sky_term` in
+     `gpu_sun.rs` (the open floor under `Sky::uniform(1.0)` with no store block, so every
+     face casts the ray; the key light off by `LIGHTING_HOOK_KEY_OFF`; a lamp lit far enough
+     that a chosen floor pixel receives none of it; 16 frames at 160 x 90; about 3 s): at that
+     pixel `direct_accumulated` reads 0 in rgb at every frame, and the filter's output reads
+     the pair's term, `pair.x * E_sky(n) * exposure`, within 5 %. Before this phase
+     `direct_accumulated` there reads the term's blend (near the full term by frame 16); the
+     value is printed.
+  2. **The switch neither dips nor flashes.** `the_sky_term_switches_without_a_dip` in
+     `gpu_sun.rs` (bar 3's rig with the key light off, so the sky alone lights the floor, as
+     Phase 16's cleanest arm; about 8 s): over the ring's pixels (faces whose record carries
+     `SKY_STALE` at any frame after the dig, outside the edit box dilated by one voxel), with
+     `before` the display value at frame 63 and `after` the value at frame 124, every frame's
+     value from 63 to 124 lies in `[min(before, after) - 2, max(before, after) + 2]` display
+     levels of 255 (ADR-0076 rule 3's form; 2 levels stands in for `T_fade` until Plan 0090
+     calibrates it), and the share of ring pixels that leave the band at any frame is 0. The
+     same statistic before this phase is read and printed (the expectation: the first stale
+     frame dips by four fifths of the sky term at a mature pixel, and the frame after the
+     re-bake lands overshoots by the direct history's share of it). The ring is non-empty: at
+     least one frame casts the ray over at least 1 % of the pixels within 64 voxels of the
+     box (Phase 16 read 7357 and 4765 rays on two frames), else the test fails as a rig fault.
+  3. **A dig leaves no dots.** `a_dig_leaves_no_dots` in `gpu_sun.rs` (the open floor of 3 x 3
      chunks baked whole under `Sky::uniform(1.0)`, a zenith sun, the live queue at the
      fly-through's settings so the re-bake takes frames, a 1 m dig at frame 64, 60 frames
      read; about 8 s): in every frame after the dig, the count of lighting pixels within 64
@@ -1228,11 +1331,21 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
      over 2 times the neighbourhood's settled mean is under 1 % of those pixels, and 0 from
      frame 16 on; the same before this phase is read and printed (the expectation: tens of
      percent in the first frames on the hole's faces).
-  2. **The hole takes its light.** The same test: 60 frames after the dig the hole's floor
+  4. **The hole takes its light.** The same test: 60 frames after the dig the hole's floor
      reads its baked value within 10 % (Phase 5 bar 4's clause), and no frame between has the
-     share of pixels changing over 16 levels above 5 %.
-  3. The fly-through's dig at Phase 16's rig re-read with the same statistic, tip against
-     the window's before binary, in the log.
+     share of pixels changing over 16 levels above 5 %; the dots on the hole's own faces (the
+     pixels inside the dilated box) are counted apart and printed, and (a) is built only if
+     their share is over 1 % on any frame after frame 16.
+  5. **Nothing moves where no ray is cast.** The hills' noon golden and the lamp-lit scenes'
+     pinned-exposure goldens are byte-identical (`vis.a` is 0 on every pixel there, so the
+     filter adds nothing and the direct part lost nothing); a golden that holds ray-lit pixels
+     at rest is re-blessed only if it moves, as a disclosed change with counts (the blend's
+     residual at rest is under one level). `frame_bytes` is unchanged.
+  6. **Cost:** the variance pass and the temporal pass on both adapters at the tunnel pose,
+     with Phase 20 bar 4's runs (the amendment's guesses: +0.01 ms RTX, +0.1 ms RENOIR on the
+     variance pass, the same back from the temporal pass).
+  7. The fly-through's dig at Phase 16's rig re-read with bar 3's statistic, tip against the
+     window's before binary, in the log.
 
 ### Phase 22: The fired lights' grain under the anchor
 - **Owner skill:** dev
@@ -1379,7 +1492,8 @@ temporal pass 0.10 to 0.12 RTX and 0.9 to 1.6 RENOIR, Phases 9 and 13):
 | `nfr.md` figure | projection (a guess) | how the close measures it |
 |---|---|---|
 | §2 Lighting, the light pass (Phase 19) | the key light on the pair adds no ray and one more read and write of a channel the pass already touches: about 0 | Phase 19 bar 3's runs, both adapters |
-| §2 Lighting, the temporal pass (Phases 20, 21) | the pair's term through the baked read's blend and the fade: +0.02 ms RTX, +0.1 ms RENOIR; the seed at a reset: 0 | Phase 20 bar 4 |
+| §2 Lighting, the temporal pass (Phase 20) | the pair's term through the baked read's blend and the fade: +0.02 ms RTX, +0.1 ms RENOIR; the seed at a reset: 0 | Phase 20 bar 4 |
+| §2 Denoise, the variance step (Phase 21 (c)) | two texture loads and six open irradiances per lighting pixel: +0.01 ms RTX, +0.1 ms RENOIR; the temporal pass gives the same back: about 0 net; section 3: 0 B, no storage texture | Phase 21 bar 6, with Phase 20 bar 4's runs |
 | §2 Denoise, a pair filter pass (Phase 20 (iii), if built) | one 5 x 5 iteration on one channel of the lighting grid: +0.05 ms RTX, +0.4 ms RENOIR, against the Denoise line's 2.0 ms | Phase 20 bar 4 |
 | §2 the bake queue's step and the pre-roll (Phase 18) | the wait off: the pre-roll back near Phase 9's finality-off reading (10.3 against 21.2 s RTX); the catch-up re-bakes at most one more job per chunk that baked provisional, a guess of 20 to 50 % of the pre-roll's jobs on the hills, behind the first bakes | Phase 18 bars 2 and 5 against Phase 9's table |
 | §3 World in VRAM (the store) | the provisional mark is a bit of the record's spare word: 0 | Phase 18 |
