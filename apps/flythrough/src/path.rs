@@ -65,16 +65,20 @@ pub enum Scene {
     Showcase,
     /// The castle in the streamed cave's hall (`--castle`).
     Castle,
+    /// The outdoor hills with the sparse trees, under a fixed low southern sun (`--source
+    /// outdoor --spawn outside --trees sparse --sun 10,180`).
+    Outdoor,
 }
 
 impl Scene {
-    pub const ALL: [Self; 3] = [Self::Cave, Self::Showcase, Self::Castle];
+    pub const ALL: [Self; 4] = [Self::Cave, Self::Showcase, Self::Castle, Self::Outdoor];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Cave => "cave",
             Self::Showcase => "showcase",
             Self::Castle => "castle",
+            Self::Outdoor => "outdoor",
         }
     }
 
@@ -82,12 +86,16 @@ impl Scene {
         Self::ALL.into_iter().find(|s| s.name() == name)
     }
 
-    /// The fly-through's flags that build this scene.
+    /// The fly-through's flags that build this scene. The outdoor scene's `--sun` fixes its
+    /// light and moves no voxel, so a path through it does not require it (`--path`'s rule).
     pub fn flags(self) -> &'static [&'static str] {
         match self {
             Self::Cave => &["--source", "cave"],
             Self::Showcase => &["--source", "showcase"],
             Self::Castle => &["--castle"],
+            Self::Outdoor => &[
+                "--source", "outdoor", "--spawn", "outside", "--trees", "sparse", "--sun", "10,180",
+            ],
         }
     }
 }
@@ -211,8 +219,47 @@ const CASTLE_KEYS: &[Keyframe] = &[
     key(31.5, [392.5, 182.5, -68.5], 25.0, 0.0),
 ];
 
+/// The outdoor hills at about 4 m over the ground: from the `outside` spawn north-east over the
+/// hills and between the sparse trees to the `forest` spawn's column, back south with the low
+/// sun ahead, over the tunnel's mouth and down the tunnel's axis to the chamber, where the last
+/// 3 s turn the view about. The keys up to the mouth are an air route found like [`SHOWCASE`]'s
+/// (a lattice search preferring 4 m over the ground, thinned without the smoothing pass); the
+/// tunnel's keys lie on its axis, about 150 voxels apart, so the spline holds the line.
+pub const OUTDOOR: CameraPath = CameraPath {
+    name: "outdoor",
+    scene: Scene::Outdoor,
+    keys: OUTDOOR_KEYS,
+};
+
+const OUTDOOR_KEYS: &[Keyframe] = &[
+    key(0.0, [-299.5, 0.5, 549.5], 48.0, 16.0),
+    key(0.5, [-299.5, 0.5, 564.5], 48.0, 14.0),
+    key(5.7, [-203.5, 108.5, 624.5], 72.0, -3.0),
+    key(11.0, [-155.5, 258.5, 612.5], 59.0, 3.0),
+    key(16.1, [-77.5, 390.5, 624.5], 74.0, 5.0),
+    key(21.4, [-35.5, 540.5, 648.5], 69.0, -17.0),
+    key(25.2, [0.5, 636.5, 594.5], -108.0, 15.0),
+    key(29.6, [-35.5, 522.5, 648.5], -90.0, -5.0),
+    key(34.9, [-35.5, 366.5, 624.5], -95.0, 0.0),
+    key(36.5, [-35.5, 318.5, 624.5], -97.0, 0.0),
+    key(36.7, [-35.5, 312.5, 624.5], -97.0, 0.0),
+    key(36.9, [-41.5, 306.5, 624.5], -95.0, 0.0),
+    key(37.1, [-41.5, 300.5, 624.5], -95.0, 0.0),
+    key(37.3, [-41.5, 294.5, 624.5], -96.0, 0.0),
+    key(37.5, [-41.5, 288.5, 624.5], -96.0, 0.0),
+    key(41.4, [-53.5, 174.5, 624.5], -90.0, -4.0),
+    key(46.6, [-53.5, 18.5, 606.5], -11.0, -18.0),
+    key(47.3, [-59.5, 0.5, 594.5], 0.0, -14.0),
+    key(50.9, [39.5, 0.5, 552.5], 0.0, -10.0),
+    key(54.8, [150.5, 0.5, 519.5], 0.0, -10.0),
+    key(60.0, [300.5, 0.5, 475.5], 0.0, -10.0),
+    key(65.2, [450.5, 0.5, 431.5], 0.0, -10.0),
+    key(70.4, [600.5, 0.5, 386.5], 0.0, 0.0),
+    key(73.4, [600.5, 0.5, 386.5], 180.0, 0.0),
+];
+
 /// Every path, by name.
-pub const PATHS: [CameraPath; 3] = [CAVE, SHOWCASE, CASTLE];
+pub const PATHS: [CameraPath; 4] = [CAVE, SHOWCASE, CASTLE, OUTDOOR];
 
 impl CameraPath {
     /// The path named `name`.
@@ -556,6 +603,8 @@ impl PathPlayer {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TesterInput {
     Key(KeyCode),
+    /// A pad button.
+    Pad(PadButton),
     /// Mouse motion (or the look stick).
     MouseLook,
     Click(MouseButton),
@@ -587,8 +636,14 @@ pub const TESTER_MOVE_KEYS: [KeyCode; 7] = [
     KeyCode::ShiftLeft,
 ];
 
+/// The pad buttons `--tester` moves the camera with: `R1` and `L1` (up and down), `R3`
+/// (faster).
+pub const TESTER_MOVE_PAD: [PadButton; 3] = [PadButton::R1, PadButton::L1, PadButton::R3];
+
 /// The tester mode's filter: movement, look, the left click's dig, `F1`, `T` and `Esc` map to
-/// their action; every other key and button (the debug keys among them) to none.
+/// their action; every other key and button (the debug keys, the menu's `Tab` and the pad's
+/// `Start` among them) to none. The frame loop passes on only what maps
+/// (`run::frame`'s key step).
 pub fn tester_action(input: TesterInput) -> Option<TesterAction> {
     match input {
         TesterInput::Key(k) if TESTER_MOVE_KEYS.contains(&k) => Some(TesterAction::Move),
@@ -596,6 +651,8 @@ pub fn tester_action(input: TesterInput) -> Option<TesterAction> {
         TesterInput::Key(KeyCode::KeyT) => Some(TesterAction::Resume),
         TesterInput::Key(KeyCode::Escape) => Some(TesterAction::End),
         TesterInput::Key(_) => None,
+        TesterInput::Pad(b) if TESTER_MOVE_PAD.contains(&b) => Some(TesterAction::Move),
+        TesterInput::Pad(_) => None,
         TesterInput::MouseLook => Some(TesterAction::Look),
         TesterInput::Click(MouseButton::Left) => Some(TesterAction::Dig),
         TesterInput::Click(_) => None,

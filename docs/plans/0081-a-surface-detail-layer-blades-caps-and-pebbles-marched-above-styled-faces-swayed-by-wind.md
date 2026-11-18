@@ -1,6 +1,6 @@
 # 0081: A surface detail layer: blades, caps and pebbles marched above styled faces, lit as hits, faded by size on screen, swayed by a wind the game sets
 
-> **Status:** approved (2026-11-16, the owner's go with every recommended answer)
+> **Status:** approved (2026-11-16, the owner's go with every recommended answer); amended 2026-11-17 (architect re-read against main 3b3986d0 after Plan 0032's close, Plan 0069, Plan 0080's lane and Plan 0086: the section "Amended 2026-11-17 (re-read)" below is the phases' errata)
 > **Created:** 2026-11-16
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md); the cave presets serve M6's consumer
 > **Related ADRs:** [ADR-0063](../adrs/0063-surface-detail-is-a-procedural-shell-marched-at-the-hit-described-per-material-on-the-render-side.md)
@@ -26,7 +26,7 @@
 > 2026-11-03 (a stable image without flicker or aliasing comes first) and of 2026-11-12
 > (cheap unpicked arms stay as settings). The first consumer's needs are in
 > `.claude/skills/architect/references/project-context.md`.
-> **Starts after:** [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
+> **Starts after:** [Plan 0032](done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
 > closes and merges (the outdoor source with its `grass` row, the sun and the sky ray),
 > which itself follows Plan 0069 (the settings surface this plan's knobs join). **Before Plan
 > 0033** (the far field draws the face albedo this layer fades to; settling the near look first
@@ -37,6 +37,110 @@
 > **Exploration (lane rules 2b):** Phases 1 to 4 are exploration; the owner's window in Phase 5
 > is their gate. Each lands its CPU tests of data, determinism and API; every image judgement
 > is a reading in `docs/plans/logs/0081.md` until Phase 6 writes the tests against the picks.
+
+## Amended 2026-11-17 (re-read)
+
+Read at main 3b3986d0 (Plan 0032 closed, v0.61.0; Plan 0069 closed, v0.60.0) against the
+`plan-0080` lane (the menu) and Plan 0086 (approved, its lane open). The lane branches from
+main once Plan 0086 and Plan 0080 have merged; the tree's names win. The Decision, the
+Interface and the phases stand except where this section says otherwise; `dev` reads it as
+the phases' errata. Crate names here are `vxe-*`; if Plan 0087 has merged first they read
+`svet-*` through that plan's map.
+
+### Name mapping (the plan's name, then the tree's)
+
+| The plan says | The tree has |
+|---|---|
+| "`frame/marcher.rs` or the frame module that owns group 0" | `crates/vxe-render/src/frame/pipelines.rs` (`world_layout`, `world_bind`; bindings 0 to 18 used, 5 and 6 unused, 19 the next); `frame/marcher.rs` is the hit pass's pipelines only |
+| the style lane in the material row (`gpu_world/format.rs`) | **none.** The rows are `GpuWorld`'s (`gpu_world/stage.rs` `material_rows`, lanes 8, 9 and 11 to 15 spare) and `Frame` cannot mark them dirty. The per-material word is `Frame`-owned, as `emission_scale` is (binding 11, `Frame::set_emission_scales`): see "Interface changes" |
+| `shaders/light.wgsl` (the light pass) | the light pass's entry is `shade.wgsl`; `light.wgsl` is the list lights' walk and `sky_light.wgsl` the key light and the sky ray. The shadow-ray origins are `light.wgsl` (`shadowed`), `emissive.wgsl` and `sky_light.wgsl` (`shadow_origin`, `hitrec.wgsl`) |
+| "the baked emissive light is read for the face under the element" (in the light pass) | the store is read in the **temporal** pass: `store_voxel(rec.p, nf)` = `floor(p - 0.5 nf)` (`hitrec.wgsl`, called from `temporal.wgsl`). A detail hit up to 4 voxels above its face reads air there: Phase 1 makes the read find the face voxel for a `HIT_DETAIL` record (a step along `-n_face` to the first solid voxel, at most `DETAIL_HEIGHT_MAX + 1`, or the face cell's offset in the record's free bits; `dev` picks, the log says which) |
+| "`info.w` has bits 6 to 15 free" | bits 6 to 15 are the entity instance when `HIT_ENTITY` (bit 5) is set, and `unpack_hit` decodes `instance = flags >> 6` on every record. A detail hit is never an entity hit, so `HIT_DETAIL` at bit 6 and `s` in bits 8 to 15 stand, and every reader of `rec.instance` is gated by `rec.entity` (`dev` greps; the log says which) |
+| one writer of the hit record | three: `hit.wgsl` (the main walk and the split pixel's resume) and `field_walk.wgsl` (the field look). The layer is off under `--look field` (the field has no face); the two `hit.wgsl` writers take it |
+| `Frame::set_dt` | exists (`frame/mod.rs`, in `NOT_SETTINGS`); the wind's phase advances there. `Params` is packed in `frame/encode.rs` (1193 of 1200 lines): the wind and phase take `Params`' free pads (`_pad3`, `_pad4`, `_pad8`, `_pad9`, `_pad10`) or the style uniform's tail, packed in a small new module, not in `encode.rs` |
+| the style buffer, "storage" | a **uniform** buffer (4096 B fits): group 0 asserts `STORAGE_BUFFERS_NEEDED` = 13 (`lib.rs`, `gpu_world/format.rs`), so a storage buffer would raise the constants and the tests |
+| `apps/flythrough/src/main.rs` (flags) | `cli/outdoor.rs` (`--detail`, `--detail-wind`, `--detail-cells`, `--detail-probes` beside `--trees`; `cli/flags.rs` is at 1190 lines), `cli/tests.rs` (the parse test), `docs/flythrough.md` (every key and flag; the root README only links it) |
+| `apps/flythrough/src/lib.rs` (the presets beside `cave_materials()`) | `scene.rs` (`cave_materials`, `outdoor_materials`; `GRASS` 5, `SOIL` 6, `BARK` 7, `LEAF` 8 in `outdoor.rs`, so `grass2` is id 9; `rock` is `cave::ROCK` 1) |
+| "the menu's table (Plan 0080's file)", `hud.rs` | `toggles.rs` (on `plan-0080`: a `Toggle { press: Press::Menu, name, group, row, get, flip, needs, number }`, group `Look`); the banner is `hud/modes.rs` (**1197 of 1200 lines**: the detail words go in a new `hud/modes_detail.rs` or a split `dev` makes first); the steps row is `hud/stats.rs` `StepsSample` fed by `run/hud_feed.rs` `steps_line`, the exit line `run/frame.rs` |
+| "the camera has a vertical half-angle of 0.5 rad" | **35 degrees** (`vfov` 70 in `setup.rs` and `scene.rs`; the fly.rs unit tests alone use 1.0). At 1280 x 720 internal a voxel at `D` voxels spans `720 / (2 D tan 35) = 514 / D` pixels: six pixels a voxel is `D` = 86 (8.6 m), twelve is 43, two is 257, four is 129; a 0.15-voxel blade is one pixel wide at `D` = 77. Phase 3 bar 1 moves with it (below) |
+| `tests/strip.rs` | `apps/flythrough/examples/strip.rs` (1554 lines), whose `--source` takes `showcase\|level` only: Phase 3 bar 4 adds an `outdoor` arm to it (a small addition, in Phase 3's files) |
+| `apps/flythrough/tests/gpu_golden.rs` (the goldens) | at 1885 of 2000 lines: `outdoor_noon_detail` goes in `gpu_outdoor_golden.rs` (the outdoor goldens' file, `Hills` rig) and `cave_detail` in a new `gpu_detail_golden.rs` or beside it |
+| "a cyan emission near the ore's" (the cave preset) | the cave's ore is orange (`ORE_EMISSION`, `--emissive-ore on`); cyan is the showcase's crystal. The cap's emission is `dev`'s pick near one of them; the log says which |
+| `SurfaceDetailSettings` in `frame/settings.rs` | the struct may live in `detail.rs`; its `FIELDS` rows, `with_test_value` arms and `PROFILE_PICKS` are `crates/vxe-render/src/settings.rs` (1146 lines), and the fly-through fills it in `cli/settings.rs` `render_settings()` |
+
+### Interface changes
+
+- **Starts after:** Plan 0086 closes and merges (the architect's recommendation at Plan
+  0032's close, the owner's order owed), which follows Plan 0032; and Plan 0080 has merged
+  (the menu entry). Still before Plan 0033.
+- **One per-material style word, shared with Plan 0086.** Plan 0086 Phase 2 adds a
+  `Frame`-owned `u32` per material id with a `SHADOW_AS_BRICK` bit, set through
+  `Frame::set_material_styles(&[u32])`, and names this plan as the one that absorbs it. This
+  plan's detail style index lives in that word (bits 0 to 7 the style index plus one, 0 none;
+  bit 8 `SHADOW_AS_BRICK`, as 0086 lays it out), uploaded as `emission_scale` is, read in the
+  hit pass where the walk has the material id. `Frame::set_surface_details` fills the style
+  uniform and the index bits; the material rows and `GpuWorld` are untouched. If 0086 has
+  not landed when this lane starts, this plan adds the word and 0086 takes it (the merge item
+  both logs name). `set_surface_details` and `set_detail_wind` are per-frame inputs listed in
+  `NOT_SETTINGS` (ADR-0055's rule: a `Frame::set_*` is a setting or a listed input, or
+  `every_setter_is_a_setting_or_an_input` fails).
+- **The sky term at a detail hit** is Plan 0086's: the store's visibility times `E_sky` for
+  the face under the element (the same store read as the emissive part, through the fix
+  above), with the element's shading normal; the sky ray only where the bake is stale. Plan
+  0086's `SHADOW_AS_BRICK` applies to an element's shadow rays unchanged. 0086 Phase 3's
+  lifted ray origin acts in the far-normal regime (`[2, 6]` pixels a voxel), where the layer
+  at `[6, 12]` has faded out; at the `[2, 4]` candidate the two overlap, and Phase 5 sees it.
+- **The menu, not a key** (ADR-0061, Plan 0080): the `detail` toggle is a `Press::Menu` entry
+  of `toggles::TOGGLES` (group `Look`), no key; its `get` is the banner's word; `--keys` lists
+  it; 0080's `every_toggle_and_action_is_an_entry` and `the_source_reads_no_key_the_tables_miss`
+  pass. Bar 4 of Phase 1 reads: the entry's `flip` moves `Modes::line()` through `detail off`
+  and `detail grass`.
+- **The settings** (Plan 0069): `SurfaceDetailSettings` joins `RenderSettings` in Phase 1,
+  not Phase 4, with its `FIELDS` rows (`on`, `fade_px`, `min_px`, `max_cells`, `probes`,
+  `density_scale`: `Settle`, since each moves hits under the history; `dev` proves the class
+  in `gpu_settings.rs`), `with_test_value` arms, a `PROFILE_PICKS` row (Portable `on: false`)
+  and the fly-through's `render_settings()`; Phase 4 adds the fields it introduces. The HUD's
+  profile row (`cli/settings.rs` `profile_row`) names a changed field as it does every other.
+- **The tester (Plan 0088)** ships the outdoor scene at the fly-through's defaults. If Phase
+  5 picks `grass` on by default, the tester's outdoor path shows it and its report's rows
+  move: a disclosed change in this plan's log, and Plan 0088's path (computed from the
+  heightfield) is unaffected.
+
+### Phases: what changes
+
+- **Phase 1** files: `frame/pipelines.rs` (the style uniform's binding), a small module for
+  the `Params` words, `shade.wgsl` and `temporal.wgsl` (the store read for a detail record)
+  in place of `light.wgsl`; `cli/outdoor.rs`, `cli/tests.rs`, `scene.rs`, `toggles.rs`,
+  `hud/modes_detail.rs` (or the split), `docs/flythrough.md`; `settings.rs` and
+  `cli/settings.rs` for the settings struct. Bar 1's "uploads `k + 1` in its first spare
+  lane" reads "writes `k + 1` into the style word's index bits and leaves 0086's flag bit as
+  it was". Bar 3's camera is 20 voxels up at 45 degrees as written.
+- **Phase 2** unchanged but for the files: `cli/outdoor.rs`, `hud/stats.rs`, `run/hud_feed.rs`,
+  `run/frame.rs` (the exit line).
+- **Phase 3** bar 1 at `vfov` 70: no `HIT_DETAIL` pixel lies farther than **86** voxels from
+  the camera within 5 % at `fade_px` `[6, 12]`, and the mean composite colour of the floor
+  band **92 to 102** voxels out is within 10 % of the band **70 to 80** voxels out at
+  `far_shade` 1.0. The candidates' distances in the Decision read 4.3 to 8.6 m for `[6, 12]`
+  and 12.9 to 25.7 m for `[2, 4]`. Bar 4 adds the `outdoor` arm to `examples/strip.rs`. The
+  wind's words are packed outside `encode.rs`.
+- **Phase 4**: the settings struct already exists (Phase 1); this phase adds `density_scale`
+  if Phase 1 left it out, and the Portable pick. The cave cap's emission colour is `dev`'s
+  pick (above). Files: `scene.rs` for the presets, `cli/outdoor.rs` for `meadow` and `cave`.
+- **Phase 5** also reaches the grass through the menu (`Tab`, the `Look` group, the `detail`
+  row) and on the pad, and the owner's slow adapter run is one pose, as written.
+- **Phase 6** goldens: `outdoor_noon_detail_golden` in `gpu_outdoor_golden.rs` (soak, as
+  written), `cave_detail_golden` in a new golden file or beside it, never in `gpu_golden.rs`.
+  Bar 6's ledger row is the "surface detail layer" row the architect added to table 2 of
+  `docs/nfr/02-frame-budget.md` on 2026-11-17 (budgeted, this plan's Budgets figures); the
+  close replaces it with the reading.
+
+### Tiers and budgets, checked
+
+The tiers paragraph is current (10 s soak line, `--binaries` per phase, the gate at the tip).
+The Budgets table's base is main after Plan 0086 merges, not Plan 0032: the hit pass outdoors
+reads inside a 5.1 to 5.6 ms RTX frame and a 37.5 to 45.8 ms RENOIR frame at 1080p (Plan 0032
+Phase 7, `docs/nfr/02-frame-budget.md`), and Phase 1 bar 5 reads the base again. No owner
+question is added by this re-read.
 
 ## TL;DR
 

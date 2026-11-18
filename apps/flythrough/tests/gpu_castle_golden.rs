@@ -54,9 +54,36 @@ fn castle_gate_golden() {
         println!("castle_gate.png: build peak RSS {peak} B");
         assert!(peak < 300 << 20, "build peak RSS {peak} B");
     }
-    let Some(mut rig) = LookRig::new(&world, None) else {
+    let Some(img) = gate_image(&world, None) else {
         return;
     };
+    assert_golden("castle_gate.png", &img);
+    if let Some(peak) = peak_rss() {
+        println!("castle_gate.png: process peak RSS {peak} B");
+    }
+}
+
+/// The gate pose after 16 frames of history, the headlamp on and the torches lit, read back
+/// as RGBA8; `None` without a software adapter. With `profile`, the frame renders at its
+/// internal scale through FSR 2 and applies its `Live` and `Settle` fields, the exposure kept
+/// at the golden's; its `Rebuild` fields do not reach the fixed mirror.
+fn gate_image(world: &vxe_world::World, profile: Option<vxe_render::Profile>) -> Option<Vec<u8>> {
+    use support::*;
+    let mut rig = LookRig::new(world, None)?;
+    if let Some(p) = profile {
+        let mut s = vxe_render::RenderSettings::profile(p);
+        s.lighting.exposure = vxe_render::Lighting::default().exposure;
+        let output = [WIDTH, HEIGHT];
+        rig.frame = vxe_render::Frame::with_sizes(&rig.device, s.scale.internal(output), output);
+        rig.frame.set_upscaler_kind(
+            &rig.device,
+            vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+                sharpness: s.fsr2.sharpness,
+                ..vxe_render::Fsr2Settings::default()
+            }),
+        );
+        rig.frame.apply_settings(&rig.device, &rig.queue, &s);
+    }
     let (eye, yaw, pitch) = castle::CastleShot::Gate.pose();
     let camera = vxe_render::Camera {
         position: eye.map(|v| v as f32 + 0.5).into(),
@@ -67,11 +94,11 @@ fn castle_gate_golden() {
     rig.gpu.set_focus(VoxelCoord(eye));
     for _ in 0..4 {
         rig.gpu
-            .sync_now(&world, &rig.device, &rig.queue)
+            .sync_now(world, &rig.device, &rig.queue)
             .expect("mirror fits the adapter");
     }
     // The store the cube faces read: the chunks around the eye's.
-    rig.bake_around(&world, eye, 1, 64);
+    rig.bake_around(world, eye, 1, 64);
     for _ in 0..16 {
         rig.frame.step(
             &rig.device,
@@ -83,12 +110,36 @@ fn castle_gate_golden() {
     }
     let img = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
     println!(
-        "castle_gate.png: {} light samples, bins covering 1 %: {}",
+        "gate ({profile:?}): {} light samples, bins covering 1 %: {}",
         rig.gpu.light_samples(),
         bins_covering(&img, 0.01)
     );
-    assert_golden("castle_gate.png", &img);
-    if let Some(peak) = peak_rss() {
-        println!("castle_gate.png: process peak RSS {peak} B");
-    }
+    Some(img)
+}
+
+/// `profile_portable_gate.png`: the gate pose in the portable profile, held to the goldens'
+/// floor (0.1 % of pixels over 2/255), and differing from the floor profile's image at the
+/// same pose in more than that share, so the profile reached the frame. The gate holds the
+/// torches and the lamp that portable's light cap and lamp bounce cut.
+#[test]
+#[ignore = "soak"]
+fn portable_profile_golden() {
+    use support::*;
+    use vxe_render::Profile;
+    let (world, _) = gate_world();
+    let Some(img) = gate_image(&world, Some(Profile::Portable)) else {
+        return;
+    };
+    assert_golden("profile_portable_gate.png", &img);
+    let floor = gate_image(&world, Some(Profile::Floor)).expect("the adapter rendered once");
+    let f = fraction_differing(&img, &floor, 2);
+    println!(
+        "profile_portable_gate.png: {:.4} % of pixels differ from the floor's by more than 2/255",
+        f * 100.0
+    );
+    assert!(
+        f > 0.001,
+        "portable: {:.4} % differ from the floor",
+        f * 100.0
+    );
 }

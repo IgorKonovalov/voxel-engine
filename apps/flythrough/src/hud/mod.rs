@@ -8,6 +8,7 @@
 //! process's RSS from `/proc` is not free either, so both are sampled at a [`Cadence`] and
 //! shown with the sample's age.
 
+pub mod menu;
 mod modes;
 mod stats;
 mod upscaler;

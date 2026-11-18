@@ -779,3 +779,44 @@ fn limits_compensation_and_dt() {
         s.current
     );
 }
+
+/// An empty world under `Sky::uniform(0.5)` in auto with instant adaptation, the camera pitched
+/// up so its lowest ray is above the horizon (a uniform sky reads 0 below it): the exposure the
+/// second frame reads is `0.18 / 0.5 = 0.36` within 1 %.
+#[test]
+fn auto_exposure_finds_the_key_under_a_uniform_sky() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        &FnSource(|_: [i32; 3]| AIR),
+        &MaterialTable::new(),
+    );
+    let gpu = mirror(&device, &queue, &world);
+    let mut frame = Frame::new(&device, 32, 18);
+    frame.set_resolution(&device, LightingResolution::Full);
+    frame.set_lighting(Lighting {
+        lamp: false,
+        candidates: 0,
+        exposure: Exposure::Auto(AutoExposure::instant()),
+        ..Lighting::default()
+    });
+    frame.set_dt(1.0 / 60.0);
+    frame.set_sky(Some(vxe_render::sky::Sky::uniform(0.5)));
+    // vfov 2 atan(1/2) is about 53 degrees, so at a pitch of 60 the lowest ray, a corner's,
+    // rises well above the horizon.
+    let up = Camera {
+        position: Vec3::new(32.0, 32.0, 32.0),
+        yaw: 0.0,
+        pitch: 60f32.to_radians(),
+        vfov: 2.0 * 0.5f32.atan(),
+    };
+    let mut s = state(&device, &queue, &frame);
+    for _ in 0..2 {
+        frame.step(&device, &queue, &gpu, &up, &LightParams::at_eye());
+        s = state(&device, &queue, &frame);
+    }
+    println!("under a uniform sky of 0.5: {s:?}");
+    assert!((s.current / 0.36 - 1.0).abs() <= 0.01, "{}", s.current);
+}

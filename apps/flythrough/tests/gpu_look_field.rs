@@ -947,9 +947,10 @@ fn the_split_walk_moves_no_hit_record() {
 /// `frame_bytes_hold_the_store_and_no_emissive_history`), and the direct pair: the direct
 /// target and its two accumulations, 8 B each a lighting pixel at 640 x 360 (DIRECT_PAIR,
 /// `gpu_upscale.rs`'s `frame_bytes_hold_the_direct_pair`), and the entity mirror at its default
-/// pool (ENTITY_MIRROR: the tree, 512 instances and 8 MiB, ADR-0050).
+/// pool with its marks (ENTITY_MIRROR: the tree, 512 instances and 8 MiB, ADR-0050; the marks
+/// buffer's 4096 B, ADR-0074).
 const DEFAULT_FRAME_BYTES: u64 = 124_737_616 + ENTITY_MIRROR;
-const ENTITY_MIRROR: u64 = 4096 + 65_536 + (8 << 20);
+const ENTITY_MIRROR: u64 = 4096 + 65_536 + (8 << 20) + 4096;
 const DEFAULT_MAIN: u64 = 130_267_168;
 const STORE_LESS: u64 = 3_686_400 + 7_372_800;
 const DIRECT_PAIR: u64 = 3 * 8 * 640 * 360;

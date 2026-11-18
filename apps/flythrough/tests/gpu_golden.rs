@@ -1337,8 +1337,15 @@ fn upscaled_golden_sharpens_within_the_neighbourhood() {
 /// fly-through's defaults (indirect light on at the default probe spacing, FSR 2 at its default
 /// scale 1.5 with sharpening 0.5, the lighting at its default resolution,
 /// `LookPreset::DEFAULT` with its store read and filter weights), the lamp off, the shot's exposure and the showcase's light radius,
-/// the light store baked over [`SHOWCASE_BAKE`], under `table`.
-fn showcase_hall(table: &MaterialTable, frames: u32) -> Option<(Vec<u8>, u64)> {
+/// the light store baked over [`SHOWCASE_BAKE`], under `table`. With `profile`, the frame
+/// renders at its internal scale and then applies its `Live` and `Settle` fields, its lamp
+/// included, with the shot's exposure; its `Rebuild` fields do not reach the hall's fixed
+/// mirror.
+fn showcase_hall(
+    table: &MaterialTable,
+    frames: u32,
+    profile: Option<vxe_render::Profile>,
+) -> Option<(Vec<u8>, u64)> {
     use flythrough::showcase::{SHOTS, ShowcaseSource};
     let source = ShowcaseSource::new(1);
     let world = World::generate(source.extent(), &source, table);
@@ -1376,11 +1383,11 @@ fn showcase_hall(table: &MaterialTable, frames: u32) -> Option<(Vec<u8>, u64)> {
     }
     // The fly-through's default upscaler: FSR 2 at internal scale 1.5 with sharpening 0.5.
     let output = [WIDTH, HEIGHT];
-    let mut frame = Frame::with_sizes(
-        &device,
-        vxe_render::RenderScale::OneHalf.internal(output),
-        output,
-    );
+    let settings = profile.map(vxe_render::RenderSettings::profile);
+    let scale = settings
+        .as_ref()
+        .map_or(vxe_render::RenderScale::OneHalf, |s| s.scale);
+    let mut frame = Frame::with_sizes(&device, scale.internal(output), output);
     frame.set_upscaler_kind(
         &device,
         vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
@@ -1402,6 +1409,10 @@ fn showcase_hall(table: &MaterialTable, frames: u32) -> Option<(Vec<u8>, u64)> {
         far_normal: look.far_normal,
         ..vxe_render::LookParams::default()
     });
+    if let Some(mut s) = settings {
+        s.lighting.exposure = vxe_render::Exposure::Manual(shot.exposure_milli as f32 / 1000.0);
+        frame.apply_settings(&device, &queue, &s);
+    }
     let camera = Camera {
         position: shot.eye.0.map(|v| v as f32 + 0.5).into(),
         yaw: (shot.yaw_deg as f32).to_radians(),
@@ -1469,7 +1480,7 @@ fn hue_class(p: &[u8]) -> Option<usize> {
 #[ignore = "soak"]
 fn showcase_hall_golden_is_lit_by_its_four_ores() {
     let table = flythrough::showcase_materials();
-    let Some((lit, samples)) = showcase_hall(&table, SHOWCASE_FRAMES) else {
+    let Some((lit, samples)) = showcase_hall(&table, SHOWCASE_FRAMES, None) else {
         return;
     };
     assert_golden("showcase_hall.png", &lit);
@@ -1481,7 +1492,7 @@ fn showcase_hall_golden_is_lit_by_its_four_ores() {
         });
     }
     let (off, off_samples) =
-        showcase_hall(&dark, SHOWCASE_DARK_FRAMES).expect("the adapter rendered once");
+        showcase_hall(&dark, SHOWCASE_DARK_FRAMES, None).expect("the adapter rendered once");
     let lit_off = off
         .chunks(4)
         .filter(|p| p[..3].iter().any(|&c| c > 2))
@@ -1510,6 +1521,44 @@ fn showcase_hall_golden_is_lit_by_its_four_ores() {
     assert!(covered >= 2, "{classes:?}");
     assert!(classes.iter().all(|&c| c >= 1), "{classes:?}");
     assert!((11.0..=40.0).contains(&luma), "{luma}");
+}
+
+/// `profile_<name>_hall.png`: the showcase's hall in `p`, held to the goldens' floor (0.1 %
+/// of pixels over 2/255), and differing from the floor profile's image at the same pose in
+/// more than that share, so the profile reached the frame.
+fn profile_hall_golden(p: vxe_render::Profile) {
+    use vxe_render::Profile;
+    let table = flythrough::showcase_materials();
+    let Some((img, _)) = showcase_hall(&table, SHOWCASE_FRAMES, Some(p)) else {
+        return;
+    };
+    assert_golden(&format!("profile_{}_hall.png", p.name()), &img);
+    let (floor, _) = showcase_hall(&table, SHOWCASE_FRAMES, Some(Profile::Floor))
+        .expect("the adapter rendered once");
+    let f = fraction_differing(&img, &floor, 2);
+    println!(
+        "profile_{}_hall.png: {:.4} % of pixels differ from the floor's by more than 2/255",
+        p.name(),
+        f * 100.0
+    );
+    assert!(
+        f > 0.001,
+        "{}: {:.4} % differ from the floor",
+        p.name(),
+        f * 100.0
+    );
+}
+
+#[test]
+#[ignore = "soak"]
+fn performance_profile_golden() {
+    profile_hall_golden(vxe_render::Profile::Performance);
+}
+
+#[test]
+#[ignore = "soak"]
+fn high_profile_golden() {
+    profile_hall_golden(vxe_render::Profile::High);
 }
 
 /// The level's spawn pose as the fly-through starts there: the spawn voxel's centre, yaw 0,

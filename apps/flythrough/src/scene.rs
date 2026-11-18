@@ -292,6 +292,34 @@ pub fn cave_materials() -> MaterialTable {
     t
 }
 
+/// The outdoor source's table (`outdoor::OutdoorSource`): [`cave_materials`] with `grass` and
+/// `soil` appended at `outdoor::GRASS` and `outdoor::SOIL`, then the trees' `bark` and `leaf`
+/// at `outdoor::BARK` and `outdoor::LEAF`, so every earlier id keeps its meaning.
+pub fn outdoor_materials() -> MaterialTable {
+    let mut t = cave_materials();
+    let row = |name: &str, albedo: [f32; 3]| Material {
+        albedo,
+        ..Material::named(name)
+    };
+    assert_eq!(
+        t.push(row("grass", [0.18, 0.32, 0.10])),
+        crate::outdoor::GRASS
+    );
+    assert_eq!(
+        t.push(row("soil", [0.30, 0.22, 0.15])),
+        crate::outdoor::SOIL
+    );
+    assert_eq!(
+        t.push(row("bark", [0.25, 0.17, 0.11])),
+        crate::outdoor::BARK
+    );
+    assert_eq!(
+        t.push(row("leaf", [0.12, 0.26, 0.08])),
+        crate::outdoor::LEAF
+    );
+    t
+}
+
 /// `table` (the cave's four rows after air) with the castle's seven rows appended at
 /// `castle::MATERIAL_BASE` on, in palette order: stone, trim (darker stone for ribs, tracery
 /// and merlons), slate, wood and iron, opaque; glass, translucent and tinted blue; and torch,

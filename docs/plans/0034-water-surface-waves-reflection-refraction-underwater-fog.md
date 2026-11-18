@@ -1,6 +1,8 @@
 # 0034: Liquid surfaces: analytic waves, traced reflection and refraction rays, and absorption under the surface
 
-> **Status:** approved (2026-10-22), amended 2026-11-10 (review pass)
+> **Status:** approved (2026-10-22), amended 2026-11-10 (review pass); amended 2026-11-17
+> (architect re-read against main 3b3986d0 after Plan 0032's close, Plan 0069, Plan 0080's lane
+> and Plan 0086: the section "Amended 2026-11-17 (re-read)" below is the phases' errata)
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
@@ -38,7 +40,7 @@
 > commit is main after Plan 0033's close. Plan 0045 splits `marcher.rs`, `gpu_world.rs`,
 > `march.wgsl` and `main.rs` before this plan starts, so every path under "Files touched" names
 > the file as it stands at main 82ea836, and `dev` re-reads the paths at the base commit.
-> **Relies on:** [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)'s
+> **Relies on:** [Plan 0032](done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)'s
 > section "Interface for Plans 0033 to 0037" and nothing else of that plan;
 > [Plan 0058](done/0058-dynamic-lights-a-list-of-analytic-lights-dropped-carried-and-bounced.md)'s
 > direct target and light list as its Data shapes state them; Plan 0033 only for what it says
@@ -54,6 +56,133 @@
 > (`test-changed.mjs --binaries`, Plan 0066); a named test over 10 s on lavapipe is born
 > `#[ignore = "soak"]` (`docs/nfr.md` section 7). The mechanisms and bars stand; only when they
 > become tests moves.
+
+## Amended 2026-11-17 (re-read)
+
+Read at main 3b3986d0 (Plan 0032 closed, v0.61.0; Plan 0069 closed, v0.60.0) against the
+`plan-0080` lane (the menu) and Plans 0086, 0081 and 0033 (approved, ahead of this plan). The
+lane branches from main once Plan 0033 has merged; the tree's names win. The Decision and the
+phases stand except where this section says otherwise; `dev` reads it as the phases' errata.
+Crate names are `vxe-*`; if Plan 0087 has merged first they read `svet-*` through its map.
+
+### Name mapping (the plan's name, then the tree's)
+
+| The plan says | The tree has |
+|---|---|
+| `MaterialFlags` "holds 1, 2 and 4" | still so (`INDESTRUCTIBLE`, `TRANSLUCENT`, `CRISP`; `material.rs`); `LIQUID` is 8. `Material` has `name, albedo, roughness, emission, hardness, flags, acoustic, payload, opacity`; every literal in the workspace uses `..Material::named(..)`, so a new field breaks none |
+| the GPU row "from four `vec4` to six" | `gpu_world/format.rs` `MATERIAL_FLOATS` 16, packed in `gpu_world/stage.rs` `material_rows`: lanes 8, 9 and 11 to 15 are spare (7), and lane 10 (`opacity`) is read by no shader. The nine liquid floats fit the spares plus **one** more `vec4` (five rows, `MATERIAL_FLOATS` 20); Plans 0086 and 0081 take no row lane (their per-material word is `Frame`-owned). The `m * 4u` reads are nine, in `walk.wgsl`, `hit.wgsl`, `hitrec.wgsl`, `common.wgsl` (two), `composite.wgsl` (two), `field.wgsl`, `probe_update.wgsl`; the flag constants for shaders are `frame/compose.rs`'s prelude (`MATERIAL_TRANSLUCENT`, `MATERIAL_CRISP`; `MATERIAL_LIQUID` joins them) |
+| `gpu_world.rs` (the row stride, `exposed_emitters`) | `gpu_world/format.rs` and `stage.rs` (the row); `gpu_world/lights.rs` `exposed_emitters` with the rule in `gpu_world/emitters.rs` `scan_masks` (an emitter is emissive **and** opaque, so a translucent emitter yields 0 samples today, as Phase 6 bar 1 assumes); `gpu_world/slot.rs` decides opaque against translucent (`opaque = !translucent`, so Phase 1's upload-as-opaque bar passes as the tree stands) |
+| `march.wgsl` | `walk.wgsl` (`march(o, d, t_limit, cutaway)`, `tlookup`, `is_translucent`, `saw_translucent`), `hit.wgsl` (`translucent_march`, `glass_tint`, `glass_reflected` with Schlick F0 0.04, `layer_out` and `transmit_out` at group 1 bindings 2 and 5, `glass_store` at 6; **group 1's next free binding is 7**), `hitrec.wgsl` (the record; `HIT_TRANSLUCENT` bit 2) |
+| "two hit-record flags" (`HIT_REFRACTED`, `HIT_UNDER_LIQUID`) | bits 6 to 15 of `info.w` are a kind-dependent payload: the entity instance under `HIT_ENTITY` (bit 5), Plan 0081's `HIT_DETAIL` (bit 6) and `s` (8 to 15), Plan 0033's level (7, 8) and fallback mark (9). A refracted floor hit may be a clip hit too, so this plan's two flags take bits **10 and 11**, meaningful when bit 5 is clear; `dev` extends `unpack_hit`'s kind switch and gates `rec.instance` readers by `rec.entity` |
+| "the per-call argument the bake never passes" (the liquid depth on shadow rays) | `march` has no per-call lighting argument (Plan 0032 Phase 10 removed the walk-scope absent rule). `liquid_depth`'s switch is a **walk-scope variable** set around `march` by the light pass's callers, as `shadowed()` in `light.wgsl` sets `coarse_span`; `bake_source()` (`bake/pipeline.rs`) leaves it off |
+| `lamp_lit` | **none.** The headlamp is slot 0 of the list of lights (Plan 0058): the reflected hit's lamp and list terms are one call, `lights_lit_rgb` (`light.wgsl`) or `light_term` (`common.wgsl`), with one shadow ray each where the plan says the lamp's is shadowed and the list's not (`dev` keeps the plan's split: the lamp shadowed, the other fifteen unshadowed) |
+| `key_light_at`, `sky_radiance`, `body_disc`, `transmittance`, `sky_altitude`, `SKY_RAY_VOXELS`, `Sky::uniform` | `sky.wgsl`, `sky_light.wgsl` (`key_sample`, `sky_ray_sample`, 512), `sky.rs` as named; the per-pixel angle the wave footprint needs is computed in `body_disc` from `params.views[0]` |
+| `emissive_estimate` | `emissive.wgsl` |
+| `store_voxel`, `store_face`, `store_brick_value`, `reads_store` | `hitrec.wgsl` (`store_voxel`, `store_face`, `reads_store`) and `temporal.wgsl` (`store_brick_value` over `StoreHead`, group 2 binding 11); the hit pass carries its own copy for glass (`glass_store_value`, `glass_store_cell`). The liquid pass's read is a third copy or a shared module `dev` factors out; the log says which |
+| `marcher.rs` (targets, the pass, `LiquidParams`) | `frame/targets.rs` (`Targets`, hand-summed `bytes()`), `frame/encode.rs` (`FRAME_PASSES`, 23 names, **1193 of 1200 lines**: `fsrs_passes_close_the_frame_passes` pins the tail, `liquid` goes between `gather` and `composite`), `frame/pipelines.rs` (`PASSES: [PassSpec; 15]`), `frame/compose.rs` (`shader_sources`, which `gpu_shader_portability.rs` walks, so that test needs no edit); the liquid state, pipelines and uniform go in a new `frame/liquid.rs` on `frame/sky.rs`'s pattern (`OnceLock` pipelines, `prepare`, `dispatches`); `SkyUniform` has one free word, so `LiquidParams` is a uniform of its own |
+| `lib.rs` (the shader source) | `lib.rs` (`*_WGSL` consts) and `frame/compose.rs` |
+| `light.wgsl` (the shadow rays' transmittance argument) | `light.wgsl` `shadowed()`, `sky_light.wgsl` `sky_shadowed`; the bake compiles `light.wgsl`, not `shade.wgsl` or `sky_light.wgsl` |
+| `tests/gpu_mirror.rs` | `gpu_mirror_alloc.rs` (the translucent upload test, `seeded_table`) and `gpu_mirror_budget.rs` (the light-sample counts) |
+| `apps/flythrough/src/` (the pond, the pool) | `outdoor.rs` (integer only; `determinism.rs` guards it: `outdoor_vector` hashes the 4 x 4 x 4 chunks around `MOUTH`, so a pond there re-pins `OUTDOOR_HASH` once, disclosed) and `scene.rs` `outdoor_materials` (the water row's floats, id 9; `castle_materials` requires exactly its five rows and cannot follow it) |
+| `apps/flythrough/src/main.rs` (the time, the flags, the keys) | `run/frame.rs` (`set_dt`, `set_sky`, the clock's `advance`: the waves' time is the fly-through's clock there), `cli/outdoor.rs` (`--liquid-reflection`, `--waves`, the `--spawn` values beside `outside\|inside\|forest`; `cli/flags.rs` is at 1190 lines), `cli/tests.rs`, `toggles.rs`, `docs/flythrough.md` (the root README links it) |
+| `hud.rs`, `hud::Modes` | `hud/modes.rs` (**1197 of 1200 lines**: the liquid words go in a new module or a split `dev` makes first), `hud/stats.rs` (`lighting_rows` already prints every `FRAME_PASSES` entry's time, so the liquid pass's time shows with no new row; the lighting line's colour sum gains it), `run/hud_feed.rs`, `run/pilot.rs` (the autopilot already prints p50 and p99 per `FRAME_PASSES` entry). The reflection-ray count needs a GPU counter on `temporal.wgsl`'s `counters` pattern |
+| `fsr2.rs`, `fsr2/input.wgsl` | `crates/vxe-render/src/fsr2/{mod,pipelines,prepare,resources,settings}.rs` (`reactive_translucent` in `settings.rs`; `InputUniform` has one free `_pad` word for `reactive_liquid`), `shaders/fsr2/input.wgsl` (the reactive mask from `layer.w * reactive_translucent`) |
+| "if the `own` upscaler is still in the tree" | it is (`upscale.wgsl`, `frame/upscale.rs`, `UpscalerChoice::Own`, the `own.*` rows); the removal plan is not drafted. `upscale.wgsl` takes the surface point, as the plan says, and no bar reads it |
+| `apps/flythrough/tests/gpu_golden.rs` (the three goldens) | at 1885 of 2000 lines: `lake_noon`, `under_water` and `lava_pool` go in `gpu_outdoor_golden.rs` (the `Hills` rig, 534 lines) |
+| `gpu_fsr2.rs` (Phase 7) | at 1975 of 2000 lines: Phase 7's two FSR 2 tests and the reading go in a new `apps/flythrough/tests/gpu_liquid_history.rs`; `gpu_lights.rs` (859) keeps `a_refracted_floor_keeps_its_age` |
+| `gpu_frame.rs` `frame_bytes` test | `crates/vxe-render/tests/gpu_frame.rs` (401 lines), as named; `Frame::frame_bytes` in `frame/mod.rs` |
+| `Frame::set_test_irradiance` | **none** (only `ProbeVolume::write_test_irradiance`); added here as a test hook listed in `NOT_SETTINGS` |
+| `Frame::set_liquid`, `Frame::bake_until`, `readback::read_rgba16f` | new; `frame/baked.rs`; `readback.rs`. Every new `pub fn set_*` is in `RenderSettings::SETTERS` or `NOT_SETTINGS` (`settings.rs`), or `every_setter_is_a_setting_or_an_input` fails |
+| the "re-bake a store file" mechanism | none (no `--bake-file` store exists; Plan 0032 Phase 10 found the flag refused), so Phase 1's note resolves: nothing on disk re-bakes |
+| `templates/readings-log.md` | the architect skill's template, outside the public repo; `dev` starts `docs/plans/logs/0034.md` from an existing log's shape |
+
+### Plan 0086: the sky term at a reflected hit and under water
+
+Plan 0086 (ADR-0070) bakes the sky's visibility per brick direction into the store and
+colours it by six axis irradiances `E_sky(n)` at read; the sky ray runs only where the store
+is stale, and the direct target no longer receives it. Three places in this plan change:
+
+- **The reflected hit's sky term (Decision 4, Phase 4)** is no longer "one cosine-weighted sky
+  ray". On a cube face the liquid pass reads the store's visibility beside the emissive value
+  it already reads (the same read-only binding) and multiplies by `E_sky(n)`; where the hit
+  has no store block it takes `E_sky(n)` unoccluded. No ray: the term the Risks named as the
+  noisiest in reflections is gone, and `off_screen_content_reflects` and
+  `a_reflected_face_reads_the_store` assert the stored value under `Sky::uniform(1.0)` (`pi`
+  on an open floor, as Plan 0086's tests do). The owner's Phase 9 question "the reflected
+  hit's sky ray kept or dropped" is closed by this.
+- **The in-scatter's `E` (Decision 5)** stays "the filtered irradiance the composite reads":
+  the `direct` target plus the store's part, which under 0086 holds the emissive and the sky
+  term. No wording of the bars changes.
+- **Shadow rays under liquid (Phase 5)**: the key light's, the lamp's and the list's rays
+  multiply their visibility by the liquid's transmittance as written; the sky ray does so
+  where it runs. The baked sky visibility is not attenuated by water, which joins Risk 1
+  ("baked light under water is not absorbed"): a lake floor under the open sky reads its sky
+  light at full strength and its sun dimmed. The view path still absorbs. The
+  `a_shadow_ray_through_water_dims_by_its_depth` sun arm reads "the `direct` value lower with
+  the water in every channel" on the key light alone.
+
+### Interface changes
+
+- **Starts after:** Plan 0033 closes and merges (which follows 0081, 0086 and 0032). The base
+  is main after that merge.
+- **Secondary rays and the far field (Plan 0033):** the reflection ray sets 0033's walk-scope
+  "takes the far field" with the camera as its level origin (a lake reflects the far hills);
+  the refraction walk and `liquid_span` do not (the floor is near). One line in Phase 4's
+  "What"; no far-field code of this plan's own.
+- **Settings, not flags alone** (Plan 0069, ADR-0055): `RenderSettings` gains
+  `liquid.reflection: ReflectionMode` (`Live`) and `fsr2.reactive_liquid: f32` (`Live`), each a
+  `FIELDS` row with a `with_test_value` arm, a `PROFILE_PICKS` row (Portable `Sky`, the
+  no-ray mode; Floor's default is Phase 9's pick) and the fly-through's `render_settings()`.
+  `Frame::set_liquid` (the waves, the time) is a per-frame input in `NOT_SETTINGS`, as
+  `set_sky` is; "waves frozen" is the testbed freezing the time it passes, not a setting.
+- **Menu entries, not keys** (ADR-0061, Plan 0080): the reflection cycle and the waves freeze
+  are `Press::Menu` toggles of `toggles::TOGGLES` (group `Look`), no key; their `get` is the
+  banner's word; `--keys` lists them; 0080's `every_toggle_and_action_is_an_entry` and
+  `the_source_reads_no_key_the_tables_miss` pass. Phase 8 bar 1 reads "the entry's
+  activation" for "the key".
+- **Tiers:** the "Tests and tiers" paragraph's 30 s line is **10 s** on lavapipe (60 s on CI;
+  `docs/nfr.md` section 7); a render phase runs `--profile gpu --binaries <names>` with the
+  `gpu_*` binaries it names. The goldens' and Phase 7's wall-time notes ("soak if over 30 s")
+  read 10 s.
+- **The tester's outdoor scene (Plan 0088)** flies a path computed from the heightfield and
+  guarded by an air test, and liquid voxels are solid to every CPU reader (Plan 0015's rule).
+  The pond and the lava basin stand off the route from `MOUTH` to `FOREST` (a column of the
+  source's own, named in `outdoor.rs`), and 0088's path test stays green; the log names the
+  columns.
+
+### Phases: what changes
+
+- **Phase 1** files: `gpu_world/{format,stage}.rs` (five rows), `frame/compose.rs` (the flag
+  constant), `walk.wgsl`, `hit.wgsl`, `hitrec.wgsl` (the record's bits 10 and 11),
+  `frame/{targets,encode,pipelines,compose}.rs`, the new `frame/liquid.rs`, `liquid.wgsl`,
+  `composite.wgsl`, `lib.rs`, `settings.rs` (`NOT_SETTINGS`), `gpu_mirror_alloc.rs`,
+  `gpu_liquid.rs`, `outdoor.rs`, `scene.rs`, `determinism.rs`. The stride bar reads "the five
+  `vec4` move no pixel".
+- **Phase 2**: `Frame::set_test_irradiance` is new, in `NOT_SETTINGS`.
+- **Phase 3**: the time comes from `run/frame.rs`'s clock.
+- **Phase 4** reads the store's visibility for the sky term (above), takes the far field on
+  the reflection ray (above), and shades the lamp through the list's slot 0. Golden in
+  `gpu_outdoor_golden.rs`.
+- **Phase 5**: `liquid_depth` is a walk-scope switch (above); `a_shadow_ray_through_water_
+  dims_by_its_depth` lives in `gpu_liquid.rs` as written (`gpu_dynamic_lights.rs` is at 1929
+  lines). Golden in `gpu_outdoor_golden.rs`.
+- **Phase 6**: `gpu_world/emitters.rs` (`scan_masks`), `gpu_world/lights.rs`; the counts'
+  test in `gpu_mirror_budget.rs`. Golden in `gpu_outdoor_golden.rs`.
+- **Phase 7** files: `temporal.wgsl`, `fsr2/input.wgsl`, `fsr2/{settings,prepare}.rs`,
+  `upscale.wgsl` (the surface point only), `settings.rs` (`fsr2.reactive_liquid`),
+  `gpu_lights.rs`, the new `gpu_liquid_history.rs`.
+- **Phase 8** files: `cli/outdoor.rs`, `cli/tests.rs`, `toggles.rs`, the banner's new module,
+  `hud/stats.rs` (the colour sum, the ray count), `run/hud_feed.rs`, `docs/flythrough.md`,
+  the ledgers, the log. Bar 1 drives the entries, not keys. The runs' base is the outdoor
+  frame as Plan 0032 Phase 7 read it (5.1 to 5.6 ms RTX, 37.5 to 45.8 ms RENOIR at 1080p,
+  `docs/nfr/02-frame-budget.md`), re-read at the lane's start; the ledger's "liquids" row
+  (0.9 to 1.2 ms RTX, budgeted) is what the close replaces.
+- **Phase 9**: the "reflected hit's sky ray kept or dropped" item is closed (above); the rest
+  stands.
+- **Phase 10** unchanged.
+
+No owner question is added by this re-read; the order question across M10 is in Plan 0035's
+and Plan 0036's sections.
 
 ## TL;DR
 

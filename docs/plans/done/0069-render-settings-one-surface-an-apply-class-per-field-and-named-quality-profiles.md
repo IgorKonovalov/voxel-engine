@@ -1,18 +1,21 @@
 # 0069: Render settings: one surface, an apply class per field, and named quality profiles
 
-> **Status:** approved (owner, 2026-11-11: "go with recommended on all"; every open question
-> took its recommendation, recorded under "Owner answers")
+> **Status:** done (closed 2026-11-17, v0.60.0: `RenderSettings` with an apply class per field,
+> `Frame::apply_settings`, the setter gate, and four profiles, Floor, Portable, Performance and
+> High, held to the owner's window picks; clean review, no findings). Approved by the owner
+> 2026-11-11: "go with recommended on all"; every open question took its recommendation,
+> recorded under "Owner answers".
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
 > `hud.rs`). Read each through "Where things moved" in
-> [Plan 0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
+> [Plan 0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md); the
 > phases re-cut their Files touched at their start.
 > **Created:** 2026-11-11
 > **Milestone:** M10's first plan (`docs/roadmap.md`, M10 "Order": the render-profile plan that
 > holds M10 against the budget), and the roadmap's decisions row "Floor, profiles and scene
 > scale" (the floor, portable and performance profiles). It serves `docs/nfr.md` sections 1 and 2.
-> **Related ADRs:** [ADR-0055](../adrs/0055-render-settings-are-one-struct-with-an-apply-class-per-field-and-profiles-are-named-values.md)
+> **Related ADRs:** [ADR-0055](../../adrs/0055-render-settings-are-one-struct-with-an-apply-class-per-field-and-profiles-are-named-values.md)
 > (proposed): the surface's shape and what a profile is.
 > **Source:** the owner's parked idea of 2026-10-22 (`docs/backlog.md`, "Render settings surface
 > and named quality profiles"); the static performance review of 2026-11-10, which asked for this
@@ -34,10 +37,15 @@
 >   (the review's section 2.2 list is the first draft) is removed, not documented.
 > - `Floor` equals the fly-through's defaults, and every settings struct's `Default`
 >   (`Lighting::default()` included) equals `Floor`, with a CPU test that says so.
+>   **Amended 2026-11-17 (owner):** only `RenderSettings::default()` equals `Floor`; the
+>   per-struct defaults (`Lighting::default()` and the others) stay the neutral library
+>   baseline the render tests build on. Phase 3's CPU test is the proof.
 > - Phase 2's setter gate counts the existing setters, not only new ones.
 > - Phase 4 reads the hit pass alone at `Portable`'s internal size on the RADV RENOIR before the
 >   profile values are set. Over 10 ms there, the backlog's walk-speed spike runs before
 >   Phase 6, not after M10.
+>   **Amended 2026-11-17 (owner):** the hall's 10.53 ms (Phase 4, readings log) is accepted
+>   ("0.5 ms doesn't matter"); the walk-speed spike is not required before Phase 6.
 > **Amended 2026-11-16 (architect; the owner approved it 2026-11-16 with Plan 0080):** `F4` is bound today (the a-trous filter's
 > iterations, `toggles::TOGGLES`), so "`F4` cycling the profiles" collides. Under ADR-0061 and
 > [Plan 0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) the
@@ -176,6 +184,8 @@ figures (a hand-built box on lavapipe renders a few dozen frames at 192 x 108 in
     found in the crate's source files (read at test time from `CARGO_MANIFEST_DIR`) is the
     setter of a `FIELDS` row or in `NOT_SETTINGS`; the failure names the setter (under 1 s).
   - Every field's rustdoc states its class; `cargo doc -p vxe-render` builds without warnings.
+    **Amended 2026-11-17 (owner):** without new warnings from this plan's files; the 64
+    pre-existing `private_intra_doc_links` warnings are a separate chore (`docs/backlog.md`).
 
 ### Phase 3: the profiles, in the fly-through and the tester
 - **Owner skill:** dev
@@ -248,6 +258,10 @@ figures (a hand-built box on lavapipe renders a few dozen frames at 192 x 108 in
   differs from `Floor`'s image at the same pose by more than that floor (so the profile is
   applied); `docs/nfr/02-frame-budget.md` gains a dated ledger paragraph per profile per
   adapter from the tip's reading.
+  **Amended 2026-11-17 (owner):** `portable_profile_golden` renders the castle gate (the pose
+  of `castle_gate_golden`, torches and the lamp in view) in place of the hall, beside `Floor`'s
+  image at that pose: the hall holds no glass and too few lights for Portable's cuts to move a
+  pixel (readings log, Phase 7). The floor and the "differs" bar are unchanged.
 
 ## Data shapes
 
@@ -359,21 +373,95 @@ the readings cannot see. No determinism risk: nothing here reaches `vxe-world`'s
 ## Implementation log
 
 > Written by `dev`: one row per phase, then the close block. Readings, sweeps and resume notes
-> go to `docs/plans/logs/0069.md`.
+> go to [`docs/plans/logs/0069.md`](../logs/0069.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the struct, read back and applied | dev | not started | |
-| 2: the classes, proved, and the setter gate | dev | not started | |
-| 3: the profiles, in the fly-through and the tester | dev | not started | |
-| 4: readings of each profile on both adapters | dev | not started | |
-| 5: the owner's window | human | not started | |
-| 6: the picks into the profiles | dev | not started | |
-| 7: image tests against the picks, and the tip's readings | dev | not started | |
+| 1: the struct, read back and applied | dev | done; gpu_settings 2/2 at e73cf935 (readings log, Phase 2) | 3a3a3e4b |
+| 2: the classes, proved, and the setter gate | dev | done; the `cargo doc` done-when closed by the 2026-11-17 amendment (Notes) | code 0335bc30; row f0c8a109 |
+| 3: the profiles, in the fly-through and the tester | dev | done; `Default` = Floor for `RenderSettings` only, as the 2026-11-17 amendment reads (Notes) | code e0c75597, e73cf935; row 55e62a13 |
+| 4: readings of each profile on both adapters | dev | done; most cells loaded, not quiet; RENOIR portable hall hit pass 10.5 ms, accepted by the 2026-11-17 amendment (Notes) | 356b32a1 |
+| 5: the owner's window | human | done 2026-11-17 09:20-09:38; the owner's words in the readings log, Phase 5; High offered as a fourth profile | cae1935f |
+| 6: the picks into the profiles | dev | done; `Profile::High` added (Notes) | 22e1fc2d; tester 9390b033 |
+| 7: image tests against the picks, and the tip's readings | dev | done; portable's golden at the castle gate (the 2026-11-17 amendment); a high golden added (Notes) | 97c1c930 |
 
 ### Notes
 
+- Plan-to-tree mapping (main d9628897): `impl Frame` lives in `crates/vxe-render/src/frame/`
+  (split by Plan 0045); `settings()`, `apply_settings()` and `built_with()` are in the new
+  `frame/apply.rs`; the fly-through's flags are in `apps/flythrough/src/cli/` (`flags.rs` is at
+  the 1200-line cap), and `--settings` is in the new `cli/settings.rs`; `main.rs` prints it.
+- Phase 1 deviations: `lighting.bake_pool_bytes` stays in `Lighting` as a `Rebuild` row
+  (applied by `Frame::built_with`) rather than moving to `build`; `FIELDS` names an enum, an
+  `Option` or an array as one leaf, and a struct-like enum variant's fields (`bake.budget`) or a
+  `vxe_world` struct (`build.residency`) lie under their row; the upscaler is
+  `upscaler: UpscalerChoice` with `jitter`, `sharpness`, `fsr2` and `own` beside it; the light
+  cap is a new setter, `Frame::set_light_cap`; the queue knobs are `bake: BakeKnobs`, kept by
+  the frame and handed to the next `start_bake_queue`; `Frame::set_bake_slice`, and the fields
+  `Upscaler::{width, clip_gamma}`, removed as the `Delete` class (readings log, Phase 1).
+- Phase 2: `RenderSettings::SETTERS` maps each setting's setter to its fields beside
+  `NOT_SETTINGS`; the test values are `RenderSettings::with_test_value` (doc-hidden). The class
+  test is split in two by the upscaler (readings log). Done-when not met as written: `cargo doc
+  -p vxe-render` prints 64 `private_intra_doc_links` warnings (cargo's count), none on a line
+  this branch wrote; the new docs add none. Closed by the 2026-11-17 amendment (3903f104,
+  owner): the done-when reads "no new warnings from this plan's files"; the 64 are a backlog
+  chore.
+- Phase 3 deviations: the profile cycle is on `PageDown` (`toggles::KEY_PROFILE`), not `F4`,
+  until Plan 0080 frees `F4` (the 2026-11-16 amendment); Portable's `lod.r_full` is 12, following
+  its residency (`r_full` 12), a row the "Data shapes" table does not list; the HUD's profile
+  row is written only when set (`Modes::profile` non-empty), so a `Modes` built outside the
+  run draws no blank row; the tester's `run::Scale` became `run::Profile` (`--profile NAME`),
+  and `dist/README-TESTER.txt` and `docs/flythrough.md` follow.
+- Closed by the 2026-11-17 amendment (3903f104, owner, option (b)); was open since the
+  2026-11-12 amendment: "every settings struct's `Default` equals
+  `Floor`, `Lighting::default()` included" is not done. `RenderSettings::default()` equals
+  Floor (CPU test); `Lighting::default()` and the other structs keep their library defaults
+  (`Exposure::Manual(1.0)`, bounce off, far normal [0, 0]) that the render tests build on.
+  Options: (a) change the struct defaults and re-derive the tests that lean on them; (b) keep
+  them as the neutral test baseline, `RenderSettings::default()` the consumer's entry. The
+  code is as (b).
+- Phase 4: the done-when's "three quiet rounds" is not met for cells whose runs read a load
+  above 2 (other lanes building; each cell's loads are in the readings log). The frame's
+  reserved VRAM is not printed by the tree; the mirror's is. The RADV RENOIR's hit pass at
+  Portable's internal size reads 10.53 ms in the hall, over the 2026-11-12 amendment's 10 ms
+  line; the 2026-11-17 amendment (3903f104, owner) accepts it, and the walk-speed spike is
+  not required before Phase 6.
+- Phase 5: `PageDown` has no key of its own on the owner's laptop (readings log, Phase 5); the
+  cycle moves to `F4` with Plan 0080.
+- Phase 6 deviations: the files touched beyond `settings.rs` are
+  `apps/flythrough/src/cli/settings.rs` (`--profile high`, the name list, the done-when's
+  `--settings` test, and `seed_profile` setting the upscaler at internal scale 1, where the
+  fly-through's own default is `off`) and `docs/flythrough.md`; `hud.rs` is unchanged (no row
+  moves). `High` is last in the cycle (owner: "yes"). The tester's quality menu offers high
+  (owner: "yes"), an edit outside Phase 6's files: `apps/tester/src/run.rs`,
+  `apps/tester/tests/run.rs`, `dist/README-TESTER.txt`.
+- Phase 7 deviations: `high_profile_golden` (the hall) is a third profile golden beside the
+  plan's two; `portable_profile_golden` is in `gpu_castle_golden.rs` at the gate pose (the
+  2026-11-17 amendment, 8fafd02c), sharing `gate_image` with `castle_gate_golden`; all three
+  are born `#[ignore = "soak"]` (15 to 48 s on lavapipe). The tip's readings are loaded
+  (indicative) in most cells, and were taken with the release binary of 9390b033's code.
+
 ### Close triggers
+
+- **Tip gate (97c1c930, 2026-11-17, 2 lanes, CARGO_BUILD_JOBS=12, MemoryMax=16G):** `cargo
+  build` 0; `cargo nextest run --workspace --profile gate --no-fail-fast` under the exclusive
+  perf lock (load 7.14 at the lock): 995 run, 995 passed, 104 skipped, 1065.6 s, exit 0;
+  `cargo test --doc --workspace` 10 passed, 0 failed; `cargo clippy --workspace --all-targets
+  -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny check` ok; doc-links,
+  comment-hygiene, file-size, test-tiers, plan-size, index-rows 0. `cargo doc -p vxe-render`:
+  the 64 pre-existing warnings, none in this plan's files.
+- **Soak goldens (not in the gate; lavapipe, exclusive perf lock):** `portable_profile_golden`
+  pass 15.1 s (load 1.89), 8.61 % differ from Floor at the gate; `performance_profile_golden`
+  pass 41.5 s, 13.24 % differ; `high_profile_golden` pass 47.6 s, 13.11 % differ (load 40.7,
+  loaded); `castle_gate_golden` 0.0382 % against its golden after the shared `gate_image`.
+- **Budget readings:** the readings log's Phase 7 tables (both adapters, every profile, vein,
+  hall and castle, release at 9390b033's code, mostly loaded) and the ledger paragraph "The
+  render profiles" in `docs/nfr/02-frame-budget.md`. Frame GPU p50, hall: RTX Floor 4.25,
+  Portable 1.99, Performance 4.72, High 8.25 ms; RADV RENOIR Floor 34.82, Portable 16.30,
+  Performance 36.80, High 68.46 ms.
+- **The frame lines** (owner's (e), "take as is"): Floor 16.6 ms split as "Budgets" proposes,
+  Portable 33.3 ms at 720p, Performance no gate; writing them into `docs/nfr.md` is the
+  close's.
 
 ## Followups
 

@@ -1,9 +1,15 @@
 # ADR-0063: Surface detail is a procedural shell marched at the hit, described per material on the render side, cosmetic and client-only
 
 > **Status:** proposed
+> **Re-read 2026-11-17 (architect, Plan 0081's re-read):** the style's index does not ride the
+> material row's spare lane (the rows are the mirror's, not the frame's); it lives in the
+> `Frame`-owned per-material style word Plan 0086 Phase 2 introduces with `SHADOW_AS_BRICK`,
+> one word and one setter for both. The baked light under an element is read in the temporal
+> pass for the face voxel, not the element's position. Plan 0081's amendment of that date
+> carries them; the body stands.
 > **Date:** 2026-11-16
 > **Related plan(s):** [Plan 0081](../plans/0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md)
-> (builds it); [Plan 0032](../plans/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
+> (builds it); [Plan 0032](../plans/done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
 > (the outdoor source whose `grass` row is its first user);
 > [Plan 0036](../plans/0036-weather-rain-snow-wind-wet-surfaces-snow-cover-lightning.md)
 > (the wind that will drive its sway)

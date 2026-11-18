@@ -148,6 +148,11 @@ pub(crate) const LIGHTING_EMISSION_CHANGED: u32 = 1 << 8;
 /// ray), so the reset adds none.
 pub(crate) const LIGHTING_LIGHTS_CHANGED: u32 = 1 << 9;
 
+/// `Params::lighting` bit: the sky jumped since the last encode with history (Plan 0032's
+/// change rule, `SkyKey::jumped_from`): the temporal pass takes this frame's direct part as
+/// it is, as under [`LIGHTING_LIGHTS_CHANGED`]. A drifting key light raises nothing.
+pub(crate) const LIGHTING_SKY_CHANGED: u32 = 1 << 10;
+
 /// `Params::lighting` bit: the a-trous filter is off ([`Lighting::filter`]).
 pub(crate) const LIGHTING_FILTER_OFF: u32 = 1 << 5;
 
@@ -685,7 +690,17 @@ pub struct Lighting {
     pub young_filter: YoungFilter,
     /// Where an entity hit's emissive light comes from ([`EntityLight`]; default `World`).
     pub entity_light: EntityLight,
+    /// Cosine-weighted sky rays a lighting pixel casts while a sky is set, 0 (none: the
+    /// sky lights through its key light alone) to [`MAX_SKY_RAYS`] (default
+    /// [`DEFAULT_SKY_RAYS`]): their mean of `pi sky_radiance(d)`
+    /// over the rays that reach the sky above the horizon joins the direct part.
+    pub sky_rays: u32,
 }
+
+/// [`Lighting::sky_rays`]' largest value.
+pub const MAX_SKY_RAYS: u32 = 4;
+/// [`Lighting::sky_rays`] by default.
+pub const DEFAULT_SKY_RAYS: u32 = 1;
 
 impl Default for Lighting {
     fn default() -> Self {
@@ -710,6 +725,7 @@ impl Default for Lighting {
             young_filter: YoungFilter::Luma,
             entity_light: EntityLight::World,
             light_floor: DEFAULT_LIGHT_FLOOR,
+            sky_rays: DEFAULT_SKY_RAYS,
         }
     }
 }

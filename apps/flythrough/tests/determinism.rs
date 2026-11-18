@@ -171,6 +171,8 @@ fn generation_sources_contain_no_floating_point() {
     let root = env!("CARGO_MANIFEST_DIR");
     for path in [
         "src/cave.rs",
+        "src/outdoor.rs",
+        "src/trees.rs",
         "src/castle.rs",
         "src/showcase/mod.rs",
         "src/showcase/field.rs",
@@ -291,6 +293,113 @@ fn showcase_vector() {
     });
 }
 
+/// The outdoor source of seed 1 over the 4 x 4 x 4 chunks around its mouth: its hash is
+/// pinned, and every chunk generated alone on threads in reverse order is byte-identical.
+#[test]
+fn outdoor_vector() {
+    use flythrough::outdoor::{MOUTH, OutdoorSource};
+    let source = OutdoorSource::new(1);
+    let top = source.height(MOUTH[0], MOUTH[1]).div_euclid(CHUNK_EDGE);
+    let (cx, cy) = (
+        MOUTH[0].div_euclid(CHUNK_EDGE),
+        MOUTH[1].div_euclid(CHUNK_EDGE),
+    );
+    let extent = ChunkExtent::new([cx - 2, cy - 2, top - 2], [cx + 2, cy + 2, top + 2]);
+    let coords = extent.coords();
+    assert_eq!(coords.len(), 64);
+    let world = World::generate(extent, &source, &flythrough::outdoor_materials());
+    let hash = flythrough::chunks_hash(&world, &coords).expect("every chunk is resident");
+    println!("outdoor vector: 0x{hash:016x}");
+    assert_eq!(hash, OUTDOOR_HASH);
+    let reversed: Vec<ChunkCoord> = coords.iter().rev().copied().collect();
+    std::thread::scope(|s| {
+        for run in reversed.chunks(reversed.len().div_ceil(8)) {
+            let (source, world) = (&source, &world);
+            s.spawn(move || {
+                for &c in run {
+                    let mut one = Chunk::default();
+                    source.chunk(c, &mut one);
+                    let resident = world.store().get(c).expect("resident");
+                    let resident = resident
+                        .read()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    assert!(
+                        one.bricks() == resident.bricks(),
+                        "chunk {:?} differs generated alone",
+                        c.0
+                    );
+                }
+            });
+        }
+    });
+}
+
+/// Plan 0032 Phase 8 bar 1: the outdoor source of seed 1 with `--trees forest` over the 4 x 4
+/// x 4 chunks around the forest spawn's chunk: its hash is pinned, and every chunk generated
+/// alone on 8 threads in reverse order is byte-identical.
+#[test]
+fn forest_vector() {
+    use flythrough::outdoor::{OutdoorSource, Spawn};
+    use flythrough::trees::{ForestSource, LEAF_FILL, TreeDensity};
+    let source = ForestSource::new(OutdoorSource::new(1), TreeDensity::Forest, LEAF_FILL);
+    let (eye, _) = source.base().spawn(Spawn::Forest);
+    let c = eye.chunk().0;
+    let extent = ChunkExtent::new(
+        [c[0] - 2, c[1] - 2, c[2] - 2],
+        [c[0] + 2, c[1] + 2, c[2] + 2],
+    );
+    let coords = extent.coords();
+    assert_eq!(coords.len(), 64);
+    let world = World::generate(extent, &source, &flythrough::outdoor_materials());
+    // The block holds trees: bark and leaf voxels.
+    let mut trees = [0u64; 2];
+    for &c in &coords {
+        let chunk = world.store().get(c).expect("resident");
+        let chunk = chunk
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for b in chunk.bricks() {
+            for i in 0..BRICK_VOXELS {
+                match b.get(i) {
+                    flythrough::outdoor::BARK => trees[0] += 1,
+                    flythrough::outdoor::LEAF => trees[1] += 1,
+                    _ => {}
+                }
+            }
+        }
+    }
+    assert!(trees[0] > 0 && trees[1] > 0, "{trees:?}");
+    let hash = flythrough::chunks_hash(&world, &coords).expect("every chunk is resident");
+    println!(
+        "forest vector: 0x{hash:016x}, {} bark and {} leaf voxels",
+        trees[0], trees[1]
+    );
+    assert_eq!(hash, FOREST_HASH);
+    let reversed: Vec<ChunkCoord> = coords.iter().rev().copied().collect();
+    std::thread::scope(|s| {
+        for run in reversed.chunks(reversed.len().div_ceil(8)) {
+            let (source, world) = (&source, &world);
+            s.spawn(move || {
+                for &c in run {
+                    let mut one = Chunk::default();
+                    source.chunk(c, &mut one);
+                    let resident = world.store().get(c).expect("resident");
+                    let resident = resident
+                        .read()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    assert!(
+                        one.bricks() == resident.bricks(),
+                        "chunk {:?} differs generated alone",
+                        c.0
+                    );
+                }
+            });
+        }
+    });
+}
+
+const FOREST_HASH: u64 = 0x8d4e_d858_7460_a302;
+const OUTDOOR_HASH: u64 = 0x0cfd_7df8_3d1c_2955;
 const SHOWCASE_HASH: u64 = 0xb2ed_b827_7dc9_3e82;
 const CASTLE_VOX_HASH: u64 = 0x35a8_89ee_81c4_17e9;
 const CASTLE_VOXEL_HASH: u64 = 0xa2f6_f292_88e1_04e3;

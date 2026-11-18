@@ -10,23 +10,40 @@ use crate::cli::{
     walk_allowed,
 };
 use crate::fly::CutawayMode;
+use crate::outdoor::Spawn;
 use crate::path::{PATH_SEED, PathMode, Scene};
 use crate::setup::CrispRows;
 use crate::showcase::SHOTS;
 use crate::streaming::SYNC_BUDGET_MIB;
+use crate::trees::{LEAF_FILL, TreeDensity};
 use crate::{LogicChoice, LookPreset, RESIDENCY};
 use vxe_app::Pacing;
 use vxe_render::{LookParams, ViewMode};
 use vxe_world::Residency;
+
+/// `--keys`' row: print the key tree ([`crate::hud::menu::keys_text`]) and exit.
+pub(super) fn keys_flag() -> super::table::Flag<Parsing> {
+    super::table::Flag::switch(
+        &["--keys"],
+        "print the keys and the menu's tree at the start modes, and exit",
+        |p: &mut Parsing| p.args.keys = true,
+    )
+}
 
 pub fn parse_args() -> Result<Args, String> {
     parse_args_from(std::env::args().skip(1))
 }
 
 /// The arguments after the program name.
-pub(crate) fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, String> {
+pub fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, String> {
+    let argv: Vec<String> = argv.into_iter().collect();
+    let mut args = Args::defaults();
+    args.argv = argv.clone();
+    if let Some(p) = super::settings::profile_in(&argv)? {
+        args.seed_profile(p);
+    }
     let mut p = Parsing {
-        args: Args::defaults(),
+        args,
         given: Given::default(),
     };
     table().parse_into(argv, &mut p)?;
@@ -36,7 +53,7 @@ pub(crate) fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<
 
 impl Args {
     /// Every flag's default.
-    fn defaults() -> Self {
+    pub(super) fn defaults() -> Self {
         let lighting = crate::default_lighting();
         Args {
             seed: 1,
@@ -59,6 +76,8 @@ impl Args {
             entities_walk: false,
             model: None,
             clip: None,
+            library_dir: None,
+            library: false,
             sync_budget: SYNC_BUDGET_MIB << 20,
             sync_time: None,
             workers: None,
@@ -79,6 +98,11 @@ impl Args {
             tester: false,
             check_args: false,
             help: false,
+            keys: false,
+            settings: false,
+            profile: vxe_render::Profile::Floor,
+            light_cap: vxe_render::MAX_LIGHTS as u32,
+            output_hint: None,
             audio: AudioArgs {
                 on: false,
                 debug: false,
@@ -125,6 +149,10 @@ impl Args {
                 read_missing: false,
             },
             loading: LoadingArgs::default(),
+            argv: Vec::new(),
+            switch_at: Vec::new(),
+            spawn_hash: false,
+            outdoor: super::OutdoorArgs::default(),
         }
     }
 }
@@ -143,6 +171,9 @@ fn run_mode(g: &Given) -> Result<RunMode, String> {
     if (g.thin_rig || g.seam_rig) && (g.level || g.showcase || g.room.is_some()) {
         return Err(RIGS_REFUSE.to_owned());
     }
+    if g.outdoor && (g.level || g.room.is_some() || g.thin_rig || g.seam_rig) {
+        return Err(super::outdoor::OUTDOOR_REFUSES.to_owned());
+    }
     Ok(if g.thin_rig {
         RunMode::ThinRig
     } else if g.seam_rig {
@@ -151,6 +182,8 @@ fn run_mode(g: &Given) -> Result<RunMode, String> {
         RunMode::Room(edge)
     } else if g.showcase {
         RunMode::Showcase
+    } else if g.outdoor {
+        RunMode::Outdoor
     } else if g.level {
         RunMode::Level
     } else {
@@ -198,6 +231,10 @@ fn settle(args: &mut Args, given: &Given) -> Result<(), String> {
     if mode.is_showcase() && (saves || args.vault || args.autopilot || args.castle) {
         return Err(SHOWCASE_REFUSES.to_owned());
     }
+    args.outdoor.auto = mode.is_outdoor() && !given.exposure && !given.adaptation;
+    if mode.is_outdoor() && (saves || args.vault || args.castle) {
+        return Err(super::outdoor::OUTDOOR_REFUSES.to_owned());
+    }
     args.look.preset.tuning.face_mix = given.face_mix.unwrap_or(args.look.preset.tuning.face_mix);
     args.look.preset.far_normal = given.far_normal.unwrap_or(args.look.preset.far_normal);
     if args.autopilot && mode.is_level() {
@@ -219,7 +256,7 @@ fn settle(args: &mut Args, given: &Given) -> Result<(), String> {
         );
     }
     if args.walk {
-        walk_allowed(mode == RunMode::Cave).map_err(|e| format!("--walk: {e}"))?;
+        walk_allowed(mode.streams()).map_err(|e| format!("--walk: {e}"))?;
     }
     if saves && !mode.is_level() {
         return Err(SAVE_NEEDS_LEVEL.to_owned());
@@ -257,6 +294,12 @@ pub(crate) fn check_path(args: &Args, path_mode_flag: bool) -> Result<(), String
         Some(Scene::Castle)
     } else if args.mode.is_showcase() {
         Some(Scene::Showcase)
+    } else if args.mode.is_outdoor() {
+        // The spawn, the trees and their leaf fill place voxels the path is laid around;
+        // `--sun` and `--time` move none and stay free.
+        let o = &args.outdoor;
+        (o.spawn == Spawn::Outside && o.trees == TreeDensity::Sparse && o.leaf_fill() == LEAF_FILL)
+            .then_some(Scene::Outdoor)
     } else if args.mode.is_level()
         || args.mode.room().is_some()
         || args.mode.is_thin_rig()
@@ -271,7 +314,7 @@ pub(crate) fn check_path(args: &Args, path_mode_flag: bool) -> Result<(), String
             "--path {} flies the {} scene; it needs {}",
             path.name,
             path.scene.name(),
-            path.scene.flags().join(" ")
+            needed_flags(path.scene)
         ));
     }
     if args.seed != PATH_SEED {
@@ -287,6 +330,23 @@ pub(crate) fn check_path(args: &Args, path_mode_flag: bool) -> Result<(), String
         );
     }
     Ok(())
+}
+
+/// The flags `--path` requires of `scene`: its [`Scene::flags`] less the `--sun` pair, which
+/// moves no voxel.
+fn needed_flags(scene: Scene) -> String {
+    let flags = scene.flags();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < flags.len() {
+        if flags[i] == "--sun" {
+            i += 2;
+            continue;
+        }
+        out.push(flags[i]);
+        i += 1;
+    }
+    out.join(" ")
 }
 
 /// `R_FULL,R_LOD`: radii in chunks with `1 <= R_FULL <= R_LOD`, hysteresis as

@@ -8,13 +8,18 @@
 //! emissive ores, started at its `hall` shot with the lamp off (`--lamp on` or `F7` turns it on)
 //! and a light radius of 19 chunks unless `--light-radius` is given; it walks, digs and
 //! collapses as the level does, and does not take `--save`, `--replay`, `--vault`,
-//! `--autopilot`, `--room` or `--castle`. The banner's line then starts `source showcase`.
+//! `--autopilot`, `--room` or `--castle`. `--source outdoor` streams the outdoor hills
+//! (`flythrough::outdoor`) under a sky whose time of day the run's clock keeps
+//! (`flythrough::daylight`): `--spawn`, `--time`, `--day-length`, `--sky`; it does not take
+//! `--level`, `--castle`, `--vault`, `--room` or a rig. The menu's `source` entry switches it in process,
+//! through `cave`, `level`, `showcase` and `outdoor`, each with its own start settings. The
+//! banner's line starts `source NAME` on every source.
 //! `--shot hall|chasm|crystals` (with the showcase) starts at that shot's pose and exposure
 //! instead of `hall`'s. `--pose vein|patch` (with `--level`) starts at the settle rig's still
 //! camera of that name (`flythrough::VEIN_POSE`, `PATCH_POSE`) on auto exposure unless
 //! `--exposure` is given; the banner shows `pose vein` until the camera first moves.
 //!
-//! `flythrough [--seed N] [--level] [--pose vein|patch] [--source cave|level|showcase] [--shot NAME] [--vault] [--castle] [--castle-out PATH]
+//! `flythrough [--seed N] [--level] [--pose vein|patch] [--source cave|level|showcase|outdoor] [--spawn outside|inside] [--time HH:MM] [--day-length S] [--sky on|off] [--shot NAME] [--vault] [--castle] [--castle-out PATH]
 //! [--castle-shot gate|nave|window|dungeon] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--census] [--sync-budget MIB] [--sync-ms MS] [--workers N] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
 //! [--headless] [--look PRESET] [--face-mix K] [--far-normal LO,HI] [--band-census] [--view VIEW]
@@ -30,7 +35,7 @@
 //! [--jitter-phases N] [--dither on|off] [--pace free|compositor]
 //! [--exposure auto|E]
 //! [--adaptation eye|symmetric|instant] [--adapt LIGHT,CONE,ROD,FLOOR] [--metering centre|average]
-//! [--path cave|showcase|castle] [--path-mode bench|tour] [--report DIR] [--tester]`.
+//! [--path cave|showcase|castle|outdoor] [--path-mode bench|tour] [--report DIR] [--tester]`.
 //! `--path NAME` flies that scene's camera path (`flythrough::path`; the scene's own flags and
 //! seed 1 are required): `--path-mode bench` (the default) once by wall time (1/60 s a headless
 //! frame) with the lamp off unless `--lamp on` is given, then exits; `tour` loops it, the first move, look or dig hands the camera to the
@@ -45,7 +50,7 @@
 //! (`--exposure 1` is the old look); `--adaptation` picks the auto preset (`eye`: 0.15 s toward
 //! bright, 2 s then 10 s below a cone floor of 2^-6 toward dark, at most 16; `symmetric`: 0.67 s
 //! both ways; `instant`), `--adapt` replaces its three time constants (seconds) and its floor, and
-//! `--metering` weights the meter toward the view's centre or not. `Q` cycles `auto` with the
+//! `--metering` weights the meter toward the view's centre or not. the menu's `exposure` cycles `auto` with the
 //! preset, `auto symmetric` and `manual` (holding the exposure of the moment); the banner names
 //! the mode and its exposure in EV, the stats HUD's exposure row adds the metered scene and the
 //! settled exposure, and stdout prints that row every half second while the exposure moves.
@@ -63,20 +68,20 @@
 //! and `--internal-scale 1` in `off`. The quality setting is FSR 2 at scale 1 with the far
 //! normal scaled to the same voxels, `--upscaler fsr2 --internal-scale 1 --far-normal 3,9`
 //! (about twice the default's march). In a
-//! window `F10` cycles off, own and fsr2, printing the mode and showing it in a banner, `Z`
-//! cycles the sharpening (0.5, 0.25, 0; the upscaler keeps its history), `V` the far normal
+//! window `F10` cycles off, own and fsr2, printing the mode and showing it in a banner, the
+//! menu's `sharpen` cycles the sharpening (0.5, 0.25, 0; the upscaler keeps its history), its `far normal` the far normal
 //! (`[2, 6]`, `[1, 2]`, off), and `--pan DEG_PER_S` turns the camera at a constant yaw rate
-//! (positive to the left, by the frame's measured interval) that `Period` stops and starts;
+//! (positive to the left, by the frame's measured interval) that the menu's `pan` stops and starts;
 //! the stats HUD names all four on one row; FSR 2's candidate knobs, off by default, are
 //! `--jitter-phases N` (its jitter's phase count) and `--dither on` (a static one-level dither
 //! in its tone pass), each named in the banner's fsr2 line when set;
-//! `--frames` exits after N frames, printing the `F1` readings over the last ones and the
+//! `--frames` exits after N frames, printing the readings (`Enter`) over the last ones and the
 //! stats HUD's rows; `--pace free|compositor` (default `free`) picks whether the window
 //! asks the compositor for a frame callback before each present (`vxe_app::Pacing`): with it
 //! the next frame starts only after the compositor showed this one; `free` starts it at once.
 //! The banner's `pace` row names the mode for `hud::BANNER_MS` after the start.
 //! The stats HUD's `pace` row names the mode beside the wall, CPU and GPU time of a frame, and
-//! the `frames:` line at exit gives the wall time between frames beside the CPU and GPU; `--hud` starts with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
+//! the `frames:` line at exit gives the wall time between frames beside the CPU and GPU; `--hud` starts with the stats HUD shown (`F2` toggles it); `--bench` sends N bench inputs on the first
 //! frame; `--autopilot` digs, flies 300 m out and back and prints the streaming readings (see
 //! [`Autopilot`]); `--cutaway auto|on|off` sets the cutaway view's start state (default `auto`:
 //! on while the camera's voxel is neither air nor translucent, so a camera in rock or outside
@@ -100,8 +105,8 @@
 //! a normal mode with its face mix, overridable by `--face-mix`. `--far-normal LO,HI` (`--look face` starts with it off) blends
 //! face mode's shading normal toward the 27-count gradient where a voxel spans fewer than `HI`
 //! pixels, all the way at `LO` (`LookParams::far_normal`); the banner and the look line show it
-//! in face mode, `far normal off` in the others, and `N` leaves it alone. Only a run started under
-//! `--look field` builds the field's band slots and runs the field pass; any other run's `N`
+//! in face mode, `far normal off` in the others, and the menu's `look` leaves it alone. Only a run started under
+//! `--look field` builds the field's band slots and runs the field pass; any other run's `look` entry
 //! skips the field. With the field's band slots the autopilot's report adds the field pass's
 //! band slots, CPU and GPU time over the flight, and the frame line the smooth share of the
 //! last frame's hits. `--view`
@@ -112,7 +117,7 @@
 //! `--translucent-layers` sets how many translucent voxels are composited in front of the opaque
 //! hit (default 4, 0 ignores them). `--emissive-ore off` keeps the ore dark (by default it
 //! glows, `flythrough::ORE_EMISSION`, and lights the cave through the light pass's emissive
-//! samples); `M` pulses its emission scale (the probe volume sees the ore at the pulse's
+//! samples); the menu's `ore pulse` pulses its emission scale (the probe volume sees the ore at the pulse's
 //! average); `--lamp off` turns the headlamp off; `--fade-reading` (headless) digs five times
 //! along the camera ray, lets the light settle with the lamp off and then on, switches it off
 //! and prints how the screen centre's light fades, by source (see [`FadeSample`]);
@@ -130,17 +135,17 @@
 //! refines the coarse chunks nearest first, each fading from its coarse value, and a chunk the
 //! mirror gains takes its coarse pass first, unless it lies within `--full-first off|N` of the
 //! camera's (default `--near`'s radius; `off` gives every blank chunk the coarse pass first; key
-//! `Backslash` toggles `off` and `2`); its row in the banner, its depth on the HUD's store
+//! the menu's `full-first` toggles `off` and `2`); its row in the banner, its depth on the HUD's store
 //! row and a `bake queue:` line a second on stdout; `--bake-slice MS` sets the slice (default
 //! 1.5), `--bake-budget frame:MS|second:MS,CAP` the budget as a slice a frame or milliseconds a
-//! second capped at a share of the frame (ADR-0052; key `Backspace` cycles it);
+//! second capped at a share of the frame (ADR-0052; the menu's `bake budget` cycles it);
 //! `--missing-light black|neighbour|parent|chain` what a cube face with no baked value reads
 //! (ADR-0053: its chunk's summary, its face neighbours', its parent cells'; default `chain`; key
-//! `7` cycles it; the banner's queue row and the HUD's store row name it, and the `bake queue:`
+//! the menu's `missing light` cycles it; the banner's queue row and the HUD's store row name it, and the `bake queue:`
 //! line prints the no-value, fallback and still-black shares); `--reach full|partial` whether a
 //! chunk whose light reach crosses the streamer's full radius waits for it (`full`, the default)
 //! or bakes from the chunks resident full, flagged partial and re-queued as a refinement when a
-//! chunk within its reach arrives (`partial`; key `8` toggles it; the banner's queue row, the
+//! chunk within its reach arrives (`partial`; the menu's `reach` toggles it; the banner's queue row, the
 //! HUD's queue row and the `bake queue step:` line name it); a dig re-bakes its rings in the queue, ahead of
 //! every other job, the slice growing by `--edit-ms MS` (default 3) while they wait, and
 //! `--dig-reach off` turns off ring 3 (the chunks within the light radius of a dig that touched
@@ -156,16 +161,16 @@
 //! (default 16, 1.6 m; 4 to 64), `--probe-rays N` the rays each updated probe traces (default
 //! 64, 1 to 64) and `--probe-slices N` the share it refreshes a frame, one in N (8, the
 //! default, 16 or 32). In a window
-//! `F3` toggles the shadow walk, `F5` the history killer, `F6` the lighting
-//! resolution, `F7` the lamp, `F8` the lamp's bounce, `Q` the exposure, `Comma` the store read
-//! (`--store-read face|normal`, ADR-0049, default `normal`) and `Semicolon` the light's filter
-//! weights (`--light-weights normal|face`, default `face`), `Delete` the filter's weights at a
-//! young pixel (`--young-filter luma|edges`, default `luma`), `Insert` where an entity's
+//! The menu's lighting page toggles the shadow walk, the history killer, the lighting
+//! resolution, the lamp (`F7`), the lamp's bounce, the exposure, the store read
+//! (`--store-read face|normal`, ADR-0049, default `normal`) and the light's filter
+//! weights (`--light-weights normal|face`, default `face`), the filter's weights at a
+//! young pixel (`--young-filter luma|edges`, default `luma`), where an entity's
 //! emissive light comes from (`--entity-light own|world`, default `world`), each printing the
 //! lighting modes;
 //! with the stats HUD shown,
 //! two rows read every frame pass's GPU time and the light samples with those modes.
-//! `N` cycles the look presets, naming the look on the banner.
+//! The menu's `look` cycles the look presets, naming the look on the banner.
 //! `--vault` places a 16-voxel room with an indestructible
 //! shell 10 m along +x from the spawn, written over the cave as it generates (on the level, clamped
 //! inside the extent).
@@ -177,13 +182,13 @@
 //! the prefabs' bytes, and the banner names it and the shot. `--castle-out PATH` (implies
 //! `--castle`) also writes the generated `.vox` to `PATH`. `--castle-shot NAME` (implies
 //! `--castle`) starts at one of `flythrough::castle::CastleShot`'s poses instead of the gate
-//! (the spawn), and `I` moves the camera to the next shot, printing and showing its name.
+//! (the spawn), and the menu's `next castle shot` moves the camera to the next shot, printing and showing its name.
 //!
-//! `P` stamps that 16-voxel room at runtime, unrotated, with its minimum corner at the voxel
+//! The menu's `stamp` stamps that 16-voxel room at runtime, unrotated, with its minimum corner at the voxel
 //! the dig ray hits, and prints what it changed like a dig does.
 //!
 //! Every edit goes through the simulation split (ADR-0007, ADR-0010): digs, fills, stamps, the
-//! bench and `R` are inputs a shared client sends to a server running
+//! bench and the crumble are inputs a shared client sends to a server running
 //! `flythrough::logic::DigLogic` (`--logic
 //! native`, the default) or the same logic as a component hosted on `wasmtime` (`--logic wasm`,
 //! from `target/guests/flythrough-logic.wasm`, or `--logic wasm=PATH`; needs a build with
@@ -198,7 +203,7 @@
 //! client's events. With `--level`, `--save` writes the session's log file on exit and prints the
 //! world's hash; `--replay` rebuilds a saved session's world by re-simulating its inputs before the
 //! first frame and prints the same hash. Everything the session changes is in the log: digs,
-//! fills, the bench, `P`'s stamps (the save's header carries the room's content, ADR-0014) and
+//! fills, the bench, the stamps (the save's header carries the room's content, ADR-0014) and
 //! the collapse's drops and removals. Only the autopilot's carve (streaming only) applies to the
 //! world directly. `--vault` combines with both, but the room placed at generation is not an
 //! op and the save does not record it: a session saved with `--vault` replays to its world
@@ -207,7 +212,7 @@
 //! Keys: `G` toggles fly and walk mode (on the bounded level only; streaming refuses it, as it
 //! refuses `--walk`); in walk mode `W A S D` walk at 3 m/s and `Space` jumps, or, held against
 //! a wall with a standable top within 1.2 m, climbs it. On the bounded level the fly-through
-//! keeps a coarse grid and walkable map updated from every edit; `K` prints them.
+//! keeps a coarse grid and walkable map updated from every edit; the menu's `coarse print` prints them.
 //!
 //! A gamepad (`--pad on`, the default in a window; never headless or under the autopilot) flies
 //! as the keys and mouse do: the left stick moves at a speed set by its deflection, the right
@@ -224,29 +229,29 @@
 //! crushing the cells too thin to hold it (ADR-0016), until it lands (`landed after N ticks,
 //! fell M voxels`, then `, crushed K voxels, P rubble` when it crushed any, piled on top of
 //! it). A region that cannot move prints `wedged: N cells, {material: count}, cannot fall`,
-//! and a refused drop `drop refused: ...`. `R` toggles removing it with rubble (a quarter of
-//! its volume) instead. `F1` adds the region count of the last dig's query.
+//! and a refused drop `drop refused: ...`. The menu's `crumble` toggles removing it with rubble (a quarter of
+//! its volume) instead. The readings (`Enter`) add the region count of the last dig's query.
 //!
-//! `--audio` opens the default output device, `H` plays a knock and `J` a looping hum at the point
-//! the last left click dug; every frame probes their occlusion through the world. `T` plays a
-//! looping pulse (a knock each second) there, to hear the echoes in its gaps; `E` toggles the
-//! early reflections. `--audio-debug` is
+//! `--audio` opens the default output device; the menu's `knock` (the pad's `East`) plays a
+//! knock and its `hum` a looping hum at the point the last left click dug; every frame probes
+//! their occlusion through the world. Its `pulse` plays a looping pulse (a knock each second)
+//! there, to hear the echoes in its gaps; `echoes` toggles the early reflections. `--audio-debug` is
 //! `--audio` plus a line a second of the output callback's readings, a `room sent: T60 .. mfp ..
 //! energy ..` line for every room the tail is sent, a line when room fans start being discarded
 //! (the listener inside a solid) and one when they stop, and on exit writes the last
 //! 60 s the callback handed the device to `flythrough-audio-debug.wav`. `FLYTHROUGH_HRIR=<pack>`
-//! in the environment loads that HRIR pack instead of the shipped one. `Y` toggles the late
+//! in the environment loads that HRIR pack instead of the shipped one. `tail` toggles the late
 //! tail. `--absorption A` sets the cave row's absorption per metre (default 0.3). `--mic`
 //! (implies `--audio`) plays the default input device at the listener with its direct path
 //! off, so it is heard only off the walls and in the tail; wear headphones.
 //!
 //! The balance (`vxe_audio::MixSettings`) is live. The mixer sets the echo and tail levels by
-//! the room's mean free path through its default room curves; `[` and `]` step a trim on the
-//! echoes by 3 dB, `-` and `=` one on the tail (each -24 to +12 dB), `9` and `0` the tail's
-//! pre-delay by 10 ms (0 to 200 ms), `O` switches the tail's lines between handing over and
-//! gliding, and `U` switches the direct path's propagation delay. Each prints a line
+//! the room's mean free path through its default room curves; the menu's `echo trim` steps a trim on
+//! the echoes by 3 dB, `tail trim` one on the tail (each -24 to +12 dB), `pre-delay` the tail's
+//! pre-delay by 10 ms (0 to 200 ms), `tail lines` switches the tail's lines between handing over and
+//! gliding, and `direct delay` switches the direct path's propagation delay. Each prints a line
 //! `mix: echoes <trim> dB (room <curve> dB at mfp <m> m), tail <trim> dB (room <curve> dB),
-//! pre-delay .. ms, tail lines .., direct delay ..`, which `F1`, the start (with `--audio` or
+//! pre-delay .. ms, tail lines .., direct delay ..`, which the readings (`Enter`), the start (with `--audio` or
 //! `--room-line`) and every room that moves a curve by 0.5 dB or more print too.
 //! `--echo-db`, `--tail-db`, `--predelay-ms`, `--tail-glide` and `--direct-delay` set the same
 //! at the start. `--flat-mix` sets both curves flat at 0 dB (the line reads `room flat`) and
@@ -255,7 +260,7 @@
 //!
 //! `--room METRES` runs in a closed cube of air of that edge inside 2 m of rock, spawned at its
 //! centre, and implies `--room-line`: a line `room: V .. S .. mfp .. alpha .. T60 .. energy ..`
-//! whenever the listener's room fan completes (`F1` and `--audio-debug` print it too). Without
+//! whenever the listener's room fan completes (the readings, `Enter`, and `--audio-debug` print it too). Without
 //! `--audio`, `--room-line` runs the room fan with no output device: its block clock never
 //! advances, so a fan completes 8 frames after the start or after a 1 m move.
 //!
@@ -293,12 +298,16 @@ use vxe_world::Residency;
 pub mod flags;
 mod loading;
 mod model;
+mod outdoor;
 mod parse;
+mod settings;
 pub mod table;
 
 pub use flags::{GONE_SINCE_0057, gone_since_0057, help, lighting_flags};
 pub(crate) use loading::LoadingArgs;
+pub use outdoor::{OUTDOOR_MAX, OUTDOOR_MIN, OutdoorArgs, SOURCES, next_source};
 pub use parse::*;
+pub use settings::settings_lines;
 
 /// The world a run builds; the flags that pick one (`--source`, `--level`, `--room`,
 /// `--thin-rig`, `--seam-rig`) exclude each other.
@@ -310,6 +319,8 @@ pub enum RunMode {
     Level,
     /// The bounded showcase cavern.
     Showcase,
+    /// The streamed outdoor hills (`flythrough::outdoor`).
+    Outdoor,
     /// A closed cube of air of this edge in voxels inside 2 m of rock.
     Room(i32),
     /// The bounded thin-feature scene.
@@ -325,6 +336,26 @@ impl RunMode {
 
     pub(crate) fn is_showcase(self) -> bool {
         self == RunMode::Showcase
+    }
+
+    pub(crate) fn is_outdoor(self) -> bool {
+        self == RunMode::Outdoor
+    }
+
+    /// The world streams around the camera: the cave and the outdoor hills.
+    pub(crate) fn streams(self) -> bool {
+        matches!(self, RunMode::Cave | RunMode::Outdoor)
+    }
+
+    /// The `--source` value naming this world; `None` for a room or a rig.
+    pub fn source_name(self) -> Option<&'static str> {
+        match self {
+            RunMode::Cave => Some("cave"),
+            RunMode::Level => Some("level"),
+            RunMode::Showcase => Some("showcase"),
+            RunMode::Outdoor => Some("outdoor"),
+            RunMode::Room(_) | RunMode::ThinRig | RunMode::SeamRig => None,
+        }
     }
 
     pub(crate) fn is_thin_rig(self) -> bool {
@@ -372,17 +403,17 @@ pub struct LightingArgs {
     pub lamp_bounce: bool,
     /// `--shadow-walk full|coarse`: the walk shadow rays take.
     pub shadow_walk: ShadowWalk,
-    /// `--store-read face|normal`: how a cube face reads the store (ADR-0049; `Comma`).
+    /// `--store-read face|normal`: how a cube face reads the store (ADR-0049; the menu's `store read`).
     pub store_read: vxe_render::StoreRead,
-    /// `--light-weights normal|face`: the normal the light's filters compare (`Semicolon`).
+    /// `--light-weights normal|face`: the normal the light's filters compare (the menu's `light weights`).
     pub light_weights: vxe_render::LightWeights,
-    /// `--young-filter luma|edges`: the a-trous weights at a young pixel (`Delete`).
+    /// `--young-filter luma|edges`: the a-trous weights at a young pixel (the menu's `young filter`).
     pub young_filter: vxe_render::YoungFilter,
-    /// `--entity-light own|world`: where an entity's emissive light comes from (`Insert`).
+    /// `--entity-light own|world`: where an entity's emissive light comes from (the menu's `entity light`).
     pub entity_light: vxe_render::EntityLight,
     /// `--filter on|off`: the a-trous filter runs.
     pub filter: bool,
-    /// `--atrous-iterations 1|2|4`: the a-trous iterations a frame runs (`F4`).
+    /// `--atrous-iterations 1|2|4`: the a-trous iterations a frame runs (the menu's `filter iterations`).
     pub atrous_iterations: u32,
     /// `--light-floor F`: the list lights' reach floor (ADR-0044).
     pub light_floor: f32,
@@ -531,7 +562,7 @@ pub struct LookArgs {
 pub struct BakeArgs {
     /// `--bake-budget frame:MS|second:MS,CAP` (or `--bake-slice MS`, `frame:MS`): the live
     /// queue's bake budget (default `frame:` `vxe_render::DEFAULT_BAKE_SLICE_MS`); key
-    /// `Backspace` cycles it through `BUDGET_CYCLE`.
+    /// The menu's `bake budget` cycles it through `BUDGET_CYCLE`.
     pub(crate) budget: vxe_render::Budget,
     /// `--coarse N`: the live queue's coarse pass, `N` samples a brick direction (0 none;
     /// default `vxe_render::DEFAULT_COARSE_SAMPLES`).
@@ -540,28 +571,28 @@ pub struct BakeArgs {
     /// before the first frame (default `vxe_render::DEFAULT_NEAR`).
     pub(crate) near: i32,
     /// `--full-first off|N`: the live queue's full-first radius after the pre-roll
-    /// (`vxe_render::BakeQueue::full_first`); `None` follows `--near`. `Backslash` toggles it
-    /// between `off` and `2`.
+    /// (`vxe_render::BakeQueue::full_first`); `None` follows `--near`. The menu's `full-first`
+    /// toggles it between `off` and `2`.
     pub(crate) full_first: Option<Option<i32>>,
     /// `--missing-light black|neighbour|parent|chain`: what a cube face with no baked value
-    /// reads (ADR-0053); `7` cycles it.
+    /// reads (ADR-0053); the menu's `missing light` cycles it.
     pub(crate) missing_light: vxe_render::MissingLight,
     /// `--reach full|partial`: whether a chunk whose reach crosses the streamer's full radius
-    /// bakes from the chunks resident full (`vxe_render::ReachMode`); `8` toggles it.
+    /// bakes from the chunks resident full (`vxe_render::ReachMode`); the menu's `reach` toggles it.
     pub(crate) reach: vxe_render::ReachMode,
     /// `--queue-order score|distance`: the live queue's order (ADR-0048's score by default, or
-    /// the class and the distance first); `F` cycles score, score with the class as a tier,
+    /// the class and the distance first); the menu's `queue order` cycles score, score with the class as a tier,
     /// distance.
     pub(crate) queue_distance: bool,
-    /// `--queue-weights A,R` or `A,tier`: the score's angle weight (`Tab` halves it, `Slash`
-    /// doubles it) and its refine weight, or the class as the leading key (defaults
+    /// `--queue-weights A,R` or `A,tier`: the score's angle weight (the menu's `queue angle
+    /// halved` and `doubled`) and its refine weight, or the class as the leading key (defaults
     /// `vxe_render::QUEUE_ANGLE_WEIGHT` and the class as the tier, ADR-0046's
-    /// coarse-first rule; `QUEUE_REFINE_WEIGHT` is the refine weight `F` cycles to).
+    /// coarse-first rule; `QUEUE_REFINE_WEIGHT` is the refine weight `queue order` cycles to).
     pub(crate) queue_angle: f32,
     pub(crate) queue_refine: f32,
     pub(crate) queue_tier: bool,
     /// `--queue-withdraw on|off`: whether the live queue withdraws the jobs of chunks the camera
-    /// has passed (default on); `Quote` toggles it.
+    /// has passed (default on); the menu's `queue withdraw` toggles it.
     pub(crate) queue_withdraw: bool,
     /// `--queue-census`: the live queue reads its view census, the in-view ages and the angle
     /// weights at every opening (a reading; by default once a second, for the stdout line and
@@ -610,12 +641,18 @@ pub struct Args {
     pub(crate) castle_shot: castle::CastleShot,
     /// `--entities N`: `N` walkers on a 3 m ring around the spawn (`crate::walker`).
     pub(crate) entities: u32,
-    /// `--entities-walk on|off`: the walkers start walking (`F11`'s mode; off).
+    /// `--entities-walk on|off`: the walkers start walking (the menu's `walkers walk`; off).
     pub(crate) entities_walk: bool,
     /// `--model PATH`: the `.rig` the viewer loads (`crate::viewer`); `--clip NAME` its first
     /// clip.
     pub model: Option<std::path::PathBuf>,
     pub clip: Option<String>,
+    /// `--library-dir DIR`: the entities library (`crate::entities::library`); `None` for its
+    /// default directory.
+    pub library_dir: Option<std::path::PathBuf>,
+    /// `--library`: print the library's entries (`crate::entities::library::library_text`)
+    /// and exit 0.
+    pub library: bool,
     pub(crate) sync_budget: u64,
     /// `--sync-ms`: the mirror's upload time per frame; `None` (the default, or `--sync-ms 0`)
     /// for no limit.
@@ -640,7 +677,7 @@ pub struct Args {
     /// `--pad on|off`: read a gamepad in a window (on by default); never headless or under
     /// the autopilot.
     pub(crate) pad: bool,
-    /// `--dig-at F,..` and `--bench-at F,..`: a dig (the left click) or a `B` bench input at each
+    /// `--dig-at F,..` and `--bench-at F,..`: a dig (the left click) or a bench input at each
     /// of these frames, for a headless reading.
     pub(crate) dig_at: Vec<u32>,
     pub(crate) bench_at: Vec<u32>,
@@ -657,9 +694,29 @@ pub struct Args {
     pub check_args: bool,
     /// `--help`: print the flag table ([`help`]) and exit 0.
     pub help: bool,
+    /// `--keys`: print the key tree at the start modes (`hud::menu::keys_text`) and exit 0.
+    pub keys: bool,
+    /// `--profile NAME`: the render profile the other flags edit (`floor` by default).
+    pub(crate) profile: vxe_render::Profile,
+    /// `--light-cap N`: slots of the list of lights shaded, the headlamp's included
+    /// (`vxe_render::Frame::set_light_cap`); the profile's by default.
+    pub(crate) light_cap: u32,
+    /// The output size of a headless run with no `--render`: the `--profile`'s hint when one
+    /// is given, else none (1280 x 720).
+    pub(crate) output_hint: Option<[u32; 2]>,
+    /// `--settings`: print the render settings the flags give ([`settings_lines`]) and exit 0.
+    pub settings: bool,
     /// `--tester`: only movement, look, the dig, `F1`, `T` and `Esc` act
     /// (`flythrough::path::tester_action`), and the banner shows the path's mode alone.
     pub(crate) tester: bool,
+    /// The flags as given, which the in-process source switch parses again under the next
+    /// `--source` (`run::switch`).
+    pub(crate) argv: Vec<String>,
+    /// `--switch-at`: frames at which the source switches, as the menu's `source` entry does.
+    pub(crate) switch_at: Vec<u32>,
+    /// `--spawn-hash`: print the hash of the chunks within 2 of the spawn's at the end.
+    pub(crate) spawn_hash: bool,
+    pub(crate) outdoor: OutdoorArgs,
     pub(crate) audio: AudioArgs,
     pub(crate) light: LightingArgs,
     pub(crate) look: LookArgs,
@@ -707,7 +764,8 @@ impl Args {
         self.pad && !self.headless && !self.autopilot
     }
 
-    /// The auto exposure of `--adaptation`, `--adapt` and `--metering`.
+    /// The auto exposure of `--adaptation`, `--adapt` and `--metering`, with the outdoor
+    /// source's floor and ceiling unless `--exposure` or `--adaptation` is given.
     pub(crate) fn start_auto(&self) -> AutoExposure {
         let mut a = self.light.adaptation.preset();
         if let Some([light, cone, rod, floor]) = self.light.adapt {
@@ -717,7 +775,15 @@ impl Args {
             a.cone_floor = floor;
         }
         a.metering = self.light.metering;
+        if self.outdoor.auto {
+            (a.min, a.max) = (outdoor::OUTDOOR_MIN, outdoor::OUTDOOR_MAX);
+        }
         a
+    }
+
+    /// A sky is set: `--sky`, else on for the outdoor source alone.
+    pub(crate) fn sky_on(&self) -> bool {
+        self.outdoor.sky.unwrap_or(self.mode.is_outdoor())
     }
 
     /// The live queue's full-first radius: `--full-first`, else `--near`'s.
@@ -757,12 +823,20 @@ impl Args {
     }
 
     /// Every toggle's mode at the start (`toggles::TOGGLES`), the banner shown from `now_ms`, the auto exposure's
-    /// slot `start_auto` under `--adaptation`'s name; the line names the showcase source first
+    /// slot `start_auto` under `--adaptation`'s name; the line names the world's source first, then
+    /// the clock while a sky is set,
     /// and the probe spacing while the lamp's bounce is on, and the look's rows `--view`'s view.
     pub(crate) fn start_modes(&self, now_ms: f64) -> hud::Modes {
         let mut m = hud::Modes::new(self.start_lighting(), self.light.resolution, now_ms)
-            .with_source(self.mode.is_showcase().then_some("showcase"))
+            .with_source(if self.mode.is_outdoor() {
+                Some(self.outdoor.trees().source_words())
+            } else {
+                self.mode.source_name()
+            })
             .with_probe_spacing(self.light.probe_spacing);
+        m.sky = self.sky_on();
+        m.clock = self.outdoor.clock;
+        m.profile = self.profile_row(&self.render_settings(), &[]);
         m.set_auto(self.light.adaptation, self.start_auto());
         m.show_look(&self.look.preset, self.look.preset.far_normal, now_ms);
         m.show_view(self.look.view, now_ms);
@@ -850,6 +924,10 @@ impl Args {
                 Some(e) => Exposure::Manual(e),
                 None => Exposure::Auto(self.start_auto()),
             },
+            sky_rays: self
+                .outdoor
+                .sky_rays
+                .unwrap_or(vxe_render::DEFAULT_SKY_RAYS),
             ..crate::default_lighting()
         })
     }

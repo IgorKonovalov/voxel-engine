@@ -61,7 +61,7 @@ pub(crate) fn loading_flags() -> Vec<Flag<Parsing>> {
         Flag::value(
             &["--loading-screen"],
             "on|off",
-            "step the start-up behind loading frames [on in a window, off headless]",
+            "step the start-up and the in-process rebuilds behind loading frames [on in a window, off headless]",
             |p: &mut Parsing, v| {
                 p.args.loading.screen = Some(v.on_off()?);
                 Ok(())

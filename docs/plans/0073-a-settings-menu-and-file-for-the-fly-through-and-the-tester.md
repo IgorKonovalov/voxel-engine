@@ -9,7 +9,7 @@
 > (proposed): the field table, the precedence, where the file lives, which runs read it, when it
 > is written. Rests on [ADR-0055](../adrs/0055-render-settings-are-one-struct-with-an-apply-class-per-field-and-profiles-are-named-values.md)
 > (the engine stays file-free) and ADR-0009 (the HUD is the 8 x 8 font overlay, no UI library).
-> **Starts after:** [Plan 0069](0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md)
+> **Starts after:** [Plan 0069](done/0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md)
 > has merged (`RenderSettings`, `FIELDS` with the apply classes, the profiles, `F4`, the
 > tester's profile choice). The architect re-reads Phases 1, 3 and 5 against that tip before the
 > lane starts: the args module and the HUD files may have moved under Plan 0045, and how 0069's
@@ -24,7 +24,7 @@
 > quality menu keep working.
 > **Amended 2026-11-16 (architect; the owner approved it 2026-11-16 with Plan 0080):** the owner asked the same day for a menu
 > system in place of a full keyboard. ADR-0061 and
-> [Plan 0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) give
+> [Plan 0080](done/0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) give
 > the apps one menu component (pages, live values, a palette, one input-capture rule, the key
 > table as the source), and this plan **builds on it** instead of writing `SettingsMenu`'s
 > drawing and routing: **Starts after** gains Plan 0080 beside Plans 0069 and 0071. Open

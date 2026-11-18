@@ -97,13 +97,19 @@ impl ModeKey {
 /// so a test drives it without a window.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Modes {
+    /// The render profile's row (`profile: portable +2`, then `restart for: ...` while a
+    /// rebuild is pending), written by the run when it changes; empty writes no row.
+    pub profile: String,
     pub lighting: vxe_render::Lighting,
     pub resolution: vxe_render::LightingResolution,
     /// The ore's emission scale pulses.
     pub pulse: bool,
     /// The world source the line names first (`source showcase`), when it names one.
     pub source: Option<&'static str>,
-    banner_at: f64,
+    /// A sky is set: the line names the clock's time and cycle after the source.
+    pub sky: bool,
+    pub(crate) clock: crate::daylight::Clock,
+    pub(crate) banner_at: f64,
     /// The auto exposure `Q` returns to, under its preset's name.
     auto: (Adaptation, vxe_render::AutoExposure),
     /// The exposure state as last read back.
@@ -143,7 +149,7 @@ pub struct Modes {
     /// The banner's lights row after the last light key (`lights 3/16`, `carry on`).
     lights_words: Option<String>,
     /// The testbed's walkers: `` ` `` places one, `4` removes the newest thing placed.
-    pub walkers: crate::walker::Walkers,
+    pub walkers: crate::entities::Walkers,
 }
 
 /// The live queue's modes the keys step: `F` the order, `Tab` and `Slash` the score's angle
@@ -249,10 +255,13 @@ impl Modes {
         now_ms: f64,
     ) -> Self {
         Self {
+            profile: String::new(),
             lighting,
             resolution,
             pulse: false,
             source: None,
+            sky: false,
+            clock: crate::daylight::Clock::default(),
             banner_at: now_ms,
             auto: match lighting.exposure {
                 vxe_render::Exposure::Auto(a) => (Adaptation::Eye, a),
@@ -274,7 +283,7 @@ impl Modes {
             queue: QueueModes::default(),
             lights: crate::lights::TestLights::default(),
             lights_words: None,
-            walkers: crate::walker::Walkers::default(),
+            walkers: crate::entities::Walkers::default(),
         }
     }
 
@@ -284,7 +293,7 @@ impl Modes {
     }
 
     /// These modes with the testbed's walkers `walkers` (`--entities N`'s ring).
-    pub fn with_walkers(self, walkers: crate::walker::Walkers) -> Self {
+    pub fn with_walkers(self, walkers: crate::entities::Walkers) -> Self {
         Self { walkers, ..self }
     }
 
@@ -303,9 +312,14 @@ impl Modes {
         }
     }
 
-    /// Writes the mode block, one row per [`HudRow`] in order, each ending in a line break,
-    /// then the walkers' row while one is placed and the viewer's under `--model`.
+    /// Writes the mode block: the profile row when set, then one row per [`HudRow`] in order,
+    /// each ending in a line break, then the entities' row while one is placed, the aimed (or
+    /// newest) rig's clip row, and the viewer's under `--model`.
     pub fn write_rows(&self, out: &mut String) {
+        if !self.profile.is_empty() {
+            out.push_str(&self.profile);
+            out.push('\n');
+        }
         for row in HudRow::ALL {
             self.write_row(row, out);
             out.push('\n');
@@ -314,7 +328,10 @@ impl Modes {
             self.walkers.write_row(out);
             out.push('\n');
         }
-        if let Some(v) = &self.walkers.viewer {
+        if self.walkers.write_target(out) {
+            out.push('\n');
+        }
+        if let Some(v) = self.walkers.viewer() {
             v.write_row(out);
             out.push('\n');
         }
@@ -407,7 +424,6 @@ impl Modes {
     pub fn with_source(self, source: Option<&'static str>) -> Self {
         Self { source, ..self }
     }
-
     /// These modes with the probe volume's spacing `spacing` voxels (`probes N` in the line).
     pub fn with_probe_spacing(self, spacing: u32) -> Self {
         Self {
@@ -603,6 +619,10 @@ impl Modes {
         let on = |b: bool| if b { "on" } else { "off" };
         if let Some(s) = self.source {
             let _ = write!(out, "source {s}, ");
+        }
+        if self.sky {
+            self.clock.write_words(out);
+            let _ = write!(out, ", sky rays {}, ", l.sky_rays);
         }
         let _ = write!(
             out,
@@ -801,7 +821,7 @@ mod tests {
                 .unwrap();
         }
         let colour = TOGGLES.iter().find(|t| t.name == "colour").unwrap();
-        assert_eq!(colour.press, Press::Key(vxe_app::KeyCode::Digit3, None));
+        assert_eq!(colour.press, Press::Menu);
         (colour.flip)(&mut m, 10.0);
         assert!(m.banner(10.0).unwrap().lines().any(|l| l == "colour warm"));
         (colour.flip)(&mut m, 20.0);
@@ -841,7 +861,7 @@ mod tests {
                 .unwrap();
         }
         let bounce = TOGGLES.iter().find(|t| t.name == "bounce").unwrap();
-        assert_eq!(bounce.press, Press::Key(vxe_app::KeyCode::Digit5, None));
+        assert_eq!(bounce.press, Press::Menu);
         (bounce.flip)(&mut m, 10.0);
         assert!(m.banner(10.0).unwrap().lines().any(|l| l == "bounce on"));
         assert_eq!(
@@ -869,7 +889,7 @@ mod tests {
         );
         let f4 = TOGGLES
             .iter()
-            .find(|t| t.press == Press::Key(vxe_app::KeyCode::F4, None))
+            .find(|t| t.name == "filter iterations")
             .unwrap();
         assert_eq!(f4.row, HudRow::Lighting);
         assert_eq!((f4.get)(&m), "filter 4");

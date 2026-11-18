@@ -1,6 +1,9 @@
 # 0033: The far field: a clipmap of three coarse chunk levels to about 1 km
 
-> **Status:** approved (2026-10-22), amended 2026-11-10 (review pass)
+> **Status:** approved (2026-10-22), amended 2026-11-10 (review pass); **amended 2026-11-17
+> (architect re-read against main 3b3986d0 after Plan 0032's close: absent is sky, Phase 6 and
+> ADR-0028 rewritten; the section "Amended 2026-11-17 (re-read)" below is the phases' errata and
+> carries two owner questions that await answers before the go).**
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
@@ -37,7 +40,7 @@
 > **Order (owner, 2026-11-10):** Plans 0060, 0061, 0058, 0044, 0045, the `own`-removal plan and
 > the render-profile plan (both owed, not drafted), then M10 in a line: 0032, 0033, 0034,
 > 0035, 0036, 0037.
-> **Starts after:** [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
+> **Starts after:** [Plan 0032](done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
 > closes. The base is main after that close. This plan relies on Plan 0032's section
 > "Interface for Plans 0033 to 0037" and on nothing else of it: `OutdoorSource`, the flags
 > `--source outdoor`, `--spawn`, `--sun`, `--trees` and `--leaf-fill`, the column `FOREST`, the
@@ -60,6 +63,173 @@
 > (`test-changed.mjs --binaries`, Plan 0066); a named test over 10 s on lavapipe is born
 > `#[ignore = "soak"]` (`docs/nfr.md` section 7). The mechanisms and bars stand; only when they
 > become tests moves.
+
+## Amended 2026-11-17 (re-read)
+
+Read at main 3b3986d0 (Plan 0032 closed, v0.61.0: absent is sky; Plan 0069 closed, v0.60.0:
+the settings surface) against the `plan-0080` lane (the menu) and Plans 0086 and 0081
+(approved, ahead of this plan). The lane branches from main once Plan 0081 has merged; the
+tree's names win. The Decision and the phases stand except where this section says otherwise;
+`dev` reads it as the phases' errata. Crate names are `vxe-*`; if Plan 0087 has merged first
+they read `svet-*` through its map.
+
+### Name mapping (the plan's name, then the tree's)
+
+| The plan says | The tree has |
+|---|---|
+| "the per-call `march` argument Plan 0032 gives the lighting rays", "the per-call absent-chunk argument" | **none.** `march(o, d, t_limit, cutaway)` (`walk.wgsl`) has no lighting argument; Plan 0032 Phase 5 made the absent-chunk rule a walk-scope variable set around `march` (as `shadowed()` in `light.wgsl` sets `coarse_span`) and Phase 10 removed it. This plan's "takes the far field" and "level origin" are two walk-scope variables of the same kind, set by the caller around its `march` (the hit pass for the primary ray, `sky_light.wgsl`'s `key_sample` and `sky_ray_sample` for the lighting rays), and left at "no far field" by every other caller; `bake_source()` (`bake/pipeline.rs`) compiles with them at their default |
+| `Coarse { Unsupported, Uniform, Cells }` | the name is taken twice: `vxe_world::coarse::{CoarseCell, CoarseGrid}` (the brick-summary grid) and the fly-through's `edits::Coarse`. This plan's enum is **`ClipFill`**; `ClipCoord`, `ClipChunk`, `ClipResidency` and `MipRule` stand |
+| `--far-field`, `--clip-radius`, `--clip-rule`, `--settle-clip`, "clip" in flags and HUD words | "clip" is a recording clip (`examples/clip.rs --clip NAME`) and an animation clip (`KEY_CLIP_*`, `--clip`) in the fly-through. The flags are **`--far-field off\|on`, `--far-radius R`, `--far-rule level\|volume`, `--settle-far`**; the HUD and banner words say `far field`, `far levels`, `far rule`; the Rust types keep `Clip*` inside `vxe-world` and `vxe-render` |
+| `WorldSource` (`source.rs`), `UniformSource` | `crates/vxe-world/src/source.rs` (`chunk` is its one method; `FnSource`, `StampedSource` beside it, the latter forwarding `chunk` only) |
+| `mips.rs` `ChunkMips::build` (any-solid, majority material) | as named (`MIP_LEVELS` 3, `MIP_BRICKS [64, 8, 1]`, `majority`); built on the stream workers (`stream/workers.rs`), in `hash.rs` and in `world_budget` |
+| `World::{insert_clip, clip, ..}` beside the LOD mips | `store.rs`: `lods: RwLock<HashMap<ChunkCoord, Arc<ChunkMips>>>`, `lod`, `insert_lod`, `remove_lod`, `lod_coords`, `World::generate` |
+| `stream.rs`, `Residency`, `set_radii` | `crates/vxe-world/src/stream/{mod,residency,workers}.rs`: `Residency { r_full, r_lod, hysteresis }`, `StreamConfig`, `Tier { Full, LodOnly }`, `set_radii(r_full, r_lod)`, `update`, `poll`, `chunks_in_ball`, `StreamStats`, `StreamEvents`; `ResidencyPlan` in `residency.rs` |
+| `r_lod` kept equal to `r_full` (Decision, Phases 3 and 8) | `LodParams` (`frame/settings.rs`) has `r_full` and `forced_level` only (Plan 0032 Phase 10 removed its `r_lod`); the ring's radius lives in `Residency::r_lod`, `BuildSettings::residency` (16, 24, 1 in `settings.rs`; Portable 12, 18) and the pressure rule's call `stream.streamer.set_radii(r_full, r.r_lod)` in `run/frame.rs` (`RadiusRule`, `streaming.rs`). "Keep `r_lod` equal to `r_full`" edits those three, not the renderer |
+| `gpu_world.rs` | `crates/vxe-render/src/gpu_world/{mod,window,slot,format,alloc,stage}.rs`: one wrapped window (`WindowQueue`, `table_index` = `rem_euclid` per axis, `Window::{Fixed, Follow}`), `MirrorConfig { budget_bytes, record_chunks, .. }`, `ShardLayout` (ADR-0013), `GpuWorld::pressure()`, Plan 0028's `BINS`/`SLOT_BINS`/`BinAlloc`; entries `ABSENT` = `u32::MAX`, `MATERIAL_MASK` 0xFFFF, `EMPTY_BIT` 1<<29, `LOD_BIT` 1<<30, **bit 31 free** (the uniform-material entry), `RECORD_WORDS` 528 (2112 B, as the plan says) |
+| `marcher.rs` (`Params`, the levels) | `frame/settings.rs` (`Params`: `forced_level`, `lod1_r2`, `lod2_r2`, `cam_chunk_*`; five free pad words, not fifteen) and `frame/encode.rs` (packs them, **1193 of 1200 lines**). This plan's fifteen words (`clip_levels`, `clip_window`, `clip_min[3]`, `clip_switch`, `clip_band`, the bounds, `far_limit`, `clip_normals`) are a **uniform of their own** at group 0's next free binding (19; 5 and 6 are also unused), packed in a new `frame/far_field.rs`, not in `Params` or `encode.rs`. The level choice is `lod_level(chunk)` in `walk.wgsl`, applied where the entry has `LOD_BIT` |
+| `march.wgsl` | `walk.wgsl` (`march`, `descend`, `lookup`, `lod_level`, `absent_descent`, `far_normal_weight`, `surface_normal`), `hit.wgsl` (the primary ray, `translucent_march`, the split pixel's resume), `field_walk.wgsl`, `hitrec.wgsl` (`reads_store` = `found && axis >= 0 && !field`, `shadow_origin`), `common.wgsl` (`Params`, `blue_noise` at binding 12, `rand(px, dim)`) |
+| `light.wgsl`'s directional shadow ray | `sky_light.wgsl`: `key_sample` is the one place the directional sample's visibility is computed (`sky_shadowed` = `shadowed() \|\| entity_march`), `sky_ray_sample` the sky ray's, `SKY_RAY_VOXELS` 512; `shade.wgsl` (the light pass's entry) **re-casts the key ray in the steps view** (`key_ray_steps`), so Phase 6 changes both. `light.wgsl` is the list lights' `shadowed()` |
+| `probe_update.wgsl` `march(o, d, BIG, false)` | as named, unchanged |
+| "two free hit-flag bits" | bits 6 to 15 of `info.w` are the entity instance when `HIT_ENTITY` (bit 5) is set (`unpack_hit` decodes `flags >> 6` on every record), and Plan 0081 takes bit 6 (`HIT_DETAIL`) and bits 8 to 15 (`s`). A clip hit is never an entity hit nor a detail hit (the layer fades out far inside `s_1`), so the payload is **kind-dependent**: this plan's level is bits 7 and 8 and its fallback mark bit 9, read only when bits 5 and 6 are clear; `dev` writes the decode as one kind switch in `unpack_hit` and gates every reader of `rec.instance` by `rec.entity` |
+| `reads_store` false for a clip hit, `store_missing` | `hitrec.wgsl` `reads_store` gains `&& level == 0`; `temporal.wgsl` `counters[0]` is the missing count |
+| `bake.rs` `bake_source()`, `bake_origin_chunk` | `bake/pipeline.rs` (`LOD_ORIGIN` replaced by `bake_origin_chunk()` of `bake.wgsl`); the bake's layout is the shared `world_layout`, so the far-field uniform enters its layout and not its module |
+| `tests/gpu_mirror.rs` | `crates/vxe-render/tests/gpu_mirror_{alloc,budget,tiers}.rs`; the level tables' test goes beside the LOD tiers in `gpu_mirror_tiers.rs` |
+| Plan 0032's trees, "`trees.rs`'s per-voxel function" | `trees::ForestSource` (Phase 8's note: 64 shared prefabs, 16 variants by 4 turns, placements written in order over `OutdoorSource`; `StampedSource` is not used) with `ForestSource::material(p)` as the per-voxel function; `TREE_CELL` 48, **`LEAF_FILL` 64** (the owner's pick; the plan's tables assume 128), `TREE_BOX_EDGE` 3072 (**the forest is a finite 307 m square** between `MOUTH` and `FOREST`, bare hills beyond it); the default `--trees` is **`sparse`**, so every bare-hills run passes `--trees none` |
+| `OutdoorSource`'s column bound | `outdoor.rs` `height(x, y)` is three `ValueNoise` samples (cheap per column); there is no footprint min or max helper. Phase 2's bound is a scan of the footprint's corners and centre or the analytic amplitude bound (`BASE_Z` 512 plus or minus 200), `dev`'s pick |
+| `examples/world_budget.rs` | exists (935 lines); `--source showcase\|level`, `--stream R_FULL,R_LOD`; Phase 2 adds `outdoor`, `--far LEVELS,R`, `--trees`, `--far-rule`, `--leaf-fill` |
+| `apps/flythrough/src/{main,hud,lib}.rs` | `cli/outdoor.rs` (the flags, beside `--trees`; `cli/flags.rs` is at 1190 lines), `toggles.rs` (the entries), `hud/stats.rs` `memory_rows` (the chunk rows, fed by `run/hud_feed.rs`), `hud/modes.rs` (**1197 of 1200 lines**: the far-field words go in a new module or a split `dev` makes first), `run/frame.rs` `print_exit_readings` (the per-level ground line beside `steps_line`), `streaming.rs` (`RadiusRule`), `docs/flythrough.md` (every key and flag; the root README links it) |
+| `gpu_strip.rs`, `support/aliasing.rs` | both exist; the strip readings' driver is `examples/strip.rs` (`--source showcase\|level`), which Phase 7 gives an `outdoor` arm |
+| `apps/flythrough/tests/gpu_golden.rs` | at 1885 of 2000 lines; this plan's goldens live in its own `gpu_far_field.rs`, never there |
+| `templates/readings-log.md` | the architect skill's template, outside the public repo; `dev` starts `docs/plans/logs/0033.md` from an existing log's shape |
+
+### Absent is sky: the Decision's and Phase 6's rule, rewritten
+
+Plan 0032 Phase 10 (owner, 2026-11-17; ADR-0027's Outcome) made an absent chunk sky to a
+lighting ray and air to a primary ray, and removed `absent_ball_r2`, `ball_r2` and
+`LodParams::r_lod`. This plan's rule follows it, and ADR-0028 is revised the same day:
+
+- **An absent chunk sends the walk one level coarser at the same point**, as before: a level
+  holds its whole ball, so a missing finer chunk shows the coarser cell and never a hole.
+- **At the coarsest level an absent clip chunk is air to a primary ray and sky to a lighting
+  ray.** Nothing is an occluder by its absence any more. The case is the ball's edge or a
+  clip chunk not yet generated, and the fallback mark (Phase 8) counts it.
+- **Leaving the coarsest ball or passing the far limit is sky** for a lighting ray, as "leaving
+  the ball or the window is sky" was.
+- Phase 6's "What" reads accordingly: the directional shadow ray starts at its hit's level
+  with the offset `SHADOW_OFFSET x 2^k` along the shadow normal, takes the level rule by
+  distance from the camera, honours the coarse shadow walk at every level and the `SHADOW_AS_BRICK`
+  flag (Plan 0086 Phase 2) on the bricks it enters, goes one level coarser on an absent
+  chunk, and reaches the sky where it leaves the coarsest ball, passes the far limit, or
+  enters an absent chunk at the coarsest level. Its done-whens stand (the wall is resident in
+  each).
+
+### Plan 0086 and the sky term at a clip hit
+
+Plan 0086 (ADR-0070) makes the sky term at a near face `v(n) E_sky(n)`: a visibility baked
+into the store per brick direction, times six axis irradiances reduced from the sky-view
+LUT each frame; the sky ray runs only where the store has no fresh value, on a running mean
+of its own, and the direct target no longer receives it. A clip hit reads no store, so under
+0086 it has no visibility: either the ray runs on every far pixel (the stale path), or the far
+field takes `E_sky(n)` unoccluded. **Owner question 1** picks; the recommended option is the
+unoccluded term with no ray. The bake's own sky rays cap at the chunk's reach (ADR-0070), so a
+far ridge does not darken a near face's baked visibility; the horizon band carries little of
+a cosine-weighted hemisphere, and that loss is accepted and read in Phase 8's low-sun runs
+(a note in the log). The key light's visibility, whether on the direct target or on 0086's
+pair, is computed in `key_sample` where this plan's far occluder enters, before any history.
+
+### Interface changes
+
+- **Starts after:** Plan 0081 closes and merges (it follows Plan 0086, which follows Plan
+  0032). The base is main after that merge.
+- **Settings, not flags alone** (Plan 0069, ADR-0055): `BuildSettings` gains `far_field:
+  FarFieldSettings { levels: u8, r_clip: i32, hysteresis: i32, rule: MipRule }` (every field
+  `Rebuild`: the streamer and the mirror's tables are created from it) and `RenderSettings`
+  gains `far_field.band: bool` and `far_field.normals: ClipNormals` (`Settle`), each a `FIELDS`
+  row with a `with_test_value` arm, a `PROFILE_PICKS` row (Floor 3 levels at `r_clip` 22;
+  Portable 2 levels, the Risks' lever, ending at 512 m; Performance and High as Floor), and
+  the fly-through's `render_settings()`. With `levels` above 0 the residency's `r_lod` is
+  `r_full` wherever the application sets it (above). A `Frame::set_*` this plan adds is in
+  `SETTERS` or `NOT_SETTINGS`, or `every_setter_is_a_setting_or_an_input` fails.
+- **Menu entries, not keys** (ADR-0061, Plan 0080): the far-field cycle (`on`, `levels`,
+  `off`) and the clip-normals switch are `Press::Menu` toggles of `toggles::TOGGLES` (group
+  `Look`), no key; their `get` is the banner's word; `--keys` lists them; 0080's
+  `every_toggle_and_action_is_an_entry` and `the_source_reads_no_key_the_tables_miss` pass.
+  Phase 8 bar 1 reads "three activations of the entry" for "three presses of the key".
+- **The far-field uniform** (above) replaces the `Params` words of Data shapes; the bake's
+  layout carries it with `clip_levels` 0 by construction (its module never sets "takes the
+  far field").
+- **Tiers:** the "Tests and tiers" paragraph's 30 s line is **10 s** on lavapipe (60 s on CI;
+  `docs/nfr.md` section 7, since 2026-11-10); a render phase runs `--profile gpu --binaries
+  <names>` with the `gpu_*` binaries it names; the whole gpu tier is the tip's.
+- **Trees at distance under fill 64.** The Context table says what the tree now does: at
+  the owner's `LEAF_FILL` 64 both readings of the half rule thin a canopy to 11.4 % at level 1
+  and to nothing beyond, so beyond about 243 m the forest is trunks alone, and a radius-2
+  trunk is gone at level 2 too. **Owner question 2** picks the far forest's rule. Phase 2's
+  forest census and Phase 8's forest runs run at the default fill 64 and at 128 (the plan's
+  tables), and `tree_cells_equal_the_downsample` holds at level 1 under either answer.
+
+### Phases: what changes
+
+- **Phase 1** files: `crates/vxe-world/src/{source,mips,store,lib}.rs` and the new `clip.rs`
+  (`ClipFill`, not `Coarse`); `crates/vxe-render/src/gpu_world/{mod,window,slot,format}.rs`,
+  the new `frame/far_field.rs` (the uniform, its binding in `frame/pipelines.rs`),
+  `shaders/{walk,hit,hitrec,temporal}.wgsl`, `bake/pipeline.rs`; `apps/flythrough/tests/
+  gpu_far_field.rs` (new, the goldens included), `gpu_bake.rs`, `tests/support/mod.rs`. Bar 1's
+  level bits are 7 and 8 (above). Bar 3's "two existing `missing == 0` rigs" are `gpu_bake.rs`'s
+  two `assert_eq!(stats.missing, 0)` sites.
+- **Phase 2** files: `outdoor.rs` and `trees.rs` (`ForestSource::coarse_chunk` over its 64
+  prefabs' voxels at the placements it writes), `examples/world_budget.rs` (the outdoor arm
+  and flags, `--far` not `--clip`), `census.rs`, `tests/clip.rs`, `far_field_source.rs`. The
+  bare-hills census passes `--trees none`. Bar 5 runs fill 64 beside 128. Owner question 2's
+  answer sets the canopy rule before this phase starts.
+- **Phase 3**: `stream/{mod,residency,workers}.rs`, `clip.rs`, `store.rs`; bar 3 reads `r_lod`
+  through `Residency` (above).
+- **Phase 4** files: `gpu_world/{mod,window,slot,alloc}.rs`, `frame/far_field.rs`,
+  `shaders/walk.wgsl`, `gpu_mirror_tiers.rs`, `gpu_far_field.rs`. The band's dither reads
+  `blue_noise` (binding 12) through `rand(px, dim)` or a direct load, as `fsr2/tone.wgsl`
+  does. `far_field_default.png` (soak) stays in `gpu_far_field.rs`.
+- **Phase 5**: `apps/flythrough/src/main.rs` reads `run/frame.rs` or `edits.rs` (where the
+  edit results arrive); `Streamer::note_edits` stands.
+- **Phase 6** reads as rewritten above; files `sky_light.wgsl` and `shade.wgsl` (the steps
+  view's key ray) in place of `light.wgsl`, `walk.wgsl`, `probe_update.wgsl` (unchanged,
+  asserted), `frame/far_field.rs`, `gpu_far_field.rs`. Bar 4 reads, under Plan 0086: the
+  store counters read `missing == 0` and a clip pixel's emissive term is 0; its sky term is
+  question 1's.
+- **Phase 7**: `examples/strip.rs` gains the `outdoor` arm its `--source` lacks; otherwise
+  unchanged.
+- **Phase 8**: the flags `--far-field`, `--far-radius`, `--far-rule`, `--settle-far`, `--spawn
+  vista` in `cli/outdoor.rs` and `cli/tests.rs`; the toggles in `toggles.rs`; the words in
+  the banner's new module; the rows in `hud/stats.rs` `memory_rows`; the exit line in
+  `run/frame.rs`; the residency's `r_lod` in `streaming.rs` and `run/frame.rs`;
+  `docs/flythrough.md`. Bar 1 reads "three activations" and `far field levels`, `far field
+  off`, `far field on`, `normals gradient`/`normals face`, `rule volume`/`rule level`, `far
+  field off (field look)`. Bar 4's march bar (3.0 ms RTX) stands; its base is the outdoor
+  frame as Plan 0032 Phase 7 read it (5.1 to 5.6 ms RTX, 37.5 to 45.8 ms RENOIR, `docs/nfr/
+  02-frame-budget.md`), re-read at the lane's start. Bar 5 runs at fill 64 (the default) and
+  128. The forest's box is finite: the `vista` pose faces along the box's long side so the
+  trees run to its edge, and the log says where the bare hills begin.
+- **Phase 9** adds: the far forest's rule from question 2, judged by eye; the sky term at a
+  clip hit from question 1, at sunset on the horizon.
+- **Phase 10** unchanged.
+
+### Owner questions added 2026-11-17 (each with a recommendation)
+
+Answered 2026-11-17 (owner): the recommended option on both (no far sky ray, `far_field.sky_ray` off by default; the canopy envelope as solid `leaf` at levels 2 and 3).
+
+1. **The sky term at a clip hit under Plan 0086.** Recommended: **`E_sky(n)` unoccluded, no
+   ray**, as a setting `far_field.sky_ray` (`off` by default; a `Live` row): far terrain is
+   open ground whose sky visibility is near 1, the store cannot hold a value for it, and the
+   slow adapter keeps the 4.8 ms a ray it pays today on every horizon pixel otherwise.
+   Alternative: the ray on 0086's pair at every clip pixel (the stale path), exact where a far
+   valley is shadowed from the sky, at that cost.
+2. **The far forest at leaf fill 64.** Recommended: **the outdoor source's coarse path takes
+   the canopy's envelope as solid `leaf` at levels 2 and 3** (the tree's canopy ellipsoid,
+   the shape `in_canopy` already tests), and the half rule over the prefab's voxels at level
+   1, so the far forest reads as the solid blobs the owner called "amazing" at Plan 0032's
+   window and shadows as Plan 0086's `SHADOW_AS_BRICK` makes it near; both `MipRule`s stay
+   built for the general source and the hills. Alternative: the rules as written, under which
+   far canopies vanish beyond about 243 m at fill 64 and the forest is trunks alone; or the
+   far field at its own fill of 128 (a seam in density at the first switch).
 
 ## TL;DR
 

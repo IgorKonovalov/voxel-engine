@@ -382,16 +382,17 @@ pub(crate) fn wav_f32_stereo(samples: &[f32]) -> Vec<u8> {
 }
 
 impl Audio {
-    /// Plays the sound `name` names (`knock`, `hum` or `pulse`) at the dig point with `params`.
-    pub(crate) fn play(&mut self, name: &str, params: impl Fn([f32; 3]) -> PlayParams) {
+    /// Plays the sound `name` names (`knock`, `hum` or `pulse`) at the dig point with `params`;
+    /// gives the line that answers it (the sound and where, or why it did not play).
+    pub(crate) fn play(&mut self, name: &str, params: impl Fn([f32; 3]) -> PlayParams) -> String {
         let Some(p) = self.dig_point else {
-            println!("{name}: no dig point yet; left-click first");
-            return;
+            return format!("{name}: no dig point yet; left-click first");
         };
+        let mut line = format!("{name} at [{:.1}, {:.1}, {:.1}]", p[0], p[1], p[2]);
         let sound = if name == "hum" {
             let i = self.next_hum;
             self.next_hum = (i + 1) % self.hums.len();
-            println!(
+            line = format!(
                 "hum: note {} of {}, {} Hz, at [{:.1}, {:.1}, {:.1}]",
                 i + 1,
                 self.hums.len(),
@@ -408,8 +409,9 @@ impl Audio {
         };
         match self.output.play(sound, params(p)) {
             Ok(id) => self.voices.push((id, p)),
-            Err(e) => println!("{name}: {e}"),
+            Err(e) => line = format!("{name}: {e}"),
         }
+        line
     }
 
     /// Opens the default device; prints why when it cannot. `debug` meters and records the
