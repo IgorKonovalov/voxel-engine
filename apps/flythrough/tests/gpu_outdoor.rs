@@ -1902,3 +1902,4 @@ mod reading {
 }
 
 include!("gpu_outdoor/defects.rs");
+include!("gpu_outdoor/flicker.rs");
