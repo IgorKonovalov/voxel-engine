@@ -154,16 +154,21 @@ mod defects {
             }
         }
 
-        /// Plan 0086 Phase 20 bar 1a: the ray region lands within the fade. 19.png's pose
-        /// streamed as [`the_tunnel_ray_region`] (residency 16, 24, the wait off, `full`), 300
-        /// frames at 320 x 180, the exposure pinned at -10.75 EV from the first frame: per
-        /// lighting pixel each frame whether it cast the sky ray (the pair is its term) and the
-        /// display's largest channel at its centre. For every pixel that casts at frame `f` and
-        /// not at `f + 1` (its term switches from the pair to the store or the chain), `old` its
-        /// level at `f` and `new` at `f + 16`: the share of such pixels with a frame in
-        /// `f ..= f + 16` outside `[min(old, new) - 4, max(old, new) + 4]`, the mean and p99 of
-        /// `|old - new|`, the mean `|old - new| / new` (over `new` > 0), the switch count, and
-        /// the frame-to-frame p99 over the cast pixels at frames 60 and 120. Printed.
+        /// Plan 0086 Phase 20 bar 1a (re-stated 2026-11-19): the ray region lands within the
+        /// fade. 19.png's pose streamed as [`the_tunnel_ray_region`] (residency 16, 24, the wait
+        /// off, `full`), 300 frames at 320 x 180, the exposure pinned at -10.75 EV from the first
+        /// frame. Per lighting pixel each frame its sky term's source: the pair (it cast the sky
+        /// ray), the store (its face's own cell record holds the direction's baked visibility,
+        /// read from the store's words on the CPU as `store_sky_cell`), else the chain; and the
+        /// display's largest channel at its centre. A switch at `f` is a source change between
+        /// `f` and `f + 1`, by kind (pair to store, pair to chain, chain to store); `old` the
+        /// level at `f`, `new` at `f + 16`. Per kind: the count, the share with a frame in
+        /// `f ..= f + 16` outside `[min(old, new) - 4, max(old, new) + 4]`, the leavers by side
+        /// (under, over) and by whether the pixel casts again within the 16 frames, the share of
+        /// leavers that do not cast again and whose largest excursion is on `f + 1` (the
+        /// switch's frame: (ii)'s line), the mean and p99 of `|old - new|`, the mean
+        /// `|old - new| / max(new, 8)`, and the step's sign (old under new, over). The
+        /// frame-to-frame p99 over the cast pixels at frames 60 and 120. Printed.
         /// `VXE_TEST_ADAPTER` picks the adapter.
         #[test]
         #[ignore = "reading"]
@@ -179,8 +184,8 @@ mod defects {
                 flythrough::camera_looking_at(p, [p[0] + d[0], p[1] + d[1], p[2] + d[2]]);
             let noon =
                 flythrough::daylight::Clock::default().sky(flythrough::outdoor::BASE_Z as f32);
-            // Per frame: the cast mask (lighting grid) and the level at each lighting pixel.
-            let mut cast: Vec<Vec<bool>> = Vec::new();
+            // Per frame: the source per lighting pixel and the level at it.
+            let mut src: Vec<Vec<u8>> = Vec::new();
             let mut level: Vec<Vec<u8>> = Vec::new();
             support::streamed::streamed_with(
                 support::streamed::Streamed {
@@ -200,7 +205,7 @@ mod defects {
                     }),
                 },
                 |f, device, queue, frame| {
-                    use vxe_render::debug::read_rgba8;
+                    use vxe_render::debug::{read_rgba8, read_rgba32f};
                     if f == 0 {
                         frame.set_lighting(vxe_render::Lighting {
                             exposure: vxe_render::Exposure::Manual((-10.75f32).exp2()),
@@ -211,6 +216,7 @@ mod defects {
                         return;
                     }
                     let vis = read_rgba8(device, queue, frame.visibility_samples());
+                    let hits = read_rgba32f(device, queue, frame.light_hit_positions());
                     let (lw, lh) = (
                         frame.visibility_samples().width() as usize,
                         frame.visibility_samples().height() as usize,
@@ -220,7 +226,27 @@ mod defects {
                         frame.target().width() as usize,
                         frame.target().height() as usize,
                     );
-                    cast.push(vis.chunks(4).map(|v| v[3] > 127).collect());
+                    let store = frame.store();
+                    let cell = store.brick_cell().max(1) as i32;
+                    src.push(
+                        (0..lw * lh)
+                            .map(|i| {
+                                if vis[4 * i + 3] > 127 {
+                                    return PAIR;
+                                }
+                                let h = hits[i];
+                                if h[3] >= 1e30 {
+                                    return CHAIN;
+                                }
+                                let face = face_of([h[0], h[1], h[2]], p);
+                                if cell_sky(store, face.0, face.1, cell).is_some() {
+                                    STORE
+                                } else {
+                                    CHAIN
+                                }
+                            })
+                            .collect(),
+                    );
                     level.push(
                         (0..lw * lh)
                             .map(|i| {
@@ -233,50 +259,143 @@ mod defects {
                     );
                 },
             );
-            if cast.len() < FRAMES as usize {
+            if src.len() < FRAMES as usize {
                 return;
             }
-            let (mut switches, mut out, mut steps, mut rel) = (0usize, 0usize, Vec::new(), Vec::new());
-            for f in 0..cast.len() - FADE - 1 {
-                for i in 0..cast[f].len() {
-                    if !(cast[f][i] && !cast[f + 1][i]) {
-                        continue;
-                    }
-                    switches += 1;
-                    let (old, new) = (i32::from(level[f][i]), i32::from(level[f + FADE][i]));
-                    let (lo, hi) = (old.min(new) - 4, old.max(new) + 4);
-                    if (f..=f + FADE).any(|g| {
-                        let v = i32::from(level[g][i]);
-                        v < lo || v > hi
-                    }) {
-                        out += 1;
-                    }
-                    steps.push((old - new).unsigned_abs());
-                    if new > 0 {
-                        rel.push(f64::from((old - new).abs()) / f64::from(new));
-                    }
-                }
-            }
-            steps.sort_unstable();
+            let mut kinds = switch_kinds(&src, &level, FADE);
             let p99 = |v: &[u32]| v.get((v.len() * 99 / 100).min(v.len().saturating_sub(1))).copied().unwrap_or(0);
             let mean = |v: &[u32]| v.iter().map(|&x| f64::from(x)).sum::<f64>() / v.len().max(1) as f64;
+            for (name, kd) in ["pair to store", "pair to chain", "chain to store"].iter().zip(kinds.iter_mut()) {
+                kd.steps.sort_unstable();
+                let n = kd.n.max(1) as f64;
+                println!(
+                    "reading: the ray region lands, {name}: {} switches, {:.2} % left the band of 4 over {FADE} frames (under {}, over {}; cast again {}; no re-cast with the excursion on the switch's frame {} = {:.2} %), |old - new| mean {:.2} p99 {} levels, mean relative step (floored at 8) {:.3}, old under new {} over {}",
+                    kd.n,
+                    100.0 * kd.out as f64 / n,
+                    kd.side[0],
+                    kd.side[1],
+                    kd.recast,
+                    kd.on_switch,
+                    100.0 * kd.on_switch as f64 / n,
+                    mean(&kd.steps),
+                    p99(&kd.steps),
+                    kd.rel.iter().sum::<f64>() / kd.rel.len().max(1) as f64,
+                    kd.sign[0],
+                    kd.sign[1]
+                );
+            }
             let still = |f: usize| {
-                let mut c: Vec<u32> = (0..cast[f].len())
-                    .filter(|&i| cast[f][i])
+                let mut c: Vec<u32> = (0..src[f].len())
+                    .filter(|&i| src[f][i] == PAIR)
                     .map(|i| u32::from(level[f][i].abs_diff(level[f - 1][i])))
                     .collect();
                 c.sort_unstable();
                 (p99(&c), c.len())
             };
             println!(
-                "reading: the ray region lands: {switches} switches from the pair, {:.2} % left the band of 4 over {FADE} frames, |old - new| mean {:.2} p99 {} levels, mean relative step {:.3}; frame-to-frame p99 over the cast pixels at 60 {:?} and at 120 {:?} (p99, pixels; the lamp-lit floor 2.11)",
-                100.0 * out as f64 / switches.max(1) as f64,
-                mean(&steps),
-                p99(&steps),
-                rel.iter().sum::<f64>() / rel.len().max(1) as f64,
+                "reading: the ray region lands: frame-to-frame p99 over the cast pixels at 60 {:?} and at 120 {:?} (p99, pixels; the lamp-lit floor 2.11)",
                 still(60),
                 still(120)
             );
+        }
+
+        // A lighting pixel's sky-term source: the pair, the store, the chain (or no sky).
+        const PAIR: u8 = 0;
+        const STORE: u8 = 1;
+        const CHAIN: u8 = 2;
+
+        /// One kind of source switch's tally ([`switch_kinds`]).
+        #[derive(Default)]
+        struct SwitchKind {
+            n: usize,
+            out: usize,
+            side: [usize; 2],
+            recast: usize,
+            on_switch: usize,
+            steps: Vec<u32>,
+            rel: Vec<f64>,
+            sign: [usize; 2],
+        }
+
+        /// The switches of `src` (per frame, per pixel) by kind: pair to store, pair to chain,
+        /// chain to store; `old` the level at `f`, `new` at `f + fade`, the band of 4 levels
+        /// about them over `f ..= f + fade`.
+        fn switch_kinds(src: &[Vec<u8>], level: &[Vec<u8>], fade: usize) -> [SwitchKind; 3] {
+            let mut kinds: [SwitchKind; 3] = Default::default();
+            for f in 0..src.len() - fade - 1 {
+                for i in 0..src[f].len() {
+                    let k = match (src[f][i], src[f + 1][i]) {
+                        (PAIR, STORE) => 0,
+                        (PAIR, CHAIN) => 1,
+                        (CHAIN, STORE) => 2,
+                        _ => continue,
+                    };
+                    let kd = &mut kinds[k];
+                    kd.n += 1;
+                    let (old, new) = (i32::from(level[f][i]), i32::from(level[f + fade][i]));
+                    let (lo, hi) = (old.min(new) - 4, old.max(new) + 4);
+                    let mut worst = (0, f, false);
+                    for (g, row) in level.iter().enumerate().skip(f).take(fade + 1) {
+                        let v = i32::from(row[i]);
+                        let e = (lo - v).max(v - hi);
+                        if e > worst.0 {
+                            worst = (e, g, v > hi);
+                        }
+                    }
+                    if worst.0 > 0 {
+                        kd.out += 1;
+                        kd.side[usize::from(worst.2)] += 1;
+                        let recast = src[f + 1..=f + fade].iter().any(|r| r[i] == PAIR);
+                        kd.recast += usize::from(recast);
+                        kd.on_switch += usize::from(!recast && worst.1 == f + 1);
+                    }
+                    kd.steps.push((old - new).unsigned_abs());
+                    kd.rel.push(f64::from((old - new).abs()) / f64::from(new.max(8)));
+                    if old != new {
+                        kd.sign[usize::from(old > new)] += 1;
+                    }
+                }
+            }
+            kinds
+        }
+
+        /// The store voxel and face index of a cube-face hit at `h` seen from `eye`: the axis whose
+        /// coordinate lies nearest an integer, its normal toward the eye (`store_voxel`,
+        /// `store_face`).
+        fn face_of(h: [f32; 3], eye: [f32; 3]) -> ([i32; 3], u8) {
+            let axis = (0..3)
+                .min_by(|&a, &b| {
+                    let da = (h[a] - h[a].round()).abs();
+                    let db = (h[b] - h[b].round()).abs();
+                    da.total_cmp(&db)
+                })
+                .unwrap_or(2);
+            let s = if eye[axis] > h[axis] { 1.0 } else { -1.0 };
+            let mut v = [0i32; 3];
+            for k in 0..3 {
+                let n = if k == axis { s } else { 0.0 };
+                v[k] = (h[k] - 0.5 * n).floor() as i32;
+            }
+            (v, 2 * axis as u8 + u8::from(s > 0.0))
+        }
+
+        /// The sky visibility face `face` of voxel `v`'s own cell record holds in `store`
+        /// (`store_sky_cell`), `None` where it holds none baked.
+        fn cell_sky(store: &vxe_render::Store, v: [i32; 3], face: u8, cell: i32) -> Option<f32> {
+            let block = store.block_words(vxe_world::ChunkCoord(v.map(|c| c.div_euclid(64))))?;
+            let l = v.map(|c| c.rem_euclid(64));
+            let b = l.map(|c| c / 8);
+            let dir = block[(b[0] + 8 * (b[1] + 8 * b[2])) as usize];
+            if dir == 0 {
+                return None;
+            }
+            let n = 8 / cell;
+            let c = l.map(|k| (k % 8) / cell);
+            let sub = (c[0] + n * (c[1] + n * c[2])) as usize;
+            let w = vxe_render::internals::BRICK_WORDS;
+            let end = (dir >> 11) as usize;
+            let at = (end + w * sub).checked_sub(w * (n * n * n) as usize)?;
+            vxe_render::internals::record_visibility(block.get(at..at + w)?, usize::from(face))
         }
 
         /// A frame on `rig` for Phase 16's readings: 320 x 180 native, the store's counters on, the
