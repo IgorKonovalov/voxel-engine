@@ -1,9 +1,10 @@
-//! The run's tests of a structure in the belt (Plan 0083 Phase 6): the belt's fill and the
-//! Structures chooser, the frame ghost, the box rule, the quarter turn and the scale, the
-//! click's logged stamps and the words. A rock box of the cave's table with the walker's rows
-//! and the structures library's rows, the committed entities and structures libraries, the
-//! castle entry left unbuilt.
+//! The run's tests of a structure in the belt (Plan 0083 Phases 6 and 7b): the belt's fill and
+//! the Structures chooser, the ghost (a coarse copy in its frame), the box rule, the quarter
+//! turn and the scale, the click's logged stamps and the words. A rock box of the cave's table
+//! with the walker's rows and the structures library's rows, the committed entities and
+//! structures libraries, the castle entry left unbuilt.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -121,11 +122,14 @@ fn enter_slot(run: &mut Run, s: usize) {
     frame_keys(run, &pressed(crate::toggles::BELT_KEYS[s]));
 }
 
-/// The frame ghost's box: the extent of its parts' voxels in its rest pose.
+/// The ghost's frame: the extent of its frame's parts' voxels in its rest pose (part 0, the
+/// coarse body, left out when there is one: 13 or 9 parts, against the frame's 12 or 8).
 fn frame_size(run: &Run) -> [u32; 3] {
     let f = run.modes.walkers.frame.as_ref().expect("a frame ghost");
+    let parts = f.model.parts();
+    let body = usize::from(parts.len() % 2 == 1);
     let mut hi = [0u32; 3];
-    for p in f.model.parts() {
+    for p in &parts[body..] {
         let s = p.volume.size();
         for k in 0..3 {
             hi[k] = hi[k].max((-p.pivot[k] / 256) as u32 + s[k]);
@@ -139,8 +143,8 @@ fn notice(run: &Run) -> Option<&str> {
 }
 
 /// Done-when 4: the belt fills walker, spider, chapel, castle, slot 5 empty; the wheel to slot
-/// 3 enters the mode with the chapel's frame ghost in the set (twelve parts, marked in the
-/// ghost colour) and nothing placed; `Tab`, `structures`, `choose a structure`, `Down` to the
+/// 3 enters the mode with the chapel's ghost in the set (13 parts: its coarse body and twelve
+/// edges, marked in the ghost colour) and nothing placed; `Tab`, `structures`, `choose a structure`, `Down` to the
 /// castle and `7` put it in slot 7 with the page staying; `Enter` on the chapel selects slot
 /// 3, closes the menu and enters the mode; `` ` `` on the Structures page does the same; the
 /// Entities page lists no structure.
@@ -183,7 +187,7 @@ fn the_belt_holds_a_structure() {
     assert!(w.belt.on);
     assert_eq!((w.belt.selected, w.belt.structure()), (2, Some(chapel)));
     let f = w.frame.as_ref().expect("the chapel's frame");
-    assert_eq!(f.model.parts().len(), 12);
+    assert_eq!(f.model.parts().len(), 13);
     let id = f.id;
     assert!(w.set.get(id).is_some());
     assert!(w.placed.is_empty() && w.preview.is_none());
@@ -308,8 +312,8 @@ fn a_structure_stands_by_the_box_rule() {
     let f = run.modes.walkers.frame.as_ref().expect("a frame");
     assert_eq!(
         f.model.parts().len(),
-        8,
-        "a box over 64 a side: its corners"
+        9,
+        "a box over 64 a side: its body and its corners"
     );
     assert_eq!(frame_size(&run), [96, 64, 80]);
     let c = corner(&run);
@@ -698,4 +702,204 @@ fn the_built_castle_has_an_icon() {
     run.modes.walkers.icons.wait();
     let tile = belt::tile_of(&run.modes, Item::Structure(castle));
     assert!(run.modes.walkers.icons.ready(tile), "the castle's icon");
+}
+
+/// The written, non-air voxels of `scene` turned `quarters` quarter turns, with its box's
+/// minimum corner at the origin: each placement's prefab turned as placed
+/// (`Prefab::rotated`) at its place, a later placement's voxel over an earlier one's.
+fn placed_voxels(scene: &VoxScene, quarters: u8) -> BTreeMap<[i32; 3], vxe_world::MaterialId> {
+    let (lo, _) = scene.turned_bounds(quarters);
+    let mut out = BTreeMap::new();
+    for (p, o, r) in scene.placed_at([0; 3], quarters) {
+        let at = [0, 1, 2].map(|k| o.0[k] - lo[k]);
+        out.extend(voxels(&p.rotated(r), at));
+    }
+    out
+}
+
+/// The written, non-air voxels of `p`, moved by `at`.
+fn voxels(p: &Prefab, at: [i32; 3]) -> BTreeMap<[i32; 3], vxe_world::MaterialId> {
+    let s = p.size().map(|v| v as i32);
+    let mut out = BTreeMap::new();
+    for z in 0..s[2] {
+        for y in 0..s[1] {
+            for x in 0..s[0] {
+                if let Some(m) = p.get([x, y, z]).filter(|&m| m != AIR) {
+                    out.insert([at[0] + x, at[1] + y, at[2] + z], m);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Phase 7b done-when 3: the chapel's slot stands one ghost of 13 parts, part 0 a 48 x 32 x 40
+/// body at `coarse` 1 whose voxels are the chapel's scene placed at the origin, parts 1 to 12
+/// its frame's edges, with its corner at the box rule's and the ghost colour's mark; after `R`
+/// the body is 32 x 48 x 40 and is the scene turned once, the frame's extents swapped; at
+/// `structure scale` 2 the ghost is 9 parts, its body 48 x 32 x 40 at `coarse` 2 inside the
+/// 96 x 64 x 80 frame's eight corners; at scale 4 the frame stands alone until the body
+/// (64 x 43 x 54 at `coarse` 3) arrives from its worker; the castle's ghost, once built, is 9 parts, its body
+/// 60 x 60 x 50 at `coarse` 10 and its icon's volume. The world's voxels never change.
+#[test]
+fn the_ghost_is_a_coarse_copy_in_its_frame() {
+    let mut run = structure_run();
+    let hash = run.world.voxel_hash();
+    let (chapel, castle) = (structure(&run, "chapel"), structure(&run, st::CASTLE_NAME));
+    look(&mut run, EYE, -40.0);
+    enter_slot(&mut run, 2);
+    assert_eq!(run.modes.walkers.belt.structure(), Some(chapel));
+    let ghost = |run: &Run| run.modes.walkers.frame.clone().expect("a ghost");
+    let scene = run.modes.structures.entries[chapel]
+        .scene()
+        .expect("the chapel's scene")
+        .clone();
+
+    let f = ghost(&run);
+    let parts = f.model.parts();
+    assert_eq!(parts.len(), 13);
+    let body = &parts[0];
+    assert_eq!(
+        (body.volume.size(), body.coarse, body.detail, body.pivot),
+        ([48, 32, 40], 1, 1, [0; 3])
+    );
+    assert_eq!(voxels(&body.volume, [0; 3]), placed_voxels(&scene, 0));
+    assert!(parts[1..].iter().all(|p| p.coarse == 1 && p.detail == 1));
+    assert_eq!(frame_size(&run), [48, 32, 40]);
+    assert_eq!(f.corner, run.aim_corner([48, 32, 40]));
+    let w = &mut run.modes.walkers;
+    w.refresh_displays();
+    let colour = vxe_render::MARK_COLOURS[0];
+    assert!(
+        w.marks().iter().any(|(i, m)| *i == f.id
+            && m.outline
+            && m.colour == colour
+            && m.tint == crate::entities::placed::GHOST_TINT),
+        "{:?}",
+        w.marks()
+    );
+
+    frame_keys(&mut run, &pressed(KeyCode::KeyR));
+    let f = ghost(&run);
+    let body = &f.model.parts()[0];
+    assert_eq!((body.volume.size(), body.coarse), ([32, 48, 40], 1));
+    assert_eq!(voxels(&body.volume, [0; 3]), placed_voxels(&scene, 1));
+    assert_eq!(frame_size(&run), [32, 48, 40]);
+    assert_eq!(f.corner, run.aim_corner([32, 48, 40]));
+    for _ in 0..3 {
+        frame_keys(&mut run, &pressed(KeyCode::KeyR));
+    }
+
+    let scale = crate::toggles::TOGGLES
+        .iter()
+        .find(|t| t.name == "structure scale")
+        .expect("the toggle");
+    run.menu_act(Activated::Step(scale, 1));
+    run.sync_ghost();
+    assert_eq!(run.modes.structure_scale, 2);
+    let f = ghost(&run);
+    assert_eq!(f.model.parts().len(), 9);
+    let body = &f.model.parts()[0];
+    assert_eq!((body.volume.size(), body.coarse), ([48, 32, 40], 2));
+    assert_eq!(frame_size(&run), [96, 64, 80]);
+    assert_eq!(f.corner, run.aim_corner([96, 64, 80]));
+    // At scale 4 the box (192 x 128 x 160) is over `FRAME_BODY_VOXELS`: the frame stands alone
+    // until the body arrives from its worker, then the ghost is remade with it.
+    run.menu_act(Activated::Step(scale, 1));
+    run.menu_act(Activated::Step(scale, 1));
+    run.sync_ghost();
+    assert_eq!(run.modes.structure_scale, 4);
+    assert_eq!(ghost(&run).model.parts().len(), 8, "the frame alone");
+    let table = run.world.materials().clone();
+    let made = run.modes.structures.wait_body(chapel, 4, &table);
+    assert!(matches!(made, Ok(Some(_))), "the body at scale 4");
+    run.sync_ghost();
+    let f = ghost(&run);
+    assert_eq!(f.model.parts().len(), 9);
+    let body = &f.model.parts()[0];
+    assert_eq!((body.volume.size(), body.coarse), ([64, 43, 54], 3));
+    assert_eq!(frame_size(&run), [192, 128, 160]);
+    for _ in 0..3 {
+        run.menu_act(Activated::Step(scale, -1));
+    }
+    assert_eq!(run.modes.structure_scale, 1);
+
+    run.fill_belt();
+    let slot = run
+        .modes
+        .walkers
+        .belt
+        .slots
+        .iter()
+        .position(|s| *s == Some(Item::Structure(castle)))
+        .expect("the castle in the belt");
+    enter_slot(&mut run, slot);
+    run.modes.structures.wait();
+    run.sync_ghost();
+    let f = ghost(&run);
+    assert_eq!(f.model.parts().len(), 9);
+    let body = &f.model.parts()[0];
+    assert_eq!((body.volume.size(), body.coarse), ([60, 60, 50], 10));
+    let built = run.modes.structures.entries[castle]
+        .scene()
+        .expect("built")
+        .clone();
+    let icon = st::icon_model(&built).expect("the castle's icon");
+    assert_eq!(*icon.parts()[0].volume, *body.volume);
+    assert_eq!(f.corner, run.aim_corner([600, 600, 500]));
+    assert_eq!(run.world.voxel_hash(), hash, "a ghost writes no voxel");
+}
+
+mod reading {
+    use super::*;
+
+    /// The ghost's body: per case its size, `k`, pool bytes
+    /// (`vxe_render::EntityMirror::volume_bytes`) and make time (`structures::coarse_volume`,
+    /// the median of 5): the chapel at scales 1 and 4, the castle at scale 1. Printed, not
+    /// asserted. Run by hand:
+    /// `--run-ignored only -E 'test(=run::structure_tests::reading::the_ghost_body_costs)'`.
+    #[test]
+    #[ignore = "a reading"]
+    fn the_ghost_body_costs() {
+        let mut run = structure_run();
+        let table = run.world.materials().clone();
+        let (chapel, castle) = (structure(&run, "chapel"), structure(&run, st::CASTLE_NAME));
+        let lib = &mut run.modes.structures;
+        lib.build_castle(castle, &table);
+        lib.wait();
+        let scenes = [
+            (
+                "chapel x1",
+                lib.scene_at(chapel, 1, &table).expect("chapel"),
+            ),
+            (
+                "chapel x4",
+                lib.scene_at(chapel, 4, &table).expect("chapel x4"),
+            ),
+            (
+                "castle x1",
+                lib.scene_at(castle, 1, &table).expect("castle"),
+            ),
+        ];
+        for (name, scene) in scenes {
+            let mut ms: Vec<f64> = Vec::new();
+            let mut body = None;
+            for _ in 0..5 {
+                let t = crate::now();
+                body = st::coarse_volume(&scene);
+                ms.push((crate::now() - t).as_secs_f64() * 1e3);
+            }
+            ms.sort_by(f64::total_cmp);
+            let (v, k) = body.expect("a body");
+            println!(
+                "ghost body {name}: {:?} at k {k}, {} B in the pool, made in {:.1} ms (median of \
+                 5, min {:.1}, max {:.1})",
+                v.size(),
+                vxe_render::EntityMirror::volume_bytes(&v),
+                ms[2],
+                ms[0],
+                ms[4]
+            );
+        }
+    }
 }

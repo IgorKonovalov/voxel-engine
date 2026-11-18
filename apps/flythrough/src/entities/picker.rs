@@ -129,13 +129,14 @@ impl Walkers {
         }
     }
 
-    /// Stands a structure's ghost, the frame of its box, with its minimum corner at `corner`:
-    /// moved there when the frame shows `key` (the structure, scale and quarter turns), else
-    /// made anew by `make` (the old one removed, its handle freed by the next sync). With
-    /// [`MAX_ENTITIES`] placed there is no frame and the words say the set is full.
+    /// Stands a structure's ghost, its coarse copy in its box's frame, with its minimum corner
+    /// at `corner`: moved there when the ghost shows `key` (the structure, scale, quarter
+    /// turns and whether the body is in), else made anew by `make` (the old one removed, its
+    /// handle freed by the next sync). With [`MAX_ENTITIES`] placed there is no ghost and the
+    /// words say the set is full.
     pub fn show_frame(
         &mut self,
-        key: (usize, u32, u8),
+        key: (usize, u32, u8, bool),
         make: impl FnOnce() -> Model,
         corner: [i32; 3],
     ) -> Result<(), String> {

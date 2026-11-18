@@ -4,24 +4,43 @@
 //! 1 against that table, the rows it added and its size. The castle is built on a worker the
 //! first time it is asked for ([`Library::build_castle`]) and maps through the table's castle
 //! rows by name, so under `--castle` its prefabs are the ones the hall stamps. An entry is a
-//! belt item (`crate::entities::belt::Item::Structure`); its ghost is a frame
-//! ([`frame_model`]).
+//! belt item (`crate::entities::belt::Item::Structure`); its ghost is a coarse copy of the
+//! structure inside the frame of its box ([`ghost_model`]).
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 
 use vxe_assets::{SceneOptions, Slot, VoxFile, VoxMap, VoxScene};
-use vxe_entity::{MAX_EDGE, MAX_PARTS, Model, Part};
-use vxe_world::{AIR, MaterialId, MaterialTable, Prefab};
+use vxe_entity::{MAX_COARSE, MAX_EDGE, MAX_PARTS, Model, Part};
+use vxe_world::{AIR, MaterialId, MaterialTable, Prefab, Rot};
 
 /// The castle entry's name.
 pub const CASTLE_NAME: &str = "castle";
 /// A frame corner's arms, in voxels, for a box over [`MAX_EDGE`] a side.
 pub const CORNER_ARM: u32 = 32;
 
-/// A built scene at scale 1 and its icon's model ([`icon_model`]).
-type Built = Result<(Arc<VoxScene>, Option<Arc<Model>>), String>;
+/// A ghost's body: a scene's coarse volume and its factor `k` ([`coarse_volume`]).
+pub type Body = (Arc<Prefab>, u32);
+
+/// The box voxels up to which a ghost's body is made on the frame thread; a larger box's is
+/// made on a worker, the frame standing alone until it arrives. [`coarse_volume`] reads about
+/// 20 ns a box voxel (opt-level 2), so this is about 20 ms.
+pub const FRAME_BODY_VOXELS: u64 = 1 << 20;
+
+/// A ghost's body at one scale: made (`None` for a scene with none), or on its worker with
+/// the scaled scene.
+#[derive(Clone)]
+enum BodyState {
+    Made(Option<Body>),
+    Making(Arc<Mutex<Receiver<MadeBody>>>),
+}
+
+/// What a body's worker sends: the scaled scene and its body.
+type MadeBody = Result<(Arc<VoxScene>, Option<Body>), String>;
+
+/// A built scene at scale 1, its icon's model ([`icon_model`]) and its ghost's body.
+type Built = Result<(Arc<VoxScene>, Option<Arc<Model>>, Option<Body>), String>;
 
 /// The castle entry's state: asked for or not, building on a worker, or built.
 #[derive(Clone, Default)]
@@ -40,7 +59,8 @@ pub enum Source {
 }
 
 /// One structure: its name, its scene (or why it has none), the palette rows its file added,
-/// its scenes at scales over 1 once made, and its icon's model once made.
+/// its scenes at scales over 1 once made, its icon's model once made, and its ghost's body per
+/// scale once made.
 #[derive(Clone)]
 pub struct Entry {
     pub name: String,
@@ -49,6 +69,8 @@ pub struct Entry {
     scaled: Vec<(u32, Arc<VoxScene>)>,
     /// The icon's model ([`icon_model`]) once tried: `Some(None)` for a scene with none.
     icon: Option<Option<Arc<Model>>>,
+    /// The ghost's body per scale once asked for.
+    bodies: Vec<(u32, BodyState)>,
 }
 
 impl Entry {
@@ -59,6 +81,7 @@ impl Entry {
             rows,
             scaled: Vec::new(),
             icon: None,
+            bodies: Vec::new(),
         }
     }
 
@@ -280,8 +303,13 @@ impl Library {
                     let file = crate::castle::castle_vox();
                     let scene = VoxScene::load(&file, &map, SceneOptions::default())
                         .map_err(|e| e.to_string())?;
-                    let icon = icon_model(&scene).map(Arc::new);
-                    Ok((Arc::new(scene), icon))
+                    // One coarse volume serves the icon (when the scene fits no model of a
+                    // part per placement) and the ghost's body.
+                    let body = coarse_volume(&scene).map(|(v, k)| (Arc::new(v), k));
+                    let icon = scene_model(&scene)
+                        .or_else(|| body.as_ref().and_then(|(v, _)| one_part(v)))
+                        .map(Arc::new);
+                    Ok((Arc::new(scene), icon, body))
                 });
                 let _ = tx.send(built);
             });
@@ -294,8 +322,9 @@ impl Library {
         };
     }
 
-    /// Takes the castle's scene and its icon's model when its worker has made them: the words to say (`castle
-    /// built: 21 placements, 600 x 600 x 500 voxels`, or the error).
+    /// Takes the castle's scene, its icon's model and its ghost's body when its worker has
+    /// made them: the words to say (`castle built: 21 placements, 600 x 600 x 500 voxels`, or
+    /// the error).
     pub fn poll(&mut self) -> Option<String> {
         for e in &mut self.entries {
             let Ok(Source::Castle(Castle::Building(rx))) = &e.source else {
@@ -310,7 +339,7 @@ impl Library {
                 }
             };
             let words = match &built {
-                Ok((s, _)) => {
+                Ok((s, _, _)) => {
                     let z = s.size();
                     format!(
                         "{} built: {} placements, {} x {} x {} voxels",
@@ -324,8 +353,9 @@ impl Library {
                 Err(err) => format!("{}: {err}", e.name),
             };
             e.source = match built {
-                Ok((s, icon)) => {
+                Ok((s, icon, body)) => {
                     e.icon = Some(icon);
+                    e.bodies = vec![(1, BodyState::Made(body))];
                     Ok(Source::Castle(Castle::Built(s)))
                 }
                 Err(err) => Err(err),
@@ -377,6 +407,112 @@ impl Library {
         e.scaled.push((scale, s.clone()));
         Ok(s)
     }
+
+    /// Entry `i`'s ghost body at `scale` ([`coarse_volume`] of its scene at that scale), kept
+    /// once made; `Ok(None)` for a scene with none and while it is being made. A box of at
+    /// most [`FRAME_BODY_VOXELS`] voxels is made here, on first use; a larger one, with its
+    /// scaled scene, on a worker that a later call takes it from. The castle's arrives with its
+    /// build.
+    pub fn body_at(
+        &mut self,
+        i: usize,
+        scale: u32,
+        table: &MaterialTable,
+    ) -> Result<Option<Body>, String> {
+        let e = self.entries.get_mut(i).ok_or("no such structure")?;
+        if let Some(at) = e.bodies.iter().position(|(k, _)| *k == scale) {
+            let rx = match &e.bodies[at].1 {
+                BodyState::Made(b) => return Ok(b.clone()),
+                BodyState::Making(rx) => rx.clone(),
+            };
+            let got = rx.lock().map_err(|_| "a body's worker failed")?.try_recv();
+            let made = match got {
+                Err(std::sync::mpsc::TryRecvError::Empty) => return Ok(None),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    Err("the body's worker stopped".to_owned())
+                }
+                Ok(m) => m,
+            };
+            let body = match made {
+                Ok((scene, body)) => {
+                    if scale > 1 && !e.scaled.iter().any(|(k, _)| *k == scale) {
+                        e.scaled.push((scale, scene));
+                    }
+                    body
+                }
+                Err(_) => None,
+            };
+            e.bodies[at].1 = BodyState::Made(body.clone());
+            return Ok(body);
+        }
+        let size = e
+            .size(scale, 0)
+            .ok_or_else(|| format!("{}: building", e.name))?;
+        let voxels: u64 = size.iter().map(|&v| u64::from(v)).product();
+        let file = match &e.source {
+            Ok(Source::File(f, one)) if voxels > FRAME_BODY_VOXELS => {
+                let have = if scale == 1 {
+                    Some(one.clone())
+                } else {
+                    e.scaled
+                        .iter()
+                        .find(|(k, _)| *k == scale)
+                        .map(|(_, s)| s.clone())
+                };
+                Some((f.clone(), have))
+            }
+            _ => None,
+        };
+        let Some((file, have)) = file else {
+            let scene = self.scene_at(i, scale, table)?;
+            let body = coarse_volume(&scene).map(|(v, k)| (Arc::new(v), k));
+            self.entries[i]
+                .bodies
+                .push((scale, BodyState::Made(body.clone())));
+            return Ok(body);
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let table = table.clone();
+        let spawned = std::thread::Builder::new()
+            .name("structure ghost".into())
+            .spawn(move || {
+                let scene = match have {
+                    Some(s) => Ok(s),
+                    None => super::scene(&file, &table, scale).map(Arc::new),
+                };
+                let made = scene.map(|scene| {
+                    let body = coarse_volume(&scene).map(|(v, k)| (Arc::new(v), k));
+                    (scene, body)
+                });
+                let _ = tx.send(made);
+            });
+        let state = match spawned {
+            Ok(_) => BodyState::Making(Arc::new(Mutex::new(rx))),
+            Err(_) => BodyState::Made(None),
+        };
+        self.entries[i].bodies.push((scale, state));
+        Ok(None)
+    }
+
+    /// [`Library::body_at`] until entry `i`'s body at `scale` is made, for the tests.
+    pub fn wait_body(
+        &mut self,
+        i: usize,
+        scale: u32,
+        table: &MaterialTable,
+    ) -> Result<Option<Body>, String> {
+        loop {
+            let b = self.body_at(i, scale, table)?;
+            let making = self.entries[i]
+                .bodies
+                .iter()
+                .any(|(k, s)| *k == scale && matches!(s, BodyState::Making(_)));
+            if !making {
+                return Ok(b);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
 }
 
 /// The opaque row the frame of `scene` is drawn in: the material of the first written,
@@ -408,11 +544,55 @@ fn part(volume: Prefab, at: [u32; 3]) -> Part {
     }
 }
 
-/// The ghost of a box `size` voxels across: its twelve edges, one voxel thick, a part each,
+/// The frame of a box `size` voxels across: its twelve edges, one voxel thick, a part each,
 /// when every side is at most [`MAX_EDGE`]; else its eight corners, each one part of three
 /// arms of up to [`CORNER_ARM`] voxels meeting at the corner. Every voxel is `material`; the
 /// rest pose's root is the box's minimum corner.
 pub fn frame_model(size: [u32; 3], material: MaterialId) -> Model {
+    Model::new(frame_parts(size, material)).expect("a frame's parts fit a model")
+}
+
+/// A structure's ghost: part 0 its `body` (a coarse volume at `k` world voxels a voxel,
+/// [`coarse_volume`]) turned `quarters` quarter turns about z (`Prefab::rotated`, exact) with
+/// its minimum corner at the box's, then [`frame_model`]'s parts for the box `size` voxels
+/// across (`size` already turned): 13 parts for a box at most [`MAX_EDGE`] a side, else 9.
+/// With no body, or one over [`MAX_COARSE`], the frame alone. The rest pose's root is the
+/// box's minimum corner; the body overhangs the box by under `k` voxels on a side `k` does not
+/// divide.
+pub fn ghost_model(
+    body: Option<&Body>,
+    quarters: u8,
+    size: [u32; 3],
+    material: MaterialId,
+) -> Model {
+    let mut parts = Vec::new();
+    if let Some((volume, k)) = body
+        && let Ok(coarse) = u8::try_from(*k)
+        && (1..=MAX_COARSE).contains(&coarse)
+    {
+        let mut turn = Rot::IDENTITY;
+        for _ in 0..quarters % 4 {
+            turn = turn.then(Rot::Z90);
+        }
+        let turned = if turn == Rot::IDENTITY {
+            volume.clone()
+        } else {
+            Arc::new(volume.rotated(turn))
+        };
+        parts.push(Part {
+            volume: turned,
+            parent: None,
+            pivot: [0; 3],
+            detail: 1,
+            coarse,
+        });
+    }
+    parts.extend(frame_parts(size, material));
+    Model::new(parts).expect("a ghost's parts fit a model")
+}
+
+/// [`frame_model`]'s parts.
+fn frame_parts(size: [u32; 3], material: MaterialId) -> Vec<Part> {
     let s = size.map(|v| v.max(1));
     let mut parts = Vec::new();
     if s.iter().all(|&v| v <= MAX_EDGE) {
@@ -441,8 +621,8 @@ pub fn frame_model(size: [u32; 3], material: MaterialId) -> Model {
             parts.push(part(volume, at));
         }
     }
-    debug_assert!(parts.len() <= MAX_PARTS);
-    Model::new(parts).expect("a frame's parts fit a model")
+    debug_assert!(parts.len() < MAX_PARTS, "a body's part beside the frame's");
+    parts
 }
 
 /// A model of `scene` for its icon: one part per placement, its prefab turned as placed, at
@@ -472,11 +652,22 @@ pub fn icon_model(scene: &VoxScene) -> Option<Model> {
 }
 
 /// A one-part model of `scene` at most [`MAX_EDGE`] a side, for the icon of a scene over the
-/// model's limits: each voxel stands for a cube of `k` voxels a side of the box (`k` the least
-/// that fits), and holds the material of the first sample point of that cube a placement
-/// writes, the samples `k / 2` apart (at least 1) from the cube's minimum corner, the later
-/// placement first where two overlap; `None` for an empty box.
+/// model's limits: [`coarse_volume`] at detail 1; `None` for an empty box.
 pub fn coarse_model(scene: &VoxScene) -> Option<Model> {
+    one_part(&coarse_volume(scene)?.0)
+}
+
+/// A one-part model of `volume` at detail 1, its minimum corner at the root.
+fn one_part(volume: &Prefab) -> Option<Model> {
+    Model::new(vec![part(volume.clone(), [0; 3])]).ok()
+}
+
+/// `scene`'s box at most [`MAX_EDGE`] a side, and `k`: each voxel stands for a cube of `k`
+/// voxels a side of the box (`k` the least that fits), and holds the material of the first
+/// sample point of that cube a placement writes, the samples `k / 2` apart (at least 1) from
+/// the cube's minimum corner, the later placement first where two overlap. At `k` 1 it is the
+/// scene voxel for voxel. `None` for an empty box.
+pub fn coarse_volume(scene: &VoxScene) -> Option<(Prefab, u32)> {
     let size = scene.size();
     let k = size.iter().map(|&v| v.div_ceil(MAX_EDGE)).max()?;
     if k == 0 {
@@ -526,7 +717,7 @@ pub fn coarse_model(scene: &VoxScene) -> Option<Model> {
             })
         })
     });
-    Model::new(vec![part(volume, [0; 3])]).ok()
+    Some((volume, k))
 }
 
 /// The icons of the entities and of the structures ([`icon_model`], made once per entry; the

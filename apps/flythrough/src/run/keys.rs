@@ -595,10 +595,12 @@ impl Run {
         }
     }
 
-    /// A structure's ghost kept in step: entry `j`'s frame (`structures::frame_model`) with
-    /// its minimum corner at [`Run::aim_corner`], at the modes' scale and the belt's quarter
-    /// turns. The castle's build starts on its first selection and there is no frame until
-    /// it arrives; an entry in error says why once.
+    /// A structure's ghost kept in step: entry `j`'s coarse copy in its box's frame
+    /// (`structures::ghost_model`, the body made once per scale, a large one on a worker with
+    /// the frame alone until it arrives) with its minimum corner at [`Run::aim_corner`], at the
+    /// modes' scale and the belt's quarter turns. The castle's
+    /// build starts on its first selection and there is no ghost until it arrives; an entry in
+    /// error says why once.
     fn sync_frame(&mut self, j: usize) {
         let table = self.world.materials();
         self.modes.structures.build_castle(j, table);
@@ -618,9 +620,20 @@ impl Run {
             return self.modes.walkers.clear_frame();
         };
         let corner = self.aim_corner(size);
-        let make =
-            || crate::structures::frame_model(size, crate::structures::frame_row(&scene, table));
-        if let Err(words) = self.modes.walkers.show_frame((j, scale, q), make, corner) {
+        // A scale the entry has no scene at (the castle's over 1) stands the frame alone.
+        let body = self
+            .modes
+            .structures
+            .body_at(j, scale, table)
+            .ok()
+            .flatten();
+        let make = || {
+            let row = crate::structures::frame_row(&scene, table);
+            crate::structures::ghost_model(body.as_ref(), q, size, row)
+        };
+        // A body that arrives from its worker remakes the ghost.
+        let key = (j, scale, q, body.is_some());
+        if let Err(words) = self.modes.walkers.show_frame(key, make, corner) {
             self.say_once(words);
         }
     }

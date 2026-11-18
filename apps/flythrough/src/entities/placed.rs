@@ -41,13 +41,14 @@ impl PartialEq for Placed {
     }
 }
 
-/// A structure's ghost: the frame of its box (`crate::structures::frame_model`) as an entity
-/// at the box's minimum corner, the structure, scale and quarter turns it was made for, and
-/// its handle in the pool once uploaded.
+/// A structure's ghost: its coarse copy inside the frame of its box
+/// (`crate::structures::ghost_model`) as one entity at the box's minimum corner, the
+/// structure, scale and quarter turns it was made for and whether it holds its body, and its
+/// handle in the pool once uploaded.
 #[derive(Clone, Debug)]
 pub struct FrameGhost {
     pub id: EntityId,
-    pub key: (usize, u32, u8),
+    pub key: (usize, u32, u8, bool),
     pub model: Arc<Model>,
     pub handle: Option<ModelHandle>,
     pub corner: [i32; 3],
@@ -101,7 +102,8 @@ pub struct Walkers {
     pub preview: Option<Placed>,
     /// The belt's slots and placement mode (`super::belt`).
     pub belt: super::belt::Belt,
-    /// A structure's ghost in placement mode: its box's frame (`super::picker`).
+    /// A structure's ghost in placement mode: its coarse copy in its box's frame
+    /// (`super::picker`).
     pub frame: Option<FrameGhost>,
     /// The handles of frames replaced since the last sync, which it frees.
     pub(crate) frame_stale: Vec<ModelHandle>,
