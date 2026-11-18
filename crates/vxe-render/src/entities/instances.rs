@@ -81,7 +81,7 @@ pub struct EntityInstances {
     runs: BTreeMap<EntityId, Run>,
     write: u64,
     listed: Vec<Listed>,
-    placements: Vec<(PartXform, u8)>,
+    placements: Vec<(PartXform, f32)>,
     gone: Vec<EntityId>,
     ghosts: Vec<[[f32; 3]; 2]>,
     order_runs: Vec<(u16, EntityId)>,
@@ -363,7 +363,7 @@ impl EntityInstances {
             let mut entity_moved = false;
             let mut bx = [[f32::MAX; 3], [f32::MIN; 3]];
             for k in 0..n {
-                let (xf, detail) = &placements[l.at as usize + k];
+                let (xf, grain) = &placements[l.at as usize + k];
                 let vol = vols[k].1;
                 let s = &mut slots[first + k];
                 let before = if s.fresh { xf.part_to_world } else { s.prev };
@@ -387,7 +387,7 @@ impl EntityInstances {
                     vol.word,
                     (first + k) as u32 | s.generation << INSTANCE_SLOT_BITS,
                     u32::from(part_moved) * INSTANCE_MOVED,
-                    (1.0 / f32::from(*detail)).to_bits(),
+                    (1.0 / *grain).to_bits(),
                     vol.size[0],
                     vol.size[1],
                     vol.size[2],

@@ -785,6 +785,7 @@ impl Rig {
                 parent: parent.map(|(_, ni)| ni),
                 pivot: p.pivot,
                 detail: p.detail,
+                coarse: 1,
             });
             rest.push(to_world(p.at, parent_detail));
         }

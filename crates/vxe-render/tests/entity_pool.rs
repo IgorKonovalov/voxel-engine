@@ -45,6 +45,7 @@ fn model(parts: &[Arc<Prefab>]) -> Arc<Model> {
             parent: None,
             pivot: [0; 3],
             detail: 1,
+            coarse: 1,
         })
         .collect();
     Arc::new(Model::new(parts).expect("parts"))

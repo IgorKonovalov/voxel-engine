@@ -92,24 +92,28 @@ pub fn model(body: MaterialId, eye: MaterialId) -> Model {
             parent: None,
             pivot: [4 * 256, 3 * 256, 0],
             detail: DETAIL,
+            coarse: 1,
         },
         Part {
             volume: Arc::new(Prefab::new(HEAD, head, None)),
             parent: Some(0),
             pivot: [3 * 256, 3 * 256, 0],
             detail: DETAIL,
+            coarse: 1,
         },
         Part {
             volume: leg.clone(),
             parent: Some(0),
             pivot: [384, 384, 8 * 256],
             detail: DETAIL,
+            coarse: 1,
         },
         Part {
             volume: leg,
             parent: Some(0),
             pivot: [384, 384, 8 * 256],
             detail: DETAIL,
+            coarse: 1,
         },
     ];
     Model::new(parts).expect("the walker's parts are valid")

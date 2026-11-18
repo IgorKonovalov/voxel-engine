@@ -116,6 +116,7 @@ fn block(size: [u32; 3], m: MaterialId, detail: u8) -> Arc<Model> {
         parent: None,
         pivot: size.map(|s| (s * 128) as i32),
         detail,
+        coarse: 1,
     };
     Arc::new(Model::new(vec![part]).expect("one part"))
 }
@@ -453,6 +454,7 @@ fn slab_part(m: MaterialId) -> Part {
         parent: None,
         pivot: [8 * 256, 8 * 256, 2 * 256],
         detail: 1,
+        coarse: 1,
     }
 }
 

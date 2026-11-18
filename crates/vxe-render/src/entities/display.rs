@@ -35,21 +35,21 @@ impl PartXform {
             m,
             p.pivot.map(|v| v as f32 / 256.0),
             pivot_w,
-            p.detail,
+            grain(p),
         ))
     }
 
-    /// The placement whose linear part is `m` (a rotation over `detail`) and which takes the
-    /// model point `pivot_m` to the world point `pivot_w`.
-    fn from_parts(m: [[f32; 3]; 3], pivot_m: [f32; 3], pivot_w: [f32; 3], detail: u8) -> Self {
+    /// The placement whose linear part is `m` (a rotation over `grain`, model voxels per world
+    /// voxel) and which takes the model point `pivot_m` to the world point `pivot_w`.
+    fn from_parts(m: [[f32; 3]; 3], pivot_m: [f32; 3], pivot_w: [f32; 3], grain: f32) -> Self {
         let mut p2w = [[0f32; 4]; 3];
         for r in 0..3 {
             p2w[r][..3].copy_from_slice(&m[r]);
             p2w[r][3] = pivot_w[r] - (0..3).map(|c| m[r][c] * pivot_m[c]).sum::<f32>();
         }
-        // The linear part is a rotation over `detail`, so its inverse is its transpose times
-        // `detail^2`.
-        let d2 = f32::from(detail) * f32::from(detail);
+        // The linear part is a rotation over `grain`, so its inverse is its transpose times
+        // `grain^2`.
+        let d2 = grain * grain;
         let mut w2p = [[0f32; 4]; 3];
         for r in 0..3 {
             for c in 0..3 {
@@ -87,8 +87,8 @@ impl PartXform {
 /// allocates nothing.
 #[derive(Clone, Debug, Default)]
 pub struct DisplayPose {
-    /// Each part's placement and its detail.
-    pub(super) parts: Vec<(PartXform, u8)>,
+    /// Each part's placement and its grain, model voxels per world voxel ([`grain`]).
+    pub(super) parts: Vec<(PartXform, f32)>,
     /// The two compositions' storage, kept for the next refresh.
     scratch: [vxe_entity::ComposeScratch; 2],
 }
@@ -126,7 +126,7 @@ impl DisplayPose {
                 fits = false;
                 break;
             };
-            self.parts.push((x, model.parts()[k].detail));
+            self.parts.push((x, grain(&model.parts()[k])));
         }
         self.scratch[0] = c.into_scratch();
         if !fits {
@@ -192,7 +192,7 @@ impl DisplayPose {
             let (Some(xa), Some(xb)) = (PartXform::of(ca, k), PartXform::of(cb, k)) else {
                 return false;
             };
-            let d = f64::from(p.detail);
+            let d = f64::from(p.detail) / f64::from(p.coarse);
             let pivot_m = p.pivot.map(|v| v as f32 / 256.0);
             let qa = quat_of(&xa.part_to_world, d);
             let mut qb = quat_of(&xb.part_to_world, d);
@@ -210,8 +210,8 @@ impl DisplayPose {
                 (f64::from(pa[i]) + (f64::from(pb[i]) - f64::from(pa[i])) * alpha) as f32
             });
             self.parts.push((
-                PartXform::from_parts(m, pivot_m, pivot_w, p.detail),
-                p.detail,
+                PartXform::from_parts(m, pivot_m, pivot_w, grain(p)),
+                grain(p),
             ));
         }
         true
@@ -233,13 +233,19 @@ impl DisplayPose {
     }
 }
 
+/// A part's grain: model voxels per world voxel, `detail / coarse` (a fine part's `detail`, a
+/// coarse part's `1 / coarse`).
+fn grain(p: &vxe_entity::Part) -> f32 {
+    f32::from(p.detail) / f32::from(p.coarse)
+}
+
 /// `xf` applied to the point `p`.
 fn apply(xf: &[[f32; 4]; 3], p: [f32; 3]) -> [f32; 3] {
     std::array::from_fn(|r| xf[r][3] + (0..3).map(|c| xf[r][c] * p[c]).sum::<f32>())
 }
 
-/// The unit quaternion `(w, x, y, z)` of the rotation `detail` times `xf`'s linear part
-/// (Shepperd's method: the largest of the four diagonal sums is the one divided by).
+/// The unit quaternion `(w, x, y, z)` of the rotation `detail` (a part's grain) times `xf`'s
+/// linear part (Shepperd's method: the largest of the four diagonal sums is the one divided by).
 fn quat_of(xf: &[[f32; 4]; 3], detail: f64) -> [f64; 4] {
     let m = |r: usize, c: usize| f64::from(xf[r][c]) * detail;
     let tr = m(0, 0) + m(1, 1) + m(2, 2);
@@ -311,11 +317,22 @@ mod tests {
     /// A one-part model of a 2-voxel cube at detail 1, its pivot at its corner, and the pose
     /// that translates the part by `t` (1/256 world voxel) and turns it `q`.
     fn one_part(t: [i32; 3], q: vxe_entity::Quat) -> (Model, vxe_entity::Pose) {
+        grained(t, q, 1, 1)
+    }
+
+    /// [`one_part`]'s cube at `detail` and `coarse`.
+    fn grained(
+        t: [i32; 3],
+        q: vxe_entity::Quat,
+        detail: u8,
+        coarse: u8,
+    ) -> (Model, vxe_entity::Pose) {
         let part = vxe_entity::Part {
             volume: std::sync::Arc::new(Prefab::new([2; 3], vec![AIR; 8], None)),
             parent: None,
             pivot: [0; 3],
-            detail: 1,
+            detail,
+            coarse,
         };
         let model = Model::new(vec![part]).expect("one part");
         let mut pose = vxe_entity::Pose::rest(&model);
@@ -412,5 +429,64 @@ mod tests {
         assert!(!d.between_into(&model, &a, &unfit, 0.5));
         assert!(d.is_empty());
         assert!(d.of_into(&model, &a), "the storage survives a refusal");
+    }
+
+    /// The instance words of `model` at rest, alone in a fresh table.
+    fn instance_of(model: &Model) -> (DisplayPose, Vec<u32>) {
+        use super::super::{DEFAULT_ENTITY_POOL_BYTES, EntityInstances, VolumePool};
+        let mut table = vxe_world::MaterialTable::new();
+        table.push(vxe_world::Material::named("a"));
+        let mut pool = VolumePool::new(DEFAULT_ENTITY_POOL_BYTES);
+        let model = std::sync::Arc::new(model.clone());
+        let handle = pool.upload(&model, &table).expect("room").handle;
+        let d = DisplayPose::of(&model, &vxe_entity::Pose::rest(&model)).expect("fits");
+        let mut inst = EntityInstances::new();
+        inst.write(
+            &pool,
+            std::iter::once((vxe_entity::EntityId(0), handle, Some(&d))),
+        );
+        let words = inst.instance_words()[..super::super::INSTANCE_WORDS].to_vec();
+        (d, words)
+    }
+
+    /// Plan 0083 Phase 7b done-when 2: a 2-voxel cube at `coarse` 10 spans 20 world voxels on
+    /// each axis and its instance's word 27 (the shadow offset's scale, world voxels per model
+    /// voxel) reads 10.0; at `coarse` 1 the instance's words are the identity maps, the
+    /// volume's word and slot, and word 27 at `1 / detail` (1.0 at detail 1, 0.5 at detail 2),
+    /// as before the coarse grain.
+    #[test]
+    fn a_coarse_part_renders_at_world_scale() {
+        let id = vxe_entity::Quat::IDENTITY;
+        let (model, _) = grained([0; 3], id, 1, 10);
+        let (d, words) = instance_of(&model);
+        let b = PartXform::world_box(&d.part_to_world(0).expect("part"), [2; 3]);
+        assert_eq!(b, [[0.0; 3], [20.0; 3]]);
+        assert_eq!(f32::from_bits(words[27]), 10.0);
+        // The inverse map: a tenth of a model voxel per world voxel, to `f32` rounding.
+        let w2p = [
+            [0.1, 0.0, 0.0, 0.0],
+            [0.0, 0.1, 0.0, 0.0],
+            [0.0, 0.0, 0.1, 0.0],
+        ];
+        assert!(close(&d.parts[0].0.world_to_part, &w2p, 1e-7), "{d:?}");
+
+        let identity = [
+            1.0f32, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0,
+        ];
+        for (detail, scale) in [(1u8, 1.0f32), (2, 0.5)] {
+            let (model, _) = grained([0; 3], id, detail, 1);
+            let (_, words) = instance_of(&model);
+            let mut want: Vec<u32> = identity.map(|v| v / scale).map(f32::to_bits).to_vec();
+            for r in 0..3 {
+                want[r * 4 + r] = (1.0 / scale).to_bits();
+            }
+            want.extend(identity.map(|v| v * scale).map(f32::to_bits));
+            for r in 0..3 {
+                want[12 + r * 4 + r] = scale.to_bits();
+            }
+            want.extend([words[24], words[25], 0, scale.to_bits(), 2, 2, 2, 0]);
+            assert_eq!(words, want, "detail {detail}");
+            assert_eq!(words[25], 0, "slot 0, generation 0");
+        }
     }
 }

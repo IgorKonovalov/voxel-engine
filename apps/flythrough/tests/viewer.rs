@@ -386,6 +386,7 @@ mod reading {
                 parent: (k > 0).then(|| k as u8 - 1),
                 pivot: [512, 512, 0],
                 detail: 2,
+                coarse: 1,
             })
             .collect();
         let model = Model::new(parts).expect("sixteen parts");
@@ -759,6 +760,7 @@ fn a_full_pool_refuses_one_entry_and_keeps_the_rest() {
         parent: None,
         pivot: [0; 3],
         detail: 1,
+        coarse: 1,
     }])
     .expect("one part");
     let tail = sb - fb / 2;

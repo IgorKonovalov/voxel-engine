@@ -95,8 +95,9 @@ fn octa16_decode(e: vec2<u32>) -> vec3<f32> {
 // How far off the hit the shadow ray starts, in voxels, along `shadow_normal`.
 const SHADOW_OFFSET: f32 = 0.5;
 
-// SHADOW_OFFSET's scale for the hit being shaded: 1, or an entity part's `1 / detail`
-// (`entity_shadow_scale`), so a shadow ray leaves a small voxel by the same share of it.
+// SHADOW_OFFSET's scale for the hit being shaded: 1, or an entity part's world voxels per model
+// voxel, `coarse / detail` (`entity_shadow_scale`), so a shadow ray leaves a small or a large
+// voxel by the same share of it.
 var<private> shadow_scale: f32 = 1.0;
 
 // The field normal `n` of a field-surface hit whose stored shading normal is `m`, the face mix

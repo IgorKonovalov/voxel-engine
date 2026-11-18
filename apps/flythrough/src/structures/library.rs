@@ -404,6 +404,7 @@ fn part(volume: Prefab, at: [u32; 3]) -> Part {
         parent: None,
         pivot: at.map(|v| -(v as i32) * 256),
         detail: 1,
+        coarse: 1,
     }
 }
 
