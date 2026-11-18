@@ -242,17 +242,29 @@ mod defects {
             let cam = cams[0].1;
             let noon = flythrough::daylight::Clock::default().sky(flythrough::outdoor::BASE_Z as f32);
             let e = 2f32.powf(-10.75);
-            for (arm, sky, rays, fsr2) in [
-                ("sky, rays 1, native", Some(noon), 1, false),
-                ("sky, rays 1, FSR 2", Some(noon), 1, true),
-                ("sky, rays 0, FSR 2", Some(noon), 0, true),
-                ("no sky, FSR 2", None, 1, true),
+            // `anchor`: the outdoor auto exposure under that sky anchor (Plan 0086 Phase 22 bar
+            // 2) in place of the pinned exposure.
+            for (arm, sky, rays, fsr2, anchor) in [
+                ("sky, rays 1, native", Some(noon), 1, false, None),
+                ("sky, rays 1, FSR 2", Some(noon), 1, true, None),
+                ("sky, rays 0, FSR 2", Some(noon), 0, true, None),
+                ("no sky, FSR 2", None, 1, true, None),
+                ("sky, rays 1, FSR 2, auto anchor 4", Some(noon), 1, true, Some(4.0)),
+                ("sky, rays 1, FSR 2, auto anchor 0", Some(noon), 1, true, Some(0.0)),
             ] {
+                let exposure = anchor.map_or(vxe_render::Exposure::Manual(e), |a| {
+                    vxe_render::Exposure::Auto(vxe_render::AutoExposure {
+                        min: flythrough::cli::OUTDOOR_MIN,
+                        max: flythrough::cli::OUTDOOR_MAX,
+                        sky_anchor_ev: Some(a),
+                        ..vxe_render::AutoExposure::default()
+                    })
+                });
                 let f = defect_frame_fsr(
                     &mut rig,
                     sky,
                     |l| vxe_render::Lighting {
-                        exposure: vxe_render::Exposure::Manual(e),
+                        exposure,
                         sky_rays: rays,
                         ..l
                     },
@@ -262,7 +274,7 @@ mod defects {
                 );
                 let (dw, dh) = (f.target().width() as usize, f.target().height() as usize);
                 let mut s = Stepper::new(&rig, f);
-                for _ in 0..64 {
+                for _ in 0..if anchor.is_some() { 300 } else { 64 } {
                     s.run(&rig, &cam);
                 }
                 let mut shots = Vec::new();

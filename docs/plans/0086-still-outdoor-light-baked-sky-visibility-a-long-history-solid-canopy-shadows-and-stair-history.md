@@ -1602,9 +1602,9 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
 | 17: The picks as defaults, the seal bar re-derived | dev | done: anchor 4 and `smoothed` the defaults; five outdoor goldens re-blessed (counts per default in the log); seal 24.347 / 8.689 / 1.100 % passes; the sky-less goldens unmoved by the defaults (three differ from their tracked bytes at the base, not re-blessed) | `512724cf` |
 | 18: The column wait: off by default, its black region, the catch-up | dev | done in part: the setting, the catch-up (bar 3 passes), `--dump-black`; bar 2 the wait adds no black (0.0000) but 4492 chunks with their reach in the full radius stay unbaked at 1800 under both waits; bar 5 the fly-through opens 0 provisional jobs; bar 6 `partial` 967 black against 1338, not under 1 % | `76eae309` |
 | 19: The key light on the pair's `g`, the grain after a turn | dev | done in part: built; bar 1 fails (p99 2 against the lamp's 1, 1 before); the gate test `a_tree_shadow_travels_with_the_sun_at_320x180` fails (ratio 0.767); bar 3 at `60,180` 3.00 against 2.11; bar 4 met (7 frames); the drift rig off 13.9 voxels before and after | `37e03683`, `fd1e4f2d` |
-| 20: The seam between the baked sky term and the ray's | dev | done (reading only): at 19.png's pose the ray region is 0 from frame 300 under the default and `partial`, 100 % with the wait on (0 chunks baked in 600 frames); none of (i) to (iii) built; bars 1 and 2 not written (no ray-lit pixel at rest) | committed with this row |
+| 20: The seam between the baked sky term and the ray's | dev | done (reading only): at 19.png's pose the ray region is 0 from frame 300 under the default and `partial`, 100 % with the wait on (0 chunks baked in 600 frames); none of (i) to (iii) built; bars 1 and 2 not written (no ray-lit pixel at rest) | `44e24090` |
 | 21: The flash around a dig | dev | not started | |
-| 22: The fired lights' grain under the anchor | dev | not started | |
+| 22: The fired lights' grain under the anchor | dev | done: no mechanism, the backlog entry; bar 2 read with two auto-exposure arms (anchor 4: at rest p99 10, edge flips 6.09 %; anchor 0: 6, 1.10 %); landed before Phase 21 | committed with this row |
 | 23: The sunlit treads' clip | dev | not started | |
 | 24: The owner's third window | human | not started | |
 | 25: The picks as tests | dev | not started | |

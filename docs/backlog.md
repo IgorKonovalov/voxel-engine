@@ -855,3 +855,17 @@ its own app under `apps/`. The fly-through and the native paths never change or 
 for it; any crate support is target-gated. Not before the engine has steady lighting, coloured
 materials, a sky and a way to build interesting architecture.
 
+
+### The fired lights' grain: the list lights' visibility on a running mean
+
+Parked 2026-11-18 by Plan 0086 Phase 22 (the second window's defect 3: "when I shoot light,
+walls becoming grainy", 20.png, the noon tunnel under anchor 0). Phase 16 read it as Plan
+0058's, not the sky's (`docs/plans/logs/0086.md`, Phase 16's table and Phase 22): with five
+lights fired the lit patch's p99 change is 25 to 28 levels in flight and 5 to 6 at rest, the
+same with the sky off; no sky ray returns over the lights; the light pass's rise (0.13 to 4.6
+ms, loaded) is the five lights' shadow rays. In flight the list changes every frame and
+`LIGHTING_LIGHTS_CHANGED` takes the direct part's sample as it is. What it would take: the
+list lights' shadow visibility on a running mean of its own, as the key light's is on the
+visibility pair's `g` (Plan 0086 Phase 19), reprojected and reset where the light moves. Pick
+up when the third window (Plan 0086 Phase 24 run 3) judges the walls under the default anchor
+4 still grainy, or a consumer fires lights at walls in the dark.
