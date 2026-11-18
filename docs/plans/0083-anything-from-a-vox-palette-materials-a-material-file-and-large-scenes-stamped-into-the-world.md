@@ -1,6 +1,6 @@
 # 0083: Anything from a `.vox`: palette materials, a material file, and large scenes stamped into the world
 
-> **Status:** in-progress (approved 2026-11-16, the owner's go with every recommended answer; .vox scale 1 world voxel)
+> **Status:** in-progress (approved 2026-11-16, the owner's go with every recommended answer; .vox scale 1 world voxel); **amended 2026-11-18 (the Phase 6 re-read after Plans 0077 and 0080 merged): a structure is a belt item of Plan 0077's placement mode, its ghost a marked frame, the cleared box a stamp of written air, the settings a `structures` menu group; owner questions 5 to 8 await answers**
 > **Created:** 2026-11-16
 > **Milestone:** M7 in [`docs/roadmap.md`](../roadmap.md) (stamping at authored-building
 > scale), with M6's `.vox` import; the engine side in `vxe-assets` and `vxe-world`, the testbed
@@ -23,6 +23,277 @@
 > **Starts after:** Plan 0063 and the clip-recorder chore merge (the viewer, `rig.rs`, the
 > entities library), beside Plans 0078 and 0080; Phases 6 to 8 after Plans 0080 and 0077
 > merge (the menu's dynamic page, the picker's placement at the crosshair). See "Order".
+> **Amended 2026-11-18 (architect, the Phase 6 re-read at 99801643, which holds main 63e3695a
+> with Plans 0077 and 0080 closed):** the section "Amended 2026-11-18" below replaces Phase 6's
+> block and is Phase 7's errata; the dev reads it before the phases. Phases 1 to 5 and 8 stand.
+
+## Amended 2026-11-18 (the Phase 6 re-read): a structure is a belt item
+
+Phase 6 as approved names `apps/flythrough/src/menu/`, a `Page::dynamic`, `src/hud.rs` and a
+`place` action on an open page. None of them is in the tree, and the flow it describes is the
+one Plan 0077's first window struck (the panel over the view while placing). This section says
+what the tree has, picks the flow, and rewrites Phase 6 against it.
+
+### What the tree has (the plan's name, then the tree's)
+
+| The plan says | The tree has |
+|---|---|
+| `apps/flythrough/src/menu/`, `Page::dynamic` | `apps/flythrough/src/hud/menu/{mod,entries,page,route,write,filter}.rs`; the one dynamic page is the hard-coded `PageId::Entities`, its rows `Row::Item(usize)` (four lines each beside an icon tile, `ITEM_LINES`) built each frame from `Modes::walkers.library`; `Enter` gives `Activated::Choose { entry }`, a digit `Activated::Assign { entry, slot }` |
+| `src/hud.rs` (the banner) | `src/hud/mod.rs` with `hud/modes.rs` (`Modes`, `HudRow`, `BANNER_MS`); the notice row is `Run::say`, the lights' banner row `Modes::show_lights` |
+| "the aim point from the crosshair's hit as Plan 0077's picker takes it" | `Run::aim_feet(extent)` over `belt::stand` (`entities/belt.rs`): the camera ray's first world hit within `PLACE_REACH` (300 voxels), never nearer than `max(NEAR_MIN 30, NEAR_SCALE 1.5 x the longest extent)`, dropped to the floor under a wall or ceiling hit |
+| `place` from the open page | 0077's three states: the chooser only chooses and fills the belt (`Belt { slots: [Option<usize>; 9], selected, on, turn }`); placement mode with the menu closed stands the ghost (`Walkers::preview`, a marked instance, ADR-0074) at the aim; the left click places and the mode stays; `R` turns 22.5 degrees; the right click and `Esc` leave |
+| `clear box on\|off`, `scale 1..4` as page actions | a setting is an entry of a menu `Group` (`toggles::TOGGLES`; a `Toggle` with `number: Some(Number)` for a stepped value and a `HudRow` that shows its mode), as `dig radius` is under `moving` (Plan 0080) |
+| `src/structures.rs` "new" | there since Phase 4: `VoxArg`, `read`, `add_rows`, `scene`, `offset`, `ClearedSource`, `clear_box`, `ops` (a `VoxOps { prefabs, ops, chunks }`: a box carve, then a stamp per placement, submitted once the box's chunks are resident), `source`, `chapel_vox` |
+| the castle "through `VoxScene`" | `castle::castle_vox()` gives the `VoxFile` (27 tiles of at most 256 a side, 21 kept) and `above_map()` its explicit `VoxMap`; `--castle` builds it on a thread (`Pending::StreamBuilding`, Plan 0075) and places it at generation through `HallSource` |
+
+### Decision: (a) a structure joins Plan 0077's chooser, belt and placement mode
+
+A structure is one more thing a belt slot holds; its chooser is a second page of items; the
+click that places an entity places a structure. Reasons: the owner asked for the belt
+(2026-11-18, "a belt of things that is possible to place") and for the chooser to close before
+placing, and judges in the window, where a second grammar would show; one stand rule, one
+click, one `R`, one `Esc` for everything placed, so `docs/flythrough.md`'s key table gains a
+group and no new keys; and the chooser's mechanism (`Row::Item`, `Choose`, `Assign`)
+generalises by giving the item a kind, which is the whole of option (c) that is needed.
+Rejected: **(b)** a place-from-the-page action, 0077's Phase 3 flow the owner struck, and a
+second placement path to keep in step with the first; **(c)** a general dynamic `Page` type
+with an ADR: nothing needs it, two pages over one `Row::Item` kind is the generalisation, and
+ADR-0061 already fixes the one-component rule. No ADR: the rejected options are plan-level and
+recorded here.
+
+### Mechanism
+
+- **The item.** `belt::Item { Entity(usize), Structure(usize) }` (or the dev's name).
+  `Belt.slots: [Option<Item>; SLOTS]`; `Row::Item(Item)`; `Activated::Choose { item }` and
+  `Assign { item, slot }`. `Belt::fill` takes the entities' `Library::order` and then the
+  structures' order into the slots left (the committed libraries: walker, spider, chapel,
+  castle; owner question 8). The entity paths keep their `usize`.
+- **The structures library.** `structures::Library { entries, notes }` on `Modes`
+  (`hud/modes.rs`, beside `walkers`), scanned at start from `structures::LIBRARY`
+  (`<name>/<name>.vox`, name order; `--structures-dir DIR` as `--library-dir`), plus the
+  entry `castle` (generated) last. An entry holds its `VoxFile`, its `VoxScene` at scale 1,
+  its bounds and the rows it added; a file that does not read or load is an entry in error
+  (grey name, red reason, as 0077's). Every file's palette rows go into the world's table in
+  `setup::world_table` before `World::generate` (ADR-0065; today `--vox`'s only), so the
+  committed library adds the chapel's rows to every run; the start-up line says `structures: N
+  entries, +R rows`. The castle adds no row (its indices map through `castle::above_map()` to
+  the file's castle rows); its `VoxFile` is generated on a worker thread (the `--castle`
+  build's `castle_vox_on`) the first time its slot is selected or its icon is asked, and until
+  then its slot's name row and its chooser row read `castle: building` in grey, as an entry
+  not built.
+- **The chooser.** `PageId::Structures`, rows `Row::Item(Item::Structure(i))` at `ITEM_LINES`
+  each: a blank line, `chapel   4 placements  4.8 x 3.2 x 4.0 m` (grey with its red reason for
+  an entry in error), `rows +255   slot 3` (or `no slot`), a blank line. Reached by `Tab`, the
+  `structures` group row and its first entry `choose a structure` (`Act::StructurePicker`, no
+  key; owner question 6), and by the pad the same way. `Enter`, the left click, `South` and
+  `` ` `` on an entry hand over as on the Entities page (`Menu::input`'s `Entities` arm serves
+  both pages); a digit assigns and the page stays. `Menu::open_structures(selected)` beside
+  `open_entities`. The Entities page lists entities only.
+- **The settings.** `Group::Structures` after `Entities` in `Group::ALL` (13 groups), page
+  title `structures`, three entries: `choose a structure` (the action), `clear box` (a toggle,
+  `on|off`, default on) and `structure scale` (a number 1..4, step 1, default 1), the two
+  toggles' modes on a row of their own, `HudRow::Structures` (or `Controls`, the dev's call),
+  their state on `Modes` (`clear_box: bool`, `structure_scale: u32`). Both are read at the
+  ghost and at the click; a scale change re-stands the ghost.
+- **The ghost of a structure is a frame entity** (owner question 5): a `vxe_entity::Model` of
+  the structure's box at the scale and turn, a real instance in the set as the entity ghost
+  is, marked with the ghost colour (ADR-0074), touching no world voxel. For a box every side of
+  which is at most `MAX_EDGE` (64) voxels, the frame is its twelve edges, one part each, one
+  voxel thick, in the structure's most-used row (any opaque row: the mark's outline and tint
+  carry the meaning). For a larger box (the castle's 600 x 600 x 500) the frame is its eight
+  corners, each one part of three 32-voxel arms, one voxel thick, meeting at the corner. Both
+  stay under `MAX_PARTS` (16) and `MAX_EDGE`; the model is made per entry, scale and turn and
+  kept (`structures::frame_model`). The structure itself cannot be the ghost (ADR-0050's caps,
+  the backlog's traced preview); the belt's name row names it beside the frame.
+- **Where a structure stands** (owner question 7): `belt::stand_box(eye, fwd, size, cast) ->
+  corner` beside `stand`, and `Run::aim_corner(size)` beside `aim_feet`, the one placement
+  function of its kind. `p` is the camera ray's first world hit within `PLACE_REACH` on any
+  face, else the view's point at `NEAR_MIN`; `p` is dropped to the floor as `stand` drops (the
+  same code); `h` is `fwd` with z zeroed and normalised (`+x` when `fwd` is vertical); `s =
+  (|h.x| size.x + |h.y| size.y) / 2` is the box's support along `h`; the footprint's centre is
+  `c = p + h s`, so the box's near edge or corner is at `p` and the box grows away from the
+  camera, never around it; the base is at `p.z`; the corner, to a voxel, is `[c.x - size.x /
+  2, c.y - size.y / 2, p.z]`. `size` is the scene's at the scale, x and y swapped at an odd
+  quarter turn. No `NEAR_SCALE` for a box: 1.5 x the castle's 600 voxels is 90 m, past
+  `PLACE_REACH`, so `stand`'s rule would put every large structure 90 m along the view, in rock.
+- **The turn.** A stamp has the 24 cube rotations, so `R` on a structure slot turns the box a
+  **quarter turn** about z (`Rot::Z90` composed; 22.5 degrees is not a `Rot`): `Belt.turn`
+  counts 22.5 degree steps, so `R` on a structure adds four and the stamp's `Rot` is `Z90` to
+  the power of `turn / 4` (or the dev's cut); the turn is kept until the mode ends, as today.
+  `VoxScene::placed_at` takes the quarter turns: each placement's origin and `Rot` composed
+  about the box's minimum corner, in integers; the bounds swap x and y at an odd turn.
+- **The click** submits through the server, as every edit does (`net.server.submit`, the
+  tick's events print and say the lines): with `clear box` on, first a **stamp of written air**
+  the size of `structures::clear_box` (a new `Prefab::uniform(size, material)`: every brick
+  uniform and written, 4 B each after Phase 3, its id streamed as any prefab's, registered by
+  id on the server and the client as the scene's prefabs are), then one `Op::Stamp` per
+  placement of the scene at the scale and turn, in order. A stamp and not the box carve
+  because a carve is an edit, which a non-resident chunk refuses, and a castle's box at
+  `r_full` 6 is never fully resident (Phase 5's reading: 21 placements pending), so
+  `--vox-op`'s wait would never end at runtime; a stamp past residency is a placement the world
+  finishes as chunks arrive (ADR-0066), and air written by a stamp is air. `structures::ops`
+  emits the air stamp for `--vox-op` too, `VoxOps.chunks` and the residency wait go (the ops
+  go in on the first tick), so the two paths stay one and
+  `the_chapel_as_ops_equals_the_chapel_from_the_source` keeps holding on the voxels. Forced
+  residency was rejected in ADR-0066. After the click the mode stays, the frame ghost
+  re-stands, and the notice reads `placed chapel 4.8 x 3.2 x 4.0 m: 5 ops, 4 chunks now, 0
+  pending` (the chunks from the tick's results, the pending count from
+  `ChunkStore::pending_placements`).
+- **The words.** The structures row (`HudRow::Structures`) holds the two toggles' modes, as
+  every toggle shows its mode in its row (`clear box on`, `structure scale 1`); the belt's
+  name row names the selected structure and its size at the scale (`chapel  4.8 x 3.2 x 4.0 m`,
+  at scale 2 `chapel  9.6 x 6.4 x 8.0 m  x2`); the frame shows the turn.
+- **The icons.** A structure's tile is made through `icon::icon` over a model of the scene
+  when the scene fits one (every prefab at most `MAX_EDGE` a side, at most `MAX_PARTS`
+  placements: the chapel's four), on the icons' worker as an entity's is, its tile index after
+  the entities' (`MAX_TILES` 32 holds both libraries); a structure that does not fit (the
+  castle) keeps its words in its slot and its row, as an entry whose tile has not arrived.
+- **`--castle`** keeps its path (the hall, the generation-time placement). The plan's "the
+  castle through `VoxScene`" is met by the castle entry: its runtime placement goes through
+  `VoxScene::load(castle_vox(), above_map(), ..)`, and the test asserts that the scene's
+  prefabs are the tiles `HallSource` stamps, not that `--castle`'s start changes.
+- **Under `--tester`** there is no belt and no chooser, as 0077 left it.
+
+### Phase 6 (amended): a structure in the belt
+- **Owner skill:** dev
+- **What:** the mechanism above: the item kind, the structures library and its rows at start,
+  the Structures chooser, the `structures` group, the frame ghost, the box rule, the quarter
+  turn, the air stamp and the click, the icons, the words.
+- **Files touched:** `apps/flythrough/src/entities/{belt,picker,placed,icon}.rs` (the item,
+  `stand_box`, the frame ghost in the set and the marks, the tile index),
+  `apps/flythrough/src/structures.rs` (the library scan and entry, `frame_model`, `ops` with
+  the air stamp; split under `structures/` if it nears its cap),
+  `apps/flythrough/src/hud/menu/{mod,page,route,write,entries}.rs` (`Group::Structures`,
+  `PageId::Structures`, `Row::Item(Item)`, `Choose` and `Assign` by item, the title and
+  footer), `apps/flythrough/src/hud/modes.rs` (`Modes::structures`, `clear_box`,
+  `structure_scale`, `HudRow::Structures`), `apps/flythrough/src/toggles.rs` (the group's
+  three entries, `Act::StructurePicker`), `apps/flythrough/src/run/{keys,frame,edit,
+  hud_feed}.rs` (`aim_corner`, the structure's click, the prefabs registered, the notice),
+  `apps/flythrough/src/setup.rs` (the library's rows in `world_table`, the start-up line,
+  `vox_ops` without the wait), `apps/flythrough/src/cli/model.rs` (`--structures-dir`;
+  `flags.rs` is at its cap), `apps/flythrough/src/app.rs`, `apps/flythrough/src/castle.rs`
+  (the castle entry's scene), `crates/vxe-world/src/prefab.rs` (`Prefab::uniform`),
+  `crates/vxe-assets/src/scene.rs` (`placed_at` with the quarter turns), new
+  `apps/flythrough/src/run/structure_tests.rs` (`Run` is crate-private, as `picker_tests.rs`),
+  `apps/flythrough/tests/{structures,castle,toggles,menu,picker}.rs`,
+  `crates/vxe-world/tests/stamp.rs`, `crates/vxe-assets/tests/scene.rs`,
+  `apps/flythrough/assets/structures/README.md`, `docs/flythrough.md` (the `structures`
+  group, the belt's paragraph, `--structures-dir`, `--vox-op`'s row), `docs/plans/logs/0083.md`.
+- **Done when** (CPU, no device; `run/structure_tests.rs` runs on a rock box large enough for
+  the chapel's box, with the committed libraries and the castle entry left unbuilt; each
+  under 1 s unless named):
+  1. `the_library_lists_every_structure` (`tests/structures.rs`): the scan of
+     `assets/structures/` gives one entry per directory holding `<name>/<name>.vox`, in name
+     order, then `castle`; each file's palette resolves against the fly-through's table with
+     the row count the README states (the chapel 255; a second file of the same palette 0); a
+     directory without its `.vox` is a note; a file that does not parse is an entry in error
+     with its reason.
+  2. `a_uniform_prefab_is_written_air_one_word_a_brick` (`crates/vxe-world/tests/stamp.rs`,
+     under 0.5 s): `Prefab::uniform([620, 620, 510], AIR)` holds 78 x 78 x 64 bricks, every one
+     uniform and written, `bytes()` under 2 MB and `written_count` 196 044 000; stamped at the
+     corner of a solid 64³ chunk it leaves every voxel of the overlap air and the result counts
+     the rock row at the overlap's size; two constructions give one id.
+  3. `a_quarter_turn_turns_the_scene` (`crates/vxe-assets/tests/scene.rs`): the chapel's
+     scene `placed_at` with one quarter turn has every placement's origin and `Rot` equal to
+     the hand-rotated values about the box's minimum corner, its bounds' x and y swapped, and
+     its stamped voxels equal the unturned stamp's rotated voxel by voxel; four quarter turns
+     are the identity.
+  4. `the_belt_holds_a_structure` (`run/structure_tests.rs`): the belt fills walker, spider,
+     chapel, castle, slot 5 empty; the wheel to slot 3 enters the mode with the chapel's frame
+     ghost in the set (twelve parts, marked with the ghost colour) and nothing placed; `Tab`,
+     `structures`, `choose a structure`, `Down` to the castle, `7` puts it in slot 7 and the
+     page stays; `Enter` on the chapel selects slot 3, closes the menu and enters the mode;
+     `` ` `` on the Structures page does the same; the Entities page lists no structure.
+  5. `a_structure_stands_by_the_box_rule` (`run/structure_tests.rs`): with the camera 1.7 m
+     over the floor looking 40 degrees down along +x (the floor hit about 2.6 m out) the
+     chapel's corner has its minimum x at the hit's voxel, its y centre within one voxel of the
+     hit's y and its base on the floor's top, so the eye is outside the box; after `R` once
+     the box's x and y extents swap and the corner follows; at `structure scale` 2 the box
+     doubles and the corner stays at the hit; aimed into the dark with no hit within 30 m the
+     corner's x is the view's 3 m point's; a 600-wide box starts at the hit too and never holds
+     the eye.
+  6. `a_placed_structure_is_logged_stamps` (`run/structure_tests.rs`, under 5 s): the left
+     click on the chapel's slot submits in one tick one stamp of a `Prefab::uniform` the size
+     of `clear_box` and four stamps of the scene's prefabs, all kind 2 in the run's op log,
+     the air stamp first; after the tick the world holds Phase 4's per-row counts of the chapel
+     inside air with the 1 m margin; the mode stays and a new frame ghost stands; with `clear
+     box` off there are four stamps and no air; a replay of the log on a fresh world hashes
+     equal; `the_chapel_as_ops_equals_the_chapel_from_the_source` (`tests/structures.rs`) holds
+     with `ops` emitting the air stamp.
+  7. `the_castle_loads_through_the_scene` (`tests/castle.rs`): `VoxScene::load` of
+     `castle_vox()` under `above_map()` gives 21 placements whose prefab ids are the ids
+     `HallSource` stamps, in order; `--castle`'s world hash is unchanged; a castle entry before
+     its build is grey with `castle: building`.
+  8. The words: `every_toggle_shows_its_mode_in_the_hud_grid` (`tests/toggles.rs`) passes with
+     `clear box on` and `structure scale 1` in their row; 0080's
+     `every_toggle_and_action_is_an_entry`, `the_source_reads_no_key_the_tables_miss`,
+     `every_live_entry_answers`, `the_fixed_set_is_the_table` and `the_route_is_one_function`
+     pass with the group and the page; `--keys` lists `structures` with its three entries;
+     0077's `the_belt_draws_its_slots` holds with `chapel` in slot 3 (its icon once made) and
+     `castle` in slot 4; the belt's name row on slot 3 reads `chapel  4.8 x 3.2 x 4.0 m` and at
+     scale 2 `chapel  9.6 x 6.4 x 8.0 m  x2`; after a click the notice reads `placed chapel 4.8
+     x 3.2 x 4.0 m: 5 ops, N chunks now, 0 pending`; `docs/flythrough.md` has the group and the
+     belt's structures; `node scripts/check-doc-links.mjs` exits 0.
+  9. Readings (`docs/plans/logs/0083.md`): the frame models' pool bytes (the chapel's edges,
+     the castle's corners; guesses 150 KiB and 1 MiB of the 8 MiB pool); the chapel's icon
+     time; `Prefab::uniform` of the castle's box, its construction with the id (guess under
+     100 ms, the hash over 196 M bytes) and its stamp call; the structures' scan and rows at
+     start against Phase 4's start-up line.
+
+### Phase 7 (errata): the owner's window gains the belt
+The owner reaches a structure through the belt, not a page: (a) and (b) read "finds it in the
+belt (the wheel, or the Structures chooser) and places it with the click". Added checks, with
+the owner's words into the readings log: the chapel's frame ghost in the cave (question 5),
+`R`'s quarter turn, `structure scale` 2 from the menu, `clear box` off then on, where the box
+stands against the crosshair (question 7); the castle's corners frame, its click and the fly
+to its far side as (b) says; whether structures belong in the belt beside the entities
+(question 8). The picks the phase names (the emission factor `k`, the default scale, `clear
+box` on) stand.
+
+### Phase 8 (addition)
+`gpu_hud_golden` gains `the_structures_chooser` (the page with the chapel's icon and the
+castle's words, pixel exact on lavapipe, under 10 s). The rest stands.
+
+### Budgets added 2026-11-18 (guesses until Phase 6 reads them)
+
+- **The frame ghost:** 12 parts of at most 64 x 1 x 1 voxels (the chapel) or 8 parts of
+  32 x 32 x 32 (the castle's corners) in the 8 MiB entity pool while a structure slot is
+  selected in the mode; freed when the slot or the mode changes; the mark's cost is 0077's.
+- **The air stamp:** the castle's box as a uniform prefab is 389 376 bricks x 4 B, about 1.6 MB
+  in RAM and in the log per castle placement; the chapel's about 3 KB. Section 3's prefab RAM
+  line reads it with the castle's prefabs.
+- **Rows at start:** the committed library adds the chapel's 255 rows to every run (64 B a row
+  on the GPU, 16 KB), under the "1000 rows 64 KB" line of the Budgets table.
+
+### What this amendment reverses in the text above
+
+Phase 6's "places the selected `.vox` at the crosshair" from the open page, and the Decision's
+"from a Structures page of Plan 0080's menu, at the crosshair at runtime", read: from the
+belt, in placement mode, with the click. "The preview is the box's footprint on the HUD" (the
+Decision, "What this plan does NOT do") is superseded by the frame ghost under question 5; a
+traced preview of the structure itself stays out (backlog). The Decision's `clear box` "carved
+clear first" is a stamp of written air, not a carve op. Phase 6's aim rule ("the footprint
+centred on the hit") is the box rule under question 7.
+
+### Owner questions added 2026-11-18 (each with a recommendation)
+
+5. **The ghost of a structure.** Recommended: a marked frame entity (its twelve edges, or
+   its eight corners for a box over 64 voxels a side) standing where the structure will stand,
+   blue as the entity ghost is, with the name and size in the belt's name row. Alternative:
+   the words alone, no frame (the plan's original "the HUD shows its box"): cheaper, but
+   nothing in the world shows where a 5 m chapel lands before the click.
+6. **Reaching the Structures chooser.** Recommended: through the menu (`Tab`, `structures`,
+   `choose a structure`) and through the belt (a structure's slot by the wheel or a digit), no
+   new key; `` ` `` stays the entities'. Alternative: a key for the structures chooser, one
+   more bind of the kind Plan 0080 removed.
+7. **Where a structure stands.** Recommended: the box grows away from the aim: its near edge
+   at the crosshair's hit (dropped to the floor under a wall or a ceiling), its base on the
+   floor, so the camera is never inside it and a castle starts where you look. Alternative:
+   the footprint centred on the hit, as the plan wrote: a castle then surrounds the camera and
+   its stamp may bury it.
+8. **The belt's fill.** Recommended: the belt starts with the entities (walker, spider), then
+   the structures (chapel, castle) in the free slots, so the wheel reaches a structure at once.
+   Alternative: a structure enters the belt only from its chooser.
 
 ## TL;DR
 
@@ -290,7 +561,7 @@ only and may run before Plans 0080 and 0077 merge; Phase 6 needs both.
      after it (guess: the call under 500 ms with 92 % air skipped as uniform bricks, from 7.8
      ns a voxel in `prefab64_mixed`; the settle is the queue's budget, read, no proposal).
 
-### Phase 6: the Structures page in the fly-through
+### Phase 6: the Structures page in the fly-through (as approved; replaced by "Phase 6 (amended)" under "Amended 2026-11-18" above)
 - **Owner skill:** dev
 - **What:** a dynamic Structures page of Plan 0080's menu lists the structures library and
   places the selected `.vox` at the crosshair as a logged stamp, the box cleared first by
@@ -468,10 +739,10 @@ material ore
 ## Order
 
 Phases 1 to 5 start once Plan 0063 and the clip-recorder chore have merged (the viewer and the
-entities library this plan builds on) and run beside Plans 0078 and 0080; Phase 6 waits for
-Plans 0080 (the menu component, `Page::dynamic`) and 0077 (the picker's aim point and its
-Entities page as the pattern) to merge, and the architect re-reads the phase against them.
-Phase 7 can share the owner's window with Plan 0079's Phase 5. Plan 0084 (staged structures)
+entities library this plan builds on) and run beside Plans 0078 and 0080; Phase 6 waited for
+Plans 0080 and 0077 to merge (both closed 2026-11-18, merged into this lane at bab3cfca) and
+was re-read against them in "Amended 2026-11-18" above; it starts on the owner's answers to
+questions 5 to 8. Phase 7 can share the owner's window with Plan 0079's Phase 5. Plan 0084 (staged structures)
 starts after this plan closes. The plan holds nothing of M10: Plan 0069 and then 0032 run as
 the owner set them (after Plans 0062 and 0063), beside this one. Plan 0082 (entity part scale,
 in a parallel draft) scales an entity's parts finer than a world voxel; this plan's scale is an
