@@ -120,7 +120,7 @@ whole KB, against its size. A library entry whose rig has a `body` line moves at
 (at most 8 ticks a frame), wander on or off: a ground body (the walker) stands on the floor and
 falls when it is dug away, a surface body (the spider) clings to the face it touches, wall or
 ceiling, and falls and lands when that is dug away. With the wander on (`wander on` in the
-banner) each body picks a new heading every 1 to 3 s and walks or crawls at 1 or 1.5 m/s, its
+banner) each body picks a new heading every 5 to 15 s, mostly within a quarter turn, and walks or crawls at 1 or 1.5 m/s, its
 `walk` clip kept in step with the distance and `idle` played when it stands still; with it off
 each stands where it is on the clip the chooser gave it. A `--model` reload frees the replaced model, so the figure holds still over
 saves that keep the model's size. When an upload is refused although the pool's free bytes

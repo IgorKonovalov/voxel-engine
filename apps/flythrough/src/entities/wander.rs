@@ -1,6 +1,6 @@
 //! The wander: each placed body's input while the menu's `wander` is on, from a SplitMix64
-//! stream of its own. Every 60 to 180 ticks it picks a new heading (a turn of up to half a
-//! circle either way) and turns toward it one 5-degree step a tick while it moves at its
+//! stream of its own. Every 300 to 900 ticks it picks a new heading (a turn of up to a
+//! quarter circle either way, one pick in [`WIDE_TURN_ONE_IN`] up to half a circle) and turns toward it one 5-degree step a tick while it moves at its
 //! body's speed. A ground body probes ahead each tick and turns away from a near wall or a
 //! drop, turns round when blocked for 10 ticks and takes a climb one time in eight; a surface
 //! body does not avoid (a wall ahead is a concave edge it climbs, a drop a convex edge it
@@ -20,8 +20,13 @@ pub const SURFACE_SPEED: i64 = 64;
 pub const TURN_STEP: [i32; 2] = [255, 22];
 /// The turn steps in a half circle.
 pub const HALF_TURN_STEPS: i32 = 36;
-/// The shortest and longest ticks between two picks of a heading.
-pub const PICK_TICKS: (u32, u32) = (60, 180);
+/// The turn steps in a quarter circle: the most a picked heading turns, but for the wide
+/// picks.
+pub const QUARTER_TURN_STEPS: i32 = 18;
+/// One pick of a heading in this many may turn up to a half circle.
+pub const WIDE_TURN_ONE_IN: u64 = 8;
+/// The shortest and longest ticks between two picks of a heading: 5 to 15 s at 60 Hz.
+pub const PICK_TICKS: (u32, u32) = (300, 900);
 /// How far a ground body probes ahead: 20 voxels.
 pub const PROBE_REACH: i64 = 20 * 256;
 /// A wall nearer than this ahead (10 voxels) turns a ground body away.
@@ -78,11 +83,17 @@ impl Wander {
         self.turn = if self.draw() & 1 == 0 { steps } else { -steps };
     }
 
-    /// This tick's turn about the up: a new heading when the pick is due, then one step
+    /// This tick's turn about the up: a new heading when the pick is due (up to a quarter
+    /// circle, one pick in [`WIDE_TURN_ONE_IN`] up to a half), then one step
     /// toward it, or straight on once there.
     pub fn heading(&mut self) -> [i32; 2] {
         if self.next_pick == 0 {
-            self.pick_turn(0, HALF_TURN_STEPS as u32);
+            let most = if self.draw().is_multiple_of(WIDE_TURN_ONE_IN) {
+                HALF_TURN_STEPS
+            } else {
+                QUARTER_TURN_STEPS
+            };
+            self.pick_turn(0, most as u32);
             self.next_pick = self.between(PICK_TICKS.0, PICK_TICKS.1);
         }
         self.next_pick -= 1;
@@ -175,7 +186,8 @@ mod tests {
     use super::*;
 
     /// One stream per seed and index: the same pair gives the same draws, another index
-    /// other draws; the turns stay within a half circle and the picks within their ticks.
+    /// other draws; the picks stay within their ticks, their turns within a half circle, and
+    /// most of them within a quarter.
     #[test]
     fn a_stream_is_its_seed_and_index() {
         let draws = |seed, index| {
@@ -186,14 +198,20 @@ mod tests {
         assert_ne!(draws(1, 3), draws(1, 4));
         assert_ne!(draws(1, 3), draws(2, 3));
         let mut w = Wander::new(7, 0);
-        for _ in 0..2000 {
+        let (mut picks, mut wide) = (0, 0);
+        for _ in 0..400_000 {
             let at_pick = w.next_pick == 0;
             w.heading();
             assert!(w.turn.abs() <= HALF_TURN_STEPS);
             if at_pick {
                 assert!((PICK_TICKS.0 - 1..PICK_TICKS.1).contains(&w.next_pick));
+                picks += 1;
+                // The step taken this tick is off the picked turn.
+                wide += i32::from(w.turn.abs() + 1 > QUARTER_TURN_STEPS);
             }
         }
+        assert!(picks > 500, "{picks}");
+        assert!(wide > 0 && wide * 6 < picks, "{wide} of {picks}");
     }
 
     /// A turn step keeps a level direction at length 256 within a unit and turns it about 5

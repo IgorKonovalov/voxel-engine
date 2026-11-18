@@ -144,7 +144,7 @@ fn the_room_course_hashes_to_the_pinned_constant() {
             feed_pose(&mut h, &p.mover.as_ref().expect("a mover").now);
         }
     }
-    assert_eq!(h.finish(), 0x93d7_6d32_b893_7835, "the room course's hash");
+    assert_eq!(h.finish(), 0xe57c_02c6_8ac4_b2d8, "the room course's hash");
 }
 
 /// Done-when 2: over the same course no tick embeds a body, every walker's foot stays inside
