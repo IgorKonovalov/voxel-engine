@@ -266,6 +266,25 @@ impl Watch {
     }
 }
 
+/// Appends to `table` the row of `file` named by each of `names` that `table` has no row of,
+/// in `names`' order, each once; a name `file` lacks is passed over. The rows appended.
+pub fn append_named<'a>(
+    table: &mut MaterialTable,
+    file: &MaterialFile,
+    names: impl IntoIterator<Item = &'a str>,
+) -> usize {
+    let mut added = 0;
+    for n in names {
+        let held =
+            (1..table.len()).any(|i| table.get(i as MaterialId).is_some_and(|m| m.name == n));
+        if !held && let Some((_, row)) = file.row(n) {
+            table.push(row.clone());
+            added += 1;
+        }
+    }
+    added
+}
+
 /// The chunks of `world` resident now that hold a voxel of a row in `rows`, ascending.
 pub fn chunks_holding(world: &vxe_world::World, rows: &[MaterialId]) -> Vec<vxe_world::ChunkCoord> {
     use vxe_world::Brick;

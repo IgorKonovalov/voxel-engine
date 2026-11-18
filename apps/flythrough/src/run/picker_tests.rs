@@ -2,7 +2,9 @@
 //! the digits and the pad on the belt, the chooser's hand-over, where the ghost stands, the
 //! clicks, the remove key, the one panel, the caps and the tester's filter. A rock box with
 //! the walker's rows around the camera, the committed library scanned against the cave's table
-//! (the walker builds; the spider is in error), unless a test names another.
+//! (the walker builds; the spider is in error, since the bare `cave_materials()` lacks the
+//! showcase's rows it names), unless a test names another. A run's own table holds those rows
+//! (`setup::world_table`), so there the spider builds on every source.
 
 use super::*;
 use crate::entities::belt::{self, BELT_ROWS, Item};

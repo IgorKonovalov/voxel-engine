@@ -73,7 +73,9 @@ fn every_library_entry_is_in_step_and_builds() {
 /// The spider maps its nine colours to the named rows (the showcase's three glowing rows among
 /// them) and builds into fourteen parts, the body the root and every other part its child,
 /// with the looping clips `walk` (48 ticks), `idle` (120) and `rear` (60) at 30 ticks a
-/// second; against the cave's table, which lacks the showcase's rows, it does not build.
+/// second; against the bare cave table, which lacks the showcase's rows, it does not build. A
+/// run's own table takes those rows from the material file (`setup::world_table`), so a run
+/// builds it on every source.
 #[test]
 fn the_spider_has_its_rows_parts_and_clips() {
     let path = library().join("spider/spider.rig");

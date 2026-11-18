@@ -129,8 +129,31 @@ pub(crate) fn materials(args: &Args) -> MaterialTable {
 
 /// `table` with the walker's rows, then a row for each palette entry of `--model`'s and
 /// `--vox`'s `.vox` (ADR-0065), then the structures library's rows
-/// (`structures::add_library_rows`): the world's table, fixed once the world is generated.
+/// (`structures::add_library_rows`), then each row the entities library's rigs name in their
+/// `material` lines that the table lacks, from the material file by name
+/// (`entities::library::rig_material_names`; a name the file lacks stays an error on its
+/// entry): the world's table, fixed once the world is generated. The rigs' rows come last, so
+/// every row before them keeps its id.
 pub(crate) fn world_table(args: &Args, table: &MaterialTable) -> MaterialTable {
+    let mut t = table_before_entities(args, table);
+    if let Ok((file, _)) = crate::materials::load(args.materials.as_deref()) {
+        // A rig's name resolves as `viewer::material` reads it: as written, or each `_` a space.
+        let wanted: Vec<String> = crate::entities::library::rig_material_names(args)
+            .into_iter()
+            .filter(|n| crate::viewer::material(&t, n).is_none())
+            .filter_map(|n| {
+                let spaced = n.replace('_', " ");
+                [n, spaced].into_iter().find(|f| file.row(f).is_some())
+            })
+            .collect();
+        crate::materials::append_named(&mut t, &file, wanted.iter().map(String::as_str));
+    }
+    t
+}
+
+/// [`world_table`] before the rows the entities library's rigs name: [`base_table`] and the
+/// structures library's rows.
+pub(crate) fn table_before_entities(args: &Args, table: &MaterialTable) -> MaterialTable {
     let mut t = base_table(args, table);
     let dir = crate::structures::dir_of(args);
     crate::structures::add_library_rows(&dir, args.materials.as_deref(), &mut t);

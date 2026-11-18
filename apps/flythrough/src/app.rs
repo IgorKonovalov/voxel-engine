@@ -128,6 +128,11 @@ impl Flythrough {
         let mut net = Net::new(&world, logic, self.args.seed);
         let vox_ops = crate::setup::vox_ops(&self.args, world.materials());
         let structures = crate::structures::Library::of_args(&self.args, world.materials());
+        let entities = crate::entities::library::of_args(&self.args);
+        println!(
+            "{}",
+            crate::entities::library::start_line(&entities, &self.args, world.materials())
+        );
         for p in vox_ops.iter().flat_map(|v| &v.prefabs) {
             // A scene's prefab named twice registers once; a collision is a 64-bit accident.
             let _ = net.server.register_prefab(p.clone());
@@ -166,7 +171,7 @@ impl Flythrough {
                         self.args.entities,
                         self.args.entities_walk,
                     )
-                    .with_library(crate::entities::library::of_args(&self.args)),
+                    .with_library(entities),
                 )
                 .with_structures(structures),
             upscaler_changed: false,

@@ -1,8 +1,9 @@
 //! The run's tests of a structure in the belt (Plan 0083 Phases 6 and 7b): the belt's fill and
 //! the Structures chooser, the ghost (a coarse copy in its frame), the box rule, the quarter
-//! turn and the scale, the click's logged stamps and the words. A rock box of the cave's table
-//! with the walker's rows and the structures library's rows, the committed entities and
-//! structures libraries, the castle entry left unbuilt.
+//! turn and the scale, the click's logged stamps and the words, and the spider on every
+//! source's table. A rock box of the cave's table with the walker's rows and the structures
+//! library's rows, the committed entities and structures libraries, the castle entry left
+//! unbuilt.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -848,6 +849,110 @@ fn the_ghost_is_a_coarse_copy_in_its_frame() {
     assert_eq!(*icon.parts()[0].volume, *body.volume);
     assert_eq!(f.corner, run.aim_corner([600, 600, 500]));
     assert_eq!(run.world.voxel_hash(), hash, "a ghost writes no voxel");
+}
+
+/// The spider's `material` lines' names, in the rig's order.
+const SPIDER_ROWS: [&str; 9] = [
+    "shell",
+    "rubble",
+    "rock",
+    "ore",
+    "crystal",
+    "amethyst",
+    "ember",
+    "walker",
+    "walker_eye",
+];
+
+/// Phase 7b done-when 4 on the world `flags` start: the committed entities library built
+/// against the run's table loads `spider` with no error; the rig's nine `material` lines name
+/// [`SPIDER_ROWS`], each a row of the table; `crystal`, `amethyst` and `ember` are the table's
+/// last three rows (after the structures library's) and the start-up line says `+3 rows`, or,
+/// with `own`, rows of the scene's own selection and `+0 rows`; a run on a world of that table
+/// fills the belt's slot 1 with the spider (it builds, so it leads the walker by name) and its
+/// icon is made.
+fn assert_spider_builds(flags: &[&str], own: bool) {
+    let table = table_of_run(flags);
+    let args = crate::cli::parse_args_from(crate::test_support::argv(flags)).unwrap();
+    let dir = Path::new(library::DEFAULT_DIR);
+    let mut lib = library::scan(dir);
+    let errors = lib.build(&table);
+    assert!(errors.is_empty(), "{flags:?}: {errors:?}");
+    let spider = lib
+        .entries
+        .iter()
+        .position(|e| e.name == "spider")
+        .expect("the spider");
+    assert_eq!(lib.entries[spider].error(), None, "{flags:?}");
+    let rig = std::fs::read_to_string(dir.join("spider/spider.rig")).expect("the rig");
+    let rig = vxe_assets::Rig::parse(&rig).expect("parses");
+    let names: Vec<&str> = rig.materials.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(names, SPIDER_ROWS);
+    let id_of = |n: &str| crate::viewer::material(&table, n).map(usize::from);
+    for n in SPIDER_ROWS {
+        assert!(id_of(n).is_some(), "{flags:?}: no `{n}` row");
+    }
+    let showcase = ["crystal", "amethyst", "ember"].map(|n| id_of(n).unwrap());
+    let line = library::start_line(&lib, &args, &table);
+    if own {
+        let scene = crate::setup::materials(&args).len();
+        assert!(
+            showcase.iter().all(|&i| i < scene),
+            "{flags:?}: {showcase:?}"
+        );
+        assert_eq!(line, "entities: 2 entries, +0 rows");
+    } else {
+        let n = table.len();
+        assert_eq!(showcase, [n - 3, n - 2, n - 1], "{flags:?}");
+        assert_eq!(line, "entities: 2 entries, +3 rows");
+    }
+
+    let mut run = bare_run(rock_box(&table));
+    run.modes.walkers = crate::entities::Walkers::default().with_library(library::scan(dir));
+    run.modes.structures = st::Library::load(Path::new(st::LIBRARY), &table, &base_table());
+    run.poll_viewer(0.0);
+    run.fill_belt();
+    let spider = run
+        .modes
+        .walkers
+        .library
+        .entries
+        .iter()
+        .position(|e| e.name == "spider")
+        .expect("the spider");
+    // The library's order puts an entity that builds first, by name: the spider, then the
+    // walker.
+    assert_eq!(
+        run.modes.walkers.belt.slots[..2],
+        [Some(Item::Entity(spider)), Some(Item::Entity(1 - spider))],
+        "{flags:?}"
+    );
+    run.poll_viewer(0.0);
+    run.modes.walkers.icons.wait();
+    let tile = belt::tile_of(&run.modes, Item::Entity(spider));
+    assert!(
+        run.modes.walkers.icons.ready(tile),
+        "{flags:?}: the spider's icon"
+    );
+}
+
+/// [`assert_spider_builds`] on the streamed cave and the outdoor hills.
+#[test]
+fn the_spider_builds_on_every_source_cave_and_outdoor() {
+    assert_spider_builds(&[], false);
+    assert_spider_builds(&["--source", "outdoor"], false);
+}
+
+/// [`assert_spider_builds`] on `--castle`.
+#[test]
+fn the_spider_builds_on_every_source_castle() {
+    assert_spider_builds(&["--castle"], false);
+}
+
+/// [`assert_spider_builds`] on the showcase, whose own rows the spider takes.
+#[test]
+fn the_spider_builds_on_every_source_showcase() {
+    assert_spider_builds(&["--source", "showcase"], true);
 }
 
 mod reading {
