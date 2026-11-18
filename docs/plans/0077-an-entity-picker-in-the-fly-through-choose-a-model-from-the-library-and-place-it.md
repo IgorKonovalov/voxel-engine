@@ -1,6 +1,6 @@
 # 0077: An entity picker in the fly-through: choose a model from the entities library, see it at the crosshair, place it
 
-> **Status:** in-progress (dev lane from 2026-11-17); approved (2026-11-16, the owner: all eight recommended answers under "Owner questions"); amended 2026-11-17 (orchestrator re-read against Plans 0078, 0069 and 0080 as landed; owner questions 9 to 11 answered 2026-11-17: the recommended option each, `Delete` removes, `Enter` places and stays open, a page like any other)
+> **Status:** in-progress (dev lane from 2026-11-17; Phases 1 to 4 done); approved (2026-11-16, the owner: all eight recommended answers under "Owner questions"); amended 2026-11-17 (orchestrator re-read against Plans 0078, 0069 and 0080 as landed; owner questions 9 to 11 answered 2026-11-17: the recommended option each, `Delete` removes, `Enter` places and stays open, a page like any other); **amended 2026-11-18 (the owner's window: a placement mode with a belt of slots, a chooser with a picture per entry, the ghost marked and stood further out; Phases 5 to 9 replace Phase 5; owner questions 12 to 18 await answers)**
 > **Created:** 2026-11-16
 > **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md), the testbed side. Apps only
 > (`apps/flythrough`); nothing under `crates/` changes.
@@ -186,6 +186,353 @@ Re-read items for other plans (not this plan's edits): Plan 0079 Phase 4 names `
 is the `walkers walk` entry now; Plan 0083 Phase 6 names `apps/flythrough/src/menu/` and
 `Page::dynamic`, which are `hud/menu/` and this plan's page variant.
 
+## Amended 2026-11-18 (the owner's window): a placement mode, a belt, a chooser with pictures, the marked ghost
+
+Phase 4 ran 2026-11-18 (the orchestrator's `live/session77a.sh` at 6b29e621, the showcase
+hall; `live/` is untracked, so the owner's words are quoted here and the lane copies them into
+the readings log under Phase 4). The direction is right, and the hot reload moved only the
+walker. The placing is wrong in four ways, in the
+owner's words: a "separate menu just for entities" with "a small preview of the entity" per
+entry; after `Enter` on one "the menu should be closed and then I go into placing mode, so I
+can move around freely without the menu blocking the view"; the preview "should not be too
+close, as it blocks the view and it is not possible to place correctly"; and the preview must
+be told from a placed entity "with some form of border around". The owner asked for the UX
+research first; it is
+[`docs/references/entity-placement-ux.md`](../references/entity-placement-ux.md), and the
+decisions below cite its sections in brackets. The same day the owner added: "if we look at
+minecraft approach, how is placing handled there? I think there is a belt of things that is
+possible to place, maybe we should do something similar", and, asked about the wheel, "dig
+radius can stay in menu only". Phases 1 to 3 stand as landed; the picks under (a), (b) and (d)
+of Phase 4 are: `` ` `` stays, the rows stay, a clip per entity stays.
+
+### What the window showed, read against the code
+
+| The owner saw | The code | The fix |
+|---|---|---|
+| the panel over the view while placing | the preview exists only while `PageId::Entities` is open (`Run::sync_preview`), so placing means the 80-column panel with its backdrop over the scene | Phase 5: a placement mode with the menu closed; the chooser only chooses |
+| the preview too close to aim | `Run::aim_feet` stands the feet at the first world hit within the dig's `REACH` (10 m), else 2 m along the view (`lights::MISS_DROP`); looking down from eye height the floor is 2 to 3 m away and a 7 m spider fills the view | Phase 5: a stand rule with a minimum distance from the model's size, a floor drop under a wall hit, a longer reach |
+| the preview and the placed read alike | the preview is "a normal instance in the set, drawn and lit as any other" (the Decision) | Phase 6: a per-instance mark in `vxe-render`, an outline and a tint |
+| a list of words, no picture | "No thumbnails" (the Decision; owner question 2's alternative, deferred) | Phase 7: a still icon per entry, drawn as a tile in the overlay, in the chooser and in the belt |
+
+### Decisions (the reference's sections in brackets)
+
+- **Three states, one at a time.** The view (nothing of this plan's on screen); the
+  **chooser** (the menu's Entities page, ADR-0061's one component; it only chooses and fills
+  the belt); and **placement mode**, with the menu closed: the **belt** along the bottom edge,
+  the **ghost** (the preview) standing at the aim, the camera free. Opening the menu ends
+  placement mode; `Esc` in placement mode ends it and does not quit (the menu's innermost-first
+  rule, Plan 0080 [Esc]); closed and out of the mode, `Esc` quits as before.
+- **The belt** is nine slots, `1`..`9`, drawn centred along the bottom of the window only in
+  placement mode, with a backdrop (0080's bit) under it, the selected slot framed in yellow
+  (glyphs `+`, `-`, `|` around its tile: a shape, then a colour) and its name on the row above
+  the belt for `hud::BANNER_MS` after the selection changes [The belt]. The belt starts filled
+  with the library's entries in name order (slot 1 the first; `--model`'s rig first when
+  given), the rest empty; a slot keeps its entry for the run. The **wheel** steps the slot
+  (down is the next, wrapping at nine) and, with the mode off, enters it at the selected slot
+  without moving it; a **digit** enters the mode at that slot; the pad's **D-pad left and
+  right** step the slot. An empty slot shows the ghost of nothing and its name row reads
+  `slot 5 empty  (choose with` `` ` `` `)`. The **dig radius leaves the wheel and the D-pad**
+  (owner, 2026-11-18, "dig radius can stay in menu only"): its `moving` number row (0080 Phase
+  6) is its one control; `Press::Scroll` leaves the tables with it.
+- **The chooser** is `PageId::Entities` reached by `` ` `` (the `entity picker` action, as
+  before), by `Tab` and the root's `entities` group page's first row `choose an entity`, and
+  by the pad through the same rows. It lists the library's entries only: each entry takes four
+  rows, its icon tile (4 x 4 cells, Phase 7; the words alone until then) at the left and, beside
+  it, the row as today (`> spider  14 parts  7.0 x 4.0 x 2.3 m`, figures illustrative; grey with
+  its error for an entry in error), then `clips walk* idle rear   slot 2` (its clips, the
+  first marked, and the slot that holds it, or `no slot`). The clip row and the group's entries
+  leave the page: `walkers walk`, `eye lights`, `remove aimed entity` and the clip entries are
+  the `entities` group page's rows, as every other group's are. **`Enter` on an entry** puts it
+  in the selected slot (or selects the slot that already holds it), closes the chooser and
+  enters placement mode at that slot; a **digit on an entry** puts it in that slot and the
+  chooser stays open (Minecraft's hover-and-digit, the one assignment path without a cursor)
+  [The belt; The chooser]. The filter still types on the page. A list with pictures, not a
+  grid: the menu is rows, the library is a few models, and `Left` and `Right` keep their page
+  meaning (owner question 18).
+- **The ghost** is the selected slot's entry standing at the aim, a real instance in the set
+  as before (so it is lit and shadowed where it will stand), **marked**: an outline one output
+  pixel wide at 1080p, two at 1440p and above, in the ghost colour, plus a tint of its shaded
+  colour toward the same colour at 0.35 (owner question 12 keeps or drops the tint); the
+  colour is blue (`[0.35, 0.65, 1.0]`, a render setting), the orange `[1.0, 0.55, 0.15]` is the
+  second mark colour a consumer uses for "cannot place", with blue and orange the pair the
+  colour-blind guidance names, never green and red [The ghost; Colour]. A refusal (an entry in
+  error, a full set, a pool refusal) shows no ghost and says why in the notice row, as today.
+  The mark is a **general `vxe-render` facility**: `EntityMirror::set_marks(queue, &[(EntityId,
+  Mark)])` with `Mark { colour: [f32; 3], outline: bool, tint: f32 }` written as one word per
+  instance slot (a 64-word region beside the instances), read by `composite.wgsl`, which
+  already binds `hit_info_in`: a pixel whose hit record is an entity hit of a marked slot mixes
+  its colour by `tint`; a pixel whose four neighbours' instance fields differ from its own, on
+  either side of the edge, with one side a marked slot, is the mark colour (the edge is a
+  change of instance, so two instances touching keep their edge, which a depth mask would
+  lose) [Outlines]. The line is drawn before the upscale, so FSR 2 at 1.5 widens and softens it
+  by its factor and the entity's motion vectors keep it steady; if the window finds it smeared,
+  the alternative is the same test in the present pass over the hit record sampled at the
+  internal resolution with the frame's jitter removed. This needs an **ADR** (two rejected
+  alternatives: a jump-flood outline, which buys a width we do not need for several passes; a
+  translucent ghost, which needs translucent entity voxels in `entity.wgsl` that do not exist
+  and would read through the world's own translucent layers): written as ADR-0074 (the next
+  free number) when the owner answers question 12, before Phase 6 starts. Nothing in
+  `vxe-render` names a ghost or a preview: a mark is a mark.
+- **Where the ghost stands** [Where the ghost stands]: the camera ray's first world hit
+  within `PLACE_REACH` = 30 m (a guess the window judges; the dig's 10 m cannot aim a 7 m
+  model); the feet at the hit when its face is up; when the face is a wall's or a ceiling's,
+  the stand point is the hit moved back along the view by half the model's footprint and
+  **dropped to the floor** (a downward world ray of up to 10 m; none found, it stays at the
+  hit); and never nearer than `near = max(NEAR_MIN, NEAR_SCALE x extent)` with `NEAR_MIN` =
+  3 m and `NEAR_SCALE` = 1.5 over the model's longest rest-pose extent (the walker 1.5 m tall
+  stands at least 3 m out, the spider 7 m long at least 10.5 m): when the hit is nearer than
+  `near`, or there is no hit, the aim point is the view ray's point at `near`, dropped to the
+  floor the same way. `Run::aim_feet` stays the one placement function (Plans 0079 Phase 4
+  and 0083 Phase 6 extend it); `--entities N` and `4` are unchanged. The ghost **faces the
+  camera** as before, turned by `R` in 45 degree steps about the up axis; the turn is kept for
+  the next ghost until the mode ends (Satisfactory and Fortnite keep the rotation; owner
+  question 16).
+- **Placing** [The keys]: the **left click places** where the ghost stands and the mode
+  **stays**, the ghost reappearing at the aim under a new id (the builders' convention; owner
+  questions 14 and 15); the dig does not fire in the mode; the **right click leaves the mode**
+  (so does `Esc`), and the fill does not fire. `Enter` with the menu closed stays the readings.
+  The placed entity keeps the ghost's clip and turn; the notice reads `placed spider #3
+  (rear)` as today. In the mode the clip keys (`Left`, `Right`, `Down`) act on the **ghost**
+  (the thing about to be placed); out of it, on the aimed else newest placed entity as before.
+  `Delete` and `4` remove as before, in the mode or out of it.
+- **The pad** [The keys]: D-pad left and right step the slot (entering the mode from the
+  view), `R2` places (the trigger that digs), `L2` or `East` leaves the mode, `West` turns the
+  ghost (its cutaway toggle is the menu's while the mode is on). The chooser is `Start`, the
+  `entities` row, `choose an entity`, `South` on an entry. `` ` `` has no pad bind. Not an
+  owner question: the map mirrors the mouse (the trigger that digs places, the one that fills
+  leaves) and Phase 8 judges it with a pad connected.
+- **The icons** [The chooser]: a still picture per entry, 64 x 64 pixels, made **on the CPU**
+  through `vxe_entity::EntitySet::raycast` over the entry's model in its rest pose in a
+  scratch set: an orthographic view 30 degrees down and 225 degrees round (Minecraft's GUI
+  transform), the model fitted to 5/8 of the tile, each pixel the hit voxel's material colour
+  (the table's) shaded by a fixed Lambert from the entered face mapped through the part's rest
+  rotation, in integer arithmetic, so the icon is a fixed vector on both CI arms. Made on a
+  worker thread at the library's build and again when an entry reloads; a slot or a row shows
+  its words until its tile arrives (Unity's and Godot's "poll and repaint"). Still, not live
+  (owner question 17 [The chooser]): a live icon is a frame-pipeline render per entry per
+  frame; the ghost in the world is the live view. The renderer-side facility is **image tiles
+  in the overlay**, general: `HudOverlay::set_tile(queue, index, &rgba8 64 x 64)` into a tile
+  atlas (`MAX_TILES` = 32, 512 KiB) and a cell word's free bits 17..31 naming a tile and the
+  cell's position in it (a tile covers 4 x 4 cells at any glyph scale, nearest-sampled so the
+  voxels stay crisp); `hud.wgsl` draws the tile's pixel where the cell has the tile bit and no
+  glyph bit is set, above the backdrop. Nothing in `vxe-render` names an entity icon. This
+  needs an **ADR** too (rejected: a `Frame` per icon through the whole pipeline, which couples
+  an icon to the scene's lighting and costs the pipeline's targets per entry; a UI library for
+  the picture panel, ADR-0009's negative): ADR-0075, written with ADR-0074.
+- **Under `--tester`** there is no belt and no mode: the wheel and the digits map to nothing,
+  as `` ` `` does.
+
+The former Phase 5 ("the owner's picks, and the tip", under "Implementation phases" below) is
+Phase 9 now; its header says so.
+
+### Phase 5: placement mode and the belt (the new walking skeleton)
+- **Owner skill:** dev
+- **What:** the mode and the belt as the Decisions describe, in words only (no icons, no
+  mark): `Run::placing: Option<Belt>` or the dev's cut; the belt's slots, the wheel and the
+  digits, the chooser's `Enter` and digits, `Esc` and the right click, the left click placing
+  and staying, `R`, the stand rule (`PLACE_REACH`, `NEAR_MIN`, `NEAR_SCALE`, the floor drop),
+  the clip keys on the ghost, the pad binds, the `entities` group page with `choose an entity`,
+  the dig radius off the wheel and the D-pad, `--keys` and `docs/flythrough.md` (the belt, the
+  mode, the keys; the wheel row leaves `moving`). The ghost is unmarked in this phase.
+- **Files touched:** `apps/flythrough/src/entities/{picker,placed,library}.rs` (`belt.rs`
+  new), `apps/flythrough/src/hud/menu/{page,route,write,entries}.rs`, `toggles.rs` (`Press::
+  Scroll` removed, the belt's actions under `Entities`), `run/{keys,frame,hud_feed,edit,
+  picker_tests,menu_tests}.rs`, `pad.rs`, `apps/flythrough/tests/{picker,menu,toggles}.rs`,
+  `docs/flythrough.md`, `docs/plans/logs/0077.md`.
+- **Done when** (CPU, `run/picker_tests.rs` on `picker_run()` unless named, each under 0.5 s):
+  - `the_wheel_and_the_digits_enter_the_mode`: closed, one wheel step enters the mode at slot
+    1 with the ghost standing and `dig_radius` unchanged; a second step selects slot 2 (the
+    spider, grey and ghostless under the cave's table, its reason in the notice); eight more
+    wrap to slot 1; `3` selects the empty slot 3 (no ghost, the name row names it); `Esc` ends
+    the mode (no ghost, no belt, the run still going); a second `Esc` is the quit as before.
+  - `the_chooser_fills_the_belt_and_hands_over`: `` ` ``, `Down` to the spider, `2` with the
+    page open puts the spider in slot 2 and the page stays; `Enter` on the walker selects the
+    slot that holds it, closes the page and enters the mode with the walker's ghost; `` ` `` in
+    the mode opens the chooser again (the belt and the ghost gone while it is open).
+  - `the_ghost_stands_by_the_rule`: with the camera 1.7 m over the floor looking 40 degrees
+    down (the floor hit about 2.6 m out), the walker's feet are on the floor at the view's
+    3.0 m point dropped down, within one voxel; the spider's (showcase table) at 10.5 m; aimed
+    at a wall 6 m out, the walker's feet are on the floor below the hit, moved back by half its
+    footprint; aimed into the dark with no hit within 30 m, at 3.0 m along the view.
+  - `a_click_places_and_the_mode_stays`: the left click leaves one placed walker where the
+    ghost stood (same id, clip, yaw) and a new ghost; the dig count is unchanged; `R` twice
+    then a click places a walker turned 90 degrees from facing and the next ghost keeps the
+    turn; the right click ends the mode with no fill and no placement; `Right` in the mode
+    changes the ghost's clip and the placed entity keeps it.
+  - `the_belt_draws_its_slots` (`tests/picker.rs` or here): in the mode at 1280 x 720 the
+    belt's rows are the last used rows of the overlay, centred, nine slots with their digits,
+    slot 1 framed with yellow `+ - |` cells and backdrop bits under the belt; the name row
+    reads `walker` for `BANNER_MS` after a wheel step and is blank after; out of the mode the
+    overlay has no belt rows and the stats are as `F2` left them.
+  - `the_pad_places_from_the_view`: `DpadRight` enters the mode at slot 2, `DpadLeft` back to
+    1, `West` turns, `R2` places, `East` ends it; `Start`, `entities`, `choose an entity`,
+    `South` on the spider reaches the mode too.
+  - `the_dig_radius_is_menu_only` (`run/menu_tests.rs`): the wheel and `DpadUp` leave
+    `dig_radius` unchanged with the menu closed; `Tab`, `dig`, `Enter`, `Up` still steps it;
+    `--keys` lists `dig radius` under `moving` with no key.
+  - `the_route_is_one_function` (0080's) gains the wheel, the digits, `R`, `Esc` and both
+    clicks in the mode among the keys that pass; `the_tester_has_no_picker_and_an_entry_in_
+    error_refuses` gains: under `--tester` the wheel and `2` enter nothing.
+  - 0080's `every_toggle_and_action_is_an_entry`, `the_source_reads_no_key_the_tables_miss`,
+    `every_live_entry_answers` and `the_fixed_set_is_the_table` pass with the group page and
+    the belt's actions; `docs/flythrough.md`'s key table has the mode's keys and no wheel row
+    under `moving`; `node scripts/check-doc-links.mjs` exits 0.
+  - Reading: `format_us` with the belt shown (the reading of Phase 3, now with the belt rows),
+    into the readings log.
+
+### Phase 6: the mark: an outline and a tint for an instance (`vxe-render`), the ghost marked
+- **Owner skill:** dev
+- **What:** `EntityMirror::set_marks` and `Mark`, the marks' words beside the instances,
+  `composite.wgsl`'s edge test and tint, the ghost colour and the second colour as render
+  settings (`vxe_render::Settings`, every profile the same; ADR-0055), the ghost marked in the
+  fly-through through `Walkers::refresh_displays` (one call per frame, no allocation once
+  grown), and ADR-0074 cited in the code by number.
+- **Files touched:** `crates/vxe-render/src/entities/{mod,instances,display}.rs`,
+  `crates/vxe-render/src/frame/{mod,marcher}.rs`, `crates/vxe-render/src/settings.rs`,
+  `crates/vxe-render/src/shaders/{composite,hitrec,common}.wgsl`,
+  `crates/vxe-render/tests/gpu_entities.rs` or `apps/flythrough/tests/gpu_entity_library.rs`,
+  `apps/flythrough/src/entities/{placed,picker}.rs`, `apps/flythrough/src/run/frame.rs`,
+  `docs/plans/logs/0077.md`.
+- **Done when:**
+  - `a_marked_instance_has_its_outline_and_tint` (`gpu_entity_library`, lavapipe, about 6 s,
+    an estimate): two library walkers side by side on Plan 0062's lit box, the left one
+    marked blue with outline and tint 0.35, in the albedo view: at the left walker's centre
+    pixel the colour is `mix(unmarked, blue, 0.35)` within 2/255 of the right walker's centre
+    pixel mixed the same; every pixel whose hit record is the left walker's instance and whose
+    four neighbours include a non-entity or another instance's hit is the blue within 2/255,
+    and no such pixel of the right walker is; with the marks cleared both walkers read within
+    1/255 of each other at mirrored pixels.
+  - `marks_hold_two_touching_instances_apart` (same binary): the two walkers moved to touch,
+    one marked: the pixels on their shared edge are the mark colour (the edge is a change of
+    instance, not of depth).
+  - `the_ghost_is_marked_and_the_placed_are_not` (CPU, `run/picker_tests.rs`): in the mode the
+    displays' marks list holds the ghost's id with the ghost colour and no placed id; after a
+    click the placed entity's mark is gone and the new ghost's is set; out of the mode the list
+    is empty; `refreshing_the_displays_allocates_nothing_per_entity` (Plan 0062's) still holds
+    with the marks refreshed.
+  - `the_mark_colours_are_settings` (`crates/vxe-render/tests/settings.rs` or beside it): the
+    ghost colour and the second colour are fields of `Settings`, the same in every profile,
+    printed by `--settings` (or the profile's dump, whichever the tree has) and taken from
+    `--set ghost-colour=...` if the flag exists, else noted as menu-only in the readings log.
+  - Reading: the composite pass's GPU time with no mark, with one marked instance, and with
+    four, RTX 3080 Laptop at 1080p output (FSR 2 at 1.5) and lavapipe, into the readings log
+    and `docs/nfr/02-frame-budget.md`'s headroom rows; the guess is under 0.1 ms on the RTX
+    and under 0.6 ms on the RADV RENOIR (`docs/nfr.md` section 2, the headroom line).
+
+### Phase 7: the icons: a still picture per entry, as tiles in the overlay, in the chooser and the belt
+- **Owner skill:** dev
+- **What:** `HudOverlay::set_tile` and the tile bits (`vxe-render`, general; ADR-0075 cited
+  by number), the CPU icon renderer in the fly-through (`entities/icon.rs`: the fixed view,
+  the fit, the integer Lambert, a worker thread with a channel), the icons in the chooser's
+  rows and the belt's slots, the words until a tile arrives, a reload remaking its entry's
+  icon.
+- **Files touched:** `crates/vxe-render/src/hud.rs`, `crates/vxe-render/src/shaders/hud.wgsl`,
+  `crates/vxe-render/tests/gpu_hud.rs`, `apps/flythrough/src/entities/{icon,library,belt,
+  picker}.rs`, `apps/flythrough/src/hud/menu/write.rs`, `apps/flythrough/src/run/{frame,
+  hud_feed}.rs`, `apps/flythrough/tests/{icon,picker}.rs` (`icon.rs` new),
+  `apps/flythrough/tests/gpu_hud_golden.rs` and its golden, `docs/entities.md` (the icons'
+  view), `docs/plans/logs/0077.md`.
+- **Done when:**
+  - `a_tile_draws_in_its_cells` (`gpu_hud.rs`, lavapipe, under 5 s): a 64 x 64 tile of a
+    known pattern set at a 4 x 4 cell block at scale 2 reads pixel exact over a cleared target;
+    a glyph on a cell of the block is the glyph's colour over the tile; a pixel outside the
+    block is the clear colour; at scale 3 each tile pixel covers 1.5 output pixels by nearest
+    sampling (the test checks the 96 x 96 block's corners and centre).
+  - `the_walker_icon_is_fitted_and_fixed` (`tests/icon.rs`, CPU, under 0.5 s): the walker's
+    icon's non-background pixels span at least 40 of 64 pixels on the longer axis and are
+    centred within one pixel; its three visible face shades are three distinct colours derived
+    from the `walker` row's colour; the icon's bytes hash to the fixed vector written into the
+    test, bit-identical on both CI arms (integer arithmetic throughout); an entry in error has
+    no icon; the spider's icon against the showcase table hashes to its vector.
+  - `the_icon_arrives_after_the_words` (CPU, `run/picker_tests.rs`): on the first frame in the
+    mode slot 1's tile is unset and the slot shows `walker`; after the worker's message is
+    polled the cell words carry the tile bit for its 4 x 4 block; a reload of the walker's rig
+    remakes its icon (the tile index reused).
+  - `gpu_hud_golden` gains `the_belt_and_the_chooser_over_the_carved_view`: the chooser with
+    both icons, and the belt in the mode with slot 1 framed, pixel exact, blessed on lavapipe,
+    under 10 s each.
+  - Reading: the icon's CPU time per entry at 64 x 64 (release, dev box) and the tile atlas's
+    bytes, into the readings log; the guess is 5 to 50 ms per entry (4096 rays through a
+    fourteen-part model), off the frame thread, so the start time of `docs/nfr.md` section 7
+    does not move.
+
+### Phase 8: the owner's window, run 2
+- **Owner skill:** human
+- **What:** `live/session77b.sh` rebuilt at Phase 7's tip, on Linux: `--source showcase --shot
+  hall --exposure 8 --hud` at 1280 x 720 and the laptop's size: the wheel into the mode, the
+  belt and its frame, the name row, the ghost's outline and tint over the dark hall and against
+  a lit wall (`F7`), the distance of the walker and the spider as they stand, a wall aim and a
+  ceiling aim (the floor drop), `R`, a click and the next ghost, the clip keys on the ghost,
+  `Esc` and the right click out, `` ` `` into the chooser with the icons, a digit assigning a
+  slot, `Enter` handing over; the pad if one is connected; a run with `--model` and a saved
+  edit (the icon remade). Then the default cave (the spider grey, its slot ghostless).
+- **Done when:** the owner's words are in the readings log on: (a) the belt, its slots and
+  its frame; (b) the ghost's mark: outline alone, tint alone, or both (question 12); (c) the
+  stand rule's distances and the floor drop (question 13); (d) the clicks (question 14), staying
+  in the mode (15) and `R` (16); (e) the icons' size, view and lighting (17); (f) anything to
+  rename, reorder or drop, named for Phase 9.
+
+### Phase 9: the owner's picks, and the tip
+- **Owner skill:** dev
+- **What:** the former Phase 5: the window's picks (words, distances, colours, keys), then the
+  gate tier at the tip.
+- **Files touched:** the Phase 1 to 7 files as the picks need; `docs/flythrough.md`.
+- **Done when:** each pick in the readings log names its commit or the owner's "leave it";
+  the Phase 1 to 7 tests hold the changed rows; `cargo nextest run --profile gate`, clippy,
+  fmt, deny and the doc gates exit 0 at the tip; the Phase 6 and 7 readings are in the log
+  with machine and commit.
+
+### Budgets added 2026-11-18 (guesses until their phase reads them)
+
+- **The mark** (Phase 6): four `hit_info_in` taps and one compare per internal pixel in
+  `composite.wgsl`, about 0.9 M pixels at 1080p output under FSR 2 at 1.5: under 0.1 ms on the
+  RTX 3080 Laptop, under 0.6 ms on the RADV RENOIR, on the headroom line (2.6 ms, `docs/nfr.md`
+  section 2); 256 bytes of marks beside the instances. The outline is drawn before the
+  upscale; its look under FSR 2 is Phase 8's to judge.
+- **The icons** (Phase 7): 5 to 50 ms of CPU per entry, once, on a worker thread; the tile
+  atlas 512 KiB of VRAM (32 tiles of 64 x 64 RGBA8); the overlay's cell words unchanged in
+  size. The start time (`docs/nfr.md` section 7) does not move; the first frame in the mode
+  shows words until the tiles arrive.
+- **The belt** (Phase 5): six more overlay rows formatted a frame in the mode, under the
+  Phase 3 reading's order (35 us debug); the overlay's buffers are unchanged.
+
+### What this amendment reverses in the text above
+
+The Decision's "No thumbnails" and "What this plan does NOT do"'s "No thumbnails, no image in
+the overlay" are superseded: the owner asked for the picture per entry after seeing the list.
+"No moving, turning or multi-selecting a placed entity" stands for placed entities; the ghost
+turns with `R` before it is placed. Owner question 10's "`Enter` places and stays open" is
+superseded: the chooser's `Enter` hands over to the mode, and the mode stays after a click.
+
+### Owner questions added 2026-11-18 (each with a recommendation; answered by the window if not before)
+
+12. **The ghost's mark.** Recommended: an outline **and** a tint toward the same blue at 0.35,
+    so the ghost reads as a ghost at a distance where a one-pixel line vanishes, and as a
+    border up close. Alternatives: the outline alone (the owner's words, "some form of border");
+    the tint alone (cheapest, but colour alone, XAG 103).
+13. **Where the ghost stands.** Recommended: the rule from the model's size (no nearer than
+    `max(3 m, 1.5 x its longest extent)`, dropped to the floor), nothing to learn. Alternative:
+    a distance the owner pushes in and out with two keys (`-` and `=`, free), kept per run, as
+    Space Engineers' Ctrl + wheel; or a fixed 5 m for every model.
+14. **Which click places.** Recommended: the left click places and the right click leaves the
+    mode (Satisfactory, Valheim, The Sims, the editors); the dig and the fill rest while the
+    mode is on. Alternative: the right click places and the left keeps digging (Minecraft's
+    split, which the fly-through's dig and fill already follow).
+15. **After a placement.** Recommended: the mode stays and the next ghost appears (every
+    builder read; a row of spiders is clicks, not round trips). Alternative: the mode ends
+    after one placement and the wheel or a digit re-enters it.
+16. **Turning the ghost.** Recommended: `R` turns it 45 degrees about the up axis, the turn
+    kept until the mode ends. Alternatives: no turn (it faces the camera, as today); 22.5
+    degree steps (Valheim's).
+17. **The pictures.** Recommended: a still icon per entry, made once on the CPU at the fixed
+    three-quarter view, in the chooser and the belt. Alternative: a live icon (the frame
+    pipeline rendering each slot's model every frame into its tile, a `Frame` per slot), which
+    the ghost in the world already gives for the selected one.
+18. **The chooser's shape.** Recommended: a list, four rows per entry with its icon at the
+    left, on the menu's rows (`Up`/`Down` move, `Left`/`Right` keep their page meaning).
+    Alternative: a grid of icons, Minecraft's creative inventory, which needs a grid page kind
+    and two-axis navigation in the menu for a library of a few models.
+
 ## TL;DR
 
 The fly-through gains an **entity picker**: `` ` `` opens a list over the left half of the
@@ -287,7 +634,8 @@ picker into Plan 0073's menu: 0073 waits behind Plans 0069 and 0071, and the own
 picker now. We rejected a picker with its own drawing and routing: it would be the third way the
 window draws a panel.
 
-**No thumbnails.** The overlay draws 8 x 8 glyphs (ADR-0009); a picture of each model in the list
+**No thumbnails** (superseded 2026-11-18: the amendment's Phase 7 draws a still icon per entry
+as a tile in the overlay). The overlay draws 8 x 8 glyphs (ADR-0009); a picture of each model in the list
 would need a render-to-region facility in `vxe-render` and a pass per thumbnail. The preview at
 the crosshair shows the selected model lit in the world at no new render cost (owner question 2).
 
@@ -456,7 +804,7 @@ cut) rather than pass the 1200-line cap.
   Phase 4); (d) a clip per entity and the clip keys following the aim; (e) anything to rename,
   reorder or drop, named for Phase 5.
 
-### Phase 5: the owner's picks, and the tip
+### Phase 5 (as approved 2026-11-16; replaced by Phases 5 to 9 of "Amended 2026-11-18" above, where it is Phase 9)
 - **Owner skill:** dev
 - **What:** the window's picks (words, layout, keys), then the gate tier at the tip.
 - **Files touched:** the Phase 1 to 3 files as the picks need.
@@ -570,7 +918,8 @@ Answered 2026-11-16 (owner): every recommended option, 1 to 8.
   in them are the fly-through's (the engine knows no gameplay). A consumer builds its own picker,
   or none.
 - **No thumbnails, no image in the overlay, no backdrop** (Plan 0076 Phase 4 owns the backdrop if
-  its window asks for one).
+  its window asks for one). Superseded 2026-11-18 for the first two: the amendment's Phase 7
+  draws a still icon per entry as an overlay tile; the backdrop is Plan 0080's.
 - **No saved placements**, no level file, no undo beyond removal: placements end with the run,
   as Plan 0063 states.
 - **No editing a model in the picker**: rigs are edited in a text editor and MagicaVoxel
@@ -597,8 +946,13 @@ Answered 2026-11-16 (owner): every recommended option, 1 to 8.
 | 1: the library scanned and listed | dev | done; `walker.rs` split into `entities/{mod,walker,placed,pool,library}.rs` here (the amendment puts it in Phase 2); `--library` is a switch beside `--keys` and the directory is `--library-dir DIR` (the plan writes `--library [DIR]`); `Viewer`'s playback moved into `viewer::Play`; `examples/clip.rs`, `tests/gpu_entity_pool.rs` edited for the moved names. Readings: [logs/0077.md](logs/0077.md) | 5666f0e5 |
 | 2: several models at once, a clip per entity | dev | done; `Walkers` holds the `Library` (a `Viewer` per rig entry) and `Placed` its `entry` and own `viewer::Play`; the clip keys act on the aimed (else newest) entity and need `Needs::Placed`; a pool refusal of a non-`--model` entry removes its unuploaded instances and names it (`spider: ...`); the HUD's target row is its own row (`walker #1 walk 0/30`), not appended to the entities row; `refreshing_the_displays_allocates_nothing_per_entity`'s rig half re-derived (`four == 4 * one`, logged); the gpu binaries were queued behind the lock at commit (Phase 3 records them); `src/run/{tests,menu_tests}.rs` and `tests/gpu_entity_pool.rs` edited for the moved names | a74a8454 |
 | 3: the picker | dev | done; the page is `PageId::Entities` (rows `Row::Item`, `Row::Clip`, then the `entities` group's entries less the opener), opened by the root's `entities` row and by `` ` `` (the `entity picker` action, renamed from `place a walker`; `Act::Picker`); `Enter` on an entry is `Activated::Place { entry, close }` (the run answers an entry in error with its error, not `Activated::Refused`) and on the clip row `Activated::Clip`; the remove action is labelled `remove aimed entity` (the `--keys` tree's 22-column label); the run's tests are in a new `src/run/picker_tests.rs` (not `menu_tests.rs`, near its cap), the tester's `` ` `` case there too (not `tests/path.rs`, Plan 0088's); `the_route_is_one_function` is untouched and `tests/picker.rs` holds the `` ` `` and `Delete` route cases; `FORMER_KEYS` (`run/menu_tests.rs`) loses `Delete`; `HudOverlay::allocations` over 60 open frames not read (needs the window) | committed with this row |
-| 4: the owner's window | human | not started | |
-| 5: the owner's picks, and the tip | dev | not started | |
+| 4: the owner's window | human | done 2026-11-18 (the orchestrator's session script at 6b29e621; the owner's words quoted under "Amended 2026-11-18", to be copied into the readings log): the direction right, the hot reload moved only the walker; the placing UX replanned as Phases 5 to 9 | |
+| 5 (as approved): the owner's picks, and the tip | dev | replaced by Phases 5 to 9 (amended 2026-11-18); its work is Phase 9's | |
+| 5: placement mode and the belt | dev | not started | |
+| 6: the mark (`vxe-render`), the ghost marked | dev | not started (ADR-0074 first) | |
+| 7: the icons as overlay tiles, in the chooser and the belt | dev | not started (ADR-0075 first) | |
+| 8: the owner's window, run 2 | human | not started | |
+| 9: the owner's picks, and the tip | dev | not started | |
 
 ### Notes
 
