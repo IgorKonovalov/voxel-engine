@@ -329,6 +329,35 @@ fn the_chooser_fills_the_belt_and_hands_over() {
     assert_eq!(w.preview.as_ref().and_then(|p| p.entry), Some(walker));
 }
 
+/// Phase 9 (4): with `--model` naming the library's own walker rig the library holds one
+/// walker entry (`--model`'s, flagged): the belt is the walker in slot 1, the spider in slot
+/// 2, slot 3 empty, and the chooser lists two entries.
+#[test]
+fn a_model_rig_from_the_library_fills_one_slot() {
+    let mut run = bare_run(rock_box(&cave_table(), 60));
+    let dir = std::path::Path::new(library::DEFAULT_DIR);
+    let rig = dir.join("walker/walker.rig");
+    let viewer = crate::viewer::Viewer::open(&rig, None).expect("opens");
+    let lib = library::scan(dir).with_model(viewer);
+    run.modes.walkers = crate::entities::Walkers::default().with_library(lib);
+    run.poll_viewer(0.0);
+    let (walker, spider) = (entry(&run, "walker"), entry(&run, "spider"));
+    assert!(run.modes.walkers.library.entries[walker].flagged);
+    frame_keys(&mut run, &pressed(KeyCode::Backquote));
+    let b = &run.modes.walkers.belt;
+    assert_eq!(b.slots[..3], [Some(walker), Some(spider), None]);
+    let v = run.run_view();
+    let items = run.menu.rows(&run.modes, &v);
+    let items: Vec<usize> = items
+        .iter()
+        .filter_map(|r| match r {
+            Row::Item(i) => Some(*i),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(items, [walker, spider]);
+}
+
 /// The ghost's feet with the camera at `at`, `pitch_deg` above the horizon along +x, in
 /// placement mode at the walker's slot (or the slot holding `name`).
 fn ghost_feet(run: &mut Run, name: &str, at: [f32; 3], pitch_deg: f32) -> [f32; 3] {

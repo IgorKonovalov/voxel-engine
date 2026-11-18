@@ -139,18 +139,38 @@ impl Library {
         }
     }
 
-    /// `--model`'s viewer as an entry ahead of the others, selected; a scanned entry of the
-    /// same rig file stays where it is.
+    /// `--model`'s viewer as the library's flagged entry, selected: the scanned entry of the
+    /// same rig file (the two paths equal once canonicalised, each the literal path when it
+    /// does not canonicalise) takes `--model`'s viewer in place and keeps its name and place;
+    /// a rig outside the library is an extra entry ahead of the others.
     pub fn with_model(mut self, viewer: Viewer) -> Self {
-        self.entries.insert(
-            0,
-            Entry {
-                name: viewer.name.clone(),
-                source: Ok(Source::Rig(Box::new(viewer))),
-                flagged: true,
-            },
-        );
-        self.selected = 0;
+        let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let rig = canon(&viewer.rig_path);
+        let scanned = self
+            .entries
+            .iter()
+            .position(|e| e.viewer().is_some_and(|v| canon(&v.rig_path) == rig));
+        let name = viewer.name.clone();
+        let source = Ok(Source::Rig(Box::new(viewer)));
+        self.selected = match scanned {
+            Some(i) => {
+                let e = &mut self.entries[i];
+                (e.source, e.flagged) = (source, true);
+                i
+            }
+            None => {
+                let flagged = true;
+                self.entries.insert(
+                    0,
+                    Entry {
+                        name,
+                        source,
+                        flagged,
+                    },
+                );
+                0
+            }
+        };
         self
     }
 
@@ -196,9 +216,11 @@ impl Library {
     }
 
     /// The `--library` lines once [`Library::build`] has run: one per entry ([`entry_line`]),
-    /// then the notes.
+    /// `--model`'s first and the others in the library's order, then the notes.
     pub fn lines(&self, table: &MaterialTable) -> Vec<String> {
-        let mut out: Vec<String> = self.entries.iter().map(|e| entry_line(e, table)).collect();
+        let mut entries: Vec<&Entry> = self.entries.iter().collect();
+        entries.sort_by_key(|e| !e.flagged);
+        let mut out: Vec<String> = entries.iter().map(|e| entry_line(e, table)).collect();
         out.extend(self.notes.iter().cloned());
         out
     }

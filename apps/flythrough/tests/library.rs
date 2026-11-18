@@ -178,3 +178,25 @@ fn the_library_flag_prints_the_entries() {
     );
     assert!(lines[3].contains("c/ holds no c.rig"), "{text}");
 }
+
+/// Plan 0077 Phase 9 (4): `--model` naming the committed library's own walker rig (by a path
+/// that canonicalises to the scan's) with the default library gives one `walker` entry, the
+/// flagged one and first in `--library`'s lines, and one `spider` entry, no third.
+#[test]
+fn a_model_rig_from_the_library_is_one_entry() {
+    let rig = committed().join("walker/../walker/walker.rig");
+    let argv = ["--library", "--model", rig.to_str().expect("utf-8")];
+    let args = flythrough::cli::parse_args_from(argv.map(str::to_owned)).expect("parses");
+    let text = library::library_text(&args);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 2, "{text}");
+    assert!(lines[0].starts_with("walker "), "{text}");
+    assert!(lines[1].starts_with("spider "), "{text}");
+
+    let lib = library::of_args(&args);
+    assert_eq!(names(&lib), ["spider", "walker"], "the scan's places");
+    assert!(lib.entries[1].flagged && !lib.entries[0].flagged);
+    assert_eq!(lib.selected, 1);
+    assert_eq!(lib.order(), [1, 0]);
+    assert!(lib.flagged().is_some_and(|v| v.rig_path == rig));
+}

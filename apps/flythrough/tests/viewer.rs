@@ -526,43 +526,59 @@ fn each_entity_plays_its_own_clip() {
 
 /// Plan 0077 Phase 2 done-when 2: with a walker and a spider placed from one library, a saved
 /// change to the walker's rig moves the walker onto the new model under the same id, and
-/// leaves the spider's id, model and pose as they were.
+/// leaves the spider's id, model and pose as they were. Phase 9 (4): the same with `--model`
+/// naming the library's own walker rig, merged into its one entry (two entries, the walker's
+/// viewer `--model`'s), whose reload is the one viewer's (said as `--model`'s, `reloaded`).
 #[test]
 fn a_reload_moves_only_its_own_entry() {
-    let (dir, t) = library_copy("reload");
-    let mut w = entities::Walkers::default().with_library(entities::library::scan(&dir));
-    assert_eq!(w.poll_viewer(0.0, &t), None, "both build");
-    let (wi, si) = (entry(&w, "walker"), entry(&w, "spider"));
-    let walker_id = w
-        .place_entry(&t, Some(wi), [0.0, 0.0, 2.0], 0.0)
-        .expect("walker");
-    let spider_id = w
-        .place_entry(&t, Some(si), [90.0, 0.0, 2.0], 0.0)
-        .expect("spider");
-    let old_walker = w.set.get(walker_id).expect("walker").0.clone();
-    let (spider_model, spider_pose) = {
-        let (m, p) = w.set.get(spider_id).expect("spider");
-        (m.clone(), p.clone())
-    };
-    let rig_path = dir.join("walker/walker.rig");
-    let text = std::fs::read_to_string(&rig_path).expect("reads");
-    std::fs::write(&rig_path, text.replace("leg_l rot x 45", "leg_l rot x 30")).expect("saved");
-    std::fs::File::options()
-        .write(true)
-        .open(&rig_path)
-        .expect("opens")
-        .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(10))
-        .expect("stamped");
-    assert_eq!(w.poll_viewer(1.0, &t).as_deref(), Some("walker: reloaded"));
-    let (new_walker, _) = w.set.get(walker_id).expect("the same id");
-    assert!(
-        !Arc::ptr_eq(new_walker, &old_walker),
-        "the walker's model is new"
-    );
-    let (m, p) = w.set.get(spider_id).expect("the spider's id");
-    assert!(Arc::ptr_eq(m, &spider_model));
-    assert_eq!(*p, spider_pose);
-    assert_eq!(w.placed.len(), 2);
+    for merged in [false, true] {
+        let (dir, t) = library_copy(if merged { "reload-merged" } else { "reload" });
+        let rig_path = dir.join("walker/walker.rig");
+        let mut lib = entities::library::scan(&dir);
+        if merged {
+            lib = lib.with_model(Viewer::open(&rig_path, None).expect("opens"));
+            assert_eq!(lib.entries.len(), 2);
+        }
+        let mut w = entities::Walkers::default().with_library(lib);
+        assert_eq!(w.poll_viewer(0.0, &t), None, "both build");
+        let (wi, si) = (entry(&w, "walker"), entry(&w, "spider"));
+        assert_eq!(w.library.entries[wi].flagged, merged);
+        let walker_id = w
+            .place_entry(&t, Some(wi), [0.0, 0.0, 2.0], 0.0)
+            .expect("walker");
+        let spider_id = w
+            .place_entry(&t, Some(si), [90.0, 0.0, 2.0], 0.0)
+            .expect("spider");
+        let old_walker = w.set.get(walker_id).expect("walker").0.clone();
+        let (spider_model, spider_pose) = {
+            let (m, p) = w.set.get(spider_id).expect("spider");
+            (m.clone(), p.clone())
+        };
+        let text = std::fs::read_to_string(&rig_path).expect("reads");
+        std::fs::write(&rig_path, text.replace("leg_l rot x 45", "leg_l rot x 30")).expect("saved");
+        std::fs::File::options()
+            .write(true)
+            .open(&rig_path)
+            .expect("opens")
+            .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(10))
+            .expect("stamped");
+        // `--model`'s viewer says its reload as `--model` always has, unprefixed.
+        let said = if merged {
+            "reloaded"
+        } else {
+            "walker: reloaded"
+        };
+        assert_eq!(w.poll_viewer(1.0, &t).as_deref(), Some(said));
+        let (new_walker, _) = w.set.get(walker_id).expect("the same id");
+        assert!(
+            !Arc::ptr_eq(new_walker, &old_walker),
+            "the walker's model is new"
+        );
+        let (m, p) = w.set.get(spider_id).expect("the spider's id");
+        assert!(Arc::ptr_eq(m, &spider_model));
+        assert_eq!(*p, spider_pose);
+        assert_eq!(w.placed.len(), 2);
+    }
 }
 
 /// Plan 0077 Phase 2 done-when 3: with the crosshair's ray (the entity set's raycast, as the

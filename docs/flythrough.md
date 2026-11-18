@@ -284,7 +284,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--lamp-toggle N` | Switch the lamp every `N` frames |
 | `--entities N` | Start with `N` of the library's selected entry (voxel-model entities) on a 3 m ring around the spawn [0] |
 | `--entities-walk on\|off` | The built-in walkers start walking, as the menu's `walkers walk` sets them [off] |
-| `--model PATH` | View a `.rig` and the `.vox` it names (the library is `apps/flythrough/assets/entities/<name>/<name>.rig`, [entities.md](entities.md)): it is the library's first entry, selected, so `` ` `` and `--entities N` place it; a saved change to either file reloads its instances only |
+| `--model PATH` | View a `.rig` and the `.vox` it names (the library is `apps/flythrough/assets/entities/<name>/<name>.rig`, [entities.md](entities.md)): it is the library's first entry, selected, so `` ` `` and `--entities N` place it (a rig of the library itself is that entry, not a second one); a saved change to either file reloads its instances only |
 | `--clip NAME` | The `--model` clip to play first [the rig's first] |
 | `--library-dir DIR` | The entities library: every `DIR/<name>/<name>.rig` is an entry, in name order; `--model`'s rig comes first. A missing or empty library gives the built-in walker [`apps/flythrough/assets/entities`] |
 | `--fade-reading` | Headless: dig, settle, switch the lamp off and print how the light fades |
