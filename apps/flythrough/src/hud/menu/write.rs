@@ -149,7 +149,7 @@ impl Menu {
     /// `n/m` when the rows do not fit), the rows with the selected one yellow, a blank row and
     /// the footer. Writes nothing while closed.
     pub fn write(&self, m: &Modes, v: &RunView, text: &mut String, colours: &mut Vec<HudColour>) {
-        self.write_with(m, v, None, text, colours, &mut Vec::new());
+        self.write_with(m, v, None, text, colours, &mut Default::default());
     }
 
     /// [`Menu::write`] with `notice` (the last action's line, yellow) in the row above the
@@ -161,11 +161,8 @@ impl Menu {
     /// selection mark), its clips and a blank one; once its icon has arrived
     /// (`entities::icon::Icons::ready`) its tile in `tiles` (cleared first) covers the 4 x 4
     /// cells its lines leave before [`ITEM_TEXT_COL`] from the first line's third cell, so the
-    /// mark, the words and the tile read as one block.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "the menu's state and the overlay's four outputs"
-    )]
+    /// mark, the words and the tile read as one block. An entry in error is grey with its
+    /// reason red (a span in `paint`, cleared first with its tiles).
     pub fn write_with(
         &self,
         m: &Modes,
@@ -173,11 +170,11 @@ impl Menu {
         notice: Option<&str>,
         text: &mut String,
         colours: &mut Vec<HudColour>,
-        tiles: &mut Vec<vxe_render::HudTile>,
+        paint: &mut crate::entities::belt::Paint,
     ) {
         text.clear();
         colours.clear();
-        tiles.clear();
+        paint.clear();
         let Some(page) = self.page() else { return };
         let rows = self.rows(m, v);
         let n = rows.iter().filter(|r| r.selectable()).count();
@@ -252,7 +249,7 @@ impl Menu {
                 // words on the second line (the cursor's) and the clips on the third.
                 colours.push(colour);
                 if m.walkers.icons.ready(*i) {
-                    tiles.push(vxe_render::HudTile {
+                    paint.tiles.push(vxe_render::HudTile {
                         col: 2,
                         row: (colours.len() - 1) as u32,
                         index: *i as u32,
@@ -280,6 +277,21 @@ impl Menu {
             }
             cut_row(text, start);
             colours.push(colour);
+            if let Row::Item(i) = row
+                && let Some(at) = crate::entities::picker::reason_at(m, *i)
+            {
+                let col = ITEM_TEXT_COL + at;
+                let len = text.len() - start;
+                if len > col {
+                    let cell = vxe_render::HudBox {
+                        col: col as u32,
+                        row: (colours.len() - 1) as u32,
+                        cols: (len - col) as u32,
+                        rows: 1,
+                    };
+                    paint.spans.push((cell, HudColour::Red));
+                }
+            }
             if let Row::Item(i) = row {
                 text.push('\n');
                 let start = text.len();

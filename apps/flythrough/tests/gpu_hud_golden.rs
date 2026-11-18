@@ -376,16 +376,17 @@ fn the_belt_and_the_chooser_over_the_carved_view() {
 
     let mut menu = Menu::default();
     menu.open_at(PageId::Entities);
-    let (mut page, mut page_colours, mut tiles) = (String::new(), Vec::new(), Vec::new());
+    let (mut page, mut page_colours) = (String::new(), Vec::new());
+    let mut page_paint = belt::Paint::default();
     menu.write_with(
         &m,
         &RunView::default(),
         None,
         &mut page,
         &mut page_colours,
-        &mut tiles,
+        &mut page_paint,
     );
-    assert_eq!(tiles.len(), 2, "a tile per entry");
+    assert_eq!(page_paint.tiles.len(), 2, "a tile per entry");
     let panel = Panel {
         scale: 1,
         col: 0,
@@ -400,7 +401,7 @@ fn the_belt_and_the_chooser_over_the_carved_view() {
         colours: &colours,
         paint: vxe_render::HudPaint {
             backdrops: std::slice::from_ref(&backdrop),
-            tiles: &tiles,
+            tiles: &page_paint.tiles,
             ..Default::default()
         },
         tiles: &pixels,

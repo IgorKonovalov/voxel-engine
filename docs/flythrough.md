@@ -87,7 +87,7 @@ row showing the new value.
 | lights | `1` | Drop a point light of the picked colour (intensity 600) 2 voxels off the looked-at surface (20 voxels ahead on a miss); the banner names `lights <n>/16`. Sixteen slots, the headlamp's among them while it is on; a drop into a full list prints a line and adds nothing |
 | lights | `4` | Remove the newest light or walker, whichever was added last (in placement mode `4` is the belt's slot 4) |
 | lights | `6` | Fire a point light of the picked colour (intensity 600) along the view ray at 20 m/s; it stops 2 voxels short of the first surface (or after 40 m) and stays there as a dropped light |
-| entities | `` ` `` | `choose an entity`: the chooser (also the `entities` page's first row). Four rows per library entry: its parts and size (an entry in error grey with its error), then its clips (the one a placement starts on marked `*`) and the belt's slot that holds it. `Enter` (or the left click, or the pad's `South`, or `` ` ``) on an entry puts it in the belt's selected slot (or selects the slot already holding it), closes the menu and enters placement mode; a digit `1`..`9` puts it in that slot and the chooser stays open; letters search the menu as on any page |
+| entities | `` ` `` | `choose an entity`: the chooser (also the `entities` page's first row). Four rows per library entry beside its icon: a blank row, its name, parts and size on the cursor's row (an entry in error: its name grey, its error red), then its clips (the one a placement starts on marked `*`) and the belt's slot that holds it. `Enter` (or the left click, or the pad's `South`, or `` ` ``) on an entry puts it in the belt's selected slot (or selects the slot already holding it), closes the menu and enters placement mode; a digit `1`..`9` puts it in that slot and the chooser stays open; letters search the menu as on any page |
 | entities | `R` | `turn the ghost`: 22.5 degrees about the up axis per press, kept until the mode ends |
 | entities | `Delete` | Remove the placed entity under the crosshair, the menu open or not, in placement mode or not |
 | entities | `Left`, `Right` | The aimed (else the newest) placed entity's clip before and after (menu closed); in placement mode, the ghost's |
@@ -127,7 +127,7 @@ mode and under the open chooser (its frame on the selected slot; a chooser digit
 frame to the slot it fills), over a dimmed box: each slot's digit and its entry's name, the selected slot
 framed by `+`, `-` and `|` (the frame's top and bottom rows yellow), and the selected entry's
 name above the belt for 3 s after the selection changes (`slot 5 empty  (choose with `)` for
-an empty slot, an entry in error grey with its error). The belt starts filled with the library
+an empty slot, an entry in error with its name grey and its error red). The belt starts filled with the library
 in the chooser's order (`--model`'s rig first, then the entries that build, then those in
 error, each in name order); a slot keeps its entry for the run, and the chooser's digits change
 it. The wheel, the pad's D-pad left and right or the chooser's `Enter` enter the mode from the

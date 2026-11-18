@@ -18,9 +18,16 @@ pub fn item_error(m: &Modes, i: usize) -> Option<&str> {
     m.walkers.library.entries.get(i)?.error()
 }
 
+/// Where the reason of entry `i` in error starts in its [`write_item`] words, in bytes: after
+/// its name padded to ten cells and a space. `None` for an entry not in error.
+pub fn reason_at(m: &Modes, i: usize) -> Option<usize> {
+    let e = m.walkers.library.entries.get(i)?;
+    e.error().map(|_| e.name.len().max(10) + 1)
+}
+
 /// Entry `i`'s row after its selection mark, at most `width` bytes: `<name> <n> parts <x> x
 /// <y> x <z> m` (its size standing in its rest pose), `<name> built-in`, or for an entry in
-/// error its name and the error (the row drawn grey).
+/// error its name and the error from [`reason_at`] (the name drawn grey, the reason red).
 pub fn write_item(m: &Modes, i: usize, text: &mut String, width: usize) {
     let lib = &m.walkers.library;
     let row = match lib.entries.get(i) {

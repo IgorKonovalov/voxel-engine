@@ -903,7 +903,7 @@ impl Run {
             notice,
             &mut self.hud.text,
             &mut self.hud.colours,
-            &mut self.hud.paint.tiles,
+            &mut self.hud.paint,
         );
         self.hud.format_us = ((now() - t).as_secs_f64() * 1e6) as u32;
     }
@@ -911,7 +911,7 @@ impl Run {
     /// The page `write_menu` wrote, placed in a `size` window's panel with the readout
     /// (`fps 59.9  frame 16.7 ms p99 18.2`: the frame window's fps, median and p99) on the
     /// window's top row, into the HUD's reused `overlay` buffers; its formatting is added to
-    /// `format_us`. Gives the backdrop's box.
+    /// `format_us`; the page's spans and tiles moved with it. Gives the backdrop's box.
     pub(crate) fn place_menu(&mut self, size: [u32; 2]) -> HudBox {
         let t = now();
         let h = &mut self.hud;
@@ -932,7 +932,10 @@ impl Run {
             &mut h.overlay,
             &mut h.overlay_colours,
         );
-        h.paint.spans.clear();
+        for (b, _) in &mut h.paint.spans {
+            b.col += panel.col as u32;
+            b.row += panel.row as u32;
+        }
         for tile in &mut h.paint.tiles {
             tile.col += panel.col as u32;
             tile.row += panel.row as u32;

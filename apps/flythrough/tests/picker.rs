@@ -13,11 +13,12 @@ use vxe_app::{Input, KeyCode};
 use vxe_render::{HudColour, Lighting, LightingResolution};
 
 /// A library of `a` (the committed walker), `b` (the walker broken on line 3) and `spider`
-/// (the committed spider) under the target's scratch directory, built against the showcase's
-/// table with the walker's rows.
-fn library_abs() -> library::Library {
+/// (the committed spider) under the target's scratch directory (`picker-rows-<tag>`, one per
+/// test, since nextest runs them at once), built against the showcase's table with the
+/// walker's rows.
+fn library_abs(tag: &str) -> library::Library {
     let from = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/entities");
-    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("picker-rows");
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("picker-rows-{tag}"));
     let _ = std::fs::remove_dir_all(&dir);
     let rig = std::fs::read_to_string(from.join("walker/walker.rig")).expect("reads");
     for (name, text) in [
@@ -58,10 +59,10 @@ fn modes_with(lib: library::Library) -> Modes {
 /// cell (`a`'s and `spider`'s once their icons are made; `b` has none), its words (with the
 /// `>` cell when selected) on the block's second row, its clips with the playing one marked
 /// and its slot on the third, and no words beside the tile on the first and fourth; `b` grey
-/// with its error after its name; no row past 80 columns or 45 rows.
+/// with its error after its name, the error a red span; no row past 80 columns or 45 rows.
 #[test]
 fn the_picker_draws_its_rows() {
-    let mut lib = library_abs();
+    let mut lib = library_abs("rows");
     let v = lib.entries[2].viewer_mut().expect("a rig");
     assert_eq!(v.cycle(1), "clip idle");
     let mut m = modes_with(lib);
@@ -73,14 +74,15 @@ fn the_picker_draws_its_rows() {
     m.walkers.icons.wait();
     let mut menu = Menu::default();
     menu.open_entities(1);
-    let (mut text, mut colours, mut tiles) = (String::new(), Vec::new(), Vec::new());
+    let (mut text, mut colours) = (String::new(), Vec::new());
+    let mut paint = entities::belt::Paint::default();
     menu.write_with(
         &m,
         &RunView::default(),
         None,
         &mut text,
         &mut colours,
-        &mut tiles,
+        &mut paint,
     );
     let rows: Vec<&str> = text.lines().collect();
     assert!(rows.len() <= MENU_ROWS && rows.iter().all(|r| r.len() <= MENU_COLS));
@@ -89,16 +91,136 @@ fn the_picker_draws_its_rows() {
     assert_eq!(have, want, "{text}");
     let tile = |row, index| vxe_render::HudTile { col: 2, row, index };
     assert_eq!(
-        tiles,
+        paint.tiles,
         [tile(1, 0), tile(5, 2)],
         "a block's first row, the third cell"
     );
+    // `b`'s reason, after its name padded to ten cells, is a red span over the rest of its
+    // grey words row (Phase 9 (6)).
+    let b = rows[10];
+    let reason = vxe_render::HudBox {
+        col: 19,
+        row: 10,
+        cols: (b.len() - 19) as u32,
+        rows: 1,
+    };
+    assert_eq!(&b[19..], "rig line 3: unknown statement `bogus`");
+    assert_eq!(paint.spans, [(reason, HudColour::Red)]);
     for block in [1, 5, 9] {
         assert!(rows[block].is_empty() && rows[block + 3].is_empty());
         assert!(rows[block + 1].len() > 8 && rows[block + 2].len() > 8);
         assert!(rows[block + 1][2..8].trim().is_empty(), "the tile's cells");
     }
     assert!(rows[6].starts_with("> "), "the cursor on spider's words");
+}
+
+/// The colour code of each cell of `text`'s rows (`colours` per row) with `paint` laid over
+/// them, as the overlay writes the cell words; a cell past its row's end reads its row's
+/// colour only when a span reaches it.
+fn cell_colours(text: &str, colours: &[HudColour], paint: &entities::belt::Paint) -> Vec<Vec<u32>> {
+    let cols = vxe_render::HUD_GRID_COLS as usize;
+    let rows = text.split('\n').count();
+    let mut cells = vec![0u32; rows.max(45) * cols];
+    for (r, line) in text.split('\n').enumerate() {
+        for (c, b) in line.bytes().enumerate().take(cols) {
+            cells[r * cols + c] = u32::from(b) | (colours[r] as u32) << 8;
+        }
+    }
+    paint.with(&[]).apply(&mut cells);
+    cells
+        .chunks(cols)
+        .map(|r| r.iter().map(|w| (w >> 8) & 0xff).collect())
+        .collect()
+}
+
+/// Phase 9 (6): under the cave's table (the walker's rows added) the spider is in error: in
+/// the chooser its name cells are grey and the cells of its reason on the same row red (a
+/// span), the rest of the row's cells (the blank past it) untouched; its `--library` line
+/// still reads `error: ...`; and the belt's name row for its slot reads the name grey and the
+/// reason red the same way.
+#[test]
+fn an_entry_in_error_reads_its_reason_red() {
+    let table = walker::with_walker(&flythrough::cave_materials());
+    let mut lib = library::scan(Path::new(library::DEFAULT_DIR));
+    lib.build(&table);
+    let spider = lib
+        .entries
+        .iter()
+        .position(|e| e.name == "spider")
+        .expect("spider");
+    let err = lib.entries[spider].error().expect("in error").to_owned();
+    assert!(err.contains("crystal"), "{err}");
+    let line = library::entry_line(&lib.entries[spider], &table);
+    assert!(line.starts_with("spider     error: "), "{line}");
+    let mut m = modes_with(lib);
+    let order = m.walkers.library.order();
+    m.walkers.belt.fill(&order);
+    let mut menu = Menu::default();
+    menu.open_entities(0);
+    let (mut text, mut colours) = (String::new(), Vec::new());
+    let mut paint = entities::belt::Paint::default();
+    menu.write_with(
+        &m,
+        &RunView::default(),
+        None,
+        &mut text,
+        &mut colours,
+        &mut paint,
+    );
+    let rows: Vec<&str> = text.split('\n').collect();
+    let r = rows
+        .iter()
+        .position(|l| l.trim_start().starts_with("spider "))
+        .expect("the spider's row");
+    let at = rows[r].find(&err[..err.len().min(20)]).expect("the reason");
+    let cells = cell_colours(&text, &colours, &paint);
+    let (grey, red) = (HudColour::Grey as u32, HudColour::Red as u32);
+    for (c, ch) in rows[r].char_indices() {
+        let want = if c >= at { red } else { grey };
+        assert_eq!(cells[r][c], want, "cell {c} {ch:?} of {:?}", rows[r]);
+    }
+    assert!(
+        cells[r][rows[r].len()..].iter().all(|&c| c == 0),
+        "past the row"
+    );
+    assert!(
+        cells
+            .iter()
+            .enumerate()
+            .all(|(i, row)| i == r || !row.contains(&red))
+    );
+
+    // The belt's name row with the spider's slot selected.
+    let slot = m.walkers.belt.slot_of(spider).expect("a slot");
+    m.walkers.belt.select(slot, 0.0);
+    let (mut text, mut colours) = (String::new(), Vec::new());
+    let mut paint = entities::belt::Paint::default();
+    entities::belt::append_belt(
+        &mut text,
+        &mut colours,
+        (80, 45),
+        &m.walkers,
+        0.0,
+        flythrough::hud::BANNER_MS,
+        &mut paint,
+    );
+    let first = 45 - entities::belt::BELT_ROWS;
+    let name_row = text.split('\n').nth(first).expect("the name row");
+    assert_eq!(name_row.trim_start(), format!("spider: {err}"));
+    let at = name_row
+        .find(&err[..err.len().min(20)])
+        .expect("the reason");
+    let start = name_row.len() - name_row.trim_start().len();
+    let cells = cell_colours(&text, &colours, &paint);
+    for (c, &cell) in cells[first]
+        .iter()
+        .enumerate()
+        .take(name_row.len())
+        .skip(start)
+    {
+        let want = if c >= at { red } else { grey };
+        assert_eq!(cell, want, "belt cell {c} of {name_row:?}");
+    }
 }
 
 /// The page of `the_picker_draws_its_rows`: the title, the three entries of four rows each
@@ -144,7 +266,7 @@ fn the_backquote_and_delete_route() {
     assert!(taken(bq, true).menu && !taken(bq, true).pass);
     assert!(taken(bq, false).pass && !taken(bq, false).menu);
     assert!(taken(del, true).pass && !taken(del, true).menu);
-    let m = modes_with(library_abs());
+    let m = modes_with(library_abs("route"));
     let mut menu = Menu::default();
     menu.open_at(PageId::Keys);
     let mut input = Input::default();

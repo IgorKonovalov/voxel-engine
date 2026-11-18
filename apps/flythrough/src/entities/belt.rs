@@ -186,28 +186,29 @@ pub fn stand(
     }
 }
 
-/// The name row's words for the selected slot: the entry's name (its error after it, grey,
-/// for an entry in error), or `slot <n> empty  (choose with `)`.
-fn name_words(belt: &Belt, lib: &Library, out: &mut String) -> HudColour {
+/// The name row's words for the selected slot: the entry's name (grey with its error after
+/// it for an entry in error, and where the error starts in the words), or `slot <n> empty
+/// (choose with `)`.
+fn name_words(belt: &Belt, lib: &Library, out: &mut String) -> (HudColour, Option<usize>) {
     use std::fmt::Write as _;
     match belt.entry() {
         None => {
             let _ = write!(out, "slot {} empty  (choose with `)", belt.selected + 1);
-            HudColour::Yellow
+            (HudColour::Yellow, None)
         }
         Some(i) => match lib.entries.get(i) {
             None => {
                 out.push_str(BUILTIN_NAME);
-                HudColour::Yellow
+                (HudColour::Yellow, None)
             }
             Some(e) => match e.error() {
                 Some(err) => {
                     let _ = write!(out, "{}: {err}", e.name);
-                    HudColour::Grey
+                    (HudColour::Grey, Some(e.name.len() + 2))
                 }
                 None => {
                     out.push_str(&e.name);
-                    HudColour::Yellow
+                    (HudColour::Yellow, None)
                 }
             },
         },
@@ -273,14 +274,26 @@ pub fn append_belt(
     // The name row.
     let shown = belt.changed_at.is_some_and(|at| now_ms - at < banner_ms);
     let mut colour = HudColour::White;
+    let mut reason = None;
     if shown {
         let mut words = String::new();
-        colour = name_words(belt, lib, &mut words);
+        (colour, reason) = name_words(belt, lib, &mut words);
         let at = x0 + BELT_COLS.saturating_sub(words.len()) / 2;
         row.extend(std::iter::repeat_n(' ', at));
         row.push_str(&words);
+        reason = reason.map(|r| at + r);
     }
     push_row(text, colours, &cut_to(&row, cols), colour);
+    // An entry's error after its grey name is red.
+    if let Some(col) = reason.filter(|&c| c < row.len().min(cols)) {
+        let cell = HudBox {
+            col: col as u32,
+            row: first as u32,
+            cols: (row.len().min(cols) - col) as u32,
+            rows: 1,
+        };
+        paint.spans.push((cell, HudColour::Red));
+    }
     let sel = x0 + belt.selected * SLOT_COLS;
     let frame = |row: &mut String| {
         row.clear();

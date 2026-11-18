@@ -710,17 +710,21 @@ fn the_icon_arrives_after_the_words() {
         "handed over once"
     );
     frame_keys(&mut run, &pressed(KeyCode::Backquote));
-    let mut tiles = Vec::new();
+    let mut paint = belt::Paint::default();
     run.menu.write_with(
         &run.modes,
         &run.run_view(),
         None,
         &mut String::new(),
         &mut Vec::new(),
-        &mut tiles,
+        &mut paint,
     );
     assert_eq!(
-        tiles.iter().map(|t| (t.col, t.index)).collect::<Vec<_>>(),
+        paint
+            .tiles
+            .iter()
+            .map(|t| (t.col, t.index))
+            .collect::<Vec<_>>(),
         [(2, wi as u32)]
     );
     frame_keys(&mut run, &pressed(KeyCode::Escape));
