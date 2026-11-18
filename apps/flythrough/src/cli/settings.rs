@@ -184,6 +184,7 @@ impl Args {
                 ..BuildSettings::default()
             },
             output_hint: self.render.or(self.output_hint),
+            mark_colours: vxe_render::MARK_COLOURS,
         }
     }
 }

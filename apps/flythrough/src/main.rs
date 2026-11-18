@@ -26,6 +26,10 @@ fn main() {
         print!("{}", flythrough::hud::menu::keys_text(&args));
         return;
     }
+    if args.library {
+        print!("{}", flythrough::entities::library::library_text(&args));
+        return;
+    }
     if args.settings {
         print!(
             "{}",

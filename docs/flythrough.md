@@ -36,7 +36,7 @@ window's top-right corner reads `fps <n>  frame <median> ms p99 <ms>` while it i
 
 - **A switch or a cycle** (the lamp, the missing light, the view): `Enter` flips it or steps
   it to its next state; its row shows the new value.
-- **A number** (the dig radius, the queue's angle weight, the echo and tail trims, the
+- **A number** (the dig radius, which has no key, the queue's angle weight, the echo and tail trims, the
   pre-delay): `Enter` edits it. The row reads `dig radius  < 0.5 m >  0.1..3.0 m`: the value
   between `<` and `>`, its range after. `Up` and `Down` (the pad's D-pad) step it, held they
   repeat after 275 ms every 50 ms, and it stops at its range's ends; `Enter` or `Esc` (the
@@ -60,15 +60,17 @@ window's top-right corner reads `fps <n>  frame <median> ms p99 <ms>` while it i
 | `W` `A` `S` `D` | Fly (or walk, in walk mode) |
 | `Space` / `C` | Rise / sink; walking, `Space` jumps, or climbs a ledge with a standable top within 1.2 m |
 | `Shift` | Faster |
-| Left click | Dig at the crosshair; the edit result prints to the terminal |
-| Right click | Fill at the crosshair |
+| Left click | Dig at the crosshair; the edit result prints to the terminal. In placement mode: place the ghost |
+| Right click | Fill at the crosshair. In placement mode: leave it |
+| Wheel | Enter placement mode at the belt's selected slot; in the mode, step the slot (down the next, wrapping at nine) |
+| `1`..`9` | While the belt is shown (placement mode, and the chooser over it): the belt's slots, `4` included; `1`, `4` and `6` then drop, remove and fire nothing. Out of the mode they keep their shortcuts below and no digit enters the mode |
 | `Tab` | The menu; type on any page to search |
 | `F1` | The Keys page (with `--tester`: the help panel) |
 | `F2` | Toggle the stats overlay |
-| `Esc` | Clear the search, go back a page, close the menu; with the menu closed, quit (on a path run, end it so its report says how) |
+| `Esc` | Clear the search, go back a page, close the menu; with the menu closed, leave placement mode, else quit (on a path run, end it so its report says how) |
 
 While the menu is open the arrows, `Enter`, `Backspace`, `Esc`, the letters, digits and
-punctuation, the wheel and the clicks are the menu's: the dig, the fill and the dig radius
+punctuation, the wheel and the clicks are the menu's: the dig, the fill and the belt
 pause, and a letter or digit shortcut types instead of acting. The movement keys still move
 (their press also types), the mouse still looks, and the function keys still act, the open
 row showing the new value.
@@ -77,23 +79,25 @@ row showing the new value.
 
 | Group | Key | Does |
 |-------|-----|------|
-| moving | Scroll | Change the dig radius |
 | moving | `G` | Toggle fly and walk mode (bounded worlds only) |
 | camera and paths | `T` | On a `--path ... --path-mode tour` run: resume the path from its nearest point after a key took the camera |
 | upscaler | `F10` | Cycle the upscaler: off, own, fsr2 |
 | upscaler | `F4` | The next render profile: floor, portable, performance, high (`--profile`) |
 | lighting | `F7` | Toggle the headlamp |
 | lights | `1` | Drop a point light of the picked colour (intensity 600) 2 voxels off the looked-at surface (20 voxels ahead on a miss); the banner names `lights <n>/16`. Sixteen slots, the headlamp's among them while it is on; a drop into a full list prints a line and adds nothing |
-| lights | `4` | Remove the newest light or walker, whichever was added last |
+| lights | `4` | Remove the newest light or walker, whichever was added last (in placement mode `4` is the belt's slot 4) |
 | lights | `6` | Fire a point light of the picked colour (intensity 600) along the view ray at 20 m/s; it stops 2 voxels short of the first surface (or after 40 m) and stays there as a dropped light |
-| entities | `` ` `` | Place a walker (a voxel-model entity) on the looked-at surface; the banner names the walker count. A world whose table has no walker rows prints a line and places nothing |
-| entities | `Left`, `Right` | With `--model`: the clip before and after (menu closed) |
-| entities | `Down` | With `--model`: pause or play the clip (menu closed) |
+| entities | `` ` `` | `choose an entity`: the chooser (also the `entities` page's first row). Four rows per library entry beside its icon: a blank row, its name, parts and size on the cursor's row (an entry in error: its name grey, its error red), then its clips (the one a placement starts on marked `*`) and the belt's slot that holds it. `Enter` (or the left click, or the pad's `South`, or `` ` ``) on an entry puts it in the belt's selected slot (or selects the slot already holding it), closes the menu and enters placement mode; a digit `1`..`9` puts it in that slot and the chooser stays open; letters search the menu as on any page |
+| entities | `R` | `turn the ghost`: 22.5 degrees about the up axis per press, kept until the mode ends |
+| entities | `Delete` | Remove the placed entity under the crosshair, the menu open or not, in placement mode or not |
+| entities | `Left`, `Right` | The aimed (else the newest) placed entity's clip before and after (menu closed); in placement mode, the ghost's |
+| entities | `Down` | Pause or play that entity's clip (menu closed); in placement mode, the ghost's |
 | readings | `Enter` | Sample the next frames and print frame-time readings (menu closed) |
 | debug | `F9` | Cycle the view: shaded, normals, hitmask, steps, cracks, albedo |
 | debug | `X` | Cycle the cutaway: auto, on, off |
 
-Everything else is an entry of the menu (`Tab`) with no key: the look presets and far normal,
+Everything else is an entry of the menu (`Tab`) with no key: the dig radius (`moving`), the
+look presets and far normal,
 the sharpening and pan, the lighting modes but the lamp, the lights' carry, colour and bounce
 flag, the light queue's order, weights, withdrawal, budget, full-first, missing light and
 reach, the walkers' walking and eye lights, the audio's sounds and mix, the bench, the stamp,
@@ -116,6 +120,32 @@ would hold it (no hole is large enough), the pool is cleared and every placed mo
 again, and the banner reads `entity pool reset`; a `--model` model refused after that keeps
 its error on screen in red until a reload builds.
 
+### Placement mode
+
+The belt is nine slots, `1`..`9`, drawn centred along the bottom of the window in placement
+mode and under the open chooser (its frame on the selected slot; a chooser digit moves the
+frame to the slot it fills), over a dimmed box: each slot's digit and its entry's name, the selected slot
+framed by `+`, `-` and `|` (the frame's top and bottom rows yellow), and the selected entry's
+name above the belt for 3 s after the selection changes (`slot 5 empty  (choose with `)` for
+an empty slot, an entry in error with its name grey and its error red). The belt starts filled with the library
+in the chooser's order (`--model`'s rig first, then the entries that build, then those in
+error, each in name order); a slot keeps its entry for the run, and the chooser's digits change
+it. The wheel, the pad's D-pad left and right or the chooser's `Enter` enter the mode from the
+view, never a digit; in the mode every digit `1`..`9` selects its slot (`Delete` removes the
+aimed entity). Opening the menu, `Esc`, the right click, `L2` or the pad's `East` leave it.
+
+In the mode the menu is closed and the camera free. The selected slot's entry stands at the aim
+as the ghost, a real entity lit where it will stand, facing the camera, turned by `R`: at the
+camera ray's first world hit within 30 m, never nearer than 3 m or 1.5 times the model's
+longest extent (the walker at 3 m, the spider at about 10.4 m), the feet on the hit when it is
+a floor, and under a wall or a ceiling hit moved back by half the model's footprint and dropped
+to the floor (up to 10 m below). With no hit, or a hit nearer than that distance, the ghost
+stands at that distance along the view, dropped to the floor. The left click (or `R2`) places
+it there on its clip and turn (`placed spider #3 (rear)`) and the mode stays, a new ghost at
+the aim; the dig and the fill rest while the mode is on. An empty slot, an entry in error or a
+full set (64) stands no ghost and the banner says why. Under `--tester` there is no belt and no
+mode.
+
 ### Gamepad (`--pad on`, the default in a window)
 
 | Input | Does |
@@ -125,11 +155,12 @@ its error on screen in red until a reload builds.
 | `L1` / `R1` | Sink / rise |
 | `R3` | Latch boost |
 | `South` | Walking: jump; in the menu: `Enter` |
-| `R2` / `L2` | Dig / fill |
-| D-pad up / down | Step the dig radius; in the menu: move the selection, or step the number being edited |
+| `R2` / `L2` | Dig / fill; in placement mode, place the ghost / leave the mode |
+| D-pad up / down | In the menu: move the selection, or step the number being edited |
+| D-pad left / right | The belt's slot before / after, entering placement mode (`belt before`, `belt next`); in the menu: back a page / open |
 | `North` | Toggle walk mode |
-| `West` | Cycle the cutaway |
-| `East` | Knock (with `--audio`); in the menu: back |
+| `West` | Cycle the cutaway; in placement mode, turn the ghost (the cutaway is then the menu's) |
+| `East` | Knock (with `--audio`); in placement mode, leave it; in the menu: back |
 | `Start` | Open or close the menu |
 | `Select` | Toggle the stats overlay |
 
@@ -148,6 +179,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 |------|------|
 | `--help`, `-h` | Print every flag and exit |
 | `--keys` | Print the keys and the menu's tree at the start modes, and exit |
+| `--library` | Print the entities library (each entry's parts, size in voxels, pool bytes and clips, the first marked `*`, or its error) and exit |
 | `--check-args` | Parse the arguments, print `arguments ok` and exit, opening nothing |
 | `--seed N` | The world's seed [1] |
 | `--render WxH` | Fix the frame's output resolution; the window scales it |
@@ -250,10 +282,11 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--probe-slices N` | The probes refreshed a frame, one in N: 8, 16 or 32 [8] |
 | `--emissive-ore on\|off` | The ore glows and lights the cave [on] |
 | `--lamp-toggle N` | Switch the lamp every `N` frames |
-| `--entities N` | Start with `N` walkers (voxel-model entities) on a 3 m ring around the spawn [0] |
-| `--entities-walk on\|off` | The walkers start walking, as the menu's `walkers walk` sets them [off] |
-| `--model PATH` | View a `.rig` and the `.vox` it names (the library is `apps/flythrough/assets/entities/<name>/<name>.rig`, [entities.md](entities.md)): `` ` `` and `--entities N` place it in place of the walker; a saved change to either file reloads |
+| `--entities N` | Start with `N` of the library's selected entry (voxel-model entities) on a 3 m ring around the spawn [0] |
+| `--entities-walk on\|off` | The built-in walkers start walking, as the menu's `walkers walk` sets them [off] |
+| `--model PATH` | View a `.rig` and the `.vox` it names (the library is `apps/flythrough/assets/entities/<name>/<name>.rig`, [entities.md](entities.md)): it is the library's first entry, selected, so `` ` `` and `--entities N` place it (a rig of the library itself is that entry, not a second one); a saved change to either file reloads its instances only |
 | `--clip NAME` | The `--model` clip to play first [the rig's first] |
+| `--library-dir DIR` | The entities library: every `DIR/<name>/<name>.rig` is an entry, in name order; `--model`'s rig comes first. A missing or empty library gives the built-in walker [`apps/flythrough/assets/entities`] |
 | `--fade-reading` | Headless: dig, settle, switch the lamp off and print how the light fades |
 | `--exposure auto\|E` | Adapt like an eye, or a fixed exposure [auto] |
 | `--adaptation eye\|symmetric\|instant` | The auto exposure's preset [eye] |

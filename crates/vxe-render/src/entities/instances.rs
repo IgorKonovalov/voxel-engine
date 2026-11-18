@@ -29,7 +29,7 @@ use super::display::{DisplayPose, PartXform};
 use super::pool::{ModelHandle, VolumePool};
 use super::{
     INSTANCE_MOVED, INSTANCE_WORD, INSTANCE_WORDS, LEAF_BIT, LEAF_MOVED, MAX_ENTITIES,
-    MAX_ENTITY_PARTS, NODE_WORDS, TREE_HEADER_WORD,
+    MAX_ENTITY_PARTS, Mark, NODE_WORDS, TREE_HEADER_WORD,
 };
 
 /// Bits of an instance's slot in its word 25 and in the hit record's instance field.
@@ -96,6 +96,10 @@ pub struct EntityInstances {
     parts: usize,
     over: usize,
     moved: bool,
+    /// The marks by entity ([`EntityInstances::set_marks`]), and every slot's two mark words
+    /// from them and the runs ([`Mark::words`]).
+    marks: Vec<(EntityId, Mark)>,
+    mark_words: Vec<u32>,
 }
 
 impl Default for EntityInstances {
@@ -126,7 +130,40 @@ impl EntityInstances {
             parts: 0,
             over: 0,
             moved: false,
+            marks: Vec::new(),
+            mark_words: vec![0; 2 * MAX_ENTITY_PARTS],
         }
+    }
+
+    /// The marks drawn from now on, by entity (ADR-0074): kept, and each live slot's mark
+    /// words rewritten from them and the runs of the last write, as every write rewrites
+    /// them. An entity listed twice takes its first mark.
+    pub fn set_marks(&mut self, marks: &[(EntityId, Mark)]) {
+        self.marks.clear();
+        self.marks.extend_from_slice(marks);
+        self.fill_marks();
+    }
+
+    /// Every slot's owner and mark words: a live slot's owner its run's first slot, its mark
+    /// its entity's in the kept list; a free slot's words 0.
+    fn fill_marks(&mut self) {
+        self.mark_words.fill(0);
+        for (id, r) in &self.runs {
+            if r.seen != self.write {
+                continue;
+            }
+            let mark = self.marks.iter().find(|(m, _)| m == id).map(|&(_, m)| m);
+            let words = Mark::words(mark, r.first);
+            for s in usize::from(r.first)..usize::from(r.first + r.count) {
+                self.mark_words[2 * s..2 * s + 2].copy_from_slice(&words);
+            }
+        }
+    }
+
+    /// Every slot's two mark words of the last write or [`EntityInstances::set_marks`]: the
+    /// marks buffer `composite.wgsl` reads ([`Mark::words`]).
+    pub fn mark_words(&self) -> &[u32] {
+        &self.mark_words
     }
 
     /// [`EntityInstances::write`] with each entity's parts placed as `set` poses them.
@@ -190,6 +227,7 @@ impl EntityInstances {
         self.keep_and_free(now);
         self.allocate(now);
         self.fill(pool);
+        self.fill_marks();
         self.over = over;
     }
 

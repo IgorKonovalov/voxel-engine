@@ -325,6 +325,9 @@ pub(crate) struct Hud {
     pub(crate) overlay: String,
     pub(crate) overlay_colours: Vec<HudColour>,
     pub(crate) readout: String,
+    /// Reused buffers: the spans and the icons' tiles laid over the belt's or the chooser's
+    /// rows.
+    pub(crate) paint: crate::entities::belt::Paint,
     /// The far normal's words and the live queue's order and withdrawal in words, remade
     /// only when what they name changes.
     pub(crate) far_normal_words: Cached<(NormalMode, [f32; 2])>,
@@ -407,6 +410,7 @@ impl Hud {
             banner: String::new(),
             overlay: String::new(),
             overlay_colours: Vec::new(),
+            paint: Default::default(),
             readout: String::new(),
             far_normal_words: Cached::default(),
             queue_words: Cached::default(),
@@ -868,6 +872,7 @@ impl Run {
             println!("{words}");
             self.modes.show_lights(words, now_ms);
         }
+        self.modes.walkers.refresh_icons(self.world.materials());
     }
 
     /// Drops `--pose`'s banner row once the camera has left the pose.
@@ -898,6 +903,7 @@ impl Run {
             notice,
             &mut self.hud.text,
             &mut self.hud.colours,
+            &mut self.hud.paint,
         );
         self.hud.format_us = ((now() - t).as_secs_f64() * 1e6) as u32;
     }
@@ -905,7 +911,7 @@ impl Run {
     /// The page `write_menu` wrote, placed in a `size` window's panel with the readout
     /// (`fps 59.9  frame 16.7 ms p99 18.2`: the frame window's fps, median and p99) on the
     /// window's top row, into the HUD's reused `overlay` buffers; its formatting is added to
-    /// `format_us`. Gives the backdrop's box.
+    /// `format_us`; the page's spans and tiles moved with it. Gives the backdrop's box.
     pub(crate) fn place_menu(&mut self, size: [u32; 2]) -> HudBox {
         let t = now();
         let h = &mut self.hud;
@@ -926,6 +932,14 @@ impl Run {
             &mut h.overlay,
             &mut h.overlay_colours,
         );
+        for (b, _) in &mut h.paint.spans {
+            b.col += panel.col as u32;
+            b.row += panel.row as u32;
+        }
+        for tile in &mut h.paint.tiles {
+            tile.col += panel.col as u32;
+            tile.row += panel.row as u32;
+        }
         h.format_us += ((now() - t).as_secs_f64() * 1e6) as u32;
         backdrop
     }
@@ -963,7 +977,7 @@ impl Run {
     pub(crate) fn compose_banner(&self, out: &mut String, words: &str) {
         let now = ms_since(self.start);
         if !self.hud.visible
-            && let Some(v) = &self.modes.walkers.viewer
+            && let Some(v) = self.modes.walkers.viewer()
             && v.error.is_some()
         {
             hud::start_row(out);
@@ -1003,12 +1017,21 @@ impl Run {
         }
     }
 
-    /// Formats this frame's rows and strip into the overlay, timing the formatting.
+    /// Formats this frame's rows and strip into the overlay, timing the formatting; the belt
+    /// under them in placement mode ([`Run::belt_rows`]).
     pub(crate) fn update_hud(&mut self, gpu: &Gpu) {
         self.fill_hud(self.gfx.as_ref().map(GfxSample::of));
+        let belt = self.belt_rows(gpu.size, false);
         let h = &mut self.hud;
         let Some(gfx) = self.gfx.as_mut() else { return };
-        gfx.hud.set_lines(&gpu.queue, &h.text, &h.colours);
+        match belt {
+            Some(b) => {
+                let paint = h.paint.with(std::slice::from_ref(&b));
+                gfx.hud
+                    .set_lines_painted(&gpu.queue, &h.text, &h.colours, paint)
+            }
+            None => gfx.hud.set_lines(&gpu.queue, &h.text, &h.colours),
+        }
         gfx.hud.set_samples(&gpu.queue, &h.strip, hud::CEILING_MS);
     }
 

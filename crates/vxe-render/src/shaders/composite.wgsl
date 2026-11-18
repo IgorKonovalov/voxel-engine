@@ -29,6 +29,9 @@
 //                                        rgb9e5 (`t9e5_unpack`)
 //  10  texture_2d<f32>   direct_acc_in   the temporal pass's accumulated direct part (rgb),
 //                                        read with the filter off
+//  11  storage, read     marks           the entity mirror's marks (ADR-0074): two words per
+//                                        instance slot, its owner and its mark
+//                                        (`vxe_render::Mark::words`)
 //
 // Per view: `shaded` is the Lambertian `albedo * tint * E / PI` of a hit (E the direct
 // irradiance plus, with Params.lighting bit 12, the probes' indirect irradiance) plus its
@@ -44,6 +47,8 @@
 // `steps` the counters over 255; `albedo` the hit's albedo through the solid's `T`, its
 // reflected share at unit light added;
 // `cracks` the field walk's leaks over the shaded image without its layers (`crack_colour`).
+// In the shaded and albedo views a marked entity's pixels mix toward its mark's colour by
+// its tint, and its outline replaces a pixel with the colour (`mark_at`).
 
 // The cracks view's colour of a pixel whose shaded display colour is `shaded`, from the hit
 // pass's leak in `layer.x`: a miss black; a leak red; any other hit `4/255 + 0.47 shaded` per
@@ -73,6 +78,15 @@ const HDR_TARGET: bool = false;
 @group(2) @binding(8) var<storage, read_write> meter_tiles: array<vec2<f32>>;
 @group(2) @binding(9) var transmit_in: texture_2d<u32>;
 @group(2) @binding(10) var direct_acc_in: texture_2d<f32>;
+@group(2) @binding(11) var<storage, read> marks: array<u32>;
+
+// A slot's owner word (`vxe_render::Mark::words`): the owner's first slot in bits 0..8 and
+// MARK_LIVE, so `& MARK_OWNER` is 0 for no entity and differs between two entities.
+const MARK_LIVE: u32 = 512u;
+const MARK_OWNER: u32 = 1023u;
+const MARK_OUTLINE: u32 = 1024u;
+const MARK_TINT_SHIFT: u32 = 11u;
+const MARK_SLOT_MASK: u32 = 511u;
 
 // The workgroup's meter partial sums: log2 luminance, pixel count.
 var<workgroup> meter_sum: array<vec2<f32>, 64>;
@@ -207,6 +221,59 @@ fn meter_of(c: vec3<f32>) -> vec2<f32> {
     return vec2<f32>(clamp(log2(max(luminance(c), exp2(-16.0))), -16.0, 16.0), 1.0);
 }
 
+// The two mark words of the entity hit at `px`, zeros for any other hit or a miss.
+fn mark_words_at(px: vec2<i32>) -> vec2<u32> {
+    let f = textureLoad(hit_info_in, px, 0).w;
+    if ((f & (HIT_FOUND | HIT_ENTITY)) != (HIT_FOUND | HIT_ENTITY)) {
+        return vec2<u32>(0u);
+    }
+    let s = 2u * ((f >> HIT_INSTANCE_SHIFT) & MARK_SLOT_MASK);
+    return vec2<u32>(marks[s], marks[s + 1u]);
+}
+
+fn mark_colour(w: vec2<u32>) -> vec3<f32> {
+    return vec3<f32>(vec3<u32>(w.y, w.y >> 8u, w.y >> 16u) & vec3<u32>(255u)) / 255.0;
+}
+
+// Pixel `px`'s mark, ADR-0074: the colour and how much of it. A pixel whose owner differs
+// from a neighbour's (an entity against the world or another entity) takes the outline's
+// colour of the marked side, its own side first; else a marked entity's pixel its tint.
+fn mark_at(px: vec2<i32>) -> vec4<f32> {
+    let w = mark_words_at(px);
+    let own = w.x & MARK_OWNER;
+    let size = vec2<i32>(params.size);
+    for (var i = 0; i < 4; i++) {
+        let q = px + select(vec2<i32>(0, 1 - 2 * (i & 1)), vec2<i32>(1 - 2 * (i & 1), 0), i < 2);
+        if (any(q < vec2<i32>(0)) || any(q >= size)) {
+            continue;
+        }
+        let n = mark_words_at(q);
+        if ((n.x & MARK_OWNER) == own) {
+            continue;
+        }
+        if ((w.x & MARK_OUTLINE) != 0u) {
+            return vec4<f32>(mark_colour(w), 1.0);
+        }
+        if ((n.x & MARK_OUTLINE) != 0u) {
+            return vec4<f32>(mark_colour(n), 1.0);
+        }
+    }
+    return vec4<f32>(mark_colour(w), f32((w.x >> MARK_TINT_SHIFT) & 255u) / 255.0);
+}
+
+// The pre-exposed radiance `display` takes to display colour `d` (in [0, 1)): the encode
+// undone, then the ACES curve's inverse (the root of its quadratic) unless the tone map is the
+// identity. FSR 2's variant mixes a mark in radiance, before its tone pass.
+fn undisplay(d: vec3<f32>) -> vec3<f32> {
+    let m = pow(clamp(d, vec3<f32>(0.0), vec3<f32>(0.999)), vec3<f32>(2.2));
+    if ((params.lighting & LIGHTING_IDENTITY_TONE_MAP) != 0u) {
+        return m;
+    }
+    let a = 2.51 - 2.43 * m;
+    let b = 0.03 - 0.59 * m;
+    return (-b + sqrt(b * b + 4.0 * a * 0.14 * m)) / (2.0 * a);
+}
+
 // Writes pixel `px`'s colour; returns its meter term in the shaded view, else zero.
 fn composite_px(px: vec2<i32>) -> vec2<f32> {
     let rec = unpack_hit(textureLoad(hit_pos_in, px, 0), textureLoad(hit_info_in, px, 0));
@@ -228,7 +295,8 @@ fn composite_px(px: vec2<i32>) -> vec2<f32> {
         if (rec.translucent) {
             a = layer.xyz + t9e5_unpack(textureLoad(transmit_in, px, 0).x) * a;
         }
-        textureStore(target_tex, px, vec4<f32>(a, 1.0));
+        let mk = mark_at(px);
+        textureStore(target_tex, px, vec4<f32>(mix(a, mk.xyz, mk.w), 1.0));
         return vec2<f32>(0.0);
     }
     let ex = exposure_now();
@@ -262,6 +330,13 @@ fn composite_px(px: vec2<i32>) -> vec2<f32> {
     if (rec.translucent) {
         c = layer.xyz * ex + t9e5_unpack(textureLoad(transmit_in, px, 0).x) * c;
     }
-    textureStore(target_tex, px, vec4<f32>(select(display(c), c, HDR_TARGET), 1.0));
-    return meter_of(c / ex);
+    let meter = meter_of(c / ex);
+    let mk = mark_at(px);
+    if (HDR_TARGET) {
+        c = mix(c, undisplay(mk.xyz), mk.w);
+    } else {
+        c = mix(display(c), mk.xyz, mk.w);
+    }
+    textureStore(target_tex, px, vec4<f32>(c, 1.0));
+    return meter;
 }

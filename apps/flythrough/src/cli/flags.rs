@@ -273,6 +273,7 @@ fn run_flags() -> Vec<Flag<Parsing>> {
             |p: &mut Parsing| p.args.help = true,
         ),
         super::parse::keys_flag(),
+        super::model::library_flag(),
         Flag::switch(
             &["--check-args"],
             "parse the arguments, print `arguments ok` and exit",

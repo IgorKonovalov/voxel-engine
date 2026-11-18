@@ -647,6 +647,12 @@ pub struct Args {
     /// clip.
     pub model: Option<std::path::PathBuf>,
     pub clip: Option<String>,
+    /// `--library-dir DIR`: the entities library (`crate::entities::library`); `None` for its
+    /// default directory.
+    pub library_dir: Option<std::path::PathBuf>,
+    /// `--library`: print the library's entries (`crate::entities::library::library_text`)
+    /// and exit 0.
+    pub library: bool,
     pub(crate) sync_budget: u64,
     /// `--sync-ms`: the mirror's upload time per frame; `None` (the default, or `--sync-ms 0`)
     /// for no limit.

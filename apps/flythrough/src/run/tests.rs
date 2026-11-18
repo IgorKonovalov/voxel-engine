@@ -6,7 +6,7 @@ use crate::app::session_outcome;
 use crate::castle;
 use crate::cave::ROCK;
 use crate::cli::parse_args_from;
-use crate::edits::{Coarse, DIG_RADIUS, DIG_STEP};
+use crate::edits::Coarse;
 use crate::fly::{CutawayMode, Fly};
 use crate::hud::{self};
 use crate::now;
@@ -192,24 +192,6 @@ fn r2_digs_as_the_left_click_does_and_l2_fills() {
     };
     assert_eq!(f.changed_from.len(), 1);
     assert_eq!(f.changed_from[0].0, 0, "the fill writes rock over air");
-}
-
-/// The D-pad steps the dig radius by a scroll line's step: up twice raises it from 0.5 m
-/// to 0.7 m, down once lowers it to 0.6 m.
-#[test]
-fn the_dpad_steps_the_dig_radius() {
-    let mut run = bare_run(carved_rock());
-    let mut input = Input::default();
-    for _ in 0..2 {
-        input.pad_down(PadButton::DpadUp);
-        run.handle_input(&input);
-        input.end_frame();
-        input.pad_up(PadButton::DpadUp);
-    }
-    assert_eq!(run.modes.dig_radius, DIG_RADIUS + 2 * DIG_STEP);
-    input.pad_down(PadButton::DpadDown);
-    run.handle_input(&input);
-    assert_eq!(run.modes.dig_radius, DIG_RADIUS + DIG_STEP);
 }
 
 /// `--level --pose vein|patch` starts the camera at exactly the settle rig's pose (its
@@ -1098,8 +1080,10 @@ fn a_benchmark_path_runs_with_the_lamp_off_and_its_report_says_so() {
     assert_eq!(v.get("mode").and_then(Value::as_str), Some("bench"));
 }
 
-/// Under `--model`, `Right` and `Left` cycle the viewer's clips and `Down` pauses, each named in
-/// the banner, and the HUD's mode block carries the viewer's row.
+/// Under `--model`, the chooser hands the model to placement mode, a click places it, the
+/// right click leaves the mode, and `Right` and `Left` cycle the placed entity's clips and
+/// `Down` pauses it, each named in the banner; the HUD's mode block carries the entity's clip
+/// row and the viewer's own row, which the keys leave on its first clip.
 #[test]
 fn the_clip_keys_name_the_clip_and_the_pause() {
     let mut run = bare_run(carved_rock());
@@ -1108,7 +1092,7 @@ fn the_clip_keys_name_the_clip_and_the_pause() {
     let mut viewer = crate::viewer::Viewer::open(&path, None).expect("walker.rig opens");
     let table = crate::walker::with_walker(&crate::cave_materials());
     assert_eq!(viewer.build_pending(&table), None);
-    run.modes.walkers.viewer = Some(viewer);
+    run.modes.walkers = std::mem::take(&mut run.modes.walkers).with_viewer(Some(viewer));
     let mut input = Input::default();
     let mut press = |run: &mut Run, key: KeyCode| {
         input.end_frame();
@@ -1117,14 +1101,22 @@ fn the_clip_keys_name_the_clip_and_the_pause() {
         run.handle_input(&input);
         run.banner().expect("a press shows the banner")
     };
-    assert!(press(&mut run, KeyCode::ArrowRight).contains("clip walk"));
-    assert!(press(&mut run, KeyCode::ArrowDown).contains("paused"));
+    run.act(crate::toggles::Act::Picker);
+    run.menu_act(crate::hud::menu::Activated::Choose { entry: 0 });
+    let mut click = Input::default();
+    click.button_down(vxe_app::MouseButton::Left);
+    run.handle_input(&click);
+    assert!(run.banner().unwrap().contains("placed walker #1 (idle)"));
+    let mut click = Input::default();
+    click.button_down(vxe_app::MouseButton::Right);
+    run.handle_input(&click);
+    assert!(!run.modes.walkers.belt.on);
+    assert!(press(&mut run, KeyCode::ArrowRight).contains("walker #1 clip walk"));
+    assert!(press(&mut run, KeyCode::ArrowDown).contains("walker #1 paused"));
     let mut rows = String::new();
     run.modes.write_rows(&mut rows);
-    assert!(
-        rows.contains("model walker clip walk 0/30 paused\n"),
-        "{rows}"
-    );
+    assert!(rows.contains("\nwalker #1 walk 0/30 paused\n"), "{rows}");
+    assert!(rows.contains("model walker clip idle 0/60\n"), "{rows}");
     assert!(press(&mut run, KeyCode::ArrowLeft).contains("clip idle"));
-    assert!(press(&mut run, KeyCode::ArrowDown).contains("playing"));
+    assert!(press(&mut run, KeyCode::ArrowDown).contains("walker #1 playing"));
 }

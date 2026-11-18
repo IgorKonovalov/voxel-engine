@@ -377,6 +377,28 @@ fn the_route_is_one_function() {
     for k in [KeyCode::KeyW, KeyCode::F7, KeyCode::F1, KeyCode::Tab] {
         assert!(taken(RouteInput::Key(k), true).pass, "{k:?}");
     }
+    // Placement mode is the run's with the menu closed: its wheel, digits, `R`, `Esc` and
+    // both clicks pass to the run.
+    let mut placing: Vec<RouteInput> = flythrough::toggles::BELT_KEYS
+        .into_iter()
+        .chain([KeyCode::KeyR, KeyCode::Escape])
+        .map(RouteInput::Key)
+        .collect();
+    placing.extend([
+        RouteInput::Wheel,
+        RouteInput::Click(MouseButton::Left),
+        RouteInput::Click(MouseButton::Right),
+    ]);
+    for i in placing {
+        assert_eq!(
+            taken(i, false),
+            flythrough::hud::menu::Taken {
+                menu: false,
+                pass: true
+            },
+            "{i:?} in placement mode"
+        );
+    }
     assert_eq!(
         taken(RouteInput::Key(KeyCode::KeyL), true),
         flythrough::hud::menu::Taken {
@@ -461,11 +483,12 @@ fn f1_opens_the_keys_page() {
 }
 
 /// The shortcut rows of ADR-0061's key table as the owner answered it (Plan 0080's "The
-/// keys"), and the render profile's `F4` (ADR-0055): each entry that keeps a bind and its
-/// binds as the menu shows them.
-const SHORTCUTS: [(&str, &str); 16] = [
+/// keys"), the render profile's `F4` (ADR-0055) and the belt's (Plan 0077's placement mode;
+/// the dig radius is the menu's only; the digits are the belt's slots while the belt is shown,
+/// a fixed row, and enter no mode): each entry that keeps a bind and its binds as the menu
+/// shows them.
+const SHORTCUTS: [(&str, &str); 19] = [
     ("profile", "F4"),
-    ("dig radius", "wheel / pad D-pad up down"),
     ("walk", "G / pad North"),
     ("resume the tour", "T"),
     ("upscaler", "F10"),
@@ -473,7 +496,11 @@ const SHORTCUTS: [(&str, &str); 16] = [
     ("drop a light", "1"),
     ("remove the newest", "4"),
     ("fire a light", "6"),
-    ("place a walker", "`"),
+    ("choose an entity", "`"),
+    ("belt next", "pad D-pad right"),
+    ("belt before", "pad D-pad left"),
+    ("turn the ghost", "R"),
+    ("remove aimed entity", "Delete"),
     ("clip before", "Left"),
     ("clip after", "Right"),
     ("clip pause", "Down"),
@@ -535,6 +562,24 @@ fn the_shortcuts_are_the_table() {
         };
         let row = row.split("  unavailable: ").next().unwrap_or(row);
         assert!(row.trim_end().ends_with(&format!(" {keys}")), "{row}");
+    }
+    // Plan 0077 Phase 9 (1): the fixed rows say the digits are the belt's slots while the
+    // belt is shown; no entry's keys are a digit other than the lights' `1`, `4`, `6`.
+    assert!(
+        tree.lines()
+            .any(|l| l.contains("1-9") && l.contains("the belt's slots while the belt is shown")),
+        "{tree}"
+    );
+    assert!(
+        tree.lines()
+            .all(|l| l.trim_start().split("  ").next() != Some("placement mode")),
+        "{tree}"
+    );
+    for (label, keys) in SHORTCUTS {
+        let digit = keys
+            .split(" / ")
+            .any(|k| k.len() == 1 && k.chars().all(|c| c.is_ascii_digit()));
+        assert!(!digit || ["1", "4", "6"].contains(&keys), "{label}: {keys}");
     }
 }
 

@@ -355,6 +355,102 @@ fn a_backdrop_cell_dims_and_a_grey_row_reads() {
     }
 }
 
+/// Plan 0077 Phase 7 done-when 1 (ADR-0075): a 64 x 64 tile of a known pattern at the 4 x 4
+/// cell block from cell (2, 1). At scale 2 the block's 64 x 64 pixels are the tile's, exact;
+/// a glyph on a cell of the block draws its set bits white over the tile; every pixel outside
+/// the block and away from the glyph is the clear colour. At scale 3 each tile pixel covers
+/// 1.5 target pixels by nearest sampling: the 96 x 96 block's corners and centre read tile
+/// pixels (0, 0), (63, 0), (0, 63), (63, 63) and (32, 32).
+#[test]
+fn a_tile_draws_in_its_cells() {
+    let Some((device, queue)) = software_device() else {
+        return;
+    };
+    let pattern = |x: u32, y: u32| [(x * 4) as u8, (y * 4) as u8, ((x ^ y) * 4) as u8, 255];
+    let rgba: Vec<u8> = (0..64 * 64).flat_map(|i| pattern(i % 64, i / 64)).collect();
+    let mut hud = HudOverlay::new(&device, wgpu::TextureFormat::Rgba8Unorm, 2);
+    hud.set_tile(&queue, 7, &rgba);
+    let tiles = [vxe_render::HudTile {
+        col: 2,
+        row: 1,
+        index: 7,
+    }];
+    let paint = vxe_render::HudPaint {
+        tiles: &tiles,
+        ..Default::default()
+    };
+    let (w, h) = (192, 128);
+    hud.set_lines_painted(&queue, "", &[], paint);
+    let img = draw(
+        &device,
+        &queue,
+        &hud,
+        &cleared_target(&device, &queue, w, h),
+    );
+    let px = |img: &[u8], x: u32, y: u32| -> [u8; 4] {
+        img[((y * w + x) * 4) as usize..][..4].try_into().unwrap()
+    };
+    for y in 0..h {
+        for x in 0..w {
+            let inside = (32..96).contains(&x) && (16..80).contains(&y);
+            let want = if inside {
+                pattern(x - 32, y - 16)
+            } else {
+                CLEAR
+            };
+            assert_eq!(px(&img, x, y), want, "scale 2: pixel ({x}, {y})");
+        }
+    }
+    // A glyph on the block's top-left cell.
+    hud.set_lines_painted(&queue, "\n  A", &[], paint);
+    let img = draw(
+        &device,
+        &queue,
+        &hud,
+        &cleared_target(&device, &queue, w, h),
+    );
+    let a = FONT[usize::from(b'A' - 32)];
+    let mut bits = 0;
+    for (gy, row) in a.iter().enumerate() {
+        for gx in 0..8u32 {
+            if row >> gx & 1 == 1 {
+                let p = px(&img, 32 + gx * 2, 16 + gy as u32 * 2);
+                assert_eq!(p[..3], WHITE, "bit ({gx}, {gy}) of A over the tile");
+                bits += 1;
+            }
+        }
+    }
+    assert!(bits > 0);
+    assert_eq!(px(&img, 0, 0), CLEAR);
+    assert_eq!(px(&img, 95, 79), pattern(63, 63), "the block's far corner");
+    hud.set_scale(&queue, 3);
+    hud.set_lines_painted(&queue, "", &[], paint);
+    let (w3, h3) = (288, 192);
+    let img = draw(
+        &device,
+        &queue,
+        &hud,
+        &cleared_target(&device, &queue, w3, h3),
+    );
+    let px3 =
+        |x: u32, y: u32| -> [u8; 4] { img[((y * w3 + x) * 4) as usize..][..4].try_into().unwrap() };
+    let (x0, y0) = (2 * 24, 24);
+    for ((bx, by), (tx, ty)) in [
+        ((0, 0), (0, 0)),
+        ((95, 0), (63, 0)),
+        ((0, 95), (0, 63)),
+        ((95, 95), (63, 63)),
+        ((48, 48), (32, 32)),
+    ] {
+        assert_eq!(
+            px3(x0 + bx, y0 + by),
+            pattern(tx, ty),
+            "scale 3: block pixel ({bx}, {by})"
+        );
+    }
+    assert_eq!(px3(x0 + 96, y0), CLEAR, "past the block");
+}
+
 /// Readings: measurement tests that print numbers and assert nothing a tier runs. Each is
 /// `#[ignore]`d and run by hand, `cargo nextest run -p <package> --run-ignored only -E
 /// 'test(=reading::<name>)'`; the soak and full tiers leave this module out by its name.

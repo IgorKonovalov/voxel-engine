@@ -29,7 +29,7 @@
 > Phase 3 and [Plan 0082](0082-squash-and-stretch-a-scale-per-part-in-the-pose-and-the-clips.md)
 > edit (`clip.rs`, `rig.rs`, `entities.rs`, `entity.wgsl`, `spider.rig`), so the recommended
 > slot is **after Plan 0082 merges** (owner question 1); it may run beside
-> [Plan 0077](0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md)
+> [Plan 0077](done/0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md)
 > and 0079's Phase 4 (apps only). Before the lane starts the architect re-reads Phases 1 to 3
 > against the tip. Read against `plan-0063` c5c655ad, `plan-0062` 9e630854 and the
 > `chore-clip-recorder` branch; the tree's names win when the lane starts.

@@ -111,7 +111,7 @@ fn no_two_inputs_share_a_key() {
             Press::Key(k, pad) => std::iter::once(Bind::Key(k))
                 .chain(pad.map(Bind::Pad))
                 .collect(),
-            Press::Scroll | Press::Menu => Vec::new(),
+            Press::Menu => Vec::new(),
         })
         .collect();
     keys.extend(ACTIONS.iter().flat_map(|a| a.binds.iter().copied()));

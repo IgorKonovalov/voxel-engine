@@ -14,6 +14,7 @@ mod census;
 pub mod cli;
 pub mod daylight;
 pub(crate) mod edits;
+pub mod entities;
 mod fly;
 pub mod hud;
 pub mod lights;
@@ -34,7 +35,7 @@ pub mod thin_rig;
 pub mod toggles;
 pub mod trees;
 pub mod viewer;
-pub mod walker;
+pub use entities::walker;
 pub use flythrough_logic as logic;
 
 pub use census::*;

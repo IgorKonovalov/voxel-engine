@@ -382,6 +382,19 @@ Pick up after the current lighting plans close (0058 and those ahead of it).
 
 Parked 2026-11-12 (owner, at the settings-menu interview). The fly-through and the tester keep render settings in a TOML file through an app-side field table ([Plan 0073](plans/0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md), ADR-0058); the engine stays file-free (ADR-0055). A later example could show a consumer doing the same, so a game sees how. The natural home is [Plan 0071](plans/0071-the-consumers-path-a-render-example-a-renderer-tested-alone-names-and-errors.md)'s render example, or a second example beside it. Pick up after Plan 0073 closes, if 0071 has not taken it by then.
 
+### Entity placement extras parked at Plan 0077's amendment
+
+Parked 2026-11-18 from Plan 0077's "Amended 2026-11-18" (the reference is
+[`docs/references/entity-placement-ux.md`](references/entity-placement-ux.md)). Four things the
+sources show and the plan does not take: **a translucent ghost** (Valheim's look; needs
+translucent entity voxels in `entity.wgsl`, composited with the world's layers), **model icons
+as an engine facility** (the plan makes them in the fly-through on the CPU through
+`EntitySet::raycast`; a consumer with an inventory wants the same renderer, so it moves to
+`vxe-entity` or `vxe-assets` when a second user appears), **"pick" the aimed entity into the
+belt** (Minecraft's middle click) and **several belts** (Satisfactory's ten). Pick up when a
+consumer or the owner asks for one; the first two are small plans, the last two are rows in
+Plan 0077's key table.
+
 ## Performance: the static review of 2026-11-10
 
 Parked 2026-11-10. The owner asked why the window reads 30 to 50 fps with little on screen; a

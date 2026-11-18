@@ -44,8 +44,9 @@ fn rows(run: &Run) -> Vec<String> {
 }
 
 /// A key step with `Esc` and the menu closed ends the run; with it open `Esc` closes the menu
-/// (a filter first, then a page) and the run goes on. While open the left click does not dig and the wheel
-/// does not change the dig radius; closed, both do.
+/// (a filter first, then a page) and the run goes on. While open the left click does not dig
+/// and the wheel does nothing to the run; closed, the click digs and the wheel enters
+/// placement mode (the dig radius unchanged), which `Esc` ends before it ends the run.
 #[test]
 fn esc_closed_ends_the_run_and_open_never_does() {
     let mut run = bare_run(carved_rock());
@@ -79,10 +80,13 @@ fn esc_closed_ends_the_run_and_open_never_does() {
     assert!(!run.menu.is_open());
     assert_eq!(frame_keys(&mut run, &click), None);
     assert_eq!(tick_ops(&mut run), 1, "closed, the click digs");
-    assert_ne!(
-        run.modes.dig_radius, radius,
-        "closed, the wheel steps the radius"
+    assert_eq!(run.modes.dig_radius, radius, "the wheel is the belt's");
+    assert!(
+        run.modes.walkers.belt.on,
+        "closed, the wheel enters placement mode"
     );
+    assert_eq!(frame_keys(&mut run, &pressed(KeyCode::Escape)), None);
+    assert!(!run.modes.walkers.belt.on, "Esc ends placement mode first");
     assert_eq!(
         frame_keys(&mut run, &pressed(KeyCode::Escape)),
         Some(Flow::Exit)
@@ -165,9 +169,11 @@ fn the_overlay_is_chosen_by_tester_menu_and_stats() {
 
 /// The keys the menu-only entries had before the minimal key set (ADR-0061's table, the Menu
 /// rows; the profile's `PageDown`, the source's `Home`, the hour's `PageUp`, the day cycle's
-/// `End` and the trees' `CapsLock`): text here, bound to nothing now.
+/// `End` and the trees' `CapsLock`): text here, bound to nothing now (`Delete` is bound again,
+/// to the remove key of the entities; `2`, `3`, `5`, `7`, `8` and `R` to the belt's
+/// placement mode and turn).
 // keys:typed-begin
-const FORMER_KEYS: [KeyCode; 45] = [
+const FORMER_KEYS: [KeyCode; 38] = [
     KeyCode::F3,
     KeyCode::PageDown,
     KeyCode::Home,
@@ -181,7 +187,6 @@ const FORMER_KEYS: [KeyCode; 45] = [
     KeyCode::KeyQ,
     KeyCode::Comma,
     KeyCode::Semicolon,
-    KeyCode::Delete,
     KeyCode::Insert,
     KeyCode::KeyN,
     KeyCode::KeyV,
@@ -192,16 +197,10 @@ const FORMER_KEYS: [KeyCode; 45] = [
     KeyCode::Quote,
     KeyCode::Backspace,
     KeyCode::Backslash,
-    KeyCode::Digit7,
-    KeyCode::Digit8,
-    KeyCode::Digit2,
-    KeyCode::Digit3,
-    KeyCode::Digit5,
     KeyCode::KeyL,
     KeyCode::KeyI,
     KeyCode::KeyB,
     KeyCode::KeyP,
-    KeyCode::KeyR,
     KeyCode::KeyK,
     KeyCode::F11,
     KeyCode::F12,
@@ -311,8 +310,13 @@ fn a_shortcut_still_acts_and_shows() {
     frame_keys(&mut run, &pressed(KeyCode::Digit4));
     assert_eq!(count(&run), dropped, "4 removes the newest");
     frame_keys(&mut run, &pressed(KeyCode::Backquote));
-    let banner = run.banner().unwrap();
-    assert!(banner.contains("walker"), "` places a walker: {banner}");
+    assert_eq!(
+        run.menu.page(),
+        Some(PageId::Entities),
+        "` opens the entities page"
+    );
+    frame_keys(&mut run, &pressed(KeyCode::Escape));
+    assert!(!run.menu.is_open(), "Esc closes it");
     frame_keys(&mut run, &pressed(KeyCode::Enter));
     assert!(run.samples.is_some(), "Enter starts the readings");
     run.samples = None;
@@ -390,7 +394,7 @@ fn a_shortcut_still_acts_and_shows() {
 
 /// On a pad: `Start` opens the root; `DpadDown` and `South` open the second group; `East`
 /// returns to the root; `Start` closes. Closed, `Select` shows or hides the stats overlay and
-/// `DpadUp` steps the dig radius as it did.
+/// `DpadUp` leaves the dig radius as it was (the menu's only).
 #[test]
 fn the_pad_walks_the_menu() {
     use crate::hud::menu::Group;
@@ -415,7 +419,44 @@ fn the_pad_walks_the_menu() {
     assert_eq!(run.hud.visible, !visible);
     let radius = run.modes.dig_radius;
     frame_keys(&mut run, &pad(PadButton::DpadUp));
+    assert_eq!(run.modes.dig_radius, radius);
+}
+
+/// Plan 0077 Phase 5 done-when: with the menu closed the wheel and `DpadUp` leave the dig
+/// radius as it was; `Tab`, `dig`, `Enter`, `Up` still steps it; `--keys` lists it under
+/// `moving` with no key.
+#[test]
+fn the_dig_radius_is_menu_only() {
+    use vxe_app::PadButton;
+    let mut run = bare_run(carved_rock());
+    let radius = run.modes.dig_radius;
+    let mut wheel = Input::default();
+    wheel.add_scroll(1.0);
+    frame_keys(&mut run, &wheel);
+    frame_keys(&mut run, &pad(PadButton::DpadUp));
+    assert_eq!(run.modes.dig_radius, radius);
+    frame_keys(&mut run, &pressed(KeyCode::Escape));
+    assert!(!run.modes.walkers.belt.on);
+    frame_keys(&mut run, &pressed(KeyCode::Tab));
+    search(&mut run, "dig");
+    frame_keys(&mut run, &pressed(KeyCode::Enter));
+    assert!(run.menu.editing());
+    // keys:typed-begin
+    frame_keys(&mut run, &pressed(KeyCode::ArrowUp));
+    // keys:typed-end
     assert_eq!(run.modes.dig_radius, radius + crate::edits::DIG_STEP);
+    let args = crate::cli::parse_args_from(vec!["--keys".to_owned()]).expect("parses");
+    let tree = crate::hud::menu::keys_text(&args);
+    let moving = tree
+        .split("\nmoving\n")
+        .nth(1)
+        .and_then(|t| t.split("\ncamera and paths\n").next())
+        .expect("the moving group");
+    let row = moving
+        .lines()
+        .find(|l| l.trim_start().starts_with("dig radius"))
+        .expect("a dig radius row");
+    assert!(row.trim_end().ends_with(" menu"), "{row}");
 }
 
 /// `Enter` starts the readings; `F1` opens the Keys page and starts none.
@@ -689,9 +730,9 @@ fn an_unavailable_entry_says_why() {
         ("resume the tour", "needs --path"),
         ("next castle shot", "needs --castle"),
         ("pan", "needs --pan"),
-        ("clip before", "needs --model"),
-        ("clip after", "needs --model"),
-        ("clip pause", "needs --model"),
+        ("clip before", "needs a placed entity"),
+        ("clip after", "needs a placed entity"),
+        ("clip pause", "needs a placed entity"),
     ];
     let audio: Vec<&str> = entries()
         .filter(|e| e.group == Group::Audio)

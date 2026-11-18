@@ -98,6 +98,8 @@ pub struct Frame {
     restarts: u64,
     /// The sky, its uniform and LUTs ([`Frame::set_sky`]).
     sky: SkyState,
+    /// [`Frame::set_mark_colours`].
+    mark_colours: [[f32; 3]; 2],
 }
 
 impl Frame {
@@ -142,6 +144,7 @@ impl Frame {
             output_hint: None,
             restarts: 0,
             sky: SkyState::new(device),
+            mark_colours: crate::entities::MARK_COLOURS,
         }
     }
 
@@ -577,6 +580,17 @@ impl Frame {
         self.entities.set_entity_displays(queue, list);
     }
 
+    /// The colours a consumer marks entities with ([`crate::Mark`], ADR-0074), the first
+    /// and the second: settings the consumer reads, which the frame keeps and never applies.
+    pub fn set_mark_colours(&mut self, colours: [[f32; 3]; 2]) {
+        self.mark_colours = colours;
+    }
+
+    /// [`Frame::set_mark_colours`]' colours, [`crate::MARK_COLOURS`] until set.
+    pub fn mark_colours(&self) -> [[f32; 3]; 2] {
+        self.mark_colours
+    }
+
     /// Entities the last [`Frame::set_entities`] was given and did not draw.
     pub fn entities_over_cap(&self) -> usize {
         self.entities.entities_over_cap()
@@ -594,6 +608,7 @@ impl Frame {
     pub fn frame_bytes(&self) -> u64 {
         self.targets.bytes()
             + self.entities.bytes()
+            + crate::entities::MARK_BUFFER_BYTES
             + self.probe.volume.get().map_or(0, ProbeVolume::bytes)
             + self.exposure.bytes()
             + self.sky.bytes()

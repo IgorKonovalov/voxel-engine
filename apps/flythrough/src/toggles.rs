@@ -20,9 +20,6 @@ use vxe_app::{Input, KeyCode, PadButton};
 pub enum Press {
     /// A key, and the pad button that does the same, if any.
     Key(KeyCode, Option<PadButton>),
-    /// A scroll line up (or the pad's D-pad up); down steps back. The run banks fractional
-    /// lines (`edits::scroll_dig_radius`); [`Toggle::flip`] is one whole line up.
-    Scroll,
     /// No key: the toggle is the menu's only.
     Menu,
 }
@@ -65,6 +62,8 @@ pub enum Needs {
     Castle,
     /// `--model PATH`: the viewer's clips.
     Model,
+    /// A placed entity: its clip, cycled or paused.
+    Placed,
     /// A bounded world (`--level`): walking, which a streamed world refuses.
     Bounded,
     /// A bounded world (`--level`): the coarse grid and the collapse it feeds.
@@ -84,6 +83,7 @@ impl Needs {
             Self::Path => (v.path, "needs --path"),
             Self::Castle => (v.castle, "needs --castle"),
             Self::Model => (v.model, "needs --model"),
+            Self::Placed => (v.placed, "needs a placed entity"),
             Self::Bounded => (!v.streaming, "needs --level"),
             Self::Coarse => (v.coarse, "needs --level"),
             Self::Sky => (m.sky, "needs --sky on"),
@@ -97,12 +97,11 @@ impl Needs {
 }
 
 impl Toggle {
-    /// Whether `input` presses this toggle's key or pad button this frame (a scroll row is
-    /// stepped by the run's scroll banking, not here).
+    /// Whether `input` presses this toggle's key or pad button this frame.
     pub fn pressed(&self, input: &Input) -> bool {
         match self.press {
             Press::Key(key, pad) => input.pressed(key) || pad.is_some_and(|b| input.pad_pressed(b)),
-            Press::Scroll | Press::Menu => false,
+            Press::Menu => false,
         }
     }
 }
@@ -198,14 +197,35 @@ pub const KEY_DROP: KeyCode = KeyCode::Digit1;
 pub const KEY_REMOVE: KeyCode = KeyCode::Digit4;
 /// `6`: fire a light along the view ray.
 pub const KEY_FIRE: KeyCode = KeyCode::Digit6;
-/// `` ` `` (Backquote): place a walker on the looked-at surface (`crate::walker`).
+/// `` ` `` (Backquote): the chooser, the entities page; on it, `Enter`'s hand-over to
+/// placement mode (`crate::entities::picker`).
 pub const KEY_WALKER: KeyCode = KeyCode::Backquote;
+/// `R`: turn the ghost one step in placement mode (`crate::entities::belt`).
+pub const KEY_TURN: KeyCode = KeyCode::KeyR;
+/// The belt's slots' keys, `1`..`9`: while the belt is shown (placement mode, and the
+/// chooser over it) each selects its slot, `4` included, and the lights' drop, removal and
+/// shot rest; out of the mode `1`, `4` and `6` keep those binds and no digit enters the mode.
+/// No action binds them: `hud::menu::bound_keys` counts them as read.
+pub const BELT_KEYS: [KeyCode; 9] = [
+    KEY_DROP,
+    KeyCode::Digit2,
+    KeyCode::Digit3,
+    KEY_REMOVE,
+    KeyCode::Digit5,
+    KEY_FIRE,
+    KeyCode::Digit7,
+    KeyCode::Digit8,
+    KeyCode::Digit9,
+];
 /// `F4`: the next render profile (`run::profile`).
 pub const KEY_PROFILE: KeyCode = KeyCode::F4;
-/// `Left` and `Right`: the viewer's clip before and after (`--model`, `crate::viewer`).
+/// `Delete`: remove the placed entity under the crosshair.
+pub const KEY_REMOVE_AIMED: KeyCode = KeyCode::Delete;
+/// `Left` and `Right`: the aimed (else the newest) placed entity's clip before and after
+/// (`crate::entities`).
 pub const KEY_CLIP_BACK: KeyCode = KeyCode::ArrowLeft;
 pub const KEY_CLIP_ON: KeyCode = KeyCode::ArrowRight;
-/// `Down`: the viewer's clip paused or playing.
+/// `Down`: that entity's clip paused or playing.
 pub const KEY_CLIP_PAUSE: KeyCode = KeyCode::ArrowDown;
 
 /// What an action does: the run's method its entry and its binds call (`Run::act`).
@@ -223,17 +243,23 @@ pub enum Act {
     Remove,
     /// Fires a light along the view ray.
     FireLight,
-    /// Places a walker (or `--model`'s model) at the looked-at surface.
-    PlaceWalker,
+    /// Opens the chooser: the library's entries, each into a belt slot.
+    Picker,
+    /// The belt's selection one slot on (`1`) or back (`-1`), entering the mode.
+    BeltStep(i8),
+    /// Turns the ghost one step in placement mode.
+    Turn,
+    /// Removes the placed entity under the crosshair.
+    RemoveAimed,
     /// The walkers walk or hold still.
     WalkersWalk,
     /// The walkers' eye lights on or off.
     EyeLights,
-    /// The viewer's clip before.
+    /// The aimed (else the newest) placed entity's clip before.
     ClipBack,
-    /// The viewer's clip after.
+    /// Its clip after.
     ClipOn,
-    /// The viewer's clip paused or playing.
+    /// Its clip paused or playing.
     ClipPause,
     /// Plays a knock at the dig point.
     Knock,
@@ -430,10 +456,30 @@ pub static ACTIONS: &[Action] = &[
         [Bind::Key(KEY_FIRE)]
     ),
     action!(
-        "place a walker",
+        "choose an entity",
         Entities,
-        Act::PlaceWalker,
+        Act::Picker,
         [Bind::Key(KEY_WALKER)]
+    ),
+    action!(
+        "belt next",
+        Entities,
+        Act::BeltStep(1),
+        [Bind::Pad(PadButton::DpadRight)]
+    ),
+    action!(
+        "belt before",
+        Entities,
+        Act::BeltStep(-1),
+        [Bind::Pad(PadButton::DpadLeft)]
+    ),
+    action!("turn the ghost", Entities, Act::Turn, [Bind::Key(KEY_TURN)]),
+    action!(
+        "remove aimed entity",
+        Entities,
+        Act::RemoveAimed,
+        [Bind::Key(KEY_REMOVE_AIMED)],
+        Some(Needs::Placed)
     ),
     Action {
         binds: &[],
@@ -458,21 +504,21 @@ pub static ACTIONS: &[Action] = &[
         Entities,
         Act::ClipBack,
         [Bind::Key(KEY_CLIP_BACK)],
-        Some(Needs::Model)
+        Some(Needs::Placed)
     ),
     action!(
         "clip after",
         Entities,
         Act::ClipOn,
         [Bind::Key(KEY_CLIP_ON)],
-        Some(Needs::Model)
+        Some(Needs::Placed)
     ),
     action!(
         "clip pause",
         Entities,
         Act::ClipPause,
         [Bind::Key(KEY_CLIP_PAUSE)],
-        Some(Needs::Model)
+        Some(Needs::Placed)
     ),
     action!(
         "knock",
@@ -931,7 +977,7 @@ pub static TOGGLES: &[Toggle] = &[
         },
     },
     Toggle {
-        press: Press::Scroll,
+        press: Press::Menu,
         name: "dig radius",
         group: Group::Moving,
         needs: None,

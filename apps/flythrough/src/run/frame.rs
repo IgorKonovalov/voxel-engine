@@ -235,7 +235,8 @@ impl Run {
 
     /// The frame's input step, before anything else reads the input: under `--tester` the
     /// tester's filter (`F1` its help panel), else the menu's step (`menu::step`, its
-    /// activations run here); then `Esc` ends a run with no path player and `F2` (or the pad's
+    /// activations run here); then `Esc` ends placement mode, else a run with no path player,
+    /// and `F2` (or the pad's
     /// `Select`) shows or hides the stats overlay. Gives what passes on to the rest of the
     /// frame, and `Flow::Exit` when `Esc` ended the run.
     pub(crate) fn key_step<'a>(&mut self, input: &'a Input) -> (Passed<'a>, Option<Flow>) {
@@ -253,17 +254,69 @@ impl Run {
             for a in routed.acts {
                 self.menu_act(a);
             }
+            self.sync_ghost();
             routed.pass
         };
         let i = pass.input();
-        // A path run ends through its player, so its report can say how.
-        if i.pressed(KeyCode::Escape) && self.player.is_none() {
+        // `Esc` with the menu closed ends placement mode first, then the run; a path run ends
+        // through its player, so its report can say how.
+        if i.pressed(KeyCode::Escape) && self.modes.walkers.belt.on {
+            self.end_placement("placement off");
+        } else if i.pressed(KeyCode::Escape) && self.player.is_none() {
             return (pass, Some(Flow::Exit));
         }
         if !self.args.tester && (i.pressed(KeyCode::F2) || i.pad_pressed(PadButton::Select)) {
             self.hud.visible = !self.hud.visible;
         }
         (pass, None)
+    }
+
+    /// In placement mode, the belt appended to the overlay's rows for a `size` window at the
+    /// HUD's glyph scale (`entities::belt::append_belt`): to the banner's rows when `banner`,
+    /// else the stats'. Gives the belt's backdrop box; `None`, and the rows untouched, out of
+    /// the mode.
+    pub(crate) fn belt_rows(&mut self, size: [u32; 2], banner: bool) -> Option<vxe_render::HudBox> {
+        if !self.modes.walkers.belt.on {
+            return None;
+        }
+        let cell = (8 * crate::run::hud_feed::HUD_SCALE) as usize;
+        let grid = (size[0] as usize / cell, size[1] as usize / cell);
+        let h = &mut self.hud;
+        let text = if banner { &mut h.banner } else { &mut h.text };
+        h.paint.clear();
+        let b = crate::entities::belt::append_belt(
+            text,
+            &mut h.colours,
+            grid,
+            &self.modes.walkers,
+            ms_since(self.start),
+            hud::BANNER_MS,
+            &mut h.paint,
+        );
+        Some(b)
+    }
+
+    /// With the chooser open, the belt appended under the menu's panel (`Run::place_menu`'s
+    /// rows in the HUD's `overlay` buffers) for a `size` window at the menu's glyph scale, its
+    /// frame on the selected slot, its tiles after the chooser's. Gives the belt's backdrop
+    /// box; `None`, and the rows untouched, on any other page or closed.
+    pub(crate) fn chooser_belt(&mut self, size: [u32; 2]) -> Option<vxe_render::HudBox> {
+        if self.args.tester || self.menu.page() != Some(crate::hud::menu::PageId::Entities) {
+            return None;
+        }
+        self.fill_belt();
+        let panel = crate::hud::menu::Panel::of(size[0], size[1]);
+        let h = &mut self.hud;
+        let b = crate::entities::belt::append_belt(
+            &mut h.overlay,
+            &mut h.overlay_colours,
+            (panel.cols, panel.rows),
+            &self.modes.walkers,
+            ms_since(self.start),
+            hud::BANNER_MS,
+            &mut h.paint,
+        );
+        Some(b)
     }
 
     /// Interactive flight's frame: the walk or the flight from `input`, the pan, the keys
@@ -664,30 +717,40 @@ impl Run {
         };
         if let Some(gfx) = self.gfx.as_mut() {
             gfx.hud.set_scale(&gpu.queue, scale);
+            for (i, rgba) in self.modes.walkers.icons.uploads() {
+                gfx.hud.set_tile(&gpu.queue, i, &rgba);
+            }
         }
         match overlay {
             Overlay::Stats => self.update_hud(gpu),
             Overlay::Menu => {
                 self.write_menu();
                 let backdrop = self.place_menu(gpu.size);
+                let belt = self.chooser_belt(gpu.size);
                 if let Some(gfx) = self.gfx.as_mut() {
-                    gfx.hud.set_lines_over(
-                        &gpu.queue,
-                        &self.hud.overlay,
-                        &self.hud.overlay_colours,
-                        backdrop,
-                    );
+                    let h = &self.hud;
+                    let boxes = [backdrop, belt.unwrap_or(backdrop)];
+                    let paint = h.paint.with(&boxes);
+                    gfx.hud
+                        .set_lines_painted(&gpu.queue, &h.overlay, &h.overlay_colours, paint);
                     gfx.hud.set_samples(&gpu.queue, &[], 0.0);
                 }
             }
             // With the stats HUD off the overlay draws the mode banner alone while it shows.
             Overlay::Banner => {
                 self.write_banner();
+                // The stats' colours are free with the HUD off: the banner's go there.
+                crate::run::hud_feed::banner_colours(&self.hud.banner, &mut self.hud.colours);
+                let belt = self.belt_rows(gpu.size, true);
                 if let Some(gfx) = self.gfx.as_mut() {
-                    // The stats' colours are free with the HUD off: the banner's go there.
-                    crate::run::hud_feed::banner_colours(&self.hud.banner, &mut self.hud.colours);
-                    gfx.hud
-                        .set_lines(&gpu.queue, &self.hud.banner, &self.hud.colours);
+                    let (text, colours) = (&self.hud.banner, &self.hud.colours);
+                    match belt {
+                        Some(b) => {
+                            let paint = self.hud.paint.with(std::slice::from_ref(&b));
+                            gfx.hud.set_lines_painted(&gpu.queue, text, colours, paint)
+                        }
+                        None => gfx.hud.set_lines(&gpu.queue, text, colours),
+                    }
                     gfx.hud.set_samples(&gpu.queue, &[], 0.0);
                 }
             }
@@ -723,6 +786,7 @@ impl Run {
             up.to_array(),
         );
         self.poll_viewer(ms_since(self.start));
+        self.aim_entities();
         // The walkers walk before their eye lights are read, so a light rides with its head.
         self.modes.walkers.step(step);
         let mut lights = self.modes.lights.list();
@@ -735,7 +799,7 @@ impl Run {
         };
         gfx.frame.set_lights(&lights);
         gfx.frame.set_light_cap(self.args.light_cap);
-        if let Some(words) = crate::walker::feed(
+        if let Some(words) = crate::entities::feed(
             &mut self.modes.walkers,
             &self.world,
             self.fly.camera.position.to_array(),
