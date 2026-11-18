@@ -497,3 +497,120 @@ fn a_reset_pixel_starts_from_its_record() {
     assert!(plus_z > 0, "no +z pixel inside the box at frame 1");
     assert!(worst <= 1.0 / (SEED_AGE + 1.0), "{worst}");
 }
+
+/// row (2 x 1 x 2 chunks), the column of chunk (0, 0, 0) baked under `Sky::uniform(1.0)`, so the
+/// floor's neighbour (1, 0, 0) holds no block and waits in the pool; the live
+/// queue at the fly-through's settings. A 10-voxel rock box stamped into the air chunk
+/// (0, 0, 1) before the queue's first step: after that step the chunk is in the queue's digs
+/// (`digs` or `dig_open`) and, where both are in the jobs, opens ahead of (1, 0, 0); stepped
+/// until it holds no track, its block holds a record on every listed brick, each baked under
+/// the sky (`VIS_BAKED`) and none `SKY_STALE`. Then a box invalidated in the air chunk
+/// (1, 0, 1) with no voxel changed (an empty prefab's stamp) lands no block and leaves the
+/// chunk in `faceless`.
+#[test]
+fn a_stamp_into_air_is_a_dig() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = floor_world([2, 1, 2], |_| false);
+    let mut gpu = mirror(&device, &queue, &world, None);
+    let mut f = dig_frame(&device);
+    let (air, neighbour, empty) = (
+        ChunkCoord([0, 0, 1]),
+        ChunkCoord([1, 0, 0]),
+        ChunkCoord([1, 0, 1]),
+    );
+    // Only the first column baked: the neighbour holds no block and waits in the pool.
+    f.bake_until(
+        &device,
+        &queue,
+        &mut gpu,
+        &world,
+        ChunkExtent::new([0, 0, 0], [1, 1, 2]),
+        &vxe_render::BakeSettings::default(),
+        &mut |_| {},
+    )
+    .expect("the store fits");
+    assert!(f.store().block_words(neighbour).is_none(), "withheld");
+    f.start_bake_queue(
+        &queue,
+        &gpu,
+        vxe_render::queue_settings(),
+        vxe_render::DEFAULT_BAKE_SLICE_MS,
+    );
+    let cam = camera([64.0, 32.0]);
+    let stamp = |lo: [i32; 3], hi: [i32; 3]| {
+        let r = world
+            .apply(&EditOp::box_(
+                Fixed3(lo.map(|v| i64::from(v) * FIXED_ONE)),
+                Fixed3(hi.map(|v| i64::from(v) * FIXED_ONE)),
+                Mode::Fill(ROCK),
+            ))
+            .expect("the stamp is resident");
+        r.aabb.expect("the stamp changed voxels")
+    };
+    let (a, b) = stamp([20, 20, 80], [30, 30, 90]);
+    let mut enc = device.create_command_encoder(&Default::default());
+    gpu.sync(&world, &queue, &mut enc).expect("the mirror fits");
+    queue.submit([enc.finish()]);
+    f.invalidate(a.0, b.0);
+    dig_queue_step(&device, &queue, &mut f, &mut gpu, &world, &cam);
+    let q = f.bake_queue().expect("the queue runs");
+    let tracks = q.tracks(air);
+    let jobs = q.jobs();
+    let at = |c: ChunkCoord| jobs.iter().position(|j| *j == c);
+    println!(
+        "after the stamp's step: the air chunk's tracks {tracks:?}, at {:?} in the jobs, the neighbour at {:?}",
+        at(air),
+        at(neighbour)
+    );
+    assert!(
+        tracks.contains(&"digs") || tracks.contains(&"dig_open"),
+        "{tracks:?}"
+    );
+    if let (Some(x), Some(y)) = (at(air), at(neighbour)) {
+        assert!(x < y, "the dig at {x}, the neighbour at {y}");
+    }
+    let mut steps = 1;
+    while steps < 600
+        && (f.store().block_words(air).is_none()
+            || !f.bake_queue().is_some_and(|q| q.tracks(air).is_empty()))
+    {
+        dig_queue_step(&device, &queue, &mut f, &mut gpu, &world, &cam);
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("device poll");
+        steps += 1;
+    }
+    let block = f.store().block_words(air).expect("the stamped chunk's block landed");
+    let w = vxe_render::internals::BRICK_WORDS;
+    let (mut bricks, mut baked, mut stale) = (0, 0, 0);
+    for slot in 0..512usize {
+        let dir = block[slot];
+        if dir == 0 {
+            continue;
+        }
+        let rec = &block[(dir >> 11) as usize - w..(dir >> 11) as usize];
+        bricks += 1;
+        baked += usize::from((0..6).any(|k| vxe_render::internals::record_visibility(rec, k).is_some()));
+        stale += usize::from(vxe_render::internals::record_sky_stale(rec));
+    }
+    println!(
+        "landed after {steps} steps: {bricks} bricks, {baked} baked under the sky, {stale} stale"
+    );
+    assert!(bricks > 0, "no brick listed");
+    assert_eq!(baked, bricks);
+    assert_eq!(stale, 0);
+    // An empty prefab's stamp: a box with no voxel changed.
+    f.invalidate([70, 10, 70], [75, 15, 75]);
+    for _ in 0..60 {
+        dig_queue_step(&device, &queue, &mut f, &mut gpu, &world, &cam);
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("device poll");
+    }
+    let tracks = f.bake_queue().expect("the queue runs").tracks(empty);
+    println!("the empty stamp's chunk: tracks {tracks:?}");
+    assert!(f.store().block_words(empty).is_none());
+    assert!(tracks.contains(&"faceless"), "{tracks:?}");
+}

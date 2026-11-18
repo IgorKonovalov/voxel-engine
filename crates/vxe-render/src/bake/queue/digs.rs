@@ -48,6 +48,17 @@ impl BakeQueue {
                 self.stale.insert(c);
             }
             if !store.blocks.contains_key(&c) {
+                // A chunk the box touched that holds no block (air before a stamp) is a whole
+                // dig: it opens in the digs' order instead of waiting in the pool. A ring chunk
+                // the box does not touch keeps the pool's path.
+                let coord = ChunkCoord(c);
+                if !near.is_empty() && run.gpu.is_mirrored(coord) && !run.gpu.is_lod(coord) {
+                    let e = self.digs.entry(c).or_default();
+                    e.whole = true;
+                    e.near = true;
+                    self.touched.insert(c);
+                    self.faceless.remove(&c);
+                }
                 continue;
             }
             let e = self.digs.entry(c).or_default();
@@ -154,7 +165,8 @@ impl BakeQueue {
     /// Opens jobs for the waiting dig chunks not in a job, ahead of every pending job, while the
     /// loop holds under two slices of `cap` samples (one at least): ring-1 chunks first, then by
     /// distance from the camera's chunk. Each is listed again on this thread and keeps every
-    /// brick record outside its dig bricks; a chunk left with no face drops its block.
+    /// brick record outside its dig bricks (a whole dig, which held no block, keeps none and
+    /// bakes every listed brick); a chunk left with no face drops its block.
     pub(in crate::bake) fn open_digs(
         &mut self,
         run: &BakeRun<'_>,
@@ -192,17 +204,22 @@ impl BakeQueue {
                 continue;
             };
             let coord = ChunkCoord(c);
-            let Some(block) = store.words.get(&c) else {
-                continue;
+            let kept: KeptBricks = match store.words.get(&c) {
+                Some(block) => records_of(block, record)
+                    .into_iter()
+                    .filter(|(slot, _)| !d.slots.contains(slot))
+                    .collect(),
+                None if d.whole => KeptBricks::default(),
+                None => continue,
             };
-            let kept: KeptBricks = records_of(block, record)
-                .into_iter()
-                .filter(|(slot, _)| !d.slots.contains(slot))
-                .collect();
             let faces = match self.listed.remove(&c) {
                 Some(f) => f,
                 None => self.list(run.world, coord, &classes).0,
             };
+            let mut d = d;
+            if d.whole {
+                d.slots = faces.bricks.iter().map(|(slot, _)| *slot).collect();
+            }
             if let Some(m) = self.prepared.remove(&c) {
                 self.prepared_bytes -= m.masks.bytes();
             }

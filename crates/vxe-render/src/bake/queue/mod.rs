@@ -233,11 +233,14 @@ pub(super) struct Fade {
     pub(super) frames: u32,
 }
 
-/// A chunk's dig bricks (slots), and whether one of them is in ring 1.
+/// A chunk's dig bricks (slots), and whether one of them is in ring 1. `whole`: a chunk the
+/// edit's box touched that held no block (a stamp into air), whose every listed brick is a dig
+/// brick, its slots filled at its opening.
 #[derive(Clone, Debug, Default)]
 pub(super) struct DigChunk {
     pub(super) slots: std::collections::BTreeSet<u16>,
     pub(super) near: bool,
+    pub(super) whole: bool,
 }
 
 /// What the frame hands the queue's step.

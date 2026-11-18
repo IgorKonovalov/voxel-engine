@@ -211,10 +211,13 @@ mod flicker {
                 let frame = std::time::Duration::from_micros(16_667);
                 std::thread::sleep(frame.saturating_sub(tf.elapsed()));
             }
+            let st = s.frame.bake_queue().map(vxe_render::BakeQueue::stats);
             println!(
-                "castle: the queue drained {} after {n} frames, {:.1} s; missing every 100 frames {missing:?}",
+                "castle: the queue drained {} after {n} frames, {:.1} s; missing every 100 frames {missing:?}; digs {:?}, digs baked {:?}",
                 s.frame.bake_queue().is_some_and(|q| q.empty()),
-                t.elapsed().as_secs_f64()
+                t.elapsed().as_secs_f64(),
+                st.as_ref().map(|st| st.digs),
+                st.as_ref().map(|st| st.digs_baked),
             );
             settle(&mut rig, &mut s, &cam, 120);
             strip(&mut rig, &mut s, &cam, "castle", "settled");
@@ -344,6 +347,13 @@ mod flicker {
             let mut depth = Vec::with_capacity(STRIP);
             for i in 0..STRIP {
                 let q = queue_step(rig, &mut s.frame, cam);
+                if i == 0 {
+                    // The edit's boxes are taken at the strip's first step (stage 6, `boxes`).
+                    println!(
+                        "{scene} {name}: the first step {:.2} ms, its boxes stage {:.2} ms, digs {}",
+                        q.stages.total_ms, q.stages.ms[6], q.digs
+                    );
+                }
                 let sh = s.step(rig, cam);
                 support::write_png(
                     &dir.join(format!("frame-{i:03}.png")),
