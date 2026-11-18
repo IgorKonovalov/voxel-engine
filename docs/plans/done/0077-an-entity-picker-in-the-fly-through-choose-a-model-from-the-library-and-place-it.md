@@ -1,31 +1,31 @@
 # 0077: An entity picker in the fly-through: choose a model from the entities library, see it at the crosshair, place it
 
-> **Status:** in-progress (dev lane from 2026-11-17; Phases 1 to 4 done); approved (2026-11-16, the owner: all eight recommended answers under "Owner questions"); amended 2026-11-17 (orchestrator re-read against Plans 0078, 0069 and 0080 as landed; owner questions 9 to 11 answered 2026-11-17: the recommended option each, `Delete` removes, `Enter` places and stays open, a page like any other); **amended 2026-11-18 (the owner's window: a placement mode with a belt of slots, a chooser with a picture per entry, the ghost marked and stood further out; Phases 5 to 9 replace Phase 5; owner questions 12 to 18 await answers)**; **amended 2026-11-18 (the Phase 8 window, Phases 1 to 8 done): question 19 answered, six fixes folded into Phase 9, a short owner check added as Phase 10 before the close review; the owner approved the route**
+> **Status:** done (closed 2026-11-18, v0.64.0; the fresh-session review: every phase done, the named tests read against their done-whens, the owner's "all fine" at Phase 10, the mark and icon readings under their guesses, no blocker; the minor findings are in the close block); was in-progress (dev lane from 2026-11-17; Phases 1 to 4 done); approved (2026-11-16, the owner: all eight recommended answers under "Owner questions"); amended 2026-11-17 (orchestrator re-read against Plans 0078, 0069 and 0080 as landed; owner questions 9 to 11 answered 2026-11-17: the recommended option each, `Delete` removes, `Enter` places and stays open, a page like any other); **amended 2026-11-18 (the owner's window: a placement mode with a belt of slots, a chooser with a picture per entry, the ghost marked and stood further out; Phases 5 to 9 replace Phase 5; owner questions 12 to 18 await answers)**; **amended 2026-11-18 (the Phase 8 window, Phases 1 to 8 done): question 19 answered, six fixes folded into Phase 9, a short owner check added as Phase 10 before the close review; the owner approved the route**
 > **Created:** 2026-11-16
-> **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md), the testbed side. Apps only
+> **Milestone:** M6 in [`docs/roadmap.md`](../../roadmap.md), the testbed side. Apps only
 > (`apps/flythrough`); nothing under `crates/` changes.
 > **Related ADRs:** none new. Rests on
-> [ADR-0009](../adrs/0009-testbed-hud-as-embedded-bitmap-font-overlay-pass.md) (the text overlay,
-> no UI library), [ADR-0050](../adrs/0050-entities-are-posed-voxel-volumes-in-their-own-pool-traced-after-the-world-march.md)
+> [ADR-0009](../../adrs/0009-testbed-hud-as-embedded-bitmap-font-overlay-pass.md) (the text overlay,
+> no UI library), [ADR-0050](../../adrs/0050-entities-are-posed-voxel-volumes-in-their-own-pool-traced-after-the-world-march.md)
 > (models, the mirror's pool, the caps) and
-> [ADR-0051](../adrs/0051-rigs-and-clips-are-text-files-sampled-in-fixed-point-by-tick.md)
+> [ADR-0051](../../adrs/0051-rigs-and-clips-are-text-files-sampled-in-fixed-point-by-tick.md)
 > (`.rig` files, clips sampled by tick).
 > **Source:** the owner, 2026-11-16: "We need some form of overlay menu in window so user can
 > choose one of entities from predefined ones and place them"; and the same day, through the
 > orchestrator: the walker and the spider go into an **entities library**, a directory of
 > predefined models under `apps/flythrough/assets/` documented in a new `docs/entities.md`, and
 > the picker's catalogue is that directory, every entry in it.
-> **Starts after:** [Plan 0063](done/0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
+> **Starts after:** [Plan 0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
 > has closed (the viewer, `--model`, the clip keys), the clip-recorder chore stacked on it has
 > merged (the library's layout, the spider, `docs/entities.md`), and
-> [Plan 0076](0076-a-key-help-overlay-for-the-fly-through-from-the-key-table.md) has merged
+> [Plan 0076](../0076-a-key-help-overlay-for-the-fly-through-from-the-key-table.md) has merged
 > (`ACTIONS`, the help panel's groups and the source scan this plan's keys must pass). Plan 0076
 > itself follows Plans 0062 and 0075, so all four edits to `toggles.rs` land before this lane
 > branches. Before the lane starts the architect re-reads Phases 1 to 3 against that tip: the
 > library's final layout and the names `walker.rs` and `viewer.rs` carry then.
 > **Amended 2026-11-16 (architect; the owner approved it 2026-11-16 with Plan 0080):** the owner asked the same day for a menu
 > system in place of a full keyboard. ADR-0061 and
-> [Plan 0080](done/0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) give
+> [Plan 0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) give
 > the window one menu component, a palette and one input-capture rule, and this plan moves onto
 > it: **Starts after** gains Plan 0080 in place of Plan 0076 (which 0080 folds in, pending the
 > owner). **`ListMenu` is not written here**: Phase 3's picker is a **dynamic Entities page** of
@@ -198,7 +198,7 @@ can move around freely without the menu blocking the view"; the preview "should 
 close, as it blocks the view and it is not possible to place correctly"; and the preview must
 be told from a placed entity "with some form of border around". The owner asked for the UX
 research first; it is
-[`docs/references/entity-placement-ux.md`](../references/entity-placement-ux.md), and the
+[`docs/references/entity-placement-ux.md`](../../references/entity-placement-ux.md), and the
 decisions below cite its sections in brackets. The same day the owner added: "if we look at
 minecraft approach, how is placing handled there? I think there is a belt of things that is
 possible to place, maybe we should do something similar", and, asked about the wheel, "dig
@@ -1139,7 +1139,7 @@ Answered 2026-11-16 (owner): every recommended option, 1 to 8.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the library scanned and listed | dev | done; `walker.rs` split into `entities/{mod,walker,placed,pool,library}.rs` here (the amendment puts it in Phase 2); `--library` is a switch beside `--keys` and the directory is `--library-dir DIR` (the plan writes `--library [DIR]`); `Viewer`'s playback moved into `viewer::Play`; `examples/clip.rs`, `tests/gpu_entity_pool.rs` edited for the moved names. Readings: [logs/0077.md](logs/0077.md) | 5666f0e5 |
+| 1: the library scanned and listed | dev | done; `walker.rs` split into `entities/{mod,walker,placed,pool,library}.rs` here (the amendment puts it in Phase 2); `--library` is a switch beside `--keys` and the directory is `--library-dir DIR` (the plan writes `--library [DIR]`); `Viewer`'s playback moved into `viewer::Play`; `examples/clip.rs`, `tests/gpu_entity_pool.rs` edited for the moved names. Readings: [logs/0077.md](../logs/0077.md) | 5666f0e5 |
 | 2: several models at once, a clip per entity | dev | done; `Walkers` holds the `Library` (a `Viewer` per rig entry) and `Placed` its `entry` and own `viewer::Play`; the clip keys act on the aimed (else newest) entity and need `Needs::Placed`; a pool refusal of a non-`--model` entry removes its unuploaded instances and names it (`spider: ...`); the HUD's target row is its own row (`walker #1 walk 0/30`), not appended to the entities row; `refreshing_the_displays_allocates_nothing_per_entity`'s rig half re-derived (`four == 4 * one`, logged); the gpu binaries were queued behind the lock at commit (Phase 3 records them); `src/run/{tests,menu_tests}.rs` and `tests/gpu_entity_pool.rs` edited for the moved names | a74a8454 |
 | 3: the picker | dev | done; the page is `PageId::Entities` (rows `Row::Item`, `Row::Clip`, then the `entities` group's entries less the opener), opened by the root's `entities` row and by `` ` `` (the `entity picker` action, renamed from `place a walker`; `Act::Picker`); `Enter` on an entry is `Activated::Place { entry, close }` (the run answers an entry in error with its error, not `Activated::Refused`) and on the clip row `Activated::Clip`; the remove action is labelled `remove aimed entity` (the `--keys` tree's 22-column label); the run's tests are in a new `src/run/picker_tests.rs` (not `menu_tests.rs`, near its cap), the tester's `` ` `` case there too (not `tests/path.rs`, Plan 0088's); `the_route_is_one_function` is untouched and `tests/picker.rs` holds the `` ` `` and `Delete` route cases; `FORMER_KEYS` (`run/menu_tests.rs`) loses `Delete`; `HudOverlay::allocations` over 60 open frames not read (needs the window) | a20b5fe0 |
 | 4: the owner's window | human | done 2026-11-18 (the orchestrator's session script at 6b29e621; the owner's words quoted under "Amended 2026-11-18" and copied into the readings log): the direction right, the hot reload moved only the walker; the placing UX replanned as Phases 5 to 9 | |
@@ -1148,18 +1148,52 @@ Answered 2026-11-16 (owner): every recommended option, 1 to 8.
 | 6: the mark (`vxe-render`), the ghost marked | dev | done; the mark settings are one `Live` field `mark_colours: [[f32; 3]; 2]` with `Frame::set_mark_colours` (no `--set` flag in the fly-through); the outline is drawn on both sides of the entity edge (ADR-0074's "either side"), two internal pixels across; marks apply in the shaded and albedo views, FSR 2's HDR variant mixing in pre-exposed radiance; the composite's FSR 2 layout is in `frame/upscale.rs` (edited; `frame/compose.rs`, `frame/marcher.rs`, `entities/display.rs`, `hitrec.wgsl` and `common.wgsl` unchanged); edited outside the phase's files: `frame/apply.rs` (the settings' round trip), `src/lib.rs` (exports), `src/layout_tests.rs` (the shader's `MARK_*` constants), `tests/entity_instances.rs` (`the_marks_follow_the_runs`), `apps/flythrough/src/cli/settings.rs` (the new field), `apps/flythrough/src/entities/pool.rs` (`feed` passes the marks), `docs/nfr/02-frame-budget.md`; `EntityMirror::bytes()` keeps the main buffer's figure and `frame_bytes` adds the 4 KiB; `the_mark_colours_are_settings` is in `crates/vxe-render/tests/settings.rs` (new); lavapipe has no timestamp queries, so the composite reading is RTX and RADV RENOIR only | 9abcd694 |
 | 7: the icons as overlay tiles, in the chooser and the belt | dev | done; the overlay's API is `HudOverlay::set_lines_painted(text, colours, HudPaint { backdrop, spans, tiles })` and `set_tile`, with `HudPaint::apply`, `TILE_BIT` and `HUD_GRID_COLS` public for the cell-word tests; the atlas is a storage buffer; the icon is fitted to its silhouette, not its box (the box gave the walker 38 pixels); the tile index is the entry's index; `Menu::write_with` gains a `tiles` output; the belt's frame rows are white with yellow spans, and a slot with its icon drops its name; `tests/icon.rs` holds two tests (walker, spider) to keep each under 0.5 s in debug; edited outside the phase's files: `crates/vxe-render/src/{lib,settings,layout_tests}.rs`, `apps/flythrough/src/entities/{mod,placed}.rs`, `apps/flythrough/tests/picker.rs` (listed) for the new argument; `entities/picker.rs` unchanged | 0011560f |
 | 8: the owner's window, run 2 | human | done 2026-11-18 (the orchestrator's `live/session77b.sh`, binary at 0011560f, Linux; the owner's words quoted under "Amended 2026-11-18 (the Phase 8 window)" and copied into the readings log): the mode, the mark, the stand rule, the clicks, `R` and the hand-over stood; six fixes named (the digits, the belt under the chooser, the cursor, one entry per rig, the icons' size and brightness, red errors) and folded into Phase 9; question 19 answered | |
-| 9: the owner's picks, the six fixes, and the tip | dev | done; one commit per fix (16a2c7de, 8e872cb6, b6fc0859, 606eddf3, 87e2aff0, ffc2b381), this row's the log; `vxe_render::HudPaint::backdrop` became `backdrops: &[HudBox]` (`crates/vxe-render/src/hud.rs`, for the panel's and the belt's boxes); the digits 2 3 5 7 8 9 are counted read through `hud::menu::bound_keys` and a `1-9` fixed row; `Menu::write_with` takes the overlay's `Paint` in place of `tiles`; `4` out of the mode is asserted as `remove the newest` (its bind), not "the aimed entity"; a `--model` merged entry's reload says `reloaded`; edited outside the phase's files: `tests/{viewer,menu}.rs`, `run/frame.rs`'s `chooser_belt`, `docs/flythrough.md`'s `--model` row; `tests/picker.rs`' scratch directory per test (a parallel-run race). Readings: [logs/0077.md](logs/0077.md) | committed with this row |
+| 9: the owner's picks, the six fixes, and the tip | dev | done; one commit per fix (16a2c7de, 8e872cb6, b6fc0859, 606eddf3, 87e2aff0, ffc2b381), this row's the log; `vxe_render::HudPaint::backdrop` became `backdrops: &[HudBox]` (`crates/vxe-render/src/hud.rs`, for the panel's and the belt's boxes); the digits 2 3 5 7 8 9 are counted read through `hud::menu::bound_keys` and a `1-9` fixed row; `Menu::write_with` takes the overlay's `Paint` in place of `tiles`; `4` out of the mode is asserted as `remove the newest` (its bind), not "the aimed entity"; a `--model` merged entry's reload says `reloaded`; edited outside the phase's files: `tests/{viewer,menu}.rs`, `run/frame.rs`'s `chooser_belt`, `docs/flythrough.md`'s `--model` row; `tests/picker.rs`' scratch directory per test (a parallel-run race). Readings: [logs/0077.md](../logs/0077.md) | committed with this row |
 | 10: the owner's short check of the six fixes | human | done 2026-11-18 (the orchestrator's `live/session77c.sh`, the release binary at ffc2b381, Linux: the showcase hall at 1280 x 720, `--model` on the walker's rig, the default cave): the owner's words "all fine" on all six (the digits, the belt under the chooser, the cursor, one entry per rig, the icons, the red error); no named change, so (5)'s 6 x 6 block is not taken; the owner parked a Unity- or Godot-like editor interface in `docs/backlog.md` on main (8f69dffb), nothing for this plan. Recorded at the close review (the lane had ended); the words in the readings log | |
 
 ### Notes
 
+Written at the close review (2026-11-18, the architect, from the readings log and the gate run
+there): the lane ended at the Phase 10 runner without the close block. Deviations, all in the
+rows above: the belt fills from `Library::order` (the entries that build first), not plain
+name order; `4` out of the mode is its bind's `remove the newest`, not "the aimed entity"; the
+frame's `|` cells were white until Phase 7's span colour; no `--set` flag, so the mark colours
+are read through `--settings` only; every composite reading was loaded (a quiet one is owed);
+Phase 3's `HudOverlay::allocations` over 60 open frames was not read (Plan 0080's reading
+covers the menu, not the chooser's tiles and spans). Followups noticed and not acted on:
+`eye_lights` allocates a `Vec` per frame (Plan 0062's, not this plan's);
+`the_icon_arrives_after_the_words` writes its scratch library under `std::env::temp_dir()`,
+the other tests under `CARGO_TARGET_TMPDIR`.
+
 ### Close triggers
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** the entities library (`library::scan`, `--library`, `--library-dir`,
+  `--model` merged into its scanned entry); a `Viewer` per entry and a clip and playback per
+  placed entity; the chooser (`PageId::Entities`, four rows per entry with its icon tile, grey
+  name and red reason for an entry in error); placement mode with the belt (`entities/belt.rs`:
+  nine slots, the wheel, the digits while shown, the D-pad), the ghost at `Run::aim_feet`'s
+  stand rule (`PLACE_REACH` 30 m, `NEAR_MIN` 3 m, `NEAR_SCALE` 1.5, the floor drop), `R` in
+  22.5 degree steps, the left click placing and staying, the right click and `Esc` leaving,
+  `Delete` removing the aimed entity; in `vxe-render`: the marks buffer and `composite.wgsl`'s
+  outline and tint (ADR-0074), the overlay's image tiles and span colours (ADR-0075), the
+  `mark_colours` setting; the CPU icon renderer (`entities/icon.rs`) on a worker thread.
+- **Public API changed:** `vxe_render` exports `Mark`, `MARK_COLOURS`, `MARK_BUFFER_BYTES`,
+  `HudPaint`, `HudTile`, `MAX_TILES`, `TILE_BIT`, `TILE_CELLS`, `TILE_PX`, `HUD_GRID_COLS`;
+  `EntityMirror::set_marks`; `Frame::set_mark_colours` and `mark_colours`;
+  `RenderSettings::mark_colours` (`Live`); `HudOverlay::set_tile` and `set_lines_painted`;
+  `Frame::frame_bytes` grows by 4096 (three inventory tests re-pinned at 547085ec).
+- **Budget readings** (`logs/0077.md`): the composite's marks 0.02 to 0.03 ms RTX 3080 Laptop
+  and 0.07 to 0.10 ms RADV RENOIR at 1080p from FSR 2 at 1.5 (loaded, indicative; the guesses
+  0.1 and 0.6; `docs/nfr/02-frame-budget.md` table 2); the icon 1.89 ms (walker) and 14.68 ms
+  (spider) release on the dev box (the guess 5 to 50), the atlas 524 288 bytes; the library's
+  scan and build 4.1 ms (cave) and 7.3 ms (showcase) release (the guess 10); the page's format
+  35 us and the belt's 4 us, debug; the marks buffer 4096 bytes. No `docs/nfr.md` budget line
+  moved.
+- **Gate at the tip:** the lane's at ffc2b381: `cargo nextest run --workspace --profile gate`
+  1138 run, 1138 passed, 127 skipped, 1120.9 s (load 24.6 at the start); clippy, fmt, doctests
+  (10), deny and the doc gates 0. The close review's run at the closing tree is in the
+  readings log's "Close review" section.
+- **Outstanding `human` phases:** none (Phases 4, 8 and 10 done 2026-11-18).
 
 ## Followups
 

@@ -1,6 +1,6 @@
 # ADR-0075: The overlay draws image tiles in its cells, and an entity's icon is a still made once on the CPU through the entity raycast
 
-> **Status:** proposed
+> **Status:** accepted (Plan 0077, 2026-11-18, with an Outcome)
 > **Amended 2026-11-18 (architect, at Plan 0077's Phase 5 checkpoint):** the cell word is not
 > full. A tile needs 9 bits (5 for `MAX_TILES` = 32, 4 for the cell's place in its 4 x 4
 > block), so the tile takes bits 17..26 and bits 27..31 stay free; the Decision and the
@@ -8,7 +8,7 @@
 > `hud.wgsl`); only `HudOverlay`'s CPU API colours whole rows, and Plan 0077 Phase 7 adds a
 > span colour over the written rows beside the tiles, with no new bit.
 > **Date:** 2026-11-18
-> **Related plan(s):** [Plan 0077](../plans/0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md) (Phase 7)
+> **Related plan(s):** [Plan 0077](../plans/done/0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md) (Phase 7)
 
 ## Context
 
@@ -114,5 +114,22 @@ converge on and what a fourteen-part model needs to read.
 
 ## Outcome
 
-_(Added at acceptance if Plan 0077's Phase 7 reading or Phase 8 window falsifies something
-above.)_
+Added 2026-11-18 at Plan 0077's close (Phase 7 landed at 0011560f, the icons re-cut at
+87e2aff0 after the owner's Phase 8 window; "all fine" at Phase 10).
+
+- **The fit is 7/8 of the tile, not Minecraft's 5/8, and the fit is the silhouette's.** At 5/8
+  the owner read the icons as "small and dim" beside the words; the fit rose to 56 of 64 pixels
+  on the longer axis (the walker's solid pixels from 10.5 % to 21 % of the tile), and it is
+  taken over the model's projected solid voxels, not its box (the box fit gave the walker 16 x
+  38 pixels). The face shade rose from `96 + 160 cos` to `176 + 80 cos` 256ths (the walker's
+  three visible faces 198, 210, 244 bytes; the darkest at 0.77 of the albedo). The block stays
+  4 x 4 cells and the tile 64 pixels: the cell word above is unchanged. `tests/icon.rs` pins
+  the fit, the shades and the hashes.
+- **The cost is under the guess.** The icon takes a median 1.89 ms for the six-part walker and
+  14.68 ms for the fourteen-part spider (release, the dev box's Ryzen 9 5900HS, load 8.1), on
+  a worker thread (`std::sync::mpsc`, polled with `try_recv` each frame); the atlas is
+  524 288 bytes as a storage buffer at group 0 binding 4.
+- **The overlay's paint is one struct**: `HudOverlay::set_lines_painted(queue, text, colours,
+  HudPaint { backdrops, spans, tiles })`, the span colour of the amendment above and several
+  backdrop boxes (the panel's and the belt's) beside the tiles; a tile index past `MAX_TILES`
+  keeps its cell's words.

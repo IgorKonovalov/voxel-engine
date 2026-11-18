@@ -1,6 +1,6 @@
 # ADR-0074: An entity carries a mark, drawn in the composite as an outline where the entity changes and a tint of its shaded colour
 
-> **Status:** proposed
+> **Status:** accepted (Plan 0077, 2026-11-18, with an Outcome)
 > **Amended 2026-11-18 (architect, at Plan 0077's Phase 5 checkpoint):** the hit record's
 > instance field is a **part** slot (`INSTANCE_SLOT_BITS` = 9 over `MAX_ENTITY_PARTS` = 512),
 > not an entity; an entity's parts take a run of slots (`entities/instances.rs`, `Run`). The
@@ -10,7 +10,7 @@
 > first slot) compared for the edge; Alternatives D to F record what was rejected with it.
 > The body below is the amended text.
 > **Date:** 2026-11-18
-> **Related plan(s):** [Plan 0077](../plans/0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md) (Phase 6)
+> **Related plan(s):** [Plan 0077](../plans/done/0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md) (Phase 6)
 
 ## Context
 
@@ -163,5 +163,24 @@ group the composite already owns.
 
 ## Outcome
 
-_(Added at acceptance if Plan 0077's Phase 6 reading or Phase 8 window falsifies something
-above.)_
+Added 2026-11-18 at Plan 0077's close (Phase 6 landed at 9abcd694; the owner's windows of
+Phases 8 and 10 kept the mark as built, "leave it" on outline and tint together).
+
+- **The line is two internal pixels across, not one.** `composite.wgsl`'s `mark_at` gives a
+  pixel the marked side's colour whenever its owner differs from a four-neighbour's, on both
+  sides of the silhouette edge (the entity's rim pixel and the world's pixel next to it), which
+  is what "on either side of that edge" above meant and what the Negative's "one internal
+  pixel" did not say. `a_marked_instance_has_its_outline_and_tint` asserts the entity-side
+  pixels; the owner did not find the line smeared under FSR 2 at 1.5, so the present-pass
+  fallback was not taken.
+- **The cost reading is under the guess, loaded.** The composite's median with the mark test
+  against the same tree without it: 0.02 to 0.03 ms on the RTX 3080 Laptop and 0.07 to 0.10 ms
+  on the RADV RENOIR at 1920 x 1080 from FSR 2 at 1.5, with 0, 1 or 4 marked reading alike
+  (`docs/nfr/02-frame-budget.md` table 2; every run at a 1-minute load of 7 to 55, indicative,
+  so a quiet reading is still owed). lavapipe has no timestamp queries.
+- **The colours are one `Live` setting**, `mark_colours: [[f32; 3]; 2]`, the same in every
+  profile; the fly-through has no `--set` flag, so they are read through `--settings` and set
+  by a consumer through `Frame::set_mark_colours`, not from its command line.
+- The mark words pack as the code says (`vxe_render::Mark::words`): word 0 the owner's first
+  slot, a live bit, the outline bit and the tint in 8 bits from bit 11; word 1 the colour's
+  bytes.

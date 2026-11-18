@@ -5,7 +5,7 @@
 > **Related plan(s):** [Plan 0080](../plans/done/0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md)
 > (builds it); [Plan 0073](../plans/0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md),
 > [Plan 0076](../plans/0076-a-key-help-overlay-for-the-fly-through-from-the-key-table.md) and
-> [Plan 0077](../plans/0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md)
+> [Plan 0077](../plans/done/0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md)
 > (amended onto it)
 
 ## Context
