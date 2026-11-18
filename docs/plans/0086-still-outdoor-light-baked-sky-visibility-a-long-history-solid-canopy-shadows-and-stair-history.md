@@ -315,7 +315,8 @@ reading comes first (Phase 16) and the fix phase takes its cause from it and no 
    than the chain's fallback because their neighbours are unbaked too. Phase 16 reads which;
    Phase 18 fixes it and makes the wait a setting, off. (Phase 16, 2026-11-18, read neither:
    no never-final column, the same `black` under both wait modes, the unbaked chunks the `Full`
-   edge ring; Phase 18's note of that date re-scopes its bars.)
+   edge ring; Phase 18's note of that date re-scopes its bars. Phase 18's second note: the
+   counted pixels are lit by the sky ray, not black; the ring is the ray region at rest.)
 2. **A seam between the baked sky term and the ray's** (19.png). Known in part: Phase 13's
    arms apply to the baked read only (the pair's term keeps the shading normal), Phase 5 built
    the switch with no fade, and the ray's running mean at a low hit rate is grainy by the
@@ -997,6 +998,43 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   window without a dump (21.png hid the eye's x and the HUD names no chunk for a black cell, so
   the rig took the chunk's middle and missed, and a third window would leave the same gap);
   holding the setting until the cause is named (the owner's pick stands on the start time).
+- **Amended 2026-11-18, after Phase 18's readings (architect).** Bars 2 and 6 as re-scoped
+  above were read at `76eae309` and both fail as written (`docs/plans/logs/0086.md`, Phase
+  18). The readings say the bars measured the wrong thing, not that the queue is slow or
+  wrong: **no mechanism is added, no default changes, Phase 24's run 1 gains no `partial`
+  arm**, and the reach's question moves to Phase 20's reading. Bar 2's second clause and bar
+  6 are re-stated below. Grounds, three. (i) **The rig's and the dump's "reach within the full
+  radius" is the census estimate**, `d + lr <= r_full` (`tests/support/streamed.rs`'s
+  `unbaked_inner`, `run/dump_black.rs`'s `crosses`), which `docs/backlog.md` ("The census's
+  reach-bound estimate undercounts", 2026-11-12) already names as wrong: the queue's own test
+  (`bakeable_reach`: any offset of `reach_offsets(lr)` past the full sphere) has a reach five
+  chunks long on an axis at `lr` 4, so a chunk 10.3 to 12 chunks out is crossing by the queue
+  and "inner" by the rig. The dump's 15 no-block chunks within 12 chunks (`live/p18-full.log`)
+  are 14 at 10.8 to 12.4 chunks, tracks `blocked`, and one faceless at 6.2 (1 px): by the
+  queue's test the residue is zero, and the 4492 "unbaked inner" are reach-crossing chunks
+  plus chunks never listed and so never known faceless, which `partial` lists and bakes and
+  `full` leaves by ADR-0046's rule and its Outcome of 2026-11-12. Not a throughput limit: under
+  `full` the queue bakes 87 blocks in frames 300 to 1800 because nothing it may bake is left,
+  not because its slice is spent (`partial` drains the same band in 900 frames on the same
+  slice). (ii) **The counted pixels are not black on screen.** `black` is the temporal pass's
+  counters word 4, the cube-face hits with no record that the *emissive* chain left black; the
+  sky at such a pixel is the long-history ray's (`shade.wgsl` casts the sky ray where neither
+  `sky_baked` nor `sky_chained` holds; ADR-0070, "the ray where the bake is stale or absent"),
+  and on the hills no emitter reaches the ring, so a block there would hold zero emissive light
+  too. `live/p18-full.png` and `p18-partial.png` show the same lit hills, and the mask puts the
+  counted pixels on the horizon ridge, which is lit. The band is the ray region at rest, not a
+  black band: Phase 20's question (where the ray region lies at rest) and ADR-0076 rule 2's
+  recorded breach, not a defect of this phase. (iii) Plan 0067's 1 % still-black line was read
+  in a cave, where the counter and the screen agree; under a sky the counter measures an
+  emissive gap the hills do not have, so it is the wrong figure for bar 6. Rejected: baking
+  the LOD ring or a wider sky bake radius (the 234 chunks beyond 16, 1150 of the 1338 px, are
+  LOD-only, which no reach mode bakes, ADR-0053; the far field is Plan 0033's); `Partial` as
+  the default on this reading (the Outcome of 2026-11-12 stands until a window reads a
+  difference, and the two PNGs show none); the sky chain through the parents (Phase 10's
+  unbuilt item) for the LOD ring (it would replace a ray that is clean at a hit rate near 1
+  with a chunk mean, and nothing read asks for it); another 1800-frame run against the 1 %
+  line. For Plan 0090: its `--dump-pops` builds on `--dump-black`, and must attribute such a
+  pixel to the sky ray, not to "black".
 - **What:** ADR-0070's amendment of this date. **The wait is a setting**, `lighting.column_wait`
   (off by default; `--column-wait on|off` keeps its words; the banner names `column wait on`):
   on, `bakeable` requires every column over the reach's footprint final, as Phase 9 built it;
@@ -1024,7 +1062,9 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   record bit), `frame/settings.rs`, `settings.rs`, `apps/flythrough/src/cli/outdoor.rs`,
   `run/queue.rs`, `run/loading.rs`, `run/hud_feed.rs` (the dump, the eye line), `hud/modes.rs`,
   `crates/vxe-render/tests/gpu_sun.rs`, `apps/flythrough/tests/gpu_outdoor.rs`,
-  `tests/support/streamed.rs`, `docs/flythrough.md`, `docs/plans/logs/0086.md`.
+  `tests/support/streamed.rs`, `docs/flythrough.md`, `docs/plans/logs/0086.md`; for the
+  second note's `fix` commit: `bake/summary.rs` or `bake/queue/mod.rs` (the exact reach test
+  made public), `run/dump_black.rs`, `docs/backlog.md` (the estimate's entry leaves).
 - **Done when:**
   1. **No chunk waits forever.** `every_chunk_in_reach_bakes_under_the_wait` (a unit test of
      the queue on a constructed case, under 1 s): a column whose top chunk lies past the
@@ -1037,13 +1077,19 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
      `reading::the_hills_at_dusk_under_each_wait` (Phase 16's `the_hills_at_dusk_held` rig at
      21.png's pose, wait on and off, 1800 frames; a release-run reading, outside the gate):
      from frame 300 on the wait-on `black` count is within 1 % of the wait-off's (1338 read
-     for both at Phase 16), every chunk within the bake radius whose reach lies within the full
-     radius holds a block by the end under both, and the frame each mode reaches it and the
+     for both at Phase 16), every chunk within the full radius that **the queue's own reach
+     test** (`bakeable_reach`'s: no offset of `reach_offsets(lr)` past the full sphere) calls
+     bakeable holds a block, or is faceless, by the end under both (re-stated 2026-11-18, the
+     second note: the rig's `unbaked_inner` and the dump's `crosses` take that test, made
+     public from `vxe-render`, and the backlog's estimate entry leaves; read with the estimate
+     at `76eae309` the clause holds by the dump, 14 no-block chunks at 10.8 to 12.4 chunks
+     crossing by the exact test and one faceless; the re-read with the exact test goes to the
+     log as a `fix` commit of this phase), and the frame each mode reaches it and the
      pre-roll's wall time are printed against Phase 9's table (on about 21 s, off expected
      near the finality-off build's 10.3 s). The dump, run on the same rig through the
      fly-through's path (a headless run with `--dump-black`, or the support's call of the same
      function), names the same chunks as the `Hold` report: the horizon ring, no block, reach
-     crossing the full radius. A `black` of 0 is not this bar's (the `Full` ring reads black
+     crossing the full radius. A `black` of 0 is not this bar's (the `Full` ring is counted
      under both modes; bar 6 reads it).
   3. **The end state is the wait's.** `a_provisional_bake_is_caught_up` in `gpu_sun.rs` (the
      3 x 3 x 3 stepped terrain of Phase 9 bar 1 streamed so a high chunk arrives last, the wait
@@ -1059,15 +1105,18 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
      pre-roll on the hills and in the forest (RTX), against the wait-on run; the setting shows
      its mode.
   6. **The `Full` edge ring, read under `partial`** (added 2026-11-18; a reading, no default
-     change): bar 2's rig with the wait off under `--reach partial` against `full`: `black` and
-     the hit chunks with no block every 60 frames to 1800, the frame `black` falls under 1 % of
-     the lighting pixels (Plan 0067's still-black line, 0.01 at 10 s at rest; `full` reads 2.3
-     %, 1338 of 57 600, at Phase 16), the share of the missing cells the chain leaves black by
-     distance from the eye (why 157 of 1495 took the fallback: the ring's parents hold no
-     summary either, a guess), and the display PNG of each. If `partial` clears the ring and
-     `full` leaves it, Phase 24's run 1 gains the `--reach partial` arm, and whether `Partial`
-     becomes the default is the owner's at that window (a new verdict is a new Outcome on
-     ADR-0046, the architect's, not this phase's).
+     change; re-stated the same day by the second note, the 1 % line withdrawn): bar 2's rig
+     with the wait off under `--reach partial` against `full`: `black`, the hit chunks with no
+     block and the share of lighting pixels whose sky term is the ray's (the sky-ray cast
+     counter, or `vis_out`'s a) every 60 frames to 1800, and the display PNG of each. Read at
+     `76eae309`: `black` 967 against 1338, the PNGs alike to the eye, the counted pixels lit by
+     the ray on the horizon ridge, `partial` draining the band at 10 to 16 chunks by frame 1200
+     and the 234 LOD-ring chunks beyond 16 (1150 px) staying under both. The clause met: no
+     black band on screen under either mode. Phase 24's run 1 gains no `partial` arm; whether
+     `partial` earns one is Phase 20's reading (its fourth arm), since what it moves is the
+     ray region's extent, the seam's question, and whether `Partial` becomes the default under
+     a sky is the owner's at that window (a new Outcome on ADR-0046, the architect's, not this
+     phase's).
 
 ### Phase 19: The key light on the pair's `g` (B (a)), and the grain after a turn
 - **Owner skill:** dev
@@ -1116,8 +1165,15 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
 - **What:** first the reading at 19.png's pose (`--spawn inside`, noon, eye `221 -4.4 493.6`,
   anchor 4, smoothed): per lighting pixel the sky term's source (baked, chained, the pair) and
   the pair's age and hit rate, every 60 frames for 600: does the ray region shrink as the queue
-  drains (the wait: Phase 18's), stay (the reach), or follow the stale bit? Then, from this
-  list and no further: (i) the pair's term takes the same normal arm and bounce as the baked
+  drains (the wait: Phase 18's), stay (the reach), or follow the stale bit? **Amended
+  2026-11-18 (after Phase 18):** the reading runs a fourth arm, `--reach partial`, beside
+  those three (Phase 18 bar 6: the horizon's counted pixels are the ray's, and `partial`
+  drains the band at 10 to 16 chunks that `full` never bakes at rest); the ray region's share
+  of the lighting pixels under each arm goes in the table. If `partial` removes the ray region
+  at 19.png's pose at rest where (i) to (iii) do not, Phase 24's run 2 gains the `--reach
+  partial` arm, and whether `Partial` becomes the default under a sky is the owner's at that
+  window (a new Outcome on ADR-0046, the architect's); else it stays a setting and the log
+  says so. Then, from this list and no further: (i) the pair's term takes the same normal arm and bounce as the baked
   read (Phase 13's deviation undone: `sky_baked_term`'s blend applied to the pair's visibility,
   so the two estimate one quantity by one normal); (ii) the switch fades over the store's fade
   (Phase 5's "fades over the store's fade", built as none); (iii) a spatial filter over the
@@ -1229,9 +1285,10 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   at 17:00 at 21.png's pose, `--column-wait on` then `off`, both with `--dump-black` (Phase
   18): no black region, the start time read from the HUD; if a black region shows, the owner
   holds the pose a few seconds and the dump's lines and the HUD's eye line go to the verdicts
-  file beside the still, so the case is named this time; a third arm `--reach partial` if
-  Phase 18 bar 6 says the ring clears under it; (2) the tunnel at 19.png's pose at the defaults: the seam between the
-  near walls and the deeper tunnel, then deeper to the far end; (3) the same with five lights
+  file beside the still, so the case is named this time (no `--reach partial` arm here:
+  Phase 18's second note); (2) the tunnel at 19.png's pose at the defaults: the seam between
+  the near walls and the deeper tunnel, then deeper to the far end, with a `--reach partial`
+  arm only if Phase 20's reading says so; (3) the same with five lights
   fired (key `6`) under anchor 4, then `--sky-anchor 0`: the walls where the lights land, the
   light pass's ms read aloud; (4) a dig on the hills at noon and one in the tunnel, watched for
   the flash, twice each, against Phase 15's binary once; (5) the forest at `60,180` and
