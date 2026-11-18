@@ -473,6 +473,9 @@ impl Run {
     /// Fills the belt from the library's order, once (`belt::Belt::fill`).
     pub(crate) fn fill_belt(&mut self) {
         let w = &mut self.modes.walkers;
+        if w.belt.filled() {
+            return;
+        }
         let order = w.library.order();
         w.belt.fill(&order);
     }

@@ -23,10 +23,10 @@ impl Paint {
         self.tiles.clear();
     }
 
-    /// The overlay's paint over these spans and tiles, with `backdrop`.
-    pub fn with(&self, backdrop: Option<HudBox>) -> vxe_render::HudPaint<'_> {
+    /// The overlay's paint over these spans and tiles, with the `backdrops`' boxes.
+    pub fn with<'a>(&'a self, backdrops: &'a [HudBox]) -> vxe_render::HudPaint<'a> {
         vxe_render::HudPaint {
-            backdrop,
+            backdrops,
             spans: &self.spans,
             tiles: &self.tiles,
         }
@@ -77,6 +77,11 @@ impl Belt {
         for (s, &i) in self.slots.iter_mut().zip(order) {
             *s = Some(i);
         }
+    }
+
+    /// Whether [`Belt::fill`] has run.
+    pub fn filled(&self) -> bool {
+        self.filled
     }
 
     /// The selected slot's entry, when it holds one.
@@ -225,9 +230,10 @@ fn slot_words(lib: &Library, i: usize) -> &str {
 /// (shown for `banner_ms` after the belt's `changed_at`, blank after), the selected slot's
 /// frame top (`+------+`), the four slot rows (each slot's digit, then its name on the next
 /// row, or its entry's icon from the slot's third column once made; `|` at the selected
-/// slot's sides), the frame's bottom. `paint` takes the frame's cells as yellow spans (the
-/// rows are white) and the icons' tiles. Gives the backdrop's box: the slots' rows, the
-/// belt's columns plus one each side, cut to the grid.
+/// slot's sides), the frame's bottom. `paint` gains the frame's cells as yellow spans (the
+/// rows are white) and the icons' tiles, after what it holds (a chooser's tiles above the
+/// belt). Gives the backdrop's box: the slots' rows, the belt's columns plus one each side,
+/// cut to the grid.
 pub fn append_belt(
     text: &mut String,
     colours: &mut Vec<HudColour>,
@@ -238,7 +244,6 @@ pub fn append_belt(
     paint: &mut Paint,
 ) -> HudBox {
     let (belt, lib) = (&walkers.belt, &walkers.library);
-    paint.clear();
     let (cols, rows) = grid;
     let first = rows.saturating_sub(BELT_ROWS);
     // Keep at most `first` of the rows there (rows are joined by `\n`).

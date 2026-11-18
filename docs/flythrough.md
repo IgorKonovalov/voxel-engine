@@ -122,8 +122,9 @@ its error on screen in red until a reload builds.
 
 ### Placement mode
 
-The belt is nine slots, `1`..`9`, drawn centred along the bottom of the window only in
-placement mode, over a dimmed box: each slot's digit and its entry's name, the selected slot
+The belt is nine slots, `1`..`9`, drawn centred along the bottom of the window in placement
+mode and under the open chooser (its frame on the selected slot; a chooser digit moves the
+frame to the slot it fills), over a dimmed box: each slot's digit and its entry's name, the selected slot
 framed by `+`, `-` and `|` (the frame's top and bottom rows yellow), and the selected entry's
 name above the belt for 3 s after the selection changes (`slot 5 empty  (choose with `)` for
 an empty slot, an entry in error grey with its error). The belt starts filled with the library

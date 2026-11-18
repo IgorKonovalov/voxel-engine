@@ -1023,7 +1023,7 @@ impl Run {
         let Some(gfx) = self.gfx.as_mut() else { return };
         match belt {
             Some(b) => {
-                let paint = h.paint.with(Some(b));
+                let paint = h.paint.with(std::slice::from_ref(&b));
                 gfx.hud
                     .set_lines_painted(&gpu.queue, &h.text, &h.colours, paint)
             }

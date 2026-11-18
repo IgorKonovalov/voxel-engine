@@ -88,11 +88,12 @@ pub struct HudTile {
     pub index: u32,
 }
 
-/// What [`HudOverlay::set_lines_painted`] lays over the written rows: the backdrop's box, the
-/// spans (each box's cells take its colour, later spans over earlier ones) and the tiles.
+/// What [`HudOverlay::set_lines_painted`] lays over the written rows: the backdrop's boxes
+/// (a panel's and a bar's apart, say), the spans (each box's cells take its colour, later
+/// spans over earlier ones) and the tiles.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HudPaint<'a> {
-    pub backdrop: Option<HudBox>,
+    pub backdrops: &'a [HudBox],
     pub spans: &'a [(HudBox, HudColour)],
     pub tiles: &'a [HudTile],
 }
@@ -102,12 +103,12 @@ impl HudPaint<'_> {
     fn rows(&self) -> u32 {
         let spans = self.spans.iter().map(|(b, _)| b.row.saturating_add(b.rows));
         let tiles = self.tiles.iter().map(|t| t.row.saturating_add(TILE_CELLS));
-        let backdrop = self.backdrop.map(|b| b.row.saturating_add(b.rows));
+        let backdrop = self.backdrops.iter().map(|b| b.row.saturating_add(b.rows));
         spans.chain(tiles).chain(backdrop).max().unwrap_or(0)
     }
 
     /// Lays the paint over `cells` (rows of [`GRID_COLS`] words): the backdrop bit in the
-    /// backdrop's box, each span's colour in its box (the byte and the other bits kept), each
+    /// backdrop's boxes, each span's colour in its box (the byte and the other bits kept), each
     /// tile's bits in its block. What falls outside `cells` is dropped.
     pub fn apply(&self, cells: &mut [u32]) {
         let rows = (cells.len() / GRID_COLS as usize) as u32;
@@ -122,7 +123,7 @@ impl HudPaint<'_> {
                 }
             }
         };
-        if let Some(b) = &self.backdrop {
+        for b in self.backdrops {
             each(b, &mut |c, _, _| *c |= BACKDROP_BIT);
         }
         for (b, colour) in self.spans {
@@ -392,7 +393,7 @@ impl HudOverlay {
             .enumerate()
             .map(|(i, l)| (l.as_bytes(), colour(i)));
         let paint = HudPaint {
-            backdrop: Some(backdrop),
+            backdrops: std::slice::from_ref(&backdrop),
             ..HudPaint::default()
         };
         self.write_rows(queue, Counted(text.lines().count(), rows), paint);
@@ -603,7 +604,7 @@ mod tests {
             index: 5,
         }];
         HudPaint {
-            backdrop: Some(row(1, 0, 6)),
+            backdrops: &[row(1, 0, 6)],
             spans: &spans,
             tiles: &tiles,
         }

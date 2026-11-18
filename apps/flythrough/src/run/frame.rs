@@ -283,10 +283,34 @@ impl Run {
         let grid = (size[0] as usize / cell, size[1] as usize / cell);
         let h = &mut self.hud;
         let text = if banner { &mut h.banner } else { &mut h.text };
+        h.paint.clear();
         let b = crate::entities::belt::append_belt(
             text,
             &mut h.colours,
             grid,
+            &self.modes.walkers,
+            ms_since(self.start),
+            hud::BANNER_MS,
+            &mut h.paint,
+        );
+        Some(b)
+    }
+
+    /// With the chooser open, the belt appended under the menu's panel (`Run::place_menu`'s
+    /// rows in the HUD's `overlay` buffers) for a `size` window at the menu's glyph scale, its
+    /// frame on the selected slot, its tiles after the chooser's. Gives the belt's backdrop
+    /// box; `None`, and the rows untouched, on any other page or closed.
+    pub(crate) fn chooser_belt(&mut self, size: [u32; 2]) -> Option<vxe_render::HudBox> {
+        if self.args.tester || self.menu.page() != Some(crate::hud::menu::PageId::Entities) {
+            return None;
+        }
+        self.fill_belt();
+        let panel = crate::hud::menu::Panel::of(size[0], size[1]);
+        let h = &mut self.hud;
+        let b = crate::entities::belt::append_belt(
+            &mut h.overlay,
+            &mut h.overlay_colours,
+            (panel.cols, panel.rows),
             &self.modes.walkers,
             ms_since(self.start),
             hud::BANNER_MS,
@@ -702,9 +726,11 @@ impl Run {
             Overlay::Menu => {
                 self.write_menu();
                 let backdrop = self.place_menu(gpu.size);
+                let belt = self.chooser_belt(gpu.size);
                 if let Some(gfx) = self.gfx.as_mut() {
                     let h = &self.hud;
-                    let paint = h.paint.with(Some(backdrop));
+                    let boxes = [backdrop, belt.unwrap_or(backdrop)];
+                    let paint = h.paint.with(&boxes);
                     gfx.hud
                         .set_lines_painted(&gpu.queue, &h.overlay, &h.overlay_colours, paint);
                     gfx.hud.set_samples(&gpu.queue, &[], 0.0);
@@ -720,7 +746,7 @@ impl Run {
                     let (text, colours) = (&self.hud.banner, &self.hud.colours);
                     match belt {
                         Some(b) => {
-                            let paint = self.hud.paint.with(Some(b));
+                            let paint = self.hud.paint.with(std::slice::from_ref(&b));
                             gfx.hud.set_lines_painted(&gpu.queue, text, colours, paint)
                         }
                         None => gfx.hud.set_lines(&gpu.queue, text, colours),

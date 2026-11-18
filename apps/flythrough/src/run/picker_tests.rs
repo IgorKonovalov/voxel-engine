@@ -230,17 +230,62 @@ fn the_wheel_and_the_digits_enter_the_mode() {
     assert_eq!(step(&mut run, &pressed(KeyCode::Escape)), Some(Flow::Exit));
 }
 
-/// Phase 5 done-when: `` ` `` opens the chooser on the walker; `Down` to the spider, `2` with
-/// the page open puts the spider in slot 2 and the page stays; `5` puts it in slot 5 (out of
-/// slot 2); `Enter` on the walker selects the slot that holds it, closes the page and enters
-/// the mode with the walker's ghost; `` ` `` in the mode opens the chooser again, the mode,
-/// the belt and the ghost gone.
+/// The chooser's overlay at 1280 x 720 (80 x 45 cells at the menu's scale 2): the rows
+/// `Run::place_menu` writes with the belt `Run::chooser_belt` appends under them, the menu's
+/// backdrop box and the belt's.
+fn chooser_overlay(run: &mut Run) -> (Vec<String>, vxe_render::HudBox, vxe_render::HudBox) {
+    run.write_menu();
+    let menu = run.place_menu([1280, 720]);
+    let belt = run
+        .chooser_belt([1280, 720])
+        .expect("the belt under the chooser");
+    let rows = run.hud.overlay.split('\n').map(str::to_owned).collect();
+    (rows, menu, belt)
+}
+
+/// Asserts the chooser's overlay ends in the belt's seven rows with the frame on slot `slot`
+/// (0-based), the menu's backdrop ending above the belt's name row.
+fn assert_belt_under(run: &mut Run, slot: usize) {
+    let (rows, menu, belt) = chooser_overlay(run);
+    assert_eq!(rows.len(), 45);
+    let first = 45 - BELT_ROWS;
+    let top = format!("{}+------+", " ".repeat(4 + belt::SLOT_COLS * slot));
+    assert_eq!(rows[first + 1], top, "slot {}", slot + 1);
+    assert_eq!(rows[first + 6], top);
+    let digits: String = (1..=9).map(|d| format!(" {d}      ")).collect();
+    assert_eq!(
+        rows[first + 2].replace('|', " ").trim_end(),
+        format!("    {}", digits.trim_end())
+    );
+    assert!(
+        menu.row + menu.rows <= first as u32,
+        "{menu:?} over the belt"
+    );
+    assert_eq!(
+        belt,
+        vxe_render::HudBox {
+            col: 3,
+            row: first as u32 + 1,
+            cols: 74,
+            rows: 6
+        }
+    );
+}
+
+/// Phase 5 done-when, amended by Phase 9 (2): `` ` `` opens the chooser on the walker, the
+/// belt drawn under the panel with its frame on slot 1; `Down` to the spider, `2` with the
+/// page open puts the spider in slot 2, moves the frame there, and the page stays; `5` puts
+/// it in slot 5 (out of slot 2) and the frame follows; `Enter` on the walker selects the slot
+/// that holds it, closes the page and enters the mode with the walker's ghost; `` ` `` in the
+/// mode opens the chooser again with the belt under it, the mode and the ghost gone, and
+/// `Enter` hands back with the ghost.
 #[test]
 fn the_chooser_fills_the_belt_and_hands_over() {
     let mut run = picker_run();
     let (walker, spider) = (entry(&run, "walker"), entry(&run, "spider"));
     frame_keys(&mut run, &pressed(KeyCode::Backquote));
     assert_eq!(run.menu.page(), Some(PageId::Entities));
+    assert_belt_under(&mut run, 0);
     let v = run.run_view();
     let row = |run: &Run| run.menu.selected_row(&run.modes, &v);
     assert!(matches!(row(&run), Some(Row::Item(i)) if i == walker));
@@ -248,13 +293,19 @@ fn the_chooser_fills_the_belt_and_hands_over() {
     assert!(matches!(row(&run), Some(Row::Item(i)) if i == spider));
     frame_keys(&mut run, &pressed(KeyCode::Digit2));
     assert_eq!(run.modes.walkers.belt.slots[1], Some(spider));
+    assert_eq!(run.modes.walkers.belt.selected, 1);
     assert_eq!(run.menu.page(), Some(PageId::Entities));
     assert_eq!(notice(&run), Some("spider in slot 2"));
+    assert_belt_under(&mut run, 1);
     frame_keys(&mut run, &pressed(KeyCode::Digit5));
     let b = &run.modes.walkers.belt;
-    assert_eq!((b.slots[1], b.slots[4]), (None, Some(spider)));
+    assert_eq!(
+        (b.slots[1], b.slots[4], b.selected),
+        (None, Some(spider), 4)
+    );
     assert_eq!(run.menu.filter(), "");
     assert!(!b.on && run.modes.walkers.preview.is_none());
+    assert_belt_under(&mut run, 4);
 
     // keys:typed-begin
     frame_keys(&mut run, &pressed(KeyCode::ArrowUp));
@@ -265,11 +316,17 @@ fn the_chooser_fills_the_belt_and_hands_over() {
     assert!(w.belt.on);
     assert_eq!((w.belt.selected, w.belt.entry()), (0, Some(walker)));
     assert_eq!(w.preview.as_ref().and_then(|p| p.entry), Some(walker));
+    assert_eq!(run.chooser_belt([1280, 720]), None, "closed");
 
     frame_keys(&mut run, &pressed(KeyCode::Backquote));
     assert_eq!(run.menu.page(), Some(PageId::Entities));
     let w = &run.modes.walkers;
     assert!(!w.belt.on && w.preview.is_none() && w.set.is_empty());
+    assert_belt_under(&mut run, 0);
+    frame_keys(&mut run, &pressed(KeyCode::Enter));
+    let w = &run.modes.walkers;
+    assert!(w.belt.on && !run.menu.is_open());
+    assert_eq!(w.preview.as_ref().and_then(|p| p.entry), Some(walker));
 }
 
 /// The ghost's feet with the camera at `at`, `pitch_deg` above the horizon along +x, in
@@ -512,7 +569,7 @@ fn the_belt_draws_its_slots() {
         [Yellow, White, White, White, White, White, White]
     );
     assert!(paint.tiles.is_empty(), "no icon has arrived");
-    let cells = cell_words(&text, &colours, paint.with(Some(b)));
+    let cells = cell_words(&text, &colours, paint.with(&[b]));
     let cols = vxe_render::HUD_GRID_COLS as usize;
     let mut framed = 0;
     for (r, line) in rows.iter().enumerate().skip(45 - BELT_ROWS + 1) {
@@ -607,7 +664,7 @@ fn the_icon_arrives_after_the_words() {
     };
     assert_eq!(paint.tiles, [tile]);
     assert!(!text.split('\n').nth(45 - 4).unwrap().contains("walker"));
-    let cells = cell_words(&text, &colours, paint.with(Some(b)));
+    let cells = cell_words(&text, &colours, paint.with(&[b]));
     let cols = vxe_render::HUD_GRID_COLS as usize;
     for r in 0..45 {
         for c in 0..80 {

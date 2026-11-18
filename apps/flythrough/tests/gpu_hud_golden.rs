@@ -301,7 +301,7 @@ fn menu_over_the_carved_view() {
         text: &text,
         colours: &colours,
         paint: vxe_render::HudPaint {
-            backdrop: Some(backdrop),
+            backdrops: std::slice::from_ref(&backdrop),
             ..Default::default()
         },
         tiles: &[],
@@ -399,7 +399,7 @@ fn the_belt_and_the_chooser_over_the_carved_view() {
         text: &text,
         colours: &colours,
         paint: vxe_render::HudPaint {
-            backdrop: Some(backdrop),
+            backdrops: std::slice::from_ref(&backdrop),
             tiles: &tiles,
             ..Default::default()
         },
@@ -424,7 +424,7 @@ fn the_belt_and_the_chooser_over_the_carved_view() {
     let belt = MenuText {
         text: &belt_text,
         colours: &belt_colours,
-        paint: paint.with(Some(belt_box)),
+        paint: paint.with(std::slice::from_ref(&belt_box)),
         tiles: &pixels,
     };
     for (name, overlay) in [("chooser.png", chooser), ("belt.png", belt)] {
