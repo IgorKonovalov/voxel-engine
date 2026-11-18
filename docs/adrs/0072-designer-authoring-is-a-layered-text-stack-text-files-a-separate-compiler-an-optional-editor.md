@@ -351,3 +351,5 @@ when the stack is opened; none is owed now.
    layer-4 file (line-based, hand-parsed, positions in its errors), and new fly-through scenes
    stay Rust until the stack exists; (b) start writing new scenes as data files now, ahead of a
    compiler. Recommended (a); (b) invents a format before the spike has picked one.
+   **Answered 2026-11-18 (owner): (a).** The rule binds now; questions 1 to 5 wait for the
+   spike.

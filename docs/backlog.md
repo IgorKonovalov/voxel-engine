@@ -888,7 +888,10 @@ engine's mechanisms: a level loader, named regions and their events, a replay-ba
 swap, machine-readable run output) carry a recommendation each and six owner questions.
 **Waits on the engine's own mechanisms:** destruction, physics and water (the chunk-scale
 dynamics entry above, M8, M10's liquids) and the current polish. Pick up with a spike plan, as
-the ADR's "What a first plan would be" describes; the owner questions are answered then.
+the ADR's "What a first plan would be" describes; questions 1 to 5 are answered then.
+Question 6 answered 2026-11-18 (owner, the interim rule, (a)): every new text format the engine
+grows is designed as a layer-4 file (line-based, hand-parsed, diffable, positions in its errors);
+new fly-through scenes stay Rust until the stack exists.
 
 
 ### A second consumer in mind: a user-built, multiplayer game platform
