@@ -252,7 +252,7 @@ impl BakeQueue {
         let mut not_ready = 0;
         for i in 0..take {
             let (_, c) = in_view[i * n / take.max(1)];
-            not_ready += u64::from(!reach_ready(run, ChunkCoord(c), lr, view.resident));
+            not_ready += u64::from(!reach_ready(run, ChunkCoord(c), lr, view));
         }
         self.stats.view_reach = [take as u64, not_ready];
     }

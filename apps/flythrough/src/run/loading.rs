@@ -692,6 +692,10 @@ impl Run {
             half_angle,
             frustum: Some(frustum),
             full_radius: stream.map(|s| s.rule.r_full),
+            lod_radius: stream.map(|s| {
+                let r = s.streamer.config().residency;
+                r.r_lod.max(r.r_full)
+            }),
         };
         let state = p.pre.step(
             frame,

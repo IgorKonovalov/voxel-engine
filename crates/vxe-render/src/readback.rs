@@ -65,6 +65,14 @@ fn read_texels(
     })
 }
 
+/// The texels of an `r32sint` texture, rows top to bottom.
+pub fn read_r32i(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture) -> Vec<i32> {
+    read_texels(device, queue, texture, 4)
+        .chunks(4)
+        .map(|p| i32::from_le_bytes([p[0], p[1], p[2], p[3]]))
+        .collect()
+}
+
 /// The pixels of an `rgba32float` texture, rows top to bottom.
 pub fn read_rgba32f(
     device: &wgpu::Device,

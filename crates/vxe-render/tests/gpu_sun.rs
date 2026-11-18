@@ -269,6 +269,162 @@ fn upper_chunk_read(
     centre_lit(device, queue, &mut f, &gpu, &cam, 16)
 }
 
+/// Plan 0086 Phase 9 bar 4's twin: the floor of chunk (0, 0, 0) under a resident rock roof
+/// (chunks (0, 0, 1) and (1, 0, 1)), the chunk beside the floor's, (1, 0, 0), held by the
+/// window and absent from the world. Under `Sky::uniform(1.0)` with one sky ray and the key
+/// light off, a sky ray into the absent chunk ends on its face below the roof, so it is rock
+/// by the column map (ADR-0070's amendment): the floor reads under 1 % of `pi`. The same rig
+/// with every end counted as sky (`LightHooks::sky_end_is_sky`) is printed. 16-frame means.
+#[test]
+fn an_absent_chunk_below_the_column_top_is_rock_to_the_sky_ray() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let f = |p: [i32; 3]| {
+        if p[2] < FLOOR || p[2] >= 64 {
+            ROCK
+        } else {
+            AIR
+        }
+    };
+    let extent = ChunkExtent::new([0, 0, 0], [2, 1, 2]);
+    let world = World::generate(extent, &FnSource(f), &table());
+    world.store().remove(ChunkCoord([1, 0, 0]));
+    let uniform = Sky {
+        altitude_zero_z: FLOOR as f32,
+        ..Sky::uniform(1.0)
+    };
+    let cam = Camera {
+        position: Vec3::new(32.0, 8.0, FLOOR as f32 + 30.0),
+        ..camera([0.0, 0.0])
+    };
+    let gpu = mirror(&device, &queue, &world, Some(extent));
+    let read = |hooks: vxe_render::LightHooks| {
+        let mut fr = frame(&device, SIZE, ShadowWalk::Full);
+        fr.set_lighting(Lighting {
+            sky_rays: 1,
+            ..fr.lighting()
+        });
+        fr.set_light_hooks(vxe_render::LightHooks {
+            key_off: true,
+            ..hooks
+        });
+        fr.set_sky(Some(uniform));
+        centre_lit(&device, &queue, &mut fr, &gpu, &cam, 16)
+    };
+    let rule = read(Default::default());
+    let as_built = read(vxe_render::LightHooks {
+        sky_end_is_sky: true,
+        ..Default::default()
+    });
+    println!(
+        "under a roof beside an absent chunk: column rule {rule:?}, every end sky {as_built:?}"
+    );
+    let bar = 0.01 * std::f32::consts::PI;
+    assert!(rule.iter().all(|&v| v < bar), "{rule:?} against {bar}");
+}
+
+/// Plan 0086 Phase 9 bar 1: the column map is the top of opaque voxels. A 3 x 3 x 3-chunk
+/// stepped terrain (rock below `h(x, y)`, a 4 x 4-voxel shaft of air through every z at
+/// x, y 70..74), chunk (0, 0, 0) mirrored LOD-only from its mips. Each map texel (a 2 x 2
+/// column) equals the highest rock voxel's z over its columns where that lies in a full chunk,
+/// lies within one voxel above it in the LOD chunk, and is `COLUMN_NONE` over the shaft. A
+/// 2 x 2 x 1 dig of a cell's top lowers its texel at the sync that uploads it, and a voxel
+/// stamped 5 above raises it at that sync.
+#[test]
+fn the_column_map_is_the_top_of_solid() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let h = |x: i32, y: i32| 40 + 8 * (x / 24) + 5 * (y / 20);
+    let shaft = |x: i32, y: i32| (70..74).contains(&x) && (70..74).contains(&y);
+    let f = move |p: [i32; 3]| {
+        if !shaft(p[0], p[1]) && p[2] < h(p[0], p[1]) {
+            ROCK
+        } else {
+            AIR
+        }
+    };
+    let extent = ChunkExtent::new([0, 0, 0], [3, 3, 3]);
+    let world = World::generate(extent, &FnSource(f), &table());
+    let lod = ChunkCoord([0, 0, 0]);
+    let chunk = world.store().remove(lod).expect("generated");
+    world.insert_lod(
+        lod,
+        std::sync::Arc::new(ChunkMips::build(&chunk.read().expect("lock"))),
+    );
+    let mut gpu = mirror(&device, &queue, &world, Some(extent));
+    assert!(gpu.is_lod(lod), "chunk (0, 0, 0) is LOD-only");
+    let side = 3 * vxe_render::COLUMN_CELLS;
+    let read = |gpu: &GpuWorld| vxe_render::debug::read_r32i(&device, &queue, gpu.column_map());
+    let map = read(&gpu);
+    assert_eq!(map.len(), (side * side) as usize);
+    let mut checked = [0u32; 3];
+    for j in 0..side {
+        for i in 0..side {
+            let got = map[(i + side * j) as usize];
+            let cols = [[0, 0], [1, 0], [0, 1], [1, 1]].map(|o| [2 * i + o[0], 2 * j + o[1]]);
+            if cols.iter().all(|c| shaft(c[0], c[1])) {
+                assert_eq!(got, vxe_render::COLUMN_NONE, "the shaft's cell {i} {j}");
+                checked[2] += 1;
+                continue;
+            }
+            let want = cols
+                .iter()
+                .filter(|c| !shaft(c[0], c[1]))
+                .map(|c| h(c[0], c[1]) - 1)
+                .max()
+                .expect("a rock column");
+            if want < 64 && i < 32 && j < 32 {
+                assert!(
+                    (want..=want + 1).contains(&got),
+                    "LOD cell {i} {j}: {got} against {want}"
+                );
+                checked[1] += 1;
+            } else {
+                assert_eq!(got, want, "cell {i} {j}");
+                checked[0] += 1;
+            }
+        }
+    }
+    println!(
+        "cells checked: full {}, LOD {}, air {}",
+        checked[0], checked[1], checked[2]
+    );
+    assert!(checked.iter().all(|&n| n > 0), "{checked:?}");
+    let sync = |gpu: &mut GpuWorld| {
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        gpu.sync(&world, &queue, &mut enc).expect("the mirror fits");
+        queue.submit([enc.finish()]);
+    };
+    // Cell (50, 50): voxels 100..102 in x and y, all at h(100, 100).
+    let (cell, top) = ([50, 50], h(100, 100) - 1);
+    let texel = |m: &[i32]| m[(cell[0] + side * cell[1]) as usize];
+    assert_eq!(texel(&map), top);
+    let centre = |v: [i32; 3]| centre_of_voxel(v);
+    world
+        .apply(&EditOp::box_(
+            centre([100, 100, top]),
+            centre([102, 102, top + 1]),
+            Mode::Carve,
+        ))
+        .expect("the dig");
+    sync(&mut gpu);
+    let dug = texel(&read(&gpu));
+    println!("cell {cell:?}: top {top}, dug {dug}");
+    assert_eq!(dug, top - 1, "the dig lowers the texel at its sync");
+    world
+        .apply(&EditOp::box_(
+            centre([100, 100, top + 5]),
+            centre([101, 101, top + 6]),
+            Mode::Fill(ROCK),
+        ))
+        .expect("the stamp");
+    sync(&mut gpu);
+    let stamped = texel(&read(&gpu));
+    assert_eq!(stamped, top + 5, "the stamp raises the texel at its sync");
+}
+
 /// Bar 6's flags: turning the sun by 10 degrees in one frame raises the sky-change bit on that
 /// frame and no other; a drift of 0.15 of its radius a frame over 64 frames raises it on none;
 /// the list's change is raised on no frame of either. No adapter time to speak of: a 16 x 16

@@ -52,6 +52,38 @@
 
 const MAX_STEPS: u32 = 4096u;
 
+// Set around a sky ray's walk (`sky_ray_open`, ADR-0070's amendment of 2026-11-18): `march`
+// stops on entering an absent chunk (one the table holds no record for) as on leaving the
+// window, and a miss records where the ray ended in `march_end`: at its length cap, on that
+// chunk's face, or on the window's face. Clear, an absent chunk is air and `march_end` is not
+// written.
+var<private> sky_rule: bool = false;
+var<private> march_end: vec3<f32>;
+
+// The column map's cell edge in voxels and cells per chunk edge (`gpu_world::COLUMN_*`). Its
+// texel for a column with no opaque voxel is i32's minimum, below every point.
+const COLUMN_CELL: i32 = 2;
+const COLUMN_CELLS: i32 = 32;
+
+// The column map's top at `p`'s voxel column, the column clamped into the window's footprint
+// (a ray that leaves the window's side reads the edge column).
+fn column_top(p: vec3<f32>) -> i32 {
+    let lo = params.window_min.xy * 64;
+    let hi = (params.window_min.xy + params.window_size.xy) * 64 - vec2<i32>(1);
+    let x = clamp(vec2<i32>(floor(p.xy)), lo, hi);
+    let c = x >> vec2<u32>(6u);
+    let w = params.window_size.xy;
+    let tile = ((c % w) + w) % w;
+    let local = (x - c * 64) / COLUMN_CELL;
+    return textureLoad(column_map, tile * COLUMN_CELLS + local, 0).x;
+}
+
+// ADR-0070's amendment: a sky ray that ended without a hit at `p` reached the sky iff `p` lies
+// above the top of opaque voxels in its column. The window's top face is above every top.
+fn above_column(p: vec3<f32>) -> bool {
+    return p.z >= f32(column_top(p) + 1);
+}
+
 // A `march` miss's material when the split walk hands the ray on.
 const SPLIT_HANDOFF: u32 = 0xFFFFFFFFu;
 
@@ -755,6 +787,7 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
     let inv = select(vec3<f32>(BIG), 1.0 / d, d != vec3<f32>(0.0));
     let entry = enter_window(o, d, inv);
     if (!entry.found) {
+        march_end = o;
         return miss;
     }
 
@@ -769,12 +802,19 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
             walk_steps += 1u;
         }
         if (any(v < bmin_i) || any(v >= bmax_i)) {
+            march_end = o + d * t;
             return miss;
         }
         if (t > t_limit) {
+            march_end = o + d * t_limit;
             return miss;
         }
         let c = lookup_walk(v, t >= coarse_span.x && t <= coarse_span.y);
+        if (sky_rule && c.size != 0 && !c.air) {
+            // An absent chunk (an empty cell that is not a resident chunk's).
+            march_end = o + d * t;
+            return miss;
+        }
         if (split_entered) {
             // The split walk's hand-off: the ray enters a field brick at `v`.
             return Hit(false, v, axis, t, SPLIT_HANDOFF);
@@ -805,6 +845,7 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
         v = exit.v;
         axis = exit.axis;
     }
+    march_end = o + d * t;
     return miss;
 }
 

@@ -105,6 +105,7 @@ impl BakeQueue {
 
     /// The step's forget, reach-drop and touched stages over the mirror's changes.
     fn forget_unheld(&mut self, gpu: &GpuWorld, changes: Option<Vec<ChunkCoord>>) {
+        self.columns_final.clear();
         // What the queue knows of a chunk the mirror does not hold full goes with it, block or
         // none (a faceless or blocked chunk has none): the chunk is listed afresh if it returns.
         // A job in flight for it ends in the sink, which drops its block.

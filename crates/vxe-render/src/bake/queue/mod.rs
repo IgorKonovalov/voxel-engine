@@ -262,6 +262,10 @@ pub struct QueueView<'a> {
     /// of the candidates whose reach crosses it ([`QueueStats::reach_bound`]); `None` (a
     /// bounded world) counts none.
     pub full_radius: Option<i32>,
+    /// The streamer's LOD radius in chunks about the camera's chunk: the chunks it holds or
+    /// will hold, which a column must have mirrored before the bake reads its top
+    /// ([`reach_columns_final`]); `None` waits only for the chunks pending upload.
+    pub lod_radius: Option<i32>,
 }
 
 /// The live queue (ADR-0046's scheduler, Plan 0059 Phase 8 as re-read at Phase 7b): the brick
@@ -418,19 +422,61 @@ pub struct BakeQueue {
     /// Flagged chunks (block or job) a chunk within whose reach arrived full: candidates again,
     /// as a refinement.
     pub(super) partial_due: ChunkSet,
+    /// The step's verdicts of [`GpuWorld::column_final`] by chunk column, emptied each step.
+    pub(super) columns_final: std::collections::HashMap<[i32; 2], bool>,
 }
 
 /// Whether every chunk whose box lies within `lr` chunks of `coord`'s (the candidate table's
 /// reach) is mirrored full and current, or known empty: in a bounded world (`resident` `None`) a
 /// chunk the mirror does not wait to upload; in a streamed one a chunk resident full whose
-/// record is current.
+/// record is current. And every column over the reach is final ([`reach_columns_final`]).
 pub(super) fn reach_ready(
     run: &BakeRun<'_>,
     coord: ChunkCoord,
     lr: i32,
-    resident: Option<&dyn Fn(ChunkCoord) -> bool>,
+    view: &QueueView<'_>,
 ) -> bool {
-    reach_of(run, coord, lr, resident, true) == Reach::Ready
+    let held = held_by_streamer(view.eye, view.lod_radius, view.resident);
+    let held = held.as_ref().map(|h| h as &dyn Fn(ChunkCoord) -> bool);
+    reach_of(run, coord, lr, view.resident, true) == Reach::Ready
+        && reach_columns_final(coord, lr, |x, y| run.gpu.column_final(x, y, held))
+}
+
+/// Whether every chunk column over `coord`'s reach footprint (the columns of the chunks within
+/// `lr` of it, [`in_reach`]) is final by `final_column(cx, cy)`: ADR-0070's amendment, under
+/// which the bake's sky rays read the column map, so a chunk bakes only once the tops over its
+/// reach are the tops it will keep.
+pub(super) fn reach_columns_final(
+    coord: ChunkCoord,
+    lr: i32,
+    mut final_column: impl FnMut(i32, i32) -> bool,
+) -> bool {
+    let r = lr + 1;
+    for y in -r..=r {
+        for x in -r..=r {
+            if (-r..=r).any(|z| in_reach([x, y, z], lr))
+                && !final_column(coord.0[0] + x, coord.0[1] + y)
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// The chunks a column waits for before it is final ([`GpuWorld::column_final`]): in a streamed
+/// world with `lod_radius`, those within it of `eye`'s chunk (the streamer's sphere, `d2 <=
+/// r^2`); else none beyond the pending ones.
+pub(super) fn held_by_streamer(
+    eye: [f32; 3],
+    lod_radius: Option<i32>,
+    resident: Option<&dyn Fn(ChunkCoord) -> bool>,
+) -> Option<impl Fn(ChunkCoord) -> bool> {
+    let r = lod_radius.filter(|_| resident.is_some())?;
+    let e = eye.map(|v| (v.floor() as i32).div_euclid(64));
+    Some(move |c: ChunkCoord| {
+        (0..3).map(|k| i64::from(c.0[k] - e[k]).pow(2)).sum::<i64>() <= i64::from(r).pow(2)
+    })
 }
 
 /// `coord`'s reach as [`reach_ready`] reads it: [`Reach::Waiting`] at the first chunk within it
@@ -538,6 +584,7 @@ impl BakeQueue {
             order_view: None,
             order_dirty: true,
             reach_cache: Default::default(),
+            columns_final: Default::default(),
             reach_mode: ReachMode::Full,
             partial: Default::default(),
             job_partial: Default::default(),
@@ -678,6 +725,27 @@ impl BakeQueue {
     /// about `eye`: a chunk within it lies past the full sphere (`d2 > r^2` in chunks, the
     /// streamer's rule), so a still camera never makes it whole. Else `None`.
     pub(super) fn bakeable(
+        &mut self,
+        run: &BakeRun<'_>,
+        coord: ChunkCoord,
+        lr: i32,
+        view: &QueueView<'_>,
+        eye: [i32; 3],
+    ) -> Option<bool> {
+        let partial = self.bakeable_reach(run, coord, lr, view, eye)?;
+        let held = held_by_streamer(view.eye, view.lod_radius, view.resident);
+        let held = held.as_ref().map(|h| h as &dyn Fn(ChunkCoord) -> bool);
+        let memo = &mut self.columns_final;
+        reach_columns_final(coord, lr, |x, y| {
+            *memo
+                .entry([x, y])
+                .or_insert_with(|| run.gpu.column_final(x, y, held))
+        })
+        .then_some(partial)
+    }
+
+    /// [`BakeQueue::bakeable`]'s reach verdict, before the columns.
+    fn bakeable_reach(
         &mut self,
         run: &BakeRun<'_>,
         coord: ChunkCoord,
@@ -1010,5 +1078,60 @@ impl BakeQueue {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gpu_world::column_is_final;
+
+    /// ADR-0070's amendment: a chunk whose reach's columns are not final does not bake. A
+    /// window of z -2..6 over a reach of light radius 2 about chunk (0, 0, 0); every chunk of
+    /// the window mirrored but (2, 1, 5), high in a column over the reach. Wanted by the
+    /// streamer and absent, the reach is not final; mirrored, or outside the streamer's
+    /// sphere, it is; pending upload, it is not, wanted or not. A column outside the reach's
+    /// footprint (x 4) is not read.
+    #[test]
+    fn a_chunk_absent_high_in_a_column_holds_the_bake() {
+        let high = ChunkCoord([2, 1, 5]);
+        let coord = ChunkCoord([0, 0, 0]);
+        let lr = 2;
+        let fin = |mirrored: bool, pending: bool, wanted: bool| {
+            let want = move |_: ChunkCoord| wanted;
+            let w: &dyn Fn(ChunkCoord) -> bool = &want;
+            reach_columns_final(coord, lr, |x, y| {
+                column_is_final(
+                    x,
+                    y,
+                    -2..6,
+                    |c| pending && c == high,
+                    |c| mirrored || c != high,
+                    Some(w),
+                )
+            })
+        };
+        assert!(!fin(false, false, true), "absent and wanted: not final");
+        assert!(fin(true, false, true), "mirrored: final");
+        assert!(
+            fin(false, false, false),
+            "outside the streamer's sphere: final"
+        );
+        assert!(!fin(true, true, false), "pending: not final");
+        let far = ChunkCoord([4, 0, 5]);
+        let read = std::cell::RefCell::new(Vec::new());
+        reach_columns_final(coord, lr, |x, y| {
+            read.borrow_mut().push([x, y]);
+            true
+        });
+        assert!(read.borrow().contains(&[2, 1]));
+        assert!(!read.borrow().contains(&[far.0[0], far.0[1]]));
+        let held =
+            held_by_streamer([32.0, 32.0, 32.0], Some(3), Some(&|_| true)).expect("streamed");
+        assert!(held(ChunkCoord([3, 0, 0])) && !held(ChunkCoord([3, 1, 0])));
+        assert!(
+            held_by_streamer([0.0; 3], Some(3), None).is_none(),
+            "a bounded world"
+        );
     }
 }

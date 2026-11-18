@@ -140,6 +140,18 @@ fn shadowed_styled_walk(o: vec3<f32>, d: vec3<f32>, len: f32, coarse: bool, styl
     return s;
 }
 
+// Whether a sky ray from `o` along `d`, capped at `len`, reached the sky (ADR-0070 and its
+// amendment of 2026-11-18): `shadowed_styled_walk` finds no rock, and where the ray ended (the
+// cap, an absent chunk's face or the window's) lies above its column's top (`above_column`).
+// Under the reading hook `end_is_sky` (LIGHTING_HOOK_SKY_END_IS_SKY, or the bake's
+// BAKE_SKY_END_IS_SKY) any end is sky and an absent chunk is air, the rule before the column map.
+fn sky_ray_open(o: vec3<f32>, d: vec3<f32>, len: f32, coarse: bool, styles: bool, end_is_sky: bool) -> bool {
+    sky_rule = !end_is_sky;
+    let s = shadowed_styled_walk(o, d, len, coarse, styles);
+    sky_rule = false;
+    return !s && (end_is_sky || above_column(march_end));
+}
+
 // A unit direction about unit `n` drawn with density `cos / pi` from `u` and `v` in [0, 1).
 fn cosine_direction(n: vec3<f32>, u: f32, v: f32) -> vec3<f32> {
     let r = sqrt(u);

@@ -25,6 +25,34 @@ pub(super) struct MaterialFlags {
 }
 
 impl MaterialFlags {
+    /// `p`'s translucent voxels, one bit a voxel in the mask's layout.
+    pub(super) fn glass_of(&self, p: &Packed) -> [u64; 8] {
+        let translucent = |m: MaterialId| self.translucent[usize::from(m)];
+        let mut glass = [0u64; 8];
+        if materials_of(p, translucent) {
+            match (p.entry_matches(), p.wide_ids()) {
+                (Some(entries), _) => {
+                    for (m, w) in entries {
+                        if translucent(m) {
+                            for z in 0..8 {
+                                glass[z] |= w[z];
+                            }
+                        }
+                    }
+                }
+                (None, Some(ids)) => {
+                    for (i, &m) in ids.iter().enumerate() {
+                        if m != AIR && translucent(m) {
+                            glass[i / 64] |= 1 << (i % 64);
+                        }
+                    }
+                }
+                (None, None) => unreachable!("a packed brick is planar or wide"),
+            }
+        }
+        glass
+    }
+
     pub(super) fn new() -> Self {
         Self {
             translucent: vec![false; 1 << 16],
@@ -752,30 +780,8 @@ impl GpuWorld {
         if let Some((u, mask)) = band {
             band_header(&mut out[UNIT_WORDS..2 * UNIT_WORDS], u, mask);
         }
-        let translucent = |m: MaterialId| self.mats.translucent[usize::from(m)];
-        let mut glass = [0u64; 8];
+        let glass = self.mats.glass_of(p);
         let code = class_code(p.class());
-        if materials_of(p, translucent) {
-            match (p.entry_matches(), p.wide_ids()) {
-                (Some(entries), _) => {
-                    for (m, w) in entries {
-                        if translucent(m) {
-                            for z in 0..8 {
-                                glass[z] |= w[z];
-                            }
-                        }
-                    }
-                }
-                (None, Some(ids)) => {
-                    for (i, &m) in ids.iter().enumerate() {
-                        if m != AIR && translucent(m) {
-                            glass[i / 64] |= 1 << (i % 64);
-                        }
-                    }
-                }
-                (None, None) => unreachable!("a packed brick is planar or wide"),
-            }
-        }
         let mask = p.mask();
         for z in 0..8 {
             let opaque = mask[z] & !glass[z];

@@ -105,6 +105,7 @@ use vxe_world::{
 use crate::field::FieldBindings;
 
 mod alloc;
+mod columns;
 mod emitters;
 mod format;
 mod lights;
@@ -113,6 +114,10 @@ mod stage;
 mod window;
 
 pub use self::alloc::*;
+use self::columns::ColumnMap;
+#[cfg(test)]
+pub(crate) use self::columns::column_is_final;
+pub use self::columns::{COLUMN_CELL, COLUMN_CELLS, COLUMN_NONE};
 pub use self::format::*;
 pub use self::lights::*;
 use self::slot::*;
@@ -265,6 +270,8 @@ pub struct SyncStats {
     /// a chunk sized and not uploaded keeps its size until it uploads or changes.
     pub sized_chunks: u64,
     pub kept_sizes: u64,
+    /// Column-map tiles written ([`GpuWorld::column_map`]).
+    pub column_tiles: u64,
 }
 
 /// Which chunks the mirror holds.
@@ -342,6 +349,7 @@ pub struct GpuWorld {
     mats: MaterialFlags,
     lights: LightMirror,
     field: FieldState,
+    columns: ColumnMap,
 }
 
 impl GpuWorld {
@@ -396,6 +404,7 @@ impl GpuWorld {
             up: Uploader::new(device, layout, table),
             mats: MaterialFlags::new(),
             field: FieldState::default(),
+            columns: ColumnMap::new(device, window_size),
         }
     }
 
@@ -572,6 +581,50 @@ impl GpuWorld {
 
     pub fn table(&self) -> &wgpu::Buffer {
         &self.up.table
+    }
+
+    /// The column map (ADR-0070's amendment): an `r32sint` texture of the highest opaque
+    /// voxel's `z` per [`COLUMN_CELL`]-voxel column of the window's footprint among the
+    /// resident chunks, [`COLUMN_NONE`] where none; a column's [`COLUMN_CELLS`]^2 tile at its
+    /// chunk coordinate wrapped by the window size, as the chunk table is addressed.
+    pub fn column_map(&self) -> &wgpu::Texture {
+        self.columns.texture()
+    }
+
+    /// The column map's bytes on the GPU.
+    pub fn column_map_bytes(&self) -> u64 {
+        self.columns.bytes()
+    }
+
+    /// Column-map tiles written since the mirror was made.
+    pub fn column_tiles_written(&self) -> u64 {
+        self.columns.tiles_written
+    }
+
+    /// The top the column map holds, once synced, for voxel column `(x, y)`: the highest
+    /// opaque voxel's `z` among the resident chunks of the window, [`COLUMN_NONE`] for none.
+    pub fn column_top(&self, x: i32, y: i32) -> i32 {
+        let (min, size) = (self.window.min[2], self.window.size[2].max(1));
+        self.columns.top_at(x, y, min..min + size)
+    }
+
+    /// Whether chunk column `(cx, cy)` is final: no chunk of it within the window waits to
+    /// upload, and each one `wanted` names (the streamer holds or will hold it) is mirrored.
+    pub fn column_final(
+        &self,
+        cx: i32,
+        cy: i32,
+        wanted: Option<&dyn Fn(ChunkCoord) -> bool>,
+    ) -> bool {
+        let (min, size) = (self.window.min[2], self.window.size[2].max(1));
+        columns::column_is_final(
+            cx,
+            cy,
+            min..min + size,
+            |c| self.is_pending(c),
+            |c| self.is_mirrored(c),
+            wanted,
+        )
     }
 
     pub fn materials(&self) -> &wgpu::Buffer {
@@ -829,6 +882,7 @@ impl GpuWorld {
             return;
         };
         self.note_change(coord);
+        self.columns.remove(coord);
         if let Some(slots) = self
             .field
             .band
@@ -1008,6 +1062,7 @@ impl GpuWorld {
         }
         self.flush_records(enc, &mut st);
         self.flush_table(enc, &mut st);
+        st.column_tiles = self.columns.flush(queue, self.window.min, self.window.size) as u64;
         st.pending_chunks = self.window.pending.len() as u64;
         st.light_free_ranges = self.lights.free.len() as u64;
         self.up.bytes_written += st.bytes;

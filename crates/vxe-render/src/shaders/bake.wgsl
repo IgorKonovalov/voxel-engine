@@ -27,8 +27,9 @@
 // Under a sky (`job.sky` bit 0, ADR-0070) a face's samples below `sky_n` each also draw one
 // cosine-weighted ray about the face's normal from the sample's point, through the frame's
 // shadow walk (its coarse mode and shadow styles from `job.sky`'s bits 1 and 2), capped at
-// `job.radius`: a ray that finds no rock within it, or leaves the window, reached the sky; one
-// pointing below the horizon is blocked. The sky ray draws its own dimensions, so the emissive
+// `job.radius`: a ray that finds no rock reached the sky iff it ended above its column's top
+// (`sky_ray_open`; with bit 3, a reading hook, any end is sky); one pointing below the horizon
+// is blocked. The sky ray draws its own dimensions, so the emissive
 // sums are the same with the sky on and off. `sky_open` returns the round's open rays.
 //
 // Each sample is the light pass's estimate at a uniform point of the face with the face's normal, times the window `(1 - (d / L)^4)^2`, d the distance from the point to the kept
@@ -148,13 +149,14 @@ fn bake_round(
     var sky_open = 0u;
     let sky_coarse = (job.sky & 2u) != 0u;
     let sky_styles = (job.sky & 4u) != 0u;
+    let sky_end = (job.sky & 8u) != 0u;
     for (var s = lane; s < samples; s += BAKE_LANES) {
         let px = vec2<u32>(stream, f.first + s);
         let p = face_point(v, f.face, px);
         if ((job.sky & 1u) != 0u && f.first + s < f.sky_n) {
             let d = cosine_direction(nf, rand(px, BAKE_SKY_DIM), rand(px, BAKE_SKY_DIM + 1u));
             if (d.z > 0.0
-                && !shadowed_styled_walk(shadow_origin(p, nf), d, job.radius, sky_coarse, sky_styles)) {
+                && sky_ray_open(shadow_origin(p, nf), d, job.radius, sky_coarse, sky_styles, sky_end)) {
                 sky_open += 1u;
             }
         }

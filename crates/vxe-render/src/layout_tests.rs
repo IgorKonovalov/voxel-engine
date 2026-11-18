@@ -420,6 +420,8 @@ fn rust_value(name: &str) -> Option<f64> {
     Some(match name {
         "BAKE_LANES" => f64::from(crate::bake::BAKE_LANES),
         "BAKE_ROW" => f64::from(crate::bake::BAKE_ROW),
+        "COLUMN_CELL" => f64::from(crate::gpu_world::COLUMN_CELL),
+        "COLUMN_CELLS" => f64::from(crate::gpu_world::COLUMN_CELLS),
         "EMISSION_ROWS" => crate::frame::EMISSION_ROWS as f64,
         "FIRST" => f64::from(crate::font8x8::FIRST),
         "LAST" => f64::from(crate::font8x8::LAST),

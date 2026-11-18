@@ -151,6 +151,8 @@ pub(crate) struct BakeRun<'a> {
 pub(crate) const BAKE_SKY_ON: u32 = 1;
 pub(crate) const BAKE_SKY_COARSE: u32 = 2;
 pub(crate) const BAKE_SKY_STYLES: u32 = 4;
+/// The bake's sky-ray bit of the reading hook [`crate::LightHooks::sky_end_is_sky`].
+pub(crate) const BAKE_SKY_END_IS_SKY: u32 = 8;
 
 /// A chunk's job: its faces, where its block goes, and the brick records it keeps from the block
 /// before, whose bricks it does not bake.

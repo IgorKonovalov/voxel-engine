@@ -933,7 +933,7 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
 | 6: The key light on the long history, after a reading | dev | done (reading only: 3-degree p99 1 at the lamp's 1, not built) | 12fe6373 |
 | 7: A spike: a deterministic penumbra from the closest approach | dev | done (spike; cost on the RTX approach arm and the RENOIR not read) | ed47dc5c |
 | 8: The owner's windowed check | human | done 2026-11-18, failed on five points (`live/window86a/verdicts.md`; the amendment above) | |
-| 9: The sky rule: the column map, sky only above it | dev | not started | |
+| 9: The sky rule: the column map, sky only above it | dev | done; bar 5 (the seal) fails as written (24.3 %, the pair's history decaying: 1.1 % at +128 frames); the bake's finality doubles the pre-roll (10.3 to 21.2 s, RTX) | committed with this row |
 | 10: The first seconds after a jump | dev | not started | |
 | 11: The window's defaults | dev | not started | |
 | 12: The tunnel's brightness: the eye's ceiling anchored to the sky | dev | not started | |
@@ -1002,6 +1002,19 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
   The soak test `the_cave_mouth_is_lit_from_outside` fails its seal bar at the tip (sealed
   walls 24.3 % of unsealed after 64 frames, bar 2 %) and at `012bd208` (unsealed 0); not
   changed.
+
+- Phase 9: the column map's max down a column is CPU work in the sync (`gpu_world/columns.rs`,
+  `queue.write_texture` of a column's tile), not a GPU pass; no `column_map.wgsl`. The map is an
+  `r32sint` texture at group 0 binding 19, 2-voxel cells, i32's minimum for none. The key light's
+  ray keeps the old rule (only the sky rays take the column rule). `QueueView` gained
+  `lod_radius` (the columns' wanted chunks), so `apps/flythrough/src/run/queue.rs`,
+  `run/loading.rs`, `tests/support/queue.rs` and `bake/pre_roll.rs` changed outside the phase's
+  files. Reading hook `LightHooks::sky_end_is_sky`. Bar 1's dig is a 2 x 2 x 1 dig (a texel's
+  columns), read at the dig's sync. Bar 3 is the new soak test
+  `the_underground_eye_reads_no_sky` over `reading::underground_eye`. Bar 4: the wall's 0.549
+  is outside 0.50 within 0.03, equal to Phase 4's reading. Bar 5's seal bar fails as written
+  (24.347 %); bar 5's golden fails (re-blessed at Phase 11). The bake's finality lengthens the
+  pre-roll past the risk's fifth (readings log).
 
 ### Close triggers
 

@@ -477,7 +477,9 @@ impl Frame {
         self.binds.io_at(
             device,
             &self.pipes.world_layout,
-            &[0, 1, 7, 8, 9, 2, 3, 4, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+            &[
+                0, 1, 7, 8, 9, 2, 3, 4, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+            ],
             &[
                 Res::Buf(&self.state.params),
                 Res::Buf(world.pool_shard(0)),
@@ -496,6 +498,7 @@ impl Frame {
                 Res::Buf(&self.sky.uniform),
                 Res::Tex(self.sky.bound()[0]),
                 Res::Tex(self.sky.bound()[1]),
+                Res::Tex(world.column_map()),
             ],
         )
     }
@@ -504,7 +507,8 @@ impl Frame {
 /// The world's group 0, as `common.wgsl` declares it: the frame's parameters (0), the mirror's
 /// pools, records, table and materials, the light samples and the emission scales, the blue
 /// noise (12), the exposure state (13), the list of lights (14), the entity mirror (15), and the
-/// sky's uniform (16) and LUTs (17, 18) as `sky.wgsl` declares them.
+/// sky's uniform (16) and LUTs (17, 18) as `sky.wgsl` declares them, and the mirror's column map
+/// (19).
 fn world_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     let storage = |binding| wgpu::BindGroupLayoutEntry {
         binding,
@@ -542,6 +546,7 @@ fn world_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             sampled_texture(12, FLOAT),
             sampled_texture(17, FLOAT),
             sampled_texture(18, FLOAT),
+            sampled_texture(19, wgpu::TextureSampleType::Sint),
             wgpu::BindGroupLayoutEntry {
                 binding: 16,
                 visibility: wgpu::ShaderStages::COMPUTE,

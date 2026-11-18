@@ -40,8 +40,8 @@ pub mod debug {
     pub use crate::gpu_util::compute_pipelines_created;
     pub use crate::probes::ProbeRead;
     pub use crate::readback::{
-        StepHistogram, f16_to_f32, read_buffer, read_float, read_rgba8, read_rgba16f, read_rgba16u,
-        read_rgba32f,
+        StepHistogram, f16_to_f32, read_buffer, read_float, read_r32i, read_rgba8, read_rgba16f,
+        read_rgba16u, read_rgba32f,
     };
 }
 
@@ -112,9 +112,9 @@ pub use frame::{
 };
 pub use fsr2::{Fsr2, Fsr2Settings, UpscalerKind};
 pub use gpu_world::{
-    BELT_CHUNK_BYTES, BinStats, DEFAULT_BUDGET_BYTES, DEFAULT_LIGHT_CHUNK_CAP,
-    DEFAULT_LIGHT_RADIUS, DEFAULT_LIGHT_SAMPLES, GpuWorld, MirrorConfig, MirrorError, ShardLayout,
-    SyncClock, SyncPoint, SyncStats, Window,
+    BELT_CHUNK_BYTES, BinStats, COLUMN_CELL, COLUMN_CELLS, COLUMN_NONE, DEFAULT_BUDGET_BYTES,
+    DEFAULT_LIGHT_CHUNK_CAP, DEFAULT_LIGHT_RADIUS, DEFAULT_LIGHT_SAMPLES, GpuWorld, MirrorConfig,
+    MirrorError, ShardLayout, SyncClock, SyncPoint, SyncStats, Window,
 };
 pub use hud::{HudColour, HudOverlay};
 pub use light::LightParams;

@@ -372,7 +372,7 @@ impl Frame {
     /// The bake's sky-ray bits ([`crate::bake::BakeRun::sky`]): none with no sky set, else on
     /// with the frame's coarse shadow walk and shadow styles.
     pub(super) fn bake_sky(&self) -> u32 {
-        use crate::bake::{BAKE_SKY_COARSE, BAKE_SKY_ON, BAKE_SKY_STYLES};
+        use crate::bake::{BAKE_SKY_COARSE, BAKE_SKY_END_IS_SKY, BAKE_SKY_ON, BAKE_SKY_STYLES};
         if self.sky.sky.is_none() {
             return 0;
         }
@@ -386,6 +386,11 @@ impl Frame {
                 0
             } else {
                 BAKE_SKY_STYLES
+            }
+            | if self.state.hooks.sky_end_is_sky {
+                BAKE_SKY_END_IS_SKY
+            } else {
+                0
             }
     }
 

@@ -221,6 +221,10 @@ pub(crate) const LIGHTING_HOOK_NO_CLAMP: u32 = 1 << 21;
 /// ([`Penumbra::Approach`]).
 pub(crate) const LIGHTING_PENUMBRA_APPROACH: u32 = 1 << 22;
 
+/// `Params::lighting` bit, a reading hook ([`LightHooks::sky_end_is_sky`]): a sky ray that ends
+/// without a hit has reached the sky wherever it ends, and an absent chunk is air to it.
+pub(crate) const LIGHTING_HOOK_SKY_END_IS_SKY: u32 = 1 << 23;
+
 /// The light passes' reading hooks ([`Frame::set_light_hooks`]): switches that take a term or a
 /// test out of the frame to attribute what the image does to it. All off by default; each is
 /// a uniform branch on a `Params::lighting` bit.
@@ -238,6 +242,10 @@ pub struct LightHooks {
     pub sky_ray_always: bool,
     /// The visibility pair's firefly clamp is off.
     pub no_clamp: bool,
+    /// A sky ray that ends without a hit (its cap, an absent chunk, the window's face) has
+    /// reached the sky, with no column-map test, in the light pass and the bake: the rule
+    /// before ADR-0070's amendment of 2026-11-18.
+    pub sky_end_is_sky: bool,
 }
 
 impl LightHooks {
@@ -261,6 +269,10 @@ impl LightHooks {
             0
         } | if self.no_clamp {
             LIGHTING_HOOK_NO_CLAMP
+        } else {
+            0
+        } | if self.sky_end_is_sky {
+            LIGHTING_HOOK_SKY_END_IS_SKY
         } else {
             0
         }

@@ -1614,6 +1614,66 @@ fn the_face_weights_leave_near_faces_alone() {
 
 /// Readings run by hand (`--run-ignored only -E 'test(=reading::<name>)'`): the exploration
 /// phases' bars before the owner's window (Plan 0086).
+/// Plan 0086 Phase 9 bar 2: an enclosed pocket longer than the sky ray's cap reads no sky. A
+/// 288-voxel air cube (x, y, z 80..368) sealed in the rock of a 7 x 7 x 7-chunk world; the
+/// floor's bricks of the central chunk (3, 3, 1), their `+z` direction, baked alone under
+/// `Sky::uniform(1.0)` at 256 samples a brick direction. An upward ray from the floor meets the
+/// ceiling 288 voxels up, past the bake's 256-voxel cap (the light radius 4), and ends under its
+/// column's top (ADR-0070's amendment): every baked visibility reads 0 exactly. The same bake
+/// with every end counted as sky (`LightHooks::sky_end_is_sky`) is printed.
+#[test]
+fn a_sealed_cavern_wider_than_the_cap_reads_no_sky() {
+    let f = |p: [i32; 3]| {
+        if p.iter().all(|&v| (80..368).contains(&v)) {
+            vxe_world::AIR
+        } else {
+            ROCK
+        }
+    };
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [7, 7, 7]),
+        &vxe_world::FnSource(f),
+        &cave_table(),
+    );
+    let Some(mut rig) = rig_on(world, [16, 16], None) else {
+        return;
+    };
+    rig.frame.set_sky(Some(vxe_render::sky::Sky::uniform(1.0)));
+    let settings = BakeSettings {
+        filter: Some(std::sync::Arc::new(|v: [i32; 3], f: u8| {
+            v[0].div_euclid(64) == 3 && v[1].div_euclid(64) == 3 && v[2] == 79 && f == 5
+        })),
+        ..test_counts(256)
+    };
+    let mut read = |end_is_sky: bool| {
+        rig.frame.set_light_hooks(vxe_render::LightHooks {
+            sky_end_is_sky: end_is_sky,
+            ..Default::default()
+        });
+        let report = rig.bake(&settings);
+        let (vis, _) = sky_cells_of(&rig.blocks());
+        let v: Vec<f32> = vis
+            .iter()
+            .filter(|((b, f), _)| b[2] == 9 && *f == 5)
+            .map(|(_, v)| v.expect("baked under a sky"))
+            .collect();
+        (report.faces, v)
+    };
+    let (faces, rule) = read(false);
+    let (_, built) = read(true);
+    let mean = |v: &[f32]| v.iter().sum::<f32>() / v.len().max(1) as f32;
+    println!(
+        "{faces} faces, {} floor bricks: column rule max {:?} mean {}, every end sky mean {} max {:?}",
+        rule.len(),
+        rule.iter().copied().reduce(f32::max),
+        mean(&rule),
+        mean(&built),
+        built.iter().copied().reduce(f32::max),
+    );
+    assert_eq!(rule.len(), 64, "the floor's 64 bricks");
+    assert!(rule.iter().all(|&v| v == 0.0), "{rule:?}");
+}
+
 mod reading {
     use super::*;
 

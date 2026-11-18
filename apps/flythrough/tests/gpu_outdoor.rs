@@ -146,6 +146,62 @@ fn tree_shadow_bar(size: [u32; 2], tolerance: f64) {
     assert!((r[2][0] / 1.732 - 1.0).abs() <= 0.10, "ratio {}", r[2][0]);
 }
 
+/// Plan 0086 Phase 9 bar 3: the underground eye reads nothing. [`reading::underground_eye`] at
+/// `r` 7 (the owner's run-12 eye in a closed cavern at noon, the world generated and mirrored
+/// whole, the store baked whole): the near-eye baked visibility's mean per face is under 0.001 in
+/// every direction, and at both sky-ray counts the stored and direct parts' mean luminance at
+/// exposure 1 are under 0.02 in the six views, with the surface reference's within 5 % of
+/// 149.7 and 1345 (its reading at the diagnosis, `2fe4598c`).
+#[test]
+#[ignore = "soak"]
+fn the_underground_eye_reads_no_sky() {
+    let Some(u) = reading::underground_eye(7) else {
+        return;
+    };
+    for (f, v) in u.near_vis.iter().enumerate() {
+        assert!(*v < 0.001, "face {f}: near-eye visibility {v}");
+    }
+    for (rays, name, stored, direct) in &u.parts {
+        if name == "surface ref" {
+            if *rays == 1 {
+                assert!(
+                    (stored / 149.7 - 1.0).abs() <= 0.05,
+                    "surface stored {stored}"
+                );
+                assert!(
+                    (direct / 1345.0 - 1.0).abs() <= 0.05,
+                    "surface direct {direct}"
+                );
+            }
+            continue;
+        }
+        assert!(*stored < 0.02, "rays {rays} {name}: stored {stored}");
+        assert!(*direct < 0.02, "rays {rays} {name}: direct {direct}");
+    }
+}
+
+/// Plan 0086 Phase 10 bar 1: the young visibility pair forgets the leak.
+/// [`reading::underground_streamed`] at full radius 6 and one sky ray (the run-12 eye underground
+/// at noon, reached as by a jump): the hit pixels' mean direct part reads under 0.05 by frame 60
+/// and under 0.02 at frame 240; frame 1's is printed.
+#[test]
+#[ignore = "soak"]
+fn the_underground_eye_streamed() {
+    let reads = reading::underground_streamed(6, 1, &[1, 30, 60, 240]);
+    let Some(last) = reads.last() else {
+        return;
+    };
+    let at = |f: u32| reads.iter().find(|r| r.frame == f).expect("read").direct;
+    println!(
+        "direct at frame 1 {:.4}, 60 {:.4}, 240 {:.4}",
+        at(1),
+        at(60),
+        last.direct
+    );
+    assert!(at(60) < 0.05, "frame 60: {}", at(60));
+    assert!(at(240) < 0.02, "frame 240: {}", at(240));
+}
+
 mod reading {
     use super::support;
     use support::stillness::{Pose, SIZE, outdoor_level_on, run_under_sky};
@@ -1462,15 +1518,26 @@ mod reading {
     #[test]
     #[ignore = "reading"]
     fn the_underground_eye() {
+        let r = std::env::var("VXE_UNDER_R")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3);
+        underground_eye(r);
+    }
+
+    /// What [`underground_eye`] read: the near-eye baked visibility's mean per face (within 6
+    /// bricks of the eye's brick), and per sky-ray count (1, then 0) and view (the six axes,
+    /// then the surface reference) the stored and direct parts' mean luminance at the hits.
+    pub(super) struct UnderEye {
+        pub(super) near_vis: [f64; 6],
+        pub(super) parts: Vec<(u32, String, f64, f64)>,
+    }
+
+    /// [`the_underground_eye`]'s rig at `r`, printed; `None` with no adapter.
+    pub(super) fn underground_eye(r: i32) -> Option<UnderEye> {
         use flythrough::outdoor::OutdoorSource;
         use vxe_world::{ChunkExtent, VoxelCoord, World};
-        let env = |k: &str, d: i32| {
-            std::env::var(k)
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(d)
-        };
-        let (r, zhi) = (env("VXE_UNDER_R", 3), 9);
+        let zhi = 9;
         let source = OutdoorSource::new(1);
         let eye = VoxelCoord([743, 131, 15]);
         let c = eye.chunk().0;
@@ -1482,8 +1549,10 @@ mod reading {
             extent.len(),
             t.elapsed().as_secs_f64()
         );
-        let Some(mut rig) = mirrored(world, eye) else {
-            return;
+        let mut rig = mirrored(world, eye)?;
+        let mut out = UnderEye {
+            near_vis: [0.0; 6],
+            parts: Vec::new(),
         };
         println!("reading: adapter {}", rig.adapter);
         let p = [743.5f32, 131.5, 14.7];
@@ -1569,6 +1638,9 @@ mod reading {
                 }
             }
             for (fi, (n, sum, max, over)) in by_face.iter().enumerate() {
+                if near == 6 {
+                    out.near_vis[fi] = sum / (*n).max(1) as f64;
+                }
                 println!(
                     "reading: baked visibility {label}, face {fi}: {n} faces, mean {:.4}, max {max:.3}, over 0.05: {over}",
                     sum / (*n).max(1) as f64
@@ -1597,167 +1669,110 @@ mod reading {
                 println!(
                     "reading: noon bake, sky rays {rays}, view {name}: {n} hits, stored part luminance mean {a:.4e}, direct part mean {d:.4e}"
                 );
+                out.parts.push((rays, name.clone(), a, d));
             }
         }
+        Some(out)
     }
 
     /// Plan 0086 Phase 8 diagnosis, streamed: the run-12 eye underground (743, 131, 14.7;
-    /// seed 1, no trees) reached as by a jump, the hills streamed in process around it at
-    /// `VXE_UNDER_R` full (default 6) and 2 more LOD (hysteresis 1, 8 workers, a following
-    /// window), the spawn's block first, then each frame the stream updated, polled and synced
-    /// with no budget, the live queue stepped at the fly-through's settings (coarse 8, near 2,
-    /// the default slice) and the frame rendered at 12:00, manual exposure 1, `sky_rays`
-    /// `VXE_UNDER_RAYS` (default 1), facing +x. At listed
-    /// frames: the hit pixels' mean luminance of the accumulated stored part and of the direct
-    /// part, the share of lighting pixels that cast the sky ray and their mean visibility, the
-    /// mirrored chunks and the queue's depth. Printed. `VXE_TEST_ADAPTER` picks the adapter.
+    /// seed 1, no trees) reached as by a jump (`support::streamed::streamed`), `VXE_UNDER_R` full (default 6),
+    /// `sky_rays` `VXE_UNDER_RAYS` (default 1), facing +x, at 12:00. Printed at listed frames.
+    /// `VXE_TEST_ADAPTER` picks the adapter.
     #[test]
     #[ignore = "reading"]
     fn the_underground_eye_streamed() {
-        use flythrough::outdoor::OutdoorSource;
-        use std::sync::Arc;
-        use support::SyncNow;
-        use vxe_render::{GpuWorld, LodParams, MirrorConfig, QueueView, Window};
-        use vxe_world::{
-            ChunkCoord, PersistConfig, Residency, StreamConfig, Streamer, Tier, VoxelCoord, World,
-        };
-        const READS: [u32; 12] = [1, 3, 10, 30, 60, 120, 240, 480, 720, 960, 1440, 1920];
         let env = |k: &str, d: i32| {
             std::env::var(k)
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(d)
         };
-        let r = env("VXE_UNDER_R", 6);
-        let residency = Residency {
-            r_full: r,
-            r_lod: r + 2,
-            hysteresis: 1,
-        };
-        let side = 2 * (residency.r_lod + residency.hysteresis) + 1;
-        let budget = 1u64 << 30;
-        let Some((device, queue, adapter)) = support::reading_device(budget) else {
-            return;
-        };
-        println!("reading: the_underground_eye_streamed on {adapter}, r_full {r}");
-        let eye = VoxelCoord([743, 131, 15]);
-        let world = World::new(&flythrough::outdoor_materials());
-        let mut streamer = Streamer::new(
-            Arc::new(OutdoorSource::new(1)),
-            StreamConfig {
-                residency,
-                workers: 8,
-                persist: PersistConfig::default(),
-            },
+        underground_streamed(
+            env("VXE_UNDER_R", 6),
+            env("VXE_UNDER_RAYS", 1) as u32,
+            &[1, 3, 10, 30, 60, 120, 240, 480, 720, 960, 1440, 1920],
         );
-        let mut gpu = GpuWorld::with_config(
-            &device,
-            MirrorConfig {
-                budget_bytes: budget,
-                ..MirrorConfig::new(Window::Follow { side })
-            },
-        );
-        streamer.set_radii(1, 1);
-        streamer.update(&world, &[eye]);
-        let ev = streamer.wait_idle(&world);
-        gpu.apply_events(&ev);
-        gpu.set_focus(eye);
-        gpu.sync_now(&world, &device, &queue)
-            .expect("the mirror fits");
-        streamer.set_radii(residency.r_full, residency.r_lod);
-        let mut frame = Frame::new(&device, 320, 180);
-        frame.set_lod(LodParams {
-            r_full: residency.r_full,
-            forced_level: None,
+    }
+
+    /// Plan 0086 Phase 10 bar 3: the forest after a jump (seed 1, `--trees forest`, the leaf
+    /// fill's default, the forest spawn facing its way, the sun at `10,180`, the leaf shadowing
+    /// as its bricks), streamed as by a jump at full radius 6 (`support::streamed::streamed`) and read every
+    /// frame for 600: the frames until the store's black count falls under 1000 and until its
+    /// missing count falls under 5000 (at 320 x 180, 57 600 lighting pixels). Printed.
+    #[test]
+    #[ignore = "reading"]
+    fn the_forest_after_a_jump() {
+        use flythrough::outdoor::{OutdoorSource, Spawn};
+        use flythrough::trees::{ForestSource, LEAF_FILL, TreeDensity};
+        let source = ForestSource::new(OutdoorSource::new(1), TreeDensity::Forest, LEAF_FILL);
+        let (eye, facing) = source.base().spawn(Spawn::Forest);
+        let p = eye.0.map(|v| v as f32 + 0.5);
+        let d = facing.map(|v| v as f32);
+        let camera = flythrough::camera_looking_at(p, [p[0] + d[0], p[1] + d[1], p[2] + d[2]]);
+        let sky = flythrough::daylight::Clock {
+            fixed_sun: Some([10.0, 180.0]),
+            ..Default::default()
+        }
+        .sky(flythrough::outdoor::BASE_Z as f32);
+        let reads = support::streamed::streamed(support::streamed::Streamed {
+            label: "the_forest_after_a_jump",
+            source: std::sync::Arc::new(source),
+            eye,
+            camera,
+            sky,
+            styles: flythrough::outdoor_styles(flythrough::LeafShadow::Brick),
+            r: 6,
+            rays: 1,
+            reads: (0..600).collect(),
         });
-        frame.set_lighting(Lighting {
-            lamp: false,
-            exposure: Exposure::Manual(1.0),
-            sky_rays: env("VXE_UNDER_RAYS", 1) as u32,
-            ..flythrough::default_lighting()
-        });
-        frame.set_sky(Some(
-            flythrough::daylight::Clock::default().sky(flythrough::outdoor::BASE_Z as f32),
-        ));
-        frame.set_dt(1.0 / 60.0);
-        frame.start_bake_queue(
-            &queue,
-            &gpu,
-            vxe_render::queue_settings(),
-            vxe_render::DEFAULT_BAKE_SLICE_MS,
+        let first = |f: &dyn Fn(&support::streamed::StreamedRead) -> bool| {
+            reads
+                .iter()
+                .position(f)
+                .map_or(-1, |i| reads[i].frame as i64)
+        };
+        let settled = |f: &dyn Fn(&support::streamed::StreamedRead) -> bool| {
+            reads
+                .iter()
+                .rposition(|r| !f(r))
+                .map_or(0, |i| reads[i].frame as i64 + 1)
+        };
+        println!(
+            "reading: the forest after a jump: black under 1000 first at frame {}, for good from {}; missing under 5000 first at {}, for good from {}",
+            first(&|r| r.black < 1000),
+            settled(&|r| r.black < 1000),
+            first(&|r| r.missing < 5000),
+            settled(&|r| r.missing < 5000),
         );
-        frame.set_bake_coarse(8, 2);
-        let yaw = 0.0;
+    }
+
+    /// [`streamed`] at the run-12 eye underground at noon, facing +x, full radius `r`.
+    pub(super) fn underground_streamed(
+        r: i32,
+        rays: u32,
+        reads: &[u32],
+    ) -> Vec<support::streamed::StreamedRead> {
+        let source = std::sync::Arc::new(flythrough::outdoor::OutdoorSource::new(1));
         let camera = flythrough::Pose {
             name: "underground",
             position: [743.5, 131.5, 14.7],
-            yaw_deg: yaw,
+            yaw_deg: 0.0,
             pitch_deg: 0.0,
             exposure: 1.0,
         }
         .camera();
-        let lum = |p: &[f32; 4]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
-        for f in 0..=READS[READS.len() - 1] {
-            streamer.update(&world, &[eye]);
-            let ev = streamer.poll(&world);
-            gpu.apply_events(&ev);
-            gpu.set_focus(eye);
-            let mut enc = device.create_command_encoder(&Default::default());
-            gpu.sync(&world, &queue, &mut enc).expect("the mirror fits");
-            queue.submit([enc.finish()]);
-            let resident_fn = |c: ChunkCoord| streamer.tier(c) == Some(Tier::Full);
-            let view = QueueView {
-                eye: camera.position.to_array(),
-                forward: camera.basis().0.to_array(),
-                resident: Some(&resident_fn),
-                samples: None,
-                interval_s: 1.0 / 60.0,
-                hold: Some(residency.r_full + gpu.light_radius() + 1),
-                half_angle: {
-                    let [w, h] = frame.output_size();
-                    vxe_render::internals::view_half_angle(camera.vfov, w as f32 / h as f32)
-                },
-                frustum: None,
-                full_radius: Some(residency.r_full),
-            };
-            let st = frame
-                .bake_queue_step(&device, &queue, &mut gpu, &world, &view)
-                .expect("the queue runs")
-                .expect("the queue's step");
-            frame.step(&device, &queue, &gpu, &camera, &LightParams::headlamp());
-            if !READS.contains(&f) {
-                continue;
-            }
-            let hits =
-                vxe_render::debug::read_rgba32f(&device, &queue, frame.light_hit_positions());
-            let acc = vxe_render::debug::read_rgba16f(&device, &queue, frame.accumulated());
-            let dir = vxe_render::debug::read_rgba16f(&device, &queue, frame.direct_accumulated());
-            let vis = vxe_render::debug::read_rgba8(&device, &queue, frame.visibility_samples());
-            let (mut n, mut a, mut d, mut cast, mut open) =
-                (0usize, 0.0f64, 0.0f64, 0usize, 0.0f64);
-            for i in 0..hits.len() {
-                if hits[i][3] < 1.0e30 {
-                    n += 1;
-                    a += f64::from(lum(&acc[i]));
-                    d += f64::from(dir[i][3]);
-                    if vis[4 * i + 3] > 0 {
-                        cast += 1;
-                        open += f64::from(vis[4 * i]) / 255.0;
-                    }
-                }
-            }
-            println!(
-                "reading: frame {f}: {n} hits, stored {:.4e}, direct {:.4e}, sky ray cast at {cast} (mean open {:.4}), mirrored {}, queue depth {} baked {} unbaked {} waiting reach {}",
-                a / n.max(1) as f64,
-                d / n.max(1) as f64,
-                open / cast.max(1) as f64,
-                gpu.mirrored_chunks(),
-                st.depth,
-                st.baked,
-                st.unbaked,
-                st.waiting_reach,
-            );
-        }
+        support::streamed::streamed(support::streamed::Streamed {
+            label: "the_underground_eye_streamed",
+            source,
+            eye: vxe_world::VoxelCoord([743, 131, 15]),
+            camera,
+            sky: flythrough::daylight::Clock::default().sky(flythrough::outdoor::BASE_Z as f32),
+            styles: Vec::new(),
+            r,
+            rays,
+            reads: reads.to_vec(),
+        })
     }
 
     /// Plan 0086 Phase 8 diagnosis: the tunnel rig (`tunnel_rig`) baked whole under the noon

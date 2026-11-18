@@ -5,8 +5,9 @@
 // and sky.wgsl; never into the bake, which takes no sky term, nor the probe or gradient
 // passes.
 //
-// An absent chunk is air to a lighting ray, as to every ray: a ray that leaves the resident
-// world or the window has reached the sky.
+// An absent chunk is air to the key light's ray: one that leaves the resident world or the
+// window has reached the sun. A sky ray that ends without a hit (its cap, an absent chunk, the
+// window's face) reached the sky iff it ended above its column's top (`sky_ray_open`).
 
 // The random-number dimensions of the key light's disc sample, above the candidates'.
 const KEY_DIM: u32 = 1000u;
@@ -93,12 +94,30 @@ fn key_sample(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>, px: vec2<u32>) -> vec3<
 // The random-number dimensions of the sky rays, two a ray, above the key light's.
 const SKY_DIM: u32 = 1002u;
 
-// A sky ray's length cap in voxels: past it the ray counts as having reached the sky.
+// A sky ray's length cap in voxels: a ray that reaches it reached the sky iff it ends above
+// its column's top.
 const SKY_RAY_VOXELS: f32 = 512.0;
+
+// Whether a sky ray from `o` along `d` finds rock (or, with ENTITY_SHADOWS, an entity) or ends
+// at or under its column's top (`sky_ray_open`). A lifted ray (`ray_lift`) steps out of a solid
+// voxel it starts in.
+fn sky_ray_blocked(o: vec3<f32>, d: vec3<f32>, len: f32) -> bool {
+    skip_origin_cell = any(ray_lift != vec3<f32>(0.0));
+    let open = sky_ray_open(
+        o,
+        d,
+        len,
+        (params.lighting & LIGHTING_COARSE_SHADOW) != 0u,
+        (params.lighting & LIGHTING_SHADOW_STYLES) != 0u,
+        (params.lighting & LIGHTING_HOOK_SKY_END_IS_SKY) != 0u,
+    );
+    skip_origin_cell = false;
+    return !open || (ENTITY_SHADOWS && entity_march(o, d, len).found);
+}
 
 // The sky rays' visibility at a hit at `p`, normal `n`, shadow normal `ns`, lighting pixel
 // `px` (ADR-0070): the share of `sky.sky_rays` cosine-weighted rays about `n` that reach the
-// sky above the horizon (no rock within SKY_RAY_VOXELS); a ray below the horizon counts as
+// sky above the horizon (`sky_ray_blocked` clear); a ray below the horizon counts as
 // blocked (the ground there is unknown, and it is rock more often than lit sky). Its
 // expectation is the visibility the bake stores, so the temporal pass colours it as the baked
 // one: times the sky's irradiance above the horizon about the normal. 0 with no ray.
@@ -111,7 +130,7 @@ fn sky_visibility_sample(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>, px: vec2<u32
     var open = 0u;
     for (var i = 0u; i < count; i++) {
         let d = cosine_direction(n, rand(px, SKY_DIM + 2u * i), rand(px, SKY_DIM + 2u * i + 1u));
-        if (d.z > 0.0 && !sky_shadowed(o, d, SKY_RAY_VOXELS)) {
+        if (d.z > 0.0 && !sky_ray_blocked(o, d, SKY_RAY_VOXELS)) {
             open += 1u;
         }
     }

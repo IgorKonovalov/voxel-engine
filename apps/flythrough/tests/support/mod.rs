@@ -10,6 +10,7 @@ pub mod queue;
 pub mod rigs;
 pub mod settle;
 pub mod stillness;
+pub mod streamed;
 
 use std::path::PathBuf;
 

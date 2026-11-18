@@ -597,6 +597,7 @@ impl GpuWorld {
             if result.is_err() {
                 break;
             }
+            self.note_columns(coord, &src, guard.as_deref());
             // The time budget is read after each chunk written: the chunk that crosses it is
             // whole, and the rest stay pending, nearest first, with their kept sizes, for the
             // next sync. A sync whose selection spent the budget still writes its first chunk.

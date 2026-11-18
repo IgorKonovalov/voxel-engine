@@ -178,6 +178,11 @@ struct Lights {
 
 @group(0) @binding(12) var blue_noise: texture_2d<f32>;
 
+// The column map (`GpuWorld::column_map`): per COLUMN_CELL-voxel column of the window's
+// footprint the highest opaque voxel's z among the resident chunks, COLUMN_NONE for none; a
+// chunk column's COLUMN_CELLS^2 tile at its coordinate wrapped by the window size.
+@group(0) @binding(19) var column_map: texture_2d<i32>;
+
 // `ExposureState` in exposure.rs: the exposure this frame uses in auto (`current`) and the one
 // the last frame used (`previous`), then the adapted and metered levels, a counter and flags.
 struct ExposureState {
