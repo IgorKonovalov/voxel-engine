@@ -870,6 +870,12 @@ pub struct Lighting {
     /// n.d) / 2` over those it holds (a crude bounce from the brick's neighbourhood, one more
     /// record read, no ray). Read where the store holds a baked visibility.
     pub sky_bounce: f32,
+    /// The live queue's column wait (ADR-0070's amendment of the second window; default off): on,
+    /// a chunk bakes only once every column over its reach's footprint is final (holds every
+    /// chunk the streamer will hold, [`crate::QueueView::lod_radius`]); off, once no chunk of
+    /// those columns is pending upload, a block baked under a column not yet final marked
+    /// provisional and baked again once when the columns turn final.
+    pub column_wait: bool,
 }
 
 /// [`Lighting::sky_history`]' largest value: the pair's age is a half, exact to 2048.
@@ -911,6 +917,7 @@ impl Default for Lighting {
             penumbra: Penumbra::Disc,
             sky_normal: SkyNormal::Smoothed,
             sky_bounce: 0.0,
+            column_wait: false,
         }
     }
 }

@@ -836,6 +836,7 @@ impl Args {
         m.sky = self.sky_on();
         m.clock = self.outdoor.clock;
         m.leaf_shadow = self.outdoor.leaf_shadow;
+        m.dump_black = self.outdoor.dump_black;
         m.profile = self.profile_row(&self.render_settings(), &[]);
         m.set_auto(self.light.adaptation, self.start_auto());
         m.show_look(&self.look.preset, self.look.preset.far_normal, now_ms);
@@ -934,6 +935,7 @@ impl Args {
                 .unwrap_or(vxe_render::DEFAULT_SKY_HISTORY),
             penumbra: self.outdoor.penumbra,
             sky_normal: self.outdoor.sky_normal,
+            column_wait: self.outdoor.column_wait,
             sky_bounce: self.outdoor.sky_bounce,
             ..crate::default_lighting()
         })

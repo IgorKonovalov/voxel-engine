@@ -36,10 +36,11 @@ pub struct OutdoorArgs {
     pub(crate) sky_normal: vxe_render::SkyNormal,
     /// `--sky-bounce B`: the baked sky term's bounce floor, 0 to 1.
     pub(crate) sky_bounce: f32,
-    /// `--column-wait on|off` off: the live queue's bake waits for the chunks pending upload
-    /// only, not for every chunk of the streamer's LOD sphere over its columns (a reading
-    /// switch for the pre-roll; the sky rule's tops may then still move under a bake).
-    pub(crate) no_column_wait: bool,
+    /// `--column-wait on|off`: the live queue's column wait (`Lighting::column_wait`).
+    pub(crate) column_wait: bool,
+    /// `--dump-black`: once a second while the store's black count is over 0, the lighting
+    /// pixels with no record value printed by the chunk they hit (`Run::dump_black`).
+    pub(crate) dump_black: bool,
     /// `--sky-anchor N|none`: the auto exposure's ceiling anchored `N` EV over the sunlit
     /// ground's exposure while a sky is set (`AutoExposure::sky_anchor_ev`), `Some(None)` for
     /// none; unset, the preset's (`vxe_render::DEFAULT_SKY_ANCHOR_EV`).
@@ -324,12 +325,24 @@ fn ceiling_flags() -> Vec<Flag<Parsing>> {
         Flag::value(
             &["--column-wait"],
             "on|off",
-            "the live queue bakes a chunk once every column over its reach holds all the \
-                 chunks the streamer will hold; off waits for the pending uploads only (a \
-                 reading switch: faster first light, tops that may still move) [on]",
+            "on, the live queue bakes a chunk once every column over its reach holds all the \
+                 chunks the streamer will hold; off, once none of those chunks waits to \
+                 upload, and a chunk baked under a column not yet final bakes again once \
+                 when it is (faster first light, a provisional sky meanwhile) [off]",
             |p: &mut Parsing, v| {
-                p.args.outdoor.no_column_wait = !v.on_off()?;
+                p.args.outdoor.column_wait = v.on_off()?;
                 Ok(())
+            },
+        ),
+        Flag::switch(
+            &["--dump-black"],
+            "once a second while the store's black count is over 0, print the lighting pixels \
+                 with no record value grouped by the chunk they hit: its distance in chunks, \
+                 whether it holds a block, its queue tracks, the chunks that hold its columns \
+                 from final and whether its reach crosses the full radius (a reading lever; \
+                 counts the store's reads)",
+            |p: &mut Parsing| {
+                p.args.outdoor.dump_black = true;
             },
         ),
         Flag::value(

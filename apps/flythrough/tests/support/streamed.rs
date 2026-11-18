@@ -21,13 +21,15 @@ pub struct Streamed {
 
 /// [`streamed`] at the fly-through's streamed settings: LOD radius `r_lod`, the mirror's
 /// default 3 GiB budget with the fly-through's record count and window, the column wait on or
-/// off (`QueueView::lod_radius`), and at the end the unbaked chunks within the full radius,
+/// off (`Lighting::column_wait`), and at the end the unbaked chunks within the full radius,
 /// each with the chunks that hold its reach's columns from final
 /// ([`vxe_render::finality_blockers`]) and why.
 #[derive(Clone, Copy, Debug)]
 pub struct Hold {
     pub r_lod: i32,
     pub wait: bool,
+    /// The live queue's reach mode (`--reach`; the fly-through's default `Full`).
+    pub reach: vxe_render::ReachMode,
 }
 
 /// What [`streamed`] read at a frame: the hit pixels' mean luminance of the accumulated
@@ -40,6 +42,12 @@ pub struct StreamedRead {
     pub direct: f64,
     pub missing: u32,
     pub black: u32,
+    /// Under a [`Hold`]: the full chunks mirrored whose reach lies within the full radius
+    /// (distance from the eye's chunk plus the light radius at most `r_full`), not faceless and
+    /// holding no block; 0 without a hold.
+    pub unbaked_inner: u32,
+    /// The chunks the lighting pixels hit that hold no block.
+    pub hit_unbaked: u32,
 }
 
 /// A world streamed in process around `s.eye`, reached as by a jump: the spawn's block first
@@ -53,7 +61,7 @@ pub struct StreamedRead {
 /// returned; empty with no adapter.
 pub fn streamed(s: Streamed) -> Vec<StreamedRead> {
     use super::SyncNow;
-    use vxe_render::{GpuWorld, LodParams, MirrorConfig, QueueView, Window};
+    use vxe_render::{GpuWorld, MirrorConfig, QueueView, Window};
     use vxe_world::{ChunkCoord, PersistConfig, Residency, StreamConfig, Streamer, Tier, World};
     let mut out = Vec::new();
     let r = s.r;
@@ -95,34 +103,10 @@ pub fn streamed(s: Streamed) -> Vec<StreamedRead> {
     gpu.sync_now(&world, &device, &queue)
         .expect("the mirror fits");
     streamer.set_radii(residency.r_full, residency.r_lod);
-    let mut frame = Frame::new(&device, 320, 180);
-    frame.set_lod(LodParams {
-        r_full: residency.r_full,
-        forced_level: None,
-    });
-    frame.set_lighting(Lighting {
-        lamp: false,
-        exposure: Exposure::Manual(1.0),
-        sky_rays: s.rays,
-        ..flythrough::default_lighting()
-    });
-    frame.set_sky(Some(s.sky));
-    if !s.styles.is_empty() {
-        frame.set_material_styles(&queue, &s.styles);
-    }
-    frame.set_count_store(true);
-    frame.set_dt(1.0 / 60.0);
-    frame.start_bake_queue(
-        &queue,
-        &gpu,
-        vxe_render::queue_settings(),
-        vxe_render::DEFAULT_BAKE_SLICE_MS,
-    );
-    frame.set_bake_coarse(8, 2);
+    let mut frame = streamed_frame(&device, &queue, &gpu, &s, residency.r_full);
     let camera = s.camera;
     let lum = |p: &[f32; 4]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
     let last = s.reads.iter().copied().max().unwrap_or(0);
-    let wait = s.hold.is_none_or(|h| h.wait);
     for f in 0..=last {
         streamer.update(&world, &[eye]);
         gpu.apply_events(&streamer.poll(&world));
@@ -144,7 +128,7 @@ pub fn streamed(s: Streamed) -> Vec<StreamedRead> {
             },
             frustum: None,
             full_radius: Some(residency.r_full),
-            lod_radius: wait.then_some(residency.r_lod.max(residency.r_full)),
+            lod_radius: Some(residency.r_lod.max(residency.r_full)),
         };
         let st = frame
             .bake_queue_step(&device, &queue, &mut gpu, &world, &view)
@@ -175,15 +159,18 @@ pub fn streamed(s: Streamed) -> Vec<StreamedRead> {
                 }
             }
         }
+        let (unbaked_inner, hit_unbaked) = unbaked(&gpu, &frame, &hits, eye, residency.r_full);
         let read = StreamedRead {
             frame: f,
             stored: a / n.max(1) as f64,
             direct: d / n.max(1) as f64,
             missing: ss.missing,
             black: ss.still_black,
+            unbaked_inner,
+            hit_unbaked,
         };
         println!(
-            "reading: frame {f}: pending {}, coarse {}, {n} hits, stored {:.4e}, direct {:.4e}, sky ray cast at {cast} (mean open {:.4}), missing {} black {} fallback {}, mirrored {}, queue depth {} baked {} unbaked {} waiting reach {}",
+            "reading: frame {f}: pending {}, coarse {}, {n} hits, stored {:.4e}, direct {:.4e}, sky ray cast at {cast} (mean open {:.4}), missing {} black {} fallback {}, mirrored {}, queue depth {} baked {} unbaked {} waiting reach {}, unbaked within the full radius by reach {}, hit chunks with no block {}",
             gpu.pending_chunks(),
             st.coarse,
             read.stored,
@@ -197,10 +184,85 @@ pub fn streamed(s: Streamed) -> Vec<StreamedRead> {
             st.baked,
             st.unbaked,
             st.waiting_reach,
+            read.unbaked_inner,
+            read.hit_unbaked,
         );
         out.push(read);
     }
     out
+}
+
+/// [`streamed`]'s frame: 320 x 180, LOD at the full radius `r_full`, manual exposure 1, the
+/// lamp off, `s`'s sky rays, sky and styles, the column wait and reach of `s.hold` (else the
+/// defaults), the store's counters on, and the live queue at the fly-through's settings.
+fn streamed_frame(
+    device: &vxe_render::wgpu::Device,
+    queue: &vxe_render::wgpu::Queue,
+    gpu: &vxe_render::GpuWorld,
+    s: &Streamed,
+    r_full: i32,
+) -> Frame {
+    let mut frame = Frame::new(device, 320, 180);
+    frame.set_lod(vxe_render::LodParams {
+        r_full,
+        forced_level: None,
+    });
+    frame.set_lighting(Lighting {
+        lamp: false,
+        exposure: Exposure::Manual(1.0),
+        sky_rays: s.rays,
+        column_wait: s.hold.is_some_and(|h| h.wait),
+        ..flythrough::default_lighting()
+    });
+    frame.set_sky(Some(s.sky));
+    if !s.styles.is_empty() {
+        frame.set_material_styles(queue, &s.styles);
+    }
+    frame.set_count_store(true);
+    frame.set_dt(1.0 / 60.0);
+    frame.start_bake_queue(
+        queue,
+        gpu,
+        vxe_render::queue_settings(),
+        vxe_render::DEFAULT_BAKE_SLICE_MS,
+    );
+    frame.set_bake_coarse(8, 2);
+    if let Some(h) = s.hold {
+        frame.set_bake_reach(h.reach);
+    }
+    frame
+}
+
+/// [`StreamedRead::unbaked_inner`] and [`StreamedRead::hit_unbaked`] (`hits`, the lighting
+/// grid's hit positions).
+fn unbaked(
+    gpu: &vxe_render::GpuWorld,
+    frame: &vxe_render::Frame,
+    hits: &[[f32; 4]],
+    eye: vxe_world::VoxelCoord,
+    r_full: i32,
+) -> (u32, u32) {
+    let e = eye.0.map(|v| v.div_euclid(64));
+    let lr = f64::from(gpu.light_radius());
+    let q = frame.bake_queue().expect("the queue runs");
+    let no_block = |c: vxe_world::ChunkCoord| frame.store().block(c).is_none();
+    let inner = gpu
+        .full_chunks()
+        .filter(|c| {
+            let d = (0..3)
+                .map(|k| f64::from(c.0[k] - e[k]).powi(2))
+                .sum::<f64>()
+                .sqrt();
+            d + lr <= f64::from(r_full) && no_block(*c) && !q.tracks(*c).contains(&"faceless")
+        })
+        .count() as u32;
+    let hit: std::collections::BTreeSet<[i32; 3]> = hits
+        .iter()
+        .filter(|h| h[3] < 1.0e30)
+        .map(|h| [0, 1, 2].map(|k| (h[k].floor() as i32).div_euclid(64)))
+        .filter(|c| no_block(vxe_world::ChunkCoord(*c)))
+        .collect();
+    (inner, hit.len() as u32)
 }
 
 /// A shared world source as the streamer takes it.
@@ -268,9 +330,10 @@ fn held_report(
     }
 }
 
-/// [`Hold`]'s report of the hit chunks with no block at the last frame: per chunk the lighting
-/// pixels that hit it, its queue tracks, its streamer tier, whether the mirror holds it full,
-/// and the chunks that hold its columns from final.
+/// [`Hold`]'s report of the hit chunks with no block at the last frame: the fly-through's
+/// `--dump-black` lines ([`flythrough::black_dump_lines`], frame 0 on them), then per chunk the
+/// lighting pixels that hit it, its queue tracks, its streamer tier, whether the mirror holds it
+/// full, and the chunks that hold its columns from final.
 fn held_hits(
     device: &vxe_render::wgpu::Device,
     queue: &vxe_render::wgpu::Queue,
@@ -314,6 +377,11 @@ fn held_hits(
             g.width(),
             g.height(),
         );
+    }
+    // The fly-through's `--dump-black` lines on the same read-back.
+    let black = frame.read_store_stats(device, queue).still_black;
+    for l in flythrough::black_dump_lines(gpu, frame, &hits, view, 0, black) {
+        println!("reading: {l}");
     }
     let q = frame.bake_queue().expect("the queue runs");
     let jobs = q.jobs();

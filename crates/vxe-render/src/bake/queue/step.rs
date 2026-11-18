@@ -19,7 +19,9 @@ impl BakeQueue {
         store.take_summary_ms();
         self.laps.lap(S_SETUP);
         let changes = self.follow_window(run, store, view);
+        let changed = changes.as_ref().is_none_or(|c| !c.is_empty());
         self.forget_unheld(run.gpu, changes);
+        self.catch_up(run, view, changed);
         self.laps.lap(S_TOUCHED);
         self.take_boxes(run, store)?;
         self.laps.lap(S_BOXES);
@@ -121,7 +123,9 @@ impl BakeQueue {
             + self.reach.len()
             + self.listed.len()
             + self.partial.len()
-            + self.partial_due.len();
+            + self.partial_due.len()
+            + self.provisional.len()
+            + self.provisional_due.len();
         let by_keys = changes.as_ref().is_some_and(|ch| 4 * ch.len() < entries);
         if !by_keys {
             self.fades.retain(|c, _| held(c));
@@ -132,6 +136,8 @@ impl BakeQueue {
             self.listed.retain(|c, _| held(c));
             self.partial.retain(held);
             self.partial_due.retain(held);
+            self.provisional.retain(held);
+            self.provisional_due.retain(held);
         }
         match changes {
             Some(ch) => {
@@ -147,6 +153,10 @@ impl BakeQueue {
                         if !self.partial.is_empty() || !self.partial_due.is_empty() {
                             self.partial.remove(&c);
                             self.partial_due.remove(&c);
+                        }
+                        if !self.provisional.is_empty() {
+                            self.provisional.remove(&c);
+                            self.provisional_due.remove(&c);
                         }
                     }
                 }
@@ -236,6 +246,8 @@ impl BakeQueue {
             reach: &mut self.reach,
             partial: &mut self.partial,
             job_partial: &mut self.job_partial,
+            provisional: &mut self.provisional,
+            job_provisional: &mut self.job_provisional,
             entered: &mut self.entered,
             ages_first: &mut self.ages_first,
             ages_full: &mut self.ages_full,
@@ -338,6 +350,7 @@ impl BakeQueue {
         self.stats.digs = (self.digs.len() + self.dig_open.len()) as u64;
         self.stats.reach = self.reach.len() as u64;
         self.stats.partial = self.partial.len() as u64;
+        self.stats.provisional = self.provisional.len() as u64;
         self.laps.lap(S_FADES);
         // The summaries' and parents' time ran inside the placement, the fades, the evictions
         // and the window's move: it moves to its own stage, from those in that order.
@@ -370,6 +383,8 @@ struct Placement<'a> {
     reach: &'a mut std::collections::BTreeSet<[i32; 3]>,
     partial: &'a mut ChunkSet,
     job_partial: &'a mut ChunkSet,
+    provisional: &'a mut ChunkSet,
+    job_provisional: &'a mut ChunkSet,
     entered: &'a mut std::collections::HashMap<[i32; 3], (u64, bool)>,
     ages_first: &'a mut Vec<u32>,
     ages_full: &'a mut Vec<u32>,
@@ -384,6 +399,7 @@ impl Placement<'_> {
         let coarse = self.job_coarse.remove(&coord.0).unwrap_or(false);
         self.job_eye.remove(&coord.0);
         let from_partial = self.job_partial.remove(&coord.0);
+        let from_provisional = self.job_provisional.remove(&coord.0);
         let dug = self.dig_open.remove(&coord.0);
         if self.stale.remove(&coord.0) || !self.gpu.is_mirrored(coord) {
             store.release(first, block.len() as u64);
@@ -420,6 +436,11 @@ impl Placement<'_> {
                 self.partial.insert(coord.0);
             } else {
                 self.partial.remove(&coord.0);
+            }
+            if from_provisional {
+                self.provisional.insert(coord.0);
+            } else {
+                self.provisional.remove(&coord.0);
             }
         }
         let dug = dug.is_some();

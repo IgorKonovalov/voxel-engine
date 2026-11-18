@@ -671,10 +671,12 @@ impl HudStats {
             Mode::Fly => "fly",
             Mode::Walk => "walk",
         };
+        // The eye's coordinates close the line, each named, so a still cropped at the left keeps
+        // them whole.
         row(
             out,
             HudColour::White,
-            format_args!("{mode} at {x:.1} {y:.1} {z:.1} (voxels), chunk {cx} {cy} {cz}"),
+            format_args!("chunk {cx} {cy} {cz}, {mode} at x {x:.1} y {y:.1} z {z:.1} (voxels)"),
         )?;
         if let Some(c) = self.cutaway {
             row(out, HudColour::White, format_args!("cutaway ({c})"))?;

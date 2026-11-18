@@ -94,3 +94,32 @@ fn the_sky_term_flags_reach_the_lighting() {
         assert!(parse_args_from(argv(bad)).is_err(), "{bad:?}");
     }
 }
+
+/// `--column-wait` reaches the lighting, off by default and unnamed; on is named. `--dump-black`
+/// is off by default, named when on, and turns the store's counters on.
+#[test]
+fn the_column_wait_and_the_dump_reach_the_run() {
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert!(!r.start_lighting().column_wait);
+    assert!(!r.outdoor.dump_black);
+    let line = r.start_modes(0.0).line();
+    assert!(
+        !line.contains("column wait") && !line.contains("dump black"),
+        "{line}"
+    );
+    let r = parse_args_from(argv(&[
+        "--source",
+        "outdoor",
+        "--column-wait",
+        "on",
+        "--dump-black",
+    ]))
+    .unwrap();
+    assert!(r.start_lighting().column_wait);
+    assert!(r.outdoor.dump_black);
+    let line = r.start_modes(0.0).line();
+    assert!(line.contains("column wait on, dump black, "), "{line}");
+    let r = parse_args_from(argv(&["--source", "outdoor", "--column-wait", "off"])).unwrap();
+    assert!(!r.start_lighting().column_wait);
+    assert!(parse_args_from(argv(&["--column-wait", "maybe"])).is_err());
+}

@@ -267,7 +267,7 @@ fn the_cutaway_row_shows_while_the_view_is_on() {
     let lines: Vec<&str> = text.lines().collect();
     let i = lines
         .iter()
-        .position(|l| l.starts_with("fly at "))
+        .position(|l| l.contains(", fly at "))
         .expect("the camera row");
     assert_eq!(lines[i + 1], "cutaway (auto)");
     assert!(
@@ -276,6 +276,23 @@ fn the_cutaway_row_shows_while_the_view_is_on() {
             .lines()
             .any(|l| l.starts_with("cutaway")),
         "no row while the view is off"
+    );
+}
+
+/// The camera row names the chunk first and closes on the eye's three coordinates, each named
+/// in full.
+#[test]
+fn the_camera_row_closes_on_the_eye() {
+    let stats = HudStats {
+        camera: [-352.84, -30.2, 671.8],
+        chunk: [-6, -1, 10],
+        ..HudStats::default()
+    };
+    let text = stats.to_string();
+    assert!(
+        text.lines()
+            .any(|l| l == "chunk -6 -1 10, fly at x -352.8 y -30.2 z 671.8 (voxels)"),
+        "{text}"
     );
 }
 

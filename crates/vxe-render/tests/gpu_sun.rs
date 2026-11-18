@@ -1022,3 +1022,183 @@ fn a_closed_box_takes_no_sky_light() {
 
 // The readings' module, `reading`, kept in its own file for the file-size cap.
 include!("gpu_sun/reading.rs");
+
+/// The mean `+z` sky visibility (face 5) of chunk (1, 1, 0)'s records in `block` whose brick
+/// lies under `over`'s footprint (read at the slab's height).
+fn up_visibility_under(block: &[u32], over: impl Fn([i32; 3]) -> bool) -> f32 {
+    let w = vxe_render::internals::BRICK_WORDS;
+    let (mut sum, mut n) = (0.0, 0u32);
+    for slot in 0..512usize {
+        let dir = block[slot];
+        if dir == 0 {
+            continue;
+        }
+        let rec = &block[(dir >> 11) as usize - w..(dir >> 11) as usize];
+        let b = brick_of_slot(slot);
+        let at = [64 + b[0] * 8 + 4, 64 + b[1] * 8 + 4, 201];
+        if over(at)
+            && let Some(v) = vxe_render::internals::record_visibility(rec, 5)
+        {
+            sum += v;
+            n += 1;
+        }
+    }
+    sum / n.max(1) as f32
+}
+
+/// The live queue on `world` under `Sky::uniform(1.0)` with the column wait `wait`, the light
+/// radius 1 chunk, 64 samples a brick direction, no coarse pass, every chunk the world holds
+/// (and every one outside `extent`) resident full and every chunk of the window wanted by the
+/// streamer (`lod_radius` 8 about the
+/// floor's centre): stepped until `until` says so or 600 steps, `between` run after each step.
+fn caught_up_queue(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    world: &World,
+    extent: ChunkExtent,
+    wait: bool,
+    mut between: impl FnMut(usize, &mut GpuWorld, &mut Frame) -> bool,
+) -> (GpuWorld, Frame) {
+    let mut gpu = GpuWorld::with_config(
+        device,
+        MirrorConfig {
+            light_radius: 1,
+            ..MirrorConfig::new(Window::Fixed(extent))
+        },
+    );
+    let mut f = frame(device, SIZE, ShadowWalk::Full);
+    f.set_lighting(Lighting {
+        column_wait: wait,
+        ..f.lighting()
+    });
+    f.set_sky(Some(Sky {
+        altitude_zero_z: FLOOR as f32,
+        ..Sky::uniform(1.0)
+    }));
+    let settings = vxe_render::BakeSettings {
+        brick_samples: 64,
+        round: 64,
+        ..Default::default()
+    };
+    f.start_bake_queue(queue, &gpu, settings, 1.0e9);
+    f.set_bake_coarse(0, 0);
+    let eye = [96.0, 96.0, 32.0];
+    for i in 0..600 {
+        let mut enc = device.create_command_encoder(&Default::default());
+        gpu.sync(world, queue, &mut enc).expect("the mirror fits");
+        queue.submit([enc.finish()]);
+        // Every chunk the world holds is resident full, and one outside the extent too (the
+        // world's edge: nothing to wait for there).
+        let resident = |c: ChunkCoord| world.store().contains(c) || !extent.contains(c);
+        let view = vxe_render::QueueView {
+            eye,
+            forward: [0.0, 1.0, 0.0],
+            resident: Some(&resident),
+            samples: None,
+            interval_s: 1.0 / 60.0,
+            hold: None,
+            half_angle: 1.0,
+            frustum: None,
+            full_radius: Some(8),
+            lod_radius: Some(8),
+        };
+        f.bake_queue_step(device, queue, &mut gpu, world, &view)
+            .expect("the queue runs")
+            .expect("the queue's step");
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("device poll");
+        if between(i, &mut gpu, &mut f) {
+            break;
+        }
+    }
+    (gpu, f)
+}
+
+/// Plan 0086 Phase 18 bar 3: a provisional bake is caught up. A floor of 3 x 3 chunks over a row
+/// of rock (chunk z -1) under a rock slab in the top row (chunk row z 3, voxels 200..204 over x
+/// and y 40..150), 3 x 3 x 5 chunks, mirrored
+/// over the whole extent with the light radius 1 chunk (the slab's chunks lie outside the floor
+/// chunk's reach and inside its columns), the slab's chunk (1, 1, 3) held back from the world
+/// and so from the mirror. With the column wait off the floor chunk (1, 1, 0) bakes before the
+/// slab arrives, its block provisional; once the slab's chunk is inserted and mirrored, the
+/// queue re-bakes it once, and its record then equals bit for bit the same world's baked with
+/// the wait on and the slab present from the start. The provisional block's `+z` visibility
+/// under the slab is printed (the leak the catch-up closes).
+#[test]
+fn a_provisional_bake_is_caught_up() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let slab = |p: [i32; 3]| {
+        (200..204).contains(&p[2]) && (40..150).contains(&p[0]) && (40..150).contains(&p[1])
+    };
+    // A chunk row of rock under the floor (z -1), so the floor chunk's reach is resident.
+    let extent = ChunkExtent::new([0, 0, -1], [3, 3, 5]);
+    let world = || {
+        let f = move |p: [i32; 3]| if p[2] < FLOOR || slab(p) { ROCK } else { AIR };
+        World::generate(extent, &FnSource(f), &table())
+    };
+    let full = world();
+    let (floor, high) = (ChunkCoord([1, 1, 0]), ChunkCoord([1, 1, 3]));
+    let (_, want) = caught_up_queue(&device, &queue, &full, extent, true, |_, _, f| {
+        f.store().block_words(floor).is_some()
+            && f.bake_queue().is_some_and(|q| q.tracks(floor).is_empty())
+    });
+    if let Some(q) = want.bake_queue() {
+        let st = q.stats();
+        println!(
+            "the wait on: baked {}, depth {}, jobs {}, waiting reach {}, the floor's tracks {:?}",
+            st.baked,
+            st.depth,
+            st.jobs,
+            st.waiting_reach,
+            q.tracks(floor)
+        );
+    }
+    let want = want.store().block_words(floor).expect("baked").to_vec();
+    let held = world();
+    let slab_chunk = held.store().remove(high).expect("generated");
+    let slab_chunk = slab_chunk.read().expect("lock").clone();
+    let mut provisional = None;
+    let mut arrived = None;
+    let (mut due, mut was_due, mut requeued) = (0u32, false, 0u64);
+    let (_, got) = caught_up_queue(&device, &queue, &held, extent, false, |i, _, f| {
+        let q = f.bake_queue().expect("the queue");
+        let tracks = q.tracks(floor);
+        if arrived.is_none() {
+            if tracks.contains(&"provisional") {
+                provisional = f.store().block_words(floor).map(<[u32]>::to_vec);
+                held.store().insert(high, slab_chunk.clone());
+                arrived = Some(i);
+            }
+            return false;
+        }
+        let is_due = tracks.contains(&"provisional_due");
+        due += u32::from(is_due && !was_due);
+        was_due = is_due;
+        requeued = q.stats().provisional_requeued;
+        due > 0
+            && !tracks
+                .iter()
+                .any(|t| t.starts_with("provisional") || *t == "job_provisional")
+            && f.store().block_words(floor).is_some()
+    });
+    let arrived = arrived.expect("the floor bakes before the slab arrives");
+    let provisional = provisional.expect("a provisional block");
+    let got = got.store().block_words(floor).expect("baked").to_vec();
+    println!(
+        "the slab arrived at step {arrived}; the floor re-queued {due} times ({requeued} catch-ups over every chunk); the provisional block differs in {} words of {}; mean +z sky visibility under the slab: provisional {:.4}, caught up {:.4}, the wait's {:.4}",
+        provisional
+            .iter()
+            .zip(&want)
+            .filter(|(a, b)| a != b)
+            .count(),
+        want.len(),
+        up_visibility_under(&provisional, slab),
+        up_visibility_under(&got, slab),
+        up_visibility_under(&want, slab),
+    );
+    assert_eq!(due, 1, "one catch-up of the floor");
+    assert_eq!(got, want, "the end state is the wait's");
+}

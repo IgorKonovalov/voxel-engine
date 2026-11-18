@@ -28,6 +28,7 @@ use vxe_render::{
 };
 use vxe_world::{MaterialTable, VoxelCoord, World};
 
+pub(crate) mod dump_black;
 pub(crate) mod edit;
 pub(crate) mod fade;
 pub(crate) mod frame;

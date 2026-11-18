@@ -182,19 +182,23 @@ fn the_underground_eye_reads_no_sky() {
 
 /// Plan 0086 Phase 10 bar 1: the young visibility pair forgets the leak.
 /// [`reading::underground_streamed`] at full radius 6 and one sky ray (the run-12 eye underground
-/// at noon, reached as by a jump): the hit pixels' mean direct part reads under 0.05 by frame 60
-/// and under 0.02 at frame 240; frame 1's is printed.
+/// at noon, reached as by a jump) under the column wait's default, off (Phase 18 bar 4: a chunk
+/// may bake provisionally before its columns are final): the hit pixels' mean direct part reads
+/// under 0.05 by frame 60 and under 0.02 at frame 240; frames 1 to 30 are printed (a brief
+/// provisional leak is allowed there).
 #[test]
 #[ignore = "soak"]
 fn the_underground_eye_streamed() {
-    let reads = reading::underground_streamed(6, 1, &[1, 30, 60, 240]);
+    let frames: Vec<u32> = (1..=30).chain([60, 240]).collect();
+    let reads = reading::underground_streamed(6, 1, &frames);
     let Some(last) = reads.last() else {
         return;
     };
     let at = |f: u32| reads.iter().find(|r| r.frame == f).expect("read").direct;
+    let early: Vec<String> = (1..=30).map(|f| format!("{:.4}", at(f))).collect();
     println!(
-        "direct at frame 1 {:.4}, 60 {:.4}, 240 {:.4}",
-        at(1),
+        "direct at frames 1 to 30 [{}], 60 {:.4}, 240 {:.4}",
+        early.join(", "),
         at(60),
         last.direct
     );

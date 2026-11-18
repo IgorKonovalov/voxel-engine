@@ -9,17 +9,75 @@ mod defects {
         /// streamed about 21.png's eye (`-352.5 -30.2 671.8`, chunk `-6 -1 10`; the HUD hid the x
         /// to its last digit, so the chunk's middle), looking 30 degrees down, at the fly-through's
         /// residency (16, 24) and mirror (`support::streamed::Hold`), the column wait on
-        /// (`VXE_HELD_WAIT=0` off), 1800 frames: every 60 frames the store's counts and the
-        /// queue's; at the end every unbaked chunk within the full radius and what holds its
-        /// columns from final. `VXE_TEST_ADAPTER` picks the adapter.
+        /// (`VXE_HELD_WAIT=0` off), the reach `full` (`VXE_HELD_REACH=partial`: Phase 18 bar 6),
+        /// 1800 frames (`VXE_HELD_FRAMES`): every 60 frames the store's counts and the queue's;
+        /// at the end every unbaked chunk within the full radius and what holds its columns from
+        /// final, and the fly-through's `--dump-black` lines; the first read frame whose black
+        /// count is under 1 % of the 57 600 lighting pixels. `VXE_TEST_ADAPTER` picks the
+        /// adapter.
         #[test]
         #[ignore = "reading"]
         fn the_hills_at_dusk_held() {
             let wait = std::env::var("VXE_HELD_WAIT").as_deref() != Ok("0");
+            let reach = match std::env::var("VXE_HELD_REACH").as_deref() {
+                Ok("partial") => vxe_render::ReachMode::Partial,
+                _ => vxe_render::ReachMode::Full,
+            };
             let frames: u32 = std::env::var("VXE_HELD_FRAMES")
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(1800);
+            let reads = hills_at_dusk(wait, reach, frames);
+            let under = reads.iter().find(|r| r.black < 576).map(|r| r.frame);
+            println!(
+                "reading: the hills at dusk, wait {wait}, reach {reach:?}: black under 1 % first at frame {under:?}"
+            );
+        }
+
+        /// Plan 0086 Phase 18 bar 2: [`the_hills_at_dusk_held`]'s rig under each column wait,
+        /// the reach `full`, 1800 frames: from frame 300 on the largest relative difference of
+        /// the wait-on `black` against the wait-off's; per mode the first read frame at which no
+        /// chunk whose reach lies within the full radius is unbaked
+        /// (`StreamedRead::unbaked_inner`), and that count at the end. Printed.
+        #[test]
+        #[ignore = "reading"]
+        fn the_hills_at_dusk_under_each_wait() {
+            let on = hills_at_dusk(true, vxe_render::ReachMode::Full, 1800);
+            let off = hills_at_dusk(false, vxe_render::ReachMode::Full, 1800);
+            if on.is_empty() {
+                return;
+            }
+            let worst = on
+                .iter()
+                .zip(&off)
+                .filter(|(a, _)| a.frame >= 300)
+                .map(|(a, b)| {
+                    (f64::from(a.black) - f64::from(b.black)).abs() / f64::from(b.black.max(1))
+                })
+                .fold(0.0, f64::max);
+            let done = |r: &[support::streamed::StreamedRead]| {
+                (
+                    r.iter().find(|x| x.unbaked_inner == 0).map(|x| x.frame),
+                    r.last().map(|x| x.unbaked_inner),
+                )
+            };
+            println!(
+                "reading: under each wait: black from frame 300, the largest |on - off| / off {:.4}; on (first frame every inner chunk baked, unbaked inner at the end) {:?}, black at the end {}; off {:?}, black {}",
+                worst,
+                done(&on),
+                on.last().map_or(0, |r| r.black),
+                done(&off),
+                off.last().map_or(0, |r| r.black),
+            );
+        }
+
+        /// The hills at dusk at 21.png's pose (see [`the_hills_at_dusk_held`]), streamed
+        /// `frames` frames under the column wait `wait` and the reach `reach`, read every 60.
+        fn hills_at_dusk(
+            wait: bool,
+            reach: vxe_render::ReachMode,
+            frames: u32,
+        ) -> Vec<support::streamed::StreamedRead> {
             let camera = flythrough::Pose {
                 name: "dusk",
                 position: [-352.5, -30.2, 671.8],
@@ -33,7 +91,7 @@ mod defects {
                 ..Default::default()
             }
             .sky(flythrough::outdoor::BASE_Z as f32);
-            println!("reading: the hills at dusk, column wait {wait}");
+            println!("reading: the hills at dusk, column wait {wait}, reach {reach:?}");
             support::streamed::streamed(support::streamed::Streamed {
                 label: "the_hills_at_dusk_held",
                 source: std::sync::Arc::new(flythrough::outdoor::OutdoorSource::new(1)),
@@ -44,8 +102,12 @@ mod defects {
                 r: 16,
                 rays: 1,
                 reads: (0..=frames).step_by(60).collect(),
-                hold: Some(support::streamed::Hold { r_lod: 24, wait }),
-            });
+                hold: Some(support::streamed::Hold {
+                    r_lod: 24,
+                    wait,
+                    reach,
+                }),
+            })
         }
 
         /// A frame on `rig` for Phase 16's readings: 320 x 180 native, the store's counters on, the

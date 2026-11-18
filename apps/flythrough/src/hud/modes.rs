@@ -110,6 +110,8 @@ pub struct Modes {
     pub(crate) sky: bool,
     pub(crate) clock: crate::daylight::Clock,
     pub(crate) leaf_shadow: crate::LeafShadow,
+    /// `--dump-black` is on: the line names `dump black` after the sky's words.
+    pub(crate) dump_black: bool,
     pub(crate) banner_at: f64,
     /// The auto exposure `Q` returns to, under its preset's name.
     auto: (Adaptation, vxe_render::AutoExposure),
@@ -264,6 +266,7 @@ impl Modes {
             sky: false,
             clock: crate::daylight::Clock::default(),
             leaf_shadow: crate::LeafShadow::default(),
+            dump_black: false,
             banner_at: now_ms,
             auto: match lighting.exposure {
                 vxe_render::Exposure::Auto(a) => (Adaptation::Eye, a),
@@ -638,6 +641,12 @@ impl Modes {
             }
             if l.sky_bounce > 0.0 {
                 let _ = write!(out, "sky bounce {}, ", l.sky_bounce);
+            }
+            if l.column_wait {
+                out.push_str("column wait on, ");
+            }
+            if self.dump_black {
+                out.push_str("dump black, ");
             }
             if let vxe_render::Exposure::Auto(a) = l.exposure {
                 match a.sky_anchor_ev {

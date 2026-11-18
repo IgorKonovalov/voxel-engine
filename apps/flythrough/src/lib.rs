@@ -42,6 +42,7 @@ pub use edits::ScrollSteps;
 pub use look::*;
 pub use replay::*;
 pub use report::{now, percentile};
+pub use run::dump_black::black_dump_lines;
 pub use scene::*;
 
 /// The rubble a collapsing region leaves when `R` has the fly-through's logic remove

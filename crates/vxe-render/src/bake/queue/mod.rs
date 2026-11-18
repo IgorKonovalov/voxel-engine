@@ -207,6 +207,12 @@ pub struct QueueStats {
     /// Flagged chunks re-queued since the queue started, a chunk within their reach having
     /// arrived full.
     pub partial_requeued: u64,
+    /// Chunks whose block is provisional (baked under a column not yet final), now.
+    pub provisional: u64,
+    /// Jobs opened provisional since the queue started.
+    pub provisional_opened: u64,
+    /// Provisional chunks re-queued for their catch-up since the queue started.
+    pub provisional_requeued: u64,
 }
 
 /// What [`BakeQueue::push_batch`] pushed: the jobs' samples, the chunks with no block the pool
@@ -424,6 +430,17 @@ pub struct BakeQueue {
     pub(super) partial_due: ChunkSet,
     /// The step's verdicts of [`GpuWorld::column_final`] by chunk column, emptied each step.
     pub(super) columns_final: std::collections::HashMap<[i32; 2], bool>,
+    /// [`crate::Lighting::column_wait`], set by the frame each step.
+    pub column_wait: bool,
+    /// Chunks whose block was baked while a column over its reach was not final (the wait
+    /// off): baked again once when those columns turn final ([`BakeQueue::catch_up`]).
+    pub(super) provisional: ChunkSet,
+    /// The jobs pending or open that bake under a column not yet final.
+    pub(super) job_provisional: ChunkSet,
+    /// Chunks the opening's checks found bakeable only provisionally, read when listed.
+    pub(super) provisional_checked: ChunkSet,
+    /// Provisional chunks whose columns turned final: candidates again, for their catch-up.
+    pub(super) provisional_due: ChunkSet,
 }
 
 /// Whether every chunk whose box lies within `lr` chunks of `coord`'s (the candidate table's
@@ -611,6 +628,11 @@ impl BakeQueue {
             order_dirty: true,
             reach_cache: Default::default(),
             columns_final: Default::default(),
+            column_wait: false,
+            provisional: Default::default(),
+            job_provisional: Default::default(),
+            provisional_checked: Default::default(),
+            provisional_due: Default::default(),
             reach_mode: ReachMode::Full,
             partial: Default::default(),
             job_partial: Default::default(),
@@ -637,7 +659,8 @@ impl BakeQueue {
         let wants = !has
             || coarse
             || self.reach.contains(&c)
-            || (!self.partial_due.is_empty() && self.partial_due.contains(&c));
+            || (!self.partial_due.is_empty() && self.partial_due.contains(&c))
+            || (!self.provisional_due.is_empty() && self.provisional_due.contains(&c));
         (wants
             && !self.faceless.contains(&c)
             && !in_job.contains(&c)
@@ -745,7 +768,9 @@ impl BakeQueue {
         }
     }
 
-    /// Whether `coord` may bake under [`BakeQueue::reach`], and whether from a partial reach:
+    /// Whether `coord` may bake under [`BakeQueue::reach`] and the column wait, whether from a
+    /// partial reach and whether provisionally (a column over its reach not final, the wait
+    /// off: [`BakeQueue::column_wait`]). The reach's verdict:
     /// `Some(false)` when its reach is ready, `Some(true)` under [`ReachMode::Partial`] when
     /// nothing in its reach waits to upload and the reach crosses the streamer's full radius
     /// about `eye`: a chunk within it lies past the full sphere (`d2 > r^2` in chunks, the
@@ -757,8 +782,31 @@ impl BakeQueue {
         lr: i32,
         view: &QueueView<'_>,
         eye: [i32; 3],
-    ) -> Option<bool> {
+    ) -> Option<(bool, bool)> {
         let partial = self.bakeable_reach(run, coord, lr, view, eye)?;
+        let fin = self.columns_final_at(run, coord, lr, view);
+        if fin {
+            return Some((partial, false));
+        }
+        if self.column_wait {
+            return None;
+        }
+        // The wait off: no chunk of the columns may be pending upload. The block is
+        // provisional where the bake reads the sky (the column map's tops may still rise).
+        let gpu = run.gpu;
+        reach_columns_final(coord, lr, |x, y| gpu.column_final(x, y, None))
+            .then_some((partial, run.sky != 0))
+    }
+
+    /// Whether every column over `coord`'s reach footprint is final under `view`, the step's
+    /// verdicts memoised by column.
+    pub(super) fn columns_final_at(
+        &mut self,
+        run: &BakeRun<'_>,
+        coord: ChunkCoord,
+        lr: i32,
+        view: &QueueView<'_>,
+    ) -> bool {
         let held = held_by_streamer(view.eye, view.lod_radius, view.resident);
         let held = held.as_ref().map(|h| h as &dyn Fn(ChunkCoord) -> bool);
         let memo = &mut self.columns_final;
@@ -767,7 +815,31 @@ impl BakeQueue {
                 .entry([x, y])
                 .or_insert_with(|| run.gpu.column_final(x, y, held))
         })
-        .then_some(partial)
+    }
+
+    /// The catch-up (ADR-0070's amendment of the second window): each provisional block whose
+    /// columns turned final is due for one more bake, behind the first bakes. Runs when the
+    /// mirror changed (`changed`, or untracked) and a block is provisional.
+    pub(super) fn catch_up(&mut self, run: &BakeRun<'_>, view: &QueueView<'_>, changed: bool) {
+        if !changed || self.provisional.is_empty() {
+            return;
+        }
+        let lr = run.gpu.light_radius();
+        let flagged: Vec<[i32; 3]> = self
+            .provisional
+            .iter()
+            .filter(|c| !self.provisional_due.contains(*c))
+            .copied()
+            .collect();
+        for c in flagged {
+            if self.columns_final_at(run, ChunkCoord(c), lr, view) && self.provisional_due.insert(c)
+            {
+                self.stats.provisional_requeued += 1;
+                self.touched.insert(c);
+                self.counted_idle = false;
+                self.quiet_until = self.steps;
+            }
+        }
     }
 
     /// [`BakeQueue::bakeable`]'s reach verdict, before the columns.
@@ -968,6 +1040,9 @@ impl BakeQueue {
             ("partial", self.partial.contains(&c)),
             ("job_partial", self.job_partial.contains(&c)),
             ("partial_due", self.partial_due.contains(&c)),
+            ("provisional", self.provisional.contains(&c)),
+            ("job_provisional", self.job_provisional.contains(&c)),
+            ("provisional_due", self.provisional_due.contains(&c)),
         ]
         .into_iter()
         .filter_map(|(name, held)| held.then_some(name))
@@ -985,6 +1060,7 @@ impl BakeQueue {
             && self.digs.is_empty()
             && self.reach.is_empty()
             && self.partial_due.is_empty()
+            && self.provisional_due.is_empty()
     }
 
     /// Whether an edit box waits for the next step.
@@ -1010,6 +1086,7 @@ impl BakeQueue {
             && !self.digs.contains_key(&c.0)
             && !self.reach.contains(&c.0)
             && !self.partial_due.contains(&c.0)
+            && !self.provisional_due.contains(&c.0)
     }
 
     /// Whether `c` has had its first pass: it holds a block (coarse or full), is known to have
@@ -1108,56 +1185,4 @@ impl BakeQueue {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::gpu_world::column_is_final;
-
-    /// ADR-0070's amendment: a chunk whose reach's columns are not final does not bake. A
-    /// window of z -2..6 over a reach of light radius 2 about chunk (0, 0, 0); every chunk of
-    /// the window mirrored but (2, 1, 5), high in a column over the reach. Wanted by the
-    /// streamer and absent, the reach is not final; mirrored, or outside the streamer's
-    /// sphere, it is; pending upload, it is not, wanted or not. A column outside the reach's
-    /// footprint (x 4) is not read.
-    #[test]
-    fn a_chunk_absent_high_in_a_column_holds_the_bake() {
-        let high = ChunkCoord([2, 1, 5]);
-        let coord = ChunkCoord([0, 0, 0]);
-        let lr = 2;
-        let fin = |mirrored: bool, pending: bool, wanted: bool| {
-            let want = move |_: ChunkCoord| wanted;
-            let w: &dyn Fn(ChunkCoord) -> bool = &want;
-            reach_columns_final(coord, lr, |x, y| {
-                column_is_final(
-                    x,
-                    y,
-                    -2..6,
-                    |c| pending && c == high,
-                    |c| mirrored || c != high,
-                    Some(w),
-                )
-            })
-        };
-        assert!(!fin(false, false, true), "absent and wanted: not final");
-        assert!(fin(true, false, true), "mirrored: final");
-        assert!(
-            fin(false, false, false),
-            "outside the streamer's sphere: final"
-        );
-        assert!(!fin(true, true, false), "pending: not final");
-        let far = ChunkCoord([4, 0, 5]);
-        let read = std::cell::RefCell::new(Vec::new());
-        reach_columns_final(coord, lr, |x, y| {
-            read.borrow_mut().push([x, y]);
-            true
-        });
-        assert!(read.borrow().contains(&[2, 1]));
-        assert!(!read.borrow().contains(&[far.0[0], far.0[1]]));
-        let held =
-            held_by_streamer([32.0, 32.0, 32.0], Some(3), Some(&|_| true)).expect("streamed");
-        assert!(held(ChunkCoord([3, 0, 0])) && !held(ChunkCoord([3, 1, 0])));
-        assert!(
-            held_by_streamer([0.0; 3], Some(3), None).is_none(),
-            "a bounded world"
-        );
-    }
-}
+mod tests;

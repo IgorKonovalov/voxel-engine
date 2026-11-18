@@ -731,9 +731,9 @@ impl Run {
         gfx.frame.set_resolution(&gpu.device, self.modes.resolution);
         gfx.frame.set_look(self.modes.look);
         // The temporal pass counts the store's reads only for a reader of them: the HUD's
-        // store row and `--read-missing`.
+        // store row, `--read-missing` and `--dump-black`.
         gfx.frame
-            .set_count_store(hud || self.args.bake.read_missing);
+            .set_count_store(hud || self.args.bake.read_missing || self.args.outdoor.dump_black);
         if gfx.frame.missing_light() != self.args.bake.missing_light {
             gfx.frame
                 .set_missing_light(&gpu.queue, self.args.bake.missing_light);
