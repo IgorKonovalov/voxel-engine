@@ -329,11 +329,16 @@ prefers no provisional light to a faster start. A column's finality must be reac
 the streamer will never deliver counts as arrived.
 
 **Why.** As built the wait doubled the pre-roll (Plan 0086's readings log, Phase 9: 10.3 to
-21.2 s on the RTX 3080 Laptop) and, through a column that never turned final, left a region of
-the hill floor black for good (the window's run 4a, "there is huge artifact"); with the wait
-off the owner saw no black spot and a start "a bit faster yes", and picked off. The catch-up
-keeps the correctness the finality bought (no false sky baked in for good) at the cost of one
-more job per provisional chunk.
+21.2 s on the RTX 3080 Laptop) and the owner saw, with the wait on, a region of the hill floor
+black for good (the window's run 4a, "there is huge artifact"); with the wait off the owner saw
+no black spot and a start "a bit faster yes", and picked off. The region's cause is not named:
+the first draft of this amendment blamed a column that never turned final, and Plan 0086 Phase
+16 (2026-11-18) found none at the pose (every column final, the same black count under both
+wait modes, the unbaked chunks the edge ring `ReachMode::Full` never bakes while the camera is
+still); the decision stands on the pre-roll and the owner's pick, and Plan 0086 Phase 18 keeps
+a column's finality reachable as a property and builds the dump the next window names the case
+with. The catch-up keeps the correctness the finality bought (no false sky baked in for good) at
+the cost of one more job per provisional chunk.
 
 **Rejected:** keeping the wait on by default with the never-final column fixed (the pre-roll's
 double stands, and the owner picked against it); dropping the finality altogether (a chunk

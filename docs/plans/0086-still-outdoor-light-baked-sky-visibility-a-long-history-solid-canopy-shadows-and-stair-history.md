@@ -313,7 +313,9 @@ reading comes first (Phase 16) and the fix phase takes its cause from it and no 
    above or below the world's extent, empty by generation and never uploaded), so `bakeable`
    refuses every chunk whose reach footprint holds it; and 496 of those cells read black rather
    than the chain's fallback because their neighbours are unbaked too. Phase 16 reads which;
-   Phase 18 fixes it and makes the wait a setting, off.
+   Phase 18 fixes it and makes the wait a setting, off. (Phase 16, 2026-11-18, read neither:
+   no never-final column, the same `black` under both wait modes, the unbaked chunks the `Full`
+   edge ring; Phase 18's note of that date re-scopes its bars.)
 2. **A seam between the baked sky term and the ray's** (19.png). Known in part: Phase 13's
    arms apply to the baked read only (the pair's term keeps the shading normal), Phase 5 built
    the switch with no fade, and the ray's running mean at a low hit rate is grainy by the
@@ -974,8 +976,27 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   4. The outdoor goldens are re-blessed and the log names each with its difference count per
      default.
 
-### Phase 18: The column wait: off by default, its black region fixed, the bake caught up when a column turns final
+### Phase 18: The column wait: off by default, its black region named, the bake caught up when a column turns final
 - **Owner skill:** dev
+- **Amended 2026-11-18, after Phase 16 (architect).** Phase 16 (`f39e7dd3`) did not reproduce
+  defect 1 as a wait defect: at 21.png's pose `black` read 1338 from frame 300 on with the wait
+  on and off alike, every column turned final, `finality_blockers` was empty for every unbaked
+  chunk, and the hit chunks with no block are the horizon ring 7 to 12 chunks out whose reach
+  crosses the full radius, which `ReachMode::Full` never bakes while the camera is still (Plan
+  0067 Phase 5 built `Partial` for exactly that ring; ADR-0046's Outcome of 2026-11-12 kept
+  `full` with `chain` on the owner's "not much difference"). The owner's region (at the view's
+  centre, straight edges, stays with the wait on, absent with it off) has no named cause, and
+  the rig's dark blob at the centre lies on a chunk that holds a block. So this phase **builds
+  the setting and the catch-up as written** (bars 3 to 5 stand: the owner picked off, and the
+  pre-roll's double is a measured fact whatever the region's cause), **re-scopes bars 1 and 2**
+  (bar 1 is a property test on a constructed never-deliverable column, bar 2 reads the wait's
+  black against the wait-off's and builds the dump the third window needs to name the case), and
+  **adds bar 6**: the `Full` edge ring read under `partial`, a permanent-black source in view
+  regardless of the wait. Rejected: naming the edge ring as 21.png's cause (its black is the
+  same under both wait modes, and it sits on the horizon band, not at the centre); another
+  window without a dump (21.png hid the eye's x and the HUD names no chunk for a black cell, so
+  the rig took the chunk's middle and missed, and a third window would leave the same gap);
+  holding the setting until the cause is named (the owner's pick stands on the start time).
 - **What:** ADR-0070's amendment of this date. **The wait is a setting**, `lighting.column_wait`
   (off by default; `--column-wait on|off` keeps its words; the banner names `column wait on`):
   on, `bakeable` requires every column over the reach's footprint final, as Phase 9 built it;
@@ -984,28 +1005,46 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   carries a provisional mark (a bit of the record's spare word, or a per-chunk flag in the
   queue); when every column over its footprint is final the chunk is re-queued once, behind the
   first bakes (the light appears first everywhere, then corrects), and the mark clears when the
-  re-bake lands; the queue keeps `lod_radius` in both modes to know finality. **The black
-  region:** the cause Phase 16 named, fixed so that a column's finality is reachable: a chunk
-  the streamer will never deliver (above or below the world's extent, outside the residency the
-  streamer holds, empty by generation and never uploaded) counts as arrived; `column_final` and
-  `reach_columns_final` say so in one place.
+  re-bake lands; the queue keeps `lod_radius` in both modes to know finality. **A column's
+  finality is reachable** (the property, whatever 21.png's cause): a chunk the streamer will
+  never deliver (above or below the world's extent, outside the residency the streamer holds,
+  empty by generation and never uploaded) counts as arrived; `column_final` and
+  `reach_columns_final` say so in one place (`held_by_streamer` is that guard as built; bar 1
+  pins it). **The black-cell dump** (the reading lever for the third window): a fly-through flag
+  `--dump-black` (off by default; the banner names `dump black`) prints to stdout, once a second
+  while the HUD's `black` count is over 0, the black lighting pixels grouped by the chunk they
+  hit: coordinate, pixel count, distance from the eye in chunks, whether the chunk holds a
+  block, its queue track, `finality_blockers`, and whether its reach crosses the full radius
+  (what Phase 16's `Hold` report prints in process, from a read-back of the lighting grid's hit
+  chunks for the black pixels; the mechanism is `dev`'s, the read-back runs only under the
+  flag and at most once a second). The HUD's eye line prints the three coordinates in full
+  (21.png's x was cut off).
 - **Files touched:** `crates/vxe-render/src/bake/queue/*` (`bakeable`, the provisional mark, the
   re-queue), `gpu_world/columns.rs` (`column_final`), `bake/record.rs` (the mark's bit, if a
   record bit), `frame/settings.rs`, `settings.rs`, `apps/flythrough/src/cli/outdoor.rs`,
-  `run/queue.rs`, `run/loading.rs`, `hud/modes.rs`, `crates/vxe-render/tests/gpu_sun.rs`,
-  `apps/flythrough/tests/gpu_outdoor.rs`, `docs/flythrough.md`, `docs/plans/logs/0086.md`.
+  `run/queue.rs`, `run/loading.rs`, `run/hud_feed.rs` (the dump, the eye line), `hud/modes.rs`,
+  `crates/vxe-render/tests/gpu_sun.rs`, `apps/flythrough/tests/gpu_outdoor.rs`,
+  `tests/support/streamed.rs`, `docs/flythrough.md`, `docs/plans/logs/0086.md`.
 - **Done when:**
   1. **No chunk waits forever.** `every_chunk_in_reach_bakes_under_the_wait` (a unit test of
-     the queue on the case Phase 16 named, under 1 s): with the wait on, a chunk whose column
-     holds a chunk the streamer will never deliver is `bakeable` once the deliverable ones are
+     the queue on a constructed case, under 1 s): a column whose top chunk lies past the
+     residency the streamer holds (outside `lod_radius` about the eye) or above the world's
+     extent; with the wait on, the chunk under it is `bakeable` once the deliverable chunks are
      resident; the Phase 9 unit test (`a_chunk_absent_high_in_a_column_holds_the_bake`) still
-     holds for a chunk that is pending.
-  2. **The hill at 17:00 has no black region.** `reading::the_hills_at_dusk_under_each_wait`
-     (`gpu_outdoor.rs`, the fly-through headless at 21.png's pose, wait on and off, 1800 frames;
-     a release-run reading, outside the gate): `black` reads 0 from the pre-roll's end on, and
-     every chunk within the bake radius holds a block by the end; the frame each mode reaches
-     it is printed, and the pre-roll's wall time against Phase 9's table (on about 21 s, off
-     expected near the finality-off build's 10.3 s).
+     holds for a chunk that is pending. If the guard as built passes it unchanged, the log says
+     so: the test then pins the property.
+  2. **The wait adds no black, and the black cells are named.**
+     `reading::the_hills_at_dusk_under_each_wait` (Phase 16's `the_hills_at_dusk_held` rig at
+     21.png's pose, wait on and off, 1800 frames; a release-run reading, outside the gate):
+     from frame 300 on the wait-on `black` count is within 1 % of the wait-off's (1338 read
+     for both at Phase 16), every chunk within the bake radius whose reach lies within the full
+     radius holds a block by the end under both, and the frame each mode reaches it and the
+     pre-roll's wall time are printed against Phase 9's table (on about 21 s, off expected
+     near the finality-off build's 10.3 s). The dump, run on the same rig through the
+     fly-through's path (a headless run with `--dump-black`, or the support's call of the same
+     function), names the same chunks as the `Hold` report: the horizon ring, no block, reach
+     crossing the full radius. A `black` of 0 is not this bar's (the `Full` ring reads black
+     under both modes; bar 6 reads it).
   3. **The end state is the wait's.** `a_provisional_bake_is_caught_up` in `gpu_sun.rs` (the
      3 x 3 x 3 stepped terrain of Phase 9 bar 1 streamed so a high chunk arrives last, the wait
      off; about 6 s): the floor chunk bakes before the high chunk arrives (its block
@@ -1019,6 +1058,16 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   5. **Cost reading:** the re-bakes' count and their share of the queue's jobs through the
      pre-roll on the hills and in the forest (RTX), against the wait-on run; the setting shows
      its mode.
+  6. **The `Full` edge ring, read under `partial`** (added 2026-11-18; a reading, no default
+     change): bar 2's rig with the wait off under `--reach partial` against `full`: `black` and
+     the hit chunks with no block every 60 frames to 1800, the frame `black` falls under 1 % of
+     the lighting pixels (Plan 0067's still-black line, 0.01 at 10 s at rest; `full` reads 2.3
+     %, 1338 of 57 600, at Phase 16), the share of the missing cells the chain leaves black by
+     distance from the eye (why 157 of 1495 took the fallback: the ring's parents hold no
+     summary either, a guess), and the display PNG of each. If `partial` clears the ring and
+     `full` leaves it, Phase 24's run 1 gains the `--reach partial` arm, and whether `Partial`
+     becomes the default is the owner's at that window (a new verdict is a new Outcome on
+     ADR-0046, the architect's, not this phase's).
 
 ### Phase 19: The key light on the pair's `g` (B (a)), and the grain after a turn
 - **Owner skill:** dev
@@ -1106,7 +1155,11 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   stale bit); (b) the ring's coarse re-bake does not write the sky words (`VIS_BAKED` from the
   full pass only, Phase 10's unbuilt item) so no brick-sized patch lands at a low count; (c)
   the switch between the stored and direct parts at the stale bit fades (Phase 20's (ii)
-  covers it if built there).
+  covers it if built there). **Phase 16 (2026-11-18) points at (c):** the stored/direct switch
+  at the stale bit carries the area (with the sky alone, half the region moves over 16 levels
+  for two frames; the ray's young samples about 26 dots of 50, the key light's reset pixels
+  about 24, the clamp 45 against 50), so (c) is built first and bar 1 re-read before (a) or
+  (b) is touched; (a) only if the dots on the hole's faces stay over the bar after (c).
 - **Files touched:** `temporal.wgsl`, `bake/job.rs`, `bake/queue/*`,
   `crates/vxe-render/tests/gpu_sun.rs`, `apps/flythrough/tests/gpu_outdoor.rs`,
   `docs/plans/logs/0086.md`.
@@ -1134,7 +1187,10 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   0058's grain made visible by the anchor's dark tunnel, this phase writes no mechanism: the
   reading goes to `docs/backlog.md` as its own entry under Engine mechanisms (a Plan 0058
   follow-up: the list lights' visibility on the pair's `g` is the natural upgrade), and the
-  window judges it under the default anchor 4.
+  window judges it under the default anchor 4. **Phase 16 (2026-11-18) names the second:** the
+  grain is the same with no sky, no sky ray returns over the lights, and the light pass's rise
+  is the five lights' shadow rays (Plan 0058's fired light), so this phase writes no mechanism:
+  the backlog entry and bar 2 only.
 - **Files touched:** `bake/queue/*` (`take_boxes` or the light-change path), `bake/store.rs`,
   `crates/vxe-render/tests/gpu_sun.rs`, `docs/backlog.md` (if filed), `docs/plans/logs/0086.md`.
 - **Done when:**
@@ -1153,7 +1209,9 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   (ADR-0033) weighs the lit floor's share so the key sits between the shadowed and the sunlit
   floor, or the tone curve's shoulder compresses what lies over the key (if the curve has none
   above the key, adding one is a look change on every scene and an owner question before it
-  is built: the architect's, not `dev`'s).
+  is built: the architect's, not `dev`'s). **Phase 16 (2026-11-18): anchor 4 removes the clip**
+  (0.000 % at 255 against 1.323 % under `none`; the treads' mean level 166.5 against 243.6), so
+  this phase writes the bar only, pinned from that table, and no tone-curve question is owed.
 - **Files touched:** `crates/vxe-render/src/exposure.rs`, `shaders/exposure.wgsl` or
   `composite.wgsl` (only if a mechanism), `apps/flythrough/tests/gpu_outdoor.rs`,
   `docs/plans/logs/0086.md`.
@@ -1168,8 +1226,11 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
 - **What:** a runner (session86c) on one build at the tip of Phase 23, the window's before
   binary and Phase 15's binary (`live/bin86b`) beside it, the fly-through's stdout visible and
   a ping when ready, each run re-checking one defect or one pick, in this order: (1) the hills
-  at 17:00 at 21.png's pose, `--column-wait on` then `off`: no black region, the start time
-  read from the HUD; (2) the tunnel at 19.png's pose at the defaults: the seam between the
+  at 17:00 at 21.png's pose, `--column-wait on` then `off`, both with `--dump-black` (Phase
+  18): no black region, the start time read from the HUD; if a black region shows, the owner
+  holds the pose a few seconds and the dump's lines and the HUD's eye line go to the verdicts
+  file beside the still, so the case is named this time; a third arm `--reach partial` if
+  Phase 18 bar 6 says the ring clears under it; (2) the tunnel at 19.png's pose at the defaults: the seam between the
   near walls and the deeper tunnel, then deeper to the far end; (3) the same with five lights
   fired (key `6`) under anchor 4, then `--sky-anchor 0`: the walls where the lights land, the
   light pass's ms read aloud; (4) a dig on the hills at noon and one in the tunnel, watched for
