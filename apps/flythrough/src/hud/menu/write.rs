@@ -6,7 +6,7 @@
 //! readout on the window's top row, and gives the backdrop's box.
 
 use super::RunView;
-use super::page::{Menu, PageId, Row};
+use super::page::{ITEM_LINES, Menu, PageId, Row};
 use crate::hud::Modes;
 use std::fmt::Write as _;
 use vxe_render::{HudBox, HudColour};
@@ -19,6 +19,9 @@ pub const MENU_ROWS: usize = 45;
 pub const LIST_ROWS: usize = MENU_ROWS - 3;
 /// The column the binds start at.
 pub const KEY_COL: usize = 60;
+/// The column a chooser entry's words start at: after the selection mark, its 4 x 4 cell
+/// tile and two cells.
+pub const ITEM_TEXT_COL: usize = 8;
 
 /// The menu's glyph scale for a `width` x `height` window: the largest integer scale at which
 /// [`MENU_COLS`] x [`MENU_ROWS`] cells of 8 x 8 glyph pixels fit, at least 2.
@@ -169,14 +172,28 @@ impl Menu {
         let rows = self.rows(m, v);
         let n = rows.iter().filter(|r| r.selectable()).count();
         let sel = self.selected().min(n.saturating_sub(1));
-        // The selected row's place among all rows; headers scroll with the rest.
+        // Each row's first line among all the rows' lines (a chooser's entry takes
+        // `ITEM_LINES`); headers scroll with the rest.
+        let height = |r: &Row| {
+            if matches!(r, Row::Item(_)) {
+                ITEM_LINES
+            } else {
+                1
+            }
+        };
+        let mut line_of = Vec::with_capacity(rows.len());
+        let mut lines = 0;
+        for r in &rows {
+            line_of.push(lines);
+            lines += height(r);
+        }
         let at = rows
             .iter()
             .enumerate()
             .filter(|(_, r)| r.selectable())
             .nth(sel)
-            .map_or(0, |(i, _)| i);
-        let top = (at + 1).saturating_sub(LIST_ROWS);
+            .map_or(0, |(i, r)| line_of[i] + height(r));
+        let top = at.saturating_sub(LIST_ROWS);
         let searching = !self.filter().is_empty();
         let start = text.len();
         text.push_str("menu");
@@ -191,7 +208,7 @@ impl Menu {
         if searching {
             let _ = write!(text, "  search: {}", self.filter());
         }
-        if rows.len() > LIST_ROWS {
+        if lines > LIST_ROWS {
             let _ = write!(text, "  {}/{n}", sel + 1);
         }
         cut_row(text, start);
@@ -207,7 +224,7 @@ impl Menu {
                 pick += 1;
             }
             let unavailable = unavailable(row, m, v);
-            if i < top || i >= top + LIST_ROWS {
+            if line_of[i] < top || line_of[i] + height(row) > top + LIST_ROWS {
                 continue;
             }
             text.push('\n');
@@ -232,13 +249,27 @@ impl Menu {
             cut_row(text, start);
             let in_error =
                 matches!(row, Row::Item(i) if crate::entities::picker::item_error(m, *i).is_some());
-            colours.push(if unavailable.is_some() || in_error {
+            let colour = if unavailable.is_some() || in_error {
                 HudColour::Grey
             } else if selected {
                 HudColour::Yellow
             } else {
                 HudColour::White
-            });
+            };
+            colours.push(colour);
+            if let Row::Item(i) = row {
+                // The entry's clips and slot beside the tile, then the tile's last two lines.
+                text.push('\n');
+                let start = text.len();
+                pad_to(text, start, ITEM_TEXT_COL);
+                crate::entities::picker::write_item_clips(m, *i, text);
+                cut_row(text, start);
+                colours.push(colour);
+                for _ in 2..ITEM_LINES {
+                    text.push('\n');
+                    colours.push(colour);
+                }
+            }
         }
         text.push('\n');
         if let Some(line) = notice {
@@ -278,7 +309,7 @@ fn unavailable(row: &Row, m: &Modes, v: &RunView) -> Option<&'static str> {
             }
             why
         }
-        Row::Fixed(..) | Row::Header(_) | Row::Item(_) | Row::Clip => None,
+        Row::Fixed(..) | Row::Header(_) | Row::Item(_) => None,
     }
 }
 
@@ -310,8 +341,10 @@ fn write_row(
     match *row {
         Row::Group(g) => text.push_str(g.name()),
         Row::Header(g) => text.push_str(g.name()),
-        Row::Item(i) => crate::entities::picker::write_item(m, i, text, MENU_COLS - 2),
-        Row::Clip => crate::entities::picker::write_clip(m, text),
+        Row::Item(i) => {
+            pad_to(text, start, ITEM_TEXT_COL);
+            crate::entities::picker::write_item(m, i, text, MENU_COLS - ITEM_TEXT_COL);
+        }
         Row::Fixed(keys, does) => {
             let _ = write!(text, "  {keys:<18}{does}");
         }
@@ -355,6 +388,6 @@ fn footer(page: PageId, searching: bool) -> &'static str {
         PageId::Root => "Enter opens  Esc closes  Tab closes  type to search",
         PageId::Group(_) => "Enter acts  Esc back  Tab closes  type to search",
         PageId::Keys => "F1 closes  Tab the menu  Enter acts  type to search",
-        PageId::Entities => "Enter places  ` places, closes  Delete removes  Esc closes",
+        PageId::Entities => "Enter places it  1-9 into a slot  Esc closes  type to search",
     }
 }

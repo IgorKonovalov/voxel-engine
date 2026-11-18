@@ -3,11 +3,11 @@
 use crate::app::ms_since;
 use crate::castle;
 use crate::cli::walk_allowed;
-use crate::edits::scroll_dig_radius;
 use crate::entities::Pick;
+use crate::entities::belt;
 use crate::entities::picker::full_words;
 use crate::fly::Walk;
-use crate::hud::menu::{Activated, AudioView, PageId, Row, RunView};
+use crate::hud::menu::{Activated, AudioView, RunView};
 use crate::hud::{self};
 use crate::lights;
 use crate::logic::DigInput;
@@ -16,11 +16,11 @@ use crate::path::Drive;
 use crate::run::Run;
 use crate::run::hud_feed::Samples;
 use crate::setup::{castle_banner, castle_camera};
-use crate::toggles::{ACTIONS, Act, TOGGLES, press};
+use crate::toggles::{ACTIONS, Act, BELT_KEYS, TOGGLES, press};
 use vxe_app::{Axis, Input, MouseButton, PadButton};
 use vxe_audio::{Command, PlayParams};
 use vxe_render::Camera;
-use vxe_world::{FIXED_ONE, Face};
+use vxe_world::{FIXED_ONE, Face, Fixed3};
 
 /// A trigger presses (`R2` digs, `L2` fills) once pulled past this, and lets go under
 /// [`TRIGGER_RELEASE`], so a trigger resting near a threshold does not repeat.
@@ -114,7 +114,15 @@ impl Run {
     pub(crate) fn toggle_keys(&mut self, input: &Input) {
         let mut before = None;
         let now = ms_since(self.start);
+        let placing = self.modes.walkers.belt.on;
         for t in TOGGLES.iter().filter(|t| t.pressed(input)) {
+            // In placement mode `West` turns the ghost; the toggle it presses is the menu's.
+            if placing
+                && let crate::toggles::Press::Key(k, Some(PadButton::West)) = t.press
+                && !input.pressed(k)
+            {
+                continue;
+            }
             before.get_or_insert_with(|| self.modes.clone());
             println!("{}", press(t, &mut self.modes, now));
         }
@@ -148,10 +156,12 @@ impl Run {
             }
             Activated::Action(act) => self.act(act),
             Activated::Refused(why) => self.say(why),
-            Activated::Place { entry, close } => self.place_from_page(entry, close),
-            Activated::Clip => {
-                let words = self.modes.walkers.next_clip();
-                self.say(words);
+            Activated::Choose { entry } => self.choose(entry),
+            Activated::Assign { entry, slot } => {
+                self.fill_belt();
+                self.modes.walkers.belt.assign(slot, entry);
+                let name = self.entry_name(Some(entry));
+                self.say(format!("{name} in slot {}", slot + 1));
             }
         }
     }
@@ -187,29 +197,70 @@ impl Run {
     /// The keys, buttons and pad buttons of interactive flight; the autopilot takes none of
     /// them, so a stray click cannot change the world it measures. The toggles go through
     /// [`TOGGLES`] ([`Run::toggle_keys`]) and the actions through [`ACTIONS`] ([`Run::act`]);
-    /// the dig, the fill and the dig radius are read here. On a pad `R2` digs, `L2` fills and
-    /// the D-pad's up and down step the dig radius as a scroll line does.
+    /// the wheel, the clicks and the triggers are read here. Out of placement mode the left
+    /// click (or `R2`) digs, the right click (or `L2`) fills and the wheel enters the mode at
+    /// the belt's selected slot. In the mode the wheel steps the slot (down the next), the
+    /// left click or `R2` places the ghost, the right click, `L2` or the pad's `East` leaves,
+    /// `West` turns the ghost and every digit but `4` selects its slot; `1` and `6` drop and
+    /// fire no light and `East` knocks nothing.
     pub(crate) fn handle_input(&mut self, input: &Input) {
+        let placing = self.modes.walkers.belt.on;
         self.toggle_keys(input);
-        let scroll = input.scroll() + f32::from(u8::from(input.pad_pressed(PadButton::DpadUp)))
-            - f32::from(u8::from(input.pad_pressed(PadButton::DpadDown)));
-        if scroll != 0.0
-            && let Some(r) = scroll_dig_radius(self.modes.dig_radius, &mut self.scroll, scroll)
-        {
-            self.modes.dig_radius = r;
-            println!("{}", self.modes.row(hud::HudRow::Controls));
+        let now = ms_since(self.start);
+        let lines = self.scroll.add(input.scroll());
+        if lines != 0 {
+            self.fill_belt();
+            let belt = &mut self.modes.walkers.belt;
+            if belt.on {
+                belt.step(-lines as i32, now);
+            } else {
+                belt.select(belt.selected, now);
+            }
+            self.belt_selected();
         }
         let r2 = trigger_pressed(&mut self.triggers[1], input.axis(Axis::TriggerR));
-        if input.clicked(MouseButton::Left) || r2 {
-            self.dig();
-        }
         let l2 = trigger_pressed(&mut self.triggers[0], input.axis(Axis::TriggerL));
-        if input.clicked(MouseButton::Right) || l2 {
-            self.fill();
+        let (left, right) = (
+            input.clicked(MouseButton::Left),
+            input.clicked(MouseButton::Right),
+        );
+        if placing {
+            for (s, &k) in BELT_KEYS.iter().enumerate() {
+                if input.pressed(k) && s != 3 {
+                    self.modes.walkers.belt.select(s, now);
+                    self.belt_selected();
+                }
+            }
+            if input.pad_pressed(PadButton::West) {
+                self.act(Act::Turn);
+            }
+            if left || r2 {
+                self.place_ghost();
+            }
+            if right || l2 || input.pad_pressed(PadButton::East) {
+                self.end_placement("placement off");
+            }
+        } else {
+            if left || r2 {
+                self.dig();
+            }
+            if right || l2 {
+                self.fill();
+            }
         }
         for a in ACTIONS.iter().filter(|a| a.pressed(input)) {
-            self.act(a.act);
+            let act = match a.act {
+                Act::DropLight | Act::FireLight | Act::Knock if placing => continue,
+                Act::BeltSlot(_) if placing => continue,
+                Act::BeltSlot(_) => match BELT_KEYS.iter().position(|&k| input.pressed(k)) {
+                    Some(s) => Act::BeltSlot(s as u8 + 1),
+                    None => continue,
+                },
+                act => act,
+            };
+            self.act(act);
         }
+        self.sync_ghost();
     }
 
     /// Runs `act`: the run's method an action's bind and its menu entry both call.
@@ -219,8 +270,45 @@ impl Run {
             Act::ResumePath => self.resume_path(),
             Act::CastleShot => self.next_castle_shot(),
             Act::Picker => {
-                self.menu.open_entities(self.modes.walkers.library.selected);
-                self.sync_preview();
+                self.fill_belt();
+                let w = &self.modes.walkers;
+                let row = w
+                    .belt
+                    .entry()
+                    .and_then(|i| w.library.order().iter().position(|&o| o == i));
+                self.menu.open_entities(row.unwrap_or(0));
+                self.sync_ghost();
+                let n = self.modes.walkers.library.entries.len().max(1);
+                self.say(format!("entities library: {n} entries"));
+            }
+            Act::BeltSlot(n) => {
+                self.fill_belt();
+                let belt = &mut self.modes.walkers.belt;
+                let s = if n == 0 {
+                    belt.selected
+                } else {
+                    usize::from(n - 1)
+                };
+                belt.select(s, ms_since(self.start));
+                self.menu.close();
+                self.belt_selected();
+            }
+            Act::BeltStep(d) => {
+                self.fill_belt();
+                let belt = &mut self.modes.walkers.belt;
+                belt.step(i32::from(d), ms_since(self.start));
+                self.menu.close();
+                self.belt_selected();
+            }
+            Act::Turn => {
+                let belt = &mut self.modes.walkers.belt;
+                if belt.on {
+                    belt.turn_step();
+                    let deg = f32::from(belt.turn) * belt::TURN_STEP_DEG;
+                    self.say(format!("ghost turned {deg} degrees"));
+                } else {
+                    self.say("turn: in placement mode only");
+                }
             }
             Act::DropLight
             | Act::Remove
@@ -361,64 +449,140 @@ impl Run {
             .filter(|&id| Some(id) != preview);
     }
 
-    /// Where a placement stands: the crosshair's world surface within the dig's reach, else
-    /// [`lights::MISS_DROP`] voxels along the view; and the eye it faces. The one place the
-    /// entities page's preview, its `Enter` and `` ` `` all stand an entity.
-    pub(crate) fn aim_feet(&self) -> ([f32; 3], [f32; 3]) {
+    /// The world's first hit along the unit `dir` from `origin` within `max` voxels: its
+    /// distance and the entered face's outward normal (no normal, distance 0, when `origin`
+    /// is inside a solid voxel). [`belt::stand`]'s cast.
+    fn cast_world(&self, origin: [f32; 3], dir: [f32; 3], max: f32) -> Option<(f32, [f32; 3])> {
+        let one = FIXED_ONE as f32;
+        let o = Fixed3(origin.map(|v| (v * one).floor() as i64));
+        let d = dir.map(|v| (v * one).round() as i64);
+        let hit = self
+            .world
+            .raycast(o, d, (max * one) as i64)
+            .ok()
+            .flatten()?;
+        let normal = match hit.face {
+            Some(Face::NegX) => [-1.0, 0.0, 0.0],
+            Some(Face::PosX) => [1.0, 0.0, 0.0],
+            Some(Face::NegY) => [0.0, -1.0, 0.0],
+            Some(Face::PosY) => [0.0, 1.0, 0.0],
+            Some(Face::NegZ) => [0.0, 0.0, -1.0],
+            Some(Face::PosZ) => [0.0, 0.0, 1.0],
+            None => [0.0; 3],
+        };
+        Some((hit.t as f32 / one, normal))
+    }
+
+    /// Where a model `extent` voxels across stands for the camera now ([`belt::stand`]), and
+    /// the eye it faces. The one place the ghost, and with it every placement of the belt,
+    /// stands an entity.
+    pub(crate) fn aim_feet(&self, extent: [f32; 3]) -> ([f32; 3], [f32; 3]) {
         let c = &self.fly.camera;
         let (eye, fwd) = (c.position.to_array(), c.basis().0.to_array());
-        let hit = self.surface_along_view(REACH as f32 / FIXED_ONE as f32);
-        let at = hit.map_or(lights::MISS_DROP, |(t, _)| t);
-        (std::array::from_fn(|k| eye[k] + fwd[k] * at), eye)
+        let feet = belt::stand(eye, fwd, extent, |o, d, max| self.cast_world(o, d, max));
+        (feet, eye)
     }
 
-    /// The entities page's preview kept in step with the menu: on the page (no filter typed)
-    /// the selected entry stands at [`Run::aim_feet`], the library's selection following the
-    /// page's; anywhere else there is none. A refusal (an entry in error, a full set) says its
-    /// words once.
-    pub(crate) fn sync_preview(&mut self) {
-        let on = self.menu.page() == Some(PageId::Entities) && self.menu.filter().is_empty();
-        if !on {
-            self.modes.walkers.clear_preview();
-            return;
-        }
-        let v = self.run_view();
-        if let Some(Row::Item(i)) = self.menu.selected_row(&self.modes, &v)
-            && i < self.modes.walkers.library.entries.len()
-        {
-            self.modes.walkers.library.selected = i;
-        }
-        self.stand_preview();
+    /// Fills the belt from the library's order, once (`belt::Belt::fill`).
+    pub(crate) fn fill_belt(&mut self) {
+        let w = &mut self.modes.walkers;
+        let order = w.library.order();
+        w.belt.fill(&order);
     }
 
-    /// The library's selected entry's preview stood at [`Run::aim_feet`], or none when the
-    /// entry is in error; a full set says so once.
-    fn stand_preview(&mut self) {
-        let entry = match self.modes.walkers.pick() {
+    /// Entry `entry`'s name (`None` the built-in walker).
+    fn entry_name(&self, entry: Option<usize>) -> String {
+        let lib = &self.modes.walkers.library;
+        entry
+            .and_then(|i| lib.entries.get(i))
+            .map_or(crate::entities::library::BUILTIN_NAME, |e| &e.name)
+            .to_owned()
+    }
+
+    /// After the belt's selection changed: the library's selection follows the slot's entry,
+    /// and the ghost stands anew.
+    fn belt_selected(&mut self) {
+        let w = &mut self.modes.walkers;
+        if let Some(i) = w.belt.entry().filter(|&i| i < w.library.entries.len()) {
+            w.library.selected = i;
+        }
+        self.sync_ghost();
+    }
+
+    /// The chooser's `Enter` on `entry`: the slot that holds it selected, else it goes into
+    /// the selected slot; the menu closes and placement mode starts there.
+    fn choose(&mut self, entry: usize) {
+        self.fill_belt();
+        let now = ms_since(self.start);
+        let belt = &mut self.modes.walkers.belt;
+        let s = match belt.slot_of(entry) {
+            Some(s) => s,
+            None => {
+                belt.assign(belt.selected, entry);
+                belt.selected
+            }
+        };
+        belt.select(s, now);
+        self.menu.close();
+        self.belt_selected();
+    }
+
+    /// Ends placement mode: the ghost removed, the turn reset; says `words`.
+    pub(crate) fn end_placement(&mut self, words: &str) {
+        self.modes.walkers.belt.end();
+        self.modes.walkers.clear_preview();
+        self.say(words);
+    }
+
+    /// The ghost kept in step with the mode: in placement mode with the menu closed the
+    /// selected slot's entry stands at [`Run::aim_feet`] facing the camera, turned by the
+    /// belt's turn; anywhere else, and for an empty slot, there is none (opening the menu ends
+    /// the mode). A refusal (an entry in error, a full set) says its words once.
+    pub(crate) fn sync_ghost(&mut self) {
+        let w = &mut self.modes.walkers;
+        if self.menu.is_open() && w.belt.on {
+            w.belt.end();
+        }
+        let Some(i) = w.belt.entry().filter(|_| w.belt.on) else {
+            return w.clear_preview();
+        };
+        let entry = match w.pick_at(i) {
             Pick::Builtin => None,
             Pick::Rig(i) => Some(i),
-            Pick::Refused(_) => return self.modes.walkers.clear_preview(),
+            Pick::Refused(why) => {
+                w.clear_preview();
+                return self.say_once(why);
+            }
         };
-        let (feet, eye) = self.aim_feet();
         let table = self.world.materials();
-        if let Err(words) = self.modes.walkers.show_preview(table, entry, feet, eye)
-            && self.notice.as_ref().is_none_or(|(l, _)| *l != words)
-        {
+        let extent = self.modes.walkers.extent_of(entry, table);
+        let (feet, eye) = self.aim_feet(extent);
+        let yaw = crate::walker::facing(feet, eye) + self.modes.walkers.belt.turn_rad();
+        let table = self.world.materials();
+        if let Err(words) = self.modes.walkers.show_preview(table, entry, feet, yaw) {
+            self.say_once(words);
+        }
+    }
+
+    /// [`Run::say`] unless the notice already reads `words`.
+    fn say_once(&mut self, words: String) {
+        if self.notice.as_ref().is_none_or(|(l, _)| *l != words) {
+            self.modes.show_lights(words.clone(), ms_since(self.start));
             self.say(words);
         }
     }
 
-    /// The entities page's `Enter` (or `` ` `` on it, with `close`): library entry `entry`
-    /// placed where the preview stands, under the preview's id, and the notice names it
-    /// (`placed spider #3 (rear)`); the page stays open unless `close`.
-    fn place_from_page(&mut self, entry: usize, close: bool) {
+    /// Placement mode's click: the ghost placed where it stands under its own id, on its clip
+    /// and turn, and the notice names it (`placed spider #3 (rear)`); the mode stays and a new
+    /// ghost stands at the aim.
+    fn place_ghost(&mut self) {
+        self.sync_ghost();
         let w = &mut self.modes.walkers;
-        if entry < w.library.entries.len() {
-            w.library.selected = entry;
-        }
-        self.stand_preview();
-        let w = &mut self.modes.walkers;
-        let words = match w.pick() {
+        let Some(i) = w.belt.entry() else {
+            let words = format!("slot {} empty", w.belt.selected + 1);
+            return self.say(words);
+        };
+        let words = match w.pick_at(i) {
             Pick::Refused(why) => why,
             _ if w.placed.len() >= vxe_render::MAX_ENTITIES => full_words(),
             _ => match w.place_preview() {
@@ -441,10 +605,7 @@ impl Run {
         };
         self.modes.show_lights(words.clone(), ms_since(self.start));
         self.say(words);
-        if close {
-            self.menu.close();
-            self.modes.walkers.clear_preview();
-        }
+        self.sync_ghost();
     }
 
     /// The lights' and walkers' actions: a drop at the looked-at surface, a walker placed
@@ -469,6 +630,16 @@ impl Run {
                 }
             }
             Act::RemoveAimed => self.modes.walkers.remove_aimed(),
+            Act::ClipBack | Act::ClipOn | Act::ClipPause
+                if self.modes.walkers.belt.on && self.modes.walkers.preview.is_some() =>
+            {
+                let w = &mut self.modes.walkers;
+                match act {
+                    Act::ClipBack => w.ghost_clip(-1),
+                    Act::ClipOn => w.ghost_clip(1),
+                    _ => w.ghost_pause(),
+                }
+            }
             Act::ClipBack => self.modes.walkers.cycle_clip(-1),
             Act::ClipOn => self.modes.walkers.cycle_clip(1),
             Act::ClipPause => self.modes.walkers.toggle_pause(),

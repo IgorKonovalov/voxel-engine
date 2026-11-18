@@ -87,7 +87,7 @@ impl Entry {
             .to_owned()
     }
 
-    /// The entry's binds in words, `F7`, `X / pad West`, `wheel / pad D-pad up down`; empty
+    /// The entry's binds in words, `F7`, `X / pad West`, `2 / 3 / 5 / 7 / 8 / 9`; empty
     /// for a menu-only entry.
     pub fn keys(&self) -> String {
         let names: Vec<String> = match self.kind {
@@ -95,7 +95,6 @@ impl Entry {
                 Press::Key(k, pad) => std::iter::once(key_name(k))
                     .chain(pad.map(pad_name))
                     .collect(),
-                Press::Scroll => vec!["wheel".to_owned(), "pad D-pad up down".to_owned()],
                 Press::Menu => Vec::new(),
             },
             EntryKind::Action(a) => a
@@ -188,7 +187,7 @@ pub fn keys_text(args: &crate::cli::Args) -> String {
 pub fn bound_keys() -> Vec<KeyCode> {
     let toggles = TOGGLES.iter().filter_map(|t| match t.press {
         Press::Key(k, _) => Some(k),
-        Press::Scroll | Press::Menu => None,
+        Press::Menu => None,
     });
     let actions = ACTIONS
         .iter()

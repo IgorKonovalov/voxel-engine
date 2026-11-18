@@ -1,14 +1,14 @@
-//! The entities page's picker (the menu's dynamic page, `hud::menu::PageId::Entities`): the
-//! library's rows and the selected entry's clip row as the page draws them, and the preview,
-//! the selected entry standing at the crosshair's surface point facing the camera, a real
-//! entity in the set that `Enter` (or `` ` ``) leaves placed under its own id.
+//! The chooser (the menu's dynamic page, `hud::menu::PageId::Entities`): each library entry's
+//! rows as the page draws them; and the ghost, placement mode's selected entry standing at
+//! the aim (`super::belt::stand`) facing the camera turned by the belt's turn, a real entity
+//! in the set that a click leaves placed under its own id.
 
 use vxe_entity::EntityId;
 use vxe_render::MAX_ENTITIES;
 use vxe_world::MaterialTable;
 
-use super::library::{BUILTIN_NAME, Source, cut, extent};
-use super::walker::{facing, pose};
+use super::library::{BUILTIN_NAME, Source, cut, extent, model_of};
+use super::walker::pose;
 use super::{Placed, Walkers};
 use crate::hud::Modes;
 use crate::viewer::placed;
@@ -47,28 +47,27 @@ pub fn write_item(m: &Modes, i: usize, text: &mut String, width: usize) {
     text.push_str(&cut(row, width));
 }
 
-/// The clip row: `clip  <name>  (<k>/<n>)` for the selected entry's clip, which `Enter`
-/// cycles; `clip  none` for an entry with no clip.
-pub fn write_clip(m: &Modes, text: &mut String) {
+/// Entry `i`'s second row: its clips (the one a placement starts on marked `*`) or `no clip`,
+/// then the belt's slot that holds it (`slot 2`) or `no slot`.
+pub fn write_item_clips(m: &Modes, i: usize, text: &mut String) {
     use std::fmt::Write as _;
     let lib = &m.walkers.library;
-    let clips = lib
-        .entries
-        .get(lib.selected)
-        .and_then(|e| e.viewer())
-        .and_then(|v| Some((v, v.loaded.as_ref()?)))
-        .filter(|(_, l)| !l.clips.is_empty());
-    match clips {
-        Some((v, l)) => {
-            let name = v.clip_name().unwrap_or("");
-            let _ = write!(
-                text,
-                "clip  {name}  ({}/{})",
-                v.play.clip + 1,
-                l.clips.len()
-            );
+    let rig = lib.entries.get(i).and_then(|e| e.viewer());
+    match rig.and_then(|v| Some((v, v.loaded.as_ref()?))) {
+        Some((v, l)) if !l.clips.is_empty() => {
+            text.push_str("clips");
+            for (k, (name, _)) in l.clips.iter().enumerate() {
+                let star = if k == v.play.clip { "*" } else { "" };
+                let _ = write!(text, " {name}{star}");
+            }
         }
-        None => text.push_str("clip  none"),
+        _ => text.push_str("no clip"),
+    }
+    match m.walkers.belt.slot_of(i) {
+        Some(s) => {
+            let _ = write!(text, "   slot {}", s + 1);
+        }
+        None => text.push_str("   no slot"),
     }
 }
 
@@ -78,21 +77,20 @@ pub fn full_words() -> String {
 }
 
 impl Walkers {
-    /// Stands the preview of `entry` (`None` the built-in walker) at `feet`, facing `eye`:
+    /// Stands the ghost of `entry` (`None` the built-in walker) at `feet`, turned `yaw`:
     /// moved there when it already shows that entry, else placed anew (the old one removed).
-    /// With [`MAX_ENTITIES`] placed there is no preview and the words say the set is full.
+    /// With [`MAX_ENTITIES`] placed there is no ghost and the words say the set is full.
     pub fn show_preview(
         &mut self,
         table: &MaterialTable,
         entry: Option<usize>,
         feet: [f32; 3],
-        eye: [f32; 3],
+        yaw: f32,
     ) -> Result<(), String> {
         if self.placed.len() >= MAX_ENTITIES {
             self.clear_preview();
             return Err(full_words());
         }
-        let yaw = facing(feet, eye);
         if let Some(p) = &mut self.preview
             && p.entry == entry
         {
@@ -115,14 +113,14 @@ impl Walkers {
         Ok(())
     }
 
-    /// Removes the preview from the set.
+    /// Removes the ghost from the set.
     pub fn clear_preview(&mut self) {
         if let Some(p) = self.preview.take() {
             self.set.remove(p.id);
         }
     }
 
-    /// The preview placed where it stands: it joins [`Walkers::placed`] under its own id.
+    /// The ghost placed where it stands: it joins [`Walkers::placed`] under its own id.
     pub fn place_preview(&mut self) -> Option<EntityId> {
         let p: Placed = self.preview.take()?;
         let id = p.id;
@@ -130,27 +128,48 @@ impl Walkers {
         Some(id)
     }
 
-    /// The selected entry's next clip, the preview's with it: the notice's words.
-    pub fn next_clip(&mut self) -> String {
-        let i = self.library.selected;
-        let Some(e) = self.library.entries.get_mut(i) else {
-            return "clip: none".to_owned();
+    /// The ghost's clip `step` clips on (faded into), and its entry's with it, so the next
+    /// ghost starts on it: the banner's words.
+    pub fn ghost_clip(&mut self, step: i32) -> String {
+        let Some(i) = self.preview.as_ref().and_then(|p| p.entry) else {
+            return "no clip: no rig in placement".to_owned();
         };
+        let e = &mut self.library.entries[i];
         let name = e.name.clone();
         let Some(v) = e.viewer_mut() else {
             return format!("{name}: no clip");
         };
-        let words = v.cycle(1);
-        let (clip, l) = (v.play.clip, v.loaded.clone());
-        if let (Some(p), Some(l)) = (&mut self.preview, l)
-            && p.entry == Some(i)
-        {
-            while p.play.clip != clip && p.play.cycle(&l, 1) {}
+        let Some(l) = v.loaded.clone() else {
+            return format!("{name}: no clip");
+        };
+        let p = self.preview.as_mut().expect("a ghost");
+        if !p.play.cycle(&l, step) {
+            return format!("{name}: no clip");
         }
-        format!("{name} {words}")
+        while v.play.clip != p.play.clip && v.play.cycle(&l, 1) {}
+        let clip = p.play.clip_name(&l).unwrap_or("");
+        format!("{name} ghost clip {clip}")
     }
 
-    /// Removes the placed entity under the crosshair ([`Walkers::aimed`]; the preview is not
+    /// Pauses or plays the ghost's clip: the banner's words.
+    pub fn ghost_pause(&mut self) -> String {
+        match self.preview.as_mut() {
+            Some(p) if p.entry.is_some() => format!("ghost {}", p.play.toggle_pause()),
+            _ => "no clip: no rig in placement".to_owned(),
+        }
+    }
+
+    /// The size of entry `entry`'s model (`None` the built-in walker) standing in its rest
+    /// pose, in voxels along x, y and z; zero for one with no model.
+    pub fn extent_of(&self, entry: Option<usize>, table: &MaterialTable) -> [f32; 3] {
+        let model = match entry {
+            Some(i) => self.library.entries.get(i).and_then(|e| model_of(e, table)),
+            None => super::library::builtin_model(table),
+        };
+        model.map_or([0.0; 3], |(m, rest)| extent(&m, &rest))
+    }
+
+    /// Removes the placed entity under the crosshair ([`Walkers::aimed`]; the ghost is not
     /// one) and its mark in `4`'s list: the banner's words.
     pub fn remove_aimed(&mut self) -> String {
         let Some(k) = self

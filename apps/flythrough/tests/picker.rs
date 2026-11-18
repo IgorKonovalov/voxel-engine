@@ -1,5 +1,5 @@
-//! Plan 0077 Phase 3 with no run: the entities page as the menu writes it from the library,
-//! and the keys the menu takes for it.
+//! Plan 0077 with no run: the chooser (the entities page) as the menu writes it from the
+//! library and the belt, and the keys the menu takes for it.
 
 use std::path::{Path, PathBuf};
 
@@ -52,18 +52,21 @@ fn modes_with(lib: library::Library) -> Modes {
     m
 }
 
-/// Phase 3 done-when: `a`, `b` (in error) and `spider`, `spider` selected on its second
-/// clip: the page's text and colours are the fixture's, `b`'s row grey with its error after
-/// its name, the clip row a cycle naming `idle (2/3)`, and no row past 80 columns or 45 rows.
+/// Phase 5: `a`, `b` (in error) and `spider`, the belt filled in the chooser's order (`a`,
+/// `spider`, then `b` in error), `spider` selected on its second clip: each entry takes four
+/// rows (its words beside a 4 x 4 cell tile, then its clips with the playing one marked and
+/// its slot), `b` grey with its error after its name, and no row past 80 columns or 45 rows.
 #[test]
 fn the_picker_draws_its_rows() {
     let mut lib = library_abs();
-    lib.selected = 2;
     let v = lib.entries[2].viewer_mut().expect("a rig");
     assert_eq!(v.cycle(1), "clip idle");
-    let m = modes_with(lib);
+    let mut m = modes_with(lib);
+    let order = m.walkers.library.order();
+    assert_eq!(order, [0, 2, 1]);
+    m.walkers.belt.fill(&order);
     let mut menu = Menu::default();
-    menu.open_entities(m.walkers.library.selected);
+    menu.open_entities(1);
     let (mut text, mut colours) = (String::new(), Vec::new());
     menu.write_with(&m, &RunView::default(), None, &mut text, &mut colours);
     let rows: Vec<&str> = text.lines().collect();
@@ -73,49 +76,42 @@ fn the_picker_draws_its_rows() {
     assert_eq!(have, want, "{text}");
 }
 
-/// The page of `the_picker_draws_its_rows`: the title, the three entries (`b` grey with its
-/// error, `spider` selected), the clip row, the `entities` group's entries (the clip and
-/// remove entries grey with no entity placed), a blank notice row and the footer.
-const FIXTURE: [(&str, HudColour); 13] = [
+/// The page of `the_picker_draws_its_rows`: the title, the three entries of four rows each
+/// (`spider` selected, `b` grey), a blank notice row and the footer.
+const FIXTURE: [(&str, HudColour); 15] = [
     ("menu  >  entities", HudColour::White),
-    ("  a           6 parts  0.6 x 0.3 x 1.5 m", HudColour::White),
     (
-        "  b          rig line 3: unknown statement `bogus`",
-        HudColour::Grey,
+        "        a           6 parts  0.6 x 0.3 x 1.5 m",
+        HudColour::White,
     ),
-    (
-        "> spider     14 parts  6.9 x 4.0 x 2.3 m",
-        HudColour::Yellow,
-    ),
-    ("  clip  idle  (2/3)", HudColour::White),
-    (
-        "  remove aimed entity  needs a placed entity                Delete",
-        HudColour::Grey,
-    ),
-    ("  walkers walk off", HudColour::White),
-    ("  eye lights on", HudColour::White),
-    (
-        "  clip before  needs a placed entity                        Left",
-        HudColour::Grey,
-    ),
-    (
-        "  clip after  needs a placed entity                         Right",
-        HudColour::Grey,
-    ),
-    (
-        "  clip pause  needs a placed entity                         Down",
-        HudColour::Grey,
-    ),
+    ("        clips idle* walk turn   slot 1", HudColour::White),
+    ("", HudColour::White),
     ("", HudColour::White),
     (
-        "Enter places  ` places, closes  Delete removes  Esc closes",
+        ">       spider     14 parts  6.9 x 4.0 x 2.3 m",
+        HudColour::Yellow,
+    ),
+    ("        clips walk idle* rear   slot 2", HudColour::Yellow),
+    ("", HudColour::Yellow),
+    ("", HudColour::Yellow),
+    (
+        "        b          rig line 3: unknown statement `bogus`",
+        HudColour::Grey,
+    ),
+    ("        no clip   slot 3", HudColour::Grey),
+    ("", HudColour::Grey),
+    ("", HudColour::Grey),
+    ("", HudColour::White),
+    (
+        "Enter places it  1-9 into a slot  Esc closes  type to search",
         HudColour::White,
     ),
 ];
 
-/// The route with the entities page: `` ` `` is the menu's while open (it shows the page, and
-/// on the page places and closes) and passes while closed (its action opens the page);
-/// `Delete` passes either way, so the remove key acts on the page and off it.
+/// The route with the chooser: `` ` `` is the menu's while open (it shows the page, and on the
+/// page hands the selected entry to placement mode) and passes while closed (its action opens
+/// the page); `Delete` passes either way, so the remove key acts on the page and off it; a
+/// digit on the page puts the selected entry in that slot.
 #[test]
 fn the_backquote_and_delete_route() {
     let bq = RouteInput::Key(KeyCode::Backquote);
@@ -133,14 +129,19 @@ fn the_backquote_and_delete_route() {
     assert_eq!(menu.page(), Some(PageId::Entities));
     let routed = step(&mut menu, &input, &m, &RunView::default());
     assert!(
-        matches!(
-            routed.acts[..],
-            [Activated::Place {
-                entry: 0,
-                close: true
-            }]
-        ),
+        matches!(routed.acts[..], [Activated::Choose { entry: 0 }]),
         "{:?}",
         routed.acts
     );
+    menu.open_entities(1);
+    let mut input = Input::default();
+    input.key_down(KeyCode::Digit7);
+    let routed = step(&mut menu, &input, &m, &RunView::default());
+    assert!(
+        matches!(routed.acts[..], [Activated::Assign { entry: 2, slot: 6 }]),
+        "{:?}",
+        routed.acts
+    );
+    assert_eq!(menu.page(), Some(PageId::Entities));
+    assert_eq!(menu.filter(), "");
 }

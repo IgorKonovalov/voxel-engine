@@ -186,6 +186,15 @@ impl Library {
         errors
     }
 
+    /// The entries in the chooser's and the belt's order: `--model`'s first, then those that
+    /// can be placed, then those in error, each in the library's order (name order).
+    pub fn order(&self) -> Vec<usize> {
+        let rank = |e: &Entry| (!e.flagged, e.error().is_some());
+        let mut out: Vec<usize> = (0..self.entries.len()).collect();
+        out.sort_by_key(|&i| rank(&self.entries[i]));
+        out
+    }
+
     /// The `--library` lines once [`Library::build`] has run: one per entry ([`entry_line`]),
     /// then the notes.
     pub fn lines(&self, table: &MaterialTable) -> Vec<String> {
@@ -211,6 +220,11 @@ pub fn model_of(e: &Entry, table: &MaterialTable) -> Option<(std::sync::Arc<Mode
             Some((l.model.clone(), l.rest.clone()))
         }
     }
+}
+
+/// The built-in walker's model and rest pose from `table`'s walker rows ([`model_of`]).
+pub fn builtin_model(table: &MaterialTable) -> Option<(std::sync::Arc<Model>, Pose)> {
+    model_of(&builtin(), table)
 }
 
 /// The size of `model` standing in `pose`, in world voxels along x, y and z: the box around

@@ -377,6 +377,28 @@ fn the_route_is_one_function() {
     for k in [KeyCode::KeyW, KeyCode::F7, KeyCode::F1, KeyCode::Tab] {
         assert!(taken(RouteInput::Key(k), true).pass, "{k:?}");
     }
+    // Placement mode is the run's with the menu closed: its wheel, digits, `R`, `Esc` and
+    // both clicks pass to the run.
+    let mut placing: Vec<RouteInput> = flythrough::toggles::BELT_KEYS
+        .into_iter()
+        .chain([KeyCode::KeyR, KeyCode::Escape])
+        .map(RouteInput::Key)
+        .collect();
+    placing.extend([
+        RouteInput::Wheel,
+        RouteInput::Click(MouseButton::Left),
+        RouteInput::Click(MouseButton::Right),
+    ]);
+    for i in placing {
+        assert_eq!(
+            taken(i, false),
+            flythrough::hud::menu::Taken {
+                menu: false,
+                pass: true
+            },
+            "{i:?} in placement mode"
+        );
+    }
     assert_eq!(
         taken(RouteInput::Key(KeyCode::KeyL), true),
         flythrough::hud::menu::Taken {
@@ -461,11 +483,11 @@ fn f1_opens_the_keys_page() {
 }
 
 /// The shortcut rows of ADR-0061's key table as the owner answered it (Plan 0080's "The
-/// keys"), and the render profile's `F4` (ADR-0055): each entry that keeps a bind and its
-/// binds as the menu shows them.
-const SHORTCUTS: [(&str, &str); 17] = [
+/// keys"), the render profile's `F4` (ADR-0055) and the belt's (Plan 0077's placement mode;
+/// the dig radius is the menu's only): each entry that keeps a bind and its binds as the menu
+/// shows them.
+const SHORTCUTS: [(&str, &str); 20] = [
     ("profile", "F4"),
-    ("dig radius", "wheel / pad D-pad up down"),
     ("walk", "G / pad North"),
     ("resume the tour", "T"),
     ("upscaler", "F10"),
@@ -473,7 +495,11 @@ const SHORTCUTS: [(&str, &str); 17] = [
     ("drop a light", "1"),
     ("remove the newest", "4"),
     ("fire a light", "6"),
-    ("entity picker", "`"),
+    ("choose an entity", "`"),
+    ("placement mode", "2 / 3 / 5 / 7 / 8 / 9"),
+    ("belt next", "pad D-pad right"),
+    ("belt before", "pad D-pad left"),
+    ("turn the ghost", "R"),
     ("remove aimed entity", "Delete"),
     ("clip before", "Left"),
     ("clip after", "Right"),

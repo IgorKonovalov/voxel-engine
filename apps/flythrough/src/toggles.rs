@@ -20,9 +20,6 @@ use vxe_app::{Input, KeyCode, PadButton};
 pub enum Press {
     /// A key, and the pad button that does the same, if any.
     Key(KeyCode, Option<PadButton>),
-    /// A scroll line up (or the pad's D-pad up); down steps back. The run banks fractional
-    /// lines (`edits::scroll_dig_radius`); [`Toggle::flip`] is one whole line up.
-    Scroll,
     /// No key: the toggle is the menu's only.
     Menu,
 }
@@ -100,12 +97,11 @@ impl Needs {
 }
 
 impl Toggle {
-    /// Whether `input` presses this toggle's key or pad button this frame (a scroll row is
-    /// stepped by the run's scroll banking, not here).
+    /// Whether `input` presses this toggle's key or pad button this frame.
     pub fn pressed(&self, input: &Input) -> bool {
         match self.press {
             Press::Key(key, pad) => input.pressed(key) || pad.is_some_and(|b| input.pad_pressed(b)),
-            Press::Scroll | Press::Menu => false,
+            Press::Menu => false,
         }
     }
 }
@@ -201,9 +197,25 @@ pub const KEY_DROP: KeyCode = KeyCode::Digit1;
 pub const KEY_REMOVE: KeyCode = KeyCode::Digit4;
 /// `6`: fire a light along the view ray.
 pub const KEY_FIRE: KeyCode = KeyCode::Digit6;
-/// `` ` `` (Backquote): the entities page; on it, place the selected entry and close
-/// (`crate::entities::picker`).
+/// `` ` `` (Backquote): the chooser, the entities page; on it, `Enter`'s hand-over to
+/// placement mode (`crate::entities::picker`).
 pub const KEY_WALKER: KeyCode = KeyCode::Backquote;
+/// `R`: turn the ghost one step in placement mode (`crate::entities::belt`).
+pub const KEY_TURN: KeyCode = KeyCode::KeyR;
+/// The belt's slots' keys, `1`..`9`: in placement mode each selects its slot, but `4`, which
+/// removes the newest in the mode as out of it. Out of the mode `1` and `6` keep the lights'
+/// drop and shot, and the free digits enter the mode at their slot ([`Act::BeltSlot`]).
+pub const BELT_KEYS: [KeyCode; 9] = [
+    KEY_DROP,
+    KeyCode::Digit2,
+    KeyCode::Digit3,
+    KEY_REMOVE,
+    KeyCode::Digit5,
+    KEY_FIRE,
+    KeyCode::Digit7,
+    KeyCode::Digit8,
+    KeyCode::Digit9,
+];
 /// `F4`: the next render profile (`run::profile`).
 pub const KEY_PROFILE: KeyCode = KeyCode::F4;
 /// `Delete`: remove the placed entity under the crosshair.
@@ -230,8 +242,15 @@ pub enum Act {
     Remove,
     /// Fires a light along the view ray.
     FireLight,
-    /// Opens the entities page: the library's entries, the preview at the crosshair.
+    /// Opens the chooser: the library's entries, each into a belt slot.
     Picker,
+    /// Enters placement mode at the belt's slot of the digit pressed (1-based; 0 the
+    /// selected slot, as the menu's entry runs it).
+    BeltSlot(u8),
+    /// The belt's selection one slot on (`1`) or back (`-1`), entering the mode.
+    BeltStep(i8),
+    /// Turns the ghost one step in placement mode.
+    Turn,
     /// Removes the placed entity under the crosshair.
     RemoveAimed,
     /// The walkers walk or hold still.
@@ -439,11 +458,46 @@ pub static ACTIONS: &[Action] = &[
         [Bind::Key(KEY_FIRE)]
     ),
     action!(
-        "entity picker",
+        "choose an entity",
         Entities,
         Act::Picker,
         [Bind::Key(KEY_WALKER)]
     ),
+    Action {
+        binds: &[
+            Bind::Key(BELT_KEYS[1]),
+            Bind::Key(BELT_KEYS[2]),
+            Bind::Key(BELT_KEYS[4]),
+            Bind::Key(BELT_KEYS[6]),
+            Bind::Key(BELT_KEYS[7]),
+            Bind::Key(BELT_KEYS[8]),
+        ],
+        label: "placement mode",
+        group: Group::Entities,
+        mode: Some(|m, _| {
+            let b = &m.walkers.belt;
+            match b.on {
+                true => format!("placement on, slot {}", b.selected + 1),
+                false => format!("placement off, slot {}", b.selected + 1),
+            }
+        }),
+        act: Act::BeltSlot(0),
+        needs: None,
+        range: None,
+    },
+    action!(
+        "belt next",
+        Entities,
+        Act::BeltStep(1),
+        [Bind::Pad(PadButton::DpadRight)]
+    ),
+    action!(
+        "belt before",
+        Entities,
+        Act::BeltStep(-1),
+        [Bind::Pad(PadButton::DpadLeft)]
+    ),
+    action!("turn the ghost", Entities, Act::Turn, [Bind::Key(KEY_TURN)]),
     action!(
         "remove aimed entity",
         Entities,
@@ -947,7 +1001,7 @@ pub static TOGGLES: &[Toggle] = &[
         },
     },
     Toggle {
-        press: Press::Scroll,
+        press: Press::Menu,
         name: "dig radius",
         group: Group::Moving,
         needs: None,

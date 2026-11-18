@@ -1003,12 +1003,17 @@ impl Run {
         }
     }
 
-    /// Formats this frame's rows and strip into the overlay, timing the formatting.
+    /// Formats this frame's rows and strip into the overlay, timing the formatting; the belt
+    /// under them in placement mode ([`Run::belt_rows`]).
     pub(crate) fn update_hud(&mut self, gpu: &Gpu) {
         self.fill_hud(self.gfx.as_ref().map(GfxSample::of));
+        let belt = self.belt_rows(gpu.size, false);
         let h = &mut self.hud;
         let Some(gfx) = self.gfx.as_mut() else { return };
-        gfx.hud.set_lines(&gpu.queue, &h.text, &h.colours);
+        match belt {
+            Some(b) => gfx.hud.set_lines_over(&gpu.queue, &h.text, &h.colours, b),
+            None => gfx.hud.set_lines(&gpu.queue, &h.text, &h.colours),
+        }
         gfx.hud.set_samples(&gpu.queue, &h.strip, hud::CEILING_MS);
     }
 

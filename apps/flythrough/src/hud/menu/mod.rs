@@ -94,12 +94,13 @@ pub const FIXED_ROWS: &[(&str, &str)] = &[
     ("Space C", "up and down"),
     ("Shift", "faster"),
     ("mouse", "look"),
-    ("left click / R2", "dig"),
-    ("right click / L2", "fill"),
+    ("left click / R2", "dig; in placement mode, place the ghost"),
+    ("right click / L2", "fill; in placement mode, leave it"),
+    ("wheel", "the belt's slot, into placement mode"),
     ("Tab / pad Start", "the menu; type on any page to search"),
     ("F1", "this page, the keys"),
     ("F2 / pad Select", "the stats overlay"),
-    ("Esc", "back, close; with the menu closed, quit"),
+    ("Esc", "back, close; placing, leave the mode; else quit"),
 ];
 
 /// The few run flags an entry reads beside the modes: whether the body walks, the audio's

@@ -79,9 +79,11 @@ pub struct Walkers {
     /// The placed entity under the crosshair, as the frame last read it: the clip keys act on
     /// it, else on the newest.
     pub aimed: Option<EntityId>,
-    /// The entities page's preview: the selected entry standing at the crosshair, in the set
-    /// and drawn as any placement but not one of [`Walkers::placed`] (`super::picker`).
+    /// The ghost: placement mode's selected entry standing at the aim, in the set and drawn
+    /// as any placement but not one of [`Walkers::placed`] (`super::picker`).
     pub preview: Option<Placed>,
+    /// The belt's slots and placement mode (`super::belt`).
+    pub belt: super::belt::Belt,
     /// The frame's drawn parts, kept across frames ([`Walkers::refresh_displays`]): the first
     /// `shown` are this frame's, the rest storage kept for later frames.
     displays: Vec<(EntityId, ModelHandle, vxe_render::DisplayPose)>,
@@ -99,6 +101,7 @@ impl PartialEq for Walkers {
             && self.eye_lights_off == o.eye_lights_off
             && (self.walking, self.clock) == (o.walking, o.clock)
             && (self.library.selected, self.aimed) == (o.library.selected, o.aimed)
+            && self.belt == o.belt
     }
 }
 
@@ -154,7 +157,11 @@ impl Walkers {
 
     /// What a placement of the selected entry takes: the built-in walker with no library.
     pub fn pick(&self) -> Pick {
-        let i = self.library.selected;
+        self.pick_at(self.library.selected)
+    }
+
+    /// What a placement of library entry `i` takes: the built-in walker past the entries.
+    pub fn pick_at(&self, i: usize) -> Pick {
         let Some(e) = self.library.entries.get(i) else {
             return Pick::Builtin;
         };

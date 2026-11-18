@@ -16,21 +16,11 @@ pub enum PageId {
     Group(Group),
     /// Every entry of every group with its binds, under the fixed keys (`F1`).
     Keys,
-    /// A dynamic page, its rows built each frame from the run: the entities library's
-    /// entries, the selected entry's clip, then the `entities` group's entries
-    /// (`crate::entities::picker`). The root's `entities` row and `` ` `` open it.
+    /// The chooser, a dynamic page, its rows built each frame from the run: the entities
+    /// library's entries in [`crate::entities::library::Library::order`]
+    /// (`crate::entities::picker`). `` ` `` and the `entities` group's `choose an entity`
+    /// open it.
     Entities,
-}
-
-impl Group {
-    /// The page the root's row of the group opens: the entities' dynamic page for
-    /// [`Group::Entities`], else the group's page.
-    pub fn page(self) -> PageId {
-        match self {
-            Self::Entities => PageId::Entities,
-            g => PageId::Group(g),
-        }
-    }
 }
 
 /// One row of a page.
@@ -44,19 +34,18 @@ pub enum Row {
     /// headers (a group, no binds).
     Fixed(&'static str, &'static str),
     Header(Group),
-    /// The entities library's entry of that index: `Enter` places it at the crosshair.
+    /// The entities library's entry of that index, drawn on [`ITEM_LINES`] lines: `Enter`
+    /// hands it to placement mode, a digit puts it in that belt slot.
     Item(usize),
-    /// The selected entry's clip: `Enter` gives the next.
-    Clip,
 }
+
+/// The lines an entry of the chooser takes: its words and its clips beside a 4 x 4 cell tile.
+pub const ITEM_LINES: usize = 4;
 
 impl Row {
     /// Whether the selection can rest on the row.
     pub fn selectable(&self) -> bool {
-        matches!(
-            self,
-            Self::Group(_) | Self::Entry(_) | Self::Item(_) | Self::Clip
-        )
+        matches!(self, Self::Group(_) | Self::Entry(_) | Self::Item(_))
     }
 }
 
@@ -69,14 +58,17 @@ pub enum Activated {
     Action(Act),
     Step(&'static Toggle, i32),
     Refused(&'static str),
-    /// Places the library's entry `entry` at the crosshair (the preview, when it stands
-    /// there), the menu closed after when `close`.
-    Place {
+    /// The chooser's `Enter` on library entry `entry`: into the belt's selected slot (or
+    /// the slot that holds it selected), the menu closed, placement mode on.
+    Choose {
         entry: usize,
-        close: bool,
     },
-    /// The selected entry's next clip.
-    Clip,
+    /// A digit on the chooser's entry `entry`: into belt slot `slot` (0-based), the menu
+    /// staying open.
+    Assign {
+        entry: usize,
+        slot: usize,
+    },
 }
 
 impl std::fmt::Debug for Activated {
@@ -86,8 +78,8 @@ impl std::fmt::Debug for Activated {
             Self::Action(a) => write!(f, "Action({a:?})"),
             Self::Step(t, d) => write!(f, "Step({}, {d})", t.name),
             Self::Refused(why) => write!(f, "Refused({why})"),
-            Self::Place { entry, close } => write!(f, "Place({entry}, close {close})"),
-            Self::Clip => write!(f, "Clip"),
+            Self::Choose { entry } => write!(f, "Choose({entry})"),
+            Self::Assign { entry, slot } => write!(f, "Assign({entry}, slot {slot})"),
         }
     }
 }
@@ -113,7 +105,8 @@ pub enum MenuInput {
     Type(char),
     /// `Backspace`: the filter's last letter.
     Erase,
-    /// `` ` `` while open: on the entities' page places and closes, elsewhere shows that page.
+    /// `` ` `` while open: on the chooser hands the selected entry over as `Enter` does,
+    /// elsewhere shows the chooser.
     Entities,
     /// Wheel lines, positive away from the user (up the list).
     Scroll(i32),
@@ -152,8 +145,7 @@ impl Menu {
         self.edit
     }
 
-    /// Opens the entities' page alone (so `Esc` closes it), its selection on `selected` (the
-    /// library's selected entry).
+    /// Opens the chooser alone (so `Esc` closes it), its selection on its `selected`th row.
     pub fn open_entities(&mut self, selected: usize) {
         self.close();
         self.stack.push((PageId::Entities, selected));
@@ -203,15 +195,11 @@ impl Menu {
             Some(PageId::Root) => Group::ALL.into_iter().map(Row::Group).collect(),
             Some(PageId::Group(g)) => group_entries(g).map(Row::Entry).collect(),
             Some(PageId::Entities) => {
-                let n = m.walkers.library.entries.len().max(1);
-                let mut rows: Vec<Row> = (0..n).map(Row::Item).collect();
-                rows.push(Row::Clip);
-                rows.extend(
-                    group_entries(Group::Entities)
-                        .filter(|e| !matches!(e.kind, EntryKind::Action(a) if a.act == Act::Picker))
-                        .map(Row::Entry),
-                );
-                rows
+                let order = m.walkers.library.order();
+                if order.is_empty() {
+                    return vec![Row::Item(0)];
+                }
+                order.into_iter().map(Row::Item).collect()
             }
             Some(PageId::Keys) => {
                 let mut rows: Vec<Row> = FIXED_ROWS
@@ -268,10 +256,21 @@ impl Menu {
                         Some(Row::Item(i)) => i,
                         _ => m.walkers.library.selected,
                     };
-                    return Some(Activated::Place { entry, close: true });
+                    return Some(Activated::Choose { entry });
                 }
-                self.open_entities(m.walkers.library.selected);
+                self.open_entities(0);
                 return None;
+            }
+            MenuInput::Type(c)
+                if self.page() == Some(PageId::Entities)
+                    && self.filter.is_empty()
+                    && ('1'..='9').contains(&c) =>
+            {
+                let slot = usize::from(c as u8 - b'1');
+                return match self.selected_row(m, v) {
+                    Some(Row::Item(entry)) => Some(Activated::Assign { entry, slot }),
+                    _ => None,
+                };
             }
             _ => {}
         }
@@ -312,21 +311,10 @@ impl Menu {
                 self.select(to.clamp(0, n.saturating_sub(1) as i64) as usize);
             }
             MenuInput::Activate | MenuInput::Right => match picks.get(s) {
-                Some(Row::Group(g)) => {
-                    let at = if *g == Group::Entities {
-                        m.walkers.library.selected
-                    } else {
-                        0
-                    };
-                    self.stack.push((g.page(), at));
-                }
+                Some(Row::Group(g)) => self.stack.push((PageId::Group(*g), 0)),
                 Some(Row::Item(entry)) if i == MenuInput::Activate => {
-                    return Some(Activated::Place {
-                        entry: *entry,
-                        close: false,
-                    });
+                    return Some(Activated::Choose { entry: *entry });
                 }
-                Some(Row::Clip) if i == MenuInput::Activate => return Some(Activated::Clip),
                 Some(Row::Entry(e)) if i == MenuInput::Activate => {
                     if let Err(why) = e.available(m, v) {
                         return Some(Activated::Refused(why));
