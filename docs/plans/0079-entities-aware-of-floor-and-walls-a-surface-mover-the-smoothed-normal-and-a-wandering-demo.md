@@ -847,7 +847,7 @@ unchanged (ADR-0050).
 | 3: the body and the stride in the `.rig` | dev | done | 8c0b26d4 |
 | 4: the fly-through's demo | dev | done; done-whens 1 to 8, readings in the log | e1894054 |
 | 5: the owner's window | human | done 2026-11-18, the owner's words at Phase 6's head | 46837556 |
-| 6: the owner's picks, and the tip | dev | done; pick 1 218d84a6, pick 2 125c78ac, `nfr.md` section 8 cf3a2667; questions 9 to 11 the owner's "leave it" (recommendations, confirmed in the window); gate in the log | 218d84a6, 125c78ac, cf3a2667, committed with this row |
+| 6: the owner's picks, and the tip | dev | done; pick 1 218d84a6, pick 2 125c78ac, `nfr.md` section 8 cf3a2667; questions 9 to 11 the owner's "leave it" (recommendations, confirmed in the window); gate in Close triggers | 218d84a6, 125c78ac, cf3a2667, 9eecac9b, committed with this row |
 
 ### Notes
 
@@ -876,11 +876,11 @@ each. Empty is fine.)_
 
 ### Close triggers
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** `vxe-sim`'s surface mover (`SurfaceMover`, `probe_ahead`, `sweep_sphere`); `vxe-world`'s `solid_gradient`; `vxe-entity`'s `Quat::from_frame`; the `.rig` `body` line and clip stride; the fly-through's movers at a 60 Hz tick, the wander (legs of 5 to 15 s), the stand on a wall or ceiling, and `Esc` asks before quitting.
+- **Public API changed:** added: `vxe-sim` `SurfaceMover`, `SurfaceParams`, `SurfaceState`, `SurfaceInput`, `SurfaceEvent`, `SurfaceResult`, `Ahead`, `probe_ahead`, `sweep_sphere`, `sphere_overlaps`, `Sphere`, `normalise`, `rotate`, `shortest_arc`, `DIR_ONE`; `vxe-world` `World::solid_gradient`, `solid_gradient_with_stats`; `vxe-entity` `Quat::from_frame`, `Quat::shortest_arc`, `Quat::rotate_vector`; `vxe-assets` `RigBody`, `RigBodyLine`, clip `stride`. `vxe-sim`'s `controller.rs` and `sweep.rs` changed (`git diff main...HEAD -- crates`).
+- **Budget readings:** `docs/nfr.md` section 8 (cf3a2667) and `logs/0079.md` Phases 1, 2 and 4: surface tick 431.19 ns, `solid_gradient` half 6 917.90 ns, 64-body tick walkers 351.7 us / spiders 1412.8 us p50 (room), spiders 2839 us (showcase), frame CPU +3.07 ms at 64 spiders; Ryzen 9 5900HS / RTX 3080 Laptop, all loaded.
+- **Gate at the tip:** `flock vxe-perf.lock ... cargo nextest run --profile gate --test-threads 2` at 9eecac9b: exit 0, 1148 run, 1148 passed, 129 skipped, 1218.6 s (load 4.09 at the start, 1.34 at the end); `cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny check` 0; `cargo test --workspace --doc` 10 passed; `check-doc-links`, `check-comment-hygiene`, `check-index-rows`, `check-test-tiers`, `check-file-size`, `check-plan-size` 0; hook bite tests pass.
+- **Outstanding `human` phases:** none.
 
 ## Followups
 
