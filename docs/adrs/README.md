@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0074.**
+**Next free number: 0076.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -88,6 +88,8 @@ the status.
 | [0071](0071-the-engine-takes-a-name-one-word-for-the-project-the-crate-prefix-the-repository-and-the-archive.md) | The engine takes a name: one word that is the project, the crate prefix, the repository and the archive | accepted (owner, 2026-11-17: `svet`; Plan 0087, draft) |
 | [0072](0072-designer-authoring-is-a-layered-text-stack-text-files-a-separate-compiler-an-optional-editor.md) | Designer authoring is a layered text stack: text files, a separate compiler to the logic component, an optional editor over the same text | proposed 2026-11-17, unscheduled |
 | [0073](0073-deterministic-simulation-testing-is-an-in-tree-seeded-harness-at-the-seams-the-engine-has.md) | Deterministic simulation testing is an in-tree seeded harness at the seams the engine already has: a message-level simulated channel, a delta-debugging shrinker, no framework | proposed (Plan 0089, draft) |
+| [0074](0074-an-entity-instance-carries-a-mark-drawn-in-the-composite-as-an-outline-at-the-instance-edge-and-a-tint.md) | An entity instance carries a mark, drawn in the composite as an outline where the instance changes and a tint of its shaded colour | proposed (Plan 0077 Phase 6) |
+| [0075](0075-the-overlay-draws-image-tiles-in-its-cells-and-an-entitys-icon-is-a-still-made-once-on-the-cpu-through-the-entity-raycast.md) | The overlay draws image tiles in its cells, and an entity's icon is a still made once on the CPU through the entity raycast | proposed (Plan 0077 Phase 7) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded
