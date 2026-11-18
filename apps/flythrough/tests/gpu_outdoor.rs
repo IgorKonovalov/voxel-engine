@@ -1426,4 +1426,391 @@ mod reading {
             print_row(penumbra.name(), cell, &r, &[("ground", &hit)]);
         }
     }
+
+    /// The lighting grid's hit pixels of `f`'s last frame: their count, the mean luminance of
+    /// the accumulated stored part, and the mean luminance of the accumulated direct part.
+    fn hit_parts(
+        device: &vxe_render::wgpu::Device,
+        queue: &vxe_render::wgpu::Queue,
+        f: &Frame,
+    ) -> (usize, f64, f64) {
+        let hits = vxe_render::debug::read_rgba32f(device, queue, f.light_hit_positions());
+        let acc = vxe_render::debug::read_rgba16f(device, queue, f.accumulated());
+        let dir = vxe_render::debug::read_rgba16f(device, queue, f.direct_accumulated());
+        let lum = |p: &[f32; 4]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
+        let (mut n, mut a, mut d) = (0usize, 0.0f64, 0.0f64);
+        for i in 0..hits.len() {
+            if hits[i][3] < 1.0e30 {
+                n += 1;
+                a += f64::from(lum(&acc[i]));
+                d += f64::from(dir[i][3]);
+            }
+        }
+        let k = n.max(1) as f64;
+        (n, a / k, d / k)
+    }
+
+    /// Plan 0086 Phase 8 diagnosis: the owner's run-12 eye underground (743, 131, 14.7; seed 1,
+    /// no trees, caverns closed to the sky). The world generated whole over chunks
+    /// `x, y` within `VXE_UNDER_R` (default 3) of the eye's chunk and `z` -3..9 (over the
+    /// surface at about 501), mirrored whole. Per view (six axes and a
+    /// reference over the surface looking down): the sky ray's hit rate (`hit_rates`); then the
+    /// store baked whole under the noon sky and the baked visibility of every brick face within
+    /// 6 bricks of the eye's brick; then the noon frame at manual exposure 1 with the bake, at
+    /// `sky_rays` 1 and 0, the mean luminance of the accumulated stored part and direct part at
+    /// the hits. Printed. `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    #[test]
+    #[ignore = "reading"]
+    fn the_underground_eye() {
+        use flythrough::outdoor::OutdoorSource;
+        use vxe_world::{ChunkExtent, VoxelCoord, World};
+        let env = |k: &str, d: i32| {
+            std::env::var(k)
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(d)
+        };
+        let (r, zhi) = (env("VXE_UNDER_R", 3), 9);
+        let source = OutdoorSource::new(1);
+        let eye = VoxelCoord([743, 131, 15]);
+        let c = eye.chunk().0;
+        let extent = ChunkExtent::new([c[0] - r, c[1] - r, -3], [c[0] + r + 1, c[1] + r + 1, zhi]);
+        let t = std::time::Instant::now();
+        let world = World::generate(extent, &source, &flythrough::outdoor_materials());
+        println!(
+            "reading: the_underground_eye: extent {extent:?} ({} chunks) generated in {:.1} s",
+            extent.len(),
+            t.elapsed().as_secs_f64()
+        );
+        let Some(mut rig) = mirrored(world, eye) else {
+            return;
+        };
+        println!("reading: adapter {}", rig.adapter);
+        let p = [743.5f32, 131.5, 14.7];
+        let top = source.height(743, 131) as f32 + 20.0;
+        let mut views: Vec<(String, vxe_render::Camera)> = [
+            ("+x", [1.0, 0.0, 0.0]),
+            ("-x", [-1.0, 0.0, 0.0]),
+            ("+y", [0.0, 1.0, 0.0]),
+            ("-y", [0.0, -1.0, 0.0]),
+            ("up", [0.2, 0.0, 1.0]),
+            ("down", [0.2, 0.0, -1.0]),
+        ]
+        .iter()
+        .map(|(n, d)| {
+            (
+                n.to_string(),
+                flythrough::camera_looking_at(p, [p[0] + d[0], p[1] + d[1], p[2] + d[2]]),
+            )
+        })
+        .collect();
+        views.push((
+            "surface ref".into(),
+            flythrough::camera_looking_at([p[0], p[1], top], [p[0] + 30.0, p[1], top - 20.0]),
+        ));
+        for (name, cam) in &views {
+            let (rate, _) = hit_rates(&rig, cam);
+            let hits: Vec<f64> = rate.iter().flatten().copied().collect();
+            let mean = hits.iter().sum::<f64>() / hits.len().max(1) as f64;
+            let lit = hits.iter().filter(|&&v| v > 0.0).count();
+            let max = hits.iter().copied().fold(0.0, f64::max);
+            println!(
+                "reading: view {name}: sky ray hit rate over {} hit pixels mean {mean:.4} max {max:.3}, pixels with any hit {lit}",
+                hits.len()
+            );
+        }
+        let noon = flythrough::daylight::Clock::default().sky(flythrough::outdoor::BASE_Z as f32);
+        let mut f = Frame::new(&rig.device, 320, 180);
+        f.set_sky(Some(noon));
+        let t = std::time::Instant::now();
+        let report = f
+            .bake_until(
+                &rig.device,
+                &rig.queue,
+                &mut rig.gpu,
+                &rig.world,
+                rig.world.extent(),
+                &vxe_render::BakeSettings::default(),
+                &mut |_| {},
+            )
+            .expect("the store fits");
+        println!(
+            "reading: bake {} chunks, {} faces, {} sky rays in {:.1} s",
+            report.chunks,
+            report.faces,
+            report.sky_rays,
+            t.elapsed().as_secs_f64()
+        );
+        let blocks = support::bake::frame_blocks(&rig.device, &rig.queue, &f, rig.world.extent());
+        let (vis, _) = support::bake::sky_cells_of(&blocks);
+        let eb = eye.0.map(|v| v.div_euclid(8));
+        for (label, near) in [
+            ("within 6 bricks of the eye", 6),
+            ("under z 400 (any)", 1000),
+        ] {
+            let mut by_face = [(0usize, 0.0f64, 0.0f32, 0usize); 6];
+            let mut none = 0usize;
+            for ((b, f), v) in &vis {
+                let close = (0..3).all(|k| (b[k] - eb[k]).abs() <= near);
+                if !close || b[2] * 8 >= 400 {
+                    continue;
+                }
+                match v {
+                    Some(v) => {
+                        let e = &mut by_face[usize::from(*f)];
+                        e.0 += 1;
+                        e.1 += f64::from(*v);
+                        e.2 = e.2.max(*v);
+                        if *v > 0.05 {
+                            e.3 += 1;
+                        }
+                    }
+                    None => none += 1,
+                }
+            }
+            for (fi, (n, sum, max, over)) in by_face.iter().enumerate() {
+                println!(
+                    "reading: baked visibility {label}, face {fi}: {n} faces, mean {:.4}, max {max:.3}, over 0.05: {over}",
+                    sum / (*n).max(1) as f64
+                );
+            }
+            println!("reading: baked visibility {label}: {none} faces without a value");
+        }
+        for rays in [1u32, 0] {
+            for (name, cam) in &views {
+                f.set_lighting(Lighting {
+                    lamp: false,
+                    exposure: Exposure::Manual(1.0),
+                    sky_rays: rays,
+                    ..flythrough::default_lighting()
+                });
+                for _ in 0..64 {
+                    f.step(
+                        &rig.device,
+                        &rig.queue,
+                        &rig.gpu,
+                        cam,
+                        &LightParams::headlamp(),
+                    );
+                }
+                let (n, a, d) = hit_parts(&rig.device, &rig.queue, &f);
+                println!(
+                    "reading: noon bake, sky rays {rays}, view {name}: {n} hits, stored part luminance mean {a:.4e}, direct part mean {d:.4e}"
+                );
+            }
+        }
+    }
+
+    /// Plan 0086 Phase 8 diagnosis, streamed: the run-12 eye underground (743, 131, 14.7;
+    /// seed 1, no trees) reached as by a jump, the hills streamed in process around it at
+    /// `VXE_UNDER_R` full (default 6) and 2 more LOD (hysteresis 1, 8 workers, a following
+    /// window), the spawn's block first, then each frame the stream updated, polled and synced
+    /// with no budget, the live queue stepped at the fly-through's settings (coarse 8, near 2,
+    /// the default slice) and the frame rendered at 12:00, manual exposure 1, `sky_rays`
+    /// `VXE_UNDER_RAYS` (default 1), facing +x. At listed
+    /// frames: the hit pixels' mean luminance of the accumulated stored part and of the direct
+    /// part, the share of lighting pixels that cast the sky ray and their mean visibility, the
+    /// mirrored chunks and the queue's depth. Printed. `VXE_TEST_ADAPTER` picks the adapter.
+    #[test]
+    #[ignore = "reading"]
+    fn the_underground_eye_streamed() {
+        use flythrough::outdoor::OutdoorSource;
+        use std::sync::Arc;
+        use support::SyncNow;
+        use vxe_render::{GpuWorld, LodParams, MirrorConfig, QueueView, Window};
+        use vxe_world::{
+            ChunkCoord, PersistConfig, Residency, StreamConfig, Streamer, Tier, VoxelCoord, World,
+        };
+        const READS: [u32; 12] = [1, 3, 10, 30, 60, 120, 240, 480, 720, 960, 1440, 1920];
+        let env = |k: &str, d: i32| {
+            std::env::var(k)
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(d)
+        };
+        let r = env("VXE_UNDER_R", 6);
+        let residency = Residency {
+            r_full: r,
+            r_lod: r + 2,
+            hysteresis: 1,
+        };
+        let side = 2 * (residency.r_lod + residency.hysteresis) + 1;
+        let budget = 1u64 << 30;
+        let Some((device, queue, adapter)) = support::reading_device(budget) else {
+            return;
+        };
+        println!("reading: the_underground_eye_streamed on {adapter}, r_full {r}");
+        let eye = VoxelCoord([743, 131, 15]);
+        let world = World::new(&flythrough::outdoor_materials());
+        let mut streamer = Streamer::new(
+            Arc::new(OutdoorSource::new(1)),
+            StreamConfig {
+                residency,
+                workers: 8,
+                persist: PersistConfig::default(),
+            },
+        );
+        let mut gpu = GpuWorld::with_config(
+            &device,
+            MirrorConfig {
+                budget_bytes: budget,
+                ..MirrorConfig::new(Window::Follow { side })
+            },
+        );
+        streamer.set_radii(1, 1);
+        streamer.update(&world, &[eye]);
+        let ev = streamer.wait_idle(&world);
+        gpu.apply_events(&ev);
+        gpu.set_focus(eye);
+        gpu.sync_now(&world, &device, &queue)
+            .expect("the mirror fits");
+        streamer.set_radii(residency.r_full, residency.r_lod);
+        let mut frame = Frame::new(&device, 320, 180);
+        frame.set_lod(LodParams {
+            r_full: residency.r_full,
+            forced_level: None,
+        });
+        frame.set_lighting(Lighting {
+            lamp: false,
+            exposure: Exposure::Manual(1.0),
+            sky_rays: env("VXE_UNDER_RAYS", 1) as u32,
+            ..flythrough::default_lighting()
+        });
+        frame.set_sky(Some(
+            flythrough::daylight::Clock::default().sky(flythrough::outdoor::BASE_Z as f32),
+        ));
+        frame.set_dt(1.0 / 60.0);
+        frame.start_bake_queue(
+            &queue,
+            &gpu,
+            vxe_render::queue_settings(),
+            vxe_render::DEFAULT_BAKE_SLICE_MS,
+        );
+        frame.set_bake_coarse(8, 2);
+        let yaw = 0.0;
+        let camera = flythrough::Pose {
+            name: "underground",
+            position: [743.5, 131.5, 14.7],
+            yaw_deg: yaw,
+            pitch_deg: 0.0,
+            exposure: 1.0,
+        }
+        .camera();
+        let lum = |p: &[f32; 4]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
+        for f in 0..=READS[READS.len() - 1] {
+            streamer.update(&world, &[eye]);
+            let ev = streamer.poll(&world);
+            gpu.apply_events(&ev);
+            gpu.set_focus(eye);
+            let mut enc = device.create_command_encoder(&Default::default());
+            gpu.sync(&world, &queue, &mut enc).expect("the mirror fits");
+            queue.submit([enc.finish()]);
+            let resident_fn = |c: ChunkCoord| streamer.tier(c) == Some(Tier::Full);
+            let view = QueueView {
+                eye: camera.position.to_array(),
+                forward: camera.basis().0.to_array(),
+                resident: Some(&resident_fn),
+                samples: None,
+                interval_s: 1.0 / 60.0,
+                hold: Some(residency.r_full + gpu.light_radius() + 1),
+                half_angle: {
+                    let [w, h] = frame.output_size();
+                    vxe_render::internals::view_half_angle(camera.vfov, w as f32 / h as f32)
+                },
+                frustum: None,
+                full_radius: Some(residency.r_full),
+            };
+            let st = frame
+                .bake_queue_step(&device, &queue, &mut gpu, &world, &view)
+                .expect("the queue runs")
+                .expect("the queue's step");
+            frame.step(&device, &queue, &gpu, &camera, &LightParams::headlamp());
+            if !READS.contains(&f) {
+                continue;
+            }
+            let hits =
+                vxe_render::debug::read_rgba32f(&device, &queue, frame.light_hit_positions());
+            let acc = vxe_render::debug::read_rgba16f(&device, &queue, frame.accumulated());
+            let dir = vxe_render::debug::read_rgba16f(&device, &queue, frame.direct_accumulated());
+            let vis = vxe_render::debug::read_rgba8(&device, &queue, frame.visibility_samples());
+            let (mut n, mut a, mut d, mut cast, mut open) =
+                (0usize, 0.0f64, 0.0f64, 0usize, 0.0f64);
+            for i in 0..hits.len() {
+                if hits[i][3] < 1.0e30 {
+                    n += 1;
+                    a += f64::from(lum(&acc[i]));
+                    d += f64::from(dir[i][3]);
+                    if vis[4 * i + 3] > 0 {
+                        cast += 1;
+                        open += f64::from(vis[4 * i]) / 255.0;
+                    }
+                }
+            }
+            println!(
+                "reading: frame {f}: {n} hits, stored {:.4e}, direct {:.4e}, sky ray cast at {cast} (mean open {:.4}), mirrored {}, queue depth {} baked {} unbaked {} waiting reach {}",
+                a / n.max(1) as f64,
+                d / n.max(1) as f64,
+                open / cast.max(1) as f64,
+                gpu.mirrored_chunks(),
+                st.depth,
+                st.baked,
+                st.unbaked,
+                st.waiting_reach,
+            );
+        }
+    }
+
+    /// Plan 0086 Phase 8 diagnosis: the tunnel rig (`tunnel_rig`) baked whole under the noon
+    /// sky at the defaults; at eleven stations along the tunnel's axis (fraction 0 at the mouth,
+    /// 1 at the chamber's centre), the baked visibility of the brick faces within 4 bricks of
+    /// the station, by face direction: count and mean. Printed. Run once as built and once with
+    /// the bake's sky cap raised by hand, to split the cap's share. `VXE_TEST_ADAPTER` picks the
+    /// adapter.
+    #[test]
+    #[ignore = "reading"]
+    fn the_tunnel_bake_by_station() {
+        let Some((mut rig, _)) = tunnel_rig() else {
+            return;
+        };
+        let source = flythrough::outdoor::OutdoorSource::new(1);
+        let [a, c] = source.tunnel();
+        let noon = flythrough::daylight::Clock::default().sky(flythrough::outdoor::BASE_Z as f32);
+        let mut f = Frame::new(&rig.device, 320, 180);
+        f.set_sky(Some(noon));
+        f.bake_until(
+            &rig.device,
+            &rig.queue,
+            &mut rig.gpu,
+            &rig.world,
+            rig.world.extent(),
+            &vxe_render::BakeSettings::default(),
+            &mut |_| {},
+        )
+        .expect("the store fits");
+        let blocks = support::bake::frame_blocks(&rig.device, &rig.queue, &f, rig.world.extent());
+        let (vis, _) = support::bake::sky_cells_of(&blocks);
+        println!("reading: the_tunnel_bake_by_station on {}", rig.adapter);
+        for station in 0..=10i64 {
+            let centre = [0, 1, 2].map(|k| (a[k] + (c[k] - a[k]) * station / 10) as i32);
+            let cb = centre.map(|v| v.div_euclid(8));
+            let mut by = [(0usize, 0.0f64); 6];
+            for ((b, face), v) in &vis {
+                if (0..3).all(|k| (b[k] - cb[k]).abs() <= 4)
+                    && let Some(v) = v
+                {
+                    by[usize::from(*face)].0 += 1;
+                    by[usize::from(*face)].1 += f64::from(*v);
+                }
+            }
+            let row: Vec<String> = ["-x", "+x", "-y", "+y", "-z", "+z"]
+                .iter()
+                .zip(by)
+                .map(|(n, (k, s))| format!("{n} {k}:{:.4}", s / k.max(1) as f64))
+                .collect();
+            println!(
+                "reading: station {station} at {centre:?}: {}",
+                row.join(", ")
+            );
+        }
+    }
 }
