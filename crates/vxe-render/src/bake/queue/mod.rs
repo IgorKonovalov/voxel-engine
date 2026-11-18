@@ -464,6 +464,32 @@ pub(super) fn reach_columns_final(
     true
 }
 
+/// A reading hook: the chunks that hold a column over `coord`'s reach footprint from final
+/// under `view` ([`reach_columns_final`], [`GpuWorld::column_final`]), each with whether it is
+/// pending upload (else the streamer's sphere names it and it is not mirrored). Empty when
+/// every column is final.
+pub fn finality_blockers(
+    gpu: &GpuWorld,
+    coord: ChunkCoord,
+    lr: i32,
+    view: &QueueView<'_>,
+) -> Vec<(ChunkCoord, bool)> {
+    let held = held_by_streamer(view.eye, view.lod_radius, view.resident);
+    let w = gpu.window();
+    let mut out = Vec::new();
+    reach_columns_final(coord, lr, |x, y| {
+        for z in w.min.0[2]..w.min.0[2] + w.size()[2].max(1) {
+            let c = ChunkCoord([x, y, z]);
+            let pending = gpu.is_pending(c);
+            if pending || held.as_ref().is_some_and(|h| h(c) && !gpu.is_mirrored(c)) {
+                out.push((c, pending));
+            }
+        }
+        true
+    });
+    out
+}
+
 /// The chunks a column waits for before it is final ([`GpuWorld::column_final`]): in a streamed
 /// world with `lod_radius`, those within it of `eye`'s chunk (the streamer's sphere, `d2 <=
 /// r^2`); else none beyond the pending ones.

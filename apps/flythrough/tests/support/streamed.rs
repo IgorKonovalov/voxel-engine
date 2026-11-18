@@ -15,6 +15,19 @@ pub struct Streamed {
     pub r: i32,
     pub rays: u32,
     pub reads: Vec<u32>,
+    /// The fly-through's streamed residency and mirror in place of the rig's own ([`Hold`]).
+    pub hold: Option<Hold>,
+}
+
+/// [`streamed`] at the fly-through's streamed settings: LOD radius `r_lod`, the mirror's
+/// default 3 GiB budget with the fly-through's record count and window, the column wait on or
+/// off (`QueueView::lod_radius`), and at the end the unbaked chunks within the full radius,
+/// each with the chunks that hold its reach's columns from final
+/// ([`vxe_render::finality_blockers`]) and why.
+#[derive(Clone, Copy, Debug)]
+pub struct Hold {
+    pub r_lod: i32,
+    pub wait: bool,
 }
 
 /// What [`streamed`] read at a frame: the hit pixels' mean luminance of the accumulated
@@ -46,23 +59,19 @@ pub fn streamed(s: Streamed) -> Vec<StreamedRead> {
     let r = s.r;
     let residency = Residency {
         r_full: r,
-        r_lod: r + 2,
+        r_lod: s.hold.map_or(r + 2, |h| h.r_lod),
         hysteresis: 1,
     };
     let side = 2 * (residency.r_lod + residency.hysteresis) + 1;
-    let budget = 1u64 << 30;
+    let budget = s
+        .hold
+        .map_or(1u64 << 30, |_| vxe_render::DEFAULT_BUDGET_BYTES);
     let Some((device, queue, adapter)) = super::reading_device(budget) else {
         return out;
     };
     println!("reading: {} on {adapter}, r_full {r}", s.label);
     let eye = s.eye;
     let world = World::new(&flythrough::outdoor_materials());
-    struct DynSource(std::sync::Arc<dyn vxe_world::WorldSource + Send + Sync>);
-    impl vxe_world::WorldSource for DynSource {
-        fn chunk(&self, coord: ChunkCoord, out: &mut vxe_world::Chunk) {
-            self.0.chunk(coord, out);
-        }
-    }
     let mut streamer = Streamer::new(
         std::sync::Arc::new(DynSource(s.source.clone())),
         StreamConfig {
@@ -75,13 +84,13 @@ pub fn streamed(s: Streamed) -> Vec<StreamedRead> {
         &device,
         MirrorConfig {
             budget_bytes: budget,
+            record_chunks: s.hold.map(|_| flythrough::stream_record_chunks(residency)),
             ..MirrorConfig::new(Window::Follow { side })
         },
     );
     streamer.set_radii(1, 1);
     streamer.update(&world, &[eye]);
-    let ev = streamer.wait_idle(&world);
-    gpu.apply_events(&ev);
+    gpu.apply_events(&streamer.wait_idle(&world));
     gpu.set_focus(eye);
     gpu.sync_now(&world, &device, &queue)
         .expect("the mirror fits");
@@ -113,10 +122,10 @@ pub fn streamed(s: Streamed) -> Vec<StreamedRead> {
     let camera = s.camera;
     let lum = |p: &[f32; 4]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
     let last = s.reads.iter().copied().max().unwrap_or(0);
+    let wait = s.hold.is_none_or(|h| h.wait);
     for f in 0..=last {
         streamer.update(&world, &[eye]);
-        let ev = streamer.poll(&world);
-        gpu.apply_events(&ev);
+        gpu.apply_events(&streamer.poll(&world));
         gpu.set_focus(eye);
         let mut enc = device.create_command_encoder(&Default::default());
         gpu.sync(&world, &queue, &mut enc).expect("the mirror fits");
@@ -135,13 +144,17 @@ pub fn streamed(s: Streamed) -> Vec<StreamedRead> {
             },
             frustum: None,
             full_radius: Some(residency.r_full),
-            lod_radius: Some(residency.r_lod.max(residency.r_full)),
+            lod_radius: wait.then_some(residency.r_lod.max(residency.r_full)),
         };
         let st = frame
             .bake_queue_step(&device, &queue, &mut gpu, &world, &view)
             .expect("the queue runs")
             .expect("the queue's step");
         frame.step(&device, &queue, &gpu, &camera, &LightParams::headlamp());
+        if f == last && s.hold.is_some() {
+            held_report(&gpu, &frame, &view, eye, residency.r_full);
+            held_hits(&device, &queue, &gpu, &frame, &view, &|c| streamer.tier(c));
+        }
         if !s.reads.contains(&f) {
             continue;
         }
@@ -170,7 +183,9 @@ pub fn streamed(s: Streamed) -> Vec<StreamedRead> {
             black: ss.still_black,
         };
         println!(
-            "reading: frame {f}: {n} hits, stored {:.4e}, direct {:.4e}, sky ray cast at {cast} (mean open {:.4}), missing {} black {} fallback {}, mirrored {}, queue depth {} baked {} unbaked {} waiting reach {}",
+            "reading: frame {f}: pending {}, coarse {}, {n} hits, stored {:.4e}, direct {:.4e}, sky ray cast at {cast} (mean open {:.4}), missing {} black {} fallback {}, mirrored {}, queue depth {} baked {} unbaked {} waiting reach {}",
+            gpu.pending_chunks(),
+            st.coarse,
             read.stored,
             read.direct,
             open / cast.max(1) as f64,
@@ -186,4 +201,136 @@ pub fn streamed(s: Streamed) -> Vec<StreamedRead> {
         out.push(read);
     }
     out
+}
+
+/// A shared world source as the streamer takes it.
+struct DynSource(std::sync::Arc<dyn vxe_world::WorldSource + Send + Sync>);
+
+impl vxe_world::WorldSource for DynSource {
+    fn chunk(&self, coord: vxe_world::ChunkCoord, out: &mut vxe_world::Chunk) {
+        self.0.chunk(coord, out);
+    }
+}
+
+/// [`Hold`]'s end report: every full chunk mirrored within `r_full` of `eye`'s chunk that holds
+/// no block and is not known faceless, with its queue tracks and the chunks that hold its
+/// reach's columns from final, each named pending, or wanted and absent with the streamer's
+/// distance from the eye's chunk and whether it lies inside the mirror's window.
+fn held_report(
+    gpu: &vxe_render::GpuWorld,
+    frame: &vxe_render::Frame,
+    view: &vxe_render::QueueView<'_>,
+    eye: vxe_world::VoxelCoord,
+    r_full: i32,
+) {
+    let e = eye.0.map(|v| v.div_euclid(64));
+    let q = frame.bake_queue().expect("the queue runs");
+    let store = frame.store();
+    let lr = gpu.light_radius();
+    let w = gpu.window();
+    let mut unbaked = Vec::new();
+    for c in gpu.full_chunks() {
+        let d2: i64 = (0..3).map(|k| i64::from(c.0[k] - e[k]).pow(2)).sum();
+        if d2 > i64::from(r_full).pow(2) || store.block(c).is_some() {
+            continue;
+        }
+        let tracks = q.tracks(c);
+        if tracks.contains(&"faceless") {
+            continue;
+        }
+        unbaked.push((c, tracks));
+    }
+    println!(
+        "reading: held: {} full chunks within r_full {r_full} unbaked (window {:?} + {:?})",
+        unbaked.len(),
+        w.min.0,
+        w.size()
+    );
+    let mut blockers = std::collections::BTreeMap::<[i32; 3], (bool, usize)>::new();
+    for (c, tracks) in &unbaked {
+        let b = vxe_render::finality_blockers(gpu, *c, lr, view);
+        println!(
+            "reading: held: unbaked {:?} tracks {:?}: {} blockers",
+            c.0,
+            tracks,
+            b.len()
+        );
+        for (bc, pending) in b {
+            blockers.entry(bc.0).or_insert((pending, 0)).1 += 1;
+        }
+    }
+    for (bc, (pending, n)) in blockers {
+        let d2: i64 = (0..3).map(|k| i64::from(bc[k] - e[k]).pow(2)).sum();
+        let inside = (0..3).all(|k| bc[k] >= w.min.0[k] && bc[k] < w.min.0[k] + w.size()[k]);
+        println!(
+            "reading: held: blocker {bc:?} holds {n}: pending {pending}, d2 {d2}, in window {inside}"
+        );
+    }
+}
+
+/// [`Hold`]'s report of the hit chunks with no block at the last frame: per chunk the lighting
+/// pixels that hit it, its queue tracks, its streamer tier, whether the mirror holds it full,
+/// and the chunks that hold its columns from final.
+fn held_hits(
+    device: &vxe_render::wgpu::Device,
+    queue: &vxe_render::wgpu::Queue,
+    gpu: &vxe_render::GpuWorld,
+    frame: &vxe_render::Frame,
+    view: &vxe_render::QueueView<'_>,
+    tier: &dyn Fn(vxe_world::ChunkCoord) -> Option<vxe_world::Tier>,
+) {
+    let hits = vxe_render::debug::read_rgba32f(device, queue, frame.light_hit_positions());
+    let mut by = std::collections::BTreeMap::<[i32; 3], usize>::new();
+    for h in hits.iter().filter(|h| h[3] < 1.0e30) {
+        let c = [0, 1, 2].map(|k| (h[k].floor() as i32).div_euclid(64));
+        if frame.store().block(vxe_world::ChunkCoord(c)).is_none() {
+            *by.entry(c).or_default() += 1;
+        }
+    }
+    if let Ok(path) = std::env::var("VXE_HELD_PNG") {
+        // The display, and beside it the lighting grid: red where the hit's chunk holds no
+        // block, grey where it does, black at a miss.
+        let t = frame.target();
+        let disp = vxe_render::debug::read_rgba8(device, queue, t);
+        super::write_png(&path.clone().into(), &disp, t.width(), t.height());
+        let g = frame.light_hit_positions();
+        let mask: Vec<u8> = hits
+            .iter()
+            .flat_map(|h| {
+                if h[3] >= 1.0e30 {
+                    return [0, 0, 0, 255];
+                }
+                let c = [0, 1, 2].map(|k| (h[k].floor() as i32).div_euclid(64));
+                if frame.store().block(vxe_world::ChunkCoord(c)).is_none() {
+                    [255, 0, 0, 255]
+                } else {
+                    [128, 128, 128, 255]
+                }
+            })
+            .collect();
+        super::write_png(
+            &format!("{path}.mask.png").into(),
+            &mask,
+            g.width(),
+            g.height(),
+        );
+    }
+    let q = frame.bake_queue().expect("the queue runs");
+    let jobs = q.jobs();
+    println!("reading: held hits: {} chunks hit with no block", by.len());
+    for (c, n) in by {
+        let cc = vxe_world::ChunkCoord(c);
+        let b = vxe_render::finality_blockers(gpu, cc, gpu.light_radius(), view);
+        println!(
+            "reading: held hit chunk {c:?}: {n} px, tracks {:?}, in a job {}, tier {:?}, mirrored {} lod {} pending {}, {} blockers {:?}",
+            q.tracks(cc),
+            jobs.contains(&cc),
+            tier(cc),
+            gpu.is_mirrored(cc),
+            gpu.is_lod(cc),
+            gpu.is_pending(cc),
+            b.len(),
+            b.iter().take(4).collect::<Vec<_>>()
+        );
+    }
 }

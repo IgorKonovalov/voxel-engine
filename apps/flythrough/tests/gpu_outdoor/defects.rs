@@ -1,0 +1,558 @@
+// `gpu_outdoor`'s Phase 16 readings of the second window's defects (Plan 0086), included by
+// `gpu_outdoor.rs` (kept apart for the file-size cap).
+
+mod defects {
+    mod reading {
+        use super::super::support;
+
+        /// Plan 0086 Phase 16 reading 1 (defect 1, the window's 21.png): the hills at 17:00
+        /// streamed about 21.png's eye (`-352.5 -30.2 671.8`, chunk `-6 -1 10`; the HUD hid the x
+        /// to its last digit, so the chunk's middle), looking 30 degrees down, at the fly-through's
+        /// residency (16, 24) and mirror (`support::streamed::Hold`), the column wait on
+        /// (`VXE_HELD_WAIT=0` off), 1800 frames: every 60 frames the store's counts and the
+        /// queue's; at the end every unbaked chunk within the full radius and what holds its
+        /// columns from final. `VXE_TEST_ADAPTER` picks the adapter.
+        #[test]
+        #[ignore = "reading"]
+        fn the_hills_at_dusk_held() {
+            let wait = std::env::var("VXE_HELD_WAIT").as_deref() != Ok("0");
+            let frames: u32 = std::env::var("VXE_HELD_FRAMES")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1800);
+            let camera = flythrough::Pose {
+                name: "dusk",
+                position: [-352.5, -30.2, 671.8],
+                yaw_deg: 0.0,
+                pitch_deg: -30.0,
+                exposure: 1.0,
+            }
+            .camera();
+            let sky = flythrough::daylight::Clock {
+                minutes: 17.0 * 60.0,
+                ..Default::default()
+            }
+            .sky(flythrough::outdoor::BASE_Z as f32);
+            println!("reading: the hills at dusk, column wait {wait}");
+            support::streamed::streamed(support::streamed::Streamed {
+                label: "the_hills_at_dusk_held",
+                source: std::sync::Arc::new(flythrough::outdoor::OutdoorSource::new(1)),
+                eye: vxe_world::VoxelCoord([-353, -31, 671]),
+                camera,
+                sky,
+                styles: Vec::new(),
+                r: 16,
+                rays: 1,
+                reads: (0..=frames).step_by(60).collect(),
+                hold: Some(support::streamed::Hold { r_lod: 24, wait }),
+            });
+        }
+
+        /// A frame on `rig` for Phase 16's readings: 320 x 180 native, the store's counters on, the
+        /// fly-through's look, voxel leaves, the lamp off, `lighting` over the defaults, `sky`,
+        /// the world baked whole when `bake`.
+        fn defect_frame(
+            rig: &mut support::terms::Rig,
+            sky: Option<vxe_render::sky::Sky>,
+            lighting: impl Fn(vxe_render::Lighting) -> vxe_render::Lighting,
+            hooks: vxe_render::LightHooks,
+            bake: bool,
+        ) -> vxe_render::Frame {
+            defect_frame_fsr(rig, sky, lighting, hooks, bake, false)
+        }
+
+        /// [`defect_frame`], with `fsr2` at 320 x 180 internal under FSR 2 to 480 x 270.
+        fn defect_frame_fsr(
+            rig: &mut support::terms::Rig,
+            sky: Option<vxe_render::sky::Sky>,
+            lighting: impl Fn(vxe_render::Lighting) -> vxe_render::Lighting,
+            hooks: vxe_render::LightHooks,
+            bake: bool,
+            fsr2: bool,
+        ) -> vxe_render::Frame {
+            let mut f = if fsr2 {
+                let mut f = vxe_render::Frame::with_sizes(&rig.device, [320, 180], [480, 270]);
+                f.set_upscaler_kind(
+                    &rig.device,
+                    vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default()),
+                );
+                f
+            } else {
+                vxe_render::Frame::new(&rig.device, 320, 180)
+            };
+            f.set_count_store(true);
+            f.set_light_hooks(hooks);
+            f.set_look(vxe_render::LookParams {
+                far_normal: flythrough::LookPreset::DEFAULT.far_normal,
+                ..vxe_render::LookParams::default()
+            });
+            f.set_material_styles(
+                &rig.queue,
+                &flythrough::outdoor_styles(flythrough::LeafShadow::Voxel),
+            );
+            f.set_lighting(lighting(vxe_render::Lighting {
+                lamp: false,
+                ..flythrough::default_lighting()
+            }));
+            f.set_sky(sky);
+            if bake {
+                f.bake_until(
+                    &rig.device,
+                    &rig.queue,
+                    &mut rig.gpu,
+                    &rig.world,
+                    rig.world.extent(),
+                    &vxe_render::BakeSettings::default(),
+                    &mut |_| {},
+                )
+                .expect("the store fits");
+            }
+            f.set_dt(1.0 / 60.0);
+            f
+        }
+
+        /// Plan 0086 Phase 16 reading 2 (defect 3, the window's 20.png): the tunnel of seed 1
+        /// baked whole under the noon sky, the view out (19.png's pose, `--spawn inside`), the
+        /// exposure pinned at -10.75 EV, 320 x 180 native or under FSR 2 to 480 x 270: 64 settle
+        /// frames, 32 frames read with no light, then the fly-through's `6` five times at once
+        /// (yaws -30, -15, 0, 15, 30, 25 degrees down, so they stop on the floor near the eye as
+        /// 20.png's did; `TestLights::fire` and `step`) and 200 frames read. The lit patch is the
+        /// display pixels whose level at the end is over 1.5 times and 16 levels over their mean
+        /// before; its p99 and mean frame-to-frame change before, in flight and at rest (16
+        /// frames after the last light stops on), the share of its edge's lighting pixels whose
+        /// direct sample is off its at-rest mean by over 75 % a frame, the light pass's ms, the
+        /// sky rays cast and the store's black count. Arms: the sky at the defaults, `sky_rays` 0,
+        /// and no sky (the lights alone: Plan 0058's mechanism). `VXE_TEST_ADAPTER` picks the
+        /// adapter.
+        #[test]
+        #[ignore = "reading"]
+        #[allow(clippy::too_many_lines, reason = "a reading's arms in one place")]
+        fn the_tunnel_under_fired_lights() {
+            use support::defects::{Stepper, fire_five, level, p99_mean};
+            let Some((mut rig, cams)) = support::terms::tunnel_rig() else {
+                return;
+            };
+            println!("reading: the tunnel under fired lights on {}", rig.adapter);
+            let cam = cams[0].1;
+            let noon = flythrough::daylight::Clock::default().sky(flythrough::outdoor::BASE_Z as f32);
+            let e = 2f32.powf(-10.75);
+            for (arm, sky, rays, fsr2) in [
+                ("sky, rays 1, native", Some(noon), 1, false),
+                ("sky, rays 1, FSR 2", Some(noon), 1, true),
+                ("sky, rays 0, FSR 2", Some(noon), 0, true),
+                ("no sky, FSR 2", None, 1, true),
+            ] {
+                let f = defect_frame_fsr(
+                    &mut rig,
+                    sky,
+                    |l| vxe_render::Lighting {
+                        exposure: vxe_render::Exposure::Manual(e),
+                        sky_rays: rays,
+                        ..l
+                    },
+                    Default::default(),
+                    true,
+                    fsr2,
+                );
+                let (dw, dh) = (f.target().width() as usize, f.target().height() as usize);
+                let mut s = Stepper::new(&rig, f);
+                for _ in 0..64 {
+                    s.run(&rig, &cam);
+                }
+                let mut shots = Vec::new();
+                for _ in 0..32 {
+                    let sh = s.step(&rig, &cam);
+                    shots.push((level(&sh.display), sh, false));
+                }
+                let mut lights = fire_five(&rig, &cam, [-30.0, -15.0, 0.0, 15.0, 30.0], 25.0);
+                let (fwd, _, up) = cam.basis();
+                let mut landed = None;
+                for i in 0..200 {
+                    lights.step(
+                        1.0 / 60.0,
+                        cam.position.to_array(),
+                        fwd.to_array(),
+                        up.to_array(),
+                    );
+                    s.frame.set_lights(&lights.list());
+                    let flying = lights.lights.iter().any(|l| l.flight.is_some());
+                    if !flying && landed.is_none() {
+                        landed = Some(i);
+                    }
+                    let sh = s.step(&rig, &cam);
+                    shots.push((level(&sh.display), sh, flying));
+                }
+                let landed = landed.unwrap_or(200) + 32;
+                let n = shots[0].0.len();
+                let before: Vec<f64> = (0..n)
+                    .map(|i| shots[..32].iter().map(|s| f64::from(s.0[i])).sum::<f64>() / 32.0)
+                    .collect();
+                let end = &shots.last().expect("frames").0;
+                let lit: Vec<bool> = (0..n)
+                    .map(|i| {
+                        f64::from(end[i]) > 1.5 * before[i] && f64::from(end[i]) > before[i] + 16.0
+                    })
+                    .collect();
+                let window = |a: usize, b: usize| {
+                    let mut c = Vec::new();
+                    for k in a.max(1)..b.min(shots.len()) {
+                        for i in (0..n).filter(|&i| lit[i]) {
+                            c.push(shots[k].0[i].abs_diff(shots[k - 1].0[i]));
+                        }
+                    }
+                    p99_mean(c)
+                };
+                let rest0 = landed + 16;
+                let (b, fl, r) = (
+                    window(1, 32),
+                    window(33, landed),
+                    window(rest0, shots.len()),
+                );
+                // The lit patch's lighting pixels, and its edge: a lit one with an unlit 4-neighbour.
+                let gl = shots[0].1.direct.len();
+                let gw = 160.min(gl);
+                let mut glit = vec![false; gl];
+                for i in (0..n).filter(|&i| lit[i]) {
+                    glit[support::defects::grid_of(i, dw, dh, gw, gl)] = true;
+                }
+                // The spatial dither at rest: lit-patch pixels off their 3 x 3 mean by over half.
+                let dither = {
+                    let e: Vec<f64> = end.iter().map(|&v| f64::from(v)).collect();
+                    let mut k = 0usize;
+                    for i in (0..n).filter(|&i| lit[i]) {
+                        let (x, y) = ((i % dw) as i64, (i / dw) as i64);
+                        let (mut s, mut c) = (0.0, 0.0);
+                        for dy in -1..=1 {
+                            for dx in -1..=1 {
+                                let (u, v) = (x + dx, y + dy);
+                                if u >= 0 && v >= 0 && (u as usize) < dw && (v as usize) < dh {
+                                    s += e[v as usize * dw + u as usize];
+                                    c += 1.0;
+                                }
+                            }
+                        }
+                        k += usize::from((e[i] - s / c).abs() > 0.5 * s / c);
+                    }
+                    100.0 * k as f64 / lit.iter().filter(|&&l| l).count().max(1) as f64
+                };
+                let gh = gl / gw;
+                let edge: Vec<usize> = (0..gl)
+                    .filter(|&g| {
+                        glit[g] && {
+                            let (x, y) = (g % gw, g / gw);
+                            (x == 0 || !glit[g - 1])
+                                || (x + 1 == gw || !glit[g + 1])
+                                || (y == 0 || !glit[g - gw])
+                                || (y + 1 == gh || !glit[g + gw])
+                        }
+                    })
+                    .collect();
+                let rest = &shots[rest0.min(shots.len())..];
+                let mean_at = |g: usize| {
+                    rest.iter().map(|s| s.1.direct[g]).sum::<f32>() / rest.len().max(1) as f32
+                };
+                let means: Vec<f32> = edge.iter().map(|&g| mean_at(g)).collect();
+                let (mut flips, mut tot) = (0usize, 0usize);
+                for s in rest {
+                    for (k, &g) in edge.iter().enumerate() {
+                        if means[k] > 0.0 {
+                            tot += 1;
+                            if (s.1.direct[g] - means[k]).abs() > 0.75 * means[k] {
+                                flips += 1;
+                            }
+                        }
+                    }
+                }
+                let avg = |a: usize, b: usize, f: &dyn Fn(&support::defects::Shot) -> f64| {
+                    let b = b.min(shots.len());
+                    (a..b).map(|k| f(&shots[k].1)).sum::<f64>() / (b - a).max(1) as f64
+                };
+                let ms = |s: &support::defects::Shot| s.light_ms.unwrap_or(f64::NAN);
+                let cast = |s: &support::defects::Shot| s.cast.iter().filter(|&&c| c).count() as f64;
+                let black = |s: &support::defects::Shot| f64::from(s.black);
+                println!(
+                    "reading: {arm}: landed at {} frames after the shot; lit patch {} px ({dither:.1} % off their 3 x 3 mean by half at the end), edge {} lighting px; change p99/mean before {}/{:.2}, in flight {}/{:.2}, at rest {}/{:.2}; edge flips at rest {:.2} %; light ms before {:.3}, in flight {:.3}, at rest {:.3}; sky rays cast before {:.0}, in flight {:.0}, at rest {:.0}; black before {:.0}, at rest {:.0}",
+                    landed - 32,
+                    lit.iter().filter(|&&l| l).count(),
+                    edge.len(),
+                    b.0,
+                    b.1,
+                    fl.0,
+                    fl.1,
+                    r.0,
+                    r.1,
+                    100.0 * flips as f64 / tot.max(1) as f64,
+                    avg(0, 32, &ms),
+                    avg(32, landed, &ms),
+                    avg(rest0, shots.len(), &ms),
+                    avg(0, 32, &cast),
+                    avg(32, landed, &cast),
+                    avg(rest0, shots.len(), &cast),
+                    avg(0, 32, &black),
+                    avg(rest0, shots.len(), &black),
+                );
+            }
+        }
+
+        /// Plan 0086 Phase 16 reading 3 (defect 4, the dig flash): the hills of seed 1
+        /// (`hills_rig`, the view turned 30 degrees down) at noon on the live queue (the fly-through's settings: coarse 8, near 2,
+        /// the default slice), auto exposure (instant, the outdoor range) pinned once the queue
+        /// drains, 30 frames, then a 10-voxel box carved where the view meets the ground and 120
+        /// frames. Over the display pixels whose lighting hit lies within 64 voxels of the box:
+        /// per frame after the dig the excess dots (luminance over 2 times their own at the last
+        /// frame and over 2 times the 5 x 5 neighbourhood's mean there), the share changing by over
+        /// 16 levels, the sky rays cast and the history's mean age over the region, and the
+        /// queue's dig state. Arms: `sky_rays` 0, 1, 1 with `no_clamp`, and the sun off
+        /// (`key_off`). `VXE_TEST_ADAPTER` picks the adapter.
+        #[test]
+        #[ignore = "reading"]
+        #[allow(clippy::too_many_lines, reason = "a reading's arms in one place")]
+        fn the_dig_flash() {
+            use support::defects::{Stepper, dig_ahead, queue_step};
+            let noon = flythrough::daylight::Clock::default().sky(flythrough::outdoor::BASE_Z as f32);
+            for (arm, rays, no_clamp, key_off) in [
+                ("rays 0", 0, false, false),
+                ("rays 1", 1, false, false),
+                ("rays 1, no clamp", 1, true, false),
+                ("rays 1, sun off", 1, false, true),
+            ] {
+                let Some((mut rig, cam)) = support::terms::hills_rig() else {
+                    return;
+                };
+                // The spawn's view turned 30 degrees down: the dig lands about 35 voxels ahead, as
+                // the window's digs did.
+                let cam = {
+                    let p = cam.position.to_array();
+                    let f = cam.basis().0.to_array();
+                    let h = (f[0] * f[0] + f[1] * f[1]).sqrt().max(1e-6);
+                    let (c, s) = (30f32.to_radians().cos(), 30f32.to_radians().sin());
+                    let d = [f[0] / h * c, f[1] / h * c, -s];
+                    flythrough::camera_looking_at(p, [p[0] + d[0], p[1] + d[1], p[2] + d[2]])
+                };
+                let auto = vxe_render::Exposure::Auto(vxe_render::AutoExposure {
+                    min: flythrough::cli::OUTDOOR_MIN,
+                    max: flythrough::cli::OUTDOOR_MAX,
+                    ..vxe_render::AutoExposure::instant()
+                });
+                let mut f = defect_frame(
+                    &mut rig,
+                    Some(noon),
+                    |l| vxe_render::Lighting {
+                        exposure: auto,
+                        sky_rays: rays,
+                        ..l
+                    },
+                    vxe_render::LightHooks {
+                        no_clamp,
+                        key_off,
+                        ..Default::default()
+                    },
+                    false,
+                );
+                f.start_bake_queue(
+                    &rig.queue,
+                    &rig.gpu,
+                    vxe_render::queue_settings(),
+                    vxe_render::DEFAULT_BAKE_SLICE_MS,
+                );
+                f.set_bake_coarse(8, 2);
+                let mut drained = None;
+                for i in 0..6000 {
+                    queue_step(&mut rig, &mut f, &cam);
+                    f.step(
+                        &rig.device,
+                        &rig.queue,
+                        &rig.gpu,
+                        &cam,
+                        &vxe_render::LightParams::headlamp(),
+                    );
+                    if f.bake_queue().is_some_and(|q| q.empty()) {
+                        drained = Some(i);
+                        break;
+                    }
+                }
+                let st =
+                    vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_state(), 0, 32);
+                let ex = vxe_render::ExposureState::from_bytes(&st).current;
+                let l = f.lighting();
+                f.set_lighting(vxe_render::Lighting {
+                    exposure: vxe_render::Exposure::Manual(ex),
+                    ..l
+                });
+                let mut s = Stepper::new(&rig, f);
+                for _ in 0..30 {
+                    queue_step(&mut rig, &mut s.frame, &cam);
+                    s.run(&rig, &cam);
+                }
+                let (min, max) = dig_ahead(&mut rig, &mut s.frame, &cam);
+                let mut shots = Vec::new();
+                for _ in 0..120 {
+                    let q = queue_step(&mut rig, &mut s.frame, &cam);
+                    let sh = s.step(&rig, &cam);
+                    shots.push((
+                        sh,
+                        q.digs,
+                        s.frame.bake_queue().is_some_and(|q| q.digs_settled()),
+                    ));
+                }
+                let lum: Vec<Vec<f32>> = shots
+                    .iter()
+                    .map(|(sh, _, _)| {
+                        sh.display
+                            .chunks(4)
+                            .map(|p| {
+                                0.2126 * f32::from(p[0])
+                                    + 0.7152 * f32::from(p[1])
+                                    + 0.0722 * f32::from(p[2])
+                            })
+                            .collect()
+                    })
+                    .collect();
+                let last = shots.last().expect("frames");
+                let gl = last.0.hits.len();
+                let gw = 160.min(gl);
+                let near = |h: &[f32; 4]| {
+                    h[3] < 1.0e30
+                        && (0..3).all(|k| {
+                            let (lo, hi) = (min[k] as f32 - 64.0, max[k] as f32 + 64.0);
+                            h[k] >= lo && h[k] <= hi
+                        })
+                };
+                let region: Vec<usize> = (0..320 * 180)
+                    .filter(|&i| near(&last.0.hits[support::defects::grid_of(i, 320, 180, gw, gl)]))
+                    .collect();
+                let gregion: Vec<usize> = (0..gl).filter(|&g| near(&last.0.hits[g])).collect();
+                let settled = lum.last().expect("frames");
+                let neigh: Vec<f32> = (0..320 * 180)
+                    .map(|i| {
+                        let (x, y) = (i % 320, i / 320);
+                        let (mut s, mut n) = (0.0, 0.0);
+                        for dy in -2..=2 {
+                            for dx in -2..=2 {
+                                let (u, v) = (x + dx, y + dy);
+                                if (0..320).contains(&u) && (0..180).contains(&v) {
+                                    s += settled[(v * 320 + u) as usize];
+                                    n += 1.0;
+                                }
+                            }
+                        }
+                        s / n
+                    })
+                    .collect();
+                println!(
+                    "reading: {arm}: drained at {drained:?}, exposure {:.3} EV, box {min:?}..{max:?}, region {} px ({} lighting px), on {}",
+                    ex.log2(),
+                    region.len(),
+                    gregion.len(),
+                    rig.adapter
+                );
+                let mut sum = 0usize;
+                for k in 0..shots.len() {
+                    let excess = region
+                        .iter()
+                        .filter(|&&i| lum[k][i] > 2.0 * settled[i] && lum[k][i] > 2.0 * neigh[i])
+                        .count();
+                    if k < 60 {
+                        sum += excess;
+                    }
+                    let moved = if k == 0 {
+                        0
+                    } else {
+                        region
+                            .iter()
+                            .filter(|&&i| (lum[k][i] - lum[k - 1][i]).abs() > 16.0)
+                            .count()
+                    };
+                    let (sh, digs, settled_q) = &shots[k];
+                    let cast = gregion.iter().filter(|&&g| sh.cast[g]).count();
+                    let age = gregion.iter().map(|&g| f64::from(sh.age[g])).sum::<f64>()
+                        / gregion.len().max(1) as f64;
+                    if k < 20 || k % 10 == 9 {
+                        println!(
+                            "reading: {arm}: frame {}: excess {excess} ({:.2} %), moved {:.2} %, cast {cast}, age {age:.1}, light {:.3} ms, digs {digs}, settled {settled_q}",
+                            k + 1,
+                            100.0 * excess as f64 / region.len().max(1) as f64,
+                            100.0 * moved as f64 / region.len().max(1) as f64,
+                            sh.light_ms.unwrap_or(f64::NAN)
+                        );
+                    }
+                }
+                println!("reading: {arm}: excess summed over frames 1 to 60: {sum}");
+            }
+        }
+
+        /// Plan 0086 Phase 16 reading 4 (defect 6, the clipped treads): the forest of seed 1
+        /// (`forest_rig`) at 15:00 baked whole, voxel leaves, 320 x 180 native, the outdoor auto
+        /// exposure (instant) 64 frames then 64 more: at the last frame the share of hit pixels at
+        /// 255 in the display's largest channel, the sunlit treads (display pixels on a horizontal
+        /// face whose direct part is over 4 times the stored one) and their mean level, the
+        /// exposure and the ceiling. Under `sky_anchor_ev` none and 4. `VXE_TEST_ADAPTER` picks
+        /// the adapter.
+        #[test]
+        #[ignore = "reading"]
+        fn the_forest_treads_clip() {
+            use vxe_render::debug::{read_rgba8, read_rgba16f, read_rgba32f};
+            let Some((mut rig, cam)) = support::terms::forest_rig() else {
+                return;
+            };
+            let sky = flythrough::daylight::Clock {
+                minutes: 15.0 * 60.0,
+                ..Default::default()
+            }
+            .sky(flythrough::outdoor::BASE_Z as f32);
+            for anchor in [None, Some(4.0)] {
+                let f = defect_frame(
+                    &mut rig,
+                    Some(sky),
+                    |l| vxe_render::Lighting {
+                        exposure: vxe_render::Exposure::Auto(vxe_render::AutoExposure {
+                            min: flythrough::cli::OUTDOOR_MIN,
+                            max: flythrough::cli::OUTDOOR_MAX,
+                            sky_anchor_ev: anchor,
+                            ..vxe_render::AutoExposure::instant()
+                        }),
+                        ..l
+                    },
+                    Default::default(),
+                    true,
+                );
+                let mut s = support::defects::Stepper::new(&rig, f);
+                for _ in 0..128 {
+                    s.run(&rig, &cam);
+                }
+                let (d, q) = (&rig.device, &rig.queue);
+                let f = &s.frame;
+                let disp = support::defects::level(&read_rgba8(d, q, f.target()));
+                let hits = read_rgba32f(d, q, f.light_hit_positions());
+                let acc = read_rgba16f(d, q, f.accumulated());
+                let dir = read_rgba16f(d, q, f.direct_accumulated());
+                let lum = |p: &[f32; 4]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
+                let (gl, gw) = (hits.len(), 160.min(hits.len()));
+                let (mut hit, mut clip, mut tread, mut tread_sum) = (0usize, 0usize, 0usize, 0.0f64);
+                for (i, &v) in disp.iter().enumerate() {
+                    let g = support::defects::grid_of(i, 320, 180, gw, gl);
+                    if hits[g][3] >= 1.0e30 {
+                        continue;
+                    }
+                    hit += 1;
+                    clip += usize::from(v == 255);
+                    let h = hits[g];
+                    if (h[2] - h[2].round()).abs() < 1e-3 && lum(&dir[g]) > 4.0 * lum(&acc[g]) {
+                        tread += 1;
+                        tread_sum += f64::from(v);
+                    }
+                }
+                let st = vxe_render::debug::read_buffer(d, q, f.exposure_state(), 0, 32);
+                let state = vxe_render::ExposureState::from_bytes(&st);
+                println!(
+                    "reading: the forest at 15:00, anchor {anchor:?} on {}: {:.3} % of {hit} hit px at 255; sunlit treads {tread} px, mean level {:.1}; exposure {:.2} EV, ceiling {:.2} EV",
+                    rig.adapter,
+                    100.0 * clip as f64 / hit.max(1) as f64,
+                    tread_sum / tread.max(1) as f64,
+                    state.current.log2(),
+                    state.ceiling.log2(),
+                );
+            }
+        }
+    }
+}

@@ -1280,6 +1280,7 @@ mod reading {
             r: 6,
             rays: 1,
             reads: (0..600).collect(),
+            hold: None,
         });
         let first = |f: &dyn Fn(&support::streamed::StreamedRead) -> bool| {
             reads
@@ -1327,6 +1328,7 @@ mod reading {
             r,
             rays,
             reads: reads.to_vec(),
+            hold: None,
         })
     }
 
@@ -1580,3 +1582,5 @@ mod reading {
         }
     }
 }
+
+include!("gpu_outdoor/defects.rs");
