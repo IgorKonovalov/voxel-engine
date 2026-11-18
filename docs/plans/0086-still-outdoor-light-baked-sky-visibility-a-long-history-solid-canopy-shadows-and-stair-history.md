@@ -1427,8 +1427,8 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
 | 13: The zebra stripes: the sky term's normal and a bounce floor | dev | done (exploration); the arms apply to the baked read only; the stair rig reads face 1.62, smoothed 1.00; the open floor not in view | ad4f241c |
 | 14: The forest floor: attribution, the key light on the pair, the canopy's transmittance | dev | done in part (exploration): `absorb` built; the key light carries the grain at 60 (p99 13 against the sky's 4), neither term at 10; Phase 6's mechanism not built (an owner question: the pair's one age); bar 3's no-pixel-over-50 % not met (49 % of the projection has no leaf); absorb's light pass 4.1 to 4.8 times voxel's | committed with this row |
 | 15: The owner's second window | human | done 2026-11-18, passed on the leak and the picks, failed on six defects (`live/window86b/verdicts.md`; the second amendment) | |
-| 16: The second window's defects attributed | dev | done (readings, in-process rigs; no before-binary run): defect 1 not reproduced as a wait defect; 3 is Plan 0058's; 4 the stored/direct switch carries the area; 6 removed by anchor 4 | committed with this row |
-| 17: The picks as defaults, the seal bar re-derived | dev | not started | |
+| 16: The second window's defects attributed | dev | done (readings, in-process rigs; no before-binary run): defect 1 not reproduced as a wait defect; 3 is Plan 0058's; 4 the stored/direct switch carries the area; 6 removed by anchor 4 | `f39e7dd3` |
+| 17: The picks as defaults, the seal bar re-derived | dev | done: anchor 4 and `smoothed` the defaults; five outdoor goldens re-blessed (counts per default in the log); seal 24.347 / 8.689 / 1.100 % passes; the sky-less goldens unmoved by the defaults (three differ from their tracked bytes at the base, not re-blessed) | committed with this row |
 | 18: The column wait: off by default, its black region, the catch-up | dev | not started | |
 | 19: The key light on the pair's `g`, the grain after a turn | dev | not started | |
 | 20: The seam between the baked sky term and the ray's | dev | not started | |
