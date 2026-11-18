@@ -53,6 +53,7 @@ impl BakeQueue {
                 // the box does not touch keeps the pool's path.
                 let coord = ChunkCoord(c);
                 if !near.is_empty() && run.gpu.is_mirrored(coord) && !run.gpu.is_lod(coord) {
+                    self.stats.digs_whole += 1;
                     let e = self.digs.entry(c).or_default();
                     e.whole = true;
                     e.near = true;

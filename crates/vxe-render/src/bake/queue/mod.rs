@@ -139,6 +139,8 @@ pub struct QueueStats {
     /// Dig jobs ended, and the bricks they re-baked, since the queue started.
     pub digs_baked: u64,
     pub dig_bricks: u64,
+    /// Block-less chunks an edit's box touched, taken as whole digs since the queue started.
+    pub digs_whole: u64,
     /// Places the pool refused since the queue started: each a job or a provisional block left
     /// waiting for an eviction to free room.
     pub pool_full: u64,

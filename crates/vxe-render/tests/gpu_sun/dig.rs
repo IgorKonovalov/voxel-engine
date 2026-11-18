@@ -32,7 +32,8 @@ fn dig_frame(device: &wgpu::Device) -> Frame {
     f
 }
 
-/// One step of `f`'s live queue with every chunk of `world` resident (the eye the camera's).
+/// One step of `f`'s live queue over `world`'s bounded window (no streamer: the reach reads the
+/// mirror alone, so a chunk outside the world is no chunk to wait for), the eye the camera's.
 fn dig_queue_step(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -41,11 +42,10 @@ fn dig_queue_step(
     world: &World,
     cam: &Camera,
 ) {
-    let resident = |c: ChunkCoord| world.store().contains(c);
     let view = vxe_render::QueueView {
         eye: cam.position.to_array(),
         forward: cam.basis().0.to_array(),
-        resident: Some(&resident),
+        resident: None,
         samples: None,
         interval_s: 1.0 / 60.0,
         hold: None,
@@ -102,9 +102,12 @@ fn to_dig(h: [f32; 4], d: f32) -> f32 {
     s.sqrt()
 }
 
-/// The dig rig run: the floor baked whole, the live queue at the fly-through's settings
-/// (`queue_settings`, the default slice, coarse 8 near 2), [`DIG_AT`] frames, the dig, and
-/// [`DIG_READ`] frames: the shots of frame `DIG_AT - 1` and of every frame after the dig.
+/// The dig rig run: the live queue at the fly-through's settings (`queue_settings`, the
+/// default slice, coarse 8 near 2) bakes the floor of 3 x 3 chunks in the first frames, the
+/// dig at frame [`DIG_AT`], then [`DIG_READ`] frames: the shots of frame `DIG_AT - 1` and of
+/// every frame after the dig. At frame `DIG_AT - 1` every chunk of the 3 x 3 holds a store
+/// block, else the rig is at fault (a dig into baked ground is the case read). The queue's
+/// whole-dig count after the dig's step is printed.
 fn dig_run() -> Option<(Vec<DigShot>, World)> {
     dig_run_with(|_, _, _, _| {})
 }
@@ -118,16 +121,6 @@ fn dig_run_with(
     let world = floor_world([3, 3, 1], |_| false);
     let mut gpu = mirror(&device, &queue, &world, None);
     let mut f = dig_frame(&device);
-    f.bake_until(
-        &device,
-        &queue,
-        &mut gpu,
-        &world,
-        world.extent(),
-        &vxe_render::BakeSettings::default(),
-        &mut |_| {},
-    )
-    .expect("the store fits");
     f.start_bake_queue(
         &queue,
         &gpu,
@@ -151,13 +144,45 @@ fn dig_run_with(
             f.invalidate(a.0, b.0);
         }
         dig_queue_step(&device, &queue, &mut f, &mut gpu, &world, &cam);
+        if i == DIG_AT {
+            let st = f.bake_queue().expect("the queue runs").stats();
+            println!(
+                "the dig's step: whole digs {}, digs {}",
+                st.digs_whole, st.digs
+            );
+        }
         f.step(&device, &queue, &gpu, &cam, &LightParams::headlamp());
         each(i, &device, &queue, &f);
+        if i + 1 == DIG_AT {
+            let bare: Vec<[i32; 2]> = (0..9)
+                .map(|k| [k % 3, k / 3])
+                .filter(|c| f.store().block_words(ChunkCoord([c[0], c[1], 0])).is_none())
+                .collect();
+            assert!(
+                bare.is_empty(),
+                "rig fault: chunks {bare:?} hold no store block at frame {}",
+                DIG_AT - 1
+            );
+        }
         if i + 1 >= DIG_AT {
             shots.push(dig_shot(&device, &queue, &f));
         }
     }
     Some((shots, world))
+}
+
+/// Pixel `i`'s largest excursion out of `[lo, hi]` over `shots` (levels), the index of its
+/// frame in `shots` and whether it lies over `hi`.
+fn band_excursion(shots: &[DigShot], i: usize, lo: i32, hi: i32) -> (i32, usize, bool) {
+    let mut best = (0, 0, false);
+    for (k, s) in shots.iter().enumerate() {
+        let v = i32::from(s.level[i]);
+        let out = (lo - v).max(v - hi).max(0);
+        if out > best.0 {
+            best = (out, k, v > hi);
+        }
+    }
+    best
 }
 
 /// Plan 0086 Phase 21 bar 1: the direct part holds no sky term. The open floor of 3 x 3 chunks
@@ -233,20 +258,19 @@ fn the_sky_term_switches_without_a_dip() {
         .collect();
     let mut left = 0usize;
     let mut worst = 0i32;
+    // The leavers by the frame of their largest excursion and its side (under, over).
+    let mut by_frame = std::collections::BTreeMap::<usize, [usize; 2]>::new();
     for &i in &ring {
         let (b, a) = (i32::from(first.level[i]), i32::from(last.level[i]));
         let (lo, hi) = (b.min(a) - 2, b.max(a) + 2);
-        let out = shots
-            .iter()
-            .map(|s| {
-                let v = i32::from(s.level[i]);
-                (lo - v).max(v - hi).max(0)
-            })
-            .max()
-            .unwrap_or(0);
+        let (out, k, over) = band_excursion(&shots, i, lo, hi);
         worst = worst.max(out);
         left += usize::from(out > 0);
+        if out > 0 {
+            by_frame.entry(DIG_AT - 1 + k).or_default()[usize::from(over)] += 1;
+        }
     }
+    println!("the ring's leavers by frame (under, over): {by_frame:?}");
     println!(
         "the switch: the most a frame cast near the box {:.2} %, ring {} pixels, {} left the band (largest excursion {worst} levels)",
         100.0 * most_cast,
@@ -263,18 +287,26 @@ fn the_sky_term_switches_without_a_dip() {
     );
 }
 
-/// Plan 0086 Phase 21 bars 3 and 4: a dig leaves no dots, and the hole takes its light.
-/// [`dig_run`]'s rig. Bar 3: in every frame after the dig, the share of the lighting pixels
-/// within 64 voxels of the box whose display luma is over 2 times their value at frame 124
-/// and over 2 times the 3 x 3 neighbourhood's mean there is under 1 %, and 0 from 16 frames
-/// after the dig on. Bar 4: at frame 124 the hole's floor (hits within half a voxel of the
-/// box's bottom, inside its footprint) reads within 10 % of the same pixels on the dug world
-/// baked whole and run 64 frames; no frame between has over 5 % of the pixels changing by
-/// over 16 levels from the frame before. The dots inside the box dilated by one voxel are
-/// counted apart and printed.
+/// Plan 0086 Phase 21 bars 3 and 4 (re-stated 2026-11-19): a dig leaves no dots on its ring,
+/// and the hole takes its light. [`dig_run`]'s rig (every chunk of the floor holds a block at
+/// frame 63). Bar 3: in every frame after the dig, the share of the lighting pixels within 64
+/// voxels of the box and outside the box dilated by one voxel whose display luma is over 2
+/// times their value at frame 124 and over 2 times the 3 x 3 neighbourhood's mean there is
+/// under 1 %, and 0 from 16 frames after the dig on; the same count on the hole's own faces
+/// (inside the dilated box) is printed, not barred. Bar 4: over the pixels inside the dilated
+/// box at frame 124, with `old` the display level at frame 63 and `new` at frame 124, every
+/// frame from 64 to 124 lies in `[min(old, new) - 4, max(old, new) + 4]` (ADR-0076 rule 3's
+/// form) and no pixel leaves it; from the frame after the dig job lands (the queue's
+/// `digs_baked` rises; printed) the hole's floor (hits within half a voxel of the box's
+/// bottom, inside its footprint) reads the same pixels' mean on the dug world baked whole and
+/// run 64 frames within one display level; no frame has over 5 % of the pixels changing by
+/// over 16 levels from the frame before.
 #[test]
 fn a_dig_leaves_no_dots() {
-    let Some((shots, world)) = dig_run() else {
+    let mut baked_count = Vec::new();
+    let Some((shots, world)) = dig_run_with(|_, _, _, f| {
+        baked_count.push(f.bake_queue().expect("the queue runs").stats().digs_baked);
+    }) else {
         return;
     };
     let last = &shots[shots.len() - 1];
@@ -301,27 +333,50 @@ fn a_dig_leaves_no_dots() {
     for (k, s) in shots.iter().enumerate().skip(1) {
         let near_n = (0..n).filter(|&i| near(s, i)).count().max(1);
         let dot = |i: usize| s.luma[i] > 2.0 * last.luma[i] && s.luma[i] > 2.0 * settled_mean(i);
-        let dots = (0..n).filter(|&i| near(s, i) && dot(i)).count();
-        let hole = (0..n)
-            .filter(|&i| near(s, i) && dot(i) && to_dig(s.hit[i], 1.0) == 0.0)
+        let in_box = |i: usize| to_dig(s.hit[i], 1.0) == 0.0;
+        let ring = (0..n)
+            .filter(|&i| near(s, i) && dot(i) && !in_box(i))
             .count();
+        let hole = (0..n).filter(|&i| near(s, i) && dot(i) && in_box(i)).count();
         let prev = &shots[k - 1];
         let changed = (0..n)
             .filter(|&i| s.level[i].abs_diff(prev.level[i]) > 16)
             .count();
-        let share = dots as f64 / near_n as f64;
+        let share = ring as f64 / near_n as f64;
         worst_change = worst_change.max(changed as f64 / n as f64);
         println!(
-            "frame {}: dots {dots} ({:.3} %), on the hole's faces {hole} ({:.3} %), changed over 16 levels {:.3} %",
+            "frame {}: dots on the ring {ring} ({:.3} %), on the hole's faces {hole} ({:.3} %), changed over 16 levels {:.3} %",
             DIG_AT + k - 1,
             100.0 * share,
             100.0 * hole as f64 / near_n as f64,
             100.0 * changed as f64 / n as f64
         );
-        if share >= 0.01 || (k > 16 && dots > 0) {
+        if share >= 0.01 || (k > 16 && ring > 0) {
             fails.push(DIG_AT + k - 1);
         }
     }
+    // Bar 4's band over the hole's own faces.
+    let first = &shots[0];
+    let hole_px: Vec<usize> = (0..n)
+        .filter(|&i| last.hit[i][3] < 1e30 && to_dig(last.hit[i], 1.0) == 0.0)
+        .collect();
+    let mut left = 0usize;
+    let mut worst_out = 0i32;
+    let mut by_frame = std::collections::BTreeMap::<usize, [usize; 2]>::new();
+    for &i in &hole_px {
+        let (o, nw) = (i32::from(first.level[i]), i32::from(last.level[i]));
+        let (lo, hi) = (o.min(nw) - 4, o.max(nw) + 4);
+        let (out, k, over) = band_excursion(&shots, i, lo, hi);
+        worst_out = worst_out.max(out);
+        left += usize::from(out > 0);
+        if out > 0 {
+            by_frame.entry(DIG_AT - 1 + k).or_default()[usize::from(over)] += 1;
+        }
+    }
+    println!("the hole's leavers by frame (under, over): {by_frame:?}");
+    // The frame the dig job landed: the first frame after the dig whose `digs_baked` rose.
+    let at_dig = baked_count[DIG_AT - 1];
+    let landed = (DIG_AT..baked_count.len()).find(|&i| baked_count[i] > at_dig);
     // The hole's floor against the dug world baked whole.
     let floor_px: Vec<usize> = (0..n)
         .filter(|&i| {
@@ -353,18 +408,34 @@ fn a_dig_leaves_no_dots() {
     let mean = |s: &DigShot| {
         floor_px.iter().map(|&i| f64::from(s.luma[i])).sum::<f64>() / floor_px.len().max(1) as f64
     };
-    let (got, want) = (mean(last), mean(&baked));
+    let want = mean(&baked);
+    let from = landed.map_or(shots.len(), |l| l + 2 - DIG_AT);
+    let off: Vec<(usize, f64)> = shots
+        .iter()
+        .enumerate()
+        .skip(from)
+        .map(|(k, s)| (DIG_AT + k - 1, mean(s) - want))
+        .filter(|(_, d)| d.abs() > 1.0)
+        .collect();
+    let floor_by_frame: Vec<(usize, f64)> = [1usize, 2, 3, 4, 8, 16, 60]
+        .iter()
+        .map(|&k| (DIG_AT + k - 1, mean(&shots[k])))
+        .collect();
     println!(
-        "the hole's floor: {} pixels, frame 124 {got:.2}, baked whole {want:.2}; the most pixels changing over 16 levels in a frame {:.3} %",
+        "the hole's faces: {} pixels, {left} left the band of 4 (largest excursion {worst_out}); the dig job landed at frame {landed:?}",
+        hole_px.len()
+    );
+    println!(
+        "the hole's floor: {} pixels, baked whole {want:.2}, by frame {floor_by_frame:?}; frames off by over 1 level from the landing on {off:?}; the most pixels changing over 16 levels in a frame {:.3} %",
         floor_px.len(),
         100.0 * worst_change
     );
-    assert!(fails.is_empty(), "dots over the bar at frames {fails:?}");
+    assert!(fails.is_empty(), "dots on the ring over the bar at frames {fails:?}");
+    assert!(!hole_px.is_empty(), "the hole is not in view");
+    assert_eq!(left, 0, "{left} of {} hole pixels left the band", hole_px.len());
     assert!(!floor_px.is_empty(), "the hole's floor is not in view");
-    assert!(
-        (got / want - 1.0).abs() <= 0.10,
-        "the hole's floor {got} against {want}"
-    );
+    assert!(landed.is_some(), "the dig job did not land in the rig's frames");
+    assert!(off.is_empty(), "the hole's floor against {want}: {off:?}");
     assert!(worst_change <= 0.05, "{worst_change}");
 }
 
