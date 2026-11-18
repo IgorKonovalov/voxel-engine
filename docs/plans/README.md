@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0090** (ADRs are a separate sequence, see `../adrs/README.md` for its
+**Next free number: 0091** (ADRs are a separate sequence, see `../adrs/README.md` for its
 next free number).
 
 ## Active roster
@@ -28,6 +28,7 @@ next free number).
 | [0086](0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md) | Still outdoor light: baked sky visibility, a long history for the sky and key rays, solid canopy shadows, stair history, a penumbra spike | approved | M10, ADR-0070. After Plan 0032, before Plan 0081. |
 | [0087](0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md) | The rename to `svet`: crates, `SVET_*`, the WIT package, the tester archive, docs, the repository, a minor bump | approved | ADR-0071. Alone, last: after 0032, 0080, 0077, 0079, 0083 and 0086 merge. |
 | [0089](0089-deterministic-simulation-testing-seeded-scenarios-a-simulated-channel-a-mirror-oracle-and-gates.md) | Deterministic simulation testing: seeded scenarios, a shrinker, a simulated channel, a mirror oracle, determinism gates | approved | ADR-0073 (proposed). All phases after 0087 merges (owner). |
+| [0090](0090-the-pop-counter-scenes-on-lavapipe-count-the-pixels-that-break-the-light-rules-a-ratchet.md) | The pop counter: fixed scenes on lavapipe count the pixels that break each light rule, by source; a baseline that only falls | approved | Cross-cutting, ADR-0076 (proposed). After 0086 closes, before 0081. |
 <!-- roster:end -->
 
 ## Sequence
@@ -79,6 +80,9 @@ Each starts on main after the one before it closes, unless its line says otherwi
    **Added 2026-11-17 (architect, from the owner's picks at Plan 0032's window):** Plan 0086
    (the flicker's fixes, ADR-0070) starts when Plan 0032 closes and merges, recommended ahead
    of Plan 0081 (the still image first); the owner's go and the order are owed.
+   **Added 2026-11-18 (architect, draft):** Plan 0090 (the pop counter, ADR-0076) takes its
+   baseline on the tree with Plan 0086 merged, so it starts when 0086 closes, recommended ahead
+   of Plan 0081 so the detail layer is the first plan measured against the ratchet; awaits go.
    **Re-read 2026-11-17 (architect, the owner's "start the re-read"):** Plans 0081, 0033, 0034,
    0035, 0036 and 0037 each carry an "Amended 2026-11-17 (re-read)" section against main
    3b3986d0: the Plan 0045 paths, the menu entries in place of keys (ADR-0061), the settings
