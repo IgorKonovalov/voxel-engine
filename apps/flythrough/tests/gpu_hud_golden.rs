@@ -369,7 +369,7 @@ fn the_belt_and_the_chooser_over_the_carved_view() {
     m.walkers.refresh_icons(&table);
     m.walkers.icons.wait();
     let order = m.walkers.library.order();
-    m.walkers.belt.fill(&order);
+    m.walkers.belt.fill(&order, &[]);
     let pixels: Vec<(u32, Vec<u8>)> = m.walkers.icons.uploads().collect();
     assert_eq!(pixels.len(), 2, "both icons");
     let grid = ((WIDTH / CELL) as usize, (HEIGHT / CELL) as usize);
@@ -412,7 +412,7 @@ fn the_belt_and_the_chooser_over_the_carved_view() {
         &mut belt_text,
         &mut belt_colours,
         grid,
-        &m.walkers,
+        &m,
         0.0,
         flythrough::hud::BANNER_MS,
         &mut paint,

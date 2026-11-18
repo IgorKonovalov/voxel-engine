@@ -255,17 +255,48 @@ impl VoxScene {
         [0, 1, 2].map(|k| (i64::from(b[k]) - i64::from(a[k]) + 1).max(0) as u32)
     }
 
-    /// The placements moved by `by` voxels, as `vxe_world::StampedSource` and
-    /// `World::stamp` take them.
-    pub fn placed_at(&self, by: [i32; 3]) -> Vec<(Arc<Prefab>, VoxelCoord, Rot)> {
+    /// The placements turned `quarters` quarter turns about +z ([`Rot::Z90`] to that power)
+    /// about the box's minimum corner, which stays where it is, then moved by `by` voxels, as
+    /// `vxe_world::StampedSource` and `World::stamp` take them. Each placement's rotation is
+    /// its own then the turn; its origin is the minimum corner of its turned box. Integer
+    /// arithmetic throughout; four quarter turns are none.
+    pub fn placed_at(&self, by: [i32; 3], quarters: u8) -> Vec<(Arc<Prefab>, VoxelCoord, Rot)> {
+        let mut turn = Rot::IDENTITY;
+        for _ in 0..quarters % 4 {
+            turn = turn.then(Rot::Z90);
+        }
+        let (lo, hi) = self.bounds;
+        // The turned box's minimum relative to the minimum corner, so it comes back to it.
+        let back = turn_min(turn, [0; 3], [0, 1, 2].map(|k| hi[k] - lo[k]));
         self.placements
             .iter()
             .map(|&(i, o, r)| {
-                let o = VoxelCoord([0, 1, 2].map(|k| o.0[k].wrapping_add(by[k])));
-                (self.prefabs[i].clone(), o, r)
+                let size = r.apply_size(self.prefabs[i].size());
+                let a = [0, 1, 2].map(|k| o.0[k] - lo[k]);
+                let b = [0, 1, 2].map(|k| a[k] + size[k] as i32 - 1);
+                let m = turn_min(turn, a, b);
+                let o = VoxelCoord([0, 1, 2].map(|k| (lo[k] + m[k] - back[k]).wrapping_add(by[k])));
+                (self.prefabs[i].clone(), o, r.then(turn))
             })
             .collect()
     }
+
+    /// The inclusive box the placements fit in after `quarters` quarter turns
+    /// ([`VoxScene::placed_at`]): the same minimum corner, x and y swapped at an odd turn.
+    pub fn turned_bounds(&self, quarters: u8) -> ([i32; 3], [i32; 3]) {
+        let (lo, hi) = self.bounds;
+        if quarters.is_multiple_of(2) {
+            return (lo, hi);
+        }
+        let d = [hi[1] - lo[1], hi[0] - lo[0], hi[2] - lo[2]];
+        (lo, [0, 1, 2].map(|k| lo[k] + d[k]))
+    }
+}
+
+/// The minimum corner of the box `a..=b` turned by `turn`.
+fn turn_min(turn: Rot, a: [i32; 3], b: [i32; 3]) -> [i32; 3] {
+    let (p, q) = (turn.apply(a), turn.apply(b));
+    [0, 1, 2].map(|k| p[k].min(q[k]))
 }
 
 /// `model` as a prefab through `map`, mirrored along x when `mirror`, each voxel repeated
@@ -294,17 +325,28 @@ fn model_prefab(model: &VoxModel, map: &VoxMap, mirror: bool, k: u32) -> Result<
     if !unset.is_empty() {
         return Err(unset);
     }
-    let slot = |i: u8| -> Option<MaterialId> {
-        match map.get(i) {
-            Slot::Air => Some(AIR),
-            Slot::Material(m) => Some(m),
-            Slot::Skip | Slot::Unset => None,
-        }
-    };
+    // Each index's slot looked up once, not per voxel.
+    let slot: [Option<MaterialId>; 256] = std::array::from_fn(|i| match map.get(i as u8) {
+        Slot::Air => Some(AIR),
+        Slot::Material(m) => Some(m),
+        Slot::Skip | Slot::Unset => None,
+    });
     let size = model.size.map(|v| v * k);
+    if k == 1 {
+        // The dense form, handed to the world crate's constructor in one call.
+        let mut voxels = vec![AIR; index.len()];
+        let mut mask = vec![0u64; index.len().div_ceil(64)];
+        for (at, &i) in index.iter().enumerate() {
+            if let Some(m) = slot[usize::from(i)] {
+                voxels[at] = m;
+                mask[at / 64] |= 1 << (at % 64);
+            }
+        }
+        return Ok(Prefab::new(size, voxels, Some(mask)));
+    }
     Ok(Prefab::from_fn(size, |l| {
         let [x, y, z] = l.map(|v| (v / k) as usize);
-        slot(index[x + s[0] * (y + s[1] * z)])
+        slot[usize::from(index[x + s[0] * (y + s[1] * z)])]
     }))
 }
 

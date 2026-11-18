@@ -288,7 +288,7 @@ impl Run {
             text,
             &mut h.colours,
             grid,
-            &self.modes.walkers,
+            &self.modes,
             ms_since(self.start),
             hud::BANNER_MS,
             &mut h.paint,
@@ -301,7 +301,13 @@ impl Run {
     /// frame on the selected slot, its tiles after the chooser's. Gives the belt's backdrop
     /// box; `None`, and the rows untouched, on any other page or closed.
     pub(crate) fn chooser_belt(&mut self, size: [u32; 2]) -> Option<vxe_render::HudBox> {
-        if self.args.tester || self.menu.page() != Some(crate::hud::menu::PageId::Entities) {
+        use crate::hud::menu::PageId;
+        if self.args.tester
+            || !matches!(
+                self.menu.page(),
+                Some(PageId::Entities | PageId::Structures)
+            )
+        {
             return None;
         }
         self.fill_belt();
@@ -311,7 +317,7 @@ impl Run {
             &mut h.overlay,
             &mut h.overlay_colours,
             (panel.cols, panel.rows),
-            &self.modes.walkers,
+            &self.modes,
             ms_since(self.start),
             hud::BANNER_MS,
             &mut h.paint,

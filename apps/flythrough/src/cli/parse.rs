@@ -81,6 +81,7 @@ impl Args {
             vox_clear: true,
             vox_op: false,
             library_dir: None,
+            structures_dir: None,
             library: false,
             sync_budget: SYNC_BUDGET_MIB << 20,
             sync_time: None,

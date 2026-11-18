@@ -2,6 +2,7 @@
 //! and the whole scale.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use vxe_assets::*;
 use vxe_world::{AIR, ChunkExtent, Material, MaterialTable, Rot, UniformSource, VoxelCoord, World};
@@ -194,7 +195,7 @@ fn a_reflected_frame_loads_as_a_mirrored_model() {
             want.stamp(&p, VoxelCoord(d), Rot::IDENTITY).unwrap();
         }
         let got = world();
-        for (p, o, r) in scene.placed_at([0; 3]) {
+        for (p, o, r) in scene.placed_at([0; 3], 0) {
             got.stamp(&p, o, r).unwrap();
         }
         assert_eq!(got.voxel_hash(), want.voxel_hash(), "byte {byte}");
@@ -239,4 +240,99 @@ fn scale_repeats_voxels() {
     assert_eq!(e, SceneError::Scale(5));
     assert!(e.to_string().contains("1..=4"), "{e}");
     assert_eq!(scaled(0).unwrap_err(), SceneError::Scale(0));
+}
+
+/// The fly-through's chapel, every palette index its own material (index 0 left alone).
+fn chapel() -> VoxScene {
+    let p = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../apps/flythrough/assets/structures/chapel/chapel.vox"
+    );
+    let bytes = std::fs::read(p).expect("the fly-through's chapel.vox reads");
+    let file = VoxFile::parse(&bytes).expect("chapel.vox parses");
+    let mut m = VoxMap::new();
+    m.set(0, Slot::Skip);
+    for i in 1..=255u8 {
+        m.set(i, Slot::Material(u16::from(i)));
+    }
+    VoxScene::load(&file, &m, SceneOptions::default()).expect("the chapel loads")
+}
+
+/// Plan 0083 Phase 6 done-when 3: the chapel turned one quarter turn has every placement's
+/// origin and rotation where a turn by hand about the box's minimum corner puts them, its box
+/// with x and y swapped, and stamps the unturned chapel's voxels turned; four quarter turns
+/// are none.
+#[test]
+fn a_quarter_turn_turns_the_scene() {
+    let scene = chapel();
+    let (lo, _) = scene.bounds;
+    let by = lo.map(|v| -v);
+    let size = scene.size().map(|v| v as i32);
+    // By hand: (x, y, z) about the corner goes to (-y, x, z), moved back by the box's y.
+    let turned = scene.placed_at(by, 1);
+    let plain = scene.placed_at(by, 0);
+    assert_eq!(turned.len(), plain.len());
+    for ((p, o, r), (q, to, tr)) in plain.iter().zip(&turned) {
+        assert!(Arc::ptr_eq(p, q));
+        let s = r.apply_size(p.size()).map(|v| v as i32);
+        let (a, b) = (o.0, [0, 1, 2].map(|k| o.0[k] + s[k] - 1));
+        assert_eq!(to.0, [size[1] - 1 - b[1], a[0], a[2]], "{o:?} {r:?}");
+        assert_eq!(*tr, r.then(Rot::Z90));
+    }
+    let (tlo, thi) = scene.turned_bounds(1);
+    assert_eq!(tlo, lo);
+    assert_eq!(
+        [0, 1, 2].map(|k| thi[k] - tlo[k] + 1),
+        [size[1], size[0], size[2]]
+    );
+    assert_eq!(scene.turned_bounds(2), scene.bounds);
+
+    let world = || {
+        World::generate(
+            ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+            &UniformSource(AIR),
+            &MaterialTable::new(),
+        )
+    };
+    let (a, b) = (world(), world());
+    for (p, o, r) in &plain {
+        a.stamp(p, *o, *r).unwrap();
+    }
+    for (p, o, r) in &turned {
+        b.stamp(p, *o, *r).unwrap();
+    }
+    let mut solid = 0;
+    for z in 0..size[2] {
+        for y in 0..size[1] {
+            for x in 0..size[0] {
+                let want = a.material_at(VoxelCoord([x, y, z]));
+                let got = b.material_at(VoxelCoord([size[1] - 1 - y, x, z]));
+                assert_eq!(got, want, "({x}, {y}, {z})");
+                solid += usize::from(want != Some(AIR));
+            }
+        }
+    }
+    assert!(solid > 0);
+    // Four quarter turns, each of the last one's placements, come back to none.
+    let key = |v: &[(Arc<vxe_world::Prefab>, VoxelCoord, Rot)]| -> Vec<_> {
+        v.iter().map(|(p, o, r)| (p.id(), *o, *r)).collect()
+    };
+    let mut at = plain.clone();
+    let mut bounds = ([0; 3], [0, 1, 2].map(|k| size[k] - 1));
+    for _ in 0..4 {
+        let s = VoxScene {
+            prefabs: at.iter().map(|(p, _, _)| p.clone()).collect(),
+            placements: at
+                .iter()
+                .enumerate()
+                .map(|(i, (_, o, r))| (i, *o, *r))
+                .collect(),
+            layers: Vec::new(),
+            bounds,
+        };
+        at = s.placed_at([0; 3], 1);
+        bounds = s.turned_bounds(1);
+    }
+    assert_eq!(key(&at), key(&plain));
+    assert_eq!(key(&scene.placed_at(by, 4)), key(&plain));
 }

@@ -194,3 +194,54 @@ fn every_shot_has_room_around_its_eye() {
         "the gate is the spawn"
     );
 }
+
+/// Plan 0083 Phase 6 done-when 7: the castle's scene loaded under the castle's map (index 8,
+/// the dungeon's written air, as air: `castle::dungeon_map`) gives the 21 placements whose
+/// prefabs, corners and turns are the ones `--castle`'s hall stamps, in order; the structures
+/// library's castle map against `--castle`'s table is that map; a castle entry before its
+/// build is grey and reads `castle: building`.
+#[test]
+fn the_castle_loads_through_the_scene() {
+    let file = castle::castle_vox();
+    // The two mappings of the 21 tiles side by side: each is seconds in a test build.
+    let (scene, hall) = std::thread::scope(|s| {
+        let scene = s.spawn(|| {
+            vxe_assets::VoxScene::load(
+                &file,
+                &castle::dungeon_map(),
+                vxe_assets::SceneOptions::default(),
+            )
+        });
+        let hall = castle::castle_prefabs(&file).expect("mapped");
+        (scene.join().unwrap().expect("the castle loads"), hall)
+    });
+    assert_eq!(scene.placements.len(), 21);
+    assert_eq!(hall.len(), 21);
+    for (&(i, o, r), (p, at, rot)) in scene.placements.iter().zip(&hall) {
+        assert_eq!(scene.prefabs[i].id(), p.id());
+        assert_eq!([0, 1, 2].map(|k| o.0[k] + ORIGIN[k]), at.0);
+        assert_eq!(r, *rot);
+    }
+    let table = flythrough::castle_materials(&flythrough::cave_materials());
+    let map = flythrough::structures::castle_map(&table).expect("the castle's rows");
+    let dungeon = castle::dungeon_map();
+    for i in 0..=255u8 {
+        assert_eq!(map.get(i), dungeon.get(i), "index {i}");
+    }
+
+    let base = flythrough::walker::with_walker(&flythrough::cave_materials());
+    let dir = std::path::Path::new(flythrough::structures::LIBRARY);
+    let mut table = base.clone();
+    flythrough::structures::add_library_rows(dir, None, &mut table);
+    let mut m = flythrough::hud::Modes::new(
+        vxe_render::Lighting::default(),
+        vxe_render::LightingResolution::default(),
+        0.0,
+    );
+    m.structures = flythrough::structures::Library::load(dir, &table, &base);
+    let j = m.structures.entries.len() - 1;
+    let mut row = String::new();
+    flythrough::structures::words::write_item(&m, j, &mut row, 60);
+    assert_eq!(row, "castle: building");
+    assert!(flythrough::structures::words::grey(&m, j));
+}

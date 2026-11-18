@@ -29,6 +29,7 @@ pub enum Group {
     Lights,
     Queue,
     Entities,
+    Structures,
     Audio,
     Readings,
     Debug,
@@ -36,7 +37,7 @@ pub enum Group {
 
 impl Group {
     /// The groups in the root page's order.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Moving,
         Self::Camera,
         Self::World,
@@ -46,6 +47,7 @@ impl Group {
         Self::Lights,
         Self::Queue,
         Self::Entities,
+        Self::Structures,
         Self::Audio,
         Self::Readings,
         Self::Debug,
@@ -63,6 +65,7 @@ impl Group {
             Self::Lights => "lights",
             Self::Queue => "light queue",
             Self::Entities => "entities",
+            Self::Structures => "structures",
             Self::Audio => "audio",
             Self::Readings => "readings",
             Self::Debug => "debug",

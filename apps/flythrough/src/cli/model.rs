@@ -1,6 +1,6 @@
 //! The model viewer's, the entities library's and the assets' flags (`crate::viewer`,
 //! `crate::entities::library`, `crate::materials`, `crate::structures`): `--model`, `--clip`,
-//! `--library-dir`, `--library`, `--materials` and the `--vox` flags.
+//! `--library-dir`, `--library`, `--materials`, the `--vox` flags and `--structures-dir`.
 
 use super::flags::Parsing;
 use super::table::Flag;
@@ -63,8 +63,8 @@ pub(super) fn model_flags() -> Vec<Flag<Parsing>> {
         ),
         Flag::switch(
             &["--vox-op"],
-            "place --vox as logged ops (a box carve, then a stamp per placement) on the first \
-             tick its box is resident, instead of through the cave's source",
+            "place --vox as logged ops (a stamp of written air over its box, then a stamp per \
+             placement) on the first tick, instead of through the cave's source",
             |p: &mut Parsing| p.args.vox_op = true,
         ),
         Flag::value(
@@ -74,6 +74,16 @@ pub(super) fn model_flags() -> Vec<Flag<Parsing>> {
              assets/entities)",
             |p: &mut Parsing, v| {
                 p.args.library_dir = Some(v.text.into());
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--structures-dir"],
+            "DIR",
+            "the structures library: every DIR/<name>/<name>.vox is a belt item, its palette \
+             rows in the world's table (the fly-through's assets/structures)",
+            |p: &mut Parsing, v| {
+                p.args.structures_dir = Some(v.text.into());
                 Ok(())
             },
         ),

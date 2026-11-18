@@ -1,7 +1,14 @@
 # Structures
 
 MagicaVoxel scenes the fly-through places in the cave (Plan 0083). One directory per
-structure, `<name>/<name>.vox`:
+structure, `<name>/<name>.vox` (`--structures-dir DIR` scans another directory). Each is a
+belt item after the entities, and the generated castle after them: select its slot (the wheel,
+a digit in placement mode, or the menu's `structures` group, `choose a structure`), and a
+marked frame of its box stands where it will go, its near side at the crosshair's hit and the
+box growing away from the camera; `R` turns it a quarter turn and the left click places it as
+logged stamps (a stamp of written air over the box and 1 m around it when `clear box` is on,
+then one stamp per placement). `structure scale` (1 to 4) is in the same group. At the start
+also, from the command line:
 
 ```sh
 flythrough --vox apps/flythrough/assets/structures/chapel/chapel.vox          # ahead of the spawn
@@ -14,9 +21,11 @@ lights the cave through the bake, and `_metal` sets the roughness. Hidden layers
 objects are left out, a mirrored group is placed mirrored, and one `.vox` voxel is one world
 voxel (10 cm) unless `*k` scales it (1 to 4). Empty cells leave the world alone; the
 structure's box, with 1 m on its sides and above, is carved to air first unless
-`--vox-clear off`. The palette's rows are added when the world is generated, so a recoloured
-entry needs a restart.
+`--vox-clear off`. Every library file's palette rows are added when the world is generated
+(the start-up line `structures: N entries, +R rows`), so a recoloured entry needs a restart; a
+second file of the same palette adds none. The castle adds no palette row: it takes the
+material file's castle rows, added when the scene has none.
 
 | Structure | What it shows |
 |---|---|
-| `chapel/` | A nave with blue glass windows and two lamps, a transept placed twice through a reflected frame, a west tower, and a scaffold on a hidden layer: about 48 x 32 x 40 voxels. `chapel.voxtext` draws the models; `chapel.vox` adds the `MATL`, the layers and the mirror (`structures::chapel_vox`; `VXE_BLESS_CHAPEL=1 cargo nextest run -p flythrough --test structures` writes it) |
+| `chapel/` | rows +255. A nave with blue glass windows and two lamps, a transept placed twice through a reflected frame, a west tower, and a scaffold on a hidden layer: about 48 x 32 x 40 voxels. `chapel.voxtext` draws the models; `chapel.vox` adds the `MATL`, the layers and the mirror (`structures::chapel_vox`; `VXE_BLESS_CHAPEL=1 cargo nextest run -p flythrough --test structures` writes it) |

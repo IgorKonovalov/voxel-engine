@@ -784,7 +784,7 @@ Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
 | 3: prefabs as bricks | dev | done; `prefab64_mixed` +1.4 % over the base, met under the 2026-11-17 amendment (Notes) | a8a53e7a |
 | 4: the scene: layers, mirrors, scale, `--vox` | dev | done | a221e764 |
 | 5: placements past residency | dev | done | 7a7a6f19 |
-| 6: the Structures page | dev | not started | |
+| 6 (amended): a structure in the belt | dev | done; deviations in Notes | committed with this row |
 | 7: the owner's window | human | not started | |
 | 8: picks, goldens, readings, tip | dev | not started | |
 
@@ -860,6 +860,36 @@ Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
   stamp now reads a prefab brick once per sub-box instead of `Prefab::cell` per voxel (+1.4 %
   in the quiet A/B at dbb59413). Under the 2026-11-17 amendment (0ef2b8fe, owner: within 10 %
   of the pre-change base on the same box and lock, 3.80 ms) that reading meets Phase 3's bar.
+
+- Phase 6: `VoxScene::placed_at(by, quarters)` takes the quarter turns (callers pass 0);
+  `VoxScene::turned_bounds` is new; `structures::clear_box` and `structures::ops` take the
+  quarter turns, and `VoxOps` loses `chunks` (no residency wait).
+- Phase 6: `Prefab::id` streams runs of air as one multiplication by the prime's power and a
+  uniform line along x at once (the same value; readings log). `VoxScene`'s prefab at scale 1
+  is built dense through `Prefab::new` (the castle's scene 20 s to 4.4 s in a test build).
+- Phase 6: the castle entry maps through `structures::castle_map`, the castle rows by name
+  (under `--castle` that is `castle::dungeon_map`); `world_table` appends the material file's
+  seven castle rows when the table has none, so the castle places in its colours in the cave.
+  Done-when 7 loads the castle under `dungeon_map`: `above_map` alone refuses the dungeon
+  tiles' index 8. The castle places at scale 1 only, and a box past the edit limit is refused.
+- Phase 6: the `structures` group lists its toggles before its action (the menu's rule), so
+  `choose a structure` is its third entry, not its first.
+- Phase 6: the frame's row is the first opaque written voxel's row of the scene's first
+  prefab, not the most-used row.
+- Phase 6: `R` on a structure's slot adds four 22.5-degree steps; the quarter turns are
+  `turn / 4`.
+- Phase 6: files outside the list: `structures/{library,words}.rs` (the split),
+  `hud/modes_tests.rs` (`modes.rs`' tests moved out, the file was at 1199 lines),
+  `entities/pool.rs` (the frame's upload and free), `run/mod.rs` and `test_support.rs` (the
+  `structure_placed` field, the test module), `cli/{mod,parse}.rs` (the `structures_dir`
+  field), and for the changed API `run/picker_tests.rs`, `run/tests.rs` and
+  `tests/gpu_hud_golden.rs` (`Item`, `append_belt(&Modes)`, `Belt::fill(entities,
+  structures)`).
+- Phase 6: 0077's `the_belt_draws_its_slots` is unchanged (its run has no structures
+  library); the chapel and castle slots and the chapel's icon are asserted in
+  `the_belt_names_a_structure` (1.2 s: it waits for the icon).
+- Phase 6: the HUD's mode block gains a row and the menu's root a thirteenth group, so the
+  `gpu_hud_golden` images that draw them are expected to differ at the tip gate.
 
 ### Close triggers
 

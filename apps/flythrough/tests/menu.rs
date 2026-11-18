@@ -86,7 +86,8 @@ fn tree_row<'a>(tree: &'a str, group: &str, label: &str) -> &'a str {
 }
 
 /// `--keys` at the start modes prints `lamp on` under `lighting` with `F7` in its key column;
-/// with `--lamp off` it prints `lamp off`. Every group's header is a line of its own.
+/// with `--lamp off` it prints `lamp off`. Every group's header is a line of its own; the
+/// `structures` group lists `clear box`, `structure scale` and `choose a structure`.
 #[test]
 fn the_tree_prints_live_values() {
     let start = parse_args_from(argv(&["--keys"])).expect("--keys parses");
@@ -101,6 +102,16 @@ fn the_tree_prints_live_values() {
     );
     for g in Group::ALL {
         assert!(tree.lines().any(|l| l == g.name()), "{g:?}:\n{tree}");
+    }
+    // Plan 0083 Phase 6: the `structures` group's three entries, menu-only.
+    for (label, value) in [
+        ("clear box", "clear box on"),
+        ("structure scale", "structure scale 1"),
+        ("choose a structure", "-"),
+    ] {
+        let row = tree_row(&tree, "structures", label);
+        assert!(row.contains(&format!(" {value} ")), "{row}");
+        assert!(row.trim_end().ends_with(" menu"), "{row}");
     }
     let off = keys_text(&parse_args_from(argv(&["--keys", "--lamp", "off"])).unwrap());
     let row = tree_row(&off, "lighting", "lamp");
@@ -187,13 +198,13 @@ fn the_root_and_a_group_draw_their_rows() {
     let audio = entry_row("audio", "needs --audio");
     let want = format!(
         "menu\n> moving\n  camera and paths\n  world and sky\n  look\n  upscaler\n  lighting\n  lights\n  \
-         light queue\n  entities\n{audio}\n  readings\n  debug\n\nEnter opens  Esc closes  \
-         Tab closes  type to search"
+         light queue\n  entities\n  structures\n{audio}\n  readings\n  debug\n\nEnter opens  \
+         Esc closes  Tab closes  type to search"
     );
     assert_eq!(text, want);
-    let mut want_colours = vec![HudColour::White; 15];
+    let mut want_colours = vec![HudColour::White; 16];
     want_colours[1] = HudColour::Yellow;
-    want_colours[10] = HudColour::Grey;
+    want_colours[11] = HudColour::Grey;
     assert_eq!(colours, want_colours);
     for _ in 0..5 {
         key(&mut menu, &m, KeyCode::ArrowDown);

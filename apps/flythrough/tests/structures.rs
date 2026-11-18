@@ -1,5 +1,6 @@
-//! Plan 0083 Phase 4: the structures library with no device. The chapel's files in step, and
-//! the chapel placed ahead of the spawn by `--vox`'s path.
+//! Plan 0083 Phases 4 and 6: the structures library with no device. The library's scan and
+//! rows, the chapel's files in step, and the chapel placed ahead of the spawn by `--vox`'s
+//! path and as ops.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -12,6 +13,59 @@ use vxe_world::{ChunkExtent, MaterialId, VoxelCoord, World};
 
 fn chapel_dir() -> PathBuf {
     PathBuf::from(structures::LIBRARY).join("chapel")
+}
+
+/// Phase 6 done-when 1: the scan of the committed library gives the chapel, then the castle;
+/// the chapel adds the 255 rows the README states and the castle none (its rows come from the
+/// material file when the table has none). In a scratch library a second file of the same
+/// palette adds no row, a directory without its `.vox` is a note, and a file that does not
+/// parse is an entry in error with its reason.
+#[test]
+fn the_library_lists_every_structure() {
+    let base = flythrough::walker::with_walker(&cave_materials());
+    let dir = PathBuf::from(structures::LIBRARY);
+    let mut table = base.clone();
+    assert_eq!(structures::add_library_rows(&dir, None, &mut table), [255]);
+    for n in flythrough::materials::CASTLE_ROWS {
+        assert!(table.rows().iter().any(|m| m.name == n), "{n}");
+    }
+    let readme = std::fs::read_to_string(dir.join("README.md")).expect("reads");
+    assert!(
+        readme.contains("rows +255"),
+        "the README states the chapel's rows"
+    );
+    let lib = structures::Library::load(&dir, &table, &base);
+    let names: Vec<&str> = lib.entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, ["chapel", structures::CASTLE_NAME]);
+    let rows: Vec<usize> = lib.entries.iter().map(|e| e.rows).collect();
+    assert_eq!(rows, [255, 0]);
+    let chapel = lib.entries[0].scene().expect("the chapel loads");
+    assert_eq!((chapel.placements.len(), chapel.size()), (4, [48, 32, 40]));
+    assert!(lib.entries[1].building() && lib.entries[1].error().is_none());
+    assert!(lib.notes.is_empty(), "{:?}", lib.notes);
+
+    let scratch = std::env::temp_dir().join(format!("vxe-structures-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&scratch);
+    let bytes = std::fs::read(chapel_dir().join("chapel.vox")).expect("reads");
+    for (name, content) in [("a", &bytes[..]), ("b", &bytes[..]), ("d", b"not a vox")] {
+        std::fs::create_dir_all(scratch.join(name)).unwrap();
+        std::fs::write(scratch.join(name).join(format!("{name}.vox")), content).unwrap();
+    }
+    std::fs::create_dir_all(scratch.join("c")).unwrap();
+    let mut table = base.clone();
+    assert_eq!(
+        structures::add_library_rows(&scratch, None, &mut table),
+        [255, 0, 0]
+    );
+    let lib = structures::Library::load(&scratch, &table, &base);
+    let names: Vec<&str> = lib.entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, ["a", "b", "d", "castle"]);
+    let rows: Vec<usize> = lib.entries.iter().map(|e| e.rows).collect();
+    assert_eq!(rows, [255, 0, 0, 0]);
+    let err = lib.entries[2].error().expect("d is in error");
+    assert!(err.contains("d.vox"), "{err}");
+    assert_eq!(lib.notes, ["structures: c/ holds no c.vox"]);
+    let _ = std::fs::remove_dir_all(&scratch);
 }
 
 /// `chapel.vox` is `chapel.voxtext` with its materials, layers and mirror added
@@ -120,8 +174,9 @@ fn the_chapel_stands_at_the_spawn() {
     assert_eq!(world.voxel_hash(), 0x62cc_2a8f_36d6_eaaf, "pinned on Linux");
 }
 
-/// `--vox-op`'s path against `--vox`'s: the chapel as ops (the box carve, then a stamp per
-/// placement) on the plain cave equals the chapel through the cave's source, voxel for voxel.
+/// `--vox-op`'s path against `--vox`'s: the chapel as ops (a stamp of written air over the
+/// box, then a stamp per placement) on the plain cave equals the chapel through the cave's
+/// source, voxel for voxel.
 #[test]
 fn the_chapel_as_ops_equals_the_chapel_from_the_source() {
     let file = structures::read(&chapel_dir().join("chapel.vox")).expect("reads");
@@ -130,7 +185,7 @@ fn the_chapel_as_ops_equals_the_chapel_from_the_source() {
     let scene = structures::scene(&file, &table, 1).expect("loads");
     let cave = CaveSource::unbounded(1);
     let offset = structures::offset(&scene, cave.spawn(), None);
-    let (lo, hi) = structures::clear_box(&scene, offset).expect("a box");
+    let (lo, hi) = structures::clear_box(&scene, offset, 0).expect("a box");
     let extent = ChunkExtent::new(
         lo.map(|v| v.div_euclid(64)),
         hi.map(|v| v.div_euclid(64) + 1),
@@ -141,7 +196,7 @@ fn the_chapel_as_ops_equals_the_chapel_from_the_source() {
         &table,
     );
     let opped = World::generate(extent, &cave, &table);
-    let v = structures::ops(&scene, offset, true);
+    let v = structures::ops(&scene, offset, 0, true);
     assert_eq!(v.ops.len(), 1 + scene.placements.len());
     let mut registry = vxe_world::PrefabRegistry::new();
     for p in &v.prefabs {
@@ -215,5 +270,96 @@ mod reading {
                 world.store().pending_placements()
             );
         }
+    }
+
+    /// Plan 0083 Phase 6's readings: the structures library's scan and rows at the start, the
+    /// frame ghosts' pool bytes (the chapel's edges, the castle's corners), the chapel's icon
+    /// time, and the castle's cleared box as a uniform air prefab (its construction, its id
+    /// and its stamp into a streamed hall). Run by hand under the perf lock:
+    /// `cargo nextest run -p flythrough --test structures --run-ignored only --no-capture
+    /// -E 'test(=reading::structure_readings)'`.
+    #[test]
+    #[ignore = "reading: the structures' start, frame bytes, icon and air box, by hand"]
+    fn structure_readings() {
+        let ms = |t: std::time::Instant| flythrough::now().duration_since(t).as_secs_f64() * 1e3;
+        let dir = std::path::Path::new(flythrough::structures::LIBRARY);
+        let base = flythrough::walker::with_walker(&flythrough::cave_materials());
+        let t = flythrough::now();
+        let mut table = base.clone();
+        let rows = flythrough::structures::add_library_rows(dir, None, &mut table);
+        let rows_ms = ms(t);
+        let t = flythrough::now();
+        let lib = flythrough::structures::Library::load(dir, &table, &base);
+        println!(
+            "reading: library rows {rows:?} in {rows_ms:.1} ms, {} entries loaded in {:.1} ms, \
+             table {} -> {} rows",
+            lib.entries.len(),
+            ms(t),
+            base.len(),
+            table.len()
+        );
+        let chapel = lib.entries[0].scene().expect("the chapel").clone();
+        let row = flythrough::structures::frame_row(&chapel, &table);
+        for (name, size) in [("chapel", chapel.size()), ("castle", [600, 600, 500])] {
+            let t = flythrough::now();
+            let m = flythrough::structures::frame_model(size, row);
+            println!(
+                "reading: {name} frame {size:?}: {} parts, {} pool bytes, made in {:.2} ms",
+                m.parts().len(),
+                flythrough::entities::library::pool_bytes(&m),
+                ms(t)
+            );
+        }
+        let model = Arc::new(flythrough::structures::scene_model(&chapel).expect("fits"));
+        let t = flythrough::now();
+        let icon = flythrough::entities::icon::icon(&model, &table);
+        println!(
+            "reading: chapel icon {} in {:.1} ms",
+            if icon.is_some() { "made" } else { "none" },
+            ms(t)
+        );
+
+        let size = [620, 620, 510];
+        let t = flythrough::now();
+        let air = vxe_world::Prefab::uniform(size, vxe_world::AIR);
+        let build_ms = ms(t);
+        let t = flythrough::now();
+        let id = air.id();
+        println!(
+            "reading: air box {size:?}: built in {build_ms:.2} ms, {} B, id {id:016x} in {:.1} ms",
+            air.bytes(),
+            ms(t)
+        );
+        let world = World::new(&flythrough::castle_materials(&flythrough::cave_materials()));
+        let mut s = Streamer::new(
+            Arc::new(HallSource::new(1)),
+            StreamConfig {
+                residency: Residency {
+                    r_full: 6,
+                    r_lod: 6,
+                    hysteresis: 1,
+                },
+                workers: 4,
+                persist: PersistConfig::default(),
+            },
+        );
+        s.update(&world, &[UNBOUNDED_SPAWN]);
+        s.wait_idle(&world);
+        let at = [
+            castle::ORIGIN[0] - 10,
+            castle::ORIGIN[1] - 10,
+            castle::ORIGIN[2] - 100,
+        ];
+        let t = flythrough::now();
+        let r = world
+            .stamp(&air, at, vxe_world::Rot::IDENTITY)
+            .expect("applies");
+        println!(
+            "reading: air box stamped in {:.1} ms at r_full 6: {} chunks written now, {} \
+             placements pending",
+            ms(t),
+            r.touched.len(),
+            world.store().pending_placements()
+        );
     }
 }

@@ -88,7 +88,7 @@ row showing the new value.
 | lights | `4` | Remove the newest light or walker, whichever was added last (in placement mode `4` is the belt's slot 4) |
 | lights | `6` | Fire a point light of the picked colour (intensity 600) along the view ray at 20 m/s; it stops 2 voxels short of the first surface (or after 40 m) and stays there as a dropped light |
 | entities | `` ` `` | `choose an entity`: the chooser (also the `entities` page's first row). Four rows per library entry beside its icon: a blank row, its name, parts and size on the cursor's row (an entry in error: its name grey, its error red), then its clips (the one a placement starts on marked `*`) and the belt's slot that holds it. `Enter` (or the left click, or the pad's `South`, or `` ` ``) on an entry puts it in the belt's selected slot (or selects the slot already holding it), closes the menu and enters placement mode; a digit `1`..`9` puts it in that slot and the chooser stays open; letters search the menu as on any page |
-| entities | `R` | `turn the ghost`: 22.5 degrees about the up axis per press, kept until the mode ends |
+| entities | `R` | `turn the ghost`: 22.5 degrees about the up axis per press, kept until the mode ends; on a structure's slot a quarter turn (90 degrees) |
 | entities | `Delete` | Remove the placed entity under the crosshair, the menu open or not, in placement mode or not |
 | entities | `Left`, `Right` | The aimed (else the newest) placed entity's clip before and after (menu closed); in placement mode, the ghost's |
 | entities | `Down` | Pause or play that entity's clip (menu closed); in placement mode, the ghost's |
@@ -101,7 +101,11 @@ look presets and far normal,
 the sharpening and pan, the lighting modes but the lamp, the lights' carry, colour and bounce
 flag, the light queue's order, weights, withdrawal, budget, full-first, missing light and
 reach, the walkers' walking and eye lights, the audio's sounds and mix, the bench, the stamp,
-the crumble, the coarse print, the castle shot and the shadow ray, and the world and sky page:
+the crumble, the coarse print, the castle shot and the shadow ray, the `structures` group
+(`choose a structure`: the structures' chooser, four rows per structure beside its icon, its
+name, placements and size, then the palette rows its file added and its slot; `Enter`, a
+digit and `` ` `` act as on the entities' chooser; `clear box` on or off [on] and `structure
+scale` 1 to 4 [1], shown on the HUD's `clear box on, structure scale 1` row), and the world and sky page:
 the time of day (a number, an hour a step, held between 00:00 and 23:59) and the day cycle
 (`--day-length`) and the sky rays (1 to 4) under a sky, the next world source (`--source`'s
 order: cave, level, showcase, outdoor, and back, rebuilt in process with that source's start
@@ -145,6 +149,22 @@ it there on its clip and turn (`placed spider #3 (rear)`) and the mode stays, a 
 the aim; the dig and the fill rest while the mode is on. An empty slot, an entry in error or a
 full set (64) stands no ghost and the banner says why. Under `--tester` there is no belt and no
 mode.
+
+The belt also holds the structures (`apps/flythrough/assets/structures`, then the generated
+castle), filled after the entities: walker, spider, chapel, castle, slot 5 empty. A
+structure's ghost is a marked frame of its box at the scale and turn (its twelve edges, or its
+eight corners for a box over 64 voxels a side), its name row the structure's size
+(`chapel  4.8 x 3.2 x 4.0 m`, `  x2` after it at scale 2). The box's near side is at the
+crosshair's first world hit within 30 m (on a wall or a ceiling, dropped to the floor below),
+or the view's 3 m point dropped to the floor with no hit; its footprint grows away from the
+camera along the view and its base is on the floor, so the camera is never inside it. `R`
+turns it a quarter turn. The left click places it as logged stamps through the server: with
+`clear box` on, a stamp of written air over the box and 1 m on its sides and above, then a
+stamp per placement; a part of the box not resident is written as its chunks arrive. The
+notice reads `placed chapel 4.8 x 3.2 x 4.0 m: 5 ops, 4 chunks now, 0 pending`, and the mode
+stays. The castle builds on a worker the first time its slot is selected (`castle: building`
+in grey until it arrives) and places at scale 1 only; a box past the edit limit (1024 voxels a
+side with its margin) is refused with its size.
 
 ### Gamepad (`--pad on`, the default in a window)
 
@@ -289,7 +309,8 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--materials PATH` | The material table file [`apps/flythrough/assets/materials.txt`; the built-in copy when that is missing]. Each scene takes its rows by name; while the window is open a saved change of colour, roughness, opacity or emission shows within a second (`materials reloaded`, the emissive chunks re-baked), a row added, removed or renamed or a class changed (`flags`, emitting or not) waits for a restart (`materials: shape changed, restart`), and an error names its line. A `--model` whose `.rig` has no `material` line for a palette entry takes the entry's colour and MagicaVoxel material as a row (`vox #rrggbb ...`, the HUD's `rows +N`) |
 | `--vox PATH[@x,y,z][*k]` | Place a MagicaVoxel scene in the streamed cave at the start ([structures](../apps/flythrough/assets/structures/README.md)): its palette as material rows (glass, glow, metal), hidden layers left out, mirrored groups mirrored, `k` world voxels per `.vox` voxel per axis (1 to 4) [1]; its box's minimum corner at `x,y,z`, or 3 m ahead of the spawn, its base 1.6 m below it |
 | `--vox-clear on\|off` | Carve `--vox`'s box, and 1 m on its sides and above, to air first [on] |
-| `--vox-op` | Place `--vox` as logged ops instead of through the cave's source: a box carve (with `--vox-clear on`) and a stamp per placement, submitted on the first tick the box's chunks are resident, so the two paths can be compared |
+| `--vox-op` | Place `--vox` as logged ops instead of through the cave's source: a stamp of written air over the box (with `--vox-clear on`) and a stamp per placement, submitted on the first tick (a chunk not resident is written when it arrives), so the two paths can be compared |
+| `--structures-dir DIR` | The structures library: every `DIR/<name>/<name>.vox` is a belt item after the entities, then the castle; each file's palette rows join the world's table at the start (`structures: N entries, +R rows`) [`apps/flythrough/assets/structures`] |
 | `--library-dir DIR` | The entities library: every `DIR/<name>/<name>.rig` is an entry, in name order; `--model`'s rig comes first. A missing or empty library gives the built-in walker [`apps/flythrough/assets/entities`] |
 | `--fade-reading` | Headless: dig, settle, switch the lamp off and print how the light fades |
 | `--exposure auto\|E` | Adapt like an eye, or a fixed exposure [auto] |

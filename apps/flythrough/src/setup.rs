@@ -127,9 +127,18 @@ pub(crate) fn materials(args: &Args) -> MaterialTable {
         .unwrap_or_else(|e| fail(e))
 }
 
-/// `table` with the walker's rows, then a row for each palette entry of `--model`'s `.vox`
-/// (ADR-0065): the world's table, fixed once the world is generated.
+/// `table` with the walker's rows, then a row for each palette entry of `--model`'s and
+/// `--vox`'s `.vox` (ADR-0065), then the structures library's rows
+/// (`structures::add_library_rows`): the world's table, fixed once the world is generated.
 pub(crate) fn world_table(args: &Args, table: &MaterialTable) -> MaterialTable {
+    let mut t = base_table(args, table);
+    let dir = crate::structures::dir_of(args);
+    crate::structures::add_library_rows(&dir, args.materials.as_deref(), &mut t);
+    t
+}
+
+/// [`world_table`] before the structures library's rows.
+pub(crate) fn base_table(args: &Args, table: &MaterialTable) -> MaterialTable {
     let mut t = crate::walker::with_walker(table);
     if let Some(path) = &args.model {
         crate::viewer::palette_rows(path, &mut t, vxe_assets::DEFAULT_EMISSION_FACTOR);
@@ -155,12 +164,8 @@ pub(crate) fn vox_ops(args: &Args, table: &MaterialTable) -> Option<crate::struc
             std::process::exit(1)
         });
     let spawn = CaveSource::unbounded(args.seed).spawn();
-    let ops = st::ops(&scene, st::offset(&scene, spawn, v.at), args.vox_clear);
-    println!(
-        "vox op: {} ops over {} chunks, submitted once they are resident",
-        ops.ops.len(),
-        ops.chunks.len()
-    );
+    let ops = st::ops(&scene, st::offset(&scene, spawn, v.at), 0, args.vox_clear);
+    println!("vox op: {} ops, submitted on the first tick", ops.ops.len());
     Some(ops)
 }
 

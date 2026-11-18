@@ -711,3 +711,60 @@ fn the_source_path_and_the_op_path_agree() {
     assert_eq!(stamped.store().pending_placements(), 0);
     assert_eq!(generated.voxel_hash(), stamped.voxel_hash());
 }
+
+/// Plan 0083 Phase 6 done-when 2: a uniform prefab the size of the castle's cleared box is one
+/// written air word a brick, under 2 MB; stamped over the corner of a solid one-chunk world it
+/// leaves every voxel of the overlap air and counts the rock it replaced; two constructions
+/// give one id.
+#[test]
+fn a_uniform_prefab_is_written_air_one_word_a_brick() {
+    let size = [620, 620, 510];
+    let air = Prefab::uniform(size, AIR);
+    assert_eq!(air.grid(), [78, 78, 64]);
+    assert_eq!(air.brick_counts(), (78 * 78 * 64, 0));
+    assert!(air.bytes() < 2 << 20, "{} B", air.bytes());
+    assert_eq!(air.written_count(), 196_044_000);
+    assert_eq!(air.get([0, 0, 0]), Some(AIR));
+    assert_eq!(air.get([619, 619, 509]), Some(AIR));
+
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        &UniformSource(3),
+        &test_table(),
+    );
+    // The box from (32, 32, 32): its overlap with the one chunk is 32³.
+    let r = world.stamp(&air, [32, 32, 32], Rot::IDENTITY).unwrap();
+    assert_eq!(r.changed_from, [(3, 32 * 32 * 32)]);
+    assert_eq!(r.touched, [ChunkCoord([0, 0, 0])]);
+    assert_eq!(
+        world.count_in_box([32, 32, 32], [63, 63, 63]).unwrap(),
+        [(AIR, 32 * 32 * 32)]
+    );
+    assert_eq!(world.material_at([31, 32, 32]), Some(3));
+
+    let again = Prefab::uniform(size, AIR);
+    assert_eq!(again.id(), air.id());
+    assert_ne!(
+        Prefab::uniform([8; 3], AIR).id(),
+        Prefab::uniform([8; 3], 3).id()
+    );
+    // The id streamed by whole lines and runs of air is the dense bytes' hash.
+    for (size, m) in [([13u32, 9, 17], AIR), ([13, 9, 17], 5), ([70, 3, 2], AIR)] {
+        let n: u32 = size.iter().product();
+        let mut bytes = Vec::new();
+        for s in size {
+            bytes.extend_from_slice(&s.to_le_bytes());
+        }
+        for _ in 0..n {
+            bytes.extend_from_slice(&m.to_le_bytes());
+        }
+        let mut words = vec![u64::MAX; n.div_ceil(64) as usize];
+        if !n.is_multiple_of(64) {
+            *words.last_mut().unwrap() = (1u64 << (n % 64)) - 1;
+        }
+        for w in words {
+            bytes.extend_from_slice(&w.to_le_bytes());
+        }
+        assert_eq!(Prefab::uniform(size, m).id(), fnv(&bytes), "{size:?} {m}");
+    }
+}

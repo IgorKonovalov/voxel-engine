@@ -3,11 +3,21 @@
 //! real instance in the set, `super::Walkers::preview`) and a click places it. The belt is
 //! drawn along the bottom of the window only in the mode ([`append_belt`]). Where the ghost
 //! stands is [`stand`]: the camera ray's first world hit within [`PLACE_REACH`], never nearer
-//! than the model's own size allows, dropped to the floor under a wall or a ceiling hit.
+//! than the model's own size allows, dropped to the floor under a wall or a ceiling hit. A
+//! slot holds an entity or a structure ([`Item`]); a structure's box stands by [`stand_box`].
 
 use vxe_render::{HudBox, HudColour, HudTile};
 
-use super::library::{BUILTIN_NAME, Library};
+use super::library::BUILTIN_NAME;
+use crate::hud::Modes;
+
+/// What a belt slot holds: an entities library entry, or a structures library entry
+/// (`crate::structures::Library`), by index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Item {
+    Entity(usize),
+    Structure(usize),
+}
 
 /// What the overlay lays over a belt's or a chooser's rows (`vxe_render::HudPaint`): the
 /// spans recoloured and the icons' tiles, kept across frames.
@@ -53,12 +63,13 @@ pub const NEAR_SCALE: f32 = 1.5;
 /// How far below a stand point the floor is looked for, in voxels: 10 m.
 pub const FLOOR_DROP: f32 = 100.0;
 
-/// The belt: what each slot holds (a library entry's index), the selected slot, whether
-/// placement mode is on, the ghost's turn in [`TURN_STEP_DEG`] steps, and when the selection
-/// last changed (the run's clock, ms; the name row shows for `hud::BANNER_MS` after it).
+/// The belt: what each slot holds, the selected slot, whether placement mode is on, the
+/// ghost's turn in [`TURN_STEP_DEG`] steps (a structure's in quarter turns, four steps each),
+/// and when the selection last changed (the run's clock, ms; the name row shows for
+/// `hud::BANNER_MS` after it).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Belt {
-    pub slots: [Option<usize>; SLOTS],
+    pub slots: [Option<Item>; SLOTS],
     pub selected: usize,
     pub on: bool,
     pub turn: u8,
@@ -67,14 +78,20 @@ pub struct Belt {
 }
 
 impl Belt {
-    /// Fills the slots once from `order` (the library's listing order, [`Library::order`]),
-    /// the first nine; later calls change nothing, so a slot keeps its entry for the run.
-    pub fn fill(&mut self, order: &[usize]) {
+    /// Fills the slots once from `entities` (the entities library's order,
+    /// [`super::library::Library::order`])
+    /// and then `structures` (the structures library's), the first nine; later calls change
+    /// nothing, so a slot keeps its item for the run.
+    pub fn fill(&mut self, entities: &[usize], structures: &[usize]) {
         if self.filled {
             return;
         }
         self.filled = true;
-        for (s, &i) in self.slots.iter_mut().zip(order) {
+        let items = entities
+            .iter()
+            .map(|&i| Item::Entity(i))
+            .chain(structures.iter().map(|&j| Item::Structure(j)));
+        for (s, i) in self.slots.iter_mut().zip(items) {
             *s = Some(i);
         }
     }
@@ -84,14 +101,30 @@ impl Belt {
         self.filled
     }
 
-    /// The selected slot's entry, when it holds one.
-    pub fn entry(&self) -> Option<usize> {
+    /// The selected slot's item, when it holds one.
+    pub fn item(&self) -> Option<Item> {
         self.slots[self.selected]
     }
 
-    /// The slot holding entry `i`, when one does.
-    pub fn slot_of(&self, i: usize) -> Option<usize> {
-        self.slots.iter().position(|&s| s == Some(i))
+    /// The selected slot's entity, when it holds one.
+    pub fn entry(&self) -> Option<usize> {
+        match self.item()? {
+            Item::Entity(i) => Some(i),
+            Item::Structure(_) => None,
+        }
+    }
+
+    /// The selected slot's structure, when it holds one.
+    pub fn structure(&self) -> Option<usize> {
+        match self.item()? {
+            Item::Structure(j) => Some(j),
+            Item::Entity(_) => None,
+        }
+    }
+
+    /// The slot holding `item`, when one does.
+    pub fn slot_of(&self, item: Item) -> Option<usize> {
+        self.slots.iter().position(|&s| s == Some(item))
     }
 
     /// Moves the selection (the frame) to slot `s` (0-based) at `now`, the mode as it was.
@@ -112,8 +145,8 @@ impl Belt {
         self.select(s, now);
     }
 
-    /// Puts entry `i` in slot `s`, taking it out of any other slot that held it.
-    pub fn assign(&mut self, s: usize, i: usize) {
+    /// Puts `i` in slot `s`, taking it out of any other slot that held it.
+    pub fn assign(&mut self, s: usize, i: Item) {
         for slot in &mut self.slots {
             if *slot == Some(i) {
                 *slot = None;
@@ -122,9 +155,16 @@ impl Belt {
         self.slots[s % SLOTS] = Some(i);
     }
 
-    /// The ghost turned one more step.
+    /// The ghost turned one more step: a structure's a quarter turn (four steps, a stamp's
+    /// turns being the cube's).
     pub fn turn_step(&mut self) {
-        self.turn = (self.turn + 1) % (360.0 / TURN_STEP_DEG) as u8;
+        let steps = if self.structure().is_some() { 4 } else { 1 };
+        self.turn = (self.turn + steps) % (360.0 / TURN_STEP_DEG) as u8;
+    }
+
+    /// The turn in whole quarter turns, as a structure takes it.
+    pub fn quarters(&self) -> u8 {
+        self.turn / 4
     }
 
     /// The turn in radians.
@@ -172,6 +212,17 @@ pub fn stand(
         }
         _ => along(near),
     };
+    drop_to_floor(eye, point, &cast)
+}
+
+/// `point` dropped to the first floor within [`FLOOR_DROP`] below it; when it is inside a
+/// solid voxel the drop starts at the eye's height above it instead. No floor found, the point
+/// stands where it is.
+fn drop_to_floor(
+    eye: [f32; 3],
+    point: [f32; 3],
+    cast: &impl Fn([f32; 3], [f32; 3], f32) -> Option<(f32, [f32; 3])>,
+) -> [f32; 3] {
     let down = [0.0, 0.0, -1.0];
     match cast(point, down, FLOOR_DROP) {
         Some((t, _)) if t > 0.0 => [point[0], point[1], point[2] - t],
@@ -186,17 +237,58 @@ pub fn stand(
     }
 }
 
+/// Where a box `size` voxels across (x, y, z) stands for an eye at `eye` looking along the
+/// unit `fwd`, as its minimum corner (`cast` as [`stand`]'s): `p` is the camera ray's first
+/// world hit within [`PLACE_REACH`] (on an upward face, as it is; on a wall or a ceiling,
+/// half a voxel back along the view and dropped to the floor), else the view's point at
+/// [`NEAR_MIN`] dropped to the floor; `h` is `fwd` level and of unit length (`+x` when `fwd`
+/// is vertical); the box's support along `h` is `s = (|h.x| size.x + |h.y| size.y) / 2`, its
+/// footprint centred on `p + h s` and its base at `p.z`. So its near side or corner is at `p`
+/// and it grows away from the eye, which is never inside it.
+pub fn stand_box(
+    eye: [f32; 3],
+    fwd: [f32; 3],
+    size: [f32; 3],
+    cast: impl Fn([f32; 3], [f32; 3], f32) -> Option<(f32, [f32; 3])>,
+) -> [f32; 3] {
+    let along = |t: f32| std::array::from_fn(|k| eye[k] + fwd[k] * t);
+    let p = match cast(eye, fwd, PLACE_REACH) {
+        Some((t, n)) if t > 0.0 && n[2] > 0.5 => along(t),
+        Some((t, _)) if t > 0.0 => drop_to_floor(eye, along((t - 0.5).max(0.0)), &cast),
+        _ => drop_to_floor(eye, along(NEAR_MIN), &cast),
+    };
+    let len = fwd[0].hypot(fwd[1]);
+    let h = if len < 1e-6 {
+        [1.0, 0.0]
+    } else {
+        [fwd[0] / len, fwd[1] / len]
+    };
+    let s = (h[0].abs() * size[0] + h[1].abs() * size[1]) / 2.0;
+    let c = [p[0] + h[0] * s, p[1] + h[1] * s];
+    [c[0] - size[0] / 2.0, c[1] - size[1] / 2.0, p[2]]
+}
+
 /// The name row's words for the selected slot: the entry's name (grey with its error after
-/// it for an entry in error, and where the error starts in the words), or `slot <n> empty
-/// (choose with `)`.
-fn name_words(belt: &Belt, lib: &Library, out: &mut String) -> (HudColour, Option<usize>) {
+/// it for an entry in error, and where the error starts in the words), a structure's name and
+/// size (`crate::structures::words::write_name`), or `slot <n> empty (choose with `)`.
+fn name_words(m: &Modes, out: &mut String) -> (HudColour, Option<usize>) {
     use std::fmt::Write as _;
-    match belt.entry() {
+    let (belt, lib) = (&m.walkers.belt, &m.walkers.library);
+    match belt.item() {
         None => {
             let _ = write!(out, "slot {} empty  (choose with `)", belt.selected + 1);
             (HudColour::Yellow, None)
         }
-        Some(i) => match lib.entries.get(i) {
+        Some(Item::Structure(j)) => {
+            let (grey, reason) = crate::structures::words::write_name(m, j, out);
+            let c = if grey {
+                HudColour::Grey
+            } else {
+                HudColour::Yellow
+            };
+            (c, reason)
+        }
+        Some(Item::Entity(i)) => match lib.entries.get(i) {
             None => {
                 out.push_str(BUILTIN_NAME);
                 (HudColour::Yellow, None)
@@ -215,14 +307,31 @@ fn name_words(belt: &Belt, lib: &Library, out: &mut String) -> (HudColour, Optio
     }
 }
 
-/// A slot's words on its second row: its entry's name, cut to the slot's six inner cells.
-fn slot_words(lib: &Library, i: usize) -> &str {
-    let name = lib.entries.get(i).map_or(BUILTIN_NAME, |e| e.name.as_str());
+/// A slot's words on its second row: its item's name, cut to the slot's six inner cells.
+fn slot_words(m: &Modes, i: Item) -> &str {
+    let name = match i {
+        Item::Entity(i) => m
+            .walkers
+            .library
+            .entries
+            .get(i)
+            .map_or(BUILTIN_NAME, |e| e.name.as_str()),
+        Item::Structure(j) => m.structures.entries.get(j).map_or("", |e| e.name.as_str()),
+    };
     let mut end = name.len().min(SLOT_COLS - 2);
     while !name.is_char_boundary(end) {
         end -= 1;
     }
     &name[..end]
+}
+
+/// The overlay tile an item's icon takes: an entity's its index, a structure's after the
+/// entities' (`entities::icon::Icons` holds both).
+pub fn tile_of(m: &Modes, i: Item) -> usize {
+    match i {
+        Item::Entity(i) => i,
+        Item::Structure(j) => m.walkers.library.entries.len().max(1) + j,
+    }
 }
 
 /// Appends the belt to the overlay's `text` and `colours` (one colour per line) for a grid of
@@ -239,12 +348,12 @@ pub fn append_belt(
     text: &mut String,
     colours: &mut Vec<HudColour>,
     grid: (usize, usize),
-    walkers: &super::Walkers,
+    m: &Modes,
     now_ms: f64,
     banner_ms: f64,
     paint: &mut Paint,
 ) -> HudBox {
-    let (belt, lib) = (&walkers.belt, &walkers.library);
+    let (walkers, belt) = (&m.walkers, &m.walkers.belt);
     let (cols, rows) = grid;
     let first = rows.saturating_sub(BELT_ROWS);
     // Keep at most `first` of the rows there (rows are joined by `\n`).
@@ -277,7 +386,7 @@ pub fn append_belt(
     let mut reason = None;
     if shown {
         let mut words = String::new();
-        (colour, reason) = name_words(belt, lib, &mut words);
+        (colour, reason) = name_words(m, &mut words);
         let at = x0 + BELT_COLS.saturating_sub(words.len()) / 2;
         row.extend(std::iter::repeat_n(' ', at));
         row.push_str(&words);
@@ -304,7 +413,11 @@ pub fn append_belt(
     };
     frame(&mut row);
     push_row(text, colours, &cut_to(&row, cols), HudColour::White);
-    let icon = |s: usize| belt.slots[s].filter(|&i| walkers.icons.ready(i));
+    let icon = |s: usize| {
+        belt.slots[s]
+            .map(|i| tile_of(m, i))
+            .filter(|&t| walkers.icons.ready(t))
+    };
     for r in 0..4 {
         row.clear();
         row.extend(std::iter::repeat_n(' ', x0));
@@ -316,7 +429,7 @@ pub fn append_belt(
                 0 => row.push(char::from(b'1' + s as u8)),
                 1 if icon(s).is_none() => {
                     if let Some(i) = belt.slots[s] {
-                        row.push_str(slot_words(lib, i));
+                        row.push_str(slot_words(m, i));
                     }
                 }
                 _ => {}
@@ -379,16 +492,21 @@ mod tests {
     #[test]
     fn the_belt_steps_wraps_and_assigns() {
         let mut b = Belt::default();
-        b.fill(&[1, 0]);
-        b.fill(&[5]);
-        assert_eq!(b.slots[..3], [Some(1), Some(0), None]);
+        let e = Item::Entity;
+        b.fill(&[1, 0], &[0]);
+        b.fill(&[5], &[]);
+        assert_eq!(
+            b.slots[..4],
+            [Some(e(1)), Some(e(0)), Some(Item::Structure(0)), None]
+        );
         b.step(-1, 0.0);
         assert_eq!((b.selected, b.on), (8, true));
         b.step(1, 0.0);
         assert_eq!(b.selected, 0);
-        b.assign(4, 1);
-        assert_eq!(b.slots[..5], [None, Some(0), None, None, Some(1)]);
-        assert_eq!(b.slot_of(1), Some(4));
+        b.assign(4, e(1));
+        let s = Some(Item::Structure(0));
+        assert_eq!(b.slots[..5], [None, Some(e(0)), s, None, Some(e(1))]);
+        assert_eq!(b.slot_of(e(1)), Some(4));
         for _ in 0..17 {
             b.turn_step();
         }

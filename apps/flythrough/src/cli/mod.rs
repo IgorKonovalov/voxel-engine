@@ -655,12 +655,13 @@ pub struct Args {
     pub vox: Option<crate::structures::VoxArg>,
     /// `--vox-clear on|off`: carve the structure's box to air first (on).
     pub vox_clear: bool,
-    /// `--vox-op`: place `--vox` as ops on the first tick its box is resident, not through the
-    /// source.
+    /// `--vox-op`: place `--vox` as ops on the first tick, not through the source.
     pub vox_op: bool,
     /// `--library-dir DIR`: the entities library (`crate::entities::library`); `None` for its
     /// default directory.
     pub library_dir: Option<std::path::PathBuf>,
+    /// `--structures-dir`: the structures library's directory (`crate::structures::LIBRARY`).
+    pub structures_dir: Option<std::path::PathBuf>,
     /// `--library`: print the library's entries (`crate::entities::library::library_text`)
     /// and exit 0.
     pub library: bool,

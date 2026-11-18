@@ -311,6 +311,12 @@ impl Prefab {
         Self::build(size, |_, _, _| None, cell)
     }
 
+    /// A prefab of `size` whose every voxel is `material`, written: one word a brick, no voxel
+    /// visited. Stamped with [`AIR`], it clears its box.
+    pub fn uniform(size: [u32; 3], material: MaterialId) -> Self {
+        Self::build(size, |_, _, _| Some((material, true)), |_| Some(material))
+    }
+
     /// A prefab of `size` from `voxels` (x fastest) and a write mask (bit `i % 64` of word
     /// `i / 64` for voxel `i`); `None` writes every voxel. A masked-out voxel's value is
     /// dropped (stored as [`AIR`]).
@@ -439,13 +445,38 @@ impl Prefab {
         n
     }
 
-    /// Visits every voxel in the dense order `x + sx (y + sy z)`, a row of up to eight at a
-    /// time: `f(materials, written bits)`, bit `k` for the row's `k`-th voxel.
-    fn rows(&self, mut f: impl FnMut(&[MaterialId], u8)) {
+    /// Visits every voxel in the dense order `x + sx (y + sy z)`: a whole line along x at once
+    /// when every brick it crosses is uniform with one value ([`Line::Same`]), else a row of up
+    /// to eight voxels at a time ([`Line::Cells`]).
+    fn rows(&self, mut f: impl FnMut(Line<'_>)) {
         let e = PREFAB_BRICK_EDGE;
+        let g = self.grid.map(|v| v as usize);
+        // Per brick row (by, bz), the one value of every brick along x, when they share one.
+        let mut same = Vec::with_capacity(g[1] * g[2]);
+        for bz in 0..self.grid[2] {
+            for by in 0..self.grid[1] {
+                let mut v = None;
+                for bx in 0..self.grid[0] {
+                    match self.brick([bx, by, bz]) {
+                        BrickRef::Uniform(m, w) if v.is_none_or(|s| s == (m, w)) => {
+                            v = Some((m, w));
+                        }
+                        _ => {
+                            v = None;
+                            break;
+                        }
+                    }
+                }
+                same.push(v);
+            }
+        }
         let mut row = [AIR; 8];
         for z in 0..self.size[2] {
             for y in 0..self.size[1] {
+                if let Some((m, w)) = same[(y / e) as usize + g[1] * (z / e) as usize] {
+                    f(Line::Same(m, w, self.size[0]));
+                    continue;
+                }
                 for bx in 0..self.grid[0] {
                     let len = ((bx * e + e).min(self.size[0]) - bx * e) as usize;
                     let bits = match self.brick([bx, y / e, z / e]) {
@@ -459,7 +490,7 @@ impl Prefab {
                             (fb.mask[base / 64] >> (base % 64)) as u8 & ((1u16 << len) - 1) as u8
                         }
                     };
-                    f(&row[..len], bits);
+                    f(Line::Cells(&row[..len], bits));
                 }
             }
         }
@@ -476,28 +507,52 @@ impl Prefab {
                 h.write(&s.to_le_bytes());
             }
             let mut buf = [0u8; 16];
-            self.rows(|row, _| {
-                for (k, v) in row.iter().enumerate() {
-                    buf[2 * k..2 * k + 2].copy_from_slice(&v.to_le_bytes());
+            // A run of air voxels is a run of zero bytes, each of which only multiplies the
+            // state by the prime: the run is one multiplication by the prime's power.
+            let mut zeros = 0u64;
+            self.rows(|line| match line {
+                Line::Same(AIR, _, n) => zeros += 2 * u64::from(n),
+                Line::Same(m, _, n) => {
+                    fnv_zeros(&mut h, std::mem::take(&mut zeros));
+                    for _ in 0..n {
+                        h.write(&m.to_le_bytes());
+                    }
                 }
-                h.write(&buf[..2 * row.len()]);
+                Line::Cells(row, _) if row.iter().all(|&v| v == AIR) => {
+                    zeros += 2 * row.len() as u64;
+                }
+                Line::Cells(row, _) => {
+                    fnv_zeros(&mut h, std::mem::take(&mut zeros));
+                    for (k, v) in row.iter().enumerate() {
+                        buf[2 * k..2 * k + 2].copy_from_slice(&v.to_le_bytes());
+                    }
+                    h.write(&buf[..2 * row.len()]);
+                }
             });
+            fnv_zeros(&mut h, zeros);
             let (mut word, mut filled) = (0u64, 0u32);
-            self.rows(|row, bits| {
-                let len = row.len() as u32;
-                word |= u64::from(bits) << filled;
+            // Appends the `len` (at most 64) low bits of `bits`, writing each full word.
+            let mut push = |h: &mut Fnv1a, bits: u64, len: u32| {
+                word |= bits << filled;
                 if filled + len >= 64 {
                     h.write(&word.to_le_bytes());
                     let used = 64 - filled;
-                    word = if used < len {
-                        u64::from(bits) >> used
-                    } else {
-                        0
-                    };
+                    word = if used < len { bits >> used } else { 0 };
                     filled = len - used;
                 } else {
                     filled += len;
                 }
+            };
+            self.rows(|line| match line {
+                Line::Same(_, w, mut n) => {
+                    while n > 0 {
+                        let len = n.min(64);
+                        let bits = if w { u64::MAX >> (64 - len) } else { 0 };
+                        push(&mut h, bits, len);
+                        n -= len;
+                    }
+                }
+                Line::Cells(row, bits) => push(&mut h, u64::from(bits), row.len() as u32),
             });
             if filled > 0 {
                 h.write(&word.to_le_bytes());
@@ -683,6 +738,26 @@ impl Prefab {
                 w.then_some(m)
             },
         )
+    }
+}
+
+/// One step of [`Prefab::rows`]: a whole line of one material and write bit and its length,
+/// or up to eight voxels of a brick row and their write bits.
+enum Line<'a> {
+    Same(MaterialId, bool, u32),
+    Cells(&'a [MaterialId], u8),
+}
+
+/// FNV-1a 64 over `n` zero bytes: XOR with zero leaves the state, so it is the state times
+/// the prime to the `n`th power, by squaring.
+fn fnv_zeros(h: &mut Fnv1a, mut n: u64) {
+    let mut p = 0x0000_0100_0000_01b3u64;
+    while n > 0 {
+        if n & 1 != 0 {
+            h.0 = h.0.wrapping_mul(p);
+        }
+        p = p.wrapping_mul(p);
+        n >>= 1;
     }
 }
 

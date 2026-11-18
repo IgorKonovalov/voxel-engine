@@ -1,7 +1,14 @@
 //! `.vox` structures placed in the cave (Plan 0083): `--vox PATH[@x,y,z][*k]` loads a
 //! MagicaVoxel scene, its palette resolved to rows before the world is generated (ADR-0065),
 //! and places it through a `StampedSource` over the cave, its box carved clear first unless
-//! `--vox-clear off`. The library is `assets/structures/<name>/<name>.vox`.
+//! `--vox-clear off`. The library is `assets/structures/<name>/<name>.vox` ([`library`]),
+//! placed from the belt as logged stamps ([`ops`]); [`words`] are its rows in the chooser
+//! and the belt.
+
+pub mod library;
+pub mod words;
+
+pub use library::*;
 
 use std::path::{Path, PathBuf};
 
@@ -163,13 +170,14 @@ impl<S: WorldSource> WorldSource for ClearedSource<S> {
     }
 }
 
-/// The inclusive box [`source`] carves for `scene` moved by `offset`: the scene's box with
-/// [`CLEAR_MARGIN`] on its sides and above. `None` for a scene with no placement.
-pub fn clear_box(scene: &VoxScene, offset: [i32; 3]) -> Option<([i32; 3], [i32; 3])> {
+/// The inclusive box [`source`] carves for `scene` turned `quarters` quarter turns and moved
+/// by `offset` ([`VoxScene::placed_at`]): the turned box with [`CLEAR_MARGIN`] on its sides
+/// and above. `None` for a scene with no placement.
+pub fn clear_box(scene: &VoxScene, offset: [i32; 3], quarters: u8) -> Option<([i32; 3], [i32; 3])> {
     if scene.placements.is_empty() {
         return None;
     }
-    let (lo, hi) = scene.bounds;
+    let (lo, hi) = scene.turned_bounds(quarters);
     let m = CLEAR_MARGIN;
     let lo = [lo[0] - m, lo[1] - m, lo[2]];
     let hi = [hi[0] + m, hi[1] + m, hi[2] + m];
@@ -179,52 +187,44 @@ pub fn clear_box(scene: &VoxScene, offset: [i32; 3]) -> Option<([i32; 3], [i32; 
     ))
 }
 
-/// `--vox-op`: the scene as ops, submitted on the first tick its box is resident.
+/// A scene as ops ([`ops`]): `--vox-op`'s, submitted on the run's first tick, and a belt
+/// placement's, submitted at the click.
 #[derive(Clone, Debug)]
 pub struct VoxOps {
-    /// The prefabs the stamps name, registered on the server and the client.
+    /// The prefabs the stamps name, the air box's first when there is one, registered on the
+    /// server and the client.
     pub prefabs: Vec<std::sync::Arc<vxe_world::Prefab>>,
-    /// The box carve when clear is on, then one stamp per placement.
+    /// The air box's stamp when clear is on, then one stamp per placement.
     pub ops: Vec<vxe_world::Op>,
-    /// The chunks of the carved (or the scene's) box, which must be resident for the carve.
-    pub chunks: Vec<ChunkCoord>,
 }
 
-/// `scene` moved by `offset` as ops: a carve of [`clear_box`] when `clear`, then a stamp per
-/// placement in order, as [`source`] writes them.
-pub fn ops(scene: &VoxScene, offset: [i32; 3], clear: bool) -> VoxOps {
-    use vxe_world::{EditOp, FIXED_ONE, Fixed3, Mode, Op};
+/// `scene` turned `quarters` quarter turns and moved by `offset` as ops: when `clear`, a stamp
+/// of written air the size of [`clear_box`] at its corner (a stamp, not a carve: a stamp past
+/// residency finishes as the chunks arrive, ADR-0066), then a stamp per placement in order,
+/// as [`source`] writes them.
+pub fn ops(scene: &VoxScene, offset: [i32; 3], quarters: u8, clear: bool) -> VoxOps {
+    use vxe_world::{Op, Prefab, Rot, VoxelCoord};
     let mut ops = Vec::new();
-    let (lo, hi) = clear_box(scene, offset).unwrap_or(scene.bounds);
-    if clear && let Some((lo, hi)) = clear_box(scene, offset) {
-        let f = |v: [i32; 3]| Fixed3(v.map(|c| i64::from(c) * FIXED_ONE));
-        // A box op selects the voxels lo..hi, half-open.
-        ops.push(Op::Edit(EditOp::box_(
-            f(lo),
-            f(hi.map(|v| v + 1)),
-            Mode::Carve,
-        )));
+    let mut prefabs = Vec::new();
+    if clear && let Some((lo, hi)) = clear_box(scene, offset, quarters) {
+        let size = [0, 1, 2].map(|k| (hi[k] - lo[k] + 1) as u32);
+        let air = std::sync::Arc::new(Prefab::uniform(size, AIR));
+        ops.push(Op::Stamp {
+            prefab: air.id(),
+            origin: VoxelCoord(lo),
+            rot: Rot::IDENTITY,
+        });
+        prefabs.push(air);
     }
-    for (p, o, r) in scene.placed_at(offset) {
+    for (p, o, r) in scene.placed_at(offset, quarters) {
         ops.push(Op::Stamp {
             prefab: p.id(),
             origin: o,
             rot: r,
         });
     }
-    let mut chunks = Vec::new();
-    for z in lo[2].div_euclid(64)..=hi[2].div_euclid(64) {
-        for y in lo[1].div_euclid(64)..=hi[1].div_euclid(64) {
-            for x in lo[0].div_euclid(64)..=hi[0].div_euclid(64) {
-                chunks.push(ChunkCoord([x, y, z]));
-            }
-        }
-    }
-    VoxOps {
-        prefabs: scene.prefabs.clone(),
-        ops,
-        chunks,
-    }
+    prefabs.extend(scene.prefabs.iter().cloned());
+    VoxOps { prefabs, ops }
 }
 
 /// `scene` moved by `offset` over `base`, its box (with [`CLEAR_MARGIN`] on its sides and
@@ -236,10 +236,10 @@ pub fn source<S: WorldSource>(
     clear: bool,
 ) -> StampedSource<ClearedSource<S>> {
     // An empty box when nothing is carved.
-    let (lo, hi) = clear_box(scene, offset)
+    let (lo, hi) = clear_box(scene, offset, 0)
         .filter(|_| clear)
         .unwrap_or(([1, 1, 1], [0, 0, 0]));
-    StampedSource::new(ClearedSource { base, lo, hi }, scene.placed_at(offset))
+    StampedSource::new(ClearedSource { base, lo, hi }, scene.placed_at(offset, 0))
 }
 
 /// The chapel's glass and lamp palette indices in `chapel.voxtext`.
