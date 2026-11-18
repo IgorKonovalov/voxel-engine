@@ -784,7 +784,7 @@ Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
 | 3: prefabs as bricks | dev | done; `prefab64_mixed` +1.4 % over the base, met under the 2026-11-17 amendment (Notes) | a8a53e7a |
 | 4: the scene: layers, mirrors, scale, `--vox` | dev | done | a221e764 |
 | 5: placements past residency | dev | done | 7a7a6f19 |
-| 6 (amended): a structure in the belt | dev | done; deviations in Notes | committed with this row |
+| 6 (amended): a structure in the belt | dev | done; deviations in Notes | c83ebcf8 |
 | 7: the owner's window | human | not started | |
 | 8: picks, goldens, readings, tip | dev | not started | |
 
@@ -888,8 +888,11 @@ Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
 - Phase 6: 0077's `the_belt_draws_its_slots` is unchanged (its run has no structures
   library); the chapel and castle slots and the chapel's icon are asserted in
   `the_belt_names_a_structure` (1.2 s: it waits for the icon).
-- Phase 6: the HUD's mode block gains a row and the menu's root a thirteenth group, so the
-  `gpu_hud_golden` images that draw them are expected to differ at the tip gate.
+- Phase 6: the HUD's mode block gains a row and the menu's root a thirteenth group, so
+  `gpu_hud_golden`'s `hud.png` (24 953 bytes) and `menu.png` (12 358 bytes) differed at the tip
+  gate; both re-blessed on lavapipe after reading them: the `clear box on, structure scale 1`
+  row inserted under the lights row (the rows below it one line down), and `structures` after
+  `entities` on the root page.
 
 ### Close triggers
 
