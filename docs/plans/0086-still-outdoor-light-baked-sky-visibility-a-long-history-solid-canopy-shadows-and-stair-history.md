@@ -223,6 +223,8 @@ their gate; Phase 16 writes the picks as tests. The Implementation log's rows fo
 **Owner questions** (recommended option first; Phase 9 starts without the answers, Phases 12
 to 14 read every arm the window needs and the window picks):
 
+**Answered 2026-11-18 (owner, "all recommended"), with the go for Phases 9 to 16:** 1 (a), 2 (a), 3 (a), 4 (a).
+
 1. **The eye's ceiling outdoors (Phase 12).** (a) Anchor it to the sky: the eye opens at most
    `N` EV above the exposure the sunlit ground needs, derived each frame from the sky's
    irradiance, so a noon tunnel stays dark and a night scene still opens; `N` is a setting the
