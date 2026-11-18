@@ -42,9 +42,9 @@ pub struct StreamedRead {
     pub direct: f64,
     pub missing: u32,
     pub black: u32,
-    /// Under a [`Hold`]: the full chunks mirrored whose reach lies within the full radius
-    /// (distance from the eye's chunk plus the light radius at most `r_full`), not faceless and
-    /// holding no block; 0 without a hold.
+    /// Under a [`Hold`]: the full chunks mirrored within the full radius whose reach does not
+    /// cross it by the queue's test ([`vxe_render::reach_crosses`]), not faceless and holding
+    /// no block; 0 without a hold.
     pub unbaked_inner: u32,
     /// The chunks the lighting pixels hit that hold no block.
     pub hit_unbaked: u32,
@@ -243,17 +243,17 @@ fn unbaked(
     r_full: i32,
 ) -> (u32, u32) {
     let e = eye.0.map(|v| v.div_euclid(64));
-    let lr = f64::from(gpu.light_radius());
+    let lr = gpu.light_radius();
     let q = frame.bake_queue().expect("the queue runs");
     let no_block = |c: vxe_world::ChunkCoord| frame.store().block(c).is_none();
     let inner = gpu
         .full_chunks()
         .filter(|c| {
-            let d = (0..3)
-                .map(|k| f64::from(c.0[k] - e[k]).powi(2))
-                .sum::<f64>()
-                .sqrt();
-            d + lr <= f64::from(r_full) && no_block(*c) && !q.tracks(*c).contains(&"faceless")
+            let d2: i64 = (0..3).map(|k| i64::from(c.0[k] - e[k]).pow(2)).sum();
+            d2 <= i64::from(r_full).pow(2)
+                && !vxe_render::reach_crosses(*c, e, lr, r_full)
+                && no_block(*c)
+                && !q.tracks(*c).contains(&"faceless")
         })
         .count() as u32;
     let hit: std::collections::BTreeSet<[i32; 3]> = hits

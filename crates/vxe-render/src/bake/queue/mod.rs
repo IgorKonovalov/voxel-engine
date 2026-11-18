@@ -507,6 +507,17 @@ pub fn finality_blockers(
     out
 }
 
+/// Whether `coord`'s reach at light radius `lr` crosses the streamer's full radius `r_full`
+/// about the eye's chunk `eye`: a chunk within the reach ([`reach_offsets`]) lies past the full
+/// sphere (`d2 > r_full^2` in chunks, the streamer's rule), so a still camera never makes the
+/// reach whole and [`ReachMode::Full`] never bakes `coord`.
+pub fn reach_crosses(coord: ChunkCoord, eye: [i32; 3], lr: i32, r_full: i32) -> bool {
+    let o = [0, 1, 2].map(|k| coord.0[k] - eye[k]);
+    reach_offsets(lr).any(|n| {
+        (0..3).map(|k| i64::from(o[k] + n[k]).pow(2)).sum::<i64>() > i64::from(r_full).pow(2)
+    })
+}
+
 /// The chunks a column waits for before it is final ([`GpuWorld::column_final`]): in a streamed
 /// world with `lod_radius`, those within it of `eye`'s chunk (the streamer's sphere, `d2 <=
 /// r^2`); else none beyond the pending ones.
@@ -855,13 +866,9 @@ impl BakeQueue {
             Reach::Ready => Some(false),
             Reach::Partial
                 if self.reach_mode == ReachMode::Partial
-                    && view.full_radius.is_some_and(|r| {
-                        let o = [0, 1, 2].map(|k| coord.0[k] - eye[k]);
-                        reach_offsets(lr).any(|n| {
-                            (0..3).map(|k| i64::from(o[k] + n[k]).pow(2)).sum::<i64>()
-                                > i64::from(r).pow(2)
-                        })
-                    }) =>
+                    && view
+                        .full_radius
+                        .is_some_and(|r| reach_crosses(coord, eye, lr, r)) =>
             {
                 Some(true)
             }

@@ -90,6 +90,7 @@ pub use bake::{
     MissingLight, PreRoll, PreRollConfig, PreRollError, PreRollState, PreRollSummary,
     QUEUE_ANGLE_WEIGHT, QUEUE_BRICK_SAMPLES, QUEUE_REFINE_WEIGHT, QueueOrder, QueueStats,
     QueueView, ReachMode, Refine, Store, StoreStats, finality_blockers, queue_settings,
+    reach_crosses,
 };
 pub use camera::{Camera, View};
 pub use entities::{

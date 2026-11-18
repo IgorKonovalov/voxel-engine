@@ -21,7 +21,8 @@ fn hit_without_record(store: &vxe_render::Store, hit: [f32; 4]) -> Option<(Chunk
 /// `light_hit_positions` read back) reads no record value in `frame`'s store (the store's
 /// `missing`, of which the chain leaves `black` unlit), grouped by the chunk they hit, nearest
 /// the eye (`view.eye`) first, each with the chunk's distance in chunks, whether it holds a
-/// block, its queue tracks, the mirror's state, whether its reach crosses the full radius and
+/// block, its queue tracks, the mirror's state, whether its reach crosses the full radius by
+/// the queue's test ([`vxe_render::reach_crosses`]) and
 /// the chunks that hold its columns from final ([`vxe_render::finality_blockers`]). A header
 /// line first.
 pub fn black_dump_lines(
@@ -69,10 +70,10 @@ pub fn black_dump_lines(
         let cc = ChunkCoord(c);
         let blockers = vxe_render::finality_blockers(mirror, cc, lr, view);
         let crosses = view.full_radius.map_or("no streamer".to_owned(), |r| {
-            (d + f64::from(lr) > f64::from(r)).to_string()
+            vxe_render::reach_crosses(cc, e, lr, r).to_string()
         });
         out.push(format!(
-            "dump black: chunk {} {} {}: {n} px, {d:.1} chunks out, block {}, tracks {:?}, mirrored {} lod {} pending {}, reach crosses the full radius {crosses}, {} blockers {:?}",
+            "dump black: chunk {} {} {}: {n} px, {d:.1} chunks out, block {}, tracks {:?}, mirrored {} lod {} pending {}, reach crosses the full radius (the queue's test) {crosses}, {} blockers {:?}",
             c[0],
             c[1],
             c[2],
