@@ -5,7 +5,7 @@
 // part and a fallback hit's emissive part; a pixel whose emissive part is the store's (the
 // moments' w, temporal.wgsl) carries a cell's mean, whose variance is the cell's and not the
 // pixel's, so that part passes around the filter and the last iteration adds it back
-// (ADR-0043). Compiled after common.wgsl and hitrec.wgsl, whose bindings (group 0) and hit-record helpers it
+// (ADR-0043). Compiled after common.wgsl, hitrec.wgsl and the sky's modules, whose bindings (group 0), hit-record and sky helpers it
 // uses.
 //
 // Two entry points:
@@ -39,6 +39,12 @@
 //   4  storage texture   filter_out      rgba16float: irradiance rgb, variance a
 //   9  texture_2d<f32>   direct_acc_in   the temporal pass's accumulated direct part (rgb, its
 //                                        luminance in a)
+//  10  texture_2d<f32>   vis_in          this frame's visibility samples (shade.wgsl's
+//                                        `vis_out`, rgba8unorm: 1 in a where the sky ray was cast)
+//  11  texture_2d<f32>   pair_in         the visibility pair the temporal pass wrote this frame
+//                                        (the sky visibility's long mean in r)
+//  12  storage, read     sky_e           `E_sky` per direction (`sky_irradiance.wgsl`), as the
+//                                        temporal pass binds it
 // Bindings, group 2 of `atrous`:
 //   0  texture_2d<f32>   hit_pos_in
 //   1  texture_2d<u32>   hit_info_in
@@ -103,6 +109,9 @@ fn edge_weight(a: HitRecord, b: HitRecord, eye: vec3<f32>) -> f32 {
 @group(2) @binding(3) var moments_in: texture_2d<f32>;
 @group(2) @binding(4) var filter_out: texture_storage_2d<rgba16float, write>;
 @group(2) @binding(9) var direct_acc_in: texture_2d<f32>;
+@group(2) @binding(10) var vis_in: texture_2d<f32>;
+@group(2) @binding(11) var pair_in: texture_2d<f32>;
+@group(2) @binding(12) var<storage, read> sky_e: array<vec4<f32>, 6>;
 
 @compute @workgroup_size(8, 8, 1)
 fn variance(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -115,9 +124,12 @@ fn variance(@builtin(global_invocation_id) gid: vec3<u32>) {
     let acc = textureLoad(src_in, px, 0);
     let direct = textureLoad(direct_acc_in, px, 0);
     let mw = textureLoad(moments_in, px, 0);
-    let c = select(acc.xyz, vec3<f32>(0.0), mw.w > 0.5) + direct.xyz;
-    let m = mw.xyz;
     let rec = load_hit(px);
+    // The pair's sky term where the ray was cast (temporal.wgsl keeps it out of the direct
+    // part): filtered with the rest.
+    let sky_t = sky_pair_term(sky_e, textureLoad(pair_in, px, 0).x, textureLoad(vis_in, px, 0).a, rec.n);
+    let c = select(acc.xyz, vec3<f32>(0.0), mw.w > 0.5) + direct.xyz + sky_t;
+    let m = mw.xyz;
     // The pixel's own variance, less the moments' rounding: each moment is an f16 (relative step
     // 2^-11), so `m2 - m1^2` of a still, noise-free light is a residue of up to about three steps
     // of m2, positive or negative. Without the floor that residue sets a sigma that depends on

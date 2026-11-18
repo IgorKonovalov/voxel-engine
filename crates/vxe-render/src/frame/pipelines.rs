@@ -220,7 +220,13 @@ pub(crate) const PASSES: [PassSpec; 15] = [
     },
     PassSpec {
         label: "variance",
-        modules: &[COMMON_WGSL, HITREC_WGSL, ATROUS_WGSL],
+        modules: &[
+            COMMON_WGSL,
+            HITREC_WGSL,
+            SKY_ATMOSPHERE_WGSL,
+            SKY_WGSL,
+            ATROUS_WGSL,
+        ],
         entry: "variance",
         constants: &[],
         groups: &[
@@ -233,13 +239,22 @@ pub(crate) const PASSES: [PassSpec; 15] = [
                 (3, Io::Float),
                 (4, F16),
                 (9, Io::Float),
+                (10, Io::Float),
+                (11, Io::Float),
+                (12, Io::ReadStorage),
             ]),
         ],
         lazy: false,
     },
     PassSpec {
         label: "atrous",
-        modules: &[COMMON_WGSL, HITREC_WGSL, ATROUS_WGSL],
+        modules: &[
+            COMMON_WGSL,
+            HITREC_WGSL,
+            SKY_ATMOSPHERE_WGSL,
+            SKY_WGSL,
+            ATROUS_WGSL,
+        ],
         entry: "atrous",
         constants: &[],
         groups: &[
@@ -331,6 +346,9 @@ pub(crate) const PASSES: [PassSpec; 15] = [
                 Io::Storage,
                 Io::Uint,
                 Io::Float,
+                Io::Float,
+                Io::Float,
+                Io::ReadStorage,
             ]),
         ],
         lazy: false,

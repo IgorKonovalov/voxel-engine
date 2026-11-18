@@ -29,6 +29,11 @@
 //                                        rgb9e5 (`t9e5_unpack`)
 //  10  texture_2d<f32>   direct_acc_in   the temporal pass's accumulated direct part (rgb),
 //                                        read with the filter off
+//  11  texture_2d<f32>   vis_in          this frame's visibility samples (1 in a where the sky
+//                                        ray was cast), read with the filter off
+//  12  texture_2d<f32>   pair_in         the visibility pair the temporal pass wrote this frame,
+//                                        read with the filter off
+//  13  storage, read     sky_e           `E_sky` per direction, read with the filter off
 //
 // Per view: `shaded` is the Lambertian `albedo * tint * E / PI` of a hit (E the direct
 // irradiance plus, with Params.lighting bit 12, the probes' indirect irradiance) plus its
@@ -73,6 +78,9 @@ const HDR_TARGET: bool = false;
 @group(2) @binding(8) var<storage, read_write> meter_tiles: array<vec2<f32>>;
 @group(2) @binding(9) var transmit_in: texture_2d<u32>;
 @group(2) @binding(10) var direct_acc_in: texture_2d<f32>;
+@group(2) @binding(11) var vis_in: texture_2d<f32>;
+@group(2) @binding(12) var pair_in: texture_2d<f32>;
+@group(2) @binding(13) var<storage, read> sky_e: array<vec4<f32>, 6>;
 
 // The workgroup's meter partial sums: log2 luminance, pixel count.
 var<workgroup> meter_sum: array<vec2<f32>, 64>;
@@ -81,13 +89,16 @@ var<workgroup> meter_sum: array<vec2<f32>, 64>;
 // irradiance adds to the direct one.
 
 // The irradiance at lighting texel `q`: the filter's rgb, or with the filter off the temporal
-// pass's accumulation, its emissive rgb plus the accumulated direct rgb; with the indirect
-// flag, the gathered indirect rgb added.
+// pass's accumulation, its emissive rgb plus the accumulated direct rgb plus the pair's sky
+// term where the ray was cast (`sky_pair_term`); with the indirect flag, the gathered indirect
+// rgb added.
 fn irradiance_at(q: vec2<i32>) -> vec3<f32> {
     let v = textureLoad(irradiance_in, q, 0);
     var e = v.xyz;
     if ((params.lighting & LIGHTING_FILTER_OFF) != 0u) {
         e += textureLoad(direct_acc_in, q, 0).xyz;
+        let rec = unpack_hit(textureLoad(light_pos_in, q, 0), textureLoad(light_info_in, q, 0));
+        e += sky_pair_term(sky_e, textureLoad(pair_in, q, 0).x, textureLoad(vis_in, q, 0).a, rec.n);
     }
     if ((params.lighting & LIGHTING_INDIRECT) != 0u) {
         e += textureLoad(indirect_in, q, 0).xyz * exposure_now();

@@ -25,7 +25,7 @@ impl Frame {
         let variance_bind = self.binds.io_at(
             device,
             self.pipes.layout(P_VARIANCE),
-            &[0, 1, 2, 3, 4, 9],
+            &[0, 1, 2, 3, 4, 9, 10, 11, 12],
             &[
                 Res::Tex(t.lit_pos(c)),
                 Res::Tex(t.lit_info(c)),
@@ -33,6 +33,9 @@ impl Frame {
                 Res::Tex(&t.moments[c]),
                 Res::Tex(&t.filter[0]),
                 Res::Tex(&t.direct_accum[c]),
+                Res::Tex(&t.vis),
+                Res::Tex(&t.pair[c]),
+                Res::Buf(&self.sky.irradiance),
             ],
         );
         let n = self.state.lighting.atrous_count();
@@ -97,6 +100,9 @@ impl Frame {
                 Res::Buf(&t.tiles),
                 Res::Tex(&t.transmit),
                 Res::Tex(&t.direct_accum[c]),
+                Res::Tex(&t.vis),
+                Res::Tex(&t.pair[c]),
+                Res::Buf(&self.sky.irradiance),
             ],
         );
         let gradient_bind = self.binds.io(

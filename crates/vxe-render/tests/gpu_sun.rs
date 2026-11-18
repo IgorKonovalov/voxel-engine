@@ -119,10 +119,11 @@ fn centre_direct(
 }
 
 /// The light at the centre pixel, mean over `frames` frames: the temporal pass's accumulated
-/// direct part's rgb (the key light's, plus the visibility pair's sky term where the sky rays
-/// run, which the temporal pass adds to the direct part at every hit) plus the accumulated
-/// stored part's (at a cube face the baked visibility's sky term, ADR-0070; no emissive light
-/// here).
+/// direct part's rgb (the key light's), plus the accumulated stored part's (at a cube face the
+/// baked visibility's sky term, ADR-0070; no emissive light here), plus the visibility pair's
+/// sky term where the sky ray was cast this frame (`pair.x * E_sky(+z) * exposure`: the
+/// filter's input and the composite add it, not the direct part; every caller's centre pixel
+/// is a +z floor face at manual exposure 1).
 fn centre_lit(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -139,11 +140,29 @@ fn centre_lit(
         let d = vxe_render::debug::read_rgba16f(device, queue, frame.direct_accumulated());
         let a = vxe_render::debug::read_rgba16f(device, queue, frame.accumulated());
         let i = (h / 2) * w + w / 2;
+        let pair = pair_sky_term(device, queue, frame, i);
         for k in 0..3 {
-            sum[k] += f64::from(d[i][k]) + f64::from(a[i][k]);
+            sum[k] += f64::from(d[i][k]) + f64::from(a[i][k]) + f64::from(pair[k]);
         }
     }
     sum.map(|v| (v / f64::from(frames)) as f32)
+}
+
+/// The visibility pair's sky term at lighting pixel `i` of the last encoded frame, for a +z
+/// face at manual exposure 1: `pair.x * E_sky(+z)` where the visibility sample says the sky ray
+/// was cast, else 0 (`sky_pair_term` in sky.wgsl).
+fn pair_sky_term(device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame, i: usize) -> [f32; 3] {
+    let vis = vxe_render::debug::read_rgba8(device, queue, frame.visibility_samples());
+    if vis[4 * i + 3] <= 127 || frame.sky().is_none() {
+        return [0.0; 3];
+    }
+    let pair = vxe_render::debug::read_rgba16f(device, queue, frame.visibility_pair())[i];
+    let bytes = vxe_render::debug::read_buffer(device, queue, frame.sky_irradiance(), 0, 96);
+    let e = |k: usize| {
+        let b = &bytes[4 * k..4 * k + 4];
+        f32::from_le_bytes([b[0], b[1], b[2], b[3]])
+    };
+    [e(20), e(21), e(22)].map(|c| pair[0] * c)
 }
 
 fn within(got: [f32; 3], want: [f32; 3], rel: f32) -> bool {
@@ -1022,6 +1041,7 @@ fn a_closed_box_takes_no_sky_light() {
 
 // The readings' module, `reading`, kept in its own file for the file-size cap.
 include!("gpu_sun/reading.rs");
+include!("gpu_sun/dig.rs");
 
 /// The mean `+z` sky visibility (face 5) of chunk (1, 1, 0)'s records in `block` whose brick
 /// lies under `over`'s footprint (read at the slab's height).
@@ -1207,8 +1227,9 @@ fn a_provisional_bake_is_caught_up() {
 /// mean holds the penumbra still. `reading::penumbra_band_pinned` (the 16 x 16 slab 20 voxels
 /// over the floor, FSR 2 at 1.5 over 128 x 128, each run's exposure pinned so the band's mean
 /// level is near 118): after 64 frames, the p99 frame-to-frame change over the penumbra band's
-/// display pixels under a zenith sun of 3 degrees is at or under the headlamp's on the same
-/// floor with no sky.
+/// display pixels under a zenith sun of 3 degrees is at or under 4 levels (ADR-0076's starting
+/// `T_still`, the bar as re-stated 2026-11-18; the reading of record p99 2, mean 0.355), the
+/// headlamp's on the same floor with no sky printed beside it (p99 1, mean 0.076).
 #[test]
 fn the_penumbra_holds_still_on_the_long_history() {
     let Some((ex_sun, mean_sun, p99_sun, level_sun)) = reading::penumbra_band_pinned(Some(3.0))
@@ -1223,8 +1244,8 @@ fn the_penumbra_holds_still_on_the_long_history() {
         "penumbra band, sun 3 degrees: exposure {ex_sun:.4}, level {level_sun:.1}, change mean {mean_sun:.3}, p99 {p99_sun}; the headlamp: exposure {ex_lamp:.4}, level {level_lamp:.1}, change mean {mean_lamp:.3}, p99 {p99_lamp}"
     );
     assert!(
-        p99_sun <= p99_lamp,
-        "p99 {p99_sun} against the lamp's {p99_lamp}"
+        p99_sun <= 4.0,
+        "p99 {p99_sun} against T_still 4 (the lamp's {p99_lamp})"
     );
 }
 

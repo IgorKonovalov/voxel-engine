@@ -67,12 +67,14 @@
 // with the direct part's taps and reset where the direct part resets and on the sky-change
 // bit, a sample clamped at FIREFLY_K times the larger of the long and short means once the
 // age passes SKY_SHORT, and the age falling toward SKY_FALL_MIN where the short mean leaves
-// the long mean's band. Every hit adds it to its direct sample before the direct part's blend.
+// the long mean's band. The ray's term joins no screen history: its luminance joins the
+// moments, and the filter's input (atrous.wgsl `variance`) or, with the filter off, the
+// composite adds it from this frame's pair (`sky_pair_term`, sky.wgsl).
 // The key light's term is `key_light_at(p, n)` times its visibility's running mean in the
 // pair's g (`key_mean`): over the direct part's history age capped at `sky_history`, reset
 // where the direct part's history resets (no accepted taps, an edit box, a fresh pixel) and on
 // the sky-change bit, but not on a change of the list of lights; no clamp (the term is
-// bounded). It joins the direct sample as the sky's term does.
+// bounded). It joins the direct part at the direct part's blend weight.
 //
 // A cube face's emissive part (`reads_store`) is its brick record's value for its direction
 // (`store_brick_value`; with Params.lighting bit 14, where the shading normal is not the face
@@ -327,29 +329,13 @@ fn store_sky_fallback(head: StoreHead, v: vec3<i32>, face: u32) -> vec2<f32> {
     return vec2<f32>(0.0);
 }
 
-// The sky's mean irradiance over the part above the horizon of the hemisphere about direction
-// `dir`'s axis: `E_sky` over that part's cosine-weighted share, 1 for +z, a half sideways and
-// 0 for -z (`E_sky` is 0 there). A visibility counts a ray below the horizon blocked, so the
-// face's sky term is its visibility times this, which is the sky ray's expectation.
+// `sky_open_irradiance_in` and `sky_open_by_normal_in` (sky.wgsl) over this pass's `sky_e`.
 fn sky_open_irradiance(dir: u32) -> vec3<f32> {
-    if (dir == 4u) {
-        return vec3<f32>(0.0);
-    }
-    return sky_e[dir].xyz * select(2.0, 1.0, dir == 5u);
+    return sky_open_irradiance_in(sky_e, dir);
 }
 
-// The sky's irradiance above the horizon about shading normal `n` (`sky_open_irradiance` of
-// the directions `n` leans toward, mixed by `n_a^2`): a face's own direction's for an axis
-// normal.
 fn sky_open_by_normal(n: vec3<f32>) -> vec3<f32> {
-    var e = vec3<f32>(0.0);
-    var weight = 0.0;
-    for (var a = 0u; a < 3u; a++) {
-        let w = n[a] * n[a];
-        e += sky_open_irradiance(2u * a + select(0u, 1u, n[a] > 0.0)) * w;
-        weight += w;
-    }
-    return e / max(weight, 1e-6);
+    return sky_open_by_normal_in(sky_e, n);
 }
 
 // A cube face's baked sky term (ADR-0070) at hit `rec` of voxel `v`, face `face` (face normal
@@ -940,22 +926,25 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             m_hist = m.xy;
         }
     }
-    // The visibility pair, and its sky term where the rays were cast: the direct part takes it
-    // as if its sample had held it, a cube face's too, so the filter smooths what the pair's
-    // per-pixel mean of rare hits leaves.
+    // The visibility pair, and its sky term where the rays were cast. The direct part does not
+    // take the sky term: the filter's input (atrous.wgsl `variance`) and the composite's
+    // unfiltered sum add it from this frame's pair, so its only history is the pair's, and the
+    // switch between the stored part and the ray at the stale bit has no second history to lag
+    // behind it. Its luminance joins the moments, so the filter's variance counts it. The key
+    // light's term, sampled every frame where the key light is on, joins the direct part.
     var pair = select(seed, pair_step(vis.x, hp, accepted), sky_cast);
-    var t = vec3<f32>(0.0);
-    if (sky_cast && sky_on()) {
-        t = pair.x * sky_open_by_normal(rec.n) * exposure_now();
-    }
+    let t_sky = sky_pair_term(sky_e, pair.x, vis.a, rec.n);
+    var t_key = vec3<f32>(0.0);
     if (vis.z > 0.5) {
         pair.y = key_mean(vis.y, hp.y, age, !accepted || fresh);
-        t += key_light_at(rec.p, rec.n) * pair.y * exposure_now();
+        t_key = key_light_at(rec.p, rec.n) * pair.y * exposure_now();
     }
+    if (any(t_key > vec3<f32>(0.0))) {
+        acc_direct += a_direct * vec4<f32>(t_key, luminance(t_key));
+    }
+    let t = t_sky + t_key;
     if (any(t > vec3<f32>(0.0))) {
-        let tl = vec4<f32>(t, luminance(t));
-        acc_direct += a_direct * tl;
-        let l2 = min(l + tl.w, MOMENT_LUM_MAX);
+        let l2 = min(l + luminance(t), MOMENT_LUM_MAX);
         moments = mix(m_hist, vec2<f32>(l2, l2 * l2), a_mom);
     }
     textureStore(pair_out, px, pair);

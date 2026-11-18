@@ -15,6 +15,45 @@ fn sky_on() -> bool {
     return (sky.flags & SKY_ON) != 0u;
 }
 
+// The sky's mean irradiance over the part above the horizon of the hemisphere about direction
+// `dir`'s axis, from `e` (`E_sky` per direction, the sky irradiance pass's buffer as a pass
+// binds it): `E_sky` over that part's cosine-weighted share, 1 for +z, a half sideways and 0
+// for -z (`E_sky` is 0 there). A visibility counts a ray below the horizon blocked, so a face's
+// sky term is its visibility times this, which is the sky ray's expectation.
+fn sky_open_irradiance_in(e: array<vec4<f32>, 6>, dir: u32) -> vec3<f32> {
+    if (dir == 4u) {
+        return vec3<f32>(0.0);
+    }
+    var a = e;
+    return a[dir].xyz * select(2.0, 1.0, dir == 5u);
+}
+
+// The sky's irradiance above the horizon about shading normal `n` (`sky_open_irradiance_in` of
+// the directions `n` leans toward, mixed by `n_a^2`): a face's own direction's for an axis
+// normal.
+fn sky_open_by_normal_in(e: array<vec4<f32>, 6>, n: vec3<f32>) -> vec3<f32> {
+    var s = vec3<f32>(0.0);
+    var weight = 0.0;
+    for (var a = 0u; a < 3u; a++) {
+        let w = n[a] * n[a];
+        s += sky_open_irradiance_in(e, 2u * a + select(0u, 1u, n[a] > 0.0)) * w;
+        weight += w;
+    }
+    return s / max(weight, 1e-6);
+}
+
+// The pair's sky term at a lighting pixel (ADR-0070): the visibility pair's long mean `pair_x`
+// times the sky's open irradiance about `n`, pre-exposed, where this frame's visibility sample
+// `vis_a` says the sky ray was cast; 0 elsewhere and with no sky. The direct part does not
+// carry it: the filter's input and the composite's unfiltered sum add it each frame, so the
+// pair is the term's only history.
+fn sky_pair_term(e: array<vec4<f32>, 6>, pair_x: f32, vis_a: f32, n: vec3<f32>) -> vec3<f32> {
+    if (vis_a <= 0.5 || !sky_on()) {
+        return vec3<f32>(0.0);
+    }
+    return pair_x * sky_open_by_normal_in(e, n) * exposure_now();
+}
+
 // World position `p` in voxels to metres above the planet's surface.
 fn sky_altitude(p: vec3<f32>) -> f32 {
     return (p.z - sky.altitude_zero_z) * sky.metres_per_voxel + sky.base_altitude_m;
