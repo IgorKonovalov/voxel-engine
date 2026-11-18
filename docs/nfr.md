@@ -482,7 +482,8 @@ Every reading against these budgets, with its machine and commit, is in
   series on request and weekly in CI (`soak.yml`), `--profile full --run-ignored all` only
   when the owner asks; both leave the readings out.
   Budgets, proposals until read on the dev reference, quiet: quick under 60 s, so a phase gate
-  holds no lock; gpu under 10 min wall; gate under 12 min wall; **no single gate test over 10 s
+  holds no lock; gpu under 10 min wall; gate under 19 min wall (12 min until 2026-11-18; the
+  owner raised it after every close since Plan 0057 read over 12, the latest 1107.4 s); **no single gate test over 10 s
   on the dev reference's lavapipe, or over 60 s on CI's Linux arm** (the lavapipe line was
   30 s until 2026-11-10; the owner lowered it to bring the gate under 12 min, Plan 0066). A
   lavapipe test over the line is marked `#[ignore = "soak"]`; a CPU test over it stays in the
