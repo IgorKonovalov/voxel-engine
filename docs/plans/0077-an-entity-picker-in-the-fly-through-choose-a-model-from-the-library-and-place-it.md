@@ -1,6 +1,6 @@
 # 0077: An entity picker in the fly-through: choose a model from the entities library, see it at the crosshair, place it
 
-> **Status:** in-progress (dev lane from 2026-11-17; Phases 1 to 4 done); approved (2026-11-16, the owner: all eight recommended answers under "Owner questions"); amended 2026-11-17 (orchestrator re-read against Plans 0078, 0069 and 0080 as landed; owner questions 9 to 11 answered 2026-11-17: the recommended option each, `Delete` removes, `Enter` places and stays open, a page like any other); **amended 2026-11-18 (the owner's window: a placement mode with a belt of slots, a chooser with a picture per entry, the ghost marked and stood further out; Phases 5 to 9 replace Phase 5; owner questions 12 to 18 await answers)**
+> **Status:** in-progress (dev lane from 2026-11-17; Phases 1 to 4 done); approved (2026-11-16, the owner: all eight recommended answers under "Owner questions"); amended 2026-11-17 (orchestrator re-read against Plans 0078, 0069 and 0080 as landed; owner questions 9 to 11 answered 2026-11-17: the recommended option each, `Delete` removes, `Enter` places and stays open, a page like any other); **amended 2026-11-18 (the owner's window: a placement mode with a belt of slots, a chooser with a picture per entry, the ghost marked and stood further out; Phases 5 to 9 replace Phase 5; owner questions 12 to 18 await answers)**; **amended 2026-11-18 (the Phase 8 window, Phases 1 to 8 done): question 19 answered, six fixes folded into Phase 9, a short owner check added as Phase 10 before the close review; the owner approved the route**
 > **Created:** 2026-11-16
 > **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md), the testbed side. Apps only
 > (`apps/flythrough`); nothing under `crates/` changes.
@@ -500,15 +500,102 @@ Phase 9 now; its header says so.
   keep `1`, `4` and `6` as they are, or move the lights' keys so every digit enters the mode);
   (g) anything to rename, reorder or drop, named for Phase 9.
 
-### Phase 9: the owner's picks, and the tip
+### Phase 9: the owner's picks, the Phase 8 window's six fixes, and the tip
 - **Owner skill:** dev
-- **What:** the former Phase 5: the window's picks (words, distances, colours, keys), then the
-  gate tier at the tip.
-- **Files touched:** the Phase 1 to 7 files as the picks need; `docs/flythrough.md`.
+- **What:** the former Phase 5: the window's picks (words, distances, colours, keys), the
+  **six fixes** of "Amended 2026-11-18 (the Phase 8 window)" below, then the gate tier at the
+  tip. The six, in brief: (1) while the belt is active every digit `1`..`9` selects its slot,
+  `4` included, and out of the mode no digit enters it (the `placement mode` action leaves the
+  tables; `1`, `4`, `6` keep their old functions; `Delete` removes); (2) the belt stays drawn
+  while the chooser is open, from the view or from the mode; (3) the chooser's `>` cursor and
+  the entry's name row sit on the second row of the entry's four-row block, so the cursor,
+  the words and the icon read as one block; (4) one entry per rig: `--model` naming a file
+  the library scan found (the paths canonicalised equal) makes that entry the flagged one,
+  not a second entry; (5) the icons larger and brighter: the fit from 5/8 to **7/8** of the
+  tile, the face shade from `96 + 160 cos` to **`176 + 80 cos`** 256ths (or the dev's
+  constants that meet the bars below); the 4 x 4 cell block, the tile size and ADR-0075's
+  cell word unchanged; (6) an entry in error keeps its grey name and shows its reason **red**
+  (a Phase 7 span over the reason's cells; `HudColour::Red` exists).
+- **Files touched:** the Phase 1 to 7 files as the picks need; for the six:
+  `apps/flythrough/src/entities/{library,belt,picker,icon}.rs`,
+  `apps/flythrough/src/hud/menu/{write,route,page}.rs`, `toggles.rs`,
+  `apps/flythrough/src/run/{keys,frame,hud_feed,picker_tests}.rs`, `apps/flythrough/src/cli/
+  model.rs` (the `--model` path), `apps/flythrough/tests/{library,icon,picker}.rs`,
+  `apps/flythrough/tests/gpu_hud_golden.rs` and its goldens (`chooser.png`, `belt.png`),
+  `docs/flythrough.md` (the key table's `entities` rows, the belt's paragraph),
+  `docs/entities.md` (the icon's fit and shades, where named), `docs/plans/logs/0077.md`.
 - **Done when:** each pick in the readings log names its commit or the owner's "leave it";
-  the Phase 1 to 7 tests hold the changed rows; `cargo nextest run --profile gate`, clippy,
-  fmt, deny and the doc gates exit 0 at the tip; the Phase 6 and 7 readings are in the log
-  with machine and commit.
+  the Phase 1 to 7 tests hold the changed rows; and, for the six (CPU, `run/picker_tests.rs`
+  on `picker_run()` unless named, each under 0.5 s):
+  - (1) `the_wheel_and_the_digits_enter_the_mode` amended: in the mode `4` selects slot 4 and
+    the placed count is unchanged (nothing removed); `1` and `6` select slots 1 and 6 with no
+    light dropped and no shot fired; `Delete` in the mode removes the aimed placed entity;
+    out of the mode `1` drops a light, `4` removes the aimed entity, `6` fires, and `2`, `3`,
+    `5`, `7`, `8`, `9` leave the run as it was (no mode, no belt, no ghost); the wheel, the
+    D-pad and the chooser still enter it. `toggles::ACTIONS` has no `placement mode` action;
+    0080's `every_toggle_and_action_is_an_entry`, `the_source_reads_no_key_the_tables_miss`
+    and `the_route_is_one_function` pass; `--keys` and `docs/flythrough.md`'s key table say
+    `1`..`9` are the belt's slots while the belt is shown and list no digit as a way into the
+    mode.
+  - (2) `the_chooser_fills_the_belt_and_hands_over` amended: with the chooser open, from the
+    view and from the mode, the overlay's last rows are the belt's rows (as
+    `the_belt_draws_its_slots` reads them), the frame on the selected slot; a digit on an
+    entry puts it in that slot **and moves the frame to it**; the ghost is absent while the
+    chooser is open and back at the hand-over; the panel's used rows end above the belt's
+    rows at 1280 x 720 with the committed library.
+  - (3) `the_picker_draws_its_rows` (`tests/picker.rs`) amended: an entry is four rows; its
+    tile covers all four from the third cell; the name row (with the `>` cell when selected)
+    is the **second** row of the block and the clips row the third; the first and fourth rows
+    hold no words beside the tile. `gpu_hud_golden`'s `chooser.png` is re-blessed on lavapipe
+    and the readings log notes the cursor against `live/window77b/18.png`.
+  - (4) `a_model_rig_from_the_library_is_one_entry` (`tests/library.rs`, CPU, under 0.5 s):
+    `--model apps/flythrough/assets/entities/walker/walker.rig` with the default library
+    gives `--library` one `walker` line (flagged, first) and one `spider` line; in
+    `picker_tests` the belt is the walker in slot 1, the spider in slot 2, slot 3 empty, and
+    the chooser lists two entries; a rig outside the library is still an extra entry ahead of
+    the scan, as today; `a_reload_moves_only_its_own_entry` holds with the merged entry (the
+    hot reload is the one viewer's). Paths compare canonicalised (`std::fs::canonicalize`
+    on both, the literal path when it fails).
+  - (5) `the_walker_icon_is_fitted_and_fixed` (`tests/icon.rs`) amended: the walker's icon's
+    solid pixels span at least **54 of 64** pixels on the longer axis (the fit is 56; today
+    40) and are at
+    least **18 %** of the tile (at least 737 of 4096 pixels; today 429, 10.5 %); over its
+    solid pixels the mean shade (the icon pixel's luminance over its material's albedo
+    luminance, integer 256ths) is at least **200/256** and the darkest visible face at least
+    **190/256** (today the faces read 141, 164 and 232); the three visible faces are still
+    three distinct colours at least 8/256 apart; the walker's and the spider's hashes
+    re-pinned, bit-identical on both CI arms. The belt's slots show the same tiles, so
+    `belt.png` is re-blessed too.
+  - (6) `the_picker_draws_its_rows` amended: under the cave's table the spider's name cells
+    are `HudColour::Grey` and the cells of its reason on the same row are `HudColour::Red`
+    (the span), the rest of the row untouched; its `--library` line is unchanged; the belt's
+    name row for a slot in error reads the reason red the same way.
+  - `cargo nextest run --profile gate`, clippy, fmt, deny and the doc gates exit 0 at the
+    tip; the Phase 6 and 7 readings are in the log with machine and commit.
+
+### Phase 10: the owner's short check of the six fixes
+- **Owner skill:** human
+- **What:** `live/session77c.sh` rebuilt at Phase 9's tip, on Linux, the showcase hall at
+  1280 x 720 (`--source showcase --shot hall --exposure 8 --hud`), then `--model
+  apps/flythrough/assets/entities/walker/walker.rig` on the same scene, then the default
+  cave. The runner's checklist, one item per fix: (1) in the mode press `1`..`9` in turn:
+  each frames its slot, `4` too, nothing removed; out of the mode `1` drops a light, `4`
+  removes the aimed entity, `6` fires, `2` does nothing; `Delete` removes in the mode. (2) `` ` ``
+  from the view and from the mode: the belt under the chooser, the frame on the selected
+  slot; a digit on an entry moves the frame to that slot. (3) the chooser's `>` beside the
+  selected entry's name and icon as one block (against `live/window77b/18.png`). (4) with
+  `--model` on the walker's own rig: one walker entry in the chooser and in `--library`, slot
+  1 the walker, slot 2 the spider, slot 3 empty; a saved edit of the rig still reloads it and
+  remakes its icon. (5) the icons' size and brightness in the chooser and in the belt. (6)
+  the cave's spider: its reason red after its grey name, in the chooser and on the belt's
+  name row.
+- **Files touched:** `docs/plans/logs/0077.md` (the owner's words); `live/` (untracked).
+- **Done when:** the owner's words on each of the six are in the readings log, each "fine"
+  or a named change; a named change is a Phase 9 item (the same lane, the Phase 9 tests
+  amended, its commit named in the log) before the close review, not a new phase; if (5) is
+  still "small", the named next step is a 6 x 6 cell block (a 96-pixel tile, six place bits
+  in the cell word, ADR-0075 amended while proposed), as a Phase 9 item on the owner's word.
+  Then the close review runs in a fresh session.
 
 ### Budgets added 2026-11-18 (guesses until their phase reads them)
 
@@ -573,6 +660,74 @@ superseded: the chooser's `Enter` hands over to the mode, and the mode stays aft
     the wheel or any free digit enters it from the view. Alternative: move the drop and the
     shot to two free keys (the tables name them) so every digit but `4` enters the mode from
     the view too, one rule in both states; Phase 9 does it if picked.
+    **Answered 2026-11-18 (owner, at the Phase 8 window): neither as written.** "can we
+    override 1-9 when belt is active? that would be the best": while the belt is active
+    (placement mode, and the chooser with the belt shown) every digit `1`..`9` selects its
+    slot, `4` included; `Delete` removes the aimed entity in the mode and out of it; out of
+    the mode the digits keep their old functions (`1` drops, `4` removes, `6` fires) and no
+    digit enters the mode; the wheel, the D-pad and the chooser enter it. Phase 9 (1).
+
+## Amended 2026-11-18 (the Phase 8 window): six fixes into Phase 9, a short owner check as Phase 10
+
+Phase 8 ran 2026-11-18 (the orchestrator's `live/session77b.sh`, the release binary at
+0011560f, on Linux: the showcase hall at 1280 x 720 and at the laptop's size, `--model` with a
+saved edit, then the default cave). `live/` is untracked, so the owner's words are quoted here
+and copied into the readings log under Phase 8. The mode, the belt, the ghost's mark, the stand
+rule, the clicks, `R`, the clip keys, the hand-over and the reload stood as built; the owner
+named six things to fix and approved this route: the fixes folded into Phase 9 with the picks
+and the tip, a short owner check (Phase 10, new), then the close review in a fresh session.
+Nothing else is renumbered.
+
+**The owner's words:**
+
+- Run 1 (the hall, 1280 x 720): "when belt is active i should be able to choose which entity to
+  place with numbers, however some numbers works with other functions. also when I choose
+  entity in menu - belt should be visible".
+- Run 2 (the hall at the laptop's size): "2 is fine".
+- Run 3 (`--model` on the walker's rig; the orchestrator moved its head to `at 0 0 30` and the
+  arms to `+-12 0 24`, then reverted; the owner saw the reload): "arrow when choosing entity is
+  misaligned" (`live/window77b/18.png`: the `>` sits on the entry's name row, the icon spans
+  the rows below it; the same picture shows the walker listed twice, slot 1 from `--model` and
+  slot 3 from the library scan, and the icons small and dim beside the text; the owner agreed
+  the same day that both are defects).
+- Run 4 (the cave, the spider in error): "make error message red".
+- Question 19: "can we override 1-9 when belt is active? that would be the best".
+
+**Read as, and decided (each is a Phase 9 item with its bar there):**
+
+1. **The digits are the belt's while the belt is active.** In placement mode and in the
+   chooser with the belt shown, every digit `1`..`9` selects its slot (in the chooser it also
+   puts the highlighted entry there), `4` included: `4` no longer removes in the mode, `Delete`
+   does, in the mode and out of it. Out of the mode `1`, `4` and `6` keep their old functions
+   and **no digit enters the mode**: the wheel, the D-pad and the chooser do. This supersedes
+   the Decisions' "a digit enters the mode at that slot" and Phase 5's `placement mode`
+   action over the free digits, which leaves the tables.
+2. **The belt stays drawn while the chooser is open**, from the view or from the mode, with
+   its frame on the selected slot, so the slot being filled is visible; a chooser digit moves
+   the frame to the slot it filled. The ghost stays away while the panel is up (it returns at
+   the hand-over): the owner asked for the belt, and the panel is over the view.
+3. **The cursor lines up with the entry's block.** The entry keeps four rows and its 4 x 4
+   cell tile from the third cell; the name row, which carries the `>` cell when selected,
+   moves to the block's second row and the clips row to the third, so the cursor, the words
+   and the icon's centre are within half a row of each other and the block reads as one.
+4. **One entry per rig.** `--model` naming a file the library scan found (the two paths
+   canonicalised equal) makes that scanned entry the flagged one (first in the order, hot
+   reloaded as `--model`'s is) and adds no second entry; a rig outside the library is an extra
+   entry ahead of the scan, as today. `Library::with_model`'s "a scanned entry of the same rig
+   file stays where it is" is the defect.
+5. **Icons larger and brighter.** The fit rises from 5/8 to 7/8 of the tile (the walker's
+   long axis from 40 to 56 of 64 pixels, its solid pixels from about 10 % to about 20 % of the
+   tile) and the face shade from `96 + 160 cos` to about `176 + 80 cos` 256ths (the walker's
+   three visible faces from 141, 164, 232 to about 199, 210, 245; the darkest face from 0.55 to
+   0.78 of the albedo), still three distinct shades. The block stays 4 x 4 cells and the tile 64
+   pixels, so ADR-0075's cell word, the atlas and the chooser's rows are unchanged; the 6 x 6
+   cell block (a 96-pixel tile, six place bits) is the named next step if Phase 10 still reads
+   "small". The figures are bars in Phase 9 (5), measured on the walker in `tests/icon.rs`.
+6. **The error message in red.** An entry in error keeps 0080's grey name (an unavailable
+   row) and its reason on the same row turns `HudColour::Red` through Phase 7's span colour,
+   in the chooser and on the belt's name row. The Name mapping's "an entry in error red" to
+   "grey with its reason" of 2026-11-17 is amended to this: grey name, red reason, the words
+   still carried (never colour alone).
 
 ## TL;DR
 
@@ -992,8 +1147,9 @@ Answered 2026-11-16 (owner): every recommended option, 1 to 8.
 | 5: placement mode and the belt | dev | done; `Walkers::belt` (`entities/belt.rs`) holds the slots, the mode and the turn, the ghost is `Walkers::preview`; the belt fills once from `Library::order` (`--model`'s, then the entries that build, then those in error, each in name order), not plain name order, which the done-whens' slot 1 walker and slot 2 spider under the cave need; the chooser lists the same order and opens on the selected slot's entry; `` ` `` on the chooser does what `Enter` does; a chooser digit moves the entry (out of any other slot); digits: in the mode every digit but `4` selects its slot (`4` removes, as the amendment says), out of it only `2 3 5 7 8 9` enter (`1` and `6` keep the lights' drop and shot); the action `entity picker` is renamed `choose an entity`, with new actions `placement mode` (the free digits), `belt next`, `belt before` (D-pad), `turn the ghost` (`R`); the frame's `|` cells are white, not yellow: `HudOverlay`'s CPU API colours whole rows, so only the frame's top and bottom rows are yellow (per-cell colour is a `vxe-render` change outside this phase's files); an entry in error is grey only in the name row; the turn test presses `R` four times for 90 degrees (22.5 degree steps); the spider's near distance is 10.35 m (1.5 x its 6.9 m); opening the chooser says `entities library: <n> entries`; a ghost refusal also shows in the banner; `run/tests.rs` (a removed D-pad test, the clip test placing through the chooser) and `edits.rs` (`scroll_dig_radius` removed) edited outside the phase's files; `pad.rs` unchanged | 78bde645 |
 | 6: the mark (`vxe-render`), the ghost marked | dev | done; the mark settings are one `Live` field `mark_colours: [[f32; 3]; 2]` with `Frame::set_mark_colours` (no `--set` flag in the fly-through); the outline is drawn on both sides of the entity edge (ADR-0074's "either side"), two internal pixels across; marks apply in the shaded and albedo views, FSR 2's HDR variant mixing in pre-exposed radiance; the composite's FSR 2 layout is in `frame/upscale.rs` (edited; `frame/compose.rs`, `frame/marcher.rs`, `entities/display.rs`, `hitrec.wgsl` and `common.wgsl` unchanged); edited outside the phase's files: `frame/apply.rs` (the settings' round trip), `src/lib.rs` (exports), `src/layout_tests.rs` (the shader's `MARK_*` constants), `tests/entity_instances.rs` (`the_marks_follow_the_runs`), `apps/flythrough/src/cli/settings.rs` (the new field), `apps/flythrough/src/entities/pool.rs` (`feed` passes the marks), `docs/nfr/02-frame-budget.md`; `EntityMirror::bytes()` keeps the main buffer's figure and `frame_bytes` adds the 4 KiB; `the_mark_colours_are_settings` is in `crates/vxe-render/tests/settings.rs` (new); lavapipe has no timestamp queries, so the composite reading is RTX and RADV RENOIR only | 9abcd694 |
 | 7: the icons as overlay tiles, in the chooser and the belt | dev | done; the overlay's API is `HudOverlay::set_lines_painted(text, colours, HudPaint { backdrop, spans, tiles })` and `set_tile`, with `HudPaint::apply`, `TILE_BIT` and `HUD_GRID_COLS` public for the cell-word tests; the atlas is a storage buffer; the icon is fitted to its silhouette, not its box (the box gave the walker 38 pixels); the tile index is the entry's index; `Menu::write_with` gains a `tiles` output; the belt's frame rows are white with yellow spans, and a slot with its icon drops its name; `tests/icon.rs` holds two tests (walker, spider) to keep each under 0.5 s in debug; edited outside the phase's files: `crates/vxe-render/src/{lib,settings,layout_tests}.rs`, `apps/flythrough/src/entities/{mod,placed}.rs`, `apps/flythrough/tests/picker.rs` (listed) for the new argument; `entities/picker.rs` unchanged | 0011560f |
-| 8: the owner's window, run 2 | human | runner ready: `live/session77b.sh` (untracked), binary `live/bin/flythrough-77b` built at 0011560f | |
-| 9: the owner's picks, and the tip | dev | not started | |
+| 8: the owner's window, run 2 | human | done 2026-11-18 (the orchestrator's `live/session77b.sh`, binary at 0011560f, Linux; the owner's words quoted under "Amended 2026-11-18 (the Phase 8 window)" and copied into the readings log): the mode, the mark, the stand rule, the clicks, `R` and the hand-over stood; six fixes named (the digits, the belt under the chooser, the cursor, one entry per rig, the icons' size and brightness, red errors) and folded into Phase 9; question 19 answered | |
+| 9: the owner's picks, the six fixes, and the tip | dev | not started | |
+| 10: the owner's short check of the six fixes | human | not started | |
 
 ### Notes
 
