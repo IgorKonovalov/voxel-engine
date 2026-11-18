@@ -617,13 +617,13 @@ fn streamed_world(args: &Args) -> (VoxelCoord, Pending) {
 }
 
 /// The outdoor hills of `args.seed`, with `--trees` stood on them, streamed around the camera
-/// as the cave is.
+/// as the cave is, over the same [`world_table`] as every other source.
 fn outdoor_world(args: &Args) -> (VoxelCoord, Pending) {
     let hills = OutdoorSource::new(args.seed);
     let (spawn, _) = hills.spawn(args.outdoor.spawn);
     let trees = args.outdoor.trees();
     let workers = args.workers.unwrap_or_else(default_workers);
-    let world = World::new(&crate::walker::with_walker(&materials(args)));
+    let world = World::new(&world_table(args, &materials(args)));
     let cfg = StreamConfig {
         residency: args.residency,
         workers,

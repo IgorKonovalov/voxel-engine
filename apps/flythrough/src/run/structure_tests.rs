@@ -509,3 +509,65 @@ fn escape_leaves_a_structure_slot() {
     assert!(run.modes.walkers.frame.is_none());
     assert!(run.modes.walkers.set.get(id).is_none());
 }
+
+/// The table of the world `flags` start (`setup::build_world`, one worker): the run's own
+/// table, the generation or the castle's build joined.
+fn table_of_run(flags: &[&str]) -> MaterialTable {
+    let mut v = flags.to_vec();
+    v.extend(["--workers", "1"]);
+    let mut args = crate::cli::parse_args_from(crate::test_support::argv(&v)).expect("parses");
+    let (_, pending) = crate::setup::build_world(&mut args, &crate::edits::Failure::default());
+    match pending {
+        crate::app::Pending::Stream(b) => b.0.materials().clone(),
+        crate::app::Pending::StreamBuilding(h) => h.join().expect("built").0.materials().clone(),
+        crate::app::Pending::Level(h) => h
+            .join()
+            .expect("generated")
+            .expect("a world")
+            .materials()
+            .clone(),
+        crate::app::Pending::Failed => panic!("{flags:?}: no world"),
+    }
+}
+
+/// Asserts that each library file's scene loads against the table of the world `flags` start
+/// with no refusal (an unmapped palette index refuses it), that the entries are the cave's,
+/// and that the castle's palette maps.
+fn assert_maps_the_structures(flags: &[&str]) {
+    let cave = st::Library::load(Path::new(st::LIBRARY), &world_table(), &base_table());
+    let table = table_of_run(flags);
+    let args = crate::cli::parse_args_from(crate::test_support::argv(flags)).unwrap();
+    let base = crate::setup::base_table(&args, &crate::setup::materials(&args));
+    let lib = st::Library::load(Path::new(st::LIBRARY), &table, &base);
+    assert_eq!(lib.entries.len(), cave.entries.len(), "{flags:?}");
+    for (e, c) in lib.entries.iter().zip(&cave.entries) {
+        assert_eq!(e.error(), None, "{flags:?}: {}", e.name);
+        assert_eq!(e.name, c.name, "{flags:?}");
+    }
+    let chapel = &lib.entries[structure_index(&lib, "chapel")];
+    assert!(chapel.scene().is_some(), "{flags:?}: the chapel's scene");
+    assert!(
+        st::castle_map(&table).is_ok(),
+        "{flags:?}: the castle's palette maps"
+    );
+}
+
+/// The streamed cave's and the outdoor hills' worlds hold the structures library's rows and
+/// the castle's.
+#[test]
+fn the_cave_and_outdoor_worlds_map_the_structures() {
+    assert_maps_the_structures(&[]);
+    assert_maps_the_structures(&["--source", "outdoor"]);
+}
+
+/// `--castle`'s and the showcase's worlds hold the structures library's rows and the
+/// castle's.
+#[test]
+fn the_castle_and_showcase_worlds_map_the_structures() {
+    assert_maps_the_structures(&["--castle"]);
+    assert_maps_the_structures(&["--source", "showcase"]);
+}
+
+fn structure_index(lib: &st::Library, name: &str) -> usize {
+    lib.entries.iter().position(|e| e.name == name).expect(name)
+}
