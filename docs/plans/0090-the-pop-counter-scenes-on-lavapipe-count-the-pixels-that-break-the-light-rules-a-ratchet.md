@@ -1,6 +1,6 @@
 # 0090: The pop counter: fixed scenes on lavapipe count the pixels that break each light-stability rule, by source; a baseline that only falls
 
-> **Status:** draft
+> **Status:** approved 2026-11-18 (owner, "all recommended, go ahead"); starts after Plan 0086 closes
 > **Created:** 2026-11-18
 > **Milestone:** cross-cutting (M2's lighting base and M10's outdoor light) in `docs/roadmap.md`
 > **Related ADRs:** [ADR-0076](../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
@@ -346,6 +346,10 @@ the flag only.
 | section 2, light stability (new line) | the baseline file is the figure; no frame cost (a uniform branch for the probe, read-backs under a flag) | the frame-time goldens unchanged; `cave_mouth` byte-identical with the probe off |
 
 ## Risks & open questions
+
+**Answered 2026-11-18 (owner, "all recommended"):** the owner questions below take their
+recommended options: the castle hall; the return frame is rule 2's frame; retire the subsumed
+stillness tests at Phase 6; an exact ratchet; `FLICKERS` reserved now; Plan 0090 ahead of 0081.
 
 - **Lavapipe's run-to-run stability.** The counts must be equal across runs for an exact
   ratchet. The rigs are seeded, the queue is drained or stepped by job count, and lavapipe is
