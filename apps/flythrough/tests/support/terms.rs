@@ -156,8 +156,8 @@ pub struct Cell {
     /// The history's material and normal tests hooked off.
     pub any_history: bool,
     pub fsr2: bool,
-    /// The testbed's `leaf` shadows as its bricks (`--leaf-shadow brick`).
-    pub leaf_brick: bool,
+    /// How the testbed's `leaf` shadows (`--leaf-shadow`).
+    pub leaf: flythrough::LeafShadow,
     /// The far normal's stair rules hooked off.
     pub no_stair: bool,
     /// The store baked whole (ADR-0046's one-off bake at the defaults, the sky's channel
@@ -248,12 +248,7 @@ pub fn run_cell(
         far_normal: flythrough::LookPreset::DEFAULT.far_normal,
         ..vxe_render::LookParams::default()
     });
-    if cell.leaf_brick {
-        f.set_material_styles(
-            &rig.queue,
-            &flythrough::outdoor_styles(flythrough::LeafShadow::Brick),
-        );
-    }
+    f.set_material_styles(&rig.queue, &flythrough::outdoor_styles(cell.leaf));
     f.set_lighting(Lighting {
         exposure: Exposure::Auto(AutoExposure {
             min: flythrough::cli::OUTDOOR_MIN,
@@ -377,7 +372,7 @@ pub fn cells() -> Vec<Cell> {
                         filter,
                         any_history,
                         fsr2,
-                        leaf_brick: false,
+                        leaf: flythrough::LeafShadow::Voxel,
                         no_stair: false,
                         bake: false,
                         approach: false,
@@ -451,13 +446,13 @@ pub fn print_row(pose: &str, cell: Cell, r: &CellReading, regions: &[Region<'_>]
 }
 
 /// The defaults' cell: both terms, the filter on, the history as built, FSR 2 at 1.5.
-pub fn default_cell(leaf_brick: bool) -> Cell {
+pub fn default_cell(leaf: flythrough::LeafShadow) -> Cell {
     Cell {
         term: "both",
         filter: true,
         any_history: false,
         fsr2: true,
-        leaf_brick,
+        leaf,
         no_stair: false,
         bake: false,
         approach: false,
@@ -474,7 +469,7 @@ pub fn key_steps(
     rig: &Rig,
     cam: &vxe_render::Camera,
     sky: vxe_render::sky::Sky,
-    leaf_brick: bool,
+    leaf: flythrough::LeafShadow,
     penumbra: vxe_render::Penumbra,
 ) -> (f64, f32, f64) {
     use vxe_render::{LookParams, ViewMode};
@@ -488,12 +483,7 @@ pub fn key_steps(
         view: ViewMode::Steps,
         ..LookParams::default()
     });
-    if leaf_brick {
-        f.set_material_styles(
-            &rig.queue,
-            &flythrough::outdoor_styles(flythrough::LeafShadow::Brick),
-        );
-    }
+    f.set_material_styles(&rig.queue, &flythrough::outdoor_styles(leaf));
     f.set_sky(Some(sky));
     let mut steps: Vec<f32> = Vec::new();
     let mut loads = 0.0f64;

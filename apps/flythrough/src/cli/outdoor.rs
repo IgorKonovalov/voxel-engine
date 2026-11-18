@@ -28,7 +28,7 @@ pub struct OutdoorArgs {
     pub(crate) trees: TreeDensity,
     /// `--leaf-fill N`: a canopy voxel is kept under this of 256; unset, [`LEAF_FILL`].
     pub(crate) leaf_fill: Option<u32>,
-    /// `--leaf-shadow brick|voxel`: how the canopy shadows.
+    /// `--leaf-shadow brick|voxel|absorb`: how the canopy shadows.
     pub(crate) leaf_shadow: crate::LeafShadow,
     /// `--penumbra disc|approach`: how the key light's shadow ray makes its penumbra.
     pub(crate) penumbra: vxe_render::Penumbra,
@@ -143,12 +143,13 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
         ),
         Flag::value(
             &["--leaf-shadow"],
-            "brick|voxel",
+            "brick|voxel|absorb",
             "how a canopy shadows the sun and the sky: as its 8^3 bricks (no fleck through \
-                 it) or voxel by voxel [voxel]",
+                 it), voxel by voxel, or as a transmittance by the path through its leaves \
+                 [voxel]",
             |p: &mut Parsing, v| {
                 let names = crate::LeafShadow::ALL.map(|d| (d.name(), d));
-                p.args.outdoor.leaf_shadow = v.word(&names, "brick or voxel")?;
+                p.args.outdoor.leaf_shadow = v.word(&names, "brick, voxel or absorb")?;
                 Ok(())
             },
         ),

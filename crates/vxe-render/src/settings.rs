@@ -566,7 +566,7 @@ impl RenderSettings {
         ),
         (
             "set_material_styles",
-            "a per-material input: the consumer's render-side style of each material (SHADOW_AS_BRICK)",
+            "a per-material input: the consumer's render-side style of each material (SHADOW_AS_BRICK, SHADOW_ABSORB)",
         ),
         (
             "set_light_hooks",

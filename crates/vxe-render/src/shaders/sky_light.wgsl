@@ -58,19 +58,25 @@ fn sky_origin(p: vec3<f32>, ns: vec3<f32>) -> vec3<f32> {
 }
 
 // Whether a lighting ray from `o` along `d` finds rock (or, with ENTITY_SHADOWS, an entity)
-// before the sky. A lifted ray (`ray_lift`) steps out of a solid voxel it starts in.
+// before the sky. A lifted ray (`ray_lift`) steps out of a solid voxel it starts in. Leaves in
+// `absorb_tau` the optical depth through SHADOW_ABSORB materials the ray passed (walk.wgsl's
+// `absorb_on`), 0 with no style set.
 fn sky_shadowed(o: vec3<f32>, d: vec3<f32>, len: f32) -> bool {
     skip_origin_cell = any(ray_lift != vec3<f32>(0.0));
+    absorb_on = (params.lighting & LIGHTING_SHADOW_STYLES) != 0u;
+    absorb_tau = 0.0;
     let s = shadowed_styled(o, d, len);
+    absorb_on = false;
     skip_origin_cell = false;
     return s || (ENTITY_SHADOWS && entity_march(o, d, len).found);
 }
 
 // The key light's sample at a hit at `p`, normal `n`, shadow normal `ns`, lighting pixel `px`:
 // `key_light_at(p, n)` where one shadow ray toward a uniform point of its disc reaches the
-// sky, else 0; 0 with no key light. No firefly clamp: the term is bounded. Under
-// LIGHTING_PENUMBRA_APPROACH the ray runs toward the disc's centre and the term is
-// `key_light_at` times its closest-approach visibility (walk.wgsl's `approach_on`).
+// sky, times its transmittance through SHADOW_ABSORB materials, else 0; 0 with no key light.
+// No firefly clamp: the term is bounded. Under LIGHTING_PENUMBRA_APPROACH the ray runs toward
+// the disc's centre and the term is `key_light_at` times its closest-approach visibility
+// (walk.wgsl's `approach_on`) and its transmittance.
 fn key_sample(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>, px: vec2<u32>) -> vec3<f32> {
     let k = key_light_at(p, n);
     if (all(k <= vec3<f32>(0.0)) || (params.lighting & LIGHTING_HOOK_KEY_OFF) != 0u) {
@@ -82,13 +88,13 @@ fn key_sample(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>, px: vec2<u32>) -> vec3<
         approach_min = 1.0;
         let hit = sky_shadowed(sky_origin(p, ns), sky.key_dir, KEY_RAY_LEN);
         approach_on = false;
-        return select(k * clamp(approach_min, 0.0, 1.0), vec3<f32>(0.0), hit);
+        return select(k * (clamp(approach_min, 0.0, 1.0) * exp(-absorb_tau)), vec3<f32>(0.0), hit);
     }
     let d = disc_direction(sky.key_dir, sky.key_radius, rand(px, KEY_DIM), rand(px, KEY_DIM + 1u));
     if (sky_shadowed(sky_origin(p, ns), d, KEY_RAY_LEN)) {
         return vec3<f32>(0.0);
     }
-    return k;
+    return k * exp(-absorb_tau);
 }
 
 // The random-number dimensions of the sky rays, two a ray, above the key light's.
@@ -100,9 +106,11 @@ const SKY_RAY_VOXELS: f32 = 512.0;
 
 // Whether a sky ray from `o` along `d` finds rock (or, with ENTITY_SHADOWS, an entity) or ends
 // at or under its column's top (`sky_ray_open`). A lifted ray (`ray_lift`) steps out of a solid
-// voxel it starts in.
+// voxel it starts in. Leaves `absorb_tau` as `sky_shadowed` does.
 fn sky_ray_blocked(o: vec3<f32>, d: vec3<f32>, len: f32) -> bool {
     skip_origin_cell = any(ray_lift != vec3<f32>(0.0));
+    absorb_on = (params.lighting & LIGHTING_SHADOW_STYLES) != 0u;
+    absorb_tau = 0.0;
     let open = sky_ray_open(
         o,
         d,
@@ -111,13 +119,15 @@ fn sky_ray_blocked(o: vec3<f32>, d: vec3<f32>, len: f32) -> bool {
         (params.lighting & LIGHTING_SHADOW_STYLES) != 0u,
         (params.lighting & LIGHTING_HOOK_SKY_END_IS_SKY) != 0u,
     );
+    absorb_on = false;
     skip_origin_cell = false;
     return !open || (ENTITY_SHADOWS && entity_march(o, d, len).found);
 }
 
 // The sky rays' visibility at a hit at `p`, normal `n`, shadow normal `ns`, lighting pixel
 // `px` (ADR-0070): the share of `sky.sky_rays` cosine-weighted rays about `n` that reach the
-// sky above the horizon (`sky_ray_blocked` clear); a ray below the horizon counts as
+// sky above the horizon (`sky_ray_blocked` clear), each weighed by its transmittance through
+// SHADOW_ABSORB materials; a ray below the horizon counts as
 // blocked (the ground there is unknown, and it is rock more often than lit sky). Its
 // expectation is the visibility the bake stores, so the temporal pass colours it as the baked
 // one: times the sky's irradiance above the horizon about the normal. 0 with no ray.
@@ -127,12 +137,12 @@ fn sky_visibility_sample(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>, px: vec2<u32
         return 0.0;
     }
     let o = sky_origin(p, ns);
-    var open = 0u;
+    var open = 0.0;
     for (var i = 0u; i < count; i++) {
         let d = cosine_direction(n, rand(px, SKY_DIM + 2u * i), rand(px, SKY_DIM + 2u * i + 1u));
         if (d.z > 0.0 && !sky_ray_blocked(o, d, SKY_RAY_VOXELS)) {
-            open += 1u;
+            open += exp(-absorb_tau);
         }
     }
-    return f32(open) / f32(count);
+    return open / f32(count);
 }

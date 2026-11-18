@@ -142,6 +142,9 @@ struct Walk {
     brick_field: bool,
     // With `shadow_styles`: `brick` holds a material whose style word has SHADOW_AS_BRICK.
     brick_styled: bool,
+    // With `shadow_styles` and `absorb_on`: `brick` holds a material whose style word has
+    // SHADOW_ABSORB.
+    brick_absorb: bool,
 };
 
 var<private> walk: Walk;
@@ -178,6 +181,20 @@ var<private> approach_on: bool = false;
 var<private> approach_tan: f32;
 
 var<private> approach_min: f32;
+
+// Set around a key or sky ray while some material's style word is set (sky_light.wgsl's
+// `sky_shadowed` and `sky_ray_blocked`, the bake's sky rays): in a brick holding a material with
+// SHADOW_ABSORB, `march` steps through a solid voxel of such a material rather than hitting it,
+// adding its sigma times the ray's length through the voxel's cell to `absorb_tau`; the ray's
+// transmittance is `exp(-absorb_tau)`. Past ABSORB_TAU_MAX the ray counts as blocked. The coarse
+// walk is off inside such a brick (its solid 2^3 blocks carry no material). Clear for every
+// other walk.
+var<private> absorb_on: bool = false;
+
+var<private> absorb_tau: f32;
+
+// The optical depth at which an absorbing ray stops as blocked: a transmittance of 3.4e-4.
+const ABSORB_TAU_MAX: f32 = 8.0;
 
 const APPROACH_CELL: i32 = 8;
 const APPROACH_T0: f32 = 4.0;
@@ -224,17 +241,22 @@ fn approach_probe(v: vec3<i32>, q: vec3<f32>, t: f32, d: vec3<f32>) {
 // holding the material.
 const STYLE_SHADOW_AS_BRICK: u32 = 1u;
 
+// The material style word's bit (`frame::SHADOW_ABSORB`): a key or sky ray passes the
+// material's voxels, attenuated by its sigma (bits STYLE_SIGMA_SHIFT on, thousandths a voxel).
+const STYLE_ABSORB: u32 = 2u;
+const STYLE_SIGMA_SHIFT: u32 = 8u;
+
 // Material `m`'s style word: the third block of the emission-scale buffer, an integer as f32.
 fn material_style(m: u32) -> u32 {
     return u32(emission_scale[2u * EMISSION_ROWS + m]);
 }
 
-// Whether the brick with record entry `entry` (not 0) holds a material whose style has
-// SHADOW_AS_BRICK: a uniform brick's material, or any id of a planar Full brick's palette (its
+// Whether the brick with record entry `entry` (not 0) holds a material whose style has bit
+// `bit`: a uniform brick's material, or any id of a planar Full brick's palette (its
 // 2^planes entries in the header); a Wide brick (no palette) never.
-fn brick_styled(entry: u32) -> bool {
+fn brick_styled(entry: u32, bit: u32) -> bool {
     if ((entry & FULL_BIT) == 0u) {
-        return (material_style(entry & MATERIAL_MASK) & STYLE_SHADOW_AS_BRICK) != 0u;
+        return (material_style(entry & MATERIAL_MASK) & bit) != 0u;
     }
     let cls = (entry >> CLASS_SHIFT) & 7u;
     if (cls == CLASS_WIDE) {
@@ -246,8 +268,8 @@ fn brick_styled(entry: u32) -> bool {
         let pair = pool_word(unit, HEADER_WORD + j);
         let a = pair & 0xFFFFu;
         let b = pair >> 16u;
-        if ((a != 0u && (material_style(a) & STYLE_SHADOW_AS_BRICK) != 0u)
-            || (2u * j + 1u < n && b != 0u && (material_style(b) & STYLE_SHADOW_AS_BRICK) != 0u)) {
+        if ((a != 0u && (material_style(a) & bit) != 0u)
+            || (2u * j + 1u < n && b != 0u && (material_style(b) & bit) != 0u)) {
             return true;
         }
     }
@@ -505,7 +527,10 @@ fn descend(v: vec3<i32>) -> Descent {
             record_word(walk.base + ENTRY_WORD + walk.first + u32(b.x + e * (b.y + e * b.z)));
         walk.saw_translucent = walk.saw_translucent || (walk.brick_entry & TRANSLUCENT_BIT) != 0u;
         walk.brick_field = false;
-        walk.brick_styled = shadow_styles && walk.brick_entry != 0u && brick_styled(walk.brick_entry);
+        walk.brick_styled = shadow_styles && walk.brick_entry != 0u
+            && brick_styled(walk.brick_entry, STYLE_SHADOW_AS_BRICK);
+        walk.brick_absorb = shadow_styles && absorb_on && walk.brick_entry != 0u
+            && brick_styled(walk.brick_entry, STYLE_ABSORB);
         if (split_walk && level == 0u && (walk.brick_entry & FULL_BIT) != 0u) {
             let h = pool_word(walk.brick_entry & UNIT_MASK, HEADER_WORD + HEADER_BAND_WORD);
             walk.brick_field = (h & (HEADER_BAND_BIT | BAND_CUBES_BIT)) == HEADER_BAND_BIT;
@@ -598,7 +623,7 @@ fn lookup_walk(v: vec3<i32>, coarse: bool) -> Cell {
     let masked = skips && (params.flags & FLAG_MASKS) != 0u;
     if (masked) {
         let size = mask_skip(unit, dsc.l, dsc.i);
-        if (coarse && size < 2) {
+        if (coarse && size < 2 && !walk.brick_absorb) {
             return Cell(0, 0u, ABSENT, 0u, cell, false);
         }
         if (size != 0) {
@@ -825,6 +850,17 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
                 size = c.through;
             } else if (c.air) {
                 passing = false;
+            }
+        }
+        if (size == 0 && absorb_on && walk.brick_absorb) {
+            let style = material_style(cell_material(c));
+            if ((style & STYLE_ABSORB) != 0u) {
+                size = max(c.through, 1);
+                let x = exit_cell(o, d, inv, v, size).t - t;
+                absorb_tau += 0.001 * f32(style >> STYLE_SIGMA_SHIFT) * x;
+                if (absorb_tau > ABSORB_TAU_MAX) {
+                    return Hit(true, v, axis, t, 0u);
+                }
             }
         }
         if (size == 0 && skip_origin_cell && step == 0u) {

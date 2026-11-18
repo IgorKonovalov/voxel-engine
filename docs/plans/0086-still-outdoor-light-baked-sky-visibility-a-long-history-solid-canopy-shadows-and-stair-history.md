@@ -937,8 +937,8 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
 | 10: The first seconds after a jump | dev | done; bar 1 met by Phase 9 (no band change); built the chain's sky; bar 3's frames not reached in the rig (its queue bakes one chunk in 600 frames) | ead32aff |
 | 11: The window's defaults | dev | done; five outdoor goldens re-blessed (the leaf default moves none; Phases 9 and 10's share read against the base) | 06269523 |
 | 12: The tunnel's brightness: the eye's ceiling anchored to the sky | dev | done (exploration); the anchor is an `AutoExposure` field; the forest sunset at `N` 4 reads 1.37 EV under `none` (bar 2's 0.5 EV not met); RENOIR not read | f05cf2af |
-| 13: The zebra stripes: the sky term's normal and a bounce floor | dev | done (exploration); the arms apply to the baked read only; the stair rig reads face 1.62, smoothed 1.00; the open floor not in view | committed with this row |
-| 14: The forest floor: attribution, the key light on the pair, the canopy's transmittance | dev | not started | |
+| 13: The zebra stripes: the sky term's normal and a bounce floor | dev | done (exploration); the arms apply to the baked read only; the stair rig reads face 1.62, smoothed 1.00; the open floor not in view | ad4f241c |
+| 14: The forest floor: attribution, the key light on the pair, the canopy's transmittance | dev | done in part (exploration): `absorb` built; the key light carries the grain at 60 (p99 13 against the sky's 4), neither term at 10; Phase 6's mechanism not built (an owner question: the pair's one age); bar 3's no-pixel-over-50 % not met (49 % of the projection has no leaf); absorb's light pass 4.1 to 4.8 times voxel's | committed with this row |
 | 15: The owner's second window | human | not started | |
 | 16: The picks as tests | dev | not started | |
 

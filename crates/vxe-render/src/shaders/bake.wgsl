@@ -29,7 +29,8 @@
 // shadow walk (its coarse mode and shadow styles from `job.sky`'s bits 1 and 2), capped at
 // `job.radius`: a ray that finds no rock reached the sky iff it ended above its column's top
 // (`sky_ray_open`; with bit 3, a reading hook, any end is sky); one pointing below the horizon
-// is blocked. The sky ray draws its own dimensions, so the emissive
+// is blocked. A ray that passed SHADOW_ABSORB materials (walk.wgsl's `absorb_on`) counts as
+// open with probability its transmittance. The sky ray draws its own dimensions, so the emissive
 // sums are the same with the sky on and off. `sky_open` returns the round's open rays.
 //
 // Each sample is the light pass's estimate at a uniform point of the face with the face's normal, times the window `(1 - (d / L)^4)^2`, d the distance from the point to the kept
@@ -155,8 +156,14 @@ fn bake_round(
         let p = face_point(v, f.face, px);
         if ((job.sky & 1u) != 0u && f.first + s < f.sky_n) {
             let d = cosine_direction(nf, rand(px, BAKE_SKY_DIM), rand(px, BAKE_SKY_DIM + 1u));
-            if (d.z > 0.0
-                && sky_ray_open(shadow_origin(p, nf), d, job.radius, sky_coarse, sky_styles, sky_end)) {
+            absorb_on = sky_styles;
+            absorb_tau = 0.0;
+            let open = d.z > 0.0
+                && sky_ray_open(shadow_origin(p, nf), d, job.radius, sky_coarse, sky_styles, sky_end);
+            absorb_on = false;
+            // A ray through SHADOW_ABSORB materials counts as open with probability its
+            // transmittance, so the count's expectation is the transmitted share.
+            if (open && (absorb_tau == 0.0 || rand(px, BAKE_SKY_DIM + 2u) < exp(-absorb_tau))) {
                 sky_open += 1u;
             }
         }

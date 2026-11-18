@@ -204,6 +204,25 @@ pub(crate) const LIGHTING_SHADOW_STYLES: u32 = 1 << 18;
 /// the emissive samples' rays see the voxels.
 pub const SHADOW_AS_BRICK: u32 = 1;
 
+/// A material style word's bit ([`Frame::set_material_styles`]): the key light's ray and a
+/// sky ray (the light pass's and the bake's) pass the material's voxels, attenuated by
+/// `exp(-sigma x)` over their path `x` through them, a continuous transmittance; `sigma`, in
+/// thousandths a voxel, sits in the word's bits [`SHADOW_SIGMA_SHIFT`] on
+/// ([`shadow_absorb`]). The lamp's and the list's rays, a primary ray and the bake's emissive
+/// rays see the voxels.
+pub const SHADOW_ABSORB: u32 = 2;
+
+/// Where a [`SHADOW_ABSORB`] style word holds its sigma, in thousandths a voxel.
+pub const SHADOW_SIGMA_SHIFT: u32 = 8;
+
+/// The style word of a material that absorbs `sigma` a voxel ([`SHADOW_ABSORB`]), sigma
+/// rounded to thousandths and capped at 65.535 a voxel (the word travels as an `f32`, exact
+/// to 2^24).
+pub fn shadow_absorb(sigma: f32) -> u32 {
+    let milli = (sigma.max(0.0) * 1000.0).round().min(65_535.0) as u32;
+    SHADOW_ABSORB | (milli << SHADOW_SIGMA_SHIFT)
+}
+
 /// `Params::lighting` bit, a reading hook ([`LightHooks::no_stair`]): the far normal's stair
 /// rules are off (the history test keeps its material and face-blend normal tests, and the key
 /// and sky rays are not lifted).

@@ -314,8 +314,9 @@ impl Frame {
     }
 
     /// The render-side style word of each material id (`styles[m]` for material `m`, 0 for the
-    /// ids past its end; bits: [`SHADOW_AS_BRICK`]), from the next frame on: how the renderer
-    /// treats the material, leaving the world untouched. Writes only when the words change.
+    /// ids past its end; bits: [`SHADOW_AS_BRICK`], [`SHADOW_ABSORB`] with its sigma), from the
+    /// next frame on: how the renderer treats the material, leaving the world untouched. Writes
+    /// only when the words change.
     pub fn set_material_styles(&mut self, queue: &wgpu::Queue, styles: &[u32]) {
         let len = styles.iter().rposition(|&w| w != 0).map_or(0, |i| i + 1);
         let styles = &styles[..len.min(EMISSION_ROWS)];

@@ -801,26 +801,22 @@ mod reading {
         let gh = rate.len() / gw;
         let hit = |x: usize, y: usize| rate[(y * gh / 180) * gw + x * gw / 320].is_some();
         println!("reading: forest_leaf_shadow on {}", rig.adapter);
-        for leaf_brick in [true, false] {
+        for leaf in [flythrough::LeafShadow::Brick, flythrough::LeafShadow::Voxel] {
             let (mean, p99, _) = key_steps(
                 &rig,
                 &cam,
                 sky_at([10.0, 180.0]),
-                leaf_brick,
+                leaf,
                 vxe_render::Penumbra::Disc,
             );
             println!(
                 "reading: forest 10/180 leaf {}: key ray steps mean {mean:.2} p99 {p99}",
-                if leaf_brick { "brick" } else { "voxel" }
+                leaf.name()
             );
-            let cell = default_cell(leaf_brick);
+            let cell = default_cell(leaf);
             let r = run_cell(&mut rig, &cam, sky_at([60.0, 180.0]), cell);
             print_row(
-                if leaf_brick {
-                    "leaf brick"
-                } else {
-                    "leaf voxel"
-                },
+                &format!("leaf {}", leaf.name()),
                 cell,
                 &r,
                 &[("ground", &hit)],
@@ -849,7 +845,7 @@ mod reading {
         for no_stair in [true, false] {
             let cell = Cell {
                 no_stair,
-                ..default_cell(true)
+                ..default_cell(flythrough::LeafShadow::Brick)
             };
             let r = run_cell(&mut rig, &cam, sky, cell);
             print_row(
@@ -886,20 +882,20 @@ mod reading {
             let rim = |x: usize, y: usize| at(x, y).is_some_and(|r| (0.3..0.6).contains(&r));
             let far = |x: usize, y: usize| at(x, y).is_some_and(|r| r < 0.05);
             for (name, cell) in [
-                ("ray", default_cell(true)),
+                ("ray", default_cell(flythrough::LeafShadow::Brick)),
                 (
                     "bake only",
                     Cell {
                         term: "key",
                         bake: true,
-                        ..default_cell(true)
+                        ..default_cell(flythrough::LeafShadow::Brick)
                     },
                 ),
                 (
                     "bake + ray",
                     Cell {
                         bake: true,
-                        ..default_cell(true)
+                        ..default_cell(flythrough::LeafShadow::Brick)
                     },
                 ),
             ] {
@@ -1021,7 +1017,13 @@ mod reading {
         println!("reading: forest_approach on {}", rig.adapter);
         for penumbra in [Penumbra::Disc, Penumbra::Approach] {
             for sun in [[60.0, 180.0], [10.0, 180.0]] {
-                let (mean, p99, loads) = key_steps(&rig, &cam, sky_at(sun), true, penumbra);
+                let (mean, p99, loads) = key_steps(
+                    &rig,
+                    &cam,
+                    sky_at(sun),
+                    flythrough::LeafShadow::Brick,
+                    penumbra,
+                );
                 println!(
                     "reading: forest {sun:?} {}: key ray steps mean {mean:.2} p99 {p99}, loads mean {loads:.1}",
                     penumbra.name()
@@ -1029,7 +1031,7 @@ mod reading {
             }
             let cell = Cell {
                 approach: penumbra == Penumbra::Approach,
-                ..default_cell(true)
+                ..default_cell(flythrough::LeafShadow::Brick)
             };
             let r = run_cell(&mut rig, &cam, sky_at([60.0, 180.0]), cell);
             print_row(penumbra.name(), cell, &r, &[("ground", &hit)]);
@@ -1401,7 +1403,7 @@ mod reading {
         let cell = |anchor| Cell {
             bake: true,
             anchor,
-            ..default_cell(false)
+            ..default_cell(flythrough::LeafShadow::Voxel)
         };
         let all = |_: usize, _: usize| true;
         let name = |a: Option<f32>| a.map_or("none".to_owned(), |n| format!("N {n}"));
@@ -1469,7 +1471,7 @@ mod reading {
                    (n, b): (SkyNormal, f32),
                    r: &CellReading,
                    regions: &[Region<'_>]| {
-            let cell = default_cell(false);
+            let cell = default_cell(flythrough::LeafShadow::Voxel);
             print_row(&format!("{pose} {} {b}", n.name()), cell, r, regions);
             let [t, k] = r.stripe;
             let mean = |s: (f64, u32)| s.0 / f64::from(s.1.max(1));
@@ -1487,7 +1489,7 @@ mod reading {
             bake: true,
             sky_normal: n,
             sky_bounce: b,
-            ..default_cell(false)
+            ..default_cell(flythrough::LeafShadow::Voxel)
         };
         if let Some((mut rig, views)) = tunnel_rig() {
             println!("reading: the_stripes_under_each_arm on {}", rig.adapter);
@@ -1514,7 +1516,7 @@ mod reading {
 
     /// Plan 0086 Phase 14 bar 1: the forest floor's grain by term. The forest (`--trees
     /// forest`, `LEAF_FILL`) at `--sun 60,180` and `10,180`, the defaults' cell (FSR 2 at 1.5,
-    /// the filter on) with the leaf shadowing voxel by voxel and as its bricks: the key light
+    /// the filter on) under each `--leaf-shadow` (brick, voxel, absorb): the key light
     /// alone (`sky_rays` 0, no bake), the sky alone (the key light hooked off, the store
     /// baked) and both (baked). Per row Phase 1's statistics over every hit, the share of the
     /// lighting pixels whose direct sample changes between lit and 0 between two frames at
@@ -1550,20 +1552,19 @@ mod reading {
                 r.parts[1]
             );
         };
-        let cells = |leaf_brick: bool| {
+        let cells = |leaf: flythrough::LeafShadow| {
             [("key", false), ("sky", true), ("both", true)].map(|(term, bake)| Cell {
                 term,
                 bake,
-                ..default_cell(leaf_brick)
+                ..default_cell(leaf)
             })
         };
         if let Some((mut rig, cam)) = forest_rig() {
             println!("reading: the_forest_floor_by_term on {}", rig.adapter);
             for el in [60.0, 10.0] {
-                for leaf_brick in [false, true] {
-                    let pose =
-                        format!("forest {el} {}", if leaf_brick { "brick" } else { "voxel" });
-                    for cell in cells(leaf_brick) {
+                for leaf in flythrough::LeafShadow::ALL {
+                    let pose = format!("forest {el} {}", leaf.name());
+                    for cell in cells(leaf) {
                         let r = run_cell(&mut rig, &cam, sky_at(el), cell);
                         report(&pose, cell, &r);
                     }
@@ -1572,7 +1573,7 @@ mod reading {
         }
         if let Some((mut rig, cam)) = hills_rig() {
             for el in [60.0, 10.0] {
-                let cell = cells(false)[2];
+                let cell = cells(flythrough::LeafShadow::Voxel)[2];
                 let r = run_cell(&mut rig, &cam, sky_at(el), cell);
                 report(&format!("hills {el}"), cell, &r);
             }

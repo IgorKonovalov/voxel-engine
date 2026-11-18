@@ -427,6 +427,37 @@ fn source_showcase_parses_with_the_lamp_off_and_refuses_what_it_cannot_take() {
 /// `--source outdoor` and its flags: the spawn, the time (refusing 25:00), the day's length
 /// and the sky, on by default for the outdoor source alone; the world flags it refuses.
 #[test]
+fn the_leaf_shadow_flag_parses() {
+    // --leaf-shadow: voxel by default, naming nothing; `brick` the A/B, the canopy style on
+    // `leaf`, the banner names it.
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert_eq!(r.outdoor.leaf_shadow(), crate::LeafShadow::Voxel);
+    assert!(!r.start_modes(0.0).line().contains("leaf"));
+    let r = parse_args_from(argv(&["--source", "outdoor", "--leaf-shadow", "brick"])).unwrap();
+    assert_eq!(r.outdoor.leaf_shadow(), crate::LeafShadow::Brick);
+    assert!(r.start_modes(0.0).line().contains("leaf shadow brick"));
+    assert!(parse_args_from(argv(&["--leaf-shadow", "solid"])).is_err());
+    let styles = crate::outdoor_styles(crate::LeafShadow::Brick);
+    assert_eq!(styles.len(), usize::from(crate::outdoor::LEAF) + 1);
+    assert_eq!(
+        styles[usize::from(crate::outdoor::LEAF)],
+        vxe_render::SHADOW_AS_BRICK
+    );
+    assert_eq!(styles.iter().filter(|&&w| w != 0).count(), 1);
+    assert!(crate::outdoor_styles(crate::LeafShadow::Voxel).is_empty());
+    // `absorb`: the leaf's word is SHADOW_ABSORB with sigma 0.15 a voxel (150 thousandths).
+    let r = parse_args_from(argv(&["--source", "outdoor", "--leaf-shadow", "absorb"])).unwrap();
+    assert_eq!(r.outdoor.leaf_shadow(), crate::LeafShadow::Absorb);
+    assert!(r.start_modes(0.0).line().contains("leaf shadow absorb"));
+    let styles = crate::outdoor_styles(crate::LeafShadow::Absorb);
+    assert_eq!(
+        styles[usize::from(crate::outdoor::LEAF)],
+        vxe_render::SHADOW_ABSORB | (150 << vxe_render::SHADOW_SIGMA_SHIFT)
+    );
+    assert_eq!(styles.iter().filter(|&&w| w != 0).count(), 1);
+}
+
+#[test]
 fn the_outdoor_source_and_its_flags_parse() {
     use crate::outdoor::Spawn;
     let a = parse_args_from(argv(&["--source", "outdoor"])).expect("parses");
@@ -534,23 +565,6 @@ fn the_outdoor_source_and_its_flags_parse() {
             "{bad}"
         );
     }
-    // --leaf-shadow: voxel by default, naming nothing; `brick` the A/B, the canopy style on
-    // `leaf`, the banner names it.
-    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
-    assert_eq!(r.outdoor.leaf_shadow(), crate::LeafShadow::Voxel);
-    assert!(!r.start_modes(0.0).line().contains("leaf"));
-    let r = parse_args_from(argv(&["--source", "outdoor", "--leaf-shadow", "brick"])).unwrap();
-    assert_eq!(r.outdoor.leaf_shadow(), crate::LeafShadow::Brick);
-    assert!(r.start_modes(0.0).line().contains("leaf shadow brick"));
-    assert!(parse_args_from(argv(&["--leaf-shadow", "solid"])).is_err());
-    let styles = crate::outdoor_styles(crate::LeafShadow::Brick);
-    assert_eq!(styles.len(), usize::from(crate::outdoor::LEAF) + 1);
-    assert_eq!(
-        styles[usize::from(crate::outdoor::LEAF)],
-        vxe_render::SHADOW_AS_BRICK
-    );
-    assert_eq!(styles.iter().filter(|&&w| w != 0).count(), 1);
-    assert!(crate::outdoor_styles(crate::LeafShadow::Voxel).is_empty());
     for flag in ["--sun-radius", "--moon-radius"] {
         for bad in ["0", "11", "x"] {
             assert!(parse_args_from(argv(&[flag, bad])).is_err(), "{flag} {bad}");

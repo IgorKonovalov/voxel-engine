@@ -321,7 +321,8 @@ pub fn outdoor_materials() -> MaterialTable {
 }
 
 /// How the outdoor testbed's `leaf` shadows (`--leaf-shadow`): a light's shadow ray stops at a
-/// brick holding leaves (the renderer's `SHADOW_AS_BRICK` style), or at a leaf voxel.
+/// brick holding leaves (the renderer's `SHADOW_AS_BRICK` style), or at a leaf voxel, or the
+/// key and sky rays pass the leaves attenuated by their path through them (`SHADOW_ABSORB`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LeafShadow {
     /// The canopy shadows as its bricks: no sun fleck through it.
@@ -329,15 +330,23 @@ pub enum LeafShadow {
     /// The canopy shadows voxel by voxel. The default.
     #[default]
     Voxel,
+    /// The canopy transmits the sun and the sky by `exp(-sigma x)` over the path `x` through
+    /// its leaf voxels, sigma [`LEAF_SIGMA`].
+    Absorb,
 }
 
+/// The leaf's shadow absorption under [`LeafShadow::Absorb`], a voxel: a guess, about 5 %
+/// through 20 voxels of leaves.
+pub const LEAF_SIGMA: f32 = 0.15;
+
 impl LeafShadow {
-    pub const ALL: [Self; 2] = [Self::Brick, Self::Voxel];
+    pub const ALL: [Self; 3] = [Self::Brick, Self::Voxel, Self::Absorb];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Brick => "brick",
             Self::Voxel => "voxel",
+            Self::Absorb => "absorb",
         }
     }
 
@@ -347,18 +356,24 @@ impl LeafShadow {
         match self {
             Self::Brick => "leaf shadow brick, ",
             Self::Voxel => "",
+            Self::Absorb => "leaf shadow absorb, ",
         }
     }
 }
 
 /// The renderer's style words for [`outdoor_materials`] (`Frame::set_material_styles`):
-/// `SHADOW_AS_BRICK` on `outdoor::LEAF` under [`LeafShadow::Brick`], none under
-/// [`LeafShadow::Voxel`].
+/// `SHADOW_AS_BRICK` on `outdoor::LEAF` under [`LeafShadow::Brick`], `shadow_absorb(LEAF_SIGMA)`
+/// under [`LeafShadow::Absorb`], none under [`LeafShadow::Voxel`].
 pub fn outdoor_styles(leaf: LeafShadow) -> Vec<u32> {
     match leaf {
         LeafShadow::Brick => {
             let mut v = vec![0; usize::from(crate::outdoor::LEAF) + 1];
             v[usize::from(crate::outdoor::LEAF)] = vxe_render::SHADOW_AS_BRICK;
+            v
+        }
+        LeafShadow::Absorb => {
+            let mut v = vec![0; usize::from(crate::outdoor::LEAF) + 1];
+            v[usize::from(crate::outdoor::LEAF)] = vxe_render::shadow_absorb(LEAF_SIGMA);
             v
         }
         LeafShadow::Voxel => Vec::new(),
