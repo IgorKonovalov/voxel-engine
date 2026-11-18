@@ -97,8 +97,8 @@ pub use entities::{
     MAX_ENTITIES, MAX_ENTITY_PARTS, ModelHandle,
 };
 pub use exposure::{
-    AutoExposure, EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState, Metering,
-    ground_irradiance,
+    AutoExposure, DEFAULT_SKY_ANCHOR_EV, EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState,
+    Metering, ground_irradiance,
 };
 pub use frame::{
     ATROUS_ITERATIONS, DEFAULT_LIGHT_FLOOR, DEFAULT_PROBE_FREEZE, DEFAULT_SKY_HISTORY,

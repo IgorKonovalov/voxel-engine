@@ -41,8 +41,9 @@ pub struct OutdoorArgs {
     /// switch for the pre-roll; the sky rule's tops may then still move under a bake).
     pub(crate) no_column_wait: bool,
     /// `--sky-anchor N|none`: the auto exposure's ceiling anchored `N` EV over the sunlit
-    /// ground's exposure while a sky is set (`AutoExposure::sky_anchor_ev`); unset, none.
-    pub(crate) sky_anchor: Option<f32>,
+    /// ground's exposure while a sky is set (`AutoExposure::sky_anchor_ev`), `Some(None)` for
+    /// none; unset, the preset's (`vxe_render::DEFAULT_SKY_ANCHOR_EV`).
+    pub(crate) sky_anchor: Option<Option<f32>>,
     /// `--exposure-max EV`: the auto exposure's constant ceiling in EV; unset, the start's
     /// ([`OUTDOOR_MAX`] outdoors, the preset's elsewhere).
     pub(crate) exposure_max_ev: Option<f32>,
@@ -282,7 +283,7 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
             "face|smoothed",
             "the normal a face's baked sky light reads its visibilities by: the face's own, \
                  or the 27-count gradient's at every distance (a one-voxel stair reads one \
-                 slope) [face]",
+                 slope) [smoothed]",
             |p: &mut Parsing, v| {
                 p.args.outdoor.sky_normal =
                     v.named(vxe_render::SkyNormal::from_name, "face or smoothed")?;
@@ -311,12 +312,12 @@ fn ceiling_flags() -> Vec<Flag<Parsing>> {
             "N|none",
             "while a sky is set, the auto exposure opens at most N EV (-4 to 12) over the \
                  exposure that puts sunlit ground at mid-grey, so a noon tunnel stays dark and \
-                 the night still opens; none keeps the constant ceiling [none]",
+                 the night still opens; none keeps the constant ceiling [4]",
             |p: &mut Parsing, v| {
-                p.args.outdoor.sky_anchor = match v.text {
+                p.args.outdoor.sky_anchor = Some(match v.text {
                     "none" => None,
                     _ => Some(v.parse_if(|n: &f32| (-4.0..=12.0).contains(n), "-4 to 12 or none")?),
-                };
+                });
                 Ok(())
             },
         ),

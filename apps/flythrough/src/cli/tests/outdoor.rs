@@ -18,8 +18,9 @@ fn penumbra_is_disc_unless_named() {
     assert!(parse_args_from(argv(&["--penumbra", "soft"])).is_err());
 }
 
-/// `--sky-anchor` and `--exposure-max` reach the auto exposure; none and unset are the
-/// constant ceiling, and the banner names the anchor with a sky set.
+/// `--sky-anchor` and `--exposure-max` reach the auto exposure; unset is the default anchor
+/// 4, none the constant ceiling, and the banner names an anchor other than 4 (`none`
+/// included) with a sky set, and nothing for the default.
 #[test]
 fn the_ceiling_flags_reach_the_auto_exposure() {
     let auto = |v: &[&str]| match parse_args_from(argv(v)).unwrap().start_lighting().exposure {
@@ -27,7 +28,7 @@ fn the_ceiling_flags_reach_the_auto_exposure() {
         Exposure::Manual(_) => panic!("auto"),
     };
     let a = auto(&["--source", "outdoor"]);
-    assert_eq!((a.sky_anchor_ev, a.max), (None, 4.0));
+    assert_eq!((a.sky_anchor_ev, a.max), (Some(4.0), 4.0));
     let a = auto(&[
         "--source",
         "outdoor",
@@ -43,8 +44,15 @@ fn the_ceiling_flags_reach_the_auto_exposure() {
     );
     let r = parse_args_from(argv(&["--source", "outdoor", "--sky-anchor", "2"])).unwrap();
     assert!(r.start_modes(0.0).line().contains("sky anchor 2, "));
-    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
-    assert!(!r.start_modes(0.0).line().contains("sky anchor"));
+    let r = parse_args_from(argv(&["--source", "outdoor", "--sky-anchor", "none"])).unwrap();
+    assert!(r.start_modes(0.0).line().contains("sky anchor none, "));
+    for v in [
+        &["--source", "outdoor"][..],
+        &["--source", "outdoor", "--sky-anchor", "4"],
+    ] {
+        let r = parse_args_from(argv(v)).unwrap();
+        assert!(!r.start_modes(0.0).line().contains("sky anchor"), "{v:?}");
+    }
     for bad in [
         &["--sky-anchor", "13"][..],
         &["--sky-anchor", "x"],
@@ -54,15 +62,15 @@ fn the_ceiling_flags_reach_the_auto_exposure() {
     }
 }
 
-/// `--sky-normal` and `--sky-bounce` reach the lighting and the banner; face and 0 are
-/// unnamed.
+/// `--sky-normal` and `--sky-bounce` reach the lighting and the banner; the defaults,
+/// smoothed and 0, are unnamed, and `face` is named.
 #[test]
 fn the_sky_term_flags_reach_the_lighting() {
     let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
     let l = r.start_lighting();
     assert_eq!(
         (l.sky_normal, l.sky_bounce),
-        (vxe_render::SkyNormal::Face, 0.0)
+        (vxe_render::SkyNormal::Smoothed, 0.0)
     );
     assert!(!r.start_modes(0.0).line().contains("sky normal"));
     assert!(!r.start_modes(0.0).line().contains("sky bounce"));
@@ -70,7 +78,7 @@ fn the_sky_term_flags_reach_the_lighting() {
         "--source",
         "outdoor",
         "--sky-normal",
-        "smoothed",
+        "face",
         "--sky-bounce",
         "0.3",
     ]))
@@ -78,13 +86,10 @@ fn the_sky_term_flags_reach_the_lighting() {
     let l = r.start_lighting();
     assert_eq!(
         (l.sky_normal, l.sky_bounce),
-        (vxe_render::SkyNormal::Smoothed, 0.3)
+        (vxe_render::SkyNormal::Face, 0.3)
     );
     let line = r.start_modes(0.0).line();
-    assert!(
-        line.contains("sky normal smoothed, sky bounce 0.3, "),
-        "{line}"
-    );
+    assert!(line.contains("sky normal face, sky bounce 0.3, "), "{line}");
     for bad in [&["--sky-normal", "bent"][..], &["--sky-bounce", "1.5"]] {
         assert!(parse_args_from(argv(bad)).is_err(), "{bad:?}");
     }

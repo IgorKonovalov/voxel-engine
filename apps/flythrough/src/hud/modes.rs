@@ -633,16 +633,20 @@ impl Modes {
             if l.penumbra != vxe_render::Penumbra::Disc {
                 let _ = write!(out, "penumbra {}, ", l.penumbra.name());
             }
-            if l.sky_normal != vxe_render::SkyNormal::Face {
+            if l.sky_normal != vxe_render::SkyNormal::default() {
                 let _ = write!(out, "sky normal {}, ", l.sky_normal.name());
             }
             if l.sky_bounce > 0.0 {
                 let _ = write!(out, "sky bounce {}, ", l.sky_bounce);
             }
-            if let vxe_render::Exposure::Auto(a) = l.exposure
-                && let Some(n) = a.sky_anchor_ev
-            {
-                let _ = write!(out, "sky anchor {n}, ");
+            if let vxe_render::Exposure::Auto(a) = l.exposure {
+                match a.sky_anchor_ev {
+                    None => out.push_str("sky anchor none, "),
+                    Some(n) if n != vxe_render::DEFAULT_SKY_ANCHOR_EV => {
+                        let _ = write!(out, "sky anchor {n}, ");
+                    }
+                    Some(_) => {}
+                }
             }
         }
         let _ = write!(

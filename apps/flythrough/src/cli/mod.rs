@@ -774,7 +774,9 @@ impl Args {
         if let Some(ev) = self.outdoor.exposure_max_ev {
             a.max = ev.exp2();
         }
-        a.sky_anchor_ev = self.outdoor.sky_anchor;
+        if let Some(n) = self.outdoor.sky_anchor {
+            a.sky_anchor_ev = n;
+        }
         a
     }
 

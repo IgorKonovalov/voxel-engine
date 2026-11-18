@@ -333,9 +333,12 @@ const WALLS_IN: [[u32; 4]; 2] = [[0, 40, 80, 140], [240, 40, 320, 140]];
 /// 20-voxel stretch from where its roof stays covered to the chamber (the tunnel runs as an open
 /// cut at the mouth and crosses open ground on its way), facing the mouth, the lamp off, manual
 /// exposure 1 and every material's emission scale 0, a fill of rock across that stretch (an edit,
-/// so history dies in its box) seals the tunnel: after 64 frames the direct accumulation over the
-/// walls has a mean luminance under 2 % of the same region's after 64 frames of the unsealed pose.
-/// The sky does not leak into a sealed cave.
+/// so history dies in its box) seals the tunnel: the direct accumulation over the walls has a
+/// mean luminance under 30 % of the same region's after 64 frames of the unsealed pose 64 frames
+/// after the seal, and under 2 % 256 frames after it (the 128-frame value printed). The bar is
+/// Plan 0086 Phase 17's re-derivation from the pair's measured decay after a seal (24.3 % at 64
+/// frames, 8.7 % at 128, 1.1 % at 256; the owner judged the light's fade by eye): the sky does
+/// not leak into a sealed cave once its history has run out.
 #[test]
 #[ignore = "soak"]
 fn the_cave_mouth_is_lit_from_outside() {
@@ -430,7 +433,8 @@ fn the_cave_mouth_is_lit_from_outside() {
         .sync_now(&h.world, &h.device, &h.queue)
         .expect("the mirror fits");
     open.invalidate(aabb.0.0, aabb.1.0);
-    for _ in 0..64 {
+    let mut sealed = [0.0; 3];
+    for i in 1..=256 {
         open.step(
             &h.device,
             &h.queue,
@@ -438,14 +442,28 @@ fn the_cave_mouth_is_lit_from_outside() {
             &camera,
             &LightParams::headlamp(),
         );
+        if let Some(k) = [64, 128, 256].iter().position(|&n| n == i) {
+            sealed[k] = wall_direct(&mut h, &open);
+        }
     }
-    let sealed = wall_direct(&mut h, &open);
     println!(
-        "cave mouth walls' direct: unsealed {unsealed:.4e}, sealed {sealed:.4e} ({:.3} %)",
-        100.0 * sealed / unsealed
+        "cave mouth walls' direct: unsealed {unsealed:.4e}; sealed at 64, 128, 256 frames {:.4e}, {:.4e}, {:.4e} ({:.3} %, {:.3} %, {:.3} %)",
+        sealed[0],
+        sealed[1],
+        sealed[2],
+        100.0 * sealed[0] / unsealed,
+        100.0 * sealed[1] / unsealed,
+        100.0 * sealed[2] / unsealed,
     );
     assert!(unsealed > 0.0, "the unsealed walls take sky light");
-    assert!(sealed < 0.02 * unsealed, "{sealed} against {unsealed}");
+    assert!(
+        sealed[0] < 0.30 * unsealed,
+        "64 frames: {sealed:?} against {unsealed}"
+    );
+    assert!(
+        sealed[2] < 0.02 * unsealed,
+        "256 frames: {sealed:?} against {unsealed}"
+    );
 }
 
 /// Plan 0032 Phase 7 bar 1: `outdoor_noon.png`, `outdoor_sunset.png` and `outdoor_night.png`

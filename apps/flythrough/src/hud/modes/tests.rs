@@ -399,8 +399,9 @@ fn the_banner_names_the_view() {
     );
 }
 
-/// The sky anchor: with a sky set the banner names `sky anchor N` and the exposure row the
-/// ceiling the read-back carries with its `N`; `Q`'s symmetric preset keeps the anchor; with
+/// The sky anchor: with a sky set the banner names `sky anchor N` for an `N` other than the
+/// default 4 (and nothing for 4) and the exposure row the ceiling the read-back carries with
+/// its `N`; `Q`'s symmetric preset keeps the anchor; with
 /// no read-back the row names the model's `max`.
 #[test]
 fn the_banner_and_row_name_the_sky_anchor() {
@@ -419,7 +420,16 @@ fn the_banner_and_row_name_the_sky_anchor() {
     );
     m.set_auto(Adaptation::Eye, auto);
     m.sky = true;
-    assert!(m.line().contains("sky anchor 4, "), "{}", m.line());
+    assert!(!m.line().contains("sky anchor"), "{}", m.line());
+    let mut two = m.clone();
+    two.set_auto(
+        Adaptation::Eye,
+        vxe_render::AutoExposure {
+            sky_anchor_ev: Some(2.0),
+            ..auto
+        },
+    );
+    assert!(two.line().contains("sky anchor 2, "), "{}", two.line());
     assert_eq!(m.exposure_row().ceiling, Some((2.0, Some(4.0))));
     m.set_readout(Some(vxe_render::ExposureReadout {
         exposure: 0.01,

@@ -127,9 +127,13 @@ pub struct AutoExposure {
     pub metering: Metering,
     /// The ceiling anchored to the sky, `N` EV: while the frame holds a sky, the exposure
     /// opens at most `2^N` times the one that puts a sunlit horizontal face of albedo 0.5 at
-    /// the key ([`AutoExposure::ceiling`]); `None` (the default) keeps `max`.
+    /// the key ([`AutoExposure::ceiling`]); `None` keeps `max`. The default is
+    /// [`DEFAULT_SKY_ANCHOR_EV`]; with no sky set the ceiling is `max` whatever it holds.
     pub sky_anchor_ev: Option<f32>,
 }
+
+/// [`AutoExposure::sky_anchor_ev`]'s default, in EV over the sunlit ground's exposure.
+pub const DEFAULT_SKY_ANCHOR_EV: f32 = 4.0;
 
 impl Default for AutoExposure {
     fn default() -> Self {
@@ -151,7 +155,7 @@ impl AutoExposure {
             tau_rod: 10.0,
             cone_floor: 2f32.powi(-6),
             metering: Metering::default(),
-            sky_anchor_ev: None,
+            sky_anchor_ev: Some(DEFAULT_SKY_ANCHOR_EV),
         }
     }
 
@@ -681,6 +685,21 @@ mod tests {
         assert!((s.step(-1.0, -3.0, 0.5) - (-3.0 + 2.0 * (-1f64).exp())).abs() < 1e-12);
     }
 
+    /// Plan 0086 Phase 17: the auto exposure's default anchors its ceiling 4 EV over the
+    /// sunlit ground, and with no sky that ceiling is `max`.
+    #[test]
+    fn the_default_anchor_is_4() {
+        assert_eq!(AutoExposure::default().sky_anchor_ev, Some(4.0));
+        assert_eq!(
+            AutoExposure::eye().sky_anchor_ev,
+            Some(DEFAULT_SKY_ANCHOR_EV)
+        );
+        assert_eq!(
+            AutoExposure::default().ceiling(None),
+            AutoExposure::default().max
+        );
+    }
+
     /// Plan 0086 Phase 12 bar 1: the anchored ceiling follows the sky. Under `Sky::uniform(L)`
     /// with no key light `E_sky(+z)` is `pi L`, so at `N` 0 the ceiling is `key pi / (0.5 pi
     /// L)`; doubling `L` halves it, `N` 2 quadruples it; with no sky the ceiling is `max`, and
@@ -706,26 +725,21 @@ mod tests {
         // The key light's horizontal share adds to the sky's.
         assert_eq!(ground_irradiance([1.0, 1.0, 1.0], 2.0), 3.0);
         // No sky, or no anchor: `max`.
-        assert_eq!(at(2.0).ceiling(None), AutoExposure::eye().max);
-        assert_eq!(at(2.0).ceiling(Some(0.0)), AutoExposure::eye().max);
-        assert_eq!(
-            AutoExposure::eye().ceiling(ground(1.0)),
-            AutoExposure::eye().max
-        );
+        let none = AutoExposure {
+            sky_anchor_ev: None,
+            ..AutoExposure::eye()
+        };
+        assert_eq!(at(2.0).ceiling(None), none.max);
+        assert_eq!(at(2.0).ceiling(Some(0.0)), none.max);
+        assert_eq!(none.ceiling(ground(1.0)), none.max);
         let uniform = |a: &AutoExposure, sky: bool| {
             let mut u = ExposureUniform::default();
             u.set_auto(a, sky);
             bytemuck::bytes_of(&u).to_vec()
         };
-        assert_eq!(
-            uniform(&at(2.0), false),
-            uniform(&AutoExposure::eye(), false)
-        );
-        assert_eq!(
-            uniform(&AutoExposure::eye(), true),
-            uniform(&AutoExposure::eye(), false)
-        );
-        assert_ne!(uniform(&at(2.0), true), uniform(&AutoExposure::eye(), true));
+        assert_eq!(uniform(&at(2.0), false), uniform(&none, false));
+        assert_eq!(uniform(&none, true), uniform(&none, false));
+        assert_ne!(uniform(&at(2.0), true), uniform(&none, true));
         // The settled exposure clamps under the ceiling in force.
         let e = AutoExposure::eye();
         assert_eq!(e.exposure_under(-12.0, 0.25), 0.25);

@@ -611,16 +611,15 @@ named_enum!(Penumbra {
 /// Phase 13's arms).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SkyNormal {
-    /// The shading normal: the face's own direction near, the far normal's blend far. The
-    /// default.
-    #[default]
+    /// The shading normal: the face's own direction near, the far normal's blend far.
     Face,
     /// The 27-count gradient's normal `g` at every distance: the face's term is the mix over
     /// the directions `g` leans toward, `2a + (g_a > 0)` weighted `g_a^2`, of each direction's
     /// baked visibility times the sky's irradiance above the horizon about it, over the
     /// directions whose visibility is held; a tread and a riser of a one-voxel stair read the
     /// slope's blend. The surface and the key light keep the face normal; a face whose sky
-    /// rays were cast (no fresh bake) keeps the shading normal.
+    /// rays were cast (no fresh bake) keeps the shading normal. The default.
+    #[default]
     Smoothed,
 }
 
@@ -864,7 +863,7 @@ pub struct Lighting {
     /// How the key light's shadow ray makes its penumbra ([`Penumbra`]; default `Disc`).
     pub penumbra: Penumbra,
     /// The normal a cube face's baked sky term reads its visibilities by ([`SkyNormal`];
-    /// default `Face`).
+    /// default `Smoothed`).
     pub sky_normal: SkyNormal,
     /// The baked sky term's bounce floor `b`, 0 to 1 (default 0): the visibility is `(1 - b)
     /// v(n) + b m`, `m` the face's cell's six direction visibilities' mean weighted `(1 +
@@ -910,7 +909,7 @@ impl Default for Lighting {
             sky_rays: DEFAULT_SKY_RAYS,
             sky_history: DEFAULT_SKY_HISTORY,
             penumbra: Penumbra::Disc,
-            sky_normal: SkyNormal::Face,
+            sky_normal: SkyNormal::Smoothed,
             sky_bounce: 0.0,
         }
     }
@@ -1033,5 +1032,15 @@ mod tests {
         for s in RenderScale::ALL {
             assert_eq!(RenderScale::from_name(s.name()), Some(s));
         }
+    }
+
+    /// Plan 0086 Phase 17: the sky term reads the smoothed normal by default, with no bounce.
+    #[test]
+    fn the_sky_term_defaults_to_the_smoothed_normal() {
+        let l = super::Lighting::default();
+        assert_eq!(
+            (l.sky_normal, l.sky_bounce),
+            (super::SkyNormal::Smoothed, 0.0)
+        );
     }
 }
