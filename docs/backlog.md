@@ -893,6 +893,22 @@ Question 6 answered 2026-11-18 (owner, the interim rule, (a)): every new text fo
 grows is designed as a layer-4 file (line-based, hand-parsed, diffable, positions in its errors);
 new fly-through scenes stay Rust until the stack exists.
 
+### A proper editor interface, like Unity's or Godot's
+
+Parked 2026-11-18 at Plan 0077's Phase 10 window (owner: "as a backlog we should build a proper
+interface, similar to the one that has unity or godot"). The fly-through's menu, belt and chooser
+are a testbed's text overlay; the owner wants a real editor UI: docked panels (a scene tree, an
+inspector of a placed thing's parameters, an asset browser with thumbnails, a viewport with
+gizmos to move, turn and scale, undo). How it fits: the roadmap refuses a scene editor inside the
+engine ("no ECS, no scene editor"), so this is its own app under `apps/`, not a crate mechanism,
+and it is ADR-0072's layer 5: a view over the layer-4 text files, writing them back in canonical
+layout, never a format of its own. Open when picked up: the UI toolkit (an immediate-mode Rust UI
+such as egui over the wgpu device, or another; ADR-0009's reasons against a UI library in the
+fly-through are the testbed's, and an editor app reopens them), and whether it waits for
+ADR-0072's text formats (recommended: the level file first, so the editor has something to edit).
+Pick up after ADR-0072's spike, or earlier as a placement-only editor over today's entities if
+the owner asks.
+
 
 ### A second consumer in mind: a user-built, multiplayer game platform
 
