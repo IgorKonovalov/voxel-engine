@@ -67,7 +67,7 @@ window's top-right corner reads `fps <n>  frame <median> ms p99 <ms>` while it i
 | `Tab` | The menu; type on any page to search |
 | `F1` | The Keys page (with `--tester`: the help panel) |
 | `F2` | Toggle the stats overlay |
-| `Esc` | Clear the search, go back a page, close the menu; with the menu closed, leave placement mode, else quit (on a path run, end it so its report says how) |
+| `Esc` | Clear the search, go back a page, close the menu; with the menu closed, leave placement mode, else ask before quitting: the banner reads `Esc again to quit` for 2 s, a second `Esc` inside that quits, any other key cancels (on a path run, end it so its report says how; under `--tester` and while loading the first `Esc` quits) |
 
 While the menu is open the arrows, `Enter`, `Backspace`, `Esc`, the letters, digits and
 punctuation, the wheel and the clicks are the menu's: the dig, the fill and the belt
@@ -100,7 +100,8 @@ Everything else is an entry of the menu (`Tab`) with no key: the dig radius (`mo
 look presets and far normal,
 the sharpening and pan, the lighting modes but the lamp, the lights' carry, colour and bounce
 flag, the light queue's order, weights, withdrawal, budget, full-first, missing light and
-reach, the walkers' walking and eye lights, the audio's sounds and mix, the bench, the stamp,
+reach, the wander (`wander` under `entities`: every placed body wanders, the built-in walkers
+walk their circle) and the eye lights, the audio's sounds and mix, the bench, the stamp,
 the crumble, the coarse print, the castle shot and the shadow ray, and the world and sky page:
 the time of day (a number, an hour a step, held between 00:00 and 23:59) and the day cycle
 (`--day-length`) and the sky rays (1 to 4) under a sky, the next world source (`--source`'s
@@ -113,8 +114,15 @@ cave`), and loads behind it as start-up does; the run then comes back with the m
 switch's notice.
 
 The HUD's entities row reads `entities <n>/64 parts <m>/512 over <k> pool <used>/<total> KB`
-(`walk` after it while they walk): the entity pool's bytes in use, rounded up to whole KB,
-against its size. A `--model` reload frees the replaced model, so the figure holds still over
+(then `tick <us>`, the movers' CPU a tick as the median over the last second, once a body has
+ticked, and `wander` while the wander is on): the entity pool's bytes in use, rounded up to
+whole KB, against its size. A library entry whose rig has a `body` line moves at a 60 Hz tick
+(at most 8 ticks a frame), wander on or off: a ground body (the walker) stands on the floor and
+falls when it is dug away, a surface body (the spider) clings to the face it touches, wall or
+ceiling, and falls and lands when that is dug away. With the wander on (`wander on` in the
+banner) each body picks a new heading every 5 to 15 s, mostly within a quarter turn, and walks or crawls at 1 or 1.5 m/s, its
+`walk` clip kept in step with the distance and `idle` played when it stands still; with it off
+each stands where it is on the clip the chooser gave it. A `--model` reload frees the replaced model, so the figure holds still over
 saves that keep the model's size. When an upload is refused although the pool's free bytes
 would hold it (no hole is large enough), the pool is cleared and every placed model uploaded
 again, and the banner reads `entity pool reset`; a `--model` model refused after that keeps
@@ -139,8 +147,10 @@ as the ghost, a real entity lit where it will stand, facing the camera, turned b
 camera ray's first world hit within 30 m, never nearer than 3 m or 1.5 times the model's
 longest extent (the walker at 3 m, the spider at about 10.4 m), the feet on the hit when it is
 a floor, and under a wall or a ceiling hit moved back by half the model's footprint and dropped
-to the floor (up to 10 m below). With no hit, or a hit nearer than that distance, the ghost
-stands at that distance along the view, dropped to the floor. The left click (or `R2`) places
+to the floor (up to 10 m below). A surface body (the spider) stands on the face it is aimed at
+instead, wall or ceiling, its legs to the face, facing up the face (`R` turns it about the
+face's normal), and a click attaches it there. With no hit, or a hit nearer than that distance,
+the ghost stands at that distance along the view, dropped to the floor. The left click (or `R2`) places
 it there on its clip and turn (`placed spider #3 (rear)`) and the mode stays, a new ghost at
 the aim; the dig and the fill rest while the mode is on. An empty slot, an entry in error or a
 full set (64) stands no ghost and the banner says why. Under `--tester` there is no belt and no
@@ -283,7 +293,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--emissive-ore on\|off` | The ore glows and lights the cave [on] |
 | `--lamp-toggle N` | Switch the lamp every `N` frames |
 | `--entities N` | Start with `N` of the library's selected entry (voxel-model entities) on a 3 m ring around the spawn [0] |
-| `--entities-walk on\|off` | The built-in walkers start walking, as the menu's `walkers walk` sets them [off] |
+| `--entities-walk on\|off` | The wander starts, as the menu's `wander` sets it: every placed body wanders, the built-in walkers walk their circle [off] |
 | `--model PATH` | View a `.rig` and the `.vox` it names (the library is `apps/flythrough/assets/entities/<name>/<name>.rig`, [entities.md](entities.md)): it is the library's first entry, selected, so `` ` `` and `--entities N` place it (a rig of the library itself is that entry, not a second one); a saved change to either file reloads its instances only |
 | `--clip NAME` | The `--model` clip to play first [the rig's first] |
 | `--library-dir DIR` | The entities library: every `DIR/<name>/<name>.rig` is an entry, in name order; `--model`'s rig comes first. A missing or empty library gives the built-in walker [`apps/flythrough/assets/entities`] |

@@ -492,3 +492,82 @@ fn box_queries_past_the_limits_are_refused() {
     // A reversed box is empty, whatever its size.
     assert_eq!(world.count_in_box([5000, 0, 0], [0, 0, 0]), Ok(vec![]));
 }
+
+/// The `vxe-sim` fixtures over chunks `[-2, 2)³`, material 1 solid.
+fn fixture(f: impl Fn([i32; 3]) -> bool + Sync) -> World {
+    World::generate(
+        ChunkExtent::new([-2, -2, -2], [2, 2, 2]),
+        &FnSource(move |v| if f(v) { 1 } else { AIR }),
+        &[Material::named("rock")].into_iter().collect(),
+    )
+}
+
+/// `g` scaled to length 256, rounded to nearest, with the length taken at 256 times the
+/// scale so a short gradient normalises to within one unit.
+fn unit(g: [i64; 3]) -> [i64; 3] {
+    let n2: i128 = g.iter().map(|&c| i128::from(c) * i128::from(c)).sum();
+    // The floor of the root of `n2 * 65536`, by bisection.
+    let target = n2 * 65536;
+    let (mut lo, mut hi) = (0i128, 1i128 << 62);
+    while lo < hi {
+        let mid = (lo + hi + 1) / 2;
+        if mid * mid <= target {
+            lo = mid
+        } else {
+            hi = mid - 1
+        }
+    }
+    let len = lo;
+    g.map(|c| {
+        let n = i128::from(c) * 65536;
+        (if n >= 0 {
+            (2 * n + len) / (2 * len)
+        } else {
+            -((-2 * n + len) / (2 * len))
+        }) as i64
+    })
+}
+
+#[test]
+fn a_flat_floor_reads_its_face_normal() {
+    // F1: solid iff z < 0. Two solid layers of 25 voxels below the plane z = 0, none above.
+    let world = fixture(|[_, _, z]| z < 0);
+    assert_eq!(world.solid_gradient([24, 24, 0], 2).unwrap(), [0, 0, 50]);
+}
+
+#[test]
+fn a_staircase_reads_its_slope() {
+    // F6: z < x - 60 for 60 <= x < 80. Around (70, 24, 10) with half 2, the solid counts by x
+    // column 68..=72 are 0, 5, 10, 15, 20 (z < x - 60 within z 8..=12, times 5 in y) and by z
+    // layer 8..=12 are 20, 15, 0 (the plane), 5, 0: x reads 5 - 35, z reads 35 - 5.
+    let world =
+        fixture(|[x, _, z]| z < 0 || ((60..80).contains(&x) && z < x - 60) || (x >= 80 && z < 20));
+    let g = world.solid_gradient([70, 24, 10], 2).unwrap();
+    assert_eq!(g, [-30, 0, 30]);
+    let u = unit(g);
+    assert!(
+        (u[0] + 181).abs() <= 1 && u[1] == 0 && (u[2] - 181).abs() <= 1,
+        "{u:?}"
+    );
+}
+
+#[test]
+fn a_wall_and_a_corner_read_outward() {
+    // F2: F1 plus a wall at x in [20, 22), z in [0, 40).
+    let world = fixture(|[x, _, z]| z < 0 || ((20..22).contains(&x) && (0..40).contains(&z)));
+    // Beside the wall at (19, 10, 5): x 17..=18 is air, x 20..=21 is wall in all of z 3..=7
+    // (2 x 5 x 5 = 50); the wall is the same above and below the plane z = 5.
+    assert_eq!(world.solid_gradient([19, 10, 5], 2).unwrap(), [-50, 0, 0]);
+    // In the corner at (19, 10, 0): x 17..=18 holds the floor's z -2..=-1 (2 x 5 x 2 = 20),
+    // x 20..=21 holds floor and wall in all of z -2..=2 (50): x reads -30. z -2..=-1 is all
+    // floor (50), z 1..=2 is the wall's two columns (20): z reads 30.
+    assert_eq!(world.solid_gradient([19, 10, 0], 2).unwrap(), [-30, 0, 30]);
+}
+
+#[test]
+fn a_uniform_brick_reads_without_a_voxel_read() {
+    let world = solid3_world();
+    let (g, stats) = world.solid_gradient_with_stats([68, 68, 68], 2).unwrap();
+    assert_eq!(g, [0, 0, 0]);
+    assert_eq!(stats.voxel_arrays_read, 0);
+}

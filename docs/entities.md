@@ -66,6 +66,7 @@ material 1 walker                  # palette index -> a material table row by na
 material 2 walker_eye              #   (`_` stands for a space in the row's name)
 part torso node torso at 0 0 8 pivot 4 3 0 detail 2
 part head  node head parent torso at 0 0 12 pivot 3 3 0 detail 2
+body ground radius 4 height 26     # optional: the body a mover gives it
 clip nod ticks 30 loop
 key 0  head rot x 10
 key 15 head rot x -10 move 0 0 0.5
@@ -81,6 +82,12 @@ key 30 head rot x 10
 - **`clip`** and **`key`**: a clip is keys at integer ticks, per part: `rot <x|y|z> <degrees>`
   (whole degrees, several composing in the order written) and `move x y z` (an offset from the
   rest place). With `loop` the clip wraps at its length; without it the clip holds there.
+  `stride D` on a clip is the distance one cycle carries the body (0, the default, in place).
+- **`body`**, at most one: `body ground radius R height H [step S]` (a cylinder for
+  `vxe_sim::CharacterController`) or `body surface radius R [reach A]` (a sphere for
+  `vxe_sim::SurfaceMover`, which crawls walls and ceilings; ADR-0062). Lengths are in the root
+  part's model voxels, like `stride`; the build gives them in world units on
+  `RigModel::body` and `Clip::stride`. Which mover runs is the consumer's call.
 
 ### Poses in fixed point, drawn between ticks
 

@@ -16,6 +16,9 @@ part leg_r node leg   parent torso at 2 0 0   pivot 1.5 1.5 12 detail 2
 part arm_l node arm   parent torso at -5 0 12 pivot 1 1 7 detail 2
 part arm_r node arm   parent torso at 5 0 12  pivot 1 1 7 detail 2
 
+# Its body for a mover: a cylinder 2 world voxels in radius and 13 tall, stepping 2 voxels.
+body ground radius 4 height 26 step 4
+
 # Standing: the head nods and the arms sway out; the legs keep their rest.
 clip idle ticks 60 loop
 key 0  head  rot x 0
@@ -28,8 +31,9 @@ key 60 head  rot x 0
 key 60 arm_l rot y 0
 key 60 arm_r rot y 0
 
-# A stride in place: each leg swings 45 degrees either way, each arm 20 against its leg.
-clip walk ticks 30 loop
+# A stride: each leg swings 45 degrees either way, each arm 20 against its leg; one cycle
+# carries the body 8 world voxels.
+clip walk ticks 30 loop stride 16
 key 0  leg_l rot x 45
 key 0  leg_r rot x -45
 key 0  arm_l rot x -20

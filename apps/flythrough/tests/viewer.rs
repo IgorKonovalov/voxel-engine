@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use flythrough::viewer::Viewer;
-use flythrough::{cave_materials, entities, walker};
+use flythrough::{cave, cave_materials, entities, walker};
 use vxe_assets::{Rig, VoxText, encode};
 use vxe_entity::{blend, sample};
 use vxe_world::MaterialTable;
@@ -479,7 +479,8 @@ fn entry(w: &entities::Walkers, name: &str) -> usize {
 /// Plan 0077 Phase 2 done-when 1: two instances of the library's walker, one placed on
 /// `idle` and one on `walk`, started together: half a second on (15 ticks at 30 a second) each
 /// stands in its own clip's pose at tick 15, placed at its feet, exactly, and their legs'
-/// poses differ.
+/// poses differ. The walker has a body, so its pose is its mover's, set at the movers' tick
+/// with the wander off: on a floor whose top is at the feet it stands where it was placed.
 #[test]
 fn each_entity_plays_its_own_clip() {
     let lib =
@@ -501,8 +502,14 @@ fn each_entity_plays_its_own_clip() {
     let b = w
         .place_entry(&t, Some(i), [30.0, 0.0, 2.0], 0.0)
         .expect("placed");
+    let floor = vxe_world::World::generate(
+        vxe_world::ChunkExtent::new([-1, -1, -1], [1, 1, 1]),
+        &vxe_world::FnSource(|p: [i32; 3]| if p[2] < 2 { cave::ROCK } else { 0 }),
+        &t,
+    );
     for _ in 0..30 {
         w.step(1.0 / 60.0);
+        w.tick_movers(1.0 / 60.0, &floor);
     }
     let l = w.library.entries[i]
         .viewer()

@@ -806,7 +806,7 @@ fn light_flags() -> Vec<Flag<Parsing>> {
         Flag::value(
             &["--entities-walk"],
             "on|off",
-            "the walkers start walking, as the menu's walkers walk sets them (off)",
+            "the wander starts, as the menu's wander sets it: every body wanders, the built-in walkers walk their circle (off)",
             |p: &mut Parsing, v| {
                 p.args.entities_walk = v.on_off()?;
                 Ok(())

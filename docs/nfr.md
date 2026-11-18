@@ -79,7 +79,10 @@ with their eye lights add 1.8 to 2.2 ms to the RTX 3080 Laptop's frame and 15 to
 RADV RENOIR's, mostly light pass; with no part drawn the frame is within noise of its base. The
 owner accepted the costs as measured (2026-11-16); the outdoor plans' claim on the same line is
 the render-profile plan's to arbitrate. Readings in
-[`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md), table 2.
+[`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md), table 2. Plan 0079's movers (2026-11-18,
+e1894054, loaded) draw on the same line from the CPU side: 64 wandering walkers add 0.40 to
+0.42 ms of frame CPU p50 on the RTX 3080 Laptop host, 64 spiders +3.07 ms (36 drawn; the plan's
+guess was +1.5 ms), the readings and the profile owed in section 8 and `docs/backlog.md`.
 Plan 0063's clips cost the CPU, not the GPU: for 64 sixteen-part entities, `sample` twice reads
 0.14 ms and `DisplayPose::between` (two one-pass compositions and the `f32` blend) 0.50 ms on
 the RTX 3080 Laptop dev box's CPU (c5c655ad, release, perf lock, load about 9, so indicative),
@@ -503,6 +506,7 @@ Every reading against these budgets, with its machine and commit, is in
   **Reading (Plan 0069 close review, 2026-11-17, 11a4d2fb with main merged, dev reference on lavapipe, exclusive perf lock, 16G cap, `scripts/build-guests.sh` first, `--status-level pass`, two lanes, load 16.1 at the queue and 1.3 near the end, so loaded):** 1018 tests, all passed, 107 skipped: nextest **937.0 s, over the 12 min proposal**. The plan's own tests add about 17 s (`gpu_settings` 3.1 to 5.5 s each, the CPU tests under 0.1 s each). Twelve tests over the 10 s line, none the plan's: `castle_vector` 18.7, `the_castle_path_flies_in_air` 17.9 and `showcase_vector` 17.1 (CPU, kept in the gate), `a_baked_view_is_final_on_its_first_frame` 16.4, and eight more at 10.4 to 12.4 s.
   **Reading (Plan 0088 close review, 2026-11-17, adfcb463 with main merged, dev reference on lavapipe, exclusive perf lock, 6G cap, `-j4`, `--test-threads 2`, `scripts/build-guests.sh` first, `--status-level pass`, three lanes open, load 1.83 at the start and 3.11 at the end, so loaded):** 1105 tests, all passed, 125 skipped: nextest **1162.5 s, over the 12 min proposal**. The plan's own tests add about 1 s (`the_outdoor_path_flies_in_air` 0.67 s, the rest under 0.25 s); its `a_path_run_writes_its_report` is soak, 130.3 s by name. Eleven lavapipe tests over the 10 s line, none the plan's, 10.1 to 13.8 s under this load; not re-read quiet.
   **Reading (Plan 0077 close review, 2026-11-18, the closing tree at c1e3fa6f plus the close's docs and the 0.64.0 bump, main at becf18c7 (the fork), dev reference on lavapipe, exclusive perf lock, 16G cap, the gate's binaries built before the lock, `--status-level pass`, one lane, load 2.9 at the lock and 2.1 at the end, quiet):** 1138 tests, all passed, 127 skipped: nextest **1107.4 s, over the 12 min proposal**, as every close since Plan 0057's. The plan's own tests add about 30 s (`gpu_entity_library` 4.6 to 5.0 s each, `the_belt_and_the_chooser_over_the_carved_view` 7.2 s, `the_picker_draws_its_rows` 3.5 s with the spider's icon made in debug, the rest under 2 s). Fifteen tests over the 10 s line, none the plan's: `castle_vector` 19.9, `showcase_vector` 17.9, `the_castle_path_flies_in_air` 17.1 and `the_mouth_leads_in_and_the_chamber_is_roofed` 14.4 (CPU, kept in the gate), `a_baked_face_ignores_the_sky` 13.8, and ten more at 10.3 to 13.2 s.
+  **Reading (Plan 0079 close review, 2026-11-18, the merge of main 9202042e into plan-0079 26c92fb8 plus the close's docs and the 0.65.0 bump, dev reference on lavapipe, exclusive perf lock, 16G cap, the gate's binaries built before the lock, `--status-level pass`, three lanes open, load 16.9 at the lock (another lane building) and 6.4 at the end, loaded: indicative):** 1174 tests, all passed, 129 skipped: nextest **1208.2 s, over the 19 min budget set the same day (1140 s)** by 68 s. The plan's own tests are CPU and run beside the lavapipe group: `the_room_course_hashes_to_the_pinned_constant` 7.2 s, `the_wander_stays_in_the_room_and_never_embeds` 6.6 s, `a_dig_under_a_wandering_walker_drops_it` 1.3 s, the rest under 0.8 s (about 17 s serial against the plan's +15 s estimate); none joins the serial lavapipe group that sets the wall. Twenty-one tests over the 10 s line, none this plan's (`castle_vector` 22.8 s, `showcase_vector` 21.3 s, `the_castle_path_flies_in_air` 20.1 s, the rest 10.1 to 16.8 s). The dev's tip gate at 9eecac9b (6G cap, `--test-threads 2`, load 4.1 at the start) read 1218.6 s on 1148 tests. A quiet re-read is owed before the 19 min line is judged.
   **Reading (CI after Plan 0072, 2026-11-13, GitHub-hosted runners):** run 43377881019 on 9c256bb (cold cache, the profile change): Linux 26 min 29 s, Windows 33 min 9 s; gate on Linux 844 passed, 78 skipped, 437.6 s. Run 43395622401 on 393ed45 (warm): **Linux 15 min 6 s, Windows 18 min 47 s**, over Plan 0072's under-10 and under-15 min proposals. **Accepted by the owner 2026-11-13 ("record this time as accepted, let it be")**: these walls are the CI line; no further cut is owed.
   **Reading (CI run 41332396750 on 929d1b3, 2026-11-01, the Linux arm, lavapipe, 745 tests,
   the `ci` profile before the re-cut):** 5386 s wall for the test step, 354 min of serial
@@ -577,6 +581,9 @@ the Windows arm confirms it on the first `main` CI run after Plan 0004's merge.
 |---|---|---|
 | Controller tick, one body | 20 µs | `cargo bench -p vxe-sim --bench controller` |
 | Sweep, one body, one contact | 26.3 µs (the Plan 0004 close reading, accepted by the owner 2026-10-17; the proposal was 5 µs); a sweep profile is scheduled only when a scene sweeps more than about 100 bodies a tick | same bench, `1000 sweeps of the F2 wall case` |
+| Surface mover tick, one body, attached on a flat face (ADR-0062) | **proposal: 20 µs** (Plan 0079); read 0.43 µs, loaded (below) | `cargo bench -p vxe-sim --bench surface`, `one surface tick attached on the F1 floor` |
+| `World::solid_gradient` at `half` 6 (13³ voxels, at most 27 bricks) | **proposal: 5 µs** (Plan 0079); read 0.92 µs, loaded (below) | the `vxe-world` gradient bench case |
+| Locomotion of 64 entities a tick in the fly-through (movers, probes, poses) | **guess: 1.5 ms a tick** (Plan 0079); read 0.35 ms (walkers) and 1.41 ms (spiders) in the room, 2.84 ms (spiders) on the showcase, loaded (below) | the HUD's `tick <us>`, `--entities 64 --entities-walk on --headless` |
 | Coarse grid update after a radius-1 m carve | 50 µs | `cargo bench -p vxe-world --bench coarse` |
 | Walkable update after that change | 20 µs | same bench |
 | Coarse grid RAM | 4 B per brick, 2048 B per chunk | `world_budget --chunks` |
@@ -617,6 +624,32 @@ criterion median (low, high), exclusive perf lock, load average 1.7 to 2.3 at ea
   fe50d6d). At 32 × 32 × 32 chunks it is 67 108 864 B by the same 2048 B per chunk
   (arithmetic, not read). Grid build at the level, one thread (`world_budget --chunks 20x20x8
   --seed 1`): 156.3 ms at the close review; grid plus walkable map in the fly-through 231 ms.
+
+**Readings for Plan 0079's lines (AMD Ryzen 9 5900HS laptop, Linux, exclusive perf lock, each
+loaded: indicative, not quiet; the plan's readings log `docs/plans/logs/0079.md` has the
+runs):**
+
+- **Surface mover tick** (`cargo bench -p vxe-sim --bench surface`, criterion median (low,
+  high), commit 22d62f05 plus the Phase 1 tree, load 18.7 falling to 9.1): one tick attached on
+  the F1 floor **431.19 ns** (429.17, 433.62); one tick rounding the cube's edge 870.92 ns
+  (837.22, 912.82); one `probe_ahead` on F2 365.36 ns (350.12, 383.26). Under the 20 µs
+  proposal.
+- **`solid_gradient`** (`cargo bench -p vxe-world --bench gradient`, commit 26f63d9b, load 3.64
+  falling to 2.96) on `Full` bricks: at `half` 2 333.92 ns (333.25, 334.61); at `half` 6
+  **917.90 ns** (915.73, 920.44). Under the 5 µs proposal.
+- **Locomotion of 64 entities a tick** (Plan 0079 Phase 4, e1894054, release):
+  `reading::the_tick_cost_at_64` (`apps/flythrough/tests/wander.rs`, 64 bodies in the room
+  course, 300 ticks then 600 timed, load 4.87 falling to 2.31): walkers p50 **351.7 µs** (p99
+  577.8, max 632.8); spiders p50 **1412.8 µs** (p99 1745.2, max 1849.6). In the fly-through
+  (`--headless --render 1920x1080 --frames 2700 --adapter NVIDIA --entities 64 --entities-walk
+  on`, the exit row's `tick`, load 2.5 to 5.8): walkers 367 µs (`--level`) and 397 µs
+  (showcase); spiders on the showcase 2839 µs (36 drawn, 28 over the part cap), over the 1.5 ms
+  guess.
+- **The frame CPU those runs cost** (§2's streaming and CPU line, against the built-in walkers
+  with no mover at the same count and source, same binary): `--level` x16 1.857 to 1.942 ms
+  p50 (+0.09 ms, guess +0.3); `--level` x64 2.156 to 2.577 ms (+0.42 ms); showcase walkers x64
+  2.467 to 2.862 ms (+0.40 ms); showcase spiders x64 2.467 to 5.535 ms (**+3.07 ms**, guess
+  +1.5 ms). The owner's window (2026-11-18) did not notice the cost at either count.
 
 ## 9. Audio
 

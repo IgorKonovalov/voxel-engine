@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use vxe_assets::{Rig, VoxFile};
+use vxe_assets::{Rig, RigBody, VoxFile};
 use vxe_entity::{Clip, Model, Playback, Player, Pose, blend};
 use vxe_render::ModelHandle;
 use vxe_world::{MaterialId, MaterialTable};
@@ -54,6 +54,9 @@ pub struct Viewer {
     /// The files read at [`Viewer::open`], built against the world's table on first use.
     pending: Option<(String, Vec<u8>)>,
     pub loaded: Option<Loaded>,
+    /// The built rig's `body` line: which mover a placement of it gets (`None` for a rig
+    /// that stands still). A reload changes it for the next placement only.
+    pub body: Option<RigBody>,
     /// The model uploaded to the frame's entity mirror; `None` until uploaded and after a
     /// reload.
     pub handle: Option<ModelHandle>,
@@ -126,6 +129,7 @@ impl Viewer {
             vox_path,
             pending: Some((text, bytes)),
             loaded: None,
+            body: None,
             handle: None,
             stale: None,
             play: Play::default(),
@@ -180,6 +184,7 @@ impl Viewer {
             .parent()
             .unwrap_or(Path::new("."))
             .join(&rig.vox);
+        self.body = built.body;
         self.loaded = Some(Loaded {
             model: Arc::new(built.model),
             part_names: built.part_names,
@@ -468,7 +473,7 @@ mod tests {
     fn a_refused_reload_stays_on_screen_until_one_builds() {
         use crate::cave::ROCK;
         use crate::now;
-        use crate::run::hud_feed::banner_colours;
+        use crate::run::hud_lines::banner_colours;
         use crate::test_support::bare_run;
         use std::time::{Duration, SystemTime};
         use vxe_render::HudColour;

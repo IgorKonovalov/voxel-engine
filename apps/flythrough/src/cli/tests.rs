@@ -6,7 +6,7 @@ use crate::castle;
 use crate::cli::parse_args_from;
 use crate::fly::CutawayMode;
 use crate::hud::{self};
-use crate::run::hud_feed::look_line;
+use crate::run::hud_lines::look_line;
 use crate::setup::{default_workers, shell_config};
 use crate::showcase::SHOTS;
 use crate::test_support::argv;

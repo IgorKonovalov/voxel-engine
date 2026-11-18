@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use flythrough::viewer::{Viewer, material};
 use flythrough::{RUBBLE, cave, showcase, showcase_materials, walker};
-use vxe_assets::{Rig, VoxText, encode};
+use vxe_assets::{Rig, RigBody, VoxFile, VoxText, encode};
 use vxe_world::MaterialTable;
 
 fn library() -> PathBuf {
@@ -130,4 +130,102 @@ fn the_spider_has_its_rows_parts_and_clips() {
         .build_pending(&walker::with_walker(&flythrough::cave_materials()))
         .expect("the cave's table has no crystal row");
     assert!(e.contains("unknown material `crystal`"), "{e}");
+}
+
+/// The library's rigs built against the showcase's table carry their bodies and strides in
+/// world units (detail 2: two model voxels to a world voxel): the walker a ground body, the
+/// spider a surface body, each a non-zero `walk` stride.
+#[test]
+fn the_committed_library_builds() {
+    let t = showcase_table();
+    let build = |name: &str| {
+        let dir = library().join(name);
+        let rig =
+            Rig::parse(&std::fs::read_to_string(dir.join(format!("{name}.rig"))).unwrap()).unwrap();
+        let vox = VoxFile::parse(&std::fs::read(dir.join(&rig.vox)).unwrap()).unwrap();
+        rig.build(&vox, &|n| material(&t, n)).unwrap()
+    };
+    let walk_stride = |m: &vxe_assets::RigModel| {
+        m.clips
+            .iter()
+            .find(|(n, _)| n == "walk")
+            .map(|(_, c)| c.stride())
+    };
+    let walker = build("walker");
+    assert_eq!(
+        walker.body,
+        Some(RigBody::Ground {
+            radius: 512,
+            height: 3328,
+            step: 512
+        })
+    );
+    assert_eq!(walk_stride(&walker), Some(2048));
+    let spider = build("spider");
+    assert_eq!(
+        spider.body,
+        Some(RigBody::Surface {
+            radius: 1536,
+            reach: 384
+        })
+    );
+    assert_eq!(walk_stride(&spider), Some(3072));
+}
+
+/// Plan 0079 Phase 4 done-when 3: the walker's `walk` (30 ticks, stride 2048) follows the
+/// distance: 2048 units moved is clip tick 0 again, exactly, and 1024 is tick 15; a wandering
+/// walker that stands still fades into `idle` over 8 ticks (weight 32 a tick from the last
+/// walk pose) and at the 8th tick stands in `blend(last walk pose, idle at tick 0, 256)`.
+#[test]
+fn the_walk_clip_follows_the_distance() {
+    use flythrough::entities::mover::{Mover, walk_tick};
+    use flythrough::viewer::Play;
+    use vxe_entity::{blend, sample};
+
+    let path = library().join("walker/walker.rig");
+    let mut v = Viewer::open(&path, Some("walk".into())).expect("opens");
+    assert_eq!(v.build_pending(&showcase_table()), None);
+    let l = v.loaded.clone().expect("built");
+    let clip = |name: &str| {
+        l.clips
+            .iter()
+            .find(|(n, _)| n == name)
+            .expect(name)
+            .1
+            .clone()
+    };
+    let (walk, idle) = (clip("walk"), clip("idle"));
+    let at = |d: i64| walk.clip_tick(walk_tick(d, &walk).expect("a stride"));
+    assert_eq!((at(0), at(1024), at(2048), at(3072)), (0, 15, 0, 15));
+
+    let body = v.body.expect("a body");
+    let play = Play::start(&l, 0);
+    let rest = sample(&l.model, &l.rest, &walk, 0);
+    let mut m = Mover::new(
+        body,
+        [0.0; 3],
+        [0.0, 0.0, 1.0],
+        [0.0, -1.0, 0.0],
+        (1, 0),
+        rest,
+    );
+    // 1024 units in 24 ticks of 43 (and 8 more): the walk at the distance's tick.
+    for _ in 0..24 {
+        m.animate(43, true, true, (&l, &play));
+    }
+    m.animate(8, true, true, (&l, &play));
+    assert_eq!(m.distance, 1040);
+    let last_walk = sample(&l.model, &l.rest, &walk, 1040 * 30 / 2048);
+    assert_eq!(*m.parts(), last_walk);
+    let idle0 = sample(&l.model, &l.rest, &idle, 0);
+    for k in 1..=8u16 {
+        m.animate(0, true, true, (&l, &play));
+        assert_eq!(
+            *m.parts(),
+            blend(&last_walk, &idle0, 32 * k),
+            "still tick {k}"
+        );
+    }
+    assert_eq!(*m.parts(), blend(&last_walk, &idle0, 256));
+    assert_eq!(m.still, 8);
 }

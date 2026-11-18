@@ -31,8 +31,13 @@ part palp_r node palp_r parent body at 4 -14 0 pivot 2 10 7 detail 2
 part fang_l node fang_l parent body at -2 -13 -2 pivot 2 4 8 detail 2
 part fang_r node fang_r parent body at 2 -13 -2 pivot 2 4 8 detail 2
 
-# A wave gait: each leg on its own phase, swinging 18 degrees, lifting on the forward swing.
-clip walk ticks 48 loop
+# Its body for a mover: a sphere 6 world voxels in radius (the body's clearance) attached to
+# the surface it crawls, reaching 1.5 voxels for it.
+body surface radius 12 reach 3
+
+# A wave gait: each leg on its own phase, swinging 18 degrees, lifting on the forward swing;
+# one cycle carries the body 12 world voxels.
+clip walk ticks 48 loop stride 24
 key 0 leg_l1 rot z 50 rot y 14
 key 4 leg_l1 rot z 59 rot y 12
 key 8 leg_l1 rot z 66 rot y 7

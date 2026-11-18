@@ -32,6 +32,7 @@ pub(crate) mod edit;
 pub(crate) mod fade;
 pub(crate) mod frame;
 pub(crate) mod hud_feed;
+pub(crate) mod hud_lines;
 pub(crate) mod keys;
 pub(crate) mod loading;
 pub(crate) mod pilot;
@@ -110,6 +111,10 @@ pub(crate) struct Run {
     /// The last line an action said (`Run::say`) and when (the run's clock, ms): the menu's
     /// notice row, for `hud::BANNER_MS`.
     pub(crate) notice: Option<(String, f64)>,
+    /// When (the run's clock, ms) a first `Esc` with the menu closed and placement off asked
+    /// before quitting: a second within [`QUIT_ASK_MS`] ends the run, any other key or the
+    /// timeout drops the question (`Run::key_step`).
+    pub(crate) quit_asked: Option<f64>,
     /// The menu's `source` entry or `--switch-at` asked for the next world source: the app rebuilds the run
     /// after this frame (`run::switch`).
     pub(crate) switch: bool,
@@ -156,6 +161,11 @@ pub(crate) struct GfxPlan {
     /// The level's mirror focus (the spawn); `None` on the streamed world.
     focus: Option<VoxelCoord>,
 }
+
+/// How long (ms) the first `Esc` waits for the second before the question drops.
+pub(crate) const QUIT_ASK_MS: f64 = 2000.0;
+/// The banner row while a first `Esc` waits for the second.
+pub(crate) const QUIT_ASK_WORDS: &str = "Esc again to quit";
 
 /// Units of [`build_gfx`]'s progress, from the stages' times read on the RTX 3080 Laptop with
 /// the driver compiling (`docs/plans/logs/0075.md`): the frame's creation about 6 s (its

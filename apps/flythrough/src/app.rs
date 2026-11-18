@@ -159,7 +159,8 @@ impl Flythrough {
                         self.args.entities,
                         self.args.entities_walk,
                     )
-                    .with_library(crate::entities::library::of_args(&self.args)),
+                    .with_library(crate::entities::library::of_args(&self.args))
+                    .with_seed(self.args.seed),
                 ),
             upscaler_changed: false,
             sharpen_changed: false,
@@ -199,6 +200,7 @@ impl Flythrough {
             help: false,
             menu: Default::default(),
             notice: None,
+            quit_asked: None,
             loading: None,
             switch: false,
             retree: false,

@@ -3,7 +3,8 @@
 //! real instance in the set, `super::Walkers::preview`) and a click places it. The belt is
 //! drawn along the bottom of the window only in the mode ([`append_belt`]). Where the ghost
 //! stands is [`stand`]: the camera ray's first world hit within [`PLACE_REACH`], never nearer
-//! than the model's own size allows, dropped to the floor under a wall or a ceiling hit.
+//! than the model's own size allows, dropped to the floor under a wall or a ceiling hit (a
+//! surface body's on the face it hits, [`Stand::Surface`]).
 
 use vxe_render::{HudBox, HudColour, HudTile};
 
@@ -139,12 +140,22 @@ impl Belt {
     }
 }
 
+/// Which rule [`stand`] stands a model by: a ground body's (and a body-less entry's) on the
+/// floor, or a surface body's on whatever face the aim hits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stand {
+    Floor,
+    Surface,
+}
+
 /// Where a model `extent` voxels across (x, y, z, standing in its rest pose) stands for an
-/// eye at `eye` looking along the unit `fwd`, with `cast(origin, dir, max)` the world's first
-/// hit along a unit ray within `max` voxels (its distance and the entered face's outward
-/// normal; distance 0 when the origin is inside a solid voxel):
+/// eye at `eye` looking along the unit `fwd`, and the up it stands on, with `cast(origin,
+/// dir, max)` the world's first hit along a unit ray within `max` voxels (its distance and the
+/// entered face's outward normal; distance 0 when the origin is inside a solid voxel):
 ///
 /// - `near = max(NEAR_MIN, NEAR_SCALE x the longest extent)`;
+/// - [`Stand::Surface`]: a hit at `near` or beyond on any face: the point is the hit and the
+///   up the face's normal;
 /// - a hit at `near` or beyond on an upward face: the feet at the hit;
 /// - a hit at `near` or beyond on a wall or a ceiling: the hit moved back along the view by
 ///   half the model's footprint (its longer horizontal extent), dropped to the floor;
@@ -153,27 +164,32 @@ impl Belt {
 ///
 /// Dropped means the first floor within [`FLOOR_DROP`] below the point; when the point is
 /// inside a solid voxel the drop starts at the eye's height above it instead. No floor found,
-/// the point stands where it is.
+/// the point stands where it is. Every point but a surface hit's has the up `+z`.
 pub fn stand(
     eye: [f32; 3],
     fwd: [f32; 3],
     extent: [f32; 3],
+    kind: Stand,
     cast: impl Fn([f32; 3], [f32; 3], f32) -> Option<(f32, [f32; 3])>,
-) -> [f32; 3] {
+) -> ([f32; 3], [f32; 3]) {
+    const UP: [f32; 3] = [0.0, 0.0, 1.0];
     let longest = extent[0].max(extent[1]).max(extent[2]);
     let near = NEAR_MIN.max(NEAR_SCALE * longest);
     let along = |t: f32| std::array::from_fn(|k| eye[k] + fwd[k] * t);
     let point = match cast(eye, fwd, PLACE_REACH) {
         Some((t, n)) if t >= near => {
+            if kind == Stand::Surface && n != [0.0; 3] {
+                return (along(t), n);
+            }
             if n[2] > 0.5 {
-                return along(t);
+                return (along(t), UP);
             }
             along(t - 0.5 * extent[0].max(extent[1]))
         }
         _ => along(near),
     };
     let down = [0.0, 0.0, -1.0];
-    match cast(point, down, FLOOR_DROP) {
+    let feet = match cast(point, down, FLOOR_DROP) {
         Some((t, _)) if t > 0.0 => [point[0], point[1], point[2] - t],
         Some(_) if eye[2] > point[2] => {
             let from = [point[0], point[1], eye[2]];
@@ -183,7 +199,8 @@ pub fn stand(
             }
         }
         _ => point,
-    }
+    };
+    (feet, UP)
 }
 
 /// The name row's words for the selected slot: the entry's name (grey with its error after
@@ -397,7 +414,7 @@ mod tests {
         assert_eq!((b.on, b.turn), (false, 0));
     }
 
-    /// The stand rule against a floor at z = 0 and a wall at x = 100, the eye at z = 17.
+    /// The stand rules against a floor at z = 0 and a wall at x = 100, the eye at z = 17.
     #[test]
     fn the_stand_rule_over_a_floor_and_a_wall() {
         let cast = |o: [f32; 3], d: [f32; 3], max: f32| -> Option<(f32, [f32; 3])> {
@@ -421,16 +438,30 @@ mod tests {
         let a = 40f32.to_radians();
         let fwd = [a.cos(), 0.0, -a.sin()];
         let walker = [6.0, 3.0, 15.0];
-        let feet = stand(eye, fwd, walker, cast);
+        let (feet, up) = stand(eye, fwd, walker, Stand::Floor, cast);
+        assert_eq!(up, [0.0, 0.0, 1.0]);
         assert!((feet[0] - 30.0 * a.cos()).abs() < 1e-3, "{feet:?}");
         assert!(feet[2].abs() < 1e-3, "{feet:?}");
         let level = [1.0, 0.0, 0.0];
-        let feet = stand(eye, level, walker, cast);
+        let (feet, up) = stand(eye, level, walker, Stand::Floor, cast);
         assert!(
             (feet[0] - 97.0).abs() < 1e-3 && feet[2].abs() < 1e-3,
             "{feet:?}"
         );
-        let up = [0.0, 0.0, 1.0];
-        assert_eq!(stand(eye, up, walker, cast), [0.0, 0.0, 0.0]);
+        assert_eq!(up, [0.0, 0.0, 1.0]);
+        let z = [0.0, 0.0, 1.0];
+        assert_eq!(stand(eye, z, walker, Stand::Floor, cast), ([0.0; 3], z));
+        // A surface body stands on the wall's face itself, its up the face's normal; on the
+        // floor's face as the floor rule does; with no hit it falls back to the floor rule.
+        assert_eq!(
+            stand(eye, level, walker, Stand::Surface, cast),
+            ([100.0, 0.0, 17.0], [-1.0, 0.0, 0.0])
+        );
+        let (feet, up) = stand(eye, fwd, walker, Stand::Surface, cast);
+        assert!(
+            (feet[0] - 30.0 * a.cos()).abs() < 1e-3 && up == z,
+            "{feet:?}"
+        );
+        assert_eq!(stand(eye, z, walker, Stand::Surface, cast), ([0.0; 3], z));
     }
 }
