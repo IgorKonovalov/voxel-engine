@@ -277,6 +277,9 @@ centred on the hit") is the box rule under question 7.
 
 ### Owner questions added 2026-11-18 (each with a recommendation)
 
+**Answered 2026-11-18 (owner, "all recommended, go ahead"):** 5 the marked frame, 6 no new key,
+7 the box grows away from the aim, 8 the belt starts with the entities then the structures.
+
 5. **The ghost of a structure.** Recommended: a marked frame entity (its twelve edges, or
    its eight corners for a box over 64 voxels a side) standing where the structure will stand,
    blue as the entity ghost is, with the name and size in the belt's name row. Alternative:
