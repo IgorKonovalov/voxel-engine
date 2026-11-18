@@ -29,6 +29,16 @@ A game-agnostic voxel engine, as a Rust library workspace (ADR-0001):
 What the engine is not: a framework. No ECS, no scene editor, no asset pipeline beyond voxel
 model import. A game owns its loop and composes the crates it needs.
 
+**Two workflows, both first class (owner, 2026-11-17).** The engine aims to be best in class and
+to be worked with by a person alone or by an agent alone, neither a port of the other: "I want
+this engine be best in class, and with possibility to work with it for both pure human workflow,
+and agentic workflow as well". For a person: readable text formats, a window that shows every
+mode it is in, clear errors. For an agent: text it writes reliably, a headless build, run and
+check loop with machine-readable output (run reports, diagnostics with file and line, rendered
+stills, deterministic replay). A plan's review checks both. The authoring direction that follows
+from it (level and logic text compiled to a logic component, a visual editor optional on top) is
+ADR-0072, proposed and unscheduled.
+
 ## Decisions from the founding interview
 
 Settled on 2026-10-16. The first three are recorded in ADR-0001; the rest get their ADR with the
@@ -645,7 +655,7 @@ a cheap query.
 - **ADRs:** ADR-0007 (log, channel, client modes) and ADR-0010 (logic as a component), both
   accepted at their plans' closes.
 
-### M6: Entities as voxel models (Plan 0008 closed the `.vox` import; Plan 0062 closed the render half's entities, v0.56.0: posed voxel models traced with the world, lit and shadowed by the list lights, a headless ray query; Plan 0063 closed rigs and clips, v0.57.0: keyframe clips sampled by tick in fixed point, a `.rig` text file beside the `.vox`, the fly-through as a model viewer that reloads on save, voxels drawn as text; Plan 0078 closed the pool's free, v0.59.0: models freed by handle into a coalescing free list, stable instance slots with a generation, a removed entity's shadow gone on the next frame)
+### M6: Entities as voxel models (Plan 0008 closed the `.vox` import; Plan 0062 closed the render half's entities, v0.56.0: posed voxel models traced with the world, lit and shadowed by the list lights, a headless ray query; Plan 0063 closed rigs and clips, v0.57.0: keyframe clips sampled by tick in fixed point, a `.rig` text file beside the `.vox`, the fly-through as a model viewer that reloads on save, voxels drawn as text; Plan 0078 closed the pool's free, v0.59.0: models freed by handle into a coalescing free list, stable instance slots with a generation, a removed entity's shadow gone on the next frame; Plan 0077 closed the entity picker, v0.64.0: the entities library, a chooser with still icons, a belt of nine slots, a placement mode with a marked ghost, an outline and a tint per instance in the composite and image tiles in the overlay, ADR-0074 and ADR-0075)
 
 - `vxe-assets`: `.vox` import with material mapping. Done in Plan 0008 (v0.6.0).
 - `vxe-render`: instanced voxel volumes with transforms traced in the same pipeline (a small
@@ -663,7 +673,7 @@ a cheap query.
   Per-entity voxel damage stays out (`docs/backlog.md`).
 - **ADRs:** ADR-0050 (entity representation; accepted at Plan 0062's close, with an Outcome), ADR-0051 (rigs and clips; accepted at Plan 0063's close, with an Outcome); ADR-0064 (a part's scale and its children) with Plan 0082; ADR-0068 (variants as recipes) and ADR-0069 (the bake and the stamp) with Plan 0085.
 
-### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0, and Plan 0016 its allocation-free refresh, v0.13.0; Plan 0025 closed the cutaway view, v0.20.0; the other debug views and the profiler across passes remain, and Plan 0068 closed the benchmark lane's first form, the tester build (camera paths, run reports, Linux and Windows archives; shipped in v0.54.0, the first release, 2026-11-15); Plan 0026 closed gamepad flight, v0.21.0; Plan 0043 closed the test tiers, v0.29.1; Plan 0042 closed the generated castle, v0.30.0; Plan 0066 closed the 10 s soak line, 2026-11-11; Plan 0075 closed the loading screen, v0.58.0: start-up stepped on the app's frame loop behind an engine loading frame, 2026-11-16)
+### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0, and Plan 0016 its allocation-free refresh, v0.13.0; Plan 0025 closed the cutaway view, v0.20.0; the other debug views and the profiler across passes remain, and Plan 0068 closed the benchmark lane's first form, the tester build (camera paths, run reports, Linux and Windows archives; shipped in v0.54.0, the first release, 2026-11-15); Plan 0088 added its fourth scene, the outdoor hills, trees and tunnel on a computed path, v0.63.0, 2026-11-17; Plan 0026 closed gamepad flight, v0.21.0; Plan 0043 closed the test tiers, v0.29.1; Plan 0042 closed the generated castle, v0.30.0; Plan 0066 closed the 10 s soak line, 2026-11-11; Plan 0075 closed the loading screen, v0.58.0: start-up stepped on the app's frame loop behind an engine loading frame, 2026-11-16)
 
 - Prefab stamping with rotation and masks; debug views (material ids, acoustic properties,
   coarse grids, flags); an in-app profiler overlay with GPU timestamps; a benchmark lane
@@ -738,7 +748,7 @@ a cheap query.
   positional voice as an audio source through M4's occlusion.
 - **ADRs expected:** transport; voice codec.
 
-### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22)
+### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0; Plan 0032 closed 2026-11-17, v0.61.0)
 
 The open-sky half of the "Floor, profiles and scene scale" decision, as general engine
 mechanisms: the first consumer is underground, so nothing here is on its P0 list, and terrain
@@ -753,20 +763,30 @@ stands (the verdict shrinks it to scheme A or C, or drops it), then this milesto
 owes comes with the antialiasing plan, and 0048 was dropped under
 ADR-0043 (owner, 2026-11-04). Its first plan
 is a render-profile plan, the owner's parked settings and profiles idea, which holds M10 against
-the budget and comes before Plan 0032. Drafted 2026-11-11 as [Plan 0069](plans/0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md) with ADR-0055, approved the same day with every recommendation taken.
+the budget and comes before Plan 0032. Drafted 2026-11-11 as [Plan 0069](plans/done/0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md) with ADR-0055, approved the same day with every recommendation taken; closed 2026-11-17 (v0.60.0) with four profiles (Floor, Portable, Performance, High) and the frame lines below.
 
 **Order (owner, 2026-11-10; amended 2026-11-11 and 2026-11-12):** Plans 0060, 0061, 0067, 0045, 0070, 0058,
-the rest of 0044, the render-profile plan (Plan 0069), Plan 0071, Plan 0073 (the settings menu and file, as pages of Plan 0080's menu; 0080 itself runs beside, after 0062 and 0075 merge, amended 2026-11-16 pending owner), then the plan that removes the `own` upscaler (owed,
+the rest of 0044, the render-profile plan (Plan 0069), Plan 0071, Plan 0073 (the settings menu and file, as pages of Plan 0080's menu; 0080 itself closed 2026-11-17, v0.62.0, ADR-0061 accepted), then the plan that removes the `own` upscaler (owed,
 `docs/backlog.md`), then M6 (Plans 0062, 0063), then this milestone in plan order,
 0032 to 0037, each on main after the one before it closes. **Reordered 2026-11-16 (owner):** Plan 0069, then 0032, start once Plans 0062 and 0063 merge, beside Plans 0077 to 0080; Plan 0071, Plan 0073 and the `own` removal no longer hold M10. The six plans were rewritten on 2026-11-10
 against the baked store: no probe or store term takes sun or sky light.
 
-- **Sun and sky** (Plan 0032; ADR-0026, ADR-0027): Hillaire's atmosphere LUTs built on the GPU,
+- **Sun and sky** ([Plan 0032](plans/done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md),
+  closed 2026-11-17, v0.61.0; ADR-0026 and ADR-0027 accepted with Outcomes): Hillaire's atmosphere LUTs built on the GPU,
   a time of day the game sets, the sun or moon as one dedicated directional sample with a
   per-pixel shadow ray in the light pass, sky light from a sky ray; both land in Plan 0058's
   direct target, with no probe or store term and no sunlight bounce (redesigned 2026-11-10).
   Auto exposure. After Plan 0058 and the render-profile plan. Its testbed trees are prefabs
-  stamped at generation time (amended 2026-11-16, owner).
+  stamped at generation time (amended 2026-11-16, owner). Its Phase 9 window (2026-11-17)
+  picked the defaults and reversed "an absent chunk is solid": unknown is lit (ADR-0027's
+  Outcome).
+- **Still outdoor light** ([Plan 0086](plans/0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md),
+  drafted 2026-11-17 from the owner's picks at that window, awaits the go; ADR-0070
+  proposed): a sky visibility baked per brick direction into the per-chunk store and coloured
+  by the sky at read, the sky ray only where the bake is stale on a long running mean with a
+  firefly clamp, the key light on that history after a reading, a canopy that shadows as its
+  brick, history kept across a stair in the far-normal regime, and a spike on a
+  deterministic penumbra. After Plan 0032; recommended ahead of Plan 0081.
 - **A surface detail layer** ([Plan 0081](plans/0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md),
   drafted 2026-11-16, awaits the owner's go; ADR-0063 proposed): grass, moss, strands,
   fungus caps, flowers, pebbles and snow tufts as a procedural shell marched in the hit pass

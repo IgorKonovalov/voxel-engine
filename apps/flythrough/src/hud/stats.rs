@@ -372,6 +372,8 @@ pub struct HudStats {
     pub lighting: Option<LightingRow>,
     /// The exposure; `None` hides its row.
     pub exposure: Option<ExposureRow>,
+    /// The sky's row while a sky is set ([`SkyRow`]); `None` hides it.
+    pub sky: Option<SkyRow>,
     /// The aliasing toggles' row ([`aliasing_row`]); `None` hides it.
     pub aliasing: Option<String>,
     /// The live queue's row ([`queue_row`]); `None` hides it.
@@ -434,6 +436,28 @@ impl fmt::Display for ExposureRow {
     }
 }
 
+/// The sky's row: the three sky passes' GPU time summed, the light pass's (which casts the sky
+/// rays and the key light's shadow ray while a sky is set), the exposure in EV and the body
+/// lighting the frame (`sun`, `moon` or `none` under the horizon):
+/// `sky passes 0.12 ms  light 1.85 ms (sky on)  exposure -9.81 EV  body sun`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SkyRow {
+    pub sky_ms: f32,
+    pub light_ms: f32,
+    pub ev: f32,
+    pub body: &'static str,
+}
+
+impl fmt::Display for SkyRow {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "sky passes {:.2} ms  light {:.2} ms (sky on)  exposure {:+.2} EV  body {}",
+            self.sky_ms, self.light_ms, self.ev, self.body
+        )
+    }
+}
+
 /// The frame passes' GPU times (name and milliseconds, in pass order), the light samples the
 /// mirror holds, the probe volume's live probes at the last sample (`None` with the lamp's
 /// bounce off), the store's counts, and the lighting modes in words.
@@ -478,6 +502,9 @@ pub struct StepsSample {
     pub block_max_mean: f32,
     pub mean_loads: f32,
     pub mean_pool_reads: f32,
+    /// The key light's shadow ray's mean and p99 steps over the pixels that cast it, while
+    /// one lights the frame.
+    pub key: Option<[f32; 2]>,
 }
 
 impl StepsSample {
@@ -488,6 +515,7 @@ impl StepsSample {
             block_max_mean: h.block_max_mean() as f32,
             mean_loads: h.mean_loads() as f32,
             mean_pool_reads: h.mean_pool_reads() as f32,
+            key: None,
         }
     }
 }
@@ -541,6 +569,7 @@ impl HudStats {
             pressure: None,
             pad: None,
             lighting: None,
+            sky: None,
             exposure: None,
             aliasing: None,
             queue: None,
@@ -609,6 +638,9 @@ impl HudStats {
         if let Some(e) = &self.exposure {
             row(out, HudColour::White, format_args!("{e}"))?;
         }
+        if let Some(sky) = &self.sky {
+            row(out, HudColour::White, format_args!("{sky}"))?;
+        }
         if let Some(a) = &self.aliasing {
             row(out, HudColour::White, format_args!("{a}"))?;
         }
@@ -644,8 +676,13 @@ impl HudStats {
                 out,
                 HudColour::White,
                 format_args!(
-                    "steps per ray mean {:.2} p99 {} block-max mean {:.2}; loads mean {:.2}, pool {:.2}",
-                    s.mean_steps, s.p99_steps, s.block_max_mean, s.mean_loads, s.mean_pool_reads
+                    "steps per ray mean {:.2} p99 {} block-max mean {:.2}; loads mean {:.2}, pool {:.2}{}",
+                    s.mean_steps,
+                    s.p99_steps,
+                    s.block_max_mean,
+                    s.mean_loads,
+                    s.mean_pool_reads,
+                    KeySteps(s.key)
                 ),
             )?;
         }
@@ -741,6 +778,18 @@ impl HudStats {
             None => row(out, HudColour::White, format_args!("no edit yet"))?,
         }
         Ok(())
+    }
+}
+
+/// `; key ray steps mean 12.40 p99 61` when the key light's ray was cast, else nothing.
+struct KeySteps(Option<[f32; 2]>);
+
+impl fmt::Display for KeySteps {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some([mean, p99]) => write!(f, "; key ray steps mean {mean:.2} p99 {p99:.0}"),
+            None => Ok(()),
+        }
     }
 }
 

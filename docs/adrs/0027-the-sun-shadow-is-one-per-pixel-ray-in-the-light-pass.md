@@ -1,10 +1,13 @@
 # ADR-0027: The sun's shadow is one per-pixel ray in the light pass, a dedicated directional sample beside the emissive one
 
-> **Status:** proposed; redrafted 2026-11-10 with Plan 0032's redesign: the directional sample
+> **Status:** accepted (2026-11-17, Plan 0032's close), with the Outcome of 2026-11-17 below;
+> redrafted 2026-11-10 with Plan 0032's redesign: the directional sample
 > and the sky ray are stored in Plan 0058's direct target on its short blend, the probe volume
-> and the baked store take no sun or sky term, and a drifting sun raises no change bit
+> and the baked store take no sun or sky term, and a drifting sun raises no change bit;
+> Outcome 2026-11-17 (the owner's window): the absent-chunk rule reversed, the sky ray at
+> rest replaced by ADR-0070's baked visibility
 > **Date:** 2026-10-22
-> **Related plan(s):** [Plan 0032](../plans/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
+> **Related plan(s):** [Plan 0032](../plans/done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
 > (builds it); Plan 0033 (continues the ray into the far-field clipmap)
 > **Builds on:** [ADR-0018](0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
 > (the light pass, its shadow rays and the temporal pass),
@@ -155,7 +158,29 @@ on the lighting grid, a second change rule, and a slower answer to an edit or a 
 We do not take it without a reading; it is the named fallback if Plan 0032's stillness
 measurement finds four sky rays a pixel are not enough on the short blend.
 
-## Outcome
+## Outcome (2026-11-17, Plan 0032 Phase 9, while proposed)
 
-_(Added only at acceptance if implementation falsified something above. Dated. Never rewrite the
-body.)_
+The owner's window of 2026-11-17 (the readings log, Phase 9; the review
+`docs/reviews/2026-11-17-plan-0032-window.md`) falsified two clauses of the Decision before
+acceptance. The body is kept as written; this is what the owner picked.
+
+- **"Inside the ball, an absent chunk counts as an occluder" is reversed.** The rule shadowed
+  the far ground for the 7 to 10 s the world takes to stream after the first frame and at the
+  leading edge of every move, which the owner read as the far ground flipping between lit and
+  shadowed: "I would prefer lighted color as a default". An absent chunk is sky to the
+  lighting rays (Plan 0032 Phase 10, the review's B1); "leaving the ball or the window is sky"
+  stays. The leak the rule prevented is a transient at the ball's edge, far from the camera
+  (the near chunks are resident before the first frame), and the first consumer sets the sky
+  off. Plan 0033's clipmap, where an absent near chunk falls back to its coarse cell, is the
+  end state (the review's B3).
+- **The sky ray is not the sky light's home at rest.** The Negative consequence "the sky ray
+  is the noisiest term" was read as the tunnel's sparkle. Plan 0032 Phase 6's stop rule
+  measured the ray on an open floor under a uniform sky, where its variance is 0, and so never
+  read a partial occluder; restated on the tunnel it fires. ADR-0070 bakes a sky visibility per
+  brick direction into ADR-0046's store, coloured by the sky at read, and keeps the ray only
+  where the store has no fresh value, on a long running mean with a firefly clamp: Alternative
+  F above, taken for the rays' visibility and not for a radiance. Alternative D stays
+  rejected: what is baked is geometry, not the sky.
+- **The key light may follow onto that history** (Plan 0086's reading decides); the direct
+  target keeps the lamp and the list on the short blend. The clause "no new frame target and
+  no second history" no longer holds for the sky and, if taken, the key light.

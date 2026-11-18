@@ -1,6 +1,9 @@
 # 0037: The night sky: a star field, the moon's phases, sky bodies the game lists, an aurora that lights the ground, and a night tint
 
-> **Status:** approved (2026-10-22), amended 2026-11-10 (review pass)
+> **Status:** approved (2026-10-22), amended 2026-11-10 (review pass); amended 2026-11-17
+> (architect re-read against main 3b3986d0 after Plan 0032's close, Plan 0069, Plan 0080's lane
+> and Plan 0086: the section "Amended 2026-11-17 (re-read)" below is the phases' errata; Phase 7
+> is rewritten under ADR-0070)
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
@@ -32,9 +35,9 @@
 > **Order (owner, 2026-11-10):** Plans 0060, 0061, 0058, 0044, 0045, the `own`-removal plan and
 > the render-profile plan (both owed, see [`docs/backlog.md`](../backlog.md)), then M10 in a
 > line: 0032, 0033, 0034, 0035, 0036, 0037.
-> **Starts after:** [Plan 0036](0036-weather-rain-snow-wind-wet-surfaces-snow-cover-lightning.md)
-> closes. The base is main after that close. It builds on
-> [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
+> **Starts after:** [Plan 0035](0035-aerial-perspective-and-volumetric-clouds-with-cloud-shadows.md)
+> closes (owner, 2026-11-17, Plan 0036's question 2: the night sky before the weather). The base is main after that close. It builds on
+> [Plan 0032](done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
 > through that plan's section "Interface for Plans 0033 to 0037", on
 > [Plan 0034](0034-water-surface-waves-reflection-refraction-underwater-fog.md)'s liquid
 > shader and its secondary-ray miss lookup, and on
@@ -58,6 +61,140 @@
 > (`test-changed.mjs --binaries`, Plan 0066); a named test over 10 s on lavapipe is born
 > `#[ignore = "soak"]` (`docs/nfr.md` section 7). The mechanisms and bars stand; only when they
 > become tests moves.
+
+## Amended 2026-11-17 (re-read)
+
+Read at main 3b3986d0 (Plan 0032 closed, v0.61.0; Plan 0069 closed, v0.60.0) against the
+`plan-0080` lane (the menu) and Plans 0086, 0081, 0033, 0034, 0035 and 0036 (approved, ahead
+of this plan as approved; Plan 0036's owner question 2 may put this plan before 0036). The
+lane branches from main once the plan before it has merged; the tree's names win. The Decision
+and the phases stand except where this section says otherwise; `dev` reads it as the phases'
+errata. Crate names are `vxe-*`; if Plan 0087 has merged first they read `svet-*` through its
+map.
+
+### Name mapping (the plan's name, then the tree's)
+
+| The plan says | The tree has |
+|---|---|
+| `marcher.rs` (the `Frame` owns the night state) | `frame/mod.rs` (`Frame`; `sky: SkyState` is the model), `frame/encode.rs` (`FRAME_PASSES`, 23 names, **1193 of 1200 lines**; `night_light` goes before `light`, `aurora` and `aurora_reconstruct` between `gather` and `composite`, all before `upscale`, which `fsrs_passes_close_the_frame_passes` pins), `frame/pipelines.rs`, `frame/compose.rs` (`shader_sources`). The night's GPU state goes in a new `frame/night.rs` on `frame/sky.rs`'s pattern; the CPU `night` module stays `crates/vxe-render/src/night.rs` |
+| `sky.rs` `body_disc`, `sky.wgsl` | `sky.wgsl` `body_disc` and `disc_of` (`cover * E * T / Omega`, a pixel-wide edge from `params.views[0]`), `sky_radiance`, `transmittance`, `key_light_of`, `sky_light_changed`; `sky.rs` `Body { direction, illuminance, angular_radius }`, `Body::sun`, `Body::moon`, `Sky::key_light`, `KeyBody`, `SkyKey::jumped_from`, `body_direction`, **`SUN_ILLUMINANCE` 3000** (the plan's `E_sun` guess holds), `MOON_OVER_SUN` 1/400 000, `MOON_ANGULAR_RADIUS`; `SkyUniform` (in `sky.rs`, one free word, so the night uniform is its own) |
+| the moon today | always full and opposite the sun: `daylight.rs` places it at `body_direction(h + PI, -DECLINATION, lat)`, and `--sun` at the antipode; `--moon-radius` defaults to 3 degrees (the owner's pick); it is the key light when the sun is down (`gpu_sun.rs` `the_moon_lights_the_floor_at_night`) and scatters into the sky-view LUT. Phase 4's `--moon-phase` moves it to the sun's hour angle plus `180 - DEG`, as written |
+| `light.wgsl` (where the sky ray reads) | `sky_light.wgsl` `sky_ray_sample` (compiled into the light pass alone); `light.wgsl` is the list lights' walk and the bake compiles it |
+| `upscale.wgsl`, `fsr2/input.wgsl` change mask | both call `sky_light_changed` (`sky.wgsl`); Decision 8's now-and-then pair goes into or beside it, in both (the `own` upscaler is still in the tree) |
+| `LIGHTING_LIGHTS_CHANGED`, `LIGHTING_EMISSION_CHANGED` | `frame/settings.rs` (bits 11 and 16 up are free; `LIGHTING_SKY_CHANGED` is bit 10) |
+| `fsr2::jitter_phases`, `jitter_offset`; `marcher::jitter_at`, `JITTER_PHASES` | `fsr2/settings.rs` (18 at 1.5); `frame/upscale.rs` (exported as `vxe_render::jitter_at`, `internals::JITTER_PHASES` 16) |
+| the composite's miss site, the tint's place | `composite.wgsl`: the miss `c = (sky_radiance(d) + body_disc(d)) * ex`; the layer `c = layer * ex + T * c`; then `select(display(c), c, HDR_TARGET)` and `meter_of(c / ex)`. The night terms join the miss site; Plan 0035's media section follows; the tint sits after the layer and before the store, with the meter term taken first. Group 2 uses bindings 0 to 10 (11 the next), declared in three places (`frame/pipelines.rs`, `frame/upscale.rs` `composite_hdr_pass`, `frame/encode.rs`) |
+| "probe dispatch" | no such harness exists; Phase 1 builds the test-only entry point in `night.wgsl` the plan describes (a compute entry over a grid into a storage buffer) |
+| the analytic rig's "90 degree horizontal field" | the render-crate tests set their own `Camera` (`camera.rs` `vfov`), so the rig stands; the fly-through's goldens (`Hills` rig, `gpu_outdoor_golden.rs`) use `vfov` 70, not 90 |
+| `exposure.rs` `AutoExposure`, `eye()`, `OUTDOOR_MIN`/`OUTDOOR_MAX` | `crates/vxe-render/src/exposure.rs` (`eye()`: key 0.18, min 2^-6, max 2^4; `instant`); `cli/outdoor.rs` `OUTDOOR_MIN` 1e-4, **`OUTDOOR_MAX` 4.0** (Phase 9 bar 1's value holds); `exposure_now()` in `common.wgsl` |
+| `daylight.rs` (the clock) | `Clock { minutes, running, day_length_s, sun_radius, moon_radius, fixed_sun }`, `hour_angle` = `(h - 12) x 15` degrees, `LATITUDE_DEG` 45, `DECLINATION` 0 (an equinox, so the sidereal angle is the hour angle as the plan assumes), `DEFAULT_DAY_LENGTH_S` 1200; keys `Home`, `PageUp`, `End`, `CapsLock` (menu entries at Plan 0080's merge) |
+| `apps/flythrough/src/main.rs`, `hud.rs`, `night.rs` | `cli/outdoor.rs` (`--night`, `--night-tint`, `--night-tint-strength`, `--moon-phase`, `--star-gain`, `--aurora`, `--aurora-update` beside `--trees`; `cli/flags.rs` is at 1190 lines), `cli/tests.rs`, `toggles.rs` (the entries), `run/frame.rs` (the clock's `advance` then `set_sky`: `set_night` goes there), the new `apps/flythrough/src/night.rs` beside `daylight.rs`, `hud/modes.rs` (**1197 of 1200 lines**: the night words go in a new module or a split `dev` makes first), `hud/stats.rs` (`SkyRow` the model; `run/hud_feed.rs` `sky_row` sums passes named `sky *`, so `night_light` is its own row), `examples/hero.rs` (exists), `docs/flythrough.md` (every key and flag; the root README links it) |
+| `apps/flythrough/tests/gpu_golden.rs` (the five goldens, `the_night_goldens_differ`) | at 1885 of 2000 lines: they go in a new `gpu_night_golden.rs` on `gpu_outdoor_golden.rs`'s rigs (`Empty`, `Hills`), never there; "the goldens of Plans 0032 to 0036 pass `--night off`" reads: those goldens drive `Frame` directly (no CLI) and set no `Night`, so the testbed's new defaults leave them alone by construction |
+| `gpu_bake.rs` sky arm | `a_baked_face_ignores_the_sky` (`gpu_bake.rs`, 1596 lines), as named |
+| Plan 0034's liquid shader, Plan 0035's `cloud_*`, `CloudUpdate`, `cloud_reconstruct`, the `media` section | those plans' names, as their re-reads of 2026-11-17 map them (`liquid.wgsl` and `frame/liquid.rs`; `frame/clouds.rs`, `cloud_light.wgsl`, `cloud_sky`) |
+| `templates/readings-log.md` | the architect skill's template, outside the public repo; `dev` starts `docs/plans/logs/0037.md` from an existing log's shape |
+
+### Plan 0086: the night's light reaches the ground through `E_sky`
+
+Plan 0086 (ADR-0070) makes the sky term at a face `v(n) E_sky(n)`: a visibility baked per
+brick direction into the store, times six axis irradiances reduced each frame from the sky-view
+LUT (or, under Plan 0035's clouds, from `cloud_sky`); the sky ray runs only where the store is
+stale and scores 1 or 0; the direct target no longer receives it. Its Interface names an
+aurora's glow and a night tint as changes to `E_sky`. **Decision 8 and Phase 7 are rewritten
+on it; nothing else of the plan moves.**
+
+- **The mechanism.** The `night_light` map is built as written (the aurora at 16 steps, the
+  airglow, the catalogue's mean radiance, the sky texture's lowest useful mip, times the
+  atmosphere's transmittance). 0086's reduction gains it: `E_sky(axis)` for each of the six
+  axes is the cosine-weighted integral of `sky_radiance` (or `cloud_sky`) **plus `night_light`**
+  over the hemisphere about that axis, so every face reads the night's light through its baked
+  visibility, with no per-pixel ray and no history. `night_light(d)` is still added at Plan
+  0034's secondary-ray miss and at the background of the march that fills `cloud_sky` (so under
+  clouds `E_sky` carries the night's light through `cloud_sky`, and clouds hide it). The sky ray,
+  where the store is stale, scores a visibility and reads no map. `night.wgsl` is composed into
+  the reduction pass's module and the liquid pass's, never into `bake_source()`.
+- **What is lost, by design.** The aurora's directional shadowing on the ground (a curtain to
+  the north lights north-facing slopes more) is averaged into six axis values; ADR-0070's
+  Negative ("the direction of the visible sky is averaged away") says so and the owner took it
+  for the sun's sky. The Followup "the aurora's directional shadowing at full map resolution"
+  stands as the thing a longer-history sky target would buy back.
+- **Step A (the stillness reading and its stop rule) is replaced.** With no per-pixel ray at
+  rest the baked path is still by construction; the reading is of the six `E_sky` values frame
+  to frame under the `active` preset at a running `time_s` (a CPU readback of the sky uniform,
+  mean and largest step over 64 frames) beside Plan 0032's jump rule, and of the stale path (a
+  freshly dug floor under the `active` preset, where the ray runs on 0086's pair) against the
+  headlamp's reference on the same floor. No stop rule: the named fallback (ADR-0027
+  Alternative F, a long history) is the tree's.
+- **The bars.** 3 (`the_floor_reads_the_night_maps_cosine_integral`): the sky term read where
+  the temporal pass writes it (the store's part), not the direct target; `E_ref` is the map's
+  cosine integral about `+z`, the open floor's visibility is 1, so the 10 % holds and the
+  400-voxel pixel reads the same. 4 and 5 hold through `v` (0 in the closed box). 6 holds
+  through `cloud_sky`. 7 (`the_aurora_lit_floor_is_as_still_as_the_lamp_lit_one`) stays as the
+  regression on the baked path at the picked preset, and gains the stale-path arm as a
+  reading. 8 (`a_stepped_aurora_reaches_the_floor_in_eleven_frames`) becomes
+  `a_stepped_aurora_reaches_the_floor_on_the_next_frame`: `E_sky` is read per frame with no
+  history, so the floor's sky term is within 10 % of its new value on the frame after the step,
+  and the upscalers' mask is set on the floor's pixels through Decision 8's pair. 9 and 10
+  stand (the bake's emissive words are byte-equal; 0086's visibility words bake geometry and
+  do not see the night). Risk 4 ("the aurora's light lags") shrinks to `cloud_sky`'s eighth a
+  frame under clouds.
+
+### Interface changes
+
+- **Starts after:** Plan 0035 closes and merges, before Plan 0036 (Plan 0036's owner
+  question 2, answered 2026-11-17). The base is main after that
+  merge. The plan relies on 0034 and 0035 either way.
+- **Settings, not flags alone** (Plan 0069, ADR-0055): `RenderSettings` gains
+  `night.aurora_update: CloudUpdate` (`Settle`), `night.star_psf_px: f32` (`Settle`, Phase 2's
+  pick as the Floor value) and `night.twinkle: f32` (`Live`), each a `FIELDS` row with a
+  `with_test_value` arm, a `PROFILE_PICKS` row (Floor `OneInFour`, the plan's own projection
+  for the 0.3 ms share; Portable `OneInSixteen`) and the fly-through's `render_settings()`.
+  `Frame::set_night`, `set_night_tint`, `set_star_catalogue`, `set_sky_bodies`,
+  `set_body_texture` and `set_sky_texture` are per-frame inputs or data in `NOT_SETTINGS`;
+  every `pub fn set_*` the plan adds is in one list or the other, or
+  `every_setter_is_a_setting_or_an_input` fails. The tint's strength, hue and bounds are the
+  testbed's values the owner tunes, passed through `set_night_tint`, not settings rows.
+- **Menu entries, not keys** (ADR-0061, Plan 0080): the stars cycle, the moon-phase step, the
+  bodies cycle, the aurora cycle and the tint toggle are `Press::Menu` entries of
+  `toggles.rs` (group `Lighting`), no key; their `get` is the banner's word; `--keys` lists
+  them; 0080's `every_toggle_and_action_is_an_entry` and `the_source_reads_no_key_the_tables_miss`
+  pass. Every "key" in Phases 1 to 9's banner bars reads "the entry's activation", and Phase 9
+  bar 3 drives each entry in turn.
+- **The headroom line is 2.6 ms, not 2.1** (`docs/nfr.md` section 2, Plan 0069's close), and
+  Plan 0062's entities read 0.5 to 2.2 ms on it; this plan's 0.3 ms share stands as its dev-box
+  bar and Plan 0035's owner question 2 says how the profiles arbitrate. The slow adapter's
+  readings are recorded against Portable's 33.3 ms line.
+- **Tiers:** the "Tests and tiers" paragraph's 30 s line is **10 s** on lavapipe (60 s on CI;
+  `docs/nfr.md` section 7); a render phase runs `--profile gpu --binaries <names>` with the
+  `gpu_*` binaries it names. Every "soak if over 30 s" and the Budgets' "no gate test over 30 s"
+  read 10 s.
+
+### Phases: what changes
+
+- **Phase 1** files: the new `frame/night.rs` in place of `marcher.rs`; the probe-dispatch entry
+  built here; `cli/outdoor.rs`, `cli/tests.rs`, `toggles.rs`, the banner's new module;
+  `settings.rs` (`NOT_SETTINGS`, the rows); the golden in `gpu_night_golden.rs`.
+- **Phase 2**: the own upscaler is still in the tree, so its arm of the reading is run as the
+  plan allows (it gates nothing).
+- **Phases 3 to 6**: the entries in place of keys; `sky.wgsl`'s `disc_of` is the Lit disc's
+  site (Phase 4); the goldens in `gpu_night_golden.rs`; the `aurora` passes' places as mapped.
+- **Phase 7** as rewritten above. Files: `aurora.wgsl` (the map's entry), `night.wgsl`, Plan
+  0086's reduction pass (`sky_view.wgsl` or the pass after it, as 0086 Phase 4 lands it) in
+  place of "`light.wgsl` or wherever the sky ray reads the sky", `liquid.wgsl`, `cloud_shadow.wgsl`
+  (the `cloud_sky` background), `sky.wgsl` (`sky_light_changed`, the pair) with `fsr2/input.wgsl`
+  and `upscale.wgsl`, `frame/night.rs`, `gpu_aurora.rs`, the new `gpu_night_light.rs`,
+  `gpu_bake.rs`, the log.
+- **Phase 8** unchanged but for the entry and the golden's file.
+- **Phase 9**: the flags in `cli/outdoor.rs`; the HUD row beside `SkyRow`; the runs' base is
+  the outdoor frame as Plan 0032 Phase 7 read it (5.1 to 5.6 ms RTX, 37.5 to 45.8 ms RENOIR at
+  1080p), re-read at the lane's start; the ledger's "night sky" row (0.25 to 0.65 ms RTX,
+  budgeted) is what the close replaces; the runs read the light pass and the temporal pass
+  (where the sky term is written now).
+- **Phase 10**: the owner's window runs on Linux (owner, 2026-11-15); the slow adapter is the
+  update-mode run alone.
+- **Phase 11** unchanged.
+
+No owner question is added by this re-read; the order question is Plan 0036's question 2.
 
 ## TL;DR
 

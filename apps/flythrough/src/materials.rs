@@ -2,8 +2,8 @@
 //! `--materials PATH`, read at the start and again once a second while the window is open.
 //!
 //! Each scene takes the file's rows by name in its own order ([`Selection`]), so the ids the
-//! scenes have always used hold: the cave's four rows, then the showcase's, the castle's or
-//! the rigs' wood. A reload rewrites the GPU rows' fields and re-bakes the chunks holding a
+//! scenes have always used hold: the cave's four rows, then the showcase's, the castle's, the
+//! outdoor hills' or the rigs' wood. A reload rewrites the GPU rows' fields and re-bakes the chunks holding a
 //! row whose emission moved; a reload that adds, removes or renames a row, or changes a row's
 //! flags or whether it emits, takes effect at the next start. The wall clock read here is the
 //! testbed's, never a crate's.
@@ -37,6 +37,8 @@ pub const CASTLE_ROWS: [&str; 7] = [
     "castle glass",
     "castle torch",
 ];
+/// The outdoor hills' rows after the cave's (`crate::outdoor`'s ids).
+pub const OUTDOOR_ROWS: [&str; 4] = ["grass", "soil", "bark", "leaf"];
 /// The thin and seam rigs' row after the cave's.
 pub const RIG_ROWS: [&str; 1] = ["rig wood"];
 
@@ -294,6 +296,8 @@ pub fn chunks_holding(world: &vxe_world::World, rows: &[MaterialId]) -> Vec<vxe_
 pub fn selection(args: &crate::cli::Args) -> Selection {
     let (extra, after): (&[&'static str], &[&'static str]) = if args.castle {
         (&CASTLE_ROWS, &[])
+    } else if args.mode.is_outdoor() {
+        (&OUTDOOR_ROWS, &[])
     } else if args.mode.is_thin_rig() || args.mode.is_seam_rig() {
         (&RIG_ROWS, &[])
     } else if args.mode.is_showcase() {

@@ -14,11 +14,11 @@ use std::fmt::Write as _;
 use vxe_app::{Gpu, Pacing};
 use vxe_render::debug::StepHistogram;
 use vxe_render::{
-    BELT_CHUNK_BYTES, FRAME_PASSES, GpuWorld, HudColour, LookParams, NormalMode, ShadowWalk,
-    SyncStats,
+    BELT_CHUNK_BYTES, FRAME_PASSES, GpuWorld, HudBox, HudColour, LookParams, NormalMode,
+    ShadowWalk, SyncStats,
 };
 
-/// Frames `F1` averages over.
+/// Frames the readings (`Enter`) average over.
 pub(crate) const SAMPLES: usize = 30;
 
 /// The stats HUD's glyph scale: an 8 x 8 glyph covers 16 x 16 pixels.
@@ -320,12 +320,48 @@ pub(crate) struct Hud {
     pub(crate) colours: Vec<HudColour>,
     pub(crate) strip: Vec<f32>,
     pub(crate) banner: String,
+    /// Reused buffers: the open menu placed in the window (its rows from `text` and
+    /// `colours`, moved to the panel, the readout on the top row) and the readout's words.
+    pub(crate) overlay: String,
+    pub(crate) overlay_colours: Vec<HudColour>,
+    pub(crate) readout: String,
+    /// Reused buffers: the spans and the icons' tiles laid over the belt's or the chooser's
+    /// rows.
+    pub(crate) paint: crate::entities::belt::Paint,
     /// The far normal's words and the live queue's order and withdrawal in words, remade
     /// only when what they name changes.
     pub(crate) far_normal_words: Cached<(NormalMode, [f32; 2])>,
     pub(crate) queue_words: Cached<(vxe_render::QueueOrder, bool)>,
     /// The whole run's frame times, shown or not.
     pub(crate) run: RunTimes,
+}
+
+/// The start banner's row naming the menu's keys, shown for `hud::BANNER_MS` outside
+/// `--tester`.
+pub(crate) const KEYS_BANNER: &str = "Tab menu, F1 keys";
+
+/// What the overlay draws this frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Overlay {
+    /// The stats HUD's rows and strip.
+    Stats,
+    /// The menu's page alone.
+    Menu,
+    /// The banner alone (under `--tester`, the path's row and its help panel).
+    Banner,
+}
+
+impl Overlay {
+    /// The overlay for a run under `--tester` or not, with the menu open or closed and the
+    /// stats HUD shown or hidden: the menu over everything outside `--tester` (which has
+    /// none), else the stats or the banner.
+    pub(crate) fn of(tester: bool, menu_open: bool, stats: bool) -> Self {
+        match (tester, menu_open, stats) {
+            (false, true, _) => Self::Menu,
+            (_, _, true) => Self::Stats,
+            _ => Self::Banner,
+        }
+    }
 }
 
 /// A string kept with the key it was made from, remade only when the key changes: a row's
@@ -372,6 +408,10 @@ impl Hud {
             colours: Vec::new(),
             strip: Vec::with_capacity(hud::RING),
             banner: String::new(),
+            overlay: String::new(),
+            overlay_colours: Vec::new(),
+            paint: Default::default(),
+            readout: String::new(),
             far_normal_words: Cached::default(),
             queue_words: Cached::default(),
             run: RunTimes::default(),
@@ -466,6 +506,36 @@ pub(crate) fn shadow_steps_line(texels: &[[f32; 4]], walk: ShadowWalk) -> String
         percentile(&mut loads, 99.0),
         mean(2)
     )
+}
+
+/// The key light's shadow ray in the steps view, from the light pass's direct target (one
+/// texel per hit, alpha 1 where the ray was cast): the pixels that cast it, its mean steps,
+/// p99 steps, mean storage loads and mean pool reads; `None` where no pixel cast it.
+pub(crate) fn key_ray_steps(texels: &[[f32; 4]]) -> Option<(usize, [f64; 4])> {
+    let rays: Vec<&[f32; 4]> = texels.iter().filter(|t| t[3] > 0.5).collect();
+    if rays.is_empty() {
+        return None;
+    }
+    let n = rays.len() as f64;
+    let mean = |k: usize| rays.iter().map(|t| f64::from(t[k])).sum::<f64>() / n;
+    let mut steps: Vec<f64> = rays.iter().map(|t| f64::from(t[0])).collect();
+    Some((
+        rays.len(),
+        [mean(0), percentile(&mut steps, 99.0), mean(1), mean(2)],
+    ))
+}
+
+/// The steps view's reading of the key light's shadow ray ([`key_ray_steps`]): `key light ray
+/// (coarse walk, 1 234 567 pixels cast): steps mean 8.12, p99 64, loads mean 20.31, pool reads
+/// mean 3.10`, or `key light ray: none cast`.
+pub(crate) fn key_steps_line(texels: &[[f32; 4]], walk: ShadowWalk) -> String {
+    match key_ray_steps(texels) {
+        Some((n, [mean, p99, loads, pool])) => format!(
+            "key light ray ({} walk, {n} pixels cast): steps mean {mean:.2}, p99 {p99:.0}, loads mean {loads:.2}, pool reads mean {pool:.2}",
+            walk.name()
+        ),
+        None => "key light ray: none cast".to_owned(),
+    }
 }
 
 /// The steps view's reading of one frame: `steps per ray (2073600 rays): mean 41.27, p99 133,
@@ -589,7 +659,7 @@ pub(crate) fn write_queue_banner_row(out: &mut String, args: &Args, words: &str)
     }
     let _ = write!(
         out,
-        ", full-first {}, budget {}, missing light {}, reach {}, digs +{} ms, ring 3 {}; {words} (F order, Tab/Slash angle, Quote withdraw, Backspace budget, Backslash full-first, 7 missing light, 8 reach)",
+        ", full-first {}, budget {}, missing light {}, reach {}, digs +{} ms, ring 3 {}; {words} (Tab: the light queue page)",
         FullFirstWords(args.full_first()),
         args.bake.budget,
         args.bake.missing_light.name(),
@@ -722,6 +792,7 @@ impl Run {
         s.format_us = h.format_us;
         self.modes
             .fill_exposure_row(s.exposure.get_or_insert_with(Default::default));
+        s.sky = sky_row(&self.modes, h.pass_ms.as_deref());
         let args = &self.args;
         let words = h
             .queue_words
@@ -801,6 +872,7 @@ impl Run {
             println!("{words}");
             self.modes.show_lights(words, now_ms);
         }
+        self.modes.walkers.refresh_icons(self.world.materials());
     }
 
     /// Drops `--pose`'s banner row once the camera has left the pose.
@@ -812,6 +884,64 @@ impl Run {
         {
             self.pose = None;
         }
+    }
+
+    /// The open menu's rows into the HUD's reused text and colour buffers, the formatting
+    /// timed into `format_us`.
+    pub(crate) fn write_menu(&mut self) {
+        let t = now();
+        let v = self.run_view();
+        let at_ms = ms_since(self.start);
+        let notice = self
+            .notice
+            .as_ref()
+            .filter(|(_, at)| at_ms - at < hud::BANNER_MS)
+            .map(|(l, _)| l.as_str());
+        self.menu.write_with(
+            &self.modes,
+            &v,
+            notice,
+            &mut self.hud.text,
+            &mut self.hud.colours,
+            &mut self.hud.paint,
+        );
+        self.hud.format_us = ((now() - t).as_secs_f64() * 1e6) as u32;
+    }
+
+    /// The page `write_menu` wrote, placed in a `size` window's panel with the readout
+    /// (`fps 59.9  frame 16.7 ms p99 18.2`: the frame window's fps, median and p99) on the
+    /// window's top row, into the HUD's reused `overlay` buffers; its formatting is added to
+    /// `format_us`; the page's spans and tiles moved with it. Gives the backdrop's box.
+    pub(crate) fn place_menu(&mut self, size: [u32; 2]) -> HudBox {
+        let t = now();
+        let h = &mut self.hud;
+        h.readout.clear();
+        let _ = write!(
+            h.readout,
+            "fps {:.1}  frame {:.1} ms p99 {:.1}",
+            h.frames.fps(),
+            h.frames.frame_ms_p50(),
+            h.frames.frame_ms_p99()
+        );
+        let panel = crate::hud::menu::Panel::of(size[0], size[1]);
+        let backdrop = crate::hud::menu::place(
+            &h.text,
+            &h.colours,
+            panel,
+            &h.readout,
+            &mut h.overlay,
+            &mut h.overlay_colours,
+        );
+        for (b, _) in &mut h.paint.spans {
+            b.col += panel.col as u32;
+            b.row += panel.row as u32;
+        }
+        for tile in &mut h.paint.tiles {
+            tile.col += panel.col as u32;
+            tile.row += panel.row as u32;
+        }
+        h.format_us += ((now() - t).as_secs_f64() * 1e6) as u32;
+        backdrop
     }
 
     /// The banner at the frame loop's clock: `--pose`'s row until the camera first moves, the
@@ -847,7 +977,7 @@ impl Run {
     pub(crate) fn compose_banner(&self, out: &mut String, words: &str) {
         let now = ms_since(self.start);
         if !self.hud.visible
-            && let Some(v) = &self.modes.walkers.viewer
+            && let Some(v) = self.modes.walkers.viewer()
             && v.error.is_some()
         {
             hud::start_row(out);
@@ -868,6 +998,10 @@ impl Run {
         write_pace_banner(self.args.pace, now, out);
         hud::start_row(out);
         write_queue_banner_row(out, &self.args, words);
+        if now < hud::BANNER_MS {
+            hud::start_row(out);
+            out.push_str(KEYS_BANNER);
+        }
         if let Some((scene, _)) = self
             .scene
             .as_ref()
@@ -883,12 +1017,21 @@ impl Run {
         }
     }
 
-    /// Formats this frame's rows and strip into the overlay, timing the formatting.
+    /// Formats this frame's rows and strip into the overlay, timing the formatting; the belt
+    /// under them in placement mode ([`Run::belt_rows`]).
     pub(crate) fn update_hud(&mut self, gpu: &Gpu) {
         self.fill_hud(self.gfx.as_ref().map(GfxSample::of));
+        let belt = self.belt_rows(gpu.size, false);
         let h = &mut self.hud;
         let Some(gfx) = self.gfx.as_mut() else { return };
-        gfx.hud.set_lines(&gpu.queue, &h.text, &h.colours);
+        match belt {
+            Some(b) => {
+                let paint = h.paint.with(std::slice::from_ref(&b));
+                gfx.hud
+                    .set_lines_painted(&gpu.queue, &h.text, &h.colours, paint)
+            }
+            None => gfx.hud.set_lines(&gpu.queue, &h.text, &h.colours),
+        }
         gfx.hud.set_samples(&gpu.queue, &h.strip, hud::CEILING_MS);
     }
 
@@ -986,6 +1129,32 @@ impl Run {
             println!("{}", c.query_line());
         }
     }
+}
+
+/// The sky's HUD row while a sky is set and the passes were timed: the sky passes' GPU time
+/// summed, the light pass's, the exposure and the body [`vxe_render::sky::Sky::key_light`]
+/// names; `None` otherwise.
+fn sky_row(modes: &crate::hud::Modes, pass_ms: Option<&[f64]>) -> Option<hud::SkyRow> {
+    let passes = pass_ms.filter(|_| modes.sky)?;
+    let ms = |pred: &dyn Fn(&str) -> bool| -> f32 {
+        FRAME_PASSES
+            .iter()
+            .zip(passes)
+            .filter(|(n, _)| pred(n))
+            .map(|(_, &v)| v as f32)
+            .sum()
+    };
+    let body = match modes.clock.sky(crate::outdoor::BASE_Z as f32).key_light() {
+        Some((vxe_render::sky::KeyBody::Sun, _)) => "sun",
+        Some((vxe_render::sky::KeyBody::Moon, _)) => "moon",
+        None => "none",
+    };
+    Some(hud::SkyRow {
+        sky_ms: ms(&|n| n.starts_with("sky ")),
+        light_ms: ms(&|n| n == "light"),
+        ev: modes.exposure_ev(),
+        body,
+    })
 }
 
 #[cfg(test)]

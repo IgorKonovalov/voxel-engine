@@ -1,181 +1,59 @@
-//! The testbed's walker (ADR-0050): a voxel model of four rigid parts made in code, a torso, a
-//! head with two glowing eyes and two legs, all at detail 2. `` ` `` places one standing on the
-//! looked-at surface, facing the camera; `--entities N` places `N` on a ring around the
-//! spawn; `F11` (or `--entities-walk on`) sets them walking, each on a circle from where it
-//! stands with its legs swinging. The engine knows no walker: this is the fly-through's
-//! entity.
+//! The placed entities: the set the frame draws, each placement's model and playback, the
+//! built-in walkers' walk and eye lights, and the HUD row and banner words they give.
 
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use vxe_entity::{EntityId, EntitySet, Model, Part, PartPose, Pose, Q14_ONE, Quat};
-use vxe_render::{EntityUploadError, MAX_ENTITIES, MAX_ENTITY_PARTS, ModelHandle};
-use vxe_world::{AIR, Fixed3, Material, MaterialId, MaterialTable, Prefab};
+use vxe_entity::{EntityId, EntitySet, Model, Pose};
 
-/// The walker's body row's name in the table ([`with_walker`]).
-pub const BODY_ROW: &str = "walker";
-/// The eyes' row's name: it emits.
-pub const EYE_ROW: &str = "walker eye";
-/// The eyes' emission, radiance per channel: a warm glow.
-pub const EYE_EMISSION: [f32; 3] = [3.0, 1.6, 0.5];
-/// Model voxels per world voxel.
-pub const DETAIL: u8 = 2;
-/// The torso's size in model voxels: 8 wide (x), 6 deep (y), 12 tall (z).
-pub const TORSO: [u32; 3] = [8, 6, 12];
-/// The head's size: a 6-voxel cube; its eyes are on its front face (y 0).
-pub const HEAD: [u32; 3] = [6, 6, 6];
-/// A leg's size: 3 x 3, 8 tall.
-pub const LEG: [u32; 3] = [3, 3, 8];
-/// A walker's eye light: warm, intensity 150, casting shadows, not bouncing.
-pub const EYE_LIGHT_COLOUR: [f32; 3] = [1.0, 0.7, 0.4];
-pub const EYE_LIGHT_INTENSITY: f32 = 150.0;
-/// Where the eye light sits in the head's space, in 1/256 model voxel: between the eyes'
-/// centres in x and z, one model voxel in front of the face (a light inside the head would be
-/// shadowed by it).
-pub const EYE_LIGHT_AT: [i32; 3] = [3 * 256, -256, 896];
-/// The ring `--entities` places walkers on: 3 m around the spawn.
-pub const RING_RADIUS: f32 = 30.0;
-/// How far down from the ring's points a walker looks for the floor, in voxels.
-const FLOOR_SEARCH: i64 = 200;
-/// The radius of the circle a walking walker walks from where it stands: 2 m.
-pub const WALK_RADIUS: f32 = 20.0;
-/// Its pace along the circle: 1 m/s, in voxels per second.
-pub const WALK_SPEED: f32 = 10.0;
-/// Its legs' swing either way: 30 degrees.
-pub const WALK_SWING: f32 = std::f32::consts::FRAC_PI_6;
-/// Its strides per second (one swing forward and back of each leg).
-pub const WALK_STRIDES: f32 = 1.0;
+use crate::viewer::{Loaded, Play, Viewer, placed};
+use vxe_render::{MAX_ENTITIES, MAX_ENTITY_PARTS, ModelHandle};
+use vxe_world::MaterialTable;
 
-/// `table` with the walker's two rows appended: its body and its emissive eyes.
-pub fn with_walker(table: &MaterialTable) -> MaterialTable {
-    let mut t = table.clone();
-    t.push(Material {
-        albedo: [0.55, 0.52, 0.48],
-        ..Material::named(BODY_ROW)
-    });
-    t.push(Material {
-        albedo: [0.9, 0.7, 0.4],
-        emission: EYE_EMISSION,
-        ..Material::named(EYE_ROW)
-    });
-    t
-}
+use super::library::{Library, Source};
+use super::walker::{
+    EYE_LIGHT_AT, EYE_LIGHT_COLOUR, EYE_LIGHT_INTENSITY, FLOOR_SEARCH, RING_RADIUS, WALK_RADIUS,
+    WALK_SPEED, WALK_STRIDES, WALK_SWING, facing, model, pose, rows,
+};
 
-/// The ids of the walker's rows in `table`, when it has them.
-pub fn rows(table: &MaterialTable) -> Option<(MaterialId, MaterialId)> {
-    let find = |name: &str| {
-        table
-            .rows()
-            .iter()
-            .position(|m| m.name == name)
-            .and_then(|i| MaterialId::try_from(i).ok())
-    };
-    Some((find(BODY_ROW)?, find(EYE_ROW)?))
-}
+/// How far the ghost's shaded colour mixes toward the ghost colour (ADR-0074).
+pub const GHOST_TINT: f32 = 0.35;
 
-fn solid(size: [u32; 3], m: MaterialId) -> Vec<MaterialId> {
-    vec![m; (size[0] * size[1] * size[2]) as usize]
-}
-
-/// The walker's model: torso (part 0, hung from the root), head (1) on the torso, left and
-/// right legs (2, 3) from the torso's hips, the legs sharing one prefab. Each part's pivot is
-/// where it joins its parent: the torso's and head's bottom centres, the legs' top centres.
-pub fn model(body: MaterialId, eye: MaterialId) -> Model {
-    let mut head = solid(HEAD, body);
-    for x in [1usize, 4] {
-        // Voxel (x, 0, 3): the front face, a little above the middle.
-        head[x + 6 * 6 * 3] = eye;
-    }
-    let leg = Arc::new(Prefab::new(LEG, solid(LEG, body), None));
-    let parts = vec![
-        Part {
-            volume: Arc::new(Prefab::new(TORSO, solid(TORSO, body), None)),
-            parent: None,
-            pivot: [4 * 256, 3 * 256, 0],
-            detail: DETAIL,
-        },
-        Part {
-            volume: Arc::new(Prefab::new(HEAD, head, None)),
-            parent: Some(0),
-            pivot: [3 * 256, 3 * 256, 0],
-            detail: DETAIL,
-        },
-        Part {
-            volume: leg.clone(),
-            parent: Some(0),
-            pivot: [384, 384, 8 * 256],
-            detail: DETAIL,
-        },
-        Part {
-            volume: leg,
-            parent: Some(0),
-            pivot: [384, 384, 8 * 256],
-            detail: DETAIL,
-        },
-    ];
-    Model::new(parts).expect("the walker's parts are valid")
-}
-
-/// A turn of `angle` radians about axis `axis` (0 x, 1 y, 2 z) in Q14.
-pub fn turn(axis: usize, angle: f32) -> Quat {
-    let (s, c) = (0.5 * angle).sin_cos();
-    let mut q = [(c * Q14_ONE as f32).round() as i16, 0, 0, 0];
-    q[1 + axis] = (s * Q14_ONE as f32).round() as i16;
-    Quat(q)
-}
-
-/// The walker standing with its feet's centre at `feet` (world voxels), turned `yaw` radians
-/// about z from facing -y, its legs swung `swing` radians about x, opposite ways.
-pub fn pose(feet: [f32; 3], yaw: f32, swing: f32) -> Pose {
-    let fixed = |v: f32| (v * 256.0).round() as i64;
-    // Each offset in 1/256 world voxel: a model voxel is half a world voxel.
-    let leg_top = (LEG[2] as i32) * 128;
-    Pose {
-        root: Fixed3(feet.map(fixed)),
-        root_q: turn(2, yaw),
-        parts: vec![
-            PartPose {
-                t: [0, 0, leg_top],
-                q: Quat::IDENTITY,
-            },
-            PartPose {
-                t: [0, 0, TORSO[2] as i32 * 128],
-                q: Quat::IDENTITY,
-            },
-            PartPose {
-                t: [-256, 0, 0],
-                q: turn(0, swing),
-            },
-            PartPose {
-                t: [256, 0, 0],
-                q: turn(0, -swing),
-            },
-        ],
-    }
-}
-
-/// The yaw that turns a walker at `at` to face `eye` (its front is -y at yaw 0).
-pub fn facing(at: [f32; 3], eye: [f32; 3]) -> f32 {
-    let (dx, dy) = (eye[0] - at[0], eye[1] - at[1]);
-    // -y turned by yaw about z is (sin yaw, -cos yaw).
-    dx.atan2(-dy)
-}
-
-/// One placed walker: its entity, where it stands and which way it faces when placed, the
-/// walk's clock then, and whether it is the viewer's model (`--model`, `crate::viewer`), which
-/// plays its clip where it stands, in place of the built-in walker.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// One placed entity: its id, where it stands and which way it faces when placed, the walk's
+/// clock then (a built-in walker's), its library entry (`None` for the built-in walker) and
+/// its own playback of that entry's clips.
+#[derive(Clone, Debug)]
 pub struct Placed {
     pub id: EntityId,
     pub feet: [f32; 3],
     pub yaw: f32,
     pub since: f32,
-    pub rig: bool,
+    pub entry: Option<usize>,
+    pub play: Play,
 }
 
-/// The testbed's walkers: the set the frame draws, the walkers in the order placed, the
-/// model and its handle once uploaded, and the counts the frame drew last. Two are equal when
-/// they place the same walkers alike (the set follows from the placements).
+impl PartialEq for Placed {
+    fn eq(&self, o: &Self) -> bool {
+        (self.id, self.feet, self.yaw, self.since, self.entry)
+            == (o.id, o.feet, o.yaw, o.since, o.entry)
+            && (self.play.clip, self.play.paused, self.play.ticks)
+                == (o.play.clip, o.play.paused, o.play.ticks)
+    }
+}
+
+/// What a placement takes: the built-in walker, a library entry's rig, or why the selected
+/// entry cannot be placed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Pick {
+    Builtin,
+    Rig(usize),
+    Refused(String),
+}
+
+/// The testbed's entities: the set the frame draws, the placements in order, the library
+/// they are placed from, the built-in walker's model and its handle once uploaded, the entity
+/// under the crosshair, and the counts the frame drew last. Two are equal when they place the
+/// same entities alike (the set follows from the placements).
 #[derive(Clone, Debug, Default)]
 pub struct Walkers {
     pub set: EntitySet,
@@ -184,28 +62,44 @@ pub struct Walkers {
     pub handle: Option<ModelHandle>,
     /// `--entities N`'s ring, placed on the first frame that has the world.
     pub ring: u32,
-    /// What `4` removes, newest last: `true` a walker, `false` a light.
+    /// What `4` removes, newest last: `true` an entity, `false` a light.
     pub newest: Vec<bool>,
     pub drawn: usize,
     pub parts: usize,
     pub over: usize,
-    /// The entity pool's bytes in use and its size, as the last [`sync_models`] read them; 0
-    /// and 0 before.
+    /// The entity pool's bytes in use and its size, as the last [`super::sync_models`] read
+    /// them; 0 and 0 before.
     pub pool_used: u64,
     pub pool_total: u64,
-    /// Whether placed walkers carry their eye lights (`F12` flips it; on by default).
+    /// Whether placed built-in walkers carry their eye lights (on by default).
     pub eye_lights_off: bool,
-    /// Whether the walkers walk (`F11` flips it; off by default).
+    /// Whether the built-in walkers walk (off by default).
     pub walking: bool,
     /// Seconds walked: the walk's clock, held while the walk is off.
     pub clock: f32,
-    /// `--model`'s viewer: placements take its model in place of the built-in walker.
-    pub viewer: Option<crate::viewer::Viewer>,
+    /// The entities library: an empty one places the built-in walker.
+    pub library: Library,
+    /// Each entry's still icon, made off the frame thread (`super::icon`).
+    pub icons: super::icon::Icons,
+    /// The placed entity under the crosshair, as the frame last read it: the clip keys act on
+    /// it, else on the newest.
+    pub aimed: Option<EntityId>,
+    /// The ghost: placement mode's selected entry standing at the aim, in the set and drawn
+    /// as any placement but not one of [`Walkers::placed`] (`super::picker`).
+    pub preview: Option<Placed>,
+    /// The belt's slots and placement mode (`super::belt`).
+    pub belt: super::belt::Belt,
     /// The frame's drawn parts, kept across frames ([`Walkers::refresh_displays`]): the first
     /// `shown` are this frame's, the rest storage kept for later frames.
     displays: Vec<(EntityId, ModelHandle, vxe_render::DisplayPose)>,
     shown: usize,
-    /// The viewer's two poses placed for one instance, reused instance to instance.
+    /// The ghost's mark colour, the frame's first mark colour as the last
+    /// [`super::feed`] read it; `None` before, [`vxe_render::MARK_COLOURS`]' first.
+    pub ghost_colour: Option<[f32; 3]>,
+    /// The marks [`Walkers::refresh_displays`] last refreshed: the ghost's, when there is
+    /// one, kept across frames.
+    marks: Vec<(EntityId, vxe_render::Mark)>,
+    /// A rig instance's two poses placed, reused instance to instance.
     rig_scratch: Option<(Pose, Pose)>,
 }
 
@@ -217,11 +111,13 @@ impl PartialEq for Walkers {
             && (self.pool_used, self.pool_total) == (o.pool_used, o.pool_total)
             && self.eye_lights_off == o.eye_lights_off
             && (self.walking, self.clock) == (o.walking, o.clock)
+            && (self.library.selected, self.aimed) == (o.library.selected, o.aimed)
+            && self.belt == o.belt
     }
 }
 
 impl Walkers {
-    /// No walker yet; `ring` placed on the ring once the world is there.
+    /// No entity yet; `ring` placed on the ring once the world is there.
     pub fn with_ring(ring: u32) -> Self {
         Self {
             ring,
@@ -229,8 +125,8 @@ impl Walkers {
         }
     }
 
-    /// No walker yet; `ring` placed on the ring once the world is there, walking from the
-    /// first frame when `walking` (`--entities-walk`).
+    /// No entity yet; `ring` placed on the ring once the world is there, the built-in
+    /// walkers walking from the first frame when `walking` (`--entities-walk`).
     pub fn with_ring_walking(ring: u32, walking: bool) -> Self {
         Self {
             walking,
@@ -238,7 +134,8 @@ impl Walkers {
         }
     }
 
-    /// The model, built on first use from `table`'s walker rows; `None` without them.
+    /// The built-in walker's model, built on first use from `table`'s walker rows; `None`
+    /// without them.
     pub fn model(&mut self, table: &MaterialTable) -> Option<Arc<Model>> {
         if self.model.is_none() {
             let (body, eye) = rows(table)?;
@@ -247,103 +144,217 @@ impl Walkers {
         self.model.clone()
     }
 
-    /// These walkers with `--model`'s viewer.
-    pub fn with_viewer(self, viewer: Option<crate::viewer::Viewer>) -> Self {
-        Self { viewer, ..self }
+    /// These entities placed from `library`.
+    pub fn with_library(self, library: Library) -> Self {
+        Self { library, ..self }
     }
 
-    /// Places a walker with its feet at `feet`, facing `eye`: the viewer's model at its clip's
-    /// pose now when there is a viewer, else the built-in walker.
+    /// These entities with `--model`'s viewer as the library's one entry, selected.
+    pub fn with_viewer(self, viewer: Option<Viewer>) -> Self {
+        match viewer {
+            Some(v) => self.with_library(Library::default().with_model(v)),
+            None => self,
+        }
+    }
+
+    /// `--model`'s viewer, when there is one.
+    pub fn viewer(&self) -> Option<&Viewer> {
+        self.library.flagged()
+    }
+
+    pub fn viewer_mut(&mut self) -> Option<&mut Viewer> {
+        self.library.flagged_mut()
+    }
+
+    /// What a placement of the selected entry takes: the built-in walker with no library.
+    pub fn pick(&self) -> Pick {
+        self.pick_at(self.library.selected)
+    }
+
+    /// What a placement of library entry `i` takes: the built-in walker past the entries.
+    pub fn pick_at(&self, i: usize) -> Pick {
+        let Some(e) = self.library.entries.get(i) else {
+            return Pick::Builtin;
+        };
+        if let Some(err) = e.error() {
+            return Pick::Refused(format!("{}: {err}", e.name));
+        }
+        match e.source {
+            Ok(Source::Builtin) => Pick::Builtin,
+            _ => Pick::Rig(i),
+        }
+    }
+
+    /// Places the selected entry with its feet at `feet`, facing `eye`; whether it placed.
     pub fn place(&mut self, table: &MaterialTable, feet: [f32; 3], eye: [f32; 3]) -> bool {
-        let yaw = facing(feet, eye);
-        let (model, pose, rig) = match &mut self.viewer {
-            Some(v) => {
-                if let Some(e) = v.build_pending(table) {
-                    println!("{e}");
-                }
-                let (Some(l), Some((now, _, _))) = (&v.loaded, v.poses()) else {
-                    return false;
-                };
-                (
-                    l.model.clone(),
-                    crate::viewer::placed(&now, feet, yaw),
-                    true,
-                )
-            }
+        self.place_selected(table, feet, eye).is_ok()
+    }
+
+    /// [`Walkers::place`] giving the new entity's id, or why nothing was placed. The library's
+    /// rigs not built yet are built against `table` first.
+    pub fn place_selected(
+        &mut self,
+        table: &MaterialTable,
+        feet: [f32; 3],
+        eye: [f32; 3],
+    ) -> Result<EntityId, String> {
+        for e in self.library.build(table) {
+            println!("{e}");
+        }
+        let entry = match self.pick() {
+            Pick::Builtin => None,
+            Pick::Rig(i) => Some(i),
+            Pick::Refused(why) => return Err(why),
+        };
+        self.place_entry(table, entry, feet, facing(feet, eye))
+    }
+
+    /// Places `entry` (`None` the built-in walker) standing at `feet`, turned `yaw`: a rig at
+    /// its entry's selected clip's tick 0, on a playback of its own.
+    pub fn place_entry(
+        &mut self,
+        table: &MaterialTable,
+        entry: Option<usize>,
+        feet: [f32; 3],
+        yaw: f32,
+    ) -> Result<EntityId, String> {
+        let (model, pose, play) = match entry {
             None => {
-                let Some(model) = self.model(table) else {
-                    return false;
+                let model = self
+                    .model(table)
+                    .ok_or("walker: no walker rows in this world's table")?;
+                (model, pose(feet, yaw, 0.0), Play::default())
+            }
+            Some(i) => {
+                let e = self.library.entries.get(i).ok_or("no such entry")?;
+                let v = e.viewer().ok_or_else(|| format!("{}: not a rig", e.name))?;
+                let Some(l) = &v.loaded else {
+                    return Err(format!("model {}: not built", e.name));
                 };
-                (model, pose(feet, yaw, 0.0), false)
+                let play = Play::start(l, v.play.clip);
+                let now = play.poses(l).0;
+                (l.model.clone(), placed(&now, feet, yaw), play)
             }
         };
-        let Ok(id) = self.set.insert(model, pose) else {
-            return false;
-        };
+        let id = self.set.insert(model, pose).map_err(|e| e.to_string())?;
         self.placed.push(Placed {
             id,
             feet,
             yaw,
             since: self.clock,
-            rig,
+            entry,
+            play,
         });
-        true
+        Ok(id)
     }
 
-    /// The viewer's reload once a second (`now` in seconds; [`crate::viewer::Viewer::poll`])
-    /// and its first build: on a new model every placed instance of the old takes it under its
-    /// own id ([`vxe_entity::EntitySet::replace`]). The banner's words when anything was tried.
+    /// Each rig's first build and its reload once a second (`now` in seconds;
+    /// [`crate::viewer::Viewer::poll`]): on a new model every placed instance of that entry,
+    /// and of no other, takes it under its own id ([`vxe_entity::EntitySet::replace`]), its
+    /// clip kept by name. The banner's words when anything was tried: `--model`'s as its
+    /// viewer gives them, another entry's after its name.
     pub fn poll_viewer(&mut self, now: f64, table: &MaterialTable) -> Option<String> {
-        let v = self.viewer.as_mut()?;
-        let built = v.build_pending(table);
-        let had = v.loaded.as_ref().map(|l| l.model.clone());
-        let words = built.or_else(|| v.poll(now, table));
-        let (Some(l), Some((now_pose, _, _))) = (&v.loaded, v.poses()) else {
-            return words;
-        };
-        if had.is_some_and(|m| Arc::ptr_eq(&m, &l.model)) {
-            return words;
+        let mut words = None;
+        let mut changed = Vec::new();
+        for (i, e) in self.library.entries.iter_mut().enumerate() {
+            let (name, flagged) = (e.name.clone(), e.flagged);
+            let Some(v) = e.viewer_mut() else { continue };
+            let had = v.loaded.clone();
+            let w = v.build_pending(table).or_else(|| v.poll(now, table));
+            if let Some(w) = w {
+                let w = if flagged { w } else { format!("{name}: {w}") };
+                if words.is_some() {
+                    println!("{w}");
+                } else {
+                    words = Some(w);
+                }
+            }
+            if let (Some(old), Some(l)) = (had, &v.loaded)
+                && !Arc::ptr_eq(&old.model, &l.model)
+            {
+                changed.push((i, old));
+            }
         }
-        for p in self.placed.iter().filter(|p| p.rig) {
-            let pose = crate::viewer::placed(&now_pose, p.feet, p.yaw);
-            // The pose is the new model's, so it fits; the entity keeps its id, and with it
-            // the mirror's slots and the pixels' history.
-            let _ = self.set.replace(p.id, l.model.clone(), pose);
+        // A failed first build moves the selection off the entry.
+        self.library.build(table);
+        for (i, old) in changed {
+            let Some(l) = self.library.entries[i]
+                .viewer()
+                .and_then(|v| v.loaded.as_ref())
+            else {
+                continue;
+            };
+            for p in (self.placed.iter_mut().chain(self.preview.iter_mut()))
+                .filter(|p| p.entry == Some(i))
+            {
+                let name = p.play.clip_name(&old).map(str::to_owned);
+                p.play.rebind(name.as_deref(), l);
+                let pose = placed(&p.play.poses(l).0, p.feet, p.yaw);
+                // The pose is the new model's, so it fits; the entity keeps its id, and with
+                // it the mirror's slots and the pixels' history.
+                let _ = self.set.replace(p.id, l.model.clone(), pose);
+            }
         }
         words
     }
 
-    /// Removes the newest walker.
+    /// Removes the newest placed entity.
     pub fn remove_newest(&mut self) {
         if let Some(p) = self.placed.pop() {
             self.set.remove(p.id);
         }
     }
 
-    /// The frame's list: every placed walker under its model's uploaded handle (the viewer's
-    /// for its instances), those whose model is not uploaded left out.
+    /// Removes placement `i`; its id, when there was one.
+    pub fn remove_at(&mut self, i: usize) -> Option<EntityId> {
+        if i >= self.placed.len() {
+            return None;
+        }
+        let p = self.placed.remove(i);
+        self.set.remove(p.id);
+        Some(p.id)
+    }
+
+    /// The placements and then the preview, when there is one.
+    pub fn all(&self) -> impl Iterator<Item = &Placed> {
+        self.placed.iter().chain(self.preview.iter())
+    }
+
+    /// The uploaded handle placement `p` is drawn under: its entry's, or the built-in
+    /// walker's.
+    fn handle_of(&self, p: &Placed) -> Option<ModelHandle> {
+        match p.entry {
+            None => self.handle,
+            Some(i) => self.library.entries.get(i)?.viewer()?.handle,
+        }
+    }
+
+    /// The frame's list: every placed entity under its model's uploaded handle, those whose
+    /// model is not uploaded left out.
     pub fn list(&self) -> Vec<(EntityId, ModelHandle)> {
-        let rig = self.viewer.as_ref().and_then(|v| v.handle);
-        self.placed
-            .iter()
-            .filter_map(|p| Some((p.id, if p.rig { rig? } else { self.handle? })))
+        self.all()
+            .filter_map(|p| Some((p.id, self.handle_of(p)?)))
             .collect()
     }
 
     /// Refreshes each listed entity's drawn parts ([`Walkers::displays`]): a built-in walker
-    /// as the set poses it, a viewer instance between its clip's two ticks around now
+    /// as the set poses it, a rig instance between its own clip's two ticks around now
     /// ([`vxe_render::DisplayPose::between_into`]). The list and each entry's storage are kept
-    /// across frames, so with the same walkers placed it allocates nothing per entity; the
-    /// viewer's two poses are sampled once a frame.
+    /// across frames, so built-in walkers allocate nothing per entity; a rig instance samples
+    /// its own two poses.
     pub fn refresh_displays(&mut self) {
-        let rig = self.viewer.as_ref().and_then(|v| v.poses());
-        let rig_handle = self.viewer.as_ref().and_then(|v| v.handle);
         let mut n = 0;
-        for p in &self.placed {
+        let total = self.placed.len() + usize::from(self.preview.is_some());
+        for k in 0..total {
+            let p = self
+                .placed
+                .get(k)
+                .or(self.preview.as_ref())
+                .expect("k < total");
             let Some((model, pose)) = self.set.get(p.id) else {
                 continue;
             };
-            let Some(handle) = (if p.rig { rig_handle } else { self.handle }) else {
+            let Some(handle) = self.handle_of(p) else {
                 continue;
             };
             if n == self.displays.len() {
@@ -352,22 +363,45 @@ impl Walkers {
             }
             let slot = &mut self.displays[n];
             (slot.0, slot.1) = (p.id, handle);
-            let fits = if p.rig {
-                let Some((a, b, alpha)) = &rig else {
-                    continue;
-                };
-                let (sa, sb) = self
-                    .rig_scratch
-                    .get_or_insert_with(|| (a.clone(), b.clone()));
-                crate::viewer::place_into(sa, a, p.feet, p.yaw);
-                crate::viewer::place_into(sb, b, p.feet, p.yaw);
-                slot.2.between_into(model, sa, sb, *alpha)
-            } else {
-                slot.2.of_into(model, pose)
+            let fits = match p.entry {
+                Some(i) => {
+                    let Some(l) = self.library.entries[i]
+                        .viewer()
+                        .and_then(|v| v.loaded.as_ref())
+                    else {
+                        continue;
+                    };
+                    let (a, b, alpha) = p.play.poses(l);
+                    let (sa, sb) = self
+                        .rig_scratch
+                        .get_or_insert_with(|| (a.clone(), b.clone()));
+                    crate::viewer::place_into(sa, &a, p.feet, p.yaw);
+                    crate::viewer::place_into(sb, &b, p.feet, p.yaw);
+                    slot.2.between_into(model, sa, sb, alpha)
+                }
+                None => slot.2.of_into(model, pose),
             };
             n += usize::from(fits);
         }
         self.shown = n;
+        self.marks.clear();
+        if let Some(p) = &self.preview {
+            let colour = self.ghost_colour.unwrap_or(vxe_render::MARK_COLOURS[0]);
+            self.marks.push((
+                p.id,
+                vxe_render::Mark {
+                    colour,
+                    outline: true,
+                    tint: GHOST_TINT,
+                },
+            ));
+        }
+    }
+
+    /// The marks [`Walkers::refresh_displays`] last refreshed: the ghost's, outlined and
+    /// tinted ([`GHOST_TINT`]) in the ghost colour, or none.
+    pub fn marks(&self) -> &[(EntityId, vxe_render::Mark)] {
+        &self.marks
     }
 
     /// The drawn parts [`Walkers::refresh_displays`] last refreshed, in placement order.
@@ -375,15 +409,15 @@ impl Walkers {
         &self.displays[..self.shown]
     }
 
-    /// Each placed walker's eye light, in placement order, while they are on: the frame takes
-    /// those that fit the list's free slots.
+    /// Each placed built-in walker's eye light, in placement order, while they are on: the
+    /// frame takes those that fit the list's free slots.
     pub fn eye_lights(&self) -> Vec<vxe_render::Light> {
         if self.eye_lights_off {
             return Vec::new();
         }
         self.placed
             .iter()
-            .filter(|p| !p.rig)
+            .filter(|p| p.entry.is_none())
             .filter_map(|p| {
                 let (model, pose) = self.set.get(p.id)?;
                 let at = pose.part_point(model, 1, EYE_LIGHT_AT)?;
@@ -396,7 +430,7 @@ impl Walkers {
             .collect()
     }
 
-    /// `F12`: flips the eye lights; the banner's words.
+    /// The menu's `eye lights`: flips them; the banner's words.
     pub fn toggle_eye_lights(&mut self) -> &'static str {
         self.eye_lights_off = !self.eye_lights_off;
         if self.eye_lights_off {
@@ -406,7 +440,7 @@ impl Walkers {
         }
     }
 
-    /// `F11`: the walk on or off; the banner's words.
+    /// The menu's `walkers walk`: the walk on or off; the banner's words.
     pub fn toggle_walk(&mut self) -> &'static str {
         self.walking = !self.walking;
         if self.walking { "walk on" } else { "walk off" }
@@ -441,29 +475,99 @@ impl Walkers {
         (feet, yaw, swing)
     }
 
-    /// Advances the viewer's clip by `dt` seconds, posing its instances at the clip's tick
-    /// now, and the walk while it is on, posing every placed built-in walker
-    /// ([`Walkers::walk_pose`]); while it is off the walkers hold their poses.
+    /// Advances by `dt` seconds: each rig's own clip (the viewer's row and the next
+    /// placement's) and every rig instance's, posing it at its clip's tick now; and the walk
+    /// while it is on, posing every placed built-in walker ([`Walkers::walk_pose`]); while it
+    /// is off the walkers hold their poses.
     pub fn step(&mut self, dt: f32) {
-        if let Some(v) = &mut self.viewer {
-            v.advance(dt);
-            if let Some((now, _, _)) = v.poses() {
-                for p in self.placed.iter().filter(|p| p.rig) {
-                    let _ = self
-                        .set
-                        .set_pose(p.id, crate::viewer::placed(&now, p.feet, p.yaw));
-                }
+        for e in &mut self.library.entries {
+            if let Some(v) = e.viewer_mut() {
+                v.advance(dt);
             }
+        }
+        for p in self.placed.iter_mut().chain(self.preview.iter_mut()) {
+            let Some(i) = p.entry else { continue };
+            let Some(l) = self.library.entries[i]
+                .viewer()
+                .and_then(|v| v.loaded.as_ref())
+            else {
+                continue;
+            };
+            p.play.advance(dt, l.rate);
+            let now = p.play.poses(l).0;
+            let _ = self.set.set_pose(p.id, placed(&now, p.feet, p.yaw));
         }
         if !self.walking {
             return;
         }
         self.clock += dt;
-        for p in self.placed.iter().filter(|p| !p.rig) {
+        for p in self.placed.iter().filter(|p| p.entry.is_none()) {
             let (feet, yaw, swing) = Self::walk_pose(p, self.clock);
             // A walker's pose has its four parts, so it always fits its model.
             let _ = self.set.set_pose(p.id, pose(feet, yaw, swing));
         }
+    }
+
+    /// The placement the clip keys act on: the aimed entity's, else the newest.
+    pub fn target(&self) -> Option<usize> {
+        self.aimed
+            .and_then(|id| self.placed.iter().position(|p| p.id == id))
+            .or_else(|| self.placed.len().checked_sub(1))
+    }
+
+    /// The target's entry name and built rig, when it is a rig's instance.
+    fn target_rig(&self) -> Option<(usize, &str, &Loaded)> {
+        let k = self.target()?;
+        let e = &self.library.entries[self.placed[k].entry?];
+        Some((k, e.name.as_str(), e.viewer()?.loaded.as_ref()?))
+    }
+
+    /// `step` clips on from the target's playing clip, faded into ([`Play::cycle`]): the
+    /// banner's words.
+    pub fn cycle_clip(&mut self, step: i32) -> String {
+        let Some((k, name, l)) = self.target_rig() else {
+            return "no clip: no rig placed".to_owned();
+        };
+        let (name, l) = (name.to_owned(), l.clone());
+        let p = &mut self.placed[k];
+        if p.play.cycle(&l, step) {
+            format!(
+                "{name} #{} clip {}",
+                k + 1,
+                p.play.clip_name(&l).unwrap_or("")
+            )
+        } else {
+            format!("{name}: no clip")
+        }
+    }
+
+    /// Pauses or plays the target's clip: the banner's words.
+    pub fn toggle_pause(&mut self) -> String {
+        let Some((k, name, _)) = self.target_rig() else {
+            return "no clip: no rig placed".to_owned();
+        };
+        let name = name.to_owned();
+        format!("{name} #{} {}", k + 1, self.placed[k].play.toggle_pause())
+    }
+
+    /// The HUD's target row, `<entry> #<n> <clip> <tick>/<length>` (then ` paused`), for the
+    /// aimed (else the newest) placement when it is a rig's instance; nothing otherwise.
+    pub fn write_target(&self, out: &mut String) -> bool {
+        let Some((k, name, l)) = self.target_rig() else {
+            return false;
+        };
+        let p = &self.placed[k];
+        let _ = write!(out, "{name} #{}", k + 1);
+        match (p.play.clip_name(l), p.play.clip_tick(l)) {
+            (Some(c), Some((t, len))) => {
+                let _ = write!(out, " {c} {t}/{len}");
+            }
+            _ => out.push_str(" no clip"),
+        }
+        if p.play.paused {
+            out.push_str(" paused");
+        }
+        true
     }
 
     /// The HUD row, `entities <n>/64 parts <m>/512 over <k>`, then, once the pool is read,
@@ -509,8 +613,8 @@ impl Walkers {
             .collect()
     }
 
-    /// Places the pending ring around `centre`, each walker on the first floor below its point
-    /// (`floor_below` gives the drop in voxels), facing the centre.
+    /// Places the pending ring of the selected entry around `centre`, each on the first floor
+    /// below its point (`floor_below` gives the drop in voxels), facing the centre.
     pub fn place_ring(
         &mut self,
         table: &MaterialTable,
@@ -521,285 +625,20 @@ impl Walkers {
         for p in Self::ring_points(n, centre) {
             let drop = floor_below(p, FLOOR_SEARCH).unwrap_or(0.0);
             let feet = [p[0], p[1], p[2] - drop];
-            self.place(table, feet, centre);
-        }
-    }
-}
-
-/// What [`sync_models`] needs of an entity pool: the frame's mirror with its queue
-/// ([`MirrorPool`]), or the bookkeeping alone ([`vxe_render::internals::VolumePool`]) in a test.
-pub trait ModelPool {
-    fn upload(
-        &mut self,
-        model: &Model,
-        table: &MaterialTable,
-    ) -> Result<ModelHandle, EntityUploadError>;
-    /// Frees `handle`'s model; a handle the pool does not know is ignored.
-    fn free(&mut self, handle: ModelHandle);
-    fn clear(&mut self);
-    fn used_bytes(&self) -> u64;
-    fn total_bytes(&self) -> u64;
-}
-
-impl ModelPool for vxe_render::internals::VolumePool {
-    fn upload(
-        &mut self,
-        model: &Model,
-        table: &MaterialTable,
-    ) -> Result<ModelHandle, EntityUploadError> {
-        vxe_render::internals::VolumePool::upload(self, model, table).map(|u| u.handle)
-    }
-
-    fn free(&mut self, handle: ModelHandle) {
-        let _ = self.free_model(handle);
-    }
-
-    fn clear(&mut self) {
-        vxe_render::internals::VolumePool::clear(self);
-    }
-
-    fn used_bytes(&self) -> u64 {
-        vxe_render::internals::VolumePool::used_bytes(self)
-    }
-
-    fn total_bytes(&self) -> u64 {
-        vxe_render::internals::VolumePool::total_bytes(self)
-    }
-}
-
-/// The frame's entity mirror and the queue its uploads are written through.
-pub struct MirrorPool<'a> {
-    pub mirror: &'a mut vxe_render::EntityMirror,
-    pub queue: &'a vxe_render::wgpu::Queue,
-}
-
-impl ModelPool for MirrorPool<'_> {
-    fn upload(
-        &mut self,
-        model: &Model,
-        table: &MaterialTable,
-    ) -> Result<ModelHandle, EntityUploadError> {
-        self.mirror.upload_model(self.queue, model, table)
-    }
-
-    fn free(&mut self, handle: ModelHandle) {
-        let _ = self.mirror.free_model(handle);
-    }
-
-    fn clear(&mut self) {
-        self.mirror.clear();
-    }
-
-    fn used_bytes(&self) -> u64 {
-        self.mirror.pool_used_bytes()
-    }
-
-    fn total_bytes(&self) -> u64 {
-        self.mirror.pool_total_bytes()
-    }
-}
-
-/// The banner's words for a pool [`sync_models`] cleared and filled again.
-pub const POOL_RESET: &str = "entity pool reset";
-
-/// Whether `e` is a refusal a cleared pool may not repeat: the free bytes hold the model, no
-/// hole does.
-fn fragmented(e: &EntityUploadError) -> bool {
-    matches!(*e, EntityUploadError::PoolFull { needed, free, largest }
-        if largest < needed && needed <= free)
-}
-
-/// Uploads `model` into `pool`; on `PoolFull` frees `stale` (the viewer's replaced model, when
-/// there is one) and tries once more.
-fn upload_or_free_stale(
-    pool: &mut impl ModelPool,
-    model: &Model,
-    table: &MaterialTable,
-    stale: &mut Option<ModelHandle>,
-) -> Result<ModelHandle, EntityUploadError> {
-    match pool.upload(model, table) {
-        Err(EntityUploadError::PoolFull { .. }) if stale.is_some() => {
-            pool.free(stale.take().expect("checked"));
-            pool.upload(model, table)
-        }
-        r => r,
-    }
-}
-
-/// One pass of [`sync_models`]: the built-in walker's model and the viewer's uploaded when
-/// needed, the viewer's replaced model freed once its new one is in. The first refusal and
-/// whose it was (`true` the viewer's).
-fn upload_needed(
-    walkers: &mut Walkers,
-    pool: &mut impl ModelPool,
-    table: &MaterialTable,
-) -> Result<(), (bool, EntityUploadError)> {
-    let mut no_stale = None;
-    if walkers.handle.is_none()
-        && walkers.placed.iter().any(|p| !p.rig)
-        && let Some(model) = walkers.model(table)
-    {
-        let stale = walkers
-            .viewer
-            .as_mut()
-            .map_or(&mut no_stale, |v| &mut v.stale);
-        walkers.handle =
-            Some(upload_or_free_stale(pool, &model, table, stale).map_err(|e| (false, e))?);
-    }
-    if let Some(v) = &mut walkers.viewer
-        && v.handle.is_none()
-        && let Some(l) = &v.loaded
-    {
-        let model = l.model.clone();
-        v.handle =
-            Some(upload_or_free_stale(pool, &model, table, &mut v.stale).map_err(|e| (true, e))?);
-    }
-    if let Some(v) = &mut walkers.viewer
-        && v.handle.is_some()
-        && let Some(s) = v.stale.take()
-    {
-        pool.free(s);
-    }
-    Ok(())
-}
-
-/// The models the placed walkers need, in `pool`: the built-in walker's on first need, the
-/// viewer's after a build or a reload, then the viewer's replaced model freed. A `PoolFull`
-/// first frees the replaced model and retries; one that stands with the free bytes enough and
-/// no hole large enough clears the pool and uploads every model still placed again (the
-/// banner's [`POOL_RESET`]). A refusal after that keeps the viewer's error on screen (or prints
-/// the walker's). The pool's figures are read for the HUD row. The banner's words when there
-/// are any.
-pub fn sync_models(
-    walkers: &mut Walkers,
-    pool: &mut impl ModelPool,
-    table: &MaterialTable,
-) -> Option<String> {
-    let mut words = None;
-    let mut r = upload_needed(walkers, pool, table);
-    if let Err((_, e)) = &r
-        && fragmented(e)
-    {
-        pool.clear();
-        walkers.handle = None;
-        if let Some(v) = &mut walkers.viewer {
-            (v.handle, v.stale) = (None, None);
-        }
-        words = Some(POOL_RESET.to_owned());
-        r = upload_needed(walkers, pool, table);
-    }
-    match r {
-        Ok(()) => {}
-        Err((false, e)) => println!("walker: {e}"),
-        Err((true, e)) => {
-            if let Some(v) = &mut walkers.viewer {
-                // Tried with no model: the next try follows a reload.
-                let err = format!("model {}: {e}", v.name);
-                v.loaded = None;
-                v.error = Some(e.to_string());
-                words = Some(err);
+            if let Err(e) = self.place_selected(table, feet, centre) {
+                println!("{e}");
+                return;
             }
         }
     }
-    (walkers.pool_used, walkers.pool_total) = (pool.used_bytes(), pool.total_bytes());
-    words
-}
-
-/// One frame's walkers into `frame`: the pending ring placed around `eye` on `world`'s floor,
-/// the models synced ([`sync_models`]), and the frame's entities set while any walker is
-/// placed, was drawn the frame before, or the mirror still walks a ghost leaf; the drawn counts copied back for the HUD. The
-/// banner's words from the sync, when there are any.
-pub fn feed(
-    walkers: &mut Walkers,
-    world: &vxe_world::World,
-    eye: [f32; 3],
-    frame: &mut vxe_render::Frame,
-    queue: &vxe_render::wgpu::Queue,
-) -> Option<String> {
-    if walkers.ring > 0 {
-        let floor_below = |p: [f32; 3], search: i64| {
-            let o = Fixed3(p.map(|v| (v * 256.0).round() as i64));
-            let hit = world
-                .raycast(o, [0, 0, -256], search * 256)
-                .ok()
-                .flatten()?;
-            Some(hit.t as f32 / 256.0)
-        };
-        walkers.place_ring(world.materials(), eye, floor_below);
-    }
-    // A removal leaves a ghost leaf until the next write, so the frames keep writing while the
-    // mirror still walks one.
-    if walkers.placed.is_empty()
-        && walkers.drawn == 0
-        && walkers.over == 0
-        && !frame.entity_mirror().walks_entities()
-    {
-        return None;
-    }
-    let words = sync_models(
-        walkers,
-        &mut MirrorPool {
-            mirror: frame.entity_mirror_mut(),
-            queue,
-        },
-        world.materials(),
-    );
-    walkers.refresh_displays();
-    frame.set_entity_displays(
-        queue,
-        walkers.displays().iter().map(|(id, h, d)| (*id, *h, d)),
-    );
-    let m = frame.entity_mirror();
-    (walkers.drawn, walkers.parts, walkers.over) =
-        (m.entities_drawn(), m.parts_drawn(), m.entities_over_cap());
-    words
-}
-
-/// Voxels of the walker's model that are not air, per part, for the readings.
-pub fn solid_voxels(model: &Model) -> Vec<usize> {
-    model
-        .parts()
-        .iter()
-        .map(|p| {
-            let s = p.volume.size();
-            let mut n = 0;
-            for z in 0..s[2] as i32 {
-                for y in 0..s[1] as i32 {
-                    for x in 0..s[0] as i32 {
-                        n += usize::from(p.volume.get([x, y, z]).is_some_and(|m| m != AIR));
-                    }
-                }
-            }
-            n
-        })
-        .collect()
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::sync_models;
+    use super::super::walker::{WALK_RADIUS, WALK_SWING, model, pose, rows, with_walker};
     use super::*;
-
-    #[test]
-    fn the_walker_has_four_parts_and_two_glowing_eyes() {
-        let table = with_walker(&MaterialTable::new());
-        let (body, eye) = rows(&table).unwrap();
-        let m = model(body, eye);
-        assert_eq!(m.parts().len(), 4);
-        let head = &m.parts()[1].volume;
-        assert_eq!(head.get([1, 0, 3]), Some(eye));
-        assert_eq!(head.get([4, 0, 3]), Some(eye));
-        assert_eq!(head.get([2, 0, 3]), Some(body));
-        assert_eq!(table.get(eye).unwrap().emission, EYE_EMISSION);
-        assert_eq!(m.parts()[2].volume.id(), m.parts()[3].volume.id());
-    }
-
-    #[test]
-    fn a_walker_faces_the_eye() {
-        // At yaw 0 the front is -y: an eye at -y gives yaw 0, one at +x a quarter turn.
-        assert!(facing([0.0; 3], [0.0, -5.0, 0.0]).abs() < 1e-6);
-        let q = facing([0.0; 3], [5.0, 0.0, 0.0]);
-        assert!((q - std::f32::consts::FRAC_PI_2).abs() < 1e-6, "{q}");
-    }
+    use vxe_entity::Q14_ONE;
 
     #[test]
     fn the_hud_row_and_the_banner_count_the_walkers() {
@@ -922,7 +761,6 @@ mod tests {
             vxe_render::LightingResolution::Half,
             0.0,
         );
-        assert_eq!(crate::toggles::KEY_WALK, vxe_app::KeyCode::F11);
         assert!(m.walkers.place(&table, [50.0, 40.0, 2.0], [50.0, 0.0, 8.0]));
         let words = m.walkers.toggle_walk();
         assert_eq!(words, "walk on");
@@ -941,7 +779,7 @@ mod tests {
         let mut swings = Vec::new();
         for _ in 0..240 {
             m.walkers.step(1.0 / 60.0);
-            let p = m.walkers.placed[0];
+            let p = m.walkers.placed[0].clone();
             let (feet, yaw, swing) = Walkers::walk_pose(&p, m.walkers.clock);
             let r = ((feet[0] - centre[0]).powi(2) + (feet[1] - centre[1]).powi(2)).sqrt();
             assert!((r - WALK_RADIUS).abs() < 1e-3, "radius {r}");
@@ -1048,7 +886,7 @@ mod tests {
         }
         // A walker placed while the clock reads 2 s starts from where it stands.
         assert!(w.place(&table, [10.0, 300.0, 2.0], [10.0, 0.0, 8.0]));
-        let new = w.placed.last().copied().unwrap();
+        let new = w.placed.last().cloned().unwrap();
         let at = w.set.get(new.id).unwrap().1.clone();
         w.step(1.0 / 60.0);
         let (d, turn) = apart(w.set.get(new.id).unwrap().1, &at);
@@ -1066,7 +904,6 @@ mod tests {
             vxe_render::LightingResolution::Half,
             0.0,
         );
-        assert_eq!(crate::toggles::KEY_EYE_LIGHTS, vxe_app::KeyCode::F12);
         // Facing -y: the eye at -y of the feet.
         assert!(m.walkers.place(&table, [10.0, 20.0, 2.0], [10.0, 0.0, 8.0]));
         let lights = m.walkers.eye_lights();
@@ -1094,8 +931,9 @@ mod tests {
 
     /// Refreshing the drawn parts allocates nothing per entity once its storage has grown:
     /// eight built-in walkers allocate nothing from the second refresh on, and each holds its
-    /// set pose's parts; viewer instances allocate the same bytes a refresh with one of them
-    /// and with four (the viewer's two poses are sampled once a refresh, not per instance).
+    /// set pose's parts; rig instances, each on its own playback, allocate only the two poses
+    /// each samples: four instances allocate four times one's bytes, the drawn parts' storage
+    /// kept.
     #[test]
     fn refreshing_the_displays_allocates_nothing_per_entity() {
         use crate::test_support::counting;
@@ -1150,7 +988,11 @@ mod tests {
         refresh(&mut w);
         let four = refresh(&mut w);
         assert_eq!(w.displays().len(), 4);
-        assert!(one > 0, "the viewer samples its two poses");
-        assert_eq!(four, one, "no bytes per instance");
+        assert!(one > 0, "an instance samples its two poses");
+        assert_eq!(
+            four,
+            4 * one,
+            "each instance samples its own, the storage kept"
+        );
     }
 }

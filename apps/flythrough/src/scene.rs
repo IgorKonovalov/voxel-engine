@@ -292,6 +292,34 @@ pub fn cave_materials() -> MaterialTable {
     t
 }
 
+/// The outdoor source's table (`outdoor::OutdoorSource`): [`cave_materials`] with `grass` and
+/// `soil` appended at `outdoor::GRASS` and `outdoor::SOIL`, then the trees' `bark` and `leaf`
+/// at `outdoor::BARK` and `outdoor::LEAF`, so every earlier id keeps its meaning.
+pub fn outdoor_materials() -> MaterialTable {
+    let mut t = cave_materials();
+    let row = |name: &str, albedo: [f32; 3]| Material {
+        albedo,
+        ..Material::named(name)
+    };
+    assert_eq!(
+        t.push(row("grass", [0.18, 0.32, 0.10])),
+        crate::outdoor::GRASS
+    );
+    assert_eq!(
+        t.push(row("soil", [0.30, 0.22, 0.15])),
+        crate::outdoor::SOIL
+    );
+    assert_eq!(
+        t.push(row("bark", [0.25, 0.17, 0.11])),
+        crate::outdoor::BARK
+    );
+    assert_eq!(
+        t.push(row("leaf", [0.12, 0.26, 0.08])),
+        crate::outdoor::LEAF
+    );
+    t
+}
+
 /// `table` (the cave's four rows after air) with the castle's seven rows appended at
 /// `castle::MATERIAL_BASE` on, in palette order: stone, trim (darker stone for ribs, tracery
 /// and merlons), slate, wood and iron, opaque; glass, translucent and tinted blue; and torch,
@@ -417,12 +445,14 @@ mod tests {
     }
 
     /// The material file reproduces every table the scenes were written with in Rust, row for
-    /// row: the cave's (its ore plain and emissive), the castle's, the showcase's and the rigs'
-    /// wood, each through the selection its scene takes; and each scene's id constants name
+    /// row: the cave's (its ore plain and emissive), the castle's, the showcase's, the rigs'
+    /// wood and the outdoor hills', each through the selection its scene takes; and each scene's id constants name
     /// the file's rows.
     #[test]
     fn the_material_file_reproduces_the_rust_tables() {
-        use crate::materials::{CASTLE_ROWS, RIG_ROWS, SHOWCASE_ROWS, Selection, load};
+        use crate::materials::{
+            CASTLE_ROWS, OUTDOOR_ROWS, RIG_ROWS, SHOWCASE_ROWS, Selection, load,
+        };
         use crate::setup::CrispRows;
         let (file, _) = load(None).expect("the material file loads");
         let compose = |extra: &[&'static str], after: &[&'static str], ore: bool| {
@@ -443,6 +473,10 @@ mod tests {
         assert_eq!(
             compose(&RIG_ROWS, &[], true),
             with_wood(&with_emissive_ore(&cave_materials()))
+        );
+        assert_eq!(
+            compose(&OUTDOOR_ROWS, &[], true),
+            with_emissive_ore(&outdoor_materials())
         );
         // The ids the scenes write voxels with name the file's rows.
         let id = |n: &str| file.row(n).map(|(id, _)| id);

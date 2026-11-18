@@ -5,7 +5,9 @@
 use std::path::Path;
 
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS};
+use flythrough::outdoor::{OutdoorSource, Spawn};
 use flythrough::showcase::ShowcaseSource;
+use vxe_render::sky::Sky;
 use vxe_render::{
     Camera, Frame, GpuWorld, Lighting, LightingResolution, MirrorConfig, RenderScale, wgpu,
 };
@@ -16,6 +18,17 @@ use vxe_world::*;
 pub enum Source {
     Level,
     Showcase,
+    /// The outdoor hills, bounded to [`outdoor_extent`] around the mouth.
+    #[allow(dead_code, reason = "the clip frames the showcase and the level only")]
+    Outdoor,
+}
+
+/// The chunks a still of the outdoor hills generates: from 7 chunks (448 voxels) toward -x of
+/// the mouth to 12 past it (the chamber lies 600 voxels along +x), 4 to either side in y, and
+/// z 256 to 831, which holds the hills' surface (about 200 voxels either side of 512) and the
+/// chamber 150 under it.
+pub fn outdoor_extent() -> ChunkExtent {
+    ChunkExtent::new([-7, -4, 4], [12, 4, 13])
 }
 
 /// The light radius of the showcase: its farthest pair of chunks lies 18.06 chunks apart.
@@ -39,6 +52,16 @@ pub fn build_world(
                 )),
             );
             (world, source.spawn(), SHOWCASE_LIGHT_RADIUS)
+        }
+        Source::Outdoor => {
+            let source = OutdoorSource::new(seed);
+            let world = World::generate(
+                outdoor_extent(),
+                &source,
+                &rows(flythrough::outdoor_materials()),
+            );
+            let (eye, _) = source.spawn(Spawn::Outside);
+            (world, eye, vxe_render::DEFAULT_LIGHT_RADIUS)
         }
         Source::Level => {
             let source = CaveSource::new(seed, ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS));
@@ -185,6 +208,8 @@ pub struct FrameSetup {
     pub lighting: Lighting,
     pub look: flythrough::LookPreset,
     pub resolution: LightingResolution,
+    /// The sky over the world; `None`, the sky-less frame.
+    pub sky: Option<Sky>,
 }
 
 impl FrameSetup {
@@ -224,6 +249,7 @@ impl FrameSetup {
             ..vxe_render::LookParams::default()
         });
         frame.set_resolution(device, self.resolution);
+        frame.set_sky(self.sky);
         let r = frame
             .bake_until(
                 device,

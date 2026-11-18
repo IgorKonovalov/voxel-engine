@@ -53,7 +53,7 @@
 > **Starts after:** [Plan 0040](0040-eye-adaptation-asymmetric-auto-exposure-and-pre-exposure.md)
 > merges. Its branch changes `light.wgsl`, `temporal.wgsl`, `gradient.wgsl` and `atrous.wgsl`
 > (pre-exposed stores, a history rescale, the moment clamp), and this plan's harness reads its
-> meter tiles (`Frame::exposure_tiles`). **Before [Plan 0032](../0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)**:
+> meter tiles (`Frame::exposure_tiles`). **Before [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)**:
 > 0032 adds the sun's directional sample and sky light into this same long-history part
 > (its Decision 3 and 4) and reads its history bars against it. Settling the part's length,
 > precision and guard first means 0032 builds on them once, and does not re-read its bars

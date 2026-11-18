@@ -23,19 +23,6 @@ pub(crate) const DIG_STEP: i64 = FIXED_ONE;
 
 pub(crate) const DIG_RANGE: (i64, i64) = (FIXED_ONE, 30 * FIXED_ONE);
 
-/// The dig radius after a frame's `delta` scroll lines banked in `scroll`: whole steps of
-/// [`DIG_STEP`], clamped to [`DIG_RANGE`]; `None` when it does not change. At either end of
-/// the range, scroll pushing past it is dropped rather than banked, so the first line back
-/// steps at once.
-pub(crate) fn scroll_dig_radius(radius: i64, scroll: &mut ScrollSteps, delta: f32) -> Option<i64> {
-    let steps = scroll.add(delta);
-    let r = (radius + steps * DIG_STEP).clamp(DIG_RANGE.0, DIG_RANGE.1);
-    if (r == DIG_RANGE.1 && scroll.carry() > 0.0) || (r == DIG_RANGE.0 && scroll.carry() < 0.0) {
-        scroll.clear();
-    }
-    (r != radius).then_some(r)
-}
-
 /// Radius of the right-click fill: 0.3 m.
 pub(crate) const FILL_RADIUS: i64 = 3 * FIXED_ONE;
 
@@ -153,7 +140,7 @@ impl Coarse {
         }
     }
 
-    /// The `F1` collapse line.
+    /// The readings' (`Enter`) collapse line.
     pub(crate) fn query_line(&self) -> String {
         match self.query {
             Some(n) => format!("collapse: last dig's query found {n} regions"),
@@ -350,32 +337,6 @@ mod tests {
     use crate::percentile;
 
     use crate::test_support::{applied, native_net, net_tick};
-
-    /// 32 frames of an eighth of a line raise the dig radius from 0.5 m by four steps to
-    /// 0.9 m, each step reported once. At 3.0 m further upward scroll reports nothing and
-    /// banks nothing, so one line down steps to 2.9 m at once.
-    #[test]
-    fn smooth_scrolling_steps_the_dig_radius() {
-        let mut scroll = ScrollSteps::default();
-        let mut r = DIG_RADIUS;
-        let mut changes = Vec::new();
-        for _ in 0..32 {
-            if let Some(n) = scroll_dig_radius(r, &mut scroll, 0.125) {
-                r = n;
-                changes.push(r);
-            }
-        }
-        assert_eq!(changes, [6, 7, 8, 9].map(|v| v * FIXED_ONE));
-        assert_eq!(r, 9 * FIXED_ONE);
-
-        let mut r = 30 * FIXED_ONE;
-        for delta in [0.125, 0.5, 1.0, 0.875, 0.125] {
-            assert_eq!(scroll_dig_radius(r, &mut scroll, delta), None);
-        }
-        assert_eq!(scroll.carry(), 0.0);
-        r = scroll_dig_radius(r, &mut scroll, -1.0).expect("one line down steps");
-        assert_eq!(r, 29 * FIXED_ONE);
-    }
 
     /// Every failure and every restart of the logic prints a line; the stop prints once,
     /// naming that the session goes on, and the `Stopped` reports after it print nothing.

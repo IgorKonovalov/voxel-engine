@@ -16,6 +16,9 @@ pub(crate) const PILOT_SPEED: f32 = 100.0;
 
 pub(crate) const PILOT_LEG_SECS: f64 = 30.0;
 
+/// Outdoors the legs fly this far over the spawn (30 m).
+pub(crate) const PILOT_LIFT: f32 = 300.0;
+
 /// The autopilot's legs (`--autopilot`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Leg {
@@ -27,9 +30,10 @@ pub(crate) enum Leg {
     Return,
 }
 
-/// `--autopilot`: waits for full residency, carves 1 m at the first rock within 30 m along +x
-/// and records the touched chunks' hash, flies +x at 10 m/s for 30 s (beyond the eviction
-/// radius) and back, waits for the touched chunks to be full again, and compares the hash.
+/// `--autopilot`: waits for full residency, carves 1 m at the first solid voxel within 30 m
+/// along +x (outdoors, with none there, at the ground straight below) and records the touched
+/// chunks' hash, flies +x at 10 m/s for 30 s (beyond the eviction radius; outdoors
+/// [`PILOT_LIFT`] over the spawn) and back, waits for the touched chunks to be full again, and compares the hash.
 /// Over the flight it counts unready-near frames (a chunk wanted full within `r_full - 2`
 /// chunks of the camera's not yet resident and mirrored full), and samples streaming CPU,
 /// latency, memory and march-pass GPU time.

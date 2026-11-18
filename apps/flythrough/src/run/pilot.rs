@@ -1,7 +1,9 @@
 //! The autopilot's steps in the run: the flight, its samples and the report.
 
 use crate::app::{ms_since, peak_rss_bytes};
-use crate::autopilot::{Autopilot, Leg, PILOT_LEG_SECS, PILOT_RADIUS, PILOT_REACH, PILOT_SPEED};
+use crate::autopilot::{
+    Autopilot, Leg, PILOT_LEG_SECS, PILOT_LIFT, PILOT_RADIUS, PILOT_REACH, PILOT_SPEED,
+};
 use crate::edits::{centre_fixed, edit_line, voxel_of};
 use crate::now;
 use crate::run::Run;
@@ -33,10 +35,22 @@ impl Run {
                     return p.settle.step(false, pending, &self.failure);
                 }
                 let o = centre_fixed(self.fly.camera.position);
+                // Outdoors the +x ray may find only sky: the dig then goes straight down to
+                // the ground under the spawn.
+                let outdoor = self.args.mode.is_outdoor();
+                let dir = if outdoor
+                    && matches!(
+                        self.world.raycast(o, [FIXED_ONE, 0, 0], PILOT_REACH),
+                        Ok(None)
+                    ) {
+                    [0, 0, -FIXED_ONE]
+                } else {
+                    [FIXED_ONE, 0, 0]
+                };
                 let op = EditOp::tool_along_ray(
                     &self.world,
                     o,
-                    [FIXED_ONE, 0, 0],
+                    dir,
                     PILOT_REACH,
                     PILOT_RADIUS,
                     Mode::Carve,
@@ -55,10 +69,12 @@ impl Run {
                     Err(e) => println!("autopilot: carve refused, {e}"),
                 }
                 if p.touched.is_empty() {
-                    println!("autopilot: nothing carved within 30 m along +x; no return check");
+                    println!("autopilot: nothing carved within 30 m; no return check");
                 }
                 p.hash = chunks_hash(&self.world, &p.touched).unwrap_or(0);
-                p.origin = self.fly.camera.position;
+                // Outdoors the legs fly 30 m over the spawn, clear of the hills.
+                p.origin =
+                    self.fly.camera.position + Vec3::Z * if outdoor { PILOT_LIFT } else { 0.0 };
                 p.leg = Leg::Out;
                 p.leg_start = now();
                 p.latency_from = stream.latency_ms.len();

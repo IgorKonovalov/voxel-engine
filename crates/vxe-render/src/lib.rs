@@ -25,6 +25,8 @@ mod loading;
 mod present;
 mod probes;
 mod readback;
+mod settings;
+pub mod sky;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 
@@ -92,14 +94,14 @@ pub use bake::{
 pub use camera::{Camera, View};
 pub use entities::{
     DEFAULT_ENTITY_POOL_BYTES, DisplayPose, EntityMirror, EntityUploadError, FreedBytes,
-    MAX_ENTITIES, MAX_ENTITY_PARTS, ModelHandle,
+    MARK_BUFFER_BYTES, MARK_COLOURS, MAX_ENTITIES, MAX_ENTITY_PARTS, Mark, ModelHandle,
 };
 pub use exposure::{
     AutoExposure, EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState, Metering,
 };
 pub use frame::{
-    ATROUS_ITERATIONS, DEFAULT_LIGHT_FLOOR, DEFAULT_PROBE_FREEZE, Light, MAX_LIGHTS, Params,
-    Upscaler,
+    ATROUS_ITERATIONS, DEFAULT_LIGHT_FLOOR, DEFAULT_PROBE_FREEZE, DEFAULT_SKY_RAYS, Light,
+    MAX_LIGHTS, MAX_SKY_RAYS, Params, Upscaler,
 };
 pub use frame::{
     CrackShares, EntityLight, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, LightWeights,
@@ -113,7 +115,10 @@ pub use gpu_world::{
     DEFAULT_LIGHT_RADIUS, DEFAULT_LIGHT_SAMPLES, GpuWorld, MirrorConfig, MirrorError, ShardLayout,
     SyncClock, SyncPoint, SyncStats, Window,
 };
-pub use hud::{HudColour, HudOverlay};
+pub use hud::{
+    BACKDROP_ALPHA, GRID_COLS as HUD_GRID_COLS, HudBox, HudColour, HudOverlay, HudPaint, HudTile,
+    MAX_TILES, TILE_BIT, TILE_CELLS, TILE_PX,
+};
 pub use light::LightParams;
 pub use loading::{
     BAR_EASE_S, EasedBar, LOADING_WGSL, LoadProgress, LoadStage, LoadingLayout, LoadingScreen,
@@ -121,6 +126,9 @@ pub use loading::{
 };
 pub use present::Presenter;
 pub use probes::{DEFAULT_H_MOVE, DEFAULT_PROBE_SPACING, ProbeVolume};
+pub use settings::{
+    ApplyClass, BakeKnobs, BuildSettings, Profile, RenderSettings, SettingsChange, UpscalerChoice,
+};
 pub use {glam, wgpu};
 
 /// The hit pass's modules (`common`, `mirror`, `walk`, `hitrec`, `field_walk`, `hit`), which

@@ -1,5 +1,6 @@
-//! The model viewer's and the assets' flags: `--model` and `--clip` (`crate::viewer`), and
-//! `--materials` (`crate::materials`).
+//! The model viewer's, the entities library's and the assets' flags (`crate::viewer`,
+//! `crate::entities::library`, `crate::materials`, `crate::structures`): `--model`, `--clip`,
+//! `--library-dir`, `--library`, `--materials` and the `--vox` flags.
 
 use super::flags::Parsing;
 use super::table::Flag;
@@ -66,5 +67,25 @@ pub(super) fn model_flags() -> Vec<Flag<Parsing>> {
              tick its box is resident, instead of through the cave's source",
             |p: &mut Parsing| p.args.vox_op = true,
         ),
+        Flag::value(
+            &["--library-dir"],
+            "DIR",
+            "the entities library: every DIR/<name>/<name>.rig is an entry (the fly-through's \
+             assets/entities)",
+            |p: &mut Parsing, v| {
+                p.args.library_dir = Some(v.text.into());
+                Ok(())
+            },
+        ),
     ]
+}
+
+/// `--library`'s row: print the library's entries and exit, beside `--keys`.
+pub(super) fn library_flag() -> Flag<Parsing> {
+    Flag::switch(
+        &["--library"],
+        "print the entities library (each entry's parts, size, pool bytes and clips, or its \
+         error), and exit",
+        |p: &mut Parsing| p.args.library = true,
+    )
 }

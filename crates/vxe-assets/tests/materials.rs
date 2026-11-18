@@ -35,8 +35,8 @@ fn showcase_rows() -> Vec<Material> {
 }
 
 /// Plan 0083 Phase 2 done-when 1: the fly-through's `materials.txt` holds the showcase's
-/// rows row for row (id, name, every field) as its first seven, then the castle's and the
-/// rigs' wood; `canonical` of the file parses back equal.
+/// rows row for row (id, name, every field) as its first seven, then the castle's, the
+/// rigs' wood and the outdoor hills'; `canonical` of the file parses back equal.
 #[test]
 fn a_table_file_round_trips() {
     let file = MaterialFile::parse(&flythrough_file()).expect("parses");
@@ -59,7 +59,11 @@ fn a_table_file_round_trips() {
             "castle iron",
             "castle glass",
             "castle torch",
-            "rig wood"
+            "rig wood",
+            "grass",
+            "soil",
+            "bark",
+            "leaf"
         ]
     );
     let glass = file.row("castle glass").unwrap().1;

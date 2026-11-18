@@ -11,7 +11,7 @@
 > [ADR-0014](../../adrs/0014-prefab-identity-in-the-op-log.md) (a prefab's content id, the
 > volume's key).
 > **Source:** the owner, 2026-11-16: "proper reset should be drafted as a plan", on
-> [Plan 0077](../0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md)'s
+> [Plan 0077](0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md)'s
 > owner question 6 (answered "not now" there, with a backlog entry promised; none exists on main
 > at b4e72e35, so this plan is that entry).
 > **Starts after:** [Plan 0062](0062-entities-voxel-models-on-rigid-parts-traced-lit-shadowed-and-queried.md)

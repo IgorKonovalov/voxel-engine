@@ -20,7 +20,7 @@
 > start as a side lane once [Plan 0063](done/0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
 > has merged (`Pose::compose`, Phase 3b) and the clip-recorder chore has merged (the spider's rig,
 > `apps/flythrough/assets/entities/`). Phase 4 edits the fly-through's entities module and starts
-> after [Plan 0077](0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md)
+> after [Plan 0077](done/0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md)
 > has merged, since 0077 splits `walker.rs`, gives `Placed` its entry and clip and makes the
 > picker place on the aimed surface, and this plan builds on all three. Before Phase 4 starts the
 > architect re-reads it against that tip (the names `walker.rs`, `Placed`, `Walkers::step` and

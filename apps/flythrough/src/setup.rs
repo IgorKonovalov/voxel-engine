@@ -10,6 +10,7 @@ use crate::cli::Args;
 use crate::edits::Failure;
 use crate::hud::{self};
 use crate::now;
+use crate::outdoor::OutdoorSource;
 use crate::pad::Pad;
 use crate::run::hud_feed::look_line;
 use crate::showcase::{SHOWCASE_CHUNKS, Shot, ShowcaseSource};
@@ -111,8 +112,9 @@ pub(crate) fn shell_config(args: &Args, size: [u32; 2], pace: vxe_app::Pacing) -
 
 /// The scene's material table from the material file (`--materials`, or
 /// `assets/materials.txt`; `crate::materials`): the cave's rows with the ore emissive unless
-/// `--emissive-ore off`, the castle's under `--castle`, the rigs' wood under the thin and seam
-/// rigs, the showcase's under the showcase. A file that does not read or parse, or lacks a row,
+/// `--emissive-ore off`, the castle's under `--castle`, the outdoor hills' under
+/// `--source outdoor`, the rigs' wood under the thin and seam rigs, the showcase's under the
+/// showcase. A file that does not read or parse, or lacks a row,
 /// ends the process with status 1.
 pub(crate) fn materials(args: &Args) -> MaterialTable {
     let fail = |e: String| -> ! {
@@ -310,6 +312,8 @@ pub(crate) fn start_camera(args: &Args, spawn: VoxelCoord) -> Camera {
         crate::thin_rig_camera()
     } else if args.mode.is_seam_rig() {
         crate::seam_rig_camera()
+    } else if args.mode.is_outdoor() {
+        outdoor_camera(args)
     } else {
         Camera {
             position: spawn.0.map(|v| v as f32 + 0.5).into(),
@@ -317,6 +321,19 @@ pub(crate) fn start_camera(args: &Args, spawn: VoxelCoord) -> Camera {
             pitch: 0.0,
             vfov: 70f32.to_radians(),
         }
+    }
+}
+
+/// `--spawn`'s camera on the outdoor source of `args.seed`: the eye voxel's centre, facing
+/// the spawn's direction.
+pub(crate) fn outdoor_camera(args: &Args) -> Camera {
+    let (eye, d) = OutdoorSource::new(args.seed).spawn(args.outdoor.spawn);
+    let [x, y, z] = d.map(|v| v as f32);
+    Camera {
+        position: eye.0.map(|v| v as f32 + 0.5).into(),
+        yaw: y.atan2(x),
+        pitch: z.atan2((x * x + y * y).sqrt()),
+        vfov: 70f32.to_radians(),
     }
 }
 
@@ -461,6 +478,8 @@ pub(crate) fn build_world(args: &mut Args, failure: &Failure) -> (VoxelCoord, Pe
         (args.shot.eye, Pending::Level(generation))
     } else if args.mode.is_level() {
         level_world(args)
+    } else if args.mode.is_outdoor() {
+        outdoor_world(args)
     } else {
         streamed_world(args)
     }
@@ -592,6 +611,41 @@ fn streamed_world(args: &Args) -> (VoxelCoord, Pending) {
     )
 }
 
+/// The outdoor hills of `args.seed`, with `--trees` stood on them, streamed around the camera
+/// as the cave is.
+fn outdoor_world(args: &Args) -> (VoxelCoord, Pending) {
+    let hills = OutdoorSource::new(args.seed);
+    let (spawn, _) = hills.spawn(args.outdoor.spawn);
+    let trees = args.outdoor.trees();
+    let workers = args.workers.unwrap_or_else(default_workers);
+    let world = World::new(&crate::walker::with_walker(&materials(args)));
+    let cfg = StreamConfig {
+        residency: args.residency,
+        workers,
+        persist: PersistConfig::default(),
+    };
+    println!(
+        "streaming the outdoor hills, seed {}, trees {} (leaf fill {}): spawn {} at {:?}, r_full {}, r_lod {}, {workers} workers",
+        args.seed,
+        trees.name(),
+        args.outdoor.leaf_fill(),
+        args.outdoor.spawn.name(),
+        spawn.0,
+        args.residency.r_full,
+        args.residency.r_lod,
+    );
+    let streamer = if trees == crate::trees::TreeDensity::None {
+        Streamer::new(Arc::new(hills), cfg)
+    } else {
+        let forest = crate::trees::ForestSource::new(hills, trees, args.outdoor.leaf_fill());
+        Streamer::new(Arc::new(forest), cfg)
+    };
+    (
+        spawn,
+        Pending::Stream(Box::new(start_streaming(world, streamer, workers, spawn))),
+    )
+}
+
 /// `streamer` with the live queue's listing on its workers (ADR-0017), from the first chunk
 /// on, and the workers started on the `spawn`'s chunks.
 fn start_streaming(
@@ -667,5 +721,6 @@ pub fn flythrough(start: Instant, mut args: Args) -> Flythrough {
         pad,
         failure,
         splash: None,
+        switching: None,
     }
 }

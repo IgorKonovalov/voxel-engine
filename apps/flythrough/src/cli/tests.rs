@@ -404,10 +404,8 @@ fn source_showcase_parses_with_the_lamp_off_and_refuses_what_it_cannot_take() {
     let cave = parse_args_from(argv(&["--level", "--source", "cave"])).expect("parses");
     assert!(!cave.mode.is_level() && !cave.mode.is_showcase() && cave.light.lamp());
     assert_eq!(
-        parse_args_from(argv(&["--source", "outdoor"]))
-            .err()
-            .as_deref(),
-        Some("--source takes cave, level or showcase, not outdoor")
+        parse_args_from(argv(&["--source", "sky"])).err().as_deref(),
+        Some("--source takes cave, level, showcase or outdoor, not sky")
     );
     for extra in [
         &["--save", "a.log"][..],
@@ -421,6 +419,132 @@ fn source_showcase_parses_with_the_lamp_off_and_refuses_what_it_cannot_take() {
         v.extend_from_slice(extra);
         let e = parse_args_from(argv(&v)).err().expect("refused");
         assert!(e.starts_with("--source showcase builds"), "{extra:?}: {e}");
+    }
+}
+
+/// `--source outdoor` and its flags: the spawn, the time (refusing 25:00), the day's length
+/// and the sky, on by default for the outdoor source alone; the world flags it refuses.
+#[test]
+fn the_outdoor_source_and_its_flags_parse() {
+    use crate::outdoor::Spawn;
+    let a = parse_args_from(argv(&["--source", "outdoor"])).expect("parses");
+    assert!(a.mode.is_outdoor() && a.sky_on() && a.outdoor.spawn == Spawn::Outside);
+    assert_eq!(a.outdoor.clock, crate::daylight::Clock::default());
+    assert_eq!(a.outdoor.clock.minutes, 720.0);
+    assert_eq!(a.outdoor.clock.day_length_s, 1200.0);
+    let a = parse_args_from(argv(&[
+        "--source",
+        "outdoor",
+        "--spawn",
+        "inside",
+        "--time",
+        "17:45",
+        "--day-length",
+        "60",
+        "--sky",
+        "off",
+    ]))
+    .expect("parses");
+    assert_eq!(a.outdoor.spawn, Spawn::Inside);
+    assert_eq!(
+        (
+            a.outdoor.clock.minutes,
+            a.outdoor.clock.day_length_s,
+            a.sky_on()
+        ),
+        (1065.0, 60.0, false)
+    );
+    assert!(parse_args_from(argv(&["--sky", "on"])).unwrap().sky_on());
+    assert!(
+        !parse_args_from(argv(&["--source", "level"]))
+            .unwrap()
+            .sky_on()
+    );
+    assert_eq!(
+        parse_args_from(argv(&["--time", "25:00"])).err().as_deref(),
+        Some("--time takes HH:MM from 00:00 to 23:59, not 25:00")
+    );
+    assert!(parse_args_from(argv(&["--spawn", "roof"])).is_err());
+    // The picks of Plan 0032's window: both bodies at 3 degrees, one sky ray, the half tier
+    // (the exposure preset is pinned below, the trees and the leaf fill by
+    // `the_trees_and_the_fixed_sun_parse_and_show`).
+    let d = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert_eq!(
+        (d.outdoor.clock.sun_radius, d.outdoor.clock.moon_radius),
+        (3f32.to_radians(), 3f32.to_radians())
+    );
+    assert_eq!(
+        (d.start_lighting().sky_rays, d.light.resolution),
+        (1, LightingResolution::Half)
+    );
+    let sky = d.outdoor.clock.sky(0.0);
+    assert_eq!(
+        (sky.sun.angular_radius, sky.moon.angular_radius),
+        (3f32.to_radians(), 3f32.to_radians())
+    );
+    let r = parse_args_from(argv(&["--source", "outdoor", "--sun-radius", "1"])).unwrap();
+    assert_eq!(r.outdoor.clock.sun_radius, 1f32.to_radians());
+    assert_eq!(r.outdoor.clock.moon_radius, 3f32.to_radians());
+    let r = parse_args_from(argv(&["--source", "outdoor", "--moon-radius", "0.5"])).unwrap();
+    assert_eq!(r.outdoor.clock.moon_radius, 0.5f32.to_radians());
+    assert_eq!(
+        r.outdoor.clock.sky(0.0).moon.angular_radius,
+        0.5f32.to_radians()
+    );
+    // The engine's own default stays the real sun.
+    assert_eq!(
+        vxe_render::sky::Body::sun([0.0, 0.0, 1.0]).angular_radius,
+        vxe_render::sky::SUN_ANGULAR_RADIUS
+    );
+    let r = parse_args_from(argv(&["--source", "outdoor", "--sky-rays", "4"])).unwrap();
+    assert_eq!(r.start_lighting().sky_rays, 4);
+    assert_eq!(
+        parse_args_from(argv(&["--source", "outdoor"]))
+            .unwrap()
+            .start_lighting()
+            .sky_rays,
+        1
+    );
+    for bad in ["0", "5", "x"] {
+        assert!(
+            parse_args_from(argv(&["--sky-rays", bad])).is_err(),
+            "{bad}"
+        );
+    }
+    for flag in ["--sun-radius", "--moon-radius"] {
+        for bad in ["0", "11", "x"] {
+            assert!(parse_args_from(argv(&[flag, bad])).is_err(), "{flag} {bad}");
+        }
+    }
+    assert!(parse_args_from(argv(&["--day-length", "0"])).is_err());
+    assert!(parse_args_from(argv(&["--sky", "maybe"])).is_err());
+    // The outdoor start exposure, unless `--exposure` or `--adaptation` is given.
+    let outdoor = vxe_render::AutoExposure {
+        min: 1e-4,
+        max: 4.0,
+        ..vxe_render::AutoExposure::eye()
+    };
+    let start = |v: &[&str]| parse_args_from(argv(v)).unwrap().start_lighting().exposure;
+    assert_eq!(start(&["--source", "outdoor"]), Exposure::Auto(outdoor));
+    assert_eq!(
+        start(&["--source", "outdoor", "--exposure", "1"]),
+        Exposure::Manual(1.0)
+    );
+    assert_eq!(
+        start(&["--source", "outdoor", "--adaptation", "eye"]),
+        Exposure::Auto(vxe_render::AutoExposure::eye())
+    );
+    assert_eq!(start(&[]), Exposure::Auto(vxe_render::AutoExposure::eye()));
+    for extra in [
+        &["--castle"][..],
+        &["--vault"],
+        &["--room", "12"],
+        &["--level"],
+    ] {
+        let mut v = vec!["--source", "outdoor"];
+        v.extend_from_slice(extra);
+        let e = parse_args_from(argv(&v)).err().expect("refused");
+        assert!(e.starts_with("--source outdoor builds"), "{extra:?}: {e}");
     }
 }
 
@@ -517,7 +641,7 @@ fn lighting_flags_parse_and_refuse_unknown_values() {
     // The line the fly-through prints at the start with no lighting flags, and under the table.
     assert_eq!(
         d.start_modes(0.0).line(),
-        "lighting half, store read normal, weights face, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter 4, young luma, entity light world, ore pulse off, exposure auto eye +0.00 EV"
+        "source cave, lighting half, store read normal, weights face, shadow walk coarse, history edits, lamp on, lamp bounce on at 64 rays 1/8, probes 16, filter 4, young luma, entity light world, ore pulse off, exposure auto eye +0.00 EV"
     );
     // `--young-filter` reaches the frame's lighting; luma by default.
     assert_eq!(
@@ -900,4 +1024,118 @@ fn the_model_flags_parse() {
         panic!("--clip alone parsed");
     };
     assert!(e.contains("--clip") && e.contains("--model"), "{e}");
+}
+
+/// Plan 0032 Phase 8 bar 4: The `trees` entry's rebuild moves the banner through `trees sparse`,
+/// `trees forest`, `trees none` and back; `--trees` (sparse without the flag), `--leaf-fill`
+/// (64 without the flag, refusing 0 and 257), `--spawn forest` and `--sun 10,180` (refusing an elevation outside
+/// [-90, 90] and an azimuth outside [0, 360)) parse; with `--sun` the banner reads `sun
+/// 10/180 fixed` and the clock's keys leave the sun's direction unchanged.
+#[test]
+fn the_trees_and_the_fixed_sun_parse_and_show() {
+    use crate::outdoor::Spawn;
+    use crate::trees::{LEAF_FILL, TreeDensity};
+    let row = |a: &Args| {
+        a.start_modes(0.0)
+            .banner(0.0)
+            .expect("at the start")
+            .replace('\n', ", ")
+    };
+    let mut a = parse_args_from(argv(&["--source", "outdoor"])).expect("parses");
+    assert_eq!(a.outdoor.trees(), TreeDensity::Sparse);
+    assert_eq!((a.outdoor.leaf_fill(), LEAF_FILL), (64, 64));
+    let mut seen = vec![row(&a)];
+    for _ in 0..3 {
+        a = crate::run::switch::retreed_args(&a, 0).expect("parses");
+        seen.push(row(&a));
+    }
+    for (r, t) in seen.iter().zip(["sparse", "forest", "none", "sparse"]) {
+        assert!(r.contains(&format!("source outdoor, trees {t},")), "{r}");
+    }
+    let f = parse_args_from(argv(&[
+        "--source",
+        "outdoor",
+        "--trees",
+        "forest",
+        "--leaf-fill",
+        "64",
+        "--spawn",
+        "forest",
+    ]))
+    .expect("parses");
+    assert_eq!(
+        (f.outdoor.trees(), f.outdoor.leaf_fill(), f.outdoor.spawn()),
+        (TreeDensity::Forest, 64, Spawn::Forest)
+    );
+    for bad in ["0", "257"] {
+        assert!(
+            parse_args_from(argv(&["--leaf-fill", bad])).is_err(),
+            "{bad}"
+        );
+    }
+    assert!(parse_args_from(argv(&["--trees", "jungle"])).is_err());
+    let s = parse_args_from(argv(&["--source", "outdoor", "--sun", "10,180"])).expect("parses");
+    assert_eq!(s.outdoor.clock.fixed_sun, Some([10.0, 180.0]));
+    assert!(row(&s).contains("sun 10/180 fixed"), "{}", row(&s));
+    for bad in ["91,180", "-91,0", "10,360", "10,-1", "10", "a,b"] {
+        assert!(parse_args_from(argv(&["--sun", bad])).is_err(), "{bad}");
+    }
+    let mut clock = s.outdoor.clock;
+    let before = clock.sky(0.0).sun.direction;
+    clock.step_hours(3);
+    clock.running = true;
+    clock.advance(600.0);
+    assert_eq!(clock.sky(0.0).sun.direction, before);
+    let d = crate::daylight::fixed_direction([10.0, 180.0]);
+    assert!(d[0].abs() < 1e-6 && d[1] < 0.0 && (d[2] - 10f32.to_radians().sin()).abs() < 1e-6);
+}
+
+/// `--path outdoor` needs the outdoor source with the `outside` spawn, the sparse trees and
+/// the default leaf fill (the voxels the path is laid around); `--sun` and `--time` are free.
+/// Every refusal names the flags it needs; another scene's path stays refused outdoors.
+#[test]
+fn the_outdoor_path_needs_its_scene_and_leaves_the_sun_free() {
+    let needs = "--path outdoor flies the outdoor scene; it needs --source outdoor --spawn \
+                 outside --trees sparse";
+    let a = parse_args_from(argv(&[
+        "--source", "outdoor", "--spawn", "outside", "--trees", "sparse", "--sun", "10,180",
+        "--path", "outdoor",
+    ]))
+    .expect("the scene's flags parse");
+    assert_eq!(a.path.map(|p| p.name), Some("outdoor"));
+    let a = parse_args_from(argv(&[
+        "--source", "outdoor", "--path", "outdoor", "--time", "12:00",
+    ]))
+    .expect("the defaults and a clock parse");
+    assert_eq!(a.path.map(|p| p.name), Some("outdoor"));
+    for refused in [
+        &["--path", "outdoor"][..],
+        &["--source", "cave", "--path", "outdoor"],
+        &[
+            "--source", "outdoor", "--trees", "forest", "--path", "outdoor",
+        ],
+        &[
+            "--source", "outdoor", "--spawn", "forest", "--path", "outdoor",
+        ],
+        &[
+            "--source",
+            "outdoor",
+            "--leaf-fill",
+            "128",
+            "--path",
+            "outdoor",
+        ],
+    ] {
+        assert_eq!(
+            parse_args_from(argv(refused)).err().as_deref(),
+            Some(needs),
+            "{refused:?}"
+        );
+    }
+    assert_eq!(
+        parse_args_from(argv(&["--source", "outdoor", "--path", "cave"]))
+            .err()
+            .as_deref(),
+        Some("--path cave flies the cave scene; it needs --source cave")
+    );
 }

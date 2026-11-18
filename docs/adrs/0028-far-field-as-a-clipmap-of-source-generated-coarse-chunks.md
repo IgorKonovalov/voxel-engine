@@ -1,7 +1,12 @@
 # ADR-0028: The far field is a clipmap of coarse chunk levels that the source generates directly, with edits folded in from full detail
 
 > **Status:** proposed (redrafted 2026-11-10 against ADR-0046's baked store: the level rule is
-> per caller, the bake and the probe rays take no far field, a clip hit reads no store)
+> per caller, the bake and the probe rays take no far field, a clip hit reads no store).
+> **Revised 2026-11-17 (architect, Plan 0033's re-read):** "ADR-0027's rule, moved outward" (an
+> absent chunk inside the ball occludes a lighting ray) was flagged at Plan 0032's close and is
+> rewritten below: ADR-0027's Outcome made an absent chunk sky, and so does this ADR at its
+> coarsest level. The sky term at a clip hit under ADR-0070 (baked sky visibility) is an open
+> owner question of Plan 0033 and is noted where the Decision says what lights a clip hit.
 > **Date:** 2026-10-22
 > **Related plan(s):** [Plan 0033](../plans/0033-far-field-clipmap-to-a-kilometre.md)
 > **Claims:** the founding-interview decision "Far-field clipmap (coarser rings beyond the
@@ -90,18 +95,24 @@ takes over at `s_k = (r_(k-1) - 2) x 64 x 2^(k-1)` voxels (with `r_0 = r_full` a
 `r_k = r_clip`), inside the distance every finer chunk is guaranteed resident, moved closer by
 up to one level-`(k-1)` chunk with a per-pixel blue-noise offset when the temporal upscaler
 runs, so the seam is a dithered band the upscaler resolves. An absent chunk also sends the walk
-one level coarser at the same point; only at the coarsest level does an absent chunk inside the
-ball count as an occluder for a lighting ray (ADR-0027's rule, moved outward). The directional
-shadow ray toward the sun or moon (ADR-0027) starts at its hit's level, offset by half a cell of
-that level, and follows the same rule out to the far limit, where it reaches the sky. When the
-far field is off (no clip levels), the walk is today's. The first switch distance follows the
-streamer's live `r_full`, which the pressure rule moves.
+one level coarser at the same point; at the coarsest level an absent clip chunk is air to a
+primary ray and sky to a lighting ray (revised 2026-11-17: ADR-0027's Outcome made unknown lit,
+and nothing is an occluder by its absence; the case is the ball's edge or a clip chunk not yet
+generated, which Plan 0033 counts). The directional shadow ray toward the sun or moon
+(ADR-0027) starts at its hit's level, offset by half a cell of that level, and follows the
+same rule out to the far limit, where it reaches the sky, as it does on leaving the coarsest
+ball. When the far field is off (no clip levels), the walk is today's. The first switch
+distance follows the streamer's live `r_full`, which the pressure rule moves.
 
 **A clip hit carries no baked light.** The baked store (ADR-0046) is keyed by a full-detail
 voxel and a face; a hit at level 1 to 3 does not read it, takes an emissive term of 0 and is
-not counted as a missing record. It is lit by the direct terms (the sun, the sky ray, the
-analytic lights of ADR-0044). Its normal is the clip normal, a face or a gradient over the hit
-cell's neighbours; ADR-0042's far normal and ADR-0049's store read are for full-detail hits.
+not counted as a missing record. It is lit by the direct terms (the sun, the analytic lights of
+ADR-0044) and by a sky term that, under ADR-0070 (the sky's visibility baked into the store a
+clip hit does not read), is either the sky's unoccluded irradiance about the clip normal or the
+per-frame sky ray on its long history: Plan 0033's owner question 1 picks (revised 2026-11-17;
+the recommendation is the unoccluded term). Its normal is the clip normal, a face or a gradient
+over the hit cell's neighbours; ADR-0042's far normal and ADR-0049's store read are for
+full-detail hits.
 
 ## Consequences
 
@@ -144,8 +155,10 @@ cell's neighbours; ADR-0042's far normal and ADR-0049's store read are for full-
   right for every look, which is why both are built and judged on screen.
 - **Coarse rules in one engine.** ADR-0003's LOD-only mips keep the conservative any-solid
   rule; the far field uses the half rule in one of its two readings. A source with no coarse path keeps the
-  ring; with the far field on, the application sets `r_lod = r_full` and the ring is empty.
-  Retiring the ring is a later decision, by measurement.
+  ring; with the far field on, the application sets the streamer's `r_lod` equal to `r_full`
+  (`Streamer::set_radii`, `BuildSettings::residency`; the renderer's `LodParams` lost its
+  `r_lod` in Plan 0032) and the ring is empty. Retiring the ring is a later decision, by
+  measurement.
 - **The material rule is a heuristic.** Where the half rule turns a cell holding the exposed
   layer into air, the solid cell under it has no exposed children and takes its interior
   material: a thin grass layer on a steep slope shows soil-coloured cells at distance.

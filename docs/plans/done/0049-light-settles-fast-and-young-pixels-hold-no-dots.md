@@ -108,7 +108,7 @@
 > Phase 2, the owner setting the bars, follows Phase 1's readings, and the mechanisms follow
 > Phase 2. **Before [Plan 0048](0048-probe-rays-direct-light-without-the-clamp-bias.md)**,
 > which starts after this plan merges and must hold this plan's asserted bars, and **before
-> [Plan 0032](../0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)**,
+> [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)**,
 > which starts after 0048. Drafted against main at cb7b70b and Plan 0047's branch at
 > e1cfe53. The names dev finds in the tree win.
 

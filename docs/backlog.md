@@ -37,9 +37,36 @@ fit's free-range walks and the victim scans' chunk walks, so split them first. *
 plan, ahead of `alloc`** (Plan 0074's close review, 2026-11-14, the orchestrator's default while
 the owner is away; the owner may overturn it).
 
+### The CPU settle outdoors: the bake queue's step on a world with no emitter, and the forest's sync p99
+
+Noted 2026-11-17 from Plan 0032's Phase 9 window (`docs/plans/logs/0032.md`, Phase 9; the
+review `docs/reviews/2026-11-17-plan-0032-window.md`, E). The owner's "performance lacks" on
+the RTX 3080 Laptop was the CPU, not the GPU: for the 7 to 10 s after every load the runs read
+a frame CPU p50 of 10 to 17.6 ms (against 1.3 to 2.9 after the settle) and the `bake queue:`
+lines a `step CPU p50` of 7.9 to 15.0 ms, max up to 38, on a world whose reach holds `lights
+0` and whose store ends all zeros (step 1: 3285 chunks by 13.7 s, 8.8 MB); after the queue
+drains the step reads 0.05 ms. The forest at leaf fill 128 also read a sync p99 of 11.0 ms
+(`alloc` 5.3) and `update + poll + sync` max 150 ms; fill 64 read 3.1 ms. Both are readings
+for Plan 0067's regime rule (the step on an emitter-free world should cost near nothing) and
+for the sync's `alloc` entry above. What it takes: a chore that reads the step's parts on the
+outdoor source (listing, summaries, fades on a store that bakes to zero) and skips what a
+reach with no emitter does not need; Plan 0086 Phase 4 adds a sky channel to the same jobs,
+so read it after that lands. Owner's pick 2026-11-17 (E3): a backlog entry, not a phase.
+
 ### The streamed benches on Windows: CPU frames of 20 to 256 ms on a desktop
 
 Read 2026-11-15 from an outside tester's archive (v0.51.0, before Plan 0070's and 0074's sync cuts; Windows 10.0.26200, Ryzen 5 7600X 6 cores / 12 threads, 32 GB, desktop RTX 3080 on Vulkan, 1920 x 1080, upscaler off; the files kept in the main checkout at `live/tester-2026-11-15/`). `showcase`: wall p50 3.0 ms, p99 4.5, CPU p50 0.76. `cave`: wall p50 20.8 ms, p95 271, p99 402, CPU-bound (CPU p50 20.3, GPU 4.5), 217 of 1073 frames over 100 ms. `castle`: 97 frames in 31.5 s, CPU p50 256 ms, max 3295, GPU p50 30.2. Our Linux headless benches at the matching base read `update + poll + sync` p99 43 to 47 ms, so the castle is about 5x to 70x worse there, and the tester called it "massive stutters". Unknown: whether it is Windows (timer and sleep granularity, the allocator, thread scheduling on 6 cores), the CPU's core count, or the build. What it takes: the owed Plan 0068 Windows run on today's main with the sync's stage lines, then a plan. Pick up before the next tester archive goes out. **The owner's run (2026-11-15, v0.54.0, Windows 10.0.19045, Ryzen 9 5900HS 8 cores / 16 threads, RTX 3080 Laptop on Vulkan, FSR 2 at 1.5; files in `live/windows-run-2026-11-15/`) did not reproduce it:** CPU p50 cave 8.8 ms, showcase 1.4, castle 7.2; castle wall p95 28.2 ms, 87 frames over 33 ms, 2 over 100, the sync's p95 mostly `alloc`. Still open for the tester's machine; the next archive's `--workers 4` run tells starvation apart. **The tester's rerun (2026-11-16, v0.54.0, same machine; files in `live/tester-2026-11-16/`) settles it: the 0.51.0 stutters were the build, not Windows.** Default workers: cave wall p50 4.1 ms, p99 25.5, 32 frames over 33 ms, 1 over 100; showcase p50 2.8, p99 3.7; castle p50 4.2, p99 30.1, max 90, 20 over 33 ms, none over 100 (from p50 256 ms on 0.51.0). `--workers 4` on the castle: p99 17.6, max 66, 2 over 33 ms; the sync's p99 7.3 ms to 3.8 and light's 2.1 to 0.8. So more workers than physical cores (11 on 6 cores) still costs the tail. What it takes now: a default worker count capped at the physical cores minus one (or a measured sweep on a 6-core part), as a small chore; the entry closes with it. **Done 2026-11-16 (chore `chore-default-workers`):** the fly-through's default `--workers` is now half the logical cores, at least 1 (6 on the tester's 12 threads, where `--workers 4` read the best castle tail; no sweep between 4 and 6 was taken); the tester's next archive reads it.
+
+Beside it, 2026-11-17, an outside tester's Linux archive (v0.54.0 at 5efd884d; Ubuntu 26.04,
+Wayland, Ryzen 7 5700X 8 cores / 16 threads, 32 GB, desktop RTX 3060 on Vulkan, 1920 x 1080
+display, benches at 1280 x 720 with FSR 2 at 1.5, lamp off; kept at `live/tester-2026-11-17/`).
+GPU p50 2.3 to 2.4 ms in every scene. `showcase`: wall p50 2.7 ms, p99 3.2, max 16. `cave`: wall
+p50 4.5 ms, p95 8.1, p99 23.0, max 65, 38 of 12 887 frames over 33 ms, CPU p99 22.1 with
+`sync_us` p99 9.5 ms (max 20.9) and `light_us` p99 2.6 ms (max 10.3). `castle`: wall p50 4.3 ms,
+p95 10.7, p99 24.5, max 95, 24 of 5 572 frames over 33 ms, CPU p99 24.2, `sync_us` p99 9.0 ms.
+So on Linux the streamed scenes are CPU-spike bound (the sync and light stages, the alloc entry
+below), not the Windows-scale stall; whether Windows is the OS or the older base stays open.
+`holds_pool` reads false only because the RTX 3060's binding limit is 4 bytes under 2 GiB.
 
 ### Windows draws the whole image two to three times darker than Linux
 
@@ -92,6 +119,38 @@ would hold 3,850 copies (estimated 1 to 2 GB, not measured). The lane wrote a fl
 `ForestSource` over 64 shared prefabs instead. Engine follow-up: placements reference a shared
 prefab and rotation (an `Arc` and an orientation), so a dense generation-time scatter costs its
 distinct prefabs, not its placements. Pick up at Plan 0032's close or before the next scatter.
+
+### The profile row's `restart for:` names live fields
+
+Noted 2026-11-17 at Plan 0080's close review: after a toggle, the render profile row lists live
+fields as waiting for a restart (window session 80c, the lamp flipped off, then `F4`:
+`profile: performance, restart for: lighting.lamp, build.record_chunks`). `Run::cycle_profile`
+(`apps/flythrough/src/run/profile.rs`) takes the pending list from
+`RenderSettings::changed_fields` against the live settings, toggles included, so any `Live` or
+`Settle` field the owner changed reads as restart-only, and `build.record_chunks` (which the
+fly-through sizes itself) shows on every cycle. Plan 0069's behaviour. Fix as a chore: filter
+the pending list to the `Rebuild` class and to fields the fly-through does not set itself, with
+a test that flips the lamp and cycles. Pick up with Plan 0073's settings pages, which show the
+same classes.
+
+### The menu with a gamepad, in a window
+
+Noted 2026-11-17 (owner): Plan 0080 closes without its window's pad step (no pad was at hand;
+`docs/plans/logs/0080.md`, Phase 7). The headless tests `the_pad_walks_the_menu` and
+`the_pad_edits_a_number` cover the mapping. Owed: one windowed run with a pad connected, Start
+through the tree, South into the dig radius's edit mode, the D-pad stepping and repeating, East
+back, Select for the stats; at the next window session that has a pad.
+
+### The gate tier's tests over the 10 s line, and its wall time
+
+Noted 2026-11-17 (Plan 0032's fix pass): a loaded gate run over flythrough, vxe-render and
+vxe-tester showed 22 tests over the 10 s line, all in flythrough GPU binaries (gpu_golden,
+gpu_fsr2, gpu_queue, gpu_loading and others); the log is archived at
+`~/Work/vxe-live-archive/plan-0032/m1-gate.log`. On lavapipe a `Frame::new` costs 2.4 to 2.8 s
+and a 16-frame mean about 0.08 s, so sharing one Frame across a test's arms cuts more than
+fewer frames (0032's m1 fix). The whole gate tier read 937 to 1214 s at the last closes, over
+the 12-minute proposal in `docs/nfr.md` section 7. Owed: a test-time chore that reads
+`scripts/test-times.mjs` on a quiet gate run and trims or soaks each test over the line.
 
 ### The live queue's order and cancellation, after Plan 0059
 
@@ -323,6 +382,19 @@ Pick up after the current lighting plans close (0058 and those ahead of it).
 
 Parked 2026-11-12 (owner, at the settings-menu interview). The fly-through and the tester keep render settings in a TOML file through an app-side field table ([Plan 0073](plans/0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md), ADR-0058); the engine stays file-free (ADR-0055). A later example could show a consumer doing the same, so a game sees how. The natural home is [Plan 0071](plans/0071-the-consumers-path-a-render-example-a-renderer-tested-alone-names-and-errors.md)'s render example, or a second example beside it. Pick up after Plan 0073 closes, if 0071 has not taken it by then.
 
+### Entity placement extras parked at Plan 0077's amendment
+
+Parked 2026-11-18 from Plan 0077's "Amended 2026-11-18" (the reference is
+[`docs/references/entity-placement-ux.md`](references/entity-placement-ux.md)). Four things the
+sources show and the plan does not take: **a translucent ghost** (Valheim's look; needs
+translucent entity voxels in `entity.wgsl`, composited with the world's layers), **model icons
+as an engine facility** (the plan makes them in the fly-through on the CPU through
+`EntitySet::raycast`; a consumer with an inventory wants the same renderer, so it moves to
+`vxe-entity` or `vxe-assets` when a second user appears), **"pick" the aimed entity into the
+belt** (Minecraft's middle click) and **several belts** (Satisfactory's ten). Pick up when a
+consumer or the owner asks for one; the first two are small plans, the last two are rows in
+Plan 0077's key table.
+
 ## Performance: the static review of 2026-11-10
 
 Parked 2026-11-10. The owner asked why the window reads 30 to 50 fps with little on screen; a
@@ -513,6 +585,15 @@ first line starting `frames: `. Match `frames: {FRAMES} frames;` instead.
 
 ## Tooling and process
 
+### The 64 private-intra-doc-link warnings in `cargo doc -p vxe-render`
+
+Noted 2026-11-17 from Plan 0069 Phase 2 (`docs/plans/logs/0069.md`): `cargo doc -p vxe-render
+--no-deps` prints 64 `private_intra_doc_links` warnings (cargo's count), none on a line that plan
+wrote; its done-when was amended to "no new warnings from this plan's files". Owner 2026-11-17: fix
+them in a separate chore later. What it takes: make each linked item `pub` or `pub(crate)`-doc it
+with a plain code span, then a CI step or `RUSTDOCFLAGS=-D warnings` doc build so the count cannot
+grow again. Pick up after Plan 0069 merges, so the chore reads the settled `settings.rs`.
+
 ### The tester mode's key filter is structural, not tested in the frame loop
 
 Owed 2026-11-15 from Plan 0068's close (its phase review's M2). Under `--tester` the frame loop
@@ -521,7 +602,7 @@ Owed 2026-11-15 from Plan 0068's close (its phase review's M2). Under `--tester`
 unit test of `tester_action` cannot catch a debug key read outside `handle_input`, as `F2` is.
 What it takes: route every key the frame loop reads under `--tester` through `tester_action`, or a
 test that drives the loop's input handling with the filter on. Taken 2026-11-16 by
-[Plan 0080](plans/0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md)
+[Plan 0080](plans/done/0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md)
 Phase 2 (a test drives the loop's input step with the filter on; `Tab` and `Start` map to
 nothing); the entry leaves when that plan closes.
 
@@ -678,6 +759,15 @@ no lane holds the GPU.
 
 Parked 2026-11-05 from the ruling on `the_vein_wall_patches_are_counted`. With the table's read off at the patch pose on 299b5c8, the accumulation is bit-identical over the window (0 pixels changed), yet the filter's output reads 90.95 patches a step and the composite 51.10. The lamp is off and the gather is not added, so the filter is the only part left that moves. By reading the code (not isolated): `temporal.wgsl` keeps blending each frame's noisy sample into the moments after the emissive part holds, and `atrous.wgsl` weights its taps by that variance. `a_still_fallback_pixel_holds_still` reads the accumulation, so it does not see this. Plan 0059 keeps the fallback for no-face hits, so glass and the field look may shimmer at rest. That patch-pose run makes every hit a fallback, so it is an extreme case; a translucent surface has not been read. What it takes: a spike that reads a translucent wall's composite at rest, then a fix that holds the moments with the mean, or passes a held part around the filter as the table's part does. Plan 0059's Phase 2 reads a glass pane at rest and its Phase 3 window looks at it (owner, 2026-11-05); pick up on that answer.
 
+### Two process-spawning GPU tests skip silently without lavapipe
+
+Found 2026-11-17 at Plan 0088's close review. `apps/flythrough/tests/gpu_path.rs`
+(`a_path_run_writes_its_report`, soak) and `gpu_frame_waits.rs` print "skipped: no adapter" and
+pass when the fly-through finds no adapter, without the `VXE_REQUIRE_SOFTWARE_ADAPTER=1` panic
+that `gpu_loading.rs`'s first helper has. `soak.yml` and `ci.yml`'s Linux arm set the variable,
+so a runner without lavapipe passes these tests green. What it takes: the same three-line check
+in both, or one helper in `tests/support/` they call. A dev chore of minutes.
+
 ### The gate tier is over its wall-time budget
 
 Read 2026-11-05 on 7cd77ad (`docs/nfr.md` section 7): 1313.4 s, about 22 minutes, loaded, against the 12 min proposal, with the two tests then over the 30 s line already on the soak list. `flythrough::settle` is the largest binary at 338 s. Ruled 2026-11-05 on the four tests over the line in that run: `the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose` split (the every-pose test on the soak list; the primary pose alone stays in the gate at 9.2 s), `castle_gate_golden` went back under with its warm-up removed (25.7 s cold, 7.4 s warm, alone), and `smoothed_normals_cut_the_normal_error_and_move_no_hit` and `a_face_hidden_from_every_eye_is_settled_before_it_is_seen` stay (23.9 s and 24.1 s alone). Those two move only if a gate run started on a quiet machine reads them over the line. Moving all four would save at most about 95 s of serial time, so this is not how the budget gets met. Still owed: either cut the slowest `settle` and `golden` tests or re-set the proposal. Much of `settle`'s time goes with the table at Plan 0059's deletion, so re-read then. `the_lamp_toggle_opens_the_light_window` read 98.0 s on CI's last red run, on an older tree, and reads 18.0 s here, so it stays in the gate; CI's next run shows whether it is still over the 60 s line. Pick up as a dev chore when the owner next wants the gate faster or CI green. Read 2026-11-12 (the architecture review, on `live/plan-0068/merge-gate.log`): 809 tests, 610 s; the 177 lavapipe tests sum to 610 s serial, the whole wall, the 632 CPU tests to 273 s beside them, so the lever is the lavapipe group's thread count or the GPU tests' pixels, not the CPU tests; [Plan 0072](plans/done/0072-development-speed-the-build-graph-a-narrowed-gate-and-one-compile-per-ci-profile.md) Phase 4 measures the group at 2 and 3 (drafted, awaiting go). Read 2026-11-09 at Plan 0059's close (`docs/nfr.md` section 7): 850.2 s with `settle` back in the gate and none over the 30 s line, still over the 12 min proposal; the re-read of the proposal stays owed. Read 2026-11-08 on CI's Linux arm, Mesa 26.2.6, the GPU tests in parallel: the same tests move 25 to 40 % between runs (`a_face_hidden_from_every_eye_is_settled_before_it_is_seen` 55.6 s on run 42470428595 and 77.6 s on 42477325818; `the_lamp_toggle_opens_the_light_window` 53.2 then 70.5; `fsr2_adds_little_flicker_on_a_still_vein` 49.8 then 62.8), with several more between 45 and 58 s, so moving tests one push at a time does not converge. Ruled 2026-11-08 (owner): CI's budget step warns per test over 60 s instead of failing the push, until the light work settles; a test that stays over moves to the soak list by hand. Still owed: the architect re-reads `docs/nfr.md` section 7's 60 s line (it says a test over the line moves to the soak list; CI no longer enforces it), at Plan 0059's deletion or when the owner next wants the gate faster. Also ruled 2026-11-08 (owner), from run 42477325818 (2972 s summed over 727 gate tests, 27 tests at 30 s or more holding 41 % of it): the whole `flythrough::settle` binary (34 tests, 746 s) moves to the soak list until Plan 0059's deletion phase decides the table, and CI's Windows arm runs every CPU test but only a GPU smoke set (the `ci-windows` profile: the shutdown and walk binaries and one golden), since WARP skips the image bars and runs a test 10 to 20 times slower than lavapipe. Both are tier moves, not deletions.
@@ -799,3 +889,59 @@ its own app under `apps/`. The fly-through and the native paths never change or 
 for it; any crate support is target-gated. Not before the engine has steady lighting, coloured
 materials, a sky and a way to build interesting architecture.
 
+### Designer authoring: level and logic text, a separate compiler, an editor over the text
+
+Parked 2026-11-17 (owner: "letting non programmer build levels and game logic", "a layered
+architecture and keep the text", "a future idea after everything that we have will be polished").
+ADR-0072 (proposed) records the frame: five layers, text the truth at each, a compiler in
+`tools/` that emits a logic component and baked level data, an optional editor that reads and
+writes the same text, both the human and the agent workflow first class. Its shortlists (the
+rule language against a Lua dialect, the compiler's home, level editing before an editor, the
+engine's mechanisms: a level loader, named regions and their events, a replay-based component
+swap, machine-readable run output) carry a recommendation each and six owner questions.
+**Waits on the engine's own mechanisms:** destruction, physics and water (the chunk-scale
+dynamics entry above, M8, M10's liquids) and the current polish. Pick up with a spike plan, as
+the ADR's "What a first plan would be" describes; questions 1 to 5 are answered then.
+Question 6 answered 2026-11-18 (owner, the interim rule, (a)): every new text format the engine
+grows is designed as a layer-4 file (line-based, hand-parsed, diffable, positions in its errors);
+new fly-through scenes stay Rust until the stack exists.
+
+### A proper editor interface, like Unity's or Godot's
+
+Parked 2026-11-18 at Plan 0077's Phase 10 window (owner: "as a backlog we should build a proper
+interface, similar to the one that has unity or godot"). The fly-through's menu, belt and chooser
+are a testbed's text overlay; the owner wants a real editor UI: docked panels (a scene tree, an
+inspector of a placed thing's parameters, an asset browser with thumbnails, a viewport with
+gizmos to move, turn and scale, undo). How it fits: the roadmap refuses a scene editor inside the
+engine ("no ECS, no scene editor"), so this is its own app under `apps/`, not a crate mechanism,
+and it is ADR-0072's layer 5: a view over the layer-4 text files, writing them back in canonical
+layout, never a format of its own. Open when picked up: the UI toolkit (an immediate-mode Rust UI
+such as egui over the wgpu device, or another; ADR-0009's reasons against a UI library in the
+fly-through are the testbed's, and an editor app reopens them), and whether it waits for
+ADR-0072's text formats (recommended: the level file first, so the editor has something to edit).
+Pick up after ADR-0072's spike, or earlier as a placement-only editor over today's entities if
+the owner asks.
+
+
+### A second consumer in mind: a user-built, multiplayer game platform
+
+Parked 2026-11-17 (owner asked whether the engine could carry a Roblox-style game). Already fits:
+runtime edits as logged deterministic ops, sandboxed logic components (fuel, memory cap,
+deterministic clocks), `vxe-net`'s server tick and op logs, voxel-model entities and prefabs,
+ADR-0072's authoring stack. Missing in the engine: rigid bodies (they conflict with ADR-0008 and
+need an ADR), the network at scale (QUIC, interest management, dozens of players per server),
+platforms beyond Linux and Windows (next entry). The platform itself (accounts, avatars,
+publishing, moderation, a marketplace) is a consumer product, never `crates/`. Use: a second
+consumer to test the physics, networking and authoring designs against; no plan of its own.
+
+### Mobile and tablet targets: Android and iOS
+
+Parked 2026-11-17 (owner, "a distant and theoretic idea"). `wgpu` and `winit` reach both, so the
+port itself is small; the cost is elsewhere. **A render profile for tile GPUs** (the Radeon iGPU
+already reads 22 ms of GPU on Plan 0088's outdoor bench; a phone has less and throttles): lower
+internal resolution, baked light only, smaller residency. **A WGSL limits audit** against mobile
+`wgpu` limits (storage buffers per stage, workgroup size, missing atomics and subgroups). **Touch
+input and the app lifecycle** (suspend, surface loss). **Wasmtime on iOS** has no JIT: Pulley
+(its interpreter) or ahead-of-time components. **aarch64 determinism vectors in CI.** A new
+target is an ADR (ADR-0001 names Linux and Windows) and about a milestone's work; the cheap first
+step is the limits audit, which says what the rest costs. Tablets before phones.

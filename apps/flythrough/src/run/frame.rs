@@ -4,21 +4,25 @@ use crate::app::{diag, ms_since};
 use crate::audio::{METRES_PER_VOXEL, MIC_VOICE, room_line, room_sent_line};
 use crate::autopilot::Leg;
 use crate::edits::voxel_of;
+use crate::hud::menu::{self, Passed, all_keys, keep};
 use crate::hud::{self};
 use crate::now;
 use crate::path::{TesterAction, TesterInput, tester_action};
+use crate::percentile;
 use crate::run::Run;
 use crate::run::fade::{FADE_DIGS, FADE_END, FadeSample, fade_lamp, fade_report};
+use crate::run::hud_feed::Overlay;
 use crate::run::hud_feed::{
     SAMPLES, Samples, band_census_line, belt_line, bins_line, crack_shares, field_line,
-    print_moving_exposure, probe_passes_ms, shadow_steps_line, steps_line, window_line,
+    key_ray_steps, key_steps_line, print_moving_exposure, probe_passes_ms, shadow_steps_line,
+    steps_line, window_line,
 };
 use crate::run::keys::{ORE_PULSE_MEAN, ore_pulse};
 use crate::run::loading::fade_loading;
 use crate::setup::GfxSample;
 use crate::streaming::pressure_terms;
 use std::time::Instant;
-use vxe_app::{Flow, Gpu, Input, KeyCode, MouseButton, PadButton};
+use vxe_app::{Flow, Gpu, Input, KeyCode, PadButton};
 use vxe_audio::Command;
 use vxe_render::debug::StepHistogram;
 use vxe_render::{LodParams, MarchTimer, PassTimer, ViewMode, wgpu};
@@ -179,23 +183,15 @@ impl Run {
             return self.loading_frame(gpu, input, surface);
         }
         let t0 = now();
-        // A path run ends through its player, so its report can say how.
-        if input.pressed(KeyCode::Escape) && self.player.is_none() {
-            return Flow::Exit;
+        let (pass, exit) = self.key_step(input);
+        if let Some(flow) = exit {
+            return flow;
         }
+        let input = pass.input();
         // The first frame's delta spans startup, not a frame.
         if self.frame > 0 {
             self.hud.frames.record(dt);
             self.hud.run.wall_ms.push(f64::from(dt) * 1e3);
-        }
-        if self.args.tester {
-            if input.pressed(KeyCode::F1)
-                && tester_action(TesterInput::Key(KeyCode::F1)) == Some(TesterAction::Help)
-            {
-                self.help = !self.help;
-            }
-        } else if input.pressed(KeyCode::F2) || input.pad_pressed(PadButton::Start) {
-            self.hud.visible = !self.hud.visible;
         }
         if self.frame == 0 {
             for _ in 0..self.args.bench {
@@ -211,6 +207,7 @@ impl Run {
         if self.args.bench_at.contains(&self.frame) {
             self.bench();
         }
+        self.switch |= self.args.switch_at.contains(&self.frame);
         let driven = match self.path_step(input, dt) {
             Some(Flow::Exit) => return Flow::Exit,
             Some(Flow::Continue) => true,
@@ -225,31 +222,7 @@ impl Run {
                 return Flow::Exit;
             }
         } else {
-            match self.walk.as_mut() {
-                Some(w) => {
-                    for line in w.update(&self.world, input, &mut self.fly.camera, dt) {
-                        println!("{line}");
-                    }
-                }
-                None => self.fly.update(input, dt),
-            }
-            if let Some(p) = &self.modes.pan {
-                self.fly.camera.yaw += p.yaw(dt);
-            }
-            if self.args.tester {
-                // Free flight under `--tester`: the dig is the one action past moving.
-                if input.clicked(MouseButton::Left)
-                    && tester_action(TesterInput::Click(MouseButton::Left))
-                        == Some(TesterAction::Dig)
-                {
-                    self.dig();
-                }
-            } else {
-                self.handle_input(input);
-            }
-            self.modes
-                .cutaway
-                .update(&mut self.modes.look, &self.world, self.fly.camera.position);
+            self.flight_step(input, dt);
         }
         self.audio_step();
         if let Some(n) = self.args.frames
@@ -258,6 +231,113 @@ impl Run {
             self.samples = Some(Samples::default());
         }
         self.draw(gpu, surface, t0, dt)
+    }
+
+    /// The frame's input step, before anything else reads the input: under `--tester` the
+    /// tester's filter (`F1` its help panel), else the menu's step (`menu::step`, its
+    /// activations run here); then `Esc` ends placement mode, else a run with no path player,
+    /// and `F2` (or the pad's
+    /// `Select`) shows or hides the stats overlay. Gives what passes on to the rest of the
+    /// frame, and `Flow::Exit` when `Esc` ended the run.
+    pub(crate) fn key_step<'a>(&mut self, input: &'a Input) -> (Passed<'a>, Option<Flow>) {
+        let pass = if self.args.tester {
+            if input.pressed(KeyCode::F1)
+                && tester_action(TesterInput::Key(KeyCode::F1)) == Some(TesterAction::Help)
+            {
+                self.help = !self.help;
+            }
+            Passed::Filtered(Box::new(tester_filter(input)))
+        } else {
+            let v = self.run_view();
+            let now = ms_since(self.start);
+            let routed = menu::step_at(&mut self.menu, input, &self.modes, &v, now);
+            for a in routed.acts {
+                self.menu_act(a);
+            }
+            self.sync_ghost();
+            routed.pass
+        };
+        let i = pass.input();
+        // `Esc` with the menu closed ends placement mode first, then the run; a path run ends
+        // through its player, so its report can say how.
+        if i.pressed(KeyCode::Escape) && self.modes.walkers.belt.on {
+            self.end_placement("placement off");
+        } else if i.pressed(KeyCode::Escape) && self.player.is_none() {
+            return (pass, Some(Flow::Exit));
+        }
+        if !self.args.tester && (i.pressed(KeyCode::F2) || i.pad_pressed(PadButton::Select)) {
+            self.hud.visible = !self.hud.visible;
+        }
+        (pass, None)
+    }
+
+    /// In placement mode, the belt appended to the overlay's rows for a `size` window at the
+    /// HUD's glyph scale (`entities::belt::append_belt`): to the banner's rows when `banner`,
+    /// else the stats'. Gives the belt's backdrop box; `None`, and the rows untouched, out of
+    /// the mode.
+    pub(crate) fn belt_rows(&mut self, size: [u32; 2], banner: bool) -> Option<vxe_render::HudBox> {
+        if !self.modes.walkers.belt.on {
+            return None;
+        }
+        let cell = (8 * crate::run::hud_feed::HUD_SCALE) as usize;
+        let grid = (size[0] as usize / cell, size[1] as usize / cell);
+        let h = &mut self.hud;
+        let text = if banner { &mut h.banner } else { &mut h.text };
+        h.paint.clear();
+        let b = crate::entities::belt::append_belt(
+            text,
+            &mut h.colours,
+            grid,
+            &self.modes.walkers,
+            ms_since(self.start),
+            hud::BANNER_MS,
+            &mut h.paint,
+        );
+        Some(b)
+    }
+
+    /// With the chooser open, the belt appended under the menu's panel (`Run::place_menu`'s
+    /// rows in the HUD's `overlay` buffers) for a `size` window at the menu's glyph scale, its
+    /// frame on the selected slot, its tiles after the chooser's. Gives the belt's backdrop
+    /// box; `None`, and the rows untouched, on any other page or closed.
+    pub(crate) fn chooser_belt(&mut self, size: [u32; 2]) -> Option<vxe_render::HudBox> {
+        if self.args.tester || self.menu.page() != Some(crate::hud::menu::PageId::Entities) {
+            return None;
+        }
+        self.fill_belt();
+        let panel = crate::hud::menu::Panel::of(size[0], size[1]);
+        let h = &mut self.hud;
+        let b = crate::entities::belt::append_belt(
+            &mut h.overlay,
+            &mut h.overlay_colours,
+            (panel.cols, panel.rows),
+            &self.modes.walkers,
+            ms_since(self.start),
+            hud::BANNER_MS,
+            &mut h.paint,
+        );
+        Some(b)
+    }
+
+    /// Interactive flight's frame: the walk or the flight from `input`, the pan, the keys
+    /// ([`Run::handle_input`]) and the cutaway. Under `--tester` `input` is already the
+    /// tester's filter's, so only its keys reach the keys' step.
+    pub(crate) fn flight_step(&mut self, input: &Input, dt: f32) {
+        match self.walk.as_mut() {
+            Some(w) => {
+                for line in w.update(&self.world, input, &mut self.fly.camera, dt) {
+                    println!("{line}");
+                }
+            }
+            None => self.fly.update(input, dt),
+        }
+        if let Some(p) = &self.modes.pan {
+            self.fly.camera.yaw += p.yaw(dt);
+        }
+        self.handle_input(input);
+        self.modes
+            .cutaway
+            .update(&mut self.modes.look, &self.world, self.fly.camera.position);
     }
 
     /// Sends the camera to the mixer as its listener and probes the voices' occlusion.
@@ -601,7 +681,8 @@ impl Run {
         }
         let enc = self.step_bake_queue(gpu, enc);
         self.pilot_sample();
-        let hud = self.hud.visible;
+        let overlay = Overlay::of(self.args.tester, self.menu.is_open(), self.hud.visible);
+        let hud = overlay == Overlay::Stats;
         if self.hud.cadence.due(hud) {
             self.sample_world();
             self.sample_probes(gpu);
@@ -616,7 +697,11 @@ impl Run {
             let px = vxe_render::debug::read_rgba8(&gpu.device, &gpu.queue, gfx.frame.target());
             let width = gfx.frame.target().width() as usize;
             let h = StepHistogram::from_rgba8(&px, width);
-            self.hud.steps = Some(hud::StepsSample::from_histogram(&h));
+            let key = vxe_render::debug::read_rgba16f(&gpu.device, &gpu.queue, gfx.frame.direct());
+            self.hud.steps = Some(hud::StepsSample {
+                key: key_ray_steps(&key).map(|(_, [mean, p99, _, _])| [mean as f32, p99 as f32]),
+                ..hud::StepsSample::from_histogram(&h)
+            });
         }
         self.hud.cracks = None;
         if hud
@@ -625,18 +710,50 @@ impl Run {
         {
             self.hud.cracks = Some(crack_shares(gpu, &gfx.frame));
         }
-        // With the stats HUD off the overlay draws the mode banner alone while it shows.
-        if !hud {
-            self.write_banner();
+        // The menu draws at its panel's glyph scale; the stats and the banner at the HUD's.
+        let scale = match overlay {
+            Overlay::Menu => menu::panel_scale(gpu.size[0], gpu.size[1]),
+            Overlay::Stats | Overlay::Banner => crate::run::hud_feed::HUD_SCALE,
+        };
+        if let Some(gfx) = self.gfx.as_mut() {
+            gfx.hud.set_scale(&gpu.queue, scale);
+            for (i, rgba) in self.modes.walkers.icons.uploads() {
+                gfx.hud.set_tile(&gpu.queue, i, &rgba);
+            }
         }
-        if hud {
-            self.update_hud(gpu);
-        } else if let Some(gfx) = self.gfx.as_mut() {
-            // The stats' colours are free with the HUD off: the banner's go there.
-            crate::run::hud_feed::banner_colours(&self.hud.banner, &mut self.hud.colours);
-            gfx.hud
-                .set_lines(&gpu.queue, &self.hud.banner, &self.hud.colours);
-            gfx.hud.set_samples(&gpu.queue, &[], 0.0);
+        match overlay {
+            Overlay::Stats => self.update_hud(gpu),
+            Overlay::Menu => {
+                self.write_menu();
+                let backdrop = self.place_menu(gpu.size);
+                let belt = self.chooser_belt(gpu.size);
+                if let Some(gfx) = self.gfx.as_mut() {
+                    let h = &self.hud;
+                    let boxes = [backdrop, belt.unwrap_or(backdrop)];
+                    let paint = h.paint.with(&boxes);
+                    gfx.hud
+                        .set_lines_painted(&gpu.queue, &h.overlay, &h.overlay_colours, paint);
+                    gfx.hud.set_samples(&gpu.queue, &[], 0.0);
+                }
+            }
+            // With the stats HUD off the overlay draws the mode banner alone while it shows.
+            Overlay::Banner => {
+                self.write_banner();
+                // The stats' colours are free with the HUD off: the banner's go there.
+                crate::run::hud_feed::banner_colours(&self.hud.banner, &mut self.hud.colours);
+                let belt = self.belt_rows(gpu.size, true);
+                if let Some(gfx) = self.gfx.as_mut() {
+                    let (text, colours) = (&self.hud.banner, &self.hud.colours);
+                    match belt {
+                        Some(b) => {
+                            let paint = self.hud.paint.with(std::slice::from_ref(&b));
+                            gfx.hud.set_lines_painted(&gpu.queue, text, colours, paint)
+                        }
+                        None => gfx.hud.set_lines(&gpu.queue, text, colours),
+                    }
+                    gfx.hud.set_samples(&gpu.queue, &[], 0.0);
+                }
+            }
         }
         if let Some(n) = self.args.light.lamp_toggle
             && self.frame > 0
@@ -670,6 +787,7 @@ impl Run {
         );
         self.poll_viewer(ms_since(self.start));
         self.poll_materials(gpu);
+        self.aim_entities();
         // The walkers walk before their eye lights are read, so a light rides with its head.
         self.modes.walkers.step(step);
         let mut lights = self.modes.lights.list();
@@ -681,7 +799,8 @@ impl Run {
             return;
         };
         gfx.frame.set_lights(&lights);
-        if let Some(words) = crate::walker::feed(
+        gfx.frame.set_light_cap(self.args.light_cap);
+        if let Some(words) = crate::entities::feed(
             &mut self.modes.walkers,
             &self.world,
             self.fly.camera.position.to_array(),
@@ -708,6 +827,13 @@ impl Run {
         }
         gfx.frame.set_lighting(self.modes.lighting);
         gfx.frame.set_dt(step);
+        // The testbed's clock moves by the loop's step; the engine holds none.
+        self.modes.clock.advance(step);
+        let sky = self
+            .modes
+            .sky
+            .then(|| self.modes.clock.sky(crate::outdoor::BASE_Z as f32));
+        gfx.frame.set_sky(sky);
         gfx.frame.set_resolution(&gpu.device, self.modes.resolution);
         gfx.frame.set_look(self.modes.look);
         // The temporal pass counts the store's reads only for a reader of them: the HUD's
@@ -763,6 +889,8 @@ impl Run {
                 "{}",
                 shadow_steps_line(&shadow, gfx.frame.lighting().shadow_walk)
             );
+            let key = vxe_render::debug::read_rgba16f(&gpu.device, &gpu.queue, gfx.frame.direct());
+            println!("{}", key_steps_line(&key, gfx.frame.lighting().shadow_walk));
         }
         if let Some(gfx) = &self.gfx {
             println!("mirror: {}", belt_line(&gfx.mirror));
@@ -778,8 +906,8 @@ impl Run {
         println!("hud:\n{stats}");
     }
 
-    /// Files this frame's times into the `F1` samples, when they are being taken, and prints
-    /// their report once they hold `SAMPLES` frames.
+    /// Files this frame's times into the readings' samples (`Enter`), when they are being
+    /// taken, and prints their report once they hold `SAMPLES` frames.
     fn push_samples(
         &mut self,
         gpu: &Gpu,
@@ -788,6 +916,21 @@ impl Run {
         pass_ms: Option<&[f64]>,
         hud_ms: Option<f64>,
     ) {
+        if let Some(s) = self.file_samples(cpu_ms, gpu_ms, pass_ms, hud_ms) {
+            self.report(gpu, s);
+        }
+    }
+
+    /// Files one frame's times into the readings' samples; once they hold `SAMPLES` frames,
+    /// takes them, sets the notice to `frame: cpu X ms, gpu Y ms (median of 30)` (`gpu n/a`
+    /// with no GPU times) and gives them for the full line.
+    pub(crate) fn file_samples(
+        &mut self,
+        cpu_ms: f64,
+        gpu_ms: Option<f64>,
+        pass_ms: Option<&[f64]>,
+        hud_ms: Option<f64>,
+    ) -> Option<Samples> {
         if let Some(s) = self.samples.as_mut() {
             s.cpu_ms.push(cpu_ms);
             if let Some(ms) = gpu_ms {
@@ -804,9 +947,18 @@ impl Run {
             }
             if s.cpu_ms.len() == SAMPLES {
                 let s = self.samples.take().unwrap_or_default();
-                self.report(gpu, s);
+                let cpu = percentile(&mut s.cpu_ms.clone(), 50.0);
+                let gpu = if s.gpu_ms.is_empty() {
+                    "n/a".to_owned()
+                } else {
+                    format!("{:.3} ms", percentile(&mut s.gpu_ms.clone(), 50.0))
+                };
+                let line = format!("frame: cpu {cpu:.3} ms, gpu {gpu} (median of {SAMPLES})");
+                self.notice = Some((line, ms_since(self.start)));
+                return Some(s);
             }
         }
+        None
     }
 }
 
@@ -857,4 +1009,18 @@ impl Run {
         println!("{words}");
         self.modes.show_lights(words, now_ms);
     }
+}
+
+/// `input` with only what `--tester` keeps (`path::tester_action`): the movement keys and
+/// pad buttons, the look, the left click, `F1`, `T` and `Esc`. Nothing else reaches the run.
+pub(crate) fn tester_filter(input: &Input) -> Input {
+    keep(input, &all_keys(), |i| match i {
+        menu::RouteInput::Key(k) => tester_action(TesterInput::Key(k)).is_some(),
+        menu::RouteInput::Pad(b) => tester_action(TesterInput::Pad(b)).is_some(),
+        menu::RouteInput::Click(b) => tester_action(TesterInput::Click(b)).is_some(),
+        menu::RouteInput::MouseLook | menu::RouteInput::Stick => {
+            tester_action(TesterInput::MouseLook).is_some()
+        }
+        menu::RouteInput::Wheel | menu::RouteInput::Trigger => false,
+    })
 }

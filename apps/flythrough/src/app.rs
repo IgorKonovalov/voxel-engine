@@ -105,11 +105,14 @@ pub struct Flythrough {
     /// The loading screen [`App::splash`] drew the first frame with, handed to the run's
     /// loading frames.
     pub(crate) splash: Option<LoadingScreen>,
+    /// A switch begun after the last frame ([`Flythrough::begin_switch`]): the next run's
+    /// arguments and whether only the trees changed; done at the start of the next frame.
+    pub(crate) switching: Option<(Args, bool)>,
 }
 
 impl Flythrough {
     /// The run over `world`, streamed when `stream` is given, built from the app's arguments.
-    fn start_run(&mut self, world: World, stream: Option<Stream>) {
+    pub(crate) fn start_run(&mut self, world: World, stream: Option<Stream>) {
         let pilot = self
             .args
             .autopilot
@@ -158,19 +161,11 @@ impl Flythrough {
                     .bouncing_all(self.args.light.lights_bounce),
                 )
                 .with_walkers(
-                    crate::walker::Walkers::with_ring_walking(
+                    crate::entities::Walkers::with_ring_walking(
                         self.args.entities,
                         self.args.entities_walk,
                     )
-                    .with_viewer(self.args.model.as_ref().and_then(|path| {
-                        crate::viewer::Viewer::open(path, self.args.clip.clone())
-                            .inspect_err(|e| println!("{e}"))
-                            .ok()
-                            .map(|mut v| {
-                                v.rows_added = crate::setup::model_rows_added(&self.args);
-                                v
-                            })
-                    })),
+                    .with_library(crate::entities::library::of_args(&self.args)),
                 ),
             upscaler_changed: false,
             sharpen_changed: false,
@@ -210,12 +205,16 @@ impl Flythrough {
             help: false,
             materials: crate::materials::watch(&self.args),
             vox_ops,
+            menu: Default::default(),
+            notice: None,
             loading: None,
+            switch: false,
+            retree: false,
         });
     }
 
     /// The streamed run, its world's build joined first when it is still on its thread.
-    fn start_streamed_run(&mut self, pending: Pending) {
+    pub(crate) fn start_streamed_run(&mut self, pending: Pending) {
         let boxed = match pending {
             Pending::Stream(boxed) => boxed,
             Pending::StreamBuilding(build) => build
@@ -329,10 +328,20 @@ impl App for Flythrough {
         if self.failure.is_some() {
             return Flow::Exit;
         }
-        match self.run.as_mut() {
+        if let Some((args, retree)) = self.switching.take() {
+            self.switch_source(gpu, args, retree);
+            if self.failure.is_some() {
+                return Flow::Exit;
+            }
+        }
+        let flow = match self.run.as_mut() {
             Some(run) => run.frame(gpu, input, dt, surface),
             None => Flow::Exit,
+        };
+        if flow == Flow::Continue && self.run.as_ref().is_some_and(|r| r.switch || r.retree) {
+            self.begin_switch(gpu, surface);
         }
+        flow
     }
 }
 
@@ -346,7 +355,11 @@ pub fn start_clock() -> Instant {
 /// Runs `app` in a window, or on an offscreen target with no window under `--headless`, at
 /// `--render`'s size (1280 x 720 by default), and gives the session's outcome.
 pub fn run(app: Flythrough) -> Result<(), String> {
-    let size = app.args.render.unwrap_or([1280, 720]);
+    let size = app
+        .args
+        .render
+        .or(app.args.output_hint)
+        .unwrap_or([1280, 720]);
     let failure = app.failure.clone();
     if app.args.headless {
         // On the high-performance adapter, or with `--adapter` the first whose name contains
