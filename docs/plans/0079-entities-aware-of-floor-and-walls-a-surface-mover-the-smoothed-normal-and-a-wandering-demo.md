@@ -845,9 +845,9 @@ unchanged (ADR-0050).
 | 1: the surface mover in `vxe-sim` | dev | done; readings in [`logs/0079.md`](logs/0079.md) | bc04beb4 |
 | 2: the smoothed normal in `vxe-world`, the frame in `vxe-entity` | dev | done; done-when 8 per the 2026-11-17 amendment | 7661676e, committed with this row |
 | 3: the body and the stride in the `.rig` | dev | done | 8c0b26d4 |
-| 4: the fly-through's demo | dev | done; done-whens 1 to 8, readings in the log | committed with this row |
-| 5: the owner's window | human | not started | |
-| 6: the owner's picks, and the tip | dev | not started | |
+| 4: the fly-through's demo | dev | done; done-whens 1 to 8, readings in the log | e1894054 |
+| 5: the owner's window | human | done 2026-11-18, the owner's words at Phase 6's head | 46837556 |
+| 6: the owner's picks, and the tip | dev | done; pick 1 218d84a6, pick 2 125c78ac, `nfr.md` section 8 cf3a2667; questions 9 to 11 the owner's "leave it" (recommendations, confirmed in the window); gate in the log | 218d84a6, 125c78ac, cf3a2667, committed with this row |
 
 ### Notes
 
@@ -870,6 +870,9 @@ each. Empty is fine.)_
 - Phase 4: the stance's forward on a floor faces the eye (0077's rule); on a wall or a ceiling it is the eye's direction projected onto the face, the camera's up when that is nought (the plan: the camera's forward projected).
 - Phase 4: the room course runs in a world of rock above and below the `64^3` box (chunks `[0,0,-1]..[1,1,2]`), so done-when 5's 1 m carves through the 1-voxel floor and ceiling find rock.
 - Phase 4: Budgets readings over the guesses (loaded): spider x64 tick p50 1.41 ms (room) and 2.84 ms (showcase ring); showcase frame CPU p50 +3.07 ms at 64 spiders against the built-in base. Spiders dwell up to 220 ticks at pillars' vertical edges (the Risks' convex-edge dwell); `crates/` untouched.
+- Phase 6 pick 1 (218d84a6): "mostly up to a quarter circle" is read as seven picks in eight up to 18 steps, one in eight (`WIDE_TURN_ONE_IN`) up to 36; the room course hash is re-pinned from `0x93d7_6d32_b893_7835` to `0xe57c_02c6_8ac4_b2d8`.
+- Phase 6 pick 2 (125c78ac): "any other key" is any key of `hud::menu::all_keys()` other than `Esc` (the keys the run binds, the menu's and the typed ones); opening the menu or entering placement mode also drops the question; a mouse click or a pad button does not.
+- Phase 6: the frame CPU at 64 spiders reads +3.07 ms against the Budgets' +1.5 ms guess (loaded); the owner's window did not notice it; `docs/nfr.md` section 8 carries it beside the proposals (cf3a2667).
 
 ### Close triggers
 
