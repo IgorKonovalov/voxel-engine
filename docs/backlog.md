@@ -257,6 +257,22 @@ Parked 2026-11-10 (plan review). Plan 0033 gives a far-field hit no store value,
 emitters do not light far terrain. A coarse store block per clip brick is ADR-0028's
 Alternative F, picked up only if a reading or the owner's flight asks.
 
+### A cheaper `absorb` canopy shadow
+
+Parked 2026-11-18 at Plan 0086's Phase 15 window (owner: "shadows are good but fps dropped
+significantly - around 20"; pick C: `absorb` stays an off-by-default setting). As built (Phase
+14, `walk.wgsl`'s translucent walk through flagged bricks, `exp(-sigma x)` over the leaf
+voxels' path, sigma 0.15 a voxel) the forest's light pass reads 17.4 to 18.1 ms on the RTX
+3080 Laptop against voxel's 4.1 to 4.5, and 87.7 to 88.3 ms on the RADV RENOIR against 18.4 to
+20.3 (`docs/plans/logs/0086.md`, Phase 14 bar 4): 4.1 to 4.8 times, every shadow ray stepping
+voxel by voxel inside every leaf brick. Also read there: 49 % of the canopy's brick projection
+holds columns with no leaf voxel, which the per-voxel walk leaves at the open value. What it
+would take: a per-brick leaf density (one byte, the brick's fill, from the mirror's masks at
+upload) so the walk steps bricks and adds `sigma x fill x path` per brick, or the 2^3 coarse
+masks' count as that density per coarse cell; both make the transmittance a brick-scale blur
+of the voxel truth, which is also what fills the no-leaf columns. Pick up when a canopy's
+continuous shadow is wanted as a default or by a consumer, with Phase 14's rig as the bar.
+
 ### Remove `own`, the engine's own upscaler
 
 Parked 2026-11-10 (owner, plan review). FSR 2 at 1.5 is the default (Plan 0056) and `own` is

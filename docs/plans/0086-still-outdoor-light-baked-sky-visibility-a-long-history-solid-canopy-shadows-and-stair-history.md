@@ -2,8 +2,10 @@
 
 > **Status:** in-progress (the owner's go, 2026-11-17; it runs before Plan 0081, and Phase 6 is
 > conditional on its reading as drafted; **amended 2026-11-18** after Phase 8's window failed:
-> Phases 9 to 15 added, the picks as tests are Phase 16; the owner questions in the amendment
-> section await answers, and Phase 9 starts without them)
+> Phases 9 to 15 added; **amended again 2026-11-18** after Phase 15's window: Phases 16 to 24
+> are the fix pass and the third window, the picks as tests are Phase 25; the owner's picks
+> and answers are in the second amendment, and the go for Phases 16 to 25 is the owner's
+> "all recommended, go ahead" of that date)
 > **Created:** 2026-11-17
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0070](../adrs/0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md)
@@ -252,13 +254,119 @@ to 14 read every arm the window needs and the window picks):
    absent chunk in the column as solid (conservative: no leak ever, and the open ground after a
    jump is dark until its columns fill, then brightens).
 
+## Amended 2026-11-18, Phase 15 window
+
+Phase 15 ran on 2026-11-18 (session86b, the release binary of `e48e2aee`, the before binary
+`live/base-target` built from `a37c908b`). The owner's words per run, the orchestrator's
+readings and the stills 19.png to 22.png are in `live/window86b/verdicts.md` (gitignored; the
+words are quoted here). The window **passed on the leak and the picks and failed on six
+defects**; Phases 16 to 24 are the fix pass and the third window, and the picks as tests move
+to Phase 25.
+
+**What the window said.** Run 1 (before): "flickers". Run 2 (the tunnel, noon): "its much much
+better, but i see a clear boundary between types of colors" (19.png: the near walls and steps
+flat and clean from the baked store, the deeper tunnel grainy from the per-pixel sky rays, and
+the edge between them). Run 1b (17.png's underground spot): "looks right" (the leak is fixed by
+eye). Run 2b (anchor 0, five lights fired): "when I shoot light, walls becoming grainy" (20.png;
+the light pass 0.66 to 5.59 ms, `black` 1128, the lit patch's edge a dither of single lit
+pixels). Runs 2a to 2e: "ceiling 4 is the best". Runs 3a to 3d: "smoothed normal looks good,
+face normal with bounce are also fine". Run 4a (column wait on, the hills at 17:00): "there is
+huge artifact" (21.png: a black region with straight edges on the hill floor; `missing` 7327,
+fallback 6831, `black` 496, queue depth 14 722, waiting 1051), and it **stays**; run 4b (wait
+off) shows no such spot and starts "a bit faster yes". The dig (4a/4b): "when I dig - area
+around the place I dig flickers shortly, can't put it to screenshot - its too fast", and later:
+"flash around the dig were similar to the problem that we had before - small lights when
+digging and flicker. its just much faster than before". Runs 5a to 5f (the forest): "light is
+not settled even after wait" (22.png, voxel 60: the sunlit treads clip to white, the stripes
+back under face with no anchor), brick 60 "same", absorb 60 "shadows are good but fps dropped
+significantly - around 20", voxel 10 "grainy, especially after fast turn", brick 10 "same",
+absorb 10 "bit better, but grainy after turn". Run 6 (the day to sunset, no anchor): "ok, maybe
+even too bright". Runs 7a/7b (disc against approach): "no significant difference". Run 8 (a
+skylight dug then sealed): "light disappears quickly, fine".
+
+**The owner's picks and answers** (2026-11-18, "all recommended, go ahead": the go for Phases
+16 to 25):
+
+- **Defaults:** the exposure's sky anchor `N` 4; the sky normal `smoothed` (the bounce stays a
+  setting, 0 by default); leaf shadow `voxel` (already); penumbra `disc` (`approach` stays a
+  setting if it costs nothing when off, else goes).
+- **Phase 9 bar 5** (the cave's seal at 24 % of unsealed after 64 frames, bar 2 %): the owner
+  judged the sealed cave by eye, "light disappears quickly, fine"; the bar is re-derived from
+  the measured decay (Phase 9's readings: 24.3 % at 64 frames after the seal, 8.7 % at 128,
+  1.1 % at 256, 0.01 % at 512).
+- **A, the column wait:** off by default (the faster start, no black spot); kept as a setting;
+  its defect fixed anyway.
+- **B, the sun's mean on the pair** (the Phase 14 owner question): option (a): the key's mean
+  in `g` runs on the direct part's history age (`moments_out.z`, capped at `sky_history`) and
+  resets with it, everywhere the key light is sampled; the sky's clamp and band stay the sky's;
+  no new target.
+- **C, absorb:** stays an off-by-default setting; making it cheaper is a backlog entry
+  (`docs/backlog.md`, 2026-11-18; it cost about 20 fps on the RTX, the light pass 18 ms against
+  voxel's 4.5).
+
+**The six defects**, each with the phase that takes it. Where the cause is not known the
+reading comes first (Phase 16) and the fix phase takes its cause from it and no further:
+
+1. **A black region that stays, with the column wait on** (21.png). A defect of Phase 9's
+   finality: some chunks never bake. Candidates: a column that never turns final because a
+   chunk it waits for never arrives (within the LOD sphere but not mirrored by hysteresis,
+   above or below the world's extent, empty by generation and never uploaded), so `bakeable`
+   refuses every chunk whose reach footprint holds it; and 496 of those cells read black rather
+   than the chain's fallback because their neighbours are unbaked too. Phase 16 reads which;
+   Phase 18 fixes it and makes the wait a setting, off.
+2. **A seam between the baked sky term and the ray's** (19.png). Known in part: Phase 13's
+   arms apply to the baked read only (the pair's term keeps the shading normal), Phase 5 built
+   the switch with no fade, and the ray's running mean at a low hit rate is grainy by the
+   arithmetic in Context (relative sd 0.71 at `p` 0.03, `N` 64). Open: whether the ray region
+   at 19.png is the wait (it shrinks as the queue drains), the reach (it stays) or the stale
+   bit. Phase 20.
+3. **Walls grainy where fired lights land, under anchor 0** (20.png). Not attributed. The
+   first candidate: a dropped light re-bakes its rings (Plan 0059's rings, ADR-0046) and the
+   rings' bricks take `SKY_STALE` though no voxel changed, so the sky ray returns over the
+   rings with its 0-or-1 samples at a very low exposure (the light pass's rise from 0.66 to
+   5.6 ms and the 1128 black cells fit a re-bake). The second: Plan 0058's fired light's own
+   shadow-ray grain, made visible by the anchor's dark tunnel. Phase 16 reads it against the
+   before binary with the exposure pinned; Phase 22 fixes the first or files the second.
+4. **A brief flash around a dig**: "small lights when digging and flicker", the dig sparkle
+   of Plan 0049's window (bright dots in pixels 1 to 63 frames old, which the baked store
+   removed by taking the emissive part off the screen history), back and short-lived. The most
+   likely mechanism, from the code: a dig marks the rings' bricks `SKY_STALE` (ring 3, the
+   light radius, opens on open ground since a touched brick's visibility was over zero), so the
+   sky ray runs over the rings; the pair at a pixel that resets (the hole's fresh faces, which
+   have no history, and the dilated edit box) starts at age 0 from one raw sample, 0 or the
+   full `E_sky` (about 150 at exposure 1 at noon, against a shadowed floor's stored 10), and
+   the firefly clamp applies only once the age passes 8, so the first frames show bright and
+   black specks that the mean then averages out at `1 / (age + 1)`: "much faster than before"
+   because the mean runs to 64 and the a-trous filters the direct part. Two more candidates:
+   the ring's coarse re-bake landing per brick at a low sample count (brick-sized patches that
+   jump as the full pass lands); and the sky term's move from the stored part to the direct
+   part and back at the switch, with the direct part's `ALPHA` blend. Phase 16 reproduces it
+   headlessly and splits the three; Phase 21 fixes what it names.
+5. **The forest floor's grain at a low sun and after a fast turn**, under every leaf arm.
+   Phase 14's attribution names the key light at `60,180` (p99 13 against the sky's 4); at
+   `10,180` neither term alone. The grain after a turn is disocclusion: the new pixels'
+   history is young. Phase 19 builds B (a) and reads the turn.
+6. **The sunlit forest treads clip to white** (22.png, no anchor in that run). Not attributed:
+   the anchor at 4 may be the fix (run 6 under no anchor read "too bright"; Phase 12's table has
+   the forest at 17:45 2.08 EV lower at `N` 4 than `none`), else the eye meters the shadowed
+   floor and the sunlit tread sits 5 EV above the key (Phase 14's parts: direct 440 against
+   stored 10.6 at `60,180`), which the tone curve must shoulder. Phase 16 reads the clipped
+   share under `none`, `4` and the before binary; Phase 23 takes its result.
+
+**ADR-0070** is amended in place (it is `proposed`): the bake's finality wait becomes a
+setting, off by default, and a chunk baked while a column over its reach was not final is
+re-baked once when it turns final, so the end state is the decision's. The Implementation log's
+rows for Phases 16 to 25 were added by this amendment; `dev` fills them.
+
 ## Implementation phases
 
 Each phase ships as its own commit. `dev` implements all phases in one session with no review
 between phases. The architect reviews once at the end, in a fresh session. Phases 1 to 7 are
 **exploration** (lane rules 2b): the owner's window in Phase 8 is their gate; Phases 12 to 14
 are exploration too, gated by the second window, Phase 15, while Phases 9 to 11 carry bars
-that bite (the sky rule is a correctness fix, not a look). Each lands its
+that bite (the sky rule is a correctness fix, not a look). Phases 16 to 23 (the fix pass) carry
+bars that bite where a defect is measured headlessly, and readings where the window judges;
+Phase 24 is the third window and Phase 25 writes the picks as tests. Each lands its
 CPU tests of data, determinism and API; every bar that judges the image runs as a reading from
 a `mod reading`, recorded in the readings log, and Phase 16 writes it as a test against the
 picks. The readings log is `docs/plans/logs/0086.md`. Per phase the gpu check runs only the
@@ -781,10 +889,306 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   the forest floor's grain and brightness and the leaf arm picked, the penumbra's default, and
   any cost the HUD showed that the owner will not pay; or a no-go that names the run.
 
-### Phase 16: The picks as tests
+### Phase 16: The second window's defects attributed, each against the before binary
 - **Owner skill:** dev
-- **What:** the bars Phases 1 to 7 and 9 to 14 read, written as tests against the window's
-  picks; the defaults the window chose; the goldens Plan 0032 blessed that these mechanisms move
+- **What (readings, no fix):** four readings on the tip and on the before binaries, one table in
+  the log. The before binaries: the window's (`live/base-target`, `a37c908b`: Phases 1 to 8 in)
+  and, where the question is whether this plan introduced a defect, a release build of the
+  plan's base on `main` (the commit the lane branched from, before Phase 1). The fly-through's
+  headless run (`--headless --render 1920x1080 --frames N --seed 1`) is the rig unless a test
+  rig is named; the per-frame numbers come from the HUD's counters (`missing`, `fallback`,
+  `black`, the bake queue line, the pass times) and a display read-back per frame
+  (`Frame::set_composite_capture` or the stillness support's).
+  1. **Defect 1, the black region.** The hills at `--time 17:00` at 21.png's pose (eye about
+     `-? -30.2 671.8`, chunk `-6 -1 10`; the orchestrator's `live/window86b/verdicts.md` has
+     the HUD line), `--column-wait on`, 1800 frames at rest: every 60 frames the three counts,
+     the queue's depth, waiting and coarse. At the end, for every chunk within the bake radius
+     with no block: which column over its reach `bakeable` finds not final, and which chunk of
+     that column the finality waits for and why it is absent (pending upload; within the LOD
+     sphere but not mirrored; above or below the world's extent; empty by generation and never
+     uploaded), from a reading hook on the queue (a `bake queue:` dump or `QueueView`). And why
+     the 496 black cells read black rather than the chain's fallback (their neighbours' blocks).
+  2. **Defect 3, the fired lights.** The tunnel at 19.png's pose (`--spawn inside`, noon, eye
+     `221 -4.4 493.6`), the exposure pinned at -10.75 EV (`--exposure E`) on every binary, five
+     point lights placed where the owner's fired lights stopped (a reading hook or the input
+     log; the key `6` fires one along the view), 128 frames: the lit patch's p99 and mean
+     frame-to-frame change and the share of its edge pixels whose direct sample flips; the
+     light pass's ms before and after the lights; the HUD's `black` and the sky-ray counter per
+     frame (does the sky ray return over the lights' rings, and do the rings' bricks carry
+     `SKY_STALE`); the same on the base build with the same lights. The verdict names the grain
+     as new in this plan (and which term) or Plan 0058's.
+  3. **Defect 4, the dig flash.** The hills at noon, the queue drained, a 1 m dig at the view's
+     centre at frame 300, every frame from 270 to 420, over the lighting pixels within 64 voxels
+     of the dig's box (the hole's fresh faces included: they are where "small lights" show): the
+     count of pixels whose display luminance is over 2 times their own value at frame 420 (the
+     settled view) and over 2 times the neighbourhood's settled mean (Plan 0049's excess-dots
+     statistic, per frame and summed over frames 1 to 60 after the dig), the share of pixels
+     changing by over 16 levels a frame, the sky-ray counter and the pair's mean age over the
+     ring's pixels, and the frames until the ring's re-bake lands (the stale count). Three arms
+     split the candidates: `sky_rays` 0 (no ray: what is left is the re-bake's landing and the
+     switch), `sky_rays` 1 with `LightHooks::no_clamp` off and on, and the sun off (the sky
+     alone). The same on the window's before binary. The log says which of the three carries
+     the excess.
+  4. **Defect 6, the clipped treads.** The forest at 22.png's pose (`--spawn forest --trees
+     forest --time 15:00`), after the queue drains, 64 frames: the share of lighting pixels at
+     255 in the display's largest channel, the sunlit treads' mean level (the floor pixels whose
+     key sample is lit), the metered exposure and the ceiling in force, under `--sky-anchor
+     none`, `4`, and on the window's before binary.
+- **Files touched:** `apps/flythrough/tests/gpu_outdoor.rs`, `tests/support/*` (the
+  capture and the hooks), `crates/vxe-render/src/bake/queue/*` (the dump hook),
+  `apps/flythrough/src/lights.rs` (the placement hook, if the input log does not serve),
+  `docs/plans/logs/0086.md`.
+- **Done when:** the table is in the log; per defect one line names the cause (or "not
+  reproduced headlessly", with the rig and what it did show) and whether the before binary shows
+  it; the dig's excess is split across the three candidates with numbers; Phases 18, 21, 22 and
+  23 take their mechanism from this table. Readings only; no bar. Wall time: about 15 minutes
+  of release runs on the RTX, outside the gate.
+
+### Phase 17: The window's picks as defaults, and the seal bar re-derived
+- **Owner skill:** dev
+- **What:** `AutoExposure::sky_anchor_ev` defaults to `Some(4.0)` in `vxe-render` (with the sky
+  `None` the ceiling is `max` unchanged, Phase 12 bar 1, so the first consumer sees no change);
+  `Lighting::sky_normal` defaults to `Smoothed`; `sky_bounce` stays 0 and a setting;
+  `LeafShadow::Voxel` and `Penumbra::Disc` stay; `approach` stays a setting (Phase 7's
+  done-when 3: a uniform branch, byte-identical goldens under `disc`; the log restates that
+  claim against the tip's goldens and Phase 14's light-pass table, no new reading). The
+  fly-through's `--sky-anchor none` and `--sky-normal face` are the A/Bs; the banner names the
+  non-default (`sky anchor none`, `sky normal face`) and nothing for the defaults. **The seal
+  bar:** `the_cave_mouth_is_lit_from_outside`'s seal clause reads the sealed walls at 64 and at
+  256 frames after the seal: under 30 % of unsealed at 64 (24.3 read) and under 2 % at 256 (1.1
+  read); the 128-frame value is printed. **The goldens** the defaults move are re-blessed once,
+  with the share of each default read separately against the tracked images (anchor alone,
+  smoothed alone) before the re-bless.
+- **Files touched:** `crates/vxe-render/src/exposure.rs`, `frame/settings.rs`, `settings.rs`
+  (the defaults' descriptions), `apps/flythrough/src/cli/outdoor.rs`, `cli/tests/outdoor.rs`,
+  `hud/modes.rs`, `apps/flythrough/tests/gpu_outdoor_golden.rs`, the `golden/` images,
+  `docs/flythrough.md`, `docs/plans/logs/0086.md`.
+- **Done when:**
+  1. CPU (under 1 s): `AutoExposure::default().sky_anchor_ev == Some(4.0)`,
+     `Lighting::default().sky_normal == SkyNormal::Smoothed`, `sky_bounce` 0; the parse test
+     pins the defaults and both A/B flags with their banner words.
+  2. Every golden whose scene sets no `Sky` is byte-identical at the tip (the showcase, cave
+     and entity goldens: the defaults change nothing without a sky).
+  3. The seal bar as re-derived passes once by name (soak; its wall time printed, the 192 extra
+     frames on top of Phase 9's run).
+  4. The outdoor goldens are re-blessed and the log names each with its difference count per
+     default.
+
+### Phase 18: The column wait: off by default, its black region fixed, the bake caught up when a column turns final
+- **Owner skill:** dev
+- **What:** ADR-0070's amendment of this date. **The wait is a setting**, `lighting.column_wait`
+  (off by default; `--column-wait on|off` keeps its words; the banner names `column wait on`):
+  on, `bakeable` requires every column over the reach's footprint final, as Phase 9 built it;
+  off, a chunk bakes when its reach is resident and no chunk of its columns is pending upload
+  (today's `off`). **Catching up:** a block baked while a column over its reach was not final
+  carries a provisional mark (a bit of the record's spare word, or a per-chunk flag in the
+  queue); when every column over its footprint is final the chunk is re-queued once, behind the
+  first bakes (the light appears first everywhere, then corrects), and the mark clears when the
+  re-bake lands; the queue keeps `lod_radius` in both modes to know finality. **The black
+  region:** the cause Phase 16 named, fixed so that a column's finality is reachable: a chunk
+  the streamer will never deliver (above or below the world's extent, outside the residency the
+  streamer holds, empty by generation and never uploaded) counts as arrived; `column_final` and
+  `reach_columns_final` say so in one place.
+- **Files touched:** `crates/vxe-render/src/bake/queue/*` (`bakeable`, the provisional mark, the
+  re-queue), `gpu_world/columns.rs` (`column_final`), `bake/record.rs` (the mark's bit, if a
+  record bit), `frame/settings.rs`, `settings.rs`, `apps/flythrough/src/cli/outdoor.rs`,
+  `run/queue.rs`, `run/loading.rs`, `hud/modes.rs`, `crates/vxe-render/tests/gpu_sun.rs`,
+  `apps/flythrough/tests/gpu_outdoor.rs`, `docs/flythrough.md`, `docs/plans/logs/0086.md`.
+- **Done when:**
+  1. **No chunk waits forever.** `every_chunk_in_reach_bakes_under_the_wait` (a unit test of
+     the queue on the case Phase 16 named, under 1 s): with the wait on, a chunk whose column
+     holds a chunk the streamer will never deliver is `bakeable` once the deliverable ones are
+     resident; the Phase 9 unit test (`a_chunk_absent_high_in_a_column_holds_the_bake`) still
+     holds for a chunk that is pending.
+  2. **The hill at 17:00 has no black region.** `reading::the_hills_at_dusk_under_each_wait`
+     (`gpu_outdoor.rs`, the fly-through headless at 21.png's pose, wait on and off, 1800 frames;
+     a release-run reading, outside the gate): `black` reads 0 from the pre-roll's end on, and
+     every chunk within the bake radius holds a block by the end; the frame each mode reaches
+     it is printed, and the pre-roll's wall time against Phase 9's table (on about 21 s, off
+     expected near the finality-off build's 10.3 s).
+  3. **The end state is the wait's.** `a_provisional_bake_is_caught_up` in `gpu_sun.rs` (the
+     3 x 3 x 3 stepped terrain of Phase 9 bar 1 streamed so a high chunk arrives last, the wait
+     off; about 6 s): the floor chunk bakes before the high chunk arrives (its block
+     provisional), is re-queued once when the column turns final, and its record after the
+     re-bake is bit-identical to the same world baked with the wait on. The provisional block's
+     `+z` visibility before the re-bake is printed (the leak the catch-up closes).
+  4. **The underground stays dark with the wait off.** `the_underground_eye_streamed` (soak,
+     by name) at `column_wait` off: the direct part under 0.05 by frame 60 and under 0.02 at
+     240, as Phase 10 bar 1; the frames 1 to 30 printed (a brief provisional leak is allowed
+     there).
+  5. **Cost reading:** the re-bakes' count and their share of the queue's jobs through the
+     pre-roll on the hills and in the forest (RTX), against the wait-on run; the setting shows
+     its mode.
+
+### Phase 19: The key light on the pair's `g` (B (a)), and the grain after a turn
+- **Owner skill:** dev
+- **What:** the Phase 14 owner question's option (a): the key light's visibility (the shadow
+  ray's 0 or 1; `key_light_at` stays exact) runs a mean in the pair's `g` on the direct part's
+  history age (`moments_out.z`, capped at `sky_history`), everywhere the key light is sampled,
+  reprojected with the direct part's taps and reset where the direct part resets (an edit box,
+  no accepted history, `LIGHTING_SKY_CHANGED`); the direct target receives `key_light_at(p, n)
+  x g`; the sky's clamp and band stay the sky's; no new target. Where the direct part's
+  history is young (a disoccluded pixel after a turn) the mean restarts at its first sample,
+  which the a-trous is meant to hide; if the turn reading below stays over its bar, the one
+  more lever this phase may take is the a-trous's variance at a young age (SVGF's spatial
+  variance estimate where the age is under 4, ADR-0018), and no other.
+- **Files touched:** `crates/vxe-render/src/shaders/temporal.wgsl`, `shade.wgsl`,
+  `sky_light.wgsl`, `atrous.wgsl` (only if the lever is taken), `crates/vxe-render/tests/gpu_sun.rs`,
+  `gpu_sun/reading.rs`, `apps/flythrough/tests/gpu_outdoor.rs`, `docs/plans/logs/0086.md`.
+- **Done when:**
+  1. **The penumbra holds still.** `the_penumbra_holds_still_on_the_long_history` in
+     `gpu_sun.rs` (Phase 6 bar 2 as written: the slab rig at 3 degrees, FSR 2 at 1.5; about
+     10 s, soak if over): after 64 frames the penumbra band's p99 frame-to-frame change is at
+     or under the lamp's on the same floor.
+  2. **A drift lags under half a voxel, and a jump resets.** Phase 6's bars 3 and 4 as written
+     there (the sun drifting at the testbed's day for 64 frames moves the shadow's centroid by
+     the geometric amount within 0.5 voxel; a 10-degree jump reaches 90 % of the new lit value
+     11 frames later; `a_moving_shadow_edge_resets_the_history` holds for the key light's
+     shadow).
+  3. **The forest floor at rest.** `reading::the_forest_floor_at_a_low_sun` (Phase 14 bar 2:
+     the forest at `60,180` and `10,180`, voxel leaves, 128 frames at 320 x 180, soak): the
+     floor's p99 and mean frame-to-frame change before and after this phase, against the lamp's
+     floor; the floor's pixels split from the canopy's (by material), so a leaf voxel's own
+     jitter is read apart from the floor's light. Bar at `60,180`: the floor's p99 at or under
+     the lamp-lit forest floor's. At `10,180` a reading; if the floor's pixels alone are at the
+     bar and the canopy's carry the rest, the log says so and the architect takes it (a
+     canopy's screen-space stability is the far normal's and the upscaler's question, not this
+     plan's).
+  4. **After a turn.** `reading::the_forest_after_a_turn` (the same rig: 64 settle frames, a
+     90-degree yaw over 10 frames, 64 still frames): the floor's p99 change per frame after the
+     turn and the frames until it is within 2 display levels of the at-rest value, before and
+     after this phase, and the lamp-lit floor after the same turn. Bar: the frames to settle at
+     or under the lamp's plus 16 (a guess: the mean at age 16 steps by 1/17).
+  5. `frame_bytes` is unchanged; `sky_rays` 0 and the pinned-exposure goldens of the lamp-lit
+     scenes are byte-identical (no sky, no key light: nothing runs).
+
+### Phase 20: The seam between the baked sky term and the ray's
+- **Owner skill:** dev
+- **What:** first the reading at 19.png's pose (`--spawn inside`, noon, eye `221 -4.4 493.6`,
+  anchor 4, smoothed): per lighting pixel the sky term's source (baked, chained, the pair) and
+  the pair's age and hit rate, every 60 frames for 600: does the ray region shrink as the queue
+  drains (the wait: Phase 18's), stay (the reach), or follow the stale bit? Then, from this
+  list and no further: (i) the pair's term takes the same normal arm and bounce as the baked
+  read (Phase 13's deviation undone: `sky_baked_term`'s blend applied to the pair's visibility,
+  so the two estimate one quantity by one normal); (ii) the switch fades over the store's fade
+  (Phase 5's "fades over the store's fade", built as none); (iii) a spatial filter over the
+  pair's long mean on the lighting grid where the age is at the cap and the mean is under
+  `1 / FIREFLY_K` (one 5 x 5 a-trous iteration on the visibility, edge-stopped by depth and
+  normal: a sky visibility varies slowly along a wall, so the filter is right where the ray is
+  noisiest). If the reading says the ray region lies beyond the bake radius at rest, (iii) is
+  what carries it, and the log says so; a wider bake radius for the sky channel is not this
+  plan's (ADR-0046's reach).
+- **Files touched:** `temporal.wgsl`, `shade.wgsl`, a new `pair_filter.wgsl` and its pass in
+  `frame/encode.rs`, `frame/pipelines.rs` (if (iii)), `crates/vxe-render/tests/gpu_sun.rs`,
+  `apps/flythrough/tests/gpu_outdoor.rs`, `docs/plans/logs/0086.md`.
+- **Done when:**
+  1. **The two paths agree.** `the_sky_term_has_no_seam` in `gpu_outdoor.rs` (the tunnel pose,
+     the queue drained, 64 frames at 320 x 180; about 10 s, soak if over): over the ray-lit
+     lighting pixels within 4 voxels of a baked one, the sky term's mean is within 10 % of
+     their baked neighbours' (the normals' arm equal), and the share of edge pixels whose
+     source flips between frames is 0 after frame 16.
+  2. **The ray side is as still as the lamp.** The same test: the ray-lit region's p99
+     frame-to-frame change is at or under the headlamp's on the same pose with the sky off
+     (the plan's reference everywhere).
+  3. **Nothing moves where the store is fresh.** The hills' noon golden is byte-identical
+     (every pixel baked); the tunnel goldens that hold ray-lit pixels are re-blessed as a
+     disclosed change with counts.
+  4. **Cost:** the temporal pass and (if built) the filter pass on both adapters at the tunnel
+     pose (the budgets table's guesses).
+
+### Phase 21: The flash around a dig
+- **Owner skill:** dev
+- **What:** the mechanism Phase 16's split named, fixed from this list and no further: (a) a
+  pixel that resets inside a `SKY_STALE` ring seeds the pair from its face's cell's stale
+  baked visibility (or the chain's) at age `SEED_AGE` (8, a guess), not from one raw sample at
+  age 0, so the first samples blend at `1 / 9` and the firefly clamp is live from the first
+  frame (the hole's fresh faces have a record: the touched brick keeps its words under the
+  stale bit); (b) the ring's coarse re-bake does not write the sky words (`VIS_BAKED` from the
+  full pass only, Phase 10's unbuilt item) so no brick-sized patch lands at a low count; (c)
+  the switch between the stored and direct parts at the stale bit fades (Phase 20's (ii)
+  covers it if built there).
+- **Files touched:** `temporal.wgsl`, `bake/job.rs`, `bake/queue/*`,
+  `crates/vxe-render/tests/gpu_sun.rs`, `apps/flythrough/tests/gpu_outdoor.rs`,
+  `docs/plans/logs/0086.md`.
+- **Done when:**
+  1. **A dig leaves no dots.** `a_dig_leaves_no_dots` in `gpu_sun.rs` (the open floor of 3 x 3
+     chunks baked whole under `Sky::uniform(1.0)`, a zenith sun, the live queue at the
+     fly-through's settings so the re-bake takes frames, a 1 m dig at frame 64, 60 frames
+     read; about 8 s): in every frame after the dig, the count of lighting pixels within 64
+     voxels of the box whose display luminance is over 2 times their value at frame 124 and
+     over 2 times the neighbourhood's settled mean is under 1 % of those pixels, and 0 from
+     frame 16 on; the same before this phase is read and printed (the expectation: tens of
+     percent in the first frames on the hole's faces).
+  2. **The hole takes its light.** The same test: 60 frames after the dig the hole's floor
+     reads its baked value within 10 % (Phase 5 bar 4's clause), and no frame between has the
+     share of pixels changing over 16 levels above 5 %.
+  3. The fly-through's dig at Phase 16's rig re-read with the same statistic, tip against
+     the window's before binary, in the log.
+
+### Phase 22: The fired lights' grain under the anchor
+- **Owner skill:** dev
+- **What:** if Phase 16 names the first candidate: a dropped or fired light's re-bake rings
+  (ADR-0046's rings on a light change) leave the sky words and the `SKY_STALE` bit alone (the
+  sky visibility is geometry; only a voxel edit stales it), so no sky ray returns over a lit
+  wall; the light pass's rise is then the lights' own shadow rays. If Phase 16 names Plan
+  0058's grain made visible by the anchor's dark tunnel, this phase writes no mechanism: the
+  reading goes to `docs/backlog.md` as its own entry under Engine mechanisms (a Plan 0058
+  follow-up: the list lights' visibility on the pair's `g` is the natural upgrade), and the
+  window judges it under the default anchor 4.
+- **Files touched:** `bake/queue/*` (`take_boxes` or the light-change path), `bake/store.rs`,
+  `crates/vxe-render/tests/gpu_sun.rs`, `docs/backlog.md` (if filed), `docs/plans/logs/0086.md`.
+- **Done when:**
+  1. If built: `a_dropped_light_does_not_stale_the_sky` in `gpu_sun.rs` (the open floor baked
+     whole, a point light dropped at frame 64; about 6 s): the sky-ray counter reads 0 over the
+     frames after, every record's `SKY_STALE` stays clear, and the floor's stored sky part is
+     unchanged within 1 %; the light pass's ms before and after within the light's own share
+     (`nfr.md` section 2: 0.175 ms a light on the RTX).
+  2. Either way: the tunnel at 19.png's pose with five lights under anchor 4 and 0, the lit
+     patch's p99 change and edge flips against Phase 16's table, in the log.
+
+### Phase 23: The sunlit treads' clip
+- **Owner skill:** dev
+- **What:** from Phase 16's reading. If the clipped share under anchor 4 is under the bar, this
+  phase writes the bar and nothing else. Else, from this list: the auto exposure's metering
+  (ADR-0033) weighs the lit floor's share so the key sits between the shadowed and the sunlit
+  floor, or the tone curve's shoulder compresses what lies over the key (if the curve has none
+  above the key, adding one is a look change on every scene and an owner question before it
+  is built: the architect's, not `dev`'s).
+- **Files touched:** `crates/vxe-render/src/exposure.rs`, `shaders/exposure.wgsl` or
+  `composite.wgsl` (only if a mechanism), `apps/flythrough/tests/gpu_outdoor.rs`,
+  `docs/plans/logs/0086.md`.
+- **Done when:** `the_sunlit_forest_floor_does_not_clip` in `gpu_outdoor.rs` (the forest at
+  15:00 at the defaults, the queue drained, 64 frames at 320 x 180; about 10 s, soak if over):
+  under 0.5 % of the lighting pixels read 255 in the display's largest channel and the sunlit
+  treads' mean level is under 240 (both guesses, pinned from Phase 16's table before the test is
+  written); the share under `--sky-anchor none` is printed beside it.
+
+### Phase 24: The owner's third window
+- **Owner skill:** human
+- **What:** a runner (session86c) on one build at the tip of Phase 23, the window's before
+  binary and Phase 15's binary (`live/bin86b`) beside it, the fly-through's stdout visible and
+  a ping when ready, each run re-checking one defect or one pick, in this order: (1) the hills
+  at 17:00 at 21.png's pose, `--column-wait on` then `off`: no black region, the start time
+  read from the HUD; (2) the tunnel at 19.png's pose at the defaults: the seam between the
+  near walls and the deeper tunnel, then deeper to the far end; (3) the same with five lights
+  fired (key `6`) under anchor 4, then `--sky-anchor 0`: the walls where the lights land, the
+  light pass's ms read aloud; (4) a dig on the hills at noon and one in the tunnel, watched for
+  the flash, twice each, against Phase 15's binary once; (5) the forest at `60,180` and
+  `10,180` under `voxel`, settled, then a fast turn and the settle after it; `absorb` once at
+  60 for comparison, its fps read aloud; (6) the forest at 15:00: the treads, then the day to
+  sunset; (7) the defaults' look as one scene each: the tunnel's stairs under `smoothed` against
+  `--sky-normal face`, the ceiling under anchor 4 against `none`; (8) a skylight dug into the
+  chamber, then sealed. Each run's screenshot and the owner's words go to
+  `live/window86c/verdicts.md` as before.
+- **Files touched:** `docs/plans/logs/0086.md`.
+- **Done when:** the owner has recorded, per defect 1 to 6, fixed / not fixed / worse, and a
+  verdict on each default (the anchor, the smoothed normal, the wait off); or a no-go that names
+  the run. Each verdict's words are quoted into the readings log.
+
+### Phase 25: The picks as tests
+- **Owner skill:** dev
+- **What:** the bars Phases 1 to 7, 9 to 14 and 16 to 23 read, written as tests against the
+  window's picks; the defaults the window chose; the goldens Plan 0032 blessed that these mechanisms move
   (`outdoor_noon`, `cave_mouth`, `outdoor_forest_sunset`, the sunset and night ones if the
   bake moves them) re-blessed as a disclosed change with the difference counts in the log; a
   mechanism the window dropped stays a setting if it costs nothing when off (owner,
@@ -797,7 +1201,7 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
      gate): the 99th-percentile frame-to-frame change over the rim band and the far end is at
      or under the headlamp's on the same pose with the sky off. This is Plan 0032 Phase 6's
      stop rule on the occluded rig, as a regression test.
-  2. Every bar Phases 2 to 7 and 9 to 14 name that the window kept exists, asserts the picked
+  2. Every bar Phases 2 to 7, 9 to 14 and 16 to 23 name that the window kept exists, asserts the picked
      value, and passes in the gpu tier under the lock; each over 10 s on lavapipe is
      `#[ignore = "soak"]` and passes once by name. Phase 9's bars 2 to 5 stay whatever the
      window picks: the sky rule is not a look.
@@ -850,6 +1254,19 @@ floor's class, not the baseline):
 | §2 Lighting, the light pass (Phase 14) | the key light on the pair adds no ray: about 0; the `absorb` arm's translucent walk through leaf bricks: +0.3 ms RTX, +2.5 ms RENOIR in the forest, off unless picked | Phase 14 bar 4 |
 | the exposure pass (Phase 12) | a few multiplies: 0 | Phase 12 bar 2's runs |
 
+Added 2026-11-18, Phase 15 window (every figure a guess until its phase reads it; the readings
+this plan has: the outdoor light pass 1.1 to 1.8 ms RTX and 10.1 to 15.7 RENOIR at rest, the
+temporal pass 0.10 to 0.12 RTX and 0.9 to 1.6 RENOIR, Phases 9 and 13):
+
+| `nfr.md` figure | projection (a guess) | how the close measures it |
+|---|---|---|
+| §2 Lighting, the light pass (Phase 19) | the key light on the pair adds no ray and one more read and write of a channel the pass already touches: about 0 | Phase 19 bar 3's runs, both adapters |
+| §2 Lighting, the temporal pass (Phases 20, 21) | the pair's term through the baked read's blend and the fade: +0.02 ms RTX, +0.1 ms RENOIR; the seed at a reset: 0 | Phase 20 bar 4 |
+| §2 Denoise, a pair filter pass (Phase 20 (iii), if built) | one 5 x 5 iteration on one channel of the lighting grid: +0.05 ms RTX, +0.4 ms RENOIR, against the Denoise line's 2.0 ms | Phase 20 bar 4 |
+| §2 the bake queue's step and the pre-roll (Phase 18) | the wait off: the pre-roll back near Phase 9's finality-off reading (10.3 against 21.2 s RTX); the catch-up re-bakes at most one more job per chunk that baked provisional, a guess of 20 to 50 % of the pre-roll's jobs on the hills, behind the first bakes | Phase 18 bars 2 and 5 against Phase 9's table |
+| §3 World in VRAM (the store) | the provisional mark is a bit of the record's spare word: 0 | Phase 18 |
+| the exposure pass (Phases 17, 23) | the anchor's default: 0; a metering or shoulder change, if any: 0 | Phase 23 |
+
 On the slow adapter the outdoor light pass is over section 2's line in every configuration
 Plan 0032 read; this plan's Phase 5 is the first reading that can move it under, and `nfr.md`
 section 2 records the result at the close.
@@ -893,6 +1310,15 @@ section 2 records the result at the close.
 - **The transient after a jump** (added 2026-11-18, question 4). Under (a) the underground
   reads a brief false sky while its columns fill, remembered by the pair until the variance
   reset catches it; Phase 10 bar 1 bounds it.
+- **The provisional bake's leak** (added 2026-11-18, Phase 15 window). With the wait off a
+  chunk baked before a chunk above it arrives holds a false sky until the catch-up re-bake
+  lands; Phase 18 bar 4 bounds it in the streamed rig and bar 3 proves the end state. If the
+  catch-up's re-bakes cost more than half the pre-roll's jobs, the fallback is the wait on by
+  default for the first pre-roll only.
+- **The far end beyond the reach** (added 2026-11-18, Phase 15 window). If Phase 20's reading
+  puts the ray region beyond the bake radius at rest, the pair's filter is what carries it, and
+  the owner may still see a seam at the radius; a wider sky bake radius is an ADR-0046 change
+  for a later plan.
 
 ## What this plan does NOT do
 
@@ -939,8 +1365,17 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
 | 12: The tunnel's brightness: the eye's ceiling anchored to the sky | dev | done (exploration); the anchor is an `AutoExposure` field; the forest sunset at `N` 4 reads 1.37 EV under `none` (bar 2's 0.5 EV not met); RENOIR not read | f05cf2af |
 | 13: The zebra stripes: the sky term's normal and a bounce floor | dev | done (exploration); the arms apply to the baked read only; the stair rig reads face 1.62, smoothed 1.00; the open floor not in view | ad4f241c |
 | 14: The forest floor: attribution, the key light on the pair, the canopy's transmittance | dev | done in part (exploration): `absorb` built; the key light carries the grain at 60 (p99 13 against the sky's 4), neither term at 10; Phase 6's mechanism not built (an owner question: the pair's one age); bar 3's no-pixel-over-50 % not met (49 % of the projection has no leaf); absorb's light pass 4.1 to 4.8 times voxel's | committed with this row |
-| 15: The owner's second window | human | not started | |
-| 16: The picks as tests | dev | not started | |
+| 15: The owner's second window | human | done 2026-11-18, passed on the leak and the picks, failed on six defects (`live/window86b/verdicts.md`; the second amendment) | |
+| 16: The second window's defects attributed | dev | not started | |
+| 17: The picks as defaults, the seal bar re-derived | dev | not started | |
+| 18: The column wait: off by default, its black region, the catch-up | dev | not started | |
+| 19: The key light on the pair's `g`, the grain after a turn | dev | not started | |
+| 20: The seam between the baked sky term and the ray's | dev | not started | |
+| 21: The flash around a dig | dev | not started | |
+| 22: The fired lights' grain under the anchor | dev | not started | |
+| 23: The sunlit treads' clip | dev | not started | |
+| 24: The owner's third window | human | not started | |
+| 25: The picks as tests | dev | not started | |
 
 ### Notes
 

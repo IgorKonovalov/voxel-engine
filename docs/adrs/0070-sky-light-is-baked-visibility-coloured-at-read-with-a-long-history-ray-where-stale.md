@@ -311,6 +311,35 @@ may later seed columns the mirror has not seen, as an optimisation, not as the r
 Sky iff the end point is above a configured ground height. Wrong on the first hill. Named so
 that it is not proposed again.
 
+### Amendment 2026-11-18, after the second window: the finality is a catch-up, the wait a setting
+
+Written while the ADR is still `proposed`, after Plan 0086's Phase 15 window of the same day.
+It changes one sentence of the decision above: "the bake's reach rule gains finality: a chunk
+bakes when its reach is resident and every column over the reach's footprint is final".
+
+**Decision.** The bake does not wait for its columns by default. A chunk bakes when its reach
+is resident and no chunk of its columns is pending upload, and a block baked while a column
+over the reach's footprint was not final carries a provisional mark; when every such column
+turns final the chunk is re-baked once, behind the first bakes, and the mark clears. The end
+state is the one the sentence above described, bit-identical whatever the slicing and the
+order (ADR-0046's identity holds for the end state, and Plan 0086 Phase 18 asserts it); the
+path to it shows the light sooner and may show a provisional sky underground until the
+catch-up lands. The wait stays as a setting (`lighting.column_wait`, off), for a consumer that
+prefers no provisional light to a faster start. A column's finality must be reachable: a chunk
+the streamer will never deliver counts as arrived.
+
+**Why.** As built the wait doubled the pre-roll (Plan 0086's readings log, Phase 9: 10.3 to
+21.2 s on the RTX 3080 Laptop) and, through a column that never turned final, left a region of
+the hill floor black for good (the window's run 4a, "there is huge artifact"); with the wait
+off the owner saw no black spot and a start "a bit faster yes", and picked off. The catch-up
+keeps the correctness the finality bought (no false sky baked in for good) at the cost of one
+more job per provisional chunk.
+
+**Rejected:** keeping the wait on by default with the never-final column fixed (the pre-roll's
+double stands, and the owner picked against it); dropping the finality altogether (a chunk
+baked under a non-final column keeps a false sky until an edit re-bakes it, the leak the
+amendment above was written to remove).
+
 ## Outcome
 
 _(Added only at acceptance if implementation falsified something above. Dated. Never rewrite the
