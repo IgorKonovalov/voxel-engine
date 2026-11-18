@@ -203,8 +203,8 @@ impl Icons {
         let _ = tx.send((i, model.id(), model.clone(), Arc::new(table.clone())));
     }
 
-    /// Takes the icons the worker has made since the last call; one made for a model the
-    /// entry no longer holds is dropped.
+    /// Takes the icons the worker has made since the last call; one made for a model other
+    /// than the entry's current one is dropped.
     pub fn poll(&mut self) {
         let Some((_, rx)) = &self.worker else { return };
         let Ok(rx) = rx.lock() else { return };
