@@ -49,12 +49,14 @@
 //                                        each axis in face order (`sky_irradiance.wgsl`), xyz
 //  17  texture_2d<f32>   vis_in          this frame's visibility samples from the light pass
 //                                        (shade.wgsl's `vis_out`: the sky rays' share in r, 1 in
-//                                        a where they were cast)
+//                                        a where they were cast; the key light's visibility in
+//                                        g, 1 in b where it falls on the face)
 //  18  texture_2d<f32>   prev_pair_in    last frame's visibility pair
 //  19  storage texture   pair_out        rgba16float: the visibility pair (ADR-0070): the sky
 //                                        visibility's running mean in r, the key light's in g
-//                                        (0), the sky's short mean in b, the pair's age in a (the
-//                                        samples its mean holds, 0 where it holds none)
+//                                        (0 where it falls on no face), the sky's short mean in
+//                                        b, the pair's age in a (the samples its mean holds, 0
+//                                        where it holds none)
 //
 // The sky's term (ADR-0070) is a visibility times the sky's irradiance above the horizon about
 // the shading normal now (`sky_open_by_normal`). Where the light pass cast no sky ray (a cube
@@ -66,6 +68,11 @@
 // bit, a sample clamped at FIREFLY_K times the larger of the long and short means once the
 // age passes SKY_SHORT, and the age falling toward SKY_FALL_MIN where the short mean leaves
 // the long mean's band. Every hit adds it to its direct sample before the direct part's blend.
+// The key light's term is `key_light_at(p, n)` times its visibility's running mean in the
+// pair's g (`key_mean`): over the direct part's history age capped at `sky_history`, reset
+// where the direct part's history resets (no accepted taps, an edit box, a fresh pixel) and on
+// the sky-change bit, but not on a change of the list of lights; no clamp (the term is
+// bounded). It joins the direct sample as the sky's term does.
 //
 // A cube face's emissive part (`reads_store`) is its brick record's value for its direction
 // (`store_brick_value`; with Params.lighting bit 14, where the shading normal is not the face
@@ -673,6 +680,17 @@ fn pair_step(s: f32, hp: vec4<f32>, accepted: bool) -> vec4<f32> {
     return vec4<f32>(r + (sc - r) / n, 0.0, b, n);
 }
 
+// The key light's visibility mean after sample `s` on history `g`, which holds `age` samples
+// (the direct part's history age; `reset`: the history is not taken): over `age + 1` samples,
+// as the direct part blends, capped at `sky_history`.
+fn key_mean(s: f32, g: f32, age: f32, reset: bool) -> f32 {
+    if (reset || (params.lighting & LIGHTING_SKY_CHANGED) != 0u) {
+        return s;
+    }
+    let n = clamp(age + 1.0, 1.0, f32(max(sky.sky_history, 1u)));
+    return g + (s - g) / n;
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= params.light_size.x || gid.y >= params.light_size.y) {
@@ -925,9 +943,16 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     // The visibility pair, and its sky term where the rays were cast: the direct part takes it
     // as if its sample had held it, a cube face's too, so the filter smooths what the pair's
     // per-pixel mean of rare hits leaves.
-    let pair = select(seed, pair_step(vis.x, hp, accepted), sky_cast);
+    var pair = select(seed, pair_step(vis.x, hp, accepted), sky_cast);
+    var t = vec3<f32>(0.0);
     if (sky_cast && sky_on()) {
-        let t = pair.x * sky_open_by_normal(rec.n) * exposure_now();
+        t = pair.x * sky_open_by_normal(rec.n) * exposure_now();
+    }
+    if (vis.z > 0.5) {
+        pair.y = key_mean(vis.y, hp.y, age, !accepted || fresh);
+        t += key_light_at(rec.p, rec.n) * pair.y * exposure_now();
+    }
+    if (any(t > vec3<f32>(0.0))) {
         let tl = vec4<f32>(t, luminance(t));
         acc_direct += a_direct * tl;
         let l2 = min(l + tl.w, MOMENT_LUM_MAX);

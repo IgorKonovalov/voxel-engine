@@ -57,7 +57,7 @@ mod reading {
             let (w, h) = (t.width() as usize, t.height() as usize);
             d[(h / 2) * w + w / 2]
         };
-        (at(f.accumulated()), at(f.direct()))
+        (at(f.accumulated()), at(f.direct_accumulated()))
     }
 
     /// Plan 0086 Phase 4 bar 3: the open floor's baked sky term against `pi` (Plan 0032 Phase 6
@@ -268,7 +268,7 @@ mod reading {
         let mut sum: Vec<f64> = Vec::new();
         for _ in 0..16 {
             frame.step(&device, &queue, &gpu, &cam, &LightParams::headlamp());
-            let d = vxe_render::debug::read_rgba16f(&device, &queue, frame.direct());
+            let d = vxe_render::debug::read_rgba16f(&device, &queue, frame.direct_accumulated());
             sum.resize(d.len(), 0.0);
             for (s, p) in sum.iter_mut().zip(&d) {
                 *s += f64::from(p[3]) / 16.0;
@@ -892,6 +892,16 @@ mod reading {
         Some((mean, changes[changes.len() * 99 / 100], level))
     }
 
+    /// [`penumbra_band`] at an exposure pinned so the band's mean level is near 118 (two
+    /// passes, the second scaled by the display's gamma of 2.2): the exposure, then the band's
+    /// change mean, p99 and mean level.
+    pub(super) fn penumbra_band_pinned(radius_deg: Option<f32>) -> Option<(f32, f64, f64, f64)> {
+        let (_, _, level) = penumbra_band(radius_deg, 1.0)?;
+        let ex = ((118.0 / level.max(1.0)) as f32).powf(2.2);
+        let (mean, p99, level) = penumbra_band(radius_deg, ex)?;
+        Some((ex, mean, p99, level))
+    }
+
     /// Plan 0086 Phase 6's reading: the penumbra band's change at 3 degrees (and 5) against
     /// the lamp's on the same floor, each exposure pinned so the band's mean level is near 118
     /// (two passes, the second scaled by the display's gamma of 2.2). Printed.
@@ -899,12 +909,7 @@ mod reading {
     #[ignore = "reading"]
     fn the_penumbra_against_the_lamp() {
         for r in [Some(3.0), Some(5.0), None] {
-            let mut ex = 1.0f32;
-            let Some((_, _, level)) = penumbra_band(r, ex) else {
-                return;
-            };
-            ex *= ((118.0 / level.max(1.0)) as f32).powf(2.2);
-            let Some((mean, p99, level)) = penumbra_band(r, ex) else {
+            let Some((ex, mean, p99, level)) = penumbra_band_pinned(r) else {
                 return;
             };
             let what = r.map_or("the headlamp, no sky".to_string(), |d| {
@@ -919,7 +924,7 @@ mod reading {
     /// The key light's visibility across the slab rig's +x edge (`penumbra_band`'s slab and
     /// camera, native 128 x 128, the lighting at full resolution, the filter off, exposure 1,
     /// no sky rays) under a zenith sun of `radius_deg`: per bin of a quarter voxel in x over
-    /// 36..46 (the lighting hits with y in 30..34), the light pass's direct sample over the open
+    /// 36..46 (the lighting hits with y in 30..34), the accumulated direct part over the open
     /// floor's (x 46..50), with `penumbra`; the disc's as a mean over 64 frames, the approach's
     /// at frame 1, and the approach's largest change of a bin from frame 1 to frame 2.
     fn edge_profile(radius_deg: f32, penumbra: vxe_render::Penumbra) -> Option<(Vec<f64>, f64)> {
@@ -953,7 +958,7 @@ mod reading {
         let light = LightParams::headlamp();
         for _ in 0..frames {
             f.step(&device, &queue, &gpu, &cam, &light);
-            let d = vxe_render::debug::read_rgba16f(&device, &queue, f.direct());
+            let d = vxe_render::debug::read_rgba16f(&device, &queue, f.direct_accumulated());
             let h = vxe_render::debug::read_rgba32f(&device, &queue, f.light_hit_positions());
             let (mut sum, mut n) = ([0.0f64; BINS], [0u32; BINS]);
             let (mut open, mut on) = (0.0f64, 0u32);

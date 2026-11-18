@@ -24,10 +24,13 @@
 //   4  storage, read      light_store     the store (`bake::Store`, temporal.wgsl's `store`),
 //                                        read for `sky_baked`
 //   5  storage texture   vis_out         rgba8unorm: the sky rays' visibility sample (ADR-0070,
-//                                        `sky_visibility_sample`) in r, 0 in g and b, and 1 in a
-//                                        where the sky rays were cast; 0 where none was (no
-//                                        sky, `sky_rays` 0, a miss, the cutaway, the steps view,
-//                                        or a face with a fresh baked visibility, `sky_baked`)
+//                                        `sky_visibility_sample`) in r, and 1 in a where the
+//                                        sky rays were cast; 0 where none was (no sky,
+//                                        `sky_rays` 0, a miss, the cutaway, the steps view, or a
+//                                        face with a fresh baked visibility, `sky_baked`). The
+//                                        key light's visibility sample (`key_visibility`) in g
+//                                        and 1 in b where the key light falls on the face, else
+//                                        0 in both; the key light is not in `direct_out`
 //
 @group(2) @binding(0) var hit_pos_in: texture_2d<f32>;
 
@@ -178,7 +181,7 @@ fn shade_px(gid: vec3<u32>) {
         // The cost of each hit's shadow rays toward the lights in reach, lit or not, in the
         // frame's shadow walk: their loop iterations, storage loads and pool loads summed
         // (unclamped), and in a the rays cast; 0 where none is cast.
-        // The key light's shadow ray, cast as `key_sample` casts it where the key light
+        // The key light's shadow ray, cast as `key_visibility` casts it where the key light
         // reaches the hit (the approach penumbra's probes in its loads): its loop iterations,
         // storage loads and pool loads, and 1 in a; 0 where none is cast.
         var counts = vec4<f32>(0.0);
@@ -242,17 +245,20 @@ fn shade_px(gid: vec3<u32>) {
             let ns = shadow_normal_of(rec, ray.d);
             e = PI * lights_lit_rgb(rec.p, n, ns);
             set_ray_lift(rec, params.views[view_of(full_px(gid.xy))]);
-            // The key light's directional sample (sky_light.wgsl), with the list's. The sky rays
-            // run where the hit's face holds no fresh baked visibility; their share that
-            // reached the sky goes to the temporal pass, which keeps its running mean.
-            let k = key_sample(rec.p, n, ns, gid.xy);
-            e += vec4<f32>(k, luminance(k));
+            // The key light's visibility sample (sky_light.wgsl) goes to the temporal pass, which
+            // keeps its running mean and adds the key light by it. The sky rays run where the
+            // hit's face holds no fresh baked visibility; their share that reached the sky
+            // goes to the temporal pass too, which keeps its running mean.
+            let kv = key_visibility(rec.p, n, ns, gid.xy);
+            if (kv >= 0.0) {
+                vis = vec4<f32>(0.0, kv, 1.0, 0.0);
+            }
             let sv = store_voxel(rec.p, ns);
             let sf = store_face(rec.axis, ns);
             let baked = reads_store(rec) && (sky_baked(sv, sf) || sky_chained(sv, sf))
                 && (params.lighting & LIGHTING_HOOK_SKY_RAY_ALWAYS) == 0u;
             if (!baked && sky_on() && sky.sky_rays > 0u) {
-                vis = vec4<f32>(sky_visibility_sample(rec.p, n, ns, gid.xy), 0.0, 0.0, 1.0);
+                vis = vec4<f32>(sky_visibility_sample(rec.p, n, ns, gid.xy), vis.y, vis.z, 1.0);
             }
             // A cube face's emissive light is the store's (temporal.wgsl): no sample, no shadow
             // ray; so is an entity hit's under LIGHTING_ENTITY_WORLD. Any other hit draws its own.

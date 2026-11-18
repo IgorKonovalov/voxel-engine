@@ -107,9 +107,9 @@ fn centre_direct(
     let mut sum = [0.0f64; 3];
     for _ in 0..frames {
         frame.step(device, queue, gpu, camera, &LightParams::headlamp());
-        let d = vxe_render::debug::read_rgba16f(device, queue, frame.direct());
-        let w = frame.direct().width() as usize;
-        let h = frame.direct().height() as usize;
+        let d = vxe_render::debug::read_rgba16f(device, queue, frame.direct_accumulated());
+        let w = frame.direct_accumulated().width() as usize;
+        let h = frame.direct_accumulated().height() as usize;
         let c = d[(h / 2) * w + w / 2];
         for k in 0..3 {
             sum[k] += f64::from(c[k]);
@@ -600,7 +600,7 @@ fn roof_slab_row(walk: ShadowWalk) -> Option<SlabRow> {
     let mut xs = vec![0.0f32; w];
     for _ in 0..frames {
         f.step(&device, &queue, &gpu, &cam, &LightParams::headlamp());
-        let d = vxe_render::debug::read_rgba16f(&device, &queue, f.direct());
+        let d = vxe_render::debug::read_rgba16f(&device, &queue, f.direct_accumulated());
         let p = vxe_render::debug::read_rgba32f(&device, &queue, f.hit_positions());
         for x in 0..w {
             sum[x] += f64::from(d[row * w + x][0]);
@@ -775,7 +775,7 @@ fn a_sun_jump_marks_the_reactive_mask_and_a_drift_does_not() {
     f.set_sky(Some(at(60.0)));
     f.step(&device, &queue, &gpu, &cam, &light);
     let jump = mask(&f);
-    let d = vxe_render::debug::read_rgba16f(&device, &queue, f.direct());
+    let d = vxe_render::debug::read_rgba16f(&device, &queue, f.direct_accumulated());
     let lit: Vec<usize> = (0..d.len()).filter(|&i| d[i][0] > 0.5).collect();
     let unmarked = lit.iter().filter(|&&i| jump[i] == 0).count();
     println!(
@@ -1201,4 +1201,29 @@ fn a_provisional_bake_is_caught_up() {
     );
     assert_eq!(due, 1, "one catch-up of the floor");
     assert_eq!(got, want, "the end state is the wait's");
+}
+
+/// Plan 0086 Phase 19 bar 1 (Phase 6 bar 2): the key light's visibility on the pair's running
+/// mean holds the penumbra still. `reading::penumbra_band_pinned` (the 16 x 16 slab 20 voxels
+/// over the floor, FSR 2 at 1.5 over 128 x 128, each run's exposure pinned so the band's mean
+/// level is near 118): after 64 frames, the p99 frame-to-frame change over the penumbra band's
+/// display pixels under a zenith sun of 3 degrees is at or under the headlamp's on the same
+/// floor with no sky.
+#[test]
+fn the_penumbra_holds_still_on_the_long_history() {
+    let Some((ex_sun, mean_sun, p99_sun, level_sun)) = reading::penumbra_band_pinned(Some(3.0))
+    else {
+        return;
+    };
+    let Some((ex_lamp, mean_lamp, p99_lamp, level_lamp)) = reading::penumbra_band_pinned(None)
+    else {
+        return;
+    };
+    println!(
+        "penumbra band, sun 3 degrees: exposure {ex_sun:.4}, level {level_sun:.1}, change mean {mean_sun:.3}, p99 {p99_sun}; the headlamp: exposure {ex_lamp:.4}, level {level_lamp:.1}, change mean {mean_lamp:.3}, p99 {p99_lamp}"
+    );
+    assert!(
+        p99_sun <= p99_lamp,
+        "p99 {p99_sun} against the lamp's {p99_lamp}"
+    );
 }

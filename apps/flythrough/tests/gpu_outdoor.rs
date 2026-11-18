@@ -267,29 +267,28 @@ mod reading {
         r.print("outdoor_noon");
     }
 
-    /// Plan 0032 Phase 8 bar 5's rig: a 512 x 384 rock floor (what the view's floor spans) whose
-    /// lit plane is z = 0 and one tree from the builder (trunk radius 2 on column (0, 0) up to z =
-    /// 80, a solid canopy of radius 12 on voxel (0, 0, 80)), the camera at (0.5, 0.5, 250.5)
-    /// looking straight down at `size`; lamp off, no list light, the sky rays and the filter off,
-    /// manual exposure 1, `E_sun = (1, 1, 1)` at the real angular radius, the direct target's
-    /// luminance a 16-frame mean per lighting pixel. Each floor pixel's occlusion `w = 1 - I /
-    /// I_open` against the same pose without the tree; the centroid of `w`, at the pixels' hit
-    /// positions, over floor pixels at least 4 voxels to either side of the shadow's axis; at
-    /// 60/180 against (0.5, 46.98) and 30/270 against (139.93, 0.5); and the sum of `w` at 30 over
-    /// 60 against `sin 60 / sin 30 = 1.732`, under each of `walks`: per walk the two centroids,
-    /// then `[ratio, 0]`. `None` without an adapter. `VXE_TEST_ADAPTER` picks the adapter (unset:
-    /// lavapipe).
-    pub(super) fn tree_shadow(
-        walks: &[vxe_render::ShadowWalk],
-        size: [u32; 2],
-    ) -> Option<Vec<[f64; 2]>> {
+    /// The sun's direction at elevation `el` and azimuth `az` (degrees, azimuth from +y).
+    fn sun_dir(el: f32, az: f32) -> [f32; 3] {
+        let (e, a) = (el.to_radians(), az.to_radians());
+        [e.cos() * a.sin(), e.cos() * a.cos(), e.sin()]
+    }
+
+    /// [`tree_shadow`]'s rig: the device, its queue, the adapter's name, the floor mirrored
+    /// without and with the tree, and the camera straight down.
+    #[allow(
+        clippy::type_complexity,
+        reason = "a rig's parts, destructured at once by its two callers"
+    )]
+    fn tree_rig() -> Option<(
+        vxe_render::wgpu::Device,
+        vxe_render::wgpu::Queue,
+        String,
+        Vec<vxe_render::GpuWorld>,
+        vxe_render::Camera,
+    )> {
         use flythrough::trees::{TRUNK_SINK, TreeShape, build_tree};
         use support::SyncNow;
-        use vxe_render::sky::{Body, SUN_ANGULAR_RADIUS, Sky};
-        use vxe_render::{
-            Camera, Frame, GpuWorld, LightingResolution, MirrorConfig, ShadowWalk, Window,
-            glam::Vec3,
-        };
+        use vxe_render::{Camera, GpuWorld, MirrorConfig, Window, glam::Vec3};
         use vxe_world::{AIR, ChunkExtent, FnSource, World};
         let shape = TreeShape {
             trunk_r: 2,
@@ -342,11 +341,112 @@ mod reading {
             pitch: -std::f32::consts::FRAC_PI_2 + 1e-4,
             vfov: 1.0,
         };
-        let dir = |el: f32, az: f32| {
-            let (e, a) = (el.to_radians(), az.to_radians());
-            [e.cos() * a.sin(), e.cos() * a.cos(), e.sin()]
+        Some((device, queue, adapter, gpus, camera))
+    }
+
+    /// Plan 0086 Phase 19 bar 2 (Phase 6 bar 3): [`tree_rig`] at 320 x 180, the lighting at
+    /// full resolution, the conditions of [`tree_shadow`] with the filter on; the sun at azimuth
+    /// 180 drifting at the testbed's day (0.005 degrees a frame) from elevation 59.365 over 128
+    /// frames to 60, against the same pose held at 60 for 128 frames: the
+    /// centroid of the occlusion on the last frame's accumulated direct part, each against the
+    /// open floor's, and their distance in voxels (the bar: under 0.5). Printed.
+    /// `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    #[test]
+    #[ignore = "reading"]
+    fn a_drift_lags_under_half_a_voxel() {
+        use vxe_render::sky::{Body, SUN_ANGULAR_RADIUS, Sky};
+        use vxe_render::{Frame, GpuWorld, LightingResolution};
+        let Some((device, queue, adapter, gpus, camera)) = tree_rig() else {
+            return;
         };
-        // Per lighting pixel: the 16-frame mean luminance of the direct target and the hit.
+        let body = |direction| Body {
+            direction,
+            illuminance: [1.0; 3],
+            angular_radius: SUN_ANGULAR_RADIUS,
+        };
+        let sky_at = |el: f32| {
+            let sun = sun_dir(el, 180.0);
+            Sky {
+                altitude_zero_z: 0.0,
+                ..Sky::new(body(sun), body(sun.map(|c| -c)))
+            }
+        };
+        let run = |gpu: &GpuWorld, drift: bool| {
+            let mut f = Frame::new(&device, 320, 180);
+            f.set_resolution(&device, LightingResolution::Full);
+            f.set_lighting(Lighting {
+                lamp: false,
+                filter: true,
+                exposure: Exposure::Manual(1.0),
+                sky_rays: 0,
+                ..Lighting::default()
+            });
+            for k in 0..128u32 {
+                let el = if drift {
+                    60.0 - 0.005 * (127 - k) as f32
+                } else {
+                    60.0
+                };
+                f.set_sky(Some(sky_at(el)));
+                f.step(&device, &queue, gpu, &camera, &LightParams::headlamp());
+            }
+            let d = vxe_render::debug::read_rgba16f(&device, &queue, f.direct_accumulated());
+            let h = vxe_render::debug::read_rgba32f(&device, &queue, f.light_hit_positions());
+            let lum: Vec<f64> = d
+                .iter()
+                .map(|p| f64::from(0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]))
+                .collect();
+            (lum, h)
+        };
+        let (open, _) = run(&gpus[0], false);
+        let centroid = |lit: &[f64], hits: &[[f32; 4]]| {
+            let (mut sw, mut sx, mut sy) = (0.0f64, 0.0f64, 0.0f64);
+            for i in 0..open.len() {
+                let h = hits[i];
+                if h[3] <= 0.0 || h[2].abs() > 0.01 || open[i] <= 0.0 {
+                    continue;
+                }
+                let w = (1.0 - lit[i] / open[i]).clamp(0.0, 1.0);
+                sw += w;
+                sx += w * f64::from(h[0]);
+                sy += w * f64::from(h[1]);
+            }
+            [sx / sw, sy / sw]
+        };
+        let (still, hs) = run(&gpus[1], false);
+        let (drift, hd) = run(&gpus[1], true);
+        let (a, b) = (centroid(&still, &hs), centroid(&drift, &hd));
+        let off = ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt();
+        println!(
+            "reading: drift on {adapter}: held at 60 ({:.2}, {:.2}), drifted to 60 ({:.2}, {:.2}), off {off:.3} voxels (the geometric move over the drift {:.2})",
+            a[0],
+            a[1],
+            b[0],
+            b[1],
+            80.0 / (60.0f64 - 0.635).to_radians().tan() - 80.0 / 60f64.to_radians().tan()
+        );
+    }
+
+    /// Plan 0032 Phase 8 bar 5's rig: a 512 x 384 rock floor (what the view's floor spans) whose
+    /// lit plane is z = 0 and one tree from the builder (trunk radius 2 on column (0, 0) up to z =
+    /// 80, a solid canopy of radius 12 on voxel (0, 0, 80)), the camera at (0.5, 0.5, 250.5)
+    /// looking straight down at `size`; lamp off, no list light, the sky rays and the filter off,
+    /// manual exposure 1, `E_sun = (1, 1, 1)` at the real angular radius, the direct target's
+    /// luminance a 16-frame mean per lighting pixel. Each floor pixel's occlusion `w = 1 - I /
+    /// I_open` against the same pose without the tree; the centroid of `w`, at the pixels' hit
+    /// positions, over floor pixels at least 4 voxels to either side of the shadow's axis; at
+    /// 60/180 against (0.5, 46.98) and 30/270 against (139.93, 0.5); and the sum of `w` at 30 over
+    /// 60 against `sin 60 / sin 30 = 1.732`, under each of `walks`: per walk the two centroids,
+    /// then `[ratio, 0]`. `None` without an adapter. `VXE_TEST_ADAPTER` picks the adapter (unset:
+    /// lavapipe).
+    pub(super) fn tree_shadow(
+        walks: &[vxe_render::ShadowWalk],
+        size: [u32; 2],
+    ) -> Option<Vec<[f64; 2]>> {
+        use vxe_render::sky::{Body, SUN_ANGULAR_RADIUS, Sky};
+        use vxe_render::{Frame, GpuWorld, LightingResolution, ShadowWalk};
+        let (device, queue, adapter, gpus, camera) = tree_rig()?;
+        // Per lighting pixel: the 16-frame mean luminance of the direct part and the hit.
         // One frame for every run: its pipelines are built once.
         let mut frame = Frame::new(&device, size[0], size[1]);
         frame.set_resolution(&device, LightingResolution::Full);
@@ -372,7 +472,8 @@ mod reading {
             let mut sum = vec![0.0f64; n];
             for _ in 0..16 {
                 frame.step(&device, &queue, gpu, &camera, &LightParams::headlamp());
-                let d = vxe_render::debug::read_rgba16f(&device, &queue, frame.direct());
+                let d =
+                    vxe_render::debug::read_rgba16f(&device, &queue, frame.direct_accumulated());
                 for (s, p) in sum.iter_mut().zip(&d) {
                     *s += f64::from(0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]) / 16.0;
                 }
@@ -388,7 +489,7 @@ mod reading {
                 (60.0f32, 180.0f32, [0.5, 46.98]),
                 (30.0, 270.0, [139.93, 0.5]),
             ] {
-                let sun = dir(el, az);
+                let sun = sun_dir(el, az);
                 let (open, _) = read(&gpus[0], sun, walk);
                 let (lit, hits) = read(&gpus[1], sun, walk);
                 // The shadow's axis: from (0.5, 0.5) away from the sun.
@@ -1584,6 +1685,219 @@ mod reading {
                 report(&format!("hills {el}"), cell, &r);
             }
         }
+    }
+
+    /// The forest floor's display changes ([`forest_floor_run`]): per frame read, the floor's
+    /// and the canopy's p99 and mean change in display levels.
+    struct FloorRun {
+        /// Per frame read: `[floor p99, floor mean, canopy p99, canopy mean]`.
+        frames: Vec<[f64; 4]>,
+        exposure: f32,
+    }
+
+    /// The p99 and the mean of `v`, 0 for none.
+    fn p99_mean(mut v: Vec<f64>) -> (f64, f64) {
+        if v.is_empty() {
+            return (0.0, 0.0);
+        }
+        v.sort_by(f64::total_cmp);
+        let mean = v.iter().sum::<f64>() / v.len() as f64;
+        (v[v.len() * 99 / 100], mean)
+    }
+
+    /// `cam` on [`forest_rig`]'s world under `sky` (the defaults, voxel leaves, the store baked
+    /// whole, the lamp off) or, with `None`, the headlamp alone: FSR 2 at 1.5 over 320 x 180,
+    /// 64 frames under the outdoor auto exposure (instant, the default sky anchor), then that
+    /// exposure pinned and, with `turn`, the yaw turned by 90 degrees over 10 frames, then 64
+    /// still frames. Each read frame's display change against the frame before, split by the
+    /// hit's material at the internal pixel: the canopy (a leaf or bark voxel among the 8 about
+    /// the hit) and the floor (any other hit).
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the reading prints the bake's wall time"
+    )]
+    fn forest_floor_run(
+        rig: &mut Rig,
+        cam: &vxe_render::Camera,
+        sky: Option<vxe_render::sky::Sky>,
+        turn: bool,
+    ) -> FloorRun {
+        use flythrough::outdoor::{BARK, LEAF};
+        use vxe_render::{UpscalerKind, glam::Vec3};
+        let mut f = Frame::with_sizes(&rig.device, [320, 180], [480, 270]);
+        f.set_upscaler_kind(
+            &rig.device,
+            UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default()),
+        );
+        let base = Lighting {
+            lamp: sky.is_none(),
+            ..flythrough::default_lighting()
+        };
+        f.set_look(vxe_render::LookParams {
+            far_normal: flythrough::LookPreset::DEFAULT.far_normal,
+            ..vxe_render::LookParams::default()
+        });
+        f.set_material_styles(
+            &rig.queue,
+            &flythrough::outdoor_styles(flythrough::LeafShadow::Voxel),
+        );
+        f.set_lighting(Lighting {
+            exposure: Exposure::Auto(AutoExposure {
+                min: flythrough::cli::OUTDOOR_MIN,
+                max: flythrough::cli::OUTDOOR_MAX,
+                sky_anchor_ev: Some(vxe_render::DEFAULT_SKY_ANCHOR_EV),
+                ..AutoExposure::instant()
+            }),
+            ..base
+        });
+        let lit = sky.is_some();
+        f.set_sky(sky);
+        if lit {
+            let t = std::time::Instant::now();
+            f.bake_until(
+                &rig.device,
+                &rig.queue,
+                &mut rig.gpu,
+                &rig.world,
+                rig.world.extent(),
+                &vxe_render::BakeSettings::default(),
+                &mut |_| {},
+            )
+            .expect("the store fits");
+            println!("reading: bake {:.1} s", t.elapsed().as_secs_f64());
+        }
+        f.set_dt(1.0 / 60.0);
+        let light = LightParams::headlamp();
+        for _ in 0..64 {
+            f.step(&rig.device, &rig.queue, &rig.gpu, cam, &light);
+        }
+        let st = vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_state(), 0, 32);
+        let exposure = vxe_render::ExposureState::from_bytes(&st).current;
+        f.set_lighting(Lighting {
+            exposure: Exposure::Manual(exposure),
+            ..base
+        });
+        let canopy_at = |p: &[f32; 4]| {
+            (0..8).any(|k| {
+                let v: [i32; 3] = std::array::from_fn(|a| {
+                    let o = if k >> a & 1 == 1 { 0.01 } else { -0.01 };
+                    (p[a] + o).floor() as i32
+                });
+                matches!(
+                    rig.world.material_at(vxe_world::VoxelCoord(v)),
+                    Some(m) if m == LEAF || m == BARK
+                )
+            })
+        };
+        let read = |f: &Frame| vxe_render::debug::read_rgba8(&rig.device, &rig.queue, f.target());
+        let mut last = read(&f);
+        let mut frames = Vec::new();
+        let steps = if turn { 74 } else { 64 };
+        let mut c = *cam;
+        for k in 0..steps {
+            if turn && k < 10 {
+                c.yaw += std::f32::consts::FRAC_PI_2 / 10.0;
+            }
+            f.step(&rig.device, &rig.queue, &rig.gpu, &c, &light);
+            let now = read(&f);
+            let hits = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, f.hit_positions());
+            let (hw, dw) = (
+                f.hit_positions().width() as usize,
+                f.target().width() as usize,
+            );
+            let hh = hits.len() / hw;
+            let dh = now.len() / 4 / dw;
+            let (mut floor, mut canopy) = (Vec::new(), Vec::new());
+            for (i, (a, b)) in now.chunks(4).zip(last.chunks(4)).enumerate() {
+                let h = &hits[(i / dw * hh / dh) * hw + i % dw * hw / dw];
+                if h[3] <= 0.0 || h[3] >= 1.0e30 || Vec3::from_slice(&h[..3]).is_nan() {
+                    continue;
+                }
+                let d = f64::from((0..3).map(|k| a[k].abs_diff(b[k])).max().unwrap_or(0));
+                if canopy_at(h) {
+                    canopy.push(d);
+                } else {
+                    floor.push(d);
+                }
+            }
+            let (fp, fm) = p99_mean(floor);
+            let (cp, cm) = p99_mean(canopy);
+            frames.push([fp, fm, cp, cm]);
+            last = now;
+        }
+        FloorRun { frames, exposure }
+    }
+
+    /// The mean over `frames` of each column.
+    fn floor_means(frames: &[[f64; 4]]) -> [f64; 4] {
+        std::array::from_fn(|k| {
+            frames.iter().map(|r| r[k]).sum::<f64>() / frames.len().max(1) as f64
+        })
+    }
+
+    /// Plan 0086 Phase 19 bar 3: [`forest_floor_run`] at rest at `60,180` and `10,180` and the
+    /// headlamp alone at the same pose: the floor's and the canopy's p99 and mean change, each
+    /// the mean over the 64 read frames. Printed. `VXE_TEST_ADAPTER` picks the adapter (unset:
+    /// lavapipe).
+    #[test]
+    #[ignore = "reading"]
+    fn the_forest_floor_at_a_low_sun() {
+        let Some((mut rig, cam)) = forest_rig() else {
+            return;
+        };
+        println!("reading: the_forest_floor_at_a_low_sun on {}", rig.adapter);
+        for (name, sky) in [
+            ("sun 60,180", Some(fixed_sun_sky(60.0))),
+            ("sun 10,180", Some(fixed_sun_sky(10.0))),
+            ("the headlamp", None),
+        ] {
+            let r = forest_floor_run(&mut rig, &cam, sky, false);
+            let m = floor_means(&r.frames);
+            println!(
+                "reading: forest at rest, {name}: floor p99 {:.2} mean {:.3}; canopy p99 {:.2} mean {:.3}; exposure {:.3e}",
+                m[0], m[1], m[2], m[3], r.exposure
+            );
+        }
+    }
+
+    /// Plan 0086 Phase 19 bar 4: [`forest_floor_run`] with the turn, at `60,180` and `10,180`
+    /// and the headlamp alone: the floor's p99 change per frame from the turn's first frame,
+    /// its value at rest (the mean of the last 16 frames), and the frames after the turn ends
+    /// until it stays within 2 display levels of that. Printed. `VXE_TEST_ADAPTER` picks the
+    /// adapter (unset: lavapipe).
+    #[test]
+    #[ignore = "reading"]
+    fn the_forest_after_a_turn() {
+        let Some((mut rig, cam)) = forest_rig() else {
+            return;
+        };
+        println!("reading: the_forest_after_a_turn on {}", rig.adapter);
+        for (name, sky) in [
+            ("sun 60,180", Some(fixed_sun_sky(60.0))),
+            ("sun 10,180", Some(fixed_sun_sky(10.0))),
+            ("the headlamp", None),
+        ] {
+            let r = forest_floor_run(&mut rig, &cam, sky, true);
+            let rest = floor_means(&r.frames[r.frames.len() - 16..])[0];
+            let after = &r.frames[10..];
+            let settle = (0..after.len())
+                .find(|&k| after[k..].iter().all(|v| v[0] <= rest + 2.0))
+                .unwrap_or(after.len());
+            let series: Vec<String> = r.frames.iter().map(|v| format!("{:.0}", v[0])).collect();
+            println!(
+                "reading: forest after a turn, {name}: floor p99 at rest {rest:.2}, settled {settle} frames after the turn; per frame [{}]",
+                series.join(" ")
+            );
+        }
+    }
+
+    /// The testbed's sky with the sun fixed at elevation `el`, azimuth 180.
+    fn fixed_sun_sky(el: f32) -> vxe_render::sky::Sky {
+        flythrough::daylight::Clock {
+            fixed_sun: Some([el, 180.0]),
+            ..Default::default()
+        }
+        .sky(flythrough::outdoor::BASE_Z as f32)
     }
 }
 
