@@ -1,26 +1,26 @@
 # 0079: Entities aware of the floor and the walls: a surface mover in `vxe-sim`, the smoothed normal, a body in the `.rig`, and a wandering demo
 
-> **Status:** in-progress (approved 2026-11-16, the owner: every recommended answer under "Owner questions"; Phases 1 to 3 done; **amended 2026-11-18 (the architect's re-read against Plan 0077 as landed: Phases 4 to 6 rewritten in place, owner questions 9 to 11 await answers, Phase 4 may start on the recommendations)**)
+> **Status:** done (closed 2026-11-18, v0.65.0: every phase done and every named test read as its done-when claims; the surface mover, the gradient and the wander ship as integer motion pinned by two course hashes; the 64-spider frame CPU reads +3.07 ms against a +1.5 ms guess, recorded, the owner's window did not notice it. Approved 2026-11-16, the owner: every recommended answer under "Owner questions"; amended 2026-11-18 (the architect's re-read against Plan 0077 as landed: Phases 4 to 6 rewritten in place))
 > **Created:** 2026-11-16
-> **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md) (entities), over M3's collision
+> **Milestone:** M6 in [`docs/roadmap.md`](../../roadmap.md) (entities), over M3's collision
 > (`vxe-sim`, ADR-0005)
-> **Related ADRs:** [ADR-0062](../adrs/0062-surface-locomotion-is-a-kinematic-sphere-attached-to-a-contact-normal-in-vxe-sim.md)
+> **Related ADRs:** [ADR-0062](../../adrs/0062-surface-locomotion-is-a-kinematic-sphere-attached-to-a-contact-normal-in-vxe-sim.md)
 > (proposed; the surface mover, the smoothed normal, the frame to quaternion), accepted at this
-> plan's close. Rests on [ADR-0005](../adrs/0005-vertical-cylinder-collision-by-integer-conservative-advancement.md)
+> plan's close. Rests on [ADR-0005](../../adrs/0005-vertical-cylinder-collision-by-integer-conservative-advancement.md)
 > (the cylinder controller the ground mover is),
-> [ADR-0008](../adrs/0008-collapse-as-capped-support-flood-and-rigid-vertical-drop.md) (no rigid
+> [ADR-0008](../../adrs/0008-collapse-as-capped-support-flood-and-rigid-vertical-drop.md) (no rigid
 > bodies in the authoritative world; the mover is kinematic),
-> [ADR-0050](../adrs/0050-entities-are-posed-voxel-volumes-in-their-own-pool-traced-after-the-world-march.md)
+> [ADR-0050](../../adrs/0050-entities-are-posed-voxel-volumes-in-their-own-pool-traced-after-the-world-march.md)
 > (poses in fixed point) and
-> [ADR-0051](../adrs/0051-rigs-and-clips-are-text-files-sampled-in-fixed-point-by-tick.md)
+> [ADR-0051](../../adrs/0051-rigs-and-clips-are-text-files-sampled-in-fixed-point-by-tick.md)
 > (the `.rig` file, clips by tick).
 > **Source:** the owner, 2026-11-16: "entities should be aware of where the floor and walls are,
 > so for example we can have walkers walking and spiders crawling".
 > **Starts after:** Phases 1 to 3 touch `crates/` and the library's two rig files only; they may
-> start as a side lane once [Plan 0063](done/0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
+> start as a side lane once [Plan 0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
 > has merged (`Pose::compose`, Phase 3b) and the clip-recorder chore has merged (the spider's rig,
 > `apps/flythrough/assets/entities/`). Phase 4 edits the fly-through's entities module and starts
-> after [Plan 0077](done/0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md)
+> after [Plan 0077](0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md)
 > has merged, since 0077 splits `walker.rs`, gives `Placed` its entry and clip and makes the
 > picker place on the aimed surface, and this plan builds on all three. Before Phase 4 starts the
 > architect re-reads it against that tip (the names `walker.rs`, `Placed`, `Walkers::step` and
@@ -30,8 +30,8 @@
 ## Amended 2026-11-18 (re-read against Plan 0077 as landed)
 
 Read at `plan-0079` 8078638d, which holds main 63e3695a (Plan 0077 closed, v0.64.0; ADR-0074
-and ADR-0075 accepted; [`docs/references/entity-placement-ux.md`](../references/entity-placement-ux.md);
-the Placement mode section of [`docs/flythrough.md`](../flythrough.md)). Phases 1 to 3 stand
+and ADR-0075 accepted; [`docs/references/entity-placement-ux.md`](../../references/entity-placement-ux.md);
+the Placement mode section of [`docs/flythrough.md`](../../flythrough.md)). Phases 1 to 3 stand
 as landed. The tree's names win; Phases 4 to 6 below are rewritten in place, and this section
 holds the name mapping, the decisions and the new owner questions. **Phase 4 may start on the
 recommendations** (the owner took every recommendation of this plan on 2026-11-16; questions 9
@@ -842,7 +842,7 @@ unchanged (ADR-0050).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the surface mover in `vxe-sim` | dev | done; readings in [`logs/0079.md`](logs/0079.md) | bc04beb4 |
+| 1: the surface mover in `vxe-sim` | dev | done; readings in [`logs/0079.md`](../logs/0079.md) | bc04beb4 |
 | 2: the smoothed normal in `vxe-world`, the frame in `vxe-entity` | dev | done; done-when 8 per the 2026-11-17 amendment | 7661676e, committed with this row |
 | 3: the body and the stride in the `.rig` | dev | done | 8c0b26d4 |
 | 4: the fly-through's demo | dev | done; done-whens 1 to 8, readings in the log | e1894054 |
