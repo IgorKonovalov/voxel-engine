@@ -121,11 +121,15 @@ fn look(run: &mut Run, at: [f32; 3], pitch_deg: f32) {
     run.fly.camera.pitch = pitch_deg.to_radians();
 }
 
-/// Phase 5 done-when: closed, one wheel step enters the mode at slot 1 with the walker's ghost
-/// standing and the dig radius unchanged; a second selects slot 2 (the spider, in error
-/// under the cave's table: no ghost, its reason in the notice); eight more wrap to slot 1;
-/// `3` selects the empty slot 3 (no ghost, the name row names it); `Esc` ends the mode and
-/// the run goes on; a second `Esc` is the quit.
+/// Phase 5 done-when, amended by Phase 9 (1): closed, one wheel step enters the mode at slot
+/// 1 with the walker's ghost standing and the dig radius unchanged; a second selects slot 2
+/// (the spider, in error under the cave's table: no ghost, its reason in the notice); eight
+/// more wrap to slot 1; `3` selects the empty slot 3 (no ghost, the name row names it). In the
+/// mode `4` selects slot 4 and removes nothing, `1` and `6` select slots 1 and 6 and drop and
+/// fire nothing, and `Delete` removes the aimed placed entity. `Esc` ends the mode and the run
+/// goes on. Out of the mode `2 3 5 7 8 9` leave the run as it was, `4` removes the newest (its
+/// bind's old function), `1` drops a light and `6` fires one; the wheel still enters the mode.
+/// A second `Esc` is the quit. No action is `placement mode`.
 #[test]
 fn the_wheel_and_the_digits_enter_the_mode() {
     let mut run = picker_run();
@@ -171,9 +175,58 @@ fn the_wheel_and_the_digits_enter_the_mode() {
     let name_row = text.lines().nth(45 - BELT_ROWS).expect("the name row");
     assert_eq!(name_row.trim(), "slot 3 empty  (choose with `)");
 
+    // In the mode every digit is the belt's: `4`, `1` and `6` too.
+    let ids = three_in_a_row(&mut run);
+    let newest = |run: &Run| run.modes.walkers.newest.len();
+    let placed = |run: &Run| {
+        let w = &run.modes.walkers;
+        w.placed.iter().map(|p| p.id).collect::<Vec<_>>()
+    };
+    for (key, slot) in [
+        (KeyCode::Digit4, 3),
+        (KeyCode::Digit1, 0),
+        (KeyCode::Digit6, 5),
+    ] {
+        frame_keys(&mut run, &pressed(key));
+        let b = &run.modes.walkers.belt;
+        assert!(b.on, "{key:?}");
+        assert_eq!(b.selected, slot, "{key:?}");
+        assert_eq!(placed(&run), ids, "{key:?} removes nothing");
+        assert_eq!(newest(&run), 3, "{key:?} drops and fires nothing");
+    }
+    frame_keys(&mut run, &pressed(KeyCode::Delete));
+    assert_eq!(placed(&run), [ids[0], ids[2]]);
+
     assert_eq!(step(&mut run, &pressed(KeyCode::Escape)), None);
     let w = &run.modes.walkers;
-    assert!(!w.belt.on && w.preview.is_none() && w.set.is_empty());
+    assert!(!w.belt.on && w.preview.is_none());
+    assert_eq!(w.set.len(), 2);
+
+    // Out of the mode no digit enters it; `1`, `4` and `6` keep their binds.
+    for key in [2, 3, 5, 7, 8, 9].map(|d| crate::toggles::BELT_KEYS[d - 1]) {
+        frame_keys(&mut run, &pressed(key));
+        let w = &run.modes.walkers;
+        assert!(!w.belt.on && w.preview.is_none(), "{key:?}");
+        assert_eq!((w.set.len(), newest(&run)), (2, 2), "{key:?}");
+        assert_eq!(placed(&run), [ids[0], ids[2]], "{key:?}");
+    }
+    frame_keys(&mut run, &pressed(KeyCode::Digit4));
+    assert_eq!(placed(&run), [ids[0]], "`4` removes the newest");
+    frame_keys(&mut run, &pressed(KeyCode::Digit1));
+    assert_eq!(run.modes.walkers.newest.last(), Some(&false), "`1` drops");
+    assert_eq!(newest(&run), 2);
+    frame_keys(&mut run, &pressed(KeyCode::Digit6));
+    assert_eq!(newest(&run), 3, "`6` fires");
+    assert!(!run.modes.walkers.belt.on);
+    frame_keys(&mut run, &wheel_down());
+    assert!(run.modes.walkers.belt.on, "the wheel enters");
+    assert!(
+        crate::toggles::ACTIONS
+            .iter()
+            .all(|a| a.label != "placement mode")
+    );
+
+    assert_eq!(step(&mut run, &pressed(KeyCode::Escape)), None);
     assert_eq!(step(&mut run, &pressed(KeyCode::Escape)), Some(Flow::Exit));
 }
 
@@ -226,8 +279,17 @@ fn ghost_feet(run: &mut Run, name: &str, at: [f32; 3], pitch_deg: f32) -> [f32; 
     let i = entry(run, name);
     run.fill_belt();
     let s = run.modes.walkers.belt.slot_of(i).expect("a slot");
-    run.act(crate::toggles::Act::BeltSlot(s as u8 + 1));
+    enter_slot(run, s);
     run.modes.walkers.preview.as_ref().expect("a ghost").feet
+}
+
+/// Placement mode at slot `s` (0-based): a wheel step in when out of it, then the slot's
+/// digit.
+fn enter_slot(run: &mut Run, s: usize) {
+    if !run.modes.walkers.belt.on {
+        frame_keys(run, &wheel_down());
+    }
+    frame_keys(run, &pressed(crate::toggles::BELT_KEYS[s]));
 }
 
 /// Phase 5 done-when: the camera 1.7 m over the floor looking 40 degrees down (the floor hit
@@ -663,14 +725,15 @@ fn the_pad_places_from_the_view() {
 
 /// Phase 3 done-when, in the mode: with three placed and the crosshair on the second,
 /// `Delete` removes the second only, with the menu closed, in placement mode and with the
-/// chooser open; `4` afterwards removes the third (in the mode too).
+/// chooser open; `4` afterwards removes the third out of the mode, and in the mode selects
+/// slot 4 and removes nothing (Phase 9 (1)).
 #[test]
 fn the_remove_key_takes_the_aimed_entity() {
     for state in ["closed", "placing", "open"] {
         let mut run = picker_run();
         let ids = three_in_a_row(&mut run);
         match state {
-            "placing" => run.act(crate::toggles::Act::BeltSlot(3)),
+            "placing" => enter_slot(&mut run, 2),
             "open" => run.act(crate::toggles::Act::Picker),
             _ => {}
         }
@@ -692,7 +755,12 @@ fn the_remove_key_takes_the_aimed_entity() {
             frame_keys(&mut run, &pressed(KeyCode::Escape));
         }
         frame_keys(&mut run, &pressed(KeyCode::Digit4));
-        assert_eq!(placed(&run), [ids[0]], "{state}");
+        if state == "placing" {
+            assert_eq!(placed(&run), [ids[0], ids[2]], "{state}");
+            assert_eq!(run.modes.walkers.belt.selected, 3);
+        } else {
+            assert_eq!(placed(&run), [ids[0]], "{state}");
+        }
     }
 }
 

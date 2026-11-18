@@ -484,9 +484,10 @@ fn f1_opens_the_keys_page() {
 
 /// The shortcut rows of ADR-0061's key table as the owner answered it (Plan 0080's "The
 /// keys"), the render profile's `F4` (ADR-0055) and the belt's (Plan 0077's placement mode;
-/// the dig radius is the menu's only): each entry that keeps a bind and its binds as the menu
+/// the dig radius is the menu's only; the digits are the belt's slots while the belt is shown,
+/// a fixed row, and enter no mode): each entry that keeps a bind and its binds as the menu
 /// shows them.
-const SHORTCUTS: [(&str, &str); 20] = [
+const SHORTCUTS: [(&str, &str); 19] = [
     ("profile", "F4"),
     ("walk", "G / pad North"),
     ("resume the tour", "T"),
@@ -496,7 +497,6 @@ const SHORTCUTS: [(&str, &str); 20] = [
     ("remove the newest", "4"),
     ("fire a light", "6"),
     ("choose an entity", "`"),
-    ("placement mode", "2 / 3 / 5 / 7 / 8 / 9"),
     ("belt next", "pad D-pad right"),
     ("belt before", "pad D-pad left"),
     ("turn the ghost", "R"),
@@ -562,6 +562,24 @@ fn the_shortcuts_are_the_table() {
         };
         let row = row.split("  unavailable: ").next().unwrap_or(row);
         assert!(row.trim_end().ends_with(&format!(" {keys}")), "{row}");
+    }
+    // Plan 0077 Phase 9 (1): the fixed rows say the digits are the belt's slots while the
+    // belt is shown; no entry's keys are a digit other than the lights' `1`, `4`, `6`.
+    assert!(
+        tree.lines()
+            .any(|l| l.contains("1-9") && l.contains("the belt's slots while the belt is shown")),
+        "{tree}"
+    );
+    assert!(
+        tree.lines()
+            .all(|l| l.trim_start().split("  ").next() != Some("placement mode")),
+        "{tree}"
+    );
+    for (label, keys) in SHORTCUTS {
+        let digit = keys
+            .split(" / ")
+            .any(|k| k.len() == 1 && k.chars().all(|c| c.is_ascii_digit()));
+        assert!(!digit || ["1", "4", "6"].contains(&keys), "{label}: {keys}");
     }
 }
 

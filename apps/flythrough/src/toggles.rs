@@ -202,9 +202,10 @@ pub const KEY_FIRE: KeyCode = KeyCode::Digit6;
 pub const KEY_WALKER: KeyCode = KeyCode::Backquote;
 /// `R`: turn the ghost one step in placement mode (`crate::entities::belt`).
 pub const KEY_TURN: KeyCode = KeyCode::KeyR;
-/// The belt's slots' keys, `1`..`9`: in placement mode each selects its slot, but `4`, which
-/// removes the newest in the mode as out of it. Out of the mode `1` and `6` keep the lights'
-/// drop and shot, and the free digits enter the mode at their slot ([`Act::BeltSlot`]).
+/// The belt's slots' keys, `1`..`9`: while the belt is shown (placement mode, and the
+/// chooser over it) each selects its slot, `4` included, and the lights' drop, removal and
+/// shot rest; out of the mode `1`, `4` and `6` keep those binds and no digit enters the mode.
+/// No action binds them: `hud::menu::bound_keys` counts them as read.
 pub const BELT_KEYS: [KeyCode; 9] = [
     KEY_DROP,
     KeyCode::Digit2,
@@ -244,9 +245,6 @@ pub enum Act {
     FireLight,
     /// Opens the chooser: the library's entries, each into a belt slot.
     Picker,
-    /// Enters placement mode at the belt's slot of the digit pressed (1-based; 0 the
-    /// selected slot, as the menu's entry runs it).
-    BeltSlot(u8),
     /// The belt's selection one slot on (`1`) or back (`-1`), entering the mode.
     BeltStep(i8),
     /// Turns the ghost one step in placement mode.
@@ -463,28 +461,6 @@ pub static ACTIONS: &[Action] = &[
         Act::Picker,
         [Bind::Key(KEY_WALKER)]
     ),
-    Action {
-        binds: &[
-            Bind::Key(BELT_KEYS[1]),
-            Bind::Key(BELT_KEYS[2]),
-            Bind::Key(BELT_KEYS[4]),
-            Bind::Key(BELT_KEYS[6]),
-            Bind::Key(BELT_KEYS[7]),
-            Bind::Key(BELT_KEYS[8]),
-        ],
-        label: "placement mode",
-        group: Group::Entities,
-        mode: Some(|m, _| {
-            let b = &m.walkers.belt;
-            match b.on {
-                true => format!("placement on, slot {}", b.selected + 1),
-                false => format!("placement off, slot {}", b.selected + 1),
-            }
-        }),
-        act: Act::BeltSlot(0),
-        needs: None,
-        range: None,
-    },
     action!(
         "belt next",
         Entities,

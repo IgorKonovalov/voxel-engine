@@ -183,7 +183,8 @@ pub fn keys_text(args: &crate::cli::Args) -> String {
     out
 }
 
-/// Every key the tables and the fixed set bind.
+/// Every key the tables and the fixed set bind, then the belt's digits
+/// (`toggles::BELT_KEYS`, read while the belt is shown; `1`, `4` and `6` also bound above).
 pub fn bound_keys() -> Vec<KeyCode> {
     let toggles = TOGGLES.iter().filter_map(|t| match t.press {
         Press::Key(k, _) => Some(k),
@@ -199,6 +200,7 @@ pub fn bound_keys() -> Vec<KeyCode> {
     toggles
         .chain(actions)
         .chain(FIXED_KEYS.iter().copied())
+        .chain(crate::toggles::BELT_KEYS)
         .collect()
 }
 

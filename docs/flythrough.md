@@ -63,6 +63,7 @@ window's top-right corner reads `fps <n>  frame <median> ms p99 <ms>` while it i
 | Left click | Dig at the crosshair; the edit result prints to the terminal. In placement mode: place the ghost |
 | Right click | Fill at the crosshair. In placement mode: leave it |
 | Wheel | Enter placement mode at the belt's selected slot; in the mode, step the slot (down the next, wrapping at nine) |
+| `1`..`9` | While the belt is shown (placement mode, and the chooser over it): the belt's slots, `4` included; `1`, `4` and `6` then drop, remove and fire nothing. Out of the mode they keep their shortcuts below and no digit enters the mode |
 | `Tab` | The menu; type on any page to search |
 | `F1` | The Keys page (with `--tester`: the help panel) |
 | `F2` | Toggle the stats overlay |
@@ -84,10 +85,9 @@ row showing the new value.
 | upscaler | `F4` | The next render profile: floor, portable, performance, high (`--profile`) |
 | lighting | `F7` | Toggle the headlamp |
 | lights | `1` | Drop a point light of the picked colour (intensity 600) 2 voxels off the looked-at surface (20 voxels ahead on a miss); the banner names `lights <n>/16`. Sixteen slots, the headlamp's among them while it is on; a drop into a full list prints a line and adds nothing |
-| lights | `4` | Remove the newest light or walker, whichever was added last |
+| lights | `4` | Remove the newest light or walker, whichever was added last (in placement mode `4` is the belt's slot 4) |
 | lights | `6` | Fire a point light of the picked colour (intensity 600) along the view ray at 20 m/s; it stops 2 voxels short of the first surface (or after 40 m) and stays there as a dropped light |
 | entities | `` ` `` | `choose an entity`: the chooser (also the `entities` page's first row). Four rows per library entry: its parts and size (an entry in error grey with its error), then its clips (the one a placement starts on marked `*`) and the belt's slot that holds it. `Enter` (or the left click, or the pad's `South`, or `` ` ``) on an entry puts it in the belt's selected slot (or selects the slot already holding it), closes the menu and enters placement mode; a digit `1`..`9` puts it in that slot and the chooser stays open; letters search the menu as on any page |
-| entities | `2` `3` `5` `7` `8` `9` | `placement mode`: enter it at that slot (in the mode every digit but `4` selects its slot, `1` and `6` included) |
 | entities | `R` | `turn the ghost`: 22.5 degrees about the up axis per press, kept until the mode ends |
 | entities | `Delete` | Remove the placed entity under the crosshair, the menu open or not, in placement mode or not |
 | entities | `Left`, `Right` | The aimed (else the newest) placed entity's clip before and after (menu closed); in placement mode, the ghost's |
@@ -129,8 +129,9 @@ name above the belt for 3 s after the selection changes (`slot 5 empty  (choose 
 an empty slot, an entry in error grey with its error). The belt starts filled with the library
 in the chooser's order (`--model`'s rig first, then the entries that build, then those in
 error, each in name order); a slot keeps its entry for the run, and the chooser's digits change
-it. The wheel, a free digit or the pad's D-pad left and right enter the mode from the view;
-opening the menu, `Esc`, the right click, `L2` or the pad's `East` leave it.
+it. The wheel, the pad's D-pad left and right or the chooser's `Enter` enter the mode from the
+view, never a digit; in the mode every digit `1`..`9` selects its slot (`Delete` removes the
+aimed entity). Opening the menu, `Esc`, the right click, `L2` or the pad's `East` leave it.
 
 In the mode the menu is closed and the camera free. The selected slot's entry stands at the aim
 as the ghost, a real entity lit where it will stand, facing the camera, turned by `R`: at the

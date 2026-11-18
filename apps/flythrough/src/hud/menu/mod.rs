@@ -97,6 +97,7 @@ pub const FIXED_ROWS: &[(&str, &str)] = &[
     ("left click / R2", "dig; in placement mode, place the ghost"),
     ("right click / L2", "fill; in placement mode, leave it"),
     ("wheel", "the belt's slot, into placement mode"),
+    ("1-9", "the belt's slots while the belt is shown"),
     ("Tab / pad Start", "the menu; type on any page to search"),
     ("F1", "this page, the keys"),
     ("F2 / pad Select", "the stats overlay"),

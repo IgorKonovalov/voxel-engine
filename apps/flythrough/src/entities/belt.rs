@@ -89,11 +89,16 @@ impl Belt {
         self.slots.iter().position(|&s| s == Some(i))
     }
 
+    /// Moves the selection (the frame) to slot `s` (0-based) at `now`, the mode as it was.
+    pub fn point(&mut self, s: usize, now: f64) {
+        self.selected = s % SLOTS;
+        self.changed_at = Some(now);
+    }
+
     /// Selects slot `s` (0-based) at `now`, the mode on.
     pub fn select(&mut self, s: usize, now: f64) {
-        self.selected = s % SLOTS;
+        self.point(s, now);
         self.on = true;
-        self.changed_at = Some(now);
     }
 
     /// The selection moved `d` slots (positive the next), wrapping at nine, the mode on.

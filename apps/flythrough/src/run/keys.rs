@@ -159,7 +159,10 @@ impl Run {
             Activated::Choose { entry } => self.choose(entry),
             Activated::Assign { entry, slot } => {
                 self.fill_belt();
-                self.modes.walkers.belt.assign(slot, entry);
+                let belt = &mut self.modes.walkers.belt;
+                belt.assign(slot, entry);
+                belt.point(slot, ms_since(self.start));
+                self.belt_selected();
                 let name = self.entry_name(Some(entry));
                 self.say(format!("{name} in slot {}", slot + 1));
             }
@@ -201,8 +204,9 @@ impl Run {
     /// click (or `R2`) digs, the right click (or `L2`) fills and the wheel enters the mode at
     /// the belt's selected slot. In the mode the wheel steps the slot (down the next), the
     /// left click or `R2` places the ghost, the right click, `L2` or the pad's `East` leaves,
-    /// `West` turns the ghost and every digit but `4` selects its slot; `1` and `6` drop and
-    /// fire no light and `East` knocks nothing.
+    /// `West` turns the ghost and every digit selects its slot (`toggles::BELT_KEYS`); `1`,
+    /// `4` and `6` drop, remove and fire nothing and `East` knocks nothing. No digit enters
+    /// the mode.
     pub(crate) fn handle_input(&mut self, input: &Input) {
         let placing = self.modes.walkers.belt.on;
         self.toggle_keys(input);
@@ -226,7 +230,7 @@ impl Run {
         );
         if placing {
             for (s, &k) in BELT_KEYS.iter().enumerate() {
-                if input.pressed(k) && s != 3 {
+                if input.pressed(k) {
                     self.modes.walkers.belt.select(s, now);
                     self.belt_selected();
                 }
@@ -250,12 +254,7 @@ impl Run {
         }
         for a in ACTIONS.iter().filter(|a| a.pressed(input)) {
             let act = match a.act {
-                Act::DropLight | Act::FireLight | Act::Knock if placing => continue,
-                Act::BeltSlot(_) if placing => continue,
-                Act::BeltSlot(_) => match BELT_KEYS.iter().position(|&k| input.pressed(k)) {
-                    Some(s) => Act::BeltSlot(s as u8 + 1),
-                    None => continue,
-                },
+                Act::DropLight | Act::Remove | Act::FireLight | Act::Knock if placing => continue,
                 act => act,
             };
             self.act(act);
@@ -280,18 +279,6 @@ impl Run {
                 self.sync_ghost();
                 let n = self.modes.walkers.library.entries.len().max(1);
                 self.say(format!("entities library: {n} entries"));
-            }
-            Act::BeltSlot(n) => {
-                self.fill_belt();
-                let belt = &mut self.modes.walkers.belt;
-                let s = if n == 0 {
-                    belt.selected
-                } else {
-                    usize::from(n - 1)
-                };
-                belt.select(s, ms_since(self.start));
-                self.menu.close();
-                self.belt_selected();
             }
             Act::BeltStep(d) => {
                 self.fill_belt();
