@@ -642,6 +642,18 @@ between two ticks the done-when says so and the log states which.
   gradient over ticks (a running mean in fixed point) before any other mechanism.
 
 ### Phase 6: the owner's picks, and the tip
+
+**The Phase 5 window, 2026-11-18 (owner):** "all good besides the problem with short paths"; the
+wander's cost not noticed; motion smooth; the fall yes; questions 9 to 11 still right on screen.
+Two picks for this phase:
+1. **Longer wander legs.** `PICK_TICKS` 300 to 900 (5 to 15 s at 60 Hz, from 60 to 180) and a new
+   heading's turn mostly up to a quarter circle (from up to a half); walls and drops still turn a
+   body away. Re-pin the course hashes, named in the log.
+2. **Esc asks before it quits** (the owner quit the window by accident twice). With the menu
+   closed and placement off, the first `Esc` shows the banner `Esc again to quit` for 2 s; a
+   second `Esc` inside that ends the run; any other key or the timeout cancels. Placement's
+   `Esc`, the loading screen's and path and tester runs are unchanged. A test drives the two
+   presses and the cancel; `docs/flythrough.md` says it.
 - **Owner skill:** dev
 - **What:** the window's figures and words (speeds, radii, strides, the wander's intervals), the
   rig files re-cut, the answers to questions 9 to 11 where they differ from the recommendations
