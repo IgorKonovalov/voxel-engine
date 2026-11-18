@@ -149,7 +149,7 @@ impl Menu {
     /// `n/m` when the rows do not fit), the rows with the selected one yellow, a blank row and
     /// the footer. Writes nothing while closed.
     pub fn write(&self, m: &Modes, v: &RunView, text: &mut String, colours: &mut Vec<HudColour>) {
-        self.write_with(m, v, None, text, colours);
+        self.write_with(m, v, None, text, colours, &mut Vec::new());
     }
 
     /// [`Menu::write`] with `notice` (the last action's line, yellow) in the row above the
@@ -157,7 +157,13 @@ impl Menu {
     /// unavailable for one reason, is grey (selected or not) with its reason on the row: an
     /// entry's after its words, a group's in the key column. A number being
     /// edited reads `label  < value >  range` and the footer `Up Down change  Enter Esc
-    /// done`.
+    /// done`. A chooser entry whose icon has arrived (`entities::icon::Icons::ready`) takes
+    /// its tile in `tiles` (cleared first) at its first line's third cell, the 4 x 4 cells
+    /// its lines leave before [`ITEM_TEXT_COL`].
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the menu's state and the overlay's four outputs"
+    )]
     pub fn write_with(
         &self,
         m: &Modes,
@@ -165,9 +171,11 @@ impl Menu {
         notice: Option<&str>,
         text: &mut String,
         colours: &mut Vec<HudColour>,
+        tiles: &mut Vec<vxe_render::HudTile>,
     ) {
         text.clear();
         colours.clear();
+        tiles.clear();
         let Some(page) = self.page() else { return };
         let rows = self.rows(m, v);
         let n = rows.iter().filter(|r| r.selectable()).count();
@@ -257,6 +265,15 @@ impl Menu {
                 HudColour::White
             };
             colours.push(colour);
+            if let Row::Item(i) = row
+                && m.walkers.icons.ready(*i)
+            {
+                tiles.push(vxe_render::HudTile {
+                    col: 2,
+                    row: (colours.len() - 1) as u32,
+                    index: *i as u32,
+                });
+            }
             if let Row::Item(i) = row {
                 // The entry's clips and slot beside the tile, then the tile's last two lines.
                 text.push('\n');

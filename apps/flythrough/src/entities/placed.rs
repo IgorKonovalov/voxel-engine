@@ -79,6 +79,8 @@ pub struct Walkers {
     pub clock: f32,
     /// The entities library: an empty one places the built-in walker.
     pub library: Library,
+    /// Each entry's still icon, made off the frame thread (`super::icon`).
+    pub icons: super::icon::Icons,
     /// The placed entity under the crosshair, as the frame last read it: the clip keys act on
     /// it, else on the newest.
     pub aimed: Option<EntityId>,

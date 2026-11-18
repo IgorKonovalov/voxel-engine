@@ -5,9 +5,33 @@
 //! stands is [`stand`]: the camera ray's first world hit within [`PLACE_REACH`], never nearer
 //! than the model's own size allows, dropped to the floor under a wall or a ceiling hit.
 
-use vxe_render::{HudBox, HudColour};
+use vxe_render::{HudBox, HudColour, HudTile};
 
 use super::library::{BUILTIN_NAME, Library};
+
+/// What the overlay lays over a belt's or a chooser's rows (`vxe_render::HudPaint`): the
+/// spans recoloured and the icons' tiles, kept across frames.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Paint {
+    pub spans: Vec<(HudBox, HudColour)>,
+    pub tiles: Vec<HudTile>,
+}
+
+impl Paint {
+    pub fn clear(&mut self) {
+        self.spans.clear();
+        self.tiles.clear();
+    }
+
+    /// The overlay's paint over these spans and tiles, with `backdrop`.
+    pub fn with(&self, backdrop: Option<HudBox>) -> vxe_render::HudPaint<'_> {
+        vxe_render::HudPaint {
+            backdrop,
+            spans: &self.spans,
+            tiles: &self.tiles,
+        }
+    }
+}
 
 /// The belt's slots, `1`..`9`.
 pub const SLOTS: usize = 9;
@@ -193,19 +217,23 @@ fn slot_words(lib: &Library, i: usize) -> &str {
 /// Appends the belt to the overlay's `text` and `colours` (one colour per line) for a grid of
 /// `grid` = (columns, rows) cells: the text is cut to leave the grid's last [`BELT_ROWS`]
 /// rows and padded down to them, then the belt's rows, centred: the selected slot's name
-/// (shown for `banner_ms` after `belt.changed_at`, blank after), the selected slot's frame top
-/// (`+------+`, yellow), the four slot rows (each slot's digit, then its name on the next
-/// row; `|` at the selected slot's sides), the frame's bottom. Gives the backdrop's box: the
-/// slots' rows, the belt's columns plus one each side, cut to the grid.
+/// (shown for `banner_ms` after the belt's `changed_at`, blank after), the selected slot's
+/// frame top (`+------+`), the four slot rows (each slot's digit, then its name on the next
+/// row, or its entry's icon from the slot's third column once made; `|` at the selected
+/// slot's sides), the frame's bottom. `paint` takes the frame's cells as yellow spans (the
+/// rows are white) and the icons' tiles. Gives the backdrop's box: the slots' rows, the
+/// belt's columns plus one each side, cut to the grid.
 pub fn append_belt(
     text: &mut String,
     colours: &mut Vec<HudColour>,
     grid: (usize, usize),
-    belt: &Belt,
-    lib: &Library,
+    walkers: &super::Walkers,
     now_ms: f64,
     banner_ms: f64,
+    paint: &mut Paint,
 ) -> HudBox {
+    let (belt, lib) = (&walkers.belt, &walkers.library);
+    paint.clear();
     let (cols, rows) = grid;
     let first = rows.saturating_sub(BELT_ROWS);
     // Keep at most `first` of the rows there (rows are joined by `\n`).
@@ -252,7 +280,8 @@ pub fn append_belt(
         row.push('+');
     };
     frame(&mut row);
-    push_row(text, colours, &cut_to(&row, cols), HudColour::Yellow);
+    push_row(text, colours, &cut_to(&row, cols), HudColour::White);
+    let icon = |s: usize| belt.slots[s].filter(|&i| walkers.icons.ready(i));
     for r in 0..4 {
         row.clear();
         row.extend(std::iter::repeat_n(' ', x0));
@@ -262,7 +291,7 @@ pub fn append_belt(
             row.push(side);
             match r {
                 0 => row.push(char::from(b'1' + s as u8)),
-                1 => {
+                1 if icon(s).is_none() => {
                     if let Some(i) = belt.slots[s] {
                         row.push_str(slot_words(lib, i));
                     }
@@ -277,10 +306,36 @@ pub fn append_belt(
         push_row(text, colours, &cut_to(&row, cols), HudColour::White);
     }
     frame(&mut row);
-    push_row(text, colours, &cut_to(&row, cols), HudColour::Yellow);
+    push_row(text, colours, &cut_to(&row, cols), HudColour::White);
+    let top = first + 1;
+    let cell = |col: usize, row: usize, cols: usize, rows: usize| HudBox {
+        col: col as u32,
+        row: row as u32,
+        cols: cols as u32,
+        rows: rows as u32,
+    };
+    for (b, c) in [
+        cell(sel, top, SLOT_COLS, 1),
+        cell(sel, top + 5, SLOT_COLS, 1),
+        cell(sel, top + 1, 1, 4),
+        cell(sel + SLOT_COLS - 1, top + 1, 1, 4),
+    ]
+    .into_iter()
+    .zip(std::iter::repeat(HudColour::Yellow))
+    {
+        paint.spans.push((b, c));
+    }
+    for s in 0..SLOTS {
+        if let Some(i) = icon(s) {
+            paint.tiles.push(HudTile {
+                col: (x0 + s * SLOT_COLS + 2) as u32,
+                row: (top + 1) as u32,
+                index: i as u32,
+            });
+        }
+    }
     let col = x0.saturating_sub(1);
     let end = (x0 + BELT_COLS + 1).min(cols);
-    let top = first + 1;
     HudBox {
         col: col as u32,
         row: top as u32,

@@ -283,15 +283,14 @@ impl Run {
         let grid = (size[0] as usize / cell, size[1] as usize / cell);
         let h = &mut self.hud;
         let text = if banner { &mut h.banner } else { &mut h.text };
-        let w = &self.modes.walkers;
         let b = crate::entities::belt::append_belt(
             text,
             &mut h.colours,
             grid,
-            &w.belt,
-            &w.library,
+            &self.modes.walkers,
             ms_since(self.start),
             hud::BANNER_MS,
+            &mut h.paint,
         );
         Some(b)
     }
@@ -694,6 +693,9 @@ impl Run {
         };
         if let Some(gfx) = self.gfx.as_mut() {
             gfx.hud.set_scale(&gpu.queue, scale);
+            for (i, rgba) in self.modes.walkers.icons.uploads() {
+                gfx.hud.set_tile(&gpu.queue, i, &rgba);
+            }
         }
         match overlay {
             Overlay::Stats => self.update_hud(gpu),
@@ -701,12 +703,10 @@ impl Run {
                 self.write_menu();
                 let backdrop = self.place_menu(gpu.size);
                 if let Some(gfx) = self.gfx.as_mut() {
-                    gfx.hud.set_lines_over(
-                        &gpu.queue,
-                        &self.hud.overlay,
-                        &self.hud.overlay_colours,
-                        backdrop,
-                    );
+                    let h = &self.hud;
+                    let paint = h.paint.with(Some(backdrop));
+                    gfx.hud
+                        .set_lines_painted(&gpu.queue, &h.overlay, &h.overlay_colours, paint);
                     gfx.hud.set_samples(&gpu.queue, &[], 0.0);
                 }
             }
@@ -719,7 +719,10 @@ impl Run {
                 if let Some(gfx) = self.gfx.as_mut() {
                     let (text, colours) = (&self.hud.banner, &self.hud.colours);
                     match belt {
-                        Some(b) => gfx.hud.set_lines_over(&gpu.queue, text, colours, b),
+                        Some(b) => {
+                            let paint = self.hud.paint.with(Some(b));
+                            gfx.hud.set_lines_painted(&gpu.queue, text, colours, paint)
+                        }
                         None => gfx.hud.set_lines(&gpu.queue, text, colours),
                     }
                     gfx.hud.set_samples(&gpu.queue, &[], 0.0);

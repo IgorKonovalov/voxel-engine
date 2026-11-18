@@ -605,6 +605,14 @@ impl RenderSettings {
             "HudOverlay's own method: the overlay's lines over a dimmed box",
         ),
         (
+            "set_tile",
+            "HudOverlay's own method: an image tile of the overlay",
+        ),
+        (
+            "set_lines_painted",
+            "HudOverlay's own method: the overlay's lines, spans and tiles",
+        ),
+        (
             "set_rows",
             "HudOverlay's own method: the overlay's coloured rows",
         ),

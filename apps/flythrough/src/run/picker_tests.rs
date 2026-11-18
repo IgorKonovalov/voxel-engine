@@ -163,10 +163,10 @@ fn the_wheel_and_the_digits_enter_the_mode() {
         &mut text,
         &mut colours,
         (80, 45),
-        &w.belt,
-        &w.library,
+        w,
         now,
         crate::hud::BANNER_MS,
+        &mut belt::Paint::default(),
     );
     let name_row = text.lines().nth(45 - BELT_ROWS).expect("the name row");
     assert_eq!(name_row.trim(), "slot 3 empty  (choose with `)");
@@ -374,12 +374,32 @@ fn the_ghost_is_marked_and_the_placed_are_not() {
     assert_eq!(run.modes.walkers.marks(), []);
 }
 
-/// Phase 5 done-when: in the mode at 1280 x 720 (80 x 45 cells at the HUD's scale 2) the
-/// belt's rows are the overlay's last seven, centred: the name row, slot 1's frame top
-/// (yellow), the nine slots' digits, their names, two blank rows, the frame's bottom; slot 1
-/// framed by `+ - |`, the backdrop's box under the slot rows; the name row reads `walker` for
-/// `BANNER_MS` after a wheel step and is blank after; out of the mode the overlay has no belt
-/// rows and the stats overlay is as `F2` left it.
+/// The cell words of `text` (one row a line, white) with `colours` per row and `paint`
+/// laid over them, as the overlay writes them: rows of `vxe_render::HUD_GRID_COLS` words.
+fn cell_words(
+    text: &str,
+    colours: &[vxe_render::HudColour],
+    paint: vxe_render::HudPaint<'_>,
+) -> Vec<u32> {
+    let cols = vxe_render::HUD_GRID_COLS as usize;
+    let mut cells = vec![0u32; text.split('\n').count().max(45) * cols];
+    for (r, line) in text.split('\n').enumerate() {
+        for (c, b) in line.bytes().enumerate().take(cols) {
+            cells[r * cols + c] = u32::from(b) | (colours[r] as u32) << 8;
+        }
+    }
+    paint.apply(&mut cells);
+    cells
+}
+
+/// Phase 5 done-when, re-asserted whole at Phase 7: in the mode at 1280 x 720 (80 x 45 cells
+/// at the HUD's scale 2) the belt's rows are the overlay's last seven, centred: the name row,
+/// slot 1's frame top, the nine slots' digits, their names, two blank rows, the frame's
+/// bottom; slot 1 framed by `+ - |`, and in the cell words the overlay writes every `+`, `-`
+/// and `|` cell yellow and every other belt cell white; the backdrop's box under the slot
+/// rows; the name row reads `walker` (yellow) for `BANNER_MS` after a wheel step and is blank
+/// after; out of the mode the overlay has no belt rows and the stats overlay is as `F2` left
+/// it.
 #[test]
 fn the_belt_draws_its_slots() {
     let mut run = picker_run();
@@ -390,18 +410,19 @@ fn the_belt_draws_its_slots() {
     let draw = |now: f64| {
         let mut text = String::from("row a\nrow b");
         let mut colours = vec![vxe_render::HudColour::White; 2];
+        let mut paint = belt::Paint::default();
         let b = belt::append_belt(
             &mut text,
             &mut colours,
             (80, 45),
-            &w.belt,
-            &w.library,
+            w,
             now,
             crate::hud::BANNER_MS,
+            &mut paint,
         );
-        (text, colours, b)
+        (text, colours, b, paint)
     };
-    let (text, colours, b) = draw(at + crate::hud::BANNER_MS - 1.0);
+    let (text, colours, b, paint) = draw(at + crate::hud::BANNER_MS - 1.0);
     let rows: Vec<&str> = text.split('\n').collect();
     assert_eq!((rows.len(), colours.len()), (45, 45));
     assert_eq!(&rows[..3], ["row a", "row b", ""]);
@@ -426,8 +447,23 @@ fn the_belt_draws_its_slots() {
     use vxe_render::HudColour::{White, Yellow};
     assert_eq!(
         &colours[45 - BELT_ROWS..],
-        [Yellow, Yellow, White, White, White, White, Yellow]
+        [Yellow, White, White, White, White, White, White]
     );
+    assert!(paint.tiles.is_empty(), "no icon has arrived");
+    let cells = cell_words(&text, &colours, paint.with(Some(b)));
+    let cols = vxe_render::HUD_GRID_COLS as usize;
+    let mut framed = 0;
+    for (r, line) in rows.iter().enumerate().skip(45 - BELT_ROWS + 1) {
+        for c in 0..80 {
+            let byte = line.as_bytes().get(c).copied().unwrap_or(b' ');
+            let colour = (cells[r * cols + c] >> 8) & 0xff;
+            let frame = matches!(byte, b'+' | b'-' | b'|');
+            framed += usize::from(frame);
+            let want = if frame { Yellow } else { White } as u32;
+            assert_eq!(colour, want, "cell ({c}, {r}) {:?}", byte as char);
+        }
+    }
+    assert_eq!(framed, 2 * 8 + 2 * 4, "the selected slot's frame");
     assert_eq!(
         b,
         vxe_render::HudBox {
@@ -437,7 +473,7 @@ fn the_belt_draws_its_slots() {
             rows: 6
         }
     );
-    let (text, _, _) = draw(at + crate::hud::BANNER_MS + 1.0);
+    let (text, _, _, _) = draw(at + crate::hud::BANNER_MS + 1.0);
     assert_eq!(text.split('\n').nth(45 - BELT_ROWS), Some(""));
 
     let (text, colours) = (run.hud.text.clone(), run.hud.colours.clone());
@@ -448,6 +484,120 @@ fn the_belt_draws_its_slots() {
     assert_eq!(run.belt_rows([1280, 720], false), None);
     assert_eq!((&run.hud.text, &run.hud.colours), (&text, &colours));
     assert_eq!(run.hud.visible, stats);
+}
+
+/// Phase 7 done-when 3: on the first frame in the mode the walker's icon has not arrived
+/// (asked for at the library's build, taken at a later poll), so slot 1 lays no tile and
+/// shows `walker`; once the worker's icon is taken the belt lays tile `walker`'s entry index
+/// over the slot's 4 x 4 block (the tile bit in those cell words) and drops the slot's name,
+/// and the chooser lays the same tile at the entry's first line; the overlay is handed the
+/// icon once. A reload of the walker's rig that changes its model (a pivot moved) forgets the
+/// icon until the new one arrives, under the same tile index.
+#[test]
+fn the_icon_arrives_after_the_words() {
+    let from = std::path::Path::new(library::DEFAULT_DIR);
+    let dir = std::env::temp_dir().join(format!("vxe-icon-reload-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    for name in ["walker", "spider"] {
+        std::fs::create_dir_all(dir.join(name)).expect("dir");
+        for ext in ["rig", "vox"] {
+            let f = format!("{name}/{name}.{ext}");
+            std::fs::copy(from.join(&f), dir.join(&f)).expect("copied");
+        }
+    }
+    let mut run = bare_run(rock_box(&cave_table(), 60));
+    run.modes.walkers = crate::entities::Walkers::default().with_library(library::scan(&dir));
+    run.poll_viewer(0.0);
+    frame_keys(&mut run, &wheel_down());
+    let wi = run
+        .modes
+        .walkers
+        .belt
+        .entry()
+        .expect("slot 1 holds the walker");
+    let belt_of = |run: &Run| {
+        let (mut text, mut colours) = (String::new(), Vec::new());
+        let mut paint = belt::Paint::default();
+        let w = &run.modes.walkers;
+        let b = belt::append_belt(
+            &mut text,
+            &mut colours,
+            (80, 45),
+            w,
+            0.0,
+            crate::hud::BANNER_MS,
+            &mut paint,
+        );
+        (text, colours, b, paint)
+    };
+    let (text, _, _, paint) = belt_of(&run);
+    assert!(!run.modes.walkers.icons.ready(wi));
+    assert!(paint.tiles.is_empty());
+    assert!(text.split('\n').nth(45 - 4).unwrap().contains("|walker|"));
+
+    run.modes.walkers.icons.wait();
+    assert!(run.modes.walkers.icons.ready(wi));
+    let (text, colours, b, paint) = belt_of(&run);
+    let tile = vxe_render::HudTile {
+        col: 4 + 2,
+        row: (45 - BELT_ROWS + 2) as u32,
+        index: wi as u32,
+    };
+    assert_eq!(paint.tiles, [tile]);
+    assert!(!text.split('\n').nth(45 - 4).unwrap().contains("walker"));
+    let cells = cell_words(&text, &colours, paint.with(Some(b)));
+    let cols = vxe_render::HUD_GRID_COLS as usize;
+    for r in 0..45 {
+        for c in 0..80 {
+            let inside = (6..10).contains(&c) && (40..44).contains(&r);
+            let bit = cells[r * cols + c] & vxe_render::TILE_BIT != 0;
+            assert_eq!(bit, inside, "cell ({c}, {r})");
+        }
+    }
+    let ups: Vec<u32> = run.modes.walkers.icons.uploads().map(|(i, _)| i).collect();
+    assert_eq!(ups, [wi as u32]);
+    assert_eq!(
+        run.modes.walkers.icons.uploads().count(),
+        0,
+        "handed over once"
+    );
+    frame_keys(&mut run, &pressed(KeyCode::Backquote));
+    let mut tiles = Vec::new();
+    run.menu.write_with(
+        &run.modes,
+        &run.run_view(),
+        None,
+        &mut String::new(),
+        &mut Vec::new(),
+        &mut tiles,
+    );
+    assert_eq!(
+        tiles.iter().map(|t| (t.col, t.index)).collect::<Vec<_>>(),
+        [(2, wi as u32)]
+    );
+    frame_keys(&mut run, &pressed(KeyCode::Escape));
+
+    let rig = dir.join("walker/walker.rig");
+    let text = std::fs::read_to_string(&rig).expect("reads");
+    let moved = text.replace("pivot 3 3 0 detail 2", "pivot 3 3 1 detail 2");
+    assert_ne!(moved, text, "the head's pivot line");
+    std::fs::write(&rig, moved).expect("saved");
+    std::fs::File::options()
+        .write(true)
+        .open(&rig)
+        .expect("opens")
+        .set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(10))
+        .expect("stamped");
+    run.poll_viewer(1000.0);
+    assert!(
+        !run.modes.walkers.icons.ready(wi),
+        "the old icon is forgotten"
+    );
+    run.modes.walkers.icons.wait();
+    assert!(run.modes.walkers.icons.ready(wi));
+    let ups: Vec<u32> = run.modes.walkers.icons.uploads().map(|(i, _)| i).collect();
+    assert_eq!(ups, [wi as u32], "the same tile index");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Phase 5 done-when: on the pad, `DpadRight` enters the mode at slot 2, `DpadLeft` back to

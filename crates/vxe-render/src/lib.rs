@@ -115,7 +115,10 @@ pub use gpu_world::{
     DEFAULT_LIGHT_RADIUS, DEFAULT_LIGHT_SAMPLES, GpuWorld, MirrorConfig, MirrorError, ShardLayout,
     SyncClock, SyncPoint, SyncStats, Window,
 };
-pub use hud::{BACKDROP_ALPHA, HudBox, HudColour, HudOverlay};
+pub use hud::{
+    BACKDROP_ALPHA, GRID_COLS as HUD_GRID_COLS, HudBox, HudColour, HudOverlay, HudPaint, HudTile,
+    MAX_TILES, TILE_BIT, TILE_CELLS, TILE_PX,
+};
 pub use light::LightParams;
 pub use loading::{
     BAR_EASE_S, EasedBar, LOADING_WGSL, LoadProgress, LoadStage, LoadingLayout, LoadingScreen,

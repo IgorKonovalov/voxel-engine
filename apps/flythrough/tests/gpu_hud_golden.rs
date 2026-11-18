@@ -56,8 +56,14 @@ fn render(hud: bool) -> Option<Frame> {
     render_overlay(hud, None, None)
 }
 
-/// The menu's text as the overlay draws it: the rows, their colours and the backdrop's box.
-type MenuText<'a> = (&'a str, &'a [HudColour], HudBox);
+/// The menu's text as the overlay draws it: the rows, their colours, the paint laid over
+/// them (the backdrop's box, spans and tiles) and the tiles' pixels by atlas index.
+struct MenuText<'a> {
+    text: &'a str,
+    colours: &'a [HudColour],
+    paint: vxe_render::HudPaint<'a>,
+    tiles: &'a [(u32, Vec<u8>)],
+}
 
 /// [`render`], or with `banner` the overlay drawing that one line alone, yellow, with no
 /// strip: the fly-through's mode banner with the stats HUD off; with `menu` the overlay
@@ -115,8 +121,11 @@ fn render_overlay(hud: bool, banner: Option<&str>, menu: Option<MenuText<'_>>) -
         );
         overlay.set_samples(&queue, &[], 0.0);
     }
-    if let Some((text, colours, backdrop)) = menu {
-        overlay.set_lines_over(&queue, text, colours, backdrop);
+    if let Some(m) = &menu {
+        for (i, px) in m.tiles {
+            overlay.set_tile(&queue, *i, px);
+        }
+        overlay.set_lines_painted(&queue, m.text, m.colours, m.paint);
         overlay.set_samples(&queue, &[], 0.0);
     }
 
@@ -288,7 +297,16 @@ fn menu_over_the_carved_view() {
             rows: rows + 1,
         }
     );
-    let Some(frame) = render_overlay(false, None, Some((&text, &colours, backdrop))) else {
+    let menu = MenuText {
+        text: &text,
+        colours: &colours,
+        paint: vxe_render::HudPaint {
+            backdrop: Some(backdrop),
+            ..Default::default()
+        },
+        tiles: &[],
+    };
+    let Some(frame) = render_overlay(false, None, Some(menu)) else {
         return;
     };
     let img = &frame.composed;
@@ -327,6 +345,104 @@ fn menu_over_the_carved_view() {
         grey > 0,
         "the audio group, with no audio in the run, is grey"
     );
+}
+
+/// Plan 0077 Phase 7 done-when 6: `chooser.png`, the chooser (the menu's entities page) over
+/// the carved view at scale 1 with both library entries' icons (the showcase's table with
+/// the walker's rows, so the spider builds), placed at the window's top-left; and `belt.png`,
+/// the belt in placement mode at slot 1 with its icons in the slots and slot 1's frame
+/// yellow, the grid's 40 x 22 cells (the belt cut at the window's right edge). Pixel exact
+/// against goldens blessed on lavapipe.
+#[test]
+fn the_belt_and_the_chooser_over_the_carved_view() {
+    use flythrough::entities::{self, belt, library};
+    use flythrough::hud::menu::{Menu, PageId, Panel, RunView, place};
+    let table = flythrough::walker::with_walker(&flythrough::showcase_materials());
+    let mut m = flythrough::hud::Modes::new(
+        vxe_render::Lighting::default(),
+        vxe_render::LightingResolution::default(),
+        0.0,
+    );
+    let lib = library::scan(std::path::Path::new(library::DEFAULT_DIR));
+    m.walkers = entities::Walkers::default().with_library(lib);
+    assert_eq!(m.walkers.poll_viewer(0.0, &table), None, "both build");
+    m.walkers.refresh_icons(&table);
+    m.walkers.icons.wait();
+    let order = m.walkers.library.order();
+    m.walkers.belt.fill(&order);
+    let pixels: Vec<(u32, Vec<u8>)> = m.walkers.icons.uploads().collect();
+    assert_eq!(pixels.len(), 2, "both icons");
+    let grid = ((WIDTH / CELL) as usize, (HEIGHT / CELL) as usize);
+
+    let mut menu = Menu::default();
+    menu.open_at(PageId::Entities);
+    let (mut page, mut page_colours, mut tiles) = (String::new(), Vec::new(), Vec::new());
+    menu.write_with(
+        &m,
+        &RunView::default(),
+        None,
+        &mut page,
+        &mut page_colours,
+        &mut tiles,
+    );
+    assert_eq!(tiles.len(), 2, "a tile per entry");
+    let panel = Panel {
+        scale: 1,
+        col: 0,
+        row: 0,
+        cols: grid.0,
+        rows: grid.1,
+    };
+    let (mut text, mut colours) = (String::new(), Vec::new());
+    let backdrop = place(&page, &page_colours, panel, "", &mut text, &mut colours);
+    let chooser = MenuText {
+        text: &text,
+        colours: &colours,
+        paint: vxe_render::HudPaint {
+            backdrop: Some(backdrop),
+            tiles: &tiles,
+            ..Default::default()
+        },
+        tiles: &pixels,
+    };
+    let (mut belt_text, mut belt_colours) = (String::new(), Vec::new());
+    let mut paint = belt::Paint::default();
+    let belt_box = belt::append_belt(
+        &mut belt_text,
+        &mut belt_colours,
+        grid,
+        &m.walkers,
+        0.0,
+        flythrough::hud::BANNER_MS,
+        &mut paint,
+    );
+    assert_eq!(
+        paint.tiles.len(),
+        2,
+        "the two filled slots show their icons"
+    );
+    let belt = MenuText {
+        text: &belt_text,
+        colours: &belt_colours,
+        paint: paint.with(Some(belt_box)),
+        tiles: &pixels,
+    };
+    for (name, overlay) in [("chooser.png", chooser), ("belt.png", belt)] {
+        let Some(frame) = render_overlay(false, None, Some(overlay)) else {
+            return;
+        };
+        let img = &frame.composed;
+        let path = golden_path(name);
+        if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+            write_png(&path, img, WIDTH, HEIGHT);
+            println!("blessed {path:?}");
+        } else {
+            let differing = differing_bytes(img, &read_png(&path).0);
+            assert_eq!(differing, 0, "{name}: {differing} bytes differ");
+        }
+        let yellow = img.chunks(4).filter(|p| p[..3] == [255, 204, 0]).count();
+        assert!(yellow > 0, "{name}: the selection or the frame is yellow");
+    }
 }
 
 /// Readings run by hand (`--run-ignored only -E 'test(=reading::<name>)'`).

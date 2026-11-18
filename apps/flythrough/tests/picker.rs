@@ -68,7 +68,14 @@ fn the_picker_draws_its_rows() {
     let mut menu = Menu::default();
     menu.open_entities(1);
     let (mut text, mut colours) = (String::new(), Vec::new());
-    menu.write_with(&m, &RunView::default(), None, &mut text, &mut colours);
+    menu.write_with(
+        &m,
+        &RunView::default(),
+        None,
+        &mut text,
+        &mut colours,
+        &mut Vec::new(),
+    );
     let rows: Vec<&str> = text.lines().collect();
     assert!(rows.len() <= MENU_ROWS && rows.iter().all(|r| r.len() <= MENU_COLS));
     let want: Vec<(&str, HudColour)> = FIXTURE.to_vec();
