@@ -1,7 +1,9 @@
 # 0093: The README rewrite with reproducible screenshots: a shot manifest, a shoot script that re-renders every image in one command, an image gate, and the owner's pick from contact sheets
 
-> **Status:** proposed (drafted 2026-11-19 from the Bonsai second pass, section 2, and the
-> owner's "more screenshots through the doc"; awaits go)
+> **Status:** approved 2026-11-19 (drafted from the Bonsai second pass, section 2, and the
+> owner's "more screenshots through the doc"; the owner: "all recommended", every owner question
+> on its recommendation: after 0087, beside 0089, before 0091; canopy shot now; one caption line;
+> the frame-time figure; the hero from the sheet)
 > **Created:** 2026-11-19
 > **Milestone:** M7 in `docs/roadmap.md` (tooling); a docs plan: no engine crate changes
 > **Related ADRs:** none. The one choice with a rejected alternative (the README's images come
