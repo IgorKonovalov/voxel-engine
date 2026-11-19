@@ -3,8 +3,9 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0093** (ADRs are a separate sequence, see `../adrs/README.md` for its
-next free number).
+**Next free number: 0095** (ADRs are a separate sequence, see `../adrs/README.md` for its
+next free number). **0094 is reserved** for Plan 0086's follow-up (the outdoor grain), drafted
+at 0086's close.
 
 ## Active roster
 
@@ -29,6 +30,7 @@ next free number).
 | [0090](0090-the-pop-counter-scenes-on-lavapipe-count-the-pixels-that-break-the-light-rules-a-ratchet.md) | The pop counter: fixed scenes on lavapipe count the pixels that break each light rule, by source; a baseline that only falls | approved | Cross-cutting, ADR-0076 (proposed). After 0086 closes, before 0081. |
 | [0091](0091-the-frame-profiler-scopes-across-threads-a-gpu-lane-a-dump-for-agents-and-a-hud-ticker.md) | The frame profiler: scopes across the threads, a GPU lane, a dump the agent ranks, budget scopes, a HUD ticker | approved | M7, ADR-0077. After 0087 and 0089, before 0090 (owner). |
 | [0092](0092-wgsl-hot-reload-in-the-fly-through-an-mtime-poll-pipelines-rebuilt-and-the-old-ones-kept-on-an-error.md) | WGSL hot reload in the fly-through: an mtime poll, pipelines rebuilt from disk, the old kept on an error | approved | M7, no ADR. After 0091 in its lane, before 0090 (owner). |
+| [0093](0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) | The README rewrite with reproducible screenshots: a shot manifest, a shoot script, an image gate, the owner's picks | approved | M7 docs, no ADR. After 0087 merges, beside 0089, before 0091. |
 <!-- roster:end -->
 
 ## Sequence
@@ -163,7 +165,19 @@ on the architect's recommendation, **right after Plan 0091 merges, before Plan 0
 it is small, shares the HUD's menu and banner files with 0091, and shortens the window loop
 that Plans 0090, 0081 and the M10 look plans run on.
 
-Every active plan but 0091 and 0092 (proposed 2026-11-19) is approved (Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
+**Plan 0093** (the README rewrite with reproducible screenshots: `--still-at`, `--still-dir` and
+`--camera` on the fly-through, a manifest `docs/images/shots.json` and `scripts/shoot-images.mjs`
+that re-renders every image under the perf lock, `scripts/check-images.mjs` holding 300 KB a
+still, 700 KB a loop and 5 MB for the README in CI, fragment links validated, contact sheets the
+owner picks from, the README after Bonsai's shape with the layout, checks and process moved to
+`docs/development.md`; drafted 2026-11-19 from the Bonsai second pass, section 2, and the owner's
+"more screenshots through the doc"; approved the same day, all recommended): **after Plan 0087 merges**
+(0087 rewrites the README, every doc and the script names), **beside Plan 0089** (only `ci.yml`
+in common) and **before Plan 0091** (which edits the HUD and `run/frame.rs` that its Phase 1
+touches). Plan 0094 is reserved for Plan 0086's grain follow-up, drafted at 0086's close; 0093's
+canopy shot may wait for it.
+
+Every active plan is approved (Plans 0091, 0092 and 0093 on 2026-11-19; Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Approval accepts the design; a plan's lane
 starts only when the plans its "Starts after" line names have closed and merged, and where that
 line asks for it, after the architect has re-read the plan against the new tip. The approved
