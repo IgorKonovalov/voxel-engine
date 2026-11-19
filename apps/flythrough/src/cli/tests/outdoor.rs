@@ -124,6 +124,33 @@ fn the_column_wait_and_the_dump_reach_the_run() {
     assert!(parse_args_from(argv(&["--column-wait", "maybe"])).is_err());
 }
 
+/// `--exposure-rate` reaches the auto exposure, 1.875 EV/s by default and unnamed; another
+/// value, 0 among them, is named `exposure rate N EV/s`; out of 0 to 64 it is refused.
+#[test]
+fn the_exposure_rate_reaches_the_run() {
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert_eq!(
+        r.start_auto().rate_ev_s,
+        vxe_render::DEFAULT_EXPOSURE_RATE_EV_S
+    );
+    assert!(!r.start_modes(0.0).line().contains("exposure rate"));
+    for (v, rate) in [("0", 0.0f32), ("4", 4.0)] {
+        let r = parse_args_from(argv(&["--source", "outdoor", "--exposure-rate", v])).unwrap();
+        assert_eq!(r.start_auto().rate_ev_s, rate);
+        let line = r.start_modes(0.0).line();
+        assert!(
+            line.contains(&format!("exposure rate {rate} EV/s, ")),
+            "{line}"
+        );
+    }
+    for bad in ["-1", "65", "fast"] {
+        assert!(
+            parse_args_from(argv(&["--exposure-rate", bad])).is_err(),
+            "{bad}"
+        );
+    }
+}
+
 /// `--settle` reaches the lighting, off by default and unnamed; on is named `settle on`.
 #[test]
 fn the_settle_reaches_the_run() {

@@ -113,7 +113,10 @@ fn mirror_of(label: &str, name: &str) -> Option<Mirror> {
             tau_cone,
             tau_rod,
             floor_log2,
-            anchor
+            anchor,
+            rate_ev_s,
+            max_rate_dt,
+            _pad0, _pad1
         }),
         (_, "ProbeParams") => mirror!(crate::probes::ProbeUniform {
             origin,

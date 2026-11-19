@@ -1028,9 +1028,18 @@ mod flicker {
         /// (b) with `LightHooks::key_off`. Each strip prints its per-frame series (the over-8
         /// count per pair, the store's missing and chained counts, the sky rays cast, the
         /// queue's `digs_baked`); the strips land under `<arm>-fresh` and `<arm>-settled`.
+        /// `VXE_CASTLE_ARM` runs one arm alone in its process: `a`, or `b:E` / `c:E` pinned at
+        /// exposure `E` (arm (a)'s printed one).
         #[test]
         #[ignore = "reading"]
         fn flicker_castle() {
+            if let Ok(v) = std::env::var("VXE_CASTLE_ARM") {
+                let (arm, pin) = v.split_once(':').map_or((v.as_str(), None), |(a, e)| {
+                    (a, Some(e.parse::<f32>().expect("an exposure")))
+                });
+                castle_arm(arm, pin, arm == "c");
+                return;
+            }
             let Some(e) = castle_arm("a", None, false) else {
                 return;
             };

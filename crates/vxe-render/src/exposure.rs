@@ -130,7 +130,18 @@ pub struct AutoExposure {
     /// the key ([`AutoExposure::ceiling`]); `None` keeps `max`. The default is
     /// [`DEFAULT_SKY_ANCHOR_EV`]; with no sky set the ceiling is `max` whatever it holds.
     pub sky_anchor_ev: Option<f32>,
+    /// The most the adapted level moves toward the meter per second, in EV (ADR-0076 rule 5):
+    /// a frame's step is clamped to `rate_ev_s * min(dt, MAX_RATE_DT)`, so a hitch does not
+    /// step further than a 15 fps frame. 0 is no cap (ADR-0033's speed alone).
+    pub rate_ev_s: f32,
 }
+
+/// [`AutoExposure::rate_ev_s`]'s default: 1/32 EV a frame at 60 Hz, a step that moves a pixel
+/// at 180 of 255 by about 3.9 levels (Plan 0094's owner question 2).
+pub const DEFAULT_EXPOSURE_RATE_EV_S: f32 = 1.875;
+
+/// The longest frame step the rate cap pays for, in seconds (a 15 fps frame).
+pub(crate) const MAX_RATE_DT: f32 = 1.0 / 15.0;
 
 /// [`AutoExposure::sky_anchor_ev`]'s default, in EV over the sunlit ground's exposure.
 pub const DEFAULT_SKY_ANCHOR_EV: f32 = 4.0;
@@ -143,7 +154,7 @@ impl Default for AutoExposure {
 
 impl AutoExposure {
     /// The eye: key 0.18, limits 2^-6 and 2^4, constants 0.15, 2 and 10 s, floor 2^-6,
-    /// centre-weighted.
+    /// centre-weighted, the step capped at [`DEFAULT_EXPOSURE_RATE_EV_S`].
     pub fn eye() -> Self {
         Self {
             key: 0.18,
@@ -156,10 +167,11 @@ impl AutoExposure {
             cone_floor: 2f32.powi(-6),
             metering: Metering::default(),
             sky_anchor_ev: Some(DEFAULT_SKY_ANCHOR_EV),
+            rate_ev_s: DEFAULT_EXPOSURE_RATE_EV_S,
         }
     }
 
-    /// One rate both ways: every constant `1 / speed` seconds, no floor.
+    /// One rate both ways: every constant `1 / speed` seconds, no floor, no rate cap.
     pub fn symmetric(speed: f32) -> Self {
         let tau = 1.0 / speed;
         Self {
@@ -167,6 +179,7 @@ impl AutoExposure {
             tau_cone: tau,
             tau_rod: tau,
             cone_floor: 0.0,
+            rate_ev_s: 0.0,
             ..Self::eye()
         }
     }
@@ -186,8 +199,20 @@ impl AutoExposure {
     }
 
     /// The adapted level after `dt` seconds toward the meter `metered_log2` from
-    /// `adapted_log2`; `dt` 0 returns it unchanged.
+    /// `adapted_log2`, the step clamped by [`AutoExposure::rate_ev_s`]; `dt` 0 returns it
+    /// unchanged.
     pub fn step(&self, adapted_log2: f64, metered_log2: f64, dt: f64) -> f64 {
+        let a = adapted_log2;
+        let next = self.step_uncapped(adapted_log2, metered_log2, dt);
+        if self.rate_ev_s <= 0.0 || dt <= 0.0 {
+            return next;
+        }
+        let r = f64::from(self.rate_ev_s) * dt.min(f64::from(MAX_RATE_DT));
+        a + (next - a).clamp(-r, r)
+    }
+
+    /// [`AutoExposure::step`] at ADR-0033's speed alone.
+    fn step_uncapped(&self, adapted_log2: f64, metered_log2: f64, dt: f64) -> f64 {
         let (a, t) = (adapted_log2, metered_log2);
         if dt <= 0.0 {
             return a;
@@ -351,6 +376,11 @@ pub(crate) struct ExposureUniform {
     /// `2^sky_anchor_ev` while the frame holds a sky and the model anchors its ceiling, else 0
     /// (the ceiling is `max`).
     pub anchor: f32,
+    /// [`AutoExposure::rate_ev_s`] (0: no cap) and the longest step it pays for.
+    pub rate_ev_s: f32,
+    pub max_rate_dt: f32,
+    pub _pad0: f32,
+    pub _pad1: f32,
 }
 
 /// `ExUniform::mode` bit: the exposure is automatic.
@@ -374,6 +404,8 @@ impl ExposureUniform {
             Some(n) if sky => n.exp2(),
             _ => 0.0,
         };
+        self.rate_ev_s = auto.rate_ev_s.max(0.0);
+        self.max_rate_dt = MAX_RATE_DT;
     }
 }
 
@@ -634,11 +666,11 @@ mod tests {
         .unwrap_or_else(|e| panic!("exposure.wgsl validates: {e:?}"));
     }
 
-    /// The state and the uniform are the shader's sizes: 32 bytes and 96.
+    /// The state and the uniform are the shader's sizes: 32 bytes and 112.
     #[test]
     fn the_state_and_the_uniform_have_the_shaders_layout() {
         assert_eq!(size_of::<ExposureState>(), 32);
-        assert_eq!(size_of::<ExposureUniform>(), 96);
+        assert_eq!(size_of::<ExposureUniform>(), 112);
     }
 
     /// The centre weight is 1 + strength at the centre and falls to 1 far out; the average
@@ -657,7 +689,10 @@ mod tests {
     /// toward bright the step is `4 exp(-t / 0.15)`; a step of 0 holds; `instant` jumps.
     #[test]
     fn the_reference_step_follows_the_two_stage_curve() {
-        let e = AutoExposure::eye();
+        let e = AutoExposure {
+            rate_ev_s: 0.0,
+            ..AutoExposure::eye()
+        };
         let a = |t: f64| e.step(-4.0, -8.0, t);
         let floor_at = 2.0 * std::f64::consts::LN_2;
         assert!((a(floor_at) + 6.0).abs() < 1e-12);
@@ -683,6 +718,54 @@ mod tests {
         assert_eq!(e.exposure(-12.0), 16.0);
         let s = AutoExposure::symmetric(2.0);
         assert!((s.step(-1.0, -3.0, 0.5) - (-3.0 + 2.0 * (-1f64).exp())).abs() < 1e-12);
+    }
+
+    /// ADR-0076 rule 5 (Plan 0094 Phase 4): at the default rate (1.875 EV/s) and `dt` 1/60 a
+    /// 2 EV step toward a brighter meter moves the adapted level by 1/32 EV a frame within 1/256,
+    /// monotonically (the frame it is within 1/64 EV of the target printed: the cap holds while
+    /// ADR-0033's own step is larger, then its exponential tail); a long `dt` steps no
+    /// further than a 15 fps frame's; with the rate 0 the step is ADR-0033's; a still meter
+    /// holds the level.
+    #[test]
+    fn the_rate_caps_a_step() {
+        let e = AutoExposure::eye();
+        assert_eq!(e.rate_ev_s, DEFAULT_EXPOSURE_RATE_EV_S);
+        let dt = 1.0 / 60.0;
+        let (a0, t) = (-4.0, -2.0);
+        let mut a = a0;
+        let mut trace = vec![a];
+        let mut reached = None;
+        for k in 1..=160 {
+            let next = e.step(a, t, dt);
+            assert!(
+                next >= a && next <= t,
+                "monotonic toward the target: {a} -> {next}"
+            );
+            assert!((next - a) <= 1.0 / 32.0 + 1.0 / 256.0, "{a} -> {next}");
+            a = next;
+            trace.push(a);
+            if reached.is_none() && (a - t).abs() <= 1.0 / 64.0 {
+                reached = Some(k);
+            }
+        }
+        println!("reading: a 2 EV step at 1.875 EV/s is within 1/64 EV at frame {reached:?}");
+        assert!((a - t).abs() <= 1.0 / 64.0, "{a}");
+        assert!(
+            (trace[1] - (a0 + 1.0 / 32.0)).abs() <= 1.0 / 256.0,
+            "{trace:?}"
+        );
+        let long = e.step(a0, t, 1.0);
+        assert!((long - a0 - f64::from(DEFAULT_EXPOSURE_RATE_EV_S * MAX_RATE_DT)).abs() < 1e-6);
+        let free = AutoExposure {
+            rate_ev_s: 0.0,
+            ..e
+        };
+        assert!(
+            free.step(a0, t, dt) > a0 + 1.0 / 32.0,
+            "ADR-0033's bright step is faster"
+        );
+        assert_eq!(e.step(-3.0, -3.0, dt), -3.0);
+        assert!((AutoExposure::eye().step(-3.0, -3.0 + 1.0 / 128.0, dt) + 3.0).abs() <= 1.0 / 64.0);
     }
 
     /// Plan 0086 Phase 17: the auto exposure's default anchors its ceiling 4 EV over the

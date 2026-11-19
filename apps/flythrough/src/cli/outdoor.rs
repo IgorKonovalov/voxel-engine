@@ -52,6 +52,9 @@ pub struct OutdoorArgs {
     /// `--exposure-max EV`: the auto exposure's constant ceiling in EV; unset, the start's
     /// ([`OUTDOOR_MAX`] outdoors, the preset's elsewhere).
     pub(crate) exposure_max_ev: Option<f32>,
+    /// `--exposure-rate EV/s`: the auto exposure's rate cap (`AutoExposure::rate_ev_s`, 0 for
+    /// none); unset, the preset's (`vxe_render::DEFAULT_EXPOSURE_RATE_EV_S` for the eye).
+    pub(crate) exposure_rate: Option<f32>,
 }
 
 impl OutdoorArgs {
@@ -379,6 +382,17 @@ fn ceiling_flags() -> Vec<Flag<Parsing>> {
             |p: &mut Parsing, v| {
                 p.args.outdoor.exposure_max_ev =
                     Some(v.parse_if(|n: &f32| (-16.0..=8.0).contains(n), "-16 to 8")?);
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--exposure-rate"],
+            "EV/s",
+            "the most the auto exposure moves toward its target a second, 0 to 64, 0 for no \
+                 cap (a step is capped at a 15 fps frame's) [1.875: 1/32 EV a frame at 60 Hz]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.exposure_rate =
+                    Some(v.parse_if(|n: &f32| (0.0..=64.0).contains(n), "0 to 64")?);
                 Ok(())
             },
         ),

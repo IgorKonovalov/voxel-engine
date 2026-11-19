@@ -512,6 +512,15 @@ fn ev(s: &ExposureState) -> f64 {
 }
 
 /// log2 0.18.
+/// The eye at ADR-0033's speed alone: no rate cap (`AutoExposure::rate_ev_s` 0), the curve
+/// these rigs read.
+fn adr0033_eye() -> AutoExposure {
+    AutoExposure {
+        rate_ev_s: 0.0,
+        ..AutoExposure::eye()
+    }
+}
+
 fn log2_key() -> f64 {
     0.18f64.log2()
 }
@@ -559,7 +568,7 @@ fn luminances(steps: &[(f32, usize)]) -> Vec<f32> {
 /// second frame.
 #[test]
 fn auto_exposure_finds_the_key() {
-    let Some(mut rig) = BoxRig::new(AutoExposure::eye()) else {
+    let Some(mut rig) = BoxRig::new(adr0033_eye()) else {
         return;
     };
     rig.frame_at(0.5);
@@ -576,7 +585,7 @@ fn auto_exposure_finds_the_key() {
 /// k 600.
 #[test]
 fn dark_adaptation_runs_in_two_stages() {
-    let auto = AutoExposure::eye();
+    let auto = adr0033_eye();
     let Some(mut rig) = BoxRig::new(auto) else {
         return;
     };
@@ -628,7 +637,7 @@ fn dark_adaptation_runs_in_two_stages() {
 /// 2.997 at k 9, 1.669 at 30 and 1.531 at 60.
 #[test]
 fn light_adaptation_is_fast() {
-    let auto = AutoExposure::eye();
+    let auto = adr0033_eye();
     let Some(mut rig) = BoxRig::new(auto) else {
         return;
     };
@@ -652,7 +661,7 @@ fn light_adaptation_is_fast() {
 /// at 600 the pixel is 72/255 within 2.
 #[test]
 fn a_flash_leaves_the_eye_glared() {
-    let auto = AutoExposure::eye();
+    let auto = adr0033_eye();
     let Some(mut rig) = BoxRig::new(auto) else {
         return;
     };
@@ -717,7 +726,7 @@ fn the_symmetric_preset_is_one_rate() {
 /// `instant()` settles in one step.
 #[test]
 fn limits_compensation_and_dt() {
-    let Some(mut rig) = BoxRig::new(AutoExposure::eye()) else {
+    let Some(mut rig) = BoxRig::new(adr0033_eye()) else {
         return;
     };
     let s = rig.frame_at(2f32.powi(-12));
@@ -749,7 +758,7 @@ fn limits_compensation_and_dt() {
         rig.frame.set_lighting(Lighting {
             exposure: Exposure::Auto(AutoExposure {
                 compensation_ev: comp,
-                ..AutoExposure::eye()
+                ..adr0033_eye()
             }),
             ..rig.frame.lighting()
         });

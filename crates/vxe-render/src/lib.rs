@@ -99,8 +99,8 @@ pub use entities::{
     MARK_BUFFER_BYTES, MARK_COLOURS, MAX_ENTITIES, MAX_ENTITY_PARTS, Mark, ModelHandle,
 };
 pub use exposure::{
-    AutoExposure, DEFAULT_SKY_ANCHOR_EV, EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState,
-    Metering, ground_irradiance,
+    AutoExposure, DEFAULT_EXPOSURE_RATE_EV_S, DEFAULT_SKY_ANCHOR_EV, EXPOSURE_WGSL, Exposure,
+    ExposureReadout, ExposureState, Metering, ground_irradiance,
 };
 pub use frame::{
     ATROUS_ITERATIONS, DEFAULT_KEY_HISTORY, DEFAULT_LIGHT_FLOOR, DEFAULT_PROBE_FREEZE,

@@ -797,6 +797,9 @@ impl Args {
         if let Some(n) = self.outdoor.sky_anchor {
             a.sky_anchor_ev = n;
         }
+        if let Some(r) = self.outdoor.exposure_rate {
+            a.rate_ev_s = r;
+        }
         a
     }
 

@@ -19,8 +19,8 @@
 // than the shaded one, or an empty target) the state's adapted and metered levels hold and
 // the HELD flag is set.
 //
-// In auto, with a meter and `dt > 0`, the adapted level steps toward it (`step_adapted`,
-// `AutoExposure::step` in f32); with the reset bit it jumps to it; without a meter or with
+// In auto, with a meter and `dt > 0`, the adapted level steps toward it (`step_capped`: the
+// model's step clamped to the rate cap, `AutoExposure::step` in f32); with the reset bit it jumps to it; without a meter or with
 // `dt` 0 it holds bit for bit. In manual the adapted level holds.
 //
 // `previous` becomes the exposure this frame's passes used (the state's `current` in auto,
@@ -55,6 +55,12 @@ struct ExUniform {
     floor_log2: f32,
     // `2^N` under the sky anchor, else 0.
     anchor: f32,
+    // The adapted level's most step per second in EV (ADR-0076 rule 5; 0: no cap), and the
+    // longest frame step it pays for.
+    rate_ev_s: f32,
+    max_rate_dt: f32,
+    _pad0: f32,
+    _pad1: f32,
 };
 
 struct ExState {
@@ -105,6 +111,17 @@ fn step_adapted(a: f32, t: f32, dt: f32) -> f32 {
         return t + (f - t) * decay(dt - to_floor, ex.tau_rod);
     }
     return t + (a - t) * decay(dt, ex.tau_rod);
+}
+
+// `step_adapted` with its step clamped to `rate_ev_s * min(dt, max_rate_dt)` EV (no clamp
+// at a rate of 0), so the adapted level moves at a bounded rate toward the meter.
+fn step_capped(a: f32, t: f32, dt: f32) -> f32 {
+    let next = step_adapted(a, t, dt);
+    if (ex.rate_ev_s <= 0.0) {
+        return next;
+    }
+    let r = ex.rate_ev_s * min(dt, ex.max_rate_dt);
+    return a + clamp(next - a, -r, r);
 }
 
 // The ceiling in force: `max_e`, or the anchored one (the header).
@@ -174,7 +191,7 @@ fn exposure(@builtin(local_invocation_index) lane: u32) {
         if (metered && (ex.mode & EX_RESET) != 0u) {
             s.adapted_log2 = s.metered_log2;
         } else if (metered && ex.dt > 0.0) {
-            s.adapted_log2 = step_adapted(s.adapted_log2, s.metered_log2, ex.dt);
+            s.adapted_log2 = step_capped(s.adapted_log2, s.metered_log2, ex.dt);
         }
         s.ceiling = ceiling();
         s.current = clamp(ex.key / exp2(s.adapted_log2), ex.min_e, max(s.ceiling, ex.min_e));
