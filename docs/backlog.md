@@ -135,6 +135,20 @@ Taken 2026-11-10 by [Plan 0060](plans/done/0060-the-live-queue-by-the-view-and-w
 
 ## Engine mechanisms
 
+### The fill-in after a stamp or a jump: the no-ray sky prior, the landing's fade, the exposure's rate
+
+Parked 2026-11-19 by Plan 0086's fourth amendment ("after the castle's stop"), which charters it.
+A freshly stamped castle's keep reads its sky through the missing-light chain's neighbour
+summaries (the hill's open faces) until its dig jobs land, so its walls start lit as outdoors
+and step at every neighbouring landing; the same prior puts the dig rig's far wall 18 levels
+over its band for two frames; and the auto exposure follows all of it. Plan 0086 takes the
+split (exposure pinned, per term, per frame against the landings) and builds nothing. What it
+takes: a plan with the split as Phase 1, then by its shares: the chain's sky for a face with no
+record (the own summary kept, the neighbours' out, the ray seeded from the column or the column
+held), Phase 20 (ii)'s fade generalised to every no-ray value change, ADR-0076 rule 5's rate cap
+as an `AutoExposure` setting, Phase 20 bar 1a's (i) and (ii) by the lines, and a window on the
+castle on main. Pick up at Plan 0086's close: the architect drafts it then.
+
 ### Chunk-scale world dynamics: a cellular material step and an event scheduler
 
 Parked 2026-11-03 and 2026-11-04. The owner wants Noita or Teardown style dynamics (sand, flowing

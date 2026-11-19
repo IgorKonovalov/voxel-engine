@@ -792,6 +792,228 @@ baked floor.
    change. Recommended: accept; the collapse on a lone sample at the extremes is a firefly by the
    pair's own definition, and the floor is the band the pair already has at 0.02.
 
+## Amended 2026-11-19, after the castle's stop (the architect's calls; the owner asleep)
+
+The amendment above was built at `f64b3029` (call 1) and `f4a891ac` (call 2) and the castle
+strip was re-read on the tip (the readings log, "The castle strip on the tip"): the fresh
+over-8 mean reads 3.431 % against the stop line's 2.25 %, and the dev stopped there. Three
+findings decide what follows.
+
+**The stop line compared two different transients, and the castle cannot be judged this
+morning.** The 2.25 % is the paced rig at `6e1944ee`, where the keep's chunks waited behind the
+carve's ring and nothing landed inside the strip's 32 frames (`missing` 49 884 at frame 0 and
+49 282 at frame 100): a strip of ray sparkle and the exposure following it. On the tip the keep's
+chunks are digs (Phase 21a) and land inside the strip (`missing` 21 362 at frame 0, 2894 at frame
+100), so the strip now holds the landings' steps, which the first amendment accepts as rule 3's
+degenerate case, and whatever moves with them. 3.431 % against 2.25 % says nothing about the
+seed; the like-for-like figures are the ones the seed changed: the ray-cast share of the over-8
+pixels (15.2 to 5.8 %) and the strip by eye (the vault no longer starts lit as outdoors). The line
+was mis-set here, not missed by the dev. And Phase 24's castle run (run 9, `CASTLE_BIN`) runs on
+Plan 0083's binary, whose branch holds none of this plan (`git merge-base --is-ancestor 12c727f4
+plan-0083` says no; main lacks it too), so the owner's castle verdict this morning is a verdict on
+the belt's light before this plan, whatever this plan does to the castle tonight.
+
+**What steps in the castle is, by the shaders' rules, the no-ray path's prior, and its share is
+not measured.** `frame-002.png` shows the keep's right wall and arcade lit as if open to the sky
+and `frame-024.png` shows them dark, the floor and the left pillars brighter; `diff.png` is white
+over the walls and the floor. The over-8 split (sky ray 5.8 %, young 74.7 %, sky 2.2 %)
+attributes nothing: a strip that starts at the edit resets every castle pixel at frame 0, so "age
+under 16" names frames 1 to 16, not a cause. The rules say where the walls' light comes from. A
+whole dig's slots hold no baked visibility and no stale bit until the job lands (`open_digs`
+lists them; nothing writes `VIS_BAKED` before the bake), so `shade.wgsl`'s `sky_chained`
+answers them from the chunk's own summary, else the mean of its six face neighbours' summaries,
+and casts no ray (the rays per frame fell from 30 715 before Phase 21a to 1304 on the tip: the
+keep chained as soon as its chunks had blocks). For a keep chunk next to the hill the
+neighbours' summaries are the hill's open faces, about 1.0: the lit wall at frame 2. Every
+landing of a neighbour changes that mean by a step over every chained face around it, and the
+chunk's own landing steps it to the baked value: hundreds of chunk-sized steps over the first 100
+frames (386 dig jobs land by the drain). Call 2's bar 4 finding is the same mechanism at the dig
+rig: the hole's far wall's new cells have no record and no stale bit, `sky_chained` gives them
+the summaries (214 to 227 levels against the baked 68 to 80), and the dig job's landing steps
+them down at frame 66. The exposure meters all of it (ADR-0076 rule 5's amplification). Which
+share is the chain's steps, which the landings' and which the exposure's is not read, and no
+mechanism is built on a split that has not been read.
+
+**The owner wants a window this morning, and Phases 23 to 25 do not depend on the castle.** So
+the castle's remaining work leaves this plan. Five calls follow. Nothing here changes a default
+or an ADR.
+
+### 1. Calls 1 and 2 stand
+
+The seed's order (the record, else the column) and `P_MIN` stay: both interiors pass (0.232 and
+0.663 to 0.0; the pair at age 64 and 23, no collapse), bar 4a's largest |pair - seed| is 0, bar
+3 passes with the ring's dots 0 at every frame, the dig rig digs into baked ground (204 cast
+pixels with a stale record at frame 1), and the castle's over-8 pixels are 5.8 % ray-cast against
+15.2 % with the vault dark from frame 0. The 9.78 to 3.43 % is the open prior's removal from the
+ray path. The chain's finding does not touch them: the chain answers the no-ray path, which call
+1 did not change.
+
+### 2. The castle's remaining work splits off into a follow-up plan; 21a bar 2 is a reading; bar 1a is read, not acted on
+
+**The decision.** Phase 21a bar 2's over-8 row is retired to a reading: the tip's table row and
+the split (call 3) go in the log, and no castle mechanism is built in this plan. Phase 20 bar 1a
+is re-read on the tip with the committed rig (the switches told apart) and its lines are
+reported; (i) and (ii) are not built here whatever the lines say. Both go to one follow-up plan,
+drafted by the architect on main at this plan's close (its charter below; `docs/backlog.md`
+carries it until then), whose window is the castle on the belt with this plan's light, on main
+after Plans 0083 and 0086 merge. This plan's castle stop line becomes a regression line: a later
+reading in this plan with the castle's fresh over-8 mean over the tip's 3.431 % stops the dev.
+
+**Grounds.** The castle's remaining steps are one family, the sky term's transitions on the
+no-ray path (the chain's prior, the landing's step, the switch's fade, the exposure that scales
+them), which Phase 20 (ii) and ADR-0076 rule 3 already name as one mechanism's home; a plan that
+chases a visual defect reads its split before it commits to a mechanism (Plan 0047's lesson);
+the window this morning cannot judge it (the binary); and holding Phases 23 to 25 and the window
+for it holds the seam, the lights, the dig and the forest hostage to a scene the window does not
+run on this plan's binary. **Rejected:** (a) building the chain's fix tonight (the own summary
+kept, the neighbours' summaries out of the sky channel, the ray seeded from the column where
+neither answers): about half a day with its bars and goldens, on an attribution from the code
+with no reading, the night before the window; (b) finishing the castle's bar inside this plan
+after the window: the plan is at 25 phases and four amendments in two days, and the close review
+needs a tree that stops moving; (c) dropping the castle with no follow-up: the owner watched it
+flicker, and the mechanisms that remain are named.
+
+**The follow-up plan's charter** (the architect drafts it; nothing in it is built in this plan):
+
+1. **The split as its Phase 1**, on call 3's reading if this plan's dev has not taken it.
+2. **The no-ray path's prior for a face with no record.** The chunk's own summary stays; a face
+   neighbour's summary no longer answers the sky channel (`store_sky_fallback` and
+   `sky_chained` move together). Where neither the record nor the own summary answers, two arms
+   are read on the castle, the far field (the hills' horizon, 741 rays at rest) and the forest
+   after a turn: the ray cast, seeded from the column as call 1 seeds it (the far field keeps
+   its converging estimate; the keep casts about 20 000 rays for the bake's length, Plan 0032's
+   4.8 ms per 30 000 on the RENOIR); or the column's answer held with no ray until the bake
+   (free, binary, wrong by half under an overhang). The first is the recommendation. A
+   provisional record written at a whole dig's opening (the column's bit per brick direction,
+   `VIS_BAKED` set, no stale bit) is the CPU-side form of the second: it covers the stamped
+   chunk but not the dig ring's new cells.
+3. **The landing's and the switch's fade.** Phase 20 (ii) as this plan specifies it,
+   generalised: at a pixel with accepted history whose no-ray value changes between frames
+   (chain to store, chain to chain, pair to store) the pair carries the old value and ramps to
+   the new over `F` frames in its own channels, so a real change of the world's light takes
+   rule 3's form instead of its degenerate case. Built only if the split puts the landings' and
+   the chain's steps over the exposure's.
+4. **Rule 5's rate cap.** The adapted log2 luminance moves at most `R` EV a frame toward its
+   target (`step_adapted`'s result clamped; an `AutoExposure` field in EV per second, so the cap
+   is frame-rate independent; a CLI flag and a settings row). The default is a guess until Plan
+   0090 Phase 5 calibrates `R`: 1/16 EV a frame at 60 Hz (3.75 EV/s), so a 2-EV adaptation takes
+   half a second instead of the eye's 0.15 s toward bright, and a pixel at display level 180
+   moves at most 8 levels a frame from the exposure alone. Young pixels stay in the meter (the
+   exclusion was rejected in the first amendment and the reason stands: a block-less scene
+   would hold its exposure). Built first if the split puts the exposure's share over half.
+5. **Its bars:** the castle's fresh strip split by source, with a bar the split sets; Phase 21
+   bar 4's band clause (call 5); bar 1a's (i) and (ii) by the lines, as this plan specifies
+   them; the owner's window on main.
+
+### 3. The split reading, the one castle reading this plan still takes
+
+`flicker::reading::flicker_castle` runs its castle sequence three times in one process on one
+binary (the paced rig; RTX, release): **(a)** as today; **(b)** with the exposure pinned from the
+first frame (`Exposure::Manual`) at the value arm (a) reads at the end of its settled strip
+(`Frame::exposure_readout`'s `exposure`, printed); **(c)** arm (b) with `LightHooks::key_off`.
+Each arm prints the counts line and, for the fresh strip, the per-frame series over the 31
+pairs: the over-8 count, the store's missing count (the counter's word 0), the chained count
+(word 3), the sky rays cast, and the queue's `digs_baked` at that frame. The exposure's share is
+arm (a)'s over-8 mean less arm (b)'s; the key light's is (b) less (c); what is left is the sky
+term's no-ray path, and the series against `digs_baked` says whether its steps sit on the
+landing frames. The table goes in the log with no bar. The source per over-8 pixel (the pair,
+the chain, the store, as bar 1a's rig classifies it on the CPU) is the follow-up's instrument,
+not this reading's, unless the series does not settle the question and the dev can add it in
+under an hour. About 5 min on the RTX; it runs only while the owner's window is not on the GPU.
+
+### 4. Phase 21 bar 2: a tap weighs nothing across the cast/stored boundary
+
+**The decision.** In `atrous.wgsl`'s `atrous` entry point a tap whose pixel's cast flag (this
+frame's `vis.a > 0.5`, the texture the `variance` step already binds at group 2 binding 10)
+differs from the centre's weighs 0; the centre tap keeps its kernel weight, so `w_sum > 0`
+holds. `vis_in` joins the `atrous` bind group layout and group (`frame/pipelines.rs`,
+`frame/encode.rs`). Nothing else changes: the filtered quantity `c`, the stored part passed
+around the filter, the variance step and the composite's `LIGHTING_FILTER_OFF` branch stay as
+(c) built them.
+
+**Grounds.** Call 2's finding: the filtered quantity of a stored pixel holds no sky term (its sky
+is in the part that passes around the filter) while a cast pixel's holds the pair's whole term,
+so on any frame that mixes the two a cast pixel averages its term with its stored neighbours' 0
+(the reading: 0.59 against the pair's 3.14, 107 levels in the ring at the landing frame). The
+two populations estimate different quantities and must not be averaged; a material edge is
+already handled the same way, by a weight. On a frame where every tap is of one kind nothing
+changes, so the hills' noon golden (every pixel baked, no cast pixel) is byte-identical and the
+baked look is untouched; a lone cast pixel among stored ones filters as itself for that frame,
+which is its pair's long mean, not a dimmed one. The forest after a turn mixes the two kinds too
+(stale and missing canopy bricks next to baked ones), so this is not only the landing frame's
+fix.
+
+**Rejected.** (a) The sky term in the filtered quantity for every pixel (the stored term out of
+the passed part): filters the baked sky over the whole frame, a look change on every outdoor
+golden the night before the window, and ADR-0043's reason for passing a cell's mean around the
+filter (its variance is the cell's, not the pixel's) applies to the sky words as to the emissive
+ones. (b) The pair's term out of the filter, added after it as the stored part is: symmetric
+and binding-free, but every ray-lit pixel loses the spatial filter over its young samples (the
+forest's turn, the castle's remaining ray region), the one thing (c)'s rejected (3) kept. (c)
+Re-scoping the bar to a transient: 107 levels in a ring for a frame is the dig flash the phase
+exists for, and the owner watches the dig this morning (run 4).
+
+**Cost (a guess until bar 6 reads it):** 25 loads of an `rgba8unorm` texel per lighting pixel per
+iteration, four iterations, in the footprint the filter already reads: +0.02 ms RTX, +0.2 ms
+RENOIR on `nfr.md` section 2's Denoise line (2.0 ms); 0 B. The budgets table gains the row.
+
+**Bars.** Bar 2 as written (0 ring pixels leave the band of 2; the before's 419 and 107 levels
+printed); bars 1, 3 and 4a unchanged; bar 5's hills golden byte-identical, the tunnel goldens
+with ray-lit pixels re-blessed only if they move, as a disclosed change with counts; bar 6's
+cost line. The forest's fresh strip (the `after21` row) is read against `before21`'s 1.034 % and
+printed: a rise by more than a quarter is reported, not a stop.
+
+### 5. Phase 21 bar 4's band clause goes with the castle; this plan prints it
+
+The 40 far-wall pixels over the band by up to 18 levels at frames 64 and 65 are the chain's
+prior on the no-ray path (above): the hole's new cells have no record and no stale bit,
+`sky_chained` gives them the summaries, and the landing at frame 66 steps them to the baked
+value. The fix is the follow-up's item 2 and the re-read its bar. In this plan the band clause
+is printed, not barred: the leavers' count by frame and side with their source (the chain, by
+the CPU test bar 1a's rig uses), while the bar's other two clauses stand as bars (the floor at
+its baked value within one level from the frame after the landing, the landing frame printed;
+no frame over 5 % of pixels changing over 16 levels). Not accepted as right: an 18-level flash
+for two frames on a wall at a dig is a pop by ADR-0076's rules, disclosed in the log and carried
+by the follow-up. The owner may see it in run 4 as a brief brightening of the hole's far wall at
+the dig; the runner's note names it so it is not taken for the ring's flash.
+
+### 6. The order for the dev
+
+1. Bar 2's fix (call 4): `atrous.wgsl`, the bind group; bar 2 re-read, bars 1, 3 and 4a by
+   name in `gpu_sun`, bar 5's goldens, bar 6's cost line on both adapters; bar 4's print (call
+   5) in the same run.
+2. Phase 23 (`live/p23-defects.patch`, `live/p23-test.rs`).
+3. The window: the `after21` strips (the hills, the forest, the dig; the castle's tip row
+   stands), the three gpu binaries `--no-fail-fast` (the soak goldens by name), a fresh release
+   fly-through in `live/bin86c/` with its `.commit`, `--check-args` on every flag,
+   `live/session86c.sh` with run 4's note (call 5) and run 9's (Phase 24), the ping. **The
+   window does not wait for items 4 and 5.**
+4. The split reading (call 3), while the GPU is free of the window.
+5. Bar 1a's re-read on the tip with the committed rig (`defects::reading::the_ray_region_lands`,
+   release, RTX, the lock); the lines in the log; nothing built.
+6. The tip gate; the resume notes.
+
+Items 1 and 2 go before the window because the owner watches the dig (run 4) and the treads
+(run 6) on the window's binary; items 4 and 5 are readings the follow-up consumes and run while
+the owner looks or after.
+
+### Owner questions (the dev proceeds on the recommendation)
+
+5. **The castle's remaining fill-in (the keep's walls lit from the hill's summary until their
+   bake lands, a step at every neighbouring landing, the exposure following) leaves this plan
+   for a follow-up plan whose window is the castle on the belt on main, after Plans 0083 and
+   0086 merge.** This morning's castle run (run 9) is on Plan 0083's binary, which holds none of
+   this plan's light, so its verdict is the before state. Split now, or hold Plan 0086 for about
+   half a day to build the chain's fix first? Recommended: split; the window judges the seam, the
+   lights, the dig, the forest and the treads on this plan's binary this morning, and the castle
+   gets a window on a binary that holds both plans.
+6. **ADR-0076 rule 5's rate cap, if the split names the exposure:** the eye's fast adaptation
+   toward bright (0.15 s) becomes a ramp of at most `R` EV a frame, a guess of 1/16 at 60 Hz
+   until Plan 0090 calibrates it, as a setting with a flag. Acceptable as the follow-up's
+   mechanism, or should the exposure keep its speed and only the light be fixed? Recommended:
+   the cap as a setting; a 2-EV adaptation over half a second is still fast, and it bounds every
+   pop the exposure amplifies, which rule 5 asks for.
+
 ## Implementation phases
 
 Each phase ships as its own commit. `dev` implements all phases in one session with no review
@@ -1670,7 +1892,9 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
      remains or (i)). The lines apply to the pair-to-store switches alone: (i) on the floored
      relative step over 10 %; (ii), as call 4 specifies it, on a band share over 1 % whose
      leavers do not re-cast and whose excursion is on the switch's frame. Each is followed by the
-     re-read.
+     re-read. **Re-stated 2026-11-19 (the castle's stop, call 2):** the re-read runs on the tip
+     and its lines go in the log; neither (i) nor (ii) is built in this plan whatever the lines
+     say. The follow-up plan that takes the castle builds what the lines name.
   3. **Nothing moves where the store is fresh.** The hills' noon golden is byte-identical
      (every pixel baked); the tunnel goldens that hold ray-lit pixels are re-blessed as a
      disclosed change with counts.
@@ -1742,6 +1966,13 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
      re-bake lands overshoots by the direct history's share of it). The ring is non-empty: at
      least one frame casts the ray over at least 1 % of the pixels within 64 voxels of the
      box (Phase 16 read 7357 and 4765 rays on two frames), else the test fails as a rig fault.
+     **Amended 2026-11-19 (the castle's stop, call 4):** on the fixed rig 419 ring pixels left
+     the band by up to 107 levels at the landing frame, because the a-trous averaged a cast
+     pixel's filtered sky term with its stored neighbours' 0. The fix: in `atrous.wgsl`'s
+     `atrous` a tap whose cast flag (this frame's `vis.a`, bound to `atrous` as `variance`
+     binds it) differs from the centre's weighs 0; the centre keeps its kernel weight. The bar
+     stands as written, the before's 419 and 107 printed; `vis_in` joins the atrous bind group
+     in `frame/pipelines.rs` and `frame/encode.rs`.
   3. **A dig leaves no dots.** `a_dig_leaves_no_dots` in `gpu_sun.rs` (the open floor of 3 x 3
      chunks baked whole under `Sky::uniform(1.0)`, a zenith sun, the live queue at the
      fly-through's settings so the re-bake takes frames, a 1 m dig at frame 64, 60 frames
@@ -1762,6 +1993,12 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
      frame printed; the pair's fade from the column's 1 covers the frames before it); and no
      frame has the share of pixels changing over 16 levels above 5 %. The +10.4 % of
      `0f8cde39` is a reading of the seam on a block-less floor, accepted, not this bar's.
+     **Re-stated 2026-11-19 (the castle's stop, call 5):** the band clause is printed, not
+     barred, in this plan: the leavers' count by frame and side with their sky term's source
+     (the 40 far-wall pixels of `f4a891ac`, over by up to 18 levels at frames 64 and 65, read
+     the chain's summaries on the no-ray path until the dig job lands); the follow-up plan that
+     takes the castle fixes the chain's prior and owns the clause. The landing clause and the 5 %
+     clause stay this plan's bars.
   4a. **A reset pixel starts from its record, else the column.** `a_reset_pixel_starts_from_its_record`
      in `gpu_sun.rs` (bar 3's rig; about 3 s): at the first frame after the dig, every cast pixel
      inside the dilated box reads age `SEED_AGE`, and on `+z` faces the pair's `x` is within
@@ -1822,6 +2059,13 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
      (22 083 / 1742 / 0); the over-8 row is re-read on the tip with call 1 built (9.780 % at
      `12c727f4` under the open prior); between 0.5 % and 2.25 % the strip's over-8 split goes
      in the log for the architect's bar, over 2.25 % call 1 has not paid and the dev stops.
+     **Re-stated 2026-11-19 (the castle's stop, calls 2 and 3):** the over-8 row is a reading,
+     not a bar: the tip's 3.431 % (the 2.25 % was a strip with no landing in it, not a
+     like-for-like line), and the split reading (three arms: as is, the exposure pinned at the
+     settled value, pinned with the key light off; the per-frame over-8, missing, chained,
+     cast and `digs_baked` series) in the log. The castle's remaining mechanisms are the
+     follow-up plan's. A later reading in this plan over 3.431 % is a regression and stops the
+     dev.
   3. **A dig's ring is unchanged (re-stated 2026-11-19, call 5).** With Phase 21 bar 3's rig
      asserting its blocks, `a_dig_leaves_no_dots` and Phase 21's bars read the same values with
      this phase's queue code in and out (the dig's touched chunks all hold blocks, so nothing
@@ -1898,7 +2142,11 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   sunset; (7) the defaults' look as one scene each: the tunnel's stairs under `smoothed` against
   `--sky-normal face`, the ceiling under anchor 4 against `none`; (8) a skylight dug into the
   chamber, then sealed. Each run's screenshot and the owner's words go to
-  `live/window86c/verdicts.md` as before.
+  `live/window86c/verdicts.md` as before. **Amended 2026-11-19 (the castle's stop):** run 4's
+  note names the hole's far wall (a brief brightening for two frames at the dig is the chain's
+  prior, Phase 21 bar 4's printed clause, not the ring's flash); the castle run on `CASTLE_BIN`
+  (Plan 0083's binary, which holds none of this plan's light) is recorded as the before state
+  for the follow-up plan, whose own window runs the castle on main with both plans merged.
 - **Files touched:** `docs/plans/logs/0086.md`.
 - **Done when:** the owner has recorded, per defect 1 to 6, fixed / not fixed / worse, and a
   verdict on each default (the anchor, the smoothed normal, the wait off); or a no-go that names
@@ -1994,6 +2242,12 @@ Added 2026-11-18, the flicker check (guesses until read):
 | §2 Lighting, the temporal pass (Phase 21 (a)) | the seed's record and chain reads at a reset pixel only (a few percent of pixels a frame at rest, a wall's worth at an edit): about 0 at rest, under +0.05 ms RTX on the edit's frames | Phase 21 bar 6 |
 | §4 Edits, an edit's step (Phase 21a) | `take_boxes` gains the touched blockless chunks' entries only (their listing moves to `open_digs`' thread, where a dig's already runs): under +1 ms on the edit's frame for the castle's 17 boxes; the queue's dig work grows by the stamped chunks' jobs, which the pool would have baked anyway, moved ahead | Phase 21a bar 4 |
 
+Added 2026-11-19, the castle's stop (a guess until read):
+
+| `nfr.md` figure | projection (a guess) | how the close measures it |
+|---|---|---|
+| §2 Denoise, the a-trous iterations (Phase 21 bar 2's fix) | 25 loads of an `rgba8unorm` texel per lighting pixel per iteration, four iterations, in the footprint the filter already reads: +0.02 ms RTX, +0.2 ms RENOIR on the Denoise line's 2.0 ms; 0 B | Phase 21 bar 6, both adapters |
+
 On the slow adapter the outdoor light pass is over section 2's line in every configuration
 Plan 0032 read; this plan's Phase 5 is the first reading that can move it under, and `nfr.md`
 section 2 records the result at the close.
@@ -2064,6 +2318,11 @@ section 2 records the result at the close.
   2 (c)): a look plan of their own if the owner asks.
 - **Plan 0036's fall map at slanted directions**: Plan 0036 extends the column map; this plan
   builds the vertical one only.
+- **The fill-in after a stamp or a jump** (added 2026-11-19, the castle's stop): the no-ray
+  path's sky prior for a face with no record (the chain's neighbour summaries), the landing's
+  and the switch's fade (Phase 20 (ii) generalised), ADR-0076 rule 5's exposure rate cap, and
+  Phase 21 bar 4's band clause: the follow-up plan the amendment charters, drafted at this
+  plan's close.
 
 ## Implementation log
 
@@ -2208,3 +2467,7 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - Plan 0090 gains a stamp scene (a prefab placed on the hills at noon, the eye in it; rules 3,
   4 and 5) and reads the key mean's fade-in length against the calibrated `F` (the flicker
   amendment's owner question 1); an architect amendment on main, owed at this plan's close.
+- The fill-in follow-up plan (the castle's stop amendment, call 2's charter): the split as its
+  Phase 1, the no-ray path's prior, the fades, the exposure's rate cap, bar 4's band clause,
+  bar 1a's (i) and (ii) by the lines, a window on the castle on main; drafted by the architect
+  at this plan's close, and `docs/backlog.md` holds the pointer until then (added 2026-11-19).
