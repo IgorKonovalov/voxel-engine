@@ -173,16 +173,6 @@ would not; and two of `gpu_sun`'s sky tests the plan rewrote (Plan 0032's names,
 read over the line under the compile and go under it once the cache lands, or take the soak
 mark.
 
-### `cargo deny` fails on main's wasmtime 49.0.5 advisories
-
-Noted 2026-11-19 at Plan 0083's close: `cargo deny check` reads advisories FAILED on
-`wasmtime = "=49.0.5"` (RUSTSEC-2026-0566 to 0573: aborts and panics in builds without the
-`gc` or `threads` features, a stale GC heap pointer, unbounded growth in `wasmtime-wasi`'s
-`AsyncWriteStream` and `wasmtime-wasi-http`); bans, licenses and sources pass. The pin is
-main's and the workspace's `Cargo.toml` says a bump moves with wit-bindgen and wasm-tools.
-Owed on main as its own chore: the patched release, the lockfile, `scripts/build-guests.sh`
-and the guests rebuilt, `cargo deny` green; until then CI's deny step is red on every branch.
-
 ### The live queue's order and cancellation, after Plan 0059
 
 Taken 2026-11-10 by [Plan 0060](plans/done/0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md) and [ADR-0048](adrs/0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md); the hall's aliasing goes to the antialiasing plan below.
