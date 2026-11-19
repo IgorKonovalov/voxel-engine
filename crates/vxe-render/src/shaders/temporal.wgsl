@@ -81,7 +81,7 @@
 // moments, and the filter's input (atrous.wgsl `variance`) or, with the filter off, the
 // composite adds it from this frame's pair (`sky_pair_term`, sky.wgsl).
 // The key light's term is `key_light_at(p, n)` times its visibility's running mean in the
-// pair's g (`key_mean`): over the direct part's history age capped at `sky_history`, reset
+// pair's g (`key_mean`): over the direct part's history age capped at `key_history`, reset
 // where the direct part's history resets (no accepted taps, an edit box, a fresh pixel) and on
 // the sky-change bit, but not on a change of the list of lights; no clamp (the term is
 // bounded). It joins the direct part at the direct part's blend weight.
@@ -698,12 +698,12 @@ fn pair_step(s: f32, hp: vec4<f32>, accepted: bool, e: f32) -> vec4<f32> {
 
 // The key light's visibility mean after sample `s` on history `g`, which holds `age` samples
 // (the direct part's history age; `reset`: the history is not taken): over `age + 1` samples,
-// as the direct part blends, capped at `sky_history`.
+// as the direct part blends, capped at `key_history`.
 fn key_mean(s: f32, g: f32, age: f32, reset: bool) -> f32 {
     if (reset || (params.lighting & LIGHTING_SKY_CHANGED) != 0u) {
         return s;
     }
-    let n = clamp(age + 1.0, 1.0, f32(max(sky.sky_history, 1u)));
+    let n = clamp(age + 1.0, 1.0, f32(max(sky.key_history, 1u)));
     return g + (s - g) / n;
 }
 

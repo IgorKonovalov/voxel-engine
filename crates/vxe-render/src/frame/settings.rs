@@ -870,6 +870,11 @@ pub struct Lighting {
     /// [`MAX_SKY_HISTORY`] (default [`DEFAULT_SKY_HISTORY`]): the sky rays' visibility at a
     /// pixel with no fresh baked value is their mean over up to this many frames.
     pub sky_history: u32,
+    /// The key light's visibility mean's cap in frames (the visibility pair's `g`), 1 to
+    /// [`MAX_SKY_HISTORY`] (default [`DEFAULT_KEY_HISTORY`]): its own cap, so the key light's
+    /// mean through a canopy holds four times the sky rays' frames while a 10-degree jump
+    /// still resets it at once (the sky-change bit).
+    pub key_history: u32,
     /// How the key light's shadow ray makes its penumbra ([`Penumbra`]; default `Disc`).
     pub penumbra: Penumbra,
     /// The normal a cube face's baked sky term reads its visibilities by ([`SkyNormal`];
@@ -893,6 +898,9 @@ pub const MAX_SKY_HISTORY: u32 = 1024;
 /// [`Lighting::sky_history`] by default (Plan 0086's readings log, Phase 1: the rim's relative
 /// spread at the hit rates read there).
 pub const DEFAULT_SKY_HISTORY: u32 = 64;
+/// [`Lighting::key_history`] by default (Plan 0086 Phase 24b: the canopy's residual at rest is
+/// the key light's disc sample variance).
+pub const DEFAULT_KEY_HISTORY: u32 = 256;
 
 /// [`Lighting::sky_rays`]' largest value.
 pub const MAX_SKY_RAYS: u32 = 4;
@@ -924,6 +932,7 @@ impl Default for Lighting {
             light_floor: DEFAULT_LIGHT_FLOOR,
             sky_rays: DEFAULT_SKY_RAYS,
             sky_history: DEFAULT_SKY_HISTORY,
+            key_history: DEFAULT_KEY_HISTORY,
             penumbra: Penumbra::Disc,
             sky_normal: SkyNormal::Smoothed,
             sky_bounce: 0.0,

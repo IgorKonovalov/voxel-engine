@@ -43,6 +43,11 @@ struct SkyUniform {
     sky_scale: f32,
     prev_key_e: vec3<f32>,
     prev_sky_scale: f32,
+    // The key light's visibility mean's cap in frames (temporal.wgsl `key_mean`).
+    key_history: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 };
 
 const SKY_PI: f32 = 3.14159265358979;

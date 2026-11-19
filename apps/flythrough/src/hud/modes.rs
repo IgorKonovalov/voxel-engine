@@ -642,6 +642,9 @@ impl Modes {
             if l.sky_bounce > 0.0 {
                 let _ = write!(out, "sky bounce {}, ", l.sky_bounce);
             }
+            if l.key_history != vxe_render::DEFAULT_KEY_HISTORY {
+                let _ = write!(out, "key history {}, ", l.key_history);
+            }
             if l.column_wait {
                 out.push_str("column wait on, ");
             }

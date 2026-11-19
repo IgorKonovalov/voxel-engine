@@ -933,6 +933,10 @@ impl Args {
                 .outdoor
                 .sky_history
                 .unwrap_or(vxe_render::DEFAULT_SKY_HISTORY),
+            key_history: self
+                .outdoor
+                .key_history
+                .unwrap_or(vxe_render::DEFAULT_KEY_HISTORY),
             penumbra: self.outdoor.penumbra,
             sky_normal: self.outdoor.sky_normal,
             column_wait: self.outdoor.column_wait,

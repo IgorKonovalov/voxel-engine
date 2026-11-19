@@ -157,7 +157,8 @@ fn mirror_of(label: &str, name: &str) -> Option<Mirror> {
             prev_key_dir,
             sky_scale,
             prev_key_e,
-            prev_sky_scale
+            prev_sky_scale,
+            key_history
         }),
         (_, "Edits") => mirror!(EditsUniform { count, boxes }),
         (_, "UpTuning" | "InLamp") => mirror!(UpscaleUniform {

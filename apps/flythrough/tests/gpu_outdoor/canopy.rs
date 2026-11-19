@@ -13,7 +13,8 @@ mod canopy {
         const FRAMES: u32 = 128;
         /// The frames the long reference holds (at least), under [`REFERENCE_HISTORY`].
         const REFERENCE: u32 = 1200;
-        /// The long reference's cap on the visibility pair's means (`Lighting::sky_history`).
+        /// The long reference's cap on the visibility pair's means (`Lighting::sky_history` and
+        /// `key_history`).
         const REFERENCE_HISTORY: u32 = 1024;
         /// The pairs of frames the pop share reads, the last of a run's.
         const POP_PAIRS: u32 = 32;
@@ -196,8 +197,16 @@ mod canopy {
         ) -> Read {
             use vxe_render::debug::{read_rgba8, read_rgba16f, read_rgba32f};
             r.f.set_light_hooks(hooks);
+            // The long reference holds both of the pair's means at `history`; a run keeps the
+            // defaults' caps.
+            let base = flythrough::default_lighting();
             r.f.set_lighting(Lighting {
                 sky_history: history,
+                key_history: if history == REFERENCE_HISTORY {
+                    history
+                } else {
+                    base.key_history
+                },
                 ..r.f.lighting()
             });
             r.f.reset_history();
@@ -354,6 +363,10 @@ mod canopy {
                 ),
             ];
             let default_history = flythrough::default_lighting().sky_history;
+            println!(
+                "reading: canopy caps: sky {default_history}, key {}",
+                flythrough::default_lighting().key_history
+            );
             for (scene, clock) in scenes {
                 let sky = clock.sky(flythrough::outdoor::BASE_Z as f32);
                 let e = settled_exposure(&mut rig, &cam, Some(sky));

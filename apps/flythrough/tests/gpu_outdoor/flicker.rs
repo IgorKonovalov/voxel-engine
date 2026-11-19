@@ -355,6 +355,10 @@ mod flicker {
 
         /// The split's frames on `rig` from a settled `s`: N - 1, the dig, N .. N + SPLIT_AFTER;
         /// the table printed and written, its rows returned.
+        #[allow(
+            clippy::too_many_lines,
+            reason = "a reading's table: the counters, the shares and the parts per frame"
+        )]
         fn split_frames(
             rig: &mut Rig,
             s: &mut Stepper,

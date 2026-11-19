@@ -24,6 +24,8 @@ pub struct OutdoorArgs {
     pub(crate) sky_rays: Option<u32>,
     /// `--sky-history N`: the visibility pair's cap in frames; unset, the renderer's default.
     pub(crate) sky_history: Option<u32>,
+    /// `--key-history N`: the key light's mean's cap in frames; unset, the renderer's default.
+    pub(crate) key_history: Option<u32>,
     /// `--trees none|sparse|forest`: the trees stood on the hills.
     pub(crate) trees: TreeDensity,
     /// `--leaf-fill N`: a canopy voxel is kept under this of 256; unset, [`LEAF_FILL`].
@@ -264,6 +266,17 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
             |p: &mut Parsing, v| {
                 let max = vxe_render::MAX_SKY_HISTORY;
                 p.args.outdoor.sky_history =
+                    Some(v.parse_if(|n: &u32| (1..=max).contains(n), "1 to 1024")?);
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--key-history"],
+            "N",
+            "frames the key light's visibility mean holds at most, 1 to 1024 [256]",
+            |p: &mut Parsing, v| {
+                let max = vxe_render::MAX_SKY_HISTORY;
+                p.args.outdoor.key_history =
                     Some(v.parse_if(|n: &u32| (1..=max).contains(n), "1 to 1024")?);
                 Ok(())
             },
