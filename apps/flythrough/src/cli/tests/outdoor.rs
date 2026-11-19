@@ -123,3 +123,19 @@ fn the_column_wait_and_the_dump_reach_the_run() {
     assert!(!r.start_lighting().column_wait);
     assert!(parse_args_from(argv(&["--column-wait", "maybe"])).is_err());
 }
+
+/// `--settle` reaches the lighting, off by default and unnamed; on is named `settle on`.
+#[test]
+fn the_settle_reaches_the_run() {
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert!(!r.start_lighting().settle);
+    assert!(!r.start_modes(0.0).line().contains("settle"));
+    let r = parse_args_from(argv(&["--source", "outdoor", "--settle", "off"])).unwrap();
+    assert!(!r.start_lighting().settle);
+    assert!(!r.start_modes(0.0).line().contains("settle"));
+    let r = parse_args_from(argv(&["--source", "outdoor", "--settle", "on"])).unwrap();
+    assert!(r.start_lighting().settle);
+    let line = r.start_modes(0.0).line();
+    assert!(line.contains("settle on, "), "{line}");
+    assert!(parse_args_from(argv(&["--settle", "maybe"])).is_err());
+}

@@ -1329,6 +1329,17 @@ queue's fresh chunks** (a landed chunk's summary as the coarse answer for its fa
 pair converges, then hold). Pick up per place when its flicker is read; Plan 0090's counter
 names the places.
 
+**2026-11-19, Plan 0094 Phase 3: the settle on the pair left the plan by its stop rule**
+(`docs/plans/logs/0094.md`, Phase 3's re-read). As built (`temporal.wgsl` `settle_at_cap`: the
+band at the cap only, a hold after 16 in-band frames, a release after 4 consecutive frames out
+of it into a 1/16 fade; `Lighting::settle`, `--settle on|off`, default off): at rest it holds
+93 % of the forest's pixels and the ages match the settle off, but the trunks' pops at rest do
+not fall (0.352 % on, 0.367 % off at `10,180`) and the turn's return frame reads 37.6 % over 8
+on against 21.9 % off; the clock at 1x releases 40.6 pixels a frame with 1.04 % of them a
+`Flash`. Unread: why the return frame doubles (the trace the amendment names, the key mean's
+age per frame at a returned penumbra pixel), and whether the pops at rest are the direct
+part's own blend rather than the means'.
+
 ### A second `Frame` on one rig does not drain its bake queue
 
 Noted 2026-11-19 by Plan 0094 Phases 1 and 2 (`docs/plans/logs/0094.md`, bars 2 and 4 of

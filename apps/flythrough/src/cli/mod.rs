@@ -960,6 +960,7 @@ impl Args {
             penumbra: self.outdoor.penumbra,
             sky_normal: self.outdoor.sky_normal,
             column_wait: self.outdoor.column_wait,
+            settle: self.outdoor.settle,
             sky_bounce: self.outdoor.sky_bounce,
             ..crate::default_lighting()
         })

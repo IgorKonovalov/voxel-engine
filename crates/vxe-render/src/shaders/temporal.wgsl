@@ -89,8 +89,7 @@
 // where the direct part's history resets (no accepted taps, an edit box, a fresh pixel) and on
 // the sky-change bit, but not on a change of the list of lights; no clamp (the term is
 // bounded). It joins the direct part at the direct part's blend weight. At a stored face where
-// no sky ray was cast it settles as the pair does (`key_settle`): a band about it, a fall out
-// of the band, a hold after SETTLE_F in-band frames at the cap.
+// no sky ray was cast it settles at its cap as the pair does (`key_settle`, `settle_at_cap`).
 //
 // A cube face's emissive part (`reads_store`) is its brick record's value for its direction
 // (`store_brick_value`; with Params.lighting bit 14, where the shading normal is not the face
@@ -741,11 +740,9 @@ fn column_estimate(p: vec3<f32>, n: vec3<f32>) -> f32 {
 // A reset pair holds the estimate `e` alone in both means at age SEED_AGE; this frame's sample
 // joins from the next frame.
 //
-// The settle (unless LIGHTING_HOOK_NO_SETTLE): a pair at its cap counts its in-band frames in
-// its age past the cap; from cap + SETTLE_F on, its long mean holds (the short mean and the
-// band test still run), and it unfreezes when the short mean leaves the band (the age falls as
-// above) or the pair resets. A negative short mean is the key samples' of a pixel where no ray
-// was cast (`key_settle`), which this pair does not read: its short mean starts at its long one.
+// The settle (unless LIGHTING_NO_SETTLE; `settle_at_cap`): a pair at its cap carries the
+// settle's state in its age past the cap. Below the cap, and at the cap before it has settled,
+// the short mean leaving the band makes the age fall as above.
 fn pair_step(s: f32, hp: vec4<f32>, accepted: bool, e: f32) -> vec4<f32> {
     let age = floor(hp.w + 0.5);
     if (!accepted || age < 1.0 || (params.lighting & LIGHTING_SKY_CHANGED) != 0u) {
@@ -753,70 +750,105 @@ fn pair_step(s: f32, hp: vec4<f32>, accepted: bool, e: f32) -> vec4<f32> {
     }
     let cap = f32(max(sky.sky_history, 1u));
     let n0 = min(age + 1.0, cap);
-    let hb = select(hp.z, hp.x, hp.z < 0.0);
-    let b = hb + (s - hb) / min(n0, SKY_SHORT);
+    let b = hp.z + (s - hp.z) / min(n0, SKY_SHORT);
     let r = hp.x;
-    let band = SKY_BAND_SIGMAS * sqrt(max(r * (1.0 - r), P_MIN * (1.0 - P_MIN)) / SKY_SHORT)
-        + SKY_BAND_EPS;
-    let d = abs(b - r);
-    var n = n0;
-    var w = n0;
-    if (d > band) {
-        n = min(n, max(SKY_FALL_MIN, floor(SKY_SHORT * band / d)));
-        w = n;
-    } else if (settle_on() && age >= cap) {
-        n = min(age + 1.0, cap + SETTLE_F);
-        if (age >= cap + SETTLE_F) {
-            return vec4<f32>(r, 0.0, b, n);
-        }
-    }
+    let in_band = abs(b - r) <= settle_band(r);
     var sc = s;
     if (n0 > SKY_SHORT && (params.lighting & LIGHTING_HOOK_NO_CLAMP) == 0u) {
         sc = min(s, FIREFLY_K * max(r, b));
     }
-    return vec4<f32>(r + (sc - r) / w, 0.0, b, n);
+    let c = age - cap;
+    if (settle_on() && age >= cap && (in_band || c >= SETTLE_F)) {
+        let st = settle_at_cap(r, r + (sc - r) / cap, b, in_band, c);
+        return vec4<f32>(st.x, 0.0, b, cap + st.y);
+    }
+    var n = n0;
+    if (!in_band) {
+        n = min(n, max(SKY_FALL_MIN, floor(SKY_SHORT * settle_band(r) / abs(b - r))));
+    }
+    return vec4<f32>(r + (sc - r) / n, 0.0, b, n);
 }
 
-// The in-band frames a converged mean counts before it settles (rule 3's F, ADR-0046's FADE).
+// The band about a mean `g` of binary samples (`pair_step`'s, with SKY_BAND_SIGMAS above).
+fn settle_band(g: f32) -> f32 {
+    return SKY_BAND_SIGMAS * sqrt(max(g * (1.0 - g), P_MIN * (1.0 - P_MIN)) / SKY_SHORT)
+        + SKY_BAND_EPS;
+}
+
+// The in-band frames a converged mean counts before it settles, and the frames of the fade a
+// released mean takes toward its short mean (rule 3's F, ADR-0046's FADE).
 const SETTLE_F: f32 = 16.0;
+// The consecutive out-of-band frames that release a settled mean: a 3-sigma run of this length
+// at rest is about 1 in 10^10 a pixel, and a real change past the band shows within it.
+const SETTLE_RELEASE: f32 = 4.0;
 
 fn settle_on() -> bool {
-    return (params.lighting & LIGHTING_HOOK_NO_SETTLE) == 0u;
+    return (params.lighting & LIGHTING_NO_SETTLE) == 0u;
 }
 
-// The key mean with the settle, at a stored face where no sky ray was cast (whose pair is the
-// baked seed, its age `cap_w` the sky cap): after sample `s` on the pair's history `hp`, with
-// the direct part's history `age` (`reset`: the history is not taken). The key samples' short
-// mean over SKY_SHORT rides in the pair's z as `-1 - b` (negative, so `pair_step` knows it is
-// not its own), and the in-band frames past the key cap in its w as `cap_w + c`. The band is
-// the sky pair's (`pair_step`) about the long mean `g`: out of it, the mean and the direct
-// part's age fall as the sky pair's do; in it at the cap, `c` counts to SETTLE_F and from
-// there `g` holds. Returns the mean, the z, the w and the direct part's age.
-fn key_settle(s: f32, hp: vec4<f32>, age: f32, reset: bool, cap_w: f32) -> vec4<f32> {
+// One frame of the settle of a mean `g` at its cap, whose plain blend this frame is `blended`,
+// its short mean `b` (`in_band`: within `settle_band(g)` of it), its state `c` (the frames past
+// the cap the caller stores): from 0 to SETTLE_F the in-band frames counted (the mean blends,
+// and an out-of-band frame restarts the count); from SETTLE_F the mean holds, with
+// `c - SETTLE_F` the consecutive out-of-band frames; at SETTLE_RELEASE of them the mean is
+// released, and from SETTLE_F + SETTLE_RELEASE it fades toward its short mean at `1 / SETTLE_F`
+// a frame until the short mean is in the band again, where the count restarts. Returns the
+// mean and the new state.
+fn settle_at_cap(g: f32, blended: f32, b: f32, in_band: bool, c: f32) -> vec2<f32> {
+    let fading = SETTLE_F + SETTLE_RELEASE;
+    if (c >= fading) {
+        if (in_band) {
+            return vec2<f32>(blended, 0.0);
+        }
+        return vec2<f32>(g + (b - g) / SETTLE_F, fading);
+    }
+    if (c >= SETTLE_F) {
+        if (in_band) {
+            return vec2<f32>(g, SETTLE_F);
+        }
+        if (c + 1.0 >= fading) {
+            return vec2<f32>(g + (b - g) / SETTLE_F, fading);
+        }
+        return vec2<f32>(g, c + 1.0);
+    }
+    return vec2<f32>(blended, select(0.0, c + 1.0, in_band));
+}
+
+// A previous pair tap for a pixel of kind `own_key` (its pair carries `key_settle`'s; a tap's
+// kind is the sign of its z): a tap of the other kind reads as its long means at age `cap`, so
+// no blend mixes a key short mean with a sky one or a settle state with a plain age.
+fn pair_tap(t: vec4<f32>, own_key: bool, cap: f32) -> vec4<f32> {
+    let tap_key = t.z < 0.0;
+    if (tap_key == own_key) {
+        return t;
+    }
+    if (own_key) {
+        return vec4<f32>(t.x, t.y, -1.0 - t.y, cap);
+    }
+    return vec4<f32>(t.x, t.y, t.x, cap);
+}
+
+// The key mean with the settle at a stored face where no sky ray was cast (its pair the baked
+// seed at age `cap_w`), after sample `s` on history `hp` (`pair_tap`'s), the direct part's age
+// `age` (read, never written). The key samples' short mean rides in z as `-1 - b` (negative:
+// the tap's kind), the settle's state in w as `cap_w + c`. Below the key cap it is `key_mean`;
+// at the cap it settles (`settle_at_cap`). Returns the mean, the z and the w.
+fn key_settle(s: f32, hp: vec4<f32>, age: f32, reset: bool, cap_w: f32) -> vec3<f32> {
     if (reset || (params.lighting & LIGHTING_SKY_CHANGED) != 0u) {
-        return vec4<f32>(s, -1.0 - s, cap_w, age);
+        return vec3<f32>(s, -1.0 - s, cap_w);
     }
     let kc = f32(max(sky.key_history, 1u));
     let g = hp.y;
-    let own = hp.z < 0.0;
-    let hb = select(g, clamp(-1.0 - hp.z, 0.0, 1.0), own);
-    let c = select(0.0, clamp(floor(hp.w - cap_w + 0.5), 0.0, SETTLE_F), own);
     let n = clamp(age + 1.0, 1.0, kc);
+    let hb = clamp(-1.0 - hp.z, 0.0, 1.0);
     let b = hb + (s - hb) / min(n, SKY_SHORT);
-    let band = SKY_BAND_SIGMAS * sqrt(max(g * (1.0 - g), P_MIN * (1.0 - P_MIN)) / SKY_SHORT)
-        + SKY_BAND_EPS;
-    let d = abs(b - g);
-    if (d > band) {
-        let m = min(n, max(SKY_FALL_MIN, floor(SKY_SHORT * band / d)));
-        return vec4<f32>(g + (s - g) / m, -1.0 - b, cap_w, m - 1.0);
-    }
+    let blended = g + (s - g) / n;
     if (n < kc) {
-        return vec4<f32>(g + (s - g) / n, -1.0 - b, cap_w, age);
+        return vec3<f32>(blended, -1.0 - b, cap_w);
     }
-    if (c >= SETTLE_F) {
-        return vec4<f32>(g, -1.0 - b, cap_w + SETTLE_F, age);
-    }
-    return vec4<f32>(g + (s - g) / n, -1.0 - b, cap_w + c + 1.0, age);
+    let c = max(floor(hp.w - cap_w + 0.5), 0.0);
+    let st = settle_at_cap(g, blended, b, abs(b - g) <= settle_band(g), c);
+    return vec3<f32>(st.x, -1.0 - b, cap_w + st.y);
 }
 
 // The key light's visibility mean after sample `s` on history `g`, which holds `age` samples
@@ -966,6 +998,9 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     // moments' blend weights and the moments' history, for the pair's term (1, 1 and none at a
     // reset pixel).
     var hp = vec4<f32>(0.0);
+    // Whether this pixel's pair carries the key mean's settle (`key_settle`), for its taps.
+    let own_key = vis.z > 0.5 && settle_on() && !sky_cast && seed.w > 0.0;
+    let cap_sky = f32(max(sky.sky_history, 1u));
     var accepted = false;
     var a_direct = 1.0;
     var a_mom = 1.0;
@@ -1010,7 +1045,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             let ht = textureLoad(prev_accum_in, tap, 0);
             h += w * ht;
             hd += w * textureLoad(prev_direct_in, tap, 0);
-            hp += w * textureLoad(prev_pair_in, tap, 0);
+            hp += w * pair_tap(textureLoad(prev_pair_in, tap, 0), own_key, cap_sky);
             if (w > best_w) {
                 best_w = w;
                 best_h = ht.xyz;
@@ -1046,7 +1081,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 w_sum = 1.0;
                 h = textureLoad(prev_accum_in, tap, 0);
                 hd = textureLoad(prev_direct_in, tap, 0);
-                hp = textureLoad(prev_pair_in, tap, 0);
+                hp = pair_tap(textureLoad(prev_pair_in, tap, 0), own_key, cap_sky);
                 best_w = 1.0;
                 best_h = h.xyz;
                 m = textureLoad(prev_moments_in, tap, 0).xyz;
@@ -1138,10 +1173,9 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         t_sky = t_baked;
     }
     var t_key = vec3<f32>(0.0);
-    if (vis.z > 0.5 && settle_on() && !sky_cast && seed.w > 0.0) {
+    if (own_key) {
         let k = key_settle(vis.y, hp, age, !accepted || fresh, seed.w);
         pair = vec4<f32>(pair.x, k.x, k.y, k.z);
-        age = k.w;
         t_key = key_light_at(rec.p, rec.n) * pair.y * exposure_now();
     } else if (vis.z > 0.5) {
         pair.y = key_mean(vis.y, hp.y, age, !accepted || fresh);

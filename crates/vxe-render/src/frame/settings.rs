@@ -249,9 +249,10 @@ pub(crate) const LIGHTING_HOOK_SKY_END_IS_SKY: u32 = 1 << 23;
 /// shadow ray runs along the disc's centre, its sample on the disc fixed.
 pub(crate) const LIGHTING_HOOK_KEY_NO_JITTER: u32 = 1 << 25;
 
-/// `Params::lighting` bit, a reading hook ([`LightHooks::no_settle`]): the temporal pass's
-/// settle is off, so a converged pair keeps blending at its cap and the key mean has no band.
-pub(crate) const LIGHTING_HOOK_NO_SETTLE: u32 = 1 << 26;
+/// `Params::lighting` bit ([`Lighting::settle`] off, or [`LightHooks::no_settle`]): the
+/// temporal pass's settle is off, so a converged pair keeps blending at its cap and the key
+/// mean has no band.
+pub(crate) const LIGHTING_NO_SETTLE: u32 = 1 << 26;
 
 /// `Params::lighting` bit: a cube face's baked sky term reads its visibilities by the 27-count
 /// gradient's normal at every distance ([`SkyNormal::Smoothed`]).
@@ -280,8 +281,8 @@ pub struct LightHooks {
     pub sky_end_is_sky: bool,
     /// The key light's shadow ray runs along the disc's centre: no jitter over the sun's disc.
     pub key_no_jitter: bool,
-    /// The settle is off: a pair at its cap keeps blending its samples in, and the key mean
-    /// follows its samples at its cap with no band (temporal.wgsl `settle_on`).
+    /// The settle is off whatever [`Lighting::settle`] says: a pair at its cap keeps blending
+    /// its samples in, and the key mean follows its samples at its cap with no band.
     pub no_settle: bool,
 }
 
@@ -317,7 +318,7 @@ impl LightHooks {
         } else {
             0
         } | if self.no_settle {
-            LIGHTING_HOOK_NO_SETTLE
+            LIGHTING_NO_SETTLE
         } else {
             0
         }
@@ -902,6 +903,11 @@ pub struct Lighting {
     /// those columns is pending upload, a block baked under a column not yet final marked
     /// provisional and baked again once when the columns turn final.
     pub column_wait: bool,
+    /// The settle (default off, Plan 0094 Phase 3's stop rule): a visibility mean at its cap whose short mean stays in its
+    /// band for 16 frames holds its value, and is released after 4 consecutive frames out of
+    /// the band into a 16-frame fade toward the short mean (temporal.wgsl `settle_at_cap`).
+    /// Off, a mean at its cap keeps blending every sample in.
+    pub settle: bool,
 }
 
 /// [`Lighting::sky_history`]' largest value: the pair's age is a half, exact to 2048.
@@ -948,6 +954,7 @@ impl Default for Lighting {
             sky_normal: SkyNormal::Smoothed,
             sky_bounce: 0.0,
             column_wait: false,
+            settle: false,
         }
     }
 }
@@ -1033,6 +1040,7 @@ impl Lighting {
             } else {
                 0
             }
+            | if self.settle { 0 } else { LIGHTING_NO_SETTLE }
     }
 
     /// The manual exposure, or 1.0 in auto.

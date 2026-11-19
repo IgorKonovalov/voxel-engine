@@ -40,6 +40,8 @@ pub struct OutdoorArgs {
     pub(crate) sky_bounce: f32,
     /// `--column-wait on|off`: the live queue's column wait (`Lighting::column_wait`).
     pub(crate) column_wait: bool,
+    /// `--settle on|off`: the visibility means' settle (`Lighting::settle`).
+    pub(crate) settle: bool,
     /// `--dump-black`: once a second while the store's black count is over 0, the lighting
     /// pixels with no record value printed by the chunk they hit (`Run::dump_black`).
     pub(crate) dump_black: bool,
@@ -344,6 +346,17 @@ fn ceiling_flags() -> Vec<Flag<Parsing>> {
                  when it is (faster first light, a provisional sky meanwhile) [off]",
             |p: &mut Parsing, v| {
                 p.args.outdoor.column_wait = v.on_off()?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--settle"],
+            "on|off",
+            "on, a visibility mean at its cap whose short mean stays in its band 16 frames \
+                 holds its value until it leaves the band 4 frames running, then fades to the \
+                 new value over 16; off, it keeps blending every sample in [off]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.settle = v.on_off()?;
                 Ok(())
             },
         ),

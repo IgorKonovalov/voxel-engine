@@ -225,6 +225,7 @@ mod flicker {
             let e = s.frame.exposure_readout(&rig.device).map(|r| r.exposure).expect("a read-back");
             s.frame.set_lighting(vxe_render::Lighting {
                 exposure: vxe_render::Exposure::Manual(e),
+                settle: settle_on,
                 ..s.frame.lighting()
             });
             s.frame.set_light_hooks(vxe_render::LightHooks {
@@ -232,11 +233,20 @@ mod flicker {
                 ..Default::default()
             });
             settle(&mut rig, &mut s, &cam, 64);
+            // Held: the settle's states 16 to 19 past the sky cap (temporal.wgsl `settle_at_cap`;
+            // 20 is the fade after a release).
             let mark = (flythrough::default_lighting().sky_history + 16) as f32 - 0.5;
             let read_marks = |s: &support::defects::Stepper, rig: &Rig| -> Vec<bool> {
                 let p = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, s.frame.visibility_pair());
-                p.iter().map(|v| v[3] >= mark).collect()
+                p.iter().map(|v| (mark..mark + 4.0).contains(&v[3])).collect()
             };
+            let depth = |s: &support::defects::Stepper| {
+                s.frame.bake_queue().map_or(0, |q| {
+                    let st = q.stats();
+                    st.depth + st.jobs
+                })
+            };
+            let mut depths = Vec::with_capacity(3600);
             let gw = s.frame.visibility_pair().width() as usize;
             let (dw, dh) = (OUT[0] as usize, OUT[1] as usize);
             let mut marks = read_marks(&s, &rig);
@@ -250,6 +260,7 @@ mod flicker {
                 queue_step(&mut rig, &mut s.frame, &cam);
                 let now = s.step(&rig, &cam).display;
                 let m = read_marks(&s, &rig);
+                depths.push(depth(&s));
                 let released: Vec<bool> = marks.iter().zip(&m).map(|(a, b)| *a && !*b).collect();
                 let rel = released.iter().filter(|r| **r).count();
                 released_sum += rel as u64;
@@ -282,6 +293,16 @@ mod flicker {
                 released_sum as f64 / f64::from(frames),
                 pops_sum / f64::from(frames),
                 rig.adapter
+            );
+            let mean = depths.iter().sum::<u64>() as f64 / depths.len().max(1) as f64;
+            let within = depths.iter().filter(|d| (**d as f64 - mean).abs() <= 1.0).count();
+            let series: Vec<String> = depths.iter().step_by(300).map(u64::to_string).collect();
+            println!(
+                "reading: hills clock queue depth (pending + jobs): mean {mean:.2}, min {}, max {}, frames within 1 of the mean {:.2} %; every 300th frame: {}",
+                depths.iter().min().unwrap_or(&0),
+                depths.iter().max().unwrap_or(&0),
+                100.0 * within as f64 / depths.len().max(1) as f64,
+                series.join(" ")
             );
             match event {
                 Some((k, region, shots)) if shots.len() >= MEAN_FRAMES + F + 16 => {
@@ -389,9 +410,15 @@ mod flicker {
             .sky(flythrough::outdoor::BASE_Z as f32);
             {
                 let mut f = flicker_frame_with(&rig, sky, None, false, leaf);
+                let no_settle = NO_SETTLE.with(std::cell::Cell::get);
                 f.set_light_hooks(vxe_render::LightHooks {
-                    no_settle: NO_SETTLE.with(std::cell::Cell::get),
+                    no_settle,
                     ..Default::default()
+                });
+                // The settle is off by default; this reading has it on but in the `no_settle` arm.
+                f.set_lighting(vxe_render::Lighting {
+                    settle: !no_settle,
+                    ..f.lighting()
                 });
                 let mut s = Stepper::new(&rig, f);
                 let mut n = 0;

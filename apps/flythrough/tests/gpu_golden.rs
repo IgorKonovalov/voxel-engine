@@ -1834,6 +1834,85 @@ fn lights_box_golden_holds_two_coloured_lights() {
 mod reading {
     use super::*;
 
+    /// The cavity rig of `upscaled.png` (`fsr2` false: the own upscaler, jittered) or
+    /// `fsr2.png` (FSR 2) at sharpening 0.5 and the settle off, its image after `frames` frames.
+    fn cavity_after(fsr2: bool, frames: u32) -> Option<Vec<u8>> {
+        let world = cavity_world();
+        let rig = LookRig::new(&world, None)?;
+        let mut frame = Frame::with_sizes(&rig.device, UPSCALED_INTERNAL, UPSCALED_OUTPUT);
+        if fsr2 {
+            frame.set_upscaler_kind(
+                &rig.device,
+                vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+                    sharpness: 0.5,
+                    ..Default::default()
+                }),
+            );
+        } else {
+            frame.set_jitter(&rig.device, true);
+            frame.set_sharpness(&rig.queue, 0.5);
+        }
+        frame.set_lighting(vxe_render::Lighting {
+            settle: false,
+            ..frame.lighting()
+        });
+        for _ in 0..frames {
+            frame.step(
+                &rig.device,
+                &rig.queue,
+                &rig.gpu,
+                &cavity_camera(),
+                &LightParams::headlamp(),
+            );
+        }
+        Some(vxe_render::debug::read_rgba8(
+            &rig.device,
+            &rig.queue,
+            frame.target(),
+        ))
+    }
+
+    /// Per pixel the largest channel difference of `a` and `b`: its p99, its mean and the share
+    /// over 4.
+    fn diff_stats(a: &[u8], b: &[u8]) -> (u8, f64, f64) {
+        let mut d: Vec<u8> = a
+            .chunks(4)
+            .zip(b.chunks(4))
+            .map(|(p, q)| (0..3).map(|k| p[k].abs_diff(q[k])).max().unwrap_or(0))
+            .collect();
+        let n = d.len().max(1);
+        let mean = d.iter().map(|v| f64::from(*v)).sum::<f64>() / n as f64;
+        let over = 100.0 * d.iter().filter(|v| **v > 4).count() as f64 / n as f64;
+        d.sort_unstable();
+        (d[(n * 99 / 100).min(n - 1)], mean, over)
+    }
+
+    /// Plan 0094 Phase 3 bar 5: the two upscaled goldens the still camera's own tap moves, read
+    /// for magnitude and direction with the settle off: this tree's 32-frame image against the
+    /// golden on disk, and each of the two against this tree's 512-frame image of the same rig
+    /// (the reference). Lavapipe, where the goldens were blessed.
+    #[test]
+    #[ignore = "reading"]
+    fn the_moved_upscaled_goldens() {
+        for (fsr2, name) in [(false, "upscaled.png"), (true, "fsr2.png")] {
+            let Some(new) = cavity_after(fsr2, 32) else {
+                return;
+            };
+            let Some(reference) = cavity_after(fsr2, 512) else {
+                return;
+            };
+            let (old, _, _) = read_png(&golden_path(name));
+            let (p, m, o) = diff_stats(&new, &old);
+            let (pn, mn, on) = diff_stats(&new, &reference);
+            let (po, mo, oo) = diff_stats(&old, &reference);
+            println!(
+                "reading: {name}: new against old p99 {p} mean {m:.3} over 4 {o:.3} %; \
+                 against the 512-frame reference: new p99 {pn} mean {mn:.3} over 4 {on:.3} %, \
+                 old p99 {po} mean {mo:.3} over 4 {oo:.3} %"
+            );
+        }
+    }
+
     /// The steps view from the outside camera at 1920 x 1080 on the high-performance adapter:
     /// mean and p99 steps per ray (red channel, clamped at 255). A reading, not a check: run with
     /// `--ignored` on the machine being measured.

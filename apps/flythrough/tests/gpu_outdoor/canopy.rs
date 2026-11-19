@@ -240,6 +240,8 @@ mod canopy {
             r.f.set_lighting(Lighting {
                 sky_history: history,
                 key_history: key,
+                // The settle is off by default; `hooks.no_settle` names the arm.
+                settle: !hooks.no_settle,
                 ..r.f.lighting()
             });
             r.f.reset_history();
@@ -401,6 +403,8 @@ mod canopy {
                 let (cls, name) = name;
                 let (mut n, mut u16, mut u64_, mut full) = (0usize, 0usize, 0usize, 0usize);
                 let mut settled = 0usize;
+                // Held: the settle's states 16 to 19 past the sky cap (temporal.wgsl
+                // `settle_at_cap`; 20 is the fade after a release).
                 let settle_w = (flythrough::default_lighting().sky_history + 16) as f32;
                 let (mut obs, mut pred, mut m) = (0f64, 0f64, 0usize);
                 for i in 0..a.light_class.len() {
@@ -412,7 +416,7 @@ mod canopy {
                     u16 += usize::from(age < 16.0);
                     u64_ += usize::from(age < 64.0);
                     full += usize::from(age >= (frames - 1) as f32);
-                    settled += usize::from(a.light_pair_w[i] >= settle_w - 0.5);
+                    settled += usize::from((settle_w - 0.5..settle_w + 3.5).contains(&a.light_pair_w[i]));
                     let gr = f64::from(refr.light_g[i]);
                     if (0.02..=0.98).contains(&gr) {
                         let d = f64::from(a.light_g[i]) - gr;
@@ -431,7 +435,7 @@ mod canopy {
                     "reading: ages {scene}, {label}, {name}: {n} lighting px; age under 16 {:.2} %, under 64 {:.2} %, at {} {:.2} %; \
                      key mean RMS residual over predicted {ratio:.2} ({m} px with g in 0.02..0.98, observed RMS {:.4}); \
                      display residual lit p99 {} mean {:.2}, shadowed p99 {} mean {:.2}; pop share {:.3} %; \
-                     frame-to-frame p99 {f2f_p99} mean {f2f_mean:.3}; settled (pair a at sky cap + 16) {:.2} %",
+                     frame-to-frame p99 {f2f_p99} mean {f2f_mean:.3}; settled (pair a at sky cap + 16 to 19) {:.2} %",
                     pct(u16),
                     pct(u64_),
                     frames - 1,
