@@ -917,6 +917,103 @@ names (a pose written in place, a tick every other frame for bodies out of view,
 dwell). **Pick up when** a scene needs more than about 30 crawlers, or before the first consumer
 runs creatures on its server tick.
 
+## Ideas from Bonsai
+
+Parked 2026-11-19: the owner pointed at [Bonsai](https://github.com/scallyw4g/bonsai), a C++
+voxel engine with meshed chunks, GL deferred shading and an in-engine editor, under WTFPL, active.
+The source paths below are Bonsai's. What we already carry was left out: octree LOD, generation-time
+stamping, AO, traced shadows, OIT, particles, the profiler, debug views, settings files, the
+sky.
+
+### Edit algebra: smooth booleans, shape modifiers, more primitives
+
+Bonsai's edits union, intersect and subtract, each also smooth with a blend radius, and every
+shape takes hollow, rounding, stretch, repeat and rotation over rect, sphere, line, cylinder,
+plane, torus and pyramid (`src/engine/editor.h`, `shaders/terrain/world_edit.fragmentshader`).
+We have sphere, box and capsule with carve, fill and replace (`vxe-world` `shape.rs`). **What it
+takes:** new shape kinds and modifiers in `vxe-world`, with the smooth minimum in fixed point (a
+polynomial one), each still one logged op that reports what it changed. Size M. **Pick up when**
+a consumer wants arches, rounded rooms or hollow shells as single edits.
+
+### Layered procedural brushes as one op
+
+A Bonsai brush stacks up to 16 layers. Each layer is a shape or a noise (Perlin, Voronoi, white,
+lattice), with a blend (add, subtract, multiply) and clamps or thresholds, and is saved as a
+`.brush` file (`docs/editor.md`). That gives crater, erosion and growth brushes instead of perfect
+spheres. **What it takes:** an op kind in `vxe-world` that names its brush by content id, like
+ADR-0014's prefabs; seeded integer noise; the brush file in `vxe-assets`. Size M to L, likely an
+ADR. **Pick up after** the edit algebra above.
+
+### Edits you can still change: named layers, hide, reorder, regenerate
+
+Bonsai keeps a level as records of edits (region, brush, rotation, order, hidden), grouped into
+named layers. Chunks re-apply the edits that overlap them when they are generated
+(`editor.h`, `world.cpp`). We replay an append-only log (ADR-0007) and persist edited chunks
+(ADR-0003); moving, hiding or reordering a past edit is new. **What it takes:** a level document
+beside the runtime log, which regenerates the chunks an edit touched. Size L, an ADR; read it
+against ADR-0072's authoring text first. **Pick up with** the editor entries under Later apps.
+
+### Example-based generation from a `.vox` (voxel synthesis)
+
+`src/engine/voxel_synthesis.cpp` cuts a `.vox` into 8-cubed tiles, records the six-direction
+adjacencies and solves a new volume by constraint propagation, in the style of WFC. One
+hand-made sample would give endless cave or room variants. **What it takes:** baking the rules in
+`vxe-assets`, and a seeded solver as a `WorldSource` in `vxe-world`. Size M to L. Unverified:
+whether Bonsai 2.0 still wires it into generation. **Pick up when** a consumer wants generated
+interiors from samples.
+
+### A two-stage world source: shape, then decorate by slope
+
+Bonsai's generation shapes (solid or air, with colour), takes the gradient, then decorates with
+the surface normal in hand: cliff rock on steep faces, grass on flat ground. Its user stages
+hot-reload in a playground (`docs/terrain_gen.md`). **What it takes:** a `WorldSource` helper in
+`vxe-world`, on the CPU, because Bonsai's GPU generation would break the headless world. Add a
+reloadable parameters file in the fly-through for tuning. Size S to M.
+**Pick up with** M10's outdoor work or a consumer's surface source.
+
+### Bloom from HDR emission
+
+Bonsai gathers emission above 1.0 into a luminance target and blurs it through a three-level
+downsample and upsample chain (`src/engine/bloom.h`, `shaders/bloom_*`). We have no bloom.
+Glowing lamps and ores in the dark suit the first consumer. **What it takes:** a pass in
+`vxe-render` after the upscaler, as a render setting (ADR-0055). It must add no flicker
+(ADR-0076), and the owner judges it in a window. Size S to M. **Pick up after** Plan 0090's pop
+counter, which can hold it to rule 1.
+
+### Lit world-space sprites (cards)
+
+Bonsai's cards are instanced quads written into the g-buffer, so they are depth-tested, lit and
+occluded like geometry. They can billboard, take a tint and an alpha cutoff, and share one sprite
+array (`src/engine/card.h`). Uses: markers, decals, cheap debris, and the impostors that "hundreds
+of entities" names. **What it takes:** sprites traced or merged into `vxe-render`'s hit buffer,
+which touches its layout. Size M. **Pick up when** far entities or decals are asked for.
+
+### Hot-reload a logic component, then replay to the current tick
+
+Bonsai reloads its game library when the file changes (`game_loader.cpp`). We can go further:
+swap the WASM component when it is rebuilt, then replay the op and input log from the seed to
+the current tick, so state stays exact (determinism is what makes this possible). **What it
+takes:** a watcher in the fly-through and a re-instance in `vxe-script-wasm`, driven through
+`vxe-net`'s log. Size S to M. **Pick up with** the authoring loop (ADR-0072), or sooner if
+writing logic gets slow.
+
+### Versioned saves and logs, migrated on load
+
+Bonsai's serialisation versions each struct and keeps the old layouts (`world_edit_0`), which it
+converts forward on load (`serdes.h`). Our spill and log files refuse any other version
+(`persist.rs`, `wire.rs`). **What it takes:** pure migration functions in `vxe-world`, one per
+version step, each tested on fixed vectors. Size S to M. **Pick up before** the first consumer
+ships a save or a recorded log that must survive an engine upgrade.
+
+### Inspector rows derived from struct annotations
+
+Bonsai's `poof(@do_editor_ui ...)` generates a live inspector for any struct, with ranges,
+conditions and skip flags, so brushes, particles and nodes need no hand-written UI. Our field
+table (ADR-0058) covers only the render settings. **What it takes:** a small proc-macro crate
+that derives overlay menu rows, used by the apps. Materials, brushes, sources and poses would
+then get rows for free. `crates/` gains no UI dependency. Size M. **Pick up with** the
+editor-interface entry under Later apps.
+
 ## Later apps
 
 ### Web demo as a separate app
