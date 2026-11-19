@@ -94,7 +94,8 @@ fn mirror_of(label: &str, name: &str) -> Option<Mirror> {
             adapted_log2,
             metered_log2,
             frame,
-            flags
+            flags,
+            ceiling
         }),
         (_, "ExUniform") => mirror!(crate::exposure::ExposureUniform {
             tiles,
@@ -111,7 +112,8 @@ fn mirror_of(label: &str, name: &str) -> Option<Mirror> {
             tau_light,
             tau_cone,
             tau_rod,
-            floor_log2
+            floor_log2,
+            anchor
         }),
         (_, "ProbeParams") => mirror!(crate::probes::ProbeUniform {
             origin,
@@ -151,10 +153,12 @@ fn mirror_of(label: &str, name: &str) -> Option<Mirror> {
             key_dir,
             key_radius,
             key_e,
+            sky_history,
             prev_key_dir,
             sky_scale,
             prev_key_e,
-            prev_sky_scale
+            prev_sky_scale,
+            key_history
         }),
         (_, "Edits") => mirror!(EditsUniform { count, boxes }),
         (_, "UpTuning" | "InLamp") => mirror!(UpscaleUniform {
@@ -212,6 +216,7 @@ fn frame_params() -> Mirror {
         light_offset,
         prev_light_offset,
         output_size,
+        sky_bounce,
         dither
     });
     let far = offset_of!(Params, far_normal);
@@ -419,6 +424,8 @@ fn rust_value(name: &str) -> Option<f64> {
     Some(match name {
         "BAKE_LANES" => f64::from(crate::bake::BAKE_LANES),
         "BAKE_ROW" => f64::from(crate::bake::BAKE_ROW),
+        "COLUMN_CELL" => f64::from(crate::gpu_world::COLUMN_CELL),
+        "COLUMN_CELLS" => f64::from(crate::gpu_world::COLUMN_CELLS),
         "EMISSION_ROWS" => crate::frame::EMISSION_ROWS as f64,
         "FIRST" => f64::from(crate::font8x8::FIRST),
         "LAST" => f64::from(crate::font8x8::LAST),

@@ -185,8 +185,6 @@ struct Hills {
     world: World,
     eye: VoxelCoord,
     facing: [i64; 3],
-    /// The tunnel's chamber's centre (`inside`'s axis runs from the eye toward it).
-    chamber: VoxelCoord,
 }
 
 impl Hills {
@@ -227,7 +225,6 @@ impl Hills {
             world,
             eye,
             facing,
-            chamber: source.base().chamber(),
         })
     }
 
@@ -324,18 +321,11 @@ fn cave_mouth_hills() -> Option<Hills> {
 /// faces the noon sun).
 const OPENING: [u32; 4] = [120, 5, 200, 40];
 const WALL: [u32; 4] = [0, 100, 60, 170];
-/// The tunnel's walls in the view up the covered bore toward the mouth: the frame's left and
-/// right quarters at mid height.
-const WALLS_IN: [[u32; 4]; 2] = [[0, 40, 80, 140], [240, 40, 320, 140]];
 
 /// Plan 0032 Phase 7 bar 2: `cave_mouth.png` (the `inside` spawn facing out at 12:00) matches, and
-/// the opening reads brighter than the tunnel's shaded wall. Then in the bore 40 voxels past a
-/// 20-voxel stretch from where its roof stays covered to the chamber (the tunnel runs as an open
-/// cut at the mouth and crosses open ground on its way), facing the mouth, the lamp off, manual
-/// exposure 1 and every material's emission scale 0, a fill of rock across that stretch (an edit,
-/// so history dies in its box) seals the tunnel: after 64 frames the direct accumulation over the
-/// walls has a mean luminance under 2 % of the same region's after 64 frames of the unsealed pose.
-/// The sky does not leak into a sealed cave.
+/// the opening reads brighter than the tunnel's shaded wall. The seal clause (Phase 9 bar 5,
+/// re-derived by Plan 0086 Phase 17: a sealed cave takes no sky light once its history has run
+/// out) is Plan 0094's to write back on the pair's sky term.
 #[test]
 #[ignore = "soak"]
 fn the_cave_mouth_is_lit_from_outside() {
@@ -349,103 +339,10 @@ fn the_cave_mouth_is_lit_from_outside() {
     println!("cave mouth: opening luma {opening:.1}, wall {wall:.1}");
     assert!(opening > wall, "{opening} against {wall}");
 
-    // The tunnel's axis from the spawn toward the chamber, and where its roof (5 voxels of rock
-    // over the bore of radius 25) stays covered to the chamber: the tunnel crosses open ground
-    // on its way, so the start is 5 voxels past the last step whose roof is open, short of
-    // the chamber.
-    let e = h.eye.0.map(|v| f64::from(v) + 0.5);
-    let d = [0, 1, 2].map(|k| f64::from(h.chamber.0[k] - h.eye.0[k]));
-    let len = d.iter().map(|v| v * v).sum::<f64>().sqrt();
-    let inward = d.map(|v| v / len);
-    let axis = |t: f64| [0, 1, 2].map(|k| e[k] + t * inward[k]);
-    let covered = |t: f64| {
-        let p = axis(t).map(|v| v.floor() as i32);
-        (26..31).all(|dz| h.world.material_at(VoxelCoord([p[0], p[1], p[2] + dz])) != Some(AIR))
-    };
-    // Short of the chamber (radius 60) and the 80 voxels the rig needs.
-    let start = (0..(len - 140.0) as i32)
-        .rev()
-        .map(f64::from)
-        .find(|&t| !covered(t))
-        .expect("the bore opens at the mouth")
-        + 5.0;
-    // The camera 40 voxels past it, facing the mouth.
-    let c = axis(start + 60.0).map(|v| v as f32);
-    let camera = flythrough::camera_looking_at(c, [0, 1, 2].map(|k| c[k] - inward[k] as f32));
-    println!("cave mouth: the bore covered from {start} voxels along the axis; camera at {c:?}");
-    // Manual exposure 1: the direct target is pre-exposed, and an auto exposure would raise
-    // the sealed pose's.
-    let dark = |l: Lighting| Lighting {
-        lamp: false,
-        exposure: Exposure::Manual(1.0),
-        ..l
-    };
-    let wall_direct = |h: &mut Hills, frame: &Frame| {
-        let d = vxe_render::debug::read_rgba16f(&h.device, &h.queue, frame.direct_accumulated());
-        let (w, hh) = (
-            frame.direct_accumulated().width(),
-            frame.direct_accumulated().height(),
-        );
-        let lum = |p: &[f32; 4]| f64::from(0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]);
-        // The walls' rectangles scaled to the lighting grid.
-        let mut s = (0.0, 0usize);
-        for r in WALLS_IN {
-            let g = [
-                r[0] * w / WIDTH,
-                r[1] * hh / HEIGHT,
-                r[2] * w / WIDTH,
-                r[3] * hh / HEIGHT,
-            ];
-            for y in g[1]..g[3] {
-                for x in g[0]..g[2] {
-                    s.0 += lum(&d[(y * w + x) as usize]);
-                    s.1 += 1;
-                }
-            }
-        }
-        s.0 / s.1 as f64
-    };
-    let mut open = h.frame(at([12, 0]), dark);
-    let rows = h.world.materials().len() as u16;
-    for m in 0..rows {
-        open.set_emission_scale(&h.queue, m, 0.0);
-    }
-    h.settle(&mut open, &camera, 64);
-    let unsealed = wall_direct(&mut h, &open);
-    // Rock across the covered stretch's 20 voxels, 40 voxels to either side of the axis.
-    let (near, far) = (axis(start), axis(start + 20.0));
-    let lo = [0, 1, 2].map(|k| near[k].min(far[k]).floor() as i32 - if k == 0 { 0 } else { 40 });
-    let hi = [0, 1, 2].map(|k| near[k].max(far[k]).ceil() as i32 + if k == 0 { 0 } else { 40 });
-    let corner = |v: [i32; 3]| Fixed3(v.map(|c| i64::from(c) * FIXED_ONE));
-    let seal = EditOp {
-        shape: Shape::Box_ {
-            min: corner(lo),
-            max: corner(hi),
-        },
-        mode: Mode::Fill(flythrough::cave::ROCK),
-    };
-    let r = h.world.apply(&seal).expect("the seal applies");
-    let aabb = r.aabb.expect("the seal fills air");
-    h.gpu
-        .sync_now(&h.world, &h.device, &h.queue)
-        .expect("the mirror fits");
-    open.invalidate(aabb.0.0, aabb.1.0);
-    for _ in 0..64 {
-        open.step(
-            &h.device,
-            &h.queue,
-            &h.gpu,
-            &camera,
-            &LightParams::headlamp(),
-        );
-    }
-    let sealed = wall_direct(&mut h, &open);
-    println!(
-        "cave mouth walls' direct: unsealed {unsealed:.4e}, sealed {sealed:.4e} ({:.3} %)",
-        100.0 * sealed / unsealed
-    );
-    assert!(unsealed > 0.0, "the unsealed walls take sky light");
-    assert!(sealed < 0.02 * unsealed, "{sealed} against {unsealed}");
+    // The seal (rock across the covered bore takes the sky out of the walls' light) is owed
+    // by Plan 0094: the pair's sky term joins at the filter and the composite, so the direct
+    // accumulation holds no sky and the claim is re-derived there on the pair's term or the
+    // lit image.
 }
 
 /// Plan 0032 Phase 7 bar 1: `outdoor_noon.png`, `outdoor_sunset.png` and `outdoor_night.png`

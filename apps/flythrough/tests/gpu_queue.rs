@@ -11,6 +11,7 @@
 
 mod support;
 
+use support::SyncNow;
 use support::queue::*;
 
 use flythrough::cave::{ORE, ROCK};
@@ -176,8 +177,9 @@ fn open_order(q: &mut Q) -> Vec<i32> {
 /// weight 2: the chunks first open by `|o| x (1 + W x a)`, behind the camera `a` 0.632. At
 /// angle weight 4: ahead 1, 2, 3, behind 1 x 3.53 and 2 x 3.53, so 2, 3, 4, 5, 1, 0; at 1:
 /// behind 1.63 and 3.26, so 2, 3, 1, 4, 5, 0; at 0 the distance, ties ahead first, so 2, 3, 1,
-/// 4, 0, 5, as under the distance order.
+/// 4, 0, 5, as under the distance order. About 15 s on lavapipe: soak.
 #[test]
+#[ignore = "soak"]
 fn the_score_blends_distance_and_the_view() {
     for (order, want) in [
         (score(4.0), [2, 3, 4, 5, 1, 0]),
@@ -203,26 +205,93 @@ fn the_score_blends_distance_and_the_view() {
     }
 }
 
-/// The row with chunk 3 holding a coarse block and chunk 5 none, the rest full, camera in chunk
-/// 2 looking +x, `near` 0, refine weight 2: under the score chunk 3's refinement (1 x 2 = 2)
-/// opens before chunk 5's first pass (3); with the class as a tier, and under the distance
-/// order, chunk 5 opens first. Chunks 3 and 5 start empty and are filled by edits: 3 first,
-/// stepped until its coarse block lands, then 5.
+/// The three orders the blank-chunk tests run under: the score at angle weight 4 and refine
+/// weight 2, the score with the class as a tier, and the distance.
+fn three_orders() -> [vxe_render::QueueOrder; 3] {
+    [
+        score(4.0),
+        vxe_render::QueueOrder::Score {
+            angle: 4.0,
+            refine: vxe_render::Refine::Tier,
+        },
+        vxe_render::QueueOrder::Distance,
+    ]
+}
+
+/// The row of [`row`] with the chunks `absent` taken out of the world before it is mirrored:
+/// no mirror, queue or store has seen them.
+fn row_without(rocks: &[i64], absent: &[i32]) -> vxe_world::World {
+    let world = row(rocks);
+    for &x in absent {
+        world.store().remove(ChunkCoord([x, 0, 0]));
+    }
+    world
+}
+
+impl Q {
+    /// Chunk `x` of the row arrives as the streamer brings one: a rock block 16 voxels from its
+    /// borders, inserted into the world and mirrored, with no edit box (no `invalidate`).
+    fn arrive(&mut self, x: i32) {
+        let source = row(&[i64::from(x)]);
+        let c = ChunkCoord([x, 0, 0]);
+        let chunk = source
+            .store()
+            .remove(c)
+            .expect("the source holds the chunk");
+        let chunk = chunk.read().expect("the chunk's lock").clone();
+        self.world.store().insert(c, chunk);
+        self.gpu
+            .sync_now(&self.world, &self.device, &self.queue)
+            .expect("the mirror fits");
+    }
+
+    /// Steps until `c` holds a coarse block and no job: its refinement pending.
+    fn step_until_coarse(&mut self, c: ChunkCoord) {
+        let mut steps = 0;
+        while !(self.frame.store().is_coarse(c) && !self.q().jobs().contains(&c)) {
+            self.step();
+            steps += 1;
+            assert!(
+                steps < MAX_STEPS,
+                "chunk {c:?}'s coarse block lands: block {:?}, coarse {}, tracks {:?}, mirrored {}",
+                self.frame.store().block(c),
+                self.frame.store().is_coarse(c),
+                self.q().tracks(c),
+                self.gpu.is_mirrored(c)
+            );
+        }
+    }
+}
+
+/// The row with rock in chunks 0, 1 and 2, chunk 3 blank and chunks 4 and 5 not in the world,
+/// camera in chunk 2 looking +x, `near` 0, coarse pass on: chunk 4 arrives (inserted and
+/// mirrored, no edit box) and is stepped until its coarse block lands, so its refinement is
+/// pending; then in one frame chunk 5 arrives the same way (a blank chunk's first pass pending)
+/// and an edit fills chunk 3. Under all three
+/// orders the edited chunk is a dig (ADR-0070's whole dig of a chunk that held no block) after
+/// the edit's step, opens before chunk 4's refinement and chunk 5's first pass, and lands a
+/// full block with no coarse one. About 20 s on lavapipe: soak; the gate keeps the score's
+/// order alone (`a_chunk_an_edit_fills_is_a_dig_under_the_score`).
 #[test]
-fn a_blank_chunk_waits_behind_a_nearer_refinement_only_under_the_score() {
-    for (order, first) in [
-        (score(4.0), 3),
-        (
-            vxe_render::QueueOrder::Score {
-                angle: 4.0,
-                refine: vxe_render::Refine::Tier,
-            },
-            5,
-        ),
-        (vxe_render::QueueOrder::Distance, 5),
-    ] {
+#[ignore = "soak"]
+fn a_chunk_an_edit_fills_is_a_dig_in_every_order() {
+    for order in three_orders() {
+        edit_fills_is_a_dig(order);
+    }
+}
+
+/// `a_chunk_an_edit_fills_is_a_dig_in_every_order` under the fly-through's order, the score at
+/// angle weight 4, alone: the edited chunk's claim in the gate.
+#[test]
+fn a_chunk_an_edit_fills_is_a_dig_under_the_score() {
+    edit_fills_is_a_dig(score(4.0));
+}
+
+/// The rig and the claims of `a_chunk_an_edit_fills_is_a_dig_in_every_order` under `order`.
+fn edit_fills_is_a_dig(order: vxe_render::QueueOrder) {
+    {
         let Some(mut q) = rig(
-            row(&[0, 1, 2, 4]),
+            row_without(&[0, 1, 2], &[4, 5]),
             &Setup {
                 coarse: COARSE,
                 near: 0,
@@ -234,15 +303,74 @@ fn a_blank_chunk_waits_behind_a_nearer_refinement_only_under_the_score() {
             return;
         };
         q.settle();
+        let (three, four, five) = (
+            ChunkCoord([3, 0, 0]),
+            ChunkCoord([4, 0, 0]),
+            ChunkCoord([5, 0, 0]),
+        );
+        q.arrive(4);
+        q.step_until_coarse(four);
+        q.arrive(5);
         q.edit(&box_op([208, 16, 16], [240, 48, 48], Mode::Fill(ROCK)));
-        let three = ChunkCoord([3, 0, 0]);
-        let mut steps = 0;
-        while !(q.frame.store().is_coarse(three) && !q.q().jobs().contains(&three)) {
+        q.step();
+        let tracks = q.q().tracks(three);
+        assert!(
+            tracks.contains(&"digs") || tracks.contains(&"dig_open"),
+            "{order:?}: the edited chunk is a dig after the edit's step: {tracks:?}"
+        );
+        let mut seen: Vec<i32> = Vec::new();
+        let mut coarse_three = false;
+        for _ in 0..MAX_STEPS {
+            for c in q.q().jobs() {
+                if [three, four, five].contains(&c) && !seen.contains(&c.0[0]) {
+                    seen.push(c.0[0]);
+                }
+            }
+            coarse_three |= q.frame.store().is_coarse(three);
+            if seen.len() == 3 && q.frame.store().block(three).is_some() {
+                break;
+            }
             q.step();
-            steps += 1;
-            assert!(steps < MAX_STEPS, "chunk 3's coarse block lands");
         }
-        q.edit(&box_op([336, 16, 16], [368, 48, 48], Mode::Fill(ROCK)));
+        q.settle();
+        coarse_three |= q.frame.store().is_coarse(three);
+        println!("{order:?}: opened {seen:?}");
+        assert_eq!(seen.first(), Some(&3), "{order:?}: {seen:?}");
+        assert_eq!(seen.len(), 3, "{order:?}: all three open: {seen:?}");
+        assert!(
+            q.frame.store().block(three).is_some(),
+            "{order:?}: the dig's block lands"
+        );
+        assert!(!coarse_three, "{order:?}: the dig lands no coarse block");
+    }
+}
+
+/// The row with chunk 3 holding a coarse block and chunk 5 none, the rest full, camera in chunk
+/// 2 looking +x, `near` 0, refine weight 2: under the score chunk 3's refinement (1 x 2 = 2)
+/// opens before chunk 5's first pass (3); with the class as a tier, and under the distance
+/// order, chunk 5 opens first. Chunks 3 and 5 start out of the world and arrive with their rock
+/// as the streamer brings a chunk (inserted and mirrored, no `invalidate`): 3 first, stepped
+/// until its coarse block lands, then 5. About 19 s on lavapipe: soak.
+#[test]
+#[ignore = "soak"]
+fn a_blank_chunk_that_arrives_waits_behind_a_nearer_refinement_only_under_the_score() {
+    for (order, first) in three_orders().into_iter().zip([3, 5, 5]) {
+        let Some(mut q) = rig(
+            row_without(&[0, 1, 2, 4], &[3, 5]),
+            &Setup {
+                coarse: COARSE,
+                near: 0,
+                slice_ms: 1e-6,
+                order: Some(order),
+                ..Setup::at(ROW_EYE)
+            },
+        ) else {
+            return;
+        };
+        q.settle();
+        q.arrive(3);
+        q.step_until_coarse(ChunkCoord([3, 0, 0]));
+        q.arrive(5);
         let mut seen: Vec<i32> = Vec::new();
         for _ in 0..MAX_STEPS {
             q.step();

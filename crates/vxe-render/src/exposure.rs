@@ -106,7 +106,9 @@ impl Default for Exposure {
 /// tau)` (1 for `tau` 0): toward bright `a += (t - a) k(tau_light)`; toward dark `a` decays
 /// toward `t` at `tau_cone` while `a > log2 cone_floor` and at `tau_rod` once below, a step that
 /// crosses the floor spending `tau_cone ln((a - t) / (f - t))` of its `dt` reaching it. The
-/// exposure is `key 2^compensation_ev / 2^a` clamped to `[min, max]`.
+/// exposure is `key 2^compensation_ev / 2^a` clamped to `[min, ceiling]`, the ceiling `max`,
+/// or under [`AutoExposure::sky_anchor_ev`] while the frame holds a sky the anchored one
+/// ([`AutoExposure::ceiling`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AutoExposure {
     /// The frame luminance a settled scene is exposed to (0.18).
@@ -123,7 +125,15 @@ pub struct AutoExposure {
     /// dark stage at `tau_cone`.
     pub cone_floor: f32,
     pub metering: Metering,
+    /// The ceiling anchored to the sky, `N` EV: while the frame holds a sky, the exposure
+    /// opens at most `2^N` times the one that puts a sunlit horizontal face of albedo 0.5 at
+    /// the key ([`AutoExposure::ceiling`]); `None` keeps `max`. The default is
+    /// [`DEFAULT_SKY_ANCHOR_EV`]; with no sky set the ceiling is `max` whatever it holds.
+    pub sky_anchor_ev: Option<f32>,
 }
+
+/// [`AutoExposure::sky_anchor_ev`]'s default, in EV over the sunlit ground's exposure.
+pub const DEFAULT_SKY_ANCHOR_EV: f32 = 4.0;
 
 impl Default for AutoExposure {
     fn default() -> Self {
@@ -145,6 +155,7 @@ impl AutoExposure {
             tau_rod: 10.0,
             cone_floor: 2f32.powi(-6),
             metering: Metering::default(),
+            sky_anchor_ev: Some(DEFAULT_SKY_ANCHOR_EV),
         }
     }
 
@@ -209,11 +220,41 @@ impl AutoExposure {
         t + (a - t) * decay(dt, self.tau_rod)
     }
 
-    /// The exposure at the adapted level `adapted_log2`.
+    /// The exposure at the adapted level `adapted_log2`, under the ceiling `max`.
     pub fn exposure(&self, adapted_log2: f64) -> f64 {
-        let e = f64::from(self.key) * f64::from(self.compensation_ev).exp2() / adapted_log2.exp2();
-        e.clamp(f64::from(self.min), f64::from(self.max))
+        self.exposure_under(adapted_log2, self.max)
     }
+
+    /// The exposure at the adapted level `adapted_log2` under the ceiling `ceiling` (the
+    /// exposure pass's, which the state's `ceiling` reads back): `key 2^compensation_ev / 2^a`
+    /// clamped to `[min, max(ceiling, min)]`.
+    pub fn exposure_under(&self, adapted_log2: f64, ceiling: f32) -> f64 {
+        let e = f64::from(self.key) * f64::from(self.compensation_ev).exp2() / adapted_log2.exp2();
+        let lo = f64::from(self.min);
+        e.clamp(lo, f64::from(ceiling).max(lo))
+    }
+
+    /// The ceiling in force over a frame whose sunlit ground's irradiance is `ground`
+    /// ([`ground_irradiance`]; `None` with no sky set): with [`AutoExposure::sky_anchor_ev`]
+    /// `N` and a ground over 0, `2^N key 2^compensation_ev / (0.5 ground / pi)`, the exposure
+    /// that puts a horizontal face of albedo 0.5 under that irradiance at the key, opened `N`
+    /// EV; else `max`. The exposure pass computes the same in f32 from `E_sky`.
+    pub fn ceiling(&self, ground: Option<f32>) -> f32 {
+        match (self.sky_anchor_ev, ground) {
+            (Some(n), Some(g)) if g > 0.0 => {
+                n.exp2() * self.key * self.compensation_ev.exp2() / (0.5 * g / std::f32::consts::PI)
+            }
+            _ => self.max,
+        }
+    }
+}
+
+/// The irradiance a sunlit horizontal face at the sky's base altitude receives, in luminance
+/// (Rec. 709): the sky's `E_sky(+z)` (`e_sky_up`) and the key light's `key_horizontal` (its
+/// illuminance times the transmittance toward it times the cosine of its zenith angle, 0 with
+/// no key light). The irradiance pass writes the key light's share into `E_sky(+z)`'s `w`.
+pub fn ground_irradiance(e_sky_up: [f32; 3], key_horizontal: f32) -> f32 {
+    0.2126 * e_sky_up[0] + 0.7152 * e_sky_up[1] + 0.0722 * e_sky_up[2] + key_horizontal
 }
 
 /// `ExState` in `exposure.wgsl`, field for field: 32 bytes.
@@ -232,7 +273,10 @@ pub struct ExposureState {
     pub frame: u32,
     /// [`STATE_HELD`].
     pub flags: u32,
-    pub _pad: [u32; 2],
+    /// The ceiling the last pass clamped `current` under ([`AutoExposure::ceiling`]); in
+    /// manual, the auto model's `max` of the uniform (0 when none was set).
+    pub ceiling: f32,
+    pub _pad: u32,
 }
 
 /// `ExposureState::flags` bit: the last pass metered nothing (another view than the shaded
@@ -263,6 +307,7 @@ impl ExposureState {
             metered_log2: self.metered_log2,
             frame: self.frame,
             held: self.flags & STATE_HELD != 0,
+            ceiling: self.ceiling,
         }
     }
 }
@@ -278,6 +323,8 @@ pub struct ExposureReadout {
     pub frame: u32,
     /// The read pass metered nothing and held the levels.
     pub held: bool,
+    /// The ceiling the read pass clamped the exposure under ([`ExposureState::ceiling`]).
+    pub ceiling: f32,
 }
 
 /// `ExUniform` in `exposure.wgsl`, field for field.
@@ -301,7 +348,9 @@ pub(crate) struct ExposureUniform {
     pub tau_cone: f32,
     pub tau_rod: f32,
     pub floor_log2: f32,
-    pub _pad: f32,
+    /// `2^sky_anchor_ev` while the frame holds a sky and the model anchors its ceiling, else 0
+    /// (the ceiling is `max`).
+    pub anchor: f32,
 }
 
 /// `ExUniform::mode` bit: the exposure is automatic.
@@ -312,8 +361,8 @@ pub(crate) const EX_METER: u32 = 2;
 pub(crate) const EX_RESET: u32 = 4;
 
 impl ExposureUniform {
-    /// The auto fields of `auto`.
-    pub(crate) fn set_auto(&mut self, auto: &AutoExposure) {
+    /// The auto fields of `auto`, over a frame that holds a sky when `sky`.
+    pub(crate) fn set_auto(&mut self, auto: &AutoExposure, sky: bool) {
         self.key = auto.key * auto.compensation_ev.exp2();
         self.min = auto.min;
         self.max = auto.max;
@@ -321,6 +370,10 @@ impl ExposureUniform {
         self.tau_cone = auto.tau_cone;
         self.tau_rod = auto.tau_rod;
         self.floor_log2 = auto.floor_log2().max(-1e30) as f32;
+        self.anchor = match auto.sky_anchor_ev {
+            Some(n) if sky => n.exp2(),
+            _ => 0.0,
+        };
     }
 }
 
@@ -369,7 +422,7 @@ impl ExposurePass {
         let layout = io_layout(
             device,
             "exposure",
-            &[Io::Uniform, Io::Storage, Io::ReadStorage],
+            &[Io::Uniform, Io::Storage, Io::ReadStorage, Io::ReadStorage],
         );
         let pipeline = compute_pipeline(
             device,
@@ -450,9 +503,10 @@ impl ExposurePass {
             + RING as u64 * RING_BYTES
     }
 
-    /// Writes the pass's parameters for this frame and records it over `tiles` (its group built
-    /// again only for another `tiles`), then the state's copies: into the uniform the next frame
-    /// reads, and into a free ring slot.
+    /// Writes the pass's parameters for this frame and records it over `tiles` and `E_sky`
+    /// (`sky_e`, read for the anchored ceiling; its group built again only for other
+    /// buffers), then the state's copies: into the uniform the next frame reads, and into a
+    /// free ring slot.
     /// Slots copied by an earlier encode are asked to map first: every encode's commands are
     /// submitted before the next encode.
     pub(crate) fn encode(
@@ -460,7 +514,7 @@ impl ExposurePass {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
-        tiles: &wgpu::Buffer,
+        [tiles, sky_e]: [&wgpu::Buffer; 2],
         uniform: &ExposureUniform,
         timestamp_writes: Option<wgpu::ComputePassTimestampWrites<'_>>,
     ) {
@@ -474,6 +528,7 @@ impl ExposurePass {
                 Res::Buf(&self.uniform),
                 Res::Buf(&self.state),
                 Res::Buf(tiles),
+                Res::Buf(sky_e),
             ],
         );
         {
@@ -628,5 +683,66 @@ mod tests {
         assert_eq!(e.exposure(-12.0), 16.0);
         let s = AutoExposure::symmetric(2.0);
         assert!((s.step(-1.0, -3.0, 0.5) - (-3.0 + 2.0 * (-1f64).exp())).abs() < 1e-12);
+    }
+
+    /// Plan 0086 Phase 17: the auto exposure's default anchors its ceiling 4 EV over the
+    /// sunlit ground, and with no sky that ceiling is `max`.
+    #[test]
+    fn the_default_anchor_is_4() {
+        assert_eq!(AutoExposure::default().sky_anchor_ev, Some(4.0));
+        assert_eq!(
+            AutoExposure::eye().sky_anchor_ev,
+            Some(DEFAULT_SKY_ANCHOR_EV)
+        );
+        assert_eq!(
+            AutoExposure::default().ceiling(None),
+            AutoExposure::default().max
+        );
+    }
+
+    /// Plan 0086 Phase 12 bar 1: the anchored ceiling follows the sky. Under `Sky::uniform(L)`
+    /// with no key light `E_sky(+z)` is `pi L`, so at `N` 0 the ceiling is `key pi / (0.5 pi
+    /// L)`; doubling `L` halves it, `N` 2 quadruples it; with no sky the ceiling is `max`, and
+    /// the pass's uniform is byte for byte the one without the anchor, so the state it writes
+    /// is too.
+    #[test]
+    fn the_ceiling_follows_the_sky() {
+        use std::f32::consts::PI;
+        let at = |n: f32| AutoExposure {
+            sky_anchor_ev: Some(n),
+            ..AutoExposure::eye()
+        };
+        let ground = |l: f32| Some(ground_irradiance([PI * l; 3], 0.0));
+        for l in [0.5f32, 1.0, 37.0, 2400.0] {
+            let want = 0.18 * PI / (0.5 * PI * l);
+            let c0 = at(0.0).ceiling(ground(l));
+            assert!((c0 - want).abs() <= 1e-6 * want, "{l}: {c0} {want}");
+            let half = at(0.0).ceiling(ground(2.0 * l));
+            assert!((half - 0.5 * c0).abs() <= 1e-6 * c0, "{l}: {half} {c0}");
+            let four = at(2.0).ceiling(ground(l));
+            assert!((four - 4.0 * c0).abs() <= 1e-6 * c0, "{l}: {four} {c0}");
+        }
+        // The key light's horizontal share adds to the sky's.
+        assert_eq!(ground_irradiance([1.0, 1.0, 1.0], 2.0), 3.0);
+        // No sky, or no anchor: `max`.
+        let none = AutoExposure {
+            sky_anchor_ev: None,
+            ..AutoExposure::eye()
+        };
+        assert_eq!(at(2.0).ceiling(None), none.max);
+        assert_eq!(at(2.0).ceiling(Some(0.0)), none.max);
+        assert_eq!(none.ceiling(ground(1.0)), none.max);
+        let uniform = |a: &AutoExposure, sky: bool| {
+            let mut u = ExposureUniform::default();
+            u.set_auto(a, sky);
+            bytemuck::bytes_of(&u).to_vec()
+        };
+        assert_eq!(uniform(&at(2.0), false), uniform(&none, false));
+        assert_eq!(uniform(&none, true), uniform(&none, false));
+        assert_ne!(uniform(&at(2.0), true), uniform(&none, true));
+        // The settled exposure clamps under the ceiling in force.
+        let e = AutoExposure::eye();
+        assert_eq!(e.exposure_under(-12.0, 0.25), 0.25);
+        assert_eq!(e.exposure_under(-12.0, 1e-9), f64::from(e.min));
     }
 }

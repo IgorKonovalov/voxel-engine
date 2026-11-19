@@ -22,10 +22,34 @@ pub struct OutdoorArgs {
     pub(crate) auto: bool,
     /// `--sky-rays N`: the sky rays a lighting pixel casts; unset, the renderer's default.
     pub(crate) sky_rays: Option<u32>,
+    /// `--sky-history N`: the visibility pair's cap in frames; unset, the renderer's default.
+    pub(crate) sky_history: Option<u32>,
+    /// `--key-history N`: the key light's mean's cap in frames; unset, the renderer's default.
+    pub(crate) key_history: Option<u32>,
     /// `--trees none|sparse|forest`: the trees stood on the hills.
     pub(crate) trees: TreeDensity,
     /// `--leaf-fill N`: a canopy voxel is kept under this of 256; unset, [`LEAF_FILL`].
     pub(crate) leaf_fill: Option<u32>,
+    /// `--leaf-shadow brick|voxel|absorb`: how the canopy shadows.
+    pub(crate) leaf_shadow: crate::LeafShadow,
+    /// `--penumbra disc|approach`: how the key light's shadow ray makes its penumbra.
+    pub(crate) penumbra: vxe_render::Penumbra,
+    /// `--sky-normal face|smoothed`: the normal the baked sky term reads its visibilities by.
+    pub(crate) sky_normal: vxe_render::SkyNormal,
+    /// `--sky-bounce B`: the baked sky term's bounce floor, 0 to 1.
+    pub(crate) sky_bounce: f32,
+    /// `--column-wait on|off`: the live queue's column wait (`Lighting::column_wait`).
+    pub(crate) column_wait: bool,
+    /// `--dump-black`: once a second while the store's black count is over 0, the lighting
+    /// pixels with no record value printed by the chunk they hit (`Run::dump_black`).
+    pub(crate) dump_black: bool,
+    /// `--sky-anchor N|none`: the auto exposure's ceiling anchored `N` EV over the sunlit
+    /// ground's exposure while a sky is set (`AutoExposure::sky_anchor_ev`), `Some(None)` for
+    /// none; unset, the preset's (`vxe_render::DEFAULT_SKY_ANCHOR_EV`).
+    pub(crate) sky_anchor: Option<Option<f32>>,
+    /// `--exposure-max EV`: the auto exposure's constant ceiling in EV; unset, the start's
+    /// ([`OUTDOOR_MAX`] outdoors, the preset's elsewhere).
+    pub(crate) exposure_max_ev: Option<f32>,
 }
 
 impl OutdoorArgs {
@@ -40,6 +64,10 @@ impl OutdoorArgs {
 
     pub fn spawn(&self) -> Spawn {
         self.spawn
+    }
+
+    pub fn leaf_shadow(&self) -> crate::LeafShadow {
+        self.leaf_shadow
     }
 }
 
@@ -83,132 +111,265 @@ pub(super) fn source_flags() -> Vec<Flag<Parsing>> {
 
 /// The outdoor testbed's section.
 pub(super) fn sections() -> Vec<Section<Parsing>> {
-    vec![Section {
-        title: "Outdoors and the sky",
-        flags: vec![
-            Flag::value(
-                &["--spawn"],
-                "outside|inside|forest",
-                "where --source outdoor starts: 30 m before the cave mouth facing it, 2 m up, \
+    let mut flags = vec![
+        Flag::value(
+            &["--spawn"],
+            "outside|inside|forest",
+            "where --source outdoor starts: 30 m before the cave mouth facing it, 2 m up, \
                  3 m inside the tunnel facing out, or 64 m north of the mouth facing north, \
                  2 m up, 10 degrees down [outside]",
-                |p: &mut Parsing, v| {
-                    let names = Spawn::ALL.map(|s| (s.name(), s));
-                    p.args.outdoor.spawn = v.word(&names, "outside, inside or forest")?;
-                    Ok(())
-                },
-            ),
-            Flag::value(
-                &["--trees"],
-                "none|sparse|forest",
-                "trees on the outdoor hills, about 9 % or 94 % of the 4.8 m cells of a 307 m \
+            |p: &mut Parsing, v| {
+                let names = Spawn::ALL.map(|s| (s.name(), s));
+                p.args.outdoor.spawn = v.word(&names, "outside, inside or forest")?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--trees"],
+            "none|sparse|forest",
+            "trees on the outdoor hills, about 9 % or 94 % of the 4.8 m cells of a 307 m \
                  box; the menu's trees entry cycles them in process [sparse]",
-                |p: &mut Parsing, v| {
-                    let names = TreeDensity::ALL.map(|d| (d.name(), d));
-                    p.args.outdoor.trees = v.word(&names, "none, sparse or forest")?;
-                    Ok(())
-                },
-            ),
-            Flag::value(
-                &["--leaf-fill"],
-                "N",
-                "the canopy voxels kept, of 256, 1 to 256 [64]",
-                |p: &mut Parsing, v| {
-                    p.args.outdoor.leaf_fill =
-                        Some(v.parse_if(|n: &u32| (1..=256).contains(n), "1 to 256")?);
-                    Ok(())
-                },
-            ),
-            Flag::value(
-                &["--sun"],
-                "EL,AZ",
-                "fix the sun at this elevation and azimuth in degrees (clockwise from north, \
+            |p: &mut Parsing, v| {
+                let names = TreeDensity::ALL.map(|d| (d.name(), d));
+                p.args.outdoor.trees = v.word(&names, "none, sparse or forest")?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--leaf-fill"],
+            "N",
+            "the canopy voxels kept, of 256, 1 to 256 [64]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.leaf_fill =
+                    Some(v.parse_if(|n: &u32| (1..=256).contains(n), "1 to 256")?);
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--leaf-shadow"],
+            "brick|voxel|absorb",
+            "how a canopy shadows the sun and the sky: as its 8^3 bricks (no fleck through \
+                 it), voxel by voxel, or as a transmittance by the path through its leaves \
+                 [voxel]",
+            |p: &mut Parsing, v| {
+                let names = crate::LeafShadow::ALL.map(|d| (d.name(), d));
+                p.args.outdoor.leaf_shadow = v.word(&names, "brick, voxel or absorb")?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--sun"],
+            "EL,AZ",
+            "fix the sun at this elevation and azimuth in degrees (clockwise from north, \
                  180 south), the moon opposite; the clock's keys then leave it",
-                |p: &mut Parsing, v| {
-                    p.args.outdoor.clock.fixed_sun = Some(parse_sun(v.text)?);
-                    Ok(())
-                },
-            ),
-            Flag::value(
-                &["--time"],
-                "HH:MM",
-                "the time of day the sky starts at (latitude 45, an equinox); the menu's \
+            |p: &mut Parsing, v| {
+                p.args.outdoor.clock.fixed_sun = Some(parse_sun(v.text)?);
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--time"],
+            "HH:MM",
+            "the time of day the sky starts at (latitude 45, an equinox); the menu's \
                  time entry steps it an hour [12:00]",
-                |p: &mut Parsing, v| {
-                    p.args.outdoor.clock.minutes = parse_time(v.text)?;
-                    Ok(())
-                },
-            ),
-            Flag::value(
-                &["--day-length"],
-                "S",
-                "seconds for a whole day while the cycle runs (End runs or pauses it), 1 to \
+            |p: &mut Parsing, v| {
+                p.args.outdoor.clock.minutes = parse_time(v.text)?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--day-length"],
+            "S",
+            "seconds for a whole day while the cycle runs (End runs or pauses it), 1 to \
                  86400 [1200]",
-                |p: &mut Parsing, v| {
-                    p.args.outdoor.clock.day_length_s =
-                        v.parse_if(|s: &f32| (1.0..=86_400.0).contains(s), "1 to 86400 s")?;
-                    Ok(())
-                },
-            ),
-            Flag::value(
-                &["--sun-radius"],
-                "DEG",
-                "the sun's angular radius in degrees, 0.05 to 10: a wider disc softens every \
+            |p: &mut Parsing, v| {
+                p.args.outdoor.clock.day_length_s =
+                    v.parse_if(|s: &f32| (1.0..=86_400.0).contains(s), "1 to 86400 s")?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--sun-radius"],
+            "DEG",
+            "the sun's angular radius in degrees, 0.05 to 10: a wider disc softens every \
                  sun shadow (the real sun's is 0.2665) [3]",
-                |p: &mut Parsing, v| {
-                    let deg: f32 = v.parse_if(|d: &f32| (0.05..=10.0).contains(d), "0.05 to 10")?;
-                    p.args.outdoor.clock.sun_radius = deg.to_radians();
-                    Ok(())
-                },
-            ),
-            Flag::value(
-                &["--moon-radius"],
-                "DEG",
-                "the moon's angular radius in degrees, 0.05 to 10: its disc in the sky and its \
+            |p: &mut Parsing, v| {
+                let deg: f32 = v.parse_if(|d: &f32| (0.05..=10.0).contains(d), "0.05 to 10")?;
+                p.args.outdoor.clock.sun_radius = deg.to_radians();
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--moon-radius"],
+            "DEG",
+            "the moon's angular radius in degrees, 0.05 to 10: its disc in the sky and its \
                  shadows' softness [3]",
-                |p: &mut Parsing, v| {
-                    let deg: f32 = v.parse_if(|d: &f32| (0.05..=10.0).contains(d), "0.05 to 10")?;
-                    p.args.outdoor.clock.moon_radius = deg.to_radians();
-                    Ok(())
-                },
-            ),
-            Flag::value(
-                &["--sky-rays"],
-                "N",
-                "cosine-weighted sky rays a lighting pixel casts while a sky is set, 1 to 4 [1]",
-                |p: &mut Parsing, v| {
-                    let max = vxe_render::MAX_SKY_RAYS;
-                    p.args.outdoor.sky_rays =
-                        Some(v.parse_if(|n: &u32| (1..=max).contains(n), "1 to 4")?);
-                    Ok(())
-                },
-            ),
-            Flag::value(
-                &["--sky"],
-                "on|off",
-                "a sky over the world (vxe_render::Sky) [on for --source outdoor, else off]",
-                |p: &mut Parsing, v| {
-                    p.args.outdoor.sky = Some(v.on_off()?);
-                    Ok(())
-                },
-            ),
-            Flag::value(
-                &["--switch-at"],
-                "F[,F..]",
-                "switch the world source in process at these frames, as the menu's source entry does, and print \
-                 the spawn's hash at the end (tests)",
-                |p: &mut Parsing, v| {
-                    p.args.switch_at = super::flags::frames(v)?;
-                    Ok(())
-                },
-            ),
-            Flag::switch(
-                &["--spawn-hash"],
-                "print the voxel hash of the chunks within 2 of the spawn's chunk at the end",
-                |p: &mut Parsing| p.args.spawn_hash = true,
-            ),
-        ],
+            |p: &mut Parsing, v| {
+                let deg: f32 = v.parse_if(|d: &f32| (0.05..=10.0).contains(d), "0.05 to 10")?;
+                p.args.outdoor.clock.moon_radius = deg.to_radians();
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--sky"],
+            "on|off",
+            "a sky over the world (vxe_render::Sky) [on for --source outdoor, else off]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.sky = Some(v.on_off()?);
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--switch-at"],
+            "F[,F..]",
+            "switch the world source in process at these frames, as the menu's source entry \
+                 does, and print the spawn's hash at the end (tests)",
+            |p: &mut Parsing, v| {
+                p.args.switch_at = super::flags::frames(v)?;
+                Ok(())
+            },
+        ),
+        Flag::switch(
+            &["--spawn-hash"],
+            "print the voxel hash of the chunks within 2 of the spawn's chunk at the end",
+            |p: &mut Parsing| p.args.spawn_hash = true,
+        ),
+    ];
+    flags.extend(sky_light_flags());
+    flags.extend(ceiling_flags());
+    vec![Section {
+        title: "Outdoors and the sky",
+        flags,
     }]
+}
+
+/// The section's flags of the sky's light at a hit: the sky rays, their history, the penumbra,
+/// the baked term's normal and bounce floor.
+fn sky_light_flags() -> Vec<Flag<Parsing>> {
+    vec![
+        Flag::value(
+            &["--sky-rays"],
+            "N",
+            "cosine-weighted sky rays a lighting pixel casts where no baked sky visibility \
+                 is fresh, 0 (bake only) to 4 [1]",
+            |p: &mut Parsing, v| {
+                let max = vxe_render::MAX_SKY_RAYS;
+                p.args.outdoor.sky_rays =
+                    Some(v.parse_if(|n: &u32| (0..=max).contains(n), "0 to 4")?);
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--sky-history"],
+            "N",
+            "frames the sky rays' running mean holds at most, 1 to 1024 [64]",
+            |p: &mut Parsing, v| {
+                let max = vxe_render::MAX_SKY_HISTORY;
+                p.args.outdoor.sky_history =
+                    Some(v.parse_if(|n: &u32| (1..=max).contains(n), "1 to 1024")?);
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--key-history"],
+            "N",
+            "frames the key light's visibility mean holds at most, 1 to 1024 [256]",
+            |p: &mut Parsing, v| {
+                let max = vxe_render::MAX_SKY_HISTORY;
+                p.args.outdoor.key_history =
+                    Some(v.parse_if(|n: &u32| (1..=max).contains(n), "1 to 1024")?);
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--penumbra"],
+            "disc|approach",
+            "the key light's penumbra: a ray to a random point of its disc a frame, or one \
+                 to its centre scored by how close it passes the rock beside it (a spike) [disc]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.penumbra =
+                    v.named(vxe_render::Penumbra::from_name, "disc or approach")?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--sky-normal"],
+            "face|smoothed",
+            "the normal a face's baked sky light reads its visibilities by: the face's own, \
+                 or the 27-count gradient's at every distance (a one-voxel stair reads one \
+                 slope) [smoothed]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.sky_normal =
+                    v.named(vxe_render::SkyNormal::from_name, "face or smoothed")?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--sky-bounce"],
+            "B",
+            "the baked sky light's bounce floor, 0 to 1: this share of a face's visibility is \
+                 its brick's six visibilities' mean about the normal [0]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.sky_bounce =
+                    v.parse_if(|b: &f32| (0.0..=1.0).contains(b), "0 to 1")?;
+                Ok(())
+            },
+        ),
+    ]
+}
+
+/// The section's flags of the auto exposure's ceiling: anchored to the sky, or a constant.
+fn ceiling_flags() -> Vec<Flag<Parsing>> {
+    vec![
+        Flag::value(
+            &["--sky-anchor"],
+            "N|none",
+            "while a sky is set, the auto exposure opens at most N EV (-4 to 12) over the \
+                 exposure that puts sunlit ground at mid-grey, so a noon tunnel stays dark and \
+                 the night still opens; none keeps the constant ceiling [4]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.sky_anchor = Some(match v.text {
+                    "none" => None,
+                    _ => Some(v.parse_if(|n: &f32| (-4.0..=12.0).contains(n), "-4 to 12 or none")?),
+                });
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--column-wait"],
+            "on|off",
+            "on, the live queue bakes a chunk once every column over its reach holds all the \
+                 chunks the streamer will hold; off, once none of those chunks waits to \
+                 upload, and a chunk baked under a column not yet final bakes again once \
+                 when it is (faster first light, a provisional sky meanwhile) [off]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.column_wait = v.on_off()?;
+                Ok(())
+            },
+        ),
+        Flag::switch(
+            &["--dump-black"],
+            "once a second while the store's black count is over 0, print the lighting pixels \
+                 with no record value grouped by the chunk they hit: its distance in chunks, \
+                 whether it holds a block, its queue tracks, the chunks that hold its columns \
+                 from final and whether its reach crosses the full radius (a reading lever; \
+                 counts the store's reads)",
+            |p: &mut Parsing| {
+                p.args.outdoor.dump_black = true;
+            },
+        ),
+        Flag::value(
+            &["--exposure-max"],
+            "EV",
+            "the auto exposure's constant ceiling in EV, -16 to 8 [+2 for --source outdoor, \
+                 else +4]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.exposure_max_ev =
+                    Some(v.parse_if(|n: &f32| (-16.0..=8.0).contains(n), "-16 to 8")?);
+                Ok(())
+            },
+        ),
+    ]
 }
 
 /// The refusal of a world flag beside `--source outdoor`.

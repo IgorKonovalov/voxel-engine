@@ -113,7 +113,7 @@ impl BakeQueue {
                 checked[0] += 1;
             }
             let coord = ChunkCoord(c);
-            let Some(partial) = self.bakeable(run, coord, lr, view, eye) else {
+            let Some((partial, provisional)) = self.bakeable(run, coord, lr, view, eye) else {
                 reach += 1;
                 self.blocked.insert(c, self.steps);
                 continue;
@@ -128,6 +128,11 @@ impl BakeQueue {
                 self.partial_checked.insert(c);
             } else {
                 self.partial_checked.remove(&c);
+            }
+            if provisional {
+                self.provisional_checked.insert(c);
+            } else {
+                self.provisional_checked.remove(&c);
             }
             if class == 0 {
                 ready0 += 1;
@@ -158,6 +163,7 @@ impl BakeQueue {
         self.stats.waiting_lights = lights;
         // A checked candidate not listed (a refused place) is checked again before its listing.
         self.partial_checked.clear();
+        self.provisional_checked.clear();
         Ok(())
     }
 
@@ -252,7 +258,7 @@ impl BakeQueue {
         let mut not_ready = 0;
         for i in 0..take {
             let (_, c) = in_view[i * n / take.max(1)];
-            not_ready += u64::from(!reach_ready(run, ChunkCoord(c), lr, view.resident));
+            not_ready += u64::from(!reach_ready(run, ChunkCoord(c), lr, view));
         }
         self.stats.view_reach = [take as u64, not_ready];
     }
@@ -342,6 +348,7 @@ impl BakeQueue {
             self.job_coarse.remove(&w.coord.0);
             self.job_eye.remove(&w.coord.0);
             self.job_partial.remove(&w.coord.0);
+            self.job_provisional.remove(&w.coord.0);
             self.stale.remove(&w.coord.0);
             self.stats.withdrawn += 1;
             self.stats.withdrawn_samples += w.drawn;

@@ -115,7 +115,8 @@ struct Params {
     // `far_hi <= far_lo` is off.
     far_lo: f32,
     far_hi: f32,
-    _pad9: u32,
+    // Lighting::sky_bounce: the baked sky term's bounce floor (temporal.wgsl).
+    sky_bounce: f32,
     // FSR 2's tone pass's static dither (`Fsr2Settings::dither`, 1 on), 0 without FSR 2.
     dither: u32,
     // The chunk of view 0's origin (`Params::cam_chunk`), which the LOD walk measures from.
@@ -178,6 +179,11 @@ struct Lights {
 
 @group(0) @binding(12) var blue_noise: texture_2d<f32>;
 
+// The column map (`GpuWorld::column_map`): per COLUMN_CELL-voxel column of the window's
+// footprint the highest opaque voxel's z among the resident chunks, COLUMN_NONE for none; a
+// chunk column's COLUMN_CELLS^2 tile at its coordinate wrapped by the window size.
+@group(0) @binding(19) var column_map: texture_2d<i32>;
+
 // `ExposureState` in exposure.rs: the exposure this frame uses in auto (`current`) and the one
 // the last frame used (`previous`), then the adapted and metered levels, a counter and flags.
 struct ExposureState {
@@ -187,8 +193,9 @@ struct ExposureState {
     metered_log2: f32,
     frame: u32,
     flags: u32,
-    _pad0: u32,
-    _pad1: u32,
+    // The exposure pass's ceiling in force (`ExposureState::ceiling`); no frame pass reads it.
+    ceiling: f32,
+    _pad: u32,
 };
 
 @group(0) @binding(13) var<uniform> exposure_state: ExposureState;

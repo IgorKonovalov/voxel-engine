@@ -102,6 +102,8 @@ pub(crate) const PASSES: [PassSpec; 15] = [
             HITREC_WGSL,
             ENTITY_WGSL,
             EDITS_WGSL,
+            SKY_ATMOSPHERE_WGSL,
+            SKY_WGSL,
             TEMPORAL_WGSL,
         ],
         entry: "temporal",
@@ -126,6 +128,10 @@ pub(crate) const PASSES: [PassSpec; 15] = [
                 Io::Float,
                 Io::Float,
                 F16,
+                Io::ReadStorage,
+                Io::Float,
+                Io::Float,
+                F16,
             ]),
         ],
         lazy: false,
@@ -141,6 +147,8 @@ pub(crate) const PASSES: [PassSpec; 15] = [
             HITREC_WGSL,
             ENTITY_WGSL,
             EDITS_WGSL,
+            SKY_ATMOSPHERE_WGSL,
+            SKY_WGSL,
             TEMPORAL_WGSL,
         ],
         entry: "temporal",
@@ -155,7 +163,18 @@ pub(crate) const PASSES: [PassSpec; 15] = [
         modules: LIGHT_MODULES,
         entry: "shade",
         constants: &[("ENTITY_SHADOWS", 1.0)],
-        groups: &[W, E, Group::Own(&[Io::Float, Io::Uint, F16, F16])],
+        groups: &[
+            W,
+            E,
+            Group::Own(&[
+                Io::Float,
+                Io::Uint,
+                F16,
+                F16,
+                Io::ReadStorage,
+                Io::Store(wgpu::TextureFormat::Rgba8Unorm),
+            ]),
+        ],
         lazy: true,
     },
     PassSpec {
@@ -201,7 +220,13 @@ pub(crate) const PASSES: [PassSpec; 15] = [
     },
     PassSpec {
         label: "variance",
-        modules: &[COMMON_WGSL, HITREC_WGSL, ATROUS_WGSL],
+        modules: &[
+            COMMON_WGSL,
+            HITREC_WGSL,
+            SKY_ATMOSPHERE_WGSL,
+            SKY_WGSL,
+            ATROUS_WGSL,
+        ],
         entry: "variance",
         constants: &[],
         groups: &[
@@ -214,13 +239,22 @@ pub(crate) const PASSES: [PassSpec; 15] = [
                 (3, Io::Float),
                 (4, F16),
                 (9, Io::Float),
+                (10, Io::Float),
+                (11, Io::Float),
+                (12, Io::ReadStorage),
             ]),
         ],
         lazy: false,
     },
     PassSpec {
         label: "atrous",
-        modules: &[COMMON_WGSL, HITREC_WGSL, ATROUS_WGSL],
+        modules: &[
+            COMMON_WGSL,
+            HITREC_WGSL,
+            SKY_ATMOSPHERE_WGSL,
+            SKY_WGSL,
+            ATROUS_WGSL,
+        ],
         entry: "atrous",
         constants: &[],
         groups: &[
@@ -234,6 +268,7 @@ pub(crate) const PASSES: [PassSpec; 15] = [
                 (6, Io::Uniform),
                 (7, Io::Float),
                 (8, Io::Float),
+                (10, Io::Float),
             ]),
         ],
         lazy: false,
@@ -312,6 +347,9 @@ pub(crate) const PASSES: [PassSpec; 15] = [
                 Io::Storage,
                 Io::Uint,
                 Io::Float,
+                Io::Float,
+                Io::Float,
+                Io::ReadStorage,
                 Io::ReadStorage,
             ]),
         ],
@@ -459,7 +497,9 @@ impl Frame {
         self.binds.io_at(
             device,
             &self.pipes.world_layout,
-            &[0, 1, 7, 8, 9, 2, 3, 4, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+            &[
+                0, 1, 7, 8, 9, 2, 3, 4, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+            ],
             &[
                 Res::Buf(&self.state.params),
                 Res::Buf(world.pool_shard(0)),
@@ -478,6 +518,7 @@ impl Frame {
                 Res::Buf(&self.sky.uniform),
                 Res::Tex(self.sky.bound()[0]),
                 Res::Tex(self.sky.bound()[1]),
+                Res::Tex(world.column_map()),
             ],
         )
     }
@@ -486,7 +527,8 @@ impl Frame {
 /// The world's group 0, as `common.wgsl` declares it: the frame's parameters (0), the mirror's
 /// pools, records, table and materials, the light samples and the emission scales, the blue
 /// noise (12), the exposure state (13), the list of lights (14), the entity mirror (15), and the
-/// sky's uniform (16) and LUTs (17, 18) as `sky.wgsl` declares them.
+/// sky's uniform (16) and LUTs (17, 18) as `sky.wgsl` declares them, and the mirror's column map
+/// (19).
 fn world_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     let storage = |binding| wgpu::BindGroupLayoutEntry {
         binding,
@@ -524,6 +566,7 @@ fn world_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             sampled_texture(12, FLOAT),
             sampled_texture(17, FLOAT),
             sampled_texture(18, FLOAT),
+            sampled_texture(19, wgpu::TextureSampleType::Sint),
             wgpu::BindGroupLayoutEntry {
                 binding: 16,
                 visibility: wgpu::ShaderStages::COMPUTE,

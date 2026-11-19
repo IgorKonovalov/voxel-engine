@@ -1,0 +1,406 @@
+// `gpu_outdoor`'s canopy readings (Plan 0086 Phase 24b, the 86c window's defect B), included by
+// `gpu_outdoor.rs` (kept apart for the file-size cap).
+
+mod canopy {
+    pub(super) mod reading {
+        use super::super::support;
+        use support::terms::Rig;
+        use vxe_render::{Camera, Exposure, Frame, LightHooks, LightParams, Lighting};
+
+        const INTERNAL: [u32; 2] = [320, 180];
+        const OUT: [u32; 2] = [480, 270];
+        /// The frames a run holds before it is read, after a history reset.
+        const FRAMES: u32 = 128;
+        /// The frames the long reference holds (at least), under [`REFERENCE_HISTORY`].
+        const REFERENCE: u32 = 1200;
+        /// The long reference's cap on the visibility pair's means (`Lighting::sky_history` and
+        /// `key_history`).
+        const REFERENCE_HISTORY: u32 = 1024;
+        /// The pairs of frames the pop share reads, the last of a run's.
+        const POP_PAIRS: u32 = 32;
+
+        /// One arm of the split.
+        #[derive(Clone, Copy)]
+        struct Arm {
+            name: &'static str,
+            /// The store baked whole (else none, and `sky_rays` 0: the key light alone).
+            baked: bool,
+            hooks: LightHooks,
+        }
+
+        const ARMS: [Arm; 4] = [
+            Arm {
+                name: "both",
+                baked: true,
+                hooks: LightHooks {
+                    key_off: false,
+                    any_history: false,
+                    no_stair: false,
+                    sky_ray_always: false,
+                    no_clamp: false,
+                    sky_end_is_sky: false,
+                    key_no_jitter: false,
+                },
+            },
+            Arm {
+                name: "key alone",
+                baked: false,
+                hooks: LightHooks {
+                    key_off: false,
+                    any_history: false,
+                    no_stair: false,
+                    sky_ray_always: false,
+                    no_clamp: false,
+                    sky_end_is_sky: false,
+                    key_no_jitter: false,
+                },
+            },
+            Arm {
+                name: "sky alone",
+                baked: true,
+                hooks: LightHooks {
+                    key_off: true,
+                    any_history: false,
+                    no_stair: false,
+                    sky_ray_always: false,
+                    no_clamp: false,
+                    sky_end_is_sky: false,
+                    key_no_jitter: false,
+                },
+            },
+            Arm {
+                name: "key alone, no jitter",
+                baked: false,
+                hooks: LightHooks {
+                    key_off: false,
+                    any_history: false,
+                    no_stair: false,
+                    sky_ray_always: false,
+                    no_clamp: false,
+                    sky_end_is_sky: false,
+                    key_no_jitter: true,
+                },
+            },
+        ];
+
+        /// A pixel's class: the floor (no leaf or bark among the 8 voxels about the hit), a
+        /// trunk (bark), or neither (a leaf, the sky).
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        enum Class {
+            Floor,
+            Trunk,
+            Other,
+        }
+
+        /// A frame stepped by hand with its step count (the jitter's phase follows it).
+        struct Run {
+            f: Frame,
+            steps: u32,
+        }
+
+        impl Run {
+            fn step(&mut self, rig: &Rig, cam: &Camera, light: &LightParams) {
+                self.f.step(&rig.device, &rig.queue, &rig.gpu, cam, light);
+                self.steps += 1;
+            }
+        }
+
+        /// The defaults' frame on the forest rig under `sky` (none: the headlamp alone), FSR 2
+        /// from [`INTERNAL`] to [`OUT`], voxel leaves, the exposure pinned at `exposure`, the
+        /// store baked whole with `baked`, `sky_rays` 0 without.
+        fn frame(
+            rig: &mut Rig,
+            sky: Option<vxe_render::sky::Sky>,
+            baked: bool,
+            exposure: Exposure,
+        ) -> Run {
+            let mut f = Frame::with_sizes(&rig.device, INTERNAL, OUT);
+            f.set_upscaler_kind(
+                &rig.device,
+                vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default()),
+            );
+            f.set_look(vxe_render::LookParams {
+                far_normal: flythrough::LookPreset::DEFAULT.far_normal,
+                ..vxe_render::LookParams::default()
+            });
+            f.set_material_styles(
+                &rig.queue,
+                &flythrough::outdoor_styles(flythrough::LeafShadow::Voxel),
+            );
+            let base = flythrough::default_lighting();
+            f.set_lighting(Lighting {
+                lamp: sky.is_none(),
+                exposure,
+                sky_rays: if baked || sky.is_none() {
+                    base.sky_rays
+                } else {
+                    0
+                },
+                ..base
+            });
+            f.set_sky(sky);
+            if baked && sky.is_some() {
+                f.bake_until(
+                    &rig.device,
+                    &rig.queue,
+                    &mut rig.gpu,
+                    &rig.world,
+                    rig.world.extent(),
+                    &vxe_render::BakeSettings::default(),
+                    &mut |_| {},
+                )
+                .expect("the store fits");
+            }
+            f.set_dt(1.0 / 60.0);
+            Run { f, steps: 0 }
+        }
+
+        /// The settled exposure of the defaults under `sky` (or the headlamp alone): 64 frames
+        /// under the outdoor auto exposure (instant, the default sky anchor).
+        fn settled_exposure(rig: &mut Rig, cam: &Camera, sky: Option<vxe_render::sky::Sky>) -> f32 {
+            let auto = Exposure::Auto(vxe_render::AutoExposure {
+                min: flythrough::cli::OUTDOOR_MIN,
+                max: flythrough::cli::OUTDOOR_MAX,
+                sky_anchor_ev: Some(vxe_render::DEFAULT_SKY_ANCHOR_EV),
+                ..vxe_render::AutoExposure::instant()
+            });
+            let mut r = frame(rig, sky, sky.is_some(), auto);
+            for _ in 0..64 {
+                r.step(rig, cam, &LightParams::headlamp());
+            }
+            let st = vxe_render::debug::read_buffer(&rig.device, &rig.queue, r.f.exposure_state(), 0, 32);
+            vxe_render::ExposureState::from_bytes(&st).current
+        }
+
+        /// What a run's last frame reads: the display's largest channel, the class and the key
+        /// mean `g` per display pixel, and over the last [`POP_PAIRS`] pairs the over-4 counts
+        /// per class (floor, trunk) with the class's pixel count.
+        struct Read {
+            level: Vec<u8>,
+            class: Vec<Class>,
+            g: Vec<f32>,
+            pops: [(u64, u64); 2],
+        }
+
+        /// Resets `r`'s history, sets `hooks` and `history`, steps `frames` frames (then more
+        /// until `align`'s `(phase, phases)` holds the step count at `phase` modulo `phases`)
+        /// and reads the last [`POP_PAIRS`] + 1.
+        #[allow(clippy::too_many_arguments, reason = "a reading's knobs")]
+        fn hold(
+            rig: &Rig,
+            cam: &Camera,
+            r: &mut Run,
+            hooks: LightHooks,
+            history: u32,
+            frames: u32,
+            align: Option<(u32, u32)>,
+        ) -> Read {
+            use vxe_render::debug::{read_rgba8, read_rgba16f, read_rgba32f};
+            r.f.set_light_hooks(hooks);
+            // The long reference holds both of the pair's means at `history`; a run keeps the
+            // defaults' caps.
+            let base = flythrough::default_lighting();
+            r.f.set_lighting(Lighting {
+                sky_history: history,
+                key_history: if history == REFERENCE_HISTORY {
+                    history
+                } else {
+                    base.key_history
+                },
+                ..r.f.lighting()
+            });
+            r.f.reset_history();
+            let mut total = frames;
+            if let Some((phase, phases)) = align {
+                while (r.steps + total) % phases != phase {
+                    total += 1;
+                }
+            }
+            let light = LightParams::headlamp();
+            for _ in 0..total - POP_PAIRS - 1 {
+                r.step(rig, cam, &light);
+            }
+            let (d, q) = (&rig.device, &rig.queue);
+            let level = |f: &Frame| support::defects::level(&read_rgba8(d, q, f.target()));
+            let classify = |f: &Frame| {
+                let hits = read_rgba32f(d, q, f.light_hit_positions());
+                let gw = f.light_hit_positions().width() as usize;
+                let cls: Vec<Class> = hits.iter().map(|h| class_of(&rig.world, h)).collect();
+                let n = (OUT[0] * OUT[1]) as usize;
+                (0..n)
+                    .map(|i| {
+                        cls[support::defects::grid_of(
+                            i,
+                            OUT[0] as usize,
+                            OUT[1] as usize,
+                            gw,
+                            hits.len(),
+                        )]
+                    })
+                    .collect::<Vec<_>>()
+            };
+            r.step(rig, cam, &light);
+            let mut last = level(&r.f);
+            let class = classify(&r.f);
+            let mut pops = [(0u64, 0u64); 2];
+            for _ in 0..POP_PAIRS {
+                r.step(rig, cam, &light);
+                let now = level(&r.f);
+                for (i, (&a, &b)) in last.iter().zip(&now).enumerate() {
+                    let k = match class[i] {
+                        Class::Floor => 0,
+                        Class::Trunk => 1,
+                        Class::Other => continue,
+                    };
+                    pops[k].1 += 1;
+                    pops[k].0 += u64::from(a.abs_diff(b) > 4);
+                }
+                last = now;
+            }
+            let pair = read_rgba16f(d, q, r.f.visibility_pair());
+            let gw = r.f.visibility_pair().width() as usize;
+            let n = (OUT[0] * OUT[1]) as usize;
+            let g = (0..n)
+                .map(|i| {
+                    pair[support::defects::grid_of(i, OUT[0] as usize, OUT[1] as usize, gw, pair.len())][1]
+                })
+                .collect();
+            Read {
+                level: last,
+                class,
+                g,
+                pops,
+            }
+        }
+
+        /// The class of a lighting pixel's hit `h`.
+        fn class_of(world: &vxe_world::World, h: &[f32; 4]) -> Class {
+            use flythrough::outdoor::{BARK, LEAF};
+            if h[3] <= 0.0 || h[3] >= 1.0e30 || h[..3].iter().any(|v| v.is_nan()) {
+                return Class::Other;
+            }
+            let (mut leaf, mut bark) = (false, false);
+            for k in 0..8 {
+                let v: [i32; 3] = std::array::from_fn(|a| {
+                    let o = if k >> a & 1 == 1 { 0.01 } else { -0.01 };
+                    (h[a] + o).floor() as i32
+                });
+                match world.material_at(vxe_world::VoxelCoord(v)) {
+                    Some(m) if m == LEAF => leaf = true,
+                    Some(m) if m == BARK => bark = true,
+                    _ => {}
+                }
+            }
+            if leaf {
+                Class::Other
+            } else if bark {
+                Class::Trunk
+            } else {
+                Class::Floor
+            }
+        }
+
+        /// The residual of `a` against the reference `r` per class (floor, trunk) and key
+        /// mean (lit: `g` over 0.5 in `a`; shadowed): (p99, mean, pixels).
+        fn residual(a: &Read, r: &Read) -> [[(u8, f64, usize); 2]; 2] {
+            let mut v: [[Vec<u8>; 2]; 2] = Default::default();
+            for i in 0..a.level.len() {
+                let k = match a.class[i] {
+                    Class::Floor => 0,
+                    Class::Trunk => 1,
+                    Class::Other => continue,
+                };
+                let lit = usize::from(a.g[i] <= 0.5);
+                v[k][lit].push(a.level[i].abs_diff(r.level[i]));
+            }
+            v.map(|row| {
+                row.map(|c| {
+                    let n = c.len();
+                    let (p, m) = support::defects::p99_mean(c);
+                    (p, m, n)
+                })
+            })
+        }
+
+        /// Plan 0086 Phase 24b's table: the forest of seed 1 at its spawn's view, the sun at
+        /// `10,180` and at 15:00, voxel leaves, FSR 2 from 320 x 180 to 480 x 270, the exposure
+        /// pinned at the defaults' settled value: per arm of the split (both terms; the key light
+        /// alone, `sky_rays` 0 and no store; the sky alone, `key_off`; the key light alone with
+        /// `key_no_jitter`) the run of [`FRAMES`] frames after a history reset against the same
+        /// arm's long reference ([`REFERENCE`] frames under `sky_history` [`REFERENCE_HISTORY`],
+        /// read at the same jitter phase): the residual's p99 and mean in display levels on the
+        /// floor and the trunks, lit (the key mean over 0.5) and shadowed; and the pop share
+        /// over 4 levels per frame pair over the run's last [`POP_PAIRS`] pairs, beside the
+        /// lamp-lit floor's. `VXE_TEST_ADAPTER` picks the adapter.
+        #[test]
+        #[ignore = "reading"]
+        fn the_canopy_residual() {
+            let Some((mut rig, cam)) = support::terms::forest_rig() else {
+                return;
+            };
+            let phases = vxe_render::Fsr2Settings::default().phases(INTERNAL[0], OUT[0]);
+            println!("reading: the_canopy_residual on {}, {phases} jitter phases", rig.adapter);
+            // The lamp-lit floor: the headlamp alone, at its settled exposure.
+            let e = settled_exposure(&mut rig, &cam, None);
+            let mut lamp = frame(&mut rig, None, false, Exposure::Manual(e));
+            let r = hold(&rig, &cam, &mut lamp, LightHooks::default(), 64, FRAMES, None);
+            let lamp_pop = 100.0 * r.pops[0].0 as f64 / (r.pops[0].1.max(1) as f64);
+            println!("reading: canopy, the headlamp alone: floor pop share {lamp_pop:.3} % of {} px-pairs", r.pops[0].1);
+            let scenes = [
+                (
+                    "sun 10,180",
+                    flythrough::daylight::Clock {
+                        fixed_sun: Some([10.0, 180.0]),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "15:00",
+                    flythrough::daylight::Clock {
+                        minutes: 15.0 * 60.0,
+                        ..Default::default()
+                    },
+                ),
+            ];
+            let default_history = flythrough::default_lighting().sky_history;
+            println!(
+                "reading: canopy caps: sky {default_history}, key {}",
+                flythrough::default_lighting().key_history
+            );
+            for (scene, clock) in scenes {
+                let sky = clock.sky(flythrough::outdoor::BASE_Z as f32);
+                let e = settled_exposure(&mut rig, &cam, Some(sky));
+                println!("reading: canopy {scene}: exposure pinned at {e:.4e}");
+                let mut baked = frame(&mut rig, Some(sky), true, Exposure::Manual(e));
+                let mut bare = frame(&mut rig, Some(sky), false, Exposure::Manual(e));
+                for arm in ARMS {
+                    let r = if arm.baked { &mut baked } else { &mut bare };
+                    let a = hold(&rig, &cam, r, arm.hooks, default_history, FRAMES, None);
+                    let phase = r.steps % phases;
+                    let refr = hold(
+                        &rig,
+                        &cam,
+                        r,
+                        arm.hooks,
+                        REFERENCE_HISTORY,
+                        REFERENCE,
+                        Some((phase, phases)),
+                    );
+                    let res = residual(&a, &refr);
+                    let pop = |k: usize| 100.0 * a.pops[k].0 as f64 / a.pops[k].1.max(1) as f64;
+                    let cell = |c: (u8, f64, usize)| format!("p99 {} mean {:.2} ({} px)", c.0, c.1, c.2);
+                    println!(
+                        "reading: canopy {scene}, {}: floor lit {}, shadowed {}; trunks lit {}, shadowed {}; pop share floor {:.3} % trunks {:.3} % (lamp-lit floor {lamp_pop:.3} %)",
+                        arm.name,
+                        cell(res[0][0]),
+                        cell(res[0][1]),
+                        cell(res[1][0]),
+                        cell(res[1][1]),
+                        pop(0),
+                        pop(1),
+                    );
+                }
+            }
+        }
+    }
+}

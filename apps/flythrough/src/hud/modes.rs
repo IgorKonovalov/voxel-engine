@@ -109,6 +109,9 @@ pub struct Modes {
     /// A sky is set: the line names the clock's time and cycle after the source.
     pub sky: bool,
     pub(crate) clock: crate::daylight::Clock,
+    pub(crate) leaf_shadow: crate::LeafShadow,
+    /// `--dump-black` is on: the line names `dump black` after the sky's words.
+    pub(crate) dump_black: bool,
     pub(crate) banner_at: f64,
     /// The auto exposure `Q` returns to, under its preset's name.
     auto: (Adaptation, vxe_render::AutoExposure),
@@ -278,6 +281,8 @@ impl Modes {
             source: None,
             sky: false,
             clock: crate::daylight::Clock::default(),
+            leaf_shadow: crate::LeafShadow::default(),
+            dump_black: false,
             banner_at: now_ms,
             auto: match lighting.exposure {
                 vxe_render::Exposure::Auto(a) => (Adaptation::Eye, a),
@@ -483,10 +488,12 @@ impl Modes {
         }
     }
 
-    /// The auto symmetric preset `Q` passes through, with the start's metering.
+    /// The auto symmetric preset `Q` passes through, with the start's metering and ceiling.
     fn symmetric(&self) -> vxe_render::AutoExposure {
         vxe_render::AutoExposure {
             metering: self.auto.1.metering,
+            max: self.auto.1.max,
+            sky_anchor_ev: self.auto.1.sky_anchor_ev,
             ..Adaptation::Symmetric.preset()
         }
     }
@@ -619,9 +626,16 @@ impl Modes {
         self.write_exposure_mode(&mut row.mode);
         row.ev = self.exposure_ev();
         row.scene_ev = scene;
-        row.target_ev = match self.lighting.exposure {
-            vxe_render::Exposure::Auto(a) => scene.map(|t| a.exposure(f64::from(t)).log2() as f32),
-            vxe_render::Exposure::Manual(_) => None,
+        let ceiling = self.readout.map(|r| r.ceiling).filter(|&c| c > 0.0);
+        (row.target_ev, row.ceiling) = match self.lighting.exposure {
+            vxe_render::Exposure::Auto(a) => {
+                let c = ceiling.unwrap_or(a.max);
+                (
+                    scene.map(|t| a.exposure_under(f64::from(t), c).log2() as f32),
+                    Some((c.log2(), a.sky_anchor_ev.filter(|_| self.sky))),
+                )
+            }
+            vxe_render::Exposure::Manual(_) => (None, None),
         };
     }
 
@@ -637,11 +651,8 @@ impl Modes {
         );
     }
 
-    /// The modes in words: `lighting half, store read face, weights normal, shadow walk coarse, history edits, lamp on,
-    /// lamp bounce on at 64 rays 1/8, probes 16, filter on, ore pulse off, exposure auto eye +1.53
-    /// EV` (the probe rays per update, the share of probes refreshed a frame, while the lamp's
-    /// bounce is on the voxels between probes, and the exposure in EV, `log2 e`), after
-    /// `source NAME, ` when the modes name a source.
+    /// The modes in words (`lighting half, ..., lamp bounce on at 64 rays 1/8, probes 16, ...,
+    /// exposure auto eye +1.53 EV`), after `source NAME, ` when the modes name a source.
     pub fn line(&self) -> String {
         let mut out = String::new();
         self.write_line(&mut out);
@@ -658,6 +669,34 @@ impl Modes {
         if self.sky {
             self.clock.write_words(out);
             let _ = write!(out, ", sky rays {}, ", l.sky_rays);
+            out.push_str(self.leaf_shadow.words());
+            if l.penumbra != vxe_render::Penumbra::Disc {
+                let _ = write!(out, "penumbra {}, ", l.penumbra.name());
+            }
+            if l.sky_normal != vxe_render::SkyNormal::default() {
+                let _ = write!(out, "sky normal {}, ", l.sky_normal.name());
+            }
+            if l.sky_bounce > 0.0 {
+                let _ = write!(out, "sky bounce {}, ", l.sky_bounce);
+            }
+            if l.key_history != vxe_render::DEFAULT_KEY_HISTORY {
+                let _ = write!(out, "key history {}, ", l.key_history);
+            }
+            if l.column_wait {
+                out.push_str("column wait on, ");
+            }
+            if self.dump_black {
+                out.push_str("dump black, ");
+            }
+            if let vxe_render::Exposure::Auto(a) = l.exposure {
+                match a.sky_anchor_ev {
+                    None => out.push_str("sky anchor none, "),
+                    Some(n) if n != vxe_render::DEFAULT_SKY_ANCHOR_EV => {
+                        let _ = write!(out, "sky anchor {n}, ");
+                    }
+                    Some(_) => {}
+                }
+            }
         }
         let _ = write!(
             out,
@@ -833,5 +872,4 @@ fn wrap_from(out: &mut String, from: usize) {
 }
 
 #[cfg(test)]
-#[path = "modes_tests.rs"]
 mod tests;

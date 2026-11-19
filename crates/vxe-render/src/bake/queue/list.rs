@@ -146,10 +146,13 @@ impl BakeQueue {
             self.prepared_bytes -= m.masks.bytes();
         }
         let partial = self.partial_checked.remove(&c);
+        let provisional = self.provisional_checked.remove(&c);
         if faces.faces() == 0 {
             self.reach.remove(&c);
             self.partial_due.remove(&c);
             self.partial.remove(&c);
+            self.provisional_due.remove(&c);
+            self.provisional.remove(&c);
             self.faceless.insert(c);
             return Ok(0);
         }
@@ -165,11 +168,18 @@ impl BakeQueue {
         };
         self.reach.remove(&c);
         self.partial_due.remove(&c);
+        self.provisional_due.remove(&c);
         if partial {
             self.job_partial.insert(c);
             self.stats.partial_opened += 1;
         } else {
             self.job_partial.remove(&c);
+        }
+        if provisional {
+            self.job_provisional.insert(c);
+            self.stats.provisional_opened += 1;
+        } else {
+            self.job_provisional.remove(&c);
         }
         let coarse = class == 0 && self.coarse_samples > 0 && !self.full_first_at(c, eye);
         let brick_samples = if coarse {

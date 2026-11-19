@@ -107,15 +107,62 @@ fn centre_direct(
     let mut sum = [0.0f64; 3];
     for _ in 0..frames {
         frame.step(device, queue, gpu, camera, &LightParams::headlamp());
-        let d = vxe_render::debug::read_rgba16f(device, queue, frame.direct());
-        let w = frame.direct().width() as usize;
-        let h = frame.direct().height() as usize;
+        let d = vxe_render::debug::read_rgba16f(device, queue, frame.direct_accumulated());
+        let w = frame.direct_accumulated().width() as usize;
+        let h = frame.direct_accumulated().height() as usize;
         let c = d[(h / 2) * w + w / 2];
         for k in 0..3 {
             sum[k] += f64::from(c[k]);
         }
     }
     sum.map(|v| (v / f64::from(frames)) as f32)
+}
+
+/// The light at the centre pixel, mean over `frames` frames: the temporal pass's accumulated
+/// direct part's rgb (the key light's), plus the accumulated stored part's (at a cube face the
+/// baked visibility's sky term, ADR-0070; no emissive light here), plus the visibility pair's
+/// sky term where the sky ray was cast this frame (`pair.x * E_sky(+z) * exposure`: the
+/// filter's input and the composite add it, not the direct part; every caller's centre pixel
+/// is a +z floor face at manual exposure 1).
+fn centre_lit(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    frame: &mut Frame,
+    gpu: &GpuWorld,
+    camera: &Camera,
+    frames: u32,
+) -> [f32; 3] {
+    let mut sum = [0.0f64; 3];
+    for _ in 0..frames {
+        frame.step(device, queue, gpu, camera, &LightParams::headlamp());
+        let w = frame.direct_accumulated().width() as usize;
+        let h = frame.direct_accumulated().height() as usize;
+        let d = vxe_render::debug::read_rgba16f(device, queue, frame.direct_accumulated());
+        let a = vxe_render::debug::read_rgba16f(device, queue, frame.accumulated());
+        let i = (h / 2) * w + w / 2;
+        let pair = pair_sky_term(device, queue, frame, i);
+        for k in 0..3 {
+            sum[k] += f64::from(d[i][k]) + f64::from(a[i][k]) + f64::from(pair[k]);
+        }
+    }
+    sum.map(|v| (v / f64::from(frames)) as f32)
+}
+
+/// The visibility pair's sky term at lighting pixel `i` of the last encoded frame, for a +z
+/// face at manual exposure 1: `pair.x * E_sky(+z)` where the visibility sample says the sky ray
+/// was cast, else 0 (`sky_pair_term` in sky.wgsl).
+fn pair_sky_term(device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame, i: usize) -> [f32; 3] {
+    let vis = vxe_render::debug::read_rgba8(device, queue, frame.visibility_samples());
+    if vis[4 * i + 3] <= 127 || frame.sky().is_none() {
+        return [0.0; 3];
+    }
+    let pair = vxe_render::debug::read_rgba16f(device, queue, frame.visibility_pair())[i];
+    let bytes = vxe_render::debug::read_buffer(device, queue, frame.sky_irradiance(), 0, 96);
+    let e = |k: usize| {
+        let b = &bytes[4 * k..4 * k + 4];
+        f32::from_le_bytes([b[0], b[1], b[2], b[3]])
+    };
+    [e(20), e(21), e(22)].map(|c| pair[0] * c)
 }
 
 fn within(got: [f32; 3], want: [f32; 3], rel: f32) -> bool {
@@ -217,7 +264,7 @@ fn an_absent_chunk_is_sky_to_the_sky_ray() {
     assert!(within(sky_ray, pi, 0.10), "{sky_ray:?}");
 }
 
-/// The floor's centre direct value under `s` at `rays` sky rays, a 16-frame mean, through a
+/// The floor's centre light (`centre_lit`) under `s` at `rays` sky rays, a 16-frame mean, through a
 /// mirror whose window holds the chunk above the floor's whether `world` has it or not.
 fn upper_chunk_read(
     device: &wgpu::Device,
@@ -238,7 +285,238 @@ fn upper_chunk_read(
         ..f.lighting()
     });
     f.set_sky(Some(s));
-    centre_direct(device, queue, &mut f, &gpu, &cam, 16)
+    centre_lit(device, queue, &mut f, &gpu, &cam, 16)
+}
+
+/// Plan 0086 Phase 10 bar 2: a young chunk reads its neighbours' sky. An open floor of 3 x 3
+/// chunks under `Sky::uniform(1.0)`, one sky ray, the key light off, baked at 64 samples a brick
+/// direction with the centre chunk's faces withheld (the bake's face filter), so the centre
+/// holds no block. On the first frame the centre floor's light is the neighbour floor's within
+/// 10 % (both read at the centre pixel of a camera over each), the light pass casts no sky ray
+/// at the centre's pixel (the missing-light chain's sky visibility stands in), and the store's
+/// black count is 0.
+#[test]
+fn a_young_chunk_reads_its_neighbours_sky() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = floor_world([3, 3, 1], |_| false);
+    let mut gpu = mirror(&device, &queue, &world, None);
+    let uniform = Sky {
+        altitude_zero_z: FLOOR as f32,
+        ..Sky::uniform(1.0)
+    };
+    let mut f = frame(&device, SIZE, ShadowWalk::Full);
+    f.set_lighting(Lighting {
+        sky_rays: 1,
+        ..f.lighting()
+    });
+    f.set_light_hooks(vxe_render::LightHooks {
+        key_off: true,
+        ..Default::default()
+    });
+    f.set_sky(Some(uniform));
+    f.set_count_store(true);
+    let settings = vxe_render::BakeSettings {
+        brick_samples: 64,
+        round: 64,
+        filter: Some(std::sync::Arc::new(|v: [i32; 3], _f: u8| {
+            !(v[0].div_euclid(64) == 1 && v[1].div_euclid(64) == 1)
+        })),
+        ..Default::default()
+    };
+    f.bake_until(
+        &device,
+        &queue,
+        &mut gpu,
+        &world,
+        world.extent(),
+        &settings,
+        &mut |_| {},
+    )
+    .expect("the store fits");
+    let mut read = |at: [f32; 2]| {
+        let lit = centre_lit(&device, &queue, &mut f, &gpu, &camera(at), 1);
+        let vis = vxe_render::debug::read_rgba8(&device, &queue, f.visibility_samples());
+        let w = f.visibility_samples().width() as usize;
+        let h = f.visibility_samples().height() as usize;
+        let cast = vis[4 * ((h / 2) * w + w / 2) + 3] > 0;
+        (lit, cast, f.read_store_stats(&device, &queue))
+    };
+    let (young, young_cast, st) = read([96.0, 96.0]);
+    let (old, old_cast, _) = read([32.0, 96.0]);
+    println!(
+        "centre {young:?} (sky ray cast {young_cast}), neighbour {old:?} (cast {old_cast}); store missing {} fallback {} black {}",
+        st.missing, st.fallback, st.still_black
+    );
+    assert!(within(young, old, 0.10), "{young:?} against {old:?}");
+    assert!(!young_cast, "the chain stands in for the sky ray");
+    assert!(st.missing > 0, "the centre's faces have no block");
+    assert_eq!(st.still_black, 0);
+}
+
+/// Plan 0086 Phase 9 bar 4's twin: the floor of chunk (0, 0, 0) under a resident rock roof
+/// (chunks (0, 0, 1) and (1, 0, 1)), the chunk beside the floor's, (1, 0, 0), held by the
+/// window and absent from the world. Under `Sky::uniform(1.0)` with one sky ray and the key
+/// light off, a sky ray into the absent chunk ends on its face below the roof, so it is rock
+/// by the column map (ADR-0070's amendment): the floor reads under 1 % of `pi`. The same rig
+/// with every end counted as sky (`LightHooks::sky_end_is_sky`) is printed. 16-frame means.
+/// Soak: 11.0 s on lavapipe in Plan 0086 Phase 24i's quiet gate.
+#[test]
+#[ignore = "soak"]
+fn an_absent_chunk_below_the_column_top_is_rock_to_the_sky_ray() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let f = |p: [i32; 3]| {
+        if p[2] < FLOOR || p[2] >= 64 {
+            ROCK
+        } else {
+            AIR
+        }
+    };
+    let extent = ChunkExtent::new([0, 0, 0], [2, 1, 2]);
+    let world = World::generate(extent, &FnSource(f), &table());
+    world.store().remove(ChunkCoord([1, 0, 0]));
+    let uniform = Sky {
+        altitude_zero_z: FLOOR as f32,
+        ..Sky::uniform(1.0)
+    };
+    let cam = Camera {
+        position: Vec3::new(32.0, 8.0, FLOOR as f32 + 30.0),
+        ..camera([0.0, 0.0])
+    };
+    let gpu = mirror(&device, &queue, &world, Some(extent));
+    let read = |hooks: vxe_render::LightHooks| {
+        let mut fr = frame(&device, SIZE, ShadowWalk::Full);
+        fr.set_lighting(Lighting {
+            sky_rays: 1,
+            ..fr.lighting()
+        });
+        fr.set_light_hooks(vxe_render::LightHooks {
+            key_off: true,
+            ..hooks
+        });
+        fr.set_sky(Some(uniform));
+        let lit = centre_lit(&device, &queue, &mut fr, &gpu, &cam, 16);
+        let pair = centre_pair(&device, &queue, &fr);
+        println!(
+            "the centre pixel's visibility pair at the last frame: mean {:.4} at age {}",
+            pair[0], pair[3]
+        );
+        lit
+    };
+    let rule = read(Default::default());
+    let as_built = read(vxe_render::LightHooks {
+        sky_end_is_sky: true,
+        ..Default::default()
+    });
+    println!(
+        "under a roof beside an absent chunk: column rule {rule:?}, every end sky {as_built:?}"
+    );
+    let bar = 0.01 * std::f32::consts::PI;
+    assert!(rule.iter().all(|&v| v < bar), "{rule:?} against {bar}");
+}
+
+/// Plan 0086 Phase 9 bar 1: the column map is the top of opaque voxels. A 3 x 3 x 3-chunk
+/// stepped terrain (rock below `h(x, y)`, a 4 x 4-voxel shaft of air through every z at
+/// x, y 70..74), chunk (0, 0, 0) mirrored LOD-only from its mips. Each map texel (a 2 x 2
+/// column) equals the highest rock voxel's z over its columns where that lies in a full chunk,
+/// lies within one voxel above it in the LOD chunk, and is `COLUMN_NONE` over the shaft. A
+/// 2 x 2 x 1 dig of a cell's top lowers its texel at the sync that uploads it, and a voxel
+/// stamped 5 above raises it at that sync.
+#[test]
+fn the_column_map_is_the_top_of_solid() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let h = |x: i32, y: i32| 40 + 8 * (x / 24) + 5 * (y / 20);
+    let shaft = |x: i32, y: i32| (70..74).contains(&x) && (70..74).contains(&y);
+    let f = move |p: [i32; 3]| {
+        if !shaft(p[0], p[1]) && p[2] < h(p[0], p[1]) {
+            ROCK
+        } else {
+            AIR
+        }
+    };
+    let extent = ChunkExtent::new([0, 0, 0], [3, 3, 3]);
+    let world = World::generate(extent, &FnSource(f), &table());
+    let lod = ChunkCoord([0, 0, 0]);
+    let chunk = world.store().remove(lod).expect("generated");
+    world.insert_lod(
+        lod,
+        std::sync::Arc::new(ChunkMips::build(&chunk.read().expect("lock"))),
+    );
+    let mut gpu = mirror(&device, &queue, &world, Some(extent));
+    assert!(gpu.is_lod(lod), "chunk (0, 0, 0) is LOD-only");
+    let side = 3 * vxe_render::COLUMN_CELLS;
+    let read = |gpu: &GpuWorld| vxe_render::debug::read_r32i(&device, &queue, gpu.column_map());
+    let map = read(&gpu);
+    assert_eq!(map.len(), (side * side) as usize);
+    let mut checked = [0u32; 3];
+    for j in 0..side {
+        for i in 0..side {
+            let got = map[(i + side * j) as usize];
+            let cols = [[0, 0], [1, 0], [0, 1], [1, 1]].map(|o| [2 * i + o[0], 2 * j + o[1]]);
+            if cols.iter().all(|c| shaft(c[0], c[1])) {
+                assert_eq!(got, vxe_render::COLUMN_NONE, "the shaft's cell {i} {j}");
+                checked[2] += 1;
+                continue;
+            }
+            let want = cols
+                .iter()
+                .filter(|c| !shaft(c[0], c[1]))
+                .map(|c| h(c[0], c[1]) - 1)
+                .max()
+                .expect("a rock column");
+            if want < 64 && i < 32 && j < 32 {
+                assert!(
+                    (want..=want + 1).contains(&got),
+                    "LOD cell {i} {j}: {got} against {want}"
+                );
+                checked[1] += 1;
+            } else {
+                assert_eq!(got, want, "cell {i} {j}");
+                checked[0] += 1;
+            }
+        }
+    }
+    println!(
+        "cells checked: full {}, LOD {}, air {}",
+        checked[0], checked[1], checked[2]
+    );
+    assert!(checked.iter().all(|&n| n > 0), "{checked:?}");
+    let sync = |gpu: &mut GpuWorld| {
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        gpu.sync(&world, &queue, &mut enc).expect("the mirror fits");
+        queue.submit([enc.finish()]);
+    };
+    // Cell (50, 50): voxels 100..102 in x and y, all at h(100, 100).
+    let (cell, top) = ([50, 50], h(100, 100) - 1);
+    let texel = |m: &[i32]| m[(cell[0] + side * cell[1]) as usize];
+    assert_eq!(texel(&map), top);
+    let centre = |v: [i32; 3]| centre_of_voxel(v);
+    world
+        .apply(&EditOp::box_(
+            centre([100, 100, top]),
+            centre([102, 102, top + 1]),
+            Mode::Carve,
+        ))
+        .expect("the dig");
+    sync(&mut gpu);
+    let dug = texel(&read(&gpu));
+    println!("cell {cell:?}: top {top}, dug {dug}");
+    assert_eq!(dug, top - 1, "the dig lowers the texel at its sync");
+    world
+        .apply(&EditOp::box_(
+            centre([100, 100, top + 5]),
+            centre([101, 101, top + 6]),
+            Mode::Fill(ROCK),
+        ))
+        .expect("the stamp");
+    sync(&mut gpu);
+    let stamped = texel(&read(&gpu));
+    assert_eq!(stamped, top + 5, "the stamp raises the texel at its sync");
 }
 
 /// Bar 6's flags: turning the sun by 10 degrees in one frame raises the sky-change bit on that
@@ -349,7 +627,7 @@ fn roof_slab_row(walk: ShadowWalk) -> Option<SlabRow> {
     let mut xs = vec![0.0f32; w];
     for _ in 0..frames {
         f.step(&device, &queue, &gpu, &cam, &LightParams::headlamp());
-        let d = vxe_render::debug::read_rgba16f(&device, &queue, f.direct());
+        let d = vxe_render::debug::read_rgba16f(&device, &queue, f.direct_accumulated());
         let p = vxe_render::debug::read_rgba32f(&device, &queue, f.hit_positions());
         for x in 0..w {
             sum[x] += f64::from(d[row * w + x][0]);
@@ -524,7 +802,7 @@ fn a_sun_jump_marks_the_reactive_mask_and_a_drift_does_not() {
     f.set_sky(Some(at(60.0)));
     f.step(&device, &queue, &gpu, &cam, &light);
     let jump = mask(&f);
-    let d = vxe_render::debug::read_rgba16f(&device, &queue, f.direct());
+    let d = vxe_render::debug::read_rgba16f(&device, &queue, f.direct_accumulated());
     let lit: Vec<usize> = (0..d.len()).filter(|&i| d[i][0] > 0.5).collect();
     let unmarked = lit.iter().filter(|&&i| jump[i] == 0).count();
     println!(
@@ -689,7 +967,7 @@ fn sky_lit_against_lamp_lit(fsr: bool, exposure: [f32; 2], frames: u32) {
 }
 
 /// Under `Sky::uniform(1.0)`, one sky ray, filter off, exposure 1, the coarse walk: the
-/// 64-frame mean of the direct target at the centre pixel of `cam` over `world`.
+/// 64-frame mean of the light at the centre pixel of `cam` over `world` (`centre_lit`).
 fn under_uniform_sky(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -706,7 +984,20 @@ fn under_uniform_sky(
         altitude_zero_z: FLOOR as f32,
         ..Sky::uniform(1.0)
     }));
-    centre_direct(device, queue, &mut f, &gpu, cam, 64)
+    let lit = centre_lit(device, queue, &mut f, &gpu, cam, 64);
+    println!(
+        "the centre pixel's visibility pair at the last frame: mean {:.4} at age {}",
+        centre_pair(device, queue, &f)[0],
+        centre_pair(device, queue, &f)[3]
+    );
+    lit
+}
+
+/// The visibility pair at the centre lighting pixel of `f`'s last frame.
+fn centre_pair(device: &wgpu::Device, queue: &wgpu::Queue, f: &Frame) -> [f32; 4] {
+    let w = f.visibility_pair().width() as usize;
+    let h = f.visibility_pair().height() as usize;
+    vxe_render::debug::read_rgba16f(device, queue, f.visibility_pair())[(h / 2) * w + w / 2]
 }
 
 /// A camera at `pos` facing +y at `pitch` degrees.
@@ -769,88 +1060,259 @@ fn a_closed_box_takes_no_sky_light() {
     }
 }
 
-mod reading {
-    use super::*;
+// The readings' module, `reading`, kept in its own file for the file-size cap.
+include!("gpu_sun/reading.rs");
+include!("gpu_sun/dig.rs");
+include!("gpu_sun/history.rs");
 
-    /// Bar 3 under the coarse walk, printed (the bar is on the full walk).
-    #[test]
-    #[ignore = "reading"]
-    fn a_roof_slab_casts_a_soft_shadow_under_the_coarse_walk() {
-        if let Some(r) = super::roof_slab_row(ShadowWalk::Coarse) {
-            println!("coarse: {r:?}");
+/// The mean `+z` sky visibility (face 5) of chunk (1, 1, 0)'s records in `block` whose brick
+/// lies under `over`'s footprint (read at the slab's height).
+fn up_visibility_under(block: &[u32], over: impl Fn([i32; 3]) -> bool) -> f32 {
+    let w = vxe_render::internals::BRICK_WORDS;
+    let (mut sum, mut n) = (0.0, 0u32);
+    for slot in 0..512usize {
+        let dir = block[slot];
+        if dir == 0 {
+            continue;
+        }
+        let rec = &block[(dir >> 11) as usize - w..(dir >> 11) as usize];
+        let b = brick_of_slot(slot);
+        let at = [64 + b[0] * 8 + 4, 64 + b[1] * 8 + 4, 201];
+        if over(at)
+            && let Some(v) = vxe_render::internals::record_visibility(rec, 5)
+        {
+            sum += v;
+            n += 1;
         }
     }
+    sum / n.max(1) as f32
+}
 
-    /// Bars 1, 2 and 4 under the default coarse walk, printed.
-    #[test]
-    #[ignore = "reading"]
-    fn the_floor_values_under_the_coarse_walk() {
-        let Some((device, queue)) = device() else {
-            return;
+/// The live queue on `world` under `Sky::uniform(1.0)` with the column wait `wait`, the light
+/// radius 1 chunk, 64 samples a brick direction, no coarse pass, every chunk the world holds
+/// (and every one outside `extent`) resident full and every chunk of the window wanted by the
+/// streamer (`lod_radius` 8 about the
+/// floor's centre): stepped until `until` says so or 600 steps, `between` run after each step.
+fn caught_up_queue(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    world: &World,
+    extent: ChunkExtent,
+    wait: bool,
+    mut between: impl FnMut(usize, &mut GpuWorld, &mut Frame) -> bool,
+) -> (GpuWorld, Frame) {
+    let mut gpu = GpuWorld::with_config(
+        device,
+        MirrorConfig {
+            light_radius: 1,
+            ..MirrorConfig::new(Window::Fixed(extent))
+        },
+    );
+    let mut f = frame(device, SIZE, ShadowWalk::Full);
+    f.set_lighting(Lighting {
+        column_wait: wait,
+        ..f.lighting()
+    });
+    f.set_sky(Some(Sky {
+        altitude_zero_z: FLOOR as f32,
+        ..Sky::uniform(1.0)
+    }));
+    let settings = vxe_render::BakeSettings {
+        brick_samples: 64,
+        round: 64,
+        ..Default::default()
+    };
+    f.start_bake_queue(queue, &gpu, settings, 1.0e9);
+    f.set_bake_coarse(0, 0);
+    let eye = [96.0, 96.0, 32.0];
+    for i in 0..600 {
+        let mut enc = device.create_command_encoder(&Default::default());
+        gpu.sync(world, queue, &mut enc).expect("the mirror fits");
+        queue.submit([enc.finish()]);
+        // Every chunk the world holds is resident full, and one outside the extent too (the
+        // world's edge: nothing to wait for there).
+        let resident = |c: ChunkCoord| world.store().contains(c) || !extent.contains(c);
+        let view = vxe_render::QueueView {
+            eye,
+            forward: [0.0, 1.0, 0.0],
+            resident: Some(&resident),
+            samples: None,
+            interval_s: 1.0 / 60.0,
+            hold: None,
+            half_angle: 1.0,
+            frustum: None,
+            full_radius: Some(8),
+            lod_radius: Some(8),
         };
-        let world = floor_world([2, 2, 1], |_| false);
-        let gpu = mirror(&device, &queue, &world, None);
-        let cam = camera([64.0, 40.0]);
-        for (name, s) in [
-            (
-                "noon",
-                sky(dir(90.0, 0.0), dir(-45.0, 0.0), [[1.0; 3], [0.0; 3]]),
-            ),
-            (
-                "slant",
-                sky(dir(30.0, 90.0), dir(-45.0, 0.0), [[1.0; 3], [0.0; 3]]),
-            ),
-            (
-                "moon",
-                sky(dir(-30.0, 0.0), dir(90.0, 0.0), [[1.0; 3], [1e-3; 3]]),
-            ),
-        ] {
-            let mut f = frame(&device, SIZE, ShadowWalk::Coarse);
-            f.set_sky(Some(s));
-            let got = centre_direct(&device, &queue, &mut f, &gpu, &cam, 16);
-            println!("coarse, {name}: {got:?}");
+        f.bake_queue_step(device, queue, &mut gpu, world, &view)
+            .expect("the queue runs")
+            .expect("the queue's step");
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("device poll");
+        if between(i, &mut gpu, &mut f) {
+            break;
         }
     }
+    (gpu, f)
+}
 
-    /// Plan 0032 Phase 6 Step A: a still camera 40 voxels over a 1024 x 1024 rock floor,
-    /// looking down at 45 degrees, filter on, the default lighting tier, native 320 x 180 and
-    /// FSR 2 at 1.5 to 480 x 270. Under `Sky::uniform(1.0)` at 1, 2 and 4 sky rays, and with
-    /// the headlamp and no sky: after 64 settle frames, the mean and the 99th percentile of
-    /// the per-pixel change of the displayed image (the largest channel, in levels of 255)
-    /// between consecutive frames over 64 frames. The exposure is pinned so the floor's mean
-    /// display level is near 118 (mid-grey, 0.18 linear).
-    #[test]
-    #[ignore = "reading"]
-    fn sky_ray_stillness() {
-        let Some((device, queue)) = device() else {
-            return;
-        };
-        let world = floor_world([16, 16, 1], |_| false);
-        let gpu = mirror(&device, &queue, &world, None);
-        let cam = Camera {
-            position: Vec3::new(512.0, 400.0, FLOOR as f32 + 40.0),
-            yaw: FRAC_PI_2,
-            pitch: -45f32.to_radians(),
-            vfov: 60f32.to_radians(),
-        };
-        let run = |rays, fsr, exposure| {
-            let mut f = still_frame(&device, fsr);
-            still_change(&device, &queue, &gpu, &cam, &mut f, rays, exposure, 64)
-        };
-        for fsr in [false, true] {
-            let name = if fsr { "FSR 2 at 1.5" } else { "native" };
-            for rays in [None, Some(1), Some(2), Some(4)] {
-                // Two passes: the second's exposure scales the first's toward level 118 by the
-                // display's gamma of 2.2.
-                let mut ex = if rays.is_some() { 0.5 } else { 1.0 };
-                let (_, _, level) = run(rays, fsr, ex);
-                ex *= ((118.0 / level.max(1.0)) as f32).powf(2.2);
-                let (mean, p99, level) = run(rays, fsr, ex);
-                let what = rays.map_or("the headlamp, no sky".into(), |n| format!("{n} sky rays"));
-                println!(
-                    "{name}, {what}: exposure {ex:.4}, mean level {level:.1}, change mean {mean:.3}, p99 {p99}"
-                );
+/// Plan 0086 Phase 18 bar 3: a provisional bake is caught up. A floor of 3 x 3 chunks over a row
+/// of rock (chunk z -1) under a rock slab in the top row (chunk row z 3, voxels 200..204 over x
+/// and y 40..150), 3 x 3 x 5 chunks, mirrored
+/// over the whole extent with the light radius 1 chunk (the slab's chunks lie outside the floor
+/// chunk's reach and inside its columns), the slab's chunk (1, 1, 3) held back from the world
+/// and so from the mirror. With the column wait off the floor chunk (1, 1, 0) bakes before the
+/// slab arrives, its block provisional; once the slab's chunk is inserted and mirrored, the
+/// queue re-bakes it once, and its record then equals bit for bit the same world's baked with
+/// the wait on and the slab present from the start. The provisional block's `+z` visibility
+/// under the slab is printed (the leak the catch-up closes).
+#[test]
+fn a_provisional_bake_is_caught_up() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let slab = |p: [i32; 3]| {
+        (200..204).contains(&p[2]) && (40..150).contains(&p[0]) && (40..150).contains(&p[1])
+    };
+    // A chunk row of rock under the floor (z -1), so the floor chunk's reach is resident.
+    let extent = ChunkExtent::new([0, 0, -1], [3, 3, 5]);
+    let world = || {
+        let f = move |p: [i32; 3]| if p[2] < FLOOR || slab(p) { ROCK } else { AIR };
+        World::generate(extent, &FnSource(f), &table())
+    };
+    let full = world();
+    let (floor, high) = (ChunkCoord([1, 1, 0]), ChunkCoord([1, 1, 3]));
+    let (_, want) = caught_up_queue(&device, &queue, &full, extent, true, |_, _, f| {
+        f.store().block_words(floor).is_some()
+            && f.bake_queue().is_some_and(|q| q.tracks(floor).is_empty())
+    });
+    if let Some(q) = want.bake_queue() {
+        let st = q.stats();
+        println!(
+            "the wait on: baked {}, depth {}, jobs {}, waiting reach {}, the floor's tracks {:?}",
+            st.baked,
+            st.depth,
+            st.jobs,
+            st.waiting_reach,
+            q.tracks(floor)
+        );
+    }
+    let want = want.store().block_words(floor).expect("baked").to_vec();
+    let held = world();
+    let slab_chunk = held.store().remove(high).expect("generated");
+    let slab_chunk = slab_chunk.read().expect("lock").clone();
+    let mut provisional = None;
+    let mut arrived = None;
+    let (mut due, mut was_due, mut requeued) = (0u32, false, 0u64);
+    let (_, got) = caught_up_queue(&device, &queue, &held, extent, false, |i, _, f| {
+        let q = f.bake_queue().expect("the queue");
+        let tracks = q.tracks(floor);
+        if arrived.is_none() {
+            if tracks.contains(&"provisional") {
+                provisional = f.store().block_words(floor).map(<[u32]>::to_vec);
+                held.store().insert(high, slab_chunk.clone());
+                arrived = Some(i);
             }
+            return false;
         }
+        let is_due = tracks.contains(&"provisional_due");
+        due += u32::from(is_due && !was_due);
+        was_due = is_due;
+        requeued = q.stats().provisional_requeued;
+        due > 0
+            && !tracks
+                .iter()
+                .any(|t| t.starts_with("provisional") || *t == "job_provisional")
+            && f.store().block_words(floor).is_some()
+    });
+    let arrived = arrived.expect("the floor bakes before the slab arrives");
+    let provisional = provisional.expect("a provisional block");
+    let got = got.store().block_words(floor).expect("baked").to_vec();
+    println!(
+        "the slab arrived at step {arrived}; the floor re-queued {due} times ({requeued} catch-ups over every chunk); the provisional block differs in {} words of {}; mean +z sky visibility under the slab: provisional {:.4}, caught up {:.4}, the wait's {:.4}",
+        provisional
+            .iter()
+            .zip(&want)
+            .filter(|(a, b)| a != b)
+            .count(),
+        want.len(),
+        up_visibility_under(&provisional, slab),
+        up_visibility_under(&got, slab),
+        up_visibility_under(&want, slab),
+    );
+    assert_eq!(due, 1, "one catch-up of the floor");
+    assert_eq!(got, want, "the end state is the wait's");
+}
+
+/// Plan 0086 Phase 19 bar 1 (Phase 6 bar 2): the key light's visibility on the pair's running
+/// mean holds the penumbra still. `reading::penumbra_band_pinned` (the 16 x 16 slab 20 voxels
+/// over the floor, FSR 2 at 1.5 over 128 x 128, each run's exposure pinned so the band's mean
+/// level is near 118): after 64 frames, the p99 frame-to-frame change over the penumbra band's
+/// display pixels under a zenith sun of 3 degrees is at or under 4 levels (ADR-0076's starting
+/// `T_still`, the bar as re-stated 2026-11-18; the reading of record p99 2, mean 0.355), the
+/// headlamp's on the same floor with no sky printed beside it (p99 1, mean 0.076).
+/// Soak: 24.8 s on lavapipe in Plan 0086 Phase 24i's quiet gate.
+#[test]
+#[ignore = "soak"]
+fn the_penumbra_holds_still_on_the_long_history() {
+    let Some((ex_sun, mean_sun, p99_sun, level_sun)) = reading::penumbra_band_pinned(Some(3.0))
+    else {
+        return;
+    };
+    let Some((ex_lamp, mean_lamp, p99_lamp, level_lamp)) = reading::penumbra_band_pinned(None)
+    else {
+        return;
+    };
+    println!(
+        "penumbra band, sun 3 degrees: exposure {ex_sun:.4}, level {level_sun:.1}, change mean {mean_sun:.3}, p99 {p99_sun}; the headlamp: exposure {ex_lamp:.4}, level {level_lamp:.1}, change mean {mean_lamp:.3}, p99 {p99_lamp}"
+    );
+    assert!(
+        p99_sun <= 4.0,
+        "p99 {p99_sun} against T_still 4 (the lamp's {p99_lamp})"
+    );
+}
+
+/// Plan 0086 Phase 19 bar 6: `Frame::reset_history` between two `Frame::step` calls restarts
+/// every pixel. The open floor under the noon sun, 8 frames stepped (every hit pixel's age 7),
+/// then a reset: the next step's moments read age 0 at every pixel, and `history_restarts`
+/// counts the reset; the step after reads age 1.
+#[test]
+fn a_reset_between_steps_restarts_the_history() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = floor_world([2, 2, 1], |_| false);
+    let gpu = mirror(&device, &queue, &world, None);
+    let cam = camera([64.0, 40.0]);
+    let mut f = frame(&device, SIZE, ShadowWalk::Full);
+    f.set_sky(Some(sky(
+        dir(90.0, 0.0),
+        dir(-45.0, 0.0),
+        [[1.0; 3], [0.0; 3]],
+    )));
+    let ages = |f: &Frame| -> Vec<f32> {
+        vxe_render::debug::read_rgba16f(&device, &queue, f.moments())
+            .iter()
+            .map(|m| m[2])
+            .collect()
+    };
+    let light = LightParams::headlamp();
+    for _ in 0..8 {
+        f.step(&device, &queue, &gpu, &cam, &light);
     }
+    let before = ages(&f);
+    let centre = (SIZE[1] as usize / 2) * SIZE[0] as usize + SIZE[0] as usize / 2;
+    println!("centre age before the reset: {}", before[centre]);
+    assert_eq!(before[centre], 7.0, "the history runs before the reset");
+    let restarts = f.history_restarts();
+    f.reset_history();
+    f.step(&device, &queue, &gpu, &cam, &light);
+    let after = ages(&f);
+    let max = after.iter().copied().fold(0.0f32, f32::max);
+    println!("largest age after the reset: {max}");
+    assert!(after.iter().all(|&a| a == 0.0), "largest age {max}");
+    assert_eq!(f.history_restarts(), restarts + 1);
+    f.step(&device, &queue, &gpu, &cam, &light);
+    assert_eq!(ages(&f)[centre], 1.0, "the history runs again");
 }

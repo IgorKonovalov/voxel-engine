@@ -52,6 +52,38 @@
 
 const MAX_STEPS: u32 = 4096u;
 
+// Set around a sky ray's walk (`sky_ray_open`, ADR-0070's amendment of 2026-11-18): `march`
+// stops on entering an absent chunk (one the table holds no record for) as on leaving the
+// window, and a miss records where the ray ended in `march_end`: at its length cap, on that
+// chunk's face, or on the window's face. Clear, an absent chunk is air and `march_end` is not
+// written.
+var<private> sky_rule: bool = false;
+var<private> march_end: vec3<f32>;
+
+// The column map's cell edge in voxels and cells per chunk edge (`gpu_world::COLUMN_*`). Its
+// texel for a column with no opaque voxel is i32's minimum, below every point.
+const COLUMN_CELL: i32 = 2;
+const COLUMN_CELLS: i32 = 32;
+
+// The column map's top at `p`'s voxel column, the column clamped into the window's footprint
+// (a ray that leaves the window's side reads the edge column).
+fn column_top(p: vec3<f32>) -> i32 {
+    let lo = params.window_min.xy * 64;
+    let hi = (params.window_min.xy + params.window_size.xy) * 64 - vec2<i32>(1);
+    let x = clamp(vec2<i32>(floor(p.xy)), lo, hi);
+    let c = x >> vec2<u32>(6u);
+    let w = params.window_size.xy;
+    let tile = ((c % w) + w) % w;
+    let local = (x - c * 64) / COLUMN_CELL;
+    return textureLoad(column_map, tile * COLUMN_CELLS + local, 0).x;
+}
+
+// ADR-0070's amendment: a sky ray that ended without a hit at `p` reached the sky iff `p` lies
+// above the top of opaque voxels in its column. The window's top face is above every top.
+fn above_column(p: vec3<f32>) -> bool {
+    return p.z >= f32(column_top(p) + 1);
+}
+
 // A `march` miss's material when the split walk hands the ray on.
 const SPLIT_HANDOFF: u32 = 0xFFFFFFFFu;
 
@@ -108,6 +140,11 @@ struct Walk {
     saw_translucent: bool,
     // With `split_walk`: `brick` is a field brick (a band brick without BAND_CUBES_BIT).
     brick_field: bool,
+    // With `shadow_styles`: `brick` holds a material whose style word has SHADOW_AS_BRICK.
+    brick_styled: bool,
+    // With `shadow_styles` and `absorb_on`: `brick` holds a material whose style word has
+    // SHADOW_ABSORB.
+    brick_absorb: bool,
 };
 
 var<private> walk: Walk;
@@ -118,6 +155,126 @@ var<private> walk: Walk;
 var<private> split_walk: bool = false;
 
 var<private> split_entered: bool;
+
+// Set by `shadowed_styled` around its walk while some material's style word is set
+// (LIGHTING_SHADOW_STYLES): a brick holding a material with SHADOW_AS_BRICK is solid from where
+// the ray enters it, except the brick `styled_from` (the ray's origin's, world bricks of 8
+// voxels), which the ray leaves rather than enters. Clear for every other walk.
+var<private> shadow_styles: bool = false;
+
+var<private> styled_from: vec3<i32>;
+
+// Set around a key or sky ray lifted off a far hit (sky_light.wgsl's `ray_lift`): `march` steps
+// out of the voxel its origin lies in when that voxel is solid, rather than hitting it, so a
+// stair smaller than a pixel casts no shadow on its own tread.
+var<private> skip_origin_cell: bool = false;
+
+// Set around the key light's centre ray under the approach penumbra (sky_light.wgsl's
+// `key_sample`, LIGHTING_PENUMBRA_APPROACH): in each empty cell of edge at most APPROACH_CELL
+// (a brick's, so the empty brick beside an occupied one is probed), at points about
+// APPROACH_REACH apart along the ray past `t` APPROACH_T0 (at most four a cell), `march`
+// probes the four voxels APPROACH_REACH across `d`'s dominant axis on the coarse walk and
+// keeps in `approach_min` the smallest ratio of the distance from the point to a solid
+// probe's 2^3 block to `t approach_tan`. Clear for every other walk.
+var<private> approach_on: bool = false;
+
+var<private> approach_tan: f32;
+
+var<private> approach_min: f32;
+
+// Set around a key or sky ray while some material's style word is set (sky_light.wgsl's
+// `sky_shadowed` and `sky_ray_blocked`, the bake's sky rays): in a brick holding a material with
+// SHADOW_ABSORB, `march` steps through a solid voxel of such a material rather than hitting it,
+// adding its sigma times the ray's length through the voxel's cell to `absorb_tau`; the ray's
+// transmittance is `exp(-absorb_tau)`. Past ABSORB_TAU_MAX the ray counts as blocked. The coarse
+// walk is off inside such a brick (its solid 2^3 blocks carry no material). Clear for every
+// other walk.
+var<private> absorb_on: bool = false;
+
+var<private> absorb_tau: f32;
+
+// The optical depth at which an absorbing ray stops as blocked: a transmittance of 3.4e-4.
+const ABSORB_TAU_MAX: f32 = 8.0;
+
+const APPROACH_CELL: i32 = 8;
+const APPROACH_T0: f32 = 4.0;
+const APPROACH_REACH: i32 = 2;
+
+// `march`'s approach probes along the ray `o + d t` over the empty cell it crosses from `t0` to
+// `t1` (see `approach_on`).
+fn approach_cell(o: vec3<f32>, d: vec3<f32>, t0: f32, t1: f32) {
+    let ta = max(t0, APPROACH_T0);
+    if (t1 <= ta) {
+        return;
+    }
+    let n = clamp(ceil((t1 - ta) / f32(APPROACH_REACH)), 1.0, 4.0);
+    for (var j = 0.0; j < n; j += 1.0) {
+        let t = ta + (j + 0.5) * (t1 - ta) / n;
+        let q = o + d * t;
+        approach_probe(vec3<i32>(floor(q)), q, t, d);
+    }
+}
+
+// The approach probes at voxel `v` holding the ray's point `q` at `t`, `d` the ray's direction.
+fn approach_probe(v: vec3<i32>, q: vec3<f32>, t: f32, d: vec3<f32>) {
+    let a = abs(d);
+    let k = select(select(2, 1, a.y >= a.z), 0, a.x >= a.y && a.x >= a.z);
+    let b = (k + 1) % 3;
+    let c = (k + 2) % 3;
+    // Whole-vector selects, not `eb[b] = ...`: FXC rejects a store to a runtime-chosen
+    // component.
+    let eb = select(vec3<i32>(0), vec3<i32>(APPROACH_REACH), vec3<i32>(0, 1, 2) == vec3<i32>(b));
+    let ec = select(vec3<i32>(0), vec3<i32>(APPROACH_REACH), vec3<i32>(0, 1, 2) == vec3<i32>(c));
+    var probes = array<vec3<i32>, 4>(v + eb, v - eb, v + ec, v - ec);
+    for (var i = 0; i < 4; i++) {
+        let p = probes[i];
+        if (lookup_walk(p, true).size != 0) {
+            continue;
+        }
+        let lo = vec3<f32>(p & vec3<i32>(-2));
+        let gap = max(lo - q, vec3<f32>(0.0)) + max(q - (lo + 2.0), vec3<f32>(0.0));
+        approach_min = min(approach_min, length(gap) / (t * approach_tan));
+    }
+}
+
+// The material style word's bit (`frame::SHADOW_AS_BRICK`): a shadow ray stops at a brick
+// holding the material.
+const STYLE_SHADOW_AS_BRICK: u32 = 1u;
+
+// The material style word's bit (`frame::SHADOW_ABSORB`): a key or sky ray passes the
+// material's voxels, attenuated by its sigma (bits STYLE_SIGMA_SHIFT on, thousandths a voxel).
+const STYLE_ABSORB: u32 = 2u;
+const STYLE_SIGMA_SHIFT: u32 = 8u;
+
+// Material `m`'s style word: the third block of the emission-scale buffer, an integer as f32.
+fn material_style(m: u32) -> u32 {
+    return u32(emission_scale[2u * EMISSION_ROWS + m]);
+}
+
+// Whether the brick with record entry `entry` (not 0) holds a material whose style has bit
+// `bit`: a uniform brick's material, or any id of a planar Full brick's palette (its
+// 2^planes entries in the header); a Wide brick (no palette) never.
+fn brick_styled(entry: u32, bit: u32) -> bool {
+    if ((entry & FULL_BIT) == 0u) {
+        return (material_style(entry & MATERIAL_MASK) & bit) != 0u;
+    }
+    let cls = (entry >> CLASS_SHIFT) & 7u;
+    if (cls == CLASS_WIDE) {
+        return false;
+    }
+    let unit = entry & UNIT_MASK;
+    let n = 1u << class_planes(cls);
+    for (var j = 0u; j < (n + 1u) / 2u; j++) {
+        let pair = pool_word(unit, HEADER_WORD + j);
+        let a = pair & 0xFFFFu;
+        let b = pair >> 16u;
+        if ((a != 0u && (material_style(a) & bit) != 0u)
+            || (2u * j + 1u < n && b != 0u && (material_style(b) & bit) != 0u)) {
+            return true;
+        }
+    }
+    return false;
+}
 
 // The stretch of the ray parameter over which `march` takes the coarse shadow walk's cells
 // (`lookup_walk`); empty (BIG, -BIG) for the full walk. The light pass sets it around a
@@ -370,6 +527,10 @@ fn descend(v: vec3<i32>) -> Descent {
             record_word(walk.base + ENTRY_WORD + walk.first + u32(b.x + e * (b.y + e * b.z)));
         walk.saw_translucent = walk.saw_translucent || (walk.brick_entry & TRANSLUCENT_BIT) != 0u;
         walk.brick_field = false;
+        walk.brick_styled = shadow_styles && walk.brick_entry != 0u
+            && brick_styled(walk.brick_entry, STYLE_SHADOW_AS_BRICK);
+        walk.brick_absorb = shadow_styles && absorb_on && walk.brick_entry != 0u
+            && brick_styled(walk.brick_entry, STYLE_ABSORB);
         if (split_walk && level == 0u && (walk.brick_entry & FULL_BIT) != 0u) {
             let h = pool_word(walk.brick_entry & UNIT_MASK, HEADER_WORD + HEADER_BAND_WORD);
             walk.brick_field = (h & (HEADER_BAND_BIT | BAND_CUBES_BIT)) == HEADER_BAND_BIT;
@@ -448,6 +609,9 @@ fn lookup_walk(v: vec3<i32>, coarse: bool) -> Cell {
     let skips = (params.flags & FLAG_SKIPS) != 0u;
     let entry = dsc.entry;
     let cell = dsc.cell;
+    if (shadow_styles && walk.brick_styled && any((v >> vec3<u32>(3u)) != styled_from)) {
+        return Cell(0, 0u, ABSENT, 0u, cell, false);
+    }
     if ((entry & FULL_BIT) == 0u) {
         let brick = select(cell, 8 * cell, skips);
         if ((entry & TRANSLUCENT_BIT) != 0u) {
@@ -459,7 +623,7 @@ fn lookup_walk(v: vec3<i32>, coarse: bool) -> Cell {
     let masked = skips && (params.flags & FLAG_MASKS) != 0u;
     if (masked) {
         let size = mask_skip(unit, dsc.l, dsc.i);
-        if (coarse && size < 2) {
+        if (coarse && size < 2 && !walk.brick_absorb) {
             return Cell(0, 0u, ABSENT, 0u, cell, false);
         }
         if (size != 0) {
@@ -648,6 +812,7 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
     let inv = select(vec3<f32>(BIG), 1.0 / d, d != vec3<f32>(0.0));
     let entry = enter_window(o, d, inv);
     if (!entry.found) {
+        march_end = o;
         return miss;
     }
 
@@ -662,12 +827,19 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
             walk_steps += 1u;
         }
         if (any(v < bmin_i) || any(v >= bmax_i)) {
+            march_end = o + d * t;
             return miss;
         }
         if (t > t_limit) {
+            march_end = o + d * t_limit;
             return miss;
         }
         let c = lookup_walk(v, t >= coarse_span.x && t <= coarse_span.y);
+        if (sky_rule && c.size != 0 && !c.air) {
+            // An absent chunk (an empty cell that is not a resident chunk's).
+            march_end = o + d * t;
+            return miss;
+        }
         if (split_entered) {
             // The split walk's hand-off: the ray enters a field brick at `v`.
             return Hit(false, v, axis, t, SPLIT_HANDOFF);
@@ -680,6 +852,20 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
                 passing = false;
             }
         }
+        if (size == 0 && absorb_on && walk.brick_absorb) {
+            let style = material_style(cell_material(c));
+            if ((style & STYLE_ABSORB) != 0u) {
+                size = max(c.through, 1);
+                let x = exit_cell(o, d, inv, v, size).t - t;
+                absorb_tau += 0.001 * f32(style >> STYLE_SIGMA_SHIFT) * x;
+                if (absorb_tau > ABSORB_TAU_MAX) {
+                    return Hit(true, v, axis, t, 0u);
+                }
+            }
+        }
+        if (size == 0 && skip_origin_cell && step == 0u) {
+            size = 1;
+        }
         if (size == 0) {
             var m = 0u;
             if (march_material) {
@@ -688,10 +874,14 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
             return Hit(true, v, axis, t, m);
         }
         let exit = exit_cell(o, d, inv, v, size);
+        if (approach_on && size <= APPROACH_CELL) {
+            approach_cell(o, d, t, exit.t);
+        }
         t = exit.t;
         v = exit.v;
         axis = exit.axis;
     }
+    march_end = o + d * t;
     return miss;
 }
 

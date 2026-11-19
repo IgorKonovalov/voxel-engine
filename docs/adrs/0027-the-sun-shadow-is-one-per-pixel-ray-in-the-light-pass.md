@@ -184,3 +184,13 @@ acceptance. The body is kept as written; this is what the owner picked.
 - **The key light may follow onto that history** (Plan 0086's reading decides); the direct
   target keeps the lamp and the list on the short blend. The clause "no new frame target and
   no second history" no longer holds for the sky and, if taken, the key light.
+
+## Outcome (2026-11-19, Plan 0086's close)
+
+The key light's visibility rides the visibility pair's `g` on a running mean of its own
+(`key_history`, 256 frames by default; Plan 0086 Phases 19 and 24b), reprojected and reset
+with the direct accumulation and on the sky-change bit, so the "may follow" clause of the
+Outcome above is taken: Alternative F for the key light's visibility as well, not for a
+radiance. The disc-sampled shadow ray is still one a pixel a frame, and the direct target keeps
+the lamp and the list on the short blend. The clause "no new frame target and no second
+history" holds for neither the sky nor the key light.

@@ -610,6 +610,14 @@ impl Run {
         } else {
             None
         });
+        // The pre-roll's bakes read the sky and the canopy's style as the frame loop sets them,
+        // so a pre-rolled block holds its sky visibility and a column's finality marks it.
+        super::frame::set_sky_and_styles(
+            &self.modes,
+            self.args.mode.is_outdoor(),
+            gpu,
+            &mut gfx.frame,
+        );
         let frame = &mut gfx.frame;
         let settings = vxe_render::queue_settings();
         frame.start_bake_queue(
@@ -708,6 +716,10 @@ impl Run {
             half_angle,
             frustum: Some(frustum),
             full_radius: stream.map(|s| s.rule.r_full),
+            lod_radius: stream.map(|s| {
+                let r = s.streamer.config().residency;
+                r.r_lod.max(r.r_full)
+            }),
         };
         let state = p.pre.step(
             frame,
@@ -798,6 +810,20 @@ impl Run {
             "pre-roll: {} steps, {} chunks baked, {} samples, {:.0} ms of steps, the longest {:.1} ms",
             s.steps, s.baked, s.samples, p.work_ms, p.longest_ms
         );
+        if let Some(q) = frame.bake_queue() {
+            let qs = q.stats();
+            println!(
+                "pre-roll: column wait {}, {} jobs opened provisional, {} catch-ups queued, {} chunks provisional",
+                if frame.lighting().column_wait {
+                    "on"
+                } else {
+                    "off"
+                },
+                qs.provisional_opened,
+                qs.provisional_requeued,
+                qs.provisional
+            );
+        }
         // The pre-roll's near chunks take the full count under `--near`; the live queue's
         // full-first radius starts here.
         frame.set_bake_full_first(self.args.full_first());

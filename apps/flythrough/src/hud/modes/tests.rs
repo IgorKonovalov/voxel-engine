@@ -1,4 +1,4 @@
-//! `Modes`' unit tests: the banner, the rows and the toggles' words.
+//! The modes' tests: the banner's and the HUD's words for each mode and key.
 
 use super::*;
 use crate::toggles::Press;
@@ -285,6 +285,7 @@ fn the_banner_names_each_change_and_fades_after_three_seconds() {
         metered_log2: -6.0,
         frame: 9,
         held: false,
+        ceiling: 16.0,
     }));
     assert!(
         q.banner(0.0)
@@ -307,7 +308,7 @@ fn the_banner_names_each_change_and_fades_after_three_seconds() {
     }
     assert_eq!(
         q.exposure_row().to_string(),
-        "exposure auto eye +3.53 EV  scene -6.0 EV  settles +3.53 EV"
+        "exposure auto eye +3.53 EV  scene -6.0 EV  settles +3.53 EV  ceiling +4.00 EV"
     );
     m.press(ModeKey::Lamp, changed + 10_000.0);
     let again = m
@@ -396,4 +397,59 @@ fn the_banner_names_the_view() {
         m.banner(9000.0).as_deref(),
         Some(format!("look field, far normal off\n{lighting}").as_str())
     );
+}
+
+/// The sky anchor: with a sky set the banner names `sky anchor N` for an `N` other than the
+/// default 4 (and nothing for 4) and the exposure row the ceiling the read-back carries with
+/// its `N`; `Q`'s symmetric preset keeps the anchor; with
+/// no read-back the row names the model's `max`.
+#[test]
+fn the_banner_and_row_name_the_sky_anchor() {
+    let auto = vxe_render::AutoExposure {
+        max: 4.0,
+        sky_anchor_ev: Some(4.0),
+        ..vxe_render::AutoExposure::eye()
+    };
+    let mut m = Modes::new(
+        vxe_render::Lighting {
+            exposure: vxe_render::Exposure::Auto(auto),
+            ..vxe_render::Lighting::default()
+        },
+        vxe_render::LightingResolution::default(),
+        0.0,
+    );
+    m.set_auto(Adaptation::Eye, auto);
+    m.sky = true;
+    assert!(!m.line().contains("sky anchor"), "{}", m.line());
+    let mut two = m.clone();
+    two.set_auto(
+        Adaptation::Eye,
+        vxe_render::AutoExposure {
+            sky_anchor_ev: Some(2.0),
+            ..auto
+        },
+    );
+    assert!(two.line().contains("sky anchor 2, "), "{}", two.line());
+    assert_eq!(m.exposure_row().ceiling, Some((2.0, Some(4.0))));
+    m.set_readout(Some(vxe_render::ExposureReadout {
+        exposure: 0.01,
+        adapted_log2: 0.0,
+        metered_log2: 0.0,
+        frame: 3,
+        held: false,
+        ceiling: 0.0625,
+    }));
+    let row = m.exposure_row();
+    assert_eq!(row.ceiling, Some((-4.0, Some(4.0))));
+    assert_eq!(
+        row.to_string(),
+        "exposure auto eye -6.64 EV  scene +0.0 EV  settles -4.00 EV  ceiling -4.00 EV (anchor 4)"
+    );
+    m.press(ModeKey::Exposure, 0.0);
+    let vxe_render::Exposure::Auto(sym) = m.lighting.exposure else {
+        panic!("Q from auto eye is auto symmetric");
+    };
+    assert_eq!((sym.sky_anchor_ev, sym.max), (Some(4.0), 4.0));
+    m.sky = false;
+    assert!(!m.line().contains("sky anchor"));
 }

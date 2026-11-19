@@ -490,7 +490,7 @@ impl JobLoop {
             settings.seed,
             ((run.gpu.light_radius() * 64) as f32).to_bits(),
             u32::from(settings.clamp),
-            0,
+            run.sky,
             0,
             0,
             0,
@@ -665,6 +665,7 @@ impl JobLoop {
                     report.rays += u64::from(words[15]);
                     report.ray_len += f64::from(f32::from_bits(words[16]));
                     report.samples += u64::from(samples);
+                    report.sky_rays += u64::from(samples.min(s.sky_n.saturating_sub(words[4])));
                     s.add(words, samples);
                     if settings.snapshots.contains(&s.n) {
                         let (a, b) = (s.mean(s.sum), s.mean(s.clamped));
@@ -875,6 +876,12 @@ impl JobCtx<'_, '_> {
                     material: 0,
                     snapshots: Vec::new(),
                     done: !wanted,
+                    sky_n: if self.run.sky & BAKE_SKY_ON != 0 {
+                        SKY_BAKE_RAYS.div_ceil(drawn[d].max(1)).min(n)
+                    } else {
+                        0
+                    },
+                    sky_open: 0,
                 });
             }
         }
@@ -928,11 +935,9 @@ impl JobCtx<'_, '_> {
         for (slot, keys) in &job.faces.bricks {
             let states = &job.states[at..at + keys.len()];
             at += keys.len();
-            let record = job
-                .kept_bricks
-                .get(slot)
-                .cloned()
-                .unwrap_or_else(|| brick_record(states, clamp, cell));
+            let record = job.kept_bricks.get(slot).cloned().unwrap_or_else(|| {
+                brick_record(states, clamp, cell, self.run.sky & BAKE_SKY_ON != 0)
+            });
             block.extend(record);
         }
         debug_assert_eq!(block.len() as u64, words);

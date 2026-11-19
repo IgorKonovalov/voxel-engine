@@ -25,6 +25,7 @@ mod dispatch;
 mod encode;
 mod lights;
 mod marcher;
+mod output_binds;
 mod pipelines;
 mod probe_channel;
 mod readback_ring;
@@ -210,6 +211,17 @@ impl Frame {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// `Params.history` (bit 0 the lighting history, bit 1 the upscaler's) and `Params.lighting`
+    /// as the last encode wrote them to the GPU: a reading of which frame-wide flags a frame
+    /// raised.
+    pub fn last_encoded_flags(&self) -> (u32, u32) {
+        let [h, l] = &self.state.last_flags;
+        (
+            h.load(std::sync::atomic::Ordering::Relaxed),
+            l.load(std::sync::atomic::Ordering::Relaxed),
+        )
+    }
+
     /// The size the hit pass and the lighting passes render at.
     pub fn internal_size(&self) -> [u32; 2] {
         [self.targets.width, self.targets.height]
@@ -280,7 +292,9 @@ impl Frame {
     /// Drops all history: the next encoded frame starts every pixel afresh.
     pub fn reset_history(&mut self) {
         self.restarts += 1;
-        self.history().valid = false;
+        let h = self.history();
+        h.valid = false;
+        h.encoded = false;
     }
 
     /// The restarts of the temporal history so far: each [`Frame::reset_history`] (a size, an
@@ -313,6 +327,33 @@ impl Frame {
     /// (an authoritative change is a `Replace` op).
     pub fn set_emission_scale(&mut self, queue: &wgpu::Queue, material: u16, scale: f32) {
         self.set_emission_scales(queue, material, scale, scale);
+    }
+
+    /// The render-side style word of each material id (`styles[m]` for material `m`, 0 for the
+    /// ids past its end; bits: [`SHADOW_AS_BRICK`], [`SHADOW_ABSORB`] with its sigma), from the
+    /// next frame on: how the renderer treats the material, leaving the world untouched. Writes
+    /// only when the words change.
+    pub fn set_material_styles(&mut self, queue: &wgpu::Queue, styles: &[u32]) {
+        let len = styles.iter().rposition(|&w| w != 0).map_or(0, |i| i + 1);
+        let styles = &styles[..len.min(EMISSION_ROWS)];
+        if styles == self.state.styles.as_slice() {
+            return;
+        }
+        let rows = styles.len().max(self.state.styles.len());
+        let words: Vec<f32> = (0..rows)
+            .map(|i| styles.get(i).map_or(0.0, |&w| w as f32))
+            .collect();
+        queue.write_buffer(
+            &self.state.emission_scale,
+            (2 * EMISSION_ROWS * 4) as u64,
+            bytemuck::cast_slice(&words),
+        );
+        self.state.styles = styles.to_vec();
+    }
+
+    /// The style words [`Frame::set_material_styles`] last set, trailing zeros dropped.
+    pub fn material_styles(&self) -> &[u32] {
+        &self.state.styles
     }
 
     /// Scales material `material`'s emission by `pixels` in the light the frame's pixels
@@ -502,6 +543,18 @@ impl Frame {
     /// The temporal pass's accumulated direct part (rgba16float: as [`Frame::direct`]).
     pub fn direct_accumulated(&self) -> &wgpu::Texture {
         &self.targets.direct_accum[self.cur]
+    }
+
+    /// The light pass's visibility samples (rgba8unorm, ADR-0070): the sky rays' share that
+    /// reached the sky in r, and 1 in a where the sky rays were cast this frame, else 0.
+    pub fn visibility_samples(&self) -> &wgpu::Texture {
+        &self.targets.vis
+    }
+
+    /// The temporal pass's visibility pair (rgba16float, ADR-0070): the sky visibility's
+    /// running mean in r, the key light's in g (0), the sky's short mean in b, its age in a.
+    pub fn visibility_pair(&self) -> &wgpu::Texture {
+        &self.targets.pair[self.cur]
     }
 
     /// The filter's output, the irradiance the composite shades with when the filter runs

@@ -279,6 +279,10 @@ impl Run {
             half_angle,
             frustum: Some(frustum),
             full_radius: stream.map(|s| s.rule.r_full),
+            lod_radius: stream.map(|s| {
+                let r = s.streamer.config().residency;
+                r.r_lod.max(r.r_full)
+            }),
         };
         let dug = gfx.frame.bake_queue().is_some_and(|q| !q.digs_settled());
         let new_box = gfx.frame.bake_queue().is_some_and(|q| q.boxes_waiting());
@@ -449,7 +453,7 @@ impl Run {
             let max = sl.last().copied().unwrap_or(0.0);
             let mut cpu = std::mem::take(&mut self.queue.step_cpu);
             println!(
-                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample, fading {}, coarse {} chunks, {}, eye {:.0} {:.0} {:.0}, step CPU p50 {:.3} max {:.3} ms",
+                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample, fading {}, coarse {} chunks, {}, eye {:.0} {:.0} {:.0}, step CPU p50 {:.3} max {:.3} ms, provisional {} (opened {}, catch-ups {})",
                 t / 1e3,
                 self.frame,
                 st.depth,
@@ -473,6 +477,9 @@ impl Run {
                 self.fly.camera.position.z,
                 percentile(&mut cpu, 50.0),
                 percentile(&mut cpu, 100.0),
+                st.provisional,
+                st.provisional_opened,
+                st.provisional_requeued,
             );
             let needs = gfx
                 .frame
@@ -520,6 +527,9 @@ impl Run {
             self.queue.line_baked = st.baked;
             self.queue.line_samples = st.total_samples;
             self.queue.line_prepared = st.prepared;
+            if self.args.outdoor.dump_black && store_stats.still_black > 0 {
+                self.dump_black(gpu, store_stats.still_black);
+            }
         }
     }
 

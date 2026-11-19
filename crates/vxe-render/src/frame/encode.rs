@@ -1,15 +1,17 @@
 //! The frame's encode: its uniforms, its bind groups and the passes it records.
 
+use super::output_binds::OutputBinds;
 use super::*;
 
 /// Passes of a frame in encode order, as [`Frame::encode`] times them: pass `i` writes
 /// timestamps `2 i` and `2 i + 1` of the timer it is given.
 /// The nine before the last are FSR 2's ([`crate::fsr2::FSR2_PASSES`]); in FSR mode `upscale`
 /// and `sharpen` are empty, and otherwise FSR's are. `exposure` runs last, after either.
-pub const FRAME_PASSES: [&str; 23] = [
+pub const FRAME_PASSES: [&str; 24] = [
     "sky transmittance",
     "sky multiscatter",
     "sky view",
+    "sky irradiance",
     "hit",
     "gradient",
     "light",
@@ -72,15 +74,6 @@ struct Binds<'a> {
     variance_bind: wgpu::BindGroup,
     atrous_binds: Vec<wgpu::BindGroup>,
     out: OutputBinds<'a>,
-}
-
-/// The composite's pipeline and the output passes' bind groups.
-struct OutputBinds<'a> {
-    composite: &'a wgpu::ComputePipeline,
-    composite_bind: wgpu::BindGroup,
-    gradient_bind: wgpu::BindGroup,
-    upscale_bind: Option<wgpu::BindGroup>,
-    sharpen_bind: Option<wgpu::BindGroup>,
 }
 
 /// The chunk (64 voxels to an edge) holding `view`'s origin, the LOD walk's reference for
@@ -203,6 +196,7 @@ impl Frame {
             window_min: e.min.0,
             face_mix: self.state.look.tuning.face_mix,
             far_normal: self.state.look.far_normal,
+            sky_bounce: self.state.lighting.sky_bounce.clamp(0.0, 1.0),
             window_size: e.size(),
             lamp: Light::headlamp(camera, light),
             lamp_pose: [light.offset_right, light.offset_down, light.turn],
@@ -224,6 +218,12 @@ impl Frame {
                 [self.targets.width, self.targets.height]
             },
             lighting: self.state.lighting.flags()
+                | self.state.hooks.bits()
+                | if self.state.styles.is_empty() {
+                    0
+                } else {
+                    LIGHTING_SHADOW_STYLES
+                }
                 | if self
                     .state
                     .emission_changed_at
@@ -281,6 +281,14 @@ impl Frame {
     ) {
         self.binds.tick();
         let uni = self.write_uniforms(queue, world, params, keep);
+        for (slot, v) in self
+            .state
+            .last_flags
+            .iter()
+            .zip([uni.p.history, uni.p.lighting])
+        {
+            slot.store(v, std::sync::atomic::Ordering::Relaxed);
+        }
         let binds = self.bind_groups(device, encoder, world);
         self.record(device, queue, encoder, &uni, &binds, timer);
     }
@@ -520,6 +528,8 @@ impl Frame {
                 Res::Tex(t.lit_info(c)),
                 Res::Tex(&t.irradiance),
                 Res::Tex(&t.direct),
+                Res::Buf(self.baked.store.pool()),
+                Res::Tex(&t.vis),
             ],
         );
         let temporal_bind = self.binds.io(
@@ -542,6 +552,10 @@ impl Frame {
                 Res::Tex(&t.direct),
                 Res::Tex(&t.direct_accum[q]),
                 Res::Tex(&t.direct_accum[c]),
+                Res::Buf(&self.sky.irradiance),
+                Res::Tex(&t.vis),
+                Res::Tex(&t.pair[q]),
+                Res::Tex(&t.pair[c]),
             ],
         );
         // The filter runs in the shaded and cracks views unless switched off; the variance pass
@@ -562,139 +576,6 @@ impl Frame {
             variance_bind,
             atrous_binds,
             out,
-        }
-    }
-
-    /// The filter's bind groups: whether it runs, the variance pass's and each a-trous
-    /// iteration's.
-    fn filter_binds(&self, device: &wgpu::Device) -> (bool, wgpu::BindGroup, Vec<wgpu::BindGroup>) {
-        let t = &self.targets;
-        let c = self.cur;
-        let filtering = self.state.lighting.filter && self.state.look.view.shades();
-        let variance_bind = self.binds.io_at(
-            device,
-            self.pipes.layout(P_VARIANCE),
-            &[0, 1, 2, 3, 4, 9],
-            &[
-                Res::Tex(t.lit_pos(c)),
-                Res::Tex(t.lit_info(c)),
-                Res::Tex(&t.accum[c]),
-                Res::Tex(&t.moments[c]),
-                Res::Tex(&t.filter[0]),
-                Res::Tex(&t.direct_accum[c]),
-            ],
-        );
-        let n = self.state.lighting.atrous_count();
-        let atrous_binds: Vec<wgpu::BindGroup> = (0..n)
-            .map(|i| {
-                self.binds.io_at(
-                    device,
-                    self.pipes.layout(P_ATROUS),
-                    &[0, 1, 2, 5, 6, 7, 8],
-                    &[
-                        Res::Tex(t.lit_pos(c)),
-                        Res::Tex(t.lit_info(c)),
-                        Res::Tex(&t.filter[i % 2]),
-                        Res::Tex(&t.filter[(i + 1) % 2]),
-                        Res::Buf(&self.state.atrous_steps[i][usize::from(i + 1 == n)]),
-                        Res::Tex(&t.accum[c]),
-                        Res::Tex(&t.moments[c]),
-                    ],
-                )
-            })
-            .collect();
-        (filtering, variance_bind, atrous_binds)
-    }
-
-    /// The bind groups of the composite (and its pipeline, FSR 2's variant in FSR mode), the
-    /// gradient, and the engine's own upscale and sharpen passes.
-    fn output_binds(&self, device: &wgpu::Device, filtering: bool) -> OutputBinds<'_> {
-        let t = &self.targets;
-        let (c, q) = (self.cur, self.cur ^ 1);
-        let lit = if filtering {
-            &t.filter[self.state.lighting.atrous_count() % 2]
-        } else {
-            &t.accum[c]
-        };
-        // In FSR mode the composite writes FSR's colour input at the internal size.
-        let composite_out = self.up.fsr.as_ref().map_or(&t.output, Fsr2::colour);
-        // FSR 2's composite stores linear radiance (`composite_hdr`).
-        let (composite_layout, composite) = self
-            .up
-            .composite_hdr
-            .as_ref()
-            .filter(|_| self.up.fsr.is_some())
-            .map_or(
-                (
-                    self.pipes.layout(P_COMPOSITE),
-                    self.pipes.pipeline(device, P_COMPOSITE),
-                ),
-                |(l, p)| (l, p),
-            );
-        let composite_bind = self.binds.io(
-            device,
-            composite_layout,
-            &[
-                Res::Tex(&t.hit_pos[c]),
-                Res::Tex(&t.hit_info[c]),
-                Res::Tex(&t.layer),
-                Res::Tex(lit),
-                Res::Tex(composite_out),
-                Res::Tex(t.lit_pos(c)),
-                Res::Tex(t.lit_info(c)),
-                Res::Tex(&t.indirect),
-                Res::Buf(&t.tiles),
-                Res::Tex(&t.transmit),
-                Res::Tex(&t.direct_accum[c]),
-                Res::Buf(self.entities.marks_buffer()),
-            ],
-        );
-        let gradient_bind = self.binds.io(
-            device,
-            self.pipes.layout(P_GRADIENT),
-            &[
-                Res::Tex(t.lit_pos(q)),
-                Res::Tex(t.lit_info(q)),
-                Res::Tex(&t.direct),
-                Res::Tex(&t.strata),
-            ],
-        );
-        let upscale_bind = t.history.as_ref().map(|hist| {
-            self.binds.io(
-                device,
-                self.pipes.layout(P_UPSCALE),
-                &[
-                    Res::Tex(&t.hit_pos[c]),
-                    Res::Tex(&t.hit_info[c]),
-                    Res::Tex(&t.output),
-                    Res::Tex(&t.hit_pos[q]),
-                    Res::Tex(&t.hit_info[q]),
-                    Res::Tex(&hist[q]),
-                    Res::Tex(&hist[c]),
-                    Res::Buf(&self.state.edits),
-                    Res::Buf(&self.up.params),
-                    Res::Tex(&t.accum[c]),
-                ],
-            )
-        });
-        let sharpen_bind = t.history.as_ref().map(|hist| {
-            self.binds.io(
-                device,
-                self.pipes.layout(P_SHARPEN),
-                &[
-                    Res::Tex(&hist[c]),
-                    Res::Tex(&t.output),
-                    Res::Buf(&self.up.sharpen_params),
-                ],
-            )
-        });
-        // The gradient pass runs in a shaded view for the gradient mode's lambda.
-        OutputBinds {
-            composite,
-            composite_bind,
-            gradient_bind,
-            upscale_bind,
-            sharpen_bind,
         }
     }
 
@@ -811,42 +692,40 @@ impl Frame {
             p.views[0].origin[2],
             &self.state,
         );
-        let [sky_t, sky_m, sky_v] = self.sky.dispatches(device, sky_groups.as_ref());
-        let passes = [
-            sky_t,
-            sky_m,
-            sky_v,
-            hit,
-            gradient,
-            Dispatches::one(frame_pass(
-                world,
-                self.light_pipeline(device),
-                &binds.light_bind,
-                2,
-                lw,
-            )),
-            Dispatches::one(frame_pass(
-                world,
-                self.temporal_pipeline(device),
-                &binds.temporal_bind,
-                2,
-                lw,
-            )),
-            atrous,
-            probes,
-            gather,
-            Dispatches::one(frame_pass(
-                world,
-                out.composite,
-                &out.composite_bind,
-                2,
-                full,
-            )),
-            upscale,
-            sharpen,
-        ]
-        .into_iter()
-        .chain(fsr_passes);
+        let sky = self.sky.dispatches(device, sky_groups.as_ref());
+        let passes = sky
+            .into_iter()
+            .chain([
+                hit,
+                gradient,
+                Dispatches::one(frame_pass(
+                    world,
+                    self.light_pipeline(device),
+                    &binds.light_bind,
+                    2,
+                    lw,
+                )),
+                Dispatches::one(frame_pass(
+                    world,
+                    self.temporal_pipeline(device),
+                    &binds.temporal_bind,
+                    2,
+                    lw,
+                )),
+                atrous,
+                probes,
+                gather,
+                Dispatches::one(frame_pass(
+                    world,
+                    out.composite,
+                    &out.composite_bind,
+                    2,
+                    full,
+                )),
+                upscale,
+                sharpen,
+            ])
+            .chain(fsr_passes);
         self.record_passes(device, queue, encoder, passes, &p, timer);
     }
 
@@ -1020,7 +899,7 @@ impl Frame {
             device,
             queue,
             encoder,
-            &t.tiles,
+            [&t.tiles, &self.sky.irradiance],
             &self.exposure_uniform(p),
             timer
                 .filter(|t| t.passes() > exposure_pass)
@@ -1159,7 +1038,7 @@ impl Frame {
             ..ExposureUniform::default()
         };
         if let Exposure::Auto(a) = &self.state.lighting.exposure {
-            u.set_auto(a);
+            u.set_auto(a, self.sky.sky.is_some());
         }
         u
     }

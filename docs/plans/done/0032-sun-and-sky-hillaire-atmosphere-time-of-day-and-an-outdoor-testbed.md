@@ -93,7 +93,7 @@
 > - **Phase 6's stop rule** is restated on an occluded rig (the tunnel), where it fires: see
 >   the amendment under Phase 6. Its amendment is the plan below, not a fifth ray.
 > - **The flicker's mechanisms** (the review's C1 and C2, both; D1 to D4, all four) go to
->   [Plan 0086](../0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md)
+>   [Plan 0086](0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md)
 >   with [ADR-0070](../../adrs/0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md),
 >   which starts when this plan has closed and merged, each mechanism behind the attribution
 >   reading the review names. This plan does not grow a bake channel or a history pair: its

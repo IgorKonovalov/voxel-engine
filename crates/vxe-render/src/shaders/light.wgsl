@@ -66,7 +66,7 @@ fn light_lit(li: Light, p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>) -> f32 {
         let dist2 = max(dot(to_light, to_light), 1e-4);
         let l = to_light * inverseSqrt(dist2);
         let dist = sqrt(dist2);
-        if (shadowed(o, l, dist) || (ENTITY_SHADOWS && entity_march(o, l, dist).found)) {
+        if (shadowed_styled(o, l, dist) || (ENTITY_SHADOWS && entity_march(o, l, dist).found)) {
             lit = 0.0;
         }
     }
@@ -98,7 +98,12 @@ const COARSE_MARGIN: f32 = 3.5;
 // Whether rock lies on `o + d t` for `0 <= t <= len`: the full walk, or with
 // `Params.lighting` bit 1 the coarse walk between COARSE_MARGIN of either end.
 fn shadowed(o: vec3<f32>, d: vec3<f32>, len: f32) -> bool {
-    if ((params.lighting & LIGHTING_COARSE_SHADOW) != 0u) {
+    return shadowed_walk(o, d, len, (params.lighting & LIGHTING_COARSE_SHADOW) != 0u);
+}
+
+// `shadowed` with the coarse walk on where `coarse`, whatever `Params.lighting` says.
+fn shadowed_walk(o: vec3<f32>, d: vec3<f32>, len: f32, coarse: bool) -> bool {
+    if (coarse) {
         coarse_span = vec2<f32>(COARSE_MARGIN, len - COARSE_MARGIN);
     }
     march_material = false;
@@ -106,6 +111,55 @@ fn shadowed(o: vec3<f32>, d: vec3<f32>, len: f32) -> bool {
     march_material = true;
     coarse_span = vec2<f32>(BIG, -BIG);
     return s.found;
+}
+
+// `shadowed` for a light's shadow ray (the list's, the lamp's, the key light's, a sky ray):
+// while some material's style word has SHADOW_AS_BRICK (LIGHTING_SHADOW_STYLES), a brick
+// holding such a material stops the ray where it enters it, the brick of `o` aside. The
+// bake's emissive samples' rays take `shadowed`.
+fn shadowed_styled(o: vec3<f32>, d: vec3<f32>, len: f32) -> bool {
+    return shadowed_styled_walk(
+        o,
+        d,
+        len,
+        (params.lighting & LIGHTING_COARSE_SHADOW) != 0u,
+        (params.lighting & LIGHTING_SHADOW_STYLES) != 0u,
+    );
+}
+
+// `shadowed_styled` with the coarse walk and the styles on where `coarse` and `styles`
+// (the bake's sky rays, which take the frame's choice from their job).
+fn shadowed_styled_walk(o: vec3<f32>, d: vec3<f32>, len: f32, coarse: bool, styles: bool) -> bool {
+    if (!styles) {
+        return shadowed_walk(o, d, len, coarse);
+    }
+    shadow_styles = true;
+    styled_from = voxel_at(o, d) >> vec3<u32>(3u);
+    let s = shadowed_walk(o, d, len, coarse);
+    shadow_styles = false;
+    return s;
+}
+
+// Whether a sky ray from `o` along `d`, capped at `len`, reached the sky (ADR-0070 and its
+// amendment of 2026-11-18): `shadowed_styled_walk` finds no rock, and where the ray ended (the
+// cap, an absent chunk's face or the window's) lies above its column's top (`above_column`).
+// Under the reading hook `end_is_sky` (LIGHTING_HOOK_SKY_END_IS_SKY, or the bake's
+// BAKE_SKY_END_IS_SKY) any end is sky and an absent chunk is air, the rule before the column map.
+fn sky_ray_open(o: vec3<f32>, d: vec3<f32>, len: f32, coarse: bool, styles: bool, end_is_sky: bool) -> bool {
+    sky_rule = !end_is_sky;
+    let s = shadowed_styled_walk(o, d, len, coarse, styles);
+    sky_rule = false;
+    return !s && (end_is_sky || above_column(march_end));
+}
+
+// A unit direction about unit `n` drawn with density `cos / pi` from `u` and `v` in [0, 1).
+fn cosine_direction(n: vec3<f32>, u: f32, v: f32) -> vec3<f32> {
+    let r = sqrt(u);
+    let phi = 2.0 * PI * v;
+    let a = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), abs(n.x) > 0.9);
+    let t = normalize(cross(a, n));
+    let b = cross(n, t);
+    return normalize(t * (r * cos(phi)) + b * (r * sin(phi)) + n * sqrt(max(1.0 - u, 0.0)));
 }
 
 // The unit normal of face `f` (2 k toward -k, 2 k + 1 toward +k).

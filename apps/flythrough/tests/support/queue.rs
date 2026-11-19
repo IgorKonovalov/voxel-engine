@@ -67,6 +67,8 @@ pub struct Q {
     pub resident: Option<fn(ChunkCoord) -> bool>,
     /// The streamer's full radius in chunks the view hands the queue; `None` a bounded world.
     pub full_radius: Option<i32>,
+    /// The streamer's LOD radius the view hands the queue; `None` waits for no column chunk.
+    pub lod_radius: Option<i32>,
 }
 
 /// How a rig's queue and mirror start.
@@ -163,6 +165,7 @@ pub fn rig(world: World, setup: &Setup) -> Option<Q> {
         last_step_ms: 0.0,
         resident: None,
         full_radius: None,
+        lod_radius: None,
     })
 }
 
@@ -197,6 +200,7 @@ impl Q {
             },
             frustum: None,
             full_radius: self.full_radius,
+            lod_radius: self.lod_radius,
         };
         #[allow(
             clippy::disallowed_methods,

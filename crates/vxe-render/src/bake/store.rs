@@ -437,6 +437,28 @@ impl Store {
         queue.write_buffer(&self.pool, first * 4, bytemuck::cast_slice(words));
     }
 
+    /// Marks `slots`' records of `coord`'s block [`SKY_STALE`] in the store's copy and the
+    /// pool (a dig's ring, ADR-0070); a chunk with no block or no baked visibility there is
+    /// left as it is.
+    pub(super) fn mark_sky_stale(
+        &mut self,
+        queue: &wgpu::Queue,
+        coord: ChunkCoord,
+        slots: &[u16],
+        record: usize,
+    ) {
+        let Some(&(first, _)) = self.blocks.get(&coord.0) else {
+            return;
+        };
+        let Some(block) = self.words.get_mut(&coord.0) else {
+            return;
+        };
+        if mark_sky_stale(block, slots, record) {
+            let mut shown = block.clone();
+            self.show(queue, coord, first, &mut shown);
+        }
+    }
+
     /// The chunk table's word for `coord`.
     pub(super) fn table_word(&self, coord: ChunkCoord) -> u64 {
         let window = self.window.expect("a reset store");

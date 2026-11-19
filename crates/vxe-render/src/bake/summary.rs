@@ -111,11 +111,13 @@ pub(super) fn reach_offsets(lr: i32) -> impl Iterator<Item = [i32; 3]> {
 }
 
 /// A running mean of records by direction: each direction over the records that hold it, the
-/// material the most of them keep (the lowest on a tie), the mask their union.
+/// material the most of them keep (the lowest on a tie), the mask their union; each direction's
+/// sky visibility over the records that hold it baked under a sky.
 #[derive(Default)]
 pub(super) struct RecordMean {
     pub(super) sums: [[f64; 3]; 6],
     pub(super) counts: [u32; 6],
+    pub(super) vis: [(f64, u32); 6],
     /// Material and how many records keep it.
     pub(super) materials: Vec<(u32, u32)>,
 }
@@ -133,6 +135,10 @@ impl RecordMean {
                     *s += f64::from(x);
                 }
                 *count += 1;
+            }
+            if let Some(v) = record_visibility(r, f) {
+                self.vis[f].0 += f64::from(v);
+                self.vis[f].1 += 1;
             }
         }
         let m = r[6] & 0xFFFF;
@@ -163,6 +169,16 @@ impl RecordMean {
             }
         }
         out[6] = material | mask << 16;
+        if self.vis.iter().any(|&(_, n)| n > 0) {
+            let v = self.vis.map(|(sum, n)| {
+                if n > 0 {
+                    (sum / f64::from(n)) as f32
+                } else {
+                    0.0
+                }
+            });
+            out[VIS_WORD..VIS_WORD + 2].copy_from_slice(&visibility_words(v));
+        }
         Some(out)
     }
 }
@@ -575,8 +591,8 @@ pub(super) fn fade_mix(shown: &mut Vec<u32>, from: &[u32], to: &[u32], t: f32, r
     }
 }
 
-/// A brick record's directions it holds no value for take the mean of those it does: a brick a
-/// dig touched may have faces now where it had none.
+/// A brick record's directions it holds no value for take the mean of those it does, its sky
+/// visibilities likewise: a brick a dig touched may have faces now where it had none.
 pub(super) fn fill_directions(r: &mut [u32]) {
     let mask = r[6] >> 16;
     let held: Vec<[f32; 3]> = (0..6)
@@ -593,11 +609,40 @@ pub(super) fn fill_directions(r: &mut [u32]) {
             *w = rgb9e5_pack(mean);
         }
     }
+    let vis: Vec<f32> = (0..6).filter_map(|f| record_visibility(r, f)).collect();
+    if !vis.is_empty() {
+        let mean = vis.iter().sum::<f32>() / vis.len() as f32;
+        let v: [f32; 6] = std::array::from_fn(|f| record_visibility(r, f).unwrap_or(mean));
+        let stale = r[VIS_WORD + 1] & SKY_STALE;
+        r[VIS_WORD..VIS_WORD + 2].copy_from_slice(&visibility_words(v));
+        r[VIS_WORD + 1] |= stale;
+    }
     r[6] = (r[6] & 0xFFFF) | 0x3F << 16;
 }
 
-/// Whether `slot`'s record in `block` holds light in any direction (a brick with no record holds
-/// none).
+/// Sets [`SKY_STALE`] on every cell record of `slots` in `block` that holds a baked
+/// visibility; returns whether any was set.
+pub(super) fn mark_sky_stale(block: &mut [u32], slots: &[u16], record: usize) -> bool {
+    let mut any = false;
+    for &slot in slots {
+        let dir = block[usize::from(slot)];
+        if dir == 0 {
+            continue;
+        }
+        let run = (dir >> 11) as usize;
+        for cell in (run - record..run).step_by(BRICK_WORDS) {
+            let w = &mut block[cell + VIS_WORD + 1];
+            if *w & VIS_BAKED != 0 && *w & SKY_STALE == 0 {
+                *w |= SKY_STALE;
+                any = true;
+            }
+        }
+    }
+    any
+}
+
+/// Whether `slot`'s record in `block` holds light in any direction, emissive or a sky visibility
+/// over zero (a brick with no record holds none).
 pub(super) fn brick_lit(block: &[u32], slot: u16, record: usize) -> bool {
     let dir = block[usize::from(slot)];
     if dir == 0 {
@@ -605,9 +650,11 @@ pub(super) fn brick_lit(block: &[u32], slot: u16, record: usize) -> bool {
     }
     let run = (dir >> 11) as usize;
     (run - record..run).step_by(BRICK_WORDS).any(|cell| {
-        block[cell..cell + 6]
+        let r = &block[cell..cell + BRICK_WORDS];
+        r[..6]
             .iter()
             .any(|&w| rgb9e5_unpack(w).iter().any(|&v| v > 0.0))
+            || (0..6).any(|f| record_visibility(r, f).is_some_and(|v| v > 0.0))
     })
 }
 
@@ -621,16 +668,17 @@ mod tests {
             bricks: vec![(3, vec![1, 2, 3]), (9, vec![4])],
             glass: Vec::new(),
         };
-        // The directory's 512 words, then the summary's 7 (ADR-0053), then the records.
+        // The directory's 512 words, then the summary's 9 (ADR-0053; seven words and ADR-0070's
+        // two of sky visibility), then the records.
         let (d, words) = layout(&faces, record_words(8));
-        assert_eq!(d.len(), 512 + 7, "the head: directory and summary");
-        assert_eq!(d[3], (512 + 7 + 7) << 11);
-        assert_eq!(d[9], (512 + 7 + 14) << 11);
+        assert_eq!(d.len(), 512 + 9, "the head: directory and summary");
+        assert_eq!(d[3], (512 + 9 + 9) << 11);
+        assert_eq!(d[9], (512 + 9 + 18) << 11);
         assert_eq!(d[4], 0);
-        assert_eq!(words, 512 + 7 + 14);
+        assert_eq!(words, 512 + 9 + 18);
         let (d, words) = layout(&faces, record_words(4));
-        assert_eq!(d[9], (512 + 7 + 2 * 56) << 11);
-        assert_eq!(words, 512 + 7 + 2 * 56);
+        assert_eq!(d[9], (512 + 9 + 2 * 72) << 11);
+        assert_eq!(words, 512 + 9 + 2 * 72);
     }
 
     /// A record of one cell: `dirs` (face, value) held, material `m`.
@@ -779,6 +827,68 @@ mod tests {
     /// The parent table's cells cover the window at any alignment, levels 1 and 2 apart and
     /// after the chunk table; `temporal.wgsl` reads it with the same constants.
     #[test]
+    fn a_mean_records_sky_visibility_by_direction_over_the_records_baked_under_a_sky() {
+        let mut a = cell_record(&[(4, [0.0; 3]), (5, [0.0; 3])], 1);
+        a[VIS_WORD..VIS_WORD + 2]
+            .copy_from_slice(&visibility_words([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]));
+        let mut b = cell_record(&[(5, [0.0; 3]), (0, [0.0; 3])], 1);
+        b[VIS_WORD..VIS_WORD + 2]
+            .copy_from_slice(&visibility_words([0.4, 0.0, 0.0, 0.0, 0.0, 0.5]));
+        // A record baked with no sky adds no visibility.
+        let c = cell_record(&[(5, [0.0; 3])], 1);
+        let m = mean_record([&a, &b, &c]).expect("three records");
+        let at = |f| record_visibility(&m, f).expect("baked");
+        assert!((at(5) - 0.75).abs() <= 1.0 / 255.0, "+z {}", at(5));
+        assert!((at(0) - 0.4).abs() <= 1.0 / 255.0, "-x {}", at(0));
+        assert_eq!(at(4), 0.0, "-z held at zero");
+        assert_eq!(
+            mean_record([&c]).map(|r| record_visibility(&r, 5)),
+            Some(None)
+        );
+        // A dug brick's directions it lacked take the mean of those it holds.
+        let mut d = a;
+        fill_directions(&mut d);
+        assert!((record_visibility(&d, 1).expect("filled") - 0.5).abs() <= 1.0 / 255.0);
+    }
+
+    /// A dig's ring marks its bricks' baked visibilities stale (ADR-0070): every cell record
+    /// of the listed slots that holds one, no other slot, and no record baked with no sky; the
+    /// mark holds through a dug brick's filled directions and leaves the values readable.
+    #[test]
+    fn a_dig_ring_marks_its_baked_visibilities_stale() {
+        let mut lit = cell_record(&[(5, [0.0; 3])], 1);
+        lit[VIS_WORD..VIS_WORD + 2]
+            .copy_from_slice(&visibility_words([0.0, 0.0, 0.0, 0.0, 0.0, 0.6]));
+        let dark = cell_record(&[(5, [0.0; 3])], 1);
+        // A block of three bricks at slots 0, 1 and 2, records of one cell, slot 2 with no sky.
+        let mut block = vec![0u32; BLOCK_HEAD_WORDS as usize];
+        let mut at = BLOCK_HEAD_WORDS as u32;
+        for (slot, r) in [(0usize, &lit), (1, &lit), (2, &dark)] {
+            block.extend_from_slice(r);
+            at += BRICK_WORDS as u32;
+            block[slot] = at << 11;
+        }
+        let stale = |b: &[u32], slot: usize| {
+            let run = (b[slot] >> 11) as usize;
+            b[run - BRICK_WORDS + VIS_WORD + 1] & SKY_STALE != 0
+        };
+        assert!(mark_sky_stale(&mut block, &[1, 2], BRICK_WORDS));
+        assert!(!stale(&block, 0), "a slot outside the ring");
+        assert!(stale(&block, 1), "a ring slot with a baked visibility");
+        assert!(!stale(&block, 2), "a ring slot baked with no sky");
+        assert!(
+            !mark_sky_stale(&mut block, &[1, 2], BRICK_WORDS),
+            "already marked"
+        );
+        let run = (block[1] >> 11) as usize;
+        let mut r = block[run - BRICK_WORDS..run].to_vec();
+        assert!((record_visibility(&r, 5).expect("readable") - 0.6).abs() <= 1.0 / 255.0);
+        fill_directions(&mut r);
+        assert_ne!(r[VIS_WORD + 1] & SKY_STALE, 0, "kept through the fill");
+        assert!((record_visibility(&r, 0).expect("filled") - 0.6).abs() <= 1.0 / 255.0);
+    }
+
+    #[test]
     fn the_parent_table_covers_the_window() {
         for (min, size) in [
             ([0, 0, 0], [3, 3, 3]),
@@ -813,7 +923,8 @@ mod tests {
             assert!(l1.iter().all(|&w| w < l2_min), "level 1 before level 2");
         }
         let wgsl = include_str!("../shaders/temporal.wgsl");
-        assert!(wgsl.contains(&format!("const STORE_SUMMARY_AT: u32 = {SUMMARY_AT}u;")));
+        let hitrec = include_str!("../shaders/hitrec.wgsl");
+        assert!(hitrec.contains(&format!("const STORE_SUMMARY_AT: u32 = {SUMMARY_AT}u;")));
         assert!(wgsl.contains("(store[STORE_FLAGS] >> 2u) & 3u"));
         assert_eq!(FLAG_MISSING_SHIFT, 2);
         assert_eq!(MissingLight::Neighbour.bits(), 1);

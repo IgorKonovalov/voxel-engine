@@ -161,6 +161,18 @@ instead); `the_built_castle_has_an_icon`, `the_ghost_is_a_coarse_copy_in_its_fra
 `the_castle_loads_through_the_scene` need the built castle and are soak marks or one shared
 build. About 100 s of serial time.
 
+Plan 0086's close (2026-11-19, `docs/nfr.md` section 7): 1792.6 s quiet, 61 tests over the
+line, none of them new; the wall is the light pass's pipeline compile on lavapipe (+2.2 to
+2.6 s on every test that builds a frame, the penumbra spike's default-off branch the largest
+step), accepted by the owner and taken by Plan 0094 with the pipeline-cache entry below. Two
+smaller items from the same close: `gpu_world::columns::tests::the_first_flush_of_the_streamed_window_is_cheap`
+(c682fa9d) bounds a wall clock in the gate (under 1000 ms; 189.5 ms quiet in debug on the dev
+reference), which a loaded CI runner can trip, where a count of the sheet lookups per tile
+would not; and two of `gpu_sun`'s sky tests the plan rewrote (Plan 0032's names,
+`a_closed_box_takes_no_sky_light` 13.7 s, `the_open_floor_reads_pi_under_a_uniform_sky` 13.3 s)
+read over the line under the compile and go under it once the cache lands, or take the soak
+mark.
+
 ### `cargo deny` fails on main's wasmtime 49.0.5 advisories
 
 Noted 2026-11-19 at Plan 0083's close: `cargo deny check` reads advisories FAILED on
@@ -315,6 +327,22 @@ Parked 2026-11-10 (plan review). Plan 0033 gives a far-field hit no store value,
 emitters do not light far terrain. A coarse store block per clip brick is ADR-0028's
 Alternative F, picked up only if a reading or the owner's flight asks.
 
+### A cheaper `absorb` canopy shadow
+
+Parked 2026-11-18 at Plan 0086's Phase 15 window (owner: "shadows are good but fps dropped
+significantly - around 20"; pick C: `absorb` stays an off-by-default setting). As built (Phase
+14, `walk.wgsl`'s translucent walk through flagged bricks, `exp(-sigma x)` over the leaf
+voxels' path, sigma 0.15 a voxel) the forest's light pass reads 17.4 to 18.1 ms on the RTX
+3080 Laptop against voxel's 4.1 to 4.5, and 87.7 to 88.3 ms on the RADV RENOIR against 18.4 to
+20.3 (`docs/plans/logs/0086.md`, Phase 14 bar 4): 4.1 to 4.8 times, every shadow ray stepping
+voxel by voxel inside every leaf brick. Also read there: 49 % of the canopy's brick projection
+holds columns with no leaf voxel, which the per-voxel walk leaves at the open value. What it
+would take: a per-brick leaf density (one byte, the brick's fill, from the mirror's masks at
+upload) so the walk steps bricks and adds `sigma x fill x path` per brick, or the 2^3 coarse
+masks' count as that density per coarse cell; both make the transmittance a brick-scale blur
+of the voxel truth, which is also what fills the no-leaf columns. Pick up when a canopy's
+continuous shadow is wanted as a default or by a consumer, with Phase 14's rig as the bar.
+
 ### Remove `own`, the engine's own upscaler
 
 Parked 2026-11-10 (owner, plan review). FSR 2 at 1.5 is the default (Plan 0056) and `own` is
@@ -381,10 +409,6 @@ Parked 2026-11-12 at Plan 0067's Phase 7 (followup F1, the owner's amendment of 
 
 Parked 2026-11-12 at Plan 0067's Phase 7 (followup F2; `docs/plans/logs/0067.md`, Phase 3). Under `--bake-budget second:150,0.25` on rig (b) glide 150 the Radeon bakes 148 ms a wall second and the RTX 91 to 92: the RTX's submits read slice p50 5.31 ms, max 7.20, against a granted slice of about 8 ms (150 ms a second x a 53 ms mean interval), at 5.1 ns a sample with `jobs 10`. The sample cap (1e7, 51 ms) does not bind; the open jobs' rounds and `IN_FLIGHT` 2 are candidates, not readings. The default is `frame:1.5` (owner, 2026-11-12), where both adapters read what they read before, so this bites only a per-second profile. What it takes: a lap on the dispatch (rounds planned against the slice, rounds sent, the wait on `IN_FLIGHT`), then the fix it names. Pick up with Plan 0069's profiles if one sets a per-second budget.
 
-### The census's reach-bound estimate undercounts
-
-Parked 2026-11-12 at Plan 0067's Phase 7 (`docs/plans/logs/0067.md`, Phase 5, attempt 1). The per-second line's `reach-bound N of M in view waiting` counts an in-view waiting chunk whose distance in chunks plus the light radius exceeds the streamer's full radius. The reach's own extent is larger (a gap under the radius reaches about 5.4 chunks at a light radius of 4), so the estimate misses chunks whose reach does cross; `--reach partial` uses the exact test (a chunk within the reach past the full sphere) since 2f3450f. The estimate is kept because Phases 1 to 5's readings used it. What it takes: the exact test in the census over its sample (`VIEW_REACH_SAMPLE` chunks a line, up to 1 331 lookups each, at the line's cadence), printed beside the estimate for one release, then the estimate dropped. Pick up when a plan reads the reach-bound count again.
-
 ### The first-block fallback fade's CPU under `chain`
 
 Parked 2026-11-12 at Plan 0067's close review (`docs/plans/logs/0067.md`, Phase 7, the opening row). Under the default missing light, `chain`, every chunk's first block fades over `FADE` frames from its fallback value, and the render thread rewrites the fading block (`advance_fades`) and its summary and two parent records (`Store::show`) every frame of the fade. In regime B, where nearly every step opens, that reads `fades` 1.05 to 1.10 ms p50 and `summaries` 0.61 to 0.63 on the RTX 3080 Laptop (`--near 0`, rig (c)), against 0.002 and 0.05 under `black`, and takes the opening step from 0.75 to 0.86 to 0.88 of the start commit's (bar 0.8); the default glide's `summaries` read 0.965 ms p50, p99 2.86. The owner saw no lag at this cost in the window. Levers, unbuilt: a shorter fade for a first block (a look change, the owner's eye), the summary and parents written once at the fade's end instead of every frame (ADR-0053 has a parent fade with its children, so this one needs an Outcome there), or the blend on the GPU (the temporal read mixes the fallback with the block by a per-chunk weight). Pick up with the next frame-CPU plan, or if a profile (Plan 0069) runs regime B by default (`full_first` off).
@@ -414,6 +438,20 @@ Parked 2026-11-12 (owner, from the video "the voxel rendering tech nobody talks 
 - **What it takes:** a look spike (corner AO at the hit, an optional ramp beside `albedo`, the hue jitter) with an owner window; an ADR if the material row changes shape.
 
 Pick up after the current lighting plans close (0058 and those ahead of it).
+
+### Plan 0090 owes a stamp scene and a reading of the key mean's fade-in against `F`
+
+Parked 2026-11-18 by Plan 0086's flicker amendment (the architect, overnight). A freshly
+placed castle on the hills at noon flickered in the Plan 0083 window (25.png): the stamped
+chunks baked behind the carve's dig ring and every reset pixel on the new walls ran the sky
+ray's mean from one raw sample (`docs/plans/logs/0086.md`, the flicker section). Plan 0086
+Phase 21 (a) and Phase 21a take the fix; what is owed on main is (1) a scene in Plan 0090's
+table, a prefab placed on the hills at noon with the eye inside it, read under rules 3, 4 and
+5, so the class cannot return unseen; and (2) a reading of the key light's mean (`key_mean`,
+Plan 0086 Phase 19) at an edit-cast shadow outside its edit box, which fades in over up to
+`sky_history` frames, against the `F` the owner calibrates in Plan 0090 Phase 5; if `F` is
+shorter, the key mean takes a band test as `pair_step` has for the sky. An architect amendment
+to Plan 0090, at Plan 0086's close.
 
 ### A consumer's settings file in the render example
 
@@ -1245,3 +1283,17 @@ input and the app lifecycle** (suspend, surface loss). **Wasmtime on iOS** has n
 (its interpreter) or ahead-of-time components. **aarch64 determinism vectors in CI.** A new
 target is an ADR (ADR-0001 names Linux and Windows) and about a milestone's work; the cheap first
 step is the limits audit, which says what the rest costs. Tablets before phones.
+
+### The fired lights' grain: the list lights' visibility on a running mean
+
+Parked 2026-11-18 by Plan 0086 Phase 22 (the second window's defect 3: "when I shoot light,
+walls becoming grainy", 20.png, the noon tunnel under anchor 0). Phase 16 read it as Plan
+0058's, not the sky's (`docs/plans/logs/0086.md`, Phase 16's table and Phase 22): with five
+lights fired the lit patch's p99 change is 25 to 28 levels in flight and 5 to 6 at rest, the
+same with the sky off; no sky ray returns over the lights; the light pass's rise (0.13 to 4.6
+ms, loaded) is the five lights' shadow rays. In flight the list changes every frame and
+`LIGHTING_LIGHTS_CHANGED` takes the direct part's sample as it is. What it would take: the
+list lights' shadow visibility on a running mean of its own, as the key light's is on the
+visibility pair's `g` (Plan 0086 Phase 19), reprojected and reset where the light moves. Pick
+up when the third window (Plan 0086 Phase 24 run 3) judges the walls under the default anchor
+4 still grainy, or a consumer fires lights at walls in the dark.

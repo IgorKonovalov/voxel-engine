@@ -199,11 +199,16 @@ pub(super) struct FrameState {
     /// Whether the field look takes the split walk ([`FLAG_FIELD_SPLIT`]); on by default.
     pub(super) field_split: bool,
     pub(super) lighting: Lighting,
+    /// The reading hooks ([`Frame::set_light_hooks`]).
+    pub(super) hooks: LightHooks,
     /// The per-material emission scales, 1.0 unless set: an `f32` per material id for the
     /// light the frame's pixels sample, then [`EMISSION_ROWS`] more for the light the probe
-    /// rays sample.
+    /// rays sample; then [`EMISSION_ROWS`] style words ([`Frame::set_material_styles`]), each
+    /// an integer as `f32`, 0 unless set.
     pub(super) emission_scale: wgpu::Buffer,
     pub(super) emission_cpu: Vec<f32>,
+    /// The style words as last set, trailing zeros dropped.
+    pub(super) styles: Vec<u32>,
     /// The blue-noise texture, uploaded by the first `encode`.
     pub(super) blue_noise: wgpu::Texture,
     pub(super) blue_noise_written: std::sync::atomic::AtomicBool,
@@ -215,12 +220,23 @@ pub(super) struct FrameState {
     /// Whether the last encode with history found the headlamp's light changed (its switch,
     /// parameters or shadow walk; [`Frame::lamp_changed`]).
     pub(super) lamp_changed: std::sync::atomic::AtomicBool,
+    /// `Params.history` and `Params.lighting` as the last encode wrote them
+    /// ([`Frame::last_encoded_flags`]).
+    pub(super) last_flags: [std::sync::atomic::AtomicU32; 2],
     /// The list of lights ([`Frame::set_lights`]) and its uniform.
     pub(super) lights: LightsState,
     /// The a-trous dispatches the last encode recorded ([`Frame::atrous_dispatches`]).
     pub(super) atrous_dispatches: std::sync::atomic::AtomicU32,
     /// The light table's chunks, chosen again only when what they are chosen from changes.
     pub(super) light_near: std::sync::Mutex<LightNear>,
+}
+
+/// The emission-scale buffer's first contents: the two blocks of scales at 1.0, then the style
+/// words at 0.
+fn initial_emission_rows() -> Vec<f32> {
+    let mut v = vec![1.0f32; 3 * EMISSION_ROWS];
+    v[2 * EMISSION_ROWS..].fill(0.0);
+    v
 }
 
 impl FrameState {
@@ -258,15 +274,17 @@ impl FrameState {
             look: LookParams::default(),
             field_split: true,
             lighting: Lighting::default(),
+            hooks: LightHooks::default(),
             emission_scale: wgpu::util::DeviceExt::create_buffer_init(
                 device,
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("emission scale"),
-                    contents: bytemuck::cast_slice(&vec![1.0f32; 2 * EMISSION_ROWS]),
+                    contents: bytemuck::cast_slice(&initial_emission_rows()),
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 },
             ),
             emission_cpu: vec![1.0; 2 * EMISSION_ROWS],
+            styles: Vec::new(),
             blue_noise: device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("blue noise"),
                 size: wgpu::Extent3d {
@@ -286,6 +304,7 @@ impl FrameState {
             emission_changed_at: None,
             history: std::sync::Mutex::new(History::default()),
             lamp_changed: std::sync::atomic::AtomicBool::new(false),
+            last_flags: Default::default(),
             lights: LightsState::new(device),
             atrous_dispatches: std::sync::atomic::AtomicU32::new(0),
             light_near: std::sync::Mutex::default(),

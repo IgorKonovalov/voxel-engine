@@ -53,6 +53,13 @@ pub(super) struct Targets {
     /// The temporal pass's accumulated direct part (rgba16float, as `direct`).
     pub(super) direct_accum: [wgpu::Texture; 2],
     pub(super) moments: [wgpu::Texture; 2],
+    /// The light pass's sky and key light visibility samples (rgba8unorm), on the lighting
+    /// grid: the sky rays' share that reached the sky in r, 0 in g and b, and 1 in a where the
+    /// sky rays were cast (ADR-0070), else 0.
+    pub(super) vis: wgpu::Texture,
+    /// The temporal pass's visibility pair (rgba16float, ADR-0070): the sky visibility's
+    /// running mean in r, the key light's in g (0), the sky's short mean in b, the age in a.
+    pub(super) pair: [wgpu::Texture; 2],
     /// The filter's ping-pong pair (rgba16float: irradiance rgb, variance a).
     pub(super) filter: [wgpu::Texture; 2],
     /// The gradient pass's strata, one texel per 3 x 3 lighting pixels (rgba16float: the
@@ -127,6 +134,8 @@ impl Targets {
             accum: [0, 1].map(|_| lit("accumulated irradiance", Rgba16Float)),
             direct_accum: [0, 1].map(|_| lit("accumulated direct", Rgba16Float)),
             moments: [0, 1].map(|_| lit("moments", Rgba16Float)),
+            vis: lit("visibility samples", Rgba8Unorm),
+            pair: [0, 1].map(|_| lit("visibility pair", Rgba16Float)),
             filter: [0, 1].map(|_| lit("filter", Rgba16Float)),
             strata: sized(
                 "gradient strata",
@@ -211,7 +220,7 @@ impl Targets {
         px * (2 * (16 + 8) + 8)
             + output * 4
             + history
-            + lpx * (half + 8 + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 2 * 8 + 8)
+            + lpx * (half + 8 + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 2 * 8 + 8 + 4 + 2 * 8)
             + strata * 8
             + self.tiles.size()
             + self.split_list.get().map_or(0, wgpu::Buffer::size)

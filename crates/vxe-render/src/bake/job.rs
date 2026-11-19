@@ -34,6 +34,10 @@ pub(super) struct FaceState {
     pub(super) material: u16,
     pub(super) snapshots: Vec<(u32, [f32; 3], [f32; 3])>,
     pub(super) done: bool,
+    /// Its samples below this index each draw a sky ray (ADR-0070); 0 under no sky.
+    pub(super) sky_n: u32,
+    /// Of those read back, the rays that reached the sky.
+    pub(super) sky_open: u32,
 }
 
 pub(super) fn lum3(c: [f64; 3]) -> f64 {
@@ -41,6 +45,12 @@ pub(super) fn lum3(c: [f64; 3]) -> f64 {
 }
 
 impl FaceState {
+    /// The share of its sky rays read back that reached the sky; `None` with none drawn.
+    pub(super) fn sky_fraction(&self) -> Option<f64> {
+        let drawn = self.n.min(self.sky_n);
+        (drawn > 0).then(|| f64::from(self.sky_open) / f64::from(drawn))
+    }
+
     pub(super) fn kept(&self, clamp: bool) -> [f64; 3] {
         if clamp { self.clamped } else { self.sum }
     }
@@ -65,6 +75,7 @@ impl FaceState {
         w[4] = first;
         w[5] = samples;
         w[17] = slot as u32;
+        w[19] = self.sky_n;
         w
     }
 
@@ -116,6 +127,7 @@ impl FaceState {
             self.best = best;
             self.material = out[14] as u16;
         }
+        self.sky_open += out[18];
         self.n += samples;
     }
 }
@@ -130,7 +142,17 @@ pub(crate) struct BakeRun<'a> {
     pub world_bind: &'a wgpu::BindGroup,
     pub params_buffer: &'a wgpu::Buffer,
     pub params: Params,
+    /// The bake's sky rays (ADR-0070): 0 with no sky set, else [`BAKE_SKY_ON`] with the frame's
+    /// coarse-shadow and shadow-style bits ([`BAKE_SKY_COARSE`], [`BAKE_SKY_STYLES`]).
+    pub sky: u32,
 }
+
+/// [`BakeRun::sky`]'s bits, `BakeJob.sky` in `bake.wgsl`.
+pub(crate) const BAKE_SKY_ON: u32 = 1;
+pub(crate) const BAKE_SKY_COARSE: u32 = 2;
+pub(crate) const BAKE_SKY_STYLES: u32 = 4;
+/// The bake's sky-ray bit of the reading hook [`crate::LightHooks::sky_end_is_sky`].
+pub(crate) const BAKE_SKY_END_IS_SKY: u32 = 8;
 
 /// A chunk's job: its faces, where its block goes, and the brick records it keeps from the block
 /// before, whose bricks it does not bake.

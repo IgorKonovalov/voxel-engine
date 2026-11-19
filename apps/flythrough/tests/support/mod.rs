@@ -4,12 +4,15 @@
 
 pub mod aliasing;
 pub mod bake;
+pub mod defects;
 pub mod lights;
 pub mod look;
 pub mod queue;
 pub mod rigs;
 pub mod settle;
 pub mod stillness;
+pub mod streamed;
+pub mod terms;
 
 use std::path::PathBuf;
 

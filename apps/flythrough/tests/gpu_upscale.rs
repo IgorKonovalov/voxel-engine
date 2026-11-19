@@ -645,7 +645,8 @@ fn frame_bytes_add_the_histories_and_the_output_target() {
 /// (8 458 240 B, ADR-0050), before the store's pool is allocated. The live queue's start
 /// allocates the pool at `Lighting::bake_pool_bytes` (256 MiB) under the adapter's storage
 /// binding, 128 MiB on lavapipe (134 217 728 B; the chunk table and every block lie in it):
-/// 258 955 344 B plus the entity mirror.
+/// 258 955 344 B plus the entity mirror. The visibility pair and its samples (ADR-0070, 20 B a
+/// lighting pixel, 4 608 000 B: `frame_bytes_hold_the_visibility_pair`) add to both figures.
 #[test]
 fn frame_bytes_hold_the_store_and_no_emissive_history() {
     let Some((device, queue)) = software_device(64 << 20) else {
@@ -660,7 +661,7 @@ fn frame_bytes_hold_the_store_and_no_emissive_history() {
     let pool = 128u64 << 20;
     println!("frame_bytes at the default: {before} B before the store, pool {pool} B");
     assert_eq!(base, 124_737_616);
-    let base = base + ENTITY_MIRROR;
+    let base = base + VIS_PAIR + ENTITY_MIRROR;
     assert_eq!(before, base);
     let world = World::generate(
         ChunkExtent::new([0, 0, 0], [1, 1, 1]),
@@ -680,13 +681,61 @@ fn frame_bytes_hold_the_store_and_no_emissive_history() {
     let after = frame.frame_bytes();
     println!("frame_bytes with the store: {after} B");
     assert_eq!(after, base + pool);
-    assert_eq!(after, 258_955_344 + ENTITY_MIRROR);
+    assert_eq!(after, 258_955_344 + VIS_PAIR + ENTITY_MIRROR);
+}
+
+/// The visibility pair (two `rgba16float` targets, 8 B a lighting pixel each) and the light
+/// pass's visibility samples (`rgba8unorm`, 4 B) at 640 x 360 lighting pixels (ADR-0070).
+const VIS_PAIR: u64 = (2 * 8 + 4) * 640 * 360;
+
+/// The visibility pair and its samples in `frame_bytes`: at 1280 x 720 internal on the half
+/// tier, 20 B a lighting pixel, 4 608 000 B over the inventory with the direct pair
+/// (`frame_bytes_hold_the_direct_pair`).
+#[test]
+fn frame_bytes_hold_the_visibility_pair() {
+    let Some((device, _queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let frame = Frame::with_sizes(&device, [1280, 720], [1280, 720]);
+    let lit = 640u64 * 360;
+    let pair = 2 * 8 * lit;
+    let samples = 4 * lit;
+    println!(
+        "frame_bytes at 1280x720, half tier: {} B, the pair {pair} B, the samples {samples} B",
+        frame.frame_bytes()
+    );
+    assert_eq!(pair + samples, VIS_PAIR);
+    assert_eq!(VIS_PAIR, 4_608_000);
+    assert_eq!(
+        frame.frame_bytes(),
+        with_direct_inventory(1280, 720) + VIS_PAIR
+    );
+}
+
+/// `frame_bytes`' inventory at `w` x `h` internal and output on the half tier, the direct pair
+/// in it and the visibility pair not (as `frame_bytes_hold_the_direct_pair` counts it).
+fn with_direct_inventory(w: u32, h: u32) -> u64 {
+    let px = u64::from(w) * u64::from(h);
+    let (lw, lh) = (w.div_ceil(2), h.div_ceil(2));
+    let lit = u64::from(lw) * u64::from(lh);
+    let strata = u64::from(lw.div_ceil(3)) * u64::from(lh.div_ceil(3));
+    let tiles = 8 * u64::from(w.div_ceil(8) * h.div_ceil(8));
+    px * (2 * (16 + 8) + 8)
+        + px * 4
+        + lit * (2 * (16 + 8) + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 8)
+        + strata * 8
+        + tiles
+        + 32
+        + 16
+        + 928
+        + ENTITY_MIRROR
+        + 3 * 8 * lit
 }
 
 /// The direct target and its accumulation pair (ADR-0044) in `frame_bytes`: at 1280 x 720
 /// internal on the half tier (640 x 360 lighting pixels), three `rgba16float` targets of 8 B a
 /// lighting pixel, 5 529 600 B, the difference between the frame's count and its inventory
-/// without them.
+/// without them (and without the visibility pair, `VIS_PAIR`).
 #[test]
 fn frame_bytes_hold_the_direct_pair() {
     let Some((device, _queue)) = software_device(64 << 20) else {
@@ -718,7 +767,7 @@ fn frame_bytes_hold_the_direct_pair() {
         frame.frame_bytes()
     );
     assert_eq!(direct, 5_529_600);
-    assert_eq!(frame.frame_bytes(), without_direct + direct);
+    assert_eq!(frame.frame_bytes(), without_direct + direct + VIS_PAIR);
 }
 
 /// Every image's sharpness on the stripe wall at both distances, still and panning at arm's

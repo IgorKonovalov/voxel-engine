@@ -159,6 +159,31 @@ fn hud_golden_over_the_carved_view_is_pixel_exact() {
     let (golden, w, h) = read_png(&path);
     assert_eq!((w, h), (WIDTH, HEIGHT));
     let differing = differing_bytes(img, &golden);
+    if differing > 0 {
+        // Where the bytes lie: per 8-pixel row band (a text row above the strip), the pixels
+        // that differ and their x range.
+        let mut bands: std::collections::BTreeMap<u32, (u32, u32, u32)> = Default::default();
+        for (i, (p, q)) in img.chunks(4).zip(golden.chunks(4)).enumerate() {
+            if p != q {
+                let (x, y) = (i as u32 % WIDTH, i as u32 / WIDTH);
+                let e = bands.entry(y / CELL).or_insert((0, x, x));
+                *e = (e.0 + 1, e.1.min(x), e.2.max(x));
+            }
+        }
+        let lines: Vec<String> = fixed_stats()
+            .to_string()
+            .lines()
+            .map(String::from)
+            .collect();
+        for (band, (n, x0, x1)) in &bands {
+            println!(
+                "band {band} (y {}..{}): {n} px differ, x {x0}..={x1}; row text {:?}",
+                band * CELL,
+                band * CELL + CELL,
+                lines.get(*band as usize)
+            );
+        }
+    }
     assert_eq!(differing, 0, "hud.png: {differing} bytes differ");
 
     // The overlay touches only the text rows (plus their one-pixel shadow) and the strip;

@@ -40,8 +40,8 @@ pub mod debug {
     pub use crate::gpu_util::compute_pipelines_created;
     pub use crate::probes::ProbeRead;
     pub use crate::readback::{
-        StepHistogram, f16_to_f32, read_buffer, read_float, read_rgba8, read_rgba16f, read_rgba16u,
-        read_rgba32f,
+        StepHistogram, f16_to_f32, read_buffer, read_float, read_r32i, read_rgba8, read_rgba16f,
+        read_rgba16u, read_rgba32f,
     };
 }
 
@@ -52,9 +52,10 @@ pub mod debug {
 pub mod internals {
     pub use crate::bake::{
         BAKE_ROUND, BRICK_CELL, BRICK_WORDS, ChunkFaces, DIG_FADE, FADE, FacePrep,
-        QUEUE_VIEW_MARGIN_DEG, STORE_COARSE_READS, SUMMARY_AT, VIEW_IN, VIEW_OUT, VIEW_SHELL,
-        angle_term, dig_ring, face_classes, in_near_shell, list_world_chunk, rgb9e5_unpack,
-        tone_level, view_half_angle, view_half_angles,
+        QUEUE_VIEW_MARGIN_DEG, SKY_BAKE_RAYS, STORE_COARSE_READS, SUMMARY_AT, VIEW_IN, VIEW_OUT,
+        VIEW_SHELL, angle_term, dig_ring, face_classes, in_near_shell, list_world_chunk,
+        record_sky_stale, record_visibility, rgb9e5_unpack, tone_level, view_half_angle,
+        view_half_angles,
     };
     pub use crate::entities::{EntityInstances, PoolUpload, RangeAlloc, VolumePool};
     pub use crate::exposure::{METER_LOG2_LIMIT, STATE_HELD};
@@ -89,7 +90,8 @@ pub use bake::{
     DEFAULT_BAKE_SLICE_MS, DEFAULT_COARSE_SAMPLES, DEFAULT_NEAR, DigReport, FaceOutcome,
     MissingLight, PreRoll, PreRollConfig, PreRollError, PreRollState, PreRollSummary,
     QUEUE_ANGLE_WEIGHT, QUEUE_BRICK_SAMPLES, QUEUE_REFINE_WEIGHT, QueueOrder, QueueStats,
-    QueueView, ReachMode, Refine, Store, StoreStats, queue_settings,
+    QueueView, ReachMode, Refine, Store, StoreStats, finality_blockers, queue_settings,
+    reach_crosses,
 };
 pub use camera::{Camera, View};
 pub use entities::{
@@ -97,23 +99,25 @@ pub use entities::{
     MARK_BUFFER_BYTES, MARK_COLOURS, MAX_ENTITIES, MAX_ENTITY_PARTS, Mark, ModelHandle,
 };
 pub use exposure::{
-    AutoExposure, EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState, Metering,
+    AutoExposure, DEFAULT_SKY_ANCHOR_EV, EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState,
+    Metering, ground_irradiance,
 };
 pub use frame::{
-    ATROUS_ITERATIONS, DEFAULT_LIGHT_FLOOR, DEFAULT_PROBE_FREEZE, DEFAULT_SKY_RAYS, Light,
-    MAX_LIGHTS, MAX_SKY_RAYS, Params, Upscaler,
+    ATROUS_ITERATIONS, DEFAULT_KEY_HISTORY, DEFAULT_LIGHT_FLOOR, DEFAULT_PROBE_FREEZE,
+    DEFAULT_SKY_HISTORY, DEFAULT_SKY_RAYS, Light, MAX_LIGHTS, MAX_SKY_HISTORY, MAX_SKY_RAYS,
+    Params, SHADOW_ABSORB, SHADOW_AS_BRICK, SHADOW_SIGMA_SHIFT, Upscaler, shadow_absorb,
 };
 pub use frame::{
-    CrackShares, EntityLight, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, LightWeights,
-    Lighting, LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher,
-    NormalMode, PassTimer, RenderScale, ShadowWalk, StoreRead, SurfaceTuning, ToneMap, ViewMode,
-    YoungFilter, jitter_at,
+    CrackShares, EntityLight, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, LightHooks,
+    LightWeights, Lighting, LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS,
+    MarchTimer, Marcher, NormalMode, PassTimer, Penumbra, RenderScale, ShadowWalk, SkyNormal,
+    StoreRead, SurfaceTuning, ToneMap, ViewMode, YoungFilter, jitter_at,
 };
 pub use fsr2::{Fsr2, Fsr2Settings, UpscalerKind};
 pub use gpu_world::{
-    BELT_CHUNK_BYTES, BinStats, DEFAULT_BUDGET_BYTES, DEFAULT_LIGHT_CHUNK_CAP,
-    DEFAULT_LIGHT_RADIUS, DEFAULT_LIGHT_SAMPLES, GpuWorld, MirrorConfig, MirrorError, ShardLayout,
-    SyncClock, SyncPoint, SyncStats, Window,
+    BELT_CHUNK_BYTES, BinStats, COLUMN_CELL, COLUMN_CELLS, COLUMN_NONE, DEFAULT_BUDGET_BYTES,
+    DEFAULT_LIGHT_CHUNK_CAP, DEFAULT_LIGHT_RADIUS, DEFAULT_LIGHT_SAMPLES, GpuWorld, MirrorConfig,
+    MirrorError, ShardLayout, SyncClock, SyncPoint, SyncStats, Window,
 };
 pub use hud::{
     BACKDROP_ALPHA, GRID_COLS as HUD_GRID_COLS, HudBox, HudColour, HudOverlay, HudPaint, HudTile,

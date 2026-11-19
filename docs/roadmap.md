@@ -759,7 +759,7 @@ a cheap query.
   positional voice as an audio source through M4's occlusion.
 - **ADRs expected:** transport; voice codec.
 
-### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0; Plan 0032 closed 2026-11-17, v0.61.0)
+### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0; Plan 0032 closed 2026-11-17, v0.61.0; Plan 0086 closed 2026-11-19, v0.67.0)
 
 The open-sky half of the "Floor, profiles and scene scale" decision, as general engine
 mechanisms: the first consumer is underground, so nothing here is on its P0 list, and terrain
@@ -791,13 +791,18 @@ against the baked store: no probe or store term takes sun or sky light.
   stamped at generation time (amended 2026-11-16, owner). Its Phase 9 window (2026-11-17)
   picked the defaults and reversed "an absent chunk is solid": unknown is lit (ADR-0027's
   Outcome).
-- **Still outdoor light** ([Plan 0086](plans/0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md),
-  drafted 2026-11-17 from the owner's picks at that window, awaits the go; ADR-0070
-  proposed): a sky visibility baked per brick direction into the per-chunk store and coloured
-  by the sky at read, the sky ray only where the bake is stale on a long running mean with a
-  firefly clamp, the key light on that history after a reading, a canopy that shadows as its
-  brick, history kept across a stair in the far-normal regime, and a spike on a
-  deterministic penumbra. After Plan 0032; recommended ahead of Plan 0081.
+- **Still outdoor light** ([Plan 0086](plans/done/0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md),
+  closed 2026-11-19, v0.67.0; ADR-0070 accepted with an Outcome): a sky visibility baked per
+  brick direction into the per-chunk store and coloured by the sky at read, a sky ray that has
+  reached the sky only above its column's top (the column map), the sky ray only where the
+  bake is stale on a running mean with a firefly clamp and a seed from the record, the key
+  light's visibility on the same pair at its own cap, a canopy that shadows as its brick (the
+  default `voxel`; `brick` and `absorb` settings), history kept across a stair in the far-normal
+  regime, the exposure anchored to the sky, a chunk an edit fills from air baked as a dig, and
+  a penumbra spike kept as a setting. Four owner windows picked the defaults. What it left
+  (the canopy's grain at rest, the dig's hole band, the tunnel's far end, the cave's seal
+  clause, the light pass's compile cost, three Phase 5 readings that regressed) is Plan 0094's,
+  approved 2026-11-19 to run next.
 - **A surface detail layer** ([Plan 0081](plans/0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md),
   drafted 2026-11-16, awaits the owner's go; ADR-0063 proposed): grass, moss, strands,
   fungus caps, flowers, pebbles and snow tufts as a procedural shell marched in the hit pass

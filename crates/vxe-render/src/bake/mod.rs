@@ -119,6 +119,8 @@ pub struct BakeReport {
     pub faces_at_max: u64,
     pub rays: u64,
     pub ray_len: f64,
+    /// Sky rays the kept samples drew (ADR-0070).
+    pub sky_rays: u64,
     /// Every face, under [`BakeSettings::keep_faces`].
     pub outcomes: Vec<FaceOutcome>,
 }

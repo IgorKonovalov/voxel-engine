@@ -97,7 +97,8 @@ pub struct Params {
     pub _pad10: u32,
     /// [`LookParams::far_normal`].
     pub far_normal: [f32; 2],
-    pub _pad9: u32,
+    /// [`Lighting::sky_bounce`] clamped to 0 ..= 1.
+    pub sky_bounce: f32,
     /// 1: [`Fsr2Settings::dither`] while FSR 2 runs unbypassed.
     pub dither: u32,
     /// The chunk of `views[0]`'s origin, which the LOD walk measures its levels from;
@@ -182,6 +183,135 @@ pub(crate) const LIGHTING_YOUNG_EDGES: u32 = 1 << 4;
 /// `Params::lighting` bit: an entity hit's emissive part is the store's at the world faces
 /// around it ([`EntityLight::World`]).
 pub(crate) const LIGHTING_ENTITY_WORLD: u32 = 1 << 7;
+
+/// `Params::lighting` bit, a reading hook ([`LightHooks::key_off`]): the light pass adds no key
+/// light sample, so the direct part's sky term is the sky rays' alone.
+pub(crate) const LIGHTING_HOOK_KEY_OFF: u32 = 1 << 16;
+
+/// `Params::lighting` bit, a reading hook ([`LightHooks::any_history`]): the temporal pass
+/// accepts a reprojected tap whatever its material and normal (the thing and the position
+/// tests still hold).
+pub(crate) const LIGHTING_HOOK_ANY_HISTORY: u32 = 1 << 17;
+
+/// `Params::lighting` bit: some material's style word has [`SHADOW_AS_BRICK`]
+/// ([`Frame::set_material_styles`]), so a light's shadow ray reads the styles of the bricks it
+/// enters; clear, it reads none.
+pub(crate) const LIGHTING_SHADOW_STYLES: u32 = 1 << 18;
+
+/// A material style word's bit ([`Frame::set_material_styles`]): a light's shadow ray (the
+/// key light's, a sky ray, the lamp's and the list's) stops where it enters a brick holding
+/// the material, so a sparse canopy shadows as its bricks. A primary ray, the bake's rays and
+/// the emissive samples' rays see the voxels.
+pub const SHADOW_AS_BRICK: u32 = 1;
+
+/// A material style word's bit ([`Frame::set_material_styles`]): the key light's ray and a
+/// sky ray (the light pass's and the bake's) pass the material's voxels, attenuated by
+/// `exp(-sigma x)` over their path `x` through them, a continuous transmittance; `sigma`, in
+/// thousandths a voxel, sits in the word's bits [`SHADOW_SIGMA_SHIFT`] on
+/// ([`shadow_absorb`]). The lamp's and the list's rays, a primary ray and the bake's emissive
+/// rays see the voxels.
+pub const SHADOW_ABSORB: u32 = 2;
+
+/// Where a [`SHADOW_ABSORB`] style word holds its sigma, in thousandths a voxel.
+pub const SHADOW_SIGMA_SHIFT: u32 = 8;
+
+/// The style word of a material that absorbs `sigma` a voxel ([`SHADOW_ABSORB`]), sigma
+/// rounded to thousandths and capped at 65.535 a voxel (the word travels as an `f32`, exact
+/// to 2^24).
+pub fn shadow_absorb(sigma: f32) -> u32 {
+    let milli = (sigma.max(0.0) * 1000.0).round().min(65_535.0) as u32;
+    SHADOW_ABSORB | (milli << SHADOW_SIGMA_SHIFT)
+}
+
+/// `Params::lighting` bit, a reading hook ([`LightHooks::no_stair`]): the far normal's stair
+/// rules are off (the history test keeps its material and face-blend normal tests, and the key
+/// and sky rays are not lifted).
+pub(crate) const LIGHTING_HOOK_NO_STAIR: u32 = 1 << 19;
+
+/// `Params::lighting` bit, a reading hook ([`LightHooks::sky_ray_always`]): the light pass
+/// casts the sky rays at every hit, a face with a fresh baked sky visibility too, and the
+/// temporal pass takes the visibility pair's mean there instead of the baked value.
+pub(crate) const LIGHTING_HOOK_SKY_RAY_ALWAYS: u32 = 1 << 20;
+
+/// `Params::lighting` bit, a reading hook ([`LightHooks::no_clamp`]): the visibility pair's
+/// firefly clamp is off.
+pub(crate) const LIGHTING_HOOK_NO_CLAMP: u32 = 1 << 21;
+
+/// `Params::lighting` bit: the key light's shadow ray is the closest-approach penumbra
+/// ([`Penumbra::Approach`]).
+pub(crate) const LIGHTING_PENUMBRA_APPROACH: u32 = 1 << 22;
+
+/// `Params::lighting` bit, a reading hook ([`LightHooks::sky_end_is_sky`]): a sky ray that ends
+/// without a hit has reached the sky wherever it ends, and an absent chunk is air to it.
+pub(crate) const LIGHTING_HOOK_SKY_END_IS_SKY: u32 = 1 << 23;
+
+/// `Params::lighting` bit, a reading hook ([`LightHooks::key_no_jitter`]): the key light's
+/// shadow ray runs along the disc's centre, its sample on the disc fixed.
+pub(crate) const LIGHTING_HOOK_KEY_NO_JITTER: u32 = 1 << 25;
+
+/// `Params::lighting` bit: a cube face's baked sky term reads its visibilities by the 27-count
+/// gradient's normal at every distance ([`SkyNormal::Smoothed`]).
+pub(crate) const LIGHTING_SKY_SMOOTHED: u32 = 1 << 24;
+
+/// The light passes' reading hooks ([`Frame::set_light_hooks`]): switches that take a term or a
+/// test out of the frame to attribute what the image does to it. All off by default; each is
+/// a uniform branch on a `Params::lighting` bit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LightHooks {
+    /// The light pass adds no key light sample.
+    pub key_off: bool,
+    /// The temporal pass's history test drops its material and normal tests.
+    pub any_history: bool,
+    /// The far normal's stair rules are off: the history test and the key and sky rays'
+    /// origins as at a near hit.
+    pub no_stair: bool,
+    /// The sky rays run at every hit, a face with a fresh baked sky visibility too, and the
+    /// sky term there is the visibility pair's.
+    pub sky_ray_always: bool,
+    /// The visibility pair's firefly clamp is off.
+    pub no_clamp: bool,
+    /// A sky ray that ends without a hit (its cap, an absent chunk, the window's face) has
+    /// reached the sky, with no column-map test, in the light pass and the bake: the rule
+    /// before ADR-0070's amendment of 2026-11-18.
+    pub sky_end_is_sky: bool,
+    /// The key light's shadow ray runs along the disc's centre: no jitter over the sun's disc.
+    pub key_no_jitter: bool,
+}
+
+impl LightHooks {
+    /// The hooks' `Params::lighting` bits.
+    pub(super) fn bits(self) -> u32 {
+        (if self.key_off {
+            LIGHTING_HOOK_KEY_OFF
+        } else {
+            0
+        }) | if self.any_history {
+            LIGHTING_HOOK_ANY_HISTORY
+        } else {
+            0
+        } | if self.no_stair {
+            LIGHTING_HOOK_NO_STAIR
+        } else {
+            0
+        } | if self.sky_ray_always {
+            LIGHTING_HOOK_SKY_RAY_ALWAYS
+        } else {
+            0
+        } | if self.no_clamp {
+            LIGHTING_HOOK_NO_CLAMP
+        } else {
+            0
+        } | if self.sky_end_is_sky {
+            LIGHTING_HOOK_SKY_END_IS_SKY
+        } else {
+            0
+        } | if self.key_no_jitter {
+            LIGHTING_HOOK_KEY_NO_JITTER
+        } else {
+            0
+        }
+    }
+}
 
 /// `Params::flags` bit: trace the shadow ray.
 pub(crate) const FLAG_SHADOWS: u32 = 1;
@@ -467,6 +597,47 @@ named_enum!(ShadowWalk {
     Coarse => "coarse",
 });
 
+/// How the key light's shadow ray makes its penumbra (Plan 0086 Phase 7's spike).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Penumbra {
+    /// One ray toward a uniform point of the body's disc a pixel and frame: the penumbra is the
+    /// mean over frames and pixels. The default.
+    #[default]
+    Disc,
+    /// One ray toward the body's centre that keeps, along its walk, the smallest ratio of the
+    /// distance from the ray to a solid 2^3 block beside it (probed two voxels across the ray's
+    /// dominant axis, about every two voxels through cells of a brick's edge or less) to
+    /// `t tan r`, `r` the body's angular radius: the visibility is that ratio clamped to 1, 0
+    /// where the ray hits. The same every frame; a penumbra on the lit side of the edge only.
+    Approach,
+}
+
+named_enum!(Penumbra {
+    Disc => "disc",
+    Approach => "approach",
+});
+
+/// The normal a cube face's baked sky term (ADR-0070) reads its visibilities by (Plan 0086
+/// Phase 13's arms).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SkyNormal {
+    /// The shading normal: the face's own direction near, the far normal's blend far.
+    Face,
+    /// The 27-count gradient's normal `g` at every distance: the face's term is the mix over
+    /// the directions `g` leans toward, `2a + (g_a > 0)` weighted `g_a^2`, of each direction's
+    /// baked visibility times the sky's irradiance above the horizon about it, over the
+    /// directions whose visibility is held; a tread and a riser of a one-voxel stair read the
+    /// slope's blend. The surface and the key light keep the face normal; a face whose sky
+    /// rays were cast (no fresh bake) keeps the shading normal. The default.
+    #[default]
+    Smoothed,
+}
+
+named_enum!(SkyNormal {
+    Face => "face",
+    Smoothed => "smoothed",
+});
+
 /// How a cube face's hit reads its emissive part from the store (ADR-0049).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum StoreRead {
@@ -690,12 +861,46 @@ pub struct Lighting {
     pub young_filter: YoungFilter,
     /// Where an entity hit's emissive light comes from ([`EntityLight`]; default `World`).
     pub entity_light: EntityLight,
-    /// Cosine-weighted sky rays a lighting pixel casts while a sky is set, 0 (none: the
-    /// sky lights through its key light alone) to [`MAX_SKY_RAYS`] (default
-    /// [`DEFAULT_SKY_RAYS`]): their mean of `pi sky_radiance(d)`
-    /// over the rays that reach the sky above the horizon joins the direct part.
+    /// Cosine-weighted sky rays a lighting pixel casts while a sky is set where its face holds
+    /// no fresh baked sky visibility (ADR-0070), 0 (none: bake only) to [`MAX_SKY_RAYS`]
+    /// (default [`DEFAULT_SKY_RAYS`]): the share that reaches the sky above the horizon feeds
+    /// the visibility pair, whose mean is coloured by the sky's irradiance about the normal.
     pub sky_rays: u32,
+    /// The visibility pair's running mean's cap in frames (ADR-0070), 1 to
+    /// [`MAX_SKY_HISTORY`] (default [`DEFAULT_SKY_HISTORY`]): the sky rays' visibility at a
+    /// pixel with no fresh baked value is their mean over up to this many frames.
+    pub sky_history: u32,
+    /// The key light's visibility mean's cap in frames (the visibility pair's `g`), 1 to
+    /// [`MAX_SKY_HISTORY`] (default [`DEFAULT_KEY_HISTORY`]): its own cap, so the key light's
+    /// mean through a canopy holds four times the sky rays' frames while a 10-degree jump
+    /// still resets it at once (the sky-change bit).
+    pub key_history: u32,
+    /// How the key light's shadow ray makes its penumbra ([`Penumbra`]; default `Disc`).
+    pub penumbra: Penumbra,
+    /// The normal a cube face's baked sky term reads its visibilities by ([`SkyNormal`];
+    /// default `Smoothed`).
+    pub sky_normal: SkyNormal,
+    /// The baked sky term's bounce floor `b`, 0 to 1 (default 0): the visibility is `(1 - b)
+    /// v(n) + b m`, `m` the face's cell's six direction visibilities' mean weighted `(1 +
+    /// n.d) / 2` over those it holds (a crude bounce from the brick's neighbourhood, one more
+    /// record read, no ray). Read where the store holds a baked visibility.
+    pub sky_bounce: f32,
+    /// The live queue's column wait (ADR-0070's amendment of the second window; default off): on,
+    /// a chunk bakes only once every column over its reach's footprint is final (holds every
+    /// chunk the streamer will hold, [`crate::QueueView::lod_radius`]); off, once no chunk of
+    /// those columns is pending upload, a block baked under a column not yet final marked
+    /// provisional and baked again once when the columns turn final.
+    pub column_wait: bool,
 }
+
+/// [`Lighting::sky_history`]' largest value: the pair's age is a half, exact to 2048.
+pub const MAX_SKY_HISTORY: u32 = 1024;
+/// [`Lighting::sky_history`] by default (Plan 0086's readings log, Phase 1: the rim's relative
+/// spread at the hit rates read there).
+pub const DEFAULT_SKY_HISTORY: u32 = 64;
+/// [`Lighting::key_history`] by default (Plan 0086 Phase 24b: the canopy's residual at rest is
+/// the key light's disc sample variance).
+pub const DEFAULT_KEY_HISTORY: u32 = 256;
 
 /// [`Lighting::sky_rays`]' largest value.
 pub const MAX_SKY_RAYS: u32 = 4;
@@ -726,6 +931,12 @@ impl Default for Lighting {
             entity_light: EntityLight::World,
             light_floor: DEFAULT_LIGHT_FLOOR,
             sky_rays: DEFAULT_SKY_RAYS,
+            sky_history: DEFAULT_SKY_HISTORY,
+            key_history: DEFAULT_KEY_HISTORY,
+            penumbra: Penumbra::Disc,
+            sky_normal: SkyNormal::Smoothed,
+            sky_bounce: 0.0,
+            column_wait: false,
         }
     }
 }
@@ -801,6 +1012,16 @@ impl Lighting {
             } else {
                 0
             }
+            | if self.penumbra == Penumbra::Approach {
+                LIGHTING_PENUMBRA_APPROACH
+            } else {
+                0
+            }
+            | if self.sky_normal == SkyNormal::Smoothed {
+                LIGHTING_SKY_SMOOTHED
+            } else {
+                0
+            }
     }
 
     /// The manual exposure, or 1.0 in auto.
@@ -837,5 +1058,24 @@ mod tests {
         for s in RenderScale::ALL {
             assert_eq!(RenderScale::from_name(s.name()), Some(s));
         }
+    }
+
+    /// Plan 0086 Phase 17: the sky term reads the smoothed normal by default, with no bounce.
+    #[test]
+    fn the_sky_term_defaults_to_the_smoothed_normal() {
+        let l = super::Lighting::default();
+        assert_eq!(
+            (l.sky_normal, l.sky_bounce),
+            (super::SkyNormal::Smoothed, 0.0)
+        );
+    }
+
+    /// Plan 0086 Phase 25 (the 86d window's state): the key light's visibility mean holds 256
+    /// frames by default and the sky's 64, each its own cap.
+    #[test]
+    fn the_key_mean_holds_256_frames_by_default() {
+        let l = super::Lighting::default();
+        assert_eq!((l.key_history, l.sky_history), (256, 64));
+        assert_eq!(super::DEFAULT_KEY_HISTORY, 256);
     }
 }

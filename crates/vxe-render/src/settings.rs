@@ -431,6 +431,12 @@ impl RenderSettings {
         ("lighting.young_filter", Live),
         ("lighting.entity_light", Live),
         ("lighting.sky_rays", Live),
+        ("lighting.sky_history", Live),
+        ("lighting.key_history", Live),
+        ("lighting.penumbra", Live),
+        ("lighting.sky_normal", Live),
+        ("lighting.sky_bounce", Live),
+        ("lighting.column_wait", Live),
         ("look.normal_mode", Live),
         ("look.view", Settle),
         ("look.translucent_layers", Live),
@@ -569,6 +575,14 @@ impl RenderSettings {
         (
             "set_count_store",
             "a reading hook: counts the store's reads for the HUD and readings",
+        ),
+        (
+            "set_material_styles",
+            "a per-material input: the consumer's render-side style of each material (SHADOW_AS_BRICK, SHADOW_ABSORB)",
+        ),
+        (
+            "set_light_hooks",
+            "a reading hook: takes the key light or the history's material and normal tests out",
         ),
         (
             "set_bypass",
@@ -824,7 +838,8 @@ fn flip(b: &mut bool) {
 fn lighting_test_value(l: &mut Lighting, name: &str) -> bool {
     use crate::exposure::Exposure;
     use crate::frame::{
-        EntityLight, HistoryKill, LightWeights, ShadowWalk, StoreRead, ToneMap, YoungFilter,
+        EntityLight, HistoryKill, LightWeights, Penumbra, ShadowWalk, SkyNormal, StoreRead,
+        ToneMap, YoungFilter,
     };
     match name {
         "exposure" => {
@@ -836,8 +851,14 @@ fn lighting_test_value(l: &mut Lighting, name: &str) -> bool {
         "tone_map" => other(&mut l.tone_map, ToneMap::Aces, ToneMap::Identity),
         "lamp" => flip(&mut l.lamp),
         "sky_rays" => l.sky_rays = (l.sky_rays + 1) % (super::MAX_SKY_RAYS + 1),
+        "sky_history" => l.sky_history = if l.sky_history == 64 { 128 } else { 64 },
+        "key_history" => l.key_history = if l.key_history == 256 { 64 } else { 256 },
         "candidates" => l.candidates = if l.candidates == 4 { 8 } else { 4 },
         "shadow_walk" => other(&mut l.shadow_walk, ShadowWalk::Full, ShadowWalk::Coarse),
+        "penumbra" => other(&mut l.penumbra, Penumbra::Disc, Penumbra::Approach),
+        "sky_normal" => other(&mut l.sky_normal, SkyNormal::Face, SkyNormal::Smoothed),
+        "sky_bounce" => l.sky_bounce = if l.sky_bounce == 0.0 { 0.3 } else { 0.0 },
+        "column_wait" => flip(&mut l.column_wait),
         "filter" => flip(&mut l.filter),
         "atrous_iterations" => l.atrous_iterations = if l.atrous_iterations == 2 { 4 } else { 2 },
         "history" => other(&mut l.history, HistoryKill::Edits, HistoryKill::Gradient),

@@ -777,7 +777,8 @@ impl Args {
     }
 
     /// The auto exposure of `--adaptation`, `--adapt` and `--metering`, with the outdoor
-    /// source's floor and ceiling unless `--exposure` or `--adaptation` is given.
+    /// source's floor and ceiling unless `--exposure` or `--adaptation` is given, then
+    /// `--exposure-max`'s ceiling and `--sky-anchor`'s.
     pub(crate) fn start_auto(&self) -> AutoExposure {
         let mut a = self.light.adaptation.preset();
         if let Some([light, cone, rod, floor]) = self.light.adapt {
@@ -789,6 +790,12 @@ impl Args {
         a.metering = self.light.metering;
         if self.outdoor.auto {
             (a.min, a.max) = (outdoor::OUTDOOR_MIN, outdoor::OUTDOOR_MAX);
+        }
+        if let Some(ev) = self.outdoor.exposure_max_ev {
+            a.max = ev.exp2();
+        }
+        if let Some(n) = self.outdoor.sky_anchor {
+            a.sky_anchor_ev = n;
         }
         a
     }
@@ -848,6 +855,8 @@ impl Args {
             .with_probe_spacing(self.light.probe_spacing);
         m.sky = self.sky_on();
         m.clock = self.outdoor.clock;
+        m.leaf_shadow = self.outdoor.leaf_shadow;
+        m.dump_black = self.outdoor.dump_black;
         m.profile = self.profile_row(&self.render_settings(), &[]);
         m.set_auto(self.light.adaptation, self.start_auto());
         m.show_look(&self.look.preset, self.look.preset.far_normal, now_ms);
@@ -940,6 +949,18 @@ impl Args {
                 .outdoor
                 .sky_rays
                 .unwrap_or(vxe_render::DEFAULT_SKY_RAYS),
+            sky_history: self
+                .outdoor
+                .sky_history
+                .unwrap_or(vxe_render::DEFAULT_SKY_HISTORY),
+            key_history: self
+                .outdoor
+                .key_history
+                .unwrap_or(vxe_render::DEFAULT_KEY_HISTORY),
+            penumbra: self.outdoor.penumbra,
+            sky_normal: self.outdoor.sky_normal,
+            column_wait: self.outdoor.column_wait,
+            sky_bounce: self.outdoor.sky_bounce,
             ..crate::default_lighting()
         })
     }

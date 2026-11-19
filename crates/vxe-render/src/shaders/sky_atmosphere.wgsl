@@ -36,12 +36,18 @@ struct SkyUniform {
     key_dir: vec3<f32>,
     key_radius: f32,
     key_e: vec3<f32>,
-    _pad: u32,
+    // The visibility pair's running mean's cap in frames (temporal.wgsl).
+    sky_history: u32,
     // The frame before's key light (SKY_PREV_KEY), and the sky's scale now and then.
     prev_key_dir: vec3<f32>,
     sky_scale: f32,
     prev_key_e: vec3<f32>,
     prev_sky_scale: f32,
+    // The key light's visibility mean's cap in frames (temporal.wgsl `key_mean`).
+    key_history: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 };
 
 const SKY_PI: f32 = 3.14159265358979;
@@ -218,4 +224,24 @@ fn mie_phase(c: f32, g: f32) -> f32 {
 fn one_minus_exp(x: vec3<f32>) -> vec3<f32> {
     let series = x * (1.0 - x * (0.5 - x / 6.0));
     return select(1.0 - exp(-x), series, x < vec3<f32>(0.01));
+}
+
+// `sky.wgsl`'s `sky_radiance` with a sky set, over the sky-view LUT `lut`: the uniform test
+// sky's radiance above the horizon and 0 below, else the LUT's radiance from unit world
+// direction `d` over `sky.view_scale`.
+fn sky_view_radiance(lut: texture_2d<f32>, d: vec3<f32>) -> vec3<f32> {
+    if ((sky.flags & SKY_UNIFORM) != 0u) {
+        return select(vec3<f32>(0.0), sky.uniform_l, d.z > 0.0);
+    }
+    let r = sky_camera_r();
+    let zen = acos(clamp(d.z, -1.0, 1.0));
+    var az = atan2(d.y, d.x);
+    if (az < 0.0) {
+        az += 2.0 * SKY_PI;
+    }
+    let uv = vec2<f32>(
+        az / (2.0 * SKY_PI),
+        unit_to_uv(sky_view_v(zen, r), f32(vec2<u32>(SKY_VIEW_W, SKY_VIEW_H).y)),
+    );
+    return lut_tap(lut, uv, true).xyz / sky.view_scale;
 }

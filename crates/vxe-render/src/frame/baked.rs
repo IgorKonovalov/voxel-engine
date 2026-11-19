@@ -7,6 +7,10 @@ use super::*;
 /// (missing, brick reads, coarse reads, fallback, still black).
 pub(super) const STORE_STATS_BYTES: u64 = 20;
 
+/// Bytes of the temporal pass's counter buffer: the store's five words, then the history
+/// test's four ([`Frame::read_history_rejections`]).
+pub(super) const COUNTER_BYTES: u64 = 36;
+
 /// Holds the light-sample ranges out to every chunk of `extent`'s reach (its farthest corner from
 /// the focus chunk, plus the light radius and one, for a job's box) and syncs until they settle.
 pub(super) fn hold_reach(
@@ -84,7 +88,7 @@ impl BakeLink {
             count_store: false,
             counters: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("store counters"),
-                size: STORE_STATS_BYTES,
+                size: COUNTER_BYTES,
                 usage: wgpu::BufferUsages::STORAGE
                     | wgpu::BufferUsages::COPY_SRC
                     | wgpu::BufferUsages::COPY_DST,
@@ -168,6 +172,7 @@ impl Frame {
             world_bind: &world_bind,
             params_buffer: &self.state.params,
             params,
+            sky: self.bake_sky(),
         };
         crate::bake::run(&run, &mut self.baked.store, extent, settings, progress)
     }
@@ -358,9 +363,36 @@ impl Frame {
             world_bind: &world_bind,
             params_buffer: &self.state.params,
             params,
+            sky: self.bake_sky(),
         };
         let q = self.baked.queue.as_mut()?;
+        q.column_wait = self.state.lighting.column_wait;
         Some(q.step(&run, &mut self.baked.store, view, t0))
+    }
+
+    /// The bake's sky-ray bits ([`crate::bake::BakeRun::sky`]): none with no sky set, else on
+    /// with the frame's coarse shadow walk and shadow styles.
+    pub(super) fn bake_sky(&self) -> u32 {
+        use crate::bake::{BAKE_SKY_COARSE, BAKE_SKY_END_IS_SKY, BAKE_SKY_ON, BAKE_SKY_STYLES};
+        if self.sky.sky.is_none() {
+            return 0;
+        }
+        BAKE_SKY_ON
+            | if self.state.lighting.shadow_walk == ShadowWalk::Coarse {
+                BAKE_SKY_COARSE
+            } else {
+                0
+            }
+            | if self.state.styles.is_empty() {
+                0
+            } else {
+                BAKE_SKY_STYLES
+            }
+            | if self.state.hooks.sky_end_is_sky {
+                BAKE_SKY_END_IS_SKY
+            } else {
+                0
+            }
     }
 
     /// The frame parameters a bake dispatches with: no view but the LOD walk's camera chunk,
@@ -428,6 +460,7 @@ impl Frame {
             world_bind: &world_bind,
             params_buffer: &self.state.params,
             params,
+            sky: self.bake_sky(),
         };
         Some(crate::bake::rebake(
             &run,
@@ -454,6 +487,35 @@ impl Frame {
     /// Whether the temporal pass counts the store's reads ([`Frame::set_count_store`]).
     pub fn counts_store(&self) -> bool {
         self.baked.count_store
+    }
+
+    /// The temporal pass's history test over the last submitted encode, a blocking read (zeros
+    /// with [`Frame::set_count_store`] off): the hits it tested (a hit with history on, outside
+    /// an edit box), then of those whose history reset (no tap accepted, by the bilinear four
+    /// or the 3 x 3 search), the nearest previous pixel's first failing test in the order
+    /// material, normal, position (any other: no hit there, another thing, or a pixel off the
+    /// grid).
+    pub fn read_history_rejections(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> [u32; 4] {
+        let bytes = crate::readback::read_buffer(
+            device,
+            queue,
+            &self.baked.counters,
+            STORE_STATS_BYTES,
+            COUNTER_BYTES - STORE_STATS_BYTES,
+        );
+        std::array::from_fn(|i| {
+            u32::from_le_bytes([
+                bytes[4 * i],
+                bytes[4 * i + 1],
+                bytes[4 * i + 2],
+                bytes[4 * i + 3],
+            ])
+        })
+    }
+
+    /// The light passes' reading hooks ([`LightHooks`]; all off by default).
+    pub fn set_light_hooks(&mut self, hooks: LightHooks) {
+        self.state.hooks = hooks;
     }
 
     /// The store's counters; `missing` is a blocking read of the last submitted encode's
