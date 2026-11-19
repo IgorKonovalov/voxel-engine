@@ -87,9 +87,28 @@ mod flicker {
         /// another strip (`settled`). The pacing: the queue's slice is GPU time, so an unpaced
         /// test frame (about 2.3 ms in a release build) leaves the bake a few submits per
         /// hundred frames behind the frames' own GPU work.
+        ///
+        /// The split (Plan 0086's amendment after the castle's stop, call 3): the sequence runs
+        /// three times in one process, (a) as above; (b) the exposure pinned from the first frame
+        /// (`Exposure::Manual`) at the exposure arm (a) reads after its settled strip; (c) arm
+        /// (b) with `LightHooks::key_off`. Each strip prints its per-frame series (the over-8
+        /// count per pair, the store's missing and chained counts, the sky rays cast, the
+        /// queue's `digs_baked`); the strips land under `<arm>-fresh` and `<arm>-settled`.
         #[test]
         #[ignore = "reading"]
         fn flicker_castle() {
+            let Some(e) = castle_arm("a", None, false) else {
+                return;
+            };
+            println!("castle split: arm (a)'s settled exposure {e}, pinned in (b) and (c)");
+            castle_arm("b", Some(e), false);
+            castle_arm("c", Some(e), true);
+        }
+
+        /// One arm of [`flicker_castle`]: the exposure pinned at `pin` from the first frame
+        /// (else the auto exposure), the key light off with `key_off`; the exposure read after
+        /// the settled strip. `None` without an adapter.
+        fn castle_arm(arm: &str, pin: Option<f32>, key_off: bool) -> Option<f32> {
             use flythrough::castle;
             use flythrough::outdoor::{OutdoorSource, Spawn};
             use vxe_world::{ChunkExtent, VoxelCoord, World};
@@ -159,15 +178,14 @@ mod flicker {
                 flythrough::level_pool_units(&w, false) * vxe_render::internals::UNIT_BYTES
             };
             let world = World::generate(extent, &source, &table);
-            let Some(mut rig) = mirrored_with(world, eye, pool * 5 / 4) else {
-                return;
-            };
+            let mut rig = mirrored_with(world, eye, pool * 5 / 4)?;
+            println!("castle arm ({arm}): exposure pinned {pin:?}, key light off {key_off}");
             let (at, yaw, pitch) = castle::CastleShot::Nave.pose();
             let p = [0, 1, 2].map(|k| (at[k] - castle::ORIGIN[k] + o[k]) as f32 + 0.5);
             let (y, pt) = ((yaw as f32).to_radians(), (pitch as f32).to_radians());
             let d = [y.cos() * pt.cos(), y.sin() * pt.cos(), pt.sin()];
             let cam = flythrough::camera_looking_at(p, [p[0] + d[0], p[1] + d[1], p[2] + d[2]]);
-            let mut s = strip_frame(&mut rig, noon(), &cam);
+            let mut s = strip_frame_with(&mut rig, noon(), &cam, pin, key_off);
             let mut pre = 0;
             while pre < 30_000 && !s.frame.bake_queue().is_some_and(|q| q.empty()) {
                 queue_step(&mut rig, &mut s.frame, &cam);
@@ -195,7 +213,7 @@ mod flicker {
                 boxes[0].0,
                 boxes[0].1
             );
-            strip(&mut rig, &mut s, &cam, "castle", "fresh");
+            strip(&mut rig, &mut s, &cam, "castle", &format!("{arm}-fresh"));
             let mut n = 0;
             let mut missing = Vec::new();
             let t = std::time::Instant::now();
@@ -220,7 +238,10 @@ mod flicker {
                 st.as_ref().map(|st| st.digs_baked),
             );
             settle(&mut rig, &mut s, &cam, 120);
-            strip(&mut rig, &mut s, &cam, "castle", "settled");
+            strip(&mut rig, &mut s, &cam, "castle", &format!("{arm}-settled"));
+            let e = s.frame.exposure_readout(&rig.device).map(|r| r.exposure);
+            println!("castle arm ({arm}): the exposure after the settled strip {e:?}");
+            e
         }
 
         /// [`support::terms::mirrored`] with the pool given.
@@ -281,6 +302,18 @@ mod flicker {
         /// the fly-through's settings), `sky` set, the queue stepped until it drains (at most
         /// 6000 frames).
         fn strip_frame(rig: &mut Rig, sky: vxe_render::sky::Sky, cam: &Camera) -> Stepper {
+            strip_frame_with(rig, sky, cam, None, false)
+        }
+
+        /// [`strip_frame`], the exposure pinned at `pin` (`Exposure::Manual`) from the first
+        /// frame where given, the key light off with `key_off`.
+        fn strip_frame_with(
+            rig: &mut Rig,
+            sky: vxe_render::sky::Sky,
+            cam: &Camera,
+            pin: Option<f32>,
+            key_off: bool,
+        ) -> Stepper {
             let mut f = vxe_render::Frame::with_sizes(&rig.device, INTERNAL, OUT);
             f.set_upscaler_kind(
                 &rig.device,
@@ -304,6 +337,18 @@ mod flicker {
                 }),
                 ..flythrough::default_lighting()
             });
+            if let Some(e) = pin {
+                f.set_lighting(vxe_render::Lighting {
+                    exposure: vxe_render::Exposure::Manual(e),
+                    ..f.lighting()
+                });
+            }
+            if key_off {
+                f.set_light_hooks(vxe_render::LightHooks {
+                    key_off: true,
+                    ..Default::default()
+                });
+            }
             f.set_sky(Some(sky));
             f.set_dt(1.0 / 60.0);
             f.start_bake_queue(
@@ -345,6 +390,7 @@ mod flicker {
             std::fs::create_dir_all(&dir).expect("the strip's directory");
             let mut shots: Vec<Shot> = Vec::with_capacity(STRIP);
             let mut depth = Vec::with_capacity(STRIP);
+            let mut baked = Vec::with_capacity(STRIP);
             for i in 0..STRIP {
                 let q = queue_step(rig, &mut s.frame, cam);
                 if i == 0 {
@@ -362,6 +408,7 @@ mod flicker {
                     OUT[1],
                 );
                 depth.push(q.depth);
+                baked.push(q.digs_baked);
                 shots.push(sh);
             }
             let n = (OUT[0] * OUT[1]) as usize;
@@ -445,8 +492,21 @@ mod flicker {
                 depth.last().unwrap_or(&0),
                 rig.adapter,
             );
+            // Per pair k (frames k - 1 to k), the values at frame k.
+            let series = format!(
+                "flicker {scene} {name} series (frames 1..{STRIP}): over 8 {:?}; missing {:?}; chained {:?}; sky rays cast {:?}; digs baked {:?}",
+                over[1],
+                shots[1..].iter().map(|s| s.missing).collect::<Vec<_>>(),
+                shots[1..].iter().map(|s| s.chained).collect::<Vec<_>>(),
+                shots[1..]
+                    .iter()
+                    .map(|s| s.cast.iter().filter(|&&c| c).count())
+                    .collect::<Vec<_>>(),
+                &baked[1..],
+            );
             println!("{line}");
-            std::fs::write(dir.join("counts.txt"), format!("{line}\n")).expect("the counts");
+            println!("{series}");
+            std::fs::write(dir.join("counts.txt"), format!("{line}\n{series}\n")).expect("the counts");
         }
     }
 }

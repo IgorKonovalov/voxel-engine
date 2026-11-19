@@ -23,6 +23,8 @@ pub struct Shot {
     /// The store's black and missing counts.
     pub black: u32,
     pub missing: u32,
+    /// Lighting pixels with no brick value that took a value from the missing-light chain.
+    pub chained: u32,
 }
 
 /// A frame on a rig stepped by hand so its passes are timed ([`vxe_render::PassTimer`]).
@@ -101,6 +103,7 @@ pub fn read(rig: &Rig, f: &Frame, light_ms: Option<f64>) -> Shot {
         light_ms,
         black: ss.still_black,
         missing: ss.missing,
+        chained: ss.fallback,
     }
 }
 
