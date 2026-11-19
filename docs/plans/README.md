@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0091** (ADRs are a separate sequence, see `../adrs/README.md` for its
+**Next free number: 0093** (ADRs are a separate sequence, see `../adrs/README.md` for its
 next free number).
 
 ## Active roster
@@ -28,6 +28,8 @@ next free number).
 | [0087](0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md) | The rename to `svet`: crates, `SVET_*`, the WIT package, the tester archive, docs, the repository, a minor bump | approved | ADR-0071. Alone, last: after 0032, 0080, 0077, 0079, 0083 and 0086 merge. |
 | [0089](0089-deterministic-simulation-testing-seeded-scenarios-a-simulated-channel-a-mirror-oracle-and-gates.md) | Deterministic simulation testing: seeded scenarios, a shrinker, a simulated channel, a mirror oracle, determinism gates | approved | ADR-0073 (proposed). All phases after 0087 merges (owner). |
 | [0090](0090-the-pop-counter-scenes-on-lavapipe-count-the-pixels-that-break-the-light-rules-a-ratchet.md) | The pop counter: fixed scenes on lavapipe count the pixels that break each light rule, by source; a baseline that only falls | approved | Cross-cutting, ADR-0076 (proposed). After 0086 closes, before 0081. |
+| [0091](0091-the-frame-profiler-scopes-across-threads-a-gpu-lane-a-dump-for-agents-and-a-hud-ticker.md) | The frame profiler: scopes across the threads, a GPU lane, a dump the agent ranks, budget scopes, a HUD ticker | approved | M7, ADR-0077. After 0087 and 0089, before 0090 (owner). |
+| [0092](0092-wgsl-hot-reload-in-the-fly-through-an-mtime-poll-pipelines-rebuilt-and-the-old-ones-kept-on-an-error.md) | WGSL hot reload in the fly-through: an mtime poll, pipelines rebuilt from disk, the old kept on an error | approved | M7, no ADR. After 0091 in its lane, before 0090 (owner). |
 <!-- roster:end -->
 
 ## Sequence
@@ -147,7 +149,22 @@ article "Deterministic Simulation Testing"; ADR-0073 proposed): approved 2026-11
 recommended answers except the timing: every phase runs after Plan 0087 (the rename) merges
 (owner). No new dependency.
 
-Every active plan is approved (Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
+**Plan 0091** (the frame profiler: `profiling` facade scopes in `vxe-render` and the apps, puffin
+behind the fly-through's `profiler` feature, `--profiler-dump` writing a Chrome trace, a text tree
+and `run.json`'s `scopes_top`, `scripts/profile-top.mjs` for agents, `PassTimer`'s passes as a
+`gpu` lane, budget scopes, allocation counting, a HUD ticker with a frozen frame; drafted
+2026-11-19 from the Bonsai second pass and approved the same day, ADR-0077 accepted): the owner placed it
+**after Plans 0087 and 0089 and before Plan 0090** (2026-11-19). It touches the fly-through's
+HUD, report and run loop, so it does not run beside a lane that edits them.
+
+**Plan 0092** (WGSL hot reload in the fly-through: `Frame::reload_shaders` in `vxe-render`, an
+mtime poll under `--watch-shaders`, the old pipelines kept and the error on the window on a
+compile failure; drafted and approved 2026-11-19, no ADR, no dependency): the owner placed it
+on the architect's recommendation, **right after Plan 0091 merges, before Plan 0090**, in the same lane, because
+it is small, shares the HUD's menu and banner files with 0091, and shortens the window loop
+that Plans 0090, 0081 and the M10 look plans run on.
+
+Every active plan but 0091 and 0092 (proposed 2026-11-19) is approved (Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Approval accepts the design; a plan's lane
 starts only when the plans its "Starts after" line names have closed and merged, and where that
 line asks for it, after the architect has re-read the plan against the new tip. The approved
