@@ -16,7 +16,7 @@
 > merges: its Phases 2 and 3 edit `apps/flythrough/src/path.rs` (the tester filter),
 > `apps/flythrough/tests/path.rs`, `cli/parse.rs` and `docs/flythrough.md`, the files this plan
 > adds to. It does **not** wait for
-> [Plan 0086](../0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md):
+> [Plan 0086](0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md):
 > the two share no file but `cli/parse.rs` (0086's Phase 7 adds a flag; this plan changes the
 > scene derivation, a different hunk), and an outdoor tester reading taken before 0086 lands is
 > the baseline its close compares against. This plan is a day's lane and merges before

@@ -161,6 +161,18 @@ instead); `the_built_castle_has_an_icon`, `the_ghost_is_a_coarse_copy_in_its_fra
 `the_castle_loads_through_the_scene` need the built castle and are soak marks or one shared
 build. About 100 s of serial time.
 
+Plan 0086's close (2026-11-19, `docs/nfr.md` section 7): 1792.6 s quiet, 61 tests over the
+line, none of them new; the wall is the light pass's pipeline compile on lavapipe (+2.2 to
+2.6 s on every test that builds a frame, the penumbra spike's default-off branch the largest
+step), accepted by the owner and taken by Plan 0094 with the pipeline-cache entry below. Two
+smaller items from the same close: `gpu_world::columns::tests::the_first_flush_of_the_streamed_window_is_cheap`
+(c682fa9d) bounds a wall clock in the gate (under 1000 ms; 189.5 ms quiet in debug on the dev
+reference), which a loaded CI runner can trip, where a count of the sheet lookups per tile
+would not; and two of `gpu_sun`'s sky tests the plan rewrote (Plan 0032's names,
+`a_closed_box_takes_no_sky_light` 13.7 s, `the_open_floor_reads_pi_under_a_uniform_sky` 13.3 s)
+read over the line under the compile and go under it once the cache lands, or take the soak
+mark.
+
 ### `cargo deny` fails on main's wasmtime 49.0.5 advisories
 
 Noted 2026-11-19 at Plan 0083's close: `cargo deny check` reads advisories FAILED on
@@ -177,24 +189,6 @@ Taken 2026-11-10 by [Plan 0060](plans/done/0060-the-live-queue-by-the-view-and-w
 
 
 ## Engine mechanisms
-
-### The fill-in after a stamp or a jump: the no-ray sky prior, the landing's fade, the exposure's rate
-
-Parked 2026-11-19 by Plan 0086's fourth amendment ("after the castle's stop"), which charters it.
-A freshly stamped castle's keep reads its sky through the missing-light chain's neighbour
-summaries (the hill's open faces) until its dig jobs land, so its walls start lit as outdoors
-and step at every neighbouring landing; the same prior puts the dig rig's far wall 18 levels
-over its band for two frames; and the auto exposure follows all of it. Plan 0086 takes the
-split (exposure pinned, per term, per frame against the landings) and builds nothing. What it
-takes: a plan with the split as Phase 1, then by its shares: the chain's sky for a face with no
-record (the own summary kept, the neighbours' out, the ray seeded from the column or the column
-held), Phase 20 (ii)'s fade generalised to every no-ray value change, ADR-0076 rule 5's rate cap
-as an `AutoExposure` setting, Phase 20 bar 1a's (i) and (ii) by the lines, and a window on the
-castle on main. Pick up at Plan 0086's close: the architect drafts it then. **The before state
-(2026-11-19, Plan 0086's 86c window, run 9 on Plan 0083's binary, which holds none of 0086's
-light):** the castle placed on the hills at noon, the owner inside: "fine, but it flickers in
-the shadowed part"; the follow-up's window judges the same pose on main with both plans merged,
-and its split reads the shadowed part first.
 
 ### Chunk-scale world dynamics: a cellular material step and an event scheduler
 

@@ -1,8 +1,10 @@
 # ADR-0070: Sky light is a visibility baked per brick direction, coloured by the sky at read; a long-history ray covers what the bake has not caught
 
-> **Status:** proposed
+> **Status:** accepted (2026-11-19, Plan 0086's close), with the Outcome of 2026-11-19 below;
+> amended twice 2026-11-18 while proposed (what counts as sky: the column map; the finality a
+> catch-up, the wait a setting)
 > **Date:** 2026-11-17
-> **Related plan(s):** [Plan 0086](../plans/0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md)
+> **Related plan(s):** [Plan 0086](../plans/done/0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md)
 > (builds it); [Plan 0032](../plans/done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
 > (whose sky ray this replaces at rest; its Phase 6 stop rule fired at the owner's window of
 > 2026-11-17)
@@ -345,7 +347,53 @@ double stands, and the owner picked against it); dropping the finality altogethe
 baked under a non-final column keeps a false sky until an edit re-bakes it, the leak the
 amendment above was written to remove).
 
-## Outcome
+## Outcome (2026-11-19, Plan 0086's close)
 
-_(Added only at acceptance if implementation falsified something above. Dated. Never rewrite the
-body.)_
+Built as decided, with the two amendments above, through four owner windows (Plan 0086 Phases
+8, 15, 24 and 24e; the readings log `docs/plans/logs/0086.md`). The body stands; what the
+implementation changed or falsified:
+
+- **The baked term is `v E_sky(n) / h(n)`**, `h` the hemisphere's cosine share above the
+  horizon (1 for `+z`, a half for a horizontal normal), not `v E_sky(n)`: the bake's
+  visibility is a fraction of the rays above the horizon, so the open-floor and open-wall
+  readings (`pi` and `pi / 2` under `Sky::uniform(1.0)`) hold only with the division. `E_sky`
+  is written by a pass of its own (`sky_irradiance.wgsl`, 32 x 32 strata of equal cosine
+  measure per axis) into a 96 B storage buffer the temporal pass binds, not carried in the
+  sky uniform. The normal it reads by is the 27-count gradient's at every distance
+  (`sky_normal smoothed`, the second window's pick), so a one-voxel stair reads one slope.
+- **The pair's sky term never reaches the direct target.** It joins at the a-trous's variance
+  step and the composite (Phase 21 (c)), so `direct_accumulated` carries no sky and a
+  stale ring face's term passes around the filter in the baked form (Phase 24a); the light
+  pass hands the rays' share to the temporal pass through an `rgba8unorm` target (20 B a
+  lighting pixel with the pair, not 16). A reset pair starts from its face's record, else from
+  the column map at the hit's air side, at age `SEED_AGE` 8 (Phase 21), not from one raw
+  sample; the chain's neighbour summaries stand in for the sky where a face has no record
+  (Phase 10).
+- **The key light's visibility took the pair's `g`** (Phase 19), on a cap of its own
+  (`key_history`, 256 by default; the sky's `sky_history` stays 64): the 3-degree penumbra
+  read p99 1 against the lamp's 1 before the move (Phase 6, so the Decision's condition did not
+  fire), and the move was made for the forest floor's grain after a turn; the penumbra holds
+  p99 2 against `T_still` 4 on it.
+- **The column map** is a CPU sheet per mirrored chunk (1024 B) and an `r32sint` texture at
+  2-voxel cells, 10 653 696 B at the fly-through's window of side 51 (the amendment's guess
+  4.5 MB); its first flush computed each cell against every chunk of the column and cost the
+  outdoor start 48 s on lavapipe and 3 x on the RTX release until `c682fa9d` walked the column
+  once per tile. The key light's ray keeps the old rule.
+- **`sky_rays` 0 shows a stale ring's stale value** during a dig until its re-bake lands, and
+  with `sky_rays` 1 the dug floor's stored part reads 24.8 on the dig's first frame against
+  3.58 landed (Phase 5 bar 4's last clause, printed, not asserted). **A chunk an edit fills
+  from air is a dig** (Phase 21a), so a stamped castle's chunks bake ahead of the pool.
+- **Costs read:** the record 9 words from 7 (+8 B, as projected; the hills' store 10.6 MB);
+  the RTX 3080 Laptop's outdoor light pass at rest 1.57 ms on the hills and 2.53 in the forest
+  at 1080p (0.72 at the tunnel); the RADV RENOIR's 8.0 and 12.0 ms there (10.5 on the hills
+  before this ADR with the ray on everywhere), 3.88 + 0.34 at the tunnel, still over the 4.0
+  ms line at rest: the Positive consequence "the slow adapter's 4.8 ms a ray" was the ray's
+  share, and what the RENOIR pays now is the key light's disc ray and the baked read. The
+  readings are in `docs/nfr/02-frame-budget.md`. The bake under a sky lengthens the pre-roll (the RTX's
+  hills 7.3 to 14.4 s; the wait on doubled it again, which the second amendment turned off).
+- **Open, Plan 0094:** the tunnel's far end reads p99 4 against the headlamp's 2 under FSR 2
+  (the rim band meets it); the canopy's grain at rest (the key mean's age at the trunks); the
+  dig's hole band; the cave's seal clause re-derived on the pair's term; the pair's mean and
+  clamp readings that regressed against Phase 5's (0.6167 against 0.5 within 0.1; 0.4993
+  against 0.25); the light pass's compile cost (+2.85 s a pipeline build on lavapipe, the
+  penumbra spike's branch +1.25 of it).
