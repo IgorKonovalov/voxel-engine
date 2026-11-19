@@ -321,6 +321,153 @@ mod flicker {
             }
         }
 
+        /// Plan 0094 Phase 2 bar 2: the dig's hole band. [`dig_split`]'s rig at
+        /// `VXE_SPLIT_TIME` (16:00 and 17:00 on the shadowed side are the plan's), drained and
+        /// settled, 8 frames read, the dig at N, then frames until the dig's job lands (the
+        /// queue's `digs_baked` rises; at most 400) and `F + 16` more. The bands by the hit's
+        /// distance from the dig's box at N: the hole band (within 8 voxels) and the ring's edge
+        /// (8 to 16). Per band: on the pairs ending at N to N + 4, of the pixels over 4 levels,
+        /// the shares whose lighting pixel cast the sky ray, holds a pair at the seed's age
+        /// (`SEED_AGE` 8), a history of age 0 (the key mean's restart), and each source word;
+        /// the mean |seed - settled| of the pair's mean over the pixels seeded at N (the
+        /// contact shadow's seed against what the pixel settles to, frame `landing + F + 16`);
+        /// and rule 3's class shares over the trace from N - 8 to the landing plus `F + 16`, the
+        /// fade allowed `landing + F` frames. `VXE_TEST_ADAPTER` picks the adapter.
+        #[test]
+        #[ignore = "reading"]
+        fn hole_band() {
+            use support::rules::{F, MEAN_FRAMES, T_FADE, TraceClass, trace_classes};
+            let Some((mut rig, cam)) = support::terms::hills_rig() else {
+                return;
+            };
+            let cam = pitched(&cam, -30.0);
+            let mut s = strip_frame(&mut rig, split_sky(), &cam);
+            let mut n = 0;
+            while n < 30_000 && !s.frame.bake_queue().is_some_and(|q| q.empty()) {
+                queue_step(&mut rig, &mut s.frame, &cam);
+                s.run(&rig, &cam);
+                n += 1;
+            }
+            settle(&mut rig, &mut s, &cam, 240);
+            let pair_of = |rig: &Rig, s: &Stepper| {
+                vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, s.frame.visibility_pair())
+            };
+            let mut shots: Vec<(Shot, Vec<[f32; 4]>)> = Vec::new();
+            for _ in 0..MEAN_FRAMES {
+                queue_step(&mut rig, &mut s.frame, &cam);
+                let sh = s.step(&rig, &cam);
+                shots.push((sh, pair_of(&rig, &s)));
+            }
+            let (min, max) = dig_ahead(&mut rig, &mut s.frame, &cam);
+            let mut landing = None;
+            let mut baked0 = None;
+            let mut k = 0usize;
+            loop {
+                let q = queue_step(&mut rig, &mut s.frame, &cam);
+                let b0 = *baked0.get_or_insert(q.digs_baked);
+                let sh = s.step(&rig, &cam);
+                shots.push((sh, pair_of(&rig, &s)));
+                if landing.is_none() && q.digs_baked > b0 {
+                    landing = Some(k);
+                }
+                k += 1;
+                if landing.is_some_and(|l| k > l + F + 16) || k > 400 {
+                    break;
+                }
+            }
+            let Some(landing) = landing else {
+                println!("hole band: the dig's job did not land within 400 frames");
+                return;
+            };
+            let at_n = &shots[MEAN_FRAMES].0;
+            let gw = ((at_n.hits.len() as f64 * f64::from(INTERNAL[0]) / f64::from(INTERNAL[1]))
+                .sqrt()
+                .round() as usize)
+                .max(1);
+            let dist = |h: &[f32; 4]| -> Option<f32> {
+                if h[3] >= 1e30 {
+                    return None;
+                }
+                let d2: f32 = (0..3)
+                    .map(|k| {
+                        let v = h[k];
+                        let d = (min[k] as f32 - v).max(v - (max[k] + 1) as f32).max(0.0);
+                        d * d
+                    })
+                    .sum();
+                Some(d2.sqrt())
+            };
+            let n_px = (OUT[0] * OUT[1]) as usize;
+            let grid = |i: usize| grid_of(i, OUT[0] as usize, OUT[1] as usize, gw, at_n.hits.len());
+            let band_of = |i: usize| match dist(&at_n.hits[grid(i)]) {
+                Some(d) if d <= 8.0 => Some(0),
+                Some(d) if d <= 16.0 => Some(1),
+                _ => None,
+            };
+            let settled = &shots[(MEAN_FRAMES + landing + F + 16).min(shots.len() - 1)].1;
+            for (b, name) in ["hole band", "ring edge 8..16"].iter().enumerate() {
+                let region: Vec<bool> = (0..n_px).map(|i| band_of(i) == Some(b)).collect();
+                let px = region.iter().filter(|&&r| r).count();
+                // The pairs ending at N .. N + 4.
+                let (mut over, mut cast, mut seed, mut age0) = (0u64, 0u64, 0u64, 0u64);
+                let mut words = [0u64; 7];
+                for e in MEAN_FRAMES..MEAN_FRAMES + 5 {
+                    let (a, (sh, pair)) = (&shots[e - 1].0, &shots[e]);
+                    for i in (0..n_px).filter(|&i| region[i]) {
+                        if support::rules::change(&a.display, &sh.display, i) <= 4 {
+                            continue;
+                        }
+                        let g = grid(i);
+                        over += 1;
+                        cast += u64::from(sh.cast[g]);
+                        seed += u64::from((pair[g][3] - 8.0).abs() < 0.5);
+                        age0 += u64::from(sh.age[g] < 0.5);
+                        words[usize::from(sh.source[g]).min(6)] += 1;
+                    }
+                }
+                let pc = |v: u64| 100.0 * v as f64 / over.max(1) as f64;
+                let w: Vec<String> = support::defects::SOURCE_NAMES
+                    .iter()
+                    .zip(words)
+                    .filter(|(_, c)| *c > 0)
+                    .map(|(s, c)| format!("{s} {:.1} %", pc(c)))
+                    .collect();
+                // The seed against the settled mean at the lighting pixels seeded at N.
+                let pn = &shots[MEAN_FRAMES].1;
+                let (mut dev, mut seeded) = (0f64, 0u64);
+                for g in 0..pn.len() {
+                    let h = &at_n.hits[g];
+                    let in_band = match dist(h) {
+                        Some(d) => if b == 0 { d <= 8.0 } else { d > 8.0 && d <= 16.0 },
+                        None => false,
+                    };
+                    if in_band && at_n.cast[g] && (pn[g][3] - 8.0).abs() < 0.5 {
+                        dev += f64::from((pn[g][0] - settled[g][0]).abs());
+                        seeded += 1;
+                    }
+                }
+                let refs: Vec<&[u8]> = shots[..].iter().map(|(sh, _)| sh.display.as_slice()).collect();
+                let c = trace_classes(&refs, &region, T_FADE, landing + F);
+                let cls: Vec<String> = TraceClass::ALL
+                    .iter()
+                    .map(|t| format!("{t:?} {:.2} %", 100.0 * c[t.index()] as f64 / px.max(1) as f64))
+                    .collect();
+                println!(
+                    "reading: hole band at {}, {name}: {px} px; landing at N + {landing}; pairs N..N+4 over 4: {over} px-pairs, \
+                     cast {:.1} %, pair at the seed's age {:.1} %, history age 0 {:.1} %, sources [{}]; \
+                     seeded at N {seeded} lighting px, mean |seed - settled| {:.4}; rule 3 classes [{}] ({})",
+                    std::env::var("VXE_SPLIT_TIME").unwrap_or_else(|_| "12:00".into()),
+                    pc(cast),
+                    pc(seed),
+                    pc(age0),
+                    w.join(", "),
+                    dev / seeded.max(1) as f64,
+                    cls.join(", "),
+                    rig.adapter
+                );
+            }
+        }
+
         /// [`flicker_dig_split`] on a streamed world as the window streams it: the hills of
         /// seed 1 about the spawn at the fly-through's residency (`RESIDENCY`, full 16, LOD 24)
         /// and mirror (the default budget, `stream_record_chunks`, a following window), the
@@ -1035,6 +1182,127 @@ mod flicker {
             }
         }
 
+        /// A castle strip frame's parts: the exposure this frame used, and per lighting pixel
+        /// the stored part's and the accumulated direct part's luminance (pre-exposed).
+        struct CastleParts {
+            exposure: f32,
+            stored: Vec<f32>,
+            direct: Vec<f32>,
+        }
+
+        fn castle_parts(rig: &Rig, s: &Stepper) -> CastleParts {
+            use vxe_render::debug::{read_buffer, read_rgba16f};
+            let (d, q) = (&rig.device, &rig.queue);
+            let lum = |p: &[f32; 4]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
+            let st = read_buffer(d, q, s.frame.exposure_state(), 0, 32);
+            CastleParts {
+                exposure: vxe_render::ExposureState::from_bytes(&st).previous,
+                stored: read_rgba16f(d, q, s.frame.accumulated()).iter().map(lum).collect(),
+                direct: read_rgba16f(d, q, s.frame.direct_accumulated()).iter().map(lum).collect(),
+            }
+        }
+
+        /// Plan 0094 Phase 2 bar 1: the castle strip's pixels over 4 and over 8 by source and
+        /// transition. Per pair and pixel over the bar, its lighting pixel `g`, in order: the
+        /// exposure's (its step alone, `level |e_b / e_a - 1|`, is over the bar); a switch (the
+        /// sky term's source word differs between the two frames: `a>b`); the key light's (the
+        /// accumulated direct part's change, rescaled by the exposure step, is larger than the
+        /// stored part's) at a no-ray pixel; else the source word at `b`: the chain (own
+        /// summary, neighbours), the store (a fresh record), the pair (a stale record or no
+        /// value: the ray, its key light term included), none. The transition: `reset` (the
+        /// history's age fell), `young` (under 16), `steady`. The keep's walls (the hit within
+        /// a voxel of a castle material) are a class of their own; the over-8 counts per pair
+        /// are printed beside `digs_baked`.
+        fn castle_sources(rig: &Rig, shots: &[Shot], parts: &[CastleParts], baked: &[u64], name: &str) {
+            use std::collections::BTreeMap;
+            use support::defects::{
+                SOURCE_NAMES, SOURCE_NEIGHBOURS, SOURCE_NONE, SOURCE_OWN_SUMMARY, SOURCE_RECORD,
+            };
+            let base = flythrough::outdoor_materials().len() as vxe_world::MaterialId;
+            let n = (OUT[0] * OUT[1]) as usize;
+            let gl = shots[0].hits.len();
+            let gw = ((gl as f64 * f64::from(INTERNAL[0]) / f64::from(INTERNAL[1])).sqrt().round() as usize).max(1);
+            let wall_of = |h: &[f32; 4]| {
+                if h[3] >= 1e30 {
+                    return false;
+                }
+                (0..8).any(|k| {
+                    let v: [i32; 3] = std::array::from_fn(|a| (h[a] + if k >> a & 1 == 1 { 0.5 } else { -0.5 }).floor() as i32);
+                    rig.world.material_at(vxe_world::VoxelCoord(v)).is_some_and(|m| m >= base)
+                })
+            };
+            for bar in [4u8, 8] {
+                // (class, walls) -> count; transition -> count.
+                let mut by: BTreeMap<(String, bool), u64> = BTreeMap::new();
+                let mut trans: BTreeMap<(String, bool), u64> = BTreeMap::new();
+                let mut per_pair = Vec::new();
+                let mut total = [0u64; 2];
+                for k in 1..shots.len() {
+                    let (a, b) = (&shots[k - 1], &shots[k]);
+                    let (pa, pb) = (&parts[k - 1], &parts[k]);
+                    let ratio = pb.exposure / pa.exposure.max(1e-12);
+                    let mut c = 0u64;
+                    for i in 0..n {
+                        let d = support::rules::change(&a.display, &b.display, i);
+                        if d <= bar {
+                            continue;
+                        }
+                        c += 1;
+                        let g = grid_of(i, OUT[0] as usize, OUT[1] as usize, gw, gl);
+                        let wall = wall_of(&b.hits[g]);
+                        total[usize::from(wall)] += 1;
+                        let lv = f32::from(support::rules::level(&a.display, i));
+                        let (sa, sb) = (a.source[g], b.source[g]);
+                        let class = if lv * (ratio - 1.0).abs() > f32::from(bar) {
+                            "exposure".to_string()
+                        } else if sa != sb {
+                            format!("switch {}>{}", SOURCE_NAMES[usize::from(sa).min(6)], SOURCE_NAMES[usize::from(sb).min(6)])
+                        } else {
+                            let ds = (pb.stored[g] - pa.stored[g] * ratio).abs();
+                            let dd = (pb.direct[g] - pa.direct[g] * ratio).abs();
+                            match sb {
+                                SOURCE_OWN_SUMMARY | SOURCE_NEIGHBOURS | SOURCE_RECORD if dd > ds => "key".into(),
+                                SOURCE_OWN_SUMMARY | SOURCE_NEIGHBOURS => "chain".into(),
+                                SOURCE_RECORD => "store".into(),
+                                SOURCE_NONE => "none".into(),
+                                _ => "pair".into(),
+                            }
+                        };
+                        *by.entry((class, wall)).or_default() += 1;
+                        let t = if b.age[g] + 0.5 < a.age[g] {
+                            "reset"
+                        } else if b.age[g] < 16.0 {
+                            "young"
+                        } else {
+                            "steady"
+                        };
+                        let tl = format!("{} {t}", SOURCE_NAMES[usize::from(sb).min(6)]);
+                        *trans.entry((tl, wall)).or_default() += 1;
+                    }
+                    per_pair.push(c);
+                }
+                let fmt = |m: &BTreeMap<(String, bool), u64>, wall: bool| {
+                    let t = total[usize::from(wall)].max(1) as f64;
+                    let mut v: Vec<(&String, &u64)> = m.iter().filter(|((_, w), _)| *w == wall).map(|((s, _), c)| (s, c)).collect();
+                    v.sort_by(|x, y| y.1.cmp(x.1));
+                    v.iter().map(|(s, c)| format!("{s} {:.1} %", 100.0 * **c as f64 / t)).collect::<Vec<_>>().join(", ")
+                };
+                println!(
+                    "castle {name} sources over {bar}: walls {} px-pairs [{}]; elsewhere {} px-pairs [{}]",
+                    total[1],
+                    fmt(&by, true),
+                    total[0],
+                    fmt(&by, false)
+                );
+                println!(
+                    "castle {name} transitions over {bar}: walls [{}]; elsewhere [{}]",
+                    fmt(&trans, true),
+                    fmt(&trans, false)
+                );
+                println!("castle {name} over {bar} per pair {per_pair:?}; digs baked {:?}", &baked[1..]);
+            }
+        }
+
         /// [`STRIP`] frames read back and written, and their counts printed.
         fn strip(rig: &mut Rig, s: &mut Stepper, cam: &Camera, scene: &str, name: &str) {
             let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1046,6 +1314,7 @@ mod flicker {
             let mut shots: Vec<Shot> = Vec::with_capacity(STRIP);
             let mut depth = Vec::with_capacity(STRIP);
             let mut baked = Vec::with_capacity(STRIP);
+            let mut parts: Vec<CastleParts> = Vec::new();
             for i in 0..STRIP {
                 let q = queue_step(rig, &mut s.frame, cam);
                 if i == 0 {
@@ -1064,7 +1333,13 @@ mod flicker {
                 );
                 depth.push(q.depth);
                 baked.push(q.digs_baked);
+                if scene == "castle" {
+                    parts.push(castle_parts(rig, s));
+                }
                 shots.push(sh);
+            }
+            if scene == "castle" {
+                castle_sources(rig, &shots, &parts, &baked, name);
             }
             let n = (OUT[0] * OUT[1]) as usize;
             let level = |sh: &Shot, i: usize| {

@@ -903,8 +903,8 @@ records it.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The readings, the key light's side | dev | done; readings in [`logs/0094.md`](logs/0094.md); the sky term's source word added to the moments' `w` under `COUNT_STORE` (`temporal.wgsl`, outside Files touched); the rule-form unit tests in a CPU binary `tests/rules.rs` (not in `support/rules.rs`, which every gpu binary includes); 5.4's source is the own summary, not the neighbours' | committed with this row |
-| 2: The readings, the no-ray path's side | dev | not started | |
+| 1: The readings, the key light's side | dev | done; readings in [`logs/0094.md`](logs/0094.md); the sky term's source word added to the moments' `w` under `COUNT_STORE` (`temporal.wgsl`, outside Files touched); the rule-form unit tests in a CPU binary `tests/rules.rs` (not in `support/rules.rs`, which every gpu binary includes); 5.4's source is the own summary, not the neighbours' | 3d20c1a2 |
+| 2: The readings, the no-ray path's side | dev | done; arms (b) and (c) of the castle ran with the queue undrained before the stamps; the keep's walls classed by a castle material within half a voxel of the hit | committed with this row |
 | 2a: The light pass's compile cost, the pipeline cache | dev | not started | |
 | 3: The key mean keeps its age at a still camera | dev | not started | |
 | 4: The exposure's rate cap | dev | not started | |
