@@ -85,6 +85,8 @@ pub struct Clip {
     looped: bool,
     /// Sorted by part.
     tracks: Vec<Track>,
+    /// The distance one cycle carries the body, in 1/256 world voxel; 0 is in place.
+    stride: i32,
 }
 
 impl Clip {
@@ -130,7 +132,20 @@ impl Clip {
             length,
             looped,
             tracks,
+            stride: 0,
         })
+    }
+
+    /// The same clip with `stride`: the distance one cycle carries the body, in 1/256 world
+    /// voxel (0, the default, is in place). A consumer that moves the body ties the clip's
+    /// tick to the distance moved through it, so the feet keep pace with the ground.
+    pub fn with_stride(self, stride: i32) -> Self {
+        Self { stride, ..self }
+    }
+
+    /// The distance one cycle carries the body, in 1/256 world voxel; 0 is in place.
+    pub fn stride(&self) -> i32 {
+        self.stride
     }
 
     pub fn length(&self) -> u32 {

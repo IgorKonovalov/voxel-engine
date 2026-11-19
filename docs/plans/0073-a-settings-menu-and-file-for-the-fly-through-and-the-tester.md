@@ -24,7 +24,7 @@
 > quality menu keep working.
 > **Amended 2026-11-16 (architect; the owner approved it 2026-11-16 with Plan 0080):** the owner asked the same day for a menu
 > system in place of a full keyboard. ADR-0061 and
-> [Plan 0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) give
+> [Plan 0080](done/0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) give
 > the apps one menu component (pages, live values, a palette, one input-capture rule, the key
 > table as the source), and this plan **builds on it** instead of writing `SettingsMenu`'s
 > drawing and routing: **Starts after** gains Plan 0080 beside Plans 0069 and 0071. Open

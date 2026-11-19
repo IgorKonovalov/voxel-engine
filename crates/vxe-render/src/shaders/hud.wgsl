@@ -5,17 +5,26 @@
 // Bindings, group 0:
 //   0  uniform  params   scale, and the strip's sample count, ceiling and line
 //   1  storage  cells    256 x 128 u32 cells, row-major with a fixed stride of 256:
-//                        bits 0..8 the ASCII byte (below 32 is blank), bits 8..16 the colour
+//                        bits 0..8 the ASCII byte (below 32 is blank), bits 8..16 the colour,
+//                        bit 16 the backdrop, bit 17 a tile, bits 18..23 its index, bits
+//                        23..27 the cell's place in the tile's 4 x 4 block (dy * 4 + dx)
 //   2  storage  font     95 glyphs x 8 row bytes packed little-endian into 190 u32s;
 //                        bit 0 of a row byte is the glyph's leftmost pixel
 //   3  storage  samples  up to 256 f32 strip samples, oldest first
+//   4  storage  atlas    32 tiles of 64 x 64 RGBA8 pixels (one u32 each, red lowest),
+//                        row-major from each tile's top-left (ADR-0075)
 //
 // The draw's first instance carries the target's height in pixels (see `vs_main`).
 //
 // A set glyph bit is opaque in its cell's colour. Otherwise, inside the strip, a sample's
-// bar is opaque white and the line row is opaque red where no bar covers it. Otherwise a
-// pixel whose up-left neighbour (-1, -1) is a set glyph bit is the shadow: black at alpha
-// 0.75. Everything else is transparent.
+// bar is opaque white and the line row is opaque red where no bar covers it. Otherwise, in
+// a tile cell whose tile pixel's alpha is at least one half, the tile pixel, opaque (the
+// glyph shadow mixed over it at 0.75). Otherwise a pixel whose up-left neighbour (-1, -1) is
+// a set glyph bit is the shadow: black at alpha 0.75. Otherwise a pixel in a cell with the
+// backdrop bit is black at alpha 0.7. Everything else is transparent.
+//
+// A tile covers its 4 x 4 block of cells, 32 scale target pixels a side, nearest-sampled: the
+// block's pixel `p` shows tile pixel `p * 64 / (32 scale)`.
 //
 // The strip: sample i is column i, `scale` pixels wide, from the left edge. Its bottom row
 // sits directly above the last text row of the target (8 scale pixels up from the bottom
@@ -34,6 +43,7 @@ struct Params {
 @group(0) @binding(1) var<storage, read> cells: array<u32>;
 @group(0) @binding(2) var<storage, read> font: array<u32, 190>;
 @group(0) @binding(3) var<storage, read> samples: array<f32, 256>;
+@group(0) @binding(4) var<storage, read> atlas: array<u32>;
 
 const GRID_COLS: u32 = 256u;
 const GRID_ROWS: u32 = 128u;
@@ -41,6 +51,12 @@ const FIRST: u32 = 32u;
 const LAST: u32 = 126u;
 const NONE: u32 = 0xffffffffu;
 const SHADOW_ALPHA: f32 = 0.75;
+const BACKDROP_BIT: u32 = 0x10000u;
+const BACKDROP_ALPHA: f32 = 0.7;
+const TILE_BIT: u32 = 0x20000u;
+const TILE_INDEX_SHIFT: u32 = 18u;
+const TILE_POS_SHIFT: u32 = 23u;
+const TILE_PX: u32 = 64u;
 
 struct VsOut {
     @builtin(position) pos: vec4<f32>,
@@ -111,11 +127,42 @@ fn strip_at(q: vec2<u32>, height: u32) -> u32 {
     return NONE;
 }
 
-// 0 white, 1 yellow, 2 red; anything else white.
+// Whether the cell under `q` carries the backdrop bit.
+fn backdrop_at(q: vec2<u32>) -> bool {
+    let cell_px = 8u * params.scale;
+    let col = q.x / cell_px;
+    let row = q.y / cell_px;
+    if col >= GRID_COLS || row >= GRID_ROWS {
+        return false;
+    }
+    return (cells[row * GRID_COLS + col] & BACKDROP_BIT) != 0u;
+}
+
+// The tile pixel under `q` (rgba), alpha 0 outside a tile cell.
+fn tile_at(q: vec2<u32>) -> vec4<f32> {
+    let cell_px = 8u * params.scale;
+    let col = q.x / cell_px;
+    let row = q.y / cell_px;
+    if col >= GRID_COLS || row >= GRID_ROWS {
+        return vec4<f32>(0.0);
+    }
+    let cell = cells[row * GRID_COLS + col];
+    if (cell & TILE_BIT) == 0u {
+        return vec4<f32>(0.0);
+    }
+    let index = (cell >> TILE_INDEX_SHIFT) & 31u;
+    let pos = (cell >> TILE_POS_SHIFT) & 15u;
+    let local = vec2<u32>(pos & 3u, pos >> 2u) * cell_px + q % vec2<u32>(cell_px);
+    let t = local * TILE_PX / (4u * cell_px);
+    return unpack4x8unorm(atlas[index * TILE_PX * TILE_PX + t.y * TILE_PX + t.x]);
+}
+
+// 0 white, 1 yellow, 2 red, 3 grey; anything else white.
 fn palette(c: u32) -> vec3<f32> {
     switch c {
         case 1u: { return vec3<f32>(1.0, 0.8, 0.0); }
         case 2u: { return vec3<f32>(1.0, 0.25, 0.25); }
+        case 3u: { return vec3<f32>(0.6, 0.6, 0.6); }
         default: { return vec3<f32>(1.0, 1.0, 1.0); }
     }
 }
@@ -131,8 +178,16 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if bar != NONE {
         return vec4<f32>(palette(bar), 1.0);
     }
-    if q.x >= 1u && q.y >= 1u && text_at(q - vec2<u32>(1u, 1u)) != NONE {
+    let shadow = q.x >= 1u && q.y >= 1u && text_at(q - vec2<u32>(1u, 1u)) != NONE;
+    let tile = tile_at(q);
+    if tile.a >= 0.5 {
+        return vec4<f32>(select(tile.rgb, tile.rgb * (1.0 - SHADOW_ALPHA), shadow), 1.0);
+    }
+    if shadow {
         return vec4<f32>(0.0, 0.0, 0.0, SHADOW_ALPHA);
+    }
+    if backdrop_at(q) {
+        return vec4<f32>(0.0, 0.0, 0.0, BACKDROP_ALPHA);
     }
     return vec4<f32>(0.0);
 }

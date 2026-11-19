@@ -20,12 +20,13 @@ fn scratch(name: &str) -> PathBuf {
     d
 }
 
-/// Each menu choice's flags, exactly: a benchmark adds `--lamp off` after the scene's flags,
-/// a tour adds none. The report folder is `R`.
+/// Each menu choice's flags, exactly (each row's words in order, split at the spaces): a
+/// benchmark adds `--lamp off` after the scene's flags, a tour adds none. The report folder is
+/// `R`.
 #[test]
 fn each_choice_gives_its_exact_flag_list() {
     let r = Path::new("R");
-    let table: [(RunSpec, &[&str]); 5] = [
+    let table: [(RunSpec, &str); 6] = [
         (
             RunSpec {
                 scene: Scene::Cave,
@@ -33,23 +34,7 @@ fn each_choice_gives_its_exact_flag_list() {
                 output: Output::Hd720,
                 profile: Profile::Floor,
             },
-            &[
-                "--source",
-                "cave",
-                "--lamp",
-                "off",
-                "--tester",
-                "--path",
-                "cave",
-                "--path-mode",
-                "bench",
-                "--render",
-                "1280x720",
-                "--profile",
-                "floor",
-                "--report",
-                "R",
-            ],
+            "--source cave --lamp off --tester --path cave --path-mode bench --render 1280x720 --profile floor --report R",
         ),
         (
             RunSpec {
@@ -58,21 +43,7 @@ fn each_choice_gives_its_exact_flag_list() {
                 output: Output::Hd1080,
                 profile: Profile::Portable,
             },
-            &[
-                "--source",
-                "showcase",
-                "--tester",
-                "--path",
-                "showcase",
-                "--path-mode",
-                "tour",
-                "--render",
-                "1920x1080",
-                "--profile",
-                "portable",
-                "--report",
-                "R",
-            ],
+            "--source showcase --tester --path showcase --path-mode tour --render 1920x1080 --profile portable --report R",
         ),
         (
             RunSpec {
@@ -81,22 +52,7 @@ fn each_choice_gives_its_exact_flag_list() {
                 output: Output::Display,
                 profile: Profile::Performance,
             },
-            &[
-                "--castle",
-                "--lamp",
-                "off",
-                "--tester",
-                "--path",
-                "castle",
-                "--path-mode",
-                "bench",
-                "--render",
-                "2560x1440",
-                "--profile",
-                "performance",
-                "--report",
-                "R",
-            ],
+            "--castle --lamp off --tester --path castle --path-mode bench --render 2560x1440 --profile performance --report R",
         ),
         (
             RunSpec {
@@ -105,22 +61,7 @@ fn each_choice_gives_its_exact_flag_list() {
                 output: Output::Hd1080,
                 profile: Profile::High,
             },
-            &[
-                "--castle",
-                "--lamp",
-                "off",
-                "--tester",
-                "--path",
-                "castle",
-                "--path-mode",
-                "bench",
-                "--render",
-                "1920x1080",
-                "--profile",
-                "high",
-                "--report",
-                "R",
-            ],
+            "--castle --lamp off --tester --path castle --path-mode bench --render 1920x1080 --profile high --report R",
         ),
         (
             RunSpec {
@@ -129,23 +70,20 @@ fn each_choice_gives_its_exact_flag_list() {
                 output: Output::Hd720,
                 profile: Profile::Floor,
             },
-            &[
-                "--castle",
-                "--tester",
-                "--path",
-                "castle",
-                "--path-mode",
-                "tour",
-                "--render",
-                "1280x720",
-                "--profile",
-                "floor",
-                "--report",
-                "R",
-            ],
+            "--castle --tester --path castle --path-mode tour --render 1280x720 --profile floor --report R",
+        ),
+        (
+            RunSpec {
+                scene: Scene::Outdoor,
+                mode: PathMode::Bench,
+                output: Output::Hd720,
+                profile: Profile::Floor,
+            },
+            "--source outdoor --spawn outside --trees sparse --sun 10,180 --lamp off --tester --path outdoor --path-mode bench --render 1280x720 --profile floor --report R",
         ),
     ];
     for (spec, want) in table {
+        let want: Vec<&str> = want.split(' ').collect();
         assert_eq!(fly_args(&spec, Some([2560, 1440]), r), want, "{spec:?}");
     }
     // Without a known display the display choice falls back to 1280 x 720.

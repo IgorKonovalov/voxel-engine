@@ -6,6 +6,11 @@
 > land in Plan 0058's direct target. The cloud shadow therefore multiplies the directional
 > sample's visibility in the light pass alone, and the upscalers follow a moving shadow
 > through the map of this frame and of the frame before
+> **Re-read 2026-11-17 (architect, Plan 0035's re-read):** under ADR-0070 (Plan 0086) the sky
+> light at a face is a baked visibility times six axis irradiances `E_sky`, so "the sky ray
+> reads the sky under clouds" becomes "the `E_sky` reduction reads the `cloud_sky` map"; where
+> the cloud shadow multiplies the key light's visibility relative to 0086's long history is
+> Plan 0035's owner question 1 (recommended: at the read, after the history). The body stands.
 > **Date:** 2026-10-22
 > **Related plan(s):** [Plan 0035](../plans/0035-aerial-perspective-and-volumetric-clouds-with-cloud-shadows.md)
 

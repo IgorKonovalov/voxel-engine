@@ -6,6 +6,12 @@
 //! The cell grid is laid out at its cap, [`GRID_COLS`] x [`GRID_ROWS`] cells, with a fixed row
 //! stride of [`GRID_COLS`]; the part a target shows is `ceil(width / (8 scale))` x
 //! `ceil(height / (8 scale))` cells from the top-left, and the rest is clipped, never wrapped.
+//! A box of cells may carry a dim backdrop ([`HudBox`]): black at alpha [`BACKDROP_ALPHA`]
+//! under the cells' pixels that no glyph covers. A box of cells may be recoloured over the
+//! written rows (a span, [`HudPaint::spans`]), and a 4 x 4 block of cells may show an image
+//! tile (ADR-0075): one of [`MAX_TILES`] 64 x 64 RGBA8 pictures in an atlas
+//! ([`HudOverlay::set_tile`]), nearest-sampled at any scale, under the glyphs and over the
+//! backdrop.
 
 use crate::font8x8::{FONT, printable};
 
@@ -13,7 +19,7 @@ use crate::font8x8::{FONT, printable};
 pub(crate) const HUD_WGSL: &str = include_str!("shaders/hud.wgsl");
 
 /// The most columns of cells the overlay holds; the cell buffer's row stride.
-pub(crate) const GRID_COLS: u32 = 256;
+pub const GRID_COLS: u32 = 256;
 /// The most rows of cells the overlay holds.
 pub(crate) const GRID_ROWS: u32 = 128;
 /// Bytes of the cell buffer: one `u32` per cell at the cap (128 KiB).
@@ -26,6 +32,23 @@ pub(crate) const STRIP_PX: u32 = 64;
 pub(crate) const LINE_MS: f32 = 1000.0 / 60.0;
 /// `Params::line_px` for no line.
 const NO_LINE: u32 = u32::MAX;
+/// The backdrop bit of a cell word (bits 0..8 the byte, 8..16 the colour).
+pub(crate) const BACKDROP_BIT: u32 = 1 << 16;
+/// The backdrop's opacity: a backdrop pixel is `mix(target, black, BACKDROP_ALPHA)`.
+pub const BACKDROP_ALPHA: f32 = 0.7;
+/// A cell word's tile bit; the tile's index from [`TILE_INDEX_SHIFT`] (5 bits) and the cell's
+/// place in its block from [`TILE_POS_SHIFT`] (4 bits, `dy * 4 + dx`): bits 17..26.
+pub const TILE_BIT: u32 = 1 << 17;
+pub(crate) const TILE_INDEX_SHIFT: u32 = 18;
+pub(crate) const TILE_POS_SHIFT: u32 = 23;
+/// A tile's side in pixels.
+pub const TILE_PX: u32 = 64;
+/// A tile's side in cells.
+pub const TILE_CELLS: u32 = 4;
+/// The tiles the atlas holds: 32 of 64 x 64 RGBA8, 512 KiB.
+pub const MAX_TILES: u32 = 32;
+/// Bytes of the tile atlas.
+pub(crate) const ATLAS_BYTES: u64 = (MAX_TILES * TILE_PX * TILE_PX * 4) as u64;
 
 /// The colour of a row of text.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -34,6 +57,92 @@ pub enum HudColour {
     White = 0,
     Yellow = 1,
     Red = 2,
+    /// A row that is shown but does not act, such as an unavailable entry.
+    Grey = 3,
+}
+
+/// A box of cells, `cols` x `rows` from cell (`col`, `row`), whose cells carry the dim
+/// backdrop. Cells past the grid's cap are dropped.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HudBox {
+    pub col: u32,
+    pub row: u32,
+    pub cols: u32,
+    pub rows: u32,
+}
+
+impl HudBox {
+    /// Whether cell (`col`, `row`) is inside the box.
+    pub fn contains(&self, col: u32, row: u32) -> bool {
+        (self.col..self.col + self.cols).contains(&col)
+            && (self.row..self.row + self.rows).contains(&row)
+    }
+}
+
+/// Tile `index` of the atlas shown over the [`TILE_CELLS`] x [`TILE_CELLS`] cells from cell
+/// (`col`, `row`). Cells past the grid's cap are dropped.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HudTile {
+    pub col: u32,
+    pub row: u32,
+    pub index: u32,
+}
+
+/// What [`HudOverlay::set_lines_painted`] lays over the written rows: the backdrop's boxes
+/// (a panel's and a bar's apart, say), the spans (each box's cells take its colour, later
+/// spans over earlier ones) and the tiles.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HudPaint<'a> {
+    pub backdrops: &'a [HudBox],
+    pub spans: &'a [(HudBox, HudColour)],
+    pub tiles: &'a [HudTile],
+}
+
+impl HudPaint<'_> {
+    /// The rows the paint reaches: one past its last box's or tile's row.
+    fn rows(&self) -> u32 {
+        let spans = self.spans.iter().map(|(b, _)| b.row.saturating_add(b.rows));
+        let tiles = self.tiles.iter().map(|t| t.row.saturating_add(TILE_CELLS));
+        let backdrop = self.backdrops.iter().map(|b| b.row.saturating_add(b.rows));
+        spans.chain(tiles).chain(backdrop).max().unwrap_or(0)
+    }
+
+    /// Lays the paint over `cells` (rows of [`GRID_COLS`] words): the backdrop bit in the
+    /// backdrop's boxes, each span's colour in its box (the byte and the other bits kept), each
+    /// tile's bits in its block. What falls outside `cells` is dropped.
+    pub fn apply(&self, cells: &mut [u32]) {
+        let rows = (cells.len() / GRID_COLS as usize) as u32;
+        let mut each = |b: &HudBox, f: &mut dyn FnMut(&mut u32, u32, u32)| {
+            for row in b.row..b.row.saturating_add(b.rows).min(rows) {
+                for col in b.col..b.col.saturating_add(b.cols).min(GRID_COLS) {
+                    f(
+                        &mut cells[(row * GRID_COLS + col) as usize],
+                        col - b.col,
+                        row - b.row,
+                    );
+                }
+            }
+        };
+        for b in self.backdrops {
+            each(b, &mut |c, _, _| *c |= BACKDROP_BIT);
+        }
+        for (b, colour) in self.spans {
+            let code = (*colour as u32) << 8;
+            each(b, &mut |c, _, _| *c = (*c & !0xff00) | code);
+        }
+        for t in self.tiles.iter().filter(|t| t.index < MAX_TILES) {
+            let b = HudBox {
+                col: t.col,
+                row: t.row,
+                cols: TILE_CELLS,
+                rows: TILE_CELLS,
+            };
+            let index = t.index << TILE_INDEX_SHIFT;
+            each(&b, &mut |c, dx, dy| {
+                *c |= TILE_BIT | index | (dy * TILE_CELLS + dx) << TILE_POS_SHIFT;
+            });
+        }
+    }
 }
 
 /// The uniform block of `hud.wgsl`, field for field.
@@ -56,8 +165,13 @@ pub struct HudOverlay {
     params: wgpu::Buffer,
     cells: wgpu::Buffer,
     samples: wgpu::Buffer,
+    atlas: wgpu::Buffer,
     /// Target pixels per glyph pixel along each axis: a cell covers `8 scale` x `8 scale`.
     scale: u32,
+    /// The strip's samples and ceiling as the last `set_samples` gave them, kept so a
+    /// `set_scale` rewrites the uniform block whole.
+    sample_count: u32,
+    ceiling_ms: f32,
     /// Rows of cells the last `set_text` wrote; the next one clears any it does not reuse.
     rows: u32,
     /// The CPU copy of the rows being written, reused between calls.
@@ -75,34 +189,7 @@ impl HudOverlay {
             label: Some("hud.wgsl"),
             source: wgpu::ShaderSource::Wgsl(HUD_WGSL.into()),
         });
-        let storage = |binding| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("hud"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                storage(1),
-                storage(2),
-                storage(3),
-            ],
-        });
+        let layout = bind_layout(device);
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("hud"),
             bind_group_layouts: &[Some(&layout)],
@@ -172,6 +259,12 @@ impl HudOverlay {
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             None,
         );
+        let atlas = buffer(
+            "hud tiles",
+            ATLAS_BYTES,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            None,
+        );
         let font = buffer(
             "hud font",
             size_of_val(&FONT) as u64,
@@ -198,6 +291,10 @@ impl HudOverlay {
                     binding: 3,
                     resource: samples.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: atlas.as_entire_binding(),
+                },
             ],
         });
         Self {
@@ -206,16 +303,48 @@ impl HudOverlay {
             params,
             cells,
             samples,
+            atlas,
             scale,
+            sample_count: 0,
+            ceiling_ms: 0.0,
             rows: 0,
             staging: Vec::new(),
             allocations: 0,
         }
     }
 
-    /// Target pixels per glyph pixel along each axis, as given to [`HudOverlay::new`].
+    /// Target pixels per glyph pixel along each axis, as given to [`HudOverlay::new`] or
+    /// the last [`HudOverlay::set_scale`].
     pub fn scale(&self) -> u32 {
         self.scale
+    }
+
+    /// Draws each glyph pixel as `scale` x `scale` target pixels (at least 1) from the next
+    /// draw on: the cells and the strip grow or shrink about the top-left, and the strip's
+    /// samples and ceiling stay. Writes the uniform block only when the scale changes.
+    pub fn set_scale(&mut self, queue: &wgpu::Queue, scale: u32) {
+        let scale = scale.max(1);
+        if scale == self.scale {
+            return;
+        }
+        self.scale = scale;
+        queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&self.params()));
+    }
+
+    /// The uniform block for the current scale, sample count and ceiling.
+    fn params(&self) -> Params {
+        let shown = self.sample_count > 0;
+        let strip_px = STRIP_PX * self.scale;
+        Params {
+            scale: self.scale,
+            sample_count: self.sample_count,
+            ceiling_ms: if shown { self.ceiling_ms } else { 1.0 },
+            line_px: if shown && self.ceiling_ms > LINE_MS {
+                ((LINE_MS / self.ceiling_ms * strip_px as f32).round() as u32).min(strip_px - 1)
+            } else {
+                NO_LINE
+            },
+        }
     }
 
     /// The CPU allocations the overlay has made: each time its staging copy of the rows grew.
@@ -226,7 +355,11 @@ impl HudOverlay {
 
     /// Replaces the text with `rows`, all white, from the top-left cell.
     pub fn set_text(&mut self, queue: &wgpu::Queue, rows: &[&[u8]]) {
-        self.write_rows(queue, rows.iter().map(|&r| (r, HudColour::White)));
+        self.write_rows(
+            queue,
+            rows.iter().map(|&r| (r, HudColour::White)),
+            HudPaint::default(),
+        );
     }
 
     /// Replaces the text with the lines of `text`, line `i` in `colours[i]` (white past the
@@ -237,22 +370,78 @@ impl HudOverlay {
             .lines()
             .enumerate()
             .map(|(i, l)| (l.as_bytes(), colour(i)));
-        self.write_rows(queue, Counted(text.lines().count(), rows));
+        self.write_rows(
+            queue,
+            Counted(text.lines().count(), rows),
+            HudPaint::default(),
+        );
+    }
+
+    /// [`Self::set_lines`] with the cells of `backdrop` dimmed under the text: each pixel of
+    /// a box cell that no glyph covers is black at alpha [`BACKDROP_ALPHA`] over the target
+    /// (a glyph's shadow inside the box stays the shadow).
+    pub fn set_lines_over(
+        &mut self,
+        queue: &wgpu::Queue,
+        text: &str,
+        colours: &[HudColour],
+        backdrop: HudBox,
+    ) {
+        let colour = |i| colours.get(i).copied().unwrap_or_default();
+        let rows = text
+            .lines()
+            .enumerate()
+            .map(|(i, l)| (l.as_bytes(), colour(i)));
+        let paint = HudPaint {
+            backdrops: std::slice::from_ref(&backdrop),
+            ..HudPaint::default()
+        };
+        self.write_rows(queue, Counted(text.lines().count(), rows), paint);
+    }
+
+    /// [`Self::set_lines`] with `paint` laid over the rows: its backdrop, its spans' colours
+    /// and its tiles ([`HudPaint::apply`]).
+    pub fn set_lines_painted(
+        &mut self,
+        queue: &wgpu::Queue,
+        text: &str,
+        colours: &[HudColour],
+        paint: HudPaint<'_>,
+    ) {
+        let colour = |i| colours.get(i).copied().unwrap_or_default();
+        let rows = text
+            .lines()
+            .enumerate()
+            .map(|(i, l)| (l.as_bytes(), colour(i)));
+        self.write_rows(queue, Counted(text.lines().count(), rows), paint);
+    }
+
+    /// Writes tile `index` of the atlas from `rgba`, [`TILE_PX`] x [`TILE_PX`] RGBA8 pixels
+    /// row-major from the top-left; a pixel whose alpha is under 128 is not drawn (the
+    /// backdrop or the target shows). An index past [`MAX_TILES`] or a slice of another
+    /// length writes nothing.
+    pub fn set_tile(&mut self, queue: &wgpu::Queue, index: u32, rgba: &[u8]) {
+        let len = (TILE_PX * TILE_PX * 4) as usize;
+        if index >= MAX_TILES || rgba.len() != len {
+            return;
+        }
+        queue.write_buffer(&self.atlas, u64::from(index) * len as u64, rgba);
     }
 
     /// Replaces the text with `rows`, each in its colour, from the top-left cell. A row past
     /// [`GRID_ROWS`] or a byte past [`GRID_COLS`] is dropped; a byte outside 32 to 126 draws
     /// as `?`.
     pub fn set_rows(&mut self, queue: &wgpu::Queue, rows: &[(&[u8], HudColour)]) {
-        self.write_rows(queue, rows.iter().copied());
+        self.write_rows(queue, rows.iter().copied(), HudPaint::default());
     }
 
     fn write_rows<'a>(
         &mut self,
         queue: &wgpu::Queue,
         rows: impl ExactSizeIterator<Item = (&'a [u8], HudColour)>,
+        paint: HudPaint<'_>,
     ) {
-        let n = (rows.len() as u32).min(GRID_ROWS);
+        let n = (rows.len() as u32).max(paint.rows()).min(GRID_ROWS);
         // Rows the previous text used and this one does not are written blank.
         let written = n.max(self.rows);
         let capacity = self.staging.capacity();
@@ -264,6 +453,7 @@ impl HudOverlay {
                 *cell = u32::from(printable(b)) | (colour as u32) << 8;
             }
         }
+        paint.apply(&mut self.staging[..(n * GRID_COLS) as usize]);
         if written > 0 {
             queue.write_buffer(&self.cells, 0, bytemuck::cast_slice(&self.staging));
         }
@@ -277,21 +467,12 @@ impl HudOverlay {
     pub fn set_samples(&mut self, queue: &wgpu::Queue, samples: &[f32], ceiling_ms: f32) {
         let samples = &samples[samples.len().saturating_sub(MAX_SAMPLES)..];
         let shown = ceiling_ms > 0.0 && ceiling_ms.is_finite();
-        let strip_px = STRIP_PX * self.scale;
-        let params = Params {
-            scale: self.scale,
-            sample_count: if shown { samples.len() as u32 } else { 0 },
-            ceiling_ms: if shown { ceiling_ms } else { 1.0 },
-            line_px: if shown && ceiling_ms > LINE_MS {
-                ((LINE_MS / ceiling_ms * strip_px as f32).round() as u32).min(strip_px - 1)
-            } else {
-                NO_LINE
-            },
-        };
+        self.sample_count = if shown { samples.len() as u32 } else { 0 };
+        self.ceiling_ms = if shown { ceiling_ms } else { 0.0 };
         if !samples.is_empty() {
             queue.write_buffer(&self.samples, 0, bytemuck::cast_slice(samples));
         }
-        queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&params));
+        queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&self.params()));
     }
 
     /// Records the overlay onto `view`, a `width` x `height` target, into `encoder`; what the
@@ -340,6 +521,40 @@ impl HudOverlay {
     }
 }
 
+/// The overlay's group 0, as `hud.wgsl` declares it: the uniform block, then the cells, the
+/// font, the samples and the tile atlas, read-only storage.
+fn bind_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    let storage = |binding| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    };
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("hud"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            storage(1),
+            storage(2),
+            storage(3),
+            storage(4),
+        ],
+    })
+}
+
 /// An iterator of known length: `.0` items of `.1`.
 struct Counted<I>(usize, I);
 
@@ -361,7 +576,71 @@ impl<I: Iterator> ExactSizeIterator for Counted<I> {}
 
 #[cfg(test)]
 mod tests {
-    use super::HUD_WGSL;
+    use super::*;
+
+    /// Plan 0077 Phase 7 done-when 4: two rows written white, one span of three cells yellow
+    /// on the second: exactly those three words carry the yellow code, the rest of the row
+    /// white, their bytes kept; a span reaching past the grid's columns is clipped; the
+    /// backdrop bit under a span survives; a tile's block carries its bits.
+    #[test]
+    fn a_span_colours_its_cells() {
+        let mut cells = vec![0u32; 2 * GRID_COLS as usize];
+        for c in cells.iter_mut().take(10) {
+            *c = u32::from(b'a');
+        }
+        let row = |r: u32, col: u32, cols: u32| HudBox {
+            col,
+            row: r,
+            cols,
+            rows: 1,
+        };
+        let spans = [
+            (row(1, 4, 3), HudColour::Yellow),
+            (row(0, GRID_COLS - 2, 9), HudColour::Red),
+        ];
+        let tiles = [HudTile {
+            col: 20,
+            row: 0,
+            index: 5,
+        }];
+        HudPaint {
+            backdrops: &[row(1, 0, 6)],
+            spans: &spans,
+            tiles: &tiles,
+        }
+        .apply(&mut cells);
+        let colour = |w: u32| (w >> 8) & 0xff;
+        let second = &cells[GRID_COLS as usize..];
+        let yellow: Vec<usize> = (0..GRID_COLS as usize)
+            .filter(|&i| colour(second[i]) == HudColour::Yellow as u32)
+            .collect();
+        assert_eq!(yellow, [4, 5, 6]);
+        assert!((0..GRID_COLS as usize).all(|i| yellow.contains(&i) || colour(second[i]) == 0));
+        assert_eq!(
+            second[4] & BACKDROP_BIT,
+            BACKDROP_BIT,
+            "the backdrop survives"
+        );
+        assert_eq!(second[6] & BACKDROP_BIT, 0);
+        let red: Vec<usize> = (0..GRID_COLS as usize)
+            .filter(|&i| colour(cells[i]) == HudColour::Red as u32)
+            .collect();
+        assert_eq!(red, [GRID_COLS as usize - 2, GRID_COLS as usize - 1]);
+        assert_eq!(
+            cells[0],
+            u32::from(b'a'),
+            "an unpainted cell keeps its word"
+        );
+        assert_eq!(
+            cells[21],
+            TILE_BIT | 5 << TILE_INDEX_SHIFT | 1 << TILE_POS_SHIFT
+        );
+        assert_eq!(
+            second[23],
+            TILE_BIT | 5 << TILE_INDEX_SHIFT | 7 << TILE_POS_SHIFT,
+            "the block's second row; the third and fourth are past these two rows"
+        );
+    }
 
     #[test]
     fn hud_wgsl_validates_through_naga() {

@@ -104,6 +104,7 @@ impl Frame {
                 Res::Tex(&t.vis),
                 Res::Tex(&t.pair[c]),
                 Res::Buf(&self.sky.irradiance),
+                Res::Buf(self.entities.marks_buffer()),
             ],
         );
         let gradient_bind = self.binds.io(

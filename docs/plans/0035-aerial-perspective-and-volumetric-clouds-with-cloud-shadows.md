@@ -1,6 +1,9 @@
 # 0035: Aerial perspective over the near and far field, and volumetric clouds that shadow the ground
 
-> **Status:** approved (2026-10-22), amended 2026-11-10 (review pass)
+> **Status:** approved (2026-10-22), amended 2026-11-10 (review pass); amended 2026-11-17
+> (architect re-read against main 3b3986d0 after Plan 0032's close, Plan 0069, Plan 0080's lane
+> and Plan 0086: the section "Amended 2026-11-17 (re-read)" below is the phases' errata and
+> carries two owner questions that await answers before the go)
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
@@ -53,6 +56,155 @@
 > (`test-changed.mjs --binaries`, Plan 0066); a named test over 10 s on lavapipe is born
 > `#[ignore = "soak"]` (`docs/nfr.md` section 7). The mechanisms and bars stand; only when they
 > become tests moves.
+
+## Amended 2026-11-17 (re-read)
+
+Read at main 3b3986d0 (Plan 0032 closed, v0.61.0; Plan 0069 closed, v0.60.0) against the
+`plan-0080` lane (the menu) and Plans 0086, 0081, 0033 and 0034 (approved, ahead of this
+plan). The lane branches from main once Plan 0034 has merged; the tree's names win. The
+Decision and the phases stand except where this section says otherwise; `dev` reads it as
+the phases' errata. Crate names are `vxe-*`; if Plan 0087 has merged first they read `svet-*`
+through its map.
+
+### Name mapping (the plan's name, then the tree's)
+
+| The plan says | The tree has |
+|---|---|
+| `marcher.rs` (the `Frame` owns `Clouds`, the passes) | `frame/mod.rs` (`Frame`, `sky: SkyState` the model), `frame/encode.rs` (`FRAME_PASSES`, 23 names, **1193 of 1200 lines**; `record` is near the 150-line function cap), `frame/pipelines.rs` (`PASSES`), `frame/compose.rs` (`shader_sources`, which `gpu_shader_portability.rs` walks, so that test needs no edit). The cloud state, its pipelines, uniform and textures go in a new `frame/clouds.rs` on `frame/sky.rs`'s pattern (a `(label, modules, entry)` table, `OnceLock` pipelines, `prepare`, `dispatches`, `bytes`); `sky_aerial` joins `frame/sky.rs` or the same new module |
+| "filtered 3D-texture samples", "full mip chains", "their sampler" | **none exists.** No compute pass binds a sampler or a 3D texture: `gpu_util.rs`'s `Io` offers `Float` (2D, not filterable), `Uint`, `Store`, `Uniform`, `Storage`, `ReadStorage`, and the sky LUTs are read by a hand-written bilinear `lut_tap` over `textureLoad` (Plan 0032's "filtering sampler" was never built). Phase 2 adds the `Io` and layout variants for a filtering sampler and 3D textures with mips (`rgba8unorm` is filterable in WebGPU core). `r32float` and `rg32float` are **not** filterable without a device feature the plan refuses: the shadow map's and the depth buffers' bilinear reads are by hand, the `lut_tap` way |
+| the pass order | the cloud shadow and `cloud_sky` passes precede `light`; `clouds` and `cloud_reconstruct` follow `hit` and precede `composite`; all precede `upscale` (`fsrs_passes_close_the_frame_passes` in `fsr2/mod.rs` pins the tail). A pass named `sky aerial` lands in the HUD's "sky passes" sum (`run/hud_feed.rs` `sky_row` sums names starting `sky `), which is right for it |
+| "Plan 0032's light-pass sky source" | `sky_light.wgsl`: `key_sample` is the one place the directional sample's visibility is computed (`sky_shadowed`), `sky_ray_sample` the sky ray's lookup; `shade.wgsl` (the light pass's entry) re-casts the key ray in the steps view and takes the multiplier too; `LIGHT_MODULES` (`frame/pipelines.rs`) composes them with `light.wgsl`, which the bake also compiles, so `cloud_light.wgsl` joins `LIGHT_MODULES` and the upscalers' input modules, never `bake_source()` (`bake/pipeline.rs`). The bake's layout is the shared `world_layout`, so a group 0 binding enters its layout and not its module |
+| the composite's miss site, the `media` section's place | `composite.wgsl`: the miss `c = (sky_radiance(d) + body_disc(d)) * ex`, then the hit's albedo, `lit_at` and emission, then the cracks view (which meters before the layer), then `c = layer * ex + T * c`, then `select(display(c), c, HDR_TARGET)` and `meter_of(c / ex)`. The media section sits after the hit's emission and before the translucent layer; the HDR variant is a text replacement of `HDR_TARGET` (`frame/upscale.rs` `composite_hdr_source`) and inherits it. The composite's group 2 uses bindings 0 to 10 (11 the next) and its layout is declared in **three** places that change together: `frame/pipelines.rs` (`PASSES` composite), `frame/upscale.rs` (`composite_hdr_pass`) and `frame/encode.rs` (the bind group) |
+| group 0's next free bindings | 19 and up (5 and 6 are also unused); a new storage buffer raises `STORAGE_BUFFERS_NEEDED` (13), textures and uniforms do not |
+| `fsr2.rs`, `fsr2/input.wgsl` | `crates/vxe-render/src/fsr2/{mod,pipelines,prepare,resources,settings}.rs`; `Fsr2Settings` (`reactive_translucent`), `InputUniform` with one free `_pad` word (`reactive_cloud`), `fsr2/input.wgsl` (`light_changed` calls `sky_light_changed` of `sky.wgsl`; a miss gets motion by ray direction only, where cloud reactivity enters). `upscale.wgsl` (`up_light_changed`) is the `own` upscaler's, still in the tree |
+| `HDR_MAX` "65 504" | `common.wgsl` `HDR_MAX` = **60 000**; the direct and irradiance stores clamp to it |
+| the blue-noise texture | `blue_noise` at group 0 binding 12 (128 x 128 `r8unorm`, `common.wgsl`), read through `rand(px, dim)` or a direct load; `hash_u32` (lowbias32) exists, a PCG hash and a Bayer order do not |
+| `Frame::resize`, `set_resolution` | `frame/mod.rs`, both through `set_sizes` (rebuilds `Targets`); `Clouds` resizes there |
+| `apps/flythrough/src/main.rs`, `hud.rs` | `cli/outdoor.rs` (the flags beside `--trees`; `cli/flags.rs` is at 1190 lines), `cli/tests.rs`, `toggles.rs` (the entries), `run/frame.rs` (`clock.advance` then `set_sky`: `CloudWeather::advance(dt)` goes there), `hud/modes.rs` (**1197 of 1200 lines**: the cloud words go in a new module or a split `dev` makes first), `hud/stats.rs`, `run/hud_feed.rs` (the autopilot print, `frame_bytes`), `docs/flythrough.md` (every key and flag) |
+| "the fly-through's banner tests" | `run/tests.rs` (`the_banner_names_*`, at 1151 of 1200 lines), `hud/modes.rs`'s tests, `daylight.rs`'s tests |
+| `apps/flythrough/tests/gpu_golden.rs` (Phase 7's goldens) | at 1885 of 2000 lines: the three goldens go in `gpu_outdoor_golden.rs` (the `Hills` rig) |
+| `gpu_fsr2.rs` `the_tone_pass_reproduces_the_composites_bytes` | exists (`gpu_fsr2.rs`, at **1975 of 2000 lines**); its helper takes no `Sky`. Phase 5 bar 5's outdoor pose is a new test in a new `gpu_media_tone.rs` that builds the same comparison with a `Sky`, not an edit of that file |
+| rigs to reuse | `gpu_sky.rs` (`empty`, `noon`, `south`), `gpu_sun.rs` (the floor rig, `Sky::uniform`, `still_frame`), `gpu_outdoor_golden.rs` (`Empty` and `Hills`), `support/stillness.rs` (`outdoor_level_on`, `run_under_sky`) |
+| `templates/readings-log.md` | the architect skill's template, outside the public repo; `dev` starts `docs/plans/logs/0035.md` from an existing log's shape |
+
+### Plan 0086: the sky under clouds and the cloud shadow's history
+
+Plan 0086 (ADR-0070) makes the sky term at a face `v(n) E_sky(n)`: a visibility baked per
+brick direction, times six axis irradiances reduced from the sky-view LUT each frame; the sky
+ray runs only where the store is stale and scores 1 or 0; the key light's visibility may move
+onto the same running mean (0086 Phase 6, after a reading). Its Interface says a plan that
+changes the sky's radiance changes `E_sky`, and a plan that occludes the sky with geometry the
+mirror does not hold multiplies `v` or leaves it. For this plan:
+
+- **"The sky ray reads `cloud_sky_radiance(d)`" (Decision, Phase 6) becomes: the `E_sky`
+  reduction reads the `cloud_sky` map in place of the clear sky-view LUT while clouds are on.**
+  The six axis irradiances then carry the overcast (grey, dim), every face reads them through
+  its baked visibility with no per-pixel noise, and the sky ray, where it runs, scores a
+  visibility and needs no cloud lookup. `cloud_sky_radiance(d)` stays as the function the
+  reduction and a later plan's secondary-ray miss call. Phase 6 bar 6
+  (`an_overcast_sky_lights_the_ground_dimmer_and_greyer`) reads the sky term where the temporal
+  pass writes it (the store's part), not the direct target. Bar 8's reading becomes the
+  frame-to-frame change of the six `E_sky` values under `scattered()` at 10 m/s of wind (a
+  CPU readback of the sky uniform), beside Plan 0032's jump rule; its stop rule's candidate is
+  a slower `cloud_sky` update, since a now-and-then pair for a per-pixel ray no longer applies.
+- **The cloud shadow and the key light's history: owner question 1.** The multiplier enters
+  `key_sample`, before any history, as written; if 0086 Phase 6 has put the key light's
+  visibility on the 64-frame running mean, a cloud shadow moving at wind speed would smear
+  across seconds there unless the variance reset catches every edge. The recommended answer
+  applies the cloud transmittance **at the read, after whichever history the key light's
+  visibility rides** (the pair stores the geometric 0-or-1 visibility; the map's value is
+  deterministic per pixel and needs no history), so a shadow step reaches the ground on the
+  next frame. Then Phase 6 bars 3 and 4 read "within one frame of the map's change" where the
+  key light is on the pair, and the eleven-frame and four-frame bounds as written where it
+  stays on the direct target's blend; `dev` reads which at the base and the log says which.
+  The now-and-then pair for the upscalers stands either way. 0086's Interface also lets such a
+  term "set the sky-change bit on the frame it changes": not taken, since the bit resets the
+  whole direct accumulation (Plan 0032 Decision 5) and the done-whens say no bit is set.
+
+### Interface changes
+
+- **Starts after:** Plan 0034 closes and merges. The base is main after that merge.
+- **Settings, not flags alone** (Plan 0069, ADR-0055): `RenderSettings` gains `clouds.update:
+  CloudUpdate` (`Settle`), `clouds.lighting: CloudLighting` (`Live`), `clouds.shadow: bool`
+  (`Live`), `clouds.aerial: bool` (`Live`) and `fsr2.reactive_cloud: f32` (`Live`), each a
+  `FIELDS` row with a `with_test_value` arm, a `PROFILE_PICKS` row and the fly-through's
+  `render_settings()`. The weather (`Clouds::set_weather`, `set_weather_map`, `set_seed`) is a
+  per-frame input: every `pub fn set_*` in the crate is in `SETTERS` or `NOT_SETTINGS`, or
+  `every_setter_is_a_setting_or_an_input` fails, and these go in `NOT_SETTINGS`. The
+  profiles' picks are owner question 2's.
+- **Menu entries, not keys** (ADR-0061, Plan 0080): the cloud preset cycle, the lighting mode,
+  the update mode, aerial and the cloud shadow are `Press::Menu` toggles of `toggles::TOGGLES`
+  (group `Lighting`), no key; their `get` is the banner's word; `--keys` lists them; 0080's
+  `every_toggle_and_action_is_an_entry` and `the_source_reads_no_key_the_tables_miss` pass.
+  Every "toggle on a free key" in Phases 1 to 6 reads "a menu entry", and every banner bar
+  drives the entry's `flip`.
+- **The headroom line is 2.6 ms, not 2.1** (Plan 0069's close rebalanced the Floor split:
+  `docs/nfr.md` section 2), and Plan 0062's entities already read 0.5 to 2.2 ms on it (RTX,
+  4 to 16 walkers, accepted by the owner 2026-11-16). The allotment table's shares (1.0, 0.8,
+  0.3) stand as proposals, and with the entities' reading they exceed the line by
+  construction on a scene that has both; owner question 2 says how the profiles arbitrate.
+  The slow adapter's outdoor frame reads 37.5 to 45.8 ms against 16.6 before this plan (Plan
+  0032 Phase 7), so its reading is recorded against Portable's 33.3 ms line, not Floor's.
+- **Tiers:** the "Tests and tiers" paragraph's 30 s line is **10 s** on lavapipe (60 s on CI;
+  `docs/nfr.md` section 7); a render phase runs `--profile gpu --binaries <names>` with the
+  `gpu_*` binaries it names. Every "soak if over 30 s" reads 10 s.
+- **The far field (Plan 0033)** is in the tree by then: Phase 5 bar 3's and Phase 7's "smallest
+  clip radius Plan 0033 accepts" is `far_field.r_clip` at its test minimum (0033 Phase 3 uses
+  6), and the far-field hit carries its level in the record's bits 7 and 8.
+
+### Phases: what changes
+
+- **Phase 1** files: the new `frame/clouds.rs` in place of `marcher.rs`; `composite.wgsl` and
+  the three composite layouts; `cli/outdoor.rs`, `toggles.rs`, the banner's new module. Bar 4
+  drives the entry.
+- **Phase 2** adds the `Io` and layout variants for a filtering sampler and 3D textures with
+  mips (`gpu_util.rs`, `frame/pipelines.rs`), and a PCG hash and Bayer order in WGSL (new, in
+  `cloud_noise.wgsl` and `clouds.wgsl`). `Clouds::set_weather`, `set_weather_map` and
+  `set_seed` go in `NOT_SETTINGS`.
+- **Phase 3** unchanged but for the entry.
+- **Phase 4**: the shadow and depth buffers are read bilinear by hand (`r32float`,
+  `rg32float`); `reactive_cloud` takes `InputUniform`'s free word and a `FIELDS` row;
+  `Frame::set_sizes` resizes the cloud buffers.
+- **Phase 5**: bar 5's outdoor tone comparison is a new test in a new file (above); `sky_aerial`
+  may live in `frame/sky.rs` (333 lines) as the plan says.
+- **Phase 6** as rewritten above: the `E_sky` reduction reads `cloud_sky`; the shadow's
+  multiplier's place follows owner question 1; bars 3, 4, 6 and 8 as restated. Files:
+  `sky_light.wgsl` and `shade.wgsl` (the steps view's key ray) for "Plan 0032's light-pass
+  sky source"; Plan 0086's reduction pass (`sky_view.wgsl` or the pass after it, as 0086
+  Phase 4 lands it) for the `E_sky` read; `fsr2/input.wgsl` and `upscale.wgsl` for the pair.
+- **Phase 7**: the flags in `cli/outdoor.rs`; `CloudWeather::advance` in `run/frame.rs`; the
+  goldens in `gpu_outdoor_golden.rs`; the settings rows and the profile picks (question 2);
+  the runs' base is the outdoor frame as Plan 0032 Phase 7 read it (5.1 to 5.6 ms RTX, 37.5 to
+  45.8 ms RENOIR at 1080p), re-read at the lane's start; the ledger's "clouds and aerial
+  perspective" row (0.5 to 1.0 ms RTX, budgeted) is what the close replaces.
+- **Phase 8**: the owner's window runs on Linux; the slow adapter is one pose per preset
+  (owner, 2026-11-15: Windows once in a while, not per plan).
+- **Phase 9** unchanged.
+
+### Owner questions added 2026-11-17 (each with a recommendation)
+
+Answered 2026-11-17 (owner): the recommended option on both (the cloud shadow at the read, after the history; the clouds kept whole and scaled by profile, the window deciding the defaults).
+
+1. **Where the cloud shadow multiplies the key light under Plan 0086.** Recommended: **at the
+   read, after the history** (the visibility pair keeps the geometric visibility; the map's
+   transmittance multiplies where the pair is read, so a moving shadow follows on the next
+   frame and the pair's reset never fires for it); where the key light stays on the direct
+   target the blend's eleven frames stand. Alternative: inside `key_sample` as written, before
+   the history, with the pair's variance reset expected to catch the shadow's edge (a smear of
+   up to 64 frames where it does not).
+2. **Do the clouds still fit, and what the profiles do.** The Floor's 2.6 ms headroom holds
+   the entities' 0.5 to 2.2 ms as read plus this plan's 1.0 proposal, 0036's 0.8 and 0037's
+   0.3: over by construction on a scene that has entities and weather, and the slow adapter's
+   outdoor frame is already 2.3 to 2.8 times its Floor line. Recommended: **keep the plan whole;
+   Floor defaults `OneInFour`, the shadow on, aerial on; Portable sets `clouds.update`
+   `OneInSixteen` with the shadow off** (the shadow map and `cloud_sky` are the per-frame
+   cost that does not scale with the buffer) and keeps aerial on (under 0.1 ms); the RENOIR's
+   reading is recorded against Portable's 33.3 ms, and the RTX's against the 1.0 ms share. The
+   owner judges the look in Phase 8 and the readings decide the defaults, as the plan says.
+   Alternatives: Portable with clouds off entirely (aerial on), so the slow adapter pays
+   nothing and an overcast sky there is clear; or cut the clouds to a plan after the M10
+   window and ship aerial perspective and the weather-map contract alone here (Plan 0036's
+   rain then falls from a clear sky until that plan lands).
 
 ## TL;DR
 

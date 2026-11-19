@@ -30,6 +30,18 @@ docs/images/spider-walk -- --clip walk` and `scripts/record-clip.sh --width 480 
 docs/images/walker-walk -- --rig apps/flythrough/assets/entities/walker/walker.rig --clip walk
 --ahead 70 --orbit 24,3,-10 --aim 9`.
 
+### The icons
+
+The chooser and the belt show each entry as a still 64 x 64 picture (ADR-0075), made on the CPU
+from the model in its rest pose through the entity raycast: an orthographic view 30 degrees down
+from off the model's -x, -y side (so a model facing -y, as the rig grammar has it, shows its
+front and its left flank), the silhouette fitted to 56 of the 64 pixels, each pixel the hit
+voxel's table colour with a fixed light from `(-2, -3, 6) / 7`, a face's shade `176 + 80` times
+its cosine to the light in 256ths (the -x, -y and top faces 198, 210 and 244: three distinct
+shades, the darkest at 0.77 of the colour). The icons are made on a worker thread when the library builds and again
+when an entry's rig reloads with a changed model; a row or a slot shows the entry's name until
+its picture arrives. `apps/flythrough/tests/icon.rs` pins the walker's and the spider's icons.
+
 ## How they work
 
 ### A model is rigid parts on a `.vox`
@@ -54,6 +66,7 @@ material 1 walker                  # palette index -> a material table row by na
 material 2 walker_eye              #   (`_` stands for a space in the row's name)
 part torso node torso at 0 0 8 pivot 4 3 0 detail 2
 part head  node head parent torso at 0 0 12 pivot 3 3 0 detail 2
+body ground radius 4 height 26     # optional: the body a mover gives it
 clip nod ticks 30 loop
 key 0  head rot x 10
 key 15 head rot x -10 move 0 0 0.5
@@ -69,6 +82,12 @@ key 30 head rot x 10
 - **`clip`** and **`key`**: a clip is keys at integer ticks, per part: `rot <x|y|z> <degrees>`
   (whole degrees, several composing in the order written) and `move x y z` (an offset from the
   rest place). With `loop` the clip wraps at its length; without it the clip holds there.
+  `stride D` on a clip is the distance one cycle carries the body (0, the default, in place).
+- **`body`**, at most one: `body ground radius R height H [step S]` (a cylinder for
+  `vxe_sim::CharacterController`) or `body surface radius R [reach A]` (a sphere for
+  `vxe_sim::SurfaceMover`, which crawls walls and ceilings; ADR-0062). Lengths are in the root
+  part's model voxels, like `stride`; the build gives them in world units on
+  `RigModel::body` and `Clip::stride`. Which mover runs is the consumer's call.
 
 ### Poses in fixed point, drawn between ticks
 

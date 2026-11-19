@@ -37,6 +37,7 @@ impl Frame {
             bake: self.bake_knobs(),
             build: self.build,
             output_hint: self.output_hint,
+            mark_colours: self.mark_colours,
         }
     }
 
@@ -119,6 +120,9 @@ impl Frame {
         }
         if any("missing_light") {
             self.set_missing_light(queue, s.missing_light);
+        }
+        if any("mark_colours") {
+            self.set_mark_colours(s.mark_colours);
         }
         if any("bake.") {
             let b = s.bake;

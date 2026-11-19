@@ -128,7 +128,7 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
             &["--trees"],
             "none|sparse|forest",
             "trees on the outdoor hills, about 9 % or 94 % of the 4.8 m cells of a 307 m \
-                 box; CapsLock cycles them in process [sparse]",
+                 box; the menu's trees entry cycles them in process [sparse]",
             |p: &mut Parsing, v| {
                 let names = TreeDensity::ALL.map(|d| (d.name(), d));
                 p.args.outdoor.trees = v.word(&names, "none, sparse or forest")?;
@@ -170,8 +170,8 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
         Flag::value(
             &["--time"],
             "HH:MM",
-            "the time of day the sky starts at (latitude 45, an equinox); PageUp steps an \
-                 hour, Shift+PageUp back [12:00]",
+            "the time of day the sky starts at (latitude 45, an equinox); the menu's \
+                 time entry steps it an hour [12:00]",
             |p: &mut Parsing, v| {
                 p.args.outdoor.clock.minutes = parse_time(v.text)?;
                 Ok(())
@@ -222,8 +222,8 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
         Flag::value(
             &["--switch-at"],
             "F[,F..]",
-            "switch the world source in process at these frames, as Home does, and print \
-                 the spawn's hash at the end (tests)",
+            "switch the world source in process at these frames, as the menu's source entry \
+                 does, and print the spawn's hash at the end (tests)",
             |p: &mut Parsing, v| {
                 p.args.switch_at = super::flags::frames(v)?;
                 Ok(())

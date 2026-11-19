@@ -8,17 +8,14 @@ use crate::hud::{self, Cadence, FrameStats, HudStats, WorldSample};
 use crate::now;
 use crate::report::{Series, SyncSeries};
 use crate::run::Run;
+use crate::run::hud_lines::{banner_colour, look_line};
 use crate::setup::GfxSample;
 use crate::{LookPreset, percentile};
 use std::fmt::Write as _;
 use vxe_app::{Gpu, Pacing};
-use vxe_render::debug::StepHistogram;
-use vxe_render::{
-    BELT_CHUNK_BYTES, FRAME_PASSES, GpuWorld, HudColour, LookParams, NormalMode, ShadowWalk,
-    SyncStats,
-};
+use vxe_render::{FRAME_PASSES, HudBox, HudColour, NormalMode, SyncStats};
 
-/// Frames `F1` averages over.
+/// Frames the readings (`Enter`) average over.
 pub(crate) const SAMPLES: usize = 30;
 
 /// The stats HUD's glyph scale: an 8 x 8 glyph covers 16 x 16 pixels.
@@ -51,125 +48,6 @@ pub(crate) fn print_moving_exposure(
         }
         None => *last = Some((now_ms, ev)),
     }
-}
-
-/// The probe volume's bytes inside `Frame::frame_bytes`, by part.
-pub(crate) fn probe_bytes_line(p: &vxe_render::ProbeVolume) -> String {
-    format!(
-        "probe volume {} B in frame_bytes (atlases {} B, state {} B, update list, rays and uniform {} B), spacing {} voxels",
-        p.bytes(),
-        p.atlas_bytes(),
-        p.state_bytes(),
-        p.bytes() - p.atlas_bytes() - p.state_bytes(),
-        p.spacing()
-    )
-}
-
-/// The probe update and gather passes' GPU time in a frame's `FRAME_PASSES` times.
-pub(crate) fn probe_passes_ms(passes: &[f64]) -> f64 {
-    FRAME_PASSES
-        .iter()
-        .zip(passes)
-        .filter(|(name, _)| matches!(**name, "probes" | "gather"))
-        .map(|(_, ms)| ms)
-        .sum()
-}
-
-/// `--lamp-toggle`'s exit line: the probes plus gather median of the last [`SAMPLES`] frames
-/// outside and inside a light-change window.
-pub(crate) fn window_line(every: u32, ms: &[Vec<f64>; 2]) -> String {
-    let tail = |v: &Vec<f64>| {
-        let mut t = v[v.len().saturating_sub(SAMPLES)..].to_vec();
-        if t.is_empty() {
-            "n/a".to_owned()
-        } else {
-            format!("{:.3} ms", percentile(&mut t, 50.0))
-        }
-    };
-    format!(
-        "lamp toggled every {every} frames: probes + gather median of the last {SAMPLES} outside a light-change window {} ({} frames), inside {} ({} frames)",
-        tail(&ms[0]),
-        ms[0].len(),
-        tail(&ms[1]),
-        ms[1].len()
-    )
-}
-
-/// The field surface's band slots in the mirror: the band bricks holding one and their units'
-/// bytes (each slot's whole bin, a uniform band brick's own slot included), inside the
-/// mirror's live bytes.
-pub(crate) fn field_line(mirror: &GpuWorld) -> String {
-    format!(
-        "field band: {} band bricks, {} B of band slots, mirror {} B live, {} B allocated",
-        mirror.band_bricks(),
-        mirror.band_units() * vxe_render::internals::UNIT_BYTES,
-        mirror.mirror_bytes(),
-        mirror.allocated_bytes()
-    )
-}
-
-/// The band census (`flythrough::band_census`) over the chunks `mirror` holds full, against
-/// the mirror's live bytes.
-pub(crate) fn band_census_line(world: &vxe_world::World, mirror: &GpuWorld) -> String {
-    let chunks: Vec<vxe_world::ChunkCoord> = world
-        .store()
-        .coords()
-        .into_iter()
-        .filter(|&c| mirror.is_mirrored(c) && !mirror.is_lod(c))
-        .collect();
-    let t = now();
-    let cs = crate::band_census(world, &chunks);
-    format!(
-        "band census over {} full chunks in {:.0} ms: band voxels {} solid, {} air; band bricks {} Full, {} uniform solid, {} uniform air ({} in all); Full bricks with a surface voxel {}, of them band {}; bytes packed {}, dense {}; mirror {} B live",
-        chunks.len(),
-        ms_since(t),
-        cs.solid_voxels,
-        cs.air_voxels,
-        cs.full_bricks,
-        cs.solid_bricks,
-        cs.air_bricks,
-        cs.bricks(),
-        cs.surface_full_bricks,
-        cs.surface_full_band_bricks,
-        cs.packed_bytes,
-        cs.dense_bytes,
-        mirror.mirror_bytes()
-    )
-}
-
-/// The pool's bins at a moment: per bin with a page, its slot size, live slots, spare units
-/// (free slots and the rest of its cursor's page) and pages, then the spare units over every
-/// bin against the live units, e.g. `bins: 2u 10 live 6 spare 1p, 3u 4 live 0 spare 1p;
-/// spare 6 of 32 live units (18.75 %)`.
-pub(crate) fn bins_line(mirror: &GpuWorld) -> String {
-    let bins: Vec<String> = mirror
-        .bin_stats()
-        .iter()
-        .filter(|b| b.pages > 0)
-        .map(|b| {
-            format!(
-                "{}u {} live {} spare {}p",
-                b.units,
-                b.live,
-                b.spare * u64::from(b.units),
-                b.pages
-            )
-        })
-        .collect();
-    let (spare, live) = (mirror.spare_units(), mirror.live_units());
-    format!(
-        "bins: {}; spare {spare} of {live} live units ({:.2} %)",
-        bins.join(", "),
-        100.0 * spare as f64 / live.max(1) as f64
-    )
-}
-
-/// `field pass: 383608 band slots in 12.345 ms GPU (initial fill)`.
-pub(crate) fn field_pass_line(what: &str, (n, ms): (usize, Option<f64>)) -> String {
-    let ms = ms.map_or("n/a (no TIMESTAMP_QUERY)".to_owned(), |ms| {
-        format!("{ms:.3} ms")
-    });
-    format!("field pass: {n} band slots in {ms} GPU ({what})")
 }
 
 #[derive(Default)]
@@ -320,12 +198,48 @@ pub(crate) struct Hud {
     pub(crate) colours: Vec<HudColour>,
     pub(crate) strip: Vec<f32>,
     pub(crate) banner: String,
+    /// Reused buffers: the open menu placed in the window (its rows from `text` and
+    /// `colours`, moved to the panel, the readout on the top row) and the readout's words.
+    pub(crate) overlay: String,
+    pub(crate) overlay_colours: Vec<HudColour>,
+    pub(crate) readout: String,
+    /// Reused buffers: the spans and the icons' tiles laid over the belt's or the chooser's
+    /// rows.
+    pub(crate) paint: crate::entities::belt::Paint,
     /// The far normal's words and the live queue's order and withdrawal in words, remade
     /// only when what they name changes.
     pub(crate) far_normal_words: Cached<(NormalMode, [f32; 2])>,
     pub(crate) queue_words: Cached<(vxe_render::QueueOrder, bool)>,
     /// The whole run's frame times, shown or not.
     pub(crate) run: RunTimes,
+}
+
+/// The start banner's row naming the menu's keys, shown for `hud::BANNER_MS` outside
+/// `--tester`.
+pub(crate) const KEYS_BANNER: &str = "Tab menu, F1 keys";
+
+/// What the overlay draws this frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Overlay {
+    /// The stats HUD's rows and strip.
+    Stats,
+    /// The menu's page alone.
+    Menu,
+    /// The banner alone (under `--tester`, the path's row and its help panel).
+    Banner,
+}
+
+impl Overlay {
+    /// The overlay for a run under `--tester` or not, with the menu open or closed and the
+    /// stats HUD shown or hidden: the menu over everything outside `--tester` (which has
+    /// none), else the stats or the banner.
+    pub(crate) fn of(tester: bool, menu_open: bool, stats: bool) -> Self {
+        match (tester, menu_open, stats) {
+            (false, true, _) => Self::Menu,
+            (_, _, true) => Self::Stats,
+            _ => Self::Banner,
+        }
+    }
 }
 
 /// A string kept with the key it was made from, remade only when the key changes: a row's
@@ -372,6 +286,10 @@ impl Hud {
             colours: Vec::new(),
             strip: Vec::with_capacity(hud::RING),
             banner: String::new(),
+            overlay: String::new(),
+            overlay_colours: Vec::new(),
+            paint: Default::default(),
+            readout: String::new(),
             far_normal_words: Cached::default(),
             queue_words: Cached::default(),
             run: RunTimes::default(),
@@ -397,17 +315,6 @@ pub(crate) struct FieldSamples {
     pub(crate) items: Vec<f64>,
     pub(crate) cpu_ms: Vec<f64>,
     pub(crate) gpu_ms: Vec<f64>,
-}
-
-/// The mirror's staging belt: its chunks, the host bytes they map at the chunk size, and how
-/// often a burst replaced it.
-pub(crate) fn belt_line(mirror: &GpuWorld) -> String {
-    let n = mirror.belt_chunks();
-    format!(
-        "staging belt {n} chunks ({} B mapped), {} trims",
-        n as u64 * BELT_CHUNK_BYTES,
-        mirror.belt_trims()
-    )
 }
 
 impl FieldSamples {
@@ -448,109 +355,12 @@ impl FieldSamples {
     }
 }
 
-/// The steps view's reading of the lamp shadow rays, from the light pass's counters (one
-/// texel per hit, alpha 1): `shadow rays (full walk, 1 234 567 rays): steps mean 8.12, loads
-/// mean 20.31, p99 64, pool reads mean 3.10`.
-pub(crate) fn shadow_steps_line(texels: &[[f32; 4]], walk: ShadowWalk) -> String {
-    let rays: Vec<&[f32; 4]> = texels.iter().filter(|t| t[3] > 0.5).collect();
-    let n = rays.len().max(1) as f64;
-    let mean = |k: usize| rays.iter().map(|t| f64::from(t[k])).sum::<f64>() / n;
-    let mut loads: Vec<f64> = rays.iter().map(|t| f64::from(t[1])).collect();
-    format!(
-        "shadow rays ({} walk, {} pixels cast, {:.3} a casting pixel): steps mean {:.2}, loads mean {:.2}, p99 {:.0}, pool reads mean {:.2}",
-        walk.name(),
-        rays.len(),
-        mean(3),
-        mean(0),
-        mean(1),
-        percentile(&mut loads, 99.0),
-        mean(2)
-    )
-}
-
-/// The key light's shadow ray in the steps view, from the light pass's direct target (one
-/// texel per hit, alpha 1 where the ray was cast): the pixels that cast it, its mean steps,
-/// p99 steps, mean storage loads and mean pool reads; `None` where no pixel cast it.
-pub(crate) fn key_ray_steps(texels: &[[f32; 4]]) -> Option<(usize, [f64; 4])> {
-    let rays: Vec<&[f32; 4]> = texels.iter().filter(|t| t[3] > 0.5).collect();
-    if rays.is_empty() {
-        return None;
-    }
-    let n = rays.len() as f64;
-    let mean = |k: usize| rays.iter().map(|t| f64::from(t[k])).sum::<f64>() / n;
-    let mut steps: Vec<f64> = rays.iter().map(|t| f64::from(t[0])).collect();
-    Some((
-        rays.len(),
-        [mean(0), percentile(&mut steps, 99.0), mean(1), mean(2)],
-    ))
-}
-
-/// The steps view's reading of the key light's shadow ray ([`key_ray_steps`]): `key light ray
-/// (coarse walk, 1 234 567 pixels cast): steps mean 8.12, p99 64, loads mean 20.31, pool reads
-/// mean 3.10`, or `key light ray: none cast`.
-pub(crate) fn key_steps_line(texels: &[[f32; 4]], walk: ShadowWalk) -> String {
-    match key_ray_steps(texels) {
-        Some((n, [mean, p99, loads, pool])) => format!(
-            "key light ray ({} walk, {n} pixels cast): steps mean {mean:.2}, p99 {p99:.0}, loads mean {loads:.2}, pool reads mean {pool:.2}",
-            walk.name()
-        ),
-        None => "key light ray: none cast".to_owned(),
-    }
-}
-
-/// The steps view's reading of one frame: `steps per ray (2073600 rays): mean 41.27, p99 133,
-/// block-max mean 88.10; loads mean 12.40, p99 61; pool reads mean 3.02, p99 18`. Counts clamp
-/// at 255 as the view does; the block-max mean is over 8 × 8 pixel blocks of each block's
-/// maximum steps; loads are the ray's 32-bit storage loads from the mirror, pool reads the
-/// pool loads among them.
 /// The cracks view's shares of the frame `frame` last rendered, read back from its hit pass's
 /// layers and records: a blocking copy of each.
 pub(crate) fn crack_shares(gpu: &Gpu, frame: &vxe_render::Frame) -> vxe_render::CrackShares {
     let layers = vxe_render::debug::read_rgba16f(&gpu.device, &gpu.queue, frame.layers());
     let records = vxe_render::debug::read_rgba16u(&gpu.device, &gpu.queue, frame.hit_records());
     vxe_render::CrackShares::from_layers(&layers, &records)
-}
-
-pub(crate) fn steps_line(h: &StepHistogram) -> String {
-    format!(
-        "steps per ray ({} rays): mean {:.2}, p99 {}, block-max mean {:.2}; loads mean {:.2}, p99 {}; pool reads mean {:.2}, p99 {}",
-        h.rays(),
-        h.mean_steps(),
-        h.p99_steps(),
-        h.block_max_mean(),
-        h.mean_loads(),
-        h.p99_loads(),
-        h.mean_pool_reads(),
-        h.p99_pool_reads()
-    )
-}
-
-/// The preset's name and parts, the far normal and the view: `look field (normals contour,
-/// face mix 0, far normal off), view shaded`.
-pub(crate) fn look_line(look: &LookParams, preset: &LookPreset) -> String {
-    format!(
-        "look {} (normals {}, {}, {}), view {}",
-        preset.name,
-        look.normal_mode.name(),
-        preset.parts(),
-        LookPreset::far_normal_words(look.normal_mode, look.far_normal),
-        look.view.name()
-    )
-}
-
-/// A banner row's colour: red for the model viewer's error row, yellow otherwise.
-pub(crate) fn banner_colour(line: &str) -> HudColour {
-    if crate::viewer::is_error_row(line) {
-        HudColour::Red
-    } else {
-        HudColour::Yellow
-    }
-}
-
-/// Each of `banner`'s rows' colours into `colours`, cleared first ([`banner_colour`]).
-pub(crate) fn banner_colours(banner: &str, colours: &mut Vec<HudColour>) {
-    colours.clear();
-    colours.extend(banner.lines().map(banner_colour));
 }
 
 /// Appends the banner's pacing row, `pace free`, to `out` as a banner row (`hud::start_row`)
@@ -619,7 +429,7 @@ pub(crate) fn write_queue_banner_row(out: &mut String, args: &Args, words: &str)
     }
     let _ = write!(
         out,
-        ", full-first {}, budget {}, missing light {}, reach {}, digs +{} ms, ring 3 {}; {words} (F order, Tab/Slash angle, Quote withdraw, Backspace budget, Backslash full-first, 7 missing light, 8 reach)",
+        ", full-first {}, budget {}, missing light {}, reach {}, digs +{} ms, ring 3 {}; {words} (Tab: the light queue page)",
         FullFirstWords(args.full_first()),
         args.bake.budget,
         args.bake.missing_light.name(),
@@ -832,6 +642,7 @@ impl Run {
             println!("{words}");
             self.modes.show_lights(words, now_ms);
         }
+        self.modes.walkers.refresh_icons(self.world.materials());
     }
 
     /// Drops `--pose`'s banner row once the camera has left the pose.
@@ -843,6 +654,64 @@ impl Run {
         {
             self.pose = None;
         }
+    }
+
+    /// The open menu's rows into the HUD's reused text and colour buffers, the formatting
+    /// timed into `format_us`.
+    pub(crate) fn write_menu(&mut self) {
+        let t = now();
+        let v = self.run_view();
+        let at_ms = ms_since(self.start);
+        let notice = self
+            .notice
+            .as_ref()
+            .filter(|(_, at)| at_ms - at < hud::BANNER_MS)
+            .map(|(l, _)| l.as_str());
+        self.menu.write_with(
+            &self.modes,
+            &v,
+            notice,
+            &mut self.hud.text,
+            &mut self.hud.colours,
+            &mut self.hud.paint,
+        );
+        self.hud.format_us = ((now() - t).as_secs_f64() * 1e6) as u32;
+    }
+
+    /// The page `write_menu` wrote, placed in a `size` window's panel with the readout
+    /// (`fps 59.9  frame 16.7 ms p99 18.2`: the frame window's fps, median and p99) on the
+    /// window's top row, into the HUD's reused `overlay` buffers; its formatting is added to
+    /// `format_us`; the page's spans and tiles moved with it. Gives the backdrop's box.
+    pub(crate) fn place_menu(&mut self, size: [u32; 2]) -> HudBox {
+        let t = now();
+        let h = &mut self.hud;
+        h.readout.clear();
+        let _ = write!(
+            h.readout,
+            "fps {:.1}  frame {:.1} ms p99 {:.1}",
+            h.frames.fps(),
+            h.frames.frame_ms_p50(),
+            h.frames.frame_ms_p99()
+        );
+        let panel = crate::hud::menu::Panel::of(size[0], size[1]);
+        let backdrop = crate::hud::menu::place(
+            &h.text,
+            &h.colours,
+            panel,
+            &h.readout,
+            &mut h.overlay,
+            &mut h.overlay_colours,
+        );
+        for (b, _) in &mut h.paint.spans {
+            b.col += panel.col as u32;
+            b.row += panel.row as u32;
+        }
+        for tile in &mut h.paint.tiles {
+            tile.col += panel.col as u32;
+            tile.row += panel.row as u32;
+        }
+        h.format_us += ((now() - t).as_secs_f64() * 1e6) as u32;
+        backdrop
     }
 
     /// The banner at the frame loop's clock: `--pose`'s row until the camera first moves, the
@@ -878,7 +747,7 @@ impl Run {
     pub(crate) fn compose_banner(&self, out: &mut String, words: &str) {
         let now = ms_since(self.start);
         if !self.hud.visible
-            && let Some(v) = &self.modes.walkers.viewer
+            && let Some(v) = self.modes.walkers.viewer()
             && v.error.is_some()
         {
             hud::start_row(out);
@@ -896,9 +765,20 @@ impl Run {
         if let Some((pose, _)) = &self.pose {
             out.push_str(pose);
         }
+        if self
+            .quit_asked
+            .is_some_and(|at| now - at < super::QUIT_ASK_MS)
+        {
+            hud::start_row(out);
+            out.push_str(super::QUIT_ASK_WORDS);
+        }
         write_pace_banner(self.args.pace, now, out);
         hud::start_row(out);
         write_queue_banner_row(out, &self.args, words);
+        if now < hud::BANNER_MS {
+            hud::start_row(out);
+            out.push_str(KEYS_BANNER);
+        }
         if let Some((scene, _)) = self
             .scene
             .as_ref()
@@ -914,12 +794,21 @@ impl Run {
         }
     }
 
-    /// Formats this frame's rows and strip into the overlay, timing the formatting.
+    /// Formats this frame's rows and strip into the overlay, timing the formatting; the belt
+    /// under them in placement mode ([`Run::belt_rows`]).
     pub(crate) fn update_hud(&mut self, gpu: &Gpu) {
         self.fill_hud(self.gfx.as_ref().map(GfxSample::of));
+        let belt = self.belt_rows(gpu.size, false);
         let h = &mut self.hud;
         let Some(gfx) = self.gfx.as_mut() else { return };
-        gfx.hud.set_lines(&gpu.queue, &h.text, &h.colours);
+        match belt {
+            Some(b) => {
+                let paint = h.paint.with(std::slice::from_ref(&b));
+                gfx.hud
+                    .set_lines_painted(&gpu.queue, &h.text, &h.colours, paint)
+            }
+            None => gfx.hud.set_lines(&gpu.queue, &h.text, &h.colours),
+        }
         gfx.hud.set_samples(&gpu.queue, &h.strip, hud::CEILING_MS);
     }
 

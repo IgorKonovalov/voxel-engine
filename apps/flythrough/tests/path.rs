@@ -6,13 +6,15 @@ use std::collections::HashMap;
 
 use flythrough::castle;
 use flythrough::cave::CaveSource;
+use flythrough::outdoor::OutdoorSource;
 use flythrough::path::{
-    CASTLE, CAVE, CameraPath, Controls, Drive, Keyframe, PATH_SEED, PATHS, PathMode, PathPlayer,
-    SHOWCASE, Scene, TesterAction, TesterInput, key, tester_action,
+    CASTLE, CAVE, CameraPath, Controls, Drive, Keyframe, OUTDOOR, PATH_SEED, PATHS, PathMode,
+    PathPlayer, SHOWCASE, Scene, TesterAction, TesterInput, key, tester_action,
 };
 use flythrough::report::{Recorder, RunReport, json};
 use flythrough::showcase::ShowcaseSource;
-use vxe_app::{KeyCode, MouseButton};
+use flythrough::trees::{ForestSource, LEAF_FILL, TreeDensity};
+use vxe_app::{KeyCode, MouseButton, PadButton};
 use vxe_world::{AIR, Chunk, ChunkCoord, MaterialId, VoxelCoord, WorldSource};
 
 /// Samples the air test reads along a path, seconds apart.
@@ -165,6 +167,41 @@ fn the_castle_path_flies_in_air() {
     );
 }
 
+/// `--path outdoor`'s world, the hills of the path's seed with the sparse trees at the default
+/// leaf fill stood on them, read chunk by chunk through its source as the fly-through streams it:
+/// no sample of the path meets grass, soil, rock, bark or leaf.
+#[test]
+fn the_outdoor_path_flies_in_air() {
+    let src = ForestSource::new(
+        OutdoorSource::new(PATH_SEED),
+        TreeDensity::Sparse,
+        LEAF_FILL,
+    );
+    let chunks: RefCell<HashMap<ChunkCoord, Chunk>> = RefCell::default();
+    let bad = rock_on(&OUTDOOR, |p| {
+        let v = VoxelCoord(p);
+        let mut chunks = chunks.borrow_mut();
+        let c = chunks.entry(v.chunk()).or_insert_with(|| {
+            let mut c = Chunk::default();
+            src.chunk(v.chunk(), &mut c);
+            c
+        });
+        c.brick(v.brick_slot()).get(v.index_in_brick())
+    });
+    assert!(
+        bad.is_empty(),
+        "the outdoor path meets the ground or a tree:\n{}",
+        bad.join("\n")
+    );
+}
+
+/// The outdoor path flies 60 to 75 s, the cave path's scale.
+#[test]
+fn the_outdoor_path_is_a_minute_or_more() {
+    let d = OUTDOOR.duration_s();
+    assert!((60.0..=75.0).contains(&d), "the outdoor path flies {d} s");
+}
+
 /// Each path names its scene, and the castle's cut keys hold the leg's last pose until the cut.
 #[test]
 fn every_scene_has_one_path_and_a_cut_holds_the_pose_before_it() {
@@ -288,8 +325,23 @@ fn the_tester_filter_leaves_movement_look_help_and_esc() {
         KeyCode::F9,
         KeyCode::Comma,
         KeyCode::Semicolon,
+        KeyCode::Tab,
+        KeyCode::KeyL,
+        KeyCode::Enter,
     ] {
         assert_eq!(tester_action(TesterInput::Key(k)), None, "{k:?}");
+    }
+    // The menu's pad button and the stats' are nothing under `--tester`; `R1`, `L1` and `R3`
+    // move the camera.
+    for b in [PadButton::Start, PadButton::Select, PadButton::South] {
+        assert_eq!(tester_action(TesterInput::Pad(b)), None, "{b:?}");
+    }
+    for b in [PadButton::R1, PadButton::L1, PadButton::R3] {
+        assert_eq!(
+            tester_action(TesterInput::Pad(b)),
+            Some(TesterAction::Move),
+            "{b:?}"
+        );
     }
     assert_eq!(tester_action(TesterInput::Click(MouseButton::Right)), None);
     assert_eq!(

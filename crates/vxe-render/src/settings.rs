@@ -230,6 +230,9 @@ pub struct RenderSettings {
     /// The output size a headless consumer renders at with none of its own; the consumer's
     /// window wins. `Rebuild`: the frame never applies it.
     pub output_hint: Option<[u32; 2]>,
+    /// The colours a consumer marks entities with, the first and the second
+    /// ([`crate::Frame::set_mark_colours`], ADR-0074); `Live`, the same in every profile.
+    pub mark_colours: [[f32; 3]; 2],
 }
 
 impl Default for RenderSettings {
@@ -320,6 +323,7 @@ impl RenderSettings {
                 ..BuildSettings::default()
             },
             output_hint: Some([1920, 1080]),
+            mark_colours: crate::entities::MARK_COLOURS,
         };
         match p {
             Profile::Floor => floor,
@@ -483,6 +487,7 @@ impl RenderSettings {
         ("build.residency", Rebuild),
         ("build.workers", Rebuild),
         ("output_hint", Rebuild),
+        ("mark_colours", Live),
     ];
 
     /// Each `pub fn set_*` of the crate that sets a field, and the fields it sets: a name, or a
@@ -513,6 +518,7 @@ impl RenderSettings {
         ("set_entity_mirror", &["build.entity_pool_bytes"]),
         ("set_field_surface", &["build.field_surface"]),
         ("set_sync_budget_time", &["build.sync_budget_time"]),
+        ("set_mark_colours", &["mark_colours"]),
     ];
 
     /// Each `pub fn set_*` of the crate that is not a setting, and why.
@@ -541,6 +547,10 @@ impl RenderSettings {
         (
             "set_entities",
             "a per-frame input: the entities drawn, on the frame and the entity mirror",
+        ),
+        (
+            "set_marks",
+            "a per-frame input: the entities marked, on the entity mirror",
         ),
         (
             "set_entity_displays",
@@ -600,6 +610,22 @@ impl RenderSettings {
         ),
         ("set_text", "HudOverlay's own method: the overlay's text"),
         ("set_lines", "HudOverlay's own method: the overlay's lines"),
+        (
+            "set_scale",
+            "HudOverlay's own method: the overlay's glyph scale",
+        ),
+        (
+            "set_lines_over",
+            "HudOverlay's own method: the overlay's lines over a dimmed box",
+        ),
+        (
+            "set_tile",
+            "HudOverlay's own method: an image tile of the overlay",
+        ),
+        (
+            "set_lines_painted",
+            "HudOverlay's own method: the overlay's lines, spans and tiles",
+        ),
         (
             "set_rows",
             "HudOverlay's own method: the overlay's coloured rows",
@@ -745,6 +771,7 @@ impl RenderSettings {
                     Some([1280, 720])
                 }
             }
+            "mark_colours" => s.mark_colours.swap(0, 1),
             _ => return None,
         }
         Some(s)

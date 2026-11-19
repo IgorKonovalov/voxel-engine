@@ -1,30 +1,134 @@
 # 0079: Entities aware of the floor and the walls: a surface mover in `vxe-sim`, the smoothed normal, a body in the `.rig`, and a wandering demo
 
-> **Status:** approved (2026-11-16, the owner: every recommended answer under "Owner questions")
+> **Status:** done (closed 2026-11-18, v0.65.0: every phase done and every named test read as its done-when claims; the surface mover, the gradient and the wander ship as integer motion pinned by two course hashes; the 64-spider frame CPU reads +3.07 ms against a +1.5 ms guess, recorded, the owner's window did not notice it. Approved 2026-11-16, the owner: every recommended answer under "Owner questions"; amended 2026-11-18 (the architect's re-read against Plan 0077 as landed: Phases 4 to 6 rewritten in place))
 > **Created:** 2026-11-16
-> **Milestone:** M6 in [`docs/roadmap.md`](../roadmap.md) (entities), over M3's collision
+> **Milestone:** M6 in [`docs/roadmap.md`](../../roadmap.md) (entities), over M3's collision
 > (`vxe-sim`, ADR-0005)
-> **Related ADRs:** [ADR-0062](../adrs/0062-surface-locomotion-is-a-kinematic-sphere-attached-to-a-contact-normal-in-vxe-sim.md)
+> **Related ADRs:** [ADR-0062](../../adrs/0062-surface-locomotion-is-a-kinematic-sphere-attached-to-a-contact-normal-in-vxe-sim.md)
 > (proposed; the surface mover, the smoothed normal, the frame to quaternion), accepted at this
-> plan's close. Rests on [ADR-0005](../adrs/0005-vertical-cylinder-collision-by-integer-conservative-advancement.md)
+> plan's close. Rests on [ADR-0005](../../adrs/0005-vertical-cylinder-collision-by-integer-conservative-advancement.md)
 > (the cylinder controller the ground mover is),
-> [ADR-0008](../adrs/0008-collapse-as-capped-support-flood-and-rigid-vertical-drop.md) (no rigid
+> [ADR-0008](../../adrs/0008-collapse-as-capped-support-flood-and-rigid-vertical-drop.md) (no rigid
 > bodies in the authoritative world; the mover is kinematic),
-> [ADR-0050](../adrs/0050-entities-are-posed-voxel-volumes-in-their-own-pool-traced-after-the-world-march.md)
+> [ADR-0050](../../adrs/0050-entities-are-posed-voxel-volumes-in-their-own-pool-traced-after-the-world-march.md)
 > (poses in fixed point) and
-> [ADR-0051](../adrs/0051-rigs-and-clips-are-text-files-sampled-in-fixed-point-by-tick.md)
+> [ADR-0051](../../adrs/0051-rigs-and-clips-are-text-files-sampled-in-fixed-point-by-tick.md)
 > (the `.rig` file, clips by tick).
 > **Source:** the owner, 2026-11-16: "entities should be aware of where the floor and walls are,
 > so for example we can have walkers walking and spiders crawling".
 > **Starts after:** Phases 1 to 3 touch `crates/` and the library's two rig files only; they may
-> start as a side lane once [Plan 0063](done/0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
+> start as a side lane once [Plan 0063](0063-rigs-and-clips-keyframe-animation-a-model-viewer-and-text-authoring.md)
 > has merged (`Pose::compose`, Phase 3b) and the clip-recorder chore has merged (the spider's rig,
 > `apps/flythrough/assets/entities/`). Phase 4 edits the fly-through's entities module and starts
 > after [Plan 0077](0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md)
 > has merged, since 0077 splits `walker.rs`, gives `Placed` its entry and clip and makes the
 > picker place on the aimed surface, and this plan builds on all three. Before Phase 4 starts the
 > architect re-reads it against that tip (the names `walker.rs`, `Placed`, `Walkers::step` and
-> `F11` carry then). Owner question 7 is the order.
+> `F11` carry then). Owner question 7 is the order. **The re-read is done (2026-11-18): the
+> section "Amended 2026-11-18" below; the dev reads it before Phase 4.**
+
+## Amended 2026-11-18 (re-read against Plan 0077 as landed)
+
+Read at `plan-0079` 8078638d, which holds main 63e3695a (Plan 0077 closed, v0.64.0; ADR-0074
+and ADR-0075 accepted; [`docs/references/entity-placement-ux.md`](../../references/entity-placement-ux.md);
+the Placement mode section of [`docs/flythrough.md`](../../flythrough.md)). Phases 1 to 3 stand
+as landed. The tree's names win; Phases 4 to 6 below are rewritten in place, and this section
+holds the name mapping, the decisions and the new owner questions. **Phase 4 may start on the
+recommendations** (the owner took every recommendation of this plan on 2026-11-16; questions 9
+to 11 are routed the same way and the Phase 5 window answers them if the owner has not before).
+Plan 0077's UX decisions stand untouched: the chooser, the belt, placement mode, the marked
+ghost, the minimal key set (ADR-0061). Nothing under `crates/` changes in Phase 4.
+
+### Name mapping (the plan's name, then the tree's)
+
+| The plan says | The tree has |
+|---|---|
+| `F11`, "banner `walk on` / `walk off`" | `F11` is bound to nothing (`FORMER_KEYS` in `run/menu_tests.rs`; ADR-0061). The toggle is the menu entry `walkers walk` (`Act::WalkersWalk` in `toggles::ACTIONS`, group `Entities`, no bind), `Walkers::toggle_walk`, `Walkers.walking`, the words `walk on` / `walk off`; `--entities-walk on\|off` starts it |
+| "`` ` `` placing on the looked-at surface facing the camera"; Phase 5's "aim and `` ` ``" | `` ` `` opens the chooser (`PageId::Entities`); `Enter` on an entry fills the belt's slot, closes the menu and enters placement mode; the ghost stands at `Run::aim_feet`; the **left click** (or `R2`) places the ghost (`Walkers::place_preview`) and the mode stays; `R` turns the ghost 22.5 degrees; `Esc` or the right click leaves |
+| "the picker places the selected entry on the aimed surface" | `Run::aim_feet(extent) -> (feet, eye)` (`run/keys.rs`) calls `belt::stand(eye, fwd, extent, cast)`: a hit on an up face at `near` or beyond is the feet; a wall's or a ceiling's hit is moved back along the view by half the footprint and **dropped to the floor**; a nearer hit or none, the view's point at `near`, dropped. `PLACE_REACH` 30 m, `NEAR_MIN` 3 m, `NEAR_SCALE` 1.5, `FLOOR_DROP` 10 m (`entities/belt.rs`) |
+| `Placed { id, feet, yaw, since, rig }` | `Placed { id, feet: [f32; 3], yaw: f32, since: f32, entry: Option<usize>, play: Play }` (`entities/placed.rs`): no orientation beyond the yaw, no mover state. The ghost is `Walkers.preview: Option<Placed>`, the same type; its pose is `viewer::placed(&clip_pose, feet, yaw)` (the root at the feet, `root_q` a yaw about `z`) |
+| `walker.rs`, "the scripted circle goes" | `entities/walker.rs` is the **built-in walker made in code** (four parts, no rig, no body): the one entry when the library is missing or empty (`library::builtin`; the tester archive's fallback, since the archive ships no library). `Walkers::walk_pose` circles only it, in `f32`. With the committed library no placement is a built-in walker |
+| `Walkers::step(dt)` | as named, called once a frame from `run/frame.rs` with `dt` clamped to 0.1 s (1/60 headless): advances each rig instance's `Play` by time and poses it. The walk mode's tick is `fly::TICK_HZ` (60) capped at `fly::MAX_TICKS_PER_FRAME` (**8**; the Risks' "4" reads 8) |
+| `apps/flythrough/src/entities/{mod,placed,wander,tick}.rs` | `entities/{mod,belt,icon,library,picker,placed,pool,walker}.rs`; `placed.rs` is 998 lines and `run/hud_feed.rs` 1196 against `check-file-size`'s 1200 |
+| `walk` after the entities row | `Walkers::write_row` (`placed.rs`), called from `hud/modes.rs`; `run/hud_feed.rs` composes the stats and the banner |
+| "the fly-through's walk params" | `fly.rs`'s `CharacterParams`: `step_height` 1024, `climb_height` 3072, `climb_speed` 64, `gravity` -8, `max_fall` 1024 |
+
+### Decisions
+
+1. **The toggle.** The wander is the menu entry that is `walkers walk` today, renamed
+   **`wander`** (its mode text and the banner `wander on` / `wander off`; question 11), with
+   **no key** (question 9); `--entities-walk on|off` keeps its name and its help text says what
+   it starts. The toggle supplies the wander's **input** only: **the movers tick whether or not
+   the wander is on**, with zero input when it is off, so a body stands on its surface, falls
+   when the surface is dug away and lands, wander or not (done-when 5 holds in both states);
+   "a stopped wander leaves each body where it is" stands.
+2. **Placing is Plan 0077's flow, untouched.** Putting a crawler on a wall is: the spider's
+   slot selected (the wheel, a digit in the mode, or the chooser's `Enter`), aim at the wall,
+   left click. This plan adds no key, no row and no page; done-when 4 and Phase 5 read so.
+3. **`Run::aim_feet` stays the one placement function; `belt::stand` branches on the body.**
+   `stand` gains a `Stand` argument, `Stand::Floor` (today's rule: for a ground body and for a
+   body-less entry) or `Stand::Surface` (a hit on **any** face at `near` or beyond is the stand
+   point itself and the face's outward normal is the body's up; a nearer hit or none falls back
+   to today's rule, the view's point at `near` dropped to the floor, up `+z`: a surface body
+   placed in the air falls at its first tick and lands as Phase 1 lands), and returns the point
+   **and the up** (`+z` for `Floor`). `Run::aim_feet(extent, stand)` returns them with the eye;
+   the `Stand` comes from the entry's `RigModel.body` (`Surface` for `RigBody::Surface`, `Floor`
+   otherwise). One function, not two, because the reach, the `near` rule and the floor drop are
+   shared and there is one caller (`Run::sync_ghost`); `--entities N`'s `place_ring` is
+   unchanged (the floor below each point; a surface body there starts attached with normal
+   `+z`). **The ghost of a surface body stands on the wall** (question 10): it is the one
+   picture of where the entity will be, and a ghost dropped to the floor under a wall hit would
+   preview a placement that does not happen. `R` turns the ghost about its **up** (the face's
+   normal for a surface body), in 0077's 22.5 degree steps.
+4. **The mover state lives in `Placed.mover: Option<Mover>`** (`entities/mover.rs`, new), the
+   ghost included. A `Mover` holds the body's kind and state (`Ground { state:
+   CharacterState, forward: [i64; 3] }` or `Surface(SurfaceState)`), its params built from
+   the `RigBody` at placement, the wander's per-entity state (`Wander`: the SplitMix64 stream,
+   the target heading, the counters), the distance accumulated for the clip, the still-tick
+   count, and the previous and current `Pose` (`prev`, `now`) that `displays()` interpolates.
+   `feet` and `yaw` stay: the placement's record, and the pose source of a body-less entry (the
+   built-in walker, a rig without `body`), as today. With a `Mover` the drawn pose comes from
+   the mover's state (Phase 4's pose rule), `yaw` is the turn about the body's up and `feet` is
+   where it was put. The ghost's `Mover` is built attached, with its up from `stand`, and **is
+   never ticked** (`Walkers::step` skips `preview`), so it shows the body on the wall where a
+   click will attach it; the click moves the `Placed` into `placed` as today and the next tick
+   takes it over. A reload of the entry (`poll_viewer`, `EntitySet::replace`) keeps the
+   `Mover`; a changed `body` line applies to the next placement (stated in the doc).
+5. **The built-in walker keeps its circle.** `walk_pose`, the `WALK_*` constants and
+   `walker.rs` stand; the toggle runs the circle for built-in walkers and the wander for every
+   entity with a body. Only a run with no library places it, it has no clips to tie to the
+   ground, and porting a code model to the mover for a fallback nobody sees with the library
+   present is not this plan's. "The scripted circle goes" reads: the library's entities do not
+   circle; the walker and the spider wander. Followup: when the tester archive ships the
+   library, the built-in walker and its circle go (a chore, under Followups).
+6. **The file split, first.** `run/hud_feed.rs`'s free line formatters (`probe_bytes_line`
+   through `field_pass_line`, `belt_line`, `shadow_steps_line`, `key_ray_steps`,
+   `key_steps_line`, `steps_line`, `look_line`, the banner colour helpers) move to
+   `run/hud_lines.rs` (new) before anything is added; `hud_feed.rs` keeps the `Run` methods.
+   The tick sampler (`Ticker`: the 60 Hz accumulator, the last second's tick times, their p50)
+   is `entities/tick.rs` (new); the `tick <us>` words are appended by `Walkers::write_row` in
+   `placed.rs`, which stays under 1200 lines with the mover in `mover.rs` and the wander in
+   `wander.rs`. `node scripts/check-file-size.mjs` is a Phase 4 done-when.
+
+### Owner questions added 2026-11-18 (each with a recommendation; Phase 4 starts on them, the Phase 5 window answers them if not before)
+
+**Answered 2026-11-18 (owner, "all recommended"):** 9 no key, 10 yes, 11 `wander`.
+
+9. **A key for the wander toggle.** Recommended: **no key**: the entry `wander` under
+   `entities` (`Tab`, two rows; or the palette by typing `wan`), and `--entities-walk on` for a
+   run that starts wandering. ADR-0061 empties the keyboard, and a shortcut takes a free key
+   with the owner's go. Alternative: a free key from `FORMER_KEYS` (`F11` as before, or `=`),
+   bound through `toggles::ACTIONS` so `--keys` and the help list it.
+10. **The crawler's ghost on the wall.** Recommended: **yes**: the spider's ghost aimed at a
+    wall or a ceiling stands on it, marked as today, legs to the face, turned by `R` about the
+    face's normal, and the click places it exactly there. Alternative: the ghost keeps 0077's
+    floor rule for every body (one stand rule, nothing to learn) and only the placement
+    attaches to the wall, which previews a placement that does not happen.
+11. **The toggle's words.** Recommended: the entry, its mode text and the banner read
+    **`wander`** (`wander on` / `wander off`; the HUD row's `wander` in place of `walk`),
+    since spiders crawl and the circle is the fallback's; `--entities-walk` keeps its name (a
+    renamed flag costs every script and doc that names it and shows nothing on screen).
+    Alternative: `walkers walk` and `walk on` / `walk off` kept as written, nothing renamed.
 
 ## TL;DR
 
@@ -39,8 +143,9 @@ instead of flipping at each voxel. A `.rig` names its **body** (ground or surfac
 a clip's **stride**, so the legs move as far as the body does. The fly-through's demo is a
 **seeded wander**: walkers roam a cave floor turning from walls and drops, spiders crawl the
 walls and the ceiling. All of it is integer arithmetic at the sim tick, pinned by course hashes
-on both CI arms. The first thing seen: `` ` `` on a wall with the spider selected puts it on the
-wall, and `F11` sends it climbing.
+on both CI arms. The first thing seen (amended 2026-11-18): in placement mode with the spider's
+slot selected, the ghost stands on the wall you aim at and a click places it there; the menu's
+`wander` sends it climbing.
 
 ## Context & problem
 
@@ -256,9 +361,10 @@ between two ticks the done-when says so and the log states which.
      unchanged.
   4. `a_walker_falls_into_the_hole_dug_under_it` (`tests/controller.rs`): on F1, the fixtures'
      body standing at foot `(10, 10, 0)` voxels, grounded after one tick; a `Carve` of
-     `Shape::Sphere` of radius 768 centred at the centre of voxel `(10, 10, -1)` (`(2688, 2688,
-     -128)`: the voxel centres within 3 voxels go to air, a crater four voxels deep under the
-     body and one voxel wide at its bottom) is followed by ticks: the next tick's result reads
+     `Shape::Sphere` of radius 1024 centred at the centre of voxel `(10, 10, -1)` (`(2688, 2688,
+     -128)`: the voxel centres within 4 voxels go to air, a crater wider than the body; radius
+     768, the body's own, leaves a rim the flat-bottomed cylinder rests on. Amended 2026-11-16
+     (owner)) is followed by ticks: the next tick's result reads
      `grounded == false`; within 30 ticks `landed` is `Some`, the foot's `z` is at most -256
      (inside the crater; how deep depends on the fixtures' body radius against the crater's
      taper, so the depth is read, not asserted) and the body overlaps nothing (the fixtures'
@@ -344,6 +450,10 @@ between two ticks the done-when says so and the log states which.
      reads `(-183, 0, 183)`; any air voxel on the slope's face gives the same gradient, since
      the staircase repeats along `(1, 0, 1)`) while the contact normal is `(0, 0, 256)`; with
      `smooth` off, `smooth_normal == normal`.
+     **Amended 2026-11-17 (owner):** the body is radius 128 (`half` 1), which rests on the
+     tread's face; radius 512 rests on the step corners and reads a diagonal contact (readings
+     log). The contact normal reads `(0, 0, 256)` and the smoothed normal the slope, `(-181, 0,
+     181)` within 3, from the gradient `(-6, 0, 6)`.
   9. The determinism vectors of `vxe-entity` and `vxe-sim` pass unchanged; the surface course
      hash of Phase 1 is re-pinned if `smooth_normal` joins the hash (the dev states which).
   10. The bench reads `solid_gradient` at `half` 2 and `half` 6 on a `Full`-brick world into
@@ -366,7 +476,9 @@ between two ticks the done-when says so and the log states which.
   - **The library.** `walker.rig`: `body ground radius 4 height 26 step 4` (2 world voxels of
     radius, 13 tall: the torso's pivot is 8 model voxels up, the head's 12 above it, the head 6
     tall) and `clip walk ticks 30 loop stride 16` (8 world voxels a cycle, two strides of
-    0.4 m). `spider.rig`: `body surface radius 12 reach 3` (6 world voxels, the body's
+    0.4 m; **amended 2026-11-17 (owner):** the walker body stays `height 26` as written,
+    though the tree's walker tops out at 30 model voxels; either figure is fine).
+    `spider.rig`: `body surface radius 12 reach 3` (6 world voxels, the body's
     clearance; 1.5 voxels of reach) and `clip walk ticks 48 loop stride 24` (12 world voxels a
     cycle). The figures are the architect's first cut; the window re-reads them.
   - `Rig::write` prints both statements; `the_parser_never_panics` covers them through the
@@ -392,20 +504,31 @@ between two ticks the done-when says so and the log states which.
 
 ### Phase 4: the fly-through's demo: movers at the tick, a wander, clips by distance
 - **Owner skill:** dev
-- **What:** every placed entity whose rig has a body moves; the scripted circle goes.
-  - **The tick.** `Walkers::step(dt)` becomes a 60 Hz accumulator (the walk mode's rate in
-    `fly.rs`) that ticks each placed entity's mover against the world: a `Ground` body through
-    `CharacterController` (params from the rig's body plus the fly-through's walk params for
-    climb, gravity and fall), a `Surface` body through `SurfaceMover` (params from the body;
-    `smooth` on). An entity with no body stands as today. The previous tick's `Pose` and the
-    current are kept per entity, and `displays()` hands `DisplayPose::between(prev, now,
-    alpha)` with the accumulator's fraction, so the picture is between sim ticks and never
-    ahead of them.
-  - **The pose from the state.** Ground: `root` is the foot, `root_q` is `Quat::from_frame`
-    of the body's forward (the last non-zero wish, as an integer direction) and `+z`. Surface:
-    `root` is the contact point `centre - normal * radius / |normal|`, `root_q` is `from_frame`
-    of the forward and `smooth_normal`. The parts come from the clip (below) through `sample`
-    over the rig's rest.
+- **What** (rewritten 2026-11-18 against Plan 0077 as landed; the amendment's Decisions are
+  the errata): every placed entity whose rig has a body moves; the walker and the spider
+  wander; the built-in walker keeps its circle (Decision 5).
+  - **The split first.** `run/hud_feed.rs`'s free line formatters move to `run/hud_lines.rs`
+    (Decision 6) before the row below is added.
+  - **The tick** (`entities/tick.rs`, new). `Walkers::step(dt)` feeds a 60 Hz accumulator
+    (`fly::TICK_HZ`, capped at `fly::MAX_TICKS_PER_FRAME` ticks a frame, after which the sim
+    falls behind the clock rather than spiral) that ticks every `placed` entity's `Mover`
+    against the world, **wander on or off** (Decision 1): a `Ground` body through
+    `CharacterController` (radius, height and step from the rig's body; `climb_height`,
+    `climb_speed`, `gravity` and `max_fall` from `fly.rs`'s walk params), a `Surface` body
+    through `SurfaceMover` (radius and reach from the body; `smooth` on; `speed_max` the
+    wander's speed; `gravity` and `max_fall` the walk params'). The ghost (`preview`) is not
+    ticked. An entity with no body (the built-in walker, a rig without `body`) stands as
+    today. Each `Mover` keeps `prev` and `now`, and `refresh_displays` hands
+    `DisplayPose::between_into(prev, now, alpha)` with the accumulator's fraction, so the
+    picture is between sim ticks and never ahead of them. The tick's CPU (every mover, probe
+    and pose) is sampled into the `Ticker`'s last second.
+  - **The pose from the state** (`entities/mover.rs`, new). Ground: `root` is the foot,
+    `root_q` is `Quat::from_frame` of the body's forward (the last non-zero wish, as an
+    integer direction) and `+z`. Surface: `root` is the contact point `centre - normal *
+    radius / |normal|`, `root_q` is `from_frame` of the forward and `smooth_normal`. The parts
+    come from the clip (below) through `Play::poses` over the rig's rest, as
+    `viewer::place_into` gives them today; for an entity with a `Mover` this pose replaces
+    `placed(&clip_pose, feet, yaw)`.
   - **Clips by distance.** A moving body's `walk` clip advances by the distance it moved:
     `clip_tick = (distance_accumulated * clip.ticks) / clip.stride`, wrapping when looped; a
     clip with stride 0 plays by time as today. A body that moved nothing for 8 ticks switches
@@ -421,28 +544,39 @@ between two ticks the done-when says so and the log states which.
     `step_height`): a wall within 10 voxels or `floor == None` picks a new target between 90
     and 180 degrees away; `blocked` for 10 ticks turns it round; a `climb_available` is taken
     one time in eight (seeded). A surface body does not avoid: a wall ahead is a concave edge it
-    climbs, a drop a convex edge it rounds. `F11` toggles the wander (banner `walk on` / `walk
-    off`, as today; `--entities-walk on` starts it); a stopped wander leaves each body where it
-    is, standing on its surface.
-  - **Placing on a face.** `` ` `` (and Plan 0077's picker on `Enter`) places a `Ground` body
-    with its foot at the aimed point and its forward toward the camera, projected level; a
-    `Surface` body with its centre `radius` out from the aimed point along the hit face's
-    normal, attached to that normal, its forward the camera's forward projected onto the face
-    (the camera's up when that is zero). So aiming at a wall puts the spider on the wall.
-    `--entities N`'s ring places on the floor below each point as today; a `Surface` body on
-    the floor starts attached with normal `+z`.
+    climbs, a drop a convex edge it rounds. The menu's **`wander`** entry (today's `walkers
+    walk`, renamed; `Act::WalkersWalk` or the dev's name; no key: questions 9 and 11) toggles
+    the wander's input, its mode text and the banner `wander on` / `wander off`;
+    `--entities-walk on` starts it; a stopped wander leaves each body where it is, standing on
+    its surface, and the movers keep ticking with zero input, so a dug surface still drops a
+    standing body. The built-in walker's circle runs under the same toggle as today.
+  - **Placing on a face** (Decisions 3 and 4). `belt::stand` gains `Stand::{Floor, Surface}`
+    and returns the up with the point; `Run::aim_feet(extent, stand)` passes the kind of the
+    entry's body. `Walkers::show_preview` and `place_entry` take the stance (the point, the
+    up, and the forward: the camera's forward projected onto the face, the camera's up when
+    that is zero, turned by the belt's turn about the up) and build the `Mover`: a `Ground`
+    body with its foot at the point, grounded, forward level; a `Surface` body with its centre
+    `radius` out from the point along the up, attached to that normal. So in placement mode
+    with the spider's slot selected, aiming at a wall stands the ghost on the wall and the left
+    click places it there. A `Floor` stand's up is `+z`. `--entities N`'s ring places on the
+    floor below each point as today; a `Surface` body on the floor starts attached with normal
+    `+z`.
   - **The HUD.** The entities row gains `tick <us>` (the movers' CPU a tick, p50 over the last
-    second) and the banner reads `walk on` / `walk off`.
+    second, from the `Ticker`) and reads `wander` in place of `walk` while the wander is on;
+    the banner reads `wander on` / `wander off`.
   - **Readings** into the log, release, dev box, perf lock: the movers' tick CPU at 64 walkers
     wandering (`--model .../walker.rig --entities 64 --entities-walk on --headless`) and at the
     part cap's spiders (`--model .../spider.rig --entities 64 ...` draws 36, `512 / 14`); the
     frame CPU p50 against Plan 0062's Phase 5 figures at the same counts.
-- **Files touched:** `apps/flythrough/src/entities/{mod,placed,wander,tick}.rs` (the names
-  after Plan 0077's split; `walker.rs` if it is not split), `run/{keys,frame,hud_feed}.rs`,
-  `hud/modes.rs`, `cli/flags.rs` (`--entities-walk` kept), `apps/flythrough/tests/wander.rs`
-  (new), `tests/viewer.rs` or `tests/entities.rs` (the clip-by-distance case),
-  `docs/flythrough.md`, `docs/plans/logs/0079.md`.
-- **Done when** (CPU, no device):
+- **Files touched** (amended 2026-11-18): `apps/flythrough/src/entities/{mod,placed,belt,
+  picker,wander,mover,tick}.rs` (`wander`, `mover`, `tick` new), `run/{keys,frame,hud_feed,
+  hud_lines}.rs` (`hud_lines` new, the split), `hud/modes.rs`, `toggles.rs` (the entry's label
+  and mode text), `cli/{mod,flags}.rs` (`--entities-walk` kept, its help text), `viewer.rs`
+  (if the pose helpers move), `run/picker_tests.rs`, `run/menu_tests.rs` (the renamed flag),
+  `apps/flythrough/tests/wander.rs` (new), `tests/entities.rs` (the clip-by-distance case),
+  `docs/flythrough.md` (the key table's `entities` rows, the Placement mode section's wall
+  stand, the entities row), `docs/plans/logs/0079.md`.
+- **Done when** (CPU, no device; amended 2026-11-18 where marked):
   1. `the_room_course_hashes_to_the_pinned_constant` (`tests/wander.rs`): a hand-built closed
      room (a `64^3` box of solid with its interior air, two pillars and a 4-voxel step), 8
      walkers and 8 spiders placed on seeded points, wandering 1500 ticks (25 s): every tick's
@@ -456,28 +590,45 @@ between two ticks the done-when says so and the log states which.
      the library's `walk`) is at `clip_tick` 0 again, exactly; after 1024 it is at tick 15; a
      body that stands still for 8 ticks plays `idle`, and its pose at the 8th tick equals
      `blend(last walk pose, idle at tick 0, 256)`.
-  4. `a_spider_placed_on_a_wall_is_on_the_wall`: the place ray hitting a `-x` wall face at
-     `(32, 10, 5)` voxels puts the spider's centre at `(32 - 6, 10, 5)` voxels plus the hit's
-     in-face offset, attached with normal `(-256, 0, 0)`; its `root_q` applied to `+z` gives
-     `-x` within 2 per component; a walker placed at the same hit has its foot at the hit point
-     and `root_q` a yaw only (its up stays `+z`).
+  4. `a_spider_placed_on_a_wall_is_on_the_wall` (amended 2026-11-18; `run/picker_tests.rs`
+     on a run whose world has a flat `-x` wall face, under the showcase table so the spider
+     builds): the camera 12 m from the wall (beyond the spider's `near` of about 10.4 m, so
+     the hit counts), aiming square at it, in placement mode at the spider's slot: the ghost's
+     `Mover` is a `Surface` body attached with normal `(-256, 0, 0)`, its centre at the hit
+     point moved 6 voxels (1536) along `-x`, its `root_q` applied to `+z` giving `-x` within 2
+     per component; the left click leaves that `Placed` in `placed` with the same state, and
+     the next tick with the wander off keeps it attached with `moved == 0`. At the same aim
+     with the walker's slot selected the ghost stands on the floor below the hit, moved back by
+     half its footprint (0077's rule, as `the_ghost_stands_by_the_rule` reads it), its `Mover` a
+     `Ground` body and its `root_q` a yaw only (its up stays `+z`). Under `--tester` nothing
+     of this fires (no mode, as 0077 left it).
   5. `a_dig_under_a_wandering_walker_drops_it`: in the room, a carve of radius 1 m under a
      walker's foot is followed by a tick that reads `grounded == false` and within 60 ticks a
      `landed`; a carve of the ceiling patch a spider is on is followed by `Detached`, then
-     `Landed`, then the spider attached with normal `+z`.
-  6. The HUD row and banner tests cover `tick <us>` and `walk on` / `walk off` (under 1 s).
+     `Landed`, then the spider attached with normal `+z`. **Amended 2026-11-18:** the same
+     carves with the wander off give the same events (the movers tick regardless, Decision 1).
+  6. (amended 2026-11-18) The HUD row and banner tests cover `tick <us>` and `wander on` /
+     `wander off`; 0080's `every_toggle_and_action_is_an_entry`, `every_live_entry_answers`
+     and `the_fixed_set_is_the_table` pass with the renamed entry; `--keys` lists `wander`
+     under `entities` with no key; `docs/flythrough.md`'s key table and Placement mode section
+     say so, and `node scripts/check-doc-links.mjs` exits 0 (under 1 s).
   7. The readings above are in the log with machine, load and commit, against the Budgets
      table's guesses.
+  8. (added 2026-11-18) `node scripts/check-file-size.mjs` exits 0: `run/hud_feed.rs` and
+     `entities/placed.rs` under 1200 lines after the split (Decision 6).
 
 ### Phase 5: the owner's window
 - **Owner skill:** human
-- **What:** on Linux, `cargo run --release -p flythrough -- --source showcase --shot hall
-  --exposure 8 --hud` at 1280 x 720: place four walkers on the floor and `F11`; place spiders
-  on the floor, on a wall and on the ceiling (aim and `` ` ``), and watch them wander; dig the
-  floor under a walker and the ceiling under a spider with the left click; stand where a
-  walker approaches; watch a spider cross a convex edge (an ore row's lip) and a concave one
-  (floor to wall); then `--entities 64 --entities-walk on` with the walker and with the spider
-  for the cost.
+- **What** (amended 2026-11-18 to Plan 0077's flow): on Linux, `cargo run --release -p
+  flythrough -- --source showcase --shot hall --exposure 8 --hud` at 1280 x 720 (the
+  orchestrator's `live/session79a.sh`, untracked): the wheel into placement mode at the
+  walker's slot, four clicks on the floor; `Tab`, `entities`, `wander` (the banner `wander
+  on`); the spider's slot (a digit in the mode), a click on the floor, one on a wall and one on
+  the ceiling, the ghost standing on each face before the click; watch them wander; leave the
+  mode (`Esc`) and dig the floor under a walker and the ceiling under a spider with the left
+  click; stand where a walker approaches; watch a spider cross a convex edge (an ore row's lip)
+  and a concave one (floor to wall); then `--entities 64 --entities-walk on` with the walker
+  and with the spider for the cost.
 - **Done when:** the owner's words are in the readings log on: (a) the walkers' walk: pace,
   turning, the legs against the ground (sliding or planted), what they do at walls and drops;
   (b) the spiders' crawl: the body's lean on steps and edges (the smoothed normal), the rounding
@@ -485,19 +636,36 @@ between two ticks the done-when says so and the log states which.
   the surface is dug away and the landing; (d) the motion between ticks (smooth or stepped);
   (e) the frame at 64 walkers and at 36 spiders, and whether the wander's cost is noticed; (f)
   figures to change (speeds, the spider's radius, the walker's step, the stride lengths), named
-  for Phase 6. **Stop rule:** a "no" on (b)'s lean goes to the architect with Phase 2's
+  for Phase 6; (g) (added 2026-11-18) the ghost on the wall and the ceiling (question 10), the
+  toggle's words and its missing key (questions 9 and 11). **Stop rule:** a "no" on (b)'s lean goes to the architect with Phase 2's
   gradient at `half` 2 and 6 read on the showcase's walls, and the first amendment is a
   gradient over ticks (a running mean in fixed point) before any other mechanism.
 
 ### Phase 6: the owner's picks, and the tip
+
+**The Phase 5 window, 2026-11-18 (owner):** "all good besides the problem with short paths"; the
+wander's cost not noticed; motion smooth; the fall yes; questions 9 to 11 still right on screen.
+Two picks for this phase:
+1. **Longer wander legs.** `PICK_TICKS` 300 to 900 (5 to 15 s at 60 Hz, from 60 to 180) and a new
+   heading's turn mostly up to a quarter circle (from up to a half); walls and drops still turn a
+   body away. Re-pin the course hashes, named in the log.
+2. **Esc asks before it quits** (the owner quit the window by accident twice). With the menu
+   closed and placement off, the first `Esc` shows the banner `Esc again to quit` for 2 s; a
+   second `Esc` inside that ends the run; any other key or the timeout cancels. Placement's
+   `Esc`, the loading screen's and path and tester runs are unchanged. A test drives the two
+   presses and the cancel; `docs/flythrough.md` says it.
 - **Owner skill:** dev
 - **What:** the window's figures and words (speeds, radii, strides, the wander's intervals), the
-  rig files re-cut, then the gate tier at the tip.
-- **Files touched:** the Phase 1 to 4 files as the picks need; `docs/nfr.md` section 8 (the
-  readings beside the proposals).
-- **Done when:** each pick in the log names its commit or the owner's "leave it"; the course
-  hashes are re-pinned where a figure changed, with the change named; `cargo nextest run
-  --profile gate`, doctests, clippy, fmt, deny and the doc gates exit 0 at the tip.
+  rig files re-cut, the answers to questions 9 to 11 where they differ from the recommendations
+  (a key bound through `toggles::ACTIONS`, the ghost's stand rule, the toggle's words), then
+  the gate tier at the tip.
+- **Files touched:** the Phase 1 to 4 files as the picks need (`toggles.rs`, `entities/belt.rs`
+  and `docs/flythrough.md` for the three questions); `docs/nfr.md` section 8 (the readings
+  beside the proposals).
+- **Done when:** each pick, and each of questions 9 to 11, in the log names its commit or the
+  owner's "leave it"; the course hashes are re-pinned where a figure changed, with the change
+  named; `cargo nextest run --profile gate`, doctests, clippy, fmt, deny and the doc gates exit
+  0 at the tip.
 
 ## Data shapes
 
@@ -524,6 +692,15 @@ pub struct Clip { /* as today */ pub stride: i32 /* 1/256 world voxel a cycle; 0
 // illustrative: vxe-assets
 pub enum RigBody { Ground { radius: i64, height: i64, step: i64 }, Surface { radius: i64, reach: i64 } }
 pub struct RigModel { /* as today */ pub body: Option<RigBody> }
+
+// illustrative: apps/flythrough (amended 2026-11-18; the dev's names)
+pub enum Stand { Floor, Surface }
+pub fn stand(eye: [f32; 3], fwd: [f32; 3], extent: [f32; 3], kind: Stand, cast: impl Fn(..))
+    -> ([f32; 3] /* the point */, [f32; 3] /* the up */);
+pub enum MoverBody { Ground { state: CharacterState, forward: [i64; 3] }, Surface(SurfaceState) }
+pub struct Mover { pub body: MoverBody, /* params from the RigBody */ pub wander: Wander,
+                   pub distance: i64, pub still: u32, pub prev: Pose, pub now: Pose }
+pub struct Placed { /* as today: id, feet, yaw, since, entry, play */ pub mover: Option<Mover> }
 ```
 
 ```
@@ -574,9 +751,16 @@ unchanged (ADR-0050).
   picker's placement on the aimed surface, and the split of `walker.rs`; the header's re-read
   before Phase 4 is the guard. If 0077's lane slips, Phase 4 builds on `plan-0063`'s
   `Walkers::place` and the single viewer, and the picker adopts the mover state when it lands.
+  **Closed 2026-11-18:** Plan 0077 closed first; the re-read is "Amended 2026-11-18" above.
 - **The 60 Hz tick under a slow frame.** A frame of 50 ms runs three ticks; the accumulator is
-  capped at 4 ticks a frame (the walk mode's rule in `fly.rs`), after which the sim falls behind
-  the clock rather than spiral. Stated in the tick's doc.
+  capped at `fly::MAX_TICKS_PER_FRAME` ticks a frame (the walk mode's rule in `fly.rs`; 8 in
+  the tree, amended 2026-11-18 from "4"), after which the sim falls behind the clock rather
+  than spiral. Stated in the tick's doc.
+- **The ghost's mover and a moving aim** (added 2026-11-18). `sync_ghost` re-stands the ghost
+  every frame the aim moves; building a `Mover` each time allocates (the `Wander` stream, the
+  two poses). The ghost's `Mover` is rebuilt only when the stand's up or the entry changes and
+  moved otherwise, so the mode's per-frame cost stays 0077's; Phase 4's reading of the frame
+  CPU in the mode says whether it did.
 - **Open, for the owner:** the questions below.
 
 ### Owner questions (each with a recommendation)
@@ -619,6 +803,8 @@ unchanged (ADR-0050).
    and their banner (`walk on` / `walk off`) and now mean the wander; placement on a wall is
    the aim. Alternative: a new key for "crawl", of which none is free after Plan 0077
    (`Home`, `End`, `PageUp`, `PageDown` and the numpad remain).
+   **Superseded 2026-11-18:** `F11` is bound to nothing (ADR-0061) and placement is Plan
+   0077's belt and click; questions 9 to 11 under "Amended 2026-11-18" take its place.
 
 ## What this plan does NOT do
 
@@ -656,12 +842,12 @@ unchanged (ADR-0050).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the surface mover in `vxe-sim` | dev | not started | |
-| 2: the smoothed normal in `vxe-world`, the frame in `vxe-entity` | dev | not started | |
-| 3: the body and the stride in the `.rig` | dev | not started | |
-| 4: the fly-through's demo | dev | not started | |
-| 5: the owner's window | human | not started | |
-| 6: the owner's picks, and the tip | dev | not started | |
+| 1: the surface mover in `vxe-sim` | dev | done; readings in [`logs/0079.md`](../logs/0079.md) | bc04beb4 |
+| 2: the smoothed normal in `vxe-world`, the frame in `vxe-entity` | dev | done; done-when 8 per the 2026-11-17 amendment | 7661676e, committed with this row |
+| 3: the body and the stride in the `.rig` | dev | done | 8c0b26d4 |
+| 4: the fly-through's demo | dev | done; done-whens 1 to 8, readings in the log | e1894054 |
+| 5: the owner's window | human | done 2026-11-18, the owner's words at Phase 6's head | 46837556 |
+| 6: the owner's picks, and the tip | dev | done; pick 1 218d84a6, pick 2 125c78ac, `nfr.md` section 8 cf3a2667; questions 9 to 11 the owner's "leave it" (recommendations, confirmed in the window); gate in Close triggers | 218d84a6, 125c78ac, cf3a2667, 9eecac9b, committed with this row |
 
 ### Notes
 
@@ -669,13 +855,32 @@ _(Deviations from the plan, with the commit, stated without justification. Done-
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
 
+- Phase 1 (43adce43 and its phase commit): the move step glides over a contact whose normal is the body's own: the rest of the move is swept once more, lifted `rest / 64 + 1` along the normal.
+- Phase 1: the forward is carried by the shortest arc at a convex edge too; on landing it is projected onto the new surface only.
+- Phase 1: the half turn for antiparallel directions is about `e_k` made perpendicular to `a`, not `e_k` itself (the same for axis directions).
+- Phase 1: the sphere's depenetration takes the controller's candidate order with both limits at twice the radius; a failed attach leaves the centre where the move put it; a tick that detaches and lands reports `Detached`.
+- Phase 1 done-when 2: the event tick slides the rest of its move up the wall, so `(4864, 2560, 6656)` is read on tick 136 (event tick plus 99).
+- Phase 1 done-when 4: radius 768 does not drop the body; amended to 1024 (22d62f05, owner).
+- Phase 2 done-when 8 not met as first stated: a radius-512 sphere on F6 rests on the step corners, contact `(-192, 0, 170)`, not `(0, 0, 256)`; closed by the 2026-11-17 amendment (0835fa97, owner): the test commits with radius 128 (`half` 1).
+- Phase 2: `normalise` takes the length at 256 times the scale (the floor root of a short vector read `(-6, 0, 6)` as `(-192, 0, 192)`); the Phase 1 surface course hash is re-pinned to `0x0a07_c86c_51f9_8d3c` with `smooth_normal` in it.
+- Phase 3: the walker's `body ground radius 4 height 26 step 4` is the phase's line as written; the tree's walker has its torso at 12, not 8, so its top is 30 model voxels, 4 above the body's height (readings log).
+- Phase 1: the `CLAUDE.md` line for `vxe-sim` is not in the worktree; the orchestrator adds it in the main checkout's `.claude/` repo.
+- Phase 4: files outside the phase's list: `app.rs` (`with_seed(args.seed)`, the wander's seed), `entities/walker.rs` (its doc's `walkers walk`), `tests/viewer.rs` (`each_entity_plays_its_own_clip` ticks the movers on a floor world; the library walker's pose is its mover's), and the import lines of `hud_lines`' callers (`setup.rs`, `run/{edit,loading,pilot,tests,mod}.rs`, `cli/tests.rs`, `hud/stats/tests.rs`).
+- Phase 4: `refreshing_the_displays_allocates_nothing_per_entity` now reads 0 bytes for the library walker's instances (they draw their movers' poses); its "four times one's bytes" for rig instances without a body is no longer exercised.
+- Phase 4: the stance's forward on a floor faces the eye (0077's rule); on a wall or a ceiling it is the eye's direction projected onto the face, the camera's up when that is nought (the plan: the camera's forward projected).
+- Phase 4: the room course runs in a world of rock above and below the `64^3` box (chunks `[0,0,-1]..[1,1,2]`), so done-when 5's 1 m carves through the 1-voxel floor and ceiling find rock.
+- Phase 4: Budgets readings over the guesses (loaded): spider x64 tick p50 1.41 ms (room) and 2.84 ms (showcase ring); showcase frame CPU p50 +3.07 ms at 64 spiders against the built-in base. Spiders dwell up to 220 ticks at pillars' vertical edges (the Risks' convex-edge dwell); `crates/` untouched.
+- Phase 6 pick 1 (218d84a6): "mostly up to a quarter circle" is read as seven picks in eight up to 18 steps, one in eight (`WIDE_TURN_ONE_IN`) up to 36; the room course hash is re-pinned from `0x93d7_6d32_b893_7835` to `0xe57c_02c6_8ac4_b2d8`.
+- Phase 6 pick 2 (125c78ac): "any other key" is any key of `hud::menu::all_keys()` other than `Esc` (the keys the run binds, the menu's and the typed ones); opening the menu or entering placement mode also drops the question; a mouse click or a pad button does not.
+- Phase 6: the frame CPU at 64 spiders reads +3.07 ms against the Budgets' +1.5 ms guess (loaded); the owner's window did not notice it; `docs/nfr.md` section 8 carries it beside the proposals (cf3a2667).
+
 ### Close triggers
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** `vxe-sim`'s surface mover (`SurfaceMover`, `probe_ahead`, `sweep_sphere`); `vxe-world`'s `solid_gradient`; `vxe-entity`'s `Quat::from_frame`; the `.rig` `body` line and clip stride; the fly-through's movers at a 60 Hz tick, the wander (legs of 5 to 15 s), the stand on a wall or ceiling, and `Esc` asks before quitting.
+- **Public API changed:** added: `vxe-sim` `SurfaceMover`, `SurfaceParams`, `SurfaceState`, `SurfaceInput`, `SurfaceEvent`, `SurfaceResult`, `Ahead`, `probe_ahead`, `sweep_sphere`, `sphere_overlaps`, `Sphere`, `normalise`, `rotate`, `shortest_arc`, `DIR_ONE`; `vxe-world` `World::solid_gradient`, `solid_gradient_with_stats`; `vxe-entity` `Quat::from_frame`, `Quat::shortest_arc`, `Quat::rotate_vector`; `vxe-assets` `RigBody`, `RigBodyLine`, clip `stride`. `vxe-sim`'s `controller.rs` and `sweep.rs` changed (`git diff main...HEAD -- crates`).
+- **Budget readings:** `docs/nfr.md` section 8 (cf3a2667) and `logs/0079.md` Phases 1, 2 and 4: surface tick 431.19 ns, `solid_gradient` half 6 917.90 ns, 64-body tick walkers 351.7 us / spiders 1412.8 us p50 (room), spiders 2839 us (showcase), frame CPU +3.07 ms at 64 spiders; Ryzen 9 5900HS / RTX 3080 Laptop, all loaded.
+- **Gate at the tip:** `flock vxe-perf.lock ... cargo nextest run --profile gate --test-threads 2` at 9eecac9b: exit 0, 1148 run, 1148 passed, 129 skipped, 1218.6 s (load 4.09 at the start, 1.34 at the end); `cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny check` 0; `cargo test --workspace --doc` 10 passed; `check-doc-links`, `check-comment-hygiene`, `check-index-rows`, `check-test-tiers`, `check-file-size`, `check-plan-size` 0; hook bite tests pass.
+- **Outstanding `human` phases:** none.
 
 ## Followups
 
@@ -684,4 +889,8 @@ each. Empty is fine.)_
 - A backlog entry for a sphere-sphere separation between entities in the fly-through, if the
   window (Phase 5) finds the crowd passing through itself odd.
 - Plan 0077's picker places a `Surface` body on the aimed face through this plan's Phase 4; if
-  0077 closes first, its placement is the one this plan amends, not the reverse.
+  0077 closes first, its placement is the one this plan amends, not the reverse. (0077 closed
+  first, 2026-11-18: Phase 4 amends `belt::stand` and `Run::aim_feet`.)
+- The built-in walker and its scripted circle (`entities/walker.rs`, `Walkers::walk_pose`) go
+  when the tester archive ships the entities library (`scripts/package-tester.sh` packs none
+  today): a chore, written up at this plan's close as a backlog entry.

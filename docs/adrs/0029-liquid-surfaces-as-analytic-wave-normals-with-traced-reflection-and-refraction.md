@@ -3,6 +3,11 @@
 > **Status:** proposed; refreshed 2026-11-10 (architect, review pass) against ADR-0046's baked
 > store, ADR-0047's path-length filter, Plan 0058's direct target and Plan 0032's redesigned
 > sky light. The probe volume lights nothing here: it is the lamp's bounce channel (ADR-0043)
+> **Re-read 2026-11-17 (architect, Plan 0034's re-read):** under ADR-0070 (Plan 0086) the sky
+> term at a reflected cube-face hit is the store's baked sky visibility times the sky's axis
+> irradiance, read beside the emissive value, not a sky ray; the baked sky light under water
+> is not absorbed, as the baked emissive light is not. Plan 0034's amendment of that date
+> carries it; the body stands.
 > **Date:** 2026-10-22
 > **Related plan(s):** [Plan 0034](../plans/0034-water-surface-waves-reflection-refraction-underwater-fog.md)
 

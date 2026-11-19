@@ -14,7 +14,8 @@ use crate::app::{diag, ms_since};
 use crate::cli::{Args, RunMode};
 use crate::edits::{ball, voxel_of};
 use crate::now;
-use crate::run::hud_feed::{HUD_SCALE, band_census_line, field_line, field_pass_line};
+use crate::run::hud_feed::HUD_SCALE;
+use crate::run::hud_lines::{band_census_line, field_line, field_pass_line};
 use crate::run::queue::{COARSE_PRE_ROLL_MS, PRE_ROLL_SAMPLES, queue_view_angles};
 use crate::run::{BUILD_UNITS, GfxPlan, Run, build_gfx};
 use crate::setup::{Gfx, castle_banner, start_camera};
@@ -196,6 +197,9 @@ pub(crate) struct Loading {
     longest: Vec<(&'static str, f64)>,
     /// The step time of each stage, by name, in order, in ms.
     stage_ms: Vec<(&'static str, f64)>,
+    /// The run was switched in process: its banner and the menu's notice are shown afresh
+    /// from loading's end, so they are not spent behind loading frames.
+    switched: bool,
 }
 
 impl Loading {
@@ -282,7 +286,7 @@ pub(crate) fn scene_title(args: &Args) -> String {
         RunMode::Cave => "cave".to_owned(),
         RunMode::Level => "level".to_owned(),
         RunMode::Showcase => "showcase".to_owned(),
-        RunMode::Outdoor => "outdoor hills".to_owned(),
+        RunMode::Outdoor => args.outdoor.trees().source_words().to_owned(),
         RunMode::Room(edge) => format!("room of {edge} voxels"),
         RunMode::ThinRig => "thin rig".to_owned(),
         RunMode::SeamRig => "seam rig".to_owned(),
@@ -320,6 +324,17 @@ impl Run {
         self.new_loading(Stage::Build(Box::new(build)), Some(screen))
     }
 
+    /// Loading's start under the screen for a run switched in process
+    /// (`run::switch`), its GPU objects rebuilt from the run before's: the entity pipelines
+    /// (built already on the kept frame), then the level's upload or the streamed near
+    /// residency, each stepped behind `screen`'s loading frames.
+    pub(crate) fn start_loading_switched(&mut self, screen: LoadingScreen) -> Loading {
+        let next = self.first_stage(true);
+        let mut loading = self.new_loading(Stage::Pipelines(Box::new(next)), Some(screen));
+        loading.switched = true;
+        loading
+    }
+
     /// Loading's start without the screen, the run's GPU objects built: the entity pipelines,
     /// then the level's upload or the streamed near residency.
     pub(crate) fn start_loading_unscreened(&mut self) -> Loading {
@@ -345,6 +360,7 @@ impl Run {
             intervals: Vec::new(),
             longest: Vec::new(),
             stage_ms: Vec::new(),
+            switched: false,
         }
     }
 
@@ -840,6 +856,13 @@ impl Run {
                 interval_line(&loading.intervals),
                 ms_since(loading.began)
             );
+        }
+        if loading.switched {
+            let at = ms_since(self.start);
+            self.modes.banner_at = at;
+            if let Some((_, said)) = self.notice.as_mut() {
+                *said = at;
+            }
         }
         diag(format_args!("init done"));
     }

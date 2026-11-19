@@ -826,15 +826,17 @@ figure, itself a guess until that plan's close reads it; "guess" means no plan e
 | liquids | 0.9 to 1.2 | 5.9 to 7.8 (6.5x) | budgeted | Plan 0034, ADR-0029: a half-screen lake in `Trace`, refraction walk 0.4 plus the liquid pass 0.5 to 0.8; under 0.5 in `Sky`; lava adds none |
 | voxel-model entities (creatures), with their shadows and motion | 0.5 to 2.2 | 4.6 to 23.0 | measured | Plan 0062 Phase 5 (c872cb1, `--level --seed 1`, spawn, 1920 x 1080, FSR 2 at 1.5, quiet): the frame's growth at 4 to 16 walkers, still to walking, their eye lights in the list, RTX 3080 Laptop and RADV RENOIR; most of it the light pass's shadow rays through the tree. 64 walkers: 3.5 to 4.5 RTX, 31 to 33 Radeon. Accepted by the owner as measured (2026-11-16) |
 | entity shadows and motion vectors | in the row above | in the row above | measured | Plan 0062 read them in one frame with the entities; probe and bake rays see no entity (ADR-0050) |
+| entity marks: an outline and a tint in the composite | 0.02 to 0.03 | 0.07 to 0.10 | measured | Plan 0077 Phase 6 (ADR-0074; the Phase 6 tree at 9abcd694, `gpu_entity_library`'s `reading::the_composite_cost_with_marks`, four library walkers in a rock box, 1920 x 1080 from FSR 2 at 1.5, loaded at a 1-minute load of 7 to 55, indicative): the composite's median with the mark test against the same tree with `mark_at` returning nothing, RTX 3080 Laptop and RADV RENOIR; 0, 1 or 4 marked read alike. lavapipe has no timestamp queries |
 | volumetrics: dust, fog, smoke | 0.3 to 0.6 | 2.0 to 3.9 (6.5x) | guess | M8 (`roadmap.md`): a coarse volume marched at half resolution with a fixed step count; scaled from Plan 0035's cloud march |
 | effects: debris particles | 0.1 to 0.3 | 0.7 to 2.0 (6.5x) | guess | M8, no plan |
-| **cave frame subtotal** (the first consumer's) | **1.9 to 4.6** | **13.6 to 38.4** | | the six rows above (the entity rows measured at 4 to 16 walkers, Plan 0062) |
+| **cave frame subtotal** (the first consumer's) | **1.92 to 4.63** | **13.67 to 38.5** | | the seven rows above (the entity rows measured at 4 to 16 walkers, Plan 0062; the marks, Plan 0077) |
 | sun and sky | 0.87 to 0.92 | 7.8 to 9.6 | measured | Plan 0032 Phase 7 (a68f2659 plus its tree, loaded, indicative; the table under "The sun and the sky on the outdoor hills" below), ADR-0026, ADR-0027: the light pass's growth over `--sky off` plus the three sky passes, at noon, midnight and inside the cave mouth, one sky ray, 1080p from FSR 2 at 1.5. RTX 3080 Laptop and RADV RENOIR; most of it the key ray and the sky ray in the light pass. Read before Plan 0086 (ADR-0070), which moves the sky ray's cost |
 | far field | 0.3 to 1.0 | 2.0 to 6.5 (6.5x) | budgeted | Plan 0033, ADR-0028: outdoor horizon view, primary rays; the sun ray's growth is unprojected |
 | clouds and aerial perspective | 0.5 to 1.0 | 3.6 to 7.7 | budgeted | Plan 0035, ADR-0030; it proposes a 1.0 ms sub-line on the floor |
 | weather | 0.25 to 0.8 | 0.75 to 8.0 | budgeted | Plan 0036, ADR-0031: fall map, precipitation, composite terms |
 | night sky | 0.25 to 0.65 | 2.0 to 5.2 | budgeted | Plan 0037, ADR-0032: aurora and the composite's stars and bodies; it proposes a 0.3 ms cap on the floor |
-| **outdoor frame total** (cave rows plus M10) | **4.07 to 8.97** | **29.8 to 75.4** | | all rows (sun and sky measured, Plan 0032's close) |
+| surface detail layer | 0.3 to 0.8 | 2.0 to 5.0 | budgeted | Plan 0081, ADR-0063 (row added 2026-11-17 at the M10 re-read): the hit pass's shell march with `grass` on half the screen at the `[6, 12]` fade, probes off; the slow adapter at about six times the RTX's hit pass, which is why the Portable profile is off. Plan 0086's baked sky visibility (ADR-0070) has no row: its close replaces the "sun and sky" figures |
+| **outdoor frame total** (cave rows plus M10) | **4.39 to 9.80** | **31.87 to 80.5** | | all rows (sun and sky measured, Plan 0032's close; the surface detail row added 2026-11-17) |
 
 Game work is the consumer's CPU, outside this GPU ledger; today's frame CPU (table 1) runs
 beside the GPU.
@@ -990,6 +992,15 @@ per-run figures are in `docs/plans/logs/0032.md`, Phase 7.
 | RADV RENOIR | forest, fill 128, `--shadow-walk full` | 15.135 | 41.984 | over | over | 24.17 / 95 |
 
 Ratios of the light pass: forest/open at fill 128 1.04 (RTX) and 1.17 (RADV), at fill 64 0.99 and 1.18; fill 64/128 0.95 and 1.00; full/coarse at fill 128 1.20 and 1.21. The `--look face` configuration is the default look. Per-run figures in `docs/plans/logs/0032.md`, Phase 8.
+
+**The outdoor tester benchmark (Plan 0088 Phase 2, 2026-11-17, release `flythrough` at fa8394ea, before Plan 0086's outdoor light; the tester's exact outdoor bench flags `--source outdoor --spawn outside --trees sparse --sun 10,180 --lamp off --tester --path outdoor --path-mode bench --render 1280x720 --profile floor` plus `--headless --adapter NVIDIA|RENOIR --report DIR`; one run per adapter, exclusive perf lock; started at a 1-minute load of 19.5 and 25.6 with two other lanes building, so both are loaded (indicative)).** The 73.4 s path at the headless clock's 1/60 s, 4283 measured frames after the 2 s warm-up; `run.json`'s percentiles in ms. Every figure: [Plan 0088's readings log](../plans/logs/0088.md), Phase 2.
+
+| adapter | wall p50 / p95 / p99 | CPU p50 / p95 / p99 | GPU p50 / p95 / p99 | over 33 ms | load |
+|---|---|---|---|---|---|
+| RTX 3080 Laptop (driver 615.78.08) | 20.4 / 57.0 / 114.0 | 14.2 / 48.6 / 102.3 | 4.61 / 10.90 / 13.00 | 837 | 40.1 s |
+| RADV RENOIR (Mesa 26.2.5) | 29.5 / 54.7 / 77.5 | 6.3 / 31.2 / 54.8 | 22.34 / 25.14 / 26.33 | 1331 | 20.1 s |
+
+At 1280 x 720 in the Floor profile (853 x 480 internal, FSR 2) the RTX's GPU frame p50 sits under Plan 0032's 1080p readings above (5.1 to 5.6 ms) and RADV's under its 37.5 to 45.8; the wall and CPU tails on the RTX are the loaded CPU's (the bake queue's step and the sync, section 5).
 
 **The render profiles (Plan 0069 Phase 7, 2026-11-17, release `flythrough` at the code of
 9390b033, `--headless --hud --frames 600 --adapter NVIDIA|Radeon --profile P`, the vein

@@ -105,6 +105,9 @@ pub struct Flythrough {
     /// The loading screen [`App::splash`] drew the first frame with, handed to the run's
     /// loading frames.
     pub(crate) splash: Option<LoadingScreen>,
+    /// A switch begun after the last frame ([`Flythrough::begin_switch`]): the next run's
+    /// arguments and whether only the trees changed; done at the start of the next frame.
+    pub(crate) switching: Option<(Args, bool)>,
 }
 
 impl Flythrough {
@@ -152,15 +155,12 @@ impl Flythrough {
                     .bouncing_all(self.args.light.lights_bounce),
                 )
                 .with_walkers(
-                    crate::walker::Walkers::with_ring_walking(
+                    crate::entities::Walkers::with_ring_walking(
                         self.args.entities,
                         self.args.entities_walk,
                     )
-                    .with_viewer(self.args.model.as_ref().and_then(|path| {
-                        crate::viewer::Viewer::open(path, self.args.clip.clone())
-                            .inspect_err(|e| println!("{e}"))
-                            .ok()
-                    })),
+                    .with_library(crate::entities::library::of_args(&self.args))
+                    .with_seed(self.args.seed),
                 ),
             upscaler_changed: false,
             sharpen_changed: false,
@@ -198,6 +198,9 @@ impl Flythrough {
             adapter: None,
             surface: None,
             help: false,
+            menu: Default::default(),
+            notice: None,
+            quit_asked: None,
             loading: None,
             switch: false,
             retree: false,
@@ -319,12 +322,18 @@ impl App for Flythrough {
         if self.failure.is_some() {
             return Flow::Exit;
         }
+        if let Some((args, retree)) = self.switching.take() {
+            self.switch_source(gpu, args, retree);
+            if self.failure.is_some() {
+                return Flow::Exit;
+            }
+        }
         let flow = match self.run.as_mut() {
             Some(run) => run.frame(gpu, input, dt, surface),
             None => Flow::Exit,
         };
         if flow == Flow::Continue && self.run.as_ref().is_some_and(|r| r.switch || r.retree) {
-            self.switch_source(gpu);
+            self.begin_switch(gpu, surface);
         }
         flow
     }

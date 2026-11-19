@@ -6,11 +6,12 @@ use crate::app::session_outcome;
 use crate::castle;
 use crate::cave::ROCK;
 use crate::cli::parse_args_from;
-use crate::edits::{Coarse, DIG_RADIUS, DIG_STEP};
+use crate::edits::Coarse;
 use crate::fly::{CutawayMode, Fly};
 use crate::hud::{self};
 use crate::now;
-use crate::run::hud_feed::{Hud, look_line, write_pace_banner};
+use crate::run::hud_feed::{Hud, write_pace_banner};
+use crate::run::hud_lines::look_line;
 use crate::setup::{GfxSample, castle_camera, start_camera};
 use crate::test_support::{applied, argv, bare_run, carved_rock, counting};
 use crate::toggles::TOGGLES;
@@ -126,6 +127,18 @@ fn an_applied_op_no_logic_line_names_still_updates_the_coarse_grid() {
     assert_eq!(solid(&run), 512);
 }
 
+/// Runs the menu entry labelled `label` as `Enter` on it does.
+fn enter(run: &mut Run, label: &str) {
+    use crate::hud::menu::{Activated, EntryKind, entries};
+    let e = entries()
+        .find(|e| e.label == label)
+        .unwrap_or_else(|| panic!("{label} is an entry"));
+    run.menu_act(match e.kind {
+        EntryKind::Toggle(t) => Activated::Toggle(t),
+        EntryKind::Action(a) => Activated::Action(a.act),
+    });
+}
+
 /// The edits one server tick of `run` applied.
 fn tick_edits(run: &mut Run) -> Vec<EditResult> {
     let net = run.net.as_mut().unwrap();
@@ -182,24 +195,6 @@ fn r2_digs_as_the_left_click_does_and_l2_fills() {
     assert_eq!(f.changed_from[0].0, 0, "the fill writes rock over air");
 }
 
-/// The D-pad steps the dig radius by a scroll line's step: up twice raises it from 0.5 m
-/// to 0.7 m, down once lowers it to 0.6 m.
-#[test]
-fn the_dpad_steps_the_dig_radius() {
-    let mut run = bare_run(carved_rock());
-    let mut input = Input::default();
-    for _ in 0..2 {
-        input.pad_down(PadButton::DpadUp);
-        run.handle_input(&input);
-        input.end_frame();
-        input.pad_up(PadButton::DpadUp);
-    }
-    assert_eq!(run.modes.dig_radius, DIG_RADIUS + 2 * DIG_STEP);
-    input.pad_down(PadButton::DpadDown);
-    run.handle_input(&input);
-    assert_eq!(run.modes.dig_radius, DIG_RADIUS + DIG_STEP);
-}
-
 /// `--level --pose vein|patch` starts the camera at exactly the settle rig's pose (its
 /// position, yaw and pitch) and leaves the exposure on auto; `--pose` without `--level` and
 /// an unknown name are errors that list the names; the banner's first row reads `pose vein`
@@ -254,20 +249,16 @@ fn the_aliasing_toggles_show_in_the_banner() {
     let mut run = bare_run(carved_rock());
     run.modes.upscaler = hud::UpscalerBanner::new(hud::UpscalerMode::Fsr2, "1.5");
     run.modes.pan = Some(hud::Pan::new(1.1, -1.0e9));
-    let mut input = Input::default();
-    let mut press = |run: &mut Run, key: KeyCode| {
-        input.end_frame();
-        input.key_up(key);
-        input.key_down(key);
-        run.handle_input(&input);
+    let press = |run: &mut Run, label: &str| {
+        enter(run, label);
         run.banner().expect("a press shows the banner")
     };
     for want in ["far normal 1..2", "far normal off", "far normal 2..6"] {
-        let banner = press(&mut run, KeyCode::KeyV);
+        let banner = press(&mut run, "far normal");
         assert!(banner.contains(want), "{want}: {banner}");
     }
     for want in ["sharpen 0.25", "sharpen 0", "sharpen 0.5"] {
-        let banner = press(&mut run, KeyCode::KeyZ);
+        let banner = press(&mut run, "sharpen");
         assert!(
             banner
                 .lines()
@@ -277,7 +268,7 @@ fn the_aliasing_toggles_show_in_the_banner() {
         assert_eq!(run.args.look.sharpen.to_string(), want["sharpen ".len()..]);
     }
     for (want, on) in [("pan 1.1 deg/s stopped", false), ("pan 1.1 deg/s", true)] {
-        let banner = press(&mut run, KeyCode::Period);
+        let banner = press(&mut run, "pan");
         assert!(banner.lines().any(|l| l == want), "{want}: {banner}");
         assert_eq!(run.modes.pan.map(|p| p.on), Some(on));
     }
@@ -408,38 +399,34 @@ fn the_store_read_toggle_shows_in_the_banner() {
     );
     let mut run = bare_run(carved_rock());
     run.modes.upscaler = hud::UpscalerBanner::new(hud::UpscalerMode::Fsr2, "1.5");
-    let mut input = Input::default();
-    let mut press = |run: &mut Run, key: KeyCode| {
-        input.end_frame();
-        input.key_up(key);
-        input.key_down(key);
-        run.handle_input(&input);
+    let press = |run: &mut Run, key: &str| {
+        enter(run, key);
         let row = hud::aliasing_row(&run.modes.upscaler, "far normal 2..6", &run.modes, None);
         (run.banner().expect("a press shows the banner"), row)
     };
     for (key, banner_word, row_words) in [
         (
-            KeyCode::Comma,
+            "store read",
             "store read face",
             "store read face, weights face, lighting half",
         ),
         (
-            KeyCode::Semicolon,
+            "light weights",
             "weights normal",
             "store read face, weights normal, lighting half",
         ),
         (
-            KeyCode::F6,
+            "lighting resolution",
             "lighting full",
             "store read face, weights normal, lighting full",
         ),
         (
-            KeyCode::Comma,
+            "store read",
             "store read normal",
             "store read normal, weights normal, lighting full",
         ),
         (
-            KeyCode::Semicolon,
+            "light weights",
             "weights face",
             "store read normal, weights face, lighting full",
         ),
@@ -459,20 +446,16 @@ fn the_store_read_toggle_shows_in_the_banner() {
 
 /// `--queue-order` parses `score` and `distance` and refuses the rest, `--queue-weights` `A,R`
 /// and `A,tier`; a plain start reads the score with the class as the tier; `F` cycles the
-/// order, `Tab` halves the angle weight and `Slash` doubles it, each press changing the banner and
-/// the HUD's queue row in the same frame.
+/// order, the menu's halving halves the angle weight and `Slash` doubles it, each changing the
+/// banner and the HUD's queue row in the same frame.
 #[test]
 fn the_banner_names_the_queue_order_and_its_weights() {
     use vxe_render::{QUEUE_ANGLE_WEIGHT as A, QUEUE_REFINE_WEIGHT as R};
     let mut run = bare_run(carved_rock());
-    let mut input = Input::default();
-    let mut shown = |run: &mut Run, key: Option<KeyCode>| {
-        input.end_frame();
-        if let Some(key) = key {
-            input.key_up(key);
-            input.key_down(key);
+    let shown = |run: &mut Run, label: Option<&str>| {
+        if let Some(label) = label {
+            enter(run, label);
         }
-        run.handle_input(&input);
         run.refresh_hud_stats(None);
         let banner = run.banner().expect("the queue's row is on the banner");
         let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
@@ -480,7 +463,9 @@ fn the_banner_names_the_queue_order_and_its_weights() {
     };
     let check = |(banner, row): (String, String), want: String| {
         assert!(
-            banner.contains(&format!("; {want}; withdraw on (F order")),
+            banner.contains(&format!(
+                "; {want}; withdraw on (Tab: the light queue page)"
+            )),
             "{want}: {banner}"
         );
         assert_eq!(
@@ -501,16 +486,23 @@ fn the_banner_names_the_queue_order_and_its_weights() {
         "order distance".to_owned(),
         format!("order score, angle {A}, refine {R}"),
     ] {
-        check(shown(&mut run, Some(KeyCode::KeyF)), want);
+        check(shown(&mut run, Some("queue order")), want);
     }
-    for (key, angle) in [
-        (KeyCode::Tab, A / 2.0),
-        (KeyCode::Slash, A),
-        (KeyCode::Slash, A * 2.0),
-    ] {
+    // `queue angle` is a number: one step down halves the weight, one up doubles it.
+    let angle = crate::toggles::TOGGLES
+        .iter()
+        .find(|t| t.name == "queue angle")
+        .expect("queue angle is a toggle");
+    run.menu_act(crate::hud::menu::Activated::Step(angle, -1));
+    check(
+        shown(&mut run, None),
+        format!("order score, angle {}, refine {R}", A / 2.0),
+    );
+    for a in [A, A * 2.0] {
+        run.menu_act(crate::hud::menu::Activated::Step(angle, 1));
         check(
-            shown(&mut run, Some(key)),
-            format!("order score, angle {angle}, refine {R}"),
+            shown(&mut run, None),
+            format!("order score, angle {a}, refine {R}"),
         );
     }
     use vxe_render::{QueueOrder, Refine};
@@ -559,16 +551,12 @@ fn the_banner_names_the_queue_order_and_its_weights() {
 #[test]
 fn the_banner_names_the_withdrawal() {
     let mut run = bare_run(carved_rock());
-    let mut input = Input::default();
     for want in ["withdraw off", "withdraw on", "withdraw off"] {
-        input.end_frame();
-        input.key_up(KeyCode::Quote);
-        input.key_down(KeyCode::Quote);
-        run.handle_input(&input);
+        enter(&mut run, "queue withdraw");
         run.refresh_hud_stats(None);
         let banner = run.banner().expect("the queue's row is on the banner");
         assert!(
-            banner.contains(&format!("; {want} (F order")),
+            banner.contains(&format!("; {want} (Tab: the light queue page)")),
             "{want}: {banner}"
         );
         let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
@@ -603,24 +591,17 @@ fn the_banner_names_the_withdrawal() {
 #[test]
 fn the_banner_names_the_full_first_radius() {
     let mut run = bare_run(carved_rock());
-    let mut input = Input::default();
     run.refresh_hud_stats(None);
     let banner = run.banner().expect("the queue's row is on the banner");
     assert!(banner.contains(", full-first 2, budget "), "{banner}");
-    assert!(
-        banner.contains("Backslash full-first, 7 missing light, 8 reach)"),
-        "{banner}"
-    );
+    assert!(banner.contains("(Tab: the light queue page)"), "{banner}");
     let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
     assert!(
         row.ends_with("; full-first 2; reach full; budget frame:1.5"),
         "{row}"
     );
     for want in ["off", "2", "off"] {
-        input.end_frame();
-        input.key_up(KeyCode::Backslash);
-        input.key_down(KeyCode::Backslash);
-        run.handle_input(&input);
+        enter(&mut run, "full-first");
         run.refresh_hud_stats(None);
         let banner = run.banner().expect("the queue's row is on the banner");
         assert!(
@@ -652,18 +633,14 @@ fn the_banner_names_the_full_first_radius() {
 fn the_banner_names_the_missing_light() {
     use vxe_render::MissingLight;
     let mut run = bare_run(carved_rock());
-    let mut input = Input::default();
     let banner = run.banner().expect("the queue's row is on the banner");
     assert!(
         banner.contains(", missing light chain, reach full, digs "),
         "{banner}"
     );
-    assert!(banner.contains("7 missing light, 8 reach)"), "{banner}");
+    assert!(banner.contains("(Tab: the light queue page)"), "{banner}");
     for want in ["black", "neighbour", "parent", "chain"] {
-        input.end_frame();
-        input.key_up(KeyCode::Digit7);
-        input.key_down(KeyCode::Digit7);
-        run.handle_input(&input);
+        enter(&mut run, "missing light");
         let banner = run.banner().expect("the queue's row is on the banner");
         assert!(
             banner.contains(&format!(", missing light {want}, reach full, digs ")),
@@ -687,18 +664,14 @@ fn the_banner_names_the_missing_light() {
 fn the_banner_names_the_reach() {
     use vxe_render::ReachMode;
     let mut run = bare_run(carved_rock());
-    let mut input = Input::default();
     run.refresh_hud_stats(None);
     let banner = run.banner().expect("the queue's row is on the banner");
     assert!(banner.contains(", reach full, digs "), "{banner}");
-    assert!(banner.contains("7 missing light, 8 reach)"), "{banner}");
+    assert!(banner.contains("(Tab: the light queue page)"), "{banner}");
     let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
     assert!(row.contains("; reach full; budget "), "{row}");
     for (want, note) in [("partial", "partial (0 partial)"), ("full", "full")] {
-        input.end_frame();
-        input.key_up(KeyCode::Digit8);
-        input.key_down(KeyCode::Digit8);
-        run.handle_input(&input);
+        enter(&mut run, "reach");
         run.refresh_hud_stats(None);
         let banner = run.banner().expect("the queue's row is on the banner");
         assert!(
@@ -730,7 +703,6 @@ fn the_banner_names_the_reach() {
 fn the_banner_names_the_budget() {
     use vxe_render::Budget;
     let mut run = bare_run(carved_rock());
-    let mut input = Input::default();
     run.refresh_hud_stats(None);
     let banner = run.banner().expect("the queue's row is on the banner");
     assert!(
@@ -749,10 +721,7 @@ fn the_banner_names_the_budget() {
         ("frame:1.5", ""),
         ("second:150,0.25", " (slice 2.31 ms)"),
     ] {
-        input.end_frame();
-        input.key_up(KeyCode::Backspace);
-        input.key_down(KeyCode::Backspace);
-        run.handle_input(&input);
+        enter(&mut run, "bake budget");
         run.refresh_hud_stats(None);
         let banner = run.banner().expect("the queue's row is on the banner");
         assert!(
@@ -761,10 +730,7 @@ fn the_banner_names_the_budget() {
             )),
             "{want}: {banner}"
         );
-        assert!(
-            banner.contains("Backspace budget, Backslash full-first, 7 missing light, 8 reach)"),
-            "{banner}"
-        );
+        assert!(banner.contains("(Tab: the light queue page)"), "{banner}");
         let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
         assert!(
             row.ends_with(&format!("; budget {want}{slice}")),
@@ -824,21 +790,17 @@ fn f9_cycles_the_views_and_the_banner_names_them() {
     assert_eq!(a.look.view, ViewMode::Cracks);
 }
 
-/// With the castle, `I` moves the camera to the next shot's pose and puts its name on the
-/// banner: gate, nave, window, dungeon, gate. Without it, `I` does nothing.
+/// With the castle, the menu's `next castle shot` moves the camera to the next shot's pose
+/// and puts its name on the banner: gate, nave, window, dungeon, gate. Without it, it does
+/// nothing.
 #[test]
-fn i_cycles_the_castle_shots() {
+fn the_castle_shot_entry_cycles_the_shots() {
     let mut run = bare_run(carved_rock());
-    let mut input = Input::default();
-    input.key_down(KeyCode::KeyI);
-    run.handle_input(&input);
+    enter(&mut run, "next castle shot");
     assert!(run.scene.is_none() && run.fly.camera.position == Vec3::splat(0.5));
     run.castle_shot = Some(castle::CastleShot::Gate);
     for want in ["nave", "window", "dungeon", "gate"] {
-        input.end_frame();
-        input.key_up(KeyCode::KeyI);
-        input.key_down(KeyCode::KeyI);
-        run.handle_input(&input);
+        enter(&mut run, "next castle shot");
         let shot = run.castle_shot.unwrap();
         assert_eq!(shot.name(), want);
         let (eye, _, _) = shot.pose();
@@ -1119,8 +1081,10 @@ fn a_benchmark_path_runs_with_the_lamp_off_and_its_report_says_so() {
     assert_eq!(v.get("mode").and_then(Value::as_str), Some("bench"));
 }
 
-/// Under `--model`, `Right` and `Left` cycle the viewer's clips and `Down` pauses, each named in
-/// the banner, and the HUD's mode block carries the viewer's row.
+/// Under `--model`, the chooser hands the model to placement mode, a click places it, the
+/// right click leaves the mode, and `Right` and `Left` cycle the placed entity's clips and
+/// `Down` pauses it, each named in the banner; the HUD's mode block carries the entity's clip
+/// row and the viewer's own row, which the keys leave on its first clip.
 #[test]
 fn the_clip_keys_name_the_clip_and_the_pause() {
     let mut run = bare_run(carved_rock());
@@ -1129,7 +1093,7 @@ fn the_clip_keys_name_the_clip_and_the_pause() {
     let mut viewer = crate::viewer::Viewer::open(&path, None).expect("walker.rig opens");
     let table = crate::walker::with_walker(&crate::cave_materials());
     assert_eq!(viewer.build_pending(&table), None);
-    run.modes.walkers.viewer = Some(viewer);
+    run.modes.walkers = std::mem::take(&mut run.modes.walkers).with_viewer(Some(viewer));
     let mut input = Input::default();
     let mut press = |run: &mut Run, key: KeyCode| {
         input.end_frame();
@@ -1138,14 +1102,22 @@ fn the_clip_keys_name_the_clip_and_the_pause() {
         run.handle_input(&input);
         run.banner().expect("a press shows the banner")
     };
-    assert!(press(&mut run, KeyCode::ArrowRight).contains("clip walk"));
-    assert!(press(&mut run, KeyCode::ArrowDown).contains("paused"));
+    run.act(crate::toggles::Act::Picker);
+    run.menu_act(crate::hud::menu::Activated::Choose { entry: 0 });
+    let mut click = Input::default();
+    click.button_down(vxe_app::MouseButton::Left);
+    run.handle_input(&click);
+    assert!(run.banner().unwrap().contains("placed walker #1 (idle)"));
+    let mut click = Input::default();
+    click.button_down(vxe_app::MouseButton::Right);
+    run.handle_input(&click);
+    assert!(!run.modes.walkers.belt.on);
+    assert!(press(&mut run, KeyCode::ArrowRight).contains("walker #1 clip walk"));
+    assert!(press(&mut run, KeyCode::ArrowDown).contains("walker #1 paused"));
     let mut rows = String::new();
     run.modes.write_rows(&mut rows);
-    assert!(
-        rows.contains("model walker clip walk 0/30 paused\n"),
-        "{rows}"
-    );
+    assert!(rows.contains("\nwalker #1 walk 0/30 paused\n"), "{rows}");
+    assert!(rows.contains("model walker clip idle 0/60\n"), "{rows}");
     assert!(press(&mut run, KeyCode::ArrowLeft).contains("clip idle"));
-    assert!(press(&mut run, KeyCode::ArrowDown).contains("playing"));
+    assert!(press(&mut run, KeyCode::ArrowDown).contains("walker #1 playing"));
 }

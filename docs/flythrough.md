@@ -2,8 +2,8 @@
 
 The fly-through (`apps/flythrough`) is the engine's testbed. This page lists every key it binds
 and every flag it reads. The sources of truth are the code: `flythrough --help` prints one row
-per flag from the same table the parser reads (`apps/flythrough/src/cli/table.rs`), the toggle
-keys are one table in `apps/flythrough/src/toggles.rs`, and the long-form notes are the
+per flag from the same table the parser reads (`apps/flythrough/src/cli/table.rs`), the keys
+are two tables in `apps/flythrough/src/toggles.rs` (`flythrough --keys` prints them), and the long-form notes are the
 `flythrough::cli` module docs. When this page and `--help` disagree, `--help` is right and this
 page is stale.
 
@@ -15,12 +15,44 @@ cargo run --release -p flythrough -- --help             # every flag
 ```
 
 Every toggle prints its mode to stdout and shows it in the window: the lighting, look,
-upscaler and queue toggles raise a banner for 3 s, and the stats overlay (`F2`) carries
-the same rows.
+upscaler and queue toggles raise a banner for 3 s, the menu's row shows it, and the stats
+overlay (`F2`) carries the same rows.
 
 ## Keys
 
-### Moving and editing
+The keys are few (ADR-0061): a fixed set, a shortcut on a handful of entries, and everything
+else in the menu. `Tab` opens the menu: a page per group, each entry with its live value and
+its key where it keeps one; `Enter` flips or runs the selected entry, `Esc` goes back and
+closes. Typing on any page searches the whole tree (`lam` finds the lamp, its bounce and the
+missing light). `F1` opens the Keys page: every entry with its binds. `flythrough --keys`
+prints the same tree with every entry's start value and key, from the tables in
+`apps/flythrough/src/toggles.rs`; this section is that output's fixed and shortcut rows.
+
+### In the menu
+
+The menu draws as a panel of 80 x 45 cells at the largest whole glyph scale that fits the
+window (2 at 1280 x 720, 3 at 1920 x 1080), centred, over a dimmed box behind its rows; the
+window's top-right corner reads `fps <n>  frame <median> ms p99 <ms>` while it is open.
+
+- **A switch or a cycle** (the lamp, the missing light, the view): `Enter` flips it or steps
+  it to its next state; its row shows the new value.
+- **A number** (the dig radius, which has no key, the queue's angle weight, the echo and tail trims, the
+  pre-delay): `Enter` edits it. The row reads `dig radius  < 0.5 m >  0.1..3.0 m`: the value
+  between `<` and `>`, its range after. `Up` and `Down` (the pad's D-pad) step it, held they
+  repeat after 275 ms every 50 ms, and it stops at its range's ends; `Enter` or `Esc` (the
+  pad's `South` or `East`) keep the value and leave the edit.
+- **A grey row** is an entry the run cannot act on, with the reason on its own row after its
+  value, on its page and in the search (`needs --audio`, `needs --pan`, `needs --path`,
+  `needs --castle`, `needs --model`, `needs --level`, `needs --sky on`,
+  `needs --source outdoor`); `Enter` on it changes nothing and says
+  the reason. A group whose entries
+  all need the same flag is grey on the root with the reason beside it. `--keys` prints
+  `unavailable: <reason>` on those rows.
+- **The notice row**, above the footer, holds the last line an action printed for 3 s, in
+  yellow: `readings: sampling 30 frames` and then the frame line, the logic's `stamped: ...`,
+  a refused entry's reason.
+
+### Fixed
 
 | Key | Does |
 |-----|------|
@@ -28,115 +60,101 @@ the same rows.
 | `W` `A` `S` `D` | Fly (or walk, in walk mode) |
 | `Space` / `C` | Rise / sink; walking, `Space` jumps, or climbs a ledge with a standable top within 1.2 m |
 | `Shift` | Faster |
-| Left click | Dig at the crosshair; the edit result prints to the terminal |
-| Right click | Fill at the crosshair |
-| Scroll | Change the dig radius |
-| `G` | Toggle fly and walk mode (bounded worlds only) |
-| `B` | Run the carve benchmark in place |
-| `P` | Stamp a 16-voxel room with an indestructible shell at the crosshair |
-| `R` | Toggle what unsupported rock does after a dig: fall (default) or crumble into rubble (bounded worlds only) |
-| `K` | Print the coarse grid and walkable map (bounded worlds only) |
-| `I` | With `--castle`: move the camera to the next castle shot |
-| `T` | On a `--path ... --path-mode tour` run: resume the path from its nearest point after a key took the camera |
-| `Esc` | Quit (on a path run, end it so its report says how) |
-
-### Readings and views
-
-| Key | Does |
-|-----|------|
-| `F1` | Sample the next frames and print frame-time readings (with `--tester`: the help panel) |
+| Left click | Dig at the crosshair; the edit result prints to the terminal. In placement mode: place the ghost |
+| Right click | Fill at the crosshair. In placement mode: leave it |
+| Wheel | Enter placement mode at the belt's selected slot; in the mode, step the slot (down the next, wrapping at nine) |
+| `1`..`9` | While the belt is shown (placement mode, and the chooser over it): the belt's slots, `4` included; `1`, `4` and `6` then drop, remove and fire nothing. Out of the mode they keep their shortcuts below and no digit enters the mode |
+| `Tab` | The menu; type on any page to search |
+| `F1` | The Keys page (with `--tester`: the help panel) |
 | `F2` | Toggle the stats overlay |
-| `F9` | Cycle the view: shaded, normals, hitmask, steps, cracks, albedo |
-| `X` | Cycle the cutaway: auto, on, off |
-| `L` | Toggle the shadow ray |
+| `Esc` | Clear the search, go back a page, close the menu; with the menu closed, leave placement mode, else ask before quitting: the banner reads `Esc again to quit` for 2 s, a second `Esc` inside that quits, any other key cancels (on a path run, end it so its report says how; under `--tester` and while loading the first `Esc` quits) |
 
-### Look and upscaler
+While the menu is open the arrows, `Enter`, `Backspace`, `Esc`, the letters, digits and
+punctuation, the wheel and the clicks are the menu's: the dig, the fill and the belt
+pause, and a letter or digit shortcut types instead of acting. The movement keys still move
+(their press also types), the mouse still looks, and the function keys still act, the open
+row showing the new value.
 
-| Key | Does |
-|-----|------|
-| `N` | Cycle the look presets: face, field, trilinear8, gradient27 (the field only in a run started under `--look field`) |
-| `V` | Cycle face mode's far normal: `[2, 6]`, `[1, 2]`, off |
-| `F10` | Cycle the upscaler: off, own, fsr2 |
-| `Z` | Cycle the sharpening: 0.5, 0.25, 0 |
-| `.` | Stop and start the `--pan` turn |
+### Shortcuts, by the menu's groups
 
-### Lighting
+| Group | Key | Does |
+|-------|-----|------|
+| moving | `G` | Toggle fly and walk mode (bounded worlds only) |
+| camera and paths | `T` | On a `--path ... --path-mode tour` run: resume the path from its nearest point after a key took the camera |
+| upscaler | `F10` | Cycle the upscaler: off, own, fsr2 |
+| upscaler | `F4` | The next render profile: floor, portable, performance, high (`--profile`) |
+| lighting | `F7` | Toggle the headlamp |
+| lights | `1` | Drop a point light of the picked colour (intensity 600) 2 voxels off the looked-at surface (20 voxels ahead on a miss); the banner names `lights <n>/16`. Sixteen slots, the headlamp's among them while it is on; a drop into a full list prints a line and adds nothing |
+| lights | `4` | Remove the newest light or walker, whichever was added last (in placement mode `4` is the belt's slot 4) |
+| lights | `6` | Fire a point light of the picked colour (intensity 600) along the view ray at 20 m/s; it stops 2 voxels short of the first surface (or after 40 m) and stays there as a dropped light |
+| entities | `` ` `` | `choose an entity`: the chooser (also the `entities` page's first row). Four rows per library entry beside its icon: a blank row, its name, parts and size on the cursor's row (an entry in error: its name grey, its error red), then its clips (the one a placement starts on marked `*`) and the belt's slot that holds it. `Enter` (or the left click, or the pad's `South`, or `` ` ``) on an entry puts it in the belt's selected slot (or selects the slot already holding it), closes the menu and enters placement mode; a digit `1`..`9` puts it in that slot and the chooser stays open; letters search the menu as on any page |
+| entities | `R` | `turn the ghost`: 22.5 degrees about the up axis per press, kept until the mode ends |
+| entities | `Delete` | Remove the placed entity under the crosshair, the menu open or not, in placement mode or not |
+| entities | `Left`, `Right` | The aimed (else the newest) placed entity's clip before and after (menu closed); in placement mode, the ghost's |
+| entities | `Down` | Pause or play that entity's clip (menu closed); in placement mode, the ghost's |
+| readings | `Enter` | Sample the next frames and print frame-time readings (menu closed) |
+| debug | `F9` | Cycle the view: shaded, normals, hitmask, steps, cracks, albedo |
+| debug | `X` | Cycle the cutaway: auto, on, off |
 
-| Key | Does |
-|-----|------|
-| `F3` | Toggle the shadow walk: coarse (default) or full |
-| `F4` | Step the a-trous filter's iterations: 4 (default), 2, 1; the lighting row names `filter <n>` |
-| `F5` | Toggle what kills history: edit boxes (default), or edit boxes and A-SVGF's gradient |
-| `F6` | Toggle the lighting resolution: half (default) or full |
-| `F7` | Toggle the headlamp |
-| `F8` | Toggle the lamp's bounce from the probe volume (ADR-0043) |
-| `Q` | Cycle the exposure: auto (the preset), auto symmetric, manual (holds the exposure of the moment) |
-| `,` | Toggle how a cube face reads the light store: normal (default) or face (ADR-0049) |
-| `;` | Toggle the normal the light's filters compare: face (default) or normal |
-| `Delete` | Toggle the a-trous weights at a pixel younger than 4 frames: luma (all weights, default) or edges (plane and normal only); the lighting row names `young <mode>` |
-| `Insert` | Toggle where an entity's emissive light comes from: own (its own sample) or world (the baked light of the world faces around it, default); the lighting row names `entity light <mode>` |
-| `M` | Pulse the ore's emission (a render-side scale) |
-
-### Dynamic lights
-
-| Key | Does |
-|-----|------|
-| `1` | Drop a point light of the picked colour (intensity 600) 2 voxels off the looked-at surface (20 voxels ahead on a miss); the banner names `lights <n>/16`. Sixteen slots, the headlamp's among them while it is on; a drop into a full list prints a line and adds nothing |
-| `2` | Toggle carry: the newest light rides 2 m ahead and 0.3 m below the eye until `2` again sets it down |
-| `3` | Pick the next colour (white, warm, red, green, blue) and recolour the newest light, in flight or still; later drops and shots take it |
-| `4` | Remove the newest light or walker, whichever was added last |
-| `5` | Flip the newest light's bounce flag: with `--lamp-bounce on` a flagged light feeds the probe channel; the `lights` row marks each flagged light `*` |
-| `6` | Fire a point light of the picked colour (intensity 600) along the view ray at 20 m/s; it stops 2 voxels short of the first surface (or after 40 m) and stays there as a dropped light |
-
-### Walkers
-
-| Key | Does |
-|-----|------|
-| `` ` `` | Place a walker (a voxel-model entity) on the looked-at surface; the banner names the walker count. A world whose table has no walker rows prints a line and places nothing |
-| `F11` | Toggle whether the walkers walk or hold still |
-| `F12` | Toggle the walkers' eye lights |
-| `PageDown` | The next render profile: floor, portable, performance, high (`--profile`) |
-| `Home` | The next world source, rebuilt in process (`--source`'s order: cave, level, showcase, outdoor, and back), with that source's start settings; the window, the frame and the clock stay. A source that refuses the run's other flags is passed over |
-| `PageUp` | Under a sky: the time of day an hour on; with `Shift`, an hour back |
-| `End` | Under a sky: run or pause the day cycle (`--day-length`) |
-| `CapsLock` | On the outdoor hills: the next `--trees` (none, sparse, forest, and back), rebuilt in process as `Home` rebuilds a source; the window, the frame and the clock stay |
-| `Left`, `Right` | With `--model`: the clip before and after |
-| `Down` | With `--model`: pause or play the clip |
+Everything else is an entry of the menu (`Tab`) with no key: the dig radius (`moving`), the
+look presets and far normal,
+the sharpening and pan, the lighting modes but the lamp, the lights' carry, colour and bounce
+flag, the light queue's order, weights, withdrawal, budget, full-first, missing light and
+reach, the wander (`wander` under `entities`: every placed body wanders, the built-in walkers
+walk their circle) and the eye lights, the audio's sounds and mix, the bench, the stamp,
+the crumble, the coarse print, the castle shot and the shadow ray, and the world and sky page:
+the time of day (a number, an hour a step, held between 00:00 and 23:59) and the day cycle
+(`--day-length`) and the sky rays (1 to 4) under a sky, the next world source (`--source`'s
+order: cave, level, showcase, outdoor, and back, rebuilt in process with that source's start
+settings; the window, the frame, the clock and the menu stay; a source that refuses the run's
+other flags is passed over), and on the outdoor hills the next `--trees` (none, sparse, forest,
+and back), rebuilt in process as the source is. Under `--loading-screen on` a rebuild shows the
+loading screen at once, naming what loads (`loading outdoor, trees sparse`, `switching from
+cave`), and loads behind it as start-up does; the run then comes back with the menu and the
+switch's notice.
 
 The HUD's entities row reads `entities <n>/64 parts <m>/512 over <k> pool <used>/<total> KB`
-(`walk` after it while they walk): the entity pool's bytes in use, rounded up to whole KB,
-against its size. A `--model` reload frees the replaced model, so the figure holds still over
+(then `tick <us>`, the movers' CPU a tick as the median over the last second, once a body has
+ticked, and `wander` while the wander is on): the entity pool's bytes in use, rounded up to
+whole KB, against its size. A library entry whose rig has a `body` line moves at a 60 Hz tick
+(at most 8 ticks a frame), wander on or off: a ground body (the walker) stands on the floor and
+falls when it is dug away, a surface body (the spider) clings to the face it touches, wall or
+ceiling, and falls and lands when that is dug away. With the wander on (`wander on` in the
+banner) each body picks a new heading every 5 to 15 s, mostly within a quarter turn, and walks or crawls at 1 or 1.5 m/s, its
+`walk` clip kept in step with the distance and `idle` played when it stands still; with it off
+each stands where it is on the clip the chooser gave it. A `--model` reload frees the replaced model, so the figure holds still over
 saves that keep the model's size. When an upload is refused although the pool's free bytes
 would hold it (no hole is large enough), the pool is cleared and every placed model uploaded
 again, and the banner reads `entity pool reset`; a `--model` model refused after that keeps
 its error on screen in red until a reload builds.
 
-### The light queue
+### Placement mode
 
-| Key | Does |
-|-----|------|
-| `F` | Cycle the queue's order |
-| `Tab` / `Slash` | Halve / double the queue's angle weight |
-| `Quote` | Toggle withdrawing the jobs of chunks the camera passed |
-| `Backspace` | Cycle the bake budget: the default slice a frame, 150 ms a second, 300 ms a second (each capped at a quarter of the frame) |
-| `Backslash` | Toggle the full-first radius: off or `--near`'s |
-| `7` | Cycle what a face with no baked value reads: black, neighbour, parent, chain (ADR-0053) |
-| `8` | Toggle the light reach: full or partial |
+The belt is nine slots, `1`..`9`, drawn centred along the bottom of the window in placement
+mode and under the open chooser (its frame on the selected slot; a chooser digit moves the
+frame to the slot it fills), over a dimmed box: each slot's digit and its entry's name, the selected slot
+framed by `+`, `-` and `|` (the frame's top and bottom rows yellow), and the selected entry's
+name above the belt for 3 s after the selection changes (`slot 5 empty  (choose with `)` for
+an empty slot, an entry in error with its name grey and its error red). The belt starts filled with the library
+in the chooser's order (`--model`'s rig first, then the entries that build, then those in
+error, each in name order); a slot keeps its entry for the run, and the chooser's digits change
+it. The wheel, the pad's D-pad left and right or the chooser's `Enter` enter the mode from the
+view, never a digit; in the mode every digit `1`..`9` selects its slot (`Delete` removes the
+aimed entity). Opening the menu, `Esc`, the right click, `L2` or the pad's `East` leave it.
 
-### Audio (with `--audio`)
-
-| Key | Does |
-|-----|------|
-| `H` | Play a knock at the point the last left click dug |
-| `J` | Play a looping hum there |
-| `T` | Play a looping pulse there (a knock each second) |
-| `E` | Toggle the early reflections |
-| `Y` | Toggle the late reverb tail |
-| `[` / `]` | Trim the echoes down / up 3 dB |
-| `-` / `=` | Trim the tail down / up 3 dB |
-| `9` / `0` | Shorten / lengthen the tail's pre-delay by 10 ms |
-| `O` | Toggle the tail's glide |
-| `U` | Toggle the direct path's propagation delay |
+In the mode the menu is closed and the camera free. The selected slot's entry stands at the aim
+as the ghost, a real entity lit where it will stand, facing the camera, turned by `R`: at the
+camera ray's first world hit within 30 m, never nearer than 3 m or 1.5 times the model's
+longest extent (the walker at 3 m, the spider at about 10.4 m), the feet on the hit when it is
+a floor, and under a wall or a ceiling hit moved back by half the model's footprint and dropped
+to the floor (up to 10 m below). A surface body (the spider) stands on the face it is aimed at
+instead, wall or ceiling, its legs to the face, facing up the face (`R` turns it about the
+face's normal), and a click attaches it there. With no hit, or a hit nearer than that distance,
+the ghost stands at that distance along the view, dropped to the floor. The left click (or `R2`) places
+it there on its clip and turn (`placed spider #3 (rear)`) and the mode stays, a new ghost at
+the aim; the dig and the fill rest while the mode is on. An empty slot, an entry in error or a
+full set (64) stands no ghost and the banner says why. Under `--tester` there is no belt and no
+mode.
 
 ### Gamepad (`--pad on`, the default in a window)
 
@@ -146,13 +164,15 @@ its error on screen in red until a reload builds.
 | Right stick | Look |
 | `L1` / `R1` | Sink / rise |
 | `R3` | Latch boost |
-| `South` | Walking: jump |
-| `R2` / `L2` | Dig / fill |
-| D-pad up / down | Step the dig radius |
+| `South` | Walking: jump; in the menu: `Enter` |
+| `R2` / `L2` | Dig / fill; in placement mode, place the ghost / leave the mode |
+| D-pad up / down | In the menu: move the selection, or step the number being edited |
+| D-pad left / right | The belt's slot before / after, entering placement mode (`belt before`, `belt next`); in the menu: back a page / open |
 | `North` | Toggle walk mode |
-| `West` | Cycle the cutaway |
-| `East` | Knock (with `--audio`) |
-| `Start` | Toggle the stats overlay |
+| `West` | Cycle the cutaway; in placement mode, turn the ghost (the cutaway is then the menu's) |
+| `East` | Knock (with `--audio`); in placement mode, leave it; in the menu: back |
+| `Start` | Open or close the menu |
+| `Select` | Toggle the stats overlay |
 
 ### Tester mode (`--tester`)
 
@@ -168,12 +188,14 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | Flag | Does |
 |------|------|
 | `--help`, `-h` | Print every flag and exit |
+| `--keys` | Print the keys and the menu's tree at the start modes, and exit |
+| `--library` | Print the entities library (each entry's parts, size in voxels, pool bytes and clips, the first marked `*`, or its error) and exit |
 | `--check-args` | Parse the arguments, print `arguments ok` and exit, opening nothing |
 | `--seed N` | The world's seed [1] |
 | `--render WxH` | Fix the frame's output resolution; the window scales it |
-| `--frames N` | Exit after `N` frames, printing the `F1` readings over the last ones |
+| `--frames N` | Exit after `N` frames, printing the readings (`Enter`) over the last ones |
 | `--pace free\|compositor` | Wait for the compositor's frame callback before each present or not [free] |
-| `--bench N` | Send `N` `B` benchmark inputs on the first frame |
+| `--bench N` | Send `N` bench inputs on the first frame |
 | `--dig-at F,..` | Dig at each of these frames |
 | `--bench-at F,..` | A bench input at each of these frames |
 | `--sync-budget MIB` | The mirror's upload bytes a frame |
@@ -194,7 +216,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--save PATH` | Write the session's log file on exit and print the world's hash (with `--level`) |
 | `--replay PATH` | Re-simulate a saved session before the first frame |
 | `--logic native\|wasm[=PATH]` | The server's logic: native [default], or a component (needs `--features wasm` and `scripts/build-guests.sh`) |
-| `--path cave\|showcase\|castle` | Fly that scene's camera path (the scene's own flags and seed 1 required) |
+| `--path cave\|showcase\|castle\|outdoor` | Fly that scene's camera path (the scene's own flags and seed 1 required; `outdoor` needs `--source outdoor` with the `outside` spawn, the sparse trees and the default leaf fill, and takes any `--sun` or `--time`) |
 | `--path-mode bench\|tour` | Fly the path once by wall time with the lamp off, then exit [bench]; or loop it |
 | `--report DIR` | Write `DIR/run.json` at exit (with `--path`) |
 | `--tester` | Only movement, look, the dig, `F1`, `T` and `Esc` act |
@@ -209,9 +231,9 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--trees none\|sparse\|forest` | Trees on the outdoor hills: about 9 % or 94 % of the 48-voxel cells of a 3072-voxel box between the mouth and the forest spawn; the banner's source reads `outdoor, trees NAME` [sparse] |
 | `--leaf-fill N` | The canopy voxels kept, of 256, 1 to 256 [64] |
 | `--leaf-shadow brick\|voxel\|absorb` | How a canopy shadows the sun and the sky: as its 8^3 bricks (a light's shadow ray stops where it enters a brick holding leaves, so no fleck shows through), voxel by voxel, or as a transmittance (the key light's ray and the sky rays pass the leaves, attenuated by `exp(-0.15 x)` over the path `x` in voxels through them); the banner reads `leaf shadow brick` or `leaf shadow absorb` with a sky set and names nothing for `voxel` [voxel] |
-| `--sun EL,AZ` | Fix the sun at this elevation and azimuth in degrees (clockwise from north, 180 south), the moon opposite; `PageUp` and `End` leave it, and the banner reads `sun EL/AZ fixed` in place of the time |
+| `--sun EL,AZ` | Fix the sun at this elevation and azimuth in degrees (clockwise from north, 180 south), the moon opposite; the menu's `time` and `day cycle` leave it, and the banner reads `sun EL/AZ fixed` in place of the time |
 | `--time HH:MM` | The time of day the sky starts at, latitude 45 at an equinox [12:00]; the banner names it while a sky is set |
-| `--day-length S` | Seconds for a whole day while the cycle runs (`End`) [1200] |
+| `--day-length S` | Seconds for a whole day while the cycle runs (the menu's `day cycle`) [1200] |
 | `--sun-radius DEG` | The sun's angular radius, 0.05 to 10 degrees: a wider disc softens every sun shadow (the real sun's is 0.2665) [3] |
 | `--moon-radius DEG` | The moon's angular radius, 0.05 to 10 degrees: its disc in the sky and its shadows' softness [3] |
 | `--sky-rays N` | Cosine-weighted sky rays a lighting pixel casts where no baked sky visibility is fresh, 0 (bake only) to 4; the banner names the count [1] |
@@ -225,7 +247,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--dump-black` | Once a second while the store's black count is over 0, print the lighting pixels with no record value grouped by the chunk they hit: its distance in chunks, whether it holds a block, its queue tracks, the chunks that hold its columns from final and whether its reach crosses the full radius (the queue's own test, as `--reach partial` reads it). Counts the store's reads; the banner names `dump black` [off] |
 | `--exposure-max EV` | The auto exposure's constant ceiling in EV, -16 to 8; the exposure row names it as `ceiling +X EV` [+2 for `--source outdoor`, else +4] |
 | `--sky on\|off` | A sky over the world [on for `--source outdoor`, else off] |
-| `--switch-at F,..` | Switch the source at these frames, as `Home` does, and print the spawn's hash at the end |
+| `--switch-at F,..` | Switch the source at these frames, as the menu's `source` entry does, and print the spawn's hash at the end |
 | `--spawn-hash` | Print the voxel hash of the chunks within 2 of the spawn's chunk at the end |
 | `--level` | The bounded level (as `--source level`) |
 | `--thin-rig` | A bounded scene of thin features for the field look |
@@ -280,10 +302,11 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--probe-slices N` | The probes refreshed a frame, one in N: 8, 16 or 32 [8] |
 | `--emissive-ore on\|off` | The ore glows and lights the cave [on] |
 | `--lamp-toggle N` | Switch the lamp every `N` frames |
-| `--entities N` | Start with `N` walkers (voxel-model entities) on a 3 m ring around the spawn [0] |
-| `--entities-walk on\|off` | The walkers start walking, as `F11` sets them [off] |
-| `--model PATH` | View a `.rig` and the `.vox` it names (the library is `apps/flythrough/assets/entities/<name>/<name>.rig`, [entities.md](entities.md)): `` ` `` and `--entities N` place it in place of the walker; a saved change to either file reloads |
+| `--entities N` | Start with `N` of the library's selected entry (voxel-model entities) on a 3 m ring around the spawn [0] |
+| `--entities-walk on\|off` | The wander starts, as the menu's `wander` sets it: every placed body wanders, the built-in walkers walk their circle [off] |
+| `--model PATH` | View a `.rig` and the `.vox` it names (the library is `apps/flythrough/assets/entities/<name>/<name>.rig`, [entities.md](entities.md)): it is the library's first entry, selected, so `` ` `` and `--entities N` place it (a rig of the library itself is that entry, not a second one); a saved change to either file reloads its instances only |
 | `--clip NAME` | The `--model` clip to play first [the rig's first] |
+| `--library-dir DIR` | The entities library: every `DIR/<name>/<name>.rig` is an entry, in name order; `--model`'s rig comes first. A missing or empty library gives the built-in walker [`apps/flythrough/assets/entities`] |
 | `--fade-reading` | Headless: dig, settle, switch the lamp off and print how the light fades |
 | `--exposure auto\|E` | Adapt like an eye, or a fixed exposure [auto] |
 | `--adaptation eye\|symmetric\|instant` | The auto exposure's preset [eye] |
@@ -329,7 +352,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 
 | Flag | Does |
 |------|------|
-| `--loading-screen on\|off` | Step the start-up (the entity pipelines, the level's upload or the streamed near residency, the light pre-roll, the field's fill) from the frame loop behind loading frames: a turning voxel cube, a bar that only moves forward, the scene, the stage and its count; off runs it all before the first frame [on in a window, off headless] |
+| `--loading-screen on\|off` | Step the start-up (the entity pipelines, the level's upload or the streamed near residency, the light pre-roll, the field's fill) from the frame loop behind loading frames: a turning voxel cube, a bar that only moves forward, the scene, the stage and its count; the menu's in-process rebuilds (`source`, `trees`, `--switch-at`) load the same way; off runs it all before the first frame [on in a window, off headless] |
 | `--loading-fade MS` | Fade the loading frame out over the first world frames; 0 cuts [250] |
 
 With the screen on, the window's first frame is a still loading frame (the background, the
@@ -351,11 +374,10 @@ stage's step time).
 | `--profile floor\|portable\|performance\|high` | The render profile (`vxe_render::Profile`) the other flags edit, whatever their order: floor (1080p, FSR 2 at 1.5), portable (720p, FSR 2 at 1.5, fewer layers and lights, no lamp bounce, a smaller residency), performance (the window's size, FSR 2 at 2) or high (1080p, FSR 2 at 1; not for the slow adapter); its output hint sizes a headless run with no `--render`. The HUD's first mode row reads `profile: portable +1` with one field edited [floor] |
 | `--light-cap N` | Slots of the list of lights shaded, the headlamp's included, 1 to 16 [the profile's] |
 
-`PageDown` cycles the profiles in the window: the next one's translucent layers, lamp bounce,
-light cap, internal scale and bake budget apply from the next frame, and the profile row names
-the fields that wait for a restart with `--profile` (`restart for: lod.r_full,
-build.mirror_budget_bytes, build.residency`). `F4` takes the cycle once the menu frees it
-(ADR-0061).
+`F4` (or the menu's `profile` entry, on the upscaler page) cycles the profiles in the window:
+the next one's translucent layers, lamp bounce, light cap, internal scale and bake budget apply
+from the next frame, and the profile row names the fields that wait for a restart with
+`--profile` (`restart for: lod.r_full, build.mirror_budget_bytes, build.residency`).
 
 ### Diagnostics
 

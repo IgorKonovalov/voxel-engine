@@ -1326,9 +1326,9 @@ the log (a time switch, no second test).
 
 ### 3. 24d bar 4: a loaded gate is a reading, and the soak marks wait for the quiet run
 
-1819.5 s at load 14 is a reading, not the bar. `docs/nfr.md` section 7's gate budget is 12 min
-wall on the dev reference, quiet (the log's "19 min" has no source there; the dev corrects the
-log's line); the last quiet readings on main are already over it, so the gate's wall at this
+1819.5 s at load 14 is a reading, not the bar. `docs/nfr.md` section 7's gate budget is 19 min
+wall on the dev reference, quiet (corrected at the merge of main, 2026-11-19: main's section 7
+reads 19 min, 12 until 2026-11-18; "12 min" read the branch's stale copy); the last quiet readings on main are already over it, so the gate's wall at this
 plan's tip is a disclosed reading for the close, not a bar this plan meets. **The tip gate is
 re-read quiet before the close** (load under 2 at the start, nothing building beside it), once,
 after Phase 24f and the restated 24a land, as 24d bar 4's reading.
@@ -1361,6 +1361,9 @@ third of the three-order test's wall), the three orders in the soak test.
    fill-in, or hold for (ii)? Recommended: close with the reading if the trunks and the floor
    read alike and the owner's word at 24g is "better"; (ii) inside this plan only if 24f's
    ratio names it and it is a day's work, else the follow-up's.
+   **Answered 2026-11-19 (owner):** "go with recommendation": if 24g still reads grain on the
+   trunks after the age fix, the plan closes with the residual disclosed and the trunks' grain
+   goes to the follow-up plan beside the castle's fill-in.
 
 ## Implementation phases
 
@@ -2668,7 +2671,8 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   4. The gate tier at the tip reads 0 failures (`cargo nextest run --profile gate`, under the
      lock, the wall time in the log against section 7's 19 min).
 - **Bar 4 restated (2026-11-19, the fix-pass amendment, call 3):** section 7's gate budget is
-  12 min quiet on the dev reference; the 1819.5 s at load 14 is a loaded reading. The tip gate
+  19 min quiet on the dev reference (corrected at the merge of main, 2026-11-19; "12 min" read
+  the branch's stale copy); the 1819.5 s at load 14 is a loaded reading. The tip gate
   is re-read **quiet** (load under 2 at the start, nothing building beside it) once, after
   Phases 24f and 24a's restated bar land, with 0 failures, the wall and the load in the log as
   the close's reading. The soak marks follow that run: each of

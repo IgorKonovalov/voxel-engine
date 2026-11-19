@@ -242,3 +242,94 @@ fn a_benchmark_warms_up_from_the_first_world_frame() {
     );
     assert_eq!(on.0 + on.1, 129.0, "world frames only");
 }
+
+/// The showcase headless on lavapipe at 64 x 36 with the screen on, the pre-roll's near ring
+/// at 0 and no coarse pass, switched in process after its frame 0 (`--switch-at 0`; the
+/// showcase's next source is the outdoor hills, trees sparse by default): after the
+/// showcase's frame 0 a loading frame names the next world and the one it leaves (`switch
+/// splash drawn: loading outdoor, trees sparse, switching from showcase`), then the new run's
+/// loading frames (at least 3, the bar never moving back) step its stages, the near chunks'
+/// light among them, the last reading `done 1`, and only then is the new run's frame 0
+/// submitted; the switch's line names both sources, and the run ends at `--frames 3` (the
+/// showcase's frame 0 and the switched run's 2).
+#[test]
+fn a_source_switch_shows_the_loading_frames_before_the_new_world() {
+    let out = Command::new(env!("CARGO_BIN_EXE_flythrough"))
+        .args([
+            "--headless",
+            "--adapter",
+            "llvmpipe",
+            "--source",
+            "showcase",
+            "--frames",
+            "3",
+            "--switch-at",
+            "0",
+            "--render",
+            "64x36",
+            "--near",
+            "0",
+            "--coarse",
+            "0",
+            "--loading-screen",
+            "on",
+        ])
+        .env("RUST_LOG", "flythrough=info")
+        .output()
+        .expect("the fly-through runs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if !out.status.success() && stderr.contains("no adapter") {
+        println!("skipped: no adapter ({})", stderr.trim());
+        return;
+    }
+    assert!(out.status.success(), "stdout:\n{stdout}\nstderr:\n{stderr}");
+    assert!(
+        stdout
+            .lines()
+            .any(|l| l == "switch: source showcase to outdoor after 1 frames, op log 0"),
+        "the switch's line in\n{stdout}"
+    );
+    let lines: Vec<&str> = stderr.lines().collect();
+    let at = |from: usize, what: &str| {
+        lines[from..]
+            .iter()
+            .position(|l| l.contains(what))
+            .map(|i| from + i)
+    };
+    let first_world = at(0, "diag: frame 0: submitted").expect("the showcase's frame 0");
+    let splash = at(first_world, "diag: switch splash drawn: ")
+        .unwrap_or_else(|| panic!("no switch splash after the first world frame in\n{stderr}"));
+    assert!(
+        lines[splash].contains(
+            "switch splash drawn: loading outdoor, trees sparse, switching from showcase at "
+        ),
+        "{}",
+        lines[splash]
+    );
+    let next_world = at(splash, "diag: frame 0: submitted")
+        .unwrap_or_else(|| panic!("no frame 0 of the switched run in\n{stderr}"));
+    let between = loading_frames(&lines[splash..next_world].join("\n"));
+    let stages: Vec<&str> = between.iter().map(|(s, _)| s.as_str()).collect();
+    println!(
+        "{} loading frames between the splash and the switched run's frame 0",
+        between.len()
+    );
+    assert!(
+        between.len() >= 3 && stages.contains(&"lighting the near chunks"),
+        "the switched run's stages behind loading frames: {stages:?}"
+    );
+    for w in between.windows(2) {
+        assert!(w[1].1 >= w[0].1, "the bar moved back: {w:?}");
+    }
+    assert_eq!(
+        between.last().map(|(s, f)| (s.as_str(), *f)),
+        Some(("done", 1.0)),
+        "the last loading frame before the new world reads done"
+    );
+    assert_eq!(
+        world_frames(&stderr),
+        3,
+        "the showcase's frame 0 and the switched run's 2"
+    );
+}

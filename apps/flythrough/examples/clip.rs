@@ -548,7 +548,7 @@ fn main() -> Result<(), String> {
     }
     let loaded = viewer.loaded.clone().ok_or("the rig did not build")?;
     let clip_name = viewer.clip_name().unwrap_or("rest").to_owned();
-    let clip = loaded.clips.get(viewer.clip).map(|(_, c)| c.clone());
+    let clip = loaded.clips.get(viewer.play.clip).map(|(_, c)| c.clone());
 
     let (feet, facing, camera) = stage(&args, &world)?;
     let eye = camera.position.to_array();

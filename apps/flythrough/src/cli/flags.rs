@@ -146,7 +146,7 @@ pub fn lighting_flags<T: 'static>(part: fn(&mut T) -> &mut LightingArgs) -> Vec<
         Flag::value(
             &["--atrous-iterations"],
             "1|2|4",
-            "the a-trous iterations a frame runs while the filter is on (F4)",
+            "the a-trous iterations a frame runs while the filter is on (the menu steps them)",
             move |t, v| {
                 part(t).atrous_iterations =
                     v.parse_if(|n: &u32| [1, 2, 4].contains(n), "1, 2 or 4")?;
@@ -272,12 +272,12 @@ fn run_flags() -> Vec<Flag<Parsing>> {
             "print this help and exit",
             |p: &mut Parsing| p.args.help = true,
         ),
+        super::parse::keys_flag(),
+        super::model::library_flag(),
         Flag::switch(
             &["--check-args"],
             "parse the arguments, print `arguments ok` and exit",
-            |p: &mut Parsing| {
-                p.args.check_args = true;
-            },
+            |p: &mut Parsing| p.args.check_args = true,
         ),
         Flag::value(
             &["--seed"],
@@ -461,7 +461,7 @@ fn session_flags() -> Vec<Flag<Parsing>> {
         ),
         Flag::value(
             &["--path"],
-            "cave|showcase|castle",
+            "cave|showcase|castle|outdoor",
             "fly that scene's camera path",
             |p: &mut Parsing, v| {
                 p.args.path =
@@ -806,7 +806,7 @@ fn light_flags() -> Vec<Flag<Parsing>> {
         Flag::value(
             &["--entities-walk"],
             "on|off",
-            "the walkers start walking, as F11 sets them (off)",
+            "the wander starts, as the menu's wander sets it: every body wanders, the built-in walkers walk their circle (off)",
             |p: &mut Parsing, v| {
                 p.args.entities_walk = v.on_off()?;
                 Ok(())

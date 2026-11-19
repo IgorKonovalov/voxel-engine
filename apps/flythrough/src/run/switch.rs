@@ -1,17 +1,21 @@
-//! The in-process source switch (`Home`, `--switch-at`): the run is torn down (its server and
+//! The in-process source switch (the menu's `source` and `trees` entries, `--switch-at`): the run is torn down (its server and
 //! logic, its stream and its world, and the GPU mirror) and the next `--source` value's run is
 //! built as `--source NAME` with the run's other flags would start it, while the window, the
 //! `Frame` (its pipelines, targets and LUTs) and the sky's clock are kept. The frame's
 //! histories, exposure and entity mirror start afresh; the light store is emptied by the new
-//! run's live queue at its pre-roll.
+//! run's live queue at its pre-roll. Under the loading screen the frame that asked is followed
+//! by a loading frame naming the next world, presented before the teardown and the world's
+//! build block, and the new run loads behind loading frames as start-up does (ADR-0059).
 
+use super::hud_feed::HUD_SCALE;
+use super::loading::{draw_view, scene_title};
 use super::{GfxPlan, Run, reserve_mirror, set_plan};
-use crate::app::{Flythrough, Pending, ms_since};
+use crate::app::{Flythrough, Pending, diag, ms_since};
 use crate::cli::{Args, SOURCES, next_source, parse_args_from};
 use crate::outdoor::{GRASS, SOIL};
 use crate::setup::{Gfx, build_world, load_logic, start_camera};
 use vxe_app::Gpu;
-use vxe_render::wgpu;
+use vxe_render::{LoadingScreen, LoadingView, wgpu};
 use vxe_world::{BRICK_VOXELS, ChunkCoord, VoxelCoord, World};
 
 /// The flags of `argv` with every world-picking flag (`--source NAME`, `--level`) dropped and
@@ -186,40 +190,88 @@ fn rebuild_gfx(device: &wgpu::Device, queue: &wgpu::Queue, plan: GfxPlan, old: G
 }
 
 impl Run {
-    /// Builds the run's GPU objects from `old`'s ([`rebuild_gfx`]) and loads the world with
-    /// no loading screen, as `--loading-screen off` does: the frame that switched holds until
-    /// the near residency and the pre-roll end.
-    fn init_switched(&mut self, gpu: &Gpu, old: Gfx) {
+    /// Builds the run's GPU objects from `old`'s ([`rebuild_gfx`]) and loads the world. Under
+    /// the loading screen the load steps behind loading frames drawn with `screen` (the one
+    /// [`Flythrough::begin_switch`] drew, else a new one), as start-up's does after its
+    /// pipelines; without it, as `--loading-screen off` does, the frame that switched holds
+    /// until the near residency and the pre-roll end.
+    fn init_switched(&mut self, gpu: &Gpu, old: Gfx, screen: Option<LoadingScreen>) {
         self.adapter = Some(gpu.adapter.get_info());
         self.surface = Some((gpu.surface_format, gpu.surface_color_space));
         let plan = self.gfx_plan(gpu);
         println!("{}", self.modes.line());
         self.gfx = Some(rebuild_gfx(&gpu.device, &gpu.queue, plan, old));
+        if self.args.loading.screen_on(self.args.headless) {
+            let screen = screen
+                .unwrap_or_else(|| LoadingScreen::new(&gpu.device, gpu.surface_format, HUD_SCALE));
+            self.loading = Some(self.start_loading_switched(screen));
+            return;
+        }
         let loading = self.start_loading_unscreened();
         self.load_all(gpu, loading);
     }
 }
 
+/// The loading frame's stage row while the old run is torn down and the next one's world is
+/// built: `switching from cave`.
+pub(crate) fn switching_stage(from: &Args) -> String {
+    format!("switching from {}", scene_title(from))
+}
+
 impl Flythrough {
-    /// The switch the run asked for: the next source's run in place of the current one
-    /// ([`switched_args`]), keeping the GPU objects but the mirror, the audio and the clock.
-    /// With no source to switch to the run goes on.
-    pub(crate) fn switch_source(&mut self, gpu: &Gpu) {
+    /// The switch the run asked for, begun after the frame that asked: the next source's
+    /// arguments ([`switched_args`]) or the next trees' ([`retreed_args`]), and, under the
+    /// loading screen, a loading frame over `surface` naming what loads (`loading outdoor,
+    /// trees sparse`), presented before the next frame's [`Flythrough::switch_source`] blocks
+    /// on the teardown and the world's build. With nothing to switch to the run goes on.
+    pub(crate) fn begin_switch(&mut self, gpu: &Gpu, surface: &wgpu::TextureView) {
+        let Some(run) = self.run.as_mut() else {
+            return;
+        };
+        let retree = std::mem::take(&mut run.retree) && !run.switch;
+        run.switch = false;
+        let next = if retree {
+            retreed_args(&run.args, run.frame)
+        } else {
+            switched_args(&run.args, run.frame)
+        };
+        let Some(args) = next else {
+            return;
+        };
+        if args.loading.screen_on(args.headless) {
+            let mut screen = LoadingScreen::new(&gpu.device, gpu.surface_format, HUD_SCALE);
+            let title = format!("loading {}", scene_title(&args));
+            let stage = switching_stage(&run.args);
+            draw_view(
+                gpu,
+                surface,
+                &mut screen,
+                &LoadingView {
+                    title: &title,
+                    stage: &stage,
+                    detail: "",
+                    progress: 0.0,
+                    seconds: 0.0,
+                    alpha: 1.0,
+                },
+            );
+            diag(format_args!("switch splash drawn: {title}, {stage}"));
+            self.splash = Some(screen);
+        }
+        self.switching = Some((args, retree));
+    }
+
+    /// The switch [`Flythrough::begin_switch`] began: the run over `args` in place of the
+    /// current one, keeping the GPU objects but the mirror, the audio and the clock; `retree`
+    /// when only the trees changed.
+    pub(crate) fn switch_source(&mut self, gpu: &Gpu, args: Args, retree: bool) {
+        let screen = self.splash.take();
         let Some(mut old) = self.run.take() else {
             return;
         };
-        let retree = std::mem::take(&mut old.retree) && !old.switch;
-        old.switch = false;
-        let next = if retree {
-            retreed_args(&old.args, old.frame)
-        } else {
-            switched_args(&old.args, old.frame)
-        };
-        let Some(args) = next else {
-            self.run = Some(old);
-            return;
-        };
+        let (menu, notice) = (std::mem::take(&mut old.menu), old.notice.take());
         let (Some(gfx), clock) = (old.gfx.take(), old.modes.clock) else {
+            (old.menu, old.notice) = (menu, notice);
             self.run = Some(old);
             return;
         };
@@ -245,20 +297,22 @@ impl Flythrough {
         };
         run.modes.clock = clock;
         run.modes.banner_at = now;
+        // The menu stays as it was, so its world page can switch again.
+        (run.menu, run.notice) = (menu, notice);
         let ops = run.net.as_ref().map_or(0, |n| n.server.ops().len());
-        if retree {
-            println!(
+        run.say(if retree {
+            format!(
                 "switch: trees {} after {frame} frames, op log {ops}",
                 self.args.outdoor.trees().name()
-            );
+            )
         } else {
-            println!(
+            format!(
                 "switch: source {} to {} after {frame} frames, op log {ops}",
                 from.source_name().unwrap_or("?"),
                 self.args.mode.source_name().unwrap_or("?"),
-            );
-        }
-        run.init_switched(gpu, gfx);
+            )
+        });
+        run.init_switched(gpu, gfx, screen);
     }
 }
 
@@ -321,5 +375,24 @@ mod tests {
             crate::cli::RunMode::Outdoor,
         );
         assert_eq!(v, argv(&["--seed", "3", "--source", "outdoor"]));
+    }
+
+    /// The loading frame a switch draws names what loads and what it leaves: the menu's
+    /// `source` entry from the cave reads `loading level` over `switching from cave`, and its
+    /// `trees` entry on the outdoor hills `loading outdoor, trees forest` over `switching from
+    /// outdoor, trees sparse`.
+    #[test]
+    fn the_switch_loading_frame_names_the_next_world() {
+        let cave = parse_args_from(argv(&[])).expect("parses");
+        let next = switched_args(&cave, 0).expect("the level parses");
+        assert_eq!(scene_title(&next), "level");
+        assert_eq!(switching_stage(&cave), "switching from cave");
+        let outdoor = parse_args_from(argv(&["--source", "outdoor"])).expect("parses");
+        let retreed = retreed_args(&outdoor, 0).expect("the next trees parse");
+        assert_eq!(scene_title(&retreed), "outdoor, trees forest");
+        assert_eq!(
+            switching_stage(&outdoor),
+            "switching from outdoor, trees sparse"
+        );
     }
 }

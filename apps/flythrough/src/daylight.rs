@@ -4,13 +4,11 @@
 //! at 18:00 and stands at 45 degrees in the south at 12:00. The moon is full, 12 hours from
 //! the sun, at `vxe_render::sky::MOON_OVER_SUN` of its illuminance.
 //!
-//! The keys: [`KEY_HOUR`] steps the clock an hour forward, and back with Shift held;
-//! [`KEY_DAY_CYCLE`] runs or pauses it at `--day-length`; [`KEY_SOURCE`] switches the world
-//! source in process (`run::switch`), keeping the clock, and [`KEY_TREES`] the outdoor trees.
+//! The menu's world page (`toggles::TOGGLES`, `toggles::ACTIONS`) steps the clock an hour at
+//! a time, runs or pauses it at `--day-length`, switches the world source in process
+//! (`run::switch`), keeping the clock, and steps the outdoor trees.
 
-use crate::hud::Modes;
 use std::fmt::Write as _;
-use vxe_app::{Input, KeyCode};
 use vxe_render::sky::{Body, Sky, body_direction};
 
 /// The testbed's latitude in degrees.
@@ -26,15 +24,6 @@ const DAY_MIN: f64 = 1440.0;
 /// wider than the real ones (`vxe_render::sky::SUN_ANGULAR_RADIUS`, the engine's default) so
 /// their discs read on screen and their shadows are soft.
 pub const BODY_RADIUS_DEG: f32 = 3.0;
-
-/// `Home`: the next world source, rebuilt in process (`run::switch`).
-pub const KEY_SOURCE: KeyCode = KeyCode::Home;
-/// `PageUp`: an hour forward; with Shift, an hour back.
-pub const KEY_HOUR: KeyCode = KeyCode::PageUp;
-/// `End`: the day cycle runs or pauses.
-pub const KEY_DAY_CYCLE: KeyCode = KeyCode::End;
-/// `CapsLock`: the outdoor hills' next `--trees`, rebuilt in process as [`KEY_SOURCE`] does.
-pub const KEY_TREES: KeyCode = KeyCode::CapsLock;
 
 /// The time of day and whether it runs.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -116,14 +105,26 @@ impl Clock {
         self.minutes = (self.minutes + 60.0 * f64::from(hours)).rem_euclid(DAY_MIN);
     }
 
+    /// Moves the time by `hours`, held between 00:00 and 23:59: the menu's time entry, a
+    /// number that stops at its range's ends.
+    pub fn step_hours_held(&mut self, hours: i32) {
+        self.minutes = (self.minutes + 60.0 * f64::from(hours)).clamp(0.0, DAY_MIN - 1.0);
+    }
+
+    /// `time 12:00`; with a fixed sun `sun 10/180 fixed`.
+    pub fn write_time(&self, out: &mut String) {
+        let m = self.minutes.floor() as u32;
+        let _ = match self.fixed_sun {
+            Some([e, a]) => write!(out, "sun {e}/{a} fixed"),
+            None => write!(out, "time {:02}:{:02}", m / 60, m % 60),
+        };
+    }
+
     /// `time 12:00, day cycle off`; with a fixed sun `sun 10/180 fixed, day cycle off`.
     pub fn write_words(&self, out: &mut String) {
-        let m = self.minutes.floor() as u32;
+        self.write_time(out);
         let cycle = if self.running { "on" } else { "off" };
-        let _ = match self.fixed_sun {
-            Some([e, a]) => write!(out, "sun {e}/{a} fixed, day cycle {cycle}"),
-            None => write!(out, "time {:02}:{:02}, day cycle {cycle}", m / 60, m % 60),
-        };
+        let _ = write!(out, ", day cycle {cycle}");
     }
 }
 
@@ -158,29 +159,6 @@ pub fn parse_time(s: &str) -> Result<f64, String> {
         return Err(bad());
     }
     Ok(f64::from(h * 60 + m))
-}
-
-/// The clock's keys on `m`: [`KEY_HOUR`] (Shift held: back) and [`KEY_DAY_CYCLE`]; each shows
-/// the banner from `now_ms` and prints the lighting row. Whether one was pressed. They act
-/// while a sky is set, as the banner names the time only then.
-pub(crate) fn clock_keys(input: &Input, m: &mut Modes, now_ms: f64) -> bool {
-    if !m.sky {
-        return false;
-    }
-    let shift = input.held(KeyCode::ShiftLeft) || input.held(KeyCode::ShiftRight);
-    let pressed = if input.pressed(KEY_HOUR) {
-        m.clock.step_hours(if shift { -1 } else { 1 });
-        true
-    } else if input.pressed(KEY_DAY_CYCLE) {
-        m.clock.running = !m.clock.running;
-        true
-    } else {
-        false
-    };
-    if pressed {
-        m.banner_at = now_ms;
-    }
-    pressed
 }
 
 #[cfg(test)]
@@ -231,39 +209,63 @@ mod tests {
         assert_eq!(s, "time 23:00, day cycle on");
     }
 
-    /// On the outdoor source the banner names the clock: `PageUp` steps 12:00 to 13:00,
-    /// Shift+`PageUp` back to 12:00, `End` turns the cycle on; the banner reads empty
-    /// `BANNER_MS` after the last press. Off a sky the keys do nothing.
+    /// On the outdoor source the banner names the clock, and the menu's world entries step
+    /// it: the time 12:00 to 13:00 and back, held at 23:59 and 00:00; the day cycle on, the
+    /// banner shown from the flip and empty `BANNER_MS` after. Off a sky they are unavailable
+    /// with their reason.
     #[test]
-    fn the_clock_keys_change_the_banner() {
+    fn the_world_entries_step_the_clock() {
+        use crate::hud::Modes;
+        use crate::hud::menu::{Group, RunView, group_entries};
         let args = crate::cli::parse_args_from(crate::test_support::argv(&["--source", "outdoor"]))
             .expect("parses");
         let mut m = args.start_modes(0.0);
-        let mut input = Input::default();
-        let mut press = |m: &mut Modes, keys: &[KeyCode], now: f64| {
-            keys.iter().for_each(|&k| input.key_down(k));
-            let pressed = clock_keys(&input, m, now);
-            keys.iter().for_each(|&k| input.key_up(k));
-            input.end_frame();
-            (pressed, m.banner(now).unwrap_or_default())
+        let entry = |label: &str| {
+            group_entries(Group::World)
+                .find(|e| e.label == label)
+                .expect("a world entry")
         };
+        let toggle = |label: &str| match entry(label).kind {
+            crate::hud::menu::EntryKind::Toggle(t) => t,
+            crate::hud::menu::EntryKind::Action(_) => panic!("{label} is a toggle"),
+        };
+        let step = |m: &mut Modes, d: i32| (toggle("time").number.expect("a number").step)(m, d);
         // The banner wraps its line at commas; its rows joined read the line again.
         let row = |b: &str| b.replace('\n', ", ");
         assert!(
             row(&m.banner(0.0).expect("at the start"))
                 .contains("source outdoor, trees sparse, time 12:00, day cycle off, sky rays 1")
         );
-        let (_, b) = press(&mut m, &[KEY_HOUR], 5000.0);
-        assert!(row(&b).contains("time 13:00"), "{b}");
-        let (_, b) = press(&mut m, &[KeyCode::ShiftLeft, KEY_HOUR], 6000.0);
-        assert!(row(&b).contains("time 12:00"), "{b}");
-        let (_, b) = press(&mut m, &[KEY_DAY_CYCLE], 7000.0);
-        assert!(row(&b).contains("day cycle on"), "{b}");
+        step(&mut m, 1);
+        assert_eq!((toggle("time").get)(&m), "time 13:00");
+        step(&mut m, -1);
+        assert_eq!((toggle("time").get)(&m), "time 12:00");
+        (0..30).for_each(|_| step(&mut m, 1));
+        assert_eq!((toggle("time").get)(&m), "time 23:59");
+        (0..30).for_each(|_| step(&mut m, -1));
+        assert_eq!((toggle("time").get)(&m), "time 00:00");
+        let b = crate::toggles::press(toggle("day cycle"), &mut m, 7000.0);
+        assert!(b.contains("day cycle on"), "{b}");
+        assert!(row(&m.banner(7000.0).expect("shown")).contains("day cycle on"));
         assert!(m.banner(7000.0 + crate::hud::BANNER_MS).is_none());
-        let mut cave = crate::cli::parse_args_from(Vec::new())
+        let v = RunView::default();
+        for label in ["time", "day cycle", "sky rays"] {
+            assert_eq!(entry(label).available(&m, &v), Ok(()), "{label}");
+        }
+        let cave = crate::cli::parse_args_from(Vec::new())
             .expect("parses")
             .start_modes(0.0);
-        assert!(!press(&mut cave, &[KEY_HOUR], 5000.0).0);
+        for label in ["time", "day cycle", "sky rays"] {
+            assert_eq!(
+                entry(label).available(&cave, &v),
+                Err("needs --sky on"),
+                "{label}"
+            );
+        }
+        assert_eq!(
+            entry("trees").available(&cave, &v),
+            Err("needs --source outdoor")
+        );
         assert!(!cave.line().contains("time") && !cave.line().contains("sky rays"));
     }
 

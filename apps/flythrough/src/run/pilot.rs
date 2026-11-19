@@ -7,7 +7,7 @@ use crate::autopilot::{
 use crate::edits::{centre_fixed, edit_line, voxel_of};
 use crate::now;
 use crate::run::Run;
-use crate::run::hud_feed::{belt_line, probe_bytes_line};
+use crate::run::hud_lines::{belt_line, probe_bytes_line};
 use crate::setup::Gfx;
 use crate::streaming::pressure_terms;
 use crate::{chunks_hash, percentile};

@@ -22,7 +22,7 @@ fn the_banner_and_hud_name_the_colour_and_the_removal() {
             .unwrap();
     }
     let colour = TOGGLES.iter().find(|t| t.name == "colour").unwrap();
-    assert_eq!(colour.press, Press::Key(vxe_app::KeyCode::Digit3, None));
+    assert_eq!(colour.press, Press::Menu);
     (colour.flip)(&mut m, 10.0);
     assert!(m.banner(10.0).unwrap().lines().any(|l| l == "colour warm"));
     (colour.flip)(&mut m, 20.0);
@@ -62,7 +62,7 @@ fn the_banner_and_hud_name_the_bounce_flag() {
             .unwrap();
     }
     let bounce = TOGGLES.iter().find(|t| t.name == "bounce").unwrap();
-    assert_eq!(bounce.press, Press::Key(vxe_app::KeyCode::Digit5, None));
+    assert_eq!(bounce.press, Press::Menu);
     (bounce.flip)(&mut m, 10.0);
     assert!(m.banner(10.0).unwrap().lines().any(|l| l == "bounce on"));
     assert_eq!(
@@ -90,7 +90,7 @@ fn f4_steps_the_filters_iterations() {
     );
     let f4 = TOGGLES
         .iter()
-        .find(|t| t.press == Press::Key(vxe_app::KeyCode::F4, None))
+        .find(|t| t.name == "filter iterations")
         .unwrap();
     assert_eq!(f4.row, HudRow::Lighting);
     assert_eq!((f4.get)(&m), "filter 4");

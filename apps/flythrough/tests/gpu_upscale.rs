@@ -13,8 +13,8 @@ use vxe_render::{
 use vxe_world::*;
 
 /// The entity mirror's bytes in `frame_bytes` at its default pool (ADR-0050): the tree 4096 B,
-/// the instances 65 536 B and the pool 8 MiB.
-const ENTITY_MIRROR: u64 = 4096 + 65_536 + (8 << 20);
+/// the instances 65 536 B and the pool 8 MiB; and its marks buffer, 4096 B (ADR-0074).
+const ENTITY_MIRROR: u64 = 4096 + 65_536 + (8 << 20) + 4096;
 
 /// `world` mirrored over its extent on the software adapter, with a frame of `internal`
 /// pixels for an `output` image, lighting at full resolution; `None` without the adapter.

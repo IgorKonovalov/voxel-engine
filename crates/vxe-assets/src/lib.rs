@@ -33,8 +33,8 @@ mod write;
 pub use map::{Slot, Unmapped, VoxMap};
 pub use palette::DEFAULT_PALETTE;
 pub use rig::{
-    Axis, DEFAULT_RATE, Line, MAX_DEGREES, Rig, RigClip, RigError, RigKey, RigMaterial, RigModel,
-    RigPart, VoxSource, axis_rotation, key_rotation,
+    Axis, DEFAULT_RATE, Line, MAX_DEGREES, Rig, RigBody, RigBodyLine, RigClip, RigError, RigKey,
+    RigMaterial, RigModel, RigPart, VoxSource, axis_rotation, key_rotation,
 };
 pub use vox::{
     MAX_MODEL_EDGE, MAX_PLACEMENTS, MAX_TRANSLATION, Node, Placement, VoxError, VoxFile, VoxModel,

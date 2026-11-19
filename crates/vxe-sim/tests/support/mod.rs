@@ -3,7 +3,9 @@
 #![allow(dead_code, reason = "shared across test binaries; each uses a subset")]
 
 use vxe_sim::{
-    Body, CharacterController, CharacterState, ControllerParams, MoveInput, MoveResult, overlaps,
+    Body, CharacterController, CharacterState, ControllerParams, MoveInput, MoveResult,
+    SurfaceInput, SurfaceMover, SurfaceParams, SurfaceResult, SurfaceState, overlaps,
+    sphere_overlaps,
 };
 use vxe_world::*;
 
@@ -113,5 +115,63 @@ pub fn walk(wish: [i64; 2]) -> impl FnMut(u32) -> MoveInput {
     move |_| MoveInput {
         wish,
         ..MoveInput::default()
+    }
+}
+
+/// The cube: solid iff every coordinate is in `[16, 32)`, in an otherwise empty world.
+pub fn cube() -> World {
+    world(|v| v.iter().all(|c| (16..32).contains(c)))
+}
+
+/// The cube over the F1 floor.
+pub fn cube_over_floor() -> World {
+    world(|v| v[2] < 0 || v.iter().all(|c| (16..32).contains(c)))
+}
+
+/// The surface mover's parameters the tests share: a one-voxel sphere, 1.5 voxels of reach.
+pub fn surface_params() -> SurfaceParams {
+    SurfaceParams {
+        radius: 256,
+        attach_reach: 384,
+        speed_max: 1024,
+        gravity: -16,
+        max_fall: 1024,
+        smooth: false,
+    }
+}
+
+/// One surface tick's record: the result and the state after it.
+pub struct SurfaceStep {
+    pub r: SurfaceResult,
+    pub s: SurfaceState,
+}
+
+/// Runs `ticks` surface ticks of `mover` from `state`, `input(tick)` giving each tick's input
+/// (ticks count from 1), and asserts the sphere never overlaps the world after a tick.
+pub fn run_surface(
+    world: &World,
+    mover: &SurfaceMover,
+    state: &mut SurfaceState,
+    ticks: u32,
+    mut input: impl FnMut(u32) -> SurfaceInput,
+) -> Vec<SurfaceStep> {
+    let mut out = Vec::new();
+    for t in 1..=ticks {
+        let r = mover.tick(world, state, &input(t));
+        assert!(
+            !sphere_overlaps(world, &mover.sphere(state.centre.0)),
+            "tick {t}: overlapping at {:?}",
+            state.centre
+        );
+        out.push(SurfaceStep { r, s: *state });
+    }
+    out
+}
+
+/// Straight on at `speed`.
+pub fn crawl(speed: i64) -> impl FnMut(u32) -> SurfaceInput {
+    move |_| SurfaceInput {
+        heading: [256, 0],
+        speed,
     }
 }

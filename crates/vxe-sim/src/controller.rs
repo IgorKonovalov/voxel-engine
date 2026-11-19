@@ -182,6 +182,30 @@ impl Query<'_> {
     }
 }
 
+/// The depenetration candidates in their fixed order: up by 1 voxel at a time to `up_to`,
+/// then for each distance `d` from 1 voxel to `around_to` in voxel steps, `+x, -x, +y, -y,
+/// +z, -z` scaled by `d`.
+pub(crate) fn depenetration_offsets(up_to: i64, around_to: i64) -> impl Iterator<Item = [i64; 3]> {
+    let up = (1..)
+        .map(|k| k * FIXED_ONE)
+        .take_while(move |&d| d <= up_to)
+        .map(|d| [0, 0, d]);
+    let around = (1..)
+        .map(|k| k * FIXED_ONE)
+        .take_while(move |&d| d <= around_to)
+        .flat_map(|d| {
+            [
+                [d, 0, 0],
+                [-d, 0, 0],
+                [0, d, 0],
+                [0, -d, 0],
+                [0, 0, d],
+                [0, 0, -d],
+            ]
+        });
+    up.chain(around)
+}
+
 /// Moves a body through a world, one tick at a time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CharacterController {
@@ -282,24 +306,7 @@ impl CharacterController {
     /// candidate is free. The result depends on the world and the body alone.
     fn depenetrate(&self, q: &mut Query<'_>, foot: [i64; 3]) -> Option<[i64; 3]> {
         let p = &self.params;
-        let up = (1..)
-            .map(|k| k * FIXED_ONE)
-            .take_while(|&d| d <= p.step_height)
-            .map(|d| [0, 0, d]);
-        let around = (1..)
-            .map(|k| k * FIXED_ONE)
-            .take_while(|&d| d <= p.climb_height)
-            .flat_map(|d| {
-                [
-                    [d, 0, 0],
-                    [-d, 0, 0],
-                    [0, d, 0],
-                    [0, -d, 0],
-                    [0, 0, d],
-                    [0, 0, -d],
-                ]
-            });
-        up.chain(around)
+        depenetration_offsets(p.step_height, p.climb_height)
             .find(|off| !q.overlaps(&self.body([0, 1, 2].map(|k| foot[k] + off[k]))))
     }
 

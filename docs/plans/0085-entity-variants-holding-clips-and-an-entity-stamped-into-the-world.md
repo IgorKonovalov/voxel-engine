@@ -25,11 +25,11 @@
 > `apps/flythrough/assets/entities/`, `docs/entities.md`) and
 > [Plan 0078](done/0078-the-entity-pool-frees-models-by-handle-stable-instance-slots-and-a-reset.md)
 > (it rewrites `entities.rs`'s instance write and gives the handle its generation) have merged
-> into main. It edits the files [Plan 0079](0079-entities-aware-of-floor-and-walls-a-surface-mover-the-smoothed-normal-and-a-wandering-demo.md)'s
+> into main. It edits the files [Plan 0079](done/0079-entities-aware-of-floor-and-walls-a-surface-mover-the-smoothed-normal-and-a-wandering-demo.md)'s
 > Phase 3 and [Plan 0082](0082-squash-and-stretch-a-scale-per-part-in-the-pose-and-the-clips.md)
 > edit (`clip.rs`, `rig.rs`, `entities.rs`, `entity.wgsl`, `spider.rig`), so the recommended
 > slot is **after Plan 0082 merges** (owner question 1); it may run beside
-> [Plan 0077](0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md)
+> [Plan 0077](done/0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md)
 > and 0079's Phase 4 (apps only). Before the lane starts the architect re-reads Phases 1 to 3
 > against the tip. Read against `plan-0063` c5c655ad, `plan-0062` 9e630854 and the
 > `chore-clip-recorder` branch; the tree's names win when the lane starts.

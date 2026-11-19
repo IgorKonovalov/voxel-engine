@@ -192,6 +192,7 @@ pub(super) fn composite_hdr_pass(
             Io::Float,
             Io::Float,
             Io::ReadStorage,
+            Io::ReadStorage,
         ],
     );
     let pipeline = compute_pipeline(
