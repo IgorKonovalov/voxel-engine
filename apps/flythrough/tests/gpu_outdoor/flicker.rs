@@ -2,6 +2,48 @@
 // `gpu_outdoor.rs` (kept apart for the file-size cap).
 
 mod flicker {
+    /// Plan 0086 Phase 24a bar 2 (ADR-0076 rule 4's form): a dig changes nothing outside its
+    /// reach. `reading::dig_split`'s rig (the hills of seed 1 at noon, the spawn's view 30 degrees
+    /// down, the fly-through's defaults, FSR 2 from 640 x 360 to 960 x 540, the live queue drained;
+    /// `VXE_SPLIT_TIME` another hour), the 1 m dig about 35 voxels ahead: over every frame pair
+    /// from the one ending at the dig's frame N to N + 16, the share of display pixels outside
+    /// the box dilated by 64 voxels whose largest channel changes by over 4 levels is at most
+    /// 0.5 % (the settled strip's largest 0.191 %; the tip before the fix printed in the log);
+    /// at N the lighting pixels outside the dilated box that cast the sky ray are no more than
+    /// at N - 1 and those of age 0 no more than the most of the 8 still frames before, the
+    /// history's two bits set, neither change bit raised and the restarts unchanged. The share
+    /// inside the dilated box is printed (Phase 21's bars hold there).
+    #[test]
+    #[ignore = "soak"]
+    fn a_dig_changes_nothing_outside_its_reach() {
+        let Some(rows) = reading::dig_split() else {
+            return;
+        };
+        let b = reading::SPLIT_BEFORE;
+        let (still, after) = rows.split_at(b);
+        let n = &after[0];
+        let worst = after
+            .iter()
+            .map(|r| r.share_out)
+            .fold(0.0f64, f64::max);
+        println!(
+            "dig: outside the reach at most {worst:.3} % over 4; inside at N {:.3} %",
+            n.share_in
+        );
+        assert!(worst <= 0.5, "outside the reach: {worst:.3} % over 4 levels");
+        assert!(
+            n.cast_out <= still[b - 1].cast_out,
+            "sky rays cast outside the reach: {} at N, {} at N - 1",
+            n.cast_out,
+            still[b - 1].cast_out
+        );
+        let age0 = still.iter().map(|r| r.age0_out).max().unwrap_or(0);
+        assert!(n.age0_out <= age0, "age 0 outside: {} at N, at most {age0} still", n.age0_out);
+        assert_eq!(n.history, 0b11, "the history bits at N");
+        assert!(!n.flags_changed, "no change bit at N");
+        assert_eq!(n.restarts, still[b - 1].restarts, "no restart at N");
+    }
+
     mod reading {
         use super::super::support;
         use support::defects::{Shot, Stepper, dig_ahead, grid_of, queue_step};
@@ -75,6 +117,437 @@ mod flicker {
             strip(&mut rig, &mut s, &cam, "dig", "fresh");
             settle(&mut rig, &mut s, &cam, 600);
             strip(&mut rig, &mut s, &cam, "dig", "settled");
+        }
+
+        /// Phase 24a's split of the dig's view-wide flash: [`flicker_dig`]'s rig, the frame
+        /// before the dig (N - 1) read, then the dig's frame N and [`SPLIT_AFTER`] more. Per
+        /// frame the frame-wide counters (the history bits and the lighting flags the encode
+        /// wrote, the restarts, the sky and lights change bits, the store's chunks and window,
+        /// the queue's digs) and the lighting pixels' counts inside and outside the dig's box
+        /// dilated by 64 voxels: the sky rays cast, the history's age 0 and the chained count;
+        /// per frame pair the share of display pixels over 4 levels inside and outside. The
+        /// frames N - 1 to N + 2 land under `live/flicker/dig/current/split/`.
+        #[test]
+        #[ignore = "reading"]
+        fn flicker_dig_split() {
+            dig_split();
+        }
+
+        /// [`flicker_dig_split`]'s rig and split: its rows, `None` without an adapter.
+        pub(in super::super) fn dig_split() -> Option<Vec<SplitRow>> {
+            let (mut rig, cam) = support::terms::hills_rig()?;
+            let cam = pitched(&cam, -30.0);
+            let mut s = strip_frame(&mut rig, split_sky(), &cam);
+            // Attribution switches: `VXE_SPLIT_FILTER=0` the a-trous off, `VXE_SPLIT_FACE=1` the
+            // sky term's normal the face's, `VXE_SPLIT_BOUNCE=0` no bounce floor.
+            let mut l = s.frame.lighting();
+            if std::env::var("VXE_SPLIT_FILTER").as_deref() == Ok("0") {
+                l.filter = false;
+            }
+            if std::env::var("VXE_SPLIT_FACE").as_deref() == Ok("1") {
+                l.sky_normal = vxe_render::SkyNormal::Face;
+            }
+            if std::env::var("VXE_SPLIT_BOUNCE").as_deref() == Ok("0") {
+                l.sky_bounce = 0.0;
+            }
+            s.frame.set_lighting(l);
+            // Drained before the dig, so the split reads one state on any binary.
+            let mut n = 0;
+            while n < 30_000 && !s.frame.bake_queue().is_some_and(|q| q.empty()) {
+                queue_step(&mut rig, &mut s.frame, &cam);
+                s.run(&rig, &cam);
+                n += 1;
+            }
+            println!(
+                "split: drained {} after {n} more frames",
+                s.frame.bake_queue().is_some_and(|q| q.empty())
+            );
+            settle(&mut rig, &mut s, &cam, 240);
+            Some(split_frames(&mut rig, &mut s, &cam, "dig", &mut queue_step))
+        }
+
+        /// [`flicker_dig_split`] on a streamed world as the window streams it: the hills of
+        /// seed 1 about the spawn at the fly-through's residency (`RESIDENCY`, full 16, LOD 24)
+        /// and mirror (the default budget, `stream_record_chunks`, a following window), the
+        /// streamer polled and the mirror synced every frame, the live queue stepped with the
+        /// streamer's residency; [`STREAM_SETTLE`] frames (`VXE_SPLIT_SETTLE`) before the split.
+        #[test]
+        #[ignore = "reading"]
+        fn flicker_dig_streamed() {
+            use std::cell::RefCell;
+            use vxe_render::{GpuWorld, MirrorConfig, QueueView, Window};
+            use vxe_world::{ChunkCoord, PersistConfig, StreamConfig, Streamer, Tier, World};
+            let residency = flythrough::RESIDENCY;
+            let budget = vxe_render::DEFAULT_BUDGET_BYTES;
+            let Some((device, queue, adapter)) = support::reading_device(budget) else {
+                return;
+            };
+            let source = flythrough::outdoor::OutdoorSource::new(1);
+            let (eye, facing) = source.spawn(flythrough::outdoor::Spawn::Outside);
+            let world = World::new(&flythrough::outdoor_materials());
+            let streamer = RefCell::new(Streamer::new(
+                std::sync::Arc::new(source),
+                StreamConfig {
+                    residency,
+                    workers: 8,
+                    persist: PersistConfig::default(),
+                },
+            ));
+            let side = 2 * (residency.r_lod + residency.hysteresis) + 1;
+            let mut gpu = GpuWorld::with_config(
+                &device,
+                MirrorConfig {
+                    budget_bytes: budget,
+                    record_chunks: Some(flythrough::stream_record_chunks(residency)),
+                    ..MirrorConfig::new(Window::Follow { side })
+                },
+            );
+            {
+                use support::SyncNow;
+                let mut st = streamer.borrow_mut();
+                st.set_radii(1, 1);
+                st.update(&world, &[eye]);
+                gpu.apply_events(&st.wait_idle(&world));
+                gpu.set_focus(eye);
+                gpu.sync_now(&world, &device, &queue).expect("the mirror fits");
+                st.set_radii(residency.r_full, residency.r_lod);
+            }
+            let mut rig = Rig {
+                device,
+                queue,
+                gpu,
+                adapter,
+                world,
+            };
+            let p = eye.0.map(|v| v as f32 + 0.5);
+            let d = facing.map(|v| v as f32);
+            let cam = flythrough::camera_looking_at(p, [p[0] + d[0], p[1] + d[1], p[2] + d[2]]);
+            let cam = pitched(&cam, -30.0);
+            let f = flicker_frame(&rig, split_sky(), None, false);
+            let mut s = Stepper::new(&rig, f);
+            let mut tick = |rig: &mut Rig, f: &mut vxe_render::Frame, cam: &Camera| {
+                let mut st = streamer.borrow_mut();
+                st.update(&rig.world, &[eye]);
+                rig.gpu.apply_events(&st.poll(&rig.world));
+                rig.gpu.set_focus(eye);
+                let mut enc = rig.device.create_command_encoder(&Default::default());
+                rig.gpu
+                    .sync(&rig.world, &rig.queue, &mut enc)
+                    .expect("the mirror fits");
+                rig.queue.submit([enc.finish()]);
+                let resident_fn = |c: ChunkCoord| st.tier(c) == Some(Tier::Full);
+                let view = QueueView {
+                    eye: cam.position.to_array(),
+                    forward: cam.basis().0.to_array(),
+                    resident: Some(&resident_fn),
+                    samples: None,
+                    interval_s: 1.0 / 60.0,
+                    hold: Some(residency.r_full + rig.gpu.light_radius() + 1),
+                    half_angle: {
+                        let [w, h] = f.output_size();
+                        vxe_render::internals::view_half_angle(cam.vfov, w as f32 / h as f32)
+                    },
+                    frustum: None,
+                    full_radius: Some(residency.r_full),
+                    lod_radius: Some(residency.r_lod.max(residency.r_full)),
+                };
+                f.bake_queue_step(&rig.device, &rig.queue, &mut rig.gpu, &rig.world, &view)
+                    .expect("the queue runs")
+                    .expect("the queue's step")
+            };
+            let settle_n: u32 = std::env::var("VXE_SPLIT_SETTLE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(STREAM_SETTLE);
+            for n in 0..settle_n {
+                let q = tick(&mut rig, &mut s.frame, &cam);
+                s.run(&rig, &cam);
+                if n % 300 == 0 {
+                    println!(
+                        "streamed settle {n}: mirrored {}, pending {}, queue depth {}",
+                        rig.gpu.mirrored_chunks(),
+                        rig.gpu.pending_chunks(),
+                        q.depth
+                    );
+                }
+            }
+            split_frames(&mut rig, &mut s, &cam, "dig-streamed", &mut tick);
+        }
+
+        /// The split's sky: noon, or the clock at `VXE_SPLIT_TIME` (`HH:MM`).
+        fn split_sky() -> vxe_render::sky::Sky {
+            let minutes = std::env::var("VXE_SPLIT_TIME").ok().and_then(|t| {
+                let (h, m) = t.split_once(':')?;
+                Some(h.parse::<f64>().ok()? * 60.0 + m.parse::<f64>().ok()?)
+            });
+            match minutes {
+                Some(minutes) => flythrough::daylight::Clock {
+                    minutes,
+                    ..Default::default()
+                }
+                .sky(flythrough::outdoor::BASE_Z as f32),
+                None => noon(),
+            }
+        }
+
+        /// The frames [`flicker_dig_streamed`] runs before its split.
+        const STREAM_SETTLE: u32 = 1800;
+
+        /// Frames [`flicker_dig_split`] reads after the dig's.
+        const SPLIT_AFTER: usize = 16;
+        /// Frames it reads before the dig, the last N - 1.
+        pub(in super::super) const SPLIT_BEFORE: usize = 8;
+
+        /// One frame of the split: its read-backs and counters.
+        struct SplitFrame {
+            shot: Shot,
+            history: u32,
+            lighting: u32,
+            restarts: u64,
+            sky_changed: bool,
+            lights_changed: bool,
+            store_chunks: u64,
+            store_coarse: u64,
+            window: Option<vxe_world::ChunkExtent>,
+            q: vxe_render::QueueStats,
+            /// Per lighting pixel: the stored part's, the direct part's and the filter's output
+            /// luminance, the pair's sky mean and the stored flag (the moments' w).
+            parts: Vec<[f32; 5]>,
+        }
+
+        /// A frame's queue step (and, on a streamed rig, the stream's poll and the mirror's
+        /// sync before it).
+        type Tick<'a> = dyn FnMut(&mut Rig, &mut vxe_render::Frame, &Camera) -> vxe_render::QueueStats + 'a;
+
+        fn split_frame(rig: &mut Rig, s: &mut Stepper, cam: &Camera, tick: &mut Tick<'_>) -> SplitFrame {
+            let q = tick(rig, &mut s.frame, cam);
+            let shot = s.step(rig, cam);
+            let f = &s.frame;
+            let (history, lighting) = f.last_encoded_flags();
+            let st = f.store().stats(0, 0, 0);
+            let parts = {
+                use vxe_render::debug::read_rgba16f;
+                let (d, q) = (&rig.device, &rig.queue);
+                let lum = |p: &[f32; 4]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
+                let acc = read_rgba16f(d, q, f.accumulated());
+                let dir = read_rgba16f(d, q, f.direct_accumulated());
+                let fil = read_rgba16f(d, q, f.filtered());
+                let pair = read_rgba16f(d, q, f.visibility_pair());
+                let mom = read_rgba16f(d, q, f.moments());
+                (0..acc.len())
+                    .map(|i| [lum(&acc[i]), lum(&dir[i]), lum(&fil[i]), pair[i][0], mom[i][3]])
+                    .collect()
+            };
+            SplitFrame {
+                parts,
+                shot,
+                history,
+                lighting,
+                restarts: f.history_restarts(),
+                sky_changed: f.sky_changed(),
+                lights_changed: f.lights_changed(),
+                store_chunks: st.chunks,
+                store_coarse: st.coarse_chunks,
+                window: f.store().piece(),
+                q,
+            }
+        }
+
+        /// The split's frames on `rig` from a settled `s`: N - 1, the dig, N .. N + SPLIT_AFTER;
+        /// the table printed and written, its rows returned.
+        fn split_frames(
+            rig: &mut Rig,
+            s: &mut Stepper,
+            cam: &Camera,
+            scene: &str,
+            tick: &mut Tick<'_>,
+        ) -> Vec<SplitRow> {
+            let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../live/flicker")
+                .join(scene)
+                .join("current/split");
+            std::fs::create_dir_all(&dir).expect("the split's directory");
+            let mut frames: Vec<SplitFrame> = (0..SPLIT_BEFORE).map(|_| split_frame(rig, s, cam, tick)).collect();
+            let (min, max) = dig_ahead(rig, &mut s.frame, cam);
+            let (lo, hi) = (min.map(|v| v - 64), max.map(|v| v + 64));
+            for _ in 0..=SPLIT_AFTER {
+                frames.push(split_frame(rig, s, cam, tick));
+            }
+            let inside = |h: &[f32; 4]| {
+                h[3] < 1e30
+                    && (0..3).all(|k| {
+                        let v = h[k].floor() as i64;
+                        (lo[k]..=hi[k]).contains(&v)
+                    })
+            };
+            let n = (OUT[0] * OUT[1]) as usize;
+            let gw_of = |sh: &Shot| {
+                ((sh.hits.len() as f64 * f64::from(INTERNAL[0]) / f64::from(INTERNAL[1]))
+                    .sqrt()
+                    .round() as usize)
+                    .max(1)
+            };
+            let mut out = String::new();
+            let mut worst = 0.0f64;
+            let mut rows = Vec::with_capacity(frames.len());
+            for (k, fr) in frames.iter().enumerate() {
+                let label = if k < SPLIT_BEFORE {
+                    format!("N-{}", SPLIT_BEFORE - k)
+                } else {
+                    format!("N+{}", k - SPLIT_BEFORE)
+                };
+                let sh = &fr.shot;
+                let (mut cast_in, mut cast_out, mut a0_in, mut a0_out, mut g_in) =
+                    (0u32, 0u32, 0u32, 0u32, 0u32);
+                for (g, h) in sh.hits.iter().enumerate() {
+                    let i = inside(h);
+                    g_in += u32::from(i);
+                    let c = u32::from(sh.cast[g]);
+                    let a = u32::from(h[3] < 1e30 && sh.age[g] < 0.5);
+                    if i {
+                        cast_in += c;
+                        a0_in += a;
+                    } else {
+                        cast_out += c;
+                        a0_out += a;
+                    }
+                }
+                let mut pair = String::new();
+                let (mut share_in, mut share_out) = (0.0, 0.0);
+                if k > 0 {
+                    let a = &frames[k - 1].shot;
+                    let gw = gw_of(sh);
+                    let (mut over_in, mut over_out, mut px_in) = (0u64, 0u64, 0u64);
+                    for i in 0..n {
+                        let g = grid_of(i, OUT[0] as usize, OUT[1] as usize, gw, sh.hits.len());
+                        let is_in = inside(&sh.hits[g]) || inside(&a.hits[g]);
+                        px_in += u64::from(is_in);
+                        let d = (0..3)
+                            .map(|j| a.display[i * 4 + j].abs_diff(sh.display[i * 4 + j]))
+                            .max()
+                            .unwrap_or(0);
+                        if d > OVER[0] {
+                            if is_in {
+                                over_in += 1;
+                            } else {
+                                over_out += 1;
+                            }
+                        }
+                    }
+                    let px_out = n as u64 - px_in;
+                    share_out = 100.0 * over_out as f64 / px_out.max(1) as f64;
+                    share_in = 100.0 * over_in as f64 / px_in.max(1) as f64;
+                    if k >= SPLIT_BEFORE {
+                        worst = worst.max(share_out);
+                    }
+                    pair = format!(
+                        "; over 4 inside {share_in:.3} % of {px_in}, outside {share_out:.3} % of {px_out}"
+                    );
+                }
+                rows.push(SplitRow {
+                    share_in,
+                    share_out,
+                    cast_out,
+                    age0_out: a0_out,
+                    history: fr.history,
+                    flags_changed: fr.sky_changed || fr.lights_changed,
+                    restarts: fr.restarts,
+                });
+                let ms = |name: &str| {
+                    vxe_render::FRAME_PASSES
+                        .iter()
+                        .position(|&p| p == name)
+                        .and_then(|i| sh.passes.get(i).copied())
+                        .unwrap_or(f64::NAN)
+                };
+                pair.push_str(&format!(
+                    "; ms light {:.3} temporal {:.3} atrous {:.3} step {:.3}",
+                    ms("light"),
+                    ms("temporal"),
+                    ms("atrous"),
+                    fr.q.stages.total_ms
+                ));
+                let line = format!(
+                    "split {scene} {label}: history bits {:#04b}, lighting {:#010x} (sky changed {}, lights changed {}), restarts {}; \
+                     store chunks {} coarse {} window {:?}; queue digs {} digs baked {} whole {} depth {}; \
+                     lighting px inside {g_in}: cast in {cast_in} out {cast_out}, age 0 in {a0_in} out {a0_out}; \
+                     missing {} chained {} black {}{pair}",
+                    fr.history,
+                    fr.lighting,
+                    fr.sky_changed,
+                    fr.lights_changed,
+                    fr.restarts,
+                    fr.store_chunks,
+                    fr.store_coarse,
+                    fr.window.map(|w| (w.min.0, w.size())),
+                    fr.q.digs,
+                    fr.q.digs_baked,
+                    fr.q.digs_whole,
+                    fr.q.depth,
+                    sh.missing,
+                    sh.chained,
+                    sh.black,
+                );
+                println!("{line}");
+                out.push_str(&line);
+                out.push('\n');
+                if (SPLIT_BEFORE - 1..SPLIT_BEFORE + 3).contains(&k) {
+                    // The parts' means over the lighting pixels inside that cast at the dig's
+                    // frame N, at this frame.
+                    let n_sh = &frames[SPLIT_BEFORE].shot;
+                    let mut sum = [0.0f64; 5];
+                    let mut cnt = 0u64;
+                    for (g, p) in fr.parts.iter().enumerate() {
+                        if g < n_sh.cast.len() && n_sh.cast[g] && inside(&n_sh.hits[g]) {
+                            cnt += 1;
+                            for j in 0..5 {
+                                sum[j] += f64::from(p[j]);
+                            }
+                        }
+                    }
+                    let m = sum.map(|v| v / cnt.max(1) as f64);
+                    let line = format!(
+                        "split {scene} {label} parts over N's cast pixels ({cnt}): stored {:.4} direct {:.4} filtered {:.4} pair x {:.4} stored flag {:.3}",
+                        m[0], m[1], m[2], m[3], m[4]
+                    );
+                    println!("{line}");
+                    out.push_str(&line);
+                    out.push('\n');
+                }
+                if (SPLIT_BEFORE - 1..SPLIT_BEFORE + 3).contains(&k) {
+                    support::write_png(
+                        &dir.join(format!("frame-{label}.png")),
+                        &sh.display,
+                        OUT[0],
+                        OUT[1],
+                    );
+                }
+            }
+            let line = format!(
+                "split {scene}: the largest outside share over 4 over the pairs from N - 1 to N on {worst:.3} %; adapter {}",
+                rig.adapter
+            );
+            println!("{line}");
+            out.push_str(&line);
+            std::fs::write(dir.join("split.txt"), out).expect("the split's table");
+            rows
+        }
+
+        /// One frame of [`split_frames`]: frames N - [`SPLIT_BEFORE`] to N - 1, then N to N +
+        /// [`SPLIT_AFTER`]; the shares (percent of the display pixels over 4 levels against the
+        /// frame before; 0 at the first) inside and outside the box dilated by 64 voxels, and the
+        /// frame's counters.
+        pub(in super::super) struct SplitRow {
+            pub share_in: f64,
+            pub share_out: f64,
+            /// Lighting pixels outside the dilated box that cast the sky ray, and whose
+            /// history's age is 0.
+            pub cast_out: u32,
+            pub age0_out: u32,
+            pub history: u32,
+            /// The sky or the lights' change bit.
+            pub flags_changed: bool,
+            pub restarts: u64,
         }
 
         /// The generated castle (the belt's `castle`, its tiles above the floor) placed on the
@@ -314,6 +787,30 @@ mod flicker {
             pin: Option<f32>,
             key_off: bool,
         ) -> Stepper {
+            let f = flicker_frame(rig, sky, pin, key_off);
+            let mut s = Stepper::new(rig, f);
+            let mut n = 0;
+            while n < 6000 && !s.frame.bake_queue().is_some_and(|q| q.empty()) {
+                queue_step(rig, &mut s.frame, cam);
+                s.run(rig, cam);
+                n += 1;
+            }
+            println!(
+                "adapter {}, the queue drained {} after {n} frames",
+                rig.adapter,
+                s.frame.bake_queue().is_some_and(|q| q.empty())
+            );
+            s
+        }
+
+        /// The strips' frame: [`strip_frame_with`]'s settings, the live queue started, no
+        /// frame stepped.
+        fn flicker_frame(
+            rig: &Rig,
+            sky: vxe_render::sky::Sky,
+            pin: Option<f32>,
+            key_off: bool,
+        ) -> vxe_render::Frame {
             let mut f = vxe_render::Frame::with_sizes(&rig.device, INTERNAL, OUT);
             f.set_upscaler_kind(
                 &rig.device,
@@ -358,19 +855,7 @@ mod flicker {
                 vxe_render::DEFAULT_BAKE_SLICE_MS,
             );
             f.set_bake_coarse(8, 2);
-            let mut s = Stepper::new(rig, f);
-            let mut n = 0;
-            while n < 6000 && !s.frame.bake_queue().is_some_and(|q| q.empty()) {
-                queue_step(rig, &mut s.frame, cam);
-                s.run(rig, cam);
-                n += 1;
-            }
-            println!(
-                "adapter {}, the queue drained {} after {n} frames",
-                rig.adapter,
-                s.frame.bake_queue().is_some_and(|q| q.empty())
-            );
-            s
+            f
         }
 
         fn settle(rig: &mut Rig, s: &mut Stepper, cam: &Camera, frames: u32) {

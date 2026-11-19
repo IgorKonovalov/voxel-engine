@@ -208,6 +208,17 @@ impl Frame {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// `Params.history` (bit 0 the lighting history, bit 1 the upscaler's) and `Params.lighting`
+    /// as the last encode wrote them to the GPU: a reading of which frame-wide flags a frame
+    /// raised.
+    pub fn last_encoded_flags(&self) -> (u32, u32) {
+        let [h, l] = &self.state.last_flags;
+        (
+            h.load(std::sync::atomic::Ordering::Relaxed),
+            l.load(std::sync::atomic::Ordering::Relaxed),
+        )
+    }
+
     /// The size the hit pass and the lighting passes render at.
     pub fn internal_size(&self) -> [u32; 2] {
         [self.targets.width, self.targets.height]

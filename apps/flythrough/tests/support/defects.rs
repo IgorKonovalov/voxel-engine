@@ -20,6 +20,9 @@ pub struct Shot {
     pub age: Vec<f32>,
     /// The light pass's ms, where the adapter has timestamps.
     pub light_ms: Option<f64>,
+    /// Every pass's ms in [`vxe_render::FRAME_PASSES`]' order, where the adapter has
+    /// timestamps; empty from [`read`].
+    pub passes: Vec<f64>,
     /// The store's black and missing counts.
     pub black: u32,
     pub missing: u32,
@@ -71,14 +74,19 @@ impl Stepper {
             t.resolve(&mut enc);
         }
         rig.queue.submit([enc.finish()]);
-        let light_ms = self.timer.as_ref().map(|t| {
-            let slot = vxe_render::FRAME_PASSES
-                .iter()
-                .position(|&n| n == "light")
-                .expect("a light pass");
-            t.read_all_ms(&rig.device)[slot]
-        });
-        read(rig, f, light_ms)
+        let passes = self
+            .timer
+            .as_ref()
+            .map(|t| t.read_all_ms(&rig.device))
+            .unwrap_or_default();
+        let light_ms = vxe_render::FRAME_PASSES
+            .iter()
+            .position(|&n| n == "light")
+            .and_then(|slot| passes.get(slot).copied());
+        Shot {
+            passes,
+            ..read(rig, f, light_ms)
+        }
     }
 }
 
@@ -101,6 +109,7 @@ pub fn read(rig: &Rig, f: &Frame, light_ms: Option<f64>) -> Shot {
             .map(|p| p[2])
             .collect(),
         light_ms,
+        passes: Vec::new(),
         black: ss.still_black,
         missing: ss.missing,
         chained: ss.fallback,

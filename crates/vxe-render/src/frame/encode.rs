@@ -281,6 +281,14 @@ impl Frame {
     ) {
         self.binds.tick();
         let uni = self.write_uniforms(queue, world, params, keep);
+        for (slot, v) in self
+            .state
+            .last_flags
+            .iter()
+            .zip([uni.p.history, uni.p.lighting])
+        {
+            slot.store(v, std::sync::atomic::Ordering::Relaxed);
+        }
         let binds = self.bind_groups(device, encoder, world);
         self.record(device, queue, encoder, &uni, &binds, timer);
     }

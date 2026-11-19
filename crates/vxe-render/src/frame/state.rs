@@ -220,6 +220,9 @@ pub(super) struct FrameState {
     /// Whether the last encode with history found the headlamp's light changed (its switch,
     /// parameters or shadow walk; [`Frame::lamp_changed`]).
     pub(super) lamp_changed: std::sync::atomic::AtomicBool,
+    /// `Params.history` and `Params.lighting` as the last encode wrote them
+    /// ([`Frame::last_encoded_flags`]).
+    pub(super) last_flags: [std::sync::atomic::AtomicU32; 2],
     /// The list of lights ([`Frame::set_lights`]) and its uniform.
     pub(super) lights: LightsState,
     /// The a-trous dispatches the last encode recorded ([`Frame::atrous_dispatches`]).
@@ -301,6 +304,7 @@ impl FrameState {
             emission_changed_at: None,
             history: std::sync::Mutex::new(History::default()),
             lamp_changed: std::sync::atomic::AtomicBool::new(false),
+            last_flags: Default::default(),
             lights: LightsState::new(device),
             atrous_dispatches: std::sync::atomic::AtomicU32::new(0),
             light_near: std::sync::Mutex::default(),

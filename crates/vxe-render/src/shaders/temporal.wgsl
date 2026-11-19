@@ -21,7 +21,8 @@
 //                                        fallback hit's emissive part), then the age: frames of
 //                                        history reused, 0 after a reset; then 1 where the
 //                                        emissive part is the store's (the a-trous passes it
-//                                        through), else 0
+//                                        through), 2 where the pair's sky term rides with it,
+//                                        else 0
 //   9  uniform           edits           the frame's edit boxes (edits.wgsl's `Edits`)
 //  10  texture_2d<f32>   strata_in       the gradient pass's strata (gradient.wgsl), read in
 //                                        the gradient mode (Params.lighting bit 3): the
@@ -69,7 +70,14 @@
 // record visibility, a stale one included, else the column map's answer at the hit lifted into
 // the face's air, `column_estimate`) and this frame's sample left out, a sample clamped at FIREFLY_K times the larger of the long and short means once the
 // age passes SKY_SHORT, and the age falling toward SKY_FALL_MIN where the short mean leaves
-// the long mean's band. The ray's term joins no screen history: its luminance joins the
+// the long mean's band. At a cube face whose own cell holds a record (a stale ring brick's,
+// the ray cast at it until its re-bake lands) the pair's mean is coloured by the baked term's
+// form (`sky_baked_term`: the smoothed normal's mix and the bounce floor) with the pair's mean
+// as the face's own visibility, so the switch at the stale bit is between two estimates of one
+// term (ADR-0070), and where the pair is at its cap it rides with the stored part around the
+// filter as the baked term does (the moments' w 2; atrous.wgsl adds no pair term there);
+// elsewhere the term is `sky_pair_term`, which the a-trous and composite passes add from the
+// pair. The ray's term joins no screen history: its luminance joins the
 // moments, and the filter's input (atrous.wgsl `variance`) or, with the filter off, the
 // composite adds it from this frame's pair (`sky_pair_term`, sky.wgsl).
 // The key light's term is `key_light_at(p, n)` times its visibility's running mean in the
@@ -720,6 +728,12 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     var estimate = -1.0;
     // The normal the column test lifts the hit along: the store face's, else the shading one.
     var lift_n = rec.n;
+    // A cube face whose own cell holds a sky record: its voxel, face and face normal, for the
+    // cast path's term in the baked term's form.
+    var rec_face = false;
+    var rec_voxel = vec3<i32>(0);
+    var rec_dir = 0u;
+    var rec_nf = vec3<f32>(0.0);
     let fresh = sample.w > 0.5 && view_mode() != VIEW_STEPS;
     sample.w = 0.0;
     var stored = false;
@@ -784,6 +798,10 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             let rv = store_sky_visibility(head, store_voxel(rec.p, nf), face);
             if (rv.y > 0.0) {
                 estimate = rv.x;
+                rec_face = true;
+                rec_voxel = store_voxel(rec.p, nf);
+                rec_dir = face;
+                rec_nf = nf;
             }
             var sv = rv;
             if (sv.y == 0.0) {
@@ -969,7 +987,25 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         estimate = column_estimate(rec.p, lift_n);
     }
     var pair = select(seed, pair_step(vis.x, hp, accepted, estimate), sky_cast);
-    let t_sky = sky_pair_term(sky_e, pair.x, vis.a, rec.n);
+    var t_sky = sky_pair_term(sky_e, pair.x, vis.a, rec.n);
+    // The moments' w: 0 a pixel the filter takes whole, 1 a stored pixel (its stored part passes
+    // around the filter), 2 a stored pixel whose pair's sky term passes around it too.
+    var kind = select(0.0, 1.0, stored);
+    if (sky_cast && rec_face && sky_on() && (params.lighting & LIGHTING_HOOK_SKY_RAY_ALWAYS) == 0u
+        && pair.w >= f32(max(sky.sky_history, 1u))) {
+        // A stale ring face whose pair holds the record's estimate: its term in the baked
+        // term's form with the pair's mean as the face's own visibility, carried by the stored
+        // part as the baked term is. With the filter off the composite adds `sky_pair_term`
+        // from the pair, so the stored part carries the difference instead.
+        let t_baked = sky_baked_term(store_head(), rec_voxel, rec_dir, pair.x, rec, rec_nf) * exposure_now();
+        if ((params.lighting & LIGHTING_FILTER_OFF) != 0u) {
+            accum = vec4<f32>(max(accum.xyz + t_baked - t_sky, vec3<f32>(0.0)), accum.w);
+        } else {
+            accum = vec4<f32>(accum.xyz + t_baked, accum.w);
+            kind = 2.0;
+        }
+        t_sky = t_baked;
+    }
     var t_key = vec3<f32>(0.0);
     if (vis.z > 0.5) {
         pair.y = key_mean(vis.y, hp.y, age, !accepted || fresh);
@@ -978,7 +1014,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (any(t_key > vec3<f32>(0.0))) {
         acc_direct += a_direct * vec4<f32>(t_key, luminance(t_key));
     }
-    let t = t_sky + t_key;
+    let t = select(t_sky, vec3<f32>(0.0), kind > 1.5) + t_key;
     if (any(t > vec3<f32>(0.0))) {
         let l2 = min(l + luminance(t), MOMENT_LUM_MAX);
         moments = mix(m_hist, vec2<f32>(l2, l2 * l2), a_mom);
@@ -990,5 +1026,5 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     // The moments of a luminance at most MOMENT_LUM_MAX: the rescaled history can carry them
     // past it, and the second moment's bound, 65 025, is still a finite half.
     let m_max = vec2<f32>(MOMENT_LUM_MAX, MOMENT_LUM_MAX * MOMENT_LUM_MAX);
-    textureStore(moments_out, px, vec4<f32>(min(moments, m_max), age, select(0.0, 1.0, stored)));
+    textureStore(moments_out, px, vec4<f32>(min(moments, m_max), age, kind));
 }

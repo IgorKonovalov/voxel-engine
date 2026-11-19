@@ -55,9 +55,10 @@
 //   7  texture_2d<f32>   accum_pass_in   the temporal pass's accumulation, read by the last
 //                                        iteration for the store's emissive part
 //   8  texture_2d<f32>   moments_pass_in the temporal pass's moments (z: the age; w: the part is
-//                                        the store's)
+//                                        the store's, 2 with the pair's sky term in it)
 //  10  texture_2d<f32>   vis_in          this frame's visibility samples: a tap whose cast flag
-//                                        (a > 0.5) differs from the centre's weighs 0
+//                                        (a > 0.5, w under 1.5) differs from the centre's
+//                                        weighs 0
 
 @group(2) @binding(0) var hit_pos_in: texture_2d<f32>;
 @group(2) @binding(1) var hit_info_in: texture_2d<u32>;
@@ -129,7 +130,11 @@ fn variance(@builtin(global_invocation_id) gid: vec3<u32>) {
     let rec = load_hit(px);
     // The pair's sky term where the ray was cast (temporal.wgsl keeps it out of the direct
     // part): filtered with the rest.
-    let sky_t = sky_pair_term(sky_e, textureLoad(pair_in, px, 0).x, textureLoad(vis_in, px, 0).a, rec.n);
+    // A pixel whose moments' w is 2 carries its pair's term in the stored part instead.
+    var sky_t = vec3<f32>(0.0);
+    if (mw.w < 1.5) {
+        sky_t = sky_pair_term(sky_e, textureLoad(pair_in, px, 0).x, textureLoad(vis_in, px, 0).a, rec.n);
+    }
     let c = select(acc.xyz, vec3<f32>(0.0), mw.w > 0.5) + direct.xyz + sky_t;
     let m = mw.xyz;
     // The pixel's own variance, less the moments' rounding: each moment is an f16 (relative step
@@ -166,6 +171,12 @@ fn variance(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 @group(2) @binding(6) var<uniform> step: Step;
+
+// Whether pixel `q`'s filtered quantity holds the pair's sky term: the ray was cast there and
+// its term does not ride with the stored part (the moments' w 2, temporal.wgsl).
+fn filtered_cast(q: vec2<i32>) -> bool {
+    return textureLoad(vis_in, q, 0).a > 0.5 && textureLoad(moments_pass_in, q, 0).w < 1.5;
+}
 
 // The B3-spline kernel's 1D weights at offsets -2..2.
 const KERNEL = array<f32, 5>(0.0625, 0.25, 0.375, 0.25, 0.0625);
@@ -212,7 +223,7 @@ fn atrous(@builtin(global_invocation_id) gid: vec3<u32>) {
     // A cast pixel's filtered quantity holds the pair's sky term and a stored pixel's does not
     // (its sky passes around the filter), so the two kinds estimate different quantities: a tap
     // of the other kind weighs 0.
-    let centre_cast = textureLoad(vis_in, px, 0).a > 0.5;
+    let centre_cast = filtered_cast(px);
     var w_sum = 0.0;
     var c_sum = vec3<f32>(0.0);
     var v_sum = 0.0;
@@ -225,7 +236,7 @@ fn atrous(@builtin(global_invocation_id) gid: vec3<u32>) {
                 continue;
             }
             let other = load_hit(q);
-            if (!other.found || (textureLoad(vis_in, q, 0).a > 0.5) != centre_cast) {
+            if (!other.found || filtered_cast(q) != centre_cast) {
                 continue;
             }
             let tap = textureLoad(src_in, q, 0);
