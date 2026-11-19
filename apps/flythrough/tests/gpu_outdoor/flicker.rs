@@ -153,6 +153,174 @@ mod flicker {
             Some(split_frames(&mut rig, &mut s, &cam, "dig", &mut queue_step))
         }
 
+        /// Plan 0094 Phase 1 bar 2: the hills of seed 1 at 17:00 at rest, [`dig_split`]'s pose
+        /// and frame (the spawn's view 30 degrees down, the defaults, FSR 2 at 1.5, the queue
+        /// drained, 240 settle frames), no dig: over 32 still pairs the share of display
+        /// pixels whose largest channel changes by over 4 levels (mean and largest pair). One
+        /// arm a test, each in its own process (a second frame on one rig did not drain its
+        /// queue in 6000 frames): the defaults under the auto exposure, the exposure pinned at
+        /// its settled value, then pinned with `key_no_jitter`, and pinned with `key_off`.
+        /// `VXE_TEST_ADAPTER` picks the adapter.
+        fn hills_at_rest(arm: &str, pin: bool, hooks: vxe_render::LightHooks) {
+            let Some((mut rig, cam)) = support::terms::hills_rig() else {
+                return;
+            };
+            let cam = pitched(&cam, -30.0);
+            let sky = flythrough::daylight::Clock {
+                minutes: 17.0 * 60.0,
+                ..Default::default()
+            }
+            .sky(flythrough::outdoor::BASE_Z as f32);
+            let mut s = strip_frame(&mut rig, sky, &cam);
+            settle(&mut rig, &mut s, &cam, 240);
+            if pin {
+                let e = s.frame.exposure_readout(&rig.device).map(|r| r.exposure).expect("a read-back");
+                s.frame.set_lighting(vxe_render::Lighting {
+                    exposure: vxe_render::Exposure::Manual(e),
+                    ..s.frame.lighting()
+                });
+            }
+            s.frame.set_light_hooks(hooks);
+            settle(&mut rig, &mut s, &cam, 64);
+            let mut last = s.step(&rig, &cam).display;
+            let n = last.len() / 4;
+            let mut shares = Vec::new();
+            for _ in 0..32 {
+                queue_step(&mut rig, &mut s.frame, &cam);
+                let now = s.step(&rig, &cam).display;
+                let c = support::rules::still_count(&last, &now, support::rules::T_STILL, None);
+                shares.push(100.0 * c as f64 / n as f64);
+                last = now;
+            }
+            let mean = shares.iter().sum::<f64>() / shares.len() as f64;
+            let max = shares.iter().copied().fold(0.0, f64::max);
+            println!(
+                "reading: hills 17:00 at rest, {arm}: over 4 mean {mean:.3} % max {max:.3} % of {n} px over 32 pairs ({})",
+                rig.adapter
+            );
+        }
+
+        #[test]
+        #[ignore = "reading"]
+        fn hills_at_rest_auto() {
+            hills_at_rest("auto exposure", false, vxe_render::LightHooks::default());
+        }
+
+        #[test]
+        #[ignore = "reading"]
+        fn hills_at_rest_pinned() {
+            hills_at_rest("exposure pinned", true, vxe_render::LightHooks::default());
+        }
+
+        #[test]
+        #[ignore = "reading"]
+        fn hills_at_rest_no_jitter() {
+            let hooks = vxe_render::LightHooks {
+                key_no_jitter: true,
+                ..Default::default()
+            };
+            hills_at_rest("exposure pinned, key jitter off", true, hooks);
+        }
+
+        #[test]
+        #[ignore = "reading"]
+        fn hills_at_rest_key_off() {
+            let hooks = vxe_render::LightHooks {
+                key_off: true,
+                ..Default::default()
+            };
+            hills_at_rest("exposure pinned, key light off", true, hooks);
+        }
+
+        /// Plan 0094 Phase 1 bar 4 (ADR-0076 rule 2's form): the forest of seed 1 under the sun
+        /// at `60,180`, the strips' frame with the leaves under `absorb` and under `voxel`, the
+        /// queue drained, 240 settle frames, a settled strip of 16 pairs (its largest share of
+        /// pixels over `T_STILL`), then a 90-degree yaw over 10 frames, 64 held, back over 10:
+        /// the share of display pixels over `T_RETURN` at the return frame against the settled
+        /// image, and the frames after the return until a pair's share over `T_STILL` is at or
+        /// under the settled strip's largest (at most 600). The queue drains for at most 30 000
+        /// frames first; each leaf style runs in its own process. `VXE_TEST_ADAPTER` picks the
+        /// adapter.
+        #[test]
+        #[ignore = "reading"]
+        fn turn_and_return_absorb() {
+            turn_and_return(flythrough::LeafShadow::Absorb);
+        }
+
+        #[test]
+        #[ignore = "reading"]
+        fn turn_and_return_voxel() {
+            turn_and_return(flythrough::LeafShadow::Voxel);
+        }
+
+        fn turn_and_return(leaf: flythrough::LeafShadow) {
+            use support::rules::{T_RETURN, T_STILL, return_count, still_count};
+            let Some((mut rig, cam)) = support::terms::forest_rig() else {
+                return;
+            };
+            let sky = flythrough::daylight::Clock {
+                fixed_sun: Some([60.0, 180.0]),
+                ..Default::default()
+            }
+            .sky(flythrough::outdoor::BASE_Z as f32);
+            {
+                let f = flicker_frame_with(&rig, sky, None, false, leaf);
+                let mut s = Stepper::new(&rig, f);
+                let mut n = 0;
+                while n < 30_000 && !s.frame.bake_queue().is_some_and(|q| q.empty()) {
+                    queue_step(&mut rig, &mut s.frame, &cam);
+                    s.run(&rig, &cam);
+                    n += 1;
+                }
+                println!(
+                    "turn and return, leaves {leaf:?}: the queue drained {} after {n} frames",
+                    s.frame.bake_queue().is_some_and(|q| q.empty())
+                );
+                settle(&mut rig, &mut s, &cam, 240);
+                let settled = s.step(&rig, &cam).display;
+                let px = settled.len() / 4;
+                let pct = |c: usize| 100.0 * c as f64 / px as f64;
+                let mut last = settled.clone();
+                let mut still_max = 0.0f64;
+                for _ in 0..16 {
+                    queue_step(&mut rig, &mut s.frame, &cam);
+                    let now = s.step(&rig, &cam).display;
+                    still_max = still_max.max(pct(still_count(&last, &now, T_STILL, None)));
+                    last = now;
+                }
+                let settled_return = pct(return_count(&settled, &last, T_RETURN));
+                for k in (1..=10).chain(std::iter::repeat_n(10, 64)).chain((1..10).rev()) {
+                    let c = yawed(&cam, 9.0 * k as f32);
+                    queue_step(&mut rig, &mut s.frame, &c);
+                    s.run(&rig, &c);
+                }
+                queue_step(&mut rig, &mut s.frame, &cam);
+                let ret = s.step(&rig, &cam).display;
+                let at_return = pct(return_count(&settled, &ret, T_RETURN));
+                let mut last = ret;
+                let mut back = None;
+                let mut series = Vec::new();
+                for i in 1..=600 {
+                    queue_step(&mut rig, &mut s.frame, &cam);
+                    let now = s.step(&rig, &cam).display;
+                    let share = pct(still_count(&last, &now, T_STILL, None));
+                    if i <= 64 && i % 8 == 0 {
+                        series.push(format!("{i}: {share:.2} % / ret {:.2} %", pct(return_count(&settled, &now, T_RETURN))));
+                    }
+                    last = now;
+                    if share <= still_max {
+                        back = Some(i);
+                        break;
+                    }
+                }
+                println!(
+                    "reading: turn and return, leaves {leaf:?} on {}: return frame {at_return:.3} % over {T_RETURN} (a settled frame 16 later {settled_return:.3} %); \
+                     settled pairs over {T_STILL} at most {still_max:.3} %; back at it after {back:?} frames; series {series:?}",
+                    rig.adapter
+                );
+            }
+        }
+
         /// [`flicker_dig_split`] on a streamed world as the window streams it: the hills of
         /// seed 1 about the spawn at the fly-through's residency (`RESIDENCY`, full 16, LOD 24)
         /// and mirror (the default budget, `stream_record_chunks`, a following window), the
@@ -764,7 +932,7 @@ mod flicker {
         /// The fly-through's frame at its defaults on `rig` (the look, voxel leaves, the lamp
         /// off, the outdoor auto exposure with the sky anchor, FSR 2 at 1.5, the live queue at
         /// the fly-through's settings), `sky` set, the queue stepped until it drains (at most
-        /// 6000 frames).
+        /// 30 000 frames).
         fn strip_frame(rig: &mut Rig, sky: vxe_render::sky::Sky, cam: &Camera) -> Stepper {
             strip_frame_with(rig, sky, cam, None, false)
         }
@@ -781,7 +949,7 @@ mod flicker {
             let f = flicker_frame(rig, sky, pin, key_off);
             let mut s = Stepper::new(rig, f);
             let mut n = 0;
-            while n < 6000 && !s.frame.bake_queue().is_some_and(|q| q.empty()) {
+            while n < 30_000 && !s.frame.bake_queue().is_some_and(|q| q.empty()) {
                 queue_step(rig, &mut s.frame, cam);
                 s.run(rig, cam);
                 n += 1;
@@ -802,6 +970,17 @@ mod flicker {
             pin: Option<f32>,
             key_off: bool,
         ) -> vxe_render::Frame {
+            flicker_frame_with(rig, sky, pin, key_off, flythrough::LeafShadow::Voxel)
+        }
+
+        /// [`flicker_frame`] with the leaves' shadow `leaf`.
+        fn flicker_frame_with(
+            rig: &Rig,
+            sky: vxe_render::sky::Sky,
+            pin: Option<f32>,
+            key_off: bool,
+            leaf: flythrough::LeafShadow,
+        ) -> vxe_render::Frame {
             let mut f = vxe_render::Frame::with_sizes(&rig.device, INTERNAL, OUT);
             f.set_upscaler_kind(
                 &rig.device,
@@ -814,7 +993,7 @@ mod flicker {
             });
             f.set_material_styles(
                 &rig.queue,
-                &flythrough::outdoor_styles(flythrough::LeafShadow::Voxel),
+                &flythrough::outdoor_styles(leaf),
             );
             f.set_lighting(vxe_render::Lighting {
                 lamp: false,

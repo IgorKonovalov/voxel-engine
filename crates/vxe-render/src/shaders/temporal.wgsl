@@ -22,7 +22,8 @@
 //                                        history reused, 0 after a reset; then 1 where the
 //                                        emissive part is the store's (the a-trous passes it
 //                                        through), 2 where the pair's sky term rides with it,
-//                                        else 0
+//                                        else 0; with COUNT_STORE plus the sky term's source
+//                                        word over 16 (`sky_source`)
 //   9  uniform           edits           the frame's edit boxes (edits.wgsl's `Edits`)
 //  10  texture_2d<f32>   strata_in       the gradient pass's strata (gradient.wgsl), read in
 //                                        the gradient mode (Params.lighting bit 3): the
@@ -624,6 +625,44 @@ fn count_rejection(prev: HitRecord, rec: HitRecord) {
     }
 }
 
+// The sky term's source at a hit, a reading's word (COUNT_STORE only), added to the moments'
+// w as `source / 16` (`source_fraction`): every reader of that w compares it against 0.5 or
+// 1.5, which a fraction under 0.5 leaves as it was. SOURCE_NONE: no store face, an entity or
+// the sky off; RECORD: the face's own cell holds a fresh record (no ray); RECORD_STALE: it
+// holds one marked stale (the ray cast); OWN_SUMMARY and NEIGHBOURS: no record, the chain's
+// value from the chunk's own summary or its face neighbours' (no ray); NO_VALUE: no record
+// and no chain value (the ray cast); MISMATCH: a chain value where the ray was cast.
+const SOURCE_NONE: u32 = 0u;
+const SOURCE_RECORD: u32 = 1u;
+const SOURCE_RECORD_STALE: u32 = 2u;
+const SOURCE_OWN_SUMMARY: u32 = 3u;
+const SOURCE_NEIGHBOURS: u32 = 4u;
+const SOURCE_NO_VALUE: u32 = 5u;
+const SOURCE_MISMATCH: u32 = 6u;
+
+// The source word of face `face` of voxel `v`: `record` its own cell holds a record, `chained`
+// the chain gave a value, `ray` the light pass cast the sky ray there.
+fn sky_source(head: StoreHead, v: vec3<i32>, face: u32, record: bool, chained: bool, ray: bool) -> u32 {
+    if (record) {
+        return select(SOURCE_RECORD, SOURCE_RECORD_STALE, ray);
+    }
+    if (chained) {
+        if (ray) {
+            return SOURCE_MISMATCH;
+        }
+        return select(SOURCE_NEIGHBOURS, SOURCE_OWN_SUMMARY,
+            store_summary_sky(head, v >> vec3<u32>(6u), face).y > 0.0);
+    }
+    return SOURCE_NO_VALUE;
+}
+
+fn source_fraction(source: u32, on_entity: bool) -> f32 {
+    if (!COUNT_STORE || on_entity) {
+        return 0.0;
+    }
+    return f32(source) / 16.0;
+}
+
 const ALPHA: f32 = 0.2;
 // The age at which a fallback's emissive mean stops taking samples: 64 samples, its noise an
 // eighth of one sample's, then held until the pixel resets.
@@ -737,6 +776,8 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     let fresh = sample.w > 0.5 && view_mode() != VIEW_STEPS;
     sample.w = 0.0;
     var stored = false;
+    // The sky term's source (COUNT_STORE only; `SOURCE_*`), carried in the moments' w.
+    var source = SOURCE_NONE;
     let on_entity = entity_reads_store(rec);
     if (reads_store(rec) || on_entity) {
         let ray = pixel_ray(full_px(gid.xy));
@@ -807,6 +848,9 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             if (sv.y == 0.0) {
                 sv = store_sky_fallback(head, store_voxel(rec.p, nf), face);
             }
+            if (COUNT_STORE) {
+                source = sky_source(head, store_voxel(rec.p, nf), face, rv.y > 0.0, sv.y > 0.0, sky_cast);
+            }
             if (sv.y > 0.0 && !sky_cast) {
                 sky_term = sky_baked_term(head, store_voxel(rec.p, nf), face, sv.x, rec, nf);
                 seed = vec4<f32>(sv.x, 0.0, sv.x, f32(max(sky.sky_history, 1u)));
@@ -823,7 +867,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             let fresh_w = select(0.0, 1.0, fresh);
             textureStore(accum_out, px, min(vec4<f32>(sample.xyz, fresh_w), vec4<f32>(HDR_MAX)));
             textureStore(direct_out, px, vec4<f32>(0.0));
-            textureStore(moments_out, px, vec4<f32>(0.0, 0.0, held, 1.0));
+            textureStore(moments_out, px, vec4<f32>(0.0, 0.0, held, 1.0 + source_fraction(source, on_entity)));
             textureStore(pair_out, px, seed);
             return;
         }
@@ -1026,5 +1070,5 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     // The moments of a luminance at most MOMENT_LUM_MAX: the rescaled history can carry them
     // past it, and the second moment's bound, 65 025, is still a finite half.
     let m_max = vec2<f32>(MOMENT_LUM_MAX, MOMENT_LUM_MAX * MOMENT_LUM_MAX);
-    textureStore(moments_out, px, vec4<f32>(min(moments, m_max), age, kind));
+    textureStore(moments_out, px, vec4<f32>(min(moments, m_max), age, kind + source_fraction(source, on_entity)));
 }

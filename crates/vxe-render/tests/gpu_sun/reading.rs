@@ -493,6 +493,44 @@ mod reading {
         }
     }
 
+    /// Plan 0094 Phase 1 bar 7's trace of the pair at lighting pixel `c` over `run`: per frame
+    /// the pair's four channels (the sky mean, the key mean, the short mean, the age), the sky
+    /// sample (its share of the rays, and whether they were cast), and the pair_step rule that
+    /// fired: `seed` (the age at SEED_AGE 8 after another age: a reset, the mean the seed),
+    /// `band` (the age fell, not to the seed: the short mean left the band), `clamp` (the
+    /// sample over FIREFLY_K 4 times the larger of last frame's long and short means, the age
+    /// past 8). Frames 0 to 24, then every 8th and every frame a rule fired or a sample hit.
+    fn pair_trace(label: &str, run: &[PairFrame], c: usize) {
+        let mut prev: Option<[f32; 4]> = None;
+        let mut lines = Vec::new();
+        for (i, (pair, vis)) in run.iter().enumerate() {
+            let p = pair[c];
+            let s = f32::from(vis[c][0]) / 255.0;
+            let cast = vis[c][3] > 127;
+            let mut rule = String::new();
+            if let Some(q) = prev {
+                if (p[3] - 8.0).abs() < 0.5 && (q[3] - 7.0).abs() > 0.5 {
+                    rule = "seed".into();
+                } else if p[3] < q[3] + 0.5 {
+                    rule = "band".into();
+                }
+                if q[3] > 8.0 && s > 4.0 * q[0].max(q[2]) {
+                    rule.push_str(&format!(" clamp (bound {:.4})", 4.0 * q[0].max(q[2])));
+                }
+            } else {
+                rule = format!("first (age {})", p[3]);
+            }
+            if i <= 24 || i % 8 == 0 || !rule.is_empty() || s > 0.0 {
+                lines.push(format!(
+                    "{i}: x {:.4} y {:.4} z {:.4} age {} | s {s:.3} cast {cast} {rule}",
+                    p[0], p[1], p[2], p[3]
+                ));
+            }
+            prev = Some(p);
+        }
+        println!("reading: pair trace, {label}:\n  {}", lines.join("\n  "));
+    }
+
     /// Plan 0086 Phase 5 bar 1: a floor point at the foot of a half-plane roof's edge 20 voxels
     /// up (the roof over y >= 512 across the 1024 x 1024 floor, a hit rate of 0.5), under
     /// `Sky::uniform(1.0)`, the ray forced on: the pair's mean at the centre pixel after frame
@@ -515,6 +553,7 @@ mod reading {
             return;
         };
         let c = centre();
+        pair_trace("half-plane edge", &run, c);
         let r: Vec<f32> = run.iter().map(|(p, _)| p[c][0]).collect();
         let hits = run.iter().filter(|(_, v)| v[c][0] > 127).count();
         let late = &r[64..];
@@ -561,6 +600,7 @@ mod reading {
                 return;
             };
             let c = centre();
+            pair_trace(&format!("6 x 6 hole, clamp {}", if no_clamp { "off" } else { "on" }), &run, c);
             let r: Vec<f32> = run.iter().map(|(p, _)| p[c][0]).collect();
             let hits = run.iter().filter(|(_, v)| v[c][0] > 127).count();
             let tail = &r[8..];

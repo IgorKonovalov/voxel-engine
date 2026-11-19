@@ -21,6 +21,7 @@ fn the_sky_ray_runs_only_where_stale() {
         let eye = [80.0, 128.0, 56.0];
         let mut q = rig(world, &Setup::at(eye))?;
         q.camera.pitch = -60f32.to_radians();
+        q.frame.set_count_store(true);
         q.frame.set_lighting(vxe_render::Lighting {
             sky_rays: rays,
             ..q.frame.lighting()
@@ -47,9 +48,19 @@ fn the_sky_ray_runs_only_where_stale() {
                 q.frame.accumulated().width() as usize,
                 q.frame.accumulated().height() as usize,
             );
-            (n, a[(h / 2) * w + w / 2][1])
+            let c = (h / 2) * w + w / 2;
+            let m = vxe_render::debug::read_rgba16f(&q.device, &q.queue, q.frame.moments());
+            let p = vxe_render::debug::read_rgba16f(&q.device, &q.queue, q.frame.visibility_pair());
+            let word = support::defects::source_of(m[c][3]);
+            (n, a[c][1], word, p[c])
         };
-        let at_rest: Vec<usize> = (0..4).map(|_| cast(&mut q).0).collect();
+        let rest: Vec<_> = (0..4).map(|_| cast(&mut q)).collect();
+        let at_rest: Vec<usize> = rest.iter().map(|r| r.0).collect();
+        let (_, rest_g, rest_word, _) = rest[3];
+        println!(
+            "sky rays {rays}: at rest the centre stored g {rest_g:.3}, source {}",
+            support::defects::SOURCE_NAMES[usize::from(rest_word).min(6)]
+        );
         println!("sky rays {rays}: settled in {settled} steps; at rest {at_rest:?} pixels cast");
         assert!(at_rest.iter().all(|&n| n == 0), "sky rays {rays}: {at_rest:?} at rest");
         // The camera's centre ray meets the floor about 23 voxels ahead: dig 10 voxels there.
@@ -62,10 +73,18 @@ fn the_sky_ray_runs_only_where_stale() {
             },
         ));
         let mut row = Vec::new();
+        let mut words = Vec::new();
         let mut quiet = 0;
         for f in 1..=240 {
-            let (n, centre) = cast(&mut q);
+            let (n, centre, word, pair) = cast(&mut q);
             row.push((n, centre));
+            words.push(format!(
+                "{f}:{}:pair {:.3}/{:.3}/{}",
+                support::defects::SOURCE_NAMES[usize::from(word).min(6)],
+                pair[0],
+                pair[2],
+                pair[3]
+            ));
             quiet = if n == 0 { quiet + 1 } else { 0 };
             if quiet >= 3 && f > 8 {
                 break;
@@ -79,6 +98,10 @@ fn the_sky_ray_runs_only_where_stale() {
         println!(
             "sky rays {rays}: after the dig, frame:cast pixels:centre stored g {}",
             text.join(" ")
+        );
+        println!(
+            "sky rays {rays}: the centre's source word and pair (mean/short/age) per frame {}",
+            words.join(" ")
         );
         assert!(quiet >= 3, "sky rays {rays}: still casting after 240 frames");
         if rays == 1 {

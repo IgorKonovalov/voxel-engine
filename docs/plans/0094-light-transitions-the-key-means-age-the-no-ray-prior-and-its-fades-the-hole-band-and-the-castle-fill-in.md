@@ -1,6 +1,6 @@
 # 0094: The light's transitions: the key mean's age at a still camera, the no-ray sky prior and its fades, the exposure's rate, the dig's hole band, and the castle's fill-in
 
-> **Status:** approved 2026-11-19 (the owner: "lets run 94 right away": the slot is right after Plan 0086, before Plan 0087, its lane stacked on plan-0086 until 0086 merges; question 2, the exposure rate, on its recommendation, 1/32 EV a frame, the owner judging it at Phase 7)
+> **Status:** in-progress (approved 2026-11-19: the owner: "lets run 94 right away"; question 2, the exposure rate, on its recommendation, 1/32 EV a frame, the owner judging it at Phase 7)
 > **Created:** 2026-11-19
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0076](../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
@@ -903,7 +903,7 @@ records it.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The readings, the key light's side | dev | not started | |
+| 1: The readings, the key light's side | dev | done; readings in [`logs/0094.md`](logs/0094.md); the sky term's source word added to the moments' `w` under `COUNT_STORE` (`temporal.wgsl`, outside Files touched); the rule-form unit tests in a CPU binary `tests/rules.rs` (not in `support/rules.rs`, which every gpu binary includes); 5.4's source is the own summary, not the neighbours' | committed with this row |
 | 2: The readings, the no-ray path's side | dev | not started | |
 | 2a: The light pass's compile cost, the pipeline cache | dev | not started | |
 | 3: The key mean keeps its age at a still camera | dev | not started | |
