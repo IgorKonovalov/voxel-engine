@@ -678,6 +678,17 @@ a cheap query.
 - Prefab stamping with rotation and masks; debug views (material ids, acoustic properties,
   coarse grids, flags); an in-app profiler overlay with GPU timestamps; a benchmark lane
   (`criterion` for CPU, timestamp queries for GPU) with readings committed per named machine.
+- The profiler across passes and threads: Plan 0091 (approved 2026-11-19, ADR-0077 accepted):
+  `profiling` facade scopes in `vxe-render` and the apps, none in `vxe-world`,
+  collected by puffin only under the fly-through's `profiler` feature; a dump as a Chrome trace,
+  a text tree and `run.json`'s `scopes_top` with a ranking script for agents; the GPU passes as
+  a lane; budget scopes that count overruns against `docs/nfr.md`'s lines; allocation counting;
+  the HUD's frame ticker with a frozen frame. **Order (owner, 2026-11-19): after Plans 0087 and
+  0089, before Plan 0090**; `docs/plans/README.md` carries the sequence.
+- WGSL hot reload in the fly-through: Plan 0092 (approved 2026-11-19, no ADR): an
+  mtime poll, the frame's pipelines rebuilt from disk inside an error scope, the old ones kept
+  and the error shown on the window on a compile failure. The owner placed it right
+  after Plan 0091, before Plan 0090, in its lane.
 - The runtime stamp is op kind 2 through `Server`, logged and replayed like an edit (Plan
   0018, v0.15.0).
 - Stamping at authored-building scale: a generated castle and dungeon, a 27-tile `.vox`

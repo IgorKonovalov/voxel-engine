@@ -250,7 +250,7 @@ Found at the close ([Plan 0083](plans/done/0083-anything-from-a-vox-palette-mate
 
 ### Hundreds or thousands of entities
 
-Parked 2026-11-16 by the owner ("minecraft can have thousands of entities"). Today: `MAX_ENTITIES` 64, `MAX_ENTITY_PARTS` 512 (`vxe-render` `entities.rs`), 6 instance bits in the hit record. The cost is the trace, not the caps: Plan 0062 Phase 4 (`docs/plans/logs/0062.md`) read 64 walkers at +3.4 to 4.4 ms on the RTX 3080 Laptop and +32 to 34 ms on the Radeon iGPU, growing with screen cover and shadowing lights. **Hundreds:** wider caps and hit bits, the instance tree built on the GPU, coarse far models, shadow rays testing only entities near their light (one or two plans, no ADR). **Thousands:** entities rasterized into the hit buffer beside the traced world, which reverses ADR-0050's choice: an ADR and a spike first. **The owner's direction (2026-11-16): trace only the near ones, merge the crowded ones.** Distance tiers: near entities traced in full; mid ones traced on a coarse merged model (parts folded into one volume at detail 1); far ones as one box or impostor, or dropped below a pixel. Clusters: entities sharing a spot re-voxelized together at low resolution on the GPU each frame (or every few) into one cluster volume, walked once per ray instead of once per overlapping entity. Shadow rays test the near tier only. The server's ray query stays exact per entity; the tiers are render-only. Pick up when a consumer needs more than 64 on screen.
+Parked 2026-11-16 by the owner ("minecraft can have thousands of entities"). Today: `MAX_ENTITIES` 64, `MAX_ENTITY_PARTS` 512 (`vxe-render` `entities.rs`), 6 instance bits in the hit record. The cost is the trace, not the caps: Plan 0062 Phase 4 (`docs/plans/logs/0062.md`) read 64 walkers at +3.4 to 4.4 ms on the RTX 3080 Laptop and +32 to 34 ms on the Radeon iGPU, growing with screen cover and shadowing lights. **Hundreds:** wider caps and hit bits, the instance tree built on the GPU, coarse far models, shadow rays testing only entities near their light (one or two plans, no ADR). **Thousands:** entities rasterized into the hit buffer beside the traced world, which reverses ADR-0050's choice: an ADR and a spike first. **The owner's direction (2026-11-16): trace only the near ones, merge the crowded ones.** Distance tiers: near entities traced in full; mid ones traced on a coarse merged model (parts folded into one volume at detail 1); far ones as one box or impostor, or dropped below a pixel. Clusters: entities sharing a spot re-voxelized together at low resolution on the GPU each frame (or every few) into one cluster volume, walked once per ray instead of once per overlapping entity. Shadow rays test the near tier only. The server's ray query stays exact per entity; the tiers are render-only. Pick up when a consumer needs more than 64 on screen. Sharpened 2026-11-19 (Bonsai's 1.1.0 and 1.3.10 notes): the CPU side needs a per-chunk entity list as the broadphase (the mover's sweeps and the entity ray query walk the chunk's list, not every instance) and an LRU eviction of models from the pool when the library outgrows it, on top of Plan 0078's free list.
 
 ### A timeline for clips, kept open
 
@@ -356,7 +356,10 @@ read on the castle. Pick up with the next start-up plan, or when a tester report
 Parked 2026-11-15 by Plan 0075 ("What this plan does NOT do"). A settings change of Plan 0069's
 `Rebuild` class could drop to the loading screen, rebuild, and step back in, instead of a restart.
 What it takes: the run's stages re-entered from a live run, the world and mirror torn down in
-place. Pick up after Plan 0069 lands, if a rebuild-class setting proves common.
+place. Pick up after Plan 0069 lands, if a rebuild-class setting proves common. Sharpened
+2026-11-19: it needs a drop-and-recreate test first, headless: build, drop, build again, and
+assert the mirror's VRAM reservation and the process's RSS return to the first build's figures
+(within a stated slack); a leak there is what makes a live rebuild worse than a restart.
 
 ### The pre-roll never settles at small residencies
 
@@ -477,6 +480,9 @@ the baked light's shader waste and the queue's scan to
 Pick up: at the render-profile plan's interview, or at the next close that touches the line.
 Plan 0069 (approved 2026-11-11, its answer 4) proposes the upscale, bake-slice and split lines
 under its "Budgets", sets them at its close from the readings and rewrites the ledger then.
+Sharpened 2026-11-19: Plan 0091's budget scopes (a scope that carries its `nfr.md` line and
+counts its overruns into `run.json`) make each line above executable; a line with no owner
+then at least has a counter, and the tester's report says how often it was crossed.
 
 ### The a-trous under the baked light: fewer iterations, or none
 
@@ -630,6 +636,17 @@ first line starting `frames: `. Match `frames: {FRAMES} frames;` instead.
 
 ## Tooling and process
 
+### A bugs journal: date, hours lost, tags, the lesson
+
+Raised 2026-11-19 (Bonsai's `bugs.md`: one heading per bug with the date, the hours it cost,
+whether it is closed, tags such as `concurrency`, and a paragraph on what it was and what to
+remember). Our defects live in plan logs and close reviews, spread over many files, so the
+same class of mistake (a held lock, an unstable clock, a stale golden) is not counted. **What
+it takes:** `docs/bugs.md` with that heading form, appended at every fix pass and close review
+that names a defect; `scripts/velocity.mjs` can count its headings by tag later. Size S. Low
+priority. **Pick up** when the owner wants the recurring classes named, or at a review that
+finds the same defect twice.
+
 ### The 64 private-intra-doc-link warnings in `cargo doc -p vxe-render`
 
 Noted 2026-11-17 from Plan 0069 Phase 2 (`docs/plans/logs/0069.md`): `cargo doc -p vxe-render
@@ -692,7 +709,10 @@ Per-frame and per-chunk readings are affected little. Readings should name the c
 (`/sys/devices/system/clocksource/clocksource0/current_clocksource`). Whether to boot with
 `tsc=reliable` or `clocksource=tsc`, or find the skew's cause (firmware, a kernel change at that
 boot), is the owner's call. Pick up: at the owner's next reboot, or before any plan's budget
-readings are compared with ones from before 2026-11-05.
+readings are compared with ones from before 2026-11-05. Sharpened 2026-11-19: Plan 0091's
+profiler reads `Instant` (through its backend) and the GPU timestamps, never a raw `rdtsc` as
+Bonsai does, so this entry stays a question of reading cost, not of correctness; per-brick laps
+inside hot loops stay out of the profiler's scopes for the same reason.
 
 ### Done: the tester's benchmarks with the lamp off
 
@@ -767,7 +787,10 @@ is Vulkan-only and keyed by the driver, so it helps a second start on the same m
 first; the driver's own disk cache already does part of that. What it takes: `pipeline_times`
 read with and without a cache file across two starts, on both adapters, after Plan 0045's
 Phase 4 has split the shaders (which changes what is compiled). Ready since 0045's close
-(2026-11-13): `pipeline_times` reads `internals::shader_sources()`.
+(2026-11-13): `pipeline_times` reads `internals::shader_sources()`. Sharpened 2026-11-19: Plan
+0092 (WGSL hot reload) rebuilds a pass's pipeline from a file on disk; a reloaded pipeline is a
+new compile the cache has not seen, so the cache and the reload are read together when this is
+picked up (the engine entry above is the same question from the start-up side).
 
 ### Comment, manifest and index drift found by the 2026-11-12 review
 
@@ -791,14 +814,18 @@ checks every PR and deploys from main). Two steps: first the existing `docs/` (A
 roadmap, budgets) plus rustdoc, with CI as a link and render guard; a getting-started guide and
 a gallery only once the look is picked (after Plans 0067 and 0058) and Plan 0045 has moved the
 files. Starlight's npm tree falls outside `cargo deny`, and mdBook is the lighter alternative,
-so it takes an ADR. Pick up when the owner asks.
+so it takes an ADR. Pick up when the owner asks. Sharpened 2026-11-19: a cheap first step
+needs no site: four numbered guides in `docs/` the way Bonsai's `docs/00_getting_started.md`
+to `03_async.md` read (get started, build, a first consumer, the threads), each under a page.
 
 ### Shader toolchain spike
 
 Parked 2026-10-31. Compare naga's SPIR-V against `spirv-opt -O` on the hit shader (VGPRs,
 milliseconds, both adapters), then try wgpu subgroups and `shader-f16` on the walk. Rust versus
 C for the CPU side was asked and answered no (GPU about 9 of 10.6 ms, CPU about 1 ms). Run when
-no lane holds the GPU.
+no lane holds the GPU. Sharpened 2026-11-19: Plan 0092's hot reload is this spike's loop made
+short (edit the WGSL, see the frame and the pass's timestamp without a restart), so run the
+spike after it lands; the spike's own question, a different compiler on the same WGSL, stays.
 
 ### A held fallback still moves on screen
 
@@ -968,7 +995,15 @@ Parked 2026-11-19: the owner pointed at [Bonsai](https://github.com/scallyw4g/bo
 voxel engine with meshed chunks, GL deferred shading and an in-engine editor, under WTFPL, active.
 The source paths below are Bonsai's. What we already carry was left out: octree LOD, generation-time
 stamping, AO, traced shadows, OIT, particles, the profiler, debug views, settings files, the
-sky.
+sky. A second pass (2026-11-19, read against this file) added the entries from "Per-job
+performance tracking" on, the profiler (Plan 0091) and WGSL hot reload (Plan 0092).
+
+**Rejected as alternatives (2026-11-19), so nobody re-opens them from Bonsai:** its 2.0 moved
+generation and editing to the GPU; ours stay on the CPU in `vxe-world`, headless and
+deterministic (ADR-0001, the non-negotiables), and a GPU source would break replay from seed
+plus log (ADR-0007). Its 1.6.2 stores a 16-bit HSV colour per voxel; ours stores a material id
+whose row carries colour, class and an opaque payload (ADR-0065), so a colour change is a row
+edit, not a re-write of every voxel.
 
 ### Edit algebra: smooth booleans, shape modifiers, more primitives
 
@@ -1014,7 +1049,10 @@ the surface normal in hand: cliff rock on steep faces, grass on flat ground. Its
 hot-reload in a playground (`docs/terrain_gen.md`). **What it takes:** a `WorldSource` helper in
 `vxe-world`, on the CPU, because Bonsai's GPU generation would break the headless world. Add a
 reloadable parameters file in the fly-through for tuning. Size S to M.
-**Pick up with** M10's outdoor work or a consumer's surface source.
+**Pick up with** M10's outdoor work or a consumer's surface source. Sharpened 2026-11-19: the
+part worth copying first is Bonsai's noise-to-value remap through a polyline (a table of
+`(in, out)` points, integer-friendly) and the small visualizer that draws the curve while it is
+edited (its 1.3.0 release notes); terrace, plateau and cliff come from that one remap.
 
 ### Bloom from HDR emission
 
@@ -1040,7 +1078,10 @@ swap the WASM component when it is rebuilt, then replay the op and input log fro
 the current tick, so state stays exact (determinism is what makes this possible). **What it
 takes:** a watcher in the fly-through and a re-instance in `vxe-script-wasm`, driven through
 `vxe-net`'s log. Size S to M. **Pick up with** the authoring loop (ADR-0072), or sooner if
-writing logic gets slow.
+writing logic gets slow. Sharpened 2026-11-19: one mtime watcher in the fly-through should
+serve every reloadable file: the WGSL (Plan 0092 builds the watcher), this component, and the
+settings file (Bonsai's `settings.init` and `hotkeys.init` are parsed by struct member name,
+its 1.4.2 notes), so a second reload adds a path and a handler, not a second poll.
 
 ### Versioned saves and logs, migrated on load
 
@@ -1057,7 +1098,60 @@ conditions and skip flags, so brushes, particles and nodes need no hand-written 
 table (ADR-0058) covers only the render settings. **What it takes:** a small proc-macro crate
 that derives overlay menu rows, used by the apps. Materials, brushes, sources and poses would
 then get rows for free. `crates/` gains no UI dependency. Size M. **Pick up with** the
-editor-interface entry under Later apps.
+editor-interface entry under Later apps. Sharpened 2026-11-19: the annotation set to copy is
+small: a range (`@ui_value_range`), a skip (`@ui_skip`) and an escape to a hand-written row
+(`@custom_ui`), as Bonsai's `render_settings.h` uses them; the derive needs no more at first.
+
+### Per-job performance tracking: reserve, retire and scopes per streaming and bake job
+
+Raised 2026-11-19 (Bonsai's `work_queue.h` `TrackPerformance` flag; its debug view draws a
+job's scopes over its reserve-to-retire span). Our streaming workers (`vxe-world`
+`stream/mod.rs`) and the bake queue's jobs are timed as stages and per-second lines, never as
+one job from its queueing to its retirement, so a job that waits long and runs short reads the
+same as one that runs long. **What it takes:** a job id and a reserve and retire frame index on
+each job, recorded into the profiler's frames as a span on the job's worker lane with the
+frame it was asked for and the frame it landed; a tally of jobs retired late per second on the
+HUD. Size S on top of Plan 0091, which owns the lanes. **Pick up** after Plan 0091, when a
+streaming or settle entry above asks why a chunk arrived late rather than why it ran slow.
+
+### Fan-in continuations: "generate these chunks, then bake their light" as one dependency
+
+Raised 2026-11-19 (Bonsai's `OnComplete`, `docs/03_async.md`): a job may name a continuation
+that runs once every job in its group has retired, so a fan-out of chunk jobs fans in without
+polling. Ours poll: the live queue re-checks each frame whether a chunk's reach is resident
+before its bake may run (the "reach-bound" census). **What it takes:** a group counter on the
+streaming pool's jobs and a continuation the last one fires (the bake request for the group),
+scheduling only, no change to what a job computes, so determinism holds. Size S to M, in
+`vxe-world`'s pool with the bake queue as the first client. **Pick up** when the settle
+readings (the entries under Next up) name the poll's latency, not the bake, as the wait.
+
+### World-space debug lines: lines, boxes and a highlighted voxel over the frame
+
+Raised 2026-11-19 (Bonsai's `src/engine/debug_draw.cpp`: lines, AABBs, a highlighted voxel,
+chunk boxes). We have a cutaway view, the HUD's text grid and the entity mark (ADR-0074); no
+way to draw a chunk's box, a sweep's path, a light's reach or a job's chunk in the world.
+**What it takes:** a line list the app fills each frame (world-space segments with a colour),
+drawn by one render pass after the composite and depth-tested against the hit buffer's
+distance, so a line behind rock hides; `vxe-render` owns the pass, the app owns the list.
+Size M. M7's debug views (material ids, coarse grids, flags) need it as their canvas.
+**Pick up** with the first M7 debug view, or when a streaming or collision entry above needs
+to see where a job or a sweep went.
+
+### Edit coalescing per chunk per tick: a check first
+
+Raised 2026-11-19 (Bonsai's 1.6.1 notes, per the research pass: several edits on one chunk in a
+tick give one re-mesh). Ours should already coalesce: `sync` visits the world's dirty-chunk set
+(`vxe-render` `gpu_world/mod.rs`), a set, so two ops on one chunk between syncs should give one
+upload. Not asserted anywhere read. **What it takes:** a headless test that applies two carves
+on one chunk, syncs once, and reads one chunk upload from the sync's counters; if it reads two,
+the fix is in the dirty set's handling. Size S. **Pick up** at the next sync or edit-cost plan.
+
+### Allocation counting per frame in the apps
+
+Raised 2026-11-19 (Bonsai counts every arena push into per-thread tables and prints
+`Allocations Pushes` on its status bar). Taken by Plan 0091 Phase 6 (proposed: a counting
+`#[global_allocator]` wrapper in the apps under its feature, the count on the HUD and in
+`run.json`); this line stays until that plan is approved, then leaves.
 
 ### A hybrid far field: raster the far LOD as meshes, march near
 
@@ -1112,6 +1206,21 @@ fly-through are the testbed's, and an editor app reopens them), and whether it w
 ADR-0072's text formats (recommended: the level file first, so the editor has something to edit).
 Pick up after ADR-0072's spike, or earlier as a placement-only editor over today's entities if
 the owner asks.
+
+### The placing interface, from best practices (part of the editor epic)
+
+Parked 2026-11-19 at Plan 0083's window 83d. Owner: the placing works better after 7d (ground
+snap, `F` free, `E` places, a digit swaps), "but for right interface of placing we should create a
+separate backlog entry and look for best practices", as part of the editor epic above, later. The
+fly-through's placement mode grew one request at a time. Those requests were a belt, a frame
+ghost, then a coarse ghost, the snap, the free mode, a scale of 1 to 4 whose limits show only on
+stdout ("castle: scale 1 only", "over the edit limit of 1024"), and keys added as the mouse went
+missing. **What it takes:** a survey of how editors and building games place large objects
+(Unity, Godot, Unreal, Minecraft's structure blocks, Teardown's editor, Valheim and Satisfactory
+build modes, MagicaVoxel). Cover snapping (grid, surface, footprint), free placement, rotate and
+scale gizmos with their limits shown, a preview that tells what will be cleared, undo, and
+keyboard, mouse and pad parity. Then a design that this entry's plan and the editor app share.
+**Pick up with** the editor-interface entry above.
 
 
 ### A second consumer in mind: a user-built, multiplayer game platform
