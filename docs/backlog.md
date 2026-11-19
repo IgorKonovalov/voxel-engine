@@ -828,7 +828,15 @@ Phase 4 has split the shaders (which changes what is compiled). Ready since 0045
 (2026-11-13): `pipeline_times` reads `internals::shader_sources()`. Sharpened 2026-11-19: Plan
 0092 (WGSL hot reload) rebuilds a pass's pipeline from a file on disk; a reloaded pipeline is a
 new compile the cache has not seen, so the cache and the reload are read together when this is
-picked up (the engine entry above is the same question from the start-up side).
+picked up (the engine entry above is the same question from the start-up side). Read by Plan
+0094 Phase 2a (2026-11-19, `docs/plans/logs/0094.md`): the test supports' `wgpu::PipelineCache`
+pays 0.01 on the RTX against an empty driver cache (29.4 s cold, 0.24 s warm, 2.0 MB) and
+nothing on lavapipe (0.97, 84 B: no compiled code), so Plan 0094 keeps it for hardware adapters
+only. What that plan leaves here (owner, 2026-11-19): the light pass's default-on compile cost
+on lavapipe, the fly-through's light-pass build stage 3.7 s against the base's 2.7 (debug) with
+every default-off arm already out of the default pipelines, about 1.0 s a device of default-on
+code, about 1.4 s a frame-building test of the gate; the next step is a per-module compile
+reading (`pipeline_times` per `PASSES` row) to name the module that grew.
 
 ### Comment, manifest and index drift found by the 2026-11-12 review
 
@@ -1297,3 +1305,37 @@ list lights' shadow visibility on a running mean of its own, as the key light's 
 visibility pair's `g` (Plan 0086 Phase 19), reprojected and reset where the light moves. Pick
 up when the third window (Plan 0086 Phase 24 run 3) judges the walls under the default anchor
 4 still grainy, or a consumer fires lights at walls in the dark.
+
+### Settle early: a coarse area answer where an estimate is not still, and a hold once it is
+
+Parked 2026-11-19 (owner, at Plan 0094's Phase 1 and 2 readings: "light that is not still can be
+approximated around area and settle exit early; we don't need super precision if it becomes
+flicker", and "this exit early strategy can be used a lot around similar cases"). The principle:
+when an estimate is young or restarting, show a coarse answer pooled over its neighbourhood and
+narrow it as it ages; once its samples sit inside its band, hold it and move again only through
+one fade when the band is left. Plan 0094 takes the two forms for the visibility pair (Phase 3's
+settle on both means, Phase 6's age-weighted pool), and its window judges them. **A candidate
+rule for ADR-0076** ("an estimator at rest holds by construction, not by its cap"; the rejected
+alternative is a filter at a converged age), to be written at Plan 0094 Phase 7's verdict.
+Where else it might apply, each unread: **the exposure** (ADR-0033's two-stage already has a
+dead band in rule 5's still clause; a hold once the meter is within 1/64 EV); **the probes or
+lamp channel** (hold a probe whose samples sit in its band, Plan 0051's lamp channel grains at
+rest); **the denoiser's footprint** (the a-trous wide while the variance is young, none once
+settled, which is SVGF's intent and this plan's pool); **the fired lights' grain** (the entry
+above: a running mean that settles instead of a per-frame sample); **the entity lighting**
+(a part's coarse grain holds its light until the part moves); **the far field and LOD
+transitions** (hold a tile's converged value across a mip switch, fade the switch); **the bake
+queue's fresh chunks** (a landed chunk's summary as the coarse answer for its faces until the
+pair converges, then hold). Pick up per place when its flicker is read; Plan 0090's counter
+names the places.
+
+### A second `Frame` on one rig does not drain its bake queue
+
+Noted 2026-11-19 by Plan 0094 Phases 1 and 2 (`docs/plans/logs/0094.md`, bars 2 and 4 of
+Phase 1, bar 1 of Phase 2): on the hills, the castle's arms (b) and (c) and the forest's turn
+(twice on a fresh rig) the queue did not drain in 30 000 stepped frames, where a fresh process
+drained the same scene in 1200 to 3300; the undrained arms read up to 16 % of pixels over 4 at
+rest against under 1 % drained. Plan 0094 runs every arm in its own process. What it would take:
+a reading of the queue's depth and the job at its head on the second frame (a job that never
+lands, or a rig that re-marks what the first frame baked). A chore or the perf plan's; read
+before any gate test shares a rig between two frames.

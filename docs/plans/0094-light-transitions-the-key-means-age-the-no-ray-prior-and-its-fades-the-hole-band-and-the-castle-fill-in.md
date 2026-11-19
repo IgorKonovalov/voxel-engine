@@ -196,7 +196,8 @@ every default-off arm of the light pass (the penumbra spike, `absorb`, the readi
 the default pipeline, by an override constant where naga and the backends drop the dead branch
 (read, not assumed) and by a second pipeline built when the arm is picked where they do not;
 the GPU tests keep a `wgpu::PipelineCache` file per adapter and shader hash under `target/`,
-kept only if a second start reads at most half the first. **The three Phase 5 regressions** are
+kept only if a second start reads at most half the first (amended 2026-11-19 (owner): kept for
+hardware adapters, skipped on lavapipe; Phase 2a bar 4). **The three Phase 5 regressions** are
 traced in Phase 1 (the pair per frame from its reset, with its seed, age, band and sample, and
 the source word for the dug floor) and fixed where the trace points: 5.4 in the no-ray prior
 (Phase 5), 5.1 and 5.2 in the pair's estimator (its seed and its reset's rule, Phase 5), each
@@ -285,7 +286,14 @@ goldens against the picks are Phase 8's. Readings run as release tests on the RT
 under the exclusive perf lock with the load named (the dev reference; the RADV RENOIR is the
 slow adapter for cost lines); a bar every phase names the `gpu_*` binary it runs
 (`test-changed.mjs --binaries`). Rule-form thresholds are `T_still` 4, `T_fade` 4, `T_return`
-8, `F` 16 until Plan 0090 calibrates them.
+8, `F` 16 until Plan 0090 calibrates them. **Amended 2026-11-19 (architect), on Phases 1 and
+2's caveat:** a second `Frame` on one rig did not drain its bake queue in 30 000 frames in
+the hills' arms, the castle's arms (b) and (c) and the forest's turn, and the undrained
+arms read up to 16 % where the drained read under 1 %. So from here **every arm of a reading
+runs in its own process** (a fresh rig, `live/p1-run.sh`'s form), every table keeps its
+"queue drained" column, and a reading whose queue did not drain is printed with that word
+beside it and is never a bar's value. The cause (the queue, or the rig) is a followup, not
+this plan's.
 
 ### Phase 1: The readings, the key light's side: the age at a still camera, the ratio, the hills at rest, the tunnel's far end by term
 - **Owner skill:** dev
@@ -408,7 +416,8 @@ slow adapter for cost lines); a bar every phase names the `gpu_*` binary it runs
   nothing is removed. (3) **The pipeline cache for the GPU tests:** the test support's device
   helper opens a `wgpu::PipelineCache` from a file under `target/vxe-pipeline-cache/<adapter
   name and driver>/<hash of the shader sources>.bin` when the backend supports it (Vulkan:
-  lavapipe and the RTX; absent otherwise), passes it to every pipeline descriptor, and writes
+  lavapipe and the RTX; absent otherwise; amended 2026-11-19 (owner): hardware adapters only,
+  bar 4), passes it to every pipeline descriptor, and writes
   it back at the device's drop; a missing or stale file is a cold start, never an error. The
   engine's own cache under a game's cache directory stays the backlog's ("A wgpu pipeline cache
   owned by the engine"). The cache is kept only if it pays (bar 4); a cache that does not is
@@ -435,18 +444,36 @@ slow adapter for cost lines); a bar every phase names the `gpu_*` binary it runs
      (`__GL_SHADER_DISK_CACHE_PATH` to an empty directory, `--source outdoor --render 1280x720`)
      the light-pass stage at or under 15 s (main 9.4 s, 0086's tip 46.2) and init done at or
      under 35 s (main 29.1, the tip 67.2).
+     **Amended 2026-11-19 (owner):** the lavapipe half is **accepted at its reading**: with
+     every default-off arm of the walk out of the default light pipelines (`ae8d0722`, the
+     arms between markers that `compose` drops) the light stage reads 3.66 to 3.74 s against
+     5.11 to 5.16 before, frame creation 3.19 to 3.35 against 3.36 to 3.50 (debug, three runs
+     each, `live/p2a/lvp-*.log`); the 3.0 s bar is not met, and the rest of the cost is
+     default-on code (the arms' text removed outright read the same 3.6 to 3.7 s). The 3.7 s
+     stands as the phase's reading; the remainder (about 1.0 s over the base's 2.7) goes to the
+     backlog's "A pipeline cache for the renderer's shaders" entry, not to this plan. The RTX
+     cold-start half of this bar is still owed as written.
   3. **Every arm still works when picked, and the default image is unchanged.** The tests that
      pick an arm pass by name (`gpu_sun`'s penumbra tests, 0086 Phase 14's `absorb` test,
      every test that sets a `LightHooks` bit: `--binaries gpu_sun,gpu_outdoor,gpu_frame`); the
      goldens are byte-identical (`gpu_golden`, `gpu_outdoor_golden` by name); the banner tests
      unchanged.
-  4. **The cache pays, or it goes.** `a_second_start_reads_the_pipeline_cache` in `gpu_frame.rs`
-     (a frame built twice in two processes, or once with a cold file and once warm in one; the
-     pipelines' creation time from `pipeline_times`; about 8 s cold plus the warm run): on
-     lavapipe the warm creation is at most half the cold (the expectation is a reading; if
-     lavapipe's cache holds no compiled code and reads near 1.0, the RTX decides: at most a
-     quarter there), else the cache is removed and the log says what it read. The cache file's
-     absence or corruption is a cold start (the test deletes and truncates it once each).
+  4. **The cache stays for hardware adapters and is skipped on lavapipe.** **Amended
+     2026-11-19 (owner)** on the reading (`gpu_frame` `reading::the_pipeline_cache_pays`,
+     release, the lock): llvmpipe cold 5852 ms, warm 5682 (0.97), 84 B of data, so the cache
+     holds no compiled code there; the RTX cold 29 436 ms against an empty driver cache, warm
+     236 (0.01), 2.0 MB of data, cold again 395 ms off the driver's own disk cache. The test
+     supports' device helper opens the cache file only when the adapter is a hardware device
+     (`DeviceType::Cpu` skips it: lavapipe and any software adapter pay a write for nothing),
+     and the test asserts both halves: on a CPU adapter no cache file is opened or written
+     (the gate's form, under 1 s of added wall); on a hardware adapter the warm creation is at
+     most a quarter of the cold against an empty driver cache (the RTX's reading 0.01; the
+     phase's RTX run, named in the log). The cache file's absence or corruption is a cold
+     start (the test deletes and truncates it once each). The 0.01 is also the reading the
+     backlog's engine-side entry ("A wgpu pipeline cache owned by the engine") asked for: the
+     cold first start after an install or a driver update (46.2 s at 0086's tip) is what the
+     engine's own cache would cut; that cache stays the backlog's, with the reading recorded
+     there.
   5. **The gate's wall falls by the compile's share.** The gpu tier's four cheap binaries
      (`gpu_exposure`, `gpu_frame`, `gpu_sky`, `gpu_walk`; 0086's broad reading: 143.7 s main,
      242.5 s tip, 31 tests) re-read quiet at this phase's tip: at or under 170 s (a guess: the
@@ -469,16 +496,55 @@ slow adapter for cost lines); a bar every phase names the `gpu_*` binary it runs
   the key term alone at a converged age (SVGF's, ADR-0018), is built only when the trunks' age
   reads at cap after the fix and the 512-frame residual stays over the bar with the ratio
   between 0.7 and 1.5, and never in the same commit as the age fix.
+  **Amended 2026-11-19 (architect), on Phase 1's table and the owner's words of the same day
+  ("light that is not still can be approximated around area and settle exit early; we don't
+  need super precision if it becomes flicker").** The table names lead (c): the normal test
+  resets 416 of 14 229 tested hits a frame at a still camera (2.93 %), 4.67 % of the trunk
+  pixels are under age 64 at frame 128 (the 1 % line), and the ratio reads 0.94 to 1.36 with
+  the rest of the ages at cap, so the residual that remains once the restarts stop is the
+  estimator's own variance at its cap (the display residual at 512 frames, cap 256: trunks
+  p99 15 to 30, mean 0.99 to 5.10, over the 8 / 2 bar). Two consequences. **First, the restart
+  fix stays and comes first:** a rejection at a still camera is rule 2's violation and costs
+  nothing to remove; smoothing young pixels in front of it (the owner's "approximate around
+  area") would hide a wrong rejection at a cost and pool a thin trunk's pixels with the sky
+  and floor beside it. The recommended form is lead (c)'s cheapest: at a still camera (the
+  view matrix unchanged, the jitter aside) the reprojection's tap is the pixel itself, with
+  its own previous normal, age and pair, so no neighbour's normal is tested; the tunnel's far
+  end (Phase 1 bar 3: the key mean) is re-read, definitely, not conditionally. **Second, the
+  settle (the owner's "exit early") replaces (ii) as the next arm, before any filter:** a pair
+  whose age is at its cap and whose last `F` samples all lie inside its variance band stops
+  blending (its age channel holds a value above the cap as the mark; both means hold; the
+  sample and the band test still run every frame, so the cost is a compare); it unfreezes
+  when the band is left as the reset rule already defines it (a real change: an edit box, a
+  moving shadow edge, the sun's clock drifting the samples out of the band) or when the pixel
+  is disoccluded or its history rejected, and the new value rides rule 3's fade from the held
+  one. At rest the frame-to-frame change of a settled pixel is then 0 by construction, and
+  what remains against the 1200-frame reference is a **still grain** (the estimator's value at
+  the frame it settled, sd about `sqrt(g (1 - g) / (2 cap - 1))`, 0.03 in `g` at cap 256 and
+  `g` 0.5), which the owner judges by eye in Phase 7 run 1 beside `bin86d`. (ii) is demoted to
+  Phase 8's: built only if the owner's word in the window is that the still grain reads as
+  dirt, never on the ratio rule alone. The settle covers both of the pair's means (the key
+  mean and the sky mean) in one mechanism, so Phase 5's switches are its unfreeze cases and
+  need no second rule; it lives in `temporal.wgsl`'s pair update and the age channel, 0 B.
+  The settle is a new stability rule (an estimator at rest holds by construction, not by its
+  cap) with a rejected alternative ((ii), a filter at a converged age at +0.4 ms on the slow
+  adapter), so it is an ADR-0076 rule the architect writes at the window's verdict (ADR-0076
+  is still proposed with Plan 0090; the backlog's "Settle early" entry holds the candidate);
+  the dev proceeds on it as a measured arm with a flag (`LightHooks::no_settle` or a settings
+  row under the cheap-modes rule) so Phase 7 can show both.
 - **Files touched:** `crates/vxe-render/src/shaders/temporal.wgsl`, `shaders/atrous.wgsl` (only
   (ii)), `crates/vxe-render/tests/gpu_sun.rs`, `apps/flythrough/tests/gpu_outdoor/canopy.rs`,
-  `docs/plans/logs/0094.md`.
+  `frame/settings.rs` (the settle's flag, amended 2026-11-19), `docs/plans/logs/0094.md`.
 - **Done when:**
   1. **A still camera keeps its age.** `a_still_camera_keeps_its_history` in `gpu_outdoor.rs`
      (the forest at `10,180` under `voxel`, 64 still frames at 160 x 90 under FSR 2 at 1.5, the
      queue drained; about 5 s on lavapipe, in the gate; the 320 x 180, 128-frame form as a
      reading): after 64 still frames the share of trunk and floor pixels whose history age is
-     under 32 is at or under 1 % (the before's share printed from Phase 1's table), and the
-     history rejections per frame at rest are under a tenth of the before's.
+     under 32 is at or under 1 % (the before's share printed from Phase 1's table: trunks
+     4.67 %, floor 1.08 % under age 64), and the history rejections per frame at rest are
+     under a tenth of the before's (416 normal and 37 other of 14 229 tested a frame, so at
+     most 45 in all; amended 2026-11-19 (architect) with the figures). The settle is off for
+     this bar (it reads the ages, which the settle holds at the mark).
   2. **Every rejection the fix narrows is still defended.**
      `a_moving_entity_leaves_no_ghost_and_no_stale_shadow`, `a_moving_shadow_edge_resets_the_history`,
      `a_reset_between_steps_restarts_the_history`, the disocclusion rigs and Phase 3's
@@ -494,6 +560,20 @@ slow adapter for cost lines); a bar every phase names the `gpu_*` binary it runs
      factor of 2 of each other with the ratio between 0.7 and 1.5, disclosed, and (ii) built
      and the bar re-read with (ii)'s cost (a guess: +0.05 ms RTX, +0.4 ms RENOIR in the
      forest). The guesses stand at `T_still` 4's scale until Phase 8 pins the window's value.
+     **Amended 2026-11-19 (architect):** the same reading is taken with the settle on and
+     off, both arms printed in one table: with it on, from the frame the last pixel of each
+     class settles (printed; the expectation: within `cap + F` frames of the restart fix) the
+     pop share per pair over the trunks and the floor is 0 and the frame-to-frame p99 is 0;
+     the residual against the reference (mean, p99) is the **still grain**, printed, not
+     barred, for the owner's eye in Phase 7. The "(ii) built" clause moves to Phase 8 by the
+     owner's word; this phase builds no filter. One more clause, the settle's release:
+     `a_moving_shadow_edge_resets_the_history` and `a_reset_between_steps_restarts_the_history`
+     pass by name with the settle on (a real change still moves a settled pixel), and a new
+     reading on the hills at 17:00 with the clock running at 1x for 60 s (`VXE_SPLIT_TIME`,
+     the hills rig): the settled pixels' releases per frame and the rule 3 class of their
+     traces (the expectation: the sun's drift releases a pixel when its samples leave the
+     band, and each release is one `Fade`; a `Flash` share over 1 % names the band too narrow
+     for the settle, and the dev stops with the table).
   4. **Turning away loses less.** The `absorb` and `voxel` return-frame shares and frames to
      settle after the fix, in the log against Phase 1 bar 4; `absorb` stays a non-default
      setting with its light pass disclosed (the backlog's entry), and `docs/flythrough.md`'s row
@@ -551,7 +631,22 @@ slow adapter for cost lines); a bar every phase names the `gpu_*` binary it runs
   share for longer than the bake's length; then B, disclosed. A provisional record written at
   a whole dig's opening (the column's bit per brick direction, `VIS_BAKED` set, no stale bit)
   is B's CPU-side form and covers the stamped chunk but not the dig ring's new cells; it is
-  built only if B is taken. (2) **The fade.** At a pixel with accepted history whose no-ray
+  built only if B is taken.
+  **Amended 2026-11-19 (architect), after Phase 1 bar 7's 5.4 trace:** the dug floor's frame 1
+  reads the chunk's **own** summary (0.988, the hill's open faces), not the neighbours', so
+  (1) as written would leave it. The own summary of a chunk with a dig job queued for it
+  **predates the edit** and is wrong by the same amount as a neighbour's: for the castle's
+  keep (a stamp is a dig job) it is the hill's open faces for the bake's length, 3.8 % of the
+  walls' over-8 pixels in Phase 2's table as "switch own summary > record". So the rule is
+  **a summary answers only while no job is queued for its chunk**: the dig queue sets the
+  summary record's `SKY_STALE` bit at the enqueue (beside `mark_sky_stale` on the slots), the
+  landing's bake rewrites the summary and clears it, and `sky_chained` and
+  `store_sky_fallback` treat a stale summary as absent, so the chunk's no-record faces take
+  the no-record arm (A or B) until the job lands. For a dig that lands the next frame this is
+  one frame of the arm's answer; the column above a hole the column map does not resolve reads
+  open (5.2's trace), so under A frame 1 reads about the pre-dig value from the seed (8 of 9
+  samples), which is continuity, not a defect: **the defect 5.4 names is the step at the
+  landing**, and (2)'s fade is its fix. Bar 9 is rewritten below. (2) **The fade.** At a pixel with accepted history whose no-ray
   value changes between frames (chain to store at a landing, chain to chain at a neighbour's
   landing, pair to store at the ring's re-bake) the pair carries the old value and ramps
   linearly to the new over `F` frames (16, ADR-0046's `FADE`; one constant for every source,
@@ -575,11 +670,23 @@ slow adapter for cost lines); a bar every phase names the `gpu_*` binary it runs
   `SEED_AGE` 8 samples, so an open seed over a 0.56 hit rate lifts frame 65's mean by about
   `8 (1 - 0.56) / 72`, 0.05, which with the band's floor is the 0.06 over) or the band.
   Every reset and clamp test of 0086 stays green by name.
+  **Amended 2026-11-19 (architect), by the traces:** 5.1 **and** 5.2 are both the column's
+  seed (1.0, open, at `SEED_AGE` 8; no reset fired in either trace and the band did not
+  move), so the reset's rule is **not** 5.2's fix and stays as it is. The fix is the seed's
+  **weight by its source**: a record's value keeps `SEED_AGE` 8 (it is the face's own baked
+  visibility), the column's answer takes a smaller weight `SEED_COLUMN` (a coarse prior that
+  does not resolve a 6 x 6 hole), 2 as the starting value: 5.2's mean then reads 2 / 11 at
+  frame 9 (0.18, under the bar's 0.25; at 8 it reads 0.5) and 5.1's lift at frame 65 falls
+  from `8 (1 - 0.56) / 73`, 0.048, to `2 (1 - 0.56) / 67`, 0.013. Under A the no-record faces
+  of Phase 5 (1) seed from the column at this weight too, so the castle's and the hole's
+  young ray pixels converge faster and flicker more for the first frames: the age-weighted
+  pool of Phase 6 (a) is the measure for that, and bars 4 and 9 print them.
 - **Files touched:** `crates/vxe-render/src/shaders/shade.wgsl`, `shaders/temporal.wgsl`,
   `shaders/sky.wgsl` (the fade's term), `shaders/atrous.wgsl` and `composite.wgsl` (the fade
   carried around the filter as the stored part is), `frame/encode.rs`, `frame/pipelines.rs`,
   `frame/output_binds.rs` (the target, if one), `bake/queue/*` (the provisional record, only
-  under B), `crates/vxe-render/tests/gpu_sun.rs`, `apps/flythrough/tests/gpu_outdoor/defects.rs`,
+  under B), `bake/queue/digs.rs` and `bake/summary.rs` (the summary's stale bit at the
+  enqueue, amended 2026-11-19), `crates/vxe-render/tests/gpu_sun.rs`, `apps/flythrough/tests/gpu_outdoor/defects.rs`,
   `gpu_outdoor/flicker.rs`, `docs/plans/logs/0094.md`.
 - **Done when:**
   1. **A no-record face reads no neighbour.** `a_face_with_no_record_reads_its_own_summary_or_the_column`
@@ -588,6 +695,11 @@ slow adapter for cost lines); a bar every phase names the `gpu_*` binary it runs
      would read 1.0 and the column 0.5; 16 frames at 160 x 90; about 3 s): the centre's faces
      read the own summary where the chunk has one, else the column's 0.5 within `1 / (SEED_AGE +
      1)` under A (the pair's seed) or exactly under B; the before reads 1.0, printed.
+     **Amended 2026-11-19 (architect):** a second clause on the same rig: with the centre
+     chunk's summary present but its `SKY_STALE` bit set (a dig job queued for the chunk and
+     not landed), the centre's faces read the arm's answer, not the summary (the source word
+     printed is never "own summary" while the bit is set); and `the_sky_ray_runs_only_where_stale`'s
+     centre on frame 1 prints a source word other than "own summary" in both arms.
   2. **A landing is one fade.** `a_landing_is_one_fade` on `a_dig_leaves_no_dots`' rig in
      `gpu_sun.rs` (the key light off; about 8 s; the same test binary, no added wall if the
      rig is shared): over the hole's own faces and the ring, with `old` the mean of the 8
@@ -608,7 +720,10 @@ slow adapter for cost lines); a bar every phase names the `gpu_*` binary it runs
      share's line; the before from Phase 2 printed), and the fresh over-8 mean is under the
      regression line 3.431 % by more than the 0.2-point noise; the over-8 pixels by source
      printed (the expectation: the chain's share near 0, the remainder young ray pixels on the
-     keep under A).
+     keep under A). **Amended 2026-11-19 (architect):** if the young ray pixels alone hold the
+     share over the 1 % line, Phase 6's age-weighted pool is read on this rig too (the keep's
+     young pixels are each other's neighbours) before B is considered; the owner's rule for the
+     keep is a coarse steady wall over a precise one that grains in.
   5. **The arms' cost:** the light pass on both adapters during the castle's bake under A and
      B (the per-frame series until the drain), the hills at rest unchanged (0 cast pixels at
      rest, `the_sky_ray_runs_only_where_stale` by name), and the fade's cost: the temporal and
@@ -630,11 +745,17 @@ slow adapter for cost lines); a bar every phase names the `gpu_*` binary it runs
      and 0.4993 as the before); `a_moving_shadow_edge_resets_the_history` and
      `a_reset_pixel_starts_from_its_record` still pass by name (the reset still fires on a
      real change).
-  9. **5.4, nothing before the re-bake lands.** `the_sky_ray_runs_only_where_stale`'s last
-     clause asserted again (soak, as it stands; 12 to 14 s): from the dig's first frame to the
-     landing the dug floor's centre stored value lies in `[0, baked + T_fade]` (the baked value
-     the frame after the landing, 3.58 at the tip; the tip's 24.828 on frame 1 printed as the
-     before) and its trace to the landing is one fade (rule 3's class `Fade`), in both arms.
+  9. **5.4, the dig's light changes once.** **Rewritten 2026-11-19 (architect)** (the form
+     "in `[0, baked + T_fade]` from frame 1" is struck: no source knows a new face's
+     visibility before its bake, the column above the hole reads open, and a frame-1 value at
+     the pre-dig value is continuity). `the_sky_ray_runs_only_where_stale`'s last clause
+     asserted again (soak, as it stands; 12 to 14 s): the dug floor's centre's stored value
+     from 8 frames before the dig to the landing plus `F + 16` is one rule 3 trace of class
+     `Fade` with `old` the pre-dig mean (25.1 at the tip) and `new` the baked value (3.58):
+     no frame leaves `[min - T_fade, max + T_fade]` (the tip's one-frame step 24.8 to 3.58 is
+     the before, printed, class `Flash` or `Dip` by the classifier, as read), the trace is
+     within `T_fade` of `new` by the landing plus `F`, and frame 1's source word is not "own
+     summary"; in both arms.
 
 ### Phase 6: The dig's hole band, and the bands bar restated
 - **Owner skill:** dev
@@ -648,8 +769,34 @@ slow adapter for cost lines); a bar every phase names the `gpu_*` binary it runs
   over the same band (the 8 pairs before the dig, the same pose and clock, printed; Phase 1 bar
   2's hills reading is the 17:00 still share), at noon and at 17:00, the before's values
   printed from `live/p24/gpu_outdoor_fix3`.
+  **Amended 2026-11-19 (architect), on Phase 2 bar 2's counters.** The hole band's over-4
+  pixels split a third **the sky ray on the hole's stale faces at the seed** (cast 35.0 /
+  27.0 % at 16:00 / 17:00, the pair at `SEED_AGE` 31.5 / 24.9 %, the seed 0.105 in `g` from
+  where it settles: one sample at weight 1 / 9 moves a stale face by up to 0.11, about 3
+  levels at the hill's sky term), a third **the key mean's restart on the faces the dig
+  uncovered** (history age 0 on 34.5 / 26.5 %), and the rest the chain's prior and the
+  landing (Phase 5's). Neither third is Phase 3's: the restart on a new face is the edit box's
+  reset, which Phase 3 keeps, and the stale face's ray is ADR-0070's ring by design. The fix
+  for both is the owner's "approximate around area" in its one honest place, **the young
+  pixels**: (a) an **age-weighted pool** on the pair's two means, a 5 x 5 footprint on the
+  lighting grid edge-stopped by the hit's normal and chunk (the a-trous's stops), with the
+  pooled weight `1 - age / (2 F)` (full at a reset, none from age 32 on), so a single disc or
+  sky sample on a new face is averaged with its 24 young neighbours (variance / 25 where the
+  neighbours are as young, which the hole's floor is) and a stale face's first ray samples are
+  pooled with the ring's; it runs in the a-trous pass if the pair is bound there, else in a
+  pass of its own after the temporal pass (the dev's pick by the pass table, the hitch of a
+  new pass disclosed). The alternative, the stale record's seed weighted at `F` 16 instead of
+  `SEED_AGE` 8 (one sample moves it 1 / 17), fixes the first third alone and slows a dug
+  skylight's light by the same factor; it is read as the second arm on the first third if (a)
+  leaves it over the bar. The risk is a smeared contact shadow at the hole's rim for the
+  first `2 F` frames, bounded by the age weight and the normal stop, and read by name on
+  `a_dig_leaves_no_dots` and `gpu_sun`'s penumbra tests. The cost (a guess): +0.05 ms RTX,
+  +0.4 ms RENOIR at 1080p's half tier, paid only where young pixels exist (the footprint
+  reads nothing at weight 0), so 0 at rest.
 - **Files touched:** `apps/flythrough/tests/gpu_outdoor/flicker.rs`, `shaders/temporal.wgsl`
-  (only the seed, if named), `crates/vxe-render/tests/gpu_sun.rs`, `docs/plans/logs/0094.md`.
+  (only the seed, if named), `shaders/atrous.wgsl` or a `shaders/pool.wgsl` with its
+  `PASSES` row and `frame/pipelines.rs` (the age-weighted pool, amended 2026-11-19),
+  `crates/vxe-render/tests/gpu_sun.rs`, `docs/plans/logs/0094.md`.
 - **Done when:**
   1. **The hole takes its light once.** In `a_dig_changes_nothing_outside_its_reach` (soak; its
      RTX release run is the phase's reading, 73 to 112 s there; its lavapipe wall in the log,
@@ -658,7 +805,12 @@ slow adapter for cost lines); a bar every phase names the `gpu_*` binary it runs
      before the dig to `F + 16` after the landing) is `flash`, `dip` or `overshoot` is at or
      under 1 % and none is `slow` past `2 F` (the landing frame printed; a guess at the band
      share's line, the before printed); at noon in the test, at 16:00 and 17:00 as the RTX
-     release reading on `reading::flicker_dig_split`.
+     release reading on `reading::flicker_dig_split`. **Amended 2026-11-19 (architect):** the
+     before is Phase 2 bar 2's (16:00: Flash 3.92, Dip 6.52, Slow 0.41, Overshoot 3.37 %;
+     17:00: 5.28 / 7.30 / 0.62 / 3.47 %), and the reading is taken on three arms, the pool
+     off, the pool on, and the pool on with `key_off`, with the cast and history-age-0
+     counters beside each, so the two thirds are seen to fall one by one; the pool's cost on
+     both adapters at the hills during the band's frames and at rest (0 expected) is printed.
   2. **The ring and the outside hold still.** The same test and reading: on the pairs ending at
      N, N + 1 and N + 2 (and N + 3 on RENOIR, where the ring stays stale two frames) the over-4
      share over the ring band and over the outside is at or under the larger of 0.5 % and 1.5
@@ -692,8 +844,11 @@ slow adapter for cost lines); a bar every phase names the `gpu_*` binary it runs
 - **Owner skill:** dev
 - **What:** the bars of Phases 3 to 6 that the window kept, written or pinned as tests against
   the picks (the residual bar's 8 / 2 pinned to the window's value if the owner's word moves
-  it; `key_history` 256, the exposure's rate and the prior's arm as defaults, each a setting
-  under the cheap-modes rule, 2026-11-12); the two bars Plan 0086 struck, back as tests: **the
+  it; `key_history` 256, the exposure's rate, the settle, the pool and the prior's arm as
+  defaults, each a setting under the cheap-modes rule, 2026-11-12; amended 2026-11-19
+  (architect): (ii), the a-trous's spatial variance on the key term, is built here and only
+  if the owner's word on run 1 is that the settled grain reads as dirt, with Phase 3 bar 3's
+  cost guess and a reading before its bar); the two bars Plan 0086 struck, back as tests: **the
   tunnel's far end**, `the_tunnel_is_as_still_as_the_lamp_lit_floor` in `gpu_outdoor.rs` (the
   tunnel pose at the defaults, 128 frames at 320 x 180 under FSR 2 at 1.5; about 20 s, born
   `#[ignore = "soak"]`; no native variant: the still reference is the headlamp **under the same
@@ -719,7 +874,8 @@ slow adapter for cost lines); a bar every phase names the `gpu_*` binary it runs
   1. Every bar Phases 3 to 6 name that the window kept exists, asserts the picked value, and
      passes in the gpu tier under the lock; each over 10 s on lavapipe is `#[ignore = "soak"]`
      and passes once by name; the gate tests this plan adds or promotes (Phase 3 bar 1, Phase
-     4 bars 1 and 2, Phase 5 bars 1, 7 and 8, Phase 2a bars 1 and 4's warm run) sum to under
+     4 bars 1 and 2, Phase 5 bars 1, 7 and 8, Phase 2a bars 1 and 4's CPU-adapter half; the
+     warm run is the RTX's reading since the 2026-11-19 amendment) sum to under
      30 s on lavapipe, each named with its wall in the log.
   2. The tunnel test passes as written on lavapipe and on the RTX, or its far end's remaining
      p99 is attributed by term in the log and the test asserts the rim band alone, disclosed.
@@ -729,7 +885,9 @@ slow adapter for cost lines); a bar every phase names the `gpu_*` binary it runs
   5. **The gate's wall, re-read quiet.** `cargo nextest run --profile gate --status-level
      pass` under the lock, load under 2 at the start, the binaries built before it: its wall
      at or under the 19 min line (1140 s; 0086's quiet tip read 1883.9 s, of which about 600 s
-     is the compile cost Phase 2a removes and about 300 s is the 112 tests 0086 added), or
+     is the compile cost Phase 2a removes (amended 2026-11-19 (owner): about 1.4 of the 2.4 s
+     a frame-building test, a guess of 350 s, since bar 2 was accepted at 3.7 s) and about
+     300 s is the 112 tests 0086 added), or
      over it with the remainder attributed per test against 0086's per-test diff
      (`test-times.mjs`, the top ten named; 0086's pre-roll bake under the sky, 36.1 against
      9.7 s on the switch test, is 0086's `1e16a8fd` and is named, not fixed here); this plan's
@@ -779,15 +937,17 @@ Sizes: the fade target, if added, is 4 B per lighting pixel: about 2.1 MB at 108
 | `nfr.md` figure | projection (a guess unless marked read) | how the close measures it |
 |---|---|---|
 | §2 Lighting, the temporal pass (Phase 3) | an acceptance or age-carry change: 0 ms; (ii) if built is the a-trous's, below | Phase 3 bar 5, both adapters, the forest spawn, `live/p24f/cost86.sh` |
-| §2 Denoise, the a-trous (Phase 3 (ii), only by the rule) | a spatial variance estimate at a converged age on one channel: +0.05 ms RTX, +0.4 ms RENOIR in the forest, against the 2.0 ms line | Phase 3 bar 3 |
+| §2 Denoise, the a-trous (Phase 3 (ii), only by the rule) | a spatial variance estimate at a converged age on one channel: +0.05 ms RTX, +0.4 ms RENOIR in the forest, against the 2.0 ms line. Amended 2026-11-19 (architect): Phase 8's, only by the owner's word on the settled grain | Phase 8 bar 1 |
+| §2 Lighting, the temporal pass: the settle (Phase 3, amended 2026-11-19) | a compare on the band and a mark in the age channel: 0 ms, 0 B; at rest a settled pixel's change is 0 by construction | Phase 3 bar 3's two arms, Phase 3 bar 5 |
+| §2 Denoise or a pass of its own: the age-weighted pool (Phase 6, amended 2026-11-19) | a 5 x 5 edge-stopped footprint on the pair's two means where the age is under `2 F`: +0.05 ms RTX, +0.4 ms RENOIR at 1080p's half tier during a dig's or a stamp's first frames (guesses), 0 at rest | Phase 6 bar 1's cost line, Phase 5 bar 5 if read on the keep |
 | the exposure pass (Phase 4) | a clamp on one scalar: 0 ms, 0 B | Phase 4 bar 5 |
 | §2 Lighting, the light pass during a stamped structure's bake (Phase 5, arm A) | the keep's rays for the bake's length: about +0.17 ms RTX, +3.2 ms RENOIR (20 000 rays at 4.8 ms per 30 000, read by Plan 0032) over about 1400 frames after the stamps, then 0; at rest 0 cast pixels | Phase 5 bar 5's per-frame series, both adapters; the hills at rest unchanged |
 | §2 Lighting, the temporal pass and the composite (Phase 5, the fade) | one read and a mix at pixels with a fade in flight: +0.02 ms RTX, +0.1 ms RENOIR | Phase 5 bar 5 |
 | §3 Everything else, frame targets (Phase 5) | 0 B if the pair's `b` carries the fade, else about 2.1 MB at 1080p's half tier | `frame_bytes`, Phase 5 bar 5 |
-| §7 the gate's wall (19 min; 1883.9 s quiet at 0086's tip after the flush fix, over) | the light pass's compile cost out: the light-pass build stage 5.5 to at or under 3.0 s a device on lavapipe, about -600 s of the gate (read by 0086 as +2.2 to 2.6 s a frame-building test); this plan's gate tests under 30 s in sum; every test over 10 s on lavapipe born soak | Phase 2a bars 2 and 5, Phase 8 bar 5, `test-times.mjs` |
-| §7 start-up, the first release start on a cold driver cache (RTX) | the light-pass stage 46.2 to at or under 15 s, init done 67.2 to at or under 35 s (main's 9.4 and 29.1) | Phase 2a bar 2, the stage lines |
-| §7 a default-off arm picked at runtime (Phase 2a, the second pipeline) | one pipeline built on the apply: a hitch of about 0.5 s RTX warm, 1.5 s lavapipe (a guess), once per pick; 0 with the override route | Phase 2a bar 2's picked run |
-| the pipeline cache file (Phase 2a) | under `target/`, a few MB per adapter and shader hash; nothing in the engine or the frame | Phase 2a bar 4 |
+| §7 the gate's wall (19 min; 1883.9 s quiet at 0086's tip after the flush fix, over) | the light pass's compile cost out: the light-pass build stage 5.5 to at or under 3.0 s a device on lavapipe, about -600 s of the gate (read by 0086 as +2.2 to 2.6 s a frame-building test); this plan's gate tests under 30 s in sum; every test over 10 s on lavapipe born soak. **Amended 2026-11-19 (owner): read 5.1 to 3.7 s (debug, `ae8d0722`), accepted; the gate's share is then about 1.4 s a frame-building test, a guess of 350 s, read at Phase 8 bar 5** | Phase 2a bars 2 and 5, Phase 8 bar 5, `test-times.mjs` |
+| §7 start-up, the first release start on a cold driver cache (RTX) | the light-pass stage 46.2 to at or under 15 s, init done 67.2 to at or under 35 s (main's 9.4 and 29.1); still owed | Phase 2a bar 2, the stage lines |
+| §7 a default-off arm picked at runtime (Phase 2a, the second pipeline) | one pipeline built on the apply: a hitch of about 0.5 s RTX warm, 1.5 s lavapipe (a guess), once per pick; 0 with the override route. Read 2026-11-19 on lavapipe debug: `--penumbra approach` picked, the light stage 4.24 to 4.27 s against 3.7, about +0.55 s, before any frame | Phase 2a bar 2's picked run |
+| the pipeline cache file (Phase 2a) | under `target/`, hardware adapters only (amended 2026-11-19 (owner)): the RTX's file 2.0 MB, warm creation 0.01 of a cold driver cache, read; none on lavapipe (0.97, 84 B); nothing in the engine or the frame | Phase 2a bar 4 |
 | §2 a light-stability line (Plan 0090's, not yet written) | the castle's and the hole band's rule 3 shares and the forest's residual are readings this plan leaves for 0090's baseline | the log's tables; 0090 Phase 6 takes them |
 
 No figure here moves the Floor profile's lines at rest: the fixes are to transitions and to an
@@ -836,6 +996,18 @@ records it.
   where the override does not pay; the second pipeline costs a hitch at the pick, disclosed.
 - **Lavapipe's pipeline cache may hold no compiled code**, in which case the test cache pays
   nothing there and the RTX decides; a cache that does not pay is removed in the phase.
+  Read 2026-11-19: it holds none (0.97, 84 B); the cache is skipped on CPU adapters and kept
+  for hardware (owner; Phase 2a bar 4).
+- **The settle lags a real change** (amended 2026-11-19): a settled pixel moves only when its
+  samples leave the band, so a slow drift (the sun's clock) becomes a staircase of band-wide
+  steps, each a fade of `F`; at `T_fade` 4 levels a step is invisible, but a band wider than
+  that at a bright pixel would show. Phase 3 bar 3's clock reading names it; the flag turns
+  the settle off; the still grain is the other cost, and the owner's eye in Phase 7 is its
+  bar.
+- **The age-weighted pool smears while young** (amended 2026-11-19): a contact shadow at a
+  hole's rim is averaged with its lit neighbours for the first `2 F` frames; the normal and
+  chunk stops bound it, and `a_dig_leaves_no_dots` and the penumbra tests read it by name. If
+  the smear shows in the window, the footprint narrows (3 x 3) or the weight's age shortens.
 - **The pair's reset rule serves two masters**: a firefly over a near-zero mean must be
   clamped (5.2) while a block's pair at 0 or 1 must reset when the world changes (0086 call 1's
   `P_MIN`). Phase 5 (5) changes the rule by the trace and keeps every reset test green by name;
@@ -938,6 +1110,14 @@ each. Empty is fine.)_
 - At Plan 0086's merge the backlog's entry "The fill-in after a stamp or a jump" leaves (this
   plan takes it); "A freshly placed castle's interior under the sky, as a pop-counter scene"
   stays Plan 0090's.
+- (Added 2026-11-19, architect.) The settle is a candidate ADR-0076 rule (an estimator at rest
+  holds by construction; the backlog's "Settle early" entry): the architect writes it at
+  Phase 7's verdict, as an amendment to ADR-0076 while it is proposed or a new ADR if Plan
+  0090 has accepted it by then.
+- (Added 2026-11-19, architect.) A second `Frame` on one rig does not drain its bake queue in
+  30 000 frames (Phase 1's hills arms, Phase 2's castle arms (b) and (c), the forest's turn
+  twice on a fresh rig): the backlog's entry; a queue or rig finding for the perf plan or a
+  chore, read before a gate test shares a rig.
 - If the forest's trunks stay over the residual bar with (ii) built, a per-material style bit
   that lets a thin feature (a trunk) read the key light from a coarser shadow (ADR-0063's
   table) is a look plan's, not this one's.
