@@ -490,7 +490,7 @@ the recommended option.
    day), otherwise a backlog entry with the seed, the minimal scenario committed, the batch's
    seeds moved past it and named in the test. (b) Every finding goes to the architect before
    any fix (slower, cleaner record).
-7. **(Pre-flight 2026-11-19, open.) Default member or not.** Phase 1 makes `crates/vxe-dst`
+7. **(Pre-flight 2026-11-19; answered the same day: (a), the owner.) Default member or not.** Phase 1 makes `crates/vxe-dst`
    a workspace member that is not in `default-members`. CI's gate and the close review run
    `cargo nextest run --workspace`, which reaches it, but the canonical tip command in
    `CLAUDE.md` is a bare `cargo nextest run --profile gate`, which builds and runs the default
@@ -499,7 +499,7 @@ the recommended option.
    on the deterministic crates only, adds no external dependency and builds in seconds, and
    its gate tests then run under every form of the gate. (b) Keep it out, as drafted, and
    have Phase 1's done-when and the Implementation log say the gate at the tip runs
-   `--workspace`.
+   `--workspace`. **Answered 2026-11-19 (owner): (a), `crates/vxe-dst` is a default member.**
 
 ## What this plan does NOT do
 
