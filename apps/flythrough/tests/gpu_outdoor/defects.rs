@@ -2,7 +2,7 @@
 // `gpu_outdoor.rs` (kept apart for the file-size cap).
 
 mod defects {
-    mod reading {
+    pub(super) mod reading {
         use super::super::support;
 
         /// Plan 0086 Phase 16 reading 1 (defect 1, the window's 21.png): the hills at 17:00
@@ -843,78 +843,83 @@ mod defects {
             }
         }
 
-        /// Plan 0086 Phase 16 reading 4 (defect 6, the clipped treads): the forest of seed 1
-        /// (`forest_rig`) at 15:00 baked whole, voxel leaves, 320 x 180 native, the outdoor auto
-        /// exposure (instant) 64 frames then 64 more: at the last frame the share of hit pixels at
-        /// 255 in the display's largest channel, the sunlit treads (display pixels on a horizontal
-        /// face whose direct part is over 4 times the stored one) and their mean level, the
-        /// exposure and the ceiling. Under `sky_anchor_ev` none and 4. `VXE_TEST_ADAPTER` picks
-        /// the adapter.
+        /// Plan 0086 Phase 16 reading 4 (defect 6, the clipped treads): [`treads_clip`] over
+        /// 128 frames under `sky_anchor_ev` none and 4, printed. `VXE_TEST_ADAPTER` picks the
+        /// adapter.
         #[test]
         #[ignore = "reading"]
         fn the_forest_treads_clip() {
+            for anchor in [None, Some(4.0)] {
+                treads_clip(anchor, 128);
+            }
+        }
+
+        /// The forest of seed 1 (`forest_rig`) at 15:00 baked whole, voxel leaves, 320 x 180
+        /// native, the outdoor auto exposure (instant) under `anchor` for `frames` frames: at the
+        /// last frame the share of hit pixels at 255 in the display's largest channel (percent)
+        /// and the sunlit treads' (display pixels on a horizontal face whose direct part is over
+        /// 4 times the stored one) mean level, printed with the exposure and the ceiling. `None`
+        /// without an adapter.
+        pub(in super::super) fn treads_clip(anchor: Option<f32>, frames: u32) -> Option<(f64, f64)> {
             use vxe_render::debug::{read_rgba8, read_rgba16f, read_rgba32f};
-            let Some((mut rig, cam)) = support::terms::forest_rig() else {
-                return;
-            };
+            let (mut rig, cam) = support::terms::forest_rig()?;
             let sky = flythrough::daylight::Clock {
                 minutes: 15.0 * 60.0,
                 ..Default::default()
             }
             .sky(flythrough::outdoor::BASE_Z as f32);
-            for anchor in [None, Some(4.0)] {
-                let f = defect_frame(
-                    &mut rig,
-                    Some(sky),
-                    |l| vxe_render::Lighting {
-                        exposure: vxe_render::Exposure::Auto(vxe_render::AutoExposure {
-                            min: flythrough::cli::OUTDOOR_MIN,
-                            max: flythrough::cli::OUTDOOR_MAX,
-                            sky_anchor_ev: anchor,
-                            ..vxe_render::AutoExposure::instant()
-                        }),
-                        ..l
-                    },
-                    Default::default(),
-                    true,
-                );
-                let mut s = support::defects::Stepper::new(&rig, f);
-                for _ in 0..128 {
-                    s.run(&rig, &cam);
-                }
-                let (d, q) = (&rig.device, &rig.queue);
-                let f = &s.frame;
-                let disp = support::defects::level(&read_rgba8(d, q, f.target()));
-                let hits = read_rgba32f(d, q, f.light_hit_positions());
-                let acc = read_rgba16f(d, q, f.accumulated());
-                let dir = read_rgba16f(d, q, f.direct_accumulated());
-                let lum = |p: &[f32; 4]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
-                let (gl, gw) = (hits.len(), 160.min(hits.len()));
-                let (mut hit, mut clip, mut tread, mut tread_sum) = (0usize, 0usize, 0usize, 0.0f64);
-                for (i, &v) in disp.iter().enumerate() {
-                    let g = support::defects::grid_of(i, 320, 180, gw, gl);
-                    if hits[g][3] >= 1.0e30 {
-                        continue;
-                    }
-                    hit += 1;
-                    clip += usize::from(v == 255);
-                    let h = hits[g];
-                    if (h[2] - h[2].round()).abs() < 1e-3 && lum(&dir[g]) > 4.0 * lum(&acc[g]) {
-                        tread += 1;
-                        tread_sum += f64::from(v);
-                    }
-                }
-                let st = vxe_render::debug::read_buffer(d, q, f.exposure_state(), 0, 32);
-                let state = vxe_render::ExposureState::from_bytes(&st);
-                println!(
-                    "reading: the forest at 15:00, anchor {anchor:?} on {}: {:.3} % of {hit} hit px at 255; sunlit treads {tread} px, mean level {:.1}; exposure {:.2} EV, ceiling {:.2} EV",
-                    rig.adapter,
-                    100.0 * clip as f64 / hit.max(1) as f64,
-                    tread_sum / tread.max(1) as f64,
-                    state.current.log2(),
-                    state.ceiling.log2(),
-                );
+            let f = defect_frame(
+                &mut rig,
+                Some(sky),
+                |l| vxe_render::Lighting {
+                    exposure: vxe_render::Exposure::Auto(vxe_render::AutoExposure {
+                        min: flythrough::cli::OUTDOOR_MIN,
+                        max: flythrough::cli::OUTDOOR_MAX,
+                        sky_anchor_ev: anchor,
+                        ..vxe_render::AutoExposure::instant()
+                    }),
+                    ..l
+                },
+                Default::default(),
+                true,
+            );
+            let mut s = support::defects::Stepper::new(&rig, f);
+            for _ in 0..frames {
+                s.run(&rig, &cam);
             }
+            let (d, q) = (&rig.device, &rig.queue);
+            let f = &s.frame;
+            let disp = support::defects::level(&read_rgba8(d, q, f.target()));
+            let hits = read_rgba32f(d, q, f.light_hit_positions());
+            let acc = read_rgba16f(d, q, f.accumulated());
+            let dir = read_rgba16f(d, q, f.direct_accumulated());
+            let lum = |p: &[f32; 4]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
+            let (gl, gw) = (hits.len(), 160.min(hits.len()));
+            let (mut hit, mut clip, mut tread, mut tread_sum) = (0usize, 0usize, 0usize, 0.0f64);
+            for (i, &v) in disp.iter().enumerate() {
+                let g = support::defects::grid_of(i, 320, 180, gw, gl);
+                if hits[g][3] >= 1.0e30 {
+                    continue;
+                }
+                hit += 1;
+                clip += usize::from(v == 255);
+                let h = hits[g];
+                if (h[2] - h[2].round()).abs() < 1e-3 && lum(&dir[g]) > 4.0 * lum(&acc[g]) {
+                    tread += 1;
+                    tread_sum += f64::from(v);
+                }
+            }
+            let st = vxe_render::debug::read_buffer(d, q, f.exposure_state(), 0, 32);
+            let state = vxe_render::ExposureState::from_bytes(&st);
+            let share = 100.0 * clip as f64 / hit.max(1) as f64;
+            let mean = tread_sum / tread.max(1) as f64;
+            println!(
+                "reading: the forest at 15:00, anchor {anchor:?}, {frames} frames on {}: {share:.3} % of {hit} hit px at 255; sunlit treads {tread} px, mean level {mean:.1}; exposure {:.2} EV, ceiling {:.2} EV",
+                rig.adapter,
+                state.current.log2(),
+                state.ceiling.log2(),
+            );
+            Some((share, mean))
         }
     }
 }

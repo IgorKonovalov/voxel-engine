@@ -1929,5 +1929,24 @@ mod reading {
     }
 }
 
+/// Plan 0086 Phase 23: the sunlit forest floor does not clip. `defects::reading::treads_clip`
+/// (the forest of seed 1 at 15:00 baked whole, voxel leaves, 320 x 180, the outdoor auto
+/// exposure at the default sky anchor, 4, 64 frames): under 0.5 % of the hit pixels read 255 in
+/// the display's largest channel and the sunlit treads' mean level is under 240 (Phase 16's
+/// reading at 128 frames: 0.000 % and 166.5 under anchor 4, 1.323 % and 243.6 with none); the
+/// share with no anchor is printed beside it.
+#[test]
+#[ignore = "soak"]
+fn the_sunlit_forest_floor_does_not_clip() {
+    let Some((share, mean)) =
+        defects::reading::treads_clip(Some(vxe_render::DEFAULT_SKY_ANCHOR_EV), 64)
+    else {
+        return;
+    };
+    defects::reading::treads_clip(None, 64);
+    assert!(share < 0.5, "{share} % at 255");
+    assert!(mean < 240.0, "the treads' mean level {mean}");
+}
+
 include!("gpu_outdoor/defects.rs");
 include!("gpu_outdoor/flicker.rs");
