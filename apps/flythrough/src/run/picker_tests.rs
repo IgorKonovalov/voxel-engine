@@ -336,6 +336,58 @@ fn the_chooser_fills_the_belt_and_hands_over() {
     assert_eq!(w.preview.as_ref().and_then(|p| p.entry), Some(walker));
 }
 
+/// Done-when 4 of Plan 0083 Phase 7d: with the structures library in the belt (walker,
+/// spider, chapel, castle), the entities chooser's cursor on the walker and `4` swaps it with
+/// the castle (slot 4 walker, slot 1 castle), the notice says both moves, the frame is on
+/// slot 4 and the castle's chooser row reads `slot 1`; `1` with the walker under the cursor
+/// swaps them back.
+#[test]
+fn the_chooser_swaps_an_occupied_slot() {
+    use crate::structures as st;
+    use std::path::Path;
+    let mut table = cave_table();
+    st::add_library_rows(Path::new(st::LIBRARY), None, &mut table);
+    let mut run = run_in(rock_box(&table, 60));
+    run.modes.structures = st::Library::load(Path::new(st::LIBRARY), &table, &cave_table());
+    let walker = entry(&run, "walker");
+    let castle = run
+        .modes
+        .structures
+        .entries
+        .iter()
+        .position(|e| e.name == "castle")
+        .expect("the castle");
+    run.fill_belt();
+    assert_eq!(
+        run.modes.walkers.belt.slots[3],
+        Some(Item::Structure(castle))
+    );
+    frame_keys(&mut run, &pressed(KeyCode::Backquote));
+    let v = run.run_view();
+    assert!(matches!(
+        run.menu.selected_row(&run.modes, &v),
+        Some(Row::Item(i)) if i == Item::Entity(walker)
+    ));
+    frame_keys(&mut run, &pressed(KeyCode::Digit4));
+    let b = &run.modes.walkers.belt;
+    assert_eq!(
+        (b.slots[0], b.slots[3], b.selected),
+        (Some(Item::Structure(castle)), Some(Item::Entity(walker)), 3)
+    );
+    assert_eq!(notice(&run), Some("slot 4 walker, slot 1 castle"));
+    assert_eq!(run.menu.page(), Some(PageId::Entities));
+    let mut rows = String::new();
+    st::words::write_item_rows(&run.modes, castle, &mut rows);
+    assert!(rows.ends_with("   slot 1"), "{rows}");
+    frame_keys(&mut run, &pressed(KeyCode::Digit1));
+    let b = &run.modes.walkers.belt;
+    assert_eq!(
+        (b.slots[0], b.slots[3], b.selected),
+        (Some(Item::Entity(walker)), Some(Item::Structure(castle)), 0)
+    );
+    assert_eq!(notice(&run), Some("slot 1 walker, slot 4 castle"));
+}
+
 /// Phase 9 (4): with `--model` naming the library's own walker rig the library holds one
 /// walker entry (`--model`'s, flagged): the belt is the walker in slot 1, the spider in slot
 /// 2, slot 3 empty, and the chooser lists two entries.

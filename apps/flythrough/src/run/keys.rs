@@ -18,7 +18,7 @@ use crate::run::Run;
 use crate::run::hud_feed::Samples;
 use crate::setup::{castle_banner, castle_camera};
 use crate::toggles::{ACTIONS, Act, BELT_KEYS, TOGGLES, press};
-use vxe_app::{Axis, Input, MouseButton, PadButton};
+use vxe_app::{Axis, Input, KeyCode, MouseButton, PadButton};
 use vxe_audio::{Command, PlayParams};
 use vxe_render::Camera;
 use vxe_world::{FIXED_ONE, Face, Fixed3};
@@ -125,7 +125,12 @@ impl Run {
                 continue;
             }
             before.get_or_insert_with(|| self.modes.clone());
-            println!("{}", press(t, &mut self.modes, now));
+            let line = press(t, &mut self.modes, now);
+            if t.name == crate::toggles::SNAP {
+                self.say((t.get)(&self.modes));
+            } else {
+                println!("{line}");
+            }
         }
         if let Some(before) = before {
             self.apply_modes(&before);
@@ -161,11 +166,21 @@ impl Run {
             Activated::Assign { item, slot } => {
                 self.fill_belt();
                 let belt = &mut self.modes.walkers.belt;
-                belt.assign(slot, item);
+                let moved = belt.assign(slot, item);
                 belt.point(slot, ms_since(self.start));
                 self.belt_selected();
                 let name = self.item_name(item);
-                self.say(format!("{name} in slot {}", slot + 1));
+                let n = slot + 1;
+                let words = match moved {
+                    None => format!("{name} in slot {n}"),
+                    Some((old, Some(t))) => {
+                        format!("slot {n} {name}, slot {} {}", t + 1, self.item_name(old))
+                    }
+                    Some((old, None)) => {
+                        format!("slot {n} {name}; {} left the belt", self.item_name(old))
+                    }
+                };
+                self.say(words);
             }
         }
     }
@@ -204,7 +219,7 @@ impl Run {
     /// the wheel, the clicks and the triggers are read here. Out of placement mode the left
     /// click (or `R2`) digs, the right click (or `L2`) fills and the wheel enters the mode at
     /// the belt's selected slot. In the mode the wheel steps the slot (down the next), the
-    /// left click or `R2` places the ghost, the right click, `L2` or the pad's `East` leaves,
+    /// left click, `R2` or `E` places the ghost, the right click, `L2` or the pad's `East` leaves,
     /// `West` turns the ghost and every digit selects its slot (`toggles::BELT_KEYS`); `1`,
     /// `4` and `6` drop, remove and fire nothing and `East` knocks nothing. No digit enters
     /// the mode.
@@ -239,7 +254,7 @@ impl Run {
             if input.pad_pressed(PadButton::West) {
                 self.act(Act::Turn);
             }
-            if left || r2 {
+            if left || r2 || input.pressed(KeyCode::KeyE) {
                 self.place_ghost();
             }
             if right || l2 || input.pad_pressed(PadButton::East) {
@@ -461,7 +476,12 @@ impl Run {
     /// The world's first hit along the unit `dir` from `origin` within `max` voxels: its
     /// distance and the entered face's outward normal (no normal, distance 0, when `origin`
     /// is inside a solid voxel). [`belt::stand`]'s cast.
-    fn cast_world(&self, origin: [f32; 3], dir: [f32; 3], max: f32) -> Option<(f32, [f32; 3])> {
+    pub(crate) fn cast_world(
+        &self,
+        origin: [f32; 3],
+        dir: [f32; 3],
+        max: f32,
+    ) -> Option<(f32, [f32; 3])> {
         let one = FIXED_ONE as f32;
         let o = Fixed3(origin.map(|v| (v * one).floor() as i64));
         let d = dir.map(|v| (v * one).round() as i64);
@@ -498,15 +518,15 @@ impl Run {
         (feet, up, eye)
     }
 
-    /// Fills the belt from the entities library's order and then the structures', once
-    /// (`belt::Belt::fill`).
+    /// Fills the belt from the entities in the belt's order (`belt::entity_order`: the walker
+    /// first) and then the structures', once (`belt::Belt::fill`).
     pub(crate) fn fill_belt(&mut self) {
         if self.modes.walkers.belt.filled() {
             return;
         }
         let structures = self.modes.structures.order();
         let w = &mut self.modes.walkers;
-        let order = w.library.order();
+        let order = belt::entity_order(&w.library);
         w.belt.fill(&order, &structures);
     }
 
@@ -653,14 +673,16 @@ impl Run {
         }
     }
 
-    /// Where a box `size` voxels across stands for the camera now ([`belt::stand_box`]): its
-    /// minimum corner, to the voxel. The one place a structure's ghost and its placement
-    /// stand.
+    /// Where a box `size` voxels across stands for the camera now by the modes' snap
+    /// ([`belt::stand_box`]): its minimum corner, to the voxel. The one place a structure's
+    /// ghost and its placement stand.
     pub(crate) fn aim_corner(&self, size: [u32; 3]) -> [i32; 3] {
         let c = &self.fly.camera;
         let (eye, fwd) = (c.position.to_array(), c.basis().0.to_array());
         let size = size.map(|v| v as f32);
-        let corner = belt::stand_box(eye, fwd, size, |o, d, max| self.cast_world(o, d, max));
+        let corner = belt::stand_box(eye, fwd, size, self.modes.snap, |o, d, max| {
+            self.cast_world(o, d, max)
+        });
         // A corner on a voxel's face, read in floats, may land a hair under it.
         corner.map(|v| (v + 1e-3).floor() as i32)
     }

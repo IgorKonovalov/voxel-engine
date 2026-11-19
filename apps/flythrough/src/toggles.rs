@@ -1028,7 +1028,20 @@ pub static TOGGLES: &[Toggle] = &[
         get: |m| format!("structure scale {}", m.structure_scale),
         flip: |m, _| m.structure_scale = m.structure_scale % MAX_SCALE as u32 + 1,
     },
+    Toggle {
+        press: Press::Key(KeyCode::KeyF, Some(PadButton::DpadUp)),
+        name: SNAP,
+        group: Group::Structures,
+        needs: None,
+        number: None,
+        row: HudRow::Structures,
+        get: |m| format!("snap {}", m.snap.name()),
+        flip: |m, _| m.snap = m.snap.other(),
+    },
 ];
+
+/// The `structures` group's snap toggle's name: its key's press says its row in the notice.
+pub const SNAP: &str = "snap";
 
 /// A structure's largest scale (`vxe_assets::MAX_SCALE`).
 const MAX_SCALE: i32 = vxe_assets::MAX_SCALE as i32;

@@ -156,6 +156,8 @@ pub struct Modes {
     pub clear_box: bool,
     /// A structure's voxels repeated this many times per axis, 1 to 4.
     pub structure_scale: u32,
+    /// How a structure's box finds its base (`entities::belt::stand_box`).
+    pub snap: crate::entities::belt::Snap,
 }
 
 /// The live queue's modes the keys step: `F` the order, `Tab` and `Slash` the score's angle
@@ -297,6 +299,7 @@ impl Modes {
             structures: crate::structures::Library::default(),
             clear_box: true,
             structure_scale: 1,
+            snap: crate::entities::belt::Snap::Ground,
         }
     }
 
@@ -438,9 +441,10 @@ impl Modes {
             HudRow::Structures => {
                 let _ = write!(
                     out,
-                    "clear box {}, structure scale {}",
+                    "clear box {}, structure scale {}, snap {}",
                     on(self.clear_box),
-                    self.structure_scale
+                    self.structure_scale,
+                    self.snap.name()
                 );
             }
         }

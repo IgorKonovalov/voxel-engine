@@ -13,6 +13,9 @@ The fly-through's predefined voxel-model entities, one directory per entry:
 | `walker` | A small biped: torso, head, two legs, two arms; clips `idle`, `walk` and `turn` (the head looks left and right) | ground: radius 2, 13 tall, steps 2 (world voxels) | 8 world voxels a cycle |
 | `spider` | A large spider: body, abdomen, eight legs each on its own phase, palps and fangs; clips `walk`, `idle` and `rear`; drawn in the showcase's glowing rows, which join every source's table at the start | surface: radius 6, reach 1.5 (world voxels) | 12 world voxels a cycle |
 
+The belt starts with the walker, then the other entries in the chooser's order (`--model`'s rig
+before the walker), then the structures.
+
 View one with `flythrough --source showcase --model apps/flythrough/assets/entities/<name>/<name>.rig --clip <clip>`,
 record one with `scripts/record-clip.sh`. `apps/flythrough/tests/entities.rs` checks every
 directory here: its voxtext converts to its committed `.vox`, its rig builds against the

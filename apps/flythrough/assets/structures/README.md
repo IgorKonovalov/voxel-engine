@@ -6,10 +6,13 @@ belt item after the entities, and the generated castle after them: select its sl
 a digit in placement mode, or the menu's `structures` group, `choose a structure`), and its
 ghost stands where it will go: a coarse copy of the structure (voxel for voxel up to 64 voxels
 a side, else one voxel per cube of `k`) inside a marked frame of its box, its near side at the
-crosshair's hit and the box growing away from the camera; `R` turns it a quarter turn and the
-left click places it as logged stamps (a stamp of written air over the box and 1 m around it
-when `clear box` is on, then one stamp per placement). `structure scale` (1 to 4) is in the
-same group. The castle's icon and ghost arrive with its first build, on a worker the first time
+crosshair's hit and the box growing away from the camera, its base on the lowest ground under
+its footprint (`snap ground`, up to 8 x 8 columns; on a slope the uphill side stands in the
+cut), or with `snap free` (`F`, the pad's D-pad up) at the crosshair's hit as it is, or 30 m
+out in the air; `R` turns it a quarter turn and the
+left click (or `E`) places it as logged stamps (a stamp of written air over the box and 1 m around it
+when `clear box` is on, then one stamp per placement). `structure scale` (1 to 4) and `snap`
+are in the same group. The castle's icon and ghost arrive with its first build, on a worker the first time
 its slot is selected (`castle: building` until then). A structure larger than the cave's rooms
 stands in its cleared box with the cut rock around it: judge a large structure on the outdoor
 hills (`--source outdoor --time 12:00`). At the start also, from the command line:

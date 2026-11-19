@@ -22,7 +22,7 @@ use crate::run::loading::fade_loading;
 use crate::setup::GfxSample;
 use crate::streaming::pressure_terms;
 use std::time::Instant;
-use vxe_app::{Flow, Gpu, Input, KeyCode, PadButton};
+use vxe_app::{Flow, Gpu, Input, KeyCode, MouseButton, PadButton};
 use vxe_audio::Command;
 use vxe_render::debug::StepHistogram;
 use vxe_render::{LodParams, MarchTimer, PassTimer, ViewMode, wgpu};
@@ -262,7 +262,7 @@ impl Run {
         // `Esc` with the menu closed ends placement mode first, then the run; a path run ends
         // through its player, so its report can say how. Outside `--tester` the run ends on a
         // second `Esc` within `QUIT_ASK_MS` of the first, which shows `QUIT_ASK_WORDS`; any
-        // other key, the menu or placement mode drops the question.
+        // other key, a click, a pad button, the menu or placement mode drops the question.
         let now = ms_since(self.start);
         let esc = i.pressed(KeyCode::Escape);
         if self.quit_asked.is_some_and(|at| {
@@ -272,6 +272,10 @@ impl Run {
                 || all_keys()
                     .into_iter()
                     .any(|k| k != KeyCode::Escape && input.pressed(k))
+                || [MouseButton::Left, MouseButton::Right, MouseButton::Middle]
+                    .into_iter()
+                    .any(|b| input.clicked(b))
+                || PadButton::ALL.into_iter().any(|b| input.pad_pressed(b))
         }) {
             self.quit_asked = None;
         }

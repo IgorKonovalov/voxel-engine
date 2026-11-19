@@ -146,14 +146,29 @@ impl Belt {
         self.select(s, now);
     }
 
-    /// Puts `i` in slot `s`, taking it out of any other slot that held it.
-    pub fn assign(&mut self, s: usize, i: Item) {
-        for slot in &mut self.slots {
-            if *slot == Some(i) {
-                *slot = None;
-            }
+    /// Puts `i` in slot `s`; nothing leaves the belt but by a full one. Slot `s` empty or
+    /// holding `i`: `i` moves there from any other slot. Slot `s` holding another item: when
+    /// `i` is in slot `t` the two swap (the same call undoes it); when `i` is in no slot the
+    /// holder moves to the first empty slot after `s` (wrapping), or with none it leaves.
+    /// Gives the holder moved and where to (`None` when it left the belt).
+    pub fn assign(&mut self, s: usize, i: Item) -> Option<(Item, Option<usize>)> {
+        let s = s % SLOTS;
+        let from = self.slot_of(i);
+        let old = self.slots[s].filter(|&o| o != i);
+        if let Some(t) = from {
+            self.slots[t] = None;
         }
-        self.slots[s % SLOTS] = Some(i);
+        self.slots[s] = Some(i);
+        let old = old?;
+        let to = from.or_else(|| {
+            (1..SLOTS)
+                .map(|d| (s + d) % SLOTS)
+                .find(|&t| self.slots[t].is_none())
+        });
+        if let Some(t) = to {
+            self.slots[t] = Some(old);
+        }
+        Some((old, to))
     }
 
     /// The ghost turned one more step: a structure's a quarter turn (four steps, a stamp's
@@ -253,25 +268,74 @@ fn drop_to_floor(
     }
 }
 
+/// How a structure's box finds its base ([`stand_box`]): on the terrain under its footprint,
+/// or where the aim points, in the air too (the `structures` group's `snap`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Snap {
+    #[default]
+    Ground,
+    Free,
+}
+
+impl Snap {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Ground => "ground",
+            Self::Free => "free",
+        }
+    }
+
+    pub fn other(self) -> Self {
+        match self {
+            Self::Ground => Self::Free,
+            Self::Free => Self::Ground,
+        }
+    }
+}
+
+/// The most columns [`stand_box`]'s ground snap casts along an axis of the footprint.
+pub const SNAP_COLUMNS: usize = 8;
+/// How far over the stand point the ground snap's columns start, in voxels: inside the air
+/// voxel over a floor hit.
+pub const SNAP_START: f32 = 0.5;
+
 /// Where a box `size` voxels across (x, y, z) stands for an eye at `eye` looking along the
-/// unit `fwd`, as its minimum corner (`cast` as [`stand`]'s): `p` is the camera ray's first
-/// world hit within [`PLACE_REACH`] (on an upward face, as it is; on a wall or a ceiling,
-/// half a voxel back along the view and dropped to the floor), else the view's point at
-/// [`NEAR_MIN`] dropped to the floor; `h` is `fwd` level and of unit length (`+x` when `fwd`
-/// is vertical); the box's support along `h` is `s = (|h.x| size.x + |h.y| size.y) / 2`, its
-/// footprint centred on `p + h s` and its base at `p.z`. So its near side or corner is at `p`
-/// and it grows away from the eye, which is never inside it.
+/// unit `fwd` by the rule `snap`, as its minimum corner (`cast` as [`stand`]'s).
+///
+/// `p`, by [`Snap::Ground`]: the camera ray's first world hit within [`PLACE_REACH`] (on an
+/// upward face, as it is; on a wall or a ceiling, half a voxel back along the view and
+/// dropped to the floor), else the view's point at [`NEAR_MIN`] dropped to the floor. By
+/// [`Snap::Free`]: the first hit on any face as it is, else the view's point at
+/// [`PLACE_REACH`].
+///
+/// `h` is `fwd` level and of unit length (`+x` when `fwd` is vertical); the box's support
+/// along `h` is `s = (|h.x| size.x + |h.y| size.y) / 2` and its footprint is centred on
+/// `p + h s`. So its near side or corner is at `p` and it grows away from the eye, which is
+/// never inside it.
+///
+/// The base: free, `p.z`. Ground, the lowest column's top over a lattice of
+/// `n = min(SNAP_COLUMNS, ceil(size / 8) + 1)` columns an axis spanning the footprint corner
+/// to corner, each cast straight down from `p.z + SNAP_START` to `p.z - FLOOR_DROP`: a hit
+/// is its height, a cast that starts inside solid counts as its start, a miss as
+/// `p.z - FLOOR_DROP`. The casts start just over `p`, not high above it, so a roof over the
+/// footprint (a cave's) is never read as the ground; since the lowest column wins, a column
+/// that starts in the terrain uphill changes nothing.
 pub fn stand_box(
     eye: [f32; 3],
     fwd: [f32; 3],
     size: [f32; 3],
+    snap: Snap,
     cast: impl Fn([f32; 3], [f32; 3], f32) -> Option<(f32, [f32; 3])>,
 ) -> [f32; 3] {
     let along = |t: f32| std::array::from_fn(|k| eye[k] + fwd[k] * t);
-    let p = match cast(eye, fwd, PLACE_REACH) {
-        Some((t, n)) if t > 0.0 && n[2] > 0.5 => along(t),
-        Some((t, _)) if t > 0.0 => drop_to_floor(eye, along((t - 0.5).max(0.0)), &cast),
-        _ => drop_to_floor(eye, along(NEAR_MIN), &cast),
+    let p = match (snap, cast(eye, fwd, PLACE_REACH)) {
+        (Snap::Free, Some((t, _))) if t > 0.0 => along(t),
+        (Snap::Free, _) => along(PLACE_REACH),
+        (Snap::Ground, Some((t, n))) if t > 0.0 && n[2] > 0.5 => along(t),
+        (Snap::Ground, Some((t, _))) if t > 0.0 => {
+            drop_to_floor(eye, along((t - 0.5).max(0.0)), &cast)
+        }
+        (Snap::Ground, _) => drop_to_floor(eye, along(NEAR_MIN), &cast),
     };
     let len = fwd[0].hypot(fwd[1]);
     let h = if len < 1e-6 {
@@ -281,7 +345,56 @@ pub fn stand_box(
     };
     let s = (h[0].abs() * size[0] + h[1].abs() * size[1]) / 2.0;
     let c = [p[0] + h[0] * s, p[1] + h[1] * s];
-    [c[0] - size[0] / 2.0, c[1] - size[1] / 2.0, p[2]]
+    let lo = [c[0] - size[0] / 2.0, c[1] - size[1] / 2.0];
+    let base = match snap {
+        Snap::Free => p[2],
+        Snap::Ground => lowest_column(lo, [size[0], size[1]], p[2], &cast),
+    };
+    [lo[0], lo[1], base]
+}
+
+/// [`stand_box`]'s ground base: the lowest column top over the footprint from `lo`, `size`
+/// across, for a stand point at height `z`.
+fn lowest_column(
+    lo: [f32; 2],
+    size: [f32; 2],
+    z: f32,
+    cast: &impl Fn([f32; 3], [f32; 3], f32) -> Option<(f32, [f32; 3])>,
+) -> f32 {
+    let n = size.map(|v| SNAP_COLUMNS.min((v / 8.0).ceil() as usize + 1).max(2));
+    let top = z + SNAP_START;
+    let mut base = f32::INFINITY;
+    for i in 0..n[0] {
+        let x = lo[0] + size[0] * i as f32 / (n[0] - 1) as f32;
+        for j in 0..n[1] {
+            let y = lo[1] + size[1] * j as f32 / (n[1] - 1) as f32;
+            let column = match cast([x, y, top], [0.0, 0.0, -1.0], SNAP_START + FLOOR_DROP) {
+                Some((t, _)) => top - t,
+                None => z - FLOOR_DROP,
+            };
+            base = base.min(column);
+        }
+    }
+    base
+}
+
+/// The entities in the belt's order: [`super::library::Library::order`] with the walker's
+/// entry ([`BUILTIN_NAME`]) moved to the front, after `--model`'s when there is one.
+pub fn entity_order(lib: &super::library::Library) -> Vec<usize> {
+    let mut order = lib.order();
+    let flagged = order
+        .iter()
+        .take_while(|&&i| lib.entries[i].flagged)
+        .count();
+    if let Some(at) = order
+        .iter()
+        .position(|&i| lib.entries[i].name == BUILTIN_NAME)
+        .filter(|&at| at >= flagged)
+    {
+        let w = order.remove(at);
+        order.insert(flagged, w);
+    }
+    order
 }
 
 /// The name row's words for the selected slot: the entry's name (grey with its error after
@@ -356,7 +469,8 @@ pub fn tile_of(m: &Modes, i: Item) -> usize {
 /// (shown for `banner_ms` after the belt's `changed_at`, blank after), the selected slot's
 /// frame top (`+------+`), the four slot rows (each slot's digit, then its name on the next
 /// row, or its entry's icon from the slot's third column once made; `|` at the selected
-/// slot's sides), the frame's bottom. `paint` gains the frame's cells as yellow spans (the
+/// slot's sides; the digits' row ends with `free` in yellow while the modes' snap is
+/// [`Snap::Free`]), the frame's bottom. `paint` gains the frame's cells as yellow spans (the
 /// rows are white) and the icons' tiles, after what it holds (a chooser's tiles above the
 /// belt). Gives the backdrop's box: the slots' rows, the belt's columns plus one each side,
 /// cut to the grid.
@@ -434,6 +548,7 @@ pub fn append_belt(
             .map(|i| tile_of(m, i))
             .filter(|&t| walkers.icons.ready(t))
     };
+    let mut free = None;
     for r in 0..4 {
         row.clear();
         row.extend(std::iter::repeat_n(' ', x0));
@@ -454,6 +569,11 @@ pub fn append_belt(
                 row.push(' ');
             }
             row.push(side);
+        }
+        if r == 0 && m.snap == Snap::Free {
+            row.push(' ');
+            free = Some(row.len());
+            row.push_str(Snap::Free.name());
         }
         push_row(text, colours, &cut_to(&row, cols), HudColour::White);
     }
@@ -476,6 +596,12 @@ pub fn append_belt(
     .zip(std::iter::repeat(HudColour::Yellow))
     {
         paint.spans.push((b, c));
+    }
+    if let Some(col) = free.filter(|&c| c < cols) {
+        let n = Snap::Free.name().len().min(cols - col);
+        paint
+            .spans
+            .push((cell(col, top + 1, n, 1), HudColour::Yellow));
     }
     for s in 0..SLOTS {
         if let Some(i) = icon(s) {
@@ -580,5 +706,217 @@ mod tests {
             "{feet:?}"
         );
         assert_eq!(stand(eye, z, walker, Stand::Surface, cast), ([0.0; 3], z));
+    }
+
+    /// A cast over a step terrain, the ground's top at z = 100 for x < `step` and at `far`
+    /// from it on (any y), counting the downward casts in `downs`: a downward ray's hit is
+    /// its column's top (distance 0 inside solid); any other ray hits the near top's plane
+    /// before `step`.
+    fn step_cast(step: f32, far: f32, downs: &std::cell::Cell<usize>) -> Cast<'_> {
+        Box::new(move |o, d, max| {
+            let top = |x: f32| if x < step { 100.0 } else { far };
+            if d == [0.0, 0.0, -1.0] {
+                downs.set(downs.get() + 1);
+                let t = (o[2] - top(o[0])).max(0.0);
+                return (t <= max).then_some((t, [0.0, 0.0, 1.0]));
+            }
+            if d[2] >= 0.0 {
+                return None;
+            }
+            let t = (o[2] - 100.0) / -d[2];
+            (t <= max && o[0] + d[0] * t < step).then_some((t, [0.0, 0.0, 1.0]))
+        })
+    }
+
+    /// A boxed world cast, as [`stand_box`] takes one.
+    type Cast<'a> = Box<dyn Fn([f32; 3], [f32; 3], f32) -> Option<(f32, [f32; 3])> + 'a>;
+
+    fn unit(v: [f32; 3]) -> [f32; 3] {
+        let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+        v.map(|c| c / l)
+    }
+
+    fn near(a: [f32; 3], b: [f32; 3]) -> bool {
+        (0..3).all(|k| (a[k] - b[k]).abs() < 1e-3)
+    }
+
+    /// Done-when 1 of Plan 0083 Phase 7d: the eye at (0, 0, 110) looking at (50, 0, 100) on a
+    /// step terrain (z 100 below x 300, z 70 from it on): the castle's box (600 x 600 x 500)
+    /// takes its base from the lowest of its 8 x 8 columns; the step past the footprint
+    /// leaves it at the hit; a valley past `FLOOR_DROP` caps it; the chapel's box (48 x 32)
+    /// casts 7 x 5 columns; a wall inside the footprint (up to z 250) counts as the casts'
+    /// start, so the lowest column, at 100, wins.
+    #[test]
+    fn a_snapped_box_sinks_to_its_lowest_column() {
+        let eye = [0.0, 0.0, 110.0];
+        let fwd = unit([50.0, 0.0, -10.0]);
+        let castle = [600.0, 600.0, 500.0];
+        let chapel = [48.0, 32.0, 40.0];
+        let downs = std::cell::Cell::new(0);
+        let corner = |step: f32, far: f32, size: [f32; 3]| {
+            downs.set(0);
+            let c = stand_box(eye, fwd, size, Snap::Ground, step_cast(step, far, &downs));
+            (c, downs.get())
+        };
+        let (c, n) = corner(300.0, 70.0, castle);
+        assert!(near(c, [50.0, -300.0, 70.0]), "{c:?}");
+        assert_eq!(n, 64);
+        let (c, _) = corner(700.0, 70.0, castle);
+        assert!(near(c, [50.0, -300.0, 100.0]), "{c:?}");
+        let (c, _) = corner(300.0, -200.0, castle);
+        assert!(near(c, [50.0, -300.0, 0.0]), "{c:?}");
+        let (c, n) = corner(80.0, 70.0, chapel);
+        assert!(near(c, [50.0, -16.0, 70.0]), "{c:?}");
+        assert_eq!(n, 35);
+        let (c, _) = corner(80.0, 250.0, chapel);
+        assert!(near(c, [50.0, -16.0, 100.0]), "{c:?}");
+        // A box under 8 a side casts its four corners.
+        let (_, n) = corner(300.0, 70.0, [6.0, 6.0, 6.0]);
+        assert_eq!(n, 4);
+    }
+
+    /// Done-when 2 of Plan 0083 Phase 7d: with the snap free the box stands at the aim: no hit
+    /// along +x puts its near side at `PLACE_REACH` at the eye's height in one cast; a hit on
+    /// a ceiling 30 degrees up at t 100 is taken as it is (base 160); on the step terrain of
+    /// [`a_snapped_box_sinks_to_its_lowest_column`] the base is the hit's 100, not 70.
+    #[test]
+    fn a_free_box_stands_where_the_aim_points() {
+        let eye = [0.0, 0.0, 110.0];
+        let chapel = [48.0, 32.0, 40.0];
+        let calls = std::cell::Cell::new(0);
+        let none = |_: [f32; 3], _: [f32; 3], _: f32| {
+            calls.set(calls.get() + 1);
+            None
+        };
+        let c = stand_box(eye, [1.0, 0.0, 0.0], chapel, Snap::Free, none);
+        assert!(near(c, [PLACE_REACH, -16.0, 110.0]), "{c:?}");
+        assert_eq!(PLACE_REACH, 300.0);
+        assert_eq!(calls.get(), 1);
+        let a = 30f32.to_radians();
+        let up = [a.cos(), 0.0, a.sin()];
+        let ceiling =
+            |_: [f32; 3], d: [f32; 3], _: f32| (d[2] > 0.0).then_some((100.0, [0.0, 0.0, -1.0]));
+        let c = stand_box(eye, up, chapel, Snap::Free, ceiling);
+        assert!(near(c, [100.0 * a.cos(), -16.0, 160.0]), "{c:?}");
+        let downs = std::cell::Cell::new(0);
+        let fwd = unit([50.0, 0.0, -10.0]);
+        let step = step_cast(300.0, 70.0, &downs);
+        let c = stand_box(eye, fwd, [600.0, 600.0, 500.0], Snap::Free, step);
+        assert!(near(c, [50.0, -300.0, 100.0]), "{c:?}");
+        assert_eq!(downs.get(), 0);
+    }
+
+    /// Done-when 4 of Plan 0083 Phase 7d: a digit on an occupied slot swaps, and the same
+    /// press undoes it; an item from no slot moves the holder to the next empty slot, or off
+    /// a full belt; the item's own slot changes nothing.
+    #[test]
+    fn a_digit_on_an_occupied_slot_swaps() {
+        let it = |c: char| Item::Entity(c as usize - 'A' as usize);
+        let mut b = Belt::default();
+        b.fill(&[0, 1, 2, 3], &[]);
+        let row = |b: &Belt| b.slots[..5].to_vec();
+        let abcd = |rest: Option<Item>| {
+            let mut v: Vec<_> = "ABCD".chars().map(|c| Some(it(c))).collect();
+            v.push(rest);
+            v
+        };
+        assert_eq!(b.assign(3, it('A')), Some((it('D'), Some(0))));
+        let mut want = abcd(None);
+        want.swap(0, 3);
+        assert_eq!(row(&b), want);
+        assert_eq!(b.assign(0, it('A')), Some((it('D'), Some(3))));
+        assert_eq!(row(&b), abcd(None));
+        assert_eq!(b.assign(0, it('E')), Some((it('A'), Some(4))));
+        let mut want = abcd(Some(it('A')));
+        want[0] = Some(it('E'));
+        assert_eq!(row(&b), want);
+        let mut full = Belt::default();
+        full.fill(&(0..9).collect::<Vec<_>>(), &[]);
+        assert_eq!(full.assign(0, it('J')), Some((it('A'), None)));
+        assert_eq!(full.slots[0], Some(it('J')));
+        assert_eq!(full.slot_of(it('A')), None);
+        let before = full.clone();
+        assert_eq!(full.assign(1, it('B')), None);
+        assert_eq!(full, before);
+    }
+}
+
+#[cfg(test)]
+mod reading {
+    use super::*;
+
+    /// The ground snap's cost on the outdoor hills (seed 1): the castle's box (600 x 600 x 500)
+    /// stood from the outdoor spawn's eye at 16 yaws, 15 degrees down, over a generated block
+    /// of 37 x 37 x 7 chunks around it (the castle's footprint inside it at every yaw); per re-stand the downward casts and the wall time
+    /// (median and max of 20 a yaw), the columns that find no ground within 10 m, and the base
+    /// against the free stand's height (the aim's hit). Printed, not asserted.
+    /// Run by hand under the perf lock:
+    /// `--run-ignored only -E 'test(=entities::belt::reading::the_snap_costs)'`.
+    #[test]
+    #[ignore = "a reading"]
+    fn the_snap_costs() {
+        use crate::outdoor::{OutdoorSource, Spawn};
+        use vxe_world::{CHUNK_EDGE, ChunkExtent, World};
+        let source = OutdoorSource::new(1);
+        let (eye, _) = source.spawn(Spawn::Outside);
+        let c = eye.0.map(|v| v.div_euclid(CHUNK_EDGE));
+        // The aim's reach and the castle's diagonal past it, every way: 1150 voxels.
+        let lo = [c[0] - 18, c[1] - 18, c[2] - 5];
+        let hi = [c[0] + 19, c[1] + 19, c[2] + 2];
+        let t = crate::now();
+        let world = World::generate(
+            ChunkExtent::new(lo, hi),
+            &source,
+            &crate::outdoor_materials(),
+        );
+        println!(
+            "snap reading: {} chunks generated in {:.1} s",
+            (0..3).map(|k| hi[k] - lo[k]).product::<i32>(),
+            (crate::now() - t).as_secs_f64()
+        );
+        let run = crate::test_support::bare_run(world);
+        let eye = eye.0.map(|v| v as f32 + 0.5);
+        let castle = [600.0, 600.0, 500.0];
+        let pitch = (-15f32).to_radians();
+        for i in 0..16 {
+            let yaw = (i as f32 * 22.5).to_radians();
+            let fwd = [
+                pitch.cos() * yaw.cos(),
+                pitch.cos() * yaw.sin(),
+                pitch.sin(),
+            ];
+            let (downs, misses) = (std::cell::Cell::new(0), std::cell::Cell::new(0));
+            let cast = |o: [f32; 3], d: [f32; 3], m: f32| {
+                let hit = run.cast_world(o, d, m);
+                if d == [0.0, 0.0, -1.0] {
+                    downs.set(downs.get() + 1);
+                    misses.set(misses.get() + usize::from(hit.is_none()));
+                }
+                hit
+            };
+            let free = stand_box(eye, fwd, castle, Snap::Free, cast);
+            let mut ms = Vec::with_capacity(20);
+            let mut corner = [0.0; 3];
+            for _ in 0..20 {
+                downs.set(0);
+                misses.set(0);
+                let t = crate::now();
+                corner = stand_box(eye, fwd, castle, Snap::Ground, cast);
+                ms.push((crate::now() - t).as_secs_f64() * 1e3);
+            }
+            ms.sort_by(f64::total_cmp);
+            println!(
+                "snap reading: yaw {:5.1}: {} downward casts ({} miss), {:.3} ms median, {:.3} ms max; \
+                 base {:.1}, the free stand's z {:.1}, the ground under the eye {}",
+                i as f32 * 22.5,
+                downs.get(),
+                misses.get(),
+                ms[10],
+                ms[19],
+                corner[2],
+                free[2],
+                source.height(eye[0] as i32, eye[1] as i32)
+            );
+        }
     }
 }

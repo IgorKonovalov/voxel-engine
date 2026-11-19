@@ -498,7 +498,7 @@ fn f1_opens_the_keys_page() {
 /// the dig radius is the menu's only; the digits are the belt's slots while the belt is shown,
 /// a fixed row, and enter no mode): each entry that keeps a bind and its binds as the menu
 /// shows them.
-const SHORTCUTS: [(&str, &str); 19] = [
+const SHORTCUTS: [(&str, &str); 20] = [
     ("profile", "F4"),
     ("walk", "G / pad North"),
     ("resume the tour", "T"),
@@ -518,9 +518,11 @@ const SHORTCUTS: [(&str, &str); 19] = [
     ("knock", "pad East"),
     ("frame readings", "Enter"),
     ("view", "F9"),
+    ("snap", "F / pad D-pad up"),
 ];
 
-/// `FIXED_KEYS` is the table's Fixed rows (movement, look's keys, `Tab`, `F1`, `F2`, `Esc`) and
+/// `FIXED_KEYS` is the table's Fixed rows (movement, look's keys, `Tab`, `F1`, `F2`, `Esc`,
+/// placement mode's `E`) and
 /// no toggle or action binds one of them.
 #[test]
 fn the_fixed_set_is_the_table() {
@@ -539,6 +541,7 @@ fn the_fixed_set_is_the_table() {
             KeyCode::F1,
             KeyCode::F2,
             KeyCode::Escape,
+            KeyCode::KeyE,
         ]
     );
     let bound = bound_keys();

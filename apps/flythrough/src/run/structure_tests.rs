@@ -274,7 +274,8 @@ fn the_belt_holds_a_structure() {
 /// and its base on the floor's top, the eye outside it; `R` swaps its x and y extents and
 /// the corner follows; at `structure scale` 2 the box doubles with its corner at the hit;
 /// aimed level into an empty world, the corner's x is the view's 3 m point's; a 600-wide box
-/// starts at the hit too and does not hold the eye.
+/// starts at the hit too and does not hold the eye (its base the snap's cap past the world's
+/// end, the hit's when free).
 #[test]
 fn a_structure_stands_by_the_box_rule() {
     let mut run = structure_run();
@@ -321,8 +322,14 @@ fn a_structure_stands_by_the_box_rule() {
     assert_eq!((c[0], c[2]), (hit, -8));
     assert!((c[1] as f32 + 32.0 - EYE[1]).abs() <= 1.0, "{c:?}");
 
+    // The 600-wide box's footprint runs past the rock box's world, where the ground snap's
+    // columns miss: its base is the cap, `FLOOR_DROP` under the hit; freed, it is the hit's.
     let big = run.aim_corner([600, 600, 500]);
-    assert_eq!((big[0], big[2]), (hit, -8));
+    assert_eq!((big[0], big[2]), (hit, -8 - belt::FLOOR_DROP as i32));
+    run.modes.snap = belt::Snap::Free;
+    let free = run.aim_corner([600, 600, 500]);
+    run.modes.snap = belt::Snap::Ground;
+    assert_eq!((free[0], free[2]), (hit, -8));
     let inside = (0..3).all(|k| {
         let s = [600, 600, 500][k] as f32;
         (big[k] as f32) <= EYE[k] && EYE[k] < big[k] as f32 + s
@@ -338,6 +345,159 @@ fn a_structure_stands_by_the_box_rule() {
     look(&mut dark, [0.5, 0.5, 0.5], 0.0);
     let c = dark.aim_corner([48, 32, 40]);
     assert_eq!(c[0], (0.5 + belt::NEAR_MIN).floor() as i32, "{c:?}");
+}
+
+/// The belt's digits row drawn for a 100-cell-wide window, and whether a yellow span covers
+/// `free` on it.
+fn belt_digits(run: &Run) -> (String, bool) {
+    let (mut text, mut colours, mut paint) = (String::new(), Vec::new(), belt::Paint::default());
+    belt::append_belt(
+        &mut text,
+        &mut colours,
+        (100, 45),
+        &run.modes,
+        0.0,
+        crate::hud::BANNER_MS,
+        &mut paint,
+    );
+    let row = 45 - BELT_ROWS + 2;
+    let line = text.lines().nth(row).unwrap_or("").to_owned();
+    let yellow = line.find("free").is_some_and(|c| {
+        paint.spans.iter().any(|(b, col)| {
+            *col == vxe_render::HudColour::Yellow && b.row as usize == row && b.col as usize == c
+        })
+    });
+    (line, yellow)
+}
+
+/// Where `stand_box` stands the chapel's box for the run's camera now by `snap`, to the voxel.
+fn chapel_corner(run: &Run, snap: belt::Snap) -> [i32; 3] {
+    let c = &run.fly.camera;
+    let (eye, fwd) = (c.position.to_array(), c.basis().0.to_array());
+    belt::stand_box(eye, fwd, [48.0, 32.0, 40.0], snap, |o, d, m| {
+        run.cast_world(o, d, m)
+    })
+    .map(|v| (v + 1e-3).floor() as i32)
+}
+
+/// Done-when 3 of Plan 0083 Phase 7d: in the chapel's slot, looking 20 degrees up at the rock
+/// box's ceiling, `F` frees the snap (the HUD row, the notice, `free` in yellow on the belt,
+/// the ghost at `stand_box`'s free answer, which is not the ground one); `F` again grounds it;
+/// the pad's D-pad up does the same with the menu closed; with the menu open `F` types into
+/// the filter and the snap stays; `--keys` lists `snap` with `F`.
+#[test]
+fn the_snap_key_frees_the_ghost() {
+    use crate::hud::HudRow;
+    let mut run = structure_run();
+    look(&mut run, EYE, 20.0);
+    enter_slot(&mut run, 2);
+    let corner = |run: &Run| run.modes.walkers.frame.as_ref().expect("a frame").corner;
+    let ground = chapel_corner(&run, belt::Snap::Ground);
+    let free = chapel_corner(&run, belt::Snap::Free);
+    assert_ne!(ground, free);
+    assert_eq!(corner(&run), ground);
+    assert!(!belt_digits(&run).0.contains("free"));
+
+    frame_keys(&mut run, &pressed(KeyCode::KeyF));
+    assert_eq!(run.modes.snap, belt::Snap::Free);
+    assert_eq!(
+        run.modes.row(HudRow::Structures),
+        "clear box on, structure scale 1, snap free"
+    );
+    assert_eq!(notice(&run), Some("snap free"));
+    let (digits, yellow) = belt_digits(&run);
+    assert!(digits.ends_with(" free") && yellow, "{digits:?}");
+    assert_eq!(corner(&run), free);
+
+    frame_keys(&mut run, &pressed(KeyCode::KeyF));
+    assert_eq!(notice(&run), Some("snap ground"));
+    assert!(run.modes.row(HudRow::Structures).ends_with("snap ground"));
+    assert!(!belt_digits(&run).0.contains("free"));
+    assert_eq!(corner(&run), ground);
+
+    let mut up = Input::default();
+    up.pad_down(vxe_app::PadButton::DpadUp);
+    frame_keys(&mut run, &up);
+    assert_eq!(run.modes.snap, belt::Snap::Free);
+    assert_eq!(corner(&run), free);
+    frame_keys(&mut run, &up);
+    assert_eq!(run.modes.snap, belt::Snap::Ground);
+
+    frame_keys(&mut run, &pressed(KeyCode::Tab));
+    frame_keys(&mut run, &pressed(KeyCode::KeyF));
+    assert_eq!(run.menu.filter(), "f");
+    assert_eq!(run.modes.snap, belt::Snap::Ground);
+
+    let keys = crate::hud::menu::keys_text(
+        &crate::cli::parse_args_from(crate::test_support::argv(&["--keys"])).unwrap(),
+    );
+    let row = keys
+        .lines()
+        .find(|l| l.trim_start().starts_with("snap "))
+        .expect("the snap row");
+    assert!(row.trim_end().ends_with(" F / pad D-pad up"), "{row}");
+}
+
+/// Done-when 5 of Plan 0083 Phase 7d: `E` in the chapel's slot submits the stamps the click
+/// does (the air box, then the placements), says the click's notice and keeps the mode; in
+/// the walker's slot it places `walker #1`; out of the mode it submits nothing and says
+/// nothing.
+#[test]
+fn a_key_places_as_the_click_does() {
+    let place = |input: &Input| {
+        let mut run = structure_run();
+        look(&mut run, EYE, -40.0);
+        enter_slot(&mut run, 2);
+        frame_keys(&mut run, input);
+        run.tick_server();
+        assert!(run.modes.walkers.belt.on && run.modes.walkers.frame.is_some());
+        (stamps(&run), notice(&run).map(str::to_owned))
+    };
+    let (by_key, said) = place(&pressed(KeyCode::KeyE));
+    let (by_click, clicked) = place(&click());
+    assert_eq!(by_key.len(), 5);
+    assert_eq!(by_key, by_click);
+    assert_eq!(said, clicked);
+    let said = said.expect("a notice");
+    assert!(
+        said.starts_with("placed chapel 4.8 x 3.2 x 4.0 m: 5 ops, "),
+        "{said}"
+    );
+
+    let mut run = structure_run();
+    look(&mut run, EYE, -40.0);
+    enter_slot(&mut run, 0);
+    assert_eq!(
+        run.modes.walkers.belt.item(),
+        Some(Item::Entity(walker_index(&run)))
+    );
+    frame_keys(&mut run, &pressed(KeyCode::KeyE));
+    assert_eq!(run.modes.walkers.placed.len(), 1);
+    assert!(
+        notice(&run).is_some_and(|n| n.starts_with("placed walker #1")),
+        "{:?}",
+        notice(&run)
+    );
+    assert!(run.modes.walkers.belt.on);
+
+    let mut out = structure_run();
+    look(&mut out, EYE, -40.0);
+    let before = out.notice.clone();
+    frame_keys(&mut out, &pressed(KeyCode::KeyE));
+    out.tick_server();
+    assert!(out.modes.walkers.placed.is_empty());
+    assert_eq!(out.net.as_ref().unwrap().server.ops().entries().len(), 0);
+    assert_eq!(out.notice, before);
+}
+
+fn walker_index(run: &Run) -> usize {
+    run.modes
+        .walkers
+        .library
+        .entries
+        .iter()
+        .position(|e| e.name == "walker")
+        .expect("the walker")
 }
 
 /// The run's op log's stamps, in order: each one's prefab id.
@@ -869,8 +1029,8 @@ const SPIDER_ROWS: [&str; 9] = [
 /// [`SPIDER_ROWS`], each a row of the table; `crystal`, `amethyst` and `ember` are the table's
 /// last three rows (after the structures library's) and the start-up line says `+3 rows`, or,
 /// with `own`, rows of the scene's own selection and `+0 rows`; a run on a world of that table
-/// fills the belt's slot 1 with the spider (it builds, so it leads the walker by name) and its
-/// icon is made.
+/// fills the belt's slot 1 with the walker and slot 2 with the spider (it builds) and the
+/// spider's icon is made.
 fn assert_spider_builds(flags: &[&str], own: bool) {
     let table = table_of_run(flags);
     let args = crate::cli::parse_args_from(crate::test_support::argv(flags)).unwrap();
@@ -920,11 +1080,10 @@ fn assert_spider_builds(flags: &[&str], own: bool) {
         .iter()
         .position(|e| e.name == "spider")
         .expect("the spider");
-    // The library's order puts an entity that builds first, by name: the spider, then the
-    // walker.
+    // The belt's order puts the walker first, then the spider (`belt::entity_order`).
     assert_eq!(
         run.modes.walkers.belt.slots[..2],
-        [Some(Item::Entity(spider)), Some(Item::Entity(1 - spider))],
+        [Some(Item::Entity(1 - spider)), Some(Item::Entity(spider))],
         "{flags:?}"
     );
     run.poll_viewer(0.0);
