@@ -453,6 +453,14 @@ this plan's.
      stands as the phase's reading; the remainder (about 1.0 s over the base's 2.7) goes to the
      backlog's "A pipeline cache for the renderer's shaders" entry, not to this plan. The RTX
      cold-start half of this bar is still owed as written.
+     **Amended 2026-11-19 (architect), the RTX half read:** release, an emptied driver cache
+     per run, load 3.9 to 5.9: the light stage 16.5 to 18.1 s and init done 36.6 to 39.2 s
+     against the bar's 15 and 35, with `bin86d` at 43.0 and 71.0 s in the same session (a cut
+     of 60 %; main's 9.4 / 29.1 were read at an unrecorded load). **Accepted as the loaded
+     reading;** the bar's figures are re-read once, quiet (load under 2, the same binary form,
+     `bin86d` beside it), in Phase 8 bar 5's quiet session, and a remainder over 15 s there
+     goes to the same backlog entry as the lavapipe remainder (default-on code), not back to
+     this phase.
   3. **Every arm still works when picked, and the default image is unchanged.** The tests that
      pick an arm pass by name (`gpu_sun`'s penumbra tests, 0086 Phase 14's `absorb` test,
      every test that sets a `LightHooks` bit: `--binaries gpu_sun,gpu_outdoor,gpu_frame`); the
@@ -479,6 +487,15 @@ this plan's.
      242.5 s tip, 31 tests) re-read quiet at this phase's tip: at or under 170 s (a guess: the
      base plus the 112 tests' own growth); the per-test delta against the tip printed. The full
      quiet gate is Phase 8 bar 5's.
+     **Amended 2026-11-19 (architect):** the 170 s line assumed bar 2's 3.0 s; with the stage
+     accepted at 3.7 the cut is about 1.4 s a frame-building test, 31 tests, so the line this
+     phase can meet is **about 200 s** (242.5 less 43). Read loaded (7.9 falling to 3.4):
+     212.5 s, of which one test rose 19.7 s in the run's first minute at load 7.9 and 27 of
+     31 are within 0.5 s of the tip or lower; without the outlier 193 s. **Accepted as the
+     loaded reading against the 200 s line;** the quiet value is Phase 8 bar 5's
+     `test-times.mjs` per binary. The cache lives in `vxe-render`'s `test_support.rs`, which
+     both supports' device helpers call (the disclosed deviation from Files touched; the
+     right place, one copy).
 
 ### Phase 3: The key mean keeps its age at a still camera
 - **Owner skill:** dev
@@ -532,9 +549,79 @@ this plan's.
   is still proposed with Plan 0090; the backlog's "Settle early" entry holds the candidate);
   the dev proceeds on it as a measured arm with a flag (`LightHooks::no_settle` or a settings
   row under the cheap-modes rule) so Phase 7 can show both.
+  **Amended 2026-11-19 (architect), after the Phase 3 stop (`074ff2c5`, the log's Phase 3).**
+  Four calls, one recommended option each.
+  (1) **The still camera's own tap, accepted without the material, normal and position tests:
+  kept as built, option (b).** The waiver is the history's, not a light's: the footprint of a
+  still pixel is the frame before's, whatever lights it, and a lamp-lit scene has the same
+  restarts (the backlog's fired-lights grain is the same family). With the position test kept
+  the rejections stayed at 114 a frame and the trunks under age 16 at 3.02 %, over bar 1's
+  line; without it 12.7 a frame and 0.17 %, met. Limiting the waiver to the key light (a)
+  would keep a rule 2 violation under every lamp; (c) misses the bar. Bar 5's clause "the
+  lamp-lit goldens are byte-identical" was this plan's assumption, not a reading, and is
+  struck: the two FSR 2 goldens that moved (21.9 and 19.5 % of pixels) are read for
+  **magnitude and direction** before Phase 8 re-blesses them: the difference against the old
+  golden as a histogram (p99, the share over 4) and the new and old images each against a
+  512-frame reference of the same rig (the expectation: the new image is the nearer, since
+  fewer pixels restart), with the settle off so the two changes are split (the wip ran both
+  on). Phase 8 re-blesses them as a disclosed change with those numbers.
+  (2) **The settle: fixed in form, not dropped.** The design as built (the key samples' short
+  mean in the pair's `b` as `-1 - b`, the in-band count above the cap in `a`, at stored faces
+  with no sky ray; `pair_step` for the sky mean) is a fair exploration encoding, with two
+  faults the readings show. **The likely cause of the return frame's 38 % against 22 % and
+  of the under-64 share doubling (0.17 to 0.34 %) with the settle on:** `key_settle` runs its
+  band test at **every age**, and a key mean just reset holds one binary sample, so a penumbra
+  pixel's second sample leaves the band at `g` near 0 or 1 (the band there is
+  `3 sqrt(0.02 * 0.98 / 8)`, 0.15 in `g`; a short mean of 0.5 after samples 0 and 1 is 0.5
+  away) and the fall returns `age = m - 1`, 1: the key mean is held young frame after frame
+  and the direct part's history age falls with it. Every pixel that re-enters the view on the
+  turn back (0 to 9 frames of history at the return frame) is in that state, which is the 38 %;
+  at rest the 12.7 restarts a frame feed the same loop, which is the doubled young share and
+  the unchanged pops (the 7 % unsettled pixels carry them). The trace that confirms it: the
+  key mean's `age` per frame at a returned penumbra pixel, printed. **The form:** the settle's
+  band is tested only **at the cap** (a settled pixel or one about to settle; a young key mean
+  follows `key_mean` unchanged, as the plan wrote it: "a pair whose age is at its cap and whose
+  last `F` samples all lie inside its band"); a release needs the band left on
+  `SETTLE_RELEASE` 4 **consecutive** frames (a 3-sigma run at rest is 1 in 10^10 a pixel, so
+  the hills' 28.9 releases a frame at rest fall to about 0; a real change of more than the band
+  is seen in 4 frames), and a released mean moves toward its short mean at `1 / F` a frame
+  (rule 3's fade, Phase 5 (2)'s form) and restarts its count; **the direct part's history age
+  is never written by the key path** (the lamp's history is not the key light's to reset).
+  The encoding's second fault: the reprojection's bilinear taps blend a negative `b` (a no-ray
+  pixel's key short mean) with a neighbour's positive `b` (a cast pixel's sky short mean) at
+  the edge of a stale ring, and `cap + count` with a plain age; a tap whose kind (the sign of
+  `b`) differs from the pixel's own is read as its `x` and its age as the cap, or the tap is
+  dropped from the pair's blend, the dev's pick; Phase 5 decides whether the fade's new target
+  (if the pair's `b` cannot be retired) carries the key short mean and the counts instead, so
+  the sign trick is Phase 5's to retire or keep. **Then the readings re-taken, one arm a
+  process:** the ages table on and off (the under-64 share on within 0.05 points of off), the
+  turn's return frame on and off (on at most off plus 2 points, the noise between two `voxel`
+  runs read 0.5), the pops with 93 % settled (the expectation: under 0.1 % on the trunks, since
+  the carriers were the young loop), the tunnel's far end on and off (its under-64 share rose
+  from 0.15 to 6.55 % in the wip, the same loop), and bar 2's reset tests by name. **The stop
+  rule, said plainly:** if after this form the return frame on is still over off by more than
+  2 points, or the pops do not fall with 93 % of pixels settled, the settle leaves this plan
+  for the backlog's "Settle early" entry with the readings, and Phases 4 to 8 run without it
+  (the flag's default off). The owner likes the idea; it is kept as long as the readings let
+  it be, and dropped only on a number, which this says in advance.
+  (3) **The clock reading** (Flash 1.67 % over the 1 % stop line, the hills' queue not
+  drained in 30 000 frames even alone): not a bar value and not a stop. The release form
+  above changes what it reads (every release in the wip is the 3-sigma band on one short
+  mean), so it is re-read after (2); its precondition is not "drained" but **the queue at a
+  steady depth** (the depth printed per frame over the strip, within one job of its mean; a
+  clock that runs may re-queue by design, and a reading that waits for a drain that never
+  comes reads nothing), with the depth's series beside the table. The 1 % Flash line stands
+  on the re-read; over it with the 4-frame release, the dev stops with the table.
+  (4) **The window's switch:** the settle is a render setting under the cheap-modes rule, not
+  a hook alone: a `RenderSettings` row (`settle`, default on while (2) holds), the CLI flag
+  `--settle on|off` through `--check-args`, the banner word `settle off` when not the default
+  (nothing when it is), the row in `docs/flythrough.md`; `LightHooks::no_settle` stays as the
+  tests' bit. Bar 6 below.
 - **Files touched:** `crates/vxe-render/src/shaders/temporal.wgsl`, `shaders/atrous.wgsl` (only
   (ii)), `crates/vxe-render/tests/gpu_sun.rs`, `apps/flythrough/tests/gpu_outdoor/canopy.rs`,
-  `frame/settings.rs` (the settle's flag, amended 2026-11-19), `docs/plans/logs/0094.md`.
+  `frame/settings.rs` (the settle's flag, amended 2026-11-19), `apps/flythrough/src/cli/*`,
+  `hud/modes.rs`, `docs/flythrough.md` (the setting, its flag and banner word, amended
+  2026-11-19), `docs/plans/logs/0094.md`.
 - **Done when:**
   1. **A still camera keeps its age.** `a_still_camera_keeps_its_history` in `gpu_outdoor.rs`
      (the forest at `10,180` under `voxel`, 64 still frames at 160 x 90 under FSR 2 at 1.5, the
@@ -581,7 +668,18 @@ this plan's.
   5. **Nothing moves elsewhere.** `sky_rays` 0 and the lamp-lit goldens (`gpu_golden`) are
      byte-identical; the outdoor goldens a temporal fix moves are named with counts for Phase
      8; `frame_bytes` unchanged; the temporal pass's cost on both adapters at the forest spawn
-     within noise of `live/bin86d`'s (the cost rig `live/p24f/cost86.sh`).
+     within noise of `live/bin86d`'s (the cost rig `live/p24f/cost86.sh`). **Amended
+     2026-11-19 (architect):** the byte-identical clause is struck for the goldens the still
+     camera's own tap moves (two FSR 2 lamp-lit goldens in the wip, 21.9 and 19.5 % of
+     pixels); each moved golden is named with its difference histogram (p99, the share over
+     4) against the old image and its distance to a 512-frame reference against the old
+     golden's, read with the settle off, for Phase 8's re-bless. Goldens that neither change
+     touches stay byte-identical.
+  6. **The settle is reachable in the window** (added 2026-11-19 (architect)): `--settle off`
+     is accepted by `--check-args`, the settings row round-trips (Plan 0069's setter test
+     lists the field), the banner test pins `settle off` when set and nothing at the default
+     (CPU, under 1 s), and `docs/flythrough.md` carries the row; `--settle on` and the
+     default read the same ages table.
 
 ### Phase 4: The exposure moves at a bounded rate (ADR-0076 rule 5)
 - **Owner skill:** dev
@@ -945,7 +1043,8 @@ Sizes: the fade target, if added, is 4 B per lighting pixel: about 2.1 MB at 108
 | §2 Lighting, the temporal pass and the composite (Phase 5, the fade) | one read and a mix at pixels with a fade in flight: +0.02 ms RTX, +0.1 ms RENOIR | Phase 5 bar 5 |
 | §3 Everything else, frame targets (Phase 5) | 0 B if the pair's `b` carries the fade, else about 2.1 MB at 1080p's half tier | `frame_bytes`, Phase 5 bar 5 |
 | §7 the gate's wall (19 min; 1883.9 s quiet at 0086's tip after the flush fix, over) | the light pass's compile cost out: the light-pass build stage 5.5 to at or under 3.0 s a device on lavapipe, about -600 s of the gate (read by 0086 as +2.2 to 2.6 s a frame-building test); this plan's gate tests under 30 s in sum; every test over 10 s on lavapipe born soak. **Amended 2026-11-19 (owner): read 5.1 to 3.7 s (debug, `ae8d0722`), accepted; the gate's share is then about 1.4 s a frame-building test, a guess of 350 s, read at Phase 8 bar 5** | Phase 2a bars 2 and 5, Phase 8 bar 5, `test-times.mjs` |
-| §7 start-up, the first release start on a cold driver cache (RTX) | the light-pass stage 46.2 to at or under 15 s, init done 67.2 to at or under 35 s (main's 9.4 and 29.1); still owed | Phase 2a bar 2, the stage lines |
+| §7 start-up, the first release start on a cold driver cache (RTX) | the light-pass stage 46.2 to at or under 15 s, init done 67.2 to at or under 35 s (main's 9.4 and 29.1). Read 2026-11-19 loaded (4 to 6): 16.5 to 18.1 and 36.6 to 39.2 s, `bin86d` 43.0 / 71.0 beside; accepted, re-read quiet at Phase 8 bar 5 | Phase 2a bar 2, Phase 8 bar 5 |
+| §7 the gpu tier's four cheap binaries (Phase 2a bar 5) | 170 s as written; 200 s once bar 2 was accepted at 3.7 s. Read 2026-11-19 loaded: 212.5 s (193 without a 19.7 s outlier at load 7.9); accepted, quiet value at Phase 8 bar 5 | `test-times.mjs` per binary |
 | §7 a default-off arm picked at runtime (Phase 2a, the second pipeline) | one pipeline built on the apply: a hitch of about 0.5 s RTX warm, 1.5 s lavapipe (a guess), once per pick; 0 with the override route. Read 2026-11-19 on lavapipe debug: `--penumbra approach` picked, the light stage 4.24 to 4.27 s against 3.7, about +0.55 s, before any frame | Phase 2a bar 2's picked run |
 | the pipeline cache file (Phase 2a) | under `target/`, hardware adapters only (amended 2026-11-19 (owner)): the RTX's file 2.0 MB, warm creation 0.01 of a cold driver cache, read; none on lavapipe (0.97, 84 B); nothing in the engine or the frame | Phase 2a bar 4 |
 | §2 a light-stability line (Plan 0090's, not yet written) | the castle's and the hole band's rule 3 shares and the forest's residual are readings this plan leaves for 0090's baseline | the log's tables; 0090 Phase 6 takes them |
