@@ -158,6 +158,25 @@ fn upload_needed(
             pool.free(s);
         }
     }
+    for h in walkers.frame_stale.drain(..) {
+        pool.free(h);
+    }
+    if let Some(model) = walkers
+        .frame
+        .as_ref()
+        .filter(|f| f.handle.is_none())
+        .map(|f| f.model.clone())
+    {
+        match upload_or_free_stale(walkers, pool, &model, table) {
+            Ok(h) => {
+                if let Some(f) = walkers.frame.as_mut() {
+                    f.handle = Some(h);
+                }
+            }
+            // A frame the pool refuses is not drawn; the structure still places.
+            Err(e) => println!("structure frame: {e}"),
+        }
+    }
     Ok(())
 }
 
@@ -181,6 +200,10 @@ pub fn sync_models(
     {
         pool.clear();
         walkers.handle = None;
+        walkers.frame_stale.clear();
+        if let Some(f) = walkers.frame.as_mut() {
+            f.handle = None;
+        }
         for e in &mut walkers.library.entries {
             if let Some(v) = e.viewer_mut() {
                 (v.handle, v.stale) = (None, None);
@@ -260,6 +283,7 @@ pub fn feed(
     // mirror still walks one.
     if walkers.placed.is_empty()
         && walkers.preview.is_none()
+        && walkers.frame.is_none()
         && walkers.drawn == 0
         && walkers.over == 0
         && !frame.entity_mirror().walks_entities()

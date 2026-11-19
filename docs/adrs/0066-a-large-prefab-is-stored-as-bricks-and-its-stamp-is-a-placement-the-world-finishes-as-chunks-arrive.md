@@ -1,8 +1,8 @@
 # ADR-0066: A large prefab is stored as bricks, and its stamp is a placement the world finishes as chunks arrive
 
-> **Status:** proposed
+> **Status:** accepted (Plan 0083, 2026-11-19, with an Outcome)
 > **Date:** 2026-11-16
-> **Related plan(s):** [Plan 0083](../plans/0083-anything-from-a-vox-palette-materials-a-material-file-and-large-scenes-stamped-into-the-world.md)
+> **Related plan(s):** [Plan 0083](../plans/done/0083-anything-from-a-vox-palette-materials-a-material-file-and-large-scenes-stamped-into-the-world.md)
 
 ## Context
 
@@ -107,3 +107,27 @@ world's layout, so the copy is the simplest one.
 Smaller still for large uniform regions. Rejected: more code than bricks for a gain only past
 the brick level, and the world it is blitted into is bricks; a prefab octree would be
 flattened to bricks at every stamp anyway.
+
+## Outcome
+
+2026-11-19, at Plan 0083's close (v0.66.0). The brick storage, the unchanged ids and stamp
+vector, `LOG_FORMAT` 3 with format 2 decoding, and the stamp that writes the resident chunks
+now and leaves a placement for the rest shipped as decided; the castle's 21 kept tiles read
+44 966 592 B against 343 566 464 B dense, `prefab64_mixed` +1.4 % over the dense form, a
+uniform 64³ prefab 7.9 µs (`docs/nfr/04-edits.md`). Four points differ from the text above:
+
+- **A brick is a `u32` word**, not an enum: a uniform brick is its material and write bit in
+  the word, a stored brick the index of a 1088-byte record (`FULL` bit, a 31-bit index), so a
+  uniform brick is 4 B.
+- **A placement keeps the set of chunks it still has to write, not a `seq`.** An inserted
+  chunk, generated or restored from persistence, takes every pending placement that lists it,
+  in stamp order; the spill format is unchanged (no `seq` word), and a placement lists a
+  spilled chunk until it is reloaded and written once. `StampedSource` is unchanged.
+- **`EditResult::aabb` is the bounds of the voxels changed now**, not the whole box; the
+  pending count is read through `ChunkStore::pending_placements`.
+- **The placement copies the prefab** (`Arc::new(prefab.clone())`): `World::stamp` takes
+  `&Prefab`, so the registry's `Arc` is not shared and a rotated stamp materialises its
+  rotation once more. The cost is bounded by the pending prefabs' bytes (at most the castle's
+  45 MB again while its far tiles wait). A `stamp` that takes the `Arc`, the blit moved out
+  from under the store's write lock on the poll thread, and dropping the coordinates a finite
+  extent can never stream are follow-ups in `docs/backlog.md`, not changes to this decision.

@@ -1103,7 +1103,9 @@ fn the_clip_keys_name_the_clip_and_the_pause() {
         run.banner().expect("a press shows the banner")
     };
     run.act(crate::toggles::Act::Picker);
-    run.menu_act(crate::hud::menu::Activated::Choose { entry: 0 });
+    run.menu_act(crate::hud::menu::Activated::Choose {
+        item: crate::entities::belt::Item::Entity(0),
+    });
     let mut click = Input::default();
     click.button_down(vxe_app::MouseButton::Left);
     run.handle_input(&click);

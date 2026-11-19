@@ -1163,7 +1163,7 @@ pub(crate) fn table() -> Table<Parsing> {
             flags: bake_flags(),
         },
         Section {
-            title: "Model viewer",
+            title: "Model viewer and assets",
             flags: super::model::model_flags(),
         },
         Section {

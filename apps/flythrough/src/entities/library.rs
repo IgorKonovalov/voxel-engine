@@ -348,20 +348,69 @@ pub fn cut(mut s: String, width: usize) -> String {
     s
 }
 
+/// The library's directory `args` name: `--library-dir`'s or [`DEFAULT_DIR`].
+pub fn dir_of(args: &crate::cli::Args) -> PathBuf {
+    args.library_dir
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_DIR))
+}
+
+/// The material names the rigs of the library `args` name carry in their `material` lines,
+/// `--model`'s first, then each `<name>/<name>.rig` of the library's directory in name order,
+/// each name once in the order first met; `auto`, `air` and `skip` left out. Read and parsed
+/// only, not built: a rig that does not read or parse names nothing here (its entry reports
+/// it).
+pub fn rig_material_names(args: &crate::cli::Args) -> Vec<String> {
+    let dir = dir_of(args);
+    let mut rigs: Vec<PathBuf> = args.model.iter().cloned().collect();
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        let mut names: Vec<String> = rd
+            .filter_map(Result::ok)
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        rigs.extend(names.iter().map(|n| dir.join(n).join(format!("{n}.rig"))));
+    }
+    let mut out: Vec<String> = Vec::new();
+    for path in rigs {
+        let Some(rig) = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|t| vxe_assets::Rig::parse(&t).ok())
+        else {
+            continue;
+        };
+        for m in rig.materials {
+            if !matches!(m.name.as_str(), "auto" | "air" | "skip") && !out.contains(&m.name) {
+                out.push(m.name);
+            }
+        }
+    }
+    out
+}
+
+/// The start-up line for `lib` against the world's `table`: its entries and the rows the
+/// rigs' `material` lines added to the table from the material file
+/// (`crate::setup::world_table`), `entities: 2 entries, +3 rows`.
+pub fn start_line(lib: &Library, args: &crate::cli::Args, table: &MaterialTable) -> String {
+    let before = crate::setup::table_before_entities(args, &crate::setup::materials(args));
+    let rows = table.len().saturating_sub(before.len());
+    format!("entities: {} entries, +{rows} rows", lib.entries.len())
+}
+
 /// The library `args` name: `--library-dir`'s or [`DEFAULT_DIR`], with `--model`'s rig first
 /// when it opens.
 pub fn of_args(args: &crate::cli::Args) -> Library {
-    let dir = args
-        .library_dir
-        .clone()
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_DIR));
-    let lib = scan(&dir);
+    let lib = scan(&dir_of(args));
     match args
         .model
         .as_ref()
         .map(|p| Viewer::open(p, args.clip.clone()))
     {
-        Some(Ok(v)) => lib.with_model(v),
+        Some(Ok(mut v)) => {
+            v.rows_added = crate::setup::model_rows_added(args);
+            lib.with_model(v)
+        }
         Some(Err(e)) => {
             println!("{e}");
             lib
@@ -370,15 +419,12 @@ pub fn of_args(args: &crate::cli::Args) -> Library {
     }
 }
 
-/// The table the run's world draws entities against: the showcase's rows for the showcase,
-/// and the walker's rows on every table.
+/// The table the run's world draws entities against (`crate::setup::world_table`): the
+/// scene's rows from the material file (the showcase's for the showcase), the walker's, the
+/// palette rows of `--model`'s and `--vox`'s `.vox`, the structures library's rows, then the
+/// rows the rigs name that the table lacks.
 pub fn table_of_args(args: &crate::cli::Args) -> MaterialTable {
-    let base = crate::setup::materials(args);
-    if args.mode.is_showcase() {
-        super::walker::with_walker(&crate::with_showcase_rows(&base))
-    } else {
-        super::walker::with_walker(&base)
-    }
+    crate::setup::world_table(args, &crate::setup::materials(args))
 }
 
 /// `flythrough --library`'s text: the library `args` name, built against the run's table,

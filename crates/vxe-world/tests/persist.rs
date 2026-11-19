@@ -416,3 +416,71 @@ fn old_versions_and_non_canonical_boxes_are_refused() {
 
     assert!(decode_spill(&good, 1).is_ok());
 }
+
+/// Plan 0083 Phase 5 done-when 2: the origin chunk edited (the carve), evicted and spilled, then
+/// covered by a stamp, reloads holding both the carve and the stamp's voxels, written once by
+/// the placement; edited again over the stamp's voxels, evicted and spilled again, it reloads
+/// with that edit and no second write of the stamp.
+#[test]
+fn a_spilled_chunk_reloads_with_the_placements_it_missed() {
+    let dir = TempDir::new("spill-placement");
+    let world = World::new(&test_table());
+    let persist = PersistConfig {
+        ram_cap_bytes: 0,
+        spill_dir: Some(dir.0.clone()),
+        world_key: 7,
+    };
+    let mut s = Streamer::new(Arc::new(UniformSource(3)), config(persist, 2));
+    carve_at_origin(&world, &mut s);
+    move_away(&world, &mut s);
+    assert_eq!(s.stats().spilled_chunks, 1);
+
+    // An 8-voxel slab of material 5 across the carve's top, in the spilled chunk only.
+    let slab = Prefab::new([8, 8, 2], vec![5; 128], None);
+    let r = world.stamp(&slab, [28, 28, 40], Rot::IDENTITY).unwrap();
+    assert!(r.touched.is_empty() && r.changed_from.is_empty());
+    assert_eq!(world.store().pending_placements(), 1);
+
+    s.update(&world, &[at_chunk([0, 0, 0])]);
+    let ev = s.wait_idle(&world);
+    assert!(ev.errors.is_empty(), "{:?}", ev.errors);
+    assert_eq!(s.stats().restored_chunks, 1);
+    assert_eq!(world.store().pending_placements(), 0);
+    assert_eq!(world.store().placement_writes(), 1, "written once");
+    assert_eq!(world.material_at([32, 32, 32]), Some(AIR), "the carve kept");
+    assert_eq!(
+        world.material_at([30, 30, 41]),
+        Some(5),
+        "the stamp written"
+    );
+    assert_eq!(
+        world.material_at([30, 30, 39]),
+        Some(AIR),
+        "below the slab, carved"
+    );
+
+    // Carve through the slab, spill, reload: the carve stands, the stamp is not written again.
+    world
+        .apply(&EditOp::sphere(
+            centre_of_voxel([30, 30, 41]),
+            2 * FIXED_ONE,
+            Mode::Carve,
+        ))
+        .unwrap();
+    assert_eq!(world.material_at([30, 30, 41]), Some(AIR));
+    let tally_before = world.store().placement_writes();
+    move_away(&world, &mut s);
+    s.update(&world, &[at_chunk([0, 0, 0])]);
+    s.wait_idle(&world);
+    assert_eq!(
+        world.store().placement_writes(),
+        tally_before,
+        "no second write"
+    );
+    assert_eq!(
+        world.material_at([30, 30, 41]),
+        Some(AIR),
+        "the later carve kept"
+    );
+    assert_eq!(world.material_at([28, 28, 40]), Some(5));
+}

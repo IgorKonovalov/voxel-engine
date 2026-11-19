@@ -642,7 +642,7 @@ impl Run {
             println!("{words}");
             self.modes.show_lights(words, now_ms);
         }
-        self.modes.walkers.refresh_icons(self.world.materials());
+        crate::structures::refresh_icons(&mut self.modes, self.world.materials());
     }
 
     /// Drops `--pose`'s banner row once the camera has left the pose.

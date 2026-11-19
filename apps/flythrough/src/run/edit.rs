@@ -149,6 +149,14 @@ impl Run {
         let Some(net) = self.net.as_mut() else {
             return (0, 0, 0.0);
         };
+        // `--vox-op`'s ops go in on the first tick: a stamp past residency finishes as the
+        // chunks arrive (ADR-0066).
+        if let Some(v) = self.vox_ops.take() {
+            println!("vox op: {} ops submitted", v.ops.len());
+            for op in v.ops {
+                net.server.submit(op);
+            }
+        }
         let t = now();
         let report = net.server.tick();
         let ms = ms_since(t);
@@ -266,11 +274,24 @@ impl Run {
                 }
             }
         }
-        // Applied ops no logic line named still changed the world.
+        // Applied ops no logic line named still changed the world: a structure's stamps
+        // among them, whose chunks the notice counts.
+        let mut chunks = std::collections::BTreeSet::new();
         for event in ops.into_iter().flatten() {
             if let Event::Applied { result, .. } = event {
-                self.edited(&result.edit_result());
+                let r = result.edit_result();
+                chunks.extend(r.touched.iter().copied());
+                self.edited(&r);
             }
+        }
+        if let Some((words, n)) = self.structure_placed.take() {
+            let pending = self.world.store().pending_placements();
+            let words = format!(
+                "{words}: {n} ops, {} chunks now, {pending} pending",
+                chunks.len()
+            );
+            self.modes.show_lights(words.clone(), ms_since(self.start));
+            self.say(words);
         }
         (benches.0, benches.1, ms)
     }

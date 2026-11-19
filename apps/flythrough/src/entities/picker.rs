@@ -3,14 +3,16 @@
 //! the aim (`super::belt::stand`; a surface body on the aimed face) facing the camera turned
 //! by the belt's turn, a real entity in the set that a click leaves placed under its own id.
 
-use vxe_entity::EntityId;
+use std::sync::Arc;
+
+use vxe_entity::{EntityId, Model, Pose};
 use vxe_render::MAX_ENTITIES;
 use vxe_world::MaterialTable;
 
 use super::library::{BUILTIN_NAME, Source, cut, extent, model_of};
 use super::mover::{Mover, Stance};
 use super::walker::pose;
-use super::{Placed, Walkers};
+use super::{FrameGhost, Placed, Walkers};
 use crate::hud::Modes;
 use crate::viewer::placed;
 
@@ -71,7 +73,7 @@ pub fn write_item_clips(m: &Modes, i: usize, text: &mut String) {
         }
         _ => text.push_str("no clip"),
     }
-    match m.walkers.belt.slot_of(i) {
+    match m.walkers.belt.slot_of(super::belt::Item::Entity(i)) {
         Some(s) => {
             let _ = write!(text, "   slot {}", s + 1);
         }
@@ -134,6 +136,63 @@ impl Walkers {
     pub fn clear_preview(&mut self) {
         if let Some(p) = self.preview.take() {
             self.set.remove(p.id);
+        }
+    }
+
+    /// Stands a structure's ghost, its coarse copy in its box's frame, with its minimum corner
+    /// at `corner`: moved there when the ghost shows `key` (the structure, scale, quarter
+    /// turns and whether the body is in), else made anew by `make` (the old one removed, its
+    /// handle freed by the next sync). With [`MAX_ENTITIES`] placed there is no ghost and the
+    /// words say the set is full.
+    pub fn show_frame(
+        &mut self,
+        key: (usize, u32, u8, bool),
+        make: impl FnOnce() -> Model,
+        corner: [i32; 3],
+    ) -> Result<(), String> {
+        if self.placed.len() >= MAX_ENTITIES {
+            self.clear_frame();
+            return Err(full_words());
+        }
+        let root = vxe_world::Fixed3(corner.map(|v| i64::from(v) * 256));
+        if let Some(f) = &mut self.frame
+            && f.key == key
+        {
+            if f.corner != corner {
+                f.corner = corner;
+                let pose = Pose {
+                    root,
+                    ..Pose::rest(&f.model)
+                };
+                let _ = self.set.set_pose(f.id, pose);
+            }
+            return Ok(());
+        }
+        self.clear_frame();
+        let model = Arc::new(make());
+        let pose = Pose {
+            root,
+            ..Pose::rest(&model)
+        };
+        let id = self
+            .set
+            .insert(model.clone(), pose)
+            .map_err(|e| e.to_string())?;
+        self.frame = Some(FrameGhost {
+            id,
+            key,
+            model,
+            handle: None,
+            corner,
+        });
+        Ok(())
+    }
+
+    /// Removes a structure's ghost from the set; its handle is freed by the next sync.
+    pub fn clear_frame(&mut self) {
+        if let Some(f) = self.frame.take() {
+            self.set.remove(f.id);
+            self.frame_stale.extend(f.handle);
         }
     }
 

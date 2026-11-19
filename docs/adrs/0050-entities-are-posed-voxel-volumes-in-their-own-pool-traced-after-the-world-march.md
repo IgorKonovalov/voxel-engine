@@ -118,3 +118,10 @@ pool, the tree and the tracing order shipped as decided. Three points differ fro
 - **The pipelines.** The entity variants compile slowly on the NVIDIA driver (about 6 s for the
   set). `Frame::prepare_entities` builds them at start-up; a frame without the call builds them
   on the first frame that draws a part.
+
+2026-11-19, at Plan 0083's close (v0.66.0): **a part's grain is extended by a coarse factor.**
+Beside the `detail` of 1, 2 or 4 above, a part may instead carry `coarse` 1 to 16 world voxels
+per model voxel, in the same integer arithmetic, so a one-part body of a 600-voxel structure
+stands as a placement ghost; `MAX_PARTS`, `MAX_EDGE`, the pool and the tracing order are
+unchanged, and a `coarse` 1 model is bit-identical to before. The decision and its rejected
+alternatives are ADR-0078.

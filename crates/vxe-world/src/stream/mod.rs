@@ -345,7 +345,12 @@ impl Streamer {
     fn apply(&mut self, world: &World, done: Vec<Done>) -> StreamEvents {
         let mut ev = StreamEvents::default();
         let absorbed = self.absorb_done(world, done, &mut ev);
-        let (evict, demoting) = self.commit_residency(world, absorbed.inserts, absorbed.outside);
+        let (evict, demoting, placed) =
+            self.commit_residency(world, absorbed.inserts, absorbed.outside);
+        // A worker's result describes the chunk before a placement wrote into it.
+        if !placed.is_empty() {
+            ev.prepared.retain(|(c, _)| !placed.contains(c));
+        }
         self.schedule_io(demoting, absorbed.requeue);
         ev.evicted.extend(evict.into_iter().map(|(c, _)| c));
         ev
@@ -452,15 +457,17 @@ impl Streamer {
         }
     }
 
-    /// The sweep, then under the store's write lock the inserts, the evictions and the full
-    /// chunks of the demotions leaving the store; then persisting outside the lock. Returns
-    /// the evictions and the demoted chunks, whose mips a worker builds.
+    /// The sweep, then under the store's write lock the inserts (each written by the pending
+    /// placements that meet it first, ADR-0066), the evictions and the full chunks of the
+    /// demotions leaving the store; then persisting outside the lock. Returns the evictions,
+    /// the demoted chunks, whose mips a worker builds, and the inserted chunks a placement
+    /// changed.
     fn commit_residency(
         &mut self,
         world: &World,
         inserts: Vec<Held>,
         outside: Vec<ChunkCoord>,
-    ) -> (Vec<(ChunkCoord, Tier)>, Vec<Held>) {
+    ) -> (Vec<(ChunkCoord, Tier)>, Vec<Held>, Vec<ChunkCoord>) {
         let mut evict = Vec::new();
         let mut demote = Vec::new();
         if self.plan.sweep {
@@ -474,9 +481,16 @@ impl Streamer {
         // sweep; none is both inserted and removed in one poll.
         let mut removed = Vec::new();
         let mut demoting = Vec::new();
+        let mut placed = Vec::new();
         if !inserts.is_empty() || !evict.is_empty() || !demote.is_empty() {
             let mut map = world.store.write_lock();
+            let mut pending = crate::store::lock(&world.store.pending);
             for (coord, chunk) in inserts {
+                if !pending.list.is_empty()
+                    && pending.apply(coord, &mut crate::store::write(&chunk))
+                {
+                    placed.push(coord);
+                }
                 map.insert(coord, chunk);
                 self.plan.set_resident(coord, Tier::Full);
                 world.remove_lod(coord);
@@ -508,7 +522,7 @@ impl Streamer {
             self.plan.unset_resident(*coord);
             self.plan.in_flight.insert(*coord, Tier::LodOnly);
         }
-        (evict, demoting)
+        (evict, demoting, placed)
     }
 
     /// Queues the spill writes now due and the demotions' mips, then the loads of chunks

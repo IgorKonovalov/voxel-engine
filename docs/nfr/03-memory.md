@@ -365,6 +365,15 @@ chunks the castle meets (`examples/castle_gen`, single thread, three runs, load 
 mean 423.5 to 427.9 us and p99 2258 to 2380 us per chunk with the castle, against 186.2 to
 188.6 us and 1650 to 1710 us for the hall alone.
 
+**Prefabs as bricks (Plan 0083 Phase 3, ADR-0066).** A `Prefab` is now a grid of 8³ bricks,
+`ceil(size / 8)` per axis: a brick whose voxels inside the box are one material and one write
+bit is a 4-byte word, any other a word and 1088 B (512 materials and a 512-bit mask). A 64³
+all-rock prefab holds 512 words (under 4 KB), one with a stray voxel in every brick 512 x 1088
+B (about 557 KB, 1 % over the dense 544 KiB). **Reading (Plan 0083 Phase 3, the castle's
+soak test `the_whole_castle_holds_its_parts`, Ryzen 9 5900HS, CPU only, three dev lanes
+running):** the 21 kept tiles hold 44 966 592 B in bricks against the 343 566 464 B dense,
+13.1 %.
+
 **`castle_gate_golden`'s build bar (2026-11-05, tree on 42e39ce, lavapipe, Ryzen 9 5900HS, exclusive perf lock, 1-minute load 4.53 to 5.59, so loaded).** `VmHWM` read right after `gate_world`, before a device opens, under a bar of 300 MiB: 164 642 816 B cold, 164 888 576 B warm, 173 621 248 B with `MESA_SHADER_CACHE_DISABLE=true`; 469 794 816 B with every tile built, which fails it. The whole process's peak, printed with no bar: 1 175 887 872 B cold, 1 002 000 384 B warm, 1 171 296 256 B with the cache disabled. This bar replaces the 1 GB figure in Plan 0042's Phase 3 done-when, whose whole-process peak is the frame's and cannot see the tiles it builds. The real RAM budget stays the autopilot's `VmHWM` in section 3.
 
 **`frame_bytes` under the fly-through's FSR 2 default (Plan 0055 Phase 2, tree on 4ec2b34).**

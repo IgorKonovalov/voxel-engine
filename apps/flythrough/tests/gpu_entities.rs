@@ -75,6 +75,7 @@ fn block(size: [u32; 3], m: MaterialId, detail: u8) -> Arc<Model> {
         parent: None,
         pivot: size.map(|s| (s * 128) as i32),
         detail,
+        coarse: 1,
     };
     Arc::new(Model::new(vec![part]).expect("one part"))
 }
@@ -399,6 +400,7 @@ fn the_caps_count_what_they_drop() {
             parent: None,
             pivot: [128; 3],
             detail: 1,
+            coarse: 1,
         };
         Arc::new(Model::new((0..n).map(p).collect()).expect("parts"))
     };
@@ -556,6 +558,7 @@ fn slab(m: MaterialId, pivot: [i32; 3]) -> Arc<Model> {
         parent: None,
         pivot: pivot.map(|v| v * 256),
         detail: 1,
+        coarse: 1,
     };
     Arc::new(Model::new(vec![part]).expect("one part"))
 }

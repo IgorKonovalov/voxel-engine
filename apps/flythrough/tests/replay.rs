@@ -379,9 +379,10 @@ fn a_stamp_and_a_collapse_replay_from_the_save() {
         })
         .collect();
     assert_eq!(drop_kinds, [5; 9]);
-    // The header carries the vault the stamp names.
+    // The header carries the vault the stamp names: its 12-byte size, then 8 stored bricks of
+    // 1089 encoded bytes each (a tag, 512 `u16` materials and 8 mask words).
     assert_eq!(file.prefabs.len(), 1);
-    assert_eq!(file.header_len(), 60 + 4 + 8 + 8_716);
+    assert_eq!(file.header_len(), 60 + 4 + 8 + 8_724);
 
     let path = write(&file, "session.log");
     let (_, by_ops) = replay_file(&path, Replay::Ops, level_extent()).unwrap();

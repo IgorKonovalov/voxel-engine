@@ -4,6 +4,7 @@
 
 use super::filter::palette;
 use super::{Entry, EntryKind, FIXED_ROWS, Group, RunView, entries, group_entries};
+use crate::entities::belt::Item;
 use crate::hud::Modes;
 use crate::toggles::{Act, Toggle};
 
@@ -21,6 +22,10 @@ pub enum PageId {
     /// (`crate::entities::picker`). `` ` `` and the `entities` group's `choose an entity`
     /// open it.
     Entities,
+    /// The structures' chooser, a dynamic page as [`PageId::Entities`] is: the structures
+    /// library's entries in its order (`crate::structures::words`). The `structures` group's
+    /// `choose a structure` opens it.
+    Structures,
 }
 
 /// One row of a page.
@@ -34,9 +39,9 @@ pub enum Row {
     /// headers (a group, no binds).
     Fixed(&'static str, &'static str),
     Header(Group),
-    /// The entities library's entry of that index, drawn on [`ITEM_LINES`] lines: `Enter`
+    /// A chooser's entry, an entity or a structure, drawn on [`ITEM_LINES`] lines: `Enter`
     /// hands it to placement mode, a digit puts it in that belt slot.
-    Item(usize),
+    Item(Item),
 }
 
 /// The lines an entry of the chooser takes: its words and its clips beside a 4 x 4 cell tile.
@@ -58,15 +63,14 @@ pub enum Activated {
     Action(Act),
     Step(&'static Toggle, i32),
     Refused(&'static str),
-    /// The chooser's `Enter` on library entry `entry`: into the belt's selected slot (or
-    /// the slot that holds it selected), the menu closed, placement mode on.
+    /// A chooser's `Enter` on `item`: into the belt's selected slot (or the slot that holds
+    /// it selected), the menu closed, placement mode on.
     Choose {
-        entry: usize,
+        item: Item,
     },
-    /// A digit on the chooser's entry `entry`: into belt slot `slot` (0-based), the menu
-    /// staying open.
+    /// A digit on a chooser's `item`: into belt slot `slot` (0-based), the menu staying open.
     Assign {
-        entry: usize,
+        item: Item,
         slot: usize,
     },
 }
@@ -78,8 +82,8 @@ impl std::fmt::Debug for Activated {
             Self::Action(a) => write!(f, "Action({a:?})"),
             Self::Step(t, d) => write!(f, "Step({}, {d})", t.name),
             Self::Refused(why) => write!(f, "Refused({why})"),
-            Self::Choose { entry } => write!(f, "Choose({entry})"),
-            Self::Assign { entry, slot } => write!(f, "Assign({entry}, slot {slot})"),
+            Self::Choose { item } => write!(f, "Choose({item:?})"),
+            Self::Assign { item, slot } => write!(f, "Assign({item:?}, slot {slot})"),
         }
     }
 }
@@ -151,6 +155,17 @@ impl Menu {
         self.stack.push((PageId::Entities, selected));
     }
 
+    /// Opens the structures' chooser alone, its selection on its `selected`th row.
+    pub fn open_structures(&mut self, selected: usize) {
+        self.close();
+        self.stack.push((PageId::Structures, selected));
+    }
+
+    /// Whether a chooser (the entities' or the structures') is the page shown, no filter typed.
+    pub fn choosing(&self) -> bool {
+        matches!(self.page(), Some(PageId::Entities | PageId::Structures)) && self.filter.is_empty()
+    }
+
     /// The selected row shown at `m` and `v`, when one is.
     pub fn selected_row(&self, m: &Modes, v: &RunView) -> Option<Row> {
         let picks: Vec<Row> = self
@@ -197,10 +212,19 @@ impl Menu {
             Some(PageId::Entities) => {
                 let order = m.walkers.library.order();
                 if order.is_empty() {
-                    return vec![Row::Item(0)];
+                    return vec![Row::Item(Item::Entity(0))];
                 }
-                order.into_iter().map(Row::Item).collect()
+                order
+                    .into_iter()
+                    .map(|i| Row::Item(Item::Entity(i)))
+                    .collect()
             }
+            Some(PageId::Structures) => m
+                .structures
+                .order()
+                .into_iter()
+                .map(|j| Row::Item(Item::Structure(j)))
+                .collect(),
             Some(PageId::Keys) => {
                 let mut rows: Vec<Row> = FIXED_ROWS
                     .iter()
@@ -251,24 +275,22 @@ impl Menu {
             }
             _ if !self.is_open() => return None,
             MenuInput::Entities => {
-                if self.page() == Some(PageId::Entities) && self.filter.is_empty() {
-                    let entry = match self.selected_row(m, v) {
-                        Some(Row::Item(i)) => i,
-                        _ => m.walkers.library.selected,
+                if self.choosing() {
+                    return match self.selected_row(m, v) {
+                        Some(Row::Item(item)) => Some(Activated::Choose { item }),
+                        _ if self.page() == Some(PageId::Entities) => Some(Activated::Choose {
+                            item: Item::Entity(m.walkers.library.selected),
+                        }),
+                        _ => None,
                     };
-                    return Some(Activated::Choose { entry });
                 }
                 self.open_entities(0);
                 return None;
             }
-            MenuInput::Type(c)
-                if self.page() == Some(PageId::Entities)
-                    && self.filter.is_empty()
-                    && ('1'..='9').contains(&c) =>
-            {
+            MenuInput::Type(c) if self.choosing() && ('1'..='9').contains(&c) => {
                 let slot = usize::from(c as u8 - b'1');
                 return match self.selected_row(m, v) {
-                    Some(Row::Item(entry)) => Some(Activated::Assign { entry, slot }),
+                    Some(Row::Item(item)) => Some(Activated::Assign { item, slot }),
                     _ => None,
                 };
             }
@@ -312,8 +334,8 @@ impl Menu {
             }
             MenuInput::Activate | MenuInput::Right => match picks.get(s) {
                 Some(Row::Group(g)) => self.stack.push((PageId::Group(*g), 0)),
-                Some(Row::Item(entry)) if i == MenuInput::Activate => {
-                    return Some(Activated::Choose { entry: *entry });
+                Some(Row::Item(item)) if i == MenuInput::Activate => {
+                    return Some(Activated::Choose { item: *item });
                 }
                 Some(Row::Entry(e)) if i == MenuInput::Activate => {
                     if let Err(why) = e.available(m, v) {

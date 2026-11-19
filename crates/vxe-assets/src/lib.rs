@@ -11,6 +11,11 @@
 //! [`Rig::build`] turns it and its `.vox` into a `vxe_entity::Model`, a rest pose and clips.
 //! [`VoxText`] is voxels drawn as text, converted to and from a [`VoxFile`].
 //!
+//! [`PaletteRows`] turns every palette entry of a `.vox` into a material row by colour and
+//! `MATL` material (ADR-0065), and [`MaterialFile`] reads and writes a material table as text in
+//! the rig's line grammar. [`VoxScene`] loads a `.vox` scene for the world: hidden nodes and
+//! layers left out, reflected frames as mirrored models, a whole scale.
+//!
 //! ```
 //! use vxe_assets::{Slot, VoxMap, VoxModel};
 //!
@@ -23,22 +28,30 @@
 //! ```
 
 mod map;
+mod materials;
 mod palette;
 mod rig;
+mod rows;
+mod scene;
 mod sines;
 mod vox;
 mod voxtext;
 mod write;
 
 pub use map::{Slot, Unmapped, VoxMap};
+pub use materials::{MaterialFile, MaterialFileError};
 pub use palette::DEFAULT_PALETTE;
 pub use rig::{
     Axis, DEFAULT_RATE, Line, MAX_DEGREES, Rig, RigBody, RigBodyLine, RigClip, RigError, RigKey,
     RigMaterial, RigModel, RigPart, VoxSource, axis_rotation, key_rotation,
 };
+pub use rows::{
+    DEFAULT_EMISSION_FACTOR, PaletteRows, palette_row, resolve_existing, srgb_to_linear,
+};
+pub use scene::{MAX_SCALE, SceneError, SceneOptions, VoxScene};
 pub use vox::{
-    MAX_MODEL_EDGE, MAX_PLACEMENTS, MAX_TRANSLATION, Node, Placement, VoxError, VoxFile, VoxModel,
-    decode_rotation,
+    DEFAULT_ROUGH, MAX_MODEL_EDGE, MAX_PLACEMENTS, MAX_TRANSLATION, Node, Placement, VoxError,
+    VoxFile, VoxLayer, VoxMaterial, VoxMaterialKind, VoxModel, decode_frame, decode_rotation,
 };
 pub use voxtext::{TextColor, TextModel, VoxText, VoxTextError};
 pub use write::{encode, encode_rotation};

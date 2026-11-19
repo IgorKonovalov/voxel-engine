@@ -712,3 +712,67 @@ fn stats_counts_match_a_walk() {
         "the flight demoted and evicted"
     );
 }
+
+/// A 192 x 10 x 10 prefab of material 2, a third of its voxels unwritten, so a stamp at x 128
+/// meets chunks 2, 3 and 4 along x.
+fn wide_prefab() -> Prefab {
+    Prefab::from_fn([192, 10, 10], |[x, y, z]| {
+        ((x + y + z) % 3 != 0).then_some(2)
+    })
+}
+
+/// Plan 0083 Phase 5 done-when 1: the 3-chunk-wide prefab stamped with its middle chunk not
+/// resident (two foci keep chunks 2 and 4 and leave 3 out) returns `Ok` with the two resident
+/// chunks' counts and one pending placement; once the streamer makes the middle chunk resident,
+/// the world's voxel hash equals a world where every chunk was resident at the stamp, and no
+/// placement is pending.
+#[test]
+fn a_stamp_past_residency_finishes_when_the_chunk_arrives() {
+    let ends = [VoxelCoord([0, 0, 0]), VoxelCoord([6 * 64, 0, 0])];
+    let all = [ends[0], VoxelCoord([3 * 64, 0, 0]), ends[1]];
+    let p = wide_prefab();
+    let origin = [128, 3, 3];
+
+    let world = World::new(&test_table());
+    let mut s = Streamer::new(Arc::new(UniformSource(3)), config(2, 2, 1, 2));
+    s.update(&world, &ends);
+    s.wait_idle(&world);
+    let middle = ChunkCoord([3, 0, 0]);
+    assert!(world.store().contains(ChunkCoord([2, 0, 0])));
+    assert!(world.store().contains(ChunkCoord([4, 0, 0])));
+    assert!(!world.store().contains(middle));
+    let r = world.stamp(&p, origin, Rot::IDENTITY).unwrap();
+    assert_eq!(r.touched, [ChunkCoord([2, 0, 0]), ChunkCoord([4, 0, 0])]);
+    // Every written voxel of the two end chunks changes rock (3) into material 2.
+    let written_in = |cx: i32| {
+        let mut n = 0u32;
+        for x in 0..192 {
+            if (origin[0] + x).div_euclid(64) != cx {
+                continue;
+            }
+            for y in 0..10 {
+                for z in 0..10 {
+                    n += u32::from(p.get([x, y, z]).is_some());
+                }
+            }
+        }
+        n
+    };
+    assert_eq!(r.changed_from, [(3, written_in(2) + written_in(4))]);
+    assert_eq!(world.store().pending_placements(), 1);
+
+    s.update(&world, &all);
+    s.wait_idle(&world);
+    assert!(world.store().contains(middle));
+    assert_eq!(world.store().pending_placements(), 0);
+    assert_eq!(world.store().placement_writes(), 1);
+
+    let whole = World::new(&test_table());
+    let mut t = Streamer::new(Arc::new(UniformSource(3)), config(2, 2, 1, 2));
+    t.update(&whole, &all);
+    t.wait_idle(&whole);
+    whole.stamp(&p, origin, Rot::IDENTITY).unwrap();
+    assert_eq!(whole.store().pending_placements(), 0);
+    assert_eq!(world.store().coords(), whole.store().coords());
+    assert_eq!(world.voxel_hash(), whole.voxel_hash());
+}

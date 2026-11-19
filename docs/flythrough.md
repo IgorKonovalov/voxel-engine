@@ -61,13 +61,14 @@ window's top-right corner reads `fps <n>  frame <median> ms p99 <ms>` while it i
 | `Space` / `C` | Rise / sink; walking, `Space` jumps, or climbs a ledge with a standable top within 1.2 m |
 | `Shift` | Faster |
 | Left click | Dig at the crosshair; the edit result prints to the terminal. In placement mode: place the ghost |
+| `E` | In placement mode: place the ghost, as the left click does; out of it nothing (in the menu it types) |
 | Right click | Fill at the crosshair. In placement mode: leave it |
 | Wheel | Enter placement mode at the belt's selected slot; in the mode, step the slot (down the next, wrapping at nine) |
 | `1`..`9` | While the belt is shown (placement mode, and the chooser over it): the belt's slots, `4` included; `1`, `4` and `6` then drop, remove and fire nothing. Out of the mode they keep their shortcuts below and no digit enters the mode |
 | `Tab` | The menu; type on any page to search |
 | `F1` | The Keys page (with `--tester`: the help panel) |
 | `F2` | Toggle the stats overlay |
-| `Esc` | Clear the search, go back a page, close the menu; with the menu closed, leave placement mode, else ask before quitting: the banner reads `Esc again to quit` for 2 s, a second `Esc` inside that quits, any other key cancels (on a path run, end it so its report says how; under `--tester` and while loading the first `Esc` quits) |
+| `Esc` | Clear the search, go back a page, close the menu; with the menu closed, leave placement mode, else ask before quitting: the banner reads `Esc again to quit` for 2 s, a second `Esc` inside that quits, any other key, a click or a pad button cancels (on a path run, end it so its report says how; under `--tester` and while loading the first `Esc` quits) |
 
 While the menu is open the arrows, `Enter`, `Backspace`, `Esc`, the letters, digits and
 punctuation, the wheel and the clicks are the menu's: the dig, the fill and the belt
@@ -88,10 +89,11 @@ row showing the new value.
 | lights | `4` | Remove the newest light or walker, whichever was added last (in placement mode `4` is the belt's slot 4) |
 | lights | `6` | Fire a point light of the picked colour (intensity 600) along the view ray at 20 m/s; it stops 2 voxels short of the first surface (or after 40 m) and stays there as a dropped light |
 | entities | `` ` `` | `choose an entity`: the chooser (also the `entities` page's first row). Four rows per library entry beside its icon: a blank row, its name, parts and size on the cursor's row (an entry in error: its name grey, its error red), then its clips (the one a placement starts on marked `*`) and the belt's slot that holds it. `Enter` (or the left click, or the pad's `South`, or `` ` ``) on an entry puts it in the belt's selected slot (or selects the slot already holding it), closes the menu and enters placement mode; a digit `1`..`9` puts it in that slot and the chooser stays open; letters search the menu as on any page |
-| entities | `R` | `turn the ghost`: 22.5 degrees about the up axis per press, kept until the mode ends |
+| entities | `R` | `turn the ghost`: 22.5 degrees about the up axis per press, kept until the mode ends; on a structure's slot a quarter turn (90 degrees) |
 | entities | `Delete` | Remove the placed entity under the crosshair, the menu open or not, in placement mode or not |
 | entities | `Left`, `Right` | The aimed (else the newest) placed entity's clip before and after (menu closed); in placement mode, the ghost's |
 | entities | `Down` | Pause or play that entity's clip (menu closed); in placement mode, the ghost's |
+| structures | `F` | `snap`: a structure's box on the ground under its footprint or free where the aim points (`ground`, `free`; the pad's D-pad up with the menu closed); the notice says the new snap, the HUD row ends `snap ground` or `snap free` and the belt's digits row ends with `free` in yellow while free |
 | readings | `Enter` | Sample the next frames and print frame-time readings (menu closed) |
 | debug | `F9` | Cycle the view: shaded, normals, hitmask, steps, cracks, albedo |
 | debug | `X` | Cycle the cutaway: auto, on, off |
@@ -102,7 +104,12 @@ the sharpening and pan, the lighting modes but the lamp, the lights' carry, colo
 flag, the light queue's order, weights, withdrawal, budget, full-first, missing light and
 reach, the wander (`wander` under `entities`: every placed body wanders, the built-in walkers
 walk their circle) and the eye lights, the audio's sounds and mix, the bench, the stamp,
-the crumble, the coarse print, the castle shot and the shadow ray, and the world and sky page:
+the crumble, the coarse print, the castle shot and the shadow ray, the `structures` group
+(`choose a structure`: the structures' chooser, four rows per structure beside its icon, its
+name, placements and size, then the palette rows its file added and its slot; `Enter`, a
+digit and `` ` `` act as on the entities' chooser; `clear box` on or off [on], `structure
+scale` 1 to 4 [1] and `snap` (`F`) ground or free [ground], shown on the HUD's `clear box on,
+structure scale 1, snap ground` row), and the world and sky page:
 the time of day (a number, an hour a step, held between 00:00 and 23:59) and the day cycle
 (`--day-length`) and the sky rays (1 to 4) under a sky, the next world source (`--source`'s
 order: cave, level, showcase, outdoor, and back, rebuilt in process with that source's start
@@ -136,9 +143,12 @@ frame to the slot it fills), over a dimmed box: each slot's digit and its entry'
 framed by `+`, `-` and `|` (the frame's top and bottom rows yellow), and the selected entry's
 name above the belt for 3 s after the selection changes (`slot 5 empty  (choose with `)` for
 an empty slot, an entry in error with its name grey and its error red). The belt starts filled with the library
-in the chooser's order (`--model`'s rig first, then the entries that build, then those in
-error, each in name order); a slot keeps its entry for the run, and the chooser's digits change
-it. The wheel, the pad's D-pad left and right or the chooser's `Enter` enter the mode from the
+in the chooser's order with the walker first (`--model`'s rig first, then the walker, then the
+entries that build, then those in error, each in name order); a slot keeps its entry for the
+run, and the chooser's digits change it: a digit on an empty slot moves the entry there, on an
+occupied slot swaps the two (the same digit on the old slot swaps them back; an entry from no
+slot moves the holder to the next empty slot, or off a full belt), and the notice says both
+moves (`slot 4 walker, slot 1 castle`). The wheel, the pad's D-pad left and right or the chooser's `Enter` enter the mode from the
 view, never a digit; in the mode every digit `1`..`9` selects its slot (`Delete` removes the
 aimed entity). Opening the menu, `Esc`, the right click, `L2` or the pad's `East` leave it.
 
@@ -150,11 +160,43 @@ a floor, and under a wall or a ceiling hit moved back by half the model's footpr
 to the floor (up to 10 m below). A surface body (the spider) stands on the face it is aimed at
 instead, wall or ceiling, its legs to the face, facing up the face (`R` turns it about the
 face's normal), and a click attaches it there. With no hit, or a hit nearer than that distance,
-the ghost stands at that distance along the view, dropped to the floor. The left click (or `R2`) places
+the ghost stands at that distance along the view, dropped to the floor. The left click (or `R2`, or `E`) places
 it there on its clip and turn (`placed spider #3 (rear)`) and the mode stays, a new ghost at
 the aim; the dig and the fill rest while the mode is on. An empty slot, an entry in error or a
 full set (64) stands no ghost and the banner says why. Under `--tester` there is no belt and no
 mode.
+
+The belt also holds the structures (`apps/flythrough/assets/structures`, then the generated
+castle), filled after the entities: walker, spider, chapel, castle, slot 5 empty (the
+spider's rows join every source's table at the start, `entities: 2 entries, +3 rows`). A
+structure's ghost is a coarse copy of the structure inside a frame of its box at the scale and
+turn, marked as one entity: the copy is the structure voxel for voxel while it is at most 64
+voxels a side, else one voxel for each cube of `k` voxels (the least `k` that fits: 10 for the
+castle), and the frame is its twelve edges, or its eight corners for a box over 64 voxels a
+side. It writes no voxel. Its name row is the structure's size
+(`chapel  4.8 x 3.2 x 4.0 m`, `  x2` after it at scale 2). The box's near side is at the
+crosshair's first world hit within 30 m (on a wall or a ceiling, dropped to the floor below),
+or the view's 3 m point dropped to the floor with no hit; its footprint grows away from the
+camera along the view, so the camera is never inside it. With `snap ground` (the default) its
+base is the lowest of a lattice of columns over the footprint (up to 8 x 8, corners included),
+each cast down from just over that point: on a slope the uphill side stands in the cut
+`clear box` makes, and a column that finds no ground within 10 m caps the base 10 m under the
+point. With `snap free` (`F`) the box stands where the crosshair's first hit is, on any face
+and with no drop, or 30 m along the view in the air, its base at that point. `R`
+turns it a quarter turn. The left click (or `E`) places it as logged stamps through the server: with
+`clear box` on, a stamp of written air over the box and 1 m on its sides and above, then a
+stamp per placement; a part of the box not resident is written as its chunks arrive. The
+notice reads `placed chapel 4.8 x 3.2 x 4.0 m: 5 ops, 4 chunks now, 0 pending`, and the mode
+stays. The castle builds on a worker the first time its slot is selected (`castle: building`
+in grey until it arrives; its icon and its ghost arrive with it). A box past the edit limit
+(1024 voxels a side with its 1 m margin each side) is refused: the click places nothing and
+the notice over the view reads `castle x2: 1200 x 1200 x 1000 voxels, over the edit limit
+of 1024`, and while that slot is selected at that scale the belt's name row stays on screen with
+the same words in grey, the reason in red. The castle (60 x 60 x 50 m) is past the limit at
+every scale over 1; were it not, it would read `castle: scale 1 only`, having no file to scale. A
+structure larger than the cave's rooms stands in its cleared box with the cut rock around it:
+the fly-through has no notion of a room, so judge a large structure on the outdoor hills
+(`--source outdoor --time 12:00`).
 
 ### Gamepad (`--pad on`, the default in a window)
 
@@ -166,7 +208,8 @@ mode.
 | `R3` | Latch boost |
 | `South` | Walking: jump; in the menu: `Enter` |
 | `R2` / `L2` | Dig / fill; in placement mode, place the ghost / leave the mode |
-| D-pad up / down | In the menu: move the selection, or step the number being edited |
+| D-pad up | The structures' `snap`, ground or free (menu closed); in the menu: move the selection up, or step the number being edited |
+| D-pad down | In the menu: move the selection down, or step the number being edited |
 | D-pad left / right | The belt's slot before / after, entering placement mode (`belt before`, `belt next`); in the menu: back a page / open |
 | `North` | Toggle walk mode |
 | `West` | Cycle the cutaway; in placement mode, turn the ghost (the cutaway is then the menu's) |
@@ -296,6 +339,11 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--entities-walk on\|off` | The wander starts, as the menu's `wander` sets it: every placed body wanders, the built-in walkers walk their circle [off] |
 | `--model PATH` | View a `.rig` and the `.vox` it names (the library is `apps/flythrough/assets/entities/<name>/<name>.rig`, [entities.md](entities.md)): it is the library's first entry, selected, so `` ` `` and `--entities N` place it (a rig of the library itself is that entry, not a second one); a saved change to either file reloads its instances only |
 | `--clip NAME` | The `--model` clip to play first [the rig's first] |
+| `--materials PATH` | The material table file [`apps/flythrough/assets/materials.txt`; the built-in copy when that is missing]. Each scene takes its rows by name; while the window is open a saved change of colour, roughness, opacity or emission shows within a second (`materials reloaded`, the emissive chunks re-baked), a row added, removed or renamed or a class changed (`flags`, emitting or not) waits for a restart (`materials: shape changed, restart`), and an error names its line. A `--model` whose `.rig` has no `material` line for a palette entry takes the entry's colour and MagicaVoxel material as a row (`vox #rrggbb ...`, the HUD's `rows +N`) |
+| `--vox PATH[@x,y,z][*k]` | Place a MagicaVoxel scene in the streamed cave at the start ([structures](../apps/flythrough/assets/structures/README.md)): its palette as material rows (glass, glow, metal), hidden layers left out, mirrored groups mirrored, `k` world voxels per `.vox` voxel per axis (1 to 4) [1]; its box's minimum corner at `x,y,z`, or 3 m ahead of the spawn, its base 1.6 m below it |
+| `--vox-clear on\|off` | Carve `--vox`'s box, and 1 m on its sides and above, to air first [on] |
+| `--vox-op` | Place `--vox` as logged ops instead of through the cave's source: a stamp of written air over the box (with `--vox-clear on`) and a stamp per placement, submitted on the first tick (a chunk not resident is written when it arrives), so the two paths can be compared |
+| `--structures-dir DIR` | The structures library: every `DIR/<name>/<name>.vox` is a belt item after the entities, then the castle; each file's palette rows join the world's table at the start (`structures: N entries, +R rows`) [`apps/flythrough/assets/structures`] |
 | `--library-dir DIR` | The entities library: every `DIR/<name>/<name>.rig` is an entry, in name order; `--model`'s rig comes first. A missing or empty library gives the built-in walker [`apps/flythrough/assets/entities`] |
 | `--fade-reading` | Headless: dig, settle, switch the lamp off and print how the light fades |
 | `--exposure auto\|E` | Adapt like an eye, or a fixed exposure [auto] |

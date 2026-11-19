@@ -25,7 +25,7 @@
 //!
 //! // One 8-voxel cube turning about its centre, its minimum corner at voxel (100, 50, 100).
 //! let cube = Arc::new(Prefab::new([8; 3], vec![bone; 512], None));
-//! let part = Part { volume: cube, parent: None, pivot: [4 * 256; 3], detail: 1 };
+//! let part = Part { volume: cube, parent: None, pivot: [4 * 256; 3], detail: 1, coarse: 1 };
 //! let model = Arc::new(Model::new(vec![part]).unwrap());
 //! let mut pose = Pose::rest(&model);
 //! pose.root = Fixed3([104 * 256, 54 * 256, 104 * 256]);
@@ -49,7 +49,7 @@ mod raycast;
 mod set;
 
 pub use clip::{Clip, ClipError, Fade, Key, Playback, Player, Track, blend, sample};
-pub use model::{MAX_EDGE, MAX_PARTS, Model, ModelError, Part};
+pub use model::{MAX_COARSE, MAX_EDGE, MAX_PARTS, Model, ModelError, Part};
 pub use pose::{ComposeScratch, ComposedPose, PartPose, Pose, PoseError};
 pub use quat::{Q14_ONE, Quat};
 pub use set::{EntityHit, EntityId, EntitySet};

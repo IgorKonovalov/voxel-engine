@@ -183,13 +183,15 @@ impl ComposedPose<'_> {
         let p = self.model.parts().get(part)?;
         let f = &self.frames[part];
         let detail = i64::from(p.detail);
+        let coarse = i128::from(p.coarse);
         let rel = [0, 1, 2].map(|k| i64::from(local[k]) - i64::from(p.pivot[k]));
-        // m * rel / (16384 * detail), the division done once.
+        // m * rel * coarse / (16384 * detail), the division done once.
         let one = i128::from(Q14_ONE) * i128::from(detail);
         let w = [0, 1, 2].map(|r| {
             let s: i128 = (0..3)
                 .map(|c| i128::from(f.m[r][c]) * i128::from(rel[c]))
-                .sum();
+                .sum::<i128>()
+                * coarse;
             f.pivot[r] + crate::quat::div_round(s, one) as i64
         });
         Some(Fixed3(w))
@@ -212,6 +214,7 @@ mod tests {
             parent,
             pivot,
             detail,
+            coarse: 1,
         }
     }
 

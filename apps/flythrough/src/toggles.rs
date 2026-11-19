@@ -245,6 +245,8 @@ pub enum Act {
     FireLight,
     /// Opens the chooser: the library's entries, each into a belt slot.
     Picker,
+    /// Opens the structures' chooser: the structures library's entries, each into a slot.
+    StructurePicker,
     /// The belt's selection one slot on (`1`) or back (`-1`), entering the mode.
     BeltStep(i8),
     /// Turns the ghost one step in placement mode.
@@ -474,6 +476,7 @@ pub static ACTIONS: &[Action] = &[
         [Bind::Pad(PadButton::DpadLeft)]
     ),
     action!("turn the ghost", Entities, Act::Turn, [Bind::Key(KEY_TURN)]),
+    action!("choose a structure", Structures, Act::StructurePicker, []),
     action!(
         "remove aimed entity",
         Entities,
@@ -1000,4 +1003,45 @@ pub static TOGGLES: &[Toggle] = &[
         },
         flip: |m, _| m.dig_radius = (m.dig_radius + DIG_STEP).min(DIG_RANGE.1),
     },
+    Toggle {
+        press: Press::Menu,
+        name: "clear box",
+        group: Group::Structures,
+        needs: None,
+        number: None,
+        row: HudRow::Structures,
+        get: |m| format!("clear box {}", on(m.clear_box)),
+        flip: |m, _| m.clear_box = !m.clear_box,
+    },
+    Toggle {
+        press: Press::Menu,
+        name: "structure scale",
+        group: Group::Structures,
+        needs: None,
+        number: Some(Number {
+            step: |m, d| {
+                m.structure_scale = (m.structure_scale as i32 + d).clamp(1, MAX_SCALE) as u32;
+            },
+            range: |_, _| format!("1..{MAX_SCALE}"),
+        }),
+        row: HudRow::Structures,
+        get: |m| format!("structure scale {}", m.structure_scale),
+        flip: |m, _| m.structure_scale = m.structure_scale % MAX_SCALE as u32 + 1,
+    },
+    Toggle {
+        press: Press::Key(KeyCode::KeyF, Some(PadButton::DpadUp)),
+        name: SNAP,
+        group: Group::Structures,
+        needs: None,
+        number: None,
+        row: HudRow::Structures,
+        get: |m| format!("snap {}", m.snap.name()),
+        flip: |m, _| m.snap = m.snap.other(),
+    },
 ];
+
+/// The `structures` group's snap toggle's name: its key's press says its row in the notice.
+pub const SNAP: &str = "snap";
+
+/// A structure's largest scale (`vxe_assets::MAX_SCALE`).
+const MAX_SCALE: i32 = vxe_assets::MAX_SCALE as i32;

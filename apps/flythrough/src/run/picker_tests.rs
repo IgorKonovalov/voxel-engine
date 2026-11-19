@@ -2,10 +2,12 @@
 //! the digits and the pad on the belt, the chooser's hand-over, where the ghost stands, the
 //! clicks, the remove key, the one panel, the caps and the tester's filter. A rock box with
 //! the walker's rows around the camera, the committed library scanned against the cave's table
-//! (the walker builds; the spider is in error), unless a test names another.
+//! (the walker builds; the spider is in error, since the bare `cave_materials()` lacks the
+//! showcase's rows it names), unless a test names another. A run's own table holds those rows
+//! (`setup::world_table`), so there the spider builds on every source.
 
 use super::*;
-use crate::entities::belt::{self, BELT_ROWS};
+use crate::entities::belt::{self, BELT_ROWS, Item};
 use crate::entities::library;
 use crate::hud::menu::{Activated, PageId, Row};
 use crate::run::hud_feed::Overlay;
@@ -167,7 +169,7 @@ fn the_wheel_and_the_digits_enter_the_mode() {
         &mut text,
         &mut colours,
         (80, 45),
-        w,
+        &run.modes,
         now,
         crate::hud::BANNER_MS,
         &mut belt::Paint::default(),
@@ -293,11 +295,11 @@ fn the_chooser_fills_the_belt_and_hands_over() {
     assert_belt_under(&mut run, 0);
     let v = run.run_view();
     let row = |run: &Run| run.menu.selected_row(&run.modes, &v);
-    assert!(matches!(row(&run), Some(Row::Item(i)) if i == walker));
+    assert!(matches!(row(&run), Some(Row::Item(i)) if i == Item::Entity(walker)));
     frame_keys(&mut run, &pressed(KeyCode::ArrowDown));
-    assert!(matches!(row(&run), Some(Row::Item(i)) if i == spider));
+    assert!(matches!(row(&run), Some(Row::Item(i)) if i == Item::Entity(spider)));
     frame_keys(&mut run, &pressed(KeyCode::Digit2));
-    assert_eq!(run.modes.walkers.belt.slots[1], Some(spider));
+    assert_eq!(run.modes.walkers.belt.slots[1], Some(Item::Entity(spider)));
     assert_eq!(run.modes.walkers.belt.selected, 1);
     assert_eq!(run.menu.page(), Some(PageId::Entities));
     assert_eq!(notice(&run), Some("spider in slot 2"));
@@ -306,7 +308,7 @@ fn the_chooser_fills_the_belt_and_hands_over() {
     let b = &run.modes.walkers.belt;
     assert_eq!(
         (b.slots[1], b.slots[4], b.selected),
-        (None, Some(spider), 4)
+        (None, Some(Item::Entity(spider)), 4)
     );
     assert_eq!(run.menu.filter(), "");
     assert!(!b.on && run.modes.walkers.preview.is_none());
@@ -334,6 +336,58 @@ fn the_chooser_fills_the_belt_and_hands_over() {
     assert_eq!(w.preview.as_ref().and_then(|p| p.entry), Some(walker));
 }
 
+/// Done-when 4 of Plan 0083 Phase 7d: with the structures library in the belt (walker,
+/// spider, chapel, castle), the entities chooser's cursor on the walker and `4` swaps it with
+/// the castle (slot 4 walker, slot 1 castle), the notice says both moves, the frame is on
+/// slot 4 and the castle's chooser row reads `slot 1`; `1` with the walker under the cursor
+/// swaps them back.
+#[test]
+fn the_chooser_swaps_an_occupied_slot() {
+    use crate::structures as st;
+    use std::path::Path;
+    let mut table = cave_table();
+    st::add_library_rows(Path::new(st::LIBRARY), None, &mut table);
+    let mut run = run_in(rock_box(&table, 60));
+    run.modes.structures = st::Library::load(Path::new(st::LIBRARY), &table, &cave_table());
+    let walker = entry(&run, "walker");
+    let castle = run
+        .modes
+        .structures
+        .entries
+        .iter()
+        .position(|e| e.name == "castle")
+        .expect("the castle");
+    run.fill_belt();
+    assert_eq!(
+        run.modes.walkers.belt.slots[3],
+        Some(Item::Structure(castle))
+    );
+    frame_keys(&mut run, &pressed(KeyCode::Backquote));
+    let v = run.run_view();
+    assert!(matches!(
+        run.menu.selected_row(&run.modes, &v),
+        Some(Row::Item(i)) if i == Item::Entity(walker)
+    ));
+    frame_keys(&mut run, &pressed(KeyCode::Digit4));
+    let b = &run.modes.walkers.belt;
+    assert_eq!(
+        (b.slots[0], b.slots[3], b.selected),
+        (Some(Item::Structure(castle)), Some(Item::Entity(walker)), 3)
+    );
+    assert_eq!(notice(&run), Some("slot 4 walker, slot 1 castle"));
+    assert_eq!(run.menu.page(), Some(PageId::Entities));
+    let mut rows = String::new();
+    st::words::write_item_rows(&run.modes, castle, &mut rows);
+    assert!(rows.ends_with("   slot 1"), "{rows}");
+    frame_keys(&mut run, &pressed(KeyCode::Digit1));
+    let b = &run.modes.walkers.belt;
+    assert_eq!(
+        (b.slots[0], b.slots[3], b.selected),
+        (Some(Item::Entity(walker)), Some(Item::Structure(castle)), 0)
+    );
+    assert_eq!(notice(&run), Some("slot 1 walker, slot 4 castle"));
+}
+
 /// Phase 9 (4): with `--model` naming the library's own walker rig the library holds one
 /// walker entry (`--model`'s, flagged): the belt is the walker in slot 1, the spider in slot
 /// 2, slot 3 empty, and the chooser lists two entries.
@@ -350,17 +404,20 @@ fn a_model_rig_from_the_library_fills_one_slot() {
     assert!(run.modes.walkers.library.entries[walker].flagged);
     frame_keys(&mut run, &pressed(KeyCode::Backquote));
     let b = &run.modes.walkers.belt;
-    assert_eq!(b.slots[..3], [Some(walker), Some(spider), None]);
+    assert_eq!(
+        b.slots[..3],
+        [Some(Item::Entity(walker)), Some(Item::Entity(spider)), None]
+    );
     let v = run.run_view();
     let items = run.menu.rows(&run.modes, &v);
-    let items: Vec<usize> = items
+    let items: Vec<Item> = items
         .iter()
         .filter_map(|r| match r {
             Row::Item(i) => Some(*i),
             _ => None,
         })
         .collect();
-    assert_eq!(items, [walker, spider]);
+    assert_eq!(items, [Item::Entity(walker), Item::Entity(spider)]);
 }
 
 /// The ghost's feet with the camera at `at`, `pitch_deg` above the horizon along +x, in
@@ -369,7 +426,12 @@ fn ghost_feet(run: &mut Run, name: &str, at: [f32; 3], pitch_deg: f32) -> [f32; 
     look(run, at, pitch_deg);
     let i = entry(run, name);
     run.fill_belt();
-    let s = run.modes.walkers.belt.slot_of(i).expect("a slot");
+    let s = run
+        .modes
+        .walkers
+        .belt
+        .slot_of(Item::Entity(i))
+        .expect("a slot");
     enter_slot(run, s);
     run.modes.walkers.preview.as_ref().expect("a ghost").feet
 }
@@ -621,7 +683,7 @@ fn the_belt_draws_its_slots() {
             &mut text,
             &mut colours,
             (80, 45),
-            w,
+            &run.modes,
             now,
             crate::hud::BANNER_MS,
             &mut paint,
@@ -724,12 +786,11 @@ fn the_icon_arrives_after_the_words() {
     let belt_of = |run: &Run| {
         let (mut text, mut colours) = (String::new(), Vec::new());
         let mut paint = belt::Paint::default();
-        let w = &run.modes.walkers;
         let b = belt::append_belt(
             &mut text,
             &mut colours,
             (80, 45),
-            w,
+            &run.modes,
             0.0,
             crate::hud::BANNER_MS,
             &mut paint,
@@ -993,7 +1054,9 @@ fn the_tester_has_no_picker_and_an_entry_in_error_refuses() {
 
     let spider = entry(&run, "spider");
     run.act(crate::toggles::Act::Picker);
-    run.menu_act(Activated::Choose { entry: spider });
+    run.menu_act(Activated::Choose {
+        item: Item::Entity(spider),
+    });
     let words = notice(&run).expect("the refusal");
     assert!(
         words.starts_with("spider: ") && words.contains("crystal"),

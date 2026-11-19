@@ -152,6 +152,25 @@ fewer frames (0032's m1 fix). The whole gate tier read 937 to 1214 s at the last
 the 12-minute proposal in `docs/nfr.md` section 7. Owed: a test-time chore that reads
 `scripts/test-times.mjs` on a quiet gate run and trims or soaks each test over the line.
 
+Plan 0083's close (2026-11-19, `docs/nfr.md` section 7): 1263 s loaded, 29 tests over the line.
+Five are the plan's, each generating the castle's world in a test build (21.6 to 26.4 s):
+`the_spider_builds_on_every_source_castle` and `the_castle_world_maps_the_structures` read only
+the castle's material table, which `setup::world_table(&args, &setup::materials(&args))` gives
+without the build (`table_of_run` in `run/structure_tests.rs` joins `Pending::StreamBuilding`
+instead); `the_built_castle_has_an_icon`, `the_ghost_is_a_coarse_copy_in_its_frame` and
+`the_castle_loads_through_the_scene` need the built castle and are soak marks or one shared
+build. About 100 s of serial time.
+
+### `cargo deny` fails on main's wasmtime 49.0.5 advisories
+
+Noted 2026-11-19 at Plan 0083's close: `cargo deny check` reads advisories FAILED on
+`wasmtime = "=49.0.5"` (RUSTSEC-2026-0566 to 0573: aborts and panics in builds without the
+`gc` or `threads` features, a stale GC heap pointer, unbounded growth in `wasmtime-wasi`'s
+`AsyncWriteStream` and `wasmtime-wasi-http`); bans, licenses and sources pass. The pin is
+main's and the workspace's `Cargo.toml` says a bump moves with wit-bindgen and wasm-tools.
+Owed on main as its own chore: the patched release, the lockfile, `scripts/build-guests.sh`
+and the guests rebuilt, `cargo deny` green; until then CI's deny step is red on every branch.
+
 ### The live queue's order and cancellation, after Plan 0059
 
 Taken 2026-11-10 by [Plan 0060](plans/done/0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md) and [ADR-0048](adrs/0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md); the hall's aliasing goes to the antialiasing plan below.
@@ -206,13 +225,28 @@ that can be created as a .vox file"). Three pieces those plans leave out. **Down
 (a majority vote per 2³, or a non-integer scale): Plan 0083 scales up by an integer only, since a
 vote changes thin features and the owner judges detail by eye; pick up if a scene authored at a
 finer grid than 10 cm is wanted. **A traced preview** of a structure at the crosshair before it
-is placed: the entity pool's parts are capped at 64 voxels (ADR-0050), so a castle cannot be
-previewed as an entity; the HUD shows the box's footprint instead. What it takes: a coarse model
-(detail 1 over 8-voxel cells) in the pool, or a wire box drawn by the overlay. **A row's class
+is placed: taken 2026-11-18 by Plan 0083's Phase 7b after the owner's window ("something
+simplified at least to understand what it is"): a coarse grain per entity part and a one-part
+coarse copy of the structure in its marked frame; what stays parked is a full-detail preview,
+which the pool's 64-voxel parts (ADR-0050) cannot hold. **A row's class
 changed live** (stone to glass without a restart): ADR-0065 fixes a row's translucent, emissive
 and opaque class for the world's life because the mirror's slot packing and the bake's emitter
 lists read it at the first sync; lifting it means re-packing every brick that holds the row and
 re-baking its chunks. Pick up if the materials file's reload hits the `restart` banner often.
+
+### A foundation under a snapped structure
+
+Parked 2026-11-19 from Plan 0083's Phase 7c verdict (window 83c: the castle's ghost floated
+over the hills). Phase 7d snaps a structure's box to the terrain under its footprint, one column
+winning (the lowest, owner question 9), so on a slope one side is sunk or floats. A foundation
+that fills the footprint's columns from the base down to the terrain would remove the choice; it
+is a stamp that writes into air only, which Plan 0084's write policy (ADR-0067) gives a stamp.
+Pick up when 0084 lands: a `foundation on|off` beside `clear box`, the fill in the structure's
+most-used row, as a third stamp of the click.
+
+### Plan 0083's leftovers (close review, 2026-11-19)
+
+Found at the close ([Plan 0083](plans/done/0083-anything-from-a-vox-palette-materials-a-material-file-and-large-scenes-stamped-into-the-world.md), v0.66.0); none blocked it, each is a small fix pass when the area is next open. **Pending placements (`vxe-world`, ADR-0066's Outcome).** `World::stamp` takes `&Prefab`, so a placement past residency copies the prefab into a fresh `Arc` (`stamp.rs`, the `Placement` push) instead of sharing the registry's, and a rotated stamp materialises its rotation once more: bounded by the pending prefabs' bytes (the castle's 45 MB again at most), a `stamp` over the `Arc` removes it. The poll thread blits every placement an inserted chunk lists under the store's write lock (`stream/mod.rs`, `commit_residency`), up to a 64³ blit per placement while every reader waits; blit into the held chunk first, then apply only what arrived since under the lock. A placement whose remaining coordinates lie outside a finite `World::extent`, or where the camera never goes, lives for the session; drop the coordinates a finite extent can never stream at stamp time and report the pending bytes beside the count. Two stamps on one world at once (not reachable through the server, whose ops are serial) can order an overlap differently in resident and pending chunks: say in `stamp`'s doc that the caller serialises stamps. **Scenes (`vxe-assets`).** `VoxScene::load` honours a hidden layer only on the outermost layered transform of a path (`scene.rs`, the group arm): a shape on a hidden layer under a group on a visible one is hidden in MagicaVoxel and placed here; check every transform's layer and add the nested case to `hidden_layers_and_nodes_are_not_placed`. The grammar example in `materials.rs`'s crate doc and a comment in `rows.rs` name the fly-through's castle and torch; a neutral example costs nothing. **The coarse grain (`vxe-render`).** Instance word 27 and the inverse map are derived from the one f32 grain `detail / coarse` and inverted, one ulp off for coarse 7, 13, 14 and 15; write word 27 as `coarse / detail` directly. **The testbed.** The placed notice counts the ops submitted, not the tick's applied events, and `register_prefab`'s errors are dropped, so a stamp refused at the tick still reads `placed`. A click while the ghost body's worker is building the same scaled scene builds it again on the frame thread (`scene_at`); refuse with `building` or wait on the worker. `Entry::refusal` adds the 1 m margin on every axis while the air box adds it above only and `clear box` off adds none, and prints the un-margined size it did not check. `Modes::edit_axis_max` starts at the default until a slot is entered, so the chooser's belt row can show the wrong verdict on a world with another limit. `a_key_places_as_the_click_does` compares prefab ids, not `(prefab, origin, rot)`; `a_placed_structure_is_logged_stamps` pins the chapel's per-row counts as a sorted list, losing row identity. `run/structure_tests.rs` is at 1169 of 1200 lines; the next test splits it (the ghost and icon tests to a sibling). **Owed readings (the plan's Budgets table).** The live queue's settle after a runtime castle (two 1500-frame headless runs never drained the queue, with or without the castle, `docs/plans/logs/0083.md` Phase 8: a longer run or a quiet queue is needed), `VmHWM` at `--frames 3000` with and without `--castle` (the prefab bytes fell from 343 MB to 45 MB; the RSS was not re-read), the first frame with `--vox chapel` against the plain cave over three runs, the material term of `GpuWorld::mirror_bytes` with the chapel's 255 rows, and `--census` for `Wide` bricks with the castle placed. Pick up with the next plan on structures (0084) or a readings chore.
 
 ### Hundreds or thousands of entities
 
@@ -384,6 +418,17 @@ Pick up after the current lighting plans close (0058 and those ahead of it).
 ### A consumer's settings file in the render example
 
 Parked 2026-11-12 (owner, at the settings-menu interview). The fly-through and the tester keep render settings in a TOML file through an app-side field table ([Plan 0073](plans/0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md), ADR-0058); the engine stays file-free (ADR-0055). A later example could show a consumer doing the same, so a game sees how. The natural home is [Plan 0071](plans/0071-the-consumers-path-a-render-example-a-renderer-tested-alone-names-and-errors.md)'s render example, or a second example beside it. Pick up after Plan 0073 closes, if 0071 has not taken it by then.
+
+### A freshly placed castle's interior under the sky, as a pop-counter scene
+
+Parked 2026-11-18 from Plan 0083's Phase 7 verdict (session 83b, `--source outdoor --time
+12:00`, 25.png): inside a castle placed from the belt a moment before, the walls clipped white
+and blue and the vault was dark and grainy with sparkles ("castle flickers badly"; HUD queue
+depth 10 751, missing 0, scene -4.1 EV, eye +1.34 EV). A freshly stamped large structure under
+a sky is the sky ray's region at rest on a young history with the exposure moving on it: what
+ADR-0076's rules 1 to 3 forbid. Plan 0083 does not fix it. Pick up in Plan 0090 Phase 4 (the
+other stills) or Plan 0086's close: a fixed scene that stamps the castle's hall on the hills
+and counts the pixels that break rules 1 to 3 over its settle, by source.
 
 ### Entity placement extras parked at Plan 0077's amendment
 

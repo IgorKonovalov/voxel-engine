@@ -18,7 +18,7 @@ use crate::run::Run;
 use crate::run::hud_feed::Samples;
 use crate::setup::{castle_banner, castle_camera};
 use crate::toggles::{ACTIONS, Act, BELT_KEYS, TOGGLES, press};
-use vxe_app::{Axis, Input, MouseButton, PadButton};
+use vxe_app::{Axis, Input, KeyCode, MouseButton, PadButton};
 use vxe_audio::{Command, PlayParams};
 use vxe_render::Camera;
 use vxe_world::{FIXED_ONE, Face, Fixed3};
@@ -125,7 +125,12 @@ impl Run {
                 continue;
             }
             before.get_or_insert_with(|| self.modes.clone());
-            println!("{}", press(t, &mut self.modes, now));
+            let line = press(t, &mut self.modes, now);
+            if t.name == crate::toggles::SNAP {
+                self.say((t.get)(&self.modes));
+            } else {
+                println!("{line}");
+            }
         }
         if let Some(before) = before {
             self.apply_modes(&before);
@@ -157,15 +162,25 @@ impl Run {
             }
             Activated::Action(act) => self.act(act),
             Activated::Refused(why) => self.say(why),
-            Activated::Choose { entry } => self.choose(entry),
-            Activated::Assign { entry, slot } => {
+            Activated::Choose { item } => self.choose(item),
+            Activated::Assign { item, slot } => {
                 self.fill_belt();
                 let belt = &mut self.modes.walkers.belt;
-                belt.assign(slot, entry);
+                let moved = belt.assign(slot, item);
                 belt.point(slot, ms_since(self.start));
                 self.belt_selected();
-                let name = self.entry_name(Some(entry));
-                self.say(format!("{name} in slot {}", slot + 1));
+                let name = self.item_name(item);
+                let n = slot + 1;
+                let words = match moved {
+                    None => format!("{name} in slot {n}"),
+                    Some((old, Some(t))) => {
+                        format!("slot {n} {name}, slot {} {}", t + 1, self.item_name(old))
+                    }
+                    Some((old, None)) => {
+                        format!("slot {n} {name}; {} left the belt", self.item_name(old))
+                    }
+                };
+                self.say(words);
             }
         }
     }
@@ -204,7 +219,7 @@ impl Run {
     /// the wheel, the clicks and the triggers are read here. Out of placement mode the left
     /// click (or `R2`) digs, the right click (or `L2`) fills and the wheel enters the mode at
     /// the belt's selected slot. In the mode the wheel steps the slot (down the next), the
-    /// left click or `R2` places the ghost, the right click, `L2` or the pad's `East` leaves,
+    /// left click, `R2` or `E` places the ghost, the right click, `L2` or the pad's `East` leaves,
     /// `West` turns the ghost and every digit selects its slot (`toggles::BELT_KEYS`); `1`,
     /// `4` and `6` drop, remove and fire nothing and `East` knocks nothing. No digit enters
     /// the mode.
@@ -239,7 +254,7 @@ impl Run {
             if input.pad_pressed(PadButton::West) {
                 self.act(Act::Turn);
             }
-            if left || r2 {
+            if left || r2 || input.pressed(KeyCode::KeyE) {
                 self.place_ghost();
             }
             if right || l2 || input.pad_pressed(PadButton::East) {
@@ -281,6 +296,19 @@ impl Run {
                 let n = self.modes.walkers.library.entries.len().max(1);
                 self.say(format!("entities library: {n} entries"));
             }
+            Act::StructurePicker => {
+                self.fill_belt();
+                let row = self
+                    .modes
+                    .walkers
+                    .belt
+                    .structure()
+                    .and_then(|j| self.modes.structures.order().iter().position(|&o| o == j));
+                self.menu.open_structures(row.unwrap_or(0));
+                self.sync_ghost();
+                let n = self.modes.structures.entries.len();
+                self.say(format!("structures library: {n} entries"));
+            }
             Act::BeltStep(d) => {
                 self.fill_belt();
                 let belt = &mut self.modes.walkers.belt;
@@ -293,7 +321,12 @@ impl Run {
                 if belt.on {
                     belt.turn_step();
                     let deg = f32::from(belt.turn) * belt::TURN_STEP_DEG;
-                    self.say(format!("ghost turned {deg} degrees"));
+                    let what = if belt.structure().is_some() {
+                        "structure"
+                    } else {
+                        "ghost"
+                    };
+                    self.say(format!("{what} turned {deg} degrees"));
                 } else {
                     self.say("turn: in placement mode only");
                 }
@@ -429,18 +462,26 @@ impl Run {
             .flatten()
             .map_or(reach, |h| h.t);
         let w = &mut self.modes.walkers;
-        let preview = w.preview.as_ref().map(|p| p.id);
+        let ghosts = [
+            w.preview.as_ref().map(|p| p.id),
+            w.frame.as_ref().map(|f| f.id),
+        ];
         w.aimed = w
             .set
             .raycast(origin, dir, max_t)
             .map(|h| h.entity)
-            .filter(|&id| Some(id) != preview);
+            .filter(|&id| !ghosts.contains(&Some(id)));
     }
 
     /// The world's first hit along the unit `dir` from `origin` within `max` voxels: its
     /// distance and the entered face's outward normal (no normal, distance 0, when `origin`
     /// is inside a solid voxel). [`belt::stand`]'s cast.
-    fn cast_world(&self, origin: [f32; 3], dir: [f32; 3], max: f32) -> Option<(f32, [f32; 3])> {
+    pub(crate) fn cast_world(
+        &self,
+        origin: [f32; 3],
+        dir: [f32; 3],
+        max: f32,
+    ) -> Option<(f32, [f32; 3])> {
         let one = FIXED_ONE as f32;
         let o = Fixed3(origin.map(|v| (v * one).floor() as i64));
         let d = dir.map(|v| (v * one).round() as i64);
@@ -477,26 +518,37 @@ impl Run {
         (feet, up, eye)
     }
 
-    /// Fills the belt from the library's order, once (`belt::Belt::fill`).
+    /// Fills the belt from the entities in the belt's order (`belt::entity_order`: the walker
+    /// first) and then the structures', once (`belt::Belt::fill`).
     pub(crate) fn fill_belt(&mut self) {
-        let w = &mut self.modes.walkers;
-        if w.belt.filled() {
+        if self.modes.walkers.belt.filled() {
             return;
         }
-        let order = w.library.order();
-        w.belt.fill(&order);
+        let structures = self.modes.structures.order();
+        let w = &mut self.modes.walkers;
+        let order = belt::entity_order(&w.library);
+        w.belt.fill(&order, &structures);
     }
 
-    /// Entry `entry`'s name (`None` the built-in walker).
-    fn entry_name(&self, entry: Option<usize>) -> String {
+    /// An item's name: an entity's (the built-in walker past the entries) or a structure's.
+    fn item_name(&self, item: belt::Item) -> String {
         let lib = &self.modes.walkers.library;
-        entry
-            .and_then(|i| lib.entries.get(i))
-            .map_or(crate::entities::library::BUILTIN_NAME, |e| &e.name)
-            .to_owned()
+        match item {
+            belt::Item::Entity(i) => lib
+                .entries
+                .get(i)
+                .map_or(crate::entities::library::BUILTIN_NAME, |e| &e.name)
+                .to_owned(),
+            belt::Item::Structure(j) => self
+                .modes
+                .structures
+                .entries
+                .get(j)
+                .map_or_else(String::new, |e| e.name.clone()),
+        }
     }
 
-    /// After the belt's selection changed: the library's selection follows the slot's entry,
+    /// After the belt's selection changed: the library's selection follows the slot's entity,
     /// and the ghost stands anew.
     fn belt_selected(&mut self) {
         let w = &mut self.modes.walkers;
@@ -506,16 +558,16 @@ impl Run {
         self.sync_ghost();
     }
 
-    /// The chooser's `Enter` on `entry`: the slot that holds it selected, else it goes into
-    /// the selected slot; the menu closes and placement mode starts there.
-    fn choose(&mut self, entry: usize) {
+    /// A chooser's `Enter` on `item`: the slot that holds it selected, else it goes into the
+    /// selected slot; the menu closes and placement mode starts there.
+    fn choose(&mut self, item: belt::Item) {
         self.fill_belt();
         let now = ms_since(self.start);
         let belt = &mut self.modes.walkers.belt;
-        let s = match belt.slot_of(entry) {
+        let s = match belt.slot_of(item) {
             Some(s) => s,
             None => {
-                belt.assign(belt.selected, entry);
+                belt.assign(belt.selected, item);
                 belt.selected
             }
         };
@@ -528,6 +580,7 @@ impl Run {
     pub(crate) fn end_placement(&mut self, words: &str) {
         self.modes.walkers.belt.end();
         self.modes.walkers.clear_preview();
+        self.modes.walkers.clear_frame();
         self.say(words);
     }
 
@@ -536,10 +589,18 @@ impl Run {
     /// facing the camera, turned by the belt's turn; anywhere else, and for an empty slot, there is none (opening the menu ends
     /// the mode). A refusal (an entry in error, a full set) says its words once.
     pub(crate) fn sync_ghost(&mut self) {
+        if let Some(words) = self.modes.structures.poll() {
+            self.say(words);
+        }
         let w = &mut self.modes.walkers;
         if self.menu.is_open() && w.belt.on {
             w.belt.end();
         }
+        if let Some(j) = w.belt.structure().filter(|_| w.belt.on) {
+            w.clear_preview();
+            return self.sync_frame(j);
+        }
+        w.clear_frame();
         let Some(i) = w.belt.entry().filter(|_| w.belt.on) else {
             return w.clear_preview();
         };
@@ -569,6 +630,116 @@ impl Run {
         }
     }
 
+    /// A structure's ghost kept in step: entry `j`'s coarse copy in its box's frame
+    /// (`structures::ghost_model`, the body made once per scale, a large one on a worker with
+    /// the frame alone until it arrives) with its minimum corner at [`Run::aim_corner`], at the
+    /// modes' scale and the belt's quarter turns. The castle's
+    /// build starts on its first selection and there is no ghost until it arrives; an entry in
+    /// error says why once.
+    fn sync_frame(&mut self, j: usize) {
+        self.modes.edit_axis_max = self.world.limits().edit_axis_max;
+        let table = self.world.materials();
+        self.modes.structures.build_castle(j, table);
+        let (scale, q) = (
+            self.modes.structure_scale,
+            self.modes.walkers.belt.quarters(),
+        );
+        let Some(e) = self.modes.structures.entries.get(j) else {
+            return self.modes.walkers.clear_frame();
+        };
+        if let Some(err) = e.error() {
+            let words = format!("{}: {err}", e.name);
+            self.modes.walkers.clear_frame();
+            return self.say_once(words);
+        }
+        let (Some(size), Some(scene)) = (e.size(scale, q), e.scene().cloned()) else {
+            return self.modes.walkers.clear_frame();
+        };
+        let corner = self.aim_corner(size);
+        // A scale the entry has no scene at (the castle's over 1) stands the frame alone.
+        let body = self
+            .modes
+            .structures
+            .body_at(j, scale, table)
+            .ok()
+            .flatten();
+        let make = || {
+            let row = crate::structures::frame_row(&scene, table);
+            crate::structures::ghost_model(body.as_ref(), q, size, row)
+        };
+        // A body that arrives from its worker remakes the ghost.
+        let key = (j, scale, q, body.is_some());
+        if let Err(words) = self.modes.walkers.show_frame(key, make, corner) {
+            self.say_once(words);
+        }
+    }
+
+    /// Where a box `size` voxels across stands for the camera now by the modes' snap
+    /// ([`belt::stand_box`]): its minimum corner, to the voxel. The one place a structure's
+    /// ghost and its placement stand.
+    pub(crate) fn aim_corner(&self, size: [u32; 3]) -> [i32; 3] {
+        let c = &self.fly.camera;
+        let (eye, fwd) = (c.position.to_array(), c.basis().0.to_array());
+        let size = size.map(|v| v as f32);
+        let corner = belt::stand_box(eye, fwd, size, self.modes.snap, |o, d, max| {
+            self.cast_world(o, d, max)
+        });
+        // A corner on a voxel's face, read in floats, may land a hair under it.
+        corner.map(|v| (v + 1e-3).floor() as i32)
+    }
+
+    /// Placement mode's click on structure `j`: its scene at the modes' scale, turned by the
+    /// belt's quarter turns, with its box's minimum corner at [`Run::aim_corner`], submitted
+    /// to the server as ops (`structures::ops`: the air box's stamp when `clear box` is on,
+    /// then a stamp per placement), its prefabs registered first. The tick that applies them
+    /// says the notice (`placed chapel 4.8 x 3.2 x 4.0 m: 5 ops, 4 chunks now, 0 pending`);
+    /// the mode stays and the ghost stands anew. A box the scale refuses
+    /// (`structures::words::refusal`) places nothing and says why ([`Run::refuse`]).
+    fn place_structure(&mut self, j: usize) {
+        let (scale, q) = (
+            self.modes.structure_scale,
+            self.modes.walkers.belt.quarters(),
+        );
+        self.modes.edit_axis_max = self.world.limits().edit_axis_max;
+        if let Some(words) = crate::structures::words::refusal(&self.modes, j) {
+            return self.refuse(words);
+        }
+        let table = self.world.materials();
+        let scene = match self.modes.structures.scene_at(j, scale, table) {
+            Ok(s) => s,
+            Err(words) => return self.refuse(words),
+        };
+        let name = self.item_name(belt::Item::Structure(j));
+        let s = scene.size();
+        let size = if q % 2 == 1 { [s[1], s[0], s[2]] } else { s };
+        let corner = self.aim_corner(size);
+        let lo = scene.bounds.0;
+        let offset = [0, 1, 2].map(|k| corner[k] - lo[k]);
+        let v = crate::structures::ops(&scene, offset, q, self.modes.clear_box);
+        let Some(net) = self.net.as_mut() else {
+            return self.refuse("structure: no server in this run".to_owned());
+        };
+        for p in &v.prefabs {
+            // A prefab named twice registers once; a collision is a 64-bit accident.
+            let _ = net.server.register_prefab(p.clone());
+            let _ = net.client.register_prefab(p.clone());
+        }
+        for op in &v.ops {
+            net.server.submit(op.clone());
+        }
+        let mut words = format!("placed {name} ");
+        crate::structures::words::metres(size, &mut words);
+        self.structure_placed = Some((words, v.ops.len()));
+        self.sync_ghost();
+    }
+
+    /// A refused placement's `words`: printed, in the menu's notice row, and in the banner's
+    /// row over the view, so the window says why nothing was placed.
+    fn refuse(&mut self, words: String) {
+        self.modes.show_lights(words.clone(), ms_since(self.start));
+        self.say(words);
+    }
+
     /// [`Run::say`] unless the notice already reads `words`.
     fn say_once(&mut self, words: String) {
         if self.notice.as_ref().is_none_or(|(l, _)| *l != words) {
@@ -582,6 +753,9 @@ impl Run {
     /// ghost stands at the aim.
     fn place_ghost(&mut self) {
         self.sync_ghost();
+        if let Some(j) = self.modes.walkers.belt.structure() {
+            return self.place_structure(j);
+        }
         let w = &mut self.modes.walkers;
         let Some(i) = w.belt.entry() else {
             let words = format!("slot {} empty", w.belt.selected + 1);

@@ -225,18 +225,23 @@ fn rotated_tripod_stamp_writes_only_the_masked_voxels() {
     );
 }
 
+/// A stamp that reaches chunks outside the generated extent writes the resident ones now and
+/// keeps one pending placement for the others (ADR-0066).
 #[test]
-fn stamp_outside_the_extent_fails_with_the_first_missing_chunk_and_changes_nothing() {
+fn stamp_outside_the_extent_writes_the_resident_part_and_keeps_the_rest() {
     let world = solid3_world();
-    let before = world.voxel_hash();
     // x 120..=135 and y -8..=7 meet chunks [1, -1, 0], [1, 0, 0] (resident) and
-    // [2, -1, 0], [2, 0, 0] (outside test_extent); the first missing one ascending is
-    // [2, -1, 0].
-    let e = world
+    // [2, -1, 0], [2, 0, 0] (outside test_extent).
+    let r = world
         .stamp(&Prefab::vault(16, 4), [120, -8, 0], Rot::IDENTITY)
-        .unwrap_err();
-    assert_eq!(e, EditError::NotResident(ChunkCoord([2, -1, 0])));
-    assert_eq!(world.voxel_hash(), before);
+        .unwrap();
+    assert_eq!(r.touched, [ChunkCoord([1, -1, 0]), ChunkCoord([1, 0, 0])]);
+    // The resident half, x 120..=127: its shell (material 4) replaces rock and its inside
+    // (air) replaces rock: all 8 x 16 x 16 voxels change.
+    assert_eq!(r.changed_from, [(3, 8 * 16 * 16)]);
+    assert_eq!(world.store().pending_placements(), 1);
+    assert_eq!(world.material_at([120, -8, 0]), Some(4));
+    assert_eq!(world.material_at([121, -7, 1]), Some(AIR));
 }
 
 /// A stamp takes the world's limits like the other op kinds: an origin (or the far corner)
@@ -532,5 +537,234 @@ fn a_rotated_stamp_equals_the_identity_stamp_of_the_rotated_prefab() {
         let rb = b.stamp(&q.rotated(r), [60, -3, 1], Rot::IDENTITY).unwrap();
         assert_eq!(ra, rb, "{r:?}");
         assert_eq!(a.voxel_hash(), b.voxel_hash(), "{r:?}");
+    }
+}
+
+/// A 64³ prefab of three bands: z under 16 all rock and written, z 16 to 31 unwritten, above
+/// a mix of air and materials 1 to 3 by position with a mask by position.
+fn mixed64_banded() -> Prefab {
+    Prefab::from_fn([64; 3], |[x, y, z]| {
+        if z < 16 {
+            Some(1)
+        } else if z < 32 {
+            None
+        } else {
+            ((x + 2 * y + 3 * z) % 7 != 0).then_some(((x * 3 + y * 5 + z * 7) % 4) as MaterialId)
+        }
+    })
+}
+
+/// Plan 0083 Phase 3 done-when 1: the 16³ vault's id and a 64³ mixed prefab's id equal their
+/// values pinned from the dense form before the brick storage (the dense `Prefab::new` of the
+/// same voxels and mask), so content ids, the save's table and the stamp vector are unchanged.
+#[test]
+fn ids_do_not_change_with_the_storage() {
+    assert_eq!(Prefab::vault(16, 4).id(), 0x9fd1_757b_6f4c_eb45);
+    let p = mixed64_banded();
+    assert_eq!(p.id(), 0x674a_239a_2135_492f);
+    // The dense constructor of the same content builds the same value.
+    let n = 64 * 64 * 64;
+    let mut voxels = vec![AIR; n];
+    let mut mask = vec![0u64; n / 64];
+    for z in 0..64 {
+        for y in 0..64 {
+            for x in 0..64 {
+                if let Some(m) = p.get([x, y, z]) {
+                    let i = (x + 64 * (y + 64 * z)) as usize;
+                    voxels[i] = m;
+                    mask[i / 64] |= 1 << (i % 64);
+                }
+            }
+        }
+    }
+    let dense = Prefab::new([64; 3], voxels, Some(mask));
+    assert_eq!(dense, p);
+    assert_eq!(dense.id(), p.id());
+    // Sizes that leave partial bricks: ids of single voxels and odd boxes still hash the
+    // dense bytes (a 1-voxel prefab: size, one u16, one mask word).
+    let one = Prefab::new([1, 1, 1], vec![7], None);
+    let mut bytes = Vec::new();
+    for s in [1u32, 1, 1] {
+        bytes.extend_from_slice(&s.to_le_bytes());
+    }
+    bytes.extend_from_slice(&7u16.to_le_bytes());
+    bytes.extend_from_slice(&1u64.to_le_bytes());
+    assert_eq!(one.id(), fnv(&bytes));
+}
+
+fn fnv(bytes: &[u8]) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for &b in bytes {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// Plan 0083 Phase 3 done-when 2: a 64³ all-rock prefab is 512 one-word bricks, under 4 KB;
+/// with one odd voxel per brick it is 512 stored bricks, about 512 x 1088 B; `get` agrees with
+/// the dense form on 10 000 seeded coordinates of a seeded 24³ prefab under every `Rot`.
+#[test]
+fn a_uniform_brick_is_one_word() {
+    let rock = Prefab::new([64; 3], vec![1; 64 * 64 * 64], None);
+    assert_eq!(rock.brick_counts(), (512, 0));
+    assert!(rock.bytes() < 4096, "{} B", rock.bytes());
+    let odd = Prefab::from_fn([64; 3], |l| {
+        Some(if l.iter().all(|v| v % 8 == 3) { 2 } else { 1 })
+    });
+    assert_eq!(odd.brick_counts(), (0, 512));
+    let b = odd.bytes();
+    assert!(
+        (512 * 1088..512 * 1088 + 4096).contains(&b),
+        "{b} B against 512 x 1088 = 557 056"
+    );
+
+    // A seeded 24³ prefab, dense, against its brick form turned by every rotation.
+    let size = [24u32, 24, 24];
+    let mut seed = 0x0083_0003u64;
+    let mut next = || {
+        seed = seed
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (seed >> 33) as u32
+    };
+    let n = 24 * 24 * 24;
+    let mut voxels = vec![AIR; n];
+    let mut mask = vec![0u64; n.div_ceil(64)];
+    for i in 0..n {
+        let r = next();
+        // A third of the box uniform rock, the rest seeded.
+        let z = i / (24 * 24);
+        let (m, w) = if z < 8 {
+            (1, true)
+        } else {
+            ((r % 5) as MaterialId, r % 3 != 0)
+        };
+        if w {
+            voxels[i] = m;
+            mask[i / 64] |= 1 << (i % 64);
+        }
+    }
+    let p = Prefab::new(size, voxels.clone(), Some(mask.clone()));
+    for rot in Rot::all() {
+        let r = p.rotated(rot);
+        assert_eq!(r.size(), rot.apply_size(size));
+        // The dense rotation: destination voxel d reads the source voxel `rot` maps onto it.
+        let rs = r.size().map(|v| v as i32);
+        for _ in 0..10_000 {
+            let d = [
+                next() % rs[0] as u32,
+                next() % rs[1] as u32,
+                next() % rs[2] as u32,
+            ]
+            .map(|v| v as i32);
+            // Source voxel: invert the turn about the box.
+            let mut s = [0i32; 3];
+            for (k, &dk) in d.iter().enumerate() {
+                let (a, neg) = rot.row(k);
+                s[usize::from(a)] = if neg { 23 - dk } else { dk };
+            }
+            let i = (s[0] + 24 * (s[1] + 24 * s[2])) as usize;
+            let want = (mask[i / 64] >> (i % 64) & 1 != 0).then_some(voxels[i]);
+            assert_eq!(r.get(d), want, "{rot:?} at {d:?}");
+        }
+        assert_eq!(r.written_count(), p.written_count());
+        assert_eq!(r.rotated(rot.inverse()), p, "{rot:?} then back");
+    }
+}
+
+/// Plan 0083 Phase 5 done-when 3: the chapel-sized scene placed through `StampedSource` and
+/// stamped as ops on a resident world hash equal once both are fully resident (Plan 0008's
+/// vault test at scene scale): three prefabs, one placed twice turned, one reaching across
+/// chunk corners, over a cave-like base.
+#[test]
+fn the_source_path_and_the_op_path_agree() {
+    let nave = Arc::new(Prefab::from_fn([40, 16, 24], |[x, y, z]| {
+        let wall = !(2..38).contains(&x) || !(2..14).contains(&y) || z == 0 || z >= 22;
+        if wall {
+            Some(if (x + z) % 9 == 0 { 2 } else { 1 })
+        } else {
+            Some(AIR)
+        }
+    }));
+    let wing = Arc::new(Prefab::from_fn([10, 8, 18], |[x, y, z]| {
+        ((x + 2 * y + 3 * z) % 4 != 0).then_some(5)
+    }));
+    let tower = Arc::new(Prefab::vault(8, 4));
+    let placements = vec![
+        (nave.clone(), VoxelCoord([44, 50, 40]), Rot::IDENTITY),
+        (wing.clone(), VoxelCoord([59, 66, 40]), Rot::IDENTITY),
+        (
+            wing.clone(),
+            VoxelCoord([59, 42, 40]),
+            Rot::from_index(9).unwrap(),
+        ),
+        (tower.clone(), VoxelCoord([36, 54, 40]), Rot::Z90),
+    ];
+    let extent = ChunkExtent::new([0, 0, 0], [2, 2, 2]);
+    let source = StampedSource::new(cave_like_source(), placements.clone());
+    let generated = World::generate(extent, &source, &test_table());
+    let stamped = World::generate(extent, &cave_like_source(), &test_table());
+    for (p, o, r) in &placements {
+        stamped.stamp(p, *o, *r).unwrap();
+    }
+    assert_eq!(stamped.store().pending_placements(), 0);
+    assert_eq!(generated.voxel_hash(), stamped.voxel_hash());
+}
+
+/// Plan 0083 Phase 6 done-when 2: a uniform prefab the size of the castle's cleared box is one
+/// written air word a brick, under 2 MB; stamped over the corner of a solid one-chunk world it
+/// leaves every voxel of the overlap air and counts the rock it replaced; two constructions
+/// give one id.
+#[test]
+fn a_uniform_prefab_is_written_air_one_word_a_brick() {
+    let size = [620, 620, 510];
+    let air = Prefab::uniform(size, AIR);
+    assert_eq!(air.grid(), [78, 78, 64]);
+    assert_eq!(air.brick_counts(), (78 * 78 * 64, 0));
+    assert!(air.bytes() < 2 << 20, "{} B", air.bytes());
+    assert_eq!(air.written_count(), 196_044_000);
+    assert_eq!(air.get([0, 0, 0]), Some(AIR));
+    assert_eq!(air.get([619, 619, 509]), Some(AIR));
+
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        &UniformSource(3),
+        &test_table(),
+    );
+    // The box from (32, 32, 32): its overlap with the one chunk is 32³.
+    let r = world.stamp(&air, [32, 32, 32], Rot::IDENTITY).unwrap();
+    assert_eq!(r.changed_from, [(3, 32 * 32 * 32)]);
+    assert_eq!(r.touched, [ChunkCoord([0, 0, 0])]);
+    assert_eq!(
+        world.count_in_box([32, 32, 32], [63, 63, 63]).unwrap(),
+        [(AIR, 32 * 32 * 32)]
+    );
+    assert_eq!(world.material_at([31, 32, 32]), Some(3));
+
+    let again = Prefab::uniform(size, AIR);
+    assert_eq!(again.id(), air.id());
+    assert_ne!(
+        Prefab::uniform([8; 3], AIR).id(),
+        Prefab::uniform([8; 3], 3).id()
+    );
+    // The id streamed by whole lines and runs of air is the dense bytes' hash.
+    for (size, m) in [([13u32, 9, 17], AIR), ([13, 9, 17], 5), ([70, 3, 2], AIR)] {
+        let n: u32 = size.iter().product();
+        let mut bytes = Vec::new();
+        for s in size {
+            bytes.extend_from_slice(&s.to_le_bytes());
+        }
+        for _ in 0..n {
+            bytes.extend_from_slice(&m.to_le_bytes());
+        }
+        let mut words = vec![u64::MAX; n.div_ceil(64) as usize];
+        if !n.is_multiple_of(64) {
+            *words.last_mut().unwrap() = (1u64 << (n % 64)) - 1;
+        }
+        for w in words {
+            bytes.extend_from_slice(&w.to_le_bytes());
+        }
+        assert_eq!(Prefab::uniform(size, m).id(), fnv(&bytes), "{size:?} {m}");
     }
 }

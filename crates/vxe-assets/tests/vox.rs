@@ -655,8 +655,7 @@ fn an_encoded_three_model_scene_parses_back_to_the_same_file() {
         models,
         palette,
         nodes,
-        names: Default::default(),
-        imap_present: false,
+        ..VoxFile::default()
     };
     let bytes = encode(&file);
     let back = VoxFile::parse(&bytes).unwrap();
@@ -696,11 +695,129 @@ fn a_single_model_without_a_scene_graph_round_trips() {
         version: 150,
         models: vec![vault_model()],
         palette: DEFAULT_PALETTE,
-        nodes: Default::default(),
-        names: Default::default(),
-        imap_present: false,
+        ..VoxFile::default()
     };
     let bytes = encode(&file);
     assert_eq!(&bytes[20..24], b"SIZE");
     assert_eq!(VoxFile::parse(&bytes).unwrap(), file);
+}
+
+/// A `MATL` chunk for palette index `id` with these properties.
+fn matl_chunk(id: i32, props: &[(&str, &str)]) -> Vec<u8> {
+    let mut c = id.to_le_bytes().to_vec();
+    let pairs: Vec<(&str, String)> = props.iter().map(|&(k, v)| (k, v.to_owned())).collect();
+    dict(&mut c, &pairs);
+    chunk(b"MATL", &c, &[])
+}
+
+/// Plan 0083 Phase 1 done-when 1: `MATL` entries for indices 1 (`_glass`, `_trans 0.5`), 2
+/// (`_emit 1`, `_flux 2`) and 3 (`_metal`, `_rough 0.2`) parse to those values; an index with
+/// no `MATL` is `Diffuse`; the file encodes and parses back equal.
+#[test]
+fn a_matl_chunk_reads_glass_emit_and_metal() {
+    let extra = vec![
+        matl_chunk(
+            1,
+            &[("_type", "_glass"), ("_trans", "0.5"), ("_rough", "0.1")],
+        ),
+        matl_chunk(2, &[("_type", "_emit"), ("_emit", "1"), ("_flux", "2")]),
+        matl_chunk(
+            3,
+            &[("_type", "_metal"), ("_rough", "0.2"), ("_ior", "0.3")],
+        ),
+        matl_chunk(4, &[("_type", "_diffuse"), ("_weight", "1")]),
+    ];
+    let bytes = vox_bytes_with(150, &[two_voxel_model()], None, &[], &extra);
+    let file = VoxFile::parse(&bytes).unwrap();
+    let kind = |i: usize| file.materials[i].kind;
+    assert_eq!(
+        kind(1),
+        VoxMaterialKind::Glass {
+            trans: 0.5,
+            rough: 0.1
+        }
+    );
+    assert_eq!(kind(2), VoxMaterialKind::Emit { emit: 1.0, flux: 2 });
+    assert_eq!(kind(3), VoxMaterialKind::Metal { rough: 0.2 });
+    assert_eq!(kind(4), VoxMaterialKind::Diffuse);
+    assert_eq!(kind(5), VoxMaterialKind::Diffuse, "no MATL");
+    assert_eq!(VoxFile::parse(&encode(&file)).unwrap(), file);
+    // A property the mapping reads that is not a number is refused.
+    let bad = vec![matl_chunk(1, &[("_type", "_glass"), ("_trans", "half")])];
+    let e = VoxFile::parse(&vox_bytes_with(150, &[two_voxel_model()], None, &[], &bad));
+    assert!(matches!(e, Err(VoxError::Malformed { chunk, .. }) if &chunk == b"MATL"));
+}
+
+/// Plan 0083 Phase 1 done-when 2: every palette entry becomes a row once, by colour and
+/// material.
+#[test]
+fn every_palette_entry_becomes_a_row_once() {
+    use vxe_world::{MaterialFlags, MaterialTable};
+    // RGBA entry k is index k + 1.
+    let mut palette = test_palette();
+    palette[0] = [0xff, 0, 0, 0xff];
+    palette[1] = [0x80, 0x80, 0x80, 0xff];
+    let extra = vec![
+        matl_chunk(
+            3,
+            &[("_type", "_glass"), ("_trans", "0.5"), ("_rough", "0.1")],
+        ),
+        matl_chunk(4, &[("_type", "_emit"), ("_emit", "1"), ("_flux", "2")]),
+    ];
+    let bytes = vox_bytes_with(150, &[two_voxel_model()], Some(&palette), &[], &extra);
+    let file = VoxFile::parse(&bytes).unwrap();
+    let mut table = MaterialTable::new();
+    let map = {
+        let mut rows = PaletteRows::new(&mut table, DEFAULT_EMISSION_FACTOR);
+        let map = rows.resolve(&file, &VoxMap::new());
+        assert_eq!(rows.added(), 255);
+        map
+    };
+    assert_eq!(table.len(), 256, "air and 255 rows");
+    let row = |i: u8| match map.get(i) {
+        Slot::Material(m) => table.get(m).unwrap().clone(),
+        s => panic!("index {i} is {s:?}"),
+    };
+    assert_eq!(row(1).albedo, [1.0, 0.0, 0.0]);
+    assert_eq!(row(1).name, "vox #ff0000");
+    for c in row(2).albedo {
+        assert!((c - 0.215_860_5).abs() < 1e-6, "{c}");
+    }
+    let glass = row(3);
+    assert!(glass.flags.contains(MaterialFlags::TRANSLUCENT));
+    assert_eq!(glass.opacity, 0.5);
+    let emit = row(4);
+    // albedo * (emit 10^flux k), the scale formed first.
+    let scale = 1.0 * 100.0 * DEFAULT_EMISSION_FACTOR;
+    let want = emit.albedo.map(|a| a * scale);
+    assert_eq!(emit.emission, want);
+    assert!(emit.emission.iter().any(|&e| e > 0.0));
+    // A row named `vox #ff0000` is found by name.
+    let red = table
+        .rows()
+        .iter()
+        .position(|m| m.name == "vox #ff0000")
+        .expect("found by name");
+    assert_eq!(map.get(1), Slot::Material(red as u16));
+
+    // A second file with the same palette adds no row.
+    let before = table.len();
+    {
+        let mut rows = PaletteRows::new(&mut table, DEFAULT_EMISSION_FACTOR);
+        assert_eq!(rows.resolve(&file, &VoxMap::new()), map);
+        assert_eq!(rows.added(), 0);
+    }
+    assert_eq!(table.len(), before);
+    // Resolved against the fixed table, the same map.
+    assert_eq!(resolve_existing(&table, &file, &VoxMap::new()), map);
+
+    // Two entries of one colour and material share a row: 254.
+    let mut twin = palette;
+    twin[5] = twin[4];
+    let file = VoxFile::parse(&vox_bytes(&[two_voxel_model()], Some(&twin), &[])).unwrap();
+    let mut table = MaterialTable::new();
+    let map = PaletteRows::new(&mut table, DEFAULT_EMISSION_FACTOR).resolve(&file, &VoxMap::new());
+    assert_eq!(table.len(), 255);
+    assert_eq!(map.get(5), map.get(6));
+    let _ = AIR;
 }

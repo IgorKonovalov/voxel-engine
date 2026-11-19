@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
+use flythrough::entities::belt::Item;
 use flythrough::entities::{self, library};
 use flythrough::hud::Modes;
 use flythrough::hud::menu::{
@@ -68,7 +69,7 @@ fn the_picker_draws_its_rows() {
     let mut m = modes_with(lib);
     let order = m.walkers.library.order();
     assert_eq!(order, [0, 2, 1]);
-    m.walkers.belt.fill(&order);
+    m.walkers.belt.fill(&order, &[]);
     m.walkers
         .refresh_icons(&walker::with_walker(&flythrough::showcase_materials()));
     m.walkers.icons.wait();
@@ -154,7 +155,7 @@ fn an_entry_in_error_reads_its_reason_red() {
     assert!(line.starts_with("spider     error: "), "{line}");
     let mut m = modes_with(lib);
     let order = m.walkers.library.order();
-    m.walkers.belt.fill(&order);
+    m.walkers.belt.fill(&order, &[]);
     let mut menu = Menu::default();
     menu.open_entities(0);
     let (mut text, mut colours) = (String::new(), Vec::new());
@@ -191,7 +192,11 @@ fn an_entry_in_error_reads_its_reason_red() {
     );
 
     // The belt's name row with the spider's slot selected.
-    let slot = m.walkers.belt.slot_of(spider).expect("a slot");
+    let slot = m
+        .walkers
+        .belt
+        .slot_of(Item::Entity(spider))
+        .expect("a slot");
     m.walkers.belt.select(slot, 0.0);
     let (mut text, mut colours) = (String::new(), Vec::new());
     let mut paint = entities::belt::Paint::default();
@@ -199,7 +204,7 @@ fn an_entry_in_error_reads_its_reason_red() {
         &mut text,
         &mut colours,
         (80, 45),
-        &m.walkers,
+        &m,
         0.0,
         flythrough::hud::BANNER_MS,
         &mut paint,
@@ -276,7 +281,12 @@ fn the_backquote_and_delete_route() {
     assert_eq!(menu.page(), Some(PageId::Entities));
     let routed = step(&mut menu, &input, &m, &RunView::default());
     assert!(
-        matches!(routed.acts[..], [Activated::Choose { entry: 0 }]),
+        matches!(
+            routed.acts[..],
+            [Activated::Choose {
+                item: Item::Entity(0)
+            }]
+        ),
         "{:?}",
         routed.acts
     );
@@ -285,7 +295,13 @@ fn the_backquote_and_delete_route() {
     input.key_down(KeyCode::Digit7);
     let routed = step(&mut menu, &input, &m, &RunView::default());
     assert!(
-        matches!(routed.acts[..], [Activated::Assign { entry: 2, slot: 6 }]),
+        matches!(
+            routed.acts[..],
+            [Activated::Assign {
+                item: Item::Entity(2),
+                slot: 6
+            }]
+        ),
         "{:?}",
         routed.acts
     );

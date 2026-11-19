@@ -31,18 +31,21 @@ fn model() -> Model {
             parent: None,
             pivot: [4 * 256, 6 * 256, 3 * 256],
             detail: 1,
+            coarse: 1,
         },
         Part {
             volume: holed([8, 8, 8], 1),
             parent: Some(0),
             pivot: [4 * 256, 0, 4 * 256],
             detail: 2,
+            coarse: 1,
         },
         Part {
             volume: holed([16, 4, 4], 2),
             parent: Some(0),
             pivot: [0, 2 * 256, 2 * 256],
             detail: 4,
+            coarse: 1,
         },
     ])
     .unwrap()
