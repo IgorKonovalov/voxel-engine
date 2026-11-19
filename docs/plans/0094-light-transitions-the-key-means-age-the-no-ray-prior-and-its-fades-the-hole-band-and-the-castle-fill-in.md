@@ -20,9 +20,11 @@
 > inside a rule an accepted or proposed ADR already states.
 > **Source:** Plan 0086's "The follow-up plan's scope" (its Followups section, the wrap-up
 > amendment of 2026-11-19, items 1 to 9), its amendments "after the castle's stop" (the fill-in
-> charter), "after the 86c window", "after the fix pass", "the wrap-up" and "Phase 25's two
-> calls", its struck Phases 24a (the bands bar), 24f and 24g, its readings log
-> (`docs/plans/logs/0086.md`, Phases 24a to 25 and the resume notes), and the owner's verdicts
+> charter), "after the 86c window", "after the fix pass", "the wrap-up", "Phase 25's two
+> calls" and "the owner's two answers after the slowdown" (2026-11-19: the light pass's
+> compile cost and three regressions against its Phase 5 bars, routed here), its struck Phases
+> 24a (the bands bar), 24f and 24g, its readings log (`docs/plans/logs/0086.md`, Phases 24a to
+> 25, "the gate's slowdown" and the resume notes), and the owner's verdicts
 > at windows 86c and 86d (`live/window86c/verdicts.md`, `live/window86d/verdicts.md`, with
 > `4a-hole-flash.png`, `5b-grain.png`, `6-grain.png`, `7c-anchor-none.png`). Plan 0086 is cited
 > by number, not linked: it is **still open** on branch `plan-0086` (tip `23a89c7b` at
@@ -50,8 +52,13 @@ nothing) and rule 3 (every change is one monotonic fade) are the bars; rule 5 (t
 rate) is the cheapest fix and goes first on the castle. One owner window on main judges the
 forest, the hills, a shadowed dig and the castle, with `live/bin86d` as the before; the bars
 Plan 0086 could not meet (the tunnel's far end, the cave mouth's seal) come back as tests
-against the picks. The first thing a reader sees is Phase 1's age table; in the window, the lit
-trunks at a 10-degree sun without grain.
+against the picks. Two items the owner routed here after 0086's gate slowdown ride along: the
+light pass's compile cost (+2.85 s a build on lavapipe, about 600 s of the gate, +38 s on a
+cold driver cache; the default-off arms leave the default pipeline and the GPU tests get a
+persistent pipeline cache) and three regressions against 0086's Phase 5 bars (the pair's mean,
+the rare-hit clamp, the dug floor's first frame), attributed beside the canopy work and fixed
+in the pair's estimator and the no-ray prior. The first thing a reader sees is Phase 1's age
+table; in the window, the lit trunks at a 10-degree sun without grain.
 
 ## Context & problem
 
@@ -120,6 +127,37 @@ Followups, verbatim figures):
   no sky term and the walls' `direct_accumulated` reads 0 sealed and unsealed. The clause's
   claim stands owed: a sealed cave takes no sky light through its walls. Phase 17's shares on
   the old quantity (24.347 / 8.689 / 1.100 % at `512724cf`) are the before.
+- **The light pass's compile cost** (0086's readings log, "the gate's slowdown"; the owner's
+  answer 1: accept at 0086's close, fix here). The quiet gate at 0086's tip read 1883.9 s
+  against the 19 min line after the column map's flush was fixed (`c682fa9d`); what remains is
+  a fixed cost per device's pipelines: every lavapipe test that builds a frame is +2.2 to 2.6 s,
+  the fly-through's light-pass build stage 2.6 to 5.4 s against the base's 2.6 to 2.7
+  (`live/gate-cause/bis-*.log`: base `8afce1bc` 2617 / 2706 ms frame creation / light stage;
+  `ed47dc5c`, Phase 7's closest-approach penumbra spike, default off, 3069 / 4559, the largest
+  single step at +1.25 s; Phases 9 to 19 about +0.9, Phases 1 to 5 +0.6; `78fed792` 3565 /
+  5532), about 600 s of the gate's wall. On the RTX with a fresh driver cache the release
+  start's light-pass stage reads 46.2 s against main's 9.4 (init 67.2 against 29.1 s): the
+  first start after an install or a driver update is about 38 s longer. The options 0086
+  named: the default-off arms behind a pipeline-overridable constant or in a second pipeline
+  built only when picked; a persistent pipeline cache for the GPU tests (the backlog's "A
+  pipeline cache for the renderer's shaders"); removing the spike (the cheap-modes rule kept
+  it).
+- **Three regressions against 0086's Phase 5 readings** (its Phase 25 bar 2,
+  `live/p25-bar2*.log`; the owner's answer 2: disclosed there, attributed here). **5.1**,
+  `reading::the_visibility_pairs_mean_holds_still`: the pair's mean at frame 65 reads 0.6167
+  against the bar's 0.5 within 0.1 (the rig's own hit rate 0.562; frame 64 0.6108, the mean
+  over frames 65 to 128 0.5790; Phase 5 read 0.5542 / 0.5442), the largest change 0.0098 under
+  1/64. **5.2**, `reading::a_rare_hit_is_clamped`: with the clamp on, one hit lifts the mean to
+  0.4993 against the bar's 0.25 (Phase 5 read 0.2500), the mean 0.1511 against the form
+  factor 0.029 (5.2 times; Phase 5 read 0.0177): a value of about one half after one sample is
+  a pair blending a hit of 1 at age 1, which says the pair reset at the hit (the variance
+  reset, or the band's `P_MIN` floor of call 1) rather than clamping it. **5.4's last clause**,
+  `the_sky_ray_runs_only_where_stale` (`gpu_outdoor/bars.rs`, soak): the dug floor's centre
+  stored `g` reads 24.828 on frame 1 and 3.584 from frame 2 **in both arms, `sky_rays` 1 and
+  0** (Phase 5 read 0.000 then 4.047), so it is not the ray's: by the shaders' rules it is the
+  no-ray path's prior, the hole's new cells reading the neighbours' summaries until the dig job
+  lands, the mechanism of Phase 21 bar 4's far wall and the castle's keep. The clause "nothing
+  before the re-bake lands" is printed, not asserted, at 0086's tip.
 
 The owner's rule (2026-11-03, restated 2026-11-18): a stable image first, performance
 considered; "a flame may flicker, nothing else may"; the owner judges in windows. Plan 0086's
@@ -153,7 +191,16 @@ is built only when the trunks' age reads at cap and the 512-frame residual stays
 with the ratio near 1: sample variance no mean can pay for without lag. **One owner window** on
 main judges the forest at two suns, the hills at rest, a shadowed dig and the castle, with
 `live/bin86d` beside it; a second short look runs only if the window records a defect as not
-fixed and a shader changes after it. The bars Plan 0086 could not meet come back as tests: the
+fixed and a shader changes after it. **The compile cost** is taken before the fixes (Phase 2a):
+every default-off arm of the light pass (the penumbra spike, `absorb`, the reading hooks) leaves
+the default pipeline, by an override constant where naga and the backends drop the dead branch
+(read, not assumed) and by a second pipeline built when the arm is picked where they do not;
+the GPU tests keep a `wgpu::PipelineCache` file per adapter and shader hash under `target/`,
+kept only if a second start reads at most half the first. **The three Phase 5 regressions** are
+traced in Phase 1 (the pair per frame from its reset, with its seed, age, band and sample, and
+the source word for the dug floor) and fixed where the trace points: 5.4 in the no-ray prior
+(Phase 5), 5.1 and 5.2 in the pair's estimator (its seed and its reset's rule, Phase 5), each
+bar back as the gate test 0086 planned it. The bars Plan 0086 could not meet come back as tests: the
 tunnel's far end against a still reference that carries the same jitter (the headlamp under
 FSR 2, never the native headlamp), and the seal clause on the pair's term.
 
@@ -263,11 +310,23 @@ slow adapter for cost lines); a bar every phase names the `gpu_*` binary it runs
   settled, a 90-degree yaw over 10 frames, held 64, back over 10: the share of pixels over
   `T_return` at the return frame and the frames until the rule 1 share is back at the settled
   strip's, `voxel` beside it. The rule forms go in `tests/support/rules.rs` (rules 1 to 4 as
-  functions over per-frame shots; the trace classifier's four classes).
+  functions over per-frame shots; the trace classifier's four classes). (6) **The three Phase
+  5 regressions traced.** On 0086's own rigs (`reading::the_visibility_pairs_mean_holds_still`,
+  `reading::a_rare_hit_is_clamped` in `gpu_sun`, `the_sky_ray_runs_only_where_stale` in
+  `gpu_outdoor/bars.rs`): per frame at the rig's pixel the pair's four channels (the mean, the
+  key mean, the short mean, the age), the seed it started from and its source (the record, the
+  column), the sample, whether the band's reset fired and the clamp's bound that frame; for
+  5.4 the stored value and the sky term's source word (own summary, neighbours' summaries,
+  record) on frames 1 to the landing, in both arms. The candidates, named so the trace refutes
+  them: 5.1, the seed's prior lifting the early mean (the column reads open above the roof's
+  edge) or the band's `P_MIN` floor; 5.2, the variance reset firing on one hit over a
+  near-zero mean (a reset pair at age 1 reads about one half, which is the 0.4993) instead of
+  the clamp; 5.4, the neighbours' summaries on the no-ray path (the same in both arms says
+  no ray is involved).
 - **Files touched:** `apps/flythrough/tests/gpu_outdoor/canopy.rs`, `gpu_outdoor/still.rs`,
-  `gpu_outdoor/flicker.rs`, `apps/flythrough/tests/support/rules.rs` (new),
-  `tests/support/defects.rs` (the age and the source word per pixel, if not at hand),
-  `docs/plans/logs/0094.md`.
+  `gpu_outdoor/flicker.rs`, `gpu_outdoor/bars.rs`, `crates/vxe-render/tests/gpu_sun.rs`,
+  `apps/flythrough/tests/support/rules.rs` (new), `tests/support/defects.rs` (the age and the
+  source word per pixel, if not at hand), `docs/plans/logs/0094.md`.
 - **Done when:**
   1. **The age table is in the log:** both scenes, both classes, the three age shares, the
      rejections per frame at rest per word, the observed-over-predicted ratio per class at 128
@@ -290,6 +349,11 @@ slow adapter for cost lines); a bar every phase names the `gpu_*` binary it runs
      counted).
   6. The readings' wall and load on the RTX in the log (no gate test is added by this phase but
      the unit tests).
+  7. **The three regressions are attributed:** the three traces in the log, each with one line
+     naming its cause by the channel that moved (5.1 the seed's value against the first
+     samples, or the band; 5.2 the reset's frame and the pair's age after it; 5.4 the source
+     word on frame 1) and the phase that fixes it (Phase 5 for all three as the candidates
+     stand; another if the trace says so, named).
 
 ### Phase 2: The readings, the no-ray path's side: the castle's pixels by source, and the hole band's counters
 - **Owner skill:** dev
@@ -323,6 +387,71 @@ slow adapter for cost lines); a bar every phase names the `gpu_*` binary it runs
   3. The fresh over-8 mean on this tree's arm (a) is printed against the regression line
      3.431 % as a reading (two readings of one binary differed by 0.167 points in 0086's log,
      so a difference under 0.2 points is noise).
+
+### Phase 2a: The light pass's compile cost: the default-off arms out of the default pipeline, a pipeline cache for the GPU tests
+- **Owner skill:** dev
+- **What (the owner's answer 1 at 0086's close, 2026-11-19):** it runs before the fixes so
+  they land on the split pipeline and every gpu run from here pays less. (1) **The inventory:**
+  the light pass's arms that are off by default, from `light.wgsl`, `sky_light.wgsl` and
+  `walk.wgsl`'s `PASSES` rows: the closest-approach penumbra spike (`--penumbra approach`),
+  the `absorb` canopy walk, the reading hooks (`key_off`, `key_no_jitter`, the steps view's
+  counters, the history-any hook), each with its branch's size. (2) **The mechanism, read not
+  assumed:** first an `override` constant per arm (WGSL pipeline-overridable constants; naga
+  emits a specialization constant on Vulkan and substitutes the value on the other backends)
+  with the arm's code under `if` on it; the light-pass build stage is read on lavapipe and the
+  RTX with the overrides at their defaults. Where the stage falls to the bar, that arm is
+  done; where it does not (a backend compiling the dead branch), the arm's text leaves the
+  default module and a second shader source is composed when the arm is picked, its pipeline
+  built on the setting's apply (Plan 0069's apply class; the build is on the frame thread, its
+  hitch read and disclosed; moving it to a worker is Plan 0092's seam when it lands). The
+  default-off arms keep their flags, rows and banner words (the cheap-modes rule, 2026-11-12):
+  nothing is removed. (3) **The pipeline cache for the GPU tests:** the test support's device
+  helper opens a `wgpu::PipelineCache` from a file under `target/vxe-pipeline-cache/<adapter
+  name and driver>/<hash of the shader sources>.bin` when the backend supports it (Vulkan:
+  lavapipe and the RTX; absent otherwise), passes it to every pipeline descriptor, and writes
+  it back at the device's drop; a missing or stale file is a cold start, never an error. The
+  engine's own cache under a game's cache directory stays the backlog's ("A wgpu pipeline cache
+  owned by the engine"). The cache is kept only if it pays (bar 4); a cache that does not is
+  removed in the same phase and the log says why.
+- **Files touched:** `crates/vxe-render/src/shaders/light.wgsl`, `sky_light.wgsl`, `walk.wgsl`
+  (the override constants or the arms' modules), `frame/pipelines.rs` (the overrides, the
+  second pipeline), `frame/settings.rs` (the apply class of the arms' settings),
+  `crates/vxe-render/src/internals.rs` or its shader-source listing (the composed default
+  source), `apps/flythrough/tests/support/mod.rs` and `crates/vxe-render/tests/support/*` (the
+  cache file), `crates/vxe-render/tests/gpu_frame.rs`, `apps/flythrough/src/run/*` (the stage
+  lines, if a new one is needed), `docs/plans/logs/0094.md`.
+- **Done when:**
+  1. **The default pipeline compiles none of the arms.** A CPU test over the default
+     pipeline's composed WGSL (`internals::shader_sources()` as `pipeline_times` reads it;
+     under 1 s): the spike's and `absorb`'s function names are absent from the default source,
+     or present only under an `override` that reads false, with the mechanism per arm named
+     in the log.
+  2. **The build stage is back near the base.** The fly-through's stage lines on lavapipe
+     (0086's rig, `live/gate-cause/lvp-stage-*.log`'s flags, debug; three runs each): the
+     light-pass build stage at or under 3.0 s and frame creation at or under 3.0 s (the base
+     `8afce1bc` read 2.6 to 2.7 s each; the tip 5.5 and 3.6), with the arms at their defaults;
+     with `--penumbra approach` picked, the arm works (its own test by name) and the extra
+     build is read and printed. On the RTX release with a fresh driver cache
+     (`__GL_SHADER_DISK_CACHE_PATH` to an empty directory, `--source outdoor --render 1280x720`)
+     the light-pass stage at or under 15 s (main 9.4 s, 0086's tip 46.2) and init done at or
+     under 35 s (main 29.1, the tip 67.2).
+  3. **Every arm still works when picked, and the default image is unchanged.** The tests that
+     pick an arm pass by name (`gpu_sun`'s penumbra tests, 0086 Phase 14's `absorb` test,
+     every test that sets a `LightHooks` bit: `--binaries gpu_sun,gpu_outdoor,gpu_frame`); the
+     goldens are byte-identical (`gpu_golden`, `gpu_outdoor_golden` by name); the banner tests
+     unchanged.
+  4. **The cache pays, or it goes.** `a_second_start_reads_the_pipeline_cache` in `gpu_frame.rs`
+     (a frame built twice in two processes, or once with a cold file and once warm in one; the
+     pipelines' creation time from `pipeline_times`; about 8 s cold plus the warm run): on
+     lavapipe the warm creation is at most half the cold (the expectation is a reading; if
+     lavapipe's cache holds no compiled code and reads near 1.0, the RTX decides: at most a
+     quarter there), else the cache is removed and the log says what it read. The cache file's
+     absence or corruption is a cold start (the test deletes and truncates it once each).
+  5. **The gate's wall falls by the compile's share.** The gpu tier's four cheap binaries
+     (`gpu_exposure`, `gpu_frame`, `gpu_sky`, `gpu_walk`; 0086's broad reading: 143.7 s main,
+     242.5 s tip, 31 tests) re-read quiet at this phase's tip: at or under 170 s (a guess: the
+     base plus the 112 tests' own growth); the per-test delta against the tip printed. The full
+     quiet gate is Phase 8 bar 5's.
 
 ### Phase 3: The key mean keeps its age at a still camera
 - **Owner skill:** dev
@@ -435,6 +564,17 @@ slow adapter for cost lines); a bar every phase names the `gpu_*` binary it runs
   to the pair's visibility) so the pair-to-store switch's relative step (0.173 on the tip, the
   line 0.10) falls under the line; read after (1) and (2), built only if the line is still
   over. (4) The castle strip, Phase 20 bar 1a and Phase 21 bar 4's band clause re-read.
+  (5) **The pair's estimator, by Phase 1 bar 7's traces:** 5.4 is (1)'s (the dug floor's
+  frame 1 reads the own summary or the column-seeded ray, never the neighbours' 24.8); 5.2 at
+  its cause, the reset's rule (a single sample outside the band over a mean near 0 is a
+  firefly to clamp, not a world change to reset on: the reset needs the band left on more
+  than one consecutive sample, or the band's floor at a near-zero mean widens to the clamp's
+  bound; the dev picks by the trace, with `P_MIN`'s reason from 0086's call 1 kept, a block's
+  pair at 0 or 1 must still reset when the world changes); 5.1 at its cause, the seed (the
+  column's open answer above the roof's edge where the record has none: the seed weighs
+  `SEED_AGE` 8 samples, so an open seed over a 0.56 hit rate lifts frame 65's mean by about
+  `8 (1 - 0.56) / 72`, 0.05, which with the band's floor is the 0.06 over) or the band.
+  Every reset and clamp test of 0086 stays green by name.
 - **Files touched:** `crates/vxe-render/src/shaders/shade.wgsl`, `shaders/temporal.wgsl`,
   `shaders/sky.wgsl` (the fade's term), `shaders/atrous.wgsl` and `composite.wgsl` (the fade
   carried around the filter as the stored part is), `frame/encode.rs`, `frame/pipelines.rs`,
@@ -478,6 +618,23 @@ slow adapter for cost lines); a bar every phase names the `gpu_*` binary it runs
   6. **Nothing moves where the store is fresh.** The hills' noon golden is byte-identical
      (every pixel baked, no switch); the tunnel and forest goldens with switches are named with
      counts for Phase 8.
+  7. **5.1, the mean converges and holds.** `the_visibility_pairs_mean_holds_still` in
+     `gpu_sun.rs`, promoted from its `reading` to the gate test 0086 Phase 5 planned (about
+     8 s on lavapipe): after frame 64 the pair's mean at the rig's pixel is within 0.1 of the
+     rig's own hit rate over frames 65 to 128 (printed; 0.562 at 0086's tip, where the bar's
+     0.5 was the half plane's form factor and the rig reads the jittered footprint), and its
+     frame-to-frame change is at most 1/64; the tip's 0.6167 printed as the before.
+  8. **5.2, a firefly is clamped.** `a_rare_hit_is_clamped` in `gpu_sun.rs`, promoted likewise
+     (about 8 s): over frames 9 to 128 the pair's mean never exceeds 0.25, the same rig with the
+     clamp off printed, the dark bias printed (the clamped mean against 0.029; the tip's 0.1511
+     and 0.4993 as the before); `a_moving_shadow_edge_resets_the_history` and
+     `a_reset_pixel_starts_from_its_record` still pass by name (the reset still fires on a
+     real change).
+  9. **5.4, nothing before the re-bake lands.** `the_sky_ray_runs_only_where_stale`'s last
+     clause asserted again (soak, as it stands; 12 to 14 s): from the dig's first frame to the
+     landing the dug floor's centre stored value lies in `[0, baked + T_fade]` (the baked value
+     the frame after the landing, 3.58 at the tip; the tip's 24.828 on frame 1 printed as the
+     before) and its trace to the landing is one fade (rule 3's class `Fade`), in both arms.
 
 ### Phase 6: The dig's hole band, and the bands bar restated
 - **Owner skill:** dev
@@ -561,17 +718,22 @@ slow adapter for cost lines); a bar every phase names the `gpu_*` binary it runs
 - **Done when:**
   1. Every bar Phases 3 to 6 name that the window kept exists, asserts the picked value, and
      passes in the gpu tier under the lock; each over 10 s on lavapipe is `#[ignore = "soak"]`
-     and passes once by name; the gate tests this plan adds sum to under 15 s on lavapipe, in
-     the log.
+     and passes once by name; the gate tests this plan adds or promotes (Phase 3 bar 1, Phase
+     4 bars 1 and 2, Phase 5 bars 1, 7 and 8, Phase 2a bars 1 and 4's warm run) sum to under
+     30 s on lavapipe, each named with its wall in the log.
   2. The tunnel test passes as written on lavapipe and on the RTX, or its far end's remaining
      p99 is attributed by term in the log and the test asserts the rim band alone, disclosed.
   3. The seal clause is back with its quantity named and its first reading in the log.
   4. The goldens are re-blessed and the log names each with its difference count and the
      mechanism that moved it; `outdoor_noon` is byte-identical.
-  5. The quiet tip gate (`cargo nextest run --profile gate --status-level pass` under the lock,
-     load under 2 at the start): its wall and `test-times.mjs`'s top ten in the log, read
-     against the 19 min line as a disclosed reading (the line is over at 0086's tip, 2096.4 s,
-     whose cause 0086's Phase 25 names; this plan's share is its gate tests' sum).
+  5. **The gate's wall, re-read quiet.** `cargo nextest run --profile gate --status-level
+     pass` under the lock, load under 2 at the start, the binaries built before it: its wall
+     at or under the 19 min line (1140 s; 0086's quiet tip read 1883.9 s, of which about 600 s
+     is the compile cost Phase 2a removes and about 300 s is the 112 tests 0086 added), or
+     over it with the remainder attributed per test against 0086's per-test diff
+     (`test-times.mjs`, the top ten named; 0086's pre-roll bake under the sky, 36.1 against
+     9.7 s on the switch test, is 0086's `1e16a8fd` and is named, not fixed here); this plan's
+     own share is bar 1's sum. The reading goes to `docs/nfr.md` section 7 at the close.
 
 ### Phase 9: A second short look, only if the window asked for one
 - **Owner skill:** human
@@ -622,7 +784,10 @@ Sizes: the fade target, if added, is 4 B per lighting pixel: about 2.1 MB at 108
 | §2 Lighting, the light pass during a stamped structure's bake (Phase 5, arm A) | the keep's rays for the bake's length: about +0.17 ms RTX, +3.2 ms RENOIR (20 000 rays at 4.8 ms per 30 000, read by Plan 0032) over about 1400 frames after the stamps, then 0; at rest 0 cast pixels | Phase 5 bar 5's per-frame series, both adapters; the hills at rest unchanged |
 | §2 Lighting, the temporal pass and the composite (Phase 5, the fade) | one read and a mix at pixels with a fade in flight: +0.02 ms RTX, +0.1 ms RENOIR | Phase 5 bar 5 |
 | §3 Everything else, frame targets (Phase 5) | 0 B if the pair's `b` carries the fade, else about 2.1 MB at 1080p's half tier | `frame_bytes`, Phase 5 bar 5 |
-| §7 the gate's wall (19 min; 2096.4 s at 0086's tip, over) | this plan's gate tests under 15 s in sum; every test over 10 s on lavapipe born soak | Phase 8 bar 5, `test-times.mjs` |
+| §7 the gate's wall (19 min; 1883.9 s quiet at 0086's tip after the flush fix, over) | the light pass's compile cost out: the light-pass build stage 5.5 to at or under 3.0 s a device on lavapipe, about -600 s of the gate (read by 0086 as +2.2 to 2.6 s a frame-building test); this plan's gate tests under 30 s in sum; every test over 10 s on lavapipe born soak | Phase 2a bars 2 and 5, Phase 8 bar 5, `test-times.mjs` |
+| §7 start-up, the first release start on a cold driver cache (RTX) | the light-pass stage 46.2 to at or under 15 s, init done 67.2 to at or under 35 s (main's 9.4 and 29.1) | Phase 2a bar 2, the stage lines |
+| §7 a default-off arm picked at runtime (Phase 2a, the second pipeline) | one pipeline built on the apply: a hitch of about 0.5 s RTX warm, 1.5 s lavapipe (a guess), once per pick; 0 with the override route | Phase 2a bar 2's picked run |
+| the pipeline cache file (Phase 2a) | under `target/`, a few MB per adapter and shader hash; nothing in the engine or the frame | Phase 2a bar 4 |
 | §2 a light-stability line (Plan 0090's, not yet written) | the castle's and the hole band's rule 3 shares and the forest's residual are readings this plan leaves for 0090's baseline | the log's tables; 0090 Phase 6 takes them |
 
 No figure here moves the Floor profile's lines at rest: the fixes are to transitions and to an
@@ -661,9 +826,20 @@ records it.
 - **Determinism and layering:** nothing here touches `vxe-world`; every change is in
   `vxe-render`'s shaders, settings and the fly-through's tests. No new dependency. No vendor
   path.
-- **The gate is over its line before this plan starts** (2096.4 s quiet at 0086's tip). This
-  plan does not fix that (0086's Phase 25 done-when 4 names the cause); it adds under 15 s and
-  names each test's wall.
+- **The gate is over its line before this plan starts** (1883.9 s quiet at 0086's tip after
+  its flush fix). Phase 2a takes the compile cost's share (about 600 s); what remains over
+  1140 s is attributed per test in Phase 8, and the pre-roll's bake under the sky is 0086's to
+  own. This plan adds under 30 s of gate tests and names each one's wall.
+- **An override constant may not drop the dead branch on every backend** (naga substitutes
+  the value on HLSL and MSL; on Vulkan the driver specializes, and lavapipe's LLVM should fold
+  it, unread). Phase 2a reads the stage per arm and falls back to a second composed pipeline
+  where the override does not pay; the second pipeline costs a hitch at the pick, disclosed.
+- **Lavapipe's pipeline cache may hold no compiled code**, in which case the test cache pays
+  nothing there and the RTX decides; a cache that does not pay is removed in the phase.
+- **The pair's reset rule serves two masters**: a firefly over a near-zero mean must be
+  clamped (5.2) while a block's pair at 0 or 1 must reset when the world changes (0086 call 1's
+  `P_MIN`). Phase 5 (5) changes the rule by the trace and keeps every reset test green by name;
+  if the two cannot both hold, the dev stops with the traces for the architect.
 
 ## Owner questions (each with a recommendation; the dev proceeds on it)
 
@@ -702,6 +878,13 @@ records it.
   non-default setting with its light pass disclosed.
 - **The pop counter itself** (Plan 0090): this plan writes the rule forms once and leaves its
   readings for 0090's baseline; no baseline file, no ratchet here.
+- **The engine's own pipeline cache** under a game's cache directory (the backlog's "A wgpu
+  pipeline cache owned by the engine"): Phase 2a's cache is the GPU tests' only; a start-up
+  plan owns the engine's.
+- **Removing the penumbra spike or any default-off arm** (the cheap-modes rule keeps them);
+  Phase 2a moves them out of the default pipeline, nothing more.
+- **0086's pre-roll under the sky** (the bake carrying the sky rays, 36.1 against 9.7 s on
+  the switch test's lavapipe pre-roll): named in Phase 8's gate reading, not changed.
 - **The unified light cache** (ADR-0076 Alternative E).
 - **A wider or narrower sun disc, a `brick` canopy by default, `--lighting full` in forests:**
   look and cost calls the owner declined at 0086's question 8.
@@ -722,6 +905,7 @@ records it.
 |---|---|---|---|
 | 1: The readings, the key light's side | dev | not started | |
 | 2: The readings, the no-ray path's side | dev | not started | |
+| 2a: The light pass's compile cost, the pipeline cache | dev | not started | |
 | 3: The key mean keeps its age at a still camera | dev | not started | |
 | 4: The exposure's rate cap | dev | not started | |
 | 5: The no-ray prior and the fade | dev | not started | |

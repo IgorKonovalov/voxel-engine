@@ -180,7 +180,10 @@ touches). 0093's canopy shot may wait for Plan 0094.
 **Plan 0094** (the light's transitions: the key mean's age at a still camera, the no-ray sky
 prior and one fade for every no-ray value change, ADR-0076 rule 5's exposure rate cap, the
 dig's hole band in rule 3's form, the castle's fill-in, and the tunnel far-end and seal bars
-Plan 0086 struck; drafted 2026-11-19 from Plan 0086's follow-up scope, its 86c and 86d
+Plan 0086 struck; plus the two items the owner routed here at 0086's slowdown, the light pass's
+compile cost (the default-off arms out of the default pipeline, a pipeline cache for the GPU
+tests, about 600 s of the gate) and three regressions against 0086's Phase 5 bars; drafted
+2026-11-19 from Plan 0086's follow-up scope, its 86c and 86d
 verdicts and its readings log, while 0086 is still open on its branch; no ADR, ADR-0076 rules
 2, 3 and 5 are its targets; proposed, awaits the go): **starts after Plan 0086 closes and
 merges**. The architect recommends it as the next lane, **before Plan 0087** (the owner's
