@@ -1215,6 +1215,9 @@ written.
    none is built here; 24e shows the owner the three arms at 5b's pose beside the fixed `voxel`,
    and the pick, if any, is a one-line default change in Phase 25 under the cheap-modes rule.
 
+**Answered 2026-11-19 (owner):** 7 yes (close with the reading; the perf plan owns a stage this
+plan did not add), 8 yes (build none of the three arms; 24e shows them).
+
 ## Implementation phases
 
 Each phase ships as its own commit. `dev` implements all phases in one session with no review
