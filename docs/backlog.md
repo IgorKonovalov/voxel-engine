@@ -147,7 +147,11 @@ takes: a plan with the split as Phase 1, then by its shares: the chain's sky for
 record (the own summary kept, the neighbours' out, the ray seeded from the column or the column
 held), Phase 20 (ii)'s fade generalised to every no-ray value change, ADR-0076 rule 5's rate cap
 as an `AutoExposure` setting, Phase 20 bar 1a's (i) and (ii) by the lines, and a window on the
-castle on main. Pick up at Plan 0086's close: the architect drafts it then.
+castle on main. Pick up at Plan 0086's close: the architect drafts it then. **The before state
+(2026-11-19, Plan 0086's 86c window, run 9 on Plan 0083's binary, which holds none of 0086's
+light):** the castle placed on the hills at noon, the owner inside: "fine, but it flickers in
+the shadowed part"; the follow-up's window judges the same pose on main with both plans merged,
+and its split reads the shadowed part first.
 
 ### Chunk-scale world dynamics: a cellular material step and an event scheduler
 

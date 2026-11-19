@@ -5,7 +5,9 @@
 > Phases 9 to 15 added; **amended again 2026-11-18** after Phase 15's window: Phases 16 to 24
 > are the fix pass and the third window, the picks as tests are Phase 25; the owner's picks
 > and answers are in the second amendment, and the go for Phases 16 to 25 is the owner's
-> "all recommended, go ahead" of that date)
+> "all recommended, go ahead" of that date; **amended 2026-11-19** after Phase 24's window
+> (86c): Phases 24a to 24e are the fix pass for its defects A, B, D and E and the fourth
+> window, ahead of Phase 25; the verdicts are in `live/window86c/verdicts.md`)
 > **Created:** 2026-11-17
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0070](../adrs/0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md)
@@ -1013,6 +1015,205 @@ the owner looks or after.
    mechanism, or should the exposure keep its speed and only the light be fixed? Recommended:
    the cap as a setting; a 2-EV adaptation over half a second is still fast, and it bounds every
    pop the exposure amplifies, which rule 5 asks for.
+
+## Amended 2026-11-19, after the 86c window (the architect's calls; a fix pass before Phase 25)
+
+The third window ran on `live/bin86c` (`8f8645d6`), with Phase 15's binary and the window's
+before binary beside it; the verdicts are in `live/window86c/verdicts.md` with the stills
+beside them. **Passed:** the black region (1a, 1b), the seam (2: "no grain, very good"), the
+fired lights under anchor 4 (3a), the forest at 60 degrees (5a: better), the treads (6: not
+clipped, nothing wrong through sunset), the stairs' look (7a), the skylight and the seal (8:
+"looks great"). **The defaults stand:** anchor 4 (3b at anchor 0 is too dark; 7c at `none`
+turns the tunnel an unnatural blue, the fill unanchored at -1.09 EV against the ceiling's
++2.00), `smoothed` (7b's `face` shows no visible difference), the column wait off. **Failed,
+and owed to a fix pass:** (A) the dig's frame flashes across the whole view; (B) the light
+through a canopy does not converge at rest; (D) the tunnel stairs run at 30 to 50 fps.
+**Noted:** (C) `absorb` flickers for about half a second after a turn and runs about 50 fps;
+(E) the tip gate's two failures; run 9's castle, on Plan 0083's binary (the before state), was
+"fine, but flickers in the shadowed part", which goes to the follow-up plan's charter and to
+nothing here.
+
+Phases 24a to 24e below are the fix pass and the fourth window; Phase 25 and the close follow
+them. The plan's rule since Phase 1 holds: each defect's reading comes before its mechanism,
+and the dev builds nothing on A or B until the reading names the source.
+
+### 1. The dig flash is view-wide, and no reading has looked outside the ring
+
+**The finding.** `4a-flash.png` against `4a-after.png`: on the dig's frame every tread and
+riser of the hill to the horizon reads a hard face shade (the tread bright, the riser dark, the
+zebra Phase 13's `smoothed` removed), and the next frame reads smooth again. The HUD on that
+frame: light 1.02 ms against 0.43 after, temporal 0.97 against 0.79, a-trous 1.02 against 1.63,
+the queue's step 6.01 ms, one chunk uploaded, `missing 59 (light chain black 59)`. Phase 15's
+binary flashes too (`4b-p15-flash.png`: the lit faces, plus the dots the tip removed), so the
+cause predates Phase 21 and is not the switch Phase 16 attributed. The readings already hold
+it: the flicker rig's dig strip reads an over-4 **max of 36.754 %** of 57 600 lighting pixels
+on one frame pair, the same on `p19` and `before21` (the flicker check's table), and a 1 m
+hole's ring is not 21 000 pixels. Phases 16 and 21 counted within 64 voxels of the box, so the
+view-wide frame was in the table and unread. By ADR-0076 rule 4 (locality) nothing outside the
+edit's light-influence region may move by more than `T_still` across the edit's frames; this is
+that rule's violation, whatever the mechanism.
+
+**The candidates, by the shaders' rules, each with the counter that tells it apart.** Nothing
+is built until the counters name one; the dev reads them on the flicker rig's dig strip at
+frames N - 1, N, N + 1 and N + 2 (N the dig's frame), outside the box dilated by 64 voxels.
+(1) **Every pixel takes the ray or the chain path for one frame.** `shade.wgsl`'s `sky_baked`
+reads the store's header and table (`STORE_FLAGS`, `STORE_ORIGIN`, `STORE_SIZE`, `STORE_TABLE`)
+and the record's `VIS_BAKED` and `SKY_STALE`; a store buffer re-bound or its table rewritten on
+the edit's step before its contents land, or the stale bit set wider than the ring, makes the
+whole view cast. The face shade fits (the cast path's term is `pair.x * sky_open_by_normal(rec.n)`
+with the shading normal; `smoothed` applies to the baked read only, Phase 13's deviation), and
+so does the light pass's +0.6 ms (Plan 0032 read the sky ray at about that for a view of rays
+on the RTX). Counter: the cast pixels (`vis.a`) and the chained count per frame; a store
+generation or buffer identity per frame. (2) **The whole history flushes.** `Frame::invalidate`
+sets `overflow` past `MAX_EDITS` (64) boxes in one frame, and the edit path may push more
+boxes than one op's `aabb`. Counter: the age-0 pixel count per frame, `Params.history` bit 0,
+`history_restarts`. (3) **`LIGHTING_SKY_CHANGED` or `LIGHTING_LIGHTS_CHANGED` raised on the
+edit's frame** (`pair_step` and `key_mean` reset view-wide; the direct part takes the raw
+sample). Counter: the `lighting` flags per frame. (4) **The upscaler's history dropped** (bit 1:
+`view_changed` or `overflow`). Counter: the bit per frame; this one would alias, not shade, so
+it is the least likely. (5) **The smoothed normal's inputs** (`gradient27_normal` reads the
+mirror; one chunk's upload is local, so this needs the view-wide counter to be flat before it
+is believed). The orchestrator's read (a view-wide history or temporal break) is candidate (2)
+or (3); the face shade and the light pass's rise point at (1). The counters decide.
+
+**The decision.** Phase 24a reads the split, names the cause by its counter, and fixes it so the
+edit's frame is a still frame outside the region (the fix is to the frame's ordering or a flag's
+scope, not a new fade: a flash that is not a transition of any pixel's own value has no fade to
+ride). The bar is rule 4's form with the plan's `T_still` 4: outside the box dilated by 64
+voxels no frame pair of the fresh strip has more than 0.5 % of its pixels changing by over 4
+levels (the settled strip's max reads 0.191 %; the before's 36.754 % printed). Phase 21's bars
+stand inside the region.
+
+### 2. The canopy's grain at rest is a convergence question, not a pop count alone
+
+**The finding.** `5b-grain.png` (sun 10 degrees, `voxel`, settled): the sun patches on the
+slope are stippled and the lit trunks carry heavy grain; `6-grain.png` (15:00, settled): the
+penumbra edges of the trunks' shadows on the treads are stippled and the shaded grass under the
+canopy is speckled. The flicker rig's forest settled strip reads over-4 mean 0.653 %, max
+1.616 % (sky ray 25.6 %, young 30.1 % of the over-8 pixels), so rule 1 is not clean there
+either, but a still stipple is the larger part of what the owner sees: a per-pixel mean that
+has converged to its own error (the key light's visibility through voxel leaves is a Bernoulli
+per jittered sun sample; at the pair's cap of 64 its standard error is about `sqrt(p (1 - p)
+/ 64)`, 6 % of the sun term at `p` 0.5, about 12 display levels on a patch at 200) does not
+pop and still reads as grain. A pop count passes it. So the measure is two statistics on a
+still camera after settle, both scenes (the forest at `10,180` under `voxel`; the forest at
+15:00 at the treads), on the floor's and the trunks' pixels split by material:
+
+1. **The pop share** (rule 1): per frame pair, the share over 4 levels, the lamp-lit forest
+   floor's printed beside it.
+2. **The convergence residual:** the same pose and frame count, with the long reference the
+   same binary renders under `--sky-history 1024` (the pair's and the key mean's cap; the
+   setting exists) over 1200 settle frames; per pixel `|display(defaults, settled) -
+   display(reference)|`, the mean and p99 in levels, split lit (the key mean `g` over 0.5) and
+   shadowed. This is the grain's size as a number: what a longer mean would remove.
+
+**The split, before any mechanism:** the residual under the key light alone (`sky_rays` 0 and a
+fresh store) and the sky alone (`LightHooks::key_off`), as Phase 14's matrix; and under the key
+light alone with the sun's jitter off (a reading hook that fixes the disc sample at its centre,
+the one new hook this phase adds). If the residual falls to the bar with the jitter off, the
+grain is the disc's sample variance through the canopy and the mechanism is a longer mean for
+the key channel; if it stays, the grain is the voxel canopy's exact shadow at the lighting
+grid's half resolution (a real dapple aliased, not variance), which a longer mean cannot
+remove, and the mechanism is a look call (owner question 8).
+
+**The mechanisms, bounded (built only as the split says).** (i) A `key_history` cap of its own
+for the pair's `g` (256; the pair's `x` keeps `sky_history` 64), 0 ms and 0 B: the standard
+error halves, the grain by eye about a quarter of its area over 4 levels. Its cost is lag: the
+key mean's response to a moving sun lengthens four times, so Phase 19 bar 2 (a drift lags under
+half a voxel at the testbed's day; a 10-degree jump reaches 90 % in 11 frames, the jump's reset
+by `LIGHTING_SKY_CHANGED` unchanged) is re-run at 256 and stops the cap where it fails; the
+value the bars allow is the one taken, named in the log. (ii) If (i) leaves the trunks over the
+bar (a grazing sun on a cylinder: `p` near 0.5 along the whole trunk), the a-trous's variance
+for the direct part at a converged age (the moments' variance under-reads a mean's residual;
+SVGF's spatial estimate at age over 32 on the key term alone, one lever, as Phase 19 allowed it
+at a young age). Nothing else: not a wider disc, not a smaller one, not `brick` by default.
+
+**The bar** (guesses with `T_still` 4 as the scale, pinned by Phase 25 from the window's pick):
+the residual's p99 at or under 8 levels and its mean at or under 2 on the floor and on the
+trunks, both scenes; the pop share at or under the lamp-lit floor's. The before's values
+printed.
+
+### 3. `absorb` is a setting with a disclosed limit
+
+`--leaf-shadow absorb` is not the default (the owner picked `voxel` at 86b and 5a reads better
+under it), it costs nothing when off (owner, 2026-11-12: such an arm stays a setting), and its
+two faults are known: the light pass at 4.1 to 4.8 times `voxel`'s (Phase 14 bar 4; the
+window's about 50 fps) and a flicker of about half a second after a turn, which is the key
+mean restarting at age 0 on every disoccluded pixel with a continuous transmittance's sample
+variance under it (25 frames at 50 fps is the mean's first samples). No mechanism is built for
+it in this plan. `docs/flythrough.md`'s row and the log disclose both faults; if Phase 24b's
+cap (i) lands, 24e reads `absorb` after a turn once, as a reading, not a bar. Out of scope
+otherwise, listed under what the plan does not do.
+
+### 4. The stairs' frame cost is read against the Floor's lines before anything is blamed
+
+7a reads 30 to 50 fps at the tunnel's stairs on the RTX 3080 Laptop at the window's 2560 x
+1440 output (FSR 2 at 1.5, 1707 x 960 internal). The HUD elsewhere in the window reads the
+GPU at 6.2 to 8.4 ms and the CPU at 3 to 15 ms with the queue's step at 6 to 7 ms (the known
+main-thread cost), so the 20 to 33 ms of wall at the stairs is not yet attributed to the GPU,
+the CPU or the pacing. Phase 24c reads the pace line (wall, CPU, GPU) and the HUD's pass list at
+7a's pose, at the window's size and at 1080p output, and names the stage over its Floor line
+(`docs/nfr.md` section 2: primary 3.0 ms, lighting 4.0, denoise 2.0, upscale 3.0, the bake
+slice 1.0, streaming 1.0). The rule: a pass this plan added or grew (the sky irradiance pass,
+the light pass's sky rays, the temporal pass's pair and store read, the a-trous's `vis` taps,
+the column map's sync, the queue's step with the sky channel's jobs and the whole-chunk digs)
+over its budgets-table projection by more than 1 ms on the RTX at 1080p is this plan's to fix in
+24c from its own levers (the ray's region, the pass's footprint, the step's slice); anything
+else (the march at the stairs, the queue's step as Plan 0067 left it, the pacing) is the perf
+plan's and is disclosed with the reading. The RTX is above the floor's class, so a line over its
+budget there is over on the baseline. Owner question 7 is whether the close waits for the
+second case.
+
+### 5. The two gate failures: one test re-stated, one golden attributed
+
+**`gpu_queue::a_blank_chunk_waits_behind_a_nearer_refinement_only_under_the_score`** asserts
+the order in which a blank chunk an edit fills opens against a nearer refinement, under three
+orders. Phase 21a makes such a chunk a whole dig that opens near-first under every order and
+lands no coarse block, which is the new contract, not a regression: the test is re-stated, not
+the code. It splits in two: the edited chunk's claim (it opens first under all three orders,
+as a dig, and lands a full block with no coarse one: Phase 21a bar 1's claim at the row), and
+the original order claim for a blank chunk that arrives **without** an edit (the rig syncs the
+world with chunk 5 added and no `invalidate`), kept if the rig can add a chunk without an edit
+box in about an hour, else dropped with the log saying `the_score_blends_distance_and_the_view`
+carries the order's claim.
+
+**`gpu_hud_golden::hud_golden_over_the_carved_view_is_pixel_exact`** differs by 2427 bytes. The
+test defends the overlay's pixels, not the light. The dev attributes the bytes before
+re-blessing: by region (inside the text rows and the strip, or outside them in the march
+target) and by commit (the test is small; a bisect over the plan's commits is minutes). Text
+rows that changed because a HUD line gained a word this plan added (a mode, a counter) are
+re-blessed with the count and the line named; a march-target difference is a world or marcher
+change, which this plan did not make, and stops the dev for the architect; overlay pixels that
+moved outside the text (the shadow, the strip) are a regression and a code fix. The test's
+second and third assertions (nothing outside the overlay changed; the colours drew) stand as
+written.
+
+### 6. The order for the dev
+
+1. Phase 24d first (an hour; the gate is green again before anything else moves).
+2. Phase 24a's split reading, then its fix and bars.
+3. Phase 24b's two statistics and the split, then (i), then (ii) only as the split says.
+4. Phase 24c's reading, then its fix only under the rule's first case.
+5. Phase 24e's window: `live/bin86d` at the tip, `live/bin86c` beside it as the before,
+   `live/session86d.sh` with runs 4a, 5b, 6 and 7a of 86c (5c only if 24b's (i) landed), the
+   fly-through's stdout visible, the ping.
+6. The tip gate; the resume notes; then Phase 25.
+
+### Owner questions (the dev proceeds on the recommendation)
+
+7. **The stairs' 30 to 50 fps, if the reading names a stage this plan did not add** (the march
+   at the stairs, the queue's step on the main thread, the window's pacing): does the close
+   wait for that fix, or does the plan close with the reading disclosed and the perf plan
+   (the owed one after this set) owning it? Recommended: close with the reading; this plan's
+   bars are the still image, and a perf fix on the march or the step is a plan of its own with
+   its own measurements on both adapters.
+8. **If Phase 24b's split says the canopy's grain is the exact dapple at half resolution, not
+   variance** (the residual stays with the sun's jitter off): the mechanisms are look and cost
+   calls, not this plan's: `brick` as the forest's default (a blob, no dapple), `absorb` (a
+   continuous transmittance at 4 to 5 times the light pass), or `--lighting full` in forests
+   (the dapple at the pixel grid, the lighting passes at four times their pixels). Recommended:
+   none is built here; 24e shows the owner the three arms at 5b's pose beside the fixed `voxel`,
+   and the pick, if any, is a one-line default change in Phase 25 under the cheap-modes rule.
 
 ## Implementation phases
 
@@ -2152,10 +2353,182 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   verdict on each default (the anchor, the smoothed normal, the wait off); or a no-go that names
   the run. Each verdict's words are quoted into the readings log.
 
+### Phase 24a: The dig's view-wide flash (86c defect A)
+- **Owner skill:** dev
+- **What (added 2026-11-19, the 86c amendment, call 1):** first the reading: the flicker rig's
+  dig strip (`flicker::reading::flicker_dig`, the hills at noon, the live queue, the spawn's
+  view 30 degrees down, the 1 m dig) split per frame pair into the pixels inside and outside
+  the box dilated by 64 voxels, with per frame the counters the amendment names: the cast
+  pixels (`vis.a`), the chained count, the age-0 count, `Params.history` bits 0 and 1,
+  `Params.lighting`'s `LIGHTING_SKY_CHANGED` and `LIGHTING_LIGHTS_CHANGED`, `history_restarts`,
+  and a store generation (the buffer's identity or the table's write count, whichever the dev
+  can print in under an hour) at N - 1, N, N + 1 and N + 2. The frame whose outside share is
+  the strip's max (36.754 % today) is the flash; its counters against N - 1's name the
+  candidate (the amendment's (1) to (5)). Then the fix of the named cause, so the edit's frame
+  is a still frame outside the region: a store buffer or table written before the frame reads
+  it (or bound on the frame after its contents land), a flag scoped to the box, a flush that
+  no longer happens; no new fade, no new target. If the counters name none of the five, the dev
+  stops with the table in the log for the architect.
+- **Files touched:** `apps/flythrough/tests/gpu_outdoor/flicker.rs` (the split and the
+  counters), `apps/flythrough/tests/support/*` (the counters' read-back, if not at hand),
+  `crates/vxe-render/tests/gpu_sun.rs`, and for the fix the file the reading names among
+  `crates/vxe-render/src/bake/queue/*`, `bake/store.rs`, `frame/encode.rs`, `frame/mod.rs`,
+  `frame/output_binds.rs`, `shaders/shade.wgsl`, `shaders/temporal.wgsl`;
+  `docs/plans/logs/0086.md`.
+- **Done when:**
+  1. **The split is in the log** with the flash frame's counters against the frame before it,
+     and the cause named by the counter that moved (one line: which candidate, which counter,
+     which code path).
+  2. **A dig changes nothing outside its reach.** `a_dig_changes_nothing_outside_its_reach`:
+     first on Phase 21 bar 3's rig in `gpu_sun.rs` (the open floor of 3 x 3 chunks baked whole,
+     the camera seeing the floor to the chunks' edge, the dig at frame 64, 20 frames read; about
+     8 s) if that rig reproduces the flash before the fix (its whole-view over-4 share at frame
+     64 against frames 40 to 63; printed either way), else on the flicker rig's dig strip in
+     `gpu_outdoor.rs` at 320 x 180 (soak if over 10 s on lavapipe, and then a release reading
+     on the RTX is the per-phase run): over every frame pair from the dig's frame to 16 after,
+     the share of lighting pixels outside the box dilated by 64 voxels changing by over 4
+     levels (ADR-0076 rule 4's form, `T_still` 4) is at or under 0.5 % (the settled strip's max
+     0.191 %; the before's 36.754 % printed), and the counters at the dig's frame equal a still
+     frame's: cast pixels within the ring's count plus the settled count, age-0 pixels within
+     the dilated box's, both flags clear, `history_restarts` unchanged, the upscaler's bit set.
+  3. **Inside the region nothing regressed.** `a_dig_leaves_no_dots`,
+     `the_sky_term_switches_without_a_dip`, `the_direct_part_holds_no_sky_term` and
+     `a_reset_pixel_starts_from_its_record` pass by name; Phase 21 bar 4's two bars hold.
+  4. **The goldens.** The hills' noon golden and the lamp-lit scenes' goldens are byte-identical
+     (a fix to an edit's frame touches no still frame); `frame_bytes` unchanged, or the fix's
+     own bytes named.
+  5. **Cost:** the edit's frame on both adapters before and after (the light, temporal and
+     a-trous passes and the queue's step; the HUD's flash frame read 1.02 / 0.97 / 1.02 ms and
+     6.01 ms on the RTX at 1440p), and a still frame unchanged within noise.
+  6. The fly-through's dig at Phase 16's rig re-read with bar 2's statistic, the tip against
+     `live/bin86c`, in the log.
+
+### Phase 24b: The light through a canopy at rest (86c defect B)
+- **Owner skill:** dev
+- **What (added 2026-11-19, the 86c amendment, call 2):** the two statistics the amendment
+  names on a still camera after settle, in both scenes, on the floor's and the trunks' pixels
+  split by material: the pop share per frame pair (rule 1) and the convergence residual against
+  the same binary's long reference (`--sky-history 1024`, 1200 settle frames; the mean and p99
+  in levels, split lit and shadowed by the key mean `g`). Then the split: the key light alone
+  (`sky_rays` 0, a fresh store), the sky alone (`LightHooks::key_off`), and the key light alone
+  with the sun's jitter off (`LightHooks::key_no_jitter`, this phase's one new reading hook:
+  the disc sample fixed at its centre). Then, as the split says and no further: (i) a
+  `key_history` cap for the pair's `g` (256; `sky_history` keeps the pair's `x` at 64; an
+  `AutoExposure`-style field of `Lighting` with a flag and a settings row, its mode shown), with
+  Phase 19 bar 2 re-run at the new cap and the cap stopped where that bar fails; (ii) only if
+  (i) leaves the trunks over the bar, the a-trous's spatial variance estimate on the direct part
+  at age over 32 (SVGF's, ADR-0018), the key term alone. If the residual stays with the jitter
+  off, nothing is built and owner question 8 applies: 24e shows the three arms.
+- **Files touched:** `apps/flythrough/tests/gpu_outdoor.rs` and `gpu_outdoor/*` (the two
+  statistics on `reading::the_forest_floor_at_a_low_sun`'s rig and Phase 23's 15:00 rig),
+  `crates/vxe-render/src/frame/settings.rs` (the hook; the cap if (i)),
+  `shaders/sky_light.wgsl` or `light.wgsl` (the hook), `shaders/temporal.wgsl` (`key_mean`'s
+  cap if (i)), `shaders/atrous.wgsl` (only if (ii)), `settings.rs`, `apps/flythrough/src/cli/*`,
+  `hud/modes.rs`, `docs/flythrough.md` (if (i)), `crates/vxe-render/tests/gpu_sun.rs`,
+  `docs/plans/logs/0086.md`.
+- **Done when:**
+  1. **The table is in the log:** both scenes, both statistics, the three arms of the split,
+     before any mechanism, with the term and the sample the grain is attributed to.
+  2. **The canopy's light converges at rest.** `the_canopy_light_converges_at_rest` in
+     `gpu_outdoor.rs` (the forest at `10,180` under `voxel` and the forest at 15:00, the queue
+     drained, 128 frames at 320 x 180 against the reference's 1200; a release reading on the
+     RTX for the phase, written as a soak test if its lavapipe wall allows, else a reading named
+     in the log as Phase 20 bar 1a is): the residual's p99 at or under 8 levels and its mean at
+     or under 2 on the floor and on the trunks in both scenes, and the pop share per frame pair
+     at or under the lamp-lit forest floor's (the before's values printed beside each; guesses
+     with `T_still` 4 as the scale, Phase 25 pins the window's value).
+  3. **The sun still moves the shadow.** If (i): Phase 19 bar 2 as re-stated (the drift clause
+     read; a 10-degree jump reaches 90 % of the new lit value 11 frames later;
+     `a_moving_shadow_edge_resets_the_history` holds) at the cap taken; the cap and the drift
+     reading in the log.
+  4. **Nothing moves elsewhere.** `sky_rays` 0 and the pinned-exposure goldens of the lamp-lit
+     scenes are byte-identical; the outdoor goldens that hold a canopy are re-blessed by Phase
+     25 as a disclosed change with counts, not here; `frame_bytes` unchanged.
+  5. **Cost:** (i) 0 ms and 0 B by construction, stated; (ii) if built, the a-trous on both
+     adapters in the forest (a guess: +0.05 ms RTX, +0.4 ms RENOIR).
+  6. The hook and the setting show their mode; `absorb` after a turn at 5b's pose read once
+     with the cap in (the frames to settle, as Phase 19 bar 4 reads them), as a reading.
+
+### Phase 24c: The stairs' frame cost (86c defect D)
+- **Owner skill:** dev
+- **What (added 2026-11-19, the 86c amendment, call 4):** the reading at 7a's pose (`--source
+  outdoor --spawn inside --time 12:00 --lamp off`, the stairs near the mouth, the eye line from
+  the window's HUD or the first still), release, RTX 3080 Laptop, the exclusive perf lock, the
+  queue drained and not: the pace line (wall, CPU, GPU) and every pass of the HUD's list
+  (`FRAME_PASSES`) with the queue's step, three windows of 240 frames each, the median, at the
+  window's 2560 x 1440 and at 1920 x 1080 output (`--size`), FSR 2 at 1.5 in both; the same on
+  the RADV RENOIR once at 1080p. Each stage summed to `docs/nfr.md` section 2's Floor lines and
+  the stage over its line named, with the passes this plan added or grew split out (the sky
+  irradiance pass, the light pass's sky rays, the temporal pass, the a-trous, the column map's
+  sync, the queue's step). Then the amendment's rule: a pass of this plan's over its
+  budgets-table projection by more than 1 ms on the RTX at 1080p is fixed here from its own
+  levers (the ray's region, the pass's footprint, the step's slice), read again; anything else
+  is disclosed with the reading and goes to the perf plan (owner question 7).
+- **Files touched:** `docs/plans/logs/0086.md`; `docs/nfr/02-frame-budget.md` (the reading's
+  row, at the close); the pass's file only under the rule's first case.
+- **Done when:**
+  1. **The table is in the log** (both sizes, both adapters, drained and not), the stage over
+     its Floor line named with its ms, and the 30 to 50 fps attributed to the GPU, the CPU's
+     step or the pacing in one line.
+  2. **This plan's passes are within their projections.** On the RTX at 1080p at 7a's pose,
+     each pass this plan added or grew reads within its budgets-table projection plus 1 ms, or
+     is fixed and re-read to that line; the sum of the lighting line's passes (the light pass,
+     the sky passes) and of the denoise line's (temporal, a-trous) printed against 4.0 and 2.0
+     ms.
+  3. **The pose is a reading in the readings log and a row for the close:** the frame's GPU
+     and wall at Floor against 16.6 ms on the RTX, with the machine and commit.
+
+### Phase 24d: The tip gate's two failures (86c item E)
+- **Owner skill:** dev
+- **What (added 2026-11-19, the 86c amendment, call 5):**
+  `a_blank_chunk_waits_behind_a_nearer_refinement_only_under_the_score` re-stated as two
+  tests, and `hud_golden_over_the_carved_view_is_pixel_exact`'s 2427 bytes attributed by
+  region and commit before the golden is re-blessed, as the amendment says.
+- **Files touched:** `apps/flythrough/tests/gpu_queue.rs`, `apps/flythrough/tests/gpu_hud_golden.rs`,
+  its golden `hud.png` (only if the bytes are the text's), `docs/plans/logs/0086.md`.
+- **Done when:**
+  1. **A chunk an edit fills opens first in every order.** `a_chunk_an_edit_fills_is_a_dig_in_every_order`
+     in `gpu_queue.rs` (the row rig; about 3 s): under `score(4.0)`, the tier and the distance
+     order, the edited blank chunk is in `digs` or `dig_open` after the edit's step, opens
+     before the pending refinement and the other blank chunk, and lands a full block with no
+     coarse one.
+  2. **A blank chunk that arrives without an edit keeps the order's claim.**
+     `a_blank_chunk_that_arrives_waits_behind_a_nearer_refinement_only_under_the_score`: the
+     original assertion (3 first under the score, 5 first under the tier and the distance) with
+     chunk 5 added to the world and synced with no `invalidate`; or, if the rig cannot add a
+     chunk without an edit box in about an hour, the test is removed and the log says
+     `the_score_blends_distance_and_the_view` carries the claim.
+  3. **The HUD golden's bytes are named.** The log says which region holds the 2427 bytes
+     (text rows and strip, or the march target), which commit moved them, and which HUD line;
+     a text change is re-blessed with the count; a march-target change stops the dev for the
+     architect; an overlay regression outside the text is fixed and the golden left as it was.
+  4. The gate tier at the tip reads 0 failures (`cargo nextest run --profile gate`, under the
+     lock, the wall time in the log against section 7's 19 min).
+
+### Phase 24e: The owner's fourth window (86d)
+- **Owner skill:** human
+- **What (added 2026-11-19, the 86c amendment):** a runner (`live/session86d.sh`) on one
+  build at the tip of Phase 24d (`live/bin86d` with its `.commit`), `live/bin86c` beside it as
+  the before binary, the fly-through's stdout visible and a ping when ready, the 86c runs that
+  failed, in this order: (4) a dig on the hills at noon and one in the tunnel, twice each,
+  watched for the view-wide flash on the dig's frame, then once on `bin86c` for comparison;
+  (5b) the forest at `10,180` under `voxel`, settled: the sun patches on the slope and the lit
+  trunks, then a fast turn and the settle after it; (6) the forest at 15:00: the penumbra edges
+  on the treads and the shaded grass, settled; (7a) the tunnel's stairs near the mouth: the fps
+  and the HUD's pace line read aloud; (5c) only if Phase 24b's cap landed: `absorb` at `60,180`,
+  a turn, the half second after it, as a reading; (8, owner question 8) only if Phase 24b
+  built nothing: 5b's pose under `--leaf-shadow brick`, `absorb` and `--lighting full` beside
+  `voxel`. Runs 1 to 3, 7b, 7c and 8 of 86c are not re-run. Each run's screenshot and the
+  owner's words go to `live/window86d/verdicts.md`.
+- **Files touched:** `live/session86d.sh`, `docs/plans/logs/0086.md`.
+- **Done when:** the owner has recorded, per defect A, B and D, fixed / not fixed / worse
+  (and C's reading if run), and the pick for question 8 if it was shown; or a no-go that names
+  the run. Each verdict's words are quoted into the readings log.
+
 ### Phase 25: The picks as tests
 - **Owner skill:** dev
-- **What:** the bars Phases 1 to 7, 9 to 14 and 16 to 23 read, written as tests against the
-  window's picks; the defaults the window chose; the goldens Plan 0032 blessed that these mechanisms move
+- **What:** the bars Phases 1 to 7, 9 to 14, 16 to 23 and 24a to 24c read, written as tests
+  against the windows' picks (86c's and 86d's); the defaults the window chose; the goldens Plan 0032 blessed that these mechanisms move
   (`outdoor_noon`, `cave_mouth`, `outdoor_forest_sunset`, the sunset and night ones if the
   bake moves them) re-blessed as a disclosed change with the difference counts in the log; a
   mechanism the window dropped stays a setting if it costs nothing when off (owner,
@@ -2168,7 +2541,7 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
      gate): the 99th-percentile frame-to-frame change over the rim band and the far end is at
      or under the headlamp's on the same pose with the sky off. This is Plan 0032 Phase 6's
      stop rule on the occluded rig, as a regression test.
-  2. Every bar Phases 2 to 7, 9 to 14 and 16 to 23 name that the window kept exists, asserts the picked
+  2. Every bar Phases 2 to 7, 9 to 14, 16 to 23 and 24a to 24c name that the windows kept exists, asserts the picked
      value, and passes in the gpu tier under the lock; each over 10 s on lavapipe is
      `#[ignore = "soak"]` and passes once by name. Phase 9's bars 2 to 5 stay whatever the
      window picks: the sky rule is not a look.
@@ -2248,6 +2621,15 @@ Added 2026-11-19, the castle's stop (a guess until read):
 |---|---|---|
 | §2 Denoise, the a-trous iterations (Phase 21 bar 2's fix) | 25 loads of an `rgba8unorm` texel per lighting pixel per iteration, four iterations, in the footprint the filter already reads: +0.02 ms RTX, +0.2 ms RENOIR on the Denoise line's 2.0 ms; 0 B | Phase 21 bar 6, both adapters |
 
+Added 2026-11-19, the 86c window (guesses until read):
+
+| `nfr.md` figure | projection (a guess) | how the close measures it |
+|---|---|---|
+| §2, the edit's frame (Phase 24a) | the fix is an ordering or a flag's scope: 0 ms on a still frame; on the edit's frame the light pass loses the view-wide rays the flash cast (the HUD read 1.02 against 0.43 ms RTX at 1440p) | Phase 24a bar 5, both adapters |
+| §2 Lighting, the temporal pass (Phase 24b (i)) | a cap on a channel the pass already blends: 0 ms, 0 B | Phase 24b bar 5 |
+| §2 Denoise, the a-trous (Phase 24b (ii), only if built) | a spatial variance estimate at a converged age on one channel: +0.05 ms RTX, +0.4 ms RENOIR in the forest | Phase 24b bar 5 |
+| §2 the Floor's lines at the tunnel's stairs (Phase 24c) | a reading, no projection: the stage over its line named; this plan's passes within their rows above plus 1 ms on the RTX at 1080p | Phase 24c bars 2 and 3; the row in `docs/nfr/02-frame-budget.md` at the close |
+
 On the slow adapter the outdoor light pass is over section 2's line in every configuration
 Plan 0032 read; this plan's Phase 5 is the first reading that can move it under, and `nfr.md`
 section 2 records the result at the close.
@@ -2323,6 +2705,15 @@ section 2 records the result at the close.
   and the switch's fade (Phase 20 (ii) generalised), ADR-0076 rule 5's exposure rate cap, and
   Phase 21 bar 4's band clause: the follow-up plan the amendment charters, drafted at this
   plan's close.
+- **`absorb`'s flicker after a turn and its light pass** (added 2026-11-19, the 86c window's
+  5c): a setting that is not the default and costs nothing when off; both faults are disclosed
+  in `docs/flythrough.md`'s row and the log, and no mechanism is built for them here.
+- **A frame cost at the tunnel's stairs that is not this plan's** (added 2026-11-19, 86c's 7a:
+  the march, the queue's step on the main thread, the pacing): Phase 24c reads and names it;
+  the perf plan owed after this set owns the fix (owner question 7).
+- **A canopy's exact dapple at the lighting grid's half resolution** (added 2026-11-19, 86c's
+  5b and 6, if Phase 24b's split names it rather than the sample variance): a look and cost
+  call (owner question 8), shown at 86d, not built here beyond a default's one-line change.
 
 ## Implementation log
 
@@ -2471,3 +2862,7 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   Phase 1, the no-ray path's prior, the fades, the exposure's rate cap, bar 4's band clause,
   bar 1a's (i) and (ii) by the lines, a window on the castle on main; drafted by the architect
   at this plan's close, and `docs/backlog.md` holds the pointer until then (added 2026-11-19).
+  **The 86c window's run 9 is its before state** (added 2026-11-19, the 86c amendment): the
+  castle placed on the hills at noon on Plan 0083's binary, the owner inside: "the castle was
+  fine, but it flickers in the shadowed part"; the follow-up's window on main judges the same
+  pose with both plans' light, and its Phase 1 split reads the shadowed part first.
