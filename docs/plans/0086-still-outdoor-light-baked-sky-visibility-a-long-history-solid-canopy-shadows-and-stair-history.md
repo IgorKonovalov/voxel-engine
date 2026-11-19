@@ -3141,7 +3141,8 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
 | 24c: The stairs' frame cost | dev | done (reading): the queue's step on the main thread is over its line (6.3 ms at 1080p against 1.0; the plan's base 13.5), the GPU within every line on the RTX (4.53 ms 1080p, 7.55 ms 1440p); this plan's passes within their projections; no fix, the perf plan's (question 7) | `47fd90e8` |
 | 24e: The owner's fourth window | human | done 2026-11-19: A fixed (the view-wide flash gone; a small fast flicker in and around a hole on a shadowed slope left), D fixed (question 7); B at the cap's state still grainy (5b), `absorb` wobbles 1 to 2 s after a turn (5c), 6 "grainy a bit"; verdicts in `live/window86d/verdicts.md` | |
 | 24f: The key mean's age at the trunks | dev | not started: moved to the follow-up plan (owner, 2026-11-19, "wrap up"); with 24a's bands, the hole band and 24g. The merge of main and the light pass's cost check (86c against 86d: -0.09 to +0.13 ms at the same poses) in the log | `c3a3ad2e`, committed with this row |
-| 24h: The second merge of main | dev | done: three conflicts, `hud.png` re-blessed (306 px against main's, the camera row); quick 951 / 951, the merge's gpu binaries 57 / 57; light 4.742 / 2.940 ms at the forest and the hills | committed with this row |
+| 24h: The second merge of main | dev | done: three conflicts, `hud.png` re-blessed (306 px against main's, the camera row); quick 951 / 951, the merge's gpu binaries 57 / 57; light 4.742 / 2.940 ms at the forest and the hills | `47cc3feb` |
+| 24i: The soak marks and the quiet tip gate | dev | done in part: the three queue tests 19.9 / 19.3 / 15.3 s quiet, marked soak, the gate variant under the score; the quiet gate 1257 / 1257 in 2096.4 s (load 1.33), over 19 min; this plan's four over 10 s marked soak; the re-read at Phase 25's tip | committed with this row |
 | 25: The picks as tests | dev | not started | |
 
 ### Notes

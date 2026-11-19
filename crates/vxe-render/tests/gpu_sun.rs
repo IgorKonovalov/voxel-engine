@@ -361,7 +361,9 @@ fn a_young_chunk_reads_its_neighbours_sky() {
 /// light off, a sky ray into the absent chunk ends on its face below the roof, so it is rock
 /// by the column map (ADR-0070's amendment): the floor reads under 1 % of `pi`. The same rig
 /// with every end counted as sky (`LightHooks::sky_end_is_sky`) is printed. 16-frame means.
+/// Soak: 11.0 s on lavapipe in Plan 0086 Phase 24i's quiet gate.
 #[test]
+#[ignore = "soak"]
 fn an_absent_chunk_below_the_column_top_is_rock_to_the_sky_ray() {
     let Some((device, queue)) = device() else {
         return;
@@ -1249,7 +1251,9 @@ fn a_provisional_bake_is_caught_up() {
 /// display pixels under a zenith sun of 3 degrees is at or under 4 levels (ADR-0076's starting
 /// `T_still`, the bar as re-stated 2026-11-18; the reading of record p99 2, mean 0.355), the
 /// headlamp's on the same floor with no sky printed beside it (p99 1, mean 0.076).
+/// Soak: 24.8 s on lavapipe in Plan 0086 Phase 24i's quiet gate.
 #[test]
+#[ignore = "soak"]
 fn the_penumbra_holds_still_on_the_long_history() {
     let Some((ex_sun, mean_sun, p99_sun, level_sun)) = reading::penumbra_band_pinned(Some(3.0))
     else {

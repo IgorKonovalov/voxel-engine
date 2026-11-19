@@ -303,7 +303,9 @@ fn the_sky_term_switches_without_a_dip() {
 /// bottom, inside its footprint) reads the same pixels' mean on the dug world baked whole and
 /// run 64 frames within one display level; no frame has over 5 % of the pixels changing by
 /// over 16 levels from the frame before.
+/// Soak: 15.1 s on lavapipe in Plan 0086 Phase 24i's quiet gate.
 #[test]
+#[ignore = "soak"]
 fn a_dig_leaves_no_dots() {
     let mut baked_count = Vec::new();
     let mut src: Vec<Vec<u8>> = Vec::new();
@@ -581,7 +583,9 @@ fn up_seed(f: &Frame, world: &World, h: [f32; 4]) -> f32 {
 /// the pair's mean 1 at age `SEED_AGE`. The mean of the pair over the box's cast pixels at
 /// frames 1, 8, 16 and 60 after the dig is printed, with the count of `+z` pixels whose face
 /// holds a record (stale) at frame 1.
+/// Soak: 14.2 s on lavapipe in Plan 0086 Phase 24i's quiet gate.
 #[test]
+#[ignore = "soak"]
 fn a_reset_pixel_starts_from_its_record() {
     let Some((device, queue)) = device() else {
         return;

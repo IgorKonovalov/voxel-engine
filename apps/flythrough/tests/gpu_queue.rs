@@ -177,8 +177,9 @@ fn open_order(q: &mut Q) -> Vec<i32> {
 /// weight 2: the chunks first open by `|o| x (1 + W x a)`, behind the camera `a` 0.632. At
 /// angle weight 4: ahead 1, 2, 3, behind 1 x 3.53 and 2 x 3.53, so 2, 3, 4, 5, 1, 0; at 1:
 /// behind 1.63 and 3.26, so 2, 3, 1, 4, 5, 0; at 0 the distance, ties ahead first, so 2, 3, 1,
-/// 4, 0, 5, as under the distance order.
+/// 4, 0, 5, as under the distance order. About 15 s on lavapipe: soak.
 #[test]
+#[ignore = "soak"]
 fn the_score_blends_distance_and_the_view() {
     for (order, want) in [
         (score(4.0), [2, 3, 4, 5, 1, 0]),
@@ -269,10 +270,26 @@ impl Q {
 /// and an edit fills chunk 3. Under all three
 /// orders the edited chunk is a dig (ADR-0070's whole dig of a chunk that held no block) after
 /// the edit's step, opens before chunk 4's refinement and chunk 5's first pass, and lands a
-/// full block with no coarse one.
+/// full block with no coarse one. About 20 s on lavapipe: soak; the gate keeps the score's
+/// order alone (`a_chunk_an_edit_fills_is_a_dig_under_the_score`).
 #[test]
+#[ignore = "soak"]
 fn a_chunk_an_edit_fills_is_a_dig_in_every_order() {
     for order in three_orders() {
+        edit_fills_is_a_dig(order);
+    }
+}
+
+/// `a_chunk_an_edit_fills_is_a_dig_in_every_order` under the fly-through's order, the score at
+/// angle weight 4, alone: the edited chunk's claim in the gate.
+#[test]
+fn a_chunk_an_edit_fills_is_a_dig_under_the_score() {
+    edit_fills_is_a_dig(score(4.0));
+}
+
+/// The rig and the claims of `a_chunk_an_edit_fills_is_a_dig_in_every_order` under `order`.
+fn edit_fills_is_a_dig(order: vxe_render::QueueOrder) {
+    {
         let Some(mut q) = rig(
             row_without(&[0, 1, 2], &[4, 5]),
             &Setup {
@@ -333,8 +350,9 @@ fn a_chunk_an_edit_fills_is_a_dig_in_every_order() {
 /// opens before chunk 5's first pass (3); with the class as a tier, and under the distance
 /// order, chunk 5 opens first. Chunks 3 and 5 start out of the world and arrive with their rock
 /// as the streamer brings a chunk (inserted and mirrored, no `invalidate`): 3 first, stepped
-/// until its coarse block lands, then 5.
+/// until its coarse block lands, then 5. About 19 s on lavapipe: soak.
 #[test]
+#[ignore = "soak"]
 fn a_blank_chunk_that_arrives_waits_behind_a_nearer_refinement_only_under_the_score() {
     for (order, first) in three_orders().into_iter().zip([3, 5, 5]) {
         let Some(mut q) = rig(
