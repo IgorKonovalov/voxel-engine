@@ -44,7 +44,7 @@ impl Frame {
                 self.binds.io_at(
                     device,
                     self.pipes.layout(P_ATROUS),
-                    &[0, 1, 2, 5, 6, 7, 8],
+                    &[0, 1, 2, 5, 6, 7, 8, 10],
                     &[
                         Res::Tex(t.lit_pos(c)),
                         Res::Tex(t.lit_info(c)),
@@ -53,6 +53,7 @@ impl Frame {
                         Res::Buf(&self.state.atrous_steps[i][usize::from(i + 1 == n)]),
                         Res::Tex(&t.accum[c]),
                         Res::Tex(&t.moments[c]),
+                        Res::Tex(&t.vis),
                     ],
                 )
             })

@@ -268,6 +268,7 @@ pub(crate) const PASSES: [PassSpec; 15] = [
                 (6, Io::Uniform),
                 (7, Io::Float),
                 (8, Io::Float),
+                (10, Io::Float),
             ]),
         ],
         lazy: false,

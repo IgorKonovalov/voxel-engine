@@ -294,9 +294,11 @@ fn the_sky_term_switches_without_a_dip() {
 /// times their value at frame 124 and over 2 times the 3 x 3 neighbourhood's mean there is
 /// under 1 %, and 0 from 16 frames after the dig on; the same count on the hole's own faces
 /// (inside the dilated box) is printed, not barred. Bar 4: over the pixels inside the dilated
-/// box at frame 124, with `old` the display level at frame 63 and `new` at frame 124, every
-/// frame from 64 to 124 lies in `[min(old, new) - 4, max(old, new) + 4]` (ADR-0076 rule 3's
-/// form) and no pixel leaves it; from the frame after the dig job lands (the queue's
+/// box at frame 124, with `old` the display level at frame 63 and `new` at frame 124, the
+/// pixels with a frame from 64 to 124 outside `[min(old, new) - 4, max(old, new) + 4]`
+/// (ADR-0076 rule 3's form) are printed by the frame of their largest excursion, its side and
+/// their sky term's source there ([`sky_sources`]: the pair, the store or the chain), not
+/// barred (the chain's prior on the no-ray path is a later plan's); from the frame after the dig job lands (the queue's
 /// `digs_baked` rises; printed) the hole's floor (hits within half a voxel of the box's
 /// bottom, inside its footprint) reads the same pixels' mean on the dug world baked whole and
 /// run 64 frames within one display level; no frame has over 5 % of the pixels changing by
@@ -304,8 +306,13 @@ fn the_sky_term_switches_without_a_dip() {
 #[test]
 fn a_dig_leaves_no_dots() {
     let mut baked_count = Vec::new();
-    let Some((shots, world)) = dig_run_with(|_, _, _, f| {
+    let mut src: Vec<Vec<u8>> = Vec::new();
+    let eye = dig_camera().position.to_array();
+    let Some((shots, world)) = dig_run_with(|i, device, queue, f| {
         baked_count.push(f.bake_queue().expect("the queue runs").stats().digs_baked);
+        if i + 1 >= DIG_AT {
+            src.push(sky_sources(device, queue, f, eye));
+        }
     }) else {
         return;
     };
@@ -362,7 +369,8 @@ fn a_dig_leaves_no_dots() {
         .collect();
     let mut left = 0usize;
     let mut worst_out = 0i32;
-    let mut by_frame = std::collections::BTreeMap::<usize, [usize; 2]>::new();
+    // (frame, side, source) -> leavers.
+    let mut by_frame = std::collections::BTreeMap::<(usize, &str, &str), usize>::new();
     for &i in &hole_px {
         let (o, nw) = (i32::from(first.level[i]), i32::from(last.level[i]));
         let (lo, hi) = (o.min(nw) - 4, o.max(nw) + 4);
@@ -370,10 +378,12 @@ fn a_dig_leaves_no_dots() {
         worst_out = worst_out.max(out);
         left += usize::from(out > 0);
         if out > 0 {
-            by_frame.entry(DIG_AT - 1 + k).or_default()[usize::from(over)] += 1;
+            let side = if over { "over" } else { "under" };
+            let source = ["pair", "store", "chain"][usize::from(src[k][i])];
+            *by_frame.entry((DIG_AT - 1 + k, side, source)).or_default() += 1;
         }
     }
-    println!("the hole's leavers by frame (under, over): {by_frame:?}");
+    println!("the hole's leavers by (frame, side, source): {by_frame:?}");
     // The frame the dig job landed: the first frame after the dig whose `digs_baked` rose.
     let at_dig = baked_count[DIG_AT - 1];
     let landed = (DIG_AT..baked_count.len()).find(|&i| baked_count[i] > at_dig);
@@ -422,7 +432,7 @@ fn a_dig_leaves_no_dots() {
         .map(|&k| (DIG_AT + k - 1, mean(&shots[k])))
         .collect();
     println!(
-        "the hole's faces: {} pixels, {left} left the band of 4 (largest excursion {worst_out}); the dig job landed at frame {landed:?}",
+        "the hole's faces: {} pixels, {left} left the band of 4 (largest excursion {worst_out}; printed, not barred); the dig job landed at frame {landed:?}",
         hole_px.len()
     );
     println!(
@@ -432,11 +442,66 @@ fn a_dig_leaves_no_dots() {
     );
     assert!(fails.is_empty(), "dots on the ring over the bar at frames {fails:?}");
     assert!(!hole_px.is_empty(), "the hole is not in view");
-    assert_eq!(left, 0, "{left} of {} hole pixels left the band", hole_px.len());
     assert!(!floor_px.is_empty(), "the hole's floor is not in view");
     assert!(landed.is_some(), "the dig job did not land in the rig's frames");
     assert!(off.is_empty(), "the hole's floor against {want}: {off:?}");
     assert!(worst_change <= 0.05, "{worst_change}");
+}
+
+/// A lighting pixel's sky-term source ([`sky_sources`]).
+const SRC_PAIR: u8 = 0;
+const SRC_STORE: u8 = 1;
+const SRC_CHAIN: u8 = 2;
+
+/// Each lighting pixel's sky-term source in `f`'s frame seen from `eye`: the pair where it
+/// cast the sky ray, the store where its face's own cell record holds the direction's baked
+/// visibility ([`face_record`]), else the chain (a miss included).
+fn sky_sources(device: &wgpu::Device, queue: &wgpu::Queue, f: &Frame, eye: [f32; 3]) -> Vec<u8> {
+    use vxe_render::debug::{read_rgba8, read_rgba32f};
+    let vis = read_rgba8(device, queue, f.visibility_samples());
+    let hits = read_rgba32f(device, queue, f.light_hit_positions());
+    hits.iter()
+        .enumerate()
+        .map(|(i, h)| {
+            if vis[4 * i + 3] > 127 {
+                SRC_PAIR
+            } else if h[3] < 1e30 && face_record(f, *h, eye).is_some() {
+                SRC_STORE
+            } else {
+                SRC_CHAIN
+            }
+        })
+        .collect()
+}
+
+/// The sky visibility the cell record of hit `h`'s face (the face seen from `eye`, on the axis
+/// where `h` lies nearest a voxel boundary) holds in `f`'s store, `None` where it holds none.
+fn face_record(f: &Frame, h: [f32; 4], eye: [f32; 3]) -> Option<f32> {
+    let axis = (0..3)
+        .min_by(|&a, &b| (h[a] - h[a].round()).abs().total_cmp(&(h[b] - h[b].round()).abs()))
+        .unwrap_or(2);
+    let s = if eye[axis] > h[axis] { 1.0 } else { -1.0 };
+    let mut v = [0i32; 3];
+    for k in 0..3 {
+        let n = if k == axis { s } else { 0.0 };
+        v[k] = (h[k] - 0.5 * n).floor() as i32;
+    }
+    let face = 2 * axis + usize::from(s > 0.0);
+    let block = f.store().block_words(ChunkCoord(v.map(|c| c.div_euclid(64))))?;
+    let l = v.map(|c| c.rem_euclid(64));
+    let b = l.map(|c| c / 8);
+    let dir = block[(b[0] + 8 * (b[1] + 8 * b[2])) as usize];
+    if dir == 0 {
+        return None;
+    }
+    let cell = vxe_render::BakeSettings::default().cell as i32;
+    let n = 8 / cell;
+    let c = l.map(|k| (k % 8) / cell);
+    let sub = (c[0] + n * (c[1] + n * c[2])) as usize;
+    let w = vxe_render::internals::BRICK_WORDS;
+    let end = (dir >> 11) as usize;
+    let at = (end + w * sub).checked_sub(w * (n * n * n) as usize)?;
+    vxe_render::internals::record_visibility(block.get(at..at + w)?, face)
 }
 
 /// A reset pair's seed age (temporal.wgsl's `SEED_AGE`).

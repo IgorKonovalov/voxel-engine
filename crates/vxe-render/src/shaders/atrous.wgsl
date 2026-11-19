@@ -56,6 +56,8 @@
 //                                        iteration for the store's emissive part
 //   8  texture_2d<f32>   moments_pass_in the temporal pass's moments (z: the age; w: the part is
 //                                        the store's)
+//  10  texture_2d<f32>   vis_in          this frame's visibility samples: a tap whose cast flag
+//                                        (a > 0.5) differs from the centre's weighs 0
 
 @group(2) @binding(0) var hit_pos_in: texture_2d<f32>;
 @group(2) @binding(1) var hit_info_in: texture_2d<u32>;
@@ -207,6 +209,10 @@ fn atrous(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     let sigma = SIGMA_LUM * sqrt(max(var_sum / var_w, 0.0)) + 1e-4;
     let l = luminance(centre.xyz);
+    // A cast pixel's filtered quantity holds the pair's sky term and a stored pixel's does not
+    // (its sky passes around the filter), so the two kinds estimate different quantities: a tap
+    // of the other kind weighs 0.
+    let centre_cast = textureLoad(vis_in, px, 0).a > 0.5;
     var w_sum = 0.0;
     var c_sum = vec3<f32>(0.0);
     var v_sum = 0.0;
@@ -219,7 +225,7 @@ fn atrous(@builtin(global_invocation_id) gid: vec3<u32>) {
                 continue;
             }
             let other = load_hit(q);
-            if (!other.found) {
+            if (!other.found || (textureLoad(vis_in, q, 0).a > 0.5) != centre_cast) {
                 continue;
             }
             let tap = textureLoad(src_in, q, 0);
