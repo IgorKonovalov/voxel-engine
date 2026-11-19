@@ -138,19 +138,6 @@ mod flicker {
             let (mut rig, cam) = support::terms::hills_rig()?;
             let cam = pitched(&cam, -30.0);
             let mut s = strip_frame(&mut rig, split_sky(), &cam);
-            // Attribution switches: `VXE_SPLIT_FILTER=0` the a-trous off, `VXE_SPLIT_FACE=1` the
-            // sky term's normal the face's, `VXE_SPLIT_BOUNCE=0` no bounce floor.
-            let mut l = s.frame.lighting();
-            if std::env::var("VXE_SPLIT_FILTER").as_deref() == Ok("0") {
-                l.filter = false;
-            }
-            if std::env::var("VXE_SPLIT_FACE").as_deref() == Ok("1") {
-                l.sky_normal = vxe_render::SkyNormal::Face;
-            }
-            if std::env::var("VXE_SPLIT_BOUNCE").as_deref() == Ok("0") {
-                l.sky_bounce = 0.0;
-            }
-            s.frame.set_lighting(l);
             // Drained before the dig, so the split reads one state on any binary.
             let mut n = 0;
             while n < 30_000 && !s.frame.bake_queue().is_some_and(|q| q.empty()) {
