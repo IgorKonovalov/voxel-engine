@@ -1014,6 +1014,18 @@ that derives overlay menu rows, used by the apps. Materials, brushes, sources an
 then get rows for free. `crates/` gains no UI dependency. Size M. **Pick up with** the
 editor-interface entry under Later apps.
 
+### A hybrid far field: raster the far LOD as meshes, march near
+
+Raised 2026-11-19 in the Bonsai comparison: Bonsai rasterizes meshed chunks. For us the hit pass
+reads 1.4 to 1.9 ms of a 7.8 ms GPU frame (RTX 3080, hills, the 86c window's HUD); the rest is
+light, denoise and FSR 2, which raster would not remove. Meshing every 10 cm voxel would also cost
+triangles, edit latency and memory beside the brick map. Where raster can win is a long view, where
+the march crosses much empty space to the far LOD. **What it takes:** meshes of the far mips only
+(they are not edited at that scale), drawn into the hit buffer's depth and normal before the march,
+which then starts at the near band. An ADR, and measurements on both adapters. **Pick up when** a
+reading names the far field's march as the frame's largest stage, or a view-distance budget
+cannot be met on the baseline GPU.
+
 ## Later apps
 
 ### Web demo as a separate app
