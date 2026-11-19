@@ -1063,6 +1063,7 @@ fn a_closed_box_takes_no_sky_light() {
 // The readings' module, `reading`, kept in its own file for the file-size cap.
 include!("gpu_sun/reading.rs");
 include!("gpu_sun/dig.rs");
+include!("gpu_sun/history.rs");
 
 /// The mean `+z` sky visibility (face 5) of chunk (1, 1, 0)'s records in `block` whose brick
 /// lies under `over`'s footprint (read at the slab's height).

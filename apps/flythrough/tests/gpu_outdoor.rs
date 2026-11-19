@@ -1048,84 +1048,6 @@ mod reading {
         }
     }
 
-    /// Plan 0086 Phase 5 bar 4: an open rock floor (4 x 4 chunks, rock below z 16) under
-    /// `Sky::uniform(1.0)` through the live queue (`support::queue`'s rig at its counts), a
-    /// camera 40 voxels up looking down at 60 degrees. Settled, then a 10-voxel box dug into the
-    /// floor ahead: per frame, the lighting pixels where the sky rays were cast, until three
-    /// frames in a row read none (or 240 frames). Then the same with `sky_rays` 0, where the
-    /// count stays 0, and the dug floor's centre pixel's stored part per frame. Printed.
-    #[test]
-    #[ignore = "reading"]
-    fn the_sky_ray_runs_only_where_stale() {
-        use support::queue::{Setup, box_op, fill, rig, world_of};
-        use vxe_world::{AIR, Mode};
-        let floor = |rays: u32| {
-            let world = world_of([4, 4, 1], AIR);
-            fill(&world, [0, 0, 0], [255, 255, 15], flythrough::cave::ROCK);
-            let eye = [80.0, 128.0, 56.0];
-            let mut q = rig(world, &Setup::at(eye))?;
-            q.camera.pitch = -60f32.to_radians();
-            q.frame.set_lighting(Lighting {
-                sky_rays: rays,
-                ..q.frame.lighting()
-            });
-            q.frame.set_sky(Some(vxe_render::sky::Sky {
-                altitude_zero_z: 16.0,
-                ..vxe_render::sky::Sky::uniform(1.0)
-            }));
-            Some(q)
-        };
-        for rays in [1u32, 0] {
-            let Some(mut q) = floor(rays) else {
-                return;
-            };
-            let settled = q.settle();
-            let cast = |q: &mut support::queue::Q| {
-                q.step();
-                q.render();
-                let v = vxe_render::debug::read_rgba8(
-                    &q.device,
-                    &q.queue,
-                    q.frame.visibility_samples(),
-                );
-                let n = v.chunks(4).filter(|p| p[3] > 0).count();
-                let a = vxe_render::debug::read_rgba16f(&q.device, &q.queue, q.frame.accumulated());
-                let (w, h) = (
-                    q.frame.accumulated().width() as usize,
-                    q.frame.accumulated().height() as usize,
-                );
-                (n, a[(h / 2) * w + w / 2][1])
-            };
-            let at_rest: Vec<usize> = (0..4).map(|_| cast(&mut q).0).collect();
-            println!(
-                "reading: sky rays {rays}: settled in {settled} steps; at rest {at_rest:?} pixels cast"
-            );
-            // The camera's centre ray meets the floor about 23 voxels ahead: dig 10 voxels there.
-            q.edit(&box_op(
-                [98, 123, 6],
-                [107, 132, 15],
-                Mode::Replace {
-                    from: flythrough::cave::ROCK,
-                    to: AIR,
-                },
-            ));
-            let mut row = Vec::new();
-            let mut quiet = 0;
-            for f in 1..=240 {
-                let (n, centre) = cast(&mut q);
-                row.push(format!("{f}:{n}:{centre:.3}"));
-                quiet = if n == 0 { quiet + 1 } else { 0 };
-                if quiet >= 3 && f > 8 {
-                    break;
-                }
-            }
-            println!(
-                "reading: sky rays {rays}: after the dig, frame:cast pixels:centre stored g {}",
-                row.join(" ")
-            );
-        }
-    }
-
     /// Plan 0086 Phase 7 bar 2: the forest at `60,180` and `10,180` with the penumbra as the
     /// disc's and the closest approach's: the key ray's steps and loads, and the statistics of
     /// the defaults' cell (the leaf's SHADOW_AS_BRICK set) at `60,180`. `VXE_TEST_ADAPTER` picks
@@ -1717,10 +1639,10 @@ mod reading {
 
     /// The forest floor's display changes ([`forest_floor_run`]): per frame read, the floor's
     /// and the canopy's p99 and mean change in display levels.
-    struct FloorRun {
+    pub(super) struct FloorRun {
         /// Per frame read: `[floor p99, floor mean, canopy p99, canopy mean]`.
-        frames: Vec<[f64; 4]>,
-        exposure: f32,
+        pub(super) frames: Vec<[f64; 4]>,
+        pub(super) exposure: f32,
     }
 
     /// The p99 and the mean of `v`, 0 for none.
@@ -1744,7 +1666,7 @@ mod reading {
         clippy::disallowed_methods,
         reason = "the reading prints the bake's wall time"
     )]
-    fn forest_floor_run(
+    pub(super) fn forest_floor_run(
         rig: &mut Rig,
         cam: &vxe_render::Camera,
         sky: Option<vxe_render::sky::Sky>,
@@ -1857,7 +1779,7 @@ mod reading {
     }
 
     /// The mean over `frames` of each column.
-    fn floor_means(frames: &[[f64; 4]]) -> [f64; 4] {
+    pub(super) fn floor_means(frames: &[[f64; 4]]) -> [f64; 4] {
         std::array::from_fn(|k| {
             frames.iter().map(|r| r[k]).sum::<f64>() / frames.len().max(1) as f64
         })
@@ -1888,39 +1810,8 @@ mod reading {
         }
     }
 
-    /// Plan 0086 Phase 19 bar 4: [`forest_floor_run`] with the turn, at `60,180` and `10,180`
-    /// and the headlamp alone: the floor's p99 change per frame from the turn's first frame,
-    /// its value at rest (the mean of the last 16 frames), and the frames after the turn ends
-    /// until it stays within 2 display levels of that. Printed. `VXE_TEST_ADAPTER` picks the
-    /// adapter (unset: lavapipe).
-    #[test]
-    #[ignore = "reading"]
-    fn the_forest_after_a_turn() {
-        let Some((mut rig, cam)) = forest_rig() else {
-            return;
-        };
-        println!("reading: the_forest_after_a_turn on {}", rig.adapter);
-        for (name, sky) in [
-            ("sun 60,180", Some(fixed_sun_sky(60.0))),
-            ("sun 10,180", Some(fixed_sun_sky(10.0))),
-            ("the headlamp", None),
-        ] {
-            let r = forest_floor_run(&mut rig, &cam, sky, true);
-            let rest = floor_means(&r.frames[r.frames.len() - 16..])[0];
-            let after = &r.frames[10..];
-            let settle = (0..after.len())
-                .find(|&k| after[k..].iter().all(|v| v[0] <= rest + 2.0))
-                .unwrap_or(after.len());
-            let series: Vec<String> = r.frames.iter().map(|v| format!("{:.0}", v[0])).collect();
-            println!(
-                "reading: forest after a turn, {name}: floor p99 at rest {rest:.2}, settled {settle} frames after the turn; per frame [{}]",
-                series.join(" ")
-            );
-        }
-    }
-
     /// The testbed's sky with the sun fixed at elevation `el`, azimuth 180.
-    fn fixed_sun_sky(el: f32) -> vxe_render::sky::Sky {
+    pub(super) fn fixed_sun_sky(el: f32) -> vxe_render::sky::Sky {
         flythrough::daylight::Clock {
             fixed_sun: Some([el, 180.0]),
             ..Default::default()
@@ -1952,3 +1843,4 @@ include!("gpu_outdoor/defects.rs");
 include!("gpu_outdoor/flicker.rs");
 include!("gpu_outdoor/canopy.rs");
 include!("gpu_outdoor/still.rs");
+include!("gpu_outdoor/bars.rs");
