@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0077.**
+**Next free number: 0078.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -91,6 +91,7 @@ the status.
 | [0074](0074-an-entity-instance-carries-a-mark-drawn-in-the-composite-as-an-outline-at-the-instance-edge-and-a-tint.md) | An entity carries a mark, drawn in the composite as an outline where the entity changes and a tint of its shaded colour | accepted (Plan 0077), Outcome |
 | [0075](0075-the-overlay-draws-image-tiles-in-its-cells-and-an-entitys-icon-is-a-still-made-once-on-the-cpu-through-the-entity-raycast.md) | The overlay draws image tiles in its cells, and an entity's icon is a still made once on the CPU through the entity raycast | accepted (Plan 0077), Outcome |
 | [0076](0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md) | A still world gives a still image: five light-stability rules, a world-space history per source, a fade per transition, and a pop counter that only ratchets down | proposed (Plan 0090, draft) |
+| [0077](0077-frame-profiling-through-the-profiling-facade-with-puffin-behind-an-app-feature.md) | Frame profiling goes through the `profiling` facade, collected by puffin behind an app feature | proposed (Plan 0091, proposed) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded
