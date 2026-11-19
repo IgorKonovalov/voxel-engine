@@ -1425,6 +1425,104 @@ reading and question 7; Phase 24d's four bars with bar 4 as restated (the quiet 
 **The order for the dev:** 24h, 24i, 25, the close block of the Implementation log, then the
 three-line pointer for the fresh close review. No owner question is open.
 
+## Amended 2026-11-19, Phase 25's two calls (the architect's calls, in the wrap-up's line)
+
+Phase 25 stopped on two done-whens (the readings log, "Phase 25" and its resume notes, at
+`544d82b9`). Both go to the follow-up plan, Plan 0094 (reserved on main; its scope is the
+Followups section's last subsection). Neither is a loosening, so neither is the owner's; the
+wrap-up's rule decides them: a bar this tree cannot meet without a new attribution is the
+follow-up's Phase 1, not a margin written here.
+
+### 1. Bar 1, the tunnel's far end: a reading in this plan, the bar in the follow-up
+
+**The reading** (`still::reading::the_tunnel_beside_the_lamp_lit_floor` in `gpu_outdoor/still.rs`,
+the log's table): the rim band meets the rule under FSR 2 on both adapters (p99 2 against the
+headlamp's 3 on the RTX, 2 against 2 on lavapipe); the far end does not (4 against 2 on the
+RTX, 4 against 1 on lavapipe); natively the headlamp reads 0 in both regions and the sky 1.
+
+**The call: (c).** The bar leaves this plan as written and goes to the follow-up with 24f's
+attribution; the reading stays a reading, named as the plan's evidence for the rim band and
+its disclosure for the far end. Two reasons, neither of which a margin fixes:
+
+- **The native reference is degenerate.** With no upscaler jitter the headlamp is a fixed light
+  with no estimator under it, so its p99 is 0 by construction, and any estimated term (the
+  pair's, the key mean's, the chain's) reads at least 1 against it: a 1-against-0 failure says
+  nothing about the tunnel. The still reference for a jittered term is one that carries the
+  same jitter, and which one is a choice the follow-up makes with the attribution in hand, not
+  one this plan makes at its close. Plan 0032 Phase 6's rule was written for the composite on a
+  rig where the headlamp was an estimated term too.
+- **The far end's 4 is unattributed.** The far end is the region under 0.05 sky-ray hits: its
+  light is the baked term through the chain and the no-ray path's prior, plus the key light's
+  mean. Those are the follow-up's subjects (items 1 and 6 of its scope: the key mean's age at a
+  still camera, the no-ray path's prior and fades), and the plan's own rule since Phase 1 is
+  the reading before the mechanism. Splitting the far end's p99 by term (sky pair, key, chain)
+  is 24f bar 1's method on a new region, so it joins 24f in the follow-up rather than opening a
+  fourth attribution here.
+
+Option (a), a margin over the headlamp's p99, is a loosening and so the owner's, and the owner
+has asked for a wrap-up, not a question; option (b), another still reference, is the choice
+the follow-up makes once the term is known. Nothing in this plan's close depends on the bar:
+the plan's stop rule at the tunnel is the rim band's, met.
+
+**The dev:** the reading keeps its name and its `reading` module; the gate variant Phase 25
+named (32 frames native) is not written. Phase 25 done-when 1 is struck below.
+
+### 2. The seal test reads no sky since Phase 21 (c): the clause moves, the golden stays
+
+**The fact:** `the_cave_mouth_is_lit_from_outside` (`gpu_outdoor_golden.rs`, soak) asserts
+its seal on the walls' `direct_accumulated`. Since `0f8cde39` (Phase 21 (c)) the direct part
+carries no sky term (the pair's term joins at the filter and the composite), so the quantity
+reads 0 sealed and unsealed, and the clause has failed at every run since. Phase 17's shares
+(24.347 / 8.689 / 1.100 %, `512724cf`) were derived on that quantity.
+
+**The call: (c), with the clause cut here.** Re-deriving the seal against the pair's term or
+the lit image is a bar against a different quantity (lane rule 2a), and its shares at 64 and
+256 frames are a reading nobody has taken; that is the follow-up's. In this plan the seal
+clause is **removed** from the test and the image golden kept, with a code comment that cites
+Plan 0094 by number: the tree carries no soak test known to fail, because the weekly soak is
+the net for stale goldens and broken soak tests (owner, 2026-11-19), and a known-failing test
+in it blinds the net. This is not option (b): the claim is not dropped, it is owed, and the
+follow-up re-derives it on the pair's term (`pair` x `E_sky` at the walls, or the composite's
+lit image) with Phase 17's three shares as the before reading.
+
+### 3. The goldens' re-bless is Phase 25's evidence, unsplit
+
+Recorded as done-when 3's evidence (the log, "The goldens, re-blessed", `544d82b9`, lavapipe):
+against Phase 17's bless, of 57 600 pixels the over-2 shares are `outdoor_noon` 7.014 %
+(max 144), `outdoor_sunset` 9.606 % (181), `outdoor_night` 1.938 % (151),
+`outdoor_forest_sunset` 17.578 % (184), `cave_mouth` 3.568 % (176); `sky_empty_*` unchanged.
+The same shares read at the 86c tip (`8f8645d6`), so the move lies between `512724cf` and
+`8f8645d6`, in Phases 18 to 21a's shader commits (`76eae309`, `37e03683`, `0f8cde39`,
+`3a97ca13`, `f64b3029`, `12c727f4`, `76be1634`); 24a, 24b's cap and the two merges moved none
+of them. **The per-commit split is not read**, and this plan does not owe it: the close review
+reads the goldens as one disclosed change of the fix pass, with Phase 21 call 4's share
+(`outdoor_noon` 9385 px, 116 over 2) the one piece attributed. The review asks for the split
+only if an image reads wrong by eye.
+
+### 4. The gate's slowdown is named before the close
+
+24i's quiet gate read 2096.4 s at `47cc3feb` against the orchestrator's quiet reading of main,
+1132 s, and against Plan 0077's close, 1107.4 s (`docs/nfr.md` section 7). The wall is not the
+plan's own tests (24i's bar 3: the four over 10 s are marked soak), it is two tests this plan
+did not write that grew by an order of magnitude on this branch:
+`a_source_switch_shows_the_loading_frames_before_the_new_world` 13.4 s to 200.2 s and
+`a_mirror_that_cannot_sync_exits_1_after_the_teardown` 3.6 s to 51.5 s. 24i bar 3's fallback
+("the top ten named, none of them this plan's") was written for tests the plan added; a test
+the plan slowed is the plan's to explain. A dev investigates before the close.
+
+**The close's done-when (Phase 25's done-when 4 below):** the cause is named in the log, with
+the reading that names it (the test's own phases timed: the world's load, the pre-roll, the
+frames), and fixed in this plan if it is this plan's defect; if it is not (main's own drift, or
+the machine), the log says so with the owning plan or the chore named, and the gate's wall is a
+disclosed reading for the review. Leads, not findings: Phase 9's note that the bake's finality
+lengthens the pre-roll (10.3 to 21.2 s on the RTX), which a source switch pays once per world;
+and the mirror's teardown waiting on a sync the column map or the bake now holds open. Neither
+is read.
+
+**The order for the dev:** the seal clause cut and the comment, Phase 25 bar 2's promotions
+(the resume notes' inventory), the gate's cause, the gate re-read at the tip (24i bar 3), the
+close block, the three-line pointer. No owner question is open.
+
 ## Implementation phases
 
 Each phase ships as its own commit. `dev` implements all phases in one session with no review
@@ -2905,6 +3003,11 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   and 24a to 24c as they stand after the wrap-up amendment (24f's and 86e's are the
   follow-up's); the picks are 86c's and 86d's; `key_history` 256 is pinned as the default
   (the cheap-modes rule), and the goldens are re-blessed with the counts in the log.
+- **Amended 2026-11-19 (Phase 25's two calls):** done-when 1 is struck (the far end's bar goes
+  to Plan 0094 with 24f; the reading `still::reading::the_tunnel_beside_the_lamp_lit_floor`
+  stays, no gate variant); `the_cave_mouth_is_lit_from_outside` loses its seal clause, keeps
+  its golden, and a comment cites Plan 0094; done-when 3 is met at `544d82b9` (the amendment's
+  item 3, the move unsplit); done-when 4 is added, the gate's slowdown.
 - **What:** the bars Phases 1 to 7, 9 to 14, 16 to 23, 24a to 24c and 24f read, written as tests
   against the windows' picks (86c's, 86d's and 86e's); the defaults the window chose; the goldens Plan 0032 blessed that these mechanisms move
   (`outdoor_noon`, `cave_mouth`, `outdoor_forest_sunset`, the sunset and night ones if the
@@ -2913,18 +3016,34 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   2026-11-12) and goes otherwise, and the log names it.
 - **Files touched:** the `gpu_*` test files and `golden/` images above, `docs/plans/logs/0086.md`.
 - **Done when:**
-  1. **The restated stop rule as a test.** `the_tunnel_is_as_still_as_the_lamp_lit_floor` in
+  1. ~~**The restated stop rule as a test.** `the_tunnel_is_as_still_as_the_lamp_lit_floor` in
      `gpu_outdoor.rs` (the tunnel pose at the defaults, 128 frames at 320 x 180 under FSR 2
      at 1.5; about 20 s, so born `#[ignore = "soak"]`, with a 32-frame native variant in the
      gate): the 99th-percentile frame-to-frame change over the rim band and the far end is at
      or under the headlamp's on the same pose with the sky off. This is Plan 0032 Phase 6's
-     stop rule on the occluded rig, as a regression test.
+     stop rule on the occluded rig, as a regression test.~~ **Struck 2026-11-19 (Phase 25's
+     two calls, item 1):** the rim band meets it and the far end does not (p99 4 against the
+     headlamp's 2 on the RTX, 4 against 1 on lavapipe, under FSR 2; natively 1 against a
+     headlamp that reads 0 by construction). The reading stays; the bar is Plan 0094's, with
+     24f's attribution.
   2. Every bar Phases 2 to 7, 9 to 14, 16 to 23, 24a to 24c and 24f name that the windows kept exists, asserts the picked
      value, and passes in the gpu tier under the lock; each over 10 s on lavapipe is
      `#[ignore = "soak"]` and passes once by name. Phase 9's bars 2 to 5 stay whatever the
-     window picks: the sky rule is not a look.
+     window picks: the sky rule is not a look. **Amended 2026-11-19 (Phase 25's two calls):**
+     the seal clause of `the_cave_mouth_is_lit_from_outside` (Phase 9 bar 5, Phase 17) is cut
+     from the test, its golden kept, a comment citing Plan 0094; the readings that fail their
+     bar as first written (the resume notes' list) stay readings, and the log names them.
   3. The goldens are re-blessed and the log names each with its difference count and the
-     mechanism that moved it.
+     mechanism that moved it. **Met at `544d82b9`** with the mechanism named as the fix pass
+     (Phases 18 to 21a's shader commits, unsplit; the amendment's item 3).
+  4. **(Added 2026-11-19, Phase 25's two calls.) The gate's slowdown is named.** The log names
+     the cause of the quiet gate's 2096.4 s against main's 1132 s, read on the two tests that
+     grew (`a_source_switch_shows_the_loading_frames_before_the_new_world` 13.4 to 200.2 s,
+     `a_mirror_that_cannot_sync_exits_1_after_the_teardown` 3.6 to 51.5 s), with the reading
+     that names it; if it is this plan's defect it is fixed in this plan and the gate re-read
+     once, quiet, under 19 min or disclosed; if it is not, the owning plan or chore is named
+     and the wall is a disclosed reading for the close review. The review does not close the
+     plan on an unnamed cause.
 
 ## Data shapes
 
@@ -3330,7 +3449,26 @@ window is on main with Plans 0083 and 0086 merged, on the castle, the forest and
    window's run 9 on Plan 0083's binary, "the castle was fine, but it flickers in the shadowed
    part"; the follow-up's window judges the same pose with both plans' light, and its split
    reads the shadowed part first.
-7. **Not in it:** the perf plan's items (the queue's step on the main thread, 6.3 ms at 1080p
+7. **The tunnel's far end (Phase 25 bar 1, struck; added 2026-11-19, Phase 25's two calls).**
+   The reading `still::reading::the_tunnel_beside_the_lamp_lit_floor` (`gpu_outdoor/still.rs`,
+   `live/p25-tunnel-*.log`, `544d82b9`): the rim band p99 2 against the headlamp's 3 (RTX) and
+   2 (lavapipe) under FSR 2 at 1.5 over 128 frames, met; the far end (5904 px, sky-ray hits
+   under 0.05) 4 against 2 and 4 against 1, not met; natively over 32 frames the headlamp reads
+   0 in both regions and the sky 1. Its Phase 1 splits the far end's p99 by term (the pair's
+   sky, the key mean, the chain's no-ray prior) with 24f bar 1's method (the age histogram, the
+   rejections at rest), and picks the still reference: the headlamp is none natively (a fixed
+   light, no estimator), so the reference is a term that carries the same jitter, or the rule
+   is Plan 0032 Phase 6's composite rule re-stated for the occluded rig. The bar is then
+   written with items 1 and 6, which own the far end's terms.
+8. **The cave mouth's seal (Phase 9 bar 5, Phase 17; added 2026-11-19, Phase 25's two calls).**
+   `the_cave_mouth_is_lit_from_outside` (`gpu_outdoor_golden.rs`, soak) keeps its golden and
+   lost its seal clause here: since `0f8cde39` the direct part carries no sky term, so the
+   walls' `direct_accumulated` reads 0 sealed and unsealed. The follow-up re-derives the seal
+   on the pair's term (`pair` x `E_sky` at the walls) or the composite's lit image, reads the
+   64- and 256-frame shares sealed against unsealed, and writes the clause back with Phase 17's
+   shares on the old quantity (24.347 / 8.689 / 1.100 % at `512724cf`) as the before reading.
+   The clause's claim is Phase 9's: a sealed cave takes no sky light through its walls.
+9. **Not in it:** the perf plan's items (the queue's step on the main thread, 6.3 ms at 1080p
    against its 1.0 line, Phase 24c; owner question 7), Plan 0090's stamp scene and the key
    mean's fade-in reading against `F` (the architect's amendment to Plan 0090 at this close,
    the bullet above), and the backlog's `absorb` light pass.
