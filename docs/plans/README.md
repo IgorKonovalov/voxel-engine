@@ -4,8 +4,8 @@ The one-minute "what's in flight" view. Read this first each session instead of 
 state from `git log`. Completed plans move to `done/`.
 
 **Next free number: 0095** (ADRs are a separate sequence, see `../adrs/README.md` for its
-next free number). **0094 is reserved** for Plan 0086's follow-up (the outdoor grain), drafted
-at 0086's close.
+next free number). Plan 0094, Plan 0086's follow-up (the light's transitions), was drafted
+2026-11-19 from 0086's follow-up scope while 0086 is still open; it awaits the go.
 
 ## Active roster
 
@@ -31,6 +31,7 @@ at 0086's close.
 | [0091](0091-the-frame-profiler-scopes-across-threads-a-gpu-lane-a-dump-for-agents-and-a-hud-ticker.md) | The frame profiler: scopes across the threads, a GPU lane, a dump the agent ranks, budget scopes, a HUD ticker | approved | M7, ADR-0077. After 0087 and 0089, before 0090 (owner). |
 | [0092](0092-wgsl-hot-reload-in-the-fly-through-an-mtime-poll-pipelines-rebuilt-and-the-old-ones-kept-on-an-error.md) | WGSL hot reload in the fly-through: an mtime poll, pipelines rebuilt from disk, the old kept on an error | approved | M7, no ADR. After 0091 in its lane, before 0090 (owner). |
 | [0093](0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) | The README rewrite with reproducible screenshots: a shot manifest, a shoot script, an image gate, the owner's picks | approved | M7 docs, no ADR. After 0087 merges, beside 0089, before 0091. |
+| [0094](0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md) | Light transitions: the key mean's age, the no-ray prior and fades, the exposure's rate, the hole band, the castle | proposed | M10, ADR-0076. After 0086 merges, before 0087 (recommended). |
 <!-- roster:end -->
 
 ## Sequence
@@ -174,8 +175,18 @@ owner picks from, the README after Bonsai's shape with the layout, checks and pr
 "more screenshots through the doc"; approved the same day, all recommended): **after Plan 0087 merges**
 (0087 rewrites the README, every doc and the script names), **beside Plan 0089** (only `ci.yml`
 in common) and **before Plan 0091** (which edits the HUD and `run/frame.rs` that its Phase 1
-touches). Plan 0094 is reserved for Plan 0086's grain follow-up, drafted at 0086's close; 0093's
-canopy shot may wait for it.
+touches). 0093's canopy shot may wait for Plan 0094.
+
+**Plan 0094** (the light's transitions: the key mean's age at a still camera, the no-ray sky
+prior and one fade for every no-ray value change, ADR-0076 rule 5's exposure rate cap, the
+dig's hole band in rule 3's form, the castle's fill-in, and the tunnel far-end and seal bars
+Plan 0086 struck; drafted 2026-11-19 from Plan 0086's follow-up scope, its 86c and 86d
+verdicts and its readings log, while 0086 is still open on its branch; no ADR, ADR-0076 rules
+2, 3 and 5 are its targets; proposed, awaits the go): **starts after Plan 0086 closes and
+merges**. The architect recommends it as the next lane, **before Plan 0087** (the owner's
+still-image priority; its rigs, hooks and `VXE_*` names are 0086's and the rename would owe a
+re-read; Plan 0090's first baseline then lands on the fixed tree); the alternative is after
+0087 beside 0093 and 0089. Owner question 1 of the plan.
 
 Every active plan is approved (Plans 0091, 0092 and 0093 on 2026-11-19; Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Approval accepts the design; a plan's lane
