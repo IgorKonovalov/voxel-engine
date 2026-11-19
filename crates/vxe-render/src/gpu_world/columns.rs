@@ -457,6 +457,10 @@ mod tests {
     /// the whole window's tiles take well under a second even unoptimized (the per-cell
     /// lookup took 48 s of the outdoor start's first sync on lavapipe's debug run).
     #[test]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the test bounds the tiles' wall time"
+    )]
     fn the_first_flush_of_the_streamed_window_is_cheap() {
         let (side, wz) = (57, 57);
         let sheets = window_sheets(side, wz);
