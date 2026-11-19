@@ -1,6 +1,6 @@
 # 0091: The frame profiler: scopes across the threads, a GPU lane, a dump the agent ranks, budget scopes and a HUD ticker with a frozen frame
 
-> **Status:** proposed 2026-11-19, awaits the owner's go
+> **Status:** approved 2026-11-19 (the owner: "all recommended": questions answered on their recommendations; slot after Plans 0087 and 0089, before Plan 0090)
 > **Created:** 2026-11-19
 > **Milestone:** M7 in `docs/roadmap.md` ("an in-app profiler overlay with GPU timestamps")
 > **Related ADRs:** [ADR-0077](../adrs/0077-frame-profiling-through-the-profiling-facade-with-puffin-behind-an-app-feature.md)

@@ -1,6 +1,6 @@
 # 0092: WGSL hot reload in the fly-through: an mtime poll, the frame's pipelines rebuilt from disk, the old ones kept and the error shown on a compile failure
 
-> **Status:** proposed 2026-11-19, awaits the owner's go
+> **Status:** approved 2026-11-19 (the owner: "all recommended": questions answered on their recommendations; slot right after Plan 0091, in its lane, before Plan 0090)
 > **Created:** 2026-11-19
 > **Milestone:** M7 in `docs/roadmap.md` (tooling)
 > **Related ADRs:** none (no rejected alternative worth a record: the poll, the rebuild and the

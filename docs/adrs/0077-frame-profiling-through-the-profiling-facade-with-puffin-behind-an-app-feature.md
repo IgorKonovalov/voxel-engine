@@ -1,6 +1,6 @@
 # ADR-0077: Frame profiling goes through the `profiling` facade, collected by puffin behind an app feature
 
-> **Status:** proposed
+> **Status:** accepted 2026-11-19 (the owner approved Plan 0091 with every recommendation)
 > **Date:** 2026-11-19
 > **Related plan(s):** [Plan 0091](../plans/0091-the-frame-profiler-scopes-across-threads-a-gpu-lane-a-dump-for-agents-and-a-hud-ticker.md)
 
