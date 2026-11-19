@@ -1218,6 +1218,150 @@ written.
 **Answered 2026-11-19 (owner):** 7 yes (close with the reading; the perf plan owns a stage this
 plan did not add), 8 yes (build none of the three arms; 24e shows them).
 
+## Amended 2026-11-19, after the fix pass (the architect's calls on 24a, 24b and 24d; the 86d window runs beside them)
+
+The fix pass (Phases 24a to 24d, `bcaef227` to `78fed792`, the readings under
+`live/p24/` and in the log) came back with three calls owed. **24a** named and fixed the flash
+(candidate (1), the ring's stale bit: 29 437 cast pixels at N, the pair's term through the
+a-trous; inside the dilated box at N 14.951 to 1.169 % at 17:00, 2.267 to 1.000 % at noon),
+but bar 2 as written reads outside the dilated box, where the flash never was, and fails at
+17:00 on the tip and the fix alike because the still frames there read 0.273 to 0.630 % on
+their own. **24b** attributed the canopy's grain to the key light's disc sample (the sun's
+jitter off: trunks p99 61 to 6, floor 16 to 1 at `10,180`; 33 to 4 and 32 to 8 at 15:00), so
+owner question 8 does not apply; it built (i), `key_history` 256 (the drift 0.461 voxels, the
+jump bar passes), and read the residual unchanged at 128 frames (trunks 62 / 4.93). **24d**'s
+tip gate read 1072 / 1072 in 1819.5 s at load 14 with the other lane building, and the two new
+queue tests 11.1 and 11.2 s. The 86d window (24e) is prepared on `78fed792` and runs now, so
+the canopy's next step is a phase after it, with its own short look.
+
+### 1. 24b: the key mean's age at the trunks is read first, the cap is read past the cap, (ii) stays bounded
+
+**What the readings already say.** Two things in 24b's table say the mean's length is not yet
+the trunks' lever, and that the 128-frame run could not have shown it either way:
+
+- At its cap `key_mean` is an exponential mean (`temporal.wgsl`: `g + (s - g) / n` with `n`
+  held at the cap), whose variance is `1 / (2 cap - 1)` of one sample's. Cap 64 is a
+  127-sample mean; 128 frames at cap 256 are a 128-sample mean. The two arms are the same
+  estimator at that frame count, so "unchanged at 128 frames" is the expected result, not a
+  reading of the cap. A reading of 256 needs at least 512 frames (then its variance is a
+  quarter of 64's, the p99 about half: on the trunks about 30 from 61, still far over the bar
+  of 8). The owner's settle in the window is seconds, so 24e's 5b and 6 do read the cap.
+- The tail. A converged mean's |residual| has p99 about three times its mean (a normal's
+  2.58 sigma against 0.80 sigma). The trunks read 61 / 4.78 (13 times) and the floor 16 / 0.63
+  (25 times) at `10,180`; 33 / 2.00 and 32 / 5.35 at 15:00. Geometry explains a part (a trunk
+  face away from the sun carries no key term and no residual; a term's size in levels scales
+  with its cosine, and a sunward trunk face at a 10-degree sun takes about six times the
+  floor's irradiance), but 13 to 25 is the signature of a subpopulation of pixels carrying the
+  residual: a mean that is young on some pixels, not long on all. The no-jitter arm cannot
+  tell these apart: a restarted mean of a constant sample is the constant, so a young age shows
+  no residual under a deterministic light (the headlamp, the jitter-off sun) and all of it
+  under a jittered one. That is exactly the pattern of the table.
+
+The age `key_mean` runs on is the direct part's history age (`moments_out.z`: the accepted
+taps' age plus one; 0 where no tap passes the material test and `HISTORY_COS` 0.8, and lowered
+by the gradient's lambda). One candidate, named so the reading can refute it: at a still
+camera under FSR 2's sub-pixel jitter the reprojection's taps at a thin trunk (a cylinder of a
+few voxels under the 27-voxel smoothed normal turns tens of degrees per lighting pixel at the
+rig's size) land on a neighbour whose normal fails the test, and the pixel restarts. If the
+age restarts at a still camera, that is a defect against ADR-0076 rule 1 ("a still world gives
+a still image"), to find and fix at its cause, not a filter to add in front of it.
+
+**The decision: (c), then (a), then the fix or (ii), as Phase 24f below.**
+
+1. **(c) first, the age reading** (Phase 24f bar 1; about two hours, the rig and the counter
+   exist): at frame 128 of the same still runs (both scenes, the defaults), per class (floor,
+   trunks) the age histogram (the shares under 16, under 64, at 128) and the history
+   rejections per frame at rest (Phase 1's `Frame::read_history_rejections`, per word); and
+   the residual against its own prediction: per pixel the binomial standard error at the
+   reference's `p` (its `g`) over the pixel's own effective sample count (its age, or
+   `2 cap - 1` at the cap), in levels of the pixel's key term, and per class the observed RMS
+   residual over the predicted. A ratio near 1 says the mean's variance at its length; well
+   over 1 says the mean is not at its length, or the sample is not the model.
+2. **(a) second, the bar past the cap** (Phase 24f bar 2): the same table at 512 frames, cap
+   256 and cap 64 beside it, both scenes. Read with the ages known, it tells the cap's effect
+   from the age's.
+3. **The fix, if the age restarts** (Phase 24f bar 3): at the cause the reading names, in the
+   temporal pass's acceptance or the age's carry (the normal test at a thin feature, the taps'
+   weights, the pixel's own previous age where the view did not move), not a filter; every
+   gate test that defends rejection and reset stays green by name (the moving entity's ghost,
+   the disocclusion rigs, `a_moving_shadow_edge_resets_the_history`, Phase 3's stair rules).
+   If the cause is outside the temporal pass (the light pass's `fresh`, the hit's normal under
+   the jitter, the upscaler), the dev stops with the table for the architect.
+4. **(ii) only when** (c) reads the trunks' age at cap and (a) at 512 frames leaves the trunks
+   over the bar with the ratio near 1: sample variance no mean can pay for without lag, and
+   the spatial estimate on the key term alone is the one lever, as the 86c amendment bounded
+   it. Not before, and not beside the age fix in the same commit.
+
+**The cap stays at 256 as the default** (0 ms, 0 B; Phase 19 bar 2 passed at it) and is a
+setting under the cheap-modes rule; 24e's 5b and 6 read it by eye at the owner's settle, and
+Phase 25 pins the value from 24g's words. **Owner question 8 is closed** by the split: the grain
+is the key light's sample, not the dapple; run 8 is not in 24e, as the prep says.
+
+### 2. 24a bar 2 restated: the flash is read where it lives
+
+The ring is ADR-0070's design (the light radius about the box, its records stale for one frame
+while the re-bake lands, two on RENOIR), and at this pose it is 29 437 of 57 600 lighting
+pixels; so "outside the box dilated by 64 voxels" is outside the flash. The 17:00 still frames'
+own 0.273 to 0.630 % is the hills' grain at rest under a low sun, which no dig bar should pay
+for; it is read in Phase 24f as the hills' own rule 1 reading (the key light's sample on the
+slope, by the same split), a reading, no bar here.
+
+**Bar 2, restated.** The dilated box splits into three bands by the hit's distance from the
+dig's box: the **hole band** (within 8 voxels: the hole's faces, its rim and contact shadow,
+the edit's own change: its over-4 share printed, no bar), the **ring band** (8 to 64 voxels:
+the stale records, where the flash lived) and the **outside** (beyond 64, as written). On the
+pairs ending at N, N + 1 and N + 2 (N the dig's frame), the over-4 share over the ring band
+and over the outside is at or under the larger of 0.5 % and 1.5 times the still pairs' max
+over the same band (the 8 pairs before the dig at the same pose and clock, printed; a dig
+frame inside a still frame's noise is a still frame), `T_still` 4, at noon and at 17:00, the
+before's values printed from the tip's shaders (`live/p24/gpu_outdoor_base3`). The counters'
+clause stands as written.
+
+**The soak test stays, restated under its name.** `a_dig_changes_nothing_outside_its_reach`
+reads the three bands at noon in the soak tier (its RTX release run reads 73 to 112 s; the
+lavapipe wall is printed in the log, and if it is over 5 min the settle shrinks to the caps
+plus the 8 still frames, the queue being drained before the dig, or the size to 320 x 180);
+the 17:00 case is the RTX release reading on `reading::flicker_dig_split` with its table in
+the log (a time switch, no second test).
+
+### 3. 24d bar 4: a loaded gate is a reading, and the soak marks wait for the quiet run
+
+1819.5 s at load 14 is a reading, not the bar. `docs/nfr.md` section 7's gate budget is 12 min
+wall on the dev reference, quiet (the log's "19 min" has no source there; the dev corrects the
+log's line); the last quiet readings on main are already over it, so the gate's wall at this
+plan's tip is a disclosed reading for the close, not a bar this plan meets. **The tip gate is
+re-read quiet before the close** (load under 2 at the start, nothing building beside it), once,
+after Phase 24f and the restated 24a land, as 24d bar 4's reading.
+
+The soak marks follow the quiet run, not the loaded one: each of
+`a_chunk_an_edit_fills_is_a_dig_in_every_order`,
+`a_blank_chunk_that_arrives_waits_behind_a_nearer_refinement_only_under_the_score` and
+`the_score_blends_distance_and_the_view` (14.7 s loaded; 10.2 s quiet at the 0064 close and
+left) that reads over 10 s quiet is marked `#[ignore = "soak"]`, as section 7's rule says. The
+edited chunk's claim keeps a gate variant if its test is marked: the one order the fly-through
+uses (`score(4.0)`) in the gate as `a_chunk_an_edit_fills_is_a_dig_under_the_score` (about a
+third of the three-order test's wall), the three orders in the soak test.
+
+### 4. The order for the dev (24e runs now)
+
+1. Phase 24e's window on `78fed792` as prepared; its 5b, 5c and 6 are read as the cap's state
+   (24e's text below).
+2. Phase 24f: bar 1 (the age and the ratio), bar 2 (512 frames), then bar 3 (the fix, or the
+   stop for the architect), (ii) only by call 1's rule; the hills at 17:00 at rest read once.
+3. Phase 24a's bands and the restated test (the rig exists; an hour or two), the 17:00 reading
+   on the fix's binary.
+4. Phase 24g: the short owner look on `live/bin86e`.
+5. The tip gate quiet, the soak marks by its times, the resume notes; then Phase 25.
+
+### Owner questions (the dev proceeds on the recommendation)
+
+9. **If Phase 24g still reads grain on the trunks after the age fix** (the trunks' residual at
+   the floor's level, both over the bar's 8 at a 10-degree sun): does the plan close with the
+   residual disclosed and the trunks' grain charted to the follow-up plan beside the castle's
+   fill-in, or hold for (ii)? Recommended: close with the reading if the trunks and the floor
+   read alike and the owner's word at 24g is "better"; (ii) inside this plan only if 24f's
+   ratio names it and it is a day's work, else the follow-up's.
+
 ## Implementation phases
 
 Each phase ships as its own commit. `dev` implements all phases in one session with no review
@@ -2405,6 +2549,17 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
      6.01 ms on the RTX at 1440p), and a still frame unchanged within noise.
   6. The fly-through's dig at Phase 16's rig re-read with bar 2's statistic, the tip against
      `live/bin86c`, in the log.
+- **Bar 2 restated (2026-11-19, the fix-pass amendment, call 2):** the dilated box splits into
+  the hole band (within 8 voxels of the dig's box; its over-4 share printed, no bar), the ring
+  band (8 to 64 voxels) and the outside (beyond 64). On the pairs ending at N, N + 1 and N + 2
+  the over-4 share over the ring band and over the outside is at or under the larger of 0.5 %
+  and 1.5 times the still pairs' max over the same band (the 8 pairs before the dig, the same
+  pose and clock, printed), at noon and at 17:00, the tip's shaders' values printed beside;
+  the counters' clause stands. `a_dig_changes_nothing_outside_its_reach` keeps its name and
+  reads the three bands at noon in the soak tier (its lavapipe wall in the log; over 5 min, the
+  settle shrinks to the caps plus the still frames, or the size to 320 x 180); the 17:00 case
+  is the RTX release reading on `reading::flicker_dig_split`, its table in the log. The still
+  pairs' own share at 17:00 is Phase 24f's hills reading, not this bar's.
 
 ### Phase 24b: The light through a canopy at rest (86c defect B)
 - **Owner skill:** dev
@@ -2451,6 +2606,11 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
      adapters in the forest (a guess: +0.05 ms RTX, +0.4 ms RENOIR).
   6. The hook and the setting show their mode; `absorb` after a turn at 5b's pose read once
      with the cap in (the frames to settle, as Phase 19 bar 4 reads them), as a reading.
+- **Amended 2026-11-19 (the fix-pass amendment, call 1):** this phase ends at bar 1's table,
+  the hook, (i) at 256 with bar 3 met, and the 128-frame table at cap 256 as a reading (the
+  same estimator as cap 64 at that frame count, so it reads the same by construction). Bar 2
+  is read in Phase 24f at 512 frames, after its age reading; (ii) is Phase 24f's, by that
+  amendment's rule; bar 6's `absorb` reading is 24e's run 5c, by eye.
 
 ### Phase 24c: The stairs' frame cost (86c defect D)
 - **Owner skill:** dev
@@ -2507,6 +2667,16 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
      architect; an overlay regression outside the text is fixed and the golden left as it was.
   4. The gate tier at the tip reads 0 failures (`cargo nextest run --profile gate`, under the
      lock, the wall time in the log against section 7's 19 min).
+- **Bar 4 restated (2026-11-19, the fix-pass amendment, call 3):** section 7's gate budget is
+  12 min quiet on the dev reference; the 1819.5 s at load 14 is a loaded reading. The tip gate
+  is re-read **quiet** (load under 2 at the start, nothing building beside it) once, after
+  Phases 24f and 24a's restated bar land, with 0 failures, the wall and the load in the log as
+  the close's reading. The soak marks follow that run: each of
+  `a_chunk_an_edit_fills_is_a_dig_in_every_order`,
+  `a_blank_chunk_that_arrives_waits_behind_a_nearer_refinement_only_under_the_score` and
+  `the_score_blends_distance_and_the_view` over 10 s quiet is marked `#[ignore = "soak"]`; if
+  the first is marked, `a_chunk_an_edit_fills_is_a_dig_under_the_score` (the `score(4.0)`
+  order alone) keeps the edited chunk's claim in the gate.
 
 ### Phase 24e: The owner's fourth window (86d)
 - **Owner skill:** human
@@ -2527,11 +2697,86 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
 - **Done when:** the owner has recorded, per defect A, B and D, fixed / not fixed / worse
   (and C's reading if run), and the pick for question 8 if it was shown; or a no-go that names
   the run. Each verdict's words are quoted into the readings log.
+- **Amended 2026-11-19 (the fix-pass amendment):** the window runs on `78fed792`, which holds
+  24a's fix and 24b's cap (`key_history` 256) and nothing else for the canopy, so runs 5b, 5c
+  and 6 are read as **the cap's state**: the owner's words there are a reading of the cap at
+  the owner's settle (seconds, past the 512 frames the cap needs to show), not defect B's
+  verdict, which is Phase 24g's. The runner's wording stands; the readings log says so beside
+  the quotes. Run 8 is not in the runner (question 8 closed by 24b's split). Defects A and D
+  take their fixed / not fixed / worse here as written (D with question 7's answer: the reading
+  is the verdict).
+
+### Phase 24f: The key mean's age at the trunks, and the bar past the cap (86c defect B, continued)
+- **Owner skill:** dev
+- **What (added 2026-11-19, the fix-pass amendment, call 1):** the order is the reading of the
+  age, the bar past the cap, then the fix or the one bounded lever. First, on
+  `canopy::reading::the_canopy_residual`'s rigs (both scenes, the defaults, a still camera, the
+  queue drained), per class (floor, trunks) at frame 128: the age histogram of the lighting
+  pixels (`moments_out.z`: the shares under 16, under 64, at 128), the history rejections per
+  frame at rest (`Frame::read_history_rejections`, per word), and the residual against its own
+  prediction (per pixel the binomial standard error at the reference's `g` over the pixel's
+  effective sample count, its age or `2 cap - 1` at the cap, in levels of the pixel's key
+  term; per class the observed RMS over the predicted). Second, the residual table at 512
+  frames, cap 256 and cap 64 beside it. Third, as the readings say: if the age restarts at a
+  still camera, the fix at its cause in the temporal pass (the acceptance's normal test at a
+  thin feature, the taps' weights, or the age's carry where the view did not move), no filter,
+  no new target, every rejection and reset test green by name; if the cause is outside the
+  temporal pass, the stop with the table for the architect; (ii), the a-trous's spatial
+  variance estimate on the key term alone (SVGF's, ADR-0018), only when the trunks' age reads
+  at cap and the 512-frame residual is over the bar with the ratio near 1. Once, the hills at
+  17:00 at rest (24a's still pose) read with the same split (the sun's jitter on and off), as
+  the hills' own rule 1 reading.
+- **Files touched:** `apps/flythrough/tests/gpu_outdoor/canopy.rs` (the age, the rejections,
+  the ratio, the 512-frame run), `apps/flythrough/tests/gpu_outdoor/flicker.rs` (the hills'
+  reading), `crates/vxe-render/src/shaders/temporal.wgsl` (the fix, if named),
+  `shaders/atrous.wgsl` (only (ii)), `crates/vxe-render/tests/gpu_sun.rs`,
+  `docs/plans/logs/0086.md`.
+- **Done when:**
+  1. **The age table is in the log:** both scenes, both classes, the three age shares, the
+     rejections per frame at rest, and the observed-over-predicted ratio per class, with one
+     line that says whether the trunks' mean is at its length.
+  2. **The bar past the cap is read:** 24b bar 2's table at 512 frames at cap 256 and cap 64
+     (the residual's p99 and mean, floor and trunks, both scenes; the pop share over the last
+     32 pairs), the 128-frame values beside them.
+  3. **A still camera keeps its age.** If the age restarts: `a_still_camera_keeps_its_history`
+     in `gpu_sun.rs` or `gpu_outdoor.rs` (the forest at `10,180`, 128 still frames at 320 x
+     180; about 10 s, soak if over): after F still frames the share of trunk and floor pixels
+     whose age is under F / 2 is at or under 1 % (a guess; the before's share printed), and
+     `a_moving_entity_leaves_no_ghost_and_no_stale_shadow`, `a_moving_shadow_edge_resets_the_history`,
+     `a_reset_between_steps_restarts_the_history` and Phase 3's `reading::a_far_staircase_keeps_its_history`
+     read as before (the rejection the fix narrows is named in the log with the test that still
+     defends it).
+  4. **The canopy's residual, re-read after the fix** (24b bar 2's claim, at 512 frames):
+     the residual's p99 at or under 8 levels and its mean at or under 2 on the floor and the
+     trunks, both scenes, the pop share at or under the lamp-lit floor's; or, over the bar, the
+     trunks and the floor within a factor of 2 of each other with the ratio near 1 (the
+     variance the mean cannot pay for), disclosed, and owner question 9 applies.
+  5. **Nothing moves elsewhere.** `sky_rays` 0 and the lamp-lit goldens are byte-identical;
+     the outdoor goldens that a temporal fix moves are named with counts for Phase 25;
+     `frame_bytes` unchanged; the cost of a temporal fix on both adapters within noise, (ii)'s
+     a-trous as 24b bar 5 states it.
+  6. The hills at 17:00 at rest: the still pairs' over-4 share with the sun's jitter on and
+     off, in the log, one line of attribution.
+
+### Phase 24g: The owner's short look at the canopy (86e)
+- **Owner skill:** human
+- **What (added 2026-11-19, the fix-pass amendment):** a runner (`live/session86e.sh`) on one
+  build at Phase 24f's tip (`live/bin86e` with its `.commit`), `live/bin86d` beside it as the
+  before, the fly-through's stdout visible and a ping when ready, three runs: (5b) the forest
+  at `10,180` under `voxel`, settled for ten seconds, the lit trunks and the sun patches, then
+  a fast turn and the settle; (6) the forest at 15:00, the penumbra edges on the treads and the
+  shaded grass; (4b-still) the hills at 17:00 looking down the slope, settled, no dig: grain
+  at rest or none. Each once on `bin86e`, 5b once on `bin86d` beside it. The stills and the
+  owner's words go to `live/window86e/verdicts.md`.
+- **Files touched:** `live/session86e.sh`, `docs/plans/logs/0086.md`.
+- **Done when:** the owner has recorded defect B as fixed / not fixed / worse against 86d's
+  state, and a word on the hills at rest; the words are quoted into the readings log, and
+  question 9's answer, if the trunks still grain.
 
 ### Phase 25: The picks as tests
 - **Owner skill:** dev
-- **What:** the bars Phases 1 to 7, 9 to 14, 16 to 23 and 24a to 24c read, written as tests
-  against the windows' picks (86c's and 86d's); the defaults the window chose; the goldens Plan 0032 blessed that these mechanisms move
+- **What:** the bars Phases 1 to 7, 9 to 14, 16 to 23, 24a to 24c and 24f read, written as tests
+  against the windows' picks (86c's, 86d's and 86e's); the defaults the window chose; the goldens Plan 0032 blessed that these mechanisms move
   (`outdoor_noon`, `cave_mouth`, `outdoor_forest_sunset`, the sunset and night ones if the
   bake moves them) re-blessed as a disclosed change with the difference counts in the log; a
   mechanism the window dropped stays a setting if it costs nothing when off (owner,
@@ -2544,7 +2789,7 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
      gate): the 99th-percentile frame-to-frame change over the rim band and the far end is at
      or under the headlamp's on the same pose with the sky off. This is Plan 0032 Phase 6's
      stop rule on the occluded rig, as a regression test.
-  2. Every bar Phases 2 to 7, 9 to 14, 16 to 23 and 24a to 24c name that the windows kept exists, asserts the picked
+  2. Every bar Phases 2 to 7, 9 to 14, 16 to 23, 24a to 24c and 24f name that the windows kept exists, asserts the picked
      value, and passes in the gpu tier under the lock; each over 10 s on lavapipe is
      `#[ignore = "soak"]` and passes once by name. Phase 9's bars 2 to 5 stay whatever the
      window picks: the sky rule is not a look.
