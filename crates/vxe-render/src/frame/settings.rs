@@ -1069,4 +1069,13 @@ mod tests {
             (super::SkyNormal::Smoothed, 0.0)
         );
     }
+
+    /// Plan 0086 Phase 25 (the 86d window's state): the key light's visibility mean holds 256
+    /// frames by default and the sky's 64, each its own cap.
+    #[test]
+    fn the_key_mean_holds_256_frames_by_default() {
+        let l = super::Lighting::default();
+        assert_eq!((l.key_history, l.sky_history), (256, 64));
+        assert_eq!(super::DEFAULT_KEY_HISTORY, 256);
+    }
 }
