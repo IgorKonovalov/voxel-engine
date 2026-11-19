@@ -1189,7 +1189,7 @@ Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
 | 7c: the owner looks at the ghost | human | done 2026-11-19 (83c, no mouse): the ghost passes; verdict in "Phase 7c verdict" | |
 | 7d: the snap, the free mode, the swap, `E`, the walker first, the Esc cancel | dev | done after merge 49c5cbd3; deviations (columns start 0.5 over `p`, not 10 m; the 600 box's cap) in the log | 11f3dbe8 |
 | 7e: the owner looks at the snap and the free mode (83d) | human | done 2026-11-19: "its better"; the lowest column stands; the scale limit owed to Phase 8 | |
-| 8: picks, goldens, readings, tip | dev | done; the settle after the runtime castle not read; the golden on the goldens' floor, not SSIM (Notes) | committed with this row |
+| 8: picks, goldens, readings, tip | dev | done; the settle after the runtime castle not read; the golden on the goldens' floor, not SSIM (Notes) | 9f06b84e |
 
 ### Notes
 
@@ -1311,11 +1311,11 @@ Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature. **Public API changed:** `vxe-assets` rows, material file, scene, writer; `vxe-world` brick
+  `Prefab`, pending placements; `vxe-entity` `Model::reach`, `MAX_COARSE`. Readings: `nfr` 3, 4
+- **Gate at the tip (9f06b84e):** 1228 passed, 134 skipped, 1176 s, load 24 at the start; `cargo
+  deny` advisories fail (wasmtime 49.0.5). Readings log, "Tip gate after Phase 8"
+- **Outstanding `human` phases:** none
 
 ## Followups
 
