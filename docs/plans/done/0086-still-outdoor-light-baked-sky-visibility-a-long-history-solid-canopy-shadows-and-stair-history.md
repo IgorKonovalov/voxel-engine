@@ -1,6 +1,12 @@
 # 0086: Still outdoor light: a sky visibility baked per brick, a long history for the sky and key rays, canopies that shadow as bricks, stairs that keep their history, and a penumbra spike
 
-> **Status:** in-progress (the owner's go, 2026-11-17; it runs before Plan 0081, and Phase 6 is
+> **Status:** done (closed 2026-11-19 at the fresh-session close review, v0.67.0. Verdict: the
+> outdoor light holds still at rest wherever the store is fresh; the sky rule, the column map,
+> the visibility pair and the key mean landed with their bars as tests, and the four windows'
+> picks are the defaults; the canopy's grain at rest, the dig's hole band, the tunnel's far end,
+> the cave's seal clause, the light pass's compile cost and three Phase 5 readings that regressed
+> are disclosed and routed to Plan 0094; the gate tier read 0 failures over the 19 min line,
+> which the owner accepted on 2026-11-19.) Before the close: in-progress (the owner's go, 2026-11-17; it runs before Plan 0081, and Phase 6 is
 > conditional on its reading as drafted; **amended 2026-11-18** after Phase 8's window failed:
 > Phases 9 to 15 added; **amended again 2026-11-18** after Phase 15's window: Phases 16 to 24
 > are the fix pass and the third window, the picks as tests are Phase 25; the owner's picks
@@ -13,26 +19,26 @@
 > scope is under Followups; what remains is Phases 24h (the second merge of main), 24i (the
 > soak marks and the quiet tip gate) and 25, and the close runs the gate tier only)
 > **Created:** 2026-11-17
-> **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
-> **Related ADRs:** [ADR-0070](../adrs/0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md)
+> **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../../roadmap.md)
+> **Related ADRs:** [ADR-0070](../../adrs/0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md)
 > (proposed with this plan: the sky visibility baked per brick direction, coloured at read; the
 > ray on a long history where the bake is stale),
-> [ADR-0027](../adrs/0027-the-sun-shadow-is-one-per-pixel-ray-in-the-light-pass.md) (the key
+> [ADR-0027](../../adrs/0027-the-sun-shadow-is-one-per-pixel-ray-in-the-light-pass.md) (the key
 > light's ray; its Outcome of 2026-11-17 and its Alternative F, taken here for the rays),
-> [ADR-0046](../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
+> [ADR-0046](../../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
 > (the store and the queue that gain the channel; its Outcome of 2026-11-17),
-> [ADR-0042](../adrs/0042-the-far-shading-normal-blends-to-the-27-count-gradient-by-the-voxels-size-on-screen.md)
+> [ADR-0042](../../adrs/0042-the-far-shading-normal-blends-to-the-27-count-gradient-by-the-voxels-size-on-screen.md)
 > (the far normal whose regime Phase 3 uses),
-> [ADR-0018](../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
+> [ADR-0018](../../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
 > (the temporal pass's reprojection and resets),
-> [ADR-0063](../adrs/0063-surface-detail-is-a-procedural-shell-marched-at-the-hit-described-per-material-on-the-render-side.md)
+> [ADR-0063](../../adrs/0063-surface-detail-is-a-procedural-shell-marched-at-the-hit-described-per-material-on-the-render-side.md)
 > (Plan 0081's render-side style table, where Phase 2's flag lives once both have landed)
 > **Source:** the owner's Phase 9 window of Plan 0032 (2026-11-17; the verdict verbatim in
 > `docs/plans/logs/0032.md`), the diagnosis and options in
-> [the review of 2026-11-17](../reviews/2026-11-17-plan-0032-window.md), and the owner's
+> [the review of 2026-11-17](../../reviews/2026-11-17-plan-0032-window.md), and the owner's
 > picks of the same day: C1 and C2 both, D1 to D4 all four, each behind the attribution
 > reading the review names; stable image first, performance considered.
-> **Starts after:** [Plan 0032](done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
+> **Starts after:** [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
 > closes and merges (its Phase 10 makes an absent chunk sky, its Phase 11 sets the defaults
 > this plan's readings stand on). The architect recommends it ahead of Plan 0081 (the owner's
 > priority is the still image; Phase 2 names the merge item if 0081 runs beside).
@@ -3244,7 +3250,7 @@ section 2 records the result at the close.
 > resume notes go to the plan's readings log, `docs/plans/logs/0086.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
-Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
+Readings, gates and attempts: [`logs/0086.md`](../logs/0086.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
@@ -3365,13 +3371,25 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
 
 ### Close triggers
 
-_(Facts for the architect. No recommendations, and no suggested version bump.)_
+_(Facts for the architect. Left at its template by the dev; filled by the architect at the
+close review of 2026-11-19 from the readings log and the review's own gate.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature (the sky channel, the column map, the pair and the key mean, the
+  canopy styles, the stair history, the sky anchor, the spike as a setting, the stamped chunk as
+  a dig) with fixes (the column map's flush, the dig's view-wide flash, `hud.png`'s camera row).
+- **Public API changed:** `Lighting`'s six new fields (`sky_rays` accepts 0), `Penumbra`,
+  `SkyNormal`, `LightHooks`, the `Frame` readers for the pair, the samples, `E_sky` and the
+  style word, the shadow-style and cap constants, `AutoExposure::sky_anchor_ev`, the column map
+  on `GpuWorld`, `QueueView::lod_radius`, `BRICK_WORDS` 9 (was 7), `FRAME_PASSES` with `sky
+  irradiance`, four new bindings, seven `lighting.*` rows; by name in the CHANGELOG's 0.67.0.
+- **Budget readings:** every figure with its machine and commit is in the readings log (Phases
+  4, 5, 9, 21, 24c, the cost table, "The gate's slowdown") and, as read at the close on both
+  adapters, in `docs/nfr/02-frame-budget.md` and `docs/nfr/03-memory.md`.
+- **Gate at the tip** (the close review, `f8cbcb2d`, quiet, exclusive perf lock): build 0;
+  `cargo nextest run --workspace --profile gate --status-level pass` 1255 run, 1255 passed,
+  192 skipped, 1792.6 s (load 1.40 to 2.43); doctests 0; clippy 0; fmt 0; `cargo deny check` 1
+  (main's wasmtime advisories, `docs/backlog.md`).
+- **Outstanding `human` phases:** none (24g struck to Plan 0094).
 
 ## Followups
 

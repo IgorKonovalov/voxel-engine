@@ -3,8 +3,9 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0093** (ADRs are a separate sequence, see `../adrs/README.md` for its
-next free number).
+**Next free number: 0095** (ADRs are a separate sequence, see `../adrs/README.md` for its
+next free number). Plan 0094, Plan 0086's follow-up (the light's transitions), was approved
+2026-11-19 and runs after Plan 0086's close, before Plan 0087.
 
 ## Active roster
 
@@ -23,12 +24,13 @@ next free number).
 | [0082](0082-squash-and-stretch-a-scale-per-part-in-the-pose-and-the-clips.md) | Squash and stretch: a scale per axis per part in the pose and the clips, a slime in the library with a bounce | approved | M6, ADR-0064 (proposed). Approved 2026-11-16. After 0063, the clip chore, 0078 and 0079 P1-3. |
 | [0084](0084-staged-structures-stages-from-a-vox-a-stamp-with-a-write-policy-and-a-region-a-reveal-and-a-demolish.md) | Staged structures: stages from a `.vox`'s layers, a stamp with a write policy and a region, a reveal over ticks, a demolish | approved | M7, ADR-0067. Approved 2026-11-16. After Plan 0083 closes. |
 | [0085](0085-entity-variants-holding-clips-and-an-entity-stamped-into-the-world.md) | Entity variants (hide, swap, remap) from the `.rig`, a clip that holds, a posed entity stamped into the world | approved | M6, ADR-0068, ADR-0069 (proposed). Approved 2026-11-16. After 0063, the chore, 0078 and 0082. |
-| [0086](0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md) | Still outdoor light: baked sky visibility, a long history for the sky and key rays, solid canopy shadows, stair history, a penumbra spike | in-progress | M10, ADR-0070. Wrap-up amended 2026-11-19. |
-| [0087](0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md) | The rename to `svet`: crates, `SVET_*`, the WIT package, the tester archive, docs, the repository, a minor bump | approved | ADR-0071. Alone, last: after 0032, 0080, 0077, 0079, 0083 and 0086 merge. |
-| [0089](0089-deterministic-simulation-testing-seeded-scenarios-a-simulated-channel-a-mirror-oracle-and-gates.md) | Deterministic simulation testing: seeded scenarios, a shrinker, a simulated channel, a mirror oracle, determinism gates | approved | ADR-0073 (proposed). All phases after 0087 merges (owner). |
+| [0087](0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md) | The rename to `svet`: crates, `SVET_*`, the WIT package, the tester archive, docs, the repository, a minor bump | approved | ADR-0071. Alone, last: after 0086 merges (the rest have). Pre-flight 2026-11-19. |
+| [0089](0089-deterministic-simulation-testing-seeded-scenarios-a-simulated-channel-a-mirror-oracle-and-gates.md) | Deterministic simulation testing: seeded scenarios, a shrinker, a simulated channel, a mirror oracle, determinism gates | approved | ADR-0073. After 0087 (owner). Pre-flight 2026-11-19, q7 answered. |
 | [0090](0090-the-pop-counter-scenes-on-lavapipe-count-the-pixels-that-break-the-light-rules-a-ratchet.md) | The pop counter: fixed scenes on lavapipe count the pixels that break each light rule, by source; a baseline that only falls | approved | Cross-cutting, ADR-0076 (proposed). After 0086 closes, before 0081. |
 | [0091](0091-the-frame-profiler-scopes-across-threads-a-gpu-lane-a-dump-for-agents-and-a-hud-ticker.md) | The frame profiler: scopes across the threads, a GPU lane, a dump the agent ranks, budget scopes, a HUD ticker | approved | M7, ADR-0077. After 0087 and 0089, before 0090 (owner). |
 | [0092](0092-wgsl-hot-reload-in-the-fly-through-an-mtime-poll-pipelines-rebuilt-and-the-old-ones-kept-on-an-error.md) | WGSL hot reload in the fly-through: an mtime poll, pipelines rebuilt from disk, the old kept on an error | approved | M7, no ADR. After 0091 in its lane, before 0090 (owner). |
+| [0093](0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) | The README rewrite with reproducible screenshots: a shot manifest, a shoot script, an image gate, the owner's picks | approved | M7 docs, no ADR. After 0087 merges, beside 0089, before 0091. |
+| [0094](0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md) | Light transitions: the key mean's age, the no-ray prior and fades, the exposure's rate, the hole band, the castle | approved | M10, ADR-0076. After 0086 merges, before 0087 (recommended). |
 <!-- roster:end -->
 
 ## Sequence
@@ -163,7 +165,32 @@ on the architect's recommendation, **right after Plan 0091 merges, before Plan 0
 it is small, shares the HUD's menu and banner files with 0091, and shortens the window loop
 that Plans 0090, 0081 and the M10 look plans run on.
 
-Every active plan but 0091 and 0092 (proposed 2026-11-19) is approved (Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
+**Plan 0093** (the README rewrite with reproducible screenshots: `--still-at`, `--still-dir` and
+`--camera` on the fly-through, a manifest `docs/images/shots.json` and `scripts/shoot-images.mjs`
+that re-renders every image under the perf lock, `scripts/check-images.mjs` holding 300 KB a
+still, 700 KB a loop and 5 MB for the README in CI, fragment links validated, contact sheets the
+owner picks from, the README after Bonsai's shape with the layout, checks and process moved to
+`docs/development.md`; drafted 2026-11-19 from the Bonsai second pass, section 2, and the owner's
+"more screenshots through the doc"; approved the same day, all recommended): **after Plan 0087 merges**
+(0087 rewrites the README, every doc and the script names), **beside Plan 0089** (only `ci.yml`
+in common) and **before Plan 0091** (which edits the HUD and `run/frame.rs` that its Phase 1
+touches). 0093's canopy shot may wait for Plan 0094.
+
+**Plan 0094** (the light's transitions: the key mean's age at a still camera, the no-ray sky
+prior and one fade for every no-ray value change, ADR-0076 rule 5's exposure rate cap, the
+dig's hole band in rule 3's form, the castle's fill-in, and the tunnel far-end and seal bars
+Plan 0086 struck; plus the two items the owner routed here at 0086's slowdown, the light pass's
+compile cost (the default-off arms out of the default pipeline, a pipeline cache for the GPU
+tests, about 600 s of the gate) and three regressions against 0086's Phase 5 bars; drafted
+2026-11-19 from Plan 0086's follow-up scope, its 86c and 86d
+verdicts and its readings log, while 0086 is still open on its branch; no ADR, ADR-0076 rules
+2, 3 and 5 are its targets; proposed, awaits the go): **starts after Plan 0086 closes and
+merges**. The architect recommends it as the next lane, **before Plan 0087** (the owner's
+still-image priority; its rigs, hooks and `VXE_*` names are 0086's and the rename would owe a
+re-read; Plan 0090's first baseline then lands on the fixed tree); the alternative is after
+0087 beside 0093 and 0089. Owner question 1 of the plan.
+
+Every active plan is approved (Plans 0091, 0092 and 0093 on 2026-11-19; Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Approval accepts the design; a plan's lane
 starts only when the plans its "Starts after" line names have closed and merged, and where that
 line asks for it, after the architect has re-read the plan against the new tip. The approved
@@ -175,6 +202,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0086](done/0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md) | Still outdoor light: a sky visibility baked per brick, the column map, the sky and key rays on a long history, canopies as bricks; ADR-0070 accepted; the leftovers to Plan 0094 | 2026-11-19, v0.67.0 |
 | [0083](done/0083-anything-from-a-vox-palette-materials-a-material-file-and-large-scenes-stamped-into-the-world.md) | Anything from a `.vox`: palette materials, a material file, brick prefabs, placements past residency, structures in the belt with a coarse ghost; ADR-0065, 0066, 0077 | 2026-11-19, v0.66.0 |
 | [0079](done/0079-entities-aware-of-floor-and-walls-a-surface-mover-the-smoothed-normal-and-a-wandering-demo.md) | Entities aware of the floor and the walls: a sphere surface mover, the solid-count gradient, a `.rig` body and stride, a seeded wander; 64 spiders +3.07 ms CPU (backlog) | 2026-11-18, v0.65.0 |
 | [0077](done/0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md) | An entity picker: the entities library, a chooser with icons, a belt of slots, a placement mode with a marked ghost | 2026-11-18, v0.64.0 |

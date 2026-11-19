@@ -390,3 +390,15 @@ the emissive words and the first consumer pays nothing. The value is read as the
 is read, bilinear over the 2 x 2 cells with no screen history, times the sky's irradiance about
 the face normal at read; Alternative E's leak inside a brick applies to it. The record's growth
 and the extra rays per brick are Plan 0086's readings against `docs/nfr.md` sections 2, 3 and 4.
+
+## Outcome (2026-11-19, Plan 0086's close)
+
+The channel of the Outcome above is built: a record is 9 words (36 B) from 7, words 7 and 8
+holding the six `u8` visibilities with `VIS_BAKED` (bit 16) and `SKY_STALE` (bit 17) in word 8;
+`take_boxes` marks a dig's ring bricks `SKY_STALE` and the re-bake's records clear it. Two rules
+changed with ADR-0070's amendments: a chunk bakes when its reach is resident and no chunk of
+its columns is pending upload, and a block baked while a column over its reach was not final is
+re-baked once when it is (the wait itself is the `column_wait` setting, off); and a chunk an
+edit fills from air is a dig, ahead of the pool (Plan 0086 Phase 21a), so a stamped structure
+lights with its ring. The bake under a sky lengthens the pre-roll (the RTX 3080 Laptop's hills
+7.3 to 14.4 s, Plan 0086 Phases 4 and 9); the record's bytes are in `docs/nfr/03-memory.md`.

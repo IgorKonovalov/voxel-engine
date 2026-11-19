@@ -3,7 +3,7 @@
 > **Status:** proposed
 > **Date:** 2026-11-18
 > **Related plan(s):** [Plan 0090](../plans/0090-the-pop-counter-scenes-on-lavapipe-count-the-pixels-that-break-the-light-rules-a-ratchet.md)
-> (builds the counter and takes the baseline); [Plan 0086](../plans/0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md)
+> (builds the counter and takes the baseline); [Plan 0086](../plans/done/0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md)
 > (whose Phase 16 attributed the pops this ADR names; the baseline is taken after it merges)
 > **Builds on:** [ADR-0046](0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
 > (the baked store, its queue and its `FADE`),
