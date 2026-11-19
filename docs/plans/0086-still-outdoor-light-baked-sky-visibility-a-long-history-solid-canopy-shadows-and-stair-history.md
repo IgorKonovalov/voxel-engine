@@ -7,7 +7,11 @@
 > and answers are in the second amendment, and the go for Phases 16 to 25 is the owner's
 > "all recommended, go ahead" of that date; **amended 2026-11-19** after Phase 24's window
 > (86c): Phases 24a to 24e are the fix pass for its defects A, B, D and E and the fourth
-> window, ahead of Phase 25; the verdicts are in `live/window86c/verdicts.md`)
+> window, ahead of Phase 25; the verdicts are in `live/window86c/verdicts.md`; **amended
+> 2026-11-19, the wrap-up** (owner: "wrap up with these plans and do a follow up later"):
+> Phases 24f and 24g and 24a's restated bands bar leave this plan for the follow-up plan whose
+> scope is under Followups; what remains is Phases 24h (the second merge of main), 24i (the
+> soak marks and the quiet tip gate) and 25, and the close runs the gate tier only)
 > **Created:** 2026-11-17
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0070](../adrs/0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md)
@@ -1365,6 +1369,62 @@ third of the three-order test's wall), the three orders in the soak test.
    trunks after the age fix, the plan closes with the residual disclosed and the trunks' grain
    goes to the follow-up plan beside the castle's fill-in.
 
+## Amended 2026-11-19, the wrap-up
+
+**The decision.** The plan closes on what it has. The owner's word (2026-11-19, through the
+orchestrator): "we should wrap up with these plans and do a follow up later". Phases 24f and
+24g and Phase 24a's restated bands bar are struck from this plan and go, with their readings
+and leads, to one follow-up plan the architect drafts on main at this plan's close (its scope
+is the Followups section's last subsection; `docs/backlog.md`'s fill-in entry is its pointer
+until then). What remains for the dev is three phases: the second merge of main (24h), the
+soak marks and the quiet tip gate (24i), and Phase 25 as written; then the fresh-session close
+review, on the gate tier only (owner policy, 2026-11-19: no soak or full tier at closes).
+
+**What the plan closes on.** The 86d window (`live/window86d/verdicts.md`) confirms defect A
+fixed: the dig's view-wide flash is gone (4a "mostly good", 4b the same at 17:00; 4c on
+`bin86c` "the flash is clearly worse, the whole view"). Defect D closes by owner question 7's
+answer: Phase 24c's reading names the queue's step on the main thread (6.3 ms at 1080p against
+its 1.0 line; the GPU within every line on the RTX, 4.53 ms at 1080p, 7.55 at 1440p; this
+plan's passes within their projections), and the perf plan owns it. Phase 24d's two gate
+failures are fixed (the blank-chunk test split in two; `hud.png`'s 2427 bytes the camera row's
+prefix, re-blessed). The `key_history` cap is built and is the default at 256 (0 ms, 0 B;
+Phase 19 bar 2 passes at it; `--key-history`). The cost check at the merge (the log, "The
+merge of main and the light pass's cost"): the light pass at the same pose and clock moves
+-0.09 to +0.13 ms from `bin86c` to `bin86d`, so it did not grow; the temporal pass reads +0.11
+to +0.24 ms on still frames at 1440p from `00805204`'s baked-form read at a stale ring face
+(loaded readings; 24a bar 5 read +0.07 ms on a dig frame), which the Budgets table takes as a
+row and the close review reads against section 2.
+
+**Why these three leave, by item.**
+
+1. **Phase 24f (the canopy's grain at rest).** It is not started, and what it owes is a new
+   attribution, not a bar this tree can meet: the fix-pass amendment's own arithmetic says the
+   cap cannot show in under 512 frames, the tail (p99 13 to 25 times the mean) says a
+   subpopulation of young pixels, and the dev's lead (the resume notes) names a candidate in
+   the temporal pass that no reading has looked at yet. That is a Phase 1 of its own plan, by
+   the plan's rule since its first phase (the reading before the mechanism), and the window
+   that judges it (24g) is a window the plan would otherwise hold its close for. Owner question
+   9 is answered: the trunks' grain is disclosed at the close and goes to the follow-up.
+2. **Phase 24g (the 86e look).** It has no binary to look at without 24f; it is the follow-up's
+   window, on main.
+3. **Phase 24a's restated bands bar** (the hole, ring and outside bands at noon and 17:00, 1.5
+   times the still pairs' max). The fix is in and confirmed by eye; the bar as written at noon
+   passes on the fix (0.100 % outside; inside at N 1.000 %) and the soak test
+   `a_dig_changes_nothing_outside_its_reach` holds it; the 17:00 case fails on the tip and
+   the fix alike because the still frames there read 0.273 to 0.630 % on their own (the hills'
+   grain under a low sun, a reading 24f was to take). The band form is the right bar, and it
+   waits for the hills' reading it depends on; the follow-up writes it, with the hole band's
+   flicker the owner saw at 86d (4a, 4b) as its first subject.
+
+**What holds.** Phase 24a bars 1, 3, 4, 5 and 6 and bar 2 as written at noon; the fix
+(`00805204`); Phase 24b's table, hook and cap (its bar 2 was already 24f's); Phase 24c's
+reading and question 7; Phase 24d's four bars with bar 4 as restated (the quiet gate, now
+24i's); the goldens and defaults the three windows kept. Phase 25 pins the picks of 86c and 86d
+(86e does not run in this plan).
+
+**The order for the dev:** 24h, 24i, 25, the close block of the Implementation log, then the
+three-line pointer for the fresh close review. No owner question is open.
+
 ## Implementation phases
 
 Each phase ships as its own commit. `dev` implements all phases in one session with no review
@@ -2563,6 +2623,11 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   settle shrinks to the caps plus the still frames, or the size to 320 x 180); the 17:00 case
   is the RTX release reading on `reading::flicker_dig_split`, its table in the log. The still
   pairs' own share at 17:00 is Phase 24f's hills reading, not this bar's.
+- **Struck 2026-11-19 (the wrap-up amendment, item 3):** the restated bands bar above is the
+  follow-up plan's, with the 17:00 case and the hole band's flicker the 86d window saw. This
+  plan keeps the fix (`00805204`), bar 1, bar 2 as first written at noon (the soak test
+  `a_dig_changes_nothing_outside_its_reach` as it stands, 0.100 % outside on the fix), and
+  bars 3 to 6 as the log records them.
 
 ### Phase 24b: The light through a canopy at rest (86c defect B)
 - **Owner skill:** dev
@@ -2712,6 +2777,9 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
 
 ### Phase 24f: The key mean's age at the trunks, and the bar past the cap (86c defect B, continued)
 - **Owner skill:** dev
+- **Struck 2026-11-19 (the wrap-up amendment, item 1): not started; the follow-up plan's,
+  with its bars as written below, the readings of Phase 24b and the dev's lead on `key_mean`'s
+  age (the Followups section). Nothing below runs in this plan.**
 - **What (added 2026-11-19, the fix-pass amendment, call 1):** the order is the reading of the
   age, the bar past the cap, then the fix or the one bounded lever. First, on
   `canopy::reading::the_canopy_residual`'s rigs (both scenes, the defaults, a still camera, the
@@ -2764,6 +2832,8 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
 
 ### Phase 24g: The owner's short look at the canopy (86e)
 - **Owner skill:** human
+- **Struck 2026-11-19 (the wrap-up amendment, item 2): the follow-up plan's window, on main;
+  no `live/bin86e` is built in this plan.**
 - **What (added 2026-11-19, the fix-pass amendment):** a runner (`live/session86e.sh`) on one
   build at Phase 24f's tip (`live/bin86e` with its `.commit`), `live/bin86d` beside it as the
   before, the fly-through's stdout visible and a ping when ready, three runs: (5b) the forest
@@ -2777,8 +2847,64 @@ beside the headlamp on the same pose with the sky off, the reference the owner a
   state, and a word on the hills at rest; the words are quoted into the readings log, and
   question 9's answer, if the trunks still grain.
 
+### Phase 24h: The second merge of main
+- **Owner skill:** dev
+- **What (added 2026-11-19, the wrap-up amendment):** `git merge --no-ff main` into the lane,
+  main at `901a9e26` or later (v0.66.0: Plan 0083 merged, which touched the fly-through
+  heavily: its CLI, scenes, the belt's structures, `apps/flythrough/tests/structures.rs` and
+  `viewer.rs`, about 59 fly-through files). The first merge (`c3a3ad2e`) moved main's entity
+  marks to composite binding 14 and set `DEFAULT_FRAME_BYTES`; this one resolves what 0083
+  moved under the branch's HUD, CLI and queue changes, with the branch's light untouched.
+- **Files touched:** whatever conflicts; `docs/plans/logs/0086.md` (the merge's section: the
+  files that conflicted, the one of substance named, the checks' counts).
+- **Done when:**
+  1. `cargo build --workspace --all-targets`, `cargo clippy --workspace --all-targets -- -D
+     warnings`, `cargo fmt --all --check`, `node scripts/check-file-size.mjs`,
+     `check-comment-hygiene.mjs` and `check-test-tiers.mjs` read 0.
+  2. `node scripts/test-changed.mjs --profile quick` passes, and `--profile gpu --since HEAD~1
+     --binaries` over the binaries the merge touched (at least `gpu_hud`, `gpu_hud_golden`,
+     `gpu_queue`, `gpu_look_field`) passes under the perf lock; the counts in the log.
+  3. The release fly-through at the merge runs headless on the RTX on the hills at noon and
+     the forest at 15:00 with no validation error, and its exit line's light pass is within
+     0.5 ms of the merge's cost table (the log's "The merge of main and the light pass's cost").
+
+### Phase 24i: The soak marks and the quiet tip gate
+- **Owner skill:** dev
+- **What (added 2026-11-19, the wrap-up amendment; Phase 24d bar 4 as restated):** first the
+  three queue tests' quiet times alone (`cargo nextest run -p flythrough --test gpu_queue`
+  under the lock, load under 2 at the start; about a minute): each of
+  `a_chunk_an_edit_fills_is_a_dig_in_every_order` (11.1 s loaded),
+  `a_blank_chunk_that_arrives_waits_behind_a_nearer_refinement_only_under_the_score` (11.2 s
+  loaded) and `the_score_blends_distance_and_the_view` (14.7 s loaded; 10.2 s quiet at the
+  0064 close and left) over 10 s quiet is marked `#[ignore = "soak"]`; if the first is marked,
+  `a_chunk_an_edit_fills_is_a_dig_under_the_score` (the `score(4.0)` order alone) keeps the
+  edited chunk's claim in the gate. Then the tip gate, once, quiet: `cargo nextest run
+  --profile gate --status-level pass` under the exclusive perf lock, the gate's binaries built
+  before the lock, load under 2 at the start and nothing building beside it, tee'd to
+  `live/gate-tip-quiet.log`, then `node scripts/test-times.mjs` on the log.
+- **Files touched:** `apps/flythrough/tests/gpu_queue.rs` (the marks), `docs/plans/logs/0086.md`
+  (the times, the gate's wall and load, `test-times.mjs`'s list).
+- **Done when:**
+  1. The three tests' quiet times are in the log and each over 10 s carries the soak mark; the
+     gate variant exists if the three-order test is marked.
+  2. **The gate reads 0 failures and under 19 min wall quiet** (`docs/nfr.md` section 7; the
+     last quiet reading on main, Plan 0077's close, 1107.4 s). The wall, the load at the start
+     and the end, and the test count are in the log.
+  3. **If over 19 min, the plan names what moves:** `test-times.mjs`'s tests over 10 s that
+     this plan added (`gpu_outdoor`, `gpu_sun`, `gpu_queue` and `gpu_golden`'s new tests; the
+     list is the log's) take the soak mark, each keeping a gate variant at a smaller frame
+     count or size where its claim is a gate claim (a determinism or API claim, not a settle),
+     and the gate is re-read once. Over 19 min after that, the wall is a disclosed reading for
+     the close with the top ten tests named, none of them this plan's, and the close review
+     reads it against section 7 (the gate at Plan 0063's and 0069's closes read 937 to 1038 s
+     loaded).
+
 ### Phase 25: The picks as tests
 - **Owner skill:** dev
+- **Amended 2026-11-19 (the wrap-up):** the bars are those of Phases 1 to 7, 9 to 14, 16 to 23
+  and 24a to 24c as they stand after the wrap-up amendment (24f's and 86e's are the
+  follow-up's); the picks are 86c's and 86d's; `key_history` 256 is pinned as the default
+  (the cheap-modes rule), and the goldens are re-blessed with the counts in the log.
 - **What:** the bars Phases 1 to 7, 9 to 14, 16 to 23, 24a to 24c and 24f read, written as tests
   against the windows' picks (86c's, 86d's and 86e's); the defaults the window chose; the goldens Plan 0032 blessed that these mechanisms move
   (`outdoor_noon`, `cave_mouth`, `outdoor_forest_sunset`, the sunset and night ones if the
@@ -2879,6 +3005,7 @@ Added 2026-11-19, the 86c window (guesses until read):
 |---|---|---|
 | §2, the edit's frame (Phase 24a) | the fix is an ordering or a flag's scope: 0 ms on a still frame; on the edit's frame the light pass loses the view-wide rays the flash cast (the HUD read 1.02 against 0.43 ms RTX at 1440p) | Phase 24a bar 5, both adapters |
 | §2 Lighting, the temporal pass (Phase 24b (i)) | a cap on a channel the pass already blends: 0 ms, 0 B | Phase 24b bar 5 |
+| §2 Lighting, the temporal pass (Phase 24a's fix, read at the wrap-up) | the Phase 24a row said 0 ms on a still frame; the log's cost table reads the temporal pass +0.11 to +0.24 ms RTX at 1440p on still frames from `00805204` (loaded, the forest and the hills; the light pass -0.09 to +0.13 ms, no growth) | the log's "The merge of main and the light pass's cost"; the close review reads it against section 2's denoise line |
 | §2 Denoise, the a-trous (Phase 24b (ii), only if built) | a spatial variance estimate at a converged age on one channel: +0.05 ms RTX, +0.4 ms RENOIR in the forest | Phase 24b bar 5 |
 | §2 the Floor's lines at the tunnel's stairs (Phase 24c) | a reading, no projection: the stage over its line named; this plan's passes within their rows above plus 1 ms on the RTX at 1080p | Phase 24c bars 2 and 3; the row in `docs/nfr/02-frame-budget.md` at the close |
 
@@ -2966,6 +3093,9 @@ section 2 records the result at the close.
 - **A canopy's exact dapple at the lighting grid's half resolution** (added 2026-11-19, 86c's
   5b and 6, if Phase 24b's split names it rather than the sample variance): a look and cost
   call (owner question 8), shown at 86d, not built here beyond a default's one-line change.
+- **The canopy's convergence past the cap, the dig's hole band and 24a's bands bar** (added
+  2026-11-19, the wrap-up): Phases 24f and 24g and the restated bar go to the follow-up plan
+  with their readings; this plan closes with the trunks' grain disclosed (owner question 9).
 
 ## Implementation log
 
@@ -3116,11 +3246,89 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - Plan 0090 gains a stamp scene (a prefab placed on the hills at noon, the eye in it; rules 3,
   4 and 5) and reads the key mean's fade-in length against the calibrated `F` (the flicker
   amendment's owner question 1); an architect amendment on main, owed at this plan's close.
-- The fill-in follow-up plan (the castle's stop amendment, call 2's charter): the split as its
-  Phase 1, the no-ray path's prior, the fades, the exposure's rate cap, bar 4's band clause,
-  bar 1a's (i) and (ii) by the lines, a window on the castle on main; drafted by the architect
-  at this plan's close, and `docs/backlog.md` holds the pointer until then (added 2026-11-19).
-  **The 86c window's run 9 is its before state** (added 2026-11-19, the 86c amendment): the
-  castle placed on the hills at noon on Plan 0083's binary, the owner inside: "the castle was
-  fine, but it flickers in the shadowed part"; the follow-up's window on main judges the same
-  pose with both plans' light, and its Phase 1 split reads the shadowed part first.
+- The fill-in follow-up plan (the castle's stop amendment, call 2's charter): folded into the
+  follow-up plan's scope below (added 2026-11-19, the wrap-up); `docs/backlog.md`'s fill-in
+  entry holds the pointer until the architect drafts it at this plan's close.
+
+### The follow-up plan's scope (2026-11-19, the wrap-up amendment)
+
+One plan, drafted by the architect on main at this plan's close, from the evidence below. Its
+subject is the light's transitions this plan left open: the key mean's age at a still camera,
+the no-ray sky path's prior and fades, the dig's hole band, and the castle. Its rule is this
+plan's: the reading before the mechanism, each defect split before anything is built. Its
+window is on main with Plans 0083 and 0086 merged, on the castle, the forest and the hills.
+
+1. **The canopy's grain at rest (Phase 24f, struck).** The readings: Phase 24b's table
+   (`live/p24/b-canopy.log`, RTX, quiet): the residual against a 1200-frame reference at
+   128 frames, the forest at `10,180` trunks p99 61 / mean 4.78 and floor 16 / 0.63; at 15:00
+   floor 32 / 5.35 and trunks 33 / 2.00; the sky alone p99 1; with the sun's jitter off the
+   trunks fall to 6 / 0.25 and 4 / 0.12 and the shadowed floor to 1 and 8, so the residual is
+   the key light's disc sample; at cap 256 the 128-frame run reads 62 / 4.93 (the same
+   estimator as cap 64 at that length, by construction). The owner at 86d, cap 256 in: 5b
+   "still grainy, same as 86c", 6 "grainy a bit", the penumbrae smoother than 86c's, the lit
+   trunk sides still grain. The leads: (a) the tail, p99 at 13 to 25 times the mean against a
+   converged mean's 3, says a subpopulation of young pixels, not a long mean on all; (b) the
+   dev's lead, noticed and not acted on: `key_mean` in `temporal.wgsl` takes the direct part's
+   age after the gradient's lambda has lowered it (`age * (1 - lambda)`) and resets on
+   `!accepted || fresh`, so a lamp-light gradient or a fresh flag restarts the key mean too;
+   (c) the fix-pass amendment's candidate: the reprojection's taps at a thin trunk under FSR 2's
+   sub-pixel jitter fail the normal test and the pixel restarts. Its Phase 1 is 24f bar 1 as
+   written (the age histogram per class, the rejections per frame at rest, the observed-over-
+   predicted ratio), then bar 2 (512 frames, cap 256 beside 64), then the fix at the cause in
+   the temporal pass with every rejection and reset test green by name (24f bar 3), (ii) the
+   a-trous's spatial variance on the key term alone only when the age reads at cap and the
+   ratio near 1 (24f bar 4's rule). The rigs exist: `canopy::reading::the_canopy_residual`,
+   `LightHooks::key_no_jitter`, `Frame::read_history_rejections`; the binaries
+   `live/p24/gpu_outdoor_b` and `gpu_outdoor_bi`. The bar: 24f bar 4's (p99 8, mean 2, both
+   classes, both scenes; or the trunks and the floor within a factor of 2 with the ratio near
+   1, disclosed). The trunks' grain is disclosed at this plan's close (owner question 9).
+2. **The `absorb` wobble after a turn.** 86d's 5c: `--leaf-shadow absorb` at sun 60 is "clean
+   after settle, but any view change (a turn, a move) makes the light wobble for 1-2 s before
+   it settles"; 86c read about 0.5 s, so the 256 cap lengthened it. It is the key mean
+   restarting at age 0 on every disoccluded pixel with a continuous transmittance's sample
+   variance under it: the same view-dependence as item 1 (ADR-0076 rule 2), read with it. The
+   setting stays non-default with its limit disclosed in `docs/flythrough.md`; its light pass
+   (4.1 to 4.8 times `voxel`'s, Phase 14 bar 4) stays the backlog's.
+3. **The dig's hole band on a shadowed slope.** 86d's 4a and 4b: "digging on the shadowed side
+   of a hill, a small, very fast bright flicker inside the hole and a bit around it"
+   (`4a-hole-flash.png`; HUD 16:00, light 3.54 ms, step 5.86 ms on that frame). It is the
+   restated bar's hole band (within 8 voxels of the dig's box) and the ring band's edge, where
+   no bar reads today; Phase 24a's fix left inside the dilated box at N 1.169 % at 17:00 and
+   1.000 % at noon (`live/p24/bar2-*.log`), and on RENOIR the ring stays stale two frames (N +
+   2 inside 0.907 % with the fix). The candidates, to tell apart by counter as 24a did: the
+   hole's own faces on the ray for the frame before the re-bake lands (ADR-0070's ring, by
+   design), the contact shadow's seed (`SEED_AGE` 8, the record or the column), the key mean's
+   restart on the hole's new faces. The rig exists: `flicker::reading::flicker_dig_split`,
+   `VXE_SPLIT_TIME`; `live/p24/gpu_outdoor_{base3,fix3}`.
+4. **Phase 24a's bands bar, restated (struck here).** The dilated box in three bands (hole,
+   within 8 voxels, printed; ring, 8 to 64; outside, beyond 64); on the pairs ending at N, N + 1
+   and N + 2 the over-4 share over the ring and the outside at or under the larger of 0.5 % and
+   1.5 times the still pairs' max over the same band, `T_still` 4, at noon and at 17:00;
+   `a_dig_changes_nothing_outside_its_reach` reads the bands at noon in the soak tier, the
+   17:00 case the RTX release reading. Its dependency: the hills' own rule 1 reading at 17:00 at
+   rest (24f bar 6: the still pairs' over-4 share with the sun's jitter on and off; today 0.273
+   to 0.630 % outside the box with no dig in the pair).
+5. **The window (Phase 24g, struck): 86e on main.** The forest at `10,180` under `voxel`
+   settled ten seconds, the lit trunks and the sun patches, a fast turn and the settle; the
+   forest at 15:00, the penumbra edges and the shaded grass; the hills at 17:00 looking down
+   the slope, settled, no dig; a dig on the shadowed side of a hill at 16:00 (item 3); the
+   castle (item 6). `live/bin86d` (`78fed792`) is the before binary; 86d's stills
+   (`live/window86d/`) are the before images.
+6. **The castle: the fill-in charter and run 9's flicker.** The charter of the castle's stop
+   amendment, call 2, as written there: the split as Phase 1 (`flicker::reading::flicker_castle`
+   in three arms: as today, the exposure pinned, the key light off; the per-frame series against
+   `digs_baked`), the no-ray path's prior for a face with no record (the own summary kept, the
+   neighbours' summaries out of the sky channel; the ray seeded from the column, or the column
+   held), the landing's and the switch's fade (Phase 20 (ii) generalised), ADR-0076 rule 5's
+   exposure rate cap as an `AutoExposure` setting, Phase 21 bar 4's band clause, Phase 20 bar
+   1a's (i) and (ii) by its lines (14 131 switches, 11.31 % leave the band, relative step 1.579
+   on the tip). The readings: the castle's fresh over-8 mean 3.431 % on the tip (the stop line;
+   74.7 % of the over-8 pixels young, 5.8 % ray-cast), 9.780 % after the seed and 2.25 % before
+   it; `missing` 21 362 / 2894 / 0 at frames 0 / 100 / 200. The before state by eye: the 86c
+   window's run 9 on Plan 0083's binary, "the castle was fine, but it flickers in the shadowed
+   part"; the follow-up's window judges the same pose with both plans' light, and its split
+   reads the shadowed part first.
+7. **Not in it:** the perf plan's items (the queue's step on the main thread, 6.3 ms at 1080p
+   against its 1.0 line, Phase 24c; owner question 7), Plan 0090's stamp scene and the key
+   mean's fade-in reading against `F` (the architect's amendment to Plan 0090 at this close,
+   the bullet above), and the backlog's `absorb` light pass.
