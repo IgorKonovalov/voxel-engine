@@ -124,4 +124,4 @@ Beside the `detail` of 1, 2 or 4 above, a part may instead carry `coarse` 1 to 1
 per model voxel, in the same integer arithmetic, so a one-part body of a 600-voxel structure
 stands as a placement ghost; `MAX_PARTS`, `MAX_EDGE`, the pool and the tracing order are
 unchanged, and a `coarse` 1 model is bit-identical to before. The decision and its rejected
-alternatives are ADR-0077.
+alternatives are ADR-0078.

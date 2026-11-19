@@ -1,4 +1,4 @@
-# ADR-0077: An entity part has a grain: a detail finer than a world voxel, or a coarse factor of world voxels per model voxel
+# ADR-0078: An entity part has a grain: a detail finer than a world voxel, or a coarse factor of world voxels per model voxel
 
 > **Status:** accepted (Plan 0083 Phase 7b, written at the plan's close 2026-11-19; the
 > implementation preceded the record, as the plan said it would)
