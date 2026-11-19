@@ -77,7 +77,8 @@ fn sky_shadowed(o: vec3<f32>, d: vec3<f32>, len: f32) -> bool {
 // through SHADOW_ABSORB materials, else 0; -1 where no key light falls on the face (none set, it
 // faces away, or LIGHTING_HOOK_KEY_OFF). Under LIGHTING_PENUMBRA_APPROACH the ray runs toward
 // the disc's centre and the visibility is its closest-approach visibility (walk.wgsl's
-// `approach_on`) times its transmittance. The temporal pass keeps its running mean in the
+// `approach_on`) times its transmittance; under LIGHTING_HOOK_KEY_NO_JITTER (a reading hook) the
+// one ray runs toward the disc's centre. The temporal pass keeps its running mean in the
 // visibility pair's g and lights the face by `key_light_at` times that mean (ADR-0070's pair,
 // ADR-0027's ray).
 fn key_visibility(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>, px: vec2<u32>) -> f32 {
@@ -93,7 +94,10 @@ fn key_visibility(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>, px: vec2<u32>) -> f
         approach_on = false;
         return select(clamp(approach_min, 0.0, 1.0) * exp(-absorb_tau), 0.0, hit);
     }
-    let d = disc_direction(sky.key_dir, sky.key_radius, rand(px, KEY_DIM), rand(px, KEY_DIM + 1u));
+    var d = disc_direction(sky.key_dir, sky.key_radius, rand(px, KEY_DIM), rand(px, KEY_DIM + 1u));
+    if ((params.lighting & LIGHTING_HOOK_KEY_NO_JITTER) != 0u) {
+        d = sky.key_dir;
+    }
     if (sky_shadowed(sky_origin(p, ns), d, KEY_RAY_LEN)) {
         return 0.0;
     }

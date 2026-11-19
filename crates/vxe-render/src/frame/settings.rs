@@ -245,6 +245,10 @@ pub(crate) const LIGHTING_PENUMBRA_APPROACH: u32 = 1 << 22;
 /// without a hit has reached the sky wherever it ends, and an absent chunk is air to it.
 pub(crate) const LIGHTING_HOOK_SKY_END_IS_SKY: u32 = 1 << 23;
 
+/// `Params::lighting` bit, a reading hook ([`LightHooks::key_no_jitter`]): the key light's
+/// shadow ray runs along the disc's centre, its sample on the disc fixed.
+pub(crate) const LIGHTING_HOOK_KEY_NO_JITTER: u32 = 1 << 25;
+
 /// `Params::lighting` bit: a cube face's baked sky term reads its visibilities by the 27-count
 /// gradient's normal at every distance ([`SkyNormal::Smoothed`]).
 pub(crate) const LIGHTING_SKY_SMOOTHED: u32 = 1 << 24;
@@ -270,6 +274,8 @@ pub struct LightHooks {
     /// reached the sky, with no column-map test, in the light pass and the bake: the rule
     /// before ADR-0070's amendment of 2026-11-18.
     pub sky_end_is_sky: bool,
+    /// The key light's shadow ray runs along the disc's centre: no jitter over the sun's disc.
+    pub key_no_jitter: bool,
 }
 
 impl LightHooks {
@@ -297,6 +303,10 @@ impl LightHooks {
             0
         } | if self.sky_end_is_sky {
             LIGHTING_HOOK_SKY_END_IS_SKY
+        } else {
+            0
+        } | if self.key_no_jitter {
+            LIGHTING_HOOK_KEY_NO_JITTER
         } else {
             0
         }
