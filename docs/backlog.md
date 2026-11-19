@@ -1068,6 +1068,21 @@ ADR-0072's text formats (recommended: the level file first, so the editor has so
 Pick up after ADR-0072's spike, or earlier as a placement-only editor over today's entities if
 the owner asks.
 
+### The placing interface, from best practices (part of the editor epic)
+
+Parked 2026-11-19 at Plan 0083's window 83d. Owner: the placing works better after 7d (ground
+snap, `F` free, `E` places, a digit swaps), "but for right interface of placing we should create a
+separate backlog entry and look for best practices", as part of the editor epic above, later. The
+fly-through's placement mode grew one request at a time. Those requests were a belt, a frame
+ghost, then a coarse ghost, the snap, the free mode, a scale of 1 to 4 whose limits show only on
+stdout ("castle: scale 1 only", "over the edit limit of 1024"), and keys added as the mouse went
+missing. **What it takes:** a survey of how editors and building games place large objects
+(Unity, Godot, Unreal, Minecraft's structure blocks, Teardown's editor, Valheim and Satisfactory
+build modes, MagicaVoxel). Cover snapping (grid, surface, footprint), free placement, rotate and
+scale gizmos with their limits shown, a preview that tells what will be cleared, undo, and
+keyboard, mouse and pad parity. Then a design that this entry's plan and the editor app share.
+**Pick up with** the editor-interface entry above.
+
 
 ### A second consumer in mind: a user-built, multiplayer game platform
 
