@@ -1523,6 +1523,25 @@ is read.
 (the resume notes' inventory), the gate's cause, the gate re-read at the tip (24i bar 3), the
 close block, the three-line pointer. No owner question is open.
 
+## Amended 2026-11-19, the owner's two answers after the slowdown
+
+The dev named the gate's slowdown (the readings log, "The gate's slowdown"): Phase 9's column-map
+flush, a defect, fixed in `c682fa9d` (the source switch back to 6.9 / 6.7 s release on the RTX);
+the rest is the light pass's compile time (+2.85 s a build on lavapipe, `ed47dc5c`'s spike the
+largest step), the quiet tip gate 1883.9 s. The owner answered (2026-11-19):
+
+1. **The compile cost: accept now, fix in Plan 0094.** The close discloses the gate's wall
+   (1883.9 s against 19 min) and the first start after a driver update (+38 s release); Plan 0094
+   moves the default-off options out of the default pipeline (an override constant or a second
+   pipeline built when picked) and the GPU tests take a persistent pipeline cache (the backlog's
+   pipeline-cache entry).
+2. **The three regressions against Phase 5's readings** (5.1 the pair's mean 0.6167 against 0.5
+   within 0.1; 5.2 the clamp 0.4993 against 0.25; 5.4's last clause, the dug floor 24.828 on
+   frame 1): **disclosed, routed to Plan 0094**, attributed there beside the canopy work; they stay
+   readings here.
+
+The close follows: the close block, the fresh close review (gate tier only), the merge.
+
 ## Implementation phases
 
 Each phase ships as its own commit. `dev` implements all phases in one session with no review
