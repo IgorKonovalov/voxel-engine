@@ -23,21 +23,28 @@ pub(crate) enum Group {
 }
 
 /// One frame pass: its label, the WGSL modules its source joins in order, its entry point, its
-/// pipeline-overridable constants, its bind groups from index 0, and whether its pipeline is
-/// built on its first use rather than with the frame.
+/// pipeline-overridable constants, its bind groups from index 0, whether its source keeps the
+/// walk's default-off arms ([`compose_arms`]), and whether its pipeline is built on its first
+/// use rather than with the frame.
 pub(crate) struct PassSpec {
     pub(crate) label: &'static str,
     pub(crate) modules: &'static [&'static str],
     pub(crate) entry: &'static str,
     pub(crate) constants: &'static [(&'static str, f64)],
     pub(crate) groups: &'static [Group],
+    pub(crate) arms: bool,
     pub(crate) lazy: bool,
 }
 
 impl PassSpec {
-    /// The pass's source: the prelude and its modules ([`compose`]).
+    /// The pass's source: the prelude and its modules ([`compose`], or [`compose_arms`] for a
+    /// pass that keeps the walk's default-off arms).
     pub(crate) fn source(&self) -> String {
-        compose(self.modules)
+        if self.arms {
+            compose_arms(self.modules)
+        } else {
+            compose(self.modules)
+        }
     }
 }
 
@@ -60,6 +67,8 @@ pub(super) const P_PROBE_TRACE: usize = 11;
 pub(super) const P_PROBE_BLEND: usize = 12;
 pub(super) const P_LIGHT_BARE: usize = 13;
 pub(super) const P_LIGHT_STEPS: usize = 14;
+pub(super) const P_LIGHT_ARMS: usize = 15;
+pub(super) const P_LIGHT_BARE_ARMS: usize = 16;
 
 /// The probe update's modules: its trace and blend share one source.
 const PROBE_UPDATE: &[&str] = &[
@@ -92,7 +101,7 @@ const LIGHT_MODULES: &[&str] = &[
 
 /// Every frame pass but the hit pass ([`Marcher`]) and the composite's FSR 2 variant
 /// ([`composite_hdr_source`]), indexed by the `P_*` constants.
-pub(crate) const PASSES: [PassSpec; 15] = [
+pub(crate) const PASSES: [PassSpec; 17] = [
     PassSpec {
         label: "temporal",
         modules: &[
@@ -134,6 +143,7 @@ pub(crate) const PASSES: [PassSpec; 15] = [
                 F16,
             ]),
         ],
+        arms: false,
         lazy: false,
     },
     // The temporal pass with `COUNT_STORE` on, built on the first encode that counts
@@ -154,6 +164,7 @@ pub(crate) const PASSES: [PassSpec; 15] = [
         entry: "temporal",
         constants: &[("COUNT_STORE", 1.0)],
         groups: &[W, E, Group::SharedWith(P_TEMPORAL)],
+        arms: false,
         lazy: true,
     },
     // The light pass (`shade`) that walks the entities, built by
@@ -175,6 +186,7 @@ pub(crate) const PASSES: [PassSpec; 15] = [
                 Io::Store(wgpu::TextureFormat::Rgba8Unorm),
             ]),
         ],
+        arms: false,
         lazy: true,
     },
     PassSpec {
@@ -192,6 +204,7 @@ pub(crate) const PASSES: [PassSpec; 15] = [
         entry: "gradient",
         constants: &[("ENTITY_SHADOWS", 1.0)],
         groups: &[W, E, E, Group::Own(&[Io::Float, Io::Uint, Io::Float, F16])],
+        arms: false,
         lazy: false,
     },
     PassSpec {
@@ -216,6 +229,7 @@ pub(crate) const PASSES: [PassSpec; 15] = [
                 Io::Store(wgpu::TextureFormat::Rgba16Uint),
             ]),
         ],
+        arms: false,
         lazy: false,
     },
     PassSpec {
@@ -244,6 +258,7 @@ pub(crate) const PASSES: [PassSpec; 15] = [
                 (12, Io::ReadStorage),
             ]),
         ],
+        arms: false,
         lazy: false,
     },
     PassSpec {
@@ -271,6 +286,7 @@ pub(crate) const PASSES: [PassSpec; 15] = [
                 (10, Io::Float),
             ]),
         ],
+        arms: false,
         lazy: false,
     },
     PassSpec {
@@ -302,6 +318,7 @@ pub(crate) const PASSES: [PassSpec; 15] = [
                 Io::Float,
             ]),
         ],
+        arms: false,
         lazy: false,
     },
     PassSpec {
@@ -319,6 +336,7 @@ pub(crate) const PASSES: [PassSpec; 15] = [
                 Io::Uniform,
             ]),
         ],
+        arms: false,
         lazy: false,
     },
     PassSpec {
@@ -353,6 +371,7 @@ pub(crate) const PASSES: [PassSpec; 15] = [
                 Io::ReadStorage,
             ]),
         ],
+        arms: false,
         lazy: false,
     },
     PassSpec {
@@ -361,6 +380,7 @@ pub(crate) const PASSES: [PassSpec; 15] = [
         entry: "gather",
         constants: &[],
         groups: &[W, E, Group::Own(&[Io::Float, Io::Uint, F16]), Group::Probes],
+        arms: false,
         lazy: false,
     },
     // The probe update's two dispatches (`probe_update.wgsl`).
@@ -370,6 +390,7 @@ pub(crate) const PASSES: [PassSpec; 15] = [
         entry: "probe_trace",
         constants: &[],
         groups: &[W, E, E, Group::Probes],
+        arms: false,
         lazy: false,
     },
     PassSpec {
@@ -378,6 +399,7 @@ pub(crate) const PASSES: [PassSpec; 15] = [
         entry: "probe_blend",
         constants: &[],
         groups: &[W, E, E, Group::Probes],
+        arms: false,
         lazy: false,
     },
     // The light pass with `ENTITIES` false (`entity.wgsl`): the frame's light pass while no
@@ -389,6 +411,7 @@ pub(crate) const PASSES: [PassSpec; 15] = [
         entry: "shade",
         constants: &[("ENTITIES", 0.0)],
         groups: &[W, E, Group::SharedWith(P_LIGHT)],
+        arms: false,
         lazy: true,
     },
     // The light pass with `COUNT_STEPS` on, for the steps view, built on its first use.
@@ -398,6 +421,27 @@ pub(crate) const PASSES: [PassSpec; 15] = [
         entry: "shade",
         constants: &[("COUNT_STEPS", 1.0)],
         groups: &[W, E, Group::SharedWith(P_LIGHT)],
+        arms: true,
+        lazy: true,
+    },
+    // The light pass with the walk's default-off arms (the approach probes, the absorbing
+    // step: [`compose_arms`]), built when one is picked ([`Frame::light_pipeline`]).
+    PassSpec {
+        label: "light (arms)",
+        modules: LIGHT_MODULES,
+        entry: "shade",
+        constants: &[("ENTITY_SHADOWS", 1.0)],
+        groups: &[W, E, Group::SharedWith(P_LIGHT)],
+        arms: true,
+        lazy: true,
+    },
+    PassSpec {
+        label: "light (no entities, arms)",
+        modules: LIGHT_MODULES,
+        entry: "shade",
+        constants: &[("ENTITIES", 0.0)],
+        groups: &[W, E, Group::SharedWith(P_LIGHT)],
+        arms: true,
         lazy: true,
     },
 ];

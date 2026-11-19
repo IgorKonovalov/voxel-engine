@@ -115,16 +115,27 @@ impl Frame {
     /// The light pass's pipeline (`shade`), built on its first use unless
     /// [`Frame::prepare_entities`] built it: in the steps view the one whose `COUNT_STEPS` is
     /// true, otherwise while the entity tree holds no leaf (no part drawn and no ghost of one
-    /// that left) the one whose `ENTITIES` is false, which walks no entity.
+    /// that left) the one whose `ENTITIES` is false, which walks no entity; each of those two
+    /// in its variant with the default-off arms compiled in while [`Frame::light_arms`] holds.
     pub(super) fn light_pipeline(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
+        let arms = self.light_arms();
         let pass = if self.state.look.view == ViewMode::Steps {
             P_LIGHT_STEPS
         } else if self.entities.walks_entities() {
-            P_LIGHT
+            if arms { P_LIGHT_ARMS } else { P_LIGHT }
+        } else if arms {
+            P_LIGHT_BARE_ARMS
         } else {
             P_LIGHT_BARE
         };
         self.pipes.pipeline(device, pass)
+    }
+
+    /// Whether the light pass needs its default-off arms: the approach penumbra is picked, or
+    /// some material's style word absorbs ([`SHADOW_ABSORB`]).
+    pub fn light_arms(&self) -> bool {
+        self.state.lighting.penumbra == Penumbra::Approach
+            || self.state.styles.iter().any(|&w| w & SHADOW_ABSORB != 0)
     }
 
     /// The hit pass's pipeline `which`, in the steps view (`count`) its counting variant, and

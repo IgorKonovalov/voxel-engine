@@ -351,6 +351,66 @@ fn a_resize_builds_both_parities_once() {
 mod reading {
     use super::*;
 
+    /// Plan 0094 Phase 2a bar 4, as a reading first: on the software adapter and on the
+    /// high-performance one, a frame's pipelines (`Frame::with_sizes` at 853 x 480 to 1280 x
+    /// 720 and `prepare_entities`, the light pass's two default variants) built on a device
+    /// under an empty pipeline cache (`debug::set_pipeline_cache`), the cache's data taken,
+    /// then built again on a second device under a cache made from that data: both walls, the
+    /// data's size and the warm over the cold, printed.
+    #[test]
+    #[ignore = "a reading"]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "a reading of the pipelines' build time"
+    )]
+    fn the_pipeline_cache_pays() {
+        use vxe_render::test_support::{device_on, high_performance_adapter, software_adapter};
+        for adapter in [software_adapter(), high_performance_adapter()]
+            .into_iter()
+            .flatten()
+        {
+            let name = adapter.get_info().name;
+            if !adapter.features().contains(wgpu::Features::PIPELINE_CACHE) {
+                println!("reading: pipeline cache on {name}: the adapter has no PIPELINE_CACHE");
+                continue;
+            }
+            let build = |data: Option<&[u8]>| {
+                let (device, _q) = device_on(&adapter, 16 << 20, wgpu::Features::PIPELINE_CACHE);
+                // SAFETY: the data is this process's own `get_data` from the same adapter, or none;
+                // `fallback` takes an empty cache for data the driver refuses.
+                let cache = unsafe {
+                    device.create_pipeline_cache(&wgpu::PipelineCacheDescriptor {
+                        label: Some("reading"),
+                        data,
+                        fallback: true,
+                    })
+                };
+                vxe_render::debug::set_pipeline_cache(Some(cache));
+                let t = std::time::Instant::now();
+                let f = Frame::with_sizes(&device, [853, 480], [1280, 720]);
+                f.prepare_entities(&device);
+                let ms = t.elapsed().as_secs_f64() * 1e3;
+                let out = vxe_render::debug::pipeline_cache_data();
+                vxe_render::debug::set_pipeline_cache(None);
+                (ms, out)
+            };
+            let (cold, data) = build(None);
+            let Some(data) = data else {
+                println!(
+                    "reading: pipeline cache on {name}: no data from the backend; cold {cold:.0} ms"
+                );
+                continue;
+            };
+            let (warm, _) = build(Some(&data));
+            let (again, _) = build(None);
+            println!(
+                "reading: pipeline cache on {name}: cold {cold:.0} ms, warm {warm:.0} ms ({:.2} of cold), cold again {again:.0} ms; {} B of data",
+                warm / cold,
+                data.len()
+            );
+        }
+    }
+
     /// The CPU time of `Frame::encode` at the fly-through's default sizes (853 x 480 for a
     /// 1280 x 720 image under FSR 2, half-resolution lighting) over the one-chunk floor, on the
     /// high-performance adapter (`VK_DRIVER_FILES` picks another): 300 encodes after 20, each

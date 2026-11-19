@@ -291,6 +291,28 @@ pub fn compute_pipelines_created() -> u64 {
     COMPUTE_PIPELINES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// The pipeline cache every compute pipeline is created through while one is set
+/// ([`set_pipeline_cache`]): a reading's or a test's, never the frame's own.
+static PIPELINE_CACHE: std::sync::Mutex<Option<wgpu::PipelineCache>> = std::sync::Mutex::new(None);
+
+/// Sets (or with `None` clears) the pipeline cache [`compute_pipeline_with`] passes to every
+/// compute pipeline it creates. The cache must be of the device every later pipeline is
+/// created on until it is cleared: one device at a time, as a test process holds it.
+pub fn set_pipeline_cache(cache: Option<wgpu::PipelineCache>) {
+    *PIPELINE_CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = cache;
+}
+
+/// The data of the cache [`set_pipeline_cache`] set, where the backend gives one.
+pub fn pipeline_cache_data() -> Option<Vec<u8>> {
+    PIPELINE_CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .and_then(wgpu::PipelineCache::get_data)
+}
+
 /// [`compute_pipeline`] with the pipeline-overridable constants `constants`.
 pub(crate) fn compute_pipeline_with(
     device: &wgpu::Device,
@@ -310,6 +332,10 @@ pub(crate) fn compute_pipeline_with(
         bind_group_layouts: layouts,
         immediate_size: 0,
     });
+    let cache = PIPELINE_CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
     device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: Some(label),
         layout: Some(&layout),
@@ -319,6 +345,6 @@ pub(crate) fn compute_pipeline_with(
             constants,
             ..Default::default()
         },
-        cache: None,
+        cache: cache.as_ref(),
     })
 }
