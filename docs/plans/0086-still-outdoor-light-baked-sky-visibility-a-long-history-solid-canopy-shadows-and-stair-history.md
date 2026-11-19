@@ -2755,7 +2755,8 @@ Readings, gates and attempts: [`logs/0086.md`](logs/0086.md).
 | 21a: A chunk an edit fills from air is a dig | dev | done in part: bar 1 passes; the castle's `missing` 22 083 / 1742 / 0 at frames 0 / 100 / 200, drained at 1423 frames (2255 before); the fresh over-8 mean 9.780 % against the 0.5 % bar (9.038 % before, 2.25 % before the seed); the dig rig's centre chunk is block-less at its dig, so bar 3's rig changes (dots 2.2 % at the dig's frame). On the tip after calls 1 and 2: the castle's fresh over-8 mean 3.431 % (over 2.25 %: stopped there; 74.7 % of the over-8 pixels young, 5.8 % ray-cast); `missing` 21 362 / 2894 / 0; whole digs 0 at the dig rig's step | `12c727f4`, `f5717e6f` |
 | 22: The fired lights' grain under the anchor | dev | done: no mechanism, the backlog entry; bar 2 read with two auto-exposure arms (anchor 4: at rest p99 10, edge flips 6.09 %; anchor 0: 6, 1.10 %); landed before Phase 21 | `59d0ea90` |
 | 23: The sunlit treads' clip | dev | done: the bar only; anchor 4 0.000 % at 255, treads' mean 169.8 (no anchor 0.864 %, 241.5); soak, 146 s on lavapipe | `8f8645d6` |
-| 24: The owner's third window | human | runner ready (`live/session86c.sh`, `live/bin86c` at `8f8645d6`); the prep in the log | |
+| 24: The owner's third window | human | done 2026-11-19: passed 1a, 1b, 2, 3a, 5a, 6, 7a, 8 and the defaults; failed A (the dig's flash), B (the canopy at rest), D (the stairs' fps); verdicts in `live/window86c/verdicts.md` | |
+| 24d: The tip gate's two failures | dev | done: the blank-chunk test split in two (the edit's chunk a dig first in all three orders; an arriving chunk, inserted with no edit box, keeps the order's claim), both pass; `hud.png`'s 2427 bytes are the camera row (Phase 18's `chunk x y z, ` prefix, `76eae309`), re-blessed; the tip gate in 24e's prep | committed with this row |
 | 25: The picks as tests | dev | not started | |
 
 ### Notes
