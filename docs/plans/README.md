@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0090** (ADRs are a separate sequence, see `../adrs/README.md` for its
+**Next free number: 0091** (ADRs are a separate sequence, see `../adrs/README.md` for its
 next free number).
 
 ## Active roster
@@ -19,7 +19,6 @@ next free number).
 | [0071](0071-the-consumers-path-a-render-example-a-renderer-tested-alone-names-and-errors.md) | The consumer's path: a render example as the contract, a renderer tested alone, one name per thing, errors | approved | Cross-cutting, ADR-0057. From the 2026-11-12 review. After 0045, 0069 and 0044's Phase 8. |
 | [0073](0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md) | A settings menu and a settings file for the fly-through and the tester | approved | ADR-0058. Apps only. After 0069, 0071 and 0080; amended 2026-11-16 (owner). |
 | [0076](0076-a-key-help-overlay-for-the-fly-through-from-the-key-table.md) | A key help overlay for the fly-through: `F1` (readings move to `Enter`), written from the key tables, modes live, 80 x 45 | superseded | Apps only, no ADR. Folded into 0080 (owner, 2026-11-16). |
-| [0079](0079-entities-aware-of-floor-and-walls-a-surface-mover-the-smoothed-normal-and-a-wandering-demo.md) | Entities aware of the floor and the walls: a surface mover, the smoothed normal, a body in the `.rig`, a wander | approved | M6, ADR-0062 (proposed). Phases 1-3 after 0063 and the chore; Phase 4 after 0077. |
 | [0081](0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md) | A surface detail layer: blades, caps and pebbles marched above styled faces, lit as hits, faded by size on screen | approved | M10, ADR-0063 (proposed). Re-read 2026-11-17. After 0086 and 0080, before 0033. |
 | [0082](0082-squash-and-stretch-a-scale-per-part-in-the-pose-and-the-clips.md) | Squash and stretch: a scale per axis per part in the pose and the clips, a slime in the library with a bounce | approved | M6, ADR-0064 (proposed). Approved 2026-11-16. After 0063, the clip chore, 0078 and 0079 P1-3. |
 | [0083](0083-anything-from-a-vox-palette-materials-a-material-file-and-large-scenes-stamped-into-the-world.md) | Anything from a `.vox`: palette materials, a material file, brick prefabs, far placements | approved | M7, ADR-0065, ADR-0066. P1-7c done; P7d (snap, free mode, keys) and window 83d before P8. |
@@ -28,6 +27,7 @@ next free number).
 | [0086](0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md) | Still outdoor light: baked sky visibility, a long history for the sky and key rays, solid canopy shadows, stair history, a penumbra spike | approved | M10, ADR-0070. After Plan 0032, before Plan 0081. |
 | [0087](0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md) | The rename to `svet`: crates, `SVET_*`, the WIT package, the tester archive, docs, the repository, a minor bump | approved | ADR-0071. Alone, last: after 0032, 0080, 0077, 0079, 0083 and 0086 merge. |
 | [0089](0089-deterministic-simulation-testing-seeded-scenarios-a-simulated-channel-a-mirror-oracle-and-gates.md) | Deterministic simulation testing: seeded scenarios, a shrinker, a simulated channel, a mirror oracle, determinism gates | approved | ADR-0073 (proposed). All phases after 0087 merges (owner). |
+| [0090](0090-the-pop-counter-scenes-on-lavapipe-count-the-pixels-that-break-the-light-rules-a-ratchet.md) | The pop counter: fixed scenes on lavapipe count the pixels that break each light rule, by source; a baseline that only falls | approved | Cross-cutting, ADR-0076 (proposed). After 0086 closes, before 0081. |
 <!-- roster:end -->
 
 ## Sequence
@@ -79,6 +79,9 @@ Each starts on main after the one before it closes, unless its line says otherwi
    **Added 2026-11-17 (architect, from the owner's picks at Plan 0032's window):** Plan 0086
    (the flicker's fixes, ADR-0070) starts when Plan 0032 closes and merges, recommended ahead
    of Plan 0081 (the still image first); the owner's go and the order are owed.
+   **Added 2026-11-18 (architect, draft):** Plan 0090 (the pop counter, ADR-0076) takes its
+   baseline on the tree with Plan 0086 merged, so it starts when 0086 closes, recommended ahead
+   of Plan 0081 so the detail layer is the first plan measured against the ratchet; awaits go.
    **Re-read 2026-11-17 (architect, the owner's "start the re-read"):** Plans 0081, 0033, 0034,
    0035, 0036 and 0037 each carry an "Amended 2026-11-17 (re-read)" section against main
    3b3986d0: the Plan 0045 paths, the menu entries in place of keys (ADR-0061), the settings
@@ -112,7 +115,7 @@ Plan 0044's Phase 4; **Plan 0072** (development speed), closed 2026-11-13 (v0.51
 
 **Plan 0081** (a surface detail layer: a style table per material id on the render side, a procedural shell marched in the hit pass where a ray meets a styled face, lit as a hit, faded by the voxel's size on screen, swayed by a wind the game sets; drafted 2026-11-16 from the owner's "outdoors needs trees, grass and water" and "maybe this new layer can be used for something else as well", approved 2026-11-16 with every recommendation; ADR-0063 proposed): after Plan 0032 closes and merges, before Plan 0033; it does not wait for Plan 0036, whose wind it takes when 0036 lands. Plan 0032 was amended the same day: its trees are prefabs stamped at generation time.
 
-**Plan 0079** (entities aware of the floor and the walls: a sphere surface mover beside the cylinder controller in `vxe-sim`, the solid-count gradient as the smoothed normal in `vxe-world`, `Quat::from_frame` in `vxe-entity`, a `body` and a clip `stride` in the `.rig`, a seeded wander in the fly-through; drafted 2026-11-16 from the owner's request, approved 2026-11-16 with every recommendation; ADR-0062 proposed): Phases 1 to 3 (`crates/` and the two library rigs) as a side lane once Plan 0063 and the clip-recorder chore merge, beside 0077; Phase 4 (the fly-through) after Plan 0077 merges, with the architect's re-read.
+**Plan 0079** (entities aware of the floor and the walls: a sphere surface mover beside the cylinder controller in `vxe-sim`, the solid-count gradient as the smoothed normal in `vxe-world`, `Quat::from_frame` in `vxe-entity`, a `body` and a clip `stride` in the `.rig`, a seeded wander in the fly-through; drafted 2026-11-16 from the owner's request, approved 2026-11-16 with every recommendation; ADR-0062 proposed): **closed 2026-11-18, v0.65.0**, ADR-0062 accepted with an Outcome; every phase done, two course hashes pinned on both arms; the 64-spider frame CPU (+3.07 ms against a +1.5 ms guess) and the pathfinding plan are backlog entries. Phases 1 to 3 (`crates/` and the two library rigs) as a side lane once Plan 0063 and the clip-recorder chore merge, beside 0077; Phase 4 (the fly-through) after Plan 0077 merges, with the architect's re-read. **Re-read 2026-11-18** against 0077 as landed: the wander is the menu entry (`F11` is unbound), placing is 0077's belt and click, `belt::stand` branches on the body and the ghost of a surface body stands on the wall, the mover state is `Placed.mover`, the built-in walker keeps its circle, `hud_feed.rs` splits first; owner questions 9 to 11 (a key, the ghost on the wall, the words) took the recommendations (no key, the ghost on the wall, `wander`); the Phase 5 window asked for longer wander legs and an `Esc` confirmation, both in Phase 6.
 
 **Plan 0082** (squash and stretch: a scale per axis per part in `PartPose` and in a clip's keys, `key 10 body scale 1.2 0.8 1.2` in the `.rig`, a slime with a bounce in the entities library; drafted 2026-11-16 from the owner's "jelly-like entities, slimes" question, approved 2026-11-16 with every recommendation; ADR-0064 proposed, a parent's scale moves its children's pivots and not their shapes): after Plan 0063, the clip-recorder chore, Plan 0078 and Plan 0079's Phases 1 to 3 merge (the owner's recommendation agreed: "squash-and-stretch plan after 0079"); it may run beside 0079's Phase 4 and 0077.
 
@@ -156,6 +159,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0079](done/0079-entities-aware-of-floor-and-walls-a-surface-mover-the-smoothed-normal-and-a-wandering-demo.md) | Entities aware of the floor and the walls: a sphere surface mover, the solid-count gradient, a `.rig` body and stride, a seeded wander; 64 spiders +3.07 ms CPU (backlog) | 2026-11-18, v0.65.0 |
 | [0077](done/0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md) | An entity picker: the entities library, a chooser with icons, a belt of slots, a placement mode with a marked ghost | 2026-11-18, v0.64.0 |
 | [0088](done/0088-the-outdoor-scene-in-the-tester-a-path-over-the-hills-through-the-trees-and-into-the-cave.md) | The outdoor scene in the tester: a computed path over the hills, between the trees and down the tunnel; a fourth menu row | 2026-11-17, v0.63.0 |
 | [0080](done/0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) | The fly-through's menu: one key table, a palette, the Keys page, the minimal key set and the pad; numbers edited, grey reasons | 2026-11-17, v0.62.0 |

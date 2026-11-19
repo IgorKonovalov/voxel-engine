@@ -1,8 +1,8 @@
 # ADR-0062: Surface locomotion is a kinematic sphere attached to a contact normal in `vxe-sim`; ground locomotion keeps the cylinder controller
 
-> **Status:** proposed
+> **Status:** accepted (2026-11-18, at Plan 0079's close; see Outcome)
 > **Date:** 2026-11-16
-> **Related plan(s):** [Plan 0079](../plans/0079-entities-aware-of-floor-and-walls-a-surface-mover-the-smoothed-normal-and-a-wandering-demo.md)
+> **Related plan(s):** [Plan 0079](../plans/done/0079-entities-aware-of-floor-and-walls-a-surface-mover-the-smoothed-normal-and-a-wandering-demo.md)
 
 ## Context
 
@@ -140,4 +140,25 @@ later plan.
 
 ## Outcome
 
-_(Added at acceptance if implementation falsified something above.)_
+Added 2026-11-18 at Plan 0079's close. The decision held: `vxe-sim`'s `SurfaceMover` is the
+sphere described, swept by the same conservative advancement over the same collected boxes
+(`sweep_sphere` beside the cylinder's sweep, the cylinder's course hash unchanged), the
+gradient is `World::solid_gradient` read through the brick masks, and the frame is
+`Quat::from_frame` in `vxe-entity`; the surface course hashes to `0x0a07_c86c_51f9_8d3c` and
+the fly-through's room course (sixteen bodies, 1500 ticks) to `0xe57c_02c6_8ac4_b2d8`, both
+asserted on CI's Linux and Windows arms. Three details differ from the body above, each stated
+in the code's doc and pinned by the course hash: the forward is carried by the shortest arc at
+a **convex** transition too, not only at the concave one (the body says the concave case; on
+landing it is projected onto the new surface only); a move that meets a contact whose normal is
+the body's own glides on, swept once more lifted a little along the normal, rather than
+stopping; and the half turn for antiparallel directions is about the lowest-index axis made
+perpendicular to the direction, not that axis itself. `vxe-sim` keeps `vxe-world` as its only
+dependency: the arc is a crate-local copy of `vxe-entity`'s, held equal by one committed vector
+of 64 direction pairs hashed in both crates' tests. The measured costs (`docs/nfr.md` section 8,
+loaded, indicative): one attached tick 0.43 µs against the 20 µs proposal, `solid_gradient` at
+`half` 6 0.92 µs against 5 µs; 64 spiders' movers cost the fly-through 1.4 ms a tick in a room
+and 2.8 ms on the showcase, which is +3.07 ms of frame CPU against the plan's +1.5 ms guess,
+a profile owed in `docs/backlog.md`. The negative consequence "a sphere has no height" showed
+as planned (a radius-512 sphere on the one-voxel staircase rests on the step corners, so the
+staircase test reads a radius-128 body); the convex-edge dwell showed as a spider lingering up to
+220 ticks at a pillar's vertical edge, within the Negative list's description.

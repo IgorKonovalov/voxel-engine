@@ -338,3 +338,17 @@ fn a_zero_tick_fade_switches_at_once() {
     assert_eq!(p.pose(&m, &rest, 12), rest);
     assert_eq!(p.pose(&m, &rest, 16), sample(&m, &rest, &b, 4));
 }
+
+/// A clip is in place until given a stride; the stride rides along with the clip unchanged.
+#[test]
+fn a_clip_carries_its_stride() {
+    let m = model();
+    let c = clip(&m, 30, true, vec![key(0, [0; 3], Quat::IDENTITY)]);
+    assert_eq!(c.stride(), 0);
+    let s = c.clone().with_stride(2048);
+    assert_eq!(s.stride(), 2048);
+    assert_eq!(
+        (s.length(), s.looped(), s.tracks()),
+        (c.length(), c.looped(), c.tracks())
+    );
+}

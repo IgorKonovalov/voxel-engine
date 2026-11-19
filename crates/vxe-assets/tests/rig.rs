@@ -1,7 +1,9 @@
 //! The `.rig` file: the sample rig built against a three-node `.vox`, the degree table, errors
 //! with their lines, the canonical round trip and seeded garbage.
 
-use vxe_assets::{PaletteRows, Rig, RigError, Slot, VoxFile, VoxMap, VoxModel, VoxText, encode};
+use vxe_assets::{
+    PaletteRows, Rig, RigBody, RigError, Slot, VoxFile, VoxMap, VoxModel, VoxText, encode,
+};
 use vxe_entity::{Quat, sample};
 use vxe_world::{AIR, Material, MaterialId, MaterialTable};
 
@@ -13,7 +15,8 @@ material 9 glow_amber                # palette index -> a material name
 part torso node torso pivot 4 0 3 detail 2
 part head  node head  parent torso at 0 12 0  pivot 3 0 3 detail 2
 part leg_l node leg   parent torso at -2 0 0  pivot 1.5 8 1.5 detail 2
-clip walk ticks 40 loop
+body ground radius 4 height 26 step 4
+clip walk ticks 40 loop stride 16
 key 0  leg_l rot x 30
 key 20 leg_l rot x -30
 key 40 leg_l rot x 30
@@ -161,6 +164,102 @@ fn errors_name_their_line() {
     assert!(e.message.contains("`a`"), "{e}");
     // A Display that leads with the line, as a viewer's banner shows it.
     assert!(e.to_string().starts_with("rig line 3: "), "{e}");
+    // Two `body` lines, the second blamed.
+    let e = fails(&format!(
+        "{head}body surface radius 12
+body ground radius 4 height 26
+"
+    ));
+    assert_eq!(e.line, Some(5));
+    assert!(e.message.contains("`body`"), "{e}");
+    // A body of an unknown kind.
+    let e = fails(&format!(
+        "{head}body flying radius 4
+"
+    ));
+    assert_eq!(e.line, Some(4));
+    assert!(e.message.contains("`flying`"), "{e}");
+    // A stride that is not a multiple of 1/256.
+    let e = fails(
+        "vox a.vox
+part torso model 0 pivot 0 0 0
+clip c ticks 10 loop stride 0.3
+",
+    );
+    assert_eq!(e.line, Some(3));
+    assert!(e.message.contains("`0.3`"), "{e}");
+}
+
+/// The rig text without its `body` line and with its clip's stride dropped.
+fn bodiless() -> String {
+    SAMPLE
+        .lines()
+        .filter(|l| !l.starts_with("body"))
+        .map(|l| l.replace(" stride 16", "") + "\n")
+        .collect()
+}
+
+#[test]
+fn a_ground_body_builds_in_world_units() {
+    let vox = three_node_vox();
+    // The root, torso, is at detail 2: two model voxels to a world voxel.
+    let built = Rig::parse(SAMPLE)
+        .unwrap()
+        .build_mapped(&vox, &lookup, &mut no_palette)
+        .unwrap();
+    assert_eq!(
+        built.body,
+        Some(RigBody::Ground {
+            radius: 512,
+            height: 3328,
+            step: 512
+        })
+    );
+    let defaults = bodiless().replace("clip walk", "body ground radius 4 height 26\nclip walk");
+    let built = Rig::parse(&defaults)
+        .unwrap()
+        .build_mapped(&vox, &lookup, &mut no_palette)
+        .unwrap();
+    assert_eq!(
+        built.body,
+        Some(RigBody::Ground {
+            radius: 512,
+            height: 3328,
+            step: 512
+        })
+    );
+    let surface = bodiless().replace("clip walk", "body surface radius 12\nclip walk");
+    let built = Rig::parse(&surface)
+        .unwrap()
+        .build_mapped(&vox, &lookup, &mut no_palette)
+        .unwrap();
+    assert_eq!(
+        built.body,
+        Some(RigBody::Surface {
+            radius: 1536,
+            reach: 1024
+        })
+    );
+    let built = Rig::parse(&bodiless())
+        .unwrap()
+        .build_mapped(&vox, &lookup, &mut no_palette)
+        .unwrap();
+    assert_eq!(built.body, None);
+}
+
+#[test]
+fn a_stride_lands_on_the_clip() {
+    let vox = three_node_vox();
+    let built = Rig::parse(SAMPLE)
+        .unwrap()
+        .build_mapped(&vox, &lookup, &mut no_palette)
+        .unwrap();
+    assert_eq!(built.clips[0].1.stride(), 2048);
+    let built = Rig::parse(&bodiless())
+        .unwrap()
+        .build_mapped(&vox, &lookup, &mut no_palette)
+        .unwrap();
+    assert_eq!(built.clips[0].1.stride(), 0);
 }
 
 #[test]
@@ -205,7 +304,20 @@ fn a_rig_round_trips() {
     let first = Rig::parse(SAMPLE).unwrap();
     let text = first.write();
     println!("{text}");
+    assert!(
+        text.contains("body ground radius 4 height 26 step 4\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("clip walk ticks 40 loop stride 16\n"),
+        "{text}"
+    );
     assert_eq!(Rig::parse(&text).unwrap(), first);
+    let surface =
+        Rig::parse(&bodiless().replace("clip walk", "body surface radius 12 reach 3\nclip walk"))
+            .unwrap();
+    assert!(surface.write().contains("body surface radius 12 reach 3\n"));
+    assert_eq!(Rig::parse(&surface.write()).unwrap(), surface);
     // Lengths, moves and several turns survive too.
     let other = "vox m.vox\nrate 24\npart a model 1 at 0.5 -0.00390625 3 pivot 1 2 3.75 detail 4\n\
                  part b node x parent a pivot 0 0 0\nclip one ticks 7\n\
@@ -276,6 +388,14 @@ const WORDS: &[&str] = &[
     "40",
     "\u{e9}",
     "4294967296",
+    "body",
+    "ground",
+    "surface",
+    "radius",
+    "height",
+    "step",
+    "reach",
+    "stride",
 ];
 
 #[test]

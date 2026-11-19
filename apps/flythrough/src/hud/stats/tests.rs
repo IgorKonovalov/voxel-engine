@@ -622,10 +622,10 @@ fn the_steps_row_names_the_key_light_s_ray() {
         [99.0, 99.0, 9.0, 0.0],
     ];
     let (n, [mean, p99, loads, pool]) =
-        crate::run::hud_feed::key_ray_steps(&texels).expect("two rays cast");
+        crate::run::hud_lines::key_ray_steps(&texels).expect("two rays cast");
     assert_eq!((n, mean, loads, pool), (2, 20.0, 30.0, 3.0));
     assert!((10.0..=30.0).contains(&p99), "{p99}");
-    assert!(crate::run::hud_feed::key_ray_steps(&[[5.0, 5.0, 5.0, 0.0]]).is_none());
+    assert!(crate::run::hud_lines::key_ray_steps(&[[5.0, 5.0, 5.0, 0.0]]).is_none());
     let stats = HudStats {
         steps: Some(StepsSample {
             key: Some([20.0, 30.0]),

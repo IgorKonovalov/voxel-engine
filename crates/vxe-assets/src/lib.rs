@@ -42,8 +42,8 @@ pub use map::{Slot, Unmapped, VoxMap};
 pub use materials::{MaterialFile, MaterialFileError};
 pub use palette::DEFAULT_PALETTE;
 pub use rig::{
-    Axis, DEFAULT_RATE, Line, MAX_DEGREES, Rig, RigClip, RigError, RigKey, RigMaterial, RigModel,
-    RigPart, VoxSource, axis_rotation, key_rotation,
+    Axis, DEFAULT_RATE, Line, MAX_DEGREES, Rig, RigBody, RigBodyLine, RigClip, RigError, RigKey,
+    RigMaterial, RigModel, RigPart, VoxSource, axis_rotation, key_rotation,
 };
 pub use rows::{
     DEFAULT_EMISSION_FACTOR, PaletteRows, palette_row, resolve_existing, srgb_to_linear,

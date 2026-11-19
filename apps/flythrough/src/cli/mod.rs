@@ -641,7 +641,7 @@ pub struct Args {
     pub(crate) castle_shot: castle::CastleShot,
     /// `--entities N`: `N` walkers on a 3 m ring around the spawn (`crate::walker`).
     pub(crate) entities: u32,
-    /// `--entities-walk on|off`: the walkers start walking (the menu's `walkers walk`; off).
+    /// `--entities-walk on|off`: the wander starts (the menu's `wander`; off).
     pub(crate) entities_walk: bool,
     /// `--model PATH`: the `.rig` the viewer loads (`crate::viewer`); `--clip NAME` its first
     /// clip.

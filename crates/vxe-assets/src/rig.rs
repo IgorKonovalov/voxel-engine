@@ -10,7 +10,8 @@
 //! part torso node torso pivot 4 3 0 detail 2         # z is up: the torso's bottom centre
 //! part head  node head  parent torso at 0 0 12  pivot 3 3 0 detail 2
 //! part leg_l model 2    parent torso at -2 0 0  pivot 1.5 1.5 8 detail 2
-//! clip walk ticks 40 loop
+//! body ground radius 4 height 26 step 4  # optional: what moves the model
+//! clip walk ticks 40 loop stride 16    # stride optional: one cycle's distance
 //! key 0  leg_l rot x 30
 //! key 20 leg_l rot x -30 move 0 0 0.5
 //! key 40 leg_l rot x 30
@@ -28,6 +29,14 @@
 //!   offset from the rest place, in the parent's model voxels as `at`). Several `rot` compose in
 //!   the order written: the product `r1 * r2 * ...`, each later turn about the axes the earlier
 //!   ones turned. A key belongs to the clip above it; one part's keys rise in tick.
+//! - **`body ground radius R height H [step S]`** or **`body surface radius R [reach A]`**, at
+//!   most one: the body a mover gives the model (a ground body for the character controller,
+//!   a surface body for the surface mover, ADR-0062), in the root part's model voxels.
+//!   `step` defaults to the radius and `reach` to half the radius plus one world voxel, both
+//!   taken in world units at build. The words carry no meaning past which mover fits.
+//! - **`clip <name> ticks <n> [loop] [stride D]`**: `stride` is the distance one cycle of the
+//!   clip carries the body, in the root part's model voxels, at least 0 (0, the default, is
+//!   in place).
 //! - **Lengths** are decimals that are whole multiples of 1/256 (`1.5`, `-0.25`, `0.00390625`).
 //!   At build a length in model voxels becomes 1/256 world voxel by dividing by the detail,
 //!   rounded half away from zero.
@@ -159,8 +168,36 @@ pub struct RigClip {
     pub name: String,
     pub ticks: u32,
     pub looped: bool,
+    /// One cycle's distance, 1/256 of the root part's model voxel; 0 is in place.
+    pub stride: i32,
     pub keys: Vec<RigKey>,
     pub line: Line,
+}
+
+/// A `body` line, lengths in 1/256 of the root part's model voxel as written; the defaults
+/// are applied at build.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum RigBodyLine {
+    Ground {
+        radius: i32,
+        height: i32,
+        step: Option<i32>,
+        line: Line,
+    },
+    Surface {
+        radius: i32,
+        reach: Option<i32>,
+        line: Line,
+    },
+}
+
+/// A built body, lengths in 1/256 world voxel: which mover fits the model and its size.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RigBody {
+    /// A vertical cylinder for the character controller.
+    Ground { radius: i64, height: i64, step: i64 },
+    /// A sphere for the surface mover; `reach` is its attach reach.
+    Surface { radius: i64, reach: i64 },
 }
 
 /// A parsed rig: every statement as written, checked for names and order but not yet against
@@ -174,6 +211,7 @@ pub struct Rig {
     pub materials: Vec<RigMaterial>,
     /// In file order.
     pub parts: Vec<RigPart>,
+    pub body: Option<RigBodyLine>,
     pub clips: Vec<RigClip>,
 }
 
@@ -188,8 +226,10 @@ pub struct RigModel {
     /// rotations the identity, the root at the origin. The `rest` argument of
     /// [`vxe_entity::sample`].
     pub rest: Pose,
-    /// The clips in file order.
+    /// The clips in file order, each with its stride in 1/256 world voxel.
     pub clips: Vec<(String, Clip)>,
+    /// The `body` line in 1/256 world voxel, by the root part's detail.
+    pub body: Option<RigBody>,
 }
 
 /// Ticks per second when the rig names no `rate`.
@@ -430,6 +470,69 @@ fn parse_key(t: &mut Toks<'_>) -> Result<RigKey, RigError> {
     })
 }
 
+/// A length of at least zero.
+fn non_negative(line: usize, tok: &str) -> Result<i32, RigError> {
+    let v = length(line, tok)?;
+    if v < 0 {
+        return Err(err(line, format!("`{tok}` is negative")));
+    }
+    Ok(v)
+}
+
+/// A length of more than zero.
+fn positive(line: usize, tok: &str) -> Result<i32, RigError> {
+    let v = length(line, tok)?;
+    if v <= 0 {
+        return Err(err(line, format!("`{tok}` is not more than zero")));
+    }
+    Ok(v)
+}
+
+/// The rest of a `body` line: its kind, then its keywords in any order, each once.
+fn parse_body(t: &mut Toks<'_>) -> Result<RigBodyLine, RigError> {
+    let line = t.line;
+    let kind = t.next("`ground` or `surface`")?;
+    let (needs, optional): (&[&str], &str) = match kind {
+        "ground" => (&["radius", "height"], "step"),
+        "surface" => (&["radius"], "reach"),
+        _ => {
+            return Err(err(
+                line,
+                format!("`{kind}` is not a body; use `ground` or `surface`"),
+            ));
+        }
+    };
+    let mut got: BTreeMap<&str, i32> = BTreeMap::new();
+    while let Some(kw) = t.opt() {
+        if !(needs.contains(&kw) || kw == optional) || got.contains_key(kw) {
+            return Err(err(line, format!("unexpected `{kw}`")));
+        }
+        let tok = t.next("a length")?;
+        let v = if kw == optional && kind == "ground" {
+            non_negative(line, tok)?
+        } else {
+            positive(line, tok)?
+        };
+        got.insert(kw, v);
+    }
+    if let Some(m) = needs.iter().find(|k| !got.contains_key(**k)) {
+        return Err(err(line, format!("`body {kind}` needs `{m}`")));
+    }
+    Ok(match kind {
+        "ground" => RigBodyLine::Ground {
+            radius: got["radius"],
+            height: got["height"],
+            step: got.get("step").copied(),
+            line: Line(line),
+        },
+        _ => RigBodyLine::Surface {
+            radius: got["radius"],
+            reach: got.get("reach").copied(),
+            line: Line(line),
+        },
+    })
+}
+
 impl Rig {
     /// Parses a rig. Every error carries its line and quotes the token. Names are checked:
     /// a `key`'s part and a `part`'s parent must be parts of the file, the parents must not
@@ -441,12 +544,13 @@ impl Rig {
         let mut materials: Vec<RigMaterial> = Vec::new();
         let mut parts: Vec<RigPart> = Vec::new();
         let mut clips: Vec<RigClip> = Vec::new();
+        let mut body: Option<RigBodyLine> = None;
         for (i, raw) in text.lines().enumerate() {
             let line = i + 1;
-            let body = raw.split_once('#').map_or(raw, |(b, _)| b);
+            let code = raw.split_once('#').map_or(raw, |(b, _)| b);
             let mut t = Toks {
                 line,
-                it: body.split_ascii_whitespace(),
+                it: code.split_ascii_whitespace(),
                 last: "",
             };
             let Some(stmt) = t.opt() else { continue };
@@ -506,18 +610,31 @@ impl Rig {
                     if ticks == 0 {
                         return Err(err(line, "`ticks 0`: a clip is at least one tick"));
                     }
-                    let looped = match t.opt() {
-                        None => false,
-                        Some("loop") => true,
-                        Some(tok) => return Err(err(line, format!("unexpected `{tok}`"))),
-                    };
+                    let mut looped = false;
+                    let mut stride = None;
+                    while let Some(tok) = t.opt() {
+                        match tok {
+                            "loop" if !looped && stride.is_none() => looped = true,
+                            "stride" if stride.is_none() => {
+                                stride = Some(non_negative(line, t.next("a stride")?)?);
+                            }
+                            _ => return Err(err(line, format!("unexpected `{tok}`"))),
+                        }
+                    }
                     clips.push(RigClip {
                         name: clip_name,
                         ticks,
                         looped,
+                        stride: stride.unwrap_or(0),
                         keys: Vec::new(),
                         line: Line(line),
                     });
+                }
+                "body" => {
+                    if body.is_some() {
+                        return Err(err(line, "`body` given twice"));
+                    }
+                    body = Some(parse_body(&mut t)?);
                 }
                 "key" => {
                     let k = parse_key(&mut t)?;
@@ -560,6 +677,7 @@ impl Rig {
             rate: rate.unwrap_or(DEFAULT_RATE),
             materials,
             parts,
+            body,
             clips,
         };
         rig.check_names()?;
@@ -615,7 +733,7 @@ impl Rig {
         Ok(())
     }
 
-    /// The rig in a canonical form: `vox`, `rate`, the materials, the parts, then each clip
+    /// The rig in a canonical form: `vox`, `rate`, the materials, the parts, the body, then each clip
     /// and its keys, single spaces, lengths as the shortest exact decimal. Comments and
     /// alignment are not kept; [`Rig::parse`] reads it back to an equal rig.
     pub fn write(&self) -> String {
@@ -651,9 +769,44 @@ impl Rig {
             triple(&mut o, "pivot", p.pivot);
             let _ = writeln!(o, " detail {}", p.detail);
         }
+        let one = |o: &mut String, kw: &str, v: i32| {
+            let _ = write!(o, " {kw} ");
+            write_length(o, v);
+        };
+        match &self.body {
+            None => {}
+            Some(RigBodyLine::Ground {
+                radius,
+                height,
+                step,
+                ..
+            }) => {
+                o.push_str("body ground");
+                one(&mut o, "radius", *radius);
+                one(&mut o, "height", *height);
+                if let Some(s) = step {
+                    one(&mut o, "step", *s);
+                }
+                o.push('\n');
+            }
+            Some(RigBodyLine::Surface { radius, reach, .. }) => {
+                o.push_str("body surface");
+                one(&mut o, "radius", *radius);
+                if let Some(r) = reach {
+                    one(&mut o, "reach", *r);
+                }
+                o.push('\n');
+            }
+        }
         for c in &self.clips {
             let _ = write!(o, "clip {} ticks {}", c.name, c.ticks);
-            o.push_str(if c.looped { " loop\n" } else { "\n" });
+            if c.looped {
+                o.push_str(" loop");
+            }
+            if c.stride != 0 {
+                one(&mut o, "stride", c.stride);
+            }
+            o.push('\n');
             for k in &c.keys {
                 let _ = write!(o, "key {} {}", k.tick, k.part);
                 for (axis, deg) in &k.rots {
@@ -797,6 +950,9 @@ impl Rig {
         for (pp, t) in pose.parts.iter_mut().zip(rest) {
             pp.t = t;
         }
+        // The root part: the first in the model's order.
+        let root_detail = order.first().map_or(1, |&i| self.parts[i].detail);
+        let world = |v: i32| i64::from(to_world([v, 0, 0], root_detail)[0]);
         let mut clips = Vec::with_capacity(self.clips.len());
         for c in &self.clips {
             let mut tracks: BTreeMap<usize, Vec<Key>> = BTreeMap::new();
@@ -823,7 +979,8 @@ impl Rig {
                 })
                 .collect();
             let clip = Clip::new(&model, c.ticks, c.looped, tracks)
-                .map_err(|e| err(c.line.0, format!("clip `{}`: {e}", c.name)))?;
+                .map_err(|e| err(c.line.0, format!("clip `{}`: {e}", c.name)))?
+                .with_stride(world(c.stride) as i32);
             clips.push((c.name.clone(), clip));
         }
         Ok(RigModel {
@@ -831,6 +988,28 @@ impl Rig {
             part_names: order.iter().map(|&i| self.parts[i].name.clone()).collect(),
             rest: pose,
             clips,
+            body: self.body.as_ref().map(|b| match *b {
+                RigBodyLine::Ground {
+                    radius,
+                    height,
+                    step,
+                    ..
+                } => {
+                    let radius = world(radius);
+                    RigBody::Ground {
+                        radius,
+                        height: world(height),
+                        step: step.map_or(radius, world),
+                    }
+                }
+                RigBodyLine::Surface { radius, reach, .. } => {
+                    let radius = world(radius);
+                    RigBody::Surface {
+                        radius,
+                        reach: reach.map_or(radius / 2 + 256, world),
+                    }
+                }
+            }),
         })
     }
 

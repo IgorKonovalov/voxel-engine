@@ -12,7 +12,7 @@ use crate::hud::{self};
 use crate::now;
 use crate::outdoor::OutdoorSource;
 use crate::pad::Pad;
-use crate::run::hud_feed::look_line;
+use crate::run::hud_lines::look_line;
 use crate::showcase::{SHOWCASE_CHUNKS, Shot, ShowcaseSource};
 use std::path::Path;
 use std::sync::Arc;

@@ -155,6 +155,7 @@ pub(crate) fn bare_run(world: World) -> Run {
         structure_placed: None,
         menu: Default::default(),
         notice: None,
+        quit_asked: None,
         loading: None,
         switch: false,
         retree: false,

@@ -5,6 +5,7 @@ use crate::castle;
 use crate::cli::walk_allowed;
 use crate::entities::Pick;
 use crate::entities::belt;
+use crate::entities::mover::Stance;
 use crate::entities::picker::full_words;
 use crate::fly::Walk;
 use crate::hud::menu::{Activated, AudioView, RunView};
@@ -481,14 +482,20 @@ impl Run {
         Some((hit.t as f32 / one, normal))
     }
 
-    /// Where a model `extent` voxels across stands for the camera now ([`belt::stand`]), and
-    /// the eye it faces. The one place the ghost, and with it every placement of the belt,
-    /// stands an entity.
-    pub(crate) fn aim_feet(&self, extent: [f32; 3]) -> ([f32; 3], [f32; 3]) {
+    /// Where a model `extent` voxels across stands for the camera now by the rule `kind`
+    /// ([`belt::stand`]), the up it stands on, and the eye it faces. The one place the ghost,
+    /// and with it every placement of the belt, stands an entity.
+    pub(crate) fn aim_feet(
+        &self,
+        extent: [f32; 3],
+        kind: belt::Stand,
+    ) -> ([f32; 3], [f32; 3], [f32; 3]) {
         let c = &self.fly.camera;
         let (eye, fwd) = (c.position.to_array(), c.basis().0.to_array());
-        let feet = belt::stand(eye, fwd, extent, |o, d, max| self.cast_world(o, d, max));
-        (feet, eye)
+        let (feet, up) = belt::stand(eye, fwd, extent, kind, |o, d, max| {
+            self.cast_world(o, d, max)
+        });
+        (feet, up, eye)
     }
 
     /// Fills the belt from the entities library's order and then the structures', once
@@ -558,8 +565,8 @@ impl Run {
     }
 
     /// The ghost kept in step with the mode: in placement mode with the menu closed the
-    /// selected slot's entry stands at [`Run::aim_feet`] facing the camera, turned by the
-    /// belt's turn; anywhere else, and for an empty slot, there is none (opening the menu ends
+    /// selected slot's entry stands at [`Run::aim_feet`] (a surface body's on the aimed face)
+    /// facing the camera, turned by the belt's turn; anywhere else, and for an empty slot, there is none (opening the menu ends
     /// the mode). A refusal (an entry in error, a full set) says its words once.
     pub(crate) fn sync_ghost(&mut self) {
         if let Some(words) = self.modes.structures.poll() {
@@ -586,11 +593,19 @@ impl Run {
             }
         };
         let table = self.world.materials();
-        let extent = self.modes.walkers.extent_of(entry, table);
-        let (feet, eye) = self.aim_feet(extent);
-        let yaw = crate::walker::facing(feet, eye) + self.modes.walkers.belt.turn_rad();
+        let w = &self.modes.walkers;
+        let extent = w.extent_of(entry, table);
+        let body = entry.and_then(|i| w.library.entries.get(i)?.viewer()?.body);
+        let kind = match body {
+            Some(vxe_assets::RigBody::Surface { .. }) => belt::Stand::Surface,
+            _ => belt::Stand::Floor,
+        };
+        let (point, up, eye) = self.aim_feet(extent, kind);
+        let cam_up = self.fly.camera.basis().2.to_array();
+        let turn = self.modes.walkers.belt.turn_rad();
+        let stance = Stance::facing(point, up, eye, cam_up, turn);
         let table = self.world.materials();
-        if let Err(words) = self.modes.walkers.show_preview(table, entry, feet, yaw) {
+        if let Err(words) = self.modes.walkers.show_preview(table, entry, stance) {
             self.say_once(words);
         }
     }

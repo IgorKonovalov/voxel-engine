@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0076.**
+**Next free number: 0077.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -76,7 +76,7 @@ the status.
 | [0059](0059-loading-runs-as-time-sliced-steps-on-the-apps-frame-loop-behind-an-engine-loading-frame.md) | Loading runs as time-sliced steps on the app's frame loop, behind an engine loading frame the app can replace | accepted (Plan 0075), Outcome: the pipelines on one worker, a splash before init |
 | [0060](0060-entity-volumes-are-freed-by-handle-into-a-coalescing-free-list-and-never-moved.md) | Entity volumes are freed by handle into a coalescing free list of word ranges, never moved; queue order makes a freed range reusable at once | accepted 2026-11-16, Outcome (Plan 0078) |
 | [0061](0061-the-apps-input-is-menu-first-a-minimal-fixed-key-set-one-overlay-menu-with-a-palette-from-one-key-table.md) | The apps' input is menu-first: a minimal fixed key set, one overlay menu with a palette, one key table driving menu, help and shortcuts; apps only, no UI library | accepted, Outcome (Plan 0080) |
-| [0062](0062-surface-locomotion-is-a-kinematic-sphere-attached-to-a-contact-normal-in-vxe-sim.md) | Surface locomotion is a kinematic sphere attached to a contact normal in `vxe-sim`, with the smoothed normal a world query; ground locomotion keeps the cylinder controller | proposed (Plan 0079) |
+| [0062](0062-surface-locomotion-is-a-kinematic-sphere-attached-to-a-contact-normal-in-vxe-sim.md) | Surface locomotion is a kinematic sphere attached to a contact normal in `vxe-sim`, with the smoothed normal a world query; ground locomotion keeps the cylinder controller | accepted (Plan 0079), Outcome |
 | [0063](0063-surface-detail-is-a-procedural-shell-marched-at-the-hit-described-per-material-on-the-render-side.md) | Surface detail is a procedural shell marched at the hit, described per material on the render side, cosmetic and client-only | proposed (Plan 0081) |
 | [0064](0064-a-parts-scale-is-per-axis-in-its-own-frame-and-moves-its-childrens-pivots-not-their-shapes.md) | A part's scale is per axis in its own frame, about its pivot; it moves its children's pivots and never changes their shapes | proposed (Plan 0082) |
 | [0065](0065-materials-are-data-a-table-file-in-the-rig-grammar-and-every-vox-palette-entry-becomes-a-row.md) | Materials are data: a table file in the `.rig` line grammar, and every `.vox` palette entry becomes a row | proposed (Plan 0083) |
@@ -90,6 +90,7 @@ the status.
 | [0073](0073-deterministic-simulation-testing-is-an-in-tree-seeded-harness-at-the-seams-the-engine-has.md) | Deterministic simulation testing is an in-tree seeded harness at the seams the engine already has: a message-level simulated channel, a delta-debugging shrinker, no framework | proposed (Plan 0089, draft) |
 | [0074](0074-an-entity-instance-carries-a-mark-drawn-in-the-composite-as-an-outline-at-the-instance-edge-and-a-tint.md) | An entity carries a mark, drawn in the composite as an outline where the entity changes and a tint of its shaded colour | accepted (Plan 0077), Outcome |
 | [0075](0075-the-overlay-draws-image-tiles-in-its-cells-and-an-entitys-icon-is-a-still-made-once-on-the-cpu-through-the-entity-raycast.md) | The overlay draws image tiles in its cells, and an entity's icon is a still made once on the CPU through the entity raycast | accepted (Plan 0077), Outcome |
+| [0076](0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md) | A still world gives a still image: five light-stability rules, a world-space history per source, a fade per transition, and a pop counter that only ratchets down | proposed (Plan 0090, draft) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded

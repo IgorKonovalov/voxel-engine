@@ -171,7 +171,8 @@ impl Flythrough {
                         self.args.entities,
                         self.args.entities_walk,
                     )
-                    .with_library(entities),
+                    .with_library(entities)
+                    .with_seed(self.args.seed),
                 )
                 .with_structures(structures),
             upscaler_changed: false,
@@ -215,6 +216,7 @@ impl Flythrough {
             structure_placed: None,
             menu: Default::default(),
             notice: None,
+            quit_asked: None,
             loading: None,
             switch: false,
             retree: false,

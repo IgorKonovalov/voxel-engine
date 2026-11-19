@@ -11,6 +11,7 @@ use vxe_render::{MAX_ENTITIES, MAX_ENTITY_PARTS, ModelHandle};
 use vxe_world::MaterialTable;
 
 use super::library::{Library, Source};
+use super::mover::{Mover, Stance};
 use super::walker::{
     EYE_LIGHT_AT, EYE_LIGHT_COLOUR, EYE_LIGHT_INTENSITY, FLOOR_SEARCH, RING_RADIUS, WALK_RADIUS,
     WALK_SPEED, WALK_STRIDES, WALK_SWING, facing, model, pose, rows,
@@ -20,8 +21,9 @@ use super::walker::{
 pub const GHOST_TINT: f32 = 0.35;
 
 /// One placed entity: its id, where it stands and which way it faces when placed, the walk's
-/// clock then (a built-in walker's), its library entry (`None` for the built-in walker) and
-/// its own playback of that entry's clips.
+/// clock then (a built-in walker's), its library entry (`None` for the built-in walker), its
+/// own playback of that entry's clips, and its mover when the entry's rig has a body (its
+/// pose then follows the mover's state; `feet` and `yaw` stay the placement's record).
 #[derive(Clone, Debug)]
 pub struct Placed {
     pub id: EntityId,
@@ -30,6 +32,7 @@ pub struct Placed {
     pub since: f32,
     pub entry: Option<usize>,
     pub play: Play,
+    pub mover: Option<Mover>,
 }
 
 impl PartialEq for Placed {
@@ -38,6 +41,7 @@ impl PartialEq for Placed {
             == (o.id, o.feet, o.yaw, o.since, o.entry)
             && (self.play.clip, self.play.paused, self.play.ticks)
                 == (o.play.clip, o.play.paused, o.play.ticks)
+            && self.mover == o.mover
     }
 }
 
@@ -86,8 +90,14 @@ pub struct Walkers {
     pub pool_total: u64,
     /// Whether placed built-in walkers carry their eye lights (on by default).
     pub eye_lights_off: bool,
-    /// Whether the built-in walkers walk (off by default).
+    /// Whether the wander is on (off by default): every body wanders and the built-in walkers
+    /// walk their circle.
     pub walking: bool,
+    /// The movers' tick ([`super::tick`]).
+    pub ticker: super::tick::Ticker,
+    /// The run's seed and the placements made so far: each mover's wander stream.
+    pub seed: u64,
+    placements: u64,
     /// Seconds walked: the walk's clock, held while the walk is off.
     pub clock: f32,
     /// The entities library: an empty one places the built-in walker.
@@ -162,6 +172,11 @@ impl Walkers {
         self.model.clone()
     }
 
+    /// These entities wandering on `seed`'s streams.
+    pub fn with_seed(self, seed: u64) -> Self {
+        Self { seed, ..self }
+    }
+
     /// These entities placed from `library`.
     pub fn with_library(self, library: Library) -> Self {
         Self { library, ..self }
@@ -227,8 +242,7 @@ impl Walkers {
         self.place_entry(table, entry, feet, facing(feet, eye))
     }
 
-    /// Places `entry` (`None` the built-in walker) standing at `feet`, turned `yaw`: a rig at
-    /// its entry's selected clip's tick 0, on a playback of its own.
+    /// Places `entry` standing on the floor at `feet`, turned `yaw` ([`Walkers::place_at`]).
     pub fn place_entry(
         &mut self,
         table: &MaterialTable,
@@ -236,12 +250,26 @@ impl Walkers {
         feet: [f32; 3],
         yaw: f32,
     ) -> Result<EntityId, String> {
-        let (model, pose, play) = match entry {
+        self.place_at(table, entry, Stance::floor(feet, yaw))
+    }
+
+    /// Places `entry` (`None` the built-in walker) at `stance`: a rig at its entry's selected
+    /// clip's tick 0, on a playback of its own, with a mover standing there when the rig has a
+    /// body ([`Mover::new`]), else stood at the point turned the yaw.
+    pub fn place_at(
+        &mut self,
+        table: &MaterialTable,
+        entry: Option<usize>,
+        stance: Stance,
+    ) -> Result<EntityId, String> {
+        let (feet, yaw) = (stance.point, stance.yaw);
+        let index = self.placements;
+        let (model, pose, play, mover) = match entry {
             None => {
                 let model = self
                     .model(table)
                     .ok_or("walker: no walker rows in this world's table")?;
-                (model, pose(feet, yaw, 0.0), Play::default())
+                (model, pose(feet, yaw, 0.0), Play::default(), None)
             }
             Some(i) => {
                 let e = self.library.entries.get(i).ok_or("no such entry")?;
@@ -251,10 +279,18 @@ impl Walkers {
                 };
                 let play = Play::start(l, v.play.clip);
                 let now = play.poses(l).0;
-                (l.model.clone(), placed(&now, feet, yaw), play)
+                match v.body {
+                    Some(body) => {
+                        let (up, fwd) = (stance.up, stance.forward);
+                        let m = Mover::new(body, feet, up, fwd, (self.seed, index), now);
+                        (l.model.clone(), m.now.clone(), play, Some(m))
+                    }
+                    None => (l.model.clone(), placed(&now, feet, yaw), play, None),
+                }
             }
         };
         let id = self.set.insert(model, pose).map_err(|e| e.to_string())?;
+        self.placements += 1;
         self.placed.push(Placed {
             id,
             feet,
@@ -262,6 +298,7 @@ impl Walkers {
             since: self.clock,
             entry,
             play,
+            mover,
         });
         Ok(id)
     }
@@ -307,7 +344,14 @@ impl Walkers {
             {
                 let name = p.play.clip_name(&old).map(str::to_owned);
                 p.play.rebind(name.as_deref(), l);
-                let pose = placed(&p.play.poses(l).0, p.feet, p.yaw);
+                let parts = p.play.poses(l).0;
+                let pose = match &mut p.mover {
+                    Some(m) => {
+                        m.rebase(parts);
+                        m.now.clone()
+                    }
+                    None => placed(&parts, p.feet, p.yaw),
+                };
                 // The pose is the new model's, so it fits; the entity keeps its id, and with
                 // it the mirror's slots and the pixels' history.
                 let _ = self.set.replace(p.id, l.model.clone(), pose);
@@ -356,12 +400,14 @@ impl Walkers {
     }
 
     /// Refreshes each listed entity's drawn parts ([`Walkers::displays`]): a built-in walker
-    /// as the set poses it, a rig instance between its own clip's two ticks around now
-    /// ([`vxe_render::DisplayPose::between_into`]). The list and each entry's storage are kept
+    /// as the set poses it, a body between its mover's last two ticks at the tick's fraction
+    /// ([`super::tick::Ticker::alpha`]), any other rig instance between its own clip's two
+    /// ticks around now ([`vxe_render::DisplayPose::between_into`]). The list and each entry's storage are kept
     /// across frames, so built-in walkers allocate nothing per entity; a rig instance samples
     /// its own two poses.
     pub fn refresh_displays(&mut self) {
         let mut n = 0;
+        let alpha = self.ticker.alpha();
         let total = self.placed.len() + usize::from(self.preview.is_some());
         for k in 0..total {
             let p = self
@@ -381,8 +427,9 @@ impl Walkers {
             }
             let slot = &mut self.displays[n];
             (slot.0, slot.1) = (p.id, handle);
-            let fits = match p.entry {
-                Some(i) => {
+            let fits = match (p.entry, &p.mover) {
+                (_, Some(m)) => slot.2.between_into(model, &m.prev, &m.now, alpha),
+                (Some(i), None) => {
                     let Some(l) = self.library.entries[i]
                         .viewer()
                         .and_then(|v| v.loaded.as_ref())
@@ -397,7 +444,7 @@ impl Walkers {
                     crate::viewer::place_into(sb, &b, p.feet, p.yaw);
                     slot.2.between_into(model, sa, sb, alpha)
                 }
-                None => slot.2.of_into(model, pose),
+                (None, None) => slot.2.of_into(model, pose),
             };
             n += usize::from(fits);
         }
@@ -470,10 +517,14 @@ impl Walkers {
         }
     }
 
-    /// The menu's `walkers walk`: the walk on or off; the banner's words.
+    /// The menu's `wander`: the wander on or off; the banner's words.
     pub fn toggle_walk(&mut self) -> &'static str {
         self.walking = !self.walking;
-        if self.walking { "walk on" } else { "walk off" }
+        if self.walking {
+            "wander on"
+        } else {
+            "wander off"
+        }
     }
 
     /// Where walker `p` stands at `clock` seconds of walk, its yaw and its legs' swing: on a
@@ -506,16 +557,20 @@ impl Walkers {
     }
 
     /// Advances by `dt` seconds: each rig's own clip (the viewer's row and the next
-    /// placement's) and every rig instance's, posing it at its clip's tick now; and the walk
-    /// while it is on, posing every placed built-in walker ([`Walkers::walk_pose`]); while it
-    /// is off the walkers hold their poses.
+    /// placement's) and every rig instance's, posing it at its clip's tick now (a body's
+    /// pose is its mover's, set at the movers' tick, [`Walkers::tick_movers`]; the ghost's
+    /// mover never ticks and holds its state on this clip); and the walk while it is on,
+    /// posing every placed built-in walker ([`Walkers::walk_pose`]); while it is off the
+    /// walkers hold their poses.
     pub fn step(&mut self, dt: f32) {
         for e in &mut self.library.entries {
             if let Some(v) = e.viewer_mut() {
                 v.advance(dt);
             }
         }
-        for p in self.placed.iter_mut().chain(self.preview.iter_mut()) {
+        let ghost_at = self.placed.len();
+        let all = self.placed.iter_mut().chain(self.preview.iter_mut());
+        for (k, p) in all.enumerate() {
             let Some(i) = p.entry else { continue };
             let Some(l) = self.library.entries[i]
                 .viewer()
@@ -525,7 +580,15 @@ impl Walkers {
             };
             p.play.advance(dt, l.rate);
             let now = p.play.poses(l).0;
-            let _ = self.set.set_pose(p.id, placed(&now, p.feet, p.yaw));
+            let pose = match &mut p.mover {
+                None => placed(&now, p.feet, p.yaw),
+                Some(m) if k == ghost_at => {
+                    m.hold(now);
+                    m.now.clone()
+                }
+                Some(_) => continue,
+            };
+            let _ = self.set.set_pose(p.id, pose);
         }
         if !self.walking {
             return;
@@ -601,7 +664,9 @@ impl Walkers {
     }
 
     /// The HUD row, `entities <n>/64 parts <m>/512 over <k>`, then, once the pool is read,
-    /// ` pool <used>/<total> KB` (rounded up to whole KB), then ` walk` while they walk.
+    /// ` pool <used>/<total> KB` (rounded up to whole KB), then ` tick <us>` (the movers' CPU a
+    /// tick, the median over the last second) once a mover has ticked, then ` wander` while
+    /// the wander is on.
     pub fn write_row(&self, out: &mut String) {
         let _ = write!(
             out,
@@ -616,8 +681,11 @@ impl Walkers {
                 self.pool_total.div_ceil(1024)
             );
         }
+        if let Some(us) = self.ticker.p50_us() {
+            let _ = write!(out, " tick {us:.0}");
+        }
         if self.walking {
-            out.push_str(" walk");
+            out.push_str(" wander");
         }
     }
 
@@ -780,8 +848,8 @@ mod tests {
         );
     }
 
-    /// `F11` sets the walkers walking and names the mode in the banner; the HUD row gains
-    /// `walk`. A walker walks a 2 m circle from where it stands, facing along it, its legs
+    /// The menu's `wander` sets the built-in walkers walking and names the mode in the banner;
+    /// the HUD row gains `wander`. A walker walks a 2 m circle from where it stands, facing along it, its legs
     /// swinging 30 degrees either way; off, it holds its pose.
     #[test]
     fn the_walk_key_names_its_mode_and_walks_the_circle() {
@@ -793,15 +861,15 @@ mod tests {
         );
         assert!(m.walkers.place(&table, [50.0, 40.0, 2.0], [50.0, 0.0, 8.0]));
         let words = m.walkers.toggle_walk();
-        assert_eq!(words, "walk on");
+        assert_eq!(words, "wander on");
         m.show_lights(words.to_owned(), 5.0);
-        assert!(m.banner(5.0).unwrap().lines().any(|l| l == "walk on"));
+        assert!(m.banner(5.0).unwrap().lines().any(|l| l == "wander on"));
         (m.walkers.drawn, m.walkers.parts) = (1, 4);
         let mut rows = String::new();
         m.write_rows(&mut rows);
         assert!(
             rows.lines()
-                .any(|l| l == "entities 1/64 parts 4/512 over 0 walk"),
+                .any(|l| l == "entities 1/64 parts 4/512 over 0 wander"),
             "{rows}"
         );
         // Facing -y (yaw 0) the walker's left is +x: the circle's centre is 2 m that way.
@@ -825,7 +893,7 @@ mod tests {
         let most = swings.iter().fold(0f32, |a, s| a.max(s.abs()));
         assert!((most - WALK_SWING).abs() < 0.01, "swing {most}");
         assert!((m.walkers.clock - 4.0).abs() < 1e-4);
-        assert_eq!(m.walkers.toggle_walk(), "walk off");
+        assert_eq!(m.walkers.toggle_walk(), "wander off");
         let held = m.walkers.set.get(m.walkers.placed[0].id).unwrap().1.clone();
         m.walkers.step(1.0 / 60.0);
         assert_eq!(m.walkers.set.get(m.walkers.placed[0].id).unwrap().1, &held);
@@ -961,9 +1029,8 @@ mod tests {
 
     /// Refreshing the drawn parts allocates nothing per entity once its storage has grown:
     /// eight built-in walkers allocate nothing from the second refresh on, and each holds its
-    /// set pose's parts; rig instances, each on its own playback, allocate only the two poses
-    /// each samples: four instances allocate four times one's bytes, the drawn parts' storage
-    /// kept.
+    /// set pose's parts; the library walker's instances, each with a body, draw between their
+    /// movers' two poses and allocate nothing either, one instance or four.
     #[test]
     fn refreshing_the_displays_allocates_nothing_per_entity() {
         use crate::test_support::counting;
@@ -1018,11 +1085,11 @@ mod tests {
         refresh(&mut w);
         let four = refresh(&mut w);
         assert_eq!(w.displays().len(), 4);
-        assert!(one > 0, "an instance samples its two poses");
+        assert!(w.placed.iter().all(|p| p.mover.is_some()));
         assert_eq!(
-            four,
-            4 * one,
-            "each instance samples its own, the storage kept"
+            (one, four),
+            (0, 0),
+            "the movers' poses are drawn as they are"
         );
     }
 }
