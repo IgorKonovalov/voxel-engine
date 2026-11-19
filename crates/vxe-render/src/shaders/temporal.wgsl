@@ -58,7 +58,10 @@
 //                                        visibility's running mean in r, the key light's in g
 //                                        (0 where it falls on no face), the sky's short mean in
 //                                        b, the pair's age in a (the samples its mean holds, 0
-//                                        where it holds none)
+//                                        where it holds none; past the cap, the settle's count,
+//                                        `pair_step`); where no ray was cast, the key samples'
+//                                        short mean as `-1 - b` in b and the cap plus the key
+//                                        mean's settle count in a (`key_settle`)
 //
 // The sky's term (ADR-0070) is a visibility times the sky's irradiance above the horizon about
 // the shading normal now (`sky_open_by_normal`). Where the light pass cast no sky ray (a cube
@@ -85,7 +88,9 @@
 // pair's g (`key_mean`): over the direct part's history age capped at `key_history`, reset
 // where the direct part's history resets (no accepted taps, an edit box, a fresh pixel) and on
 // the sky-change bit, but not on a change of the list of lights; no clamp (the term is
-// bounded). It joins the direct part at the direct part's blend weight.
+// bounded). It joins the direct part at the direct part's blend weight. At a stored face where
+// no sky ray was cast it settles as the pair does (`key_settle`): a band about it, a fall out
+// of the band, a hold after SETTLE_F in-band frames at the cap.
 //
 // A cube face's emissive part (`reads_store`) is its brick record's value for its direction
 // (`store_brick_value`; with Params.lighting bit 14, where the shading normal is not the face
@@ -588,14 +593,31 @@ fn far_unmixed(rec: HitRecord, w: f32) -> vec3<f32> {
     return normalize(l * rec.n - k * f);
 }
 
+// Whether view `a` is view `b` but for the jitter: the same origin, axes and frustum.
+fn view_still(a: View, b: View) -> bool {
+    return all(a.origin == b.origin) && all(a.right == b.right) && all(a.up == b.up)
+        && all(a.fwd == b.fwd) && a.tan_left == b.tan_left && a.tan_right == b.tan_right
+        && a.tan_up == b.tan_up && a.tan_down == b.tan_down;
+}
+
 // Whether previous hit `prev` agrees with this frame's hit `rec` (reprojected to `pp`) within
 // `tol` voxels: a hit of the same thing, with the same material and a normal within
 // HISTORY_COS, or with LIGHTING_HOOK_ANY_HISTORY whatever the material and normal. Where
 // `stair_w` is over one half (the stair test) the smoothed normals (`far_unmixed`, both at this
 // hit's weight) are compared within HISTORY_COS and the material is not: a tread and its
-// riser under the jitter share the irradiance history, which is before albedo.
-fn history_agrees(prev: HitRecord, rec: HitRecord, pp: vec3<f32>, tol: f32) -> bool {
-    if (!prev.found || !same_thing(prev, rec) || distance(prev.p, pp) > tol) {
+// riser under the jitter share the irradiance history, which is before albedo. With `own_still`
+// (a world hit's own pixel at a still camera, `view_still`) neither is tested: the pixel's
+// footprint is the same as the frame before's, and under the jitter its hit moves between the
+// faces inside it (a trunk's side and its top, two faces of a corner), whose irradiance the
+// footprint's history averages; the position test stays.
+fn history_agrees(prev: HitRecord, rec: HitRecord, pp: vec3<f32>, tol: f32, own_still: bool) -> bool {
+    if (!prev.found || !same_thing(prev, rec)) {
+        return false;
+    }
+    if (own_still) {
+        return true;
+    }
+    if (distance(prev.p, pp) > tol) {
         return false;
     }
     if ((params.lighting & LIGHTING_HOOK_ANY_HISTORY) != 0u) {
@@ -609,8 +631,13 @@ fn history_agrees(prev: HitRecord, rec: HitRecord, pp: vec3<f32>, tol: f32) -> b
 
 // Counts a reset pixel's cause into `counters` (COUNT_STORE only): the first test previous
 // hit `prev` fails, in the order material (word 6; not under the stair test), normal (word 7;
-// the smoothed normals under it), anything else (word 8).
-fn count_rejection(prev: HitRecord, rec: HitRecord) {
+// the smoothed normals under it), anything else (word 8; every cause where `own_still`, which
+// tests neither material nor normal).
+fn count_rejection(prev: HitRecord, rec: HitRecord, own_still: bool) {
+    if (own_still) {
+        atomicAdd(&counters[8], 1u);
+        return;
+    }
     let stair = stair_w > 0.5;
     var cos = dot(prev.n, rec.n);
     if (stair) {
@@ -713,26 +740,83 @@ fn column_estimate(p: vec3<f32>, n: vec3<f32>) -> f32 {
 // (`accepted`: the direct part's taps agreed and nothing resets it), its cap `sky.sky_history`.
 // A reset pair holds the estimate `e` alone in both means at age SEED_AGE; this frame's sample
 // joins from the next frame.
+//
+// The settle (unless LIGHTING_HOOK_NO_SETTLE): a pair at its cap counts its in-band frames in
+// its age past the cap; from cap + SETTLE_F on, its long mean holds (the short mean and the
+// band test still run), and it unfreezes when the short mean leaves the band (the age falls as
+// above) or the pair resets. A negative short mean is the key samples' of a pixel where no ray
+// was cast (`key_settle`), which this pair does not read: its short mean starts at its long one.
 fn pair_step(s: f32, hp: vec4<f32>, accepted: bool, e: f32) -> vec4<f32> {
     let age = floor(hp.w + 0.5);
     if (!accepted || age < 1.0 || (params.lighting & LIGHTING_SKY_CHANGED) != 0u) {
         return vec4<f32>(e, 0.0, e, SEED_AGE);
     }
-    let n0 = min(age + 1.0, f32(max(sky.sky_history, 1u)));
-    let b = hp.z + (s - hp.z) / min(n0, SKY_SHORT);
+    let cap = f32(max(sky.sky_history, 1u));
+    let n0 = min(age + 1.0, cap);
+    let hb = select(hp.z, hp.x, hp.z < 0.0);
+    let b = hb + (s - hb) / min(n0, SKY_SHORT);
     let r = hp.x;
     let band = SKY_BAND_SIGMAS * sqrt(max(r * (1.0 - r), P_MIN * (1.0 - P_MIN)) / SKY_SHORT)
         + SKY_BAND_EPS;
     let d = abs(b - r);
     var n = n0;
+    var w = n0;
     if (d > band) {
         n = min(n, max(SKY_FALL_MIN, floor(SKY_SHORT * band / d)));
+        w = n;
+    } else if (settle_on() && age >= cap) {
+        n = min(age + 1.0, cap + SETTLE_F);
+        if (age >= cap + SETTLE_F) {
+            return vec4<f32>(r, 0.0, b, n);
+        }
     }
     var sc = s;
     if (n0 > SKY_SHORT && (params.lighting & LIGHTING_HOOK_NO_CLAMP) == 0u) {
         sc = min(s, FIREFLY_K * max(r, b));
     }
-    return vec4<f32>(r + (sc - r) / n, 0.0, b, n);
+    return vec4<f32>(r + (sc - r) / w, 0.0, b, n);
+}
+
+// The in-band frames a converged mean counts before it settles (rule 3's F, ADR-0046's FADE).
+const SETTLE_F: f32 = 16.0;
+
+fn settle_on() -> bool {
+    return (params.lighting & LIGHTING_HOOK_NO_SETTLE) == 0u;
+}
+
+// The key mean with the settle, at a stored face where no sky ray was cast (whose pair is the
+// baked seed, its age `cap_w` the sky cap): after sample `s` on the pair's history `hp`, with
+// the direct part's history `age` (`reset`: the history is not taken). The key samples' short
+// mean over SKY_SHORT rides in the pair's z as `-1 - b` (negative, so `pair_step` knows it is
+// not its own), and the in-band frames past the key cap in its w as `cap_w + c`. The band is
+// the sky pair's (`pair_step`) about the long mean `g`: out of it, the mean and the direct
+// part's age fall as the sky pair's do; in it at the cap, `c` counts to SETTLE_F and from
+// there `g` holds. Returns the mean, the z, the w and the direct part's age.
+fn key_settle(s: f32, hp: vec4<f32>, age: f32, reset: bool, cap_w: f32) -> vec4<f32> {
+    if (reset || (params.lighting & LIGHTING_SKY_CHANGED) != 0u) {
+        return vec4<f32>(s, -1.0 - s, cap_w, age);
+    }
+    let kc = f32(max(sky.key_history, 1u));
+    let g = hp.y;
+    let own = hp.z < 0.0;
+    let hb = select(g, clamp(-1.0 - hp.z, 0.0, 1.0), own);
+    let c = select(0.0, clamp(floor(hp.w - cap_w + 0.5), 0.0, SETTLE_F), own);
+    let n = clamp(age + 1.0, 1.0, kc);
+    let b = hb + (s - hb) / min(n, SKY_SHORT);
+    let band = SKY_BAND_SIGMAS * sqrt(max(g * (1.0 - g), P_MIN * (1.0 - P_MIN)) / SKY_SHORT)
+        + SKY_BAND_EPS;
+    let d = abs(b - g);
+    if (d > band) {
+        let m = min(n, max(SKY_FALL_MIN, floor(SKY_SHORT * band / d)));
+        return vec4<f32>(g + (s - g) / m, -1.0 - b, cap_w, m - 1.0);
+    }
+    if (n < kc) {
+        return vec4<f32>(g + (s - g) / n, -1.0 - b, cap_w, age);
+    }
+    if (c >= SETTLE_F) {
+        return vec4<f32>(g, -1.0 - b, cap_w + SETTLE_F, age);
+    }
+    return vec4<f32>(g + (s - g) / n, -1.0 - b, cap_w + c + 1.0, age);
 }
 
 // The key light's visibility mean after sample `s` on history `g`, which holds `age` samples
@@ -893,6 +977,9 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             stair_w = far_normal_weight(params.views[vi], rec.t);
         }
         let pp = prev_world(rec);
+        // A world hit at a still camera tests its own pixel's previous hit without the
+        // material and normal tests (`history_agrees`).
+        let still = !rec.entity && view_still(params.prev_views[vi], params.views[vi]);
         let full = reproject_centred(params.prev_views[vi], params.views[vi].jitter, pp);
         let q = select(prev_light_grid(full), full, full.x < 0.0) - 0.5;
         let base = vec2<i32>(floor(q));
@@ -913,7 +1000,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 continue;
             }
             let prev = unpack_hit(textureLoad(prev_pos_in, tap, 0), textureLoad(prev_info_in, tap, 0));
-            if (!history_agrees(prev, rec, pp, tol)) {
+            if (!history_agrees(prev, rec, pp, tol, still && all(tap == px))) {
                 continue;
             }
             let wx = select(1.0 - f.x, f.x, o.x == 1);
@@ -952,7 +1039,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 }
                 let prev = unpack_hit(textureLoad(prev_pos_in, tap, 0), textureLoad(prev_info_in, tap, 0));
                 let d = distance(prev.p, pp);
-                if (!history_agrees(prev, rec, pp, best)) {
+                if (!history_agrees(prev, rec, pp, best, still && all(tap == px))) {
                     continue;
                 }
                 best = d;
@@ -972,7 +1059,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 if (on_light_grid(near)) {
                     prev = unpack_hit(textureLoad(prev_pos_in, near, 0), textureLoad(prev_info_in, near, 0));
                 }
-                count_rejection(prev, rec);
+                count_rejection(prev, rec, still && all(near == px));
             }
         }
         if (w_sum > 1e-3) {
@@ -1051,7 +1138,12 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         t_sky = t_baked;
     }
     var t_key = vec3<f32>(0.0);
-    if (vis.z > 0.5) {
+    if (vis.z > 0.5 && settle_on() && !sky_cast && seed.w > 0.0) {
+        let k = key_settle(vis.y, hp, age, !accepted || fresh, seed.w);
+        pair = vec4<f32>(pair.x, k.x, k.y, k.z);
+        age = k.w;
+        t_key = key_light_at(rec.p, rec.n) * pair.y * exposure_now();
+    } else if (vis.z > 0.5) {
         pair.y = key_mean(vis.y, hp.y, age, !accepted || fresh);
         t_key = key_light_at(rec.p, rec.n) * pair.y * exposure_now();
     }

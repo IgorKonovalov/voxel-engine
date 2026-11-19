@@ -249,6 +249,10 @@ pub(crate) const LIGHTING_HOOK_SKY_END_IS_SKY: u32 = 1 << 23;
 /// shadow ray runs along the disc's centre, its sample on the disc fixed.
 pub(crate) const LIGHTING_HOOK_KEY_NO_JITTER: u32 = 1 << 25;
 
+/// `Params::lighting` bit, a reading hook ([`LightHooks::no_settle`]): the temporal pass's
+/// settle is off, so a converged pair keeps blending at its cap and the key mean has no band.
+pub(crate) const LIGHTING_HOOK_NO_SETTLE: u32 = 1 << 26;
+
 /// `Params::lighting` bit: a cube face's baked sky term reads its visibilities by the 27-count
 /// gradient's normal at every distance ([`SkyNormal::Smoothed`]).
 pub(crate) const LIGHTING_SKY_SMOOTHED: u32 = 1 << 24;
@@ -276,6 +280,9 @@ pub struct LightHooks {
     pub sky_end_is_sky: bool,
     /// The key light's shadow ray runs along the disc's centre: no jitter over the sun's disc.
     pub key_no_jitter: bool,
+    /// The settle is off: a pair at its cap keeps blending its samples in, and the key mean
+    /// follows its samples at its cap with no band (temporal.wgsl `settle_on`).
+    pub no_settle: bool,
 }
 
 impl LightHooks {
@@ -307,6 +314,10 @@ impl LightHooks {
             0
         } | if self.key_no_jitter {
             LIGHTING_HOOK_KEY_NO_JITTER
+        } else {
+            0
+        } | if self.no_settle {
+            LIGHTING_HOOK_NO_SETTLE
         } else {
             0
         }

@@ -40,6 +40,7 @@ mod canopy {
                     no_clamp: false,
                     sky_end_is_sky: false,
                     key_no_jitter: false,
+                    no_settle: false,
                 },
             },
             Arm {
@@ -53,6 +54,7 @@ mod canopy {
                     no_clamp: false,
                     sky_end_is_sky: false,
                     key_no_jitter: false,
+                    no_settle: false,
                 },
             },
             Arm {
@@ -66,6 +68,7 @@ mod canopy {
                     no_clamp: false,
                     sky_end_is_sky: false,
                     key_no_jitter: false,
+                    no_settle: false,
                 },
             },
             Arm {
@@ -79,6 +82,7 @@ mod canopy {
                     no_clamp: false,
                     sky_end_is_sky: false,
                     key_no_jitter: true,
+                    no_settle: false,
                 },
             },
         ];
@@ -188,6 +192,11 @@ mod canopy {
             /// The history rejections per frame over the last [`POP_PAIRS`] frames (tested,
             /// material, normal, other: [`Frame::read_history_rejections`]).
             rejections: Vec<[u32; 4]>,
+            /// Per class (floor, trunk) the frame-to-frame display changes over the last
+            /// [`POP_PAIRS`] pairs.
+            diffs: [Vec<u8>; 2],
+            /// Per lighting pixel at the last frame: the visibility pair's age channel (`a`).
+            light_pair_w: Vec<f32>,
         }
 
         /// Resets `r`'s history, sets `hooks` and `history`, steps `frames` frames (then more
@@ -268,6 +277,7 @@ mod canopy {
             let class = classify(&r.f);
             let mut pops = [(0u64, 0u64); 2];
             let mut rejections = Vec::with_capacity(POP_PAIRS as usize);
+            let mut diffs: [Vec<u8>; 2] = Default::default();
             for _ in 0..POP_PAIRS {
                 r.step(rig, cam, &light);
                 rejections.push(r.f.read_history_rejections(d, q));
@@ -280,6 +290,7 @@ mod canopy {
                     };
                     pops[k].1 += 1;
                     pops[k].0 += u64::from(a.abs_diff(b) > 4);
+                    diffs[k].push(a.abs_diff(b));
                 }
                 last = now;
             }
@@ -301,6 +312,8 @@ mod canopy {
                 light_age: read_rgba16f(d, q, r.f.moments()).iter().map(|m| m[2]).collect(),
                 light_g: pair.iter().map(|p| p[1]).collect(),
                 rejections,
+                diffs,
+                light_pair_w: pair.iter().map(|p| p[3]).collect(),
             }
         }
 
@@ -387,6 +400,8 @@ mod canopy {
             {
                 let (cls, name) = name;
                 let (mut n, mut u16, mut u64_, mut full) = (0usize, 0usize, 0usize, 0usize);
+                let mut settled = 0usize;
+                let settle_w = (flythrough::default_lighting().sky_history + 16) as f32;
                 let (mut obs, mut pred, mut m) = (0f64, 0f64, 0usize);
                 for i in 0..a.light_class.len() {
                     if a.light_class[i] != cls {
@@ -397,6 +412,7 @@ mod canopy {
                     u16 += usize::from(age < 16.0);
                     u64_ += usize::from(age < 64.0);
                     full += usize::from(age >= (frames - 1) as f32);
+                    settled += usize::from(a.light_pair_w[i] >= settle_w - 0.5);
                     let gr = f64::from(refr.light_g[i]);
                     if (0.02..=0.98).contains(&gr) {
                         let d = f64::from(a.light_g[i]) - gr;
@@ -410,10 +426,12 @@ mod canopy {
                 let ratio = if pred > 0.0 { (obs / pred).sqrt() } else { f64::NAN };
                 let lit = res[k][0];
                 let shd = res[k][1];
+                let (f2f_p99, f2f_mean) = support::defects::p99_mean(a.diffs[k].clone());
                 println!(
                     "reading: ages {scene}, {label}, {name}: {n} lighting px; age under 16 {:.2} %, under 64 {:.2} %, at {} {:.2} %; \
                      key mean RMS residual over predicted {ratio:.2} ({m} px with g in 0.02..0.98, observed RMS {:.4}); \
-                     display residual lit p99 {} mean {:.2}, shadowed p99 {} mean {:.2}; pop share {:.3} %",
+                     display residual lit p99 {} mean {:.2}, shadowed p99 {} mean {:.2}; pop share {:.3} %; \
+                     frame-to-frame p99 {f2f_p99} mean {f2f_mean:.3}; settled (pair a at sky cap + 16) {:.2} %",
                     pct(u16),
                     pct(u64_),
                     frames - 1,
@@ -424,6 +442,7 @@ mod canopy {
                     shd.0,
                     shd.1,
                     100.0 * a.pops[k].0 as f64 / a.pops[k].1.max(1) as f64,
+                    pct(settled),
                 );
             }
             println!(
@@ -435,9 +454,11 @@ mod canopy {
         /// Plan 0094 Phase 1 bars 1 and 2: on both forest scenes (the sun at `10,180`, 15:00),
         /// the defaults (both terms, the store baked), the exposure pinned, a still camera: the
         /// long reference ([`REFERENCE`] frames, both caps [`REFERENCE_HISTORY`]), then runs of
-        /// 128 frames at the default key cap and 512 frames at key caps 256 and 64, each
-        /// aligned to the reference's jitter phase, each read by [`age_row`].
-        /// `VXE_TEST_ADAPTER` picks the adapter.
+        /// 128 frames at the default key cap with the settle off, 512 frames at key cap 256 with
+        /// it off and on, and 512 frames at key cap 64 with it on (the reference with it off),
+        /// each aligned to the reference's jitter phase, each read by [`age_row`].
+        /// `VXE_TEST_ADAPTER` picks the adapter; `VXE_CANOPY_ARM` (0 to 3) runs one run alone
+        /// after its own reference, so each run reads in a process of its own.
         #[test]
         #[ignore = "reading"]
         fn the_canopy_ages() {
@@ -468,12 +489,27 @@ mod canopy {
                 let sky = clock.sky(flythrough::outdoor::BASE_Z as f32);
                 let e = settled_exposure(&mut rig, &cam, Some(sky));
                 let mut r = frame(&mut rig, Some(sky), true, Exposure::Manual(e));
-                let hooks = LightHooks::default();
-                let refr = hold_capped(&rig, &cam, &mut r, hooks, REFERENCE_HISTORY, REFERENCE_HISTORY, REFERENCE, None);
+                let off = LightHooks {
+                    no_settle: true,
+                    ..LightHooks::default()
+                };
+                let refr = hold_capped(&rig, &cam, &mut r, off, REFERENCE_HISTORY, REFERENCE_HISTORY, REFERENCE, None);
                 let phase = r.steps % phases;
-                for (frames, key) in [(128, key_cap), (512, 256), (512, 64)] {
+                let only: Option<usize> = std::env::var("VXE_CANOPY_ARM").ok().and_then(|v| v.parse().ok());
+                for (i, (frames, key, hooks, label)) in [
+                    (128, key_cap, off, "settle off"),
+                    (512, 256, off, "settle off"),
+                    (512, 256, LightHooks::default(), "settle on"),
+                    (512, 64, LightHooks::default(), "settle on"),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    if only.is_some_and(|o| o != i) {
+                        continue;
+                    }
                     let a = hold_capped(&rig, &cam, &mut r, hooks, sky_cap, key, frames, Some((phase, phases)));
-                    age_row(scene, &format!("{frames} frames, key cap {key}"), &a, &refr, key, frames);
+                    age_row(scene, &format!("{frames} frames, key cap {key}, {label}"), &a, &refr, key, frames);
                 }
             }
             println!("reading: the_canopy_ages wall {:.1} s", t0.elapsed().as_secs_f64());

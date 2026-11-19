@@ -200,6 +200,117 @@ mod flicker {
             );
         }
 
+        /// Plan 0094 Phase 3 bar 3's release clause: [`hills_at_rest`]'s pose and frame at 17:00,
+        /// the exposure pinned once settled, 64 frames, then the clock running at 1x (1/60 s a
+        /// frame) for 3600 frames. Per frame, the lighting pixels whose pair holds the settle's
+        /// mark (its `a` at the sky cap + 16 or more) and the ones released (the mark the frame
+        /// before, not now); the display's over-4 share per pair; and rule 3's classes of the
+        /// display pixels released on the first frame past the 120th with at least 20 releases,
+        /// over the 8 frames before it to `F + 16` after. `settle_on` false sets `no_settle`.
+        fn hills_clock(settle_on: bool) {
+            use support::rules::{F, MEAN_FRAMES, T_FADE, TraceClass, trace_classes};
+            let Some((mut rig, cam)) = support::terms::hills_rig() else {
+                return;
+            };
+            let cam = pitched(&cam, -30.0);
+            let clock = |sec: f64| {
+                flythrough::daylight::Clock {
+                    minutes: 17.0 * 60.0 + sec / 60.0,
+                    ..Default::default()
+                }
+                .sky(flythrough::outdoor::BASE_Z as f32)
+            };
+            let mut s = strip_frame(&mut rig, clock(0.0), &cam);
+            settle(&mut rig, &mut s, &cam, 240);
+            let e = s.frame.exposure_readout(&rig.device).map(|r| r.exposure).expect("a read-back");
+            s.frame.set_lighting(vxe_render::Lighting {
+                exposure: vxe_render::Exposure::Manual(e),
+                ..s.frame.lighting()
+            });
+            s.frame.set_light_hooks(vxe_render::LightHooks {
+                no_settle: !settle_on,
+                ..Default::default()
+            });
+            settle(&mut rig, &mut s, &cam, 64);
+            let mark = (flythrough::default_lighting().sky_history + 16) as f32 - 0.5;
+            let read_marks = |s: &support::defects::Stepper, rig: &Rig| -> Vec<bool> {
+                let p = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, s.frame.visibility_pair());
+                p.iter().map(|v| v[3] >= mark).collect()
+            };
+            let gw = s.frame.visibility_pair().width() as usize;
+            let (dw, dh) = (OUT[0] as usize, OUT[1] as usize);
+            let mut marks = read_marks(&s, &rig);
+            let mut last = s.step(&rig, &cam).display;
+            let mut ring: std::collections::VecDeque<Vec<u8>> = std::collections::VecDeque::new();
+            let (mut released_sum, mut settled_sum, mut pops_sum, mut max_rel) = (0u64, 0u64, 0f64, 0usize);
+            let mut event: Option<(usize, Vec<bool>, Vec<Vec<u8>>)> = None;
+            let frames: u32 = 3600;
+            for k in 1..=frames as usize {
+                s.frame.set_sky(Some(clock(k as f64 / 60.0)));
+                queue_step(&mut rig, &mut s.frame, &cam);
+                let now = s.step(&rig, &cam).display;
+                let m = read_marks(&s, &rig);
+                let released: Vec<bool> = marks.iter().zip(&m).map(|(a, b)| *a && !*b).collect();
+                let rel = released.iter().filter(|r| **r).count();
+                released_sum += rel as u64;
+                settled_sum += m.iter().filter(|v| **v).count() as u64;
+                max_rel = max_rel.max(rel);
+                let n = now.len() / 4;
+                pops_sum += 100.0 * support::rules::still_count(&last, &now, support::rules::T_STILL, None) as f64 / n as f64;
+                if let Some((_, _, shots)) = event.as_mut() {
+                    if shots.len() < MEAN_FRAMES + F + 16 {
+                        shots.push(now.clone());
+                    }
+                } else if k > 120 && rel >= 20 && ring.len() == MEAN_FRAMES {
+                    let region = (0..n).map(|i| released[support::defects::grid_of(i, dw, dh, gw, released.len())]).collect();
+                    let mut shots: Vec<Vec<u8>> = ring.iter().cloned().collect();
+                    shots.push(now.clone());
+                    event = Some((k, region, shots));
+                }
+                ring.push_back(now.clone());
+                if ring.len() > MEAN_FRAMES {
+                    ring.pop_front();
+                }
+                marks = m;
+                last = now;
+            }
+            println!(
+                "reading: hills 17:00, clock 1x for {frames} frames, settle {}: settled lighting px per frame {:.0} of {}, releases per frame {:.2} (max {max_rel}), over-4 mean {:.3} % per pair ({})",
+                if settle_on { "on" } else { "off" },
+                settled_sum as f64 / f64::from(frames),
+                marks.len(),
+                released_sum as f64 / f64::from(frames),
+                pops_sum / f64::from(frames),
+                rig.adapter
+            );
+            match event {
+                Some((k, region, shots)) if shots.len() >= MEAN_FRAMES + F + 16 => {
+                    let refs: Vec<&[u8]> = shots.iter().map(Vec::as_slice).collect();
+                    let c = trace_classes(&refs, &region, T_FADE, F);
+                    let px = region.iter().filter(|r| **r).count().max(1);
+                    let shares: Vec<String> = TraceClass::ALL
+                        .iter()
+                        .zip(c)
+                        .map(|(t, v)| format!("{t:?} {:.2} %", 100.0 * v as f64 / px as f64))
+                        .collect();
+                    println!("reading: hills clock release at frame {k}: {px} display px; {}", shares.join(", "));
+                }
+                _ => println!("reading: hills clock: no frame past 120 released 20 lighting px"),
+            }
+        }
+
+        #[test]
+        #[ignore = "reading"]
+        fn hills_clock_settle_on() {
+            hills_clock(true);
+        }
+
+        #[test]
+        #[ignore = "reading"]
+        fn hills_clock_settle_off() {
+            hills_clock(false);
+        }
+
         #[test]
         #[ignore = "reading"]
         fn hills_at_rest_auto() {
@@ -253,6 +364,19 @@ mod flicker {
             turn_and_return(flythrough::LeafShadow::Voxel);
         }
 
+        /// [`turn_and_return_voxel`] with the settle off (`no_settle`).
+        #[test]
+        #[ignore = "reading"]
+        fn turn_and_return_voxel_no_settle() {
+            NO_SETTLE.with(|n| n.set(true));
+            turn_and_return(flythrough::LeafShadow::Voxel);
+        }
+
+        std::thread_local! {
+            /// Whether [`turn_and_return`]'s frame has the settle off.
+            static NO_SETTLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        }
+
         fn turn_and_return(leaf: flythrough::LeafShadow) {
             use support::rules::{T_RETURN, T_STILL, return_count, still_count};
             let Some((mut rig, cam)) = support::terms::forest_rig() else {
@@ -264,7 +388,11 @@ mod flicker {
             }
             .sky(flythrough::outdoor::BASE_Z as f32);
             {
-                let f = flicker_frame_with(&rig, sky, None, false, leaf);
+                let mut f = flicker_frame_with(&rig, sky, None, false, leaf);
+                f.set_light_hooks(vxe_render::LightHooks {
+                    no_settle: NO_SETTLE.with(std::cell::Cell::get),
+                    ..Default::default()
+                });
                 let mut s = Stepper::new(&rig, f);
                 let mut n = 0;
                 while n < 30_000 && !s.frame.bake_queue().is_some_and(|q| q.empty()) {
