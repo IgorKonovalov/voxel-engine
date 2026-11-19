@@ -466,7 +466,8 @@ pub fn tile_of(m: &Modes, i: Item) -> usize {
 /// Appends the belt to the overlay's `text` and `colours` (one colour per line) for a grid of
 /// `grid` = (columns, rows) cells: the text is cut to leave the grid's last [`BELT_ROWS`]
 /// rows and padded down to them, then the belt's rows, centred: the selected slot's name
-/// (shown for `banner_ms` after the belt's `changed_at`, blank after), the selected slot's
+/// (shown for `banner_ms` after the belt's `changed_at`, and while a structure refused at the
+/// scale is selected; blank after), the selected slot's
 /// frame top (`+------+`), the four slot rows (each slot's digit, then its name on the next
 /// row, or its entry's icon from the slot's third column once made; `|` at the selected
 /// slot's sides; the digits' row ends with `free` in yellow while the modes' snap is
@@ -511,7 +512,11 @@ pub fn append_belt(
     let x0 = cols.saturating_sub(BELT_COLS) / 2;
     let mut row = String::with_capacity(cols);
     // The name row.
-    let shown = belt.changed_at.is_some_and(|at| now_ms - at < banner_ms);
+    // A structure refused at the modes' scale keeps its row: the refusal stays in view.
+    let shown = belt.changed_at.is_some_and(|at| now_ms - at < banner_ms)
+        || belt
+            .structure()
+            .is_some_and(|j| crate::structures::words::refusal(m, j).is_some());
     let mut colour = HudColour::White;
     let mut reason = None;
     if shown {

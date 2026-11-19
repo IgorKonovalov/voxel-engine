@@ -272,6 +272,28 @@ mod reading {
         }
     }
 
+    /// Plan 0083 Phase 8's settle reading needs the castle as a `.vox` the fly-through's
+    /// `--vox PATH --vox-op` places at runtime: writes `castle::castle_vox()` encoded to
+    /// `$VXE_CASTLE_VOX` (default `live/castle.vox` under the workspace). Its palette has no
+    /// `MATL`, so its torches are plain rows there. Run by hand:
+    /// `cargo nextest run -p flythrough --test structures --run-ignored only
+    /// -E 'test(=reading::castle_as_a_vox_file)'`.
+    #[test]
+    #[ignore = "reading: writes the castle as a .vox for the settle reading, by hand"]
+    fn castle_as_a_vox_file() {
+        let path = std::env::var("VXE_CASTLE_VOX").map_or_else(
+            |_| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../live/castle.vox"),
+            std::path::PathBuf::from,
+        );
+        let bytes = vxe_assets::encode(&castle::castle_vox());
+        std::fs::write(&path, &bytes).expect("writes");
+        println!(
+            "reading: castle.vox {} B at {}",
+            bytes.len(),
+            path.display()
+        );
+    }
+
     /// Plan 0083 Phase 6's readings: the structures library's scan and rows at the start, the
     /// frame ghosts' pool bytes (the chapel's edges, the castle's corners), the chapel's icon
     /// time, and the castle's cleared box as a uniform air prefab (its construction, its id

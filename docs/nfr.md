@@ -141,7 +141,9 @@ Every reading against this budget, with its machine, scene and commit, is in
 | Everything else in VRAM (frame targets, history, entities, upscaler) | 1.5 GB |
 
 The world figure rests on the uniform-brick assumption in `roadmap.md` (under 10 % of bricks
-non-uniform at full detail). When exceeded, far chunks drop to LOD-only residency rather than
+non-uniform at full detail). A prefab is stored as 8³ bricks (ADR-0066): the generated castle's
+21 kept tiles hold 44 966 592 B, against 343 566 464 B in the dense form (Plan 0083 Phase 3,
+Ryzen 9 5900HS); reading in the memory file. When exceeded, far chunks drop to LOD-only residency rather than
 the frame dropping.
 
 Every reading against this budget, with its machine, scene and commit, is in
@@ -162,7 +164,14 @@ Every reading against these budgets, with its machine and commit, is in
 - **Results** are returned synchronously with the edit, per material, exact.
 - **Stamp cost (proposals, Plan 0008):** a 16³ prefab stamp (the shelled box `Prefab::vault`)
   into solid rock costs under 100 µs, and a 64³ all-written prefab under 5 ms, both including
-  the `EditResult` tally.
+  the `EditResult` tally. Brick prefabs (Plan 0083, ADR-0066): `prefab64_mixed` 3.86 ms, 1.4 %
+  over the dense form's 3.80 ms on the same box; a uniform 64³ prefab 7.9 µs; a 256³
+  castle-shaped tile 19.0 ms (Ryzen 9 5900HS, quiet, perf lock, dbb59413).
+- **Runtime structure placement (Plan 0083, a reading, no budget):** a stamp writes the
+  resident chunks and leaves a pending placement for the rest; the castle's 21 stamps at
+  runtime cost 120.1 ms at the fly-through's full radius (355 chunks written now, 0 pending)
+  and 46.0 ms at radius 6 (107 now, 21 pending) (Ryzen 9 5900HS, perf lock, load 2.15,
+  7a7a6f19); the guess was under 500 ms.
   Readings in `docs/nfr/04-edits.md`.
 - **Collapse cost (proposals, Plan 0009):** `find_unsupported` after a radius-10 carve at the
   centre of a solid 4³-chunk world (every flood runs to the cap) under 1 ms; `drop_region` of

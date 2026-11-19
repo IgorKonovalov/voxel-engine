@@ -158,6 +158,10 @@ pub struct Modes {
     pub structure_scale: u32,
     /// How a structure's box finds its base (`entities::belt::stand_box`).
     pub snap: crate::entities::belt::Snap,
+    /// The most voxels an edit spans on one axis in the run's world
+    /// (`vxe_world::WorldLimits::edit_axis_max`): a structure's box over it is refused, and
+    /// the belt says so (`crate::structures::Entry::refusal`).
+    pub edit_axis_max: u32,
 }
 
 /// The live queue's modes the keys step: `F` the order, `Tab` and `Slash` the score's angle
@@ -300,6 +304,7 @@ impl Modes {
             clear_box: true,
             structure_scale: 1,
             snap: crate::entities::belt::Snap::Ground,
+            edit_axis_max: vxe_world::WorldLimits::DEFAULT.edit_axis_max,
         }
     }
 

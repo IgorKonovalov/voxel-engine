@@ -112,6 +112,25 @@ impl Entry {
             s
         })
     }
+
+    /// Why the entry cannot be placed at `scale` in a world whose edits span at most `limit`
+    /// voxels an axis: its box with [`super::CLEAR_MARGIN`] each side over the limit
+    /// (`castle x2: 1200 x 1200 x 1000 voxels, over the edit limit of 1024`), or a scale over 1
+    /// of an entry with no file to scale (`castle: scale 1 only`); `None` when it can be, and
+    /// for an entry in error or still building (their own words say why). The reason follows the
+    /// words' first `: `.
+    pub fn refusal(&self, scale: u32, limit: u32) -> Option<String> {
+        let size = self.size(scale, 0)?;
+        let m = 2 * super::CLEAR_MARGIN as u32;
+        if size.iter().any(|&v| v + m > limit) {
+            return Some(format!(
+                "{} x{scale}: {} x {} x {} voxels, over the edit limit of {limit}",
+                self.name, size[0], size[1], size[2]
+            ));
+        }
+        (scale > 1 && !matches!(&self.source, Ok(Source::File(..))))
+            .then(|| format!("{}: scale 1 only", self.name))
+    }
 }
 
 impl std::fmt::Debug for Entry {

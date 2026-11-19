@@ -12,7 +12,10 @@ cut), or with `snap free` (`F`, the pad's D-pad up) at the crosshair's hit as it
 out in the air; `R` turns it a quarter turn and the
 left click (or `E`) places it as logged stamps (a stamp of written air over the box and 1 m around it
 when `clear box` is on, then one stamp per placement). `structure scale` (1 to 4) and `snap`
-are in the same group. The castle's icon and ghost arrive with its first build, on a worker the first time
+are in the same group. A scale that puts the box with its 1 m margin over the world's edit limit
+(1024 voxels a side) is refused: the belt's name row reads it in grey with the reason in red
+(`castle x2: 1200 x 1200 x 1000 voxels, over the edit limit of 1024`) and the click says it over
+the view; the castle places at scale 1 only. The castle's icon and ghost arrive with its first build, on a worker the first time
 its slot is selected (`castle: building` until then). A structure larger than the cave's rooms
 stands in its cleared box with the cut rock around it: judge a large structure on the outdoor
 hills (`--source outdoor --time 12:00`). At the start also, from the command line:

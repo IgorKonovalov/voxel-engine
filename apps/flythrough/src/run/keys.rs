@@ -637,6 +637,7 @@ impl Run {
     /// build starts on its first selection and there is no ghost until it arrives; an entry in
     /// error says why once.
     fn sync_frame(&mut self, j: usize) {
+        self.modes.edit_axis_max = self.world.limits().edit_axis_max;
         let table = self.world.materials();
         self.modes.structures.build_castle(j, table);
         let (scale, q) = (
@@ -692,34 +693,31 @@ impl Run {
     /// to the server as ops (`structures::ops`: the air box's stamp when `clear box` is on,
     /// then a stamp per placement), its prefabs registered first. The tick that applies them
     /// says the notice (`placed chapel 4.8 x 3.2 x 4.0 m: 5 ops, 4 chunks now, 0 pending`);
-    /// the mode stays and the ghost stands anew.
+    /// the mode stays and the ghost stands anew. A box the scale refuses
+    /// (`structures::words::refusal`) places nothing and says why ([`Run::refuse`]).
     fn place_structure(&mut self, j: usize) {
         let (scale, q) = (
             self.modes.structure_scale,
             self.modes.walkers.belt.quarters(),
         );
+        self.modes.edit_axis_max = self.world.limits().edit_axis_max;
+        if let Some(words) = crate::structures::words::refusal(&self.modes, j) {
+            return self.refuse(words);
+        }
         let table = self.world.materials();
         let scene = match self.modes.structures.scene_at(j, scale, table) {
             Ok(s) => s,
-            Err(words) => return self.say(words),
+            Err(words) => return self.refuse(words),
         };
         let name = self.item_name(belt::Item::Structure(j));
         let s = scene.size();
         let size = if q % 2 == 1 { [s[1], s[0], s[2]] } else { s };
-        let limit = self.world.limits().edit_axis_max;
-        let m = 2 * crate::structures::CLEAR_MARGIN as u32;
-        if size.iter().any(|&v| v + m > limit) {
-            return self.say(format!(
-                "{name} x{scale}: {} x {} x {} voxels, over the edit limit of {limit}",
-                size[0], size[1], size[2]
-            ));
-        }
         let corner = self.aim_corner(size);
         let lo = scene.bounds.0;
         let offset = [0, 1, 2].map(|k| corner[k] - lo[k]);
         let v = crate::structures::ops(&scene, offset, q, self.modes.clear_box);
         let Some(net) = self.net.as_mut() else {
-            return self.say("structure: no server in this run");
+            return self.refuse("structure: no server in this run".to_owned());
         };
         for p in &v.prefabs {
             // A prefab named twice registers once; a collision is a 64-bit accident.
@@ -733,6 +731,13 @@ impl Run {
         crate::structures::words::metres(size, &mut words);
         self.structure_placed = Some((words, v.ops.len()));
         self.sync_ghost();
+    }
+
+    /// A refused placement's `words`: printed, in the menu's notice row, and in the banner's
+    /// row over the view, so the window says why nothing was placed.
+    fn refuse(&mut self, words: String) {
+        self.modes.show_lights(words.clone(), ms_since(self.start));
+        self.say(words);
     }
 
     /// [`Run::say`] unless the notice already reads `words`.

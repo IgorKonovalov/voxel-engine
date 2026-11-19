@@ -446,6 +446,97 @@ fn the_belt_and_the_chooser_over_the_carved_view() {
     }
 }
 
+/// Plan 0083 Phase 8 (the Phase 6 amendment's addition): `structures.png`, the menu's
+/// Structures page over the carved view at scale 1, placed at the window's top-left: the
+/// committed library's chapel with its icon and its rows, the castle before its build in grey
+/// (`castle: building`), against the cave's table with the walker's and the library's rows.
+/// Pixel exact against the golden blessed on lavapipe.
+#[test]
+fn the_structures_chooser() {
+    use flythrough::entities::{self, belt, library};
+    use flythrough::hud::menu::{Menu, PageId, Panel, RunView, place};
+    use flythrough::structures as st;
+    let base = flythrough::walker::with_walker(&flythrough::cave_materials());
+    let mut table = base.clone();
+    let dir = std::path::Path::new(st::LIBRARY);
+    st::add_library_rows(dir, None, &mut table);
+    let mut m = flythrough::hud::Modes::new(
+        vxe_render::Lighting::default(),
+        vxe_render::LightingResolution::default(),
+        0.0,
+    );
+    let lib = library::scan(std::path::Path::new(library::DEFAULT_DIR));
+    m.walkers = entities::Walkers::default().with_library(lib);
+    m.structures = st::Library::load(dir, &table, &base);
+    let names: Vec<&str> = m
+        .structures
+        .entries
+        .iter()
+        .map(|e| e.name.as_str())
+        .collect();
+    assert_eq!(names, ["chapel", st::CASTLE_NAME]);
+    st::refresh_icons(&mut m, &table);
+    m.walkers.icons.wait();
+    let chapel_tile = belt::tile_of(&m, belt::Item::Structure(0));
+    assert!(m.walkers.icons.ready(chapel_tile), "the chapel's icon");
+    let pixels: Vec<(u32, Vec<u8>)> = m.walkers.icons.uploads().collect();
+    let grid = ((WIDTH / CELL) as usize, (HEIGHT / CELL) as usize);
+
+    let mut menu = Menu::default();
+    menu.open_at(PageId::Structures);
+    let (mut page, mut page_colours) = (String::new(), Vec::new());
+    let mut page_paint = belt::Paint::default();
+    menu.write_with(
+        &m,
+        &RunView::default(),
+        None,
+        &mut page,
+        &mut page_colours,
+        &mut page_paint,
+    );
+    assert!(page.contains("castle: building"), "{page}");
+    assert!(
+        page_paint
+            .tiles
+            .iter()
+            .any(|t| t.index == chapel_tile as u32),
+        "the chapel's tile on the page"
+    );
+    let panel = Panel {
+        scale: 1,
+        col: 0,
+        row: 0,
+        cols: grid.0,
+        rows: grid.1,
+    };
+    let (mut text, mut colours) = (String::new(), Vec::new());
+    let backdrop = place(&page, &page_colours, panel, "", &mut text, &mut colours);
+    let chooser = MenuText {
+        text: &text,
+        colours: &colours,
+        paint: vxe_render::HudPaint {
+            backdrops: std::slice::from_ref(&backdrop),
+            tiles: &page_paint.tiles,
+            ..Default::default()
+        },
+        tiles: &pixels,
+    };
+    let Some(frame) = render_overlay(false, None, Some(chooser)) else {
+        return;
+    };
+    let img = &frame.composed;
+    let path = golden_path("structures.png");
+    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+        write_png(&path, img, WIDTH, HEIGHT);
+        println!("blessed {path:?}");
+    } else {
+        let differing = differing_bytes(img, &read_png(&path).0);
+        assert_eq!(differing, 0, "structures.png: {differing} bytes differ");
+    }
+    let grey = img.chunks(4).filter(|p| p[..3] == [153, 153, 153]).count();
+    assert!(grey > 0, "the castle before its build is grey");
+}
+
 /// Readings run by hand (`--run-ignored only -E 'test(=reading::<name>)'`).
 mod reading {
     use super::*;

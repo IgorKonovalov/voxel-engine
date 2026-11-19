@@ -28,7 +28,7 @@ fn base_table() -> MaterialTable {
 }
 
 /// [`base_table`] with the structures library's rows (`structures::add_library_rows`).
-fn world_table() -> MaterialTable {
+pub(super) fn world_table() -> MaterialTable {
     let mut t = base_table();
     st::add_library_rows(Path::new(st::LIBRARY), None, &mut t);
     t
@@ -36,7 +36,7 @@ fn world_table() -> MaterialTable {
 
 /// A rock box of `table` hollow over `[-8, 120) x [-40, 40) x [-8, 60)`: the floor's top at
 /// z = -8, room for the chapel's box and its margin 2.6 m ahead.
-fn rock_box(table: &MaterialTable) -> World {
+pub(super) fn rock_box(table: &MaterialTable) -> World {
     let world = World::generate(
         ChunkExtent::new([-1, -1, -1], [2, 1, 1]),
         &vxe_world::UniformSource(crate::cave::ROCK),
@@ -53,7 +53,7 @@ fn rock_box(table: &MaterialTable) -> World {
 }
 
 /// A run in `world` with the committed libraries, the entities built against its table.
-fn run_in(world: World) -> Run {
+pub(super) fn run_in(world: World) -> Run {
     let mut run = bare_run(world);
     let lib = library::scan(Path::new(library::DEFAULT_DIR));
     run.modes.walkers = crate::entities::Walkers::default().with_library(lib);
@@ -67,7 +67,7 @@ fn structure_run() -> Run {
     run_in(rock_box(&world_table()))
 }
 
-fn frame_keys(run: &mut Run, input: &Input) {
+pub(super) fn frame_keys(run: &mut Run, input: &Input) {
     let (pass, exit) = run.key_step(input);
     assert!(exit.is_none(), "the run goes on");
     run.flight_step(pass.input(), 1.0 / 60.0);
@@ -85,28 +85,28 @@ fn wheel_down() -> Input {
     i
 }
 
-fn click() -> Input {
+pub(super) fn click() -> Input {
     let mut i = Input::default();
     i.button_down(MouseButton::Left);
     i
 }
 
 /// The camera at `at`, `pitch_deg` above the horizon, looking along +x.
-fn look(run: &mut Run, at: [f32; 3], pitch_deg: f32) {
+pub(super) fn look(run: &mut Run, at: [f32; 3], pitch_deg: f32) {
     run.fly.camera.position = vxe_render::glam::Vec3::from_array(at);
     run.fly.camera.yaw = 0.0;
     run.fly.camera.pitch = pitch_deg.to_radians();
 }
 
 /// The eye 1.7 m over the floor's top (z = -8), looking 40 degrees down along +x.
-const EYE: [f32; 3] = [0.5, 0.5, 9.0];
+pub(super) const EYE: [f32; 3] = [0.5, 0.5, 9.0];
 /// Where that view meets the floor's top: x = 0.5 + 17 / tan 40 degrees.
 fn floor_hit_x() -> f32 {
     0.5 + 17.0 / 40f32.to_radians().tan()
 }
 
 /// The library index of the structure named `name`.
-fn structure(run: &Run, name: &str) -> usize {
+pub(super) fn structure(run: &Run, name: &str) -> usize {
     run.modes
         .structures
         .entries
@@ -116,7 +116,7 @@ fn structure(run: &Run, name: &str) -> usize {
 }
 
 /// Into placement mode at slot `s` (0-based): the wheel, then the slot's digit.
-fn enter_slot(run: &mut Run, s: usize) {
+pub(super) fn enter_slot(run: &mut Run, s: usize) {
     if !run.modes.walkers.belt.on {
         frame_keys(run, &wheel_down());
     }
@@ -139,7 +139,7 @@ fn frame_size(run: &Run) -> [u32; 3] {
     hi
 }
 
-fn notice(run: &Run) -> Option<&str> {
+pub(super) fn notice(run: &Run) -> Option<&str> {
     run.notice.as_ref().map(|(l, _)| l.as_str())
 }
 
@@ -501,7 +501,7 @@ fn walker_index(run: &Run) -> usize {
 }
 
 /// The run's op log's stamps, in order: each one's prefab id.
-fn stamps(run: &Run) -> Vec<u64> {
+pub(super) fn stamps(run: &Run) -> Vec<u64> {
     let net = run.net.as_ref().unwrap();
     net.server
         .ops()

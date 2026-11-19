@@ -114,8 +114,17 @@ box meets and keeps one pending placement for the chunks it writes into that are
 the streamer writes the placement into each such chunk as it inserts it, generated or restored
 from persistence, and drops it once every chunk is written. The call's cost is the resident
 part; a placement costs its rotated prefab's bytes until it is dropped, and a box test per
-pending placement on every streamed insert while any is pending. The runtime castle's call time
-and pending count are read in `docs/plans/logs/0083.md` (Phase 5).
+pending placement on every streamed insert while any is pending. **Reading (Plan 0083 Phase 5,
+`reading::castle_stamped_at_runtime`, release, tree 764f0d18, Ryzen 9 5900HS, CPU only,
+exclusive perf lock, 1-minute load 2.15):** the castle's 21 stamps into the hall streamed
+around the spawn take 120.1 ms at `r_full` 16 (17 077 resident chunks, 355 written now,
+13 154 879 voxels changed, 0 placements pending) and 46.0 ms at `r_full` 6 (925 resident, 107
+written now, 4 540 522 voxels changed, 21 pending); the guess was under 500 ms. The live
+queue's time to settle the castle's light after a runtime placement is not read: two headless
+runs of the cave (Plan 0083 Phase 8, RTX 3080 Laptop, 1500 frames, with and without the
+castle written as a `.vox` and placed by `--vox-op` on the first tick) both hold the queue at
+1 to 2 jobs with 2964 reach-bound chunks waiting to the end, so neither reaches an empty
+queue to time (`docs/plans/logs/0083.md`, Phase 8).
 
 ## Replay throughput
 

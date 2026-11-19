@@ -14,6 +14,16 @@ pub fn item_error(m: &Modes, j: usize) -> Option<&str> {
     m.structures.entries.get(j)?.error()
 }
 
+/// Why structure `j` cannot be placed at the modes' scale in the run's edit limit
+/// ([`crate::structures::Entry::refusal`]): the belt's name row shows it while the slot is
+/// selected, and the click's notice says it.
+pub fn refusal(m: &Modes, j: usize) -> Option<String> {
+    m.structures
+        .entries
+        .get(j)?
+        .refusal(m.structure_scale, m.edit_axis_max)
+}
+
 /// Whether structure `j` is drawn grey: in error, or the castle before its build.
 pub fn grey(m: &Modes, j: usize) -> bool {
     m.structures
@@ -72,8 +82,9 @@ pub fn write_item_rows(m: &Modes, j: usize, text: &mut String) {
 }
 
 /// The belt's name row for structure `j`: `chapel  4.8 x 3.2 x 4.0 m` at the modes' scale and
-/// the belt's turn (`  x2` after it at scale 2), `castle: building`, or its name and error.
-/// Gives whether it is grey and where its red reason starts.
+/// the belt's turn (`  x2` after it at scale 2), `castle: building`, its name and error, or
+/// its [`refusal`] at the scale (grey, the reason red). Gives whether it is grey and where its
+/// red reason starts.
 pub fn write_name(m: &Modes, j: usize, out: &mut String) -> (bool, Option<usize>) {
     let Some(e) = m.structures.entries.get(j) else {
         return (false, None);
@@ -83,6 +94,10 @@ pub fn write_name(m: &Modes, j: usize, out: &mut String) -> (bool, Option<usize>
         return (true, Some(e.name.len() + 2));
     }
     let scale = m.structure_scale;
+    if let Some(words) = refusal(m, j) {
+        out.push_str(&words);
+        return (true, words.find(": ").map(|at| at + 2));
+    }
     match e.size(scale, m.walkers.belt.quarters()) {
         Some(size) => {
             let _ = write!(out, "{}  ", e.name);

@@ -477,6 +477,8 @@ mod menu_tests;
 #[cfg(test)]
 mod picker_tests;
 #[cfg(test)]
+mod structure_limit_tests;
+#[cfg(test)]
 mod structure_tests;
 #[cfg(test)]
 mod tests;

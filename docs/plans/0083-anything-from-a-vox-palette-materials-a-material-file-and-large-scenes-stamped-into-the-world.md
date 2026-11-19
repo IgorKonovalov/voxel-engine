@@ -1187,9 +1187,9 @@ Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
 | 7: the owner's window | human | done 2026-11-18 (83a cave, 83b outdoor); verdict in "Phase 7 verdict" | fd650c02, 0e85862a (fixes between 83a and 83b) |
 | 7b: the coarse ghost, the spider's rows, the docs | dev | done; deviations in Notes (the spider takes belt slot 1) | 4c5b5616, 6a457a07, a4dec4c2, d8c8b284 |
 | 7c: the owner looks at the ghost | human | done 2026-11-19 (83c, no mouse): the ghost passes; verdict in "Phase 7c verdict" | |
-| 7d: the snap, the free mode, the swap, `E`, the walker first, the Esc cancel | dev | done after merge 49c5cbd3; deviations (columns start 0.5 over `p`, not 10 m; the 600 box's cap) in the log | committed with this row |
-| 7e: the owner looks at the snap and the free mode (83d) | human | not started | |
-| 8: picks, goldens, readings, tip | dev | not started | |
+| 7d: the snap, the free mode, the swap, `E`, the walker first, the Esc cancel | dev | done after merge 49c5cbd3; deviations (columns start 0.5 over `p`, not 10 m; the 600 box's cap) in the log | 11f3dbe8 |
+| 7e: the owner looks at the snap and the free mode (83d) | human | done 2026-11-19: "its better"; the lowest column stands; the scale limit owed to Phase 8 | |
+| 8: picks, goldens, readings, tip | dev | done; the settle after the runtime castle not read; the golden on the goldens' floor, not SSIM (Notes) | committed with this row |
 
 ### Notes
 
@@ -1303,8 +1303,9 @@ Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
 - Phase 7b: k follows the formula and done-when 3 (k is the scale at 1 to 3), not the
   mechanism's "k 1 at scales 1 to 3".
 - Phase 7b: `Model::reach` public, `MAX_COARSE` exported, every model id moved (coarse byte).
-- Phase 7b: files outside the list, the three spider tests, the 9-part scale-2 ghost and the
-  `gpu_entities.rs` path: readings log, Phase 7b.
+- Phase 7b and 8: files outside the list and the rest: readings log, per phase.
+
+- Phase 8: golden on the goldens' floor, not SSIM; settle not read; `CLAUDE.md` not edited (log).
 
 ### Close triggers
 

@@ -188,8 +188,12 @@ turns it a quarter turn. The left click (or `E`) places it as logged stamps thro
 stamp per placement; a part of the box not resident is written as its chunks arrive. The
 notice reads `placed chapel 4.8 x 3.2 x 4.0 m: 5 ops, 4 chunks now, 0 pending`, and the mode
 stays. The castle builds on a worker the first time its slot is selected (`castle: building`
-in grey until it arrives; its icon and its ghost arrive with it) and places at scale 1 only; a
-box past the edit limit (1024 voxels a side with its margin) is refused with its size. A
+in grey until it arrives; its icon and its ghost arrive with it). A box past the edit limit
+(1024 voxels a side with its 1 m margin each side) is refused: the click places nothing and
+the notice over the view reads `castle x2: 1200 x 1200 x 1000 voxels, over the edit limit
+of 1024`, and while that slot is selected at that scale the belt's name row stays on screen with
+the same words in grey, the reason in red. The castle (60 x 60 x 50 m) is past the limit at
+every scale over 1; were it not, it would read `castle: scale 1 only`, having no file to scale. A
 structure larger than the cave's rooms stands in its cleared box with the cut rock around it:
 the fly-through has no notion of a room, so judge a large structure on the outdoor hills
 (`--source outdoor --time 12:00`).
