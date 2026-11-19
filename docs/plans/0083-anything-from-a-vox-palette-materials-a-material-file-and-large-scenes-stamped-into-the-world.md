@@ -1,6 +1,6 @@
 # 0083: Anything from a `.vox`: palette materials, a material file, and large scenes stamped into the world
 
-> **Status:** in-progress (approved 2026-11-16, the owner's go with every recommended answer; .vox scale 1 world voxel); amended 2026-11-18 (the Phase 6 re-read after Plans 0077 and 0080 merged): a structure is a belt item of Plan 0077's placement mode, the cleared box a stamp of written air, the settings a `structures` menu group; questions 5 to 8 answered "all recommended"; **Phase 7's window done 2026-11-18 (83a cave, 83b outdoor): the verdict adds Phase 7b (the ghost is a coarse copy of the structure in its frame, the spider's rows on every source, the docs) and a five-minute owner look (7c) before Phase 8; see "Phase 7 verdict"**
+> **Status:** in-progress (approved 2026-11-16, the owner's go with every recommended answer; .vox scale 1 world voxel); amended 2026-11-18 (the Phase 6 re-read after Plans 0077 and 0080 merged): a structure is a belt item of Plan 0077's placement mode, the cleared box a stamp of written air, the settings a `structures` menu group; questions 5 to 8 answered "all recommended"; **Phase 7's window done 2026-11-18 (83a cave, 83b outdoor): the verdict adds Phase 7b (the ghost is a coarse copy of the structure in its frame, the spider's rows on every source, the docs) and a five-minute owner look (7c) before Phase 8; see "Phase 7 verdict". 7c done 2026-11-19 (83c): the ghost passes; its verdict adds Phase 7d (the ground snap, `snap ground | free` on `F`, a chooser digit swaps, `E` places, the walker first, a click cancels the quit question) and window 83d (7e) before Phase 8; see "Phase 7c verdict"**
 > **Created:** 2026-11-16
 > **Milestone:** M7 in [`docs/roadmap.md`](../roadmap.md) (stamping at authored-building
 > scale), with M6's `.vox` import; the engine side in `vxe-assets` and `vxe-world`, the testbed
@@ -496,12 +496,11 @@ Phase 8 runs after 7c. Its `chapel_golden` keeps the dark cave; `the_structures_
 (the addition above) stands; the picks it writes as defaults are the accepted ones under
 verdict 6, so it changes no default.
 
-**Owner picks 2026-11-19 (orchestrator's batch), both into Phase 8:** the belt order puts the
-walker first (walker, spider, then the structures); and a click or a pad button cancels the
-"Esc again to quit" question (Plan 0079 Phase 6's confirmation, closed in v0.65.0; this plan
-carries the change since it is the open lane on the fly-through). Done when: the belt's slot 1
-is the walker in a headless belt test, and a test drives Esc, then a mouse click (and a pad
-button), then Esc, and the process does not quit.
+**Owner picks 2026-11-19 (orchestrator's batch), carried by Phase 7d (under "Phase 7c
+verdict"), not Phase 8:** the belt order puts the walker first (walker, spider, then the
+structures); and a click or a pad button cancels the "Esc again to quit" question (Plan 0079
+Phase 6's confirmation, closed in v0.65.0; this plan carries the change since it is the open
+lane on the fly-through). Their done-whens are 7d's 6 and 7.
 
 ### Budgets added 2026-11-18 (guesses until Phase 7b reads them)
 
@@ -513,6 +512,192 @@ button), then Esc, and the process does not quit.
   row on the GPU), under the Budgets table's "1000 rows 64 KB" line.
 - **The frame with a ghost in view:** the entity term of a 64-voxel-a-side part filling the
   view, read in 7c, no bar.
+
+## Phase 7c verdict (2026-11-19): the ghost passes; the snap, the free mode, the digit and the key
+
+The owner's window 83c ran on the outdoor hills at noon with no mouse at hand (the lane's
+`live/window83c/verdicts.md` and `castle-ghost-floating.png`, untracked; Phase 7d copies the
+words into the readings log). **The coarse ghost passes:** it reads as the castle, `R`'s
+quarter turn, the chapel at scale 2 and the spider's icon are all fine. Four requests came out
+of it; they and the two 2026-11-19 picks are **Phase 7d**, a five-minute look at the snap and
+the free mode is **Phase 7e** (window 83d), and Phase 8 runs after it. The lane merges main
+first: the `Esc again to quit` question (`run/mod.rs`'s `QUIT_ASK_WORDS`, Plan 0079 Phase 6,
+v0.65.0) is on main and not in this branch yet.
+
+### The verdicts
+
+1. **The ghost floats.** The picture: the castle's ghost over a hill, the camera under its near
+   wall, the far half over the valley with air under it, the HUD's `clear box on, structure
+   scale 1`. The box rule puts the base at `p.z`, the aim's hit, and a 60 m footprint on hills
+   meets terrain 10 to 20 m away from that height. Decision: **by default the box snaps to the
+   terrain under its footprint**, defined below (the lowest column; which column wins on a
+   slope is owner question 9, with a recommendation).
+2. **A free mode.** Owner: a toggle "e.g. Space" into a mode where the structure goes anywhere,
+   in the air too. Decision: a `snap` setting in the `structures` group, `ground | free`
+   [ground], with a key. **Not `Space`:** `Space` is a fixed key (`hud::menu::FIXED_KEYS`),
+   held to rise in fly mode and to jump in walk mode, and placement mode keeps the camera
+   free, so a press toggle on it would flip the snap on every rise; the owner's words named
+   the idea, not the key. **The key is `F`**, the pad's **D-pad up** in the mode: both are
+   unbound (`F` is only a typed letter of the menu's filter, `route.rs`; D-pad up and down act
+   in the menu only, on the selection and a number's edit), and `hud::menu::entries::
+   bound_keys()` is the check. The mode shows in the window (the words below).
+3. **A digit on an occupied slot.** In the entities chooser the owner pressed `5` meaning "go
+   to the castle's slot"; the digit put the cursor's entry into slot 5 over the castle, with no
+   evident way back. Decision: **a digit on an occupied slot swaps**: the cursor's entry takes
+   the slot and the slot's holder takes the entry's old slot; nothing leaves the belt, the same
+   press undoes it, and the notice says both moves. Rejected: a confirmation (a second press
+   within 3 s): a modal step a keyboard-only owner must learn, and the first press then looks
+   like nothing happened; words alone after the replacement (`castle replaced; structures,
+   choose a structure, 5`): the loss stays and the way back is three steps.
+4. **Placing has no key.** Decision: **`E` places** in placement mode as the left click does
+   (a fixed key beside the click; the pad keeps `R2`). Not `Enter`: it is the readings' key
+   with the menu closed, and the owner reads the frame line right after a castle's placement;
+   not `Space`: held to rise. `E` is unbound (a typed letter of the filter only).
+
+### Phase 7d: the snap, the free mode, the swap, the placing key, the walker first, the Esc cancel
+- **Owner skill:** dev
+- **What:** a structure's box snaps to the terrain under its footprint; `snap ground | free`
+  in the `structures` group with `F` and D-pad up; a chooser digit on an occupied slot swaps;
+  `E` places; the belt starts with the walker; a click or a pad button cancels the quit
+  question. Entities keep `stand` (the feet at the hit): the snap and the free mode are the
+  box rule's, structures only.
+- **The snap (ground).** `belt::stand_box` finds `p` and the footprint as today (the near
+  side at the aim, growing away), then sets the base from the footprint's columns: a lattice
+  of downward casts over the footprint, `n = min(8, ceil(size / 8) + 1)` an axis, the
+  footprint's corners among them (the chapel 48 x 32: 7 x 5 = 35 casts; the castle 600 x 600:
+  64; a box under 8 a side: its 4 corners), each from `p.z + FLOOR_DROP` straight down over
+  `2 x FLOOR_DROP` (20 m). A column's top is its hit's height; a cast that starts inside a
+  solid voxel counts as `p.z + FLOOR_DROP`; a miss counts as `p.z - FLOOR_DROP` (the cap: a
+  valley deeper than 10 m under a castle still shows air, and the box never sinks out of
+  sight). **The base is the lowest column's top** (question 9); the corner is `[c.x - size.x
+  / 2, c.y - size.y / 2, base]`. The casts run on the client's world as today's `cast` does,
+  once per re-stand; `f32` as `stand_box` is (the testbed, not the engine).
+- **The free mode.** `snap free`: `p` is the aim's first hit within `PLACE_REACH` on any face
+  as it is (no drop to the floor), else the view's point at `PLACE_REACH` (30 m, the farthest
+  the aim reaches; a nearer stand is a hit); no column casts; the base at `p.z`, the footprint
+  by the box rule. So a castle in the air stands where you look at the sky, 30 m out, and a
+  castle on a hilltop stands at the hit with nothing sunk.
+- **The words.** The structures HUD row reads `clear box on, structure scale 1, snap ground`
+  (or `snap free`); a toggle prints the notice `snap free` / `snap ground` and re-stands the
+  ghost at once; while the snap is free the belt's row carries the word `free` in yellow after
+  its ninth slot, so the mode shows whenever the belt does. The Keys page and `--keys` list `F`
+  on `snap` and `E` with the click.
+- **The swap.** `Belt::assign(s, item)`: the slot `s` empty or holding `item`: as today; `s`
+  holding `old` and `item` in slot `t`: `s` gets `item`, `t` gets `old`; `item` in no slot:
+  `old` moves to the first empty slot after `s` (wrapping), or with no empty slot leaves the
+  belt. The call returns what moved; the chooser's notice reads `slot 5 walker, slot 1 castle`
+  or `slot 5 walker, slot 6 castle` or `slot 5 walker; castle left the belt`, and the entries'
+  `slot <n>` rows refresh. The belt's frame moves to `s` as today.
+- **The placing key.** `E` in placement mode, the menu closed, is the left click's placement
+  (the same path, ops and notice, the mode stays); out of the mode `E` does nothing; in the
+  menu it types.
+- **The walker first.** `Belt::fill` puts the built-in walker's entry (`library::BUILTIN_NAME`)
+  first, then the rest of the entities library's order, then the structures: walker, spider,
+  chapel, castle, slot 5 empty.
+- **The Esc cancel.** After the first `Esc` shows `Esc again to quit`, a mouse button or any pad
+  button cancels the question as "any other key" does today.
+- **Files touched:** `apps/flythrough/src/entities/belt.rs` (`stand_box`, `assign`, `fill`,
+  the belt's `free` word), `apps/flythrough/src/toggles.rs` (`snap`, `E` in the fixed set or
+  beside the click, the dev's call), `apps/flythrough/src/hud/menu/{mod,page,entries}.rs`
+  (`FIXED_KEYS`, `Assign`'s notice, the Keys page), `apps/flythrough/src/run/keys.rs` (`E`,
+  `F`, D-pad up, the quit question's cancel), `apps/flythrough/src/hud/modes.rs` (`snap`),
+  `apps/flythrough/src/structures/words.rs`, `apps/flythrough/src/run/{structure_tests,
+  picker_tests,menu_tests}.rs`, `docs/flythrough.md` (the Fixed table: `E`; the shortcuts
+  table: `structures | F | snap`; the pad table: D-pad up; the Placement mode paragraphs: the
+  snap, the free mode, the swap, the belt's order), `apps/flythrough/assets/structures/README.md`,
+  `apps/flythrough/assets/entities/README.md` (the belt's order), `docs/plans/logs/0083.md`.
+- **Done when** (CPU; each under 1 s unless named; the run tests on the chapel's run under 10 s
+  as `the_belt_holds_a_structure` is):
+  1. `a_snapped_box_sinks_to_its_lowest_column` (a unit test in `belt.rs` beside
+     `the_belt_formats`, a synthetic `cast` that counts its calls): a step terrain whose top is
+     z 100 at x < 300 and z 70 from x 300 on, an eye at (0, 0, 110) looking at (50, 0, 100),
+     the castle's 600 x 600 x 500 box: `p` is (50, 0, 100) (the floor hit), the footprint
+     x 50..650, the corner (50, -300, 70) and the downward casts number 64; the step moved to
+     x 700 (past the footprint) gives (50, -300, 100); the step's far side at z -200 gives the
+     base 0 (the cap, `p.z - FLOOR_DROP`); the chapel's 48 x 32 x 40 box over the step at x 80
+     gives the base 70 with 35 casts; a step at x 80 **up** to z 250 (a wall inside the
+     footprint, above the casts' start at z 200) gives the base 100, since a cast that starts
+     inside solid counts as high and the lowest wins. `a_structure_stands_by_the_box_rule` holds: its floor is level, so the corner is
+     unchanged.
+  2. `a_free_box_stands_where_the_aim_points` (the same module): with the snap free, the eye at
+     (0, 0, 110) along +x with no hit: the corner's x is 300 (`PLACE_REACH`) and z 110, one
+     cast in all; looking 30 degrees up at a ceiling hit at t 100 on a downward face: `p` is
+     the hit as it is (z 160), the base 160, no drop; the step terrain of test 1: the base is
+     100 (`p.z`), not 70.
+  3. `the_snap_key_frees_the_ghost` (`run/structure_tests.rs`): in the chapel's slot on the
+     rock box, `F` once: the structures HUD row reads `snap free`, the notice `snap free`, the
+     belt's cells carry `free`, and the ghost's corner is `stand_box`'s free answer for the
+     frame's eye and aim (asserted against the function); `F` again: `snap ground`, no `free`
+     in the belt, the ground corner; with the menu closed the pad's D-pad up does the same;
+     with the menu open `F` types `f` into the filter and the snap stays; `--keys` prints the
+     `snap` entry with `F`; `bound_keys()`'s uniqueness test holds with `E` and `F` in it.
+  4. `a_digit_on_an_occupied_slot_swaps` (`Belt::assign`, a unit test): slots [A, B, C, D,
+     empty..]: `assign(3, A)` gives [D, B, C, A, ..]; `assign(0, A)` again gives [A, B, C, D,
+     ..] (the same press undoes it); `assign(0, E)` with E in no slot gives [E, B, C, D, A, ..]
+     (A to the first empty slot after 0); with nine slots full, `assign(0, J)` gives J in slot
+     1 and A gone, the return naming A as left; `assign(1, B)` changes nothing. And in
+     `run/picker_tests.rs`, `the_chooser_swaps_an_occupied_slot`: the entities chooser open,
+     the cursor on the walker (slot 1), `4`: slot 4 walker, slot 1 castle, the notice `slot 4
+     walker, slot 1 castle`, the belt's frame on slot 4, the castle's row in the structures
+     chooser reads `slot 1`; `1` with the walker under the cursor: back to walker 1, castle 4.
+  5. `a_key_places_as_the_click_does` (`run/structure_tests.rs`): in the chapel's slot `E`
+     submits the ops `a_placed_structure_is_logged_stamps` asserts for the click (the air box
+     then the placements), the notice reads `placed chapel 4.8 x 3.2 x 4.0 m: ...`, the mode
+     stays; in the walker's slot `E` places `walker #1` as `a_click_places_and_the_mode_stays`
+     has the click do; out of the mode `E` submits no op and prints no notice.
+  6. `the_belt_holds_a_structure` (or `the_belt_draws_its_slots`) asserts slot 1 walker, 2
+     spider, 3 chapel, 4 castle, 5 empty; Phase 7b's "the spider takes belt slot 1" deviation
+     is reversed and its Notes line says so.
+  7. `a_click_cancels_the_quit_question` (`run/menu_tests.rs`, beside main's `Esc again to
+     quit` test): `Esc`, a left click, `Esc` within 2 s: the run is not quitting and the banner
+     no longer reads `Esc again to quit` after the click; the same with the pad's `South` in
+     place of the click; `Esc`, `Esc` still quits.
+  8. The words and the docs: `docs/flythrough.md` (the three tables and the paragraphs named
+     above), the structures README (the snap and the free mode), the entities README (the
+     belt's order), the Keys page; `docs/plans/logs/0083.md` holds the 83c window's words from
+     `live/window83c/verdicts.md` and the picture in words (the castle's ghost over the hill,
+     the HUD rows legible in it); `node scripts/check-doc-links.mjs` exits 0.
+  9. Readings (`docs/plans/logs/0083.md`): the snap's casts per re-stand on the castle's box
+     over the outdoor hills, wall time on the dev box (guess under 0.2 ms for 64 casts of at
+     most 200 voxels; over 1 ms moves the lattice to 6 x 6 and the plan says so).
+
+### Phase 7e: the owner looks at the snap and the free mode (window 83d)
+- **Owner skill:** human
+- **What:** five minutes on the outdoor hills at noon (`--source outdoor --time 12:00`),
+  batched with another plan's window: the castle's slot aimed across a slope (the base at the
+  lowest column: does the uphill side standing in the cleared cut read right, or should the
+  highest or the centre column win, question 9); `F` to free and the castle over the valley
+  from the sky; `E` places; in the entities chooser a digit on the castle's slot, then the same
+  digit back.
+- **Files touched:** `docs/plans/logs/0083.md` (the owner's words).
+- **Done when:** the owner says whether the snapped castle and the free mode read right and
+  which column wins on a slope. A "yes" sends Phase 8 on with the picks as defaults; a "no"
+  with words comes back to the architect.
+
+### Phase 8 after 7e
+
+Phase 8 runs after 7e, unchanged: `chapel_golden` keeps the dark cave, `the_structures_chooser`
+stands (the belt's golden `the_belt_and_the_chooser_over_the_carved_view` runs with the snap on
+the ground, so the `free` word changes no golden), and the picks it writes as defaults are 83d's
+(the slope rule) with the accepted ones under verdict 6.
+
+### Owner question added 2026-11-19 (with a recommendation; 83d answers it by eye if blank)
+
+9. **Which column wins on a slope.** Recommended: **the lowest** column under the footprint:
+   nothing floats, and on a slope the uphill side stands in the cut `clear box` makes anyway
+   (a castle cut into the hill; with `clear box` off the uphill walls are in rock, documented).
+   Alternatives: the highest column (the owner's literal "dropped until its base meets the
+   terrain": the box clears every column, but on a slope everything downhill of the first
+   contact floats, which is the complaint); the centre column (half of each defect). A
+   foundation filled under the footprint down to the terrain, which would remove the choice,
+   is a stamp that writes into air only: Plan 0084's write policy, parked in the backlog until
+   it lands.
+
+### Budgets added 2026-11-19 (guesses until Phase 7d reads them)
+
+- **The snap's casts:** at most 64 downward casts of at most 200 voxels per re-stand of a
+  structure's ghost (each frame the camera moves while a structure slot is selected), on the
+  client's world, guess under 0.2 ms on the dev box; nothing on the GPU, nothing kept.
 
 ## TL;DR
 
@@ -987,9 +1172,7 @@ integer up-scale of a world structure; neither reads the other's code.
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
 > above are the contract. This section records what happened.** Observations, never conclusions:
 > no pass list, no self-assessment. Deviations and unmet done-whens are **always** disclosed.
-> Keep it shorter than `## Implementation phases`. Readings, gate counts, attempts, sweeps and
-> resume notes go to the plan's readings log, `docs/plans/logs/0083.md` (started from
-> `templates/readings-log.md`), and this section links it once it exists.
+> Readings, gate counts, attempts, sweeps and resume notes go to the readings log, linked below.
 
 Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
 
@@ -1003,7 +1186,9 @@ Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
 | 6 (amended): a structure in the belt | dev | done; deviations in Notes | c83ebcf8 |
 | 7: the owner's window | human | done 2026-11-18 (83a cave, 83b outdoor); verdict in "Phase 7 verdict" | fd650c02, 0e85862a (fixes between 83a and 83b) |
 | 7b: the coarse ghost, the spider's rows, the docs | dev | done; deviations in Notes (the spider takes belt slot 1) | 4c5b5616, 6a457a07, a4dec4c2, committed with this row |
-| 7c: the owner looks at the ghost | human | not started | |
+| 7c: the owner looks at the ghost | human | done 2026-11-19 (83c, no mouse): the ghost passes; verdict in "Phase 7c verdict" | |
+| 7d: the snap, the free mode, the swap, `E`, the walker first, the Esc cancel | dev | not started | |
+| 7e: the owner looks at the snap and the free mode (83d) | human | not started | |
 | 8: picks, goldens, readings, tip | dev | not started | |
 
 ### Notes

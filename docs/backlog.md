@@ -215,6 +215,16 @@ and opaque class for the world's life because the mirror's slot packing and the 
 lists read it at the first sync; lifting it means re-packing every brick that holds the row and
 re-baking its chunks. Pick up if the materials file's reload hits the `restart` banner often.
 
+### A foundation under a snapped structure
+
+Parked 2026-11-19 from Plan 0083's Phase 7c verdict (window 83c: the castle's ghost floated
+over the hills). Phase 7d snaps a structure's box to the terrain under its footprint, one column
+winning (the lowest, owner question 9), so on a slope one side is sunk or floats. A foundation
+that fills the footprint's columns from the base down to the terrain would remove the choice; it
+is a stamp that writes into air only, which Plan 0084's write policy (ADR-0067) gives a stamp.
+Pick up when 0084 lands: a `foundation on|off` beside `clear box`, the fill in the structure's
+most-used row, as a third stamp of the click.
+
 ### Hundreds or thousands of entities
 
 Parked 2026-11-16 by the owner ("minecraft can have thousands of entities"). Today: `MAX_ENTITIES` 64, `MAX_ENTITY_PARTS` 512 (`vxe-render` `entities.rs`), 6 instance bits in the hit record. The cost is the trace, not the caps: Plan 0062 Phase 4 (`docs/plans/logs/0062.md`) read 64 walkers at +3.4 to 4.4 ms on the RTX 3080 Laptop and +32 to 34 ms on the Radeon iGPU, growing with screen cover and shadowing lights. **Hundreds:** wider caps and hit bits, the instance tree built on the GPU, coarse far models, shadow rays testing only entities near their light (one or two plans, no ADR). **Thousands:** entities rasterized into the hit buffer beside the traced world, which reverses ADR-0050's choice: an ADR and a spike first. **The owner's direction (2026-11-16): trace only the near ones, merge the crowded ones.** Distance tiers: near entities traced in full; mid ones traced on a coarse merged model (parts folded into one volume at detail 1); far ones as one box or impostor, or dropped below a pixel. Clusters: entities sharing a spot re-voxelized together at low resolution on the GPU each frame (or every few) into one cluster volume, walked once per ray instead of once per overlapping entity. Shadow rays test the near tier only. The server's ray query stays exact per entity; the tiers are render-only. Pick up when a consumer needs more than 64 on screen.
