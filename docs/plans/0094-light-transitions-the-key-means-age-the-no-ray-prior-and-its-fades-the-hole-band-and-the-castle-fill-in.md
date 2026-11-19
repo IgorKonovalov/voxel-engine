@@ -1,6 +1,6 @@
 # 0094: The light's transitions: the key mean's age at a still camera, the no-ray sky prior and its fades, the exposure's rate, the dig's hole band, and the castle's fill-in
 
-> **Status:** proposed
+> **Status:** approved 2026-11-19 (the owner: "lets run 94 right away": the slot is right after Plan 0086, before Plan 0087, its lane stacked on plan-0086 until 0086 merges; question 2, the exposure rate, on its recommendation, 1/32 EV a frame, the owner judging it at Phase 7)
 > **Created:** 2026-11-19
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0076](../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
