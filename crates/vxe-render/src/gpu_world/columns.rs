@@ -118,14 +118,7 @@ impl ColumnMap {
     fn top(&self, cell: [i32; 2], z_range: std::ops::Range<i32>) -> i32 {
         let col = cell.map(|v| v.div_euclid(COLUMN_CELLS));
         let i = cell[0].rem_euclid(COLUMN_CELLS) + COLUMN_CELLS * cell[1].rem_euclid(COLUMN_CELLS);
-        z_range
-            .rev()
-            .find_map(|z| {
-                let s = self.sheets.get(&ChunkCoord([col[0], col[1], z]))?;
-                let t = s[i as usize];
-                (t != SHEET_NONE).then(|| z * 64 + i32::from(t))
-            })
-            .unwrap_or(COLUMN_NONE)
+        top_of(&self.sheets, col, i as usize, z_range)
     }
 
     /// The top of the column holding voxel column `(x, y)` as the map holds it once flushed,
@@ -150,21 +143,14 @@ impl ColumnMap {
             return 0;
         }
         let z_range = min[2]..min[2] + size[2].max(1);
-        let mut texels = vec![COLUMN_NONE; SHEET_CELLS];
+        let mut texels = [COLUMN_NONE; SHEET_CELLS];
         let mut n = 0;
         let dirty: Vec<[i32; 2]> = self.dirty.drain().collect();
         for c in dirty {
             if (0..2).any(|k| c[k] < min[k] || c[k] >= min[k] + t[k]) {
                 continue;
             }
-            for j in 0..COLUMN_CELLS {
-                for i in 0..COLUMN_CELLS {
-                    texels[(i + COLUMN_CELLS * j) as usize] = self.top(
-                        [c[0] * COLUMN_CELLS + i, c[1] * COLUMN_CELLS + j],
-                        z_range.clone(),
-                    );
-                }
-            }
+            tile_of(&self.sheets, c, z_range.clone(), &mut texels);
             let s = self.slot(c);
             self.held[s] = Some(c);
             let origin = [0, 1].map(|k| (c[k].rem_euclid(t[k]) * COLUMN_CELLS) as u32);
@@ -224,6 +210,51 @@ impl super::GpuWorld {
                 self.columns.set_sheet(coord, true, |i| &l1[i], layers);
             }
             (super::window::Src::Full(_), None) => {}
+        }
+    }
+}
+
+/// Cell `i` of column `col`'s top over the chunks `z_range`: the highest chunk's sheet that
+/// holds an opaque voxel in the cell, else [`COLUMN_NONE`].
+fn top_of(
+    sheets: &HashMap<ChunkCoord, Sheet>,
+    col: [i32; 2],
+    i: usize,
+    z_range: std::ops::Range<i32>,
+) -> i32 {
+    z_range
+        .rev()
+        .find_map(|z| {
+            let t = sheets.get(&ChunkCoord([col[0], col[1], z]))?[i];
+            (t != SHEET_NONE).then(|| z * 64 + i32::from(t))
+        })
+        .unwrap_or(COLUMN_NONE)
+}
+
+/// Column `col`'s tile over the chunks `z_range`, every cell's [`top_of`] (x fastest): one
+/// sheet lookup per chunk of the column, top down, stopping once every cell is topped. A
+/// lookup per cell and chunk instead costs the window's first flush `(W_x W_y) 1024 W_z`
+/// hash lookups (about 190 million at the streamed defaults).
+fn tile_of(
+    sheets: &HashMap<ChunkCoord, Sheet>,
+    col: [i32; 2],
+    z_range: std::ops::Range<i32>,
+    texels: &mut [i32; SHEET_CELLS],
+) {
+    texels.fill(COLUMN_NONE);
+    let mut open = SHEET_CELLS;
+    for z in z_range.rev() {
+        if open == 0 {
+            break;
+        }
+        let Some(s) = sheets.get(&ChunkCoord([col[0], col[1], z])) else {
+            continue;
+        };
+        for (t, &h) in texels.iter_mut().zip(s.iter()) {
+            if *t == COLUMN_NONE && h != SHEET_NONE {
+                *t = z * 64 + i32::from(h);
+                open -= 1;
+            }
         }
     }
 }
@@ -366,5 +397,81 @@ mod tests {
             "level 1 mip cells 0..8 reach voxel 15"
         );
         assert!(sheet_of(8, 1, |_| &air, layers).is_none());
+    }
+
+    /// Sheets over a window of `side` x `side` columns and `wz` chunks: in each column the
+    /// chunks at z 2 and 3 hold a seeded height per cell (some cells empty), the rest none.
+    fn window_sheets(side: i32, wz: i32) -> HashMap<ChunkCoord, Sheet> {
+        let mut h = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            h ^= h << 13;
+            h ^= h >> 7;
+            h ^= h << 17;
+            h
+        };
+        let mut sheets = HashMap::new();
+        for y in 0..side {
+            for x in 0..side {
+                for z in [2, 3].into_iter().filter(|&z| z < wz) {
+                    let mut s: Sheet = Box::new([SHEET_NONE; SHEET_CELLS]);
+                    for t in s.iter_mut() {
+                        let r = next();
+                        if r % 5 != 0 {
+                            *t = (r % 64) as u8;
+                        }
+                    }
+                    sheets.insert(ChunkCoord([x - side / 2, y - side / 2, z]), s);
+                }
+            }
+        }
+        sheets
+    }
+
+    /// A column's tile holds each cell's top as the per-cell lookup finds it: the highest
+    /// chunk whose sheet tops the cell, `COLUMN_NONE` in a column with no sheet.
+    #[test]
+    fn a_tile_is_every_cells_top() {
+        let sheets = window_sheets(4, 6);
+        let mut texels = [0; SHEET_CELLS];
+        for c in [[-2, -2], [0, 1], [1, 1], [7, 7]] {
+            tile_of(&sheets, c, 0..6, &mut texels);
+            for (i, &t) in texels.iter().enumerate() {
+                assert_eq!(t, top_of(&sheets, c, i, 0..6), "column {c:?} cell {i}");
+            }
+        }
+        tile_of(&sheets, [0, 0], 0..6, &mut texels);
+        assert!(
+            texels.iter().any(|&t| t >= 3 * 64),
+            "chunk 3's sheet tops cells"
+        );
+        assert!(
+            texels.iter().any(|&t| (2 * 64..3 * 64).contains(&t)),
+            "chunk 2's shows under chunk 3's empty cells"
+        );
+        tile_of(&sheets, [7, 7], 0..6, &mut texels);
+        assert!(texels.iter().all(|&t| t == COLUMN_NONE));
+    }
+
+    /// The streamed window's first flush computes every column's tile (the defaults' side is
+    /// 57 chunks); a tile costs a lookup per chunk of its column, not per cell and chunk, so
+    /// the whole window's tiles take well under a second even unoptimized (the per-cell
+    /// lookup took 48 s of the outdoor start's first sync on lavapipe's debug run).
+    #[test]
+    fn the_first_flush_of_the_streamed_window_is_cheap() {
+        let (side, wz) = (57, 57);
+        let sheets = window_sheets(side, wz);
+        let mut texels = [0; SHEET_CELLS];
+        let mut topped = 0usize;
+        let t = std::time::Instant::now();
+        for y in 0..side {
+            for x in 0..side {
+                tile_of(&sheets, [x - side / 2, y - side / 2], 0..wz, &mut texels);
+                topped += texels.iter().filter(|&&v| v != COLUMN_NONE).count();
+            }
+        }
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        println!("{} tiles in {ms:.1} ms, {topped} cells topped", side * side);
+        assert!(topped > 0);
+        assert!(ms < 1000.0, "the window's tiles took {ms:.1} ms");
     }
 }
