@@ -496,6 +496,13 @@ Phase 8 runs after 7c. Its `chapel_golden` keeps the dark cave; `the_structures_
 (the addition above) stands; the picks it writes as defaults are the accepted ones under
 verdict 6, so it changes no default.
 
+**Owner picks 2026-11-19 (orchestrator's batch), both into Phase 8:** the belt order puts the
+walker first (walker, spider, then the structures); and a click or a pad button cancels the
+"Esc again to quit" question (Plan 0079 Phase 6's confirmation, closed in v0.65.0; this plan
+carries the change since it is the open lane on the fly-through). Done when: the belt's slot 1
+is the walker in a headless belt test, and a test drives Esc, then a mouse click (and a pad
+button), then Esc, and the process does not quit.
+
 ### Budgets added 2026-11-18 (guesses until Phase 7b reads them)
 
 - **The ghost's body:** one part of at most 64 model voxels a side at `coarse` k in the 8 MiB
