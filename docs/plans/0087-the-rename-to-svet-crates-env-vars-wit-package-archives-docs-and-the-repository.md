@@ -17,12 +17,17 @@
 > is the source, not this line). **Amended 2026-11-17 (owner):** "lets finish everything that is
 > in progress, then rename" and "86 finish before": it runs after Plans 0032, 0080, 0077, 0079,
 > 0083 and 0086 have all merged, not before 0086 as drafted. The rename is one lane, run alone, a day's work; its gate is the full one at the tip.
+> **Pre-flight 2026-11-19 (main 8c6948f1):** of those, only Plan 0086 is still open (its
+> worktree `plan-0086`); 0032, 0077, 0079, 0080, 0083 and 0088 are in `done/`. A docs-only
+> worktree (`plan-0094-draft`) may be open at the time; it touches `docs/plans/` only and
+> rebases over Phase 4 in minutes. The lane starts when `git worktree list` shows no code lane.
 
 ## TL;DR
 
 The engine takes the name ADR-0071 gave it. `crates/vxe-*` becomes `crates/svet-*` and
-`vxe_world::` becomes `svet_world::`; the 84 `VXE_*` environment variables become `SVET_*`
-with no aliases; the WIT package becomes `svet:logic@0.1.0` and the logic components are
+`vxe_world::` becomes `svet_world::`; every `VXE_*` environment variable in the live tree
+becomes `SVET_*` with no aliases (21 names on 2026-11-19, 18 of them in code; the rest of the
+87 the whole tree spells live only in the records); the WIT package becomes `svet:logic@0.1.0` and the logic components are
 rebuilt; the tester launcher becomes `svet-tester` and its archive
 `svet-tester-<version>-<os>-x86_64`; the window title reads `svet`; the README, the active
 plans, the proposed ADRs, the roadmap, the NFR and the harness say `svet`, while accepted
@@ -52,6 +57,35 @@ occurrences). The harness repository under `.claude/` (its own git repository, w
 `CLAUDE.md`) carries 41 more in 9 files. One proposed ADR's file name carries the prefix
 (`docs/adrs/0062-...-in-vxe-sim.md`). The first consumer's checkout, `~/Work/voxel-roguelite`,
 holds no `vxe` today (checked 2026-11-17), so nothing there changes.
+
+**Pre-flight 2026-11-19 (main 8c6948f1, after Plans 0077, 0079, 0080, 0083 and 0088 and the
+0090 to 0093 drafts landed).** The same greps read: 6080 occurrences in 553 files, of which
+3325 in 393 files are the live tree (317 `.rs` files, 22 manifests, 53 lockfile lines) and
+2755 in 160 files are records; the proposed ADRs among the records are 45 occurrences in 11
+files (ADR-0029 to 0032, 0063, 0064, 0067, 0069, 0072, 0073, 0076). ADR-0062 was accepted on
+2026-11-18, so its file name keeps `vxe-sim` (Phase 4 already allows it). `VXE_*` names: 87
+distinct over the whole tree, but only 21 in the live tree (33 files), 18 of them in code
+(`crates apps scripts .github dist`); the other 66 live only in the records (the strip and
+preload readings of Plans 0055 to 0059), so the plan's "84" was the whole-tree count and
+Phase 2's done-when now compares live counts. New since approval: `VXE_BLESS_CHAPEL`,
+`VXE_CASTLE_VOX`, `VXE_ICON_DIR` (Plans 0077 and 0083), the test-tiers fixtures' `VXE_ONE` to
+`VXE_FIVE` and `VXE_IN_A_COMMENT` under `scripts/fixtures/test-tiers/` (live, renamed with the
+gate's regex), `scripts/record-screen.sh` (no prefix in it), `crates/vxe-sim/src/{surface,arc}.rs`
+and `crates/vxe-net/tests/placement.rs` (covered by the generic substitution). The harness
+repository holds 44 in 10 files; the tenth is `skills/orchestrate/references/live-runner-lib.sh`,
+which names the GPU lock `.git/vxe-perf.lock`, as `scripts/record-clip.sh` and the lane rules do
+(see Phase 1). The version is 0.66.0. The first consumer's checkout still holds no `vxe`.
+**After Plan 0086 merges, also cover:** its nine readings variables (`VXE_DIAG_PRE`,
+`VXE_HELD_FRAMES`, `VXE_HELD_PNG`, `VXE_HELD_REACH`, `VXE_HELD_WAIT`, `VXE_SPLIT_SETTLE`,
+`VXE_SPLIT_TIME`, `VXE_UNDER_R`, `VXE_UNDER_RAYS`) in `apps/flythrough/tests/gpu_outdoor*` and
+`tests/support/streamed.rs`, its new render files (`gpu_world/columns.rs`, `sky_irradiance.wgsl`,
+neither spells the prefix today) and its `docs/flythrough.md` flags (none carries the prefix);
+its plan and readings log are records by then. Plans 0091 (the `profiler` feature,
+`--profiler-dump`, the `profiling` facade and puffin), 0092 (`--watch-shaders`) and 0093 (the
+shot manifest, `shoot-images.mjs`, `check-images.mjs`, `docs/development.md`) run after this
+plan and are born with the new names; their plan texts are active plans Phase 4 rewrites.
+**The lane re-runs every count in this paragraph at its start and records them in the readings
+log before Phase 1 moves a file**; the numbers here are the re-read's baseline, not its target.
 
 Three facts bound the mechanics (ADR-0071, Context): crates.io forbids a placeholder, so the
 name is held by publishing real crates or not at all, and this plan publishes nothing; GitHub
@@ -115,14 +149,20 @@ in a fresh session. The substitution rule for every phase: `vxe-` to `svet-`, `v
   `-p vxe-*` names in `.github/workflows/ci.yml`, `soak.yml` and `release.yml` (the `VXE_*`
   variables in those files wait for Phase 2). `cargo build` regenerates `Cargo.lock`; `cargo
   deny check` runs against the new names (the deny config names no crate today, so it is a
-  check, not an edit).
+  check, not an edit). **The GPU lock's path** (`.git/vxe-perf.lock`, untracked, named in
+  `scripts/record-clip.sh`, in the harness's `skills/orchestrate/references/lane-rules.md` and
+  `live-runner-lib.sh`, and in Plan 0093's text) becomes `.git/svet-perf.lock` **in the tree and
+  the nested `.claude/` repository in this same phase**, one nested commit, so no two sessions
+  ever lock different files; Phase 4's nested commit carries the rest of the harness.
 - **Files touched:** `crates/*` (moved), `Cargo.toml`, `Cargo.lock`, `apps/*/Cargo.toml`,
   `apps/flythrough/logic/Cargo.toml`, `crates/svet-script-wasm/guests/*/Cargo.toml`, every
   `.rs` that names a sibling crate, `crates/svet-render/src/shaders/composite.wgsl`,
   `scripts/build-guests.sh`, `scripts/record-clip.sh`, `scripts/test-changed.mjs`,
   `scripts/test-changed.test.mjs`, `scripts/fixtures/test-times/seeded.log`,
   `scripts/fixtures/README.md`, `apps/flythrough/assets/entities/*/*.voxtext`,
-  `.gitattributes`, `.github/workflows/*.yml` (crate names only), `docs/plans/logs/0087.md`.
+  `.gitattributes`, `.github/workflows/*.yml` (crate names only), `docs/plans/logs/0087.md`;
+  in the nested repository `.claude/skills/orchestrate/references/{lane-rules.md,live-runner-lib.sh}`
+  (the lock path only).
 - **Done when:** the readings log holds the day's crates.io result for the ten names, each
   free; `ls crates/` lists exactly `svet-app svet-assets svet-audio svet-entity svet-net
   svet-render svet-script-wasm svet-sim svet-world`; `git log --follow --oneline
@@ -132,7 +172,9 @@ in a fresh session. The substitution rule for every phase: `vxe-` to `svet-`, `v
   --all --check` and `cargo deny check` exit 0; `node scripts/test-changed.mjs --profile
   quick` (every crate changed) is green, and `node --test scripts/test-changed.test.mjs`
   passes with the new names; `git grep -I -i vxe -- crates apps Cargo.toml Cargo.lock scripts
-  .gitattributes` prints only lines carrying a `VXE_` name or `vxe:logic` (Phase 2's).
+  .gitattributes` prints only lines carrying a `VXE_` name or `vxe:logic` (Phase 2's);
+  `git grep -F perf.lock -- scripts` and `git -C .claude grep -F perf.lock` both print only
+  `svet-perf.lock`.
 
 ### Phase 2: The environment variables and the WIT package
 - **Owner skill:** dev
@@ -147,17 +189,22 @@ in a fresh session. The substitution rule for every phase: `vxe-` to `svet-`, `v
   `svet:logic/host@0.1.0`; the version stays `0.1.0`, since the namespace change is itself the
   break; `scripts/build-guests.sh` rebuilds every guest and the `flythrough-logic` component
   into `target/guests/`.
-- **Files touched:** every `.rs` with a `VXE_` literal (76 files on `main` at 778fac63, less
-  the records), `scripts/check-test-tiers.mjs`, `.github/workflows/ci.yml`,
+- **Files touched:** every `.rs` with a `VXE_` literal (33 live files on `main` at 8c6948f1,
+  more after Plan 0086), `scripts/check-test-tiers.mjs` and its fixtures
+  `scripts/fixtures/test-tiers/apps/app/tests/env_{four,five}.rs` with their line in
+  `scripts/fixtures/README.md`, `.github/workflows/ci.yml`,
   `.github/workflows/release.yml`, `scripts/package-tester.sh`,
   `crates/svet-script-wasm/wit/logic.wit`, `crates/svet-script-wasm/src/host.rs`,
   `docs/flythrough.md`, `docs/nfr.md`, `docs/nfr/*.md`, `docs/backlog.md`, the active plans
   that name a variable.
 - **Done when:** `git grep -E '\bVXE_[A-Z0-9_]+'` lists no line outside `docs/adrs/`,
-  `docs/plans/done/`, `docs/plans/logs/`, `docs/reviews/` and `CHANGELOG.md`; `git grep -h
-  -o -E '\bSVET_[A-Z0-9_]+' | sort -u | wc -l` prints the count `VXE_` had at the lane's
-  start (84 on `main` at 778fac63; the lane re-reads it at its tip before Phase 2 and records
-  both); `node scripts/check-test-tiers.mjs` exits 0 and its summary line counts `SVET_*`
+  `docs/plans/done/`, `docs/plans/logs/`, `docs/reviews/`, `CHANGELOG.md` and this plan's own
+  file (the record of the substitution; it moves to `done/` at the close); `git grep -h -o -E
+  '\bSVET_[A-Z0-9_]+' | sort -u | wc -l` prints the count of distinct `VXE_` names **the live
+  tree** had at the lane's start, that is with the same paths excluded (21 on `main` at
+  8c6948f1, 2026-11-19; the whole-tree count is larger because the records keep theirs; the
+  lane re-reads both at its tip before Phase 2 and records them); `node
+  scripts/check-test-tiers.mjs` exits 0 and its summary line counts `SVET_*`
   files; `scripts/build-guests.sh` builds every component under
   `crates/svet-script-wasm/guests/` and `flythrough-logic`, and the `svet-script-wasm` test
   binaries that load them are green (`node scripts/test-changed.mjs --profile quick`); a
@@ -200,9 +247,11 @@ in a fresh session. The substitution rule for every phase: `vxe-` to `svet-`, `v
   every `github.com/IgorKonovalov/voxel-engine` link, the regenerate commands under the hero
   image, the clone line), `docs/roadmap.md`, `docs/nfr.md` and `docs/nfr/*.md`,
   `docs/flythrough.md`, `docs/entities.md`, `docs/backlog.md`, `docs/references/*.md`, every
-  active plan under `docs/plans/` and every **proposed** ADR under `docs/adrs/` (ADR-0062's
-  file is `git mv`'d to drop `vxe-sim` from its name and its links repaired; if it has been
-  accepted by then it stays), the two index READMEs. **Left alone**: accepted ADRs,
+  active plan under `docs/plans/` **except this one** (its text is the record of what was
+  substituted and keeps the old spellings; it moves to `done/` at the close) and every
+  **proposed** ADR under `docs/adrs/` (ADR-0062 was accepted on 2026-11-18, so its file keeps
+  `vxe-sim` in its name and the ADR index's link to it stays as it is), the two index READMEs.
+  **Left alone**: accepted ADRs,
   `docs/plans/done/`, `docs/plans/logs/`, `docs/reviews/` and the CHANGELOG's existing
   entries. One sentence goes at the top of `docs/adrs/README.md` and of
   `docs/plans/README.md`, after the opening paragraph: that the engine was `voxel-engine` with
@@ -219,15 +268,19 @@ in a fresh session. The substitution rule for every phase: `vxe-` to `svet-`, `v
   `docs/plans/README.md`; in the nested repository `.claude/CLAUDE.md`, `.claude/skills/**`,
   `.claude/hooks/**`, `.claude/settings.json` where they name the prefix.
 - **Done when:** `git grep -I -i -l vxe -- README.md Cargo.toml docs ':!docs/adrs' ':!docs/plans/done'
-  ':!docs/plans/logs' ':!docs/reviews'` prints nothing, and over `docs/adrs/` the only files
-  it lists carry `> **Status:** accepted` or `superseded` (a shell loop in the readings log,
-  run and pasted); no tracked path under `docs/adrs/` carries `vxe` except by an accepted
-  ADR's own name; both indexes carry the mapping sentence and `node
+  ':!docs/plans/logs' ':!docs/reviews' ':!docs/plans/0087-*' ':!docs/plans/README.md'` prints
+  nothing; `git grep -I -i -n vxe -- docs/plans/README.md` prints only the mapping sentence's
+  lines; over `docs/adrs/` the only files the `-l` form lists carry `> **Status:** accepted`
+  or `superseded`, plus `docs/adrs/README.md` whose hits are the mapping sentence and the link
+  to ADR-0062's file (a shell loop in the readings log, run and pasted); no tracked path under
+  `docs/adrs/` carries `vxe` except by an accepted ADR's own name; both indexes carry the
+  mapping sentence and `node
   scripts/check-doc-links.mjs`, `node scripts/check-index-rows.mjs`, `node
   scripts/check-comment-hygiene.mjs` and `node scripts/check-plan-size.mjs` exit 0; `git -C
   .claude grep -I -i vxe` prints nothing (41 occurrences in 9 files on 2026-11-17) and
-  `node --test ".claude/hooks/*.test.mjs"` passes; `CLAUDE.md`'s tree lists `svet-world`
-  through `svet-entity` and `svet-tester`.
+  `node --test ".claude/hooks/*.test.mjs"` passes (44 occurrences in 10 files on 2026-11-19,
+  less the lock path Phase 1 already flipped); `CLAUDE.md`'s tree lists `svet-world` through
+  `svet-entity` and `svet-tester`.
 
 ### Phase 5: The repository takes the name
 - **Owner skill:** human
@@ -247,8 +300,8 @@ in a fresh session. The substitution rule for every phase: `vxe-` to `svet-`, `v
 ### Phase 6: The version
 - **Owner skill:** dev
 - **What:** A minor bump of `workspace.package.version` in `Cargo.toml` from whatever `main`
-  carries when the lane starts (0.59.0 on 2026-11-17; the number is read at the lane, not
-  copied from here), and a CHANGELOG entry under that version that names the old and new
+  carries when the lane starts (0.59.0 on 2026-11-17, 0.66.0 on 2026-11-19, and Plan 0086's
+  close bumps it once more; the number is read at the lane, not copied from here), and a CHANGELOG entry under that version that names the old and new
   prefixes once (`vxe-*` to `svet-*`, `VXE_*` to `SVET_*`, `vxe:logic` to `svet:logic`,
   `vxe-tester` to `svet-tester`, the repository URL) and says that earlier entries keep their
   names. A crate rename is a breaking change in `0.x`, so the bump is this plan's, done here
@@ -265,9 +318,10 @@ in a fresh session. The substitution rule for every phase: `vxe-` to `svet-`, `v
 - **What:** The one grep that proves the rename, and the full gate at the tip. `git grep -I
   -i -n vxe` over the whole tree, filtered to drop the records (`docs/adrs/` files whose
   status is `accepted` or `superseded`, `docs/plans/done/`, `docs/plans/logs/`,
-  `docs/reviews/`, and `CHANGELOG.md` lines below the new entry's heading), must print
-  nothing; the command and its empty output go to the readings log, with the count of record
-  lines it dropped. Then the plan's gate: `cargo build`, `cargo nextest run --profile gate`
+  `docs/reviews/`, `CHANGELOG.md` lines below the new entry's heading and the new entry's
+  one mapping line, this plan's own file, the two indexes' mapping sentences and the ADR
+  index's link to ADR-0062's file), must print nothing; the command and its empty output go to
+  the readings log, with the count of record lines it dropped. Then the plan's gate: `cargo build`, `cargo nextest run --profile gate`
   under the perf lock, doctests, clippy, fmt, deny, the four doc gates, the hooks' bite
   tests, and `cargo doc --workspace --no-deps` (its warning count compared with the count
   before the rename, so a broken intra-doc link from a renamed path is caught).
@@ -289,9 +343,9 @@ None new. The names that change, as the consumer sees them:
 # illustrative
 crates/svet-world            svet_world::World, svet_world::ops::Carve
 crates/svet-render           svet_render::Renderer
-SVET_COMMIT, SVET_REQUIRE_SOFTWARE_ADAPTER, SVET_* (84 names, one for one)
+SVET_COMMIT, SVET_REQUIRE_SOFTWARE_ADAPTER, SVET_* (every live name, one for one)
 package svet:logic@0.1.0;    svet:logic/host@0.1.0
-svet-tester-0.60.0-linux-x86_64.tar.gz    (the minor is Phase 6's, not this number)
+svet-tester-0.68.0-linux-x86_64.tar.gz    (the minor is Phase 6's, not this number)
 https://github.com/IgorKonovalov/svet
 ```
 
@@ -322,8 +376,12 @@ close compares it with the figure the lane read from `main` at its start.
 - **The GitHub redirect** dies the day a repository named `voxel-engine` appears under the
   owner's account; Phase 5 says none is made. Project-site URLs and `uses:` actions are not
   redirected; the project has neither.
-- **The nested `.claude/` repository.** Its commit is separate and not pushed anywhere; the
-  plan's log names its SHA so the review finds it. A skill that names `vxe-world` by path
+- **The GPU lock's path.** `.git/vxe-perf.lock` is named in a tracked script and in the
+  harness; a session that reads the old name while another reads the new one runs two GPU jobs
+  at once. Phase 1 flips both in one step, and the lane runs alone, so the window is the few
+  minutes of that step. (Pre-flight 2026-11-19.)
+- **The nested `.claude/` repository.** Its commits (Phase 1's lock path, Phase 4's rest) are
+  separate and not pushed anywhere; the plan's log names their SHAs so the review finds them. A skill that names `vxe-world` by path
   (the architect's `project-context.md`, the lane rules) must be edited or an agent reads a
   path that no longer exists.
 - **A test named by substitution** (`vxe_world_...` in a test function) changes its nextest

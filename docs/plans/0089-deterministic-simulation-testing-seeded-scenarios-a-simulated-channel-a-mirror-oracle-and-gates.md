@@ -20,9 +20,21 @@
 > **Starts after:** see "Where it sits" below; the recommendation is Phases 1 to 3 now as a
 > side lane (they add a crate and touch no engine source), Phases 4 to 7 after
 > [Plan 0087](0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md)
-> (the rename) merges, since they edit four engine crates. Paths below are pre-rename
-> (`vxe-*`); a phase that runs after 0087 reads them as `svet-*`, and a crate born before it is
-> renamed by 0087's final grep.
+> (the rename) merges, since they edit four engine crates. The owner chose the whole plan after
+> 0087 (question 1 (b)). Crate paths below carry the prefix of the day they were written;
+> Plan 0087's Phase 4 substitutes the new one in every active plan, this one included, so the
+> lane reads the paths as they stand on the day it starts.
+> **Pre-flight 2026-11-19 (main 8c6948f1):** every file, type and function this plan names
+> still exists under the name it uses (checked by grep: `ValueNoise`, `SplitMix64`,
+> `test_table`, `MemChannel`, `Endpoint`, `Server::{attach, submit, resimulate}`,
+> `Client::{shared, owned, desynced}`, `Host::{apply, unsupported}`, `TickReport`,
+> `Event::Desync`, `CharacterController`, `MoveInput`, `CharacterState`, `vxe_sim::overlaps`,
+> `find_unsupported`, `drop_region_through`, `pile_rubble`, `remove_region`, `Rot`, `LogFile`,
+> `write_hash`, `voxel_hash`, `GpuWorld::sync`, `EMPTY_BIT`, `write_lock`, `mark_dirty`,
+> `StreamError::Spill { coord, kind }`, `SpillError::Corrupt`, `PersistConfig::ram_cap_bytes`,
+> `r_full`, `hysteresis`; the save at `apps/flythrough/src/run/edit.rs` is still a bare
+> `File::create`, and no `sync_all` exists in `crates/`). The specifics that drifted are fixed
+> in place below, each marked "pre-flight"; the open point is under Owner questions (7).
 
 ## TL;DR
 
@@ -47,7 +59,8 @@ in the harness is caught at its step and shrunk to one line, and the batch is gr
 
 The article's prerequisites are this engine's rules already (ADR-0073's Context lists them with
 their types), and every one is tested by a fixed vector: 24 ops in
-`apps/flythrough/tests/determinism.rs`, one collapse course, one hundred seeded carves in
+`apps/flythrough/tests/determinism.rs` (plus, since Plans 0083 and 0086, the castle, showcase,
+outdoor and forest generation vectors there), one collapse course, one hundred seeded carves in
 `crates/vxe-net/tests/owned.rs`, one incremental-versus-rebuild walk in
 `crates/vxe-world/tests/stream.rs`. A vector defends one path. The classes of bug the engine
 has actually had are schedule-shaped: a mirror that misses a dirty chunk under one order of
@@ -240,16 +253,22 @@ seed, the entry named in the test. Every finding is a line in the Implementation
   test goes), `CLAUDE.md`'s scripts tree (one line).
 - **The script:** over the tracked `.rs` files of `crates/vxe-world/src`, `crates/vxe-net/src`,
   `crates/vxe-sim/src` and `crates/vxe-entity/src`, comments and string literals blanked:
-  `thread::spawn`, `Builder::new().spawn`, `thread::scope` and `rayon` are findings except in
-  `vxe-world/src/stream/workers.rs` and the scoped generation in `store.rs`, each carrying
-  the grep-able `#[allow(clippy::disallowed_methods, reason = "...")]`-style marker line the
-  script looks for (`// determinism: results independent of thread order, asserted by ...`);
-  `std::env::` is a finding everywhere; `f32`, `f64`, a float literal, `sin`, `cos`, `exp`,
-  `powf` and `sqrt` are findings in `vxe-world`'s `edit.rs`, `shape.rs`, `collapse/`,
-  `support.rs`, `stamp.rs`, `coarse.rs`, `raycast.rs`, `query.rs`, `fixed.rs`, `hash.rs`,
-  `log.rs`, `wire.rs`, and in all of `vxe-sim` and `vxe-entity` (`material.rs`, `census.rs` and
-  `stream/` are not scanned for floats: albedo, statistics and ratios are not edit math), plus
-  the fly-through's generation sources the old test named. Exit 1 with `file:line -> what`.
+  `thread::spawn`, `Builder::new().spawn`, `thread::scope` and `rayon` are findings except at
+  the two sites the tree has today (pre-flight 2026-11-19: the worker spawn in
+  `vxe-world/src/stream/mod.rs`, not `workers.rs`, and the scoped generation in `store.rs`),
+  each carrying the grep-able `#[allow(clippy::disallowed_methods, reason = "...")]`-style
+  marker line the script looks for (`// determinism: results independent of thread order,
+  asserted by ...`); `std::env::` is a finding everywhere (none today); `f32`, `f64`, a float
+  literal, `sin`, `cos`, `exp`, `powf` and `sqrt` are findings in **every file of
+  `vxe-world/src` except `material.rs`, `census.rs` and `stream/`** (pre-flight: the
+  exclusion list replaces the drafted inclusion list, which left `brick.rs`, `packed/`,
+  `prefab.rs`, `persist.rs`, `walkable.rs` and others unscanned; today those three areas are
+  the only ones with a float: albedo, statistics and the residency's ratios are not edit
+  math), and in all of `vxe-sim` (now with the surface mover's `surface.rs` and `arc.rs`,
+  float-free) and `vxe-entity`, plus the fly-through's generation sources the old test named.
+  Exit 1 with `file:line -> what`. Plan 0091, which runs after this plan, keeps the
+  `profiling` facade out of `vxe-world` (its streaming workers stay uninstrumented), so the
+  scan's scope is unchanged by it.
 - **Done when:** `cargo clippy --workspace --all-targets -- -D warnings` passes with the four
   attributes in place and every `#[expect]` carrying a reason (an `#[expect]` that no longer
   fires is itself a clippy error, so the list cannot rot); the fixture tree holds a spawn, an
@@ -315,6 +334,12 @@ seed, the entry named in the test. Every finding is a line in the Implementation
   window: the table entry's `EMPTY_BIT` and kind, the LOD record for a LOD-only chunk, and per
   brick the slot's logical words (mask unit, header palette and class, payload units, the
   translucent unit), not slot addresses, which legitimately differ by allocation history.
+  **After Plan 0086 merges, also cover** its column map (`gpu_world/columns.rs`: a per-chunk
+  sheet of the highest opaque voxel per 2 x 2 cell, flushed as tiles over the window into an
+  `r32sint` texture, marked dirty by a chunk's upload or drop): after the drain, the tiles of
+  the window's columns read back from both mirrors are equal; a difference is a finding on the
+  map's dirtiness tracking. The lane reads that file first; the tile is a mirror of the world
+  like the table, so it is inside this phase's claim, not a scope change.
 - **Done when:** three seeds pass as three gate tests, each estimated under 8 s on lavapipe
   (device creation, about 100 small syncs, two readbacks of at most 14 MB); a planted fault (a
   chunk edited through `write_lock` without `mark_dirty`) fails naming the chunk and the first
@@ -337,8 +362,9 @@ seed, the entry named in the test. Every finding is a line in the Implementation
   `fail_write_ppm`, `fail_rename_ppm`, `fail_read_ppm`, `truncate_on_crash: bool`; `sync`
   copies visible to durable; `crash()` discards the unsynced part (and truncates a file at a
   seeded byte when `truncate_on_crash`).
-- **The invariants:** over a schedule of edits and focus moves far enough to evict (`r_full` 1,
-  hysteresis 0, the RAM cap at one chunk so the spill runs), an edited chunk that comes back is
+- **The invariants:** over a schedule of edits and focus moves far enough to evict
+  (`Residency`'s `r_full` 1 and `hysteresis` 0, `PersistConfig::ram_cap_bytes` at one chunk
+  so the spill runs), an edited chunk that comes back is
   byte-equal to its evicted bricks, or the streamer reports `StreamError::Spill` for it and the
   coordinate stays non-resident; a chunk never returns as the source's clean generation after
   an edit. After `crash()` and a new `Streamer` over the same `SimDisk` and world key, every
@@ -384,8 +410,11 @@ and an agent writes it; the JSON line is for the agent's loop.
   dev reference, and a CPU test over it stays in the gate on both arms by the owner's rule.
   Added gpu tests: 3 (Phase 6) at under 8 s each, about 24 s of the lavapipe group's serial
   wall. The close reads the gate with and without the new tests (`node scripts/test-times.mjs`)
-  and records the delta; CI's Linux arm is accepted at about 15 min and should move by under a
-  minute. These are guesses until read.
+  and records the delta; the gate's wall budget is the one `docs/nfr.md` section 7 states (19
+  min since 2026-11-18, raised from 12) and the plan should move it by under a minute. These
+  are guesses until read. The gate runs `--workspace` (`ci.yml` and the close review), so a
+  non-default member's tests are in it; `test-changed.mjs` names the crate by `-p` when its
+  files change (see Owner questions, 7).
 - **`docs/nfr.md` section 6.** Gains a line: the seeded batch (its seeds and step counts) and
   its combined hash, asserted on both arms, with the fates vector of `tests/sim.rs`.
 - **The soak tier** (`soak.yml`, 300 min cap): the long batches are estimated at 15 to 25 min
@@ -396,13 +425,17 @@ and an agent writes it; the JSON line is for the agent's loop.
 
 ## Where it sits
 
-The open lanes are Plan 0080 (closing), 0086, 0077, 0088 and then 0087 (the rename, alone).
-Phases 1 to 3 add `crates/vxe-dst` and edit `docs/nfr.md` only, so they can run now as a side
-lane; Phases 4 to 7 edit `vxe-world`, `vxe-net`, `vxe-sim`, `vxe-entity`, `vxe-render`'s tests,
-the fly-through's save and `ci.yml`, and are best run after 0087 merges (every crate directory
-moves under it). Recommended: one lane that runs Phases 1 to 3 now, checkpoints with resume
-notes in `docs/plans/logs/0089.md`, and resumes at Phase 4 after the rename; the owner may
-instead run the whole plan after 0087 (owner question 1).
+As drafted (2026-11-17) the open lanes were Plans 0080, 0086, 0077 and 0088, then 0087 (the
+rename, alone); Phases 1 to 3 add `crates/vxe-dst` and edit `docs/nfr.md` only, Phases 4 to 7
+edit `vxe-world`, `vxe-net`, `vxe-sim`, `vxe-entity`, `vxe-render`'s tests, the fly-through's
+save and `ci.yml`. The owner chose the whole plan after 0087 (question 1 (b)).
+**Pre-flight 2026-11-19:** 0077, 0079, 0080, 0083 and 0088 have merged; 0086 is the one open
+code lane, then 0087 runs alone, then this plan starts on main. Plan 0093 (the README rewrite)
+runs beside it: no source file in common, but both add a step to `ci.yml`'s doc gates and a
+line to `scripts/fixtures/README.md`, a textual merge at whichever merges second. Plan 0091
+(the profiler) and 0092 (WGSL hot reload) run after both; 0091 adds `profiling` to
+`vxe-render` and the apps only, and 0092 edits `vxe-render`'s compose and the fly-through's
+CLI, neither a file this plan touches.
 
 ## Risks & open questions
 
@@ -457,6 +490,16 @@ the recommended option.
    day), otherwise a backlog entry with the seed, the minimal scenario committed, the batch's
    seeds moved past it and named in the test. (b) Every finding goes to the architect before
    any fix (slower, cleaner record).
+7. **(Pre-flight 2026-11-19, open.) Default member or not.** Phase 1 makes `crates/vxe-dst`
+   a workspace member that is not in `default-members`. CI's gate and the close review run
+   `cargo nextest run --workspace`, which reaches it, but the canonical tip command in
+   `CLAUDE.md` is a bare `cargo nextest run --profile gate`, which builds and runs the default
+   members only (today that is how `vxe-script-wasm` and its `wasmtime` build stay out of the
+   everyday loop). (a) **Recommended:** list `crates/vxe-dst` in `default-members`: it depends
+   on the deterministic crates only, adds no external dependency and builds in seconds, and
+   its gate tests then run under every form of the gate. (b) Keep it out, as drafted, and
+   have Phase 1's done-when and the Implementation log say the gate at the tip runs
+   `--workspace`.
 
 ## What this plan does NOT do
 
@@ -517,3 +560,6 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - The baked-light store under the Phase 6 schedule, as a reading.
 - The generator's inputs through the logic component (`vxe-script-wasm`).
 - A loom or shuttle pass over the store write lock and the eviction race.
+- Plan 0079's surface mover (`vxe-sim/src/surface.rs`) as a second walker in Phase 3's loop:
+  the same `overlaps` invariant and state hash over a seeded crawl (pre-flight 2026-11-19; not
+  added to the approved scope).
