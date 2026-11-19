@@ -1,9 +1,11 @@
 //! The `.rig` file: the sample rig built against a three-node `.vox`, the degree table, errors
 //! with their lines, the canonical round trip and seeded garbage.
 
-use vxe_assets::{Rig, RigBody, RigError, VoxFile, VoxText, encode};
+use vxe_assets::{
+    PaletteRows, Rig, RigBody, RigError, Slot, VoxFile, VoxMap, VoxModel, VoxText, encode,
+};
 use vxe_entity::{Quat, sample};
-use vxe_world::MaterialId;
+use vxe_world::{AIR, Material, MaterialId, MaterialTable};
 
 const SAMPLE: &str = "\
 # illustrative
@@ -21,6 +23,11 @@ key 40 leg_l rot x 30
 ";
 
 const GLOW: MaterialId = 7;
+
+/// The `material` lines' map alone: no palette rows, every other index undecided.
+fn no_palette(_: &VoxFile, explicit: &VoxMap) -> VoxMap {
+    explicit.clone()
+}
 
 fn lookup(name: &str) -> Option<MaterialId> {
     (name == "glow_amber").then_some(GLOW)
@@ -64,7 +71,9 @@ fn within_one(got: Quat, want: [i16; 4]) {
 fn the_sample_rig_builds_its_model_and_clips() {
     let rig = Rig::parse(SAMPLE).unwrap();
     assert_eq!((rig.vox.as_str(), rig.rate), ("walker.vox", 30));
-    let built = rig.build(&three_node_vox(), &lookup).unwrap();
+    let built = rig
+        .build_mapped(&three_node_vox(), &lookup, &mut no_palette)
+        .unwrap();
     let parts = built.model.parts();
     assert_eq!(parts.len(), 3);
     assert_eq!(built.part_names, ["torso", "head", "leg_l"]);
@@ -194,7 +203,10 @@ fn bodiless() -> String {
 fn a_ground_body_builds_in_world_units() {
     let vox = three_node_vox();
     // The root, torso, is at detail 2: two model voxels to a world voxel.
-    let built = Rig::parse(SAMPLE).unwrap().build(&vox, &lookup).unwrap();
+    let built = Rig::parse(SAMPLE)
+        .unwrap()
+        .build_mapped(&vox, &lookup, &mut no_palette)
+        .unwrap();
     assert_eq!(
         built.body,
         Some(RigBody::Ground {
@@ -204,7 +216,10 @@ fn a_ground_body_builds_in_world_units() {
         })
     );
     let defaults = bodiless().replace("clip walk", "body ground radius 4 height 26\nclip walk");
-    let built = Rig::parse(&defaults).unwrap().build(&vox, &lookup).unwrap();
+    let built = Rig::parse(&defaults)
+        .unwrap()
+        .build_mapped(&vox, &lookup, &mut no_palette)
+        .unwrap();
     assert_eq!(
         built.body,
         Some(RigBody::Ground {
@@ -214,7 +229,10 @@ fn a_ground_body_builds_in_world_units() {
         })
     );
     let surface = bodiless().replace("clip walk", "body surface radius 12\nclip walk");
-    let built = Rig::parse(&surface).unwrap().build(&vox, &lookup).unwrap();
+    let built = Rig::parse(&surface)
+        .unwrap()
+        .build_mapped(&vox, &lookup, &mut no_palette)
+        .unwrap();
     assert_eq!(
         built.body,
         Some(RigBody::Surface {
@@ -224,7 +242,7 @@ fn a_ground_body_builds_in_world_units() {
     );
     let built = Rig::parse(&bodiless())
         .unwrap()
-        .build(&vox, &lookup)
+        .build_mapped(&vox, &lookup, &mut no_palette)
         .unwrap();
     assert_eq!(built.body, None);
 }
@@ -232,11 +250,14 @@ fn a_ground_body_builds_in_world_units() {
 #[test]
 fn a_stride_lands_on_the_clip() {
     let vox = three_node_vox();
-    let built = Rig::parse(SAMPLE).unwrap().build(&vox, &lookup).unwrap();
+    let built = Rig::parse(SAMPLE)
+        .unwrap()
+        .build_mapped(&vox, &lookup, &mut no_palette)
+        .unwrap();
     assert_eq!(built.clips[0].1.stride(), 2048);
     let built = Rig::parse(&bodiless())
         .unwrap()
-        .build(&vox, &lookup)
+        .build_mapped(&vox, &lookup, &mut no_palette)
         .unwrap();
     assert_eq!(built.clips[0].1.stride(), 0);
 }
@@ -246,23 +267,23 @@ fn build_errors_name_what_is_missing() {
     let vox = three_node_vox();
     let e = Rig::parse("vox a.vox\nmaterial 9 lava\npart t node torso pivot 0 0 0\n")
         .unwrap()
-        .build(&vox, &lookup)
+        .build_mapped(&vox, &lookup, &mut no_palette)
         .unwrap_err();
     assert_eq!(e.line, Some(2));
     assert!(e.message.contains("`lava`"), "{e}");
     let e = Rig::parse("vox a.vox\nmaterial 9 glow_amber\npart t node tail pivot 0 0 0\n")
         .unwrap()
-        .build(&vox, &lookup)
+        .build_mapped(&vox, &lookup, &mut no_palette)
         .unwrap_err();
     assert!(e.message.contains("`tail`"), "{e}");
     let e = Rig::parse("vox a.vox\npart t node torso pivot 0 0 0\n")
         .unwrap()
-        .build(&vox, &lookup)
+        .build_mapped(&vox, &lookup, &mut no_palette)
         .unwrap_err();
     assert!(e.message.contains("[9]"), "an unmapped index is named: {e}");
     let e = Rig::parse("vox a.vox\nmaterial 9 glow_amber\npart t model 3 pivot 0 0 0\n")
         .unwrap()
-        .build(&vox, &lookup)
+        .build_mapped(&vox, &lookup, &mut no_palette)
         .unwrap_err();
     assert!(e.message.contains("`3`"), "{e}");
 }
@@ -387,7 +408,7 @@ fn the_parser_never_panics() {
             ok += 1;
             let _ = rig.write();
             let _ = rig.warnings();
-            if rig.build(&vox, &lookup).is_ok() {
+            if rig.build_mapped(&vox, &lookup, &mut no_palette).is_ok() {
                 built += 1;
             }
         }
@@ -409,4 +430,94 @@ fn the_parser_never_panics() {
         check(&SAMPLE[..end]);
     }
     println!("ok {ok}, built {built}");
+}
+
+/// Plan 0083 Phase 1 done-when 3: `material 7 glow_amber` over a `.vox` whose index 7 is
+/// `#ff0000` maps 7 to the table's `glow_amber` row and adds no `vox #ff0000` row; `material 8
+/// air` writes air; a rig with no `material` lines builds with every used index mapped to its
+/// palette row.
+#[test]
+fn a_material_line_wins_over_the_palette() {
+    // Entry k is [k, 255 - k, k / 2]: all distinct, and none of the three below.
+    let mut palette: [[u8; 4]; 256] =
+        std::array::from_fn(|k| [k as u8, 255 - k as u8, (k / 2) as u8, 255]);
+    palette[7] = [0xff, 0, 0, 0xff];
+    palette[8] = [0, 0xff, 0, 0xff];
+    palette[9] = [0, 0, 0xff, 0xff];
+    // One model: x 0 is index 7, x 1 index 8, x 2 index 9.
+    let vox = VoxFile {
+        models: vec![VoxModel {
+            size: [3, 1, 1],
+            voxels: vec![[0, 0, 0, 7], [1, 0, 0, 8], [2, 0, 0, 9]],
+        }],
+        palette,
+        ..VoxFile::default()
+    };
+    let base: MaterialTable = [
+        "rock",
+        "ore",
+        "shell",
+        "rubble",
+        "plank",
+        "nail",
+        "glow_amber",
+    ]
+    .map(Material::named)
+    .into_iter()
+    .collect();
+    let glow = 7;
+    assert_eq!(base.get(glow).unwrap().name, "glow_amber");
+    let by_name = |t: &MaterialTable, n: &str| -> Option<MaterialId> {
+        t.rows()
+            .iter()
+            .position(|m| m.name == n)
+            .map(|i| i as MaterialId)
+    };
+
+    let mut table = base.clone();
+    let names = table.clone();
+    let lookup = |n: &str| by_name(&names, n);
+    let rig = Rig::parse(
+        "vox a.vox\nmaterial 7 glow_amber\nmaterial 8 air\npart p model 0 pivot 0 0 0\n",
+    )
+    .unwrap();
+    let built = {
+        let mut rows = PaletteRows::new(&mut table, 0.3);
+        rig.build(&vox, &lookup, &mut rows).unwrap()
+    };
+    let part = &built.model.parts()[0].volume;
+    assert_eq!(part.get([0, 0, 0]), Some(glow), "the material line's row");
+    assert_eq!(part.get([1, 0, 0]), Some(AIR), "`material 8 air`");
+    let blue = by_name(&table, "vox #0000ff").expect("index 9's palette row");
+    assert_eq!(part.get([2, 0, 0]), Some(blue));
+    assert_eq!(by_name(&table, "vox #ff0000"), None, "index 7 adds no row");
+    assert_eq!(by_name(&table, "vox #00ff00"), None, "index 8 adds no row");
+    // A row for each of the 255 distinct entries but the two the lines decide.
+    assert_eq!(table.len(), base.len() + 253);
+
+    // No `material` lines: every used index takes its palette row.
+    let mut table = base.clone();
+    let rig = Rig::parse("vox a.vox\npart p model 0 pivot 0 0 0\n").unwrap();
+    let built = {
+        let mut rows = PaletteRows::new(&mut table, 0.3);
+        rig.build(&vox, &|_| None, &mut rows).unwrap()
+    };
+    let part = &built.model.parts()[0].volume;
+    for (x, name) in [(0, "vox #ff0000"), (1, "vox #00ff00"), (2, "vox #0000ff")] {
+        let id = by_name(&table, name).expect(name);
+        assert_eq!(part.get([x, 0, 0]), Some(id), "{name}");
+    }
+    // `skip` leaves the voxel unwritten; `auto` is the palette row.
+    let mut table = base.clone();
+    let rig =
+        Rig::parse("vox a.vox\nmaterial 7 skip\nmaterial 8 auto\npart p model 0 pivot 0 0 0\n")
+            .unwrap();
+    let built = {
+        let mut rows = PaletteRows::new(&mut table, 0.3);
+        rig.build(&vox, &|_| None, &mut rows).unwrap()
+    };
+    let part = &built.model.parts()[0].volume;
+    assert_eq!(part.get([0, 0, 0]), None);
+    assert_eq!(part.get([1, 0, 0]), by_name(&table, "vox #00ff00"));
+    let _ = Slot::Unset;
 }

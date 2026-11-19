@@ -7,6 +7,7 @@
 
 use super::RunView;
 use super::page::{ITEM_LINES, Menu, PageId, Row};
+use crate::entities::belt::Item;
 use crate::hud::Modes;
 use std::fmt::Write as _;
 use vxe_render::{HudBox, HudColour};
@@ -211,6 +212,7 @@ impl Menu {
             }
             PageId::Keys => text.push_str("  >  keys"),
             PageId::Entities => text.push_str("  >  entities"),
+            PageId::Structures => text.push_str("  >  structures"),
         }
         if searching {
             let _ = write!(text, "  search: {}", self.filter());
@@ -234,8 +236,7 @@ impl Menu {
             if line_of[i] < top || line_of[i] + height(row) > top + LIST_ROWS {
                 continue;
             }
-            let in_error =
-                matches!(row, Row::Item(i) if crate::entities::picker::item_error(m, *i).is_some());
+            let in_error = matches!(row, Row::Item(i) if item_grey(m, *i));
             let colour = if unavailable.is_some() || in_error {
                 HudColour::Grey
             } else if selected {
@@ -248,11 +249,12 @@ impl Menu {
                 // The entry's block: its tile over all four lines from the third cell, the
                 // words on the second line (the cursor's) and the clips on the third.
                 colours.push(colour);
-                if m.walkers.icons.ready(*i) {
+                let tile = crate::entities::belt::tile_of(m, *i);
+                if m.walkers.icons.ready(tile) {
                     paint.tiles.push(vxe_render::HudTile {
                         col: 2,
                         row: (colours.len() - 1) as u32,
-                        index: *i as u32,
+                        index: tile as u32,
                     });
                 }
                 text.push('\n');
@@ -278,7 +280,7 @@ impl Menu {
             cut_row(text, start);
             colours.push(colour);
             if let Row::Item(i) = row
-                && let Some(at) = crate::entities::picker::reason_at(m, *i)
+                && let Some(at) = item_reason_at(m, *i)
             {
                 let col = ITEM_TEXT_COL + at;
                 let len = text.len() - start;
@@ -293,16 +295,7 @@ impl Menu {
                 }
             }
             if let Row::Item(i) = row {
-                text.push('\n');
-                let start = text.len();
-                pad_to(text, start, ITEM_TEXT_COL);
-                crate::entities::picker::write_item_clips(m, *i, text);
-                cut_row(text, start);
-                colours.push(colour);
-                for _ in 3..ITEM_LINES {
-                    text.push('\n');
-                    colours.push(colour);
-                }
+                write_item_tail(m, *i, colour, text, colours);
             }
         }
         text.push('\n');
@@ -377,7 +370,11 @@ fn write_row(
         Row::Header(g) => text.push_str(g.name()),
         Row::Item(i) => {
             pad_to(text, start, ITEM_TEXT_COL);
-            crate::entities::picker::write_item(m, i, text, MENU_COLS - ITEM_TEXT_COL);
+            let width = MENU_COLS - ITEM_TEXT_COL;
+            match i {
+                Item::Entity(i) => crate::entities::picker::write_item(m, i, text, width),
+                Item::Structure(j) => crate::structures::words::write_item(m, j, text, width),
+            }
         }
         Row::Fixed(keys, does) => {
             let _ = write!(text, "  {keys:<18}{does}");
@@ -422,6 +419,48 @@ fn footer(page: PageId, searching: bool) -> &'static str {
         PageId::Root => "Enter opens  Esc closes  Tab closes  type to search",
         PageId::Group(_) => "Enter acts  Esc back  Tab closes  type to search",
         PageId::Keys => "F1 closes  Tab the menu  Enter acts  type to search",
-        PageId::Entities => "Enter places it  1-9 into a slot  Esc closes  type to search",
+        PageId::Entities | PageId::Structures => {
+            "Enter places it  1-9 into a slot  Esc closes  type to search"
+        }
+    }
+}
+
+/// A chooser entry's lines after its words: its second row (an entity's clips, a structure's
+/// rows) and the blank lines to [`ITEM_LINES`], in `colour`.
+fn write_item_tail(
+    m: &Modes,
+    item: Item,
+    colour: HudColour,
+    text: &mut String,
+    colours: &mut Vec<HudColour>,
+) {
+    text.push('\n');
+    let start = text.len();
+    pad_to(text, start, ITEM_TEXT_COL);
+    match item {
+        Item::Entity(i) => crate::entities::picker::write_item_clips(m, i, text),
+        Item::Structure(j) => crate::structures::words::write_item_rows(m, j, text),
+    }
+    cut_row(text, start);
+    colours.push(colour);
+    for _ in 3..ITEM_LINES {
+        text.push('\n');
+        colours.push(colour);
+    }
+}
+
+/// Whether a chooser's `item` is drawn grey: in error, or a structure not built yet.
+fn item_grey(m: &Modes, item: Item) -> bool {
+    match item {
+        Item::Entity(i) => crate::entities::picker::item_error(m, i).is_some(),
+        Item::Structure(j) => crate::structures::words::grey(m, j),
+    }
+}
+
+/// Where a chooser's `item` in error has its red reason in its words.
+fn item_reason_at(m: &Modes, item: Item) -> Option<usize> {
+    match item {
+        Item::Entity(i) => crate::entities::picker::reason_at(m, i),
+        Item::Structure(j) => crate::structures::words::reason_at(m, j),
     }
 }

@@ -386,6 +386,7 @@ mod reading {
                 parent: (k > 0).then(|| k as u8 - 1),
                 pivot: [512, 512, 0],
                 detail: 2,
+                coarse: 1,
             })
             .collect();
         let model = Model::new(parts).expect("sixteen parts");
@@ -449,6 +450,84 @@ mod reading {
             sampling[100], sampling[0], composing[100], composing[0]
         );
     }
+}
+
+/// Plan 0083 Phase 1 done-when 4: `walker.rig` with its `material` lines removed builds once
+/// the start has added the `.vox`'s palette rows to the table, and every part voxel carries
+/// the palette row of its `.vox` index; the HUD row names the rows added.
+#[test]
+fn a_rig_without_material_lines_builds() {
+    use std::collections::BTreeSet;
+    use vxe_assets::{DEFAULT_EMISSION_FACTOR, Slot, VoxFile, VoxMap, palette_row};
+
+    let dir = std::env::temp_dir().join(format!("vxe-viewer-palette-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("dir");
+    let rig = std::fs::read_to_string(assets().join("walker.rig")).expect("rig reads");
+    let bare: String = rig
+        .lines()
+        .filter(|l| !l.starts_with("material"))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    assert_ne!(bare, rig, "the sample has material lines to remove");
+    std::fs::write(dir.join("walker.rig"), &bare).expect("rig saved");
+    std::fs::copy(assets().join("walker.vox"), dir.join("walker.vox")).expect("vox copied");
+
+    let mut table = table();
+    let base = table.len();
+    let added = flythrough::viewer::palette_rows(
+        &dir.join("walker.rig"),
+        &mut table,
+        DEFAULT_EMISSION_FACTOR,
+    );
+    assert_eq!(table.len(), base + added);
+    assert!(added > 0);
+    let mut v = Viewer::open(&dir.join("walker.rig"), None).expect("opens");
+    assert_eq!(
+        v.build_pending(&table),
+        None,
+        "builds with no material line"
+    );
+    v.rows_added = added;
+
+    let vox = VoxFile::parse(&std::fs::read(dir.join("walker.vox")).unwrap()).unwrap();
+    let used: BTreeSet<u8> = vox
+        .models
+        .iter()
+        .flat_map(|m| m.voxels.iter().map(|v| v[3]))
+        .collect();
+    let map = vxe_assets::resolve_existing(&table, &vox, &VoxMap::new());
+    let want: BTreeSet<u16> = used
+        .iter()
+        .map(|&i| match map.get(i) {
+            Slot::Material(m) => {
+                let name = &table.get(m).unwrap().name;
+                assert_eq!(*name, palette_row(&vox, i, 0.0).name, "index {i}");
+                assert!(usize::from(m) >= base, "index {i} maps to a palette row");
+                m
+            }
+            s => panic!("index {i} is {s:?}"),
+        })
+        .collect();
+    let l = v.loaded.as_ref().expect("built");
+    let mut got = BTreeSet::new();
+    for part in l.model.parts() {
+        let p = &part.volume;
+        let s = p.size();
+        for z in 0..s[2] as i32 {
+            for y in 0..s[1] as i32 {
+                for x in 0..s[0] as i32 {
+                    if let Some(m) = p.get([x, y, z]).filter(|&m| m != 0) {
+                        got.insert(m);
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(got, want, "the parts carry exactly the used entries' rows");
+    let mut row = String::new();
+    v.write_row(&mut row);
+    assert!(row.ends_with(&format!(" rows +{added}")), "{row}");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The committed library's walker and spider copied under the target's scratch directory
@@ -688,6 +767,7 @@ fn a_full_pool_refuses_one_entry_and_keeps_the_rest() {
         parent: None,
         pivot: [0; 3],
         detail: 1,
+        coarse: 1,
     }])
     .expect("one part");
     let tail = sb - fb / 2;

@@ -3,11 +3,12 @@
 //! A file is `"VOX "`, a little-endian `u32` version (150 or 200), then one `MAIN` chunk
 //! whose children are the data chunks. Every chunk is a four-byte id, the byte counts of its
 //! content (`N`) and of its children (`M`), then `N + M` bytes ("MagicaVoxel .vox File
-//! Format", section 2). This parser reads `PACK`, `SIZE` and `XYZI` pairs, `RGBA`, and the
-//! scene graph (`nTRN`, `nGRP`, `nSHP`, from the format's extension document), and skips
-//! every other chunk by its declared sizes. Every multi-byte integer is little-endian.
+//! Format", section 2). This parser reads `PACK`, `SIZE` and `XYZI` pairs, `RGBA`, `MATL`
+//! (a palette entry's material), `LAYR` (layers) and the scene graph (`nTRN`, `nGRP`, `nSHP`,
+//! from the format's extension document), and skips every other chunk by its declared sizes.
+//! Every multi-byte integer is little-endian.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use vxe_world::{Rot, VoxelCoord};
 
@@ -112,8 +113,31 @@ impl Placement {
     }
 }
 
+/// What a palette entry's `MATL` chunk makes it, as MagicaVoxel's renderer reads it. The
+/// values are the chunk's own, unscaled.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum VoxMaterialKind {
+    /// `_diffuse`, a `_blend` or an unknown `_type`, and every entry with no `MATL`.
+    #[default]
+    Diffuse,
+    /// `_metal`: `_rough`.
+    Metal { rough: f32 },
+    /// `_glass`: `_trans` (or the older `_alpha`), the share of light let through, and `_rough`.
+    Glass { trans: f32, rough: f32 },
+    /// `_emit`: `_emit` (or the older `_weight`) and `_flux`, MagicaVoxel's power step 0 to 4.
+    Emit { emit: f32, flux: u8 },
+    /// `_media` and `_cloud`: `_trans` (or `_alpha`).
+    Media { trans: f32 },
+}
+
+/// One palette entry's material.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct VoxMaterial {
+    pub kind: VoxMaterialKind,
+}
+
 /// A parsed `.vox` file.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct VoxFile {
     pub version: u32,
     /// Models in file order; a model's id is its index here.
@@ -122,6 +146,9 @@ pub struct VoxFile {
     /// `[0, 0, 0, 0]`. `RGBA` entry `k` is index `k + 1`. MagicaVoxel's default palette when
     /// the file has no `RGBA`.
     pub palette: [[u8; 4]; 256],
+    /// The material of each palette index, from the file's `MATL` chunks (a chunk's id is the
+    /// palette index it describes); [`VoxMaterialKind::Diffuse`] where there is none.
+    pub materials: [VoxMaterial; 256],
     /// Scene-graph nodes by id; empty when the file has no scene graph.
     pub nodes: BTreeMap<u32, Node>,
     /// Scene-graph node names by node id, from each node's `_name` attribute; a node without
@@ -131,6 +158,44 @@ pub struct VoxFile {
     /// ignores it, so a map written against the editor's displayed order may be wrong; a
     /// caller can refuse such files.
     pub imap_present: bool,
+    /// Transform nodes whose frame-0 `_r` byte is a reflection (determinant -1), with the
+    /// byte. The node's `rot` holds the reflection composed with a mirror of the child's x
+    /// axis ([`decode_frame`]). [`VoxFile::try_placements`] refuses such a file.
+    pub reflected: BTreeMap<u32, u8>,
+    /// Nodes whose `_hidden` attribute is 1.
+    pub hidden: BTreeSet<u32>,
+    /// Transform nodes' layer ids where they differ from MagicaVoxel's default (-1 for node 0,
+    /// 0 for every other transform); [`VoxFile::layer_of`] reads them.
+    pub node_layers: BTreeMap<u32, i32>,
+    /// The `LAYR` chunks by layer id.
+    pub layers: BTreeMap<i32, VoxLayer>,
+}
+
+/// A `LAYR` chunk: the layer's `_name` (empty when it has none) and its `_hidden` flag.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct VoxLayer {
+    pub name: String,
+    pub hidden: bool,
+}
+
+impl Default for VoxFile {
+    /// A version-200 file with no models, MagicaVoxel's default palette, no materials and no
+    /// scene graph.
+    fn default() -> Self {
+        Self {
+            version: 200,
+            models: Vec::new(),
+            palette: DEFAULT_PALETTE,
+            materials: [VoxMaterial::default(); 256],
+            nodes: BTreeMap::new(),
+            names: BTreeMap::new(),
+            imap_present: false,
+            reflected: BTreeMap::new(),
+            hidden: BTreeSet::new(),
+            node_layers: BTreeMap::new(),
+            layers: BTreeMap::new(),
+        }
+    }
 }
 
 const MAIN: [u8; 4] = *b"MAIN";
@@ -224,10 +289,38 @@ fn parse_int(s: &[u8]) -> Option<i64> {
     std::str::from_utf8(s).ok()?.trim().parse().ok()
 }
 
-/// Frame 0's `_t` and `_r`, defaulting to no translation and the identity.
-fn frame(r: &Reader<'_>, attrs: &[Pair<'_>]) -> Result<([i32; 3], Rot), VoxError> {
+/// A transform frame's `_r` byte as a rotation, and whether the byte is a reflection: for a
+/// reflection (determinant -1) the rotation is the byte's matrix times a mirror of x
+/// (`R = rot * diag(-1, 1, 1)`, so `R v = rot (-v.x, v.y, v.z)`), a proper rotation. A byte
+/// whose rows repeat an axis is [`VoxError::Rotation`].
+pub fn decode_frame(r: u8) -> Result<(Rot, bool), VoxError> {
+    let a0 = r & 3;
+    let a1 = (r >> 2) & 3;
+    if a0 > 2 || a1 > 2 || a0 == a1 {
+        return Err(VoxError::Rotation(r));
+    }
+    let axis = [a0, a1, 3 - a0 - a1];
+    let mut neg = [r >> 4 & 1 != 0, r >> 5 & 1 != 0, r >> 6 & 1 != 0];
+    if let Some(rot) = Rot::from_rows(axis, neg) {
+        return Ok((rot, false));
+    }
+    // The row reading x changes sign: the matrix times diag(-1, 1, 1).
+    let k = axis
+        .iter()
+        .position(|&a| a == 0)
+        .expect("a permutation holds 0");
+    neg[k] = !neg[k];
+    Rot::from_rows(axis, neg)
+        .map(|rot| (rot, true))
+        .ok_or(VoxError::Rotation(r))
+}
+
+/// Frame 0's `_t` and `_r`, defaulting to no translation and the identity, and the `_r`
+/// byte when it is a reflection ([`decode_frame`]).
+fn frame(r: &Reader<'_>, attrs: &[Pair<'_>]) -> Result<([i32; 3], Rot, Option<u8>), VoxError> {
     let mut t = [0; 3];
     let mut rot = Rot::IDENTITY;
+    let mut reflected = None;
     for &(k, v) in attrs {
         match k {
             b"_t" => {
@@ -252,37 +345,59 @@ fn frame(r: &Reader<'_>, attrs: &[Pair<'_>]) -> Result<([i32; 3], Rot), VoxError
                 let b = parse_int(v)
                     .and_then(|b| u8::try_from(b).ok())
                     .ok_or_else(|| r.malformed("_r is not a byte"))?;
-                rot = decode_rotation(b)?;
+                let (proper, mirror) = decode_frame(b)?;
+                rot = proper;
+                reflected = mirror.then_some(b);
             }
             _ => {}
         }
     }
-    Ok((t, rot))
+    Ok((t, rot, reflected))
 }
 
-/// Parses one scene-graph chunk's content into `(id, node, name)`, the name from the node's
+/// What one scene-graph chunk says beside its node: its `_name`, `_hidden`, a transform's
+/// layer id and the `_r` byte of a reflected frame 0.
+struct NodeExtra {
+    name: Option<String>,
+    hidden: bool,
+    layer: Option<i32>,
+    reflected: Option<u8>,
+}
+
+/// Parses one scene-graph chunk's content into `(id, node, extra)`, the name from the node's
 /// `_name` attribute (MagicaVoxel writes it on transforms), its bytes read as UTF-8 with
 /// replacement characters.
-fn node(r: &mut Reader<'_>) -> Result<(u32, Node, Option<String>), VoxError> {
+fn node(r: &mut Reader<'_>) -> Result<(u32, Node, NodeExtra), VoxError> {
     let id = r.count("negative node id")?;
     let attrs = r.dict()?;
     let name = attrs
         .iter()
         .find(|(k, _)| *k == b"_name")
         .map(|(_, v)| String::from_utf8_lossy(v).into_owned());
+    let hidden = attrs
+        .iter()
+        .any(|(k, v)| *k == b"_hidden" && parse_int(v) == Some(1));
+    let mut extra = NodeExtra {
+        name,
+        hidden,
+        layer: None,
+        reflected: None,
+    };
     let node = match &r.chunk {
         b"nTRN" => {
             let child = r.count("negative child id")?;
             let _reserved = r.i32()?;
-            let _layer = r.i32()?;
+            let layer = r.i32()?;
+            extra.layer = Some(layer);
             let frames = r.count("negative frame count")?;
-            let mut first = ([0; 3], Rot::IDENTITY);
+            let mut first = ([0; 3], Rot::IDENTITY, None);
             for f in 0..frames {
                 let attrs = r.dict()?;
                 if f == 0 {
                     first = frame(r, &attrs)?;
                 }
             }
+            extra.reflected = first.2;
             Node::Transform {
                 child,
                 translation: first.0,
@@ -306,7 +421,28 @@ fn node(r: &mut Reader<'_>) -> Result<(u32, Node, Option<String>), VoxError> {
             Node::Shape { models }
         }
     };
-    Ok((id, node, name))
+    Ok((id, node, extra))
+}
+
+/// A `LAYR` chunk: its id and layer.
+fn layr(c: &mut Reader<'_>) -> Result<(i32, VoxLayer), VoxError> {
+    let id = c.i32()?;
+    let attrs = c.dict()?;
+    let mut layer = VoxLayer::default();
+    for (k, v) in attrs {
+        match k {
+            b"_name" => layer.name = String::from_utf8_lossy(v).into_owned(),
+            b"_hidden" => layer.hidden = parse_int(v) == Some(1),
+            _ => {}
+        }
+    }
+    Ok((id, layer))
+}
+
+/// MagicaVoxel's layer id for transform `id` when the file gives none other: -1 for the root,
+/// 0 for every other transform.
+pub(crate) fn default_layer(id: u32) -> i32 {
+    if id == 0 { -1 } else { 0 }
 }
 
 /// Reads the header and `MAIN`'s header: the version, and a reader over `MAIN`'s children.
@@ -415,16 +551,69 @@ fn rgba(c: &mut Reader<'_>, palette: &mut [[u8; 4]; 256]) -> Result<(), VoxError
     Ok(())
 }
 
+/// A `MATL` chunk: its id (the palette index) and the material its properties describe. An
+/// id past 255 is returned as is and ignored by the caller; a property that is not a number
+/// is [`VoxError::Malformed`].
+fn matl(c: &mut Reader<'_>) -> Result<(usize, VoxMaterial), VoxError> {
+    let id = c.count("negative material id")? as usize;
+    let attrs = c.dict()?;
+    let mut ty: &[u8] = b"_diffuse";
+    let mut num: BTreeMap<&[u8], f32> = BTreeMap::new();
+    for &(k, v) in &attrs {
+        if k == b"_type" {
+            ty = v;
+        } else {
+            let parsed = std::str::from_utf8(v)
+                .ok()
+                .and_then(|s| s.trim().parse::<f32>().ok());
+            match parsed {
+                Some(f) if f.is_finite() => {
+                    num.insert(k, f);
+                }
+                // MagicaVoxel writes only numbers past `_type`; a key the mapping reads must
+                // be one, any other is skipped.
+                _ if matches!(
+                    k,
+                    b"_rough" | b"_trans" | b"_alpha" | b"_emit" | b"_weight" | b"_flux"
+                ) =>
+                {
+                    return Err(c.malformed("a material property is not a number"));
+                }
+                _ => {}
+            }
+        }
+    }
+    let get = |k: &[u8]| num.get(k).copied();
+    let trans = get(b"_trans").or_else(|| get(b"_alpha"));
+    let kind = match ty {
+        b"_metal" => VoxMaterialKind::Metal {
+            rough: get(b"_rough").unwrap_or(DEFAULT_ROUGH),
+        },
+        b"_glass" => VoxMaterialKind::Glass {
+            trans: trans.unwrap_or(0.0),
+            rough: get(b"_rough").unwrap_or(DEFAULT_ROUGH),
+        },
+        b"_emit" => VoxMaterialKind::Emit {
+            emit: get(b"_emit").or_else(|| get(b"_weight")).unwrap_or(0.0),
+            flux: get(b"_flux").map_or(0, |f| f.round().clamp(0.0, 255.0) as u8),
+        },
+        b"_media" | b"_cloud" => VoxMaterialKind::Media {
+            trans: trans.unwrap_or(0.0),
+        },
+        _ => VoxMaterialKind::Diffuse,
+    };
+    Ok((id, VoxMaterial { kind }))
+}
+
+/// `_rough` when a `_metal` or `_glass` entry leaves it out: MagicaVoxel's slider default.
+pub const DEFAULT_ROUGH: f32 = 0.1;
+
 impl VoxFile {
     pub fn parse(bytes: &[u8]) -> Result<Self, VoxError> {
         let (version, mut r) = main_chunk(bytes)?;
         let mut file = Self {
             version,
-            models: Vec::new(),
-            palette: DEFAULT_PALETTE,
-            nodes: BTreeMap::new(),
-            names: BTreeMap::new(),
-            imap_present: false,
+            ..Self::default()
         };
         let mut pending: Option<[u32; 3]> = None;
         while r.pos < r.end {
@@ -438,7 +627,7 @@ impl VoxFile {
                 what: "SIZE without its XYZI",
             });
         }
-        file.walk(&mut |_| {})?;
+        file.walk(true, &mut |_| {})?;
         Ok(file)
     }
 
@@ -467,15 +656,34 @@ impl VoxFile {
             }
             b"RGBA" => rgba(c, &mut self.palette)?,
             b"nTRN" | b"nGRP" | b"nSHP" => {
-                let (nid, node, name) = node(c)?;
+                let (nid, node, extra) = node(c)?;
                 if self.nodes.insert(nid, node).is_some() {
                     return Err(c.malformed("duplicate node id"));
                 }
-                if let Some(name) = name {
+                if let Some(name) = extra.name {
                     self.names.insert(nid, name);
                 }
+                if extra.hidden {
+                    self.hidden.insert(nid);
+                }
+                if let Some(l) = extra.layer.filter(|&l| l != default_layer(nid)) {
+                    self.node_layers.insert(nid, l);
+                }
+                if let Some(b) = extra.reflected {
+                    self.reflected.insert(nid, b);
+                }
+            }
+            b"LAYR" => {
+                let (id, layer) = layr(c)?;
+                self.layers.insert(id, layer);
             }
             b"IMAP" => self.imap_present = true,
+            b"MATL" => {
+                let (index, m) = matl(c)?;
+                if let Some(slot) = self.materials.get_mut(index) {
+                    *slot = m;
+                }
+            }
             _ => {}
         }
         Ok(())
@@ -486,7 +694,7 @@ impl VoxFile {
     /// reachable node's placement count. An iterative depth-first walk, so a deep graph cannot
     /// exhaust the stack; each node is finished once, in post-order, when its children's
     /// counts are known, so a shared subtree costs one visit however often it is placed.
-    fn check_graph(&self) -> Result<BTreeMap<u32, u64>, VoxError> {
+    pub(crate) fn check_graph(&self) -> Result<BTreeMap<u32, u64>, VoxError> {
         if !self.nodes.contains_key(&0) {
             return Err(VoxError::SceneGraph {
                 node: 0,
@@ -566,7 +774,7 @@ impl VoxFile {
     /// the placement count times the graph's depth. Translations compose with checked
     /// addition: a sum that leaves `i32` is [`VoxError::Malformed`], since each `_t`
     /// component is within [`MAX_TRANSLATION`] and turning it by a rotation cannot overflow.
-    fn walk(&self, emit: &mut impl FnMut(Placement)) -> Result<(), VoxError> {
+    fn walk(&self, reflections: bool, emit: &mut impl FnMut(Placement)) -> Result<(), VoxError> {
         if self.nodes.is_empty() {
             for model in 0..self.models.len() {
                 emit(Placement {
@@ -589,6 +797,9 @@ impl VoxFile {
                 } => {
                     if !places(child) {
                         continue;
+                    }
+                    if let Some(&b) = self.reflected.get(&id).filter(|_| !reflections) {
+                        return Err(VoxError::Rotation(b));
                     }
                     let d = rot.apply(*translation);
                     let mut sum = [0; 3];
@@ -627,13 +838,31 @@ impl VoxFile {
     /// composing translations and rotations down the path (a child's frame is turned by its
     /// parents' rotation, then offset by their translation). Without a scene graph, one
     /// placement per model at translation 0 and [`Rot::IDENTITY`]. At most
-    /// [`MAX_PLACEMENTS`] entries.
+    /// [`MAX_PLACEMENTS`] entries. A path through a reflected frame
+    /// ([`VoxFile::reflected`]) stops the walk: the placements found before it are returned
+    /// ([`VoxFile::try_placements`] says why).
     pub fn placements(&self) -> Vec<Placement> {
         let mut out = Vec::new();
-        // A file `parse` returned passes the walk's checks, so this cannot fail; a graph
-        // edited after parsing into one that fails them yields the placements found before
+        // A file `parse` returned passes the walk's other checks; a reflected frame, or a graph
+        // edited after parsing into one that fails them, yields the placements found before
         // the fault.
-        let _ = self.walk(&mut |p| out.push(p));
+        let _ = self.walk(false, &mut |p| out.push(p));
         out
+    }
+
+    /// [`VoxFile::placements`], refusing a file whose placed path passes a reflected frame
+    /// with [`VoxError::Rotation`] and its `_r` byte ([`crate::VoxScene`] loads such a file).
+    pub fn try_placements(&self) -> Result<Vec<Placement>, VoxError> {
+        let mut out = Vec::new();
+        self.walk(false, &mut |p| out.push(p))?;
+        Ok(out)
+    }
+
+    /// Transform `id`'s layer id: [`VoxFile::node_layers`]'s, else MagicaVoxel's default.
+    pub fn layer_of(&self, id: u32) -> i32 {
+        self.node_layers
+            .get(&id)
+            .copied()
+            .unwrap_or_else(|| default_layer(id))
     }
 }

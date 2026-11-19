@@ -72,6 +72,29 @@ pub struct Viewer {
     pub error: Option<String>,
     stamps: [Option<SystemTime>; 2],
     polled_at: Option<f64>,
+    /// Palette rows the start added to the world's table for this model ([`palette_rows`]),
+    /// named on the HUD row as `rows +N` when there are any.
+    pub rows_added: usize,
+}
+
+/// Adds to `table` a row for every palette entry of the `.vox` the rig at `rig_path` names
+/// that no `material` line of the rig decides (ADR-0065), at emission factor `k`: the rows
+/// added. Run before `World::generate`, since the table is fixed after; a file that does not
+/// read or parse, or a line naming no row, adds nothing (the viewer reports it at its build).
+pub fn palette_rows(rig_path: &Path, table: &mut MaterialTable, k: f32) -> usize {
+    let Ok((text, _, bytes)) = read_files(rig_path) else {
+        return 0;
+    };
+    let (Ok(rig), Ok(vox)) = (Rig::parse(&text), VoxFile::parse(&bytes)) else {
+        return 0;
+    };
+    let names = table.clone();
+    let Ok(explicit) = rig.explicit_map(&|n| material(&names, n)) else {
+        return 0;
+    };
+    let mut rows = vxe_assets::PaletteRows::new(table, k);
+    rows.resolve(&vox, &explicit);
+    rows.added()
 }
 
 /// `name` resolved against `table`'s rows: a row of that name, or of that name with each `_`
@@ -136,6 +159,7 @@ impl Viewer {
             want_clip: clip,
             error: None,
             polled_at: None,
+            rows_added: 0,
         })
     }
 
@@ -168,8 +192,12 @@ impl Viewer {
     ) -> Result<(), String> {
         let rig = Rig::parse(rig_text).map_err(|e| e.to_string())?;
         let vox = VoxFile::parse(vox_bytes).map_err(|e| format!("{}: {e}", rig.vox))?;
+        // The table is fixed once the world is generated: the palette's rows were added at
+        // the start ([`palette_rows`]) and are found again by name.
         let built = rig
-            .build(&vox, &|n| material(table, n))
+            .build_mapped(&vox, &|n| material(table, n), &mut |f, m| {
+                vxe_assets::resolve_existing(table, f, m)
+            })
             .map_err(|e| e.to_string())?;
         let playing = self.clip_name().map(str::to_owned);
         // Built: `--clip`'s pick is spent.
@@ -274,7 +302,8 @@ impl Viewer {
         }
     }
 
-    /// The HUD row: `model <name> clip <clip> <tick>/<length>`, then ` paused` while paused;
+    /// The HUD row: `model <name> clip <clip> <tick>/<length>`, then ` paused` while paused
+    /// and ` rows +N` when the start added palette rows for the model;
     /// `model <name> not built` before a build succeeds; `model <name> error: <error>` while
     /// the last build's or reload's error stands ([`is_error_row`]).
     pub fn write_row(&self, out: &mut String) {
@@ -289,6 +318,9 @@ impl Viewer {
             return;
         };
         self.play.write(l, out);
+        if self.rows_added > 0 {
+            let _ = write!(out, " rows +{}", self.rows_added);
+        }
     }
 }
 

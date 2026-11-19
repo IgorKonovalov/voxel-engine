@@ -21,6 +21,7 @@ fn cube_part(edge: u32, detail: u8, parent: Option<u8>) -> Part {
         parent,
         pivot: [edge as i32 * 128; 3],
         detail,
+        coarse: 1,
     }
 }
 
@@ -247,6 +248,7 @@ fn model_new_refuses_a_cycle_a_seventeenth_part_and_an_oversized_volume() {
         parent: None,
         pivot: [0; 3],
         detail: 1,
+        coarse: 1,
     };
     assert_eq!(
         Model::new(vec![part]),
@@ -297,4 +299,55 @@ fn replace_keeps_the_id_and_refuses_what_does_not_fit() {
         })
     );
     assert!(Arc::ptr_eq(set.get(id).unwrap().0, &four), "unchanged");
+}
+
+/// Plan 0083 Phase 7b done-when 1: a one-part 2 x 2 x 2 volume of `STONE` at `coarse` 10, its
+/// pivot at its corner and its root at the origin, spans 20 world voxels a side: rays along +x
+/// hit its -x face at t 5 in the voxel their height names and miss above it, its far corner is
+/// the world point (20, 20, 20), its reach is the fine part's radius ten times over, and its id
+/// is not the fine part's. `Model::new` refuses a coarse factor of 0 or 17, and one over 1 at a
+/// detail over 1.
+#[test]
+fn a_coarse_part_spans_k_world_voxels_a_voxel() {
+    let part = |detail: u8, coarse: u8| Part {
+        volume: Arc::new(Prefab::new([2; 3], vec![STONE; 8], None)),
+        parent: None,
+        pivot: [0; 3],
+        detail,
+        coarse,
+    };
+    let model = Arc::new(Model::new(vec![part(1, 10)]).unwrap());
+    let mut set = EntitySet::new();
+    set.insert(model.clone(), Pose::rest(&model)).unwrap();
+    let v = |c: [i64; 3]| Fixed3(c.map(|x| x * 256));
+
+    let hit = set.raycast(v([-5, 5, 5]), PLUS_X, 64 * 256).unwrap();
+    assert_eq!(
+        (hit.t, hit.voxel, hit.face, hit.material),
+        (5 * 256, [0, 0, 0], Some(Face::NegX), STONE)
+    );
+    let hit = set.raycast(v([-5, 15, 15]), PLUS_X, 64 * 256).unwrap();
+    assert_eq!(
+        (hit.t, hit.voxel, hit.face),
+        (5 * 256, [0, 1, 1], Some(Face::NegX))
+    );
+    assert!(set.raycast(v([-5, 25, 5]), PLUS_X, 64 * 256).is_none());
+
+    let pose = Pose::rest(&model);
+    assert_eq!(pose.part_point(&model, 0, [512; 3]), Some(v([20; 3])));
+
+    let fine = Model::new(vec![part(1, 1)]).unwrap();
+    assert_eq!(model.reach(0) - 256, 10 * (fine.reach(0) - 256));
+    assert_ne!(model.id(), fine.id());
+
+    for (detail, coarse) in [(1, 0), (1, 17), (2, 2)] {
+        assert_eq!(
+            Model::new(vec![part(detail, coarse)]),
+            Err(ModelError::BadCoarse {
+                part: 0,
+                coarse,
+                detail
+            })
+        );
+    }
 }

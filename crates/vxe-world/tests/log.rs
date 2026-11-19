@@ -712,7 +712,7 @@ fn a_log_file_round_trips_with_a_64_byte_header() {
     assert_eq!(f.header_len(), 64);
     assert_eq!(bytes.len(), 64 + 47 + 65 + 75 + 17);
     assert_eq!(&bytes[0..4], b"VXEL");
-    assert_eq!(&bytes[4..8], &2u32.to_le_bytes());
+    assert_eq!(&bytes[4..8], &3u32.to_le_bytes());
     assert_eq!(&bytes[8..16], &0x5EED_0001u64.to_le_bytes());
     assert_eq!(&bytes[16..20], &1u32.to_le_bytes());
     assert_eq!(&bytes[20..24], &(-2i32).to_le_bytes());
@@ -724,7 +724,8 @@ fn a_log_file_round_trips_with_a_64_byte_header() {
 }
 
 /// A save whose log stamps the 16³ vault: a 34-byte stamp entry, and a header of 60 fixed
-/// bytes, the table's count, the vault's id and its 8 716 bytes of content.
+/// bytes, the table's count, the vault's id and its 8 724 bytes of content (12 of size, then
+/// its eight bricks, each a tag byte and 1088 bytes, since every one holds shell and air).
 fn vault_file() -> (LogFile, u64) {
     let vault = std::sync::Arc::new(Prefab::vault(16, 4));
     let mut all = PrefabRegistry::new();
@@ -751,10 +752,12 @@ fn vault_file() -> (LogFile, u64) {
 #[test]
 fn a_save_with_a_stamp_carries_its_prefab_in_the_header() {
     let (f, id) = vault_file();
-    assert_eq!(Prefab::vault(16, 4).encoded_len(), 8_716);
+    assert_eq!(Prefab::vault(16, 4).encoded_len(), 8_724);
     let bytes = f.encode();
-    assert_eq!(f.header_len(), 60 + 4 + 8 + 8_716);
-    assert_eq!(bytes.len(), 60 + 4 + 8 + 8_716 + 47 + 34);
+    assert_eq!(&bytes[4..8], &LOG_FORMAT.to_le_bytes());
+    assert_eq!(LOG_FORMAT, 3);
+    assert_eq!(f.header_len(), 60 + 4 + 8 + 8_724);
+    assert_eq!(bytes.len(), 60 + 4 + 8 + 8_724 + 47 + 34);
     assert_eq!(&bytes[60..64], &1u32.to_le_bytes());
     assert_eq!(&bytes[64..72], &id.to_le_bytes());
     assert_eq!(&bytes[72..76], &16u32.to_le_bytes());
@@ -762,14 +765,16 @@ fn a_save_with_a_stamp_carries_its_prefab_in_the_header() {
     assert_eq!(back, f);
     assert_eq!(back.prefabs.get(id).map(|p| p.id()), Some(id));
 
-    // One byte of the vault's content flipped (a voxel of its surface): refused, naming the
-    // id the table gave it.
+    // The first brick is stored whole (tag 2).
+    assert_eq!(bytes[72 + 12], 2);
+    // One byte of the vault's content flipped (an air voxel inside the first brick): refused,
+    // naming the id the table gave it.
     let mut bad = bytes.clone();
-    bad[72 + 12 + 2 * 100] ^= 1;
+    bad[72 + 12 + 1 + 2 * 100] ^= 1;
     assert_eq!(LogFile::decode(&bad), Err(WireError::PrefabMismatch { id }));
     // A mask bit flipped: the voxel it clears changes the content too.
     let mut bad = bytes.clone();
-    bad[72 + 12 + 2 * 4096] ^= 1;
+    bad[72 + 12 + 1 + 2 * 512] ^= 1;
     assert_eq!(LogFile::decode(&bad), Err(WireError::PrefabMismatch { id }));
 }
 
@@ -840,7 +845,7 @@ fn a_log_file_with_a_wrong_header_is_refused() {
     bytes[0] = b'X';
     assert_eq!(LogFile::decode(&bytes), Err(WireError::BadMagic));
 
-    for format in [0u32, 3] {
+    for format in [0u32, 4] {
         let mut bytes = file().encode();
         bytes[4..8].copy_from_slice(&format.to_le_bytes());
         assert_eq!(
@@ -900,4 +905,42 @@ fn replay_applies_in_seq_order_and_matches_direct_apply() {
         Err(EditError::NotResident(ChunkCoord([156, -1, 0])))
     );
     assert_eq!(world_hash(&world), world_hash(&direct));
+}
+
+/// Plan 0083 Phase 3 done-when 3: a log file encoded under format 2 (dense prefabs; bytes
+/// committed before the brick form, `tests/fixtures/format2_stamps.vxl`: a carve and two
+/// stamps, the 16³ vault turned by rotation 5 and a 20 x 12 x 41 masked prefab of partial
+/// bricks turned by rotation 13) decodes and replays to the hash pinned when it was written,
+/// and its format-3 re-encoding decodes and replays to the same hash.
+#[test]
+fn a_format_2_save_still_replays() {
+    let bytes = include_bytes!("fixtures/format2_stamps.vxl");
+    assert_eq!(&bytes[4..8], &2u32.to_le_bytes(), "the fixture is format 2");
+    let f = LogFile::decode(bytes).expect("a format-2 file decodes");
+    assert_eq!(f.prefabs.len(), 2);
+    assert!(f.prefabs.contains(0x9fd1_757b_6f4c_eb45), "the vault's id");
+    assert!(
+        f.prefabs.contains(0xdc5c_b41b_4c2c_8a64),
+        "the masked prefab's id"
+    );
+    let replay = |f: &LogFile| {
+        let w = solid3_world();
+        for r in w.replay(&f.ops, &f.prefabs) {
+            r.expect("each op applies");
+        }
+        w.voxel_hash()
+    };
+    // Pinned on the dense form when the fixture was written.
+    assert_eq!(replay(&f), 0x0e7d_734c_3109_70ef);
+    let again = f.encode();
+    assert_eq!(&again[4..8], &3u32.to_le_bytes());
+    let g = LogFile::decode(&again).expect("its format-3 encoding decodes");
+    assert_eq!(g, f);
+    assert_eq!(replay(&g), 0x0e7d_734c_3109_70ef);
+    assert!(
+        again.len() < bytes.len(),
+        "{} >= {}",
+        again.len(),
+        bytes.len()
+    );
 }

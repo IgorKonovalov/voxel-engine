@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0077.**
+**Next free number: 0079.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -79,8 +79,8 @@ the status.
 | [0062](0062-surface-locomotion-is-a-kinematic-sphere-attached-to-a-contact-normal-in-vxe-sim.md) | Surface locomotion is a kinematic sphere attached to a contact normal in `vxe-sim`, with the smoothed normal a world query; ground locomotion keeps the cylinder controller | accepted (Plan 0079), Outcome |
 | [0063](0063-surface-detail-is-a-procedural-shell-marched-at-the-hit-described-per-material-on-the-render-side.md) | Surface detail is a procedural shell marched at the hit, described per material on the render side, cosmetic and client-only | proposed (Plan 0081) |
 | [0064](0064-a-parts-scale-is-per-axis-in-its-own-frame-and-moves-its-childrens-pivots-not-their-shapes.md) | A part's scale is per axis in its own frame, about its pivot; it moves its children's pivots and never changes their shapes | proposed (Plan 0082) |
-| [0065](0065-materials-are-data-a-table-file-in-the-rig-grammar-and-every-vox-palette-entry-becomes-a-row.md) | Materials are data: a table file in the `.rig` line grammar, and every `.vox` palette entry becomes a row | proposed (Plan 0083) |
-| [0066](0066-a-large-prefab-is-stored-as-bricks-and-its-stamp-is-a-placement-the-world-finishes-as-chunks-arrive.md) | A large prefab is stored as bricks, and its stamp is a placement the world finishes as chunks arrive | proposed (Plan 0083) |
+| [0065](0065-materials-are-data-a-table-file-in-the-rig-grammar-and-every-vox-palette-entry-becomes-a-row.md) | Materials are data: a table file in the `.rig` line grammar, and every `.vox` palette entry becomes a row | accepted (Plan 0083, 2026-11-19), Outcome |
+| [0066](0066-a-large-prefab-is-stored-as-bricks-and-its-stamp-is-a-placement-the-world-finishes-as-chunks-arrive.md) | A large prefab is stored as bricks, and its stamp is a placement the world finishes as chunks arrive | accepted (Plan 0083, 2026-11-19), Outcome |
 | [0067](0067-a-staged-structure-is-a-sequence-of-logged-stamps-over-the-map-with-a-write-policy-not-an-entity.md) | A staged structure is a sequence of logged stamps over the map with a write policy, not an entity | proposed (Plan 0084) |
 | [0068](0068-an-entitys-variants-are-recipes-in-its-model-a-volume-per-part-and-a-palette-per-variant-picked-per-instance.md) | An entity's variants are recipes in its model: a volume per part and a palette per variant, picked per instance by one index | proposed (Plan 0085) |
 | [0069](0069-a-posed-entity-enters-the-world-as-a-baked-prefab-clipped-to-air-through-the-stamp-op.md) | A posed entity enters the world as a baked prefab, clipped to air on the server, through the stamp op | proposed (Plan 0085) |
@@ -91,6 +91,8 @@ the status.
 | [0074](0074-an-entity-instance-carries-a-mark-drawn-in-the-composite-as-an-outline-at-the-instance-edge-and-a-tint.md) | An entity carries a mark, drawn in the composite as an outline where the entity changes and a tint of its shaded colour | accepted (Plan 0077), Outcome |
 | [0075](0075-the-overlay-draws-image-tiles-in-its-cells-and-an-entitys-icon-is-a-still-made-once-on-the-cpu-through-the-entity-raycast.md) | The overlay draws image tiles in its cells, and an entity's icon is a still made once on the CPU through the entity raycast | accepted (Plan 0077), Outcome |
 | [0076](0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md) | A still world gives a still image: five light-stability rules, a world-space history per source, a fade per transition, and a pop counter that only ratchets down | proposed (Plan 0090, draft) |
+| [0077](0077-frame-profiling-through-the-profiling-facade-with-puffin-behind-an-app-feature.md) | Frame profiling goes through the `profiling` facade, collected by puffin behind an app feature | accepted (Plan 0091, approved) |
+| [0078](0078-an-entity-part-has-a-grain-a-detail-finer-than-a-world-voxel-or-a-coarse-factor-of-world-voxels-per-model-voxel.md) | An entity part has a grain: a detail finer than a world voxel, or a coarse factor of world voxels per model voxel | accepted (Plan 0083 Phase 7b, 2026-11-19) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded

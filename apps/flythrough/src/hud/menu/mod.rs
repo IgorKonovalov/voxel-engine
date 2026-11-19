@@ -29,6 +29,7 @@ pub enum Group {
     Lights,
     Queue,
     Entities,
+    Structures,
     Audio,
     Readings,
     Debug,
@@ -36,7 +37,7 @@ pub enum Group {
 
 impl Group {
     /// The groups in the root page's order.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Moving,
         Self::Camera,
         Self::World,
@@ -46,6 +47,7 @@ impl Group {
         Self::Lights,
         Self::Queue,
         Self::Entities,
+        Self::Structures,
         Self::Audio,
         Self::Readings,
         Self::Debug,
@@ -63,6 +65,7 @@ impl Group {
             Self::Lights => "lights",
             Self::Queue => "light queue",
             Self::Entities => "entities",
+            Self::Structures => "structures",
             Self::Audio => "audio",
             Self::Readings => "readings",
             Self::Debug => "debug",
@@ -71,7 +74,7 @@ impl Group {
 }
 
 /// The keys that stay bound and are no entry: movement and look's keys, the menu, the Keys
-/// page, the stats overlay and the quit. The fly-through reads them by hand (`fly`,
+/// page, the stats overlay, the quit and placement mode's `E`. The fly-through reads them by hand (`fly`,
 /// `run::frame`, [`route`]).
 pub const FIXED_KEYS: &[KeyCode] = &[
     KeyCode::KeyW,
@@ -85,6 +88,7 @@ pub const FIXED_KEYS: &[KeyCode] = &[
     KeyCode::F1,
     KeyCode::F2,
     KeyCode::Escape,
+    KeyCode::KeyE,
 ];
 
 /// The fixed binds in words, the Keys page's header block and `--keys`' first group: the
@@ -95,6 +99,7 @@ pub const FIXED_ROWS: &[(&str, &str)] = &[
     ("Shift", "faster"),
     ("mouse", "look"),
     ("left click / R2", "dig; in placement mode, place the ghost"),
+    ("E", "in placement mode, place the ghost"),
     ("right click / L2", "fill; in placement mode, leave it"),
     ("wheel", "the belt's slot, into placement mode"),
     ("1-9", "the belt's slots while the belt is shown"),

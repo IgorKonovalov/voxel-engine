@@ -27,6 +27,7 @@ fn parts(n: usize, m: MaterialId) -> Arc<Model> {
         parent: None,
         pivot: [128; 3],
         detail: 1,
+        coarse: 1,
     };
     Arc::new(Model::new((0..n).map(p).collect()).expect("parts"))
 }

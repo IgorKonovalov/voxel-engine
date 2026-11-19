@@ -1,6 +1,7 @@
 //! What the fly-through builds before its first frame: the material table, the start
 //! camera, the shell's configuration and the GPU objects of a run ([`Gfx`]).
 
+use crate::LogicChoice;
 use crate::app::{Flythrough, Pending, ms_since};
 use crate::audio::{Audio, METRES_PER_VOXEL, RoomProbe};
 use crate::castle;
@@ -13,7 +14,6 @@ use crate::outdoor::OutdoorSource;
 use crate::pad::Pad;
 use crate::run::hud_lines::look_line;
 use crate::showcase::{SHOWCASE_CHUNKS, Shot, ShowcaseSource};
-use crate::{LogicChoice, cave_materials};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -110,34 +110,139 @@ pub(crate) fn shell_config(args: &Args, size: [u32; 2], pace: vxe_app::Pacing) -
     }
 }
 
-/// The cave's material table, the ore emissive unless `--emissive-ore off`; the castle's rows
-/// under `--castle`.
+/// The scene's material table from the material file (`--materials`, or
+/// `assets/materials.txt`; `crate::materials`): the cave's rows with the ore emissive unless
+/// `--emissive-ore off`, the castle's under `--castle`, the outdoor hills' under
+/// `--source outdoor`, the rigs' wood under the thin and seam rigs, the showcase's under the
+/// showcase. A file that does not read or parse, or lacks a row,
+/// ends the process with status 1.
 pub(crate) fn materials(args: &Args) -> MaterialTable {
-    let table = if args.mode.is_outdoor() {
-        crate::outdoor_materials()
-    } else {
-        cave_materials()
+    let fail = |e: String| -> ! {
+        eprintln!("flythrough: {e}");
+        std::process::exit(1)
     };
-    let table = if args.light.emissive_ore {
-        crate::with_emissive_ore(&table)
-    } else {
-        table
-    };
-    let table = if args.castle {
-        crate::castle_materials(&table)
-    } else if args.mode.is_thin_rig() || args.mode.is_seam_rig() {
-        crate::with_wood(&table)
-    } else {
-        table
-    };
-    args.look.crisp.apply(&table)
+    let (file, _) = crate::materials::load(args.materials.as_deref()).unwrap_or_else(|e| fail(e));
+    crate::materials::selection(args)
+        .compose(&file)
+        .unwrap_or_else(|e| fail(e))
+}
+
+/// `table` with the walker's rows, then a row for each palette entry of `--model`'s and
+/// `--vox`'s `.vox` (ADR-0065), then the structures library's rows
+/// (`structures::add_library_rows`), then each row the entities library's rigs name in their
+/// `material` lines that the table lacks, from the material file by name
+/// (`entities::library::rig_material_names`; a name the file lacks stays an error on its
+/// entry): the world's table, fixed once the world is generated. The rigs' rows come last, so
+/// every row before them keeps its id.
+pub(crate) fn world_table(args: &Args, table: &MaterialTable) -> MaterialTable {
+    let mut t = table_before_entities(args, table);
+    if let Ok((file, _)) = crate::materials::load(args.materials.as_deref()) {
+        // A rig's name resolves as `viewer::material` reads it: as written, or each `_` a space.
+        let wanted: Vec<String> = crate::entities::library::rig_material_names(args)
+            .into_iter()
+            .filter(|n| crate::viewer::material(&t, n).is_none())
+            .filter_map(|n| {
+                let spaced = n.replace('_', " ");
+                [n, spaced].into_iter().find(|f| file.row(f).is_some())
+            })
+            .collect();
+        crate::materials::append_named(&mut t, &file, wanted.iter().map(String::as_str));
+    }
+    t
+}
+
+/// [`world_table`] before the rows the entities library's rigs name: [`base_table`] and the
+/// structures library's rows.
+pub(crate) fn table_before_entities(args: &Args, table: &MaterialTable) -> MaterialTable {
+    let mut t = base_table(args, table);
+    let dir = crate::structures::dir_of(args);
+    crate::structures::add_library_rows(&dir, args.materials.as_deref(), &mut t);
+    t
+}
+
+/// [`world_table`] before the structures library's rows.
+pub(crate) fn base_table(args: &Args, table: &MaterialTable) -> MaterialTable {
+    let mut t = crate::walker::with_walker(table);
+    if let Some(path) = &args.model {
+        crate::viewer::palette_rows(path, &mut t, vxe_assets::DEFAULT_EMISSION_FACTOR);
+    }
+    if let Some(v) = &args.vox
+        && let Ok(file) = crate::structures::read(&v.path)
+    {
+        crate::structures::add_rows(&file, &mut t);
+    }
+    t
+}
+
+/// `--vox-op`'s ops for the world whose table is `table` (`crate::structures::ops`), placed
+/// as `--vox` places them through the source; `None` without `--vox-op`. A file that does not
+/// read or load ends the process with status 1.
+pub(crate) fn vox_ops(args: &Args, table: &MaterialTable) -> Option<crate::structures::VoxOps> {
+    use crate::structures as st;
+    let v = args.vox.as_ref().filter(|_| args.vox_op)?;
+    let scene = st::read(&v.path)
+        .and_then(|f| st::scene(&f, table, v.scale))
+        .unwrap_or_else(|e| {
+            eprintln!("flythrough: --vox {e}");
+            std::process::exit(1)
+        });
+    let spawn = CaveSource::unbounded(args.seed).spawn();
+    let ops = st::ops(&scene, st::offset(&scene, spawn, v.at), 0, args.vox_clear);
+    println!("vox op: {} ops, submitted on the first tick", ops.ops.len());
+    Some(ops)
+}
+
+/// `--vox`'s scene over `base` (`crate::structures`), its rows in `table`: the source and its
+/// printed line. A file that does not read or load ends the process with status 1.
+fn vox_source<S: vxe_world::WorldSource>(
+    args: &Args,
+    table: &MaterialTable,
+    spawn: VoxelCoord,
+    base: S,
+) -> vxe_world::StampedSource<crate::structures::ClearedSource<S>> {
+    use crate::structures as st;
+    let v = args.vox.as_ref().expect("--vox given");
+    let t = now();
+    let scene = st::read(&v.path)
+        .and_then(|f| st::scene(&f, table, v.scale))
+        .unwrap_or_else(|e| {
+            eprintln!("flythrough: --vox {e}");
+            std::process::exit(1)
+        });
+    let offset = st::offset(&scene, spawn, v.at);
+    let (lo, hi) = scene.bounds;
+    let size = scene.size();
+    println!(
+        "vox {}: {} placements of {} prefabs, {} x {} x {} voxels at {:?}..{:?}, scale {}, \
+         clear {}, loaded in {:.0} ms",
+        v.path.display(),
+        scene.placements.len(),
+        scene.prefabs.len(),
+        size[0],
+        size[1],
+        size[2],
+        [0, 1, 2].map(|k| lo[k] + offset[k]),
+        [0, 1, 2].map(|k| hi[k] + offset[k]),
+        v.scale,
+        if args.vox_clear { "on" } else { "off" },
+        ms_since(t)
+    );
+    st::source(base, &scene, offset, args.vox_clear)
+}
+
+/// The palette rows [`world_table`] adds for `--model`'s `.vox`: the viewer's `rows +N`.
+pub(crate) fn model_rows_added(args: &Args) -> usize {
+    args.model.as_ref().map_or(0, |path| {
+        let mut t = crate::walker::with_walker(&materials(args));
+        crate::viewer::palette_rows(path, &mut t, vxe_assets::DEFAULT_EMISSION_FACTOR)
+    })
 }
 
 /// `--crisp`: which rows of the fly-through's table carry `MaterialFlags::CRISP` (a testbed
 /// switch for the field surface's cost lever): none added, the cave's rock row, or every row
 /// that is not translucent. Rows the table marks crisp itself (the thin rig's wood) stay crisp.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum CrispRows {
+pub enum CrispRows {
     #[default]
     None,
     Rock,
@@ -315,8 +420,9 @@ pub(crate) fn castle_source(
     });
     drop(file);
     let bytes = castle::prefab_bytes(placements.iter().map(|(p, _, _)| &**p));
+    let dense = castle::dense_prefab_bytes(placements.iter().map(|(p, _, _)| &**p));
     println!(
-        "castle: mapped {} prefabs, {bytes} bytes, in {:.0} ms",
+        "castle: mapped {} prefabs, {bytes} bytes ({dense} dense), in {:.0} ms",
         placements.len(),
         ms_since(t)
     );
@@ -350,7 +456,7 @@ pub(crate) fn build_world(args: &mut Args, failure: &Failure) -> (VoxelCoord, Pe
         let source = crate::thin_rig::ThinRig {
             wood: crate::THIN_RIG_WOOD,
         };
-        let table = crate::walker::with_walker(&materials(args));
+        let table = world_table(args, &materials(args));
         println!(
             "thin rig: a 5-voxel trunk on a floor with free one-, two- and three-voxel rods, a \
              diagonal branch and two sheets of wood, {:?} chunks",
@@ -363,7 +469,7 @@ pub(crate) fn build_world(args: &mut Args, failure: &Failure) -> (VoxelCoord, Pe
         let source = crate::thin_rig::SeamRig {
             crisp: crate::THIN_RIG_WOOD,
         };
-        let table = crate::walker::with_walker(&materials(args));
+        let table = world_table(args, &materials(args));
         println!(
             "seam rig: a rock wall with an 8 x 8 wood inlay flush in its face and a wood L on the \
              rock floor, {:?} chunks",
@@ -374,7 +480,7 @@ pub(crate) fn build_world(args: &mut Args, failure: &Failure) -> (VoxelCoord, Pe
         (source.spawn(), Pending::Level(generation))
     } else if let Some(edge) = args.mode.room() {
         let source = RoomSource::new(edge);
-        let table = crate::walker::with_walker(&materials(args));
+        let table = world_table(args, &materials(args));
         println!(
             "room: a closed {:.1} m cube of air in 2 m of rock, {:?} chunks",
             edge as f32 * METRES_PER_VOXEL,
@@ -385,7 +491,7 @@ pub(crate) fn build_world(args: &mut Args, failure: &Failure) -> (VoxelCoord, Pe
         (source.spawn(), Pending::Level(generation))
     } else if args.mode.is_showcase() {
         let source = ShowcaseSource::new(seed);
-        let table = crate::walker::with_walker(&crate::with_showcase_rows(&materials(args)));
+        let table = world_table(args, &materials(args));
         let generation = std::thread::spawn(move || {
             let t = now();
             let extent = source.extent();
@@ -420,7 +526,7 @@ fn replay_world(args: &mut Args, path: &Path, failure: &Failure) -> (VoxelCoord,
         Ok(file) => {
             // The session continues under the save's seed.
             args.seed = file.seed;
-            let table = crate::walker::with_walker(&materials(args));
+            let table = world_table(args, &materials(args));
             let source = CaveSource::new(file.seed, file.extent);
             let with_vault = args.vault;
             if with_vault {
@@ -466,7 +572,7 @@ fn level_world(args: &Args) -> (VoxelCoord, Pending) {
             source.vault_origin().0
         );
     }
-    let table = crate::walker::with_walker(&materials(args));
+    let table = world_table(args, &materials(args));
     let with_vault = args.vault;
     let generation = std::thread::spawn(move || {
         let t = now();
@@ -492,7 +598,8 @@ fn streamed_world(args: &Args) -> (VoxelCoord, Pending) {
     let source = CaveSource::unbounded(seed);
     let spawn = source.spawn();
     let workers = args.workers.unwrap_or_else(default_workers);
-    let world = World::new(&crate::walker::with_walker(&materials(args)));
+    let table = world_table(args, &materials(args));
+    let world = World::new(&table);
     let cfg = StreamConfig {
         residency: args.residency,
         workers,
@@ -515,7 +622,9 @@ fn streamed_world(args: &Args) -> (VoxelCoord, Pending) {
         });
         return (spawn, Pending::StreamBuilding(build));
     }
-    let streamer = if args.vault {
+    let streamer = if args.vox.is_some() && !args.vox_op {
+        Streamer::new(Arc::new(vox_source(args, &table, spawn, source)), cfg)
+    } else if args.vault {
         println!(
             "vault: {VAULT_EDGE}^3 shell room at {:?}",
             source.vault_origin().0
@@ -531,13 +640,13 @@ fn streamed_world(args: &Args) -> (VoxelCoord, Pending) {
 }
 
 /// The outdoor hills of `args.seed`, with `--trees` stood on them, streamed around the camera
-/// as the cave is.
+/// as the cave is, over the same [`world_table`] as every other source.
 fn outdoor_world(args: &Args) -> (VoxelCoord, Pending) {
     let hills = OutdoorSource::new(args.seed);
     let (spawn, _) = hills.spawn(args.outdoor.spawn);
     let trees = args.outdoor.trees();
     let workers = args.workers.unwrap_or_else(default_workers);
-    let world = World::new(&crate::walker::with_walker(&materials(args)));
+    let world = World::new(&world_table(args, &materials(args)));
     let cfg = StreamConfig {
         residency: args.residency,
         workers,

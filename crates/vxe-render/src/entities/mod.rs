@@ -16,7 +16,8 @@
 //!   voxels), the part-to-world transform of the frame before (3 x 4 `f32`), the word its
 //!   volume starts at, its slot and its slot's generation (`slot | generation << 9`, the
 //!   instances module's docs), its flags ([`INSTANCE_MOVED`]),
-//!   `1 / detail` as `f32`, and the volume's size in model voxels.
+//!   world voxels per model voxel (`coarse / detail`) as `f32`, and the volume's size in model
+//!   voxels.
 //! - the pool from [`POOL_WORD`]: each volume once, keyed by its prefab's id. A volume is a
 //!   header of [`VOLUME_HEADER_WORDS`] words (its size, then the word offsets of its
 //!   occupancy bits, block bits, palette indices and palette from the volume's start), one

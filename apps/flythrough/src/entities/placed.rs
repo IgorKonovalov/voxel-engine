@@ -45,6 +45,19 @@ impl PartialEq for Placed {
     }
 }
 
+/// A structure's ghost: its coarse copy inside the frame of its box
+/// (`crate::structures::ghost_model`) as one entity at the box's minimum corner, the
+/// structure, scale and quarter turns it was made for and whether it holds its body, and its
+/// handle in the pool once uploaded.
+#[derive(Clone, Debug)]
+pub struct FrameGhost {
+    pub id: EntityId,
+    pub key: (usize, u32, u8, bool),
+    pub model: Arc<Model>,
+    pub handle: Option<ModelHandle>,
+    pub corner: [i32; 3],
+}
+
 /// What a placement takes: the built-in walker, a library entry's rig, or why the selected
 /// entry cannot be placed.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -99,6 +112,11 @@ pub struct Walkers {
     pub preview: Option<Placed>,
     /// The belt's slots and placement mode (`super::belt`).
     pub belt: super::belt::Belt,
+    /// A structure's ghost in placement mode: its coarse copy in its box's frame
+    /// (`super::picker`).
+    pub frame: Option<FrameGhost>,
+    /// The handles of frames replaced since the last sync, which it frees.
+    pub(crate) frame_stale: Vec<ModelHandle>,
     /// The frame's drawn parts, kept across frames ([`Walkers::refresh_displays`]): the first
     /// `shown` are this frame's, the rest storage kept for later frames.
     displays: Vec<(EntityId, ModelHandle, vxe_render::DisplayPose)>,
@@ -430,12 +448,24 @@ impl Walkers {
             };
             n += usize::from(fits);
         }
+        if let Some(f) = &self.frame
+            && let (Some(h), Some((model, pose))) = (f.handle, self.set.get(f.id))
+        {
+            if n == self.displays.len() {
+                self.displays
+                    .push((f.id, h, vxe_render::DisplayPose::default()));
+            }
+            let slot = &mut self.displays[n];
+            (slot.0, slot.1) = (f.id, h);
+            n += usize::from(slot.2.of_into(model, pose));
+        }
         self.shown = n;
         self.marks.clear();
-        if let Some(p) = &self.preview {
-            let colour = self.ghost_colour.unwrap_or(vxe_render::MARK_COLOURS[0]);
+        let colour = self.ghost_colour.unwrap_or(vxe_render::MARK_COLOURS[0]);
+        let ghosts = self.preview.as_ref().map(|p| p.id);
+        for id in ghosts.into_iter().chain(self.frame.as_ref().map(|f| f.id)) {
             self.marks.push((
-                p.id,
+                id,
                 vxe_render::Mark {
                     colour,
                     outline: true,

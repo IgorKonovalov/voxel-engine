@@ -240,7 +240,8 @@ fn same_thing(a: HitRecord, b: HitRecord) -> bool {
     return a.entity == b.entity && a.instance == b.instance;
 }
 
-// The shadow offset's scale for hit `rec`: an entity part's `1 / detail`, else 1.
+// The shadow offset's scale for hit `rec`: an entity part's world voxels per model voxel
+// (`coarse / detail`), else 1.
 fn entity_shadow_scale(rec: HitRecord) -> f32 {
     if (!ENTITIES || !rec.entity) {
         return 1.0;

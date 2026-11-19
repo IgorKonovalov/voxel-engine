@@ -22,7 +22,7 @@ use crate::run::loading::fade_loading;
 use crate::setup::GfxSample;
 use crate::streaming::pressure_terms;
 use std::time::Instant;
-use vxe_app::{Flow, Gpu, Input, KeyCode, PadButton};
+use vxe_app::{Flow, Gpu, Input, KeyCode, MouseButton, PadButton};
 use vxe_audio::Command;
 use vxe_render::debug::StepHistogram;
 use vxe_render::{LodParams, MarchTimer, PassTimer, ViewMode, wgpu};
@@ -262,7 +262,7 @@ impl Run {
         // `Esc` with the menu closed ends placement mode first, then the run; a path run ends
         // through its player, so its report can say how. Outside `--tester` the run ends on a
         // second `Esc` within `QUIT_ASK_MS` of the first, which shows `QUIT_ASK_WORDS`; any
-        // other key, the menu or placement mode drops the question.
+        // other key, a click, a pad button, the menu or placement mode drops the question.
         let now = ms_since(self.start);
         let esc = i.pressed(KeyCode::Escape);
         if self.quit_asked.is_some_and(|at| {
@@ -272,6 +272,10 @@ impl Run {
                 || all_keys()
                     .into_iter()
                     .any(|k| k != KeyCode::Escape && input.pressed(k))
+                || [MouseButton::Left, MouseButton::Right, MouseButton::Middle]
+                    .into_iter()
+                    .any(|b| input.clicked(b))
+                || PadButton::ALL.into_iter().any(|b| input.pad_pressed(b))
         }) {
             self.quit_asked = None;
         }
@@ -307,7 +311,7 @@ impl Run {
             text,
             &mut h.colours,
             grid,
-            &self.modes.walkers,
+            &self.modes,
             ms_since(self.start),
             hud::BANNER_MS,
             &mut h.paint,
@@ -320,7 +324,13 @@ impl Run {
     /// frame on the selected slot, its tiles after the chooser's. Gives the belt's backdrop
     /// box; `None`, and the rows untouched, on any other page or closed.
     pub(crate) fn chooser_belt(&mut self, size: [u32; 2]) -> Option<vxe_render::HudBox> {
-        if self.args.tester || self.menu.page() != Some(crate::hud::menu::PageId::Entities) {
+        use crate::hud::menu::PageId;
+        if self.args.tester
+            || !matches!(
+                self.menu.page(),
+                Some(PageId::Entities | PageId::Structures)
+            )
+        {
             return None;
         }
         self.fill_belt();
@@ -330,7 +340,7 @@ impl Run {
             &mut h.overlay,
             &mut h.overlay_colours,
             (panel.cols, panel.rows),
-            &self.modes.walkers,
+            &self.modes,
             ms_since(self.start),
             hud::BANNER_MS,
             &mut h.paint,
@@ -805,6 +815,7 @@ impl Run {
             up.to_array(),
         );
         self.poll_viewer(ms_since(self.start));
+        self.poll_materials(gpu);
         self.aim_entities();
         // The walkers walk before their eye lights are read, so a light rides with its head.
         self.modes.walkers.step(step);
@@ -1014,6 +1025,42 @@ pub(super) fn set_sky_and_styles(
         Vec::new()
     };
     frame.set_material_styles(&gpu.queue, &styles);
+}
+
+impl Run {
+    /// The material file's reload once a second (`crate::materials`): a rewrite goes to the
+    /// mirror's rows, and every resident chunk holding a row whose emission moved is re-baked
+    /// (its box handed to the frame as an edit's is). The words are printed and shown in the
+    /// banner.
+    pub(crate) fn poll_materials(&mut self, gpu: &Gpu) {
+        let now_ms = ms_since(self.start);
+        let Some(w) = self.materials.as_mut() else {
+            return;
+        };
+        let Some(r) = w.poll(now_ms / 1000.0, self.world.materials()) else {
+            return;
+        };
+        let mut words = r.words();
+        if let (
+            crate::materials::Reload::Rewrite {
+                table, emission, ..
+            },
+            Some(gfx),
+        ) = (&r, self.gfx.as_mut())
+        {
+            gfx.mirror.rewrite_materials(table, &gpu.queue);
+            if !emission.is_empty() {
+                let chunks = crate::materials::chunks_holding(&self.world, emission);
+                for c in &chunks {
+                    let min = c.min_voxel().0;
+                    gfx.frame.invalidate(min, min.map(|v| v + 63));
+                }
+                words = format!("{words}, {} chunks re-baking", chunks.len());
+            }
+        }
+        println!("{words}");
+        self.modes.show_lights(words, now_ms);
+    }
 }
 
 /// `input` with only what `--tester` keeps (`path::tester_action`): the movement keys and

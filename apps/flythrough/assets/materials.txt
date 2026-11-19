@@ -1,0 +1,68 @@
+# The fly-through's material table (Plan 0083, ADR-0065), in the .rig line grammar.
+#   material <name>                 opens a row; the name is the rest of the line
+#   color #rrggbb | albedo r g b    sRGB (decoded to linear) or linear
+#   roughness, emission r g b, opacity, hardness, acoustic A T R, payload, flags ...
+# Each scene takes its rows by name, in its own order (`flythrough --help`, `--materials`):
+# the cave rock, ore, shell, rubble; the showcase adds crystal, amethyst, ember; `--castle`
+# adds the seven castle rows; the outdoor hills add grass, soil, bark, leaf; the thin and seam
+# rigs add rig wood. `--emissive-ore off` clears the ore's emission. The file is read again once a second while the window is open: a change
+# of colour, roughness, opacity or emission shows; a row added, removed or renamed, or a row
+# whose class (translucent, emissive, opaque) changes, waits for a restart.
+
+# The cave.
+material rock
+  albedo 0.42 0.38 0.34
+material ore
+  albedo 0.72 0.45 0.2
+  emission 1.6 0.9 0.35
+material shell
+  albedo 0.12 0.12 0.14
+  flags indestructible
+material rubble
+  albedo 0.36 0.33 0.3
+
+# The showcase's glowing rows.
+material crystal
+  albedo 0.35 0.75 0.85
+  emission 0.35 1.6 2.0
+material amethyst
+  albedo 0.45 0.25 0.6
+  emission 0.6 0.2 1.1
+material ember
+  albedo 0.6 0.22 0.1
+  emission 2.4 0.3 0.08
+
+# The castle (--castle), in its palette's order.
+material castle stone
+  albedo 0.55 0.53 0.5
+material castle trim
+  albedo 0.36 0.35 0.34
+material castle slate
+  albedo 0.2 0.22 0.27
+material castle wood
+  albedo 0.4 0.27 0.15
+material castle iron
+  albedo 0.18 0.18 0.2
+  roughness 0.5
+material castle glass
+  albedo 0.25 0.35 0.85
+  flags translucent
+  opacity 0.6
+material castle torch
+  albedo 1.0 0.7 0.3
+  emission 3.0 1.7 0.6
+
+# The thin and seam rigs' wood, drawn as cubes under the field look.
+material rig wood
+  albedo 0.45 0.3 0.16
+  flags crisp
+
+# The outdoor hills (--source outdoor).
+material grass
+  albedo 0.18 0.32 0.1
+material soil
+  albedo 0.3 0.22 0.15
+material bark
+  albedo 0.25 0.17 0.11
+material leaf
+  albedo 0.12 0.26 0.08

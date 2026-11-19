@@ -97,6 +97,35 @@ vxe-world --bench stamp`, exclusive perf lock, box under outside load of about 2
 commits 83ab811 and 39d3700):** `vault16` 22.6 to 22.8 µs; `prefab64_mixed` 2.02 to 2.07 ms;
 `prefab64_uniform` 1.455 ms. Both under their proposals; the proposals stand as budgets.
 
+**Prefabs as bricks (Plan 0083 Phase 3, ADR-0066; dev reference, Ryzen 9 5900HS, exclusive perf
+lock, quiet box, 1-minute load 0.99 to 1.86, tip dbb59413 alternated with the dense-form base
+26a76ef7, two rounds):** `prefab64_mixed` 3.855 to 3.859 ms against the base's 3.802 to
+3.805 ms (+1.4 %); `vault16` 23.7 to 24.0 µs against 22.8 to 23.2 µs; `prefab64_uniform` 7.8 to
+7.9 µs against 1.03 ms (a uniform prefab brick into a uniform world brick is one word);
+`prefab256_castle_tile` (a 256³ castle-shaped tile, about 12 % of its voxels written, on a
+4³-chunk world) 18.95 to 18.99 ms. On the same box today the base reads `prefab64_mixed` at
+3.80 ms, against the 2.07 ms above. **Owner, 2026-11-17:** Plan 0083's `prefab64_mixed` bar is
+within 10 % of the pre-change base on the same box under the same lock, base and tip
+alternated, not of the 2.07 ms reading; the 3.80 ms base and the +1.4 % tip are that bar's
+reading. The 5 ms proposal above stands as the budget.
+
+**Stamps past residency (Plan 0083 Phase 5, ADR-0066).** A stamp writes the resident chunks its
+box meets and keeps one pending placement for the chunks it writes into that are not resident;
+the streamer writes the placement into each such chunk as it inserts it, generated or restored
+from persistence, and drops it once every chunk is written. The call's cost is the resident
+part; a placement costs its rotated prefab's bytes until it is dropped, and a box test per
+pending placement on every streamed insert while any is pending. **Reading (Plan 0083 Phase 5,
+`reading::castle_stamped_at_runtime`, release, tree 764f0d18, Ryzen 9 5900HS, CPU only,
+exclusive perf lock, 1-minute load 2.15):** the castle's 21 stamps into the hall streamed
+around the spawn take 120.1 ms at `r_full` 16 (17 077 resident chunks, 355 written now,
+13 154 879 voxels changed, 0 placements pending) and 46.0 ms at `r_full` 6 (925 resident, 107
+written now, 4 540 522 voxels changed, 21 pending); the guess was under 500 ms. The live
+queue's time to settle the castle's light after a runtime placement is not read: two headless
+runs of the cave (Plan 0083 Phase 8, RTX 3080 Laptop, 1500 frames, with and without the
+castle written as a `.vox` and placed by `--vox-op` on the first tick) both hold the queue at
+1 to 2 jobs with 2964 reach-bound chunks waiting to the end, so neither reaches an empty
+queue to time (`docs/plans/logs/0083.md`, Phase 8).
+
 ## Replay throughput
 
 **Reading (dev reference, AMD Ryzen 9 5900HS, Plan

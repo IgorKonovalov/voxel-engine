@@ -17,6 +17,7 @@ fn model() -> Model {
         parent,
         pivot: [256; 3],
         detail: 1,
+        coarse: 1,
     };
     Model::new(vec![part(None), part(Some(0))]).unwrap()
 }

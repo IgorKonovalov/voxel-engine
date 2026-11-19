@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0091** (ADRs are a separate sequence, see `../adrs/README.md` for its
+**Next free number: 0093** (ADRs are a separate sequence, see `../adrs/README.md` for its
 next free number).
 
 ## Active roster
@@ -21,13 +21,14 @@ next free number).
 | [0076](0076-a-key-help-overlay-for-the-fly-through-from-the-key-table.md) | A key help overlay for the fly-through: `F1` (readings move to `Enter`), written from the key tables, modes live, 80 x 45 | superseded | Apps only, no ADR. Folded into 0080 (owner, 2026-11-16). |
 | [0081](0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md) | A surface detail layer: blades, caps and pebbles marched above styled faces, lit as hits, faded by size on screen | approved | M10, ADR-0063 (proposed). Re-read 2026-11-17. After 0086 and 0080, before 0033. |
 | [0082](0082-squash-and-stretch-a-scale-per-part-in-the-pose-and-the-clips.md) | Squash and stretch: a scale per axis per part in the pose and the clips, a slime in the library with a bounce | approved | M6, ADR-0064 (proposed). Approved 2026-11-16. After 0063, the clip chore, 0078 and 0079 P1-3. |
-| [0083](0083-anything-from-a-vox-palette-materials-a-material-file-and-large-scenes-stamped-into-the-world.md) | Anything from a `.vox`: palette materials, a material file, brick prefabs, far placements | approved | M7, ADR-0065, ADR-0066. Approved 2026-11-16. After 0063 and the chore; P6 after 0080, 0077. |
 | [0084](0084-staged-structures-stages-from-a-vox-a-stamp-with-a-write-policy-and-a-region-a-reveal-and-a-demolish.md) | Staged structures: stages from a `.vox`'s layers, a stamp with a write policy and a region, a reveal over ticks, a demolish | approved | M7, ADR-0067. Approved 2026-11-16. After Plan 0083 closes. |
 | [0085](0085-entity-variants-holding-clips-and-an-entity-stamped-into-the-world.md) | Entity variants (hide, swap, remap) from the `.rig`, a clip that holds, a posed entity stamped into the world | approved | M6, ADR-0068, ADR-0069 (proposed). Approved 2026-11-16. After 0063, the chore, 0078 and 0082. |
 | [0086](0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md) | Still outdoor light: baked sky visibility, a long history for the sky and key rays, solid canopy shadows, stair history, a penumbra spike | in-progress | M10, ADR-0070. Wrap-up amended 2026-11-19. |
 | [0087](0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md) | The rename to `svet`: crates, `SVET_*`, the WIT package, the tester archive, docs, the repository, a minor bump | approved | ADR-0071. Alone, last: after 0032, 0080, 0077, 0079, 0083 and 0086 merge. |
 | [0089](0089-deterministic-simulation-testing-seeded-scenarios-a-simulated-channel-a-mirror-oracle-and-gates.md) | Deterministic simulation testing: seeded scenarios, a shrinker, a simulated channel, a mirror oracle, determinism gates | approved | ADR-0073 (proposed). All phases after 0087 merges (owner). |
 | [0090](0090-the-pop-counter-scenes-on-lavapipe-count-the-pixels-that-break-the-light-rules-a-ratchet.md) | The pop counter: fixed scenes on lavapipe count the pixels that break each light rule, by source; a baseline that only falls | approved | Cross-cutting, ADR-0076 (proposed). After 0086 closes, before 0081. |
+| [0091](0091-the-frame-profiler-scopes-across-threads-a-gpu-lane-a-dump-for-agents-and-a-hud-ticker.md) | The frame profiler: scopes across the threads, a GPU lane, a dump the agent ranks, budget scopes, a HUD ticker | approved | M7, ADR-0077. After 0087 and 0089, before 0090 (owner). |
+| [0092](0092-wgsl-hot-reload-in-the-fly-through-an-mtime-poll-pipelines-rebuilt-and-the-old-ones-kept-on-an-error.md) | WGSL hot reload in the fly-through: an mtime poll, pipelines rebuilt from disk, the old kept on an error | approved | M7, no ADR. After 0091 in its lane, before 0090 (owner). |
 <!-- roster:end -->
 
 ## Sequence
@@ -147,7 +148,22 @@ article "Deterministic Simulation Testing"; ADR-0073 proposed): approved 2026-11
 recommended answers except the timing: every phase runs after Plan 0087 (the rename) merges
 (owner). No new dependency.
 
-Every active plan is approved (Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
+**Plan 0091** (the frame profiler: `profiling` facade scopes in `vxe-render` and the apps, puffin
+behind the fly-through's `profiler` feature, `--profiler-dump` writing a Chrome trace, a text tree
+and `run.json`'s `scopes_top`, `scripts/profile-top.mjs` for agents, `PassTimer`'s passes as a
+`gpu` lane, budget scopes, allocation counting, a HUD ticker with a frozen frame; drafted
+2026-11-19 from the Bonsai second pass and approved the same day, ADR-0077 accepted): the owner placed it
+**after Plans 0087 and 0089 and before Plan 0090** (2026-11-19). It touches the fly-through's
+HUD, report and run loop, so it does not run beside a lane that edits them.
+
+**Plan 0092** (WGSL hot reload in the fly-through: `Frame::reload_shaders` in `vxe-render`, an
+mtime poll under `--watch-shaders`, the old pipelines kept and the error on the window on a
+compile failure; drafted and approved 2026-11-19, no ADR, no dependency): the owner placed it
+on the architect's recommendation, **right after Plan 0091 merges, before Plan 0090**, in the same lane, because
+it is small, shares the HUD's menu and banner files with 0091, and shortens the window loop
+that Plans 0090, 0081 and the M10 look plans run on.
+
+Every active plan but 0091 and 0092 (proposed 2026-11-19) is approved (Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Approval accepts the design; a plan's lane
 starts only when the plans its "Starts after" line names have closed and merged, and where that
 line asks for it, after the architect has re-read the plan against the new tip. The approved
@@ -159,6 +175,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0083](done/0083-anything-from-a-vox-palette-materials-a-material-file-and-large-scenes-stamped-into-the-world.md) | Anything from a `.vox`: palette materials, a material file, brick prefabs, placements past residency, structures in the belt with a coarse ghost; ADR-0065, 0066, 0077 | 2026-11-19, v0.66.0 |
 | [0079](done/0079-entities-aware-of-floor-and-walls-a-surface-mover-the-smoothed-normal-and-a-wandering-demo.md) | Entities aware of the floor and the walls: a sphere surface mover, the solid-count gradient, a `.rig` body and stride, a seeded wander; 64 spiders +3.07 ms CPU (backlog) | 2026-11-18, v0.65.0 |
 | [0077](done/0077-an-entity-picker-in-the-fly-through-choose-a-model-from-the-library-and-place-it.md) | An entity picker: the entities library, a chooser with icons, a belt of slots, a placement mode with a marked ghost | 2026-11-18, v0.64.0 |
 | [0088](done/0088-the-outdoor-scene-in-the-tester-a-path-over-the-hills-through-the-trees-and-into-the-cave.md) | The outdoor scene in the tester: a computed path over the hills, between the trees and down the tunnel; a fourth menu row | 2026-11-17, v0.63.0 |

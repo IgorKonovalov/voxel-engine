@@ -1,15 +1,19 @@
 //! The exact ray walk through one posed part.
 //!
 //! A world ray is `origin + dir * t / 256` in 1/256 voxel, as for `World::raycast`. Into a part's
-//! space it maps with no rounding: a local coordinate is carried in units of `1 / (256 * 16384)`
-//! model voxel, so `local = pivot * 16384 + detail * M^T (world - part pivot)` is an integer for
-//! any integer world point, and the local ray is `L0 + D * t / 256` with the same parameter `t`.
+//! space it maps with no rounding: a local coordinate is carried in units of
+//! `1 / (256 * 16384 * coarse)` model voxel, so
+//! `local = pivot * 16384 * coarse + detail * M^T (world - part pivot)` is an integer for any
+//! integer world point, and the local ray is `L0 + D * t / 256` with the same parameter `t`.
 //! `M^T` stands for the inverse rotation; this map is the definition of where a turned part's
 //! voxels are, so the query needs no float and no division until it reports `t`.
 //!
 //! Crossing times are exact fractions compared by cross-multiplication in `i128`, as in the
 //! world's walk. Within the documented domain (origins in the `i32` voxel range, `|dir|`
-//! components below 2^40) no product overflows.
+//! components below 2^40) no product overflows: the world terms reach about 2^58 (`L0`) and
+//! 2^57 (`D`), a crossing's numerator about 2^66, and the products about 2^123. The coarse
+//! factor (at most 16, four bits) multiplies only the pivot and the voxel edges, which stay
+//! under 2^50 and 2^33, so it moves none of these bounds.
 
 use vxe_world::{AIR, Face, MaterialId};
 
@@ -17,7 +21,7 @@ use crate::model::Part;
 use crate::pose::PartFrame;
 use crate::quat::{Q14_ONE, rotate_back_q14};
 
-/// Local units per model voxel.
+/// Local units per model voxel of a part at `coarse` 1.
 const LOCAL_ONE: i128 = 256 * Q14_ONE as i128;
 
 /// A ray parameter `num / den`, `den > 0`.
@@ -123,12 +127,16 @@ pub(crate) fn part_raycast(
     limit: Frac,
 ) -> Option<PartHit> {
     let detail = i128::from(part.detail);
+    let coarse = i128::from(part.coarse);
+    // Local units per model voxel for this part.
+    let one = LOCAL_ONE * coarse;
     let rel = [0, 1, 2].map(|k| i128::from(origin[k]) - i128::from(frame.pivot[k]));
     let back = rotate_back_q14(&frame.m, rel);
-    let l0 = [0, 1, 2].map(|k| i128::from(part.pivot[k]) * i128::from(Q14_ONE) + detail * back[k]);
+    let l0 = [0, 1, 2]
+        .map(|k| i128::from(part.pivot[k]) * i128::from(Q14_ONE) * coarse + detail * back[k]);
     let d = rotate_back_q14(&frame.m, dir.map(i128::from)).map(|c| c * detail);
     let size = part.volume.size();
-    let hi = size.map(|s| i128::from(s) * LOCAL_ONE);
+    let hi = size.map(|s| i128::from(s) * one);
     let (enter, _exit, axis) = box_span(l0, d, [0; 3], hi)?;
     let mut t = enter;
     let mut face = axis.map(|k| entered(k, d[k] > 0));
@@ -136,7 +144,7 @@ pub(crate) fn part_raycast(
         if limit.lt(t) {
             return None;
         }
-        let v = voxel_at(l0, d, t);
+        let v = voxel_at(l0, d, t, one);
         if (0..3).any(|k| v[k] < 0 || v[k] >= i128::from(size[k])) {
             return None;
         }
@@ -159,7 +167,7 @@ pub(crate) fn part_raycast(
             }
             let edge = if d[k] > 0 { v[k] + 1 } else { v[k] };
             let tk = Frac {
-                num: (edge * LOCAL_ONE - l0[k]) * 256 * d[k].signum(),
+                num: (edge * one - l0[k]) * 256 * d[k].signum(),
                 den: d[k].abs(),
             };
             if best.is_none_or(|(b, _)| tk.lt(b)) {
@@ -172,13 +180,13 @@ pub(crate) fn part_raycast(
     }
 }
 
-/// The voxel holding the local point at parameter `t`; on a boundary, the voxel the ray moves
-/// into.
-fn voxel_at(l0: [i128; 3], d: [i128; 3], t: Frac) -> [i128; 3] {
+/// The voxel holding the local point at parameter `t`, `one` local units a model voxel; on a
+/// boundary, the voxel the ray moves into.
+fn voxel_at(l0: [i128; 3], d: [i128; 3], t: Frac, one: i128) -> [i128; 3] {
     [0, 1, 2].map(|k| {
-        // position * den * 256 = l0 * den * 256 + d * num, over den * 256 * LOCAL_ONE a voxel.
+        // position * den * 256 = l0 * den * 256 + d * num, over den * 256 * one a voxel.
         let p = l0[k] * t.den * 256 + d[k] * t.num;
-        let q = t.den * 256 * LOCAL_ONE;
+        let q = t.den * 256 * one;
         if d[k] < 0 {
             (p - 1).div_euclid(q)
         } else {

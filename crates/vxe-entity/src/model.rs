@@ -1,5 +1,5 @@
 //! A model: up to [`MAX_PARTS`] rigid parts, each a voxel volume with a parent, a pivot and a
-//! detail.
+//! grain (a detail or a coarse factor).
 
 use std::sync::Arc;
 
@@ -12,12 +12,15 @@ use crate::quat::isqrt;
 pub const MAX_PARTS: usize = 16;
 /// A part volume's largest edge, in model voxels.
 pub const MAX_EDGE: u32 = 64;
+/// A part's largest [`Part::coarse`]: 16 x [`MAX_EDGE`] is 1024 world voxels a side.
+pub const MAX_COARSE: u8 = 16;
 
 /// One rigid part of a [`Model`].
 ///
 /// The part's own space is its volume's voxel grid: voxel `(i, j, k)` spans `[i, i + 1)` model
-/// voxels on each axis, and a model voxel is `1 / detail` of a world voxel. The pivot is the
-/// point the part turns about and the point its pose places.
+/// voxels on each axis, and a model voxel is `coarse / detail` world voxels: `1 / detail` for a
+/// fine part, `coarse` for a coarse one (a part is one or the other). The pivot is the point the
+/// part turns about and the point its pose places.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Part {
     /// The voxels; at most [`MAX_EDGE`] a side. A voxel that is unwritten or [`vxe_world::AIR`]
@@ -29,6 +32,9 @@ pub struct Part {
     pub pivot: [i32; 3],
     /// Model voxels per world voxel along an axis: 1, 2 or 4.
     pub detail: u8,
+    /// World voxels per model voxel along an axis: 1 to [`MAX_COARSE`]. Over 1 only with
+    /// `detail` 1.
+    pub coarse: u8,
 }
 
 /// Why [`Model::new`] refused its parts.
@@ -45,6 +51,8 @@ pub enum ModelError {
     OversizedVolume { part: u8, size: [u32; 3] },
     /// A detail other than 1, 2 or 4.
     BadDetail { part: u8, detail: u8 },
+    /// A coarse factor outside 1 to [`MAX_COARSE`], or over 1 on a part whose detail is not 1.
+    BadCoarse { part: u8, coarse: u8, detail: u8 },
 }
 
 impl std::fmt::Display for ModelError {
@@ -69,6 +77,17 @@ impl std::fmt::Display for ModelError {
             Self::BadDetail { part, detail } => {
                 write!(f, "part {part} has detail {detail}, not 1, 2 or 4")
             }
+            Self::BadCoarse {
+                part,
+                coarse,
+                detail,
+            } => {
+                write!(
+                    f,
+                    "part {part} has coarse {coarse} at detail {detail}: coarse is 1 to \
+                     {MAX_COARSE}, and over 1 only at detail 1"
+                )
+            }
         }
     }
 }
@@ -88,7 +107,8 @@ pub struct Model {
 impl Model {
     /// A model of `parts`, refused with a typed error when it is empty, holds more than
     /// [`MAX_PARTS`], names a parent that is not an earlier part, carries a volume over
-    /// [`MAX_EDGE`] a side or a detail other than 1, 2 or 4.
+    /// [`MAX_EDGE`] a side, a detail other than 1, 2 or 4, or a coarse factor outside 1 to
+    /// [`MAX_COARSE`] or over 1 beside a detail over 1.
     pub fn new(parts: Vec<Part>) -> Result<Self, ModelError> {
         if parts.is_empty() {
             return Err(ModelError::NoParts);
@@ -113,6 +133,13 @@ impl Model {
                     detail: p.detail,
                 });
             }
+            if p.coarse == 0 || p.coarse > MAX_COARSE || (p.coarse > 1 && p.detail != 1) {
+                return Err(ModelError::BadCoarse {
+                    part,
+                    coarse: p.coarse,
+                    detail: p.detail,
+                });
+            }
         }
         let reach = parts.iter().map(part_reach).collect();
         let id = model_id(&parts);
@@ -124,13 +151,16 @@ impl Model {
     }
 
     /// FNV-1a 64 over the part count (`u32`), then per part its volume's
-    /// [`Prefab::id`] (`u64`), its parent (`u8`, 255 for none), its pivot (three `i32`) and its
-    /// detail (`u8`), all little-endian.
+    /// [`Prefab::id`] (`u64`), its parent (`u8`, 255 for none), its pivot (three `i32`), its
+    /// detail (`u8`) and its coarse factor (`u8`), all little-endian.
     pub fn id(&self) -> u64 {
         self.id
     }
 
-    pub(crate) fn reach(&self, part: usize) -> i64 {
+    /// Part `part`'s reach: a radius about its pivot that holds its whole volume under any
+    /// rotation, in 1/256 world voxel, with a margin of one world voxel. Panics past the last
+    /// part.
+    pub fn reach(&self, part: usize) -> i64 {
         self.reach[part]
     }
 }
@@ -145,12 +175,13 @@ fn model_id(parts: &[Part]) -> u64 {
             h.write(&c.to_le_bytes());
         }
         h.write(&[p.detail]);
+        h.write(&[p.coarse]);
     }
     h.finish()
 }
 
 /// The distance from the pivot to the volume's farthest corner, rounded up, in 1/256 world
-/// voxel, plus one world voxel.
+/// voxel (a model voxel is `coarse / detail` world voxels), plus one world voxel.
 fn part_reach(p: &Part) -> i64 {
     let size = p.volume.size();
     let d2: u128 = (0..3)
@@ -163,5 +194,5 @@ fn part_reach(p: &Part) -> i64 {
         .sum();
     let r = isqrt(d2) + 1;
     let detail = u128::from(p.detail);
-    (r.div_ceil(detail) + 256) as i64
+    ((r * u128::from(p.coarse)).div_ceil(detail) + 256) as i64
 }

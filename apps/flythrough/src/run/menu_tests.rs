@@ -145,6 +145,34 @@ fn esc_asks_before_it_quits() {
     );
 }
 
+/// Done-when 7 of Plan 0083 Phase 7d: after `Esc` asks, a left click cancels the question
+/// (the banner drops `Esc again to quit`, and the next `Esc` asks again rather than quitting);
+/// so does the pad's `South`; `Esc`, `Esc` still quits.
+#[test]
+fn a_click_cancels_the_quit_question() {
+    let words = "Esc again to quit";
+    let asks = |run: &Run| run.banner().is_some_and(|b| b.lines().any(|l| l == words));
+    let mut click = Input::default();
+    click.button_down(vxe_app::MouseButton::Left);
+    let mut south = Input::default();
+    south.pad_down(vxe_app::PadButton::South);
+    for cancel in [click, south] {
+        let mut run = bare_run(carved_rock());
+        assert_eq!(frame_keys(&mut run, &pressed(KeyCode::Escape)), None);
+        assert!(asks(&run));
+        assert_eq!(frame_keys(&mut run, &cancel), None);
+        assert!(run.quit_asked.is_none() && !asks(&run));
+        assert_eq!(frame_keys(&mut run, &pressed(KeyCode::Escape)), None);
+        assert!(asks(&run), "the next Esc asks again");
+    }
+    let mut run = bare_run(carved_rock());
+    assert_eq!(frame_keys(&mut run, &pressed(KeyCode::Escape)), None);
+    assert_eq!(
+        frame_keys(&mut run, &pressed(KeyCode::Escape)),
+        Some(Flow::Exit)
+    );
+}
+
 /// Under `--tester` the frame loop's input step passes on only what `tester_action` maps:
 /// every other key the fly-through knows (the debug keys, `Tab`, the typed letters) changes
 /// no mode, opens no menu, starts no readings, shows no stats and edits nothing; the left
@@ -223,9 +251,9 @@ fn the_overlay_is_chosen_by_tester_menu_and_stats() {
 /// rows; the profile's `PageDown`, the source's `Home`, the hour's `PageUp`, the day cycle's
 /// `End` and the trees' `CapsLock`): text here, bound to nothing now (`Delete` is bound again,
 /// to the remove key of the entities; `2`, `3`, `5`, `7`, `8` and `R` to the belt's
-/// placement mode and turn).
+/// placement mode and turn; `F` to the structures' snap; `E` places only in the mode).
 // keys:typed-begin
-const FORMER_KEYS: [KeyCode; 38] = [
+const FORMER_KEYS: [KeyCode; 37] = [
     KeyCode::F3,
     KeyCode::PageDown,
     KeyCode::Home,
@@ -244,7 +272,6 @@ const FORMER_KEYS: [KeyCode; 38] = [
     KeyCode::KeyV,
     KeyCode::KeyZ,
     KeyCode::Period,
-    KeyCode::KeyF,
     KeyCode::Slash,
     KeyCode::Quote,
     KeyCode::Backspace,

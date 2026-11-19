@@ -1,8 +1,8 @@
 # ADR-0065: Materials are data: a table file in the `.rig` line grammar, and every `.vox` palette entry becomes a row
 
-> **Status:** proposed
+> **Status:** accepted (Plan 0083, 2026-11-19, with an Outcome)
 > **Date:** 2026-11-16
-> **Related plan(s):** [Plan 0083](../plans/0083-anything-from-a-vox-palette-materials-a-material-file-and-large-scenes-stamped-into-the-world.md)
+> **Related plan(s):** [Plan 0083](../plans/done/0083-anything-from-a-vox-palette-materials-a-material-file-and-large-scenes-stamped-into-the-world.md)
 
 ## Context
 
@@ -101,3 +101,22 @@ exists for, and because the rows cost 64 B each on the GPU: 255 of them are 16 K
 No new rows, the table stays the consumer's hand-written set. Rejected: the nearest row's
 colour is not the painted one, so the artist sees a different castle than they built, and the
 match is silent, which the import's "never a guess" rule (Plan 0008) forbids.
+
+## Outcome
+
+2026-11-19, at Plan 0083's close (v0.66.0). The file, its grammar and canonical form, the
+palette rows deduplicated by colour and material across files, the reload that rewrites fields
+and re-bakes, and the rows fixed before `World::generate` shipped as decided; the owner's
+window (session 83) read the chapel's colours, glass and lamps as painted and a saved colour
+change on screen. Three points differ from the text above:
+
+- **Row names carry the roughness too**, so two entries that differ only there are two rows:
+  `vox #rrggbb glass 0.5 0.1`, `vox #rrggbb metal 0.2`; `_media` and `_cloud` are `media
+  <trans>` rows, not glass.
+- **A scene takes the file's rows by name in its own order** (`materials::Selection`), not the
+  whole file in file order: the cave's, the castle's, the showcase's and the outdoor rows all
+  start at id 5 in their own scenes, so one table of the whole file would move the pinned ids.
+  Rows a scene lacks but a loaded rig or structure names are appended from the file at the
+  start, after the palette rows (the castle's seven, the spider's three).
+- **A `crisp` change also waits for a restart**, beside the translucent, emissive and opaque
+  classes, since the mirror's slot packing reads it at the first sync.

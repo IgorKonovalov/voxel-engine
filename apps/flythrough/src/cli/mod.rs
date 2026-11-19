@@ -647,9 +647,21 @@ pub struct Args {
     /// clip.
     pub model: Option<std::path::PathBuf>,
     pub clip: Option<String>,
+    /// `--materials PATH`: the material file (`crate::materials`); `None` for
+    /// `assets/materials.txt`.
+    pub materials: Option<std::path::PathBuf>,
+    /// `--vox PATH[@x,y,z][*k]`: a `.vox` scene placed in the streamed cave at the start
+    /// (`crate::structures`).
+    pub vox: Option<crate::structures::VoxArg>,
+    /// `--vox-clear on|off`: carve the structure's box to air first (on).
+    pub vox_clear: bool,
+    /// `--vox-op`: place `--vox` as ops on the first tick, not through the source.
+    pub vox_op: bool,
     /// `--library-dir DIR`: the entities library (`crate::entities::library`); `None` for its
     /// default directory.
     pub library_dir: Option<std::path::PathBuf>,
+    /// `--structures-dir`: the structures library's directory (`crate::structures::LIBRARY`).
+    pub structures_dir: Option<std::path::PathBuf>,
     /// `--library`: print the library's entries (`crate::entities::library::library_text`)
     /// and exit 0.
     pub library: bool,

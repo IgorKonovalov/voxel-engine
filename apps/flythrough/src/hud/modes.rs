@@ -153,6 +153,18 @@ pub struct Modes {
     lights_words: Option<String>,
     /// The testbed's walkers: `` ` `` places one, `4` removes the newest thing placed.
     pub walkers: crate::entities::Walkers,
+    /// The structures library the belt places from (`crate::structures::library`).
+    pub structures: crate::structures::Library,
+    /// A structure's box cleared to air before it is stamped (the `structures` group).
+    pub clear_box: bool,
+    /// A structure's voxels repeated this many times per axis, 1 to 4.
+    pub structure_scale: u32,
+    /// How a structure's box finds its base (`entities::belt::stand_box`).
+    pub snap: crate::entities::belt::Snap,
+    /// The most voxels an edit spans on one axis in the run's world
+    /// (`vxe_world::WorldLimits::edit_axis_max`): a structure's box over it is refused, and
+    /// the belt says so (`crate::structures::Entry::refusal`).
+    pub edit_axis_max: u32,
 }
 
 /// The live queue's modes the keys step: `F` the order, `Tab` and `Slash` the score's angle
@@ -225,16 +237,19 @@ pub enum HudRow {
     Controls,
     /// `lights 3/16 carry fly 1 over 0` ([`crate::lights::TestLights::write_row`]).
     Lights,
+    /// `clear box on, structure scale 1`.
+    Structures,
 }
 
 impl HudRow {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Look,
         Self::Lighting,
         Self::Upscaler,
         Self::Queue,
         Self::Controls,
         Self::Lights,
+        Self::Structures,
     ];
 
     /// The first word of the row, which no other HUD row starts with.
@@ -246,6 +261,7 @@ impl HudRow {
             Self::Queue => "queue ",
             Self::Controls => "cutaway ",
             Self::Lights => "lights ",
+            Self::Structures => "clear box ",
         }
     }
 }
@@ -289,6 +305,11 @@ impl Modes {
             lights: crate::lights::TestLights::default(),
             lights_words: None,
             walkers: crate::entities::Walkers::default(),
+            structures: crate::structures::Library::default(),
+            clear_box: true,
+            structure_scale: 1,
+            snap: crate::entities::belt::Snap::Ground,
+            edit_axis_max: vxe_world::WorldLimits::DEFAULT.edit_axis_max,
         }
     }
 
@@ -300,6 +321,11 @@ impl Modes {
     /// These modes with the testbed's walkers `walkers` (`--entities N`'s ring).
     pub fn with_walkers(self, walkers: crate::entities::Walkers) -> Self {
         Self { walkers, ..self }
+    }
+
+    /// These modes with the structures library `structures`.
+    pub fn with_structures(self, structures: crate::structures::Library) -> Self {
+        Self { structures, ..self }
     }
 
     /// Shows the banner from `now_ms` with `words` as its lights row (`lights 3/16`,
@@ -422,6 +448,15 @@ impl Modes {
                 );
             }
             HudRow::Lights => self.lights.write_row(self.lighting.lamp, out),
+            HudRow::Structures => {
+                let _ = write!(
+                    out,
+                    "clear box {}, structure scale {}, snap {}",
+                    on(self.clear_box),
+                    self.structure_scale,
+                    self.snap.name()
+                );
+            }
         }
     }
 

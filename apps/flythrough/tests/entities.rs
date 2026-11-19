@@ -73,7 +73,9 @@ fn every_library_entry_is_in_step_and_builds() {
 /// The spider maps its nine colours to the named rows (the showcase's three glowing rows among
 /// them) and builds into fourteen parts, the body the root and every other part its child,
 /// with the looping clips `walk` (48 ticks), `idle` (120) and `rear` (60) at 30 ticks a
-/// second; against the cave's table, which lacks the showcase's rows, it does not build.
+/// second; against the bare cave table, which lacks the showcase's rows, it does not build. A
+/// run's own table takes those rows from the material file (`setup::world_table`), so a run
+/// builds it on every source.
 #[test]
 fn the_spider_has_its_rows_parts_and_clips() {
     let path = library().join("spider/spider.rig");
@@ -137,13 +139,16 @@ fn the_spider_has_its_rows_parts_and_clips() {
 /// spider a surface body, each a non-zero `walk` stride.
 #[test]
 fn the_committed_library_builds() {
-    let t = showcase_table();
-    let build = |name: &str| {
+    let mut t = showcase_table();
+    let mut build = |name: &str| {
         let dir = library().join(name);
         let rig =
             Rig::parse(&std::fs::read_to_string(dir.join(format!("{name}.rig"))).unwrap()).unwrap();
         let vox = VoxFile::parse(&std::fs::read(dir.join(&rig.vox)).unwrap()).unwrap();
-        rig.build(&vox, &|n| material(&t, n)).unwrap()
+        let lookup = t.clone();
+        let mut rows = vxe_assets::PaletteRows::new(&mut t, vxe_assets::DEFAULT_EMISSION_FACTOR);
+        rig.build(&vox, &|n| material(&lookup, n), &mut rows)
+            .unwrap()
     };
     let walk_stride = |m: &vxe_assets::RigModel| {
         m.clips
