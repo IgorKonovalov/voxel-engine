@@ -322,7 +322,7 @@ mod flicker {
         }
 
         /// Plan 0094 Phase 2 bar 2: the dig's hole band. [`dig_split`]'s rig at
-        /// `VXE_SPLIT_TIME` (16:00 and 17:00 on the shadowed side are the plan's), drained and
+        /// `VXE_SPLIT_TIME` (16:00 and 17:00 on the shadowed side), drained and
         /// settled, 8 frames read, the dig at N, then frames until the dig's job lands (the
         /// queue's `digs_baked` rises; at most 400) and `F + 16` more. The bands by the hit's
         /// distance from the dig's box at N: the hole band (within 8 voxels) and the ring's edge

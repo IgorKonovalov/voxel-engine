@@ -346,6 +346,96 @@ fn a_resize_builds_both_parities_once() {
     );
 }
 
+/// The test devices' pipeline cache skips a software adapter: no cache file is named for it,
+/// none is open after its device opens, the renderer builds through no cache, and a write-back
+/// writes nothing (Plan 0094 Phase 2a bar 4, the gate's half; a software driver's cache holds
+/// no compiled code, 84 B of data on llvmpipe).
+#[test]
+fn a_software_adapter_opens_no_pipeline_cache() {
+    use vxe_render::test_support::{
+        device_on, open_pipeline_cache_file, pipeline_cache_file, pipeline_cache_root,
+        software_adapter, write_back_pipeline_cache,
+    };
+    let Some(adapter) = software_adapter() else {
+        return;
+    };
+    let key = wgpu::util::pipeline_cache_key(&adapter.get_info());
+    let dir = pipeline_cache_root().zip(key).map(|(r, k)| r.join(k));
+    let files = || {
+        dir.as_ref()
+            .and_then(|d| std::fs::read_dir(d).ok())
+            .map_or(0, Iterator::count)
+    };
+    let before = files();
+    assert_eq!(pipeline_cache_file(&adapter), None);
+    let (_device, _queue) = device_on(&adapter, 16 << 20, wgpu::Features::empty());
+    assert_eq!(open_pipeline_cache_file(), None);
+    assert!(vxe_render::debug::pipeline_cache_data().is_none());
+    write_back_pipeline_cache();
+    assert_eq!(files(), before, "files under {dir:?}");
+}
+
+/// The test devices' pipeline cache pays on a hardware adapter (Plan 0094 Phase 2a bar 4, the
+/// hardware half): with the driver's own shader disk cache off, a frame's pipelines
+/// (`Frame::with_sizes` at 853 x 480 to 1280 x 720 and `prepare_entities`) built cold with the
+/// cache file deleted, then warm on a second device from the file the first wrote back: the
+/// warm build is at most a quarter of the cold (the RTX 3080 Laptop read 0.01). A truncated
+/// file is then a cold start that builds every pipeline, its wall printed. About a minute on
+/// the RTX; skipped where no hardware adapter is found.
+#[test]
+#[ignore = "soak"]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the cache's bar is a ratio of build walls"
+)]
+fn the_pipeline_cache_pays_on_a_hardware_adapter() {
+    use vxe_render::test_support::{
+        device_on, high_performance_adapter, open_pipeline_cache_file, pipeline_cache_file,
+        write_back_pipeline_cache,
+    };
+    // SAFETY: set before this process loads a driver, on the test's only thread that reads
+    // the environment; nextest runs each test in a process of its own.
+    unsafe {
+        std::env::set_var("__GL_SHADER_DISK_CACHE", "0");
+        std::env::set_var("MESA_SHADER_CACHE_DISABLE", "true");
+    }
+    let Some(adapter) = high_performance_adapter() else {
+        return;
+    };
+    let name = adapter.get_info().name;
+    let Some(file) = pipeline_cache_file(&adapter) else {
+        println!("skipped: {name} keeps no pipeline cache");
+        return;
+    };
+    let build = || {
+        let (device, _q) = device_on(&adapter, 16 << 20, wgpu::Features::empty());
+        assert_eq!(open_pipeline_cache_file().as_ref(), Some(&file));
+        let t = std::time::Instant::now();
+        let f = Frame::with_sizes(&device, [853, 480], [1280, 720]);
+        f.prepare_entities(&device);
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        write_back_pipeline_cache();
+        ms
+    };
+    let _ = std::fs::remove_file(&file);
+    let cold = build();
+    let bytes = std::fs::metadata(&file).map_or(0, |m| m.len());
+    let warm = build();
+    let data = std::fs::read(&file).expect("the written cache");
+    std::fs::write(&file, &data[..data.len() / 2]).expect("truncate the cache");
+    let truncated = build();
+    println!(
+        "pipeline cache on {name}: cold {cold:.0} ms, warm {warm:.0} ms ({:.3} of cold), \
+         truncated file {truncated:.0} ms; {bytes} B written",
+        warm / cold
+    );
+    assert!(bytes > 0, "the cold build wrote no cache to {file:?}");
+    assert!(
+        warm <= cold / 4.0,
+        "warm {warm:.0} ms against cold {cold:.0} ms"
+    );
+}
+
 /// Readings run by hand: `cargo nextest run -p vxe-render --run-ignored only -E
 /// 'test(=reading::<name>)'`; the soak and full tiers leave this module out by its name.
 mod reading {
@@ -364,7 +454,9 @@ mod reading {
         reason = "a reading of the pipelines' build time"
     )]
     fn the_pipeline_cache_pays() {
-        use vxe_render::test_support::{device_on, high_performance_adapter, software_adapter};
+        use vxe_render::test_support::{
+            device_on_uncached, high_performance_adapter, software_adapter,
+        };
         for adapter in [software_adapter(), high_performance_adapter()]
             .into_iter()
             .flatten()
@@ -375,7 +467,8 @@ mod reading {
                 continue;
             }
             let build = |data: Option<&[u8]>| {
-                let (device, _q) = device_on(&adapter, 16 << 20, wgpu::Features::PIPELINE_CACHE);
+                let (device, _q) =
+                    device_on_uncached(&adapter, 16 << 20, wgpu::Features::PIPELINE_CACHE);
                 // SAFETY: the data is this process's own `get_data` from the same adapter, or none;
                 // `fallback` takes an empty cache for data the driver refuses.
                 let cache = unsafe {
