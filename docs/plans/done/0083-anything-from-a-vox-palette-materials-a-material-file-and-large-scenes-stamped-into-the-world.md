@@ -1,21 +1,21 @@
 # 0083: Anything from a `.vox`: palette materials, a material file, and large scenes stamped into the world
 
-> **Status:** in-progress (approved 2026-11-16, the owner's go with every recommended answer; .vox scale 1 world voxel); amended 2026-11-18 (the Phase 6 re-read after Plans 0077 and 0080 merged): a structure is a belt item of Plan 0077's placement mode, the cleared box a stamp of written air, the settings a `structures` menu group; questions 5 to 8 answered "all recommended"; **Phase 7's window done 2026-11-18 (83a cave, 83b outdoor): the verdict adds Phase 7b (the ghost is a coarse copy of the structure in its frame, the spider's rows on every source, the docs) and a five-minute owner look (7c) before Phase 8; see "Phase 7 verdict". 7c done 2026-11-19 (83c): the ghost passes; its verdict adds Phase 7d (the ground snap, `snap ground | free` on `F`, a chooser digit swaps, `E` places, the walker first, a click cancels the quit question) and window 83d (7e) before Phase 8; see "Phase 7c verdict"**
+> **Status:** done (closed 2026-11-19, v0.66.0: every dev phase done and every named test read as its done-when claims or with its deviation disclosed; a `.vox` loads as painted, the table is a file reloaded live, prefabs are bricks (the castle 13 % of dense), a stamp outlives residency, and a structure places from the belt under a coarse ghost that the owner read as the castle (83c, 83d); the settle after a runtime castle, the `VmHWM`, first-frame and census readings of the Budgets table are owed to `docs/backlog.md`, the castle-building run tests read over the 10 s line, and `chapel_golden` asserts the goldens' floor, not SSIM; the soak tier is not run at closes (owner, 2026-11-19: it runs weekly in CI and when the owner asks; the close stands on the tip gate); the run this review had started before that call found that the soak test `a_stamp_and_a_collapse_replay_from_the_save` (`apps/flythrough/tests/replay.rs`) still pins the dense vault's 8 716 encoded bytes where the brick form is 8 724 (vxe-world's `tests/log.rs` pins the new value), a one-line dev fix owed before the merge. Approved 2026-11-16, the owner's go with every recommended answer; .vox scale 1 world voxel); amended 2026-11-18 (the Phase 6 re-read after Plans 0077 and 0080 merged): a structure is a belt item of Plan 0077's placement mode, the cleared box a stamp of written air, the settings a `structures` menu group; questions 5 to 8 answered "all recommended"; **Phase 7's window done 2026-11-18 (83a cave, 83b outdoor): the verdict adds Phase 7b (the ghost is a coarse copy of the structure in its frame, the spider's rows on every source, the docs) and a five-minute owner look (7c) before Phase 8; see "Phase 7 verdict". 7c done 2026-11-19 (83c): the ghost passes; its verdict adds Phase 7d (the ground snap, `snap ground | free` on `F`, a chooser digit swaps, `E` places, the walker first, a click cancels the quit question) and window 83d (7e) before Phase 8; see "Phase 7c verdict"**
 > **Created:** 2026-11-16
-> **Milestone:** M7 in [`docs/roadmap.md`](../roadmap.md) (stamping at authored-building
+> **Milestone:** M7 in [`docs/roadmap.md`](../../roadmap.md) (stamping at authored-building
 > scale), with M6's `.vox` import; the engine side in `vxe-assets` and `vxe-world`, the testbed
 > side in `apps/flythrough`.
 > **Related ADRs:**
-> [ADR-0065](../adrs/0065-materials-are-data-a-table-file-in-the-rig-grammar-and-every-vox-palette-entry-becomes-a-row.md)
+> [ADR-0065](../../adrs/0065-materials-are-data-a-table-file-in-the-rig-grammar-and-every-vox-palette-entry-becomes-a-row.md)
 > (proposed; the material file and palette rows) and
-> [ADR-0066](../adrs/0066-a-large-prefab-is-stored-as-bricks-and-its-stamp-is-a-placement-the-world-finishes-as-chunks-arrive.md)
+> [ADR-0066](../../adrs/0066-a-large-prefab-is-stored-as-bricks-and-its-stamp-is-a-placement-the-world-finishes-as-chunks-arrive.md)
 > (proposed; brick prefabs, placements past residency), both accepted at this plan's close.
-> Rests on [ADR-0014](../adrs/0014-prefab-identity-in-the-op-log.md)
+> Rests on [ADR-0014](../../adrs/0014-prefab-identity-in-the-op-log.md)
 > (the stamp op and the save's prefab table),
-> [ADR-0003](../adrs/0003-sphere-residency-with-lod-ring-and-edit-persistence.md) (residency
-> and the spill), [ADR-0046](../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
+> [ADR-0003](../../adrs/0003-sphere-residency-with-lod-ring-and-edit-persistence.md) (residency
+> and the spill), [ADR-0046](../../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
 > (the bake follows a changed chunk) and
-> [ADR-0051](../adrs/0051-rigs-and-clips-are-text-files-sampled-in-fixed-point-by-tick.md)
+> [ADR-0051](../../adrs/0051-rigs-and-clips-are-text-files-sampled-in-fixed-point-by-tick.md)
 > (the `.rig` grammar and the viewer's reload).
 > **Source:** the owner, 2026-11-16: "import nearly anything that can be created as a .vox
 > file. Large architecture is something I'm particularly interested in"; materials from the
@@ -1155,7 +1155,7 @@ integer up-scale of a world structure; neither reads the other's code.
 ## What this plan does NOT do
 
 - **Staged structures**, a stamp with a write policy and a region, a reveal over ticks and a
-  demolish: [Plan 0084](0084-staged-structures-stages-from-a-vox-a-stamp-with-a-write-policy-and-a-region-a-reveal-and-a-demolish.md)
+  demolish: [Plan 0084](../0084-staged-structures-stages-from-a-vox-a-stamp-with-a-write-policy-and-a-region-a-reveal-and-a-demolish.md)
   and ADR-0067. This plan reads layers and keeps them on `VoxScene` for it.
 - **Down-scaling** a model (a majority vote per 2³) and a non-integer scale (backlog).
 - **A traced preview** of a structure before placing it (backlog); the HUD shows its box.
@@ -1174,7 +1174,7 @@ integer up-scale of a world structure; neither reads the other's code.
 > no pass list, no self-assessment. Deviations and unmet done-whens are **always** disclosed.
 > Readings, gate counts, attempts, sweeps and resume notes go to the readings log, linked below.
 
-Readings, gate counts and attempts: [`logs/0083.md`](logs/0083.md).
+Readings, gate counts and attempts: [`logs/0083.md`](../logs/0083.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
