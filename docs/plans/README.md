@@ -3,9 +3,11 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0095** (ADRs are a separate sequence, see `../adrs/README.md` for its
-next free number). Plan 0094, Plan 0086's follow-up (the light's transitions), was approved
-2026-11-19 and runs after Plan 0086's close, before Plan 0087.
+**Next free number: 0097** (0095 is claimed by the motion-wobble lane, branch
+`spike-motion-wobble`, 2026-11-20; 0096 is the performance plan below; ADRs are a separate
+sequence, see `../adrs/README.md` for its next free number). Plan 0094, Plan 0086's follow-up
+(the light's transitions), was approved 2026-11-19 and runs after Plan 0086's close, before
+Plan 0087.
 
 ## Active roster
 
@@ -31,6 +33,7 @@ next free number). Plan 0094, Plan 0086's follow-up (the light's transitions), w
 | [0092](0092-wgsl-hot-reload-in-the-fly-through-an-mtime-poll-pipelines-rebuilt-and-the-old-ones-kept-on-an-error.md) | WGSL hot reload in the fly-through: an mtime poll, pipelines rebuilt from disk, the old kept on an error | approved | M7, no ADR. After 0091 in its lane, before 0090 (owner). |
 | [0093](0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) | The README rewrite with reproducible screenshots: a shot manifest, a shoot script, an image gate, the owner's picks | approved | M7 docs, no ADR. After 0087 merges, beside 0089, before 0091. |
 | [0094](0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md) | Light transitions: the key mean's age, the no-ray prior and fades, the exposure's rate, the hole band, the castle | approved | M10, ADR-0076. After 0086 merges, before 0087 (recommended). |
+| [0096](0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) | Performance: the bake queue's drain, the step off its depth, the RENOIR light pass, `alloc` and the eviction scan | draft | M10, cross-cutting, ADR-0080 (proposed). After 0095 merges, before 0087 (owner). |
 <!-- roster:end -->
 
 ## Sequence
@@ -190,7 +193,19 @@ still-image priority; its rigs, hooks and `VXE_*` names are 0086's and the renam
 re-read; Plan 0090's first baseline then lands on the fixed tree); the alternative is after
 0087 beside 0093 and 0089. Owner question 1 of the plan.
 
-Every active plan is approved (Plans 0091, 0092 and 0093 on 2026-11-19; Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
+**Plan 0096** (performance: the bake queue's drain as a budget, ADR-0080 proposed: a record by
+rule for a chunk with no face or buried with no emitter in reach, a sample tier by the chunk's
+size on screen through the far-normal band, a slice that drains what is in view and falls to the
+line once landed; the queue's step off its depth; the RENOIR's outdoor light pass lever by
+lever; the sync's `alloc` and the light placement's eviction scan from the backlog; drafted
+2026-11-20 from the owner's "address performance next" (2026-11-11) and window 94a's "if we have
+to wait for a minute for light to settle, something is wrong with the light", ADR-0076 rule 6;
+awaits the go): **after Plan 0095 (the motion wobble, drafted on branch `spike-motion-wobble`)
+closes and merges**, which follows Plan 0094; then Plan 0087 (owner's order, 2026-11-20: 0094,
+0095, 0096, 0087, 0089 and 0093, 0091, 0092, 0090, M10). Its Phase 1 is readings only, on both
+adapters, on the undrained image.
+
+Every active plan but Plan 0096 is approved (Plans 0091, 0092 and 0093 on 2026-11-19; Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Approval accepts the design; a plan's lane
 starts only when the plans its "Starts after" line names have closed and merged, and where that
 line asks for it, after the architect has re-read the plan against the new tip. The approved

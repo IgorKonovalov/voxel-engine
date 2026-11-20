@@ -1,0 +1,583 @@
+# 0096: Performance: the bake queue's drain (a record by rule, a tier by size on screen, a drain slice), the step off the depth, the slow adapter's light pass, and the sync's `alloc` and eviction scan
+
+> **Status:** draft (awaits the owner's go)
+> **Created:** 2026-11-20
+> **Milestone:** M10 (the outdoor scenes are where the queue never drains) and cross-cutting
+> like [Plan 0067](done/0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md):
+> it serves `docs/nfr.md` section 2's streaming, bake-slice and lighting lines and section 1's
+> slow adapter. The owner's "address performance next" (2026-11-11), placed after Plans 0094 and
+> 0095 (2026-11-20).
+> **Related ADRs:** [ADR-0080](../adrs/0080-the-live-queue-bakes-what-the-image-reads-a-record-by-rule-a-tier-by-size-on-screen-and-a-drain-slice.md)
+> (proposed with this plan: the queue bakes what the image reads). It rests on
+> [ADR-0046](../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
+> (the store and its queue), [ADR-0048](../adrs/0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md)
+> (the order and the withdrawal), [ADR-0052](../adrs/0052-the-live-queues-bake-budget-is-time-per-second-not-a-slice-per-frame.md)
+> (the budget's unit), [ADR-0053](../adrs/0053-a-light-summary-per-block-and-a-two-level-parent-table-light-a-brick-with-no-value.md)
+> (the fallback chain, the coarse answer rule 6 names), [ADR-0070](../adrs/0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md)
+> (the sky channel and the column-map rule) and
+> [ADR-0076](../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
+> rule 6 (proposed on Plan 0094's branch, 2026-11-20: the undrained image is the judged image;
+> the drain time is this plan's budget). The sync phases rest on
+> [ADR-0017](../adrs/0017-mirror-cpu-work-bounded-in-the-frame-loop-narrowing-on-stream-workers.md).
+
+## TL;DR
+
+The forest's bake queue held 12 752 to 16 150 jobs through the owner's window 94a and drained
+at 9 to 38 chunks a second, so the precise light lands 7 to 30 minutes after the load; the owner:
+"if we have to wait for a minute for light to settle, something is wrong with the light and we
+need approximate things, it is not acceptable for user". This plan makes **the time the queue
+takes to land what is in view a budget in `docs/nfr.md`** and meets it three ways (ADR-0080):
+a chunk the rules can answer gets its record **without a GPU job** (no exposed face, or buried
+under the column map with no emitter in reach: a zero record), every other chunk bakes at **a
+sample tier set by its size on screen** (full where a voxel is over the far-normal band, the
+coarse count where it is under it, promoted when the camera comes near, as one rule 3 fade),
+and the bake's slice **rises while in-view work waits** and falls to the line when it has
+landed. Beside it: the queue's step on the main thread (6.3 ms p50 at 1080p while the queue is
+deep) gets its cost off the queue's depth; the RADV RENOIR's outdoor light pass (8.0 and 12.0 ms
+against the 4.0 ms line) is read lever by lever; and the sync's `alloc` stage and the light
+placement's eviction scan (up to 1.2 s a sync in a windowed glide) take the backlog's two sync
+entries. Phase 1 is readings only, on both adapters, **on the undrained image** (rule 6). The
+first thing anyone sees: the `bake queue:` line and the HUD's queue row say how many in-view
+chunks wait, by tier, and how many seconds the drain is projected to take.
+
+## Context & problem
+
+Every figure is a reading unless marked; "RTX" is the NVIDIA GeForce RTX 3080 Laptop GPU,
+"RENOIR" the AMD Radeon Graphics (RADV RENOIR), the slow adapter of `docs/nfr.md` section 1.
+
+- **The queue never drains outdoors.** Window 94a (Plan 0094's readings log, Phase 7, release
+  `37783825`): the forest at 15:00 read a queue depth of 12 752 (run 2) and 14 499 with 4 419
+  in-view chunks waiting, 782 of them coarse (run 4); run 6's `bake queue:` lines read depth
+  16 099 to 16 150 over 5 s while `baked` rose by 9 to 38 chunks a second; run 2's first
+  seconds read +94 to +190 a second (the coarse jobs). Full residency is 17 077 chunks at
+  29.9 s, so nearly every resident chunk is listed. Plan 0086's close (`docs/nfr/02-frame-budget.md`,
+  2026-11-19) read the hills' queue over 14 000 deep in every 900-frame run and the pre-roll
+  on the RTX's hills lengthened from 7.3 s to 14.4 s with the sky channel; Plan 0094's and the
+  wobble spike's rigs never drained the forest in 30 000 frames. The wobble spike
+  (`docs/plans/logs/wobble-spike.md` on branch `spike-motion-wobble`) attributes two thirds of
+  the far pixels still differing from their settled value at a stop to faces waiting for a
+  record, the other third to the screen-space key and sky means that Plan 0095 takes.
+- **The arithmetic of the drain** (from Plan 0067's readings, `docs/plans/logs/0067.md`): a
+  full job (4096 samples a brick direction, `QUEUE_BRICK_SAMPLES`) draws about 1.2e6 samples a
+  chunk and a coarse one (256, `DEFAULT_COARSE_SAMPLES`) about 7.4e4; the RTX draws 5.1 ns a
+  sample, the RENOIR 47.3. So a full chunk costs about 6.5 ms of RTX GPU and 60 ms of RENOIR
+  GPU, a coarse one 0.4 and 3.5 ms (the sky channel since Plan 0086 adds 256 rays a brick
+  direction, longer ones: not read per job). Under the default `frame:1.5` the queue draws
+  about 40 ms of bake a wall second on the RTX and 30 on the RENOIR (`docs/nfr.md` section 2),
+  so 16 000 full chunks are 104 s of RTX GPU and about 43 minutes at the slice; on the RENOIR
+  960 s of GPU and about nine hours. No slice makes the RENOIR bake every resident chunk at
+  the full count. The 94a drain rate (9 to 38 a second) is this mix of full and coarse jobs.
+- **Rule 6 says what the image shows meanwhile** (ADR-0076, proposed, amended on Plan 0094's
+  branch at `38460762`): a face whose record has not landed shows a coarse stable answer (the
+  chain's neighbour or parent summary, ADR-0053; the no-ray prior Plan 0094 builds), and the
+  record arrives as one fade. The rule leaves the drain's time to this plan as a budget. The
+  budget is empty today: `docs/nfr.md` has a 1.0 ms bake-slice line the default `frame:1.5`
+  already exceeds (the owner took the lines as proposed at Plan 0069's close) and no line for
+  how long a chunk in view may wait.
+- **The step on the main thread.** Plan 0086 Phase 24c (`docs/plans/logs/0086.md`, RTX,
+  1080p, the tunnel's stairs at rest, the queue 14 103 to 15 444 deep): the queue's step p50
+  6.2 to 6.6 ms, frame CPU p50 7.4 to 7.8, so the wall is the step and the GPU frame (4.5 ms)
+  in series: 13.4 ms at 1080p, 16.6 at 1440p, where the GPU is within every Floor line. Plan
+  0067 made a still queue's step cost 0.075 ms and a flight's regime B step 9 to 13 ms (nearly
+  every step opening a job; `docs/nfr.md` section 2); its stage laps (`STEP_STAGES`,
+  `crates/vxe-render/src/bake/stages.rs`) read the opening's `candidates`, `list` and `sort` as
+  the large parts, each walking the candidate pool. Phase 5's reading (0086) put the step with
+  the sky channel at 5.7 to 7.6 ms p50 while baking. The backlog's "CPU settle outdoors"
+  entry read the same: 7.9 to 15.0 ms p50 for the 7 to 10 s after every load on a world with
+  no emitter in reach whose store ends all zeros (3 285 chunks baked by 13.7 s), 0.05 ms once
+  drained. `bake/queue/mod.rs` is at the 1200-line cap.
+- **The slow adapter's light pass at rest** (Plan 0086's close, `docs/nfr/02-frame-budget.md`,
+  release, headless 1080p at the defaults, the queue drained by `--bake-budget frame:40`,
+  loaded): RENOIR light 8.025 ms on the hills at noon and 12.034 in the forest at 15:00
+  against the 4.0 ms lighting line (10.5 and 12.5 before ADR-0070), inside frames of 53.3 and
+  43.7 ms whose largest pass is the hit (21.9 and 10.7 ms); at the tunnel's stairs 3.88 + 0.34.
+  The RTX reads 1.570 and 2.529, within the line. Plan 0032 Phase 6 read a sky ray at about
+  4.8 ms on the RENOIR and 0.25 on the RTX; what the RENOIR pays at rest now is the key light's
+  disc ray and the baked read. The review of Plan 0032's window
+  (`docs/reviews/2026-11-17-plan-0032-window.md`, E2) named two levers unbuilt: a cap on the
+  key ray's length and no sky ray from faces that look down.
+- **The sync's two entries** (`docs/backlog.md` until this plan; Plan 0074's close, RTX host on
+  `hpet`): `update + poll + sync` p99 18.0 to 23.7 ms in the tester cave and 20.4 to 22.7 in
+  the castle against Plan 0067's 16.6 ms; the largest stage left is `alloc` (p99 7.3 to 8.8
+  ms), whose profile read `fill_slot` 3.15 %, `BufferViewMut::drop` 3.12 %, `upload_brick`
+  2.52 % of the main thread in a glide. The forest at leaf fill 128 read a sync p99 of 11.0 ms
+  (`alloc` 5.3) and `update + poll + sync` max 150 ms (Plan 0032 Phase 9). In the owner's
+  windowed `--glide 300` cave flight every second's slowest sync from about 4 s in is `light
+  place`, up to 1 186 ms over 3 697 evictions and 99.9 M scan steps (r 0.997 against
+  `light_scan_steps`, 11 to 12 ns a step), the free ranges growing to about 6 000; no headless
+  glide (19 runs) evicted a range. The scan is `write_chunk_lights`
+  (`crates/vxe-render/src/gpu_world/lights.rs`): on a failed first fit it walks every placed
+  chunk for the farthest victim, once per eviction. Plan 0074's Phase 2 draft, a first-fit
+  index (`fit.rs`), is kept untracked in the main checkout at `live/plan-0074/drafts/`.
+- **The smaller backlog items this plan takes:** the queue step's remaining `filter` cost on a
+  moving camera (about 0.074 ms p50; `gone`, `drop_reach`, `touched` each walking the mirror's
+  changes), and the RTX's submits drawing 5.3 of a granted 8 ms slice under a per-second budget
+  (Plan 0067's followup F2: the rounds planned against the slice, or `IN_FLIGHT` 2).
+
+## Decision
+
+**The queue bakes what the image reads, and the drain of what is in view is a budget**
+(ADR-0080). Three mechanisms, in the order they pay: (1) a chunk the rules answer takes no GPU
+job: a chunk with no exposed face holds nothing to light and is marked baked-empty; a chunk
+whose reach box (the chunk dilated by the light radius, `DEFAULT_LIGHT_RADIUS` 4) lies under the
+column map's lowest top over that footprint and holds no emitter in reach gets a zero record
+written on the CPU with the baked bits set, since ADR-0070's rule already counts every ray
+ending under the column top as not sky and no emitter can reach it. (2) Every other chunk bakes
+at a tier set by its size on screen through the far-normal band (`far_normal` `[lo, hi]` pixels
+a voxel, `[2, 6]` at the defaults): full (4096) where its nearest voxel projects over `hi`, a mid
+count (1024) between, and the coarse count (256) under `lo`; a chunk that moves into a nearer
+band as the camera moves is re-listed as a refinement and lands as one `FADE` (rule 3); one
+that moves out is withdrawn like a passed job (ADR-0048) if not yet submitted. The far tier is
+final, not a first pass: the queue reaches a landed state. (3) The slice (ADR-0052's unit) has
+two values: a drain value while any in-view chunk waits for its tier's record and the line's
+value once none does; both are settings rows per profile, judged in the owner's window.
+
+Beside the queue: the step's opening cost is made proportional to the jobs it opens and the
+chunks whose score changed, not to the queue's depth; the RENOIR's light pass is read lever by
+lever behind settings (the key ray's cap, no sky ray from faces looking down, far pixels on the
+baked key with no ray and no pair update once Plan 0095 lands), each lever a cheap mode kept as
+a setting whether or not the Portable profile picks it; and the sync takes Plan 0074's Phase 2
+index for the eviction scan and the `alloc` fix its profile names.
+
+We rejected **a larger slice alone** (the arithmetic above: the RENOIR cannot bake the
+residency at the full count in any time the owner would call settling, and the RTX would spend
+minutes), **a progressive queue that refines every chunk to the full count when idle** (no
+landed state, so rule 6's "one fade when it lands" has no landing and the step never rests),
+**a per-brick skip inside the GPU job** (the step still lists, scores and submits the chunk;
+the CPU cost this plan chases stays), and **baking on the stream workers' CPUs** (ADR-0046's
+rejected alternative; the GPU bake at 5 ns a sample is the fast path). A second GPU queue was
+rejected in ADR-0052 (wgpu has one).
+
+## Architecture diagram
+
+```mermaid
+flowchart LR
+    subgraph vxe-render
+        L[list: chunks in reach] --> R{rules}
+        R -- no face --> E[baked-empty mark]
+        R -- buried, no emitter --> Z[zero record on the CPU]
+        R -- else --> T[tier by size on screen]
+        T --> Q[queue: score, tier, class]
+        Q --> S[slice: drain while in view waits, line when landed]
+        S --> J[GPU job at the tier's samples]
+        J --> ST[store: record + FADE]
+        Z --> ST
+        C[camera moved] --> T
+        C --> W[withdraw passed / demoted]
+        W --> Q
+    end
+    subgraph apps/flythrough
+        H[bake queue: line, HUD row: in view waiting by tier, drain s]
+    end
+    Q --> H
+```
+
+## Implementation phases
+
+Each phase ships as its own commit. `dev` implements all phases in one session with no review
+between phases; the architect reviews once at the end, in a fresh session. Phases 3, 4 and 6 are
+**exploration** (lane rule 2b): they name readings, not image tests, and the owner's window
+(Phase 8) decides their values; Phase 9 writes the bars against the picks. Every reading is
+taken on the **undrained image as well as the drained one**, with the queue's depth and the
+in-view waiting count beside it (ADR-0076 rule 6), on the RTX (Floor profile, 1080p, FSR 2 at
+1.5) and the RENOIR (`--adapter AMD`, Portable profile, 720p), release, under the exclusive perf
+lock with the 1-minute load logged.
+
+**Starts after Plan 0095 (the motion wobble) closes and merges**, which follows Plan 0094: 0094
+lands rule 6's coarse prior and moves the default-off arms out of the default pipeline (the
+RENOIR light-pass readings must be taken on that pipeline), and 0095's key-visibility bake adds
+about 6 % to every job's rays and lets far pixels read a baked key with no ray (its guess), which
+changes both the drain's cost and the RENOIR's light pass. If 0095 is still open when the lane
+is free, Phase 1 may run on 0094's tip with the +6 % carried as a projection and re-read at
+Phase 9.
+
+### Phase 1: Readings on the undrained image, and the drain readout
+- **Owner skill:** dev
+- **What:** The one instrument this plan adds, then every reading the fix phases bar against.
+  The instrument: the per-second `bake queue:` line (`apps/flythrough/src/run/queue.rs`,
+  `print_queue_line`) and `run.json` gain the in-view waiting count split by the chunk's band
+  (near, mid, far, by the far-normal band applied to the chunk's nearest corner) and by class
+  (no record, coarse), the samples those chunks still need, and `drain_s`, the projection of
+  that need over the last second's samples a second; the HUD's queue row shows `in view N
+  waiting, drain Ns`. The per-submit GPU time (`LoopTimer`, `crates/vxe-render/src/bake/job_loop.rs`)
+  is split across the submit's jobs by their samples into a ns-a-sample per class (full, coarse),
+  printed on the line as an attribution, not a measurement. **No profiler scopes ride here**:
+  Plan 0091's `budget_scope!` wraps `queue step` and `sync` later at the lines this plan sets;
+  what Phase 1 needs is on the existing lines and `PassTimer`.
+  The readings, in the readings log with machine, adapter, commit, load and the queue's depth:
+  1. **The drain curves** at rest from the first world frame, the hills at noon and at 17:00
+     and the forest at 15:00 (`--source outdoor`, `--spawn forest --trees forest`): depth,
+     in-view waiting by band and class, baked a second by class, bake ms a second drawn
+     against the slice granted, `drain_s`, until drained or 600 s; both adapters.
+  2. **The census of the listed chunks** at the first world frame on the same scenes: how many
+     hold no exposed face, how many are buried under the column map with no emitter in reach
+     (the rule of Phase 2, computed on the CPU from the mirror's face masks, the column map and
+     the emitter census), how many are surface chunks by band (near, mid, far by the far-normal
+     band at 1080p) and in or out of the view cone. This census sizes Phases 2 and 3; the
+     guess it tests: the residency is a sphere of about 16 chunks' radius (17 077 chunks),
+     about 800 columns, and the surface band is 2 to 3 chunks a column, so 1 600 to 2 400
+     surface chunks on the hills and more under the forest's canopies.
+  3. **The step's 21 stage means** (`bake queue step:` line, per regime) at a depth over 10 000
+     and at the drained state, at rest and in a `--glide 300` flight; and the mirror's change
+     count a step in the glide (printed beside the `filter` stages, the backlog's ask).
+  4. **The moving camera:** in the glide and in a 90-degree turn (the wobble rig's protocol):
+     jobs withdrawn before submit, jobs that completed after their chunk left the cone (wasted
+     samples), chunks re-listed.
+  5. **The RENOIR light pass by arm,** `PassTimer`'s `light` median of 30 frames at rest,
+     drained and undrained, the hills at noon and the forest at 15:00: the default; `KEY_OFF`
+     (the key ray's share); the sky ray never cast (a hook that reads the record as fresh, or
+     `sky_rays 0` where it exists) and `SKY_RAY_ALWAYS`; `far_normal` off; the full tier
+     against half; the a-trous at 1, 2 and 4 iterations. The RTX beside it.
+  6. **The sync:** the tester cave bench and the forest at leaf fill 128 with the stage lines,
+     a `perf record` of the main thread at `alloc`'s p99 syncs (the stages' callees by share);
+     and a headless glide that fills the light buffer by shrinking it (`--light-samples` at
+     1/16 of `DEFAULT_LIGHT_SAMPLES`, 1 << 20), which is the plan's bet on reproducing the
+     window's eviction scan headless; its `light place` p99, evictions and scan steps.
+- **Files touched:** `apps/flythrough/src/run/queue.rs`, `apps/flythrough/src/report.rs`,
+  `apps/flythrough/src/hud/` (the queue row), `crates/vxe-render/src/bake/queue/open.rs`
+  (`view_census` by band), `crates/vxe-render/src/bake/job_loop.rs` (the per-class split),
+  `apps/flythrough/tests/queue_line.rs` or the existing CPU test of the line,
+  `docs/plans/logs/0096.md`.
+- **Done when:** `the_queue_line_reports_in_view_waiting_by_band_and_a_drain_projection` (CPU,
+  under 1 s): a synthetic view of 12 chunks (4 near, 4 mid, 4 far, 6 without a record) at a
+  known samples-a-second prints `in view 6 waiting (near 2 mid 2 far 2)` and a `drain_s` equal
+  to the waiting samples over the rate, and `run.json` carries the same fields; the readings log
+  holds tables 1 to 6 with the queue's depth beside every row; the readings of 2 and 3 name the
+  census counts the Phase 2 and 5 bars use.
+
+### Phase 2: A record without rays: no face, or buried with no emitter in reach
+- **Owner skill:** dev
+- **What:** At listing (`push_listed`, `crates/vxe-render/src/bake/queue/list.rs`) a chunk whose
+  mirrored face masks hold no exposed face is marked baked-empty in the store's index (no record
+  bytes, the reads already return zero for a missing record through the chain, which reads its
+  neighbours' summaries as today); a chunk whose reach box lies under the column map's lowest
+  top over the box's footprint (`gpu_world/columns.rs`) and whose emitter census in reach is
+  empty (`exposed_emitters`, `gpu_world/lights.rs`) gets a zero record written on the CPU with
+  `VIS_BAKED` set and `SKY_STALE` clear and a zero summary (ADR-0053), no GPU job. Both marks
+  are undone by what undoes a bake today: a dig in the chunk or its reach re-lists it (the dig
+  rings), a column top that drops (the column map's finality and catch-up path) re-lists the
+  chunks whose box the rule covered, an emitter arriving in reach re-lists them. The rule lives
+  in a new `bake/queue/rule.rs`; `bake/queue/mod.rs` (at the 1200-line cap) is split first, its
+  tally and stats types moving to `bake/queue/stats.rs`.
+- **Files touched:** `crates/vxe-render/src/bake/queue/{mod,list,rule,stats}.rs`,
+  `crates/vxe-render/src/bake/{store,record,summary}.rs`, `crates/vxe-render/src/gpu_world/columns.rs`
+  (a lowest-top query over a footprint), `crates/vxe-render/src/bake/queue/tests.rs`,
+  `apps/flythrough/tests/gpu_bake.rs`.
+- **Done when:** (1) `a_buried_chunk_with_no_emitter_in_reach_gets_the_bakes_bytes_without_a_job`
+  (`gpu_bake`, lavapipe, about 4 s): a 7 x 7 x 7-chunk world of rock with a 3-chunk cave under a
+  flat surface, no emitter: the cave chunks' records written by the rule equal byte for byte the
+  records a full GPU bake of the same chunks writes, and the queue submitted 0 jobs for them.
+  (2) `a_chunk_with_an_emitter_in_reach_or_a_box_crossing_the_column_top_is_not_skipped` (CPU,
+  under 1 s): one emitter voxel 3 chunks away, or the box's top one chunk over the lowest
+  column top, and the chunk is listed with a job. (3) `a_dig_to_the_sky_over_a_buried_chunk_relists_it`
+  (CPU, under 2 s): a column carved from the surface into the cave lowers the column map and
+  the cave's chunks re-enter the queue as stale. (4) `a_chunk_with_no_exposed_face_holds_no_record`
+  (CPU, under 1 s): a uniform rock chunk and a uniform air chunk are marked baked-empty and the
+  store's bytes do not grow. (5) The hills at noon and the forest at 15:00 at the first world
+  frame on the RTX: the queue's depth equals Phase 1's census of surface chunks within 2 %
+  (the census and the depth are read on the same frame), and the drained image at 320 x 180
+  equals the base's drained image byte for byte (`outdoor_noon` and the forest golden rig of
+  `gpu_golden.rs`, the queue drained by `frame:40` in both; lavapipe, about 8 s each, in the
+  gate if under 10 s, else `#[ignore = "soak"]`).
+
+### Phase 3: A tier by size on screen (exploration)
+- **Owner skill:** dev
+- **What:** `push_listed` and the refinement classes gain the band: the chunk's nearest corner
+  projected at the output's focal length against `far_normal` `[lo, hi]` (px a voxel); over `hi`
+  is the full tier (`QUEUE_BRICK_SAMPLES` 4096), between is mid (1024), under `lo` is the coarse
+  tier (`DEFAULT_COARSE_SAMPLES` 256) **as its final record**. The tier is written in the record's
+  head word (two bits of `VIS_WORD`'s free bits, `record.rs`) so the read can tell it and the
+  hash tests can pin it. When the camera's chunk changes (`follow_window`, `step.rs`) the bands
+  are re-evaluated for the chunks in the view cone: a chunk now in a nearer band than its record
+  is re-listed as a refinement (the existing class, scored by ADR-0048), lands and fades over
+  `FADE`; a listed job whose band fell is withdrawn if not submitted (ADR-0048's rule, one more
+  reason). The sky channel's `SKY_BAKE_RAYS` (256) follows the tier (64 under `lo`) unless Phase
+  1's census shows the sky rays are not the far chunks' cost. The tiers are a settings row
+  (`bake.tiers`, three counts; the Portable profile's proposal 1024 / 256 / 256, a guess read in
+  Phase 8). `--full-first` keeps its meaning inside the near band. Readings, not bars: the drain
+  curves of Phase 1 (1) re-read, the in-view drain time by adapter at `frame:1.5`, the record
+  bytes of a far chunk against its full bake (the value difference, for the owner's eye in Phase
+  8).
+- **Files touched:** `crates/vxe-render/src/bake/queue/{list,open,step}.rs`,
+  `crates/vxe-render/src/bake/{order,record,job}.rs`, `crates/vxe-render/src/settings.rs`
+  (`BakeKnobs`), `crates/vxe-render/src/frame/settings.rs` (the profile rows),
+  `apps/flythrough/src/cli/flags.rs`, `crates/vxe-render/src/bake/queue/tests.rs`,
+  `apps/flythrough/tests/gpu_bake.rs`.
+- **Done when:** (1) `the_band_of_a_chunk_follows_the_far_normal_band_at_the_outputs_focal_length`
+  (CPU, under 1 s): at 1080p with the fly-through's 70-degree vertical field (f = 540 / tan 35
+  degrees, about 771 px) and `[2, 6]`, a chunk whose nearest corner is at 10 m reads full (a
+  voxel 7.7 px), at 25 m mid (3.1 px), at 50 m coarse (1.5 px); at 720p the same chunks read
+  full, coarse, coarse (f about 514 px: 5.1, 2.1, 1.0 px). (2) `a_far_record_is_promoted_as_one_fade_when_the_camera_comes_near`
+  (`gpu_bake`, lavapipe, about 6 s): a chunk baked at the coarse tier at 50 m is re-listed when
+  the camera steps to 10 m, its new record carries the full tier's bits, and the store's fade
+  state for its blocks runs `FADE` frames once (no second restart). (3) `a_tiers_record_bytes_are_the_same_on_every_run`
+  (`gpu_bake`, lavapipe, about 4 s): the coarse-tier record of a chunk hashes the same across
+  two runs and two slicings, as ADR-0046's full record does. (4) The readings log holds the
+  in-view drain time at `frame:1.5` on both adapters and the far record's value difference.
+
+### Phase 4: The drain slice, and the submits that draw their slice (exploration)
+- **Owner skill:** dev
+- **What:** `Budget` (`bake/budget.rs`) gains a drain value: while the in-view waiting count is
+  over zero the slice is `drain_ms` a frame (ADR-0052's per-second form stays available), and
+  when it reaches zero the slice falls to the line's value (`line_ms`, 1.0, the `docs/nfr.md`
+  bake line; the default `frame:1.5` becomes the drain value's floor). Proposed defaults, a
+  guess until Phase 8: Floor `drain_ms` 4.0, Portable 6.0 (at 30 fps that is 180 ms a second),
+  `line_ms` 1.0 on both; the arithmetic that sizes them: after Phases 2 and 3 the in-view work
+  on the RTX's forest is about 30 near chunks at 6.5 ms, 250 mid at 1.6 and 1 000 far at 0.4,
+  about 1 s of GPU (+6 % for Plan 0095's key rays), so 240 ms a second lands it in about 5 s;
+  the RENOIR at 9.3 x the ns a sample and the Portable tiers (1024 / 256 / 256) is about 5 s of
+  GPU, about 28 s at 180 ms a second. Both are estimates from Plan 0067's per-sample figures,
+  not readings. The RTX's submits drawing 5.3 of a granted 8 ms (Plan 0067 F2) is read by a
+  lap on `plan_rounds`, `send` and the `IN_FLIGHT` wait (`job_loop.rs`) and fixed where the lap
+  points (rounds planned to the slice, or `IN_FLIGHT` 3, a setting). Readings, not bars: the
+  drain curves at the drain slice on both adapters, the GPU frame while draining (the Floor
+  profile's 16.6 ms line on the RTX: the hills at noon read 6.7 ms of GPU at 1080p, so 4 ms of
+  slice leaves 5.9), the frame's wall and fps.
+- **Files touched:** `crates/vxe-render/src/bake/{budget,job_loop}.rs`,
+  `crates/vxe-render/src/bake/queue/step.rs`, `crates/vxe-render/src/settings.rs`,
+  `crates/vxe-render/src/frame/{baked,settings}.rs`, `apps/flythrough/src/cli/flags.rs`,
+  `apps/flythrough/src/run/queue.rs`.
+- **Done when:** (1) `the_slice_is_the_drain_value_while_in_view_work_waits_and_the_line_after`
+  (CPU, under 1 s): a synthetic queue with 3 in-view chunks waiting reads a slice of `drain_ms`
+  at 60 Hz, and the step after the third lands reads `line_ms`. (2) `the_submits_draw_at_least_85_percent_of_the_granted_slice`
+  is a reading on the RTX (the per-second line's `slice p50` over the granted slice at
+  `second:150,0.25`, the F2 rig), not a lavapipe test; the readings log holds it before and
+  after the fix. (3) The drain curves at the proposed defaults on both adapters, with the GPU
+  frame and the wall beside them.
+
+### Phase 5: The step off the queue's depth
+- **Owner skill:** dev
+- **What:** The opening's `candidates`, `list` and `sort` stages visit only the chunks whose
+  score can have changed since the last step: the candidate pool keeps its scores and a dirty
+  set (the camera's chunk changed: the view-cone members; a chunk arrived or left the mirror;
+  a record landed), and the sort becomes a bucket per band and class kept incrementally, the
+  step taking the first `OPEN_JOBS` from the nearest non-empty bucket. The `filter` stages
+  (`gone`, `drop_reach`, `touched`, `forget`) share one walk of the mirror's change list
+  (the backlog's F1). Phase 2's depth cut comes first, so this phase's bar is read at a depth the
+  skip leaves (the forest's surface chunks, Phase 1's census) and at a synthetic 20 000.
+- **Files touched:** `crates/vxe-render/src/bake/queue/{open,list,step,stats}.rs`,
+  `crates/vxe-render/src/bake/order.rs`, `crates/vxe-render/src/bake/stages.rs`,
+  `crates/vxe-render/src/bake/queue/tests.rs`.
+- **Done when:** (1) `a_still_step_visits_no_candidate_and_a_one_chunk_move_visits_only_the_cone`
+  (CPU, under 2 s): a synthetic pool of 20 000 chunks around a still camera: the step's
+  `candidates` visit counter (a new stat) reads 0 on the second step; after the camera moves
+  one chunk it reads at most the view cone's membership (counted by the test from the same
+  geometry), never the pool's size. (2) `the_opened_jobs_are_the_nearest_of_their_band_whatever_the_depth`
+  (CPU, under 2 s): the same pool at 2 000 and 20 000 opens the same first 16 jobs in the same
+  order (ADR-0048's score kept). (3) The step on the RTX at the forest at 15:00 from the first
+  world frame, regime B, release: **p50 at most 1.0 ms and p99 at most 4.0 ms** (today 6.2 to
+  7.6 ms p50; the lines proposed under Budgets), read with the depth and regime on the line.
+  (4) `images_are_unchanged_by_the_incremental_order` (`gpu_bake`, lavapipe, about 6 s): the
+  drained store of a 5 x 5 x 5 world hashes the same before and after this phase (the order
+  changes when, not what).
+
+### Phase 6: The slow adapter's light pass, lever by lever (exploration)
+- **Owner skill:** dev
+- **What:** Each lever is a setting (the cheap-modes rule, owner 2026-11-12), its delta read on
+  both adapters at rest, drained and undrained, the hills at noon and the forest at 15:00, the
+  default pipeline Plan 0094 leaves (the default-off arms out of it): (a) a cap on the key ray's
+  length in voxels past which the face counts lit (`sky_light.wgsl` `key_visibility`; the
+  review's E2, 1536 voxels its first guess); (b) no sky ray from a face whose normal points
+  down (`n.z < -0.5`), which reaches no sky through the ground under the column rule; (c) far
+  pixels (the far-normal weight 1) read Plan 0095's baked key with no ray and skip the pair's
+  update (`temporal.wgsl`), which also removes a texture write a lighting pixel there; (d) the
+  a-trous at 2 iterations in the Portable profile (Plan 0058's setting, unpicked on the
+  RENOIR). The RTX is read beside each lever and must stay within 0.1 ms of its base. Readings,
+  not bars; Phase 8 picks what the Portable profile owns.
+- **Files touched:** `crates/vxe-render/src/shaders/{sky_light,shade,temporal}.wgsl`,
+  `crates/vxe-render/src/frame/settings.rs` (the rows and flags), `apps/flythrough/src/cli/flags.rs`,
+  `apps/flythrough/tests/gpu_sun.rs` (the readings arms).
+- **Done when:** (1) `the_key_cap_and_the_down_face_skip_leave_the_lit_image_unchanged_where_they_do_not_apply`
+  (`gpu_sun`, lavapipe, 320 x 180, about 8 s): a flat open floor at noon renders byte-identical
+  with (a) and (b) on and off (no ray there is longer than the cap, no face looks down), and a
+  box with an overhang differs only under the overhang. (2) The readings log holds the lever
+  table on both adapters with the RTX deltas; the RENOIR's light pass with every lever on at
+  the Portable profile is the number Phase 8 weighs against the 4.0 ms line.
+
+### Phase 7: The sync: the eviction scan's index and the `alloc` stage
+- **Owner skill:** dev
+- **What:** Plan 0074's Phase 2 as drafted: the light buffer's free ranges in a first-fit index
+  by size (the draft `fit.rs`, untracked in the main checkout at `live/plan-0074/drafts/`,
+  read for its shape, not merged as is) and the eviction's victim from a distance-ordered index
+  of the placed chunks (a `BTreeMap` by squared distance to the focus, kept on placement and
+  on focus moves), so an eviction is O(log n) and `light_scan_steps` counts only the index
+  walks; the first fit's and the victims' steps split on the line (the backlog's ask). Then
+  `alloc` from Phase 1 (6)'s profile: the candidates named by the profile are `fill_slot`'s
+  per-brick path, the mapped belt view's drop (`BufferViewMut::drop`, one unmap per chunk
+  where one per sync would do) and `upload_brick`; the fix is what the profile points at, bytes
+  unchanged.
+- **Files touched:** `crates/vxe-render/src/gpu_world/{lights,alloc,slot,stage,window}.rs` and a
+  new `gpu_world/fit.rs`, `crates/vxe-render/tests/` (the mirror's light placement tests),
+  `apps/flythrough/src/report.rs`.
+- **Done when:** (1) `the_indexed_placement_writes_the_same_bytes_as_the_scan` (CPU, under 2 s):
+  a recorded sequence of 2 000 placements and 300 evictions with a moving focus gives the same
+  ranges and the same light buffer bytes through the index as through today's walk (the walk
+  kept behind a test-only path until this test passes, then deleted). (2) In the headless glide
+  that fills the buffer (Phase 1 (6)'s rig, `--light-samples` at 1/16): `light place` p99 under
+  2 ms over 300 s with at least 1 000 evictions logged (today the window's up to 1 186 ms; if the
+  headless rig does not evict, the bar is read in Phase 8's glide). (3) The tester cave bench on
+  the RTX host: **`alloc` p99 at most 3.0 ms** (today 7.3 to 8.8) and **`update + poll + sync`
+  p99 at most 16.6 ms** (today 18.0 to 23.7), the forest at leaf fill 128 sync p99 at most
+  6 ms (today 11.0); `pack + size` read beside them for the backlog's "Slot words packed on the
+  workers" entry.
+
+### Phase 8: The owner's window
+- **Owner skill:** human
+- **What:** One session on the dev box (Linux; the RENOIR is the same laptop's iGPU through
+  `--adapter AMD`), release at Phase 7's tip, the runner `live/session96.sh` with a banner word
+  per arm, stdout visible, HUD on with the queue row. (a) **Rule 6 by eye:** the forest at
+  15:00 and the hills at 17:00 from a fresh start on both adapters: does the image before the
+  drain look like the image after it but coarser, does each landing read as one fade, is
+  anything popping or black while `in view N waiting` falls to 0, and how long until it does
+  (the HUD's `drain Ns` against the stopwatch). (b) **The far tier:** fly slowly toward a far
+  tree and a far ridge: is the promotion's fade visible, do the far shadows at 256 samples look
+  wrong against the same view drained at `bake.tiers 4096,4096,4096`. (c) **The drain slice's
+  trade:** arms `drain_ms` 1.5, 4.0 and 8.0 on the RTX and 3.0, 6.0 and 12.0 on the RENOIR:
+  the fps the owner feels against the seconds to land. (d) **The RENOIR's light pass levers**
+  (Phase 6's a to d) in the Portable profile: the key cap's and the down-face skip's look, 2
+  a-trous iterations. (e) **The sync:** a 60 s `--glide 300` on the tester's cave path with
+  the sync's stage row visible; the stagger at 30 to 40 s present or gone. The owner's words
+  and picks are quoted in the readings log; the architect amends Phase 9's values.
+- **Files touched:** none (the runner under `live/`, untracked).
+- **Done when:** the readings log quotes the owner's verdict on (a) to (e) and a pick for
+  `drain_ms` per profile, the tiers per profile, and the light-pass levers the Portable profile
+  owns; a pick the owner declines to make takes the recommended value.
+
+### Phase 9: The bars, the lines and the goldens after the picks
+- **Owner skill:** dev
+- **What:** The picks become the defaults and the profile rows; the bars pinned: the drain time
+  of what is in view and of the whole residency, the step's lines, the sync's lines, the light
+  pass readings, in `docs/nfr.md` section 2 with the readings in `docs/nfr/02-frame-budget.md`
+  (the bake-slice line rewritten as two values, drain and landed); the goldens the picks moved
+  re-blessed with their reason; the backlog's entries this plan took closed or re-pointed; the
+  dig's enqueue read once more with the tiers (a dig's ring is baked at the near tier whatever
+  the band, since the owner is looking at it).
+- **Files touched:** `crates/vxe-render/src/frame/settings.rs`, `apps/flythrough/tests/gpu_bake.rs`,
+  `apps/flythrough/tests/gpu_golden.rs` and its goldens, `docs/nfr.md`,
+  `docs/nfr/02-frame-budget.md`, `docs/backlog.md`, `docs/flythrough.md`.
+- **Done when:** (1) `the_in_view_drain_of_the_forest_lands_within_its_budget` is a release
+  reading on both adapters recorded in the log (the headless rig of Phase 1 (1), the budget
+  lines below), not a lavapipe test; (2) `a_digs_ring_bakes_at_the_near_tier_in_the_far_band`
+  (`gpu_bake`, lavapipe, about 4 s): a dig at 50 m lists its ring at 4096; (3) every Phase 2 to
+  7 test passes at the picked defaults; (4) `cargo nextest run --profile gate` at the tip under
+  the perf lock, its wall recorded against section 7's 19 min; (5) the nfr lines read the
+  values below, with machine and commit.
+
+## Data shapes
+
+```rust
+// illustrative
+pub enum Band { Near, Mid, Far }            // by the far-normal band at the output's focal length
+pub struct Tiers { pub near: u32, pub mid: u32, pub far: u32 }  // samples a brick direction; 4096 / 1024 / 256
+pub enum Verdict { NoFace, ZeroByRule, Bake(Band) }            // what the rules say of a listed chunk
+pub struct Budget { pub drain_ms: f64, pub line_ms: f64, pub per_second: Option<(f64, f64)> }
+// record head word: VIS_BAKED (1 << 16), SKY_STALE (1 << 17), TIER (2 bits of the free bits)
+```
+
+The store's bytes do not grow: the tier takes free bits of the record's head word, the
+baked-empty mark is an index state with no record. The index of placed light chunks by distance
+is one `BTreeMap<(u64, ChunkCoord), Range>` beside today's `chunks` map, about 24 bytes a placed
+chunk (8 192 chunks at the cap: under 200 KB).
+
+## Budgets
+
+| `docs/nfr.md` figure | today (reading) | proposed line | how the close measures it |
+|---|---|---|---|
+| **New: in-view drain** (every chunk in the view cone holds its tier's record, from the first world frame, at rest) | forest 15:00 never in 30 000 frames; 4 419 in view waiting at 94a | **RTX Floor at most 10 s; RENOIR Portable at most 30 s** (estimates from the arithmetic in Phase 4; pinned from Phase 9's readings) | the Phase 1 (1) rig, release, both adapters, hills noon and forest 15:00, `drain_s` and the stopwatch frame |
+| **New: whole-residency drain** at rest | 7 to 30 min on the RTX (94a) | **RTX at most 60 s; RENOIR at most 180 s** (estimates) | the same rig to depth 0 |
+| The live bake's slice, 1.0 ms | `frame:1.5` default, over the line | two values: `drain_ms` while in view waits (Floor 4.0, Portable 6.0, the owner's pick), **`line_ms` 1.0 once landed**; the Floor frame stays within 16.6 while draining | the per-second line's slice p50 and the GPU frame, both adapters |
+| The queue's step (inside the 1.0 ms streaming line; no line of its own today) | 6.2 to 7.6 ms p50 at a depth over 14 000; 0.075 drained | **p50 at most 1.0 ms at any depth, p99 at most 4.0 ms**, both regimes | the `bake queue step:` line at the forest from the first world frame, RTX, release |
+| Lighting, 4.0 ms (RENOIR) | 8.025 hills, 12.034 forest at rest, drained | the levers' deltas read; **the Portable profile's light pass at most 4.0 ms on the hills at noon**; the forest's figure is a reading the owner weighs in Phase 8 (the line stays; a miss is disclosed, not moved) | `PassTimer` `light` median of 30 frames at rest, drained and undrained, 720p Portable |
+| Lighting (RTX) | 1.570 / 2.529 | unchanged within 0.1 ms by every lever | the same, 1080p Floor |
+| `update + poll + sync` p99 (streaming) | 18.0 to 23.7 ms cave | **at most 16.6 ms**; `alloc` p99 at most 3.0; `light place` p99 under 2 ms in a glide that evicts | the tester cave bench and the Phase 1 (6) glide, RTX host, `hpet` noted |
+| Images | | drained images byte-identical through Phase 2 and Phase 5; moved only by the tiers and the levers the owner picks (re-blessed with the reason) | `gpu_golden` on lavapipe |
+| Section 7, the gate | 1792.6 s at 0086's close, over 19 min | this plan adds about 50 s of lavapipe (the tests named, each under 10 s) and no soak test by default | the tip's gate wall |
+
+## Risks & open questions
+
+- **The zero-by-rule record at the column map's edge.** The rule is exact under ADR-0070's
+  column clause only if the column map is final for the footprint; a chunk whose footprint's
+  columns are still provisional is baked, not ruled (the census says how many). A dig that
+  lowers a column must re-list every chunk the rule covered (Phase 2's test 3); a miss there is
+  a dark cave under a new hole, visible at once.
+- **The store becomes camera-dependent.** ADR-0046's bit-identity "whatever the slicing" now
+  holds per tier; the `--bake-file` hash and Plan 0089's mirror oracle read the tier bits
+  beside the bytes. Phase 3's test 3 pins it.
+- **The far tier's look.** 256 samples a brick direction is the coarse pass the owner has seen
+  as a first pass, never as a final record on a far ridge; if the window rejects it the mid
+  count becomes the far tier (the arithmetic in Phase 4 then roughly doubles the drain).
+- **The RENOIR may not reach 4.0 ms in the forest** at any lever this plan names; the hit pass
+  (10.7 to 21.9 ms there) is not this plan's and the backlog's beam prepass is the next lever.
+  The plan discloses the miss; the Portable profile owns the levers it picks.
+- **The eviction scan may not reproduce headless** even with a shrunk buffer (the window's
+  buffer fills, the headless glides' did not, cause open); Phase 8 (e) is the fallback reading
+  and Phase 7's bytes test holds either way.
+- **`IN_FLIGHT` 3** (if the F2 lap points there) holds one more submit's prepared bytes
+  (`PREPARED_BYTES_MAX` 64 MiB is the cap) and lengthens the withdrawal's blind spot by one
+  submit.
+- **Plan 0095's bake rays** (+6 %, a guess) and its far-pixel baked key change Phases 3, 4 and
+  6's numbers; the plan starts after it merges, and Phase 1 re-reads if it ran before.
+- **Threading:** nothing moves off the render thread; the CPU-written zero record goes through
+  the store's existing write path on that thread.
+
+## What this plan does NOT do
+
+- **The hit pass on the RENOIR** (21.9 ms on the hills against 3.0): the backlog's "A beam
+  prepass, or a distance value per brick", before Plan 0033.
+- **The screen-space key and sky means' restart** (the other half of "everything wobbles"):
+  Plan 0095.
+- **The coarse prior's look before a landing** (rule 6's "what the image shows meanwhile"):
+  Plan 0094.
+- **A profiler.** Plan 0091's scopes, GPU lane and `budget_scope!` come after; this plan's one
+  readout (Phase 1) is a line, and 0091 wraps `queue step` and `sync` at the lines Phase 9 sets.
+- **FSR 2's upscale line** (9.97 ms on the RENOIR) and the denoise line (7.0 to 7.6): the
+  profile plan's lines, read beside Phase 6's table and left.
+- **Slot words packed on the workers** (`pack + size` at 17 % of the sync p99): its backlog
+  entry's rule (half or more of what is left after `alloc`) is re-read at Phase 7 (3).
+- **The first-block fallback fade's CPU under `chain`** (about 1.7 ms of a regime B step): a
+  look change or an ADR-0053 Outcome, read beside Phase 5's bar and left in the backlog.
+- **A worker thread for the step** (ADR-0017's narrowing): not needed if Phase 5's bar holds;
+  named as the next lever if it does not.
+- **The pipeline cache** (Plan 0094 gives the GPU tests one; the engine's is the backlog's).
+- **Windows readings** (owner, 2026-11-15: once in a while, not per plan).
+
+## Implementation log
+
+> Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
+> above are the contract. This section records what happened.** Observations, never conclusions:
+> no pass list, no self-assessment. Deviations and unmet done-whens are **always** disclosed.
+> Keep it shorter than `## Implementation phases`. Readings, gate counts, attempts, sweeps and
+> resume notes go to the plan's readings log, `docs/plans/logs/0096.md` (started from
+> `templates/readings-log.md`), and this section links it once it exists.
+
+| phase | owner | state | commit |
+|---|---|---|---|
+| 1: readings on the undrained image, the drain readout | dev | not started | |
+| 2: a record without rays | dev | not started | |
+| 3: a tier by size on screen | dev | not started | |
+| 4: the drain slice, the submits' slice | dev | not started | |
+| 5: the step off the depth | dev | not started | |
+| 6: the slow adapter's light pass, lever by lever | dev | not started | |
+| 7: the sync's eviction index and `alloc` | dev | not started | |
+| 8: the owner's window | human | not started | |
+| 9: the bars, the lines and the goldens | dev | not started | |
+
+### Notes
+
+_(Deviations from the plan, with the commit, stated without justification. Done-whens not
+satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
+each. Empty is fine.)_
+
+### Close triggers
+
+_(Facts for the architect. No recommendations, and no suggested version bump.)_
+
+- **What shipped:**
+- **Public API changed:**
+- **Budget readings:**
+- **Gate at the tip:**
+- **Outstanding `human` phases:**
+
+## Followups
+
+- (empty at draft time)
