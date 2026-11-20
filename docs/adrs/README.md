@@ -93,6 +93,7 @@ the status.
 | [0076](0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md) | A still world gives a still image: six light-stability rules, a world-space history per source, a fade per transition, and a pop counter that only ratchets down | proposed (Plan 0090) |
 | [0077](0077-frame-profiling-through-the-profiling-facade-with-puffin-behind-an-app-feature.md) | Frame profiling goes through the `profiling` facade, collected by puffin behind an app feature | accepted (Plan 0091, approved) |
 | [0078](0078-an-entity-part-has-a-grain-a-detail-finer-than-a-world-voxel-or-a-coarse-factor-of-world-voxels-per-model-voxel.md) | An entity part has a grain: a detail finer than a world voxel, or a coarse factor of world voxels per model voxel | accepted (Plan 0083 Phase 7b, 2026-11-19) |
+| [0079](0079-the-key-lights-visibility-is-read-with-no-screen-history-the-record-or-the-column-maps-horizon-at-the-far-a-deterministic-penumbra-near.md) | The key light's visibility is read with no screen history: the record, else the horizon far; a deterministic penumbra near | proposed (Plan 0095) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded
