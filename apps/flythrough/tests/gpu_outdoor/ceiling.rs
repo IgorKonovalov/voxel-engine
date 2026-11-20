@@ -18,6 +18,8 @@ mod ceiling {
         pub settles: f64,
         pub ceiling: f64,
         pub luma: f64,
+        /// The misses' bounding box in pixels, `[x0, y0, x1, y1]`, and their count.
+        pub misses: ([usize; 4], usize),
     }
 
     /// The scenes' times: noon, midnight and 17:45 (`outdoor_forest_sunset`'s clock), and the
@@ -80,7 +82,18 @@ mod ceiling {
                 n += 1;
             }
         }
+        let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, f.hit_records());
+        let mut bb = [usize::MAX, usize::MAX, 0, 0];
+        let mut nm = 0;
+        for (i, r) in rec.iter().enumerate() {
+            if r[3] & 1 == 0 {
+                let (x, y) = (i % w, i / w);
+                bb = [bb[0].min(x), bb[1].min(y), bb[2].max(x), bb[3].max(y)];
+                nm += 1;
+            }
+        }
         Read {
+            misses: (bb, nm),
             sky: s.sky,
             metered: s.metered_log2,
             eye: f64::from(s.current).log2(),
@@ -90,17 +103,22 @@ mod ceiling {
         }
     }
 
-    /// The deep tunnel's pose: the inside spawn turned to face in (the 4c still's way).
+    /// The tunnel rig with the inside spawn's view out (the cave mouth from inside) and the
+    /// deep pose: on the tunnel's axis half way from the mouth to the chamber, facing the
+    /// chamber (window 94b's still `4c` was taken deep in, facing away from the mouth).
     pub(super) fn deep() -> Option<(Rig, Camera, Camera)> {
-        let (rig, [(_, out), (_, inward)]) = support::terms::tunnel_rig()?;
+        let (rig, [(_, out), _]) = support::terms::tunnel_rig()?;
+        let [a, c] = flythrough::outdoor::OutdoorSource::new(1).tunnel();
+        let at = |t: f32| [0, 1, 2].map(|k| a[k] as f32 + 0.5 + (c[k] - a[k]) as f32 * t);
+        let inward = flythrough::camera_looking_at(at(0.5), at(0.6));
         Some((rig, out, inward))
     }
 
     /// Prints one row: the scene, the arm, and [`Read`]'s fields.
     pub(super) fn row(scene: &str, share: f32, r: &Read) {
         println!(
-            "reading: {scene}, share {share}: sky {:.4}, metered {:+.2}, eye {:+.3} EV, settles {:+.3} EV, ceiling {:+.3} EV, centre luma {:.4}",
-            r.sky, r.metered, r.eye, r.settles, r.ceiling, r.luma
+            "reading: {scene}, share {share}: sky {:.4}, metered {:+.2}, eye {:+.3} EV, settles {:+.3} EV, ceiling {:+.3} EV, centre luma {:.4}, misses {} in {:?}",
+            r.sky, r.metered, r.eye, r.settles, r.ceiling, r.luma, r.misses.1, r.misses.0
         );
     }
 

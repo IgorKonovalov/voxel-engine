@@ -156,9 +156,10 @@ pub(crate) const MAX_RATE_DT: f32 = 1.0 / 15.0;
 /// [`AutoExposure::sky_anchor_ev`]'s default, in EV over the sunlit ground's exposure.
 pub const DEFAULT_SKY_ANCHOR_EV: f32 = 4.0;
 
-/// [`AutoExposure::sky_anchor_share`]'s default: the anchor holds in full while a sixteenth of
-/// the metered view is sky.
-pub const DEFAULT_SKY_ANCHOR_SHARE: f32 = 1.0 / 16.0;
+/// [`AutoExposure::sky_anchor_share`]'s default: the anchor holds in full while 1/256 of the
+/// metered view is sky (Plan 0094 Phase 7b bar 1's reading: a forest floor under the canopy
+/// meters under 1/128 of sky, a deep tunnel 0).
+pub const DEFAULT_SKY_ANCHOR_SHARE: f32 = 1.0 / 256.0;
 
 impl Default for AutoExposure {
     fn default() -> Self {

@@ -193,13 +193,13 @@ fn the_settle_is_refused() {
     }
 }
 
-/// `--sky-anchor-share` reaches the auto exposure, 1/16 by default and unnamed; another value is
+/// `--sky-anchor-share` reaches the auto exposure, 1/256 by default and unnamed; another value is
 /// named `sky anchor share X` and `off` (0) `sky anchor share off` with a sky set; out of (0, 1]
 /// it is refused.
 #[test]
 fn the_sky_anchor_share_reaches_the_run() {
     let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
-    assert_eq!(r.start_auto().sky_anchor_share, 1.0 / 16.0);
+    assert_eq!(r.start_auto().sky_anchor_share, 1.0 / 256.0);
     assert_eq!(
         r.start_auto().sky_anchor_share,
         vxe_render::DEFAULT_SKY_ANCHOR_SHARE
@@ -218,7 +218,7 @@ fn the_sky_anchor_share_reaches_the_run() {
         "--source",
         "outdoor",
         "--sky-anchor-share",
-        "0.0625",
+        "0.00390625",
     ]))
     .unwrap();
     assert!(!r.start_modes(0.0).line().contains("sky anchor share"));

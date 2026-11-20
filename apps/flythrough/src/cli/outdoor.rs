@@ -348,7 +348,7 @@ fn ceiling_flags() -> Vec<Flag<Parsing>> {
             "the share of the metered view that is sky (0 to 1) at and over which the sky \
                  anchor holds in full; under it the ceiling releases toward the constant one, \
                  all the way with no sky in view, as a fade at the exposure's rate (a tunnel \
-                 exposes for its walls); off holds the anchor whatever is in view [0.0625]",
+                 exposes for its walls); off holds the anchor whatever is in view [0.00390625: 1/256]",
             |p: &mut Parsing, v| {
                 p.args.outdoor.sky_anchor_share = Some(match v.text {
                     "off" => 0.0,

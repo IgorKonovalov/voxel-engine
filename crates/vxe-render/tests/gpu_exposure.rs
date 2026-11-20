@@ -948,6 +948,12 @@ fn the_ceiling_moves_at_the_rate() {
     };
     let r_f = f64::from(vxe_render::DEFAULT_EXPOSURE_RATE_EV_S) / 60.0;
     let max = 7.0;
+    // One frame for both arms: the second starts from a reset (the adapted level and the
+    // ceiling jump to the meter's and the target's).
+    let mut frame = Frame::new(&device, 64, 36);
+    frame.set_resolution(&device, LightingResolution::Full);
+    frame.set_dt(1.0 / 60.0);
+    frame.set_sky(Some(vxe_render::sky::Sky::uniform(0.5)));
     for rate in [vxe_render::DEFAULT_EXPOSURE_RATE_EV_S, 0.0] {
         let auto = AutoExposure {
             max: 2f32.powi(7),
@@ -956,16 +962,13 @@ fn the_ceiling_moves_at_the_rate() {
             cone_floor: 0.0,
             ..AutoExposure::eye()
         };
-        let mut frame = Frame::new(&device, 64, 36);
-        frame.set_resolution(&device, LightingResolution::Full);
         frame.set_lighting(Lighting {
             lamp: false,
             candidates: 0,
             exposure: Exposure::Auto(auto),
             ..Lighting::default()
         });
-        frame.set_dt(1.0 / 60.0);
-        frame.set_sky(Some(vxe_render::sky::Sky::uniform(0.5)));
+        frame.reset_exposure();
         let frames: Vec<usize> = if rate > 0.0 {
             (0..132).collect()
         } else {
