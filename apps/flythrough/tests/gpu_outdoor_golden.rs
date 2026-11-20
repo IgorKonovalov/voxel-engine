@@ -279,11 +279,27 @@ impl Hills {
         }
     }
 
-    /// The image of `clock`'s sky after the bake and 64 frames at the picks.
+    /// The image of `clock`'s sky after the bake and 64 frames at the picks; the metered
+    /// level, the ceiling in force and the exposure in force (log2) printed.
     fn image(&mut self, clock: Clock) -> Vec<u8> {
         let camera = self.camera();
         let mut frame = self.frame(clock, |l| l);
         self.settle(&mut frame, &camera, 64);
+        let st = vxe_render::debug::read_buffer(
+            &self.device,
+            &self.queue,
+            frame.exposure_state(),
+            0,
+            32,
+        );
+        let st = vxe_render::ExposureState::from_bytes(&st);
+        println!(
+            "reading: at {:.0} min metered {:+.3}, ceiling {:+.3} EV, eye {:+.3} EV",
+            clock.minutes,
+            st.metered_log2,
+            st.ceiling.log2(),
+            st.current.log2()
+        );
         vxe_render::debug::read_rgba8(&self.device, &self.queue, frame.target())
     }
 }

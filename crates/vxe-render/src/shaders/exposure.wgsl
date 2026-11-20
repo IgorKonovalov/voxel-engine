@@ -31,10 +31,11 @@
 // The upper limit is the state's `ceiling`, the ceiling in force. Its target is `max_e`, or
 // with `anchor` over 0 (`2^N`: the frame holds a sky and the model anchors its ceiling,
 // `AutoExposure::ceiling`) and the sunlit ground's irradiance `E` over 0, the anchored
-// `c_a = anchor key / (0.5 E / pi)`, `E` being `E_sky(+z)`'s luminance plus its w. With
+// `c_a = min(anchor key / (0.5 E / pi), max_e)`, `E` being `E_sky(+z)`'s luminance plus its w:
+// the anchor lowers the ceiling and never lifts it over `max_e` (a dark sky leaves `max_e`). With
 // `sky_share` (`F`) over 0 the anchor holds by the sky in view (`AutoExposure::ceiling_target`):
-// `log2 c = mix(log2 max(max_e, c_a), log2 c_a, min(f_sky / F, 1))`, so with no sky in view the
-// anchor releases to `max_e` and never pulls the ceiling under `c_a`. Under the anchor with
+// `log2 c = mix(log2 max_e, log2 c_a, min(f_sky / F, 1))`, so with no sky in view the anchor
+// releases to `max_e`. Under the anchor with
 // `F` and the rate over 0 the ceiling in force steps toward its target by at most the rate
 // cap's step in log2 (ADR-0076 rule 5, `AutoExposure::step_ceiling`); else, on the reset bit
 // or from a state with no ceiling yet, it is the target.
@@ -145,7 +146,7 @@ fn anchored() -> f32 {
     if (e <= 0.0) {
         return ex.max_e;
     }
-    return ex.anchor * ex.key / (0.5 * e / 3.14159265358979);
+    return min(ex.anchor * ex.key / (0.5 * e / 3.14159265358979), ex.max_e);
 }
 
 // The ceiling's target at the sky share `f_sky` (the header).
@@ -154,12 +155,12 @@ fn ceiling_target(f_sky: f32) -> f32 {
     if (ex.anchor <= 0.0 || ex.sky_share <= 0.0) {
         return a;
     }
-    // At a share of `F` and over the anchored ceiling exactly, bit for bit today's.
-    if (f_sky >= ex.sky_share) {
+    // At a share of `F` and over the anchored ceiling exactly, bit for bit today's; an
+    // anchor clamped to `max_e` (a dark sky) is `max_e` at every share.
+    if (f_sky >= ex.sky_share || a >= ex.max_e) {
         return a;
     }
-    let open = max(ex.max_e, a);
-    return exp2(mix(log2(open), log2(a), f_sky / ex.sky_share));
+    return exp2(mix(log2(ex.max_e), log2(a), f_sky / ex.sky_share));
 }
 
 // The ceiling in force after a frame from `c` toward its target `goal` (the header).

@@ -279,12 +279,14 @@ impl AutoExposure {
     /// ([`ground_irradiance`]; `None` with no sky set): with [`AutoExposure::sky_anchor_ev`]
     /// `N` and a ground over 0, `2^N key 2^compensation_ev / (0.5 ground / pi)`, the exposure
     /// that puts a horizontal face of albedo 0.5 under that irradiance at the key, opened `N`
-    /// EV; else `max`. The exposure pass computes the same in f32 from `E_sky`.
+    /// EV, clamped to `max`: the anchor lowers the ceiling and never lifts it (a dark sky, as
+    /// at night, leaves `max` exactly); else `max`. The exposure pass computes the same in f32
+    /// from `E_sky`.
     pub fn ceiling(&self, ground: Option<f32>) -> f32 {
         match (self.sky_anchor_ev, ground) {
-            (Some(n), Some(g)) if g > 0.0 => {
-                n.exp2() * self.key * self.compensation_ev.exp2() / (0.5 * g / std::f32::consts::PI)
-            }
+            (Some(n), Some(g)) if g > 0.0 => (n.exp2() * self.key * self.compensation_ev.exp2()
+                / (0.5 * g / std::f32::consts::PI))
+                .min(self.max),
             _ => self.max,
         }
     }
@@ -292,15 +294,19 @@ impl AutoExposure {
     /// The ceiling's target over a frame whose sunlit ground's irradiance is `ground` and
     /// whose metered share of sky is `sky` in `[0, 1]`: with the anchor in force
     /// ([`AutoExposure::ceiling`] `c_a`, a ground over 0) and
-    /// [`AutoExposure::sky_anchor_share`] `F` over 0, `log2 c = mix(log2 max(max, c_a), log2
-    /// c_a, min(sky / F, 1))`: the anchored ceiling at a share of `F` and over, `max` (or
-    /// `c_a` where that is higher, as at night) with no sky in view; else `c_a`.
+    /// [`AutoExposure::sky_anchor_share`] `F` over 0, `log2 c = mix(log2 max, log2 c_a,
+    /// min(sky / F, 1))`: the anchored ceiling at a share of `F` and over, `max` with no sky
+    /// in view (`c_a` is never over `max`); else `c_a`.
     pub fn ceiling_target(&self, ground: Option<f32>, sky: f32) -> f32 {
         let a = self.ceiling(ground);
-        if !self.anchors(ground) || self.sky_anchor_share <= 0.0 || sky >= self.sky_anchor_share {
+        if !self.anchors(ground)
+            || self.sky_anchor_share <= 0.0
+            || sky >= self.sky_anchor_share
+            || a >= self.max
+        {
             return a;
         }
-        let open = f64::from(self.max.max(a)).log2();
+        let open = f64::from(self.max).log2();
         let t = f64::from(sky / self.sky_anchor_share);
         let l = open + (f64::from(a).log2() - open) * t;
         l.exp2() as f32
@@ -894,6 +900,16 @@ mod tests {
         assert_eq!(at(2.0).ceiling(None), none.max);
         assert_eq!(at(2.0).ceiling(Some(0.0)), none.max);
         assert_eq!(none.ceiling(ground(1.0)), none.max);
+        // A ground so dim the anchored exposure is over `max` (as at night): the anchor never
+        // lifts the ceiling, it is `max` exactly, and the target is `max` at every share.
+        let dim = ground(1e-3);
+        let open = 4.0 * 0.18 * PI / (0.5 * PI * 1e-3);
+        assert!(open > at(2.0).max, "{open}");
+        assert_eq!(at(2.0).ceiling(dim), at(2.0).max);
+        for k in 0..=64 {
+            let sky = k as f32 / 64.0;
+            assert_eq!(at(2.0).ceiling_target(dim, sky), at(2.0).max, "share {sky}");
+        }
         let uniform = |a: &AutoExposure, sky: bool| {
             let mut u = ExposureUniform::default();
             u.set_auto(a, sky);
@@ -909,9 +925,9 @@ mod tests {
     }
 
     /// Plan 0094 Phase 7b: the ceiling's target is the anchored one at a sky share of `F` and
-    /// over, `max` with no sky in view and log2-linear between; where the anchored one is over
-    /// `max` (the night) the target is the anchored one at any share; a share `F` of 0, no
-    /// anchor or no sky keep today's ceiling.
+    /// over, `max` with no sky in view and log2-linear between; where the anchored exposure is
+    /// over `max` (the night) the anchored ceiling and the target are `max` at any share; a
+    /// share `F` of 0, no anchor or no sky keep today's ceiling.
     #[test]
     fn the_ceiling_target_follows_the_sky_in_view() {
         use std::f32::consts::PI;
@@ -936,12 +952,11 @@ mod tests {
             assert!(c <= last, "monotonic in the share: {k}");
             last = c;
         }
-        // Night: the anchored ceiling over `max`; the release never lowers it.
+        // Night: the anchored exposure over `max`; the ceiling and its target are `max`.
         let night = Some(ground_irradiance([PI * 1e-3; 3], 0.0));
-        let n = e.ceiling(night);
-        assert!(n > e.max, "{n}");
+        assert_eq!(e.ceiling(night), e.max);
         for sky in [0.0, 0.5 * f, f, 1.0] {
-            assert_eq!(e.ceiling_target(night, sky), n);
+            assert_eq!(e.ceiling_target(night, sky), e.max);
         }
         // The before arm, no anchor, no sky.
         let before = AutoExposure {

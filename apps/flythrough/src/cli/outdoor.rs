@@ -332,8 +332,9 @@ fn ceiling_flags() -> Vec<Flag<Parsing>> {
             &["--sky-anchor"],
             "N|none",
             "while a sky is set, the auto exposure opens at most N EV (-4 to 12) over the \
-                 exposure that puts sunlit ground at mid-grey, so a noon tunnel stays dark and \
-                 the night still opens; none keeps the constant ceiling [4]",
+                 exposure that puts sunlit ground at mid-grey, so a noon tunnel stays dark; the \
+                 anchor lowers the constant ceiling and never lifts it (a dark sky, as at night, \
+                 leaves it); none keeps the constant ceiling [4]",
             |p: &mut Parsing, v| {
                 p.args.outdoor.sky_anchor = Some(match v.text {
                     "none" => None,

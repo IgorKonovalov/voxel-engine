@@ -125,8 +125,10 @@ mod ceiling {
     /// Plan 0094 Phase 7b bar 2: the deep tunnel (the inside spawn facing in, seed 1) with the
     /// lamp on, at 160 x 90 ([`read`]). At noon under the default share the metered sky share
     /// is 0, the ceiling in force is within 1/64 EV of `OUTDOOR_MAX` and the exposure in force
-    /// within 1/64 EV of the one the meter settles at; at midnight the exposure in force is
-    /// within 1/64 EV of the share-0 arm's (the anchor as it was). The lamp-lit centre's mean
+    /// within 1/64 EV of the one the meter settles at; at midnight, under the default share and
+    /// under 0, the ceiling in force and the exposure in force are within 1/64 EV of
+    /// `OUTDOOR_MAX` (the anchor never lifts the ceiling over it; Plan 0094 Phase 8a, the
+    /// anchored night's eye of +6.24 EV printed as the before). The lamp-lit centre's mean
     /// display luma at noon against midnight is printed as a ratio in EV; within 0.5 EV it is
     /// asserted, over it printed for the log. `VXE_TEST_ADAPTER` picks the adapter (unset:
     /// lavapipe).
@@ -151,7 +153,11 @@ mod ceiling {
         assert_eq!(noon.sky, 0.0, "no sky in view");
         assert!((noon.ceiling - max).abs() <= 1.0 / 64.0, "the ceiling {}", noon.ceiling);
         assert!((noon.eye - noon.settles).abs() <= 1.0 / 64.0, "eye {} settles {}", noon.eye, noon.settles);
-        assert!((night.eye - night0.eye).abs() <= 1.0 / 64.0, "night {} before {}", night.eye, night0.eye);
+        println!("reading: the deep midnight eye before the clamp (Phase 7b's tip) +6.24 EV");
+        for (r, arm) in [(&night, share), (&night0, 0.0)] {
+            assert!((r.ceiling - max).abs() <= 1.0 / 64.0, "share {arm}: the ceiling {}", r.ceiling);
+            assert!((r.eye - max).abs() <= 1.0 / 64.0, "share {arm}: the eye {}", r.eye);
+        }
         if ratio.abs() <= 0.5 {
             assert!(ratio.abs() <= 0.5);
         } else {
@@ -204,6 +210,50 @@ mod ceiling {
 
     pub(super) mod reading {
         use super::*;
+
+        /// Plan 0094 Phase 8a bar 4: the anchored ceiling before its clamp,
+        /// `c_a = 2^4 key / (0.5 E / pi)` from the pass's own `E_sky(+z)` (its luminance plus
+        /// the key light's `w`), against `OUTDOOR_MAX`, at the hills' spawn over the day in
+        /// 15-minute steps (one frame each at 16 x 9; `E_sky` is the sky's, not the view's),
+        /// printed with the clock times `c_a` crosses `OUTDOOR_MAX`. `VXE_TEST_ADAPTER` picks
+        /// the adapter (unset: lavapipe).
+        #[test]
+        #[ignore = "reading"]
+        fn the_ceiling_by_hour() {
+            let Some((rig, cam)) = support::terms::hills_rig() else {
+                return;
+            };
+            println!("reading: the_ceiling_by_hour on {}", rig.adapter);
+            let a = auto(vxe_render::DEFAULT_SKY_ANCHOR_SHARE);
+            let max = a.max.log2();
+            let n = a.sky_anchor_ev.expect("the outdoor anchor");
+            let mut f = Frame::new(&rig.device, 16, 9);
+            f.set_lighting(Lighting {
+                exposure: Exposure::Auto(a),
+                ..flythrough::default_lighting()
+            });
+            f.set_dt(1.0 / 60.0);
+            let light = LightParams::headlamp();
+            let mut last: Option<(f64, f32)> = None;
+            for q in 0..=96 {
+                let minutes = f64::from(q) * 15.0;
+                f.set_sky(Some(clock(minutes, None)));
+                f.step(&rig.device, &rig.queue, &rig.gpu, &cam, &light);
+                let b = vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.sky_irradiance(), 0, 96);
+                let up: Vec<f32> = b[80..96].chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+                let e = vxe_render::ground_irradiance([up[0], up[1], up[2]], up[3]);
+                let ca = (n.exp2() * a.key * a.compensation_ev.exp2() / (0.5 * e / std::f32::consts::PI)).log2();
+                let (h, m) = (q * 15 / 60, q * 15 % 60);
+                println!("reading: {h:02}:{m:02} E {e:.4e}, c_a {ca:+.3} EV, max {max:+.3} EV{}", if ca > max { ", clamped" } else { "" });
+                if let Some((t0, c0)) = last
+                    && (c0 > max) != (ca > max)
+                {
+                    let t = t0 + (minutes - t0) * f64::from((max - c0) / (ca - c0));
+                    println!("reading: c_a crosses max at {:02}:{:02}", (t / 60.0) as u32, (t % 60.0) as u32);
+                }
+                last = Some((minutes, ca));
+            }
+        }
 
         /// Plan 0094 Phase 7b bars 1, 3 and 6: per scene, [`read`] under the default share
         /// and under 0 (the anchor whatever is in view, the before): the tunnel's inside spawn
