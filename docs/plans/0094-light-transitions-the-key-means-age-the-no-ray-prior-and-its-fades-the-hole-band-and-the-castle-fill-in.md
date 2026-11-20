@@ -1309,6 +1309,101 @@ second round. The decisions, one recommended option each:
     unattributed. The quiet gate (bar 5) follows that bless.
   - Phase 9's midnight A/B is `--sky-anchor none --exposure-max 2` against the tip (the
     plan's `--exposure-max 2` alone is a no-op under the anchored night ceiling).
+- **Amended 2026-11-20 (owner), after window 94c (`live/session94c.log`):** the owner picked
+  **2b** (`--sky-anchor none --exposure-max 2`, the night held at +2 EV) over 2a (the tip's
+  anchored night: ceiling +11.86 EV, the deep tunnel's eye at +6.24 EV); the noon tunnel under
+  Phase 7b read "all good". 2b becomes the default through **Phase 8a** below, which lands
+  before this phase's bless of `outdoor_night` and before the quiet gate. The 7a1ae6e9 bullet's
+  release floor `max(max, anchored)` is **superseded** by 8a: with the anchored ceiling never
+  over `max`, the release target is `max` again, the plan's original formula, and the floor
+  has nothing left to hold. The sequence is now: 8a, then the blesses (the profile goldens as
+  decided above, `outdoor_night` as 8a's disclosed change, every other golden byte-identical
+  to the 7a1ae6e9 bless), then the one quiet gate at the tip.
+
+### Phase 8a: The night's ceiling is `max`: the sky anchor lowers the ceiling, never lifts it
+- **Owner skill:** dev
+- **Why (added 2026-11-20, architect, after window 94c):** Plan 0086 Phase 12 built the anchor
+  as `c_a = 2^N` times the exposure that puts sunlit ground at mid-grey, with no bound, so "at
+  night the anchor falls with the sun and the eye opens": at midnight `c_a` is +11.86 EV, far
+  over the outdoor `max` of +2 EV (`OUTDOOR_MAX` 4), and the moonlit level and the lamp-lit
+  tunnel both meter to mid-grey, a day-for-night look. The owner's words at 94b ("headlamp is
+  too bright, also level seems to be too bright as well") and the pick at 94c (2b, the
+  constant +2 EV, over the anchored night) say the eye must not open past `max` for a dark
+  sky. ADR-0033's clamp `[min, max]` is the hard bound again; the anchor works under it.
+- **What:** `AutoExposure::ceiling` returns `min(c_a, max)` (the CPU model) and the shader's
+  `anchored()` returns `min(c_a, max_e)`; nothing else changes. By construction: at noon and
+  every hour `c_a` is under `max` (bar 1's table: -6.75, -4.34, -2.08 EV, all under +2) the
+  ceiling, its target, its step and the image are **byte-identical** to Phase 7b's (the owner:
+  "all good"); for the hours `c_a` is over `max` the ceiling is `max` in every view, which is
+  2b bit for bit (`--sky-anchor none` reads `max_e` where the clamped anchor now reads
+  `min(c_a, max_e) == max_e`, the same f32); the crossing hour is continuous (`min`), so the
+  ceiling in force never steps at dusk or dawn. `ceiling_target`'s `max(max, c_a)` reduces to
+  `max` and is written so (the 7a1ae6e9 floor removed, since `c_a <= max` always). The HUD's
+  row shows the value (`ceiling +2.00 EV (anchor 4, sky 37 %)` at midnight); the flags keep
+  their names and defaults (`--sky-anchor 4`, `--exposure-max` +2 for `--source outdoor`), the
+  help text and `docs/flythrough.md`'s rows lose "the night still opens" and the share row's
+  "never under the anchored one (the night)".
+  **Rejected, named here (no new ADR; the plan's header rule, and the fuller record is
+  ADR-0076 rule 5's clause of this date):** (a) the sky anchor off by default (`--sky-anchor
+  none`, 2b's literal flags): loses the noon anchor, which the owner kept twice (0086 question
+  1: 7c at `none` read the tunnel "an unnatural blue"; 94c run 1 "all good" under it), and
+  moves the noon image; (b) a second constant, a night limit of its own (a `night_max`, or a
+  smaller `N` once the sun is down): a knob with no reading behind it when `max` already is
+  the constant ceiling (ADR-0033, 0086 question 1 (b)), and a smaller `N` moves noon too; (c)
+  keeping the 7a1ae6e9 floor and lowering `OUTDOOR_MAX`: a no-op at night, where the anchored
+  ceiling binds, and a change at noon; (d) a tone-curve toe for the night (0086 Phase 12's (c)):
+  a look change on every scene, the backlog's.
+- **What it does to the open night (stated, not hidden):** 2b darkens every night view, not
+  only the tunnel. Bar 1's table: the mouth from inside at midnight metered -9.91 EV and
+  settled at +7.43 EV under the anchored ceiling; under `max` it is held at +2.00 EV, **5.4 EV
+  darker**, the moonlit ground outside the mouth at about 1/40 of mid-grey instead of mid-grey;
+  the deep tunnel +6.24 to +2.00 EV (4.2 EV darker, 2b as seen). The `outdoor_night` golden
+  (the hills' spawn at 00:00) moves the same way and is re-blessed as this phase's disclosed
+  change. **No new window before the close:** 2b's run started at the inside spawn facing the
+  mouth (the sky share 0.37, the moonlit hills through it) at the HUD's `ceiling +2.00 EV`
+  before the owner turned in, so the owner saw the open night at the new default, framed by
+  the mouth, and picked it; the complaint named the level, not only the lamp; and the one
+  knob that would move it is `--exposure-max`, a setting, so a later word costs a re-bless and
+  no mechanism. The open hills at midnight by eye are the first run of the next owner window
+  of any lane (the Followups).
+- **Files touched:** `crates/vxe-render/src/exposure.rs` (`ceiling`, `ceiling_target`, their
+  doc comments, the CPU tests), `crates/vxe-render/src/shaders/exposure.wgsl` (`anchored`,
+  `ceiling_target`, the header), `apps/flythrough/src/cli/outdoor.rs` (the help text),
+  `apps/flythrough/tests/gpu_outdoor/ceiling.rs` (bar 2's midnight clause, the reading's
+  rows), `apps/flythrough/tests/gpu_outdoor_golden.rs` and its `golden/outdoor_night.png`,
+  `docs/flythrough.md`, `docs/plans/logs/0094.md`.
+- **Done when:**
+  1. **The anchor never lifts the ceiling over `max`** (CPU, under 1 s, in
+     `the_ceiling_follows_the_sky` or beside it): at a ground so dim that `2^N key
+     2^compensation_ev / (0.5 ground / pi)` is over `max`, `ceiling()` returns `max` exactly
+     (`==`, the same f32), and `ceiling_target` returns `max` at every share in [0, 1]; at a
+     ground where it is under `max` every existing clause of that test holds unchanged (its
+     `AutoExposure::eye()` ceilings are all under its `max` of 16, so no clause moves); the CPU
+     model `the_ceiling_target_follows_the_sky_in_view` restated without the floor.
+  2. **Noon is byte-identical.** `the_ceiling_moves_at_the_rate` (anchored +3.526 EV under
+     `max` +7 EV) and `the_cave_mouth_walk_exposure`'s trace pass unchanged; `outdoor_noon`,
+     `outdoor_sunset`, `outdoor_forest_sunset`, `cave_mouth`, `fsr2.png`, `upscaled.png` and
+     the two profile goldens are byte-identical to the 7a1ae6e9 bless (read before any bless;
+     a moved pixel on any of them is a stop for the architect, not a bless).
+  3. **The night is 2b.** `the_tunnel_exposes_for_its_walls_by_day`'s midnight clause is
+     restated: at midnight, deep with the lamp on, the ceiling in force and the settled
+     exposure are within 1/64 EV of `max` (+2 EV) in both arms (the default share and share 0),
+     the before (+6.24 EV) printed; the noon-midnight centre luma ratio re-read and printed (the
+     bar's 0.5 EV clause as written). `reading::the_sky_share_in_view`'s two midnight rows
+     re-read (lavapipe; the RTX beside by `VXE_TEST_ADAPTER`) and the table in the log updated:
+     the eye and the ceiling +2.000 in both.
+  4. **The hour the clamp binds is read** (`reading::the_ceiling_by_hour`, CPU, under 1 s,
+     `ceiling.rs` or `exposure.rs`'s tests): the anchored `c_a` in EV against `max` at the
+     hills' spawn in 15-minute steps over the day, printed as the two clock times `c_a` crosses
+     +2 EV (dusk and dawn); the table is in the log so the next look knows which hours the
+     night clamp covers.
+  5. **The `outdoor_night` golden** is re-blessed as this phase's disclosed change, its
+     difference count and its eye before and after (+X EV to +2.00 EV) in the log; no other
+     golden moves (bar 2).
+  6. The help text and `docs/flythrough.md`'s `--sky-anchor` and `--sky-anchor-share` rows
+     say the anchor lowers the ceiling under `max` and never lifts it; `--check-args` and the
+     CLI tests (`cli/tests/outdoor.rs`) pass as written (the defaults do not change). **Cost:**
+     0 ms by construction (one `min` in the pass), stated.
 
 ### Phase 9: A second short look, only if the window asked for one
 - **Owner skill:** human
@@ -1346,6 +1441,16 @@ second round. The decisions, one recommended option each:
   5 read them). The owner's words per run are in the log; the night's pick, if `--exposure-max
   2`, is a one-line default change for `--source outdoor` before the close, disclosed in the
   log with the goldens it moves.
+  **Window 94c ran 2026-11-20** (`live/session94c.sh`, `live/bin94c` at `5c910b22`; the words
+  in `live/session94c.log`, quoted into the log by the dev): run 1 (the noon tunnel, the lamp
+  on, then off deep in) "all good"; run 2 (midnight, the lamp on) "2b", the night held at +2
+  EV by `--sky-anchor none --exposure-max 2`, over 2a, the tip's anchored night. **Amended
+  2026-11-20 (architect):** the pick is not the flags' literal default change (the anchor off
+  would move noon, which run 1 kept); it lands as **Phase 8a**, the anchored ceiling clamped
+  to `max`, 2b bit for bit for every hour the anchor would open past `max` and Phase 7b's
+  image for every other. **No Phase 9b:** the open-sky night is not shown again before the
+  close (Phase 8a states why, and what it costs the open night); the hills at midnight are the
+  first run of the next owner window of any lane.
 
 ## Data shapes
 
@@ -1622,7 +1727,14 @@ each. Empty is fine.)_
   too bright, "with full moon maybe its ok". Phase 7b does not move it (the ceiling is at
   `max` at night already); Phase 9's third look A/Bs `--exposure-max 2`. The engine's
   mechanism for a game's darker night is ADR-0033's `compensation_ev` and `max`, both
-  settings; no engine change unless the owner picks the A/B.
+  settings; no engine change unless the owner picks the A/B. **Resolved 2026-11-20:** the owner
+  picked the A/B (2b, window 94c); Phase 8a clamps the anchored ceiling to `max` (ADR-0076
+  rule 5's clause of this date), and `outdoor_night` is re-blessed. **Owed to the next owner
+  window of any lane, its first run:** the open hills at midnight (`--source outdoor --time
+  00:00`, the default spawn) on the new default, `live/bin94c` (the anchored night) as the
+  before: a word on the moonlit level at +2 EV (Phase 8a's arithmetic says about 1/40 of
+  mid-grey). Too dark is a setting (`--exposure-max`, or `compensation_ev`) and a re-bless of
+  `outdoor_night`, not a mechanism.
 - If the forest's trunks stay over the residual bar with (ii) built, a per-material style bit
   that lets a thin feature (a trunk) read the key light from a coarser shadow (ADR-0063's
   table) is a look plan's, not this one's.

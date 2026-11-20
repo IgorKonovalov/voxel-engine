@@ -1,6 +1,6 @@
 # ADR-0076: A still world gives a still image: six light-stability rules, a world-space history per source, a fade per transition, and a pop counter that only ratchets down
 
-> **Status:** proposed (rule 6 and Alternative F added 2026-11-20, while proposed, at Plan 0094 Phase 7's verdict; rule 5's ceiling clause and `R`'s reading added the same day, after window 94b)
+> **Status:** proposed (rule 6 and Alternative F added 2026-11-20, while proposed, at Plan 0094 Phase 7's verdict; rule 5's ceiling clause and `R`'s reading added the same day, after window 94b; rule 5's `max` bound on the anchor the same day, after window 94c)
 > **Date:** 2026-11-18
 > **Related plan(s):** [Plan 0090](../plans/0090-the-pop-counter-scenes-on-lavapipe-count-the-pixels-that-break-the-light-rules-a-ratchet.md)
 > (builds the counter and takes the baseline); [Plan 0086](../plans/done/0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md)
@@ -98,12 +98,19 @@ in the counter; until then they are the guesses Plan 0090 names.
    still scene after settle it does not move (within 1/64 EV). Rule 5 is read on the exposure
    state, not per pixel, and the other rules are read on the display with the exposure's share
    attributed, so an exposure step that amplifies a pop is counted once, as exposure. The
-   ceiling in force (ADR-0033's `max`, or the sky anchor's) is part of the exposure: it moves
-   under the same cap, so the sky entering or leaving the view is a fade too, and it follows
-   what is in view, not the sky's clock (the owner, 2026-11-20, window 94b: the exposure
-   changes "according to surrounding exposure, not time of day"; Plan 0094 Phase 7b). `R`
-   read 3.75 EV/s by eye at window 94b (7.5 too fast, 1.875 too slow), the calibration Plan
-   0090 Phase 5 inherits.
+   ceiling in force (ADR-0033's `max`, or the sky anchor's under it) is part of the exposure:
+   it moves under the same cap, so the sky entering or leaving the view is a fade too, and it
+   follows what is in view, not the sky's clock (the owner, 2026-11-20, window 94b: the
+   exposure changes "according to surrounding exposure, not time of day"; Plan 0094 Phase 7b).
+   **The anchor only lowers the ceiling, never lifts it over `max`** (added 2026-11-20, after
+   window 94c: the owner picked the night held at the constant +2 EV over the anchored night's
+   +11.86 EV, "headlamp too bright, level too bright"; Plan 0094 Phase 8a): ADR-0033's
+   `[min, max]` is the hard bound in every view and hour, the anchor is `min(c_a, max)`, so a
+   dark sky never opens the eye past what a game set as its ceiling, and a moonlit level is
+   dark, not mid-grey. Rejected there: the anchor off by default (loses the noon tunnel's
+   anchor, which the owner kept twice) and a second night-only constant (a knob with no reading
+   when `max` is that constant already). `R` read 3.75 EV/s by eye at window 94b (7.5 too
+   fast, 1.875 too slow), the calibration Plan 0090 Phase 5 inherits.
 6. **No waiting: the image before the bake lands is the judged image.** (Added 2026-11-20,
    the owner at Plan 0094's window: "if we have to wait for a minute for light to settle,
    something is wrong with the light and we need approximate things, it is not acceptable for
