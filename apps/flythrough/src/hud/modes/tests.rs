@@ -286,6 +286,7 @@ fn the_banner_names_each_change_and_fades_after_three_seconds() {
         frame: 9,
         held: false,
         ceiling: 16.0,
+        sky_share: 0.0,
     }));
     assert!(
         q.banner(0.0)
@@ -401,7 +402,7 @@ fn the_banner_names_the_view() {
 
 /// The sky anchor: with a sky set the banner names `sky anchor N` for an `N` other than the
 /// default 4 (and nothing for 4) and the exposure row the ceiling the read-back carries with
-/// its `N`; `Q`'s symmetric preset keeps the anchor; with
+/// its `N` and the read-back's sky share; `Q`'s symmetric preset keeps the anchor; with
 /// no read-back the row names the model's `max`.
 #[test]
 fn the_banner_and_row_name_the_sky_anchor() {
@@ -438,12 +439,15 @@ fn the_banner_and_row_name_the_sky_anchor() {
         frame: 3,
         held: false,
         ceiling: 0.0625,
+        sky_share: 0.23,
     }));
     let row = m.exposure_row();
     assert_eq!(row.ceiling, Some((-4.0, Some(4.0))));
+    assert_eq!(row.sky_share, Some(0.23));
     assert_eq!(
         row.to_string(),
-        "exposure auto eye -6.64 EV  scene +0.0 EV  settles -4.00 EV  ceiling -4.00 EV (anchor 4)"
+        "exposure auto eye -6.64 EV  scene +0.0 EV  settles -4.00 EV  ceiling -4.00 EV (anchor 4, \
+         sky 23 %)"
     );
     m.press(ModeKey::Exposure, 0.0);
     let vxe_render::Exposure::Auto(sym) = m.lighting.exposure else {

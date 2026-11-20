@@ -413,7 +413,8 @@ pub fn write_queue_row(out: &mut String, st: &vxe_render::QueueStats, step_ms: f
 /// The exposure row: the mode in words, the exposure the next frame uses in EV (`log2 e`), the
 /// metered scene in EV (log2 of its luminance; `None` before the first read-back or while the
 /// meter holds), and in auto the exposure the meter settles at and the ceiling in force, in
-/// EV, with the sky anchor's `N` when it sets the ceiling.
+/// EV, with the sky anchor's `N` when it sets the ceiling and the metered share of the view
+/// that is sky once read back.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ExposureRow {
     pub mode: String,
@@ -421,11 +422,13 @@ pub struct ExposureRow {
     pub scene_ev: Option<f32>,
     pub target_ev: Option<f32>,
     pub ceiling: Option<(f32, Option<f32>)>,
+    /// The metered share of sky in `[0, 1]` (`ExposureReadout::sky_share`).
+    pub sky_share: Option<f32>,
 }
 
 impl fmt::Display for ExposureRow {
     /// `exposure manual +0.00 EV  scene -7.9 EV`, with `  settles +5.53 EV  ceiling +2.00 EV
-    /// (anchor 4)` in auto.
+    /// (anchor 4, sky 23 %)` in auto.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "exposure {} {:+.2} EV", self.mode, self.ev)?;
         match self.scene_ev {
@@ -436,7 +439,14 @@ impl fmt::Display for ExposureRow {
             write!(f, "  settles {t:+.2} EV")?;
         }
         match self.ceiling {
-            Some((c, Some(n))) => write!(f, "  ceiling {c:+.2} EV (anchor {n})")?,
+            Some((c, Some(n))) => match self.sky_share {
+                Some(s) => write!(
+                    f,
+                    "  ceiling {c:+.2} EV (anchor {n}, sky {:.0} %)",
+                    100.0 * s
+                )?,
+                None => write!(f, "  ceiling {c:+.2} EV (anchor {n})")?,
+            },
             Some((c, None)) => write!(f, "  ceiling {c:+.2} EV")?,
             None => {}
         }

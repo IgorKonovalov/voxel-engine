@@ -91,25 +91,25 @@ fn state(device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) -> ExposureS
     ))
 }
 
-/// The meter's tiles as `(sum, count)` pairs.
-fn tiles(device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) -> Vec<[f32; 2]> {
+/// The meter's tiles as `(sum, count, sky count)` triples (a tile is four `f32`, the last 0).
+fn tiles(device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) -> Vec<[f32; 3]> {
     let n = SIZE.map(|v| v.div_ceil(8));
     let bytes = vxe_render::debug::read_buffer(
         device,
         queue,
         frame.exposure_tiles(),
         0,
-        8 * u64::from(n[0] * n[1]),
+        16 * u64::from(n[0] * n[1]),
     );
     bytes
-        .chunks(8)
-        .map(|p| [0, 1].map(|k| f32::from_le_bytes(p[4 * k..4 * k + 4].try_into().unwrap())))
+        .chunks(16)
+        .map(|p| [0, 1, 2].map(|k| f32::from_le_bytes(p[4 * k..4 * k + 4].try_into().unwrap())))
         .collect()
 }
 
 /// `sum(w S) / sum(w n)` over the tiles of one full-target view under `metering`, the weight
 /// at each 8 x 8 tile's centre (exposure.wgsl's formula), in f64.
-fn cpu_meter(tiles: &[[f32; 2]], metering: Metering) -> f64 {
+fn cpu_meter(tiles: &[[f32; 3]], metering: Metering) -> f64 {
     let tw = SIZE[0].div_ceil(8) as usize;
     let (cx, cy, half) = (
         f64::from(SIZE[0]) / 2.0,
@@ -153,8 +153,8 @@ fn a_wall_split_in_half_meters_the_mean_of_its_halves() {
         let t = tiles(&device, &queue, &frame);
         println!("{metering:?}: metered {} log2", s.metered_log2);
         assert!(
-            t.iter().all(|p| p[1] == 64.0),
-            "every tile counts 64 pixels"
+            t.iter().all(|p| p[1] == 64.0 && p[2] == 0.0),
+            "every tile counts 64 pixels, none of them sky"
         );
         assert!(
             (s.metered_log2 + 6.0).abs() <= 1e-3,
@@ -903,4 +903,143 @@ fn a_still_scene_holds_the_exposure() {
         .fold(0.0f32, f32::max);
     println!("still: the adapted level's largest move over 64 frames {worst:.2e} EV");
     assert!(worst <= 1.0 / 64.0, "{worst}");
+}
+
+/// A uniform sky of 0.5 over a floor (z 0) and a wall at `y >= WALL_Y` up to the eye's height,
+/// both of albedo 0 emitting grey `2^-12`; the eye at `EYE`.
+fn half_wall_world() -> World {
+    let mut t = MaterialTable::new();
+    assert_eq!(t.push(emitter("dim", 2f32.powi(-12))), 1);
+    World::generate(
+        ChunkExtent::new([-1, 0, 0], [1, 2, 1]),
+        &FnSource(|v: [i32; 3]| {
+            if v[2] < 1 || (v[1] >= WALL_Y && v[2] < EYE[2] as i32) {
+                1
+            } else {
+                AIR
+            }
+        }),
+        &t,
+    )
+}
+
+/// Plan 0094 Phase 7b bar 4 (ADR-0076 rule 5 on the ceiling): at 64 x 36 under a uniform sky of
+/// 0.5, `max` 2^7 and the anchor 4 (the anchored ceiling `2^4 0.18 / (0.5 * 0.5)`, about 3.53
+/// EV), the eye at the default rate with its dark constant at its light one's (0.15 s, no
+/// floor), so the adapted level moves at the cap too and stays over the ceiling. Frames 0..8
+/// face the half wall (the upper half sky), frames 8..72 look down onto the floor and the wall
+/// (no sky: the tiles' sky share falls to 0 at frame 8), frames 72.. face the half wall
+/// again. The ceiling binds throughout (the dim walls want far more exposure), so the
+/// exposure in force is the ceiling in force: its log2 moves by at most the rate's frame step
+/// `R_f` within 1/256 EV a frame, monotonically, up from frame 8 to `max` and down from frame
+/// 72 back to the anchored ceiling, each leg within `gap / R_f + 2` frames; with the rate 0
+/// the ceiling jumps to its target in the frame the share changes (the before). Traces
+/// printed.
+#[test]
+fn the_ceiling_moves_at_the_rate() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let gpu = mirror(&device, &queue, &half_wall_world());
+    let ahead = camera();
+    let down = Camera {
+        pitch: -60f32.to_radians(),
+        ..ahead
+    };
+    let r_f = f64::from(vxe_render::DEFAULT_EXPOSURE_RATE_EV_S) / 60.0;
+    let max = 7.0;
+    for rate in [vxe_render::DEFAULT_EXPOSURE_RATE_EV_S, 0.0] {
+        let auto = AutoExposure {
+            max: 2f32.powi(7),
+            rate_ev_s: rate,
+            tau_cone: 0.15,
+            cone_floor: 0.0,
+            ..AutoExposure::eye()
+        };
+        let mut frame = Frame::new(&device, 64, 36);
+        frame.set_resolution(&device, LightingResolution::Full);
+        frame.set_lighting(Lighting {
+            lamp: false,
+            candidates: 0,
+            exposure: Exposure::Auto(auto),
+            ..Lighting::default()
+        });
+        frame.set_dt(1.0 / 60.0);
+        frame.set_sky(Some(vxe_render::sky::Sky::uniform(0.5)));
+        let frames: Vec<usize> = if rate > 0.0 {
+            (0..132).collect()
+        } else {
+            (0..10).chain(72..74).collect()
+        };
+        let mut st = Vec::new();
+        for &k in &frames {
+            let cam = if (8..72).contains(&k) { &down } else { &ahead };
+            frame.step(&device, &queue, &gpu, cam, &LightParams::at_eye());
+            st.push(state(&device, &queue, &frame));
+        }
+        let e: Vec<f64> = st.iter().map(ev).collect();
+        let c: Vec<f64> = st.iter().map(|s| f64::from(s.ceiling).log2()).collect();
+        let sky: Vec<f32> = st.iter().map(|s| s.sky).collect();
+        println!("rate {rate}: frames {frames:?}");
+        println!("rate {rate}: exposure EV {e:.3?}");
+        println!("rate {rate}: ceiling EV {c:.3?}");
+        println!("rate {rate}: sky share {sky:.3?}");
+        let anchored = c[7];
+        assert!(
+            (anchored - 3.53).abs() < 0.05,
+            "the anchored ceiling {anchored}"
+        );
+        for (i, &k) in frames.iter().enumerate() {
+            let want_sky = !(8..72).contains(&k);
+            assert!(
+                if want_sky {
+                    sky[i] > 0.3
+                } else {
+                    sky[i] == 0.0
+                },
+                "frame {k}: sky share {}",
+                sky[i]
+            );
+            // At the rate 0 the adapted level jumps as well, so past frame 8 the meter binds.
+            assert!(
+                (e[i] - c[i]).abs() < 1e-3 || (rate == 0.0 && k >= 8),
+                "frame {k}: the ceiling binds: {e:?}"
+            );
+        }
+        if rate == 0.0 {
+            // Frames 0..10 then 72..74: the jump at 8 and at 72.
+            assert!(
+                (c[8] - max).abs() < 1e-3 && (c[10] - anchored).abs() < 1e-3,
+                "{c:?}"
+            );
+            continue;
+        }
+        let legs = ((max - anchored) / r_f).ceil() as usize + 2;
+        for k in 1..frames.len() {
+            let d = e[k] - e[k - 1];
+            assert!(
+                d.abs() <= r_f + 1.0 / 256.0,
+                "frame {k}: {} -> {}",
+                e[k - 1],
+                e[k]
+            );
+            let up = (8..72).contains(&k);
+            assert!(
+                if up { d >= -1e-4 } else { d <= 1e-4 },
+                "frame {k}: monotonic {} -> {}",
+                e[k - 1],
+                e[k]
+            );
+        }
+        assert!(
+            (e[8 + legs] - max).abs() < 1e-3,
+            "up within {legs}: {}",
+            e[8 + legs]
+        );
+        assert!(
+            (e[72 + legs] - anchored).abs() < 1e-3,
+            "down within {legs}: {}",
+            e[72 + legs]
+        );
+    }
 }
