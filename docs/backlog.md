@@ -177,6 +177,19 @@ chunks" frames, cold only (warm max 87 ms). Every `vxe-render` compute pipeline 
 so the time is something else the driver does on first use. The owner noticed no hitch and
 accepted it. Pick up when a start-up or first-frame plan needs the bar, with a driver trace.
 
+### The bake queue ordered by what the march touched (2026-11-20)
+
+From a devlog (voxelbee, "Adding A CACHE To My Custom VOXEL Game Engine", devlog 5): a GPU-run
+cache where every voxel a ray renders moves to the front, so residency follows visibility. We
+do not want its eviction (a turn would reveal unloaded data: pop-in against the stable-image
+rule; the mirror's distance window, ADR-0013, stays). The part worth taking is the signal: the
+march sets a bit per chunk it hit this frame, read back a frame late. Plan 0096's in-view drain
+orders jobs by an estimated size on screen; the touched set would order them by actual
+visibility, skipping chunks behind hills or the camera, and could order the mirror's uploads
+the same way. Cost guess (not measured): one atomic-free store per hit into a bitset of the
+window's chunks, one small readback. Pick up inside Plan 0096 if its in-view drain misses the
+10 s bar.
+
 ### A wgpu pipeline cache owned by the engine
 
 Noted 2026-11-16 from the NVIDIA GLCache overflow (over 1 GB, so nothing new was kept and every
