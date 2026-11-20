@@ -829,3 +829,78 @@ fn auto_exposure_finds_the_key_under_a_uniform_sky() {
     println!("under a uniform sky of 0.5: {s:?}");
     assert!((s.current / 0.36 - 1.0).abs() <= 0.01, "{}", s.current);
 }
+
+/// The frame after a step of `d` EV toward a brighter meter by which the capped eye is within
+/// 1/64 EV of its target, from the model's constants (`exposure.rs`'s test of the same name):
+/// with `r` the per-frame cap and `tau` ADR-0033's light constant in frames, the cap binds
+/// while the gap exceeds `tau r`, then the exponential tail decays from there, plus 2 frames.
+fn landing_frame(d: f64, r: f64, tau: f64) -> usize {
+    ((d - tau * r) / r).ceil() as usize + (tau * (64.0 * tau * r).ln()).ceil() as usize + 2
+}
+
+/// ADR-0076 rule 5 (Plan 0094 Phase 4 bar 1, at Phase 7a's rate): the box settled at `B` for
+/// 8 frames, then 2 EV brighter (`4 B`). Under the eye at its default rate
+/// ([`vxe_render::DEFAULT_EXPOSURE_RATE_EV_S`], `dt` 1/60) the GPU's adapted level follows
+/// `AutoExposure::step` in f64 within 1e-3, moves at most the rate's frame step within 1/256
+/// EV a frame, monotonically toward the target, and is within 1/64 EV of it by frame 8 plus
+/// [`landing_frame`]; with the rate 0 (ADR-0033's speed alone) it is within 1/64 EV by frame 8
+/// plus `ceil(9 ln 128)`, 44. Both traces printed.
+#[test]
+fn a_light_on_steps_the_exposure_by_at_most_the_rate() {
+    let eye = AutoExposure::eye();
+    let r_f = f64::from(vxe_render::DEFAULT_EXPOSURE_RATE_EV_S) / 60.0;
+    let tau = f64::from(eye.tau_light) * 60.0;
+    let landing = landing_frame(2.0, r_f, tau);
+    for (label, auto, by) in [
+        ("rate", eye, 8 + landing),
+        (
+            "no rate",
+            adr0033_eye(),
+            8 + (tau * 128f64.ln()).ceil() as usize,
+        ),
+    ] {
+        let Some(mut rig) = BoxRig::new(auto) else {
+            return;
+        };
+        let steps = [(B, 8), (4.0 * B, by + 8)];
+        let (states, _) = rig.series(&steps, &[]);
+        check_against_reference(label, &auto, &states, &luminances(&steps));
+        let target = f64::from(states[7].adapted_log2) + 2.0;
+        let a: Vec<f64> = states.iter().map(|s| f64::from(s.adapted_log2)).collect();
+        let reached = (8..a.len()).find(|&k| (a[k] - target).abs() <= 1.0 / 64.0);
+        println!("{label}: within 1/64 EV of the target at frame {reached:?}, the bar {by}");
+        assert!(
+            reached.is_some_and(|k| k <= by),
+            "{label}: {reached:?} against {by}"
+        );
+        if label == "rate" {
+            for k in 8..a.len() {
+                let step = a[k] - a[k - 1];
+                assert!(
+                    (-1e-4..=r_f + 1.0 / 256.0).contains(&step) && a[k] <= target + 1e-3,
+                    "frame {k}: {} -> {}",
+                    a[k - 1],
+                    a[k]
+                );
+            }
+        }
+    }
+}
+
+/// ADR-0076 rule 5's still clause (Plan 0094 Phase 4 bar 2): the box at `B` with no change,
+/// under the eye at its default rate: the adapted level stays within 1/64 EV of the first
+/// frame's over 64 frames.
+#[test]
+fn a_still_scene_holds_the_exposure() {
+    let Some(mut rig) = BoxRig::new(AutoExposure::eye()) else {
+        return;
+    };
+    let (states, _) = rig.series(&[(B, 64)], &[]);
+    let a0 = states[0].adapted_log2;
+    let worst = states
+        .iter()
+        .map(|s| (s.adapted_log2 - a0).abs())
+        .fold(0.0f32, f32::max);
+    println!("still: the adapted level's largest move over 64 frames {worst:.2e} EV");
+    assert!(worst <= 1.0 / 64.0, "{worst}");
+}
