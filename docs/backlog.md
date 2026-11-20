@@ -1227,7 +1227,13 @@ the march crosses much empty space to the far LOD. **What it takes:** meshes of 
 (they are not edited at that scale), drawn into the hit buffer's depth and normal before the march,
 which then starts at the near band. An ADR, and measurements on both adapters. **Pick up when** a
 reading names the far field's march as the frame's largest stage, or a view-distance budget
-cannot be met on the baseline GPU.
+cannot be met on the baseline GPU. **If picked up (2026-11-20):** the mesher to start from is
+binary greedy meshing (Davis Morley, "Greedy Meshing Voxels Fast", Handmade Seattle 2022): one
+64-bit occupancy mask per column, faces found by `col & !(col << 1)` per axis, rows merged by
+bit runs, quads packed in 32 bits; the talk reports meshing in tens of microseconds a 64^3
+chunk, which would make re-meshing an edited far mip cheap. His "global lattice" (raster one
+plane per voxel slice and look the voxel up per fragment) is rejected for us: it is a renderer
+in place of the march, with its overdraw.
 
 ## Later apps
 
