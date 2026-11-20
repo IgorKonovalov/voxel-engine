@@ -1234,6 +1234,9 @@ bit runs, quads packed in 32 bits; the talk reports meshing in tens of microseco
 chunk, which would make re-meshing an edited far mip cheap. His "global lattice" (raster one
 plane per voxel slice and look the voxel up per fragment) is rejected for us: it is a renderer
 in place of the march, with its overdraw.
+**Owner, 2026-11-20:** leans to this hybrid as the answer for long-distance rendering. Plan
+0033 (the marched clipmap, ADR-0028) is re-read against it before its lane starts: raster the
+clip levels' meshes against marching them, measured on both adapters, as an ADR either way.
 
 ## Later apps
 
