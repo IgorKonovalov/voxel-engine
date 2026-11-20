@@ -27,7 +27,7 @@ impl KeyJobs {
         self.waiting.contains(c) || self.open.contains_key(c)
     }
 
-    /// Forgets the waiting chunks `held` does not hold (the mirror no longer holds them full);
+    /// Forgets the waiting chunks `held` does not hold (the mirror does not hold them full);
     /// a job of such a chunk ends in the sink, which drops its block.
     pub(super) fn retain(&mut self, held: impl Fn(&[i32; 3]) -> bool) {
         self.waiting.retain(held);
@@ -89,7 +89,7 @@ impl BakeQueue {
     /// and while the key-only jobs pending or open hold under one slice of `cap` samples. Each
     /// is listed again and keeps every brick record; a chunk whose block is gone, coarse, or
     /// re-baked under the current light since it was marked leaves the wait, and one whose
-    /// listing no longer matches its block's bricks (an edit its dig has not re-baked) is left
+    /// listing does not match its block's bricks (an edit its dig has not re-baked) is left
     /// to the dig. Pushed at the front: [`BakeQueue::open_digs`] runs after and goes ahead.
     pub(in crate::bake) fn open_keys(
         &mut self,
