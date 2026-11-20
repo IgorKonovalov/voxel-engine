@@ -17,10 +17,6 @@ Rules:
 
 ## Next up
 
-### wasmtime 49.0.5's advisories: `cargo deny` fails
-
-Read 2026-11-20 at Plan 0094's tip: `cargo deny check` advisories fail on RUSTSEC-2026-0566, 0567 and 0568 against wasmtime 49.0.5 (`vxe-script-wasm`). They are new advisories, not a plan's change, so CI's deny job is red until this lands. The owner picked a chore lane after Plan 0094 merges: bump wasmtime (and its wasi crates) to a patched exact pin, rebuild the guests, and pass the `vxe-script-wasm` tests and `cargo deny`. No ignore entries.
-
 ### The light placement's eviction scan in a windowed glide
 
 Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 7: the first-fit index and a distance-ordered victim index, the bytes asserted equal, a headless glide with a shrunk light buffer as the reproduction; the figures moved into the plan's context.
