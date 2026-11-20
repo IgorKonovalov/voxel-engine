@@ -263,10 +263,10 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
     }]
 }
 
-/// The testbed's pre-roll drain (`--pre-roll-drain`), listed with the light queue's flags (a
-/// look at the outdoor scenes with their far light baked).
-pub(super) fn drain_flags() -> Vec<Flag<Parsing>> {
-    vec![Flag::value(
+/// `flags` (the light queue's) with the testbed's pre-roll drain (`--pre-roll-drain`, a look at
+/// the outdoor scenes with their far light baked) after them.
+pub(super) fn with_drain_flags(mut flags: Vec<Flag<Parsing>>) -> Vec<Flag<Parsing>> {
+    flags.push(Flag::value(
         &["--pre-roll-drain"],
         "SECONDS",
         "from the first frame hold the camera and bake at 40 ms a frame until the queue is idle or SECONDS pass, 1 to 600; the banner counts the jobs left",
@@ -275,7 +275,8 @@ pub(super) fn drain_flags() -> Vec<Flag<Parsing>> {
             p.args.bake.pre_roll_drain = Some(s);
             Ok(())
         },
-    )]
+    ));
+    flags
 }
 
 /// The section's flags of the sky's light at a hit: the sky rays, their history, the penumbra,

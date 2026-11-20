@@ -1170,10 +1170,7 @@ pub(crate) fn table() -> Table<Parsing> {
         },
         Section {
             title: "Light store and queue",
-            flags: bake_flags()
-                .into_iter()
-                .chain(super::outdoor::drain_flags())
-                .collect(),
+            flags: super::outdoor::with_drain_flags(bake_flags()),
         },
         Section {
             title: "Model viewer and assets",
