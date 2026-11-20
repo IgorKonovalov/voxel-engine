@@ -318,19 +318,23 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
         ),
         Flag::value(
             &["--key-far"],
-            "baked|ray",
-            "the key light's visibility where a voxel is small on screen: the store's baked \
-                 value with no ray and no history, or the per-pixel disc ray everywhere [baked]",
+            "baked|column|ray",
+            "the key light's visibility where a voxel is small on screen, with no ray and no \
+                 history: the store's baked value where fresh, else the column map's horizon \
+                 toward the sun; or the horizon alone; or the per-pixel disc ray everywhere \
+                 [baked]",
             |p: &mut Parsing, v| {
-                p.args.outdoor.key_far = v.named(vxe_render::KeyFar::from_name, "baked or ray")?;
+                p.args.outdoor.key_far =
+                    v.named(vxe_render::KeyFar::from_name, "baked, column or ray")?;
                 Ok(())
             },
         ),
         Flag::value(
             &["--key-far-mix"],
             "blend|step",
-            "inside the far normal's band under --key-far baked: the ray's mean blended to \
-                 the store's value by the band's weight, or the store's from its half [blend]",
+            "inside the far normal's band under --key-far baked or column: the ray's mean \
+                 blended to the far estimate by the band's weight, or the estimate from its \
+                 half [blend]",
             |p: &mut Parsing, v| {
                 p.args.outdoor.key_far_mix =
                     v.named(vxe_render::KeyFarMix::from_name, "blend or step")?;

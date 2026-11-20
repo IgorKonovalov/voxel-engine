@@ -1,7 +1,12 @@
 //! The motion wobble's reading rig (ADR-0079; from the `spike-motion-wobble` branch): the forest
 //! of seed 1, a still strip, a slow fly, a stop, a turn and a hold, each read as the display's
 //! frame-to-frame change by hit distance, and the far pixels whose hit's record is fresh (the
-//! "far-baked" class) beside all far ones. Nothing is asserted: a reading in `mod reading`.
+//! "far-baked" class) beside all far ones, and the far's key source per frame (the record, the
+//! column map's horizon, a landing's fade, the ray). Nothing is asserted: a reading in `mod
+//! reading`. The protocol (Plan 0095 Phase 4): no pre-roll drain (the queue steps at the
+//! fly-through's budget from the first frame), 120 settle frames, a still strip of 33, a fly of
+//! 180 at 1 m/s, a stop held 300, a 60-degree turn over 40, a hold of 300; `drain=N` is the
+//! drained control.
 //! `VXE_WOBBLE` names the arm (see `Arm::parse`), `VXE_TEST_ADAPTER` the adapter. Frames and
 //! maps go under `live/wobble/<arm>/`.
 #![allow(
@@ -80,8 +85,8 @@ impl Arm {
     /// (sharpen 0), `albedo`, `full`, `nofilter`, `farn0`, `pin`, `anyhist`, `keyoff`,
     /// `sky0`, `brick`, `sun=EL/AZ`, `speed=M_S`, `turn=DEG`, `drain=N`, `face` (store read
     /// face), `phases=N`, `dither`, `nostair`, `wnormal`, `ray` (`key_far ray`), `step`
-    /// (`key_far_mix step`), `pre=MS` (the queue's budget through the drain, the default's
-    /// after it).
+    /// (`key_far_mix step`), `column` (`key_far column`), `pre=MS` (the queue's budget through
+    /// the drain, the default's after it).
     fn parse() -> Self {
         let spec = std::env::var("VXE_WOBBLE").unwrap_or_else(|_| "default".into());
         let mut a = Arm {
@@ -100,7 +105,7 @@ impl Arm {
             sun: [40.0, 200.0],
             speed_m_s: 1.0,
             turn_deg: 60.0,
-            drain: 2000,
+            drain: 0,
             store_read_face: false,
             jitter_phases: None,
             dither: false,
@@ -158,6 +163,7 @@ impl Arm {
                 "kh" => a.key_history = v.parse().unwrap(),
                 "sh" => a.sky_history = v.parse().unwrap(),
                 "ray" => a.key_far = vxe_render::KeyFar::Ray,
+                "column" => a.key_far = vxe_render::KeyFar::Column,
                 "step" => a.key_far_mix = vxe_render::KeyFarMix::Step,
                 "pre" => a.pre_ms = Some(v.parse().unwrap()),
                 other => panic!("unknown arm token {other}"),
@@ -395,6 +401,51 @@ fn yawed(cam: &Camera, deg: f32) -> Camera {
 
 const DIAG_AT: [usize; 6] = [0, 8, 30, 60, 120, 240];
 
+/// The frames after the drain (none by default) before the segments, for the exposure.
+const SETTLE: usize = 120;
+
+/// The far's key source over the far lighting pixels (hit over 15 m) where the key light falls:
+/// shares of the record, the horizon, a landing's fade and the ray (the light pass's sample's b
+/// says a ray was cast; else the key slot's tag, pair.wgsl's `key_slot_decode`).
+fn far_sources(rig: &Rig, f: &Frame, eye: [f32; 3]) -> [f64; 4] {
+    let hits = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, f.light_hit_positions());
+    let pair = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, f.visibility_pair());
+    let vis = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, f.visibility_samples());
+    let mut n = [0usize; 4];
+    for (i, h) in hits.iter().enumerate() {
+        if h[3] > 1e30 || !h[3].is_finite() {
+            continue;
+        }
+        let d = ((h[0] - eye[0]).powi(2) + (h[1] - eye[1]).powi(2) + (h[2] - eye[2]).powi(2))
+            .sqrt()
+            * VOXEL_M;
+        let b = vis[4 * i + 2];
+        if d < 15.0 || b < 32 {
+            continue;
+        }
+        let y = pair[i][1];
+        let k = if b > 127 {
+            3
+        } else if y <= -0.99 {
+            0
+        } else if (1.99..=3.01).contains(&y) {
+            1
+        } else {
+            2
+        };
+        n[k] += 1;
+    }
+    let t = n.iter().sum::<usize>().max(1) as f64;
+    n.map(|v| 100.0 * v as f64 / t)
+}
+
+fn fmt_sources(v: &[f64; 4]) -> String {
+    format!(
+        "record {:.1} % horizon {:.1} % fade {:.1} % ray {:.1} %",
+        v[0], v[1], v[2], v[3]
+    )
+}
+
 struct Segment {
     name: &'static str,
     /// Per pair: the change by class over 4 levels and the mean |dY|.
@@ -407,6 +458,8 @@ struct Segment {
     /// At the sampled frames: (k, age per lighting pixel, source word, cast, kind).
     diag: Vec<Diag>,
     gw: usize,
+    /// Per frame: the far's key sources ([`far_sources`]).
+    sources: Vec<[f64; 4]>,
 }
 
 /// A sampled frame's diagnostic: its index, and per lighting pixel the age, the source word,
@@ -436,6 +489,7 @@ fn run_segment(
     let mut diag = Vec::new();
     let mut gw = 1usize;
     let mut k = 0usize;
+    let mut sources = Vec::new();
     let mut sum_pass = Vec::<f64>::new();
     for cam in cams {
         queue_step(rig, &mut s.frame, &cam);
@@ -449,6 +503,7 @@ fn run_segment(
         gw = s.frame.light_hit_positions().width() as usize;
         let cls = classes(&shot.hits, &shot.source, gw, cam.position.to_array());
         let y = lumas(&shot.display);
+        sources.push(far_sources(rig, &s.frame, cam.position.to_array()));
         if keep && DIAG_AT.contains(&k) {
             let mom = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, s.frame.moments());
             let kind: Vec<u8> = mom.iter().map(|p| p[3].floor() as u8).collect();
@@ -494,10 +549,16 @@ fn run_segment(
         .filter(|(_, v)| **v / k as f64 > 0.05)
         .map(|(n, v)| format!("{n} {:.2}", v / k as f64))
         .collect();
+    let src_mean = sources.iter().fold([0.0; 4], |a, v| {
+        [0, 1, 2, 3].map(|c| a[c] + v[c] / sources.len().max(1) as f64)
+    });
     println!(
-        "  {name}: {k} frames; pass ms: {}; at its end {}",
+        "  {name}: {k} frames; pass ms: {}; at its end {}; far key sources, mean: {}; first: {}; last: {}",
         ms.join(", "),
-        depth(&s.frame)
+        depth(&s.frame),
+        fmt_sources(&src_mean),
+        sources.first().map_or("-".into(), fmt_sources),
+        sources.last().map_or("-".into(), fmt_sources)
     );
     Segment {
         name,
@@ -507,6 +568,7 @@ fn run_segment(
         frames,
         diag,
         gw,
+        sources,
     }
 }
 
@@ -582,6 +644,19 @@ fn hold_series(seg: &Segment, cls: &[u8], still_far_max: f64) {
         "  {}: far pair share back under the still max {still_far_max:.2} % after {back_pair:?} frames; within it of the final frame after {back_final:?} frames",
         seg.name
     );
+    let at: Vec<String> = [0usize, 30, 60, 120]
+        .iter()
+        .filter(|&&i| i < seg.frames.len())
+        .map(|&i| {
+            let c = change_by_class(&seg.frames[i], last, cls, 4);
+            let src = seg.sources.get(i).map_or("-".into(), fmt_sources);
+            format!(
+                "+{i}: far {:.2} %/{:.3} near {:.2} %/{:.3} mid {:.2} % ({src})",
+                c[3].0, c[3].1, c[1].0, c[1].1, c[2].0
+            )
+        })
+        .collect();
+    println!("  {} to-final over 4: {}", seg.name, at.join("; "));
     for r in rows {
         println!("    {r}");
     }
@@ -723,7 +798,7 @@ mod reading {
             "  queue drained {drained} after {n} frames ({:.1} s)",
             t.elapsed().as_secs_f64()
         );
-        for _ in 0..240 {
+        for _ in 0..SETTLE {
             queue_step(&mut rig, &mut s.frame, &cam0);
             s.run(&rig, &cam0);
         }

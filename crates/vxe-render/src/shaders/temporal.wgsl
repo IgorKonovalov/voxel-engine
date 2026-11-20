@@ -87,12 +87,15 @@
 // where the direct part's history resets (no accepted taps, an edit box, a fresh pixel) and on
 // the sky-change bit, but not on a change of the list of lights; no clamp (the term is
 // bounded). It joins the direct part at the direct part's blend weight. Under
-// LIGHTING_KEY_BAKED (ADR-0079), at a cube face whose cell holds a fresh baked key visibility
-// (`store_key_visibility`: bilinear over the 2 x 2 cells, mixed over the shading normal's
-// directions as the smoothed sky term) the visibility is that value where the light pass cast
-// no key ray (the sample's b KEY_FROM_STORE: the far normal's weight `w` at 1, or at least one
-// half under LIGHTING_KEY_STEP), with no screen history; elsewhere the mean, seeded from the
-// value at a reset, blended toward it by `w` (LIGHTING_KEY_STEP: none below one half).
+// LIGHTING_KEY_BAKED (ADR-0079) a cube face's far estimate is the store's fresh baked key
+// visibility (`store_key_visibility`: bilinear over the 2 x 2 cells, mixed over the shading
+// normal's directions as the smoothed sky term; never under LIGHTING_KEY_COLUMN), else the
+// column map's horizon toward the sun (`column_key_visibility`). Where the light pass cast no
+// key ray (the sample's b KEY_FROM_STORE: the far normal's weight `w` at 1, or at least one
+// half under LIGHTING_KEY_STEP) the visibility is that estimate with no screen history, a
+// switch of its source riding one fade (`key_far_fade`, the pair's g tagged by the source);
+// elsewhere the mean, seeded from the estimate at a reset, blended toward it by `w`
+// (LIGHTING_KEY_STEP: none below one half).
 //
 // A cube face's emissive part (`reads_store`) is its brick record's value for its direction
 // (`store_brick_value`; with Params.lighting bit 14, where the shading normal is not the face
@@ -315,7 +318,7 @@ fn store_summary_sky(head: StoreHead, c: vec3<i32>, face: u32) -> vec2<f32> {
 
 // Cell `c`'s key light visibility for direction `face` (ADR-0079) in x, with a 1 in y; 0 where
 // its record lacks the direction, was baked with no key light (KEY_BAKED clear) or is
-// SKY_STALE (a dig's ring: the channels share the bit). shade.wgsl's `key_baked` is the test.
+// SKY_STALE (a dig's ring: the channels share the bit).
 fn store_key_cell(head: StoreHead, c: vec3<i32>, face: u32) -> vec2<f32> {
     let rec = store_cell_record(head, c);
     if (rec == 0u || ((store[rec + 6u] >> (16u + face)) & 1u) == 0u
@@ -852,7 +855,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (((params.lighting & LIGHTING_STORE_BY_NORMAL) != 0u || on_entity) && any(rec.n != nf)) {
             e = store_value_by_normal(head, voxel, face, value, rec.n);
         }
-        if (!on_entity && (params.lighting & LIGHTING_KEY_BAKED) != 0u) {
+        if (!on_entity && (params.lighting & (LIGHTING_KEY_BAKED | LIGHTING_KEY_COLUMN)) == LIGHTING_KEY_BAKED) {
             key_store = store_key_visibility(head, store_voxel(rec.p, nf), face, rec.n);
         }
         // The sky's term (ADR-0070) where no ray was cast: a face's baked visibility, else the
@@ -1099,20 +1102,40 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     var t_key = vec3<f32>(0.0);
     if (vis.z > 0.5 * KEY_FROM_STORE) {
-        var k = key_store.x;
-        if (vis.z > 2.0 * KEY_FROM_STORE || key_store.y == 0.0) {
-            let seed = select(-1.0, key_store.x, key_store.y > 0.0);
-            pair.y = key_mean(vis.y, hp.y, age, !accepted || fresh, seed);
-            k = pair.y;
-            if (key_store.y > 0.0) {
-                let w = far_normal_weight(params.views[view_of(full_px(gid.xy))], rec.t);
-                let step = (params.lighting & LIGHTING_KEY_STEP) != 0u;
-                k = select(mix(pair.y, key_store.x, w), select(pair.y, key_store.x, w >= 0.5), step);
+        let key_cast = vis.z > 2.0 * KEY_FROM_STORE;
+        let g = key_slot_decode(hp.y);
+        // A slot blended from taps of two kinds holds no history.
+        let reset = !accepted || fresh || u32(g.y) == KEY_SRC_NONE;
+        // The far estimate (ADR-0079) at a cube face under LIGHTING_KEY_BAKED: the record
+        // where fresh (not under LIGHTING_KEY_COLUMN), else the column map's horizon; read
+        // where no ray was cast, inside the far normal's band, and to seed a reset mean.
+        let far_on = (params.lighting & LIGHTING_KEY_BAKED) != 0u && stored && !on_entity;
+        let w = far_normal_weight(params.views[view_of(full_px(gid.xy))], rec.t);
+        var k_far = -1.0;
+        var far_src = KEY_SRC_RECORD;
+        if (far_on && (!key_cast || w > 0.0 || reset)) {
+            k_far = key_store.x;
+            if (key_store.y == 0.0) {
+                k_far = column_key_visibility(rec.p, lift_n);
+                far_src = KEY_SRC_HORIZON;
             }
-        } else {
-            // The store answers with no ray: the mean holds its value, so a pixel that leaves
-            // the band restarts from it.
-            pair.y = key_store.x;
+        }
+        var k = 0.0;
+        if (key_cast) {
+            // Under the far estimate every mean is seeded (the horizon always answers), so the
+            // seed's weight holds from the reset on.
+            let seed = select(-1.0, max(k_far, 0.0), far_on);
+            pair.y = key_mean(vis.y, g.x, age, reset, seed);
+            k = pair.y;
+            if (k_far >= 0.0 && w > 0.0) {
+                let step = (params.lighting & LIGHTING_KEY_STEP) != 0u;
+                k = select(mix(pair.y, k_far, w), select(pair.y, k_far, w >= 0.5), step);
+            }
+        } else if (k_far >= 0.0) {
+            // No ray: the far estimate with no screen history, one fade at a source's switch.
+            let f = key_far_fade(k_far, far_src, hp.y, !reset);
+            k = f.x;
+            pair.y = f.y;
         }
         t_key = key_light_at(rec.p, rec.n) * k * exposure_now();
     }

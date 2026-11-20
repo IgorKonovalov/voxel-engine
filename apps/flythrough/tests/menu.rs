@@ -796,3 +796,28 @@ fn a_held_arrow_repeats() {
     assert_eq!(steps(&step_at(&mut menu, &press, &m, &v, 700.0).acts), 1);
     assert!(menu.editing());
 }
+
+/// Plan 0095 Phase 4: the `key far` row cycles baked, column, ray and back, its words naming
+/// each, and the banner names the two that are not the default.
+#[test]
+fn the_key_far_row_cycles_its_three_sources() {
+    let t = toggle("key far");
+    let mut m = modes(false);
+    m.sky = true;
+    let mut seen = Vec::new();
+    for _ in 0..3 {
+        press(t, &mut m, 1.0);
+        seen.push(m.lighting.key_far);
+        let mut words = String::new();
+        m.write_key_far(&mut words);
+        assert_eq!(
+            words,
+            match m.lighting.key_far {
+                vxe_render::KeyFar::Baked => String::new(),
+                k => format!("key far {}, ", k.name()),
+            }
+        );
+    }
+    use vxe_render::KeyFar;
+    assert_eq!(seen, [KeyFar::Column, KeyFar::Ray, KeyFar::Baked]);
+}

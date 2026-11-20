@@ -22,13 +22,16 @@ fn the_sky_term_defaults_to_the_smoothed_normal() {
     );
 }
 
-/// Plan 0095 Phase 2: `key_far ray` sets no key bit whatever the mix, so its lighting
-/// bits are the frame's before the channel; `baked` sets the store's bit, and `step` its
-/// own beside it.
+/// Plan 0095 Phases 2 and 4: `key_far ray` sets no key bit whatever the mix, so its lighting
+/// bits are the frame's before the channel (Phase 2's, to the bit); `baked` sets the far
+/// estimate's bit, `column` the horizon's beside it, and `step` its own beside either; every
+/// value round-trips through its name.
 #[test]
 fn the_key_far_ray_sets_no_key_bit() {
-    use super::{KeyFar, KeyFarMix, LIGHTING_KEY_BAKED, LIGHTING_KEY_STEP, Lighting};
-    let keys = LIGHTING_KEY_BAKED | LIGHTING_KEY_STEP;
+    use super::{
+        KeyFar, KeyFarMix, LIGHTING_KEY_BAKED, LIGHTING_KEY_COLUMN, LIGHTING_KEY_STEP, Lighting,
+    };
+    let keys = LIGHTING_KEY_BAKED | LIGHTING_KEY_STEP | LIGHTING_KEY_COLUMN;
     let at = |key_far, key_far_mix| {
         Lighting {
             key_far,
@@ -44,11 +47,23 @@ fn the_key_far_ray_sets_no_key_bit() {
         at(KeyFar::Baked, KeyFarMix::Blend),
         ray | LIGHTING_KEY_BAKED
     );
-    assert_eq!(at(KeyFar::Baked, KeyFarMix::Step), ray | keys);
+    assert_eq!(
+        at(KeyFar::Baked, KeyFarMix::Step),
+        ray | LIGHTING_KEY_BAKED | LIGHTING_KEY_STEP
+    );
+    assert_eq!(
+        at(KeyFar::Column, KeyFarMix::Blend),
+        ray | LIGHTING_KEY_BAKED | LIGHTING_KEY_COLUMN
+    );
+    assert_eq!(at(KeyFar::Column, KeyFarMix::Step), ray | keys);
     assert_eq!(
         (Lighting::default().key_far, Lighting::default().key_far_mix),
         (KeyFar::Baked, KeyFarMix::Blend)
     );
+    assert_eq!(KeyFar::ALL.map(KeyFar::name), ["baked", "column", "ray"]);
+    for k in KeyFar::ALL {
+        assert_eq!(KeyFar::from_name(k.name()), Some(k));
+    }
 }
 
 /// Plan 0086 Phase 25 (the 86d window's state): the key light's visibility mean holds 256

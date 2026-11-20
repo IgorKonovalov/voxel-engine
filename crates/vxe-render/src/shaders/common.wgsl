@@ -539,7 +539,7 @@ fn emission_of(m: u32) -> vec3<f32> {
 // solid to the field, and the field walk composites no translucent layer.
 
 // The light pass's visibility sample's b (shade.wgsl's `vis_out`) where the key light falls on
-// a face whose visibility the store answers with no ray (ADR-0079): under one half, which no
-// tap that pools the key light's ray (atrous.wgsl) takes for a cast one; 1 where the ray was
-// cast. The temporal pass tells the two apart at its double.
+// a face whose visibility the temporal pass's far estimate answers with no ray (ADR-0079):
+// under one half, which no tap that pools the key light's ray (atrous.wgsl) takes for a cast
+// one; 1 where the ray was cast. The temporal pass tells the two apart at its double.
 const KEY_FROM_STORE: f32 = 0.25;

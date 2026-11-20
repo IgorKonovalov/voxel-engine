@@ -18,8 +18,9 @@ fn penumbra_is_disc_unless_named() {
     assert!(parse_args_from(argv(&["--penumbra", "soft"])).is_err());
 }
 
-/// Plan 0095 Phase 2: `--key-far` is baked with the blend unless named, which the banner leaves
-/// out; `ray` and `--key-far-mix step` reach the lighting and the banner with a sky set.
+/// Plan 0095 Phases 2 and 4: `--key-far` is baked with the blend unless named, which the banner
+/// leaves out; `ray`, `column` and `--key-far-mix step` reach the lighting and the banner with a
+/// sky set.
 #[test]
 fn key_far_is_baked_blend_unless_named() {
     use vxe_render::{KeyFar, KeyFarMix};
@@ -40,6 +41,9 @@ fn key_far_is_baked_blend_unless_named() {
     let r = parse_args_from(argv(&["--source", "outdoor", "--key-far", "ray"])).unwrap();
     assert_eq!(r.start_lighting().key_far, KeyFar::Ray);
     assert!(r.start_modes(0.0).line().contains("key far ray, "));
+    let r = parse_args_from(argv(&["--source", "outdoor", "--key-far", "column"])).unwrap();
+    assert_eq!(r.start_lighting().key_far, KeyFar::Column);
+    assert!(r.start_modes(0.0).line().contains("key far column, "));
     assert!(parse_args_from(argv(&["--key-far", "far"])).is_err());
     assert!(parse_args_from(argv(&["--key-far-mix", "fade"])).is_err());
 }

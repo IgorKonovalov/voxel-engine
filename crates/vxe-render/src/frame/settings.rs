@@ -270,9 +270,14 @@ pub(crate) const LIGHTING_HOOK_SEED_STALE_F: u32 = 1 << 30;
 /// gradient's normal at every distance ([`SkyNormal::Smoothed`]).
 pub(crate) const LIGHTING_SKY_SMOOTHED: u32 = 1 << 24;
 
-/// `Params::lighting` bit: the key light's visibility is the store's where a voxel is small on
-/// screen ([`KeyFar::Baked`], ADR-0079).
+/// `Params::lighting` bit: where a voxel is small on screen the key light's visibility is the
+/// far estimate, with no ray: the store's where fresh, else the column map's horizon
+/// ([`KeyFar::Baked`], ADR-0079); with [`LIGHTING_KEY_COLUMN`] the horizon alone.
 pub(crate) const LIGHTING_KEY_BAKED: u32 = 1 << 11;
+
+/// `Params::lighting` bit, with [`LIGHTING_KEY_BAKED`]: the far estimate is the column map's
+/// horizon at every face, record or not ([`KeyFar::Column`]).
+pub(crate) const LIGHTING_KEY_COLUMN: u32 = 1 << 31;
 
 /// `Params::lighting` bit: inside the far normal's band the store's key visibility steps in at
 /// the weight's half ([`KeyFarMix::Step`]); clear, it blends by the weight.
@@ -670,20 +675,24 @@ named_enum!(Penumbra {
 /// Where the key light's visibility comes from where a voxel is small on screen (ADR-0079).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum KeyFar {
-    /// At a cube face whose cell holds a fresh baked key visibility (`KEY_BAKED`, not
-    /// `SKY_STALE`): where the far normal's weight is 1 (at and over one half under
-    /// [`KeyFarMix::Step`]) the store's value read bilinear with no screen history and no key
-    /// ray; between the band's ends the ray's running mean and the store's value by
-    /// [`KeyFarMix`]; and a reset key mean seeded from the store's value. Anywhere else the
-    /// ray. The default.
+    /// The far estimate at a cube face: the store's baked key visibility where its cell holds
+    /// a fresh one (`KEY_BAKED`, not `SKY_STALE`), read bilinear, else the column map's horizon
+    /// toward the sun softened by the disc's radius. Where the far normal's weight is 1 (at and
+    /// over one half under [`KeyFarMix::Step`]) the estimate with no key ray and no screen
+    /// history, a switch of its source (the record's landing, a re-bake) riding one fade;
+    /// between the band's ends the ray's running mean and the estimate by [`KeyFarMix`]; and a
+    /// reset key mean seeded from the estimate. Anywhere else the ray. The default.
     #[default]
     Baked,
+    /// As [`KeyFar::Baked`] with the column map's horizon at every far face, record or not.
+    Column,
     /// The per-pixel disc ray and its running mean at every distance (ADR-0027).
     Ray,
 }
 
 named_enum!(KeyFar {
     Baked => "baked",
+    Column => "column",
     Ray => "ray",
 });
 
@@ -1116,10 +1125,15 @@ impl Lighting {
             } else {
                 0
             }
-            | match (self.key_far, self.key_far_mix) {
-                (KeyFar::Ray, _) => 0,
-                (KeyFar::Baked, KeyFarMix::Blend) => LIGHTING_KEY_BAKED,
-                (KeyFar::Baked, KeyFarMix::Step) => LIGHTING_KEY_BAKED | LIGHTING_KEY_STEP,
+            | match self.key_far {
+                KeyFar::Ray => 0,
+                KeyFar::Baked => LIGHTING_KEY_BAKED,
+                KeyFar::Column => LIGHTING_KEY_BAKED | LIGHTING_KEY_COLUMN,
+            }
+            | if self.key_far != KeyFar::Ray && self.key_far_mix == KeyFarMix::Step {
+                LIGHTING_KEY_STEP
+            } else {
+                0
             }
     }
 

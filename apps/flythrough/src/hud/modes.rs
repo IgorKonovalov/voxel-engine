@@ -561,7 +561,8 @@ impl Modes {
             }
             ModeKey::KeyFar => {
                 l.key_far = match l.key_far {
-                    vxe_render::KeyFar::Baked => vxe_render::KeyFar::Ray,
+                    vxe_render::KeyFar::Baked => vxe_render::KeyFar::Column,
+                    vxe_render::KeyFar::Column => vxe_render::KeyFar::Ray,
                     vxe_render::KeyFar::Ray => vxe_render::KeyFar::Baked,
                 }
             }
@@ -657,8 +658,8 @@ impl Modes {
     }
 
     /// The key light's far source in words, as the banner names it where it is not the
-    /// default (`key far baked, key far mix blend`): `key far ray, `, or `key far baked, key far
-    /// mix step, `; empty for the default.
+    /// default (`key far baked, key far mix blend`): `key far ray, `, `key far column, `, or
+    /// `key far baked, key far mix step, `; empty for the default.
     pub fn write_key_far(&self, out: &mut String) {
         let l = &self.lighting;
         let d = vxe_render::Lighting::default();

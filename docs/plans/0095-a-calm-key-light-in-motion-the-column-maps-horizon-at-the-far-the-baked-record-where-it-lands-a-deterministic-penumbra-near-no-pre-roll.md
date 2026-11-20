@@ -600,7 +600,7 @@ its Phases 5 to 7 are Phases 9 to 11.
 | 1: The key channel in the store | dev | done (exploration) | 011d707a |
 | 2: The read at the far band and the seed | dev | done (exploration); readings partial | 937a08da |
 | 3: The owner's window W1 | human | run 2026-11-20 after a pre-roll drain (`7d19d8b0`, testbed flag); forest runs 1a to 2b judged, the hills and the day cycle not; no pick, the owner's rule instead (readings log) | |
-| 4: The far's instant estimate: the column map's horizon | dev | not started | |
+| 4: The far's instant estimate: the column map's horizon | dev | done (exploration); readings in Phase 5's log section | committed with this row |
 | 5: The near with no history: the approach penumbra | dev | not started | |
 | 6: The reach-bound count, the no-value bricks | dev | not started | |
 | 7: The owner's window W2, no pre-roll | human | not started | |
@@ -637,6 +637,20 @@ its Phases 5 to 7 are Phases 9 to 11.
   fresh, also where the record landed after the pixel's reset.
 - Phase 3 (W1): `--pre-roll-drain SECONDS` (`7d19d8b0`, testbed only) was built for the window
   and stays a reading flag; the W1 verdicts and the reach reading are in the readings log.
+
+- Phase 4: files beyond its list: `pair.wgsl` holds `column_key_visibility` and the key
+  slot's tags (not `temporal.wgsl`); `tests/menu.rs` gains the `key far` cycle test;
+  `gpu_world/columns.rs` untouched (no absorbing top built).
+- Phase 4: the horizon reads each column top as a box from the cell's entry distance, not
+  bilinear over 2 x 2 cells: bilinear tops put a 10-voxel slab's ramp at 7.9 voxels where the
+  done-when's arithmetic says 8.9; a lifted point under its own cell's top reads 0.
+- Phase 4: the landing fade moves at most 1/16 a frame (a fixed rate, no frame counter: the
+  pair's w holds the sky's fade), so a small change lands in fewer than FADE frames; a cast
+  pixel's mean hands over to the far value at once under `blend`, fades under `step`.
+- Phase 4: the far estimate in the band (0 < w < 1) switches source with no fade.
+- Phase 4: the landing test bakes the floor's `+z` faces of three brick columns with
+  `bake_until`, not one stepped job; it asserts with its own trace check, not `rules.rs`
+  (a fly-through test helper vxe-render's tests cannot reach).
 
 ### Close triggers
 
