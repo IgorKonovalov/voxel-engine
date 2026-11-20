@@ -5,7 +5,7 @@
 use crate::camera::{Camera, View};
 use crate::exposure::{
     EX_AUTO, EX_METER, EX_RESET, Exposure, ExposurePass, ExposureReadout, ExposureUniform,
-    METER_TILE, Metering,
+    METER_TILE, METER_TILE_BYTES, Metering,
 };
 use crate::fsr2::{Fsr2, UpscalerKind};
 use crate::gpu_util::*;
@@ -197,7 +197,8 @@ impl Frame {
 
     /// The meter's tiles the composite writes (`COPY_SRC`): per 8 x 8 workgroup of the
     /// internal target, row-major over `ceil(w / 8) x ceil(h / 8)`, the sum of its pixels'
-    /// clamped log2 luminance and their count, as two `f32`.
+    /// clamped log2 luminance, their count, the count of those that are sky (a miss) and 0, as
+    /// four `f32`.
     pub fn exposure_tiles(&self) -> &wgpu::Buffer {
         &self.targets.tiles
     }

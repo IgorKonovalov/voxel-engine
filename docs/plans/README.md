@@ -3,9 +3,10 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0095** (ADRs are a separate sequence, see `../adrs/README.md` for its
-next free number). Plan 0094, Plan 0086's follow-up (the light's transitions), was approved
-2026-11-19 and runs after Plan 0086's close, before Plan 0087.
+**Next free number: 0097** (0095 is claimed by the motion-wobble lane, branch
+`spike-motion-wobble`, 2026-11-20; 0096 is the performance plan below; ADRs are a separate
+sequence, see `../adrs/README.md` for its next free number). Plan 0094, Plan 0086's follow-up
+(the light's transitions), closed 2026-11-20, v0.68.0.
 
 ## Active roster
 
@@ -30,8 +31,8 @@ next free number). Plan 0094, Plan 0086's follow-up (the light's transitions), w
 | [0091](0091-the-frame-profiler-scopes-across-threads-a-gpu-lane-a-dump-for-agents-and-a-hud-ticker.md) | The frame profiler: scopes across the threads, a GPU lane, a dump the agent ranks, budget scopes, a HUD ticker | approved | M7, ADR-0077. After 0087 and 0089, before 0090 (owner). |
 | [0092](0092-wgsl-hot-reload-in-the-fly-through-an-mtime-poll-pipelines-rebuilt-and-the-old-ones-kept-on-an-error.md) | WGSL hot reload in the fly-through: an mtime poll, pipelines rebuilt from disk, the old kept on an error | approved | M7, no ADR. After 0091 in its lane, before 0090 (owner). |
 | [0093](0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) | The README rewrite with reproducible screenshots: a shot manifest, a shoot script, an image gate, the owner's picks | approved | M7 docs, no ADR. After 0087 merges, beside 0089, before 0091. |
-| [0094](0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md) | Light transitions: the key mean's age, the no-ray prior and fades, the exposure's rate, the hole band, the castle | in-progress | M10, ADR-0076. Window done 2026-11-20; fix pass, then close. |
 | [0095](0095-a-calm-key-light-in-motion-the-column-maps-horizon-at-the-far-the-baked-record-where-it-lands-a-deterministic-penumbra-near-no-pre-roll.md) | A calm key light in motion: the horizon far, the record where it lands, a deterministic penumbra near | in-progress | M10, ADR-0079. Amended at W1; W2 next. |
+| [0096](0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) | Performance: the bake queue's drain, the step off its depth, the RENOIR light pass, `alloc` and the eviction scan | approved, amended 11-20 | M10, cross-cutting, ADR-0080 (proposed). After 0095, before 0087. |
 <!-- roster:end -->
 
 ## Sequence
@@ -194,9 +195,23 @@ re-read; Plan 0090's first baseline then lands on the fixed tree); the alternati
 plan closes on a short fix pass (Phase 7a: the exposure's rate 3.75 EV/s, the arms' pipelines
 built in the loading stage, the pool off, six tests restated), Phase 8 narrowed, and a short
 second look (Phase 9). ADR-0076 gained rule 6 (the undrained image is the judged image). The
-motion wobble the owner named after the window is a separate lane's.
+motion wobble the owner named after the window is a separate lane's. **Closed 2026-11-20, v0.68.0**
+(windows 94b and 94c: the rate pinned at 3.75 EV/s, the ceiling by the sky in view, the night
+at `max`).
 
-Every active plan is approved (Plans 0091, 0092 and 0093 on 2026-11-19; Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
+**Plan 0096** (performance: the bake queue's drain as a budget, ADR-0080 proposed: a record by
+rule for a chunk with no face or buried with no emitter in reach, a sample tier by the chunk's
+size on screen through the far-normal band, a slice that drains what is in view and falls to the
+line once landed; the queue's step off its depth; the RENOIR's outdoor light pass lever by
+lever; the sync's `alloc` and the light placement's eviction scan from the backlog; drafted
+2026-11-20 from the owner's "address performance next" (2026-11-11) and window 94a's "if we have
+to wait for a minute for light to settle, something is wrong with the light", ADR-0076 rule 6;
+awaits the go): **after Plan 0095 (the motion wobble, drafted on branch `spike-motion-wobble`)
+closes and merges**, which follows Plan 0094; then Plan 0087 (owner's order, 2026-11-20: 0094,
+0095, 0096, 0087, 0089 and 0093, 0091, 0092, 0090, M10). Its Phase 1 is readings only, on both
+adapters, on the undrained image.
+
+Every active plan but Plan 0096 is approved (Plans 0091, 0092 and 0093 on 2026-11-19; Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Approval accepts the design; a plan's lane
 starts only when the plans its "Starts after" line names have closed and merged, and where that
 line asks for it, after the architect has re-read the plan against the new tip. The approved
@@ -208,6 +223,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0094](done/0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md) | Light transitions: the still tap, the no-record prior and a 16-frame fade, the exposure at 3.75 EV/s, the ceiling by the sky in view and at most `max` | 2026-11-20, v0.68.0 |
 | [0086](done/0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md) | Still outdoor light: a sky visibility baked per brick, the column map, the sky and key rays on a long history, canopies as bricks; ADR-0070 accepted; the leftovers to Plan 0094 | 2026-11-19, v0.67.0 |
 | [0083](done/0083-anything-from-a-vox-palette-materials-a-material-file-and-large-scenes-stamped-into-the-world.md) | Anything from a `.vox`: palette materials, a material file, brick prefabs, placements past residency, structures in the belt with a coarse ghost; ADR-0065, 0066, 0077 | 2026-11-19, v0.66.0 |
 | [0079](done/0079-entities-aware-of-floor-and-walls-a-surface-mover-the-smoothed-normal-and-a-wandering-demo.md) | Entities aware of the floor and the walls: a sphere surface mover, the solid-count gradient, a `.rig` body and stride, a seeded wander; 64 spiders +3.07 ms CPU (backlog) | 2026-11-18, v0.65.0 |

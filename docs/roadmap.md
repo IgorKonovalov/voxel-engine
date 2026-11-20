@@ -759,7 +759,7 @@ a cheap query.
   positional voice as an audio source through M4's occlusion.
 - **ADRs expected:** transport; voice codec.
 
-### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0; Plan 0032 closed 2026-11-17, v0.61.0; Plan 0086 closed 2026-11-19, v0.67.0)
+### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0; Plan 0032 closed 2026-11-17, v0.61.0; Plan 0086 closed 2026-11-19, v0.67.0; Plan 0094 closed 2026-11-20, v0.68.0)
 
 The open-sky half of the "Floor, profiles and scene scale" decision, as general engine
 mechanisms: the first consumer is underground, so nothing here is on its P0 list, and terrain
@@ -801,8 +801,16 @@ against the baked store: no probe or store term takes sun or sky light.
   regime, the exposure anchored to the sky, a chunk an edit fills from air baked as a dig, and
   a penumbra spike kept as a setting. Four owner windows picked the defaults. What it left
   (the canopy's grain at rest, the dig's hole band, the tunnel's far end, the cave's seal
-  clause, the light pass's compile cost, three Phase 5 readings that regressed) is Plan 0094's,
-  approved 2026-11-19 to run next.
+  clause, the light pass's compile cost, three Phase 5 readings that regressed) is Plan 0094's.
+- **The light's transitions** ([Plan 0094](plans/done/0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md),
+  closed 2026-11-20, v0.68.0; ADR-0070 gains an Outcome, ADR-0076's rules 3 and 5 built and
+  rule 6 added while it stays proposed with Plan 0090): the key mean keeps its age at a still camera, a
+  face with no record reads its own chunk's summary or casts the ray seeded from the column,
+  one 16-frame fade for every no-ray value change, the exposure moves at 3.75 EV/s, its
+  ceiling follows the sky in view and the sky anchor never lifts it over `max` (the night at
+  +2 EV), the default-off light arms out of the default pipeline; the tunnel's rim band and
+  the cave's seal clause back as tests. Three owner windows (94a to 94c). The hole's floor, the
+  dig's first frames and the motion wobble stay open (the backlog, Plan 0095).
 - **A surface detail layer** ([Plan 0081](plans/0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md),
   drafted 2026-11-16, awaits the owner's go; ADR-0063 proposed): grass, moss, strands,
   fungus caps, flowers, pebbles and snow tufts as a procedural shell marched in the hit pass

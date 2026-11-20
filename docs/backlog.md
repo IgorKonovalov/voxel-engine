@@ -19,39 +19,11 @@ Rules:
 
 ### The light placement's eviction scan in a windowed glide
 
-Noted 2026-11-14 from Plan 0074 (`docs/plans/logs/0074.md`, Phases 1, 4 and 5; RTX host, `hpet`).
-**S1's evidence, headless:** no headless glide (`--glide 300` and `1000`, 13 runs in Phase 1, 6
-in Phase 4) evicted a light range; their largest per-second `light place` p99 was 38 ms against
-the window's 846 ms; the place stage's slow syncs were 65 to 71 % off-CPU and their scan steps
-did not track their time (r 0.28). Phase 2 (the first fit and the eviction victims by index) was
-struck on that, and the windowed rig (c) was not run. **The owner's window then reproduced it**
-(Phase 5, `--glide 300`, tip and base alike): from about 4 s into the flight every second's
-slowest sync is `light place`, up to 1186 ms over 3697 evictions and 99.9 M scan steps, with r
-0.997 to 0.9996 against `light_scan_steps` (about 11 to 12 ns a step) and the free ranges
-growing to about 6000; the owner's "staggers at 30 to 40 s, fps drops to 15" are those syncs.
-Open: why the window's light buffer fills and the headless glides' does not. What it takes:
-Plan 0074's Phase 2 as drafted (indexes that answer what today's walks answer, the bytes
-asserted equal), read in the window. Its draft, a first-fit index (`fit.rs`, untracked), is
-kept in the main checkout at `live/plan-0074/drafts/fit.rs`. `light_scan_steps` sums the first
-fit's free-range walks and the victim scans' chunk walks, so split them first. **The next sync
-plan, ahead of `alloc`** (Plan 0074's close review, 2026-11-14, the orchestrator's default while
-the owner is away; the owner may overturn it).
+Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 7: the first-fit index and a distance-ordered victim index, the bytes asserted equal, a headless glide with a shrunk light buffer as the reproduction; the figures moved into the plan's context.
 
 ### The CPU settle outdoors: the bake queue's step on a world with no emitter, and the forest's sync p99
 
-Noted 2026-11-17 from Plan 0032's Phase 9 window (`docs/plans/logs/0032.md`, Phase 9; the
-review `docs/reviews/2026-11-17-plan-0032-window.md`, E). The owner's "performance lacks" on
-the RTX 3080 Laptop was the CPU, not the GPU: for the 7 to 10 s after every load the runs read
-a frame CPU p50 of 10 to 17.6 ms (against 1.3 to 2.9 after the settle) and the `bake queue:`
-lines a `step CPU p50` of 7.9 to 15.0 ms, max up to 38, on a world whose reach holds `lights
-0` and whose store ends all zeros (step 1: 3285 chunks by 13.7 s, 8.8 MB); after the queue
-drains the step reads 0.05 ms. The forest at leaf fill 128 also read a sync p99 of 11.0 ms
-(`alloc` 5.3) and `update + poll + sync` max 150 ms; fill 64 read 3.1 ms. Both are readings
-for Plan 0067's regime rule (the step on an emitter-free world should cost near nothing) and
-for the sync's `alloc` entry above. What it takes: a chore that reads the step's parts on the
-outdoor source (listing, summaries, fades on a store that bakes to zero) and skips what a
-reach with no emitter does not need; Plan 0086 Phase 4 adds a sky channel to the same jobs,
-so read it after that lands. Owner's pick 2026-11-17 (E3): a backlog entry, not a phase.
+Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) and [ADR-0080](adrs/0080-the-live-queue-bakes-what-the-image-reads-a-record-by-rule-a-tier-by-size-on-screen-and-a-drain-slice.md): a record by rule for a chunk with no face or buried with no emitter in reach (Phase 2), the step off the queue's depth (Phase 5), the forest's sync p99 (Phase 7); the readings quoted in the plan's context.
 
 ### The streamed benches on Windows: CPU frames of 20 to 256 ms on a desktop
 
@@ -81,15 +53,7 @@ Windows and a Linux screenshot of the same pose by pixel values, and swap `fs_sr
 
 ### The sync's `alloc` stage: the sync plan after the eviction scan
 
-Noted 2026-11-14 at Plan 0074's Phase 4 (`docs/plans/logs/0074.md`, the RTX host, `hpet`, lamp
-off). With `light_note` cut, the tester cave's `update + poll + sync` p99 still reads 18.3 to
-23.7 ms on the RTX and 18.0 to 18.7 on the Radeon (castle 20.4 to 22.7), over Plan 0067's
-16.6 ms. The largest stage left is `alloc`: p99 7.4 to 8.8 ms in the RTX cave and 7.3 to 7.4 on
-the Radeon, against sync p99s of 16.5 to 21.1 and 16.1 to 16.8. Phase 1's profile of it (rig
-(d), the glide): `fill_slot` 3.15 %, `BufferViewMut::drop` 3.12 %, `upload_brick` 2.52 %,
-`stage` 0.42 % of the main thread; under 1 % each in the cave bench. Pick up as the next sync
-plan after the eviction scan above; it reads its own profile first. The windowed glide's
-stagger is a different stage, the eviction scan.
+Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 7 (`alloc` p99 at most 3.0 ms, `update + poll + sync` p99 at most 16.6 in the tester cave bench), after Phase 1 (6)'s profile of the stage.
 
 ### Done: test tiers by marks, not by copied lists
 
@@ -173,16 +137,6 @@ would not; and two of `gpu_sun`'s sky tests the plan rewrote (Plan 0032's names,
 read over the line under the compile and go under it once the cache lands, or take the soak
 mark.
 
-### `cargo deny` fails on main's wasmtime 49.0.5 advisories
-
-Noted 2026-11-19 at Plan 0083's close: `cargo deny check` reads advisories FAILED on
-`wasmtime = "=49.0.5"` (RUSTSEC-2026-0566 to 0573: aborts and panics in builds without the
-`gc` or `threads` features, a stale GC heap pointer, unbounded growth in `wasmtime-wasi`'s
-`AsyncWriteStream` and `wasmtime-wasi-http`); bans, licenses and sources pass. The pin is
-main's and the workspace's `Cargo.toml` says a bump moves with wit-bindgen and wasm-tools.
-Owed on main as its own chore: the patched release, the lockfile, `scripts/build-guests.sh`
-and the guests rebuilt, `cargo deny` green; until then CI's deny step is red on every branch.
-
 ### The live queue's order and cancellation, after Plan 0059
 
 Taken 2026-11-10 by [Plan 0060](plans/done/0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md) and [ADR-0048](adrs/0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md); the hall's aliasing goes to the antialiasing plan below.
@@ -222,6 +176,19 @@ every pipeline built on the start-up worker, one loading gap stays at the first 
 chunks" frames, cold only (warm max 87 ms). Every `vxe-render` compute pipeline exists before it,
 so the time is something else the driver does on first use. The owner noticed no hitch and
 accepted it. Pick up when a start-up or first-frame plan needs the bar, with a driver trace.
+
+### The bake queue ordered by what the march touched (2026-11-20)
+
+From a devlog (voxelbee, "Adding A CACHE To My Custom VOXEL Game Engine", devlog 5): a GPU-run
+cache where every voxel a ray renders moves to the front, so residency follows visibility. We
+do not want its eviction (a turn would reveal unloaded data: pop-in against the stable-image
+rule; the mirror's distance window, ADR-0013, stays). The part worth taking is the signal: the
+march sets a bit per chunk it hit this frame, read back a frame late. Plan 0096's in-view drain
+orders jobs by an estimated size on screen; the touched set would order them by actual
+visibility, skipping chunks behind hills or the camera, and could order the mirror's uploads
+the same way. Cost guess (not measured): one atomic-free store per hit into a bitset of the
+window's chunks, one small readback. Pick up inside Plan 0096 if its in-view drain misses the
+10 s bar.
 
 ### A wgpu pipeline cache owned by the engine
 
@@ -264,6 +231,10 @@ most-used row, as a third stamp of the click.
 
 Found at the close ([Plan 0083](plans/done/0083-anything-from-a-vox-palette-materials-a-material-file-and-large-scenes-stamped-into-the-world.md), v0.66.0); none blocked it, each is a small fix pass when the area is next open. **Pending placements (`vxe-world`, ADR-0066's Outcome).** `World::stamp` takes `&Prefab`, so a placement past residency copies the prefab into a fresh `Arc` (`stamp.rs`, the `Placement` push) instead of sharing the registry's, and a rotated stamp materialises its rotation once more: bounded by the pending prefabs' bytes (the castle's 45 MB again at most), a `stamp` over the `Arc` removes it. The poll thread blits every placement an inserted chunk lists under the store's write lock (`stream/mod.rs`, `commit_residency`), up to a 64³ blit per placement while every reader waits; blit into the held chunk first, then apply only what arrived since under the lock. A placement whose remaining coordinates lie outside a finite `World::extent`, or where the camera never goes, lives for the session; drop the coordinates a finite extent can never stream at stamp time and report the pending bytes beside the count. Two stamps on one world at once (not reachable through the server, whose ops are serial) can order an overlap differently in resident and pending chunks: say in `stamp`'s doc that the caller serialises stamps. **Scenes (`vxe-assets`).** `VoxScene::load` honours a hidden layer only on the outermost layered transform of a path (`scene.rs`, the group arm): a shape on a hidden layer under a group on a visible one is hidden in MagicaVoxel and placed here; check every transform's layer and add the nested case to `hidden_layers_and_nodes_are_not_placed`. The grammar example in `materials.rs`'s crate doc and a comment in `rows.rs` name the fly-through's castle and torch; a neutral example costs nothing. **The coarse grain (`vxe-render`).** Instance word 27 and the inverse map are derived from the one f32 grain `detail / coarse` and inverted, one ulp off for coarse 7, 13, 14 and 15; write word 27 as `coarse / detail` directly. **The testbed.** The placed notice counts the ops submitted, not the tick's applied events, and `register_prefab`'s errors are dropped, so a stamp refused at the tick still reads `placed`. A click while the ghost body's worker is building the same scaled scene builds it again on the frame thread (`scene_at`); refuse with `building` or wait on the worker. `Entry::refusal` adds the 1 m margin on every axis while the air box adds it above only and `clear box` off adds none, and prints the un-margined size it did not check. `Modes::edit_axis_max` starts at the default until a slot is entered, so the chooser's belt row can show the wrong verdict on a world with another limit. `a_key_places_as_the_click_does` compares prefab ids, not `(prefab, origin, rot)`; `a_placed_structure_is_logged_stamps` pins the chapel's per-row counts as a sorted list, losing row identity. `run/structure_tests.rs` is at 1169 of 1200 lines; the next test splits it (the ghost and icon tests to a sibling). **Owed readings (the plan's Budgets table).** The live queue's settle after a runtime castle (two 1500-frame headless runs never drained the queue, with or without the castle, `docs/plans/logs/0083.md` Phase 8: a longer run or a quiet queue is needed), `VmHWM` at `--frames 3000` with and without `--castle` (the prefab bytes fell from 343 MB to 45 MB; the RSS was not re-read), the first frame with `--vox chapel` against the plain cave over three runs, the material term of `GpuWorld::mirror_bytes` with the chapel's 255 rows, and `--census` for `Wide` bricks with the castle placed. Pick up with the next plan on structures (0084) or a readings chore.
 
+### Plan 0094's leftovers (close review, 2026-11-20)
+
+Found at the close ([Plan 0094](plans/done/0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md), v0.68.0); none blocked it, each is a small fix when the area is next open. **A tautology:** `the_tunnel_exposes_for_its_walls_by_day` (`apps/flythrough/tests/gpu_outdoor/ceiling.rs`, soak) asserts the noon-midnight luma clause only inside `if ratio.abs() <= 0.5`, so it can never fail; it reads +0.063 EV since Phase 8a, so a plain `assert!` is the fix. **A bar that does not see its mechanism:** `a_rare_hit_is_clamped` (`crates/vxe-render/tests/gpu_sun/history.rs`, soak) passes with the clamp off too (largest 0.1996 both ways); a clause on what the clamp changes, or a rig with more than one hit, would defend it. **Unread costs:** the no-record prior's arm A on the RENOIR at 1080p's half tier during a stamp's bake (a linear guess of 14.6 ms, `docs/nfr/02-frame-budget.md`; Plan 0096's RENOIR readings can take it) and the no-ray fade's temporal and composite cost.
+
 ### Hundreds or thousands of entities
 
 Parked 2026-11-16 by the owner ("minecraft can have thousands of entities"). Today: `MAX_ENTITIES` 64, `MAX_ENTITY_PARTS` 512 (`vxe-render` `entities.rs`), 6 instance bits in the hit record. The cost is the trace, not the caps: Plan 0062 Phase 4 (`docs/plans/logs/0062.md`) read 64 walkers at +3.4 to 4.4 ms on the RTX 3080 Laptop and +32 to 34 ms on the Radeon iGPU, growing with screen cover and shadowing lights. **Hundreds:** wider caps and hit bits, the instance tree built on the GPU, coarse far models, shadow rays testing only entities near their light (one or two plans, no ADR). **Thousands:** entities rasterized into the hit buffer beside the traced world, which reverses ADR-0050's choice: an ADR and a spike first. **The owner's direction (2026-11-16): trace only the near ones, merge the crowded ones.** Distance tiers: near entities traced in full; mid ones traced on a coarse merged model (parts folded into one volume at detail 1); far ones as one box or impostor, or dropped below a pixel. Clusters: entities sharing a spot re-voxelized together at low resolution on the GPU each frame (or every few) into one cluster volume, walked once per ray instead of once per overlapping entity. Shadow rays test the near tier only. The server's ray query stays exact per entity; the tiers are render-only. Pick up when a consumer needs more than 64 on screen. Sharpened 2026-11-19 (Bonsai's 1.1.0 and 1.3.10 notes): the CPU side needs a per-chunk entity list as the broadphase (the mover's sweeps and the entity ray query walk the chunk's list, not every instance) and an LRU eviction of models from the pool when the library outgrows it, on top of Plan 0078's free list.
@@ -288,7 +259,10 @@ make lights darker, or random in darkness as well". Two parts: the test scenes' 
 lights are dim and some dark. The engine side is the scale over the table (ADR-0045) and the
 light list's per-light intensity (ADR-0044); the randomness belongs to the scene's seed, not
 the engine. Pick up after the Windows brightness entry is explained, so "darker" is judged on
-a correct image.
+a correct image. 2026-11-20: the review
+[`reviews/2026-11-20-crystal-islands-look.md`](reviews/2026-11-20-crystal-islands-look.md)
+(trait 3) gives it a reference: the Crystal Islands caves sit one to two EV under our key with
+the emitters dimmer and more varied; its "showcase's palette" entry carries the testbed half.
 
 ### Per-source indirect light
 
@@ -301,7 +275,11 @@ flag and the channel's redesign. Plan 0058 (closed 2026-11-15) built the per-lig
 under `Lighting::lamp_bounce`; what remains is the per-emissive-material flag and the channel's redesign.
 Plan 0032 (redesigned 2026-11-10) ships no sunlight bounce: sky light is a sky ray, so a cave
 mouth gets no bounced sun until this entry is taken. Plan 0037's night light likewise has no
-bounce and no probe feed.
+bounce and no probe feed. 2026-11-20: the review
+[`reviews/2026-11-20-crystal-islands-look.md`](reviews/2026-11-20-crystal-islands-look.md)
+(trait 1) reads the Crystal Islands caves as first-order light (emitter to wall), which the
+baked store gives; a second bounce is not what their colour rests on, so this entry ranks
+fourth of that review's engine levers.
 
 ### More than sixteen lights: a world-space light grid
 
@@ -324,6 +302,10 @@ near the camera. The answer for now is no.
 Keeping the option open is cheap. The store puts a brick's record before its face run, and the read prefers a face cell
 when one exists. Plan 0059 Phase 6 (7c105c5) has the whole face path working; Phase 14 deletes it. Pick up when
 close-range light reads too soft: shadow edges smeared over 8 voxels, or light bleeding round thin walls.
+2026-11-20: the review [`reviews/2026-11-20-crystal-islands-look.md`](reviews/2026-11-20-crystal-islands-look.md)
+(trait 1) names this as the one engine difference in how a small emitter's glow falls off on a
+near wall; ranked third of its engine levers, to be judged only on a window after that review's
+palette pass, not before.
 
 ### Baked or emissive light on far-field cells
 
@@ -407,11 +389,11 @@ Parked 2026-11-10 at Plan 0060's Phase 1 stop rules, owed to the backlog at its 
 
 ### The queue step's remaining `filter` cost on a moving camera
 
-Parked 2026-11-12 at Plan 0067's Phase 7 (followup F1, the owner's amendment of that day; `docs/plans/logs/0067.md`, Phase 2). On a step that opens nothing, with the camera moving (rig (b) glide 300, `--coarse 0`, RTX, quiet), the mirror-change filter reads about 0.074 ms p50 (`gone` 0.030, `drop_reach` 0.022, `touched` 0.017, `forget` 0.003) against the start commit's 0.019, the most of a +0.118 ms non-opening p50 Phase 2 accepted under a +0.1 tolerance. Each part scales with the mirror's changes a step (about a thousand at that speed, estimated, not printed). What it would take: print the change count, then make the per-change work one pass (the reach drop and the candidate marks share their walk), or move the change list's dedup into `GpuWorld::take_changes`. Pick up when a frame-CPU plan needs the 0.05 ms, or with Plan 0070's sync off the frame.
+Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 5 (one walk of the mirror's change list for `gone`, `drop_reach`, `touched` and `forget`; the change count printed in Phase 1).
 
 ### The RTX's submits draw less than their per-second slice
 
-Parked 2026-11-12 at Plan 0067's Phase 7 (followup F2; `docs/plans/logs/0067.md`, Phase 3). Under `--bake-budget second:150,0.25` on rig (b) glide 150 the Radeon bakes 148 ms a wall second and the RTX 91 to 92: the RTX's submits read slice p50 5.31 ms, max 7.20, against a granted slice of about 8 ms (150 ms a second x a 53 ms mean interval), at 5.1 ns a sample with `jobs 10`. The sample cap (1e7, 51 ms) does not bind; the open jobs' rounds and `IN_FLIGHT` 2 are candidates, not readings. The default is `frame:1.5` (owner, 2026-11-12), where both adapters read what they read before, so this bites only a per-second profile. What it takes: a lap on the dispatch (rounds planned against the slice, rounds sent, the wait on `IN_FLIGHT`), then the fix it names. Pick up with Plan 0069's profiles if one sets a per-second budget.
+Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 4: a lap on `plan_rounds`, `send` and the `IN_FLIGHT` wait, then the fix it names; the bar is 85 % of the granted slice drawn.
 
 ### The first-block fallback fade's CPU under `chain`
 
@@ -423,7 +405,7 @@ Parked 2026-11-13 (orchestrator default while the owner was away). The hero fix 
 
 ### Overlapping coloured lights go white: a hue-keeping tone map
 
-Parked 2026-11-15 from Plan 0058's re-window (step 1b, the plan-0058 worktree's `live/10.png`; orchestrator default, the owner said "not sure colours mix well" and passed (k)). Two dropped lights at 600 overlap as plain white, with cyan only on the green and blue edge: auto exposure sits at its +4 EV ceiling (the scene reads -3.3 EV), so every channel clips. The lights add correctly; the tone map's per-channel clip loses the hue. What it takes: a tone map that desaturates toward white only past a luminance shoulder (hue kept), or a lower light intensity; either moves goldens and is the owner's eye. Pick up at the render-settings profiles (Plan 0069) or the next look plan.
+Parked 2026-11-15 from Plan 0058's re-window (step 1b, the plan-0058 worktree's `live/10.png`; orchestrator default, the owner said "not sure colours mix well" and passed (k)). Two dropped lights at 600 overlap as plain white, with cyan only on the green and blue edge: auto exposure sits at its +4 EV ceiling (the scene reads -3.3 EV), so every channel clips. The lights add correctly; the tone map's per-channel clip loses the hue. What it takes: a tone map that desaturates toward white only past a luminance shoulder (hue kept), or a lower light intensity; either moves goldens and is the owner's eye. Pick up at the render-settings profiles (Plan 0069) or the next look plan. **Extended 2026-11-20** by the review [`reviews/2026-11-20-crystal-islands-look.md`](reviews/2026-11-20-crystal-islands-look.md) (trait 2): the Crystal Islands frames clip the same way (saturated bodies, white tips, 1:00's giant crystals flat white), so the per-channel curve is not what separates the looks; this entry is a refinement ranked second of that review's engine levers, after the per-voxel variation, and the content pass (dimmer, more varied emission) comes first.
 
 ### The hall's headless render went dark: `showcase_hall_golden_is_lit_by_its_four_ores`
 
@@ -441,7 +423,11 @@ Parked 2026-11-12 (owner, from the video "the voxel rendering tech nobody talks 
 - **Open look question:** drive the ramp by local corner AO, by the baked sky or ambient light, or both, so a cave reads tinted rather than only dark. Decide by eye in the window.
 - **What it takes:** a look spike (corner AO at the hit, an optional ramp beside `albedo`, the hue jitter) with an owner window; an ADR if the material row changes shape.
 
-Pick up after the current lighting plans close (0058 and those ahead of it).
+Pick up after the current lighting plans close (0058 and those ahead of it). 2026-11-20: the
+hue jitter named here has its own entry now, "Per-voxel albedo variation by a seeded hash"
+(from the review [`reviews/2026-11-20-crystal-islands-look.md`](reviews/2026-11-20-crystal-islands-look.md)),
+whose frames show the jitter without any ramp; a spike on this entry shares its hash and its
+place in the composite.
 
 ### Plan 0090 owes a stamp scene and a reading of the key mean's fade-in against `F`
 
@@ -485,6 +471,46 @@ belt** (Minecraft's middle click) and **several belts** (Satisfactory's ten). Pi
 consumer or the owner asks for one; the first two are small plans, the last two are rows in
 Plan 0077's key table.
 
+### Light shafts inside structures: visible sun beams through openings
+
+Noted 2026-11-20 by the owner at Plan 0094's window 94a, inside the castle's keep: "it would be
+nice in the future rays of light inside such structures". Visible beams where sunlight enters an
+interior through windows, doors or breaches, with the air lit along the ray. It belongs with the
+volumetrics (Plan 0035's froxel or march work; ADR-0030 names the cloud shell): a low-resolution
+in-scattering march along the view ray that samples the key light's shadow, reduced and
+temporally stable (the owner's stable-image rule; no grain while it converges). Cost is a guess
+until measured on the slow adapter against the headroom line in `docs/nfr.md` section 2.
+
+### Per-voxel albedo variation by a seeded hash, an amplitude per material
+
+Parked 2026-11-20 from the review
+[`reviews/2026-11-20-crystal-islands-look.md`](reviews/2026-11-20-crystal-islands-look.md)
+(trait 4), the first of its engine levers. John Lin's Crystal Islands frames put a fixed
+per-voxel speckle of two to four shades on nearly every material (foliage crowns, crystal
+faces, rock), and it is most of what reads as texture there. We have one `albedo` per row and
+nothing varies it (`composite.wgsl` reads `materials[rec.material * 4u].xyz`); the procedural
+sources put one row on everything. **The mechanism:** at the composite, scale (or hue-shift)
+the albedo by a hash of the hit voxel's integer position (ADR-0043's key `floor(p - 0.5 n)`)
+times a per-material amplitude; optionally the emission too (the frames' crystal bodies are
+darker than their tips). Stateless, no history, no random stream: a static pattern under FSR 2
+and invisible to Plan 0090's pop counter. Cost a guess: one hash and one multiply a pixel.
+**Owner, 2026-11-20:** the amplitude lives in the render settings (ADR-0063's render-side
+per-material style word), not on the material row. Size S; a look spike with an owner window, after the content pass below shows
+what the palette alone gives.
+
+### The showcase's palette after the Crystal Islands review: pale rock, more and dimmer glowing rows, a darker key
+
+Parked 2026-11-20 from the same review (its content levers), apps only. The frames' cave look
+is albedo times the emitters' irradiance, which the baked store already computes; our rock is
+`0.42 0.38 0.34` against Lin's near-white limestone, so the walls cannot take the crystals'
+colour. **What it takes:** in `apps/flythrough/assets/materials.txt` (re-read live while the
+window is open) a rock at about 0.7 to 0.8 with a tan or pink tint, six to eight glowing rows
+at a third to a half of today's emission with the ore among them, and a cave profile one to
+two EV darker (`AutoExposure::compensation_ev`); two or three leaf rows picked by hash in
+`trees.rs`. Judged in an owner window; the showcase's goldens move. Size XS. **Pick up** when
+the owner wants a look window next; this is the cheapest test of the review's thesis and
+should run before any engine lever above.
+
 ## Performance: the static review of 2026-11-10
 
 Parked 2026-11-10. The owner asked why the window reads 30 to 50 fps with little on screen; a
@@ -505,7 +531,7 @@ the baked light's shader waste and the queue's scan to
   1080, loaded; `docs/plans/logs/0061.md`, Phase 2 done-when 6). Routed at Plan 0061's close to
   Plan 0067 (the frame's cost) and Plan 0069 (a per-profile default for the weights is its
   question).
-- **The bake's slice and the queue's step have no line.** 1.5 ms of GPU a frame while the queue
+- **The bake's slice and the queue's step have no line.** Taken 2026-11-20 by Plan 0096 (draft): a drain and a landed value for the slice, a step line, an in-view drain budget. 1.5 ms of GPU a frame while the queue
   works (max 10.8 ms on record) and 1.0 ms of CPU sit outside section 2's split. Give them a
   line at the next `docs/nfr.md` revision. Plan 0060's close left it: the step reads one of two
   states (about 1 and 9 ms p50), and Plan 0067 pins the state and reads the step.
@@ -840,7 +866,15 @@ only. What that plan leaves here (owner, 2026-11-19): the light pass's default-o
 on lavapipe, the fly-through's light-pass build stage 3.7 s against the base's 2.7 (debug) with
 every default-off arm already out of the default pipelines, about 1.0 s a device of default-on
 code, about 1.4 s a frame-building test of the gate; the next step is a per-module compile
-reading (`pipeline_times` per `PASSES` row) to name the module that grew.
+reading (`pipeline_times` per `PASSES` row) to name the module that grew. **Routed to Plan
+0096 (performance) 2026-11-20**, after Plan 0094's window 94b: `absorb`'s cold start on an
+emptied driver cache read 70 s (the owner: "start is slow, 70 sec"; Plan 0094 Phase 7a's
+table: the arms' light pipelines 39 to 44 s inside their loading stage after the base's 25 to
+49 s). Plan 0096 takes two items: an engine `wgpu::PipelineCache` for hardware adapters in the
+app (the test-support cache read 29.4 s cold against 0.24 s warm on the RTX, 2.0 MB), and the
+default-off arms built in the background after the first world frame rather than inside the
+loading stage (the runtime pick's hitch with them). This entry leaves when 0096's phase takes
+them; the lavapipe compile-cost reading above stays here.
 
 ### Comment, manifest and index drift found by the 2026-11-12 review
 
@@ -1111,7 +1145,11 @@ downsample and upsample chain (`src/engine/bloom.h`, `shaders/bloom_*`). We have
 Glowing lamps and ores in the dark suit the first consumer. **What it takes:** a pass in
 `vxe-render` after the upscaler, as a render setting (ADR-0055). It must add no flicker
 (ADR-0076), and the owner judges it in a window. Size S to M. **Pick up after** Plan 0090's pop
-counter, which can hold it to rule 1.
+counter, which can hold it to rule 1. **Weakened 2026-11-20** by the review
+[`reviews/2026-11-20-crystal-islands-look.md`](reviews/2026-11-20-crystal-islands-look.md)
+(trait 10): the Crystal Islands frames show faint bloom at most, with sharp crystal edges at
+2:00 and 3:40, so the look the owner liked does not rest on it; it ranks last of that review's
+engine levers.
 
 ### Lit world-space sprites (cards)
 
@@ -1213,7 +1251,16 @@ the march crosses much empty space to the far LOD. **What it takes:** meshes of 
 (they are not edited at that scale), drawn into the hit buffer's depth and normal before the march,
 which then starts at the near band. An ADR, and measurements on both adapters. **Pick up when** a
 reading names the far field's march as the frame's largest stage, or a view-distance budget
-cannot be met on the baseline GPU.
+cannot be met on the baseline GPU. **If picked up (2026-11-20):** the mesher to start from is
+binary greedy meshing (Davis Morley, "Greedy Meshing Voxels Fast", Handmade Seattle 2022): one
+64-bit occupancy mask per column, faces found by `col & !(col << 1)` per axis, rows merged by
+bit runs, quads packed in 32 bits; the talk reports meshing in tens of microseconds a 64^3
+chunk, which would make re-meshing an edited far mip cheap. His "global lattice" (raster one
+plane per voxel slice and look the voxel up per fragment) is rejected for us: it is a renderer
+in place of the march, with its overdraw.
+**Owner, 2026-11-20:** leans to this hybrid as the answer for long-distance rendering. Plan
+0033 (the marched clipmap, ADR-0028) is re-read against it before its lane starts: raster the
+clip levels' meshes against marching them, measured on both adapters, as an ADR either way.
 
 ## Later apps
 

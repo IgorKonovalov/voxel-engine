@@ -280,3 +280,40 @@ fn the_pre_roll_drain_takes_seconds_and_its_banner_names_the_state() {
     assert_eq!(row(done, 40_000.0 + crate::hud::BANNER_MS), "");
     assert_eq!(row(Drain::Off, 0.0), "");
 }
+
+/// `--sky-anchor-share` reaches the auto exposure, 1/256 by default and unnamed; another value is
+/// named `sky anchor share X` and `off` (0) `sky anchor share off` with a sky set; out of (0, 1]
+/// it is refused.
+#[test]
+fn the_sky_anchor_share_reaches_the_run() {
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert_eq!(r.start_auto().sky_anchor_share, 1.0 / 256.0);
+    assert_eq!(
+        r.start_auto().sky_anchor_share,
+        vxe_render::DEFAULT_SKY_ANCHOR_SHARE
+    );
+    assert!(!r.start_modes(0.0).line().contains("sky anchor share"));
+    for (v, share, word) in [
+        ("0.25", 0.25f32, "sky anchor share 0.25, "),
+        ("off", 0.0, "sky anchor share off, "),
+    ] {
+        let r = parse_args_from(argv(&["--source", "outdoor", "--sky-anchor-share", v])).unwrap();
+        assert_eq!(r.start_auto().sky_anchor_share, share);
+        let line = r.start_modes(0.0).line();
+        assert!(line.contains(word), "{line}");
+    }
+    let r = parse_args_from(argv(&[
+        "--source",
+        "outdoor",
+        "--sky-anchor-share",
+        "0.00390625",
+    ]))
+    .unwrap();
+    assert!(!r.start_modes(0.0).line().contains("sky anchor share"));
+    for bad in ["0", "-0.5", "1.5", "most"] {
+        assert!(
+            parse_args_from(argv(&["--sky-anchor-share", bad])).is_err(),
+            "{bad}"
+        );
+    }
+}

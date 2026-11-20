@@ -525,6 +525,7 @@ fn the_exposure_row_names_the_mode_and_the_scene() {
         scene_ev: Some(-7.94),
         target_ev: None,
         ceiling: None,
+        sky_share: None,
     });
     s.write_rows(&mut out, &mut colours);
     let lines: Vec<&str> = out.lines().collect();
@@ -536,6 +537,7 @@ fn the_exposure_row_names_the_mode_and_the_scene() {
         scene_ev: None,
         target_ev: Some(5.526),
         ceiling: Some((2.0, None)),
+        sky_share: None,
     });
     s.write_rows(&mut out, &mut colours);
     assert_eq!(

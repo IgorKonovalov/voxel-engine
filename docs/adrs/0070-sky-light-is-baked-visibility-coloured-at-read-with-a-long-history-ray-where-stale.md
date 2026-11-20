@@ -1,6 +1,6 @@
 # ADR-0070: Sky light is a visibility baked per brick direction, coloured by the sky at read; a long-history ray covers what the bake has not caught
 
-> **Status:** accepted (2026-11-19, Plan 0086's close), with the Outcome of 2026-11-19 below;
+> **Status:** accepted (2026-11-19, Plan 0086's close), with the Outcomes of 2026-11-19 and 2026-11-20 (Plan 0094) below;
 > amended twice 2026-11-18 while proposed (what counts as sky: the column map; the finality a
 > catch-up, the wait a setting)
 > **Date:** 2026-11-17
@@ -397,3 +397,33 @@ implementation changed or falsified:
   clamp readings that regressed against Phase 5's (0.6167 against 0.5 within 0.1; 0.4993
   against 0.25); the light pass's compile cost (+2.85 s a pipeline build on lavapipe, the
   penumbra spike's branch +1.25 of it).
+
+## Outcome (2026-11-20, Plan 0094's close)
+
+Plan 0094 changed the no-ray path's prior and how a no-ray value changes; the body and the
+Outcome above stand otherwise (the readings log `docs/plans/logs/0094.md`, Phases 2, 5, 7a
+and 8).
+
+- **The no-record prior, as built.** A face whose cell holds no record of the direction
+  (baked under a sky, not stale) reads its own chunk's summary while no dig job is queued for
+  that chunk (the summary not `SKY_STALE`; a dig's enqueue marks it); else the sky ray is cast
+  on the pair, seeded from the column map's answer at `SEED_COLUMN` (2) samples instead of a
+  record's `SEED_AGE` (8) (arm A, the default). Holding the column's answer with no ray until
+  the bake lands (arm B) stays as a reading hook, `LightHooks::column_prior`. **A face
+  neighbour's summary no longer answers the sky** (ADR-0053's chain keeps it for the emissive
+  channel). Arm A's cost during a stamped castle's bake read RTX 0.28 ms and RENOIR 1.17 ms
+  mean (1.62 ms over the first 100 frames) at a 320 x 180 lighting grid, falling to arm B's
+  once the store holds every face; 1080p's half tier is not read.
+- **One fade for every no-ray value change** (ADR-0076 rule 3): where the history is taken, a
+  change of the shown value from a record, a summary or the column ramps linearly over 16
+  frames (`FADE_F`) through the pair's `x` and `w`; no target of its own was added. A reset
+  pixel shows its value at once, so a dig's new faces still step on their first frame (the
+  column's seed at 0 on the dug floor), the backlog's "the dig's first frames".
+- **The goldens' premise corrected:** the golden rigs bake one chunk around the eye, so beyond
+  it every face has no record and the prior decides it; `outdoor_noon` moved 9.55 % on that
+  account and was re-blessed with the rest.
+- **The open items of the Outcome above** went as follows: the tunnel's far end asserts its rim
+  band (a remainder of 2 levels at the far end unattributed, the motion lane's); the seal
+  clause is back at a sixteenth (1.944 % read); the pair's mean holds within 0.1 of the hit
+  rate (0.558 against 0.562); the clamp holds the rare hit under 0.25 (0.1996, a soak test);
+  the compile cost left the default pipeline (the light stage 5.1 to 3.7 s on lavapipe debug).

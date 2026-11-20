@@ -288,71 +288,172 @@ fn upper_chunk_read(
     centre_lit(device, queue, &mut f, &gpu, &cam, 16)
 }
 
-/// Plan 0086 Phase 10 bar 2: a young chunk reads its neighbours' sky. An open floor of 3 x 3
-/// chunks under `Sky::uniform(1.0)`, one sky ray, the key light off, baked at 64 samples a brick
-/// direction with the centre chunk's faces withheld (the bake's face filter), so the centre
-/// holds no block. On the first frame the centre floor's light is the neighbour floor's within
-/// 10 % (both read at the centre pixel of a camera over each), the light pass casts no sky ray
-/// at the centre's pixel (the missing-light chain's sky visibility stands in), and the store's
-/// black count is 0.
+/// The roof of [`a_face_with_no_record_reads_its_own_summary_or_the_column`]: a one-voxel slab
+/// [`ROOF_UP`] voxels over the floor, over the covered half of the centre chunk (x 64..96,
+/// y 64..128).
+const ROOF_UP: i32 = 4;
+fn under_roof(p: [i32; 3]) -> bool {
+    p[2] == FLOOR + ROOF_UP && (64..96).contains(&p[0]) && (64..128).contains(&p[1])
+}
+
+/// The sky term's source word in a moments' `w` with the store counted (temporal.wgsl's
+/// `SOURCE_*`: the word over 16 added to the kind).
+fn source_of(w: f32) -> u8 {
+    ((w - w.floor()) * 16.0).round() as u8
+}
+const SOURCE_OWN_SUMMARY: u8 = 3;
+
+/// Plan 0094 Phase 5 bar 1 (ADR-0070's no-record prior; this rig is Plan 0086 Phase 10 bar 2's,
+/// whose neighbour rule it replaces): a no-record face reads no neighbour. An open floor of
+/// 3 x 3 chunks under `Sky::uniform(1.0)`, the key light off, one sky ray, a roof
+/// ([`under_roof`]) over half the centre chunk, baked at 16 samples a brick direction with the
+/// centre chunk's faces withheld, so its four open neighbours' summaries read about 1 (what the
+/// neighbour rule gave, printed as the before) and the column map reads 0 under the roof and 1
+/// beside it. A camera low in the open half looks back under the roof (160 x 90); the read
+/// pixels are the floor's under the roof at least 8 voxels from its edges, where the column
+/// reads 0. (a) No summary for the centre: after 16 frames their mean visibility (the light
+/// over `pi`) is within `1 / (SEED_AGE + 1)` of the column's 0 under arm A (the ray, seeded
+/// from the column) and exactly 0 under arm B (`LightHooks::column_prior`). (b) The covered
+/// half's faces alone withheld, so the centre's summary holds the open half's records: every
+/// read pixel's source word is `own summary` and their mean light is the summary's `+z`
+/// visibility times `pi` within 10 %.
 #[test]
-fn a_young_chunk_reads_its_neighbours_sky() {
+fn a_face_with_no_record_reads_its_own_summary_or_the_column() {
     let Some((device, queue)) = device() else {
         return;
     };
-    let world = floor_world([3, 3, 1], |_| false);
+    let world = floor_world([3, 3, 1], under_roof);
     let mut gpu = mirror(&device, &queue, &world, None);
     let uniform = Sky {
         altitude_zero_z: FLOOR as f32,
         ..Sky::uniform(1.0)
     };
-    let mut f = frame(&device, SIZE, ShadowWalk::Full);
+    let cam = Camera {
+        position: Vec3::new(102.0, 96.0, FLOOR as f32 + 2.5),
+        yaw: std::f32::consts::PI,
+        pitch: -12f32.to_radians(),
+        vfov: 60f32.to_radians(),
+    };
+    let pi = std::f32::consts::PI;
+    let summary_up = |f: &Frame, c: [i32; 2]| -> Option<f32> {
+        let block = f.store().block_words(ChunkCoord([c[0], c[1], 0]))?;
+        let at = vxe_render::internals::SUMMARY_AT as usize;
+        let w = vxe_render::internals::BRICK_WORDS;
+        vxe_render::internals::record_visibility(&block[at..at + w], 5)
+    };
+    // Bakes `world` with the centre chunk's voxels that `withheld` names left out, then per
+    // arm (B with `column_prior`) steps `frames` frames after a reset and reads, over the
+    // read pixels, the mean light over `pi` and the source words.
+    let mut f = frame(&device, DIG_SIZE, ShadowWalk::Full);
     f.set_lighting(Lighting {
         sky_rays: 1,
         ..f.lighting()
     });
-    f.set_light_hooks(vxe_render::LightHooks {
-        key_off: true,
-        ..Default::default()
-    });
     f.set_sky(Some(uniform));
     f.set_count_store(true);
-    let settings = vxe_render::BakeSettings {
-        brick_samples: 64,
-        round: 64,
-        filter: Some(std::sync::Arc::new(|v: [i32; 3], _f: u8| {
-            !(v[0].div_euclid(64) == 1 && v[1].div_euclid(64) == 1)
-        })),
-        ..Default::default()
+    let mut run = |withheld: fn([i32; 3]) -> bool, frames: u32| {
+        let settings = vxe_render::BakeSettings {
+            brick_samples: 16,
+            round: 16,
+            filter: Some(std::sync::Arc::new(move |v: [i32; 3], _f: u8| {
+                !(v[0].div_euclid(64) == 1 && v[1].div_euclid(64) == 1 && withheld(v))
+            })),
+            ..Default::default()
+        };
+        f.bake_until(
+            &device,
+            &queue,
+            &mut gpu,
+            &world,
+            world.extent(),
+            &settings,
+            &mut |_| {},
+        )
+        .expect("the store fits");
+        let neighbours: Vec<Option<f32>> = [[0, 1], [2, 1], [1, 0], [1, 2]]
+            .iter()
+            .map(|&c| summary_up(&f, c))
+            .collect();
+        let own = summary_up(&f, [1, 1]);
+        let mut arms = Vec::new();
+        for column_prior in [false, true] {
+            f.set_light_hooks(vxe_render::LightHooks {
+                key_off: true,
+                column_prior,
+                ..Default::default()
+            });
+            f.reset_history();
+            for _ in 0..frames {
+                f.step(&device, &queue, &gpu, &cam, &LightParams::headlamp());
+            }
+            let hits = vxe_render::debug::read_rgba32f(&device, &queue, f.light_hit_positions());
+            let d = vxe_render::debug::read_rgba16f(&device, &queue, f.direct_accumulated());
+            let a = vxe_render::debug::read_rgba16f(&device, &queue, f.accumulated());
+            let m = vxe_render::debug::read_rgba16f(&device, &queue, f.moments());
+            let vis = vxe_render::debug::read_rgba8(&device, &queue, f.visibility_samples());
+            let pair = vxe_render::debug::read_rgba16f(&device, &queue, f.visibility_pair());
+            // `pair_sky_term`'s E_sky(+z), green.
+            let bytes = vxe_render::debug::read_buffer(&device, &queue, f.sky_irradiance(), 0, 96);
+            let e_up = f32::from_le_bytes([bytes[84], bytes[85], bytes[86], bytes[87]]);
+            let (mut sum, mut n, mut words) = (0.0f64, 0usize, [0usize; 7]);
+            for (i, h) in hits.iter().enumerate() {
+                let deep = h[3] < 1e30
+                    && (h[2] - FLOOR as f32).abs() < 1e-3
+                    && (72.0..88.0).contains(&h[0])
+                    && (72.0..120.0).contains(&h[1]);
+                if !deep {
+                    continue;
+                }
+                let cast = vis[4 * i + 3] > 127;
+                let ray = if cast { pair[i][0] * e_up } else { 0.0 };
+                let lit = f64::from(d[i][1]) + f64::from(a[i][1]) + f64::from(ray);
+                sum += lit / f64::from(pi);
+                n += 1;
+                words[usize::from(source_of(m[i][3])).min(6)] += 1;
+            }
+            arms.push((sum / n.max(1) as f64, n, words));
+        }
+        (neighbours, own, arms)
     };
-    f.bake_until(
-        &device,
-        &queue,
-        &mut gpu,
-        &world,
-        world.extent(),
-        &settings,
-        &mut |_| {},
-    )
-    .expect("the store fits");
-    let mut read = |at: [f32; 2]| {
-        let lit = centre_lit(&device, &queue, &mut f, &gpu, &camera(at), 1);
-        let vis = vxe_render::debug::read_rgba8(&device, &queue, f.visibility_samples());
-        let w = f.visibility_samples().width() as usize;
-        let h = f.visibility_samples().height() as usize;
-        let cast = vis[4 * ((h / 2) * w + w / 2) + 3] > 0;
-        (lit, cast, f.read_store_stats(&device, &queue))
-    };
-    let (young, young_cast, st) = read([96.0, 96.0]);
-    let (old, old_cast, _) = read([32.0, 96.0]);
+    let (neighbours, own, arms) = run(|_| true, 16);
     println!(
-        "centre {young:?} (sky ray cast {young_cast}), neighbour {old:?} (cast {old_cast}); store missing {} fallback {} black {}",
-        st.missing, st.fallback, st.still_black
+        "(a) no centre summary (own {own:?}); the neighbours' +z summaries (the before) {neighbours:?}; \
+         under the roof: arm A mean {:.4} over {} px, words {:?}; arm B mean {:.4} over {} px, words {:?}",
+        arms[0].0, arms[0].1, arms[0].2, arms[1].0, arms[1].1, arms[1].2
     );
-    assert!(within(young, old, 0.10), "{young:?} against {old:?}");
-    assert!(!young_cast, "the chain stands in for the sky ray");
-    assert!(st.missing > 0, "the centre's faces have no block");
-    assert_eq!(st.still_black, 0);
+    assert!(own.is_none(), "the centre holds a summary: {own:?}");
+    assert!(
+        arms[0].1 > 100 && arms[1].1 > 100,
+        "rig fault: few read pixels"
+    );
+    assert!(
+        arms[0].0 <= 1.0 / 9.0,
+        "arm A: {} against the column's 0",
+        arms[0].0
+    );
+    assert!(
+        arms[1].0 <= 1e-4,
+        "arm B: {} against the column's 0",
+        arms[1].0
+    );
+    let (_, own, arms) = run(|v| v[0] < 96, 4);
+    let own = own.expect("the centre's open half summarises");
+    println!(
+        "(b) the centre's summary {own:.4}: under the roof arm A mean {:.4} over {} px, words {:?}",
+        arms[0].0, arms[0].1, arms[0].2
+    );
+    assert!(arms[0].1 > 100, "rig fault: few read pixels");
+    assert_eq!(
+        arms[0].2[usize::from(SOURCE_OWN_SUMMARY)],
+        arms[0].1,
+        "{:?}",
+        arms[0].2
+    );
+    assert!(
+        (arms[0].0 / f64::from(own) - 1.0).abs() <= 0.10,
+        "{} against the summary's {own}",
+        arms[0].0
+    );
 }
 
 /// Plan 0086 Phase 9 bar 4's twin: the floor of chunk (0, 0, 0) under a resident rock roof

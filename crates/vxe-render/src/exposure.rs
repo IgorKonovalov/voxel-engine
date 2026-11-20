@@ -4,10 +4,11 @@
 //!
 //! The meter: in the shaded view the composite adds, per 8 x 8 workgroup of the internal
 //! target, `clamp(log2(max(Y, 2^-16)), -16, 16)` of each pixel's radiance before exposure and
-//! before the tone map (Rec. 709 luminance `Y`) and a count of 1, into one tile each. The
-//! exposure pass (`exposure.wgsl`, one workgroup of 256, run last in the frame) weights tile
-//! `i` by [`Metering::weight`] and writes `sum(w S) / sum(w n)` into the state's
-//! `metered_log2`.
+//! before the tone map (Rec. 709 luminance `Y`), a count of 1 and a sky count of 1 for a pixel
+//! that is sky (a miss), into one tile each (four `f32`, the last 0). The exposure pass
+//! (`exposure.wgsl`, one workgroup of 256, run last in the frame) weights tile `i` by
+//! [`Metering::weight`] and writes `sum(w S) / sum(w n)` into the state's `metered_log2` and
+//! `sum(w k) / sum(w n)`, the share of the view that is sky, into its `sky`.
 //!
 //! The exposure is [`Exposure::Manual`] or [`Exposure::Auto`]. In auto the pass steps an adapted
 //! level `a` (log2 luminance) toward the meter `t` by [`AutoExposure::step`] over the caller's
@@ -38,6 +39,8 @@ pub(crate) fn exposure_source() -> String {
 
 /// Pixels on a meter tile's edge: the composite's workgroup.
 pub(crate) const METER_TILE: u32 = 8;
+/// Bytes of one meter tile: the log2 sum, the count, the sky count and 0, as `f32`.
+pub(crate) const METER_TILE_BYTES: u64 = 16;
 /// The log2 luminance a pixel adds to its tile is clamped to `[-METER_LOG2_LIMIT,
 /// METER_LOG2_LIMIT]`.
 pub const METER_LOG2_LIMIT: f32 = 16.0;
@@ -107,8 +110,9 @@ impl Default for Exposure {
 /// toward `t` at `tau_cone` while `a > log2 cone_floor` and at `tau_rod` once below, a step that
 /// crosses the floor spending `tau_cone ln((a - t) / (f - t))` of its `dt` reaching it. The
 /// exposure is `key 2^compensation_ev / 2^a` clamped to `[min, ceiling]`, the ceiling `max`,
-/// or under [`AutoExposure::sky_anchor_ev`] while the frame holds a sky the anchored one
-/// ([`AutoExposure::ceiling`]).
+/// or under [`AutoExposure::sky_anchor_ev`] while the frame holds a sky the one in force,
+/// which steps toward the anchored one ([`AutoExposure::ceiling`]) as far as the sky in view
+/// holds it ([`AutoExposure::ceiling_target`], [`AutoExposure::step_ceiling`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AutoExposure {
     /// The frame luminance a settled scene is exposed to (0.18).
@@ -130,9 +134,15 @@ pub struct AutoExposure {
     /// the key ([`AutoExposure::ceiling`]); `None` keeps `max`. The default is
     /// [`DEFAULT_SKY_ANCHOR_EV`]; with no sky set the ceiling is `max` whatever it holds.
     pub sky_anchor_ev: Option<f32>,
-    /// The most the adapted level moves toward the meter per second, in EV (ADR-0076 rule 5):
-    /// a frame's step is clamped to `rate_ev_s * min(dt, MAX_RATE_DT)`, so a hitch does not
-    /// step further than a 15 fps frame. 0 is no cap (ADR-0033's speed alone).
+    /// The share of the view that is sky (`F`, under the meter's weights) at and over which
+    /// the anchor holds in full; under it the anchor releases toward `max`, log2-linear in
+    /// the share, to `max` with no sky in view ([`AutoExposure::ceiling_target`]). 0 holds the
+    /// anchor whatever is in view. The default is [`DEFAULT_SKY_ANCHOR_SHARE`].
+    pub sky_anchor_share: f32,
+    /// The most the adapted level, and under the sky anchor the ceiling in force, move toward
+    /// their targets per second, in EV (ADR-0076 rule 5): a frame's step is clamped to
+    /// `rate_ev_s * min(dt, MAX_RATE_DT)`, so a hitch does not step further than a 15 fps
+    /// frame. 0 is no cap (ADR-0033's speed alone, and the ceiling jumps).
     pub rate_ev_s: f32,
 }
 
@@ -145,6 +155,11 @@ pub(crate) const MAX_RATE_DT: f32 = 1.0 / 15.0;
 
 /// [`AutoExposure::sky_anchor_ev`]'s default, in EV over the sunlit ground's exposure.
 pub const DEFAULT_SKY_ANCHOR_EV: f32 = 4.0;
+
+/// [`AutoExposure::sky_anchor_share`]'s default: the anchor holds in full while 1/256 of the
+/// metered view is sky (Plan 0094 Phase 7b bar 1's reading: a forest floor under the canopy
+/// meters under 1/128 of sky, a deep tunnel 0).
+pub const DEFAULT_SKY_ANCHOR_SHARE: f32 = 1.0 / 256.0;
 
 impl Default for AutoExposure {
     fn default() -> Self {
@@ -167,6 +182,7 @@ impl AutoExposure {
             cone_floor: 2f32.powi(-6),
             metering: Metering::default(),
             sky_anchor_ev: Some(DEFAULT_SKY_ANCHOR_EV),
+            sky_anchor_share: DEFAULT_SKY_ANCHOR_SHARE,
             rate_ev_s: DEFAULT_EXPOSURE_RATE_EV_S,
         }
     }
@@ -263,14 +279,59 @@ impl AutoExposure {
     /// ([`ground_irradiance`]; `None` with no sky set): with [`AutoExposure::sky_anchor_ev`]
     /// `N` and a ground over 0, `2^N key 2^compensation_ev / (0.5 ground / pi)`, the exposure
     /// that puts a horizontal face of albedo 0.5 under that irradiance at the key, opened `N`
-    /// EV; else `max`. The exposure pass computes the same in f32 from `E_sky`.
+    /// EV, clamped to `max`: the anchor lowers the ceiling and never lifts it (a dark sky, as
+    /// at night, leaves `max` exactly); else `max`. The exposure pass computes the same in f32
+    /// from `E_sky`.
     pub fn ceiling(&self, ground: Option<f32>) -> f32 {
         match (self.sky_anchor_ev, ground) {
-            (Some(n), Some(g)) if g > 0.0 => {
-                n.exp2() * self.key * self.compensation_ev.exp2() / (0.5 * g / std::f32::consts::PI)
-            }
+            (Some(n), Some(g)) if g > 0.0 => (n.exp2() * self.key * self.compensation_ev.exp2()
+                / (0.5 * g / std::f32::consts::PI))
+                .min(self.max),
             _ => self.max,
         }
+    }
+
+    /// The ceiling's target over a frame whose sunlit ground's irradiance is `ground` and
+    /// whose metered share of sky is `sky` in `[0, 1]`: with the anchor in force
+    /// ([`AutoExposure::ceiling`] `c_a`, a ground over 0) and
+    /// [`AutoExposure::sky_anchor_share`] `F` over 0, `log2 c = mix(log2 max, log2 c_a,
+    /// min(sky / F, 1))`: the anchored ceiling at a share of `F` and over, `max` with no sky
+    /// in view (`c_a` is never over `max`); else `c_a`.
+    pub fn ceiling_target(&self, ground: Option<f32>, sky: f32) -> f32 {
+        let a = self.ceiling(ground);
+        if !self.anchors(ground)
+            || self.sky_anchor_share <= 0.0
+            || sky >= self.sky_anchor_share
+            || a >= self.max
+        {
+            return a;
+        }
+        let open = f64::from(self.max).log2();
+        let t = f64::from(sky / self.sky_anchor_share);
+        let l = open + (f64::from(a).log2() - open) * t;
+        l.exp2() as f32
+    }
+
+    /// The anchor sets the ceiling: [`AutoExposure::sky_anchor_ev`] and a ground over 0.
+    fn anchors(&self, ground: Option<f32>) -> bool {
+        self.sky_anchor_ev.is_some() && ground.is_some_and(|g| g > 0.0)
+    }
+
+    /// The ceiling in force after `dt` seconds from `ceiling` toward `target`: under the
+    /// anchor (`ground` as [`AutoExposure::ceiling`] takes it) with a share and a rate over 0,
+    /// a step of at most `rate_ev_s * min(dt, MAX_RATE_DT)` EV in log2 (ADR-0076 rule 5); else,
+    /// or from a ceiling of 0 (none yet), the target.
+    pub fn step_ceiling(&self, ground: Option<f32>, ceiling: f32, target: f32, dt: f64) -> f32 {
+        if !self.anchors(ground)
+            || self.sky_anchor_share <= 0.0
+            || self.rate_ev_s <= 0.0
+            || ceiling <= 0.0
+        {
+            return target;
+        }
+        let r = f64::from(self.rate_ev_s) * dt.max(0.0).min(f64::from(MAX_RATE_DT));
+        let c = f64::from(ceiling).log2();
+        (c + (f64::from(target).log2() - c).clamp(-r, r)).exp2() as f32
     }
 }
 
@@ -301,7 +362,8 @@ pub struct ExposureState {
     /// The ceiling the last pass clamped `current` under ([`AutoExposure::ceiling`]); in
     /// manual, the auto model's `max` of the uniform (0 when none was set).
     pub ceiling: f32,
-    pub _pad: u32,
+    /// The last metered share of the view that is sky, under the meter's weights.
+    pub sky: f32,
 }
 
 /// `ExposureState::flags` bit: the last pass metered nothing (another view than the shaded
@@ -333,6 +395,7 @@ impl ExposureState {
             frame: self.frame,
             held: self.flags & STATE_HELD != 0,
             ceiling: self.ceiling,
+            sky_share: self.sky,
         }
     }
 }
@@ -350,6 +413,8 @@ pub struct ExposureReadout {
     pub held: bool,
     /// The ceiling the read pass clamped the exposure under ([`ExposureState::ceiling`]).
     pub ceiling: f32,
+    /// The read pass's metered share of sky ([`ExposureState::sky`]).
+    pub sky_share: f32,
 }
 
 /// `ExUniform` in `exposure.wgsl`, field for field.
@@ -379,7 +444,8 @@ pub(crate) struct ExposureUniform {
     /// [`AutoExposure::rate_ev_s`] (0: no cap) and the longest step it pays for.
     pub rate_ev_s: f32,
     pub max_rate_dt: f32,
-    pub _pad0: f32,
+    /// [`AutoExposure::sky_anchor_share`], 0 without the anchor.
+    pub sky_share: f32,
     pub _pad1: f32,
 }
 
@@ -406,6 +472,11 @@ impl ExposureUniform {
         };
         self.rate_ev_s = auto.rate_ev_s.max(0.0);
         self.max_rate_dt = MAX_RATE_DT;
+        self.sky_share = if self.anchor > 0.0 {
+            auto.sky_anchor_share.max(0.0)
+        } else {
+            0.0
+        };
     }
 }
 
@@ -666,11 +737,12 @@ mod tests {
         .unwrap_or_else(|e| panic!("exposure.wgsl validates: {e:?}"));
     }
 
-    /// The state and the uniform are the shader's sizes: 32 bytes and 112.
+    /// The state and the uniform are the shader's sizes: 32 bytes and 112; a meter tile is 16.
     #[test]
     fn the_state_and_the_uniform_have_the_shaders_layout() {
         assert_eq!(size_of::<ExposureState>(), 32);
         assert_eq!(size_of::<ExposureUniform>(), 112);
+        assert_eq!(METER_TILE_BYTES, 16);
     }
 
     /// The centre weight is 1 + strength at the centre and falls to 1 far out; the average
@@ -828,6 +900,16 @@ mod tests {
         assert_eq!(at(2.0).ceiling(None), none.max);
         assert_eq!(at(2.0).ceiling(Some(0.0)), none.max);
         assert_eq!(none.ceiling(ground(1.0)), none.max);
+        // A ground so dim the anchored exposure is over `max` (as at night): the anchor never
+        // lifts the ceiling, it is `max` exactly, and the target is `max` at every share.
+        let dim = ground(1e-3);
+        let open = 4.0 * 0.18 * PI / (0.5 * PI * 1e-3);
+        assert!(open > at(2.0).max, "{open}");
+        assert_eq!(at(2.0).ceiling(dim), at(2.0).max);
+        for k in 0..=64 {
+            let sky = k as f32 / 64.0;
+            assert_eq!(at(2.0).ceiling_target(dim, sky), at(2.0).max, "share {sky}");
+        }
         let uniform = |a: &AutoExposure, sky: bool| {
             let mut u = ExposureUniform::default();
             u.set_auto(a, sky);
@@ -840,5 +922,111 @@ mod tests {
         let e = AutoExposure::eye();
         assert_eq!(e.exposure_under(-12.0, 0.25), 0.25);
         assert_eq!(e.exposure_under(-12.0, 1e-9), f64::from(e.min));
+    }
+
+    /// Plan 0094 Phase 7b: the ceiling's target is the anchored one at a sky share of `F` and
+    /// over, `max` with no sky in view and log2-linear between; where the anchored exposure is
+    /// over `max` (the night) the anchored ceiling and the target are `max` at any share; a
+    /// share `F` of 0, no anchor or no sky keep today's ceiling.
+    #[test]
+    fn the_ceiling_target_follows_the_sky_in_view() {
+        use std::f32::consts::PI;
+        let e = AutoExposure {
+            max: 4.0,
+            ..AutoExposure::eye()
+        };
+        let f = e.sky_anchor_share;
+        assert_eq!(f, DEFAULT_SKY_ANCHOR_SHARE);
+        // Noon: a bright ground, the anchored ceiling far under `max`.
+        let day = Some(ground_irradiance([PI * 2400.0; 3], 0.0));
+        let a = e.ceiling(day);
+        assert!(a < e.max, "{a}");
+        let near = |x: f32, y: f32| (x.log2() - y.log2()).abs() < 1e-5;
+        assert_eq!(e.ceiling_target(day, 1.0), a);
+        assert_eq!(e.ceiling_target(day, f), a);
+        assert!(near(e.ceiling_target(day, 0.0), e.max));
+        assert!(near(e.ceiling_target(day, 0.5 * f), (a * e.max).sqrt()));
+        let mut last = e.ceiling_target(day, 0.0);
+        for k in 1..=32 {
+            let c = e.ceiling_target(day, f * k as f32 / 16.0);
+            assert!(c <= last, "monotonic in the share: {k}");
+            last = c;
+        }
+        // Night: the anchored exposure over `max`; the ceiling and its target are `max`.
+        let night = Some(ground_irradiance([PI * 1e-3; 3], 0.0));
+        assert_eq!(e.ceiling(night), e.max);
+        for sky in [0.0, 0.5 * f, f, 1.0] {
+            assert_eq!(e.ceiling_target(night, sky), e.max);
+        }
+        // The before arm, no anchor, no sky.
+        let before = AutoExposure {
+            sky_anchor_share: 0.0,
+            ..e
+        };
+        assert_eq!(before.ceiling_target(day, 0.0), a);
+        let none = AutoExposure {
+            sky_anchor_ev: None,
+            ..e
+        };
+        assert_eq!(none.ceiling_target(day, 0.0), e.max);
+        assert_eq!(e.ceiling_target(None, 0.0), e.max);
+        // The uniform carries the share under the anchor alone.
+        let share = |a: &AutoExposure, sky: bool| {
+            let mut u = ExposureUniform::default();
+            u.set_auto(a, sky);
+            u.sky_share
+        };
+        assert_eq!(share(&e, true), f);
+        assert_eq!(share(&e, false), 0.0);
+        assert_eq!(share(&none, true), 0.0);
+    }
+
+    /// Plan 0094 Phase 7b bar 4's model (ADR-0076 rule 5 on the ceiling): from the anchored
+    /// ceiling toward `max` and back the ceiling in force moves by at most the rate's frame
+    /// step, monotonically, and lands on its target; at rate 0, from no ceiling, with no anchor
+    /// or with the share 0 it jumps.
+    #[test]
+    fn the_ceiling_steps_at_the_rate() {
+        use std::f32::consts::PI;
+        let e = AutoExposure {
+            max: 4.0,
+            ..AutoExposure::eye()
+        };
+        let dt = 1.0 / 60.0;
+        let r_f = f64::from(e.rate_ev_s) * dt;
+        let day = Some(ground_irradiance([PI * 2400.0; 3], 0.0));
+        let a = e.ceiling(day);
+        let gap = f64::from(e.max.log2() - a.log2());
+        let frames = (gap / r_f).ceil() as usize;
+        let mut c = a;
+        let mut trace = vec![c.log2()];
+        for target in [e.max, a] {
+            for _ in 0..frames + 2 {
+                let next = e.step_ceiling(day, c, target, dt);
+                let d = f64::from(next.log2() - c.log2());
+                assert!(d.abs() <= r_f + 1.0 / 256.0, "{c} -> {next}");
+                assert!(
+                    (target >= c && next >= c) || (target <= c && next <= c),
+                    "monotonic: {c} -> {next} toward {target}"
+                );
+                c = next;
+                trace.push(c.log2());
+            }
+            assert!((c.log2() - target.log2()).abs() < 1e-4, "{trace:?}");
+        }
+        println!("reading: the ceiling's trace in EV {trace:?}");
+        let jump = |m: &AutoExposure, g: Option<f32>, from: f32| m.step_ceiling(g, from, e.max, dt);
+        let free = AutoExposure {
+            rate_ev_s: 0.0,
+            ..e
+        };
+        assert_eq!(jump(&free, day, a), e.max);
+        assert_eq!(jump(&e, day, 0.0), e.max);
+        assert_eq!(jump(&e, None, a), e.max);
+        let before = AutoExposure {
+            sky_anchor_share: 0.0,
+            ..e
+        };
+        assert_eq!(jump(&before, day, a), e.max);
     }
 }

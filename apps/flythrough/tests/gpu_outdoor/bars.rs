@@ -211,3 +211,72 @@ fn the_forest_after_a_turn() {
         );
     }
 }
+
+/// Plan 0094 Phase 3 bar 1: a still camera keeps its history. The forest of seed 1 at its
+/// spawn's view (`support::terms::forest_rig`), the sun at `10,180`, voxel leaves, the store
+/// baked whole (the queue drained), FSR 2 from 160 x 90 to 240 x 135 at the defaults (the
+/// settle off), the defaults' exposure: 64 still frames after a history reset. Over the trunk
+/// and floor lighting pixels (`canopy::reading`'s classes) the share whose history age (the
+/// moments' `z`) is under 32 is at or under 1 % (Phase 1's table, the before: trunks 4.67 %,
+/// floor 1.08 % under age 64), and the history rejections at rest (material, normal and other,
+/// a frame's mean over the run's last 32 frames) are at most 45 (a tenth of the before's 416
+/// normal and 37 other of 14 229 tested a frame at 320 x 180). The 320 x 180, 128-frame form
+/// is `canopy::reading::the_canopy_ages`. Soak: 58.1 s on lavapipe (the forest's bake), loaded.
+#[test]
+#[ignore = "soak"]
+fn a_still_camera_keeps_its_history() {
+    use canopy::reading::{Class, frame_sized, hold_capped};
+    let Some((mut rig, cam)) = support::terms::forest_rig() else {
+        return;
+    };
+    let t0 = std::time::Instant::now();
+    let sky = reading::fixed_sun_sky(10.0);
+    let base = flythrough::default_lighting();
+    let mut r = frame_sized(&mut rig, Some(sky), true, base.exposure, [160, 90], [240, 135]);
+    let a = hold_capped(
+        &rig,
+        &cam,
+        &mut r,
+        vxe_render::LightHooks::default(),
+        base.sky_history,
+        base.key_history,
+        64,
+        None,
+    );
+    let mut young = [(0usize, 0usize); 2];
+    for (c, &age) in a.light_class.iter().zip(&a.light_age) {
+        let k = match c {
+            Class::Floor => 0,
+            Class::Trunk => 1,
+            Class::Other => continue,
+        };
+        young[k].1 += 1;
+        young[k].0 += usize::from(age < 32.0);
+    }
+    let mut rej = [0f64; 4];
+    for r in &a.rejections {
+        for k in 0..4 {
+            rej[k] += f64::from(r[k]) / a.rejections.len().max(1) as f64;
+        }
+    }
+    let share = |k: usize| 100.0 * young[k].0 as f64 / young[k].1.max(1) as f64;
+    let rejected = rej[1] + rej[2] + rej[3];
+    println!(
+        "still forest at 10,180: age under 32 floor {:.3} % of {} px, trunks {:.3} % of {} px (before, under 64: floor 1.08 %, trunks 4.67 %); \
+         rejections a frame: tested {:.0}, material {:.1}, normal {:.1}, other {:.1} (before 416 normal, 37 other of 14 229); wall {:.1} s on {}",
+        share(0),
+        young[0].1,
+        share(1),
+        young[1].1,
+        rej[0],
+        rej[1],
+        rej[2],
+        rej[3],
+        t0.elapsed().as_secs_f64(),
+        rig.adapter
+    );
+    assert!(young[0].1 > 100 && young[1].1 > 20, "rig fault: {young:?}");
+    assert!(share(0) <= 1.0, "floor: {:.3} %", share(0));
+    assert!(share(1) <= 1.0, "trunks: {:.3} %", share(1));
+    assert!(rejected <= 45.0, "rejections a frame at rest: {rejected:.1}");
+}

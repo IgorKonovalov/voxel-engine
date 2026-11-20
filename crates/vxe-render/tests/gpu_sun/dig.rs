@@ -644,7 +644,10 @@ fn up_seed(f: &Frame, world: &World, h: [f32; 4]) -> f32 {
 /// `Sky::uniform(1.0)` with the record withheld (no store block, bar 1's rig) the centre
 /// pixel's first frame reads `(column, SEED_COLUMN)`: the column's 1. The mean of the pair over
 /// the box's cast pixels at frames 1, 8, 16 and 60 after the dig is printed, with the count of
-/// `+z` pixels whose face holds a record (stale) at frame 1.
+/// `+z` pixels whose face holds a record (stale) at frame 1. Plan 0094 Phase 5 bar 1's second
+/// clause: at frame 1 the centre chunk's summary record is `SKY_STALE` (the dig job queued and
+/// not landed) and every `+z` pixel inside the box whose face holds no record cast the sky ray
+/// (arm A's answer, so no source word `own summary`).
 /// Soak: 14.2 s on lavapipe in Plan 0086 Phase 24i's quiet gate.
 #[test]
 #[ignore = "soak"]
@@ -666,6 +669,9 @@ fn a_reset_pixel_starts_from_its_record() {
     let (mut plus_z, mut with_record, mut stale_n) = (0usize, 0usize, 0usize);
     let (mut worst_record, mut worst_column) = (0.0f32, 0.0f32);
     let mut means = Vec::new();
+    // Frame 1: the centre's summary's stale bit, and the dug +z pixels with no record that
+    // did not cast the sky ray (a summary answered them).
+    let (mut summary_stale, mut unanswered) = (None, 0usize);
     // The rig's world after its dig, for the column test.
     let dug = floor_world([3, 3, 1], |_| false);
     dug.apply(&EditOp::box_(
@@ -683,6 +689,18 @@ fn a_reset_pixel_starts_from_its_record() {
         let vis = vxe_render::debug::read_rgba8(device, queue, f.visibility_samples());
         let hits = vxe_render::debug::read_rgba32f(device, queue, f.light_hit_positions());
         let (mut sum, mut n) = (0.0f64, 0usize);
+        if k == 1 {
+            let block = f.store().block_words(ChunkCoord([1, 1, 0])).expect("the centre's block");
+            let at = vxe_render::internals::SUMMARY_AT as usize;
+            let rec = &block[at..at + vxe_render::internals::BRICK_WORDS];
+            summary_stale = Some(vxe_render::internals::record_sky_stale(rec));
+            for (j, h) in hits.iter().enumerate() {
+                let floor = h[3] < 1e30 && (h[2] - h[2].round()).abs() < 1e-3;
+                if floor && to_dig(*h, 0.0) == 0.0 && up_record(f, *h).is_none() && vis[4 * j + 3] <= 127 {
+                    unanswered += 1;
+                }
+            }
+        }
         for (j, h) in hits.iter().enumerate() {
             if h[3] >= 1e30 || to_dig(*h, 1.0) > 0.0 || vis[4 * j + 3] <= 127 {
                 continue;
@@ -722,6 +740,11 @@ fn a_reset_pixel_starts_from_its_record() {
     println!(
         "the box's cast pixels' mean pair at frames after the dig (frame, mean, pixels): {means:?}; largest |pair - seed| over the +z pixels at frame 1: with a record {worst_record:.4}, without {worst_column:.4}"
     );
+    println!(
+        "frame 1: the centre's summary SKY_STALE {summary_stale:?}; dug +z pixels with no record and no ray {unanswered}"
+    );
+    assert_eq!(summary_stale, Some(true), "the dig job's chunk summary at frame 1");
+    assert_eq!(unanswered, 0, "a stale summary answered a no-record face");
     assert!(with_record > 0, "no +z pixel with a record inside the box at frame 1");
     assert!(plus_z > with_record, "no +z pixel without a record inside the box at frame 1");
     assert!(worst_record <= 1.0 / (SEED_AGE + 1.0), "{worst_record}");

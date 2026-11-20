@@ -195,7 +195,8 @@ struct ExposureState {
     flags: u32,
     // The exposure pass's ceiling in force (`ExposureState::ceiling`); no frame pass reads it.
     ceiling: f32,
-    _pad: u32,
+    // The exposure pass's metered share of sky (`ExposureState::sky`); no frame pass reads it.
+    sky: f32,
 };
 
 @group(0) @binding(13) var<uniform> exposure_state: ExposureState;

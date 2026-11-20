@@ -272,9 +272,9 @@ fn read(level: &VeinLevel, frame: &Frame, camera: Camera, want: Want) -> Pixels 
     let (device, queue) = (&level.device, &level.queue);
     let [tw, th] = SIZE.map(|n| n.div_ceil(TILE));
     let n = (tw * th) as u64;
-    let b = vxe_render::debug::read_buffer(device, queue, frame.exposure_tiles(), 0, 8 * n);
+    let b = vxe_render::debug::read_buffer(device, queue, frame.exposure_tiles(), 0, 16 * n);
     let meter = b
-        .chunks_exact(8)
+        .chunks_exact(16)
         .map(|c| {
             let sum = f32::from_le_bytes(c[0..4].try_into().unwrap());
             let k = f32::from_le_bytes(c[4..8].try_into().unwrap());

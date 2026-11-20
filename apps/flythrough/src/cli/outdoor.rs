@@ -54,6 +54,10 @@ pub struct OutdoorArgs {
     /// ground's exposure while a sky is set (`AutoExposure::sky_anchor_ev`), `Some(None)` for
     /// none; unset, the preset's (`vxe_render::DEFAULT_SKY_ANCHOR_EV`).
     pub(crate) sky_anchor: Option<Option<f32>>,
+    /// `--sky-anchor-share X|off`: the share of the view that is sky at and over which the
+    /// anchor holds in full (`AutoExposure::sky_anchor_share`), 0 for off; unset, the
+    /// preset's (`vxe_render::DEFAULT_SKY_ANCHOR_SHARE`).
+    pub(crate) sky_anchor_share: Option<f32>,
     /// `--exposure-max EV`: the auto exposure's constant ceiling in EV; unset, the start's
     /// ([`OUTDOOR_MAX`] outdoors, the preset's elsewhere).
     pub(crate) exposure_max_ev: Option<f32>,
@@ -376,12 +380,28 @@ fn ceiling_flags() -> Vec<Flag<Parsing>> {
             &["--sky-anchor"],
             "N|none",
             "while a sky is set, the auto exposure opens at most N EV (-4 to 12) over the \
-                 exposure that puts sunlit ground at mid-grey, so a noon tunnel stays dark and \
-                 the night still opens; none keeps the constant ceiling [4]",
+                 exposure that puts sunlit ground at mid-grey, so a noon tunnel stays dark; the \
+                 anchor lowers the constant ceiling and never lifts it (a dark sky, as at night, \
+                 leaves it); none keeps the constant ceiling [4]",
             |p: &mut Parsing, v| {
                 p.args.outdoor.sky_anchor = Some(match v.text {
                     "none" => None,
                     _ => Some(v.parse_if(|n: &f32| (-4.0..=12.0).contains(n), "-4 to 12 or none")?),
+                });
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--sky-anchor-share"],
+            "X|off",
+            "the share of the metered view that is sky (0 to 1) at and over which the sky \
+                 anchor holds in full; under it the ceiling releases toward the constant one, \
+                 all the way with no sky in view, as a fade at the exposure's rate (a tunnel \
+                 exposes for its walls); off holds the anchor whatever is in view [0.00390625: 1/256]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.sky_anchor_share = Some(match v.text {
+                    "off" => 0.0,
+                    _ => v.parse_if(|n: &f32| *n > 0.0 && *n <= 1.0, "over 0 to 1, or off")?,
                 });
                 Ok(())
             },

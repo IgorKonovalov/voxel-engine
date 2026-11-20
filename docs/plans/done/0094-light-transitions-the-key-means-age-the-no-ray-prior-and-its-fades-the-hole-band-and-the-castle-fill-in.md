@@ -1,21 +1,21 @@
 # 0094: The light's transitions: the key mean's age at a still camera, the no-ray sky prior and its fades, the exposure's rate, the dig's hole band, and the castle's fill-in
 
-> **Status:** in-progress (approved 2026-11-19: the owner: "lets run 94 right away"; question 2, the exposure rate, on its recommendation, 1/32 EV a frame, the owner judging it at Phase 7; **Phase 7's window done 2026-11-20**, its verdict under Phase 7: a short fix pass (Phase 7a), Phase 8 narrowed, a short second look (Phase 9), then the close; the motion wobble is a separate lane's)
+> **Status:** done (closed 2026-11-20 at the fresh-session close review, v0.68.0. Verdict: clean, four minors and a nit for later plans; the gate 1280 of 1280 in 1588.2 s, over the line as the owner accepted. Approved 2026-11-19: the owner: "lets run 94 right away"; windows 94a, 94b and 94c done 2026-11-20, the night's pick 2b landed as Phase 8a)
 > **Created:** 2026-11-19
-> **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
-> **Related ADRs:** [ADR-0076](../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
+> **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../../roadmap.md)
+> **Related ADRs:** [ADR-0076](../../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
 > (proposed with Plan 0090: the five rules; rules 2, 3 and 5 are this plan's targets, and its
 > binding clause is met below under "Where the histories live"),
-> [ADR-0070](../adrs/0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md)
+> [ADR-0070](../../adrs/0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md)
 > (the sky's baked visibility, the pair, the no-ray path this plan changes the prior of; its
 > close adds an Outcome naming the prior as built),
-> [ADR-0053](../adrs/0053-a-light-summary-per-block-and-a-two-level-parent-table-light-a-brick-with-no-value.md)
+> [ADR-0053](../../adrs/0053-a-light-summary-per-block-and-a-two-level-parent-table-light-a-brick-with-no-value.md)
 > (the fallback chain whose neighbour summaries leave the sky channel),
-> [ADR-0033](../adrs/0033-eye-adaptation-as-an-asymmetric-two-stage-exposure-on-the-gpu.md)
+> [ADR-0033](../../adrs/0033-eye-adaptation-as-an-asymmetric-two-stage-exposure-on-the-gpu.md)
 > (the exposure whose step gains a rate cap),
-> [ADR-0018](../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
+> [ADR-0018](../../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
 > (the temporal pass whose acceptance and age the key mean rides),
-> [ADR-0046](../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
+> [ADR-0046](../../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
 > (`FADE`, the one fade length). No new ADR: every tradeoff here is decided by a reading
 > inside a rule an accepted or proposed ADR already states.
 > **Source:** Plan 0086's "The follow-up plan's scope" (its Followups section, the wrap-up
@@ -1100,6 +1100,104 @@ second round. The decisions, one recommended option each:
      6's.
   5. The hole's two aperture figures and the word are in the log and in the backlog entry.
 
+### Phase 7b: The exposure's ceiling follows the surroundings in view, not the sky's clock
+- **Owner skill:** dev
+- **Why (added 2026-11-20, architect, after window 94b):** run 4 of `live/session94b.sh`
+  (the owner's words in `live/window94b/verdicts.md`). In the tunnel at noon with the headlamp
+  on: "light is too dark, it should be changing according to surrounding exposure, not time of
+  day" (the still `4c-tunnel-noon-lamp-dark.png`: HUD `eye -6.75 EV  scene -5.3 EV  ceiling
+  -6.75 EV (anchor 4)`, the sky anchor's ceiling holding the eye 1.45 EV under what the
+  lamp-lit walls meter). At midnight: "headlamp is too bright, also level seems to be too
+  bright as well, but with full moon maybe its ok" (the ceiling at `max`: the anchor falls with
+  the sun, and the eye keys the walls). Plan 0086 Phase 12's anchor derives the ceiling from
+  the sky's irradiance alone, so a deep tunnel's exposure is set by the hour and the same
+  lamp-lit wall reads 1.45 EV apart by day and by night. **The owner's rule, binding: the
+  exposure follows what the eye sees.** The anchor's reason stays and is a bar below (0086
+  question 1: a noon tunnel's mouth must not be lifted to mid-grey, the view out of a cave must
+  not blow out; 86c's run 7c at `none` read the lamp-off tunnel "an unnatural blue" at -1.09
+  EV): the anchor holds while the open sky is in view and releases, as one fade, where it is
+  not. The lamp-off noon tunnel is the case the two rules pull apart on; it is read here and
+  judged by eye in Phase 9, not fixed by a mechanism.
+- **What:** the composite's meter tile gains a third term, the count of its metered pixels
+  that are sky (a miss, `!rec.found`, in the shaded view; the tile goes from `vec2` to `vec4`),
+  so the exposure pass reads, under the meter's own weights, the share of the view that is sky,
+  `f_sky` in [0, 1]. The ceiling's **target** is the anchored ceiling when `f_sky >= F_FULL`,
+  `max` when `f_sky` is 0, and log2-linear between (`log2 c = mix(log2 max, log2 anchored,
+  min(f_sky / F_FULL, 1))`); `F_FULL` is an `AutoExposure` field (`sky_anchor_share`; its
+  default is bar 1's reading, the guess 1/16), and 0 keeps today's anchor whatever is in view
+  (the before, for A/Bs). The ceiling **in force** (`ExState.ceiling`) steps toward its target
+  by at most `rate_ev_s * min(dt, MAX_RATE_DT)` EV a frame, the same cap as the adapted level
+  (ADR-0076 rule 5, amended with this phase), so the sky entering or leaving the view moves
+  the exposure as a fade, never a step; with `rate_ev_s` 0 it jumps, as the ceiling does today.
+  `sky_anchor_ev` `None` and a frame with no sky keep `max` untouched (0086 Phase 12 bar 1
+  stands; the first consumer sees no change). The HUD's exposure row shows the share
+  (`ceiling -6.75 EV (anchor 4, sky 23 %)`), the fly-through's `--sky-anchor-share X|off` and
+  a settings row carry it, the banner names it when not the default.
+  **Rejected, named here (no new ADR; the plan's header rule):** (a) the anchor as built, the
+  hour deciding the tunnel (the owner's rule); (b) the constant ceiling (0086 question 1 (b):
+  3b "too dark" at 0, 7c's blue at `none`); (c) a measure from the hits' baked sky visibility
+  (`vis_in.a` on the lighting grid) instead of, or beside, the sky pixels: it counts a shaded
+  courtyard or a forest floor as open and holds the anchor there, which may be right; it is
+  the fallback arm if bar 3 fails under the sky-pixel measure, built then and not before.
+- **Files touched:** `crates/vxe-render/src/shaders/composite.wgsl` (the tile's third term),
+  `shaders/exposure.wgsl`, `src/exposure.rs`, `frame/settings.rs`, `frame/compose.rs` (the
+  tile buffer's stride), `layout_tests.rs`, `crates/vxe-render/tests/gpu_exposure.rs` (its
+  `tiles()` reader and the new tests), `apps/flythrough/src/cli/outdoor.rs`,
+  `cli/tests/outdoor.rs`, `hud/stats.rs`, `hud/modes.rs`,
+  `apps/flythrough/tests/gpu_outdoor/defects.rs` (`the_tunnel_under_each_ceiling` gains the
+  share), `docs/flythrough.md`, `docs/plans/logs/0094.md`.
+- **Done when:**
+  1. **The share is read before the threshold is pinned.** `reading::the_sky_share_in_view`
+     (`gpu_outdoor.rs`, lavapipe, 160 x 90, under 20 s; the RTX release beside it by
+     `--headless` on the same scenes): `f_sky`, the metered level, the settled exposure and the
+     ceiling in force at the tunnel's inside spawn at noon and at midnight with the lamp on,
+     the same turned to face deep in (the 4c still's pose), the cave mouth looking out from
+     inside and in from outside, the hills at noon, the forest at `10,180` under `voxel` and
+     the forest at sunset (0086 Phase 12 bar 2's scenes). The table is in the log. `F_FULL`'s
+     default is the smallest power-of-two fraction at which bars 2 and 3 both hold; a value
+     that satisfies neither is a stop for the architect (arm (c)), not a loosened bar.
+  2. **The deep tunnel exposes for its walls, not for the hour.**
+     `the_tunnel_exposes_for_its_walls_by_day` (`gpu_outdoor.rs`, lavapipe, under 15 s; gate
+     under 10 s, else soak): at the deep pose with the lamp on at noon, `f_sky` is 0, the
+     ceiling in force is within 1/64 EV of `max` once settled, and the settled exposure equals
+     the meter's (`settles` within 1/64 EV of `eye`; the before: `eye -6.75` against `settles
+     -5.3`); at midnight the settled exposure is within 1/64 EV of its value before this phase.
+     The lamp-lit floor's mean display luma at the view's centre at noon against midnight is
+     printed as a ratio; within 0.5 EV it is asserted, over it disclosed with the fill's share
+     (the day tunnel carries sky fill the night one does not).
+  3. **The open sky still holds the anchor.** On the hills at noon, the forest at sunset and
+     the cave mouth looking out from inside, the settled exposure and the ceiling in force are
+     within 1/64 EV of their values before this phase (`sky_anchor_share` 0 against the
+     default, one rig, both arms printed); the outdoor goldens Phase 8 re-blesses are read in
+     both arms before the bless: `outdoor_noon`, `outdoor_sunset` and `outdoor_forest_sunset`
+     byte-identical between the arms; `cave_mouth` and `outdoor_night` may move, their
+     difference under this arm named in Phase 8 bar 4's table as this phase's share.
+  4. **The release is a fade (rule 5).** `the_ceiling_moves_at_the_rate` (`gpu_exposure.rs`,
+     64 x 36, under 5 s, gate; a CPU model test beside it): a scene whose upper half is sky
+     for 8 frames and a wall after (the tiles' sky count falls to 0 at frame 8), then sky again
+     at frame 72: the log2 of the exposure in force (`current`) moves by at most `R_f` within
+     1/256 EV a frame, monotonically, from the anchored ceiling toward `max` (or to the meter's
+     level, whichever binds first) and back; with `rate_ev_s` 0 the ceiling jumps in one frame
+     (today's form, pinned as the before); the trace printed.
+  5. **The cave mouth walk** (`reading::the_cave_mouth_walk_exposure`, RTX release, a camera
+     path from the deep tunnel out through the mouth and back, 10 s each way): per frame
+     `f_sky`, the meter, the ceiling in force and the exposure; the largest one-frame step of
+     log2 exposure at or under `R_f + 1/256` (asserted on the trace); from the frame `f_sky`
+     first reaches `F_FULL` on the way out, the exposure in force is at or under the anchored
+     ceiling within `(log2 max - log2 anchored) / R_f + 2` frames and stays there while
+     `f_sky` stays over `F_FULL` (the anchor's reason: the view out is not lifted past
+     daylight plus `N` EV); the trace is in the log.
+  6. **The lamp-off noon tunnel is read, not fixed:** bar 2's deep pose with the lamp off, the
+     settled exposure and the centre's mean display luma printed against the arm
+     `sky_anchor_share` 0 (86c's 7c read -1.09 EV unanchored); the figure goes to the log and
+     Phase 9's third look judges it by eye.
+  7. `--check-args` accepts `--sky-anchor-share`; the banner names `sky anchor share X` when
+     not the default and nothing when it is; the HUD row shows the share; the settings row
+     round-trips (Plan 0069's setter test lists the field); `ExposureUniform`, `ExposureState`
+     and the tile stride in `layout_tests.rs`. **Cost:** 0 ms by construction (one count per
+     tile, one scalar step a frame), the tile buffer doubled (8 to 16 bytes a tile; about
+     260 KB more at a 1080p internal target), stated.
+
 ### Phase 8: The picks as tests, the bars Plan 0086 left, the goldens
 - **Owner skill:** dev
 - **What:** the bars of Phases 3 to 6 that the window kept, written or pinned as tests against
@@ -1162,6 +1260,160 @@ second round. The decisions, one recommended option each:
   plan wrote it (a test of the ages, no change to the temporal pass). Bars 2 to 5 stand as
   written.
 
+  **Amended 2026-11-20 (architect), after window 94b and the Phase 8 checkpoint `63907e44`.**
+  The exposure's rate is **pinned at 3.75 EV/s** (the owner at run 1: 3.75 fine, 7.5 too
+  fast, 1.875 too long); nothing is re-pinned before the close. **Sequence:** Phase 7b lands
+  before this phase's bless and quiet gate; the tests the two wips wrote stand as they are.
+  Bar by bar, one call each:
+  - **Bar 1:** `a_still_camera_keeps_its_history` is `#[ignore = "soak"]` (58.1 s on lavapipe,
+    the forest's bake; a GPU test over the soak line is never a gate, `docs/nfr.md` section
+    7) and passed once by name, which is its bar; no gate stand-in is written, and the gate
+    sum is read over the rest of the list.
+  - **Bar 2:** the second form is taken: the rim band asserted, the far end printed. The
+    attribution in the log is restated as the readings say: the key light's term carries 1 of
+    the 3 over the headlamp (key off 3 against 1); the 2 that remain with the key off, on 656
+    `record` pixels all at age 191 under FSR 2, are **unattributed**, disclosed, and named in
+    the Followups for the motion lane (the upscaler's history on the darkest region).
+  - **Bar 3:** the seal clause's assertion was written before its reading (it follows the
+    golden's bless); the first reading pins it: at or under 1/16 the clause stands; over it,
+    the line becomes the read ratio rounded up to the next power-of-two fraction, at most 1/4,
+    with the figure and the old quantity's shares in the log, disclosed; over 1/4 is a stop
+    for the architect before the bless.
+  - **Bar 4, restated.** `outdoor_noon` moves (9.55 %): the premise "every pixel baked" was
+    false, since the rig bakes one chunk around the eye (`bake_around(.., 1, 64)`) and beyond
+    it every face has no record and casts arm A's ray (the by-source table: `no value` 5331 of
+    5500 moved pixels). **The owner's pick (2026-11-20): re-bless** `outdoor_noon`,
+    `outdoor_sunset`, `outdoor_night`, `outdoor_forest_sunset`, `cave_mouth` and the tunnel's
+    as a disclosed change caused by the no-record prior, the by-source table standing as the
+    per-mechanism attribution, Phase 7b's share read separately first (its bar 3). The two
+    profile goldens (`profile_high_hall` 0.2170 %, `profile_performance_hall` 0.4479 %, hall
+    scenes under no sky, so not the prior's) are **attributed before the bless**: each re-read
+    with `rate_ev_s` 0 and with the still camera's own tap off (Phase 3's two movers; the pool
+    is already off); the arm that returns 0.0000 % names the mechanism beside the bless; no
+    arm returning it is a stop for the architect, not a bless. `fsr2.png` and `upscaled.png`
+    are Phase 3 bar 5's, as read there.
+  - **Bar 5:** one quiet gate for the plan, at the tip after Phase 7b and the bless, never
+    before; over the 1140 s line the attribution runs as written (the top ten of
+    `test-times.mjs` against 0086's per-test diff) and the tests over the soak line are named
+    for the close review as its minor findings; nothing is fixed for the wall in this plan.
+- **Amended 2026-11-20 (owner), at the 7a1ae6e9 checkpoint:**
+  - Phase 7b's release goes toward `max(max, anchored)`, never below the anchored ceiling
+    (the night's anchored +11.86 EV is over the outdoor max; the literal formula would drop
+    the midnight tunnel to +2 EV and break bar 2's midnight clause). Kept.
+  - Phase 7b's `F` is 1/256 (1/16 and 1/128 moved the forest and `outdoor_forest_sunset`).
+    Accepted on its thin forest margin; arm (c), the baked-visibility measure, is built only
+    if Phase 9's look reads the forest's exposure jumping.
+  - Bar 4: `profile_high_hall` and `profile_performance_hall` are blessed as a disclosed
+    change: the still camera's own tap (Phase 3) is the mechanism (0.2170 % to 0.0104 % /
+    0.0139 % with it off), and the remaining ~0.01 % is named in the Implementation log as
+    unattributed. The quiet gate (bar 5) follows that bless.
+  - Phase 9's midnight A/B is `--sky-anchor none --exposure-max 2` against the tip (the
+    plan's `--exposure-max 2` alone is a no-op under the anchored night ceiling).
+- **Amended 2026-11-20 (owner), after window 94c (`live/session94c.log`):** the owner picked
+  **2b** (`--sky-anchor none --exposure-max 2`, the night held at +2 EV) over 2a (the tip's
+  anchored night: ceiling +11.86 EV, the deep tunnel's eye at +6.24 EV); the noon tunnel under
+  Phase 7b read "all good". 2b becomes the default through **Phase 8a** below, which lands
+  before this phase's bless of `outdoor_night` and before the quiet gate. The 7a1ae6e9 bullet's
+  release floor `max(max, anchored)` is **superseded** by 8a: with the anchored ceiling never
+  over `max`, the release target is `max` again, the plan's original formula, and the floor
+  has nothing left to hold. The sequence is now: 8a, then the blesses (the profile goldens as
+  decided above, `outdoor_night` as 8a's disclosed change, every other golden byte-identical
+  to the 7a1ae6e9 bless), then the one quiet gate at the tip.
+- **Amended 2026-11-20 (owner), after the quiet gate at `fbe9af7c` (`live/p8-gate.log`):**
+  - Bar 1: `a_rare_hit_is_clamped` (10.8 s on lavapipe, over the 10 s soak line) is marked
+    `#[ignore = "soak"]` and passed once by name. The plan's gate tests then sum to about 25.7 s,
+    under the 30 s bar.
+  - Bar 5: the gate's wall (1711.4 s against the 1140 s line) is **accepted as a reading**. None
+    of the ten slowest tests is this plan's, and the gate runs 26 more tests in 172.5 s less
+    than 0086's 1883.9 s. Cutting the gate's wall is a later test-cost chore, not this plan's.
+  - The `cargo deny` advisories on wasmtime 49.0.5 (RUSTSEC-2026-0566/0567/0568) are not this
+    plan's. A chore lane bumps wasmtime after this plan merges.
+
+### Phase 8a: The night's ceiling is `max`: the sky anchor lowers the ceiling, never lifts it
+- **Owner skill:** dev
+- **Why (added 2026-11-20, architect, after window 94c):** Plan 0086 Phase 12 built the anchor
+  as `c_a = 2^N` times the exposure that puts sunlit ground at mid-grey, with no bound, so "at
+  night the anchor falls with the sun and the eye opens": at midnight `c_a` is +11.86 EV, far
+  over the outdoor `max` of +2 EV (`OUTDOOR_MAX` 4), and the moonlit level and the lamp-lit
+  tunnel both meter to mid-grey, a day-for-night look. The owner's words at 94b ("headlamp is
+  too bright, also level seems to be too bright as well") and the pick at 94c (2b, the
+  constant +2 EV, over the anchored night) say the eye must not open past `max` for a dark
+  sky. ADR-0033's clamp `[min, max]` is the hard bound again; the anchor works under it.
+- **What:** `AutoExposure::ceiling` returns `min(c_a, max)` (the CPU model) and the shader's
+  `anchored()` returns `min(c_a, max_e)`; nothing else changes. By construction: at noon and
+  every hour `c_a` is under `max` (bar 1's table: -6.75, -4.34, -2.08 EV, all under +2) the
+  ceiling, its target, its step and the image are **byte-identical** to Phase 7b's (the owner:
+  "all good"); for the hours `c_a` is over `max` the ceiling is `max` in every view, which is
+  2b bit for bit (`--sky-anchor none` reads `max_e` where the clamped anchor now reads
+  `min(c_a, max_e) == max_e`, the same f32); the crossing hour is continuous (`min`), so the
+  ceiling in force never steps at dusk or dawn. `ceiling_target`'s `max(max, c_a)` reduces to
+  `max` and is written so (the 7a1ae6e9 floor removed, since `c_a <= max` always). The HUD's
+  row shows the value (`ceiling +2.00 EV (anchor 4, sky 37 %)` at midnight); the flags keep
+  their names and defaults (`--sky-anchor 4`, `--exposure-max` +2 for `--source outdoor`), the
+  help text and `docs/flythrough.md`'s rows lose "the night still opens" and the share row's
+  "never under the anchored one (the night)".
+  **Rejected, named here (no new ADR; the plan's header rule, and the fuller record is
+  ADR-0076 rule 5's clause of this date):** (a) the sky anchor off by default (`--sky-anchor
+  none`, 2b's literal flags): loses the noon anchor, which the owner kept twice (0086 question
+  1: 7c at `none` read the tunnel "an unnatural blue"; 94c run 1 "all good" under it), and
+  moves the noon image; (b) a second constant, a night limit of its own (a `night_max`, or a
+  smaller `N` once the sun is down): a knob with no reading behind it when `max` already is
+  the constant ceiling (ADR-0033, 0086 question 1 (b)), and a smaller `N` moves noon too; (c)
+  keeping the 7a1ae6e9 floor and lowering `OUTDOOR_MAX`: a no-op at night, where the anchored
+  ceiling binds, and a change at noon; (d) a tone-curve toe for the night (0086 Phase 12's (c)):
+  a look change on every scene, the backlog's.
+- **What it does to the open night (stated, not hidden):** 2b darkens every night view, not
+  only the tunnel. Bar 1's table: the mouth from inside at midnight metered -9.91 EV and
+  settled at +7.43 EV under the anchored ceiling; under `max` it is held at +2.00 EV, **5.4 EV
+  darker**, the moonlit ground outside the mouth at about 1/40 of mid-grey instead of mid-grey;
+  the deep tunnel +6.24 to +2.00 EV (4.2 EV darker, 2b as seen). The `outdoor_night` golden
+  (the hills' spawn at 00:00) moves the same way and is re-blessed as this phase's disclosed
+  change. **No new window before the close:** 2b's run started at the inside spawn facing the
+  mouth (the sky share 0.37, the moonlit hills through it) at the HUD's `ceiling +2.00 EV`
+  before the owner turned in, so the owner saw the open night at the new default, framed by
+  the mouth, and picked it; the complaint named the level, not only the lamp; and the one
+  knob that would move it is `--exposure-max`, a setting, so a later word costs a re-bless and
+  no mechanism. The open hills at midnight by eye are the first run of the next owner window
+  of any lane (the Followups).
+- **Files touched:** `crates/vxe-render/src/exposure.rs` (`ceiling`, `ceiling_target`, their
+  doc comments, the CPU tests), `crates/vxe-render/src/shaders/exposure.wgsl` (`anchored`,
+  `ceiling_target`, the header), `apps/flythrough/src/cli/outdoor.rs` (the help text),
+  `apps/flythrough/tests/gpu_outdoor/ceiling.rs` (bar 2's midnight clause, the reading's
+  rows), `apps/flythrough/tests/gpu_outdoor_golden.rs` and its `golden/outdoor_night.png`,
+  `docs/flythrough.md`, `docs/plans/logs/0094.md`.
+- **Done when:**
+  1. **The anchor never lifts the ceiling over `max`** (CPU, under 1 s, in
+     `the_ceiling_follows_the_sky` or beside it): at a ground so dim that `2^N key
+     2^compensation_ev / (0.5 ground / pi)` is over `max`, `ceiling()` returns `max` exactly
+     (`==`, the same f32), and `ceiling_target` returns `max` at every share in [0, 1]; at a
+     ground where it is under `max` every existing clause of that test holds unchanged (its
+     `AutoExposure::eye()` ceilings are all under its `max` of 16, so no clause moves); the CPU
+     model `the_ceiling_target_follows_the_sky_in_view` restated without the floor.
+  2. **Noon is byte-identical.** `the_ceiling_moves_at_the_rate` (anchored +3.526 EV under
+     `max` +7 EV) and `the_cave_mouth_walk_exposure`'s trace pass unchanged; `outdoor_noon`,
+     `outdoor_sunset`, `outdoor_forest_sunset`, `cave_mouth`, `fsr2.png`, `upscaled.png` and
+     the two profile goldens are byte-identical to the 7a1ae6e9 bless (read before any bless;
+     a moved pixel on any of them is a stop for the architect, not a bless).
+  3. **The night is 2b.** `the_tunnel_exposes_for_its_walls_by_day`'s midnight clause is
+     restated: at midnight, deep with the lamp on, the ceiling in force and the settled
+     exposure are within 1/64 EV of `max` (+2 EV) in both arms (the default share and share 0),
+     the before (+6.24 EV) printed; the noon-midnight centre luma ratio re-read and printed (the
+     bar's 0.5 EV clause as written). `reading::the_sky_share_in_view`'s two midnight rows
+     re-read (lavapipe; the RTX beside by `VXE_TEST_ADAPTER`) and the table in the log updated:
+     the eye and the ceiling +2.000 in both.
+  4. **The hour the clamp binds is read** (`reading::the_ceiling_by_hour`, CPU, under 1 s,
+     `ceiling.rs` or `exposure.rs`'s tests): the anchored `c_a` in EV against `max` at the
+     hills' spawn in 15-minute steps over the day, printed as the two clock times `c_a` crosses
+     +2 EV (dusk and dawn); the table is in the log so the next look knows which hours the
+     night clamp covers.
+  5. **The `outdoor_night` golden** is re-blessed as this phase's disclosed change, its
+     difference count and its eye before and after (+X EV to +2.00 EV) in the log; no other
+     golden moves (bar 2).
+  6. The help text and `docs/flythrough.md`'s `--sky-anchor` and `--sky-anchor-share` rows
+     say the anchor lowers the ceiling under `max` and never lifts it; `--check-args` and the
+     CLI tests (`cli/tests/outdoor.rs`) pass as written (the defaults do not change). **Cost:**
+     0 ms by construction (one `min` in the pass), stated.
+
 ### Phase 9: A second short look, only if the window asked for one
 - **Owner skill:** human
 - **What:** runs only if Phase 7 recorded any run as not fixed or worse **and** Phase 8 changed
@@ -1179,6 +1431,35 @@ second round. The decisions, one recommended option each:
   once on the new defaults, a look only (the pool off), no verdict owed. The hole and the
   motion wobble are **not** re-judged here: the first is routed to the backlog by the verdict,
   the second is the separate lane's.
+  **Window 94b ran 2026-11-20** (`live/session94b.sh`, `live/bin94b` at `aff21a5a`; the words
+  in `live/window94b/verdicts.md`, quoted into the log by the dev): run 1 picks 3.75 EV/s
+  ("3.5 is fine, 7.5 is too fast, 1.5 is too long"); run 2 `absorb`'s start "is slow, 70 sec.
+  When arrived on a level its fine (besides wobble)" (the cold compile is Plan 0096's, the
+  Followups); run 4a (tunnel at midnight, lamp on) "headlamp is too bright, also level seems
+  to be too bright as well, but with full moon maybe its ok"; run 4c (tunnel at noon, lamp on)
+  "light is too dark, it should be changing according to surrounding exposure, not time of
+  day" (Phase 7b); 4d skipped ("enough").
+  **Amended 2026-11-20 (architect): a third look, about three minutes, after Phase 7b**, on
+  `live/bin94c` at Phase 8's tip with `live/bin94b` as the before (`live/session94c.sh`, the
+  stills and words to `live/window94c/verdicts.md`): (1) the tunnel at noon, the lamp on, walk
+  in deep: the lamp-lit walls against 94b's 4c; once deep, `F7` the lamp off for a few seconds
+  and on again (the lamp-off tunnel under the released ceiling, Phase 7b bar 6: a word on it,
+  blue or not); (2) the tunnel at midnight, the lamp on, once on the tip (unchanged by Phase
+  7b by construction) and once at `--exposure-max 2` as the A/B for "too bright": which one,
+  or neither. The hills, the forest and the cave mouth are not re-judged (Phase 7b bars 3 and
+  5 read them). The owner's words per run are in the log; the night's pick, if `--exposure-max
+  2`, is a one-line default change for `--source outdoor` before the close, disclosed in the
+  log with the goldens it moves.
+  **Window 94c ran 2026-11-20** (`live/session94c.sh`, `live/bin94c` at `5c910b22`; the words
+  in `live/session94c.log`, quoted into the log by the dev): run 1 (the noon tunnel, the lamp
+  on, then off deep in) "all good"; run 2 (midnight, the lamp on) "2b", the night held at +2
+  EV by `--sky-anchor none --exposure-max 2`, over 2a, the tip's anchored night. **Amended
+  2026-11-20 (architect):** the pick is not the flags' literal default change (the anchor off
+  would move noon, which run 1 kept); it lands as **Phase 8a**, the anchored ceiling clamped
+  to `max`, 2b bit for bit for every hour the anchor would open past `max` and Phase 7b's
+  image for every other. **No Phase 9b:** the open-sky night is not shown again before the
+  close (Phase 8a states why, and what it costs the open night); the hills at midnight are the
+  first run of the next owner window of any lane.
 
 ## Data shapes
 
@@ -1372,7 +1653,7 @@ records it.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The readings, the key light's side | dev | done; readings in [`logs/0094.md`](logs/0094.md); the sky term's source word added to the moments' `w` under `COUNT_STORE` (`temporal.wgsl`, outside Files touched); the rule-form unit tests in a CPU binary `tests/rules.rs` (not in `support/rules.rs`, which every gpu binary includes); 5.4's source is the own summary, not the neighbours' | 3d20c1a2 |
+| 1: The readings, the key light's side | dev | done; readings in [`logs/0094.md`](../logs/0094.md); the sky term's source word added to the moments' `w` under `COUNT_STORE` (`temporal.wgsl`, outside Files touched); the rule-form unit tests in a CPU binary `tests/rules.rs` (not in `support/rules.rs`, which every gpu binary includes); 5.4's source is the own summary, not the neighbours' | 3d20c1a2 |
 | 2: The readings, the no-ray path's side | dev | done; arms (b) and (c) of the castle ran with the queue undrained before the stamps; the keep's walls classed by a castle material within half a voxel of the hit | 527d35e0 |
 | 2a: The light pass's compile cost, the pipeline cache | dev | done (exploration); bars 2 (RTX half), 5 over at load 4 to 8 (log); the arms dropped by text markers, no `override`; the cache in `vxe-render`'s `test_support.rs`, not the supports' `mod.rs` (outside Files touched: `settings.rs`'s `NOT_SETTINGS` row); wip `ae8d0722` | c3763d69 |
 | 3: The key mean keeps its age at a still camera | dev | done (exploration; wip `074ff2c5`); the still-camera waiver drops the material, normal and position tests; the settle in the amended form tripped the stop rule (return frame 37.6 % on against 21.9 % off, pops at rest not falling): default off, row and flag kept, banner word `settle on` (not `settle off`); readings in the log and the backlog's "Settle early"; outside Files touched: `frame/compose.rs`, `settings.rs` (the row), `gpu_golden.rs` (bar 5's reading), `gpu_outdoor/still.rs` (`VXE_SETTLE`), `docs/backlog.md`; `a_still_camera_keeps_its_history` not written (Phase 8) | dee00eb7 |
@@ -1380,9 +1661,11 @@ records it.
 | 5: The no-ray prior and the fade | dev | done (exploration; wip `3e13c620`); arm A kept (RENOIR light pass 1.62 ms at the rig's 320 x 180 grid during the bake, B 0.62; 1080p's half tier not read); (3)'s (i) and B's provisional record not built; the fade in the pair's x and w, no target; **`a_dig_leaves_no_dots`'s landing clause fails** against the fade's ramp (off 64.8 at the landing + 1 to 8.8 at + 14) and **`a_reset_pixel_starts_from_its_record` fails** on `SEED_COLUMN` (age 2 against 8), both left as written; bar 3's relative step 0.228 (line 0.10); bars 1, 2 and 6 not written or read (Phase 8); bar 9's frame 1 reads 0 (the column seed), then a ramp to 3.58; outside Files touched: `pair.wgsl`, `lib.rs`, `frame/mod.rs`, `compose.rs`, `settings.rs`, `support/defects.rs` (`Stepper::timed`), `canopy.rs` | acbbaf87 |
 | 6: The hole band and the bands bar | dev | done (exploration); the age-weighted pool in the a-trous `variance` entry, on by default (`LightHooks::no_pool` the before); the stale seed at `F` as `LightHooks::seed_stale_f`; **bar 1 not met in any arm** (flash + dip + overshoot 14.5 to 23.7 % of the hole band against 1 %; the pool does not lower it); bar 2 within the restated line (17:00 1.095 % against 1.509 %) but `a_dig_changes_nothing_outside_its_reach`'s 0.5 % assertion fails at 17:00, left as written; bar 3: `a_dig_leaves_no_dots` and `a_reset_pixel_starts_from_its_record` fail as in Phase 5; the ring band (8 to 64) not split; outside Files touched: `settings.rs`, `compose.rs` (the hook bits), `canopy.rs` | 37783825 |
 | 7: The owner's window (run as 94a, not 86e: `live/session94a.sh`, `live/bin94a`) | human | done 2026-11-20; the words in the log; forest and castle fixed, forest 15:00 and the dig not fixed, settle off better than on, `absorb` a long first frame, exposure too slow; the verdict and the rules under Phase 7 | (no commit: `live/` is untracked) |
-| 7a: The fix pass after window 94a | dev | done; readings in the log; the arms built inside a loading stage of their own (`building the light pass arms`), not inside `building the pipelines`; `a_dig_leaves_no_dots`'s pre-landing mean read over the 8 frames before the landing (a first form over the frames from the dig failed at frame 64); `a_reset_pixel_starts_from_its_record`'s record clause on the dig rig's +z pixels, the withheld clause on the open floor; bar 9's step clause fails in both arms (frame 1, 25.1), disclosed; the hole reading on the flat floor, not the hills (`vxe-render`'s tests have no hills); outside Files touched: `pair.wgsl`, `temporal.wgsl`, `atrous.wgsl`, `settings.rs` (crate root), `frame/mod.rs`, `cli/*`, `hud/modes.rs`, `gpu_golden.rs`, `gpu_outdoor/{bars,canopy,flicker,still}.rs`, `gpu_sun/dig.rs`, `docs/backlog.md` (the word) | committed with this row |
-| 8: The picks as tests, the bars 0086 left, the goldens (narrowed 2026-11-20) | dev | not started | |
-| 9: A second short look (runs: amended 2026-11-20) | human | not started | |
+| 7a: The fix pass after window 94a | dev | done; readings in the log; the arms built inside a loading stage of their own (`building the light pass arms`), not inside `building the pipelines`; `a_dig_leaves_no_dots`'s pre-landing mean read over the 8 frames before the landing (a first form over the frames from the dig failed at frame 64); `a_reset_pixel_starts_from_its_record`'s record clause on the dig rig's +z pixels, the withheld clause on the open floor; bar 9's step clause fails in both arms (frame 1, 25.1), disclosed; the hole reading on the flat floor, not the hills (`vxe-render`'s tests have no hills); outside Files touched: `pair.wgsl`, `temporal.wgsl`, `atrous.wgsl`, `settings.rs` (crate root), `frame/mod.rs`, `cli/*`, `hud/modes.rs`, `gpu_golden.rs`, `gpu_outdoor/{bars,canopy,flicker,still}.rs`, `gpu_sun/dig.rs`, `docs/backlog.md` (the word) | 372cc392 |
+| 7b: The ceiling follows the surroundings in view (added 2026-11-20) | dev | done; readings in the log; wip `29d7c743`; **the release target is `max(max, anchored)`, not `max`** (the anchored night ceiling is over `max`; bar 2's midnight clause holds only so); `F` 1/256 (1/16 released the forest, 1/128 moved `outdoor_forest_sunset`); the deep pose is the tunnel's axis half way in, not the 4c still's (its HUD position is off the rig's axis); bar 2's noon-midnight luma ratio -1.08 EV, printed; bar 4's test 7.3 s, over the 5 s guess; bar 5 on the RTX's debug test build; the tests in `gpu_outdoor/ceiling.rs` (file-size cap) and `the_tunnel_under_each_ceiling` in `gpu_outdoor.rs`; outside Files touched: `shaders/common.wgsl`, `frame/targets.rs` (the stride; not `compose.rs`), `frame/mod.rs`, `lib.rs`, `cli/mod.rs`, `hud/modes/tests.rs`, `hud/stats/tests.rs`, `tests/support/{settle/mod,stillness,terms}.rs` | 5c910b22 |
+| 8: The picks as tests, the bars 0086 left, the goldens (narrowed 2026-11-20; bars decided after 94b) | dev | done; readings in the log; wips `63907e44`, `7a1ae6e9`, `80b34b1f`; `a_still_camera_keeps_its_history` soak (58.1 s); the tunnel test asserts the rim band, the far end printed (key term 1 of the 3, **2 unattributed**); the seal clause stands at 1/16 (1.944 %); goldens re-blessed for the no-record prior (by-source table), `fsr2`/`upscaled` for the still tap; `profile_high_hall` and `profile_performance_hall` blessed as a disclosed change, the mechanism the still camera's own tap (0.2170 % to 0.0104 %, 0.4479 % to 0.0139 % with it off), **the remaining ~0.01 % unattributed**; bar 1: the gate sum 36.53 s at the gate, `a_rare_hit_is_clamped` (10.8 s) then marked soak per the owner's amendment `b5a34e84` and passed once by name (10.7 s, `b1e34245`), the rest 25.73 s under 30 s; **bar 5**: the quiet gate 1711.4 s against 1140 s (load 1.82), accepted as a reading (owner, `b5a34e84`), 1277 of 1281 passed, the 4 failures byte inventories missing the exposure's growth (+115 216 B), fixed in `gpu_upscale.rs` and `gpu_look_field.rs` (outside Files touched) and re-read by name, not by a second gate; 0086's per-test log not on disk, the top ten named against its summary; `a_young_chunk_reads_its_neighbours_sky` removed (fails on arm A; its rig is Phase 5 bar 1's); `cargo deny` advisories on wasmtime 49.0.5 (RUSTSEC-2026-0566/0567/0568) deferred to a chore lane (owner), cleared by main's =49.0.6 bump merged at `982a953a`; `cargo deny` there still fails on RUSTSEC-2026-0587 (wasmtime-wasi 49.0.6, fixed in >=49.0.7), not this plan's | ccd68426 |
+| 8a: The night's ceiling is `max` (added 2026-11-20, after window 94c) | dev | done; readings in the log; `ceiling_target` returns early at `c_a >= max` (Rust and WGSL) beside the plan's `min`; **bar 4 is a GPU reading** (`ceiling::reading::the_ceiling_by_hour`, `E_sky` has no CPU model); the golden harness's `image` prints the metered level, ceiling and eye (`gpu_outdoor_golden.rs`); `outdoor_night` re-blessed (98.50 %, eye +7.04 EV by the model to +2.00 EV read), every other golden byte-identical; the noon-midnight luma ratio +0.063 EV, asserted | fbe9af7c |
+| 9: A second short look (runs: amended 2026-11-20; a third look after 7b) | human | done: window 94b 2026-11-20 (the words under Phase 9); window 94c 2026-11-20, run 1 "all good", run 2 "2b" (Phase 8a), quoted into the log at the close review | (no commit: `live/` is untracked) |
 
 ### Notes
 
@@ -1392,11 +1675,30 @@ each. Empty is fine.)_
 
 ### Close triggers
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+_(Facts for the architect. Left at its template by the dev; filled by the architect at the
+close review of 2026-11-20 from the readings log and the review's own gate.)_
+
+- **What shipped:** feature (the still camera's own tap, the no-record prior and the no-ray
+  fade, the exposure's rate cap, the ceiling by the sky in view and clamped to `max`, the
+  default-off light arms out of the default pipeline and built in a loading stage, a pipeline
+  cache for the GPU tests) with fixes (the frame inventories' exposure growth, six restated
+  tests) and a removal (the settle, `--settle` refused).
+- **Public API changed:** `AutoExposure::{sky_anchor_share, rate_ev_s, ceiling_target,
+  step_ceiling}`, `DEFAULT_EXPOSURE_RATE_EV_S`, `DEFAULT_SKY_ANCHOR_SHARE`; `ExposureState::sky`
+  (was `_pad`), `ExposureReadout::sky_share`; `LightHooks::{column_prior, no_fade, pool,
+  seed_stale_f}`; `Frame::prepare_light_arms`; `internals::{set_pipeline_cache,
+  pipeline_cache_data}`; `PAIR_WGSL`; the exposure uniform 96 to 112 B and the meter tile 8 to
+  16 B; `AutoExposure::ceiling` clamps to `max`. Flags `--exposure-rate`, `--sky-anchor-share`.
+- **Budget readings:** the exposure's growth +115 216 B at 1280 x 720 internal (the frame
+  inventories); arm A's light pass during the castle's bake RTX 0.276 ms, RENOIR 1.169 ms mean
+  at the rig's 320 x 180 grid (Phase 5 bar 5; 1080p's half tier not read); the light stage 5.1
+  to 3.7 s on lavapipe debug (Phase 2a); the pipeline cache RTX cold 29.4 s against 0.24 s
+  warm; the gate 1711.4 s quiet at `fbe9af7c` (Phase 8 bar 5) and 1588.2 s loaded at the close.
+  The fade's temporal and composite cost not read separately.
+- **Gate at the tip:** at the close review on `0d956f17`: nextest gate 1280 / 1280 passed, 211
+  skipped, 1588.2 s; doctests 10 passed; clippy 0; fmt 0; doc gates 0; `cargo deny` advisories
+  FAILED on RUSTSEC-2026-0587 (wasmtime-wasi 49.0.6), not this plan's.
+- **Outstanding `human` phases:** none (Phase 9's windows 94b and 94c done).
 
 ## Followups
 
@@ -1437,6 +1739,31 @@ each. Empty is fine.)_
   30 000 frames (Phase 1's hills arms, Phase 2's castle arms (b) and (c), the forest's turn
   twice on a fresh rig): the backlog's entry; a queue or rig finding for the perf plan or a
   chore, read before a gate test shares a rig.
+- (Added 2026-11-20, architect, after window 94b.) **`absorb`'s cold start is Plan 0096's.**
+  The owner: "start is slow, 70 sec" on an emptied driver cache (Phase 7a's table: the arms'
+  light pipelines 39 to 44 s inside their loading stage, the base's pipelines 25 to 49 s
+  before them); once in the level it is fine. What 0096 takes, noted in the backlog's "A
+  pipeline cache for the renderer's shaders" (0096 lives on main): an engine `PipelineCache`
+  for hardware adapters in the app (Phase 2a's test-support cache read 29.4 s cold against
+  0.24 s warm on the RTX), and the default-off arms built in the background after the first
+  frame instead of inside the loading stage, the runtime pick's hitch with them.
+- (Added 2026-11-20, architect.) **The tunnel's far end, the unattributed 2** (Phase 8 bar 2
+  as decided): with the key light off the far end's p99 frame-to-frame change is 3 against the
+  headlamp's 1, on 656 `record` pixels all at age 191 under FSR 2 at 1.5; the sky ray and the
+  chain change nothing. A reading for the motion lane (the upscaler's history on the darkest
+  region), not this plan's.
+- (Added 2026-11-20, architect.) **The night tunnel's level.** The owner at midnight, lamp on:
+  too bright, "with full moon maybe its ok". Phase 7b does not move it (the ceiling is at
+  `max` at night already); Phase 9's third look A/Bs `--exposure-max 2`. The engine's
+  mechanism for a game's darker night is ADR-0033's `compensation_ev` and `max`, both
+  settings; no engine change unless the owner picks the A/B. **Resolved 2026-11-20:** the owner
+  picked the A/B (2b, window 94c); Phase 8a clamps the anchored ceiling to `max` (ADR-0076
+  rule 5's clause of this date), and `outdoor_night` is re-blessed. **Owed to the next owner
+  window of any lane, its first run:** the open hills at midnight (`--source outdoor --time
+  00:00`, the default spawn) on the new default, `live/bin94c` (the anchored night) as the
+  before: a word on the moonlit level at +2 EV (Phase 8a's arithmetic says about 1/40 of
+  mid-grey). Too dark is a setting (`--exposure-max`, or `compensation_ev`) and a re-bless of
+  `outdoor_night`, not a mechanism.
 - If the forest's trunks stay over the residual bar with (ii) built, a per-material style bit
   that lets a thin feature (a trunk) read the key light from a coarser shadow (ADR-0063's
   table) is a look plan's, not this one's.

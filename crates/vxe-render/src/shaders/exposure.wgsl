@@ -8,16 +8,18 @@
 //   1  storage, rw       state           the exposure state (`ExposureState` in exposure.rs)
 //   2  storage, read     tiles           the composite's tiles: per 8 x 8 workgroup of the
 //                                        internal target, row-major, the sum of the clamped
-//                                        log2 luminance of its pixels and their count
+//                                        log2 luminance of its pixels, their count, the count
+//                                        of those that are sky, and 0
 //   3  storage, read     sky_e           `E_sky` (sky_irradiance.wgsl): six vec4, `+z`'s w the
 //                                        key light's horizontal irradiance in luminance
 //
 // Tile `i` weighs `w_i = 1 + strength exp(-r_i^2 / (2 sigma^2))`, `r_i` the distance of the
 // tile's centre (its 8 x 8 square's centre, in pixels) from the centre of the view whose
 // rectangle holds that point (the first view when none does), in units of half that view's
-// height. The meter is `sum(w_i S_i) / sum(w_i n_i)`. Without a metered pixel (another view
-// than the shaded one, or an empty target) the state's adapted and metered levels hold and
-// the HELD flag is set.
+// height. The meter is `sum(w_i S_i) / sum(w_i n_i)` and the sky's share of the view
+// `sum(w_i k_i) / sum(w_i n_i)` (`k_i` the tile's sky pixels). Without a metered pixel
+// (another view than the shaded one, or an empty target) the state's adapted and metered
+// levels and its share hold and the HELD flag is set.
 //
 // In auto, with a meter and `dt > 0`, the adapted level steps toward it (`step_capped`: the
 // model's step clamped to the rate cap, `AutoExposure::step` in f32); with the reset bit it jumps to it; without a meter or with
@@ -26,10 +28,17 @@
 // `previous` becomes the exposure this frame's passes used (the state's `current` in auto,
 // else the manual value: `exposure_now` in common.wgsl) and `current` the one the next frame
 // uses: the manual value, or in auto `key 2^compensation / 2^adapted` clamped to the limits.
-// The upper limit is `max_e`, or with `anchor` over 0 (`2^N`: the frame holds a sky and the
-// model anchors its ceiling, `AutoExposure::ceiling`) and the sunlit ground's irradiance `E`
-// over 0, `anchor key / (0.5 E / pi)`; `E` is `E_sky(+z)`'s luminance plus its w. The state's
-// `ceiling` keeps the limit in force.
+// The upper limit is the state's `ceiling`, the ceiling in force. Its target is `max_e`, or
+// with `anchor` over 0 (`2^N`: the frame holds a sky and the model anchors its ceiling,
+// `AutoExposure::ceiling`) and the sunlit ground's irradiance `E` over 0, the anchored
+// `c_a = min(anchor key / (0.5 E / pi), max_e)`, `E` being `E_sky(+z)`'s luminance plus its w:
+// the anchor lowers the ceiling and never lifts it over `max_e` (a dark sky leaves `max_e`). With
+// `sky_share` (`F`) over 0 the anchor holds by the sky in view (`AutoExposure::ceiling_target`):
+// `log2 c = mix(log2 max_e, log2 c_a, min(f_sky / F, 1))`, so with no sky in view the anchor
+// releases to `max_e`. Under the anchor with
+// `F` and the rate over 0 the ceiling in force steps toward its target by at most the rate
+// cap's step in log2 (ADR-0076 rule 5, `AutoExposure::step_ceiling`); else, on the reset bit
+// or from a state with no ceiling yet, it is the target.
 
 struct ExUniform {
     tiles: vec2<u32>,
@@ -55,11 +64,13 @@ struct ExUniform {
     floor_log2: f32,
     // `2^N` under the sky anchor, else 0.
     anchor: f32,
-    // The adapted level's most step per second in EV (ADR-0076 rule 5; 0: no cap), and the
-    // longest frame step it pays for.
+    // The adapted level's and the ceiling's most step per second in EV (ADR-0076 rule 5; 0:
+    // no cap), and the longest frame step it pays for.
     rate_ev_s: f32,
     max_rate_dt: f32,
-    _pad0: f32,
+    // The sky share `F` at and over which the anchor holds in full; 0 holds it whatever is in
+    // view.
+    sky_share: f32,
     _pad1: f32,
 };
 
@@ -71,12 +82,13 @@ struct ExState {
     frame: u32,
     flags: u32,
     ceiling: f32,
-    _pad: u32,
+    // The metered share of the view that is sky, under the meter's weights.
+    sky: f32,
 };
 
 @group(0) @binding(0) var<uniform> ex: ExUniform;
 @group(0) @binding(1) var<storage, read_write> state: ExState;
-@group(0) @binding(2) var<storage, read> tiles: array<vec2<f32>>;
+@group(0) @binding(2) var<storage, read> tiles: array<vec4<f32>>;
 @group(0) @binding(3) var<storage, read> sky_e: array<vec4<f32>, 6>;
 
 const TILE: f32 = 8.0;
@@ -124,8 +136,8 @@ fn step_capped(a: f32, t: f32, dt: f32) -> f32 {
     return a + clamp(next - a, -r, r);
 }
 
-// The ceiling in force: `max_e`, or the anchored one (the header).
-fn ceiling() -> f32 {
+// The anchored ceiling `c_a`, or `max_e` without an anchor or a lit ground (the header).
+fn anchored() -> f32 {
     if (ex.anchor <= 0.0) {
         return ex.max_e;
     }
@@ -134,10 +146,33 @@ fn ceiling() -> f32 {
     if (e <= 0.0) {
         return ex.max_e;
     }
-    return ex.anchor * ex.key / (0.5 * e / 3.14159265358979);
+    return min(ex.anchor * ex.key / (0.5 * e / 3.14159265358979), ex.max_e);
 }
 
-var<workgroup> partial: array<vec2<f32>, 256>;
+// The ceiling's target at the sky share `f_sky` (the header).
+fn ceiling_target(f_sky: f32) -> f32 {
+    let a = anchored();
+    if (ex.anchor <= 0.0 || ex.sky_share <= 0.0) {
+        return a;
+    }
+    // At a share of `F` and over the anchored ceiling exactly, bit for bit today's; an
+    // anchor clamped to `max_e` (a dark sky) is `max_e` at every share.
+    if (f_sky >= ex.sky_share || a >= ex.max_e) {
+        return a;
+    }
+    return exp2(mix(log2(ex.max_e), log2(a), f_sky / ex.sky_share));
+}
+
+// The ceiling in force after a frame from `c` toward its target `goal` (the header).
+fn step_ceiling(c: f32, goal: f32, reset: bool) -> f32 {
+    if (ex.anchor <= 0.0 || ex.sky_share <= 0.0 || ex.rate_ev_s <= 0.0 || reset || c <= 0.0) {
+        return goal;
+    }
+    let r = ex.rate_ev_s * min(ex.dt, ex.max_rate_dt);
+    return exp2(log2(c) + clamp(log2(goal) - log2(c), -r, r));
+}
+
+var<workgroup> partial: array<vec4<f32>, 256>;
 
 // Tile `i`'s weight under the metering.
 fn tile_weight(i: u32) -> f32 {
@@ -158,7 +193,7 @@ fn tile_weight(i: u32) -> f32 {
 @compute @workgroup_size(256, 1, 1)
 fn exposure(@builtin(local_invocation_index) lane: u32) {
     let n = ex.tiles.x * ex.tiles.y;
-    var acc = vec2<f32>(0.0);
+    var acc = vec4<f32>(0.0);
     if ((ex.mode & EX_METER) != 0u) {
         for (var i = lane; i < n; i += 256u) {
             let w = tile_weight(i);
@@ -183,6 +218,7 @@ fn exposure(@builtin(local_invocation_index) lane: u32) {
     let metered = sum.y > 0.0;
     if (metered) {
         s.metered_log2 = sum.x / sum.y;
+        s.sky = sum.z / sum.y;
     } else {
         s.flags |= STATE_HELD;
     }
@@ -193,7 +229,8 @@ fn exposure(@builtin(local_invocation_index) lane: u32) {
         } else if (metered && ex.dt > 0.0) {
             s.adapted_log2 = step_capped(s.adapted_log2, s.metered_log2, ex.dt);
         }
-        s.ceiling = ceiling();
+        let reset = (ex.mode & EX_RESET) != 0u;
+        s.ceiling = step_ceiling(s.ceiling, ceiling_target(s.sky), reset);
         s.current = clamp(ex.key / exp2(s.adapted_log2), ex.min_e, max(s.ceiling, ex.min_e));
     } else {
         s.ceiling = ex.max_e;
