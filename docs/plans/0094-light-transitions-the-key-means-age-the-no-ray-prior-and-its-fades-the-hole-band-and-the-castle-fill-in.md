@@ -1319,6 +1319,15 @@ second round. The decisions, one recommended option each:
   has nothing left to hold. The sequence is now: 8a, then the blesses (the profile goldens as
   decided above, `outdoor_night` as 8a's disclosed change, every other golden byte-identical
   to the 7a1ae6e9 bless), then the one quiet gate at the tip.
+- **Amended 2026-11-20 (owner), after the quiet gate at `fbe9af7c` (`live/p8-gate.log`):**
+  - Bar 1: `a_rare_hit_is_clamped` (10.8 s on lavapipe, over the 10 s soak line) is marked
+    `#[ignore = "soak"]` and passed once by name. The plan's gate tests then sum to about 25.7 s,
+    under the 30 s bar.
+  - Bar 5: the gate's wall (1711.4 s against the 1140 s line) is **accepted as a reading**. None
+    of the ten slowest tests is this plan's, and the gate runs 26 more tests in 172.5 s less
+    than 0086's 1883.9 s. Cutting the gate's wall is a later test-cost chore, not this plan's.
+  - The `cargo deny` advisories on wasmtime 49.0.5 (RUSTSEC-2026-0566/0567/0568) are not this
+    plan's. A chore lane bumps wasmtime after this plan merges.
 
 ### Phase 8a: The night's ceiling is `max`: the sky anchor lowers the ceiling, never lifts it
 - **Owner skill:** dev
