@@ -3,9 +3,10 @@
 #   color #rrggbb | albedo r g b    sRGB (decoded to linear) or linear
 #   roughness, emission r g b, opacity, hardness, acoustic A T R, payload, flags ...
 # Each scene takes its rows by name, in its own order (`flythrough --help`, `--materials`):
-# the cave rock, ore, shell, rubble; the showcase adds crystal, amethyst, ember; `--castle`
-# adds the seven castle rows; the outdoor hills add grass, soil, bark, leaf; the thin and seam
-# rigs add rig wood. `--emissive-ore off` clears the ore's emission. The file is read again once a second while the window is open: a change
+# the cave rock, ore, shell, rubble; the showcase takes showcase rock and showcase ore as its
+# rock and ore, then its seven glowing rows (crystal, amethyst, ember, jade, citrine, rose,
+# sapphire); `--castle` adds the seven castle rows; the outdoor hills add grass, soil, bark and
+# the three leaf rows; the thin and seam rigs add rig wood. `--emissive-ore off` clears the ore's emission. The file is read again once a second while the window is open: a change
 # of colour, roughness, opacity or emission shows; a row added, removed or renamed, or a row
 # whose class (translucent, emissive, opaque) changes, waits for a restart.
 
@@ -21,16 +22,17 @@ material shell
 material rubble
   albedo 0.36 0.33 0.3
 
-# The showcase's glowing rows.
+# The showcase's glowing rows: the crystal clusters take crystal, jade, citrine, rose and
+# sapphire, the west veins the showcase ore, the east veins amethyst, the chasm ember.
 material crystal
   albedo 0.35 0.75 0.85
-  emission 0.35 1.6 2.0
+  emission 0.14 0.64 0.8
 material amethyst
   albedo 0.45 0.25 0.6
-  emission 0.6 0.2 1.1
+  emission 0.3 0.1 0.55
 material ember
   albedo 0.6 0.22 0.1
-  emission 2.4 0.3 0.08
+  emission 1.0 0.12 0.03
 
 # The castle (--castle), in its palette's order.
 material castle stone
@@ -66,3 +68,29 @@ material bark
   albedo 0.25 0.17 0.11
 material leaf
   albedo 0.12 0.26 0.08
+
+# The showcase's rock and ore (named rock and ore in its table): a pale tan-pink rock the
+# glowing rows tint, and the ore's orange at the cave's emission.
+material showcase rock
+  albedo 0.74 0.66 0.6
+material showcase ore
+  albedo 0.72 0.45 0.2
+  emission 1.6 0.9 0.35
+material jade
+  albedo 0.3 0.8 0.42
+  emission 0.18 0.85 0.3
+material citrine
+  albedo 0.85 0.75 0.3
+  emission 0.75 0.6 0.12
+material rose
+  albedo 0.8 0.3 0.6
+  emission 0.85 0.14 0.5
+material sapphire
+  albedo 0.25 0.35 0.85
+  emission 0.12 0.28 1.0
+
+# The outdoor hills' other leaf rows; each tree variant takes one of the three by hash.
+material leaf 2
+  albedo 0.17 0.3 0.07
+material leaf 3
+  albedo 0.09 0.22 0.11

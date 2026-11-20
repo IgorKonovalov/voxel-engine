@@ -6,6 +6,7 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+- **Security (deps): `wasmtime` and `wasmtime-wasi` `=49.0.7` (were `=49.0.6`), the patched 49.x release for RUSTSEC-2026-0587 (a WASI filesystem sandbox escape on Windows); `cargo deny check` passes again (the wasmtime chore).**
 - **Security (deps): `wasmtime` and `wasmtime-wasi` `=49.0.6` (were `=49.0.5`), the patched 49.x release for RUSTSEC-2026-0566 to 0573; `cargo deny check` passes again (the wasmtime chore).**
 
 ## [0.68.0] - 2026-11-20

@@ -429,6 +429,24 @@ hue jitter named here has its own entry now, "Per-voxel albedo variation by a se
 whose frames show the jitter without any ramp; a spike on this entry shares its hash and its
 place in the composite.
 
+### Thin step lines along voxel slopes
+
+Seen 2026-11-20 by the owner at window W2 (the forest at 15:00 and at `--sun 10,180`, in both
+arms of Plan 0095's spike, so not the motion lane's and not the exposure's): the terrain's
+slopes at mid range show thin lines along each voxel step, where a step's one-voxel vertical
+face reads a different shade from the ground beside it (the key light and the sky term at a
+face whose normal is 90 degrees off the slope's), a staircase drawn as contour lines. The sky
+term already reads one slope at every distance through the 27-count gradient (`sky_normal
+smoothed`, ADR-0070's Outcome); the key light's shadow ray and the face's own shade do not.
+Options, to decide by eye in a look plan's window: (a) smooth the shading normal across the
+steps at mid range, the gradient normal replacing the face normal past a distance band for
+every term, not the sky's alone; (b) blend each step's vertical face with the ground below it
+over the far-normal band, so the riser takes the tread's shade as it shrinks toward a pixel;
+(c) the field surface for terrain (Plan 0054's, opt-in), which has no steps to draw. What it
+takes: a short look spike with two stills per arm at W2's poses and an owner window; a change
+to the far-normal band is ADR-0063's table. Pick up after Plans 0095 and 0097; not Plan
+0097's.
+
 ### Plan 0090 owes a stamp scene and a reading of the key mean's fade-in against `F`
 
 Parked 2026-11-18 by Plan 0086's flicker amendment (the architect, overnight). A freshly
@@ -498,18 +516,14 @@ and invisible to Plan 0090's pop counter. Cost a guess: one hash and one multipl
 per-material style word), not on the material row. Size S; a look spike with an owner window, after the content pass below shows
 what the palette alone gives.
 
-### The showcase's palette after the Crystal Islands review: pale rock, more and dimmer glowing rows, a darker key
+### Done: the showcase's palette after the Crystal Islands review: pale rock, more and dimmer glowing rows, a darker key
 
-Parked 2026-11-20 from the same review (its content levers), apps only. The frames' cave look
-is albedo times the emitters' irradiance, which the baked store already computes; our rock is
-`0.42 0.38 0.34` against Lin's near-white limestone, so the walls cannot take the crystals'
-colour. **What it takes:** in `apps/flythrough/assets/materials.txt` (re-read live while the
-window is open) a rock at about 0.7 to 0.8 with a tan or pink tint, six to eight glowing rows
-at a third to a half of today's emission with the ore among them, and a cave profile one to
-two EV darker (`AutoExposure::compensation_ev`); two or three leaf rows picked by hash in
-`trees.rs`. Judged in an owner window; the showcase's goldens move. Size XS. **Pick up** when
-the owner wants a look window next; this is the cheapest test of the review's thesis and
-should run before any engine lever above.
+Done 2026-11-20 (419a0039, 7d3a9c7a, 6abc8a17; merged over v0.68.0 at 60ff48ad, goldens
+re-blessed at db103e2b): the showcase's pale tinted rock, five-hued dimmer crystals and veins,
+the trees' three leaf rows by hash, and `--exposure-comp EV` on the auto exposure. The owner's
+window P1 picked the walls taking the hues, the ore at the cave ore's full glow, compensation
+0 on every source (the darker key was not taken; the flag stays) and the forest's three greens
+as they are.
 
 ## Performance: the static review of 2026-11-10
 
@@ -1261,6 +1275,9 @@ in place of the march, with its overdraw.
 **Owner, 2026-11-20:** leans to this hybrid as the answer for long-distance rendering. Plan
 0033 (the marched clipmap, ADR-0028) is re-read against it before its lane starts: raster the
 clip levels' meshes against marching them, measured on both adapters, as an ADR either way.
+**Owner, later 2026-11-20:** "agreed on far distance": the hybrid is the agreed direction for
+the far field, not only a lean. The re-read runs after Plan 0087 (the rename), as the first M10
+step; the meshing explainer and Morley's talk are in `references/voxel-optimizations.md`.
 
 ## Later apps
 

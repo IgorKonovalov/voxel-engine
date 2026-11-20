@@ -46,7 +46,14 @@ pub const CRYSTAL: MaterialId = 5;
 pub const AMETHYST: MaterialId = 6;
 /// Deep red ember lining the chasm.
 pub const EMBER: MaterialId = 7;
-/// Amber is the cave's ore row.
+/// Green, yellow, magenta and blue crystal, the clusters' other hues.
+pub const JADE: MaterialId = 8;
+pub const CITRINE: MaterialId = 9;
+pub const ROSE: MaterialId = 10;
+pub const SAPPHIRE: MaterialId = 11;
+/// The hues a crystal cluster takes, one per cluster.
+pub const CRYSTAL_HUES: [MaterialId; 5] = [CRYSTAL, JADE, CITRINE, ROSE, SAPPHIRE];
+/// Amber is the row at the cave's ore id (the file's `showcase ore`).
 pub const AMBER: MaterialId = ORE;
 
 /// The fixed point of the ellipsoid term: `q == K` on the noiseless wall.

@@ -47,9 +47,7 @@ pub fn build_world(
             let world = World::generate(
                 source.extent(),
                 &source,
-                &rows(flythrough::with_showcase_rows(
-                    &flythrough::with_emissive_ore(&flythrough::cave_materials()),
-                )),
+                &rows(flythrough::showcase_materials()),
             );
             (world, source.spawn(), SHOWCASE_LIGHT_RADIUS)
         }

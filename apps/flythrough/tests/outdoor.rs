@@ -161,7 +161,7 @@ fn a_tree_is_what_the_formula_says() {
     let mut rng = SplitMix64(0x7EE5);
     for draw in 0..16 {
         let shape = TreeShape::from_hash(rng.next_u64());
-        let tree = build_tree(shape, draw, LEAF_FILL);
+        let tree = build_tree(shape, draw, LEAF_FILL, LEAF);
         let [ax, ay] = shape.axis();
         for z in TRUNK_SINK..TRUNK_SINK + shape.height {
             assert_eq!(tree.get([ax, ay, z]), Some(BARK), "{shape:?} z {z}");
@@ -224,7 +224,7 @@ fn no_tree_stands_at_the_mouth() {
             }
             for z in lo - 16..=hi + 130 {
                 let m = world.material_at(vxe_world::VoxelCoord([x, y, z]));
-                near += u64::from(matches!(m, Some(BARK | LEAF)));
+                near += u64::from(m.is_some_and(|m| m == BARK || is_leaf(m)));
             }
         }
     }
@@ -238,9 +238,9 @@ fn no_tree_stands_at_the_mouth() {
         let h = source.base().height(t.axis[0], t.axis[1]);
         for z in h + 1..t.base + t.shape.height {
             let m = source.material([t.axis[0], t.axis[1], z]);
-            assert!(matches!(m, BARK | LEAF), "{:?} z {z}: {m}", t.axis);
+            assert!(m == BARK || is_leaf(m), "{:?} z {z}: {m}", t.axis);
             column += 1;
-            leaf += u64::from(m == LEAF);
+            leaf += u64::from(is_leaf(m));
         }
     }
     println!(

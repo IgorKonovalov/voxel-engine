@@ -5,8 +5,9 @@
 //!
 //! **A tree** ([`build_tree`]) of a [`TreeShape`] is a trunk of [`BARK`], the voxels with
 //! `dx^2 + dy^2 <= rt^2` about its axis column from [`TRUNK_SINK`] voxels under its base to
-//! `base + height - 1`, and a canopy of [`LEAF`], the voxels with `dx^2 + dy^2 + dz^2 <= rc^2`
-//! about `(axis, base + height)` that an integer hash keeps with probability `leaf_fill / 256`.
+//! `base + height - 1`, and a canopy of one of [`LEAF_ROWS`] (the variant's, [`leaf_row`]), the
+//! voxels with `dx^2 + dy^2 + dz^2 <= rc^2` about `(axis, base + height)` that an integer hash
+//! keeps with probability `leaf_fill / 256`.
 //! Bark wins over leaf. Every other voxel of its box is left unwritten, so the world around a
 //! tree stays as it was. The prefab's frame puts the axis column at `(rc, rc)` and the base at
 //! z = [`TRUNK_SINK`], so a quarter turn about z keeps the axis where it was.
@@ -31,7 +32,7 @@ use vxe_world::{
     brick_of_slot, index_in_brick,
 };
 
-use crate::outdoor::{BARK, FOREST, LEAF, MOUTH, OUTSIDE_RUN, OutdoorSource};
+use crate::outdoor::{BARK, FOREST, LEAF_ROWS, MOUTH, OUTSIDE_RUN, OutdoorSource};
 
 /// The scatter cell's edge in voxels.
 pub const TREE_CELL: i32 = 48;
@@ -159,10 +160,10 @@ impl TreeShape {
     }
 }
 
-/// The tree of `shape` as a masked prefab: [`BARK`] on the trunk, [`LEAF`] on the canopy
+/// The tree of `shape` as a masked prefab: [`BARK`] on the trunk, `leaf` on the canopy
 /// voxels whose hash of `(leaf_seed, local voxel)` has its low byte under `leaf_fill` (256
 /// keeps every one), nothing written elsewhere.
-pub fn build_tree(shape: TreeShape, leaf_seed: u64, leaf_fill: u32) -> Prefab {
+pub fn build_tree(shape: TreeShape, leaf_seed: u64, leaf_fill: u32, leaf: MaterialId) -> Prefab {
     let size = shape.size();
     let n = size.iter().map(|&s| s as usize).product::<usize>();
     let mut voxels = vec![vxe_world::AIR; n];
@@ -177,7 +178,7 @@ pub fn build_tree(shape: TreeShape, leaf_seed: u64, leaf_fill: u32) -> Prefab {
                 } else if shape.in_canopy(l)
                     && (hash3(leaf_seed ^ LEAF_SALT, l) & 255) < u64::from(leaf_fill)
                 {
-                    Some(LEAF)
+                    Some(leaf)
                 } else {
                     None
                 };
@@ -190,6 +191,12 @@ pub fn build_tree(shape: TreeShape, leaf_seed: u64, leaf_fill: u32) -> Prefab {
         }
     }
     Prefab::new(size, voxels, Some(mask))
+}
+
+/// Variant `v`'s leaf row for `seed`: one of [`LEAF_ROWS`] by a hash of the seed and `v`.
+pub fn leaf_row(seed: u64, v: usize) -> MaterialId {
+    let h = hash3(seed ^ VARIANT_SALT, [v as i32, 1, 0]);
+    LEAF_ROWS[(h % LEAF_ROWS.len() as u64) as usize]
 }
 
 /// Variant `v`'s shape for `seed`.
@@ -267,7 +274,12 @@ impl ForestSource {
         let seed = base.seed;
         let turned: Vec<[Arc<Prefab>; 4]> = (0..TREE_VARIANTS)
             .map(|v| {
-                let p = build_tree(variant_shape(seed, v), seed ^ v as u64, leaf_fill);
+                let p = build_tree(
+                    variant_shape(seed, v),
+                    seed ^ v as u64,
+                    leaf_fill,
+                    leaf_row(seed, v),
+                );
                 [0, 1, 2, 3].map(|k| Arc::new(p.rotated(z_turn(k))))
             })
             .collect();
@@ -406,6 +418,36 @@ mod tests {
         assert_eq!(TreeDensity::ALL.map(TreeDensity::keep), [0, 24, 240]);
     }
 
+    /// Seed 1's variants take every leaf row, and a variant's tree is leaved in its own row
+    /// alone.
+    #[test]
+    fn the_variants_take_every_leaf_row() {
+        let rows: Vec<MaterialId> = (0..TREE_VARIANTS).map(|v| leaf_row(1, v)).collect();
+        for m in LEAF_ROWS {
+            assert!(rows.contains(&m), "{rows:?}");
+        }
+        for v in [0, 1, 2] {
+            let p = build_tree(variant_shape(1, v), 1 ^ v as u64, LEAF_FILL, leaf_row(1, v));
+            let [sx, sy, sz] = p.size().map(|s| s as i32);
+            let mut leaves = 0;
+            for z in 0..sz {
+                for y in 0..sy {
+                    for x in 0..sx {
+                        match p.get([x, y, z]) {
+                            Some(m) if m == BARK => {}
+                            Some(m) => {
+                                assert_eq!(m, leaf_row(1, v));
+                                leaves += 1;
+                            }
+                            None => {}
+                        }
+                    }
+                }
+            }
+            assert!(leaves > 0);
+        }
+    }
+
     /// A quarter turn about z keeps the axis column at `(rc, rc)`: the trunk's bark lies on
     /// the same local column in every rotation.
     #[test]
@@ -415,7 +457,7 @@ mod tests {
             height: 50,
             canopy_r: 18,
         };
-        let p = build_tree(shape, 1, LEAF_FILL);
+        let p = build_tree(shape, 1, LEAF_FILL, crate::outdoor::LEAF);
         for k in 0..4 {
             let r = p.rotated(z_turn(k));
             assert_eq!(r.size(), p.size());

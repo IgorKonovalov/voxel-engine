@@ -475,6 +475,13 @@ names or hands over the 461 no-record pixels. If 0095 is still open when the lan
   box with an overhang differs only under the overhang. (2) The readings log holds the lever
   table on both adapters with the RTX deltas; the RENOIR's light pass with every lever on at
   the Portable profile is the number Phase 8 weighs against the 4.0 ms line.
+- **Amended 2026-11-20 (owner), from Plan 0095's Phase 9 readings (`c6b6bf52`):** the approach
+  penumbra is the default on every adapter and profile (the owner's pick over keeping `disc` on the
+  slow adapter), and it is this phase's first named lever. Headless 1080p, forest 15:00, at rest:
+  RENOIR 34.0 ms against 11.8 ms under `disc` (hills noon 11.2 against 7.4), RTX 3.32 against
+  1.21. The lever table reads approach's own cost and the levers that cut it (its step count, its
+  reach, a half-rate form) on both adapters; the Portable profile keeps approach unless the owner
+  picks otherwise at Phase 8.
 
 ### Phase 7: The sync: the eviction scan's index and the `alloc` stage
 - **Owner skill:** dev

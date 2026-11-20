@@ -336,7 +336,8 @@ impl ShowcaseSource {
     }
 
     /// Eight clusters of three to six crystal prisms (radius 2..4, length 16..36, a hashed
-    /// tilt) standing in the east floor at `x` 690..749 where `10 q_xy <= 7 K`: centres
+    /// tilt), the `n`th placed taking hue `CRYSTAL_HUES[(n + o) % 5]` with `o` from the seed,
+    /// standing in the east floor at `x` 690..749 where `10 q_xy <= 7 K`: centres
     /// [`CLUSTER_SPACING`] apart and in distinct chunks, 4 m clear of every pillar's reach,
     /// every prism [`CRYSTAL_EYE_CLEAR`] from each shot's eye and two voxels off the first
     /// [`RAY_CLEAR`] voxels of its centre ray.
@@ -351,6 +352,8 @@ impl ShowcaseSource {
             .collect();
         let mut centres: Vec<[i64; 3]> = Vec::new();
         let mut out = Vec::new();
+        let hues = CRYSTAL_HUES.len();
+        let hue_offset = (hash3(self.seed, [Kind::Crystal as i32, -1, 0]) % hues as u64) as usize;
         let mut i = 0;
         while centres.len() < CLUSTERS {
             assert!(
@@ -376,6 +379,7 @@ impl ShowcaseSource {
             if !apart || !off_pillars {
                 continue;
             }
+            let m = CRYSTAL_HUES[(centres.len() + hue_offset) % hues];
             let prisms: Vec<Feature> = (0..3 + (h >> 32) % 4)
                 .map(|k| {
                     let h = hash3(self.seed, [Kind::Crystal as i32, cluster, 1 + k as i32]);
@@ -390,11 +394,11 @@ impl ShowcaseSource {
                         self.floor_at(foot[0] as i32, foot[1] as i32) - 4,
                     ];
                     let b = [a[0] + tilt(32), a[1] + tilt(44), a[2] + len];
-                    Feature::Capsule { a, b, r }
+                    Feature::Capsule { a, b, r, m }
                 })
                 .collect();
             let clear = prisms.iter().all(|p| {
-                let Feature::Capsule { a, b, r } = *p else {
+                let Feature::Capsule { a, b, r, .. } = *p else {
                     return false;
                 };
                 SHOTS.iter().all(|s| {
@@ -425,7 +429,7 @@ impl ShowcaseSource {
                 [CHASM_X - BRIDGE_HALF_SPAN, BRIDGE_Y[0], BRIDGE_SPRING].map(|v| v as i32),
                 [CHASM_X + BRIDGE_HALF_SPAN, BRIDGE_Y[1], BRIDGE_DECK].map(|v| v as i32),
             ),
-            Feature::Capsule { a, b, r } => (
+            Feature::Capsule { a, b, r, .. } => (
                 [0, 1, 2].map(|k| (a[k].min(b[k]) - r) as i32),
                 [0, 1, 2].map(|k| (a[k].max(b[k]) + r) as i32),
             ),
@@ -607,21 +611,20 @@ impl ShowcaseSource {
         }
     }
 
-    /// Whether a crystal of `scope` holds `p`.
-    pub(crate) fn crystal_at(&self, scope: Scope<'_>, p: [i32; 3]) -> bool {
+    /// The hue of the first crystal of `scope` that holds `p`, in the list's order.
+    pub(crate) fn crystal_at(&self, scope: Scope<'_>, p: [i32; 3]) -> Option<MaterialId> {
         let hit = |i: usize| {
             let (lo, hi) = self.boxes[i];
             match self.features[i] {
-                Feature::Capsule { a, b, r } => {
-                    (0..3).all(|k| p[k] >= lo[k] && p[k] <= hi[k])
-                        && in_capsule(a, b, r, p.map(i64::from))
-                }
-                _ => false,
+                Feature::Capsule { a, b, r, m } => ((0..3).all(|k| p[k] >= lo[k] && p[k] <= hi[k])
+                    && in_capsule(a, b, r, p.map(i64::from)))
+                .then_some(m),
+                _ => None,
             }
         };
         match scope {
-            Scope::All => (0..self.features.len()).any(hit),
-            Scope::Bucket(b) => b.iter().any(|&i| hit(i as usize)),
+            Scope::All => (0..self.features.len()).find_map(hit),
+            Scope::Bucket(b) => b.iter().find_map(|&i| hit(i as usize)),
         }
     }
 
@@ -666,14 +669,18 @@ impl ShowcaseSource {
         }
         let b = brick_min(p);
         if b == f.brick {
-            !self.crystal_at(scope, p) && self.base_air(f, p) && !self.rock_feature(scope, f, p)
+            self.crystal_at(scope, p).is_none()
+                && self.base_air(f, p)
+                && !self.rock_feature(scope, f, p)
         } else {
             let g = Fields::of_brick(self.noises, b);
             let scope = match scope {
                 Scope::All => Scope::All,
                 Scope::Bucket(_) => Scope::Bucket(self.bucket(b)),
             };
-            !self.crystal_at(scope, p) && self.base_air(&g, p) && !self.rock_feature(scope, &g, p)
+            self.crystal_at(scope, p).is_none()
+                && self.base_air(&g, p)
+                && !self.rock_feature(scope, &g, p)
         }
     }
 
@@ -717,12 +724,12 @@ impl ShowcaseSource {
         if self.in_shell(p) {
             return SHELL;
         }
-        if self.crystal_at(scope, p) {
+        if let Some(hue) = self.crystal_at(scope, p) {
             // A crystal voxel lit only from below would light the floor as a ceiling face.
             let mut below = p;
             below[2] -= 1;
             let under_only = self.air_at(f, scope, below) && !self.faces_air(f, scope, p);
-            return if under_only { ROCK } else { CRYSTAL };
+            return if under_only { ROCK } else { hue };
         }
         if self.base_air(f, p) && !self.rock_feature(scope, f, p) {
             return AIR;
