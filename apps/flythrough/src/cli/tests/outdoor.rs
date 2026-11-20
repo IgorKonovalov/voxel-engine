@@ -5,16 +5,16 @@ use crate::cli::parse_args_from;
 use crate::test_support::argv;
 use vxe_render::Exposure;
 
-/// `--penumbra`: disc unless named; approach reaches the lighting and the banner.
+/// `--penumbra`: approach unless named (Plan 0095 Phase 5, the fly-through's
+/// `DEFAULT_PENUMBRA`), which the banner leaves out; disc reaches the lighting and the banner.
 #[test]
-fn penumbra_is_disc_unless_named() {
-    // Disc by default and unnamed; approach reaches the lighting and the banner.
+fn penumbra_is_approach_unless_named() {
     let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
-    assert_eq!(r.start_lighting().penumbra, vxe_render::Penumbra::Disc);
-    assert!(!r.start_modes(0.0).line().contains("penumbra"));
-    let r = parse_args_from(argv(&["--source", "outdoor", "--penumbra", "approach"])).unwrap();
     assert_eq!(r.start_lighting().penumbra, vxe_render::Penumbra::Approach);
-    assert!(r.start_modes(0.0).line().contains("penumbra approach, "));
+    assert!(!r.start_modes(0.0).line().contains("penumbra"));
+    let r = parse_args_from(argv(&["--source", "outdoor", "--penumbra", "disc"])).unwrap();
+    assert_eq!(r.start_lighting().penumbra, vxe_render::Penumbra::Disc);
+    assert!(r.start_modes(0.0).line().contains("penumbra disc, "));
     assert!(parse_args_from(argv(&["--penumbra", "soft"])).is_err());
 }
 
@@ -185,7 +185,8 @@ fn the_exposure_rate_reaches_the_run() {
 }
 
 /// The light pass arms are built in the loading stage (`run::loading::ARMS`) when the flags
-/// pick one at start, `--leaf-shadow absorb` or `--penumbra approach`, and not otherwise.
+/// pick one at start, `--leaf-shadow absorb` or the approach penumbra under a sky (the
+/// default outdoors), and not otherwise.
 #[test]
 fn an_arm_picked_at_start_is_built_while_loading() {
     let stages = |r: &crate::cli::Args| {
@@ -194,18 +195,36 @@ fn an_arm_picked_at_start_is_built_while_loading() {
             .map(|(n, _)| n)
             .collect::<Vec<_>>()
     };
-    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    let r = parse_args_from(argv(&["--source", "outdoor", "--penumbra", "disc"])).unwrap();
     assert!(!r.light_arms_at_start());
     assert!(!stages(&r).contains(&crate::run::loading::ARMS));
+    let r = parse_args_from(argv(&["--source", "outdoor", "--sky", "off"])).unwrap();
+    assert!(!r.light_arms_at_start());
     for picked in [
-        &["--source", "outdoor", "--leaf-shadow", "absorb"][..],
+        &[
+            "--source",
+            "outdoor",
+            "--penumbra",
+            "disc",
+            "--leaf-shadow",
+            "absorb",
+        ][..],
         &["--source", "outdoor", "--penumbra", "approach"],
+        &["--source", "outdoor"],
     ] {
         let r = parse_args_from(argv(picked)).unwrap();
         assert!(r.light_arms_at_start(), "{picked:?}");
         assert_eq!(stages(&r)[1], crate::run::loading::ARMS, "{picked:?}");
     }
-    let r = parse_args_from(argv(&["--source", "outdoor", "--leaf-shadow", "voxel"])).unwrap();
+    let r = parse_args_from(argv(&[
+        "--source",
+        "outdoor",
+        "--penumbra",
+        "disc",
+        "--leaf-shadow",
+        "voxel",
+    ]))
+    .unwrap();
     assert!(!r.light_arms_at_start());
 }
 

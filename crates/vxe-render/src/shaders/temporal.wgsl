@@ -95,7 +95,10 @@
 // half under LIGHTING_KEY_STEP) the visibility is that estimate with no screen history, a
 // switch of its source riding one fade (`key_far_fade`, the pair's g tagged by the source);
 // elsewhere the mean, seeded from the estimate at a reset, blended toward it by `w`
-// (LIGHTING_KEY_STEP: none below one half).
+// (LIGHTING_KEY_STEP: none below one half). Under LIGHTING_PENUMBRA_APPROACH a cast sample
+// is the closest-approach visibility of the disc's centre ray, a function of the hit alone,
+// taken as it is with no mean and nothing for a reset to restart; the pair's g holds it where
+// `w` is 0, and inside the band the far estimate with its landing's fade.
 //
 // A cube face's emissive part (`reads_store`) is its brick record's value for its direction
 // (`store_brick_value`; with Params.lighting bit 14, where the shading normal is not the face
@@ -1121,7 +1124,19 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
         }
         var k = 0.0;
-        if (key_cast) {
+        if (key_cast && (params.lighting & LIGHTING_PENUMBRA_APPROACH) != 0u) {
+            // The approach penumbra (ADR-0079's near): the frame's value as it is, no mean, so
+            // a reset changes nothing. The slot needs no history for it, so inside the band it
+            // carries the far estimate through its landing's fade, as at a pixel with no ray.
+            k = vis.y;
+            pair.y = vis.y;
+            if (k_far >= 0.0 && w > 0.0) {
+                let f = key_far_fade(k_far, far_src, hp.y, !reset);
+                pair.y = f.y;
+                let step = (params.lighting & LIGHTING_KEY_STEP) != 0u;
+                k = select(mix(vis.y, f.x, w), select(vis.y, f.x, w >= 0.5), step);
+            }
+        } else if (key_cast) {
             // Under the far estimate every mean is seeded (the horizon always answers), so the
             // seed's weight holds from the reset on.
             let seed = select(-1.0, max(k_far, 0.0), far_on);

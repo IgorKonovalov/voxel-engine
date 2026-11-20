@@ -1024,9 +1024,10 @@ fn help_lists_every_flag_the_parser_accepts() {
 }
 
 /// Without flags the fly-through starts in `crate::default_lighting()`, the base the examples
-/// that render its image share: every field but the exposure (auto, the eye's) and the lamp's
-/// bounce (on) is that base's, so the store is read by the shading normal and the filters
-/// weigh the face normal.
+/// that render its image share: every field but the exposure (auto, the eye's), the lamp's
+/// bounce (on) and the key light's penumbra (`crate::DEFAULT_PENUMBRA`, approach; the base
+/// keeps the library's disc until the pick of Plan 0095's window) is that base's, so the store
+/// is read by the shading normal and the filters weigh the face normal.
 #[test]
 fn the_start_lighting_is_the_shared_default_lighting() {
     let d = parse_args_from(argv(&[])).unwrap();
@@ -1036,11 +1037,13 @@ fn the_start_lighting_is_the_shared_default_lighting() {
         Lighting {
             exposure: base.exposure,
             lamp_bounce: base.lamp_bounce,
+            penumbra: base.penumbra,
             ..start
         },
         base
     );
     assert!(start.lamp && start.lamp_bounce);
+    assert_eq!(start.penumbra, vxe_render::Penumbra::Approach);
     assert_eq!(
         (start.store_read, start.light_weights),
         (

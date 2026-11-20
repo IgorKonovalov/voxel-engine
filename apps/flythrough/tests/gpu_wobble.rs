@@ -77,6 +77,10 @@ struct Arm {
     key_far_mix: vxe_render::KeyFarMix,
     /// The queue's budget a frame through the drain, in ms (`pre=MS`); `None` the default.
     pre_ms: Option<f64>,
+    penumbra: vxe_render::Penumbra,
+    leaves_absorb: bool,
+    /// The turn's frames (`turnf=N`, 40 by default): 240 is a slow pan.
+    turn_frames: usize,
 }
 
 impl Arm {
@@ -86,7 +90,9 @@ impl Arm {
     /// `sky0`, `brick`, `sun=EL/AZ`, `speed=M_S`, `turn=DEG`, `drain=N`, `face` (store read
     /// face), `phases=N`, `dither`, `nostair`, `wnormal`, `ray` (`key_far ray`), `step`
     /// (`key_far_mix step`), `column` (`key_far column`), `pre=MS` (the queue's budget through
-    /// the drain, the default's after it).
+    /// the drain, the default's after it), `approach` / `disc` (the penumbra; the fly-through's
+    /// default unless named), `absorb` (the leaves absorb, `--leaf-shadow absorb`), `turnf=N`
+    /// (the turn's frames).
     fn parse() -> Self {
         let spec = std::env::var("VXE_WOBBLE").unwrap_or_else(|_| "default".into());
         let mut a = Arm {
@@ -123,6 +129,9 @@ impl Arm {
             key_far: flythrough::default_lighting().key_far,
             key_far_mix: flythrough::default_lighting().key_far_mix,
             pre_ms: None,
+            penumbra: flythrough::DEFAULT_PENUMBRA,
+            leaves_absorb: false,
+            turn_frames: 40,
         };
         for t in spec.split(',') {
             let (k, v) = t.split_once('=').unwrap_or((t, ""));
@@ -166,6 +175,10 @@ impl Arm {
                 "column" => a.key_far = vxe_render::KeyFar::Column,
                 "step" => a.key_far_mix = vxe_render::KeyFarMix::Step,
                 "pre" => a.pre_ms = Some(v.parse().unwrap()),
+                "approach" => a.penumbra = vxe_render::Penumbra::Approach,
+                "disc" => a.penumbra = vxe_render::Penumbra::Disc,
+                "absorb" => a.leaves_absorb = true,
+                "turnf" => a.turn_frames = v.parse().unwrap(),
                 other => panic!("unknown arm token {other}"),
             }
         }
@@ -237,6 +250,8 @@ fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
     });
     let leaf = if arm.leaves_brick {
         flythrough::LeafShadow::Brick
+    } else if arm.leaves_absorb {
+        flythrough::LeafShadow::Absorb
     } else {
         flythrough::LeafShadow::Voxel
     };
@@ -249,6 +264,7 @@ fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
         sky_history: arm.sky_history,
         key_far: arm.key_far,
         key_far_mix: arm.key_far_mix,
+        penumbra: arm.penumbra,
         store_read: if arm.store_read_face {
             vxe_render::StoreRead::Face
         } else {
@@ -883,9 +899,10 @@ mod reading {
             hold_series(&stop, &cls, still_far_max);
             support::write_png(&dir.join("stop-final.png"), &shot.display, OUT[0], OUT[1]);
         }
-        // The turn: `turn_deg` over 40 frames, then 180 held.
-        let turn_cams: Vec<Camera> = (1..=40)
-            .map(|k| yawed(&cam1, arm.turn_deg * k as f32 / 40.0))
+        // The turn: `turn_deg` over `turn_frames` frames, then the hold.
+        let tf = arm.turn_frames;
+        let turn_cams: Vec<Camera> = (1..=tf)
+            .map(|k| yawed(&cam1, arm.turn_deg * k as f32 / tf as f32))
             .collect();
         let cam2 = *turn_cams.last().unwrap();
         let turn = run_segment(

@@ -100,6 +100,12 @@ pub const DEFAULT_STORE_READ: vxe_render::StoreRead = vxe_render::StoreRead::Nor
 /// tread's taps stay apart under the far normal. The library's default is `Normal`.
 pub const DEFAULT_LIGHT_WEIGHTS: vxe_render::LightWeights = vxe_render::LightWeights::Face;
 
+/// The key light's penumbra the fly-through starts with without `--penumbra`: the closest
+/// approach of one centre ray, taken as the value with no screen history (ADR-0079's near).
+/// The library's default is `Disc`, and [`default_lighting`] keeps it, so the images the tests
+/// render from that base do not move with this pick.
+pub const DEFAULT_PENUMBRA: vxe_render::Penumbra = vxe_render::Penumbra::Approach;
+
 /// The lighting the fly-through's flags start from: the library's `Lighting::default()` read
 /// with [`DEFAULT_STORE_READ`] and [`DEFAULT_LIGHT_WEIGHTS`]. The fly-through's flag defaults
 /// and every example that renders the fly-through's image take this one base, so the two

@@ -704,7 +704,7 @@ impl Modes {
             let _ = write!(out, ", sky rays {}, ", l.sky_rays);
             out.push_str(self.leaf_shadow.words());
             self.write_key_far(out);
-            if l.penumbra != vxe_render::Penumbra::Disc {
+            if l.penumbra != crate::DEFAULT_PENUMBRA {
                 let _ = write!(out, "penumbra {}, ", l.penumbra.name());
             }
             if l.sky_normal != vxe_render::SkyNormal::default() {

@@ -344,3 +344,137 @@ fn a_records_landing_at_the_far_is_one_fade() {
     assert!(moved > 100, "{moved} moved");
     assert!(long > 0, "{moved} moved");
 }
+
+// Plan 0095 Phase 5: the near key light under `penumbra approach` is the frame's approach
+// visibility times the ray's transmittance, taken as the value (no running mean), and the
+// approach probes skip voxels of a SHADOW_ABSORB material. The 128 x 128 rig of the far
+// tests' camera, the far normal's band off (its weight 0: the near).
+
+/// A rock floor (id 1) under z 16 over one chunk plus `extra` voxels of material `m(p)`
+/// (0 air), and a material table of rock and leaf (id 2).
+fn styled_world(m: impl Fn([i32; 3]) -> MaterialId + Sync) -> World {
+    let f = move |p: [i32; 3]| if p[2] < FLOOR { ROCK } else { m(p) };
+    let table: MaterialTable = [Material::named("rock"), Material::named("leaf")]
+        .into_iter()
+        .collect();
+    World::generate(ChunkExtent::new([0, 0, 0], [1, 1, 1]), &FnSource(f), &table)
+}
+
+/// The near rig's frame: [`frame`] at 128 x 128 under `penumbra approach`, the leaf (id 2)
+/// absorbing `sigma` a voxel, a sun at elevation `el` and azimuth `az` of the real radius.
+fn near_frame(device: &wgpu::Device, queue: &wgpu::Queue, el: f32, az: f32, sigma: f32) -> Frame {
+    let mut f = frame(device, [128, 128], ShadowWalk::Full);
+    f.set_lighting(Lighting {
+        penumbra: vxe_render::Penumbra::Approach,
+        ..f.lighting()
+    });
+    f.set_material_styles(queue, &[0, 0, vxe_render::shadow_absorb(sigma)]);
+    f.set_sky(Some(sky(dir(el, az), dir(-40.0, 0.0), [[1.0; 3], [0.0; 3]])));
+    f
+}
+
+/// One frame of `f` from `cam`: per lighting pixel whose hit is a floor face, its index, hit
+/// x and y, and the key slot (a ray's value under `approach`).
+fn near_floor(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    f: &mut Frame,
+    gpu: &GpuWorld,
+    cam: &Camera,
+) -> Vec<(usize, f32, f32, f32)> {
+    f.step(device, queue, gpu, cam, &LightParams::headlamp());
+    let h = vxe_render::debug::read_rgba32f(device, queue, f.light_hit_positions());
+    let pair = vxe_render::debug::read_rgba16f(device, queue, f.visibility_pair());
+    (0..h.len())
+        .filter(|&i| h[i][3] < 1e30 && (h[i][2] - FLOOR as f32).abs() < 0.01)
+        .map(|i| (i, h[i][0], h[i][1], pair[i][1]))
+        .collect()
+}
+
+/// Straight down from 8 voxels over the floor at `at`, screen right +x.
+fn down_at(at: [f32; 2]) -> Camera {
+    Camera {
+        position: Vec3::new(at[0], at[1], FLOOR as f32 + 8.0),
+        ..far_camera()
+    }
+}
+
+/// Determinism: under `approach` the near key slot at every floor pixel of the slab-edge rig
+/// (rock to z 26 over x < 24, the sun at elevation 40 in the west) is the same f16 on frames
+/// 1, 2 and 3: the value of the frame's ray, which a reset does not change.
+#[test]
+fn the_approach_penumbra_is_the_same_every_frame() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let slab = styled_world(|p| if p[2] < FLOOR + 10 && p[0] < 24 { ROCK } else { AIR });
+    let gpu = mirror(&device, &queue, &slab, None);
+    let mut f = near_frame(&device, &queue, 40.0, 270.0, 0.15);
+    let cam = far_camera();
+    let shots: Vec<Vec<f32>> = (0..3)
+        .map(|_| {
+            near_floor(&device, &queue, &mut f, &gpu, &cam)
+                .iter()
+                .map(|p| p.3)
+                .collect()
+        })
+        .collect();
+    assert!(shots[0].contains(&0.0) && shots[0].contains(&1.0));
+    assert_eq!(shots[0], shots[1]);
+    assert_eq!(shots[1], shots[2]);
+}
+
+/// Bar: under a zenith sun, a floor under a one-voxel layer of leaf (z 28, the whole chunk)
+/// absorbing 0.15 a voxel reads, under `approach` with the probes' skip, within 8 levels of
+/// `exp(-0.15) 255 = 219.5` at every floor pixel (the transmittance alone). 15.0 s on lavapipe
+/// at load 1.1 (over the soak line).
+#[test]
+#[ignore = "soak"]
+fn a_floor_under_a_leaf_layer_reads_its_transmittance() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let leaf = styled_world(|p| if p[2] == FLOOR + 12 { 2 } else { AIR });
+    let gpu = mirror(&device, &queue, &leaf, None);
+    let mut f = near_frame(&device, &queue, 90.0, 0.0, 0.15);
+    let px = near_floor(&device, &queue, &mut f, &gpu, &far_camera());
+    assert!(px.len() > 10_000, "{} floor pixels", px.len());
+    let want = (-0.15f64).exp() * 255.0;
+    for p in &px {
+        let got = f64::from(p.3) * 255.0;
+        assert!((got - want).abs() <= 8.0, "at ({}, {}): {got} against {want}", p.1, p.2);
+    }
+}
+
+/// Bar: a rock post (x 28..32, y 30..34, to z 26) under a sun at elevation 45 in the west:
+/// under `approach` the floor in its shadow (x 33..40, y 30.5..33.5) reads 0, and the floor
+/// two voxels past the shadow's side (x 33..40, y 36.1..40), past a ramp of `t tan r` (under
+/// 0.07 voxels for the real radius at the post's 14 voxels), reads 255.
+#[test]
+fn a_post_casts_a_dark_shadow_and_a_lit_side_under_the_approach() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let post = styled_world(|p| {
+        if (28..32).contains(&p[0]) && (30..34).contains(&p[1]) && p[2] < FLOOR + 10 {
+            ROCK
+        } else {
+            AIR
+        }
+    });
+    let gpu = mirror(&device, &queue, &post, None);
+    let mut f = near_frame(&device, &queue, 45.0, 270.0, 0.15);
+    let px = near_floor(&device, &queue, &mut f, &gpu, &down_at([36.0, 34.0]));
+    let (mut dark, mut lit) = (0, 0);
+    for p in &px {
+        if (33.0..40.0).contains(&p.1) && (30.5..33.5).contains(&p.2) {
+            assert_eq!(p.3, 0.0, "in the shadow at ({}, {})", p.1, p.2);
+            dark += 1;
+        }
+        if (33.0..40.0).contains(&p.1) && (36.1..40.0).contains(&p.2) {
+            assert_eq!(p.3, 1.0, "past the side at ({}, {})", p.1, p.2);
+            lit += 1;
+        }
+    }
+    assert!(dark > 300 && lit > 300, "{dark} dark, {lit} lit pixels");
+}

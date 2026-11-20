@@ -226,9 +226,11 @@ mod tests {
     }
 
     /// The fly-through's own values over a profile's: the records sized to the residency,
-    /// and no output hint without `--profile`.
+    /// the key light's penumbra ([`crate::DEFAULT_PENUMBRA`]), and no output hint without
+    /// `--profile`.
     fn fly_through(p: Profile, hint: bool) -> RenderSettings {
         let mut s = RenderSettings::profile(p);
+        s.lighting.penumbra = crate::DEFAULT_PENUMBRA;
         s.build.record_chunks = Some(crate::stream_record_chunks(s.build.residency));
         if !hint {
             s.output_hint = None;

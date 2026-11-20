@@ -32,8 +32,9 @@ pub struct OutdoorArgs {
     pub(crate) leaf_fill: Option<u32>,
     /// `--leaf-shadow brick|voxel|absorb`: how the canopy shadows.
     pub(crate) leaf_shadow: crate::LeafShadow,
-    /// `--penumbra disc|approach`: how the key light's shadow ray makes its penumbra.
-    pub(crate) penumbra: vxe_render::Penumbra,
+    /// `--penumbra disc|approach`: how the key light's shadow ray makes its penumbra; unset,
+    /// [`crate::DEFAULT_PENUMBRA`].
+    pub(crate) penumbra: Option<vxe_render::Penumbra>,
     /// `--key-far baked|ray`: where the key light's visibility comes from where a voxel is
     /// small on screen (ADR-0079).
     pub(crate) key_far: vxe_render::KeyFar,
@@ -308,11 +309,12 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
         Flag::value(
             &["--penumbra"],
             "disc|approach",
-            "the key light's penumbra: a ray to a random point of its disc a frame, or one \
-                 to its centre scored by how close it passes the rock beside it (a spike) [disc]",
+            "the key light's penumbra: a ray to a random point of its disc a frame and its \
+                 running mean, or one ray to its centre scored by how close it passes the rock \
+                 beside it, taken as the value with no history [approach]",
             |p: &mut Parsing, v| {
                 p.args.outdoor.penumbra =
-                    v.named(vxe_render::Penumbra::from_name, "disc or approach")?;
+                    Some(v.named(vxe_render::Penumbra::from_name, "disc or approach")?);
                 Ok(())
             },
         ),

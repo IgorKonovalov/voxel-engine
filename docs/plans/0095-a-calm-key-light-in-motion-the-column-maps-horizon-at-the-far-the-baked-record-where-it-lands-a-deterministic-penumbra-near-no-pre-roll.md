@@ -600,8 +600,8 @@ its Phases 5 to 7 are Phases 9 to 11.
 | 1: The key channel in the store | dev | done (exploration) | 011d707a |
 | 2: The read at the far band and the seed | dev | done (exploration); readings partial | 937a08da |
 | 3: The owner's window W1 | human | run 2026-11-20 after a pre-roll drain (`7d19d8b0`, testbed flag); forest runs 1a to 2b judged, the hills and the day cycle not; no pick, the owner's rule instead (readings log) | |
-| 4: The far's instant estimate: the column map's horizon | dev | done (exploration); readings in Phase 5's log section | committed with this row |
-| 5: The near with no history: the approach penumbra | dev | not started | |
+| 4: The far's instant estimate: the column map's horizon | dev | done (exploration); readings in Phase 5's log section | 1006270b |
+| 5: The near with no history: the approach penumbra | dev | done (exploration); readings partial | committed with this row |
 | 6: The reach-bound count, the no-value bricks | dev | not started | |
 | 7: The owner's window W2, no pre-roll | human | not started | |
 | 8: The sun's step and the edit's ring (if W2 keeps the record) | dev | not started | |
@@ -651,6 +651,20 @@ its Phases 5 to 7 are Phases 9 to 11.
 - Phase 4: the landing test bakes the floor's `+z` faces of three brick columns with
   `bake_until`, not one stepped job; it asserts with its own trace check, not `rules.rs`
   (a fly-through test helper vxe-render's tests cannot reach).
+- Phase 5: files beyond its list: the fly-through's `look.rs` (`DEFAULT_PENUMBRA`),
+  `cli/outdoor.rs`, `cli/mod.rs`, `hud/modes.rs`, `cli/settings.rs`, `cli/tests.rs`,
+  `cli/tests/outdoor.rs` and `docs/flythrough.md` (the default flip); `sky_light.wgsl` and
+  `pair.wgsl` untouched.
+- Phase 5: the default is the fly-through's start value, not the library's
+  (`Lighting::default()` and `default_lighting()` keep `disc`, so no golden moves);
+  `the_start_lighting_is_the_shared_default_lighting` names the penumbra as a third field the
+  start sets beside the exposure and the lamp's bounce.
+- Phase 5: the probes' skip has no setting; the reading without it is a build with
+  `APPROACH_SKIP_ABSORB` false (`live/bin/p5-noskip`). Under the fly-through's default leaves
+  (`--leaf-shadow voxel`) no material absorbs, so the skip acts only under `absorb`.
+- Phase 5: `a_floor_under_a_leaf_layer_reads_its_transmittance` is born soak (15.0 s).
+- Phase 5: inside the band under approach the key slot carries the far estimate's fade (not
+  in the phase's text: Phase 4's undrained hold read the band's unfaded landings).
 
 ### Close triggers
 
