@@ -1835,7 +1835,7 @@ mod reading {
     use super::*;
 
     /// The cavity rig of `upscaled.png` (`fsr2` false: the own upscaler, jittered) or
-    /// `fsr2.png` (FSR 2) at sharpening 0.5 and the settle off, its image after `frames` frames.
+    /// `fsr2.png` (FSR 2) at sharpening 0.5, its image after `frames` frames.
     fn cavity_after(fsr2: bool, frames: u32) -> Option<Vec<u8>> {
         let world = cavity_world();
         let rig = LookRig::new(&world, None)?;
@@ -1852,10 +1852,6 @@ mod reading {
             frame.set_jitter(&rig.device, true);
             frame.set_sharpness(&rig.queue, 0.5);
         }
-        frame.set_lighting(vxe_render::Lighting {
-            settle: false,
-            ..frame.lighting()
-        });
         for _ in 0..frames {
             frame.step(
                 &rig.device,

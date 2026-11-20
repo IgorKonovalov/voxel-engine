@@ -941,6 +941,13 @@ impl Args {
         }
     }
 
+    /// Whether the flags pick a light pass arm at start (`--leaf-shadow absorb`, `--penumbra
+    /// approach`), whose pipelines the loading stage then builds.
+    pub(crate) fn light_arms_at_start(&self) -> bool {
+        self.start_lighting().penumbra == vxe_render::Penumbra::Approach
+            || self.outdoor.leaf_shadow() == crate::LeafShadow::Absorb
+    }
+
     /// The lighting the fly-through starts in, from its flags.
     pub(crate) fn start_lighting(&self) -> Lighting {
         self.light.apply(Lighting {
@@ -963,7 +970,6 @@ impl Args {
             penumbra: self.outdoor.penumbra,
             sky_normal: self.outdoor.sky_normal,
             column_wait: self.outdoor.column_wait,
-            settle: self.outdoor.settle,
             sky_bounce: self.outdoor.sky_bounce,
             ..crate::default_lighting()
         })

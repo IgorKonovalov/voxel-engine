@@ -8,7 +8,9 @@ mod flicker {
     /// `VXE_SPLIT_TIME` another hour), the 1 m dig about 35 voxels ahead: over every frame pair
     /// from the one ending at the dig's frame N to N + 16, the share of display pixels outside
     /// the box dilated by 64 voxels whose largest channel changes by over 4 levels is at most
-    /// 0.5 % (the settled strip's largest 0.191 %; the tip before the fix printed in the log);
+    /// the larger of 0.5 % and 1.5 times the still pairs' largest share over the same band
+    /// (restated by Plan 0094 Phase 7a: a still image at 17:00 reads about 1 % there by
+    /// itself; the still pairs printed);
     /// at N the lighting pixels outside the dilated box that cast the sky ray are no more than
     /// at N - 1 and those of age 0 no more than the most of the 8 still frames before, the
     /// history's two bits set, neither change bit raised and the restarts unchanged. The share
@@ -35,7 +37,11 @@ mod flicker {
             "dig: outside the reach at most {worst:.3} % over 4 (the still pairs' max {still_max:.3} %); inside at N {:.3} %",
             n.share_in
         );
-        assert!(worst <= 0.5, "outside the reach: {worst:.3} % over 4 levels");
+        let line = f64::max(0.5, 1.5 * still_max);
+        assert!(
+            worst <= line,
+            "outside the reach: {worst:.3} % over 4 levels, the line {line:.3} %"
+        );
         assert!(
             n.cast_out <= still[b - 1].cast_out,
             "sky rays cast outside the reach: {} at N, {} at N - 1",
@@ -143,9 +149,9 @@ mod flicker {
             let (mut rig, cam) = support::terms::hills_rig()?;
             let cam = pitched(&cam, -30.0);
             let mut s = strip_frame(&mut rig, split_sky(), &cam);
-            let arm = std::env::var("VXE_HOLE_ARM").unwrap_or_else(|_| "pool".into());
+            let arm = std::env::var("VXE_HOLE_ARM").unwrap_or_else(|_| "no-pool".into());
             s.frame.set_light_hooks(vxe_render::LightHooks {
-                no_pool: arm.ends_with("no-pool"),
+                pool: !arm.ends_with("no-pool"),
                 seed_stale_f: arm.starts_with("seed-f"),
                 ..Default::default()
             });
@@ -212,138 +218,6 @@ mod flicker {
             );
         }
 
-        /// Plan 0094 Phase 3 bar 3's release clause: [`hills_at_rest`]'s pose and frame at 17:00,
-        /// the exposure pinned once settled, 64 frames, then the clock running at 1x (1/60 s a
-        /// frame) for 3600 frames. Per frame, the lighting pixels whose pair holds the settle's
-        /// mark (its `a` at the sky cap + 16 or more) and the ones released (the mark the frame
-        /// before, not now); the display's over-4 share per pair; and rule 3's classes of the
-        /// display pixels released on the first frame past the 120th with at least 20 releases,
-        /// over the 8 frames before it to `F + 16` after. `settle_on` false sets `no_settle`.
-        fn hills_clock(settle_on: bool) {
-            use support::rules::{F, MEAN_FRAMES, T_FADE, TraceClass, trace_classes};
-            let Some((mut rig, cam)) = support::terms::hills_rig() else {
-                return;
-            };
-            let cam = pitched(&cam, -30.0);
-            let clock = |sec: f64| {
-                flythrough::daylight::Clock {
-                    minutes: 17.0 * 60.0 + sec / 60.0,
-                    ..Default::default()
-                }
-                .sky(flythrough::outdoor::BASE_Z as f32)
-            };
-            let mut s = strip_frame(&mut rig, clock(0.0), &cam);
-            settle(&mut rig, &mut s, &cam, 240);
-            let e = s.frame.exposure_readout(&rig.device).map(|r| r.exposure).expect("a read-back");
-            s.frame.set_lighting(vxe_render::Lighting {
-                exposure: vxe_render::Exposure::Manual(e),
-                settle: settle_on,
-                ..s.frame.lighting()
-            });
-            s.frame.set_light_hooks(vxe_render::LightHooks {
-                no_settle: !settle_on,
-                ..Default::default()
-            });
-            settle(&mut rig, &mut s, &cam, 64);
-            // Held: the settle's states 16 to 19 past the sky cap (temporal.wgsl `settle_at_cap`;
-            // 20 is the fade after a release).
-            let mark = (flythrough::default_lighting().sky_history + 16) as f32 - 0.5;
-            let read_marks = |s: &support::defects::Stepper, rig: &Rig| -> Vec<bool> {
-                let p = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, s.frame.visibility_pair());
-                p.iter().map(|v| (mark..mark + 4.0).contains(&v[3])).collect()
-            };
-            let depth = |s: &support::defects::Stepper| {
-                s.frame.bake_queue().map_or(0, |q| {
-                    let st = q.stats();
-                    st.depth + st.jobs
-                })
-            };
-            let mut depths = Vec::with_capacity(3600);
-            let gw = s.frame.visibility_pair().width() as usize;
-            let (dw, dh) = (OUT[0] as usize, OUT[1] as usize);
-            let mut marks = read_marks(&s, &rig);
-            let mut last = s.step(&rig, &cam).display;
-            let mut ring: std::collections::VecDeque<Vec<u8>> = std::collections::VecDeque::new();
-            let (mut released_sum, mut settled_sum, mut pops_sum, mut max_rel) = (0u64, 0u64, 0f64, 0usize);
-            let mut event: Option<(usize, Vec<bool>, Vec<Vec<u8>>)> = None;
-            let frames: u32 = 3600;
-            for k in 1..=frames as usize {
-                s.frame.set_sky(Some(clock(k as f64 / 60.0)));
-                queue_step(&mut rig, &mut s.frame, &cam);
-                let now = s.step(&rig, &cam).display;
-                let m = read_marks(&s, &rig);
-                depths.push(depth(&s));
-                let released: Vec<bool> = marks.iter().zip(&m).map(|(a, b)| *a && !*b).collect();
-                let rel = released.iter().filter(|r| **r).count();
-                released_sum += rel as u64;
-                settled_sum += m.iter().filter(|v| **v).count() as u64;
-                max_rel = max_rel.max(rel);
-                let n = now.len() / 4;
-                pops_sum += 100.0 * support::rules::still_count(&last, &now, support::rules::T_STILL, None) as f64 / n as f64;
-                if let Some((_, _, shots)) = event.as_mut() {
-                    if shots.len() < MEAN_FRAMES + F + 16 {
-                        shots.push(now.clone());
-                    }
-                } else if k > 120 && rel >= 20 && ring.len() == MEAN_FRAMES {
-                    let region = (0..n).map(|i| released[support::defects::grid_of(i, dw, dh, gw, released.len())]).collect();
-                    let mut shots: Vec<Vec<u8>> = ring.iter().cloned().collect();
-                    shots.push(now.clone());
-                    event = Some((k, region, shots));
-                }
-                ring.push_back(now.clone());
-                if ring.len() > MEAN_FRAMES {
-                    ring.pop_front();
-                }
-                marks = m;
-                last = now;
-            }
-            println!(
-                "reading: hills 17:00, clock 1x for {frames} frames, settle {}: settled lighting px per frame {:.0} of {}, releases per frame {:.2} (max {max_rel}), over-4 mean {:.3} % per pair ({})",
-                if settle_on { "on" } else { "off" },
-                settled_sum as f64 / f64::from(frames),
-                marks.len(),
-                released_sum as f64 / f64::from(frames),
-                pops_sum / f64::from(frames),
-                rig.adapter
-            );
-            let mean = depths.iter().sum::<u64>() as f64 / depths.len().max(1) as f64;
-            let within = depths.iter().filter(|d| (**d as f64 - mean).abs() <= 1.0).count();
-            let series: Vec<String> = depths.iter().step_by(300).map(u64::to_string).collect();
-            println!(
-                "reading: hills clock queue depth (pending + jobs): mean {mean:.2}, min {}, max {}, frames within 1 of the mean {:.2} %; every 300th frame: {}",
-                depths.iter().min().unwrap_or(&0),
-                depths.iter().max().unwrap_or(&0),
-                100.0 * within as f64 / depths.len().max(1) as f64,
-                series.join(" ")
-            );
-            match event {
-                Some((k, region, shots)) if shots.len() >= MEAN_FRAMES + F + 16 => {
-                    let refs: Vec<&[u8]> = shots.iter().map(Vec::as_slice).collect();
-                    let c = trace_classes(&refs, &region, T_FADE, F);
-                    let px = region.iter().filter(|r| **r).count().max(1);
-                    let shares: Vec<String> = TraceClass::ALL
-                        .iter()
-                        .zip(c)
-                        .map(|(t, v)| format!("{t:?} {:.2} %", 100.0 * v as f64 / px as f64))
-                        .collect();
-                    println!("reading: hills clock release at frame {k}: {px} display px; {}", shares.join(", "));
-                }
-                _ => println!("reading: hills clock: no frame past 120 released 20 lighting px"),
-            }
-        }
-
-        #[test]
-        #[ignore = "reading"]
-        fn hills_clock_settle_on() {
-            hills_clock(true);
-        }
-
-        #[test]
-        #[ignore = "reading"]
-        fn hills_clock_settle_off() {
-            hills_clock(false);
-        }
-
         #[test]
         #[ignore = "reading"]
         fn hills_at_rest_auto() {
@@ -397,19 +271,9 @@ mod flicker {
             turn_and_return(flythrough::LeafShadow::Voxel);
         }
 
-        /// [`turn_and_return_voxel`] with the settle off (`no_settle`).
-        #[test]
-        #[ignore = "reading"]
-        fn turn_and_return_voxel_no_settle() {
-            NO_SETTLE.with(|n| n.set(true));
-            turn_and_return(flythrough::LeafShadow::Voxel);
-        }
-
         std::thread_local! {
             /// Whether [`castle_arm`]'s frame reads the prior's arm B.
             static COLUMN_PRIOR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-            /// Whether [`turn_and_return`]'s frame has the settle off.
-            static NO_SETTLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
         }
 
         fn turn_and_return(leaf: flythrough::LeafShadow) {
@@ -423,17 +287,7 @@ mod flicker {
             }
             .sky(flythrough::outdoor::BASE_Z as f32);
             {
-                let mut f = flicker_frame_with(&rig, sky, None, false, leaf);
-                let no_settle = NO_SETTLE.with(std::cell::Cell::get);
-                f.set_light_hooks(vxe_render::LightHooks {
-                    no_settle,
-                    ..Default::default()
-                });
-                // The settle is off by default; this reading has it on but in the `no_settle` arm.
-                f.set_lighting(vxe_render::Lighting {
-                    settle: !no_settle,
-                    ..f.lighting()
-                });
+                let f = flicker_frame_with(&rig, sky, None, false, leaf);
                 let mut s = Stepper::new(&rig, f);
                 let mut n = 0;
                 while n < 30_000 && !s.frame.bake_queue().is_some_and(|q| q.empty()) {
@@ -502,9 +356,9 @@ mod flicker {
         /// contact shadow's seed against what the pixel settles to, frame `landing + F + 16`);
         /// and rule 3's class shares over the trace from N - 8 to the landing plus `F + 16`, the
         /// fade allowed `landing + F` frames; the a-trous pass's ms still and over the band's
-        /// frames. `VXE_HOLE_ARM`: `pool` (the default), `no-pool` (`LightHooks::no_pool`),
-        /// `key-off` (the pool with `LightHooks::key_off`), `seed-f` and `seed-f-no-pool` (those
-        /// with `LightHooks::seed_stale_f`); [`dig_split`] reads it too. `VXE_TEST_ADAPTER` picks the adapter.
+        /// frames. `VXE_HOLE_ARM`: `no-pool` (the default), `pool` (`LightHooks::pool`),
+        /// `key-off` (the pool with `LightHooks::key_off`), `seed-f` (the pool) and
+        /// `seed-f-no-pool` (those with `LightHooks::seed_stale_f`); [`dig_split`] reads it too. `VXE_TEST_ADAPTER` picks the adapter.
         #[test]
         #[ignore = "reading"]
         fn hole_band() {
@@ -514,9 +368,9 @@ mod flicker {
             };
             let cam = pitched(&cam, -30.0);
             let mut s = strip_frame(&mut rig, split_sky(), &cam);
-            let arm = std::env::var("VXE_HOLE_ARM").unwrap_or_else(|_| "pool".into());
+            let arm = std::env::var("VXE_HOLE_ARM").unwrap_or_else(|_| "no-pool".into());
             s.frame.set_light_hooks(vxe_render::LightHooks {
-                no_pool: arm.ends_with("no-pool"),
+                pool: !arm.ends_with("no-pool"),
                 key_off: arm == "key-off",
                 seed_stale_f: arm.starts_with("seed-f"),
                 ..Default::default()

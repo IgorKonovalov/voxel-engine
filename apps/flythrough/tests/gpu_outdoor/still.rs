@@ -60,8 +60,6 @@ mod still {
         let base = Lighting {
             lamp: !sky,
             sky_rays: arm.sky_rays.unwrap_or(defaults.sky_rays),
-            // A reading's switch: `VXE_SETTLE=off` turns the settle off.
-            settle: std::env::var("VXE_SETTLE").as_deref() != Ok("off"),
             ..defaults
         };
         f.set_count_store(true);

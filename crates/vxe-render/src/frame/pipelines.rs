@@ -496,6 +496,13 @@ impl Pipelines {
         self.pipeline(device, P_LIGHT_BARE);
     }
 
+    /// Builds the light pass's variants with the default-off arms compiled in
+    /// (`P_LIGHT_ARMS` and `P_LIGHT_BARE_ARMS`) unless they are built.
+    pub(super) fn prepare_light_arms(&self, device: &wgpu::Device) {
+        self.pipeline(device, P_LIGHT_ARMS);
+        self.pipeline(device, P_LIGHT_BARE_ARMS);
+    }
+
     /// Pass `p`'s own group layout, or the layout it shares.
     pub(super) fn layout(&self, p: usize) -> &wgpu::BindGroupLayout {
         let at = PASSES[p]

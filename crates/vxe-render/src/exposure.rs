@@ -136,9 +136,9 @@ pub struct AutoExposure {
     pub rate_ev_s: f32,
 }
 
-/// [`AutoExposure::rate_ev_s`]'s default: 1/32 EV a frame at 60 Hz, a step that moves a pixel
-/// at 180 of 255 by about 3.9 levels (Plan 0094's owner question 2).
-pub const DEFAULT_EXPOSURE_RATE_EV_S: f32 = 1.875;
+/// [`AutoExposure::rate_ev_s`]'s default: 1/16 EV a frame at 60 Hz, a step that moves a pixel
+/// at 180 of 255 by about 8 levels; a 6 EV change takes about 1.6 s.
+pub const DEFAULT_EXPOSURE_RATE_EV_S: f32 = 3.75;
 
 /// The longest frame step the rate cap pays for, in seconds (a 15 fps frame).
 pub(crate) const MAX_RATE_DT: f32 = 1.0 / 15.0;
@@ -720,17 +720,27 @@ mod tests {
         assert!((s.step(-1.0, -3.0, 0.5) - (-3.0 + 2.0 * (-1f64).exp())).abs() < 1e-12);
     }
 
-    /// ADR-0076 rule 5 (Plan 0094 Phase 4): at the default rate (1.875 EV/s) and `dt` 1/60 a
-    /// 2 EV step toward a brighter meter moves the adapted level by 1/32 EV a frame within 1/256,
-    /// monotonically (the frame it is within 1/64 EV of the target printed: the cap holds while
-    /// ADR-0033's own step is larger, then its exponential tail); a long `dt` steps no
-    /// further than a 15 fps frame's; with the rate 0 the step is ADR-0033's; a still meter
-    /// holds the level.
+    /// The frame after a step of `d` EV toward a brighter meter by which the capped eye is within
+    /// 1/64 EV of its target, from the model's constants: with `r` the per-frame cap and `tau`
+    /// ADR-0033's light constant in frames, the cap binds while the gap exceeds `tau r`, then the
+    /// exponential tail decays from there, plus 2 frames of rounding.
+    pub(crate) fn landing_frame(d: f64, r: f64, tau: f64) -> u32 {
+        ((d - tau * r) / r).ceil() as u32 + (tau * (64.0 * tau * r).ln()).ceil() as u32 + 2
+    }
+
+    /// ADR-0076 rule 5 (Plan 0094 Phase 4, the rate of Phase 7a): at the default rate and `dt`
+    /// 1/60 a 2 EV step toward a brighter meter moves the adapted level by at most the rate's
+    /// frame step (1/16 EV at 3.75 EV/s) within 1/256, monotonically, the first step being the
+    /// cap, and is within 1/64 EV of the target by [`landing_frame`] (the frame it reaches printed);
+    /// a long `dt` steps no further than a 15 fps frame's; with the rate 0 the step is
+    /// ADR-0033's; a still meter holds the level.
     #[test]
     fn the_rate_caps_a_step() {
         let e = AutoExposure::eye();
         assert_eq!(e.rate_ev_s, DEFAULT_EXPOSURE_RATE_EV_S);
         let dt = 1.0 / 60.0;
+        let r_f = f64::from(DEFAULT_EXPOSURE_RATE_EV_S) * dt;
+        let landing = landing_frame(2.0, r_f, f64::from(e.tau_light) / dt);
         let (a0, t) = (-4.0, -2.0);
         let mut a = a0;
         let mut trace = vec![a];
@@ -741,19 +751,22 @@ mod tests {
                 next >= a && next <= t,
                 "monotonic toward the target: {a} -> {next}"
             );
-            assert!((next - a) <= 1.0 / 32.0 + 1.0 / 256.0, "{a} -> {next}");
+            assert!((next - a) <= r_f + 1.0 / 256.0, "{a} -> {next}");
             a = next;
             trace.push(a);
             if reached.is_none() && (a - t).abs() <= 1.0 / 64.0 {
                 reached = Some(k);
             }
         }
-        println!("reading: a 2 EV step at 1.875 EV/s is within 1/64 EV at frame {reached:?}");
-        assert!((a - t).abs() <= 1.0 / 64.0, "{a}");
-        assert!(
-            (trace[1] - (a0 + 1.0 / 32.0)).abs() <= 1.0 / 256.0,
-            "{trace:?}"
+        println!(
+            "reading: a 2 EV step at {DEFAULT_EXPOSURE_RATE_EV_S} EV/s is within 1/64 EV at frame \
+             {reached:?}, the derived landing frame {landing}"
         );
+        assert!(
+            reached.is_some_and(|k| k <= landing),
+            "{reached:?} {landing}"
+        );
+        assert!((trace[1] - (a0 + r_f)).abs() <= 1.0 / 256.0, "{trace:?}");
         let long = e.step(a0, t, 1.0);
         assert!((long - a0 - f64::from(DEFAULT_EXPOSURE_RATE_EV_S * MAX_RATE_DT)).abs() < 1e-6);
         let free = AutoExposure {
@@ -761,7 +774,7 @@ mod tests {
             ..e
         };
         assert!(
-            free.step(a0, t, dt) > a0 + 1.0 / 32.0,
+            free.step(a0, t, dt) > a0 + r_f,
             "ADR-0033's bright step is faster"
         );
         assert_eq!(e.step(-3.0, -3.0, dt), -3.0);

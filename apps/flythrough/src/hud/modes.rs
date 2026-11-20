@@ -686,9 +686,6 @@ impl Modes {
             if l.column_wait {
                 out.push_str("column wait on, ");
             }
-            if l.settle {
-                out.push_str("settle on, ");
-            }
             if self.dump_black {
                 out.push_str("dump black, ");
             }

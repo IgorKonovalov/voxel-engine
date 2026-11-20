@@ -40,8 +40,6 @@ pub struct OutdoorArgs {
     pub(crate) sky_bounce: f32,
     /// `--column-wait on|off`: the live queue's column wait (`Lighting::column_wait`).
     pub(crate) column_wait: bool,
-    /// `--settle on|off`: the visibility means' settle (`Lighting::settle`).
-    pub(crate) settle: bool,
     /// `--dump-black`: once a second while the store's black count is over 0, the lighting
     /// pixels with no record value printed by the chunk they hit (`Run::dump_black`).
     pub(crate) dump_black: bool,
@@ -352,17 +350,6 @@ fn ceiling_flags() -> Vec<Flag<Parsing>> {
                 Ok(())
             },
         ),
-        Flag::value(
-            &["--settle"],
-            "on|off",
-            "on, a visibility mean at its cap whose short mean stays in its band 16 frames \
-                 holds its value until it leaves the band 4 frames running, then fades to the \
-                 new value over 16; off, it keeps blending every sample in [off]",
-            |p: &mut Parsing, v| {
-                p.args.outdoor.settle = v.on_off()?;
-                Ok(())
-            },
-        ),
         Flag::switch(
             &["--dump-black"],
             "once a second while the store's black count is over 0, print the lighting pixels \
@@ -389,7 +376,7 @@ fn ceiling_flags() -> Vec<Flag<Parsing>> {
             &["--exposure-rate"],
             "EV/s",
             "the most the auto exposure moves toward its target a second, 0 to 64, 0 for no \
-                 cap (a step is capped at a 15 fps frame's) [1.875: 1/32 EV a frame at 60 Hz]",
+                 cap (a step is capped at a 15 fps frame's) [3.75: 1/16 EV a frame at 60 Hz]",
             |p: &mut Parsing, v| {
                 p.args.outdoor.exposure_rate =
                     Some(v.parse_if(|n: &f32| (0.0..=64.0).contains(n), "0 to 64")?);

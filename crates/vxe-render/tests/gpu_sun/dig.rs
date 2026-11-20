@@ -287,6 +287,59 @@ fn the_sky_term_switches_without_a_dip() {
     );
 }
 
+/// The mean of `luma` over the pixels `px`.
+fn floor_mean(luma: &[f32], px: &[usize]) -> f64 {
+    px.iter().map(|&i| f64::from(luma[i])).sum::<f64>() / px.len().max(1) as f64
+}
+
+/// [`landing_rule3`]'s reading of the hole's floor.
+struct Rule3 {
+    /// The floor's mean over the 8 frames before the landing, and over the last 8 frames.
+    pre: f64,
+    settled: f64,
+    /// `[min(pre, settled) - T_fade, max(pre, settled) + T_fade]`.
+    band: [f64; 2],
+    /// The frames from the landing plus `F` on whose mean is off the baked whole's by over
+    /// `T_fade`, with the difference; the frames after the dig out of the band, with the mean.
+    off: Vec<(usize, f64)>,
+    out: Vec<(usize, f64)>,
+}
+
+/// ADR-0076 rule 3 over the hole's floor `px` (its `T_fade` 4 and `F` 16): `shots` from frame
+/// `DIG_AT - 1`, `lumas` the display's luma from frame `DIG_AT - 16`, `want` the baked whole's
+/// mean, `at` the landing's index in `shots`.
+fn landing_rule3(shots: &[DigShot], lumas: &[Vec<f32>], px: &[usize], want: f64, at: usize) -> Rule3 {
+    const T_FADE: f64 = 4.0;
+    const F: usize = 16;
+    let mean = |s: &DigShot| floor_mean(&s.luma, px);
+    let off = shots
+        .iter()
+        .enumerate()
+        .skip(at + F)
+        .map(|(k, s)| (DIG_AT + k - 1, mean(s) - want))
+        .filter(|(_, d)| d.abs() > T_FADE)
+        .collect();
+    // `lumas[at + 15]` is the landing's frame.
+    let pre = lumas[at + 7..at + 15].iter().map(|l| floor_mean(l, px)).sum::<f64>() / 8.0;
+    let tail = &shots[shots.len() - 8..];
+    let settled = tail.iter().map(mean).sum::<f64>() / 8.0;
+    let band = [pre.min(settled) - T_FADE, pre.max(settled) + T_FADE];
+    let out = shots
+        .iter()
+        .enumerate()
+        .skip(1)
+        .map(|(k, s)| (DIG_AT + k - 1, mean(s)))
+        .filter(|(_, m)| *m < band[0] || *m > band[1])
+        .collect();
+    Rule3 {
+        pre,
+        settled,
+        band,
+        off,
+        out,
+    }
+}
+
 /// Plan 0086 Phase 21 bars 3 and 4 (re-stated 2026-11-19): a dig leaves no dots on its ring,
 /// and the hole takes its light. [`dig_run`]'s rig (every chunk of the floor holds a block at
 /// frame 63). Bar 3: in every frame after the dig, the share of the lighting pixels within 64
@@ -298,20 +351,29 @@ fn the_sky_term_switches_without_a_dip() {
 /// pixels with a frame from 64 to 124 outside `[min(old, new) - 4, max(old, new) + 4]`
 /// (ADR-0076 rule 3's form) are printed by the frame of their largest excursion, its side and
 /// their sky term's source there ([`sky_sources`]: the pair, the store or the chain), not
-/// barred (the chain's prior on the no-ray path is a later plan's); from the frame after the dig job lands (the queue's
-/// `digs_baked` rises; printed) the hole's floor (hits within half a voxel of the box's
-/// bottom, inside its footprint) reads the same pixels' mean on the dug world baked whole and
-/// run 64 frames within one display level; no frame has over 5 % of the pixels changing by
-/// over 16 levels from the frame before.
+/// barred (the chain's prior on the no-ray path is a later plan's). The landing, in ADR-0076
+/// rule 3's form (restated by Plan 0094 Phase 7a, the no-ray value's fade): with the dig job's
+/// landing frame (the queue's `digs_baked` rises; printed), the hole's floor (hits within half
+/// a voxel of the box's bottom, inside its footprint) reads the same pixels' mean on the dug
+/// world baked whole and run 64 frames within `T_fade` 4 levels from the landing plus `F` 16
+/// frames on, and no frame after the dig leaves `[min - T_fade, max + T_fade]` of the floor's
+/// pre-landing mean (the 8 frames before the landing, the dig's own among them, read at the
+/// same pixels) and its settled mean (the last 8 frames); no frame has over 5 % of the pixels changing by over 16 levels from the frame
+/// before.
 /// Soak: 15.1 s on lavapipe in Plan 0086 Phase 24i's quiet gate.
 #[test]
 #[ignore = "soak"]
 fn a_dig_leaves_no_dots() {
     let mut baked_count = Vec::new();
     let mut src: Vec<Vec<u8>> = Vec::new();
+    // The display's luma per frame from 16 frames before the dig (frame `DIG_AT - 16 + k`).
+    let mut lumas: Vec<Vec<f32>> = Vec::new();
     let eye = dig_camera().position.to_array();
     let Some((shots, world)) = dig_run_with(|i, device, queue, f| {
         baked_count.push(f.bake_queue().expect("the queue runs").stats().digs_baked);
+        if i + 16 >= DIG_AT {
+            lumas.push(dig_shot(device, queue, f).luma);
+        }
         if i + 1 >= DIG_AT {
             src.push(sky_sources(device, queue, f, eye));
         }
@@ -417,28 +479,22 @@ fn a_dig_leaves_no_dots() {
         f.step(&device, &queue, &gpu, &cam, &LightParams::headlamp());
     }
     let baked = dig_shot(&device, &queue, &f);
-    let mean = |s: &DigShot| {
-        floor_px.iter().map(|&i| f64::from(s.luma[i])).sum::<f64>() / floor_px.len().max(1) as f64
-    };
-    let want = mean(&baked);
-    let from = landed.map_or(shots.len(), |l| l + 2 - DIG_AT);
-    let off: Vec<(usize, f64)> = shots
-        .iter()
-        .enumerate()
-        .skip(from)
-        .map(|(k, s)| (DIG_AT + k - 1, mean(s) - want))
-        .filter(|(_, d)| d.abs() > 1.0)
-        .collect();
+    let mean = |l: &[f32]| floor_mean(l, &floor_px);
+    let want = mean(&baked.luma);
+    let at = landed.map_or(shots.len() - 1, |l| l + 1 - DIG_AT).min(shots.len() - 1);
+    let rule3 = landing_rule3(&shots, &lumas, &floor_px, want, at);
+    let (pre, settled, lo, hi) = (rule3.pre, rule3.settled, rule3.band[0], rule3.band[1]);
+    let (off, out) = (&rule3.off, &rule3.out);
     let floor_by_frame: Vec<(usize, f64)> = [1usize, 2, 3, 4, 8, 16, 60]
         .iter()
-        .map(|&k| (DIG_AT + k - 1, mean(&shots[k])))
+        .map(|&k| (DIG_AT + k - 1, mean(&shots[k].luma)))
         .collect();
     println!(
         "the hole's faces: {} pixels, {left} left the band of 4 (largest excursion {worst_out}; printed, not barred); the dig job landed at frame {landed:?}",
         hole_px.len()
     );
     println!(
-        "the hole's floor: {} pixels, baked whole {want:.2}, by frame {floor_by_frame:?}; frames off by over 1 level from the landing on {off:?}; the most pixels changing over 16 levels in a frame {:.3} %",
+        "the hole's floor: {} pixels, baked whole {want:.2}, by frame {floor_by_frame:?}; pre-landing mean {pre:.2}, settled {settled:.2}; frames off by over 4 levels from the landing plus 16 on {off:?}; frames out of [{lo:.2}, {hi:.2}] {out:?}; the most pixels changing over 16 levels in a frame {:.3} %",
         floor_px.len(),
         100.0 * worst_change
     );
@@ -447,6 +503,7 @@ fn a_dig_leaves_no_dots() {
     assert!(!floor_px.is_empty(), "the hole's floor is not in view");
     assert!(landed.is_some(), "the dig job did not land in the rig's frames");
     assert!(off.is_empty(), "the hole's floor against {want}: {off:?}");
+    assert!(out.is_empty(), "the hole's floor out of [{lo}, {hi}]: {out:?}");
     assert!(worst_change <= 0.05, "{worst_change}");
 }
 
@@ -506,8 +563,10 @@ fn face_record(f: &Frame, h: [f32; 4], eye: [f32; 3]) -> Option<f32> {
     vxe_render::internals::record_visibility(block.get(at..at + w)?, face)
 }
 
-/// A reset pair's seed age (temporal.wgsl's `SEED_AGE`).
+/// A reset pair's seed age where the seed is a record's value (temporal.wgsl's `SEED_AGE`),
+/// and where it is the column's answer (`SEED_COLUMN`).
 const SEED_AGE: f32 = 8.0;
+const SEED_COLUMN: f32 = 2.0;
 
 /// The `+z` record of the voxel under floor hit `h` (a face at integral z) in `f`'s store:
 /// its sky visibility for `+z` and whether it is `SKY_STALE`; `None` where no record holds the
@@ -574,15 +633,18 @@ fn up_seed(f: &Frame, world: &World, h: [f32; 4]) -> f32 {
     }
 }
 
-/// Plan 0086 Phase 21 bar 4a: a reset pixel starts from its estimate. On [`dig_run`]'s rig, at
-/// the first frame after the dig, every lighting pixel inside the dig's box dilated by one
-/// voxel that cast the sky ray (its history reset by the edit) reads the pair's age
-/// `SEED_AGE`, and on a `+z` face its mean lies within `1 / (SEED_AGE + 1)` of the seed
-/// [`up_seed`] takes (the record's, else the column test's). On the open floor under
-/// `Sky::uniform(1.0)` with no store block (bar 1's rig) the centre pixel's first frame reads
-/// the pair's mean 1 at age `SEED_AGE`. The mean of the pair over the box's cast pixels at
-/// frames 1, 8, 16 and 60 after the dig is printed, with the count of `+z` pixels whose face
-/// holds a record (stale) at frame 1.
+/// Plan 0086 Phase 21 bar 4a, restated by Plan 0094 Phase 7a (the seed's weight by its
+/// source, Phase 5): a reset pixel starts from its record, else from the column. On
+/// [`dig_run`]'s rig (the floor baked before the dig, the reset), at the first frame after the
+/// dig, every lighting pixel inside the dig's box dilated by one voxel that cast the sky ray
+/// (its history reset by the edit) reads the pair's age `SEED_AGE` or `SEED_COLUMN`; on a `+z`
+/// face it is `(record, SEED_AGE)` where the face's record holds a value ([`up_record`]) and
+/// `(column, SEED_COLUMN)` where it holds none, the mean within `1 / (age + 1)` of the seed
+/// [`up_seed`] takes, and both kinds are in the box. On the open floor under
+/// `Sky::uniform(1.0)` with the record withheld (no store block, bar 1's rig) the centre
+/// pixel's first frame reads `(column, SEED_COLUMN)`: the column's 1. The mean of the pair over
+/// the box's cast pixels at frames 1, 8, 16 and 60 after the dig is printed, with the count of
+/// `+z` pixels whose face holds a record (stale) at frame 1.
 /// Soak: 14.2 s on lavapipe in Plan 0086 Phase 24i's quiet gate.
 #[test]
 #[ignore = "soak"]
@@ -598,11 +660,11 @@ fn a_reset_pixel_starts_from_its_record() {
         let c = (DIG_SIZE[1] as usize / 2) * w + w / 2;
         f.step(&device, &queue, &gpu, &camera([96.0, 96.0]), &LightParams::headlamp());
         let pair = vxe_render::debug::read_rgba16f(&device, &queue, f.visibility_pair())[c];
-        println!("the open floor's first frame: pair {:.4} at age {}", pair[0], pair[3]);
-        assert_eq!((pair[0], pair[3]), (1.0, SEED_AGE));
+        println!("the open floor's first frame, the record withheld: pair {:.4} at age {}", pair[0], pair[3]);
+        assert_eq!((pair[0], pair[3]), (1.0, SEED_COLUMN));
     }
     let (mut plus_z, mut with_record, mut stale_n) = (0usize, 0usize, 0usize);
-    let mut worst = 0.0f32;
+    let (mut worst_record, mut worst_column) = (0.0f32, 0.0f32);
     let mut means = Vec::new();
     // The rig's world after its dig, for the column test.
     let dug = floor_world([3, 3, 1], |_| false);
@@ -630,14 +692,23 @@ fn a_reset_pixel_starts_from_its_record() {
             if k != 1 {
                 continue;
             }
-            assert_eq!(pair[j][3], SEED_AGE, "pixel {j}: age {}", pair[j][3]);
+            assert!(
+                pair[j][3] == SEED_AGE || pair[j][3] == SEED_COLUMN,
+                "pixel {j}: age {}",
+                pair[j][3]
+            );
             if (h[2] - h[2].round()).abs() < 1e-3 {
                 plus_z += 1;
+                let d = (pair[j][0] - up_seed(f, &dug, *h)).abs();
                 if let Some((_, st)) = up_record(f, *h) {
                     with_record += 1;
                     stale_n += usize::from(st);
+                    assert_eq!(pair[j][3], SEED_AGE, "pixel {j} holds a record");
+                    worst_record = worst_record.max(d);
+                } else {
+                    assert_eq!(pair[j][3], SEED_COLUMN, "pixel {j} holds no record");
+                    worst_column = worst_column.max(d);
                 }
-                worst = worst.max((pair[j][0] - up_seed(f, &dug, *h)).abs());
             }
         }
         means.push((k, sum / n.max(1) as f64, n));
@@ -649,10 +720,12 @@ fn a_reset_pixel_starts_from_its_record() {
         "frame 1: {plus_z} cast +z pixels in the box, {with_record} with a record, {stale_n} stale"
     );
     println!(
-        "the box's cast pixels' mean pair at frames after the dig (frame, mean, pixels): {means:?}; largest |pair - seed| over the +z pixels at frame 1 {worst:.4}"
+        "the box's cast pixels' mean pair at frames after the dig (frame, mean, pixels): {means:?}; largest |pair - seed| over the +z pixels at frame 1: with a record {worst_record:.4}, without {worst_column:.4}"
     );
-    assert!(plus_z > 0, "no +z pixel inside the box at frame 1");
-    assert!(worst <= 1.0 / (SEED_AGE + 1.0), "{worst}");
+    assert!(with_record > 0, "no +z pixel with a record inside the box at frame 1");
+    assert!(plus_z > with_record, "no +z pixel without a record inside the box at frame 1");
+    assert!(worst_record <= 1.0 / (SEED_AGE + 1.0), "{worst_record}");
+    assert!(worst_column <= 1.0 / (SEED_COLUMN + 1.0), "{worst_column}");
 }
 
 /// row (2 x 1 x 2 chunks), the column of chunk (0, 0, 0) baked under `Sky::uniform(1.0)`, so the

@@ -249,11 +249,6 @@ pub(crate) const LIGHTING_HOOK_SKY_END_IS_SKY: u32 = 1 << 23;
 /// shadow ray runs along the disc's centre, its sample on the disc fixed.
 pub(crate) const LIGHTING_HOOK_KEY_NO_JITTER: u32 = 1 << 25;
 
-/// `Params::lighting` bit ([`Lighting::settle`] off, or [`LightHooks::no_settle`]): the
-/// temporal pass's settle is off, so a converged pair keeps blending at its cap and the key
-/// mean has no band.
-pub(crate) const LIGHTING_NO_SETTLE: u32 = 1 << 26;
-
 /// `Params::lighting` bit, a reading hook ([`LightHooks::column_prior`]): a face with no record
 /// and no fresh own summary holds the column's answer with no sky ray (the prior's arm B).
 pub(crate) const LIGHTING_HOOK_COLUMN_PRIOR: u32 = 1 << 27;
@@ -262,13 +257,13 @@ pub(crate) const LIGHTING_HOOK_COLUMN_PRIOR: u32 = 1 << 27;
 /// shows at once instead of riding the fade (temporal.wgsl `no_ray_fade`).
 pub(crate) const LIGHTING_HOOK_NO_FADE: u32 = 1 << 28;
 
-/// `Params::lighting` bit, a reading hook ([`LightHooks::no_pool`]): the a-trous variance pass
-/// takes each young pixel's pair means as they are, with no age-weighted pool (atrous.wgsl
-/// `pooled_pair`).
-pub(crate) const LIGHTING_HOOK_NO_POOL: u32 = 1 << 29;
+/// `Params::lighting` bit, a reading hook ([`LightHooks::pool`]): the a-trous variance pass
+/// pools each young pixel's pair means with its neighbours' by age (atrous.wgsl
+/// `pooled_pair`); without it the means are taken as they are.
+pub(crate) const LIGHTING_HOOK_POOL: u32 = 1 << 29;
 
 /// `Params::lighting` bit, a reading hook ([`LightHooks::seed_stale_f`]): a reset pair seeded from
-/// a stale record counts SETTLE_F samples instead of SEED_AGE (temporal.wgsl).
+/// a stale record counts FADE_F samples instead of SEED_AGE (temporal.wgsl).
 pub(crate) const LIGHTING_HOOK_SEED_STALE_F: u32 = 1 << 30;
 
 /// `Params::lighting` bit: a cube face's baked sky term reads its visibilities by the 27-count
@@ -298,17 +293,15 @@ pub struct LightHooks {
     pub sky_end_is_sky: bool,
     /// The key light's shadow ray runs along the disc's centre: no jitter over the sun's disc.
     pub key_no_jitter: bool,
-    /// The settle is off whatever [`Lighting::settle`] says: a pair at its cap keeps blending
-    /// its samples in, and the key mean follows its samples at its cap with no band.
-    pub no_settle: bool,
     /// The no-record prior's arm B: a face with no record and no fresh own summary holds the
     /// column's answer with no sky ray, until its bake (arm A, the default, casts the ray seeded
     /// from the column).
     pub column_prior: bool,
     /// A no-ray sky value's change shows at once: no fade.
     pub no_fade: bool,
-    /// A young pixel's pair means are not pooled with its neighbours': no age-weighted pool.
-    pub no_pool: bool,
+    /// A young pixel's pair means are pooled with its neighbours' by age: the age-weighted
+    /// pool (off by default).
+    pub pool: bool,
     /// A reset pair seeded from a stale record (a ring face casting the sky ray) counts 16
     /// samples (the fade's frames) instead of 8.
     pub seed_stale_f: bool,
@@ -345,10 +338,6 @@ impl LightHooks {
             LIGHTING_HOOK_KEY_NO_JITTER
         } else {
             0
-        } | if self.no_settle {
-            LIGHTING_NO_SETTLE
-        } else {
-            0
         } | if self.column_prior {
             LIGHTING_HOOK_COLUMN_PRIOR
         } else {
@@ -357,15 +346,12 @@ impl LightHooks {
             LIGHTING_HOOK_NO_FADE
         } else {
             0
-        } | if self.no_pool {
-            LIGHTING_HOOK_NO_POOL
-        } else {
-            0
-        } | if self.seed_stale_f {
-            LIGHTING_HOOK_SEED_STALE_F
-        } else {
-            0
-        }
+        } | if self.pool { LIGHTING_HOOK_POOL } else { 0 }
+            | if self.seed_stale_f {
+                LIGHTING_HOOK_SEED_STALE_F
+            } else {
+                0
+            }
     }
 }
 
@@ -947,11 +933,6 @@ pub struct Lighting {
     /// those columns is pending upload, a block baked under a column not yet final marked
     /// provisional and baked again once when the columns turn final.
     pub column_wait: bool,
-    /// The settle (default off, Plan 0094 Phase 3's stop rule): a visibility mean at its cap whose short mean stays in its
-    /// band for 16 frames holds its value, and is released after 4 consecutive frames out of
-    /// the band into a 16-frame fade toward the short mean (temporal.wgsl `settle_at_cap`).
-    /// Off, a mean at its cap keeps blending every sample in.
-    pub settle: bool,
 }
 
 /// [`Lighting::sky_history`]' largest value: the pair's age is a half, exact to 2048.
@@ -998,7 +979,6 @@ impl Default for Lighting {
             sky_normal: SkyNormal::Smoothed,
             sky_bounce: 0.0,
             column_wait: false,
-            settle: false,
         }
     }
 }
@@ -1084,7 +1064,6 @@ impl Lighting {
             } else {
                 0
             }
-            | if self.settle { 0 } else { LIGHTING_NO_SETTLE }
     }
 
     /// The manual exposure, or 1.0 in auto.

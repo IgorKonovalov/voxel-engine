@@ -7,13 +7,19 @@
 /// ahead: per frame, the lighting pixels where the sky rays were cast, until three frames in a
 /// row read none (or 240 frames). At rest no pixel casts. With `sky_rays` 1 the dug rings'
 /// pixels cast on the dig's first frame and none once their re-bake lands (the frame printed).
-/// With `sky_rays` 0 no pixel casts at any frame. The dug floor's centre pixel's stored part
-/// per frame is printed: the bar's clause that it reads nothing before the re-bake lands is
-/// not asserted (the tip reads 24.8 on the dig's first frame against 3.58 landed).
+/// With `sky_rays` 0 no pixel casts at any frame. Plan 0094 Phase 5 bar 9 (ADR-0076 rule 3, the
+/// dig's light changes once), in both arms: the dug floor's centre pixel's stored part, from
+/// the 8 frames before the dig (`old`, their mean) to the landing (the first frame after the
+/// dig whose source word is `record`) plus `F + 16` (`new`, the value there), leaves no frame
+/// outside `[min(old, new) - T_fade, max(old, new) + T_fade]` and is within `T_fade` of `new`
+/// from the landing plus `F` on; frame 1's source word is not `own summary`. The trace is
+/// printed with the step clause's result beside it (no one-frame change over
+/// `|old - new| / F + T_fade`), not asserted: the frame-1 value is the column's seed.
 #[test]
 #[ignore = "soak"]
 fn the_sky_ray_runs_only_where_stale() {
     use support::queue::{Setup, box_op, fill, rig, world_of};
+    use support::rules::{F, MEAN_FRAMES, T_FADE};
     use vxe_world::{AIR, Mode};
     let floor = |rays: u32| {
         let world = world_of([4, 4, 1], AIR);
@@ -54,9 +60,10 @@ fn the_sky_ray_runs_only_where_stale() {
             let word = support::defects::source_of(m[c][3]);
             (n, a[c][1], word, p[c])
         };
-        let rest: Vec<_> = (0..4).map(|_| cast(&mut q)).collect();
+        let rest: Vec<_> = (0..MEAN_FRAMES).map(|_| cast(&mut q)).collect();
         let at_rest: Vec<usize> = rest.iter().map(|r| r.0).collect();
-        let (_, rest_g, rest_word, _) = rest[3];
+        let (_, rest_g, rest_word, _) = rest[MEAN_FRAMES - 1];
+        let old = rest.iter().map(|r| f64::from(r.1)).sum::<f64>() / MEAN_FRAMES as f64;
         println!(
             "sky rays {rays}: at rest the centre stored g {rest_g:.3}, source {}",
             support::defects::SOURCE_NAMES[usize::from(rest_word).min(6)]
@@ -74,10 +81,12 @@ fn the_sky_ray_runs_only_where_stale() {
         ));
         let mut row = Vec::new();
         let mut words = Vec::new();
+        let mut word_at = Vec::new();
         let mut quiet = 0;
         for f in 1..=240 {
             let (n, centre, word, pair) = cast(&mut q);
             row.push((n, centre));
+            word_at.push(word);
             words.push(format!(
                 "{f}:{}:pair {:.3}/{:.3}/{}",
                 support::defects::SOURCE_NAMES[usize::from(word).min(6)],
@@ -86,7 +95,8 @@ fn the_sky_ray_runs_only_where_stale() {
                 pair[3]
             ));
             quiet = if n == 0 { quiet + 1 } else { 0 };
-            if quiet >= 3 && f > 8 {
+            let landed = word_at.iter().position(|&w| w == 1);
+            if quiet >= 3 && f > 8 && landed.is_some_and(|l| f > l + 1 + F + 16) {
                 break;
             }
         }
@@ -104,6 +114,54 @@ fn the_sky_ray_runs_only_where_stale() {
             words.join(" ")
         );
         assert!(quiet >= 3, "sky rays {rays}: still casting after 240 frames");
+        // Rule 3 over the centre's stored part: `row[k]` is frame `k + 1` after the dig.
+        let landing = word_at
+            .iter()
+            .position(|&w| w == 1)
+            .expect("the centre's record lands");
+        let end = (landing + F + 16).min(row.len() - 1);
+        let new = f64::from(row[end].1);
+        let t = f64::from(T_FADE);
+        let (lo, hi) = (old.min(new) - t, old.max(new) + t);
+        let trace: Vec<f64> = rest
+            .iter()
+            .map(|r| f64::from(r.1))
+            .chain(row[..=end].iter().map(|r| f64::from(r.1)))
+            .collect();
+        let out: Vec<(usize, f64)> = row[..=end]
+            .iter()
+            .enumerate()
+            .map(|(k, r)| (k + 1, f64::from(r.1)))
+            .filter(|(_, v)| *v < lo || *v > hi)
+            .collect();
+        let late: Vec<(usize, f64)> = row[landing + F..=end]
+            .iter()
+            .enumerate()
+            .map(|(k, r)| (landing + F + k + 1, f64::from(r.1)))
+            .filter(|(_, v)| (v - new).abs() > t)
+            .collect();
+        let step_line = (old - new).abs() / F as f64 + t;
+        let steps: Vec<(usize, f64)> = trace
+            .windows(2)
+            .enumerate()
+            .map(|(k, w)| (k + 1, (w[1] - w[0]).abs()))
+            .filter(|(_, d)| *d > step_line)
+            .map(|(k, d)| (k as i64 - MEAN_FRAMES as i64 + 1, d))
+            .map(|(k, d)| (k.max(0) as usize, d))
+            .collect();
+        println!(
+            "sky rays {rays}: rule 3 over the centre: old {old:.3}, new {new:.3} (frame {}), landing at frame {}; out of [{lo:.3}, {hi:.3}] {out:?}; off new by over {t} from frame {} {late:?}; the step clause (no one-frame change over {step_line:.3}): {} (frame after the dig, step) {steps:?}",
+            end + 1,
+            landing + 1,
+            landing + F + 1,
+            if steps.is_empty() { "holds" } else { "fails" }
+        );
+        assert_ne!(
+            word_at[0], 3,
+            "sky rays {rays}: frame 1 reads the own summary"
+        );
+        assert!(out.is_empty(), "sky rays {rays}: the trace leaves the band: {out:?}");
+        assert!(late.is_empty(), "sky rays {rays}: off new from the landing plus F: {late:?}");
         if rays == 1 {
             assert!(row[0].0 > 0, "the dig's first frame casts over the rings");
         } else {

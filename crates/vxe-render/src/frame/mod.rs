@@ -594,6 +594,14 @@ impl Frame {
         self.pipes.prepare_entities(device);
     }
 
+    /// Builds the light pass's pipelines with the default-off arms compiled in (the ones
+    /// [`Frame::light_arms`] picks), with entities and without, unless they are built: a
+    /// caller that knows an arm is picked at start builds them here, ahead of the first frame
+    /// that draws with them, which otherwise builds them itself.
+    pub fn prepare_light_arms(&self, device: &wgpu::Device) {
+        self.pipes.prepare_light_arms(device);
+    }
+
     /// Replaces the entity mirror (a pool of another size); the next frames draw no entity
     /// until [`Frame::set_entities`].
     pub fn set_entity_mirror(&mut self, mirror: crate::EntityMirror) {

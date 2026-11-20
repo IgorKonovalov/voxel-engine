@@ -1400,8 +1400,13 @@ hill, HUD `missing 0`, so the baked visibility): Plan 0094 Phase 7a (6) reads th
 visibility against a brute-force aperture over the dug voxels and writes the word here:
 `geometry` (a radius-0.5 m sphere's floor sees about half the sky and a grey face under a blue
 sky reads blue beside grass; then the look is the hole's walls' bounce and a darker soil, a look
-plan's) or `overstated` (a bake finding). Pick up after the motion lane, or with the next dig
-look.
+plan's) or `overstated` (a bake finding). **Read: `geometry`** (`gpu_sun`
+`reading::the_dug_floors_baked_visibility_against_its_aperture`, lavapipe, the flat floor under
+`Sky::uniform(1.0)` standing in for the hills): the 10-voxel box's record 0.184 against 0.209
+over its cell's faces; the radius-5 sphere's record 0.718 against 0.748, but its record cell is
+the 8-voxel brick, so the bowl's own faces (aperture 0.473) share one value with the open
+ground beside them: at brick resolution a small hole's floor shows the brick's mean, not its
+own sky. Pick up after the motion lane, or with the next dig look.
 
 ### The key term's grain at rest on a penumbra, and the a-trous's spatial variance (ii)
 

@@ -58,10 +58,8 @@
 //                                        visibility's running mean in r, the key light's in g
 //                                        (0 where it falls on no face), the sky's short mean in
 //                                        b, the pair's age in a (the samples its mean holds, 0
-//                                        where it holds none; past the cap, the settle's count,
-//                                        `pair_step`); where no ray was cast, the key samples'
-//                                        short mean as `-1 - b` in b and the cap plus the key
-//                                        mean's settle count in a (`key_settle`)
+//                                        where it holds none); where no ray was cast, the cap
+//                                        plus the no-ray fade's frames left in a (`no_ray_fade`)
 //
 // The sky's term (ADR-0070) is a visibility times the sky's irradiance above the horizon about
 // the shading normal now (`sky_open_by_normal`). Where the light pass cast no sky ray (a cube
@@ -88,8 +86,7 @@
 // pair's g (`key_mean`): over the direct part's history age capped at `key_history`, reset
 // where the direct part's history resets (no accepted taps, an edit box, a fresh pixel) and on
 // the sky-change bit, but not on a change of the list of lights; no clamp (the term is
-// bounded). It joins the direct part at the direct part's blend weight. At a stored face where
-// no sky ray was cast it settles at its cap as the pair does (`key_settle`, `settle_at_cap`).
+// bounded). It joins the direct part at the direct part's blend weight.
 //
 // A cube face's emissive part (`reads_store`) is its brick record's value for its direction
 // (`store_brick_value`; with Params.lighting bit 14, where the shading normal is not the face
@@ -837,9 +834,6 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     // moments' blend weights and the moments' history, for the pair's term (1, 1 and none at a
     // reset pixel).
     var hp = vec4<f32>(0.0);
-    // Whether this pixel's pair carries the key mean's settle (`key_settle`), for its taps.
-    let own_key = vis.z > 0.5 && settle_on() && !sky_cast && seed.w > 0.0;
-    let cap_sky = f32(max(sky.sky_history, 1u));
     var accepted = false;
     var a_direct = 1.0;
     var a_mom = 1.0;
@@ -884,7 +878,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             let ht = textureLoad(prev_accum_in, tap, 0);
             h += w * ht;
             hd += w * textureLoad(prev_direct_in, tap, 0);
-            hp += w * pair_tap(textureLoad(prev_pair_in, tap, 0), own_key, cap_sky);
+            hp += w * textureLoad(prev_pair_in, tap, 0);
             if (w > best_w) {
                 best_w = w;
                 best_h = ht.xyz;
@@ -920,7 +914,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 w_sum = 1.0;
                 h = textureLoad(prev_accum_in, tap, 0);
                 hd = textureLoad(prev_direct_in, tap, 0);
-                hp = pair_tap(textureLoad(prev_pair_in, tap, 0), own_key, cap_sky);
+                hp = textureLoad(prev_pair_in, tap, 0);
                 best_w = 1.0;
                 best_h = h.xyz;
                 m = textureLoad(prev_moments_in, tap, 0).xyz;
@@ -988,17 +982,17 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     // switch between the stored part and the ray at the stale bit has no second history to lag
     // behind it. Its luminance joins the moments, so the filter's variance counts it. The key
     // light's term, sampled every frame where the key light is on, joins the direct part.
-    // A record's value seeds a reset pair at SEED_AGE (SETTLE_F under
+    // A record's value seeds a reset pair at SEED_AGE (FADE_F under
     // LIGHTING_HOOK_SEED_STALE_F where the face's record is stale, the ray cast at it), the
     // column's at SEED_COLUMN.
     let stale_f = rec_face && sky_cast && (params.lighting & LIGHTING_HOOK_SEED_STALE_F) != 0u;
-    let seed_age = select(select(SEED_AGE, SETTLE_F, stale_f), SEED_COLUMN, estimate < 0.0);
+    let seed_age = select(select(SEED_AGE, FADE_F, stale_f), SEED_COLUMN, estimate < 0.0);
     if (estimate < 0.0) {
         estimate = column_estimate(rec.p, lift_n);
     }
     var pair = select(seed, pair_step(vis.x, hp, accepted, estimate, seed_age), sky_cast);
-    if (no_ray && !own_key) {
-        // The no-ray value rides one fade; the key settle's pixel keeps its pair's z and w.
+    if (no_ray) {
+        // The no-ray value rides one fade.
         let fx = no_ray_fade(seed.x, hp, accepted, seed.w);
         pair = vec4<f32>(fx.x, pair.y, fx.x, fx.y);
     }
@@ -1026,11 +1020,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         t_sky = t_baked;
     }
     var t_key = vec3<f32>(0.0);
-    if (own_key) {
-        let k = key_settle(vis.y, hp, age, !accepted || fresh, seed.w);
-        pair = vec4<f32>(pair.x, k.x, k.y, k.z);
-        t_key = key_light_at(rec.p, rec.n) * pair.y * exposure_now();
-    } else if (vis.z > 0.5) {
+    if (vis.z > 0.5) {
         pair.y = key_mean(vis.y, hp.y, age, !accepted || fresh);
         t_key = key_light_at(rec.p, rec.n) * pair.y * exposure_now();
     }

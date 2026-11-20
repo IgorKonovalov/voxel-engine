@@ -1038,4 +1038,181 @@ mod reading {
             );
         }
     }
+
+    /// The exposed `+z` faces (a solid voxel under air) of the record cell of `cell` voxels
+    /// holding voxel `v`, as their voxels; with `dug`, only those whose top is under the floor
+    /// (the dig's own faces).
+    fn cell_up_faces(world: &World, v: [i32; 3], cell: i32, dug: bool) -> Vec<[i32; 3]> {
+        let c0 = v.map(|k| k.div_euclid(cell) * cell);
+        let solid = |p: [i32; 3]| world.material_at(p).is_some_and(|m| m != AIR);
+        let mut out = Vec::new();
+        for z in c0[2]..c0[2] + cell {
+            for y in c0[1]..c0[1] + cell {
+                for x in c0[0]..c0[0] + cell {
+                    if solid([x, y, z]) && !solid([x, y, z + 1]) && (!dug || z + 1 < FLOOR) {
+                        out.push([x, y, z]);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The cosine-weighted share of the sky over the `+z` faces `faces` (their voxels; each top
+    /// at `z + 1`), by brute force on the CPU: 1024 directions, stratified 32 x 32 over the
+    /// cosine-weighted hemisphere, each from a point on one face (the faces taken in turn), walked
+    /// through `world`'s voxels by a DDA; a ray that leaves the world's extent or rises past its
+    /// top has reached the sky (an absent chunk's column is empty).
+    fn brute_aperture(world: &World, faces: &[[i32; 3]]) -> f64 {
+        let ext = world.extent();
+        let lo = ext.min.0.map(|c| c * 64);
+        let hi = ext.max.0.map(|c| c * 64);
+        let solid = |p: [i32; 3]| world.material_at(p).is_some_and(|m| m != AIR);
+        if faces.is_empty() {
+            return f64::NAN;
+        }
+        let (mut open, mut n) = (0usize, 0usize);
+        for i in 0..32 {
+            for j in 0..32 {
+                let (u1, u2) = ((f64::from(i) + 0.5) / 32.0, (f64::from(j) + 0.5) / 32.0);
+                let r = u1.sqrt();
+                let phi = std::f64::consts::TAU * u2;
+                let d = [r * phi.cos(), r * phi.sin(), (1.0 - u1).sqrt()];
+                let f = faces[(i * 32 + j) as usize % faces.len()];
+                let (a, b) = (((i * 7 + j * 13) % 32) as f64, ((i * 11 + j * 5) % 32) as f64);
+                let o = [
+                    f64::from(f[0]) + (a + 0.5) / 32.0,
+                    f64::from(f[1]) + (b + 0.5) / 32.0,
+                    f64::from(f[2] + 1) + 1e-4,
+                ];
+                n += 1;
+                let mut p = o.map(|x| x.floor() as i32);
+                let step = d.map(|x| if x > 0.0 { 1 } else { -1 });
+                let mut t_max = [f64::INFINITY; 3];
+                let mut t_delta = [f64::INFINITY; 3];
+                for k in 0..3 {
+                    if d[k].abs() > 1e-12 {
+                        let next = if d[k] > 0.0 { f64::from(p[k] + 1) } else { f64::from(p[k]) };
+                        t_max[k] = (next - o[k]) / d[k];
+                        t_delta[k] = 1.0 / d[k].abs();
+                    }
+                }
+                let hit = loop {
+                    if (0..3).any(|k| p[k] < lo[k] || p[k] >= hi[k]) {
+                        break false;
+                    }
+                    if solid(p) {
+                        break true;
+                    }
+                    let k = (0..3).min_by(|&x, &y| t_max[x].total_cmp(&t_max[y])).unwrap_or(2);
+                    p[k] += step[k];
+                    t_max[k] += t_delta[k];
+                };
+                open += usize::from(!hit);
+            }
+        }
+        open as f64 / n as f64
+    }
+
+    /// [`dug_floor_record`]'s world after the dig, the floor voxel, its record (visibility,
+    /// stale) and the landing frame.
+    type DugFloor = (World, [i32; 3], Option<(f32, bool)>, Option<usize>);
+
+    /// The `+z` record the live queue bakes at the floor of `op`'s dig into the dig rig's floor
+    /// ([`dig_run`]'s world, queue and frames): the first solid voxel under `(x, y)` after the
+    /// dig, its record's visibility [`DIG_READ`] frames after the dig, whether it is stale, and
+    /// the frame the dig job landed.
+    fn dug_floor_record(op: &EditOp, xy: [i32; 2]) -> Option<DugFloor> {
+        let (device, queue) = device()?;
+        let world = floor_world([3, 3, 1], |_| false);
+        let mut gpu = mirror(&device, &queue, &world, None);
+        let mut f = dig_frame(&device);
+        f.start_bake_queue(
+            &queue,
+            &gpu,
+            vxe_render::queue_settings(),
+            vxe_render::DEFAULT_BAKE_SLICE_MS,
+        );
+        f.set_bake_coarse(8, 2);
+        let cam = dig_camera();
+        let mut at_dig = 0;
+        let mut landed = None;
+        for i in 0..DIG_AT + DIG_READ {
+            if i == DIG_AT {
+                let r = world.apply(op).expect("the dig is resident");
+                let (a, b) = r.aabb.expect("the dig changed voxels");
+                let mut enc = device.create_command_encoder(&Default::default());
+                gpu.sync(&world, &queue, &mut enc).expect("the mirror fits");
+                queue.submit([enc.finish()]);
+                f.invalidate(a.0, b.0);
+                at_dig = f.bake_queue().expect("the queue runs").stats().digs_baked;
+            }
+            dig_queue_step(&device, &queue, &mut f, &mut gpu, &world, &cam);
+            f.step(&device, &queue, &gpu, &cam, &LightParams::headlamp());
+            if i >= DIG_AT
+                && landed.is_none()
+                && f.bake_queue().expect("the queue runs").stats().digs_baked > at_dig
+            {
+                landed = Some(i);
+            }
+        }
+        let z = (0..FLOOR).rev().find(|&z| world.material_at([xy[0], xy[1], z]).is_some_and(|m| m != AIR))?;
+        let v = [xy[0], xy[1], z];
+        let h = [xy[0] as f32 + 0.5, xy[1] as f32 + 0.5, (z + 1) as f32, 1.0];
+        let rec = up_record(&f, h);
+        Some((world, v, rec, landed))
+    }
+
+    /// Plan 0094 Phase 7a (6), the hole's reading: on the dig rig's floor (`Sky::uniform(1.0)`,
+    /// the live queue), a 10-voxel box carved as `the_sky_ray_runs_only_where_stale`'s dig is
+    /// and a radius-5-voxel sphere carved at the floor's surface (the hills are not in this
+    /// crate's tests; the flat floor stands in), the stored `+z` visibility of the record cell
+    /// holding the dug floor's centre after the landing against [`brute_aperture`] over the same
+    /// cell's exposed `+z` faces (the record's own footprint), with the word `geometry` (within
+    /// 0.05), `overstated` (the store over the aperture) or `understated`; and the aperture over
+    /// the cell's dug faces alone (the hole's floor and steps), printed beside it.
+    #[test]
+    #[ignore = "reading"]
+    fn the_dug_floors_baked_visibility_against_its_aperture() {
+        let cell = vxe_render::BakeSettings::default().cell as i32;
+        let fx = |v: [i32; 3]| Fixed3(v.map(|c| i64::from(c) * FIXED_ONE));
+        let centre = [(DIG_LO[0] + DIG_HI[0]) / 2, (DIG_LO[1] + DIG_HI[1]) / 2];
+        for (name, op) in [
+            ("box 10 voxels", EditOp::box_(fx(DIG_LO), fx(DIG_HI), Mode::Carve)),
+            (
+                "sphere r 5 voxels",
+                EditOp::sphere(
+                    Fixed3([
+                        i64::from(centre[0]) * FIXED_ONE + FIXED_ONE / 2,
+                        i64::from(centre[1]) * FIXED_ONE + FIXED_ONE / 2,
+                        i64::from(FLOOR) * FIXED_ONE,
+                    ]),
+                    5 * FIXED_ONE,
+                    Mode::Carve,
+                ),
+            ),
+        ] {
+            let Some((world, v, rec, landed)) = dug_floor_record(&op, centre) else {
+                return;
+            };
+            let faces = cell_up_faces(&world, v, cell, false);
+            let dug = cell_up_faces(&world, v, cell, true);
+            let brute = brute_aperture(&world, &faces);
+            let dug_aperture = brute_aperture(&world, &dug);
+            let word = match rec {
+                Some((g, _)) if (f64::from(g) - brute).abs() <= 0.05 => "geometry",
+                Some((g, _)) if f64::from(g) > brute => "overstated",
+                Some(_) => "understated",
+                None => "no record",
+            };
+            println!(
+                "reading: the dug floor, {name}: floor voxel {v:?} (depth {} voxels), cell {cell}; stored +z visibility {:?} (stale {:?}), landed at frame {landed:?}; the cell's {} +z faces' brute-force aperture {brute:.4} over 1024 directions: {word}; its {} dug faces alone {dug_aperture:.4}",
+                FLOOR - 1 - v[2],
+                rec.map(|r| r.0),
+                rec.map(|r| r.1),
+                faces.len(),
+                dug.len(),
+            );
+        }
+    }
 }

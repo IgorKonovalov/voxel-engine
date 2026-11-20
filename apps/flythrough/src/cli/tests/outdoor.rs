@@ -124,7 +124,7 @@ fn the_column_wait_and_the_dump_reach_the_run() {
     assert!(parse_args_from(argv(&["--column-wait", "maybe"])).is_err());
 }
 
-/// `--exposure-rate` reaches the auto exposure, 1.875 EV/s by default and unnamed; another
+/// `--exposure-rate` reaches the auto exposure, 3.75 EV/s by default and unnamed; another
 /// value, 0 among them, is named `exposure rate N EV/s`; out of 0 to 64 it is refused.
 #[test]
 fn the_exposure_rate_reaches_the_run() {
@@ -133,8 +133,11 @@ fn the_exposure_rate_reaches_the_run() {
         r.start_auto().rate_ev_s,
         vxe_render::DEFAULT_EXPOSURE_RATE_EV_S
     );
+    assert_eq!(vxe_render::DEFAULT_EXPOSURE_RATE_EV_S, 3.75);
     assert!(!r.start_modes(0.0).line().contains("exposure rate"));
-    for (v, rate) in [("0", 0.0f32), ("4", 4.0)] {
+    let r = parse_args_from(argv(&["--source", "outdoor", "--exposure-rate", "3.75"])).unwrap();
+    assert!(!r.start_modes(0.0).line().contains("exposure rate"));
+    for (v, rate) in [("0", 0.0f32), ("1.875", 1.875), ("7.5", 7.5)] {
         let r = parse_args_from(argv(&["--source", "outdoor", "--exposure-rate", v])).unwrap();
         assert_eq!(r.start_auto().rate_ev_s, rate);
         let line = r.start_modes(0.0).line();
@@ -151,18 +154,41 @@ fn the_exposure_rate_reaches_the_run() {
     }
 }
 
-/// `--settle` reaches the lighting, off by default and unnamed; on is named `settle on`.
+/// The light pass arms are built in the loading stage (`run::loading::ARMS`) when the flags
+/// pick one at start, `--leaf-shadow absorb` or `--penumbra approach`, and not otherwise.
 #[test]
-fn the_settle_reaches_the_run() {
+fn an_arm_picked_at_start_is_built_while_loading() {
+    let stages = |r: &crate::cli::Args| {
+        crate::run::loading::load_stages(true, false, r.light_arms_at_start())
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect::<Vec<_>>()
+    };
     let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
-    assert!(!r.start_lighting().settle);
+    assert!(!r.light_arms_at_start());
+    assert!(!stages(&r).contains(&crate::run::loading::ARMS));
+    for picked in [
+        &["--source", "outdoor", "--leaf-shadow", "absorb"][..],
+        &["--source", "outdoor", "--penumbra", "approach"],
+    ] {
+        let r = parse_args_from(argv(picked)).unwrap();
+        assert!(r.light_arms_at_start(), "{picked:?}");
+        assert_eq!(stages(&r)[1], crate::run::loading::ARMS, "{picked:?}");
+    }
+    let r = parse_args_from(argv(&["--source", "outdoor", "--leaf-shadow", "voxel"])).unwrap();
+    assert!(!r.light_arms_at_start());
+}
+
+/// The settle is gone (Plan 0094 Phase 7a, ADR-0076's Alternative F): `--settle` is refused
+/// and the banner names no settle.
+#[test]
+fn the_settle_is_refused() {
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
     assert!(!r.start_modes(0.0).line().contains("settle"));
-    let r = parse_args_from(argv(&["--source", "outdoor", "--settle", "off"])).unwrap();
-    assert!(!r.start_lighting().settle);
-    assert!(!r.start_modes(0.0).line().contains("settle"));
-    let r = parse_args_from(argv(&["--source", "outdoor", "--settle", "on"])).unwrap();
-    assert!(r.start_lighting().settle);
-    let line = r.start_modes(0.0).line();
-    assert!(line.contains("settle on, "), "{line}");
-    assert!(parse_args_from(argv(&["--settle", "maybe"])).is_err());
+    for v in ["on", "off"] {
+        assert!(
+            parse_args_from(argv(&["--source", "outdoor", "--settle", v])).is_err(),
+            "{v}"
+        );
+    }
 }

@@ -169,6 +169,9 @@ pub(crate) struct GfxPlan {
     field: bool,
     /// The level's mirror focus (the spawn); `None` on the streamed world.
     focus: Option<VoxelCoord>,
+    /// The settings at start pick a light pass arm ([`Run::light_arms_at_start`]): the
+    /// worker builds the arms' light pipelines too.
+    arms: bool,
 }
 
 /// How long (ms) the first `Esc` waits for the second before the question drops.
@@ -180,14 +183,19 @@ pub(crate) const QUIT_ASK_WORDS: &str = "Esc again to quit";
 /// the driver compiling (`docs/plans/logs/0075.md`): the frame's creation about 6 s (its
 /// compute pipelines), its settings about 0.6 s, the entity pipelines about 6 s.
 pub(crate) const BUILD_UNITS: u64 = 21;
+/// Units of the light pass arms' build ([`Frame::prepare_light_arms`]) beyond
+/// [`BUILD_UNITS`], at the same 0.6 s a unit: 18.2 s read cold on the RTX 3080 Laptop
+/// (`docs/plans/logs/0094.md`, window 94a's run 6).
+pub(crate) const ARMS_UNITS: u64 = 30;
 const FRAME_UNITS: u64 = 10;
 const SETTINGS_UNITS: u64 = 1;
 
 /// The run's GPU objects from `plan`: the frame and its settings, the mirror, the presenter,
 /// the overlay and the timers, then, when `entities` (the loading screen's worker), the
-/// entity pipelines ([`Frame::prepare_entities`]) and the light bake's
-/// ([`Frame::prepare_bake`]). Adds each part's units to `built` as it ends (of
-/// [`BUILD_UNITS`]); safe to run off the main thread (it touches nothing but the device and
+/// entity pipelines ([`Frame::prepare_entities`]), the light bake's
+/// ([`Frame::prepare_bake`]) and, when `plan.arms`, the light pass arms'
+/// ([`Frame::prepare_light_arms`]). Adds each part's units to `built` as it ends (of
+/// [`BUILD_UNITS`], then [`ARMS_UNITS`] more); safe to run off the main thread (it touches nothing but the device and
 /// the queue).
 pub(crate) fn build_gfx(
     device: &wgpu::Device,
@@ -230,8 +238,17 @@ pub(crate) fn build_gfx(
         diag(format_args!("entity pipelines built"));
         gfx.frame.prepare_bake(device);
         diag(format_args!("bake pipeline built"));
+        built.store(BUILD_UNITS, Ordering::Relaxed);
+        if plan.arms {
+            // The arms picked at start are built here, under the loading stage's bar
+            // (`run::loading::ARMS`), not by the first world frame.
+            gfx.frame.prepare_light_arms(device);
+            diag(format_args!("light pass arms built"));
+            built.store(BUILD_UNITS + ARMS_UNITS, Ordering::Relaxed);
+        }
+    } else {
+        built.store(BUILD_UNITS, Ordering::Relaxed);
     }
-    built.store(BUILD_UNITS, Ordering::Relaxed);
     gfx
 }
 
@@ -380,7 +397,15 @@ impl Run {
             mirror: self.mirror_config(mirror),
             field: self.args.field_surface(),
             focus: (!streamed).then_some(self.spawn),
+            arms: self.light_arms_at_start(),
         }
+    }
+
+    /// Whether the settings at start pick a light pass arm (`--leaf-shadow absorb`,
+    /// `--penumbra approach`), whose pipelines the loading stage then builds
+    /// ([`Frame::prepare_light_arms`]); a pick at runtime builds them on its first frame.
+    pub(crate) fn light_arms_at_start(&self) -> bool {
+        self.args.light_arms_at_start()
     }
 
     /// The mirror's VRAM budget: `--mirror-budget`, else the level's from its content and

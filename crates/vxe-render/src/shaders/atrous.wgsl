@@ -15,7 +15,7 @@
 //   zero), else from the moments of its 7 x 7 neighbourhood under the same edge weights as the
 //   filter. With the lamp on a young store pixel in the lamp's shadow keeps the 7 x 7 estimate,
 //   which lets the filter soften the shadow's edge into it. A young pixel's pair means are
-//   pooled first (`pooled_pair`, unless LIGHTING_HOOK_NO_POOL): its sky term is the pooled
+//   pooled first (`pooled_pair`, under LIGHTING_HOOK_POOL): its sky term is the pooled
 //   sky mean's, and its direct part takes the pooled key mean's difference.
 //   `atrous` is one iteration with the 5 x 5 B3-spline kernel at stride `step.size` (1, 2, 4,
 //   8 over four dispatches): each tap weighs `exp(-plane distance / SIGMA_PLANE)`,
@@ -218,7 +218,7 @@ fn variance(@builtin(global_invocation_id) gid: vec3<u32>) {
     // A pixel whose moments' w is 2 carries its pair's term in the stored part instead.
     var sky_t = vec3<f32>(0.0);
     var key_t = vec3<f32>(0.0);
-    if (rec.found && (params.lighting & LIGHTING_HOOK_NO_POOL) == 0u) {
+    if (rec.found && (params.lighting & LIGHTING_HOOK_POOL) != 0u) {
         let pooled = pooled_pair(px, rec, mw);
         sky_t = pooled.sky;
         key_t = pooled.key;
