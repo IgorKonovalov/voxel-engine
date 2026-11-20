@@ -1,6 +1,6 @@
 # 0095: A calm key light in motion: the column map's horizon at the far, the baked record where it lands, a deterministic penumbra near, judged with no pre-roll
 
-> **Status:** in-progress (dev lane from 2026-11-20). Approved 2026-11-20 (owner go; stacked on plan-0094 at aff21a5a, merges main after 0094 lands). **Amended 2026-11-20 by the architect at window W1's verdicts** (the owner: the image right after a move must be calm without waiting; a pre-roll is not a fix): the far gains an instant estimate from the column map, the near a deterministic penumbra, the bake becomes the far's refinement; Phases 4 to 11 below are the contract from here, Phases 1 to 3 the record of what was built and seen. The owner's earlier picks stand (coarse far shadows per brick face direction; the far gate by the far normal's band; W1 at the default 3-degree sun; a lagging re-bake under the day cycle shows the old shadow with a fade).
+> **Status:** in-progress (dev lane from 2026-11-20). Approved 2026-11-20 (owner go; stacked on plan-0094 at aff21a5a, merges main after 0094 lands). **Amended 2026-11-20 by the architect at window W1's verdicts** (the owner: the image right after a move must be calm without waiting; a pre-roll is not a fix): the far gains an instant estimate from the column map, the near a deterministic penumbra, the bake becomes the far's refinement; Phases 4 to 11 below are the contract from here, Phases 1 to 3 the record of what was built and seen. The owner's earlier picks stand (coarse far shadows per brick face direction; the far gate by the far normal's band; W1 at the default 3-degree sun; a lagging re-bake under the day cycle shows the old shadow with a fade). **Owner answers to the amendment's questions (2026-11-20):** the far keeps the baked record as its refinement (question 1); the approach penumbra is the near's default from Phase 5 (question 2); the far tiers' reach rule moves to Plan 0096, written on main by the architect there (question 3); W2 is short: the forest only, two arms, about 10 minutes, no pre-roll, from the first frame; the hills and the day cycle go to a later look if needed (question 4).
 > **Created:** 2026-11-20
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0079](../adrs/0079-the-key-lights-visibility-is-read-with-no-screen-history-the-record-or-the-column-maps-horizon-at-the-far-a-deterministic-penumbra-near.md)
@@ -324,22 +324,21 @@ against the hold's final frame at +0, +30 (0.5 s), +60 and +120 (2 s).
 
 ### Phase 7: The owner's window W2: the image right after a move, no pre-roll
 - **Owner skill:** human
-- **What:** A release binary of the branch's tip after Phase 6, `live/sessionW2.sh` on the
-  live-runner lib (dry-run with `skip`), **no `--pre-roll-drain` in any run**: the forest at
-  `--time 15:00` and at `--sun 10,180`, the hills at noon; per scene, from the first frame: a
-  slow fly at 1 m/s for 10 s, a 60-degree turn and a 5 s hold, a fast 180-degree turn and a
-  5 s hold; arms (the menu rows; the banner names the modes): (a) `key far baked` with
-  `penumbra approach` (the proposed default), (b) `key far column` with `approach`, (c) `key
-  far baked` with `disc` (Phase 2's form with the horizon prior), (d) `key far ray` with `disc`
-  (the before); the day cycle on for 60 s on the hills under (a) and (b). About 25 minutes.
-  The owner's verdicts, in the owner's words, to `live/windowW2/verdicts.md` with stills:
-  (1) is the image calm right after the turn, near and far, under (a) and (b); (2) the far's
-  look: does the horizon's shadow read as wrong anywhere (a canopy's floor too dark, a far
-  overhang), and do the record's landings under (a) show as fades the eye objects to;
-  (3) the near penumbra under `approach` against `disc`: its edge, the canopy floor's dapple,
-  the step edges; (4) the day cycle: the horizon's shadow turning beside the record's stepping;
-  (5) the picks: `key_far`, `penumbra`, `key_far_mix`, and whether the far keeps the record at
-  all (owner question 1).
+- **What (the owner's shape, 2026-11-20, question 4):** A release binary of the branch's tip
+  after Phase 6, `live/sessionW2.sh` on the live-runner lib (dry-run with `skip`), **no
+  `--pre-roll-drain` in any run**: the forest at `--time 15:00` and at `--sun 10,180`, from the
+  first frame: a slow fly at 1 m/s for 10 s, a 60-degree turn and a 5 s hold, a fast 180-degree
+  turn and a 5 s hold; two arms (the menu rows; the banner names the modes): (a) `key far
+  baked` with `penumbra approach` (the default from Phase 5) and (d) `key far ray` with `disc`
+  (the before). About 10 minutes. No hills and no day cycle (a later look if needed; `column`
+  and `baked`+`disc` stay as menu rows the owner may switch to). The owner's verdicts, in the
+  owner's words, to `live/windowW2/verdicts.md` with stills: (1) is the image calm right after
+  the turns, near and far, under (a); (2) the far's look: does the horizon's shadow read as
+  wrong anywhere (a canopy's floor too dark), and do the record's landings show as fades the eye
+  objects to; (3) the near penumbra under `approach` against the before: its edge, the canopy
+  floor's dapple, the step edges; (4) anything worse than the before; (5) the picks:
+  `key_far_mix`, and whether the far keeps the record (the owner's answer to question 1 stands
+  unless this verdict reverses it).
 - **Files touched:** `live/sessionW2.sh`, `live/windowW2/` (untracked), `docs/plans/logs/0095.md`
   (the verdicts summarised).
 - **Done when:** the five verdicts are written and the picks are named; a verdict that names a
@@ -535,7 +534,7 @@ and checks each row above for a number, a machine and a commit.
 - **GPU features:** none new; the horizon is texture loads on a bound `r32sint` texture.
 - **Threading:** the key-only job (Phase 8) runs on the bake's worker like every job.
 
-## Owner questions (each with a recommendation; the dev proceeds on it)
+## Owner questions (answered 2026-11-20, all as recommended but question 4's shape: see the status line; kept as the record)
 
 1. **Does the far keep the record as its refinement, or hold the horizon for good?**
    **Recommended:** keep the record where it lands (`key far baked`: the record has the leaves'
