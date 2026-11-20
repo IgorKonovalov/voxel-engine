@@ -110,6 +110,14 @@ pub(super) fn reach_offsets(lr: i32) -> impl Iterator<Item = [i32; 3]> {
         .filter(move |&o| in_reach(o, lr))
 }
 
+/// The longest offset within a light reach of `lr` chunks ([`reach_offsets`]), as a length in
+/// chunks: 5.39 at 4, 4.36 at 3, 3.46 at 2.
+pub(super) fn reach_extent(lr: i32) -> f64 {
+    reach_offsets(lr)
+        .map(|o| o.iter().map(|&d| f64::from(d).powi(2)).sum::<f64>().sqrt())
+        .fold(0.0, f64::max)
+}
+
 /// A running mean of records by direction: each direction over the records that hold it, the
 /// material the most of them keep (the lowest on a tie), the mask their union; each direction's
 /// sky visibility over the records that hold it baked under a sky.

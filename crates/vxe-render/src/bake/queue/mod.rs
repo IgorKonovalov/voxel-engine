@@ -193,7 +193,7 @@ pub struct QueueStats {
     pub rebuilt: u64,
     /// Of the candidates in the view cone beyond the shell at the last census, waiting for
     /// their light (blank or coarse), those whose reach crosses the streamer's full radius
-    /// ([`QueueView::full_radius`]): their distance in chunks plus the light radius exceeds it,
+    /// ([`QueueView::full_radius`]): a chunk within their reach lies past it ([`reach_crosses`]),
     /// so a neighbour within their reach is not resident full while the camera stands still.
     pub reach_bound: u64,
     /// Openings since the queue started that pushed a full job on a chunk with no block while a

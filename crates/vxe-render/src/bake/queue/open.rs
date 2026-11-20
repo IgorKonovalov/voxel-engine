@@ -372,6 +372,11 @@ impl BakeQueue {
         let mut census = [[[0u32; 4]; 4]; 2];
         let mut cone_only = 0u64;
         let mut lens: [Vec<f32>; 2] = [Vec::new(), Vec::new()];
+        let (offsets, extent): (Vec<[i32; 3]>, f64) = if view.full_radius.is_some() {
+            (reach_offsets(lr).collect(), reach_extent(lr))
+        } else {
+            (Vec::new(), 0.0)
+        };
         for &Cand {
             d2,
             c,
@@ -397,7 +402,10 @@ impl BakeQueue {
             waiting[class][usize::from(coarse)] += 1;
             census[usize::from(coarse)][distance_band(len)][angle_band(a)] += 1;
             if class == VIEW_IN {
-                if view.full_radius.is_some_and(|r| len + lr as f32 > r as f32) {
+                if view
+                    .full_radius
+                    .is_some_and(|r| is_reach_bound(o, &offsets, extent, r))
+                {
                     reach_bound += 1;
                 }
                 lens[usize::from(coarse)].push(len);
@@ -447,4 +455,24 @@ impl BakeQueue {
             self.angle_needs.push(need);
         }
     }
+}
+
+/// Whether a chunk at offset `o` (chunks) from the eye's chunk is reach-bound: some chunk of its
+/// reach (`offsets`, [`reach_offsets`] at the light radius) lies past the full radius `r_full`
+/// (the streamer's `d2 > r^2`), the test [`reach_crosses`] makes; a chunk whose distance plus
+/// the reach's extent (`extent`, [`reach_extent`]) stays within the radius reads no offset.
+pub(in crate::bake) fn is_reach_bound(
+    o: [i32; 3],
+    offsets: &[[i32; 3]],
+    extent: f64,
+    r_full: i32,
+) -> bool {
+    let len = o.iter().map(|&d| f64::from(d).powi(2)).sum::<f64>().sqrt();
+    if len + extent <= f64::from(r_full) {
+        return false;
+    }
+    let r2 = i64::from(r_full).pow(2);
+    offsets
+        .iter()
+        .any(|n| (0..3).map(|k| i64::from(o[k] + n[k]).pow(2)).sum::<i64>() > r2)
 }

@@ -601,8 +601,8 @@ its Phases 5 to 7 are Phases 9 to 11.
 | 2: The read at the far band and the seed | dev | done (exploration); readings partial | 937a08da |
 | 3: The owner's window W1 | human | run 2026-11-20 after a pre-roll drain (`7d19d8b0`, testbed flag); forest runs 1a to 2b judged, the hills and the day cycle not; no pick, the owner's rule instead (readings log) | |
 | 4: The far's instant estimate: the column map's horizon | dev | done (exploration); readings in Phase 5's log section | 1006270b |
-| 5: The near with no history: the approach penumbra | dev | done (exploration); readings partial | committed with this row |
-| 6: The reach-bound count, the no-value bricks | dev | not started | |
+| 5: The near with no history: the approach penumbra | dev | done (exploration); readings partial | fe564d2b |
+| 6: The reach-bound count, the no-value bricks | dev | done; the no-value bricks named (the dump's own voxel rounding), not fixed | committed with this row |
 | 7: The owner's window W2, no pre-roll | human | not started | |
 | 8: The sun's step and the edit's ring (if W2 keeps the record) | dev | not started | |
 | 9: The fix pass after W2 | dev | not started | |
@@ -665,6 +665,11 @@ its Phases 5 to 7 are Phases 9 to 11.
 - Phase 5: `a_floor_under_a_leaf_layer_reads_its_transmittance` is born soak (15.0 s).
 - Phase 5: inside the band under approach the key slot carries the far estimate's fade (not
   in the phase's text: Phase 4's undrained hold read the band's unfaded landings).
+- Phase 6: the exact test lives in `open.rs` (`is_reach_bound`), not `queue/mod.rs` (at its
+  1200-line cap); `reach_extent` in `summary.rs`.
+- Phase 6: the no-value paragraph is read from W1's dump (7d19d8b0), not a new run; the
+  dump's miscount is reported, not fixed (the fix is outside the phase's files and needs the
+  face normal read back).
 
 ### Close triggers
 
