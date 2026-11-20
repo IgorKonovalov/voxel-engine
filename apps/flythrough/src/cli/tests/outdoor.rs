@@ -218,3 +218,42 @@ fn the_settle_is_refused() {
         );
     }
 }
+
+#[test]
+fn the_pre_roll_drain_takes_seconds_and_its_banner_names_the_state() {
+    use crate::run::queue::{Drain, write_drain_banner};
+    let drain = |a: &[&str]| parse_args_from(argv(a)).map(|r| r.bake.pre_roll_drain);
+    assert_eq!(drain(&["--source", "outdoor"]), Ok(None));
+    assert_eq!(drain(&["--pre-roll-drain", "90"]), Ok(Some(90.0)));
+    assert!(drain(&["--pre-roll-drain", "0"]).is_err());
+    assert!(drain(&["--pre-roll-drain", "601"]).is_err());
+    let stats = vxe_render::QueueStats {
+        jobs: 12,
+        coarse: 340,
+        ..Default::default()
+    };
+    let row = |d: Drain, now: f64| {
+        let mut out = String::new();
+        write_drain_banner(&mut out, d, Some(&stats), 120.0, now);
+        out
+    };
+    let draining = Drain::Draining {
+        from_ms: 1000.0,
+        clear_ms: None,
+    };
+    assert_eq!(
+        row(draining, 31_000.0).trim(),
+        "pre-roll: draining 12 jobs, 340 coarse chunks to refine, 90 s at most; HOLD STILL"
+    );
+    let done = Drain::Done {
+        at_ms: 40_000.0,
+        secs: 39.0,
+        landed: true,
+    };
+    assert_eq!(
+        row(done, 41_000.0).trim(),
+        "pre-roll: landed after 39 s; move now"
+    );
+    assert_eq!(row(done, 40_000.0 + crate::hud::BANNER_MS), "");
+    assert_eq!(row(Drain::Off, 0.0), "");
+}

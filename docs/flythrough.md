@@ -372,6 +372,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--bake-budget frame:MS\|second:MS,CAP` | The queue's budget, ADR-0052 |
 | `--coarse N` | The coarse pass's samples a brick direction, 0 to 4096 [256] |
 | `--near R` | Chunks baked in full before the first frame, 0 to 8 [2] |
+| `--pre-roll-drain SECONDS` | From the first drawn frame hold the camera (keys and the menu still act) and bake at 40 ms a frame until the queue has no job and no coarse chunk left for 1.5 s or `SECONDS` pass, 1 to 600; then the budget returns. The banner reads `pre-roll: draining J jobs, C coarse chunks to refine, ... HOLD STILL`, then `pre-roll: landed` or `timed out`; stdout closes with the far lighting pixels' (over 15 m) share whose store record is fresh |
 | `--full-first off\|N` | The queue's full-first radius after the pre-roll [`--near`'s] |
 | `--missing-light black\|neighbour\|parent\|chain` | What a face with no baked value reads, ADR-0053 [chain] |
 | `--reach full\|partial` | Whether a chunk waits for its whole light reach [full] |

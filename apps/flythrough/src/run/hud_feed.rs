@@ -775,6 +775,15 @@ impl Run {
         write_pace_banner(self.args.pace, now, out);
         hud::start_row(out);
         write_queue_banner_row(out, &self.args, words);
+        if let Some(secs) = self.args.bake.pre_roll_drain {
+            crate::run::queue::write_drain_banner(
+                out,
+                self.queue.drain,
+                self.queue.stats.as_ref(),
+                secs,
+                now,
+            );
+        }
         if now < hud::BANNER_MS {
             hud::start_row(out);
             out.push_str(KEYS_BANNER);

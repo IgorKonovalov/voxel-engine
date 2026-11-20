@@ -19,10 +19,93 @@ pub(crate) const PRE_ROLL_SAMPLES: u64 = 2_000_000;
 /// coarse first; the level's 3168 take about 4 s on the RTX.
 pub(crate) const COARSE_PRE_ROLL_MS: f64 = 5000.0;
 
+/// The live queue's budget a frame while `--pre-roll-drain` drains, in ms.
+pub(crate) const PRE_ROLL_DRAIN_MS: f64 = 40.0;
+
+/// Wall ms the live queue must stay idle ([`drain_idle`]) before `--pre-roll-drain` calls the
+/// view landed.
+const DRAIN_LANDED_HOLD_MS: f64 = 1500.0;
+
+/// The distance past which a lighting pixel counts as far in the drain's closing line (the
+/// wobble rig's far class).
+const DRAIN_FAR_M: f32 = 15.0;
+
+/// `--pre-roll-drain`'s state: not started, draining since a frame-loop ms (with the ms the
+/// queue first read idle), or ended at a ms after its seconds, landed or timed out.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) enum Drain {
+    #[default]
+    Off,
+    Draining {
+        from_ms: f64,
+        clear_ms: Option<f64>,
+    },
+    Done {
+        at_ms: f64,
+        secs: f64,
+        landed: bool,
+    },
+}
+
+/// Whether the live queue has nothing left it can bake while the camera stands: no job open or
+/// pending and no coarse block waiting for its refinement. The chunks still without a block are
+/// those it cannot take (their reach crosses the streamer's full radius, or they are not
+/// resident full).
+pub(crate) fn drain_idle(st: &vxe_render::QueueStats) -> bool {
+    st.jobs == 0 && st.coarse == 0
+}
+
+/// Appends `--pre-roll-drain`'s banner row to `out`: while it drains the queue's jobs and coarse
+/// chunks left and the seconds to its limit (`secs`), then for `hud::BANNER_MS` after it ends how it ended.
+pub(crate) fn write_drain_banner(
+    out: &mut String,
+    drain: Drain,
+    stats: Option<&vxe_render::QueueStats>,
+    secs: f64,
+    now_ms: f64,
+) {
+    use std::fmt::Write as _;
+    match drain {
+        Drain::Off => {}
+        Drain::Draining { from_ms, .. } => {
+            crate::hud::start_row(out);
+            let left = (secs - (now_ms - from_ms) / 1e3).max(0.0);
+            match stats {
+                Some(st) => {
+                    let _ = write!(
+                        out,
+                        "pre-roll: draining {} jobs, {} coarse chunks to refine, {left:.0} s at most; HOLD STILL",
+                        st.jobs, st.coarse,
+                    );
+                }
+                None => {
+                    let _ = write!(out, "pre-roll: draining, {left:.0} s at most; HOLD STILL");
+                }
+            }
+        }
+        Drain::Done {
+            at_ms,
+            secs: took,
+            landed,
+        } => {
+            if now_ms - at_ms < crate::hud::BANNER_MS {
+                crate::hud::start_row(out);
+                let _ = write!(
+                    out,
+                    "pre-roll: {} after {took:.0} s; move now",
+                    if landed { "landed" } else { "timed out" },
+                );
+            }
+        }
+    }
+}
+
 /// The live queue's state in the fly-through: the workers' results before the frame exists, and
 /// what its stdout line reads.
 #[derive(Default)]
 pub(crate) struct QueueRun {
+    /// `--pre-roll-drain`'s state.
+    pub(crate) drain: Drain,
     pub(crate) prepared: Vec<(ChunkCoord, vxe_world::Prepared)>,
     /// Ms since the start at the last line, and the chunks baked and samples then.
     pub(crate) line_ms: f64,
@@ -257,6 +340,12 @@ impl Run {
             return enc;
         }
         gpu.queue.submit([enc.finish()]);
+        self.drain_begin();
+        let Some(gfx) = self.gfx.as_mut() else {
+            return gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        };
         let (forward, _, _) = self.fly.camera.basis();
         let stream = self.stream.as_ref();
         let resident_fn = |c: ChunkCoord| {
@@ -391,9 +480,112 @@ impl Run {
             }
             None => {}
         }
+        self.drain_check(gpu);
         self.print_queue_line(gpu);
         gpu.device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default())
+    }
+
+    /// `--pre-roll-drain`'s start, at the first queue step: the budget to `PRE_ROLL_DRAIN_MS` a
+    /// frame and the camera held from this frame.
+    fn drain_begin(&mut self) {
+        if self.args.bake.pre_roll_drain.is_none() || self.queue.drain != Drain::Off {
+            return;
+        }
+        if let Some(gfx) = self.gfx.as_mut() {
+            gfx.frame.set_bake_budget(vxe_render::Budget::PerFrame {
+                ms: PRE_ROLL_DRAIN_MS,
+            });
+        }
+        self.queue.drain = Drain::Draining {
+            from_ms: ms_since(self.start),
+            clear_ms: None,
+        };
+        println!(
+            "pre-roll drain: the camera held, the queue at {PRE_ROLL_DRAIN_MS} ms a frame for {} s at most",
+            self.args.bake.pre_roll_drain.unwrap_or_default()
+        );
+    }
+
+    /// `--pre-roll-drain`'s end, after the frame's queue step: landed once the queue has been
+    /// idle ([`drain_idle`]) for `DRAIN_LANDED_HOLD_MS`, timed out at its seconds;
+    /// either returns the budget to `--bake-budget`'s (the menu's) and prints the line and the
+    /// far share ([`Run::print_drain_share`]).
+    fn drain_check(&mut self, gpu: &Gpu) {
+        let (Drain::Draining { from_ms, clear_ms }, Some(st)) =
+            (self.queue.drain, self.queue.stats)
+        else {
+            return;
+        };
+        let t = ms_since(self.start);
+        let limit = self.args.bake.pre_roll_drain.unwrap_or_default();
+        let clear_ms = (drain_idle(&st) && st.openings > 0).then(|| clear_ms.unwrap_or(t));
+        let landed = clear_ms.is_some_and(|c| t - c >= DRAIN_LANDED_HOLD_MS);
+        let secs = (t - from_ms) / 1e3;
+        if !landed && secs < limit {
+            self.queue.drain = Drain::Draining { from_ms, clear_ms };
+            return;
+        }
+        if let Some(gfx) = self.gfx.as_mut() {
+            gfx.frame.set_bake_budget(self.args.bake.budget);
+        }
+        self.queue.drain = Drain::Done {
+            at_ms: t,
+            secs,
+            landed,
+        };
+        println!(
+            "pre-roll drain: {} after {secs:.1} s (frame {}), {} jobs, {} coarse, depth {}, {} baked; the budget back to {}",
+            if landed { "landed" } else { "timed out" },
+            self.frame,
+            st.jobs,
+            st.coarse,
+            st.depth,
+            st.baked,
+            self.args.bake.budget,
+        );
+        self.print_drain_share(gpu);
+    }
+
+    /// Whether `--pre-roll-drain` holds the camera this frame.
+    pub(crate) fn draining(&self) -> bool {
+        matches!(self.queue.drain, Drain::Draining { .. })
+    }
+
+    /// `--pre-roll-drain`'s closing share line: of the last frame's lighting pixels, those whose
+    /// hit lies over `DRAIN_FAR_M` from the eye (far), and of them those whose sky source word
+    /// is `record` (a fresh store record: far-baked). Reads the hit positions and the moments
+    /// back blocking, once; the source words are written while the store's reads are counted,
+    /// which the drain turns on.
+    fn print_drain_share(&self, gpu: &Gpu) {
+        let Some(gfx) = self.gfx.as_ref() else {
+            return;
+        };
+        let (d, q) = (&gpu.device, &gpu.queue);
+        let hits = vxe_render::debug::read_rgba32f(d, q, gfx.frame.light_hit_positions());
+        let moments = vxe_render::debug::read_rgba16f(d, q, gfx.frame.moments());
+        let eye = self.fly.camera.position.to_array();
+        let far_voxels = DRAIN_FAR_M / crate::audio::METRES_PER_VOXEL;
+        let (mut far, mut far_baked) = (0usize, 0usize);
+        for (h, m) in hits.iter().zip(&moments) {
+            if !h[3].is_finite() || h[3] > 1.0e30 {
+                continue;
+            }
+            let d2: f32 = (0..3).map(|k| (h[k] - eye[k]).powi(2)).sum();
+            if d2.sqrt() >= far_voxels {
+                far += 1;
+                // The moments' w: the kind plus the source word over 16; word 1 is `record`.
+                let word = ((m[3] - m[3].floor()) * 16.0).round() as u8;
+                far_baked += usize::from(word == 1);
+            }
+        }
+        let n = hits.len().max(1) as f64;
+        println!(
+            "pre-roll drain: far (over {DRAIN_FAR_M} m) {:.1} % of the lighting pixels, far-baked {:.1} % ({:.1} % of far)",
+            100.0 * far as f64 / n,
+            100.0 * far_baked as f64 / n,
+            100.0 * far_baked as f64 / far.max(1) as f64,
+        );
     }
 
     /// The live queue's lines, once a second of wall time in a window or once every 60 frames

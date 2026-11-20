@@ -607,6 +607,11 @@ pub struct BakeArgs {
     /// `--read-missing`: while a dig's rings 1 and 2 wait, the store's no-value count is read back
     /// each frame (blocking) for the `dig settled:` line.
     pub(crate) read_missing: bool,
+    /// `--pre-roll-drain SECONDS`: from the first drawn frame the camera is held still and the
+    /// live queue bakes at `PRE_ROLL_DRAIN_MS` a frame until it is idle (no job, no coarse chunk) or
+    /// `SECONDS` have passed, then the budget returns to `budget` (a testbed lever for a look at
+    /// a view whose far light is baked).
+    pub(crate) pre_roll_drain: Option<f64>,
 }
 
 /// The fly-through's arguments: the run's own, the world ([`RunMode`]) and the four groups.
