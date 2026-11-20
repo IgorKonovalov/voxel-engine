@@ -59,6 +59,32 @@ impl Stepper {
         );
     }
 
+    /// One frame at `cam`, timed and not read back: the light pass's ms, where the adapter
+    /// has timestamps.
+    pub fn timed(&mut self, rig: &Rig, cam: &Camera) -> Option<f64> {
+        let f = &mut self.frame;
+        f.advance();
+        let params = f.params(&rig.gpu, cam, &LightParams::headlamp());
+        let mut enc = rig.device.create_command_encoder(&Default::default());
+        f.encode(
+            &rig.device,
+            &rig.queue,
+            &mut enc,
+            &rig.gpu,
+            &params,
+            self.timer.as_ref(),
+        );
+        if let Some(t) = &self.timer {
+            t.resolve(&mut enc);
+        }
+        rig.queue.submit([enc.finish()]);
+        let passes = self.timer.as_ref()?.read_all_ms(&rig.device);
+        vxe_render::FRAME_PASSES
+            .iter()
+            .position(|&n| n == "light")
+            .and_then(|slot| passes.get(slot).copied())
+    }
+
     /// One frame at `cam`, timed and read back.
     pub fn step(&mut self, rig: &Rig, cam: &Camera) -> Shot {
         let f = &mut self.frame;

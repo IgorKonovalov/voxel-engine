@@ -1168,14 +1168,17 @@ mod flicker {
             strip(&mut rig, &mut s, &cam, "castle", &format!("{arm}-fresh"));
             let mut n = 0;
             let mut missing = Vec::new();
+            let mut light = Vec::new();
             let t = std::time::Instant::now();
             while n < 3000 && !s.frame.bake_queue().is_some_and(|q| q.empty()) {
                 let tf = std::time::Instant::now();
                 queue_step(&mut rig, &mut s.frame, &cam);
                 if n % 100 == 0 {
-                    missing.push(s.step(&rig, &cam).missing);
+                    let shot = s.step(&rig, &cam);
+                    missing.push(shot.missing);
+                    light.extend(shot.light_ms);
                 } else {
-                    s.run(&rig, &cam);
+                    light.extend(s.timed(&rig, &cam));
                 }
                 n += 1;
                 let frame = std::time::Duration::from_micros(16_667);
@@ -1189,11 +1192,48 @@ mod flicker {
                 st.as_ref().map(|st| st.digs),
                 st.as_ref().map(|st| st.digs_baked),
             );
+            print_light_series(&light);
             settle(&mut rig, &mut s, &cam, 120);
             strip(&mut rig, &mut s, &cam, "castle", &format!("{arm}-settled"));
             let e = s.frame.exposure_readout(&rig.device).map(|r| r.exposure);
             println!("castle arm ({arm}): the exposure after the settled strip {e:?}");
             e
+        }
+
+        /// The light pass's ms over the castle's drain (one value a timed frame): the count,
+        /// the mean, the p50, p95 and max, the frames over the lighting line (4.0 ms) and the
+        /// longest run of them, and the mean of each 100 frames.
+        fn print_light_series(ms: &[f64]) {
+            if ms.is_empty() {
+                println!("castle: light pass untimed (no timestamps)");
+                return;
+            }
+            let mut v = ms.to_vec();
+            v.sort_by(f64::total_cmp);
+            let q = |p: f64| v[((v.len() - 1) as f64 * p).round() as usize];
+            let (mut over, mut run, mut longest) = (0, 0, 0);
+            for &x in ms {
+                if x > 4.0 {
+                    over += 1;
+                    run += 1;
+                    longest = longest.max(run);
+                } else {
+                    run = 0;
+                }
+            }
+            let hundreds: Vec<String> = ms
+                .chunks(100)
+                .map(|c| format!("{:.3}", c.iter().sum::<f64>() / c.len() as f64))
+                .collect();
+            println!(
+                "castle: light pass over the drain: {} frames, mean {:.3} ms, p50 {:.3}, p95 {:.3}, max {:.3}; over 4.0 ms {over} frames, longest run {longest}; mean a 100 frames [{}]",
+                ms.len(),
+                ms.iter().sum::<f64>() / ms.len() as f64,
+                q(0.5),
+                q(0.95),
+                v[v.len() - 1],
+                hundreds.join(", ")
+            );
         }
 
         /// [`support::terms::mirrored`] with the pool given.
