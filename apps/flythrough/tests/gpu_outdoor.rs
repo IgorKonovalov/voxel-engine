@@ -295,7 +295,7 @@ mod reading {
             height: 80,
             canopy_r: 12,
         };
-        let tree = build_tree(shape, 0, 256);
+        let tree = build_tree(shape, 0, 256, flythrough::outdoor::LEAF);
         let lo = [-12, -12, -TRUNK_SINK];
         let world_of = |with_tree: bool| {
             let tree = &tree;
@@ -1675,7 +1675,7 @@ mod reading {
         sky: Option<vxe_render::sky::Sky>,
         turn: bool,
     ) -> FloorRun {
-        use flythrough::outdoor::{BARK, LEAF};
+        use flythrough::outdoor::{BARK, is_leaf};
         use vxe_render::{UpscalerKind, glam::Vec3};
         let mut f = Frame::with_sizes(&rig.device, [320, 180], [480, 270]);
         f.set_upscaler_kind(
@@ -1738,7 +1738,7 @@ mod reading {
                 });
                 matches!(
                     rig.world.material_at(vxe_world::VoxelCoord(v)),
-                    Some(m) if m == LEAF || m == BARK
+                    Some(m) if is_leaf(m) || m == BARK
                 )
             })
         };

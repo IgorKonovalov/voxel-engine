@@ -343,7 +343,7 @@ mod canopy {
 
         /// The class of a lighting pixel's hit `h`.
         fn class_of(world: &vxe_world::World, h: &[f32; 4]) -> Class {
-            use flythrough::outdoor::{BARK, LEAF};
+            use flythrough::outdoor::{BARK, is_leaf};
             if h[3] <= 0.0 || h[3] >= 1.0e30 || h[..3].iter().any(|v| v.is_nan()) {
                 return Class::Other;
             }
@@ -354,7 +354,7 @@ mod canopy {
                     (h[a] + o).floor() as i32
                 });
                 match world.material_at(vxe_world::VoxelCoord(v)) {
-                    Some(m) if m == LEAF => leaf = true,
+                    Some(m) if is_leaf(m) => leaf = true,
                     Some(m) if m == BARK => bark = true,
                     _ => {}
                 }

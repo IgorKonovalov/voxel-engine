@@ -31,6 +31,16 @@ pub const SOIL: MaterialId = 6;
 /// The trees' rows ([`crate::trees`]), appended after the soil.
 pub const BARK: MaterialId = 7;
 pub const LEAF: MaterialId = 8;
+/// The trees' other leaf rows, after the first: a yellower and a bluer green.
+pub const LEAF_2: MaterialId = 9;
+pub const LEAF_3: MaterialId = 10;
+/// The leaf rows a tree variant picks from ([`crate::trees::leaf_row`]).
+pub const LEAF_ROWS: [MaterialId; 3] = [LEAF, LEAF_2, LEAF_3];
+
+/// Whether `m` is one of [`LEAF_ROWS`].
+pub fn is_leaf(m: MaterialId) -> bool {
+    LEAF_ROWS.contains(&m)
+}
 /// Soil voxels under the grass.
 pub const SOIL_DEPTH: i32 = 8;
 /// Caverns open only deeper than this under the surface.

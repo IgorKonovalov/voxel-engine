@@ -362,7 +362,7 @@ fn forest_vector() {
             for i in 0..BRICK_VOXELS {
                 match b.get(i) {
                     flythrough::outdoor::BARK => trees[0] += 1,
-                    flythrough::outdoor::LEAF => trees[1] += 1,
+                    m if flythrough::outdoor::is_leaf(m) => trees[1] += 1,
                     _ => {}
                 }
             }
@@ -398,8 +398,8 @@ fn forest_vector() {
     });
 }
 
-const FOREST_HASH: u64 = 0x8d4e_d858_7460_a302;
+const FOREST_HASH: u64 = 0x33fe_6694_e783_3288;
 const OUTDOOR_HASH: u64 = 0x0cfd_7df8_3d1c_2955;
-const SHOWCASE_HASH: u64 = 0xb2ed_b827_7dc9_3e82;
+const SHOWCASE_HASH: u64 = 0x9e6b_3f6f_2bf0_17d3;
 const CASTLE_VOX_HASH: u64 = 0x35a8_89ee_81c4_17e9;
 const CASTLE_VOXEL_HASH: u64 = 0xa2f6_f292_88e1_04e3;

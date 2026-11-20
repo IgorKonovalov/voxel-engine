@@ -198,9 +198,14 @@ pub enum Feature {
     },
     /// The natural arch over the chasm (`BRIDGE_*`).
     Bridge,
-    /// A crystal prism: [`CRYSTAL`] within `r` of the segment from `a` to `b`, wherever it
-    /// lies.
-    Capsule { a: [i64; 3], b: [i64; 3], r: i64 },
+    /// A crystal prism: its cluster's hue `m` (one of [`CRYSTAL_HUES`]) within `r` of the
+    /// segment from `a` to `b`, wherever it lies.
+    Capsule {
+        a: [i64; 3],
+        b: [i64; 3],
+        r: i64,
+        m: MaterialId,
+    },
 }
 
 impl Feature {

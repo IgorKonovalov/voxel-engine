@@ -850,6 +850,16 @@ fn light_flags() -> Vec<Flag<Parsing>> {
             },
         ),
         Flag::value(
+            &["--exposure-comp"],
+            "EV",
+            "the auto exposure's compensation in EV, -4 to 4 [0]",
+            |p: &mut Parsing, v| {
+                p.args.light.exposure_comp =
+                    Some(v.parse_if(|n: &f32| (-4.0..=4.0).contains(n), "-4 to 4")?);
+                Ok(())
+            },
+        ),
+        Flag::value(
             &["--adapt"],
             "LIGHT,CONE,ROD,FLOOR",
             "the preset's time constants and cone floor",
