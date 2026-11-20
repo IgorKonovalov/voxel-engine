@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0081** (0079 is claimed by the motion-wobble lane, branch `spike-motion-wobble`, 2026-11-20; 0080 is Plan 0096's).
+**Next free number: 0082** (0079 is claimed by the motion-wobble lane, branch `spike-motion-wobble`, 2026-11-20; 0080 is Plan 0096's; 0081 is Plan 0097's).
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -94,6 +94,7 @@ the status.
 | [0077](0077-frame-profiling-through-the-profiling-facade-with-puffin-behind-an-app-feature.md) | Frame profiling goes through the `profiling` facade, collected by puffin behind an app feature | accepted (Plan 0091, approved) |
 | [0078](0078-an-entity-part-has-a-grain-a-detail-finer-than-a-world-voxel-or-a-coarse-factor-of-world-voxels-per-model-voxel.md) | An entity part has a grain: a detail finer than a world voxel, or a coarse factor of world voxels per model voxel | accepted (Plan 0083 Phase 7b, 2026-11-19) |
 | [0080](0080-the-live-queue-bakes-what-the-image-reads-a-record-by-rule-a-tier-by-size-on-screen-and-a-drain-slice.md) | The live queue bakes what the image reads: a record by rule, a sample tier by size on screen, a slice that drains what is in view | proposed (Plan 0096), amended 11-20 |
+| [0081](0081-the-sky-anchor-holds-by-the-sky-over-the-cameras-floor-or-in-view-and-releases-where-both-are-absent.md) | The sky anchor holds by the sky over the camera's floor (the baked record under the eye) or by the sky in view, and releases only where both are absent | proposed (Plan 0097) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded
