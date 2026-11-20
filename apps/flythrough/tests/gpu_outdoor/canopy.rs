@@ -43,6 +43,8 @@ mod canopy {
                     no_settle: false,
                     column_prior: false,
                     no_fade: false,
+                    no_pool: false,
+                    seed_stale_f: false,
                 },
             },
             Arm {
@@ -59,6 +61,8 @@ mod canopy {
                     no_settle: false,
                     column_prior: false,
                     no_fade: false,
+                    no_pool: false,
+                    seed_stale_f: false,
                 },
             },
             Arm {
@@ -75,6 +79,8 @@ mod canopy {
                     no_settle: false,
                     column_prior: false,
                     no_fade: false,
+                    no_pool: false,
+                    seed_stale_f: false,
                 },
             },
             Arm {
@@ -91,6 +97,8 @@ mod canopy {
                     no_settle: false,
                     column_prior: false,
                     no_fade: false,
+                    no_pool: false,
+                    seed_stale_f: false,
                 },
             },
         ];

@@ -988,8 +988,11 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     // switch between the stored part and the ray at the stale bit has no second history to lag
     // behind it. Its luminance joins the moments, so the filter's variance counts it. The key
     // light's term, sampled every frame where the key light is on, joins the direct part.
-    // A record's value seeds a reset pair at SEED_AGE, the column's at SEED_COLUMN.
-    let seed_age = select(SEED_AGE, SEED_COLUMN, estimate < 0.0);
+    // A record's value seeds a reset pair at SEED_AGE (SETTLE_F under
+    // LIGHTING_HOOK_SEED_STALE_F where the face's record is stale, the ray cast at it), the
+    // column's at SEED_COLUMN.
+    let stale_f = rec_face && sky_cast && (params.lighting & LIGHTING_HOOK_SEED_STALE_F) != 0u;
+    let seed_age = select(select(SEED_AGE, SETTLE_F, stale_f), SEED_COLUMN, estimate < 0.0);
     if (estimate < 0.0) {
         estimate = column_estimate(rec.p, lift_n);
     }

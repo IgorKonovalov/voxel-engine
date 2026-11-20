@@ -262,6 +262,15 @@ pub(crate) const LIGHTING_HOOK_COLUMN_PRIOR: u32 = 1 << 27;
 /// shows at once instead of riding the fade (temporal.wgsl `no_ray_fade`).
 pub(crate) const LIGHTING_HOOK_NO_FADE: u32 = 1 << 28;
 
+/// `Params::lighting` bit, a reading hook ([`LightHooks::no_pool`]): the a-trous variance pass
+/// takes each young pixel's pair means as they are, with no age-weighted pool (atrous.wgsl
+/// `pooled_pair`).
+pub(crate) const LIGHTING_HOOK_NO_POOL: u32 = 1 << 29;
+
+/// `Params::lighting` bit, a reading hook ([`LightHooks::seed_stale_f`]): a reset pair seeded from
+/// a stale record counts SETTLE_F samples instead of SEED_AGE (temporal.wgsl).
+pub(crate) const LIGHTING_HOOK_SEED_STALE_F: u32 = 1 << 30;
+
 /// `Params::lighting` bit: a cube face's baked sky term reads its visibilities by the 27-count
 /// gradient's normal at every distance ([`SkyNormal::Smoothed`]).
 pub(crate) const LIGHTING_SKY_SMOOTHED: u32 = 1 << 24;
@@ -298,6 +307,11 @@ pub struct LightHooks {
     pub column_prior: bool,
     /// A no-ray sky value's change shows at once: no fade.
     pub no_fade: bool,
+    /// A young pixel's pair means are not pooled with its neighbours': no age-weighted pool.
+    pub no_pool: bool,
+    /// A reset pair seeded from a stale record (a ring face casting the sky ray) counts 16
+    /// samples (the fade's frames) instead of 8.
+    pub seed_stale_f: bool,
 }
 
 impl LightHooks {
@@ -341,6 +355,14 @@ impl LightHooks {
             0
         } | if self.no_fade {
             LIGHTING_HOOK_NO_FADE
+        } else {
+            0
+        } | if self.no_pool {
+            LIGHTING_HOOK_NO_POOL
+        } else {
+            0
+        } | if self.seed_stale_f {
+            LIGHTING_HOOK_SEED_STALE_F
         } else {
             0
         }

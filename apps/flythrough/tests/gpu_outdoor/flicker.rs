@@ -26,8 +26,13 @@ mod flicker {
             .iter()
             .map(|r| r.share_out)
             .fold(0.0f64, f64::max);
+        let still_max = still
+            .iter()
+            .skip(1)
+            .map(|r| r.share_out)
+            .fold(0.0f64, f64::max);
         println!(
-            "dig: outside the reach at most {worst:.3} % over 4; inside at N {:.3} %",
+            "dig: outside the reach at most {worst:.3} % over 4 (the still pairs' max {still_max:.3} %); inside at N {:.3} %",
             n.share_in
         );
         assert!(worst <= 0.5, "outside the reach: {worst:.3} % over 4 levels");
@@ -138,6 +143,13 @@ mod flicker {
             let (mut rig, cam) = support::terms::hills_rig()?;
             let cam = pitched(&cam, -30.0);
             let mut s = strip_frame(&mut rig, split_sky(), &cam);
+            let arm = std::env::var("VXE_HOLE_ARM").unwrap_or_else(|_| "pool".into());
+            s.frame.set_light_hooks(vxe_render::LightHooks {
+                no_pool: arm.ends_with("no-pool"),
+                seed_stale_f: arm.starts_with("seed-f"),
+                ..Default::default()
+            });
+            println!("split: arm {arm}");
             // Drained before the dig, so the split reads one state on any binary.
             let mut n = 0;
             while n < 30_000 && !s.frame.bake_queue().is_some_and(|q| q.empty()) {
@@ -489,7 +501,10 @@ mod flicker {
         /// the mean |seed - settled| of the pair's mean over the pixels seeded at N (the
         /// contact shadow's seed against what the pixel settles to, frame `landing + F + 16`);
         /// and rule 3's class shares over the trace from N - 8 to the landing plus `F + 16`, the
-        /// fade allowed `landing + F` frames. `VXE_TEST_ADAPTER` picks the adapter.
+        /// fade allowed `landing + F` frames; the a-trous pass's ms still and over the band's
+        /// frames. `VXE_HOLE_ARM`: `pool` (the default), `no-pool` (`LightHooks::no_pool`),
+        /// `key-off` (the pool with `LightHooks::key_off`), `seed-f` and `seed-f-no-pool` (those
+        /// with `LightHooks::seed_stale_f`); [`dig_split`] reads it too. `VXE_TEST_ADAPTER` picks the adapter.
         #[test]
         #[ignore = "reading"]
         fn hole_band() {
@@ -499,6 +514,13 @@ mod flicker {
             };
             let cam = pitched(&cam, -30.0);
             let mut s = strip_frame(&mut rig, split_sky(), &cam);
+            let arm = std::env::var("VXE_HOLE_ARM").unwrap_or_else(|_| "pool".into());
+            s.frame.set_light_hooks(vxe_render::LightHooks {
+                no_pool: arm.ends_with("no-pool"),
+                key_off: arm == "key-off",
+                seed_stale_f: arm.starts_with("seed-f"),
+                ..Default::default()
+            });
             let mut n = 0;
             while n < 30_000 && !s.frame.bake_queue().is_some_and(|q| q.empty()) {
                 queue_step(&mut rig, &mut s.frame, &cam);
@@ -562,6 +584,23 @@ mod flicker {
                 _ => None,
             };
             let settled = &shots[(MEAN_FRAMES + landing + F + 16).min(shots.len() - 1)].1;
+            // The a-trous passes' ms (the variance pass and its four iterations share the
+            // slot): the 8 still frames, and the frames from N to the landing plus F.
+            let atrous = vxe_render::FRAME_PASSES.iter().position(|&n| n == "atrous");
+            let ms = |r: std::ops::Range<usize>| {
+                let v: Vec<f64> = shots[r]
+                    .iter()
+                    .filter_map(|(sh, _)| atrous.and_then(|k| sh.passes.get(k).copied()))
+                    .collect();
+                v.iter().sum::<f64>() / v.len().max(1) as f64
+            };
+            println!(
+                "reading: hole band arm {arm} at {}: the a-trous pass {:.3} ms still, {:.3} ms from N to the landing + F ({})",
+                std::env::var("VXE_SPLIT_TIME").unwrap_or_else(|_| "12:00".into()),
+                ms(0..MEAN_FRAMES),
+                ms(MEAN_FRAMES..(MEAN_FRAMES + landing + F).min(shots.len())),
+                rig.adapter
+            );
             for (b, name) in ["hole band", "ring edge 8..16"].iter().enumerate() {
                 let region: Vec<bool> = (0..n_px).map(|i| band_of(i) == Some(b)).collect();
                 let px = region.iter().filter(|&&r| r).count();
