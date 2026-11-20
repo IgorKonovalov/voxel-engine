@@ -213,8 +213,9 @@ fn the_visibility_pairs_mean_holds_still() {
 /// under a roof 20 voxels up with a 6 x 6 hole straight above it (the form factor
 /// `36 / (400 pi) = 0.029`), the ray forced on: over frames 9 to 128 the pair's mean never
 /// exceeds 0.25 with the clamp on; the clamp off and the dark bias (the mean against 0.029)
-/// printed (0086's tip 0.1511 and 0.4993).
+/// printed (0086's tip 0.1511 and 0.4993). Over the soak line on lavapipe (10.8 s).
 #[test]
+#[ignore = "soak"]
 fn a_rare_hit_is_clamped() {
     let (cx, cy) = (512, 512);
     let roof = move |p: [i32; 3]| {
