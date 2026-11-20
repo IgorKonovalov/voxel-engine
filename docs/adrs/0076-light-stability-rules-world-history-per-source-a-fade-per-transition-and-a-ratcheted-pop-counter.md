@@ -5,7 +5,7 @@
 > **Related plan(s):** [Plan 0090](../plans/0090-the-pop-counter-scenes-on-lavapipe-count-the-pixels-that-break-the-light-rules-a-ratchet.md)
 > (builds the counter and takes the baseline); [Plan 0086](../plans/done/0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md)
 > (whose Phase 16 attributed the pops this ADR names; the baseline is taken after it merges);
-> [Plan 0094](../plans/0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md)
+> [Plan 0094](../plans/done/0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md)
 > (rules 2, 3 and 5 as its targets; its window gave rule 6 and rejected Alternative F)
 > **Builds on:** [ADR-0046](0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
 > (the baked store, its queue and its `FADE`),

@@ -1,21 +1,21 @@
 # 0094: The light's transitions: the key mean's age at a still camera, the no-ray sky prior and its fades, the exposure's rate, the dig's hole band, and the castle's fill-in
 
-> **Status:** in-progress (approved 2026-11-19: the owner: "lets run 94 right away"; question 2, the exposure rate, on its recommendation, 1/32 EV a frame, the owner judging it at Phase 7; **Phase 7's window done 2026-11-20**, its verdict under Phase 7: a short fix pass (Phase 7a), Phase 8 narrowed, a short second look (Phase 9), then the close; the motion wobble is a separate lane's; **window 94b done 2026-11-20**: the rate pinned at 3.75 EV/s, the headlamp's exposure to a new Phase 7b, Phase 8's bars decided, a third three-minute look in Phase 9, then the close)
+> **Status:** done (closed 2026-11-20 at the fresh-session close review, v0.68.0. Verdict: clean, four minors and a nit for later plans; the gate 1280 of 1280 in 1588.2 s, over the line as the owner accepted. Approved 2026-11-19: the owner: "lets run 94 right away"; windows 94a, 94b and 94c done 2026-11-20, the night's pick 2b landed as Phase 8a)
 > **Created:** 2026-11-19
-> **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
-> **Related ADRs:** [ADR-0076](../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
+> **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../../roadmap.md)
+> **Related ADRs:** [ADR-0076](../../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
 > (proposed with Plan 0090: the five rules; rules 2, 3 and 5 are this plan's targets, and its
 > binding clause is met below under "Where the histories live"),
-> [ADR-0070](../adrs/0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md)
+> [ADR-0070](../../adrs/0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md)
 > (the sky's baked visibility, the pair, the no-ray path this plan changes the prior of; its
 > close adds an Outcome naming the prior as built),
-> [ADR-0053](../adrs/0053-a-light-summary-per-block-and-a-two-level-parent-table-light-a-brick-with-no-value.md)
+> [ADR-0053](../../adrs/0053-a-light-summary-per-block-and-a-two-level-parent-table-light-a-brick-with-no-value.md)
 > (the fallback chain whose neighbour summaries leave the sky channel),
-> [ADR-0033](../adrs/0033-eye-adaptation-as-an-asymmetric-two-stage-exposure-on-the-gpu.md)
+> [ADR-0033](../../adrs/0033-eye-adaptation-as-an-asymmetric-two-stage-exposure-on-the-gpu.md)
 > (the exposure whose step gains a rate cap),
-> [ADR-0018](../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
+> [ADR-0018](../../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
 > (the temporal pass whose acceptance and age the key mean rides),
-> [ADR-0046](../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
+> [ADR-0046](../../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
 > (`FADE`, the one fade length). No new ADR: every tradeoff here is decided by a reading
 > inside a rule an accepted or proposed ADR already states.
 > **Source:** Plan 0086's "The follow-up plan's scope" (its Followups section, the wrap-up
@@ -1653,7 +1653,7 @@ records it.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The readings, the key light's side | dev | done; readings in [`logs/0094.md`](logs/0094.md); the sky term's source word added to the moments' `w` under `COUNT_STORE` (`temporal.wgsl`, outside Files touched); the rule-form unit tests in a CPU binary `tests/rules.rs` (not in `support/rules.rs`, which every gpu binary includes); 5.4's source is the own summary, not the neighbours' | 3d20c1a2 |
+| 1: The readings, the key light's side | dev | done; readings in [`logs/0094.md`](../logs/0094.md); the sky term's source word added to the moments' `w` under `COUNT_STORE` (`temporal.wgsl`, outside Files touched); the rule-form unit tests in a CPU binary `tests/rules.rs` (not in `support/rules.rs`, which every gpu binary includes); 5.4's source is the own summary, not the neighbours' | 3d20c1a2 |
 | 2: The readings, the no-ray path's side | dev | done; arms (b) and (c) of the castle ran with the queue undrained before the stamps; the keep's walls classed by a castle material within half a voxel of the hit | 527d35e0 |
 | 2a: The light pass's compile cost, the pipeline cache | dev | done (exploration); bars 2 (RTX half), 5 over at load 4 to 8 (log); the arms dropped by text markers, no `override`; the cache in `vxe-render`'s `test_support.rs`, not the supports' `mod.rs` (outside Files touched: `settings.rs`'s `NOT_SETTINGS` row); wip `ae8d0722` | c3763d69 |
 | 3: The key mean keeps its age at a still camera | dev | done (exploration; wip `074ff2c5`); the still-camera waiver drops the material, normal and position tests; the settle in the amended form tripped the stop rule (return frame 37.6 % on against 21.9 % off, pops at rest not falling): default off, row and flag kept, banner word `settle on` (not `settle off`); readings in the log and the backlog's "Settle early"; outside Files touched: `frame/compose.rs`, `settings.rs` (the row), `gpu_golden.rs` (bar 5's reading), `gpu_outdoor/still.rs` (`VXE_SETTLE`), `docs/backlog.md`; `a_still_camera_keeps_its_history` not written (Phase 8) | dee00eb7 |
@@ -1663,9 +1663,9 @@ records it.
 | 7: The owner's window (run as 94a, not 86e: `live/session94a.sh`, `live/bin94a`) | human | done 2026-11-20; the words in the log; forest and castle fixed, forest 15:00 and the dig not fixed, settle off better than on, `absorb` a long first frame, exposure too slow; the verdict and the rules under Phase 7 | (no commit: `live/` is untracked) |
 | 7a: The fix pass after window 94a | dev | done; readings in the log; the arms built inside a loading stage of their own (`building the light pass arms`), not inside `building the pipelines`; `a_dig_leaves_no_dots`'s pre-landing mean read over the 8 frames before the landing (a first form over the frames from the dig failed at frame 64); `a_reset_pixel_starts_from_its_record`'s record clause on the dig rig's +z pixels, the withheld clause on the open floor; bar 9's step clause fails in both arms (frame 1, 25.1), disclosed; the hole reading on the flat floor, not the hills (`vxe-render`'s tests have no hills); outside Files touched: `pair.wgsl`, `temporal.wgsl`, `atrous.wgsl`, `settings.rs` (crate root), `frame/mod.rs`, `cli/*`, `hud/modes.rs`, `gpu_golden.rs`, `gpu_outdoor/{bars,canopy,flicker,still}.rs`, `gpu_sun/dig.rs`, `docs/backlog.md` (the word) | 372cc392 |
 | 7b: The ceiling follows the surroundings in view (added 2026-11-20) | dev | done; readings in the log; wip `29d7c743`; **the release target is `max(max, anchored)`, not `max`** (the anchored night ceiling is over `max`; bar 2's midnight clause holds only so); `F` 1/256 (1/16 released the forest, 1/128 moved `outdoor_forest_sunset`); the deep pose is the tunnel's axis half way in, not the 4c still's (its HUD position is off the rig's axis); bar 2's noon-midnight luma ratio -1.08 EV, printed; bar 4's test 7.3 s, over the 5 s guess; bar 5 on the RTX's debug test build; the tests in `gpu_outdoor/ceiling.rs` (file-size cap) and `the_tunnel_under_each_ceiling` in `gpu_outdoor.rs`; outside Files touched: `shaders/common.wgsl`, `frame/targets.rs` (the stride; not `compose.rs`), `frame/mod.rs`, `lib.rs`, `cli/mod.rs`, `hud/modes/tests.rs`, `hud/stats/tests.rs`, `tests/support/{settle/mod,stillness,terms}.rs` | 5c910b22 |
-| 8: The picks as tests, the bars 0086 left, the goldens (narrowed 2026-11-20; bars decided after 94b) | dev | done; readings in the log; wips `63907e44`, `7a1ae6e9`, `80b34b1f`; `a_still_camera_keeps_its_history` soak (58.1 s); the tunnel test asserts the rim band, the far end printed (key term 1 of the 3, **2 unattributed**); the seal clause stands at 1/16 (1.944 %); goldens re-blessed for the no-record prior (by-source table), `fsr2`/`upscaled` for the still tap; `profile_high_hall` and `profile_performance_hall` blessed as a disclosed change, the mechanism the still camera's own tap (0.2170 % to 0.0104 %, 0.4479 % to 0.0139 % with it off), **the remaining ~0.01 % unattributed**; bar 1: the gate sum 36.53 s at the gate, `a_rare_hit_is_clamped` (10.8 s) then marked soak per the owner's amendment `b5a34e84` and passed once by name (10.7 s, `b1e34245`), the rest 25.73 s under 30 s; **bar 5**: the quiet gate 1711.4 s against 1140 s (load 1.82), accepted as a reading (owner, `b5a34e84`), 1277 of 1281 passed, the 4 failures byte inventories missing the exposure's growth (+115 216 B), fixed in `gpu_upscale.rs` and `gpu_look_field.rs` (outside Files touched) and re-read by name, not by a second gate; 0086's per-test log not on disk, the top ten named against its summary; `a_young_chunk_reads_its_neighbours_sky` removed (fails on arm A; its rig is Phase 5 bar 1's); `cargo deny` advisories on wasmtime 49.0.5 (RUSTSEC-2026-0566/0567/0568) deferred to a chore lane (owner), cleared by main's =49.0.6 bump merged at `982a953a`; `cargo deny` there still fails on RUSTSEC-2026-0587 (wasmtime-wasi 49.0.6, fixed in >=49.0.7), not this plan's | committed with this row |
+| 8: The picks as tests, the bars 0086 left, the goldens (narrowed 2026-11-20; bars decided after 94b) | dev | done; readings in the log; wips `63907e44`, `7a1ae6e9`, `80b34b1f`; `a_still_camera_keeps_its_history` soak (58.1 s); the tunnel test asserts the rim band, the far end printed (key term 1 of the 3, **2 unattributed**); the seal clause stands at 1/16 (1.944 %); goldens re-blessed for the no-record prior (by-source table), `fsr2`/`upscaled` for the still tap; `profile_high_hall` and `profile_performance_hall` blessed as a disclosed change, the mechanism the still camera's own tap (0.2170 % to 0.0104 %, 0.4479 % to 0.0139 % with it off), **the remaining ~0.01 % unattributed**; bar 1: the gate sum 36.53 s at the gate, `a_rare_hit_is_clamped` (10.8 s) then marked soak per the owner's amendment `b5a34e84` and passed once by name (10.7 s, `b1e34245`), the rest 25.73 s under 30 s; **bar 5**: the quiet gate 1711.4 s against 1140 s (load 1.82), accepted as a reading (owner, `b5a34e84`), 1277 of 1281 passed, the 4 failures byte inventories missing the exposure's growth (+115 216 B), fixed in `gpu_upscale.rs` and `gpu_look_field.rs` (outside Files touched) and re-read by name, not by a second gate; 0086's per-test log not on disk, the top ten named against its summary; `a_young_chunk_reads_its_neighbours_sky` removed (fails on arm A; its rig is Phase 5 bar 1's); `cargo deny` advisories on wasmtime 49.0.5 (RUSTSEC-2026-0566/0567/0568) deferred to a chore lane (owner), cleared by main's =49.0.6 bump merged at `982a953a`; `cargo deny` there still fails on RUSTSEC-2026-0587 (wasmtime-wasi 49.0.6, fixed in >=49.0.7), not this plan's | ccd68426 |
 | 8a: The night's ceiling is `max` (added 2026-11-20, after window 94c) | dev | done; readings in the log; `ceiling_target` returns early at `c_a >= max` (Rust and WGSL) beside the plan's `min`; **bar 4 is a GPU reading** (`ceiling::reading::the_ceiling_by_hour`, `E_sky` has no CPU model); the golden harness's `image` prints the metered level, ceiling and eye (`gpu_outdoor_golden.rs`); `outdoor_night` re-blessed (98.50 %, eye +7.04 EV by the model to +2.00 EV read), every other golden byte-identical; the noon-midnight luma ratio +0.063 EV, asserted | fbe9af7c |
-| 9: A second short look (runs: amended 2026-11-20; a third look after 7b) | human | window 94b done 2026-11-20 (the words under Phase 9); the third look owed | |
+| 9: A second short look (runs: amended 2026-11-20; a third look after 7b) | human | done: window 94b 2026-11-20 (the words under Phase 9); window 94c 2026-11-20, run 1 "all good", run 2 "2b" (Phase 8a), quoted into the log at the close review | (no commit: `live/` is untracked) |
 
 ### Notes
 
@@ -1675,11 +1675,30 @@ each. Empty is fine.)_
 
 ### Close triggers
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+_(Facts for the architect. Left at its template by the dev; filled by the architect at the
+close review of 2026-11-20 from the readings log and the review's own gate.)_
+
+- **What shipped:** feature (the still camera's own tap, the no-record prior and the no-ray
+  fade, the exposure's rate cap, the ceiling by the sky in view and clamped to `max`, the
+  default-off light arms out of the default pipeline and built in a loading stage, a pipeline
+  cache for the GPU tests) with fixes (the frame inventories' exposure growth, six restated
+  tests) and a removal (the settle, `--settle` refused).
+- **Public API changed:** `AutoExposure::{sky_anchor_share, rate_ev_s, ceiling_target,
+  step_ceiling}`, `DEFAULT_EXPOSURE_RATE_EV_S`, `DEFAULT_SKY_ANCHOR_SHARE`; `ExposureState::sky`
+  (was `_pad`), `ExposureReadout::sky_share`; `LightHooks::{column_prior, no_fade, pool,
+  seed_stale_f}`; `Frame::prepare_light_arms`; `internals::{set_pipeline_cache,
+  pipeline_cache_data}`; `PAIR_WGSL`; the exposure uniform 96 to 112 B and the meter tile 8 to
+  16 B; `AutoExposure::ceiling` clamps to `max`. Flags `--exposure-rate`, `--sky-anchor-share`.
+- **Budget readings:** the exposure's growth +115 216 B at 1280 x 720 internal (the frame
+  inventories); arm A's light pass during the castle's bake RTX 0.276 ms, RENOIR 1.169 ms mean
+  at the rig's 320 x 180 grid (Phase 5 bar 5; 1080p's half tier not read); the light stage 5.1
+  to 3.7 s on lavapipe debug (Phase 2a); the pipeline cache RTX cold 29.4 s against 0.24 s
+  warm; the gate 1711.4 s quiet at `fbe9af7c` (Phase 8 bar 5) and 1588.2 s loaded at the close.
+  The fade's temporal and composite cost not read separately.
+- **Gate at the tip:** at the close review on `0d956f17`: nextest gate 1280 / 1280 passed, 211
+  skipped, 1588.2 s; doctests 10 passed; clippy 0; fmt 0; doc gates 0; `cargo deny` advisories
+  FAILED on RUSTSEC-2026-0587 (wasmtime-wasi 49.0.6), not this plan's.
+- **Outstanding `human` phases:** none (Phase 9's windows 94b and 94c done).
 
 ## Followups
 
