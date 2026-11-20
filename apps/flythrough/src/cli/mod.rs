@@ -52,8 +52,7 @@
 //! bright, 2 s then 10 s below a cone floor of 2^-6 toward dark, at most 16; `symmetric`: 0.67 s
 //! both ways; `instant`), `--adapt` replaces its three time constants (seconds) and its floor, and
 //! `--metering` weights the meter toward the view's centre or not, and `--exposure-comp`
-//! shifts the auto exposure's key (-1.5 EV on the showcase, 0 elsewhere; the banner names it
-//! when it is not 0). the menu's `exposure` cycles `auto` with the
+//! shifts the auto exposure's key (0 by default; the banner names it when it is not 0). the menu's `exposure` cycles `auto` with the
 //! preset, `auto symmetric` and `manual` (holding the exposure of the moment); the banner names
 //! the mode and its exposure in EV, the stats HUD's exposure row adds the metered scene and the
 //! settled exposure, and stdout prints that row every half second while the exposure moves.
@@ -457,14 +456,9 @@ pub struct LightingArgs {
     pub(crate) adapt: Option<[f32; 4]>,
     /// `--metering centre|average`: how the meter weights the frame (centre by default).
     pub(crate) metering: vxe_render::Metering,
-    /// `--exposure-comp EV`: the auto exposure's compensation, or `None` for the source's
-    /// ([`SHOWCASE_EXPOSURE_COMP`] for the showcase, else 0).
+    /// `--exposure-comp EV`: the auto exposure's compensation, or `None` for 0.
     pub(crate) exposure_comp: Option<f32>,
 }
-
-/// The showcase's auto exposure compensation in EV: a low key, the rock in the dark greys and
-/// the glowing rows the brightest things on screen.
-pub const SHOWCASE_EXPOSURE_COMP: f32 = -1.5;
 
 impl LightingArgs {
     /// The flags' defaults over `base`'s switches and walks: the fly-through's start from its
@@ -799,14 +793,7 @@ impl Args {
             a.cone_floor = floor;
         }
         a.metering = self.light.metering;
-        a.compensation_ev = self
-            .light
-            .exposure_comp
-            .unwrap_or(if self.mode.is_showcase() {
-                SHOWCASE_EXPOSURE_COMP
-            } else {
-                0.0
-            });
+        a.compensation_ev = self.light.exposure_comp.unwrap_or(0.0);
         if self.outdoor.auto {
             (a.min, a.max) = (outdoor::OUTDOOR_MIN, outdoor::OUTDOOR_MAX);
         }

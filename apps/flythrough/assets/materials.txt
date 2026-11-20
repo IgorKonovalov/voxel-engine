@@ -70,12 +70,12 @@ material leaf
   albedo 0.12 0.26 0.08
 
 # The showcase's rock and ore (named rock and ore in its table): a pale tan-pink rock the
-# glowing rows tint, and the ore's orange at under half the cave's.
+# glowing rows tint, and the ore's orange at the cave's emission.
 material showcase rock
   albedo 0.74 0.66 0.6
 material showcase ore
   albedo 0.72 0.45 0.2
-  emission 0.7 0.4 0.15
+  emission 1.6 0.9 0.35
 material jade
   albedo 0.3 0.8 0.42
   emission 0.18 0.85 0.3

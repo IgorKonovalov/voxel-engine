@@ -852,7 +852,7 @@ fn light_flags() -> Vec<Flag<Parsing>> {
         Flag::value(
             &["--exposure-comp"],
             "EV",
-            "the auto exposure's compensation in EV, -4 to 4 [-1.5 on the showcase, else 0]",
+            "the auto exposure's compensation in EV, -4 to 4 [0]",
             |p: &mut Parsing, v| {
                 p.args.light.exposure_comp =
                     Some(v.parse_if(|n: &f32| (-4.0..=4.0).contains(n), "-4 to 4")?);

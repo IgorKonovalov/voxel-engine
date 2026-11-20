@@ -453,8 +453,8 @@ pub const AMETHYST_EMISSION: [f32; 3] = [0.3, 0.1, 0.55];
 /// The showcase's ember emission: deep red.
 pub const EMBER_EMISSION: [f32; 3] = [1.0, 0.12, 0.03];
 
-/// The showcase's amber emission: the ore's orange at under half of [`ORE_EMISSION`].
-pub const AMBER_EMISSION: [f32; 3] = [0.7, 0.4, 0.15];
+/// The showcase's amber emission: the cave ore's, [`ORE_EMISSION`].
+pub const AMBER_EMISSION: [f32; 3] = ORE_EMISSION;
 
 /// The showcase's rows at the cave's ids and under its names: a pale tan-pink `rock` the
 /// glowing rows tint at `cave::ROCK`, an `ore` emitting [`AMBER_EMISSION`] at `cave::ORE`, then

@@ -360,7 +360,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--adaptation eye\|symmetric\|instant` | The auto exposure's preset [eye] |
 | `--adapt LIGHT,CONE,ROD,FLOOR` | The preset's time constants and cone floor |
 | `--metering centre\|average` | How the meter weights the frame |
-| `--exposure-comp EV` | The auto exposure's compensation in EV, -4 to 4; the banner names it when it is not 0 [-1.5 for `--source showcase`, else 0] |
+| `--exposure-comp EV` | The auto exposure's compensation in EV, -4 to 4; the banner names it when it is not 0 [0] |
 
 ### Light store and queue
 
