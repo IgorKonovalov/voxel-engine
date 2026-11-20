@@ -179,10 +179,11 @@ var<private> skip_origin_cell: bool = false;
 // solid (APPROACH_SKIP_ABSORB). Clear for every other walk.
 var<private> approach_on: bool = false;
 
-// The approach probes' call and the absorbing step in `march` sit between `arms:begin` and
-// `arms:end` lines: `compose` leaves them out of every source but those `compose_arms` builds
-// (the light pass's arms variants, its steps view and the bake), so the default light pipelines
-// compile neither (Plan 0094 Phase 2a); there `approach_on` and `absorb_on` are never read.
+// The absorbing step in `march` sits between `arms:begin` and `arms:end` lines: `compose`
+// leaves it out of every source but those `compose_arms` builds (the light pass's arms
+// variants, its steps view and the bake), so the default light pipelines do not compile it
+// (Plan 0094 Phase 2a); there `absorb_on` is never read. The approach probes' call is in every
+// source: the approach penumbra is the near's pick (ADR-0079).
 
 var<private> approach_tan: f32;
 
@@ -893,11 +894,9 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
             return Hit(true, v, axis, t, m);
         }
         let exit = exit_cell(o, d, inv, v, size);
-        // arms:begin (the approach probes)
         if (approach_on && size <= APPROACH_CELL) {
             approach_cell(o, d, t, exit.t);
         }
-        // arms:end
         t = exit.t;
         v = exit.v;
         axis = exit.axis;

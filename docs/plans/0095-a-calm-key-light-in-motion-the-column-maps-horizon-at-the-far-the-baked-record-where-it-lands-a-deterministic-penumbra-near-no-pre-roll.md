@@ -604,8 +604,8 @@ its Phases 5 to 7 are Phases 9 to 11.
 | 5: The near with no history: the approach penumbra | dev | done (exploration); readings partial | fe564d2b |
 | 6: The reach-bound count, the no-value bricks | dev | done; the no-value bricks named (the dump's own voxel rounding), not fixed | 930e75ad |
 | 7: The owner's window W2, no pre-roll | human | run 2026-11-20 on the forest, no pre-roll; (a) stands as the default, the far keeps the record; owner: 1a "everything besides near lines on slopes looks good", 1d "before - grain" (readings log) | 87b09f09 |
-| 8: The sun's step and the edit's ring (if W2 keeps the record) | dev | done; the day-cycle readings follow the commit | committed with this row |
-| 9: The fix pass after W2 | dev | not started | |
+| 8: The sun's step and the edit's ring (if W2 keeps the record) | dev | done; the day-cycle readings in `87ced612` | a92aca70 |
+| 9: The fix pass after W2 | dev | done; the picks were the defaults; the approach probes moved into the default light pipelines; the rig re-read follows the commit | committed with this row |
 | 10: The bars, the goldens, the NFR readings | dev | not started | |
 | 11: A second short look, if asked | human | not started | |
 
@@ -686,6 +686,11 @@ its Phases 5 to 7 are Phases 9 to 11.
 - Phase 8: the far landing test drifts the sun 1 degree a frame: a 4-degree turn in one frame
   is a sky jump (over the 3-degree radius), which snaps the far slot by design.
 - Phase 8: `key_step` is a settings-file row only (no menu row, no flag), as listed.
+- Phase 9: the approach penumbra stays off the library's `Lighting::default()` and the
+  fly-through's `default_lighting()` (the goldens' base); the fly-through starts in it.
+  Files beyond its list: `frame/encode.rs` (`light_arms`), `frame/pipelines.rs`,
+  `frame/compose.rs` (its test), the fly-through's `cli/mod.rs` and `cli/tests/outdoor.rs`
+  (the loading stage's arms).
 
 ### Close triggers
 

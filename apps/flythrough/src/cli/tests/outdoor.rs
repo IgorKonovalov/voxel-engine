@@ -185,8 +185,8 @@ fn the_exposure_rate_reaches_the_run() {
 }
 
 /// The light pass arms are built in the loading stage (`run::loading::ARMS`) when the flags
-/// pick one at start, `--leaf-shadow absorb` or the approach penumbra under a sky (the
-/// default outdoors), and not otherwise.
+/// pick one at start, `--leaf-shadow absorb`, and not otherwise: the approach penumbra (the
+/// default outdoors) is in the default light pipelines.
 #[test]
 fn an_arm_picked_at_start_is_built_while_loading() {
     let stages = |r: &crate::cli::Args| {
@@ -200,6 +200,13 @@ fn an_arm_picked_at_start_is_built_while_loading() {
     assert!(!stages(&r).contains(&crate::run::loading::ARMS));
     let r = parse_args_from(argv(&["--source", "outdoor", "--sky", "off"])).unwrap();
     assert!(!r.light_arms_at_start());
+    for unpicked in [
+        &["--source", "outdoor", "--penumbra", "approach"][..],
+        &["--source", "outdoor"],
+    ] {
+        let r = parse_args_from(argv(unpicked)).unwrap();
+        assert!(!r.light_arms_at_start(), "{unpicked:?}");
+    }
     for picked in [
         &[
             "--source",
@@ -209,8 +216,7 @@ fn an_arm_picked_at_start_is_built_while_loading() {
             "--leaf-shadow",
             "absorb",
         ][..],
-        &["--source", "outdoor", "--penumbra", "approach"],
-        &["--source", "outdoor"],
+        &["--source", "outdoor", "--leaf-shadow", "absorb"],
     ] {
         let r = parse_args_from(argv(picked)).unwrap();
         assert!(r.light_arms_at_start(), "{picked:?}");
