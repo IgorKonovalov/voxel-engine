@@ -226,3 +226,7 @@ finer than our 10 cm (a lupin spike is six to eight voxels wide); it is unknown 
 - Where the per-voxel variation's amplitude lives: the material row (an ADR amending
   ADR-0065's file) or the render-side style word of ADR-0063. The review leans to the style
   word: it is cosmetic, client-only and already per material.
+
+**Answered 2026-11-20 (owner):** the content pass runs now as a small apps chore with a
+window; the variation's amplitude goes in the render settings (ADR-0063's render-side style
+word), not the material row.

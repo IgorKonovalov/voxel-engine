@@ -486,9 +486,8 @@ the albedo by a hash of the hit voxel's integer position (ADR-0043's key `floor(
 times a per-material amplitude; optionally the emission too (the frames' crystal bodies are
 darker than their tips). Stateless, no history, no random stream: a static pattern under FSR 2
 and invisible to Plan 0090's pop counter. Cost a guess: one hash and one multiply a pixel.
-**Owner's call:** the amplitude on the material row (an ADR amending ADR-0065's file) or on
-ADR-0063's render-side per-material style word (the review leans there: cosmetic,
-client-only). Size S; a look spike with an owner window, after the content pass below shows
+**Owner, 2026-11-20:** the amplitude lives in the render settings (ADR-0063's render-side
+per-material style word), not on the material row. Size S; a look spike with an owner window, after the content pass below shows
 what the palette alone gives.
 
 ### The showcase's palette after the Crystal Islands review: pale rock, more and dimmer glowing rows, a darker key
