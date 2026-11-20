@@ -70,6 +70,8 @@ struct Arm {
     sky_history: u32,
     key_far: vxe_render::KeyFar,
     key_far_mix: vxe_render::KeyFarMix,
+    /// The queue's budget a frame through the drain, in ms (`pre=MS`); `None` the default.
+    pre_ms: Option<f64>,
 }
 
 impl Arm {
@@ -78,7 +80,8 @@ impl Arm {
     /// (sharpen 0), `albedo`, `full`, `nofilter`, `farn0`, `pin`, `anyhist`, `keyoff`,
     /// `sky0`, `brick`, `sun=EL/AZ`, `speed=M_S`, `turn=DEG`, `drain=N`, `face` (store read
     /// face), `phases=N`, `dither`, `nostair`, `wnormal`, `ray` (`key_far ray`), `step`
-    /// (`key_far_mix step`).
+    /// (`key_far_mix step`), `pre=MS` (the queue's budget through the drain, the default's
+    /// after it).
     fn parse() -> Self {
         let spec = std::env::var("VXE_WOBBLE").unwrap_or_else(|_| "default".into());
         let mut a = Arm {
@@ -114,6 +117,7 @@ impl Arm {
             sky_history: flythrough::default_lighting().sky_history,
             key_far: flythrough::default_lighting().key_far,
             key_far_mix: flythrough::default_lighting().key_far_mix,
+            pre_ms: None,
         };
         for t in spec.split(',') {
             let (k, v) = t.split_once('=').unwrap_or((t, ""));
@@ -155,6 +159,7 @@ impl Arm {
                 "sh" => a.sky_history = v.parse().unwrap(),
                 "ray" => a.key_far = vxe_render::KeyFar::Ray,
                 "step" => a.key_far_mix = vxe_render::KeyFarMix::Step,
+                "pre" => a.pre_ms = Some(v.parse().unwrap()),
                 other => panic!("unknown arm token {other}"),
             }
         }
@@ -702,6 +707,9 @@ mod reading {
             }
             return;
         }
+        if let Some(ms) = arm.pre_ms {
+            s.frame.set_bake_budget(vxe_render::Budget::PerFrame { ms });
+        }
         let t = std::time::Instant::now();
         let mut n = 0;
         while n < arm.drain && !s.frame.bake_queue().is_some_and(|q| q.empty()) {
@@ -710,6 +718,7 @@ mod reading {
             n += 1;
         }
         let drained = s.frame.bake_queue().is_some_and(|q| q.empty());
+        s.frame.set_bake_budget(vxe_render::Budget::default());
         println!(
             "  queue drained {drained} after {n} frames ({:.1} s)",
             t.elapsed().as_secs_f64()

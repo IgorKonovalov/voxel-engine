@@ -445,9 +445,9 @@ Readings: [`logs/0095.md`](logs/0095.md).
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The key channel in the store | dev | done (exploration) | 011d707a |
-| 2: The read at the far band and the seed | dev | built (exploration); readings in progress | committed with this row |
-| 3: The sun's step and the edit's ring | dev | not started | |
-| 4: The owner's window W1 | human | not started | |
+| 2: The read at the far band and the seed | dev | done (exploration); readings partial | 937a08da |
+| 3: The sun's step and the edit's ring | dev | not started (W1 runs before it, as the plan allows) | |
+| 4: The owner's window W1 | human | prepared after Phase 2 (`live/sessionW1.sh`), not run | |
 | 5: The fix pass after W1 | dev | not started | |
 | 6: The bars, the goldens, the NFR readings | dev | not started | |
 | 7: A second short look, if asked | human | not started | |
@@ -472,6 +472,9 @@ Readings: [`logs/0095.md`](logs/0095.md).
   key far mix step`); the menu's rows name every mode.
 - Phase 2: the far-baked class is read from the sky's source word `record` (the shared stale
   bit and job), not from the key words themselves.
+- Phase 2: the rig readings do not meet the Phase 2 targets in any arm; the far-baked class
+  was empty at the still and the stops (the far unbaked after the drain); the light pass's
+  ms, the store's bytes and the pre-roll on both adapters are not taken (readings log).
 - Phase 2: the seed counts as SEED_AGE samples of the key mean at every pixel whose record is
   fresh, also where the record landed after the pixel's reset.
 
