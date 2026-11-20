@@ -94,7 +94,11 @@ impl Arm {
     /// default unless named), `absorb` (the leaves absorb, `--leaf-shadow absorb`), `turnf=N`
     /// (the turn's frames).
     fn parse() -> Self {
-        let spec = std::env::var("VXE_WOBBLE").unwrap_or_else(|_| "default".into());
+        Self::from_spec(&std::env::var("VXE_WOBBLE").unwrap_or_else(|_| "default".into()))
+    }
+
+    /// The arm `spec` names ([`Arm::parse`]'s tokens).
+    fn from_spec(spec: &str) -> Self {
         let mut a = Arm {
             name: spec.replace(['/', '='], "-"),
             upscaler: "fsr2",
@@ -755,6 +759,15 @@ mod reading {
         let Some((mut rig, cam0)) = forest_rig(8) else {
             return;
         };
+        wobble_on(&mut rig, cam0, &arm);
+    }
+}
+
+/// The rig's protocol for `arm` on `rig` from the spawn's camera `cam0`: the table's rows
+/// printed, frames and maps under `live/wobble/<arm>/`.
+fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) {
+    QUEUE_ON.with(|q| q.set(true));
+    {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../live/wobble")
             .join(&arm.name);
@@ -766,16 +779,16 @@ mod reading {
             ..cam0
         };
         cam0.position.z += arm.up / VOXEL_M;
-        let f = frame_for(&rig, &arm);
-        let mut s = Stepper::new(&rig, f);
+        let f = frame_for(rig, arm);
+        let mut s = Stepper::new(rig, f);
         if arm.probe {
             for k in 0..8 {
                 let c = yawed(&cam0, 45.0 * k as f32);
                 for _ in 0..30 {
-                    queue_step(&mut rig, &mut s.frame, &c);
-                    s.run(&rig, &c);
+                    queue_step(rig, &mut s.frame, &c);
+                    s.run(rig, &c);
                 }
-                let shot = s.step(&rig, &c);
+                let shot = s.step(rig, &c);
                 let gw = s.frame.light_hit_positions().width() as usize;
                 let cls = classes(&shot.hits, &shot.source, gw, c.position.to_array());
                 let n = cls.len() as f64;
@@ -804,8 +817,8 @@ mod reading {
         let t = std::time::Instant::now();
         let mut n = 0;
         while n < arm.drain && !s.frame.bake_queue().is_some_and(|q| q.empty()) {
-            queue_step(&mut rig, &mut s.frame, &cam0);
-            s.run(&rig, &cam0);
+            queue_step(rig, &mut s.frame, &cam0);
+            s.run(rig, &cam0);
             n += 1;
         }
         let drained = s.frame.bake_queue().is_some_and(|q| q.empty());
@@ -815,8 +828,8 @@ mod reading {
             t.elapsed().as_secs_f64()
         );
         for _ in 0..SETTLE {
-            queue_step(&mut rig, &mut s.frame, &cam0);
-            s.run(&rig, &cam0);
+            queue_step(rig, &mut s.frame, &cam0);
+            s.run(rig, &cam0);
         }
         if arm.nqueue {
             QUEUE_ON.with(|q| q.set(false));
@@ -832,13 +845,13 @@ mod reading {
                 ..s.frame.lighting()
             });
             for _ in 0..32 {
-                queue_step(&mut rig, &mut s.frame, &cam0);
-                s.run(&rig, &cam0);
+                queue_step(rig, &mut s.frame, &cam0);
+                s.run(rig, &cam0);
             }
         }
         // The still strip.
         let still = run_segment(
-            &mut rig,
+            rig,
             &mut s,
             std::iter::repeat_n(cam0, 33),
             "still",
@@ -849,7 +862,7 @@ mod reading {
         );
         summarise(&still, "classes per frame");
         {
-            let shot = support::defects::read(&rig, &s.frame, None);
+            let shot = support::defects::read(rig, &s.frame, None);
             let gw = s.frame.light_hit_positions().width() as usize;
             let cls = classes(&shot.hits, &shot.source, gw, cam0.position.to_array());
             let n = cls.len() as f64;
@@ -870,7 +883,7 @@ mod reading {
         let fly_cams: Vec<Camera> = (1..=180).map(|k| moved(&cam0, step * k as f32)).collect();
         let cam1 = *fly_cams.last().unwrap();
         let fly = run_segment(
-            &mut rig,
+            rig,
             &mut s,
             fly_cams.into_iter(),
             "fly",
@@ -882,7 +895,7 @@ mod reading {
         summarise(&fly, "classes per frame, the camera moving");
         // The stop: 180 frames held at the fly's end.
         let stop = run_segment(
-            &mut rig,
+            rig,
             &mut s,
             std::iter::repeat_n(cam1, arm.hold),
             "stop",
@@ -893,7 +906,7 @@ mod reading {
         );
         summarise(&stop, "classes per frame");
         {
-            let shot = support::defects::read(&rig, &s.frame, None);
+            let shot = support::defects::read(rig, &s.frame, None);
             let gw = s.frame.light_hit_positions().width() as usize;
             let cls = classes(&shot.hits, &shot.source, gw, cam1.position.to_array());
             hold_series(&stop, &cls, still_far_max);
@@ -906,7 +919,7 @@ mod reading {
             .collect();
         let cam2 = *turn_cams.last().unwrap();
         let turn = run_segment(
-            &mut rig,
+            rig,
             &mut s,
             turn_cams.into_iter(),
             "turn",
@@ -917,7 +930,7 @@ mod reading {
         );
         summarise(&turn, "classes per frame, the camera turning");
         let hold = run_segment(
-            &mut rig,
+            rig,
             &mut s,
             std::iter::repeat_n(cam2, arm.hold),
             "hold",
@@ -928,7 +941,7 @@ mod reading {
         );
         summarise(&hold, "classes per frame");
         {
-            let shot = support::defects::read(&rig, &s.frame, None);
+            let shot = support::defects::read(rig, &s.frame, None);
             let gw = s.frame.light_hit_positions().width() as usize;
             let cls = classes(&shot.hits, &shot.source, gw, cam2.position.to_array());
             hold_series(&hold, &cls, still_far_max);
@@ -941,4 +954,180 @@ mod reading {
         }
         println!("done: {}", dir.display());
     }
+}
+
+/// Plan 0095 Phase 10's soak reading: the rig's protocol ([`wobble_on`]) for the arm set
+/// `default`, `albedo`, `ray,disc`, `column` and `nqueue`, no drain, on one forest (`r` 8) at
+/// 1080p through FSR 2 at 1.5: each arm's rows printed with the queue's depth and the far's key
+/// source split, so a later plan re-reads the wobble with the same instrument. Asserts nothing.
+/// `VXE_TEST_ADAPTER` picks the adapter (the RTX by hand; unset, lavapipe).
+#[test]
+#[ignore = "soak"]
+fn the_wobble_table_over_the_arm_set() {
+    let Some((mut rig, cam0)) = forest_rig(8) else {
+        return;
+    };
+    for spec in ["default", "albedo", "ray,disc", "column", "nqueue"] {
+        wobble_on(&mut rig, cam0, &Arm::from_spec(spec));
+    }
+}
+
+/// One run of the gate scene's protocol: the share of far pixels over 4 levels on each
+/// segment, and the near's at the stop.
+#[derive(Debug)]
+struct Gate {
+    /// The still strip's far pairs, mean.
+    still: f64,
+    /// The fly's far and near pairs, mean.
+    fly: f64,
+    fly_near: f64,
+    /// The stop's first frame against its last: near, far.
+    stop_near: f64,
+    stop_far: f64,
+    /// The hold's frames +0, +30 and +60 against its last, far.
+    hold: [f64; 3],
+    /// The far's and near's shares of the display at the hold's end.
+    far_px: f64,
+    near_px: f64,
+}
+
+/// The gate scene's frames: 120 settle, a still strip of 16, a fly of 20 at 1 m/s, a stop held
+/// 60, a 60-degree turn over 10, a hold of 120.
+const GATE_SETTLE: usize = 120;
+const GATE_STILL: usize = 16;
+const GATE_FLY: usize = 20;
+const GATE_STOP: usize = 60;
+const GATE_TURN: usize = 10;
+const GATE_HOLD: usize = 120;
+
+/// The gate scene's protocol for `arm` from `cam0`: the queue steps through the settle, and
+/// after it only when `!frozen`.
+fn gate_run(rig: &mut Rig, cam0: &Camera, arm: support::wobble::Arm, frozen: bool) -> Gate {
+    use support::wobble::{FAR, NEAR, depth, frame, moved, over, share, step, yawed};
+    let mut f = frame(rig, arm);
+    for _ in 0..GATE_SETTLE {
+        step(rig, &mut f, cam0, true);
+    }
+    let q = !frozen;
+    let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len().max(1) as f64;
+    let mut last = support::wobble::read(rig, &f, cam0);
+    let mut still = Vec::new();
+    for _ in 0..GATE_STILL {
+        let r = step(rig, &mut f, cam0, q);
+        still.push(over(&last.luma, &r.luma, &r.class, FAR));
+        last = r;
+    }
+    let (mut fly, mut fly_near) = (Vec::new(), Vec::new());
+    let mut cam = *cam0;
+    for k in 1..=GATE_FLY {
+        cam = moved(cam0, k as f32 / 60.0);
+        let r = step(rig, &mut f, &cam, q);
+        fly.push(over(&last.luma, &r.luma, &r.class, FAR));
+        fly_near.push(over(&last.luma, &r.luma, &r.class, NEAR));
+        last = r;
+    }
+    let stop: Vec<_> = (0..GATE_STOP).map(|_| step(rig, &mut f, &cam, q)).collect();
+    let end = stop.last().unwrap();
+    let stop_near = over(&stop[0].luma, &end.luma, &end.class, NEAR);
+    let stop_far = over(&stop[0].luma, &end.luma, &end.class, FAR);
+    let mut turned = cam;
+    for k in 1..=GATE_TURN {
+        turned = yawed(&cam, 60.0 * k as f32 / GATE_TURN as f32);
+        step(rig, &mut f, &turned, q);
+    }
+    let hold: Vec<_> = (0..GATE_HOLD)
+        .map(|_| step(rig, &mut f, &turned, q))
+        .collect();
+    let end = hold.last().unwrap();
+    let g = Gate {
+        still: mean(&still),
+        fly: mean(&fly),
+        fly_near: mean(&fly_near),
+        stop_near,
+        stop_far,
+        hold: [0, 30, 60].map(|i| over(&hold[i].luma, &end.luma, &end.class, FAR)),
+        far_px: share(&end.class, FAR),
+        near_px: share(&end.class, NEAR),
+    };
+    println!(
+        "gate, {} on {}{}: still far {:.2} %; fly far {:.2} % near {:.2} %; stop +0 near {:.2} % far {:.2} %; hold +0 / +30 / +60 far {:.2} / {:.2} / {:.2} %; far {:.1} % of the display, near {:.1} %; {}",
+        arm.name(),
+        rig.adapter,
+        if frozen {
+            ", queue frozen"
+        } else {
+            ", undrained"
+        },
+        g.still,
+        g.fly,
+        g.fly_near,
+        g.stop_near,
+        g.stop_far,
+        g.hold[0],
+        g.hold[1],
+        g.hold[2],
+        g.far_px,
+        g.near_px,
+        depth(&f)
+    );
+    g
+}
+
+/// Plan 0095 Phase 10 bar 1 (ADR-0079, as amended 2026-11-20: the far no worse than the before):
+/// [`support::wobble`]'s scene, a 3 x 3 x 2 chunk forest of seed 1 at 320 x 180 through FSR 2
+/// at 1.5 to 480 x 270, no drain, the queue stepping at the default budget from the first frame;
+/// [`gate_run`]'s protocol (120 settle frames, a still strip of 16, a 20-frame fly at 1 m/s, a
+/// stop held 60, a 60-degree turn over 10 frames, a hold of 120: the hold runs past 60 frames so
+/// +60 has a final frame to read against). With the queue frozen at the settle's end, under the
+/// picks against the before (`key far ray`, `penumbra disc`) read in the same run: the far
+/// class's share over 4 levels on the still's pairs (mean), the fly's pairs (mean), and from the
+/// hold's last frame at +30 and +60, each at or under the before's plus 1 point; the near
+/// class's stop +0 within 2 points of the lighting-off (albedo) run's. The same segments
+/// undrained print with the queue's depth and the picks' +60 is at most 10 % (a guess: the
+/// landings' fades over a 2 s hold; re-read when Plan 0096 lands). Far is a hit 6 m out or more
+/// ([`support::wobble::NEAR_M`]: the far normal's weight at least 0.996 at this width). Every
+/// figure prints. `VXE_TEST_ADAPTER` picks the adapter (unset, lavapipe).
+#[test]
+#[ignore = "soak"]
+fn the_far_moves_no_worse_than_the_before_and_the_near_stops_clean() {
+    use support::wobble::Arm;
+    let Some((mut rig, cam)) = support::wobble::forest() else {
+        return;
+    };
+    let picks = gate_run(&mut rig, &cam, Arm::Picks, true);
+    let before = gate_run(&mut rig, &cam, Arm::Before, true);
+    let off = gate_run(&mut rig, &cam, Arm::Albedo, true);
+    let picks_u = gate_run(&mut rig, &cam, Arm::Picks, false);
+    let before_u = gate_run(&mut rig, &cam, Arm::Before, false);
+    println!(
+        "gate undrained: picks +60 {:.2} %, before +60 {:.2} %",
+        picks_u.hold[2], before_u.hold[2]
+    );
+    assert!(
+        picks.far_px > 5.0,
+        "far {:.1} % of the display",
+        picks.far_px
+    );
+    for (seg, p, b) in [
+        ("still", picks.still, before.still),
+        ("fly", picks.fly, before.fly),
+        ("hold +30", picks.hold[1], before.hold[1]),
+        ("hold +60", picks.hold[2], before.hold[2]),
+    ] {
+        assert!(
+            p <= b + 1.0,
+            "{seg}: far {p:.2} % over 4 against the before's {b:.2} % + 1"
+        );
+    }
+    assert!(
+        (picks.stop_near - off.stop_near).abs() <= 2.0,
+        "stop +0 near {:.2} % against the lighting-off {:.2} %",
+        picks.stop_near,
+        off.stop_near
+    );
+    assert!(
+        picks_u.hold[2] <= 10.0,
+        "undrained +60 far {:.2} %",
+        picks_u.hold[2]
+    );
 }

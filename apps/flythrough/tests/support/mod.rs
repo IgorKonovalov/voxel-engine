@@ -14,6 +14,7 @@ pub mod settle;
 pub mod stillness;
 pub mod streamed;
 pub mod terms;
+pub mod wobble;
 
 use std::path::PathBuf;
 
@@ -218,6 +219,57 @@ pub fn assert_golden(name: &str, rgba: &[u8]) {
         f * 100.0
     );
     assert!(f <= 0.001, "{name}: {:.4} % of pixels differ", f * 100.0);
+}
+
+/// The mean SSIM of two `w`-wide rgba8 images over their luma (Rec. 709 weights, 0..255), on
+/// non-overlapping 8 x 8 windows with the standard constants (`K1` 0.01, `K2` 0.03, `L` 255);
+/// a partial window at an edge is left out.
+pub fn ssim(a: &[u8], b: &[u8], w: u32) -> f64 {
+    assert_eq!(a.len(), b.len());
+    let (w, h) = (w as usize, a.len() / 4 / w as usize);
+    let luma =
+        |p: &[u8]| 0.2126 * f64::from(p[0]) + 0.7152 * f64::from(p[1]) + 0.0722 * f64::from(p[2]);
+    let (c1, c2) = ((0.01f64 * 255.0).powi(2), (0.03f64 * 255.0).powi(2));
+    let (mut sum, mut n) = (0.0, 0usize);
+    for wy in (0..h - h % 8).step_by(8) {
+        for wx in (0..w - w % 8).step_by(8) {
+            let (mut ma, mut mb, mut aa, mut bb, mut ab) = (0.0, 0.0, 0.0, 0.0, 0.0);
+            for y in wy..wy + 8 {
+                for x in wx..wx + 8 {
+                    let i = 4 * (y * w + x);
+                    let (p, q) = (luma(&a[i..i + 4]), luma(&b[i..i + 4]));
+                    (ma, mb) = (ma + p, mb + q);
+                    (aa, bb, ab) = (aa + p * p, bb + q * q, ab + p * q);
+                }
+            }
+            let k = 64.0;
+            let (ma, mb) = (ma / k, mb / k);
+            let (va, vb, cov) = (aa / k - ma * ma, bb / k - mb * mb, ab / k - ma * mb);
+            sum += ((2.0 * ma * mb + c1) * (2.0 * cov + c2))
+                / ((ma * ma + mb * mb + c1) * (va + vb + c2));
+            n += 1;
+        }
+    }
+    sum / n.max(1) as f64
+}
+
+/// Compares `rgba` with the golden `name` by [`ssim`], at least `floor`, or rewrites the golden
+/// when `VXE_BLESS=1`; the share of pixels differing by more than 2/255 prints beside it.
+pub fn assert_golden_ssim(name: &str, rgba: &[u8], floor: f64) {
+    let path = golden_path(name);
+    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+        write_png(&path, rgba, WIDTH, HEIGHT);
+        println!("blessed {path:?}");
+        return;
+    }
+    let (golden, w, h) = read_png(&path);
+    assert_eq!((w, h), (WIDTH, HEIGHT));
+    let s = ssim(rgba, &golden, WIDTH);
+    println!(
+        "{name}: SSIM {s:.4}; {:.4} % of pixels differ by more than 2/255",
+        fraction_differing(rgba, &golden, 2) * 100.0
+    );
+    assert!(s >= floor, "{name}: SSIM {s:.4} under {floor}");
 }
 
 // ---- The surface-look harness (tests/gpu_look.rs) ----

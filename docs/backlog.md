@@ -1278,6 +1278,22 @@ clip levels' meshes against marching them, measured on both adapters, as an ADR 
 **Owner, later 2026-11-20:** "agreed on far distance": the hybrid is the agreed direction for
 the far field, not only a lean. The re-read runs after Plan 0087 (the rename), as the first M10
 step; the meshing explainer and Morley's talk are in `references/voxel-optimizations.md`.
+The key light's far pixels still cast the ray inside the far normal's band: see "Narrow the far
+normal's band so far pixels stop casting the ray" below, for whichever far-field plan runs first.
+
+### Narrow the far normal's band so far pixels stop casting the ray
+
+Raised 2026-11-20 at Plan 0095 Phase 10's amendment (owner: "no worse than the before" at the
+far; narrowing is the far-field work's). ADR-0079's far reads the record, else the column map's
+horizon, only at the far normal's weight 1; inside the band (`[2, 6]` pixels a voxel) it still
+casts the key ray, and the Phase 9 readings (`docs/plans/logs/0095.md`, "Phase 9 readings", RTX,
+1080p, the forest's hold) put 96.9 % of the far's key samples on the ray, 1.8 % on the horizon,
+1.3 % on the record. So the far's motion bars read about the before's (hold +60 27.2 % against
+30.8 %, queue frozen). **What it takes:** a narrower band for the key's far gate only (its own
+pair of pixel sizes beside the shading normal's), or the far estimate inside the band blended
+with the ray instead of switched, read on the wobble rig (`gpu_wobble`'s soak reading) on both
+adapters; an owner window, since the far's shadows change where the ray gives way. **Pick up**
+with the hybrid far field above or Plan 0096's far tiers, whichever runs first.
 
 ## Later apps
 

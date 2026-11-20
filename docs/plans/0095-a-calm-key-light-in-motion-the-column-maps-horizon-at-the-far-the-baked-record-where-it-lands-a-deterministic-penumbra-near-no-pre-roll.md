@@ -624,9 +624,9 @@ its Phases 5 to 7 are Phases 9 to 11.
 | 6: The reach-bound count, the no-value bricks | dev | done; the no-value bricks named (the dump's own voxel rounding), not fixed | 930e75ad |
 | 7: The owner's window W2, no pre-roll | human | run 2026-11-20 on the forest, no pre-roll; (a) stands as the default, the far keeps the record; owner: 1a "everything besides near lines on slopes looks good", 1d "before - grain" (readings log) | 87b09f09 |
 | 8: The sun's step and the edit's ring (if W2 keeps the record) | dev | done; the day-cycle readings in `87ced612` | a92aca70 |
-| 9: The fix pass after W2 | dev | done; the picks were the defaults; the approach probes moved into the default light pipelines; the rig re-read follows the commit | committed with this row |
-| 10: The bars, the goldens, the NFR readings | dev | not started | |
-| 11: A second short look, if asked | human | not started | |
+| 9: The fix pass after W2 | dev | done; the picks were the defaults; the approach probes moved into the default light pipelines; the rig re-read follows the commit | 220a599c |
+| 10: The bars, the goldens, the NFR readings | dev | in progress (main merged `2dfbad9b`, flags cap `b46cb3eb`); stopped at the bars: the near stop, the undrained +60 and the far return miss as stated (readings log) | wip, committed with this row |
+| 11: A second short look, if asked | human | struck 2026-11-20 (owner, amendment `95d735fd`): W2 asked for no second look | |
 
 ### Notes
 

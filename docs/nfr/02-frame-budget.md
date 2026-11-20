@@ -1042,3 +1042,30 @@ the 4.0 ms lighting line), owed to Plan 0096, which reads the RENOIR's outdoor l
 ceiling's step are one clamp each in the exposure pass (0 ms by construction, not read); the
 no-ray fade's temporal and composite cost is not read separately. The exposure's meter tile
 grows 8 to 16 B and its uniform 96 to 112 B: +115 216 B at 1280 x 720 internal.
+
+**The key light with no screen history (Plan 0095, ADR-0079; 2026-11-20, release `flythrough`
+at `b46cb3eb`'s render code, `--headless --source outdoor --frames 1500 --render 1920x1080`,
+the forest `--spawn forest --trees forest --time 15:00` and the hills `--time 12:00`, undrained
+(the queue at the default budget) and drained (`--bake-budget frame:40`, 0 jobs at the end),
+the HUD's last light row, exclusive perf lock; the RTX runs started at a 1-minute load of 3.7
+to 7.1 (loaded, indicative), the RENOIR's at 0.5 to 4.2; every row in
+`docs/plans/logs/0095.md`, Phase 10).** The fly-through's defaults since the plan (the far reads
+the baked record, else the column map's horizon toward the sun; the approach penumbra near, on
+every adapter and profile, the owner's pick of 2026-11-20) against the before (`--key-far ray
+--penumbra disc`), light pass in ms, undrained / drained:
+
+| scene | RTX 3080 Laptop, picks | RTX, before | RADV RENOIR, picks | RENOIR, before |
+|---|---|---|---|---|
+| forest 15:00 | 3.04 / 3.43 | 1.19 / 1.35 | **34.16 / 33.95** | 12.04 / 12.03 |
+| hills 12:00 | 1.11 / 1.28 | 0.84 / 0.94 | **11.18 / 11.18** | 8.01 / 8.01 |
+
+**The RENOIR's light pass is over the 4.0 ms lighting line, named: the approach penumbra's
+cost** (+22.1 ms in the forest, +3.2 on the hills); Plan 0096 Phase 6 (the slow adapter's light
+pass, lever by lever) takes it as a named lever. The RTX is inside the line. The pre-roll is a
+check, not a claim: the coarse pass ends at 7.4 to 7.6 s (picks) against 7.2 to 7.4 (before) in
+the RTX's forest and at 6.0 s in both arms on its hills, at 10.2 to 11.6 against 10.3 to 10.5 s
+in the RENOIR's forest and 7.2 to 7.4 s on its hills; the first frame follows 0.9 to 1.5 s
+later. The key re-bake under the day cycle (Phase 8's readings at `a92aca70`, `--day-cycle`,
+1200 s day, a key step every 10 s, no drain, 3600 frames): the RTX re-keys every marked block
+2.3 to 5.7 s after a step (forest 48.9, hills 99.5 key jobs a second), the RENOIR in 9.1 to
+49.5 s in the forest and 7.1 to 14.6 s on the hills (3.0 and 4.7 a second).
