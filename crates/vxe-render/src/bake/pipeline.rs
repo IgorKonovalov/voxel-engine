@@ -15,7 +15,7 @@ pub(crate) const BAKE_BATCH_FACES: usize = 65_536;
 pub(crate) const OPEN_JOBS: usize = 256;
 
 /// The bytes of the job uniform (`BakeJob` in `bake.wgsl`).
-pub(crate) const JOB_BYTES: u64 = 32;
+pub(crate) const JOB_BYTES: u64 = 48;
 
 /// A slot's 16-byte words (`TABLE_SLOT` in `bake.wgsl`): the candidate table (a header, then
 /// [`LIGHT_TABLE_ENTRIES`] entries), then the job's chunk.

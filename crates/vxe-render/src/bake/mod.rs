@@ -121,6 +121,8 @@ pub struct BakeReport {
     pub ray_len: f64,
     /// Sky rays the kept samples drew (ADR-0070).
     pub sky_rays: u64,
+    /// Key light rays the kept samples drew (ADR-0079).
+    pub key_rays: u64,
     /// Every face, under [`BakeSettings::keep_faces`].
     pub outcomes: Vec<FaceOutcome>,
 }

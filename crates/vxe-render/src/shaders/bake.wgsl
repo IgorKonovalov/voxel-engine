@@ -33,6 +33,15 @@
 // open with probability its transmittance. The sky ray draws its own dimensions, so the emissive
 // sums are the same with the sky on and off. `sky_open` returns the round's open rays.
 //
+// Under a key light (`job.key` 1, ADR-0079) a face's samples below `key_n` each also draw one
+// ray from the sample's point toward a uniform point of the light's disc (`disc_direction`
+// about `job.key_dir`, radius `job.key_radius`), through the same shadow walk as the sky rays,
+// capped at `job.radius`: a ray that finds no rock reached the light (an absent chunk is air,
+// the light pass's rule for the key ray), counted open with probability its transmittance
+// through SHADOW_ABSORB materials. A face that looks away from the light (`n . l <= 0`) is
+// unlit and draws none. Its dimensions are its own, so the emissive and sky sums are the same
+// with the key light on and off. `key_open` returns the round's open rays.
+//
 // Each sample is the light pass's estimate at a uniform point of the face with the face's normal, times the window `(1 - (d / L)^4)^2`, d the distance from the point to the kept
 // emitter point and L `job.radius` in voxels: it falls to 0 at L, so the table's edge is no seam.
 
@@ -44,9 +53,14 @@ struct BakeJob {
     clamp: u32,
     // The sky rays' bits (`bake::BAKE_SKY_ON`, `_COARSE`, `_STYLES`); 0 draws none.
     sky: u32,
-    _pad1: u32,
+    // 1: the key rays are drawn toward `key_dir`'s disc of `key_radius` radians.
+    key: u32,
     _pad2: u32,
     _pad3: u32,
+    key_dir_x: f32,
+    key_dir_y: f32,
+    key_dir_z: f32,
+    key_radius: f32,
 };
 
 struct BakeFace {
@@ -76,10 +90,17 @@ struct BakeFace {
     sky_open: u32,
     // In: the face's samples below this index draw a sky ray.
     sky_n: u32,
+    // Out: the round's key light rays that reached the light's disc.
+    key_open: u32,
+    // In: the face's samples below this index draw a key light ray.
+    key_n: u32,
 };
 
 // The random-number dimensions of a sample's sky ray, two, above the candidates'.
 const BAKE_SKY_DIM: u32 = 1002u;
+
+// The random-number dimensions of a sample's key light ray, three, above the sky ray's.
+const BAKE_KEY_DIM: u32 = 1005u;
 
 @group(3) @binding(0) var<uniform> job: BakeJob;
 @group(3) @binding(1) var<storage, read_write> faces: array<BakeFace>;
@@ -116,6 +137,7 @@ var<workgroup> red_material: array<u32, 64>;
 var<workgroup> red_rays: array<u32, 64>;
 var<workgroup> red_len: array<f32, 64>;
 var<workgroup> red_sky: array<u32, 64>;
+var<workgroup> red_key: array<u32, 64>;
 var<workgroup> red_samples: u32;
 
 @compute @workgroup_size(64, 1, 1)
@@ -148,6 +170,9 @@ fn bake_round(
     var rays = 0u;
     var ray_len = 0.0;
     var sky_open = 0u;
+    var key_open = 0u;
+    let key_dir = vec3<f32>(job.key_dir_x, job.key_dir_y, job.key_dir_z);
+    let key_faces = job.key != 0u && dot(nf, key_dir) > 0.0;
     let sky_coarse = (job.sky & 2u) != 0u;
     let sky_styles = (job.sky & 4u) != 0u;
     let sky_end = (job.sky & 8u) != 0u;
@@ -165,6 +190,16 @@ fn bake_round(
             // transmittance, so the count's expectation is the transmitted share.
             if (open && (absorb_tau == 0.0 || rand(px, BAKE_SKY_DIM + 2u) < exp(-absorb_tau))) {
                 sky_open += 1u;
+            }
+        }
+        if (key_faces && f.first + s < f.key_n) {
+            let d = disc_direction(key_dir, job.key_radius, rand(px, BAKE_KEY_DIM), rand(px, BAKE_KEY_DIM + 1u));
+            absorb_on = sky_styles;
+            absorb_tau = 0.0;
+            let lit = !shadowed_styled_walk(shadow_origin(p, nf), d, job.radius, sky_coarse, sky_styles);
+            absorb_on = false;
+            if (lit && (absorb_tau == 0.0 || rand(px, BAKE_KEY_DIM + 2u) < exp(-absorb_tau))) {
+                key_open += 1u;
             }
         }
         let r = draw_candidates(px, p, nf);
@@ -208,6 +243,7 @@ fn bake_round(
     red_rays[lane] = rays;
     red_len[lane] = ray_len;
     red_sky[lane] = sky_open;
+    red_key[lane] = key_open;
     for (var stride = BAKE_LANES / 2u; stride > 0u; stride >>= 1u) {
         workgroupBarrier();
         if (lane < stride) {
@@ -218,6 +254,7 @@ fn bake_round(
             red_rays[lane] += red_rays[o];
             red_len[lane] += red_len[o];
             red_sky[lane] += red_sky[o];
+            red_key[lane] += red_key[o];
             let b = red_best[o];
             let b_at = red_best_at[o];
             if (b > red_best[lane] || (b == red_best[lane] && b_at < red_best_at[lane])) {
@@ -242,5 +279,6 @@ fn bake_round(
     f.rays = red_rays[0];
     f.ray_len = red_len[0];
     f.sky_open = red_sky[0];
+    f.key_open = red_key[0];
     faces[at] = f;
 }

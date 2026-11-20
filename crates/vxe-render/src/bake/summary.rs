@@ -700,17 +700,17 @@ mod tests {
             bricks: vec![(3, vec![1, 2, 3]), (9, vec![4])],
             glass: Vec::new(),
         };
-        // The directory's 512 words, then the summary's 9 (ADR-0053; seven words and ADR-0070's
-        // two of sky visibility), then the records.
+        // The directory's 512 words, then the summary's 11 (ADR-0053; seven words, ADR-0070's
+        // two of sky visibility and ADR-0079's two of key visibility), then the records.
         let (d, words) = layout(&faces, record_words(8));
-        assert_eq!(d.len(), 512 + 9, "the head: directory and summary");
-        assert_eq!(d[3], (512 + 9 + 9) << 11);
-        assert_eq!(d[9], (512 + 9 + 18) << 11);
+        assert_eq!(d.len(), 512 + 11, "the head: directory and summary");
+        assert_eq!(d[3], (512 + 11 + 11) << 11);
+        assert_eq!(d[9], (512 + 11 + 22) << 11);
         assert_eq!(d[4], 0);
-        assert_eq!(words, 512 + 9 + 18);
+        assert_eq!(words, 512 + 11 + 22);
         let (d, words) = layout(&faces, record_words(4));
-        assert_eq!(d[9], (512 + 9 + 2 * 72) << 11);
-        assert_eq!(words, 512 + 9 + 2 * 72);
+        assert_eq!(d[9], (512 + 11 + 2 * 88) << 11);
+        assert_eq!(words, 512 + 11 + 2 * 88);
     }
 
     /// A record of one cell: `dirs` (face, value) held, material `m`.

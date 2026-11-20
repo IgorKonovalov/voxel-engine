@@ -71,6 +71,86 @@ fn a_baked_face_ignores_the_sky() {
     );
 }
 
+/// Every brick record of `blocks` in block and slot order, as its words.
+fn records(blocks: &BTreeMap<[i32; 3], Vec<u32>>) -> Vec<Vec<u32>> {
+    let w = vxe_render::internals::BRICK_WORDS;
+    let mut out = Vec::new();
+    for block in blocks.values() {
+        for &dir in &block[..512] {
+            if dir != 0 {
+                out.push(block[(dir >> 11) as usize - w..(dir >> 11) as usize].to_vec());
+            }
+        }
+    }
+    out
+}
+
+/// A sky over the small box whose sun is at elevation `el` degrees (the moon under the
+/// horizon): no key light at a negative `el`.
+fn sun_sky(el: f32) -> vxe_render::sky::Sky {
+    let e = el.to_radians();
+    vxe_render::sky::Sky::new(
+        vxe_render::sky::Body::sun([0.3 * e.cos(), -(0.91f32).sqrt() * e.cos(), e.sin()]),
+        vxe_render::sky::Body::moon([0.0, 0.0, -1.0]),
+    )
+}
+
+/// Plan 0095 Phase 1 bar 3 (ADR-0046's identity rule for the key words, ADR-0079): the small box
+/// under a sun at elevation 40: every record carries the key words (`KEY_BAKED`), and a second
+/// bake and one in batches of 7 faces read byte-equal blocks.
+#[test]
+fn the_key_words_bake_identically() {
+    let (world, _) = small_box();
+    let Some(mut rig) = rig_on(world, [16, 16], None) else {
+        return;
+    };
+    let counts = test_counts(256);
+    rig.frame.set_sky(Some(sun_sky(40.0)));
+    rig.bake(&counts);
+    let lit = rig.blocks();
+    let lit_records = records(&lit);
+    assert!(!lit_records.is_empty());
+    assert!(
+        lit_records.iter().all(|r| r[10] & (1 << 16) != 0),
+        "a record with no KEY_BAKED under a sun"
+    );
+    rig.bake(&counts);
+    assert_eq!(rig.blocks(), lit, "a second bake");
+    rig.bake(&BakeSettings {
+        batch_faces: 7,
+        ..counts.clone()
+    });
+    assert_eq!(rig.blocks(), lit, "batches of 7 faces");
+}
+
+/// Plan 0095 Phase 1 bar 3 (ADR-0070's no-sky form): the small box under the same sky with both
+/// bodies below the horizon (no key light): every record's emissive, tail and sky words equal
+/// those of the bake under the sun at elevation 40, and its two key words are zero.
+#[test]
+fn a_bake_with_no_key_light_leaves_the_other_words() {
+    let (world, _) = small_box();
+    let Some(mut rig) = rig_on(world, [16, 16], None) else {
+        return;
+    };
+    let counts = test_counts(256);
+    rig.frame.set_sky(Some(sun_sky(40.0)));
+    rig.bake(&counts);
+    let lit = records(&rig.blocks());
+    rig.frame.set_sky(Some(sun_sky(-10.0)));
+    rig.bake(&counts);
+    let night = records(&rig.blocks());
+    assert_eq!(night.len(), lit.len());
+    assert!(!lit.is_empty());
+    for (n, l) in night.iter().zip(&lit) {
+        assert_eq!(
+            n[..9],
+            l[..9],
+            "the emissive, tail and sky words with no key light"
+        );
+        assert_eq!(n[9..], [0, 0], "the key words with no key light");
+    }
+}
+
 /// The records depend on each face's own samples alone: one batch, batches of 7 faces and the
 /// jobs reversed read bit-identical; and [`four_ways`].
 #[test]

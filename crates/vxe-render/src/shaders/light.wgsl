@@ -152,6 +152,20 @@ fn sky_ray_open(o: vec3<f32>, d: vec3<f32>, len: f32, coarse: bool, styles: bool
     return !s && (end_is_sky || above_column(march_end));
 }
 
+// A unit direction drawn uniformly over the solid angle of the disc of angular radius `r`
+// about unit `l` (the key light's, sky_light.wgsl, and the bake's key rays), from `u` and `v` in [0, 1): `1 - cos` taken as `2 sin^2(r / 2) u`, which
+// keeps its digits at the sun's 4.65 mrad.
+fn disc_direction(l: vec3<f32>, r: f32, u: f32, v: f32) -> vec3<f32> {
+    let h = sin(0.5 * r);
+    let omc = 2.0 * h * h * u;
+    let sin_t = sqrt(max(omc * (2.0 - omc), 0.0));
+    let phi = 2.0 * PI * v;
+    let a = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), abs(l.x) > 0.9);
+    let t = normalize(cross(a, l));
+    let b = cross(l, t);
+    return normalize(l * (1.0 - omc) + (t * cos(phi) + b * sin(phi)) * sin_t);
+}
+
 // A unit direction about unit `n` drawn with density `cos / pi` from `u` and `v` in [0, 1).
 fn cosine_direction(n: vec3<f32>, u: f32, v: f32) -> vec3<f32> {
     let r = sqrt(u);

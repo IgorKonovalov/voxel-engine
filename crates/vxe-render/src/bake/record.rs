@@ -22,8 +22,11 @@ pub const STORE_COARSE_READS: u64 = 2;
 /// The words of a block's directory.
 pub(crate) const DIRECTORY_WORDS: u64 = CHUNK_BRICKS as u64;
 
-/// The bytes of one face in the working buffer (`BakeFace` in `bake.wgsl`).
-pub(crate) const FACE_BYTES: u64 = 80;
+/// The `u32` words of one face in the working buffer (`BakeFace` in `bake.wgsl`).
+pub(crate) const FACE_WORDS: usize = 22;
+
+/// The bytes of one face in the working buffer.
+pub(crate) const FACE_BYTES: u64 = FACE_WORDS as u64 * 4;
 
 /// The display's level, 0 to 255, of luminance `l` at unit exposure: `tone.wgsl`'s ACES and 2.2
 /// encode at [`BAKE_EXPOSURE`], unrounded.
@@ -74,10 +77,11 @@ pub fn rgb9e5_unpack(w: u32) -> [f32; 3] {
 /// Words of a brick-level cell's record: six direction values in [`rgb9e5_pack`], face order, then
 /// `material | direction mask << 16`, the mask's bit `face` set where the cell has a face
 /// of that direction, then two words of sky visibility (ADR-0070): direction `face`'s `u8` at
-/// byte `face % 4` of word `7 + face / 4`, and [`VIS_BAKED`] in the second. A brick's record
-/// is its cells' records in cell order ([`record_words`]): one cell of 8 voxels, or eight of 4
-/// (`x + 2 y + 4 z`).
-pub const BRICK_WORDS: usize = 9;
+/// byte `face % 4` of word `7 + face / 4`, and [`VIS_BAKED`] in the second; then two words of
+/// the key light's visibility over its disc (ADR-0079) in the same form from [`KEY_WORD`], with
+/// [`KEY_BAKED`] in the second. A brick's record is its cells' records in cell order
+/// ([`record_words`]): one cell of 8 voxels, or eight of 4 (`x + 2 y + 4 z`).
+pub const BRICK_WORDS: usize = 11;
 
 /// A record's first sky visibility word.
 pub(crate) const VIS_WORD: usize = 7;
@@ -89,6 +93,56 @@ pub(crate) const VIS_BAKED: u32 = 1 << 16;
 /// visibilities predate the edit until its re-bake lands, whose record clears it. The light
 /// pass casts the sky rays at a face of a record with it.
 pub(crate) const SKY_STALE: u32 = 1 << 17;
+
+/// A record's first key light visibility word (ADR-0079).
+pub(crate) const KEY_WORD: usize = 9;
+
+/// The second key visibility word's flag: the record's key visibilities were baked under a key
+/// light. They share the sky's [`SKY_STALE`]: a dig's ring marks both channels.
+pub(crate) const KEY_BAKED: u32 = 1 << 16;
+
+/// Key light rays a brick direction draws in the bake (ADR-0079's `KEY_BAKE_RAYS`, a guess: the
+/// binomial standard deviation at a half-lit disc is 1/16).
+pub const KEY_BAKE_RAYS: u32 = 64;
+
+/// A block's word holding the key light's direction its key visibilities were baked under
+/// ([`pack_direction`]): the summary record's first key word, whose [`KEY_BAKED`] stays clear,
+/// so no reader takes it for a visibility. 0 where the block was baked with no key light.
+pub const KEY_SUN_AT: u64 = SUMMARY_AT + KEY_WORD as u64;
+
+/// Unit direction `d` as one word: its octahedral map, `x` in the low 16 bits, `y` in the
+/// high, each in [-1, 1] over `1..=65535` so that no direction packs to 0 (none).
+pub(crate) fn pack_direction(d: [f32; 3]) -> u32 {
+    let l = d[0].abs() + d[1].abs() + d[2].abs();
+    if l.is_nan() || l <= 0.0 {
+        return 0;
+    }
+    let (mut x, mut y) = (d[0] / l, d[1] / l);
+    if d[2] < 0.0 {
+        let (ox, oy) = (x, y);
+        x = (1.0 - oy.abs()) * if ox >= 0.0 { 1.0 } else { -1.0 };
+        y = (1.0 - ox.abs()) * if oy >= 0.0 { 1.0 } else { -1.0 };
+    }
+    let q = |v: f32| ((v.clamp(-1.0, 1.0) * 32767.0).round() as i32 + 32768) as u32;
+    q(x) | q(y) << 16
+}
+
+/// The unit direction of a [`pack_direction`] word; `None` for 0.
+pub fn unpack_direction(w: u32) -> Option<[f32; 3]> {
+    if w == 0 {
+        return None;
+    }
+    let u = |b: u32| (b as i32 - 32768) as f32 / 32767.0;
+    let (mut x, mut y) = (u(w & 0xFFFF), u(w >> 16));
+    let z = 1.0 - x.abs() - y.abs();
+    if z < 0.0 {
+        let (ox, oy) = (x, y);
+        x = (1.0 - oy.abs()) * if ox >= 0.0 { 1.0 } else { -1.0 };
+        y = (1.0 - ox.abs()) * if oy >= 0.0 { 1.0 } else { -1.0 };
+    }
+    let n = (x * x + y * y + z * z).sqrt();
+    Some([x / n, y / n, z / n])
+}
 
 /// Sky rays a brick direction draws at most in the bake (ADR-0070's `SKY_BAKE_RAYS`, a guess:
 /// the binomial standard deviation at a half open sky is 1/32).
@@ -118,6 +172,22 @@ pub(crate) fn visibility_words(v: [f32; 6]) -> [u32; 2] {
     ]
 }
 
+/// The two key visibility words (ADR-0079) of six fractions in [0, 1], rounded to `u8` as
+/// [`visibility_words`], with [`KEY_BAKED`].
+pub(crate) fn key_words(v: [f32; 6]) -> [u32; 2] {
+    let [a, b] = visibility_words(v);
+    [a, (b & !VIS_BAKED) | KEY_BAKED]
+}
+
+/// Direction `face`'s key light visibility in [0, 1] of record `r` (ADR-0079), `None` where it
+/// was baked with no key light or lacks the direction.
+pub fn record_key_visibility(r: &[u32], face: usize) -> Option<f32> {
+    if r[KEY_WORD + 1] & KEY_BAKED == 0 || (r[6] >> (16 + face)) & 1 == 0 {
+        return None;
+    }
+    Some(((r[KEY_WORD + face / 4] >> (8 * (face % 4))) & 255) as f32 / 255.0)
+}
+
 /// The store header's flags word: bit 1 ([`FLAG_CELL4`]) where the records' cells are 4 voxels.
 pub(crate) const STORE_FLAGS: u64 = 12;
 
@@ -145,14 +215,22 @@ pub(crate) const FLAG_MISSING_SHIFT: u32 = 2;
 /// A brick's record from its faces' states, one [`BRICK_WORDS`] record a cell of `cell` voxels in
 /// cell order: each direction the mean of the cell's baked faces' values, the mask of the
 /// directions it has, and the material of the sample that read the largest luminance over the
-/// cell; under `sky` each direction's visibility the mean of its faces' open fractions.
-pub(super) fn brick_record(states: &[FaceState], clamp: bool, cell: u32, sky: bool) -> Vec<u32> {
+/// cell; under `sky` each direction's visibility the mean of its faces' open fractions, and under
+/// `key` each direction's key visibility the mean of its faces' lit fractions.
+pub(super) fn brick_record(
+    states: &[FaceState],
+    clamp: bool,
+    cell: u32,
+    sky: bool,
+    key: bool,
+) -> Vec<u32> {
     let side = (8 / cell) as usize;
     let cells = side * side * side;
     let mut sums = vec![[[0f64; 3]; 6]; cells];
     let mut counts = vec![[0u32; 6]; cells];
     let mut best = vec![(-1f32, 0u16); cells];
     let mut vis = vec![[(0f64, 0u32); 6]; cells];
+    let mut lit = vec![[(0f64, 0u32); 6]; cells];
     for s in states {
         let l = s.voxel.map(|x| (x.rem_euclid(8) as u32 / cell) as usize);
         let c = l[0] + side * (l[1] + side * l[2]);
@@ -172,6 +250,10 @@ pub(super) fn brick_record(states: &[FaceState], clamp: bool, cell: u32, sky: bo
             vis[c][f].0 += open;
             vis[c][f].1 += 1;
         }
+        if let Some(l) = s.key_fraction() {
+            lit[c][f].0 += l;
+            lit[c][f].1 += 1;
+        }
     }
     let mut out = vec![0u32; BRICK_WORDS * cells];
     for c in 0..cells {
@@ -185,15 +267,20 @@ pub(super) fn brick_record(states: &[FaceState], clamp: bool, cell: u32, sky: bo
             }
         }
         r[6] = u32::from(best[c].1) | mask << 16;
-        if sky {
-            let v = vis[c].map(|(sum, n)| {
+        let mean = |m: [(f64, u32); 6]| {
+            m.map(|(sum, n)| {
                 if n > 0 {
                     (sum / f64::from(n)) as f32
                 } else {
                     0.0
                 }
-            });
-            r[VIS_WORD..VIS_WORD + 2].copy_from_slice(&visibility_words(v));
+            })
+        };
+        if sky {
+            r[VIS_WORD..VIS_WORD + 2].copy_from_slice(&visibility_words(mean(vis[c])));
+        }
+        if key {
+            r[KEY_WORD..KEY_WORD + 2].copy_from_slice(&key_words(mean(lit[c])));
         }
     }
     out
@@ -244,6 +331,55 @@ mod tests {
             None,
             "no sky baked"
         );
+    }
+
+    /// Plan 0095 Phase 1: the key words round-trip within one `u8` step per direction, leave
+    /// the sky's words unbaked, and a record with no `KEY_BAKED` reads `None`.
+    #[test]
+    fn the_key_words_round_trip_by_direction() {
+        let mut r = [0u32; BRICK_WORDS];
+        r[6] = 0b11_1111 << 16;
+        let v = [1.0, 0.0, 0.5, 0.25, 0.75, 1.0];
+        r[KEY_WORD..KEY_WORD + 2].copy_from_slice(&key_words(v));
+        for (f, x) in v.iter().enumerate() {
+            let got = record_key_visibility(&r, f).expect("baked under a key light");
+            assert!((got - x).abs() <= 1.0 / 255.0, "{f}: {got} {x}");
+        }
+        assert_eq!(
+            record_visibility(&r, 0),
+            None,
+            "the key words are not the sky's"
+        );
+        let mut none = r;
+        none[KEY_WORD + 1] &= !KEY_BAKED;
+        assert_eq!(record_key_visibility(&none, 0), None, "no KEY_BAKED");
+        r[6] = 1 << 16;
+        assert_eq!(
+            record_key_visibility(&r, 1),
+            None,
+            "the mask lacks the direction"
+        );
+    }
+
+    /// A packed direction is never 0 and comes back within 1e-3 of itself, below the horizon too.
+    #[test]
+    fn a_packed_direction_round_trips() {
+        for d in [
+            [0.0f32, 0.0, 1.0],
+            [0.0, 0.0, -1.0],
+            [0.6, -0.48, 0.64],
+            [-0.36, 0.48, -0.8],
+            [1.0, 0.0, 0.0],
+        ] {
+            let w = pack_direction(d);
+            assert_ne!(w, 0, "{d:?}");
+            let got = unpack_direction(w).expect("a direction");
+            for k in 0..3 {
+                assert!((got[k] - d[k]).abs() < 1e-3, "{d:?} read {got:?}");
+            }
+        }
+        assert_eq!(unpack_direction(0), None);
+        assert_eq!(pack_direction([0.0; 3]), 0);
     }
 
     #[test]

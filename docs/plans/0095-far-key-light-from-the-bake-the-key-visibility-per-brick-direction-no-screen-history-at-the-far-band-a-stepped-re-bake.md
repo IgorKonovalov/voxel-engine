@@ -1,6 +1,6 @@
 # 0095: Far key light from the bake: the key visibility per brick direction, no screen history at the far band, the near restart seeded from it, a stepped re-bake when the sun turns
 
-> **Status:** approved 2026-11-20 (owner go; stacked on plan-0094 at aff21a5a, merges main after 0094 lands). The owner accepted coarse far shadows per brick face direction and the far gate by the far normal's band; W1 judges the default 3-degree sun only; a lagging re-bake under the day cycle shows the old shadow with a fade (both as recommended).
+> **Status:** in-progress (dev lane from 2026-11-20). Approved 2026-11-20 (owner go; stacked on plan-0094 at aff21a5a, merges main after 0094 lands). The owner accepted coarse far shadows per brick face direction and the far gate by the far normal's band; W1 judges the default 3-degree sun only; a lagging re-bake under the day cycle shows the old shadow with a fade (both as recommended).
 > **Created:** 2026-11-20
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0079](../adrs/0079-the-key-lights-visibility-is-baked-per-brick-direction-over-the-disc-and-read-without-screen-history-where-far.md)
@@ -440,9 +440,11 @@ and checks each row above for a number, a machine and a commit.
 > resume notes go to the plan's readings log, `docs/plans/logs/0095.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
+Readings: [`logs/0095.md`](logs/0095.md).
+
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The key channel in the store | dev | not started | |
+| 1: The key channel in the store | dev | done (exploration) | committed with this row |
 | 2: The read at the far band and the seed | dev | not started | |
 | 3: The sun's step and the edit's ring | dev | not started | |
 | 4: The owner's window W1 | human | not started | |
@@ -452,9 +454,16 @@ and checks each row above for a number, a machine and a commit.
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1: files beyond its list: `bake/job.rs` (the face's key rays), `bake/mod.rs`
+  (`BakeReport::key_rays`), `bake/store.rs` (the summary keeps the sun stamp),
+  `bake/summary.rs` (its layout test at 11 words), `frame/baked.rs` (`bake_key`),
+  `shaders/light.wgsl` and `shaders/sky_light.wgsl` (`disc_direction` moved into the bake's
+  modules); `gpu_world/format.rs`, `frame/settings.rs`, `settings.rs` and the HUD untouched.
+- Phase 1: the block's sun stamp is the summary record's first key word (`KEY_SUN_AT`, its
+  `KEY_BAKED` clear), not a new header word; a dig ring job stamps the current sun though its
+  kept bricks may be older.
+- Phase 1: the debug view of the baked key per face is not built in Phase 1 (its read is
+  Phase 2's `temporal.wgsl`).
 
 ### Close triggers
 
