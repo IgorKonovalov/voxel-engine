@@ -3,8 +3,9 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0097** (0095 is claimed by the motion-wobble lane, branch
-`spike-motion-wobble`, 2026-11-20; 0096 is the performance plan below; ADRs are a separate
+**Next free number: 0098** (0095 is claimed by the motion-wobble lane, branch
+`spike-motion-wobble`, 2026-11-20; 0096 is the performance plan below; 0097 the exposure's
+anchor by the sky around the camera; ADRs are a separate
 sequence, see `../adrs/README.md` for its next free number). Plan 0094, Plan 0086's follow-up
 (the light's transitions), closed 2026-11-20, v0.68.0.
 
@@ -32,6 +33,7 @@ sequence, see `../adrs/README.md` for its next free number). Plan 0094, Plan 008
 | [0092](0092-wgsl-hot-reload-in-the-fly-through-an-mtime-poll-pipelines-rebuilt-and-the-old-ones-kept-on-an-error.md) | WGSL hot reload in the fly-through: an mtime poll, pipelines rebuilt from disk, the old kept on an error | approved | M7, no ADR. After 0091 in its lane, before 0090 (owner). |
 | [0093](0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) | The README rewrite with reproducible screenshots: a shot manifest, a shoot script, an image gate, the owner's picks | approved | M7 docs, no ADR. After 0087 merges, beside 0089, before 0091. |
 | [0096](0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) | Performance: the bake queue's drain, the step off its depth, the RENOIR light pass, `alloc` and the eviction scan | approved, amended 11-20 | M10, cross-cutting, ADR-0080 (proposed). After 0095, before 0087. |
+| [0097](0097-the-exposures-anchor-by-the-sky-around-the-camera-the-floor-record-under-the-eye-a-time-constant-and-the-canopys-shade.md) | The exposure's anchor by the sky around the camera: the floor record under the eye, a time constant | approved 11-20 | M10, ADR-0081 (proposed). Lane waits on 0095's merge. |
 <!-- roster:end -->
 
 ## Sequence
@@ -209,6 +211,17 @@ awaits the go): **after Plan 0095 (the motion wobble, drafted on branch `spike-m
 closes and merges**, which follows Plan 0094; then Plan 0087 (owner's order, 2026-11-20: 0094,
 0095, 0096, 0087, 0089 and 0093, 0091, 0092, 0090, M10). Its Phase 1 is readings only, on both
 adapters, on the undrained image.
+
+**Plan 0097** (the exposure's anchor by the sky around the camera, ADR-0081 proposed: Plan 0094
+Phase 7b anchors the ceiling by the share of sky in view, and at window W2 (2026-11-20, the
+forest at `--sun 10,180`) one canopy closing over the last sky pixel released the ceiling by
+about 5 EV, the owner's "when I reach really shadowed spot - too bright"; the anchor now holds
+by the larger of the sky in view and the `+z` sky visibility of the baked floor record under
+the eye, smoothed by a time constant, so a tunnel or cave still releases and the night stays at
++2 EV; four phases, a reading before the threshold, the mechanism, the owner's window with the
+owed open hills at midnight, the picks as tests): **approved 2026-11-20 by the owner's picks at
+W2 (all as recommended); its lane starts after Plan 0095 closes and merges**, beside or after
+Plan 0096 as the owner orders then. The slope's step lines seen at W2 went to the backlog.
 
 Every active plan but Plan 0096 is approved (Plans 0091, 0092 and 0093 on 2026-11-19; Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Approval accepts the design; a plan's lane
