@@ -1,5 +1,5 @@
-//! The outdoor section's lighting flags: the penumbra, the sky term's normal and bounce, the
-//! exposure's ceiling.
+//! The outdoor section's lighting flags: the penumbra, the key light's far source, the sky
+//! term's normal and bounce, the exposure's ceiling.
 
 use crate::cli::parse_args_from;
 use crate::test_support::argv;
@@ -16,6 +16,32 @@ fn penumbra_is_disc_unless_named() {
     assert_eq!(r.start_lighting().penumbra, vxe_render::Penumbra::Approach);
     assert!(r.start_modes(0.0).line().contains("penumbra approach, "));
     assert!(parse_args_from(argv(&["--penumbra", "soft"])).is_err());
+}
+
+/// Plan 0095 Phase 2: `--key-far` is baked with the blend unless named, which the banner leaves
+/// out; `ray` and `--key-far-mix step` reach the lighting and the banner with a sky set.
+#[test]
+fn key_far_is_baked_blend_unless_named() {
+    use vxe_render::{KeyFar, KeyFarMix};
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    let l = r.start_lighting();
+    assert_eq!(
+        (l.key_far, l.key_far_mix),
+        (KeyFar::Baked, KeyFarMix::Blend)
+    );
+    assert!(!r.start_modes(0.0).line().contains("key far"));
+    let r = parse_args_from(argv(&["--source", "outdoor", "--key-far-mix", "step"])).unwrap();
+    assert_eq!(r.start_lighting().key_far_mix, KeyFarMix::Step);
+    assert!(
+        r.start_modes(0.0)
+            .line()
+            .contains("key far baked, key far mix step, ")
+    );
+    let r = parse_args_from(argv(&["--source", "outdoor", "--key-far", "ray"])).unwrap();
+    assert_eq!(r.start_lighting().key_far, KeyFar::Ray);
+    assert!(r.start_modes(0.0).line().contains("key far ray, "));
+    assert!(parse_args_from(argv(&["--key-far", "far"])).is_err());
+    assert!(parse_args_from(argv(&["--key-far-mix", "fade"])).is_err());
 }
 
 /// `--sky-anchor` and `--exposure-max` reach the auto exposure; unset is the default anchor

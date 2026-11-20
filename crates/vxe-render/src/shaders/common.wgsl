@@ -537,3 +537,9 @@ fn emission_of(m: u32) -> vec3<f32> {
 // (HIT_FIELD), so the light pass starts its shadow rays along the field normal
 // (`shadow_normal_of`); they walk the voxels (`march`), not the field. Translucent voxels are
 // solid to the field, and the field walk composites no translucent layer.
+
+// The light pass's visibility sample's b (shade.wgsl's `vis_out`) where the key light falls on
+// a face whose visibility the store answers with no ray (ADR-0079): under one half, which no
+// tap that pools the key light's ray (atrous.wgsl) takes for a cast one; 1 where the ray was
+// cast. The temporal pass tells the two apart at its double.
+const KEY_FROM_STORE: f32 = 0.25;

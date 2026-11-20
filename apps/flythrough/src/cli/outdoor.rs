@@ -34,6 +34,12 @@ pub struct OutdoorArgs {
     pub(crate) leaf_shadow: crate::LeafShadow,
     /// `--penumbra disc|approach`: how the key light's shadow ray makes its penumbra.
     pub(crate) penumbra: vxe_render::Penumbra,
+    /// `--key-far baked|ray`: where the key light's visibility comes from where a voxel is
+    /// small on screen (ADR-0079).
+    pub(crate) key_far: vxe_render::KeyFar,
+    /// `--key-far-mix blend|step`: how the store's key visibility joins the ray inside the far
+    /// normal's band.
+    pub(crate) key_far_mix: vxe_render::KeyFarMix,
     /// `--sky-normal face|smoothed`: the normal the baked sky term reads its visibilities by.
     pub(crate) sky_normal: vxe_render::SkyNormal,
     /// `--sky-bounce B`: the baked sky term's bounce floor, 0 to 1.
@@ -292,6 +298,27 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
             |p: &mut Parsing, v| {
                 p.args.outdoor.penumbra =
                     v.named(vxe_render::Penumbra::from_name, "disc or approach")?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--key-far"],
+            "baked|ray",
+            "the key light's visibility where a voxel is small on screen: the store's baked \
+                 value with no ray and no history, or the per-pixel disc ray everywhere [baked]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.key_far = v.named(vxe_render::KeyFar::from_name, "baked or ray")?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--key-far-mix"],
+            "blend|step",
+            "inside the far normal's band under --key-far baked: the ray's mean blended to \
+                 the store's value by the band's weight, or the store's from its half [blend]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.key_far_mix =
+                    v.named(vxe_render::KeyFarMix::from_name, "blend or step")?;
                 Ok(())
             },
         ),

@@ -270,6 +270,14 @@ pub(crate) const LIGHTING_HOOK_SEED_STALE_F: u32 = 1 << 30;
 /// gradient's normal at every distance ([`SkyNormal::Smoothed`]).
 pub(crate) const LIGHTING_SKY_SMOOTHED: u32 = 1 << 24;
 
+/// `Params::lighting` bit: the key light's visibility is the store's where a voxel is small on
+/// screen ([`KeyFar::Baked`], ADR-0079).
+pub(crate) const LIGHTING_KEY_BAKED: u32 = 1 << 11;
+
+/// `Params::lighting` bit: inside the far normal's band the store's key visibility steps in at
+/// the weight's half ([`KeyFarMix::Step`]); clear, it blends by the weight.
+pub(crate) const LIGHTING_KEY_STEP: u32 = 1 << 26;
+
 /// The light passes' reading hooks ([`Frame::set_light_hooks`]): switches that take a term or a
 /// test out of the frame to attribute what the image does to it. All off by default; each is
 /// a uniform branch on a `Params::lighting` bit.
@@ -659,6 +667,42 @@ named_enum!(Penumbra {
     Approach => "approach",
 });
 
+/// Where the key light's visibility comes from where a voxel is small on screen (ADR-0079).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum KeyFar {
+    /// At a cube face whose cell holds a fresh baked key visibility (`KEY_BAKED`, not
+    /// `SKY_STALE`): where the far normal's weight is 1 (at and over one half under
+    /// [`KeyFarMix::Step`]) the store's value read bilinear with no screen history and no key
+    /// ray; between the band's ends the ray's running mean and the store's value by
+    /// [`KeyFarMix`]; and a reset key mean seeded from the store's value. Anywhere else the
+    /// ray. The default.
+    #[default]
+    Baked,
+    /// The per-pixel disc ray and its running mean at every distance (ADR-0027).
+    Ray,
+}
+
+named_enum!(KeyFar {
+    Baked => "baked",
+    Ray => "ray",
+});
+
+/// How [`KeyFar::Baked`] joins the ray's mean and the store's value inside the far normal's
+/// band.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum KeyFarMix {
+    /// `mix(mean, store, w)`, `w` the far normal's weight. The default.
+    #[default]
+    Blend,
+    /// The store's value where `w` is at least one half, else the mean.
+    Step,
+}
+
+named_enum!(KeyFarMix {
+    Blend => "blend",
+    Step => "step",
+});
+
 /// The normal a cube face's baked sky term (ADR-0070) reads its visibilities by (Plan 0086
 /// Phase 13's arms).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -919,6 +963,12 @@ pub struct Lighting {
     pub key_history: u32,
     /// How the key light's shadow ray makes its penumbra ([`Penumbra`]; default `Disc`).
     pub penumbra: Penumbra,
+    /// Where the key light's visibility comes from where a voxel is small on screen
+    /// ([`KeyFar`]; default `Baked`).
+    pub key_far: KeyFar,
+    /// How the store's key visibility joins the ray's mean inside the far normal's band
+    /// ([`KeyFarMix`]; default `Blend`).
+    pub key_far_mix: KeyFarMix,
     /// The normal a cube face's baked sky term reads its visibilities by ([`SkyNormal`];
     /// default `Smoothed`).
     pub sky_normal: SkyNormal,
@@ -976,6 +1026,8 @@ impl Default for Lighting {
             sky_history: DEFAULT_SKY_HISTORY,
             key_history: DEFAULT_KEY_HISTORY,
             penumbra: Penumbra::Disc,
+            key_far: KeyFar::Baked,
+            key_far_mix: KeyFarMix::Blend,
             sky_normal: SkyNormal::Smoothed,
             sky_bounce: 0.0,
             column_wait: false,
@@ -1064,6 +1116,11 @@ impl Lighting {
             } else {
                 0
             }
+            | match (self.key_far, self.key_far_mix) {
+                (KeyFar::Ray, _) => 0,
+                (KeyFar::Baked, KeyFarMix::Blend) => LIGHTING_KEY_BAKED,
+                (KeyFar::Baked, KeyFarMix::Step) => LIGHTING_KEY_BAKED | LIGHTING_KEY_STEP,
+            }
     }
 
     /// The manual exposure, or 1.0 in auto.
@@ -1089,35 +1146,4 @@ pub const MAX_EDITS: usize = 64;
 pub const GRADIENT_STRATUM: u32 = 3;
 
 #[cfg(test)]
-mod tests {
-    use super::RenderScale;
-
-    #[test]
-    fn the_internal_size_rounds_the_output_over_the_scale() {
-        assert_eq!(RenderScale::One.internal([2530, 1378]), [2530, 1378]);
-        assert_eq!(RenderScale::OneHalf.internal([2530, 1378]), [1687, 919]);
-        assert_eq!(RenderScale::Two.internal([385, 1]), [193, 1]);
-        for s in RenderScale::ALL {
-            assert_eq!(RenderScale::from_name(s.name()), Some(s));
-        }
-    }
-
-    /// Plan 0086 Phase 17: the sky term reads the smoothed normal by default, with no bounce.
-    #[test]
-    fn the_sky_term_defaults_to_the_smoothed_normal() {
-        let l = super::Lighting::default();
-        assert_eq!(
-            (l.sky_normal, l.sky_bounce),
-            (super::SkyNormal::Smoothed, 0.0)
-        );
-    }
-
-    /// Plan 0086 Phase 25 (the 86d window's state): the key light's visibility mean holds 256
-    /// frames by default and the sky's 64, each its own cap.
-    #[test]
-    fn the_key_mean_holds_256_frames_by_default() {
-        let l = super::Lighting::default();
-        assert_eq!((l.key_history, l.sky_history), (256, 64));
-        assert_eq!(super::DEFAULT_KEY_HISTORY, 256);
-    }
-}
+mod tests;

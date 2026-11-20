@@ -76,12 +76,20 @@ const FADE_F: f32 = 16.0;
 
 // The key light's visibility mean after sample `s` on history `g`, which holds `age` samples
 // (the direct part's history age; `reset`: the history is not taken): over `age + 1` samples,
-// as the direct part blends, capped at `key_history`.
-fn key_mean(s: f32, g: f32, age: f32, reset: bool) -> f32 {
-    if (reset || (params.lighting & LIGHTING_SKY_CHANGED) != 0u) {
+// as the direct part blends, capped at `key_history`. With a fresh baked value `seed` (0 to 1;
+// negative for none, ADR-0079) a reset mean starts from the seed instead of the sample, and
+// the seed counts as SEED_AGE samples of the mean from then on (a pixel whose record landed
+// after its reset is counted the same). On the sky-change bit the sample restarts it: the
+// record predates the jump.
+fn key_mean(s: f32, g: f32, age: f32, reset: bool, seed: f32) -> f32 {
+    if ((params.lighting & LIGHTING_SKY_CHANGED) != 0u) {
         return s;
     }
-    let n = clamp(age + 1.0, 1.0, f32(max(sky.key_history, 1u)));
+    if (reset) {
+        return select(s, seed, seed >= 0.0);
+    }
+    let seeded = select(0.0, SEED_AGE, seed >= 0.0);
+    let n = clamp(age + 1.0 + seeded, 1.0, f32(max(sky.key_history, 1u)));
     return g + (s - g) / n;
 }
 

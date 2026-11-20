@@ -686,6 +686,14 @@ pub static TOGGLES: &[Toggle] = &[
         "store read {}",
         m.lighting.store_read.name()
     )),
+    lighting!("key far", KeyFar, |m| format!(
+        "key far {}",
+        m.lighting.key_far.name()
+    )),
+    lighting!("key far mix", KeyFarMix, |m| format!(
+        "key far mix {}",
+        m.lighting.key_far_mix.name()
+    )),
     lighting!("light weights", LightWeights, |m| format!(
         "weights {}",
         m.lighting.light_weights.name()

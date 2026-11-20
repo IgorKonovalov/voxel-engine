@@ -86,7 +86,13 @@
 // pair's g (`key_mean`): over the direct part's history age capped at `key_history`, reset
 // where the direct part's history resets (no accepted taps, an edit box, a fresh pixel) and on
 // the sky-change bit, but not on a change of the list of lights; no clamp (the term is
-// bounded). It joins the direct part at the direct part's blend weight.
+// bounded). It joins the direct part at the direct part's blend weight. Under
+// LIGHTING_KEY_BAKED (ADR-0079), at a cube face whose cell holds a fresh baked key visibility
+// (`store_key_visibility`: bilinear over the 2 x 2 cells, mixed over the shading normal's
+// directions as the smoothed sky term) the visibility is that value where the light pass cast
+// no key ray (the sample's b KEY_FROM_STORE: the far normal's weight `w` at 1, or at least one
+// half under LIGHTING_KEY_STEP), with no screen history; elsewhere the mean, seeded from the
+// value at a reset, blended toward it by `w` (LIGHTING_KEY_STEP: none below one half).
 //
 // A cube face's emissive part (`reads_store`) is its brick record's value for its direction
 // (`store_brick_value`; with Params.lighting bit 14, where the shading normal is not the face
@@ -305,6 +311,72 @@ fn store_summary_sky(head: StoreHead, c: vec3<i32>, face: u32) -> vec2<f32> {
     }
     let byte = (store[rec + VIS_WORD + face / 4u] >> (8u * (face % 4u))) & 255u;
     return vec2<f32>(f32(byte) / 255.0, 1.0);
+}
+
+// Cell `c`'s key light visibility for direction `face` (ADR-0079) in x, with a 1 in y; 0 where
+// its record lacks the direction, was baked with no key light (KEY_BAKED clear) or is
+// SKY_STALE (a dig's ring: the channels share the bit). shade.wgsl's `key_baked` is the test.
+fn store_key_cell(head: StoreHead, c: vec3<i32>, face: u32) -> vec2<f32> {
+    let rec = store_cell_record(head, c);
+    if (rec == 0u || ((store[rec + 6u] >> (16u + face)) & 1u) == 0u
+        || (store[rec + KEY_WORD + 1u] & KEY_BAKED) == 0u
+        || (store[rec + VIS_WORD + 1u] & SKY_STALE) != 0u) {
+        return vec2<f32>(0.0);
+    }
+    let byte = (store[rec + KEY_WORD + face / 4u] >> (8u * (face % 4u))) & 255u;
+    return vec2<f32>(f32(byte) / 255.0, 1.0);
+}
+
+// Face `face` of voxel `v`'s key visibility: the 2 x 2 cells' bilinear over those that hold it,
+// as `store_sky_visibility`; the voxel's own cell's where none does with weight; 0 in y where
+// its own cell holds none.
+fn store_key_direction(head: StoreHead, v: vec3<i32>, face: u32) -> vec2<f32> {
+    let own = store_key_cell(head, v >> vec3<u32>(head.shift), face);
+    if (own.y == 0.0) {
+        return own;
+    }
+    var sum = 0.0;
+    var weight = 0.0;
+    for (var i = 0; i < 4; i++) {
+        let tap = store_tap(v, face, head.shift, i);
+        let r = store_key_cell(head, tap.cell, face);
+        sum += r.x * (tap.w * r.y);
+        weight += tap.w * r.y;
+    }
+    if (weight > 0.0) {
+        return vec2<f32>(sum / weight, 1.0);
+    }
+    return own;
+}
+
+// Face `face` of voxel `v`'s key visibility by shading normal `n` (ADR-0079): the mix over the
+// directions `n` leans toward (`n_a^2` above 1e-4) of each direction's
+// (`store_key_direction`), over those that hold one, as `sky_baked_term` mixes the sky's; 0 in
+// y where the face's own direction holds none (the light pass casts the key ray there).
+fn store_key_visibility(head: StoreHead, v: vec3<i32>, face: u32, n: vec3<f32>) -> vec2<f32> {
+    let own = store_key_direction(head, v, face);
+    if (own.y == 0.0) {
+        return own;
+    }
+    var sum = 0.0;
+    var weight = 0.0;
+    for (var a = 0u; a < 3u; a++) {
+        let w = n[a] * n[a];
+        if (w < 1e-4) {
+            continue;
+        }
+        let dir = 2u * a + select(0u, 1u, n[a] > 0.0);
+        var r = own;
+        if (dir != face) {
+            r = store_key_direction(head, v, dir);
+        }
+        sum += r.x * (w * r.y);
+        weight += w * r.y;
+    }
+    if (weight > 0.0) {
+        return vec2<f32>(sum / weight, 1.0);
+    }
+    return own;
 }
 
 // The no-record prior's sky visibility for face `face` of voxel `v` (hit `p`, lifted along `n`
@@ -718,6 +790,9 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     var nr_voxel = vec3<i32>(0);
     var nr_face = 0u;
     var nr_nf = vec3<f32>(0.0);
+    // The store's key light visibility at a cube face (ADR-0079) in x, with a 1 in y where its
+    // cell holds a fresh one under LIGHTING_KEY_BAKED; 0 in y for none.
+    var key_store = vec2<f32>(0.0);
     let fresh = sample.w > 0.5 && view_mode() != VIEW_STEPS;
     sample.w = 0.0;
     var stored = false;
@@ -776,6 +851,9 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         var e = value;
         if (((params.lighting & LIGHTING_STORE_BY_NORMAL) != 0u || on_entity) && any(rec.n != nf)) {
             e = store_value_by_normal(head, voxel, face, value, rec.n);
+        }
+        if (!on_entity && (params.lighting & LIGHTING_KEY_BAKED) != 0u) {
+            key_store = store_key_visibility(head, store_voxel(rec.p, nf), face, rec.n);
         }
         // The sky's term (ADR-0070) where no ray was cast: a face's baked visibility, else the
         // missing-light chain's, coloured by the sky now. An entity keeps its sky rays.
@@ -1020,9 +1098,23 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         t_sky = t_baked;
     }
     var t_key = vec3<f32>(0.0);
-    if (vis.z > 0.5) {
-        pair.y = key_mean(vis.y, hp.y, age, !accepted || fresh);
-        t_key = key_light_at(rec.p, rec.n) * pair.y * exposure_now();
+    if (vis.z > 0.5 * KEY_FROM_STORE) {
+        var k = key_store.x;
+        if (vis.z > 2.0 * KEY_FROM_STORE || key_store.y == 0.0) {
+            let seed = select(-1.0, key_store.x, key_store.y > 0.0);
+            pair.y = key_mean(vis.y, hp.y, age, !accepted || fresh, seed);
+            k = pair.y;
+            if (key_store.y > 0.0) {
+                let w = far_normal_weight(params.views[view_of(full_px(gid.xy))], rec.t);
+                let step = (params.lighting & LIGHTING_KEY_STEP) != 0u;
+                k = select(mix(pair.y, key_store.x, w), select(pair.y, key_store.x, w >= 0.5), step);
+            }
+        } else {
+            // The store answers with no ray: the mean holds its value, so a pixel that leaves
+            // the band restarts from it.
+            pair.y = key_store.x;
+        }
+        t_key = key_light_at(rec.p, rec.n) * k * exposure_now();
     }
     if (any(t_key > vec3<f32>(0.0))) {
         acc_direct += a_direct * vec4<f32>(t_key, luminance(t_key));

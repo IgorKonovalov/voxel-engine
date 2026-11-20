@@ -30,7 +30,10 @@
 //                                        face with a fresh baked visibility, `sky_baked`). The
 //                                        key light's visibility sample (`key_visibility`) in g
 //                                        and 1 in b where the key light falls on the face, else
-//                                        0 in both; the key light is not in `direct_out`
+//                                        0 in both; KEY_FROM_STORE in b and 0 in g where it
+//                                        falls on the face and the store answers it with no ray
+//                                        (`key_from_store`); the key light is not in
+//                                        `direct_out`
 //
 @group(2) @binding(0) var hit_pos_in: texture_2d<f32>;
 
@@ -84,6 +87,53 @@ fn sky_baked(v: vec3<i32>, face: u32) -> bool {
     let vis = light_store[rec + VIS_WORD + 1u];
     return ((light_store[rec + 6u] >> (16u + face)) & 1u) != 0u
         && (vis & VIS_BAKED) != 0u && (vis & SKY_STALE) == 0u;
+}
+
+// The first word of voxel `v`'s cell's record in the light pass's store binding; 0 where its
+// brick has none.
+fn light_record(v: vec3<i32>) -> u32 {
+    let shift = select(3u, 2u, (light_store[STORE_FLAGS] & 2u) != 0u);
+    let per = 3u - shift;
+    let c = v >> vec3<u32>(shift);
+    let b = c >> vec3<u32>(per);
+    let block = light_block(b >> vec3<u32>(3u));
+    if (block == 0u) {
+        return 0u;
+    }
+    let s = b & vec3<i32>(7);
+    let dir = light_store[block + u32(s.x + 8 * (s.y + 8 * s.z))];
+    if (dir == 0u) {
+        return 0u;
+    }
+    let n = 1 << per;
+    let l = c & vec3<i32>(n - 1);
+    let sub = u32(l.x + n * (l.y + n * l.z));
+    return block + (dir >> 11u) - BRICK_WORDS * u32(n * n * n) + BRICK_WORDS * sub;
+}
+
+// Whether the store holds a fresh key light visibility for face `face` of voxel `v`
+// (ADR-0079): its cell's record has the direction and KEY_BAKED, and no SKY_STALE (the
+// channels share it). temporal.wgsl's `store_key_cell` reads the value by the same test.
+fn key_baked(v: vec3<i32>, face: u32) -> bool {
+    let rec = light_record(v);
+    if (rec == 0u) {
+        return false;
+    }
+    return ((light_store[rec + 6u] >> (16u + face)) & 1u) != 0u
+        && (light_store[rec + KEY_WORD + 1u] & KEY_BAKED) != 0u
+        && (light_store[rec + VIS_WORD + 1u] & SKY_STALE) == 0u;
+}
+
+// Whether the light pass leaves the key light's visibility at cube face hit `rec` (store voxel
+// `v`, face `face`) of view `view` to the store, with no ray (ADR-0079): under
+// LIGHTING_KEY_BAKED, where the far normal's weight is 1 (at least one half under
+// LIGHTING_KEY_STEP) and the face's cell holds a fresh baked key visibility (`key_baked`).
+fn key_from_store(rec: HitRecord, v: vec3<i32>, face: u32, view: View) -> bool {
+    if ((params.lighting & LIGHTING_KEY_BAKED) == 0u || !reads_store(rec)) {
+        return false;
+    }
+    let at = select(1.0, 0.5, (params.lighting & LIGHTING_KEY_STEP) != 0u);
+    return far_normal_weight(view, rec.t) >= at && key_baked(v, face);
 }
 
 // Whether face `face` of voxel `v`, whose own cell holds no fresh baked visibility, takes the
@@ -235,17 +285,26 @@ fn shade_px(gid: vec3<u32>) {
         } else {
             let ns = shadow_normal_of(rec, ray.d);
             e = PI * lights_lit_rgb(rec.p, n, ns);
-            set_ray_lift(rec, params.views[view_of(full_px(gid.xy))]);
+            let view_here = params.views[view_of(full_px(gid.xy))];
+            set_ray_lift(rec, view_here);
             // The key light's visibility sample (sky_light.wgsl) goes to the temporal pass, which
-            // keeps its running mean and adds the key light by it. The sky rays run where the
-            // hit's face holds no fresh baked visibility; their share that reached the sky
-            // goes to the temporal pass too, which keeps its running mean.
-            let kv = key_visibility(rec.p, n, ns, gid.xy);
-            if (kv >= 0.0) {
-                vis = vec4<f32>(0.0, kv, 1.0, 0.0);
-            }
+            // keeps its running mean and adds the key light by it; where the store answers it
+            // (`key_from_store`) no ray is cast and the temporal pass reads the store. The sky
+            // rays run where the hit's face holds no fresh baked visibility; their share that
+            // reached the sky goes to the temporal pass too, which keeps its running mean.
             let sv = store_voxel(rec.p, ns);
             let sf = store_face(rec.axis, ns);
+            if (key_from_store(rec, sv, sf, view_here)) {
+                if (any(key_light_at(rec.p, n) > vec3<f32>(0.0))
+                    && (params.lighting & LIGHTING_HOOK_KEY_OFF) == 0u) {
+                    vis = vec4<f32>(0.0, 0.0, KEY_FROM_STORE, 0.0);
+                }
+            } else {
+                let kv = key_visibility(rec.p, n, ns, gid.xy);
+                if (kv >= 0.0) {
+                    vis = vec4<f32>(0.0, kv, 1.0, 0.0);
+                }
+            }
             let baked = reads_store(rec) && (sky_baked(sv, sf) || sky_chained(sv, sf))
                 && (params.lighting & LIGHTING_HOOK_SKY_RAY_ALWAYS) == 0u;
             if (!baked && sky_on() && sky.sky_rays > 0u) {

@@ -968,6 +968,8 @@ impl Args {
                 .key_history
                 .unwrap_or(vxe_render::DEFAULT_KEY_HISTORY),
             penumbra: self.outdoor.penumbra,
+            key_far: self.outdoor.key_far,
+            key_far_mix: self.outdoor.key_far_mix,
             sky_normal: self.outdoor.sky_normal,
             column_wait: self.outdoor.column_wait,
             sky_bounce: self.outdoor.sky_bounce,

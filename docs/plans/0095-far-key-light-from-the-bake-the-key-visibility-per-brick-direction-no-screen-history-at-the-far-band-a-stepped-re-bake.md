@@ -444,8 +444,8 @@ Readings: [`logs/0095.md`](logs/0095.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The key channel in the store | dev | done (exploration) | committed with this row |
-| 2: The read at the far band and the seed | dev | not started | |
+| 1: The key channel in the store | dev | done (exploration) | 011d707a |
+| 2: The read at the far band and the seed | dev | built (exploration); readings in progress | committed with this row |
 | 3: The sun's step and the edit's ring | dev | not started | |
 | 4: The owner's window W1 | human | not started | |
 | 5: The fix pass after W1 | dev | not started | |
@@ -462,8 +462,18 @@ Readings: [`logs/0095.md`](logs/0095.md).
 - Phase 1: the block's sun stamp is the summary record's first key word (`KEY_SUN_AT`, its
   `KEY_BAKED` clear), not a new header word; a dig ring job stamps the current sun though its
   kept bricks may be older.
-- Phase 1: the debug view of the baked key per face is not built in Phase 1 (its read is
-  Phase 2's `temporal.wgsl`).
+- Phase 1: the debug view of the baked key per face (a `store read` view) is not built.
+- Phase 2: files beyond its list: `frame/compose.rs` (the two bits), `src/lib.rs` (exports),
+  `settings/tests.rs` and `frame/settings/tests.rs` (moved out for the size cap), the fly-through's
+  `cli/outdoor.rs`, `cli/mod.rs`, `cli/tests/outdoor.rs` (`--key-far`, `--key-far-mix`),
+  `toggles.rs` (the menu rows), `tests/menu.rs` and `docs/flythrough.md`; `frame/encode.rs`
+  untouched (the bits ride `Lighting::flags`).
+- Phase 2: the banner names `key far` only off the default (`key far ray`, `key far baked,
+  key far mix step`); the menu's rows name every mode.
+- Phase 2: the far-baked class is read from the sky's source word `record` (the shared stale
+  bit and job), not from the key words themselves.
+- Phase 2: the seed counts as SEED_AGE samples of the key mean at every pixel whose record is
+  fresh, also where the record landed after the pixel's reset.
 
 ### Close triggers
 

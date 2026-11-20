@@ -222,6 +222,8 @@ fn the_root_and_a_group_draw_their_rows() {
         ("ore pulse off", ""),
         ("exposure manual", ""),
         ("store read face", ""),
+        ("key far baked", ""),
+        ("key far mix blend", ""),
         ("light weights normal", ""),
         ("young filter: young luma", ""),
         ("entity light world", ""),
@@ -232,7 +234,7 @@ fn the_root_and_a_group_draw_their_rows() {
     want.push(String::new());
     want.push("Enter acts  Esc back  Tab closes  type to search".to_owned());
     assert_eq!(text, want.join("\n"));
-    let mut want_colours = vec![HudColour::White; 15];
+    let mut want_colours = vec![HudColour::White; 17];
     want_colours[1] = HudColour::Yellow;
     assert_eq!(colours, want_colours);
 }
