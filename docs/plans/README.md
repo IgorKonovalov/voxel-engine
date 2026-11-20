@@ -33,7 +33,7 @@ Plan 0087.
 | [0092](0092-wgsl-hot-reload-in-the-fly-through-an-mtime-poll-pipelines-rebuilt-and-the-old-ones-kept-on-an-error.md) | WGSL hot reload in the fly-through: an mtime poll, pipelines rebuilt from disk, the old kept on an error | approved | M7, no ADR. After 0091 in its lane, before 0090 (owner). |
 | [0093](0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) | The README rewrite with reproducible screenshots: a shot manifest, a shoot script, an image gate, the owner's picks | approved | M7 docs, no ADR. After 0087 merges, beside 0089, before 0091. |
 | [0094](0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md) | Light transitions: the key mean's age, the no-ray prior and fades, the exposure's rate, the hole band, the castle | approved | M10, ADR-0076. After 0086 merges, before 0087 (recommended). |
-| [0096](0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) | Performance: the bake queue's drain, the step off its depth, the RENOIR light pass, `alloc` and the eviction scan | approved | M10, cross-cutting, ADR-0080 (proposed). After 0095 merges, before 0087 (owner). |
+| [0096](0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) | Performance: the bake queue's drain, the step off its depth, the RENOIR light pass, `alloc` and the eviction scan | approved, amended 11-20 | M10, cross-cutting, ADR-0080 (proposed). After 0095, before 0087. |
 <!-- roster:end -->
 
 ## Sequence
