@@ -602,8 +602,8 @@ its Phases 5 to 7 are Phases 9 to 11.
 | 3: The owner's window W1 | human | run 2026-11-20 after a pre-roll drain (`7d19d8b0`, testbed flag); forest runs 1a to 2b judged, the hills and the day cycle not; no pick, the owner's rule instead (readings log) | |
 | 4: The far's instant estimate: the column map's horizon | dev | done (exploration); readings in Phase 5's log section | 1006270b |
 | 5: The near with no history: the approach penumbra | dev | done (exploration); readings partial | fe564d2b |
-| 6: The reach-bound count, the no-value bricks | dev | done; the no-value bricks named (the dump's own voxel rounding), not fixed | committed with this row |
-| 7: The owner's window W2, no pre-roll | human | not started | |
+| 6: The reach-bound count, the no-value bricks | dev | done; the no-value bricks named (the dump's own voxel rounding), not fixed | 930e75ad |
+| 7: The owner's window W2, no pre-roll | human | run 2026-11-20 on the forest, no pre-roll; (a) stands as the default, the far keeps the record; owner: 1a "everything besides near lines on slopes looks good", 1d "before - grain" (readings log) | committed with this row |
 | 8: The sun's step and the edit's ring (if W2 keeps the record) | dev | not started | |
 | 9: The fix pass after W2 | dev | not started | |
 | 10: The bars, the goldens, the NFR readings | dev | not started | |
@@ -670,6 +670,9 @@ its Phases 5 to 7 are Phases 9 to 11.
 - Phase 6: the no-value paragraph is read from W1's dump (7d19d8b0), not a new run; the
   dump's miscount is reported, not fixed (the fix is outside the phase's files and needs the
   face normal read back).
+- Phase 7 (W2): the forest only, (a) against (d), no stills saved; run 0 (the open night)
+  drew no remark; `key_far_mix` was not judged (blend stays); the owner routed the exposure in
+  deep shade to Plan 0097 and the step lines on slopes to the backlog (both arms show them).
 
 ### Close triggers
 
