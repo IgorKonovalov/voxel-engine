@@ -429,6 +429,24 @@ hue jitter named here has its own entry now, "Per-voxel albedo variation by a se
 whose frames show the jitter without any ramp; a spike on this entry shares its hash and its
 place in the composite.
 
+### Thin step lines along voxel slopes
+
+Seen 2026-11-20 by the owner at window W2 (the forest at 15:00 and at `--sun 10,180`, in both
+arms of Plan 0095's spike, so not the motion lane's and not the exposure's): the terrain's
+slopes at mid range show thin lines along each voxel step, where a step's one-voxel vertical
+face reads a different shade from the ground beside it (the key light and the sky term at a
+face whose normal is 90 degrees off the slope's), a staircase drawn as contour lines. The sky
+term already reads one slope at every distance through the 27-count gradient (`sky_normal
+smoothed`, ADR-0070's Outcome); the key light's shadow ray and the face's own shade do not.
+Options, to decide by eye in a look plan's window: (a) smooth the shading normal across the
+steps at mid range, the gradient normal replacing the face normal past a distance band for
+every term, not the sky's alone; (b) blend each step's vertical face with the ground below it
+over the far-normal band, so the riser takes the tread's shade as it shrinks toward a pixel;
+(c) the field surface for terrain (Plan 0054's, opt-in), which has no steps to draw. What it
+takes: a short look spike with two stills per arm at W2's poses and an owner window; a change
+to the far-normal band is ADR-0063's table. Pick up after Plans 0095 and 0097; not Plan
+0097's.
+
 ### Plan 0090 owes a stamp scene and a reading of the key mean's fade-in against `F`
 
 Parked 2026-11-18 by Plan 0086's flicker amendment (the architect, overnight). A freshly
