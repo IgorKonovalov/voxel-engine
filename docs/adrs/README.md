@@ -93,7 +93,7 @@ the status.
 | [0076](0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md) | A still world gives a still image: five light-stability rules, a world-space history per source, a fade per transition, and a pop counter that only ratchets down | proposed (Plan 0090, draft) |
 | [0077](0077-frame-profiling-through-the-profiling-facade-with-puffin-behind-an-app-feature.md) | Frame profiling goes through the `profiling` facade, collected by puffin behind an app feature | accepted (Plan 0091, approved) |
 | [0078](0078-an-entity-part-has-a-grain-a-detail-finer-than-a-world-voxel-or-a-coarse-factor-of-world-voxels-per-model-voxel.md) | An entity part has a grain: a detail finer than a world voxel, or a coarse factor of world voxels per model voxel | accepted (Plan 0083 Phase 7b, 2026-11-19) |
-| [0080](0080-the-live-queue-bakes-what-the-image-reads-a-record-by-rule-a-tier-by-size-on-screen-and-a-drain-slice.md) | The live queue bakes what the image reads: a record by rule, a sample tier by size on screen, a slice that drains what is in view | proposed (Plan 0096, draft) |
+| [0080](0080-the-live-queue-bakes-what-the-image-reads-a-record-by-rule-a-tier-by-size-on-screen-and-a-drain-slice.md) | The live queue bakes what the image reads: a record by rule, a sample tier by size on screen, a slice that drains what is in view | proposed (Plan 0096), amended 11-20 |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded
