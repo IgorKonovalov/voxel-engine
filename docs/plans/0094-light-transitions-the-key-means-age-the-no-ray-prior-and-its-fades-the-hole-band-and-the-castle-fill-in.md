@@ -977,6 +977,13 @@ second round. The decisions, one recommended option each:
   Alternative F. The alternative, removing it now, saves one code path in the temporal pass;
   that pass is the motion lane's from here, and the lane may retire the settle and the pair's
   `b` sign trick together if it needs the channel. Named there, not touched here.
+  **Amended 2026-11-20 (owner): removed now, not kept.** Phase 7a (3) deletes the settle: the
+  `settle` settings row, `--settle`, the banner word, `LightHooks::no_settle` (bit 26),
+  `temporal.wgsl`'s `settle_at_cap`, `key_settle`, the pair's `-1 - b` short-mean encoding and
+  the in-band count above the cap in its age channel, `pair_tap`'s kind read, the
+  `docs/flythrough.md` row and the tests and readings' arms that set it (`VXE_SETTLE`,
+  `hills_clock_settle_*`, `turn_and_return_voxel_no_settle`). ADR-0076's Alternative F stays
+  as the record, with the readings.
 - **The hole: no mechanism in this plan; one cheap reading decides what the backlog entry
   says.** Two halves. The *first frames* ("bright spots that settle for a few frames") are
   Phase 2 bar 2's thirds as read: the column's seed at the hole's new faces (open, 1.0, at
@@ -1035,8 +1042,11 @@ second round. The decisions, one recommended option each:
   (3) The age-weighted pool **off by default** (Phase 6 bar 1: no arm lowered the band's
   shares and Slow rose 0.4 to 2.4 %; a default no reading paid for smears young pixels with
   their settled neighbours' means): the hook's sense inverted (`LightHooks::pool` turns it on),
-  the readings' arms unchanged by name; the settle stays as it is (default off). (4) The hole's
-  reading, (6) below. (5) **The tests restated:**
+  the readings' arms unchanged by name; **the settle removed** (owner, 2026-11-20: the list
+  under the verdict's settle bullet; the pair's `b` is a plain short mean again, the age
+  channel holds nothing above the cap; `--settle` is refused by `--check-args`; the moved
+  goldens of Phase 3 bar 5 were read with the settle off, so nothing there changes). (4) The
+  hole's reading, (6) below. (5) **The tests restated:**
   - `a_dig_leaves_no_dots`'s landing clause ("within one level from the frame after the
     landing") becomes rule 3's: the floor's mean against the baked whole is within `T_fade` 4
     from the landing plus `F` 16 on, and no frame leaves `[min - T_fade, max + T_fade]` of the
@@ -1313,11 +1323,18 @@ records it.
    `--settle` setting** (the cheap-modes rule; 0 ms off; the motion lane may retire it with the
    pair's `b` trick if it needs the channel). The alternative: remove it now, one code path
    less in the temporal pass, which the motion lane then does not inherit.
+   **Answered 2026-11-20 (owner): remove now.** Phase 7a (3) deletes it; Alternative F is the
+   record.
 4. **(Added 2026-11-20.) The hole's look, if Phase 7a (6) reads `geometry`.** **Recommended:
    accept it as read** (a grey floor under a blue sky at half the sky's visibility; the owner's
    "can even accept that"), with the hole's walls' bounce and a darker soil as a look entry in
    the backlog. The alternative: a look plan for dug interiors (the bounce term at a hole's
    floor), after the motion lane.
+   **Answered 2026-11-20 (owner): a dug-interior look plan, later.** The backlog's entry "How
+   dug interiors should look" carries it (darker, less sky than the true aperture, the 94a
+   stills as the before); nothing in this plan. Question 1's exposure answer: 3.75 EV/s as the
+   default into Phase 9, 7.5 as the other arm (the recommendation). The scope answer: a short
+   fix pass and the close (the recommendation).
 
 ## What this plan does NOT do
 
@@ -1404,8 +1421,7 @@ each. Empty is fine.)_
 - (Added 2026-11-20, architect.) **The motion wobble** (the owner, after window 94a: the image
   never settles on far trees during a slow fly, after a turn or while moving) is a separate
   lane's with its own architect. From this plan it inherits: the still camera's own tap and
-  its dropped tests (Phase 3), the settle's code and the pair's `b` sign trick (to retire or
-  keep), the column seed on a dig's new faces and the key mean's restart there (Phase 2 bar
+  its dropped tests (Phase 3), the column seed on a dig's new faces and the key mean's restart there (Phase 2 bar
   2's thirds, Phase 6's table), the turn's return-frame readings (Phase 1 bar 4, Phase 3's
   re-read: 21.9 to 22.8 % over 8 under `voxel`), and (ii) as a candidate. This plan changes
   the temporal pass and the upscaler's history no further.

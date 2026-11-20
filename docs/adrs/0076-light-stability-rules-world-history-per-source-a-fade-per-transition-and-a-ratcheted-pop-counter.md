@@ -204,8 +204,8 @@ against 21.9 % without it (rule 2 made worse: a held pixel that re-enters the vi
 from a young state), and the owner's eye preferred it off, "especially in motion"
 (`docs/plans/logs/0094.md`, Phase 3 and Phase 7). It lost because a hold freezes the grain it
 converged on and adds a state the reprojection must carry; rule 6 asks for a coarse answer
-while young and a fade at the landing, not a hold once old. The code stays a default-off
-setting (`--settle`) under the cheap-modes rule.
+while young and a fade at the landing, not a hold once old. The owner had its code removed
+(2026-11-20, Plan 0094 Phase 7a); this section is its record.
 
 ## Outcome
 

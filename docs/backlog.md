@@ -1347,8 +1347,8 @@ part's own blend rather than the means'.
 **2026-11-20, Plan 0094 Phase 7's verdict: the hold form is rejected, the principle becomes
 ADR-0076 rule 6.** The owner's eye agreed with the readings (window 94a: settle on against off
 "no significant difference" at rest, "3a looks better than 3b, especially in motion"); the
-settle stays a default-off `--settle` setting under the cheap-modes rule and is ADR-0076's
-Alternative F. The age-weighted pool (Phase 6) lowered none of the hole band's shares and
+settle's code is removed by the owner's call (Plan 0094 Phase 7a) and ADR-0076's Alternative F
+is its record. The age-weighted pool (Phase 6) lowered none of the hole band's shares and
 raised Slow 0.4 to 2.4 %, and is off by default from Phase 7a. What the owner asked for at the
 window ("if we have to wait for a minute for light to settle, something is wrong with the light
 and we need approximate things") is written as rule 6: a coarse stable answer while the precise
@@ -1418,3 +1418,18 @@ owner's word on run 1) did not fire, run 2's grain has the missing records and t
 exposure as the other leads, and a spatial filter on the key term interacts with the temporal
 pass the motion lane owns. Pick up in that lane, with the reading first: the penumbra's
 frame-to-frame p99 at rest split by the key term, the sky's young pixels and the exposure.
+
+### How dug interiors should look: darker, less sky than the true aperture
+
+Parked 2026-11-20 by the owner at Plan 0094's window 94a verdict ("the hole reads lit";
+`live/window94a/1-forest-dig-lit-hole.png`, `4-dig-hole-lit.png`: a radius-0.5 m hole's floor
+blue-grey under a shaded hill and under a canopy, its walls dark brown). Plan 0094 Phase 7a (6)
+reads whether the baked visibility matches the hole's true aperture; the owner's call is that
+**even a correct aperture is not the look**: a dug interior should read darker and take less sky
+than the geometry gives, so a hole reads as a hole beside the ground it was dug from. A look
+plan, later, after the motion lane: candidates are the hole's walls' bounce in the baked term
+(the walls' own low value folded into the floor's, which the bake's bounce cell mean may already
+carry too little of), a darker soil row at the material table (a consumer's palette call, not
+the engine's), or an occlusion term at concave faces read from the column map or the coarse
+grid. Read first on the 94a stills' scenes (the hills at 16:00, the forest at `10,180`) with
+the true aperture printed beside the stored value; the pick is the owner's eye.
