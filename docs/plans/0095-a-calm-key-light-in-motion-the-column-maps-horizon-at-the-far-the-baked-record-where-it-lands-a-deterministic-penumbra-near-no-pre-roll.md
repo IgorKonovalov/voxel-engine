@@ -422,6 +422,25 @@ against the hold's final frame at +0, +30 (0.5 s), +60 and +120 (2 s).
     (section 2, unchanged: a check, not a claim) and, if Phase 8 is built, the key re-bake's
     rate under the day cycle (a new line in section 2's table, see Budgets), each with machine,
     commit and load; the ADR-0079 Outcome facts in the close triggers.
+- **Amended 2026-11-20 (owner), after the Phase 9 readings (`c6b6bf52`) and the tip gate
+  (`40caec95`):**
+  - **The far bars become "no worse than the before".** The picks read, queue frozen, fly 13.2 %,
+    +30 37.2 %, +60 27.2 %, +120 12.8 % against the before (`key far ray`, `penumbra disc`)
+    14.8 / 40.2 / 30.8 / 16.9 %; about 97 % of the far pixels sit inside the far normal's band and
+    still cast the ray. The gate scene asserts each far segment (fly, +30, +60, the still) at or
+    under the before's figure read in the same run plus 1 point, instead of 3 / 5 / 2 %; the
+    undrained +60 bar and the near stop bar stand; the rule 2 far scene asserts the same form
+    against the before's return frame. Every figure prints. Narrowing the band so far pixels stop
+    casting is a backlog entry for the far-field work, not this plan's.
+  - **The tree-shadow scene pins `key_far: Ray`.** `a_tree_shadow_travels_with_the_sun_at_320x180`
+    tests the ray's geometry; with no record the default far reads the column horizon, a
+    heightfield under the canopy. With `Ray` it reads (0.49, 46.78) against (0.5, 46.98).
+  - **The approach penumbra is the default on every adapter and profile** (owner's pick over
+    keeping disc on the slow adapter): the RENOIR's forest light pass reads 34.0 ms against
+    11.8 ms under disc, the 4.0 ms section 2 line, and RTX 3.32 ms. The NFR rows record it as
+    over the line, named; Plan 0096 Phase 6 (the slow adapter's light pass, lever by lever)
+    takes approach's cost as a named lever.
+  - **Phase 11 is struck:** W2 asked for no second look.
 
 ### Phase 11: A second short look, only if W2 asked for one
 - **Owner skill:** human
