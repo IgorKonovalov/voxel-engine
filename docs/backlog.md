@@ -840,7 +840,15 @@ only. What that plan leaves here (owner, 2026-11-19): the light pass's default-o
 on lavapipe, the fly-through's light-pass build stage 3.7 s against the base's 2.7 (debug) with
 every default-off arm already out of the default pipelines, about 1.0 s a device of default-on
 code, about 1.4 s a frame-building test of the gate; the next step is a per-module compile
-reading (`pipeline_times` per `PASSES` row) to name the module that grew.
+reading (`pipeline_times` per `PASSES` row) to name the module that grew. **Routed to Plan
+0096 (performance) 2026-11-20**, after Plan 0094's window 94b: `absorb`'s cold start on an
+emptied driver cache read 70 s (the owner: "start is slow, 70 sec"; Plan 0094 Phase 7a's
+table: the arms' light pipelines 39 to 44 s inside their loading stage after the base's 25 to
+49 s). Plan 0096 takes two items: an engine `wgpu::PipelineCache` for hardware adapters in the
+app (the test-support cache read 29.4 s cold against 0.24 s warm on the RTX, 2.0 MB), and the
+default-off arms built in the background after the first world frame rather than inside the
+loading stage (the runtime pick's hitch with them). This entry leaves when 0096's phase takes
+them; the lavapipe compile-cost reading above stays here.
 
 ### Comment, manifest and index drift found by the 2026-11-12 review
 
