@@ -498,18 +498,14 @@ and invisible to Plan 0090's pop counter. Cost a guess: one hash and one multipl
 per-material style word), not on the material row. Size S; a look spike with an owner window, after the content pass below shows
 what the palette alone gives.
 
-### The showcase's palette after the Crystal Islands review: pale rock, more and dimmer glowing rows, a darker key
+### Done: the showcase's palette after the Crystal Islands review: pale rock, more and dimmer glowing rows, a darker key
 
-Parked 2026-11-20 from the same review (its content levers), apps only. The frames' cave look
-is albedo times the emitters' irradiance, which the baked store already computes; our rock is
-`0.42 0.38 0.34` against Lin's near-white limestone, so the walls cannot take the crystals'
-colour. **What it takes:** in `apps/flythrough/assets/materials.txt` (re-read live while the
-window is open) a rock at about 0.7 to 0.8 with a tan or pink tint, six to eight glowing rows
-at a third to a half of today's emission with the ore among them, and a cave profile one to
-two EV darker (`AutoExposure::compensation_ev`); two or three leaf rows picked by hash in
-`trees.rs`. Judged in an owner window; the showcase's goldens move. Size XS. **Pick up** when
-the owner wants a look window next; this is the cheapest test of the review's thesis and
-should run before any engine lever above.
+Done 2026-11-20 (419a0039, 7d3a9c7a, 6abc8a17; merged over v0.68.0 at 60ff48ad, goldens
+re-blessed at db103e2b): the showcase's pale tinted rock, five-hued dimmer crystals and veins,
+the trees' three leaf rows by hash, and `--exposure-comp EV` on the auto exposure. The owner's
+window P1 picked the walls taking the hues, the ore at the cave ore's full glow, compensation
+0 on every source (the darker key was not taken; the flag stays) and the forest's three greens
+as they are.
 
 ## Performance: the static review of 2026-11-10
 
