@@ -17,7 +17,7 @@ use crate::now;
 use crate::run::hud_feed::HUD_SCALE;
 use crate::run::hud_lines::{band_census_line, field_line, field_pass_line};
 use crate::run::queue::{COARSE_PRE_ROLL_MS, PRE_ROLL_SAMPLES, queue_view_angles};
-use crate::run::{BUILD_UNITS, GfxPlan, Run, build_gfx};
+use crate::run::{ARMS_UNITS, BUILD_UNITS, GfxPlan, Run, build_gfx};
 use crate::setup::{Gfx, castle_banner, start_camera};
 use crate::streaming::NEAR_D2;
 use std::sync::Arc;
@@ -36,6 +36,7 @@ pub(crate) const PRE_ROLL_CAP_MS: f64 = 120_000.0;
 
 /// The stages' names, as the loading frame and the `loading frame` diag lines show them.
 pub(crate) const PIPELINES: &str = "building the pipelines";
+pub(crate) const ARMS: &str = "building the light pass arms";
 pub(crate) const UPLOAD: &str = "uploading the level";
 pub(crate) const RESIDENCY: &str = "streaming the near chunks";
 pub(crate) const NEAR: &str = "lighting the near chunks";
@@ -51,6 +52,9 @@ pub(crate) const FIELD: &str = "filling the field";
 /// castle's loading), 0.2 to 0.3 s from a warm shader cache; the weight is the compiled
 /// case's, against the other stages' sum of about 1.
 pub(crate) const PIPELINES_WEIGHT: f32 = 1.6;
+/// The light pass arms' build when the settings at start pick one: 18.2 s read cold on the
+/// RTX 3080 Laptop (window 94a's run 6) against the pipelines' about 12 s.
+pub(crate) const ARMS_WEIGHT: f32 = 2.4;
 pub(crate) const UPLOAD_WEIGHT: f32 = 0.03;
 pub(crate) const RESIDENCY_WEIGHT: f32 = 0.05;
 pub(crate) const NEAR_WEIGHT: f32 = 0.30;
@@ -104,12 +108,15 @@ pub(crate) struct Build {
     built: Arc<AtomicU64>,
     /// When the worker started: the stage's time is the worker's wall time.
     began: Instant,
+    /// The worker builds the light pass arms after the pipelines ([`ARMS`]).
+    arms: bool,
 }
 
 impl Build {
     /// Starts the build of `plan` on a worker thread over clones of the device and the queue.
     pub(crate) fn spawn(gpu: &Gpu, plan: GfxPlan) -> Self {
         let built = Arc::new(AtomicU64::new(0));
+        let arms = plan.arms;
         let (device, queue, done) = (gpu.device.clone(), gpu.queue.clone(), built.clone());
         let worker = std::thread::Builder::new()
             .name("start-up build".to_owned())
@@ -119,6 +126,7 @@ impl Build {
             worker: Some(worker),
             built,
             began: now(),
+            arms,
         }
     }
 
@@ -160,6 +168,9 @@ pub(crate) enum Stage {
     /// The entity pipelines' build without the screen, one step that blocks for its whole
     /// time, then the stage it holds.
     Pipelines(Box<Stage>),
+    /// The light pass arms' build without the screen when the settings at start pick an arm,
+    /// one blocking step, then the stage it holds.
+    Arms(Box<Stage>),
     Upload(Upload),
     Residency(Residency),
     PreRoll(Box<PreRollRun>),
@@ -226,7 +237,9 @@ impl Loading {
     /// The current stage's name.
     fn stage_name(&self) -> &'static str {
         match &self.stage {
+            Stage::Build(b) if b.arms && b.units() >= BUILD_UNITS => ARMS,
             Stage::Build(_) | Stage::Pipelines(_) => PIPELINES,
+            Stage::Arms(_) => ARMS,
             Stage::Upload(_) => UPLOAD,
             Stage::Residency(_) => RESIDENCY,
             Stage::PreRoll(p) => match p.pre.state() {
@@ -248,7 +261,9 @@ impl Loading {
                 PreRollState::Coarse { passed, of } => format!("{passed} / {of} chunks"),
                 PreRollState::Done(s) => format!("{} chunks", s.baked),
             },
-            Stage::Build(_) | Stage::Pipelines(_) | Stage::Field | Stage::Done => String::new(),
+            Stage::Build(_) | Stage::Pipelines(_) | Stage::Arms(_) | Stage::Field | Stage::Done => {
+                String::new()
+            }
         }
     }
 
@@ -293,10 +308,14 @@ pub(crate) fn scene_title(args: &Args) -> String {
     }
 }
 
-/// The stages a run loads through, with their weights: the pipelines, the level's
-/// upload or the streamed near residency, the pre-roll's two, and the field's fill when the run starts in the field.
-pub(crate) fn load_stages(streamed: bool, field: bool) -> Vec<(&'static str, f32)> {
+/// The stages a run loads through, with their weights: the pipelines, the light pass arms
+/// when the settings at start pick one (`arms`), the level's upload or the streamed near
+/// residency, the pre-roll's two, and the field's fill when the run starts in the field.
+pub(crate) fn load_stages(streamed: bool, field: bool, arms: bool) -> Vec<(&'static str, f32)> {
     let mut v = vec![(PIPELINES, PIPELINES_WEIGHT)];
+    if arms {
+        v.push((ARMS, ARMS_WEIGHT));
+    }
     v.push(if streamed {
         (RESIDENCY, RESIDENCY_WEIGHT)
     } else {
@@ -346,7 +365,11 @@ impl Run {
         let streamed = self.stream.is_some();
         Loading {
             stage,
-            progress: LoadProgress::new(&load_stages(streamed, self.args.field_surface())),
+            progress: LoadProgress::new(&load_stages(
+                streamed,
+                self.args.field_surface(),
+                self.light_arms_at_start(),
+            )),
             screen,
             bar: EasedBar::default(),
             fade_ms: self.args.loading.fade_ms,
@@ -408,6 +431,9 @@ impl Run {
         };
         self.gfx = Some(gfx);
         self.resized(gpu);
+        if build.arms {
+            loading.progress.enter(ARMS);
+        }
         loading.progress.next();
         self.first_stage(true)
     }
@@ -448,6 +474,16 @@ impl Run {
                 // builds none.
                 gfx.frame.prepare_entities(&gpu.device);
                 diag(format_args!("entity pipelines built"));
+                loading.progress.next();
+                if self.light_arms_at_start() {
+                    Stage::Arms(next)
+                } else {
+                    *next
+                }
+            }
+            Stage::Arms(next) => {
+                gfx.frame.prepare_light_arms(&gpu.device);
+                diag(format_args!("light pass arms built"));
                 loading.progress.next();
                 *next
             }
@@ -914,7 +950,14 @@ impl Run {
                     (loading.slice_ms - ms_since(t0)).max(0.0) * 1e-3,
                 ));
                 if !b.finished() {
-                    loading.progress.set(b.units(), Some(BUILD_UNITS));
+                    if b.arms && b.units() >= BUILD_UNITS {
+                        loading.progress.enter(ARMS);
+                        loading
+                            .progress
+                            .set(b.units() - BUILD_UNITS, Some(ARMS_UNITS));
+                    } else {
+                        loading.progress.set(b.units(), Some(BUILD_UNITS));
+                    }
                     break;
                 }
             }
@@ -1044,21 +1087,26 @@ pub(crate) fn draw_view(
 
 #[cfg(test)]
 mod tests {
-    use super::{COARSE, FIELD, NEAR, PIPELINES, RESIDENCY, UPLOAD, load_stages};
+    use super::{ARMS, COARSE, FIELD, NEAR, PIPELINES, RESIDENCY, UPLOAD, load_stages};
 
-    /// A run first builds the entity pipelines; then a level loads through its upload, a
-    /// streamed world through its near residency, then
-    /// the pre-roll's two stages, then the field's fill when the run starts in the field.
+    /// A run first builds the entity pipelines, then the light pass arms when the settings at
+    /// start pick one; then a level loads through its upload, a streamed world through its near
+    /// residency, then the pre-roll's two stages, then the field's fill when the run starts in
+    /// the field.
     #[test]
     fn the_stages_follow_the_world_and_the_look() {
         let names = |s: Vec<(&'static str, f32)>| s.into_iter().map(|(n, _)| n).collect::<Vec<_>>();
         assert_eq!(
-            names(load_stages(false, false)),
+            names(load_stages(false, false, false)),
             [PIPELINES, UPLOAD, NEAR, COARSE]
         );
         assert_eq!(
-            names(load_stages(true, true)),
+            names(load_stages(true, true, false)),
             [PIPELINES, RESIDENCY, NEAR, COARSE, FIELD]
+        );
+        assert_eq!(
+            names(load_stages(true, false, true)),
+            [PIPELINES, ARMS, RESIDENCY, NEAR, COARSE]
         );
     }
 }

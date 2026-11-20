@@ -185,6 +185,11 @@ impl Store {
         let s = block_summary(block, record);
         let at = SUMMARY_AT as usize;
         block[at..at + BRICK_WORDS].copy_from_slice(&s.unwrap_or_default());
+        // A block whose cells hold a dig's stale visibilities: its summary waits for the bake
+        // too (the no-record prior does not read it).
+        if any_cell_stale(block, record) {
+            mark_summary_stale(block);
+        }
         self.set_summary(queue, c, s);
         self.summary_ms += seconds_since(t) * 1e3;
     }
@@ -438,7 +443,8 @@ impl Store {
     }
 
     /// Marks `slots`' records of `coord`'s block [`SKY_STALE`] in the store's copy and the
-    /// pool (a dig's ring, ADR-0070); a chunk with no block or no baked visibility there is
+    /// pool (a dig's ring, ADR-0070), and its summary record ([`mark_summary_stale`]: a dig
+    /// job is queued for the chunk); a chunk with no block or no baked visibility there is
     /// left as it is.
     pub(super) fn mark_sky_stale(
         &mut self,
@@ -453,10 +459,18 @@ impl Store {
         let Some(block) = self.words.get_mut(&coord.0) else {
             return;
         };
-        if mark_sky_stale(block, slots, record) {
-            let mut shown = block.clone();
-            self.show(queue, coord, first, &mut shown);
+        let cells = mark_sky_stale(block, slots, record);
+        if !cells && !block_summary_baked(block) {
+            return;
         }
+        let mut shown = block.clone();
+        self.summarise(queue, coord.0, &mut shown);
+        mark_summary_stale(&mut shown);
+        let at = SUMMARY_AT as usize + VIS_WORD + 1;
+        if let Some(block) = self.words.get_mut(&coord.0) {
+            block[at] = shown[at];
+        }
+        queue.write_buffer(&self.pool, first * 4, bytemuck::cast_slice(&shown));
     }
 
     /// The chunk table's word for `coord`.

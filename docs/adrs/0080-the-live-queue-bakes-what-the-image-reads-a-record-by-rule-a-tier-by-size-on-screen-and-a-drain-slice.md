@@ -1,6 +1,9 @@
 # ADR-0080: The live queue bakes what the image reads: a record by rule where no ray is needed, a sample tier by the chunk's size on screen, and a slice that drains what is in view
 
-> **Status:** proposed
+> **Status:** proposed. **Amended 2026-11-20 (owner)**, while proposed, at Plan 0095's window
+> W1: the far tiers gain a reach clause (rule 4), since under the default reach rule no chunk
+> past about 11.2 chunks ever bakes and the far tier would have had nothing to bake; see
+> "Context, amended" and Alternatives E to G
 > **Date:** 2026-11-20
 > **Related plan(s):** [Plan 0096](../plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md)
 > **Builds on:** [ADR-0046](0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
@@ -8,7 +11,9 @@
 > (the order by the view, the withdrawal), [ADR-0052](0052-the-live-queues-bake-budget-is-time-per-second-not-a-slice-per-frame.md)
 > (the budget's unit), [ADR-0070](0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md)
 > (the sky channel and the column-map clause), [ADR-0076](0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
-> rule 6 (the undrained image is the judged image; the drain is a budget)
+> rule 6 (the undrained image is the judged image; the drain is a budget), and ADR-0079 (on
+branch `plan-0095` until Plan 0095 merges: the key light's far estimate is the column map's
+horizon, which the record refines; it hands the far tiers' reach rule to this ADR)
 
 ## Context
 
@@ -34,10 +39,33 @@ direction and 256 give the same display value within the owner's eye (a guess th
 reads). What the image reads is a record at the precision the view can see; what the queue bakes
 today is every record at the precision the nearest view could see.
 
+### Context, amended 2026-11-20: the reach rule leaves the far tier nothing to bake
+
+Plan 0095's dev read the queue at rest after a drain (its readings log, "The idle queue after
+W1", `b7ad63f7` on branch `plan-0095`): a chunk bakes only when every chunk in its light reach is
+mirrored at full detail (ADR-0046's identity rule; `in_reach` at the default light radius 4
+reaches offsets up to 5.39 chunks), and the streamer's full radius is 16 chunks (12 in the
+Portable profile, `lod.r_full`), so a still camera never fills the reach of a chunk farther than
+about 11.2 chunks (about 72 m at 6.4 m a chunk; about 42 m in the Portable profile): under
+`ReachMode::Full` nothing beyond that line ever bakes, and the LOD-only ring (16 to 24 chunks)
+never does. On the hills at noon the drain "landed" with 0 jobs while 2 964 of 3 561 in-view
+chunks waiting were reach-bound; the exact test (`reach_crosses`) marks 11 814 of the full
+sphere's chunks as crossing, the HUD's `len + lr > r_full` count 9 924 (Plan 0095 Phase 6 fixes
+the count). Rule 2's far band begins where a voxel projects under `lo` (2 px: about 38.5 m at
+1080p and the fly-through's focal length, about 26 m at 720p), so nearly every far-band chunk
+and no near-band chunk lies past the reach line: **a tier by size on screen whose far tier can
+never bake is no tier.** `ReachMode::Partial` (ADR-0046's Outcome of 2026-11-12, a setting off
+by default) already bakes such a chunk from the chunks resident, flags it partial in the queue's
+maps and re-queues it when a chunk in its reach arrives full; the owner saw it globally at Plan
+0067's window ("not much difference really") and kept `Full`. Plan 0095's owner answers of
+2026-11-20 route the rule to this ADR and Plan 0096: the far's calm image is the column map's
+horizon (ADR-0079) and the bake refines it where a record lands.
+
 ## Decision
 
 **The live queue bakes what the image reads, and the time to land what is in view is a budget in
-`docs/nfr.md`.** Three rules, in the order they pay:
+`docs/nfr.md`.** Three rules, in the order they pay, and a fourth (amended 2026-11-20) that lets
+the far tiers bake at all:
 
 1. **A record by rule where no ray is needed.** A listed chunk with no exposed face is marked
    baked-empty and holds no record; a listed chunk whose reach box (the chunk dilated by the
@@ -58,10 +86,26 @@ today is every record at the precision the nearest view could see.
    drain value while any chunk in the view cone waits for its tier's record, and the line's
    value once none does. Both are settings rows per profile; the drain value is the owner's pick
    at the plan's window, against the frame rate they feel.
+4. **The reach rule by tier** (amended 2026-11-20, owner). The near tier keeps ADR-0046's rule:
+   a near-band chunk bakes once every chunk in its light reach is mirrored full. A mid- or
+   far-band chunk whose reach crosses the streamer's full radius (`reach_crosses`) bakes **from
+   the chunks resident** once nothing in its reach waits to upload (the `Partial` reach of
+   ADR-0046's Outcome, now by band instead of global): the full-detail chunks inside the sphere
+   and the LOD-only chunks beyond it as the bake's shadow walk finds them (it walks the mirror
+   as the frame does, from the job's chunk; the plan confirms a LOD-only chunk casts from its
+   mip, not as air), the record flagged partial in the queue's maps as today. **A partial far
+   record is refined by rule 2's promotion, not by the reach filling:** the camera that fills a
+   far chunk's reach is on its way to the mid band, where the re-bake happens anyway at the
+   full reach, so the existing re-queue on arrival is off for mid and far records and one fade
+   is saved per approached chunk. The dig's ring keeps the near count and the full reach; a
+   ring whose reach crosses bakes partial at the near count and the re-queue on arrival refines
+   it. A chunk that cannot hold a record (LOD-only, no bricks) is not listed; its faces read the
+   column map (the key light's horizon, ADR-0079; the sky rule, ADR-0070) for good.
 
-The queue therefore reaches a **landed** state (every in-view chunk at its tier), and the budget
-is the time from the first world frame to that state, per adapter and profile, beside the time to
-drain the whole residency.
+The queue therefore reaches a **landed** state (every in-view chunk that can hold a record holds
+its tier's record; a LOD-ring face served by the column map has nothing to wait for and counts
+as landed), and the budget is the time from the first world frame to that state, per adapter and
+profile, beside the time to drain the whole residency.
 
 ## Consequences
 
@@ -74,6 +118,9 @@ drain the whole residency.
   own, not the RTX's divided by nine.
 - Nothing changes for an indoor scene with emitters: no chunk there is buried without an emitter
   in reach, and the near band is where the lamp is.
+- (Amended 2026-11-20) The baked far reaches the full sphere's edge (16 chunks, about 102 m at
+  the defaults) instead of about 72 m, with no change to the residency or its memory; the near
+  tier's records are ADR-0046's, bit for bit.
 
 ### Negative
 - **The store is camera-dependent.** ADR-0046's bit-identity "whatever the slicing" becomes
@@ -90,6 +137,16 @@ drain the whole residency.
 - A drain slice over the bake line while the owner looks at a coarse image is GPU taken from the
   frame when it is most visible; the Floor profile's 16.6 ms holds it only because the RTX frame
   outdoors is about 6.7 ms at 1080p.
+- (Amended 2026-11-20) **A partial record's bytes depend on what was resident at the bake.** At
+  a still camera that set is the full sphere (the job waits until nothing in reach is pending),
+  so the record is the same on every run from the same start; in motion it is whatever had
+  arrived, and the camera that stops at 60 m keeps a far record cast partly from mips until it
+  comes nearer. The plan's hash test pins the still case; the window judges the far record's
+  look, mips and all, against the full-reach bake. The `partial` flag stays in the queue's
+  maps, not in the record head.
+- (Amended 2026-11-20) The LOD ring never holds a record, so a far face there reads the column
+  map for good: the horizon's hard heightfield shadow at the key light and no leaf porosity.
+  That is ADR-0079's call and its window's; this ADR only names the line where the record ends.
 
 ## Alternatives considered
 
@@ -114,6 +171,27 @@ shader may keep its own early-outs.
 ### Alternative D: The bake on the stream workers' CPUs
 Rejected in ADR-0046 and not reopened: at 5 ns a sample the GPU is the fast path, and rule 1
 already gives the CPU the records that need no sample.
+
+### Alternative E: A wider full residency (added 2026-11-20)
+Raise `lod.r_full` so the reach line moves out (20 puts it at about 97 m). The resident set
+grows as the cube (about 0.87 GB live at 16 by `docs/nfr.md` section 3; about 1.7 GB at 20, 2.9
+at 24), the queue's depth with it, the LOD ring stays unbaked and the Portable profile, at 12,
+cannot pay it at all. ADR-0079's Alternative J, rejected there for the same arithmetic.
+
+### Alternative F: `--reach partial` as the global default (added 2026-11-20)
+Flip ADR-0046's Outcome: every chunk whose reach crosses bakes partial, the near ones too, as
+Plan 0067's arm did. The owner saw it and kept `Full`; it changes the near records' bytes (the
+ones ADR-0046's identity test and the dig's ring are built on) for a gain that only the far
+needs, and Plan 0095 could not flip it on its branch without owning the queue. Rejected: the
+reach is a rule by tier, rule 4, so the near keeps the identity rule and only the bands that
+cannot see the difference depart from it.
+
+### Alternative G: Refine a partial far record when its reach fills (added 2026-11-20)
+Keep the existing re-queue on arrival for the far tiers. It costs one more job and one more fade
+for every far chunk the camera approaches, at about 72 m, where a voxel is 1 px and the
+difference between a mip caster and a full one at the reach's rim is under the eye's reach; the
+promotion to the mid band at about 38 m re-bakes it at the full reach anyway. Rejected as the
+trigger; kept for the dig's ring, whose near count wants the full reach.
 
 ## Outcome
 

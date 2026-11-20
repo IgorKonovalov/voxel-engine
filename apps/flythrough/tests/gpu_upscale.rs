@@ -16,6 +16,11 @@ use vxe_world::*;
 /// the instances 65 536 B and the pool 8 MiB; and its marks buffer, 4096 B (ADR-0074).
 const ENTITY_MIRROR: u64 = 4096 + 65_536 + (8 << 20) + 4096;
 
+/// The exposure's growth over the figures main's frame held (Plan 0094 Phases 4 and 7b): the
+/// meter tile from 8 to 16 B (the sky count) over 160 x 90 tiles at 1280 x 720 internal, and the
+/// pass's uniform from 96 to 112 B (the rate, the sky share).
+const EXPOSURE_GROWTH: u64 = (16 - 8) * 160 * 90 + (112 - 96);
+
 /// `world` mirrored over its extent on the software adapter, with a frame of `internal`
 /// pixels for an `output` image, lighting at full resolution; `None` without the adapter.
 fn rig(world: &World, internal: [u32; 2], output: [u32; 2]) -> Option<LookRig> {
@@ -642,7 +647,8 @@ fn frame_bytes_add_the_histories_and_the_output_target() {
 /// 640 x 360 = 3 686 400 B, ADR-0036's figure), less the two `rgba32uint` reservoir textures
 /// (2 x 16 B x 640 x 360 = 7 372 800 B), plus the direct target and its accumulation pair
 /// (3 x 8 B x 640 x 360 = 5 529 600 B, ADR-0044): 124 737 616 B, plus the entity mirror
-/// (8 458 240 B, ADR-0050), before the store's pool is allocated. The live queue's start
+/// (8 458 240 B, ADR-0050) and the exposure's growth (`EXPOSURE_GROWTH`, 115 216 B), before
+/// the store's pool is allocated. The live queue's start
 /// allocates the pool at `Lighting::bake_pool_bytes` (256 MiB) under the adapter's storage
 /// binding, 128 MiB on lavapipe (134 217 728 B; the chunk table and every block lie in it):
 /// 258 955 344 B plus the entity mirror. The visibility pair and its samples (ADR-0070, 20 B a
@@ -661,7 +667,7 @@ fn frame_bytes_hold_the_store_and_no_emissive_history() {
     let pool = 128u64 << 20;
     println!("frame_bytes at the default: {before} B before the store, pool {pool} B");
     assert_eq!(base, 124_737_616);
-    let base = base + VIS_PAIR + ENTITY_MIRROR;
+    let base = base + VIS_PAIR + ENTITY_MIRROR + EXPOSURE_GROWTH;
     assert_eq!(before, base);
     let world = World::generate(
         ChunkExtent::new([0, 0, 0], [1, 1, 1]),
@@ -681,7 +687,10 @@ fn frame_bytes_hold_the_store_and_no_emissive_history() {
     let after = frame.frame_bytes();
     println!("frame_bytes with the store: {after} B");
     assert_eq!(after, base + pool);
-    assert_eq!(after, 258_955_344 + VIS_PAIR + ENTITY_MIRROR);
+    assert_eq!(
+        after,
+        258_955_344 + VIS_PAIR + ENTITY_MIRROR + EXPOSURE_GROWTH
+    );
 }
 
 /// The visibility pair (two `rgba16float` targets, 8 B a lighting pixel each) and the light
@@ -719,7 +728,7 @@ fn with_direct_inventory(w: u32, h: u32) -> u64 {
     let (lw, lh) = (w.div_ceil(2), h.div_ceil(2));
     let lit = u64::from(lw) * u64::from(lh);
     let strata = u64::from(lw.div_ceil(3)) * u64::from(lh.div_ceil(3));
-    let tiles = 8 * u64::from(w.div_ceil(8) * h.div_ceil(8));
+    let tiles = 16 * u64::from(w.div_ceil(8) * h.div_ceil(8));
     px * (2 * (16 + 8) + 8)
         + px * 4
         + lit * (2 * (16 + 8) + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 8)
@@ -727,7 +736,7 @@ fn with_direct_inventory(w: u32, h: u32) -> u64 {
         + tiles
         + 32
         + 16
-        + 928
+        + 944
         + ENTITY_MIRROR
         + 3 * 8 * lit
 }
@@ -748,10 +757,10 @@ fn frame_bytes_hold_the_direct_pair() {
     // The inventory at the half tier: the hit buffers twice and the layers, transmittance; the
     // output; the half grid's hit buffers twice; the irradiance, direct, two accumulations, two
     // direct accumulations, two moments, two filters, the indirect; the strata; the tiles; the
-    // split walk's stub (32 B) and dispatch (16 B); the exposure's buffers (928 B); and the
-    // entity mirror.
+    // split walk's stub (32 B) and dispatch (16 B); the exposure's buffers (944 B: the state
+    // twice, the 112-byte uniform, the ring); and the entity mirror. A meter tile is 16 B.
     let strata = 640u64.div_ceil(3) * 360u64.div_ceil(3);
-    let tiles = 8 * u64::from(1280u32.div_ceil(8) * 720u32.div_ceil(8));
+    let tiles = 16 * u64::from(1280u32.div_ceil(8) * 720u32.div_ceil(8));
     let without_direct = px * (2 * (16 + 8) + 8)
         + px * 4
         + lit * (2 * (16 + 8) + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 8)
@@ -759,7 +768,7 @@ fn frame_bytes_hold_the_direct_pair() {
         + tiles
         + 32
         + 16
-        + 928
+        + 944
         + ENTITY_MIRROR;
     let direct = 3 * 8 * lit;
     println!(

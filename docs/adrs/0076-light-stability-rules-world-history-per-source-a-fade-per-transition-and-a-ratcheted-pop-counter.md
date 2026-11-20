@@ -1,10 +1,12 @@
-# ADR-0076: A still world gives a still image: five light-stability rules, a world-space history per source, a fade per transition, and a pop counter that only ratchets down
+# ADR-0076: A still world gives a still image: six light-stability rules, a world-space history per source, a fade per transition, and a pop counter that only ratchets down
 
-> **Status:** proposed
+> **Status:** proposed (rule 6 and Alternative F added 2026-11-20, while proposed, at Plan 0094 Phase 7's verdict; rule 5's ceiling clause and `R`'s reading added the same day, after window 94b; rule 5's `max` bound on the anchor the same day, after window 94c)
 > **Date:** 2026-11-18
 > **Related plan(s):** [Plan 0090](../plans/0090-the-pop-counter-scenes-on-lavapipe-count-the-pixels-that-break-the-light-rules-a-ratchet.md)
 > (builds the counter and takes the baseline); [Plan 0086](../plans/done/0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md)
-> (whose Phase 16 attributed the pops this ADR names; the baseline is taken after it merges)
+> (whose Phase 16 attributed the pops this ADR names; the baseline is taken after it merges);
+> [Plan 0094](../plans/done/0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md)
+> (rules 2, 3 and 5 as its targets; its window gave rule 6 and rejected Alternative F)
 > **Builds on:** [ADR-0046](0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
 > (the baked store, its queue and its `FADE`),
 > [ADR-0053](0053-a-light-summary-per-block-and-a-two-level-parent-table-light-a-brick-with-no-value.md)
@@ -60,12 +62,12 @@ gate read 1107 s, so a new gate test has about 30 s of headroom unless it replac
 
 ## Decision
 
-**Light stability is a rule with a mechanical gate, not a look.** Five rules say what every
+**Light stability is a rule with a mechanical gate, not a look.** The rules below say what every
 light source owes the image; a counter measures the pixels that break each one on fixed scenes;
 a committed baseline per scene and rule may fall and never rise; and every plan that adds or
 changes a light source states where its history lives and how it fades.
 
-**The five rules.** Each is stated with the measurement that decides it. The visibility
+**The rules.** Each is stated with the measurement that decides it. The visibility
 thresholds (`T_still`, `T_return`, `T_fade`, the fade's frame count `F`, the exposure rate
 `R`) are calibrated once by the owner's eye on graded pops (Plan 0090 Phase 5) and then fixed
 in the counter; until then they are the guesses Plan 0090 names.
@@ -95,7 +97,34 @@ in the counter; until then they are the guesses Plan 0090 names.
    (ADR-0033's `a`) steps by at most `R` EV a frame, monotonically toward its target, and in a
    still scene after settle it does not move (within 1/64 EV). Rule 5 is read on the exposure
    state, not per pixel, and the other rules are read on the display with the exposure's share
-   attributed, so an exposure step that amplifies a pop is counted once, as exposure.
+   attributed, so an exposure step that amplifies a pop is counted once, as exposure. The
+   ceiling in force (ADR-0033's `max`, or the sky anchor's under it) is part of the exposure:
+   it moves under the same cap, so the sky entering or leaving the view is a fade too, and it
+   follows what is in view, not the sky's clock (the owner, 2026-11-20, window 94b: the
+   exposure changes "according to surrounding exposure, not time of day"; Plan 0094 Phase 7b).
+   **The anchor only lowers the ceiling, never lifts it over `max`** (added 2026-11-20, after
+   window 94c: the owner picked the night held at the constant +2 EV over the anchored night's
+   +11.86 EV, "headlamp too bright, level too bright"; Plan 0094 Phase 8a): ADR-0033's
+   `[min, max]` is the hard bound in every view and hour, the anchor is `min(c_a, max)`, so a
+   dark sky never opens the eye past what a game set as its ceiling, and a moonlit level is
+   dark, not mid-grey. Rejected there: the anchor off by default (loses the noon tunnel's
+   anchor, which the owner kept twice) and a second night-only constant (a knob with no reading
+   when `max` is that constant already). `R` read 3.75 EV/s by eye at window 94b (7.5 too
+   fast, 1.875 too slow), the calibration Plan 0090 Phase 5 inherits.
+6. **No waiting: the image before the bake lands is the judged image.** (Added 2026-11-20,
+   the owner at Plan 0094's window: "if we have to wait for a minute for light to settle,
+   something is wrong with the light and we need approximate things, it is not acceptable for
+   user".) A pixel whose precise answer has not arrived (a record not yet baked, a queue not
+   drained, an estimator under its cap) shows a **coarse, stable answer**, never its own first
+   samples: the value it carried before the event (continuity), a coarser level's (a chunk's
+   summary, the column, a mip), or a pool over neighbours that are already settled; the precise
+   value then arrives as one rule 3 fade. The approximation is judged by rules 1, 2 and 4 like
+   any other value, so a prior that is binary or wrong by a factor (an open column over a hole)
+   fails rule 3 at the landing and is not a coarse answer. Every rule 1 to 4 reading states the
+   bake queue's depth beside it and is taken on the undrained image as well as the drained one;
+   a bar that reads only the drained image defends nothing the owner sees. The time the queue
+   takes to land what is in view is a budget (`docs/nfr.md`), not a rule, and the perf plan
+   owns it; this rule says what the image shows meanwhile.
 
 **The counter.** A headless harness on lavapipe (the software adapter CI has; `docs/nfr.md`
 section 6) runs fixed scenes with fixed seeds at a low resolution, reads back the display and
@@ -174,9 +203,22 @@ printed reading beside them.
 ### Alternative E: One unified world-space light cache, now
 Fold every source into one estimate with one history and one fade, superseding ADR-0027,
 ADR-0044, ADR-0046 and ADR-0070 together. It may be the end state, but no reading says which
-sources need it, and it is a rewrite of the lighting base in flight. The five rules are what
+sources need it, and it is a rewrite of the lighting base in flight. The rules are what
 such a design would have to satisfy; the counter says whether and where the ratchet stalls,
 and that reading decides it later.
+
+### Alternative F: The settle, a converged estimator holds by construction (added 2026-11-20)
+What Plan 0094 Phase 3 built as the pixel-hold form of "approximate while not still": a
+visibility mean at its cap whose short mean stays inside its variance band for `F` frames stops
+blending and holds, releasing into a fade when the band is left four frames running. At rest it
+held 93 % of the forest's pixels with no change by construction, but the trunks' pops did not
+fall (0.352 % held against 0.367 % not), the turn's return frame read 37.6 % of pixels over 8
+against 21.9 % without it (rule 2 made worse: a held pixel that re-enters the view restarts
+from a young state), and the owner's eye preferred it off, "especially in motion"
+(`docs/plans/logs/0094.md`, Phase 3 and Phase 7). It lost because a hold freezes the grain it
+converged on and adds a state the reprojection must carry; rule 6 asks for a coarse answer
+while young and a fade at the landing, not a hold once old. The owner had its code removed
+(2026-11-20, Plan 0094 Phase 7a); this section is its record.
 
 ## Outcome
 

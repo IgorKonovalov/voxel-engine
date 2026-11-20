@@ -22,7 +22,8 @@
 //                                        history reused, 0 after a reset; then 1 where the
 //                                        emissive part is the store's (the a-trous passes it
 //                                        through), 2 where the pair's sky term rides with it,
-//                                        else 0
+//                                        else 0; with COUNT_STORE plus the sky term's source
+//                                        word over 16 (`sky_source`)
 //   9  uniform           edits           the frame's edit boxes (edits.wgsl's `Edits`)
 //  10  texture_2d<f32>   strata_in       the gradient pass's strata (gradient.wgsl), read in
 //                                        the gradient mode (Params.lighting bit 3): the
@@ -57,7 +58,8 @@
 //                                        visibility's running mean in r, the key light's in g
 //                                        (0 where it falls on no face), the sky's short mean in
 //                                        b, the pair's age in a (the samples its mean holds, 0
-//                                        where it holds none)
+//                                        where it holds none); where no ray was cast, the cap
+//                                        plus the no-ray fade's frames left in a (`no_ray_fade`)
 //
 // The sky's term (ADR-0070) is a visibility times the sky's irradiance above the horizon about
 // the shading normal now (`sky_open_by_normal`). Where the light pass cast no sky ray (a cube
@@ -297,46 +299,30 @@ fn store_summary_sky(head: StoreHead, c: vec3<i32>, face: u32) -> vec2<f32> {
     }
     let rec = block + STORE_SUMMARY_AT;
     if (((store[rec + 6u] >> (16u + face)) & 1u) == 0u
-        || (store[rec + VIS_WORD + 1u] & VIS_BAKED) == 0u) {
+        || (store[rec + VIS_WORD + 1u] & VIS_BAKED) == 0u
+        || (store[rec + VIS_WORD + 1u] & SKY_STALE) != 0u) {
         return vec2<f32>(0.0);
     }
     let byte = (store[rec + VIS_WORD + face / 4u] >> (8u * (face % 4u))) & 255u;
     return vec2<f32>(f32(byte) / 255.0, 1.0);
 }
 
-// The missing-light chain's sky visibility (ADR-0053's chain on ADR-0070's channel) for face
-// `face` of voxel `v`, whose own cell holds none: the chunk's own summary's, else the mean of its
-// six face neighbours' summaries that hold it; 0 in y for none, and under the `black` and
-// `parent` modes (the parent records are not read for the sky). shade.wgsl's `sky_chained` is
-// the same test, so the light pass casts no sky ray where this finds a value.
-fn store_sky_fallback(head: StoreHead, v: vec3<i32>, face: u32) -> vec2<f32> {
+// The no-record prior's sky visibility for face `face` of voxel `v` (hit `p`, lifted along `n`
+// for the column), whose own cell holds none: the chunk's own summary's while no dig job is
+// queued for the chunk (its summary not SKY_STALE); else, with LIGHTING_HOOK_COLUMN_PRIOR, the
+// column's answer held (`column_estimate`); 0 in y for none (the light pass casts the sky ray),
+// and under the `black` and `parent` modes. A face neighbour's summary does not answer the sky.
+// shade.wgsl's `sky_chained` is the same test.
+fn store_sky_fallback(head: StoreHead, v: vec3<i32>, face: u32, p: vec3<f32>, n: vec3<f32>) -> vec2<f32> {
     let mode = store_mode();
     if (mode == 0u || mode == MISSING_PARENT) {
         return vec2<f32>(0.0);
     }
-    let c = v >> vec3<u32>(6u);
-    let own = store_summary_sky(head, c, face);
-    if (own.y > 0.0) {
+    let own = store_summary_sky(head, v >> vec3<u32>(6u), face);
+    if (own.y > 0.0 || (params.lighting & LIGHTING_HOOK_COLUMN_PRIOR) == 0u) {
         return own;
     }
-    var sum = 0.0;
-    var n = 0.0;
-    for (var f = 0u; f < 6u; f++) {
-        let sign = select(1, -1, (f & 1u) == 0u);
-        let axis = f / 2u;
-        let o = vec3<i32>(
-            select(0, sign, axis == 0u),
-            select(0, sign, axis == 1u),
-            select(0, sign, axis == 2u),
-        );
-        let r = store_summary_sky(head, c + o, face);
-        sum += r.x * r.y;
-        n += r.y;
-    }
-    if (n > 0.0) {
-        return vec2<f32>(sum / n, 1.0);
-    }
-    return vec2<f32>(0.0);
+    return vec2<f32>(column_estimate(p, n), 1.0);
 }
 
 // `sky_open_irradiance_in` and `sky_open_by_normal_in` (sky.wgsl) over this pass's `sky_e`.
@@ -587,14 +573,31 @@ fn far_unmixed(rec: HitRecord, w: f32) -> vec3<f32> {
     return normalize(l * rec.n - k * f);
 }
 
+// Whether view `a` is view `b` but for the jitter: the same origin, axes and frustum.
+fn view_still(a: View, b: View) -> bool {
+    return all(a.origin == b.origin) && all(a.right == b.right) && all(a.up == b.up)
+        && all(a.fwd == b.fwd) && a.tan_left == b.tan_left && a.tan_right == b.tan_right
+        && a.tan_up == b.tan_up && a.tan_down == b.tan_down;
+}
+
 // Whether previous hit `prev` agrees with this frame's hit `rec` (reprojected to `pp`) within
 // `tol` voxels: a hit of the same thing, with the same material and a normal within
 // HISTORY_COS, or with LIGHTING_HOOK_ANY_HISTORY whatever the material and normal. Where
 // `stair_w` is over one half (the stair test) the smoothed normals (`far_unmixed`, both at this
 // hit's weight) are compared within HISTORY_COS and the material is not: a tread and its
-// riser under the jitter share the irradiance history, which is before albedo.
-fn history_agrees(prev: HitRecord, rec: HitRecord, pp: vec3<f32>, tol: f32) -> bool {
-    if (!prev.found || !same_thing(prev, rec) || distance(prev.p, pp) > tol) {
+// riser under the jitter share the irradiance history, which is before albedo. With `own_still`
+// (a world hit's own pixel at a still camera, `view_still`) neither is tested: the pixel's
+// footprint is the same as the frame before's, and under the jitter its hit moves between the
+// faces inside it (a trunk's side and its top, two faces of a corner), whose irradiance the
+// footprint's history averages; the position test stays.
+fn history_agrees(prev: HitRecord, rec: HitRecord, pp: vec3<f32>, tol: f32, own_still: bool) -> bool {
+    if (!prev.found || !same_thing(prev, rec)) {
+        return false;
+    }
+    if (own_still) {
+        return true;
+    }
+    if (distance(prev.p, pp) > tol) {
         return false;
     }
     if ((params.lighting & LIGHTING_HOOK_ANY_HISTORY) != 0u) {
@@ -608,8 +611,13 @@ fn history_agrees(prev: HitRecord, rec: HitRecord, pp: vec3<f32>, tol: f32) -> b
 
 // Counts a reset pixel's cause into `counters` (COUNT_STORE only): the first test previous
 // hit `prev` fails, in the order material (word 6; not under the stair test), normal (word 7;
-// the smoothed normals under it), anything else (word 8).
-fn count_rejection(prev: HitRecord, rec: HitRecord) {
+// the smoothed normals under it), anything else (word 8; every cause where `own_still`, which
+// tests neither material nor normal).
+fn count_rejection(prev: HitRecord, rec: HitRecord, own_still: bool) {
+    if (own_still) {
+        atomicAdd(&counters[8], 1u);
+        return;
+    }
     let stair = stair_w > 0.5;
     var cos = dot(prev.n, rec.n);
     if (stair) {
@@ -622,6 +630,44 @@ fn count_rejection(prev: HitRecord, rec: HitRecord) {
     } else {
         atomicAdd(&counters[8], 1u);
     }
+}
+
+// The sky term's source at a hit, a reading's word (COUNT_STORE only), added to the moments'
+// w as `source / 16` (`source_fraction`): every reader of that w compares it against 0.5 or
+// 1.5, which a fraction under 0.5 leaves as it was. SOURCE_NONE: no store face, an entity or
+// the sky off; RECORD: the face's own cell holds a fresh record (no ray); RECORD_STALE: it
+// holds one marked stale (the ray cast); OWN_SUMMARY and COLUMN: no record, the prior's value
+// from the chunk's own summary or the column held (`store_sky_fallback`; no ray); NO_VALUE: no
+// record and no prior's value (the ray cast); MISMATCH: a prior's value where the ray was cast.
+const SOURCE_NONE: u32 = 0u;
+const SOURCE_RECORD: u32 = 1u;
+const SOURCE_RECORD_STALE: u32 = 2u;
+const SOURCE_OWN_SUMMARY: u32 = 3u;
+const SOURCE_COLUMN: u32 = 4u;
+const SOURCE_NO_VALUE: u32 = 5u;
+const SOURCE_MISMATCH: u32 = 6u;
+
+// The source word of face `face` of voxel `v`: `record` its own cell holds a record, `chained`
+// the chain gave a value, `ray` the light pass cast the sky ray there.
+fn sky_source(head: StoreHead, v: vec3<i32>, face: u32, record: bool, chained: bool, ray: bool) -> u32 {
+    if (record) {
+        return select(SOURCE_RECORD, SOURCE_RECORD_STALE, ray);
+    }
+    if (chained) {
+        if (ray) {
+            return SOURCE_MISMATCH;
+        }
+        return select(SOURCE_COLUMN, SOURCE_OWN_SUMMARY,
+            store_summary_sky(head, v >> vec3<u32>(6u), face).y > 0.0);
+    }
+    return SOURCE_NO_VALUE;
+}
+
+fn source_fraction(source: u32, on_entity: bool) -> f32 {
+    if (!COUNT_STORE || on_entity) {
+        return 0.0;
+    }
+    return f32(source) / 16.0;
 }
 
 const ALPHA: f32 = 0.2;
@@ -637,75 +683,7 @@ const HISTORY_COS: f32 = 0.8;
 const HISTORY_DIST: f32 = 0.5;
 const HISTORY_DIST_PER_T: f32 = 0.03;
 
-// The visibility pair (ADR-0070). The short mean's frames, and the age past which a sample is
-// clamped.
-const SKY_SHORT: f32 = 8.0;
-// A sample is clamped at this many times the larger of the long and short means (Plan 0086's
-// readings log, Phase 1: the smallest integer that leaves every pixel of a hit rate over 0.3
-// unclamped).
-const FIREFLY_K: f32 = 4.0;
-// The band about the long mean the short mean stays in: this many binomial standard deviations
-// of an 8-frame mean at the long mean's rate, plus SKY_BAND_EPS (a half's rounding and a
-// still pixel's drift).
-const SKY_BAND_SIGMAS: f32 = 3.0;
-const SKY_BAND_EPS: f32 = 0.02;
-// The band's variance is at least a rate of P_MIN's, so a pair at 0 or 1 (a seed, or a
-// settled pixel at the extremes) is not the band's degenerate point: one disagreeing sample
-// (1 / SKY_SHORT) stays inside it, two in a row leave it.
-const P_MIN: f32 = 0.02;
-// Out of the band the age falls to SKY_SHORT times the band over the distance, at least this.
-const SKY_FALL_MIN: f32 = 2.0;
-// The samples a reset pair's seed counts as: the next sample blends at `1 / (SEED_AGE + 1)`,
-// past SKY_SHORT, so the firefly clamp holds from the frame after the reset.
-const SEED_AGE: f32 = 8.0;
-
-// How far a seed's column test lifts the hit along the face normal, in voxels: past the
-// column map's cell, so the point is not read in the wall's own cell (whose top is the wall's).
-const SEED_LIFT: f32 = f32(COLUMN_CELL) + 0.5;
-
-// A reset pair's seed with no record: the column map's answer (ADR-0070's sky rule) at hit `p`
-// lifted SEED_LIFT voxels along `n` into the air the face looks into, 1 above its column's
-// top of solid, else 0.
-fn column_estimate(p: vec3<f32>, n: vec3<f32>) -> f32 {
-    return select(0.0, 1.0, above_column(p + n * SEED_LIFT));
-}
-
-// The visibility pair after sample `s` (the sky rays' share this frame) on history `hp`
-// (`accepted`: the direct part's taps agreed and nothing resets it), its cap `sky.sky_history`.
-// A reset pair holds the estimate `e` alone in both means at age SEED_AGE; this frame's sample
-// joins from the next frame.
-fn pair_step(s: f32, hp: vec4<f32>, accepted: bool, e: f32) -> vec4<f32> {
-    let age = floor(hp.w + 0.5);
-    if (!accepted || age < 1.0 || (params.lighting & LIGHTING_SKY_CHANGED) != 0u) {
-        return vec4<f32>(e, 0.0, e, SEED_AGE);
-    }
-    let n0 = min(age + 1.0, f32(max(sky.sky_history, 1u)));
-    let b = hp.z + (s - hp.z) / min(n0, SKY_SHORT);
-    let r = hp.x;
-    let band = SKY_BAND_SIGMAS * sqrt(max(r * (1.0 - r), P_MIN * (1.0 - P_MIN)) / SKY_SHORT)
-        + SKY_BAND_EPS;
-    let d = abs(b - r);
-    var n = n0;
-    if (d > band) {
-        n = min(n, max(SKY_FALL_MIN, floor(SKY_SHORT * band / d)));
-    }
-    var sc = s;
-    if (n0 > SKY_SHORT && (params.lighting & LIGHTING_HOOK_NO_CLAMP) == 0u) {
-        sc = min(s, FIREFLY_K * max(r, b));
-    }
-    return vec4<f32>(r + (sc - r) / n, 0.0, b, n);
-}
-
-// The key light's visibility mean after sample `s` on history `g`, which holds `age` samples
-// (the direct part's history age; `reset`: the history is not taken): over `age + 1` samples,
-// as the direct part blends, capped at `key_history`.
-fn key_mean(s: f32, g: f32, age: f32, reset: bool) -> f32 {
-    if (reset || (params.lighting & LIGHTING_SKY_CHANGED) != 0u) {
-        return s;
-    }
-    let n = clamp(age + 1.0, 1.0, f32(max(sky.key_history, 1u)));
-    return g + (s - g) / n;
-}
+// The visibility pair's functions are pair.wgsl's.
 
 @compute @workgroup_size(8, 8, 1)
 fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -734,9 +712,17 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     var rec_voxel = vec3<i32>(0);
     var rec_dir = 0u;
     var rec_nf = vec3<f32>(0.0);
+    // A store face where no sky ray was cast whose sky term comes from the store or the prior
+    // (`no_ray`): its voxel, face and face normal, for the term after the fade.
+    var no_ray = false;
+    var nr_voxel = vec3<i32>(0);
+    var nr_face = 0u;
+    var nr_nf = vec3<f32>(0.0);
     let fresh = sample.w > 0.5 && view_mode() != VIEW_STEPS;
     sample.w = 0.0;
     var stored = false;
+    // The sky term's source (COUNT_STORE only; `SOURCE_*`), carried in the moments' w.
+    var source = SOURCE_NONE;
     let on_entity = entity_reads_store(rec);
     if (reads_store(rec) || on_entity) {
         let ray = pixel_ray(full_px(gid.xy));
@@ -805,14 +791,23 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
             var sv = rv;
             if (sv.y == 0.0) {
-                sv = store_sky_fallback(head, store_voxel(rec.p, nf), face);
+                sv = store_sky_fallback(head, store_voxel(rec.p, nf), face, rec.p, nf);
+            }
+            if (COUNT_STORE) {
+                source = sky_source(head, store_voxel(rec.p, nf), face, rv.y > 0.0, sv.y > 0.0, sky_cast);
             }
             if (sv.y > 0.0 && !sky_cast) {
                 sky_term = sky_baked_term(head, store_voxel(rec.p, nf), face, sv.x, rec, nf);
                 seed = vec4<f32>(sv.x, 0.0, sv.x, f32(max(sky.sky_history, 1u)));
+                no_ray = true;
+                nr_voxel = store_voxel(rec.p, nf);
+                nr_face = face;
+                nr_nf = nf;
             }
         }
-        sample = vec4<f32>((e.xyz + sky_term) * exposure_now(), 0.0);
+        // The no-ray sky term joins the stored part after the history, at its faded value
+        // (`no_ray_fade`); the return below, which keeps no history, takes it as it is.
+        sample = vec4<f32>(e.xyz * exposure_now(), 0.0);
         if ((params.lighting & LIGHTING_DIRECT) == 0u && (params.flags & FLAG_CUTAWAY) == 0u
             && view_mode() != VIEW_STEPS) {
             var held = 0.0;
@@ -821,9 +816,10 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
             // A face's pixel is never fresh here (no light, no shadow ray); a moved part's is.
             let fresh_w = select(0.0, 1.0, fresh);
-            textureStore(accum_out, px, min(vec4<f32>(sample.xyz, fresh_w), vec4<f32>(HDR_MAX)));
+            let lit = sample.xyz + sky_term * exposure_now();
+            textureStore(accum_out, px, min(vec4<f32>(lit, fresh_w), vec4<f32>(HDR_MAX)));
             textureStore(direct_out, px, vec4<f32>(0.0));
-            textureStore(moments_out, px, vec4<f32>(0.0, 0.0, held, 1.0));
+            textureStore(moments_out, px, vec4<f32>(0.0, 0.0, held, 1.0 + source_fraction(source, on_entity)));
             textureStore(pair_out, px, seed);
             return;
         }
@@ -849,6 +845,9 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             stair_w = far_normal_weight(params.views[vi], rec.t);
         }
         let pp = prev_world(rec);
+        // A world hit at a still camera tests its own pixel's previous hit without the
+        // material and normal tests (`history_agrees`).
+        let still = !rec.entity && view_still(params.prev_views[vi], params.views[vi]);
         let full = reproject_centred(params.prev_views[vi], params.views[vi].jitter, pp);
         let q = select(prev_light_grid(full), full, full.x < 0.0) - 0.5;
         let base = vec2<i32>(floor(q));
@@ -869,7 +868,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 continue;
             }
             let prev = unpack_hit(textureLoad(prev_pos_in, tap, 0), textureLoad(prev_info_in, tap, 0));
-            if (!history_agrees(prev, rec, pp, tol)) {
+            if (!history_agrees(prev, rec, pp, tol, still && all(tap == px))) {
                 continue;
             }
             let wx = select(1.0 - f.x, f.x, o.x == 1);
@@ -908,7 +907,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 }
                 let prev = unpack_hit(textureLoad(prev_pos_in, tap, 0), textureLoad(prev_info_in, tap, 0));
                 let d = distance(prev.p, pp);
-                if (!history_agrees(prev, rec, pp, best)) {
+                if (!history_agrees(prev, rec, pp, best, still && all(tap == px))) {
                     continue;
                 }
                 best = d;
@@ -928,7 +927,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 if (on_light_grid(near)) {
                     prev = unpack_hit(textureLoad(prev_pos_in, near, 0), textureLoad(prev_info_in, near, 0));
                 }
-                count_rejection(prev, rec);
+                count_rejection(prev, rec, still && all(near == px));
             }
         }
         if (w_sum > 1e-3) {
@@ -983,10 +982,24 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     // switch between the stored part and the ray at the stale bit has no second history to lag
     // behind it. Its luminance joins the moments, so the filter's variance counts it. The key
     // light's term, sampled every frame where the key light is on, joins the direct part.
+    // A record's value seeds a reset pair at SEED_AGE (FADE_F under
+    // LIGHTING_HOOK_SEED_STALE_F where the face's record is stale, the ray cast at it), the
+    // column's at SEED_COLUMN.
+    let stale_f = rec_face && sky_cast && (params.lighting & LIGHTING_HOOK_SEED_STALE_F) != 0u;
+    let seed_age = select(select(SEED_AGE, FADE_F, stale_f), SEED_COLUMN, estimate < 0.0);
     if (estimate < 0.0) {
         estimate = column_estimate(rec.p, lift_n);
     }
-    var pair = select(seed, pair_step(vis.x, hp, accepted, estimate), sky_cast);
+    var pair = select(seed, pair_step(vis.x, hp, accepted, estimate, seed_age), sky_cast);
+    if (no_ray) {
+        // The no-ray value rides one fade.
+        let fx = no_ray_fade(seed.x, hp, accepted, seed.w);
+        pair = vec4<f32>(fx.x, pair.y, fx.x, fx.y);
+    }
+    if (no_ray) {
+        let t_nr = sky_baked_term(store_head(), nr_voxel, nr_face, pair.x, rec, nr_nf) * exposure_now();
+        accum = vec4<f32>(accum.xyz + t_nr, accum.w);
+    }
     var t_sky = sky_pair_term(sky_e, pair.x, vis.a, rec.n);
     // The moments' w: 0 a pixel the filter takes whole, 1 a stored pixel (its stored part passes
     // around the filter), 2 a stored pixel whose pair's sky term passes around it too.
@@ -1026,5 +1039,5 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     // The moments of a luminance at most MOMENT_LUM_MAX: the rescaled history can carry them
     // past it, and the second moment's bound, 65 025, is still a finite half.
     let m_max = vec2<f32>(MOMENT_LUM_MAX, MOMENT_LUM_MAX * MOMENT_LUM_MAX);
-    textureStore(moments_out, px, vec4<f32>(min(moments, m_max), age, kind));
+    textureStore(moments_out, px, vec4<f32>(min(moments, m_max), age, kind + source_fraction(source, on_entity)));
 }

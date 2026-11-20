@@ -87,37 +87,28 @@ fn sky_baked(v: vec3<i32>, face: u32) -> bool {
 }
 
 // Whether face `face` of voxel `v`, whose own cell holds no fresh baked visibility, takes the
-// missing-light chain's sky visibility instead of the sky rays: its cell holds no record of the
-// direction baked under a sky and is not stale, and its chunk's summary, or one of its six face
-// neighbours', holds the direction baked under a sky, under the `neighbour` or `chain` mode.
-// temporal.wgsl's `store_sky_fallback` reads the value by the same test.
+// no-record prior's sky visibility instead of the sky rays: its cell holds no record of the
+// direction baked under a sky and is not stale, under the `neighbour` or `chain` mode, and its
+// chunk's own summary holds the direction baked under a sky and not SKY_STALE (no dig job is
+// queued for the chunk), or LIGHTING_HOOK_COLUMN_PRIOR holds the column's answer. A face
+// neighbour's summary does not answer the sky. temporal.wgsl's `store_sky_fallback` reads the
+// value by the same test.
 fn sky_chained(v: vec3<i32>, face: u32) -> bool {
     let mode = (light_store[STORE_FLAGS] >> 2u) & 3u;
     if (mode == 0u || mode == 2u || sky_stale(v)) {
         return false;
     }
-    let c = v >> vec3<u32>(6u);
-    for (var f = 0u; f < 7u; f++) {
-        var o = vec3<i32>(0);
-        if (f < 6u) {
-            let sign = select(1, -1, (f & 1u) == 0u);
-            let axis = f / 2u;
-            o = vec3<i32>(
-                select(0, sign, axis == 0u),
-                select(0, sign, axis == 1u),
-                select(0, sign, axis == 2u),
-            );
-        }
-        let block = light_block(c + o);
-        if (block != 0u) {
-            let rec = block + STORE_SUMMARY_AT;
-            if (((light_store[rec + 6u] >> (16u + face)) & 1u) != 0u
-                && (light_store[rec + VIS_WORD + 1u] & VIS_BAKED) != 0u) {
-                return true;
-            }
-        }
+    if ((params.lighting & LIGHTING_HOOK_COLUMN_PRIOR) != 0u) {
+        return true;
     }
-    return false;
+    let block = light_block(v >> vec3<u32>(6u));
+    if (block == 0u) {
+        return false;
+    }
+    let rec = block + STORE_SUMMARY_AT;
+    let vis = light_store[rec + VIS_WORD + 1u];
+    return ((light_store[rec + 6u] >> (16u + face)) & 1u) != 0u
+        && (vis & VIS_BAKED) != 0u && (vis & SKY_STALE) == 0u;
 }
 
 // Chunk `c`'s block in the light pass's store binding; 0 for none or outside the table.

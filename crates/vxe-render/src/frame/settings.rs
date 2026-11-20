@@ -249,6 +249,23 @@ pub(crate) const LIGHTING_HOOK_SKY_END_IS_SKY: u32 = 1 << 23;
 /// shadow ray runs along the disc's centre, its sample on the disc fixed.
 pub(crate) const LIGHTING_HOOK_KEY_NO_JITTER: u32 = 1 << 25;
 
+/// `Params::lighting` bit, a reading hook ([`LightHooks::column_prior`]): a face with no record
+/// and no fresh own summary holds the column's answer with no sky ray (the prior's arm B).
+pub(crate) const LIGHTING_HOOK_COLUMN_PRIOR: u32 = 1 << 27;
+
+/// `Params::lighting` bit, a reading hook ([`LightHooks::no_fade`]): a no-ray sky value's change
+/// shows at once instead of riding the fade (temporal.wgsl `no_ray_fade`).
+pub(crate) const LIGHTING_HOOK_NO_FADE: u32 = 1 << 28;
+
+/// `Params::lighting` bit, a reading hook ([`LightHooks::pool`]): the a-trous variance pass
+/// pools each young pixel's pair means with its neighbours' by age (atrous.wgsl
+/// `pooled_pair`); without it the means are taken as they are.
+pub(crate) const LIGHTING_HOOK_POOL: u32 = 1 << 29;
+
+/// `Params::lighting` bit, a reading hook ([`LightHooks::seed_stale_f`]): a reset pair seeded from
+/// a stale record counts FADE_F samples instead of SEED_AGE (temporal.wgsl).
+pub(crate) const LIGHTING_HOOK_SEED_STALE_F: u32 = 1 << 30;
+
 /// `Params::lighting` bit: a cube face's baked sky term reads its visibilities by the 27-count
 /// gradient's normal at every distance ([`SkyNormal::Smoothed`]).
 pub(crate) const LIGHTING_SKY_SMOOTHED: u32 = 1 << 24;
@@ -276,6 +293,18 @@ pub struct LightHooks {
     pub sky_end_is_sky: bool,
     /// The key light's shadow ray runs along the disc's centre: no jitter over the sun's disc.
     pub key_no_jitter: bool,
+    /// The no-record prior's arm B: a face with no record and no fresh own summary holds the
+    /// column's answer with no sky ray, until its bake (arm A, the default, casts the ray seeded
+    /// from the column).
+    pub column_prior: bool,
+    /// A no-ray sky value's change shows at once: no fade.
+    pub no_fade: bool,
+    /// A young pixel's pair means are pooled with its neighbours' by age: the age-weighted
+    /// pool (off by default).
+    pub pool: bool,
+    /// A reset pair seeded from a stale record (a ring face casting the sky ray) counts 16
+    /// samples (the fade's frames) instead of 8.
+    pub seed_stale_f: bool,
 }
 
 impl LightHooks {
@@ -309,7 +338,20 @@ impl LightHooks {
             LIGHTING_HOOK_KEY_NO_JITTER
         } else {
             0
-        }
+        } | if self.column_prior {
+            LIGHTING_HOOK_COLUMN_PRIOR
+        } else {
+            0
+        } | if self.no_fade {
+            LIGHTING_HOOK_NO_FADE
+        } else {
+            0
+        } | if self.pool { LIGHTING_HOOK_POOL } else { 0 }
+            | if self.seed_stale_f {
+                LIGHTING_HOOK_SEED_STALE_F
+            } else {
+                0
+            }
     }
 }
 

@@ -123,3 +123,109 @@ fn the_column_wait_and_the_dump_reach_the_run() {
     assert!(!r.start_lighting().column_wait);
     assert!(parse_args_from(argv(&["--column-wait", "maybe"])).is_err());
 }
+
+/// `--exposure-rate` reaches the auto exposure, 3.75 EV/s by default and unnamed; another
+/// value, 0 among them, is named `exposure rate N EV/s`; out of 0 to 64 it is refused.
+#[test]
+fn the_exposure_rate_reaches_the_run() {
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert_eq!(
+        r.start_auto().rate_ev_s,
+        vxe_render::DEFAULT_EXPOSURE_RATE_EV_S
+    );
+    assert_eq!(vxe_render::DEFAULT_EXPOSURE_RATE_EV_S, 3.75);
+    assert!(!r.start_modes(0.0).line().contains("exposure rate"));
+    let r = parse_args_from(argv(&["--source", "outdoor", "--exposure-rate", "3.75"])).unwrap();
+    assert!(!r.start_modes(0.0).line().contains("exposure rate"));
+    for (v, rate) in [("0", 0.0f32), ("1.875", 1.875), ("7.5", 7.5)] {
+        let r = parse_args_from(argv(&["--source", "outdoor", "--exposure-rate", v])).unwrap();
+        assert_eq!(r.start_auto().rate_ev_s, rate);
+        let line = r.start_modes(0.0).line();
+        assert!(
+            line.contains(&format!("exposure rate {rate} EV/s, ")),
+            "{line}"
+        );
+    }
+    for bad in ["-1", "65", "fast"] {
+        assert!(
+            parse_args_from(argv(&["--exposure-rate", bad])).is_err(),
+            "{bad}"
+        );
+    }
+}
+
+/// The light pass arms are built in the loading stage (`run::loading::ARMS`) when the flags
+/// pick one at start, `--leaf-shadow absorb` or `--penumbra approach`, and not otherwise.
+#[test]
+fn an_arm_picked_at_start_is_built_while_loading() {
+    let stages = |r: &crate::cli::Args| {
+        crate::run::loading::load_stages(true, false, r.light_arms_at_start())
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect::<Vec<_>>()
+    };
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert!(!r.light_arms_at_start());
+    assert!(!stages(&r).contains(&crate::run::loading::ARMS));
+    for picked in [
+        &["--source", "outdoor", "--leaf-shadow", "absorb"][..],
+        &["--source", "outdoor", "--penumbra", "approach"],
+    ] {
+        let r = parse_args_from(argv(picked)).unwrap();
+        assert!(r.light_arms_at_start(), "{picked:?}");
+        assert_eq!(stages(&r)[1], crate::run::loading::ARMS, "{picked:?}");
+    }
+    let r = parse_args_from(argv(&["--source", "outdoor", "--leaf-shadow", "voxel"])).unwrap();
+    assert!(!r.light_arms_at_start());
+}
+
+/// The settle is gone (Plan 0094 Phase 7a, ADR-0076's Alternative F): `--settle` is refused
+/// and the banner names no settle.
+#[test]
+fn the_settle_is_refused() {
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert!(!r.start_modes(0.0).line().contains("settle"));
+    for v in ["on", "off"] {
+        assert!(
+            parse_args_from(argv(&["--source", "outdoor", "--settle", v])).is_err(),
+            "{v}"
+        );
+    }
+}
+
+/// `--sky-anchor-share` reaches the auto exposure, 1/256 by default and unnamed; another value is
+/// named `sky anchor share X` and `off` (0) `sky anchor share off` with a sky set; out of (0, 1]
+/// it is refused.
+#[test]
+fn the_sky_anchor_share_reaches_the_run() {
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert_eq!(r.start_auto().sky_anchor_share, 1.0 / 256.0);
+    assert_eq!(
+        r.start_auto().sky_anchor_share,
+        vxe_render::DEFAULT_SKY_ANCHOR_SHARE
+    );
+    assert!(!r.start_modes(0.0).line().contains("sky anchor share"));
+    for (v, share, word) in [
+        ("0.25", 0.25f32, "sky anchor share 0.25, "),
+        ("off", 0.0, "sky anchor share off, "),
+    ] {
+        let r = parse_args_from(argv(&["--source", "outdoor", "--sky-anchor-share", v])).unwrap();
+        assert_eq!(r.start_auto().sky_anchor_share, share);
+        let line = r.start_modes(0.0).line();
+        assert!(line.contains(word), "{line}");
+    }
+    let r = parse_args_from(argv(&[
+        "--source",
+        "outdoor",
+        "--sky-anchor-share",
+        "0.00390625",
+    ]))
+    .unwrap();
+    assert!(!r.start_modes(0.0).line().contains("sky anchor share"));
+    for bad in ["0", "-0.5", "1.5", "most"] {
+        assert!(
+            parse_args_from(argv(&["--sky-anchor-share", bad])).is_err(),
+            "{bad}"
+        );
+    }
+}

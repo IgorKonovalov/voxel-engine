@@ -88,33 +88,7 @@ fn mirror_of(label: &str, name: &str) -> Option<Mirror> {
             changed,
             lamp
         }),
-        (_, "ExposureState") => mirror!(crate::exposure::ExposureState {
-            current,
-            previous,
-            adapted_log2,
-            metered_log2,
-            frame,
-            flags,
-            ceiling
-        }),
-        (_, "ExUniform") => mirror!(crate::exposure::ExposureUniform {
-            tiles,
-            view_count,
-            mode,
-            rects,
-            manual,
-            strength,
-            sigma,
-            dt,
-            key,
-            min_e = min,
-            max_e = max,
-            tau_light,
-            tau_cone,
-            tau_rod,
-            floor_log2,
-            anchor
-        }),
+        (_, "ExposureState" | "ExUniform") => exposure_mirror(name),
         (_, "ProbeParams") => mirror!(crate::probes::ProbeUniform {
             origin,
             spacing,
@@ -183,6 +157,45 @@ fn mirror_of(label: &str, name: &str) -> Option<Mirror> {
         (_, "BakeJob") => raw("bake::JOB_BYTES", crate::bake::JOB_BYTES as usize),
         _ => return None,
     })
+}
+
+/// `ExposureState` (common.wgsl, exposure.wgsl's `ExState` reads the same buffer) and
+/// `ExUniform` in exposure.wgsl.
+fn exposure_mirror(name: &str) -> Mirror {
+    match name {
+        "ExposureState" => mirror!(crate::exposure::ExposureState {
+            current,
+            previous,
+            adapted_log2,
+            metered_log2,
+            frame,
+            flags,
+            ceiling,
+            sky
+        }),
+        _ => mirror!(crate::exposure::ExposureUniform {
+            tiles,
+            view_count,
+            mode,
+            rects,
+            manual,
+            strength,
+            sigma,
+            dt,
+            key,
+            min_e = min,
+            max_e = max,
+            tau_light,
+            tau_cone,
+            tau_rod,
+            floor_log2,
+            anchor,
+            rate_ev_s,
+            max_rate_dt,
+            sky_share,
+            _pad1
+        }),
+    }
 }
 
 /// `Params` in `common.wgsl`.
@@ -374,6 +387,42 @@ fn every_uniform_struct_has_the_layout_of_the_rust_struct_that_fills_it() {
         errors.is_empty(),
         "{}",
         errors.into_iter().collect::<Vec<_>>().join("\n")
+    );
+}
+
+/// The meter's tile buffer (the composite's `meter_tiles`, the exposure pass's `tiles`) strides
+/// `exposure::METER_TILE_BYTES` a tile on both sides, the size the frame allocates it by.
+#[test]
+fn the_meter_tiles_stride_as_the_buffer_is_sized() {
+    let mut seen = Vec::new();
+    for (label, source) in sources() {
+        let module = naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|e| panic!("{label}: {}", e.emit_to_string(&source)));
+        for (_, g) in module.global_variables.iter() {
+            let name = g.name.as_deref().unwrap_or("");
+            let wanted = match (label.as_str(), name) {
+                (_, "meter_tiles") => true,
+                (l, "tiles") => l.contains("exposure"),
+                _ => false,
+            };
+            if !wanted {
+                continue;
+            }
+            let TypeInner::Array { stride, .. } = module.types[g.ty].inner else {
+                panic!("{label}: {name} is not an array");
+            };
+            assert_eq!(
+                u64::from(stride),
+                crate::exposure::METER_TILE_BYTES,
+                "{label}: {name}"
+            );
+            seen.push(format!("{label}: {name}"));
+        }
+    }
+    assert!(
+        seen.iter().any(|s| s.ends_with("meter_tiles"))
+            && seen.iter().any(|s| s.ends_with(": tiles")),
+        "{seen:?}"
     );
 }
 

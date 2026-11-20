@@ -118,6 +118,10 @@ pub(crate) const PRELUDE: &[(&str, u32)] = &[
     ("LIGHTING_PENUMBRA_APPROACH", LIGHTING_PENUMBRA_APPROACH),
     ("LIGHTING_HOOK_SKY_END_IS_SKY", LIGHTING_HOOK_SKY_END_IS_SKY),
     ("LIGHTING_HOOK_KEY_NO_JITTER", LIGHTING_HOOK_KEY_NO_JITTER),
+    ("LIGHTING_HOOK_COLUMN_PRIOR", LIGHTING_HOOK_COLUMN_PRIOR),
+    ("LIGHTING_HOOK_NO_FADE", LIGHTING_HOOK_NO_FADE),
+    ("LIGHTING_HOOK_POOL", LIGHTING_HOOK_POOL),
+    ("LIGHTING_HOOK_SEED_STALE_F", LIGHTING_HOOK_SEED_STALE_F),
     ("LIGHTING_SKY_SMOOTHED", LIGHTING_SKY_SMOOTHED),
     // The list of lights (`frame/lights.rs`).
     ("MAX_LIGHTS", MAX_LIGHTS as u32),
@@ -182,13 +186,43 @@ pub(crate) fn prelude() -> String {
 
 /// A pass's source: [`prelude`] then `modules`, joined by newlines.
 pub(crate) fn compose(modules: &[&str]) -> String {
+    compose_with(modules, false)
+}
+
+/// [`compose`] keeping the walk's default-off arms: the lines from each `// arms:begin` to its
+/// `// arms:end` (`walk.wgsl`'s approach probes and absorbing step), which [`compose`] leaves
+/// out.
+pub(crate) fn compose_arms(modules: &[&str]) -> String {
+    compose_with(modules, true)
+}
+
+fn compose_with(modules: &[&str], arms: bool) -> String {
     let mut s = prelude();
     for m in modules {
         s.push('\n');
-        s.push_str(m);
+        if arms || !m.contains(ARMS_BEGIN) {
+            s.push_str(m);
+            continue;
+        }
+        let mut inside = false;
+        for line in m.lines() {
+            let t = line.trim_start();
+            if t.starts_with(ARMS_BEGIN) {
+                inside = true;
+            } else if t.starts_with(ARMS_END) {
+                inside = false;
+            } else if !inside {
+                s.push_str(line);
+                s.push('\n');
+            }
+        }
     }
     s
 }
+
+/// The markers of a default-off arm's lines in a module ([`compose_arms`]).
+const ARMS_BEGIN: &str = "// arms:begin";
+const ARMS_END: &str = "// arms:end";
 
 /// One compute pipeline's source as the renderer composes it.
 pub struct ShaderSource {
@@ -419,5 +453,35 @@ mod tests {
         assert!(p.contains("const PAYLOAD_WORD: u32 = 32u;"));
         assert!(p.contains("const FLAG_FIELD_SPLIT: u32 = 524288u;"));
         assert!(p.contains("const MATERIAL_TRANSLUCENT: u32 = 2u;"));
+    }
+
+    /// The light pass's default pipelines compile neither default-off arm of the walk (the
+    /// approach probes' call, the absorbing step's sum): their sources lack both, which the
+    /// arms' variants, the steps view and the bake keep; the markers pair up in `walk.wgsl`.
+    #[test]
+    fn the_default_light_pipelines_compile_no_arm() {
+        use super::super::pipelines::{
+            P_LIGHT, P_LIGHT_ARMS, P_LIGHT_BARE, P_LIGHT_BARE_ARMS, P_LIGHT_STEPS,
+        };
+        let arms = ["approach_cell(o, d, t, exit.t)", "absorb_tau += 0.001"];
+        for p in [P_LIGHT, P_LIGHT_BARE] {
+            let src = PASSES[p].source();
+            for a in arms {
+                assert!(!src.contains(a), "{} compiles {a}", PASSES[p].label);
+            }
+        }
+        for p in [P_LIGHT_ARMS, P_LIGHT_BARE_ARMS, P_LIGHT_STEPS] {
+            let src = PASSES[p].source();
+            for a in arms {
+                assert!(src.contains(a), "{} lacks {a}", PASSES[p].label);
+            }
+        }
+        let bake = crate::bake::bake_source();
+        assert!(bake.contains(arms[1]), "the bake lacks the absorbing step");
+        let (b, e) = (
+            WALK_WGSL.matches(ARMS_BEGIN).count(),
+            WALK_WGSL.matches(ARMS_END).count(),
+        );
+        assert_eq!((b, e), (2, 2), "walk.wgsl's arms markers");
     }
 }

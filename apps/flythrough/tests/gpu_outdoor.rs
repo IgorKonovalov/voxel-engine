@@ -1446,7 +1446,8 @@ mod reading {
     /// `OUTDOOR_MIN` and `OUTDOOR_MAX`) with the sky anchor `none`, 0, 2, 4 and 6: the tunnel at
     /// noon out of and into it (the metered exposure and the ceiling in EV, the rim band's and
     /// the far end's mean display level), the hills at noon (`outside`; the whole frame's mean
-    /// level) and the forest at 17:45 (`outdoor_forest_sunset`'s clock). Printed; the window
+    /// level) and the forest at 17:45 (`outdoor_forest_sunset`'s clock), with the metered sky
+    /// share (Plan 0094 Phase 7b) beside each. Printed; the window
     /// picks. `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
@@ -1475,10 +1476,11 @@ mod reading {
                 for a in arms {
                     let r = run_cell(&mut rig, cam, clock(720.0).sky(base), cell(a));
                     println!(
-                        "reading: {pose} noon, anchor {}: exposure {:+.2} EV, ceiling {:+.2} EV, level rim {:.1} far {:.1} all {:.1}",
+                        "reading: {pose} noon, anchor {}: exposure {:+.2} EV, ceiling {:+.2} EV, sky {:.4}, level rim {:.1} far {:.1} all {:.1}",
                         name(a),
                         r.exposure.log2(),
                         r.ceiling.log2(),
+                        r.sky,
                         region_level(&r, &rim),
                         region_level(&r, &far),
                         region_level(&r, &all)
@@ -1496,10 +1498,11 @@ mod reading {
             for a in arms {
                 let r = run_cell(&mut rig, &cam, clock(minutes).sky(base), cell(a));
                 println!(
-                    "reading: {pose} at {minutes} min, anchor {}: exposure {:+.2} EV, ceiling {:+.2} EV, level all {:.1}",
+                    "reading: {pose} at {minutes} min, anchor {}: exposure {:+.2} EV, ceiling {:+.2} EV, sky {:.4}, level all {:.1}",
                     name(a),
                     r.exposure.log2(),
                     r.ceiling.log2(),
+                    r.sky,
                     region_level(&r, &all)
                 );
             }
@@ -1844,3 +1847,4 @@ include!("gpu_outdoor/flicker.rs");
 include!("gpu_outdoor/canopy.rs");
 include!("gpu_outdoor/still.rs");
 include!("gpu_outdoor/bars.rs");
+include!("gpu_outdoor/ceiling.rs");

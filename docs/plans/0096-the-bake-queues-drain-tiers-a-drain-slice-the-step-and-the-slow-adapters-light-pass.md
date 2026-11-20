@@ -1,6 +1,6 @@
 # 0096: Performance: the bake queue's drain (a record by rule, a tier by size on screen, a drain slice), the step off the depth, the slow adapter's light pass, and the sync's `alloc` and eviction scan
 
-> **Status:** approved 2026-11-20 (owner go; starts after Plan 0095 closes and merges). Owner picks, all as recommended: the drain slice 4.0 ms Floor / 6.0 ms Portable while in-view work waits, 1.0 once landed; a far chunk's 256-sample record is final until the camera brings it nearer; if the RENOIR forest stays over 4.0 ms the Portable profile owns the levers it picks and the Floor line stays with the miss disclosed; the window includes the 60 s cave glide.
+> **Status:** approved 2026-11-20 (owner go; starts after Plan 0095 closes and merges). Owner picks, all as recommended: the drain slice 4.0 ms Floor / 6.0 ms Portable while in-view work waits, 1.0 once landed; a far chunk's 256-sample record is final until the camera brings it nearer; if the RENOIR forest stays over 4.0 ms the Portable profile owns the levers it picks and the Floor line stays with the miss disclosed; the window includes the 60 s cave glide. **Amended 2026-11-20 (owner)**, at Plan 0095's window W1: the far tiers' reach rule moves into this plan (ADR-0080 rule 4; a chunk whose reach crosses the full radius bakes its mid or far tier from the chunks resident, the near tier keeps the full reach), Phase 1's census counts reach-bound chunks by the exact test and names the no-record bricks if Plan 0095 Phase 6 cannot, Phase 6 (c) reads far pixels on the baked key or the column map's horizon, the landed state counts a LOD-ring face served by the horizon, and 0095's extra bake rays are conditional on its window W2.
 > **Created:** 2026-11-20
 > **Milestone:** M10 (the outdoor scenes are where the queue never drains) and cross-cutting
 > like [Plan 0067](done/0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md):
@@ -8,7 +8,9 @@
 > slow adapter. The owner's "address performance next" (2026-11-11), placed after Plans 0094 and
 > 0095 (2026-11-20).
 > **Related ADRs:** [ADR-0080](../adrs/0080-the-live-queue-bakes-what-the-image-reads-a-record-by-rule-a-tier-by-size-on-screen-and-a-drain-slice.md)
-> (proposed with this plan: the queue bakes what the image reads). It rests on
+> (proposed with this plan: the queue bakes what the image reads; amended 2026-11-20 with rule
+> 4, the reach rule by tier) and ADR-0079 (on branch `plan-0095` until Plan 0095 merges: the
+> far's key light is the column map's horizon, refined by the record this plan lands). It rests on
 > [ADR-0046](../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
 > (the store and its queue), [ADR-0048](../adrs/0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md)
 > (the order and the withdrawal), [ADR-0052](../adrs/0052-the-live-queues-bake-budget-is-time-per-second-not-a-slice-per-frame.md)
@@ -30,9 +32,11 @@ takes to land what is in view a budget in `docs/nfr.md`** and meets it three way
 a chunk the rules can answer gets its record **without a GPU job** (no exposed face, or buried
 under the column map with no emitter in reach: a zero record), every other chunk bakes at **a
 sample tier set by its size on screen** (full where a voxel is over the far-normal band, the
-coarse count where it is under it, promoted when the camera comes near, as one rule 3 fade),
-and the bake's slice **rises while in-view work waits** and falls to the line when it has
-landed. Beside it: the queue's step on the main thread (6.3 ms p50 at 1080p while the queue is
+coarse count where it is under it, promoted when the camera comes near, as one rule 3 fade;
+**a mid or far chunk whose light reach crosses the streamer's full radius bakes from the chunks
+resident**, since under the default reach rule nothing past about 72 m ever bakes and the far
+tier would be empty), and the bake's slice **rises while in-view work waits** and falls to the
+line when it has landed. Beside it: the queue's step on the main thread (6.3 ms p50 at 1080p while the queue is
 deep) gets its cost off the queue's depth; the RADV RENOIR's outdoor light pass (8.0 and 12.0 ms
 against the 4.0 ms line) is read lever by lever; and the sync's `alloc` stage and the light
 placement's eviction scan (up to 1.2 s a sync in a windowed glide) take the backlog's two sync
@@ -57,6 +61,22 @@ Every figure is a reading unless marked; "RTX" is the NVIDIA GeForce RTX 3080 La
   (`docs/plans/logs/wobble-spike.md` on branch `spike-motion-wobble`) attributes two thirds of
   the far pixels still differing from their settled value at a stop to faces waiting for a
   record, the other third to the screen-space key and sky means that Plan 0095 takes.
+- **The reach rule caps the baked far at about 72 m** (amended 2026-11-20; Plan 0095's
+  readings log, "The idle queue after W1", `b7ad63f7` on branch `plan-0095`): a chunk bakes only
+  when every chunk in its light reach is mirrored full (`in_reach`, offsets up to 5.39 chunks at
+  `DEFAULT_LIGHT_RADIUS` 4), and the full radius is 16 chunks (`lod.r_full`; 12 in the Portable
+  profile), so under `ReachMode::Full` no chunk past 11.18 chunks (about 72 m; about 42 m in
+  the Portable profile) ever bakes and the LOD ring (16 to 24 chunks) never does. The hills at
+  noon drained to 0 jobs at 26 s with 2 964 of 3 561 in-view chunks waiting reach-bound; the
+  exact test (`reach_crosses`) marks 11 814 of the full sphere's chunks, the HUD's `len + lr >
+  r_full` 9 924 (the 1 890 between lie at 10.68 to 12.0 chunks; Plan 0095 Phase 6 fixes the
+  count). The last black dump there also found 461 px over 24 chunks within 10 chunks whose
+  chunk holds a block and whose hit brick has no record, at every dump from frame 60 on,
+  unexplained. The far band of this plan's tiers begins at about 38.5 m at 1080p (a voxel under
+  2 px), so nearly every far-band chunk is past the reach line: without a reach rule the far
+  tier has nothing to bake. `ReachMode::Partial` (`--reach partial`, Plan 0067 Phase 5) bakes
+  such a chunk from the chunks resident and re-queues it when its reach arrives; the owner kept
+  `Full` globally at Plan 0067's window ("not much difference really").
 - **The arithmetic of the drain** (from Plan 0067's readings, `docs/plans/logs/0067.md`): a
   full job (4096 samples a brick direction, `QUEUE_BRICK_SAMPLES`) draws about 1.2e6 samples a
   chunk and a coarse one (256, `DEFAULT_COARSE_SAMPLES`) about 7.4e4; the RTX draws 5.1 ns a
@@ -128,7 +148,15 @@ a voxel, `[2, 6]` at the defaults): full (4096) where its nearest voxel projects
 count (1024) between, and the coarse count (256) under `lo`; a chunk that moves into a nearer
 band as the camera moves is re-listed as a refinement and lands as one `FADE` (rule 3); one
 that moves out is withdrawn like a passed job (ADR-0048) if not yet submitted. The far tier is
-final, not a first pass: the queue reaches a landed state. (3) The slice (ADR-0052's unit) has
+final, not a first pass: the queue reaches a landed state. **The reach rule is by tier**
+(ADR-0080 rule 4, amended 2026-11-20): a near-band chunk waits for its full reach (ADR-0046); a
+mid- or far-band chunk whose reach crosses the full radius (`reach_crosses`) bakes from the
+chunks resident once nothing in its reach waits to upload, the LOD-only chunks beyond the sphere
+casting from their mips, flagged partial in the queue's maps as `ReachMode::Partial` does
+today; the partial record is refined by the band promotion, not by the reach filling (the
+re-queue on arrival is off for mid and far records), and the dig's ring keeps the near count
+with the re-queue. A LOD-only chunk holds no record; its faces read the column map (ADR-0079's
+horizon, ADR-0070's sky rule) for good, and the landed state counts them as landed. (3) The slice (ADR-0052's unit) has
 two values: a drain value while any in-view chunk waits for its tier's record and the line's
 value once none does; both are settings rows per profile, judged in the owner's window.
 
@@ -139,7 +167,13 @@ baked key with no ray and no pair update once Plan 0095 lands), each lever a che
 a setting whether or not the Portable profile picks it; and the sync takes Plan 0074's Phase 2
 index for the eviction scan and the `alloc` fix its profile names.
 
-We rejected **a larger slice alone** (the arithmetic above: the RENOIR cannot bake the
+We rejected, for the reach (ADR-0080 Alternatives E to G), **a wider full residency** (cube-law
+memory on about 0.87 GB live, the LOD ring still unbaked, the Portable profile cannot pay it),
+**`--reach partial` as the global default** (the owner kept `Full` at Plan 0067's window; it
+changes the near records that ADR-0046's identity test and the dig's ring stand on, for a gain
+only the far needs) and **refining a partial far record when its reach fills** (one more job and
+fade per approached chunk at about 72 m, where the mid band's re-bake at about 38 m lands at
+the full reach anyway). We rejected **a larger slice alone** (the arithmetic above: the RENOIR cannot bake the
 residency at the full count in any time the owner would call settling, and the RTX would spend
 minutes), **a progressive queue that refines every chunk to the full count when idle** (no
 landed state, so rule 6's "one fade when it lands" has no landing and the step never rests),
@@ -157,7 +191,7 @@ flowchart LR
         R -- no face --> E[baked-empty mark]
         R -- buried, no emitter --> Z[zero record on the CPU]
         R -- else --> T[tier by size on screen]
-        T --> Q[queue: score, tier, class]
+        T -- near: full reach / mid, far: resident reach --> Q[queue: score, tier, class]
         Q --> S[slice: drain while in view waits, line when landed]
         S --> J[GPU job at the tier's samples]
         J --> ST[store: record + FADE]
@@ -185,11 +219,16 @@ lock with the 1-minute load logged.
 
 **Starts after Plan 0095 (the motion wobble) closes and merges**, which follows Plan 0094: 0094
 lands rule 6's coarse prior and moves the default-off arms out of the default pipeline (the
-RENOIR light-pass readings must be taken on that pipeline), and 0095's key-visibility bake adds
-about 6 % to every job's rays and lets far pixels read a baked key with no ray (its guess), which
-changes both the drain's cost and the RENOIR's light pass. If 0095 is still open when the lane
-is free, Phase 1 may run on 0094's tip with the +6 % carried as a projection and re-read at
-Phase 9.
+RENOIR light-pass readings must be taken on that pipeline), and 0095 (amended 2026-11-20 at its
+window W1) gives the far's key light an instant estimate from the column map's horizon that the
+baked record refines where it lands (the owner's pick), so far pixels read a baked key or the
+horizon with no ray; its key-visibility bake adds about 6 % to every job's rays (its guess)
+**only if its window W2 keeps the record as the far's refinement**; if W2 holds the horizon for
+good, 0095's key bake defaults off and the jobs' rays are unchanged. Either way the drain's cost
+and the RENOIR's light pass are re-read here. Plan 0095 Phase 6 also lands the reach-bound
+count's fix (the exact extent, 5.39 chunks at light radius 4) that Phase 1's census reads, and
+names or hands over the 461 no-record pixels. If 0095 is still open when the lane is free, Phase
+1 may run on 0094's tip with the +6 % carried as a projection and re-read at Phase 9.
 
 ### Phase 1: Readings on the undrained image, and the drain readout
 - **Owner skill:** dev
@@ -213,10 +252,19 @@ Phase 9.
      hold no exposed face, how many are buried under the column map with no emitter in reach
      (the rule of Phase 2, computed on the CPU from the mirror's face masks, the column map and
      the emitter census), how many are surface chunks by band (near, mid, far by the far-normal
-     band at 1080p) and in or out of the view cone. This census sizes Phases 2 and 3; the
-     guess it tests: the residency is a sphere of about 16 chunks' radius (17 077 chunks),
-     about 800 columns, and the surface band is 2 to 3 chunks a column, so 1 600 to 2 400
-     surface chunks on the hills and more under the forest's canopies.
+     band at 1080p) and in or out of the view cone, and how many of the surface chunks by band
+     are **reach-bound by the exact test** (`reach_crosses`, or `len + reach_extent(lr) >
+     r_full` with the extent 5.39 chunks at light radius 4, as Plan 0095 Phase 6 lands it; not
+     the old `len + lr`), which is what Phase 3's reach rule bakes partial. This census sizes
+     Phases 2 and 3; the guess it tests: the residency is a sphere of about 16 chunks' radius
+     (17 077 chunks), about 800 columns, and the surface band is 2 to 3 chunks a column, so
+     1 600 to 2 400 surface chunks on the hills and more under the forest's canopies, with
+     most of the far band past the 11.18-chunk reach line. If Plan 0095 Phase 6 did not name
+     the cause of the about 461 px whose chunk holds a block and whose hit brick has no record
+     (`--dump-black` on the hills at noon, 24 to 28 chunks within 10 chunks, every dump from
+     frame 60 on), this census takes them: the dump's materials, faces and cell states, one
+     paragraph in the readings log naming the cause, and the fix in Phase 2 if it is a listing
+     rule's miss (reported to the architect if larger).
   3. **The step's 21 stage means** (`bake queue step:` line, per regime) at a depth over 10 000
      and at the drained state, at rest and in a `--glide 300` flight; and the mirror's change
      count a step in the glide (printed beside the `filter` stages, the backlog's ask).
@@ -294,14 +342,30 @@ Phase 9.
   reason). The sky channel's `SKY_BAKE_RAYS` (256) follows the tier (64 under `lo`) unless Phase
   1's census shows the sky rays are not the far chunks' cost. The tiers are a settings row
   (`bake.tiers`, three counts; the Portable profile's proposal 1024 / 256 / 256, a guess read in
-  Phase 8). `--full-first` keeps its meaning inside the near band. Readings, not bars: the drain
-  curves of Phase 1 (1) re-read, the in-view drain time by adapter at `frame:1.5`, the record
-  bytes of a far chunk against its full bake (the value difference, for the owner's eye in Phase
-  8).
-- **Files touched:** `crates/vxe-render/src/bake/queue/{list,open,step}.rs`,
-  `crates/vxe-render/src/bake/{order,record,job}.rs`, `crates/vxe-render/src/settings.rs`
-  (`BakeKnobs`), `crates/vxe-render/src/frame/settings.rs` (the profile rows),
-  `apps/flythrough/src/cli/flags.rs`, `crates/vxe-render/src/bake/queue/tests.rs`,
+  Phase 8). `--full-first` keeps its meaning inside the near band.
+  **The reach rule by tier** (ADR-0080 rule 4, amended 2026-11-20): `reach_ready` keeps
+  ADR-0046's rule for a near-band candidate; a mid- or far-band candidate whose reach crosses
+  the full radius (`reach_crosses`, `bake/queue/mod.rs`) takes the `Partial` path
+  (`summary.rs`, `Reach::Partial`) once nothing in its reach waits to upload, is flagged in
+  `partial` as today, and its job's shadow walk reads the mirror as the frame does from the
+  job's chunk (`bake_origin_chunk`), so a LOD-only chunk beyond the sphere casts from its mip;
+  the phase confirms that with a test (below), since the walk's level choice is by distance
+  from the origin chunk and a LOD-only chunk has no level-0 bricks. `requeue_partial` skips a
+  flagged chunk whose record is at the mid or far tier (the band promotion is its refinement);
+  the dig's ring, at the near count, keeps the re-queue. `ReachMode` becomes the near tier's
+  mode (`Full` by default; `--reach partial` and key `8` keep their meaning for the near band,
+  a setting that costs nothing when off). The `reach_bound` census (`open.rs`) splits into
+  near-band reach-bound (waiting for good at a still camera) and mid/far reach-bound (listed
+  partial). Readings, not bars: the drain curves of Phase 1 (1) re-read, the in-view drain time
+  by adapter at `frame:1.5`, the record bytes of a far chunk against its full bake and of a
+  partial far record against the same chunk baked with its reach filled (the value differences,
+  for the owner's eye in Phase 8), the baked far's farthest chunk in view (about 16 chunks
+  expected, 11.18 before).
+- **Files touched:** `crates/vxe-render/src/bake/queue/{mod,list,open,step}.rs` (`reach_crosses`,
+  `requeue_partial`, the census split), `crates/vxe-render/src/bake/{order,record,job,summary}.rs`
+  (`ReachMode` scoped to the near tier), `crates/vxe-render/src/settings.rs` (`BakeKnobs`),
+  `crates/vxe-render/src/frame/settings.rs` (the profile rows), `apps/flythrough/src/cli/flags.rs`,
+  `docs/flythrough.md` (`--reach`), `crates/vxe-render/src/bake/queue/tests.rs`,
   `apps/flythrough/tests/gpu_bake.rs`.
 - **Done when:** (1) `the_band_of_a_chunk_follows_the_far_normal_band_at_the_outputs_focal_length`
   (CPU, under 1 s): at 1080p with the fly-through's 70-degree vertical field (f = 540 / tan 35
@@ -312,8 +376,22 @@ Phase 9.
   the camera steps to 10 m, its new record carries the full tier's bits, and the store's fade
   state for its blocks runs `FADE` frames once (no second restart). (3) `a_tiers_record_bytes_are_the_same_on_every_run`
   (`gpu_bake`, lavapipe, about 4 s): the coarse-tier record of a chunk hashes the same across
-  two runs and two slicings, as ADR-0046's full record does. (4) The readings log holds the
-  in-view drain time at `frame:1.5` on both adapters and the far record's value difference.
+  two runs and two slicings, as ADR-0046's full record does; a partial far record, baked from a
+  still camera after the sphere is resident, hashes the same across two runs too. (4)
+  `a_far_band_chunk_whose_reach_crosses_the_full_radius_bakes_from_the_chunks_resident` (CPU,
+  under 2 s): a streamed `QueueView` with `r_full` 16 and light radius 4 and a candidate list of
+  the full sphere: every far-band chunk past 11.18 chunks out is listed with a job and flagged
+  partial once nothing in its reach is pending, a near-band chunk at the same reach state (a
+  shrunk `r_full` of 4 to make one) waits, and the step after a chunk arrives in a flagged far
+  chunk's reach re-queues nothing while the same arrival in a flagged dig ring's reach re-queues
+  the ring (the near count). (5) `a_lod_only_chunk_in_a_partial_reach_casts_from_its_mip`
+  (`gpu_bake`, lavapipe, about 6 s): a world with one emitter chunk, a far-band receiver and a
+  wall chunk between them that is mirrored LOD-only (the streamer's sphere set so the wall is
+  past `r_full`): the receiver's partial record is darker on the wall's side than the same
+  world with the wall absent, and equals within the coarse tier's noise the record baked with
+  the wall resident full. (6) The readings log holds the in-view drain time at `frame:1.5` on
+  both adapters, the far record's value difference against the full count, the partial record's
+  against the filled reach, and the farthest baked chunk in view.
 
 ### Phase 4: The drain slice, and the submits that draw their slice (exploration)
 - **Owner skill:** dev
@@ -379,8 +457,12 @@ Phase 9.
   length in voxels past which the face counts lit (`sky_light.wgsl` `key_visibility`; the
   review's E2, 1536 voxels its first guess); (b) no sky ray from a face whose normal points
   down (`n.z < -0.5`), which reaches no sky through the ground under the column rule; (c) far
-  pixels (the far-normal weight 1) read Plan 0095's baked key with no ray and skip the pair's
-  update (`temporal.wgsl`), which also removes a texture write a lighting pixel there; (d) the
+  pixels (the far-normal weight 1) read **the baked key where the record is fresh, else the
+  column map's horizon toward the sun** (ADR-0079; Plan 0095 Phases 2 and 4 land both reads),
+  with no key ray, and skip the pair's update (`temporal.wgsl`), which also removes a texture
+  write a lighting pixel there; this lever's reading is the horizon march's cost
+  (`COLUMN_KEY_STEPS` texture loads a far pixel) against the disc ray it replaces, on both
+  adapters, and where Plan 0095 already made it the default the arm is its before; (d) the
   a-trous at 2 iterations in the Portable profile (Plan 0058's setting, unpicked on the
   RENOIR). The RTX is read beside each lever and must stay within 0.1 ms of its base. Readings,
   not bars; Phase 8 picks what the Portable profile owns.
@@ -431,7 +513,11 @@ Phase 9.
   anything popping or black while `in view N waiting` falls to 0, and how long until it does
   (the HUD's `drain Ns` against the stopwatch). (b) **The far tier:** fly slowly toward a far
   tree and a far ridge: is the promotion's fade visible, do the far shadows at 256 samples look
-  wrong against the same view drained at `bake.tiers 4096,4096,4096`. (c) **The drain slice's
+  wrong against the same view drained at `bake.tiers 4096,4096,4096`; on the approach from 100
+  to 40 m, does the far ridge's partial record (its rim cast from mips) read any different from
+  the mid band's full-reach record it fades into, and is the line where the baked far ends and
+  the horizon begins (about 102 m, the LOD ring) visible as a seam in the key light's shadows.
+  (c) **The drain slice's
   trade:** arms `drain_ms` 1.5, 4.0 and 8.0 on the RTX and 3.0, 6.0 and 12.0 on the RENOIR:
   the fps the owner feels against the seconds to land. (d) **The RENOIR's light pass levers**
   (Phase 6's a to d) in the Portable profile: the key cap's and the down-face skip's look, 2
@@ -469,7 +555,8 @@ Phase 9.
 // illustrative
 pub enum Band { Near, Mid, Far }            // by the far-normal band at the output's focal length
 pub struct Tiers { pub near: u32, pub mid: u32, pub far: u32 }  // samples a brick direction; 4096 / 1024 / 256
-pub enum Verdict { NoFace, ZeroByRule, Bake(Band) }            // what the rules say of a listed chunk
+pub enum Verdict { NoFace, ZeroByRule, Bake(Band, Reach) }     // what the rules say of a listed chunk;
+                                                                // Reach::Partial only for Mid and Far
 pub struct Budget { pub drain_ms: f64, pub line_ms: f64, pub per_second: Option<(f64, f64)> }
 // record head word: VIS_BAKED (1 << 16), SKY_STALE (1 << 17), TIER (2 bits of the free bits)
 ```
@@ -483,7 +570,7 @@ chunk (8 192 chunks at the cap: under 200 KB).
 
 | `docs/nfr.md` figure | today (reading) | proposed line | how the close measures it |
 |---|---|---|---|
-| **New: in-view drain** (every chunk in the view cone holds its tier's record, from the first world frame, at rest) | forest 15:00 never in 30 000 frames; 4 419 in view waiting at 94a | **RTX Floor at most 10 s; RENOIR Portable at most 30 s** (estimates from the arithmetic in Phase 4; pinned from Phase 9's readings) | the Phase 1 (1) rig, release, both adapters, hills noon and forest 15:00, `drain_s` and the stopwatch frame |
+| **New: in-view drain** (every chunk in the view cone that can hold a record holds its tier's record, from the first world frame, at rest; a LOD-ring face served by the column map's horizon and sky rule has no record to wait for and counts as landed, amended 2026-11-20) | forest 15:00 never in 30 000 frames; 4 419 in view waiting at 94a; the hills "landed" at 26 s with 2 964 in view reach-bound under the old rule | **RTX Floor at most 10 s; RENOIR Portable at most 30 s** (estimates from the arithmetic in Phase 4; pinned from Phase 9's readings) | the Phase 1 (1) rig, release, both adapters, hills noon and forest 15:00, `drain_s` and the stopwatch frame, the in-view waiting count at 0 with the reach-bound count beside it |
 | **New: whole-residency drain** at rest | 7 to 30 min on the RTX (94a) | **RTX at most 60 s; RENOIR at most 180 s** (estimates) | the same rig to depth 0 |
 | The live bake's slice, 1.0 ms | `frame:1.5` default, over the line | two values: `drain_ms` while in view waits (Floor 4.0, Portable 6.0, the owner's pick), **`line_ms` 1.0 once landed**; the Floor frame stays within 16.6 while draining | the per-second line's slice p50 and the GPU frame, both adapters |
 | The queue's step (inside the 1.0 ms streaming line; no line of its own today) | 6.2 to 7.6 ms p50 at a depth over 14 000; 0.075 drained | **p50 at most 1.0 ms at any depth, p99 at most 4.0 ms**, both regimes | the `bake queue step:` line at the forest from the first world frame, RTX, release |
@@ -506,6 +593,18 @@ chunk (8 192 chunks at the cap: under 200 KB).
 - **The far tier's look.** 256 samples a brick direction is the coarse pass the owner has seen
   as a first pass, never as a final record on a far ridge; if the window rejects it the mid
   count becomes the far tier (the arithmetic in Phase 4 then roughly doubles the drain).
+- **A partial far record's bytes are the residency's at the bake** (amended 2026-11-20). At a
+  still camera the job waits until nothing in reach is pending, so the record is the sphere's
+  and Phase 3's hash test holds; in motion it is whatever had arrived and stays until the band
+  promotion. A camera that stops at 60 m keeps far records cast partly from mips; Phase 8 (b)
+  reads whether the eye can tell. If it can, the re-queue on arrival comes back for the far
+  tiers (ADR-0080 Alternative G) at one more fade per approached chunk.
+- **The drain's order may not match what is visible** (the backlog's "The bake queue ordered by
+  what the march touched", 2026-11-20): the in-view drain orders by an estimated size on screen
+  and bakes chunks behind hills and trunks before some the eye sees. If the in-view drain misses
+  its 10 s bar after Phases 2 to 4, the march's touched set (a bit per chunk hit this frame,
+  read back a frame late) is the optional lever: it orders the queue by actual visibility and
+  skips the occluded. Taken inside this plan only on that miss; otherwise the entry stays.
 - **The RENOIR may not reach 4.0 ms in the forest** at any lever this plan names; the hit pass
   (10.7 to 21.9 ms there) is not this plan's and the backlog's beam prepass is the next lever.
   The plan discloses the miss; the Portable profile owns the levers it picks.
@@ -515,8 +614,13 @@ chunk (8 192 chunks at the cap: under 200 KB).
 - **`IN_FLIGHT` 3** (if the F2 lap points there) holds one more submit's prepared bytes
   (`PREPARED_BYTES_MAX` 64 MiB is the cap) and lengthens the withdrawal's blind spot by one
   submit.
-- **Plan 0095's bake rays** (+6 %, a guess) and its far-pixel baked key change Phases 3, 4 and
+- **Plan 0095's bake rays** (+6 %, a guess; only if its window W2 keeps the record as the far's
+  refinement) and its far-pixel read (the baked key, else the horizon) change Phases 3, 4 and
   6's numbers; the plan starts after it merges, and Phase 1 re-reads if it ran before.
+- **The baked far ends at the sphere** (about 102 m at the defaults, 77 m in the Portable
+  profile): past it the key light is the horizon's heightfield shadow for good. Whether that
+  seam shows is Phase 8 (b)'s question; the answer that moves it is ADR-0079's, not a wider
+  residency (ADR-0080 Alternative E).
 - **Threading:** nothing moves off the render thread; the CPU-written zero record goes through
   the store's existing write path on that thread.
 

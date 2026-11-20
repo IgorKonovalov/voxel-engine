@@ -153,7 +153,8 @@ impl Targets {
             indirect: lit("indirect irradiance", Rgba16Float),
             tiles: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("exposure meter tiles"),
-                size: 8 * u64::from(width.div_ceil(METER_TILE) * height.div_ceil(METER_TILE)),
+                size: METER_TILE_BYTES
+                    * u64::from(width.div_ceil(METER_TILE) * height.div_ceil(METER_TILE)),
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }),

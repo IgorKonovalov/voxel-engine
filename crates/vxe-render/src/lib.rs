@@ -37,7 +37,7 @@ pub mod debug {
     pub use crate::bake::{
         LightSummaries, ParentTable, Regime, STEP_STAGES, StepStages, StepTally,
     };
-    pub use crate::gpu_util::compute_pipelines_created;
+    pub use crate::gpu_util::{compute_pipelines_created, pipeline_cache_data, set_pipeline_cache};
     pub use crate::probes::ProbeRead;
     pub use crate::readback::{
         StepHistogram, f16_to_f32, read_buffer, read_float, read_r32i, read_rgba8, read_rgba16f,
@@ -99,8 +99,8 @@ pub use entities::{
     MARK_BUFFER_BYTES, MARK_COLOURS, MAX_ENTITIES, MAX_ENTITY_PARTS, Mark, ModelHandle,
 };
 pub use exposure::{
-    AutoExposure, DEFAULT_SKY_ANCHOR_EV, EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState,
-    Metering, ground_irradiance,
+    AutoExposure, DEFAULT_EXPOSURE_RATE_EV_S, DEFAULT_SKY_ANCHOR_EV, DEFAULT_SKY_ANCHOR_SHARE,
+    EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState, Metering, ground_irradiance,
 };
 pub use frame::{
     ATROUS_ITERATIONS, DEFAULT_KEY_HISTORY, DEFAULT_LIGHT_FLOOR, DEFAULT_PROBE_FREEZE,
@@ -150,6 +150,8 @@ pub const MARCH_WGSL: &str = concat!(
 pub const LIGHT_WGSL: &str = include_str!("shaders/light.wgsl");
 /// The gradient pass, compiled after the light pass's modules.
 pub const GRADIENT_WGSL: &str = include_str!("shaders/gradient.wgsl");
+/// The visibility pair's functions, compiled before `temporal.wgsl`.
+pub const PAIR_WGSL: &str = include_str!("shaders/pair.wgsl");
 /// The temporal pass, compiled after the modules its pass names.
 pub const TEMPORAL_WGSL: &str = include_str!("shaders/temporal.wgsl");
 /// The variance estimate and the a-trous filter, compiled after the modules its pass names.
