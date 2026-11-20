@@ -162,3 +162,10 @@ values near the key either way.
   internal; on RADV RENOIR +0.106 ms and 0.060 ms. Both are above the plan's dev-box guesses
   (0.02 to 0.05 and 0.01 to 0.03 ms) and well inside the 1.5 ms post line. `frame_bytes` grows
   by 260 128 B.
+- **The ceiling, 2026-11-20 (Plan 0094 Phase 8a).** Plan 0086 Phase 12 put a second ceiling
+  beside `max`, the sky anchor (`2^N` times the exposure that puts sunlit ground at mid-grey,
+  while a sky is set), and let it exceed `max` at night so the eye opened under a dark sky. The
+  owner's pick at Plan 0094's window 94c reverses that half: the anchor is `min(c_a, max)`, so
+  `[min, max]` is the hard bound this ADR states in every view and hour, and the anchor only
+  lowers the ceiling where open sky is in view (ADR-0076 rule 5 carries the clause and the
+  rejected alternatives). A game's darker night is `compensation_ev` or `max`, as here.

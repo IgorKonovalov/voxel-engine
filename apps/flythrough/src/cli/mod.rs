@@ -778,7 +778,7 @@ impl Args {
 
     /// The auto exposure of `--adaptation`, `--adapt` and `--metering`, with the outdoor
     /// source's floor and ceiling unless `--exposure` or `--adaptation` is given, then
-    /// `--exposure-max`'s ceiling and `--sky-anchor`'s.
+    /// `--exposure-max`'s ceiling, `--sky-anchor`'s and `--sky-anchor-share`'s.
     pub(crate) fn start_auto(&self) -> AutoExposure {
         let mut a = self.light.adaptation.preset();
         if let Some([light, cone, rod, floor]) = self.light.adapt {
@@ -796,6 +796,12 @@ impl Args {
         }
         if let Some(n) = self.outdoor.sky_anchor {
             a.sky_anchor_ev = n;
+        }
+        if let Some(f) = self.outdoor.sky_anchor_share {
+            a.sky_anchor_share = f;
+        }
+        if let Some(r) = self.outdoor.exposure_rate {
+            a.rate_ev_s = r;
         }
         a
     }
@@ -936,6 +942,13 @@ impl Args {
                 false,
             ),
         }
+    }
+
+    /// Whether the flags pick a light pass arm at start (`--leaf-shadow absorb`, `--penumbra
+    /// approach`), whose pipelines the loading stage then builds.
+    pub(crate) fn light_arms_at_start(&self) -> bool {
+        self.start_lighting().penumbra == vxe_render::Penumbra::Approach
+            || self.outdoor.leaf_shadow() == crate::LeafShadow::Absorb
     }
 
     /// The lighting the fly-through starts in, from its flags.

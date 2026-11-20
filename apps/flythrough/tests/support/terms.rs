@@ -187,6 +187,8 @@ pub struct CellReading {
     pub exposure: f32,
     /// The ceiling the auto exposure was clamped under at its 64th frame.
     pub ceiling: f32,
+    /// The metered share of the view that is sky at its 64th frame.
+    pub sky: f32,
     /// The stripe metric at the last frame: over the lighting pixels whose hit is within 48
     /// voxels, the mean luminance of the stored and direct accumulations at hits on a
     /// horizontal face (a tread) and on a vertical one (a riser), and their counts.
@@ -290,7 +292,7 @@ pub fn run_cell(
     // ring returns an older frame's state).
     let st = vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_state(), 0, 32);
     let state = vxe_render::ExposureState::from_bytes(&st);
-    let (exposure, ceiling) = (state.current, state.ceiling);
+    let (exposure, ceiling, sky) = (state.current, state.ceiling, state.sky);
     f.set_lighting(Lighting {
         exposure: Exposure::Manual(exposure),
         ..base
@@ -354,6 +356,7 @@ pub fn run_cell(
         grid_width: f.direct().width() as usize,
         exposure,
         ceiling,
+        sky,
         stripe,
         parts,
     }

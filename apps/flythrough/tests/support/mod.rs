@@ -9,6 +9,7 @@ pub mod lights;
 pub mod look;
 pub mod queue;
 pub mod rigs;
+pub mod rules;
 pub mod settle;
 pub mod stillness;
 pub mod streamed;

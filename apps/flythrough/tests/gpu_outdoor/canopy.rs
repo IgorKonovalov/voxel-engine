@@ -40,6 +40,10 @@ mod canopy {
                     no_clamp: false,
                     sky_end_is_sky: false,
                     key_no_jitter: false,
+                    column_prior: false,
+                    no_fade: false,
+                    pool: false,
+                    seed_stale_f: false,
                 },
             },
             Arm {
@@ -53,6 +57,10 @@ mod canopy {
                     no_clamp: false,
                     sky_end_is_sky: false,
                     key_no_jitter: false,
+                    column_prior: false,
+                    no_fade: false,
+                    pool: false,
+                    seed_stale_f: false,
                 },
             },
             Arm {
@@ -66,6 +74,10 @@ mod canopy {
                     no_clamp: false,
                     sky_end_is_sky: false,
                     key_no_jitter: false,
+                    column_prior: false,
+                    no_fade: false,
+                    pool: false,
+                    seed_stale_f: false,
                 },
             },
             Arm {
@@ -79,6 +91,10 @@ mod canopy {
                     no_clamp: false,
                     sky_end_is_sky: false,
                     key_no_jitter: true,
+                    column_prior: false,
+                    no_fade: false,
+                    pool: false,
+                    seed_stale_f: false,
                 },
             },
         ];
@@ -86,20 +102,22 @@ mod canopy {
         /// A pixel's class: the floor (no leaf or bark among the 8 voxels about the hit), a
         /// trunk (bark), or neither (a leaf, the sky).
         #[derive(Clone, Copy, PartialEq, Eq)]
-        enum Class {
+        pub(in super::super) enum Class {
             Floor,
             Trunk,
             Other,
         }
 
-        /// A frame stepped by hand with its step count (the jitter's phase follows it).
-        struct Run {
+        /// A frame stepped by hand with its step count (the jitter's phase follows it) and its
+        /// display size.
+        pub(in super::super) struct Run {
             f: Frame,
             steps: u32,
+            out: [u32; 2],
         }
 
         impl Run {
-            fn step(&mut self, rig: &Rig, cam: &Camera, light: &LightParams) {
+            pub(in super::super) fn step(&mut self, rig: &Rig, cam: &Camera, light: &LightParams) {
                 self.f.step(&rig.device, &rig.queue, &rig.gpu, cam, light);
                 self.steps += 1;
             }
@@ -114,7 +132,19 @@ mod canopy {
             baked: bool,
             exposure: Exposure,
         ) -> Run {
-            let mut f = Frame::with_sizes(&rig.device, INTERNAL, OUT);
+            frame_sized(rig, sky, baked, exposure, INTERNAL, OUT)
+        }
+
+        /// [`frame`] from `internal` to `out`.
+        pub(in super::super) fn frame_sized(
+            rig: &mut Rig,
+            sky: Option<vxe_render::sky::Sky>,
+            baked: bool,
+            exposure: Exposure,
+            internal: [u32; 2],
+            out: [u32; 2],
+        ) -> Run {
+            let mut f = Frame::with_sizes(&rig.device, internal, out);
             f.set_upscaler_kind(
                 &rig.device,
                 vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default()),
@@ -152,7 +182,7 @@ mod canopy {
                 .expect("the store fits");
             }
             f.set_dt(1.0 / 60.0);
-            Run { f, steps: 0 }
+            Run { f, steps: 0, out }
         }
 
         /// The settled exposure of the defaults under `sky` (or the headlamp alone): 64 frames
@@ -175,11 +205,22 @@ mod canopy {
         /// What a run's last frame reads: the display's largest channel, the class and the key
         /// mean `g` per display pixel, and over the last [`POP_PAIRS`] pairs the over-4 counts
         /// per class (floor, trunk) with the class's pixel count.
-        struct Read {
+        pub(in super::super) struct Read {
             level: Vec<u8>,
             class: Vec<Class>,
             g: Vec<f32>,
             pops: [(u64, u64); 2],
+            /// Per lighting pixel at the last frame: the class, the history's age (the moments'
+            /// `z`) and the key mean `g`.
+            pub(in super::super) light_class: Vec<Class>,
+            pub(in super::super) light_age: Vec<f32>,
+            light_g: Vec<f32>,
+            /// The history rejections per frame over the last [`POP_PAIRS`] frames (tested,
+            /// material, normal, other: [`Frame::read_history_rejections`]).
+            pub(in super::super) rejections: Vec<[u32; 4]>,
+            /// Per class (floor, trunk) the frame-to-frame display changes over the last
+            /// [`POP_PAIRS`] pairs.
+            diffs: [Vec<u8>; 2],
         }
 
         /// Resets `r`'s history, sets `hooks` and `history`, steps `frames` frames (then more
@@ -195,18 +236,35 @@ mod canopy {
             frames: u32,
             align: Option<(u32, u32)>,
         ) -> Read {
-            use vxe_render::debug::{read_rgba8, read_rgba16f, read_rgba32f};
-            r.f.set_light_hooks(hooks);
             // The long reference holds both of the pair's means at `history`; a run keeps the
             // defaults' caps.
-            let base = flythrough::default_lighting();
+            let key = if history == REFERENCE_HISTORY {
+                history
+            } else {
+                flythrough::default_lighting().key_history
+            };
+            hold_capped(rig, cam, r, hooks, history, key, frames, align)
+        }
+
+        /// [`hold`] with the key mean's cap `key` named.
+        #[allow(clippy::too_many_arguments, reason = "a reading's knobs")]
+        pub(in super::super) fn hold_capped(
+            rig: &Rig,
+            cam: &Camera,
+            r: &mut Run,
+            hooks: LightHooks,
+            history: u32,
+            key: u32,
+            frames: u32,
+            align: Option<(u32, u32)>,
+        ) -> Read {
+            use vxe_render::debug::{read_rgba8, read_rgba16f, read_rgba32f};
+            let out = r.out;
+            r.f.set_light_hooks(hooks);
+            r.f.set_count_store(true);
             r.f.set_lighting(Lighting {
                 sky_history: history,
-                key_history: if history == REFERENCE_HISTORY {
-                    history
-                } else {
-                    base.key_history
-                },
+                key_history: key,
                 ..r.f.lighting()
             });
             r.f.reset_history();
@@ -226,13 +284,13 @@ mod canopy {
                 let hits = read_rgba32f(d, q, f.light_hit_positions());
                 let gw = f.light_hit_positions().width() as usize;
                 let cls: Vec<Class> = hits.iter().map(|h| class_of(&rig.world, h)).collect();
-                let n = (OUT[0] * OUT[1]) as usize;
+                let n = (out[0] * out[1]) as usize;
                 (0..n)
                     .map(|i| {
                         cls[support::defects::grid_of(
                             i,
-                            OUT[0] as usize,
-                            OUT[1] as usize,
+                            out[0] as usize,
+                            out[1] as usize,
                             gw,
                             hits.len(),
                         )]
@@ -243,8 +301,11 @@ mod canopy {
             let mut last = level(&r.f);
             let class = classify(&r.f);
             let mut pops = [(0u64, 0u64); 2];
+            let mut rejections = Vec::with_capacity(POP_PAIRS as usize);
+            let mut diffs: [Vec<u8>; 2] = Default::default();
             for _ in 0..POP_PAIRS {
                 r.step(rig, cam, &light);
+                rejections.push(r.f.read_history_rejections(d, q));
                 let now = level(&r.f);
                 for (i, (&a, &b)) in last.iter().zip(&now).enumerate() {
                     let k = match class[i] {
@@ -254,22 +315,29 @@ mod canopy {
                     };
                     pops[k].1 += 1;
                     pops[k].0 += u64::from(a.abs_diff(b) > 4);
+                    diffs[k].push(a.abs_diff(b));
                 }
                 last = now;
             }
             let pair = read_rgba16f(d, q, r.f.visibility_pair());
             let gw = r.f.visibility_pair().width() as usize;
-            let n = (OUT[0] * OUT[1]) as usize;
+            let n = (out[0] * out[1]) as usize;
             let g = (0..n)
                 .map(|i| {
-                    pair[support::defects::grid_of(i, OUT[0] as usize, OUT[1] as usize, gw, pair.len())][1]
+                    pair[support::defects::grid_of(i, out[0] as usize, out[1] as usize, gw, pair.len())][1]
                 })
                 .collect();
+            let hits = read_rgba32f(d, q, r.f.light_hit_positions());
             Read {
                 level: last,
                 class,
                 g,
                 pops,
+                light_class: hits.iter().map(|h| class_of(&rig.world, h)).collect(),
+                light_age: read_rgba16f(d, q, r.f.moments()).iter().map(|m| m[2]).collect(),
+                light_g: pair.iter().map(|p| p[1]).collect(),
+                rejections,
+                diffs,
             }
         }
 
@@ -320,6 +388,139 @@ mod canopy {
                     (p, m, n)
                 })
             })
+        }
+
+        /// The effective sample count of a running mean over `age + 1` samples capped at
+        /// `cap` (past the cap an exponential mean of weight `1 / cap`, whose variance is a
+        /// sample's over `2 cap - 1`).
+        fn n_eff(age: f32, cap: u32) -> f64 {
+            let n = f64::from(age.max(0.0)) + 1.0;
+            if n < f64::from(cap) {
+                n
+            } else {
+                2.0 * f64::from(cap) - 1.0
+            }
+        }
+
+        /// One row of Plan 0094 Phase 1's age table for run `a` (key cap `key`, `frames`
+        /// frames) against the reference `refr`: per class (floor, trunks) over the lighting
+        /// pixels, the shares of history age under 16, under 64 and at the run's full length
+        /// (`frames - 1`), the key mean's observed RMS residual against the reference over
+        /// its binomial prediction (`g (1 - g)` at the reference's `g`, over the run's and the
+        /// reference's effective counts, pixels with the reference's `g` in 0.02..0.98), the
+        /// mean history rejections per frame (tested, material, normal, other), the display
+        /// residual and the pop share.
+        fn age_row(scene: &str, label: &str, a: &Read, refr: &Read, key: u32, frames: u32) {
+            let mut rej = [0f64; 4];
+            for r in &a.rejections {
+                for k in 0..4 {
+                    rej[k] += f64::from(r[k]) / a.rejections.len().max(1) as f64;
+                }
+            }
+            let res = residual(a, refr);
+            for (k, name) in [(Class::Floor, "floor"), (Class::Trunk, "trunks")]
+                .into_iter()
+                .enumerate()
+            {
+                let (cls, name) = name;
+                let (mut n, mut u16, mut u64_, mut full) = (0usize, 0usize, 0usize, 0usize);
+                let (mut obs, mut pred, mut m) = (0f64, 0f64, 0usize);
+                for i in 0..a.light_class.len() {
+                    if a.light_class[i] != cls {
+                        continue;
+                    }
+                    let age = a.light_age[i];
+                    n += 1;
+                    u16 += usize::from(age < 16.0);
+                    u64_ += usize::from(age < 64.0);
+                    full += usize::from(age >= (frames - 1) as f32);
+                    let gr = f64::from(refr.light_g[i]);
+                    if (0.02..=0.98).contains(&gr) {
+                        let d = f64::from(a.light_g[i]) - gr;
+                        obs += d * d;
+                        pred += gr * (1.0 - gr)
+                            * (1.0 / n_eff(age, key) + 1.0 / n_eff(refr.light_age[i], REFERENCE_HISTORY));
+                        m += 1;
+                    }
+                }
+                let pct = |v: usize| 100.0 * v as f64 / n.max(1) as f64;
+                let ratio = if pred > 0.0 { (obs / pred).sqrt() } else { f64::NAN };
+                let lit = res[k][0];
+                let shd = res[k][1];
+                let (f2f_p99, f2f_mean) = support::defects::p99_mean(a.diffs[k].clone());
+                println!(
+                    "reading: ages {scene}, {label}, {name}: {n} lighting px; age under 16 {:.2} %, under 64 {:.2} %, at {} {:.2} %; \
+                     key mean RMS residual over predicted {ratio:.2} ({m} px with g in 0.02..0.98, observed RMS {:.4}); \
+                     display residual lit p99 {} mean {:.2}, shadowed p99 {} mean {:.2}; pop share {:.3} %; \
+                     frame-to-frame p99 {f2f_p99} mean {f2f_mean:.3}",
+                    pct(u16),
+                    pct(u64_),
+                    frames - 1,
+                    pct(full),
+                    (obs / m.max(1) as f64).sqrt(),
+                    lit.0,
+                    lit.1,
+                    shd.0,
+                    shd.1,
+                    100.0 * a.pops[k].0 as f64 / a.pops[k].1.max(1) as f64,
+                );
+            }
+            println!(
+                "reading: ages {scene}, {label}: rejections per frame at rest: tested {:.0}, material {:.1}, normal {:.1}, other {:.1}",
+                rej[0], rej[1], rej[2], rej[3]
+            );
+        }
+
+        /// Plan 0094 Phase 1 bars 1 and 2: on both forest scenes (the sun at `10,180`, 15:00),
+        /// the defaults (both terms, the store baked), the exposure pinned, a still camera: the
+        /// long reference ([`REFERENCE`] frames, both caps [`REFERENCE_HISTORY`]), then runs of
+        /// 128 frames at the default key cap, 512 frames at key cap 256 and 512 frames at key cap
+        /// 64, each aligned to the reference's jitter phase, each read by [`age_row`].
+        /// `VXE_TEST_ADAPTER` picks the adapter; `VXE_CANOPY_ARM` (0 to 2) runs one run alone
+        /// after its own reference, so each run reads in a process of its own.
+        #[test]
+        #[ignore = "reading"]
+        fn the_canopy_ages() {
+            let Some((mut rig, cam)) = support::terms::forest_rig() else {
+                return;
+            };
+            let phases = vxe_render::Fsr2Settings::default().phases(INTERNAL[0], OUT[0]);
+            println!("reading: the_canopy_ages on {}, {phases} jitter phases", rig.adapter);
+            let t0 = std::time::Instant::now();
+            let sky_cap = flythrough::default_lighting().sky_history;
+            let key_cap = flythrough::default_lighting().key_history;
+            for (scene, clock) in [
+                (
+                    "sun 10,180",
+                    flythrough::daylight::Clock {
+                        fixed_sun: Some([10.0, 180.0]),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "15:00",
+                    flythrough::daylight::Clock {
+                        minutes: 15.0 * 60.0,
+                        ..Default::default()
+                    },
+                ),
+            ] {
+                let sky = clock.sky(flythrough::outdoor::BASE_Z as f32);
+                let e = settled_exposure(&mut rig, &cam, Some(sky));
+                let mut r = frame(&mut rig, Some(sky), true, Exposure::Manual(e));
+                let off = LightHooks::default();
+                let refr = hold_capped(&rig, &cam, &mut r, off, REFERENCE_HISTORY, REFERENCE_HISTORY, REFERENCE, None);
+                let phase = r.steps % phases;
+                let only: Option<usize> = std::env::var("VXE_CANOPY_ARM").ok().and_then(|v| v.parse().ok());
+                for (i, (frames, key)) in [(128, key_cap), (512, 256), (512, 64)].into_iter().enumerate() {
+                    if only.is_some_and(|o| o != i) {
+                        continue;
+                    }
+                    let a = hold_capped(&rig, &cam, &mut r, off, sky_cap, key, frames, Some((phase, phases)));
+                    age_row(scene, &format!("{frames} frames, key cap {key}"), &a, &refr, key, frames);
+                }
+            }
+            println!("reading: the_canopy_ages wall {:.1} s", t0.elapsed().as_secs_f64());
         }
 
         /// Plan 0086 Phase 24b's table: the forest of seed 1 at its spawn's view, the sun at

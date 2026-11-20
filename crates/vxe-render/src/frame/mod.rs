@@ -5,7 +5,7 @@
 use crate::camera::{Camera, View};
 use crate::exposure::{
     EX_AUTO, EX_METER, EX_RESET, Exposure, ExposurePass, ExposureReadout, ExposureUniform,
-    METER_TILE, Metering,
+    METER_TILE, METER_TILE_BYTES, Metering,
 };
 use crate::fsr2::{Fsr2, UpscalerKind};
 use crate::gpu_util::*;
@@ -13,8 +13,8 @@ use crate::gpu_world::GpuWorld;
 use crate::light::LightParams;
 use crate::probes::{DEFAULT_PROBE_SPACING, ProbeUniform, ProbeVolume};
 use crate::{
-    ATROUS_WGSL, COMPOSITE_WGSL, GRADIENT_WGSL, LIGHT_WGSL, PROBE_GATHER_WGSL, PROBE_UPDATE_WGSL,
-    TEMPORAL_WGSL,
+    ATROUS_WGSL, COMPOSITE_WGSL, GRADIENT_WGSL, LIGHT_WGSL, PAIR_WGSL, PROBE_GATHER_WGSL,
+    PROBE_UPDATE_WGSL, TEMPORAL_WGSL,
 };
 use vxe_world::ChunkCoord;
 
@@ -197,7 +197,8 @@ impl Frame {
 
     /// The meter's tiles the composite writes (`COPY_SRC`): per 8 x 8 workgroup of the
     /// internal target, row-major over `ceil(w / 8) x ceil(h / 8)`, the sum of its pixels'
-    /// clamped log2 luminance and their count, as two `f32`.
+    /// clamped log2 luminance, their count, the count of those that are sky (a miss) and 0, as
+    /// four `f32`.
     pub fn exposure_tiles(&self) -> &wgpu::Buffer {
         &self.targets.tiles
     }
@@ -592,6 +593,14 @@ impl Frame {
     /// that uses it.
     pub fn prepare_entities(&self, device: &wgpu::Device) {
         self.pipes.prepare_entities(device);
+    }
+
+    /// Builds the light pass's pipelines with the default-off arms compiled in (the ones
+    /// [`Frame::light_arms`] picks), with entities and without, unless they are built: a
+    /// caller that knows an arm is picked at start builds them here, ahead of the first frame
+    /// that draws with them, which otherwise builds them itself.
+    pub fn prepare_light_arms(&self, device: &wgpu::Device) {
+        self.pipes.prepare_light_arms(device);
     }
 
     /// Replaces the entity mirror (a pool of another size); the next frames draw no entity

@@ -129,7 +129,7 @@ pub(super) fn replace_once(source: &str, from: &str, to: &str) -> String {
 /// `lod_level`), so one dispatch serves faces of many jobs; then bake.wgsl.
 pub(crate) fn bake_source() -> String {
     use crate::frame::{
-        COMMON_WGSL, EMISSIVE_WGSL, ENTITY_WGSL, HITREC_WGSL, MIRROR_WGSL, WALK_WGSL, compose,
+        COMMON_WGSL, EMISSIVE_WGSL, ENTITY_WGSL, HITREC_WGSL, MIRROR_WGSL, WALK_WGSL, compose_arms,
     };
     let walk = replace_once(
         WALK_WGSL,
@@ -137,7 +137,7 @@ pub(crate) fn bake_source() -> String {
         "let d = chunk - bake_origin_chunk();",
     );
     let light = replace_once(crate::LIGHT_WGSL, TABLE_READ, "return bake_table_slot(i);");
-    compose(&[
+    compose_arms(&[
         COMMON_WGSL,
         MIRROR_WGSL,
         &walk,

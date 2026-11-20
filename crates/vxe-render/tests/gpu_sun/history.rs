@@ -169,3 +169,85 @@ fn a_far_staircase_keeps_its_history() {
         }
     }
 }
+
+/// Plan 0086 Phase 5 bar 1, promoted by Plan 0094 Phase 8 (its Phase 5 bar 7): a floor point at
+/// the foot of a half-plane roof's edge 20 voxels up (the roof over y >= 512 across the
+/// 1024 x 1024 floor), under `Sky::uniform(1.0)`, the ray forced on: the pair's mean at the
+/// centre pixel over frames 65 to 128 is within 0.1 of the pixel's own hit rate over the run
+/// (0.562 read; the half plane's form factor 0.5 is the jittered footprint's), and its largest
+/// frame-to-frame change there is at most the running mean's step at the cap, 1 / 64.
+#[test]
+fn the_visibility_pairs_mean_holds_still() {
+    let roof = |p: [i32; 3]| p[2] == FLOOR + 20 && p[1] >= 512;
+    let world = floor_world([16, 16, 1], roof);
+    let cam = looking(
+        [512.0, 470.0, FLOOR as f32 + 10.0],
+        [512.0, 512.0, FLOOR as f32],
+    );
+    let hooks = vxe_render::LightHooks {
+        sky_ray_always: true,
+        ..Default::default()
+    };
+    let Some(run) = pair_run(&world, &cam, 128, hooks, &mut |_, _| None) else {
+        return;
+    };
+    let c = centre();
+    let r: Vec<f32> = run.iter().map(|(p, _)| p[c][0]).collect();
+    let rate = run.iter().filter(|(_, v)| v[c][0] > 127).count() as f32 / 128.0;
+    let late = &r[64..];
+    let mean = late.iter().sum::<f32>() / late.len() as f32;
+    let step = late
+        .windows(2)
+        .map(|w| (w[1] - w[0]).abs())
+        .fold(0f32, f32::max);
+    println!(
+        "half-plane edge: hit rate {rate:.3}; pair mean at frame 64 {:.4}, over 65..128 \
+         {mean:.4} (0086's tip 0.6167); largest change a frame {step:.4}",
+        r[63]
+    );
+    assert!((mean - rate).abs() <= 0.1, "{mean} against the hit rate {rate}");
+    assert!(step <= 1.0 / 64.0, "{step}");
+}
+
+/// Plan 0086 Phase 5 bar 2, promoted by Plan 0094 Phase 8 (its Phase 5 bar 8): a floor point
+/// under a roof 20 voxels up with a 6 x 6 hole straight above it (the form factor
+/// `36 / (400 pi) = 0.029`), the ray forced on: over frames 9 to 128 the pair's mean never
+/// exceeds 0.25 with the clamp on; the clamp off and the dark bias (the mean against 0.029)
+/// printed (0086's tip 0.1511 and 0.4993). Over the soak line on lavapipe (10.8 s).
+#[test]
+#[ignore = "soak"]
+fn a_rare_hit_is_clamped() {
+    let (cx, cy) = (512, 512);
+    let roof = move |p: [i32; 3]| {
+        p[2] == FLOOR + 20 && !((cx - 3..cx + 3).contains(&p[0]) && (cy - 3..cy + 3).contains(&p[1]))
+    };
+    let world = floor_world([16, 16, 1], roof);
+    let cam = looking(
+        [512.0, 480.0, FLOOR as f32 + 10.0],
+        [512.0, 512.0, FLOOR as f32],
+    );
+    let mut largest = [0f32; 2];
+    for (k, no_clamp) in [false, true].into_iter().enumerate() {
+        let hooks = vxe_render::LightHooks {
+            sky_ray_always: true,
+            no_clamp,
+            ..Default::default()
+        };
+        let Some(run) = pair_run(&world, &cam, 128, hooks, &mut |_, _| None) else {
+            return;
+        };
+        let c = centre();
+        let tail: Vec<f32> = run[8..].iter().map(|(p, _)| p[c][0]).collect();
+        let hits = run.iter().filter(|(_, v)| v[c][0] > 127).count();
+        largest[k] = tail.iter().copied().fold(0f32, f32::max);
+        let mean = tail.iter().sum::<f32>() / tail.len() as f32;
+        println!(
+            "6 x 6 hole, clamp {}: {hits} hits in 128 frames; pair over frames 9..128: largest \
+             {:.4}, mean {mean:.4} ({:.3} of 0.029)",
+            if no_clamp { "off" } else { "on" },
+            largest[k],
+            mean / 0.029
+        );
+    }
+    assert!(largest[0] <= 0.25, "{}", largest[0]);
+}

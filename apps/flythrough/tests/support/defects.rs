@@ -18,6 +18,9 @@ pub struct Shot {
     pub cast: Vec<bool>,
     /// The history's age per lighting pixel (the moments' `z`).
     pub age: Vec<f32>,
+    /// The sky term's source per lighting pixel ([`source_of`]; with the store counted, else
+    /// [`SOURCE_NONE`]).
+    pub source: Vec<u8>,
     /// The light pass's ms, where the adapter has timestamps.
     pub light_ms: Option<f64>,
     /// Every pass's ms in [`vxe_render::FRAME_PASSES`]' order, where the adapter has
@@ -54,6 +57,32 @@ impl Stepper {
             cam,
             &LightParams::headlamp(),
         );
+    }
+
+    /// One frame at `cam`, timed and not read back: the light pass's ms, where the adapter
+    /// has timestamps.
+    pub fn timed(&mut self, rig: &Rig, cam: &Camera) -> Option<f64> {
+        let f = &mut self.frame;
+        f.advance();
+        let params = f.params(&rig.gpu, cam, &LightParams::headlamp());
+        let mut enc = rig.device.create_command_encoder(&Default::default());
+        f.encode(
+            &rig.device,
+            &rig.queue,
+            &mut enc,
+            &rig.gpu,
+            &params,
+            self.timer.as_ref(),
+        );
+        if let Some(t) = &self.timer {
+            t.resolve(&mut enc);
+        }
+        rig.queue.submit([enc.finish()]);
+        let passes = self.timer.as_ref()?.read_all_ms(&rig.device);
+        vxe_render::FRAME_PASSES
+            .iter()
+            .position(|&n| n == "light")
+            .and_then(|slot| passes.get(slot).copied())
     }
 
     /// One frame at `cam`, timed and read back.
@@ -96,6 +125,7 @@ pub fn read(rig: &Rig, f: &Frame, light_ms: Option<f64>) -> Shot {
     let (d, q) = (&rig.device, &rig.queue);
     let lum = |p: &[f32; 4]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
     let ss = f.read_store_stats(d, q);
+    let mom = read_rgba16f(d, q, f.moments());
     Shot {
         display: read_rgba8(d, q, f.target()),
         hits: read_rgba32f(d, q, f.light_hit_positions()),
@@ -104,16 +134,38 @@ pub fn read(rig: &Rig, f: &Frame, light_ms: Option<f64>) -> Shot {
             .chunks(4)
             .map(|p| p[3] > 0)
             .collect(),
-        age: read_rgba16f(d, q, f.moments())
-            .iter()
-            .map(|p| p[2])
-            .collect(),
+        age: mom.iter().map(|p| p[2]).collect(),
+        source: mom.iter().map(|p| source_of(p[3])).collect(),
         light_ms,
         passes: Vec::new(),
         black: ss.still_black,
         missing: ss.missing,
         chained: ss.fallback,
     }
+}
+
+/// The sky term's source words (temporal.wgsl's `SOURCE_*`, written with the store counted).
+pub const SOURCE_NONE: u8 = 0;
+pub const SOURCE_RECORD: u8 = 1;
+pub const SOURCE_RECORD_STALE: u8 = 2;
+pub const SOURCE_OWN_SUMMARY: u8 = 3;
+pub const SOURCE_COLUMN: u8 = 4;
+pub const SOURCE_NO_VALUE: u8 = 5;
+pub const SOURCE_MISMATCH: u8 = 6;
+/// The source words' names, by word.
+pub const SOURCE_NAMES: [&str; 7] = [
+    "none",
+    "record",
+    "record stale",
+    "own summary",
+    "column",
+    "no value",
+    "mismatch",
+];
+
+/// The source word in a moments' `w` (its kind plus the word over 16).
+pub fn source_of(w: f32) -> u8 {
+    ((w - w.floor()) * 16.0).round() as u8
 }
 
 /// The display's per-pixel level: the largest channel.

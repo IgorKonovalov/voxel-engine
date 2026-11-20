@@ -23,7 +23,8 @@
 //                                        `workgroup_id.y * workgroups.x + workgroup_id.x`, the
 //                                        sum over its pixels of `clamp(log2(max(Y, 2^-16)),
 //                                        -16, 16)` of the shaded radiance before exposure and
-//                                        the tone map, and their count; written in the shaded
+//                                        the tone map, their count and the count of those
+//                                        that are sky (a miss), w 0; written in the shaded
 //                                        view only
 //   9  texture_2d<u32>   transmit_in     the hit pass's r32uint transmittance per channel,
 //                                        rgb9e5 (`t9e5_unpack`)
@@ -80,7 +81,7 @@ const HDR_TARGET: bool = false;
 @group(2) @binding(5) var light_pos_in: texture_2d<f32>;
 @group(2) @binding(6) var light_info_in: texture_2d<u32>;
 @group(2) @binding(7) var indirect_in: texture_2d<f32>;
-@group(2) @binding(8) var<storage, read_write> meter_tiles: array<vec2<f32>>;
+@group(2) @binding(8) var<storage, read_write> meter_tiles: array<vec4<f32>>;
 @group(2) @binding(9) var transmit_in: texture_2d<u32>;
 @group(2) @binding(10) var direct_acc_in: texture_2d<f32>;
 @group(2) @binding(11) var vis_in: texture_2d<f32>;
@@ -96,8 +97,8 @@ const MARK_OUTLINE: u32 = 1024u;
 const MARK_TINT_SHIFT: u32 = 11u;
 const MARK_SLOT_MASK: u32 = 511u;
 
-// The workgroup's meter partial sums: log2 luminance, pixel count.
-var<workgroup> meter_sum: array<vec2<f32>, 64>;
+// The workgroup's meter partial sums: log2 luminance, pixel count, sky pixel count, 0.
+var<workgroup> meter_sum: array<vec4<f32>, 64>;
 
 // The prelude's LIGHTING_INDIRECT, a `Params::lighting` bit: the probe gather ran and its
 // irradiance adds to the direct one.
@@ -210,7 +211,7 @@ fn composite(
     @builtin(workgroup_id) wid: vec3<u32>,
     @builtin(num_workgroups) groups: vec3<u32>,
 ) {
-    var m = vec2<f32>(0.0);
+    var m = vec4<f32>(0.0);
     if (gid.x < params.size.x && gid.y < params.size.y) {
         m = composite_px(vec2<i32>(gid.xy));
     }
@@ -227,9 +228,11 @@ fn composite(
     }
 }
 
-// The meter's term of radiance `c` before exposure: its clamped log2 luminance and a count.
-fn meter_of(c: vec3<f32>) -> vec2<f32> {
-    return vec2<f32>(clamp(log2(max(luminance(c), exp2(-16.0))), -16.0, 16.0), 1.0);
+// The meter's term of radiance `c` before exposure: its clamped log2 luminance, a count, and
+// a count of 1 when the pixel is sky (`sky`: a miss).
+fn meter_of(c: vec3<f32>, sky: bool) -> vec4<f32> {
+    let l = clamp(log2(max(luminance(c), exp2(-16.0))), -16.0, 16.0);
+    return vec4<f32>(l, 1.0, select(0.0, 1.0, sky), 0.0);
 }
 
 // The two mark words of the entity hit at `px`, zeros for any other hit or a miss.
@@ -286,17 +289,17 @@ fn undisplay(d: vec3<f32>) -> vec3<f32> {
 }
 
 // Writes pixel `px`'s colour; returns its meter term in the shaded view, else zero.
-fn composite_px(px: vec2<i32>) -> vec2<f32> {
+fn composite_px(px: vec2<i32>) -> vec4<f32> {
     let rec = unpack_hit(textureLoad(hit_pos_in, px, 0), textureLoad(hit_info_in, px, 0));
     let layer = textureLoad(layer_in, px, 0);
     let view = view_mode();
     if (view == VIEW_STEPS) {
         textureStore(target_tex, px, vec4<f32>(layer.xyz / 255.0, 1.0));
-        return vec2<f32>(0.0);
+        return vec4<f32>(0.0);
     }
     if (view == VIEW_HITMASK) {
         textureStore(target_tex, px, vec4<f32>(vec3<f32>(select(0.0, 1.0, rec.found)), 1.0));
-        return vec2<f32>(0.0);
+        return vec4<f32>(0.0);
     }
     if (view == VIEW_ALBEDO) {
         var a = vec3<f32>(0.0);
@@ -308,7 +311,7 @@ fn composite_px(px: vec2<i32>) -> vec2<f32> {
         }
         let mk = mark_at(px);
         textureStore(target_tex, px, vec4<f32>(mix(a, mk.xyz, mk.w), 1.0));
-        return vec2<f32>(0.0);
+        return vec4<f32>(0.0);
     }
     let ex = exposure_now();
     var c = vec3<f32>(0.0);
@@ -321,7 +324,7 @@ fn composite_px(px: vec2<i32>) -> vec2<f32> {
     if (rec.found) {
         if (view == VIEW_NORMALS) {
             textureStore(target_tex, px, vec4<f32>(rec.n * 0.5 + 0.5, 1.0));
-            return vec2<f32>(0.0);
+            return vec4<f32>(0.0);
         }
         let albedo = materials[rec.material * 4u].xyz;
         c = albedo * lit_at(px, rec) * (1.0 / PI);
@@ -336,12 +339,12 @@ fn composite_px(px: vec2<i32>) -> vec2<f32> {
         // so the leaks reach the window unchanged.
         let k = crack_colour(rec.found, display(c), layer);
         textureStore(target_tex, px, vec4<f32>(k, 1.0));
-        return meter_of(c / ex);
+        return meter_of(c / ex, !rec.found);
     }
     if (rec.translucent) {
         c = layer.xyz * ex + t9e5_unpack(textureLoad(transmit_in, px, 0).x) * c;
     }
-    let meter = meter_of(c / ex);
+    let meter = meter_of(c / ex, !rec.found);
     let mk = mark_at(px);
     if (HDR_TARGET) {
         c = mix(c, undisplay(mk.xyz), mk.w);

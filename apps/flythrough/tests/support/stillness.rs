@@ -388,10 +388,10 @@ fn run_inner(
             queue,
             frame.exposure_tiles(),
             0,
-            8 * tiles_n as u64,
+            16 * tiles_n as u64,
         );
         let t: Tiles = b
-            .chunks_exact(8)
+            .chunks_exact(16)
             .map(|c| {
                 let sum = f32::from_le_bytes(c[0..4].try_into().unwrap());
                 let n = f32::from_le_bytes(c[4..8].try_into().unwrap());

@@ -91,25 +91,25 @@ fn state(device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) -> ExposureS
     ))
 }
 
-/// The meter's tiles as `(sum, count)` pairs.
-fn tiles(device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) -> Vec<[f32; 2]> {
+/// The meter's tiles as `(sum, count, sky count)` triples (a tile is four `f32`, the last 0).
+fn tiles(device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) -> Vec<[f32; 3]> {
     let n = SIZE.map(|v| v.div_ceil(8));
     let bytes = vxe_render::debug::read_buffer(
         device,
         queue,
         frame.exposure_tiles(),
         0,
-        8 * u64::from(n[0] * n[1]),
+        16 * u64::from(n[0] * n[1]),
     );
     bytes
-        .chunks(8)
-        .map(|p| [0, 1].map(|k| f32::from_le_bytes(p[4 * k..4 * k + 4].try_into().unwrap())))
+        .chunks(16)
+        .map(|p| [0, 1, 2].map(|k| f32::from_le_bytes(p[4 * k..4 * k + 4].try_into().unwrap())))
         .collect()
 }
 
 /// `sum(w S) / sum(w n)` over the tiles of one full-target view under `metering`, the weight
 /// at each 8 x 8 tile's centre (exposure.wgsl's formula), in f64.
-fn cpu_meter(tiles: &[[f32; 2]], metering: Metering) -> f64 {
+fn cpu_meter(tiles: &[[f32; 3]], metering: Metering) -> f64 {
     let tw = SIZE[0].div_ceil(8) as usize;
     let (cx, cy, half) = (
         f64::from(SIZE[0]) / 2.0,
@@ -153,8 +153,8 @@ fn a_wall_split_in_half_meters_the_mean_of_its_halves() {
         let t = tiles(&device, &queue, &frame);
         println!("{metering:?}: metered {} log2", s.metered_log2);
         assert!(
-            t.iter().all(|p| p[1] == 64.0),
-            "every tile counts 64 pixels"
+            t.iter().all(|p| p[1] == 64.0 && p[2] == 0.0),
+            "every tile counts 64 pixels, none of them sky"
         );
         assert!(
             (s.metered_log2 + 6.0).abs() <= 1e-3,
@@ -512,6 +512,15 @@ fn ev(s: &ExposureState) -> f64 {
 }
 
 /// log2 0.18.
+/// The eye at ADR-0033's speed alone: no rate cap (`AutoExposure::rate_ev_s` 0), the curve
+/// these rigs read.
+fn adr0033_eye() -> AutoExposure {
+    AutoExposure {
+        rate_ev_s: 0.0,
+        ..AutoExposure::eye()
+    }
+}
+
 fn log2_key() -> f64 {
     0.18f64.log2()
 }
@@ -559,7 +568,7 @@ fn luminances(steps: &[(f32, usize)]) -> Vec<f32> {
 /// second frame.
 #[test]
 fn auto_exposure_finds_the_key() {
-    let Some(mut rig) = BoxRig::new(AutoExposure::eye()) else {
+    let Some(mut rig) = BoxRig::new(adr0033_eye()) else {
         return;
     };
     rig.frame_at(0.5);
@@ -576,7 +585,7 @@ fn auto_exposure_finds_the_key() {
 /// k 600.
 #[test]
 fn dark_adaptation_runs_in_two_stages() {
-    let auto = AutoExposure::eye();
+    let auto = adr0033_eye();
     let Some(mut rig) = BoxRig::new(auto) else {
         return;
     };
@@ -628,7 +637,7 @@ fn dark_adaptation_runs_in_two_stages() {
 /// 2.997 at k 9, 1.669 at 30 and 1.531 at 60.
 #[test]
 fn light_adaptation_is_fast() {
-    let auto = AutoExposure::eye();
+    let auto = adr0033_eye();
     let Some(mut rig) = BoxRig::new(auto) else {
         return;
     };
@@ -652,7 +661,7 @@ fn light_adaptation_is_fast() {
 /// at 600 the pixel is 72/255 within 2.
 #[test]
 fn a_flash_leaves_the_eye_glared() {
-    let auto = AutoExposure::eye();
+    let auto = adr0033_eye();
     let Some(mut rig) = BoxRig::new(auto) else {
         return;
     };
@@ -717,7 +726,7 @@ fn the_symmetric_preset_is_one_rate() {
 /// `instant()` settles in one step.
 #[test]
 fn limits_compensation_and_dt() {
-    let Some(mut rig) = BoxRig::new(AutoExposure::eye()) else {
+    let Some(mut rig) = BoxRig::new(adr0033_eye()) else {
         return;
     };
     let s = rig.frame_at(2f32.powi(-12));
@@ -749,7 +758,7 @@ fn limits_compensation_and_dt() {
         rig.frame.set_lighting(Lighting {
             exposure: Exposure::Auto(AutoExposure {
                 compensation_ev: comp,
-                ..AutoExposure::eye()
+                ..adr0033_eye()
             }),
             ..rig.frame.lighting()
         });
@@ -819,4 +828,221 @@ fn auto_exposure_finds_the_key_under_a_uniform_sky() {
     }
     println!("under a uniform sky of 0.5: {s:?}");
     assert!((s.current / 0.36 - 1.0).abs() <= 0.01, "{}", s.current);
+}
+
+/// The frame after a step of `d` EV toward a brighter meter by which the capped eye is within
+/// 1/64 EV of its target, from the model's constants (`exposure.rs`'s test of the same name):
+/// with `r` the per-frame cap and `tau` ADR-0033's light constant in frames, the cap binds
+/// while the gap exceeds `tau r`, then the exponential tail decays from there, plus 2 frames.
+fn landing_frame(d: f64, r: f64, tau: f64) -> usize {
+    ((d - tau * r) / r).ceil() as usize + (tau * (64.0 * tau * r).ln()).ceil() as usize + 2
+}
+
+/// ADR-0076 rule 5 (Plan 0094 Phase 4 bar 1, at Phase 7a's rate): the box settled at `B` for
+/// 8 frames, then 2 EV brighter (`4 B`). Under the eye at its default rate
+/// ([`vxe_render::DEFAULT_EXPOSURE_RATE_EV_S`], `dt` 1/60) the GPU's adapted level follows
+/// `AutoExposure::step` in f64 within 1e-3, moves at most the rate's frame step within 1/256
+/// EV a frame, monotonically toward the target, and is within 1/64 EV of it by frame 8 plus
+/// [`landing_frame`]; with the rate 0 (ADR-0033's speed alone) it is within 1/64 EV by frame 8
+/// plus `ceil(9 ln 128)`, 44. Both traces printed.
+#[test]
+fn a_light_on_steps_the_exposure_by_at_most_the_rate() {
+    let eye = AutoExposure::eye();
+    let r_f = f64::from(vxe_render::DEFAULT_EXPOSURE_RATE_EV_S) / 60.0;
+    let tau = f64::from(eye.tau_light) * 60.0;
+    let landing = landing_frame(2.0, r_f, tau);
+    for (label, auto, by) in [
+        ("rate", eye, 8 + landing),
+        (
+            "no rate",
+            adr0033_eye(),
+            8 + (tau * 128f64.ln()).ceil() as usize,
+        ),
+    ] {
+        let Some(mut rig) = BoxRig::new(auto) else {
+            return;
+        };
+        let steps = [(B, 8), (4.0 * B, by + 8)];
+        let (states, _) = rig.series(&steps, &[]);
+        check_against_reference(label, &auto, &states, &luminances(&steps));
+        let target = f64::from(states[7].adapted_log2) + 2.0;
+        let a: Vec<f64> = states.iter().map(|s| f64::from(s.adapted_log2)).collect();
+        let reached = (8..a.len()).find(|&k| (a[k] - target).abs() <= 1.0 / 64.0);
+        println!("{label}: within 1/64 EV of the target at frame {reached:?}, the bar {by}");
+        assert!(
+            reached.is_some_and(|k| k <= by),
+            "{label}: {reached:?} against {by}"
+        );
+        if label == "rate" {
+            for k in 8..a.len() {
+                let step = a[k] - a[k - 1];
+                assert!(
+                    (-1e-4..=r_f + 1.0 / 256.0).contains(&step) && a[k] <= target + 1e-3,
+                    "frame {k}: {} -> {}",
+                    a[k - 1],
+                    a[k]
+                );
+            }
+        }
+    }
+}
+
+/// ADR-0076 rule 5's still clause (Plan 0094 Phase 4 bar 2): the box at `B` with no change,
+/// under the eye at its default rate: the adapted level stays within 1/64 EV of the first
+/// frame's over 64 frames.
+#[test]
+fn a_still_scene_holds_the_exposure() {
+    let Some(mut rig) = BoxRig::new(AutoExposure::eye()) else {
+        return;
+    };
+    let (states, _) = rig.series(&[(B, 64)], &[]);
+    let a0 = states[0].adapted_log2;
+    let worst = states
+        .iter()
+        .map(|s| (s.adapted_log2 - a0).abs())
+        .fold(0.0f32, f32::max);
+    println!("still: the adapted level's largest move over 64 frames {worst:.2e} EV");
+    assert!(worst <= 1.0 / 64.0, "{worst}");
+}
+
+/// A uniform sky of 0.5 over a floor (z 0) and a wall at `y >= WALL_Y` up to the eye's height,
+/// both of albedo 0 emitting grey `2^-12`; the eye at `EYE`.
+fn half_wall_world() -> World {
+    let mut t = MaterialTable::new();
+    assert_eq!(t.push(emitter("dim", 2f32.powi(-12))), 1);
+    World::generate(
+        ChunkExtent::new([-1, 0, 0], [1, 2, 1]),
+        &FnSource(|v: [i32; 3]| {
+            if v[2] < 1 || (v[1] >= WALL_Y && v[2] < EYE[2] as i32) {
+                1
+            } else {
+                AIR
+            }
+        }),
+        &t,
+    )
+}
+
+/// Plan 0094 Phase 7b bar 4 (ADR-0076 rule 5 on the ceiling): at 64 x 36 under a uniform sky of
+/// 0.5, `max` 2^7 and the anchor 4 (the anchored ceiling `2^4 0.18 / (0.5 * 0.5)`, about 3.53
+/// EV), the eye at the default rate with its dark constant at its light one's (0.15 s, no
+/// floor), so the adapted level moves at the cap too and stays over the ceiling. Frames 0..8
+/// face the half wall (the upper half sky), frames 8..72 look down onto the floor and the wall
+/// (no sky: the tiles' sky share falls to 0 at frame 8), frames 72.. face the half wall
+/// again. The ceiling binds throughout (the dim walls want far more exposure), so the
+/// exposure in force is the ceiling in force: its log2 moves by at most the rate's frame step
+/// `R_f` within 1/256 EV a frame, monotonically, up from frame 8 to `max` and down from frame
+/// 72 back to the anchored ceiling, each leg within `gap / R_f + 2` frames; with the rate 0
+/// the ceiling jumps to its target in the frame the share changes (the before). Traces
+/// printed.
+#[test]
+fn the_ceiling_moves_at_the_rate() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let gpu = mirror(&device, &queue, &half_wall_world());
+    let ahead = camera();
+    let down = Camera {
+        pitch: -60f32.to_radians(),
+        ..ahead
+    };
+    let r_f = f64::from(vxe_render::DEFAULT_EXPOSURE_RATE_EV_S) / 60.0;
+    let max = 7.0;
+    // One frame for both arms: the second starts from a reset (the adapted level and the
+    // ceiling jump to the meter's and the target's).
+    let mut frame = Frame::new(&device, 64, 36);
+    frame.set_resolution(&device, LightingResolution::Full);
+    frame.set_dt(1.0 / 60.0);
+    frame.set_sky(Some(vxe_render::sky::Sky::uniform(0.5)));
+    for rate in [vxe_render::DEFAULT_EXPOSURE_RATE_EV_S, 0.0] {
+        let auto = AutoExposure {
+            max: 2f32.powi(7),
+            rate_ev_s: rate,
+            tau_cone: 0.15,
+            cone_floor: 0.0,
+            ..AutoExposure::eye()
+        };
+        frame.set_lighting(Lighting {
+            lamp: false,
+            candidates: 0,
+            exposure: Exposure::Auto(auto),
+            ..Lighting::default()
+        });
+        frame.reset_exposure();
+        let frames: Vec<usize> = if rate > 0.0 {
+            (0..132).collect()
+        } else {
+            (0..10).chain(72..74).collect()
+        };
+        let mut st = Vec::new();
+        for &k in &frames {
+            let cam = if (8..72).contains(&k) { &down } else { &ahead };
+            frame.step(&device, &queue, &gpu, cam, &LightParams::at_eye());
+            st.push(state(&device, &queue, &frame));
+        }
+        let e: Vec<f64> = st.iter().map(ev).collect();
+        let c: Vec<f64> = st.iter().map(|s| f64::from(s.ceiling).log2()).collect();
+        let sky: Vec<f32> = st.iter().map(|s| s.sky).collect();
+        println!("rate {rate}: frames {frames:?}");
+        println!("rate {rate}: exposure EV {e:.3?}");
+        println!("rate {rate}: ceiling EV {c:.3?}");
+        println!("rate {rate}: sky share {sky:.3?}");
+        let anchored = c[7];
+        assert!(
+            (anchored - 3.53).abs() < 0.05,
+            "the anchored ceiling {anchored}"
+        );
+        for (i, &k) in frames.iter().enumerate() {
+            let want_sky = !(8..72).contains(&k);
+            assert!(
+                if want_sky {
+                    sky[i] > 0.3
+                } else {
+                    sky[i] == 0.0
+                },
+                "frame {k}: sky share {}",
+                sky[i]
+            );
+            // At the rate 0 the adapted level jumps as well, so past frame 8 the meter binds.
+            assert!(
+                (e[i] - c[i]).abs() < 1e-3 || (rate == 0.0 && k >= 8),
+                "frame {k}: the ceiling binds: {e:?}"
+            );
+        }
+        if rate == 0.0 {
+            // Frames 0..10 then 72..74: the jump at 8 and at 72.
+            assert!(
+                (c[8] - max).abs() < 1e-3 && (c[10] - anchored).abs() < 1e-3,
+                "{c:?}"
+            );
+            continue;
+        }
+        let legs = ((max - anchored) / r_f).ceil() as usize + 2;
+        for k in 1..frames.len() {
+            let d = e[k] - e[k - 1];
+            assert!(
+                d.abs() <= r_f + 1.0 / 256.0,
+                "frame {k}: {} -> {}",
+                e[k - 1],
+                e[k]
+            );
+            let up = (8..72).contains(&k);
+            assert!(
+                if up { d >= -1e-4 } else { d <= 1e-4 },
+                "frame {k}: monotonic {} -> {}",
+                e[k - 1],
+                e[k]
+            );
+        }
+        assert!(
+            (e[8 + legs] - max).abs() < 1e-3,
+            "up within {legs}: {}",
+            e[8 + legs]
+        );
+        assert!(
+            (e[72 + legs] - anchored).abs() < 1e-3,
+            "down within {legs}: {}",
+            e[72 + legs]
+        );
+    }
 }

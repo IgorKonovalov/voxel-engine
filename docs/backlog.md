@@ -195,7 +195,11 @@ window's chunks, one small readback. Pick up inside Plan 0096 if its in-view dra
 Noted 2026-11-16 from the NVIDIA GLCache overflow (over 1 GB, so nothing new was kept and every
 start recompiled). `wgpu::PipelineCache` on Vulkan, saved under the game's cache directory, would
 make a warm start independent of the driver's own cache size and eviction. Pick up with the next
-start-up time plan, or when a tester reports long starts.
+start-up time plan, or when a tester reports long starts. Readings: Plan 0094 Phase 2a, the
+RTX's light stage 16.5 to 18.1 s cold against 0.1 s warm, and its window 94a's run 6, where
+`--leaf-shadow absorb` (a default-off arm, its light pipelines built when picked) cost 18.2 s
+on the first world frame on a cold driver cache (`docs/plans/logs/0094.md`, Phase 7); Plan 0094
+Phase 7a moves that build into the loading stage, the cost itself stays this entry's.
 
 ### `.vox` import: down-scaling, a traced preview, a row's class changed live
 
@@ -226,6 +230,10 @@ most-used row, as a third stamp of the click.
 ### Plan 0083's leftovers (close review, 2026-11-19)
 
 Found at the close ([Plan 0083](plans/done/0083-anything-from-a-vox-palette-materials-a-material-file-and-large-scenes-stamped-into-the-world.md), v0.66.0); none blocked it, each is a small fix pass when the area is next open. **Pending placements (`vxe-world`, ADR-0066's Outcome).** `World::stamp` takes `&Prefab`, so a placement past residency copies the prefab into a fresh `Arc` (`stamp.rs`, the `Placement` push) instead of sharing the registry's, and a rotated stamp materialises its rotation once more: bounded by the pending prefabs' bytes (the castle's 45 MB again at most), a `stamp` over the `Arc` removes it. The poll thread blits every placement an inserted chunk lists under the store's write lock (`stream/mod.rs`, `commit_residency`), up to a 64³ blit per placement while every reader waits; blit into the held chunk first, then apply only what arrived since under the lock. A placement whose remaining coordinates lie outside a finite `World::extent`, or where the camera never goes, lives for the session; drop the coordinates a finite extent can never stream at stamp time and report the pending bytes beside the count. Two stamps on one world at once (not reachable through the server, whose ops are serial) can order an overlap differently in resident and pending chunks: say in `stamp`'s doc that the caller serialises stamps. **Scenes (`vxe-assets`).** `VoxScene::load` honours a hidden layer only on the outermost layered transform of a path (`scene.rs`, the group arm): a shape on a hidden layer under a group on a visible one is hidden in MagicaVoxel and placed here; check every transform's layer and add the nested case to `hidden_layers_and_nodes_are_not_placed`. The grammar example in `materials.rs`'s crate doc and a comment in `rows.rs` name the fly-through's castle and torch; a neutral example costs nothing. **The coarse grain (`vxe-render`).** Instance word 27 and the inverse map are derived from the one f32 grain `detail / coarse` and inverted, one ulp off for coarse 7, 13, 14 and 15; write word 27 as `coarse / detail` directly. **The testbed.** The placed notice counts the ops submitted, not the tick's applied events, and `register_prefab`'s errors are dropped, so a stamp refused at the tick still reads `placed`. A click while the ghost body's worker is building the same scaled scene builds it again on the frame thread (`scene_at`); refuse with `building` or wait on the worker. `Entry::refusal` adds the 1 m margin on every axis while the air box adds it above only and `clear box` off adds none, and prints the un-margined size it did not check. `Modes::edit_axis_max` starts at the default until a slot is entered, so the chooser's belt row can show the wrong verdict on a world with another limit. `a_key_places_as_the_click_does` compares prefab ids, not `(prefab, origin, rot)`; `a_placed_structure_is_logged_stamps` pins the chapel's per-row counts as a sorted list, losing row identity. `run/structure_tests.rs` is at 1169 of 1200 lines; the next test splits it (the ghost and icon tests to a sibling). **Owed readings (the plan's Budgets table).** The live queue's settle after a runtime castle (two 1500-frame headless runs never drained the queue, with or without the castle, `docs/plans/logs/0083.md` Phase 8: a longer run or a quiet queue is needed), `VmHWM` at `--frames 3000` with and without `--castle` (the prefab bytes fell from 343 MB to 45 MB; the RSS was not re-read), the first frame with `--vox chapel` against the plain cave over three runs, the material term of `GpuWorld::mirror_bytes` with the chapel's 255 rows, and `--census` for `Wide` bricks with the castle placed. Pick up with the next plan on structures (0084) or a readings chore.
+
+### Plan 0094's leftovers (close review, 2026-11-20)
+
+Found at the close ([Plan 0094](plans/done/0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md), v0.68.0); none blocked it, each is a small fix when the area is next open. **A tautology:** `the_tunnel_exposes_for_its_walls_by_day` (`apps/flythrough/tests/gpu_outdoor/ceiling.rs`, soak) asserts the noon-midnight luma clause only inside `if ratio.abs() <= 0.5`, so it can never fail; it reads +0.063 EV since Phase 8a, so a plain `assert!` is the fix. **A bar that does not see its mechanism:** `a_rare_hit_is_clamped` (`crates/vxe-render/tests/gpu_sun/history.rs`, soak) passes with the clamp off too (largest 0.1996 both ways); a clause on what the clamp changes, or a rig with more than one hit, would defend it. **Unread costs:** the no-record prior's arm A on the RENOIR at 1080p's half tier during a stamp's bake (a linear guess of 14.6 ms, `docs/nfr/02-frame-budget.md`; Plan 0096's RENOIR readings can take it) and the no-ray fade's temporal and composite cost.
 
 ### Hundreds or thousands of entities
 
@@ -850,7 +858,23 @@ Phase 4 has split the shaders (which changes what is compiled). Ready since 0045
 (2026-11-13): `pipeline_times` reads `internals::shader_sources()`. Sharpened 2026-11-19: Plan
 0092 (WGSL hot reload) rebuilds a pass's pipeline from a file on disk; a reloaded pipeline is a
 new compile the cache has not seen, so the cache and the reload are read together when this is
-picked up (the engine entry above is the same question from the start-up side).
+picked up (the engine entry above is the same question from the start-up side). Read by Plan
+0094 Phase 2a (2026-11-19, `docs/plans/logs/0094.md`): the test supports' `wgpu::PipelineCache`
+pays 0.01 on the RTX against an empty driver cache (29.4 s cold, 0.24 s warm, 2.0 MB) and
+nothing on lavapipe (0.97, 84 B: no compiled code), so Plan 0094 keeps it for hardware adapters
+only. What that plan leaves here (owner, 2026-11-19): the light pass's default-on compile cost
+on lavapipe, the fly-through's light-pass build stage 3.7 s against the base's 2.7 (debug) with
+every default-off arm already out of the default pipelines, about 1.0 s a device of default-on
+code, about 1.4 s a frame-building test of the gate; the next step is a per-module compile
+reading (`pipeline_times` per `PASSES` row) to name the module that grew. **Routed to Plan
+0096 (performance) 2026-11-20**, after Plan 0094's window 94b: `absorb`'s cold start on an
+emptied driver cache read 70 s (the owner: "start is slow, 70 sec"; Plan 0094 Phase 7a's
+table: the arms' light pipelines 39 to 44 s inside their loading stage after the base's 25 to
+49 s). Plan 0096 takes two items: an engine `wgpu::PipelineCache` for hardware adapters in the
+app (the test-support cache read 29.4 s cold against 0.24 s warm on the RTX, 2.0 MB), and the
+default-off arms built in the background after the first world frame rather than inside the
+loading stage (the runtime pick's hitch with them). This entry leaves when 0096's phase takes
+them; the lavapipe compile-cost reading above stays here.
 
 ### Comment, manifest and index drift found by the 2026-11-12 review
 
@@ -1332,3 +1356,132 @@ list lights' shadow visibility on a running mean of its own, as the key light's 
 visibility pair's `g` (Plan 0086 Phase 19), reprojected and reset where the light moves. Pick
 up when the third window (Plan 0086 Phase 24 run 3) judges the walls under the default anchor
 4 still grainy, or a consumer fires lights at walls in the dark.
+
+### Settle early: a coarse area answer where an estimate is not still, and a hold once it is
+
+Parked 2026-11-19 (owner, at Plan 0094's Phase 1 and 2 readings: "light that is not still can be
+approximated around area and settle exit early; we don't need super precision if it becomes
+flicker", and "this exit early strategy can be used a lot around similar cases"). The principle:
+when an estimate is young or restarting, show a coarse answer pooled over its neighbourhood and
+narrow it as it ages; once its samples sit inside its band, hold it and move again only through
+one fade when the band is left. Plan 0094 takes the two forms for the visibility pair (Phase 3's
+settle on both means, Phase 6's age-weighted pool), and its window judges them. **A candidate
+rule for ADR-0076** ("an estimator at rest holds by construction, not by its cap"; the rejected
+alternative is a filter at a converged age), to be written at Plan 0094 Phase 7's verdict.
+Where else it might apply, each unread: **the exposure** (ADR-0033's two-stage already has a
+dead band in rule 5's still clause; a hold once the meter is within 1/64 EV); **the probes or
+lamp channel** (hold a probe whose samples sit in its band, Plan 0051's lamp channel grains at
+rest); **the denoiser's footprint** (the a-trous wide while the variance is young, none once
+settled, which is SVGF's intent and this plan's pool); **the fired lights' grain** (the entry
+above: a running mean that settles instead of a per-frame sample); **the entity lighting**
+(a part's coarse grain holds its light until the part moves); **the far field and LOD
+transitions** (hold a tile's converged value across a mip switch, fade the switch); **the bake
+queue's fresh chunks** (a landed chunk's summary as the coarse answer for its faces until the
+pair converges, then hold). Pick up per place when its flicker is read; Plan 0090's counter
+names the places.
+
+**2026-11-19, Plan 0094 Phase 3: the settle on the pair left the plan by its stop rule**
+(`docs/plans/logs/0094.md`, Phase 3's re-read). As built (`temporal.wgsl` `settle_at_cap`: the
+band at the cap only, a hold after 16 in-band frames, a release after 4 consecutive frames out
+of it into a 1/16 fade; `Lighting::settle`, `--settle on|off`, default off): at rest it holds
+93 % of the forest's pixels and the ages match the settle off, but the trunks' pops at rest do
+not fall (0.352 % on, 0.367 % off at `10,180`) and the turn's return frame reads 37.6 % over 8
+on against 21.9 % off; the clock at 1x releases 40.6 pixels a frame with 1.04 % of them a
+`Flash`. Unread: why the return frame doubles (the trace the amendment names, the key mean's
+age per frame at a returned penumbra pixel), and whether the pops at rest are the direct
+part's own blend rather than the means'.
+
+**2026-11-20, Plan 0094 Phase 7's verdict: the hold form is rejected, the principle becomes
+ADR-0076 rule 6.** The owner's eye agreed with the readings (window 94a: settle on against off
+"no significant difference" at rest, "3a looks better than 3b, especially in motion"); the
+settle's code is removed by the owner's call (Plan 0094 Phase 7a) and ADR-0076's Alternative F
+is its record. The age-weighted pool (Phase 6) lowered none of the hole band's shares and
+raised Slow 0.4 to 2.4 %, and is off by default from Phase 7a. What the owner asked for at the
+window ("if we have to wait for a minute for light to settle, something is wrong with the light
+and we need approximate things") is written as rule 6: a coarse stable answer while the precise
+one has not landed, one fade when it does, and every reading on the undrained image too. The
+places listed above stay candidates; the first one the rule points at is the bake queue's drain
+(the entry below, "The bake queue's backlog at a still camera").
+
+### A second `Frame` on one rig does not drain its bake queue
+
+Noted 2026-11-19 by Plan 0094 Phases 1 and 2 (`docs/plans/logs/0094.md`, bars 2 and 4 of
+Phase 1, bar 1 of Phase 2): on the hills, the castle's arms (b) and (c) and the forest's turn
+(twice on a fresh rig) the queue did not drain in 30 000 stepped frames, where a fresh process
+drained the same scene in 1200 to 3300; the undrained arms read up to 16 % of pixels over 4 at
+rest against under 1 % drained. Plan 0094 runs every arm in its own process. What it would take:
+a reading of the queue's depth and the job at its head on the second frame (a job that never
+lands, or a rig that re-marks what the first frame baked). A chore or the perf plan's; read
+before any gate test shares a rig between two frames.
+
+### The bake queue's backlog at a still camera: minutes to drain what is in view
+
+Noted 2026-11-20 at Plan 0094's window 94a (`docs/plans/logs/0094.md`, Phase 7; the session
+log's `bake queue:` lines): in the forest and on the hills the HUD read a queue depth of 12 752
+to 16 150 jobs through every run, at a still camera after full residency (17 077 full chunks at
+29.9 s), with `in view 3652 waiting (1030 coarse)`, `missing 244 (fallback 232, black 12)` at
+the 15:00 still, and `baked` rising by 9 to 38 chunks a second at `budget frame:1.5`, which is 7
+to 30 minutes to the drain. The owner's rule from that window (ADR-0076 rule 6): the image
+meanwhile is the judged image. What it would take, in order: the drain's rate as a figure in
+`docs/nfr.md` (jobs a second and the seconds until every chunk in view has a record, at a still
+camera, on both adapters) with the HUD showing it; the in-view jobs ahead of the rest and the
+budget sized to land them within seconds (ADR-0048's order already scores the view; the step's
+6.3 ms on the main thread, Plan 0086 Phase 24c, is the other half); and the coarse pass as the
+rule's "coarse answer" for what is not landed (it exists: `coarse 1479 chunks` in the same
+line). The perf plan's first item; a related finding is "A second `Frame` on one rig does not
+drain its bake queue" above.
+
+### The dug hole's light: the first frames and the lit floor
+
+Noted 2026-11-20 at Plan 0094's window 94a (runs 1 and 4: "dig still flashes, hole lit";
+`live/window94a/4-dig-hole-lit.png`); the owner: "can even accept that", and it does not matter
+in tunnels under the headlamp. Two halves. **The first frames** ("bright spots that settle for a
+few frames"): Plan 0094 Phase 2 bar 2's thirds, the column's seed at the hole's new faces (open,
+1.0, at `SEED_COLUMN` 2 until the dig's job lands, one frame on the RTX, two on the RENOIR) and
+the key mean's restart on the new faces (the edit box's reset, ADR-0018); Phase 6's table
+(`flicker::reading::hole_band`): flash plus dip plus overshoot 14.5 to 23.7 % of the hole band
+in every arm, the pool included. Both are history mechanics; the motion lane that takes the
+turn's wobble inherits them (a seed that carries the pre-dig value as rule 3's `old` across the
+edit box's reset is the candidate rule 6 names). **The lit floor** (blue-grey under a shaded
+hill, HUD `missing 0`, so the baked visibility): Plan 0094 Phase 7a (6) reads the stored
+visibility against a brute-force aperture over the dug voxels and writes the word here:
+`geometry` (a radius-0.5 m sphere's floor sees about half the sky and a grey face under a blue
+sky reads blue beside grass; then the look is the hole's walls' bounce and a darker soil, a look
+plan's) or `overstated` (a bake finding). **Read: `geometry`** (`gpu_sun`
+`reading::the_dug_floors_baked_visibility_against_its_aperture`, lavapipe, the flat floor under
+`Sky::uniform(1.0)` standing in for the hills): the 10-voxel box's record 0.184 against 0.209
+over its cell's faces; the radius-5 sphere's record 0.718 against 0.748, but its record cell is
+the 8-voxel brick, so the bowl's own faces (aperture 0.473) share one value with the open
+ground beside them: at brick resolution a small hole's floor shows the brick's mean, not its
+own sky. Pick up after the motion lane, or with the next dig look.
+
+### The key term's grain at rest on a penumbra, and the a-trous's spatial variance (ii)
+
+Noted 2026-11-20 at Plan 0094's window 94a, run 2 (the forest at 15:00: "still some grain" on
+the penumbra edges of the trunks' shadows and the sun patch; queue depth 12 752, missing 244).
+Plan 0094 removed the restarts at a still camera (Phase 3: rejections 416 to 0 a frame, the
+trunks under age 64 4.67 to 0.17 %) and what remains at rest is the key light's own estimator
+at its cap (`key_history` 256): the forest's trunks p99 23, mean 2.37 against the 1200-frame
+reference at 512 frames; the hills' over-4 share at rest 0.154 % with the key light, 0.012 %
+without (Phase 1 bar 2). A penumbra is where `g` is near one half and the variance largest.
+The plan's (ii), SVGF's spatial variance estimate on the key term alone at a converged age in
+the a-trous (ADR-0018; a guess of +0.05 ms RTX, +0.4 ms RENOIR), was not built: its clause (the
+owner's word on run 1) did not fire, run 2's grain has the missing records and the moving
+exposure as the other leads, and a spatial filter on the key term interacts with the temporal
+pass the motion lane owns. Pick up in that lane, with the reading first: the penumbra's
+frame-to-frame p99 at rest split by the key term, the sky's young pixels and the exposure.
+
+### How dug interiors should look: darker, less sky than the true aperture
+
+Parked 2026-11-20 by the owner at Plan 0094's window 94a verdict ("the hole reads lit";
+`live/window94a/1-forest-dig-lit-hole.png`, `4-dig-hole-lit.png`: a radius-0.5 m hole's floor
+blue-grey under a shaded hill and under a canopy, its walls dark brown). Plan 0094 Phase 7a (6)
+reads whether the baked visibility matches the hole's true aperture; the owner's call is that
+**even a correct aperture is not the look**: a dug interior should read darker and take less sky
+than the geometry gives, so a hole reads as a hole beside the ground it was dug from. A look
+plan, later, after the motion lane: candidates are the hole's walls' bounce in the baked term
+(the walls' own low value folded into the floor's, which the bake's bounce cell mean may already
+carry too little of), a darker soil row at the material table (a consumer's palette call, not
+the engine's), or an occlusion term at concave faces read from the column map or the coarse
+grid. Read first on the 94a stills' scenes (the hills at 16:00, the forest at `10,180`) with
+the true aperture printed beside the stored value; the pick is the owner's eye.

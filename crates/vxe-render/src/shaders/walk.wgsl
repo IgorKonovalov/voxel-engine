@@ -178,6 +178,11 @@ var<private> skip_origin_cell: bool = false;
 // probe's 2^3 block to `t approach_tan`. Clear for every other walk.
 var<private> approach_on: bool = false;
 
+// The approach probes' call and the absorbing step in `march` sit between `arms:begin` and
+// `arms:end` lines: `compose` leaves them out of every source but those `compose_arms` builds
+// (the light pass's arms variants, its steps view and the bake), so the default light pipelines
+// compile neither (Plan 0094 Phase 2a); there `approach_on` and `absorb_on` are never read.
+
 var<private> approach_tan: f32;
 
 var<private> approach_min: f32;
@@ -852,6 +857,7 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
                 passing = false;
             }
         }
+        // arms:begin (the absorbing step: compiled only where `compose_arms` keeps it)
         if (size == 0 && absorb_on && walk.brick_absorb) {
             let style = material_style(cell_material(c));
             if ((style & STYLE_ABSORB) != 0u) {
@@ -863,6 +869,7 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
                 }
             }
         }
+        // arms:end
         if (size == 0 && skip_origin_cell && step == 0u) {
             size = 1;
         }
@@ -874,9 +881,11 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
             return Hit(true, v, axis, t, m);
         }
         let exit = exit_cell(o, d, inv, v, size);
+        // arms:begin (the approach probes)
         if (approach_on && size <= APPROACH_CELL) {
             approach_cell(o, d, t, exit.t);
         }
+        // arms:end
         t = exit.t;
         v = exit.v;
         axis = exit.axis;

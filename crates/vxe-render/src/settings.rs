@@ -525,6 +525,10 @@ impl RenderSettings {
     pub const NOT_SETTINGS: &'static [(&'static str, &'static str)] = &[
         ("set_dt", "a per-frame input: the frame's step in seconds"),
         (
+            "set_pipeline_cache",
+            "a test hook: the pipeline cache the test devices build through",
+        ),
+        (
             "set_sky",
             "a per-frame input: the game's sky, its bodies moved by the game's clock",
         ),

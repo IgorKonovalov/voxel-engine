@@ -14,7 +14,9 @@
 //   (LIGHTING_DIRECT clear: the lamp off and the list empty), is a store's pixel whose lamp part is zero (its moments are
 //   zero), else from the moments of its 7 x 7 neighbourhood under the same edge weights as the
 //   filter. With the lamp on a young store pixel in the lamp's shadow keeps the 7 x 7 estimate,
-//   which lets the filter soften the shadow's edge into it.
+//   which lets the filter soften the shadow's edge into it. A young pixel's pair means are
+//   pooled first (`pooled_pair`, under LIGHTING_HOOK_POOL): its sky term is the pooled
+//   sky mean's, and its direct part takes the pooled key mean's difference.
 //   `atrous` is one iteration with the 5 x 5 B3-spline kernel at stride `step.size` (1, 2, 4,
 //   8 over four dispatches): each tap weighs `exp(-plane distance / SIGMA_PLANE)`,
 //   `max(n.n', 0)^128` (on `filter_normal`'s normals, hitrec.wgsl) and
@@ -116,6 +118,89 @@ fn edge_weight(a: HitRecord, b: HitRecord, eye: vec3<f32>) -> f32 {
 @group(2) @binding(11) var pair_in: texture_2d<f32>;
 @group(2) @binding(12) var<storage, read> sky_e: array<vec4<f32>, 6>;
 
+// The age-weighted pool (ADR-0076's young pixels): a pixel's pair means are mixed toward the
+// mean of its 5 x 5 neighbourhood's at weight `1 - age / POOL_AGE`, full at a reset and none
+// from POOL_AGE on, so a young pixel's few samples are averaged with its young neighbours'.
+// A tap counts where it is a hit whose voxel lies in the centre's chunk, at the edge weight
+// (`edge_weight`: the plane and the normal) times its own samples (its mean's age, at least 1).
+// The sky's long mean (the pair's x, its samples the pair's w) pools where the centre cast the
+// sky ray and its term does not ride with the stored part (the moments' w under 1.5), over taps
+// of the same kind; the key light's mean (the pair's y, its samples the direct part's age, the
+// moments' z) pools where the key light falls on the centre (the visibility sample's b), over
+// taps where it falls too. Returns the sky's term (`sky_pair_term` of the pooled x, 0 where the
+// sky does not pool or ride here) and the key's correction to the direct part: its light times
+// the pooled mean less its own, pre-exposed. A footprint at weight 0 reads no tap.
+const POOL_AGE: f32 = 32.0;
+// The world's chunk edge in voxels (`vxe_world::CHUNK_EDGE`).
+const POOL_CHUNK: f32 = 64.0;
+
+struct Pooled {
+    sky: vec3<f32>,
+    key: vec3<f32>,
+};
+
+fn pool_chunk(r: HitRecord) -> vec3<i32> {
+    return vec3<i32>(floor((r.p - r.n * 0.5) / POOL_CHUNK));
+}
+
+fn pooled_pair(px: vec2<i32>, rec: HitRecord, mw: vec4<f32>) -> Pooled {
+    let pair = textureLoad(pair_in, px, 0);
+    let vis = textureLoad(vis_in, px, 0);
+    let sky_here = mw.w < 1.5 && vis.a > 0.5;
+    let key_here = vis.b > 0.5;
+    let ws = select(0.0, clamp(1.0 - pair.w / POOL_AGE, 0.0, 1.0), sky_here);
+    let wk = select(0.0, clamp(1.0 - mw.z / POOL_AGE, 0.0, 1.0), key_here);
+    var x = pair.x;
+    var y = pair.y;
+    if (ws > 0.0 || wk > 0.0) {
+        let eye = eye_of(px);
+        let chunk = pool_chunk(rec);
+        var sx = 0.0;
+        var swx = 0.0;
+        var sy = 0.0;
+        var swy = 0.0;
+        for (var j = -2; j <= 2; j++) {
+            for (var i = -2; i <= 2; i++) {
+                let q = px + vec2<i32>(i, j);
+                if (!inside(q)) {
+                    continue;
+                }
+                let other = load_hit(q);
+                if (!other.found || any(pool_chunk(other) != chunk)) {
+                    continue;
+                }
+                let e = edge_weight(rec, other, eye);
+                if (e <= 0.0) {
+                    continue;
+                }
+                let tp = textureLoad(pair_in, q, 0);
+                let tv = textureLoad(vis_in, q, 0);
+                let tm = textureLoad(moments_in, q, 0);
+                if (ws > 0.0 && tv.a > 0.5 && tm.w < 1.5) {
+                    let w = e * max(tp.w, 1.0);
+                    sx += w * tp.x;
+                    swx += w;
+                }
+                if (wk > 0.0 && tv.b > 0.5) {
+                    let w = e * max(tm.z, 1.0);
+                    sy += w * tp.y;
+                    swy += w;
+                }
+            }
+        }
+        if (swx > 0.0) {
+            x = mix(pair.x, sx / swx, ws);
+        }
+        if (swy > 0.0) {
+            y = mix(pair.y, sy / swy, wk);
+        }
+    }
+    var out: Pooled;
+    out.sky = select(vec3<f32>(0.0), sky_pair_term(sky_e, x, vis.a, rec.n), mw.w < 1.5);
+    out.key = key_light_at(rec.p, rec.n) * (y - pair.y) * exposure_now();
+    return out;
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn variance(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= params.light_size.x || gid.y >= params.light_size.y) {
@@ -132,10 +217,15 @@ fn variance(@builtin(global_invocation_id) gid: vec3<u32>) {
     // part): filtered with the rest.
     // A pixel whose moments' w is 2 carries its pair's term in the stored part instead.
     var sky_t = vec3<f32>(0.0);
-    if (mw.w < 1.5) {
+    var key_t = vec3<f32>(0.0);
+    if (rec.found && (params.lighting & LIGHTING_HOOK_POOL) != 0u) {
+        let pooled = pooled_pair(px, rec, mw);
+        sky_t = pooled.sky;
+        key_t = pooled.key;
+    } else if (mw.w < 1.5) {
         sky_t = sky_pair_term(sky_e, textureLoad(pair_in, px, 0).x, textureLoad(vis_in, px, 0).a, rec.n);
     }
-    let c = select(acc.xyz, vec3<f32>(0.0), mw.w > 0.5) + direct.xyz + sky_t;
+    let c = max(select(acc.xyz, vec3<f32>(0.0), mw.w > 0.5) + direct.xyz + key_t, vec3<f32>(0.0)) + sky_t;
     let m = mw.xyz;
     // The pixel's own variance, less the moments' rounding: each moment is an f16 (relative step
     // 2^-11), so `m2 - m1^2` of a still, noise-free light is a residue of up to about three steps
