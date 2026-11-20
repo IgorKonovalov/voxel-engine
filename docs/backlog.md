@@ -1275,6 +1275,9 @@ in place of the march, with its overdraw.
 **Owner, 2026-11-20:** leans to this hybrid as the answer for long-distance rendering. Plan
 0033 (the marched clipmap, ADR-0028) is re-read against it before its lane starts: raster the
 clip levels' meshes against marching them, measured on both adapters, as an ADR either way.
+**Owner, later 2026-11-20:** "agreed on far distance": the hybrid is the agreed direction for
+the far field, not only a lean. The re-read runs after Plan 0087 (the rename), as the first M10
+step; the meshing explainer and Morley's talk are in `references/voxel-optimizations.md`.
 
 ## Later apps
 

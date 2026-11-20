@@ -134,6 +134,31 @@ Each entry ends with the milestone it informs. The distilled list is at the end.
   cheapest known way to keep a 16-bit material space while storing most bricks at 4 or 8 bits.
   M1.
 
+## Meshing, for a raster far field
+
+The engine draws nothing as triangles: the brick map is ray-marched, so meshing has no place in
+today's frame. These entries are background for the hybrid far field (raster the far LOD as
+meshes, march near), the owner's lean of 2026-11-20 recorded in `backlog.md`, which Plan 0033 is
+re-read against before its lane.
+
+- **Elttob, "Consume everything: how greedy meshing works", Roblox DevForum, 2020-02-07.**
+  <https://devforum.roblox.com/t/consume-everything-how-greedy-meshing-works/452717>. A plain,
+  illustrated walk through the greedy merge, grown one dimension at a time: in 1D, from an
+  unvisited filled block run forward while the next block is filled and unvisited; in 2D, extend
+  that run across rows while every block of the next row can be included; 3D is the same
+  extension once more. Its unit is **volume**, not faces: it merges solid blocks into cuboids
+  (Roblox parts), claiming 15 931 instances down to 508 on its sample scene, and it has no
+  material-equality or face-visibility rule. A surface mesher applies the same sweep per face
+  direction and slice, to visible faces only, with an equal-material (and equal-light) test.
+  The post names none of the costs: T-junction cracks where a large quad meets small ones,
+  per-corner occlusion or light that cannot interpolate across a merged quad (light must be
+  read per pixel from the light store instead), and a re-mesh of the chunk on every edit.
+  M10 (Plan 0033's re-read), as the algorithm's explainer; the fast form is the next entry.
+- **Davis Morley, "Greedy Meshing Voxels Fast", Handmade Seattle 2022.** Binary greedy meshing:
+  a column of voxels as one machine word, face culling and the greedy merge done with shifts
+  and masks instead of per-voxel loops. The mesher the backlog's hybrid far-field entry names.
+  M10 (Plan 0033's re-read).
+
 ## Production reference: Teardown
 
 - **Wittens, "Teardown Frame Teardown", acko.net, 2021.**
