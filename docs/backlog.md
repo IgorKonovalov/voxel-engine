@@ -471,6 +471,16 @@ belt** (Minecraft's middle click) and **several belts** (Satisfactory's ten). Pi
 consumer or the owner asks for one; the first two are small plans, the last two are rows in
 Plan 0077's key table.
 
+### Light shafts inside structures: visible sun beams through openings
+
+Noted 2026-11-20 by the owner at Plan 0094's window 94a, inside the castle's keep: "it would be
+nice in the future rays of light inside such structures". Visible beams where sunlight enters an
+interior through windows, doors or breaches, with the air lit along the ray. It belongs with the
+volumetrics (Plan 0035's froxel or march work; ADR-0030 names the cloud shell): a low-resolution
+in-scattering march along the view ray that samples the key light's shadow, reduced and
+temporally stable (the owner's stable-image rule; no grain while it converges). Cost is a guess
+until measured on the slow adapter against the headroom line in `docs/nfr.md` section 2.
+
 ## Performance: the static review of 2026-11-10
 
 Parked 2026-11-10. The owner asked why the window reads 30 to 50 fps with little on screen; a
