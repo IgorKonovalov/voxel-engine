@@ -276,6 +276,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--leaf-shadow brick\|voxel\|absorb` | How a canopy shadows the sun and the sky: as its 8^3 bricks (a light's shadow ray stops where it enters a brick holding leaves, so no fleck shows through), voxel by voxel, or as a transmittance (the key light's ray and the sky rays pass the leaves, attenuated by `exp(-0.15 x)` over the path `x` in voxels through them); the banner reads `leaf shadow brick` or `leaf shadow absorb` with a sky set and names nothing for `voxel` [voxel] |
 | `--sun EL,AZ` | Fix the sun at this elevation and azimuth in degrees (clockwise from north, 180 south), the moon opposite; the menu's `time` and `day cycle` leave it, and the banner reads `sun EL/AZ fixed` in place of the time |
 | `--time HH:MM` | The time of day the sky starts at, latitude 45 at an equinox [12:00]; the banner names it while a sky is set |
+| `--day-cycle` | Start with the day cycle running, as `End` does in the window (a reading lever for the key light's re-bake under a moving sun) |
 | `--day-length S` | Seconds for a whole day while the cycle runs (the menu's `day cycle`) [1200] |
 | `--sun-radius DEG` | The sun's angular radius, 0.05 to 10 degrees: a wider disc softens every sun shadow (the real sun's is 0.2665) [3] |
 | `--moon-radius DEG` | The moon's angular radius, 0.05 to 10 degrees: its disc in the sky and its shadows' softness [3] |

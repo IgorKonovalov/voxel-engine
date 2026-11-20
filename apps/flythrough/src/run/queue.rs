@@ -645,7 +645,7 @@ impl Run {
             let max = sl.last().copied().unwrap_or(0.0);
             let mut cpu = std::mem::take(&mut self.queue.step_cpu);
             println!(
-                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample, fading {}, coarse {} chunks, {}, eye {:.0} {:.0} {:.0}, step CPU p50 {:.3} max {:.3} ms, provisional {} (opened {}, catch-ups {})",
+                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample, fading {}, coarse {} chunks, {}, eye {:.0} {:.0} {:.0}, step CPU p50 {:.3} max {:.3} ms, provisional {} (opened {}, catch-ups {}), key {} (landed {})",
                 t / 1e3,
                 self.frame,
                 st.depth,
@@ -672,6 +672,8 @@ impl Run {
                 st.provisional,
                 st.provisional_opened,
                 st.provisional_requeued,
+                st.keys,
+                st.keys_baked,
             );
             let needs = gfx
                 .frame

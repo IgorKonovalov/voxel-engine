@@ -179,6 +179,17 @@ pub(crate) fn key_words(v: [f32; 6]) -> [u32; 2] {
     [a, (b & !VIS_BAKED) | KEY_BAKED]
 }
 
+/// A key-only re-bake's record (ADR-0079): `kept` with each cell's two key visibility words
+/// taken from `baked`, a record of the same cells whose faces drew their key rays alone.
+pub(crate) fn key_rebaked(kept: &[u32], baked: &[u32]) -> Vec<u32> {
+    let mut r = kept.to_vec();
+    for cell in (0..r.len().min(baked.len())).step_by(BRICK_WORDS) {
+        let k = cell + KEY_WORD;
+        r[k..k + 2].copy_from_slice(&baked[k..k + 2]);
+    }
+    r
+}
+
 /// Direction `face`'s key light visibility in [0, 1] of record `r` (ADR-0079), `None` where it
 /// was baked with no key light or lacks the direction.
 pub fn record_key_visibility(r: &[u32], face: usize) -> Option<f32> {
@@ -380,6 +391,19 @@ mod tests {
         }
         assert_eq!(unpack_direction(0), None);
         assert_eq!(pack_direction([0.0; 3]), 0);
+    }
+
+    /// A key-only re-bake's record is the kept one but each cell's two key words, which come
+    /// from the re-baked record.
+    #[test]
+    fn a_key_rebake_replaces_only_the_key_words() {
+        let kept: Vec<u32> = (0..2 * BRICK_WORDS as u32).map(|i| 1000 + i).collect();
+        let baked: Vec<u32> = (0..2 * BRICK_WORDS as u32).map(|i| 5000 + i).collect();
+        let r = key_rebaked(&kept, &baked);
+        for (i, w) in r.iter().enumerate() {
+            let key = (KEY_WORD..KEY_WORD + 2).contains(&(i % BRICK_WORDS));
+            assert_eq!(*w, if key { baked[i] } else { kept[i] }, "word {i}");
+        }
     }
 
     #[test]

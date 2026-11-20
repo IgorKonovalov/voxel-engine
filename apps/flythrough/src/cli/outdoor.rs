@@ -191,6 +191,12 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
                 Ok(())
             },
         ),
+        Flag::switch(
+            &["--day-cycle"],
+            "start with the day cycle running, as End does in the window (a reading lever \
+                 for the key light's re-bake under a moving sun)",
+            |p: &mut Parsing| p.args.outdoor.clock.running = true,
+        ),
         Flag::value(
             &["--day-length"],
             "S",

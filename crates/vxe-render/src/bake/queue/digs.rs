@@ -264,6 +264,7 @@ impl BakeQueue {
                 kept_bricks: kept,
                 samples,
                 brick_samples: None,
+                key_only: false,
             });
             self.dig_open.insert(c, d);
         }

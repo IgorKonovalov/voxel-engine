@@ -992,7 +992,15 @@ pub struct Lighting {
     /// those columns is pending upload, a block baked under a column not yet final marked
     /// provisional and baked again once when the columns turn final.
     pub column_wait: bool,
+    /// Degrees the key light turns past a block's baked direction, beyond its disc's angular
+    /// radius, before the live queue re-bakes the block's key visibilities alone (ADR-0079;
+    /// default [`DEFAULT_KEY_STEP`]).
+    pub key_step: f32,
 }
+
+/// [`Lighting::key_step`] by default, in degrees (Plan 0095 Phase 8, a guess: 10 s of the
+/// default day).
+pub const DEFAULT_KEY_STEP: f32 = 3.0;
 
 /// [`Lighting::sky_history`]' largest value: the pair's age is a half, exact to 2048.
 pub const MAX_SKY_HISTORY: u32 = 1024;
@@ -1040,6 +1048,7 @@ impl Default for Lighting {
             sky_normal: SkyNormal::Smoothed,
             sky_bounce: 0.0,
             column_wait: false,
+            key_step: DEFAULT_KEY_STEP,
         }
     }
 }

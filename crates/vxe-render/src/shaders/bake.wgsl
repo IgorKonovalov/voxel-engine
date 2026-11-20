@@ -42,6 +42,9 @@
 // unlit and draws none. Its dimensions are its own, so the emissive and sky sums are the same
 // with the key light on and off. `key_open` returns the round's open rays.
 //
+// A key-only job's entry (`face` bit 8, FACE_KEY_ONLY: `bake::FACE_KEY_ONLY`, ADR-0079) draws
+// the key ray alone at each sample: no sky ray and no emissive candidate, its sums 0.
+//
 // Each sample is the light pass's estimate at a uniform point of the face with the face's normal, times the window `(1 - (d / L)^4)^2`, d the distance from the point to the kept
 // emitter point and L `job.radius` in voxels: it falls to 0 at L, so the table's edge is no seam.
 
@@ -67,6 +70,7 @@ struct BakeFace {
     voxel_x: i32,
     voxel_y: i32,
     voxel_z: i32,
+    // The face (0..5), with FACE_KEY_ONLY.
     face: u32,
     first: u32,
     samples: u32,
@@ -95,6 +99,9 @@ struct BakeFace {
     // In: the face's samples below this index draw a key light ray.
     key_n: u32,
 };
+
+// `BakeFace.face`'s flag of a key-only job's entry.
+const FACE_KEY_ONLY: u32 = 256u;
 
 // The random-number dimensions of a sample's sky ray, two, above the candidates'.
 const BAKE_SKY_DIM: u32 = 1002u;
@@ -158,9 +165,11 @@ fn bake_round(
     bake_slot = f.slot;
     reset_walk();
     let v = vec3<i32>(f.voxel_x, f.voxel_y, f.voxel_z);
-    let key = face_seed_key(v, f.face);
+    let face = f.face & 7u;
+    let key_only = (f.face & FACE_KEY_ONLY) != 0u;
+    let key = face_seed_key(v, face);
     let stream = hash_u32(job.seed ^ hash_u32(key.x ^ hash_u32(key.y)));
-    let nf = face_dir(f.face);
+    let nf = face_dir(face);
     var sum = vec3<f32>(0.0);
     var clamped = vec3<f32>(0.0);
     var lum2 = 0.0;
@@ -178,8 +187,8 @@ fn bake_round(
     let sky_end = (job.sky & 8u) != 0u;
     for (var s = lane; s < samples; s += BAKE_LANES) {
         let px = vec2<u32>(stream, f.first + s);
-        let p = face_point(v, f.face, px);
-        if ((job.sky & 1u) != 0u && f.first + s < f.sky_n) {
+        let p = face_point(v, face, px);
+        if (!key_only && (job.sky & 1u) != 0u && f.first + s < f.sky_n) {
             let d = cosine_direction(nf, rand(px, BAKE_SKY_DIM), rand(px, BAKE_SKY_DIM + 1u));
             absorb_on = sky_styles;
             absorb_tau = 0.0;
@@ -201,6 +210,9 @@ fn bake_round(
             if (lit && (absorb_tau == 0.0 || rand(px, BAKE_KEY_DIM + 2u) < exp(-absorb_tau))) {
                 key_open += 1u;
             }
+        }
+        if (key_only) {
+            continue;
         }
         let r = draw_candidates(px, p, nf);
         if (!(r.w_sum > 0.0 && r.target_pdf > 0.0 && r.m > 0.0)) {

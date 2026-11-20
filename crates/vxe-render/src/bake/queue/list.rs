@@ -205,6 +205,7 @@ impl BakeQueue {
             kept_bricks: KeptBricks::new(),
             samples,
             brick_samples: coarse.then_some(brick_samples),
+            key_only: false,
         });
         self.job_coarse.insert(c, coarse);
         self.job_eye.insert(c, self.eye_moves);

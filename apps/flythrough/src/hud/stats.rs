@@ -399,7 +399,8 @@ pub fn queue_row(st: &vxe_render::QueueStats, step_ms: f64, mode: &str) -> Strin
 }
 
 /// Appends [`queue_row`]'s text before its mode to `out`:
-/// `in view: 12 waiting (5 coarse), withdrawn 3, step 1.25 ms`.
+/// `in view: 12 waiting (5 coarse), withdrawn 3, step 1.25 ms`, then `, key 40` while blocks
+/// wait for or run a key-only re-bake (ADR-0079).
 pub fn write_queue_row(out: &mut String, st: &vxe_render::QueueStats, step_ms: f64) {
     let [blank, coarse] = st.view_waiting[vxe_render::internals::VIEW_IN];
     let _ = write!(
@@ -408,6 +409,9 @@ pub fn write_queue_row(out: &mut String, st: &vxe_render::QueueStats, step_ms: f
         blank + coarse,
         st.withdrawn
     );
+    if st.keys > 0 {
+        let _ = write!(out, ", key {}", st.keys);
+    }
 }
 
 /// The exposure row: the mode in words, the exposure the next frame uses in EV (`log2 e`), the

@@ -801,6 +801,8 @@ pub(super) struct OpenJob {
     pub(super) faces: ChunkFaces,
     pub(super) first_word: u64,
     pub(super) kept_bricks: KeptBricks,
+    /// [`Job::key_only`].
+    pub(super) key_only: bool,
     pub(super) states: Vec<FaceState>,
     /// The faces still running.
     pub(super) live: Vec<usize>,
@@ -825,6 +827,7 @@ impl JobCtx<'_, '_> {
             kept_bricks,
             samples: _,
             brick_samples,
+            key_only,
         } = job;
         write_job_table(self.run, coord, slot);
         // A job's own count (the live queue's coarse pass) on cells of a brick draws each
@@ -835,7 +838,8 @@ impl JobCtx<'_, '_> {
         let mut states: Vec<FaceState> = Vec::with_capacity(faces.faces());
         for (brick_at, keys) in &faces.bricks {
             let b = brick_of_slot(usize::from(*brick_at));
-            let record_kept = kept_bricks.contains_key(brick_at);
+            // A key-only job keeps every record's other words and draws every face's key rays.
+            let record_kept = !key_only && kept_bricks.contains_key(brick_at);
             // A brick-level direction's samples, spread over its faces, a translucent voxel's
             // among them.
             let mut per_dir = [0u32; 6];
@@ -867,7 +871,15 @@ impl JobCtx<'_, '_> {
                 };
                 let wanted = in_subset
                     && !record_kept
+                    && (!key_only || self.run.key.is_some())
                     && self.settings.filter.as_ref().is_none_or(|f| f(voxel, face));
+                let key_n = if self.run.key.is_some() {
+                    KEY_BAKE_RAYS.div_ceil(drawn[d].max(1)).min(n)
+                } else {
+                    0
+                };
+                // A key-only face draws its key rays and stops.
+                let n = if key_only { key_n } else { n };
                 states.push(FaceState {
                     voxel,
                     face,
@@ -882,18 +894,15 @@ impl JobCtx<'_, '_> {
                     material: 0,
                     snapshots: Vec::new(),
                     done: !wanted,
-                    sky_n: if self.run.sky & BAKE_SKY_ON != 0 {
+                    sky_n: if self.run.sky & BAKE_SKY_ON != 0 && !key_only {
                         SKY_BAKE_RAYS.div_ceil(drawn[d].max(1)).min(n)
                     } else {
                         0
                     },
                     sky_open: 0,
-                    key_n: if self.run.key.is_some() {
-                        KEY_BAKE_RAYS.div_ceil(drawn[d].max(1)).min(n)
-                    } else {
-                        0
-                    },
+                    key_n,
                     key_open: 0,
+                    key_only,
                 });
             }
         }
@@ -903,6 +912,7 @@ impl JobCtx<'_, '_> {
             faces,
             first_word,
             kept_bricks,
+            key_only,
             states,
             live,
             slot,
@@ -947,7 +957,7 @@ impl JobCtx<'_, '_> {
         for (slot, keys) in &job.faces.bricks {
             let states = &job.states[at..at + keys.len()];
             at += keys.len();
-            let record = job.kept_bricks.get(slot).cloned().unwrap_or_else(|| {
+            let baked = || {
                 brick_record(
                     states,
                     clamp,
@@ -955,7 +965,12 @@ impl JobCtx<'_, '_> {
                     self.run.sky & BAKE_SKY_ON != 0,
                     self.run.key.is_some(),
                 )
-            });
+            };
+            let record = match job.kept_bricks.get(slot) {
+                Some(kept) if job.key_only && self.run.key.is_some() => key_rebaked(kept, &baked()),
+                Some(kept) => kept.clone(),
+                None => baked(),
+            };
             block.extend(record);
         }
         debug_assert_eq!(block.len() as u64, words);

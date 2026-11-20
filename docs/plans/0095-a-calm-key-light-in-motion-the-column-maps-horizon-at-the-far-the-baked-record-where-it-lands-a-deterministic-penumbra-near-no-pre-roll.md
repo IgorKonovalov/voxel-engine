@@ -603,8 +603,8 @@ its Phases 5 to 7 are Phases 9 to 11.
 | 4: The far's instant estimate: the column map's horizon | dev | done (exploration); readings in Phase 5's log section | 1006270b |
 | 5: The near with no history: the approach penumbra | dev | done (exploration); readings partial | fe564d2b |
 | 6: The reach-bound count, the no-value bricks | dev | done; the no-value bricks named (the dump's own voxel rounding), not fixed | 930e75ad |
-| 7: The owner's window W2, no pre-roll | human | run 2026-11-20 on the forest, no pre-roll; (a) stands as the default, the far keeps the record; owner: 1a "everything besides near lines on slopes looks good", 1d "before - grain" (readings log) | committed with this row |
-| 8: The sun's step and the edit's ring (if W2 keeps the record) | dev | not started | |
+| 7: The owner's window W2, no pre-roll | human | run 2026-11-20 on the forest, no pre-roll; (a) stands as the default, the far keeps the record; owner: 1a "everything besides near lines on slopes looks good", 1d "before - grain" (readings log) | 87b09f09 |
+| 8: The sun's step and the edit's ring (if W2 keeps the record) | dev | done; the day-cycle readings follow the commit | committed with this row |
 | 9: The fix pass after W2 | dev | not started | |
 | 10: The bars, the goldens, the NFR readings | dev | not started | |
 | 11: A second short look, if asked | human | not started | |
@@ -673,6 +673,19 @@ its Phases 5 to 7 are Phases 9 to 11.
 - Phase 7 (W2): the forest only, (a) against (d), no stills saved; run 0 (the open night)
   drew no remark; `key_far_mix` was not judged (blend stays); the owner routed the exposure in
   deep shade to Plan 0097 and the step lines on slopes to the backlog (both arms show them).
+- Phase 8: files beyond its list: `bake/job.rs` (`Job::key_only`, `FACE_KEY_ONLY`),
+  `bake/summary.rs` (`fade_mix` mixes the key bytes: the light pass's key slot follows a
+  record's own value at once, so a re-bake's landing fades in the store, dig and refinement
+  landings too), `bake/queue/stats.rs` (`QueueStats` moved out of `queue/mod.rs` for its
+  1200-line cap), `layout_tests.rs`, `frame/baked.rs`, `lib.rs`, the fly-through's
+  `run/queue.rs` (the stdout line) and `cli/outdoor.rs` with `docs/flythrough.md`
+  (`--day-cycle`, a reading lever); `job_loop.rs` and `bake/record.rs` hold the job kind.
+- Phase 8: a block stamped 0 (baked with no key light) re-bakes its key words once one is up;
+  key-only jobs go ahead of the pool's, behind the digs, at most 16 a step and one slice of
+  samples; they draw the key rays alone (no emissive sample, no sky ray).
+- Phase 8: the far landing test drifts the sun 1 degree a frame: a 4-degree turn in one frame
+  is a sky jump (over the 3-degree radius), which snaps the far slot by design.
+- Phase 8: `key_step` is a settings-file row only (no menu row, no flag), as listed.
 
 ### Close triggers
 

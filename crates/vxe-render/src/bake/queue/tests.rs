@@ -1,5 +1,6 @@
 //! The queue's unit tests of the column finality (ADR-0070's amendment).
 
+use super::keys::key_turned;
 use super::open::is_reach_bound;
 use super::*;
 use crate::gpu_world::column_is_final;
@@ -122,4 +123,21 @@ fn the_reach_bound_count_matches_the_exact_crossing_test() {
     assert_eq!((census, exact), (11_814, 11_814));
     assert!(!is_reach_bound([11, 0, 0], &offsets, extent, r));
     assert!(is_reach_bound([11, 3, 1], &offsets, extent, r));
+}
+
+/// A block re-bakes its key words once the light has turned past both the disc's radius and
+/// the step, or when it was baked with no key light.
+#[test]
+fn a_block_is_turned_past_the_radius_and_the_step() {
+    let at = |deg: f32| {
+        let r = deg.to_radians();
+        [r.sin(), 0.0, r.cos()]
+    };
+    let stamp = pack_direction(at(0.0));
+    let (radius, step) = (3f32.to_radians(), 3f32.to_radians());
+    assert!(!key_turned(stamp, at(1.0), radius, step));
+    assert!(!key_turned(stamp, at(2.9), radius, step));
+    assert!(key_turned(stamp, at(4.0), radius, step));
+    assert!(!key_turned(stamp, at(4.0), 5f32.to_radians(), step));
+    assert!(key_turned(0, at(0.0), radius, step));
 }
