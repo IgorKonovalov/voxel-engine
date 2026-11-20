@@ -294,7 +294,8 @@ pub fn cave_materials() -> MaterialTable {
 
 /// The outdoor source's table (`outdoor::OutdoorSource`): [`cave_materials`] with `grass` and
 /// `soil` appended at `outdoor::GRASS` and `outdoor::SOIL`, then the trees' `bark` and `leaf`
-/// at `outdoor::BARK` and `outdoor::LEAF`, so every earlier id keeps its meaning.
+/// at `outdoor::BARK` and `outdoor::LEAF`, then `leaf 2` and `leaf 3` at `outdoor::LEAF_2`
+/// and `outdoor::LEAF_3`, so every earlier id keeps its meaning.
 pub fn outdoor_materials() -> MaterialTable {
     let mut t = cave_materials();
     let row = |name: &str, albedo: [f32; 3]| Material {
@@ -316,6 +317,14 @@ pub fn outdoor_materials() -> MaterialTable {
     assert_eq!(
         t.push(row("leaf", [0.12, 0.26, 0.08])),
         crate::outdoor::LEAF
+    );
+    assert_eq!(
+        t.push(row("leaf 2", [0.17, 0.30, 0.07])),
+        crate::outdoor::LEAF_2
+    );
+    assert_eq!(
+        t.push(row("leaf 3", [0.09, 0.22, 0.11])),
+        crate::outdoor::LEAF_3
     );
     t
 }
@@ -362,22 +371,20 @@ impl LeafShadow {
 }
 
 /// The renderer's style words for [`outdoor_materials`] (`Frame::set_material_styles`):
-/// `SHADOW_AS_BRICK` on `outdoor::LEAF` under [`LeafShadow::Brick`], `shadow_absorb(LEAF_SIGMA)`
-/// under [`LeafShadow::Absorb`], none under [`LeafShadow::Voxel`].
+/// `SHADOW_AS_BRICK` on every row of `outdoor::LEAF_ROWS` under [`LeafShadow::Brick`],
+/// `shadow_absorb(LEAF_SIGMA)` under [`LeafShadow::Absorb`], none under [`LeafShadow::Voxel`].
 pub fn outdoor_styles(leaf: LeafShadow) -> Vec<u32> {
-    match leaf {
-        LeafShadow::Brick => {
-            let mut v = vec![0; usize::from(crate::outdoor::LEAF) + 1];
-            v[usize::from(crate::outdoor::LEAF)] = vxe_render::SHADOW_AS_BRICK;
-            v
-        }
-        LeafShadow::Absorb => {
-            let mut v = vec![0; usize::from(crate::outdoor::LEAF) + 1];
-            v[usize::from(crate::outdoor::LEAF)] = vxe_render::shadow_absorb(LEAF_SIGMA);
-            v
-        }
-        LeafShadow::Voxel => Vec::new(),
+    let word = match leaf {
+        LeafShadow::Brick => vxe_render::SHADOW_AS_BRICK,
+        LeafShadow::Absorb => vxe_render::shadow_absorb(LEAF_SIGMA),
+        LeafShadow::Voxel => return Vec::new(),
+    };
+    let rows = crate::outdoor::LEAF_ROWS;
+    let mut v = vec![0; rows.iter().map(|&m| usize::from(m)).max().unwrap_or(0) + 1];
+    for m in rows {
+        v[usize::from(m)] = word;
     }
+    v
 }
 
 /// `table` (the cave's four rows after air) with the castle's seven rows appended at
@@ -438,17 +445,43 @@ pub fn with_emissive_ore(table: &MaterialTable) -> MaterialTable {
 }
 
 /// The showcase's crystal emission: cyan, radiance per channel.
-pub const CRYSTAL_EMISSION: [f32; 3] = [0.35, 1.6, 2.0];
+pub const CRYSTAL_EMISSION: [f32; 3] = [0.14, 0.64, 0.8];
 
 /// The showcase's amethyst emission: a dim violet.
-pub const AMETHYST_EMISSION: [f32; 3] = [0.6, 0.2, 1.1];
+pub const AMETHYST_EMISSION: [f32; 3] = [0.3, 0.1, 0.55];
 
 /// The showcase's ember emission: deep red.
-pub const EMBER_EMISSION: [f32; 3] = [2.4, 0.3, 0.08];
+pub const EMBER_EMISSION: [f32; 3] = [1.0, 0.12, 0.03];
 
-/// `table` (the cave's five rows, air included) with the showcase's three emissive rows
-/// appended at `showcase::CRYSTAL`, `AMETHYST` and `EMBER`, each with rock's acoustics. The
-/// showcase's amber is the table's ore row as it stands.
+/// The showcase's amber emission: the ore's orange at under half of [`ORE_EMISSION`].
+pub const AMBER_EMISSION: [f32; 3] = [0.7, 0.4, 0.15];
+
+/// The showcase's rows at the cave's ids and under its names: a pale tan-pink `rock` the
+/// glowing rows tint at `cave::ROCK`, an `ore` emitting [`AMBER_EMISSION`] at `cave::ORE`, then
+/// the cave's shell and rubble.
+pub fn showcase_base_materials() -> MaterialTable {
+    let cave = cave_materials();
+    let mut t = MaterialTable::new();
+    let row = |name: &str, albedo: [f32; 3]| Material {
+        albedo,
+        ..Material::named(name)
+    };
+    assert_eq!(t.push(row("rock", [0.74, 0.66, 0.60])), cave::ROCK);
+    let amber = Material {
+        emission: AMBER_EMISSION,
+        ..row("ore", [0.72, 0.45, 0.20])
+    };
+    assert_eq!(t.push(amber), cave::ORE);
+    for id in [cave::SHELL, RUBBLE] {
+        let m = cave.get(id).expect("the cave's row").clone();
+        assert_eq!(t.push(m), id);
+    }
+    t
+}
+
+/// `table` (four rows after air) with the showcase's seven emissive rows appended from
+/// `showcase::CRYSTAL` on: crystal, amethyst, ember, jade, citrine, rose and sapphire, each
+/// with the table's rock's acoustics.
 pub fn with_showcase_rows(table: &MaterialTable) -> MaterialTable {
     let mut t = table.clone();
     assert_eq!(
@@ -476,6 +509,22 @@ pub fn with_showcase_rows(table: &MaterialTable) -> MaterialTable {
             showcase::EMBER,
             row("ember", [0.60, 0.22, 0.10], EMBER_EMISSION),
         ),
+        (
+            showcase::JADE,
+            row("jade", [0.30, 0.80, 0.42], [0.18, 0.85, 0.3]),
+        ),
+        (
+            showcase::CITRINE,
+            row("citrine", [0.85, 0.75, 0.30], [0.75, 0.6, 0.12]),
+        ),
+        (
+            showcase::ROSE,
+            row("rose", [0.80, 0.30, 0.60], [0.85, 0.14, 0.5]),
+        ),
+        (
+            showcase::SAPPHIRE,
+            row("sapphire", [0.25, 0.35, 0.85], [0.12, 0.28, 1.0]),
+        ),
     ];
     for (id, m) in rows {
         assert_eq!(t.push(m), id);
@@ -483,10 +532,10 @@ pub fn with_showcase_rows(table: &MaterialTable) -> MaterialTable {
     t
 }
 
-/// The showcase's table: [`cave_materials`] with the ore emitting [`ORE_EMISSION`] (the
-/// amber) and the three emissive rows of [`with_showcase_rows`].
+/// The showcase's table: [`showcase_base_materials`] and the seven emissive rows of
+/// [`with_showcase_rows`].
 pub fn showcase_materials() -> MaterialTable {
-    with_showcase_rows(&with_emissive_ore(&cave_materials()))
+    with_showcase_rows(&showcase_base_materials())
 }
 
 #[cfg(test)]
@@ -511,7 +560,7 @@ mod tests {
     #[test]
     fn the_material_file_reproduces_the_rust_tables() {
         use crate::materials::{
-            CASTLE_ROWS, OUTDOOR_ROWS, RIG_ROWS, SHOWCASE_ROWS, Selection, load,
+            CASTLE_ROWS, OUTDOOR_ROWS, RIG_ROWS, SHOWCASE_BASE_ROWS, SHOWCASE_ROWS, Selection, load,
         };
         use crate::setup::CrispRows;
         let (file, _) = load(None).expect("the material file loads");
@@ -529,7 +578,27 @@ mod tests {
             compose(&CASTLE_ROWS, &[], true),
             castle_materials(&with_emissive_ore(&cave_materials()))
         );
-        assert_eq!(compose(&[], &SHOWCASE_ROWS, true), showcase_materials());
+        let showcase = |ore: bool| {
+            Selection::base_and(
+                &SHOWCASE_BASE_ROWS,
+                &[],
+                &SHOWCASE_ROWS,
+                ore,
+                CrispRows::None,
+            )
+            .compose(&file)
+            .expect("composes")
+        };
+        assert_eq!(showcase(true), showcase_materials());
+        let mut dark = MaterialTable::new();
+        for (id, row) in showcase_materials().rows().iter().enumerate().skip(1) {
+            let mut m = row.clone();
+            if id == usize::from(cave::ORE) {
+                m.emission = [0.0; 3];
+            }
+            dark.push(m);
+        }
+        assert_eq!(showcase(false), dark);
         assert_eq!(
             compose(&RIG_ROWS, &[], true),
             with_wood(&with_emissive_ore(&cave_materials()))
@@ -547,6 +616,17 @@ mod tests {
         assert_eq!(id("crystal"), Some(showcase::CRYSTAL));
         assert_eq!(id("amethyst"), Some(showcase::AMETHYST));
         assert_eq!(id("ember"), Some(showcase::EMBER));
+        let glow = showcase_materials();
+        for (i, n) in (showcase::CRYSTAL..=showcase::SAPPHIRE).zip(SHOWCASE_ROWS) {
+            assert_eq!(glow.get(i).map(|m| m.name.as_str()), Some(n));
+        }
+        let leaves = with_emissive_ore(&outdoor_materials());
+        for (m, n) in crate::outdoor::LEAF_ROWS
+            .into_iter()
+            .zip(["leaf", "leaf 2", "leaf 3"])
+        {
+            assert_eq!(leaves.get(m).map(|r| r.name.as_str()), Some(n));
+        }
         let castle = compose(&CASTLE_ROWS, &[], true);
         for (i, n) in (castle::STONE..=castle::TORCH).zip(CASTLE_ROWS) {
             assert_eq!(

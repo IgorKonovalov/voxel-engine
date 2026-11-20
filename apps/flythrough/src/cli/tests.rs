@@ -13,6 +13,7 @@ use crate::test_support::argv;
 use crate::{LogicChoice, LookPreset, RESIDENCY};
 use vxe_app::Pacing;
 use vxe_render::UpscalerKind;
+mod exposure;
 mod outdoor;
 
 use vxe_render::{
@@ -429,7 +430,7 @@ fn source_showcase_parses_with_the_lamp_off_and_refuses_what_it_cannot_take() {
 #[test]
 fn the_leaf_shadow_flag_parses() {
     // --leaf-shadow: voxel by default, naming nothing; `brick` the A/B, the canopy style on
-    // `leaf`, the banner names it.
+    // the three leaf rows, the banner names it.
     let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
     assert_eq!(r.outdoor.leaf_shadow(), crate::LeafShadow::Voxel);
     assert!(!r.start_modes(0.0).line().contains("leaf"));
@@ -438,23 +439,24 @@ fn the_leaf_shadow_flag_parses() {
     assert!(r.start_modes(0.0).line().contains("leaf shadow brick"));
     assert!(parse_args_from(argv(&["--leaf-shadow", "solid"])).is_err());
     let styles = crate::outdoor_styles(crate::LeafShadow::Brick);
-    assert_eq!(styles.len(), usize::from(crate::outdoor::LEAF) + 1);
-    assert_eq!(
-        styles[usize::from(crate::outdoor::LEAF)],
-        vxe_render::SHADOW_AS_BRICK
-    );
-    assert_eq!(styles.iter().filter(|&&w| w != 0).count(), 1);
+    assert_eq!(styles.len(), usize::from(crate::outdoor::LEAF_3) + 1);
+    for m in crate::outdoor::LEAF_ROWS {
+        assert_eq!(styles[usize::from(m)], vxe_render::SHADOW_AS_BRICK);
+    }
+    assert_eq!(styles.iter().filter(|&&w| w != 0).count(), 3);
     assert!(crate::outdoor_styles(crate::LeafShadow::Voxel).is_empty());
     // `absorb`: the leaf's word is SHADOW_ABSORB with sigma 0.15 a voxel (150 thousandths).
     let r = parse_args_from(argv(&["--source", "outdoor", "--leaf-shadow", "absorb"])).unwrap();
     assert_eq!(r.outdoor.leaf_shadow(), crate::LeafShadow::Absorb);
     assert!(r.start_modes(0.0).line().contains("leaf shadow absorb"));
     let styles = crate::outdoor_styles(crate::LeafShadow::Absorb);
-    assert_eq!(
-        styles[usize::from(crate::outdoor::LEAF)],
-        vxe_render::SHADOW_ABSORB | (150 << vxe_render::SHADOW_SIGMA_SHIFT)
-    );
-    assert_eq!(styles.iter().filter(|&&w| w != 0).count(), 1);
+    for m in crate::outdoor::LEAF_ROWS {
+        assert_eq!(
+            styles[usize::from(m)],
+            vxe_render::SHADOW_ABSORB | (150 << vxe_render::SHADOW_SIGMA_SHIFT)
+        );
+    }
+    assert_eq!(styles.iter().filter(|&&w| w != 0).count(), 3);
 }
 
 #[test]

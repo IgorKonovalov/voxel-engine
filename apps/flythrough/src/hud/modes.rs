@@ -494,6 +494,7 @@ impl Modes {
             metering: self.auto.1.metering,
             max: self.auto.1.max,
             sky_anchor_ev: self.auto.1.sky_anchor_ev,
+            compensation_ev: self.auto.1.compensation_ev,
             ..Adaptation::Symmetric.preset()
         }
     }
@@ -725,6 +726,11 @@ impl Modes {
         );
         self.write_exposure_mode(out);
         let _ = write!(out, " {:+.2} EV", self.exposure_ev());
+        if let vxe_render::Exposure::Auto(a) = self.lighting.exposure
+            && a.compensation_ev != 0.0
+        {
+            let _ = write!(out, ", exposure comp {:+.1} EV", a.compensation_ev);
+        }
     }
 
     /// The filter in words: `filter <n>` (its a-trous iterations) while it runs, `filter off`.

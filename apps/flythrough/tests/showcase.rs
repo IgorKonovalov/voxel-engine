@@ -4,8 +4,8 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use flythrough::showcase::{
-    AMBER, AMETHYST, CHASM_HALF, CHASM_X, CRYSTAL, CRYSTAL_FLOOR_X, EMBER, EMBER_TOP_Z, ORE_TOP_Z,
-    SHOTS, SHOWCASE_CHUNKS, ShowcaseSource,
+    AMBER, AMETHYST, CHASM_HALF, CHASM_X, CRYSTAL, CRYSTAL_FLOOR_X, CRYSTAL_HUES, EMBER,
+    EMBER_TOP_Z, ORE_TOP_Z, SHOTS, SHOWCASE_CHUNKS, ShowcaseSource,
 };
 use vxe_render::{DEFAULT_LIGHT_CHUNK_CAP, DEFAULT_LIGHT_SAMPLES, internals::exposed_emitters};
 use vxe_world::*;
@@ -14,6 +14,15 @@ fn generate(seed: u64) -> (ShowcaseSource, World) {
     let source = ShowcaseSource::new(seed);
     let world = World::generate(source.extent(), &source, &flythrough::showcase_materials());
     (source, world)
+}
+
+/// `m` with every crystal hue counted as [`CRYSTAL`]: the four kinds of light the hall holds.
+fn kind(m: MaterialId) -> MaterialId {
+    if CRYSTAL_HUES.contains(&m) {
+        CRYSTAL
+    } else {
+        m
+    }
 }
 
 /// Whether the brick of `world` at brick coordinate `b` is `Uniform(AIR)`.
@@ -137,16 +146,22 @@ fn census(source: &ShowcaseSource, world: &World) -> Census {
     }
 }
 
-/// Seed 1's light samples: every ore lights some of the hall and the crystals outnumber each
-/// other ore; no chunk holds more than the per-chunk cap and the total is at most a quarter
-/// of the buffer. Each ore lies only in its own zone, all under the dome's upper half.
+/// Seed 1's light samples: every ore lights some of the hall and the crystals (their five
+/// hues together) outnumber each other ore, each hue with samples of its own; no chunk holds
+/// more than the per-chunk cap and the total is at most a quarter of the buffer. Each ore
+/// lies only in its own zone, all under the dome's upper half.
 #[test]
 fn the_four_ores_light_the_hall_from_their_own_zones() {
     let (source, world) = generate(1);
     let c = census(&source, &world);
     let mut totals: BTreeMap<MaterialId, u64> = BTreeMap::new();
+    let mut hues: BTreeMap<MaterialId, u64> = BTreeMap::new();
     let mut misplaced = Vec::new();
     for &(m, v) in &c.samples {
+        if CRYSTAL_HUES.contains(&m) {
+            *hues.entry(m).or_default() += 1;
+        }
+        let m = kind(m);
         *totals.entry(m).or_default() += 1;
         let [x, y, z] = v.map(i64::from);
         let band = (x - CHASM_X - source.chasm_offset(v[1])).abs() <= CHASM_HALF + 3;
@@ -164,7 +179,7 @@ fn the_four_ores_light_the_hall_from_their_own_zones() {
     let total: u64 = totals.values().sum();
     let get = |m| totals.get(&m).copied().unwrap_or(0);
     println!(
-        "light samples: amber {}, crystal {}, amethyst {}, ember {}; total {total}; the fullest chunk {:?} holds {}",
+        "light samples: amber {}, crystal {} (by hue {hues:?}), amethyst {}, ember {}; total {total}; the fullest chunk {:?} holds {}",
         get(AMBER),
         get(CRYSTAL),
         get(AMETHYST),
@@ -172,6 +187,7 @@ fn the_four_ores_light_the_hall_from_their_own_zones() {
         c.worst.1.0,
         c.worst.0
     );
+    assert_eq!(hues.len(), CRYSTAL_HUES.len(), "{hues:?}");
     assert!(
         misplaced.is_empty(),
         "{} out of their zones: {:?}",
@@ -238,7 +254,7 @@ fn about_half_the_hall_floor_is_dark() {
         let v = v.map(i64::from);
         let ore = ores
             .iter()
-            .position(|&o| o == m)
+            .position(|&o| o == kind(m))
             .expect("one of the four ores");
         grid.entry(v.map(|k| k.div_euclid(REACH)))
             .or_default()

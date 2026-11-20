@@ -282,7 +282,7 @@ fn scene(args: &Args) -> Option<Scene> {
         return level_scene(args, &base);
     }
     let source = ShowcaseSource::new(1);
-    let table = flythrough::with_showcase_rows(&base);
+    let table = flythrough::showcase_materials();
     let world = World::generate(source.extent(), &source, &table);
     let shot = args.shot.as_deref().unwrap_or("hall");
     let shot = SHOTS

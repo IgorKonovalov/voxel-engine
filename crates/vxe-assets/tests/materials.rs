@@ -12,8 +12,8 @@ fn flythrough_file() -> String {
     std::fs::read_to_string(p).expect("the fly-through's materials.txt reads")
 }
 
-/// The showcase's table as the fly-through writes it in Rust (`scene::showcase_materials`):
-/// the cave's four rows with the ore emissive, then crystal, amethyst and ember.
+/// The file's first seven rows as the fly-through writes them in Rust (`scene.rs`): the
+/// cave's four rows with the ore emissive, then the showcase's crystal, amethyst and ember.
 fn showcase_rows() -> Vec<Material> {
     let row = |name: &str, albedo: [f32; 3], emission: [f32; 3]| Material {
         albedo,
@@ -28,15 +28,16 @@ fn showcase_rows() -> Vec<Material> {
             ..row("shell", [0.12, 0.12, 0.14], [0.0; 3])
         },
         row("rubble", [0.36, 0.33, 0.30], [0.0; 3]),
-        row("crystal", [0.35, 0.75, 0.85], [0.35, 1.6, 2.0]),
-        row("amethyst", [0.45, 0.25, 0.60], [0.6, 0.2, 1.1]),
-        row("ember", [0.60, 0.22, 0.10], [2.4, 0.3, 0.08]),
+        row("crystal", [0.35, 0.75, 0.85], [0.14, 0.64, 0.8]),
+        row("amethyst", [0.45, 0.25, 0.60], [0.3, 0.1, 0.55]),
+        row("ember", [0.60, 0.22, 0.10], [1.0, 0.12, 0.03]),
     ]
 }
 
-/// Plan 0083 Phase 2 done-when 1: the fly-through's `materials.txt` holds the showcase's
-/// rows row for row (id, name, every field) as its first seven, then the castle's, the
-/// rigs' wood and the outdoor hills'; `canonical` of the file parses back equal.
+/// Plan 0083 Phase 2 done-when 1: the fly-through's `materials.txt` holds the cave's and the
+/// showcase's first rows row for row (id, name, every field) as its first seven, then the
+/// castle's, the rigs' wood, the outdoor hills', the showcase's base and other glowing rows
+/// and the outdoor hills' other leaves; `canonical` of the file parses back equal.
 #[test]
 fn a_table_file_round_trips() {
     let file = MaterialFile::parse(&flythrough_file()).expect("parses");
@@ -63,7 +64,15 @@ fn a_table_file_round_trips() {
             "grass",
             "soil",
             "bark",
-            "leaf"
+            "leaf",
+            "showcase rock",
+            "showcase ore",
+            "jade",
+            "citrine",
+            "rose",
+            "sapphire",
+            "leaf 2",
+            "leaf 3"
         ]
     );
     let glass = file.row("castle glass").unwrap().1;

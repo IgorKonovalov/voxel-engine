@@ -2,8 +2,9 @@
 //! `--materials PATH`, read at the start and again once a second while the window is open.
 //!
 //! Each scene takes the file's rows by name in its own order ([`Selection`]), so the ids the
-//! scenes have always used hold: the cave's four rows, then the showcase's, the castle's, the
-//! outdoor hills' or the rigs' wood. A reload rewrites the GPU rows' fields and re-bakes the chunks holding a
+//! scenes have always used hold: the cave's four rows (the showcase's own rock and ore in
+//! place of rock and ore), then the showcase's, the castle's, the outdoor hills' or the rigs'
+//! wood. A reload rewrites the GPU rows' fields and re-bakes the chunks holding a
 //! row whose emission moved; a reload that adds, removes or renames a row, or changes a row's
 //! flags or whether it emits, takes effect at the next start. The wall clock read here is the
 //! testbed's, never a crate's.
@@ -25,8 +26,12 @@ pub const BUILT_IN: &str = include_str!("../assets/materials.txt");
 
 /// The cave's rows, ids 1 to 4.
 pub const CAVE_ROWS: [&str; 4] = ["rock", "ore", "shell", "rubble"];
-/// The showcase's rows after the cave's.
-pub const SHOWCASE_ROWS: [&str; 3] = ["crystal", "amethyst", "ember"];
+/// The showcase's rows at the cave's ids 1 to 4: a pale rock and a dimmer ore.
+pub const SHOWCASE_BASE_ROWS: [&str; 4] = ["showcase rock", "showcase ore", "shell", "rubble"];
+/// The showcase's glowing rows after its base rows (`showcase::CRYSTAL` on).
+pub const SHOWCASE_ROWS: [&str; 7] = [
+    "crystal", "amethyst", "ember", "jade", "citrine", "rose", "sapphire",
+];
 /// The castle's rows after the cave's, in its palette's order.
 pub const CASTLE_ROWS: [&str; 7] = [
     "castle stone",
@@ -38,7 +43,7 @@ pub const CASTLE_ROWS: [&str; 7] = [
     "castle torch",
 ];
 /// The outdoor hills' rows after the cave's (`crate::outdoor`'s ids).
-pub const OUTDOOR_ROWS: [&str; 4] = ["grass", "soil", "bark", "leaf"];
+pub const OUTDOOR_ROWS: [&str; 6] = ["grass", "soil", "bark", "leaf", "leaf 2", "leaf 3"];
 /// The thin and seam rigs' row after the cave's.
 pub const RIG_ROWS: [&str; 1] = ["rig wood"];
 
@@ -68,7 +73,20 @@ impl Selection {
         emissive_ore: bool,
         crisp: CrispRows,
     ) -> Self {
-        let mut names = CAVE_ROWS.to_vec();
+        Self::base_and(&CAVE_ROWS, extra, after_crisp, emissive_ore, crisp)
+    }
+
+    /// `base` (the four rows at the cave's ids, the ore's second, each named in the table by
+    /// the cave's name, so a rig's `rock` is the scene's rock) followed by `extra`, then
+    /// `after_crisp`.
+    pub fn base_and(
+        base: &[&'static str; 4],
+        extra: &[&'static str],
+        after_crisp: &[&'static str],
+        emissive_ore: bool,
+        crisp: CrispRows,
+    ) -> Self {
+        let mut names = base.to_vec();
         names.extend_from_slice(extra);
         Self {
             names,
@@ -79,25 +97,29 @@ impl Selection {
     }
 
     /// The selected rows as a table: air, then each name's row in the selection's order. A
-    /// name the file lacks is an error naming it.
+    /// name the file lacks is an error naming it. The first four rows take [`CAVE_ROWS`]'
+    /// names; `emissive_ore` off clears the emission of the row at the ore's id (the second).
     pub fn compose(&self, file: &MaterialFile) -> Result<MaterialTable, String> {
-        let row = |n: &str| {
+        let row = |n: &str, slot: Option<usize>| {
             let (_, row) = file
                 .row(n)
                 .ok_or_else(|| format!("materials: no row `{n}`, which the scene takes"))?;
             let mut row = row.clone();
-            if n == "ore" && !self.emissive_ore {
+            if let Some(i) = slot {
+                row.name = CAVE_ROWS[i].to_owned();
+            }
+            if slot == Some(1) && !self.emissive_ore {
                 row.emission = [0.0; 3];
             }
             Ok::<_, String>(row)
         };
         let mut t = MaterialTable::new();
-        for &n in &self.names {
-            t.push(row(n)?);
+        for (i, &n) in self.names.iter().enumerate() {
+            t.push(row(n, (i < CAVE_ROWS.len()).then_some(i))?);
         }
         let mut t = self.crisp.apply(&t);
         for &n in &self.after_crisp {
-            t.push(row(n)?);
+            t.push(row(n, None)?);
         }
         Ok(t)
     }
@@ -311,16 +333,24 @@ pub fn chunks_holding(world: &vxe_world::World, rows: &[MaterialId]) -> Vec<vxe_
 }
 
 /// The selection `args` names: the cave's rows, then the castle's under `--castle`, the rigs'
-/// wood under the thin and seam rigs, or the showcase's (after `--crisp`) under the showcase.
+/// wood under the thin and seam rigs; under the showcase its own base rows and then its
+/// glowing rows (after `--crisp`).
 pub fn selection(args: &crate::cli::Args) -> Selection {
+    if args.mode.is_showcase() {
+        return Selection::base_and(
+            &SHOWCASE_BASE_ROWS,
+            &[],
+            &SHOWCASE_ROWS,
+            args.light.emissive_ore,
+            args.look.crisp,
+        );
+    }
     let (extra, after): (&[&'static str], &[&'static str]) = if args.castle {
         (&CASTLE_ROWS, &[])
     } else if args.mode.is_outdoor() {
         (&OUTDOOR_ROWS, &[])
     } else if args.mode.is_thin_rig() || args.mode.is_seam_rig() {
         (&RIG_ROWS, &[])
-    } else if args.mode.is_showcase() {
-        (&[], &SHOWCASE_ROWS)
     } else {
         (&[], &[])
     };

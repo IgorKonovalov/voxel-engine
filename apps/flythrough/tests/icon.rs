@@ -154,7 +154,7 @@ fn the_spider_icon_is_fixed() {
 }
 
 const WALKER_ICON: u64 = 0xcd07_06e0_5e4b_9c08;
-const SPIDER_ICON: u64 = 0x9944_fab1_4d52_4f08;
+const SPIDER_ICON: u64 = 0xf1ab_3d3a_97e5_0c96;
 
 /// The icon's CPU time per entry, release build, by wall clock; with `VXE_ICON_DIR` set,
 /// each icon's raw RGBA8 bytes written there as `<name>.rgba`. A reading: it prints and
