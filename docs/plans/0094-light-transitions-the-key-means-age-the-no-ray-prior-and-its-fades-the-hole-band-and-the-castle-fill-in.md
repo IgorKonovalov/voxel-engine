@@ -1296,6 +1296,19 @@ second round. The decisions, one recommended option each:
     before; over the 1140 s line the attribution runs as written (the top ten of
     `test-times.mjs` against 0086's per-test diff) and the tests over the soak line are named
     for the close review as its minor findings; nothing is fixed for the wall in this plan.
+- **Amended 2026-11-20 (owner), at the 7a1ae6e9 checkpoint:**
+  - Phase 7b's release goes toward `max(max, anchored)`, never below the anchored ceiling
+    (the night's anchored +11.86 EV is over the outdoor max; the literal formula would drop
+    the midnight tunnel to +2 EV and break bar 2's midnight clause). Kept.
+  - Phase 7b's `F` is 1/256 (1/16 and 1/128 moved the forest and `outdoor_forest_sunset`).
+    Accepted on its thin forest margin; arm (c), the baked-visibility measure, is built only
+    if Phase 9's look reads the forest's exposure jumping.
+  - Bar 4: `profile_high_hall` and `profile_performance_hall` are blessed as a disclosed
+    change: the still camera's own tap (Phase 3) is the mechanism (0.2170 % to 0.0104 % /
+    0.0139 % with it off), and the remaining ~0.01 % is named in the Implementation log as
+    unattributed. The quiet gate (bar 5) follows that bless.
+  - Phase 9's midnight A/B is `--sky-anchor none --exposure-max 2` against the tip (the
+    plan's `--exposure-max 2` alone is a no-op under the anchored night ceiling).
 
 ### Phase 9: A second short look, only if the window asked for one
 - **Owner skill:** human
