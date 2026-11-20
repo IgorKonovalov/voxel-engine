@@ -19,39 +19,11 @@ Rules:
 
 ### The light placement's eviction scan in a windowed glide
 
-Noted 2026-11-14 from Plan 0074 (`docs/plans/logs/0074.md`, Phases 1, 4 and 5; RTX host, `hpet`).
-**S1's evidence, headless:** no headless glide (`--glide 300` and `1000`, 13 runs in Phase 1, 6
-in Phase 4) evicted a light range; their largest per-second `light place` p99 was 38 ms against
-the window's 846 ms; the place stage's slow syncs were 65 to 71 % off-CPU and their scan steps
-did not track their time (r 0.28). Phase 2 (the first fit and the eviction victims by index) was
-struck on that, and the windowed rig (c) was not run. **The owner's window then reproduced it**
-(Phase 5, `--glide 300`, tip and base alike): from about 4 s into the flight every second's
-slowest sync is `light place`, up to 1186 ms over 3697 evictions and 99.9 M scan steps, with r
-0.997 to 0.9996 against `light_scan_steps` (about 11 to 12 ns a step) and the free ranges
-growing to about 6000; the owner's "staggers at 30 to 40 s, fps drops to 15" are those syncs.
-Open: why the window's light buffer fills and the headless glides' does not. What it takes:
-Plan 0074's Phase 2 as drafted (indexes that answer what today's walks answer, the bytes
-asserted equal), read in the window. Its draft, a first-fit index (`fit.rs`, untracked), is
-kept in the main checkout at `live/plan-0074/drafts/fit.rs`. `light_scan_steps` sums the first
-fit's free-range walks and the victim scans' chunk walks, so split them first. **The next sync
-plan, ahead of `alloc`** (Plan 0074's close review, 2026-11-14, the orchestrator's default while
-the owner is away; the owner may overturn it).
+Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 7: the first-fit index and a distance-ordered victim index, the bytes asserted equal, a headless glide with a shrunk light buffer as the reproduction; the figures moved into the plan's context.
 
 ### The CPU settle outdoors: the bake queue's step on a world with no emitter, and the forest's sync p99
 
-Noted 2026-11-17 from Plan 0032's Phase 9 window (`docs/plans/logs/0032.md`, Phase 9; the
-review `docs/reviews/2026-11-17-plan-0032-window.md`, E). The owner's "performance lacks" on
-the RTX 3080 Laptop was the CPU, not the GPU: for the 7 to 10 s after every load the runs read
-a frame CPU p50 of 10 to 17.6 ms (against 1.3 to 2.9 after the settle) and the `bake queue:`
-lines a `step CPU p50` of 7.9 to 15.0 ms, max up to 38, on a world whose reach holds `lights
-0` and whose store ends all zeros (step 1: 3285 chunks by 13.7 s, 8.8 MB); after the queue
-drains the step reads 0.05 ms. The forest at leaf fill 128 also read a sync p99 of 11.0 ms
-(`alloc` 5.3) and `update + poll + sync` max 150 ms; fill 64 read 3.1 ms. Both are readings
-for Plan 0067's regime rule (the step on an emitter-free world should cost near nothing) and
-for the sync's `alloc` entry above. What it takes: a chore that reads the step's parts on the
-outdoor source (listing, summaries, fades on a store that bakes to zero) and skips what a
-reach with no emitter does not need; Plan 0086 Phase 4 adds a sky channel to the same jobs,
-so read it after that lands. Owner's pick 2026-11-17 (E3): a backlog entry, not a phase.
+Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) and [ADR-0080](adrs/0080-the-live-queue-bakes-what-the-image-reads-a-record-by-rule-a-tier-by-size-on-screen-and-a-drain-slice.md): a record by rule for a chunk with no face or buried with no emitter in reach (Phase 2), the step off the queue's depth (Phase 5), the forest's sync p99 (Phase 7); the readings quoted in the plan's context.
 
 ### The streamed benches on Windows: CPU frames of 20 to 256 ms on a desktop
 
@@ -81,15 +53,7 @@ Windows and a Linux screenshot of the same pose by pixel values, and swap `fs_sr
 
 ### The sync's `alloc` stage: the sync plan after the eviction scan
 
-Noted 2026-11-14 at Plan 0074's Phase 4 (`docs/plans/logs/0074.md`, the RTX host, `hpet`, lamp
-off). With `light_note` cut, the tester cave's `update + poll + sync` p99 still reads 18.3 to
-23.7 ms on the RTX and 18.0 to 18.7 on the Radeon (castle 20.4 to 22.7), over Plan 0067's
-16.6 ms. The largest stage left is `alloc`: p99 7.4 to 8.8 ms in the RTX cave and 7.3 to 7.4 on
-the Radeon, against sync p99s of 16.5 to 21.1 and 16.1 to 16.8. Phase 1's profile of it (rig
-(d), the glide): `fill_slot` 3.15 %, `BufferViewMut::drop` 3.12 %, `upload_brick` 2.52 %,
-`stage` 0.42 % of the main thread; under 1 % each in the cave bench. Pick up as the next sync
-plan after the eviction scan above; it reads its own profile first. The windowed glide's
-stagger is a different stage, the eviction scan.
+Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 7 (`alloc` p99 at most 3.0 ms, `update + poll + sync` p99 at most 16.6 in the tester cave bench), after Phase 1 (6)'s profile of the stage.
 
 ### Done: test tiers by marks, not by copied lists
 
@@ -393,11 +357,11 @@ Parked 2026-11-10 at Plan 0060's Phase 1 stop rules, owed to the backlog at its 
 
 ### The queue step's remaining `filter` cost on a moving camera
 
-Parked 2026-11-12 at Plan 0067's Phase 7 (followup F1, the owner's amendment of that day; `docs/plans/logs/0067.md`, Phase 2). On a step that opens nothing, with the camera moving (rig (b) glide 300, `--coarse 0`, RTX, quiet), the mirror-change filter reads about 0.074 ms p50 (`gone` 0.030, `drop_reach` 0.022, `touched` 0.017, `forget` 0.003) against the start commit's 0.019, the most of a +0.118 ms non-opening p50 Phase 2 accepted under a +0.1 tolerance. Each part scales with the mirror's changes a step (about a thousand at that speed, estimated, not printed). What it would take: print the change count, then make the per-change work one pass (the reach drop and the candidate marks share their walk), or move the change list's dedup into `GpuWorld::take_changes`. Pick up when a frame-CPU plan needs the 0.05 ms, or with Plan 0070's sync off the frame.
+Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 5 (one walk of the mirror's change list for `gone`, `drop_reach`, `touched` and `forget`; the change count printed in Phase 1).
 
 ### The RTX's submits draw less than their per-second slice
 
-Parked 2026-11-12 at Plan 0067's Phase 7 (followup F2; `docs/plans/logs/0067.md`, Phase 3). Under `--bake-budget second:150,0.25` on rig (b) glide 150 the Radeon bakes 148 ms a wall second and the RTX 91 to 92: the RTX's submits read slice p50 5.31 ms, max 7.20, against a granted slice of about 8 ms (150 ms a second x a 53 ms mean interval), at 5.1 ns a sample with `jobs 10`. The sample cap (1e7, 51 ms) does not bind; the open jobs' rounds and `IN_FLIGHT` 2 are candidates, not readings. The default is `frame:1.5` (owner, 2026-11-12), where both adapters read what they read before, so this bites only a per-second profile. What it takes: a lap on the dispatch (rounds planned against the slice, rounds sent, the wait on `IN_FLIGHT`), then the fix it names. Pick up with Plan 0069's profiles if one sets a per-second budget.
+Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 4: a lap on `plan_rounds`, `send` and the `IN_FLIGHT` wait, then the fix it names; the bar is 85 % of the granted slice drawn.
 
 ### The first-block fallback fade's CPU under `chain`
 
@@ -501,7 +465,7 @@ the baked light's shader waste and the queue's scan to
   1080, loaded; `docs/plans/logs/0061.md`, Phase 2 done-when 6). Routed at Plan 0061's close to
   Plan 0067 (the frame's cost) and Plan 0069 (a per-profile default for the weights is its
   question).
-- **The bake's slice and the queue's step have no line.** 1.5 ms of GPU a frame while the queue
+- **The bake's slice and the queue's step have no line.** Taken 2026-11-20 by Plan 0096 (draft): a drain and a landed value for the slice, a step line, an in-view drain budget. 1.5 ms of GPU a frame while the queue
   works (max 10.8 ms on record) and 1.0 ms of CPU sit outside section 2's split. Give them a
   line at the next `docs/nfr.md` revision. Plan 0060's close left it: the step reads one of two
   states (about 1 and 9 ms p50), and Plan 0067 pins the state and reads the step.
