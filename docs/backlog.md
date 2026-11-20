@@ -238,7 +238,10 @@ make lights darker, or random in darkness as well". Two parts: the test scenes' 
 lights are dim and some dark. The engine side is the scale over the table (ADR-0045) and the
 light list's per-light intensity (ADR-0044); the randomness belongs to the scene's seed, not
 the engine. Pick up after the Windows brightness entry is explained, so "darker" is judged on
-a correct image.
+a correct image. 2026-11-20: the review
+[`reviews/2026-11-20-crystal-islands-look.md`](reviews/2026-11-20-crystal-islands-look.md)
+(trait 3) gives it a reference: the Crystal Islands caves sit one to two EV under our key with
+the emitters dimmer and more varied; its "showcase's palette" entry carries the testbed half.
 
 ### Per-source indirect light
 
@@ -251,7 +254,11 @@ flag and the channel's redesign. Plan 0058 (closed 2026-11-15) built the per-lig
 under `Lighting::lamp_bounce`; what remains is the per-emissive-material flag and the channel's redesign.
 Plan 0032 (redesigned 2026-11-10) ships no sunlight bounce: sky light is a sky ray, so a cave
 mouth gets no bounced sun until this entry is taken. Plan 0037's night light likewise has no
-bounce and no probe feed.
+bounce and no probe feed. 2026-11-20: the review
+[`reviews/2026-11-20-crystal-islands-look.md`](reviews/2026-11-20-crystal-islands-look.md)
+(trait 1) reads the Crystal Islands caves as first-order light (emitter to wall), which the
+baked store gives; a second bounce is not what their colour rests on, so this entry ranks
+fourth of that review's engine levers.
 
 ### More than sixteen lights: a world-space light grid
 
@@ -274,6 +281,10 @@ near the camera. The answer for now is no.
 Keeping the option open is cheap. The store puts a brick's record before its face run, and the read prefers a face cell
 when one exists. Plan 0059 Phase 6 (7c105c5) has the whole face path working; Phase 14 deletes it. Pick up when
 close-range light reads too soft: shadow edges smeared over 8 voxels, or light bleeding round thin walls.
+2026-11-20: the review [`reviews/2026-11-20-crystal-islands-look.md`](reviews/2026-11-20-crystal-islands-look.md)
+(trait 1) names this as the one engine difference in how a small emitter's glow falls off on a
+near wall; ranked third of its engine levers, to be judged only on a window after that review's
+palette pass, not before.
 
 ### Baked or emissive light on far-field cells
 
@@ -373,7 +384,7 @@ Parked 2026-11-13 (orchestrator default while the owner was away). The hero fix 
 
 ### Overlapping coloured lights go white: a hue-keeping tone map
 
-Parked 2026-11-15 from Plan 0058's re-window (step 1b, the plan-0058 worktree's `live/10.png`; orchestrator default, the owner said "not sure colours mix well" and passed (k)). Two dropped lights at 600 overlap as plain white, with cyan only on the green and blue edge: auto exposure sits at its +4 EV ceiling (the scene reads -3.3 EV), so every channel clips. The lights add correctly; the tone map's per-channel clip loses the hue. What it takes: a tone map that desaturates toward white only past a luminance shoulder (hue kept), or a lower light intensity; either moves goldens and is the owner's eye. Pick up at the render-settings profiles (Plan 0069) or the next look plan.
+Parked 2026-11-15 from Plan 0058's re-window (step 1b, the plan-0058 worktree's `live/10.png`; orchestrator default, the owner said "not sure colours mix well" and passed (k)). Two dropped lights at 600 overlap as plain white, with cyan only on the green and blue edge: auto exposure sits at its +4 EV ceiling (the scene reads -3.3 EV), so every channel clips. The lights add correctly; the tone map's per-channel clip loses the hue. What it takes: a tone map that desaturates toward white only past a luminance shoulder (hue kept), or a lower light intensity; either moves goldens and is the owner's eye. Pick up at the render-settings profiles (Plan 0069) or the next look plan. **Extended 2026-11-20** by the review [`reviews/2026-11-20-crystal-islands-look.md`](reviews/2026-11-20-crystal-islands-look.md) (trait 2): the Crystal Islands frames clip the same way (saturated bodies, white tips, 1:00's giant crystals flat white), so the per-channel curve is not what separates the looks; this entry is a refinement ranked second of that review's engine levers, after the per-voxel variation, and the content pass (dimmer, more varied emission) comes first.
 
 ### The hall's headless render went dark: `showcase_hall_golden_is_lit_by_its_four_ores`
 
@@ -391,7 +402,11 @@ Parked 2026-11-12 (owner, from the video "the voxel rendering tech nobody talks 
 - **Open look question:** drive the ramp by local corner AO, by the baked sky or ambient light, or both, so a cave reads tinted rather than only dark. Decide by eye in the window.
 - **What it takes:** a look spike (corner AO at the hit, an optional ramp beside `albedo`, the hue jitter) with an owner window; an ADR if the material row changes shape.
 
-Pick up after the current lighting plans close (0058 and those ahead of it).
+Pick up after the current lighting plans close (0058 and those ahead of it). 2026-11-20: the
+hue jitter named here has its own entry now, "Per-voxel albedo variation by a seeded hash"
+(from the review [`reviews/2026-11-20-crystal-islands-look.md`](reviews/2026-11-20-crystal-islands-look.md)),
+whose frames show the jitter without any ramp; a spike on this entry shares its hash and its
+place in the composite.
 
 ### Plan 0090 owes a stamp scene and a reading of the key mean's fade-in against `F`
 
@@ -444,6 +459,37 @@ volumetrics (Plan 0035's froxel or march work; ADR-0030 names the cloud shell): 
 in-scattering march along the view ray that samples the key light's shadow, reduced and
 temporally stable (the owner's stable-image rule; no grain while it converges). Cost is a guess
 until measured on the slow adapter against the headroom line in `docs/nfr.md` section 2.
+
+### Per-voxel albedo variation by a seeded hash, an amplitude per material
+
+Parked 2026-11-20 from the review
+[`reviews/2026-11-20-crystal-islands-look.md`](reviews/2026-11-20-crystal-islands-look.md)
+(trait 4), the first of its engine levers. John Lin's Crystal Islands frames put a fixed
+per-voxel speckle of two to four shades on nearly every material (foliage crowns, crystal
+faces, rock), and it is most of what reads as texture there. We have one `albedo` per row and
+nothing varies it (`composite.wgsl` reads `materials[rec.material * 4u].xyz`); the procedural
+sources put one row on everything. **The mechanism:** at the composite, scale (or hue-shift)
+the albedo by a hash of the hit voxel's integer position (ADR-0043's key `floor(p - 0.5 n)`)
+times a per-material amplitude; optionally the emission too (the frames' crystal bodies are
+darker than their tips). Stateless, no history, no random stream: a static pattern under FSR 2
+and invisible to Plan 0090's pop counter. Cost a guess: one hash and one multiply a pixel.
+**Owner's call:** the amplitude on the material row (an ADR amending ADR-0065's file) or on
+ADR-0063's render-side per-material style word (the review leans there: cosmetic,
+client-only). Size S; a look spike with an owner window, after the content pass below shows
+what the palette alone gives.
+
+### The showcase's palette after the Crystal Islands review: pale rock, more and dimmer glowing rows, a darker key
+
+Parked 2026-11-20 from the same review (its content levers), apps only. The frames' cave look
+is albedo times the emitters' irradiance, which the baked store already computes; our rock is
+`0.42 0.38 0.34` against Lin's near-white limestone, so the walls cannot take the crystals'
+colour. **What it takes:** in `apps/flythrough/assets/materials.txt` (re-read live while the
+window is open) a rock at about 0.7 to 0.8 with a tan or pink tint, six to eight glowing rows
+at a third to a half of today's emission with the ore among them, and a cave profile one to
+two EV darker (`AutoExposure::compensation_ev`); two or three leaf rows picked by hash in
+`trees.rs`. Judged in an owner window; the showcase's goldens move. Size XS. **Pick up** when
+the owner wants a look window next; this is the cheapest test of the review's thesis and
+should run before any engine lever above.
 
 ## Performance: the static review of 2026-11-10
 
@@ -1063,7 +1109,11 @@ downsample and upsample chain (`src/engine/bloom.h`, `shaders/bloom_*`). We have
 Glowing lamps and ores in the dark suit the first consumer. **What it takes:** a pass in
 `vxe-render` after the upscaler, as a render setting (ADR-0055). It must add no flicker
 (ADR-0076), and the owner judges it in a window. Size S to M. **Pick up after** Plan 0090's pop
-counter, which can hold it to rule 1.
+counter, which can hold it to rule 1. **Weakened 2026-11-20** by the review
+[`reviews/2026-11-20-crystal-islands-look.md`](reviews/2026-11-20-crystal-islands-look.md)
+(trait 10): the Crystal Islands frames show faint bloom at most, with sharp crystal edges at
+2:00 and 3:40, so the look the owner liked does not rest on it; it ranks last of that review's
+engine levers.
 
 ### Lit world-space sprites (cards)
 
