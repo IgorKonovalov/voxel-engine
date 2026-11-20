@@ -394,6 +394,8 @@ mod flicker {
         }
 
         std::thread_local! {
+            /// Whether [`castle_arm`]'s frame reads the prior's arm B.
+            static COLUMN_PRIOR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
             /// Whether [`turn_and_return`]'s frame has the settle off.
             static NO_SETTLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
         }
@@ -1029,7 +1031,8 @@ mod flicker {
         /// count per pair, the store's missing and chained counts, the sky rays cast, the
         /// queue's `digs_baked`); the strips land under `<arm>-fresh` and `<arm>-settled`.
         /// `VXE_CASTLE_ARM` runs one arm alone in its process: `a`, or `b:E` / `c:E` pinned at
-        /// exposure `E` (arm (a)'s printed one).
+        /// exposure `E` (arm (a)'s printed one); a name ending in `B` (`aB`) reads the
+        /// no-record prior's arm B (`LightHooks::column_prior`).
         #[test]
         #[ignore = "reading"]
         fn flicker_castle() {
@@ -1037,7 +1040,8 @@ mod flicker {
                 let (arm, pin) = v.split_once(':').map_or((v.as_str(), None), |(a, e)| {
                     (a, Some(e.parse::<f32>().expect("an exposure")))
                 });
-                castle_arm(arm, pin, arm == "c");
+                COLUMN_PRIOR.with(|c| c.set(arm.ends_with('B')));
+                castle_arm(arm, pin, arm.starts_with('c'));
                 return;
             }
             let Some(e) = castle_arm("a", None, false) else {
@@ -1129,6 +1133,11 @@ mod flicker {
             let d = [y.cos() * pt.cos(), y.sin() * pt.cos(), pt.sin()];
             let cam = flythrough::camera_looking_at(p, [p[0] + d[0], p[1] + d[1], p[2] + d[2]]);
             let mut s = strip_frame_with(&mut rig, noon(), &cam, pin, key_off);
+            s.frame.set_light_hooks(vxe_render::LightHooks {
+                key_off,
+                column_prior: COLUMN_PRIOR.with(std::cell::Cell::get),
+                ..Default::default()
+            });
             let mut pre = 0;
             while pre < 30_000 && !s.frame.bake_queue().is_some_and(|q| q.empty()) {
                 queue_step(&mut rig, &mut s.frame, &cam);
@@ -1380,7 +1389,7 @@ mod flicker {
         fn castle_sources(rig: &Rig, shots: &[Shot], parts: &[CastleParts], baked: &[u64], name: &str) {
             use std::collections::BTreeMap;
             use support::defects::{
-                SOURCE_NAMES, SOURCE_NEIGHBOURS, SOURCE_NONE, SOURCE_OWN_SUMMARY, SOURCE_RECORD,
+                SOURCE_NAMES, SOURCE_COLUMN, SOURCE_NONE, SOURCE_OWN_SUMMARY, SOURCE_RECORD,
             };
             let base = flythrough::outdoor_materials().len() as vxe_world::MaterialId;
             let n = (OUT[0] * OUT[1]) as usize;
@@ -1425,8 +1434,8 @@ mod flicker {
                             let ds = (pb.stored[g] - pa.stored[g] * ratio).abs();
                             let dd = (pb.direct[g] - pa.direct[g] * ratio).abs();
                             match sb {
-                                SOURCE_OWN_SUMMARY | SOURCE_NEIGHBOURS | SOURCE_RECORD if dd > ds => "key".into(),
-                                SOURCE_OWN_SUMMARY | SOURCE_NEIGHBOURS => "chain".into(),
+                                SOURCE_OWN_SUMMARY | SOURCE_COLUMN | SOURCE_RECORD if dd > ds => "key".into(),
+                                SOURCE_OWN_SUMMARY | SOURCE_COLUMN => "chain".into(),
                                 SOURCE_RECORD => "store".into(),
                                 SOURCE_NONE => "none".into(),
                                 _ => "pair".into(),

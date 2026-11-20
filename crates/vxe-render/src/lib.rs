@@ -150,6 +150,8 @@ pub const MARCH_WGSL: &str = concat!(
 pub const LIGHT_WGSL: &str = include_str!("shaders/light.wgsl");
 /// The gradient pass, compiled after the light pass's modules.
 pub const GRADIENT_WGSL: &str = include_str!("shaders/gradient.wgsl");
+/// The visibility pair's functions, compiled before `temporal.wgsl`.
+pub const PAIR_WGSL: &str = include_str!("shaders/pair.wgsl");
 /// The temporal pass, compiled after the modules its pass names.
 pub const TEMPORAL_WGSL: &str = include_str!("shaders/temporal.wgsl");
 /// The variance estimate and the a-trous filter, compiled after the modules its pass names.

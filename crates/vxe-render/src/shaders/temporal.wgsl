@@ -302,46 +302,30 @@ fn store_summary_sky(head: StoreHead, c: vec3<i32>, face: u32) -> vec2<f32> {
     }
     let rec = block + STORE_SUMMARY_AT;
     if (((store[rec + 6u] >> (16u + face)) & 1u) == 0u
-        || (store[rec + VIS_WORD + 1u] & VIS_BAKED) == 0u) {
+        || (store[rec + VIS_WORD + 1u] & VIS_BAKED) == 0u
+        || (store[rec + VIS_WORD + 1u] & SKY_STALE) != 0u) {
         return vec2<f32>(0.0);
     }
     let byte = (store[rec + VIS_WORD + face / 4u] >> (8u * (face % 4u))) & 255u;
     return vec2<f32>(f32(byte) / 255.0, 1.0);
 }
 
-// The missing-light chain's sky visibility (ADR-0053's chain on ADR-0070's channel) for face
-// `face` of voxel `v`, whose own cell holds none: the chunk's own summary's, else the mean of its
-// six face neighbours' summaries that hold it; 0 in y for none, and under the `black` and
-// `parent` modes (the parent records are not read for the sky). shade.wgsl's `sky_chained` is
-// the same test, so the light pass casts no sky ray where this finds a value.
-fn store_sky_fallback(head: StoreHead, v: vec3<i32>, face: u32) -> vec2<f32> {
+// The no-record prior's sky visibility for face `face` of voxel `v` (hit `p`, lifted along `n`
+// for the column), whose own cell holds none: the chunk's own summary's while no dig job is
+// queued for the chunk (its summary not SKY_STALE); else, with LIGHTING_HOOK_COLUMN_PRIOR, the
+// column's answer held (`column_estimate`); 0 in y for none (the light pass casts the sky ray),
+// and under the `black` and `parent` modes. A face neighbour's summary does not answer the sky.
+// shade.wgsl's `sky_chained` is the same test.
+fn store_sky_fallback(head: StoreHead, v: vec3<i32>, face: u32, p: vec3<f32>, n: vec3<f32>) -> vec2<f32> {
     let mode = store_mode();
     if (mode == 0u || mode == MISSING_PARENT) {
         return vec2<f32>(0.0);
     }
-    let c = v >> vec3<u32>(6u);
-    let own = store_summary_sky(head, c, face);
-    if (own.y > 0.0) {
+    let own = store_summary_sky(head, v >> vec3<u32>(6u), face);
+    if (own.y > 0.0 || (params.lighting & LIGHTING_HOOK_COLUMN_PRIOR) == 0u) {
         return own;
     }
-    var sum = 0.0;
-    var n = 0.0;
-    for (var f = 0u; f < 6u; f++) {
-        let sign = select(1, -1, (f & 1u) == 0u);
-        let axis = f / 2u;
-        let o = vec3<i32>(
-            select(0, sign, axis == 0u),
-            select(0, sign, axis == 1u),
-            select(0, sign, axis == 2u),
-        );
-        let r = store_summary_sky(head, c + o, face);
-        sum += r.x * r.y;
-        n += r.y;
-    }
-    if (n > 0.0) {
-        return vec2<f32>(sum / n, 1.0);
-    }
-    return vec2<f32>(0.0);
+    return vec2<f32>(column_estimate(p, n), 1.0);
 }
 
 // `sky_open_irradiance_in` and `sky_open_by_normal_in` (sky.wgsl) over this pass's `sky_e`.
@@ -655,14 +639,14 @@ fn count_rejection(prev: HitRecord, rec: HitRecord, own_still: bool) {
 // w as `source / 16` (`source_fraction`): every reader of that w compares it against 0.5 or
 // 1.5, which a fraction under 0.5 leaves as it was. SOURCE_NONE: no store face, an entity or
 // the sky off; RECORD: the face's own cell holds a fresh record (no ray); RECORD_STALE: it
-// holds one marked stale (the ray cast); OWN_SUMMARY and NEIGHBOURS: no record, the chain's
-// value from the chunk's own summary or its face neighbours' (no ray); NO_VALUE: no record
-// and no chain value (the ray cast); MISMATCH: a chain value where the ray was cast.
+// holds one marked stale (the ray cast); OWN_SUMMARY and COLUMN: no record, the prior's value
+// from the chunk's own summary or the column held (`store_sky_fallback`; no ray); NO_VALUE: no
+// record and no prior's value (the ray cast); MISMATCH: a prior's value where the ray was cast.
 const SOURCE_NONE: u32 = 0u;
 const SOURCE_RECORD: u32 = 1u;
 const SOURCE_RECORD_STALE: u32 = 2u;
 const SOURCE_OWN_SUMMARY: u32 = 3u;
-const SOURCE_NEIGHBOURS: u32 = 4u;
+const SOURCE_COLUMN: u32 = 4u;
 const SOURCE_NO_VALUE: u32 = 5u;
 const SOURCE_MISMATCH: u32 = 6u;
 
@@ -676,7 +660,7 @@ fn sky_source(head: StoreHead, v: vec3<i32>, face: u32, record: bool, chained: b
         if (ray) {
             return SOURCE_MISMATCH;
         }
-        return select(SOURCE_NEIGHBOURS, SOURCE_OWN_SUMMARY,
+        return select(SOURCE_COLUMN, SOURCE_OWN_SUMMARY,
             store_summary_sky(head, v >> vec3<u32>(6u), face).y > 0.0);
     }
     return SOURCE_NO_VALUE;
@@ -702,165 +686,7 @@ const HISTORY_COS: f32 = 0.8;
 const HISTORY_DIST: f32 = 0.5;
 const HISTORY_DIST_PER_T: f32 = 0.03;
 
-// The visibility pair (ADR-0070). The short mean's frames, and the age past which a sample is
-// clamped.
-const SKY_SHORT: f32 = 8.0;
-// A sample is clamped at this many times the larger of the long and short means (Plan 0086's
-// readings log, Phase 1: the smallest integer that leaves every pixel of a hit rate over 0.3
-// unclamped).
-const FIREFLY_K: f32 = 4.0;
-// The band about the long mean the short mean stays in: this many binomial standard deviations
-// of an 8-frame mean at the long mean's rate, plus SKY_BAND_EPS (a half's rounding and a
-// still pixel's drift).
-const SKY_BAND_SIGMAS: f32 = 3.0;
-const SKY_BAND_EPS: f32 = 0.02;
-// The band's variance is at least a rate of P_MIN's, so a pair at 0 or 1 (a seed, or a
-// settled pixel at the extremes) is not the band's degenerate point: one disagreeing sample
-// (1 / SKY_SHORT) stays inside it, two in a row leave it.
-const P_MIN: f32 = 0.02;
-// Out of the band the age falls to SKY_SHORT times the band over the distance, at least this.
-const SKY_FALL_MIN: f32 = 2.0;
-// The samples a reset pair's seed counts as: the next sample blends at `1 / (SEED_AGE + 1)`,
-// past SKY_SHORT, so the firefly clamp holds from the frame after the reset.
-const SEED_AGE: f32 = 8.0;
-
-// How far a seed's column test lifts the hit along the face normal, in voxels: past the
-// column map's cell, so the point is not read in the wall's own cell (whose top is the wall's).
-const SEED_LIFT: f32 = f32(COLUMN_CELL) + 0.5;
-
-// A reset pair's seed with no record: the column map's answer (ADR-0070's sky rule) at hit `p`
-// lifted SEED_LIFT voxels along `n` into the air the face looks into, 1 above its column's
-// top of solid, else 0.
-fn column_estimate(p: vec3<f32>, n: vec3<f32>) -> f32 {
-    return select(0.0, 1.0, above_column(p + n * SEED_LIFT));
-}
-
-// The visibility pair after sample `s` (the sky rays' share this frame) on history `hp`
-// (`accepted`: the direct part's taps agreed and nothing resets it), its cap `sky.sky_history`.
-// A reset pair holds the estimate `e` alone in both means at age SEED_AGE; this frame's sample
-// joins from the next frame.
-//
-// The settle (unless LIGHTING_NO_SETTLE; `settle_at_cap`): a pair at its cap carries the
-// settle's state in its age past the cap. Below the cap, and at the cap before it has settled,
-// the short mean leaving the band makes the age fall as above.
-fn pair_step(s: f32, hp: vec4<f32>, accepted: bool, e: f32) -> vec4<f32> {
-    let age = floor(hp.w + 0.5);
-    if (!accepted || age < 1.0 || (params.lighting & LIGHTING_SKY_CHANGED) != 0u) {
-        return vec4<f32>(e, 0.0, e, SEED_AGE);
-    }
-    let cap = f32(max(sky.sky_history, 1u));
-    let n0 = min(age + 1.0, cap);
-    let b = hp.z + (s - hp.z) / min(n0, SKY_SHORT);
-    let r = hp.x;
-    let in_band = abs(b - r) <= settle_band(r);
-    var sc = s;
-    if (n0 > SKY_SHORT && (params.lighting & LIGHTING_HOOK_NO_CLAMP) == 0u) {
-        sc = min(s, FIREFLY_K * max(r, b));
-    }
-    let c = age - cap;
-    if (settle_on() && age >= cap && (in_band || c >= SETTLE_F)) {
-        let st = settle_at_cap(r, r + (sc - r) / cap, b, in_band, c);
-        return vec4<f32>(st.x, 0.0, b, cap + st.y);
-    }
-    var n = n0;
-    if (!in_band) {
-        n = min(n, max(SKY_FALL_MIN, floor(SKY_SHORT * settle_band(r) / abs(b - r))));
-    }
-    return vec4<f32>(r + (sc - r) / n, 0.0, b, n);
-}
-
-// The band about a mean `g` of binary samples (`pair_step`'s, with SKY_BAND_SIGMAS above).
-fn settle_band(g: f32) -> f32 {
-    return SKY_BAND_SIGMAS * sqrt(max(g * (1.0 - g), P_MIN * (1.0 - P_MIN)) / SKY_SHORT)
-        + SKY_BAND_EPS;
-}
-
-// The in-band frames a converged mean counts before it settles, and the frames of the fade a
-// released mean takes toward its short mean (rule 3's F, ADR-0046's FADE).
-const SETTLE_F: f32 = 16.0;
-// The consecutive out-of-band frames that release a settled mean: a 3-sigma run of this length
-// at rest is about 1 in 10^10 a pixel, and a real change past the band shows within it.
-const SETTLE_RELEASE: f32 = 4.0;
-
-fn settle_on() -> bool {
-    return (params.lighting & LIGHTING_NO_SETTLE) == 0u;
-}
-
-// One frame of the settle of a mean `g` at its cap, whose plain blend this frame is `blended`,
-// its short mean `b` (`in_band`: within `settle_band(g)` of it), its state `c` (the frames past
-// the cap the caller stores): from 0 to SETTLE_F the in-band frames counted (the mean blends,
-// and an out-of-band frame restarts the count); from SETTLE_F the mean holds, with
-// `c - SETTLE_F` the consecutive out-of-band frames; at SETTLE_RELEASE of them the mean is
-// released, and from SETTLE_F + SETTLE_RELEASE it fades toward its short mean at `1 / SETTLE_F`
-// a frame until the short mean is in the band again, where the count restarts. Returns the
-// mean and the new state.
-fn settle_at_cap(g: f32, blended: f32, b: f32, in_band: bool, c: f32) -> vec2<f32> {
-    let fading = SETTLE_F + SETTLE_RELEASE;
-    if (c >= fading) {
-        if (in_band) {
-            return vec2<f32>(blended, 0.0);
-        }
-        return vec2<f32>(g + (b - g) / SETTLE_F, fading);
-    }
-    if (c >= SETTLE_F) {
-        if (in_band) {
-            return vec2<f32>(g, SETTLE_F);
-        }
-        if (c + 1.0 >= fading) {
-            return vec2<f32>(g + (b - g) / SETTLE_F, fading);
-        }
-        return vec2<f32>(g, c + 1.0);
-    }
-    return vec2<f32>(blended, select(0.0, c + 1.0, in_band));
-}
-
-// A previous pair tap for a pixel of kind `own_key` (its pair carries `key_settle`'s; a tap's
-// kind is the sign of its z): a tap of the other kind reads as its long means at age `cap`, so
-// no blend mixes a key short mean with a sky one or a settle state with a plain age.
-fn pair_tap(t: vec4<f32>, own_key: bool, cap: f32) -> vec4<f32> {
-    let tap_key = t.z < 0.0;
-    if (tap_key == own_key) {
-        return t;
-    }
-    if (own_key) {
-        return vec4<f32>(t.x, t.y, -1.0 - t.y, cap);
-    }
-    return vec4<f32>(t.x, t.y, t.x, cap);
-}
-
-// The key mean with the settle at a stored face where no sky ray was cast (its pair the baked
-// seed at age `cap_w`), after sample `s` on history `hp` (`pair_tap`'s), the direct part's age
-// `age` (read, never written). The key samples' short mean rides in z as `-1 - b` (negative:
-// the tap's kind), the settle's state in w as `cap_w + c`. Below the key cap it is `key_mean`;
-// at the cap it settles (`settle_at_cap`). Returns the mean, the z and the w.
-fn key_settle(s: f32, hp: vec4<f32>, age: f32, reset: bool, cap_w: f32) -> vec3<f32> {
-    if (reset || (params.lighting & LIGHTING_SKY_CHANGED) != 0u) {
-        return vec3<f32>(s, -1.0 - s, cap_w);
-    }
-    let kc = f32(max(sky.key_history, 1u));
-    let g = hp.y;
-    let n = clamp(age + 1.0, 1.0, kc);
-    let hb = clamp(-1.0 - hp.z, 0.0, 1.0);
-    let b = hb + (s - hb) / min(n, SKY_SHORT);
-    let blended = g + (s - g) / n;
-    if (n < kc) {
-        return vec3<f32>(blended, -1.0 - b, cap_w);
-    }
-    let c = max(floor(hp.w - cap_w + 0.5), 0.0);
-    let st = settle_at_cap(g, blended, b, abs(b - g) <= settle_band(g), c);
-    return vec3<f32>(st.x, -1.0 - b, cap_w + st.y);
-}
-
-// The key light's visibility mean after sample `s` on history `g`, which holds `age` samples
-// (the direct part's history age; `reset`: the history is not taken): over `age + 1` samples,
-// as the direct part blends, capped at `key_history`.
-fn key_mean(s: f32, g: f32, age: f32, reset: bool) -> f32 {
-    if (reset || (params.lighting & LIGHTING_SKY_CHANGED) != 0u) {
-        return s;
-    }
-    let n = clamp(age + 1.0, 1.0, f32(max(sky.key_history, 1u)));
-    return g + (s - g) / n;
-}
+// The visibility pair's functions are pair.wgsl's.
 
 @compute @workgroup_size(8, 8, 1)
 fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -889,6 +715,12 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     var rec_voxel = vec3<i32>(0);
     var rec_dir = 0u;
     var rec_nf = vec3<f32>(0.0);
+    // A store face where no sky ray was cast whose sky term comes from the store or the prior
+    // (`no_ray`): its voxel, face and face normal, for the term after the fade.
+    var no_ray = false;
+    var nr_voxel = vec3<i32>(0);
+    var nr_face = 0u;
+    var nr_nf = vec3<f32>(0.0);
     let fresh = sample.w > 0.5 && view_mode() != VIEW_STEPS;
     sample.w = 0.0;
     var stored = false;
@@ -962,7 +794,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
             var sv = rv;
             if (sv.y == 0.0) {
-                sv = store_sky_fallback(head, store_voxel(rec.p, nf), face);
+                sv = store_sky_fallback(head, store_voxel(rec.p, nf), face, rec.p, nf);
             }
             if (COUNT_STORE) {
                 source = sky_source(head, store_voxel(rec.p, nf), face, rv.y > 0.0, sv.y > 0.0, sky_cast);
@@ -970,9 +802,15 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             if (sv.y > 0.0 && !sky_cast) {
                 sky_term = sky_baked_term(head, store_voxel(rec.p, nf), face, sv.x, rec, nf);
                 seed = vec4<f32>(sv.x, 0.0, sv.x, f32(max(sky.sky_history, 1u)));
+                no_ray = true;
+                nr_voxel = store_voxel(rec.p, nf);
+                nr_face = face;
+                nr_nf = nf;
             }
         }
-        sample = vec4<f32>((e.xyz + sky_term) * exposure_now(), 0.0);
+        // The no-ray sky term joins the stored part after the history, at its faded value
+        // (`no_ray_fade`); the return below, which keeps no history, takes it as it is.
+        sample = vec4<f32>(e.xyz * exposure_now(), 0.0);
         if ((params.lighting & LIGHTING_DIRECT) == 0u && (params.flags & FLAG_CUTAWAY) == 0u
             && view_mode() != VIEW_STEPS) {
             var held = 0.0;
@@ -981,7 +819,8 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
             // A face's pixel is never fresh here (no light, no shadow ray); a moved part's is.
             let fresh_w = select(0.0, 1.0, fresh);
-            textureStore(accum_out, px, min(vec4<f32>(sample.xyz, fresh_w), vec4<f32>(HDR_MAX)));
+            let lit = sample.xyz + sky_term * exposure_now();
+            textureStore(accum_out, px, min(vec4<f32>(lit, fresh_w), vec4<f32>(HDR_MAX)));
             textureStore(direct_out, px, vec4<f32>(0.0));
             textureStore(moments_out, px, vec4<f32>(0.0, 0.0, held, 1.0 + source_fraction(source, on_entity)));
             textureStore(pair_out, px, seed);
@@ -1149,10 +988,21 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     // switch between the stored part and the ray at the stale bit has no second history to lag
     // behind it. Its luminance joins the moments, so the filter's variance counts it. The key
     // light's term, sampled every frame where the key light is on, joins the direct part.
+    // A record's value seeds a reset pair at SEED_AGE, the column's at SEED_COLUMN.
+    let seed_age = select(SEED_AGE, SEED_COLUMN, estimate < 0.0);
     if (estimate < 0.0) {
         estimate = column_estimate(rec.p, lift_n);
     }
-    var pair = select(seed, pair_step(vis.x, hp, accepted, estimate), sky_cast);
+    var pair = select(seed, pair_step(vis.x, hp, accepted, estimate, seed_age), sky_cast);
+    if (no_ray && !own_key) {
+        // The no-ray value rides one fade; the key settle's pixel keeps its pair's z and w.
+        let fx = no_ray_fade(seed.x, hp, accepted, seed.w);
+        pair = vec4<f32>(fx.x, pair.y, fx.x, fx.y);
+    }
+    if (no_ray) {
+        let t_nr = sky_baked_term(store_head(), nr_voxel, nr_face, pair.x, rec, nr_nf) * exposure_now();
+        accum = vec4<f32>(accum.xyz + t_nr, accum.w);
+    }
     var t_sky = sky_pair_term(sky_e, pair.x, vis.a, rec.n);
     // The moments' w: 0 a pixel the filter takes whole, 1 a stored pixel (its stored part passes
     // around the filter), 2 a stored pixel whose pair's sky term passes around it too.

@@ -620,6 +620,38 @@ pub(super) fn fill_directions(r: &mut [u32]) {
     r[6] = (r[6] & 0xFFFF) | 0x3F << 16;
 }
 
+/// Whether any cell record of `block` (of `record` words a brick) holds a visibility marked
+/// [`SKY_STALE`]: a dig's ring whose re-bake has not landed.
+pub(super) fn any_cell_stale(block: &[u32], record: usize) -> bool {
+    block[..CHUNK_BRICKS]
+        .iter()
+        .filter(|&&d| d != 0)
+        .any(|&dir| {
+            let run = (dir >> 11) as usize;
+            (run - record..run)
+                .step_by(BRICK_WORDS)
+                .any(|cell| block[cell + VIS_WORD + 1] & SKY_STALE != 0)
+        })
+}
+
+/// Whether `block`'s summary record holds a baked visibility not yet marked [`SKY_STALE`].
+pub(super) fn block_summary_baked(block: &[u32]) -> bool {
+    let w = block[SUMMARY_AT as usize + VIS_WORD + 1];
+    w & VIS_BAKED != 0 && w & SKY_STALE == 0
+}
+
+/// Sets [`SKY_STALE`] on `block`'s summary record when it holds a baked visibility (a dig job
+/// is queued for the chunk: the summary predates the edit, and the no-record prior does not
+/// read it until the job's bake rewrites it); returns whether it was set.
+pub(super) fn mark_summary_stale(block: &mut [u32]) -> bool {
+    let w = &mut block[SUMMARY_AT as usize + VIS_WORD + 1];
+    if *w & VIS_BAKED != 0 && *w & SKY_STALE == 0 {
+        *w |= SKY_STALE;
+        return true;
+    }
+    false
+}
+
 /// Sets [`SKY_STALE`] on every cell record of `slots` in `block` that holds a baked
 /// visibility; returns whether any was set.
 pub(super) fn mark_sky_stale(block: &mut [u32], slots: &[u16], record: usize) -> bool {
@@ -849,6 +881,35 @@ mod tests {
         let mut d = a;
         fill_directions(&mut d);
         assert!((record_visibility(&d, 1).expect("filled") - 0.5).abs() <= 1.0 / 255.0);
+    }
+
+    /// A block whose cells a dig's ring marked stale marks its summary stale too, once, and a
+    /// summary with no baked visibility is left alone (the no-record prior, Plan 0094 Phase 5).
+    #[test]
+    fn a_stale_cell_marks_the_summary_stale() {
+        let mut lit = cell_record(&[(5, [0.0; 3])], 1);
+        lit[VIS_WORD..VIS_WORD + 2]
+            .copy_from_slice(&visibility_words([0.0, 0.0, 0.0, 0.0, 0.0, 0.6]));
+        let mut block = vec![0u32; BLOCK_HEAD_WORDS as usize];
+        block.extend_from_slice(&lit);
+        block[0] = (BLOCK_HEAD_WORDS as u32 + BRICK_WORDS as u32) << 11;
+        let s = block_summary(&block, BRICK_WORDS).expect("a lit block");
+        let at = SUMMARY_AT as usize;
+        block[at..at + BRICK_WORDS].copy_from_slice(&s);
+        assert!(!any_cell_stale(&block, BRICK_WORDS));
+        assert!(block_summary_baked(&block));
+        assert!(mark_sky_stale(&mut block, &[0], BRICK_WORDS));
+        assert!(any_cell_stale(&block, BRICK_WORDS));
+        assert!(mark_summary_stale(&mut block));
+        assert!(!mark_summary_stale(&mut block), "once");
+        assert!(!block_summary_baked(&block));
+        assert_ne!(
+            block[at + VIS_WORD + 1] & VIS_BAKED,
+            0,
+            "the value stays readable"
+        );
+        let mut dark = vec![0u32; BLOCK_HEAD_WORDS as usize];
+        assert!(!mark_summary_stale(&mut dark), "no baked visibility");
     }
 
     /// A dig's ring marks its bricks' baked visibilities stale (ADR-0070): every cell record

@@ -41,6 +41,8 @@ mod canopy {
                     sky_end_is_sky: false,
                     key_no_jitter: false,
                     no_settle: false,
+                    column_prior: false,
+                    no_fade: false,
                 },
             },
             Arm {
@@ -55,6 +57,8 @@ mod canopy {
                     sky_end_is_sky: false,
                     key_no_jitter: false,
                     no_settle: false,
+                    column_prior: false,
+                    no_fade: false,
                 },
             },
             Arm {
@@ -69,6 +73,8 @@ mod canopy {
                     sky_end_is_sky: false,
                     key_no_jitter: false,
                     no_settle: false,
+                    column_prior: false,
+                    no_fade: false,
                 },
             },
             Arm {
@@ -83,6 +89,8 @@ mod canopy {
                     sky_end_is_sky: false,
                     key_no_jitter: true,
                     no_settle: false,
+                    column_prior: false,
+                    no_fade: false,
                 },
             },
         ];

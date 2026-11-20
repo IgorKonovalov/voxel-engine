@@ -123,7 +123,7 @@ pub const SOURCE_NONE: u8 = 0;
 pub const SOURCE_RECORD: u8 = 1;
 pub const SOURCE_RECORD_STALE: u8 = 2;
 pub const SOURCE_OWN_SUMMARY: u8 = 3;
-pub const SOURCE_NEIGHBOURS: u8 = 4;
+pub const SOURCE_COLUMN: u8 = 4;
 pub const SOURCE_NO_VALUE: u8 = 5;
 pub const SOURCE_MISMATCH: u8 = 6;
 /// The source words' names, by word.
@@ -132,7 +132,7 @@ pub const SOURCE_NAMES: [&str; 7] = [
     "record",
     "record stale",
     "own summary",
-    "neighbours",
+    "column",
     "no value",
     "mismatch",
 ];

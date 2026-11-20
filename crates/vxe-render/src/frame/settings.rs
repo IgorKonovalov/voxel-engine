@@ -254,6 +254,14 @@ pub(crate) const LIGHTING_HOOK_KEY_NO_JITTER: u32 = 1 << 25;
 /// mean has no band.
 pub(crate) const LIGHTING_NO_SETTLE: u32 = 1 << 26;
 
+/// `Params::lighting` bit, a reading hook ([`LightHooks::column_prior`]): a face with no record
+/// and no fresh own summary holds the column's answer with no sky ray (the prior's arm B).
+pub(crate) const LIGHTING_HOOK_COLUMN_PRIOR: u32 = 1 << 27;
+
+/// `Params::lighting` bit, a reading hook ([`LightHooks::no_fade`]): a no-ray sky value's change
+/// shows at once instead of riding the fade (temporal.wgsl `no_ray_fade`).
+pub(crate) const LIGHTING_HOOK_NO_FADE: u32 = 1 << 28;
+
 /// `Params::lighting` bit: a cube face's baked sky term reads its visibilities by the 27-count
 /// gradient's normal at every distance ([`SkyNormal::Smoothed`]).
 pub(crate) const LIGHTING_SKY_SMOOTHED: u32 = 1 << 24;
@@ -284,6 +292,12 @@ pub struct LightHooks {
     /// The settle is off whatever [`Lighting::settle`] says: a pair at its cap keeps blending
     /// its samples in, and the key mean follows its samples at its cap with no band.
     pub no_settle: bool,
+    /// The no-record prior's arm B: a face with no record and no fresh own summary holds the
+    /// column's answer with no sky ray, until its bake (arm A, the default, casts the ray seeded
+    /// from the column).
+    pub column_prior: bool,
+    /// A no-ray sky value's change shows at once: no fade.
+    pub no_fade: bool,
 }
 
 impl LightHooks {
@@ -319,6 +333,14 @@ impl LightHooks {
             0
         } | if self.no_settle {
             LIGHTING_NO_SETTLE
+        } else {
+            0
+        } | if self.column_prior {
+            LIGHTING_HOOK_COLUMN_PRIOR
+        } else {
+            0
+        } | if self.no_fade {
+            LIGHTING_HOOK_NO_FADE
         } else {
             0
         }
