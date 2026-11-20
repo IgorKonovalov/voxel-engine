@@ -1,6 +1,6 @@
 # ADR-0076: A still world gives a still image: six light-stability rules, a world-space history per source, a fade per transition, and a pop counter that only ratchets down
 
-> **Status:** proposed (rule 6 and Alternative F added 2026-11-20, while proposed, at Plan 0094 Phase 7's verdict; rule 5's ceiling clause and `R`'s reading added the same day, after window 94b; rule 5's `max` bound on the anchor the same day, after window 94c)
+> **Status:** proposed (rule 6 and Alternative F added 2026-11-20, while proposed, at Plan 0094 Phase 7's verdict; rule 5's ceiling clause and `R`'s reading added the same day, after window 94b; rule 5's `max` bound on the anchor the same day, after window 94c; rule 5's "around the camera" clause the same day, after window W2, ADR-0081)
 > **Date:** 2026-11-18
 > **Related plan(s):** [Plan 0090](../plans/0090-the-pop-counter-scenes-on-lavapipe-count-the-pixels-that-break-the-light-rules-a-ratchet.md)
 > (builds the counter and takes the baseline); [Plan 0086](../plans/done/0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md)
@@ -110,7 +110,13 @@ in the counter; until then they are the guesses Plan 0090 names.
    dark, not mid-grey. Rejected there: the anchor off by default (loses the noon tunnel's
    anchor, which the owner kept twice) and a second night-only constant (a knob with no reading
    when `max` is that constant already). `R` read 3.75 EV/s by eye at window 94b (7.5 too
-   fast, 1.875 too slow), the calibration Plan 0090 Phase 5 inherits.
+   fast, 1.875 too slow), the calibration Plan 0090 Phase 5 inherits. **"What is in view"
+   is widened to "what is in view or around the camera"** (added 2026-11-20, after window
+   W2: one canopy closing over the last sky pixel released the ceiling by about 5 EV, "when I
+   reach really shadowed spot - too bright"; ADR-0081, Plan 0097): the anchor holds by the
+   larger of the sky share in view and the sky over the camera's floor (the baked record
+   under the eye, smoothed by a time constant), and releases only where both are absent, so
+   the surroundings decide and not the pixel a leaf covers.
 6. **No waiting: the image before the bake lands is the judged image.** (Added 2026-11-20,
    the owner at Plan 0094's window: "if we have to wait for a minute for light to settle,
    something is wrong with the light and we need approximate things, it is not acceptable for
