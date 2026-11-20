@@ -228,7 +228,11 @@ accepted it. Pick up when a start-up or first-frame plan needs the bar, with a d
 Noted 2026-11-16 from the NVIDIA GLCache overflow (over 1 GB, so nothing new was kept and every
 start recompiled). `wgpu::PipelineCache` on Vulkan, saved under the game's cache directory, would
 make a warm start independent of the driver's own cache size and eviction. Pick up with the next
-start-up time plan, or when a tester reports long starts.
+start-up time plan, or when a tester reports long starts. Readings: Plan 0094 Phase 2a, the
+RTX's light stage 16.5 to 18.1 s cold against 0.1 s warm, and its window 94a's run 6, where
+`--leaf-shadow absorb` (a default-off arm, its light pipelines built when picked) cost 18.2 s
+on the first world frame on a cold driver cache (`docs/plans/logs/0094.md`, Phase 7); Plan 0094
+Phase 7a moves that build into the loading stage, the cost itself stays this entry's.
 
 ### `.vox` import: down-scaling, a traced preview, a row's class changed live
 
@@ -1340,6 +1344,18 @@ on against 21.9 % off; the clock at 1x releases 40.6 pixels a frame with 1.04 % 
 age per frame at a returned penumbra pixel), and whether the pops at rest are the direct
 part's own blend rather than the means'.
 
+**2026-11-20, Plan 0094 Phase 7's verdict: the hold form is rejected, the principle becomes
+ADR-0076 rule 6.** The owner's eye agreed with the readings (window 94a: settle on against off
+"no significant difference" at rest, "3a looks better than 3b, especially in motion"); the
+settle stays a default-off `--settle` setting under the cheap-modes rule and is ADR-0076's
+Alternative F. The age-weighted pool (Phase 6) lowered none of the hole band's shares and
+raised Slow 0.4 to 2.4 %, and is off by default from Phase 7a. What the owner asked for at the
+window ("if we have to wait for a minute for light to settle, something is wrong with the light
+and we need approximate things") is written as rule 6: a coarse stable answer while the precise
+one has not landed, one fade when it does, and every reading on the undrained image too. The
+places listed above stay candidates; the first one the rule points at is the bake queue's drain
+(the entry below, "The bake queue's backlog at a still camera").
+
 ### A second `Frame` on one rig does not drain its bake queue
 
 Noted 2026-11-19 by Plan 0094 Phases 1 and 2 (`docs/plans/logs/0094.md`, bars 2 and 4 of
@@ -1350,3 +1366,55 @@ rest against under 1 % drained. Plan 0094 runs every arm in its own process. Wha
 a reading of the queue's depth and the job at its head on the second frame (a job that never
 lands, or a rig that re-marks what the first frame baked). A chore or the perf plan's; read
 before any gate test shares a rig between two frames.
+
+### The bake queue's backlog at a still camera: minutes to drain what is in view
+
+Noted 2026-11-20 at Plan 0094's window 94a (`docs/plans/logs/0094.md`, Phase 7; the session
+log's `bake queue:` lines): in the forest and on the hills the HUD read a queue depth of 12 752
+to 16 150 jobs through every run, at a still camera after full residency (17 077 full chunks at
+29.9 s), with `in view 3652 waiting (1030 coarse)`, `missing 244 (fallback 232, black 12)` at
+the 15:00 still, and `baked` rising by 9 to 38 chunks a second at `budget frame:1.5`, which is 7
+to 30 minutes to the drain. The owner's rule from that window (ADR-0076 rule 6): the image
+meanwhile is the judged image. What it would take, in order: the drain's rate as a figure in
+`docs/nfr.md` (jobs a second and the seconds until every chunk in view has a record, at a still
+camera, on both adapters) with the HUD showing it; the in-view jobs ahead of the rest and the
+budget sized to land them within seconds (ADR-0048's order already scores the view; the step's
+6.3 ms on the main thread, Plan 0086 Phase 24c, is the other half); and the coarse pass as the
+rule's "coarse answer" for what is not landed (it exists: `coarse 1479 chunks` in the same
+line). The perf plan's first item; a related finding is "A second `Frame` on one rig does not
+drain its bake queue" above.
+
+### The dug hole's light: the first frames and the lit floor
+
+Noted 2026-11-20 at Plan 0094's window 94a (runs 1 and 4: "dig still flashes, hole lit";
+`live/window94a/4-dig-hole-lit.png`); the owner: "can even accept that", and it does not matter
+in tunnels under the headlamp. Two halves. **The first frames** ("bright spots that settle for a
+few frames"): Plan 0094 Phase 2 bar 2's thirds, the column's seed at the hole's new faces (open,
+1.0, at `SEED_COLUMN` 2 until the dig's job lands, one frame on the RTX, two on the RENOIR) and
+the key mean's restart on the new faces (the edit box's reset, ADR-0018); Phase 6's table
+(`flicker::reading::hole_band`): flash plus dip plus overshoot 14.5 to 23.7 % of the hole band
+in every arm, the pool included. Both are history mechanics; the motion lane that takes the
+turn's wobble inherits them (a seed that carries the pre-dig value as rule 3's `old` across the
+edit box's reset is the candidate rule 6 names). **The lit floor** (blue-grey under a shaded
+hill, HUD `missing 0`, so the baked visibility): Plan 0094 Phase 7a (6) reads the stored
+visibility against a brute-force aperture over the dug voxels and writes the word here:
+`geometry` (a radius-0.5 m sphere's floor sees about half the sky and a grey face under a blue
+sky reads blue beside grass; then the look is the hole's walls' bounce and a darker soil, a look
+plan's) or `overstated` (a bake finding). Pick up after the motion lane, or with the next dig
+look.
+
+### The key term's grain at rest on a penumbra, and the a-trous's spatial variance (ii)
+
+Noted 2026-11-20 at Plan 0094's window 94a, run 2 (the forest at 15:00: "still some grain" on
+the penumbra edges of the trunks' shadows and the sun patch; queue depth 12 752, missing 244).
+Plan 0094 removed the restarts at a still camera (Phase 3: rejections 416 to 0 a frame, the
+trunks under age 64 4.67 to 0.17 %) and what remains at rest is the key light's own estimator
+at its cap (`key_history` 256): the forest's trunks p99 23, mean 2.37 against the 1200-frame
+reference at 512 frames; the hills' over-4 share at rest 0.154 % with the key light, 0.012 %
+without (Phase 1 bar 2). A penumbra is where `g` is near one half and the variance largest.
+The plan's (ii), SVGF's spatial variance estimate on the key term alone at a converged age in
+the a-trous (ADR-0018; a guess of +0.05 ms RTX, +0.4 ms RENOIR), was not built: its clause (the
+owner's word on run 1) did not fire, run 2's grain has the missing records and the moving
+exposure as the other leads, and a spatial filter on the key term interacts with the temporal
+pass the motion lane owns. Pick up in that lane, with the reading first: the penumbra's
+frame-to-frame p99 at rest split by the key term, the sky's young pixels and the exposure.

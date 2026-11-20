@@ -1,6 +1,6 @@
 # 0094: The light's transitions: the key mean's age at a still camera, the no-ray sky prior and its fades, the exposure's rate, the dig's hole band, and the castle's fill-in
 
-> **Status:** in-progress (approved 2026-11-19: the owner: "lets run 94 right away"; question 2, the exposure rate, on its recommendation, 1/32 EV a frame, the owner judging it at Phase 7)
+> **Status:** in-progress (approved 2026-11-19: the owner: "lets run 94 right away"; question 2, the exposure rate, on its recommendation, 1/32 EV a frame, the owner judging it at Phase 7; **Phase 7's window done 2026-11-20**, its verdict under Phase 7: a short fix pass (Phase 7a), Phase 8 narrowed, a short second look (Phase 9), then the close; the motion wobble is a separate lane's)
 > **Created:** 2026-11-19
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0076](../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
@@ -938,6 +938,158 @@ this plan's.
   (86c's for the castle), a word on the hills at rest, and the exposure's rate by eye (too
   slow, right, or no difference) at the cave mouth and the castle; the words are in the log.
 
+**Verdict, 2026-11-20 (architect), window 94a** (the runner `live/session94a.sh` on
+`live/bin94a` at Phase 6's tip `37783825`, `live/bin86d` beside it; the owner's words and
+stills in `live/window94a/verdicts.md`, quoted in the log). Per run: (1) the forest at
+`10,180` **fixed** ("overall it looks a lot better"; 1c, the before, "significantly worse due
+to grain after settle"), settle on against off "no significant difference"; (2) the forest at
+15:00 **not fixed**: "still some grain" on the penumbra edges of the trunks' shadows and the
+sun patch, with the HUD's queue depth 12 752 undrained and 244 records missing; (3) the hills
+at rest: settle off (3a) "looks better than" settle on (3b), "especially in motion"; (4) the
+dig at 16:00 **not fixed** against 86d's 4a: "dig still flashes, hole lit" (the hole's floor
+reads blue under the hill's shade; HUD queue depth 14 499, exposure eye -7.93 against settles
+-7.46), and run 1's forest dig the same ("bright spots that settle for a few frames and
+lighted hole"); (5) the castle **fixed** ("castle looks fine"); (6) `absorb` after a turn "no
+significant difference except very long start" (the session log: the first world frame drawn
+18 153.9 ms after the last loading frame, against 50 to 127 ms in every other run of the
+session: the arms' light pipelines are built on the first world frame, cold, outside the
+loading stage and its bar); (7) the exposure at the cave mouth "feels too slow".
+
+**Two owner rules from the window, binding.** First: "if we have to wait for a minute for
+light to settle, something is wrong with the light and we need approximate things, it is not
+acceptable for user": the image before a bake lands, the undrained image, is the judged image,
+and a bar that reads only the drained one defends nothing the owner sees (ADR-0076 gains rule
+6 for it, below; the pixel-hold form of "approximate while not still", the settle, failed by
+eye and by reading and is its rejected Alternative F). Second, after the window: the wobble of
+everything after a turn or while moving ("clearly seen on far trees during a slow fly: the
+image never settles") is **the significant problem and goes to a lane of its own**, with its
+own architect; this plan names it and touches the temporal pass and the upscaler's history no
+further than Phases 3 to 6 already did. The dig's light is the smaller problem ("can even
+accept that"; it does not matter in tunnels under the headlamp). So what follows is a **short
+fix pass (Phase 7a), Phase 8 narrowed, a short second look (Phase 9) and the close**, not a
+second round. The decisions, one recommended option each:
+
+- **The settle: kept as a default-off setting, not removed.** The cheap-modes rule
+  (2026-11-12): it costs 0 ms off, its row, flag and banner word stay, and `pair_tap`'s kind
+  read is a no-op while the pair's `b` is never negative. It failed by eye (3b worse than 3a,
+  especially in motion) and by reading (the return frame 37.6 against 21.9 % over 8), so it is
+  **not** the ADR-0076 rule the Phase 3 amendment foresaw; ADR-0076 records it as the rejected
+  Alternative F. The alternative, removing it now, saves one code path in the temporal pass;
+  that pass is the motion lane's from here, and the lane may retire the settle and the pair's
+  `b` sign trick together if it needs the channel. Named there, not touched here.
+- **The hole: no mechanism in this plan; one cheap reading decides what the backlog entry
+  says.** Two halves. The *first frames* ("bright spots that settle for a few frames") are
+  Phase 2 bar 2's thirds as read: the column's seed at the hole's new faces (open, 1.0, at
+  `SEED_COLUMN` 2, for the frame before the dig's job lands; digs already go to the queue's
+  front, `digs.rs`) and the key mean's restart on the new faces (the edit box's reset, ADR-0018,
+  by design). Both are history mechanics the motion lane owns from here; disclosed, routed to
+  the backlog with Phase 6's table. The *lit floor* in the stills: the HUD reads `missing 0`,
+  so the floor shows its **baked** visibility, not a prior or a young ray; a radius-0.5 m
+  sphere's floor lies about 5 voxels under a 10-voxel opening, a half-angle of about 45
+  degrees, cosine-weighted about half the sky, and the sky's colour on a grey soil or rock face
+  reads blue beside green grass under the same light. The reading that tells "correct by
+  geometry" from "the bake overstates" is Phase 7a (6): the stored visibility at a dug floor
+  against a brute-force aperture over the dug voxels. Correct by geometry, the look (the hole's
+  walls' bounce, a darker soil) is the backlog's; overstated, a bake finding is the backlog's.
+  Either way the owner's "can even accept that" stands and nothing is built here.
+- **Pre-bake grain: no approximation is built in this plan; ADR-0076 gains the rule the next
+  plan designs against.** Run 2's grain at rest is the key light's own (Phase 1 bar 2: the
+  hills' over-4 share at rest 0.154 % with the key light and 0.012 % without; the forest's
+  trunks at the cap's variance, p99 23 and mean 2.37 against the 1200-frame reference at 512
+  frames), with the sky's young pixels under it where records are missing (missing 244,
+  fallback 232 at the still). The wait itself is the queue: 12 752 to 16 150 jobs through
+  every run of the session at a still camera, draining at 9 to 38 chunks a second (the session
+  log's `bake queue:` lines), which is 7 to 30 minutes; the perf plan owns the queue's step
+  and throughput (this plan's "What this plan does NOT do"), and rule 6 makes the undrained
+  image its bar. (ii), the a-trous's spatial variance on the key term, is **not built**: its
+  clause (the owner's word on run 1) did not fire (run 1 "a lot better"), run 2's grain is one
+  lead among three (the key term's cap variance, the missing records, the exposure moving),
+  and a spatial filter on the key term interacts with the temporal pass the motion lane now
+  owns. It goes to the backlog with the figures, named for that lane.
+- **`absorb`'s start: fixed in Phase 7a (2).** When an arm is picked at the CLI the arms'
+  light pipelines (`P_LIGHT_ARMS`, `P_LIGHT_BARE_ARMS`, Phase 2a) are built on the first world
+  frame, with no stage line and no bar; run 6 paid 18.2 s there on a cold driver cache. They
+  are built in the loading stage instead ("building the pipelines", under the splash's bar)
+  with a stage line naming the arm; a pick at runtime keeps Phase 2a's disclosed hitch. The
+  compile's cost itself (cold once per binary and driver, warm after by the driver's cache)
+  stays the backlog's "A wgpu pipeline cache owned by the engine".
+- **The exposure's rate: 3.75 EV/s (1/16 EV a frame at 60 Hz) as the default, the owner
+  reading 3.75 and 7.5 at Phase 9.** The 1/32 pick derived from `T_still` at a bright pixel,
+  which is rule 1's bar for a *still* scene; a walk from a cave into daylight is not one, and
+  rule 5 asks only for a bounded, monotone step and no move at rest. At 3.75 EV/s a 2 EV change
+  takes about 0.6 s plus ADR-0033's tail and the cave mouth's 6 EV about 1.6 s (3.2 at 1.875;
+  ADR-0033 uncapped about 0.9 s); at 7.5 EV/s about 0.8 s, close to ADR-0033 for a large change
+  while a frame still moves at most 1/8 EV (16 levels at display 180, a uniform move the eye
+  reads as adaptation, not a pop). The cap carries less than the plan guessed: the castle's
+  exposure share fell with Phase 5's prior (bar 4: 0.704 % over 8 under A), not with the cap
+  (Phase 4 bar 3: 0.4 points). Rule 5's still clause is unchanged.
+- **The tests that fail as written are restated in Phase 7a (5)**, each in rule 3's form or
+  at the value the amendments set, never loosened past its claim.
+
+### Phase 7a: The fix pass after window 94a
+- **Owner skill:** dev
+- **What:** (1) `DEFAULT_EXPOSURE_RATE_EV_S` 3.75, the row in `docs/flythrough.md` and the
+  banner's default with it. (2) The arms' light pipelines built in the loading stage when the
+  settings at start pick an arm (`--leaf-shadow absorb`, `--penumbra approach`), a `diag`
+  stage line naming the arm (`light pass arms built`), nothing built when no arm is picked.
+  (3) The age-weighted pool **off by default** (Phase 6 bar 1: no arm lowered the band's
+  shares and Slow rose 0.4 to 2.4 %; a default no reading paid for smears young pixels with
+  their settled neighbours' means): the hook's sense inverted (`LightHooks::pool` turns it on),
+  the readings' arms unchanged by name; the settle stays as it is (default off). (4) The hole's
+  reading, (6) below. (5) **The tests restated:**
+  - `a_dig_leaves_no_dots`'s landing clause ("within one level from the frame after the
+    landing") becomes rule 3's: the floor's mean against the baked whole is within `T_fade` 4
+    from the landing plus `F` 16 on, and no frame leaves `[min - T_fade, max + T_fade]` of the
+    pre-landing and settled means; the dots clause and the 5 % clause stand.
+  - `a_reset_pixel_starts_from_its_record` gets a record in its rig (the floor baked before the
+    reset) and asserts `(record, SEED_AGE 8)` on it, with a second clause on a withheld record:
+    `(column, SEED_COLUMN 2)`; the name then says what the test defends.
+  - Phase 5 bar 3's relative-step line 0.10 is **struck as superseded by the fade**: a
+    pair-to-store switch rides `F` frames, so the per-frame step is the read 0.228 / 16; the
+    bar is the band share, at or under 1 % over 16 frames (read 0.55 %), and (i) is not built.
+    The pair reading under the store at 11 014 of 11 957 switches (the bounce term the pair's
+    estimate lacks, mean 1.90 levels, p99 9) is a followup, named in the log.
+  - Phase 5 bar 9 gains the clause the classifier lacks: besides the band, **no one-frame
+    change over `|old - new| / F + T_fade`** across the trace (the tip's 25.1 to 0 at frame 1
+    passes the band test because `new - T_fade` is under 0 and is a step of 25). The trace is
+    printed as read, the clause's result beside it; **a failure here is disclosed, not fixed**
+    (the frame-1 value is the column's seed, the motion lane's and the backlog's).
+  - `a_dig_changes_nothing_outside_its_reach` asserts the restated line, the larger of 0.5 %
+    and 1.5 times the still pairs' max over the same band (17:00: 1.095 against 1.509 %; noon:
+    0.101 against 0.5 %), the still pairs printed.
+  - Phase 4 bar 1's landing frame is derived from the model's constants, not written as 66:
+    with `R_f` the per-frame cap and `tau_f` ADR-0033's 0.15 s in frames (9 at 60 Hz) the cap
+    binds while the remaining gap exceeds `tau_f R_f`, then the tail decays, so the target `D`
+    is reached within 1/64 EV by frame `8 + ceil((D - tau_f R_f) / R_f) + ceil(tau_f ln(64
+    tau_f R_f)) + 2` (at 1/16: 8 + 23 + 33 + 2 = 66; at 1/32 the form gives 91 against the read
+    82); the step clause (at most `R_f` within 1/256, monotone) is the assertion that matters.
+  (6) **The hole's reading** (`reading::the_dug_floors_baked_visibility_against_its_aperture`
+  in `gpu_sun.rs`, lavapipe, about 5 s): on `the_sky_ray_runs_only_where_stale`'s dug floor and
+  on a radius-5-voxel sphere carve into the hills' surface, the stored `g` after the landing
+  against a brute-force cosine-weighted aperture over the dug voxels (1024 directions, a DDA
+  on the CPU), both printed with the word `geometry` (within 0.05) or `overstated`; the
+  backlog entry takes the word. No mechanism follows in this plan.
+- **Files touched:** `crates/vxe-render/src/exposure.rs`, `frame/pipelines.rs` and
+  `apps/flythrough/src/run/*` (the loading stage), `frame/settings.rs` and `compose.rs` (the
+  pool's bit), `crates/vxe-render/tests/gpu_sun.rs`, `gpu_exposure.rs`,
+  `apps/flythrough/tests/gpu_outdoor/*.rs`, `tests/support/defects.rs`, `docs/flythrough.md`,
+  `docs/plans/logs/0094.md`.
+- **Done when:**
+  1. The banner names nothing at 3.75 EV/s and `exposure rate 1.875 EV/s` when set (CPU, under
+     1 s); the CPU model test and Phase 8's GPU test use the derived landing frame.
+  2. With `--leaf-shadow absorb` the fly-through's `diag` lines show `light pass arms built`
+     inside the loading stage and the first world frame within 2x the default run's (a release
+     reading on the RTX on an emptied driver cache, `__GL_SHADER_DISK_CACHE_PATH`, run 6's
+     18 153.9 ms as the before); a CPU test over the loading stages' list names the stage when
+     an arm is picked and not otherwise (under 1 s).
+  3. The six tests above pass by name with their restated forms (`--binaries
+     gpu_sun,gpu_outdoor,gpu_exposure`), each form quoted in the log with its before; bar 9's
+     step clause's result is in the log whichever way it reads.
+  4. `hole_band`'s arms read the same by name with the pool off as Phase 6's `no pool` rows
+     (one arm, 17:00, RTX release, a reading); the a-trous slot at rest within noise of Phase
+     6's.
+  5. The hole's two aperture figures and the word are in the log and in the backlog entry.
+
 ### Phase 8: The picks as tests, the bars Plan 0086 left, the goldens
 - **Owner skill:** dev
 - **What:** the bars of Phases 3 to 6 that the window kept, written or pinned as tests against
@@ -991,6 +1143,15 @@ this plan's.
      9.7 s on the switch test, is 0086's `1e16a8fd` and is named, not fixed here); this plan's
      own share is bar 1's sum. The reading goes to `docs/nfr.md` section 7 at the close.
 
+  **Amended 2026-11-20 (architect), narrowed by Phase 7's verdict.** (ii) is **not built**
+  (its clause did not fire; the verdict routes it to the backlog for the motion lane). The
+  defaults are Phase 7a's: the settle off, the pool off, the exposure's rate 3.75 EV/s until
+  Phase 9's pick re-pins it (a one-line change before the close), `key_history` 256, arm A.
+  The residual bar's 8 / 2 stays as written (the window moved no number). Bar 1's list gains
+  Phase 7a's restated tests and Phase 3 bar 1's `a_still_camera_keeps_its_history` as the
+  plan wrote it (a test of the ages, no change to the temporal pass). Bars 2 to 5 stand as
+  written.
+
 ### Phase 9: A second short look, only if the window asked for one
 - **Owner skill:** human
 - **What:** runs only if Phase 7 recorded any run as not fixed or worse **and** Phase 8 changed
@@ -999,6 +1160,15 @@ this plan's.
 - **Files touched:** `live/session86f.sh`, `docs/plans/logs/0094.md`.
 - **Done when:** the owner's words per named run are in the log, or the log says the phase did
   not run and why.
+  **Amended 2026-11-20 (architect): the phase runs**, since Phase 7 recorded runs as not fixed
+  and Phase 7a changes two defaults. Short, about ten minutes, on `live/bin94b` at Phase 8's
+  tip with `live/bin94a` as the before (`live/session94b.sh`): (1) the cave mouth at
+  `--exposure-rate 3.75` and at `7.5`, the owner picking one (the default is re-pinned to the
+  pick before the close); (2) `absorb`'s start once on an emptied driver cache, the loading bar
+  showing the arms' build, the first world frame's `diag` line read; (3) the forest at 15:00
+  once on the new defaults, a look only (the pool off), no verdict owed. The hole and the
+  motion wobble are **not** re-judged here: the first is routed to the backlog by the verdict,
+  the second is the separate lane's.
 
 ## Data shapes
 
@@ -1137,6 +1307,17 @@ records it.
    `T_still` on a bright pixel; the owner reads it by eye at the cave mouth and the castle in
    Phase 7 and may pick 1/16 (3.75 EV/s) there; Plan 0090 Phase 5 calibrates `R` later and
    re-pins it. The cap is a setting under the cheap-modes rule; 0 restores ADR-0033's speed.
+   **Answered by the window (2026-11-20): too slow.** The default moves to 3.75 EV/s (Phase
+   7a); the owner reads 3.75 and 7.5 at Phase 9 and the pick is re-pinned before the close.
+3. **(Added 2026-11-20.) The settle's code.** **Recommended: keep it as the default-off
+   `--settle` setting** (the cheap-modes rule; 0 ms off; the motion lane may retire it with the
+   pair's `b` trick if it needs the channel). The alternative: remove it now, one code path
+   less in the temporal pass, which the motion lane then does not inherit.
+4. **(Added 2026-11-20.) The hole's look, if Phase 7a (6) reads `geometry`.** **Recommended:
+   accept it as read** (a grey floor under a blue sky at half the sky's visibility; the owner's
+   "can even accept that"), with the hole's walls' bounce and a darker soil as a look entry in
+   the backlog. The alternative: a look plan for dug interiors (the bounce term at a hole's
+   floor), after the motion lane.
 
 ## What this plan does NOT do
 
@@ -1181,9 +1362,10 @@ records it.
 | 4: The exposure's rate cap | dev | done (exploration; `live/phase4.patch`); bars 1 and 2 read as CPU tests on the f64 model (the GPU tests are Phase 8's); **bar 1 not met as written**: a 2 EV step lands within 1/64 EV at frame 82, not by frame 66 (8 + 64 + 2; the cap, then ADR-0033's tail); the castle's arm (a) ran with its queue undrained; outside Files touched: `layout_tests.rs`, `lib.rs`, `cli/mod.rs`, `cli/tests/outdoor.rs`; the settings row is `lighting.exposure`'s | 2d7a0a9f |
 | 5: The no-ray prior and the fade | dev | done (exploration; wip `3e13c620`); arm A kept (RENOIR light pass 1.62 ms at the rig's 320 x 180 grid during the bake, B 0.62; 1080p's half tier not read); (3)'s (i) and B's provisional record not built; the fade in the pair's x and w, no target; **`a_dig_leaves_no_dots`'s landing clause fails** against the fade's ramp (off 64.8 at the landing + 1 to 8.8 at + 14) and **`a_reset_pixel_starts_from_its_record` fails** on `SEED_COLUMN` (age 2 against 8), both left as written; bar 3's relative step 0.228 (line 0.10); bars 1, 2 and 6 not written or read (Phase 8); bar 9's frame 1 reads 0 (the column seed), then a ramp to 3.58; outside Files touched: `pair.wgsl`, `lib.rs`, `frame/mod.rs`, `compose.rs`, `settings.rs`, `support/defects.rs` (`Stepper::timed`), `canopy.rs` | acbbaf87 |
 | 6: The hole band and the bands bar | dev | done (exploration); the age-weighted pool in the a-trous `variance` entry, on by default (`LightHooks::no_pool` the before); the stale seed at `F` as `LightHooks::seed_stale_f`; **bar 1 not met in any arm** (flash + dip + overshoot 14.5 to 23.7 % of the hole band against 1 %; the pool does not lower it); bar 2 within the restated line (17:00 1.095 % against 1.509 %) but `a_dig_changes_nothing_outside_its_reach`'s 0.5 % assertion fails at 17:00, left as written; bar 3: `a_dig_leaves_no_dots` and `a_reset_pixel_starts_from_its_record` fail as in Phase 5; the ring band (8 to 64) not split; outside Files touched: `settings.rs`, `compose.rs` (the hook bits), `canopy.rs` | committed with this row |
-| 7: The owner's window (86e) | human | not started | |
-| 8: The picks as tests, the bars 0086 left, the goldens | dev | not started | |
-| 9: A second short look (conditional) | human | not started | |
+| 7: The owner's window (run as 94a, not 86e: `live/session94a.sh`, `live/bin94a`) | human | done 2026-11-20; the words in the log; forest and castle fixed, forest 15:00 and the dig not fixed, settle off better than on, `absorb` a long first frame, exposure too slow; the verdict and the rules under Phase 7 | (no commit: `live/` is untracked) |
+| 7a: The fix pass after window 94a | dev | not started | |
+| 8: The picks as tests, the bars 0086 left, the goldens (narrowed 2026-11-20) | dev | not started | |
+| 9: A second short look (runs: amended 2026-11-20) | human | not started | |
 
 ### Notes
 
@@ -1212,7 +1394,29 @@ each. Empty is fine.)_
 - (Added 2026-11-19, architect.) The settle is a candidate ADR-0076 rule (an estimator at rest
   holds by construction; the backlog's "Settle early" entry): the architect writes it at
   Phase 7's verdict, as an amendment to ADR-0076 while it is proposed or a new ADR if Plan
-  0090 has accepted it by then.
+  0090 has accepted it by then. **Resolved 2026-11-20:** not a rule. The settle failed by eye
+  and by reading; ADR-0076 (still proposed) records it as its rejected Alternative F and gains
+  **rule 6** instead, the owner's rule from the window: the undrained image is the judged
+  image, a source whose precise answer has not landed shows a coarse stable answer and takes
+  the precise one as one fade, and every stillness reading states the queue's depth beside it.
+  Plan 0090's counter reads the undrained image too (its scene table gains the queue's depth
+  as a column; a change for its architect at its re-read).
+- (Added 2026-11-20, architect.) **The motion wobble** (the owner, after window 94a: the image
+  never settles on far trees during a slow fly, after a turn or while moving) is a separate
+  lane's with its own architect. From this plan it inherits: the still camera's own tap and
+  its dropped tests (Phase 3), the settle's code and the pair's `b` sign trick (to retire or
+  keep), the column seed on a dig's new faces and the key mean's restart there (Phase 2 bar
+  2's thirds, Phase 6's table), the turn's return-frame readings (Phase 1 bar 4, Phase 3's
+  re-read: 21.9 to 22.8 % over 8 under `voxel`), and (ii) as a candidate. This plan changes
+  the temporal pass and the upscaler's history no further.
+- (Added 2026-11-20, architect.) **The bake queue's drain at a still camera** is the perf
+  plan's first item under rule 6: 12 752 to 16 150 jobs undrained through every run of window
+  94a at 9 to 38 chunks a second (the backlog's entry with the session log's figures), so the
+  "coarse approximation" the owner asked for is, first, a queue that lands what is in view
+  within seconds, and only then a prior for what is not.
+- (Added 2026-11-20, architect.) The hole's floor, the dig's first frames, the key term's
+  grain at rest at a penumbra and (ii): the backlog's entries, each with this plan's figures
+  and Phase 7a (6)'s aperture word.
 - (Added 2026-11-19, architect.) A second `Frame` on one rig does not drain its bake queue in
   30 000 frames (Phase 1's hills arms, Phase 2's castle arms (b) and (c), the forest's turn
   twice on a fresh rig): the backlog's entry; a queue or rig finding for the perf plan or a

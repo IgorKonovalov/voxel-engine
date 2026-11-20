@@ -30,7 +30,7 @@ next free number). Plan 0094, Plan 0086's follow-up (the light's transitions), w
 | [0091](0091-the-frame-profiler-scopes-across-threads-a-gpu-lane-a-dump-for-agents-and-a-hud-ticker.md) | The frame profiler: scopes across the threads, a GPU lane, a dump the agent ranks, budget scopes, a HUD ticker | approved | M7, ADR-0077. After 0087 and 0089, before 0090 (owner). |
 | [0092](0092-wgsl-hot-reload-in-the-fly-through-an-mtime-poll-pipelines-rebuilt-and-the-old-ones-kept-on-an-error.md) | WGSL hot reload in the fly-through: an mtime poll, pipelines rebuilt from disk, the old kept on an error | approved | M7, no ADR. After 0091 in its lane, before 0090 (owner). |
 | [0093](0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) | The README rewrite with reproducible screenshots: a shot manifest, a shoot script, an image gate, the owner's picks | approved | M7 docs, no ADR. After 0087 merges, beside 0089, before 0091. |
-| [0094](0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md) | Light transitions: the key mean's age, the no-ray prior and fades, the exposure's rate, the hole band, the castle | approved | M10, ADR-0076. After 0086 merges, before 0087 (recommended). |
+| [0094](0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md) | Light transitions: the key mean's age, the no-ray prior and fades, the exposure's rate, the hole band, the castle | in-progress | M10, ADR-0076. Window done 2026-11-20; fix pass, then close. |
 <!-- roster:end -->
 
 ## Sequence
@@ -188,7 +188,12 @@ verdicts and its readings log, while 0086 is still open on its branch; no ADR, A
 merges**. The architect recommends it as the next lane, **before Plan 0087** (the owner's
 still-image priority; its rigs, hooks and `VXE_*` names are 0086's and the rename would owe a
 re-read; Plan 0090's first baseline then lands on the fixed tree); the alternative is after
-0087 beside 0093 and 0089. Owner question 1 of the plan.
+0087 beside 0093 and 0089. Owner question 1 of the plan. **2026-11-20:** its owner window
+(94a) is done; the forest and the castle read fixed, the dig and the forest at 15:00 not; the
+plan closes on a short fix pass (Phase 7a: the exposure's rate 3.75 EV/s, the arms' pipelines
+built in the loading stage, the pool off, six tests restated), Phase 8 narrowed, and a short
+second look (Phase 9). ADR-0076 gained rule 6 (the undrained image is the judged image). The
+motion wobble the owner named after the window is a separate lane's.
 
 Every active plan is approved (Plans 0091, 0092 and 0093 on 2026-11-19; Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Approval accepts the design; a plan's lane
