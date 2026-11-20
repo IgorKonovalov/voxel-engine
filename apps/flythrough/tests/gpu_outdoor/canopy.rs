@@ -102,20 +102,22 @@ mod canopy {
         /// A pixel's class: the floor (no leaf or bark among the 8 voxels about the hit), a
         /// trunk (bark), or neither (a leaf, the sky).
         #[derive(Clone, Copy, PartialEq, Eq)]
-        enum Class {
+        pub(in super::super) enum Class {
             Floor,
             Trunk,
             Other,
         }
 
-        /// A frame stepped by hand with its step count (the jitter's phase follows it).
-        struct Run {
+        /// A frame stepped by hand with its step count (the jitter's phase follows it) and its
+        /// display size.
+        pub(in super::super) struct Run {
             f: Frame,
             steps: u32,
+            out: [u32; 2],
         }
 
         impl Run {
-            fn step(&mut self, rig: &Rig, cam: &Camera, light: &LightParams) {
+            pub(in super::super) fn step(&mut self, rig: &Rig, cam: &Camera, light: &LightParams) {
                 self.f.step(&rig.device, &rig.queue, &rig.gpu, cam, light);
                 self.steps += 1;
             }
@@ -130,7 +132,19 @@ mod canopy {
             baked: bool,
             exposure: Exposure,
         ) -> Run {
-            let mut f = Frame::with_sizes(&rig.device, INTERNAL, OUT);
+            frame_sized(rig, sky, baked, exposure, INTERNAL, OUT)
+        }
+
+        /// [`frame`] from `internal` to `out`.
+        pub(in super::super) fn frame_sized(
+            rig: &mut Rig,
+            sky: Option<vxe_render::sky::Sky>,
+            baked: bool,
+            exposure: Exposure,
+            internal: [u32; 2],
+            out: [u32; 2],
+        ) -> Run {
+            let mut f = Frame::with_sizes(&rig.device, internal, out);
             f.set_upscaler_kind(
                 &rig.device,
                 vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default()),
@@ -168,7 +182,7 @@ mod canopy {
                 .expect("the store fits");
             }
             f.set_dt(1.0 / 60.0);
-            Run { f, steps: 0 }
+            Run { f, steps: 0, out }
         }
 
         /// The settled exposure of the defaults under `sky` (or the headlamp alone): 64 frames
@@ -191,19 +205,19 @@ mod canopy {
         /// What a run's last frame reads: the display's largest channel, the class and the key
         /// mean `g` per display pixel, and over the last [`POP_PAIRS`] pairs the over-4 counts
         /// per class (floor, trunk) with the class's pixel count.
-        struct Read {
+        pub(in super::super) struct Read {
             level: Vec<u8>,
             class: Vec<Class>,
             g: Vec<f32>,
             pops: [(u64, u64); 2],
             /// Per lighting pixel at the last frame: the class, the history's age (the moments'
             /// `z`) and the key mean `g`.
-            light_class: Vec<Class>,
-            light_age: Vec<f32>,
+            pub(in super::super) light_class: Vec<Class>,
+            pub(in super::super) light_age: Vec<f32>,
             light_g: Vec<f32>,
             /// The history rejections per frame over the last [`POP_PAIRS`] frames (tested,
             /// material, normal, other: [`Frame::read_history_rejections`]).
-            rejections: Vec<[u32; 4]>,
+            pub(in super::super) rejections: Vec<[u32; 4]>,
             /// Per class (floor, trunk) the frame-to-frame display changes over the last
             /// [`POP_PAIRS`] pairs.
             diffs: [Vec<u8>; 2],
@@ -234,7 +248,7 @@ mod canopy {
 
         /// [`hold`] with the key mean's cap `key` named.
         #[allow(clippy::too_many_arguments, reason = "a reading's knobs")]
-        fn hold_capped(
+        pub(in super::super) fn hold_capped(
             rig: &Rig,
             cam: &Camera,
             r: &mut Run,
@@ -245,6 +259,7 @@ mod canopy {
             align: Option<(u32, u32)>,
         ) -> Read {
             use vxe_render::debug::{read_rgba8, read_rgba16f, read_rgba32f};
+            let out = r.out;
             r.f.set_light_hooks(hooks);
             r.f.set_count_store(true);
             r.f.set_lighting(Lighting {
@@ -269,13 +284,13 @@ mod canopy {
                 let hits = read_rgba32f(d, q, f.light_hit_positions());
                 let gw = f.light_hit_positions().width() as usize;
                 let cls: Vec<Class> = hits.iter().map(|h| class_of(&rig.world, h)).collect();
-                let n = (OUT[0] * OUT[1]) as usize;
+                let n = (out[0] * out[1]) as usize;
                 (0..n)
                     .map(|i| {
                         cls[support::defects::grid_of(
                             i,
-                            OUT[0] as usize,
-                            OUT[1] as usize,
+                            out[0] as usize,
+                            out[1] as usize,
                             gw,
                             hits.len(),
                         )]
@@ -306,10 +321,10 @@ mod canopy {
             }
             let pair = read_rgba16f(d, q, r.f.visibility_pair());
             let gw = r.f.visibility_pair().width() as usize;
-            let n = (OUT[0] * OUT[1]) as usize;
+            let n = (out[0] * out[1]) as usize;
             let g = (0..n)
                 .map(|i| {
-                    pair[support::defects::grid_of(i, OUT[0] as usize, OUT[1] as usize, gw, pair.len())][1]
+                    pair[support::defects::grid_of(i, out[0] as usize, out[1] as usize, gw, pair.len())][1]
                 })
                 .collect();
             let hits = read_rgba32f(d, q, r.f.light_hit_positions());
