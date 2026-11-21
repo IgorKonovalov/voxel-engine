@@ -327,6 +327,20 @@ names or hands over the 461 no-record pixels. If 0095 is still open when the lan
   equals the base's drained image byte for byte (`outdoor_noon` and the forest golden rig of
   `gpu_golden.rs`, the queue drained by `frame:40` in both; lavapipe, about 8 s each, in the
   gate if under 10 s, else `#[ignore = "soak"]`).
+- **Amended 2026-11-21 (owner), at the `e1944c81` checkpoint: the no-face verdict moves to the
+  stream workers.** At the first world frame the forest's queue held 16 249 listed against about
+  5 924 surface chunks, because faceless chunks (6 901) leave the pool only when listed, at 16
+  checks an opening. The owner picked over a budgeted main-thread listing at pool sync (a full
+  listing read 2.1 s across 16 threads, against Phase 5's 1.0 ms step line) and over reading bar 5
+  after the queue has listed: the stream workers compute a chunk's no-face verdict when they mesh
+  its mirror data, from its own face masks and its six neighbours' border masks (a neighbour not
+  yet streamed counts as open, so the verdict errs toward a job), and the pool admits such a chunk
+  already baked-empty; a neighbour arriving later that opens a border re-lists it. The buried
+  rule stays at listing (it needs the column map's finality). Bar 5 stands with one change: the
+  depth at the first world frame equals the census's surface plus buried-unresolved chunks within
+  2 %, and the faceless count admitted to the queue is 0. The image half is read by bar 1's
+  live-queue byte test, since the golden rigs bake through `bake_until`, not the live queue. The
+  verdict's worker cost is read (microseconds a chunk) and the main thread gains no listing work.
 
 ### Phase 3: A tier by size on screen (exploration)
 - **Owner skill:** dev
