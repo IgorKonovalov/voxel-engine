@@ -346,7 +346,7 @@ direction bit and `VIS_BAKED` answers with its `+z` byte over 255. No `vxe-world
 | 1: The reading: the sky over the floor | dev | done; `F_floor` 1/8; readings in [`logs/0097.md`](logs/0097.md) | ea15d52f |
 | 2: The anchor by the floor's sky | dev | done; bar 4's baked deep noon tunnel at +1.18 EV, not `max` (Notes) | 5d1cbf77 |
 | 3: The owner's window | human | done, window 97 (2026-11-21); words in the amendment and the readings log | b3277359 (setup) |
-| 3a: Highlight protection | dev | built, P99 default; bar 3's bless interrupted, bars 3 and 4 owed (Notes); short window awaits the owner | committed with this row |
+| 3a: Highlight protection | dev | built, P99 default; bar 3's bless interrupted, bars 3 and 4 owed (Notes); short window awaits the owner | 8ff3bbe4 |
 | 4: The picks as tests and the docs | dev | not started | |
 
 ### Notes
