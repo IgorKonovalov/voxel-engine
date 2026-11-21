@@ -200,6 +200,7 @@ impl Frame {
         (q.coarse_samples, q.near, q.full_first) = (k.coarse_samples, k.near, k.full_first);
         (q.edit_ms, q.reach_ring) = (k.edit_ms, k.dig_reach);
         q.tiers = k.tiers;
+        q.drain = k.drain;
         q.set_reach_mode(k.reach);
         self.baked.queue = Some(q);
     }
@@ -279,6 +280,15 @@ impl Frame {
         self.baked.knobs.tiers = tiers;
         if let Some(q) = self.baked.queue.as_mut() {
             q.tiers = tiers;
+        }
+    }
+
+    /// The live queue's slice's two values (ADR-0080 rule 3): the drain value while a chunk in
+    /// view waits for its tier's record, the line's once none does; `None` is the budget alone.
+    pub fn set_bake_drain(&mut self, drain: Option<crate::bake::Drain>) {
+        self.baked.knobs.drain = drain;
+        if let Some(q) = self.baked.queue.as_mut() {
+            q.drain = drain;
         }
     }
 

@@ -25,6 +25,16 @@ pub struct QueueStats {
     /// The last sliced step's slice in milliseconds, from the budget ([`Budget::slice_ms`]),
     /// before a dig's growth.
     pub slice_ms: f64,
+    /// Whether the last sliced step's slice was the drain value ([`crate::bake::Drain`]), and
+    /// the chunks in view still waiting for their tier's record it was read from
+    /// ([`BakeQueue::view_waiting`]).
+    pub draining: bool,
+    pub drain_waiting: u64,
+    /// Since the queue started: the submits' plans that stopped at the sample cap, at the
+    /// entries' batch, and out of rounds to plan; and the steps that sent no submit because
+    /// [`crate::bake::IN_FLIGHT`] were unread.
+    pub plan_stops: [u64; 3],
+    pub in_flight_full: u64,
     /// Samples since the queue started.
     pub total_samples: u64,
     /// Chunks whose block is the coarse pass, waiting for their refinement.

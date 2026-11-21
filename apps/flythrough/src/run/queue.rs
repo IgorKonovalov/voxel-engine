@@ -788,6 +788,7 @@ impl Run {
                 self.queue.drain_of(&st).text(),
                 class_ns,
             );
+            print_slice_line(t, &st, p50);
             let needs = gfx
                 .frame
                 .bake_queue_mut()
@@ -846,4 +847,22 @@ impl Run {
         write_queue_banner_row(&mut out, &self.args, &self.args.queue_words());
         out
     }
+}
+
+/// The per-second `bake queue slice:` line: the slice granted and whether it was the drain's
+/// value (ADR-0080 rule 3), the chunks in view still waiting for their tier, the slices drawn,
+/// and why the submits' plans stopped.
+fn print_slice_line(t: f64, st: &vxe_render::QueueStats, p50: f64) {
+    println!(
+        "bake queue slice: at {:.1} s, granted {:.2} ms ({}, {} in view waiting for their tier), drawn p50 {:.2} ms, plans stopped at the cap {} at the batch {} out of rounds {}, steps with every submit slot unread {}",
+        t / 1e3,
+        st.slice_ms,
+        if st.draining { "drain" } else { "line" },
+        st.drain_waiting,
+        p50,
+        st.plan_stops[0],
+        st.plan_stops[1],
+        st.plan_stops[2],
+        st.in_flight_full,
+    );
 }

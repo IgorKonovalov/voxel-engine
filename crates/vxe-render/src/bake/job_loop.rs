@@ -76,6 +76,9 @@ pub(crate) struct JobLoop {
     pub(super) timer: Option<Option<LoopTimer>>,
     /// The samples the last [`JobLoop::dispatch`] planned: 0 when it dispatched nothing.
     pub last_samples: u64,
+    /// The dispatches' plans that stopped at the sample cap, at the entries' batch, and out of
+    /// rounds to plan, since the loop started.
+    pub plan_stops: [u64; 3],
     /// The light epoch the open jobs' tables were last written at ([`JobLoop::refresh_tables`]).
     pub(super) tables_at: Option<u64>,
     /// Each ended job's chunk and the samples its faces drew, where the loop keeps them
@@ -108,6 +111,7 @@ impl JobLoop {
             timed: false,
             timer: None,
             last_samples: 0,
+            plan_stops: [0; 3],
             tables_at: None,
             ended: None,
         }
@@ -347,6 +351,14 @@ impl JobLoop {
             return false;
         }
         self.last_samples = budget.samples;
+        let stop = if budget.samples >= budget.cap {
+            0
+        } else if budget.entries >= budget.batch {
+            1
+        } else {
+            2
+        };
+        self.plan_stops[stop] += 1;
         let (input, entries, jobs_in) = self.fill_entries(&plan, round, budget.entries);
         self.send(run, bind, settings, &input, entries, jobs_in);
         true

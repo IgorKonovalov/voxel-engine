@@ -97,6 +97,12 @@ impl BakeQueue {
             .copied()
             .collect();
         self.stats.retiered += moved.len() as u64;
+        if !moved.is_empty() {
+            // A block whose band changed may be a refinement's candidate: the depth is counted
+            // again and the next step opens.
+            self.counted_idle = false;
+            self.quiet_until = self.steps;
+        }
         self.touched.extend(moved);
         let pending: ChunkSet = self.lp.pending_chunks().map(|c| c.0).collect();
         let job_count = &self.job_count;
@@ -129,5 +135,50 @@ impl BakeQueue {
         }
         self.counted_idle = false;
         self.quiet_until = self.steps;
+    }
+
+    /// Removes from [`BakeQueue::view_waiting`] each chunk that waits for nothing now: its record at
+    /// its band's count, out of the mirror's full chunks, or known to hold no face.
+    pub(super) fn land_waiting(&mut self, gpu: &GpuWorld, store: &Store) {
+        if self.view_waiting.is_empty() {
+            self.stats.drain_waiting = 0;
+            return;
+        }
+        let landed: Vec<[i32; 3]> = self
+            .view_waiting
+            .iter()
+            .copied()
+            .filter(|&c| self.landed(gpu, store, c))
+            .collect();
+        self.retain_waiting(|c| landed.contains(&c));
+    }
+
+    /// Drops the chunks `landed` names from [`BakeQueue::view_waiting`].
+    pub(super) fn retain_waiting(&mut self, landed: impl Fn([i32; 3]) -> bool) {
+        self.view_waiting.retain(|&c| !landed(c));
+        self.stats.drain_waiting = self.view_waiting.len() as u64;
+    }
+
+    /// The step's slice in ms after a frame of `interval_s` seconds: the drain's value while a
+    /// chunk of [`BakeQueue::view_waiting`] waits, its line's once none does, the budget's
+    /// without a drain.
+    pub(super) fn step_slice(&mut self, interval_s: f64) -> f64 {
+        let waiting = !self.view_waiting.is_empty();
+        self.stats.draining = self.drain.is_some() && waiting;
+        match self.drain {
+            Some(d) => d.slice_ms(&self.budget, interval_s, waiting),
+            None => self.budget.slice_ms(interval_s),
+        }
+    }
+
+    /// Whether chunk `c` waits for no record: not mirrored full, faceless, sealed, or holding
+    /// a block at its band's count.
+    pub(super) fn landed(&self, gpu: &GpuWorld, store: &Store, c: [i32; 3]) -> bool {
+        let cc = ChunkCoord(c);
+        !gpu.is_mirrored(cc)
+            || gpu.is_lod(cc)
+            || self.faceless.contains(&c)
+            || self.sealed.holds(c)
+            || (store.blocks.contains_key(&c) && !self.lesser(store, c))
     }
 }

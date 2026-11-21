@@ -464,6 +464,17 @@ impl BakeQueue {
             waiting_all.push((c, has, coarse, self.need_samples(c, has, eye)));
         }
         self.stats.cone_only = cone_only;
+        // The drain's set (ADR-0080 rule 3): the chunks the census counts in view waiting.
+        let eye_c = view.eye.map(|v| (v / 64.0).floor() as i32);
+        self.view_waiting = waiting_all
+            .iter()
+            .filter(|&&(c, has, coarse, _)| {
+                let o = [0, 1, 2].map(|k| c[k] - eye_c[k]);
+                !(has == 1 && !coarse)
+                    && angle_term(o, view.forward, view.half_angle, self.near) <= 0.0
+            })
+            .map(|w| w.0)
+            .collect();
         self.stats.in_view = in_view_census(view, self.near, self.far_normal, waiting_all);
         self.stats.view_median = lens.map(|mut l| {
             l.sort_unstable_by(f32::total_cmp);

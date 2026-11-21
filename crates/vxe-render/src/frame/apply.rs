@@ -132,6 +132,7 @@ impl Frame {
             self.set_bake_reach(b.reach);
             self.set_bake_digs(b.edit_ms, b.dig_reach);
             self.set_bake_tiers(b.tiers);
+            self.set_bake_drain(b.drain);
         }
         out
     }

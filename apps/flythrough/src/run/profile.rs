@@ -17,6 +17,7 @@ impl Run {
         (s.scale, s.jitter) = (scale, jitter);
         s.bake.budget = self.modes.queue.budget;
         s.bake.tiers = self.args.bake.tiers;
+        s.bake.drain = self.args.bake.drain;
         s
     }
 
@@ -47,10 +48,12 @@ impl Run {
         }
         self.args.bake.budget = to.bake.budget;
         self.args.bake.tiers = to.bake.tiers;
+        self.args.bake.drain = to.bake.drain;
         self.modes.queue.budget = to.bake.budget;
         if let Some(g) = self.gfx.as_mut() {
             g.frame.set_bake_budget(to.bake.budget);
             g.frame.set_bake_tiers(to.bake.tiers);
+            g.frame.set_bake_drain(to.bake.drain);
         }
         let pending = to.changed_fields(&self.live_settings());
         self.modes.profile = self.args.profile_row(&self.live_settings(), &pending);

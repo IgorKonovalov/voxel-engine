@@ -202,7 +202,7 @@ impl BakeQueue {
     ) -> Result<(u64, bool), BakeError> {
         let dig = !self.digs.is_empty() || !self.dig_open.is_empty();
         let cap = view.samples.unwrap_or_else(|| {
-            let slice = self.budget.slice_ms(view.interval_s);
+            let slice = self.step_slice(view.interval_s);
             self.stats.slice_ms = slice;
             let ms = slice + if dig { self.edit_ms } else { 0.0 };
             ((ms * 1e6 / self.stats.ns_per_sample.max(0.1)) as u64).clamp(16_384, SUBMIT_SAMPLES)
@@ -317,7 +317,9 @@ impl BakeQueue {
             laps.ms[S_PLACE] += p;
         };
         lap(&mut self.laps, S_COLLECT);
-        let sent = self.lp.in_flight() < IN_FLIGHT
+        let room = self.lp.in_flight() < IN_FLIGHT;
+        let in_flight_full = !room && !self.lp.idle();
+        let sent = room
             && self
                 .lp
                 .dispatch(run, bind, store, &settings, cap, &mut sink, &mut |_| {});
@@ -342,6 +344,8 @@ impl BakeQueue {
         // late; without timestamps it stays at the first guess, a fixed count.
         self.stats.cap = cap;
         self.stats.submitted = submitted;
+        self.stats.plan_stops = self.lp.plan_stops;
+        self.stats.in_flight_full += u64::from(in_flight_full);
         self.stats.samples = d.samples;
         self.stats.ms = d.gpu_ms.unwrap_or(d.seconds * 1e3);
         self.stats.total_samples += d.samples;
@@ -384,6 +388,7 @@ impl BakeQueue {
             }
         }
         self.advance_fades(run.queue, store, record);
+        self.land_waiting(run.gpu, store);
         self.stats.jobs = self.lp.chunks().count() as u64;
         self.stats.fading = self.fades.len() as u64;
         self.stats.coarse = store.coarse.len() as u64;

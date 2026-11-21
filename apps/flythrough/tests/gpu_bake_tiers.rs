@@ -120,7 +120,7 @@ fn a_far_record_is_promoted_as_one_fade_when_the_camera_comes_near() {
 }
 
 /// Bakes [`far_row`] seen from chunk 0 to an empty queue, its steps sliced by the frame's slice
-/// (`samples` `None`) or the pre-roll's unsliced count: chunk 8's block.
+/// (`samples` `None`) or a pre-roll's count a step: chunk 8's block.
 fn far_block(samples: Option<u64>) -> Option<Vec<u32>> {
     let mut q = tiered(far_row(), &Setup::at([32.5, 32.5, 32.5]))?;
     q.samples = samples;
@@ -130,9 +130,10 @@ fn far_block(samples: Option<u64>) -> Option<Vec<u32>> {
 
 /// The partial rig: [`wall_row`] shifted so the camera sits 8 chunks before the receiver, the
 /// row at x 8 to 12; with `lod_wall`, the wall's chunk (10) is LOD-only and not resident full,
-/// as a streamer leaves a chunk past its full radius. The view's full radius is 1 chunk, so the
-/// receiver's reach (chunks 7 to 11) crosses it and, far band, it bakes from the chunks
-/// resident.
+/// as a streamer leaves a chunk past its full radius. The view's full radius is 0 chunks, so
+/// every reach crosses it, and a reach past the row's one-chunk cross-section is never resident
+/// full: the receiver, far band, bakes from the chunks resident by rule 4; the near-band chunks
+/// by the queue's `ReachMode::Partial`, set here so they bake at all.
 fn partial_rig(wall: bool, lod_wall: bool) -> Option<Q> {
     fn but_wall(c: ChunkCoord) -> bool {
         c != ChunkCoord([10, 0, 0])
@@ -157,13 +158,14 @@ fn partial_rig(wall: bool, lod_wall: bool) -> Option<Q> {
         },
     )?;
     q.resident = Some(if lod_wall { but_wall } else { every });
-    q.full_radius = Some(1);
+    q.full_radius = Some(0);
+    q.frame.set_bake_reach(vxe_render::ReachMode::Partial);
     Some(q)
 }
 
 /// Plan 0096 Phase 3 bar 3 (ADR-0046's identity per tier, ADR-0080): chunk 8's far-tier record
 /// of [`far_row`] hashes the same over two runs and two slicings (the frame's slice and the
-/// pre-roll's unsliced count); and the receiver's partial far record of the partial rig (the
+/// pre-roll's 16 384 samples a step); and the receiver's partial far record of the partial rig (the
 /// wall LOD-only), baked from a still camera with the rig's chunks resident, the same over two
 /// runs.
 #[test]
@@ -172,7 +174,7 @@ fn a_tiers_record_bytes_are_the_same_on_every_run() {
         return;
     };
     let b = far_block(None).expect("an adapter");
-    let c = far_block(Some(u64::MAX)).expect("an adapter");
+    let c = far_block(Some(16_384)).expect("an adapter");
     assert_eq!(tiers_of(&a), vec![2]);
     assert_eq!(a, b, "two runs");
     assert_eq!(a, c, "two slicings");
@@ -199,21 +201,20 @@ fn a_tiers_record_bytes_are_the_same_on_every_run() {
 #[test]
 fn a_lod_only_chunk_in_a_partial_reach_casts_from_its_mip() {
     let read = |wall: bool, lod_wall: bool| {
-        let mut q = partial_rig(wall, lod_wall).expect("an adapter");
+        let mut q = partial_rig(wall, lod_wall)?;
         if lod_wall {
             assert!(q.gpu.is_lod(ChunkCoord([10, 0, 0])), "the wall is LOD-only");
         }
         q.settle();
         let block = q.target([9, 0, 0]).expect("the receiver's block");
         assert_eq!(tiers_of(&block), vec![2]);
-        light_of(&block)
+        Some(light_of(&block))
     };
-    if partial_rig(false, false).is_none() {
+    let Some(open) = read(false, false) else {
         return;
-    }
-    let open = read(false, false);
-    let mip = read(true, true);
-    let full = read(true, false);
+    };
+    let mip = read(true, true).expect("an adapter");
+    let full = read(true, false).expect("an adapter");
     println!("receiver light: open {open:.4}, wall from its mips {mip:.4}, wall full {full:.4}");
     assert!(open > 0.0, "the ore lights the receiver");
     assert!(mip < open, "the LOD-only wall darkens the receiver");

@@ -392,3 +392,29 @@ fn a_far_band_chunk_whose_reach_crosses_the_full_radius_bakes_from_the_chunks_re
         vec![ring]
     );
 }
+
+/// Plan 0096 Phase 4 bar 1 (ADR-0080 rule 3): a queue with 3 chunks in view waiting for their
+/// tier's record reads the drain value (4.0 ms a frame at 60 Hz, over the budget's 1.5) while
+/// any waits, and the line's 1.0 at the step after the third lands; without a drain, the
+/// budget's 1.5 throughout.
+#[test]
+fn the_slice_is_the_drain_value_while_in_view_work_waits_and_the_line_after() {
+    let hz60 = 1.0 / 60.0;
+    let mut q = BakeQueue::new(BakeSettings::default(), 1.5);
+    q.drain = Some(DEFAULT_DRAIN);
+    let chunks = [[3, 0, 0], [4, 0, 0], [5, 0, 0]];
+    q.view_waiting = chunks.iter().copied().collect();
+    let mut landed: Vec<[i32; 3]> = Vec::new();
+    for c in chunks {
+        assert_eq!(q.step_slice(hz60), 4.0, "{} landed", landed.len());
+        assert!(q.stats.draining);
+        landed.push(c);
+        q.retain_waiting(|x| landed.contains(&x));
+    }
+    assert_eq!(q.stats.drain_waiting, 0);
+    assert_eq!(q.step_slice(hz60), 1.0, "the line once the third landed");
+    assert!(!q.stats.draining);
+    q.drain = None;
+    q.view_waiting = chunks.iter().copied().collect();
+    assert_eq!(q.step_slice(hz60), 1.5, "the budget alone");
+}

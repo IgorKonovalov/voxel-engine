@@ -142,6 +142,7 @@ impl Args {
                 budget: vxe_render::Budget::default(),
                 coarse: vxe_render::DEFAULT_COARSE_SAMPLES,
                 tiers: vxe_render::DEFAULT_TIERS,
+                drain: Some(vxe_render::DEFAULT_DRAIN),
                 near: vxe_render::DEFAULT_NEAR,
                 full_first: None,
                 missing_light: vxe_render::MissingLight::Chain,

@@ -69,6 +69,17 @@ fn sections() -> Vec<Section<Parsing>> {
                 },
             ),
             Flag::value(
+                &["--bake-drain"],
+                "off|DRAIN,LINE",
+                "the live queue's slice a frame in ms while a chunk in view waits for its tier's \
+                 record (at least the budget's) and once none does, each 0.1 to 100; off is the \
+                 budget alone [the profile's: 4,1 at floor, 6,1 at portable]",
+                |p: &mut Parsing, v| {
+                    p.args.bake.drain = vxe_render::Drain::parse(v.text)?;
+                    Ok(())
+                },
+            ),
+            Flag::value(
                 &["--light-hooks"],
                 "NAME[,NAME]",
                 "the light passes' reading hooks (a reading lever): keyoff (no key light ray), \
@@ -145,6 +156,7 @@ impl Args {
         self.residency = s.build.residency;
         self.bake.budget = s.bake.budget;
         self.bake.tiers = s.bake.tiers;
+        self.bake.drain = s.bake.drain;
         self.light_cap = s.light_cap;
         self.output_hint = s.output_hint;
     }
@@ -225,6 +237,7 @@ impl Args {
                 edit_ms: b.edit_ms,
                 dig_reach: b.dig_reach,
                 tiers: b.tiers,
+                drain: b.drain,
             },
             build: BuildSettings {
                 mirror_budget_bytes: self

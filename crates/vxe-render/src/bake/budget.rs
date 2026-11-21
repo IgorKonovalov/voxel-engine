@@ -82,6 +82,61 @@ impl std::fmt::Display for Budget {
     }
 }
 
+/// The slice's two values (ADR-0080 rule 3): `drain_ms` a frame while a chunk in view waits
+/// for its tier's record, at least the [`Budget`]'s slice; `line_ms` a frame once none does
+/// (the `docs/nfr.md` bake line).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Drain {
+    pub drain_ms: f64,
+    pub line_ms: f64,
+}
+
+/// The floor profile's drain: 4.0 ms a frame while in-view work waits, 1.0 once landed.
+pub const DEFAULT_DRAIN: Drain = Drain {
+    drain_ms: 4.0,
+    line_ms: 1.0,
+};
+
+impl Drain {
+    /// The step's slice after a frame of `interval_s` seconds under `budget`, with a chunk in
+    /// view `waiting` or not.
+    pub fn slice_ms(&self, budget: &Budget, interval_s: f64, waiting: bool) -> f64 {
+        if waiting {
+            self.drain_ms.max(budget.slice_ms(interval_s))
+        } else {
+            self.line_ms
+        }
+    }
+
+    /// Parses `off` (`None`) or `DRAIN,LINE` in ms (the form [`std::fmt::Display`] writes).
+    pub fn parse(s: &str) -> Result<Option<Self>, String> {
+        if s == "off" {
+            return Ok(None);
+        }
+        let num = |v: &str| {
+            v.trim()
+                .parse::<f64>()
+                .ok()
+                .filter(|x| x.is_finite() && (0.1..=100.0).contains(x))
+                .ok_or_else(|| format!("bake drain: {v:?} is not 0.1 to 100 ms"))
+        };
+        let (d, l) = s
+            .split_once(',')
+            .ok_or_else(|| format!("bake drain: {s:?} is neither off nor DRAIN,LINE"))?;
+        Ok(Some(Drain {
+            drain_ms: num(d)?,
+            line_ms: num(l)?,
+        }))
+    }
+}
+
+impl std::fmt::Display for Drain {
+    /// `4,1`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{},{}", self.drain_ms, self.line_ms)
+    }
+}
+
 /// Milliseconds a frame the live queue's slice grows by while a dig's bricks wait (ADR-0046's
 /// edit cap, by time on the slice's own ns a sample).
 pub const DEFAULT_BAKE_EDIT_MS: f64 = 3.0;
@@ -120,5 +175,26 @@ mod tests {
         assert!(Budget::parse("second:150").is_err());
         assert!(Budget::parse("second:150,0").is_err());
         assert!(Budget::parse("minute:3").is_err());
+    }
+
+    /// Plan 0096 Phase 4 (ADR-0080 rule 3): the drain value while a chunk in view waits, at
+    /// least the budget's slice, and the line's once none does; `off` and `DRAIN,LINE` parse.
+    #[test]
+    fn the_drain_slice_is_the_drain_value_while_waiting_and_the_line_after() {
+        let d = DEFAULT_DRAIN;
+        let f = Budget::PerFrame { ms: 1.5 };
+        assert_eq!(d.slice_ms(&f, 1.0 / 60.0, true), 4.0);
+        assert_eq!(d.slice_ms(&f, 1.0 / 60.0, false), 1.0);
+        let big = Budget::PerFrame { ms: 8.0 };
+        assert_eq!(
+            d.slice_ms(&big, 1.0 / 60.0, true),
+            8.0,
+            "the budget's floor"
+        );
+        assert_eq!(Drain::parse("off"), Ok(None));
+        assert_eq!(Drain::parse("4,1"), Ok(Some(d)));
+        assert_eq!(d.to_string(), "4,1");
+        assert!(Drain::parse("4").is_err());
+        assert!(Drain::parse("0,1").is_err());
     }
 }

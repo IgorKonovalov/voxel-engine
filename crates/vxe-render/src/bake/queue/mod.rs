@@ -210,6 +210,13 @@ pub struct BakeQueue {
     /// The bake budget: the slice a frame, or milliseconds a second sized by the view's
     /// interval ([`QueueView::interval_s`]).
     pub budget: Budget,
+    /// The slice's two values (ADR-0080 rule 3): the drain value while a chunk of
+    /// [`BakeQueue::view_waiting`] waits, the line's once none does; `None` is the budget alone.
+    pub drain: Option<Drain>,
+    /// The chunks in view the last census found waiting for their tier's record, each removed
+    /// as its record lands at its band's count, or as it leaves the mirror or turns out to hold
+    /// no face.
+    pub(super) view_waiting: ChunkSet,
     /// A brick direction's samples in the coarse pass; 0 bakes every chunk at the full count.
     pub coarse_samples: u32,
     /// Chunks (Chebyshev) around the camera's that the score's angle term and the withdrawal
@@ -482,6 +489,8 @@ impl BakeQueue {
         Self {
             settings,
             budget: Budget::PerFrame { ms: slice_ms },
+            drain: None,
+            view_waiting: Default::default(),
             coarse_samples: DEFAULT_COARSE_SAMPLES,
             near: DEFAULT_NEAR,
             full_first: Some(DEFAULT_NEAR),

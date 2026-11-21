@@ -92,6 +92,9 @@ pub struct BakeKnobs {
     /// The sample tiers a brick direction by band, near, mid and far (ADR-0080;
     /// [`crate::Frame::set_bake_tiers`]).
     pub tiers: [u32; 3],
+    /// The slice's drain and line values (ADR-0080 rule 3; [`crate::Frame::set_bake_drain`]);
+    /// `None` is the budget alone.
+    pub drain: Option<crate::bake::Drain>,
 }
 
 impl Default for BakeKnobs {
@@ -106,6 +109,7 @@ impl Default for BakeKnobs {
             edit_ms: crate::bake::DEFAULT_BAKE_EDIT_MS,
             dig_reach: true,
             tiers: crate::bake::DEFAULT_TIERS,
+            drain: Some(crate::bake::DEFAULT_DRAIN),
         }
     }
 }
@@ -291,6 +295,7 @@ impl RenderSettings {
     /// | `build.mirror_budget_bytes` | 3 GiB | 3 GiB x (12 / 16)^3 | 3 GiB | 3 GiB |
     /// | `bake.budget` | 1.5 ms a frame | 0.75 ms a frame | 1.5 ms a frame | 1.5 ms a frame |
     /// | `bake.tiers` | 4096, 1024, 256 | 1024, 256, 256 | 4096, 1024, 256 | 4096, 1024, 256 |
+    /// | `bake.drain` | 4.0, 1.0 ms | 6.0, 1.0 ms | 4.0, 1.0 ms | 4.0, 1.0 ms |
     pub fn profile(p: Profile) -> Self {
         let floor = Self {
             lighting: Lighting {
@@ -350,6 +355,10 @@ impl RenderSettings {
                     ms: crate::bake::DEFAULT_BAKE_SLICE_MS / 2.0,
                 };
                 s.bake.tiers = [1024, 256, 256];
+                s.bake.drain = Some(crate::bake::Drain {
+                    drain_ms: 6.0,
+                    line_ms: 1.0,
+                });
                 s
             }
             Profile::Performance => Self {
@@ -409,6 +418,15 @@ impl RenderSettings {
                 "[1024, 256, 256]",
                 "[4096, 1024, 256]",
                 "[4096, 1024, 256]",
+            ],
+        ),
+        (
+            "bake.drain",
+            [
+                "Some(Drain { drain_ms: 4.0, line_ms: 1.0 })",
+                "Some(Drain { drain_ms: 6.0, line_ms: 1.0 })",
+                "Some(Drain { drain_ms: 4.0, line_ms: 1.0 })",
+                "Some(Drain { drain_ms: 4.0, line_ms: 1.0 })",
             ],
         ),
         (
@@ -493,6 +511,7 @@ impl RenderSettings {
         ("bake.edit_ms", Live),
         ("bake.dig_reach", Live),
         ("bake.tiers", Live),
+        ("bake.drain", Live),
         ("build.mirror_budget_bytes", Rebuild),
         ("build.record_chunks", Rebuild),
         ("build.light_samples", Rebuild),
@@ -535,6 +554,7 @@ impl RenderSettings {
         ("set_bake_reach", &["bake.reach"]),
         ("set_bake_digs", &["bake.edit_ms", "bake.dig_reach"]),
         ("set_bake_tiers", &["bake.tiers"]),
+        ("set_bake_drain", &["bake.drain"]),
         ("set_entity_mirror", &["build.entity_pool_bytes"]),
         ("set_field_surface", &["build.field_surface"]),
         ("set_sync_budget_time", &["build.sync_budget_time"]),
@@ -759,6 +779,13 @@ impl RenderSettings {
             "bake.edit_ms" => s.bake.edit_ms += 1.0,
             "bake.dig_reach" => flip(&mut s.bake.dig_reach),
             "bake.tiers" => s.bake.tiers[1] /= 2,
+            "bake.drain" => {
+                s.bake.drain = if s.bake.drain.is_some() {
+                    None
+                } else {
+                    Some(crate::bake::DEFAULT_DRAIN)
+                }
+            }
             "build.mirror_budget_bytes" => s.build.mirror_budget_bytes /= 2,
             "build.record_chunks" => {
                 s.build.record_chunks = if s.build.record_chunks.is_some() {
