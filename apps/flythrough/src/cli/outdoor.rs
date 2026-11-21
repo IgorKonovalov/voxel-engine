@@ -47,6 +47,11 @@ pub struct OutdoorArgs {
     pub(crate) sky_bounce: f32,
     /// `--column-wait on|off`: the live queue's column wait (`Lighting::column_wait`).
     pub(crate) column_wait: bool,
+    /// `--key-cap V|off`: the key ray's length in voxels past which a face counts lit
+    /// (`Lighting::key_cap`), 0 for none.
+    pub(crate) key_cap: f32,
+    /// `--sky-down-skip on|off`: no sky ray from a face looking down (`Lighting::sky_down_skip`).
+    pub(crate) sky_down_skip: bool,
     /// `--dump-black`: once a second while the store's black count is over 0, the lighting
     /// pixels with no record value printed by the chunk they hit (`Run::dump_black`).
     pub(crate) dump_black: bool,
@@ -363,6 +368,30 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
             |p: &mut Parsing, v| {
                 p.args.outdoor.sky_normal =
                     v.named(vxe_render::SkyNormal::from_name, "face or smoothed")?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--key-cap"],
+            "V|off",
+            "the key light's shadow ray's length in voxels, past which a face counts lit (a \
+                 slow adapter's lever) [off]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.key_cap = if v.text == "off" {
+                    0.0
+                } else {
+                    v.parse_if(|c: &f32| *c >= 1.0, "a length of at least 1 voxel, or off")?
+                };
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--sky-down-skip"],
+            "on|off",
+            "no sky ray from a face whose normal points down: its sky visibility reads 0 (a \
+                 slow adapter's lever) [off]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.sky_down_skip = v.on_off()?;
                 Ok(())
             },
         ),

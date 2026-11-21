@@ -57,6 +57,12 @@ fn sky_shadowed(o: vec3<f32>, d: vec3<f32>, len: f32) -> bool {
     return s || (ENTITY_SHADOWS && entity_march(o, d, len).found);
 }
 
+// The key light's shadow ray's length: `params.key_cap` voxels where it is set (a ray clear that
+// far counts lit), else KEY_RAY_LEN.
+fn key_ray_len() -> f32 {
+    return select(KEY_RAY_LEN, params.key_cap, params.key_cap > 0.0);
+}
+
 // The key light's sample at a hit at `p`, normal `n`, shadow normal `ns`, lighting pixel `px`:
 // The key light's visibility at a hit, the share of `key_light_at(p, n)` that arrives: 1 where
 // one shadow ray toward a uniform point of its disc reaches the sky, times its transmittance
@@ -76,7 +82,7 @@ fn key_visibility(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>, px: vec2<u32>) -> f
         approach_on = true;
         approach_tan = max(tan(sky.key_radius), 1.0e-4);
         approach_min = 1.0;
-        let hit = sky_shadowed(sky_origin(p, ns), sky.key_dir, KEY_RAY_LEN);
+        let hit = sky_shadowed(sky_origin(p, ns), sky.key_dir, key_ray_len());
         approach_on = false;
         return select(clamp(approach_min, 0.0, 1.0) * exp(-absorb_tau), 0.0, hit);
     }
@@ -84,7 +90,7 @@ fn key_visibility(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>, px: vec2<u32>) -> f
     if ((params.lighting & LIGHTING_HOOK_KEY_NO_JITTER) != 0u) {
         d = sky.key_dir;
     }
-    if (sky_shadowed(sky_origin(p, ns), d, KEY_RAY_LEN)) {
+    if (sky_shadowed(sky_origin(p, ns), d, key_ray_len())) {
         return 0.0;
     }
     return exp(-absorb_tau);
@@ -126,7 +132,9 @@ fn sky_ray_blocked(o: vec3<f32>, d: vec3<f32>, len: f32) -> bool {
 // one: times the sky's irradiance above the horizon about the normal. 0 with no ray.
 fn sky_visibility_sample(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>, px: vec2<u32>) -> f32 {
     let count = sky.sky_rays;
-    if (count == 0u) {
+    // A face looking down reaches no sky through the ground under the column rule: no ray
+    // under LIGHTING2_SKY_DOWN_SKIP.
+    if (count == 0u || ((params.lighting2 & LIGHTING2_SKY_DOWN_SKIP) != 0u && n.z < -0.5)) {
         return 0.0;
     }
     let o = sky_origin(p, ns);

@@ -91,10 +91,13 @@ pub struct Params {
     pub light_scale: u32,
     pub light_offset: u32,
     pub prev_light_offset: u32,
-    pub _pad8: u32,
+    /// [`LIGHTING2_SKY_DOWN_SKIP`]: the light pass's second word of switches.
+    pub lighting2: u32,
     /// The size of the frame's image: the output size with the upscaler, else `size`.
     pub output_size: [u32; 2],
-    pub _pad10: u32,
+    /// [`Lighting::key_cap`]: the key ray's length in voxels, past which the face counts lit;
+    /// 0 for no cap.
+    pub key_cap: f32,
     /// [`LookParams::far_normal`].
     pub far_normal: [f32; 2],
     /// [`Lighting::sky_bounce`] clamped to 0 ..= 1.
@@ -282,6 +285,10 @@ pub(crate) const LIGHTING_KEY_COLUMN: u32 = 1 << 31;
 /// `Params::lighting` bit: inside the far normal's band the store's key visibility steps in at
 /// the weight's half ([`KeyFarMix::Step`]); clear, it blends by the weight.
 pub(crate) const LIGHTING_KEY_STEP: u32 = 1 << 26;
+
+/// `Params::lighting2` bit ([`Lighting::sky_down_skip`]): no sky ray from a face whose normal
+/// points down.
+pub(crate) const LIGHTING2_SKY_DOWN_SKIP: u32 = 1;
 
 /// The light passes' reading hooks ([`Frame::set_light_hooks`]): switches that take a term or a
 /// test out of the frame to attribute what the image does to it. All off by default; each is
@@ -986,6 +993,14 @@ pub struct Lighting {
     /// n.d) / 2` over those it holds (a crude bounce from the brick's neighbourhood, one more
     /// record read, no ray). Read where the store holds a baked visibility.
     pub sky_bounce: f32,
+    /// The key light's shadow ray's length in voxels, past which a face counts lit (0, the
+    /// default: no cap; Plan 0096 Phase 6's lever (a), 1536 its first guess): a slow adapter's
+    /// light pass skips the ray's far march.
+    pub key_cap: f32,
+    /// No sky ray from a face whose normal points down (`n.z < -0.5`): its sky visibility reads
+    /// 0, as the ground under it reaches no sky under the column rule (default off; Plan 0096
+    /// Phase 6's lever (b)).
+    pub sky_down_skip: bool,
     /// The live queue's column wait (ADR-0070's amendment of the second window; default off): on,
     /// a chunk bakes only once every column over its reach's footprint is final (holds every
     /// chunk the streamer will hold, [`crate::QueueView::lod_radius`]); off, once no chunk of
@@ -1047,6 +1062,8 @@ impl Default for Lighting {
             key_far_mix: KeyFarMix::Blend,
             sky_normal: SkyNormal::Smoothed,
             sky_bounce: 0.0,
+            key_cap: 0.0,
+            sky_down_skip: false,
             column_wait: false,
             key_step: DEFAULT_KEY_STEP,
         }

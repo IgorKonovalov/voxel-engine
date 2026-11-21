@@ -228,7 +228,9 @@ fn frame_params() -> Mirror {
         light_scale,
         light_offset,
         prev_light_offset,
+        lighting2,
         output_size,
+        key_cap,
         sky_bounce,
         dither
     });

@@ -999,6 +999,8 @@ impl Args {
             sky_normal: self.outdoor.sky_normal,
             column_wait: self.outdoor.column_wait,
             sky_bounce: self.outdoor.sky_bounce,
+            key_cap: self.outdoor.key_cap,
+            sky_down_skip: self.outdoor.sky_down_skip,
             ..crate::default_lighting()
         })
     }
