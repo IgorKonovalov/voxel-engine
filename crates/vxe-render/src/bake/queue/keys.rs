@@ -18,13 +18,13 @@ pub(in crate::bake) struct KeyJobs {
     /// Chunks whose block waits for its key-only job.
     waiting: std::collections::BTreeSet<[i32; 3]>,
     /// Chunks whose key-only job is pending or open.
-    pub(super) open: std::collections::HashMap<[i32; 3], ()>,
+    pub(super) open: std::collections::HashSet<[i32; 3]>,
 }
 
 impl KeyJobs {
     /// Whether `c` waits for a key-only job or has one pending or open.
     pub(super) fn holds(&self, c: &[i32; 3]) -> bool {
-        self.waiting.contains(c) || self.open.contains_key(c)
+        self.waiting.contains(c) || self.open.contains(c)
     }
 
     /// Forgets the waiting chunks `held` does not hold (the mirror does not hold them full);
@@ -74,7 +74,7 @@ impl BakeQueue {
         self.keys.scanned = Some(dir);
         let step = self.key_step.max(0.0).to_radians();
         for (c, block) in &store.words {
-            if self.keys.open.contains_key(c)
+            if self.keys.open.contains(c)
                 || store.is_coarse(ChunkCoord(*c))
                 || !key_turned(block[KEY_SUN_AT as usize], dir, radius, step)
             {
@@ -104,7 +104,7 @@ impl BakeQueue {
         if self.keys.waiting.is_empty() {
             return Ok(());
         }
-        let mut left = self.lp.dig_samples_left(&self.keys.open);
+        let mut left = self.lp.dig_samples_left(|c| self.keys.open.contains(c));
         if left >= cap {
             return Ok(());
         }
@@ -185,7 +185,7 @@ impl BakeQueue {
                 brick_samples: None,
                 key_only: true,
             });
-            self.keys.open.insert(c, ());
+            self.keys.open.insert(c);
         }
         for job in jobs.into_iter().rev() {
             self.lp.push_front(job);

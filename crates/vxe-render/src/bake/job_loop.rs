@@ -234,7 +234,7 @@ impl JobLoop {
     }
 
     /// [`JobLoop::samples_left`] of the jobs whose chunks `of` holds.
-    pub(super) fn dig_samples_left<V>(&self, of: &std::collections::HashMap<[i32; 3], V>) -> u64 {
+    pub(super) fn dig_samples_left(&self, of: impl Fn(&[i32; 3]) -> bool) -> u64 {
         let live = |s: &FaceState| {
             if s.done {
                 0
@@ -245,13 +245,13 @@ impl JobLoop {
         let open: u64 = self
             .open
             .iter()
-            .filter(|j| of.contains_key(&j.coord.0))
+            .filter(|j| of(&j.coord.0))
             .map(|j| j.states.iter().map(live).sum::<u64>())
             .sum();
         let pending: u64 = self
             .pending
             .iter()
-            .filter(|j| of.contains_key(&j.coord.0))
+            .filter(|j| of(&j.coord.0))
             .map(|j| j.samples)
             .sum();
         open + pending

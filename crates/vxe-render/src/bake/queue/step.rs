@@ -387,7 +387,7 @@ struct Placement<'a> {
     job_coarse: &'a mut std::collections::HashMap<[i32; 3], bool>,
     job_eye: &'a mut std::collections::HashMap<[i32; 3], u64>,
     dig_open: &'a mut std::collections::HashMap<[i32; 3], DigChunk>,
-    keys_open: &'a mut std::collections::HashMap<[i32; 3], ()>,
+    keys_open: &'a mut std::collections::HashSet<[i32; 3]>,
     reach: &'a mut std::collections::BTreeSet<[i32; 3]>,
     partial: &'a mut ChunkSet,
     job_partial: &'a mut ChunkSet,
@@ -409,7 +409,7 @@ impl Placement<'_> {
         let from_partial = self.job_partial.remove(&coord.0);
         let from_provisional = self.job_provisional.remove(&coord.0);
         let dug = self.dig_open.remove(&coord.0);
-        let keyed = self.keys_open.remove(&coord.0).is_some();
+        let keyed = self.keys_open.remove(&coord.0);
         if self.stale.remove(&coord.0) || !self.gpu.is_mirrored(coord) {
             store.release(first, block.len() as u64);
             // A dig job's bricks went back to the waiting digs at the edit; a whole chunk's

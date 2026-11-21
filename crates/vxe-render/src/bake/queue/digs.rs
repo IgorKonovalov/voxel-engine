@@ -191,7 +191,7 @@ impl BakeQueue {
         order.sort_unstable();
         // The dig jobs already pending or open count against the two slices; the rest of the
         // loop does not, so a dig never waits behind the queue's own depth.
-        let mut left: u64 = self.lp.dig_samples_left(&self.dig_open);
+        let mut left: u64 = self.lp.dig_samples_left(|c| self.dig_open.contains_key(c));
         let classes = self.classes(run.world.materials());
         let record = self.record_words();
         let brick_samples = self.settings.brick_samples;
