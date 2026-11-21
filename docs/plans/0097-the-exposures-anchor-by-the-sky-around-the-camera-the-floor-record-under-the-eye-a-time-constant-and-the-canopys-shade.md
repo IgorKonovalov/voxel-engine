@@ -315,8 +315,8 @@ direction bit and `VIS_BAKED` answers with its `+z` byte over 255. No `vxe-world
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The reading: the sky over the floor | dev | done; `F_floor` 1/8; readings in [`logs/0097.md`](logs/0097.md) | ea15d52f |
-| 2: The anchor by the floor's sky | dev | done; bar 4's baked deep noon tunnel at +1.18 EV, not `max` (Notes) | committed with this row |
-| 3: The owner's window | human | not started | |
+| 2: The anchor by the floor's sky | dev | done; bar 4's baked deep noon tunnel at +1.18 EV, not `max` (Notes) | 5d1cbf77 |
+| 3: The owner's window | human | runner ready (`live/session97.sh`), awaits the owner | |
 | 4: The picks as tests and the docs | dev | not started | |
 
 ### Notes
