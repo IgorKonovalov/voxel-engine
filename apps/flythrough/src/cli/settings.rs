@@ -47,6 +47,19 @@ fn sections() -> Vec<Section<Parsing>> {
                     Ok(())
                 },
             ),
+            Flag::value(
+                &["--light-samples"],
+                "N",
+                "the mirror's light-sample buffer in samples, 1024 to 1048576 (a reading lever: \
+                 a smaller buffer fills and evicts) [1048576]",
+                |p: &mut Parsing, v| {
+                    p.args.light_samples = Some(v.parse_if(
+                        |n: &u32| (1024..=vxe_render::DEFAULT_LIGHT_SAMPLES).contains(n),
+                        "1024 to 1048576",
+                    )?);
+                    Ok(())
+                },
+            ),
         ],
     }]
 }

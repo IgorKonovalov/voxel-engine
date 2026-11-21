@@ -13,6 +13,9 @@ use vxe_render::SyncStats;
 
 use crate::path::WARMUP_S;
 
+mod queue;
+pub use queue::{QueueDrain, drain_words};
+
 /// The `schema` field: bumped when a field changes meaning or goes away.
 pub const SCHEMA: u32 = 2;
 
@@ -124,6 +127,8 @@ pub struct RunReport {
     pub load_ms: Option<f64>,
     /// The loading stages in order and the step time each took, in ms (schema 2).
     pub load_stages: Vec<(&'static str, f64)>,
+    /// The live queue's in-view drain at the run's end; `None` without the live queue.
+    pub queue: Option<QueueDrain>,
     /// `completed` or `aborted`; `failed` when the session ended on an error.
     pub ended: &'static str,
 }
@@ -531,6 +536,11 @@ impl RunReport {
             o.push('}');
         }
         o.push(']');
+        field(&mut o, "queue");
+        match &self.queue {
+            Some(q) => q.write_json(&mut o),
+            None => o.push_str("null"),
+        }
         field(&mut o, "ended");
         write_json_string(&mut o, self.ended);
         o.push_str("\n}\n");
@@ -922,6 +932,7 @@ mod tests {
             streaming: None,
             load_ms: None,
             load_stages: Vec::new(),
+            queue: None,
             ended: "completed",
         }
     }

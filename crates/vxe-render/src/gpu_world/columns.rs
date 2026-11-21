@@ -127,6 +127,15 @@ impl ColumnMap {
         self.top([x, y].map(|v| v.div_euclid(COLUMN_CELL)), z_range)
     }
 
+    /// The lowest top over chunk column `col`'s 64 x 64 footprint as the map holds it once
+    /// flushed, over the window's chunks `z_range`: [`COLUMN_NONE`] when a cell of it holds no
+    /// opaque voxel.
+    pub(super) fn lowest_top(&self, col: [i32; 2], z_range: std::ops::Range<i32>) -> i32 {
+        let mut texels = [COLUMN_NONE; SHEET_CELLS];
+        tile_of(&self.sheets, col, z_range, &mut texels);
+        texels.into_iter().min().unwrap_or(COLUMN_NONE)
+    }
+
     /// Writes the tiles of the dirty columns inside the window, and of every tile slot that
     /// now names another column. Returns the tiles written.
     pub(super) fn flush(&mut self, queue: &wgpu::Queue, min: [i32; 3], size: [i32; 3]) -> usize {

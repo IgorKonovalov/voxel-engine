@@ -6,10 +6,12 @@ mod digs;
 mod keys;
 mod list;
 mod open;
+mod rule;
 mod stats;
 mod step;
 
-pub use self::stats::QueueStats;
+pub use self::open::in_view_census;
+pub use self::stats::{Band, Bands, InViewWaiting, ListingCensus, QueueStats, chunk_nearest};
 
 /// Frames a re-baked block's values move over, from what it showed to its new values.
 pub const FADE: u32 = 16;
@@ -165,6 +167,9 @@ pub struct QueueView<'a> {
     /// will hold, which a column must have mirrored before the bake reads its top
     /// ([`reach_columns_final`]); `None` waits only for the chunks pending upload.
     pub lod_radius: Option<i32>,
+    /// The output's focal length in pixels ([`Bands::focal_px`]), which with
+    /// [`BakeQueue::far_normal`] sets each chunk's [`Band`]; `None` reads every chunk as near.
+    pub focal_px: Option<f32>,
 }
 
 /// The live queue (ADR-0046's scheduler, Plan 0059 Phase 8 as re-read at Phase 7b): the brick
@@ -331,6 +336,23 @@ pub struct BakeQueue {
     pub key_step: f32,
     /// The key-only re-bakes waiting and in a job.
     pub(super) keys: keys::KeyJobs,
+    /// Whether a candidate the rule answers ([`rule::buried`], no exposed emitter within the
+    /// light radius) takes a zero record written on the CPU instead of a GPU job (ADR-0080).
+    pub zero_rule: bool,
+    /// Chunks whose block is the rule's zero record: baked again when a change near them
+    /// breaks the rule ([`BakeQueue::relist_zeroed`]).
+    pub(super) zeroed: ChunkSet,
+    /// Chunks the opening's checks found answered by the rule, read when listed.
+    pub(super) ruled_checked: ChunkSet,
+    /// Ruled chunks listed this step, their place and faces: their zero blocks are placed at
+    /// the step's submit.
+    pub(super) ruled: Vec<(ChunkCoord, u64, ChunkFaces)>,
+    /// The step's lowest column tops by chunk column ([`GpuWorld::column_lowest`]), emptied
+    /// each step.
+    pub(super) columns_lowest: std::collections::HashMap<[i32; 2], i32>,
+    /// `LookParams::far_normal` (`[lo, hi]` pixels a voxel), set by the frame each step: with
+    /// [`QueueView::focal_px`] the band a chunk's size on screen puts it in ([`Bands`]).
+    pub far_normal: [f32; 2],
     /// Chunks whose block was baked while a column over its reach was not final (the wait
     /// off): baked again once when those columns turn final ([`BakeQueue::catch_up`]).
     pub(super) provisional: ChunkSet,
@@ -541,6 +563,12 @@ impl BakeQueue {
             column_wait: false,
             key_step: crate::frame::DEFAULT_KEY_STEP,
             keys: Default::default(),
+            far_normal: [0.0; 2],
+            zero_rule: true,
+            zeroed: Default::default(),
+            ruled_checked: Default::default(),
+            ruled: Vec::new(),
+            columns_lowest: Default::default(),
             provisional: Default::default(),
             job_provisional: Default::default(),
             provisional_checked: Default::default(),
@@ -910,6 +938,25 @@ impl BakeQueue {
         self.census_due = true;
     }
 
+    /// The samples `c` still needs (class 1 with a block, `coarse` a coarse one): its brick
+    /// directions ([`ChunkMasks::dirs_bound`] from its prepared masks, else six a brick) at the
+    /// full count, and at the coarse count too where its first pass is still to come and is
+    /// the coarse one.
+    pub(super) fn need_samples(&self, c: [i32; 3], class: u8, eye: [i32; 3]) -> u64 {
+        let dirs = self
+            .prepared
+            .get(&c)
+            .map_or(CHUNK_BRICKS as u64 * 6, |m| m.masks.dirs_bound());
+        let coarse_first = class == 0 && self.coarse_samples > 0 && !self.full_first_at(c, eye);
+        let per = u64::from(self.settings.brick_samples)
+            + if coarse_first {
+                u64::from(self.coarse_samples)
+            } else {
+                0
+            };
+        dirs * per
+    }
+
     /// Where `c` lies against `view` from the camera's chunk `eye`: [`VIEW_SHELL`],
     /// [`VIEW_IN`] or [`VIEW_OUT`].
     pub(super) fn view_class(&self, c: [i32; 3], eye: [i32; 3], view: &QueueView<'_>) -> usize {
@@ -952,6 +999,7 @@ impl BakeQueue {
             ("job_provisional", self.job_provisional.contains(&c)),
             ("provisional_due", self.provisional_due.contains(&c)),
             ("keys", self.keys.holds(&c)),
+            ("zeroed", self.zeroed.contains(&c)),
         ]
         .into_iter()
         .filter_map(|(name, held)| held.then_some(name))

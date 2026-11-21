@@ -201,6 +201,7 @@ impl Q {
             frustum: None,
             full_radius: self.full_radius,
             lod_radius: self.lod_radius,
+            focal_px: None,
         };
         #[allow(
             clippy::disallowed_methods,

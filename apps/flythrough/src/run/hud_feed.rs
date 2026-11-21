@@ -574,6 +574,7 @@ impl Run {
         hud::write_queue_row(
             queue,
             &self.queue.stats.unwrap_or_default(),
+            self.queue.line_rate,
             self.queue.line_step_p50,
         );
         queue.push_str("; ");

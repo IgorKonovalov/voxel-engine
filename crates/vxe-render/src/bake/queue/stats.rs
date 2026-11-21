@@ -121,4 +121,167 @@ pub struct QueueStats {
     pub keys: u64,
     /// Key-only re-bakes landed since the queue started.
     pub keys_baked: u64,
+    /// The chunks in view (the view cone and the near shell) waiting for their light at the
+    /// last census, by band and class, and the samples they still need ([`InViewWaiting`]).
+    pub in_view: InViewWaiting,
+    /// The samples read back since the queue started of jobs at the full count and of jobs at
+    /// their own count (the coarse pass), and the GPU milliseconds of their submits split
+    /// between them by those samples: an attribution, not a measurement of each class.
+    pub class_samples: [u64; 2],
+    pub class_ms: [f64; 2],
+    /// The mirror's changes the steps read since the queue started, each chunk once a step:
+    /// what the step's `filter` stages walk.
+    pub mirror_changes: u64,
+    /// Chunks given the rule's zero record since the queue started, with no GPU job
+    /// ([`BakeQueue::zero_rule`]), and zeroed chunks baked again since, a change near them
+    /// having broken the rule.
+    pub zeroed: u64,
+    pub zero_relisted: u64,
+}
+
+/// A chunk's band by its size on screen: where a voxel of its nearest point projects over the
+/// far-normal band's top (near), within the band (mid), or under its bottom (far) ([`Bands`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Band {
+    Near,
+    Mid,
+    Far,
+}
+
+impl Band {
+    /// The bands nearest first, in the order of [`InViewWaiting::chunks`].
+    pub const ALL: [Band; 3] = [Band::Near, Band::Mid, Band::Far];
+
+    /// The band's index in [`Band::ALL`].
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    /// The band's name on the lines: `near`, `mid`, `far`.
+    pub fn name(self) -> &'static str {
+        ["near", "mid", "far"][self.index()]
+    }
+}
+
+/// The far-normal band (`[lo, hi]` pixels a voxel, `LookParams::far_normal`) at a view's focal
+/// length in pixels (`focal_px`: half the output's height over the tangent of half the
+/// vertical field, which for square pixels equals the width's over the horizontal's, the
+/// shader's `far_normal_weight`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Bands {
+    pub focal_px: f32,
+    pub lo: f32,
+    pub hi: f32,
+}
+
+impl Bands {
+    /// The focal length in pixels of an output `height` pixels tall under a vertical field of
+    /// `vfov` radians.
+    pub fn focal_px(height: u32, vfov: f32) -> f32 {
+        height as f32 * 0.5 / (vfov * 0.5).tan()
+    }
+
+    /// The band of a voxel `px` pixels across: over `hi` near, from `lo` to `hi` mid, under `lo`
+    /// far. With the band off (`hi <= lo`) every voxel is near.
+    pub fn of_px(&self, px: f32) -> Band {
+        if self.hi <= self.lo || px > self.hi {
+            Band::Near
+        } else if px >= self.lo {
+            Band::Mid
+        } else {
+            Band::Far
+        }
+    }
+
+    /// The pixels a voxel spans at `d` voxels from the eye.
+    pub fn px_at(&self, d: f32) -> f32 {
+        self.focal_px / d.max(1e-3)
+    }
+
+    /// The band of chunk `c` seen from `eye` (voxels): by its point nearest the eye (the eye's
+    /// own chunk is near).
+    pub fn of_chunk(&self, c: [i32; 3], eye: [f32; 3]) -> Band {
+        self.of_px(self.px_at(chunk_nearest(c, eye)))
+    }
+}
+
+/// The distance in voxels from `eye` to the nearest point of chunk `c`'s box (0 inside it).
+pub fn chunk_nearest(c: [i32; 3], eye: [f32; 3]) -> f32 {
+    (0..3)
+        .map(|k| {
+            let lo = (c[k] * 64) as f32;
+            let hi = lo + 64.0;
+            let d = (lo - eye[k]).max(eye[k] - hi).max(0.0);
+            d * d
+        })
+        .sum::<f32>()
+        .sqrt()
+}
+
+/// The chunks in view waiting for their light, by band ([`Band::ALL`]'s order) and class (no
+/// record, a coarse record), and the samples they still need: each chunk's brick directions
+/// (bounded from its prepared masks, else six a brick) at the count of every pass it has left.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct InViewWaiting {
+    pub chunks: [[u64; 2]; 3],
+    pub samples: u64,
+}
+
+impl InViewWaiting {
+    /// Counts a waiting chunk of `band`, with a coarse record or none, needing `samples`.
+    pub fn note(&mut self, band: Band, coarse: bool, samples: u64) {
+        self.chunks[band.index()][usize::from(coarse)] += 1;
+        self.samples += samples;
+    }
+
+    /// The chunks waiting in every band and class.
+    pub fn total(&self) -> u64 {
+        self.chunks.iter().flatten().sum()
+    }
+
+    /// The chunks waiting in each band, both classes.
+    pub fn by_band(&self) -> [u64; 3] {
+        self.chunks.map(|[a, b]| a + b)
+    }
+
+    /// The chunks waiting with no record and with a coarse one, every band.
+    pub fn by_class(&self) -> [u64; 2] {
+        [0, 1].map(|k| self.chunks.iter().map(|b| b[k]).sum())
+    }
+
+    /// The seconds the need takes at `samples_per_s` (the last second's rate): `None` while the
+    /// queue draws nothing and something waits, 0 when nothing does.
+    pub fn drain_s(&self, samples_per_s: f64) -> Option<f64> {
+        if self.samples == 0 {
+            Some(0.0)
+        } else if samples_per_s > 0.0 {
+            Some(self.samples as f64 / samples_per_s)
+        } else {
+            None
+        }
+    }
+}
+
+/// A reading of the chunks the queue lists ([`BakeQueue::listing_census`]): every candidate and
+/// every chunk in a job with no full block, by what the rules would answer of it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ListingCensus {
+    /// The chunks read.
+    pub listed: u64,
+    /// Of them, those whose listing finds no exposed face.
+    pub no_face: u64,
+    /// Of the rest, those whose reach box (the chunk dilated by the light radius) lies under
+    /// the column map's lowest top over the box's footprint, with no exposed emitter within the
+    /// light radius and every column over the reach final; and those that would be but for a
+    /// column not yet final.
+    pub buried: u64,
+    pub buried_unfinal: u64,
+    /// The rest (surface chunks) by band ([`Band::ALL`]'s order) and out of view (0) or in
+    /// view (1: the view cone or the near shell).
+    pub surface: [[u64; 2]; 3],
+    /// Of the surface chunks, by band, those whose reach crosses the streamer's full radius
+    /// ([`reach_crosses`]); none in a bounded world.
+    pub reach_bound: [u64; 3],
+    /// The census's CPU milliseconds.
+    pub ms: f64,
 }

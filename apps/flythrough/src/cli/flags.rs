@@ -1007,7 +1007,7 @@ fn bake_flags() -> Vec<Flag<Parsing>> {
         ),
         Flag::switch(
             &["--queue-census"],
-            "read the queue's view census at every opening",
+            "read the queue's view census at every opening, its listing once",
             |p: &mut Parsing| {
                 p.args.bake.queue_census = true;
             },

@@ -351,33 +351,36 @@ fn fixed_stats_format_to_their_rows() {
     assert!(colours.iter().all(|&c| c != HudColour::Red));
 }
 
-/// The queue row counts the chunks in the view cone beyond the shell still waiting, blank
-/// and coarse, from the queue's counters; the shell and the chunks out of view are not
-/// counted.
+/// The queue row counts the chunks in view still waiting from the queue's in-view census, of
+/// them the coarse ones, and the seconds their need takes at the given rate: 12 waiting
+/// needing 6.0e7 samples at 1.5e7 a second drain in 4.0 s; nothing drawn reads `n/a`.
 #[test]
 fn the_queue_row_counts_the_view() {
     let mut st = vxe_render::QueueStats::default();
-    st.view_waiting[vxe_render::internals::VIEW_SHELL] = [3, 1];
-    st.view_waiting[vxe_render::internals::VIEW_IN] = [7, 5];
-    st.view_waiting[vxe_render::internals::VIEW_OUT] = [40, 9];
+    st.in_view.chunks = [[3, 1], [2, 2], [2, 2]];
+    st.in_view.samples = 60_000_000;
     assert_eq!(
-        queue_row(&st, 1.254, ""),
-        "in view: 12 waiting (5 coarse), withdrawn 0, step 1.25 ms"
+        queue_row(&st, 1.5e7, 1.254, ""),
+        "in view: 12 waiting (5 coarse), drain 4.0 s, withdrawn 0, step 1.25 ms"
+    );
+    assert_eq!(
+        queue_row(&st, 0.0, 1.254, ""),
+        "in view: 12 waiting (5 coarse), drain n/a, withdrawn 0, step 1.25 ms"
     );
     let keyed = vxe_render::QueueStats { keys: 40, ..st };
     assert_eq!(
-        queue_row(&keyed, 1.254, ""),
-        "in view: 12 waiting (5 coarse), withdrawn 0, step 1.25 ms, key 40"
+        queue_row(&keyed, 1.5e7, 1.254, ""),
+        "in view: 12 waiting (5 coarse), drain 4.0 s, withdrawn 0, step 1.25 ms, key 40"
     );
     let (mut out, mut colours) = (String::new(), Vec::new());
     let mut s = HudStats::fixed();
     s.write_rows(&mut out, &mut colours);
     assert!(!out.contains("in view:"), "{out}");
-    s.queue = Some(queue_row(&st, 1.254, ""));
+    s.queue = Some(queue_row(&st, 1.5e7, 1.254, ""));
     s.write_rows(&mut out, &mut colours);
     assert!(
         out.lines()
-            .any(|l| l == "in view: 12 waiting (5 coarse), withdrawn 0, step 1.25 ms"),
+            .any(|l| l == "in view: 12 waiting (5 coarse), drain 4.0 s, withdrawn 0, step 1.25 ms"),
         "{out}"
     );
     assert_eq!(out.lines().count(), colours.len());

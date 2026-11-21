@@ -601,7 +601,8 @@ pub struct BakeArgs {
     pub(crate) queue_withdraw: bool,
     /// `--queue-census`: the live queue reads its view census, the in-view ages and the angle
     /// weights at every opening (a reading; by default once a second, for the stdout line and
-    /// the HUD's queue row, and no angle weights).
+    /// the HUD's queue row, and no angle weights), and at its first live step the census of
+    /// its listing (`vxe_render::BakeQueue::listing_census`, the `bake queue census:` line).
     pub(crate) queue_census: bool,
     /// `--edit-ms MS`: the live queue's slice grows by `MS` a frame while a dig's bricks wait
     /// (default `vxe_render::DEFAULT_BAKE_EDIT_MS`).
@@ -723,6 +724,9 @@ pub struct Args {
     /// `--light-cap N`: slots of the list of lights shaded, the headlamp's included
     /// (`vxe_render::Frame::set_light_cap`); the profile's by default.
     pub(crate) light_cap: u32,
+    /// `--light-samples N`: the mirror's light-sample buffer in samples
+    /// (`vxe_render::MirrorConfig::light_samples`); `vxe_render::DEFAULT_LIGHT_SAMPLES` without.
+    pub(crate) light_samples: Option<u32>,
     /// The output size of a headless run with no `--render`: the `--profile`'s hint when one
     /// is given, else none (1280 x 720).
     pub(crate) output_hint: Option<[u32; 2]>,

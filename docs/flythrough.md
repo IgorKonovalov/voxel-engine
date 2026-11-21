@@ -382,7 +382,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--queue-order score\|distance` | The live queue's order |
 | `--queue-weights A,R\|A,tier` | The score's angle and refine weights |
 | `--queue-withdraw on\|off` | Withdraw the jobs of chunks the camera passed |
-| `--queue-census` | Read the queue's view census at every opening |
+| `--queue-census` | Read the queue's view census at every opening, its listing once |
 | `--edit-ms MS` | The slice's growth while a dig waits, 0 to 100 ms [3] |
 | `--dig-reach on\|off` | A dig re-bakes the chunks within the light radius [on] |
 | `--read-missing` | Read the store's no-value count while a dig waits |
@@ -428,6 +428,7 @@ stage's step time).
 | `--settings` | Print every render setting the flags give (`vxe_render::RenderSettings`, ADR-0055), one line per field: its name, its apply class (`live`, `settle`, `rebuild`) and its value; then exit |
 | `--profile floor\|portable\|performance\|high` | The render profile (`vxe_render::Profile`) the other flags edit, whatever their order: floor (1080p, FSR 2 at 1.5), portable (720p, FSR 2 at 1.5, fewer layers and lights, no lamp bounce, a smaller residency), performance (the window's size, FSR 2 at 2) or high (1080p, FSR 2 at 1; not for the slow adapter); its output hint sizes a headless run with no `--render`. The HUD's first mode row reads `profile: portable +1` with one field edited [floor] |
 | `--light-cap N` | Slots of the list of lights shaded, the headlamp's included, 1 to 16 [the profile's] |
+| `--light-samples N` | The mirror's light-sample buffer in samples, 1024 to 1048576 (a reading lever: a smaller buffer fills and evicts) [1048576] |
 
 `F4` (or the menu's `profile` entry, on the upscaler page) cycles the profiles in the window:
 the next one's translucent layers, lamp bounce, light cap, internal scale and bake budget apply

@@ -457,6 +457,7 @@ fn run_json_carries_the_streaming_stages() {
         streaming: None,
         load_ms: None,
         load_stages: Vec::new(),
+        queue: None,
         ended: "completed",
     };
     rec.fill(&mut r);
@@ -596,6 +597,7 @@ fn the_sync_line_names_its_slowest_sync() {
         streaming: None,
         load_ms: None,
         load_stages: Vec::new(),
+        queue: None,
         ended: "completed",
     };
     rec.fill(&mut r);

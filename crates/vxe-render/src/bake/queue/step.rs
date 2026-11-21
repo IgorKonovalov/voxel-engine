@@ -1,5 +1,6 @@
 //! The queue's step: one frame's run over every stage.
 
+use super::rule::zero_block;
 use super::*;
 
 impl BakeQueue {
@@ -20,6 +21,7 @@ impl BakeQueue {
         self.laps.lap(S_SETUP);
         let changes = self.follow_window(run, store, view);
         let changed = changes.as_ref().is_none_or(|c| !c.is_empty());
+        self.relist_zeroed(run.gpu, store, changes.as_deref());
         self.forget_unheld(run.gpu, changes);
         self.catch_up(run, view, changed);
         self.laps.lap(S_TOUCHED);
@@ -71,6 +73,7 @@ impl BakeQueue {
             self.stats.scanned += ch.len() as u64;
             let mut seen = ChunkSet::with_capacity_and_hasher(ch.len(), Default::default());
             ch.retain(|c| seen.insert(c.0));
+            self.stats.mirror_changes += ch.len() as u64;
             ch
         });
         let unheld = |c: &[i32; 3]| !gpu.is_mirrored(ChunkCoord(*c)) || gpu.is_lod(ChunkCoord(*c));
@@ -100,6 +103,7 @@ impl BakeQueue {
         }
         for c in gone {
             store.remove(run.queue, ChunkCoord(c));
+            self.zeroed.remove(&c);
         }
         self.laps.lap(S_GONE);
         changes
@@ -108,6 +112,7 @@ impl BakeQueue {
     /// The step's forget, reach-drop and touched stages over the mirror's changes.
     fn forget_unheld(&mut self, gpu: &GpuWorld, changes: Option<Vec<ChunkCoord>>) {
         self.columns_final.clear();
+        self.columns_lowest.clear();
         // What the queue knows of a chunk the mirror does not hold full goes with it, block or
         // none (a faceless or blocked chunk has none): the chunk is listed afresh if it returns.
         // A job in flight for it ends in the sink, which drops its block.
@@ -239,6 +244,8 @@ impl BakeQueue {
         // The sink's own time, the blocks' placement, taken out of the collect's and the
         // submit's laps.
         let place_ms = std::cell::Cell::new(0.0f64);
+        let ruled = std::mem::take(&mut self.ruled);
+        let (cell, clamp) = (self.settings.cell, self.settings.clamp);
         let mut placement = Placement {
             gpu: run.gpu,
             queue: run.queue,
@@ -265,6 +272,17 @@ impl BakeQueue {
             placement.place(store, coord, first, block);
             place_ms.set(place_ms.get() + seconds_since(t) * 1e3);
         };
+        // The rule's zero records land through the same placement as a job's block.
+        let sky = run.sky & BAKE_SKY_ON != 0;
+        let key = run.key.map(|(d, _)| d);
+        for (coord, first, faces) in ruled {
+            sink(
+                store,
+                coord,
+                first,
+                zero_block(coord, &faces, cell, clamp, sky, key),
+            );
+        }
         let settings = BakeSettings {
             round: if view.samples.is_some() {
                 UNSLICED_ROUND
@@ -305,6 +323,8 @@ impl BakeQueue {
             if let Some(ms) = w.gpu_ms {
                 *d.gpu_ms.get_or_insert(0.0) += ms;
             }
+            d.class_samples = [0, 1].map(|k| d.class_samples[k] + w.class_samples[k]);
+            d.class_ms = [0, 1].map(|k| d.class_ms[k] + w.class_ms[k]);
             lap(&mut self.laps, S_COLLECT);
         }
         // The slice is sized by the GPU's own time for the submits read back, a frame or two
@@ -314,6 +334,9 @@ impl BakeQueue {
         self.stats.samples = d.samples;
         self.stats.ms = d.gpu_ms.unwrap_or(d.seconds * 1e3);
         self.stats.total_samples += d.samples;
+        let st = &mut self.stats;
+        st.class_samples = [0, 1].map(|k| st.class_samples[k] + d.class_samples[k]);
+        st.class_ms = [0, 1].map(|k| st.class_ms[k] + d.class_ms[k]);
         if let Some(ms) = d.gpu_ms
             && d.samples >= 4096
         {

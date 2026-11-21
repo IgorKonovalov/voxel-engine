@@ -432,6 +432,7 @@ impl Run {
         MirrorConfig {
             budget_bytes: self.mirror_budget(),
             light_radius: self.args.light.radius(),
+            light_samples: self.args.light_samples.unwrap_or(cfg.light_samples),
             ..cfg
         }
     }

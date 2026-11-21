@@ -147,6 +147,8 @@ impl BakeQueue {
         }
         let partial = self.partial_checked.remove(&c);
         let provisional = self.provisional_checked.remove(&c);
+        let ruled = self.ruled_checked.remove(&c);
+        self.zeroed.remove(&c);
         if faces.faces() == 0 {
             self.reach.remove(&c);
             self.partial_due.remove(&c);
@@ -169,6 +171,16 @@ impl BakeQueue {
         self.reach.remove(&c);
         self.partial_due.remove(&c);
         self.provisional_due.remove(&c);
+        if ruled {
+            // The rule's zero record: no job; its block is placed at this step's submit.
+            self.job_partial.remove(&c);
+            self.job_provisional.remove(&c);
+            self.job_coarse.insert(c, false);
+            self.ruled.push((coord, first_word, faces));
+            self.zeroed.insert(c);
+            self.stats.zeroed += 1;
+            return Ok(0);
+        }
         if partial {
             self.job_partial.insert(c);
             self.stats.partial_opened += 1;

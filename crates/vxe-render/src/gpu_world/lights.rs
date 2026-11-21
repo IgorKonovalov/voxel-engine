@@ -565,6 +565,16 @@ impl GpuWorld {
             .or_insert_with(|| self.lights_ready_near_uncached(coord, r))
     }
 
+    /// Whether a chunk holding an exposed emitter lies with its box within `r` chunks of
+    /// `coord`'s box (the bake's candidate table's reach, as [`GpuWorld::lights_ready_near`]
+    /// reads it).
+    pub fn emitters_near(&self, coord: ChunkCoord, r: i32) -> bool {
+        self.lights
+            .chunks
+            .iter()
+            .any(|(c, l)| boxes_within(*c, coord, r) && l.bricks.values().any(|s| !s.is_empty()))
+    }
+
     /// [`GpuWorld::lights_ready_near`] walked in full, for tests that compare the two.
     #[doc(hidden)]
     pub fn lights_ready_near_uncached(&self, coord: ChunkCoord, r: i32) -> bool {
@@ -594,4 +604,13 @@ impl GpuWorld {
     pub fn light_range(&self, coord: ChunkCoord) -> Option<(u32, u32)> {
         self.lights.chunks.get(&coord).and_then(|l| l.range)
     }
+}
+
+/// Whether chunk `a`'s box lies within `r` chunks of chunk `b`'s: the squared gap between the
+/// boxes, in chunks, under `r^2` (the bake's candidate table's reach).
+pub(crate) fn boxes_within(a: ChunkCoord, b: ChunkCoord, r: i32) -> bool {
+    let gap2: i64 = (0..3)
+        .map(|k| i64::from(((a.0[k] - b.0[k]).abs() - 1).max(0)).pow(2))
+        .sum();
+    gap2 < i64::from(r).pow(2)
 }

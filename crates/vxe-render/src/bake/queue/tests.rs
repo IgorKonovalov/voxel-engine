@@ -2,6 +2,7 @@
 
 use super::keys::key_turned;
 use super::open::is_reach_bound;
+use super::rule::{buried, relisted};
 use super::*;
 use crate::gpu_world::column_is_final;
 
@@ -140,4 +141,62 @@ fn a_block_is_turned_past_the_radius_and_the_step() {
     assert!(key_turned(stamp, at(4.0), radius, step));
     assert!(!key_turned(stamp, at(4.0), 5f32.to_radians(), step));
     assert!(key_turned(0, at(0.0), radius, step));
+}
+
+/// Plan 0096 Phase 2 bar 2 (ADR-0080): the rule skips no chunk it cannot answer. A chunk at
+/// (3, 3, 1) at light radius 2 under a flat column top of 319 is buried (its box's top 255);
+/// one column of its footprint whose lowest top is 191 (the box's top one chunk over it), or
+/// 255 (level with it), or holding no opaque voxel, and it is not. An emitter chunk 3 chunks
+/// away along x lies within the light radius 4 (a gap of 2 chunks), so the chunk bakes with a
+/// job; one 6 chunks away (a gap of 5) does not reach it.
+#[test]
+fn a_chunk_with_an_emitter_in_reach_or_a_box_crossing_the_column_top_is_not_skipped() {
+    let c = ChunkCoord([3, 3, 1]);
+    assert!(buried(c, 2, |_, _| 319));
+    for low in [191, 255, crate::gpu_world::COLUMN_NONE] {
+        assert!(
+            !buried(c, 2, |x, y| if [x, y] == [5, 1] { low } else { 319 }),
+            "a column at {low}"
+        );
+    }
+    let mut read = Vec::new();
+    buried(c, 2, |x, y| {
+        read.push([x, y]);
+        319
+    });
+    assert_eq!(read.len(), 25, "the footprint's 5 x 5 columns");
+    use crate::gpu_world::boxes_within;
+    let o = ChunkCoord([0, 0, 0]);
+    assert!(
+        boxes_within(ChunkCoord([3, 0, 0]), o, 4),
+        "an emitter 3 chunks away"
+    );
+    assert!(!boxes_within(ChunkCoord([6, 0, 0]), o, 4));
+}
+
+/// Plan 0096 Phase 2 bar 3: a column carved from the surface into a cave re-lists the cave's
+/// zeroed chunks. Three zeroed chunks (2..=4, 3, 1) and a far one (20, 20, 1) under a flat
+/// column top of 319 at light radius 2: no change re-lists nothing; a carve that lowers
+/// column (4, 3) to 100 re-lists the three, whose footprints hold it, and reads the rule of
+/// none but those within 2 columns of the change.
+#[test]
+fn a_dig_to_the_sky_over_a_buried_chunk_relists_it() {
+    let cave = [[2, 3, 1], [3, 3, 1], [4, 3, 1]];
+    let far = [20, 20, 1];
+    let zeroed: ChunkSet = cave.iter().copied().chain([far]).collect();
+    let flat = |_: i32, _: i32| 319;
+    let still = |z: [i32; 3]| buried(ChunkCoord(z), 2, flat);
+    assert!(relisted(&zeroed, Some(&[]), 2, still).is_empty());
+    assert!(
+        relisted(&zeroed, None, 2, still).is_empty(),
+        "every one still buried"
+    );
+    let dug = |x: i32, y: i32| if [x, y] == [4, 3] { 100 } else { 319 };
+    let mut asked = Vec::new();
+    let due = relisted(&zeroed, Some(&[[4, 3]]), 2, |z| {
+        asked.push(z);
+        buried(ChunkCoord(z), 2, dug)
+    });
+    assert_eq!(due, cave.to_vec());
+    assert!(!asked.contains(&far), "the far chunk is not read");
 }

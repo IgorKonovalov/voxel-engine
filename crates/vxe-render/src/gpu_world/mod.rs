@@ -608,6 +608,14 @@ impl GpuWorld {
         self.columns.top_at(x, y, min..min + size)
     }
 
+    /// The lowest top the column map holds, once synced, over chunk column `(cx, cy)`'s
+    /// footprint: [`COLUMN_NONE`] where a cell of it holds no opaque voxel among the resident
+    /// chunks of the window.
+    pub fn column_lowest(&self, cx: i32, cy: i32) -> i32 {
+        let (min, size) = (self.window.min[2], self.window.size[2].max(1));
+        self.columns.lowest_top([cx, cy], min..min + size)
+    }
+
     /// Whether chunk column `(cx, cy)` is final: no chunk of it within the window waits to
     /// upload, and each one `wanted` names (the streamer holds or will hold it) is mirrored.
     pub fn column_final(

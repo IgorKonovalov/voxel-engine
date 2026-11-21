@@ -86,12 +86,12 @@ pub mod internals {
 }
 
 pub use bake::{
-    BakeError, BakeProgress, BakeQueue, BakeReport, BakeSettings, Budget, DEFAULT_BAKE_EDIT_MS,
-    DEFAULT_BAKE_SLICE_MS, DEFAULT_COARSE_SAMPLES, DEFAULT_NEAR, DigReport, FaceOutcome,
-    MissingLight, PreRoll, PreRollConfig, PreRollError, PreRollState, PreRollSummary,
-    QUEUE_ANGLE_WEIGHT, QUEUE_BRICK_SAMPLES, QUEUE_REFINE_WEIGHT, QueueOrder, QueueStats,
-    QueueView, ReachMode, Refine, Store, StoreStats, finality_blockers, queue_settings,
-    reach_crosses,
+    BakeError, BakeProgress, BakeQueue, BakeReport, BakeSettings, Band, Bands, Budget,
+    DEFAULT_BAKE_EDIT_MS, DEFAULT_BAKE_SLICE_MS, DEFAULT_COARSE_SAMPLES, DEFAULT_NEAR, DigReport,
+    FaceOutcome, InViewWaiting, ListingCensus, MissingLight, PreRoll, PreRollConfig, PreRollError,
+    PreRollState, PreRollSummary, QUEUE_ANGLE_WEIGHT, QUEUE_BRICK_SAMPLES, QUEUE_REFINE_WEIGHT,
+    QueueOrder, QueueStats, QueueView, ReachMode, Refine, Store, StoreStats, chunk_nearest,
+    finality_blockers, in_view_census, queue_settings, reach_crosses,
 };
 pub use camera::{Camera, View};
 pub use entities::{

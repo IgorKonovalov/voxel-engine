@@ -18,6 +18,11 @@ pub(crate) struct SubmitDone {
     pub seconds: f64,
     /// The dispatch's milliseconds on the GPU's timestamps, where the loop times its submits.
     pub gpu_ms: Option<f64>,
+    /// Of `samples`, those of jobs at the full count and those at a job's own count (the
+    /// coarse pass), and `gpu_ms` split between them by those samples: an attribution of the
+    /// dispatch's time by its share of the samples, not a measurement of each class.
+    pub class_samples: [u64; 2],
+    pub class_ms: [f64; 2],
 }
 
 /// Lanes of a workgroup that share an entry's samples (`BAKE_LANES` in bake.wgsl).
@@ -634,6 +639,7 @@ impl JobLoop {
             let out_words: &[u32] = bytemuck::cast_slice(&bytes[STAMP_BYTES as usize..]);
             let mut e = 0usize;
             let mut at = 0usize;
+            let mut class_samples = [0u64; 2];
             for &(slot, i, r) in &f.entries {
                 if self.open.get(at).is_none_or(|j| j.slot != slot) {
                     match self.open.iter().position(|j| j.slot == slot) {
@@ -655,6 +661,7 @@ impl JobLoop {
                         }
                     }
                 }
+                let class = usize::from(self.open[at].own_count);
                 let s = &mut self.open[at].states[i];
                 for _ in 0..r {
                     let words = &out_words[e * FACE_WORDS..(e + 1) * FACE_WORDS];
@@ -667,6 +674,7 @@ impl JobLoop {
                         report.wasted += u64::from(samples);
                         continue;
                     }
+                    class_samples[class] += u64::from(samples);
                     report.rays += u64::from(words[15]);
                     report.ray_len += f64::from(f32::from_bits(words[16]));
                     report.samples += u64::from(samples);
@@ -701,6 +709,18 @@ impl JobLoop {
             out.seconds += seconds;
             if let Some(ms) = gpu_ms {
                 *out.gpu_ms.get_or_insert(0.0) += ms;
+                let all = class_samples[0] + class_samples[1];
+                for ((s, m), &n) in out
+                    .class_samples
+                    .iter_mut()
+                    .zip(&mut out.class_ms)
+                    .zip(&class_samples)
+                {
+                    *s += n;
+                    if all > 0 {
+                        *m += ms * n as f64 / all as f64;
+                    }
+                }
             }
             self.close_ended(run, store, settings, sink);
             progress(&self.done);
@@ -803,6 +823,9 @@ pub(super) struct OpenJob {
     pub(super) kept_bricks: KeptBricks,
     /// [`Job::key_only`].
     pub(super) key_only: bool,
+    /// Whether the job draws its own count ([`Job::brick_samples`], the coarse pass): its
+    /// samples' class in [`SubmitDone::class_samples`].
+    pub(super) own_count: bool,
     pub(super) states: Vec<FaceState>,
     /// The faces still running.
     pub(super) live: Vec<usize>,
@@ -833,6 +856,7 @@ impl JobCtx<'_, '_> {
         // A job's own count (the live queue's coarse pass) on cells of a brick draws each
         // direction's samples on `ceil(count / BAKE_LANES)` of its faces, spread evenly through
         // them in key order, so each entry fills its workgroup; the record is their mean.
+        let own_count = brick_samples.is_some();
         let subset = brick_samples.is_some() && self.settings.cell == 8;
         let brick_samples = brick_samples.unwrap_or(self.settings.brick_samples);
         let mut states: Vec<FaceState> = Vec::with_capacity(faces.faces());
@@ -913,6 +937,7 @@ impl JobCtx<'_, '_> {
             first_word,
             kept_bricks,
             key_only,
+            own_count,
             states,
             live,
             slot,

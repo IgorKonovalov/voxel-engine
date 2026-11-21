@@ -383,14 +383,16 @@ pub struct HudStats {
     pub modes: String,
 }
 
-/// The live queue's row: the chunks in the view cone beyond the near shell still waiting for
-/// their light, and of them those with a coarse block, the jobs withdrawn since the start, the
-/// queue step's CPU p50 over the last second, then `mode` (the order and the withdrawal in
-/// words) after a semicolon when it is not empty:
-/// `in view: 12 waiting (5 coarse), withdrawn 3, step 1.25 ms; order distance; withdraw on`.
-pub fn queue_row(st: &vxe_render::QueueStats, step_ms: f64, mode: &str) -> String {
+/// The live queue's row: the chunks in view (the view cone and the near shell) still waiting
+/// for their light ([`vxe_render::QueueStats::in_view`]), and of them those with a coarse
+/// block, the seconds their need takes at `rate` samples a second
+/// ([`vxe_render::InViewWaiting::drain_s`]), the jobs withdrawn since the start, the queue
+/// step's CPU p50 over the last second, then `mode` (the order and the withdrawal in words)
+/// after a semicolon when it is not empty: `in view: 12 waiting (5 coarse), drain 4.0 s,
+/// withdrawn 3, step 1.25 ms; order distance; withdraw on`.
+pub fn queue_row(st: &vxe_render::QueueStats, rate: f64, step_ms: f64, mode: &str) -> String {
     let mut row = String::new();
-    write_queue_row(&mut row, st, step_ms);
+    write_queue_row(&mut row, st, rate, step_ms);
     if !mode.is_empty() {
         row.push_str("; ");
         row.push_str(mode);
@@ -399,16 +401,21 @@ pub fn queue_row(st: &vxe_render::QueueStats, step_ms: f64, mode: &str) -> Strin
 }
 
 /// Appends [`queue_row`]'s text before its mode to `out`:
-/// `in view: 12 waiting (5 coarse), withdrawn 3, step 1.25 ms`, then `, key 40` while blocks
-/// wait for or run a key-only re-bake (ADR-0079).
-pub fn write_queue_row(out: &mut String, st: &vxe_render::QueueStats, step_ms: f64) {
-    let [blank, coarse] = st.view_waiting[vxe_render::internals::VIEW_IN];
+/// `in view: 12 waiting (5 coarse), drain 4.0 s, withdrawn 3, step 1.25 ms`, then `, key 40`
+/// while blocks wait for or run a key-only re-bake (ADR-0079).
+pub fn write_queue_row(out: &mut String, st: &vxe_render::QueueStats, rate: f64, step_ms: f64) {
+    let [_, coarse] = st.in_view.by_class();
     let _ = write!(
         out,
-        "in view: {} waiting ({coarse} coarse), withdrawn {}, step {step_ms:.2} ms",
-        blank + coarse,
-        st.withdrawn
+        "in view: {} waiting ({coarse} coarse), drain ",
+        st.in_view.total()
     );
+    // Written in place: the HUD's refresh allocates nothing after its first frame.
+    let _ = match st.in_view.drain_s(rate) {
+        Some(s) => write!(out, "{s:.1} s"),
+        None => write!(out, "n/a"),
+    };
+    let _ = write!(out, ", withdrawn {}, step {step_ms:.2} ms", st.withdrawn);
     if st.keys > 0 {
         let _ = write!(out, ", key {}", st.keys);
     }

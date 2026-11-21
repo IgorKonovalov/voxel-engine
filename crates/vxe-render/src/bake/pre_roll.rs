@@ -135,6 +135,7 @@ impl PreRoll {
             frustum: view.frustum,
             full_radius: view.full_radius,
             lod_radius: view.lod_radius,
+            focal_px: view.focal_px,
         };
         if let Some(Err(e)) = frame.bake_queue_step(device, queue, mirror, world, &view) {
             return Err(PreRollError::Bake(e));

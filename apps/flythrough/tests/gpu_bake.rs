@@ -1813,3 +1813,75 @@ mod reading {
         }
     }
 }
+
+/// A 7 x 7 x 7-chunk world of rock under air from z 320 (a flat surface), with a cave of air
+/// over chunks (2..=4, 3, 1) under it, no emitter; the live queue at light radius 2 over a
+/// sun at elevation 40, the camera above the surface; `rule` sets the queue's zero rule.
+fn buried_rig(rule: bool) -> Option<support::queue::Q> {
+    use support::queue::{Setup, box_op, rig, world_of};
+    let world = world_of([7, 7, 7], ROCK);
+    for (min, max) in [
+        ([0, 0, 320], [448, 448, 448]),
+        ([140, 200, 80], [300, 250, 120]),
+    ] {
+        world
+            .apply(&box_op(min, max, Mode::Carve))
+            .expect("the box is resident");
+    }
+    let mut q = rig(world, &Setup::at([224.0, 224.0, 400.0]))?;
+    q.frame.set_sky(Some(sun_sky(40.0)));
+    q.frame
+        .bake_queue_mut()
+        .expect("the queue started")
+        .zero_rule = rule;
+    Some(q)
+}
+
+/// The cave's chunks, under the surface with their reach boxes (top z 255) under every
+/// column's top (319).
+const CAVE: [[i32; 3]; 3] = [[2, 3, 1], [3, 3, 1], [4, 3, 1]];
+
+/// Plan 0096 Phase 2 bar 1 (ADR-0080): the cave's chunks, buried under the column map with no
+/// emitter in reach, take the rule's zero record with no GPU job, and those records equal byte
+/// for byte the records the same queue writes with the rule off (each a GPU job at the full
+/// count), under a sun (the sky's and the key light's flags set).
+#[test]
+fn a_buried_chunk_with_no_emitter_in_reach_gets_the_bakes_bytes_without_a_job() {
+    let Some(mut ruled) = buried_rig(true) else {
+        return;
+    };
+    ruled.settle();
+    let Some(mut baked) = buried_rig(false) else {
+        return;
+    };
+    baked.settle();
+    for c in CAVE {
+        assert!(ruled.q().zeroed(ChunkCoord(c)), "{c:?} took no zero record");
+        assert!(!baked.q().zeroed(ChunkCoord(c)));
+        let (a, b) = (ruled.target(c), baked.target(c));
+        assert!(a.is_some(), "{c:?} holds no block");
+        assert_eq!(a, b, "{c:?}: the rule's record against the GPU's");
+    }
+    assert!(ruled.q().stats().zeroed >= CAVE.len() as u64);
+    assert_eq!(baked.q().stats().zeroed, 0);
+}
+
+/// Plan 0096 Phase 2 bar 4: a uniform rock chunk inside the rock (5, 5, 2), every neighbour
+/// rock, and a uniform air chunk over the surface (3, 3, 6) hold no record: the rock is marked faceless, and the store
+/// holds no block of either. (A lavapipe test: the store needs a device.)
+#[test]
+fn a_chunk_with_no_exposed_face_holds_no_record() {
+    let Some(mut q) = buried_rig(true) else {
+        return;
+    };
+    q.settle();
+    let (rock, air) = ([5, 5, 2], [3, 3, 6]);
+    assert!(q.target(rock).is_none(), "the rock chunk's record");
+    assert!(q.target(air).is_none(), "the air chunk's record");
+    assert!(
+        q.q().tracks(ChunkCoord(rock)).contains(&"faceless"),
+        "{:?}",
+        q.q().tracks(ChunkCoord(rock))
+    );
+    assert!(!q.q().zeroed(ChunkCoord(rock)));
+}
