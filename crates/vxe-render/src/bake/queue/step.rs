@@ -19,7 +19,7 @@ impl BakeQueue {
         // Summary time spent outside a step (a one-shot bake, a dig's ring) is not this step's.
         store.take_summary_ms();
         self.laps.lap(S_SETUP);
-        let changes = self.follow_window(run, store, view);
+        let (changes, unheld) = self.follow_window(run, store, view);
         let changed = changes.as_ref().is_none_or(|c| !c.is_empty());
         self.relist_zeroed(run.gpu, store, changes.as_deref());
         let world = run.world.store();
@@ -29,7 +29,7 @@ impl BakeQueue {
             let (n, b) = self.sealed.shells();
             (n as u64, b as u64)
         };
-        self.forget_unheld(run.gpu, changes);
+        self.forget_unheld(run.gpu, changes, &unheld);
         self.catch_up(run, view, changed);
         self.laps.lap(S_TOUCHED);
         self.take_boxes(run, store)?;
@@ -47,13 +47,14 @@ impl BakeQueue {
 
     /// The step's window stages: the eye's cell, the store's window, and the blocks of the chunks
     /// the mirror does not hold full. Returns the mirror's changes since the last step, each
-    /// chunk once (`None` untracked, the first step).
+    /// chunk once (`None` untracked, the first step), and those of them the mirror does not
+    /// hold full, read in the same walk (the forget stage's keys).
     fn follow_window(
         &mut self,
         run: &BakeRun<'_>,
         store: &mut Store,
         view: &QueueView<'_>,
-    ) -> Option<Vec<ChunkCoord>> {
+    ) -> (Option<Vec<ChunkCoord>>, Vec<[i32; 3]>) {
         self.steps += 1;
         let eye = view.eye.map(|v| (v / 64.0).floor() as i32);
         if eye != self.eye {
@@ -89,12 +90,20 @@ impl BakeQueue {
         // such chunk is among the mirror's changes since the step that last read them.
         // In coordinate order, so the freed places return to the free list in the same order
         // run to run.
+        // One walk of the changes reads which the mirror does not hold full, for this stage and
+        // the forget stage's.
+        let unheld_changes: Vec<[i32; 3]> = changes
+            .iter()
+            .flatten()
+            .map(|c| c.0)
+            .filter(unheld)
+            .collect();
         let gone: Vec<[i32; 3]> = match &changes {
-            Some(ch) => {
-                let mut g: Vec<[i32; 3]> = ch
+            Some(_) => {
+                let mut g: Vec<[i32; 3]> = unheld_changes
                     .iter()
-                    .map(|c| c.0)
-                    .filter(|c| store.blocks.contains_key(c) && unheld(c))
+                    .copied()
+                    .filter(|c| store.blocks.contains_key(c))
                     .collect();
                 g.sort_unstable();
                 g
@@ -115,11 +124,16 @@ impl BakeQueue {
             self.block_count.remove(&c);
         }
         self.laps.lap(S_GONE);
-        changes
+        (changes, unheld_changes)
     }
 
     /// The step's forget, reach-drop and touched stages over the mirror's changes.
-    fn forget_unheld(&mut self, gpu: &GpuWorld, changes: Option<Vec<ChunkCoord>>) {
+    fn forget_unheld(
+        &mut self,
+        gpu: &GpuWorld,
+        changes: Option<Vec<ChunkCoord>>,
+        unheld: &[[i32; 3]],
+    ) {
         self.columns_final.clear();
         self.columns_lowest.clear();
         // What the queue knows of a chunk the mirror does not hold full goes with it, block or
@@ -157,7 +171,7 @@ impl BakeQueue {
         match changes {
             Some(ch) => {
                 if by_keys {
-                    for c in ch.iter().map(|c| c.0).filter(|c| !held(c)) {
+                    for &c in unheld {
                         self.fades.remove(&c);
                         self.faceless.remove(&c);
                         self.blocked.remove(&c);
@@ -226,6 +240,8 @@ impl BakeQueue {
             }
             self.laps.lap(S_LIST);
         }
+        self.stats.visited = self.ordered.take_visited();
+        self.stats.visited_total += self.stats.visited;
         Ok((cap, opened_step))
     }
 

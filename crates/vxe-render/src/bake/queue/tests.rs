@@ -418,3 +418,173 @@ fn the_slice_is_the_drain_value_while_in_view_work_waits_and_the_line_after() {
     q.view_waiting = chunks.iter().copied().collect();
     assert_eq!(q.step_slice(hz60), 1.5, "the budget alone");
 }
+
+/// A synthetic pool of the cube of chunks `-r..=r` about the origin, about one in eleven (by
+/// its coordinate) a class 1 candidate with a coarse block, the rest class 0.
+fn cube_pool(r: i32) -> std::collections::HashMap<[i32; 3], (u8, bool)> {
+    let mut pool = std::collections::HashMap::new();
+    for x in -r..=r {
+        for y in -r..=r {
+            for z in -r..=r {
+                let class = u8::from((7 * x + 13 * y + 29 * z).rem_euclid(11) == 0);
+                pool.insert([x, y, z], (class, class == 1));
+            }
+        }
+    }
+    pool
+}
+
+/// The order's view from chunk `eye` looking along +x, at a 70 degree, 16:9 view.
+fn order_view(eye: [i32; 3]) -> (OrderView, [f32; 3], f32) {
+    let forward = [1.0f32, 0.0, 0.0];
+    let half = view_half_angle(70f32.to_radians(), 16.0 / 9.0);
+    let key = OrderView {
+        eye,
+        forward: forward.map(f32::to_bits),
+        half_angle: half.to_bits(),
+        order: QueueOrder::default(),
+        near: 1,
+    };
+    (key, forward, half)
+}
+
+/// An opening's walk of the kept order: the first `n` of lead 0, then the first `n` of lead 1.
+fn walk(
+    ordered: &mut Ordered,
+    pool: &std::collections::HashMap<[i32; 3], (u8, bool)>,
+    n: usize,
+) -> Vec<[i32; 3]> {
+    let mut out = Vec::new();
+    for lead in 0..2 {
+        for i in 0..n {
+            match ordered.get(lead, i, pool) {
+                Some(k) => out.push(k.c),
+                None => break,
+            }
+        }
+    }
+    out
+}
+
+/// Plan 0096 Phase 5 bar 1: over a pool of 20 000 candidates (the cube -13..=13, 19 683) a
+/// second opening at a still camera scores no candidate, and one after the camera moves a
+/// chunk scores at most the view cone's members (the chunks of the pool whose angle term reads
+/// 0 from the new eye: the cone and the near shell), never the pool.
+#[test]
+fn a_still_step_visits_no_candidate_and_a_one_chunk_move_visits_only_the_cone() {
+    let pool = cube_pool(13);
+    assert_eq!(pool.len(), 19_683);
+    let mut ordered = Ordered::default();
+    let (key, f, h) = order_view([0, 0, 0]);
+    ordered.set_view(key, f, h);
+    ordered.rebuild(pool.iter());
+    let first = walk(&mut ordered, &pool, QUEUE_CHECKS);
+    assert_eq!(first.len(), 2 * QUEUE_CHECKS);
+    let opened = ordered.take_visited();
+    assert!(opened > 0 && opened < pool.len() as u64, "{opened}");
+    let (key, f, h) = order_view([0, 0, 0]);
+    assert!(!ordered.set_view(key, f, h));
+    assert_eq!(walk(&mut ordered, &pool, QUEUE_CHECKS), first);
+    assert_eq!(ordered.take_visited(), 0, "a still camera's second opening");
+    let eye = [1, 0, 0];
+    let (key, f, h) = order_view(eye);
+    ordered.set_view(key, f, h);
+    walk(&mut ordered, &pool, QUEUE_CHECKS);
+    let moved = ordered.take_visited();
+    let cone = pool
+        .keys()
+        .filter(|c| angle_term([0, 1, 2].map(|k| c[k] - eye[k]), f, h, 1) <= 0.0)
+        .count() as u64;
+    assert!(moved > 0 && moved <= cone, "moved {moved}, cone {cone}");
+    assert!(moved < pool.len() as u64);
+}
+
+/// Plan 0096 Phase 5 bar 2: the pool at about 2 000 (the cube -6..=6, 2 197) and at about
+/// 20 000 (-13..=13) opens the same first 16 candidates of each class, in the order a full
+/// sort of ADR-0048's keys gives.
+#[test]
+fn the_opened_jobs_are_the_nearest_of_their_band_whatever_the_depth() {
+    let eye = [0, 0, 0];
+    let (key, f, h) = order_view(eye);
+    let mut opened = Vec::new();
+    for r in [6, 13] {
+        let pool = cube_pool(r);
+        let mut ordered = Ordered::default();
+        ordered.set_view(key, f, h);
+        ordered.rebuild(pool.iter());
+        let got = walk(&mut ordered, &pool, OPENED);
+        let mut full: Vec<Cand> = pool
+            .iter()
+            .map(|(&c, &(class, coarse))| {
+                cand_at(c, class, coarse, eye, f, h, QueueOrder::default(), 1)
+            })
+            .collect();
+        full.sort_by_key(Cand::sort_key);
+        let want: Vec<[i32; 3]> = [0u8, 1]
+            .iter()
+            .flat_map(|&l| full.iter().filter(move |k| k.lead == l).take(OPENED))
+            .map(|k| k.c)
+            .collect();
+        assert_eq!(got, want, "the cube of side {}", 2 * r + 1);
+        opened.push(got);
+    }
+    assert_eq!(opened[0], opened[1]);
+}
+
+/// The jobs an opening's first walk takes in the order tests.
+const OPENED: usize = 16;
+
+/// The kept order after candidates join and leave between openings (in a scanned cell, an
+/// unscanned one and a cell new to the index, near and far) walks whole as a full sort of the
+/// pool does.
+#[test]
+fn the_kept_order_walks_as_a_full_sort_after_joins_and_leaves() {
+    let eye = [0, 0, 0];
+    let (key, f, h) = order_view(eye);
+    let mut pool = cube_pool(6);
+    let mut ordered = Ordered::default();
+    ordered.set_view(key, f, h);
+    ordered.rebuild(pool.iter());
+    walk(&mut ordered, &pool, OPENED);
+    let joins = [[1, 1, 0], [5, 0, 0], [20, 0, 0], [-30, 2, 1], [0, 0, 9]];
+    let leaves = [[0, 1, 0], [6, 6, 6], [2, 0, 0]];
+    for (n, c) in joins.into_iter().enumerate() {
+        let v = (u8::from(n % 2 == 1), n % 2 == 1);
+        let was = pool.insert(c, v).map(|w| w.0);
+        ordered.insert(c, v.0, v.1, was);
+        walk(&mut ordered, &pool, OPENED);
+    }
+    for c in leaves {
+        let (class, _) = pool.remove(&c).expect("in the pool");
+        ordered.remove(c, class);
+    }
+    // The whole order, so the far joins are walked too. The walk yields what left as it
+    // stands; the opening skips them by the pool's check.
+    let n = pool.len();
+    let got: Vec<[i32; 3]> = walk(&mut ordered, &pool, n + leaves.len())
+        .into_iter()
+        .filter(|c| pool.contains_key(c))
+        .collect();
+    let mut full: Vec<Cand> = pool
+        .iter()
+        .map(|(&c, &(class, coarse))| {
+            cand_at(c, class, coarse, eye, f, h, QueueOrder::default(), 1)
+        })
+        .collect();
+    full.sort_by_key(Cand::sort_key);
+    for lead in 0..2u8 {
+        let want: Vec<[i32; 3]> = full
+            .iter()
+            .filter(|k| k.lead == lead)
+            .take(n)
+            .map(|k| k.c)
+            .collect();
+        let have: Vec<[i32; 3]> = got
+            .iter()
+            .copied()
+            .filter(|c| pool[c].0 == lead)
+            .take(n)
+            .collect();
+        assert_eq!(have, want, "lead {lead}");
+    }
+}

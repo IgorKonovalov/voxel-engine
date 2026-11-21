@@ -107,10 +107,15 @@ pub struct QueueStats {
     pub openings: u64,
     /// In the last step: the chunks the mirror filter and a whole reading of the candidates
     /// visited, the reach walks run ([`reach_ready`], not answered from the cache), and
-    /// whether the candidates' order was scored again (1) or walked as kept (0).
+    /// whether the order's index was read whole again (1, at a change of the order's leads)
+    /// or kept (0).
     pub scanned: u64,
     pub reach_checks: u64,
     pub rebuilt: u64,
+    /// In the last step: the candidates the order scored (its walks from the camera outward),
+    /// 0 at a still camera with no candidate joining; and their sum since the queue started.
+    pub visited: u64,
+    pub visited_total: u64,
     /// Of the candidates in the view cone beyond the shell at the last census, waiting for
     /// their light (blank or coarse), those whose reach crosses the streamer's full radius
     /// ([`QueueView::full_radius`]): a chunk within their reach lies past it ([`reach_crosses`]),

@@ -324,11 +324,9 @@ pub struct BakeQueue {
     /// The jobs' chunks at the last reading of the pool: a chunk joining or leaving a job is
     /// read again.
     pub(super) pool_jobs: std::collections::HashSet<[i32; 3]>,
-    /// The pool's candidates in their order, and the view they were scored under; dirty when
-    /// a candidate joined the pool or changed class.
+    /// The pool's candidates in their order, walked from the camera outward and kept in step
+    /// with the pool ([`BakeQueue::pool_insert`], [`BakeQueue::pool_remove`]).
     pub(super) ordered: Ordered,
-    pub(super) order_view: Option<OrderView>,
-    pub(super) order_dirty: bool,
     /// Each checked candidate's reach verdict ([`reach_ready`]), dropped when a chunk within
     /// the light radius and one of it changes in the mirror.
     /// Each verdict with whether its walk stopped at the first chunk not resident full
@@ -541,8 +539,6 @@ impl BakeQueue {
             pool_stale: true,
             pool_jobs: Default::default(),
             ordered: Ordered::default(),
-            order_view: None,
-            order_dirty: true,
             reach_cache: Default::default(),
             columns_final: Default::default(),
             column_wait: false,
@@ -600,10 +596,24 @@ impl BakeQueue {
         .then_some((u8::from(has), coarse))
     }
 
+    /// `c` joins the pool as `v`, or its value changes, in the pool and the kept order.
+    pub(super) fn pool_insert(&mut self, c: [i32; 3], v: (u8, bool)) {
+        let was = self.pool.insert(c, v).map(|w| w.0);
+        self.ordered.insert(c, v.0, v.1, was);
+    }
+
+    /// `c` leaves the pool and the kept order: its value, if it was a candidate.
+    pub(super) fn pool_remove(&mut self, c: [i32; 3]) -> Option<(u8, bool)> {
+        let was = self.pool.remove(&c);
+        if let Some((class, _)) = was {
+            self.ordered.remove(c, class);
+        }
+        was
+    }
+
     /// Brings the pool up to date: whole when it is stale, else for the chunks touched since,
     /// the store's changed blocks and the chunks that joined or left a job. A candidate that
-    /// joins or changes class leaves the kept order dirty; one that leaves is skipped by the
-    /// walk.
+    /// joins, changes or leaves moves in the kept order with it.
     pub(super) fn sync_pool(&mut self, run: &BakeRun<'_>, store: &mut Store) {
         let gpu = run.gpu;
         let in_job: std::collections::HashSet<[i32; 3]> = self.lp.chunks().map(|c| c.0).collect();
@@ -618,8 +628,8 @@ impl BakeQueue {
                 .collect();
             self.stats.scanned += gpu.mirrored_chunks() as u64;
             self.pool = pool;
+            self.ordered.rebuild(self.pool.iter());
             self.pool_stale = false;
-            self.order_dirty = true;
             self.touched.clear();
         } else {
             let moved: Vec<[i32; 3]> = self
@@ -635,12 +645,9 @@ impl BakeQueue {
                     continue;
                 }
                 match now {
-                    Some(v) => {
-                        self.pool.insert(c, v);
-                        self.order_dirty = true;
-                    }
+                    Some(v) => self.pool_insert(c, v),
                     None => {
-                        self.pool.remove(&c);
+                        self.pool_remove(c);
                     }
                 }
             }

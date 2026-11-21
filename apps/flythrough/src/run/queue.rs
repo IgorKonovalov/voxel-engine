@@ -127,6 +127,8 @@ pub(crate) struct QueueRun {
     /// The steps' stages since the last line, and over the run by the regime of their second
     /// (the `frames:` summary's `queue step` lines).
     pub(crate) line_stages: Vec<vxe_render::debug::StepStages>,
+    /// The queue's candidates scored at the last step line ([`vxe_render::QueueStats::visited_total`]).
+    pub(crate) line_visited: u64,
     pub(crate) tally: vxe_render::debug::StepTally,
     /// The jobs and the openings at the last line, and the last line's step p50 (the HUD's).
     pub(crate) line_openings: u64,
@@ -298,6 +300,12 @@ pub(crate) fn queue_step_line(
         (st.mirror_changes - q.line_changes) as f64 / n
     );
     q.line_changes = st.mirror_changes;
+    let _ = write!(
+        line,
+        "; candidates scored a step mean {:.1}",
+        (st.visited_total - q.line_visited) as f64 / n
+    );
+    q.line_visited = st.visited_total;
     line
 }
 

@@ -50,15 +50,12 @@ impl BakeQueue {
         // The loop's samples left, read once (it walks every open face) and then counted on.
         let mut left = self.lp.samples_left();
         let angle_needs = self.census_every_opening;
-        let nearest_in_view = if angle_needs {
-            self.ordered
-                .all()
-                .filter(|k| k.a <= 0.0 && self.pool.contains_key(&k.c))
-                .map(|k| k.d2)
-                .min()
-        } else {
-            None
-        };
+        let nearest_in_view = angle_needs
+            .then(|| self.nearest_in_view(eye, view))
+            .flatten();
+        // Each lead in turn (the class when tiered): a lead whose checks are spent is left for
+        // the next, as a walk through the rest of it would skip them all.
+        let mut lead = 0usize;
         let mut next = 0;
         // A sliced opening lists its ready candidates in batches: a candidate joins the batch
         // while the loop's samples left plus the batch's bounds ([`BakeQueue::listing_bound`],
@@ -77,9 +74,8 @@ impl BakeQueue {
         };
         while let Some(Cand {
             class, coarse, c, ..
-        }) = self.ordered.get(next)
+        }) = self.walk_next(&mut lead, &mut next, tiered, checked[0] >= checks)
         {
-            next += 1;
             // A kept candidate pushed, or listed faceless, since the order was scored has left
             // the pool; a class change re-scores the order before the walk.
             if self.pool.get(&c) != Some(&(class, coarse)) {
@@ -168,6 +164,8 @@ impl BakeQueue {
             self.push_batch(run, store, eye, &classes, &mut ready)?;
         }
         if full_blank && !parallel {
+            // The class 0 walk's place, or past its end once the walk reached class 1.
+            let next = if lead == 0 { next } else { usize::MAX };
             self.note_starved(run, view, eye, next, checks);
         }
         self.stats.waiting_reach = reach;
@@ -177,6 +175,42 @@ impl BakeQueue {
         self.provisional_checked.clear();
         self.ruled_checked.clear();
         Ok(())
+    }
+
+    /// The opening's next candidate in the kept order, `next` past it: lead `lead`'s, or once
+    /// that lead is out (or `spent`, its checks used) under a `tiered` order, lead 1's.
+    fn walk_next(
+        &mut self,
+        lead: &mut usize,
+        next: &mut usize,
+        tiered: bool,
+        spent: bool,
+    ) -> Option<Cand> {
+        if tiered && *lead == 0 && spent {
+            (*lead, *next) = (1, 0);
+        }
+        loop {
+            if let Some(k) = self.ordered.get(*lead, *next, &self.pool) {
+                *next += 1;
+                return Some(k);
+            }
+            if *lead == 0 && tiered {
+                (*lead, *next) = (1, 0);
+            } else {
+                return None;
+            }
+        }
+    }
+
+    /// The squared chunk distance of the nearest candidate in the view cone or the near shell.
+    fn nearest_in_view(&self, eye: [i32; 3], view: &QueueView<'_>) -> Option<i64> {
+        let (order, near) = (self.order, self.near);
+        self.pool
+            .iter()
+            .map(|(&c, &(class, coarse))| cand_of(c, class, coarse, eye, view, order, near))
+            .filter(|k| k.a <= 0.0)
+            .map(|k| k.d2)
+            .min()
     }
 
     /// The opening's candidates, census and sort stages: the kept order scored again when a
@@ -202,15 +236,8 @@ impl BakeQueue {
             order,
             near,
         };
-        if self.order_dirty || self.order_view != Some(key) {
-            let cands: Vec<Cand> = self
-                .pool
-                .iter()
-                .map(|(&c, &(class, coarse))| cand_of(c, class, coarse, eye, view, order, near))
-                .collect();
-            self.ordered = Ordered::new(cands);
-            self.order_dirty = false;
-            self.order_view = Some(key);
+        if self.ordered.set_view(key, view.forward, view.half_angle) {
+            self.ordered.rebuild(self.pool.iter());
             self.stats.rebuilt += 1;
         }
         self.laps.lap(S_CANDIDATES);
@@ -222,10 +249,9 @@ impl BakeQueue {
             self.entered
                 .retain(|c, _| gpu.is_mirrored(ChunkCoord(*c)) && !gpu.is_lod(ChunkCoord(*c)));
             let cands: Vec<Cand> = self
-                .ordered
-                .all()
-                .filter(|k| self.pool.contains_key(&k.c))
-                .copied()
+                .pool
+                .iter()
+                .map(|(&c, &(class, coarse))| cand_of(c, class, coarse, eye, view, order, near))
                 .collect();
             // The chunks in a job still wait for their light: those with no block or a
             // coarse one, not a dig's or a key-only re-bake's.

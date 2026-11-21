@@ -94,7 +94,7 @@ impl BakeQueue {
         let mut looked = 0;
         while let Some(Cand {
             class, coarse, c, ..
-        }) = self.ordered.get(next)
+        }) = self.ordered.get(0, next, &self.pool)
         {
             next += 1;
             if looked >= checks {
@@ -136,7 +136,7 @@ impl BakeQueue {
         let c = coord.0;
         self.stats.prepared += u64::from(prepared);
         // Faceless or in a job, it is no candidate either way; a refused place keeps it one.
-        let candidacy = self.pool.remove(&c);
+        let candidacy = self.pool_remove(c);
         if let Some(m) = self.prepared.remove(&c) {
             self.prepared_bytes -= m.masks.bytes();
         }
@@ -158,7 +158,7 @@ impl BakeQueue {
             Ok(w) => w,
             Err(e) => {
                 if let Some(v) = candidacy {
-                    self.pool.insert(c, v);
+                    self.pool_insert(c, v);
                 }
                 return Err(e);
             }

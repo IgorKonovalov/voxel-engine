@@ -768,3 +768,43 @@ fn a_still_camera_drains_and_withdraws_nothing() {
         "chunk 1's job is withdrawn"
     );
 }
+
+/// Plan 0096 Phase 5 bar 4: the kept order walked from the camera outward changes when a chunk
+/// is lit, not what it holds. A 5 x 5 x 5 chunk world (a rock floor, four pillars through it and
+/// an ore slab on two of them) settled through the live queue from its centre while the camera
+/// turns a quarter every 8 steps, so the walks restart, is bit-identical block by block to a
+/// one-shot bake of the same world at the same counts, whose order is the job list's.
+#[test]
+fn images_are_unchanged_by_the_incremental_order() {
+    let world = world_of([5, 5, 5], AIR);
+    fill(&world, [0, 0, 0], [319, 319, 70], ROCK);
+    for (x, y) in [(60, 60), (60, 250), (250, 60), (250, 250)] {
+        fill(&world, [x, y, 71], [x + 12, y + 12, 260], ROCK);
+    }
+    fill(&world, [60, 60, 200], [262, 72, 212], ORE);
+    let eye = [160.5, 160.5, 140.5];
+    let Some(mut q) = rig(world, &Setup::at(eye)) else {
+        return;
+    };
+    let mut scored = 0;
+    for n in 0..MAX_STEPS {
+        q.camera.yaw = ((n / 8) % 4) as f32 * std::f32::consts::FRAC_PI_2;
+        scored += q.step().visited;
+        if n > 32 && q.q().empty() {
+            break;
+        }
+    }
+    assert!(q.q().empty(), "the queue settles: {:?}", q.q().stats());
+    let got = q.blocks();
+    println!("{} blocks, {scored} candidates scored", got.len());
+    assert!(
+        got.len() >= 25,
+        "the floor's chunks hold blocks: {}",
+        got.len()
+    );
+    let fresh = q.fresh();
+    assert_eq!(got.len(), fresh.len());
+    for (c, b) in &got {
+        assert_eq!(Some(b), fresh.get(c), "{c:?} against a one-shot bake");
+    }
+}
