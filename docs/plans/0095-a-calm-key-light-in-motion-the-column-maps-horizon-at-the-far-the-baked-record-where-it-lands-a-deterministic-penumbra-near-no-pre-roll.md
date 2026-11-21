@@ -739,6 +739,11 @@ its Phases 5 to 7 are Phases 9 to 11.
   `outdoor_goldens_differ_by_time_of_day` fails at the tip.
 - Phase 10: `profile_portable_gate.png` (0.81 %) moved at Plan 0094 Phase 3 `dee00eb7`, not the
   showcase palette; not blessed: `portable_profile_golden` (soak) fails at the tip as on main.
+- Phase 10 (coordinator, 2026-11-21, under the owner's decisions): `outdoor_sunset.png` re-blessed
+  as this plan's `key_far: Baked` change, and `profile_portable_gate.png` as Plan 0094's (the
+  still camera's tap, `dee00eb7`, which 0094 Phase 8 approved for the profile goldens and missed
+  for this soak one) carried by this plan; both read 0.0000 % unblessed, `outdoor_night.png`
+  0.0000 % (readings log). This supersedes the two "not blessed" notes above.
 - Phase 10: the close block's triggers are not filled; the tip gate tier was not run (the
   amendment leaves it to the close review).
 
