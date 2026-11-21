@@ -1,10 +1,11 @@
 # ADR-0079: The key light's visibility is read with no screen history: the baked record where fresh, else the column map's horizon at the far band; a deterministic penumbra near; the record or the horizon seeds any ray mean that is left
 
-> **Status:** proposed (Plan 0095, in progress; amended 2026-11-20 while proposed, at Plan
-> 0095's window W1: the far's instant estimate and the near's deterministic penumbra added, the
-> bake kept as the far's refinement, see "Context, amended")
+> **Status:** accepted (2026-11-21, Plan 0095's close), with the Outcome below; amended
+> 2026-11-20 while proposed, at Plan 0095's window W1: the far's instant estimate and the
+> near's deterministic penumbra added, the bake kept as the far's refinement, see "Context,
+> amended"
 > **Date:** 2026-11-20
-> **Related plan(s):** [Plan 0095](../plans/0095-a-calm-key-light-in-motion-the-column-maps-horizon-at-the-far-the-baked-record-where-it-lands-a-deterministic-penumbra-near-no-pre-roll.md)
+> **Related plan(s):** [Plan 0095](../plans/done/0095-a-calm-key-light-in-motion-the-column-maps-horizon-at-the-far-the-baked-record-where-it-lands-a-deterministic-penumbra-near-no-pre-roll.md)
 > (builds it); Plan 0094 (the screen history's transitions, closing beside this; its ADR-0076
 > rule 6 is the standard this is read by); Plan 0096 (the queue's drain and the far tiers' reach
 > rule, which decide where and when a record lands at the far)
@@ -351,6 +352,43 @@ Four rays a pixel cut the mean's variance by four and the first frames' grain by
 RADV RENOIR pays four times its largest light-pass term, and the restart remains. Decisive:
 cost for a half measure.
 
-## Outcome
+## Outcome (2026-11-21, Plan 0095's close)
 
-_(Added at acceptance if Plan 0095 falsifies something above.)_
+Plan 0095 built the decision as amended; what it read against the body above (the readings log
+`docs/plans/logs/0095.md`, Phases 4 to 10 and the close review's fix pass):
+
+- **The far estimate reaches few pixels yet.** The record, else the horizon, is read only at
+  the far normal's weight 1; inside the band (`[2, 6]` pixels a voxel) the key ray is still
+  cast. In the forest at 1080p 96.9 % of the far's key samples over a hold came from the ray,
+  1.8 % from the horizon and 1.3 % from the record, so the far's motion reads about the
+  before's: queue frozen, hold +60 27.2 % against 30.8 %, fly 13.2 against 14.8 %. The bars
+  were set by the owner to "no worse than the before + 1 point" (lavapipe gate scene, soak);
+  narrowing the key's far gate is the backlog's "Narrow the far normal's band so far pixels stop
+  casting the ray", for the far-field work or Plan 0096's far tiers.
+- **The horizon as built** reads each column top as a box from the cell's entry distance, with
+  a refinement walk of at most 8 cells in the steepest interval, not bilinear over 2 x 2 cells
+  (bilinear put a 10-voxel slab's ramp at 7.9 voxels where the geometry says 8.9). A lifted
+  point under its own cell's top reads 0. The absorbing top was not built: the forest floor
+  meters within 0.1 EV of the drained record under the horizon (the condition was a fifth).
+- **The near's approach penumbra is the fly-through's default on every adapter and profile**
+  (the owner's pick over keeping the disc on the slow adapter), its probes compiled into the
+  default light pipelines; the library's `Lighting::default()` keeps `disc`. Its cost is the
+  negative this body under-stated: the RADV RENOIR's forest light pass reads 34.0 ms against
+  12.0 under disc (hills 11.2 against 8.0), over section 2's 4.0 ms line; the RTX 3.0 to 3.4
+  ms. Plan 0096 Phase 6 takes it as its first lever. At 1080p on the RTX the near stops clean
+  (stop +0 near 0.81 % against the lighting-off 0.04 %, the disc's 14.9 %); at lavapipe's
+  320-pixel grid the band starts at about 2.2 m, so the near bar is asserted only there.
+- **The bake stays the far's refinement** (W2 kept it): the record is 11 words (+8 B, the store
+  11.0 to 13.6 MB live outdoors); key-only re-bakes follow a turning sun past `key_step` (3
+  degrees), re-keying every marked block 2.3 to 5.7 s after a step on the RTX and 7.1 to 49.5 s
+  on the RENOIR under the default day. A dig's ring re-bakes the key words with the sky's:
+  about +21 % of the ring's samples, the dig frame's light pass +1.31 ms on the RENOIR (to 3.31
+  ms); the dug box's over-4 share at the dig's frame rises (RTX 3.54 against 1.21 %, RENOIR
+  2.97 against 1.26 %) and the RENOIR's ring lands fewer bricks by N + 2 (138 against 368), a
+  reading left to the backlog's dug-hole entry.
+- **Undrained**, as the owner sees it (ADR-0076 rule 6), the hold's far +120 reads 60.7 %
+  until records land (7.3 % at +210): the landing waits on the queue, Plan 0096's. The rule 2
+  far return (84.7 % against the before's 77.3 %) is a reading, not a bar.
+- **The owner at W2:** the default against the before, "before - grain"; overall "we are much
+  better than before". The step lines along slopes (both arms) went to the backlog and the
+  exposure in deep shade to Plan 0097.

@@ -1487,6 +1487,12 @@ over its cell's faces; the radius-5 sphere's record 0.718 against 0.748, but its
 the 8-voxel brick, so the bowl's own faces (aperture 0.473) share one value with the open
 ground beside them: at brick resolution a small hole's floor shows the brick's mean, not its
 own sky. Pick up after the motion lane, or with the next dig look.
+**Plan 0095's close (2026-11-21) adds a reading** (`docs/plans/logs/0095.md`, Phase 10, the dig
+split at `85fb3de7` against main `e6582b9e`): with the key words in the dig's ring, the dug box's
+share over 4 levels at the dig's frame rose from 1.21 to 3.54 % on the RTX and from 1.26 to
+2.97 % on the RENOIR (the outside's unchanged at about 1.1 %), and the RENOIR's ring landed 138
+dig bricks by N + 2 against 368 (its samples a step about +21 % each). Not attributed; read it
+with the first frames above.
 
 ### The key term's grain at rest on a penumbra, and the a-trous's spatial variance (ii)
 

@@ -1,25 +1,25 @@
 # 0095: A calm key light in motion: the column map's horizon at the far, the baked record where it lands, a deterministic penumbra near, judged with no pre-roll
 
-> **Status:** in-progress (dev lane from 2026-11-20). Approved 2026-11-20 (owner go; stacked on plan-0094 at aff21a5a, merges main after 0094 lands). **Amended 2026-11-20 by the architect at window W1's verdicts** (the owner: the image right after a move must be calm without waiting; a pre-roll is not a fix): the far gains an instant estimate from the column map, the near a deterministic penumbra, the bake becomes the far's refinement; Phases 4 to 11 below are the contract from here, Phases 1 to 3 the record of what was built and seen. The owner's earlier picks stand (coarse far shadows per brick face direction; the far gate by the far normal's band; W1 at the default 3-degree sun; a lagging re-bake under the day cycle shows the old shadow with a fade). **Owner answers to the amendment's questions (2026-11-20):** the far keeps the baked record as its refinement (question 1); the approach penumbra is the near's default from Phase 5 (question 2); the far tiers' reach rule moves to Plan 0096, written on main by the architect there (question 3); W2 is short: the forest only, two arms, about 10 minutes, no pre-roll, from the first frame; the hills and the day cycle go to a later look if needed (question 4).
+> **Status:** done (closed 2026-11-21 at the fresh-session close review, v0.69.0. Verdict: clean after one fix pass (the section 4 dig reading taken, a slow test to soak, a nit); the gate 1309 of 1309 in 1900.0 s, over the line as the owner accepted at Plan 0094. W2: "overall we are much better than before"). Approved 2026-11-20 (owner go; stacked on plan-0094 at aff21a5a, merges main after 0094 lands). **Amended 2026-11-20 by the architect at window W1's verdicts** (the owner: the image right after a move must be calm without waiting; a pre-roll is not a fix): the far gains an instant estimate from the column map, the near a deterministic penumbra, the bake becomes the far's refinement; Phases 4 to 11 below are the contract from here, Phases 1 to 3 the record of what was built and seen. The owner's earlier picks stand (coarse far shadows per brick face direction; the far gate by the far normal's band; W1 at the default 3-degree sun; a lagging re-bake under the day cycle shows the old shadow with a fade). **Owner answers to the amendment's questions (2026-11-20):** the far keeps the baked record as its refinement (question 1); the approach penumbra is the near's default from Phase 5 (question 2); the far tiers' reach rule moves to Plan 0096, written on main by the architect there (question 3); W2 is short: the forest only, two arms, about 10 minutes, no pre-roll, from the first frame; the hills and the day cycle go to a later look if needed (question 4).
 > **Created:** 2026-11-20
-> **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
-> **Related ADRs:** [ADR-0079](../adrs/0079-the-key-lights-visibility-is-read-with-no-screen-history-the-record-or-the-column-maps-horizon-at-the-far-a-deterministic-penumbra-near.md)
+> **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../../roadmap.md)
+> **Related ADRs:** [ADR-0079](../../adrs/0079-the-key-lights-visibility-is-read-with-no-screen-history-the-record-or-the-column-maps-horizon-at-the-far-a-deterministic-penumbra-near.md)
 > (proposed with this plan, amended with it on 2026-11-20: the decision, the W1 readings and
 > the rejected alternatives, the spike's and W1's among them),
-> [ADR-0070](../adrs/0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md)
+> [ADR-0070](../../adrs/0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md)
 > (the sky's baked visibility this mirrors, and the column map the far's prior reads),
-> [ADR-0046](../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
+> [ADR-0046](../../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
 > (the store, the bake job, `FADE`, the identity rule and the reach it implies),
-> [ADR-0048](../adrs/0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md)
+> [ADR-0048](../../adrs/0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md)
 > (the queue order the key-only re-bake rides),
-> [ADR-0042](../adrs/0042-the-far-shading-normal-blends-to-the-27-count-gradient-by-the-voxels-size-on-screen.md)
+> [ADR-0042](../../adrs/0042-the-far-shading-normal-blends-to-the-27-count-gradient-by-the-voxels-size-on-screen.md)
 > (the far normal's band, the far gate),
-> [ADR-0076](../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
+> [ADR-0076](../../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
 > (rules 2, 3 and 6; the binding clause is met under "Where the histories live"; rule 6 is on
 > Plan 0094's branch until it merges),
 > ADR-0080 (proposed on main with Plan 0096, not on this branch: the drain and the far tiers,
 > which decide when and where a record lands at the far; the reach rule this plan hands over),
-> [ADR-0055](../adrs/0055-render-settings-are-one-struct-with-an-apply-class-per-field-and-profiles-are-named-values.md)
+> [ADR-0055](../../adrs/0055-render-settings-are-one-struct-with-an-apply-class-per-field-and-profiles-are-named-values.md)
 > (the settings rows this adds)
 > **Source:** the motion-wobble spike (branch `spike-motion-wobble`, tip `9d8340e5` at drafting;
 > its readings log `docs/plans/logs/wobble-spike.md` is committed there and summarised in
@@ -622,7 +622,7 @@ and checks each row above for a number, a machine and a commit.
 > resume notes go to the plan's readings log, `docs/plans/logs/0095.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
-Readings: [`logs/0095.md`](logs/0095.md).
+Readings: [`logs/0095.md`](../logs/0095.md).
 
 Amended 2026-11-20 (architect, at W1): the phases were renumbered; the rows below keep their
 names. The first form's Phase 3 (the sun's step) is Phase 8 now, its Phase 4 (W1) is Phase 3,
@@ -754,11 +754,14 @@ its Phases 5 to 7 are Phases 9 to 11.
 
 ### Close triggers
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+Filled at the close review of 2026-11-21; the full form is the readings log's "The close review".
+
+- **What shipped:** feature. **Public API changed:** `KeyFar`, `KeyFarMix`, `Lighting::key_*`,
+  `QueueStats::{keys, keys_baked}`, `BRICK_WORDS` 11, settings rows and flags (the log).
+- **Budget readings:** sections 2, 3 and 4 in `docs/nfr/02-frame-budget.md` and `03-memory.md`
+  (RENOIR forest light 34.2 ms, over the line by the owner's pick).
+- **Gate at the tip:** `85fb3de7` 1309 / 1309, 216 skipped, 1900.0 s; doctests, clippy, fmt,
+  deny, doc gates 0; fix pass quick 510 / 510. **Outstanding `human` phases:** none.
 
 ## Followups
 
