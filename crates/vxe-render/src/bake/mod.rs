@@ -55,6 +55,7 @@ use crate::frame::{LIGHT_TABLE_ENTRIES, LightTableUniform, Params};
 use crate::gpu_util::{Io, compute_pipeline_with, io_layout};
 use crate::gpu_world::{CHANGES_MAX, GpuWorld};
 
+mod around;
 mod budget;
 mod faces;
 mod job;
@@ -68,6 +69,7 @@ mod stages;
 mod store;
 mod summary;
 
+pub use self::around::*;
 pub use self::budget::*;
 pub use self::faces::*;
 pub use self::job::*;

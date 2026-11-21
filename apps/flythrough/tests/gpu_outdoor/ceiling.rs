@@ -49,13 +49,28 @@ mod ceiling {
     /// frames, the exposure reset to the meter (the adapted level and the ceiling jump), then
     /// 24 more. No bake: the faces with no record take the no-ray prior.
     pub(super) fn read(rig: &mut Rig, cam: &Camera, sky: vxe_render::sky::Sky, lamp: bool, leaf: flythrough::LeafShadow, share: f32) -> Read {
+        read_with(rig, cam, sky, lamp, leaf, auto(share), false).0
+    }
+
+    /// [`read`] under the auto exposure `a`, the store first baked by `support::bake_around`
+    /// at radius 1 and 256 samples about the camera's voxel when `bake`; with the sky over the
+    /// floor under the camera from the store after the frames (`vxe_render::sky_over_floor`).
+    #[allow(clippy::too_many_arguments, reason = "the scene's parts, as `read` takes them")]
+    pub(super) fn read_with(
+        rig: &mut Rig,
+        cam: &Camera,
+        sky: vxe_render::sky::Sky,
+        lamp: bool,
+        leaf: flythrough::LeafShadow,
+        a: AutoExposure,
+        bake: bool,
+    ) -> (Read, Option<(f32, vxe_render::AroundSource)>) {
         let mut f = Frame::new(&rig.device, 160, 90);
         f.set_look(vxe_render::LookParams {
             far_normal: flythrough::LookPreset::DEFAULT.far_normal,
             ..vxe_render::LookParams::default()
         });
         f.set_material_styles(&rig.queue, &flythrough::outdoor_styles(leaf));
-        let a = auto(share);
         f.set_lighting(Lighting {
             lamp,
             exposure: Exposure::Auto(a),
@@ -63,6 +78,11 @@ mod ceiling {
         });
         f.set_sky(Some(sky));
         f.set_dt(1.0 / 60.0);
+        let eye = cam.position.to_array();
+        if bake {
+            let centre = eye.map(|v| v.floor() as i32);
+            support::bake_around(&rig.device, &rig.queue, &mut rig.gpu, &mut f, &rig.world, centre, 1, 256);
+        }
         let light = LightParams::headlamp();
         for k in 0..48 {
             if k == 24 {
@@ -92,7 +112,7 @@ mod ceiling {
                 nm += 1;
             }
         }
-        Read {
+        let read = Read {
             misses: (bb, nm),
             sky: s.sky,
             metered: s.metered_log2,
@@ -100,7 +120,8 @@ mod ceiling {
             settles: a.exposure_under(f64::from(s.metered_log2), s.ceiling).log2(),
             ceiling: f64::from(s.ceiling).log2(),
             luma: sum / n.max(1) as f64,
-        }
+        };
+        (read, vxe_render::sky_over_floor(f.store(), eye))
     }
 
     /// The tunnel rig with the inside spawn's view out (the cave mouth from inside) and the
@@ -112,6 +133,29 @@ mod ceiling {
         let at = |t: f32| [0, 1, 2].map(|k| a[k] as f32 + 0.5 + (c[k] - a[k]) as f32 * t);
         let inward = flythrough::camera_looking_at(at(0.5), at(0.6));
         Some((rig, out, inward))
+    }
+
+    /// Window W2's two poses (Plan 0097, the forest at `--sun 10,180`): the deep shade and the
+    /// 1 %-sky spot, eye in voxels from the HUD. The W2 log has no yaw: both face -x, pitched
+    /// 10 degrees down.
+    pub(super) const W2_SHADE: [f32; 3] = [367.4, 690.8, 569.4];
+    pub(super) const W2_SKY: [f32; 3] = [237.4, 642.8, 596.7];
+
+    /// A W2 pose's camera at `p`: facing -x, pitched 10 degrees down, 70 degrees vertical.
+    pub(super) fn w2_camera(p: [f32; 3]) -> Camera {
+        Camera {
+            position: p.into(),
+            yaw: std::f32::consts::PI,
+            pitch: -10f32.to_radians(),
+            vfov: 70f32.to_radians(),
+        }
+    }
+
+    /// The forest of seed 1 generated about the midpoint of the two W2 poses (both within
+    /// 2 chunks of it).
+    pub(super) fn w2_rig() -> Option<Rig> {
+        let mid = [0, 1, 2].map(|k| ((W2_SHADE[k] + W2_SKY[k]) / 2.0).floor() as i32);
+        support::terms::forest_rig_about(mid)
     }
 
     /// Prints one row: the scene, the arm, and [`Read`]'s fields.
@@ -307,6 +351,125 @@ mod ceiling {
                 }
             }
         }
+        /// Plan 0097 Phase 1 bars 2 and 4: per scene, [`read_with`] under the default share
+        /// (Phase 7b's exposure) with the store baked at radius 1 and 256 samples about the
+        /// eye: the sky over the floor (`vxe_render::sky_over_floor`) and its source beside
+        /// the metered sky share, the metered level, the ceiling in force and the eye. The W2
+        /// shade and 1 %-sky poses at the fixed sun 10,180 ([`w2_rig`]), the tunnel deep in
+        /// at noon with the lamp on, 3 m inside the mouth facing in, the mouth from inside,
+        /// the hills at noon facing away from the mouth, the forest spawn at 17:45. Then
+        /// `F_floor`'s candidate (the largest power-of-two fraction under both W2 poses' share
+        /// and over the deep tunnel's) and the walk's cost: 600 calls on the W2 store along the
+        /// line between the poses, mean and max microseconds. `VXE_TEST_ADAPTER` picks the
+        /// adapter (unset: lavapipe).
+        #[test]
+        #[ignore = "reading"]
+        fn the_sky_over_the_floor() {
+            use vxe_render::AroundSource;
+            type Floor = Option<(f32, AroundSource)>;
+            let a = auto(vxe_render::DEFAULT_SKY_ANCHOR_SHARE);
+            let leaf = flythrough::LeafShadow::default();
+            let line = |scene: &str, r: &Read, fl: Floor| {
+                let floor = match fl {
+                    Some((v, src)) => format!("{v:.4} ({:.0}/255, {})", v * 255.0, src.name()),
+                    None => "none".to_string(),
+                };
+                println!(
+                    "reading: {scene}: floor {floor}, sky {:.4}, metered {:+.2}, ceiling {:+.3} EV, eye {:+.3} EV, settles {:+.3} EV",
+                    r.sky, r.metered, r.ceiling, r.eye, r.settles
+                );
+            };
+            let mut w2: Vec<Floor> = Vec::new();
+            let mut deep_floor: Floor = None;
+            if let Some(mut rig) = w2_rig() {
+                println!("reading: the_sky_over_the_floor on {}", rig.adapter);
+                let sun = clock(720.0, Some([10.0, 180.0]));
+                for (scene, p) in [("W2 shade 10,180", W2_SHADE), ("W2 1 % sky 10,180", W2_SKY)] {
+                    let (r, fl) = read_with(&mut rig, &w2_camera(p), sun, false, leaf, a, true);
+                    line(scene, &r, fl);
+                    w2.push(fl);
+                }
+                // The W2 log has no yaw: the shade spot's view by yaw (16 steps from +x) at
+                // pitches -10 and -30 degrees, the metered sky share and the eye (no bake).
+                for pitch in [-10.0f32, -30.0] {
+                    for k in 0..16 {
+                        let yaw = k as f32 * std::f32::consts::TAU / 16.0;
+                        let cam = Camera {
+                            yaw,
+                            pitch: pitch.to_radians(),
+                            ..w2_camera(W2_SHADE)
+                        };
+                        let (r, _) = read_with(&mut rig, &cam, sun, false, leaf, a, false);
+                        println!(
+                            "reading: W2 shade view yaw {:.1} deg pitch {pitch:.0}: sky {:.4}, ceiling {:+.3} EV, eye {:+.3} EV, metered {:+.2}",
+                            yaw.to_degrees(),
+                            r.sky,
+                            r.ceiling,
+                            r.eye,
+                            r.metered
+                        );
+                    }
+                }
+                // The walk's cost on the shade's store: 600 eyes on the line between the poses.
+                let mut f = Frame::new(&rig.device, 16, 9);
+                f.set_sky(Some(sun));
+                let centre = W2_SHADE.map(|v| v.floor() as i32);
+                support::bake_around(&rig.device, &rig.queue, &mut rig.gpu, &mut f, &rig.world, centre, 1, 256);
+                let (mut total, mut worst, mut answered) = (0.0f64, 0.0f64, 0);
+                for k in 0..600 {
+                    let t = k as f32 / 599.0;
+                    let eye = [0, 1, 2].map(|i| W2_SHADE[i] + (W2_SKY[i] - W2_SHADE[i]) * t);
+                    let t0 = std::time::Instant::now();
+                    let fl = std::hint::black_box(vxe_render::sky_over_floor(f.store(), std::hint::black_box(eye)));
+                    let us = t0.elapsed().as_secs_f64() * 1e6;
+                    total += us;
+                    worst = worst.max(us);
+                    answered += usize::from(fl.is_some());
+                }
+                println!(
+                    "reading: the walk over 600 eyes between the W2 poses: mean {:.3} us, max {:.3} us, {answered} answered ({})",
+                    total / 600.0,
+                    worst,
+                    if cfg!(debug_assertions) { "debug" } else { "release" }
+                );
+            }
+            if let Some((mut rig, out, inward)) = deep() {
+                let [ma, mc] = flythrough::outdoor::OutdoorSource::new(1).tunnel();
+                let at = |t: f32| [0, 1, 2].map(|k| ma[k] as f32 + 0.5 + (mc[k] - ma[k]) as f32 * t);
+                let len = (0..3).map(|k| ((mc[k] - ma[k]) as f32).powi(2)).sum::<f32>().sqrt();
+                let t3 = 30.0 / len;
+                let in3 = flythrough::camera_looking_at(at(t3), at(t3 + 0.1));
+                let noon = clock(720.0, None);
+                for (scene, cam) in [
+                    ("tunnel deep noon lamp", &inward),
+                    ("tunnel 3 m in, facing in, noon lamp", &in3),
+                    ("mouth from inside noon lamp", &out),
+                ] {
+                    let (r, fl) = read_with(&mut rig, cam, noon, true, leaf, a, true);
+                    line(scene, &r, fl);
+                    if scene.starts_with("tunnel deep") {
+                        deep_floor = fl;
+                    }
+                }
+            }
+            if let Some((mut rig, cam)) = support::terms::hills_rig() {
+                let away = Camera {
+                    yaw: cam.yaw + std::f32::consts::PI,
+                    ..cam
+                };
+                let (r, fl) = read_with(&mut rig, &away, clock(720.0, None), false, leaf, a, true);
+                line("hills noon facing away", &r, fl);
+            }
+            if let Some((mut rig, cam)) = support::terms::forest_rig() {
+                let (r, fl) = read_with(&mut rig, &cam, clock(17.0 * 60.0 + 45.0, None), false, leaf, a, true);
+                line("forest spawn 17:45", &r, fl);
+            }
+            let low = w2.iter().map(|f| f.map_or(0.0, |v| v.0)).fold(f32::INFINITY, f32::min);
+            let deep_v = deep_floor.map_or(0.0, |v| v.0);
+            let pick = (1..=16).map(|k| 2f32.powi(-k)).find(|&p| p < low && p > deep_v);
+            println!("reading: F_floor candidate {pick:?} (W2 lowest {low:.4}, deep tunnel {deep_v:.4})");
+        }
+
         /// Plan 0094 Phase 7b bar 5: [`walk`] at the default share and at 0 (the anchored
         /// ceiling, the share-0 arm's ceiling in force), 600 frames each way: the trace printed
         /// every 8th frame and in full to stdout's `trace` lines; the largest one-frame step of

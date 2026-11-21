@@ -1,6 +1,6 @@
 # 0097: The exposure's anchor by the sky around the camera: the floor record under the eye, a time constant, and the canopy's shade kept in daylight
 
-> **Status:** approved 2026-11-20 (the owner's picks at window W2, all as recommended: the
+> **Status:** in-progress (lane plan-0097 from main 123964e7, 2026-11-21). Approved 2026-11-20 (the owner's picks at window W2, all as recommended: the
 > anchor by the sky around the camera's position, a small plan of its own, the slope's step
 > lines to the backlog). **The lane starts after Plan 0095 closes and merges** (owner's
 > order, 2026-11-20).
@@ -314,7 +314,7 @@ direction bit and `VIS_BAKED` answers with its `+z` byte over 255. No `vxe-world
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The reading: the sky over the floor | dev | not started | |
+| 1: The reading: the sky over the floor | dev | done; `F_floor` 1/8; readings in [`logs/0097.md`](logs/0097.md) | committed with this row |
 | 2: The anchor by the floor's sky | dev | not started | |
 | 3: The owner's window | human | not started | |
 | 4: The picks as tests and the docs | dev | not started | |
@@ -324,6 +324,18 @@ direction bit and `VIS_BAKED` answers with its `+z` byte over 255. No `vxe-world
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- Phase 1: the reader and its record lookup by cell are in `bake/around.rs`
+  (`sky_over_floor`, `floor_sky`, `cell_record`), not `bake/store.rs`; the CPU test is the unit
+  test `bake::around::tests::the_floor_record_under_the_eye` over `floor_sky` (a `Store` needs a
+  device), not in `tests/rules.rs`; it adds a cells-of-4 case.
+- Phase 1: `ceiling.rs`'s `read` became `read_with` (an `AutoExposure` and a bake flag; it
+  returns the floor share too); `read` calls it unchanged.
+- Phase 1: the W2 log has no yaw. Facing -x at pitch -10 the shade pose meters 2.75 % sky, not
+  W2's 0 %; facing -x at pitch -30 it meters 0 % and the ceiling releases to +2 EV (the yaw
+  sweep in the log).
+- Phase 1: the deep noon tunnel's floor reads 3/255, not 0; at `F_floor` 1/8 that is 0.094 of
+  the share.
 
 ### Close triggers
 
