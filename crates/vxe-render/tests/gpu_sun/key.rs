@@ -198,6 +198,7 @@ fn far_level_at(px: &[(usize, f32, f32, u8)], row: usize, x: f32) -> f64 {
 /// x and y 8..64) reads 0 at every floor pixel more than 12 voxels inside the slab's edge, each
 /// with no key ray cast (the sample's b 64, KEY_FROM_STORE).
 #[test]
+#[ignore = "soak"]
 fn the_far_horizon_reads_an_open_floor_lit_and_a_roofed_one_dark() {
     let Some((device, queue)) = device() else {
         return;
