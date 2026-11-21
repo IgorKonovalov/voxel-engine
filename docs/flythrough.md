@@ -120,6 +120,15 @@ loading screen at once, naming what loads (`loading outdoor, trees sparse`, `swi
 cave`), and loads behind it as start-up does; the run then comes back with the menu and the
 switch's notice.
 
+The `debug` page also holds the diagnosis switches, menu only and free while off, each named on
+the lighting row and in the banner when it is off its default: `penumbra` (approach, disc;
+`--penumbra`), `sky normal` (smoothed, face; `--sky-normal`), `filter` (the a-trous filter on
+or off; `--filter`), `light history` (off: every lighting pixel restarts each frame, the
+upscaler keeps its history), `key jitter` (off: the key light's shadow ray runs along the
+disc's centre), `stair rules` (off: the far normal's stair rules in the history test and the
+key and sky rays' lift) and `queue freeze` (on: the live queue takes no step, so no record
+lands).
+
 The HUD's entities row reads `entities <n>/64 parts <m>/512 over <k> pool <used>/<total> KB`
 (then `tick <us>`, the movers' CPU a tick as the median over the last second, once a body has
 ticked, and `wander` while the wander is on): the entity pool's bytes in use, rounded up to

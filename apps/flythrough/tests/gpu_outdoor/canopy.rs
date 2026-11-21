@@ -44,6 +44,7 @@ mod canopy {
                     no_fade: false,
                     pool: false,
                     seed_stale_f: false,
+                    no_history: false,
                 },
             },
             Arm {
@@ -61,6 +62,7 @@ mod canopy {
                     no_fade: false,
                     pool: false,
                     seed_stale_f: false,
+                    no_history: false,
                 },
             },
             Arm {
@@ -78,6 +80,7 @@ mod canopy {
                     no_fade: false,
                     pool: false,
                     seed_stale_f: false,
+                    no_history: false,
                 },
             },
             Arm {
@@ -95,6 +98,7 @@ mod canopy {
                     no_fade: false,
                     pool: false,
                     seed_stale_f: false,
+                    no_history: false,
                 },
             },
         ];

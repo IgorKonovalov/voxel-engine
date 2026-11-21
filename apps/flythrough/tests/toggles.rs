@@ -5,10 +5,15 @@ use flythrough::hud::{HudRow, HudStats, Modes};
 use flythrough::toggles::{TOGGLES, Toggle};
 use vxe_render::{Lighting, LightingResolution};
 
-/// The modes a run starts with, a pan running so `Period` has one to stop, a sky so the clock
-/// and the sky rays show, and one dropped light so `5` has one to flag.
+/// The modes a run starts with (the fly-through's penumbra, `flythrough::DEFAULT_PENUMBRA`), a
+/// pan running so `Period` has one to stop, a sky so the clock and the sky rays show, and one
+/// dropped light so `5` has one to flag.
 fn start() -> Modes {
-    let mut m = Modes::new(Lighting::default(), LightingResolution::Half, 0.0).with_pan(10.0, 0.0);
+    let lighting = Lighting {
+        penumbra: flythrough::DEFAULT_PENUMBRA,
+        ..Lighting::default()
+    };
+    let mut m = Modes::new(lighting, LightingResolution::Half, 0.0).with_pan(10.0, 0.0);
     m.sky = true;
     m.lights
         .drop_at(true, [0.0; 3], [1.0, 0.0, 0.0], None)

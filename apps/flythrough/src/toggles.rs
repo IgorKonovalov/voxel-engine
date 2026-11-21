@@ -650,6 +650,27 @@ fn step_queue_angle(m: &mut Modes, d: i32) {
     };
 }
 
+/// A diagnosis switch of the debug page (menu only, free when off): its mode in words on the
+/// lighting row and in the banner, which a flip shows again from `now`.
+macro_rules! diag {
+    ($name:literal, $get:expr, $set:expr) => {
+        Toggle {
+            press: Press::Menu,
+            name: $name,
+            group: Group::Debug,
+            row: HudRow::Lighting,
+            get: $get,
+            flip: |m, now| {
+                let set: fn(&mut Modes) = $set;
+                set(m);
+                m.banner_at = now;
+            },
+            needs: None,
+            number: None,
+        }
+    };
+}
+
 /// The toggle table: every key of the fly-through that switches a mode.
 pub static TOGGLES: &[Toggle] = &[
     lighting!("shadow walk", ShadowWalk, |m| format!(
@@ -938,6 +959,63 @@ pub static TOGGLES: &[Toggle] = &[
         get: |m| format!("shadow ray {}", on(m.shadow_ray)),
         flip: |m, _| m.shadow_ray = !m.shadow_ray,
     },
+    diag!(
+        "penumbra",
+        |m| format!("penumbra {}", m.lighting.penumbra.name()),
+        |m| {
+            use vxe_render::Penumbra;
+            m.lighting.penumbra = match m.lighting.penumbra {
+                Penumbra::Approach => Penumbra::Disc,
+                Penumbra::Disc => Penumbra::Approach,
+            };
+        }
+    ),
+    diag!(
+        "sky normal",
+        |m| format!("sky normal {}", m.lighting.sky_normal.name()),
+        |m| {
+            use vxe_render::SkyNormal;
+            m.lighting.sky_normal = match m.lighting.sky_normal {
+                SkyNormal::Smoothed => SkyNormal::Face,
+                SkyNormal::Face => SkyNormal::Smoothed,
+            };
+        }
+    ),
+    diag!(
+        "filter",
+        |m| format!("filter {}", on(m.lighting.filter)),
+        |m| {
+            m.lighting.filter = !m.lighting.filter;
+        }
+    ),
+    diag!(
+        "light history",
+        |m| format!("light history {}", on(!m.diag.hooks.no_history)),
+        |m| {
+            m.diag.hooks.no_history = !m.diag.hooks.no_history;
+        }
+    ),
+    diag!(
+        "key jitter",
+        |m| format!("key jitter {}", on(!m.diag.hooks.key_no_jitter)),
+        |m| {
+            m.diag.hooks.key_no_jitter = !m.diag.hooks.key_no_jitter;
+        }
+    ),
+    diag!(
+        "stair rules",
+        |m| format!("stair rules {}", on(!m.diag.hooks.no_stair)),
+        |m| {
+            m.diag.hooks.no_stair = !m.diag.hooks.no_stair;
+        }
+    ),
+    diag!(
+        "queue freeze",
+        |m| format!("queue freeze {}", on(m.diag.queue_frozen)),
+        |m| {
+            m.diag.queue_frozen = !m.diag.queue_frozen;
+        }
+    ),
     Toggle {
         press: Press::Menu,
         name: "time",

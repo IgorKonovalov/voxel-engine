@@ -861,6 +861,7 @@ impl Run {
             }
         }
         gfx.frame.set_lighting(self.modes.lighting);
+        gfx.frame.set_light_hooks(self.modes.diag.hooks);
         gfx.frame.set_dt(step);
         // The testbed's clock moves by the loop's step; the engine holds none.
         self.modes.clock.advance(step);

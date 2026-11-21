@@ -318,6 +318,9 @@ pub struct LightHooks {
     /// A reset pair seeded from a stale record (a ring face casting the sky ray) counts 16
     /// samples (the fade's frames) instead of 8.
     pub seed_stale_f: bool,
+    /// The light passes take no screen history: `Params::history` bit 0 is clear every frame,
+    /// so every pixel resets (age 0, this frame's sample) while the upscaler keeps its own.
+    pub no_history: bool,
 }
 
 impl LightHooks {
