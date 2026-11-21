@@ -744,6 +744,11 @@ its Phases 5 to 7 are Phases 9 to 11.
   still camera's tap, `dee00eb7`, which 0094 Phase 8 approved for the profile goldens and missed
   for this soak one) carried by this plan; both read 0.0000 % unblessed, `outdoor_night.png`
   0.0000 % (readings log). This supersedes the two "not blessed" notes above.
+- Fix pass (close review): the section 4 dig reading taken (readings log, Phase 10; NFR section
+  2's Plan 0095 paragraph), with the split line printing the step's samples and dig bricks
+  (its own test commit); `the_far_horizon_reads_an_open_floor_lit_and_a_roofed_one_dark`
+  born soak (10.6 to 12.4 s); the key-only jobs' open set a `HashSet` (`dig_samples_left` takes a
+  membership test).
 - Phase 10: the close block's triggers are not filled; the tip gate tier was not run (the
   amendment leaves it to the close review).
 

@@ -1069,3 +1069,11 @@ later. The key re-bake under the day cycle (Phase 8's readings at `a92aca70`, `-
 1200 s day, a key step every 10 s, no drain, 3600 frames): the RTX re-keys every marked block
 2.3 to 5.7 s after a step (forest 48.9, hills 99.5 key jobs a second), the RENOIR in 9.1 to
 49.5 s in the forest and 7.1 to 14.6 s on the hills (3.0 and 4.7 a second).
+The dig's frame (Plan 0086 Phase 24a's rig `flicker::reading::flicker_dig_split` at 17:00,
+release, the tip's render code at `85fb3de7` against main `e6582b9e`, exclusive perf lock; RTX
+3080 Laptop at a 1-minute load of 3.9 / 2.5, RADV RENOIR at 2.2 / 0.6): the light pass rises at
+the dig's frame by +0.16 ms on the RTX (main +0.18) and +1.31 ms on the RENOIR (main +1.12), to
+0.40 and 3.31 ms; the queue's step at the dig's frame 17.5 against 16.4 ms (RTX) and 2.80
+against 2.84 ms (RENOIR); the ring's samples a step on the RENOIR 424 442 against 514 367 (main),
+the same 1 971 264 on the RTX, each ring brick direction drawing `KEY_BAKE_RAYS` (64) key rays
+more (Plan 0095's readings log, Phase 10).
