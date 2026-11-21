@@ -346,7 +346,7 @@ direction bit and `VIS_BAKED` answers with its `+z` byte over 255. No `vxe-world
 | 1: The reading: the sky over the floor | dev | done; `F_floor` 1/8; readings in [`logs/0097.md`](logs/0097.md) | ea15d52f |
 | 2: The anchor by the floor's sky | dev | done; bar 4's baked deep noon tunnel at +1.18 EV, not `max` (Notes) | 5d1cbf77 |
 | 3: The owner's window | human | done, window 97 (2026-11-21); words in the amendment and the readings log | b3277359 (setup) |
-| 3a: Highlight protection | dev | built, P99 default; bar 3's bless interrupted, bars 3 and 4 owed (Notes); short window awaits the owner | 8ff3bbe4 |
+| 3a: Highlight protection | dev | built, P99 default; short window awaits the owner | 8ff3bbe4 |
 | 4: The picks as tests and the docs | dev | not started | |
 
 ### Notes
@@ -400,9 +400,9 @@ each. Empty is fine.)_
 - Phase 3a bar 1: the window's clipping state is not reproduced headless at the window-97 pose
   (darkest metered view -7.39 EV against the window's -10.4); the cap binds and lowers the
   over-white share where the lit wall fills the top percent (readings log).
-- Phase 3a bars 3 and 4: the bless run was interrupted on the coordinator's request after 51 of
-  86 flythrough tests; `castle_gate.png` moved with the cap at P99 (not blessed); the rest of
-  the bless, the cap-off arm and `the_ceiling_moves_at_the_rate` are owed.
+- Phase 3a bar 3: `castle_gate.png`, `look_gradient27.png` and `look_trilinear8.png` render
+  differently from their committed files in both arms, byte-identical to main's own render at
+  123964e7; not blessed (readings log).
 
 ### Close triggers
 
