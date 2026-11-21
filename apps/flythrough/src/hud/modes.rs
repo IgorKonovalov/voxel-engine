@@ -502,6 +502,7 @@ impl Modes {
             sky_anchor_share: self.auto.1.sky_anchor_share,
             sky_anchor_floor: self.auto.1.sky_anchor_floor,
             sky_around_tau: self.auto.1.sky_around_tau,
+            highlight_percentile: self.auto.1.highlight_percentile,
             rate_ev_s: self.auto.1.rate_ev_s,
             ..Adaptation::Symmetric.preset()
         }
@@ -666,6 +667,12 @@ impl Modes {
                 .map_or((None, None), |r| (Some(r.sky_share), Some(r.sky_floor))),
             _ => (None, None),
         };
+        row.highlight = match self.lighting.exposure {
+            vxe_render::Exposure::Auto(a) if a.highlight_percentile > 0.0 => {
+                self.readout.and_then(|r| r.highlight).map(f32::log2)
+            }
+            _ => None,
+        };
     }
 
     /// The key light's far source in words, as the banner names it where it is not the
@@ -765,6 +772,15 @@ impl Modes {
             && a.rate_ev_s != vxe_render::DEFAULT_EXPOSURE_RATE_EV_S
         {
             let _ = write!(out, "exposure rate {} EV/s, ", a.rate_ev_s);
+        }
+        if let vxe_render::Exposure::Auto(a) = l.exposure
+            && a.highlight_percentile != vxe_render::DEFAULT_EXPOSURE_HIGHLIGHT
+        {
+            if a.highlight_percentile > 0.0 {
+                let _ = write!(out, "exposure highlight {}, ", a.highlight_percentile);
+            } else {
+                out.push_str("exposure highlight off, ");
+            }
         }
         let _ = write!(
             out,

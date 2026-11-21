@@ -69,6 +69,10 @@ pub struct OutdoorArgs {
     /// `--exposure-rate EV/s`: the auto exposure's rate cap (`AutoExposure::rate_ev_s`, 0 for
     /// none); unset, the preset's (`vxe_render::DEFAULT_EXPOSURE_RATE_EV_S` for the eye).
     pub(crate) exposure_rate: Option<f32>,
+    /// `--exposure-highlight P|off`: highlight protection's percentile
+    /// (`AutoExposure::highlight_percentile`, 0 for off); unset, the preset's
+    /// (`vxe_render::DEFAULT_EXPOSURE_HIGHLIGHT`).
+    pub(crate) exposure_highlight: Option<f32>,
 }
 
 impl OutdoorArgs {
@@ -476,6 +480,21 @@ fn ceiling_flags() -> Vec<Flag<Parsing>> {
             |p: &mut Parsing, v| {
                 p.args.outdoor.exposure_rate =
                     Some(v.parse_if(|n: &f32| (0.0..=64.0).contains(n), "0 to 64")?);
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--exposure-highlight"],
+            "P|off",
+            "highlight protection: the auto exposure is also capped so the brightest 100 - P \
+                 percent of the view (the hits' brightest channel, per 8 x 8 tile; never the \
+                 sky) stays at or under the tone curve's 0.95, 50 to 100; the HUD's exposure \
+                 row reads the cap as `hi`; off lets the bright tail clip [99]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.exposure_highlight = Some(match v.text {
+                    "off" => 0.0,
+                    _ => v.parse_if(|n: &f32| (50.0..=100.0).contains(n), "50 to 100, or off")?,
+                });
                 Ok(())
             },
         ),

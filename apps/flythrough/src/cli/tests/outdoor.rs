@@ -325,6 +325,36 @@ fn the_sky_anchor_floor_reaches_the_run() {
     assert!(parse_args_from(argv(&["--check-args", "--sky-anchor-floor", "off"])).is_ok());
 }
 
+/// `--exposure-highlight` reaches the auto exposure, 99 by default and unnamed; another value
+/// is named `exposure highlight P` and `off` (0) `exposure highlight off`; out of [50, 100] it
+/// is refused; `--check-args` accepts it.
+#[test]
+fn the_exposure_highlight_reaches_the_run() {
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert_eq!(r.start_auto().highlight_percentile, 99.0);
+    assert_eq!(
+        r.start_auto().highlight_percentile,
+        vxe_render::DEFAULT_EXPOSURE_HIGHLIGHT
+    );
+    assert!(!r.start_modes(0.0).line().contains("exposure highlight"));
+    for (v, p, word) in [
+        ("97.5", 97.5f32, "exposure highlight 97.5, "),
+        ("off", 0.0, "exposure highlight off, "),
+    ] {
+        let r = parse_args_from(argv(&["--source", "outdoor", "--exposure-highlight", v])).unwrap();
+        assert_eq!(r.start_auto().highlight_percentile, p);
+        let line = r.start_modes(0.0).line();
+        assert!(line.contains(word), "{line}");
+    }
+    for bad in ["0", "49", "100.5", "most"] {
+        assert!(
+            parse_args_from(argv(&["--exposure-highlight", bad])).is_err(),
+            "{bad}"
+        );
+    }
+    assert!(parse_args_from(argv(&["--check-args", "--exposure-highlight", "off"])).is_ok());
+}
+
 /// `--sky-anchor-share` reaches the auto exposure, 1/256 by default and unnamed; another value is
 /// named `sky anchor share X` and `off` (0) `sky anchor share off` with a sky set; out of (0, 1]
 /// it is refused.

@@ -431,11 +431,15 @@ pub struct ExposureRow {
     /// With the sky share, the sky share over the camera's floor fed to the exposure
     /// (`ExposureReadout::sky_floor`), `Some(None)` while absent or off.
     pub floor_share: Option<Option<f32>>,
+    /// The highlight cap in force in EV (`ExposureReadout::highlight`), `None` while off or
+    /// not yet read back.
+    pub highlight: Option<f32>,
 }
 
 impl fmt::Display for ExposureRow {
     /// `exposure manual +0.00 EV  scene -7.9 EV`, with `  settles +5.53 EV  ceiling +2.00 EV
-    /// (anchor 4, sky 23 %, floor 12 %)` in auto (`floor -` while the floor's share is absent).
+    /// (anchor 4, sky 23 %, floor 12 %)  hi +0.80 EV` in auto (`floor -` while the floor's
+    /// share is absent; `hi` the highlight cap, while it is on).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "exposure {} {:+.2} EV", self.mode, self.ev)?;
         match self.scene_ev {
@@ -463,6 +467,9 @@ impl fmt::Display for ExposureRow {
             },
             Some((c, None)) => write!(f, "  ceiling {c:+.2} EV")?,
             None => {}
+        }
+        if let Some(h) = self.highlight {
+            write!(f, "  hi {h:+.2} EV")?;
         }
         Ok(())
     }

@@ -345,7 +345,8 @@ direction bit and `VIS_BAKED` answers with its `+z` byte over 255. No `vxe-world
 |---|---|---|---|
 | 1: The reading: the sky over the floor | dev | done; `F_floor` 1/8; readings in [`logs/0097.md`](logs/0097.md) | ea15d52f |
 | 2: The anchor by the floor's sky | dev | done; bar 4's baked deep noon tunnel at +1.18 EV, not `max` (Notes) | 5d1cbf77 |
-| 3: The owner's window | human | runner ready (`live/session97.sh`), awaits the owner | |
+| 3: The owner's window | human | done, window 97 (2026-11-21); words in the amendment and the readings log | b3277359 (setup) |
+| 3a: Highlight protection | dev | built, P99 default; bar 3's bless interrupted, bars 3 and 4 owed (Notes); short window awaits the owner | committed with this row |
 | 4: The picks as tests and the docs | dev | not started | |
 
 ### Notes
@@ -384,6 +385,24 @@ each. Empty is fine.)_
   the anchor in force and `F_floor` over 0.
 - Phase 2: the tunnel test's tautology (Plan 0094's leftover) is not fixed: the test was not
   opened.
+- Phase 3a names no `Files touched`; it touched `exposure.rs`, a new `exposure/highlight.rs`,
+  `exposure/tests.rs` (the module's tests moved out of `exposure.rs` for the 1200-line cap),
+  `shaders/exposure.wgsl`, `shaders/composite.wgsl` (the meter tile's last word),
+  `frame/{compose,encode,mod}.rs`, `layout_tests.rs`, `lib.rs`, the fly-through's
+  `cli/{mod,outdoor}.rs`, `cli/tests/outdoor.rs`, `hud/{modes,stats}.rs` and their tests,
+  `tests/gpu_outdoor/ceiling.rs` and `docs/flythrough.md`.
+- Phase 3a: the tail reads each hit pixel's brightest channel per 8 x 8 tile (the largest in
+  the tile), not luminance; sky pixels are left out (with them in, `the_ceiling_moves_at_the_rate`
+  failed and four goldens moved: readings log, attempt 1).
+- Phase 3a: the highlight state is a 16-byte buffer of its own (`ExposureHighlight`,
+  `Frame::exposure_highlight`), not fields of `ExposureState`; the HUD prints `hi +X EV` only
+  while the cap is on and read back (nothing when off).
+- Phase 3a bar 1: the window's clipping state is not reproduced headless at the window-97 pose
+  (darkest metered view -7.39 EV against the window's -10.4); the cap binds and lowers the
+  over-white share where the lit wall fills the top percent (readings log).
+- Phase 3a bars 3 and 4: the bless run was interrupted on the coordinator's request after 51 of
+  86 flythrough tests; `castle_gate.png` moved with the cap at P99 (not blessed); the rest of
+  the bless, the cap-off arm and `the_ceiling_moves_at_the_rate` are owed.
 
 ### Close triggers
 

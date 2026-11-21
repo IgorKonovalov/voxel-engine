@@ -1054,6 +1054,7 @@ impl Frame {
         around.1 = None;
         if let Exposure::Auto(a) = &self.state.lighting.exposure {
             u.set_auto(a, self.sky.sky.is_some());
+            u.set_highlight(a, self.state.lighting.tone_map);
             // The floor's term (ADR-0081): walked and smoothed only where it can move the
             // ceiling, the anchor in force and `F_floor` over 0.
             if u.anchor > 0.0 && u.sky_share > 0.0 && a.sky_anchor_floor > 0.0 {

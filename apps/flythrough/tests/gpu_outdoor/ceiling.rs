@@ -20,6 +20,14 @@ mod ceiling {
         pub luma: f64,
         /// The misses' bounding box in pixels, `[x0, y0, x1, y1]`, and their count.
         pub misses: ([usize; 4], usize),
+        /// The highlight's state after the last frame (Plan 0097 Phase 3a).
+        pub hi: vxe_render::ExposureHighlight,
+        /// Over the whole view: the share of pixels whose brightest display byte is over the
+        /// white point's (`HIGHLIGHT_WHITE` encoded, 249), the share at 255, and the 99th and
+        /// 99.9th percentile of the brightest byte.
+        pub over_white: f64,
+        pub at_255: f64,
+        pub top: [u8; 2],
     }
 
     /// The scenes' times: noon, midnight and 17:45 (`outdoor_forest_sunset`'s clock), and the
@@ -102,6 +110,16 @@ mod ceiling {
                 n += 1;
             }
         }
+        let hb = vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_highlight(), 0, 16);
+        let hi = vxe_render::ExposureHighlight::from_bytes(&hb);
+        let white = (255.0 * vxe_render::HIGHLIGHT_WHITE.powf(1.0 / 2.2)).round() as u8;
+        let mut tops: Vec<u8> = px.chunks_exact(4).map(|p| p[0].max(p[1]).max(p[2])).collect();
+        let np = tops.len() as f64;
+        let over_white = tops.iter().filter(|&&t| t > white).count() as f64 / np;
+        let at_255 = tops.iter().filter(|&&t| t == 255).count() as f64 / np;
+        tops.sort_unstable();
+        let q = |p: f64| tops[((p * np) as usize).min(tops.len() - 1)];
+        let top = [q(0.99), q(0.999)];
         let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, f.hit_records());
         let mut bb = [usize::MAX, usize::MAX, 0, 0];
         let mut nm = 0;
@@ -120,6 +138,10 @@ mod ceiling {
             settles: a.exposure_under(f64::from(s.metered_log2), s.ceiling).log2(),
             ceiling: f64::from(s.ceiling).log2(),
             luma: sum / n.max(1) as f64,
+            hi,
+            over_white,
+            at_255,
+            top,
         };
         (read, vxe_render::sky_over_floor(f.store(), eye))
     }
@@ -573,6 +595,88 @@ mod ceiling {
             }
             if let Some((mut rig, cam)) = support::terms::forest_rig() {
                 go(&mut rig, "forest spawn 17:45", &cam, clock(17.0 * 60.0 + 45.0, None), false);
+            }
+        }
+
+        /// Plan 0097 Phase 3a (highlight protection): window 97's tunnel pose (run 4, the HUD's
+        /// x 304.4 y 8.8 z 465.7 voxels, noon, the lamp on, the store baked about it) facing
+        /// +x, +y, -x and -y at pitch 0 and on the axis toward the chamber ([`deep`]'s), under
+        /// the cap off and at the percentiles 95, 97, 98, 99 and 99.5 (at pitch -35 and +25 and
+        /// with no bake, the cap off and the default): the eye, the ceiling, the
+        /// tail level this frame and smoothed, the cap, and the view's share over the white
+        /// point and at 255 with its 99th and 99.9th percentile byte. Then bar 2's scenes, the
+        /// cap off against the default: the W2 shade pose at 10,180 and at 15:00, the forest
+        /// spawn at 15:00 and the open hills at midnight (the default spawn's view).
+        /// `VXE_TEST_ADAPTER` picks the adapter (the RTX for the reading).
+        #[test]
+        #[ignore = "reading"]
+        fn the_highlight_cap() {
+            const W97_TUNNEL: [f32; 3] = [304.4, 8.8, 465.7];
+            let on = auto(vxe_render::DEFAULT_SKY_ANCHOR_SHARE);
+            let leaf = flythrough::LeafShadow::default();
+            let go_with = |rig: &mut Rig, scene: &str, cam: &Camera, sky: vxe_render::sky::Sky, lamp: bool, ps: &[f32], bake: bool| {
+                for &p in ps {
+                    let a = AutoExposure { highlight_percentile: p, ..on };
+                    let (r, fl) = read_with(rig, cam, sky, lamp, leaf, a, bake);
+                    let arm = if p > 0.0 { format!("P{p}") } else { "off".to_string() };
+                    println!(
+                        "reading: {scene}, {arm}: floor {}, sky {:.4}, metered {:+.2}, ceiling {:+.3} EV, eye {:+.3} EV, tail {:+.2} (smoothed {:+.2}), cap {}, over white {:.4}, at 255 {:.4}, top p99 {} p99.9 {}",
+                        fl.map_or("none".to_string(), |(v, _)| format!("{v:.4}")),
+                        r.sky,
+                        r.metered,
+                        r.ceiling,
+                        r.eye,
+                        r.hi.now_log2,
+                        r.hi.log2,
+                        r.hi.cap().map_or("-".to_string(), |c| format!("{:+.3} EV", c.log2())),
+                        r.over_white,
+                        r.at_255,
+                        r.top[0],
+                        r.top[1]
+                    );
+                }
+            };
+            let go = |rig: &mut Rig, scene: &str, cam: &Camera, sky: vxe_render::sky::Sky, lamp: bool, ps: &[f32]| {
+                go_with(rig, scene, cam, sky, lamp, ps, true)
+            };
+            let pair = [0.0, vxe_render::DEFAULT_EXPOSURE_HIGHLIGHT];
+            let noon = clock(720.0, None);
+            let sweep = [0.0, 95.0, 97.0, 98.0, 99.0, 99.5];
+            if let Some((mut rig, _, inward)) = deep() {
+                println!("reading: the_highlight_cap on {}", rig.adapter);
+                for (name, yaw) in [("+x", 0.0f32), ("+y", 90.0), ("-x", 180.0), ("-y", 270.0)] {
+                    let cam = Camera {
+                        position: W97_TUNNEL.into(),
+                        yaw: yaw.to_radians(),
+                        pitch: 0.0,
+                        vfov: 70f32.to_radians(),
+                    };
+                    go(&mut rig, &format!("W97 tunnel facing {name}"), &cam, noon, true, &sweep);
+                    for pitch in [-35.0f32, 25.0] {
+                        let c = Camera {
+                            pitch: pitch.to_radians(),
+                            ..cam
+                        };
+                        go(&mut rig, &format!("W97 tunnel facing {name} pitch {pitch}"), &c, noon, true, &pair);
+                    }
+                    go_with(&mut rig, &format!("W97 tunnel facing {name} no bake"), &cam, noon, true, &pair, false);
+                }
+                let axis = Camera {
+                    position: W97_TUNNEL.into(),
+                    ..inward
+                };
+                go(&mut rig, "W97 tunnel along the axis", &axis, noon, true, &sweep);
+            }
+            if let Some(mut rig) = w2_rig() {
+                let shade = w2_shade_camera();
+                go(&mut rig, "W2 shade 10,180", &shade, clock(720.0, Some([10.0, 180.0])), false, &pair);
+                go(&mut rig, "W2 shade 15:00", &shade, clock(900.0, None), false, &pair);
+            }
+            if let Some((mut rig, cam)) = support::terms::forest_rig() {
+                go(&mut rig, "forest spawn 15:00", &cam, clock(900.0, None), false, &pair);
+            }
+            if let Some((mut rig, cam)) = support::terms::hills_rig() {
+                go(&mut rig, "hills midnight", &cam, clock(0.0, None), false, &pair);
             }
         }
 

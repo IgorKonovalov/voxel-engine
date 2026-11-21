@@ -99,9 +99,10 @@ pub use entities::{
     MARK_BUFFER_BYTES, MARK_COLOURS, MAX_ENTITIES, MAX_ENTITY_PARTS, Mark, ModelHandle,
 };
 pub use exposure::{
-    AutoExposure, DEFAULT_EXPOSURE_RATE_EV_S, DEFAULT_SKY_ANCHOR_EV, DEFAULT_SKY_ANCHOR_FLOOR,
-    DEFAULT_SKY_ANCHOR_SHARE, DEFAULT_SKY_AROUND_TAU, EXPOSURE_WGSL, Exposure, ExposureReadout,
-    ExposureState, Metering, SkyAround, ground_irradiance,
+    AutoExposure, DEFAULT_EXPOSURE_HIGHLIGHT, DEFAULT_EXPOSURE_RATE_EV_S, DEFAULT_SKY_ANCHOR_EV,
+    DEFAULT_SKY_ANCHOR_FLOOR, DEFAULT_SKY_ANCHOR_SHARE, DEFAULT_SKY_AROUND_TAU, EXPOSURE_WGSL,
+    Exposure, ExposureHighlight, ExposureReadout, ExposureState, HIGHLIGHT_WHITE, Metering,
+    SkyAround, ground_irradiance, white_exposed,
 };
 pub use frame::{
     ATROUS_ITERATIONS, DEFAULT_KEY_HISTORY, DEFAULT_KEY_STEP, DEFAULT_LIGHT_FLOOR,

@@ -23,9 +23,11 @@
 //                                        `workgroup_id.y * workgroups.x + workgroup_id.x`, the
 //                                        sum over its pixels of `clamp(log2(max(Y, 2^-16)),
 //                                        -16, 16)` of the shaded radiance before exposure and
-//                                        the tone map, their count and the count of those
-//                                        that are sky (a miss), w 0; written in the shaded
-//                                        view only
+//                                        the tone map, their count, the count of those
+//                                        that are sky (a miss), and the largest
+//                                        `clamp(log2(max(max(r, g, b), 2^-16)), -16, 16)`
+//                                        over its hits (-16 with none);
+//                                        written in the shaded view only
 //   9  texture_2d<u32>   transmit_in     the hit pass's r32uint transmittance per channel,
 //                                        rgb9e5 (`t9e5_unpack`)
 //  10  texture_2d<f32>   direct_acc_in   the temporal pass's accumulated direct part (rgb),
@@ -211,15 +213,18 @@ fn composite(
     @builtin(workgroup_id) wid: vec3<u32>,
     @builtin(num_workgroups) groups: vec3<u32>,
 ) {
-    var m = vec4<f32>(0.0);
+    var m = vec4<f32>(0.0, 0.0, 0.0, -16.0);
     if (gid.x < params.size.x && gid.y < params.size.y) {
         m = composite_px(vec2<i32>(gid.xy));
     }
     meter_sum[lane] = m;
     workgroupBarrier();
+    // Sums the first three words and keeps the largest last one.
     for (var stride = 32u; stride > 0u; stride >>= 1u) {
         if (lane < stride) {
-            meter_sum[lane] += meter_sum[lane + stride];
+            let a = meter_sum[lane];
+            let b = meter_sum[lane + stride];
+            meter_sum[lane] = vec4<f32>(a.xyz + b.xyz, max(a.w, b.w));
         }
         workgroupBarrier();
     }
@@ -228,11 +233,16 @@ fn composite(
     }
 }
 
-// The meter's term of radiance `c` before exposure: its clamped log2 luminance, a count, and
-// a count of 1 when the pixel is sky (`sky`: a miss).
+// The meter's term of radiance `c` before exposure: its clamped log2 luminance, a count, a
+// count of 1 when the pixel is sky (`sky`: a miss), and its brightest channel's clamped log2
+// (-16 for sky: the highlight cap reads the hits alone).
 fn meter_of(c: vec3<f32>, sky: bool) -> vec4<f32> {
     let l = clamp(log2(max(luminance(c), exp2(-16.0))), -16.0, 16.0);
-    return vec4<f32>(l, 1.0, select(0.0, 1.0, sky), 0.0);
+    var top = -16.0;
+    if (!sky) {
+        top = clamp(log2(max(max(c.x, max(c.y, c.z)), exp2(-16.0))), -16.0, 16.0);
+    }
+    return vec4<f32>(l, 1.0, select(0.0, 1.0, sky), top);
 }
 
 // The two mark words of the entity hit at `px`, zeros for any other hit or a miss.

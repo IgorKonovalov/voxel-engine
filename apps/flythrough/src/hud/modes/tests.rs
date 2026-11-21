@@ -288,6 +288,7 @@ fn the_banner_names_each_change_and_fades_after_three_seconds() {
         ceiling: 16.0,
         sky_share: 0.0,
         sky_floor: None,
+        highlight: None,
     }));
     assert!(
         q.banner(0.0)
@@ -459,6 +460,7 @@ fn the_banner_and_row_name_the_sky_anchor() {
         ceiling: 0.0625,
         sky_share: 0.23,
         sky_floor: Some(0.12),
+        highlight: None,
     }));
     let row = m.exposure_row();
     assert_eq!(row.ceiling, Some((-4.0, Some(4.0))));
@@ -477,6 +479,7 @@ fn the_banner_and_row_name_the_sky_anchor() {
         ceiling: 0.0625,
         sky_share: 0.23,
         sky_floor: None,
+        highlight: None,
     }));
     assert!(
         m.exposure_row()

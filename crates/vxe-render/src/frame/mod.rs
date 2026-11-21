@@ -211,6 +211,12 @@ impl Frame {
         self.exposure.state()
     }
 
+    /// The exposure's highlight state the exposure pass writes (16 bytes, `COPY_SRC`:
+    /// [`crate::exposure::ExposureHighlight::from_bytes`] reads a copy), for tests and tools.
+    pub fn exposure_highlight(&self) -> &wgpu::Buffer {
+        self.exposure.highlight()
+    }
+
     /// The meter's tiles the composite writes (`COPY_SRC`): per 8 x 8 workgroup of the
     /// internal target, row-major over `ceil(w / 8) x ceil(h / 8)`, the sum of its pixels'
     /// clamped log2 luminance, their count, the count of those that are sky (a miss) and 0, as

@@ -9,9 +9,12 @@
 //   2  storage, read     tiles           the composite's tiles: per 8 x 8 workgroup of the
 //                                        internal target, row-major, the sum of the clamped
 //                                        log2 luminance of its pixels, their count, the count
-//                                        of those that are sky, and 0
+//                                        of those that are sky, and the largest log2 of their
+//                                        brightest channel
 //   3  storage, read     sky_e           `E_sky` (sky_irradiance.wgsl): six vec4, `+z`'s w the
 //                                        key light's horizontal irradiance in luminance
+//   4  storage, rw       hi              the highlight's state (`ExposureHighlight` in
+//                                        exposure/highlight.rs)
 //
 // Tile `i` weighs `w_i = 1 + strength exp(-r_i^2 / (2 sigma^2))`, `r_i` the distance of the
 // tile's centre (its 8 x 8 square's centre, in pixels) from the centre of the view whose
@@ -41,6 +44,13 @@
 // `F` and the rate over 0 the ceiling in force steps toward its target by at most the rate
 // cap's step in log2 (ADR-0076 rule 5, `AutoExposure::step_ceiling`); else, on the reset bit
 // or from a state with no ceiling yet, it is the target.
+//
+// Highlight protection (exposure/highlight.rs), in auto with `hi_tail` over 0: the tiles'
+// brightest-channel maxima are binned by pixel count into `TAIL_BINS` bins of `TAIL_BIN_EV`
+// over [-16, 16), the level over which the share `hi_tail` of the metered pixels lies is read
+// linear within its bin, smoothed by `step_capped` (the eye's step; a reset or the first
+// metered frame jumps), and `current` is clamped under `hi_white / 2^level` besides the
+// ceiling. Without a meter the level holds.
 
 struct ExUniform {
     tiles: vec2<u32>,
@@ -76,6 +86,12 @@ struct ExUniform {
     sky_share: f32,
     // The sky share over the camera's floor over `F_floor`, in [0, 1], under mode bit 3.
     sky_around: f32,
+    // Highlight protection: the tail's share of the view (0: off) and the exposed value the
+    // tail is held at or under.
+    hi_tail: f32,
+    hi_white: f32,
+    _pad0: f32,
+    _pad1: f32,
 };
 
 struct ExState {
@@ -95,7 +111,38 @@ struct ExState {
 @group(0) @binding(2) var<storage, read> tiles: array<vec4<f32>>;
 @group(0) @binding(3) var<storage, read> sky_e: array<vec4<f32>, 6>;
 
+// `ExposureHighlight` in exposure/highlight.rs.
+struct ExHighlight {
+    now_log2: f32,
+    log2: f32,
+    cap: f32,
+    seen: u32,
+};
+
+@group(0) @binding(4) var<storage, read_write> hi: ExHighlight;
+
 const TILE: f32 = 8.0;
+// The tail's bins span the meter's clamp, [-16, 16) in log2 (`TAIL_BINS` from the prelude).
+const TAIL_LO: f32 = -16.0;
+const TAIL_BIN_EV: f32 = 32.0 / f32(TAIL_BINS);
+
+var<workgroup> tail: array<atomic<u32>, TAIL_BINS>;
+
+// The level over which the share `hi_tail` of `total` binned pixels lies, linear within its
+// bin; the bottom of the range for an empty histogram.
+fn tail_level(total: f32) -> f32 {
+    let goal = ex.hi_tail * total;
+    var above = 0.0;
+    for (var b = i32(TAIL_BINS) - 1; b >= 0; b--) {
+        let n = f32(atomicLoad(&tail[b]));
+        if (n > 0.0 && above + n >= goal) {
+            let top = TAIL_LO + TAIL_BIN_EV * f32(b + 1);
+            return top - TAIL_BIN_EV * clamp((goal - above) / n, 0.0, 1.0);
+        }
+        above += n;
+    }
+    return TAIL_LO;
+}
 
 // `exp(-dt / tau)`, 0 for a constant of 0.
 fn decay(dt: f32, tau: f32) -> f32 {
@@ -200,11 +247,21 @@ fn tile_weight(i: u32) -> f32 {
 @compute @workgroup_size(256, 1, 1)
 fn exposure(@builtin(local_invocation_index) lane: u32) {
     let n = ex.tiles.x * ex.tiles.y;
+    if (lane < TAIL_BINS) {
+        atomicStore(&tail[lane], 0u);
+    }
+    workgroupBarrier();
+    let binning = ex.hi_tail > 0.0;
     var acc = vec4<f32>(0.0);
     if ((ex.mode & EX_METER) != 0u) {
         for (var i = lane; i < n; i += 256u) {
+            let t = tiles[i];
             let w = tile_weight(i);
-            acc += w * tiles[i];
+            acc += w * vec4<f32>(t.xyz, 0.0);
+            if (binning && t.y > 0.0) {
+                let b = clamp(i32(floor((t.w - TAIL_LO) / TAIL_BIN_EV)), 0, i32(TAIL_BINS) - 1);
+                atomicAdd(&tail[b], u32(t.y));
+            }
         }
     }
     partial[lane] = acc;
@@ -238,10 +295,36 @@ fn exposure(@builtin(local_invocation_index) lane: u32) {
         }
         let reset = (ex.mode & EX_RESET) != 0u;
         s.ceiling = step_ceiling(s.ceiling, ceiling_target(s.sky), reset);
-        s.current = clamp(ex.key / exp2(s.adapted_log2), ex.min_e, max(s.ceiling, ex.min_e));
+        var h = hi;
+        var upper = s.ceiling;
+        if (binning) {
+            if (metered) {
+                // The binned total is the unweighted pixel count.
+                var total = 0u;
+                for (var b = 0u; b < TAIL_BINS; b++) {
+                    total += atomicLoad(&tail[b]);
+                }
+                h.now_log2 = tail_level(f32(total));
+                if (reset || h.seen == 0u) {
+                    h.log2 = h.now_log2;
+                } else if (ex.dt > 0.0) {
+                    h.log2 = step_capped(h.log2, h.now_log2, ex.dt);
+                }
+                h.seen = 1u;
+            }
+            if (h.seen != 0u) {
+                h.cap = ex.hi_white / exp2(h.log2);
+                upper = min(upper, h.cap);
+            }
+        } else {
+            h = ExHighlight(0.0, 0.0, 0.0, 0u);
+        }
+        hi = h;
+        s.current = clamp(ex.key / exp2(s.adapted_log2), ex.min_e, max(upper, ex.min_e));
     } else {
         s.ceiling = ex.max_e;
         s.current = ex.manual;
+        hi = ExHighlight(0.0, 0.0, 0.0, 0u);
     }
     s.frame += 1u;
     state = s;
