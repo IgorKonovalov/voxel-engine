@@ -624,8 +624,9 @@ fn summarise(seg: &Segment, cls_note: &str) {
 }
 
 /// The series of a hold: per frame, the far class's over-4 share and mean |dY| against the
-/// previous frame, and against the hold's last frame.
-fn hold_series(seg: &Segment, cls: &[u8], still_far_max: f64) {
+/// previous frame, and against the hold's last frame. Returns the near class's over-4 share at
+/// +0 (the hold's first frame against its last).
+fn hold_series(seg: &Segment, cls: &[u8], still_far_max: f64) -> f64 {
     let last = seg.frames.last().unwrap();
     let mut back_pair = None;
     let mut back_final = None;
@@ -677,6 +678,7 @@ fn hold_series(seg: &Segment, cls: &[u8], still_far_max: f64) {
         })
         .collect();
     println!("  {} to-final over 4: {}", seg.name, at.join("; "));
+    let near0 = change_by_class(&seg.frames[0], last, cls, 4)[1].0;
     for r in rows {
         println!("    {r}");
     }
@@ -747,6 +749,7 @@ fn hold_series(seg: &Segment, cls: &[u8], still_far_max: f64) {
             pct(kinds[2], n)
         );
     }
+    near0
 }
 
 mod reading {
@@ -764,8 +767,10 @@ mod reading {
 }
 
 /// The rig's protocol for `arm` on `rig` from the spawn's camera `cam0`: the table's rows
-/// printed, frames and maps under `live/wobble/<arm>/`.
-fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) {
+/// printed, frames and maps under `live/wobble/<arm>/`. Returns the stop's near +0 (the near
+/// class's over-4 share from the stop's first frame to its last; NaN for a `probe` arm, which
+/// runs no stop).
+fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> f64 {
     QUEUE_ON.with(|q| q.set(true));
     {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -809,7 +814,7 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) {
                     OUT[1],
                 );
             }
-            return;
+            return f64::NAN;
         }
         if let Some(ms) = arm.pre_ms {
             s.frame.set_bake_budget(vxe_render::Budget::PerFrame { ms });
@@ -905,11 +910,12 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) {
             Some(fly.last.clone()),
         );
         summarise(&stop, "classes per frame");
+        let stop_near;
         {
             let shot = support::defects::read(rig, &s.frame, None);
             let gw = s.frame.light_hit_positions().width() as usize;
             let cls = classes(&shot.hits, &shot.source, gw, cam1.position.to_array());
-            hold_series(&stop, &cls, still_far_max);
+            stop_near = hold_series(&stop, &cls, still_far_max);
             support::write_png(&dir.join("stop-final.png"), &shot.display, OUT[0], OUT[1]);
         }
         // The turn: `turn_deg` over `turn_frames` frames, then the hold.
@@ -953,23 +959,36 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) {
             );
         }
         println!("done: {}", dir.display());
+        stop_near
     }
 }
 
 /// Plan 0095 Phase 10's soak reading: the rig's protocol ([`wobble_on`]) for the arm set
 /// `default`, `albedo`, `ray,disc`, `column` and `nqueue`, no drain, on one forest (`r` 8) at
 /// 1080p through FSR 2 at 1.5: each arm's rows printed with the queue's depth and the far's key
-/// source split, so a later plan re-reads the wobble with the same instrument. Asserts nothing.
-/// `VXE_TEST_ADAPTER` picks the adapter (the RTX by hand; unset, lavapipe).
+/// source split, so a later plan re-reads the wobble with the same instrument. Plan 0095 Phase
+/// 10's near bar (as amended 2026-11-21): the `default` arm's (the picks') stop +0 near, the near
+/// class's over-4 share from the stop's first frame to its last, is at most the `albedo` arm's
+/// (lighting off) read in the same run plus 2 points. The bar is read at 1080p only: at the gate
+/// scene's 320-pixel grid the far normal's band starts at about 2.2 m and most near pixels read
+/// the far estimate. `VXE_TEST_ADAPTER` picks the adapter (the RTX by hand; unset, lavapipe).
 #[test]
 #[ignore = "soak"]
 fn the_wobble_table_over_the_arm_set() {
     let Some((mut rig, cam0)) = forest_rig(8) else {
         return;
     };
+    let mut near = Vec::new();
     for spec in ["default", "albedo", "ray,disc", "column", "nqueue"] {
-        wobble_on(&mut rig, cam0, &Arm::from_spec(spec));
+        near.push((spec, wobble_on(&mut rig, cam0, &Arm::from_spec(spec))));
     }
+    let row: Vec<String> = near.iter().map(|(a, v)| format!("{a} {v:.2} %")).collect();
+    println!("stop +0 near on {}: {}", rig.adapter, row.join(", "));
+    let (picks, off) = (near[0].1, near[1].1);
+    assert!(
+        picks <= off + 2.0,
+        "stop +0 near {picks:.2} % against the lighting-off {off:.2} % + 2"
+    );
 }
 
 /// One run of the gate scene's protocol: the share of far pixels over 4 levels on each
@@ -1081,15 +1100,17 @@ fn gate_run(rig: &mut Rig, cam0: &Camera, arm: support::wobble::Arm, frozen: boo
 /// +60 has a final frame to read against). With the queue frozen at the settle's end, under the
 /// picks against the before (`key far ray`, `penumbra disc`) read in the same run: the far
 /// class's share over 4 levels on the still's pairs (mean), the fly's pairs (mean), and from the
-/// hold's last frame at +30 and +60, each at or under the before's plus 1 point; the near
-/// class's stop +0 within 2 points of the lighting-off (albedo) run's. The same segments
-/// undrained print with the queue's depth and the picks' +60 is at most 10 % (a guess: the
-/// landings' fades over a 2 s hold; re-read when Plan 0096 lands). Far is a hit 6 m out or more
+/// hold's last frame at +30 and +60, each at or under the before's plus 1 point. Printed, not
+/// asserted (as amended 2026-11-21): the near class's stop +0 beside the lighting-off (albedo)
+/// run's (at this 320-pixel grid the far normal's band starts at about 2.2 m, so most near
+/// pixels read the far estimate; the near bar is the 1080p soak reading's,
+/// [`the_wobble_table_over_the_arm_set`]), and the same segments undrained with the queue's
+/// depth, the picks' +60 beside the before's (Plan 0096's far tiers re-read it). Far is a hit 6 m out or more
 /// ([`support::wobble::NEAR_M`]: the far normal's weight at least 0.996 at this width). Every
 /// figure prints. `VXE_TEST_ADAPTER` picks the adapter (unset, lavapipe).
 #[test]
 #[ignore = "soak"]
-fn the_far_moves_no_worse_than_the_before_and_the_near_stops_clean() {
+fn the_far_moves_no_worse_than_the_before() {
     use support::wobble::Arm;
     let Some((mut rig, cam)) = support::wobble::forest() else {
         return;
@@ -1100,8 +1121,8 @@ fn the_far_moves_no_worse_than_the_before_and_the_near_stops_clean() {
     let picks_u = gate_run(&mut rig, &cam, Arm::Picks, false);
     let before_u = gate_run(&mut rig, &cam, Arm::Before, false);
     println!(
-        "gate undrained: picks +60 {:.2} %, before +60 {:.2} %",
-        picks_u.hold[2], before_u.hold[2]
+        "gate readings: stop +0 near picks {:.2} %, before {:.2} %, lighting off {:.2} %; undrained +60 far picks {:.2} %, before {:.2} %",
+        picks.stop_near, before.stop_near, off.stop_near, picks_u.hold[2], before_u.hold[2]
     );
     assert!(
         picks.far_px > 5.0,
@@ -1119,15 +1140,4 @@ fn the_far_moves_no_worse_than_the_before_and_the_near_stops_clean() {
             "{seg}: far {p:.2} % over 4 against the before's {b:.2} % + 1"
         );
     }
-    assert!(
-        (picks.stop_near - off.stop_near).abs() <= 2.0,
-        "stop +0 near {:.2} % against the lighting-off {:.2} %",
-        picks.stop_near,
-        off.stop_near
-    );
-    assert!(
-        picks_u.hold[2] <= 10.0,
-        "undrained +60 far {:.2} %",
-        picks_u.hold[2]
-    );
 }

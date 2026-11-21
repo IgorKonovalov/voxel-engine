@@ -639,7 +639,7 @@ its Phases 5 to 7 are Phases 9 to 11.
 | 7: The owner's window W2, no pre-roll | human | run 2026-11-20 on the forest, no pre-roll; (a) stands as the default, the far keeps the record; owner: 1a "everything besides near lines on slopes looks good", 1d "before - grain" (readings log) | 87b09f09 |
 | 8: The sun's step and the edit's ring (if W2 keeps the record) | dev | done; the day-cycle readings in `87ced612` | a92aca70 |
 | 9: The fix pass after W2 | dev | done; the picks were the defaults; the approach probes moved into the default light pipelines; the rig re-read follows the commit | 220a599c |
-| 10: The bars, the goldens, the NFR readings | dev | in progress (main merged `2dfbad9b`, flags cap `b46cb3eb`); stopped at the bars: the near stop, the undrained +60 and the far return miss as stated (readings log) | wip, committed with this row |
+| 10: The bars, the goldens, the NFR readings | dev | done as amended `5f3e1e9b` (main merged `2dfbad9b`, flags cap `b46cb3eb`, wip `ce1a7050`); far bars asserted, near stop at the RTX 1080p only (0.81 against 0.04 % + 2), undrained +60 and far return printed; `outdoor_sunset.png` (6.05 %) and `profile_portable_gate.png` (0.81 %) not blessed (readings log) | committed with this row |
 | 11: A second short look, if asked | human | struck 2026-11-20 (owner, amendment `95d735fd`): W2 asked for no second look | |
 
 ### Notes
@@ -724,6 +724,23 @@ its Phases 5 to 7 are Phases 9 to 11.
   Files beyond its list: `frame/encode.rs` (`light_arms`), `frame/pipelines.rs`,
   `frame/compose.rs` (its test), the fly-through's `cli/mod.rs` and `cli/tests/outdoor.rs`
   (the loading stage's arms).
+- Phase 10: files beyond its list: `tests/gpu_outdoor.rs` (the tree-shadow scene's `KeyFar::Ray`,
+  the include), `tests/gpu_outdoor_golden.rs` (`outdoor_forest_afternoon_golden`),
+  `tests/support/mod.rs` and `tests/support/wobble.rs` (the gate scene), `docs/backlog.md` (the
+  far band's narrowing).
+- Phase 10: the gate scene and the far return are born soak (130.1 s and 39.3 s on lavapipe);
+  the golden is in the gate (7.6 s). The gate scene's tests were renamed to what they assert
+  (`the_far_moves_no_worse_than_the_before`, `the_far_return_prints_against_the_before`); the
+  far return asserts only that the scene has far pixels (over 5 % of the display).
+- Phase 10: the near stop bar lives in `the_wobble_table_over_the_arm_set` (soak, by hand on the
+  RTX), whose `default` and `albedo` arms are the picks and lighting off.
+- Phase 10: `outdoor_sunset.png` moves 6.05 % with `key_far: Baked` (masked behind noon's
+  failure in the same test); not named in the amendment, not blessed: the soak test
+  `outdoor_goldens_differ_by_time_of_day` fails at the tip.
+- Phase 10: `profile_portable_gate.png` (0.81 %) moved at Plan 0094 Phase 3 `dee00eb7`, not the
+  showcase palette; not blessed: `portable_profile_golden` (soak) fails at the tip as on main.
+- Phase 10: the close block's triggers are not filled; the tip gate tier was not run (the
+  amendment leaves it to the close review).
 
 ### Close triggers
 

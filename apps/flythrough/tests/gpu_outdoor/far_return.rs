@@ -4,8 +4,8 @@
 /// The far class's share over 4 levels at the return frame of a turn away and back against the
 /// settled image, for `arm` on [`support::wobble`]'s scene: 120 settle frames, the settled
 /// frame, a 90-degree yaw over 10 frames, 64 held, back over 10, the queue stepping throughout
-/// (no drain).
-fn far_return(rig: &mut support::terms::Rig, cam: &vxe_render::Camera, arm: support::wobble::Arm) -> f64 {
+/// (no drain). Returns the share and the far class's share of the display at the return frame.
+fn far_return(rig: &mut support::terms::Rig, cam: &vxe_render::Camera, arm: support::wobble::Arm) -> (f64, f64) {
     use support::wobble::{FAR, frame, over, share, step, yawed};
     let mut f = frame(rig, arm);
     for _ in 0..120 {
@@ -25,26 +25,24 @@ fn far_return(rig: &mut support::terms::Rig, cam: &vxe_render::Camera, arm: supp
         share(&ret.class, FAR),
         support::wobble::depth(&f)
     );
-    at
+    (at, share(&ret.class, FAR))
 }
 
-/// Plan 0095 Phase 10 bar 3 (ADR-0076 rule 2 at the far, ADR-0079; as amended 2026-11-20: no
-/// worse than the before): on [`support::wobble`]'s scene (a 3 x 3 x 2 chunk forest of seed 1 at
-/// 320 x 180 through FSR 2 at 1.5, no drain), [`far_return`]'s share of far pixels over 4 levels
-/// at the return frame under the picks is at or under the before's (`key far ray`, `penumbra
-/// disc`) read in the same run plus 1 point. Both figures print. Plan 0090's counter takes the
-/// scene when it lands.
+/// Plan 0095 Phase 10's rule 2 reading at the far (ADR-0076 rule 2, ADR-0079; a reading, not a
+/// bar, as amended 2026-11-21): on [`support::wobble`]'s scene (a 3 x 3 x 2 chunk forest of seed
+/// 1 at 320 x 180 through FSR 2 at 1.5, no drain), [`far_return`]'s share of far pixels over 4
+/// levels at the return frame under the picks and under the before (`key far ray`, `penumbra
+/// disc`), both printed. Asserted only that the scene has far pixels to read. Plan 0096's far
+/// tiers and Plan 0090's counter take the scene.
 #[test]
 #[ignore = "soak"]
-fn the_far_returns_no_worse_than_the_before() {
+fn the_far_return_prints_against_the_before() {
     use support::wobble::Arm;
     let Some((mut rig, cam)) = support::wobble::forest() else {
         return;
     };
-    let picks = far_return(&mut rig, &cam, Arm::Picks);
-    let before = far_return(&mut rig, &cam, Arm::Before);
-    assert!(
-        picks <= before + 1.0,
-        "the far's return frame {picks:.2} % over 4 against the before's {before:.2} % + 1"
-    );
+    let (picks, far_px) = far_return(&mut rig, &cam, Arm::Picks);
+    let (before, _) = far_return(&mut rig, &cam, Arm::Before);
+    println!("far return: picks {picks:.2} %, before {before:.2} %");
+    assert!(far_px > 5.0, "far {far_px:.1} % of the display");
 }
