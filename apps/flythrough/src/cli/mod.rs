@@ -727,6 +727,9 @@ pub struct Args {
     /// `--light-samples N`: the mirror's light-sample buffer in samples
     /// (`vxe_render::MirrorConfig::light_samples`); `vxe_render::DEFAULT_LIGHT_SAMPLES` without.
     pub(crate) light_samples: Option<u32>,
+    /// `--light-hooks`: the light passes' reading hooks (`vxe_render::LightHooks`); none
+    /// without.
+    pub(crate) light_hooks: vxe_render::LightHooks,
     /// The output size of a headless run with no `--render`: the `--profile`'s hint when one
     /// is given, else none (1280 x 720).
     pub(crate) output_hint: Option<[u32; 2]>,

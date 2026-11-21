@@ -108,6 +108,7 @@ impl Args {
             profile: vxe_render::Profile::Floor,
             light_cap: vxe_render::MAX_LIGHTS as u32,
             light_samples: None,
+            light_hooks: vxe_render::LightHooks::default(),
             output_hint: None,
             audio: AudioArgs {
                 on: false,

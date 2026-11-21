@@ -835,6 +835,9 @@ impl Run {
         };
         gfx.frame.set_lights(&lights);
         gfx.frame.set_light_cap(self.args.light_cap);
+        if self.args.light_hooks != vxe_render::LightHooks::default() {
+            gfx.frame.set_light_hooks(self.args.light_hooks);
+        }
         if let Some(words) = crate::entities::feed(
             &mut self.modes.walkers,
             &self.world,

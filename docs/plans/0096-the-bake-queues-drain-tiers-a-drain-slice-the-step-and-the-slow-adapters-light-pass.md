@@ -679,7 +679,7 @@ Readings log: [logs/0096.md](logs/0096.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: readings on the undrained image, the drain readout | dev | not started | |
+| 1: readings on the undrained image, the drain readout | dev | done; readout code in `e1944c81` (wip, with Phase 2's first cut); table 5 lacks `far_normal` off, `KEY_OFF` and `SKY_RAY_ALWAYS` (re-run queued on `--light-hooks`, a reading flag added in `cli/settings.rs`), table 6 lacks the `perf` profile; the 1/16 light-buffer glide evicts headless (`light place` p50 813 ms) and runs about 1 frame a second | committed with this row |
 | 2: a record without rays | dev | not started | |
 | 3: a tier by size on screen | dev | not started | |
 | 4: the drain slice, the submits' slice | dev | not started | |

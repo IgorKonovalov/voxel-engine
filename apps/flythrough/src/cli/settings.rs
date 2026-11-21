@@ -48,6 +48,26 @@ fn sections() -> Vec<Section<Parsing>> {
                 },
             ),
             Flag::value(
+                &["--light-hooks"],
+                "NAME[,NAME]",
+                "the light passes' reading hooks (a reading lever): keyoff (no key light ray), \
+                 skyalways (the sky ray cast whatever the record) [none]",
+                |p: &mut Parsing, v| {
+                    for name in v.string().split(',') {
+                        match name {
+                            "keyoff" => p.args.light_hooks.key_off = true,
+                            "skyalways" => p.args.light_hooks.sky_ray_always = true,
+                            _ => {
+                                return Err(format!(
+                                    "--light-hooks takes keyoff or skyalways, not {name}"
+                                ));
+                            }
+                        }
+                    }
+                    Ok(())
+                },
+            ),
+            Flag::value(
                 &["--light-samples"],
                 "N",
                 "the mirror's light-sample buffer in samples, 1024 to 1048576 (a reading lever: \
