@@ -2,8 +2,8 @@
 //! the workers sealed is no candidate, so the pool admits it already known faceless and the
 //! main thread never lists it. Each verdict carries its point of the shells' order and the
 //! later one holds; an edit forgets the shells of the chunks it changed and clears the
-//! verdicts within a voxel of it at a new point, so a verdict read before the edit no longer
-//! holds.
+//! verdicts within a voxel of it at a new point, so a verdict read before the edit does not
+//! hold.
 
 use std::collections::HashMap;
 
@@ -88,7 +88,7 @@ impl Sealed {
             .is_none_or(|s| !std::sync::Arc::ptr_eq(s, &m.shells))
         {
             if self.shells.is_some() {
-                // A new hook's order starts again: what the old one sealed no longer holds.
+                // A new hook's order starts again: what the old one sealed does not hold.
                 changed.extend(self.verdicts.drain().filter(|e| e.1.0).map(|e| e.0));
                 self.count = 0;
             }

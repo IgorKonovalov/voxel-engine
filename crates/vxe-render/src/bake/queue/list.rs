@@ -169,13 +169,14 @@ impl BakeQueue {
         let (count, tier) = self.count_for(c, class, eye);
         let near = self.near_count();
         if ruled {
-            // The rule's zero record at the job's count: no job; its block is placed at this
-            // step's submit.
+            // The rule's zero record: no job; its block is placed at this step's submit. It is
+            // what a bake at any count writes, so it holds the near tier and no band's
+            // promotion refines it (`u32::MAX` is never below a band's count).
             self.job_partial.remove(&c);
             self.job_provisional.remove(&c);
-            self.job_coarse.insert(c, count < near);
-            self.job_count.insert(c, count);
-            self.ruled.push((coord, first_word, faces, tier));
+            self.job_coarse.insert(c, false);
+            self.job_count.insert(c, u32::MAX);
+            self.ruled.push((coord, first_word, faces, 0));
             self.zeroed.insert(c);
             self.stats.zeroed += 1;
             return Ok(0);

@@ -6,6 +6,7 @@ mod digs;
 mod keys;
 mod list;
 mod open;
+mod reach;
 mod rule;
 mod sealed;
 mod stats;
@@ -13,6 +14,7 @@ mod step;
 mod tiers;
 
 pub use self::open::in_view_census;
+use self::reach::reach_of;
 pub use self::stats::{Band, Bands, InViewWaiting, ListingCensus, QueueStats, chunk_nearest};
 pub use self::tiers::DEFAULT_TIERS;
 
@@ -322,7 +324,10 @@ pub struct BakeQueue {
     pub(super) order_dirty: bool,
     /// Each checked candidate's reach verdict ([`reach_ready`]), dropped when a chunk within
     /// the light radius and one of it changes in the mirror.
-    pub(super) reach_cache: ChunkMap<Reach>,
+    /// Each verdict with whether its walk stopped at the first chunk not resident full
+    /// ([`reach_of`]'s `first`), whose [`Reach::Partial`] does not say that nothing in the reach
+    /// waits to upload.
+    pub(super) reach_cache: ChunkMap<(Reach, bool)>,
     /// Chunks whose block was baked from a partial reach ([`ReachMode::Partial`]).
     pub(super) partial: ChunkSet,
     /// The jobs pending or open that bake from a partial reach.
@@ -358,7 +363,7 @@ pub struct BakeQueue {
     /// [`BakeSettings::brick_samples`].
     pub tiers: [u32; 3],
     /// Each block's samples a brick direction ([`BakeQueue::tiers`]), and each job's.
-    pub(super) held: std::collections::HashMap<[i32; 3], u32>,
+    pub(super) block_count: std::collections::HashMap<[i32; 3], u32>,
     pub(super) job_count: std::collections::HashMap<[i32; 3], u32>,
     /// The bands the last step read ([`tiers`]), `None` without a focal length, and the centre
     /// of the camera's chunk in voxels they are read from.
@@ -471,52 +476,6 @@ pub(super) fn held_by_streamer(
     })
 }
 
-/// `coord`'s reach as [`reach_ready`] reads it: [`Reach::Waiting`] at the first chunk within it
-/// waiting to upload, else [`Reach::Partial`] if a chunk within it is not resident full (a
-/// streamed world only), else [`Reach::Ready`]. With `first`, the walk stops at the first chunk
-/// that is not ready either way and reads it as [`Reach::Partial`]: a caller that asks only
-/// whether the reach is ready ([`ReachMode::Full`], the census) walks no further than that.
-pub(super) fn reach_of(
-    run: &BakeRun<'_>,
-    coord: ChunkCoord,
-    lr: i32,
-    resident: Option<&dyn Fn(ChunkCoord) -> bool>,
-    first: bool,
-) -> Reach {
-    let gpu = run.gpu;
-    if resident.is_none() && gpu.pending_chunks() == 0 {
-        return Reach::Ready;
-    }
-    let r = lr + 1;
-    let mut partial = false;
-    for z in -r..=r {
-        for y in -r..=r {
-            for x in -r..=r {
-                if !in_reach([x, y, z], lr) {
-                    continue;
-                }
-                let n = ChunkCoord([coord.0[0] + x, coord.0[1] + y, coord.0[2] + z]);
-                if gpu.is_pending(n) {
-                    return Reach::Waiting;
-                }
-                if let Some(res) = resident
-                    && !(res(n) && gpu.is_mirrored(n) && !gpu.is_lod(n))
-                {
-                    if first {
-                        return Reach::Partial;
-                    }
-                    partial = true;
-                }
-            }
-        }
-    }
-    if partial {
-        Reach::Partial
-    } else {
-        Reach::Ready
-    }
-}
-
 impl BakeQueue {
     /// A queue whose budget is `slice_ms` a frame ([`Budget::PerFrame`]).
     pub fn new(settings: BakeSettings, slice_ms: f64) -> Self {
@@ -587,7 +546,7 @@ impl BakeQueue {
             ruled_checked: Default::default(),
             ruled: Vec::new(),
             tiers: DEFAULT_TIERS,
-            held: Default::default(),
+            block_count: Default::default(),
             job_count: Default::default(),
             bands: None,
             eye_c: [32.0; 3],
@@ -689,49 +648,6 @@ impl BakeQueue {
         }
     }
 
-    /// [`reach_ready`] through the cache of verdicts; a bounded world with nothing waiting to
-    /// upload is ready without a walk. A miss counts in [`QueueStats::reach_checks`].
-    pub(super) fn reach_cached(
-        &mut self,
-        run: &BakeRun<'_>,
-        coord: ChunkCoord,
-        lr: i32,
-        resident: Option<&dyn Fn(ChunkCoord) -> bool>,
-    ) -> Reach {
-        if resident.is_none() && run.gpu.pending_chunks() == 0 {
-            return Reach::Ready;
-        }
-        if let Some(&v) = self.reach_cache.get(&coord.0) {
-            // A streamer's residency can move a frame ahead of the mirror; a bounded world's
-            // verdict reads the mirror alone.
-            debug_assert!(
-                resident.is_some()
-                    || v == reach_of(run, coord, lr, resident, self.reach_mode == ReachMode::Full),
-                "the cached reach of {coord:?}"
-            );
-            return v;
-        }
-        self.stats.reach_checks += 1;
-        let v = reach_of(run, coord, lr, resident, self.reach_mode == ReachMode::Full);
-        self.reach_cache.insert(coord.0, v);
-        v
-    }
-
-    /// Whether a chunk whose reach is not resident full bakes from the chunks that are.
-    pub fn reach_mode(&self) -> ReachMode {
-        self.reach_mode
-    }
-
-    /// Sets [`BakeQueue::reach_mode`]. A change drops the cached reach verdicts: under
-    /// [`ReachMode::Full`] a walk stops at the first chunk not resident full, so its
-    /// [`Reach::Partial`] does not say that nothing in the reach waits to upload.
-    pub fn set_reach_mode(&mut self, mode: ReachMode) {
-        if mode != self.reach_mode {
-            self.reach_mode = mode;
-            self.reach_cache.clear();
-        }
-    }
-
     /// Whether `coord` may bake under [`BakeQueue::reach`] and the column wait, whether from a
     /// partial reach and whether provisionally (a column over its reach not final, the wait
     /// off: [`BakeQueue::column_wait`]). The reach's verdict:
@@ -804,134 +720,6 @@ impl BakeQueue {
                 self.quiet_until = self.steps;
             }
         }
-    }
-
-    /// [`BakeQueue::bakeable`]'s reach verdict, before the columns.
-    fn bakeable_reach(
-        &mut self,
-        run: &BakeRun<'_>,
-        coord: ChunkCoord,
-        lr: i32,
-        view: &QueueView<'_>,
-        eye: [i32; 3],
-    ) -> Option<bool> {
-        match self.reach_cached(run, coord, lr, view.resident) {
-            Reach::Ready => Some(false),
-            Reach::Partial
-                if (self.reach_mode == ReachMode::Partial
-                    || self.band_of(coord.0) != Band::Near)
-                    && view
-                        .full_radius
-                        .is_some_and(|r| reach_crosses(coord, eye, lr, r)) =>
-            {
-                Some(true)
-            }
-            _ => None,
-        }
-    }
-
-    /// Re-queues as a refinement each chunk flagged partial (its block, or its job's) within
-    /// whose reach a chunk of `changed` is now held full: a chunk arriving, or a held one
-    /// changing. `None` (the changes went untracked) re-queues every flagged chunk. Nothing to
-    /// do under [`ReachMode::Full`], which flags none.
-    pub(super) fn requeue_partial(&mut self, gpu: &GpuWorld, changed: Option<&[ChunkCoord]>) {
-        if self.partial.is_empty() && self.job_partial.is_empty() {
-            return;
-        }
-        let due: Vec<[i32; 3]> = match changed {
-            None => self
-                .partial
-                .iter()
-                .chain(self.job_partial.iter())
-                .copied()
-                .collect(),
-            Some(ch) => {
-                let lr = gpu.light_radius();
-                let held: ChunkSet = ch
-                    .iter()
-                    .filter(|c| gpu.is_mirrored(**c) && !gpu.is_lod(**c))
-                    .map(|c| c.0)
-                    .collect();
-                if held.is_empty() {
-                    return;
-                }
-                let flagged =
-                    |c: &[i32; 3]| self.partial.contains(c) || self.job_partial.contains(c);
-                let mut due = Vec::new();
-                // Each side walks its reach over the other's set: the smaller side walks.
-                if self.partial.len() + self.job_partial.len() <= held.len() {
-                    for p in self.partial.iter().chain(self.job_partial.iter()) {
-                        let near = reach_offsets(lr)
-                            .any(|o| held.contains(&[p[0] + o[0], p[1] + o[1], p[2] + o[2]]));
-                        if near {
-                            due.push(*p);
-                        }
-                    }
-                } else {
-                    for n in &held {
-                        for o in reach_offsets(lr) {
-                            let p = [n[0] + o[0], n[1] + o[1], n[2] + o[2]];
-                            if flagged(&p) {
-                                due.push(p);
-                            }
-                        }
-                    }
-                }
-                due
-            }
-        };
-        let near = self.near_count();
-        for p in due {
-            // A mid or far record's refinement is its band's promotion, not its reach filling
-            // (ADR-0080 rule 4); a near one (a dig's ring) is baked again.
-            let count = self.job_count.get(&p).or_else(|| self.held.get(&p));
-            if count.is_some_and(|&n| n < near) {
-                continue;
-            }
-            if self.partial_due.insert(p) {
-                self.stats.partial_requeued += 1;
-                self.touched.insert(p);
-                self.counted_idle = false;
-                self.quiet_until = self.steps;
-            }
-        }
-    }
-
-    /// Drops the cached reach verdicts within `lr + 1` chunks (Chebyshev) of a chunk of
-    /// `changed`; too many pairs to compare drop them all.
-    pub(super) fn drop_reach(&mut self, changed: &[ChunkCoord], lr: i32) {
-        if changed.is_empty() || self.reach_cache.is_empty() {
-            return;
-        }
-        if changed.len().saturating_mul(self.reach_cache.len()) > 1 << 22 {
-            self.reach_cache.clear();
-            return;
-        }
-        let r = lr + 1;
-        // The verdicts within `r` (Chebyshev) of a changed chunk go. Removing each changed
-        // chunk's neighbourhood by key costs `(2 r + 1)^3` lookups a change; a scan of the cache
-        // costs its length times the changes. In a flight a few chunks change a step against
-        // thousands of cached verdicts, so the keys are removed directly unless the scan is
-        // smaller. Either way the same verdicts go.
-        let side = (2 * r + 1) as usize;
-        if changed.len().saturating_mul(side * side * side) < self.reach_cache.len() {
-            for n in changed {
-                for dz in -r..=r {
-                    for dy in -r..=r {
-                        for dx in -r..=r {
-                            self.reach_cache
-                                .remove(&[n.0[0] + dx, n.0[1] + dy, n.0[2] + dz]);
-                        }
-                    }
-                }
-            }
-            return;
-        }
-        self.reach_cache.retain(|c, _| {
-            !changed
-                .iter()
-                .any(|n| (0..3).all(|k| (n.0[k] - c[k]).abs() <= r))
-        });
     }
 
     pub fn stats(&self) -> QueueStats {

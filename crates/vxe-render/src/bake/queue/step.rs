@@ -112,7 +112,7 @@ impl BakeQueue {
         for c in gone {
             store.remove(run.queue, ChunkCoord(c));
             self.zeroed.remove(&c);
-            self.held.remove(&c);
+            self.block_count.remove(&c);
         }
         self.laps.lap(S_GONE);
         changes
@@ -263,7 +263,7 @@ impl BakeQueue {
             stats: &mut self.stats,
             job_coarse: &mut self.job_coarse,
             job_count: &mut self.job_count,
-            held: &mut self.held,
+            block_count: &mut self.block_count,
             job_eye: &mut self.job_eye,
             dig_open: &mut self.dig_open,
             keys_open: &mut self.keys.open,
@@ -420,7 +420,7 @@ struct Placement<'a> {
     stats: &'a mut QueueStats,
     job_coarse: &'a mut std::collections::HashMap<[i32; 3], bool>,
     job_count: &'a mut std::collections::HashMap<[i32; 3], u32>,
-    held: &'a mut std::collections::HashMap<[i32; 3], u32>,
+    block_count: &'a mut std::collections::HashMap<[i32; 3], u32>,
     job_eye: &'a mut std::collections::HashMap<[i32; 3], u64>,
     dig_open: &'a mut std::collections::HashMap<[i32; 3], DigChunk>,
     keys_open: &'a mut std::collections::HashSet<[i32; 3]>,
@@ -513,7 +513,7 @@ impl Placement<'_> {
         // The table word's flag follows at the put below.
         store.mark_coarse(coord, coarse);
         if let Some(n) = count {
-            self.held.insert(coord.0, n);
+            self.block_count.insert(coord.0, n);
         }
         let old = store
             .blocks

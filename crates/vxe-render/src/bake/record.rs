@@ -164,6 +164,11 @@ pub fn unpack_direction(w: u32) -> Option<[f32; 3]> {
 /// the binomial standard deviation at a half open sky is 1/32).
 pub const SKY_BAKE_RAYS: u32 = 256;
 
+/// Sky rays a brick direction draws at most in a far-tier record ([`TIER_FAR`], ADR-0080 rule
+/// 2): the sky channel follows the tier where a voxel spans under the far-normal band's bottom
+/// (a guess: the binomial standard deviation at a half open sky is 1/16).
+pub(crate) const SKY_FAR_RAYS: u32 = 64;
+
 /// Direction `face`'s sky visibility in [0, 1] of record `r`, `None` where it was baked with no
 /// sky or lacks the direction.
 pub fn record_visibility(r: &[u32], face: usize) -> Option<f32> {

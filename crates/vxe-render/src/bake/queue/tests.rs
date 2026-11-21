@@ -204,38 +204,45 @@ fn a_dig_to_the_sky_over_a_buried_chunk_relists_it() {
 /// Plan 0096 Phase 3 bar 1 (ADR-0080 rule 2): a chunk's band at the fly-through's 70-degree
 /// vertical field and the far-normal band `[2, 6]` px a voxel. At 1080p (f = 540 / tan 35
 /// degrees, 771.2 px) a chunk whose nearest corner lies 100 voxels (10 m) away reads near (7.7
-/// px), 250 (25 m) mid (3.1 px), 500 (50 m) far (1.5 px). At 720p (f 514.1 px) the same
-/// chunks read 5.1, 2.1 and 1.0 px: mid, mid, far by the band's own edges.
+/// px), 250 (25 m) mid (3.1 px), 500 (50 m) far (1.5 px). At 720p (f 514.1 px) the same chunks
+/// read 5.1, 2.1 and 1.0 px, which the band's edges read mid, mid, far.
 #[test]
 fn the_band_of_a_chunk_follows_the_far_normal_band_at_the_outputs_focal_length() {
     let vfov = 70f32.to_radians();
-    let eye = [32.0, 32.0, 32.0];
-    // Chunks along +x whose nearest face lies `d` voxels from the eye: x from 64 at chunk 1.
-    let chunk_at = |d: i32| [(32 + d) / 64, 0, 0];
-    let read = |height: u32, d: i32| {
-        let b = Bands {
-            focal_px: Bands::focal_px(height, vfov),
-            lo: 2.0,
-            hi: 6.0,
-        };
-        let c = chunk_at(d);
-        let near = chunk_nearest(c, eye);
-        (b.px_at(near), b.of_chunk(c, eye))
+    let bands = |height: u32| Bands {
+        focal_px: Bands::focal_px(height, vfov),
+        lo: 2.0,
+        hi: 6.0,
     };
     let f1080 = Bands::focal_px(1080, vfov);
     assert!((f1080 - 771.2).abs() < 0.1, "{f1080}");
-    // The chunks' nearest faces: 96 (chunk 2 starts at 128), 224 and 480 voxels.
+    assert!((Bands::focal_px(720, vfov) - 514.1).abs() < 0.1);
+    // Chunk (8, 0, 0) spans x 512..576; an eye at x 512 - d (y and z inside the chunk's span)
+    // has the chunk's nearest point d voxels away.
+    let read = |height: u32, d: i32| {
+        let b = bands(height);
+        let eye = [(512 - d) as f32, 32.0, 32.0];
+        let c = [8, 0, 0];
+        assert_eq!(chunk_nearest(c, eye), d as f32);
+        (b.px_at(d as f32), b.of_chunk(c, eye))
+    };
     for (d, px, band) in [
-        (96, 8.03, Band::Near),
-        (224, 3.44, Band::Mid),
-        (480, 1.61, Band::Far),
+        (100, 7.71, Band::Near),
+        (250, 3.08, Band::Mid),
+        (500, 1.54, Band::Far),
     ] {
         let (p, b) = read(1080, d);
         assert!((p - px).abs() < 0.01, "1080p at {d}: {p} px");
         assert_eq!(b, band, "1080p at {d}");
     }
-    for (d, band) in [(96, Band::Mid), (224, Band::Mid), (480, Band::Far)] {
-        assert_eq!(read(720, d).1, band, "720p at {d}");
+    for (d, px, band) in [
+        (100, 5.14, Band::Mid),
+        (250, 2.06, Band::Mid),
+        (500, 1.03, Band::Far),
+    ] {
+        let (p, b) = read(720, d);
+        assert!((p - px).abs() < 0.01, "720p at {d}: {p} px");
+        assert_eq!(b, band, "720p at {d}");
     }
     // The band off (`hi <= lo`) reads every chunk near.
     let off = Bands {
@@ -243,7 +250,7 @@ fn the_band_of_a_chunk_follows_the_far_normal_band_at_the_outputs_focal_length()
         lo: 0.0,
         hi: 0.0,
     };
-    assert_eq!(off.of_chunk([7, 0, 0], eye), Band::Near);
+    assert_eq!(off.of_chunk([7, 0, 0], [32.0; 3]), Band::Near);
 }
 
 /// ADR-0080 rule 2 on a bare queue: with bands its jobs draw their band's tier past the coarse
@@ -288,11 +295,100 @@ fn a_chunks_count_and_tier_follow_its_band() {
     );
     assert_eq!(q.count_for(far, 1, eye), (256, TIER_FAR));
     // A block's count against its band's: a mid chunk at 256 is below, a far one is not.
-    q.held.insert(mid, 256);
-    q.held.insert(far, 256);
+    q.block_count.insert(mid, 256);
+    q.block_count.insert(far, 256);
     assert_eq!(q.below(mid), Some(true));
     assert_eq!(q.below(far), Some(false));
     assert_eq!(q.below(near), None);
-    q.held.insert(mid, 1024);
+    q.block_count.insert(mid, 1024);
     assert_eq!(q.below(mid), Some(false));
+}
+
+/// Plan 0096 Phase 3 bar 4 (ADR-0080 rule 4): the reach rule by tier over a streamed view with
+/// `r_full` 16 and light radius 4, the candidates the full sphere's octant of non-negative
+/// offsets about the eye's chunk, the resident chunks exactly the sphere's and nothing pending,
+/// the bands at 1080p and `[2, 6]`. Every chunk whose reach crosses the full radius
+/// ([`reach_crosses`]: the chunks past 16 less the reach's extent, 5.39 chunks, out) is mid or
+/// far band and bakes flagged partial ([`reach_verdict`] `Some(true)`); with a chunk of its
+/// reach pending (one in 8 read) it waits; every other chunk's reach is ready. A near-band
+/// chunk whose reach crosses a shrunk `r_full` of 4 waits under the default
+/// [`ReachMode::Full`] and bakes partial under [`ReachMode::Partial`]. A chunk arriving in a
+/// flagged far record's reach re-queues nothing; the same arrival in a flagged dig ring's reach
+/// (a record at the near count) re-queues the ring.
+#[test]
+fn a_far_band_chunk_whose_reach_crosses_the_full_radius_bakes_from_the_chunks_resident() {
+    use super::reach::{reach_by, reach_verdict};
+    let (lr, r) = (4, 16);
+    let eye = [0, 0, 0];
+    let bands = Bands {
+        focal_px: Bands::focal_px(1080, 70f32.to_radians()),
+        lo: 2.0,
+        hi: 6.0,
+    };
+    let eye_c = [32.0; 3];
+    let within = |c: ChunkCoord, r: i32| c.0.iter().map(|&d| d * d).sum::<i32>() <= r * r;
+    let verdict = |c: ChunkCoord, r: i32, mode: ReachMode, pending: Option<ChunkCoord>| {
+        let mode = mode.for_band(bands.of_chunk(c.0, eye_c) == Band::Near);
+        let reach = reach_by(
+            c,
+            lr,
+            |n| Some(n) == pending,
+            |n| within(n, r),
+            mode == ReachMode::Full,
+        );
+        reach_verdict(reach, mode, reach_crosses(c, eye, lr, r))
+    };
+    // The sphere's octant of non-negative offsets (the rule is symmetric; a debug build's
+    // walks over the whole sphere take about 10 s).
+    let sphere: Vec<ChunkCoord> = (0..=r)
+        .flat_map(|z| (0..=r).flat_map(move |y| (0..=r).map(move |x| ChunkCoord([x, y, z]))))
+        .filter(|&c| within(c, r))
+        .collect();
+    let mut partial = 0;
+    for &c in &sphere {
+        let len = (c.0.iter().map(|&d| f64::from(d * d)).sum::<f64>()).sqrt();
+        let v = verdict(c, r, ReachMode::Full, None);
+        if reach_crosses(c, eye, lr, r) {
+            assert!(len > f64::from(r) - reach_extent(lr), "{c:?} at {len}");
+            assert_ne!(bands.of_chunk(c.0, eye_c), Band::Near, "{c:?}");
+            assert_eq!(v, Some(true), "{c:?} bakes partial");
+            // One in 8 again with a chunk of its reach pending.
+            if partial % 8 == 0 {
+                let pending = ChunkCoord([c.0[0] + 1, c.0[1], c.0[2]]);
+                assert_eq!(
+                    verdict(c, r, ReachMode::Full, Some(pending)),
+                    None,
+                    "{c:?} waits for a pending chunk"
+                );
+            }
+            partial += 1;
+        } else {
+            assert_eq!(v, Some(false), "{c:?}'s reach is resident");
+        }
+    }
+    assert!(partial > 0);
+    // A near-band chunk whose reach crosses a shrunk full radius of 4.
+    let near = ChunkCoord([1, 0, 0]);
+    assert_eq!(bands.of_chunk(near.0, eye_c), Band::Near);
+    assert!(reach_crosses(near, eye, lr, 4));
+    assert_eq!(verdict(near, 4, ReachMode::Full, None), None, "it waits");
+    assert_eq!(verdict(near, 4, ReachMode::Partial, None), Some(true));
+    // The re-queue on arrival: a far record at 256, a dig's ring at the near count.
+    let mut q = BakeQueue::new(BakeSettings::default(), 1.0);
+    q.settings.brick_samples = QUEUE_BRICK_SAMPLES;
+    q.tiers = DEFAULT_TIERS;
+    q.bands = Some(bands);
+    let (far, ring) = ([14, 0, 0], [-14, 0, 0]);
+    q.partial.insert(far);
+    q.block_count.insert(far, DEFAULT_TIERS[2]);
+    q.partial.insert(ring);
+    q.block_count.insert(ring, QUEUE_BRICK_SAMPLES);
+    let arrived = |c: [i32; 3]| -> ChunkSet { [c].into_iter().collect() };
+    q.requeue_arrived(Some(&arrived([17, 0, 0])), lr);
+    assert!(q.partial_due.is_empty(), "the far record is not re-queued");
+    q.requeue_arrived(Some(&arrived([-17, 0, 0])), lr);
+    assert_eq!(
+        q.partial_due.iter().copied().collect::<Vec<_>>(),
+        vec![ring]
+    );
 }

@@ -378,7 +378,8 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--pre-roll-drain SECONDS` | From the first drawn frame hold the camera (keys and the menu still act) and bake at 40 ms a frame until the queue has no job and no coarse chunk left for 1.5 s or `SECONDS` pass, 1 to 600; then the budget returns. The banner reads `pre-roll: draining J jobs, C coarse chunks to refine, ... HOLD STILL`, then `pre-roll: landed` or `timed out`; stdout closes with the far lighting pixels' (over 15 m) share whose store record is fresh |
 | `--full-first off\|N` | The queue's full-first radius after the pre-roll [`--near`'s] |
 | `--missing-light black\|neighbour\|parent\|chain` | What a face with no baked value reads, ADR-0053 [chain] |
-| `--reach full\|partial` | Whether a chunk waits for its whole light reach [full] |
+| `--reach full\|partial` | Whether a near-band chunk waits for its whole light reach (a mid- or far-band chunk whose reach crosses the full radius bakes from the chunks resident either way, ADR-0080) [full] |
+| `--bake-tiers NEAR,MID,FAR` | The live queue's samples a brick direction by a chunk's band on screen (the far-normal band at the output's focal length), each 16 to 65536 [the profile's: 4096,1024,256 at floor, 1024,256,256 at portable] |
 | `--queue-order score\|distance` | The live queue's order |
 | `--queue-weights A,R\|A,tier` | The score's angle and refine weights |
 | `--queue-withdraw on\|off` | Withdraw the jobs of chunks the camera passed |

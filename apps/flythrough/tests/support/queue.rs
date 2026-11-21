@@ -69,6 +69,9 @@ pub struct Q {
     pub full_radius: Option<i32>,
     /// The streamer's LOD radius the view hands the queue; `None` waits for no column chunk.
     pub lod_radius: Option<i32>,
+    /// The output's focal length in pixels the view hands the queue (its bands, ADR-0080);
+    /// `None` reads every chunk near.
+    pub focal_px: Option<f32>,
 }
 
 /// How a rig's queue and mirror start.
@@ -166,6 +169,7 @@ pub fn rig(world: World, setup: &Setup) -> Option<Q> {
         resident: None,
         full_radius: None,
         lod_radius: None,
+        focal_px: None,
     })
 }
 
@@ -201,7 +205,7 @@ impl Q {
             frustum: None,
             full_radius: self.full_radius,
             lod_radius: self.lod_radius,
-            focal_px: None,
+            focal_px: self.focal_px,
         };
         #[allow(
             clippy::disallowed_methods,

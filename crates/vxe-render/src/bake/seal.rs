@@ -276,7 +276,7 @@ impl Shells {
 
     /// After an edit: `edited`'s shells go (their content changed), and `near`'s verdicts read
     /// not sealed until a neighbour's arrival reads them again. The new point of the order: a
-    /// verdict on any of them from before it no longer holds.
+    /// verdict on any of them from before it does not hold.
     pub(crate) fn forget(&mut self, edited: &[[i32; 3]], near: &[[i32; 3]]) -> u64 {
         self.seq += 1;
         for c in edited {

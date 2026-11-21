@@ -954,7 +954,7 @@ fn bake_flags() -> Vec<Flag<Parsing>> {
         Flag::value(
             &["--reach"],
             "full|partial",
-            "whether a chunk waits for its whole light reach",
+            "whether a near-band chunk waits for its whole light reach (mid and far: partial)",
             |p: &mut Parsing, v| {
                 p.args.bake.reach = vxe_render::ReachMode::parse(v.text)?;
                 Ok(())

@@ -398,7 +398,7 @@ impl BakeQueue {
         lr: i32,
     ) {
         let mut waiting = [[0u64; 2]; 3];
-        let mut reach_bound = 0u64;
+        let mut reach_bound = [0u64; 2];
         let mut census = [[[0u32; 4]; 4]; 2];
         let mut cone_only = 0u64;
         let mut waiting_all: Vec<([i32; 3], u8, bool, u64)> = Vec::new();
@@ -440,7 +440,7 @@ impl BakeQueue {
                     .full_radius
                     .is_some_and(|r| is_reach_bound(o, &offsets, extent, r))
                 {
-                    reach_bound += 1;
+                    reach_bound[usize::from(self.band_of(c) != Band::Near)] += 1;
                 }
                 lens[usize::from(coarse)].push(len);
                 if view

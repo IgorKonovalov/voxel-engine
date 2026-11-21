@@ -104,8 +104,10 @@ pub struct QueueStats {
     /// Of the candidates in the view cone beyond the shell at the last census, waiting for
     /// their light (blank or coarse), those whose reach crosses the streamer's full radius
     /// ([`QueueView::full_radius`]): a chunk within their reach lies past it ([`reach_crosses`]),
-    /// so a neighbour within their reach is not resident full while the camera stands still.
-    pub reach_bound: u64,
+    /// so a neighbour within their reach is not resident full while the camera stands still:
+    /// near-band ones (0), which wait for good at a still camera under [`ReachMode::Full`], and
+    /// mid- or far-band ones (1), which bake from the chunks resident (ADR-0080 rule 4).
+    pub reach_bound: [u64; 2],
     /// Openings since the queue started that pushed a full job on a chunk with no block while a
     /// blank candidate outside [`BakeQueue::full_first`] was ready and left unpushed: the near
     /// shell starving the coarse front.

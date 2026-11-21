@@ -927,7 +927,12 @@ impl JobCtx<'_, '_> {
                     snapshots: Vec::new(),
                     done: !wanted,
                     sky_n: if self.run.sky & BAKE_SKY_ON != 0 && !key_only {
-                        SKY_BAKE_RAYS.div_ceil(drawn[d].max(1)).min(n)
+                        let rays = if tier == TIER_FAR {
+                            SKY_FAR_RAYS
+                        } else {
+                            SKY_BAKE_RAYS
+                        };
+                        rays.div_ceil(drawn[d].max(1)).min(n)
                     } else {
                         0
                     },
