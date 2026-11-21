@@ -441,6 +441,20 @@ against the hold's final frame at +0, +30 (0.5 s), +60 and +120 (2 s).
     over the line, named; Plan 0096 Phase 6 (the slow adapter's light pass, lever by lever)
     takes approach's cost as a named lever.
   - **Phase 11 is struck:** W2 asked for no second look.
+- **Amended 2026-11-21 (owner), after the Phase 10 bars at `404a0349`:**
+  - **The near stop +0 bar is asserted only in the RTX soak reading at 1080p** (picks 0.81 %),
+    against the lighting-off figure read in the same run plus 2 points. The lavapipe gate scene at
+    a 320-pixel grid prints it (picks 21.32 %, before 16.62 %, lighting off 0.48 %): at that grid
+    the far normal's band starts at about 2.2 m, so most near pixels read the far estimate.
+  - **The undrained +60 and the rule 2 far return are readings, not bars.** Undrained +60: picks
+    11.26 % against the 10 % guess (before 20.63 %). Far return: picks 84.72 % against the
+    before's 77.27 % (exposure pinned: 76.76 against 68.86). Both print; Plan 0096's far tiers
+    and the backlog's band entry take them. The far's four queue-frozen bars stand as amended.
+  - **The goldens:** `outdoor_noon`, `outdoor_forest_sunset` and `cave_mouth` move with the
+    library default `key_far: Baked` and are re-blessed at the picks as this plan's disclosed
+    change (the owner judged the look at W2). `profile_portable_gate` already fails on main
+    `e6582b9e` (0.8142 %); the dev names its cause and re-blesses it as main's disclosed change
+    if the cause is the showcase palette, else reports.
 
 ### Phase 11: A second short look, only if W2 asked for one
 - **Owner skill:** human
