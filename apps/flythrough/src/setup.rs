@@ -682,9 +682,9 @@ fn start_streaming(
     workers: usize,
     spawn: VoxelCoord,
 ) -> (World, Streamer, usize) {
-    streamer.set_prep(Some(Arc::new(vxe_render::internals::FacePrep {
-        classes: Arc::new(vxe_render::internals::face_classes(world.materials())),
-    })));
+    streamer.set_prep(Some(Arc::new(vxe_render::internals::FacePrep::new(
+        Arc::new(vxe_render::internals::face_classes(world.materials())),
+    ))));
     streamer.update(&world, &[spawn]);
     (world, streamer, workers)
 }

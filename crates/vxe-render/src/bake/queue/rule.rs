@@ -79,7 +79,7 @@ pub(crate) fn zero_block(
 
 /// Of the chunks `zeroed` holds (zero records by the rule), those within `lr` chunks
 /// (Chebyshev, x and y) of a column of `changed` (chunk columns whose mirror changed) that
-/// `still` no longer finds buried: due to bake again. `None` reads every zeroed chunk.
+/// `still` does not find buried now: due to bake again. `None` reads every zeroed chunk.
 pub(crate) fn relisted(
     zeroed: &ChunkSet,
     changed: Option<&[[i32; 2]]>,
@@ -116,7 +116,7 @@ impl BakeQueue {
     }
 
     /// Bakes again each zeroed chunk near a mirror change (`changes`; `None` untracked, every
-    /// one) that the rule no longer answers: a dig that lowered a column top over its reach,
+    /// one) that the rule does not answer now: a dig that lowered a column top over its reach,
     /// an emitter arriving within it. Its block re-bakes whole ([`BakeQueue::reach`]) and fades.
     /// A zeroed chunk whose block is gone is forgotten.
     pub(super) fn relist_zeroed(

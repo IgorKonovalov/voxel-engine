@@ -1885,3 +1885,55 @@ fn a_chunk_with_no_exposed_face_holds_no_record() {
     );
     assert!(!q.q().zeroed(ChunkCoord(rock)));
 }
+
+/// Plan 0096 Phase 2 as amended: the stream workers' no-face verdict. Every chunk of the buried
+/// rig's world goes through the workers' hook ([`vxe_render::internals::FacePrep`]) before the
+/// queue's first step, in slot order, so a chunk's neighbours arrive before and after it. The
+/// rock chunk (5, 5, 2), all six neighbours rock, is sealed by the verdicts and never listed
+/// (no `faceless` mark, no record); the corner chunk (0, 0, 0), whose three outer neighbours
+/// never stream, reads open there and is listed (the listing finds no face: absent is rock);
+/// a cave chunk is neither. A carve into the sealed chunk clears its verdict and it takes a
+/// record.
+#[test]
+fn the_workers_seal_a_chunk_with_no_face_and_an_edit_opens_it() {
+    use vxe_world::ChunkPrep;
+    let Some(mut q) = buried_rig(true) else {
+        return;
+    };
+    let prep = vxe_render::internals::FacePrep::new(std::sync::Arc::new(
+        vxe_render::internals::face_classes(q.world.materials()),
+    ));
+    let mut results = Vec::new();
+    for z in 0..7 {
+        for y in 0..7 {
+            for x in 0..7 {
+                let c = ChunkCoord([x, y, z]);
+                let chunk = q.world.store().get(c).expect("resident");
+                let chunk = chunk.read().expect("unpoisoned");
+                results.push((c, prep.prepare(c, &chunk)));
+            }
+        }
+    }
+    q.frame.take_prepared(&results, &q.world);
+    q.settle();
+    let (rock, corner, cave) = ([5, 5, 2], [0, 0, 0], CAVE[1]);
+    let tracks = |q: &support::queue::Q, c| q.q().tracks(ChunkCoord(c));
+    assert_eq!(tracks(&q, rock), vec!["sealed"], "the rock chunk");
+    assert!(q.target(rock).is_none());
+    assert_eq!(tracks(&q, corner), vec!["faceless"], "the corner chunk");
+    assert!(!tracks(&q, cave).contains(&"sealed"));
+    assert!(q.target(cave).is_some(), "the cave's record");
+    // A carve into the rock chunk's middle: its verdict goes and the dig bakes it.
+    q.edit(&support::queue::box_op(
+        [340, 340, 150],
+        [350, 350, 160],
+        Mode::Carve,
+    ));
+    q.settle();
+    assert!(
+        !tracks(&q, rock).contains(&"sealed"),
+        "{:?}",
+        tracks(&q, rock)
+    );
+    assert!(q.target(rock).is_some(), "the dug chunk's record");
+}

@@ -159,9 +159,18 @@ fn print_listing_census(
         return;
     }
     if let Some(q) = gfx.frame.bake_queue_mut() {
-        let depth = q.stats().depth;
+        let st = q.stats();
         let c = q.listing_census(&gfx.mirror, world, view);
-        println!("{}", listing_census_line(&c, depth));
+        println!("{}", listing_census_line(&c, st.depth));
+        println!(
+            "bake queue census: sealed by the workers {} of {} chunks, the verdict mean {:.1} us max {:.1} us a chunk; {} shells, {} B",
+            st.sealed,
+            st.hook_chunks,
+            st.seal_ns as f64 / st.hook_chunks.max(1) as f64 / 1e3,
+            st.seal_max_ns as f64 / 1e3,
+            st.shells,
+            st.shell_bytes,
+        );
     }
 }
 
@@ -177,9 +186,10 @@ pub(crate) fn listing_census_line(c: &vxe_render::ListingCensus, depth: u64) -> 
         )
     };
     format!(
-        "bake queue census: depth {depth}, listed {}, no face {}, buried with no emitter in reach {} (+{} under a column not final), surface {}: {}, {}, {}; {:.1} ms",
+        "bake queue census: depth {depth}, listed {}, no face {} ({} at the residency's edge), buried with no emitter in reach {} (+{} under a column not final), surface {}: {}, {}, {}; {:.1} ms",
         c.listed,
         c.no_face,
+        c.no_face_edge,
         c.buried,
         c.buried_unfinal,
         c.surface.iter().flatten().sum::<u64>(),
@@ -740,7 +750,7 @@ impl Run {
             );
             self.queue.line_class = (st.class_samples, st.class_ms);
             println!(
-                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample, fading {}, coarse {} chunks, {}, eye {:.0} {:.0} {:.0}, step CPU p50 {:.3} max {:.3} ms, provisional {} (opened {}, catch-ups {}), key {} (landed {}), zero by rule {} (re-listed {}), {}, {}",
+                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample, fading {}, coarse {} chunks, {}, eye {:.0} {:.0} {:.0}, step CPU p50 {:.3} max {:.3} ms, provisional {} (opened {}, catch-ups {}), key {} (landed {}), zero by rule {} (re-listed {}), sealed by the workers {} ({} shells, {} B), {}, {}",
                 t / 1e3,
                 self.frame,
                 st.depth,
@@ -771,6 +781,9 @@ impl Run {
                 st.keys_baked,
                 st.zeroed,
                 st.zero_relisted,
+                st.sealed,
+                st.shells,
+                st.shell_bytes,
                 self.queue.drain_of(&st).text(),
                 class_ns,
             );

@@ -22,6 +22,13 @@ impl BakeQueue {
         let changes = self.follow_window(run, store, view);
         let changed = changes.as_ref().is_none_or(|c| !c.is_empty());
         self.relist_zeroed(run.gpu, store, changes.as_deref());
+        let world = run.world.store();
+        self.sealed
+            .prune(run.gpu.mirrored_chunks(), |c| world.contains(ChunkCoord(c)));
+        (self.stats.shells, self.stats.shell_bytes) = {
+            let (n, b) = self.sealed.shells();
+            (n as u64, b as u64)
+        };
         self.forget_unheld(run.gpu, changes);
         self.catch_up(run, view, changed);
         self.laps.lap(S_TOUCHED);

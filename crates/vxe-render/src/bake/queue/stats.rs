@@ -54,6 +54,15 @@ pub struct QueueStats {
     pub hook_chunks: u64,
     pub hook_ns: u64,
     pub hook_max_ns: u64,
+    /// Of that time, the no-face verdict's in total and at most: the shell and the shared
+    /// map's update under its lock ([`crate::bake::seal`]).
+    pub seal_ns: u64,
+    pub seal_max_ns: u64,
+    /// Full chunks the workers' verdicts hold sealed (no exposed face, no candidate), and the
+    /// shells the workers' map holds with their bytes.
+    pub sealed: u64,
+    pub shells: u64,
+    pub shell_bytes: u64,
     /// The candidates at the last opening by where they lie against the view ([`VIEW_SHELL`],
     /// [`VIEW_IN`], [`VIEW_OUT`]): those with no block, and those with a coarse one.
     pub view_waiting: [[u64; 2]; 3],
@@ -270,6 +279,9 @@ pub struct ListingCensus {
     pub listed: u64,
     /// Of them, those whose listing finds no exposed face.
     pub no_face: u64,
+    /// Of those, the ones with a neighbour the mirror does not hold full (the residency's
+    /// edge, read open by the workers' verdict and as rock by the listing).
+    pub no_face_edge: u64,
     /// Of the rest, those whose reach box (the chunk dilated by the light radius) lies under
     /// the column map's lowest top over the box's footprint, with no exposed emitter within the
     /// light radius and every column over the reach final; and those that would be but for a

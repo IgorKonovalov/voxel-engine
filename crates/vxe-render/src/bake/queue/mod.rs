@@ -7,6 +7,7 @@ mod keys;
 mod list;
 mod open;
 mod rule;
+mod sealed;
 mod stats;
 mod step;
 
@@ -256,6 +257,9 @@ pub struct BakeQueue {
     /// nothing and the queue drains.
     pub(super) job_eye: std::collections::HashMap<[i32; 3], u64>,
     pub(super) faceless: std::collections::HashSet<[i32; 3]>,
+    /// The stream workers' no-face verdicts ([`crate::bake::seal`]), each with its point of the
+    /// shells' order, and their handle once a result brought it ([`sealed::Sealed`]).
+    pub(super) sealed: sealed::Sealed,
     /// Chunks an edit touched while their job ran: the job's block is thrown away.
     pub(super) stale: std::collections::HashSet<[i32; 3]>,
     /// Candidates not ready at a check, and the step that checked them.
@@ -565,6 +569,7 @@ impl BakeQueue {
             keys: Default::default(),
             far_normal: [0.0; 2],
             zero_rule: true,
+            sealed: Default::default(),
             zeroed: Default::default(),
             ruled_checked: Default::default(),
             ruled: Vec::new(),
@@ -603,6 +608,7 @@ impl BakeQueue {
             || (!self.provisional_due.is_empty() && self.provisional_due.contains(&c));
         (wants
             && !self.faceless.contains(&c)
+            && !self.sealed.holds(c)
             && !in_job.contains(&c)
             && !self.digs.contains_key(&c))
         .then_some((u8::from(has), coarse))
@@ -989,6 +995,7 @@ impl BakeQueue {
             ("reach", self.reach.contains(&c)),
             ("listed", self.listed.contains_key(&c)),
             ("faceless", self.faceless.contains(&c)),
+            ("sealed", self.sealed.holds(c)),
             ("blocked", self.blocked.contains_key(&c)),
             ("job_coarse", self.job_coarse.contains_key(&c)),
             ("stale", self.stale.contains(&c)),
@@ -1038,6 +1045,7 @@ impl BakeQueue {
     pub fn settled(&self, store: &Store, c: ChunkCoord, absent: bool) -> bool {
         ((store.blocks.contains_key(&c.0) && !store.is_coarse(c))
             || self.faceless.contains(&c.0)
+            || self.sealed.holds(c.0)
             || absent)
             && !self.lp.chunks().any(|j| j == c)
             && !self.digs.contains_key(&c.0)
@@ -1051,6 +1059,7 @@ impl BakeQueue {
     pub fn passed(&self, store: &Store, c: ChunkCoord) -> bool {
         store.blocks.contains_key(&c.0)
             || self.faceless.contains(&c.0)
+            || self.sealed.holds(c.0)
             || self.blocked.contains_key(&c.0)
     }
 
@@ -1083,9 +1092,13 @@ impl BakeQueue {
             self.stats.hook_chunks += 1;
             self.stats.hook_ns += m.ns;
             self.stats.hook_max_ns = self.stats.hook_max_ns.max(m.ns);
+            self.stats.seal_ns += m.seal_ns;
+            self.stats.seal_max_ns = self.stats.seal_max_ns.max(m.seal_ns);
             if m.classes.as_slice() != classes {
                 continue;
             }
+            let changed = self.sealed.take(&m);
+            self.touched.extend(changed);
             self.prepared_bytes += m.masks.bytes();
             if let Some(old) = self.prepared.insert(c.0, m) {
                 self.prepared_bytes -= old.masks.bytes();
@@ -1120,6 +1133,7 @@ impl BakeQueue {
     /// box's rings are read at the next step.
     pub fn invalidate(&mut self, min: [i32; 3], max: [i32; 3]) {
         self.boxes.push([min, max]);
+        self.sealed.forget(min, max);
         let lo = min.map(|v| (v - 1).div_euclid(64));
         let hi = max.map(|v| (v + 1).div_euclid(64));
         for z in lo[2]..=hi[2] {

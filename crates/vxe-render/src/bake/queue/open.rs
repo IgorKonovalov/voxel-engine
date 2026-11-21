@@ -250,6 +250,7 @@ impl BakeQueue {
         }
         self.laps.lap(S_CENSUS);
         self.stats.depth = self.pool.len() as u64;
+        self.stats.sealed = self.sealed.count();
         self.counted_idle = self.lp.chunks().next().is_none();
         self.laps.lap(S_SORT);
     }
@@ -548,6 +549,12 @@ impl BakeQueue {
             out.listed += 1;
             if !has_face {
                 out.no_face += 1;
+                let edge = (0..6).any(|f| {
+                    let mut n = c;
+                    n[f / 2] += if f % 2 == 1 { 1 } else { -1 };
+                    !gpu.is_mirrored(ChunkCoord(n)) || gpu.is_lod(ChunkCoord(n))
+                });
+                out.no_face_edge += u64::from(edge);
                 continue;
             }
             let coord = ChunkCoord(c);

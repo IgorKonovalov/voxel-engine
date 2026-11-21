@@ -267,10 +267,12 @@ impl Run {
         );
         if let Some(st) = self.queue.stats {
             println!(
-                "autopilot: the workers' face masks per chunk: mean {:.1} us, max {:.1} us over {} chunks since the start",
+                "autopilot: the workers' face masks per chunk: mean {:.1} us, max {:.1} us over {} chunks since the start; the no-face verdict per chunk: mean {:.1} us, max {:.1} us",
                 st.hook_ns as f64 / st.hook_chunks.max(1) as f64 / 1e3,
                 st.hook_max_ns as f64 / 1e3,
-                st.hook_chunks
+                st.hook_chunks,
+                st.seal_ns as f64 / st.hook_chunks.max(1) as f64 / 1e3,
+                st.seal_max_ns as f64 / 1e3,
             );
         }
         let mut lat = stream.latency_ms[p.latency_from..].to_vec();

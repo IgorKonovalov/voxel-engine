@@ -679,8 +679,8 @@ Readings log: [logs/0096.md](logs/0096.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: readings on the undrained image, the drain readout | dev | done; readout code in `e1944c81` (wip, with Phase 2's first cut); table 5 lacks `far_normal` off, `KEY_OFF` and `SKY_RAY_ALWAYS` (re-run queued on `--light-hooks`, a reading flag added in `cli/settings.rs`), table 6 lacks the `perf` profile; the 1/16 light-buffer glide evicts headless (`light place` p50 813 ms) and runs about 1 frame a second | committed with this row |
-| 2: a record without rays | dev | not started | |
+| 1: readings on the undrained image, the drain readout | dev | done; readout code in `e1944c81` (wip, with Phase 2's first cut); table 5 lacks `far_normal` off, `KEY_OFF` and `SKY_RAY_ALWAYS` (re-run queued on `--light-hooks`, a reading flag added in `cli/settings.rs`), table 6 lacks the `perf` profile; the 1/16 light-buffer glide evicts headless (`light place` p50 813 ms) and runs about 1 frame a second | `2437b054` |
+| 2: a record without rays | dev | done as amended: the zero record by rule at listing (`e1944c81`), the no-face verdict on the stream workers (`bake/seal.rs`, `bake/queue/sealed.rs`); bar 4 is a lavapipe test (the store needs a device); bar 5 (the census against the depth on the amended binary) and the verdict's worker cost not read (the GPU lock is held by the Phase 1 glide); bar 1 read 10.4 s loaded, its quiet re-read owed; `apps/flythrough/src/setup.rs` and `run/pilot.rs` outside the files touched | committed with this row |
 | 3: a tier by size on screen | dev | not started | |
 | 4: the drain slice, the submits' slice | dev | not started | |
 | 5: the step off the depth | dev | not started | |
