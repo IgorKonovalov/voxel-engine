@@ -788,7 +788,8 @@ impl Args {
 
     /// The auto exposure of `--adaptation`, `--adapt` and `--metering`, with the outdoor
     /// source's floor and ceiling unless `--exposure` or `--adaptation` is given, then
-    /// `--exposure-max`'s ceiling, `--sky-anchor`'s and `--sky-anchor-share`'s.
+    /// `--exposure-max`'s ceiling, `--sky-anchor`'s, `--sky-anchor-share`'s and
+    /// `--sky-anchor-floor`'s.
     pub(crate) fn start_auto(&self) -> AutoExposure {
         let mut a = self.light.adaptation.preset();
         if let Some([light, cone, rod, floor]) = self.light.adapt {
@@ -810,6 +811,9 @@ impl Args {
         }
         if let Some(f) = self.outdoor.sky_anchor_share {
             a.sky_anchor_share = f;
+        }
+        if let Some(f) = self.outdoor.sky_anchor_floor {
+            a.sky_anchor_floor = f;
         }
         if let Some(r) = self.outdoor.exposure_rate {
             a.rate_ev_s = r;

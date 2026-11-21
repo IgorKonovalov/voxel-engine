@@ -428,11 +428,14 @@ pub struct ExposureRow {
     pub ceiling: Option<(f32, Option<f32>)>,
     /// The metered share of sky in `[0, 1]` (`ExposureReadout::sky_share`).
     pub sky_share: Option<f32>,
+    /// With the sky share, the sky share over the camera's floor fed to the exposure
+    /// (`ExposureReadout::sky_floor`), `Some(None)` while absent or off.
+    pub floor_share: Option<Option<f32>>,
 }
 
 impl fmt::Display for ExposureRow {
     /// `exposure manual +0.00 EV  scene -7.9 EV`, with `  settles +5.53 EV  ceiling +2.00 EV
-    /// (anchor 4, sky 23 %)` in auto.
+    /// (anchor 4, sky 23 %, floor 12 %)` in auto (`floor -` while the floor's share is absent).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "exposure {} {:+.2} EV", self.mode, self.ev)?;
         match self.scene_ev {
@@ -444,11 +447,18 @@ impl fmt::Display for ExposureRow {
         }
         match self.ceiling {
             Some((c, Some(n))) => match self.sky_share {
-                Some(s) => write!(
-                    f,
-                    "  ceiling {c:+.2} EV (anchor {n}, sky {:.0} %)",
-                    100.0 * s
-                )?,
+                Some(s) => {
+                    write!(
+                        f,
+                        "  ceiling {c:+.2} EV (anchor {n}, sky {:.0} %",
+                        100.0 * s
+                    )?;
+                    match self.floor_share {
+                        Some(Some(v)) => write!(f, ", floor {:.0} %)", 100.0 * v)?,
+                        Some(None) => f.write_str(", floor -)")?,
+                        None => f.write_str(")")?,
+                    }
+                }
                 None => write!(f, "  ceiling {c:+.2} EV (anchor {n})")?,
             },
             Some((c, None)) => write!(f, "  ceiling {c:+.2} EV")?,

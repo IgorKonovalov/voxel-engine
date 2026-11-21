@@ -287,6 +287,44 @@ fn the_pre_roll_drain_takes_seconds_and_its_banner_names_the_state() {
     assert_eq!(row(Drain::Off, 0.0), "");
 }
 
+/// `--sky-anchor-floor` reaches the auto exposure, 1/8 by default and unnamed; another value is
+/// named `sky anchor floor X` and `off` (0) `sky anchor floor off` with a sky set; out of (0,
+/// 1] it is refused; `--check-args` accepts it.
+#[test]
+fn the_sky_anchor_floor_reaches_the_run() {
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert_eq!(r.start_auto().sky_anchor_floor, 0.125);
+    assert_eq!(
+        r.start_auto().sky_anchor_floor,
+        vxe_render::DEFAULT_SKY_ANCHOR_FLOOR
+    );
+    assert!(!r.start_modes(0.0).line().contains("sky anchor floor"));
+    for (v, floor, word) in [
+        ("0.25", 0.25f32, "sky anchor floor 0.25, "),
+        ("off", 0.0, "sky anchor floor off, "),
+    ] {
+        let r = parse_args_from(argv(&["--source", "outdoor", "--sky-anchor-floor", v])).unwrap();
+        assert_eq!(r.start_auto().sky_anchor_floor, floor);
+        let line = r.start_modes(0.0).line();
+        assert!(line.contains(word), "{line}");
+    }
+    let r = parse_args_from(argv(&[
+        "--source",
+        "outdoor",
+        "--sky-anchor-floor",
+        "0.125",
+    ]))
+    .unwrap();
+    assert!(!r.start_modes(0.0).line().contains("sky anchor floor"));
+    for bad in ["0", "-0.5", "1.5", "most"] {
+        assert!(
+            parse_args_from(argv(&["--sky-anchor-floor", bad])).is_err(),
+            "{bad}"
+        );
+    }
+    assert!(parse_args_from(argv(&["--check-args", "--sky-anchor-floor", "off"])).is_ok());
+}
+
 /// `--sky-anchor-share` reaches the auto exposure, 1/256 by default and unnamed; another value is
 /// named `sky anchor share X` and `off` (0) `sky anchor share off` with a sky set; out of (0, 1]
 /// it is refused.

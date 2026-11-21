@@ -193,7 +193,7 @@ fn exposure_mirror(name: &str) -> Mirror {
             rate_ev_s,
             max_rate_dt,
             sky_share,
-            _pad1
+            sky_around
         }),
     }
 }

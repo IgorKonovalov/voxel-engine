@@ -58,6 +58,11 @@ pub struct OutdoorArgs {
     /// anchor holds in full (`AutoExposure::sky_anchor_share`), 0 for off; unset, the
     /// preset's (`vxe_render::DEFAULT_SKY_ANCHOR_SHARE`).
     pub(crate) sky_anchor_share: Option<f32>,
+    /// `--sky-anchor-floor X|off`: the share of the hemisphere over the camera's floor that
+    /// is open sky at and over which the anchor holds in full (`AutoExposure::
+    /// sky_anchor_floor`, ADR-0081), 0 for off; unset, the preset's
+    /// (`vxe_render::DEFAULT_SKY_ANCHOR_FLOOR`).
+    pub(crate) sky_anchor_floor: Option<f32>,
     /// `--exposure-max EV`: the auto exposure's constant ceiling in EV; unset, the start's
     /// ([`OUTDOOR_MAX`] outdoors, the preset's elsewhere).
     pub(crate) exposure_max_ev: Option<f32>,
@@ -407,6 +412,22 @@ fn ceiling_flags() -> Vec<Flag<Parsing>> {
                  exposes for its walls); off holds the anchor whatever is in view [0.00390625: 1/256]",
             |p: &mut Parsing, v| {
                 p.args.outdoor.sky_anchor_share = Some(match v.text {
+                    "off" => 0.0,
+                    _ => v.parse_if(|n: &f32| *n > 0.0 && *n <= 1.0, "over 0 to 1, or off")?,
+                });
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--sky-anchor-floor"],
+            "X|off",
+            "the share of the sky over the camera's floor (the baked sky visibility of the \
+                 floor under the eye, 0 to 1) at and over which the sky anchor holds in full, \
+                 whatever is in view; the anchor holds by the larger of this and the view's \
+                 share, so it releases only where both are low (a tunnel, a cave); off \
+                 anchors by the view alone [0.125]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.sky_anchor_floor = Some(match v.text {
                     "off" => 0.0,
                     _ => v.parse_if(|n: &f32| *n > 0.0 && *n <= 1.0, "over 0 to 1, or off")?,
                 });

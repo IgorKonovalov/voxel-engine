@@ -158,6 +158,52 @@ mod ceiling {
         support::terms::forest_rig_about(mid)
     }
 
+    /// The W2 shade pose with no sky in view: facing -x pitched 30 degrees down (Plan 0097
+    /// Phase 1's yaw sweep: at pitch -10 every yaw meters some sky).
+    pub(super) fn w2_shade_camera() -> Camera {
+        Camera {
+            pitch: -30f32.to_radians(),
+            ..w2_camera(W2_SHADE)
+        }
+    }
+
+    /// Plan 0097 Phase 2 bar 3 (ADR-0081): the forest at the fixed sun 10,180 ([`w2_rig`]),
+    /// the store baked at radius 1 and 256 samples about each pose, the exposure settled
+    /// ([`read_with`]). With no sky in view at the W2 shade pose ([`w2_shade_camera`]) the
+    /// anchor holds by the floor's share: the settled eye is within 1 EV of the 1 %-sky pose's
+    /// and both ceilings in force are within 1/64 EV of `c_a` (the ceiling under a share `F`
+    /// of 0, the anchor whatever is in view). With `F_floor` 0 (the before) the shade pose's
+    /// ceiling releases to `OUTDOOR_MAX` within 1/64 EV. `VXE_TEST_ADAPTER` picks the adapter
+    /// (unset: lavapipe).
+    #[test]
+    #[ignore = "soak"]
+    fn the_shade_under_the_canopy_keeps_the_anchor() {
+        let Some(mut rig) = w2_rig() else {
+            return;
+        };
+        let sun = clock(720.0, Some([10.0, 180.0]));
+        let leaf = flythrough::LeafShadow::default();
+        let on = auto(vxe_render::DEFAULT_SKY_ANCHOR_SHARE);
+        let shade = w2_shade_camera();
+        let (s, fs) = read_with(&mut rig, &shade, sun, false, leaf, on, true);
+        let (k, fk) = read_with(&mut rig, &w2_camera(W2_SKY), sun, false, leaf, on, true);
+        let (b, _) = read_with(&mut rig, &shade, sun, false, leaf, AutoExposure { sky_anchor_floor: 0.0, ..on }, true);
+        let (h, _) = read_with(&mut rig, &shade, sun, false, leaf, AutoExposure { sky_anchor_share: 0.0, ..on }, false);
+        let c_a = h.ceiling;
+        println!("on {}: c_a {c_a:+.3} EV, floor shade {fs:?}, floor 1 % sky {fk:?}", rig.adapter);
+        row("W2 shade, floor 1/8", 1.0 / 256.0, &s);
+        row("W2 1 % sky, floor 1/8", 1.0 / 256.0, &k);
+        row("W2 shade, floor off (the before)", 1.0 / 256.0, &b);
+        println!("reading: the eyes apart {:+.3} EV, the before's {:+.3} EV", s.eye - k.eye, b.eye - k.eye);
+        assert_eq!(s.sky, 0.0, "no sky in view at the shade pose");
+        assert!((s.eye - k.eye).abs() <= 1.0, "shade {} against 1 % sky {}", s.eye, k.eye);
+        for (name, r) in [("shade", &s), ("1 % sky", &k)] {
+            assert!((r.ceiling - c_a).abs() <= 1.0 / 64.0, "{name}: ceiling {} against c_a {c_a}", r.ceiling);
+        }
+        let max = f64::from(flythrough::cli::OUTDOOR_MAX).log2();
+        assert!((b.ceiling - max).abs() <= 1.0 / 64.0, "the before releases: {}", b.ceiling);
+    }
+
     /// Prints one row: the scene, the arm, and [`Read`]'s fields.
     pub(super) fn row(scene: &str, share: f32, r: &Read) {
         println!(
@@ -352,7 +398,7 @@ mod ceiling {
             }
         }
         /// Plan 0097 Phase 1 bars 2 and 4: per scene, [`read_with`] under the default share
-        /// (Phase 7b's exposure) with the store baked at radius 1 and 256 samples about the
+        /// and the floor's term off (Phase 7b's exposure) with the store baked at radius 1 and 256 samples about the
         /// eye: the sky over the floor (`vxe_render::sky_over_floor`) and its source beside
         /// the metered sky share, the metered level, the ceiling in force and the eye. The W2
         /// shade and 1 %-sky poses at the fixed sun 10,180 ([`w2_rig`]), the tunnel deep in
@@ -367,7 +413,10 @@ mod ceiling {
         fn the_sky_over_the_floor() {
             use vxe_render::AroundSource;
             type Floor = Option<(f32, AroundSource)>;
-            let a = auto(vxe_render::DEFAULT_SKY_ANCHOR_SHARE);
+            let a = AutoExposure {
+                sky_anchor_floor: 0.0,
+                ..auto(vxe_render::DEFAULT_SKY_ANCHOR_SHARE)
+            };
             let leaf = flythrough::LeafShadow::default();
             let line = |scene: &str, r: &Read, fl: Floor| {
                 let floor = match fl {
@@ -468,6 +517,63 @@ mod ceiling {
             let deep_v = deep_floor.map_or(0.0, |v| v.0);
             let pick = (1..=16).map(|k| 2f32.powi(-k)).find(|&p| p < low && p > deep_v);
             println!("reading: F_floor candidate {pick:?} (W2 lowest {low:.4}, deep tunnel {deep_v:.4})");
+        }
+
+        /// Plan 0097 Phase 2's table: per scene, [`read_with`] with the store baked about the
+        /// eye under the floor's term off (the before) and at the default `F_floor`: the floor
+        /// share the frame fed the exposure, the metered sky share, the ceiling in force and
+        /// the eye. The W2 shade pose facing -x at pitch -30 (no sky in view) at the fixed sun
+        /// 10,180 and at 15:00, the W2 1 %-sky pose; the tunnel deep in at noon and at midnight
+        /// and 3 m inside the mouth with the lamp on, the mouth from inside at noon; the hills
+        /// facing away from the mouth at noon and at midnight; the forest spawn at 17:45.
+        /// `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+        #[test]
+        #[ignore = "reading"]
+        fn the_anchor_by_the_floor() {
+            let on = auto(vxe_render::DEFAULT_SKY_ANCHOR_SHARE);
+            let arms = [("floor off", AutoExposure { sky_anchor_floor: 0.0, ..on }), ("floor 1/8", on)];
+            let leaf = flythrough::LeafShadow::default();
+            let go = |rig: &mut Rig, scene: &str, cam: &Camera, sky: vxe_render::sky::Sky, lamp: bool| {
+                for (arm, a) in arms {
+                    let (r, fl) = read_with(rig, cam, sky, lamp, leaf, a, true);
+                    println!(
+                        "reading: {scene}, {arm}: floor {}, sky {:.4}, metered {:+.2}, ceiling {:+.3} EV, eye {:+.3} EV",
+                        fl.map_or("none".to_string(), |(v, s)| format!("{v:.4} ({})", s.name())),
+                        r.sky,
+                        r.metered,
+                        r.ceiling,
+                        r.eye
+                    );
+                }
+            };
+            if let Some(mut rig) = w2_rig() {
+                println!("reading: the_anchor_by_the_floor on {}", rig.adapter);
+                let shade = w2_shade_camera();
+                go(&mut rig, "W2 shade 10,180", &shade, clock(720.0, Some([10.0, 180.0])), false);
+                go(&mut rig, "W2 shade 15:00", &shade, clock(900.0, None), false);
+                go(&mut rig, "W2 1 % sky 10,180", &w2_camera(W2_SKY), clock(720.0, Some([10.0, 180.0])), false);
+            }
+            if let Some((mut rig, out, inward)) = deep() {
+                let [ma, mc] = flythrough::outdoor::OutdoorSource::new(1).tunnel();
+                let at = |t: f32| [0, 1, 2].map(|k| ma[k] as f32 + 0.5 + (mc[k] - ma[k]) as f32 * t);
+                let len = (0..3).map(|k| ((mc[k] - ma[k]) as f32).powi(2)).sum::<f32>().sqrt();
+                let in3 = flythrough::camera_looking_at(at(30.0 / len), at(30.0 / len + 0.1));
+                go(&mut rig, "tunnel deep noon lamp", &inward, clock(720.0, None), true);
+                go(&mut rig, "tunnel deep midnight lamp", &inward, clock(0.0, None), true);
+                go(&mut rig, "tunnel 3 m in noon lamp", &in3, clock(720.0, None), true);
+                go(&mut rig, "mouth from inside noon lamp", &out, clock(720.0, None), true);
+            }
+            if let Some((mut rig, cam)) = support::terms::hills_rig() {
+                let away = Camera {
+                    yaw: cam.yaw + std::f32::consts::PI,
+                    ..cam
+                };
+                go(&mut rig, "hills noon away", &away, clock(720.0, None), false);
+                go(&mut rig, "hills midnight away", &away, clock(0.0, None), false);
+            }
+            if let Some((mut rig, cam)) = support::terms::forest_rig() {
+                go(&mut rig, "forest spawn 17:45", &cam, clock(17.0 * 60.0 + 45.0, None), false);
+            }
         }
 
         /// Plan 0094 Phase 7b bar 5: [`walk`] at the default share and at 0 (the anchored

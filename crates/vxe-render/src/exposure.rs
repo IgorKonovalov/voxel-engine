@@ -29,6 +29,9 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::gpu_util::{Io, compute_pipeline, io_layout};
 
+mod around;
+pub use around::SkyAround;
+
 /// The exposure pass, compiled after the prelude ([`exposure_source`]).
 pub const EXPOSURE_WGSL: &str = include_str!("shaders/exposure.wgsl");
 
@@ -139,6 +142,15 @@ pub struct AutoExposure {
     /// the share, to `max` with no sky in view ([`AutoExposure::ceiling_target`]). 0 holds the
     /// anchor whatever is in view. The default is [`DEFAULT_SKY_ANCHOR_SHARE`].
     pub sky_anchor_share: f32,
+    /// The share of the hemisphere over the camera's floor that is open sky (`F_floor`, the
+    /// baked `+z` sky visibility of the record under the eye, ADR-0081) at and over which the
+    /// anchor holds in full; the anchor holds by the larger of this share and the view's
+    /// ([`AutoExposure::ceiling_target`]). 0 drops the term (the view's share alone). The
+    /// default is [`DEFAULT_SKY_ANCHOR_FLOOR`].
+    pub sky_anchor_floor: f32,
+    /// The time constant in seconds the floor's share is smoothed at before it reaches the
+    /// exposure ([`SkyAround::step`]); 0 jumps. The default is [`DEFAULT_SKY_AROUND_TAU`].
+    pub sky_around_tau: f32,
     /// The most the adapted level, and under the sky anchor the ceiling in force, move toward
     /// their targets per second, in EV (ADR-0076 rule 5): a frame's step is clamped to
     /// `rate_ev_s * min(dt, MAX_RATE_DT)`, so a hitch does not step further than a 15 fps
@@ -160,6 +172,14 @@ pub const DEFAULT_SKY_ANCHOR_EV: f32 = 4.0;
 /// metered view is sky (Plan 0094 Phase 7b bar 1's reading: a forest floor under the canopy
 /// meters under 1/128 of sky, a deep tunnel 0).
 pub const DEFAULT_SKY_ANCHOR_SHARE: f32 = 1.0 / 256.0;
+
+/// [`AutoExposure::sky_anchor_floor`]'s default: the anchor holds in full while 1/8 of the
+/// floor's hemisphere is open sky (Plan 0097 Phase 1's reading: the forest floor at window W2's
+/// two poses 0.14 and 0.20, the deep noon tunnel's 0.012; the largest power of two between).
+pub const DEFAULT_SKY_ANCHOR_FLOOR: f32 = 1.0 / 8.0;
+
+/// [`AutoExposure::sky_around_tau`]'s default in seconds (ADR-0081's guess).
+pub const DEFAULT_SKY_AROUND_TAU: f32 = 1.0;
 
 impl Default for AutoExposure {
     fn default() -> Self {
@@ -183,6 +203,8 @@ impl AutoExposure {
             metering: Metering::default(),
             sky_anchor_ev: Some(DEFAULT_SKY_ANCHOR_EV),
             sky_anchor_share: DEFAULT_SKY_ANCHOR_SHARE,
+            sky_anchor_floor: DEFAULT_SKY_ANCHOR_FLOOR,
+            sky_around_tau: DEFAULT_SKY_AROUND_TAU,
             rate_ev_s: DEFAULT_EXPOSURE_RATE_EV_S,
         }
     }
@@ -291,25 +313,42 @@ impl AutoExposure {
         }
     }
 
-    /// The ceiling's target over a frame whose sunlit ground's irradiance is `ground` and
-    /// whose metered share of sky is `sky` in `[0, 1]`: with the anchor in force
-    /// ([`AutoExposure::ceiling`] `c_a`, a ground over 0) and
+    /// The ceiling's target over a frame whose sunlit ground's irradiance is `ground`, whose
+    /// metered share of sky is `sky` in `[0, 1]` and whose camera's floor sees the share
+    /// `floor` of its hemisphere open (`None`: no record answered, ADR-0081): with the anchor
+    /// in force ([`AutoExposure::ceiling`] `c_a`, a ground over 0) and
     /// [`AutoExposure::sky_anchor_share`] `F` over 0, `log2 c = mix(log2 max, log2 c_a,
-    /// min(sky / F, 1))`: the anchored ceiling at a share of `F` and over, `max` with no sky
-    /// in view (`c_a` is never over `max`); else `c_a`.
-    pub fn ceiling_target(&self, ground: Option<f32>, sky: f32) -> f32 {
+    /// min(s, 1))` with `s` the larger of `sky / F` and, with
+    /// [`AutoExposure::sky_anchor_floor`] `F_floor` over 0 and a floor share, `floor /
+    /// F_floor` ([`AutoExposure::floor_term`]): the anchored ceiling at a share of `F` and
+    /// over or a floor share of `F_floor` and over, `max` with neither (`c_a` is never over
+    /// `max`); else `c_a`.
+    pub fn ceiling_target(&self, ground: Option<f32>, sky: f32, floor: Option<f32>) -> f32 {
         let a = self.ceiling(ground);
+        let around = self.floor_term(floor);
         if !self.anchors(ground)
             || self.sky_anchor_share <= 0.0
             || sky >= self.sky_anchor_share
+            || around.is_some_and(|s| s >= 1.0)
             || a >= self.max
         {
             return a;
         }
         let open = f64::from(self.max).log2();
-        let t = f64::from(sky / self.sky_anchor_share);
+        let view = sky / self.sky_anchor_share;
+        let t = f64::from(around.map_or(view, |s| view.max(s)));
         let l = open + (f64::from(a).log2() - open) * t;
         l.exp2() as f32
+    }
+
+    /// The floor's normalised share `floor / F_floor` in `[0, 1]`, as the exposure uniform's
+    /// `sky_around` carries it: `None` with [`AutoExposure::sky_anchor_floor`] 0 or no floor
+    /// share.
+    pub fn floor_term(&self, floor: Option<f32>) -> Option<f32> {
+        if self.sky_anchor_floor <= 0.0 {
+            return None;
+        }
+        floor.map(|f| (f.max(0.0) / self.sky_anchor_floor).min(1.0))
     }
 
     /// The anchor sets the ceiling: [`AutoExposure::sky_anchor_ev`] and a ground over 0.
@@ -396,6 +435,7 @@ impl ExposureState {
             held: self.flags & STATE_HELD != 0,
             ceiling: self.ceiling,
             sky_share: self.sky,
+            sky_floor: None,
         }
     }
 }
@@ -415,6 +455,10 @@ pub struct ExposureReadout {
     pub ceiling: f32,
     /// The read pass's metered share of sky ([`ExposureState::sky`]).
     pub sky_share: f32,
+    /// The sky share over the camera's floor the frame last fed the exposure, smoothed
+    /// ([`SkyAround`]), `None` while absent or off: set by the frame on the CPU, not read
+    /// back.
+    pub sky_floor: Option<f32>,
 }
 
 /// `ExUniform` in `exposure.wgsl`, field for field.
@@ -446,7 +490,9 @@ pub(crate) struct ExposureUniform {
     pub max_rate_dt: f32,
     /// [`AutoExposure::sky_anchor_share`], 0 without the anchor.
     pub sky_share: f32,
-    pub _pad1: f32,
+    /// The floor's share over `F_floor` in `[0, 1]` ([`AutoExposure::floor_term`]), read
+    /// under [`EX_AROUND`] alone.
+    pub sky_around: f32,
 }
 
 /// `ExUniform::mode` bit: the exposure is automatic.
@@ -455,6 +501,9 @@ pub(crate) const EX_AUTO: u32 = 1;
 pub(crate) const EX_METER: u32 = 2;
 /// `ExUniform::mode` bit: the adapted level jumps to the meter.
 pub(crate) const EX_RESET: u32 = 4;
+/// `ExUniform::mode` bit: `sky_around` holds the floor's share (ADR-0081); clear, the term is
+/// absent and the view's share alone holds the anchor.
+pub(crate) const EX_AROUND: u32 = 8;
 
 impl ExposureUniform {
     /// The auto fields of `auto`, over a frame that holds a sky when `sky`.
@@ -477,6 +526,22 @@ impl ExposureUniform {
         } else {
             0.0
         };
+    }
+
+    /// The floor's share `floor` under `auto` ([`AutoExposure::floor_term`]): the
+    /// [`EX_AROUND`] bit and `sky_around` where the term is present, both clear where it is
+    /// absent.
+    pub(crate) fn set_around(&mut self, auto: &AutoExposure, floor: Option<f32>) {
+        match auto.floor_term(floor) {
+            Some(s) => {
+                self.mode |= EX_AROUND;
+                self.sky_around = s;
+            }
+            None => {
+                self.mode &= !EX_AROUND;
+                self.sky_around = 0.0;
+            }
+        }
     }
 }
 
@@ -908,7 +973,11 @@ mod tests {
         assert_eq!(at(2.0).ceiling(dim), at(2.0).max);
         for k in 0..=64 {
             let sky = k as f32 / 64.0;
-            assert_eq!(at(2.0).ceiling_target(dim, sky), at(2.0).max, "share {sky}");
+            assert_eq!(
+                at(2.0).ceiling_target(dim, sky, None),
+                at(2.0).max,
+                "share {sky}"
+            );
         }
         let uniform = |a: &AutoExposure, sky: bool| {
             let mut u = ExposureUniform::default();
@@ -942,13 +1011,16 @@ mod tests {
         let a = e.ceiling(day);
         assert!(a < e.max, "{a}");
         let near = |x: f32, y: f32| (x.log2() - y.log2()).abs() < 1e-5;
-        assert_eq!(e.ceiling_target(day, 1.0), a);
-        assert_eq!(e.ceiling_target(day, f), a);
-        assert!(near(e.ceiling_target(day, 0.0), e.max));
-        assert!(near(e.ceiling_target(day, 0.5 * f), (a * e.max).sqrt()));
-        let mut last = e.ceiling_target(day, 0.0);
+        assert_eq!(e.ceiling_target(day, 1.0, None), a);
+        assert_eq!(e.ceiling_target(day, f, None), a);
+        assert!(near(e.ceiling_target(day, 0.0, None), e.max));
+        assert!(near(
+            e.ceiling_target(day, 0.5 * f, None),
+            (a * e.max).sqrt()
+        ));
+        let mut last = e.ceiling_target(day, 0.0, None);
         for k in 1..=32 {
-            let c = e.ceiling_target(day, f * k as f32 / 16.0);
+            let c = e.ceiling_target(day, f * k as f32 / 16.0, None);
             assert!(c <= last, "monotonic in the share: {k}");
             last = c;
         }
@@ -956,20 +1028,20 @@ mod tests {
         let night = Some(ground_irradiance([PI * 1e-3; 3], 0.0));
         assert_eq!(e.ceiling(night), e.max);
         for sky in [0.0, 0.5 * f, f, 1.0] {
-            assert_eq!(e.ceiling_target(night, sky), e.max);
+            assert_eq!(e.ceiling_target(night, sky, None), e.max);
         }
         // The before arm, no anchor, no sky.
         let before = AutoExposure {
             sky_anchor_share: 0.0,
             ..e
         };
-        assert_eq!(before.ceiling_target(day, 0.0), a);
+        assert_eq!(before.ceiling_target(day, 0.0, None), a);
         let none = AutoExposure {
             sky_anchor_ev: None,
             ..e
         };
-        assert_eq!(none.ceiling_target(day, 0.0), e.max);
-        assert_eq!(e.ceiling_target(None, 0.0), e.max);
+        assert_eq!(none.ceiling_target(day, 0.0, None), e.max);
+        assert_eq!(e.ceiling_target(None, 0.0, None), e.max);
         // The uniform carries the share under the anchor alone.
         let share = |a: &AutoExposure, sky: bool| {
             let mut u = ExposureUniform::default();
@@ -979,6 +1051,79 @@ mod tests {
         assert_eq!(share(&e, true), f);
         assert_eq!(share(&e, false), 0.0);
         assert_eq!(share(&none, true), 0.0);
+    }
+
+    /// Plan 0097 Phase 2 bar 1 (ADR-0081): the target holds by the larger of the view's share
+    /// over `F` and the floor's over `F_floor`. At a day ground: a floor share of `F_floor`
+    /// alone, or a view share of `F` alone, is `c_a` exactly; neither is `max`; half of
+    /// `F_floor` is `sqrt(c_a max)`; half of each equals half of the view's alone. With
+    /// `F_floor` 0 every pair reads as the floor absent (Phase 7b's target); at night `max`
+    /// at every pair. The uniform carries the term under its bit alone.
+    #[test]
+    fn the_ceiling_target_follows_the_floor_too() {
+        use std::f32::consts::PI;
+        let e = AutoExposure {
+            max: 4.0,
+            ..AutoExposure::eye()
+        };
+        let (f, ff) = (e.sky_anchor_share, e.sky_anchor_floor);
+        assert_eq!(ff, DEFAULT_SKY_ANCHOR_FLOOR);
+        let day = Some(ground_irradiance([PI * 2400.0; 3], 0.0));
+        let a = e.ceiling(day);
+        assert!(a < e.max, "{a}");
+        let ev = |x: f32, y: f32| (f64::from(x).log2() - f64::from(y).log2()).abs();
+        assert_eq!(e.ceiling_target(day, 0.0, Some(ff)), a);
+        assert_eq!(e.ceiling_target(day, 0.0, Some(1.0)), a);
+        assert_eq!(e.ceiling_target(day, f, Some(0.0)), a);
+        assert!(ev(e.ceiling_target(day, 0.0, Some(0.0)), e.max) <= 1.0 / 256.0);
+        assert!(ev(e.ceiling_target(day, 0.0, None), e.max) <= 1.0 / 256.0);
+        let half = e.ceiling_target(day, 0.0, Some(ff / 2.0));
+        assert!(ev(half, (a * e.max).sqrt()) <= 1.0 / 256.0, "{half}");
+        assert_eq!(
+            e.ceiling_target(day, f / 2.0, Some(ff / 2.0)),
+            e.ceiling_target(day, f / 2.0, Some(0.0))
+        );
+        assert_eq!(
+            e.ceiling_target(day, f / 2.0, Some(0.0)),
+            e.ceiling_target(day, f / 2.0, None)
+        );
+        // The larger share decides.
+        assert_eq!(
+            e.ceiling_target(day, f / 4.0, Some(ff / 2.0)),
+            e.ceiling_target(day, 0.0, Some(ff / 2.0))
+        );
+        // `F_floor` 0: the floor's share is ignored, Phase 7b's target at every pair.
+        let before = AutoExposure {
+            sky_anchor_floor: 0.0,
+            ..e
+        };
+        for sky in [0.0, f / 2.0, f, 1.0] {
+            for floor in [None, Some(0.0), Some(ff / 2.0), Some(ff), Some(1.0)] {
+                assert_eq!(
+                    before.ceiling_target(day, sky, floor),
+                    e.ceiling_target(day, sky, None),
+                    "sky {sky} floor {floor:?}"
+                );
+            }
+        }
+        // Night: `max` at every pair.
+        let night = Some(ground_irradiance([PI * 1e-3; 3], 0.0));
+        for sky in [0.0, f / 2.0, f, 1.0] {
+            for floor in [None, Some(0.0), Some(ff / 2.0), Some(ff), Some(1.0)] {
+                assert_eq!(e.ceiling_target(night, sky, floor), e.max);
+            }
+        }
+        // The uniform: the bit and the normalised share, clear when absent or off.
+        let around = |a: &AutoExposure, floor: Option<f32>| {
+            let mut u = ExposureUniform::default();
+            u.set_auto(a, true);
+            u.set_around(a, floor);
+            (u.mode & EX_AROUND, u.sky_around)
+        };
+        assert_eq!(around(&e, Some(ff / 2.0)), (EX_AROUND, 0.5));
+        assert_eq!(around(&e, Some(0.9)), (EX_AROUND, 1.0));
+        assert_eq!(around(&e, None), (0, 0.0));
+        assert_eq!(around(&before, Some(0.9)), (0, 0.0));
     }
 
     /// Plan 0094 Phase 7b bar 4's model (ADR-0076 rule 5 on the ceiling): from the anchored

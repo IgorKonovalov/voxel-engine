@@ -34,8 +34,10 @@
 // `c_a = min(anchor key / (0.5 E / pi), max_e)`, `E` being `E_sky(+z)`'s luminance plus its w:
 // the anchor lowers the ceiling and never lifts it over `max_e` (a dark sky leaves `max_e`). With
 // `sky_share` (`F`) over 0 the anchor holds by the sky in view (`AutoExposure::ceiling_target`):
-// `log2 c = mix(log2 max_e, log2 c_a, min(f_sky / F, 1))`, so with no sky in view the anchor
-// releases to `max_e`. Under the anchor with
+// `log2 c = mix(log2 max_e, log2 c_a, min(s, 1))` with `s = f_sky / F`, or under the mode's
+// bit 3 the larger of that and `sky_around`, the floor's sky share over `F_floor` the CPU
+// smoothed and normalised (ADR-0081, `AutoExposure::ceiling_target`), so the anchor releases to
+// `max_e` only with no sky in view and no sky over the floor. Under the anchor with
 // `F` and the rate over 0 the ceiling in force steps toward its target by at most the rate
 // cap's step in log2 (ADR-0076 rule 5, `AutoExposure::step_ceiling`); else, on the reset bit
 // or from a state with no ceiling yet, it is the target.
@@ -43,7 +45,8 @@
 struct ExUniform {
     tiles: vec2<u32>,
     view_count: u32,
-    // Bit 0: auto; bit 1: meter (the shaded view ran); bit 2: reset (jump to the meter).
+    // Bit 0: auto; bit 1: meter (the shaded view ran); bit 2: reset (jump to the meter); bit
+    // 3: `sky_around` holds the floor's share.
     mode: u32,
     // The views' rectangles (x, y, w, h) in internal pixels.
     rects: array<vec4<f32>, 2>,
@@ -71,7 +74,8 @@ struct ExUniform {
     // The sky share `F` at and over which the anchor holds in full; 0 holds it whatever is in
     // view.
     sky_share: f32,
-    _pad1: f32,
+    // The sky share over the camera's floor over `F_floor`, in [0, 1], under mode bit 3.
+    sky_around: f32,
 };
 
 struct ExState {
@@ -155,12 +159,15 @@ fn ceiling_target(f_sky: f32) -> f32 {
     if (ex.anchor <= 0.0 || ex.sky_share <= 0.0) {
         return a;
     }
-    // At a share of `F` and over the anchored ceiling exactly, bit for bit today's; an
-    // anchor clamped to `max_e` (a dark sky) is `max_e` at every share.
-    if (f_sky >= ex.sky_share || a >= ex.max_e) {
+    let around = (ex.mode & 8u) != 0u;
+    // At a share of `F` and over, or a floor share of `F_floor` and over, the anchored
+    // ceiling exactly; an anchor clamped to `max_e` (a dark sky) is `max_e` at every share.
+    if (f_sky >= ex.sky_share || (around && ex.sky_around >= 1.0) || a >= ex.max_e) {
         return a;
     }
-    return exp2(mix(log2(ex.max_e), log2(a), f_sky / ex.sky_share));
+    let view = f_sky / ex.sky_share;
+    let s = select(view, max(view, ex.sky_around), around);
+    return exp2(mix(log2(ex.max_e), log2(a), s));
 }
 
 // The ceiling in force after a frame from `c` toward its target `goal` (the header).

@@ -314,8 +314,8 @@ direction bit and `VIS_BAKED` answers with its `+z` byte over 255. No `vxe-world
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The reading: the sky over the floor | dev | done; `F_floor` 1/8; readings in [`logs/0097.md`](logs/0097.md) | committed with this row |
-| 2: The anchor by the floor's sky | dev | not started | |
+| 1: The reading: the sky over the floor | dev | done; `F_floor` 1/8; readings in [`logs/0097.md`](logs/0097.md) | ea15d52f |
+| 2: The anchor by the floor's sky | dev | done; bar 4's baked deep noon tunnel at +1.18 EV, not `max` (Notes) | committed with this row |
 | 3: The owner's window | human | not started | |
 | 4: The picks as tests and the docs | dev | not started | |
 
@@ -336,6 +336,25 @@ each. Empty is fine.)_
   sweep in the log).
 - Phase 1: the deep noon tunnel's floor reads 3/255, not 0; at `F_floor` 1/8 that is 0.094 of
   the share.
+- Phase 2, bar 4 not met as stated with a baked store: the deep noon tunnel's floor reads
+  0.0118 and its ceiling in force is +1.176 EV, not within 1/64 EV of `max` (+2.000);
+  `the_tunnel_exposes_for_its_walls_by_day` bakes no store and passes unchanged. Routed to the
+  window's run 4 against the before.
+- Phase 2, bar 3: the W2 shade pose is facing -x at pitch -30 (`w2_shade_camera`, no sky in
+  view); the eyes of the two poses are 0.52 EV apart in both arms (the plan's 3.5 EV before is
+  not reproduced with the store baked; the ceiling clause separates the arms).
+- Phase 2, bar 5: the committed `outdoor_night.png` differs from main's own render at 123964e7
+  (1827 pixels by at most 2/255); the tip renders main's image byte for byte in both arms. The
+  file is not re-blessed.
+- Phase 2: `F_floor` and `tau_around` are `AutoExposure` fields (`sky_anchor_floor`,
+  `sky_around_tau`), carried by the render settings' one `lighting.exposure` row (an enum, one
+  leaf) as `sky_anchor_share` is; no separate rows were added. The HUD reads the fed share from
+  `ExposureReadout::sky_floor` (set on the CPU by `Frame::exposure_readout`).
+- Phase 2: the uniform's spare word carries the floor's share over `F_floor` (`sky_around`)
+  and a mode bit (`EX_AROUND`, bit 3) marks it present; the frame walks and smooths only with
+  the anchor in force and `F_floor` over 0.
+- Phase 2: the tunnel test's tautology (Plan 0094's leftover) is not fixed: the test was not
+  opened.
 
 ### Close triggers
 

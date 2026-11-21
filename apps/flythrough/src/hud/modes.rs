@@ -500,6 +500,8 @@ impl Modes {
             sky_anchor_ev: self.auto.1.sky_anchor_ev,
             compensation_ev: self.auto.1.compensation_ev,
             sky_anchor_share: self.auto.1.sky_anchor_share,
+            sky_anchor_floor: self.auto.1.sky_anchor_floor,
+            sky_around_tau: self.auto.1.sky_around_tau,
             rate_ev_s: self.auto.1.rate_ev_s,
             ..Adaptation::Symmetric.preset()
         }
@@ -657,12 +659,12 @@ impl Modes {
             }
             vxe_render::Exposure::Manual(_) => (None, None),
         };
-        row.sky_share = match row.ceiling {
+        (row.sky_share, row.floor_share) = match row.ceiling {
             Some((_, Some(_))) => self
                 .readout
                 .filter(|r| r.ceiling > 0.0)
-                .map(|r| r.sky_share),
-            _ => None,
+                .map_or((None, None), |r| (Some(r.sky_share), Some(r.sky_floor))),
+            _ => (None, None),
         };
     }
 
@@ -746,6 +748,15 @@ impl Modes {
                         let _ = write!(out, "sky anchor share {}, ", a.sky_anchor_share);
                     } else {
                         out.push_str("sky anchor share off, ");
+                    }
+                }
+                if a.sky_anchor_ev.is_some()
+                    && a.sky_anchor_floor != vxe_render::DEFAULT_SKY_ANCHOR_FLOOR
+                {
+                    if a.sky_anchor_floor > 0.0 {
+                        let _ = write!(out, "sky anchor floor {}, ", a.sky_anchor_floor);
+                    } else {
+                        out.push_str("sky anchor floor off, ");
                     }
                 }
             }
