@@ -217,6 +217,35 @@ tip's.
   longer "too bright" against the before, or names what is wrong; run (4) still reads "all
   good" or names the change; run (1) has a word on the moonlit level.
 
+- **Amended 2026-11-21 (owner), window 97 (`live/session97.log`), the owner's words:**
+  (1) midnight hills: "night is good". (2) forest 10,180: "deep shade was better in new
+  version"; "wobble is still there" (motion, not exposure; routed to the diagnosis window, not
+  this plan). (3) forest 15:00: "fine". (4) noon tunnel, lamp on: "blue overexposure is back",
+  the before "even worse", "it was better before" (tip: floor 2 %, ceiling +0.92, eye +0.92,
+  scene -10.4 EV; before: ceiling and eye +2.00, scene -9.1 EV; the lit near walls clip). (5) cave
+  mouth: "strange lines on brick edges" and distant trees' shadows changing with the camera still
+  (routed to the diagnosis window). The floor term stays (F_floor 1/8). **The owner picked
+  highlight protection for (4)** over a lower daytime ceiling: Phase 3a below.
+
+### Phase 3a: Highlight protection: the eye never clips the view's bright tail
+- **Owner skill:** dev
+- **What:** The meter also reads a high percentile of the view's luminance (the brightest few
+  percent; the dev reads 95th to 99th on the tunnel and picks, the log names it). The eye is
+  capped so that percentile maps at or under a white point just below 1.0 after the tone curve:
+  `eye <= ev_of(white) - ev_of(L_hi)`, then the ceiling and the rate as today. In a mostly dark
+  view with lit walls the cap holds the walls under white; in a uniformly dark tunnel (no bright
+  tail) it does nothing and the release to the ceiling stands. The percentile comes from the
+  existing meter pass (a coarse histogram or a max of tile maxima, whichever the pass already
+  affords), smoothed with the eye's own rate so it does not pump. A flag `--exposure-highlight
+  P|off` and a HUD field (`hi -X EV`).
+- **Done when:** (1) the noon tunnel at the window's pose (`live/session97.log` run 4) reads its
+  near lit walls at or under the white point on the RTX headless, with the before (the cap off)
+  printed. (2) The W2 shade spot, the night hills and the 15:00 forest keep their eye within 0.25
+  EV of the Phase 2 tip (the cap is idle there, or the log names why not). (3) Every golden
+  byte-identical in both arms or the moved ones named and judged at the next window.
+  (4) `the_ceiling_moves_at_the_rate` unchanged. (5) A short window (tunnel, cave mouth, the
+  forest at 10,180) closes it; the runner is built, the owner opens it.
+
 ### Phase 4: The picks as tests and the docs
 - **Owner skill:** dev
 - **What:** the window's picks as defaults (any `F_floor` or `tau_around` move, with the
