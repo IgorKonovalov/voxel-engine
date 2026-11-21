@@ -480,23 +480,21 @@ fn a_post_casts_a_dark_shadow_and_a_lit_side_under_the_approach() {
     assert!(dark > 300 && lit > 300, "{dark} dark, {lit} lit pixels");
 }
 
-/// One 320 x 180 frame's light pass of `world` under a noon sun (one sky ray a pixel, the filter
-/// off) with the key cap `cap` (0: none) and the down-face skip `down`, from 4 voxels over the
-/// floor at x 48 looking along -x, 10 degrees up: per lighting pixel its hit position and its
-/// visibility pair as bits.
+/// One 320 x 180 frame's light pass of the mirrored world `gpu` under a noon sun (no sky ray,
+/// the filter off, the disc penumbra, `key_far ray` so every pixel's key is its ray with no far
+/// estimate to seed or replace it) with the key cap `cap` (0: none), from 4 voxels over the floor at x 48 looking along -x, 10 degrees
+/// up: per lighting pixel its hit position and its visibility pair (`y` the key light's ray
+/// mean, one frame: the ray's value).
 fn lever_shot(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    world: &World,
+    gpu: &GpuWorld,
     cap: f32,
-    down: bool,
-) -> (Vec<[f32; 4]>, Vec<[u32; 4]>) {
-    let gpu = mirror(device, queue, world, None);
+) -> (Vec<[f32; 4]>, Vec<[f32; 4]>) {
     let mut f = frame(device, [320, 180], ShadowWalk::Full);
     f.set_lighting(Lighting {
-        sky_rays: 1,
+        key_far: vxe_render::KeyFar::Ray,
         key_cap: cap,
-        sky_down_skip: down,
         ..f.lighting()
     });
     f.set_sky(Some(sky(dir(90.0, 0.0), dir(-40.0, 0.0), [[1.0; 3], [0.0; 3]])));
@@ -506,48 +504,60 @@ fn lever_shot(
         pitch: 10f32.to_radians(),
         vfov: 60f32.to_radians(),
     };
-    f.step(device, queue, &gpu, &cam, &LightParams::headlamp());
+    f.step(device, queue, gpu, &cam, &LightParams::headlamp());
     let h = vxe_render::debug::read_rgba32f(device, queue, f.light_hit_positions());
     let pair = vxe_render::debug::read_rgba16f(device, queue, f.visibility_pair());
-    let bits = pair.iter().map(|p| p.map(f32::to_bits)).collect();
-    (h, bits)
+    (h, pair)
 }
 
-/// Plan 0096 Phase 6 bar 1: the slow adapter's key cap (1 536 voxels) and down-face skip leave
-/// the light pass's visibility pair bit-identical where they do not apply: an open floor at noon
-/// (no key ray longer than the cap in a one-chunk window, no face looking down) under either;
-/// and a floor with a slab at z 26..28 over x < 24 (an overhang, held on a post at x < 4)
-/// under the cap; under the skip it differs, and only at pixels whose hit is on the slab's
-/// underside (z 26, the faces looking down).
+/// Plan 0096 Phase 6 bar 1: the slow adapter's key cap counts a key ray clear for `cap` voxels
+/// lit, so it changes the image only where a ray is longer than the cap. An open floor at noon
+/// (every ray clear) renders bit-identical with the cap at 4 voxels and with none. Under a slab
+/// at z 26..28 over x < 24 (an overhang 10 voxels over the floor, no post), the cap at 4 voxels,
+/// under that clearance, lifts the floor under the slab from dark to lit; every pixel that
+/// differs is a floor hit (z 16) at x < 24.1 (the slab's edge plus the sun disc's lean over the
+/// 10 voxels, about 0.05), and the slab's own faces and the open floor past it are unchanged.
 #[test]
-fn the_key_cap_and_the_down_face_skip_leave_the_lit_image_unchanged_where_they_do_not_apply() {
+#[ignore = "soak"]
+fn the_key_cap_leaves_the_lit_image_unchanged_where_no_ray_is_longer() {
     let Some((device, queue)) = device() else {
         return;
     };
-    let open = styled_world(|_| AIR);
+    const CAP: f32 = 4.0;
     let under = FLOOR + 10;
-    let slab = styled_world(move |p| {
+    let bits = |v: &[f32; 4]| v.map(f32::to_bits);
+    let open = mirror(&device, &queue, &styled_world(|_| AIR), None);
+    let base = lever_shot(&device, &queue, &open, 0.0).1;
+    let capped = lever_shot(&device, &queue, &open, CAP).1;
+    let moved = (0..base.len()).filter(|&i| bits(&base[i]) != bits(&capped[i]));
+    assert_eq!(moved.count(), 0, "the open floor under the cap");
+    let slab_world = styled_world(move |p| {
         let deck = (under..under + 2).contains(&p[2]) && p[0] < 24;
-        let post = p[2] < under && p[0] < 4 && (28..36).contains(&p[1]);
-        if deck || post { ROCK } else { AIR }
+        if deck { ROCK } else { AIR }
     });
-    let base = lever_shot(&device, &queue, &open, 0.0, false);
-    assert_eq!(base.1, lever_shot(&device, &queue, &open, 1536.0, false).1, "open, cap");
-    assert_eq!(base.1, lever_shot(&device, &queue, &open, 0.0, true).1, "open, skip");
-    let (h, plain) = lever_shot(&device, &queue, &slab, 0.0, false);
-    assert_eq!(plain, lever_shot(&device, &queue, &slab, 1536.0, false).1, "slab, cap");
-    let skip = lever_shot(&device, &queue, &slab, 0.0, true).1;
-    let differ: Vec<usize> = (0..plain.len()).filter(|&i| plain[i] != skip[i]).collect();
-    let undersides = (0..h.len())
-        .filter(|&i| h[i][3] < 1e30 && (h[i][2] - under as f32).abs() < 0.01 && h[i][0] < 24.0)
-        .count();
-    println!("{} pixels differ, {undersides} on the underside", differ.len());
-    assert!(!differ.is_empty() && undersides > 0);
+    let slab = mirror(&device, &queue, &slab_world, None);
+    let (h, plain) = lever_shot(&device, &queue, &slab, 0.0);
+    let (hc, cap) = lever_shot(&device, &queue, &slab, CAP);
+    assert!(h.iter().zip(&hc).all(|(a, b)| bits(a) == bits(b)), "the cap moves a hit");
+    let floor = |i: usize| h[i][3] < 1e30 && (h[i][2] - FLOOR as f32).abs() < 0.01;
+    let shaded: Vec<usize> = (0..h.len())
+        .filter(|&i| floor(i) && h[i][0] < 23.0)
+        .collect();
+    let differ: Vec<usize> = (0..h.len())
+        .filter(|&i| bits(&plain[i]) != bits(&cap[i]))
+        .collect();
+    println!(
+        "{} pixels differ, {} on the floor well under the slab",
+        differ.len(),
+        shaded.len()
+    );
+    assert!(shaded.len() > 300, "{} floor pixels under the slab", shaded.len());
+    for &i in &shaded {
+        let pair = (plain[i][1], cap[i][1]);
+        assert_eq!(pair, (0.0, 1.0), "pixel {i} under the slab, hit {:?}", h[i]);
+    }
     for i in differ {
-        assert!(
-            (h[i][2] - under as f32).abs() < 0.01 && h[i][0] < 24.0,
-            "pixel {i} differs off the underside: hit {:?}",
-            h[i]
-        );
+        let under_slab = floor(i) && h[i][0] < 24.1;
+        assert!(under_slab, "pixel {i} differs off the floor under the slab: hit {:?}", h[i]);
     }
 }
