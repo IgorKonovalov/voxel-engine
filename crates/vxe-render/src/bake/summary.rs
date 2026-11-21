@@ -110,6 +110,14 @@ pub(super) fn reach_offsets(lr: i32) -> impl Iterator<Item = [i32; 3]> {
         .filter(move |&o| in_reach(o, lr))
 }
 
+/// The longest offset within a light reach of `lr` chunks ([`reach_offsets`]), as a length in
+/// chunks: 5.39 at 4, 4.36 at 3, 3.46 at 2.
+pub(super) fn reach_extent(lr: i32) -> f64 {
+    reach_offsets(lr)
+        .map(|o| o.iter().map(|&d| f64::from(d).powi(2)).sum::<f64>().sqrt())
+        .fold(0.0, f64::max)
+}
+
 /// A running mean of records by direction: each direction over the records that hold it, the
 /// material the most of them keep (the lowest on a tie), the mask their union; each direction's
 /// sky visibility over the records that hold it baked under a sky.
@@ -569,12 +577,19 @@ pub(super) fn fallback_block(block: &[u32], chain: &[u32; BRICK_WORDS], record: 
 }
 
 /// A fade's block at `t` of the way from `from` to `to` (one layout): `to`'s words, each cell's
-/// direction values mixed in linear light and packed again. The fades write it each frame, and a
-/// block landing on a running fade starts its own from it.
+/// direction values mixed in linear light and packed again, and where both hold [`KEY_BAKED`]
+/// its six key visibilities mixed and rounded to `u8` (a key re-bake's landing is one fade,
+/// ADR-0079). The fades write it each frame, and a block landing on a running fade starts its
+/// own from it.
 pub(super) fn fade_mix(shown: &mut Vec<u32>, from: &[u32], to: &[u32], t: f32, record: usize) {
     let lerp = |a: u32, b: u32| {
         let (x, y) = (rgb9e5_unpack(a), rgb9e5_unpack(b));
         rgb9e5_pack([0, 1, 2].map(|k| x[k] + (y[k] - x[k]) * t))
+    };
+    let byte = |a: u32, b: u32, at: u32| {
+        let (x, y) = ((a >> at) & 255, (b >> at) & 255);
+        let v = (x as f32 + (y as f32 - x as f32) * t).round() as u32;
+        v.min(255) << at
     };
     shown.clear();
     shown.extend_from_slice(to);
@@ -586,6 +601,13 @@ pub(super) fn fade_mix(shown: &mut Vec<u32>, from: &[u32], to: &[u32], t: f32, r
         for cell in (run - record..run).step_by(BRICK_WORDS) {
             for w in cell..cell + 6 {
                 shown[w] = lerp(from[w], to[w]);
+            }
+            let k = cell + KEY_WORD;
+            if from[k + 1] & KEY_BAKED != 0 && to[k + 1] & KEY_BAKED != 0 {
+                shown[k] = (0..4).fold(0, |w, i| w | byte(from[k], to[k], 8 * i));
+                shown[k + 1] = (to[k + 1] & !0xFFFF)
+                    | byte(from[k + 1], to[k + 1], 0)
+                    | byte(from[k + 1], to[k + 1], 8);
             }
         }
     }
@@ -700,17 +722,60 @@ mod tests {
             bricks: vec![(3, vec![1, 2, 3]), (9, vec![4])],
             glass: Vec::new(),
         };
-        // The directory's 512 words, then the summary's 9 (ADR-0053; seven words and ADR-0070's
-        // two of sky visibility), then the records.
+        // The directory's 512 words, then the summary's 11 (ADR-0053; seven words, ADR-0070's
+        // two of sky visibility and ADR-0079's two of key visibility), then the records.
         let (d, words) = layout(&faces, record_words(8));
-        assert_eq!(d.len(), 512 + 9, "the head: directory and summary");
-        assert_eq!(d[3], (512 + 9 + 9) << 11);
-        assert_eq!(d[9], (512 + 9 + 18) << 11);
+        assert_eq!(d.len(), 512 + 11, "the head: directory and summary");
+        assert_eq!(d[3], (512 + 11 + 11) << 11);
+        assert_eq!(d[9], (512 + 11 + 22) << 11);
         assert_eq!(d[4], 0);
-        assert_eq!(words, 512 + 9 + 18);
+        assert_eq!(words, 512 + 11 + 22);
         let (d, words) = layout(&faces, record_words(4));
-        assert_eq!(d[9], (512 + 9 + 2 * 72) << 11);
-        assert_eq!(words, 512 + 9 + 2 * 72);
+        assert_eq!(d[9], (512 + 11 + 2 * 88) << 11);
+        assert_eq!(words, 512 + 11 + 2 * 88);
+    }
+
+    /// A fade mixes the key visibilities byte by byte where both blocks hold KEY_BAKED, keeping
+    /// the target's flags, and takes the target's where either lacks it.
+    #[test]
+    fn a_fade_mixes_the_key_visibilities() {
+        let faces = ChunkFaces {
+            bricks: vec![(3, vec![1])],
+            glass: Vec::new(),
+        };
+        let (dir, words) = layout(&faces, BRICK_WORDS);
+        let mut from = dir.clone();
+        from.resize(words as usize, 0);
+        let mut to = from.clone();
+        let k = words as usize - BRICK_WORDS + KEY_WORD;
+        from[k..k + 2].copy_from_slice(&key_words([1.0, 0.0, 0.5, 1.0, 0.2, 0.0]));
+        to[k..k + 2].copy_from_slice(&key_words([0.0, 1.0, 0.5, 1.0, 0.6, 1.0]));
+        to[k + 1] |= SKY_STALE;
+        let mut shown = Vec::new();
+        fade_mix(&mut shown, &from, &to, 0.25, BRICK_WORDS);
+        let bytes = |w: &[u32]| {
+            [
+                w[0] & 255,
+                w[0] >> 8 & 255,
+                w[0] >> 16 & 255,
+                w[0] >> 24,
+                w[1] & 255,
+                w[1] >> 8 & 255,
+            ]
+        };
+        assert_eq!(bytes(&shown[k..k + 2]), [191, 64, 128, 255, 77, 64]);
+        assert_eq!(
+            shown[k + 1] & !0xFFFF,
+            to[k + 1] & !0xFFFF,
+            "the target's flags"
+        );
+        from[k + 1] &= !KEY_BAKED;
+        fade_mix(&mut shown, &from, &to, 0.25, BRICK_WORDS);
+        assert_eq!(
+            shown[k..k + 2],
+            to[k..k + 2],
+            "no key fade from an unbaked record"
+        );
     }
 
     /// A record of one cell: `dirs` (face, value) held, material `m`.

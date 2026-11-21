@@ -30,7 +30,11 @@
 //                                        face with a fresh baked visibility, `sky_baked`). The
 //                                        key light's visibility sample (`key_visibility`) in g
 //                                        and 1 in b where the key light falls on the face, else
-//                                        0 in both; the key light is not in `direct_out`
+//                                        0 in both; KEY_FROM_STORE in b and 0 in g where it
+//                                        falls on the face and the temporal pass's far estimate
+//                                        answers it with no ray (`key_from_store`); the key
+//                                        light is not in
+//                                        `direct_out`
 //
 @group(2) @binding(0) var hit_pos_in: texture_2d<f32>;
 
@@ -84,6 +88,19 @@ fn sky_baked(v: vec3<i32>, face: u32) -> bool {
     let vis = light_store[rec + VIS_WORD + 1u];
     return ((light_store[rec + 6u] >> (16u + face)) & 1u) != 0u
         && (vis & VIS_BAKED) != 0u && (vis & SKY_STALE) == 0u;
+}
+
+// Whether the light pass leaves the key light's visibility at cube face hit `rec` of view
+// `view` to the temporal pass's far estimate, with no ray (ADR-0079): under LIGHTING_KEY_BAKED
+// (the record where fresh, else the column map's horizon; the horizon alone under
+// LIGHTING_KEY_COLUMN), where the far normal's weight is 1 (at least one half under
+// LIGHTING_KEY_STEP).
+fn key_from_store(rec: HitRecord, view: View) -> bool {
+    if ((params.lighting & LIGHTING_KEY_BAKED) == 0u || !reads_store(rec)) {
+        return false;
+    }
+    let at = select(1.0, 0.5, (params.lighting & LIGHTING_KEY_STEP) != 0u);
+    return far_normal_weight(view, rec.t) >= at;
 }
 
 // Whether face `face` of voxel `v`, whose own cell holds no fresh baked visibility, takes the
@@ -200,7 +217,8 @@ fn shade_px(gid: vec3<u32>) {
                 rays += 1u;
             }
             counts = vec4<f32>(f32(steps), f32(storage), f32(pool), f32(rays));
-            if (any(key_light_at(rec.p, rec.n) > vec3<f32>(0.0))) {
+            if (any(key_light_at(rec.p, rec.n) > vec3<f32>(0.0))
+                && !key_from_store(rec, params.views[view_of(full_px(gid.xy))])) {
                 var d = disc_direction(sky.key_dir, sky.key_radius, rand(gid.xy, KEY_DIM), rand(gid.xy, KEY_DIM + 1u));
                 let approach = (params.lighting & LIGHTING_PENUMBRA_APPROACH) != 0u;
                 if (approach) {
@@ -235,17 +253,26 @@ fn shade_px(gid: vec3<u32>) {
         } else {
             let ns = shadow_normal_of(rec, ray.d);
             e = PI * lights_lit_rgb(rec.p, n, ns);
-            set_ray_lift(rec, params.views[view_of(full_px(gid.xy))]);
+            let view_here = params.views[view_of(full_px(gid.xy))];
+            set_ray_lift(rec, view_here);
             // The key light's visibility sample (sky_light.wgsl) goes to the temporal pass, which
-            // keeps its running mean and adds the key light by it. The sky rays run where the
-            // hit's face holds no fresh baked visibility; their share that reached the sky
-            // goes to the temporal pass too, which keeps its running mean.
-            let kv = key_visibility(rec.p, n, ns, gid.xy);
-            if (kv >= 0.0) {
-                vis = vec4<f32>(0.0, kv, 1.0, 0.0);
-            }
+            // keeps its running mean and adds the key light by it; where the store answers it
+            // (`key_from_store`) no ray is cast and the temporal pass reads its far estimate. The sky
+            // rays run where the hit's face holds no fresh baked visibility; their share that
+            // reached the sky goes to the temporal pass too, which keeps its running mean.
             let sv = store_voxel(rec.p, ns);
             let sf = store_face(rec.axis, ns);
+            if (key_from_store(rec, view_here)) {
+                if (any(key_light_at(rec.p, n) > vec3<f32>(0.0))
+                    && (params.lighting & LIGHTING_HOOK_KEY_OFF) == 0u) {
+                    vis = vec4<f32>(0.0, 0.0, KEY_FROM_STORE, 0.0);
+                }
+            } else {
+                let kv = key_visibility(rec.p, n, ns, gid.xy);
+                if (kv >= 0.0) {
+                    vis = vec4<f32>(0.0, kv, 1.0, 0.0);
+                }
+            }
             let baked = reads_store(rec) && (sky_baked(sv, sf) || sky_chained(sv, sf))
                 && (params.lighting & LIGHTING_HOOK_SKY_RAY_ALWAYS) == 0u;
             if (!baked && sky_on() && sky.sky_rays > 0u) {

@@ -426,8 +426,8 @@ pub(crate) const PASSES: [PassSpec; 17] = [
         arms: true,
         lazy: true,
     },
-    // The light pass with the walk's default-off arms (the approach probes, the absorbing
-    // step: [`compose_arms`]), built when one is picked ([`Frame::light_pipeline`]).
+    // The light pass with the walk's default-off arm (the absorbing step: [`compose_arms`]),
+    // built when it is picked ([`Frame::light_pipeline`]).
     PassSpec {
         label: "light (arms)",
         modules: LIGHT_MODULES,

@@ -612,6 +612,11 @@ pub struct BakeArgs {
     /// `--read-missing`: while a dig's rings 1 and 2 wait, the store's no-value count is read back
     /// each frame (blocking) for the `dig settled:` line.
     pub(crate) read_missing: bool,
+    /// `--pre-roll-drain SECONDS`: from the first drawn frame the camera is held still and the
+    /// live queue bakes at `PRE_ROLL_DRAIN_MS` a frame until it is idle (no job, no coarse chunk) or
+    /// `SECONDS` have passed, then the budget returns to `budget` (a testbed lever for a look at
+    /// a view whose far light is baked).
+    pub(crate) pre_roll_drain: Option<f64>,
 }
 
 /// The fly-through's arguments: the run's own, the world ([`RunMode`]) and the four groups.
@@ -950,11 +955,10 @@ impl Args {
         }
     }
 
-    /// Whether the flags pick a light pass arm at start (`--leaf-shadow absorb`, `--penumbra
-    /// approach`), whose pipelines the loading stage then builds.
+    /// Whether the flags pick a light pass arm at start (`--leaf-shadow absorb`), whose
+    /// pipelines the loading stage then builds. The approach penumbra needs none.
     pub(crate) fn light_arms_at_start(&self) -> bool {
-        self.start_lighting().penumbra == vxe_render::Penumbra::Approach
-            || self.outdoor.leaf_shadow() == crate::LeafShadow::Absorb
+        self.outdoor.leaf_shadow() == crate::LeafShadow::Absorb
     }
 
     /// The lighting the fly-through starts in, from its flags.
@@ -976,7 +980,9 @@ impl Args {
                 .outdoor
                 .key_history
                 .unwrap_or(vxe_render::DEFAULT_KEY_HISTORY),
-            penumbra: self.outdoor.penumbra,
+            penumbra: self.outdoor.penumbra.unwrap_or(crate::DEFAULT_PENUMBRA),
+            key_far: self.outdoor.key_far,
+            key_far_mix: self.outdoor.key_far_mix,
             sky_normal: self.outdoor.sky_normal,
             column_wait: self.outdoor.column_wait,
             sky_bounce: self.outdoor.sky_bounce,

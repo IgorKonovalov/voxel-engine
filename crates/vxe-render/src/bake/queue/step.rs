@@ -138,6 +138,7 @@ impl BakeQueue {
             self.partial_due.retain(held);
             self.provisional.retain(held);
             self.provisional_due.retain(held);
+            self.keys.retain(held);
         }
         match changes {
             Some(ch) => {
@@ -158,6 +159,7 @@ impl BakeQueue {
                             self.provisional.remove(&c);
                             self.provisional_due.remove(&c);
                         }
+                        self.keys.retain(|k| *k != c);
                     }
                 }
                 self.laps.lap(S_FORGET);
@@ -193,6 +195,9 @@ impl BakeQueue {
         });
         self.withdraw_passed(run, store, view);
         self.laps.lap(S_WITHDRAW);
+        // The key-only jobs push at the front before the digs, which go ahead of them.
+        self.mark_keys(run, store);
+        self.open_keys(run, store, view, cap)?;
         self.open_digs(run, store, cap)?;
         self.laps.lap(S_DIGS);
         let mut opened_step = false;
@@ -243,6 +248,7 @@ impl BakeQueue {
             job_coarse: &mut self.job_coarse,
             job_eye: &mut self.job_eye,
             dig_open: &mut self.dig_open,
+            keys_open: &mut self.keys.open,
             reach: &mut self.reach,
             partial: &mut self.partial,
             job_partial: &mut self.job_partial,
@@ -351,6 +357,7 @@ impl BakeQueue {
         self.stats.reach = self.reach.len() as u64;
         self.stats.partial = self.partial.len() as u64;
         self.stats.provisional = self.provisional.len() as u64;
+        self.stats.keys = self.keys.count();
         self.laps.lap(S_FADES);
         // The summaries' and parents' time ran inside the placement, the fades, the evictions
         // and the window's move: it moves to its own stage, from those in that order.
@@ -380,6 +387,7 @@ struct Placement<'a> {
     job_coarse: &'a mut std::collections::HashMap<[i32; 3], bool>,
     job_eye: &'a mut std::collections::HashMap<[i32; 3], u64>,
     dig_open: &'a mut std::collections::HashMap<[i32; 3], DigChunk>,
+    keys_open: &'a mut std::collections::HashSet<[i32; 3]>,
     reach: &'a mut std::collections::BTreeSet<[i32; 3]>,
     partial: &'a mut ChunkSet,
     job_partial: &'a mut ChunkSet,
@@ -401,16 +409,36 @@ impl Placement<'_> {
         let from_partial = self.job_partial.remove(&coord.0);
         let from_provisional = self.job_provisional.remove(&coord.0);
         let dug = self.dig_open.remove(&coord.0);
+        let keyed = self.keys_open.remove(&coord.0);
         if self.stale.remove(&coord.0) || !self.gpu.is_mirrored(coord) {
             store.release(first, block.len() as u64);
             // A dig job's bricks went back to the waiting digs at the edit; a whole chunk's
             // job that would have replaced a full block re-bakes whole.
             if dug.is_none()
+                && !keyed
                 && self.gpu.is_mirrored(coord)
                 && store.blocks.contains_key(&coord.0)
                 && !store.is_coarse(coord)
             {
                 self.reach.insert(coord.0);
+            }
+            return;
+        }
+        if keyed {
+            // A key-only job keeps the block's words but its key visibilities: its place,
+            // reach and provisional flags stay; the light pass fades the key words' change.
+            self.stats.keys_baked += 1;
+            if let Some((f, from)) = store
+                .blocks
+                .get(&coord.0)
+                .and_then(|&(f, _)| store.words.get(&coord.0).map(|w| (f, w.clone())))
+                .filter(|(_, w)| {
+                    w.len() == block.len() && w[..CHUNK_BRICKS] == block[..CHUNK_BRICKS]
+                })
+            {
+                self.refade(store, coord, (first, f), from, block, false);
+            } else {
+                store.release(first, block.len() as u64);
             }
             return;
         }

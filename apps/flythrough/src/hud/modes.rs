@@ -45,6 +45,10 @@ pub enum ModeKey {
     YoungFilter,
     /// `Insert`: an entity's emissive light, its own sample or the store's.
     EntityLight,
+    /// The menu's: the key light's far visibility from the store or the ray (ADR-0079).
+    KeyFar,
+    /// The menu's: the store's key visibility blended or stepped in the far normal's band.
+    KeyFarMix,
 }
 
 /// The auto exposure's preset, as `--adaptation` names it.
@@ -557,6 +561,19 @@ impl Modes {
                     vxe_render::StoreRead::Normal => vxe_render::StoreRead::Face,
                 }
             }
+            ModeKey::KeyFar => {
+                l.key_far = match l.key_far {
+                    vxe_render::KeyFar::Baked => vxe_render::KeyFar::Column,
+                    vxe_render::KeyFar::Column => vxe_render::KeyFar::Ray,
+                    vxe_render::KeyFar::Ray => vxe_render::KeyFar::Baked,
+                }
+            }
+            ModeKey::KeyFarMix => {
+                l.key_far_mix = match l.key_far_mix {
+                    vxe_render::KeyFarMix::Blend => vxe_render::KeyFarMix::Step,
+                    vxe_render::KeyFarMix::Step => vxe_render::KeyFarMix::Blend,
+                }
+            }
             ModeKey::LightWeights => {
                 l.light_weights = match l.light_weights {
                     vxe_render::LightWeights::Normal => vxe_render::LightWeights::Face,
@@ -649,6 +666,21 @@ impl Modes {
         };
     }
 
+    /// The key light's far source in words, as the banner names it where it is not the
+    /// default (`key far baked, key far mix blend`): `key far ray, `, `key far column, `, or
+    /// `key far baked, key far mix step, `; empty for the default.
+    pub fn write_key_far(&self, out: &mut String) {
+        let l = &self.lighting;
+        let d = vxe_render::Lighting::default();
+        if (l.key_far, l.key_far_mix) == (d.key_far, d.key_far_mix) {
+            return;
+        }
+        let _ = write!(out, "key far {}, ", l.key_far.name());
+        if l.key_far_mix != d.key_far_mix {
+            let _ = write!(out, "key far mix {}, ", l.key_far_mix.name());
+        }
+    }
+
     /// The light's resolution and its filters in words, as the aliasing row names them:
     /// `store read face, weights normal, lighting half`.
     pub fn write_filter_words(&self, out: &mut String) {
@@ -680,7 +712,8 @@ impl Modes {
             self.clock.write_words(out);
             let _ = write!(out, ", sky rays {}, ", l.sky_rays);
             out.push_str(self.leaf_shadow.words());
-            if l.penumbra != vxe_render::Penumbra::Disc {
+            self.write_key_far(out);
+            if l.penumbra != crate::DEFAULT_PENUMBRA {
                 let _ = write!(out, "penumbra {}, ", l.penumbra.name());
             }
             if l.sky_normal != vxe_render::SkyNormal::default() {

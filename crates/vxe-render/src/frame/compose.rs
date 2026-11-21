@@ -15,7 +15,8 @@ use std::fmt::Write as _;
 use super::settings::SPLIT_GROUP;
 use super::*;
 use crate::bake::{
-    BRICK_WORDS, SKY_STALE, STORE_FLAGS, STORE_TABLE, TABLE_COARSE, VIS_BAKED, VIS_WORD,
+    BRICK_WORDS, KEY_BAKED, KEY_WORD, SKY_STALE, STORE_FLAGS, STORE_TABLE, TABLE_COARSE, VIS_BAKED,
+    VIS_WORD,
 };
 use crate::exposure::STATE_HELD;
 use crate::field::{BAND_CUBES_BIT, CRISP_COUNT_BIT, SMOOTH_COUNT_BIT};
@@ -123,6 +124,9 @@ pub(crate) const PRELUDE: &[(&str, u32)] = &[
     ("LIGHTING_HOOK_POOL", LIGHTING_HOOK_POOL),
     ("LIGHTING_HOOK_SEED_STALE_F", LIGHTING_HOOK_SEED_STALE_F),
     ("LIGHTING_SKY_SMOOTHED", LIGHTING_SKY_SMOOTHED),
+    ("LIGHTING_KEY_BAKED", LIGHTING_KEY_BAKED),
+    ("LIGHTING_KEY_STEP", LIGHTING_KEY_STEP),
+    ("LIGHTING_KEY_COLUMN", LIGHTING_KEY_COLUMN),
     // The list of lights (`frame/lights.rs`).
     ("MAX_LIGHTS", MAX_LIGHTS as u32),
     ("LIGHT_ON", Light::ON),
@@ -153,6 +157,8 @@ pub(crate) const PRELUDE: &[(&str, u32)] = &[
     ("VIS_WORD", VIS_WORD as u32),
     ("VIS_BAKED", VIS_BAKED),
     ("SKY_STALE", SKY_STALE),
+    ("KEY_WORD", KEY_WORD as u32),
+    ("KEY_BAKED", KEY_BAKED),
     // The probe slots' flags (`probes`).
     ("TOUCHED_BIT", TOUCHED_BIT),
     ("MOVED_BIT", MOVED_BIT),
@@ -190,8 +196,7 @@ pub(crate) fn compose(modules: &[&str]) -> String {
 }
 
 /// [`compose`] keeping the walk's default-off arms: the lines from each `// arms:begin` to its
-/// `// arms:end` (`walk.wgsl`'s approach probes and absorbing step), which [`compose`] leaves
-/// out.
+/// `// arms:end` (`walk.wgsl`'s absorbing step), which [`compose`] leaves out.
 pub(crate) fn compose_arms(modules: &[&str]) -> String {
     compose_with(modules, true)
 }
@@ -455,33 +460,40 @@ mod tests {
         assert!(p.contains("const MATERIAL_TRANSLUCENT: u32 = 2u;"));
     }
 
-    /// The light pass's default pipelines compile neither default-off arm of the walk (the
-    /// approach probes' call, the absorbing step's sum): their sources lack both, which the
-    /// arms' variants, the steps view and the bake keep; the markers pair up in `walk.wgsl`.
+    /// The light pass's default pipelines compile the approach probes' call (the near's pick,
+    /// ADR-0079) and not the walk's default-off arm, the absorbing step's sum, which the arms'
+    /// variants, the steps view and the bake keep; the markers pair up in `walk.wgsl`.
     #[test]
     fn the_default_light_pipelines_compile_no_arm() {
         use super::super::pipelines::{
             P_LIGHT, P_LIGHT_ARMS, P_LIGHT_BARE, P_LIGHT_BARE_ARMS, P_LIGHT_STEPS,
         };
-        let arms = ["approach_cell(o, d, t, exit.t)", "absorb_tau += 0.001"];
+        let (approach, absorb) = ("approach_cell(o, d, t, exit.t)", "absorb_tau += 0.001");
         for p in [P_LIGHT, P_LIGHT_BARE] {
             let src = PASSES[p].source();
-            for a in arms {
-                assert!(!src.contains(a), "{} compiles {a}", PASSES[p].label);
-            }
+            assert!(
+                !src.contains(absorb),
+                "{} compiles {absorb}",
+                PASSES[p].label
+            );
+            assert!(
+                src.contains(approach),
+                "{} lacks {approach}",
+                PASSES[p].label
+            );
         }
         for p in [P_LIGHT_ARMS, P_LIGHT_BARE_ARMS, P_LIGHT_STEPS] {
             let src = PASSES[p].source();
-            for a in arms {
+            for a in [approach, absorb] {
                 assert!(src.contains(a), "{} lacks {a}", PASSES[p].label);
             }
         }
         let bake = crate::bake::bake_source();
-        assert!(bake.contains(arms[1]), "the bake lacks the absorbing step");
+        assert!(bake.contains(absorb), "the bake lacks the absorbing step");
         let (b, e) = (
             WALK_WGSL.matches(ARMS_BEGIN).count(),
             WALK_WGSL.matches(ARMS_END).count(),
         );
-        assert_eq!((b, e), (2, 2), "walk.wgsl's arms markers");
+        assert_eq!((b, e), (1, 1), "walk.wgsl's arms markers");
     }
 }

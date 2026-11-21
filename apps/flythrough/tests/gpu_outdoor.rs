@@ -456,7 +456,10 @@ mod reading {
     /// lit plane is z = 0 and one tree from the builder (trunk radius 2 on column (0, 0) up to z =
     /// 80, a solid canopy of radius 12 on voxel (0, 0, 80)), the camera at (0.5, 0.5, 250.5)
     /// looking straight down at `size`; lamp off, no list light, the sky rays and the filter off,
-    /// manual exposure 1, `E_sun = (1, 1, 1)` at the real angular radius, the direct target's
+    /// manual exposure 1, `E_sun = (1, 1, 1)` at the real angular radius, the key light's far
+    /// estimate pinned to the ray (`KeyFar::Ray`: the bar reads the ray's geometry, and the floor
+    /// 250 voxels down sits at the far normal's weight 1 with no record, where the default reads
+    /// the column map's horizon, a heightfield under the canopy), the direct target's
     /// luminance a 16-frame mean per lighting pixel. Each floor pixel's occlusion `w = 1 - I /
     /// I_open` against the same pose without the tree; the centroid of `w`, at the pixels' hit
     /// positions, over floor pixels at least 4 voxels to either side of the shadow's axis; at
@@ -482,6 +485,7 @@ mod reading {
                 shadow_walk: walk,
                 exposure: Exposure::Manual(1.0),
                 sky_rays: 0,
+                key_far: vxe_render::KeyFar::Ray,
                 ..Lighting::default()
             });
             let body = |direction| Body {
@@ -1848,3 +1852,4 @@ include!("gpu_outdoor/canopy.rs");
 include!("gpu_outdoor/still.rs");
 include!("gpu_outdoor/bars.rs");
 include!("gpu_outdoor/ceiling.rs");
+include!("gpu_outdoor/far_return.rs");

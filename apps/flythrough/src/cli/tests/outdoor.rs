@@ -1,21 +1,51 @@
-//! The outdoor section's lighting flags: the penumbra, the sky term's normal and bounce, the
-//! exposure's ceiling.
+//! The outdoor section's lighting flags: the penumbra, the key light's far source, the sky
+//! term's normal and bounce, the exposure's ceiling.
 
 use crate::cli::parse_args_from;
 use crate::test_support::argv;
 use vxe_render::Exposure;
 
-/// `--penumbra`: disc unless named; approach reaches the lighting and the banner.
+/// `--penumbra`: approach unless named (Plan 0095 Phase 5, the fly-through's
+/// `DEFAULT_PENUMBRA`), which the banner leaves out; disc reaches the lighting and the banner.
 #[test]
-fn penumbra_is_disc_unless_named() {
-    // Disc by default and unnamed; approach reaches the lighting and the banner.
+fn penumbra_is_approach_unless_named() {
     let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
-    assert_eq!(r.start_lighting().penumbra, vxe_render::Penumbra::Disc);
-    assert!(!r.start_modes(0.0).line().contains("penumbra"));
-    let r = parse_args_from(argv(&["--source", "outdoor", "--penumbra", "approach"])).unwrap();
     assert_eq!(r.start_lighting().penumbra, vxe_render::Penumbra::Approach);
-    assert!(r.start_modes(0.0).line().contains("penumbra approach, "));
+    assert!(!r.start_modes(0.0).line().contains("penumbra"));
+    let r = parse_args_from(argv(&["--source", "outdoor", "--penumbra", "disc"])).unwrap();
+    assert_eq!(r.start_lighting().penumbra, vxe_render::Penumbra::Disc);
+    assert!(r.start_modes(0.0).line().contains("penumbra disc, "));
     assert!(parse_args_from(argv(&["--penumbra", "soft"])).is_err());
+}
+
+/// Plan 0095 Phases 2 and 4: `--key-far` is baked with the blend unless named, which the banner
+/// leaves out; `ray`, `column` and `--key-far-mix step` reach the lighting and the banner with a
+/// sky set.
+#[test]
+fn key_far_is_baked_blend_unless_named() {
+    use vxe_render::{KeyFar, KeyFarMix};
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    let l = r.start_lighting();
+    assert_eq!(
+        (l.key_far, l.key_far_mix),
+        (KeyFar::Baked, KeyFarMix::Blend)
+    );
+    assert!(!r.start_modes(0.0).line().contains("key far"));
+    let r = parse_args_from(argv(&["--source", "outdoor", "--key-far-mix", "step"])).unwrap();
+    assert_eq!(r.start_lighting().key_far_mix, KeyFarMix::Step);
+    assert!(
+        r.start_modes(0.0)
+            .line()
+            .contains("key far baked, key far mix step, ")
+    );
+    let r = parse_args_from(argv(&["--source", "outdoor", "--key-far", "ray"])).unwrap();
+    assert_eq!(r.start_lighting().key_far, KeyFar::Ray);
+    assert!(r.start_modes(0.0).line().contains("key far ray, "));
+    let r = parse_args_from(argv(&["--source", "outdoor", "--key-far", "column"])).unwrap();
+    assert_eq!(r.start_lighting().key_far, KeyFar::Column);
+    assert!(r.start_modes(0.0).line().contains("key far column, "));
+    assert!(parse_args_from(argv(&["--key-far", "far"])).is_err());
+    assert!(parse_args_from(argv(&["--key-far-mix", "fade"])).is_err());
 }
 
 /// `--sky-anchor` and `--exposure-max` reach the auto exposure; unset is the default anchor
@@ -155,7 +185,8 @@ fn the_exposure_rate_reaches_the_run() {
 }
 
 /// The light pass arms are built in the loading stage (`run::loading::ARMS`) when the flags
-/// pick one at start, `--leaf-shadow absorb` or `--penumbra approach`, and not otherwise.
+/// pick one at start, `--leaf-shadow absorb`, and not otherwise: the approach penumbra (the
+/// default outdoors) is in the default light pipelines.
 #[test]
 fn an_arm_picked_at_start_is_built_while_loading() {
     let stages = |r: &crate::cli::Args| {
@@ -164,18 +195,42 @@ fn an_arm_picked_at_start_is_built_while_loading() {
             .map(|(n, _)| n)
             .collect::<Vec<_>>()
     };
-    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    let r = parse_args_from(argv(&["--source", "outdoor", "--penumbra", "disc"])).unwrap();
     assert!(!r.light_arms_at_start());
     assert!(!stages(&r).contains(&crate::run::loading::ARMS));
+    let r = parse_args_from(argv(&["--source", "outdoor", "--sky", "off"])).unwrap();
+    assert!(!r.light_arms_at_start());
+    for unpicked in [
+        &["--source", "outdoor", "--penumbra", "approach"][..],
+        &["--source", "outdoor"],
+    ] {
+        let r = parse_args_from(argv(unpicked)).unwrap();
+        assert!(!r.light_arms_at_start(), "{unpicked:?}");
+    }
     for picked in [
-        &["--source", "outdoor", "--leaf-shadow", "absorb"][..],
-        &["--source", "outdoor", "--penumbra", "approach"],
+        &[
+            "--source",
+            "outdoor",
+            "--penumbra",
+            "disc",
+            "--leaf-shadow",
+            "absorb",
+        ][..],
+        &["--source", "outdoor", "--leaf-shadow", "absorb"],
     ] {
         let r = parse_args_from(argv(picked)).unwrap();
         assert!(r.light_arms_at_start(), "{picked:?}");
         assert_eq!(stages(&r)[1], crate::run::loading::ARMS, "{picked:?}");
     }
-    let r = parse_args_from(argv(&["--source", "outdoor", "--leaf-shadow", "voxel"])).unwrap();
+    let r = parse_args_from(argv(&[
+        "--source",
+        "outdoor",
+        "--penumbra",
+        "disc",
+        "--leaf-shadow",
+        "voxel",
+    ]))
+    .unwrap();
     assert!(!r.light_arms_at_start());
 }
 
@@ -191,6 +246,45 @@ fn the_settle_is_refused() {
             "{v}"
         );
     }
+}
+
+#[test]
+fn the_pre_roll_drain_takes_seconds_and_its_banner_names_the_state() {
+    use crate::run::queue::{Drain, write_drain_banner};
+    let drain = |a: &[&str]| parse_args_from(argv(a)).map(|r| r.bake.pre_roll_drain);
+    assert_eq!(drain(&["--source", "outdoor"]), Ok(None));
+    assert_eq!(drain(&["--pre-roll-drain", "90"]), Ok(Some(90.0)));
+    assert!(drain(&["--pre-roll-drain", "0"]).is_err());
+    assert!(drain(&["--pre-roll-drain", "601"]).is_err());
+    let stats = vxe_render::QueueStats {
+        jobs: 12,
+        coarse: 340,
+        ..Default::default()
+    };
+    let row = |d: Drain, now: f64| {
+        let mut out = String::new();
+        write_drain_banner(&mut out, d, Some(&stats), 120.0, now);
+        out
+    };
+    let draining = Drain::Draining {
+        from_ms: 1000.0,
+        clear_ms: None,
+    };
+    assert_eq!(
+        row(draining, 31_000.0).trim(),
+        "pre-roll: draining 12 jobs, 340 coarse chunks to refine, 90 s at most; HOLD STILL"
+    );
+    let done = Drain::Done {
+        at_ms: 40_000.0,
+        secs: 39.0,
+        landed: true,
+    };
+    assert_eq!(
+        row(done, 41_000.0).trim(),
+        "pre-roll: landed after 39 s; move now"
+    );
+    assert_eq!(row(done, 40_000.0 + crate::hud::BANNER_MS), "");
+    assert_eq!(row(Drain::Off, 0.0), "");
 }
 
 /// `--sky-anchor-share` reaches the auto exposure, 1/256 by default and unnamed; another value is

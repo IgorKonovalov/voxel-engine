@@ -32,8 +32,15 @@ pub struct OutdoorArgs {
     pub(crate) leaf_fill: Option<u32>,
     /// `--leaf-shadow brick|voxel|absorb`: how the canopy shadows.
     pub(crate) leaf_shadow: crate::LeafShadow,
-    /// `--penumbra disc|approach`: how the key light's shadow ray makes its penumbra.
-    pub(crate) penumbra: vxe_render::Penumbra,
+    /// `--penumbra disc|approach`: how the key light's shadow ray makes its penumbra; unset,
+    /// [`crate::DEFAULT_PENUMBRA`].
+    pub(crate) penumbra: Option<vxe_render::Penumbra>,
+    /// `--key-far baked|ray`: where the key light's visibility comes from where a voxel is
+    /// small on screen (ADR-0079).
+    pub(crate) key_far: vxe_render::KeyFar,
+    /// `--key-far-mix blend|step`: how the store's key visibility joins the ray inside the far
+    /// normal's band.
+    pub(crate) key_far_mix: vxe_render::KeyFarMix,
     /// `--sky-normal face|smoothed`: the normal the baked sky term reads its visibilities by.
     pub(crate) sky_normal: vxe_render::SkyNormal,
     /// `--sky-bounce B`: the baked sky term's bounce floor, 0 to 1.
@@ -184,6 +191,12 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
                 Ok(())
             },
         ),
+        Flag::switch(
+            &["--day-cycle"],
+            "start with the day cycle running, as End does in the window (a reading lever \
+                 for the key light's re-bake under a moving sun)",
+            |p: &mut Parsing| p.args.outdoor.clock.running = true,
+        ),
         Flag::value(
             &["--day-length"],
             "S",
@@ -250,6 +263,22 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
     }]
 }
 
+/// `flags` (the light queue's) with the testbed's pre-roll drain (`--pre-roll-drain`, a look at
+/// the outdoor scenes with their far light baked) after them.
+pub(super) fn with_drain_flags(mut flags: Vec<Flag<Parsing>>) -> Vec<Flag<Parsing>> {
+    flags.push(Flag::value(
+        &["--pre-roll-drain"],
+        "SECONDS",
+        "from the first frame hold the camera and bake at 40 ms a frame until the queue is idle or SECONDS pass, 1 to 600; the banner counts the jobs left",
+        |p: &mut Parsing, v| {
+            let s = v.parse_if(|s: &f64| (1.0..=600.0).contains(s), "1 to 600 s")?;
+            p.args.bake.pre_roll_drain = Some(s);
+            Ok(())
+        },
+    ));
+    flags
+}
+
 /// The section's flags of the sky's light at a hit: the sky rays, their history, the penumbra,
 /// the baked term's normal and bounce floor.
 fn sky_light_flags() -> Vec<Flag<Parsing>> {
@@ -291,11 +320,37 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
         Flag::value(
             &["--penumbra"],
             "disc|approach",
-            "the key light's penumbra: a ray to a random point of its disc a frame, or one \
-                 to its centre scored by how close it passes the rock beside it (a spike) [disc]",
+            "the key light's penumbra: a ray to a random point of its disc a frame and its \
+                 running mean, or one ray to its centre scored by how close it passes the rock \
+                 beside it, taken as the value with no history [approach]",
             |p: &mut Parsing, v| {
                 p.args.outdoor.penumbra =
-                    v.named(vxe_render::Penumbra::from_name, "disc or approach")?;
+                    Some(v.named(vxe_render::Penumbra::from_name, "disc or approach")?);
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--key-far"],
+            "baked|column|ray",
+            "the key light's visibility where a voxel is small on screen, with no ray and no \
+                 history: the store's baked value where fresh, else the column map's horizon \
+                 toward the sun; or the horizon alone; or the per-pixel disc ray everywhere \
+                 [baked]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.key_far =
+                    v.named(vxe_render::KeyFar::from_name, "baked, column or ray")?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--key-far-mix"],
+            "blend|step",
+            "inside the far normal's band under --key-far baked or column: the ray's mean \
+                 blended to the far estimate by the band's weight, or the estimate from its \
+                 half [blend]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.key_far_mix =
+                    v.named(vxe_render::KeyFarMix::from_name, "blend or step")?;
                 Ok(())
             },
         ),

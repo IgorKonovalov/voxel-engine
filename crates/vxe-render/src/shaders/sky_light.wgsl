@@ -15,20 +15,6 @@ const KEY_DIM: u32 = 1000u;
 // A key light's shadow ray runs until it leaves the window (or MAX_STEPS).
 const KEY_RAY_LEN: f32 = 1.0e6;
 
-// A unit direction drawn uniformly over the solid angle of the disc of angular radius `r`
-// about unit `l`, from `u` and `v` in [0, 1): `1 - cos` taken as `2 sin^2(r / 2) u`, which
-// keeps its digits at the sun's 4.65 mrad.
-fn disc_direction(l: vec3<f32>, r: f32, u: f32, v: f32) -> vec3<f32> {
-    let h = sin(0.5 * r);
-    let omc = 2.0 * h * h * u;
-    let sin_t = sqrt(max(omc * (2.0 - omc), 0.0));
-    let phi = 2.0 * PI * v;
-    let a = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), abs(l.x) > 0.9);
-    let t = normalize(cross(a, l));
-    let b = cross(l, t);
-    return normalize(l * (1.0 - omc) + (t * cos(phi) + b * sin(phi)) * sin_t);
-}
-
 // The key and sky rays' origin offset at the light pass's pixel beyond its shadow origin:
 // `LIFT` voxels along the shading normal times the far normal's blend weight where that is over
 // one half, else 0 (`set_ray_lift`). A nonzero lift also sets the walk's `skip_origin_cell`.

@@ -364,6 +364,11 @@ fn the_queue_row_counts_the_view() {
         queue_row(&st, 1.254, ""),
         "in view: 12 waiting (5 coarse), withdrawn 0, step 1.25 ms"
     );
+    let keyed = vxe_render::QueueStats { keys: 40, ..st };
+    assert_eq!(
+        queue_row(&keyed, 1.254, ""),
+        "in view: 12 waiting (5 coarse), withdrawn 0, step 1.25 ms, key 40"
+    );
     let (mut out, mut colours) = (String::new(), Vec::new());
     let mut s = HudStats::fixed();
     s.write_rows(&mut out, &mut colours);

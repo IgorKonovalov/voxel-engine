@@ -234,7 +234,7 @@ impl JobLoop {
     }
 
     /// [`JobLoop::samples_left`] of the jobs whose chunks `of` holds.
-    pub(super) fn dig_samples_left<V>(&self, of: &std::collections::HashMap<[i32; 3], V>) -> u64 {
+    pub(super) fn dig_samples_left(&self, of: impl Fn(&[i32; 3]) -> bool) -> u64 {
         let live = |s: &FaceState| {
             if s.done {
                 0
@@ -245,13 +245,13 @@ impl JobLoop {
         let open: u64 = self
             .open
             .iter()
-            .filter(|j| of.contains_key(&j.coord.0))
+            .filter(|j| of(&j.coord.0))
             .map(|j| j.states.iter().map(live).sum::<u64>())
             .sum();
         let pending: u64 = self
             .pending
             .iter()
-            .filter(|j| of.contains_key(&j.coord.0))
+            .filter(|j| of(&j.coord.0))
             .map(|j| j.samples)
             .sum();
         open + pending
@@ -444,11 +444,11 @@ impl JobLoop {
         plan: &[Vec<(usize, u32)>],
         round: u32,
         capacity: usize,
-    ) -> (Vec<[u32; 20]>, Entries, u64) {
+    ) -> (Vec<[u32; FACE_WORDS]>, Entries, u64) {
         let report = &mut self.report;
         // One dispatch: each entry names its job's slot, and its face's samples from the first
         // no submit has drawn.
-        let mut input: Vec<[u32; 20]> = Vec::with_capacity(capacity);
+        let mut input: Vec<[u32; FACE_WORDS]> = Vec::with_capacity(capacity);
         let mut entries = Vec::new();
         let mut jobs_in = 0u64;
         for (job, p) in self.open.iter_mut().zip(plan) {
@@ -478,22 +478,27 @@ impl JobLoop {
         run: &BakeRun<'_>,
         bind: &wgpu::BindGroup,
         settings: &BakeSettings,
-        input: &[[u32; 20]],
+        input: &[[u32; FACE_WORDS]],
         entries: Entries,
         jobs_in: u64,
     ) {
         let (device, queue) = (run.device, run.queue);
         let report = &mut self.report;
         let count = input.len() as u32;
+        let (key_dir, key_radius) = run.key.unwrap_or(([0.0; 3], 0.0));
         let uniform = [
             count,
             settings.seed,
             ((run.gpu.light_radius() * 64) as f32).to_bits(),
             u32::from(settings.clamp),
             run.sky,
+            u32::from(run.key.is_some()),
             0,
             0,
-            0,
+            key_dir[0].to_bits(),
+            key_dir[1].to_bits(),
+            key_dir[2].to_bits(),
+            key_radius.to_bits(),
         ];
         queue.write_buffer(&run.pipeline.job, 0, bytemuck::cast_slice(&uniform));
         queue.write_buffer(&run.pipeline.faces, 0, bytemuck::cast_slice(input));
@@ -641,7 +646,7 @@ impl JobLoop {
                                 .find(|j| j.slot == slot)
                                 .expect("a job with entries in flight stays open or withdrawn");
                             for _ in 0..r {
-                                let samples = out_words[e * 20 + 5];
+                                let samples = out_words[e * FACE_WORDS + 5];
                                 e += 1;
                                 z.states[i].queued -= samples;
                                 report.wasted += u64::from(samples);
@@ -652,7 +657,7 @@ impl JobLoop {
                 }
                 let s = &mut self.open[at].states[i];
                 for _ in 0..r {
-                    let words = &out_words[e * 20..(e + 1) * 20];
+                    let words = &out_words[e * FACE_WORDS..(e + 1) * FACE_WORDS];
                     e += 1;
                     let samples = words[5];
                     s.queued -= samples;
@@ -666,6 +671,7 @@ impl JobLoop {
                     report.ray_len += f64::from(f32::from_bits(words[16]));
                     report.samples += u64::from(samples);
                     report.sky_rays += u64::from(samples.min(s.sky_n.saturating_sub(words[4])));
+                    report.key_rays += u64::from(samples.min(s.key_n.saturating_sub(words[4])));
                     s.add(words, samples);
                     if settings.snapshots.contains(&s.n) {
                         let (a, b) = (s.mean(s.sum), s.mean(s.clamped));
@@ -795,6 +801,8 @@ pub(super) struct OpenJob {
     pub(super) faces: ChunkFaces,
     pub(super) first_word: u64,
     pub(super) kept_bricks: KeptBricks,
+    /// [`Job::key_only`].
+    pub(super) key_only: bool,
     pub(super) states: Vec<FaceState>,
     /// The faces still running.
     pub(super) live: Vec<usize>,
@@ -819,6 +827,7 @@ impl JobCtx<'_, '_> {
             kept_bricks,
             samples: _,
             brick_samples,
+            key_only,
         } = job;
         write_job_table(self.run, coord, slot);
         // A job's own count (the live queue's coarse pass) on cells of a brick draws each
@@ -829,7 +838,8 @@ impl JobCtx<'_, '_> {
         let mut states: Vec<FaceState> = Vec::with_capacity(faces.faces());
         for (brick_at, keys) in &faces.bricks {
             let b = brick_of_slot(usize::from(*brick_at));
-            let record_kept = kept_bricks.contains_key(brick_at);
+            // A key-only job keeps every record's other words and draws every face's key rays.
+            let record_kept = !key_only && kept_bricks.contains_key(brick_at);
             // A brick-level direction's samples, spread over its faces, a translucent voxel's
             // among them.
             let mut per_dir = [0u32; 6];
@@ -861,7 +871,15 @@ impl JobCtx<'_, '_> {
                 };
                 let wanted = in_subset
                     && !record_kept
+                    && (!key_only || self.run.key.is_some())
                     && self.settings.filter.as_ref().is_none_or(|f| f(voxel, face));
+                let key_n = if self.run.key.is_some() {
+                    KEY_BAKE_RAYS.div_ceil(drawn[d].max(1)).min(n)
+                } else {
+                    0
+                };
+                // A key-only face draws its key rays and stops.
+                let n = if key_only { key_n } else { n };
                 states.push(FaceState {
                     voxel,
                     face,
@@ -876,12 +894,15 @@ impl JobCtx<'_, '_> {
                     material: 0,
                     snapshots: Vec::new(),
                     done: !wanted,
-                    sky_n: if self.run.sky & BAKE_SKY_ON != 0 {
+                    sky_n: if self.run.sky & BAKE_SKY_ON != 0 && !key_only {
                         SKY_BAKE_RAYS.div_ceil(drawn[d].max(1)).min(n)
                     } else {
                         0
                     },
                     sky_open: 0,
+                    key_n,
+                    key_open: 0,
+                    key_only,
                 });
             }
         }
@@ -891,6 +912,7 @@ impl JobCtx<'_, '_> {
             faces,
             first_word,
             kept_bricks,
+            key_only,
             states,
             live,
             slot,
@@ -935,12 +957,25 @@ impl JobCtx<'_, '_> {
         for (slot, keys) in &job.faces.bricks {
             let states = &job.states[at..at + keys.len()];
             at += keys.len();
-            let record = job.kept_bricks.get(slot).cloned().unwrap_or_else(|| {
-                brick_record(states, clamp, cell, self.run.sky & BAKE_SKY_ON != 0)
-            });
+            let baked = || {
+                brick_record(
+                    states,
+                    clamp,
+                    cell,
+                    self.run.sky & BAKE_SKY_ON != 0,
+                    self.run.key.is_some(),
+                )
+            };
+            let record = match job.kept_bricks.get(slot) {
+                Some(kept) if job.key_only && self.run.key.is_some() => key_rebaked(kept, &baked()),
+                Some(kept) => kept.clone(),
+                None => baked(),
+            };
             block.extend(record);
         }
         debug_assert_eq!(block.len() as u64, words);
+        // The sun its key words were baked under: a ring job's kept bricks may be older.
+        block[KEY_SUN_AT as usize] = self.run.key.map_or(0, |(d, _)| pack_direction(d));
         report.faces += job.states.iter().filter(|s| s.n > 0).count() as u64;
         if self.settings.keep_faces {
             report

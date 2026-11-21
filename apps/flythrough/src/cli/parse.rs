@@ -152,6 +152,7 @@ impl Args {
                 edit_ms: vxe_render::DEFAULT_BAKE_EDIT_MS,
                 dig_reach: true,
                 read_missing: false,
+                pre_roll_drain: None,
             },
             loading: LoadingArgs::default(),
             argv: Vec::new(),

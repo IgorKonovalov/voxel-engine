@@ -817,11 +817,13 @@ mod flicker {
                         .unwrap_or(f64::NAN)
                 };
                 pair.push_str(&format!(
-                    "; ms light {:.3} temporal {:.3} atrous {:.3} step {:.3}",
+                    "; ms light {:.3} temporal {:.3} atrous {:.3} step {:.3}; step samples {} dig bricks {}",
                     ms("light"),
                     ms("temporal"),
                     ms("atrous"),
-                    fr.q.stages.total_ms
+                    fr.q.stages.total_ms,
+                    fr.q.samples,
+                    fr.q.dig_bricks
                 ));
                 let line = format!(
                     "split {scene} {label}: history bits {:#04b}, lighting {:#010x} (sky changed {}, lights changed {}), restarts {}; \

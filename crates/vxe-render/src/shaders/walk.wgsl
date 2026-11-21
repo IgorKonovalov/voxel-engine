@@ -175,13 +175,15 @@ var<private> skip_origin_cell: bool = false;
 // APPROACH_REACH apart along the ray past `t` APPROACH_T0 (at most four a cell), `march`
 // probes the four voxels APPROACH_REACH across `d`'s dominant axis on the coarse walk and
 // keeps in `approach_min` the smallest ratio of the distance from the point to a solid
-// probe's 2^3 block to `t approach_tan`. Clear for every other walk.
+// probe's 2^3 block to `t approach_tan`, a voxel of a SHADOW_ABSORB material not counting as
+// solid (APPROACH_SKIP_ABSORB). Clear for every other walk.
 var<private> approach_on: bool = false;
 
-// The approach probes' call and the absorbing step in `march` sit between `arms:begin` and
-// `arms:end` lines: `compose` leaves them out of every source but those `compose_arms` builds
-// (the light pass's arms variants, its steps view and the bake), so the default light pipelines
-// compile neither (Plan 0094 Phase 2a); there `approach_on` and `absorb_on` are never read.
+// The absorbing step in `march` sits between `arms:begin` and `arms:end` lines: `compose`
+// leaves it out of every source but those `compose_arms` builds (the light pass's arms
+// variants, its steps view and the bake), so the default light pipelines do not compile it
+// (Plan 0094 Phase 2a); there `absorb_on` is never read. The approach probes' call is in every
+// source: the approach penumbra is the near's pick (ADR-0079).
 
 var<private> approach_tan: f32;
 
@@ -204,6 +206,9 @@ const ABSORB_TAU_MAX: f32 = 8.0;
 const APPROACH_CELL: i32 = 8;
 const APPROACH_T0: f32 = 4.0;
 const APPROACH_REACH: i32 = 2;
+// Whether the approach probes pass voxels of a SHADOW_ABSORB material (ADR-0079); a reading
+// compares a build with it false.
+const APPROACH_SKIP_ABSORB: bool = true;
 
 // `march`'s approach probes along the ray `o + d t` over the empty cell it crosses from `t0` to
 // `t1` (see `approach_on`).
@@ -233,7 +238,15 @@ fn approach_probe(v: vec3<i32>, q: vec3<f32>, t: f32, d: vec3<f32>) {
     var probes = array<vec3<i32>, 4>(v + eb, v - eb, v + ec, v - ec);
     for (var i = 0; i < 4; i++) {
         let p = probes[i];
-        if (lookup_walk(p, true).size != 0) {
+        let c = lookup_walk(p, true);
+        if (c.size != 0) {
+            continue;
+        }
+        // A voxel of a SHADOW_ABSORB material is no near miss: the ray's transmittance carries
+        // its shadow. In a brick holding one the coarse walk is off (`brick_absorb`), so the
+        // cell is the voxel's own.
+        if (APPROACH_SKIP_ABSORB && walk.brick_absorb
+            && (material_style(cell_material(c)) & STYLE_ABSORB) != 0u) {
             continue;
         }
         let lo = vec3<f32>(p & vec3<i32>(-2));
@@ -881,11 +894,9 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
             return Hit(true, v, axis, t, m);
         }
         let exit = exit_cell(o, d, inv, v, size);
-        // arms:begin (the approach probes)
         if (approach_on && size <= APPROACH_CELL) {
             approach_cell(o, d, t, exit.t);
         }
-        // arms:end
         t = exit.t;
         v = exit.v;
         axis = exit.axis;

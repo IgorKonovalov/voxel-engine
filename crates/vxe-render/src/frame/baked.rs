@@ -173,6 +173,7 @@ impl Frame {
             params_buffer: &self.state.params,
             params,
             sky: self.bake_sky(),
+            key: self.bake_key(),
         };
         crate::bake::run(&run, &mut self.baked.store, extent, settings, progress)
     }
@@ -364,9 +365,11 @@ impl Frame {
             params_buffer: &self.state.params,
             params,
             sky: self.bake_sky(),
+            key: self.bake_key(),
         };
         let q = self.baked.queue.as_mut()?;
         q.column_wait = self.state.lighting.column_wait;
+        q.key_step = self.state.lighting.key_step;
         Some(q.step(&run, &mut self.baked.store, view, t0))
     }
 
@@ -393,6 +396,13 @@ impl Frame {
             } else {
                 0
             }
+    }
+
+    /// The key light the bake's key rays aim at (ADR-0079): the sky's key light above the
+    /// horizon, its direction and angular radius; `None` with no sky or none up.
+    pub(super) fn bake_key(&self) -> Option<([f32; 3], f32)> {
+        let (_, body) = self.sky.sky.as_ref()?.key_light()?;
+        Some((body.direction, body.angular_radius))
     }
 
     /// The frame parameters a bake dispatches with: no view but the LOD walk's camera chunk,
@@ -461,6 +471,7 @@ impl Frame {
             params_buffer: &self.state.params,
             params,
             sky: self.bake_sky(),
+            key: self.bake_key(),
         };
         Some(crate::bake::rebake(
             &run,

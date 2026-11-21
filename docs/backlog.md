@@ -1278,6 +1278,22 @@ clip levels' meshes against marching them, measured on both adapters, as an ADR 
 **Owner, later 2026-11-20:** "agreed on far distance": the hybrid is the agreed direction for
 the far field, not only a lean. The re-read runs after Plan 0087 (the rename), as the first M10
 step; the meshing explainer and Morley's talk are in `references/voxel-optimizations.md`.
+The key light's far pixels still cast the ray inside the far normal's band: see "Narrow the far
+normal's band so far pixels stop casting the ray" below, for whichever far-field plan runs first.
+
+### Narrow the far normal's band so far pixels stop casting the ray
+
+Raised 2026-11-20 at Plan 0095 Phase 10's amendment (owner: "no worse than the before" at the
+far; narrowing is the far-field work's). ADR-0079's far reads the record, else the column map's
+horizon, only at the far normal's weight 1; inside the band (`[2, 6]` pixels a voxel) it still
+casts the key ray, and the Phase 9 readings (`docs/plans/logs/0095.md`, "Phase 9 readings", RTX,
+1080p, the forest's hold) put 96.9 % of the far's key samples on the ray, 1.8 % on the horizon,
+1.3 % on the record. So the far's motion bars read about the before's (hold +60 27.2 % against
+30.8 %, queue frozen). **What it takes:** a narrower band for the key's far gate only (its own
+pair of pixel sizes beside the shading normal's), or the far estimate inside the band blended
+with the ray instead of switched, read on the wobble rig (`gpu_wobble`'s soak reading) on both
+adapters; an owner window, since the far's shadows change where the ray gives way. **Pick up**
+with the hybrid far field above or Plan 0096's far tiers, whichever runs first.
 
 ## Later apps
 
@@ -1471,6 +1487,12 @@ over its cell's faces; the radius-5 sphere's record 0.718 against 0.748, but its
 the 8-voxel brick, so the bowl's own faces (aperture 0.473) share one value with the open
 ground beside them: at brick resolution a small hole's floor shows the brick's mean, not its
 own sky. Pick up after the motion lane, or with the next dig look.
+**Plan 0095's close (2026-11-21) adds a reading** (`docs/plans/logs/0095.md`, Phase 10, the dig
+split at `85fb3de7` against main `e6582b9e`): with the key words in the dig's ring, the dug box's
+share over 4 levels at the dig's frame rose from 1.21 to 3.54 % on the RTX and from 1.26 to
+2.97 % on the RENOIR (the outside's unchanged at about 1.1 %), and the RENOIR's ring landed 138
+dig bricks by N + 2 against 368 (its samples a step about +21 % each). Not attributed; read it
+with the first frames above.
 
 ### The key term's grain at rest on a penumbra, and the a-trous's spatial variance (ii)
 

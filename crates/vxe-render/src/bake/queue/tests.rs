@@ -1,5 +1,7 @@
 //! The queue's unit tests of the column finality (ADR-0070's amendment).
 
+use super::keys::key_turned;
+use super::open::is_reach_bound;
 use super::*;
 use crate::gpu_world::column_is_final;
 
@@ -92,4 +94,50 @@ fn every_chunk_in_reach_bakes_under_the_wait() {
         !fin(None, Some(top)),
         "a pending chunk beyond the sphere: not final"
     );
+}
+
+/// Plan 0095 Phase 6: the census's reach-bound test ([`is_reach_bound`]) over a candidate list of
+/// every chunk of the full sphere (`d2 <= 16^2` about the eye's chunk) at light radius 4 counts
+/// the chunks [`reach_crosses`] marks, chunk for chunk: 11 814 of them. A chunk 11 chunks out
+/// along an axis is not bound (its reach's farthest chunk, at offset (4, 3, 2), lies 15.43
+/// out), and one at (11, 3, 1), 11.45 out, is (16.43).
+#[test]
+fn the_reach_bound_count_matches_the_exact_crossing_test() {
+    let (lr, r) = (4, 16);
+    let offsets: Vec<[i32; 3]> = reach_offsets(lr).collect();
+    let extent = reach_extent(lr);
+    assert!((extent - 29f64.sqrt()).abs() < 1e-9, "{extent}");
+    let eye = [3, -2, 1];
+    let sphere: Vec<[i32; 3]> = (-r..=r)
+        .flat_map(|z| (-r..=r).flat_map(move |y| (-r..=r).map(move |x| [x, y, z])))
+        .filter(|o| o.iter().map(|&d| d * d).sum::<i32>() <= r * r)
+        .collect();
+    let (mut census, mut exact) = (0, 0);
+    for &o in &sphere {
+        let bound = is_reach_bound(o, &offsets, extent, r);
+        let crosses = reach_crosses(ChunkCoord([0, 1, 2].map(|k| eye[k] + o[k])), eye, lr, r);
+        assert_eq!(bound, crosses, "offset {o:?}");
+        census += usize::from(bound);
+        exact += usize::from(crosses);
+    }
+    assert_eq!((census, exact), (11_814, 11_814));
+    assert!(!is_reach_bound([11, 0, 0], &offsets, extent, r));
+    assert!(is_reach_bound([11, 3, 1], &offsets, extent, r));
+}
+
+/// A block re-bakes its key words once the light has turned past both the disc's radius and
+/// the step, or when it was baked with no key light.
+#[test]
+fn a_block_is_turned_past_the_radius_and_the_step() {
+    let at = |deg: f32| {
+        let r = deg.to_radians();
+        [r.sin(), 0.0, r.cos()]
+    };
+    let stamp = pack_direction(at(0.0));
+    let (radius, step) = (3f32.to_radians(), 3f32.to_radians());
+    assert!(!key_turned(stamp, at(1.0), radius, step));
+    assert!(!key_turned(stamp, at(2.9), radius, step));
+    assert!(key_turned(stamp, at(4.0), radius, step));
+    assert!(!key_turned(stamp, at(4.0), 5f32.to_radians(), step));
+    assert!(key_turned(0, at(0.0), radius, step));
 }

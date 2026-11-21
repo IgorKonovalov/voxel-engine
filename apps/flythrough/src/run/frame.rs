@@ -222,7 +222,12 @@ impl Run {
                 return Flow::Exit;
             }
         } else {
+            // `--pre-roll-drain` holds the camera; the keys and the menu still act.
+            let held = self.draining().then_some(self.fly.camera);
             self.flight_step(input, dt);
+            if let Some(camera) = held {
+                self.fly.camera = camera;
+            }
         }
         self.audio_step();
         if let Some(n) = self.args.frames
@@ -868,9 +873,12 @@ impl Run {
         gfx.frame.set_resolution(&gpu.device, self.modes.resolution);
         gfx.frame.set_look(self.modes.look);
         // The temporal pass counts the store's reads only for a reader of them: the HUD's
-        // store row, `--read-missing` and `--dump-black`.
-        gfx.frame
-            .set_count_store(hud || self.args.bake.read_missing || self.args.outdoor.dump_black);
+        // store row, `--read-missing`, `--dump-black` and `--pre-roll-drain`'s closing line.
+        gfx.frame.set_count_store(
+            hud || self.args.bake.read_missing
+                || self.args.outdoor.dump_black
+                || matches!(self.queue.drain, crate::run::queue::Drain::Draining { .. }),
+        );
         if gfx.frame.missing_light() != self.args.bake.missing_light {
             gfx.frame
                 .set_missing_light(&gpu.queue, self.args.bake.missing_light);

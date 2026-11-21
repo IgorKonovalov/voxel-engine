@@ -38,6 +38,12 @@ pub(super) struct FaceState {
     pub(super) sky_n: u32,
     /// Of those read back, the rays that reached the sky.
     pub(super) sky_open: u32,
+    /// Its samples below this index each draw a key light ray (ADR-0079); 0 with no key light.
+    pub(super) key_n: u32,
+    /// Of those read back, the rays that reached the key light's disc.
+    pub(super) key_open: u32,
+    /// A key-only job's face ([`Job::key_only`]): its samples draw the key ray alone.
+    pub(super) key_only: bool,
 }
 
 pub(super) fn lum3(c: [f64; 3]) -> f64 {
@@ -49,6 +55,12 @@ impl FaceState {
     pub(super) fn sky_fraction(&self) -> Option<f64> {
         let drawn = self.n.min(self.sky_n);
         (drawn > 0).then(|| f64::from(self.sky_open) / f64::from(drawn))
+    }
+
+    /// The share of its key light rays read back that reached the disc; `None` with none drawn.
+    pub(super) fn key_fraction(&self) -> Option<f64> {
+        let drawn = self.n.min(self.key_n);
+        (drawn > 0).then(|| f64::from(self.key_open) / f64::from(drawn))
     }
 
     pub(super) fn kept(&self, clamp: bool) -> [f64; 3] {
@@ -66,16 +78,17 @@ impl FaceState {
 
     /// The first words of the working buffer's entry (`BakeFace` in `bake.wgsl`) for the round
     /// from sample `first`.
-    pub(super) fn input(&self, first: u32, samples: u32, slot: usize) -> [u32; 20] {
-        let mut w = [0u32; 20];
+    pub(super) fn input(&self, first: u32, samples: u32, slot: usize) -> [u32; FACE_WORDS] {
+        let mut w = [0u32; FACE_WORDS];
         w[0] = self.voxel[0] as u32;
         w[1] = self.voxel[1] as u32;
         w[2] = self.voxel[2] as u32;
-        w[3] = u32::from(self.face);
+        w[3] = u32::from(self.face) | if self.key_only { FACE_KEY_ONLY } else { 0 };
         w[4] = first;
         w[5] = samples;
         w[17] = slot as u32;
         w[19] = self.sky_n;
+        w[21] = self.key_n;
         w
     }
 
@@ -128,6 +141,7 @@ impl FaceState {
             self.material = out[14] as u16;
         }
         self.sky_open += out[18];
+        self.key_open += out[20];
         self.n += samples;
     }
 }
@@ -145,6 +159,9 @@ pub(crate) struct BakeRun<'a> {
     /// The bake's sky rays (ADR-0070): 0 with no sky set, else [`BAKE_SKY_ON`] with the frame's
     /// coarse-shadow and shadow-style bits ([`BAKE_SKY_COARSE`], [`BAKE_SKY_STYLES`]).
     pub sky: u32,
+    /// The key light the bake draws its key rays toward (ADR-0079): its unit direction and
+    /// angular radius; `None` with no key light above the horizon, and the key words stay 0.
+    pub key: Option<([f32; 3], f32)>,
 }
 
 /// [`BakeRun::sky`]'s bits, `BakeJob.sky` in `bake.wgsl`.
@@ -168,7 +185,15 @@ pub(crate) struct Job {
     /// A brick direction's samples at the brick level for this job alone (the live queue's coarse
     /// pass); `None` the settings' [`BakeSettings::brick_samples`].
     pub brick_samples: Option<u32>,
+    /// A key-only re-bake (ADR-0079): every brick record is kept (`kept_bricks` holds them all)
+    /// but its two key visibility words, which its faces' key rays draw again; no emissive
+    /// sample and no sky ray is drawn.
+    pub key_only: bool,
 }
+
+/// The entry's `face` word's flag (`BakeFace.face` in `bake.wgsl`): a key-only job's face,
+/// whose samples draw the key ray alone.
+pub(crate) const FACE_KEY_ONLY: u32 = 1 << 8;
 
 /// Brick records a re-baked ring job keeps, by brick slot.
 pub(crate) type KeptBricks = std::collections::HashMap<u16, Vec<u32>>;
@@ -243,6 +268,7 @@ pub(crate) fn run(
                 kept_bricks: KeptBricks::new(),
                 samples: 0,
                 brick_samples: None,
+                key_only: false,
             };
             at += words;
             job
@@ -350,6 +376,7 @@ pub(crate) fn rebake(
             kept_bricks,
             samples: 0,
             brick_samples: None,
+            key_only: false,
         });
     }
     let bake = run_jobs(run, store, jobs, settings, progress)?;

@@ -759,7 +759,7 @@ a cheap query.
   positional voice as an audio source through M4's occlusion.
 - **ADRs expected:** transport; voice codec.
 
-### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0; Plan 0032 closed 2026-11-17, v0.61.0; Plan 0086 closed 2026-11-19, v0.67.0; Plan 0094 closed 2026-11-20, v0.68.0)
+### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0; Plan 0032 closed 2026-11-17, v0.61.0; Plan 0086 closed 2026-11-19, v0.67.0; Plan 0094 closed 2026-11-20, v0.68.0; Plan 0095 closed 2026-11-21, v0.69.0)
 
 The open-sky half of the "Floor, profiles and scene scale" decision, as general engine
 mechanisms: the first consumer is underground, so nothing here is on its P0 list, and terrain
@@ -811,6 +811,15 @@ against the baked store: no probe or store term takes sun or sky light.
   +2 EV), the default-off light arms out of the default pipeline; the tunnel's rim band and
   the cave's seal clause back as tests. Three owner windows (94a to 94c). The hole's floor, the
   dig's first frames and the motion wobble stay open (the backlog, Plan 0095).
+- **A calm key light in motion** ([Plan 0095](plans/done/0095-a-calm-key-light-in-motion-the-column-maps-horizon-at-the-far-the-baked-record-where-it-lands-a-deterministic-penumbra-near-no-pre-roll.md),
+  closed 2026-11-21, v0.69.0; ADR-0079 accepted with an Outcome): the key light's estimate
+  carries no screen history: the far reads the record baked per brick direction where fresh,
+  else the column map's horizon toward the sun, with one landing fade; the near reads the
+  closest-approach penumbra of one centre ray (the fly-through's default on every adapter);
+  key-only re-bakes follow a turning sun. Two owner windows (W1, W2: "overall we are much
+  better than before"). Left open: the far normal's band still casts the ray at most far pixels
+  (the backlog), the RENOIR's light pass at 34 ms in the forest (Plan 0096 Phase 6), the
+  landings' wait (Plan 0096), the exposure in deep shade (Plan 0097).
 - **A surface detail layer** ([Plan 0081](plans/0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md),
   drafted 2026-11-16, awaits the owner's go; ADR-0063 proposed): grass, moss, strands,
   fungus caps, flowers, pebbles and snow tufts as a procedural shell marched in the hit pass

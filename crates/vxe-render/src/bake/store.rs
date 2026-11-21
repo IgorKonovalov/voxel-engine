@@ -184,7 +184,10 @@ impl Store {
         let record = record_words(self.cell);
         let s = block_summary(block, record);
         let at = SUMMARY_AT as usize;
+        // The summary's first key word is the block's sun stamp (`KEY_SUN_AT`), kept.
+        let stamp = block[KEY_SUN_AT as usize];
         block[at..at + BRICK_WORDS].copy_from_slice(&s.unwrap_or_default());
+        block[KEY_SUN_AT as usize] = stamp;
         // A block whose cells hold a dig's stale visibilities: its summary waits for the bake
         // too (the no-record prior does not read it).
         if any_cell_stale(block, record) {

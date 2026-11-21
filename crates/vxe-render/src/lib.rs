@@ -51,11 +51,11 @@ pub mod debug {
 #[doc(hidden)]
 pub mod internals {
     pub use crate::bake::{
-        BAKE_ROUND, BRICK_CELL, BRICK_WORDS, ChunkFaces, DIG_FADE, FADE, FacePrep,
-        QUEUE_VIEW_MARGIN_DEG, SKY_BAKE_RAYS, STORE_COARSE_READS, SUMMARY_AT, VIEW_IN, VIEW_OUT,
-        VIEW_SHELL, angle_term, dig_ring, face_classes, in_near_shell, list_world_chunk,
-        record_sky_stale, record_visibility, rgb9e5_unpack, tone_level, view_half_angle,
-        view_half_angles,
+        BAKE_ROUND, BRICK_CELL, BRICK_WORDS, ChunkFaces, DIG_FADE, FADE, FacePrep, KEY_BAKE_RAYS,
+        KEY_SUN_AT, QUEUE_VIEW_MARGIN_DEG, SKY_BAKE_RAYS, STORE_COARSE_READS, SUMMARY_AT, VIEW_IN,
+        VIEW_OUT, VIEW_SHELL, angle_term, dig_ring, face_classes, in_near_shell, list_world_chunk,
+        record_key_visibility, record_sky_stale, record_visibility, rgb9e5_unpack, tone_level,
+        unpack_direction, view_half_angle, view_half_angles,
     };
     pub use crate::entities::{EntityInstances, PoolUpload, RangeAlloc, VolumePool};
     pub use crate::exposure::{METER_LOG2_LIMIT, STATE_HELD};
@@ -103,15 +103,16 @@ pub use exposure::{
     EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState, Metering, ground_irradiance,
 };
 pub use frame::{
-    ATROUS_ITERATIONS, DEFAULT_KEY_HISTORY, DEFAULT_LIGHT_FLOOR, DEFAULT_PROBE_FREEZE,
-    DEFAULT_SKY_HISTORY, DEFAULT_SKY_RAYS, Light, MAX_LIGHTS, MAX_SKY_HISTORY, MAX_SKY_RAYS,
-    Params, SHADOW_ABSORB, SHADOW_AS_BRICK, SHADOW_SIGMA_SHIFT, Upscaler, shadow_absorb,
+    ATROUS_ITERATIONS, DEFAULT_KEY_HISTORY, DEFAULT_KEY_STEP, DEFAULT_LIGHT_FLOOR,
+    DEFAULT_PROBE_FREEZE, DEFAULT_SKY_HISTORY, DEFAULT_SKY_RAYS, Light, MAX_LIGHTS,
+    MAX_SKY_HISTORY, MAX_SKY_RAYS, Params, SHADOW_ABSORB, SHADOW_AS_BRICK, SHADOW_SIGMA_SHIFT,
+    Upscaler, shadow_absorb,
 };
 pub use frame::{
-    CrackShares, EntityLight, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, LightHooks,
-    LightWeights, Lighting, LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS,
-    MarchTimer, Marcher, NormalMode, PassTimer, Penumbra, RenderScale, ShadowWalk, SkyNormal,
-    StoreRead, SurfaceTuning, ToneMap, ViewMode, YoungFilter, jitter_at,
+    CrackShares, EntityLight, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, KeyFar,
+    KeyFarMix, LightHooks, LightWeights, Lighting, LightingResolution, LodParams, LookParams,
+    MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher, NormalMode, PassTimer, Penumbra, RenderScale,
+    ShadowWalk, SkyNormal, StoreRead, SurfaceTuning, ToneMap, ViewMode, YoungFilter, jitter_at,
 };
 pub use fsr2::{Fsr2, Fsr2Settings, UpscalerKind};
 pub use gpu_world::{

@@ -131,6 +131,17 @@ every Floor line. Plan 0032 Phase 6's table read the sky ray itself at about 4.8
 the RENOIR and 0.25 on the RTX; what the RENOIR pays at rest now is the key light's disc ray
 and the baked read. Tables in [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md).
 
+**The approach penumbra puts the slow adapter's outdoor light pass further over the lighting
+line** (Plan 0095, ADR-0079, 2026-11-20, release at `b46cb3eb`'s render code, headless 1920 x
+1080, undrained and drained alike; RTX runs loaded): the fly-through's default on every adapter
+and profile (the owner's pick over keeping the disc on the slow adapter) reads 34.0 to 34.2 ms
+on the RADV RENOIR in the forest at 15:00 and 11.2 on the hills at noon, against 12.0 and 8.0
+under `key far ray` with `penumbra disc`. **Over the 4.0 ms line, named: approach's cost**;
+Plan 0096 Phase 6 takes it as a lever. The RTX 3080 Laptop reads 3.0 to 3.4 and 1.1 to 1.3 ms,
+inside it. The pre-roll is unchanged within 0.2 s (RTX) and 1.3 s (RENOIR); the key re-bake
+under the day cycle re-keys every marked block 2.3 to 5.7 s after a step on the RTX and 7.1 to
+49.5 s on the RENOIR.
+
 Every reading against this budget, with its machine, scene and commit, is in
 [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md); new readings go there.
 
@@ -147,6 +158,9 @@ non-uniform at full detail). A prefab is stored as 8³ bricks (ADR-0066): the ge
 21 kept tiles hold 44 966 592 B, against 343 566 464 B in the dense form (Plan 0083 Phase 3,
 Ryzen 9 5900HS); reading in the memory file. When exceeded, far chunks drop to LOD-only residency rather than
 the frame dropping.
+
+The baked light store's record is 11 words (44 B) since Plan 0095 (the key light's visibility
+per brick direction, ADR-0079): 11.0 to 13.6 MB live outdoors at 1080p (2026-11-20).
 
 Every reading against this budget, with its machine, scene and commit, is in
 [`docs/nfr/03-memory.md`](nfr/03-memory.md); new readings go there.

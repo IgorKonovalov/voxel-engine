@@ -399,3 +399,13 @@ output (`frame_bytes_under_fsr2_swap_the_histories_for_fsr2s_inventory`, lavapip
 **The column map (Plan 0086 Phase 9, ADR-0070's amendment, arithmetic).** An `r32sint` texture of one texel per 2 x 2-voxel column over the mirror window's footprint, `(W 32)^2 x 4` B (`GpuWorld::column_map_bytes`): 10 653 696 B at the fly-through's streamed window of side 51 (r_lod 24, hysteresis 1), about 0.7 % of section 3's 1.5 GB line for everything else in VRAM. The CPU keeps a sheet of 1024 B per mirrored chunk that holds an opaque voxel. Not read on a device.
 
 **The sky visibility channel in the store's record (Plan 0086, ADR-0070; the close review's runs of 2026-11-19 above in `02-frame-budget.md`, release, drained, loaded).** A record is 9 words (36 B) from 7: +8 B, +28.6 %, as projected. The store's live bytes at the last frame (the frame line's `store`): the hills at noon 10.6 MB over 1773 chunk blocks on the RTX 3080 Laptop (10.3 MB over 1708 on the RADV RENOIR; Plan 0032 Phase 8 read 8.8 MB on the hills before the channel, unsettled at frame 270), the forest at 15:00 11.9 MB over 1720 and 1726 blocks (15.5 MB before, at a different residency). The mirror's live bytes are unchanged by the plan (309 232 364 B on the hills, 340 840 748 B in the forest). The column map's 10 653 696 B above is arithmetic still; the frame line does not print it.
+
+**The key light's words in the store's record (Plan 0095, ADR-0079; the runs of
+`docs/nfr/02-frame-budget.md`'s Plan 0095 table, 2026-11-20, release at `b46cb3eb`'s render
+code).** A record is 11 words (44 B) from 9: +8 B, +22 % (arithmetic), the far keeping the
+baked record as its refinement (the owner's answer at W2). The store's live bytes at the last
+frame (the frame line's `store`): the forest at 15:00 12.7 MB over 1585 to 1596 chunk blocks
+(RENOIR, undrained), 13.5 MB over 1708 (RTX, undrained) and 13.6 MB over 1720 (drained, both
+adapters); the hills at noon 11.0 to 12.0 MB over 1581 to 1773 blocks. Plan 0086's close read
+11.9 MB in the forest over 1720 blocks and 10.6 MB on the hills over 1773 at 9 words. The frame
+targets are unchanged.

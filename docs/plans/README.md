@@ -3,11 +3,10 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0098** (0095 is claimed by the motion-wobble lane, branch
-`spike-motion-wobble`, 2026-11-20; 0096 is the performance plan below; 0097 the exposure's
-anchor by the sky around the camera; ADRs are a separate
-sequence, see `../adrs/README.md` for its next free number). Plan 0094, Plan 0086's follow-up
-(the light's transitions), closed 2026-11-20, v0.68.0.
+**Next free number: 0098** (0096 is the performance plan below; 0097 the exposure's anchor by
+the sky around the camera; ADRs are a separate sequence, see `../adrs/README.md` for its next
+free number). Plan 0095, the motion wobble (a calm key light in motion), closed 2026-11-21,
+v0.69.0.
 
 ## Active roster
 
@@ -207,8 +206,8 @@ line once landed; the queue's step off its depth; the RENOIR's outdoor light pas
 lever; the sync's `alloc` and the light placement's eviction scan from the backlog; drafted
 2026-11-20 from the owner's "address performance next" (2026-11-11) and window 94a's "if we have
 to wait for a minute for light to settle, something is wrong with the light", ADR-0076 rule 6;
-awaits the go): **after Plan 0095 (the motion wobble, drafted on branch `spike-motion-wobble`)
-closes and merges**, which follows Plan 0094; then Plan 0087 (owner's order, 2026-11-20: 0094,
+awaits the go): **after Plan 0095 (the motion wobble; closed 2026-11-21, v0.69.0) merges**,
+which followed Plan 0094; then Plan 0087 (owner's order, 2026-11-20: 0094,
 0095, 0096, 0087, 0089 and 0093, 0091, 0092, 0090, M10). Its Phase 1 is readings only, on both
 adapters, on the undrained image.
 
@@ -235,6 +234,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0095](done/0095-a-calm-key-light-in-motion-the-column-maps-horizon-at-the-far-the-baked-record-where-it-lands-a-deterministic-penumbra-near-no-pre-roll.md) | A calm key light: the far's record else the column horizon, the approach penumbra near, key re-bakes; RENOIR over the line | 2026-11-21, v0.69.0 |
 | [0094](done/0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md) | Light transitions: the still tap, the no-record prior and a 16-frame fade, the exposure at 3.75 EV/s, the ceiling by the sky in view and at most `max` | 2026-11-20, v0.68.0 |
 | [0086](done/0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md) | Still outdoor light: a sky visibility baked per brick, the column map, the sky and key rays on a long history, canopies as bricks; ADR-0070 accepted; the leftovers to Plan 0094 | 2026-11-19, v0.67.0 |
 | [0083](done/0083-anything-from-a-vox-palette-materials-a-material-file-and-large-scenes-stamped-into-the-world.md) | Anything from a `.vox`: palette materials, a material file, brick prefabs, placements past residency, structures in the belt with a coarse ghost; ADR-0065, 0066, 0077 | 2026-11-19, v0.66.0 |

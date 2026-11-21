@@ -1,8 +1,9 @@
 //! Plan 0032's goldens: the sky of an empty world at noon, sunset and night, the outdoor
-//! hills of seed 1 at noon, sunset and night and in the cave mouth, and the forest at sunset,
-//! each at the testbed's picks (both bodies at `daylight::BODY_RADIUS_DEG`, one sky ray, the
-//! half lighting tier, the outdoor auto exposure, `--trees sparse` at `LEAF_FILL` unless a
-//! test names another). Lavapipe, 320 x 180, blessed with `VXE_BLESS=1`.
+//! hills of seed 1 at noon, sunset and night and in the cave mouth, the forest at sunset, and
+//! (Plan 0095) the forest at 15:00 under ADR-0079's key light, each at the testbed's picks
+//! (both bodies at `daylight::BODY_RADIUS_DEG`, one sky ray, the half lighting tier, the
+//! outdoor auto exposure, `--trees sparse` at `LEAF_FILL` unless a test names another).
+//! Lavapipe, 320 x 180, blessed with `VXE_BLESS=1`.
 
 mod support;
 
@@ -570,6 +571,34 @@ fn outdoor_forest_sunset_golden() {
     );
     assert!(nf > 0 && no > 0);
     assert!(in_forest < open, "{in_forest} against {open}");
+}
+
+/// Plan 0095 Phase 10 bar 4 (ADR-0079): `outdoor_forest_afternoon.png`, the `forest` spawn
+/// with `--trees forest` over the chunks within 2 of the spawn's (1 in z) at 15:00, under the
+/// picks (the far reads the record, else the column map's horizon, by the far normal's band;
+/// the approach penumbra near), no drain (no store baked: every far pixel reads its horizon),
+/// 64 frames, matches the bless with an SSIM of at least 0.98.
+#[test]
+fn outdoor_forest_afternoon_golden() {
+    let Some(mut forest) = Hills::new(Spawn::Forest, TreeDensity::Forest, 2) else {
+        return;
+    };
+    let camera = forest.camera();
+    let mut frame = forest.frame(at([15, 0]), |l| Lighting {
+        penumbra: flythrough::DEFAULT_PENUMBRA,
+        ..l
+    });
+    for _ in 0..64 {
+        frame.step(
+            &forest.device,
+            &forest.queue,
+            &forest.gpu,
+            &camera,
+            &LightParams::headlamp(),
+        );
+    }
+    let img = vxe_render::debug::read_rgba8(&forest.device, &forest.queue, frame.target());
+    support::assert_golden_ssim("outdoor_forest_afternoon.png", &img, 0.98);
 }
 
 mod reading {

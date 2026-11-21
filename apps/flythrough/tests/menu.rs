@@ -222,6 +222,8 @@ fn the_root_and_a_group_draw_their_rows() {
         ("ore pulse off", ""),
         ("exposure manual", ""),
         ("store read face", ""),
+        ("key far baked", ""),
+        ("key far mix blend", ""),
         ("light weights normal", ""),
         ("young filter: young luma", ""),
         ("entity light world", ""),
@@ -232,7 +234,7 @@ fn the_root_and_a_group_draw_their_rows() {
     want.push(String::new());
     want.push("Enter acts  Esc back  Tab closes  type to search".to_owned());
     assert_eq!(text, want.join("\n"));
-    let mut want_colours = vec![HudColour::White; 15];
+    let mut want_colours = vec![HudColour::White; 17];
     want_colours[1] = HudColour::Yellow;
     assert_eq!(colours, want_colours);
 }
@@ -793,4 +795,29 @@ fn a_held_arrow_repeats() {
     );
     assert_eq!(steps(&step_at(&mut menu, &press, &m, &v, 700.0).acts), 1);
     assert!(menu.editing());
+}
+
+/// Plan 0095 Phase 4: the `key far` row cycles baked, column, ray and back, its words naming
+/// each, and the banner names the two that are not the default.
+#[test]
+fn the_key_far_row_cycles_its_three_sources() {
+    let t = toggle("key far");
+    let mut m = modes(false);
+    m.sky = true;
+    let mut seen = Vec::new();
+    for _ in 0..3 {
+        press(t, &mut m, 1.0);
+        seen.push(m.lighting.key_far);
+        let mut words = String::new();
+        m.write_key_far(&mut words);
+        assert_eq!(
+            words,
+            match m.lighting.key_far {
+                vxe_render::KeyFar::Baked => String::new(),
+                k => format!("key far {}, ", k.name()),
+            }
+        );
+    }
+    use vxe_render::KeyFar;
+    assert_eq!(seen, [KeyFar::Column, KeyFar::Ray, KeyFar::Baked]);
 }

@@ -131,11 +131,10 @@ impl Frame {
         self.pipes.pipeline(device, pass)
     }
 
-    /// Whether the light pass needs its default-off arms: the approach penumbra is picked, or
-    /// some material's style word absorbs ([`SHADOW_ABSORB`]).
+    /// Whether the light pass needs its default-off arm: some material's style word absorbs
+    /// ([`SHADOW_ABSORB`]). The approach penumbra's probes are in every light pipeline.
     pub fn light_arms(&self) -> bool {
-        self.state.lighting.penumbra == Penumbra::Approach
-            || self.state.styles.iter().any(|&w| w & SHADOW_ABSORB != 0)
+        self.state.styles.iter().any(|&w| w & SHADOW_ABSORB != 0)
     }
 
     /// The hit pass's pipeline `which`, in the steps view (`count`) its counting variant, and

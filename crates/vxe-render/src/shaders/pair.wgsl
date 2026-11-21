@@ -39,6 +39,188 @@ fn column_estimate(p: vec3<f32>, n: vec3<f32>) -> f32 {
     return select(0.0, 1.0, above_column(p + n * SEED_LIFT));
 }
 
+// The key light's horizon over the column map (ADR-0079, `column_key_visibility`): the coarse
+// march's distances, COLUMN_KEY_STEPS of them in a geometric series from COLUMN_KEY_D0 to
+// COLUMN_KEY_D1 voxels, and the most cells the refinement walks inside one of its intervals.
+const COLUMN_KEY_STEPS: u32 = 12u;
+const COLUMN_KEY_D0: f32 = 4.0;
+const COLUMN_KEY_D1: f32 = 512.0;
+const COLUMN_KEY_REFINE: u32 = 8u;
+
+// The column map's texel for a column with no opaque voxel (`gpu_world::COLUMN_NONE`).
+const COLUMN_NONE_I: i32 = -2147483647 - 1;
+
+// The column map's height (the top voxel's z plus 1) over map cell `c` (global cell
+// coordinates, COLUMN_CELL voxels an edge): -1e9 where the column holds no opaque voxel, and
+// 3e38 outside the window's footprint, which the march reads as its end.
+fn column_cell_height(c: vec2<i32>) -> f32 {
+    let x = c * COLUMN_CELL;
+    let lo = params.window_min.xy * 64;
+    let hi = (params.window_min.xy + params.window_size.xy) * 64;
+    if (any(x < lo) || any(x >= hi)) {
+        return 3.0e38;
+    }
+    let k = x >> vec2<u32>(6u);
+    let w = params.window_size.xy;
+    let tile = ((k % w) + w) % w;
+    let top = textureLoad(column_map, tile * COLUMN_CELLS + (x - k * 64) / COLUMN_CELL, 0).x;
+    return select(f32(top) + 1.0, -1.0e9, top == COLUMN_NONE_I);
+}
+
+// The ray parameter at which a horizontal ray from `q` along unit `u` enters map cell `c`
+// (the larger of the axes' near-plane crossings; an axis `u` does not move along is entered
+// at -3e38).
+fn column_cell_entry(q: vec2<f32>, u: vec2<f32>, c: vec2<i32>) -> f32 {
+    let lo = vec2<f32>(c * COLUMN_CELL);
+    let near = select(lo + f32(COLUMN_CELL), lo, u > vec2<f32>(0.0));
+    let t = select(vec2<f32>(-3.0e38), (near - q) / u, abs(u) > vec2<f32>(1.0e-6));
+    return max(t.x, t.y);
+}
+
+// The key light's visibility at hit `p` with face normal `n` from the column map's tops
+// (ADR-0079's horizon, no state): the hit lifted SEED_LIFT voxels along `n` to `q`; the
+// horizon's tangent toward the sun the largest `(height - q.z) / t` over the map cells along the
+// sun's horizontal direction, `t` the distance at which the ray from `q` enters the cell (so a
+// box heightfield's edge stands where its cell begins): the cell at each of the coarse march's
+// distances, then every cell (at most COLUMN_KEY_REFINE) of the one interval between two of
+// those distances whose far cell's height over its near end's distance is largest. A point
+// under its own cell's top reads 0 (inside the heightfield). A cell outside the
+// window's footprint ends the march (the rest is lit); a column with no opaque voxel casts
+// nothing. The visibility is `clamp((tan e - tan h) / (2 tan r) + 1/2, 0, 1)`, `e` the sun's
+// elevation, `h` the horizon's, `r` the disc's radius: 1 above every top, 0 under one, the
+// disc's width of ramp between. 0 where the sun is at or under the horizon.
+fn column_key_visibility(p: vec3<f32>, n: vec3<f32>) -> f32 {
+    let l = sky.key_dir;
+    if (l.z <= 0.0) {
+        return 0.0;
+    }
+    let q = p + n * SEED_LIFT;
+    let flat = length(l.xy);
+    let tan_e = l.z / max(flat, 1.0e-6);
+    let u = select(vec2<f32>(1.0, 0.0), l.xy / flat, flat > 1.0e-6);
+    // Under its own column's top the lifted point is inside the heightfield: shadowed at any
+    // elevation, as the sky's column test reads it (`column_estimate`).
+    let own = column_cell_height(vec2<i32>(floor(q.xy / f32(COLUMN_CELL))));
+    if (own < 1.0e38 && own > q.z) {
+        return 0.0;
+    }
+    var tan_h = -3.0e38;
+    let ratio = pow(COLUMN_KEY_D1 / COLUMN_KEY_D0, 1.0 / f32(COLUMN_KEY_STEPS - 1u));
+    var d = COLUMN_KEY_D0;
+    var d_prev = f32(COLUMN_CELL);
+    var best = -3.0e38;
+    var seg = vec2<f32>(0.0, -1.0);
+    for (var k = 0u; k < COLUMN_KEY_STEPS; k++) {
+        let c = vec2<i32>(floor((q.xy + u * d) / f32(COLUMN_CELL)));
+        let h = column_cell_height(c);
+        if (h > 1.0e38) {
+            break;
+        }
+        let t = max(column_cell_entry(q.xy, u, c), 0.5);
+        tan_h = max(tan_h, (h - q.z) / t);
+        let score = (h - q.z) / d_prev;
+        if (score > best) {
+            best = score;
+            seg = vec2<f32>(d_prev, d);
+        }
+        d_prev = d;
+        d *= ratio;
+    }
+    // The refinement: the interval's cells in order, from the one holding its start.
+    if (seg.y > seg.x) {
+        var c = vec2<i32>(floor((q.xy + u * seg.x) / f32(COLUMN_CELL)));
+        let s = vec2<i32>(sign(u));
+        for (var i = 0u; i < COLUMN_KEY_REFINE; i++) {
+            let t = column_cell_entry(q.xy, u, c);
+            if (t >= seg.y) {
+                break;
+            }
+            let h = column_cell_height(c);
+            if (h > 1.0e38) {
+                break;
+            }
+            if (t > 0.5) {
+                tan_h = max(tan_h, (h - q.z) / t);
+            }
+            // The next cell: across the face the ray leaves through first.
+            let far = vec2<f32>(c * COLUMN_CELL) + select(vec2<f32>(0.0), vec2<f32>(f32(COLUMN_CELL)), u > vec2<f32>(0.0));
+            let tx = select(vec2<f32>(3.0e38), (far - q.xy) / u, abs(u) > vec2<f32>(1.0e-6));
+            c += select(vec2<i32>(0, s.y), vec2<i32>(s.x, 0), tx.x <= tx.y);
+        }
+    }
+    let r = max(tan(sky.key_radius), 1.0e-4);
+    return clamp((tan_e - tan_h) / (2.0 * r) + 0.5, 0.0, 1.0);
+}
+
+// The key slot (the pair's g) at a pixel where the light pass cast no key ray holds the far
+// estimate tagged by its source, so the next frame tells a source's switch from the source's
+// own motion; a cast pixel's g is the ray's running mean, in 0 to 1 (atrous.wgsl pools it).
+// A record's value `v` is stored as `KEY_TAG_RECORD - v` (-2 to -1), the horizon's as
+// `KEY_TAG_HORIZON + v` (2 to 3), a value in a landing's fade as `KEY_TAG_FADE + v` (4 to 5).
+// A reprojected slot between the ranges (taps of two kinds blended) reads as no history.
+const KEY_TAG_RECORD: f32 = -1.0;
+const KEY_TAG_HORIZON: f32 = 2.0;
+const KEY_TAG_FADE: f32 = 4.0;
+const KEY_SRC_MEAN: u32 = 0u;
+const KEY_SRC_RECORD: u32 = 1u;
+const KEY_SRC_HORIZON: u32 = 2u;
+const KEY_SRC_FADE: u32 = 3u;
+const KEY_SRC_NONE: u32 = 4u;
+
+// Slot `y`'s value in x and its source (`KEY_SRC_*`, as f32) in y; KEY_SRC_NONE between ranges.
+fn key_slot_decode(y: f32) -> vec2<f32> {
+    let e = 1.0 / 512.0;
+    if (y >= -e && y <= 1.0 + e) {
+        return vec2<f32>(clamp(y, 0.0, 1.0), f32(KEY_SRC_MEAN));
+    }
+    if (y >= -2.0 - e && y <= -1.0 + e) {
+        return vec2<f32>(clamp(KEY_TAG_RECORD - y, 0.0, 1.0), f32(KEY_SRC_RECORD));
+    }
+    if (y >= KEY_TAG_HORIZON - e && y <= KEY_TAG_HORIZON + 1.0 + e) {
+        return vec2<f32>(clamp(y - KEY_TAG_HORIZON, 0.0, 1.0), f32(KEY_SRC_HORIZON));
+    }
+    if (y >= KEY_TAG_FADE - e && y <= KEY_TAG_FADE + 1.0 + e) {
+        return vec2<f32>(clamp(y - KEY_TAG_FADE, 0.0, 1.0), f32(KEY_SRC_FADE));
+    }
+    return vec2<f32>(0.0, f32(KEY_SRC_NONE));
+}
+
+// The slot of value `v` from source `src` (KEY_SRC_RECORD, _HORIZON or _FADE).
+fn key_slot_encode(v: f32, src: u32) -> f32 {
+    if (src == KEY_SRC_RECORD) {
+        return KEY_TAG_RECORD - v;
+    }
+    return select(KEY_TAG_FADE, KEY_TAG_HORIZON, src == KEY_SRC_HORIZON) + v;
+}
+
+// The far key value shown at a pixel with no key ray and the slot it leaves (ADR-0079's
+// landing fade, rule 3's form): `t` the far estimate this frame from `src` (KEY_SRC_RECORD or
+// _HORIZON), `hy` the reprojected slot, `accepted` whether the history is taken. A pixel whose
+// history is not taken, or whose slot was the same source's, shows `t` at once (the source's
+// own value follows the hit); a slot of the other source, or one in a fade, moves toward `t`
+// by at most 1 / FADE_F a frame, so a landing is one monotonic fade within FADE_F frames; a
+// cast pixel's mean hands over at once under the blend (the band already showed the far
+// value at its end) and fades under LIGHTING_KEY_STEP. LIGHTING_HOOK_NO_FADE shows `t` at
+// once. Returns the value and the slot.
+fn key_far_fade(t: f32, src: u32, hy: f32, accepted: bool) -> vec2<f32> {
+    let steady = vec2<f32>(t, key_slot_encode(t, src));
+    if (!accepted || (params.lighting & LIGHTING_HOOK_NO_FADE) != 0u) {
+        return steady;
+    }
+    let prev = key_slot_decode(hy);
+    let was = u32(prev.y);
+    if (was == KEY_SRC_NONE || was == src
+        || (was == KEY_SRC_MEAN && (params.lighting & LIGHTING_KEY_STEP) == 0u)
+        || abs(t - prev.x) <= FADE_EPS) {
+        return steady;
+    }
+    let x = prev.x + clamp(t - prev.x, -1.0 / FADE_F, 1.0 / FADE_F);
+    if (abs(t - x) <= FADE_EPS) {
+        return steady;
+    }
+    return vec2<f32>(x, key_slot_encode(x, KEY_SRC_FADE));
+}
+
 // The visibility pair after sample `s` (the sky rays' share this frame) on history `hp`
 // (`accepted`: the direct part's taps agreed and nothing resets it), its cap `sky.sky_history`.
 // A reset pair holds the estimate `e` alone in both means at age `seed_age` (SEED_AGE for a
@@ -76,12 +258,20 @@ const FADE_F: f32 = 16.0;
 
 // The key light's visibility mean after sample `s` on history `g`, which holds `age` samples
 // (the direct part's history age; `reset`: the history is not taken): over `age + 1` samples,
-// as the direct part blends, capped at `key_history`.
-fn key_mean(s: f32, g: f32, age: f32, reset: bool) -> f32 {
-    if (reset || (params.lighting & LIGHTING_SKY_CHANGED) != 0u) {
+// as the direct part blends, capped at `key_history`. With a fresh baked value `seed` (0 to 1;
+// negative for none, ADR-0079) a reset mean starts from the seed instead of the sample, and
+// the seed counts as SEED_AGE samples of the mean from then on (a pixel whose record landed
+// after its reset is counted the same). On the sky-change bit the sample restarts it: the
+// record predates the jump.
+fn key_mean(s: f32, g: f32, age: f32, reset: bool, seed: f32) -> f32 {
+    if ((params.lighting & LIGHTING_SKY_CHANGED) != 0u) {
         return s;
     }
-    let n = clamp(age + 1.0, 1.0, f32(max(sky.key_history, 1u)));
+    if (reset) {
+        return select(s, seed, seed >= 0.0);
+    }
+    let seeded = select(0.0, SEED_AGE, seed >= 0.0);
+    let n = clamp(age + 1.0 + seeded, 1.0, f32(max(sky.key_history, 1u)));
     return g + (s - g) / n;
 }
 

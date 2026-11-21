@@ -1165,6 +1165,8 @@ fn a_closed_box_takes_no_sky_light() {
 include!("gpu_sun/reading.rs");
 include!("gpu_sun/dig.rs");
 include!("gpu_sun/history.rs");
+include!("gpu_sun/key.rs");
+include!("gpu_sun/rebake.rs");
 
 /// The mean `+z` sky visibility (face 5) of chunk (1, 1, 0)'s records in `block` whose brick
 /// lies under `over`'s footprint (read at the slab's height).
