@@ -199,6 +199,7 @@ impl Frame {
         k.budget = q.budget;
         (q.coarse_samples, q.near, q.full_first) = (k.coarse_samples, k.near, k.full_first);
         (q.edit_ms, q.reach_ring) = (k.edit_ms, k.dig_reach);
+        q.tiers = k.tiers;
         q.set_reach_mode(k.reach);
         self.baked.queue = Some(q);
     }
@@ -269,6 +270,15 @@ impl Frame {
         self.baked.knobs.reach = mode;
         if let Some(q) = self.baked.queue.as_mut() {
             q.set_reach_mode(mode);
+        }
+    }
+
+    /// The live queue's sample tiers a brick direction by band, near, mid and far (ADR-0080:
+    /// a chunk's record at its band's count by its size on screen).
+    pub fn set_bake_tiers(&mut self, tiers: [u32; 3]) {
+        self.baked.knobs.tiers = tiers;
+        if let Some(q) = self.baked.queue.as_mut() {
+            q.tiers = tiers;
         }
     }
 

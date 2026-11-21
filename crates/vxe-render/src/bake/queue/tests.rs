@@ -200,3 +200,99 @@ fn a_dig_to_the_sky_over_a_buried_chunk_relists_it() {
     assert_eq!(due, cave.to_vec());
     assert!(!asked.contains(&far), "the far chunk is not read");
 }
+
+/// Plan 0096 Phase 3 bar 1 (ADR-0080 rule 2): a chunk's band at the fly-through's 70-degree
+/// vertical field and the far-normal band `[2, 6]` px a voxel. At 1080p (f = 540 / tan 35
+/// degrees, 771.2 px) a chunk whose nearest corner lies 100 voxels (10 m) away reads near (7.7
+/// px), 250 (25 m) mid (3.1 px), 500 (50 m) far (1.5 px). At 720p (f 514.1 px) the same
+/// chunks read 5.1, 2.1 and 1.0 px: mid, mid, far by the band's own edges.
+#[test]
+fn the_band_of_a_chunk_follows_the_far_normal_band_at_the_outputs_focal_length() {
+    let vfov = 70f32.to_radians();
+    let eye = [32.0, 32.0, 32.0];
+    // Chunks along +x whose nearest face lies `d` voxels from the eye: x from 64 at chunk 1.
+    let chunk_at = |d: i32| [(32 + d) / 64, 0, 0];
+    let read = |height: u32, d: i32| {
+        let b = Bands {
+            focal_px: Bands::focal_px(height, vfov),
+            lo: 2.0,
+            hi: 6.0,
+        };
+        let c = chunk_at(d);
+        let near = chunk_nearest(c, eye);
+        (b.px_at(near), b.of_chunk(c, eye))
+    };
+    let f1080 = Bands::focal_px(1080, vfov);
+    assert!((f1080 - 771.2).abs() < 0.1, "{f1080}");
+    // The chunks' nearest faces: 96 (chunk 2 starts at 128), 224 and 480 voxels.
+    for (d, px, band) in [
+        (96, 8.03, Band::Near),
+        (224, 3.44, Band::Mid),
+        (480, 1.61, Band::Far),
+    ] {
+        let (p, b) = read(1080, d);
+        assert!((p - px).abs() < 0.01, "1080p at {d}: {p} px");
+        assert_eq!(b, band, "1080p at {d}");
+    }
+    for (d, band) in [(96, Band::Mid), (224, Band::Mid), (480, Band::Far)] {
+        assert_eq!(read(720, d).1, band, "720p at {d}");
+    }
+    // The band off (`hi <= lo`) reads every chunk near.
+    let off = Bands {
+        focal_px: f1080,
+        lo: 0.0,
+        hi: 0.0,
+    };
+    assert_eq!(off.of_chunk([7, 0, 0], eye), Band::Near);
+}
+
+/// ADR-0080 rule 2 on a bare queue: with bands its jobs draw their band's tier past the coarse
+/// pass, the record's tier bits follow the count, and a block below its band's count is a
+/// refinement's candidate; without a focal length every count is the settings'.
+#[test]
+fn a_chunks_count_and_tier_follow_its_band() {
+    use crate::bake::record::{TIER_FAR, TIER_MID};
+    let mut q = BakeQueue::new(BakeSettings::default(), 1.0);
+    q.settings.brick_samples = QUEUE_BRICK_SAMPLES;
+    q.tiers = DEFAULT_TIERS;
+    let eye = [0, 0, 0];
+    let (near, mid, far) = ([1, 0, 0], [4, 0, 0], [9, 0, 0]);
+    // No focal length: the settings' count, past the coarse pass beyond the full-first shell.
+    assert_eq!(q.count_for(near, 1, eye), (QUEUE_BRICK_SAMPLES, 0));
+    assert_eq!(q.want(far), QUEUE_BRICK_SAMPLES);
+    q.bands = Some(Bands {
+        focal_px: Bands::focal_px(1080, 70f32.to_radians()),
+        lo: 2.0,
+        hi: 6.0,
+    });
+    q.eye_c = [32.0; 3];
+    assert_eq!(q.band_of(near), Band::Near);
+    assert_eq!(q.band_of(mid), Band::Mid);
+    assert_eq!(q.band_of(far), Band::Far);
+    q.full_first = Some(2);
+    assert_eq!(q.count_for(near, 0, eye), (4096, 0), "full first");
+    assert_eq!(
+        q.count_for(mid, 0, eye),
+        (256, TIER_FAR),
+        "a coarse first pass"
+    );
+    assert_eq!(
+        q.count_for(mid, 1, eye),
+        (1024, TIER_MID),
+        "the mid refinement"
+    );
+    assert_eq!(
+        q.count_for(far, 0, eye),
+        (256, TIER_FAR),
+        "the far tier, final"
+    );
+    assert_eq!(q.count_for(far, 1, eye), (256, TIER_FAR));
+    // A block's count against its band's: a mid chunk at 256 is below, a far one is not.
+    q.held.insert(mid, 256);
+    q.held.insert(far, 256);
+    assert_eq!(q.below(mid), Some(true));
+    assert_eq!(q.below(far), Some(false));
+    assert_eq!(q.below(near), None);
+    q.held.insert(mid, 1024);
+    assert_eq!(q.below(mid), Some(false));
+}

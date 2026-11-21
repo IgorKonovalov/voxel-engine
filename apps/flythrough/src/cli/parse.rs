@@ -141,6 +141,7 @@ impl Args {
             bake: BakeArgs {
                 budget: vxe_render::Budget::default(),
                 coarse: vxe_render::DEFAULT_COARSE_SAMPLES,
+                tiers: vxe_render::DEFAULT_TIERS,
                 near: vxe_render::DEFAULT_NEAR,
                 full_first: None,
                 missing_light: vxe_render::MissingLight::Chain,

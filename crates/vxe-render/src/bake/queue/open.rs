@@ -236,7 +236,7 @@ impl BakeQueue {
                 .filter(|c| !self.dig_open.contains_key(c) && !self.keys.holds(c))
                 .filter_map(|c| {
                     let has = store.blocks.contains_key(&c);
-                    let coarse = has && store.is_coarse(ChunkCoord(c));
+                    let coarse = has && self.lesser(store, c);
                     (!has || coarse).then_some((c, u8::from(has), coarse))
                 })
                 .collect();
@@ -312,7 +312,7 @@ impl BakeQueue {
             .map(|c| c.0)
             .filter(|c| {
                 let o = [0, 1, 2].map(|k| c[k] - eye[k]);
-                let full = store.blocks.contains_key(c) && !store.is_coarse(ChunkCoord(*c));
+                let full = store.blocks.contains_key(c) && !self.lesser(store, *c);
                 // Only a job opened before the camera's chunk last changed: the camera has moved
                 // since, so it can have passed the chunk.
                 job_eye.get(c).is_some_and(|&at| at < moves)
@@ -372,6 +372,7 @@ impl BakeQueue {
         for w in self.lp.withdraw(|c| passed.contains(&c.0), record) {
             store.release(w.first_word, w.words);
             self.job_coarse.remove(&w.coord.0);
+            self.job_count.remove(&w.coord.0);
             self.job_eye.remove(&w.coord.0);
             self.job_partial.remove(&w.coord.0);
             self.job_provisional.remove(&w.coord.0);

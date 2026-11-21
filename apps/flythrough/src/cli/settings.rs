@@ -48,6 +48,27 @@ fn sections() -> Vec<Section<Parsing>> {
                 },
             ),
             Flag::value(
+                &["--bake-tiers"],
+                "NEAR,MID,FAR",
+                "the live queue's samples a brick direction by a chunk's band on screen (the \
+                 far-normal band at the output's focal length), each 16 to 65536 [the profile's: \
+                 4096,1024,256 at floor]",
+                |p: &mut Parsing, v| {
+                    let n: Vec<u32> = v
+                        .string()
+                        .split(',')
+                        .map(|t| t.parse::<u32>().map_err(|e| e.to_string()))
+                        .collect::<Result<_, _>>()?;
+                    match n[..] {
+                        [a, b, c] if [a, b, c].iter().all(|x| (16..=65536).contains(x)) => {
+                            p.args.bake.tiers = [a, b, c];
+                            Ok(())
+                        }
+                        _ => Err("--bake-tiers takes NEAR,MID,FAR, each 16 to 65536".into()),
+                    }
+                },
+            ),
+            Flag::value(
                 &["--light-hooks"],
                 "NAME[,NAME]",
                 "the light passes' reading hooks (a reading lever): keyoff (no key light ray), \
@@ -123,6 +144,7 @@ impl Args {
             });
         self.residency = s.build.residency;
         self.bake.budget = s.bake.budget;
+        self.bake.tiers = s.bake.tiers;
         self.light_cap = s.light_cap;
         self.output_hint = s.output_hint;
     }
@@ -202,6 +224,7 @@ impl Args {
                 reach: b.reach,
                 edit_ms: b.edit_ms,
                 dig_reach: b.dig_reach,
+                tiers: b.tiers,
             },
             build: BuildSettings {
                 mirror_budget_bytes: self

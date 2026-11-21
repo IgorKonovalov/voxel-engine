@@ -666,6 +666,7 @@ impl Run {
         frame.set_bake_coarse(self.args.bake.coarse, self.args.bake.near);
         frame.set_bake_digs(self.args.bake.edit_ms, self.args.bake.dig_reach);
         frame.set_bake_reach(self.args.bake.reach);
+        frame.set_bake_tiers(self.args.bake.tiers);
         if let Some(q) = frame.bake_queue_mut() {
             q.order = self.args.queue_order();
             q.withdraw = self.args.bake.queue_withdraw;

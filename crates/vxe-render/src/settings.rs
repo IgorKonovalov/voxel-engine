@@ -89,6 +89,9 @@ pub struct BakeKnobs {
     pub edit_ms: f64,
     /// Whether a dig that touched lit bricks re-bakes the chunks within the light radius.
     pub dig_reach: bool,
+    /// The sample tiers a brick direction by band, near, mid and far (ADR-0080;
+    /// [`crate::Frame::set_bake_tiers`]).
+    pub tiers: [u32; 3],
 }
 
 impl Default for BakeKnobs {
@@ -102,6 +105,7 @@ impl Default for BakeKnobs {
             reach: ReachMode::default(),
             edit_ms: crate::bake::DEFAULT_BAKE_EDIT_MS,
             dig_reach: true,
+            tiers: crate::bake::DEFAULT_TIERS,
         }
     }
 }
@@ -286,6 +290,7 @@ impl RenderSettings {
     /// | `lod.r_full` | 16 | 12 | 16 | 16 |
     /// | `build.mirror_budget_bytes` | 3 GiB | 3 GiB x (12 / 16)^3 | 3 GiB | 3 GiB |
     /// | `bake.budget` | 1.5 ms a frame | 0.75 ms a frame | 1.5 ms a frame | 1.5 ms a frame |
+    /// | `bake.tiers` | 4096, 1024, 256 | 1024, 256, 256 | 4096, 1024, 256 | 4096, 1024, 256 |
     pub fn profile(p: Profile) -> Self {
         let floor = Self {
             lighting: Lighting {
@@ -344,6 +349,7 @@ impl RenderSettings {
                 s.bake.budget = crate::bake::Budget::PerFrame {
                     ms: crate::bake::DEFAULT_BAKE_SLICE_MS / 2.0,
                 };
+                s.bake.tiers = [1024, 256, 256];
                 s
             }
             Profile::Performance => Self {
@@ -394,6 +400,15 @@ impl RenderSettings {
                 "PerFrame { ms: 0.75 }",
                 "PerFrame { ms: 1.5 }",
                 "PerFrame { ms: 1.5 }",
+            ],
+        ),
+        (
+            "bake.tiers",
+            [
+                "[4096, 1024, 256]",
+                "[1024, 256, 256]",
+                "[4096, 1024, 256]",
+                "[4096, 1024, 256]",
             ],
         ),
         (
@@ -477,6 +492,7 @@ impl RenderSettings {
         ("bake.reach", Live),
         ("bake.edit_ms", Live),
         ("bake.dig_reach", Live),
+        ("bake.tiers", Live),
         ("build.mirror_budget_bytes", Rebuild),
         ("build.record_chunks", Rebuild),
         ("build.light_samples", Rebuild),
@@ -518,6 +534,7 @@ impl RenderSettings {
         ("set_bake_full_first", &["bake.full_first"]),
         ("set_bake_reach", &["bake.reach"]),
         ("set_bake_digs", &["bake.edit_ms", "bake.dig_reach"]),
+        ("set_bake_tiers", &["bake.tiers"]),
         ("set_entity_mirror", &["build.entity_pool_bytes"]),
         ("set_field_surface", &["build.field_surface"]),
         ("set_sync_budget_time", &["build.sync_budget_time"]),
@@ -741,6 +758,7 @@ impl RenderSettings {
             "bake.reach" => other(&mut s.bake.reach, ReachMode::Full, ReachMode::Partial),
             "bake.edit_ms" => s.bake.edit_ms += 1.0,
             "bake.dig_reach" => flip(&mut s.bake.dig_reach),
+            "bake.tiers" => s.bake.tiers[1] /= 2,
             "build.mirror_budget_bytes" => s.build.mirror_budget_bytes /= 2,
             "build.record_chunks" => {
                 s.build.record_chunks = if s.build.record_chunks.is_some() {

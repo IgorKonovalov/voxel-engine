@@ -97,6 +97,22 @@ pub(crate) const SKY_STALE: u32 = 1 << 17;
 /// A record's first key light visibility word (ADR-0079).
 pub(crate) const KEY_WORD: usize = 9;
 
+/// The record's tier (ADR-0080): two bits of the second visibility word's free bits, 0 at the
+/// settings' count (the live queue's near tier, and every one-off bake), [`TIER_MID`] at its
+/// mid count, [`TIER_FAR`] at its far or coarse count. The reads mask them off.
+pub(crate) const TIER_SHIFT: u32 = 18;
+
+/// [`TIER_SHIFT`]'s mid tier.
+pub(crate) const TIER_MID: u8 = 1;
+
+/// [`TIER_SHIFT`]'s far tier.
+pub(crate) const TIER_FAR: u8 = 2;
+
+/// The tier bits of the cell record `r` ([`TIER_SHIFT`]).
+pub fn record_tier(r: &[u32]) -> u8 {
+    ((r[VIS_WORD + 1] >> TIER_SHIFT) & 3) as u8
+}
+
 /// The second key visibility word's flag: the record's key visibilities were baked under a key
 /// light. They share the sky's [`SKY_STALE`]: a dig's ring marks both channels.
 pub(crate) const KEY_BAKED: u32 = 1 << 16;
@@ -234,6 +250,7 @@ pub(super) fn brick_record(
     cell: u32,
     sky: bool,
     key: bool,
+    tier: u8,
 ) -> Vec<u32> {
     let side = (8 / cell) as usize;
     let cells = side * side * side;
@@ -293,6 +310,7 @@ pub(super) fn brick_record(
         if key {
             r[KEY_WORD..KEY_WORD + 2].copy_from_slice(&key_words(mean(lit[c])));
         }
+        r[VIS_WORD + 1] |= u32::from(tier) << TIER_SHIFT;
     }
     out
 }

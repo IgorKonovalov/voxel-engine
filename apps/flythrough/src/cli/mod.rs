@@ -565,6 +565,9 @@ pub struct LookArgs {
 /// The light store's and the live queue's flags.
 #[derive(Clone)]
 pub struct BakeArgs {
+    /// `--bake-tiers NEAR,MID,FAR`: the live queue's sample tiers a brick direction by band
+    /// (`vxe_render::Frame::set_bake_tiers`); the profile's by default.
+    pub(crate) tiers: [u32; 3],
     /// `--bake-budget frame:MS|second:MS,CAP` (or `--bake-slice MS`, `frame:MS`): the live
     /// queue's bake budget (default `frame:` `vxe_render::DEFAULT_BAKE_SLICE_MS`); key
     /// The menu's `bake budget` cycles it through `BUDGET_CYCLE`.

@@ -189,6 +189,9 @@ pub(crate) struct Job {
     /// but its two key visibility words, which its faces' key rays draw again; no emissive
     /// sample and no sky ray is drawn.
     pub key_only: bool,
+    /// The record's tier bits ([`TIER_SHIFT`]): 0 at the settings' count (the near tier),
+    /// [`TIER_MID`] or [`TIER_FAR`] at the live queue's lesser counts (ADR-0080).
+    pub tier: u8,
 }
 
 /// The entry's `face` word's flag (`BakeFace.face` in `bake.wgsl`): a key-only job's face,
@@ -269,6 +272,7 @@ pub(crate) fn run(
                 samples: 0,
                 brick_samples: None,
                 key_only: false,
+                tier: 0,
             };
             at += words;
             job
@@ -377,6 +381,7 @@ pub(crate) fn rebake(
             samples: 0,
             brick_samples: None,
             key_only: false,
+            tier: 0,
         });
     }
     let bake = run_jobs(run, store, jobs, settings, progress)?;

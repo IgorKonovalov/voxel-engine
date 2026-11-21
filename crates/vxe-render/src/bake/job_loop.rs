@@ -152,6 +152,11 @@ impl JobLoop {
         self.in_flight.len()
     }
 
+    /// The chunks of the jobs pending, not yet opened.
+    pub(crate) fn pending_chunks(&self) -> impl Iterator<Item = ChunkCoord> + '_ {
+        self.pending.iter().map(|j| j.coord)
+    }
+
     /// The chunks of the jobs pending or open.
     pub(crate) fn chunks(&self) -> impl Iterator<Item = ChunkCoord> + '_ {
         self.pending
@@ -826,6 +831,8 @@ pub(super) struct OpenJob {
     /// Whether the job draws its own count ([`Job::brick_samples`], the coarse pass): its
     /// samples' class in [`SubmitDone::class_samples`].
     pub(super) own_count: bool,
+    /// [`Job::tier`].
+    pub(super) tier: u8,
     pub(super) states: Vec<FaceState>,
     /// The faces still running.
     pub(super) live: Vec<usize>,
@@ -851,6 +858,7 @@ impl JobCtx<'_, '_> {
             samples: _,
             brick_samples,
             key_only,
+            tier,
         } = job;
         write_job_table(self.run, coord, slot);
         // A job's own count (the live queue's coarse pass) on cells of a brick draws each
@@ -938,6 +946,7 @@ impl JobCtx<'_, '_> {
             kept_bricks,
             key_only,
             own_count,
+            tier,
             states,
             live,
             slot,
@@ -989,6 +998,7 @@ impl JobCtx<'_, '_> {
                     cell,
                     self.run.sky & BAKE_SKY_ON != 0,
                     self.run.key.is_some(),
+                    job.tier,
                 )
             };
             let record = match job.kept_bricks.get(slot) {

@@ -37,6 +37,7 @@ pub(crate) fn zero_block(
     clamp: bool,
     sky: bool,
     key: Option<[f32; 3]>,
+    tier: u8,
 ) -> Vec<u32> {
     let (dir, words) = layout(faces, record_words(cell));
     let mut block = dir;
@@ -70,7 +71,7 @@ pub(crate) fn zero_block(
                 }
             })
             .collect();
-        block.extend(brick_record(&states, clamp, cell, sky, key.is_some()));
+        block.extend(brick_record(&states, clamp, cell, sky, key.is_some(), tier));
     }
     debug_assert_eq!(block.len() as u64, words);
     block[KEY_SUN_AT as usize] = key.map_or(0, pack_direction);

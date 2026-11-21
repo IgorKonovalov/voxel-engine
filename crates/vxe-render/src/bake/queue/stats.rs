@@ -146,6 +146,10 @@ pub struct QueueStats {
     /// having broken the rule.
     pub zeroed: u64,
     pub zero_relisted: u64,
+    /// Blocks whose band changed as the camera's chunk changed (their candidacy read again),
+    /// and pending jobs withdrawn above their new band's count, since the queue started.
+    pub retiered: u64,
+    pub withdrawn_band: u64,
 }
 
 /// A chunk's band by its size on screen: where a voxel of its nearest point projects over the

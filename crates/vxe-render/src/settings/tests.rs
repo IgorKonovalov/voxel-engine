@@ -67,6 +67,7 @@ fn the_default_is_the_floor_and_the_profiles_differ_in_their_rows() {
             "lod.r_full",
             "light_cap",
             "bake.budget",
+            "bake.tiers",
             "build.mirror_budget_bytes",
             "build.residency",
             "output_hint",

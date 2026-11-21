@@ -7,12 +7,7 @@ impl BakeQueue {
     /// bound from its prepared masks ([`ChunkMasks::dirs_bound`]), or six for every brick of
     /// the chunk where none arrived, at the count [`BakeQueue::push_listed`] would give it.
     pub(in crate::bake) fn listing_bound(&self, c: [i32; 3], class: u8, eye: [i32; 3]) -> u64 {
-        let coarse = class == 0 && self.coarse_samples > 0 && !self.full_first_at(c, eye);
-        let brick_samples = if coarse {
-            self.coarse_samples
-        } else {
-            self.settings.brick_samples
-        };
+        let brick_samples = self.count_for(c, class, eye).0;
         let dirs = self
             .prepared
             .get(&c)
@@ -171,12 +166,16 @@ impl BakeQueue {
         self.reach.remove(&c);
         self.partial_due.remove(&c);
         self.provisional_due.remove(&c);
+        let (count, tier) = self.count_for(c, class, eye);
+        let near = self.near_count();
         if ruled {
-            // The rule's zero record: no job; its block is placed at this step's submit.
+            // The rule's zero record at the job's count: no job; its block is placed at this
+            // step's submit.
             self.job_partial.remove(&c);
             self.job_provisional.remove(&c);
-            self.job_coarse.insert(c, false);
-            self.ruled.push((coord, first_word, faces));
+            self.job_coarse.insert(c, count < near);
+            self.job_count.insert(c, count);
+            self.ruled.push((coord, first_word, faces, tier));
             self.zeroed.insert(c);
             self.stats.zeroed += 1;
             return Ok(0);
@@ -193,12 +192,8 @@ impl BakeQueue {
         } else {
             self.job_provisional.remove(&c);
         }
-        let coarse = class == 0 && self.coarse_samples > 0 && !self.full_first_at(c, eye);
-        let brick_samples = if coarse {
-            self.coarse_samples
-        } else {
-            self.settings.brick_samples
-        };
+        let coarse = count < near;
+        let brick_samples = count;
         let samples = faces
             .bricks
             .iter()
@@ -216,10 +211,12 @@ impl BakeQueue {
             first_word,
             kept_bricks: KeptBricks::new(),
             samples,
-            brick_samples: coarse.then_some(brick_samples),
+            brick_samples: (count != self.settings.brick_samples).then_some(count),
             key_only: false,
+            tier,
         });
         self.job_coarse.insert(c, coarse);
+        self.job_count.insert(c, count);
         self.job_eye.insert(c, self.eye_moves);
         self.stats.coarse_opened += u64::from(coarse);
         Ok(samples)

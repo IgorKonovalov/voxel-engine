@@ -60,6 +60,7 @@ impl BakeQueue {
             self.eye_moves += 1;
         }
         self.eye = eye;
+        self.retier(store, view, eye);
         let gpu = run.gpu;
         self.stats.scanned = 0;
         self.stats.reach_checks = 0;
@@ -111,6 +112,7 @@ impl BakeQueue {
         for c in gone {
             store.remove(run.queue, ChunkCoord(c));
             self.zeroed.remove(&c);
+            self.held.remove(&c);
         }
         self.laps.lap(S_GONE);
         changes
@@ -260,6 +262,8 @@ impl BakeQueue {
             fades: &mut self.fades,
             stats: &mut self.stats,
             job_coarse: &mut self.job_coarse,
+            job_count: &mut self.job_count,
+            held: &mut self.held,
             job_eye: &mut self.job_eye,
             dig_open: &mut self.dig_open,
             keys_open: &mut self.keys.open,
@@ -282,12 +286,12 @@ impl BakeQueue {
         // The rule's zero records land through the same placement as a job's block.
         let sky = run.sky & BAKE_SKY_ON != 0;
         let key = run.key.map(|(d, _)| d);
-        for (coord, first, faces) in ruled {
+        for (coord, first, faces, tier) in ruled {
             sink(
                 store,
                 coord,
                 first,
-                zero_block(coord, &faces, cell, clamp, sky, key),
+                zero_block(coord, &faces, cell, clamp, sky, key, tier),
             );
         }
         let settings = BakeSettings {
@@ -415,6 +419,8 @@ struct Placement<'a> {
     fades: &'a mut BTreeMap<[i32; 3], Fade>,
     stats: &'a mut QueueStats,
     job_coarse: &'a mut std::collections::HashMap<[i32; 3], bool>,
+    job_count: &'a mut std::collections::HashMap<[i32; 3], u32>,
+    held: &'a mut std::collections::HashMap<[i32; 3], u32>,
     job_eye: &'a mut std::collections::HashMap<[i32; 3], u64>,
     dig_open: &'a mut std::collections::HashMap<[i32; 3], DigChunk>,
     keys_open: &'a mut std::collections::HashSet<[i32; 3]>,
@@ -435,6 +441,7 @@ impl Placement<'_> {
     /// stale or left the mirror.
     fn place(&mut self, store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>) {
         let coarse = self.job_coarse.remove(&coord.0).unwrap_or(false);
+        let count = self.job_count.remove(&coord.0);
         self.job_eye.remove(&coord.0);
         let from_partial = self.job_partial.remove(&coord.0);
         let from_provisional = self.job_provisional.remove(&coord.0);
@@ -505,6 +512,9 @@ impl Placement<'_> {
         self.stats.baked += 1;
         // The table word's flag follows at the put below.
         store.mark_coarse(coord, coarse);
+        if let Some(n) = count {
+            self.held.insert(coord.0, n);
+        }
         let old = store
             .blocks
             .get(&coord.0)

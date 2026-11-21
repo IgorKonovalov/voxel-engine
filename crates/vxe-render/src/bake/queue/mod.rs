@@ -10,9 +10,11 @@ mod rule;
 mod sealed;
 mod stats;
 mod step;
+mod tiers;
 
 pub use self::open::in_view_census;
 pub use self::stats::{Band, Bands, InViewWaiting, ListingCensus, QueueStats, chunk_nearest};
+pub use self::tiers::DEFAULT_TIERS;
 
 /// Frames a re-baked block's values move over, from what it showed to its new values.
 pub const FADE: u32 = 16;
@@ -350,7 +352,18 @@ pub struct BakeQueue {
     pub(super) ruled_checked: ChunkSet,
     /// Ruled chunks listed this step, their place and faces: their zero blocks are placed at
     /// the step's submit.
-    pub(super) ruled: Vec<(ChunkCoord, u64, ChunkFaces)>,
+    pub(super) ruled: Vec<(ChunkCoord, u64, ChunkFaces, u8)>,
+    /// The sample tiers a brick direction by band, near, mid and far (ADR-0080 rule 2); with a
+    /// view's focal length a chunk's job draws its band's count past its coarse pass, else
+    /// [`BakeSettings::brick_samples`].
+    pub tiers: [u32; 3],
+    /// Each block's samples a brick direction ([`BakeQueue::tiers`]), and each job's.
+    pub(super) held: std::collections::HashMap<[i32; 3], u32>,
+    pub(super) job_count: std::collections::HashMap<[i32; 3], u32>,
+    /// The bands the last step read ([`tiers`]), `None` without a focal length, and the centre
+    /// of the camera's chunk in voxels they are read from.
+    pub(super) bands: Option<Bands>,
+    pub(super) eye_c: [f32; 3],
     /// The step's lowest column tops by chunk column ([`GpuWorld::column_lowest`]), emptied
     /// each step.
     pub(super) columns_lowest: std::collections::HashMap<[i32; 2], i32>,
@@ -573,6 +586,11 @@ impl BakeQueue {
             zeroed: Default::default(),
             ruled_checked: Default::default(),
             ruled: Vec::new(),
+            tiers: DEFAULT_TIERS,
+            held: Default::default(),
+            job_count: Default::default(),
+            bands: None,
+            eye_c: [32.0; 3],
             columns_lowest: Default::default(),
             provisional: Default::default(),
             job_provisional: Default::default(),
@@ -600,7 +618,7 @@ impl BakeQueue {
             return None;
         }
         let has = store.blocks.contains_key(&c);
-        let coarse = has && store.is_coarse(cc);
+        let coarse = has && self.lesser(store, c);
         let wants = !has
             || coarse
             || self.reach.contains(&c)
@@ -800,7 +818,8 @@ impl BakeQueue {
         match self.reach_cached(run, coord, lr, view.resident) {
             Reach::Ready => Some(false),
             Reach::Partial
-                if self.reach_mode == ReachMode::Partial
+                if (self.reach_mode == ReachMode::Partial
+                    || self.band_of(coord.0) != Band::Near)
                     && view
                         .full_radius
                         .is_some_and(|r| reach_crosses(coord, eye, lr, r)) =>
@@ -861,7 +880,14 @@ impl BakeQueue {
                 due
             }
         };
+        let near = self.near_count();
         for p in due {
+            // A mid or far record's refinement is its band's promotion, not its reach filling
+            // (ADR-0080 rule 4); a near one (a dig's ring) is baked again.
+            let count = self.job_count.get(&p).or_else(|| self.held.get(&p));
+            if count.is_some_and(|&n| n < near) {
+                continue;
+            }
             if self.partial_due.insert(p) {
                 self.stats.partial_requeued += 1;
                 self.touched.insert(p);
@@ -945,21 +971,17 @@ impl BakeQueue {
     }
 
     /// The samples `c` still needs (class 1 with a block, `coarse` a coarse one): its brick
-    /// directions ([`ChunkMasks::dirs_bound`] from its prepared masks, else six a brick) at the
-    /// full count, and at the coarse count too where its first pass is still to come and is
-    /// the coarse one.
+    /// directions ([`ChunkMasks::dirs_bound`] from its prepared masks, else six a brick) at its
+    /// band's count ([`BakeQueue::want`]), and at the coarse count too where its first pass is
+    /// still to come and is the coarse one.
     pub(super) fn need_samples(&self, c: [i32; 3], class: u8, eye: [i32; 3]) -> u64 {
         let dirs = self
             .prepared
             .get(&c)
             .map_or(CHUNK_BRICKS as u64 * 6, |m| m.masks.dirs_bound());
-        let coarse_first = class == 0 && self.coarse_samples > 0 && !self.full_first_at(c, eye);
-        let per = u64::from(self.settings.brick_samples)
-            + if coarse_first {
-                u64::from(self.coarse_samples)
-            } else {
-                0
-            };
+        let want = self.want(c);
+        let first = self.count_for(c, class, eye).0;
+        let per = u64::from(want) + if first < want { u64::from(first) } else { 0 };
         dirs * per
     }
 
@@ -1043,7 +1065,7 @@ impl BakeQueue {
     /// Whether `c` holds its block at the full count or is known to have none: no face, or
     /// (`absent`) no chunk.
     pub fn settled(&self, store: &Store, c: ChunkCoord, absent: bool) -> bool {
-        ((store.blocks.contains_key(&c.0) && !store.is_coarse(c))
+        ((store.blocks.contains_key(&c.0) && !self.lesser(store, c.0))
             || self.faceless.contains(&c.0)
             || self.sealed.holds(c.0)
             || absent)
