@@ -1,6 +1,6 @@
 # 0096: Performance: the bake queue's drain (a record by rule, a tier by size on screen, a drain slice), the step off the depth, the slow adapter's light pass, and the sync's `alloc` and eviction scan
 
-> **Status:** in-progress (dev, 2026-11-21). Approved 2026-11-20 (owner go; starts after Plan 0095 closes and merges). Owner picks, all as recommended: the drain slice 4.0 ms Floor / 6.0 ms Portable while in-view work waits, 1.0 once landed; a far chunk's 256-sample record is final until the camera brings it nearer; if the RENOIR forest stays over 4.0 ms the Portable profile owns the levers it picks and the Floor line stays with the miss disclosed; the window includes the 60 s cave glide. **Amended 2026-11-20 (owner)**, at Plan 0095's window W1: the far tiers' reach rule moves into this plan (ADR-0080 rule 4; a chunk whose reach crosses the full radius bakes its mid or far tier from the chunks resident, the near tier keeps the full reach), Phase 1's census counts reach-bound chunks by the exact test and names the no-record bricks if Plan 0095 Phase 6 cannot, Phase 6 (c) reads far pixels on the baked key or the column map's horizon, the landed state counts a LOD-ring face served by the horizon, and 0095's extra bake rays are conditional on its window W2.
+> **Status:** in-progress (dev, 2026-11-21). Approved 2026-11-20 (owner go; starts after Plan 0095 closes and merges). Owner picks, all as recommended: the drain slice 4.0 ms Floor / 6.0 ms Portable while in-view work waits, 1.0 once landed; a far chunk's 256-sample record is final until the camera brings it nearer; if the RENOIR forest stays over 4.0 ms the Portable profile owns the levers it picks and the Floor line stays with the miss disclosed; the window includes the 60 s cave glide. **Amended 2026-11-20 (owner)**, at Plan 0095's window W1: the far tiers' reach rule moves into this plan (ADR-0080 rule 4; a chunk whose reach crosses the full radius bakes its mid or far tier from the chunks resident, the near tier keeps the full reach), Phase 1's census counts reach-bound chunks by the exact test and names the no-record bricks if Plan 0095 Phase 6 cannot, Phase 6 (c) reads far pixels on the baked key or the column map's horizon, the landed state counts a LOD-ring face served by the horizon, and 0095's extra bake rays are conditional on its window W2. **Amended 2026-11-22 (architect, owner confirm owed)**, overnight at the Phase 6 checkpoint `2665f41f`: Phase 4's bar 2 is read at the default drain slice and the F2 rig's miss is a disclosed reading with its cause (the opening's candidate cap, routed to the Phase 5 bar 3 decision); Phase 6's lever (b) leaves bar 1 and the window (a no-op on cube faces, bounded at 0.16 ms by Phase 1's `--sky-rays 0` arm), the setting stays, and bar 1 becomes the key cap's test; Phase 6's paths fixed (`crates/vxe-render/tests/gpu_sun/key.rs`, `cli/outdoor.rs`).
 > **Created:** 2026-11-20
 > **Milestone:** M10 (the outdoor scenes are where the queue never drains) and cross-cutting
 > like [Plan 0067](done/0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md):
@@ -436,6 +436,31 @@ names or hands over the 461 no-record pixels. If 0095 is still open when the lan
   `second:150,0.25`, the F2 rig), not a lavapipe test; the readings log holds it before and
   after the fix. (3) The drain curves at the proposed defaults on both adapters, with the GPU
   frame and the wall beside them.
+- **Amended 2026-11-22 (architect, owner confirm owed): bar 2 is read at the default slice
+  form, and the F2 rig's miss is a disclosed reading, not a fix in this plan.** The lap
+  (readings log, Phase 4, `da6d113a`) found the plans stopping out of rounds (716 of 1 116 at the
+  F2 rig), not at the sample cap, with no step finding both submit slots unread: the submit is
+  short of jobs, not of slots or of planned rounds, so neither named fix (rounds planned to the
+  slice, `IN_FLIGHT` 3) reaches the cause. The jobs come from the opening, which admits at most
+  `QUEUE_CHECKS` (16) candidates a lead a step (`open.rs`), and at the forest's tier mix after
+  Phase 3 what a step admits drew 4.35 to 5.48 ms p50 of RTX GPU whatever the grant: under the F2
+  rig's per-second grant of 6.3 to 8.9 ms (0.60 to 0.69 drawn), over the drain slice's 4.0 ms,
+  where the cap binds (stops at the cap 1 800 against 188 out of rounds, 0.94 to 0.99 drawn).
+  Phase 5's lazy walk changed the order's cost, not the cap, so a re-read after it would read the
+  same. The fix that reaches the cause is an opening that admits candidates until the opened jobs'
+  projected samples (the tier's count times the faces listed, at Phase 1's ns a sample) fill the
+  granted slice; every candidate admitted costs a `list` (about 1 ms each, Phase 5's readings),
+  the stage Phase 5's bar 3 already misses, so raising the cap trades GPU utilisation under the
+  per-second budget for main-thread step time, the cost the owner named first (2026-11-11). So:
+  (1) bar 2 reads **at the default slice form** (`bake.drain`, Floor 4,1 / Portable 6,1): the
+  submits draw at least 85 % of the granted drain slice while in-view work waits (read 0.94 to
+  0.99 at `da6d113a`, loaded; re-read quiet at Phase 9 on both adapters); (2) the F2 rig
+  (`second:150,0.25`, ADR-0052's per-second form, no longer the default) stays a disclosed reading
+  with its cause, in the log and in `docs/nfr/02-frame-budget.md` at Phase 9; (3) the
+  opening-to-the-slice fix rides the Phase 5 bar 3 decision (the owner question in the readings
+  log): if the listing leaves the main thread, the cap becomes the slice's and bar 2 is re-read
+  at the F2 rig there; if not, Plan 0067's F2 entry returns to `docs/backlog.md` re-pointed at
+  the opening's cap, not the planner. No code changes in Phase 4.
 
 ### Phase 5: The step off the queue's depth
 - **Owner skill:** dev
@@ -481,8 +506,10 @@ names or hands over the 461 no-record pixels. If 0095 is still open when the lan
   RENOIR). The RTX is read beside each lever and must stay within 0.1 ms of its base. Readings,
   not bars; Phase 8 picks what the Portable profile owns.
 - **Files touched:** `crates/vxe-render/src/shaders/{sky_light,shade,temporal}.wgsl`,
-  `crates/vxe-render/src/frame/settings.rs` (the rows and flags), `apps/flythrough/src/cli/flags.rs`,
-  `apps/flythrough/tests/gpu_sun.rs` (the readings arms).
+  `crates/vxe-render/src/frame/settings.rs` (the rows and flags), `apps/flythrough/src/cli/outdoor.rs`
+  (the outdoor flags live there, not in `cli/flags.rs`; corrected 2026-11-22),
+  `crates/vxe-render/tests/gpu_sun/key.rs` (the readings arms; the plan first named
+  `apps/flythrough/tests/gpu_sun.rs`, which does not exist; corrected 2026-11-22).
 - **Done when:** (1) `the_key_cap_and_the_down_face_skip_leave_the_lit_image_unchanged_where_they_do_not_apply`
   (`gpu_sun`, lavapipe, 320 x 180, about 8 s): a flat open floor at noon renders byte-identical
   with (a) and (b) on and off (no ray there is longer than the cap, no face looks down), and a
@@ -496,6 +523,35 @@ names or hands over the 461 no-record pixels. If 0095 is still open when the lan
   1.21. The lever table reads approach's own cost and the levers that cut it (its step count, its
   reach, a half-rate form) on both adapters; the Portable profile keeps approach unless the owner
   picks otherwise at Phase 8.
+- **Amended 2026-11-22 (architect, owner confirm owed): lever (b) leaves bar 1 and the window;
+  the setting stays; bar 1 becomes the key cap's test.** Bar 1's overhang check cannot hold on
+  cube faces: `sky_visibility_sample` (`sky_light.wgsl`) draws its rays as a cosine lobe about the
+  shading normal `n` and marches only a ray with `d.z > 0`, so on a face whose normal points
+  straight down (`n.z = -1`) every ray is already counted blocked without a march, and the skip
+  changes neither the image nor the cost there (the first run read "0 pixels differ, 5 388 on the
+  underside"); it reaches only a face whose smoothed or far normal has `-1 < n.z < -0.5`, where it
+  also darkens a face a sideways-up ray could have lit past an overhang's edge, so it is not exact
+  there either. Its gain is bounded above by Phase 1's table 5 `--sky-rays 0` arm, which casts no
+  sky ray at all: RENOIR forest 17.68 against 17.68 ms, hills noon 4.78 against 4.94, at most about
+  0.16 ms against the 4.0 ms line, because at rest the sky ray is cast only where the record is
+  stale (ADR-0070). A bar for 0.16 ms is not worth holding, and the third option (the skip by the
+  hit's cube normal) is a no-op on the image by the same arithmetic; reading the lever on the far
+  normal's band would read a band Plan 0098 is about to move. So: lever (b) is **dropped from bar
+  1 and from Phase 8 (d)** (the window reads the key cap's look and 2 a-trous iterations), the
+  built setting `lighting.sky_down_skip` / `--sky-down-skip` stays, default off (the cheap-modes
+  rule, owner 2026-11-12), and the `skydown` arms the lever table is already running are recorded
+  as the reading that closes it. **Bar 1 becomes the key cap's test**
+  (`the_key_cap_leaves_the_lit_image_unchanged_where_no_ray_is_longer`,
+  `crates/vxe-render/tests/gpu_sun/key.rs`, lavapipe, 320 x 180): a flat open floor at noon
+  renders byte-identical with the cap on and off (a clear ray counts lit at the cap as at
+  `KEY_RAY_LEN`), and a box with an overhang differs only on the floor under the overhang, whose
+  ray meets the slab at the clearance height: the test sets the cap under that clearance (at the
+  default 1 536 voxels nothing in a small rig is longer than the cap, which is why the first run
+  read the overhang identical under the cap), and that floor counts lit under the cap while the
+  open floor and the box's lit faces are unchanged. Its wall is read quiet; over the 10 s soak
+  line (the first run read 54.3 s with six frames) it is born `#[ignore = "soak"]` and named so in
+  the Implementation log. The approach penumbra's own lever waits for Plan 0098's window W1 and
+  is out of this phase (the orchestrator's scope, 2026-11-22).
 
 ### Phase 7: The sync: the eviction scan's index and the `alloc` stage
 - **Owner skill:** dev
