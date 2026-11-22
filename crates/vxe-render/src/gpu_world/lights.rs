@@ -145,6 +145,13 @@ impl Ranges {
         self.high
     }
 
+    /// Whether `n` samples could be placed without an eviction: a free range holds them, or
+    /// the samples above the high-water mark do. No samples always fit.
+    pub(super) fn fits(&self, n: u32) -> bool {
+        self.free.longest() >= n.max(1)
+            || u64::from(self.high) + u64::from(n) <= u64::from(self.samples)
+    }
+
     /// Places `n` samples of `coord`, which holds no range, at squared chunk distance `d2` from
     /// `focus`: the lowest free run that holds them, else the samples above the high-water mark;
     /// while neither fits, the farthest placed chunk beyond `d2` is released and pushed to
@@ -280,6 +287,87 @@ impl Ranges {
     #[cfg(test)]
     pub(super) fn free_ranges(&self) -> Vec<(u32, u32)> {
         self.free.ranges().collect()
+    }
+}
+
+/// A chunk `place_lights`' write walk wants written: its squared chunk distance to the focus,
+/// whether it holds a range (a dirty placed chunk) and its thinned count (0 for empty lists).
+pub(super) struct Wanted {
+    pub(super) d2: i64,
+    pub(super) coord: ChunkCoord,
+    pub(super) placed: bool,
+    pub(super) n: u32,
+}
+
+/// What [`write_walk`] does to the buffer and the light mirror's sets.
+pub(super) trait WriteWalk {
+    /// Writes `coord` at squared distance `d2`, its old range released first
+    /// ([`GpuWorld::write_chunk_lights`]): the samples written, `None` when refused.
+    fn write(&mut self, coord: ChunkCoord, d2: i64) -> Option<u64>;
+    /// Whether `n` samples fit the buffer without an eviction ([`Ranges::fits`]).
+    fn fits(&self, n: u32) -> bool;
+    /// Counts `coord` refused without trying to place it.
+    fn refuse(&mut self, coord: ChunkCoord);
+    /// `coord` waits for the next sync's sample budget.
+    fn wait(&mut self, coord: ChunkCoord);
+    /// `coord` was walked: it leaves the dirty and waiting sets.
+    fn walked(&mut self, coord: ChunkCoord);
+}
+
+/// The write walk over `wanted` (nearest first) until `budget` samples are written; the rest
+/// wait. A refusal means no placed chunk lay farther than the refused one, and the walk only
+/// places chunks at least as far after it, so for the rest of the walk no later chunk has a
+/// victim (a victim lies strictly farther): a later unplaced chunk is placed only if a free
+/// range or the headroom holds it. One that neither holds is counted refused without a fit or
+/// a victim lookup; one that fits, and a placed chunk (a dirty one, whose release frees its
+/// range), is written as before. The outcome is the full walk's.
+pub(super) fn write_walk(wanted: &[Wanted], budget: u64, w: &mut impl WriteWalk) {
+    let mut written = 0u64;
+    let mut refused = false;
+    for x in wanted {
+        if written >= budget {
+            w.wait(x.coord);
+            continue;
+        }
+        if refused && !x.placed && !w.fits(x.n) {
+            w.refuse(x.coord);
+        } else {
+            let wrote = w.write(x.coord, x.d2);
+            refused |= wrote.is_none();
+            written += wrote.unwrap_or(0);
+        }
+        w.walked(x.coord);
+    }
+}
+
+/// [`WriteWalk`] on the mirror inside a sync.
+struct SyncWalk<'a> {
+    gw: &'a mut GpuWorld,
+    enc: &'a mut wgpu::CommandEncoder,
+    st: &'a mut SyncStats,
+}
+
+impl WriteWalk for SyncWalk<'_> {
+    fn write(&mut self, coord: ChunkCoord, d2: i64) -> Option<u64> {
+        self.gw.write_chunk_lights(coord, d2, self.enc, self.st)
+    }
+
+    fn fits(&self, n: u32) -> bool {
+        self.gw.lights.ranges.fits(n)
+    }
+
+    fn refuse(&mut self, _: ChunkCoord) {
+        self.st.light_refused += 1;
+    }
+
+    fn wait(&mut self, coord: ChunkCoord) {
+        let syncs = self.gw.lights.syncs;
+        self.gw.lights.wait.entry(coord).or_insert(syncs);
+    }
+
+    fn walked(&mut self, coord: ChunkCoord) {
+        self.gw.lights.dirty.remove(&coord);
+        self.gw.lights.wait.remove(&coord);
     }
 }
 
@@ -477,24 +565,22 @@ impl GpuWorld {
                 self.release_lights(c, enc);
             }
         }
-        let mut wanted: Vec<(i64, ChunkCoord)> = self
+        let cap = self.cfg.light_chunk_cap;
+        let mut wanted: Vec<Wanted> = self
             .lights
             .chunks
             .iter()
             .filter(|(c, l)| d2(**c) <= r * r && (!l.placed || self.lights.dirty.contains(*c)))
-            .map(|(c, _)| (d2(*c), *c))
+            .map(|(c, l)| Wanted {
+                d2: d2(*c),
+                coord: *c,
+                placed: l.placed,
+                n: thinned_len(l.bricks.values().map(Vec::len).sum(), cap) as u32,
+            })
             .collect();
-        wanted.sort_unstable_by_key(|&(d, c)| (d, c.0));
-        let mut written = 0u64;
-        for (d, c) in wanted {
-            if written >= u64::from(self.cfg.light_sync_samples) {
-                self.lights.wait.entry(c).or_insert(self.lights.syncs);
-                continue;
-            }
-            written += self.write_chunk_lights(c, d, enc, st);
-            self.lights.dirty.remove(&c);
-            self.lights.wait.remove(&c);
-        }
+        wanted.sort_unstable_by_key(|w| (w.d2, w.coord.0));
+        let budget = u64::from(self.cfg.light_sync_samples);
+        write_walk(&wanted, budget, &mut SyncWalk { gw: self, enc, st });
         // A dirty chunk outside the radius is rewritten when it comes back inside it.
         self.lights.wait.retain(|c, _| d2(*c) <= r * r);
         st.light_oldest_wait = self
@@ -513,22 +599,22 @@ impl GpuWorld {
     /// Writes `coord`'s samples (thinned to the cap) into a new range, its old range zeroed and
     /// freed; `d2` is its squared chunk distance to the focus. When the buffer has no run, the
     /// farthest range beyond `d2` is evicted until one fits; with none left the chunk is
-    /// refused and holds no range. The samples written.
+    /// refused (`None`) and holds no range. The samples written.
     pub(super) fn write_chunk_lights(
         &mut self,
         coord: ChunkCoord,
         d2: i64,
         enc: &mut wgpu::CommandEncoder,
         st: &mut SyncStats,
-    ) -> u64 {
+    ) -> Option<u64> {
         self.release_lights(coord, enc);
         let Some(l) = self.lights.chunks.get(&coord) else {
-            return 0;
+            return Some(0);
         };
         if l.bricks.is_empty() {
             self.lights.chunks.remove(&coord);
             self.lights.touch();
-            return 0;
+            return Some(0);
         }
         // The thinned count first: a chunk the buffer refuses is not gathered.
         let total: usize = l.bricks.values().map(Vec::len).sum();
@@ -549,7 +635,7 @@ impl GpuWorld {
         }
         let Some(start) = placed else {
             st.light_refused += 1;
-            return 0;
+            return None;
         };
         let l = self
             .lights
@@ -577,7 +663,7 @@ impl GpuWorld {
         self.lights.live += u64::from(n);
         self.lights.ranges.set_power(coord, power);
         self.lights.epoch += 1;
-        u64::from(n)
+        Some(u64::from(n))
     }
 
     /// Zeroes and frees `coord`'s range, keeping its lists.
@@ -760,87 +846,4 @@ pub(crate) fn boxes_within(a: ChunkCoord, b: ChunkCoord, r: i32) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// One run of the recorded sequence on [`Ranges`], by the index or (`linear`) by the walk
-    /// and the scan: per step the placed ranges, the free ranges and the high-water mark, the
-    /// buffer's words (each placed sample holds its chunk's tag, a released one 0), and the
-    /// placements and evictions.
-    fn replay(linear: bool) -> (Vec<String>, Vec<u32>, u64, u64) {
-        const SAMPLES: u32 = 24_000;
-        let mut r = Ranges::new(SAMPLES);
-        r.linear = linear;
-        let mut words = vec![0u32; SAMPLES as usize];
-        let mut st = SyncStats::default();
-        let mut seed = 0x9E37_79B9_7F4A_7C15u64;
-        let mut rand = move |m: u64| {
-            seed = seed
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1_442_695_040_888_963_407);
-            (seed >> 33) % m
-        };
-        let tag = |c: ChunkCoord| ((c.0[0] + 64) as u32) << 16 | ((c.0[2] + 64) as u32) << 4 | 1;
-        let mut log = Vec::new();
-        let (mut placed, mut evictions) = (0u64, 0u64);
-        for step in 0..2_600u64 {
-            let focus = ChunkCoord([(step / 40) as i32, 0, 0]);
-            let c = ChunkCoord([
-                focus.0[0] + rand(13) as i32 - 6,
-                rand(3) as i32 - 1,
-                rand(13) as i32 - 6,
-            ]);
-            if rand(10) == 0 {
-                // A dropped chunk: forgotten now, freed at the next sync.
-                if let Some((s, n)) = r.forget(c) {
-                    words[s as usize..(s + n) as usize].fill(0);
-                    r.free_range((s, n));
-                }
-                continue;
-            }
-            if let Some((s, n)) = r.release(c) {
-                words[s as usize..(s + n) as usize].fill(0);
-            }
-            let n = 1 + rand(400) as u32;
-            let mut evicted = Vec::new();
-            let at = r.place(c, n, c.distance2(focus), focus, &mut evicted, &mut st);
-            for (_, (s, n)) in &evicted {
-                words[*s as usize..(*s + *n) as usize].fill(0);
-            }
-            evictions += evicted.len() as u64;
-            if let Some(s) = at {
-                words[s as usize..(s + n) as usize].fill(tag(c));
-                placed += 1;
-            }
-            let mut held: Vec<_> = r.placed().collect();
-            held.sort_unstable_by_key(|&(c, _)| c.0);
-            log.push(format!(
-                "{step}: {at:?} evicted {evicted:?} held {held:?} free {:?} high {}",
-                r.free_ranges(),
-                r.high()
-            ));
-        }
-        (log, words, placed, evictions)
-    }
-
-    /// Plan 0096 Phase 7 bar 1: a recorded sequence of placements, releases and drops with a
-    /// moving focus (2 600 steps, at least 2 000 placements and 300 evictions) gives the same
-    /// ranges, free ranges and buffer words at every step through the first-fit index and the
-    /// victims' index as through the walk of every free range and the scan of every placed
-    /// chunk.
-    #[test]
-    fn the_indexed_placement_writes_the_same_bytes_as_the_scan() {
-        let (walk, walk_words, placed, evictions) = replay(true);
-        let (index, index_words, ..) = replay(false);
-        println!("{placed} placements, {evictions} evictions");
-        assert!(
-            placed >= 2_000 && evictions >= 300,
-            "{placed} placed, {evictions} evicted"
-        );
-        for (a, b) in walk.iter().zip(&index) {
-            assert_eq!(a, b);
-        }
-        assert_eq!(walk.len(), index.len());
-        assert_eq!(walk_words, index_words);
-    }
-}
+mod tests;

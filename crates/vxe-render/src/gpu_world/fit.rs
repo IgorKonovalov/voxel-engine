@@ -73,6 +73,11 @@ impl FreeRanges {
         }
     }
 
+    /// The longest free range's length, 0 with none.
+    pub(super) fn longest(&self) -> u32 {
+        self.tree[1]
+    }
+
     /// The lowest-start free range of at least `n` samples, its start and length; adds the tree
     /// nodes and ranges visited to `steps`.
     pub(super) fn first_fit(&self, n: u32, steps: &mut u64) -> Option<(u32, u32)> {
