@@ -33,7 +33,7 @@ v0.69.0.
 | [0093](0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) | The README rewrite with reproducible screenshots: a shot manifest, a shoot script, an image gate, the owner's picks | approved | M7 docs, no ADR. After 0087 merges, beside 0089, before 0091. |
 | [0096](0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) | Performance: the bake queue's drain, the step off its depth, the RENOIR light pass, `alloc` and the eviction scan | approved, amended 11-20 | M10, cross-cutting, ADR-0080 (proposed). After 0095, before 0087. |
 | [0097](0097-the-exposures-anchor-by-the-sky-around-the-camera-the-floor-record-under-the-eye-a-time-constant-and-the-canopys-shade.md) | The exposure's anchor by the sky around the camera: the floor record under the eye, a time constant | approved 11-20 | M10, ADR-0081 (proposed). Lane waits on 0095's merge. |
-| [0098](0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md) | A calm light by default: no screen history, smooth sources to the mid range, the FSR 2 turn read first | approved 11-22 | M10, ADR-0082 (proposed). Needs `diag-edges`' switches. |
+| [0098](0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md) | A calm light by default: no screen history, smooth sources to the mid range, the FSR 2 turn read first | in-progress, amended 11-22 at W1 | M10, ADR-0082 (proposed). W2 owed. |
 <!-- roster:end -->
 
 ## Sequence

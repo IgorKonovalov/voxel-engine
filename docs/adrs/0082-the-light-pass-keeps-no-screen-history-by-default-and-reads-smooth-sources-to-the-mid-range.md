@@ -41,21 +41,31 @@ map's horizon, the 27-count gradient normal). The band in which a voxel counts a
 shading normal and for the key light's far estimate widens from `[2, 6]` pixels a voxel toward
 the mid range; its values, and the near penumbra's form (approach made world-fixed, the disc,
 or the disc's centre ray alone), are the owner's picks at Plan 0098's window, recorded in this
-ADR's Outcome. The history stays a render setting (`light history on`), off by default. The
+ADR's Outcome. **A change in a world record (a bake landing, a refinement) fades in the store,
+every word the image reads, since no screen history is left to soften it** (amended
+2026-11-22, below). The history stays a render setting (`light history on`), off by default. The
 upscaler keeps its own history; FSR 2 stays the default upscaler, and its behaviour after a
 turn is treated inside its path, by a reading first.
 
 ## Consequences
 
 ### Positive
-- The image right after a move is the image at rest, by construction: there is no mean to
-  restart, so ADR-0076's rule 6 and the owner's "no waiting for light" hold without a fade.
+- The image right after a move is the image at rest, by construction, for everything the
+  screen history used to carry: there is no mean to restart. **Amended 2026-11-22** (still
+  proposed; Plan 0098's readings): the first draft said ADR-0076's rule 6 then holds "without
+  a fade", which is wrong. With no history a bake landing shows in one frame (15.61 % of the
+  near pixels at one landing after a stop, the exposure pinned), so the fade rule 6 asks for
+  moves into the store.
 - One fewer source of state: the history test, its rejection rules and the stair rules stop
   deciding what the default image looks like.
 - The light pass can get cheaper where the history's passes can be skipped (unread; Plan 0098
   reads it on both adapters).
 
 ### Negative
+- **Far geometry finer than a pixel's jitter step loses the average that hid it.** Sparse
+  leaves at 15 to 60 m change hit between jitter phases (17.46 % of the far hits at rest), and
+  the two hits' light differs; the history averaged that, and the upscaler's own history does
+  not. No mechanism is known yet (added 2026-11-22; Plan 0098 Phase 5 is its spike).
 - **A term that draws one random sample a frame has nothing to average it.** The disc
   penumbra, a sky ray where no record is fresh and the fired lights' visibility each show
   per-frame noise unless they become deterministic or read a smooth source. The owner saw "no
