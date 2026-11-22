@@ -1306,6 +1306,33 @@ cycling F9 to the `steps` view drops the window to about 14 fps and the composit
 unresponsive. Unread: whether the view's own pass is slow or it disables a cheaper path. Pick
 up with any work on the debug views.
 
+### The baked key record's cell blend carries light across a shadow edge
+
+Found 2026-11-22 by the tunnel-leak diagnosis (branch `diag-leak` at `4a6770db`, its log
+`docs/plans/logs/diag-leak.md` on that branch; owner's window 97b: a blinking sunlit wall and a
+white patch in a dark tunnel, on the builds before and after Plan 0097). With the far estimate
+forced on every face, `KeyFar::Baked`'s blend between brick-direction cells (ADR-0079) puts
+12 225 px bright where the truth is shadowed, against 912 for the column map's horizon, which
+errs dark through the tunnel's mouth instead. Neither symptom reproduced headless, and at the
+wall's distance (2 to 4 m) the far weight is 0, so how the window read the record there is
+unshown. **What it takes:** first a debug view of each pixel's key source tag, to catch the lit
+state live in a window; then, only if the record is shown to be the source, a blend that does
+not cross a shadow edge (the own cell only, a blend gated by the cells' agreement, or a finer
+record). **Pick up** after Plan 0098's window W1: if the owner picks `key far column` as the
+default, the record is a setting off by default and this stays parked. The white patch seen
+from the spawn is real light through a roof slot of the test world's generator (the valley
+dips under the tunnel's crown over x 192 to 266), the owner's call to close.
+
+### A mip by majority can drop a roof one or two voxels thick
+
+Raised 2026-11-22 by the same diagnosis, untested: at LOD 1 the mip's majority rule may remove
+a 1 to 2 voxel roof (the tunnel at x 266 to 290), which would let the sun into an enclosed
+place at a distance. It bears on any far geometry that reads a coarser mip (Plan 0098's
+candidate for the far hits that flip under the jitter): a mip read for visibility or for a
+stable far hit wants "any solid" coverage, not the majority. **What it takes:** a CPU test of
+the mip of a one-voxel slab over air, and a reading of the far shadow under it. Pick up with
+Plan 0098's Phase 5 amendment.
+
 ## Later apps
 
 ### Web demo as a separate app
