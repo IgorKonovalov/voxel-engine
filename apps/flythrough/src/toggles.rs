@@ -1027,6 +1027,13 @@ pub static TOGGLES: &[Toggle] = &[
         }
     ),
     diag!(
+        "landing fade",
+        |m| format!("landing fade {}", on(m.lighting.landing_fade)),
+        |m| {
+            m.lighting.landing_fade = !m.lighting.landing_fade;
+        }
+    ),
+    diag!(
         "key jitter",
         |m| format!("key jitter {}", on(!m.diag.hooks.key_no_jitter)),
         |m| {

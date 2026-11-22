@@ -9,7 +9,7 @@ mod open;
 mod stats;
 mod step;
 
-pub use self::stats::QueueStats;
+pub use self::stats::*;
 
 /// Frames a re-baked block's values move over, from what it showed to its new values.
 pub const FADE: u32 = 16;
@@ -121,6 +121,8 @@ pub(super) struct Fade {
     pub(super) from: Vec<u32>,
     pub(super) frame: u32,
     pub(super) frames: u32,
+    /// The sky visibilities ride this fade ([`BakeQueue::landing_fade`] as it started).
+    pub(super) vis: bool,
 }
 
 /// A chunk's dig bricks (slots), and whether one of them is in ring 1. `whole`: a chunk the
@@ -329,6 +331,9 @@ pub struct BakeQueue {
     /// its key visibilities alone once the key light has turned past it and its disc's radius
     /// from the light they were baked under ([`BakeQueue::mark_keys`]).
     pub key_step: f32,
+    /// [`crate::Lighting::landing_fade`], set by the frame each step: a landing block's sky
+    /// visibilities fade with its direction values ([`fade_mix`]).
+    pub landing_fade: bool,
     /// The key-only re-bakes waiting and in a job.
     pub(super) keys: keys::KeyJobs,
     /// Chunks whose block was baked while a column over its reach was not final (the wait
@@ -540,6 +545,7 @@ impl BakeQueue {
             columns_final: Default::default(),
             column_wait: false,
             key_step: crate::frame::DEFAULT_KEY_STEP,
+            landing_fade: false,
             keys: Default::default(),
             provisional: Default::default(),
             job_provisional: Default::default(),

@@ -392,33 +392,38 @@ fn the_sky_anchor_share_reaches_the_run() {
     }
 }
 
-/// Plan 0098 Phase 1: `--calm` sets exactly the four rows of ADR-0082's combination (light
-/// history off, key far column, key far mix step, far normal 8..12) and nothing else of the
-/// start's lighting; a later flag of the four overrides its part (`--calm --far-normal 2,6`
-/// keeps 2..6 and is not calm), an earlier one is overridden. With all four the lighting
-/// row reads `light history off` and the banner names `calm`; the default names neither.
+/// Plan 0098 Phase 6 (Phase 1's test, its four rows become window W1's five picks): `--calm`
+/// sets exactly light history off, key far column, key far mix step, the disc penumbra and far
+/// normal 4..8, and nothing else of the start's lighting; a later flag of the five overrides
+/// its part (`--calm --far-normal 2,6` keeps 2..6 and is not calm, `--calm --penumbra approach`
+/// is not calm), an earlier one is overridden. With all five the lighting row reads `light
+/// history off` and the banner names `calm`; the default names neither. `--landing-fade`
+/// reaches the lighting and the banner, and `--calm` leaves it as it is.
 #[test]
-fn calm_sets_the_four_rows_and_a_later_flag_wins() {
+fn calm_sets_the_five_picks_and_a_later_flag_wins() {
     use crate::hud::HudRow;
-    use vxe_render::{KeyFar, KeyFarMix};
+    use vxe_render::{KeyFar, KeyFarMix, Penumbra};
     let base = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
     assert!(base.start_lighting().light_history);
+    assert!(!base.start_lighting().landing_fade);
     let m = base.start_modes(0.0);
     assert!(!m.row(HudRow::Lighting).contains("light history"));
     assert!(!m.banner(0.0).unwrap().contains("calm"));
+    assert!(!m.banner(0.0).unwrap().contains("landing fade"));
 
     let r = parse_args_from(argv(&["--source", "outdoor", "--calm"])).unwrap();
     let l = r.start_lighting();
     assert_eq!(
-        (l.light_history, l.key_far, l.key_far_mix),
-        (false, KeyFar::Column, KeyFarMix::Step)
+        (l.light_history, l.key_far, l.key_far_mix, l.penumbra),
+        (false, KeyFar::Column, KeyFarMix::Step, Penumbra::Disc)
     );
-    assert_eq!(r.start_look().far_normal, [8.0, 12.0]);
+    assert_eq!(r.start_look().far_normal, [4.0, 8.0]);
     assert_eq!(
         vxe_render::Lighting {
             light_history: true,
             key_far: base.start_lighting().key_far,
             key_far_mix: base.start_lighting().key_far_mix,
+            penumbra: base.start_lighting().penumbra,
             ..l
         },
         base.start_lighting(),
@@ -448,6 +453,16 @@ fn calm_sets_the_four_rows_and_a_later_flag_wins() {
     let r = parse_args_from(argv(&[
         "--source",
         "outdoor",
+        "--calm",
+        "--penumbra",
+        "approach",
+    ]))
+    .unwrap();
+    assert_eq!(r.start_lighting().penumbra, Penumbra::Approach);
+    assert!(!r.start_modes(0.0).line().contains("calm"));
+    let r = parse_args_from(argv(&[
+        "--source",
+        "outdoor",
         "--light-history",
         "on",
         "--calm",
@@ -464,4 +479,18 @@ fn calm_sets_the_four_rows_and_a_later_flag_wins() {
     .unwrap();
     assert!(r.start_lighting().light_history);
     assert!(parse_args_from(argv(&["--light-history", "maybe"])).is_err());
+
+    let r = parse_args_from(argv(&[
+        "--source",
+        "outdoor",
+        "--landing-fade",
+        "on",
+        "--calm",
+    ]))
+    .unwrap();
+    assert!(r.start_lighting().landing_fade);
+    let banner = r.start_modes(0.0).banner(0.0).unwrap().replace('\n', ", ");
+    assert!(banner.contains("calm, "), "{banner}");
+    assert!(banner.contains("landing fade on, "), "{banner}");
+    assert!(parse_args_from(argv(&["--landing-fade", "maybe"])).is_err());
 }

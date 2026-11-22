@@ -993,6 +993,10 @@ impl Args {
                 .outdoor
                 .light_history
                 .unwrap_or(crate::default_lighting().light_history),
+            landing_fade: self
+                .outdoor
+                .landing_fade
+                .unwrap_or(crate::default_lighting().landing_fade),
             penumbra: self.outdoor.penumbra.unwrap_or(crate::DEFAULT_PENUMBRA),
             key_far: self.outdoor.key_far,
             key_far_mix: self.outdoor.key_far_mix,

@@ -44,6 +44,9 @@ pub struct OutdoorArgs {
     /// `--light-history on|off` (or `--calm`'s off): the light passes' screen history
     /// (`Lighting::light_history`); unset, the renderer's default.
     pub(crate) light_history: Option<bool>,
+    /// `--landing-fade on|off`: a landing block's sky visibilities ride the store's fade
+    /// (`Lighting::landing_fade`); unset, the renderer's default.
+    pub(crate) landing_fade: Option<bool>,
     /// `--sky-normal face|smoothed`: the normal the baked sky term reads its visibilities by.
     pub(crate) sky_normal: vxe_render::SkyNormal,
     /// `--sky-bounce B`: the baked sky term's bounce floor, 0 to 1.
@@ -97,17 +100,18 @@ impl OutdoorArgs {
     }
 }
 
-/// `--calm`'s far normal band in pixels a voxel (ADR-0082): the mid range the diagnosis
-/// window of 2026-11-21 read as calm.
-pub const CALM_FAR_NORMAL: [f32; 2] = [8.0, 12.0];
+/// `--calm`'s far normal band in pixels a voxel (ADR-0082): window W1's pick (Plan 0098,
+/// 2026-11-22).
+pub const CALM_FAR_NORMAL: [f32; 2] = [4.0, 8.0];
 
-/// Whether `l` and the far normal band `far_normal` are `--calm`'s combination: no light
-/// history, the key light's far from the column map's horizon, stepped in at the band's half,
-/// and the band [`CALM_FAR_NORMAL`].
+/// Whether `l` and the far normal band `far_normal` are `--calm`'s combination, window W1's
+/// five picks: no light history, the key light's far from the column map's horizon, stepped in
+/// at the band's half, the band [`CALM_FAR_NORMAL`] and the disc penumbra.
 pub fn is_calm(l: &vxe_render::Lighting, far_normal: [f32; 2]) -> bool {
     !l.light_history
         && l.key_far == vxe_render::KeyFar::Column
         && l.key_far_mix == vxe_render::KeyFarMix::Step
+        && l.penumbra == vxe_render::Penumbra::Disc
         && far_normal == CALM_FAR_NORMAL
 }
 
@@ -391,15 +395,26 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
                 Ok(())
             },
         ),
+        Flag::value(
+            &["--landing-fade"],
+            "on|off",
+            "a landing block's sky visibilities ride the store's fade with its light; off, \
+                 they change in the frame it lands and only the light history softens it [off]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.landing_fade = Some(v.on_off()?);
+                Ok(())
+            },
+        ),
         Flag::switch(
             &["--calm"],
-            "the diagnosis window's calm combination (ADR-0082): --light-history off \
-                 --key-far column --key-far-mix step --far-normal 8,12; a later flag of the \
-                 four overrides its part; the banner names calm while all four hold",
+            "the calm combination as window W1 picked it (ADR-0082): --light-history off \
+                 --key-far column --key-far-mix step --far-normal 4,8 --penumbra disc; a later \
+                 flag of the five overrides its part; the banner names calm while all five hold",
             |p: &mut Parsing| {
                 p.args.outdoor.light_history = Some(false);
                 p.args.outdoor.key_far = vxe_render::KeyFar::Column;
                 p.args.outdoor.key_far_mix = vxe_render::KeyFarMix::Step;
+                p.args.outdoor.penumbra = Some(vxe_render::Penumbra::Disc);
                 p.given.far_normal = Some(CALM_FAR_NORMAL);
             },
         ),

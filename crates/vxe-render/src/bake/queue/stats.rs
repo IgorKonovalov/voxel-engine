@@ -121,4 +121,34 @@ pub struct QueueStats {
     pub keys: u64,
     /// Key-only re-bakes landed since the queue started.
     pub keys_baked: u64,
+    /// Blocks landed since the queue started, by how ([`LANDED_REFADED`], [`LANDED_FALLBACK`],
+    /// [`LANDED_UNFADED`], [`LANDED_BARE`]); key-only jobs are in [`QueueStats::keys_baked`].
+    pub landings: [u64; 4],
+    /// Of the faded landings since the queue started (refaded and over the fallback, key-only
+    /// jobs among them), the cells whose words differ from what the pool showed as the fade
+    /// started, by read ([`LANDING_DIRECTIONS`] to [`LANDING_TAIL`]).
+    pub landing_cells: [u64; 6],
 }
+
+/// [`QueueStats::landings`]: a block over its chunk's block of the same layout, faded from
+/// what that showed.
+pub const LANDED_REFADED: usize = 0;
+/// A first block over the missing-light chain, faded from the chain's values.
+pub const LANDED_FALLBACK: usize = 1;
+/// A block over its chunk's block of another layout, put with no fade.
+pub const LANDED_UNFADED: usize = 2;
+/// A first block with no chain to fade from, put with no fade.
+pub const LANDED_BARE: usize = 3;
+
+/// [`QueueStats::landing_cells`]: the six direction values (faded).
+pub const LANDING_DIRECTIONS: usize = 0;
+/// The sky visibilities, both baked alike (faded under [`crate::Lighting::landing_fade`]).
+pub const LANDING_VIS: usize = 1;
+/// The sky visibilities' flags (baked, stale) changed: not faded.
+pub const LANDING_VIS_FLAG: usize = 2;
+/// The key visibilities, both baked (faded).
+pub const LANDING_KEY: usize = 3;
+/// The key visibilities with either unbaked: not faded.
+pub const LANDING_KEY_FLAG: usize = 4;
+/// The tail word (material and direction mask): not faded.
+pub const LANDING_TAIL: usize = 5;

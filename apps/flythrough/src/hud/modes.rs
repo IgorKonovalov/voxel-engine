@@ -841,6 +841,9 @@ impl Modes {
         if !self.lighting.light_history {
             out.push_str("light history off, ");
         }
+        if self.lighting.landing_fade {
+            out.push_str("landing fade on, ");
+        }
         if h.key_no_jitter {
             out.push_str("key jitter off, ");
         }

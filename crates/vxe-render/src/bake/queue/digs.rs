@@ -321,7 +321,7 @@ impl BakeQueue {
                 continue;
             }
             let t = f.frame as f32 / f.frames as f32;
-            fade_mix(&mut shown, &f.from, to, t, record);
+            fade_mix(&mut shown, &f.from, to, t, record, f.vis);
             store.show(queue, ChunkCoord(*c), f.first, &mut shown);
         }
         self.fade_scratch = shown;

@@ -259,6 +259,7 @@ impl BakeQueue {
             ages_full: &mut self.ages_full,
             steps: self.steps,
             record: record_words(self.settings.cell),
+            landing_fade: self.landing_fade,
         };
         let mut sink = |store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>| {
             let t = stopwatch();
@@ -398,6 +399,8 @@ struct Placement<'a> {
     ages_full: &'a mut Vec<u32>,
     steps: u64,
     record: usize,
+    /// [`BakeQueue::landing_fade`].
+    landing_fade: bool,
 }
 
 impl Placement<'_> {
@@ -486,6 +489,7 @@ impl Placement<'_> {
                 self.refade(store, coord, (first, f), from, block, dug);
             }
             Some((f, from)) => {
+                self.stats.landings[LANDED_UNFADED] += 1;
                 store.release(f, from.len() as u64);
                 self.fades.remove(&coord.0);
                 store.put(self.queue, coord, first, block);
@@ -494,7 +498,9 @@ impl Placement<'_> {
                 // A first block under a fallback mode fades from the chain's value, read
                 // before the block's own summary joins the chain (ADR-0053).
                 Some(chain) => {
-                    let mut from = fallback_block(&block, &chain, self.record);
+                    self.stats.landings[LANDED_FALLBACK] += 1;
+                    let mut from = fallback_block(&block, &chain, self.record, self.landing_fade);
+                    count_landing(&mut self.stats.landing_cells, &from, &block, self.record);
                     store.put(self.queue, coord, first, block);
                     store.show(self.queue, coord, first, &mut from);
                     self.fades.insert(
@@ -504,10 +510,14 @@ impl Placement<'_> {
                             from,
                             frame: 0,
                             frames: FADE,
+                            vis: self.landing_fade,
                         },
                     );
                 }
-                None => store.put(self.queue, coord, first, block),
+                None => {
+                    self.stats.landings[LANDED_BARE] += 1;
+                    store.put(self.queue, coord, first, block);
+                }
             },
         }
     }
@@ -535,11 +545,13 @@ impl Placement<'_> {
             {
                 let mut now = Vec::new();
                 let t = fd.frame as f32 / fd.frames as f32;
-                fade_mix(&mut now, &fd.from, &from, t, self.record);
+                fade_mix(&mut now, &fd.from, &from, t, self.record, fd.vis);
                 now
             }
             _ => from,
         };
+        self.stats.landings[LANDED_REFADED] += 1;
+        count_landing(&mut self.stats.landing_cells, &from, &block, self.record);
         store.release(first, block.len() as u64);
         store.put(self.queue, coord, f, block);
         store.show(self.queue, coord, f, &mut from);
@@ -550,7 +562,38 @@ impl Placement<'_> {
                 from,
                 frame: 0,
                 frames: if dug { DIG_FADE } else { FADE },
+                vis: self.landing_fade,
             },
         );
+    }
+}
+
+/// Counts into `cells` ([`QueueStats::landing_cells`]) the cells of a landing block `to` whose
+/// words differ from `from`, what the pool shows as the fade starts, by read.
+fn count_landing(cells: &mut [u64; 6], from: &[u32], to: &[u32], record: usize) {
+    for &dir in &to[..CHUNK_BRICKS] {
+        if dir == 0 {
+            continue;
+        }
+        let run = (dir >> 11) as usize;
+        for cell in (run - record..run).step_by(BRICK_WORDS) {
+            let (a, b) = (
+                &from[cell..cell + BRICK_WORDS],
+                &to[cell..cell + BRICK_WORDS],
+            );
+            let (v, k) = (VIS_WORD, KEY_WORD);
+            let flags = |w: u32| w & !0xFFFF;
+            cells[LANDING_DIRECTIONS] += u64::from(a[..6] != b[..6]);
+            if flags(a[v + 1]) != flags(b[v + 1]) {
+                cells[LANDING_VIS_FLAG] += 1;
+            } else if a[v..v + 2] != b[v..v + 2] {
+                cells[LANDING_VIS] += 1;
+            }
+            let keyed = a[k + 1] & KEY_BAKED != 0 && b[k + 1] & KEY_BAKED != 0;
+            if a[k..k + 2] != b[k..k + 2] {
+                cells[if keyed { LANDING_KEY } else { LANDING_KEY_FLAG }] += 1;
+            }
+            cells[LANDING_TAIL] += u64::from(a[6] != b[6]);
+        }
     }
 }

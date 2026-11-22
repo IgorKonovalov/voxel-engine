@@ -88,6 +88,11 @@ struct Arm {
     /// The upscaler's scale, output over internal width (`scale=X`, 1.5 by default); `off1`
     /// renders at the output.
     scale: f32,
+    /// `Lighting::landing_fade` (`lfade`): a landing block's sky visibilities ride the store's
+    /// fade.
+    landing_fade: bool,
+    /// The fly's frames (`fly=N`, 180 by default; 20 is the short fly of Plan 0097's finding).
+    fly: usize,
 }
 
 impl Arm {
@@ -100,8 +105,9 @@ impl Arm {
     /// the drain, the default's after it), `approach` / `disc` (the penumbra; the fly-through's
     /// default unless named), `absorb` (the leaves absorb, `--leaf-shadow absorb`), `turnf=N`
     /// (the turn's frames), `nohist` (`light_history` off), `calm` (the fly-through's
-    /// `--calm`: `nohist`, `column`, `step` and the far normal 8..12), `native` (as `off1`),
-    /// `scale=X` (the upscaler's scale) and `farn=LO/HI` (the far normal's band).
+    /// `--calm` as window W1 picked it: `nohist`, `column`, `step`, `disc` and the far normal
+    /// 4..8), `native` (as `off1`), `scale=X` (the upscaler's scale), `farn=LO/HI` (the far
+    /// normal's band), `lfade` (`Lighting::landing_fade` on) and `fly=N` (the fly's frames).
     fn parse() -> Self {
         Self::from_spec(&std::env::var("VXE_WOBBLE").unwrap_or_else(|_| "default".into()))
     }
@@ -147,6 +153,8 @@ impl Arm {
             turn_frames: 40,
             light_history: flythrough::default_lighting().light_history,
             scale: 1.5,
+            landing_fade: flythrough::default_lighting().landing_fade,
+            fly: 180,
         };
         for t in spec.split(',') {
             let (k, v) = t.split_once('=').unwrap_or((t, ""));
@@ -205,8 +213,11 @@ impl Arm {
                     a.light_history = false;
                     a.key_far = vxe_render::KeyFar::Column;
                     a.key_far_mix = vxe_render::KeyFarMix::Step;
+                    a.penumbra = vxe_render::Penumbra::Disc;
                     a.far_normal = flythrough::cli::CALM_FAR_NORMAL;
                 }
+                "lfade" => a.landing_fade = true,
+                "fly" => a.fly = v.parse().unwrap(),
                 other => panic!("unknown arm token {other}"),
             }
         }
@@ -300,6 +311,7 @@ fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
         key_far_mix: arm.key_far_mix,
         penumbra: arm.penumbra,
         light_history: arm.light_history,
+        landing_fade: arm.landing_fade,
         store_read: if arm.store_read_face {
             vxe_render::StoreRead::Face
         } else {
@@ -511,9 +523,8 @@ struct Segment {
     gw: usize,
     /// Per frame: the far's key sources ([`far_sources`]).
     sources: Vec<[f64; 4]>,
-    /// Per frame after its queue step: the live queue's chunks baked and key-only jobs ended
-    /// since it started, and the blocks fading (zeros with no queue).
-    queue: Vec<[u64; 3]>,
+    /// Per frame after its queue step: the live queue's counters (the default's with no queue).
+    queue: Vec<vxe_render::QueueStats>,
 }
 
 /// A sampled frame's diagnostic: its index, and per lighting pixel the age, the source word,
@@ -548,10 +559,7 @@ fn run_segment(
     let mut queue = Vec::new();
     for cam in cams {
         queue_step(rig, &mut s.frame, &cam);
-        queue.push(s.frame.bake_queue().map_or([0; 3], |q| {
-            let st = q.stats();
-            [st.baked, st.keys_baked, st.fading]
-        }));
+        queue.push(s.frame.bake_queue().map(|q| q.stats()).unwrap_or_default());
         let shot = s.step(rig, &cam);
         if sum_pass.len() < shot.passes.len() {
             sum_pass.resize(shot.passes.len(), 0.0);
@@ -632,25 +640,52 @@ fn run_segment(
     }
 }
 
-/// The stop's frames `LANDING` one by one: the near class's over-4 share against the previous
-/// frame and against the segment's last, beside the queue's chunks baked and key-only jobs
-/// ended in that frame's step and the blocks fading after it.
+/// The stop's frames `LANDING` one by one, and every other frame of the stop in whose step a
+/// block landed or whose near pair is over [`LANDING_PAIR`]: the near class's over-4 share
+/// against the previous frame and against the segment's last, beside the queue's landings in
+/// that frame's step (chunks baked and key-only jobs ended; the blocks landed by how, refaded /
+/// over the fallback / another layout unfaded / bare unfaded; the landed cells whose words
+/// changed by read, directions / sky visibilities / sky flags / key visibilities / key flags /
+/// tail) and the blocks fading after it. Then the stop's largest near pair and its frame.
 const LANDING: std::ops::RangeInclusive<usize> = 36..=64;
+
+/// A stop frame's near pair over 4 levels, in %, over which [`landing_rows`] prints it.
+const LANDING_PAIR: f64 = 0.5;
 
 fn landing_rows(seg: &Segment, cls: &[u8]) {
     let last = seg.frames.last().unwrap();
-    for i in LANDING.filter(|&i| i > 0 && i < seg.frames.len()) {
+    let mut max = (0.0f64, 0usize);
+    for i in 1..seg.frames.len() {
         let pair = change_by_class(&seg.frames[i - 1], &seg.frames[i], cls, 4)[1].0;
+        if pair > max.0 {
+            max = (pair, i);
+        }
+        let (a, b) = (&seg.queue[i - 1], &seg.queue[i]);
+        let landed = b.baked - a.baked + b.keys_baked - a.keys_baked;
+        if !LANDING.contains(&i) && landed == 0 && pair <= LANDING_PAIR {
+            continue;
+        }
         let to_final = change_by_class(&seg.frames[i], last, cls, 4)[1].0;
-        let (a, b) = (seg.queue[i - 1], seg.queue[i]);
+        let how: Vec<String> = (0..4)
+            .map(|k| (b.landings[k] - a.landings[k]).to_string())
+            .collect();
+        let cells: Vec<String> = (0..6)
+            .map(|k| (b.landing_cells[k] - a.landing_cells[k]).to_string())
+            .collect();
         println!(
-            "    landing {} +{i}: pair near {pair:.2} %; to-final near {to_final:.2} %; landed baked {} keys {}; fading {}",
+            "    landing {} +{i}: pair near {pair:.2} %; to-final near {to_final:.2} %; landed baked {} keys {}; how {}; cells {}; fading {}",
             seg.name,
-            b[0] - a[0],
-            b[1] - a[1],
-            b[2]
+            b.baked - a.baked,
+            b.keys_baked - a.keys_baked,
+            how.join("/"),
+            cells.join("/"),
+            b.fading
         );
     }
+    println!(
+        "  {}: largest near pair {:.2} % at +{}",
+        seg.name, max.0, max.1
+    );
 }
 
 /// The live queue's depth in words: its jobs and the chunks it waits on.
@@ -944,9 +979,11 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> f64 {
             println!("  classes at the still: {}", share.join(", "));
         }
         let still_far_max = still.pairs.iter().map(|p| p[3].0).fold(0.0, f64::max);
-        // The slow fly: 180 frames forward.
+        // The slow fly: `arm.fly` frames forward (180 by default).
         let step = arm.speed_m_s / 60.0;
-        let fly_cams: Vec<Camera> = (1..=180).map(|k| moved(&cam0, step * k as f32)).collect();
+        let fly_cams: Vec<Camera> = (1..=arm.fly)
+            .map(|k| moved(&cam0, step * k as f32))
+            .collect();
         let cam1 = *fly_cams.last().unwrap();
         let fly = run_segment(
             rig,

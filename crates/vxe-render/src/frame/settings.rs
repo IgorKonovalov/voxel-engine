@@ -974,6 +974,10 @@ pub struct Lighting {
     /// on): off, `Params::history` bit 0 is clear every frame, so every lighting pixel resets
     /// (age 0, this frame's sample) while the upscaler keeps its own history (bit 1).
     pub light_history: bool,
+    /// A landing block's sky visibilities ride the store's fade with its direction values and
+    /// key visibilities (default off): off, they change in the frame the block lands, and only
+    /// the light pass's screen history (the no-ray fade) softens it.
+    pub landing_fade: bool,
     /// How the key light's shadow ray makes its penumbra ([`Penumbra`]; default `Disc`).
     pub penumbra: Penumbra,
     /// Where the key light's visibility comes from where a voxel is small on screen
@@ -1047,6 +1051,7 @@ impl Default for Lighting {
             sky_history: DEFAULT_SKY_HISTORY,
             key_history: DEFAULT_KEY_HISTORY,
             light_history: true,
+            landing_fade: false,
             penumbra: Penumbra::Disc,
             key_far: KeyFar::Baked,
             key_far_mix: KeyFarMix::Blend,

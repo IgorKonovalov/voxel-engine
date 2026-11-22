@@ -370,6 +370,7 @@ impl Frame {
         let q = self.baked.queue.as_mut()?;
         q.column_wait = self.state.lighting.column_wait;
         q.key_step = self.state.lighting.key_step;
+        q.landing_fade = self.state.lighting.landing_fade;
         Some(q.step(&run, &mut self.baked.store, view, t0))
     }
 
