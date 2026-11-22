@@ -1,6 +1,6 @@
 # 0096: Performance: the bake queue's drain (a record by rule, a tier by size on screen, a drain slice), the step off the depth, the slow adapter's light pass, and the sync's `alloc` and eviction scan
 
-> **Status:** in-progress (dev, 2026-11-21). Approved 2026-11-20 (owner go; starts after Plan 0095 closes and merges). Owner picks, all as recommended: the drain slice 4.0 ms Floor / 6.0 ms Portable while in-view work waits, 1.0 once landed; a far chunk's 256-sample record is final until the camera brings it nearer; if the RENOIR forest stays over 4.0 ms the Portable profile owns the levers it picks and the Floor line stays with the miss disclosed; the window includes the 60 s cave glide. **Amended 2026-11-20 (owner)**, at Plan 0095's window W1: the far tiers' reach rule moves into this plan (ADR-0080 rule 4; a chunk whose reach crosses the full radius bakes its mid or far tier from the chunks resident, the near tier keeps the full reach), Phase 1's census counts reach-bound chunks by the exact test and names the no-record bricks if Plan 0095 Phase 6 cannot, Phase 6 (c) reads far pixels on the baked key or the column map's horizon, the landed state counts a LOD-ring face served by the horizon, and 0095's extra bake rays are conditional on its window W2. **Amended 2026-11-22 (architect, owner confirm owed)**, overnight at the Phase 6 checkpoint `2665f41f`: Phase 4's bar 2 is read at the default drain slice and the F2 rig's miss is a disclosed reading with its cause (the opening's candidate cap, routed to the Phase 5 bar 3 decision); Phase 6's lever (b) leaves bar 1 and the window (a no-op on cube faces, bounded at 0.16 ms by Phase 1's `--sky-rays 0` arm), the setting stays, and bar 1 becomes the key cap's test; Phase 6's paths fixed (`crates/vxe-render/tests/gpu_sun/key.rs`, `cli/outdoor.rs`).
+> **Status:** in-progress (dev, 2026-11-21). Approved 2026-11-20 (owner go; starts after Plan 0095 closes and merges). Owner picks, all as recommended: the drain slice 4.0 ms Floor / 6.0 ms Portable while in-view work waits, 1.0 once landed; a far chunk's 256-sample record is final until the camera brings it nearer; if the RENOIR forest stays over 4.0 ms the Portable profile owns the levers it picks and the Floor line stays with the miss disclosed; the window includes the 60 s cave glide. **Amended 2026-11-20 (owner)**, at Plan 0095's window W1: the far tiers' reach rule moves into this plan (ADR-0080 rule 4; a chunk whose reach crosses the full radius bakes its mid or far tier from the chunks resident, the near tier keeps the full reach), Phase 1's census counts reach-bound chunks by the exact test and names the no-record bricks if Plan 0095 Phase 6 cannot, Phase 6 (c) reads far pixels on the baked key or the column map's horizon, the landed state counts a LOD-ring face served by the horizon, and 0095's extra bake rays are conditional on its window W2. **Amended 2026-11-22 (architect, owner confirm owed)**, overnight at the Phase 6 checkpoint `2665f41f`: Phase 4's bar 2 is read at the default drain slice and the F2 rig's miss is a disclosed reading with its cause (the opening's candidate cap, routed to the Phase 5 bar 3 decision); Phase 6's lever (b) leaves bar 1 and the window (a no-op on cube faces, bounded at 0.16 ms by Phase 1's `--sky-rays 0` arm), the setting stays, and bar 1 becomes the key cap's test; Phase 6's paths fixed (`crates/vxe-render/tests/gpu_sun/key.rs`, `cli/outdoor.rs`). **Amended 2026-11-22 (architect, owner confirm owed)**, overnight at Phase 7's tip `8bb8857b`: Phase 7's bar 2 (the glide's `light place`) takes a Phase 7b, the write walk ending at the first refusal it cannot undo (outcomes identical, bar 1's test extended), before the Phase 8 window when it lands first; Phase 7's bar 3 (`alloc` and the sync lines) is disclosed, the per-brick packing routed to its own plan under ADR-0056 at this plan's close.
 > **Created:** 2026-11-20
 > **Milestone:** M10 (the outdoor scenes are where the queue never drains) and cross-cutting
 > like [Plan 0067](done/0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md):
@@ -579,6 +579,79 @@ names or hands over the 461 no-record pixels. If 0095 is still open when the lan
   p99 at most 16.6 ms** (today 18.0 to 23.7), the forest at leaf fill 128 sync p99 at most
   6 ms (today 11.0); `pack + size` read beside them for the backlog's "Slot words packed on the
   workers" entry.
+- **Amended 2026-11-22 (architect, owner confirm owed): bar 2's miss has one cause, the walk's
+  retries, and takes Phase 7b; bar 2 stays as written and is re-read there.** The glide
+  (readings log, Phase 7, `live/bin/p7a`, loaded) reads `light place` p50/p99 11.2 / 17.6 ms
+  from 813 / 1 002 ms, with about 549 chunks evicted and 549 written a sync and about 15 400
+  refused a sync: `place_lights`'s write walk retries every refused chunk at every sync, each
+  retry a thinned count, a failed first fit and a victim lookup, about 0.7 µs, which is
+  10.8 of the 11.2 ms. The churn is the rig's intent, not a fault: the buffer at 1/16
+  (`--light-samples 65536`) holds a small fraction of the hold radius's demand, so the placed
+  set is a frontier that moves with the focus, and a chunk entering it evicts one leaving it.
+  Eviction hysteresis against that churn (option c) is rejected: it changes which chunks hold
+  light near the frontier, a look change no window reads, to spare a cost that is not the
+  evictions'. A cross-sync memo (no re-walk of a refused set until a range is released or the
+  focus chunk moves) is not taken either: in the glide a range is released at every sync, so
+  the walk would run anyway. What pays is ending the walk: Phase 7b.
+- **Amended 2026-11-22 (architect, owner confirm owed): bar 3 is disclosed, not fixed in this
+  plan; the per-brick packing goes to its own plan under ADR-0056.** The cave bench reads
+  `alloc` p99 9.4 ms on the Phase 6 and the Phase 7 binaries alike against 3.0, `update +
+  poll + sync` p99 21.4 to 21.7 against 16.6, and the forest at leaf fill 128 sync p99 7.5
+  against 6 (`alloc` 2.9, `copy` 2.5); `light place` p99 fell from 2.0 to 1.6 (the index). The
+  frame-pointer profile attributes `alloc` to the per-brick path as a whole and to no item a
+  third of it: `upload_record`'s brick loop, `upload_brick` with `fill_slot` and the belt's
+  staging (the mapped view's drop and its page faults about an eighth), about 9.5 µs a brick
+  packed, 13 383 bricks at the slowest sync. So "the fix is what the profile points at" has no
+  single target on the render thread: the stage is the packing, and taking the packing off the
+  render thread is ADR-0056's accepted mechanism, which Plan 0070 deferred when the packing read
+  1.5 ms of a 44 to 47 ms sync p99 and left a rule (the worker packing returns as its own plan
+  at half or more of the sync p99 left after `light_note` and `alloc`). The rule is met in
+  substance: `alloc` is the packing path, 9.4 of 19.4 ms. It is a slot-format boundary across
+  threads, a plan of its own with the ADR's Outcome extended, not a phase of a plan in its
+  fourth day. Capping the bricks a sync packs (option c) is rejected: it is the `--sync-ms`
+  budget's trade, read at Plan 0064 Phase 4b (residency p95 2.7 to 6.9 s against 0.30 s), and
+  the backlog's rule that a budget pays only once a chunk's upload is cheaper stands. So: bar
+  3's three lines stay as written; Phase 9 pins the readings as disclosed misses in
+  `docs/nfr.md` section 2 with the attribution above; the backlog's "Slot words packed on the
+  workers" entry is re-pointed at this reading and its plan is drafted at this plan's close;
+  the backlog's "sync's `alloc` stage" entry closes into it. Nothing changes for Phase 8: its
+  (e) reads the sync row as a reading.
+
+### Phase 7b: The write walk ends at the first refusal it cannot undo
+- **Owner skill:** dev
+- **What:** (Amended 2026-11-22, architect, owner confirm owed.) `place_lights`
+  (`crates/vxe-render/src/gpu_world/lights.rs`) walks the wanted chunks nearest first, so once a
+  chunk is refused (no free run holds it, no headroom above the high-water mark, no placed chunk
+  farther than it) **every later unplaced chunk in the same walk is refused too**: it is at least
+  as far, so it has no victim either (a victim lies strictly farther), and nothing has freed a
+  run since. The walk ends there and counts the rest refused with a refusal's bookkeeping (the
+  `light_refused` count, the `dirty` and `wait` sets), under two conditions that keep it exact:
+  while the free list holds a run or the high-water mark is under the capacity the walk goes on,
+  since a later chunk with a smaller thinned count may fit; and a later chunk that holds a range
+  (a dirty placed one) is still rewritten, since its release may free a run, after which the walk
+  goes on by the same rule. The outcomes (which chunks hold which ranges, the buffer's bytes) are
+  the full walk's, and Phase 7's bar 1 defends that on a sequence that refuses. No flag, no
+  setting: an exact early-out of a walk whose result it does not change.
+- **Files touched:** `crates/vxe-render/src/gpu_world/lights.rs` (`place_lights`; the `Ranges`
+  queries the stop reads: a free run exists, headroom), `crates/vxe-render/src/gpu_world/fit.rs`
+  if the free list needs an any-run query, the bar 1 unit test beside them.
+- **Done when:** (1) `the_indexed_placement_writes_the_same_bytes_as_the_scan` (Phase 7 bar 1)
+  gains a refusing phase: a buffer that holds about a tenth of the sequence's demand, so most
+  placements refuse, with rewrites of dirty placed chunks among the refused, and every step's
+  placed ranges, free ranges, high-water mark and buffer words still equal the walk's. (2)
+  `a_refused_walk_ends_at_the_first_refusal_it_cannot_undo` (CPU, under 1 s): on a full buffer
+  with no free run, a walk of N wanted chunks whose first K fit calls `place` K + 1 times and
+  counts N - K refused; the same walk with a dirty placed chunk after the refusal calls it once
+  more and resumes the unplaced chunks only if that rewrite left a run. (3) Phase 7's bar 2
+  re-read on its rig (`--headless --frames 18000 --glide 300 --light-samples 65536`, RTX Floor
+  1080p, the load logged): `light place` p99 under 2 ms with over 1 000 evictions logged. If it
+  lands over 2 ms with the retries gone, the residual is disclosed with its split (the wanted
+  set's collection and sort against the writes), and no second mechanism rides in this plan.
+  (4) The cave bench's `light place` p99 within 0.1 ms of Phase 7's 1.55 to 1.63 (the bench
+  refuses nothing, so the stop never fires). Order: **before Phase 8** when it lands before the
+  owner opens the window; the runner `live/session96.sh` stays valid (no flag, no outcome
+  change) and `live/bin96/flythrough` is rebuilt at 7b's tip. If the owner opens the window
+  first, the window runs on Phase 7's binary, 7b lands after it, and (e) is not re-run.
 
 ### Phase 8: The owner's window
 - **Owner skill:** human

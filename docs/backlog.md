@@ -53,7 +53,7 @@ Windows and a Linux screenshot of the same pose by pixel values, and swap `fs_sr
 
 ### The sync's `alloc` stage: the sync plan after the eviction scan
 
-Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 7 (`alloc` p99 at most 3.0 ms, `update + poll + sync` p99 at most 16.6 in the tester cave bench), after Phase 1 (6)'s profile of the stage.
+Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 7 (`alloc` p99 at most 3.0 ms, `update + poll + sync` p99 at most 16.6 in the tester cave bench), after Phase 1 (6)'s profile of the stage. Read 2026-11-22 at Plan 0096 Phase 7 (`8bb8857b`, RTX host, cave bench, `docs/plans/logs/0096.md`): `alloc` p99 9.4 ms of a sync p99 19.4 on the Phase 6 and Phase 7 binaries alike, and the frame-pointer profile spreads it over the per-brick path as a whole (`upload_record`'s brick loop, `upload_brick`, `fill_slot`, the belt view's drop), about 9.5 µs a brick packed, no item a third of it. The miss is disclosed in that plan (architect amendment, owner confirm owed) and this entry closes into "Slot words packed on the workers" below, whose mechanism is the fix.
 
 ### Done: test tiers by marks, not by copied lists
 
@@ -652,7 +652,14 @@ read again at Plan 0074's Phase 4 with `light_note` cut (`docs/plans/logs/0074.m
 the tip cave's `size` p99 2.8 to 3.8 ms and `pack` 2 us, 17.1 to 17.9 % of the sync p99 on the
 RTX (16.5 to 21.1 ms) and 16.6 to 17.1 % on the Radeon (16.1 to 16.8), still under half;
 the lane's drafts (`live/p2_wire.py`, `live/p2-draft/`) stay untracked in the plan-0070
-worktree and leave with it.
+worktree and leave with it. **Read 2026-11-22 at Plan 0096 Phase 7 (`8bb8857b`, RTX host, cave
+bench):** with `light_note` and the eviction scan cut, `alloc` p99 is 9.4 ms of a sync p99 of
+19.4 (48 %) and its profile is the per-brick packing path as a whole (about 9.5 µs a brick,
+13 383 bricks at the slowest sync; `pack + size` p99 3.0 ms beside it): the rule is met in
+substance, since `alloc` is the packing this entry moves. **Pick up at Plan 0096's close:** its
+own plan under ADR-0056 (the Outcome extended with this reading), the lines it chases Plan 0096's
+bar 3 (`alloc` p99 3.0 ms, `update + poll + sync` p99 16.6, the forest at leaf fill 128 sync p99
+6). Architect's routing, owner confirm owed.
 
 ### The sync's `light_note` stage and the windowed glide's light walks
 
