@@ -41,6 +41,9 @@ pub struct OutdoorArgs {
     /// `--key-far-mix blend|step`: how the store's key visibility joins the ray inside the far
     /// normal's band.
     pub(crate) key_far_mix: vxe_render::KeyFarMix,
+    /// `--light-history on|off` (or `--calm`'s off): the light passes' screen history
+    /// (`Lighting::light_history`); unset, the renderer's default.
+    pub(crate) light_history: Option<bool>,
     /// `--sky-normal face|smoothed`: the normal the baked sky term reads its visibilities by.
     pub(crate) sky_normal: vxe_render::SkyNormal,
     /// `--sky-bounce B`: the baked sky term's bounce floor, 0 to 1.
@@ -92,6 +95,20 @@ impl OutdoorArgs {
     pub fn leaf_shadow(&self) -> crate::LeafShadow {
         self.leaf_shadow
     }
+}
+
+/// `--calm`'s far normal band in pixels a voxel (ADR-0082): the mid range the diagnosis
+/// window of 2026-11-21 read as calm.
+pub const CALM_FAR_NORMAL: [f32; 2] = [8.0, 12.0];
+
+/// Whether `l` and the far normal band `far_normal` are `--calm`'s combination: no light
+/// history, the key light's far from the column map's horizon, stepped in at the band's half,
+/// and the band [`CALM_FAR_NORMAL`].
+pub fn is_calm(l: &vxe_render::Lighting, far_normal: [f32; 2]) -> bool {
+    !l.light_history
+        && l.key_far == vxe_render::KeyFar::Column
+        && l.key_far_mix == vxe_render::KeyFarMix::Step
+        && far_normal == CALM_FAR_NORMAL
 }
 
 /// The outdoor start exposure's floor: a sunlit ground reads about 200 to 300 frame radiance
@@ -361,6 +378,29 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
                 p.args.outdoor.key_far_mix =
                     v.named(vxe_render::KeyFarMix::from_name, "blend or step")?;
                 Ok(())
+            },
+        ),
+        Flag::value(
+            &["--light-history"],
+            "on|off",
+            "the light passes read last frame's lighting through their history test; off, \
+                 every lighting pixel is this frame's alone (the upscaler keeps its own \
+                 history) [on]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.light_history = Some(v.on_off()?);
+                Ok(())
+            },
+        ),
+        Flag::switch(
+            &["--calm"],
+            "the diagnosis window's calm combination (ADR-0082): --light-history off \
+                 --key-far column --key-far-mix step --far-normal 8,12; a later flag of the \
+                 four overrides its part; the banner names calm while all four hold",
+            |p: &mut Parsing| {
+                p.args.outdoor.light_history = Some(false);
+                p.args.outdoor.key_far = vxe_render::KeyFar::Column;
+                p.args.outdoor.key_far_mix = vxe_render::KeyFarMix::Step;
+                p.given.far_normal = Some(CALM_FAR_NORMAL);
             },
         ),
         Flag::value(

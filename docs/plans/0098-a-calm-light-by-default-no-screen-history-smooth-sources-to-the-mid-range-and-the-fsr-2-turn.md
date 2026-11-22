@@ -1,6 +1,6 @@
 # 0098: A calm light by default: no screen history, smooth sources to the mid range, and the FSR 2 turn
 
-> **Status:** approved 2026-11-22 (owner)
+> **Status:** in-progress
 > **Created:** 2026-11-21
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0082](../adrs/0082-the-light-pass-keeps-no-screen-history-by-default-and-reads-smooth-sources-to-the-mid-range.md)
@@ -255,7 +255,7 @@ pub struct Lighting {
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The calm combination as one setting | dev | not started | |
+| 1: The calm combination as one setting | dev | done; `Lighting::light_history` (the plan's `history` is taken by `HistoryKill`); the setting row in `crates/vxe-render/src/settings.rs`; `start_lighting` in `cli/mod.rs`; the menu's far normal steps 4..8 and 8..12 too (`cli/parse.rs`, `run/tests.rs`); the hook's three lines dropped from `gpu_outdoor/canopy.rs`; readings in the log | committed with this row |
 | 2: Where FSR 2 loses the far trees | dev | not started | |
 | 3: The owner's window W1 | human | not started | |
 | 4: The picks become the defaults | dev | not started | |

@@ -239,7 +239,7 @@ fn pose_starts_the_level_at_the_rigs_still_camera() {
     );
 }
 
-/// `V` steps the far normal through `[2, 6]`, `[1, 2]` and off, `Z` the sharpening through
+/// `V` steps the far normal through `[1, 2]`, off, `[4, 8]`, `[8, 12]` and `[2, 6]`, `Z` the sharpening through
 /// 0.25, 0 and 0.5, and `Period` stops and starts `--pan`'s yaw; each press changes the
 /// banner's text to the new mode, and the stats HUD's aliasing row names all four.
 /// `--pan` parses a number of degrees a second and refuses a non-number and 0; FSR 2's
@@ -253,7 +253,13 @@ fn the_aliasing_toggles_show_in_the_banner() {
         enter(run, label);
         run.banner().expect("a press shows the banner")
     };
-    for want in ["far normal 1..2", "far normal off", "far normal 2..6"] {
+    for want in [
+        "far normal 1..2",
+        "far normal off",
+        "far normal 4..8",
+        "far normal 8..12",
+        "far normal 2..6",
+    ] {
         let banner = press(&mut run, "far normal");
         assert!(banner.contains(want), "{want}: {banner}");
     }

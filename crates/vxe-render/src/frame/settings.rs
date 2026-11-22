@@ -318,9 +318,6 @@ pub struct LightHooks {
     /// A reset pair seeded from a stale record (a ring face casting the sky ray) counts 16
     /// samples (the fade's frames) instead of 8.
     pub seed_stale_f: bool,
-    /// The light passes take no screen history: `Params::history` bit 0 is clear every frame,
-    /// so every pixel resets (age 0, this frame's sample) while the upscaler keeps its own.
-    pub no_history: bool,
 }
 
 impl LightHooks {
@@ -973,6 +970,10 @@ pub struct Lighting {
     /// mean through a canopy holds four times the sky rays' frames while a 10-degree jump
     /// still resets it at once (the sky-change bit).
     pub key_history: u32,
+    /// The light passes read last frame's lighting through the history test (ADR-0082; default
+    /// on): off, `Params::history` bit 0 is clear every frame, so every lighting pixel resets
+    /// (age 0, this frame's sample) while the upscaler keeps its own history (bit 1).
+    pub light_history: bool,
     /// How the key light's shadow ray makes its penumbra ([`Penumbra`]; default `Disc`).
     pub penumbra: Penumbra,
     /// Where the key light's visibility comes from where a voxel is small on screen
@@ -1045,6 +1046,7 @@ impl Default for Lighting {
             sky_rays: DEFAULT_SKY_RAYS,
             sky_history: DEFAULT_SKY_HISTORY,
             key_history: DEFAULT_KEY_HISTORY,
+            light_history: true,
             penumbra: Penumbra::Disc,
             key_far: KeyFar::Baked,
             key_far_mix: KeyFarMix::Blend,

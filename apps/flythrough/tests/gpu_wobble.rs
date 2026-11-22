@@ -81,6 +81,8 @@ struct Arm {
     leaves_absorb: bool,
     /// The turn's frames (`turnf=N`, 40 by default): 240 is a slow pan.
     turn_frames: usize,
+    /// The light passes' screen history (`Lighting::light_history`; `nohist` or `calm` clear it).
+    light_history: bool,
 }
 
 impl Arm {
@@ -92,7 +94,8 @@ impl Arm {
     /// (`key_far_mix step`), `column` (`key_far column`), `pre=MS` (the queue's budget through
     /// the drain, the default's after it), `approach` / `disc` (the penumbra; the fly-through's
     /// default unless named), `absorb` (the leaves absorb, `--leaf-shadow absorb`), `turnf=N`
-    /// (the turn's frames).
+    /// (the turn's frames), `nohist` (`light_history` off), `calm` (the fly-through's
+    /// `--calm`: `nohist`, `column`, `step` and the far normal 8..12) and `native` (as `off1`).
     fn parse() -> Self {
         Self::from_spec(&std::env::var("VXE_WOBBLE").unwrap_or_else(|_| "default".into()))
     }
@@ -136,6 +139,7 @@ impl Arm {
             penumbra: flythrough::DEFAULT_PENUMBRA,
             leaves_absorb: false,
             turn_frames: 40,
+            light_history: flythrough::default_lighting().light_history,
         };
         for t in spec.split(',') {
             let (k, v) = t.split_once('=').unwrap_or((t, ""));
@@ -183,6 +187,14 @@ impl Arm {
                 "disc" => a.penumbra = vxe_render::Penumbra::Disc,
                 "absorb" => a.leaves_absorb = true,
                 "turnf" => a.turn_frames = v.parse().unwrap(),
+                "nohist" => a.light_history = false,
+                "native" => a.upscaler = "off",
+                "calm" => {
+                    a.light_history = false;
+                    a.key_far = vxe_render::KeyFar::Column;
+                    a.key_far_mix = vxe_render::KeyFarMix::Step;
+                    a.far_normal = flythrough::cli::CALM_FAR_NORMAL;
+                }
                 other => panic!("unknown arm token {other}"),
             }
         }
@@ -269,6 +281,7 @@ fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
         key_far: arm.key_far,
         key_far_mix: arm.key_far_mix,
         penumbra: arm.penumbra,
+        light_history: arm.light_history,
         store_read: if arm.store_read_face {
             vxe_render::StoreRead::Face
         } else {
@@ -963,9 +976,9 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> f64 {
     }
 }
 
-/// Plan 0095 Phase 10's soak reading: the rig's protocol ([`wobble_on`]) for the arm set
-/// `default`, `albedo`, `ray,disc`, `column` and `nqueue`, no drain, on one forest (`r` 8) at
-/// 1080p through FSR 2 at 1.5: each arm's rows printed with the queue's depth and the far's key
+/// Plan 0095 Phase 10's soak reading: the rig's protocol ([`wobble_on`]) for Plan 0098 Phase
+/// 1's arm set `default`, `albedo`, `calm` and `calm,native` (the last with no upscaler, at 1080p
+/// native), no drain, on one forest (`r` 8) at 1080p through FSR 2 at 1.5: each arm's rows printed with the queue's depth and the far's key
 /// source split, so a later plan re-reads the wobble with the same instrument. Plan 0095 Phase
 /// 10's near bar (as amended 2026-11-21): the `default` arm's (the picks') stop +0 near, the near
 /// class's over-4 share from the stop's first frame to its last, is at most the `albedo` arm's
@@ -979,7 +992,7 @@ fn the_wobble_table_over_the_arm_set() {
         return;
     };
     let mut near = Vec::new();
-    for spec in ["default", "albedo", "ray,disc", "column", "nqueue"] {
+    for spec in ["default", "albedo", "calm", "calm,native"] {
         near.push((spec, wobble_on(&mut rig, cam0, &Arm::from_spec(spec))));
     }
     let row: Vec<String> = near.iter().map(|(a, v)| format!("{a} {v:.2} %")).collect();

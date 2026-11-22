@@ -990,9 +990,9 @@ pub static TOGGLES: &[Toggle] = &[
     ),
     diag!(
         "light history",
-        |m| format!("light history {}", on(!m.diag.hooks.no_history)),
+        |m| format!("light history {}", on(m.lighting.light_history)),
         |m| {
-            m.diag.hooks.no_history = !m.diag.hooks.no_history;
+            m.lighting.light_history = !m.lighting.light_history;
         }
     ),
     diag!(

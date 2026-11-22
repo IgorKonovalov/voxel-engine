@@ -307,7 +307,9 @@ pub mod table;
 
 pub use flags::{GONE_SINCE_0057, gone_since_0057, help, lighting_flags};
 pub(crate) use loading::LoadingArgs;
-pub use outdoor::{OUTDOOR_MAX, OUTDOOR_MIN, OutdoorArgs, SOURCES, next_source};
+pub use outdoor::{
+    CALM_FAR_NORMAL, OUTDOOR_MAX, OUTDOOR_MIN, OutdoorArgs, SOURCES, is_calm, next_source,
+};
 pub use parse::*;
 pub use settings::settings_lines;
 
@@ -987,6 +989,10 @@ impl Args {
                 .outdoor
                 .key_history
                 .unwrap_or(vxe_render::DEFAULT_KEY_HISTORY),
+            light_history: self
+                .outdoor
+                .light_history
+                .unwrap_or(crate::default_lighting().light_history),
             penumbra: self.outdoor.penumbra.unwrap_or(crate::DEFAULT_PENUMBRA),
             key_far: self.outdoor.key_far,
             key_far_mix: self.outdoor.key_far_mix,

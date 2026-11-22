@@ -1,5 +1,5 @@
-//! The outdoor section's lighting flags: the penumbra, the key light's far source, the sky
-//! term's normal and bounce, the exposure's ceiling.
+//! The outdoor section's lighting flags: the penumbra, the key light's far source, `--calm`,
+//! the sky term's normal and bounce, the exposure's ceiling.
 
 use crate::cli::parse_args_from;
 use crate::test_support::argv;
@@ -390,4 +390,78 @@ fn the_sky_anchor_share_reaches_the_run() {
             "{bad}"
         );
     }
+}
+
+/// Plan 0098 Phase 1: `--calm` sets exactly the four rows of ADR-0082's combination (light
+/// history off, key far column, key far mix step, far normal 8..12) and nothing else of the
+/// start's lighting; a later flag of the four overrides its part (`--calm --far-normal 2,6`
+/// keeps 2..6 and is not calm), an earlier one is overridden. With all four the lighting
+/// row reads `light history off` and the banner names `calm`; the default names neither.
+#[test]
+fn calm_sets_the_four_rows_and_a_later_flag_wins() {
+    use crate::hud::HudRow;
+    use vxe_render::{KeyFar, KeyFarMix};
+    let base = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert!(base.start_lighting().light_history);
+    let m = base.start_modes(0.0);
+    assert!(!m.row(HudRow::Lighting).contains("light history"));
+    assert!(!m.banner(0.0).unwrap().contains("calm"));
+
+    let r = parse_args_from(argv(&["--source", "outdoor", "--calm"])).unwrap();
+    let l = r.start_lighting();
+    assert_eq!(
+        (l.light_history, l.key_far, l.key_far_mix),
+        (false, KeyFar::Column, KeyFarMix::Step)
+    );
+    assert_eq!(r.start_look().far_normal, [8.0, 12.0]);
+    assert_eq!(
+        vxe_render::Lighting {
+            light_history: true,
+            key_far: base.start_lighting().key_far,
+            key_far_mix: base.start_lighting().key_far_mix,
+            ..l
+        },
+        base.start_lighting(),
+        "--calm changes no other lighting row"
+    );
+    let m = r.start_modes(0.0);
+    let row = m.row(HudRow::Lighting);
+    assert!(row.contains("light history off, "), "{row}");
+    let banner = m.banner(0.0).unwrap().replace('\n', ", ");
+    assert!(banner.contains("calm, "), "{banner}");
+    assert!(
+        banner.contains("key far column, key far mix step, "),
+        "{banner}"
+    );
+
+    let r = parse_args_from(argv(&[
+        "--source",
+        "outdoor",
+        "--calm",
+        "--far-normal",
+        "2,6",
+    ]))
+    .unwrap();
+    assert_eq!(r.start_look().far_normal, [2.0, 6.0]);
+    assert!(!r.start_lighting().light_history);
+    assert!(!r.start_modes(0.0).line().contains("calm"));
+    let r = parse_args_from(argv(&[
+        "--source",
+        "outdoor",
+        "--light-history",
+        "on",
+        "--calm",
+    ]))
+    .unwrap();
+    assert!(!r.start_lighting().light_history);
+    let r = parse_args_from(argv(&[
+        "--source",
+        "outdoor",
+        "--calm",
+        "--light-history",
+        "on",
+    ]))
+    .unwrap();
+    assert!(r.start_lighting().light_history);
+    assert!(parse_args_from(argv(&["--light-history", "maybe"])).is_err());
 }

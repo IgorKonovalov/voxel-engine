@@ -425,16 +425,14 @@ pub(crate) fn parse_pan(v: &str) -> Result<f32, String> {
         ))
 }
 
-/// The far normal `V` steps through: `[2, 6]`, `[1, 2]`, off, then `[2, 6]` again; any other
-/// band steps to `[2, 6]`.
+/// The far normal `V` steps through: `[2, 6]`, `[1, 2]`, off, `[4, 8]`, `[8, 12]` (`--calm`'s
+/// band, ADR-0082), then `[2, 6]` again; any other band steps to `[2, 6]`.
 pub(crate) fn next_far_normal(f: [f32; 2]) -> [f32; 2] {
-    if f == [2.0, 6.0] {
-        [1.0, 2.0]
-    } else if f == [1.0, 2.0] {
-        [0.0, 0.0]
-    } else {
-        [2.0, 6.0]
-    }
+    const CYCLE: [[f32; 2]; 5] = [[2.0, 6.0], [1.0, 2.0], [0.0, 0.0], [4.0, 8.0], [8.0, 12.0]];
+    CYCLE
+        .iter()
+        .position(|&b| b == f)
+        .map_or(CYCLE[0], |i| CYCLE[(i + 1) % CYCLE.len()])
 }
 
 pub(crate) fn parse_far_normal(v: &str) -> Result<[f32; 2], String> {
