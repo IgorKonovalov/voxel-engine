@@ -1,15 +1,14 @@
 //! The light-sample buffer (ADR-0025): each mirrored chunk's exposed emitters, and their
 //! ranges of the buffer by the light radius.
 
+use super::fit::FreeRanges;
 use super::*;
 
 /// The light-sample buffer and each chunk's samples.
 pub(super) struct LightMirror {
-    /// The buffer, its free ranges (start to length) below `high`, the first sample never
-    /// handed out.
+    /// The buffer and its ranges.
     pub(super) buf: wgpu::Buffer,
-    pub(super) free: BTreeMap<u32, u32>,
-    pub(super) high: u32,
+    pub(super) ranges: Ranges,
     /// Ranges are held out to at least this many chunks of the focus ([`GpuWorld::hold_lights`]).
     pub(super) hold: i32,
     /// Each chunk's samples.
@@ -58,8 +57,7 @@ impl LightMirror {
                 "light_samples",
                 (u64::from(samples) + LIGHT_TABLE_SLOTS) * LIGHT_SAMPLE_BYTES,
             ),
-            free: BTreeMap::new(),
-            high: 0,
+            ranges: Ranges::new(samples),
             hold: 0,
             chunks: HashMap::new(),
             live: 0,
@@ -83,23 +81,166 @@ impl LightMirror {
         self.changes += 1;
     }
 
+    /// Notes range `r` released from its chunk (freed, its zeroing the caller's).
+    fn released(&mut self, r: (u32, u32)) {
+        self.touch();
+        self.epoch += 1;
+        self.live -= u64::from(r.1);
+    }
+}
+
+/// The light-sample buffer's ranges: the free ranges below `high` (the first sample never
+/// handed out), each placed chunk's range and power ([`GpuWorld::light_chunks`]), and the placed
+/// chunks by squared chunk distance to `focus`, ties by coordinate (the eviction's index: its
+/// last entry is the farthest placed chunk, the victim a scan of every placed chunk would pick).
+/// The index is kept on placement and release, and rebuilt when an eviction asks for it at a
+/// focus other than its own.
+pub(super) struct Ranges {
+    samples: u32,
+    free: FreeRanges,
+    high: u32,
+    held: HashMap<ChunkCoord, (u32, u32, f32)>,
+    by_distance: BTreeMap<(i64, [i32; 3]), ChunkCoord>,
+    focus: Option<ChunkCoord>,
+    /// The first fit and the victim by a walk of every free range and a scan of every placed
+    /// chunk: the reference the indexed placement is tested against.
+    #[cfg(test)]
+    pub(super) linear: bool,
+}
+
+impl Ranges {
+    /// No range placed in a buffer of `samples` samples.
+    pub(super) fn new(samples: u32) -> Self {
+        Self {
+            samples,
+            free: FreeRanges::new(samples),
+            high: 0,
+            held: HashMap::new(),
+            by_distance: BTreeMap::new(),
+            focus: None,
+            #[cfg(test)]
+            linear: false,
+        }
+    }
+
+    /// `coord`'s range, start and length.
+    pub(super) fn get(&self, coord: ChunkCoord) -> Option<(u32, u32)> {
+        self.held.get(&coord).map(|&(s, n, _)| (s, n))
+    }
+
+    /// Sets placed chunk `coord`'s power.
+    pub(super) fn set_power(&mut self, coord: ChunkCoord, power: f32) {
+        if let Some(h) = self.held.get_mut(&coord) {
+            h.2 = power;
+        }
+    }
+
+    /// Free ranges below the high-water mark.
+    pub(super) fn free_count(&self) -> usize {
+        self.free.len()
+    }
+
+    /// The samples from 0 to the high-water mark.
+    pub(super) fn high(&self) -> u32 {
+        self.high
+    }
+
+    /// Places `n` samples of `coord`, which holds no range, at squared chunk distance `d2` from
+    /// `focus`: the lowest free run that holds them, else the samples above the high-water mark;
+    /// while neither fits, the farthest placed chunk beyond `d2` is released and pushed to
+    /// `evicted` with its range. `None` (refused) when nothing farther is left. The first fit's
+    /// steps go to `st.light_fit_steps`, the victims' to `st.light_victim_steps`.
+    pub(super) fn place(
+        &mut self,
+        coord: ChunkCoord,
+        n: u32,
+        d2: i64,
+        focus: ChunkCoord,
+        evicted: &mut Vec<(ChunkCoord, (u32, u32))>,
+        st: &mut SyncStats,
+    ) -> Option<u32> {
+        debug_assert!(!self.held.contains_key(&coord));
+        loop {
+            if let Some(start) = self.alloc(n, &mut st.light_fit_steps) {
+                self.held.insert(coord, (start, n, 0.0));
+                if let Some(f) = self.focus {
+                    self.by_distance
+                        .insert((coord.distance2(f), coord.0), coord);
+                }
+                return Some(start);
+            }
+            let v = self.victim(focus, d2, &mut st.light_victim_steps)?;
+            let r = self.release(v).expect("a victim holds a range");
+            evicted.push((v, r));
+        }
+    }
+
+    /// The placed chunk farthest from `focus` (the greatest coordinate among the farthest),
+    /// when it lies beyond `d2`.
+    fn victim(&mut self, focus: ChunkCoord, d2: i64, steps: &mut u64) -> Option<ChunkCoord> {
+        #[cfg(test)]
+        if self.linear {
+            *steps += self.held.len() as u64;
+            return self
+                .held
+                .keys()
+                .map(|c| (c.distance2(focus), c.0, *c))
+                .filter(|&(d, _, _)| d > d2)
+                .max()
+                .map(|(_, _, c)| c);
+        }
+        if self.focus != Some(focus) {
+            *steps += self.held.len() as u64;
+            self.by_distance = self
+                .held
+                .keys()
+                .map(|c| ((c.distance2(focus), c.0), *c))
+                .collect();
+            self.focus = Some(focus);
+        }
+        *steps += 1;
+        self.by_distance
+            .last_key_value()
+            .filter(|((d, _), _)| *d > d2)
+            .map(|(_, c)| *c)
+    }
+
+    /// Removes `coord`'s range from the placed chunks, without freeing it.
+    pub(super) fn forget(&mut self, coord: ChunkCoord) -> Option<(u32, u32)> {
+        let (s, n, _) = self.held.remove(&coord)?;
+        if let Some(f) = self.focus {
+            self.by_distance.remove(&(coord.distance2(f), coord.0));
+        }
+        Some((s, n))
+    }
+
+    /// Removes `coord`'s range from the placed chunks and frees it.
+    pub(super) fn release(&mut self, coord: ChunkCoord) -> Option<(u32, u32)> {
+        let r = self.forget(coord)?;
+        self.free_range(r);
+        Some(r)
+    }
+
     /// The start of a free run of `n` samples: the lowest free range that holds it, else the
-    /// samples above the high-water mark; `None` when the buffer has no such run. Adds the
-    /// free ranges walked to `steps`.
-    pub(super) fn alloc_range(&mut self, n: u32, samples: u32, steps: &mut u64) -> Option<u32> {
-        let fit = self.free.iter().find(|&(_, &len)| {
-            *steps += 1;
-            len >= n
-        });
-        if let Some((&start, &len)) = fit {
-            self.free.remove(&start);
+    /// samples above the high-water mark; `None` when the buffer has no such run.
+    fn alloc(&mut self, n: u32, steps: &mut u64) -> Option<u32> {
+        #[cfg(test)]
+        let fit = if self.linear {
+            self.free.first_fit_linear(n)
+        } else {
+            self.free.first_fit(n, steps)
+        };
+        #[cfg(not(test))]
+        let fit = self.free.first_fit(n, steps);
+        if let Some((start, len)) = fit {
+            self.free.remove(start);
             if len > n {
                 self.free.insert(start + n, len - n);
             }
             return Some(start);
         }
         let start = self.high;
-        if u64::from(start) + u64::from(n) > u64::from(samples) {
+        if u64::from(start) + u64::from(n) > u64::from(self.samples) {
             return None;
         }
         self.high += n;
@@ -109,15 +250,13 @@ impl LightMirror {
     /// Returns a range to the free ranges, merged with its neighbours; a free range that
     /// reaches the high-water mark lowers it instead.
     pub(super) fn free_range(&mut self, (mut start, mut len): (u32, u32)) {
-        if let Some((&s, &l)) = self.free.range(..start).next_back()
-            && s + l == start
-        {
-            self.free.remove(&s);
+        if let Some((s, l)) = self.free.before(start) {
+            self.free.remove(s);
             start = s;
             len += l;
         }
-        if let Some(&l) = self.free.get(&(start + len)) {
-            self.free.remove(&(start + len));
+        if let Some(l) = self.free.get(start + len) {
+            self.free.remove(start + len);
             len += l;
         }
         if start + len == self.high {
@@ -125,6 +264,22 @@ impl LightMirror {
         } else {
             self.free.insert(start, len);
         }
+    }
+
+    /// The placed chunks and their ranges.
+    pub(super) fn placed(&self) -> impl Iterator<Item = (ChunkCoord, (u32, u32))> + '_ {
+        self.held.iter().map(|(c, &(s, n, _))| (*c, (s, n)))
+    }
+
+    /// The placed chunks: coordinate, start, length and power.
+    pub(super) fn placed_power(&self) -> impl Iterator<Item = (ChunkCoord, u32, u32, f32)> + '_ {
+        self.held.iter().map(|(c, &(s, n, p))| (*c, s, n, p))
+    }
+
+    /// The free ranges by start, for the tests.
+    #[cfg(test)]
+    pub(super) fn free_ranges(&self) -> Vec<(u32, u32)> {
+        self.free.ranges().collect()
     }
 }
 
@@ -200,6 +355,16 @@ pub(super) fn scan_emitters<'a>(
     ))
 }
 
+/// The length of `n` samples thinned by [`thin_samples`] to at most `cap`.
+pub(crate) fn thinned_len(n: usize, cap: u32) -> usize {
+    let cap = cap.max(1) as usize;
+    if n <= cap {
+        n
+    } else {
+        n.div_ceil(n.div_ceil(cap))
+    }
+}
+
 /// `samples` thinned to at most `cap` by keeping every `k`-th by index, `k` the least that
 /// fits.
 pub(crate) fn thin_samples(samples: Vec<LightSample>, cap: u32) -> Vec<LightSample> {
@@ -212,14 +377,14 @@ pub(crate) fn thin_samples(samples: Vec<LightSample>, cap: u32) -> Vec<LightSamp
     samples.into_iter().step_by(k).collect()
 }
 
-/// A chunk's light samples: each emissive brick's list by brick slot, and its range of the
-/// light-sample buffer.
+/// A chunk's light samples: each emissive brick's list by brick slot (its range of the
+/// light-sample buffer is in [`Ranges`]).
 #[derive(Default)]
 pub(super) struct ChunkLights {
     pub(super) bricks: BTreeMap<u16, Vec<LightSample>>,
-    pub(super) range: Option<(u32, u32)>,
-    /// The power of the samples last written ([`GpuWorld::light_chunks`]).
-    pub(super) power: f32,
+    /// Whether the chunk holds a range in [`Ranges`]: the walks' and the readiness checks'
+    /// test without a lookup there.
+    pub(super) placed: bool,
 }
 
 impl GpuWorld {
@@ -303,10 +468,10 @@ impl GpuWorld {
         if moved || force {
             let far: Vec<ChunkCoord> = self
                 .lights
-                .chunks
-                .iter()
-                .filter(|(c, l)| l.range.is_some() && d2(**c) > (r + 1) * (r + 1))
-                .map(|(c, _)| *c)
+                .ranges
+                .placed()
+                .filter(|(c, _)| d2(*c) > (r + 1) * (r + 1))
+                .map(|(c, _)| c)
                 .collect();
             for c in far {
                 self.release_lights(c, enc);
@@ -316,9 +481,7 @@ impl GpuWorld {
             .lights
             .chunks
             .iter()
-            .filter(|(c, l)| {
-                d2(**c) <= r * r && (l.range.is_none() || self.lights.dirty.contains(*c))
-            })
+            .filter(|(c, l)| d2(**c) <= r * r && (!l.placed || self.lights.dirty.contains(*c)))
             .map(|(c, _)| (d2(*c), *c))
             .collect();
         wanted.sort_unstable_by_key(|&(d, c)| (d, c.0));
@@ -367,46 +530,40 @@ impl GpuWorld {
             self.lights.touch();
             return 0;
         }
+        // The thinned count first: a chunk the buffer refuses is not gathered.
+        let total: usize = l.bricks.values().map(Vec::len).sum();
+        let n = thinned_len(total, self.cfg.light_chunk_cap) as u32;
+        let mut evicted = Vec::new();
+        let placed = self
+            .lights
+            .ranges
+            .place(coord, n, d2, self.window.focus, &mut evicted, st);
+        for (v, r) in evicted {
+            if let Some(l) = self.lights.chunks.get_mut(&v) {
+                l.placed = false;
+            }
+            self.lights.released(r);
+            self.zero_light_range(r, enc);
+            self.lights.wait.entry(v).or_insert(self.lights.syncs);
+            st.light_evicted += 1;
+        }
+        let Some(start) = placed else {
+            st.light_refused += 1;
+            return 0;
+        };
+        let l = self
+            .lights
+            .chunks
+            .get_mut(&coord)
+            .expect("a placed chunk has lists");
+        l.placed = true;
         let all: Vec<LightSample> = l.bricks.values().flatten().copied().collect();
         let power: f32 = all
             .iter()
             .map(|s| self.mats.emit_lum[usize::from(s.material())] * s.faces().count_ones() as f32)
             .sum();
         let samples = thin_samples(all, self.cfg.light_chunk_cap);
-        let n = samples.len() as u32;
-        let start = loop {
-            if let Some(start) =
-                self.lights
-                    .alloc_range(n, self.cfg.light_samples, &mut st.light_scan_steps)
-            {
-                break Some(start);
-            }
-            st.light_scan_steps += self.lights.chunks.len() as u64;
-            let f = self.window.focus;
-            let victim = self
-                .lights
-                .chunks
-                .iter()
-                .filter(|(c, l)| **c != coord && l.range.is_some())
-                .map(|(c, _)| {
-                    let d: i64 = (0..3).map(|k| i64::from(c.0[k] - f.0[k]).pow(2)).sum();
-                    (d, c.0, *c)
-                })
-                .filter(|&(d, _, _)| d > d2)
-                .max();
-            match victim {
-                Some((_, _, v)) => {
-                    self.release_lights(v, enc);
-                    self.lights.wait.entry(v).or_insert(self.lights.syncs);
-                    st.light_evicted += 1;
-                }
-                None => break None,
-            }
-        };
-        let Some(start) = start else {
-            st.light_refused += 1;
-            return 0;
-        };
+        debug_assert_eq!(samples.len() as u32, n);
         self.up.belt.write(
             enc,
             &self.lights.buf,
@@ -418,27 +575,19 @@ impl GpuWorld {
         st.light_samples += u64::from(n);
         st.light_chunks_written += 1;
         self.lights.live += u64::from(n);
-        if let Some(l) = self.lights.chunks.get_mut(&coord) {
-            l.range = Some((start, n));
-            l.power = power;
-        }
+        self.lights.ranges.set_power(coord, power);
         self.lights.epoch += 1;
         u64::from(n)
     }
 
     /// Zeroes and frees `coord`'s range, keeping its lists.
     pub(super) fn release_lights(&mut self, coord: ChunkCoord, enc: &mut wgpu::CommandEncoder) {
-        if let Some(r) = self
-            .lights
-            .chunks
-            .get_mut(&coord)
-            .and_then(|l| l.range.take())
-        {
-            self.lights.touch();
-            self.lights.epoch += 1;
-            self.lights.live -= u64::from(r.1);
+        if let Some(r) = self.lights.ranges.release(coord) {
+            if let Some(l) = self.lights.chunks.get_mut(&coord) {
+                l.placed = false;
+            }
+            self.lights.released(r);
             self.zero_light_range(r, enc);
-            self.lights.free_range(r);
         }
     }
 
@@ -446,10 +595,7 @@ impl GpuWorld {
     /// power (the sum over the chunk's samples, before thinning, of its material's emitted
     /// luminance times its exposed faces; the render-side scale left out).
     pub fn light_chunks(&self) -> impl Iterator<Item = (ChunkCoord, u32, u32, f32)> + '_ {
-        self.lights
-            .chunks
-            .iter()
-            .filter_map(|(c, l)| l.range.map(|(s, n)| (*c, s, n, l.power)))
+        self.lights.ranges.placed_power()
     }
 
     /// The first slot of the candidate table in the light-sample buffer: just past the
@@ -471,7 +617,7 @@ impl GpuWorld {
         let f = self.window.focus;
         self.lights.chunks.iter().all(|(c, l)| {
             let d2: i64 = (0..3).map(|k| i64::from(c.0[k] - f.0[k]).pow(2)).sum();
-            d2 > r * r || (l.range.is_some() && !self.lights.dirty.contains(c))
+            d2 > r * r || (l.placed && !self.lights.dirty.contains(c))
         })
     }
 
@@ -493,9 +639,7 @@ impl GpuWorld {
         if dirty || waited || held.is_some() {
             self.lights.touch();
         }
-        if let Some(l) = held
-            && let Some(r) = l.range
-        {
+        if let Some(r) = self.lights.ranges.forget(coord) {
             self.lights.epoch += 1;
             self.lights.live -= u64::from(r.1);
             self.lights.dropped.push(r);
@@ -509,7 +653,7 @@ impl GpuWorld {
         }
         for r in std::mem::take(&mut self.lights.dropped) {
             self.zero_light_range(r, enc);
-            self.lights.free_range(r);
+            self.lights.ranges.free_range(r);
         }
     }
 
@@ -541,7 +685,7 @@ impl GpuWorld {
 
     /// The samples from 0 to the buffer's high-water mark; freeing the top range lowers it.
     pub fn light_span(&self) -> u32 {
-        self.lights.high
+        self.lights.ranges.high()
     }
 
     /// Whether every chunk with lights whose box lies within `r` chunks of `coord`'s box (the
@@ -583,7 +727,7 @@ impl GpuWorld {
             let gap2: i64 = (0..3)
                 .map(|k| i64::from(((c.0[k] - coord.0[k]).abs() - 1).max(0)).pow(2))
                 .sum();
-            gap2 >= rr || (l.range.is_some() && !self.lights.dirty.contains(c))
+            gap2 >= rr || (l.placed && !self.lights.dirty.contains(c))
         })
     }
 
@@ -602,7 +746,7 @@ impl GpuWorld {
 
     /// `coord`'s range of the light-sample buffer, start and length.
     pub fn light_range(&self, coord: ChunkCoord) -> Option<(u32, u32)> {
-        self.lights.chunks.get(&coord).and_then(|l| l.range)
+        self.lights.ranges.get(coord)
     }
 }
 
@@ -613,4 +757,90 @@ pub(crate) fn boxes_within(a: ChunkCoord, b: ChunkCoord, r: i32) -> bool {
         .map(|k| i64::from(((a.0[k] - b.0[k]).abs() - 1).max(0)).pow(2))
         .sum();
     gap2 < i64::from(r).pow(2)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One run of the recorded sequence on [`Ranges`], by the index or (`linear`) by the walk
+    /// and the scan: per step the placed ranges, the free ranges and the high-water mark, the
+    /// buffer's words (each placed sample holds its chunk's tag, a released one 0), and the
+    /// placements and evictions.
+    fn replay(linear: bool) -> (Vec<String>, Vec<u32>, u64, u64) {
+        const SAMPLES: u32 = 24_000;
+        let mut r = Ranges::new(SAMPLES);
+        r.linear = linear;
+        let mut words = vec![0u32; SAMPLES as usize];
+        let mut st = SyncStats::default();
+        let mut seed = 0x9E37_79B9_7F4A_7C15u64;
+        let mut rand = move |m: u64| {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (seed >> 33) % m
+        };
+        let tag = |c: ChunkCoord| ((c.0[0] + 64) as u32) << 16 | ((c.0[2] + 64) as u32) << 4 | 1;
+        let mut log = Vec::new();
+        let (mut placed, mut evictions) = (0u64, 0u64);
+        for step in 0..2_600u64 {
+            let focus = ChunkCoord([(step / 40) as i32, 0, 0]);
+            let c = ChunkCoord([
+                focus.0[0] + rand(13) as i32 - 6,
+                rand(3) as i32 - 1,
+                rand(13) as i32 - 6,
+            ]);
+            if rand(10) == 0 {
+                // A dropped chunk: forgotten now, freed at the next sync.
+                if let Some((s, n)) = r.forget(c) {
+                    words[s as usize..(s + n) as usize].fill(0);
+                    r.free_range((s, n));
+                }
+                continue;
+            }
+            if let Some((s, n)) = r.release(c) {
+                words[s as usize..(s + n) as usize].fill(0);
+            }
+            let n = 1 + rand(400) as u32;
+            let mut evicted = Vec::new();
+            let at = r.place(c, n, c.distance2(focus), focus, &mut evicted, &mut st);
+            for (_, (s, n)) in &evicted {
+                words[*s as usize..(*s + *n) as usize].fill(0);
+            }
+            evictions += evicted.len() as u64;
+            if let Some(s) = at {
+                words[s as usize..(s + n) as usize].fill(tag(c));
+                placed += 1;
+            }
+            let mut held: Vec<_> = r.placed().collect();
+            held.sort_unstable_by_key(|&(c, _)| c.0);
+            log.push(format!(
+                "{step}: {at:?} evicted {evicted:?} held {held:?} free {:?} high {}",
+                r.free_ranges(),
+                r.high()
+            ));
+        }
+        (log, words, placed, evictions)
+    }
+
+    /// Plan 0096 Phase 7 bar 1: a recorded sequence of placements, releases and drops with a
+    /// moving focus (2 600 steps, at least 2 000 placements and 300 evictions) gives the same
+    /// ranges, free ranges and buffer words at every step through the first-fit index and the
+    /// victims' index as through the walk of every free range and the scan of every placed
+    /// chunk.
+    #[test]
+    fn the_indexed_placement_writes_the_same_bytes_as_the_scan() {
+        let (walk, walk_words, placed, evictions) = replay(true);
+        let (index, index_words, ..) = replay(false);
+        println!("{placed} placements, {evictions} evictions");
+        assert!(
+            placed >= 2_000 && evictions >= 300,
+            "{placed} placed, {evictions} evicted"
+        );
+        for (a, b) in walk.iter().zip(&index) {
+            assert_eq!(a, b);
+        }
+        assert_eq!(walk.len(), index.len());
+        assert_eq!(walk_words, index_words);
+    }
 }

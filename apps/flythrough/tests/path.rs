@@ -495,13 +495,13 @@ fn run_json_carries_the_streaming_stages() {
 
 /// 60 syncs, one slow: 59 of 1050 us (select 100, size 200, light 300, copy 50, alloc 400;
 /// light place 200, note 100) with light counters by k (bricks 2 k, emitter bricks k, chunks
-/// written 1, samples 100 k, scan steps 3 k, free ranges 5), and at k = 37 one of 40 000 us
-/// (select 5000, size 8000, light 20 000, copy 1000, alloc 6000; light place 12 000, note
-/// 8000) with bricks 900, emitter bricks 640, fresh records 12, chunks written 9, samples
-/// 16 384, evicted 120, refused 3, scan steps 61 000, free ranges 88. By nearest rank over 60
-/// the counters' p50 is the 30th value (k = 29 of the quiet ones) and their p99 the 60th, the
-/// slow sync's. The `sync:` line ends with that sync's wall, stages and counters, after the
-/// percentiles; `run.json` from a recorder fed the same series has the counters' p50 and p99.
+/// written 1, samples 100 k, fit steps 3 k, victim steps k, free ranges 5), and at k = 37 one of
+/// 40 000 us (select 5000, size 8000, light 20 000, copy 1000, alloc 6000; light place 12 000,
+/// note 8000) with bricks 900, emitter bricks 640, fresh records 12, chunks written 9, samples
+/// 16 384, evicted 120, refused 3, fit steps 61 000, victim steps 400, free ranges 88. By nearest
+/// rank over 60 the counters' p50 is the 30th value (k = 29 of the quiet ones) and their p99 the
+/// 60th, the slow sync's. The `sync:` line ends with that sync's wall, stages and counters, after
+/// the percentiles; `run.json` from a recorder fed the same series has the counters' p50 and p99.
 #[test]
 fn the_sync_line_names_its_slowest_sync() {
     use flythrough::report::SyncSeries;
@@ -526,7 +526,8 @@ fn the_sync_line_names_its_slowest_sync() {
                 light_samples: 16_384,
                 light_evicted: 120,
                 light_refused: 3,
-                light_scan_steps: 61_000,
+                light_fit_steps: 61_000,
+                light_victim_steps: 400,
                 light_free_ranges: 88,
                 ..Default::default()
             }
@@ -545,7 +546,8 @@ fn the_sync_line_names_its_slowest_sync() {
                 light_emitter_bricks: k,
                 light_chunks_written: 1,
                 light_samples: 100 * k,
-                light_scan_steps: 3 * k,
+                light_fit_steps: 3 * k,
+                light_victim_steps: k,
                 light_free_ranges: 5,
                 ..Default::default()
             }
@@ -560,12 +562,12 @@ fn the_sync_line_names_its_slowest_sync() {
     let line = series.line().expect("a line after 60 syncs");
     let counters = "; light counters p50/p99: bricks 58/900, emitter bricks 29/640, fresh records \
                     0/12, chunks written 1/9, samples 2900/16384, evicted 0/120, refused 0/3, \
-                    scan steps 87/61000, free ranges 5/88";
+                    fit steps 87/61000, victim steps 29/400, free ranges 5/88";
     let slowest = "; slowest 40000 us: select 5000, size 8000, pack 0, light 20000, copy 1000, \
                    alloc 6000; light place 12000, note 8000; packed bricks 4; lock wait 6; \
                    rescan inserts 3000; light bricks 900, emitter bricks 640, fresh records 12, \
-                   chunks written 9, samples 16384, evicted 120, refused 3, scan steps 61000, \
-                   free ranges 88";
+                   chunks written 9, samples 16384, evicted 120, refused 3, fit steps 61000, \
+                   victim steps 400, free ranges 88";
     assert!(
         line.starts_with("sync p50/p99 1050/40000 us over 60 syncs:"),
         "{line}"
@@ -617,7 +619,8 @@ fn the_sync_line_names_its_slowest_sync() {
         ("light_samples", 2900.0, 16384.0),
         ("light_evicted", 0.0, 120.0),
         ("light_refused", 0.0, 3.0),
-        ("light_scan_steps", 87.0, 61000.0),
+        ("light_fit_steps", 87.0, 61000.0),
+        ("light_victim_steps", 29.0, 400.0),
         ("light_free_ranges", 5.0, 88.0),
     ] {
         assert_eq!((num(name, "p50"), num(name, "p99")), (p50, p99), "{name}");

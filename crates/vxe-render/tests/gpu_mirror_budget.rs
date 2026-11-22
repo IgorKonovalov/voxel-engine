@@ -896,8 +896,8 @@ fn the_light_walks_skip_only_what_did_not_change() {
 /// (room for every chunk) neither sync evicts or refuses, all 16 fresh emitting records are
 /// counted, and every chunk is written once. With a buffer of half the samples the first
 /// read, the first sync refuses the far chunks and the second, nearer to them, evicts the
-/// ranges by the old focus: `light_evicted` above 0 and `light_scan_steps` at least
-/// `light_evicted` (each eviction walks the ranged chunks).
+/// ranges by the old focus: `light_evicted` above 0 and `light_victim_steps` at least
+/// `light_evicted` (each eviction reads the victims' index).
 #[test]
 fn the_light_counters_follow_a_full_buffer() {
     let Some((device, queue)) = device() else {
@@ -933,7 +933,7 @@ fn the_light_counters_follow_a_full_buffer() {
     let (full, all) = flight(1 << 16);
     for (k, s) in full.iter().enumerate() {
         println!(
-            "full sync {k}: bricks {} emitter {} fresh {} written {} samples {} evicted {} refused {} steps {} free {}",
+            "full sync {k}: bricks {} emitter {} fresh {} written {} samples {} evicted {} refused {} steps {}/{} free {}",
             s.light_bricks,
             s.light_emitter_bricks,
             s.light_fresh_records,
@@ -941,7 +941,8 @@ fn the_light_counters_follow_a_full_buffer() {
             s.light_samples,
             s.light_evicted,
             s.light_refused,
-            s.light_scan_steps,
+            s.light_fit_steps,
+            s.light_victim_steps,
             s.light_free_ranges
         );
         assert_eq!((s.light_evicted, s.light_refused), (0, 0), "sync {k}");
@@ -955,18 +956,19 @@ fn the_light_counters_follow_a_full_buffer() {
     let (half, _) = flight((all / 2) as u32);
     for (k, s) in half.iter().enumerate() {
         println!(
-            "half sync {k}: written {} samples {} evicted {} refused {} steps {} free {}",
+            "half sync {k}: written {} samples {} evicted {} refused {} steps {}/{} free {}",
             s.light_chunks_written,
             s.light_samples,
             s.light_evicted,
             s.light_refused,
-            s.light_scan_steps,
+            s.light_fit_steps,
+            s.light_victim_steps,
             s.light_free_ranges
         );
     }
     assert!(half[0].light_refused > 0);
     let evicted: u64 = half.iter().map(|s| s.light_evicted).sum();
-    let steps: u64 = half.iter().map(|s| s.light_scan_steps).sum();
+    let steps: u64 = half.iter().map(|s| s.light_victim_steps).sum();
     assert!(evicted > 0, "no eviction with half the samples");
     assert!(steps >= evicted, "{steps} steps for {evicted} evictions");
 }

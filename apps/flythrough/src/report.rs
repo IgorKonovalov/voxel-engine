@@ -160,12 +160,13 @@ pub const SYNC_FIELDS: [&str; SYNC_N] = [
     "light_samples",
     "light_evicted",
     "light_refused",
-    "light_scan_steps",
+    "light_fit_steps",
+    "light_victim_steps",
     "light_free_ranges",
 ];
 
 /// Entries of [`SYNC_FIELDS`].
-pub const SYNC_N: usize = 22;
+pub const SYNC_N: usize = 23;
 
 /// The first of [`SYNC_FIELDS`]' light counters, and their short names on the `sync:` line.
 const LIGHT_FIELDS: usize = 13;
@@ -177,7 +178,8 @@ const LIGHT_NAMES: [&str; SYNC_N - LIGHT_FIELDS] = [
     "samples",
     "evicted",
     "refused",
-    "scan steps",
+    "fit steps",
+    "victim steps",
     "free ranges",
 ];
 
@@ -210,7 +212,8 @@ pub fn sync_values(s: &SyncStats) -> [f64; SYNC_N] {
         s.light_samples,
         s.light_evicted,
         s.light_refused,
-        s.light_scan_steps,
+        s.light_fit_steps,
+        s.light_victim_steps,
         s.light_free_ranges,
     ]
     .into_iter()
