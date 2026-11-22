@@ -103,7 +103,8 @@ fn hit_change(a: &[[f32; 4]], b: &[[f32; 4]], eye: [f32; 3]) -> f64 {
 
 /// The motion vectors' error against the exact reprojection, in display pixels, over the far
 /// render pixels: the input pass's motion (UV) against `reproject_centred` of each hit through
-/// `prev` in f64, less the pixel's centre. Returns (mean, p99, max).
+/// `prev` in f64, less the pixel's centre, over the hits the previous view holds. Returns
+/// (median, p99, max).
 fn motion_error(
     hits: &[[f32; 4]],
     motion: &[[f32; 2]],
@@ -137,6 +138,11 @@ fn motion_error(
         let y = dot(d, u) / z;
         let qx = (x + tl) / (tl + tr) * w - f64::from(jitter[0]);
         let qy = (tu - y) / (tu + td) * h - f64::from(jitter[1]);
+        // A hit outside the previous view has no history: the input pass writes its
+        // off-screen motion there, which is no error.
+        if !(0.0..w).contains(&qx) || !(0.0..h).contains(&qy) {
+            continue;
+        }
         let (px, py) = ((i % size[0] as usize) as f64, (i / size[0] as usize) as f64);
         let ex = (qx - (px + 0.5)) / w;
         let ey = (qy - (py + 0.5)) / h;
@@ -148,9 +154,9 @@ fn motion_error(
         return (0.0, 0.0, 0.0);
     }
     errs.sort_by(f64::total_cmp);
-    let mean = errs.iter().sum::<f64>() / errs.len() as f64;
+    let p50 = errs[(errs.len() - 1) / 2];
     let p99 = errs[(errs.len() - 1) * 99 / 100];
-    (mean, p99, *errs.last().unwrap())
+    (p50, p99, *errs.last().unwrap())
 }
 
 /// Reads an rg32float texture as pairs.
@@ -244,11 +250,11 @@ pub(super) fn fsr_split(rig: &mut Rig, cam0: Camera, arm: &Arm) {
     let cam2 = prev;
     if !motion.is_empty() {
         let n = motion.len() as f64;
-        let mean = motion.iter().map(|m| m.0).sum::<f64>() / n;
+        let median = motion.iter().map(|m| m.0).sum::<f64>() / n;
         let p99 = motion.iter().map(|m| m.1).fold(0.0, f64::max);
         let max = motion.iter().map(|m| m.2).fold(0.0, f64::max);
         println!(
-            "fsr {name}: turn frames {}..{TURN}, far motion error in display px: mean {mean:.2e}, p99 (worst frame) {p99:.2e}, max {max:.2e}",
+            "fsr {name}: turn frames {}..{TURN}, far motion error in display px over the hits the previous view holds: median (frame mean) {median:.2e}, p99 (worst frame) {p99:.2e}, max {max:.2e}",
             MOTION_FROM + 1
         );
     }

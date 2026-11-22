@@ -256,8 +256,8 @@ pub struct Lighting {
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The calm combination as one setting | dev | done (6370f2c4); `Lighting::light_history` (the plan's `history` is taken by `HistoryKill`); the setting row in `crates/vxe-render/src/settings.rs`; `start_lighting` in `cli/mod.rs`; the menu's far normal steps 4..8 and 8..12 too (`cli/parse.rs`, `run/tests.rs`); the hook's three lines dropped from `gpu_outdoor/canopy.rs`; readings in the log | committed with this row |
-| 2: Where FSR 2 loses the far trees | dev | instrument in; the reading is `mod reading` (`gpu_wobble/fsr.rs`), not soak; the levers' switches need `run/keys.rs` and `run/profile.rs`; readings in the log | committed with this row |
-| 3: The owner's window W1 | human | not started | |
+| 2: Where FSR 2 loses the far trees | dev | done (e2963230; the table and the motion fix with the next row's commit); instrument in; the reading is `mod reading` (`gpu_wobble/fsr.rs`), not soak; the levers' switches need `run/keys.rs` and `run/profile.rs`; readings in the log | committed with this row |
+| 3: The owner's window W1 | human | prepared, not run: `live/session98.sh` at `e2963230`, upscale-ratio runs first (orchestrator) | committed with this row |
 | 4: The picks become the defaults | dev | not started | |
 | 5: The FSR 2 turn | dev | awaits the amendment | |
 
