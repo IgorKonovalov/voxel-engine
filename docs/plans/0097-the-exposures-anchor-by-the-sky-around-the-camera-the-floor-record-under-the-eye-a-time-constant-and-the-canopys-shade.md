@@ -552,8 +552,8 @@ direction bit and `VIS_BAKED` answers with its `+z` byte over 255. No `vxe-world
 | 3a: Highlight protection | dev | built, P99 default; short window awaits the owner | 8ff3bbe4 |
 | 3b: The lift | dev | done, `L` 4 default; bars 2 and 3 as amended 2026-11-22 read and met (readings log) | b6283105, 16ae8dc0 |
 | 3c: The short window | human | run 2026-11-22 (window 97c): "1a looks great", the lift stays 4 | the log |
-| 3d: The exposure's step just after a stop | dev | closed as amended: not reproduced; the guard soak-marked, bites on a forced jump (readings log) | (this commit) |
-| 4: The picks as tests and the docs | dev | not started | |
+| 3d: The exposure's step just after a stop | dev | closed as amended: not reproduced; the guard soak-marked, bites on a forced jump (readings log) | bc359c32 |
+| 4: The picks as tests and the docs | dev | done; the walk's ceiling 0.0000 EV from `c_a`, step 0.0512 EV (RTX), 0.0625 (lavapipe soak, 12.5 s); no default moved | 80cd7134 (wip), the phase commit |
 
 ### Notes
 
@@ -632,6 +632,17 @@ each. Empty is fine.)_
 
 - Phase 3d bar 2: the guard's lavapipe run read 8.65 s at load 2.94 (loaded); the soak mark
   stays. The bite run forced the jump with a midnight sky and an exposure reset at stop +5.
+
+- Phase 4 bar 1: along the walk (facing along each leg, pitch -10) the view's sky share is
+  0.0127 to 0.0955, over `F` on every frame, so the view holds the anchor; the floor share
+  (0.13 to 0.26) is not what holds it on this path.
+- Phase 4 bar 1: the lavapipe form walks both legs whole at 4 x (142 frames each way), not
+  "120 frames" (120 voxels covers neither 141-voxel leg).
+- Phase 4 bar 1: the floor walk's CPU time is one `sky_over_floor` call timed on the test
+  thread at each frame's eye, not inside `Frame::step`.
+- Phase 4 bar 3: `docs/flythrough.md` unchanged; its rows already named both flags, the HUD's
+  floor and lift and the `off` befores.
+- Phase 4's readings ran on mains, the battery charging from 66 %, loaded (readings log).
 
 - Architect, 2026-11-22: Phase 3d amended to close as not reproduced (its bars restated in the
   phase). **A finding for Plan 0098, not this plan's:** near-pixel jumps with the exposure
