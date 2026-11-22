@@ -511,9 +511,9 @@ direction bit and `VIS_BAKED` answers with its `+z` byte over 255. No `vxe-world
 | 2: The anchor by the floor's sky | dev | done; bar 4's baked deep noon tunnel at +1.18 EV, not `max` (Notes) | 5d1cbf77 |
 | 3: The owner's window | human | done, window 97 (2026-11-21); words in the amendment and the readings log | b3277359 (setup) |
 | 3a: Highlight protection | dev | built, P99 default; short window awaits the owner | 8ff3bbe4 |
-| 3b: The lift | dev | built, `L` 4 default; bar 2's luma clause and bar 3's x 262.1 clause unmet (Notes); short window awaits the owner | committed with this row |
+| 3b: The lift | dev | done, `L` 4 default; bars 2 and 3 as amended 2026-11-22 read and met (readings log) | b6283105, 16ae8dc0 |
 | 3c: The short window | human | run 2026-11-22 (window 97c): "1a looks great", the lift stays 4 | the log |
-| 3d: The exposure's step just after a stop | dev | not started | |
+| 3d: The exposure's step just after a stop | dev | stopped at bar 1 for the architect: the eye moves 0 EV across the stop (Notes) | |
 | 4: The picks as tests and the docs | dev | not started | |
 
 ### Notes
@@ -583,6 +583,13 @@ each. Empty is fine.)_
 - Phase 3b bar 3 not met as stated: x 262.1's ceiling in force is 2.367 EV under the lift-off
   arm's, not 2.5; the headless floor share there reads 6.27 % (the window's HUD 5 %). Every other
   clause holds. The reading ran 82 s on the RTX (debug, loaded), over 60 s; it stays a reading.
+- Phase 3b, after the amendment of 2026-11-22: bar 2's linear form ran (-4.482 EV against
+  -4.753, lavapipe); bar 3's gap 2.367 EV against 2.0, ceiling at its target in both arms (RTX,
+  58.3 s).
+- Phase 3d bar 1: the exposure used is -6.6005 EV on every frame from the fly's last to stop +29
+  (fly 20 and fly 180, RTX), bound by the ceiling at `c_a`; the wobble table's default arm at
+  16ae8dc0 reads at most 0.09 % near per pair in the stop's first 16 frames (the 0098 lane read
+  12.12 % at +7 on 56cb9931). Stopped per the bar; bars 2 and 4 not done.
 
 ### Close triggers
 
