@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0082** (0079 accepted at Plan 0095's close, 2026-11-21; 0080 is Plan 0096's; 0081 is Plan 0097's).
+**Next free number: 0084** (0079 accepted at Plan 0095's close, 2026-11-21; 0080 is Plan 0096's; 0081 is Plan 0097's; 0082 is Plan 0098's; 0083 is Plan 0099's).
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -96,6 +96,8 @@ the status.
 | [0079](0079-the-key-lights-visibility-is-read-with-no-screen-history-the-record-or-the-column-maps-horizon-at-the-far-a-deterministic-penumbra-near.md) | The key light's visibility is read with no screen history: the record, else the horizon far; a deterministic penumbra near | accepted (Plan 0095), Outcome |
 | [0080](0080-the-live-queue-bakes-what-the-image-reads-a-record-by-rule-a-tier-by-size-on-screen-and-a-drain-slice.md) | The live queue bakes what the image reads: a record by rule, a sample tier by size on screen, a slice that drains what is in view | proposed (Plan 0096), amended 11-20 |
 | [0081](0081-the-sky-anchor-holds-by-the-sky-over-the-cameras-floor-or-in-view-and-releases-where-both-are-absent.md) | The sky anchor holds by the sky over the camera's floor or by the sky in view, and releases only where both are absent, by at most a lift over the daylight anchor | proposed (Plan 0097) |
+| [0082](0082-the-light-pass-keeps-no-screen-history-by-default-and-reads-smooth-sources-to-the-mid-range.md) | The light pass keeps no screen history by default and reads smooth sources to the mid range | proposed (Plan 0098) |
+| [0083](0083-the-live-bake-queue-runs-on-a-bake-thread-the-render-thread-applies-its-write-lists-and-issues-its-submits.md) | The live bake queue runs on a bake thread; the render thread applies its write lists and issues its submits | proposed (Plan 0099); extends ADR-0017 |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded

@@ -675,8 +675,8 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   failures fixed by 73e0842a and their binaries (`gpu_upscale`, `gpu_look_field`) rerun whole
   exit 0 (10 passed); the whole gate was not rerun (the orchestrator's call). Doctests exit 0
   (10 passed); `cargo clippy --workspace --all-targets -D warnings` exit 0; `cargo fmt --all
-  --check` exit 0; `cargo deny check` exit 1 (advisories: RUSTSEC-2026-0592, `url` 2.5.8, the
-  lockfile unchanged from main). Readings log, "The tip's gate".
+  --check` exit 0; `cargo deny check` exit 1 before the merge of main (RUSTSEC-2026-0592, `url`
+  2.5.8), exit 0 after it (main ed2fb525, `url` 2.5.9). Readings log, "The tip's gate".
 - **Outstanding `human` phases:** none (Phases 3 and 3c run).
 
 ## Followups
