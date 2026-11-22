@@ -93,6 +93,8 @@ struct Arm {
     landing_fade: bool,
     /// The fly's frames (`fly=N`, 180 by default; 20 is the short fly of Plan 0097's finding).
     fly: usize,
+    /// The normals view (`normals`): the shading normal as colour, for the term split.
+    normals: bool,
 }
 
 impl Arm {
@@ -107,7 +109,8 @@ impl Arm {
     /// (the turn's frames), `nohist` (`light_history` off), `calm` (the fly-through's
     /// `--calm` as window W1 picked it: `nohist`, `column`, `step`, `disc` and the far normal
     /// 4..8), `native` (as `off1`), `scale=X` (the upscaler's scale), `farn=LO/HI` (the far
-    /// normal's band), `lfade` (`Lighting::landing_fade` on) and `fly=N` (the fly's frames).
+    /// normal's band), `lfade` (`Lighting::landing_fade` on), `fly=N` (the fly's frames) and
+    /// `normals` (the normals view).
     fn parse() -> Self {
         Self::from_spec(&std::env::var("VXE_WOBBLE").unwrap_or_else(|_| "default".into()))
     }
@@ -155,6 +158,7 @@ impl Arm {
             scale: 1.5,
             landing_fade: flythrough::default_lighting().landing_fade,
             fly: 180,
+            normals: false,
         };
         for t in spec.split(',') {
             let (k, v) = t.split_once('=').unwrap_or((t, ""));
@@ -217,6 +221,7 @@ impl Arm {
                     a.far_normal = flythrough::cli::CALM_FAR_NORMAL;
                 }
                 "lfade" => a.landing_fade = true,
+                "normals" => a.normals = true,
                 "fly" => a.fly = v.parse().unwrap(),
                 other => panic!("unknown arm token {other}"),
             }
@@ -288,6 +293,8 @@ fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
         far_normal: arm.far_normal,
         view: if arm.albedo {
             vxe_render::ViewMode::Albedo
+        } else if arm.normals {
+            vxe_render::ViewMode::Normals
         } else {
             vxe_render::ViewMode::Shaded
         },

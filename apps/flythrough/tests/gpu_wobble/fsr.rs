@@ -373,6 +373,123 @@ pub(super) fn fsr_split(rig: &mut Rig, cam0: Camera, arm: &Arm) {
     }
 }
 
+/// The term split's per-arm sums over the still pairs: over the display pixels whose lighting
+/// pixel's far hit flips phase to phase, the pixels, their summed |dY| and those over 4 levels;
+/// the same over the far display pixels that do not flip; over the flipping lighting pixels,
+/// their summed |d direct| (the light pass's direct sample's luminance) and summed direct.
+#[derive(Default)]
+struct TermSums {
+    flip: (usize, f64, usize),
+    still: (usize, f64, usize),
+    direct: (usize, f64, f64),
+}
+
+/// Plan 0098 Phase 5's term split: `arm` on the wobble rig's forest at the spawn (as
+/// [`fsr_split`]), the queue stepping through the settle and stopped for the still frames so
+/// nothing lands; the exposure set to `exposure` where given (the full arm's, so a term's
+/// luma is on one scale). Returns the sums and the settled exposure.
+fn term_sums(rig: &mut Rig, cam0: Camera, arm: &Arm, exposure: Option<f32>) -> (TermSums, f32) {
+    QUEUE_ON.with(|q| q.set(true));
+    let cam0 = Camera {
+        pitch: arm.pitch.to_radians(),
+        yaw: cam0.yaw + arm.yaw.to_radians(),
+        ..cam0
+    };
+    let f = frame_for(rig, arm);
+    let mut s = Stepper::new(rig, f);
+    for _ in 0..SETTLE {
+        queue_step(rig, &mut s.frame, &cam0);
+        s.run(rig, &cam0);
+    }
+    let e = s
+        .frame
+        .exposure_readout(&rig.device)
+        .map(|r| r.exposure)
+        .expect("a read-back");
+    s.frame.set_lighting(vxe_render::Lighting {
+        exposure: vxe_render::Exposure::Manual(exposure.unwrap_or(e)),
+        ..s.frame.lighting()
+    });
+    QUEUE_ON.with(|q| q.set(false));
+    for _ in 0..16 {
+        s.run(rig, &cam0);
+    }
+    let eye = cam0.position.to_array();
+    let (dw, dh) = (OUT[0] as usize, OUT[1] as usize);
+    let far = |h: [f32; 4]| hit_m(h, eye).is_some_and(|d| d > 15.0);
+    let mut sums = TermSums::default();
+    let mut last: Option<support::defects::Shot> = None;
+    for _ in 0..=STILL {
+        let shot = s.step(rig, &cam0);
+        if let Some(a) = &last {
+            let gl = shot.hits.len();
+            let gw = s.frame.light_hit_positions().width() as usize;
+            let flips: Vec<Option<bool>> = a
+                .hits
+                .iter()
+                .zip(&shot.hits)
+                .map(|(p, q)| {
+                    if !(far(*p) || far(*q)) {
+                        return None;
+                    }
+                    let both = hit_m(*p, eye).is_some() && hit_m(*q, eye).is_some();
+                    Some(!both || (0..3).any(|i| (p[i] - q[i]).abs() > 1.0))
+                })
+                .collect();
+            for (g, fl) in flips.iter().enumerate() {
+                if *fl == Some(true) {
+                    sums.direct.0 += 1;
+                    sums.direct.1 += f64::from((shot.direct[g] - a.direct[g]).abs());
+                    sums.direct.2 += f64::from(shot.direct[g].max(a.direct[g]));
+                }
+            }
+            let (ya, yb) = (lumas(&a.display), lumas(&shot.display));
+            for i in 0..dw * dh {
+                let Some(fl) = flips[support::defects::grid_of(i, dw, dh, gw, gl)] else {
+                    continue;
+                };
+                let d = ya[i].abs_diff(yb[i]);
+                let c = if fl { &mut sums.flip } else { &mut sums.still };
+                c.0 += 1;
+                c.1 += f64::from(d);
+                c.2 += usize::from(d > 4);
+            }
+        }
+        last = Some(shot);
+    }
+    (sums, e)
+}
+
+/// Plan 0098 Phase 5's term split over `specs` (the full arm first; its exposure is every
+/// arm's): per arm, over the far display pixels whose hit flips phase to phase at a still
+/// camera, the mean |dY| and the share over 4 levels, beside the far pixels that do not flip;
+/// and over the flipping lighting pixels the light pass's direct sample's mean |d| against its
+/// mean. Printed, nothing asserted.
+pub(super) fn term_split(rig: &mut Rig, cam0: Camera, specs: &[&str]) {
+    let mut exposure = None;
+    for spec in specs {
+        let arm = Arm::from_spec(spec);
+        let (t, e) = term_sums(rig, cam0, &arm, exposure);
+        exposure.get_or_insert(e);
+        let pct = |v: usize, d: usize| 100.0 * v as f64 / d.max(1) as f64;
+        let mean = |v: f64, d: usize| v / d.max(1) as f64;
+        println!(
+            "terms {spec} on {} (exposure {:.6}): flipping far px {} mean |dY| {:.3} over 4 {:.2} %; still far px {} mean |dY| {:.3} over 4 {:.2} %; direct over flipping lighting px {}: mean |d| {:.4} against a mean of {:.4}",
+            rig.adapter,
+            exposure.unwrap(),
+            t.flip.0,
+            mean(t.flip.1, t.flip.0),
+            pct(t.flip.2, t.flip.0),
+            t.still.0,
+            mean(t.still.1, t.still.0),
+            pct(t.still.2, t.still.0),
+            t.direct.0,
+            mean(t.direct.1, t.direct.0),
+            mean(t.direct.2, t.direct.0)
+        );
+    }
+}
+
 mod reading {
     use super::*;
 
@@ -394,5 +511,21 @@ mod reading {
         for spec in specs.split(';') {
             fsr_split(&mut rig, cam0, &Arm::from_spec(spec));
         }
+    }
+
+    /// Plan 0098 Phase 5's term split: [`term_split`] over `VXE_WOBBLE_TERMS` (arms separated
+    /// by `;`, the full arm first), by default `calm` (every term), `calm,keyoff` (the key
+    /// light out: the sky term and the albedo), `albedo` (the albedo alone) and
+    /// `calm,normals` (the normals view: the shading normal). The rig's forest has no lamp
+    /// (`lamp: false`), so the lamp terms read 0 here. `VXE_TEST_ADAPTER` picks the adapter.
+    #[test]
+    #[ignore = "reading"]
+    fn the_far_flips_by_term() {
+        let specs = std::env::var("VXE_WOBBLE_TERMS")
+            .unwrap_or_else(|_| "calm;calm,keyoff;albedo;calm,normals".into());
+        let Some((mut rig, cam0)) = forest_rig(8) else {
+            return;
+        };
+        term_split(&mut rig, cam0, &specs.split(';').collect::<Vec<_>>());
     }
 }
