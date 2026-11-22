@@ -5,7 +5,7 @@
 > **Amended 2026-11-22 by the architect at window 97c's verdicts (the owner: "1a looks great", the
 > lift stays 4): Phase 3b's bars 2 and 3 restated, Phase 3d added (the exposure's step just after a
 > stop, from the 0098 lane's reading).**
-> **Amended 2026-11-22 (architect, owner confirm owed): Phase 3d closes as not reproduced at the
+> **Amended 2026-11-22 (architect; owner confirmed 2026-11-22): Phase 3d closes as not reproduced at the
 > tip (the eye moves 0 EV across the stop; no fix), its invariant test stays as a guard; the near
 > jumps read with the exposure constant are routed to Plan 0098.**
 > Approved 2026-11-20 (the owner's picks at window W2, all as recommended: the
@@ -410,7 +410,7 @@ tip's.
      over 1 % near (it read 12.12 % at +7; pinned, 0.12 % at most).
   4. Every exposure golden byte-identical, or each move named with its count; a moved pixel
      in a still scene is a stop for the architect.
-- **Amended 2026-11-22 (architect, owner confirm owed): the phase closes as "not reproduced at
+- **Amended 2026-11-22 (architect; owner confirmed 2026-11-22): the phase closes as "not reproduced at
   the tip", with no change to the exposure.** Bar 1's stop clause fired (the readings log,
   "Phase 3d"; the RTX 3080 laptop, loaded, indicative, 16ae8dc0): the exposure in force is
   -6.6005 EV on every frame from the fly's last to stop +29 at fly 20 and fly 180, the ceiling
