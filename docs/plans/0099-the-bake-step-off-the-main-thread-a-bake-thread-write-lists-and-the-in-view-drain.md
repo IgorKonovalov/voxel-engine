@@ -1,7 +1,7 @@
 # 0099: The bake step off the main thread: a bake thread, write lists the render thread applies, and the in-view drain
 
-> **Status:** draft (2026-11-22, architect). Awaits the owner's go and his answers to the
-> questions under "Risks & open questions". **After: 0096, 0098, 0087** (owner, 2026-11-22:
+> **Status:** approved (owner, 2026-11-22; his answers are under "Risks & open questions":
+> the recommended option in each, question 2 by his own words). **After: 0096, 0098, 0087** (owner, 2026-11-22:
 > drafted now, the lane after the rename; then 0089 and 0093, 0091, ...).
 > **Created:** 2026-11-22
 > **Milestone:** M10 (the outdoor scenes are where the queue is deep) and cross-cutting, like
@@ -386,6 +386,9 @@ store's GPU bytes and its CPU copy of the blocks do not change.
 ## Risks & open questions
 
 **Questions the owner answers before the go** (the first option is the recommendation):
+
+**Answered (owner, 2026-11-22): (a) in all five.** Question 2 in his words: "I agree with
+keeping fade length"; the other four: "agreed on other recommended".
 
 1. **What runs in which mode.** (a) The thread in a window and in the perf rigs; lockstep for
    the pre-roll, the tests, the goldens, the pop counter and any headless run that asserts

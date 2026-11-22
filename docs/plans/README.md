@@ -35,7 +35,7 @@ v0.69.0.
 | [0096](0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) | Performance: the bake queue's drain, the step off its depth, the RENOIR light pass, `alloc` and the eviction scan | approved, amended 11-20 | M10, cross-cutting, ADR-0080 (proposed). After 0095, before 0087. |
 | [0097](0097-the-exposures-anchor-by-the-sky-around-the-camera-the-floor-record-under-the-eye-a-time-constant-and-the-canopys-shade.md) | The exposure's anchor by the sky around the camera: the floor record under the eye, a time constant | approved 11-20 | M10, ADR-0081 (proposed). Lane waits on 0095's merge. |
 | [0098](0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md) | A calm light by default: no screen history, smooth sources to the mid range, the FSR 2 turn read first | approved 11-22 | M10, ADR-0082 (proposed). Needs `diag-edges`' switches. |
-| [0099](0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) | The bake step off the main thread: a bake thread, write lists, the in-view drain | draft | ADR-0083 (proposed). After 0096, 0098, 0087. Awaits the go. |
+| [0099](0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) | The bake step off the main thread: a bake thread, write lists, the in-view drain | approved 11-22 | ADR-0083 (proposed). After 0096, 0098, 0087. |
 <!-- roster:end -->
 
 ## Sequence
@@ -234,7 +234,7 @@ candidate cap; six phases, a split reading first, one owner window): **draft, 20
 awaits the owner's go and five answers**; its lane runs after Plans 0096, 0098 and 0087
 (owner, 2026-11-22).
 
-Plan 0099 is a draft. Every active plan but Plan 0096 is approved (Plans 0091, 0092 and 0093 on 2026-11-19; Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
+Every active plan but Plan 0096 is approved (Plan 0099 on 2026-11-22; Plans 0091, 0092 and 0093 on 2026-11-19; Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Approval accepts the design; a plan's lane
 starts only when the plans its "Starts after" line names have closed and merged, and where that
 line asks for it, after the architect has re-read the plan against the new tip. The approved
