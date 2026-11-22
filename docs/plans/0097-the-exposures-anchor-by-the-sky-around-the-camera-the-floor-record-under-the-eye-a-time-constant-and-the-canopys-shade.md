@@ -2,6 +2,9 @@
 
 > **Status:** in-progress (lane plan-0097 from main 123964e7, 2026-11-21). **Amended 2026-11-22
 > (owner), window 97b: the lift, Phases 3b and 3c (dark places stay dark; ADR-0081 amended).**
+> **Amended 2026-11-22 by the architect at window 97c's verdicts (the owner: "1a looks great", the
+> lift stays 4): Phase 3b's bars 2 and 3 restated, Phase 3d added (the exposure's step just after a
+> stop, from the 0098 lane's reading).**
 > Approved 2026-11-20 (the owner's picks at window W2, all as recommended: the
 > anchor by the sky around the camera's position, a small plan of its own, the slope's step
 > lines to the backlog). **The lane starts after Plan 0095 closes and merges** (owner's
@@ -315,9 +318,17 @@ tip's.
      walls_by_day`, soak, amended, the test opened): at noon with no bake and no sky in view the
      ceiling in force is within 1/64 EV of `c_a 2^L` (`c_a` from `AutoExposure::ceiling(ground)`,
      printed) and `max` with the lift off (the before, asserted); at midnight the ceiling and the
-     eye within 1/64 EV of `max` in both arms; the centre's luma noon over midnight is
-     `log2(c_a 2^L / max)` within 0.5 EV, as a plain `assert!` (Plan 0094's leftover tautology
-     goes with it; the backlog entry is struck in the log).
+     eye within 1/64 EV of `max` in both arms; the centre's **linear** luminance noon over
+     midnight is `log2(c_a 2^L / max)` within 0.5 EV, as a plain `assert!` (Plan 0094's leftover
+     tautology goes with it; the backlog entry is struck in the log). **Amended 2026-11-22:**
+     the clause as first written compared display bytes after the tone curve (-2.954 EV read
+     against -4.753; the exposure ratio exact), and the curve is not linear, so the bar was
+     wrong, not the code. The test reads the centre before the tone curve (the frame's linear
+     target, or the display bytes through the curve's inverse where no channel is within 4
+     levels of 0 or 255); if neither is readable in the rig, the clause becomes: the display
+     luma at noon is under midnight's by at least 1 EV of display value, and the exposure in
+     force noon over midnight is `c_a 2^L / max` within 1/64 EV, and the log says which form
+     ran.
   3. **The reading on the window's poses** (`reading::the_lift_in_the_tunnel`, `gpu_outdoor.rs`,
      160 x 90, `bake_around` radius 1 at 256 samples, 48 frames with a reset at 24; the RTX by
      `VXE_TEST_ADAPTER`, lavapipe otherwise; a reading, under 60 s or soak): the noon tunnel with
@@ -329,8 +340,12 @@ tip's.
      and the tail's level (`hi`'s `now_log2`, the brightest percent) each as EV under the sunlit
      ground's `log2(0.5 E / pi)`, so the close can say how far under the daylight the blue walls
      are in absolute terms (about 7 EV is 5 % of the sky; much brighter is the lighting's, the
-     leak diagnosis's). The table is in the log. **Bars at the default:** x 262.1's ceiling in
-     force is at least 2.5 EV under the lift-off arm's; the W2 shade's and the 1 %-sky spot's eyes
+     leak diagnosis's). The table is in the log. **Bars at the default (amended 2026-11-22):** x 262.1's
+     ceiling in force is within 1/64 EV of `ceiling_target` at the pose's own read shares in
+     both arms, and at least 2.0 EV under the lift-off arm's (the first bar, 2.5, was the
+     arithmetic at a floor share of 5 %, the window's rounded HUD; headless the pose reads
+     6.27 % and the gap 2.367 EV, which the formula gives; the owner at 97c: "1a looks
+     great"); the W2 shade's and the 1 %-sky spot's eyes
      are within 1/64 EV of the lift-off arm's; the midnight hills and the deep midnight tunnel
      read +2.000 in every arm; the mouth from inside within 1/64 EV of the lift-off arm's.
   4. **The goldens are byte-identical in both arms** (the lift default and off; Phase 2 bar 5's
@@ -362,6 +377,36 @@ tip's.
 - **Done when:** the owner's words per run are in the log; run 1 says the blue section is dark
   enough or names `L`'s direction, and has a word on the deep lamp section; run 3 says the shade
   is as before.
+
+### Phase 3d: The exposure's step just after a stop
+- **Owner skill:** dev
+- **What:** The 0098 lane's wobble table on this plan's base reads one step of the auto
+  exposure at the 7th frame after the camera stops: 12.12 % of the near pixels change in that
+  frame, none with the exposure pinned (`docs/plans/logs/0097.md`, "Finding for the
+  architect's next amendment"). First the reading that names which term stepped; then the
+  step is removed so the eye in force moves at most the rate in any frame, a stop included
+  (ADR-0076 rule 5).
+- **Files touched:** `apps/flythrough/tests/gpu_outdoor/ceiling.rs` (or `gpu_wobble.rs` for the
+  reading), `crates/vxe-render/src/exposure.rs`, `crates/vxe-render/src/shaders/exposure.wgsl`,
+  `docs/plans/logs/0097.md`.
+- **Done when:**
+  1. **The reading** (the wobble rig's forest and protocol: 120 settle frames, fly 20 frames at
+     1 m/s, stop, 30 frames; RTX by `VXE_TEST_ADAPTER`, a reading, soak): per frame from the
+     last fly frame to stop +15, the exposure in force, its target, the ceiling in force and
+     its target, the floor and sky shares, the highlight cap's level and whether it binds; the
+     log names the term whose value moves at stop +7 and by how many EV. If the exposure in
+     force moves no more than the rate there, the step is not the eye's: the dev says so in the
+     log and stops for the architect (the suspects then are a value applied a frame late or the
+     upscaler's pre-exposure).
+  2. **The invariant** (`the_eye_holds_the_rate_across_a_stop`, the same protocol on lavapipe
+     at 160 x 90 if it runs under 10 s, else soak): on every frame from the last fly frame to
+     stop +30 the one-frame step of log2 exposure is at or under `R_f + 1/256` (0.0625 + 1/256
+     = 0.0664 EV at 60 Hz); the test fails on the base before the fix (named in the log with
+     the step it read).
+  3. The wobble table's `default` arm, unpinned, reads no frame pair of the stop's first 16
+     over 1 % near (it read 12.12 % at +7; pinned, 0.12 % at most).
+  4. Every exposure golden byte-identical, or each move named with its count; a moved pixel
+     in a still scene is a stop for the architect.
 
 ### Phase 4: The picks as tests and the docs
 - **Owner skill:** dev
@@ -467,6 +512,8 @@ direction bit and `VIS_BAKED` answers with its `+z` byte over 255. No `vxe-world
 | 3: The owner's window | human | done, window 97 (2026-11-21); words in the amendment and the readings log | b3277359 (setup) |
 | 3a: Highlight protection | dev | built, P99 default; short window awaits the owner | 8ff3bbe4 |
 | 3b: The lift | dev | built, `L` 4 default; bar 2's luma clause and bar 3's x 262.1 clause unmet (Notes); short window awaits the owner | committed with this row |
+| 3c: The short window | human | run 2026-11-22 (window 97c): "1a looks great", the lift stays 4 | the log |
+| 3d: The exposure's step just after a stop | dev | not started | |
 | 4: The picks as tests and the docs | dev | not started | |
 
 ### Notes
