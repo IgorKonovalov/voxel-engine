@@ -162,3 +162,18 @@ Proposal: add a "Lighting and look" section. It would take about twenty entries 
 5. **Bake-queue bookkeeping at the 0096 merge.** Six stale "(draft, awaits the go)" pointers, 1533 not marked taken, the touched-set trigger (208) met with no route into Plan 0099, the lane's "bake step off the main thread" entry already stale, and a merge conflict at the top of "Next up".
 
 Runner-up: Plan 0090's owed amendment (480 and 498) should land before that lane starts.
+
+## Owner answers (2026-11-22, in chat to the orchestrator)
+
+1. **`own`, the engine's own upscaler:** "remove it". The removal plan is drafted (it was owed
+   since Plan 0069's close); the keep-as-setting rule does not cover it.
+2. **The engine's pipeline cache:** "yes, plan but later after rename": a plan of its own,
+   drafted and slotted after Plan 0087.
+3. **The lavapipe group at two threads in the gate:** "recommended approach are fine": go, as a
+   chore with its readings.
+4. **A raster pass in the engine:** "leave open", until Plan 0033's re-read.
+5. **The slow adapter's walk-speed spike entry:** "drop".
+
+**The clean-up** (delete the done entries, fix the pointers, merge the duplicates, a "Lighting
+and look" section, the misfiled entries moved): agreed, one architect pass after Plans 0096,
+0097 and 0098 have merged.
