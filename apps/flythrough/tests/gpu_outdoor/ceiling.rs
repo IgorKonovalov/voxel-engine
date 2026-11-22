@@ -429,6 +429,121 @@ mod ceiling {
         assert!(worst.0 <= r_f, "a step of {:.4} EV at stop {:+} over {r_f:.4} EV", worst.0, worst.1);
     }
 
+    /// One frame of [`canopy_walk`]: the floor's share fed to the exposure (`f_floor`,
+    /// `Frame::sky_floor`, `None` while unread), the metered share of sky in view (`f_sky`),
+    /// the ceiling in force (log2) and the exposure in force (log2).
+    pub(super) type CanopyTrace = Vec<(Option<f32>, f32, f64, f64)>;
+
+    /// The canopy walk (Plan 0097 Phase 4 bar 1): the forest at the fixed sun 10,180
+    /// ([`w2_rig`]), the lamp off, the store baked by `support::bake_around` at radius 1 and
+    /// 256 samples about the midpoint of the two W2 poses (every chunk the line between them
+    /// crosses), at native `size` under [`auto`] at the default share and `dt` 1/60. The eye
+    /// moves in a straight line from the 1 %-sky pose to the shade pose and back, `step`
+    /// voxels a frame, facing along the leg pitched 10 degrees down, after 120 still frames at
+    /// the start facing the first leg. Returns the walk's frames (the still ones left out),
+    /// `c_a`, the anchored ceiling (log2) from the pass's own ground irradiance, and the wall
+    /// time of one `vxe_render::sky_over_floor` call on the frame's store at each frame's eye
+    /// (the CPU walk the frame does once a frame).
+    pub(super) fn canopy_walk(rig: &mut Rig, size: (u32, u32), step: f32) -> (CanopyTrace, f64, Vec<std::time::Duration>) {
+        let a = auto(vxe_render::DEFAULT_SKY_ANCHOR_SHARE);
+        let mut f = Frame::new(&rig.device, size.0, size.1);
+        f.set_look(vxe_render::LookParams {
+            far_normal: flythrough::LookPreset::DEFAULT.far_normal,
+            ..vxe_render::LookParams::default()
+        });
+        f.set_material_styles(&rig.queue, &flythrough::outdoor_styles(flythrough::LeafShadow::default()));
+        f.set_lighting(Lighting {
+            lamp: false,
+            exposure: Exposure::Auto(a),
+            ..flythrough::default_lighting()
+        });
+        f.set_sky(Some(clock(720.0, Some([10.0, 180.0]))));
+        f.set_dt(1.0 / 60.0);
+        let mid = [0, 1, 2].map(|k| ((W2_SHADE[k] + W2_SKY[k]) / 2.0).floor() as i32);
+        support::bake_around(&rig.device, &rig.queue, &mut rig.gpu, &mut f, &rig.world, mid, 1, 256);
+        let d = [0, 1, 2].map(|k| W2_SHADE[k] - W2_SKY[k]);
+        let len = d.iter().map(|v| v * v).sum::<f32>().sqrt();
+        let frames = (len / step).ceil() as u32;
+        let cam = |t: f32, back: bool| {
+            let p = [0, 1, 2].map(|k| W2_SKY[k] + d[k] * t);
+            let s = if back { -1.0 } else { 1.0 };
+            Camera {
+                position: p.into(),
+                yaw: (s * d[1]).atan2(s * d[0]),
+                pitch: -10f32.to_radians(),
+                vfov: 70f32.to_radians(),
+            }
+        };
+        let light = LightParams::headlamp();
+        for _ in 0..120 {
+            f.step(&rig.device, &rig.queue, &rig.gpu, &cam(0.0, false), &light);
+        }
+        let mut trace = CanopyTrace::new();
+        let mut walk = Vec::new();
+        for back in [false, true] {
+            for k in 1..=frames {
+                let t = (k as f32 * step / len).min(1.0);
+                let c = cam(if back { 1.0 - t } else { t }, back);
+                f.step(&rig.device, &rig.queue, &rig.gpu, &c, &light);
+                let t0 = std::time::Instant::now();
+                std::hint::black_box(vxe_render::sky_over_floor(f.store(), c.position.to_array()));
+                walk.push(t0.elapsed());
+                let st = vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_state(), 0, 32);
+                let st = vxe_render::ExposureState::from_bytes(&st);
+                trace.push((f.sky_floor(), st.sky, f64::from(st.ceiling).log2(), f64::from(st.current).log2()));
+            }
+        }
+        let b = vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.sky_irradiance(), 0, 96);
+        let up: Vec<f32> = b[80..96].chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+        let ground = vxe_render::ground_irradiance([up[0], up[1], up[2]], up[3]);
+        (trace, f64::from(a.ceiling(Some(ground))).log2(), walk)
+    }
+
+    /// Prints [`canopy_walk`]'s trace (`trace` lines) and returns the largest one-frame step
+    /// of log2 exposure and the largest distance of the ceiling in force from `c_a`, each with
+    /// its frame.
+    pub(super) fn canopy_worst(trace: &CanopyTrace, c_a: f64) -> ((f64, usize), (f64, usize)) {
+        let (mut step, mut off) = ((0.0f64, 0usize), (0.0f64, 0usize));
+        for (k, r) in trace.iter().enumerate() {
+            println!(
+                "trace {k}: floor {} sky {:.4} ceiling {:+.4} exposure {:+.4}",
+                r.0.map_or("-".to_string(), |v| format!("{v:.4}")),
+                r.1,
+                r.2,
+                r.3
+            );
+            if k > 0 && (r.3 - trace[k - 1].3).abs() > step.0 {
+                step = ((r.3 - trace[k - 1].3).abs(), k);
+            }
+            if (r.2 - c_a).abs() > off.0 {
+                off = ((r.2 - c_a).abs(), k);
+            }
+        }
+        (step, off)
+    }
+
+    /// Plan 0097 Phase 4 bar 1, the lavapipe form: [`canopy_walk`] at 160 x 90 and 4 times
+    /// the reading's speed (1 voxel a frame, 60 voxels a second; 142 frames each way): the
+    /// ceiling in force within 0.5 EV of `c_a` on every frame and the largest one-frame step
+    /// of log2 exposure at or under `R_f + 1/256`. `VXE_TEST_ADAPTER` picks the adapter (unset:
+    /// lavapipe).
+    #[test]
+    #[ignore = "soak"]
+    fn the_canopy_walk_holds_the_anchor() {
+        let Some(mut rig) = w2_rig() else {
+            return;
+        };
+        let (trace, c_a, _) = canopy_walk(&mut rig, (160, 90), 1.0);
+        let ((step, ks), (off, ko)) = canopy_worst(&trace, c_a);
+        let r_f = f64::from(vxe_render::DEFAULT_EXPOSURE_RATE_EV_S) / 60.0 + 1.0 / 256.0;
+        println!(
+            "reading: on {}: c_a {c_a:+.4} EV; the largest step {step:.4} EV at frame {ks} (bar {r_f:.4}); the ceiling at most {off:.4} EV from c_a at frame {ko}",
+            rig.adapter
+        );
+        assert!(off <= 0.5, "the ceiling {off:.4} EV from c_a at frame {ko}");
+        assert!(step <= r_f, "a step of {step:.4} EV at frame {ks}");
+    }
+
     /// One walk of [`walk`]: per frame the metered sky share, the metered level, the ceiling
     /// in force (log2) and the exposure in force (log2).
     pub(super) type Trace = Vec<(f32, f32, f64, f64)>;
@@ -974,6 +1089,36 @@ mod ceiling {
                 }
                 assert!(late.is_empty(), "over the anchored ceiling at frames {late:?}");
             }
+        }
+
+        /// Plan 0097 Phase 4 bar 1: [`canopy_walk`] at native 320 x 180 at 15 voxels a second
+        /// (a quarter voxel a frame, 565 frames each way): the trace in full (`trace` lines),
+        /// the ceiling in force within 0.5 EV of `c_a` on every frame and the largest one-frame
+        /// step of log2 exposure at or under `R_f + 1/256`; the floor walk's CPU time a frame
+        /// printed. `VXE_TEST_ADAPTER` picks the adapter (the RTX, release, for the reading).
+        #[test]
+        #[ignore = "reading"]
+        fn the_canopy_walk_exposure() {
+            let Some(mut rig) = w2_rig() else {
+                return;
+            };
+            let (trace, c_a, walk) = canopy_walk(&mut rig, (320, 180), 0.25);
+            let us: Vec<f64> = walk.iter().map(|d| d.as_secs_f64() * 1e6).collect();
+            println!(
+                "reading: the floor walk (sky_over_floor) {:.3} us mean, {:.3} us max over {} frames",
+                us.iter().sum::<f64>() / us.len().max(1) as f64,
+                us.iter().copied().fold(0.0, f64::max),
+                us.len()
+            );
+            let ((step, ks), (off, ko)) = canopy_worst(&trace, c_a);
+            let r_f = f64::from(vxe_render::DEFAULT_EXPOSURE_RATE_EV_S) / 60.0 + 1.0 / 256.0;
+            println!(
+                "reading: the_canopy_walk_exposure on {}: c_a {c_a:+.4} EV; the largest step {step:.4} EV at frame {ks} (bar {r_f:.4}); the ceiling at most {off:.4} EV from c_a at frame {ko}; {} frames",
+                rig.adapter,
+                trace.len()
+            );
+            assert!(off <= 0.5, "the ceiling {off:.4} EV from c_a at frame {ko}");
+            assert!(step <= r_f, "a step of {step:.4} EV at frame {ks}");
         }
     }
 }

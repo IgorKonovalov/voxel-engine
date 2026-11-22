@@ -191,14 +191,17 @@ pub const DEFAULT_SKY_ANCHOR_SHARE: f32 = 1.0 / 256.0;
 
 /// [`AutoExposure::sky_anchor_floor`]'s default: the anchor holds in full while 1/8 of the
 /// floor's hemisphere is open sky (Plan 0097 Phase 1's reading: the forest floor at window W2's
-/// two poses 0.14 and 0.20, the deep noon tunnel's 0.012; the largest power of two between).
+/// two poses 0.14 and 0.20, the deep noon tunnel's 0.012; the largest power of two between),
+/// kept at window 97 (the forest's deep shade "better" than with the view's share alone).
 pub const DEFAULT_SKY_ANCHOR_FLOOR: f32 = 1.0 / 8.0;
 
-/// [`AutoExposure::sky_around_tau`]'s default in seconds (ADR-0081's guess).
+/// [`AutoExposure::sky_around_tau`]'s default in seconds (ADR-0081's guess; window 97 left
+/// it unanswered, and the canopy walk of Plan 0097 Phase 4 reads the eye's steps under it).
 pub const DEFAULT_SKY_AROUND_TAU: f32 = 1.0;
 
 /// [`AutoExposure::sky_anchor_lift`]'s default in EV (ADR-0081's amendment: the pupil's 2 to
-/// 8 mm, 16 times; a guess the owner's window reads).
+/// 8 mm, 16 times), kept at window 97c (the noon tunnel with the lamp on "looks great" at 4;
+/// 2 and 6 not needed).
 pub const DEFAULT_SKY_ANCHOR_LIFT: f32 = 4.0;
 
 /// [`AutoExposure::highlight_percentile`]'s default (Plan 0097 Phase 3a's tunnel reading).
