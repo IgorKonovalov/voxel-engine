@@ -354,12 +354,10 @@ impl Frame {
             p.prev_views = h.prev_views;
             p.prev_light_offset = h.prev_offset;
             h.last_offset = params.light_offset;
-            p.history = self
-                .state
-                .lighting
-                .light_history_bits(h.valid && !h.overflow);
+            let valid = h.valid && !h.overflow;
+            p.history = self.state.lighting.light_history_bits(valid);
             // Bit 1: the upscaler's history holds this view's image.
-            p.history |= u32::from(h.valid && !h.overflow && !h.view_changed) << 1;
+            p.history |= u32::from(valid && !h.view_changed) << 1;
             h.view_changed = false;
             for (i, [min, max]) in h.edits.iter().enumerate() {
                 edits.boxes[2 * i] = [min[0], min[1], min[2], 0];
