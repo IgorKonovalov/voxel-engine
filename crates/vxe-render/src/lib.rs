@@ -89,10 +89,10 @@ pub use bake::{
     AROUND_REACH, AroundSource, BakeError, BakeProgress, BakeQueue, BakeReport, BakeSettings,
     Budget, DEFAULT_BAKE_EDIT_MS, DEFAULT_BAKE_SLICE_MS, DEFAULT_COARSE_SAMPLES, DEFAULT_NEAR,
     DigReport, FaceOutcome, LANDED_BARE, LANDED_FALLBACK, LANDED_REFADED, LANDED_UNFADED,
-    LANDING_DIRECTIONS, LANDING_KEY, LANDING_KEY_FLAG, LANDING_TAIL, LANDING_VIS, LANDING_VIS_FLAG,
-    MissingLight, PreRoll, PreRollConfig, PreRollError, PreRollState, PreRollSummary,
-    QUEUE_ANGLE_WEIGHT, QUEUE_BRICK_SAMPLES, QUEUE_REFINE_WEIGHT, QueueOrder, QueueStats,
-    QueueView, ReachMode, Refine, Store, StoreStats, finality_blockers, queue_settings,
+    LANDING_DIRECTIONS, LANDING_KEY, LANDING_KEY_FLAG, LANDING_RECORDS, LANDING_TAIL, LANDING_VIS,
+    LANDING_VIS_FLAG, MissingLight, PreRoll, PreRollConfig, PreRollError, PreRollState,
+    PreRollSummary, QUEUE_ANGLE_WEIGHT, QUEUE_BRICK_SAMPLES, QUEUE_REFINE_WEIGHT, QueueOrder,
+    QueueStats, QueueView, ReachMode, Refine, Store, StoreStats, finality_blockers, queue_settings,
     reach_crosses, sky_over_floor,
 };
 pub use camera::{Camera, View};

@@ -570,7 +570,7 @@ impl Placement<'_> {
 
 /// Counts into `cells` ([`QueueStats::landing_cells`]) the cells of a landing block `to` whose
 /// words differ from `from`, what the pool shows as the fade starts, by read.
-fn count_landing(cells: &mut [u64; 6], from: &[u32], to: &[u32], record: usize) {
+fn count_landing(cells: &mut [u64; 7], from: &[u32], to: &[u32], record: usize) {
     for &dir in &to[..CHUNK_BRICKS] {
         if dir == 0 {
             continue;
@@ -594,6 +594,7 @@ fn count_landing(cells: &mut [u64; 6], from: &[u32], to: &[u32], record: usize) 
                 cells[if keyed { LANDING_KEY } else { LANDING_KEY_FLAG }] += 1;
             }
             cells[LANDING_TAIL] += u64::from(a[6] != b[6]);
+            cells[LANDING_RECORDS] += 1;
         }
     }
 }

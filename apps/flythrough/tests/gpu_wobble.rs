@@ -664,7 +664,7 @@ fn run_segment(
 /// that frame's step (chunks baked and key-only jobs ended; the blocks landed by how, refaded /
 /// over the fallback / another layout unfaded / bare unfaded; the landed cells whose words
 /// changed by read, directions / sky visibilities / sky flags / key visibilities / key flags /
-/// tail) and the blocks fading after it. Then the stop's largest near pair and its frame.
+/// tail, then every cell they hold) and the blocks fading after it. Then the stop's largest near pair and its frame.
 const LANDING: std::ops::RangeInclusive<usize> = 36..=64;
 
 /// A stop frame's near pair over 4 levels, in %, over which [`landing_rows`] prints it.
@@ -687,7 +687,7 @@ fn landing_rows(seg: &Segment, cls: &[u8]) {
         let how: Vec<String> = (0..4)
             .map(|k| (b.landings[k] - a.landings[k]).to_string())
             .collect();
-        let cells: Vec<String> = (0..6)
+        let cells: Vec<String> = (0..7)
             .map(|k| (b.landing_cells[k] - a.landing_cells[k]).to_string())
             .collect();
         println!(

@@ -126,8 +126,9 @@ pub struct QueueStats {
     pub landings: [u64; 4],
     /// Of the faded landings since the queue started (refaded and over the fallback, key-only
     /// jobs among them), the cells whose words differ from what the pool showed as the fade
-    /// started, by read ([`LANDING_DIRECTIONS`] to [`LANDING_TAIL`]).
-    pub landing_cells: [u64; 6],
+    /// started, by read ([`LANDING_DIRECTIONS`] to [`LANDING_TAIL`]); and every cell those
+    /// landings hold, changed or not ([`LANDING_RECORDS`]).
+    pub landing_cells: [u64; 7],
 }
 
 /// [`QueueStats::landings`]: a block over its chunk's block of the same layout, faded from
@@ -152,3 +153,5 @@ pub const LANDING_KEY: usize = 3;
 pub const LANDING_KEY_FLAG: usize = 4;
 /// The tail word (material and direction mask): not faded.
 pub const LANDING_TAIL: usize = 5;
+/// Every cell record of the faded landings, changed or not: 0 for blocks with no surface brick.
+pub const LANDING_RECORDS: usize = 6;
