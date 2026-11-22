@@ -3,8 +3,9 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0098** (0096 is the performance plan below; 0097 the exposure's anchor by
-the sky around the camera; ADRs are a separate sequence, see `../adrs/README.md` for its next
+**Next free number: 0100** (0096 is the performance plan below; 0097 the exposure's anchor by
+the sky around the camera; 0098 the calm light by default, drafted 2026-11-21; 0099 the bake
+step off the main thread, drafted 2026-11-22; ADRs are a separate sequence, see `../adrs/README.md` for its next
 free number). Plan 0095, the motion wobble (a calm key light in motion), closed 2026-11-21,
 v0.69.0.
 
@@ -33,6 +34,8 @@ v0.69.0.
 | [0093](0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) | The README rewrite with reproducible screenshots: a shot manifest, a shoot script, an image gate, the owner's picks | approved | M7 docs, no ADR. After 0087 merges, beside 0089, before 0091. |
 | [0096](0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) | Performance: the bake queue's drain, the step off its depth, the RENOIR light pass, `alloc` and the eviction scan | in progress, amended 11-22 | M10, ADR-0080 (proposed). Phase 9 left. Before 0087. |
 | [0097](0097-the-exposures-anchor-by-the-sky-around-the-camera-the-floor-record-under-the-eye-a-time-constant-and-the-canopys-shade.md) | The exposure's anchor by the sky around the camera: the floor record under the eye, a time constant | approved 11-20 | M10, ADR-0081 (proposed). Lane waits on 0095's merge. |
+| [0098](0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md) | A calm light by default: no screen history, smooth sources to the mid range, the FSR 2 turn read first | approved 11-22 | M10, ADR-0082 (proposed). Needs `diag-edges`' switches. |
+| [0099](0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) | The bake step off the main thread: a bake thread, write lists, the in-view drain | approved 11-22 | ADR-0083 (proposed). After 0096, 0098, 0087. |
 <!-- roster:end -->
 
 ## Sequence
@@ -222,7 +225,16 @@ owed open hills at midnight, the picks as tests): **approved 2026-11-20 by the o
 W2 (all as recommended); its lane starts after Plan 0095 closes and merges**, beside or after
 Plan 0096 as the owner orders then. The slope's step lines seen at W2 went to the backlog.
 
-Every active plan but Plan 0096 is approved (Plans 0091, 0092 and 0093 on 2026-11-19; Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
+**Plan 0099** (the bake step off the main thread, ADR-0083 proposed, extending ADR-0017: the
+live queue's books and per-job CPU work on one bake thread, the render thread applying write
+lists under a byte cap and issuing the submits, the same code in lockstep as a setting; from
+Plan 0096's Phase 8 window, the RTX at about 30 fps while the forest's queue drains, the step
+28.0 / 51.1 ms p50/p99; it takes 0096's step line, the in-view drain's line and the opening's
+candidate cap; six phases, a split reading first, one owner window): **draft, 2026-11-22,
+awaits the owner's go and five answers**; its lane runs after Plans 0096, 0098 and 0087
+(owner, 2026-11-22).
+
+Every active plan but Plan 0096 is approved (Plan 0099 on 2026-11-22; Plans 0091, 0092 and 0093 on 2026-11-19; Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Approval accepts the design; a plan's lane
 starts only when the plans its "Starts after" line names have closed and merged, and where that
 line asks for it, after the architect has re-read the plan against the new tip. The approved
