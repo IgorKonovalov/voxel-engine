@@ -1,6 +1,6 @@
 # 0098: A calm light by default: no screen history, smooth sources to the mid range, and the FSR 2 turn
 
-> **Status:** draft
+> **Status:** approved 2026-11-22 (owner)
 > **Created:** 2026-11-21
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0082](../adrs/0082-the-light-pass-keeps-no-screen-history-by-default-and-reads-smooth-sources-to-the-mid-range.md)
