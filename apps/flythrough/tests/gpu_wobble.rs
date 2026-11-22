@@ -511,6 +511,9 @@ struct Segment {
     gw: usize,
     /// Per frame: the far's key sources ([`far_sources`]).
     sources: Vec<[f64; 4]>,
+    /// Per frame after its queue step: the live queue's chunks baked and key-only jobs ended
+    /// since it started, and the blocks fading (zeros with no queue).
+    queue: Vec<[u64; 3]>,
 }
 
 /// A sampled frame's diagnostic: its index, and per lighting pixel the age, the source word,
@@ -542,8 +545,13 @@ fn run_segment(
     let mut k = 0usize;
     let mut sources = Vec::new();
     let mut sum_pass = Vec::<f64>::new();
+    let mut queue = Vec::new();
     for cam in cams {
         queue_step(rig, &mut s.frame, &cam);
+        queue.push(s.frame.bake_queue().map_or([0; 3], |q| {
+            let st = q.stats();
+            [st.baked, st.keys_baked, st.fading]
+        }));
         let shot = s.step(rig, &cam);
         if sum_pass.len() < shot.passes.len() {
             sum_pass.resize(shot.passes.len(), 0.0);
@@ -620,6 +628,28 @@ fn run_segment(
         diag,
         gw,
         sources,
+        queue,
+    }
+}
+
+/// The stop's frames `LANDING` one by one: the near class's over-4 share against the previous
+/// frame and against the segment's last, beside the queue's chunks baked and key-only jobs
+/// ended in that frame's step and the blocks fading after it.
+const LANDING: std::ops::RangeInclusive<usize> = 36..=64;
+
+fn landing_rows(seg: &Segment, cls: &[u8]) {
+    let last = seg.frames.last().unwrap();
+    for i in LANDING.filter(|&i| i > 0 && i < seg.frames.len()) {
+        let pair = change_by_class(&seg.frames[i - 1], &seg.frames[i], cls, 4)[1].0;
+        let to_final = change_by_class(&seg.frames[i], last, cls, 4)[1].0;
+        let (a, b) = (seg.queue[i - 1], seg.queue[i]);
+        println!(
+            "    landing {} +{i}: pair near {pair:.2} %; to-final near {to_final:.2} %; landed baked {} keys {}; fading {}",
+            seg.name,
+            b[0] - a[0],
+            b[1] - a[1],
+            b[2]
+        );
     }
 }
 
@@ -947,6 +977,7 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> f64 {
             let gw = s.frame.light_hit_positions().width() as usize;
             let cls = classes(&shot.hits, &shot.source, gw, cam1.position.to_array());
             stop_near = hold_series(&stop, &cls, still_far_max);
+            landing_rows(&stop, &cls);
             support::write_png(&dir.join("stop-final.png"), &shot.display, OUT[0], OUT[1]);
         }
         // The turn: `turn_deg` over `turn_frames` frames, then the hold.
