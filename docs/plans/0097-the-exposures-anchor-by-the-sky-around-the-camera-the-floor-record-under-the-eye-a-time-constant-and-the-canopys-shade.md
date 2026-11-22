@@ -1,6 +1,6 @@
 # 0097: The exposure's anchor by the sky around the camera: the floor record under the eye, a time constant, and the canopy's shade kept in daylight
 
-> **Status:** in-progress (lane plan-0097 from main 123964e7, 2026-11-21). **Amended 2026-11-22
+> **Status:** implemented, awaits the fresh close review (lane plan-0097 from main 123964e7, 2026-11-21). **Amended 2026-11-22
 > (owner), window 97b: the lift, Phases 3b and 3c (dark places stay dark; ADR-0081 amended).**
 > **Amended 2026-11-22 by the architect at window 97c's verdicts (the owner: "1a looks great", the
 > lift stays 4): Phase 3b's bars 2 and 3 restated, Phase 3d added (the exposure's step just after a
@@ -653,11 +653,31 @@ each. Empty is fine.)_
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature (the exposure's anchor by the sky over the camera's floor,
+  highlight protection, the lift; tests and docs).
+- **Public API changed:** `vxe-render`: `AutoExposure` fields `sky_anchor_floor`,
+  `sky_around_tau`, `sky_anchor_lift`, `highlight_percentile` and methods `ceiling_target`
+  (takes the floor's share), `release_top`, `floor_term`; `ExposureReadout::sky_floor` and
+  `highlight`; `ExposureState` words `sky_around`, `hi_tail`, `hi_white`; `ExposureUniform`
+  112 to 128 B (`lift` in the former `_pad0`); `ExposureHighlight` (16 B, its own buffer);
+  `SkyAround`; `sky_over_floor`, `AroundSource`, `AROUND_REACH`; `white_exposed`,
+  `HIGHLIGHT_WHITE`; `DEFAULT_SKY_ANCHOR_FLOOR`, `DEFAULT_SKY_AROUND_TAU`,
+  `DEFAULT_SKY_ANCHOR_LIFT`, `DEFAULT_EXPOSURE_HIGHLIGHT`; `Frame::sky_floor`,
+  `Frame::exposure_highlight`. Shader interfaces: `exposure.wgsl` (the uniform, `ExHighlight`,
+  the `EX_AROUND` mode bit), `composite.wgsl` (the meter tile's last word, the tile's tail).
+  Config: the fly-through's `--sky-anchor-floor`, `--exposure-highlight`, `--sky-anchor-lift`.
+- **Budget readings:** the frame's exposure buffers +32 B (the uniform +16 B, the highlight
+  state 16 B), on top of Plan 0094's +115 216 B: +115 248 B at 1280 x 720 internal (frame
+  inventories, lavapipe). The floor walk's CPU time 0.226 us mean, 0.501 us max a frame (RTX
+  3080 Laptop host, release, 80cd7134, loaded; `docs/nfr/02-frame-budget.md`).
+- **Gate at the tip:** `scripts/build-guests.sh`; `cargo nextest run --profile gate` run 4 at
+  ef49b0bc exit 100 (1290 run, 1288 passed, 2 failed, 226 skipped, 1914.9 s, loaded), the two
+  failures fixed by 73e0842a and their binaries (`gpu_upscale`, `gpu_look_field`) rerun whole
+  exit 0 (10 passed); the whole gate was not rerun (the orchestrator's call). Doctests exit 0
+  (10 passed); `cargo clippy --workspace --all-targets -D warnings` exit 0; `cargo fmt --all
+  --check` exit 0; `cargo deny check` exit 1 (advisories: RUSTSEC-2026-0592, `url` 2.5.8, the
+  lockfile unchanged from main). Readings log, "The tip's gate".
+- **Outstanding `human` phases:** none (Phases 3 and 3c run).
 
 ## Followups
 
