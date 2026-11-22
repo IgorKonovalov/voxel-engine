@@ -27,7 +27,7 @@ Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queue
 
 ### The CPU settle outdoors: the bake queue's step on a world with no emitter, and the forest's sync p99
 
-Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) and [ADR-0080](adrs/0080-the-live-queue-bakes-what-the-image-reads-a-record-by-rule-a-tier-by-size-on-screen-and-a-drain-slice.md): a record by rule for a chunk with no face or buried with no emitter in reach (Phase 2), the step off the queue's depth (Phase 5), the forest's sync p99 (Phase 7); the readings quoted in the plan's context.
+Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) and [ADR-0080](adrs/0080-the-live-queue-bakes-what-the-image-reads-a-record-by-rule-a-tier-by-size-on-screen-and-a-drain-slice.md): a record by rule for a chunk with no face or buried with no emitter in reach (Phase 2), the step off the queue's depth (Phase 5), the forest's sync p99 (Phase 7); the readings quoted in the plan's context. What Phase 5 left (2026-11-22): the step no longer grows with the depth (candidates scored a step 0 to 56 of a pool of 9 361, the drained step 0.065 ms p50), but while baking it costs per job opened (`list`, `collect`, `submit`, `fades`, `summaries`; regime B 20.7 / 55.0 ms p50/p99 on the RTX forest, loaded). **That per-job cost is re-pointed (Plan 0096 Phase 9) at "The bake step off the main thread" above.**
 
 ### The streamed benches on Windows: CPU frames of 20 to 256 ms on a desktop
 
@@ -397,7 +397,7 @@ Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queue
 
 ### The RTX's submits draw less than their per-second slice
 
-Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 4: a lap on `plan_rounds`, `send` and the `IN_FLIGHT` wait, then the fix it names; the bar is 85 % of the granted slice drawn.
+Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 4: a lap on `plan_rounds`, `send` and the `IN_FLIGHT` wait, then the fix it names; the bar is 85 % of the granted slice drawn. Read 2026-11-22 (Plan 0096 Phase 4, `docs/plans/logs/0096.md`): the plans stop out of rounds, not at the cap or the slots; the submit is short of jobs because the opening admits at most `QUEUE_CHECKS` (16) candidates a step, each listed on the render thread. At the drain slice the submits draw 0.94 to 0.99 of it; at the per-second form (`second:150,0.25`) 0.60 to 0.69. **Re-pointed (Plan 0096 Phase 9) at "The bake step off the main thread" above**, which takes the opening's cap with the listing.
 
 ### The first-block fallback fade's CPU under `chain`
 
