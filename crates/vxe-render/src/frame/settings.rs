@@ -983,7 +983,9 @@ pub struct Lighting {
     pub light_history_far: bool,
     /// A spike arm (Plan 0098 Phase 5, default off): the a-trous filter's plane and normal
     /// edge stops relax by the far normal's weight, so the key light of two hits a jitter step
-    /// apart is one spatial mean at the far.
+    /// apart is one spatial mean at the far; and the stored sky term, which passes around the
+    /// filter, mixes a face's baked visibility toward its chunk summary's by the same weight
+    /// (temporal.wgsl).
     pub far_light_wide: bool,
     /// How the key light's shadow ray makes its penumbra ([`Penumbra`]; default `Disc`).
     pub penumbra: Penumbra,
@@ -1035,7 +1037,8 @@ impl Lighting {
     /// `Params::history`'s light bits for a frame whose history is `valid`: bit 0 the light
     /// passes read it ([`Lighting::light_history`], or under [`Lighting::light_history_far`] bit
     /// 2 too: at the far alone, temporal.wgsl `light_history_at`), bit 3 the a-trous filter's
-    /// edges relax at the far ([`Lighting::far_light_wide`], atrous.wgsl `far_wide`).
+    /// edges relax and the stored sky term widens at the far ([`Lighting::far_light_wide`],
+    /// atrous.wgsl `far_wide`, temporal.wgsl).
     pub(crate) fn light_history_bits(&self, valid: bool) -> u32 {
         let far_only = !self.light_history && self.light_history_far;
         u32::from(valid && (self.light_history || far_only))

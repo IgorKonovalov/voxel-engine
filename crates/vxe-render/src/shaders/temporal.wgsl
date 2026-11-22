@@ -888,6 +888,17 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             if (sv.y == 0.0) {
                 sv = store_sky_fallback(head, store_voxel(rec.p, nf), face, rec.p, nf);
             }
+            // `Params::history` bit 3 (`Lighting::far_light_wide`, a spike arm): the sky term
+            // skips the filter, so its own source widens instead: the face's visibility mixes
+            // toward its chunk summary's by the far normal's weight, so two hits a jitter step
+            // apart at the far read one value.
+            if ((params.history & 8u) != 0u && sv.y > 0.0) {
+                let cs = store_summary_sky(head, store_voxel(rec.p, nf) >> vec3<u32>(6u), face);
+                if (cs.y > 0.0) {
+                    let w = far_normal_weight(params.views[view_of(full_px(gid.xy))], rec.t);
+                    sv = vec2<f32>(mix(sv.x, cs.x, w), sv.y);
+                }
+            }
             if (COUNT_STORE) {
                 source = sky_source(head, store_voxel(rec.p, nf), face, rv.y > 0.0, sv.y > 0.0, sky_cast);
             }
