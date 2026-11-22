@@ -95,7 +95,7 @@ the status.
 | [0078](0078-an-entity-part-has-a-grain-a-detail-finer-than-a-world-voxel-or-a-coarse-factor-of-world-voxels-per-model-voxel.md) | An entity part has a grain: a detail finer than a world voxel, or a coarse factor of world voxels per model voxel | accepted (Plan 0083 Phase 7b, 2026-11-19) |
 | [0079](0079-the-key-lights-visibility-is-read-with-no-screen-history-the-record-or-the-column-maps-horizon-at-the-far-a-deterministic-penumbra-near.md) | The key light's visibility is read with no screen history: the record, else the horizon far; a deterministic penumbra near | accepted (Plan 0095), Outcome |
 | [0080](0080-the-live-queue-bakes-what-the-image-reads-a-record-by-rule-a-tier-by-size-on-screen-and-a-drain-slice.md) | The live queue bakes what the image reads: a record by rule, a sample tier by size on screen, a slice that drains what is in view | proposed (Plan 0096), amended 11-20 |
-| [0081](0081-the-sky-anchor-holds-by-the-sky-over-the-cameras-floor-or-in-view-and-releases-where-both-are-absent.md) | The sky anchor holds by the sky over the camera's floor (the baked record under the eye) or by the sky in view, and releases only where both are absent | proposed (Plan 0097) |
+| [0081](0081-the-sky-anchor-holds-by-the-sky-over-the-cameras-floor-or-in-view-and-releases-where-both-are-absent.md) | The sky anchor holds by the sky over the camera's floor or by the sky in view, and releases only where both are absent, by at most a lift over the daylight anchor | proposed (Plan 0097) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded

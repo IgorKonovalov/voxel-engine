@@ -1,6 +1,8 @@
 # 0097: The exposure's anchor by the sky around the camera: the floor record under the eye, a time constant, and the canopy's shade kept in daylight
 
-> **Status:** in-progress (lane plan-0097 from main 123964e7, 2026-11-21). Approved 2026-11-20 (the owner's picks at window W2, all as recommended: the
+> **Status:** in-progress (lane plan-0097 from main 123964e7, 2026-11-21). **Amended 2026-11-22
+> (owner), window 97b: the lift, Phases 3b and 3c (dark places stay dark; ADR-0081 amended).**
+> Approved 2026-11-20 (the owner's picks at window W2, all as recommended: the
 > anchor by the sky around the camera's position, a small plan of its own, the slope's step
 > lines to the backlog). **The lane starts after Plan 0095 closes and merges** (owner's
 > order, 2026-11-20).
@@ -78,6 +80,21 @@ with its old value. `F_floor` 0 is the before. We rejected the hits' baked visib
 anchors), the column map's footprint (a vertical line, not a hemisphere), camera rays (a new
 ray source where a baked hemisphere exists; the fallback arm) and a hysteresis pair (a step
 where the rules want fades): ADR-0081.
+
+**Amended 2026-11-22 (owner), window 97b: the release is bounded by a lift.** The release's
+top is no longer `max` but `c_top = min(max, c_a 2^L)`, `L` the **lift** in EV
+(`AutoExposure::sky_anchor_lift`, `DEFAULT_SKY_ANCHOR_LIFT` 4, a guess the window reads; `None`
+is the before): `log2 c = mix(log2 c_top, log2 c_a, min(s, 1))` with `s` as above. By day the
+eye opens at most `L` EV over the daylight anchor wherever it stands, so a place the daylight
+reaches only through a crack shows dark against the daylight it is cut from; the two shares
+still decide where between `c_a` and `c_top` the target sits, the ceiling in force still steps
+under the rate cap, and the night (`c_a >= max`) is untouched. The reason for 4: the pupil's 2
+to 8 mm is 16 times, the fast part of adaptation; the rods' twenty minutes are not a game's
+daytime eye. Rejected: a slope in the floor's share (the local daylight followed in part: the
+deep lamp tunnel brighter than the sky-lit middle, which the owner read as overexposed at window
+97, and a step at the record's last quantum), a slow release rate (a look that depends on how
+long the owner stood there), a lower `N` or a lower day `max` (both darken the W2 shade, a bar):
+ADR-0081's amendment of this date.
 
 ## Architecture diagram
 
@@ -246,6 +263,106 @@ tip's.
   (4) `the_ceiling_moves_at_the_rate` unchanged. (5) A short window (tunnel, cave mouth, the
   forest at 10,180) closes it; the runner is built, the owner opens it.
 
+- **Amended 2026-11-22 (owner), window 97b (`live/window97b/verdicts-orchestrator.md`, the
+  stills beside it), the owner's words:** run 3, the forest at 10,180: "3a looks better"
+  (the tip over the before). Run 2, the cave mouth: "before and after mostly same". Run 1, the
+  noon tunnel with the lamp, on the tip at x 262.1 y 4.6 z 489.0: "we still have this part
+  where there is blue light and it is very bright. such thing will never happen in real life.
+  Should be much darker in this case" (HUD: scene -7.4 EV, eye -1.29 at the ceiling -1.29,
+  anchor 4, sky 0 %, floor 5 %, `hi +0.51`: the cap is not binding); on the before at x 274.2
+  y 1.2 z 482.5 "seems worse" (eye -0.43 at the ceiling, floor 3 %, scene -7.1). So the cap
+  does its job (bar 1's clipping) and the complaint is the release itself: at 5 % of the floor's
+  sky the target sits 5.5 EV over the daylight anchor. **The owner picked a rule that dark
+  places stay dark** (how far the eye may lift a dark scene): Phases 3b and 3c below, then the
+  close. **Routed out, not this plan's:** the tunnel's light leaks (a blinking sunlit wall at
+  x 96.5 y 0.5 z 535.5 and a white patch deep in the tunnel, on both builds, with 0 coarse
+  waiting in view); a separate diagnosis has them.
+
+### Phase 3b: The lift: by day the eye opens at most `L` EV over the daylight anchor
+- **Owner skill:** dev
+- **What:** `AutoExposure` gains `sky_anchor_lift: Option<f32>` (`L` in EV;
+  `DEFAULT_SKY_ANCHOR_LIFT` 4; `None` is the before). `ceiling_target` (Rust and WGSL) releases
+  toward `c_top = min(max, c_a 2^L)` instead of `max`: `log2 c = mix(log2 c_top, log2 c_a,
+  min(s, 1))`, `s` the larger normalised share as today; `step_ceiling`, the rate cap,
+  `tau_around`, `F`, `F_floor`, the night clamp (`c_a >= max` is `max`) and the highlight cap
+  are untouched. The uniform carries the lift (a word of its own or a factor; `layout_tests.rs`
+  names it). The HUD's exposure row reads `ceiling -4.35 EV (anchor 4, lift 4, sky 0 %, floor
+  5 %)`; the fly-through's `--sky-anchor-lift L|off` and the settings' exposure leaf carry it;
+  the banner names `sky anchor lift L` or `sky anchor lift off` when not the default. **The
+  arithmetic at `c_a` -6.75 (noon, the readings' rig) and `max` +2, so `c_top` -2.75:** floor
+  5 % (x 262.1): -4.35 against the tip's -1.50 (the HUD's -1.29 at a rounded 5 %); 3 % (x 274.2):
+  -3.71 against -0.10; 1.6 % (window 97's x 304.4): -3.25 against +0.90; the deep pose's 1.2 %:
+  -3.13 against +1.17; a sealed cave by day (no sky in view, floor 0 or absent): -2.75 against
+  +2.00; at 15:00 (`c_a` -6.19) `c_top` is -2.19, at 17:45 (-2.08) +1.92, at night +2.00. A
+  floor at `F_floor` and over, and a sky share at `F` and over, stay `c_a` exactly, so the W2
+  shade, the mouth, the hills and every open-sky golden are unchanged by construction.
+- **Files touched:** `crates/vxe-render/src/exposure.rs`, `exposure/tests.rs`,
+  `shaders/exposure.wgsl`, `frame/encode.rs`, `frame/settings.rs`, `layout_tests.rs`,
+  `apps/flythrough/src/cli/outdoor.rs`, `cli/tests/outdoor.rs`, `hud/{modes,stats}.rs`,
+  `apps/flythrough/tests/gpu_outdoor/ceiling.rs`, `docs/flythrough.md`,
+  `docs/plans/logs/0097.md`.
+- **Done when:**
+  1. **The release is bounded** (`the_release_is_bounded_by_the_lift`, CPU, under 1 s, beside
+     `the_ceiling_target_follows_the_floor_too`): at a day ground with `c_a` 6 EV under `max`
+     and `L` 4, `ceiling_target(ground, 0, None)` is `c_a 2^4` within 1/256 EV; `(0, Some(F_floor
+     / 2))` is `c_a 2^2` within 1/256 EV (the mix's midpoint between `c_a` and `c_top`);
+     `(F, Some(0))` and `(0, Some(F_floor))` are `c_a` exactly (`==`); with `L` 8 (over the 6 EV
+     gap) `(0, None)` is `max` within 1/256 EV (`c_top` clamps); with `L` 0 every pair is `c_a`
+     (the hard anchor); with `sky_anchor_lift` `None` every clause of `the_ceiling_target_follows_
+     the_floor_too` and `_the_sky_in_view` holds as written (the before); at a night ground
+     (`c_a >= max`) `max` at every pair with `L` 4.
+  2. **The deep tunnel by day is darker than by night by the gap** (`the_tunnel_exposes_for_its_
+     walls_by_day`, soak, amended, the test opened): at noon with no bake and no sky in view the
+     ceiling in force is within 1/64 EV of `c_a 2^L` (`c_a` from `AutoExposure::ceiling(ground)`,
+     printed) and `max` with the lift off (the before, asserted); at midnight the ceiling and the
+     eye within 1/64 EV of `max` in both arms; the centre's luma noon over midnight is
+     `log2(c_a 2^L / max)` within 0.5 EV, as a plain `assert!` (Plan 0094's leftover tautology
+     goes with it; the backlog entry is struck in the log).
+  3. **The reading on the window's poses** (`reading::the_lift_in_the_tunnel`, `gpu_outdoor.rs`,
+     160 x 90, `bake_around` radius 1 at 256 samples, 48 frames with a reset at 24; the RTX by
+     `VXE_TEST_ADAPTER`, lavapipe otherwise; a reading, under 60 s or soak): the noon tunnel with
+     the lamp on at x 262.1 y 4.6 z 489.0 and x 274.2 y 1.2 z 482.5 (the window-97b stills'
+     `fly at`, facing +x at pitch 0, the tunnel's dark end at the centre as the stills show),
+     window 97's x 304.4 y 8.8 z 465.7, Phase 7b's deep pose, the mouth from inside, the W2 shade
+     and 1 %-sky spots at 10,180, the hills at midnight; per pose and per arm (lift off, 6, 4, 2):
+     the floor and sky shares, `c_a`, the ceiling in force, the eye, `hi`, and the metered mean
+     and the tail's level (`hi`'s `now_log2`, the brightest percent) each as EV under the sunlit
+     ground's `log2(0.5 E / pi)`, so the close can say how far under the daylight the blue walls
+     are in absolute terms (about 7 EV is 5 % of the sky; much brighter is the lighting's, the
+     leak diagnosis's). The table is in the log. **Bars at the default:** x 262.1's ceiling in
+     force is at least 2.5 EV under the lift-off arm's; the W2 shade's and the 1 %-sky spot's eyes
+     are within 1/64 EV of the lift-off arm's; the midnight hills and the deep midnight tunnel
+     read +2.000 in every arm; the mouth from inside within 1/64 EV of the lift-off arm's.
+  4. **The goldens are byte-identical in both arms** (the lift default and off; Phase 2 bar 5's
+     list and Phase 3a bar 3's run), the three files 3a found unchanged by main excepted as there;
+     a moved pixel is a stop for the architect, not a bless. `the_ceiling_moves_at_the_rate`
+     passes unchanged at `L` 4 (its anchored 3.53 + 4 is over its `max` 7, so `c_top` is `max`:
+     arithmetic); a pick under 3.5 at the window sets that rig's lift off, named in the log.
+  5. **The flag and the rows:** `--check-args` accepts `--sky-anchor-lift 4` and `off`; the
+     banner names `sky anchor lift X` when not the default and nothing when it is; the HUD row
+     shows `lift L` after the anchor; the exposure leaf round-trips the field; `ExposureUniform`
+     in `layout_tests.rs` names the word. **Cost:** 0 ms on the GPU by construction (one `min`
+     and one multiply in the pass's single invocation), stated.
+
+### Phase 3c: The short window: the tunnel under the lift
+- **Owner skill:** human
+- **What:** a windowed session on Linux, `live/session97c.sh` on the live-runner lib, the tip's
+  release binary against `live/bin97b` (Phase 3a's tip, the before), stdout visible, the HUD's
+  exposure row on. Runs: (1) the noon tunnel with the lamp on, from the mouth past x 262, x 274
+  and x 304 to the deep pose and back, tip then before: a word on the blue section ("much
+  darker" met, or which way `L` moves) and a word on the deep lamp section, which by day now
+  sits about 5 EV under 94c's +2 (the trade the lift makes; the window-97 before at +2.00 read
+  "even worse", so 94c's "all good" is not the bar there, the owner's eye is); (2) **only if run
+  1 names a direction**, the tunnel again on the tip at `--sky-anchor-lift 6` or `2`; (3) the
+  forest at 10,180 on the W2 path, tip only: the shade is unchanged by construction, the owner
+  confirms it by eye. The night is not run: bar 3's +2.000 rows and the byte-identical
+  `outdoor_night` stand for it. The architect quotes the words into the log and routes the
+  pick into Phase 4.
+- **Files touched:** `live/` (untracked), `docs/plans/logs/0097.md`.
+- **Done when:** the owner's words per run are in the log; run 1 says the blue section is dark
+  enough or names `L`'s direction, and has a word on the deep lamp section; run 3 says the shade
+  is as before.
+
 ### Phase 4: The picks as tests and the docs
 - **Owner skill:** dev
 - **What:** the window's picks as defaults (any `F_floor` or `tau_around` move, with the
@@ -262,12 +379,14 @@ tip's.
      largest one-frame step of log2 exposure is at or under `R_f + 1/256` (0.0625 + 1/256);
      the trace is in the log. The lavapipe form at 160 x 90 is a soak test asserting the same
      two clauses over 120 frames at 4 x the speed if it runs under 60 s, else the reading alone.
-  2. **The picks are the defaults:** `DEFAULT_SKY_ANCHOR_FLOOR` and `DEFAULT_SKY_AROUND_TAU`
-     are the window's values, their doc comments name the reading; every golden byte-identical
-     to Phase 2's bless unless a pick moved it, each move named with its count.
-  3. `docs/flythrough.md`'s exposure rows name `--sky-anchor-floor`, the floor share in the HUD
-     row and the before (`off`); `docs/nfr/02-frame-budget.md`'s exposure row notes the walk's
-     CPU microseconds with machine and commit.
+  2. **The picks are the defaults:** `DEFAULT_SKY_ANCHOR_FLOOR`, `DEFAULT_SKY_AROUND_TAU` and
+     (amended 2026-11-22) `DEFAULT_SKY_ANCHOR_LIFT` are the windows' values, their doc comments
+     name the reading; every golden byte-identical to Phase 2's bless unless a pick moved it,
+     each move named with its count.
+  3. `docs/flythrough.md`'s exposure rows name `--sky-anchor-floor` and (amended 2026-11-22)
+     `--sky-anchor-lift`, the floor share and the lift in the HUD row and the befores (`off`);
+     `docs/nfr/02-frame-budget.md`'s exposure row notes the walk's CPU microseconds with machine
+     and commit.
 
 ## Data shapes
 
@@ -416,8 +535,12 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 ## Followups
 
-- ADR-0081's Outcome at the close: the source that answered at each window scene, `F_floor`
-  and `tau_around` as read, and whether Alternative E was needed.
+- ADR-0081's Outcome at the close: the source that answered at each window scene, `F_floor`,
+  `tau_around` and the lift `L` as read, and whether Alternative E was needed.
+- ADR-0076 rule 5's clause of 2026-11-20 says the anchor "releases only where both are absent";
+  with the lift it releases there by at most `L` EV over the anchor. ADR-0081 carries the bound;
+  the one-line touch to ADR-0076 (proposed, Plan 0090's) is the architect's at whichever of the
+  two is accepted first.
 - ADR-0076 rule 5's clause of this date is accepted with ADR-0076 at Plan 0090's close; if
   Plan 0090 accepts it first, ADR-0081 carries the clause alone.
 - Plan 0094's leftover tautology in `the_tunnel_exposes_for_its_walls_by_day` (the luma clause
