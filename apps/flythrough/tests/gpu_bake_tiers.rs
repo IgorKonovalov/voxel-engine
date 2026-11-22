@@ -1,7 +1,7 @@
 //! The live queue's tiers by size on screen (ADR-0080 rules 2 and 4) on the software adapter: a
 //! far chunk's record at the far tier's count and its promotion as the camera comes near, the
-//! tier's bytes against two runs and two slicings, and a far chunk's partial record cast from a
-//! LOD-only chunk's mips.
+//! tier's bytes against two runs and two slicings, a far chunk's partial record cast from a
+//! LOD-only chunk's mips, and a far dig's ring at the near tier.
 //!
 //! Every world here is a row of hand-built boxes at test counts (tiers 64, 32 and 16 samples a
 //! brick direction, no coarse pass); the rigs are `support::queue`'s, the view's focal length
@@ -223,6 +223,52 @@ fn a_lod_only_chunk_in_a_partial_reach_casts_from_its_mip() {
         (mip - full).abs() <= noise,
         "mips {mip} against full {full}: over the far tier's noise {noise}"
     );
+}
+
+/// Chunk 8 of [`far_row`] baked from chunk 0 (far band) at tiers `[near, 32, 16]` and a queue
+/// count of 128 (neither tier), then a pit carved into the rock's -x face, the reach ring off:
+/// the samples the dig's ring re-baked, and chunk 8's records' tier bits after it.
+fn dig_samples(near: u32) -> Option<(u64, Vec<u8>)> {
+    let setup = Setup {
+        counts: vxe_render::BakeSettings {
+            brick_samples: 128,
+            ..counts()
+        },
+        ..Setup::at([32.5, 32.5, 32.5])
+    };
+    let mut q = tiered(far_row(), &setup)?;
+    q.frame.set_bake_tiers([near, TIERS[1], TIERS[2]]);
+    q.frame
+        .set_bake_digs(vxe_render::DEFAULT_BAKE_EDIT_MS, false);
+    q.settle();
+    assert_eq!(tiers_of(&q.target([8, 0, 0])?), vec![2], "baked far first");
+    let before = q.q().stats().total_samples;
+    q.edit(&box_op(
+        [520, 28, 28],
+        [526, 36, 36],
+        vxe_world::Mode::Carve,
+    ));
+    q.settle();
+    let st = q.q().stats();
+    assert!(st.digs_baked > 0 && st.dig_bricks > 0, "{st:?}");
+    Some((st.total_samples - before, tiers_of(&q.target([8, 0, 0])?)))
+}
+
+/// Plan 0096 Phase 9 (ADR-0080 rule 2): a dig at 48 m, in the far band, re-bakes its ring at the
+/// near tier's count, not its band's (16) nor the queue's own (128): the same dig at near tiers
+/// 64 and 32 draws samples in that ratio, each a whole number of the near count a direction,
+/// and the dug records carry the near tier's bits beside the far ones the ring kept.
+#[test]
+fn a_digs_ring_bakes_at_the_near_tier_in_the_far_band() {
+    let Some((at64, tiers)) = dig_samples(64) else {
+        return;
+    };
+    let (at32, _) = dig_samples(32).expect("an adapter");
+    println!("the dig's samples: near 64 {at64}, near 32 {at32}");
+    assert!(at32 > 0, "the dig re-baked");
+    assert_eq!(at32 % 32, 0, "a whole number of the near count a direction");
+    assert_eq!(at64, 2 * at32, "the ring's count is the near tier's");
+    assert_eq!(tiers, vec![0, 2], "dug records near, kept records far");
 }
 
 /// Readings, run by hand (`--run-ignored only -E 'test(=reading::<name>)'`).
