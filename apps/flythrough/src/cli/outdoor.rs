@@ -63,6 +63,10 @@ pub struct OutdoorArgs {
     /// sky_anchor_floor`, ADR-0081), 0 for off; unset, the preset's
     /// (`vxe_render::DEFAULT_SKY_ANCHOR_FLOOR`).
     pub(crate) sky_anchor_floor: Option<f32>,
+    /// `--sky-anchor-lift L|off`: the most the released anchor opens over the anchored
+    /// ceiling, in EV (`AutoExposure::sky_anchor_lift`, ADR-0081), `None` for off; unset, the
+    /// preset's (`vxe_render::DEFAULT_SKY_ANCHOR_LIFT`).
+    pub(crate) sky_anchor_lift: Option<Option<f32>>,
     /// `--exposure-max EV`: the auto exposure's constant ceiling in EV; unset, the start's
     /// ([`OUTDOOR_MAX`] outdoors, the preset's elsewhere).
     pub(crate) exposure_max_ev: Option<f32>,
@@ -434,6 +438,22 @@ fn ceiling_flags() -> Vec<Flag<Parsing>> {
                 p.args.outdoor.sky_anchor_floor = Some(match v.text {
                     "off" => 0.0,
                     _ => v.parse_if(|n: &f32| *n > 0.0 && *n <= 1.0, "over 0 to 1, or off")?,
+                });
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--sky-anchor-lift"],
+            "L|off",
+            "by day, where the sky anchor releases (no sky in view, little over the floor), \
+                 the auto exposure opens at most L EV (0 to 12) over the anchored ceiling, so \
+                 a tunnel or cave stays dark against the daylight it is cut from; 0 holds the \
+                 anchor everywhere; a dark sky, as at night, is untouched; off releases to the \
+                 constant ceiling [4]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.sky_anchor_lift = Some(match v.text {
+                    "off" => None,
+                    _ => Some(v.parse_if(|n: &f32| (0.0..=12.0).contains(n), "0 to 12 or off")?),
                 });
                 Ok(())
             },

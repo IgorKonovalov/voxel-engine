@@ -214,8 +214,10 @@ fn the_ceiling_follows_the_sky() {
 #[test]
 fn the_ceiling_target_follows_the_sky_in_view() {
     use std::f32::consts::PI;
+    // The lift off: the release's top is `max` (the before; the lift's own test below).
     let e = AutoExposure {
         max: 4.0,
+        sky_anchor_lift: None,
         ..AutoExposure::eye()
     };
     let f = e.sky_anchor_share;
@@ -276,8 +278,10 @@ fn the_ceiling_target_follows_the_sky_in_view() {
 #[test]
 fn the_ceiling_target_follows_the_floor_too() {
     use std::f32::consts::PI;
+    // The lift off: the release's top is `max` (the before; the lift's own test below).
     let e = AutoExposure {
         max: 4.0,
+        sky_anchor_lift: None,
         ..AutoExposure::eye()
     };
     let (f, ff) = (e.sky_anchor_share, e.sky_anchor_floor);
@@ -338,6 +342,73 @@ fn the_ceiling_target_follows_the_floor_too() {
     assert_eq!(around(&e, Some(0.9)), (EX_AROUND, 1.0));
     assert_eq!(around(&e, None), (0, 0.0));
     assert_eq!(around(&before, Some(0.9)), (0, 0.0));
+}
+
+/// Plan 0097 Phase 3b bar 1 (ADR-0081, amended): the release is bounded by the lift. At a day
+/// ground whose anchored ceiling `c_a` is 6 EV under `max`, with `L` 4: no share is `c_a 2^4`,
+/// half of `F_floor` is `c_a 2^2` (the mix's midpoint), `F` or `F_floor` is `c_a` exactly;
+/// `L` 8 (over the gap) clamps to `max`; `L` 0 is `c_a` at every pair; at night `max` at
+/// every pair. The uniform carries `2^L` under the anchor alone.
+#[test]
+fn the_release_is_bounded_by_the_lift() {
+    let e = AutoExposure::eye();
+    assert_eq!(e.sky_anchor_lift, Some(DEFAULT_SKY_ANCHOR_LIFT));
+    assert_eq!(DEFAULT_SKY_ANCHOR_LIFT, 4.0);
+    let (f, ff) = (e.sky_anchor_share, e.sky_anchor_floor);
+    // The ground that puts `c_a` at `max / 64`: `c_a = 2^N key / (0.5 g / pi)`.
+    let c_want = e.max / 64.0;
+    let g = DEFAULT_SKY_ANCHOR_EV.exp2() * e.key * 2.0 * std::f32::consts::PI / c_want;
+    let day = Some(g);
+    let a = e.ceiling(day);
+    let ev = |x: f32, y: f32| (f64::from(x).log2() - f64::from(y).log2()).abs();
+    assert!(ev(a, c_want) <= 1e-5, "{a} {c_want}");
+    let lift = |l: Option<f32>| AutoExposure {
+        sky_anchor_lift: l,
+        ..e
+    };
+    let l4 = lift(Some(4.0));
+    let top = l4.ceiling_target(day, 0.0, None);
+    assert!(ev(top, a * 16.0) <= 1.0 / 256.0, "{top} {}", a * 16.0);
+    let mid = l4.ceiling_target(day, 0.0, Some(ff / 2.0));
+    assert!(ev(mid, a * 4.0) <= 1.0 / 256.0, "{mid} {}", a * 4.0);
+    assert_eq!(l4.ceiling_target(day, f, Some(0.0)), a);
+    assert_eq!(l4.ceiling_target(day, 0.0, Some(ff)), a);
+    // `L` 8, over the 6 EV gap: `c_top` clamps to `max`.
+    let open = lift(Some(8.0)).ceiling_target(day, 0.0, None);
+    assert!(ev(open, e.max) <= 1.0 / 256.0, "{open}");
+    // `L` 0: the hard anchor at every pair.
+    let pairs = [
+        (0.0, None),
+        (0.0, Some(0.0)),
+        (f / 2.0, None),
+        (0.0, Some(ff / 2.0)),
+        (f, Some(0.0)),
+        (0.0, Some(ff)),
+        (1.0, Some(1.0)),
+    ];
+    for (sky, floor) in pairs {
+        assert_eq!(
+            lift(Some(0.0)).ceiling_target(day, sky, floor),
+            a,
+            "sky {sky} floor {floor:?}"
+        );
+    }
+    // Night (`c_a >= max`): `max` at every pair with `L` 4.
+    let night = Some(ground_irradiance([std::f32::consts::PI * 1e-3; 3], 0.0));
+    assert_eq!(l4.ceiling(night), e.max);
+    for (sky, floor) in pairs {
+        assert_eq!(l4.ceiling_target(night, sky, floor), e.max);
+    }
+    // The uniform: `2^L` under the anchor, 0 without the anchor or the lift.
+    let word = |a: &AutoExposure, sky: bool| {
+        let mut u = ExposureUniform::default();
+        u.set_auto(a, sky);
+        u.lift
+    };
+    assert_eq!(word(&l4, true), 16.0);
+    assert_eq!(word(&l4, false), 0.0);
+    assert_eq!(word(&lift(None), true), 0.0);
+    assert_eq!(word(&lift(Some(0.0)), true), 1.0);
 }
 
 /// Plan 0094 Phase 7b bar 4's model (ADR-0076 rule 5 on the ceiling): from the anchored

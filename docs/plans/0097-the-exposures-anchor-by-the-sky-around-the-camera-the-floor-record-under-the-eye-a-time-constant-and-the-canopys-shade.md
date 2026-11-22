@@ -466,6 +466,7 @@ direction bit and `VIS_BAKED` answers with its `+z` byte over 255. No `vxe-world
 | 2: The anchor by the floor's sky | dev | done; bar 4's baked deep noon tunnel at +1.18 EV, not `max` (Notes) | 5d1cbf77 |
 | 3: The owner's window | human | done, window 97 (2026-11-21); words in the amendment and the readings log | b3277359 (setup) |
 | 3a: Highlight protection | dev | built, P99 default; short window awaits the owner | 8ff3bbe4 |
+| 3b: The lift | dev | built, `L` 4 default; bar 2's luma clause and bar 3's x 262.1 clause unmet (Notes); short window awaits the owner | committed with this row |
 | 4: The picks as tests and the docs | dev | not started | |
 
 ### Notes
@@ -522,6 +523,19 @@ each. Empty is fine.)_
 - Phase 3a bar 3: `castle_gate.png`, `look_gradient27.png` and `look_trilinear8.png` render
   differently from their committed files in both arms, byte-identical to main's own render at
   123964e7; not blessed (readings log).
+- Phase 3b touched `lib.rs` (the default's export) and the fly-through's `cli/mod.rs`
+  (`start_auto`) besides its list; `frame/encode.rs` and `frame/settings.rs` are unchanged (the
+  lift is set in `ExposureUniform::set_auto`; the settings' one `lighting.exposure` row carries
+  the field with `AutoExposure`).
+- Phase 3b: the lift is the uniform's spare word `_pad0`, renamed `lift` (`2^L`, 0 for off).
+- Phase 3b bar 2 not met as stated: the centre's display luma noon over midnight reads -2.954
+  EV against `log2(c_a 2^L / max)` -4.753 EV (lavapipe); the exposures' ratio is -4.753 EV. The
+  clause is a plain `assert!` as written and fails; the test is soak (no gate runs it).
+- Phase 3b bar 2: the eye-within-settles clause asserts the default arm; the lift-off arm's eye
+  reads +1.373 against +2.000 under the highlight cap (no bake) and is printed.
+- Phase 3b bar 3 not met as stated: x 262.1's ceiling in force is 2.367 EV under the lift-off
+  arm's, not 2.5; the headless floor share there reads 6.27 % (the window's HUD 5 %). Every other
+  clause holds. The reading ran 82 s on the RTX (debug, loaded), over 60 s; it stays a reading.
 
 ### Close triggers
 

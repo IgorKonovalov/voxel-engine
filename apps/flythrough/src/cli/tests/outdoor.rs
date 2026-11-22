@@ -325,6 +325,41 @@ fn the_sky_anchor_floor_reaches_the_run() {
     assert!(parse_args_from(argv(&["--check-args", "--sky-anchor-floor", "off"])).is_ok());
 }
 
+/// `--sky-anchor-lift` reaches the auto exposure, 4 by default and unnamed; another value is
+/// named `sky anchor lift L` and `off` (`None`) `sky anchor lift off` with a sky set; out of
+/// [0, 12] it is refused; `--check-args` accepts `4` and `off`.
+#[test]
+fn the_sky_anchor_lift_reaches_the_run() {
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert_eq!(r.start_auto().sky_anchor_lift, Some(4.0));
+    assert_eq!(
+        r.start_auto().sky_anchor_lift,
+        Some(vxe_render::DEFAULT_SKY_ANCHOR_LIFT)
+    );
+    assert!(!r.start_modes(0.0).line().contains("sky anchor lift"));
+    for (v, lift, word) in [
+        ("6", Some(6.0f32), "sky anchor lift 6, "),
+        ("2", Some(2.0), "sky anchor lift 2, "),
+        ("off", None, "sky anchor lift off, "),
+    ] {
+        let r = parse_args_from(argv(&["--source", "outdoor", "--sky-anchor-lift", v])).unwrap();
+        assert_eq!(r.start_auto().sky_anchor_lift, lift);
+        let line = r.start_modes(0.0).line();
+        assert!(line.contains(word), "{line}");
+    }
+    let r = parse_args_from(argv(&["--source", "outdoor", "--sky-anchor-lift", "4"])).unwrap();
+    assert!(!r.start_modes(0.0).line().contains("sky anchor lift"));
+    for bad in ["-1", "12.5", "most"] {
+        assert!(
+            parse_args_from(argv(&["--sky-anchor-lift", bad])).is_err(),
+            "{bad}"
+        );
+    }
+    for ok in ["4", "off"] {
+        assert!(parse_args_from(argv(&["--check-args", "--sky-anchor-lift", ok])).is_ok());
+    }
+}
+
 /// `--exposure-highlight` reaches the auto exposure, 99 by default and unnamed; another value
 /// is named `exposure highlight P` and `off` (0) `exposure highlight off`; out of [50, 100] it
 /// is refused; `--check-args` accepts it.

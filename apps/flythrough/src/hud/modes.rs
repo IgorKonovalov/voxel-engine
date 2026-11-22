@@ -502,6 +502,7 @@ impl Modes {
             sky_anchor_share: self.auto.1.sky_anchor_share,
             sky_anchor_floor: self.auto.1.sky_anchor_floor,
             sky_around_tau: self.auto.1.sky_around_tau,
+            sky_anchor_lift: self.auto.1.sky_anchor_lift,
             highlight_percentile: self.auto.1.highlight_percentile,
             rate_ev_s: self.auto.1.rate_ev_s,
             ..Adaptation::Symmetric.preset()
@@ -667,6 +668,10 @@ impl Modes {
                 .map_or((None, None), |r| (Some(r.sky_share), Some(r.sky_floor))),
             _ => (None, None),
         };
+        row.lift = match (row.ceiling, self.lighting.exposure) {
+            (Some((_, Some(_))), vxe_render::Exposure::Auto(a)) => Some(a.sky_anchor_lift),
+            _ => None,
+        };
         row.highlight = match self.lighting.exposure {
             vxe_render::Exposure::Auto(a) if a.highlight_percentile > 0.0 => {
                 self.readout.and_then(|r| r.highlight).map(f32::log2)
@@ -764,6 +769,15 @@ impl Modes {
                         let _ = write!(out, "sky anchor floor {}, ", a.sky_anchor_floor);
                     } else {
                         out.push_str("sky anchor floor off, ");
+                    }
+                }
+                if a.sky_anchor_ev.is_some() {
+                    match a.sky_anchor_lift {
+                        None => out.push_str("sky anchor lift off, "),
+                        Some(l) if l != vxe_render::DEFAULT_SKY_ANCHOR_LIFT => {
+                            let _ = write!(out, "sky anchor lift {l}, ");
+                        }
+                        Some(_) => {}
                     }
                 }
             }

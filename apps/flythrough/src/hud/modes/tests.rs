@@ -404,10 +404,11 @@ fn the_banner_names_the_view() {
 
 /// The sky anchor: with a sky set the banner names `sky anchor N` for an `N` other than the
 /// default 4 (and nothing for 4) and `sky anchor floor X` for a floor share other than the
-/// default (`off` for 0), and the exposure row the ceiling the read-back carries with its `N`,
+/// default (`off` for 0) and `sky anchor lift L` for a lift other than the default 4 (`off`
+/// for none), and the exposure row the ceiling the read-back carries with its `N`, the lift,
 /// the read-back's sky share and the floor's share (`floor -` while absent); `Q`'s symmetric
-/// preset keeps the anchor and the floor's share; with no read-back the row names the model's
-/// `max`.
+/// preset keeps the anchor, the lift and the floor's share; with no read-back the row names
+/// the model's `max`.
 #[test]
 fn the_banner_and_row_name_the_sky_anchor() {
     let auto = vxe_render::AutoExposure {
@@ -450,6 +451,40 @@ fn the_banner_and_row_name_the_sky_anchor() {
         );
         assert!(f.line().contains(word), "{}", f.line());
     }
+    assert!(!m.line().contains("sky anchor lift"), "{}", m.line());
+    for (lift, word) in [
+        (Some(6.0), "sky anchor lift 6, "),
+        (None, "sky anchor lift off, "),
+    ] {
+        let mut f = m.clone();
+        f.set_auto(
+            Adaptation::Eye,
+            vxe_render::AutoExposure {
+                sky_anchor_lift: lift,
+                ..auto
+            },
+        );
+        assert!(f.line().contains(word), "{}", f.line());
+        f.set_readout(Some(vxe_render::ExposureReadout {
+            exposure: 0.01,
+            adapted_log2: 0.0,
+            metered_log2: 0.0,
+            frame: 3,
+            held: false,
+            ceiling: 0.0625,
+            sky_share: 0.0,
+            sky_floor: Some(0.05),
+            highlight: None,
+        }));
+        let lw = lift.map_or("lift off".to_owned(), |l| format!("lift {l}"));
+        assert!(
+            f.exposure_row()
+                .to_string()
+                .ends_with(&format!("(anchor 4, {lw}, sky 0 %, floor 5 %)")),
+            "{}",
+            f.exposure_row()
+        );
+    }
     assert_eq!(m.exposure_row().ceiling, Some((2.0, Some(4.0))));
     m.set_readout(Some(vxe_render::ExposureReadout {
         exposure: 0.01,
@@ -468,7 +503,7 @@ fn the_banner_and_row_name_the_sky_anchor() {
     assert_eq!(
         row.to_string(),
         "exposure auto eye -6.64 EV  scene +0.0 EV  settles -4.00 EV  ceiling -4.00 EV (anchor 4, \
-         sky 23 %, floor 12 %)"
+         lift 4, sky 23 %, floor 12 %)"
     );
     m.set_readout(Some(vxe_render::ExposureReadout {
         exposure: 0.01,
@@ -484,7 +519,7 @@ fn the_banner_and_row_name_the_sky_anchor() {
     assert!(
         m.exposure_row()
             .to_string()
-            .ends_with("(anchor 4, sky 23 %, floor -)"),
+            .ends_with("(anchor 4, lift 4, sky 23 %, floor -)"),
         "{}",
         m.exposure_row()
     );
@@ -494,8 +529,16 @@ fn the_banner_and_row_name_the_sky_anchor() {
     };
     assert_eq!((sym.sky_anchor_ev, sym.max), (Some(4.0), 4.0));
     assert_eq!(
-        (sym.sky_anchor_floor, sym.sky_around_tau),
-        (auto.sky_anchor_floor, auto.sky_around_tau)
+        (
+            sym.sky_anchor_floor,
+            sym.sky_around_tau,
+            sym.sky_anchor_lift
+        ),
+        (
+            auto.sky_anchor_floor,
+            auto.sky_around_tau,
+            auto.sky_anchor_lift
+        )
     );
     m.sky = false;
     assert!(!m.line().contains("sky anchor"));

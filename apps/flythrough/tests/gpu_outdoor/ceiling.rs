@@ -28,6 +28,9 @@ mod ceiling {
         pub over_white: f64,
         pub at_255: f64,
         pub top: [u8; 2],
+        /// The sunlit ground's irradiance the pass read at the last frame
+        /// (`vxe_render::ground_irradiance` over its `E_sky(+z)`), the anchor's `ground`.
+        pub ground: f32,
     }
 
     /// The scenes' times: noon, midnight and 17:45 (`outdoor_forest_sunset`'s clock), and the
@@ -120,6 +123,9 @@ mod ceiling {
         tops.sort_unstable();
         let q = |p: f64| tops[((p * np) as usize).min(tops.len() - 1)];
         let top = [q(0.99), q(0.999)];
+        let b = vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.sky_irradiance(), 0, 96);
+        let up: Vec<f32> = b[80..96].chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+        let ground = vxe_render::ground_irradiance([up[0], up[1], up[2]], up[3]);
         let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, f.hit_records());
         let mut bb = [usize::MAX, usize::MAX, 0, 0];
         let mut nm = 0;
@@ -142,6 +148,7 @@ mod ceiling {
             over_white,
             at_255,
             top,
+            ground,
         };
         (read, vxe_render::sky_over_floor(f.store(), eye))
     }
@@ -234,16 +241,18 @@ mod ceiling {
         );
     }
 
-    /// Plan 0094 Phase 7b bar 2: the deep tunnel (the inside spawn facing in, seed 1) with the
-    /// lamp on, at 160 x 90 ([`read`]). At noon under the default share the metered sky share
-    /// is 0, the ceiling in force is within 1/64 EV of `OUTDOOR_MAX` and the exposure in force
-    /// within 1/64 EV of the one the meter settles at; at midnight, under the default share and
-    /// under 0, the ceiling in force and the exposure in force are within 1/64 EV of
-    /// `OUTDOOR_MAX` (the anchor never lifts the ceiling over it; Plan 0094 Phase 8a, the
-    /// anchored night's eye of +6.24 EV printed as the before). The lamp-lit centre's mean
-    /// display luma at noon against midnight is printed as a ratio in EV; within 0.5 EV it is
-    /// asserted, over it printed for the log. `VXE_TEST_ADAPTER` picks the adapter (unset:
-    /// lavapipe).
+    /// Plan 0094 Phase 7b bar 2, amended by Plan 0097 Phase 3b bar 2 (ADR-0081's lift): the
+    /// deep tunnel (the inside spawn facing in, seed 1) with the lamp on, at 160 x 90
+    /// ([`read`], no bake, so no floor share). At noon the metered sky share is 0; under the
+    /// default lift `L` the ceiling in force is within 1/64 EV of `c_a 2^L` (`c_a`
+    /// `AutoExposure::ceiling` over the pass's own ground, printed) and with the lift off (the
+    /// before) within 1/64 EV of `OUTDOOR_MAX`; under the default the exposure in force is
+    /// within 1/64 EV of the one the meter settles at (the lift off's printed: no bake, the
+    /// highlight cap holds it under). At midnight, under the default lift, the lift off and
+    /// the share 0, the ceiling in force and the exposure in force are within 1/64 EV of
+    /// `OUTDOOR_MAX` (the anchor never lifts the ceiling over it; Plan 0094 Phase 8a). The
+    /// lamp-lit centre's mean display luma at noon over midnight is `log2(c_a 2^L / max)`
+    /// within 0.5 EV. `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "soak"]
     fn the_tunnel_exposes_for_its_walls_by_day() {
@@ -252,29 +261,37 @@ mod ceiling {
         };
         let leaf = flythrough::LeafShadow::default();
         let share = vxe_render::DEFAULT_SKY_ANCHOR_SHARE;
-        let noon = read(&mut rig, &cam, clock(720.0, None), true, leaf, share);
-        let night = read(&mut rig, &cam, clock(0.0, None), true, leaf, share);
+        let on = auto(share);
+        let lift = on.sky_anchor_lift.expect("the default lift");
+        let off = AutoExposure { sky_anchor_lift: None, ..on };
+        let at = |rig: &mut Rig, minutes: f64, a: AutoExposure| read_with(rig, &cam, clock(minutes, None), true, leaf, a, false).0;
+        let noon = at(&mut rig, 720.0, on);
+        let noon_off = at(&mut rig, 720.0, off);
+        let night = at(&mut rig, 0.0, on);
+        let night_off = at(&mut rig, 0.0, off);
         let night0 = read(&mut rig, &cam, clock(0.0, None), true, leaf, 0.0);
-        println!("on {}", rig.adapter);
-        row("deep noon lamp", share, &noon);
-        row("deep midnight lamp", share, &night);
+        let c_a = f64::from(on.ceiling(Some(noon.ground))).log2();
+        let top = f64::from(on.release_top(on.ceiling(Some(noon.ground)))).log2();
+        let max = f64::from(flythrough::cli::OUTDOOR_MAX).log2();
+        println!("on {}: noon c_a {c_a:+.3} EV, lift {lift}, c_a 2^L {top:+.3} EV, max {max:+.3} EV", rig.adapter);
+        row("deep noon lamp, lift default", share, &noon);
+        row("deep noon lamp, lift off", share, &noon_off);
+        row("deep midnight lamp, lift default", share, &night);
+        row("deep midnight lamp, lift off", share, &night_off);
         row("deep midnight lamp", 0.0, &night0);
         let ratio = (noon.luma / night.luma).log2();
-        println!("reading: the centre's luma noon over midnight {ratio:+.3} EV");
-        let max = f64::from(flythrough::cli::OUTDOOR_MAX).log2();
+        let want = c_a + f64::from(lift) - max;
+        println!("reading: the centre's luma noon over midnight {ratio:+.3} EV against log2(c_a 2^L / max) {want:+.3} EV");
         assert_eq!(noon.sky, 0.0, "no sky in view");
-        assert!((noon.ceiling - max).abs() <= 1.0 / 64.0, "the ceiling {}", noon.ceiling);
+        assert!((noon.ceiling - (c_a + f64::from(lift))).abs() <= 1.0 / 64.0, "the ceiling {} against c_a 2^L {}", noon.ceiling, c_a + f64::from(lift));
+        assert!((noon_off.ceiling - max).abs() <= 1.0 / 64.0, "the before's ceiling {}", noon_off.ceiling);
         assert!((noon.eye - noon.settles).abs() <= 1.0 / 64.0, "eye {} settles {}", noon.eye, noon.settles);
-        println!("reading: the deep midnight eye before the clamp (Phase 7b's tip) +6.24 EV");
-        for (r, arm) in [(&night, share), (&night0, 0.0)] {
-            assert!((r.ceiling - max).abs() <= 1.0 / 64.0, "share {arm}: the ceiling {}", r.ceiling);
-            assert!((r.eye - max).abs() <= 1.0 / 64.0, "share {arm}: the eye {}", r.eye);
+        println!("reading: the lift off's eye {:+.3} EV against its settled {:+.3} EV (the highlight cap)", noon_off.eye, noon_off.settles);
+        for (r, arm) in [(&night, "lift default"), (&night_off, "lift off"), (&night0, "share 0")] {
+            assert!((r.ceiling - max).abs() <= 1.0 / 64.0, "{arm}: the ceiling {}", r.ceiling);
+            assert!((r.eye - max).abs() <= 1.0 / 64.0, "{arm}: the eye {}", r.eye);
         }
-        if ratio.abs() <= 0.5 {
-            assert!(ratio.abs() <= 0.5);
-        } else {
-            println!("reading: the noon-midnight ratio is over 0.5 EV, disclosed in the log");
-        }
+        assert!((ratio - want).abs() <= 0.5, "noon over midnight {ratio:+.3} EV against {want:+.3} EV");
     }
 
     /// One walk of [`walk`]: per frame the metered sky share, the metered level, the ceiling
@@ -678,6 +695,95 @@ mod ceiling {
             if let Some((mut rig, cam)) = support::terms::hills_rig() {
                 go(&mut rig, "hills midnight", &cam, clock(0.0, None), false, &pair);
             }
+        }
+
+        /// Plan 0097 Phase 3b bar 3 (ADR-0081's lift): per pose and per arm (the lift off, 6,
+        /// 4 and 2), [`read_with`] with the store baked about the pose: the floor's and the
+        /// view's sky share, `c_a`, the ceiling in force, the eye, the highlight cap, and the
+        /// metered mean and the tail's level (`hi`'s `now_log2`) each as EV under the sunlit
+        /// ground's `log2(0.5 E / pi)`. Poses: the noon tunnel with the lamp on at window 97b's
+        /// x 262.1 y 4.6 z 489.0 and x 274.2 y 1.2 z 482.5 and window 97's x 304.4 y 8.8 z 465.7
+        /// facing +x at pitch 0, the deep pose ([`deep`]) at noon and at midnight, the cave mouth
+        /// from inside at noon, the W2 shade ([`w2_shade_camera`]) and 1 %-sky spots at 10,180,
+        /// the hills at midnight. Asserted at the default lift: x 262.1's ceiling in force at
+        /// least 2.5 EV under the lift-off arm's; the W2 eyes and the mouth's within 1/64 EV of
+        /// the lift-off arm's; the midnight hills and the deep midnight tunnel's ceiling and eye
+        /// +2.000 in every arm. `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+        #[test]
+        #[ignore = "reading"]
+        fn the_lift_in_the_tunnel() {
+            let on = auto(vxe_render::DEFAULT_SKY_ANCHOR_SHARE);
+            let arms: [(&str, Option<f32>); 4] = [("off", None), ("6", Some(6.0)), ("4", Some(4.0)), ("2", Some(2.0))];
+            let leaf = flythrough::LeafShadow::default();
+            let max = f64::from(flythrough::cli::OUTDOOR_MAX).log2();
+            // Per pose, the reads per arm in `arms`' order.
+            let run = |rig: &mut Rig, scene: &str, cam: &Camera, sky: vxe_render::sky::Sky, lamp: bool| -> Vec<Read> {
+                let mut out = Vec::new();
+                for (arm, l) in arms {
+                    let a = AutoExposure { sky_anchor_lift: l, ..on };
+                    let (r, fl) = read_with(rig, cam, sky, lamp, leaf, a, true);
+                    let c_a = f64::from(a.ceiling(Some(r.ground))).log2();
+                    let sunlit = f64::from(0.5 * r.ground / std::f32::consts::PI).log2();
+                    println!(
+                        "reading: {scene}, lift {arm}: floor {}, sky {:.4}, c_a {c_a:+.3} EV, ceiling {:+.3} EV, eye {:+.3} EV, hi {}, metered {:+.2} EV under the sunlit ground, tail {:+.2} EV under it, ground {:.4e}",
+                        fl.map_or("none".to_string(), |(v, _)| format!("{v:.4}")),
+                        r.sky,
+                        r.ceiling,
+                        r.eye,
+                        r.hi.cap().map_or("-".to_string(), |c| format!("{:+.3} EV", c.log2())),
+                        f64::from(r.metered) - sunlit,
+                        f64::from(r.hi.now_log2) - sunlit,
+                        r.ground,
+                    );
+                    out.push(r);
+                }
+                out
+            };
+            let (off, def) = (0, 2);
+            let noon = clock(720.0, None);
+            let mut failures = Vec::new();
+            let mut check = |ok: bool, what: String| {
+                if !ok {
+                    failures.push(what);
+                }
+            };
+            if let Some((mut rig, out_cam, inward)) = deep() {
+                println!("reading: the_lift_in_the_tunnel on {}", rig.adapter);
+                for (name, p) in [("x 262.1", [262.1f32, 4.6, 489.0]), ("x 274.2", [274.2, 1.2, 482.5]), ("x 304.4", [304.4, 8.8, 465.7])] {
+                    let cam = Camera {
+                        position: p.into(),
+                        yaw: 0.0,
+                        pitch: 0.0,
+                        vfov: 70f32.to_radians(),
+                    };
+                    let r = run(&mut rig, &format!("noon tunnel lamp {name} facing +x"), &cam, noon, true);
+                    if name == "x 262.1" {
+                        check(r[off].ceiling - r[def].ceiling >= 2.5, format!("x 262.1: ceiling {:+.3} against the lift off's {:+.3}", r[def].ceiling, r[off].ceiling));
+                    }
+                }
+                run(&mut rig, "deep pose noon lamp", &inward, noon, true);
+                let night = run(&mut rig, "deep pose midnight lamp", &inward, clock(0.0, None), true);
+                for (k, r) in night.iter().enumerate() {
+                    check((r.ceiling - max).abs() < 0.0005 && (r.eye - max).abs() < 0.0005, format!("deep midnight arm {}: ceiling {:+.4} eye {:+.4}", arms[k].0, r.ceiling, r.eye));
+                }
+                let mouth = run(&mut rig, "cave mouth from inside noon lamp", &out_cam, noon, true);
+                check((mouth[def].eye - mouth[off].eye).abs() <= 1.0 / 64.0, format!("mouth: eye {:+.4} against {:+.4}", mouth[def].eye, mouth[off].eye));
+            }
+            if let Some(mut rig) = w2_rig() {
+                let sun = clock(720.0, Some([10.0, 180.0]));
+                for (name, cam) in [("W2 shade 10,180", w2_shade_camera()), ("W2 1 % sky 10,180", w2_camera(W2_SKY))] {
+                    let r = run(&mut rig, name, &cam, sun, false);
+                    check((r[def].eye - r[off].eye).abs() <= 1.0 / 64.0, format!("{name}: eye {:+.4} against {:+.4}", r[def].eye, r[off].eye));
+                }
+            }
+            if let Some((mut rig, cam)) = support::terms::hills_rig() {
+                let r = run(&mut rig, "hills midnight", &cam, clock(0.0, None), false);
+                for (k, r) in r.iter().enumerate() {
+                    check((r.ceiling - max).abs() < 0.0005 && (r.eye - max).abs() < 0.0005, format!("hills midnight arm {}: ceiling {:+.4} eye {:+.4}", arms[k].0, r.ceiling, r.eye));
+                }
+            }
+            println!("reading: bars unmet {failures:?}");
+            assert!(failures.is_empty(), "{failures:?}");
         }
 
         /// Plan 0094 Phase 7b bar 5: [`walk`] at the default share and at 0 (the anchored
