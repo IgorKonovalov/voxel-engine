@@ -127,7 +127,9 @@ or off; `--filter`), `light history` (off: every lighting pixel restarts each fr
 upscaler keeps its history; `--light-history`, a render setting), `key jitter` (off: the key light's shadow ray runs along the
 disc's centre), `stair rules` (off: the far normal's stair rules in the history test and the
 key and sky rays' lift) and `queue freeze` (on: the live queue takes no step, so no record
-lands).
+lands). Two FSR 2 levers sit beside them, applied from the next frame and named in the
+upscaler's banner: `render scale` (1.5, 1, 2: FSR 2 at 1 is its antialiasing at native;
+`--scale`) and `jitter phases` (FSR 2's own count, 8, 32; `--jitter-phases`).
 
 The HUD's entities row reads `entities <n>/64 parts <m>/512 over <k> pool <used>/<total> KB`
 (then `tick <us>`, the movers' CPU a tick as the median over the last second, once a body has

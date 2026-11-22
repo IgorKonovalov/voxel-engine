@@ -22,9 +22,10 @@
 //   9  storage texture   lock_status_out          rg32float
 //   10 storage texture   upscaled_out             rgba16float
 //   11 storage texture   luma_history_out         rgba8unorm
-//   12 storage texture   weight_out               r32float: with `cb.debug`, the history's
+//   12 storage texture   weight_out               r32float: with `cb.debug` 1, the history's
 //                                                 share of the blend, `1 - fAlpha` of AMD's
-//                                                 `Accumulate` (0 for a new sample)
+//                                                 `Accumulate` (0 for a new sample); with 2,
+//                                                 the pixel's `stage_code`
 //
 // `HDR` (FFX_FSR2_OPTION_HDR_COLOR_INPUT) is defined before common.wgsl. The upscaled image is
 // `upscaled_out`'s rgb, the accumulated colour unprepared: AMD's pass also writes it to its
@@ -254,8 +255,10 @@ fn accumulate_colors(history_in: vec3<f32>, accumulation_in: vec3<f32>, upsample
 }
 
 // RectifyHistory: clamps history outside the scaled variance box toward it, by how little the
-// lock and the luma instability protect it; returns (history, accumulation).
-fn rectify_history(params: AccumulationParams, clipping_box: RectificationBox, history: ptr<function, vec3<f32>>, accumulation: ptr<function, vec3<f32>>, lock_contribution: f32, luma_instability: f32) {
+// lock and the luma instability protect it; updates (history, accumulation) and returns how far
+// the clamp went, `1 - contribution` where the history lay outside the box, else 0 (the debug
+// stage code's, no part of AMD's arithmetic).
+fn rectify_history(params: AccumulationParams, clipping_box: RectificationBox, history: ptr<function, vec3<f32>>, accumulation: ptr<function, vec3<f32>>, lock_contribution: f32, luma_instability: f32) -> f32 {
     let scale_factor_influence = min(20.0, pow(1.0 / length(cb.downscale.x * cb.downscale.y), 3.0));
     let velocity_factor = saturate(params.hr_velocity / 20.0);
     let box_scale_t = max(params.depth_clip_factor, max(params.accumulation_mask, velocity_factor));
@@ -274,7 +277,25 @@ fn rectify_history(params: AccumulationParams, clipping_box: RectificationBox, h
         *history = mix(clamped, h, saturate(contribution));
         let accumulation_min = min(*accumulation, vec3<f32>(0.1));
         *accumulation = mix(accumulation_min, *accumulation, saturate(contribution));
+        return 1.0 - saturate(contribution.x);
     }
+    return 0.0;
+}
+
+// The debug stage code (`cb.debug` 2): where this pixel's history went, as an integer under
+// 2^24 held exactly in an f32. Bit 0 a new sample (off screen or a reset), bit 1 a lock
+// reprojected from the frame before, bit 2 that lock released here (its lifetime 0 after the
+// lock update: the luminance change, the reactive mask or the depth clip), bit 3 the history
+// clamped (outside the scaled rectification box); bits 4..11 the clamp's strength and 12..19
+// the depth clip factor, each times 255; bits 20..23 the history's share of the blend times 15.
+// `fsr2::Fsr2Stage::decode` reads it.
+fn stage_code(params: AccumulationParams, was_locked: bool, lock_after: f32, clamp_amount: f32, history_weight: f32) -> f32 {
+    var c = u32(params.is_new_sample) | (u32(was_locked) << 1u)
+        | (u32(was_locked && lock_after == 0.0) << 2u) | (u32(clamp_amount > 0.0) << 3u);
+    c |= u32(round(saturate(clamp_amount) * 255.0)) << 4u;
+    c |= u32(round(saturate(params.depth_clip_factor) * 255.0)) << 12u;
+    c |= u32(round(saturate(history_weight) * 15.0)) << 20u;
+    return f32(c);
 }
 
 fn finalize_lock_status(params: AccumulationParams, lock_status_in: vec2<f32>, upsampled_weight: f32) {
@@ -402,15 +423,19 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3<u32>) {
     let luma_instability = compute_luma_instability_factor(params, clipping_box, this_frame_reactive, luminance_diff);
     var accumulation = compute_base_accumulation_weight(params, this_frame_reactive, in_motion_last_frame, upsampled.w);
     var history_weight = 0.0;
+    var clamp_amount = 0.0;
     if (params.is_new_sample) {
         history = ycocg_to_rgb(upsampled.xyz);
     } else {
-        rectify_history(params, clipping_box, &history, &accumulation, lock_contribution, luma_instability);
+        clamp_amount = rectify_history(params, clipping_box, &history, &accumulation, lock_contribution, luma_instability);
         history = accumulate_colors(history, accumulation, upsampled);
         history_weight = 1.0 - upsampled.w / max(FSR2_EPSILON, accumulation.x + upsampled.w);
     }
-    if (cb.debug != 0u) {
+    if (cb.debug == 1u) {
         textureStore(weight_out, hr_pos, vec4<f32>(history_weight, 0.0, 0.0, 0.0));
+    } else if (cb.debug == 2u) {
+        let code = stage_code(params, lock_state.was_locked_prev_frame, lock_status.x, clamp_amount, history_weight);
+        textureStore(weight_out, hr_pos, vec4<f32>(code, 0.0, 0.0, 0.0));
     }
     history = unprepare_rgb(history, exposure());
     finalize_lock_status(params, lock_status, upsampled.w);

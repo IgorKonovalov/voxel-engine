@@ -16,6 +16,8 @@
     reason = "a reading rig: its arms leave fields unread, its runs time themselves"
 )]
 
+#[path = "gpu_wobble/fsr.rs"]
+mod fsr;
 mod support;
 
 use std::path::{Path, PathBuf};
@@ -83,6 +85,9 @@ struct Arm {
     turn_frames: usize,
     /// The light passes' screen history (`Lighting::light_history`; `nohist` or `calm` clear it).
     light_history: bool,
+    /// The upscaler's scale, output over internal width (`scale=X`, 1.5 by default); `off1`
+    /// renders at the output.
+    scale: f32,
 }
 
 impl Arm {
@@ -95,7 +100,8 @@ impl Arm {
     /// the drain, the default's after it), `approach` / `disc` (the penumbra; the fly-through's
     /// default unless named), `absorb` (the leaves absorb, `--leaf-shadow absorb`), `turnf=N`
     /// (the turn's frames), `nohist` (`light_history` off), `calm` (the fly-through's
-    /// `--calm`: `nohist`, `column`, `step` and the far normal 8..12) and `native` (as `off1`).
+    /// `--calm`: `nohist`, `column`, `step` and the far normal 8..12), `native` (as `off1`),
+    /// `scale=X` (the upscaler's scale) and `farn=LO/HI` (the far normal's band).
     fn parse() -> Self {
         Self::from_spec(&std::env::var("VXE_WOBBLE").unwrap_or_else(|_| "default".into()))
     }
@@ -140,6 +146,7 @@ impl Arm {
             leaves_absorb: false,
             turn_frames: 40,
             light_history: flythrough::default_lighting().light_history,
+            scale: 1.5,
         };
         for t in spec.split(',') {
             let (k, v) = t.split_once('=').unwrap_or((t, ""));
@@ -188,6 +195,11 @@ impl Arm {
                 "absorb" => a.leaves_absorb = true,
                 "turnf" => a.turn_frames = v.parse().unwrap(),
                 "nohist" => a.light_history = false,
+                "scale" => a.scale = v.parse().unwrap(),
+                "farn" => {
+                    let (lo, hi) = v.split_once('/').expect("farn=LO/HI");
+                    a.far_normal = [lo.parse().unwrap(), hi.parse().unwrap()];
+                }
                 "native" => a.upscaler = "off",
                 "calm" => {
                     a.light_history = false;
@@ -229,7 +241,13 @@ fn forest_rig(r: i32) -> Option<(Rig, Camera)> {
 }
 
 fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
-    let internal = if arm.upscaler == "off" { OUT } else { INTERNAL };
+    let internal = if arm.upscaler == "off" {
+        OUT
+    } else if arm.scale == 1.5 {
+        INTERNAL
+    } else {
+        OUT.map(|n| (n as f32 / arm.scale).round() as u32)
+    };
     let mut f = Frame::with_sizes(&rig.device, internal, OUT);
     match arm.upscaler {
         "fsr2" => f.set_upscaler_kind(

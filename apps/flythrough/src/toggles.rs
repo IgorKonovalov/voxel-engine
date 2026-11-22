@@ -299,6 +299,12 @@ pub enum Act {
     NextSource,
     /// The outdoor hills' next tree density, rebuilt in process as the source switch is.
     Trees,
+    /// The upscaler's next internal scale (1.5, 1, 2), applied from the next frame
+    /// (`Run::cycle_scale`).
+    RenderScale,
+    /// FSR 2's next jitter phase count (its own, 8, 32), applied from the next frame
+    /// (`Run::cycle_jitter_phases`).
+    JitterPhases,
 }
 
 impl Act {
@@ -428,6 +434,31 @@ pub static ACTIONS: &[Action] = &[
         }),
         act: Act::Trees,
         needs: Some(Needs::Outdoor),
+        range: None,
+    },
+    Action {
+        binds: &[],
+        label: "render scale",
+        group: Group::Debug,
+        mode: Some(|m, _| format!("scale {}", m.scale)),
+        act: Act::RenderScale,
+        needs: None,
+        range: None,
+    },
+    Action {
+        binds: &[],
+        label: "jitter phases",
+        group: Group::Debug,
+        mode: Some(|m, _| {
+            let phases = m
+                .upscaler
+                .fsr2_knobs
+                .split(", ")
+                .find_map(|w| w.strip_prefix("phases "));
+            format!("jitter phases {}", phases.unwrap_or("fsr2's"))
+        }),
+        act: Act::JitterPhases,
+        needs: None,
         range: None,
     },
     Action {

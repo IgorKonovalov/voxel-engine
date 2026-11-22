@@ -102,6 +102,9 @@ pub struct Fsr2 {
     bypass: bool,
     /// The accumulate pass writes its history weight ([`Fsr2::set_debug`]).
     debug: bool,
+    /// With `debug`, the accumulate pass writes its stage code instead
+    /// ([`Fsr2::set_debug_stages`]).
+    stages: bool,
     /// The pre-exposure of the last encoded frame (`previousFramePreExposure`).
     pre_exposure: std::sync::Mutex<f32>,
 }
@@ -156,6 +159,12 @@ impl Fsr2 {
             self.debug = debug;
             self.res = Resources::new(device, self.res.render, self.res.display, debug);
         }
+    }
+
+    /// For readings: with [`Fsr2::set_debug`] on, the accumulate pass writes each pixel's stage
+    /// code ([`Fsr2Stage`]) to [`Fsr2::history_weight`]'s texture instead of the weight.
+    pub fn set_debug_stages(&mut self, on: bool) {
+        self.stages = on;
     }
 
     /// Bytes FSR's resources occupy.
@@ -227,9 +236,76 @@ impl Fsr2 {
     }
 }
 
+/// One display pixel's history in the accumulate pass, decoded from the stage code it writes
+/// under [`Fsr2::set_debug_stages`] (accumulate.wgsl's `stage_code`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Fsr2Stage {
+    /// No history: the pixel reprojects off screen, or the frame resets.
+    pub new_sample: bool,
+    /// A lock reprojected from the frame before.
+    pub was_locked: bool,
+    /// That lock released this frame (the luminance change, the reactive mask or the depth
+    /// clip set its lifetime to 0).
+    pub released: bool,
+    /// The history lay outside the scaled rectification box and was clamped toward it.
+    pub clamped: bool,
+    /// How far the clamp went, 0 to 1 (`1 - contribution` of AMD's `RectifyHistory`), in
+    /// 1/255 steps.
+    pub clamp: f32,
+    /// The depth clip factor, 0 to 1, in 1/255 steps.
+    pub depth_clip: f32,
+    /// The history's share of the blend, 0 to 1, in 1/15 steps.
+    pub history_weight: f32,
+}
+
+impl Fsr2Stage {
+    /// The stage code `v` decoded; `None` for a value that is no code (not an integer under
+    /// 2^24).
+    pub fn decode(v: f32) -> Option<Self> {
+        if !(0.0..16_777_216.0).contains(&v) || v.fract() != 0.0 {
+            return None;
+        }
+        let c = v as u32;
+        let byte = |shift: u32| ((c >> shift) & 0xFF) as f32 / 255.0;
+        Some(Self {
+            new_sample: c & 1 != 0,
+            was_locked: c & 2 != 0,
+            released: c & 4 != 0,
+            clamped: c & 8 != 0,
+            clamp: byte(4),
+            depth_clip: byte(12),
+            history_weight: ((c >> 20) & 0xF) as f32 / 15.0,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The stage code's fields come back from the bit layout `stage_code` writes: flags in
+    /// bits 0..3, the clamp in 4..11, the depth clip in 12..19, the weight in 20..23; a
+    /// fraction or a value past 2^24 is no code.
+    #[test]
+    fn a_stage_code_decodes_its_fields() {
+        let code = (1 | 2 | 8) | (128 << 4) | (255 << 12) | (15 << 20);
+        let s = Fsr2Stage::decode(code as f32).unwrap();
+        assert_eq!(
+            s,
+            Fsr2Stage {
+                new_sample: true,
+                was_locked: true,
+                released: false,
+                clamped: true,
+                clamp: 128.0 / 255.0,
+                depth_clip: 1.0,
+                history_weight: 1.0,
+            }
+        );
+        assert_eq!(Fsr2Stage::decode(4.0).map(|s| s.released), Some(true));
+        assert_eq!(Fsr2Stage::decode(0.5), None);
+        assert_eq!(Fsr2Stage::decode(16_777_216.0), None);
+    }
 
     /// FSR's passes are the frame's last slots but the exposure pass, in their order.
     #[test]

@@ -116,7 +116,7 @@ pub use frame::{
     MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher, NormalMode, PassTimer, Penumbra, RenderScale,
     ShadowWalk, SkyNormal, StoreRead, SurfaceTuning, ToneMap, ViewMode, YoungFilter, jitter_at,
 };
-pub use fsr2::{Fsr2, Fsr2Settings, UpscalerKind};
+pub use fsr2::{Fsr2, Fsr2Settings, Fsr2Stage, UpscalerKind};
 pub use gpu_world::{
     BELT_CHUNK_BYTES, BinStats, COLUMN_CELL, COLUMN_CELLS, COLUMN_NONE, DEFAULT_BUDGET_BYTES,
     DEFAULT_LIGHT_CHUNK_CAP, DEFAULT_LIGHT_RADIUS, DEFAULT_LIGHT_SAMPLES, GpuWorld, MirrorConfig,

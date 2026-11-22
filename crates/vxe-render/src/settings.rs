@@ -601,6 +601,10 @@ impl RenderSettings {
             "a test hook on Fsr2: writes its history weight",
         ),
         (
+            "set_debug_stages",
+            "a reading hook on Fsr2: writes its accumulate stage code for the weight",
+        ),
+        (
             "set_sync_clock",
             "a test hook on GpuWorld: the clock its time budget reads",
         ),

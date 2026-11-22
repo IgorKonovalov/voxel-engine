@@ -64,7 +64,8 @@ struct Fsr2Constants {
     spd_mips: u32,
     spd_work_groups: u32,
     rcas_con: f32,
-    // Nonzero: the accumulate pass writes its history weight to its debug target.
+    // 1: the accumulate pass writes its history weight to its debug target; 2: its stage code
+    // (accumulate.wgsl's `stage_code`).
     debug: u32,
     // The tone arithmetic RCAS applies (rcas.wgsl): bit 0 the identity tone map
     // (LIGHTING_IDENTITY_TONE_MAP), bit 1 the shaded view, bit 2 the static dither.

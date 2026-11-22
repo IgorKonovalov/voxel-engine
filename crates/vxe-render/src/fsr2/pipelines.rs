@@ -317,6 +317,7 @@ impl Fsr2 {
             settings,
             bypass: false,
             debug: false,
+            stages: false,
             pre_exposure: std::sync::Mutex::new(1.0),
         }
     }
