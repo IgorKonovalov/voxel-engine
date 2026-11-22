@@ -1,6 +1,6 @@
 # 0096: Performance: the bake queue's drain (a record by rule, a tier by size on screen, a drain slice), the step off the depth, the slow adapter's light pass, and the sync's `alloc` and eviction scan
 
-> **Status:** in-progress (dev, 2026-11-21). Approved 2026-11-20 (owner go; starts after Plan 0095 closes and merges). Owner picks, all as recommended: the drain slice 4.0 ms Floor / 6.0 ms Portable while in-view work waits, 1.0 once landed; a far chunk's 256-sample record is final until the camera brings it nearer; if the RENOIR forest stays over 4.0 ms the Portable profile owns the levers it picks and the Floor line stays with the miss disclosed; the window includes the 60 s cave glide. **Amended 2026-11-20 (owner)**, at Plan 0095's window W1: the far tiers' reach rule moves into this plan (ADR-0080 rule 4; a chunk whose reach crosses the full radius bakes its mid or far tier from the chunks resident, the near tier keeps the full reach), Phase 1's census counts reach-bound chunks by the exact test and names the no-record bricks if Plan 0095 Phase 6 cannot, Phase 6 (c) reads far pixels on the baked key or the column map's horizon, the landed state counts a LOD-ring face served by the horizon, and 0095's extra bake rays are conditional on its window W2. **Amended 2026-11-22 (architect, owner confirm owed)**, overnight at the Phase 6 checkpoint `2665f41f`: Phase 4's bar 2 is read at the default drain slice and the F2 rig's miss is a disclosed reading with its cause (the opening's candidate cap, routed to the Phase 5 bar 3 decision); Phase 6's lever (b) leaves bar 1 and the window (a no-op on cube faces, bounded at 0.16 ms by Phase 1's `--sky-rays 0` arm), the setting stays, and bar 1 becomes the key cap's test; Phase 6's paths fixed (`crates/vxe-render/tests/gpu_sun/key.rs`, `cli/outdoor.rs`). **Amended 2026-11-22 (architect, owner confirm owed)**, overnight at Phase 7's tip `8bb8857b`: Phase 7's bar 2 (the glide's `light place`) takes a Phase 7b, the write walk ending at the first refusal it cannot undo (outcomes identical, bar 1's test extended), before the Phase 8 window when it lands first; Phase 7's bar 3 (`alloc` and the sync lines) is disclosed, the per-brick packing routed to its own plan under ADR-0056 at this plan's close.
+> **Status:** in-progress (dev, 2026-11-21). Approved 2026-11-20 (owner go; starts after Plan 0095 closes and merges). Owner picks, all as recommended: the drain slice 4.0 ms Floor / 6.0 ms Portable while in-view work waits, 1.0 once landed; a far chunk's 256-sample record is final until the camera brings it nearer; if the RENOIR forest stays over 4.0 ms the Portable profile owns the levers it picks and the Floor line stays with the miss disclosed; the window includes the 60 s cave glide. **Amended 2026-11-20 (owner)**, at Plan 0095's window W1: the far tiers' reach rule moves into this plan (ADR-0080 rule 4; a chunk whose reach crosses the full radius bakes its mid or far tier from the chunks resident, the near tier keeps the full reach), Phase 1's census counts reach-bound chunks by the exact test and names the no-record bricks if Plan 0095 Phase 6 cannot, Phase 6 (c) reads far pixels on the baked key or the column map's horizon, the landed state counts a LOD-ring face served by the horizon, and 0095's extra bake rays are conditional on its window W2. **Amended 2026-11-22 (architect, owner confirm owed)**, overnight at the Phase 6 checkpoint `2665f41f`: Phase 4's bar 2 is read at the default drain slice and the F2 rig's miss is a disclosed reading with its cause (the opening's candidate cap, routed to the Phase 5 bar 3 decision); Phase 6's lever (b) leaves bar 1 and the window (a no-op on cube faces, bounded at 0.16 ms by Phase 1's `--sky-rays 0` arm), the setting stays, and bar 1 becomes the key cap's test; Phase 6's paths fixed (`crates/vxe-render/tests/gpu_sun/key.rs`, `cli/outdoor.rs`). **Amended 2026-11-22 (architect, owner confirm owed)**, overnight at Phase 7's tip `8bb8857b`: Phase 7's bar 2 (the glide's `light place`) takes a Phase 7b, the write walk ending at the first refusal it cannot undo (outcomes identical, bar 1's test extended), before the Phase 8 window when it lands first; Phase 7's bar 3 (`alloc` and the sync lines) is disclosed, the per-brick packing routed to its own plan under ADR-0056 at this plan's close. **Amended 2026-11-22 (architect), at the Phase 8 window** (section "The window's verdict and what is left"): the verdicts are recorded with their standing; the three overnight amendments above and the readings log's five morning questions stand **on the recommended option under the owner's standing rule, not on his words**; Phase 6's base is `--penumbra disc` (Plan 0098's W1, owner confirm owed at its W2) and the approach penumbra's lever leaves this plan; the drain slice per profile is set by a headless sweep under a stated rule; Phase 9 is restated; the bake step off the main thread is a plan of its own, drafted now; the RENOIR's 85 ms frame was read at 3.79 times the Portable profile's pixels and is not a close trigger.
 > **Created:** 2026-11-20
 > **Milestone:** M10 (the outdoor scenes are where the queue never drains) and cross-cutting
 > like [Plan 0067](done/0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md):
@@ -487,6 +487,15 @@ names or hands over the 461 no-record pixels. If 0095 is still open when the lan
   (4) `images_are_unchanged_by_the_incremental_order` (`gpu_bake`, lavapipe, about 6 s): the
   drained store of a 5 x 5 x 5 world hashes the same before and after this phase (the order
   changes when, not what).
+- **Amended 2026-11-22 (architect, on the recommended option; morning question 1): bar 3 is
+  the depth's, and the per-job stages are a reading.** Bar 3 as written priced the depth and
+  reads 20.7 / 55.0 ms (loaded) because of what a step does per job it opens (`list`,
+  `collect`, `submit`, `fades`, `summaries`), whatever the depth. Bar 3 becomes: on the forest
+  run the candidates scored a step stay under the view cone's membership (read 0 to 56 against
+  a pool of 9 361) and the drained step's p50 is under 0.1 ms (read 0.065; 0.05 to 0.07 in the
+  window's a2). The 1.0 / 4.0 ms line in Budgets stays as proposed; Phase 9 pins the regime B
+  reading against it as a disclosed miss, and the plan that meets it is the bake step off the
+  main thread (the section after Phase 9).
 
 ### Phase 6: The slow adapter's light pass, lever by lever (exploration)
 - **Owner skill:** dev
@@ -552,6 +561,19 @@ names or hands over the 461 no-record pixels. If 0095 is still open when the lan
   line (the first run read 54.3 s with six frames) it is born `#[ignore = "soak"]` and named so in
   the Implementation log. The approach penumbra's own lever waits for Plan 0098's window W1 and
   is out of this phase (the orchestrator's scope, 2026-11-22).
+- **Amended 2026-11-22 (architect; Plan 0098's W1, owner confirm owed at its W2): the base is
+  `--penumbra disc`, and approach's lever leaves this plan.** This replaces the 2026-11-20
+  owner amendment above for this plan's readings: W1 points to the disc (under approach "light
+  rays are gone when I am distant", and approach is the tunnel wall's blink), so the approach
+  penumbra's cost is no lever here and its step count, reach and half-rate form are not built.
+  Approach stays a setting (the cheap-modes rule). The default's flip is Plan 0098's code, not
+  this plan's; until it merges the tree's default is approach and Phase 9 reads both. The
+  levers that remain (the key cap, 2 a-trous iterations) are re-read at Phase 9 on the disc
+  with `--key-far column --key-far-mix step`, the parts of 0098's picks this branch holds.
+  Phase 1's table 5 already reads the disc's light pass on the RENOIR at Portable 720p
+  (loaded): 5.25 ms in the forest against 17.68 under approach, 2.97 on the hills at noon
+  against 4.94. If W2 overturns the disc, approach's reading stands as the disclosed miss
+  `docs/nfr.md` already names and its lever goes to the backlog; this plan is not reopened.
 
 ### Phase 7: The sync: the eviction scan's index and the `alloc` stage
 - **Owner skill:** dev
@@ -678,6 +700,8 @@ names or hands over the 461 no-record pixels. If 0095 is still open when the lan
 - **Done when:** the readings log quotes the owner's verdict on (a) to (e) and a pick for
   `drain_ms` per profile, the tiers per profile, and the light-pass levers the Portable profile
   owns; a pick the owner declines to make takes the recommended value.
+- **Run 2026-11-22, 21:19 to 21:29**, on `1844a99b`: the verdict is in the section "The
+  window's verdict and what is left" after Phase 9, the numbers in the readings log's Phase 8.
 
 ### Phase 9: The bars, the lines and the goldens after the picks
 - **Owner skill:** dev
@@ -698,6 +722,165 @@ names or hands over the 461 no-record pixels. If 0095 is still open when the lan
   7 test passes at the picked defaults; (4) `cargo nextest run --profile gate` at the tip under
   the perf lock, its wall recorded against section 7's 19 min; (5) the nfr lines read the
   values below, with machine and commit.
+- **Amended 2026-11-22 (architect): restated in the section below**, which adds the Portable
+  profile's size in a window, the drain sweep and its rule, the disc base and the quiet
+  re-reads, and says which lines are pinned as disclosed misses.
+
+## The window's verdict and what is left (amendment, 2026-11-22, architect)
+
+Phase 8 ran on 2026-11-22 from 21:19 to 21:29 on the dev box, release `1844a99b`
+(`live/bin96`), a window of 2530 x 1378 (internal 1687 x 919 at FSR 2's 1.5), on mains under
+the performance power profile. The numbers per run are in the readings log
+([logs/0096.md](logs/0096.md), "Phase 8").
+
+### The verdict, item by item
+
+| item | what was run | the verdict | standing |
+|---|---|---|---|
+| (a) RTX, the forest (a1) | 18 s of world frames, closed with 437 chunks in view still waiting | "works, but fps around 30" | the owner's words |
+| (a) RTX, the hills at 17:00 (a2) | 99 s | "fully settled in around a minute or so if I am looking for stable fps (70+)" | the owner's words; the log reads 31 to 45 fps until the in-view work lands 16.1 s after the first world frame, 55 to 69 until the queue empties at 27.5 s, 68 to 77 from about 35 s |
+| (a) RENOIR at Portable (a3, a4) | 67 and 81 s | "very slow, around 8-9 fps"; "as slow" | the owner's words; GPU-bound (gpu 85.5 and 84.7 ms, cpu 5.9 and 8.6) |
+| (a) rule 6 by eye: coarser but the same, one fade per landing, nothing popping or black | all four | not stated | **unjudged**. An image-stability question, so it takes no recommended answer; routed to Plan 0098's W2 |
+| (b) the far tier: 256 against 4096, the promotion's fade, the seam at the LOD ring | b1 for 31 s; b2 for 23 frames | no words, no complaint | **unjudged**; b2 closed 1 s after its first world frame, so the 4096 arm was not seen. The tiers stay at the profiles' rows by recommendation |
+| (c) the drain slice | RTX arms skipped; RENOIR 3.0 and 6.0 for 30 and 41 frames | "wherever best performance on synthetic" | the owner's words: he declines to pick by eye, the readings set it |
+| (d) the RENOIR's levers | skipped | none | **unjudged**; by recommendation the Portable profile owns no new lever (below) |
+| (e) the cave glide, RTX | 25 s of world frames | "no stagger"; "went surprisingly well with about 30-40 fps" | the owner's words |
+| the five morning questions and the three overnight amendments | not put to him | none | **by recommendation**, under the owner's standing rule (2026-11-03: a question that is not about image stability takes the recommended option). Not his words; he may overturn any of them |
+
+### What the window settles
+
+- **The eviction stagger is gone** ((e), the owner's words). The glide's `light place` read
+  2.2 / 6.2 ms p50/p99 with 158 / 1 279 chunks evicted a sync and a slowest sync of 21.0 ms,
+  against up to 1 186 ms before Phase 7. Phase 7's bar 2 (under 2 ms) is still missed, on the
+  1/16 rig (8.6 / 10.7 ms) and here; it is disclosed with Phase 7b's split and no further
+  mechanism rides in this plan, as Phase 7b says.
+- **The queue lands.** The RTX's hills land what is in view 16.1 s after the first world frame
+  and empty the residency at 27.5 s; b1's forest landed its view at 22.3 s. Before this plan
+  the forest never drained in 30 000 frames.
+- **The drain slice is the readings' to set** ((c)); the rule is below.
+
+### The two findings the window adds, and where each goes
+
+**1. The RTX holds about 30 fps while the queue drains, and the cause is the main thread, not
+the slice.** In a1 the frame's CPU read 28.0 ms p50 against a march GPU of 11.6 ms, and the
+queue's step in regime B 28.0 / 51.1 ms p50/p99 over 465 steps; in a2 the step read 13.1 /
+34.3 and the frame rate rose as the queue emptied (the step 0.05 ms once drained, the wall
+13.3 ms, GPU-bound at this window). The owner's "about a minute" on the hills reads 36 to 44 s
+from the process start on the log's clock. Either way it is the complaint this plan was
+written for (2026-11-20: "if we have to wait for a minute for light to settle, something is
+wrong"), now with a frame rate attached, and it is not met: the in-view drain's proposed line
+on the RTX is 10 s and the step's is 1.0 ms. Phases 2 to 5 took the depth out of the step and
+gave the queue an end; the cost left is per job opened and it runs on the render thread.
+**That is not stretched into this plan.** The lines stay as proposed and are pinned as
+disclosed misses, and the fix is **the bake step off the main thread, a plan of its own with
+its threading decision (ADR-0017 extended or superseded)**: the listing, the collect, the
+submit, the fades and the summaries on a bake thread, the render thread keeping the slot
+writes; it also takes the opening's candidate cap (Phase 4's F2 reading) and the in-view
+drain's 10 s line. **It is drafted now**, beside Phase 9, not at the close: it is the owner's
+first-named cost (2026-11-11) and his "no waiting for light" (2026-11-20). Its lane starts
+when this plan and Plan 0098 have both merged (0098's Phase 6 edits `bake/queue/step.rs`),
+and before Plan 0087. The slot is an owner question; the recommendation is that one.
+
+**2. The RENOIR's 85 ms was read at 3.79 times the Portable profile's pixels.** The line
+(`docs/nfr.md` section 2) is **33.3 ms a frame at 720p output with FSR 2 at 1.5**, an internal
+853 x 480, set at Plan 0069's close from indoor readings of 8.1 to 16.3 ms; the lighting
+line this plan reads the RENOIR against (4.0 ms) is the Floor split's, applied at Portable
+720p by the Budgets table. The window ran the profile at 2530 x 1378, because a profile's
+`output_hint` sizes only a headless run and a window renders at its own size. What the
+profile reads at its own resolution, headless (loaded, indicative):
+
+| RENOIR, Portable, 1280 x 720 | forest 15:00 | hills at noon | source |
+|---|---|---|---|
+| GPU frame at rest, approach (the tree's default) | 32.7 ms | 24.2 ms | Phase 6's base |
+| of it the light pass, approach / disc | 17.7 / 5.25 ms | 4.94 / 2.97 ms | Phase 1's table 5 |
+| GPU frame at rest, disc | about 20.3 ms | about 22.2 ms | **arithmetic** across the two tables, not a run |
+| wall while draining / after, approach | 47 / 37 ms | 39 / 28 ms | Phase 4's drain curves |
+| the window's GPU divided by 3.79 | 22.6 ms | 22.3 ms (17:00) | **a guess**: the passes do not scale alike (the forest's hit read 4.9 times its 720p figure, its light 1.3 times, unexplained) |
+
+So at the resolution its line names, the profile is at the line in the forest under approach
+and over it while draining, and the disc is what brings it inside (a projection until Phase 9
+reads it). At the window's size no lever this plan holds reaches 33.3 ms: FSR 2's passes
+alone read 16.4 ms there and the hit 25.5 to 34.3. **This is not a close trigger** (no line
+is defined at that size) **and not a plan of its own.** It is a profile change inside Phase
+9: **the Portable profile renders at its output hint in a window too** and the window scales
+it, the mechanism `--render WxH` already is; the other profiles keep the window's size. A
+720p image stretched over a large window is softer, which the owner has not seen: **owner
+confirm owed**, with one RENOIR run at Plan 0098's W2. What stays over the Floor split at any
+size is the RENOIR's hit pass (the backlog's beam prepass, before Plan 0033) and FSR 2's
+upscale line (the profile lines' own), both already named under "What this plan does NOT do".
+
+### The picks by recommendation
+
+- **The tiers** stay 4096 / 1024 / 256 (Floor) and 1024 / 256 / 256 (Portable). The far
+  tier's look at 256 is unjudged, so the risk "The far tier's look" stays open in ADR-0080's
+  Outcome at the close, not closed by silence.
+- **The Portable profile owns no new light-pass lever.** The key cap read within the noise
+  (-0.11 to +0.14 ms) and stays off. Two a-trous iterations read 0.6 to 0.7 ms cheaper on the
+  RENOIR and change the filter, which every profile keeps from the Floor as an image-stability
+  choice (`RenderSettings::profile`) and nobody judged; it stays a setting.
+- **The drain slice, by the owner's rule ("best performance on synthetic").** Phase 9 sweeps,
+  headless and quiet, the forest at 15:00 and the hills at noon from the first world frame:
+  1.5, 4.0 and 8.0 ms on the RTX (Floor, 1080p), 3.0, 6.0 and 12.0 on the RENOIR (Portable,
+  720p). The rule, fixed before the readings: an arm whose in-view drain is over twice the
+  shortest arm's is out; of the rest the pick is the lowest frame wall p50 while in-view work
+  waits; arms within 5 % of it tie, and a tie goes to the shorter drain, then to today's row
+  (4.0 and 6.0). The forest decides where the scenes disagree. Frame rate first, since that
+  is what the owner named; the guard keeps a slice that never lands from winning.
+
+### Phase 9, restated (dev)
+
+The original Phase 9 stands (the dig's ring test, every Phase 2 to 7 test at the defaults, the
+gate at the tip, the backlog's entries); these replace or add to its readings and lines:
+
+1. **The Portable profile's size in a window** (`apps/flythrough/src/app.rs`,
+   `cli/settings.rs`, the HUD's size row, `docs/flythrough.md`). Done when: a CPU test of the
+   argument resolution reads an output of 1280 x 720 for `--profile portable` in a window and
+   the window's size for the other profiles, `--render` overriding both ways (a form that says
+   "the window's size" is dev's to name); the HUD's size row shows the internal, the output
+   and the window's size, so the mode is on screen.
+2. **The drain sweep** under the rule above; the picked values become the profiles'
+   `bake.drain` rows. The table (per arm: the in-view drain after the first world frame, the
+   residency's, the wall p50 and p99 while draining and after, the drawn over the granted
+   slice) goes to the readings log.
+3. **The lines, pinned quiet** (1-minute load under 2 at the start, logged, no other lane's
+   GPU or cargo job running; a loaded run is labelled indicative and does not pin a line), on
+   both adapters at the picked slice: the in-view and whole-residency drain; the step in
+   regime B and drained; the cave bench's sync lines and the glide's `light place`; the
+   submits' drawn share at the drain slice (the window's a3 drew 8.8 to 9.7 ms of a granted
+   6.0 at the large size; read it at 720p). **Every proposed line in Budgets stays as
+   written; none moves to its reading.** A line that is missed is pinned in `docs/nfr.md` as
+   a disclosed miss with its cause and the plan that takes it.
+4. **The RENOIR's light pass** at Portable 720p, at rest, drained and undrained, the forest
+   and the hills at noon: the tree's default (approach), and the disc base
+   (`--penumbra disc --key-far column --key-far-mix step`) with the arms key cap, 2 a-trous
+   iterations and both; the RTX at Floor beside each, within 0.1 ms of its base. The Budgets
+   bar (at most 4.0 ms on the hills at noon) is read on the disc base.
+5. **What the earlier phases still owe:** the quiet walls of the lavapipe tests read loaded
+   (Phase 2's bar 1, Phase 3's bars 2, 3 and 5, Phase 5's bar 4 at 15.8 s), each born
+   `#[ignore = "soak"]` if over the 10 s line; and the readings the log names as not read
+   (Phase 2's bar 5, Phase 3's bar 6), read or named as not read at the close.
+6. **The window's readings** go to `docs/nfr/02-frame-budget.md` labelled with the window's
+   size, beside the 720p figures, not against the Portable line.
+7. **Goldens:** no pick moved a drained image (the tiers and the levers are unchanged, the
+   slice changes when, not what), so no re-bless is expected; a golden that moves is reported,
+   not re-blessed.
+8. **The backlog:** Plan 0067's F2 entry and the step's per-job cost are re-pointed at "The
+   bake step off the main thread" (`docs/backlog.md`, Next up); the approach penumbra's lever
+   is not added unless Plan 0098's W2 overturns the disc.
+
+### How the plan closes
+
+After Phase 9 the plan goes to its fresh-session close review; **no fix pass precedes it**,
+since the window named no defect in a mechanism this plan built. It closes with its misses
+disclosed, not met: the in-view drain on the RTX, the step's line, the sync's three lines,
+the glide's `light place`, and the RENOIR's forest light pass under either penumbra. ADR-0080
+is accepted with an Outcome that says so and carries the unjudged far tier. Plan 0098 and
+this plan touch the same light-pass figures; whichever merges second re-reads them at its
+close. Follow-ups, in order: **the bake step off the main thread** (drafted now; the lane
+after this plan and 0098 merge, before 0087), then **slot words packed on the workers**
+(ADR-0056's mechanism, drafted at this plan's close as the Phase 7 amendment says; the owner
+called the glide fine, so its lane can wait for Plan 0091's scopes), with the beam prepass
+where the backlog has it, before Plan 0033.
 
 ## Data shapes
 

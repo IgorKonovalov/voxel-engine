@@ -17,6 +17,10 @@ Rules:
 
 ## Next up
 
+### The bake step off the main thread (2026-11-22)
+
+Plan owed, drafted now (architect), from [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md)'s Phase 8 window: the RTX holds about 30 fps while the queue drains (forest: frame CPU p50 28.0 ms against a march GPU of 11.6; the queue's step in regime B 28.0 / 51.1 ms p50/p99), and the owner's "about a minute" to a stable 70+ fps on the hills. What is left after 0096 is per job opened (`list`, `collect`, `submit`, `fades`, `summaries`), on the render thread. The plan moves that work to a bake thread, the render thread keeping the slot writes: a threading decision (ADR-0017 extended or superseded). It takes 0096's missed lines (the step p50 at most 1.0 ms, the in-view drain at most 10 s on the RTX) and the opening's candidate cap (the entry "The RTX's submits draw less than their per-second slice"). Lane after Plans 0096 and 0098 merge, before Plan 0087 (the slot is the owner's call).
+
 ### The light placement's eviction scan in a windowed glide
 
 Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 7: the first-fit index and a distance-ordered victim index, the bytes asserted equal, a headless glide with a shrunk light buffer as the reproduction; the figures moved into the plan's context.
