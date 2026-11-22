@@ -590,6 +590,23 @@ Chebyshev distance per brick, mirror-side only, would lengthen the fixed 16-voxe
 Both pay in halls and outdoors and little in veins. Read the steps view's histogram first; pick
 up before Plan 0033's far field, whose rays are the long ones.
 
+**A second arm for the same spike: rasterized brick boxes (owner, 2026-11-22).** Draw a tight
+bounding box per occupied brick with the rasterizer and march only inside the box in the
+fragment shader, so the rasterizer and the depth buffer skip the empty space (Douglas Dwyer,
+"Drawing MILLIONS of voxels on an integrated GPU with parallax ray marching", Voxel Devlog #4,
+2022, youtube.com/watch?v=h81I8hR56vQ: 8 x 8 x 8 boxes from an octree, 36 volumes of 256 cubed
+at over 60 fps on Intel UHD; he left a compute ray marcher because it was bound by memory
+bandwidth on weak cards). Why it is here: the RENOIR's hit pass read 25 to 34 ms at Plan 0096's
+window (2530 x 1378, Portable). What it does not touch: the shadow, sky and lamp rays (his
+shadows are a rasterized shadow map) and the far trees' wobble. Known costs: a box list kept
+current under edits and streaming (a second mirror); a fragment that writes depth loses the
+early depth test (he writes true depth to a second target and fixes the depth buffer in a later
+pass, which holds only while boxes do not overlap); a ray that misses inside a box is a
+discard, and a sparse canopy stacks them, so the forest is the case to read; a raster pass is a
+change to ADR-0001's all-compute stack and needs its own ADR. The spike reads both arms on the
+RENOIR in the forest and the hall; the boxes are taken only if they beat the beam prepass
+clearly there.
+
 ### Narrower frame targets and fewer stores
 
 `hit_pos` is `rgba32float` and every screen pass taps it; a ray length in `r32float` would cut
