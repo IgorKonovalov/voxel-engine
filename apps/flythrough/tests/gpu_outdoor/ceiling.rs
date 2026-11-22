@@ -350,6 +350,85 @@ mod ceiling {
         }
     }
 
+    /// Plan 0097 Phase 3d bar 2 (ADR-0076 rule 5): the wobble rig's protocol on the forest of
+    /// seed 1 (`support::terms::forest_rig`, the spawn turned 90 degrees and pitched 4 down),
+    /// native 160 x 90, the sun fixed at 40/200, the lamp off, the bake queue stepping at the
+    /// fly-through's budget, under [`auto`] at the default share and `dt` 1/60: 120 settle
+    /// frames, a fly of 20 frames at 1 m/s, the stop held 30. On every frame from the fly's
+    /// last to stop +30 the one-frame step of log2 of the exposure the frame used
+    /// (`ExposureState::previous`) is at or under `R_f + 1/256` (`R_f` the rate over 60 Hz).
+    /// In this rig the exposure holds at the anchored ceiling and every step reads 0 EV; the
+    /// test is a guard: a jump on a stop frame (the sky set to midnight with the exposure reset
+    /// to the meter at stop +5) fails it with a step of 8.6 EV at stop +6.
+    /// `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    #[test]
+    #[ignore = "soak"]
+    fn the_eye_holds_the_rate_across_a_stop() {
+        let Some((mut rig, spawn)) = support::terms::forest_rig() else {
+            return;
+        };
+        let cam0 = Camera {
+            pitch: -4f32.to_radians(),
+            yaw: spawn.yaw + 90f32.to_radians(),
+            ..spawn
+        };
+        let a = auto(vxe_render::DEFAULT_SKY_ANCHOR_SHARE);
+        let mut f = Frame::new(&rig.device, 160, 90);
+        f.set_look(vxe_render::LookParams {
+            far_normal: flythrough::LookPreset::DEFAULT.far_normal,
+            ..vxe_render::LookParams::default()
+        });
+        f.set_material_styles(&rig.queue, &flythrough::outdoor_styles(flythrough::LeafShadow::default()));
+        f.set_lighting(Lighting {
+            lamp: false,
+            exposure: Exposure::Auto(a),
+            ..flythrough::default_lighting()
+        });
+        f.set_sky(Some(clock(720.0, Some([40.0, 200.0]))));
+        f.set_dt(1.0 / 60.0);
+        f.start_bake_queue(&rig.queue, &rig.gpu, vxe_render::queue_settings(), vxe_render::DEFAULT_BAKE_SLICE_MS);
+        f.set_bake_coarse(8, 2);
+        let light = LightParams::headlamp();
+        let ahead = {
+            let d = cam0.basis().0;
+            let h = (d.x * d.x + d.y * d.y).sqrt().max(1e-6);
+            [d.x / h, d.y / h]
+        };
+        // 1 m/s at 60 Hz in voxels of 0.1 m.
+        let at = |k: usize| {
+            let mut c = cam0;
+            let m = k.min(20) as f32 / 60.0 / 0.1;
+            c.position.x += ahead[0] * m;
+            c.position.y += ahead[1] * m;
+            c
+        };
+        let r_f = f64::from(a.rate_ev_s) / 60.0 + 1.0 / 256.0;
+        let mut last = None;
+        // Frames are labelled from the stop: -1 the fly's last.
+        let mut worst = (0.0f64, 0i64);
+        for k in 0..120 + 20 + 31 {
+            let cam = if k < 120 { cam0 } else { at(k - 119) };
+            support::defects::queue_step(&mut rig, &mut f, &cam);
+            f.step(&rig.device, &rig.queue, &rig.gpu, &cam, &light);
+            if k + 2 < 120 + 20 {
+                continue;
+            }
+            let st = vxe_render::ExposureState::from_bytes(&vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_state(), 0, 32));
+            let used = f64::from(st.previous).log2();
+            let label = k as i64 - 140;
+            if let Some(p) = last {
+                let d: f64 = used - p;
+                println!("reading: stop {label:+}: used {used:+.4} EV, step {d:+.4} EV, ceiling {:+.4} EV", f64::from(st.ceiling).log2());
+                if d.abs() > worst.0 {
+                    worst = (d.abs(), label);
+                }
+            }
+            last = Some(used);
+        }
+        println!("reading: on {}: the largest step {:.4} EV at stop {:+}, the bar {r_f:.4} EV", rig.adapter, worst.0, worst.1);
+        assert!(worst.0 <= r_f, "a step of {:.4} EV at stop {:+} over {r_f:.4} EV", worst.0, worst.1);
+    }
+
     /// One walk of [`walk`]: per frame the metered sky share, the metered level, the ceiling
     /// in force (log2) and the exposure in force (log2).
     pub(super) type Trace = Vec<(f32, f32, f64, f64)>;

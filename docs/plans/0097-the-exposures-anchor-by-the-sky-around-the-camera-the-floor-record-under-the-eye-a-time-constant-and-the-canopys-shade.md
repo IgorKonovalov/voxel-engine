@@ -552,7 +552,7 @@ direction bit and `VIS_BAKED` answers with its `+z` byte over 255. No `vxe-world
 | 3a: Highlight protection | dev | built, P99 default; short window awaits the owner | 8ff3bbe4 |
 | 3b: The lift | dev | done, `L` 4 default; bars 2 and 3 as amended 2026-11-22 read and met (readings log) | b6283105, 16ae8dc0 |
 | 3c: The short window | human | run 2026-11-22 (window 97c): "1a looks great", the lift stays 4 | the log |
-| 3d: The exposure's step just after a stop | dev | stopped at bar 1 for the architect: the eye moves 0 EV across the stop (Notes) | |
+| 3d: The exposure's step just after a stop | dev | closed as amended: not reproduced; the guard soak-marked, bites on a forced jump (readings log) | (this commit) |
 | 4: The picks as tests and the docs | dev | not started | |
 
 ### Notes
@@ -629,6 +629,9 @@ each. Empty is fine.)_
   (fly 20 and fly 180, RTX), bound by the ceiling at `c_a`; the wobble table's default arm at
   16ae8dc0 reads at most 0.09 % near per pair in the stop's first 16 frames (the 0098 lane read
   12.12 % at +7 on 56cb9931). Stopped per the bar; bars 2 and 4 not done.
+
+- Phase 3d bar 2: the guard's lavapipe run read 8.65 s at load 2.94 (loaded); the soak mark
+  stays. The bite run forced the jump with a midnight sky and an exposure reset at stop +5.
 
 - Architect, 2026-11-22: Phase 3d amended to close as not reproduced (its bars restated in the
   phase). **A finding for Plan 0098, not this plan's:** near-pixel jumps with the exposure
