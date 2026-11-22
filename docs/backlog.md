@@ -17,6 +17,34 @@ Rules:
 
 ## Next up
 
+### Distant trees that do not wobble: a stable far representation (owner, 2026-11-22)
+
+What is left of the wobble after Plan 0098's calm picks is distant trees while moving: sparse
+leaves at 15 to 60 m flip between jitter positions under FSR 2 (the plan's readings log; a
+denser canopy wobbles less at window W1, and the owner rejected changing models: "we don't know
+what models will be used in the end and can't simplify models"). The owner's direction: do not
+re-decide distant things every frame; "just not change them, or make this change less frequent.
+Maybe use rasterised objects when they are in distance, and voxels only for something that is
+close and we can reliably calculate it". Three ways, none measured:
+
+1. **A cached or rasterized stand-in at distance** (impostors, or a far band rendered to a
+   texture and refreshed rarely). Calm because the texture is filtered and nothing changes
+   between refreshes. Costs: invalidation on edits and on the sun's move, the swap to voxels on
+   approach, a raster path (ADR-0001). At 15 to 60 m a walk changes the view fast, so it fits
+   best beyond that band. **Owner, 2026-11-22: folded into
+   [Plan 0033](plans/0033-far-field-clipmap-to-a-kilometre.md)**, which picks the far
+   representation anyway; its next re-read takes this in as an arm.
+2. **Partial coverage in the far voxel data**: a canopy cell answers a share of leaf, the pixel
+   blends it with what is behind; independent of where in the pixel the ray went; any model;
+   edits ride the LOD mips. Risk: soft trees (the owner disliked the solid canopy's look).
+3. **No jitter in the far band**: far rays through the pixel centre. The cheapest test of the
+   direction (with the upscaler off he saw no wobble on a turn, "not right" as a picture). It is
+   Plan 0098 Phase 5's `far jitter` arm, not built there because the hit pass has no previous
+   hit to read; it wants a small phase of its own.
+
+Order proposed by the orchestrator, not yet the owner's: 3 first, then 2 if 3 reads calm but
+ugly; 1 with Plan 0033. Pick up after Plan 0098's W2 shows what its two built arms do.
+
 ### The light placement's eviction scan in a windowed glide
 
 Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 7: the first-fit index and a distance-ordered victim index, the bytes asserted equal, a headless glide with a shrunk light buffer as the reproduction; the figures moved into the plan's context.
