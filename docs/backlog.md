@@ -447,6 +447,8 @@ takes: a short look spike with two stills per arm at W2's poses and an owner win
 to the far-normal band is ADR-0063's table. Pick up after Plans 0095 and 0097; not Plan
 0097's.
 
+Taken 2026-11-21 by [Plan 0098](plans/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md) (option (a) through the widened band, judged at its window W1).
+
 ### Plan 0090 owes a stamp scene and a reading of the key mean's fade-in against `F`
 
 Parked 2026-11-18 by Plan 0086's flicker amendment (the architect, overnight). A freshly
@@ -1294,6 +1296,15 @@ pair of pixel sizes beside the shading normal's), or the far estimate inside the
 with the ray instead of switched, read on the wobble rig (`gpu_wobble`'s soak reading) on both
 adapters; an owner window, since the far's shadows change where the ray gives way. **Pick up**
 with the hybrid far field above or Plan 0096's far tiers, whichever runs first.
+
+Taken 2026-11-21 by [Plan 0098](plans/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md) (`key far mix step` with the band widened, judged at its window W1).
+
+### The F9 steps view drops the window to about 14 fps
+
+Seen 2026-11-21 at the diagnosis window (`docs/plans/logs/0098.md`, scene A; RTX 3080 Laptop):
+cycling F9 to the `steps` view drops the window to about 14 fps and the compositor flags it
+unresponsive. Unread: whether the view's own pass is slow or it disables a cheaper path. Pick
+up with any work on the debug views.
 
 ## Later apps
 
