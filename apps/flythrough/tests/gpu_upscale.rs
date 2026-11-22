@@ -17,9 +17,10 @@ use vxe_world::*;
 const ENTITY_MIRROR: u64 = 4096 + 65_536 + (8 << 20) + 4096;
 
 /// The exposure's growth over the figures main's frame held (Plan 0094 Phases 4 and 7b): the
-/// meter tile from 8 to 16 B (the sky count) over 160 x 90 tiles at 1280 x 720 internal, and the
-/// pass's uniform from 96 to 112 B (the rate, the sky share).
-const EXPOSURE_GROWTH: u64 = (16 - 8) * 160 * 90 + (112 - 96);
+/// meter tile from 8 to 16 B (the sky count) over 160 x 90 tiles at 1280 x 720 internal, the
+/// pass's uniform from 96 to 128 B (the rate, the sky share; the highlight's words, Plan 0097
+/// Phase 3a) and the highlight state's 16 B buffer (`ExposureHighlight`, Phase 3a).
+const EXPOSURE_GROWTH: u64 = (16 - 8) * 160 * 90 + (128 - 96) + 16;
 
 /// `world` mirrored over its extent on the software adapter, with a frame of `internal`
 /// pixels for an `output` image, lighting at full resolution; `None` without the adapter.
@@ -647,7 +648,7 @@ fn frame_bytes_add_the_histories_and_the_output_target() {
 /// 640 x 360 = 3 686 400 B, ADR-0036's figure), less the two `rgba32uint` reservoir textures
 /// (2 x 16 B x 640 x 360 = 7 372 800 B), plus the direct target and its accumulation pair
 /// (3 x 8 B x 640 x 360 = 5 529 600 B, ADR-0044): 124 737 616 B, plus the entity mirror
-/// (8 458 240 B, ADR-0050) and the exposure's growth (`EXPOSURE_GROWTH`, 115 216 B), before
+/// (8 458 240 B, ADR-0050) and the exposure's growth (`EXPOSURE_GROWTH`, 115 248 B), before
 /// the store's pool is allocated. The live queue's start
 /// allocates the pool at `Lighting::bake_pool_bytes` (256 MiB) under the adapter's storage
 /// binding, 128 MiB on lavapipe (134 217 728 B; the chunk table and every block lie in it):
