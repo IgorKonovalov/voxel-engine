@@ -116,6 +116,9 @@ fn sections() -> Vec<Section<Parsing>> {
     }]
 }
 
+/// The window's first size, and a headless target's, with no `--render` and no profile hint.
+const DEFAULT_SURFACE: [u32; 2] = [1280, 720];
+
 /// The names `--profile` takes.
 const PROFILE_NAMES: &str = "floor, portable, performance or high";
 
@@ -159,6 +162,41 @@ impl Args {
         self.bake.drain = s.bake.drain;
         self.light_cap = s.light_cap;
         self.output_hint = s.output_hint;
+    }
+
+    /// `--render WxH`'s size; none without the flag or under `--render window`.
+    pub(crate) fn render_fixed(&self) -> Option<[u32; 2]> {
+        match self.render {
+            Some(super::RenderSize::Fixed(s)) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// The output size a window does not change, the window scaling the frame to it:
+    /// `--render WxH`'s; none under `--render window`; without the flag the portable
+    /// profile's hint (it renders at 720p in a window too, so the slow adapter draws the
+    /// pixels its frame line names), none for the other profiles (they draw at the window's).
+    pub(crate) fn fixed_output(&self) -> Option<[u32; 2]> {
+        match self.render {
+            Some(super::RenderSize::Fixed(s)) => Some(s),
+            Some(super::RenderSize::Window) => None,
+            None => self
+                .output_hint
+                .filter(|_| self.profile == Profile::Portable),
+        }
+    }
+
+    /// The frame's output size on a surface (a window, or a headless target) of `surface`.
+    pub(crate) fn output_size(&self, surface: [u32; 2]) -> [u32; 2] {
+        self.fixed_output().unwrap_or(surface)
+    }
+
+    /// The size the window opens at, or the headless target's: `--render WxH`'s, else the
+    /// profile's hint, else 1280 x 720.
+    pub(crate) fn surface_size(&self) -> [u32; 2] {
+        self.render_fixed()
+            .or(self.output_hint)
+            .unwrap_or(DEFAULT_SURFACE)
     }
 
     /// The streamed mirror's budget unless `--mirror-budget` is given: the profile's.
@@ -252,7 +290,7 @@ impl Args {
                 workers: self.workers,
                 ..BuildSettings::default()
             },
-            output_hint: self.render.or(self.output_hint),
+            output_hint: self.render_fixed().or(self.output_hint),
             mark_colours: vxe_render::MARK_COLOURS,
         }
     }
@@ -385,5 +423,43 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// In a window the portable profile renders at its hint, 1280 x 720, and the window
+    /// scales it; the other profiles, and no profile, at the window's size; `--render WxH`
+    /// fixes the output under any profile and `--render window` gives the portable profile
+    /// the window's size. The window opens at the fixed size or the hint.
+    #[test]
+    fn the_output_follows_the_window_but_for_portable_and_render_overrides_both_ways() {
+        let window = [2530, 1378];
+        let out = |a: &[&str]| {
+            let a = parse_args_from(argv(a)).expect("parses");
+            (a.output_size(window), a.surface_size())
+        };
+        assert_eq!(out(&[]), (window, [1280, 720]), "no profile");
+        for p in Profile::ALL {
+            let hint = RenderSettings::profile(p).output_hint;
+            let (output, surface) = out(&["--profile", p.name()]);
+            let want = if p == Profile::Portable {
+                [1280, 720]
+            } else {
+                window
+            };
+            assert_eq!(output, want, "{}", p.name());
+            assert_eq!(surface, hint.unwrap_or([1280, 720]), "{}", p.name());
+            assert_eq!(
+                out(&["--profile", p.name(), "--render", "800x600"]),
+                ([800, 600], [800, 600]),
+                "{} with --render 800x600",
+                p.name()
+            );
+            assert_eq!(
+                out(&["--render", "window", "--profile", p.name()]).0,
+                window,
+                "{} with --render window",
+                p.name()
+            );
+        }
+        assert!(parse_args_from(argv(&["--render", "wide"])).is_err());
     }
 }

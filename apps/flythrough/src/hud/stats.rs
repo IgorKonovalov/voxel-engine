@@ -503,8 +503,20 @@ pub struct LightingRow {
     /// took a fallback and those left black; empty, nothing.
     pub missing_light: &'static str,
     pub modes: String,
-    /// The internal and output sizes while the upscaler runs: a row then reads its passes.
-    pub upscale: Option<[[u32; 2]; 2]>,
+    /// The frame's sizes, while the upscaler runs or in a window: a row then reads them, and
+    /// the upscaler's passes while it runs.
+    pub sizes: Option<FrameSizes>,
+}
+
+/// The frame's sizes the HUD's size row reads: the internal (the march's), the output (the
+/// upscaler's target) and, in a window, the window's, which scales the output when they differ.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct FrameSizes {
+    pub internal: [u32; 2],
+    pub output: [u32; 2],
+    pub window: Option<[u32; 2]>,
+    /// Whether an upscaler runs (the row then reads its passes first).
+    pub upscaling: bool,
 }
 
 /// The mirror's pressure (the fuller of its pool units and records), its reservation in bytes,
@@ -889,31 +901,37 @@ fn lighting_rows(
         out.write_str(&l.store_note)?;
     }
     row(out, HudColour::White, format_args!("; {}", l.modes))?;
-    if let Some([[iw, ih], [ow, oh]]) = l.upscale {
-        // Yellow when the composite, upscale and sharpen passes and FSR 2's exceed the
-        // upscale line. FSR 2's passes, when they ran, read as one total.
-        let fsr: f32 = l
-            .passes
-            .iter()
-            .filter(|(n, _)| n.starts_with("fsr2 "))
-            .map(|&(_, v)| v)
-            .sum();
-        let post = ms("composite") + ms("upscale") + ms("sharpen") + fsr;
-        if fsr > 0.0 {
-            write!(out, "fsr2 {fsr:.2} ms")?;
+    if let Some(z) = l.sizes {
+        let ([iw, ih], [ow, oh]) = (z.internal, z.output);
+        let colour = if z.upscaling {
+            // Yellow when the composite, upscale and sharpen passes and FSR 2's exceed the
+            // upscale line. FSR 2's passes, when they ran, read as one total.
+            let fsr: f32 = l
+                .passes
+                .iter()
+                .filter(|(n, _)| n.starts_with("fsr2 "))
+                .map(|&(_, v)| v)
+                .sum();
+            let post = ms("composite") + ms("upscale") + ms("sharpen") + fsr;
+            if fsr > 0.0 {
+                write!(out, "fsr2 {fsr:.2} ms, {iw}x{ih} to {ow}x{oh}")?;
+            } else {
+                write!(
+                    out,
+                    "upscale {:.2} sharpen {:.2} ms, {iw}x{ih} to {ow}x{oh}",
+                    ms("upscale"),
+                    ms("sharpen")
+                )?;
+            }
+            over(post, UPSCALE_LINE_MS)
         } else {
-            write!(
-                out,
-                "upscale {:.2} sharpen {:.2} ms",
-                ms("upscale"),
-                ms("sharpen")
-            )?;
+            write!(out, "frame {ow}x{oh}")?;
+            HudColour::White
+        };
+        match z.window {
+            Some([ww, wh]) => row(out, colour, format_args!(", window {ww}x{wh}"))?,
+            None => row(out, colour, format_args!(""))?,
         }
-        row(
-            out,
-            over(post, UPSCALE_LINE_MS),
-            format_args!(", {iw}x{ih} to {ow}x{oh}"),
-        )?;
     }
     Ok(())
 }

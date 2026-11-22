@@ -235,7 +235,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--library` | Print the entities library (each entry's parts, size in voxels, pool bytes and clips, the first marked `*`, or its error) and exit |
 | `--check-args` | Parse the arguments, print `arguments ok` and exit, opening nothing |
 | `--seed N` | The world's seed [1] |
-| `--render WxH` | Fix the frame's output resolution; the window scales it |
+| `--render WxH\|window` | Fix the frame's output resolution, the window scaling it; `window` is the window's size, also under the portable profile. Without the flag a window draws at its own size, but the portable profile draws at its hint (1280 x 720) in a window too. The HUD's size row reads the internal, the output and the window's size (`fsr2 16.37 ms, 853x480 to 1280x720, window 2530x1378`) [the window's; portable's 1280x720] |
 | `--frames N` | Exit after `N` frames, printing the readings (`Enter`) over the last ones |
 | `--pace free\|compositor` | Wait for the compositor's frame callback before each present or not [free] |
 | `--bench N` | Send `N` bench inputs on the first frame |
@@ -430,7 +430,7 @@ stage's step time).
 | Flag | Does |
 |------|------|
 | `--settings` | Print every render setting the flags give (`vxe_render::RenderSettings`, ADR-0055), one line per field: its name, its apply class (`live`, `settle`, `rebuild`) and its value; then exit |
-| `--profile floor\|portable\|performance\|high` | The render profile (`vxe_render::Profile`) the other flags edit, whatever their order: floor (1080p, FSR 2 at 1.5), portable (720p, FSR 2 at 1.5, fewer layers and lights, no lamp bounce, a smaller residency), performance (the window's size, FSR 2 at 2) or high (1080p, FSR 2 at 1; not for the slow adapter); its output hint sizes a headless run with no `--render`. The HUD's first mode row reads `profile: portable +1` with one field edited [floor] |
+| `--profile floor\|portable\|performance\|high` | The render profile (`vxe_render::Profile`) the other flags edit, whatever their order: floor (1080p, FSR 2 at 1.5), portable (720p, FSR 2 at 1.5, fewer layers and lights, no lamp bounce, a smaller residency), performance (the window's size, FSR 2 at 2) or high (1080p, FSR 2 at 1; not for the slow adapter); its output hint sizes a headless run with no `--render` and the window it opens; the portable profile's sizes its frame in a window too (`--render`). The HUD's first mode row reads `profile: portable +1` with one field edited [floor] |
 | `--light-cap N` | Slots of the list of lights shaded, the headlamp's included, 1 to 16 [the profile's] |
 | `--light-samples N` | The mirror's light-sample buffer in samples, 1024 to 1048576 (a reading lever: a smaller buffer fills and evicts) [1048576] |
 

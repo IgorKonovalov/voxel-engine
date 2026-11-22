@@ -65,7 +65,12 @@ fn a_shown_hud_s_refresh_and_banner_allocate_nothing_after_the_first_frame() {
         pressure: 0.25,
         budget_bytes: 64 << 20,
         light_samples: 4096,
-        upscale: Some([[640, 360], [960, 540]]),
+        sizes: Some(hud::FrameSizes {
+            internal: [640, 360],
+            output: [960, 540],
+            window: Some([1920, 1080]),
+            upscaling: true,
+        }),
     };
     run.start = now();
     let mut per_frame = Vec::with_capacity(100);

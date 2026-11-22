@@ -290,12 +290,11 @@ fn run_flags() -> Vec<Flag<Parsing>> {
         ),
         Flag::value(
             &["--render"],
-            "WxH",
-            "the frame's output resolution",
+            "WxH|window",
+            "the frame's output resolution, the window scaling it; window is the window's size \
+             [the window's; the portable profile's hint, 1280x720, in a window too]",
             |p: &mut Parsing, v| {
-                let (w, h) = v.text.split_once('x').ok_or("--render takes WxH")?;
-                let parse = |s: &str| s.parse::<u32>().map_err(|e| format!("--render: {e}"));
-                p.args.render = Some([parse(w)?, parse(h)?]);
+                p.args.render = Some(super::RenderSize::parse(v.text)?);
                 Ok(())
             },
         ),

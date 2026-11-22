@@ -410,7 +410,7 @@ fn the_store_row_reads_its_counts() {
         missing_light: "chain",
         store_note: ", queue depth 4, coarse 2, jobs 9, slice 1.25 ms".to_owned(),
         modes: "light baked".to_owned(),
-        upscale: None,
+        sizes: None,
     });
     s.write_rows(&mut out, &mut colours);
     assert!(
@@ -449,7 +449,7 @@ fn the_lighting_rows_follow_the_march_row() {
         store_note: String::new(),
         missing_light: "",
         modes: "lighting full".to_owned(),
-        upscale: None,
+        sizes: None,
     });
     s.write_rows(&mut out, &mut colours);
     let lines: Vec<&str> = out.lines().collect();
@@ -501,7 +501,12 @@ fn the_upscale_row_follows_the_lighting_rows() {
         store_note: String::new(),
         missing_light: "",
         modes: "lighting half".to_owned(),
-        upscale: Some([[1280, 720], [1920, 1080]]),
+        sizes: Some(FrameSizes {
+            internal: [1280, 720],
+            output: [1920, 1080],
+            window: None,
+            upscaling: true,
+        }),
     });
     s.write_rows(&mut out, &mut colours);
     let lines: Vec<&str> = out.lines().collect();
@@ -575,7 +580,12 @@ fn the_upscale_row_sums_fsr2s_passes() {
         store_note: String::new(),
         missing_light: "",
         modes: "lighting half".to_owned(),
-        upscale: Some([[1280, 720], [1920, 1080]]),
+        sizes: Some(FrameSizes {
+            internal: [1280, 720],
+            output: [1920, 1080],
+            window: None,
+            upscaling: true,
+        }),
     });
     s.write_rows(&mut out, &mut colours);
     let lines: Vec<&str> = out.lines().collect();
@@ -585,6 +595,40 @@ fn the_upscale_row_sums_fsr2s_passes() {
     s.lighting.as_mut().unwrap().passes[4].1 = 1.4;
     s.write_rows(&mut out, &mut colours);
     assert_eq!(colours[5], HudColour::Yellow, "0.2 + 1.55 over 1.5 ms");
+}
+
+/// In a window the size row reads the internal, the output and the window's size, so a
+/// profile that renders at its hint while the window scales it shows on screen; with no
+/// upscaler it reads the output and the window.
+#[test]
+fn the_size_row_reads_the_window_beside_the_internal_and_output_sizes() {
+    let (mut out, mut colours) = (String::new(), Vec::new());
+    let mut s = HudStats::fixed();
+    s.lighting = Some(LightingRow {
+        passes: vec![("composite", 0.2), ("fsr2 accumulate", 0.4)],
+        light_samples: 0,
+        live_probes: None,
+        store: None,
+        store_note: String::new(),
+        missing_light: "",
+        modes: "lighting half".to_owned(),
+        sizes: Some(FrameSizes {
+            internal: [853, 480],
+            output: [1280, 720],
+            window: Some([2530, 1378]),
+            upscaling: true,
+        }),
+    });
+    s.write_rows(&mut out, &mut colours);
+    assert_eq!(
+        out.lines().nth(5),
+        Some("fsr2 0.40 ms, 853x480 to 1280x720, window 2530x1378")
+    );
+    let z = s.lighting.as_mut().unwrap().sizes.as_mut().unwrap();
+    (z.internal, z.upscaling) = ([1280, 720], false);
+    s.write_rows(&mut out, &mut colours);
+    assert_eq!(out.lines().nth(5), Some("frame 1280x720, window 2530x1378"));
+    assert_eq!(colours[5], HudColour::White);
 }
 
 /// A pad row sits before the format row, and a run without a pad source shows none.

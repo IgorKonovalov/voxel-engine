@@ -38,7 +38,7 @@ pub(crate) struct Gfx {
 }
 
 /// The GPU side's values the HUD's rows read: the mirror's sizes, slots and pressure, its light
-/// samples, and the internal and output sizes while the upscaler runs.
+/// samples, and the frame's sizes while the upscaler runs or in a window.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct GfxSample {
     pub(crate) mirror_bytes: u64,
@@ -47,11 +47,13 @@ pub(crate) struct GfxSample {
     pub(crate) pressure: f32,
     pub(crate) budget_bytes: u64,
     pub(crate) light_samples: u64,
-    pub(crate) upscale: Option<[[u32; 2]; 2]>,
+    pub(crate) sizes: Option<crate::hud::FrameSizes>,
 }
 
 impl GfxSample {
-    pub(crate) fn of(g: &Gfx) -> Self {
+    /// `window` is the window's size, none headless.
+    pub(crate) fn of(g: &Gfx, window: Option<[u32; 2]>) -> Self {
+        let upscaling = g.frame.upscaling();
         Self {
             mirror_bytes: g.mirror.mirror_bytes(),
             pool_live: g.mirror.live_bricks(),
@@ -59,10 +61,12 @@ impl GfxSample {
             pressure: g.mirror.pressure(),
             budget_bytes: g.mirror.allocated_bytes(),
             light_samples: g.mirror.light_samples(),
-            upscale: g
-                .frame
-                .upscaling()
-                .then(|| [g.frame.internal_size(), g.frame.output_size()]),
+            sizes: (upscaling || window.is_some()).then(|| crate::hud::FrameSizes {
+                internal: g.frame.internal_size(),
+                output: g.frame.output_size(),
+                window,
+                upscaling,
+            }),
         }
     }
 }

@@ -626,11 +626,32 @@ pub struct BakeArgs {
     pub(crate) pre_roll_drain: Option<f64>,
 }
 
+/// What `--render` names: a fixed output size the window scales, or the window's own size.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RenderSize {
+    Fixed([u32; 2]),
+    Window,
+}
+
+impl RenderSize {
+    /// `WxH` or `window`.
+    pub(crate) fn parse(text: &str) -> Result<Self, String> {
+        if text == "window" {
+            return Ok(Self::Window);
+        }
+        let (w, h) = text.split_once('x').ok_or("--render takes WxH or window")?;
+        let parse = |s: &str| s.parse::<u32>().map_err(|e| format!("--render: {e}"));
+        Ok(Self::Fixed([parse(w)?, parse(h)?]))
+    }
+}
+
 /// The fly-through's arguments: the run's own, the world ([`RunMode`]) and the four groups.
 #[derive(Clone)]
 pub struct Args {
     pub(crate) seed: u64,
-    pub(crate) render: Option<[u32; 2]>,
+    /// `--render`: the output size, or the window's; none without the flag
+    /// ([`Args::fixed_output`] resolves it with the profile).
+    pub(crate) render: Option<RenderSize>,
     pub(crate) frames: Option<u32>,
     /// `--pace`: whether the window waits for the compositor's frame callback.
     pub(crate) pace: Pacing,
@@ -736,8 +757,9 @@ pub struct Args {
     /// `--light-hooks`: the light passes' reading hooks (`vxe_render::LightHooks`); none
     /// without.
     pub(crate) light_hooks: vxe_render::LightHooks,
-    /// The output size of a headless run with no `--render`: the `--profile`'s hint when one
-    /// is given, else none (1280 x 720).
+    /// The output size of a headless run with no `--render`, and the window's first size:
+    /// the `--profile`'s hint when one is given, else none (1280 x 720). The portable
+    /// profile's renders in a window too ([`Args::fixed_output`]).
     pub(crate) output_hint: Option<[u32; 2]>,
     /// `--settings`: print the render settings the flags give ([`settings_lines`]) and exit 0.
     pub settings: bool,
