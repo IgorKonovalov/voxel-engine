@@ -763,6 +763,17 @@ const HISTORY_DIST_PER_T: f32 = 0.03;
 
 // The visibility pair's functions are pair.wgsl's.
 
+// Whether hit `rec` of lighting pixel `gid` reads the light passes' history: `Params::history`
+// bit 0, and under bit 2 (`Lighting::light_history_far`, a spike arm) only where the far
+// normal's weight is 1.
+fn light_history_at(gid: vec2<u32>, rec: HitRecord) -> bool {
+    if ((params.history & 1u) == 0u) {
+        return false;
+    }
+    return (params.history & 4u) == 0u
+        || far_normal_weight(params.views[view_of(full_px(gid))], rec.t) >= 1.0;
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= params.light_size.x || gid.y >= params.light_size.y) {
@@ -895,7 +906,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         if ((params.lighting & LIGHTING_DIRECT) == 0u && (params.flags & FLAG_CUTAWAY) == 0u
             && view_mode() != VIEW_STEPS) {
             var held = 0.0;
-            if ((params.history & 1u) != 0u && !in_edit(rec.p)) {
+            if (light_history_at(gid.xy, rec) && !in_edit(rec.p)) {
                 held = min(floor(textureLoad(prev_moments_in, px, 0).z + 0.5) + 1.0, AGE_MAX);
             }
             // A face's pixel is never fresh here (no light, no shadow ray); a moved part's is.
@@ -922,7 +933,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     var a_direct = 1.0;
     var a_mom = 1.0;
     var m_hist = vec2<f32>(0.0);
-    if (rec.found && (params.history & 1u) != 0u && !in_edit(rec.p)) {
+    if (rec.found && light_history_at(gid.xy, rec) && !in_edit(rec.p)) {
         let vi = view_of(full_px(gid.xy));
         if (!rec.entity && !rec.field && rec.axis >= 0 && normal_mode() == NORMAL_FACE
             && (params.lighting & LIGHTING_HOOK_NO_STAIR) == 0u) {

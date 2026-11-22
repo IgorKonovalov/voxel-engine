@@ -1034,6 +1034,20 @@ pub static TOGGLES: &[Toggle] = &[
         }
     ),
     diag!(
+        "far light wide",
+        |m| format!("far light wide {}", on(m.lighting.far_light_wide)),
+        |m| {
+            m.lighting.far_light_wide = !m.lighting.far_light_wide;
+        }
+    ),
+    diag!(
+        "light history far",
+        |m| format!("light history far {}", on(m.lighting.light_history_far)),
+        |m| {
+            m.lighting.light_history_far = !m.lighting.light_history_far;
+        }
+    ),
+    diag!(
         "key jitter",
         |m| format!("key jitter {}", on(!m.diag.hooks.key_no_jitter)),
         |m| {

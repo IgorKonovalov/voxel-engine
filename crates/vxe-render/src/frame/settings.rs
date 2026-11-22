@@ -978,6 +978,13 @@ pub struct Lighting {
     /// key visibilities (default off): off, they change in the frame the block lands, and only
     /// the light pass's screen history (the no-ray fade) softens it.
     pub landing_fade: bool,
+    /// A spike arm (Plan 0098 Phase 5, default off): with [`Lighting::light_history`] off, the
+    /// light passes keep their history where the far normal's weight is 1, the far trees alone.
+    pub light_history_far: bool,
+    /// A spike arm (Plan 0098 Phase 5, default off): the a-trous filter's plane and normal
+    /// edge stops relax by the far normal's weight, so the key light of two hits a jitter step
+    /// apart is one spatial mean at the far.
+    pub far_light_wide: bool,
     /// How the key light's shadow ray makes its penumbra ([`Penumbra`]; default `Disc`).
     pub penumbra: Penumbra,
     /// Where the key light's visibility comes from where a voxel is small on screen
@@ -1024,6 +1031,19 @@ pub const MAX_SKY_RAYS: u32 = 4;
 /// [`Lighting::sky_rays`] by default.
 pub const DEFAULT_SKY_RAYS: u32 = 1;
 
+impl Lighting {
+    /// `Params::history`'s light bits for a frame whose history is `valid`: bit 0 the light
+    /// passes read it ([`Lighting::light_history`], or under [`Lighting::light_history_far`] bit
+    /// 2 too: at the far alone, temporal.wgsl `light_history_at`), bit 3 the a-trous filter's
+    /// edges relax at the far ([`Lighting::far_light_wide`], atrous.wgsl `far_wide`).
+    pub(crate) fn light_history_bits(&self, valid: bool) -> u32 {
+        let far_only = !self.light_history && self.light_history_far;
+        u32::from(valid && (self.light_history || far_only))
+            | u32::from(far_only) << 2
+            | u32::from(self.far_light_wide) << 3
+    }
+}
+
 impl Default for Lighting {
     fn default() -> Self {
         Self {
@@ -1052,6 +1072,8 @@ impl Default for Lighting {
             key_history: DEFAULT_KEY_HISTORY,
             light_history: true,
             landing_fade: false,
+            light_history_far: false,
+            far_light_wide: false,
             penumbra: Penumbra::Disc,
             key_far: KeyFar::Baked,
             key_far_mix: KeyFarMix::Blend,

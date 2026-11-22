@@ -126,7 +126,10 @@ the lighting row and in the banner when it is off its default: `penumbra` (appro
 or off; `--filter`), `light history` (off: every lighting pixel restarts each frame, the
 upscaler keeps its history; `--light-history`, a render setting), `landing fade` (on: a
 landing block's sky visibilities ride the store's fade with its light, so a landing arrives
-softly with no light history; `--landing-fade`, a render setting), `key jitter` (off: the key light's shadow ray runs along the
+softly with no light history; `--landing-fade`, a render setting), `far light wide` (on: the
+a-trous filter's plane and normal edges relax by the far normal's weight, a far-trees spike arm),
+`light history far` (on, with light history off: the light passes keep their history where the
+far normal's weight is 1, a far-trees spike arm), `key jitter` (off: the key light's shadow ray runs along the
 disc's centre), `stair rules` (off: the far normal's stair rules in the history test and the
 key and sky rays' lift) and `queue freeze` (on: the live queue takes no step, so no record
 lands). Two FSR 2 levers sit beside them, applied from the next frame and named in the

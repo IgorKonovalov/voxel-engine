@@ -354,7 +354,7 @@ impl Frame {
             p.prev_views = h.prev_views;
             p.prev_light_offset = h.prev_offset;
             h.last_offset = params.light_offset;
-            p.history = u32::from(h.valid && !h.overflow && self.state.lighting.light_history);
+            p.history = self.state.lighting.light_history_bits(h.valid && !h.overflow);
             // Bit 1: the upscaler's history holds this view's image.
             p.history |= u32::from(h.valid && !h.overflow && !h.view_changed) << 1;
             h.view_changed = false;

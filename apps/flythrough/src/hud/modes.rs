@@ -844,6 +844,12 @@ impl Modes {
         if self.lighting.landing_fade {
             out.push_str("landing fade on, ");
         }
+        if self.lighting.light_history_far {
+            out.push_str("light history far on, ");
+        }
+        if self.lighting.far_light_wide {
+            out.push_str("far light wide on, ");
+        }
         if h.key_no_jitter {
             out.push_str("key jitter off, ");
         }

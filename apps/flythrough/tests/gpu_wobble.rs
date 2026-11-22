@@ -95,6 +95,10 @@ struct Arm {
     fly: usize,
     /// The normals view (`normals`): the shading normal as colour, for the term split.
     normals: bool,
+    /// Plan 0098 Phase 5's arms: `Lighting::far_light_wide` (`wide`) and
+    /// `Lighting::light_history_far` (`hfar`).
+    far_light_wide: bool,
+    light_history_far: bool,
 }
 
 impl Arm {
@@ -110,7 +114,8 @@ impl Arm {
     /// `--calm` as window W1 picked it: `nohist`, `column`, `step`, `disc` and the far normal
     /// 4..8), `native` (as `off1`), `scale=X` (the upscaler's scale), `farn=LO/HI` (the far
     /// normal's band), `lfade` (`Lighting::landing_fade` on), `fly=N` (the fly's frames) and
-    /// `normals` (the normals view).
+    /// `normals` (the normals view); Plan 0098 Phase 5's arms `wide` (`far_light_wide`) and
+    /// `hfar` (`light_history_far`).
     fn parse() -> Self {
         Self::from_spec(&std::env::var("VXE_WOBBLE").unwrap_or_else(|_| "default".into()))
     }
@@ -159,6 +164,8 @@ impl Arm {
             landing_fade: flythrough::default_lighting().landing_fade,
             fly: 180,
             normals: false,
+            far_light_wide: false,
+            light_history_far: false,
         };
         for t in spec.split(',') {
             let (k, v) = t.split_once('=').unwrap_or((t, ""));
@@ -222,6 +229,8 @@ impl Arm {
                 }
                 "lfade" => a.landing_fade = true,
                 "normals" => a.normals = true,
+                "wide" => a.far_light_wide = true,
+                "hfar" => a.light_history_far = true,
                 "fly" => a.fly = v.parse().unwrap(),
                 other => panic!("unknown arm token {other}"),
             }
@@ -319,6 +328,8 @@ fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
         penumbra: arm.penumbra,
         light_history: arm.light_history,
         landing_fade: arm.landing_fade,
+        far_light_wide: arm.far_light_wide,
+        light_history_far: arm.light_history_far,
         store_read: if arm.store_read_face {
             vxe_render::StoreRead::Face
         } else {
