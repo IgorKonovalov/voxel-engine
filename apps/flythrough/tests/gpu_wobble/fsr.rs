@@ -2,8 +2,9 @@
 //! arm on the wobble rig's forest: the settle, eight still frames whose render-size hits are
 //! compared phase to phase, a 60-degree turn over 40 frames whose last 10 have their motion
 //! vectors checked against the hits' exact reprojection, then a hold of 120 frames whose first
-//! 31 read the accumulate pass's stage code (`vxe_render::Fsr2Stage`) per display pixel. Each
-//! row is printed; nothing is asserted.
+//! 31 read the accumulate pass's stage code (`vxe_render::Fsr2Stage`) per display pixel. The
+//! still's changed far hits are split by distance band and by leaf or other material. Each row
+//! is printed; nothing is asserted.
 
 use super::*;
 use vxe_render::{Fsr2Stage, View, wgpu};
@@ -99,6 +100,73 @@ fn hit_change(a: &[[f32; 4]], b: &[[f32; 4]], eye: [f32; 3]) -> f64 {
         moved += usize::from(changed);
     }
     100.0 * moved as f64 / n.max(1) as f64
+}
+
+/// One frame's render-size hit positions and records.
+type Hits = (Vec<[f32; 4]>, Vec<[u16; 4]>);
+
+/// The distance bands of [`flip_split`] in metres: 15 to 30, 30 to 60, over 60.
+const BANDS: [f64; 2] = [30.0, 60.0];
+
+/// [`hit_change`]'s far pixels split by band (the nearer of the pair's hits, a miss beyond
+/// every band) and by kind (a leaf row's material in either frame's record, or anything
+/// else): per band and kind, the far pixels and the ones whose hit changed.
+fn flip_split(
+    a: (&[[f32; 4]], &[[u16; 4]]),
+    b: (&[[f32; 4]], &[[u16; 4]]),
+    eye: [f32; 3],
+) -> [[(usize, usize); 2]; 3] {
+    let leaf = |r: [u16; 4]| r[3] & 1 == 1 && flythrough::outdoor::LEAF_ROWS.contains(&r[2]);
+    let mut out = [[(0usize, 0usize); 2]; 3];
+    for (((p, q), ra), rb) in a.0.iter().zip(b.0).zip(a.1).zip(b.1) {
+        let (da, db) = (hit_m(*p, eye), hit_m(*q, eye));
+        if !(da.is_some_and(|d| d > 15.0) || db.is_some_and(|d| d > 15.0)) {
+            continue;
+        }
+        let changed = match (da, db) {
+            (Some(_), Some(_)) => (0..3).any(|i| (p[i] - q[i]).abs() > 1.0),
+            _ => true,
+        };
+        let d = da.into_iter().chain(db).fold(f64::INFINITY, f64::min);
+        let band = BANDS.iter().filter(|&&e| d >= e).count();
+        let kind = usize::from(!(leaf(*ra) || leaf(*rb)));
+        out[band][kind].0 += 1;
+        out[band][kind].1 += usize::from(changed);
+    }
+    out
+}
+
+/// [`flip_split`]'s counts summed over the pairs, printed: per band and kind the share of the
+/// far pixels, the share of them that changed, and the points it adds to the total share.
+fn print_flip_split(name: &str, sum: &[[(usize, usize); 2]; 3]) {
+    let all: usize = sum.iter().flatten().map(|c| c.0).sum();
+    let pct = |v: usize, d: usize| 100.0 * v as f64 / d.max(1) as f64;
+    let row = |label: &str, c: (usize, usize)| {
+        format!(
+            "{label}: {:.1} % of far, {:.2} % changed, {:.2} pts",
+            pct(c.0, all),
+            pct(c.1, c.0),
+            pct(c.1, all)
+        )
+    };
+    let add = |x: (usize, usize), y: (usize, usize)| (x.0 + y.0, x.1 + y.1);
+    let names = ["15-30 m", "30-60 m", ">60 m (or miss)"];
+    for (b, k) in sum.iter().enumerate() {
+        println!(
+            "fsr {name}: flips {}; {}; {}",
+            row(names[b], add(k[0], k[1])),
+            row("leaf", k[0]),
+            row("other", k[1])
+        );
+    }
+    let kinds = sum
+        .iter()
+        .fold([(0, 0); 2], |acc, k| [add(acc[0], k[0]), add(acc[1], k[1])]);
+    println!(
+        "fsr {name}: flips by kind {}; {}",
+        row("leaf", kinds[0]),
+        row("other", kinds[1])
+    );
 }
 
 /// The motion vectors' error against the exact reprojection, in display pixels, over the far
@@ -197,17 +265,26 @@ pub(super) fn fsr_split(rig: &mut Rig, cam0: Camera, arm: &Arm) {
     }
     // Still: the far hits phase to phase.
     let eye0 = cam0.position.to_array();
-    let mut last: Option<Vec<[f32; 4]>> = None;
+    let mut last: Option<Hits> = None;
     let mut changes = Vec::new();
+    let mut flips = [[(0usize, 0usize); 2]; 3];
     for _ in 0..STILL {
         queue_step(rig, &mut s.frame, &cam0);
         s.run(rig, &cam0);
         let hits =
             vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, s.frame.hit_positions());
-        if let Some(a) = &last {
+        let recs = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, s.frame.hit_records());
+        if let Some((a, ra)) = &last {
             changes.push(hit_change(a, &hits, eye0));
+            let f = flip_split((a, ra), (&hits, &recs), eye0);
+            for (b, k) in f.iter().enumerate() {
+                for (j, c) in k.iter().enumerate() {
+                    flips[b][j].0 += c.0;
+                    flips[b][j].1 += c.1;
+                }
+            }
         }
-        last = Some(hits);
+        last = Some((hits, recs));
     }
     let mean_change = changes.iter().sum::<f64>() / changes.len().max(1) as f64;
     println!(
@@ -218,6 +295,7 @@ pub(super) fn fsr_split(rig: &mut Rig, cam0: Camera, arm: &Arm) {
             .collect::<Vec<_>>()
             .join(" ")
     );
+    print_flip_split(name, &flips);
     // The turn; the motion checked over its last frames.
     let mut prev = cam0;
     let mut motion = Vec::new();
