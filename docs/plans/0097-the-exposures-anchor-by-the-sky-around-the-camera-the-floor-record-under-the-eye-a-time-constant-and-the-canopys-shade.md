@@ -5,6 +5,9 @@
 > **Amended 2026-11-22 by the architect at window 97c's verdicts (the owner: "1a looks great", the
 > lift stays 4): Phase 3b's bars 2 and 3 restated, Phase 3d added (the exposure's step just after a
 > stop, from the 0098 lane's reading).**
+> **Amended 2026-11-22 (architect, owner confirm owed): Phase 3d closes as not reproduced at the
+> tip (the eye moves 0 EV across the stop; no fix), its invariant test stays as a guard; the near
+> jumps read with the exposure constant are routed to Plan 0098.**
 > Approved 2026-11-20 (the owner's picks at window W2, all as recommended: the
 > anchor by the sky around the camera's position, a small plan of its own, the slope's step
 > lines to the backlog). **The lane starts after Plan 0095 closes and merges** (owner's
@@ -407,6 +410,42 @@ tip's.
      over 1 % near (it read 12.12 % at +7; pinned, 0.12 % at most).
   4. Every exposure golden byte-identical, or each move named with its count; a moved pixel
      in a still scene is a stop for the architect.
+- **Amended 2026-11-22 (architect, owner confirm owed): the phase closes as "not reproduced at
+  the tip", with no change to the exposure.** Bar 1's stop clause fired (the readings log,
+  "Phase 3d"; the RTX 3080 laptop, loaded, indicative, 16ae8dc0): the exposure in force is
+  -6.6005 EV on every frame from the fly's last to stop +29 at fly 20 and fly 180, the ceiling
+  on its anchored target, the adapted level and the highlight cap both over it. The 0098
+  lane's 12.12 % step (read on 56cb9931, before the lift's b6283105) does not reproduce.
+  **Which commit removed it is not established, and no bisect is asked for**; the two readings
+  differ in base and in load, so "the lift removed it" is a guess. The bars now read:
+  1. **Met as the reading above.** The term named: none of the eye's.
+  2. **The invariant stays, as a regression guard; the clause "fails on the base before the
+     fix" is struck** (there is no fix to come before it). The dev commits
+     `the_eye_holds_the_rate_across_a_stop` from `live/p3d-invariant-draft.rs` into
+     `apps/flythrough/tests/gpu_outdoor/ceiling.rs` beside `the_tunnel_exposes_for_its_walls_
+     by_day` (binary `gpu_outdoor`; in `gpu_wobble.rs` beside the reading instead if the forest
+     rig's support module is not reachable from `gpu_outdoor`, said in the log), **born
+     `#[ignore = "soak"]`**: its lavapipe time is not read, and 171 forest frames with the
+     bake queue stepping are a guess of well over the 10 s line (the tunnel test beside it
+     reads 25.4 s). It is no gate's; the weekly soak runs it. The dev runs it once on lavapipe
+     and once on the RTX and logs both times and the largest step; the mark comes off only on
+     a quiet lavapipe reading under 10 s. **What it defends, stated plainly:** in this rig the
+     step reads 0.0000 EV, so the test has never been seen to fail. The dev shows it bites
+     with one uncommitted run in which the exposure is made to jump on a stop frame (the means
+     is the dev's, named in the log with the step the assertion printed); if nothing in the
+     rig can make it jump, the log says so and the test's doc comment says it guards a
+     constant.
+  3. **Met by the reading:** the wobble table's `default` arm at the tip, unpinned, reads 0.02
+     to 0.09 % near per frame pair over the stop's first 16 (+7: 0.07 %). The bar is the
+     table's, as written; bar 1's own fly-20 protocol reads one pair of 18.67 % at stop +3
+     with the exposure constant, which is not this bar's and not this plan's (below).
+  4. **Met by construction:** the phase changes no render source and no shader, only a test
+     file, so no golden can move; no golden run is owed for this phase (the tip's gate tier
+     renders them).
+- **Routed out, to Plan 0098** (the readings log, "Finding for Plan 0098"): with the exposure
+  constant, 18.67 % of the near pixels change in one frame pair at fly 20's stop +3, and the
+  wobble table's largest near pair of the stop is 2.26 %, later than +16. Neither is the
+  exposure's; this plan does not chase them, and no scene or rig is simplified to hide them.
 
 ### Phase 4: The picks as tests and the docs
 - **Owner skill:** dev
@@ -590,6 +629,11 @@ each. Empty is fine.)_
   (fly 20 and fly 180, RTX), bound by the ceiling at `c_a`; the wobble table's default arm at
   16ae8dc0 reads at most 0.09 % near per pair in the stop's first 16 frames (the 0098 lane read
   12.12 % at +7 on 56cb9931). Stopped per the bar; bars 2 and 4 not done.
+
+- Architect, 2026-11-22: Phase 3d amended to close as not reproduced (its bars restated in the
+  phase). **A finding for Plan 0098, not this plan's:** near-pixel jumps with the exposure
+  constant, 18.67 % at fly 20's stop +3 and 2.26 % after +16 in the wobble table; the text to
+  lift is in the readings log, "Finding for Plan 0098".
 
 ### Close triggers
 
