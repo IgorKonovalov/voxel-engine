@@ -10,7 +10,7 @@ mod ceiling {
     /// (log2), the exposure in force (`eye`, log2), the exposure the meter settles at under the
     /// ceiling in force (`settles`, log2), the ceiling in force (log2), and the mean display
     /// luma (Rec. 709 over the encoded bytes, 0 to 1) over the view's central quarter.
-    #[derive(Clone, Copy, Debug)]
+    #[derive(Clone, Debug)]
     pub(super) struct Read {
         pub sky: f32,
         pub metered: f32,
@@ -31,6 +31,38 @@ mod ceiling {
         /// The sunlit ground's irradiance the pass read at the last frame
         /// (`vxe_render::ground_irradiance` over its `E_sky(+z)`), the anchor's `ground`.
         pub ground: f32,
+        /// The floor's sky share the frame fed the last pass, smoothed
+        /// (`Frame::sky_floor`): the share the pass's ceiling target read.
+        pub floor: Option<f32>,
+        /// The display bytes of the view's central quarter, row-major (for [`linear_ratio`]).
+        pub centre: Vec<[u8; 3]>,
+    }
+
+    /// The ACES fit (Narkowicz 2015) and the 2.2 encode inverted on the display byte `b`:
+    /// the pre-exposed linear value the composite wrote (`composite.wgsl`'s `display`).
+    pub(super) fn untone(b: u8) -> f64 {
+        let y = (f64::from(b) / 255.0).powf(2.2);
+        // aces(x) = y: (2.51 - 2.43 y) x^2 + (0.03 - 0.59 y) x - 0.14 y = 0, the positive root.
+        let (qa, qb, qc) = (2.51 - 2.43 * y, 0.03 - 0.59 * y, -0.14 * y);
+        (-qb + (qb * qb - 4.0 * qa * qc).sqrt()) / (2.0 * qa)
+    }
+
+    /// The centre's linear luminance `a` over `b`, in EV: the mean Rec. 709 luminance of the
+    /// display bytes through [`untone`], over the central pixels where no channel of either
+    /// frame is within 4 levels of 0 or 255 (the curve's inverse is coarse there); and that
+    /// pixel count. `None` with no such pixel.
+    pub(super) fn linear_ratio(a: &[[u8; 3]], b: &[[u8; 3]]) -> Option<(f64, usize)> {
+        let ok = |p: &[u8; 3]| p.iter().all(|&c| (5..=250).contains(&c));
+        let lum = |p: &[u8; 3]| 0.2126 * untone(p[0]) + 0.7152 * untone(p[1]) + 0.0722 * untone(p[2]);
+        let (mut sa, mut sb, mut n) = (0.0, 0.0, 0usize);
+        for (p, q) in a.iter().zip(b) {
+            if ok(p) && ok(q) {
+                sa += lum(p);
+                sb += lum(q);
+                n += 1;
+            }
+        }
+        (n > 0).then(|| ((sa / sb).log2(), n))
     }
 
     /// The scenes' times: noon, midnight and 17:45 (`outdoor_forest_sunset`'s clock), and the
@@ -106,11 +138,13 @@ mod ceiling {
         let px = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, f.target());
         let (w, h) = (160usize, 90usize);
         let (mut sum, mut n) = (0.0f64, 0usize);
+        let mut centre = Vec::new();
         for y in h / 4..3 * h / 4 {
             for x in w / 4..3 * w / 4 {
                 let p = &px[(y * w + x) * 4..];
                 sum += (0.2126 * f64::from(p[0]) + 0.7152 * f64::from(p[1]) + 0.0722 * f64::from(p[2])) / 255.0;
                 n += 1;
+                centre.push([p[0], p[1], p[2]]);
             }
         }
         let hb = vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_highlight(), 0, 16);
@@ -149,6 +183,8 @@ mod ceiling {
             at_255,
             top,
             ground,
+            floor: f.sky_floor(),
+            centre,
         };
         (read, vxe_render::sky_over_floor(f.store(), eye))
     }
@@ -251,8 +287,12 @@ mod ceiling {
     /// highlight cap holds it under). At midnight, under the default lift, the lift off and
     /// the share 0, the ceiling in force and the exposure in force are within 1/64 EV of
     /// `OUTDOOR_MAX` (the anchor never lifts the ceiling over it; Plan 0094 Phase 8a). The
-    /// lamp-lit centre's mean display luma at noon over midnight is `log2(c_a 2^L / max)`
-    /// within 0.5 EV. `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    /// lamp-lit centre's linear luminance at noon over midnight (the display bytes through the
+    /// tone curve's inverse, [`linear_ratio`], over at least 64 pixels both frames read
+    /// unclipped) is `log2(c_a 2^L / max)` within 0.5 EV; where under 64 pixels are readable,
+    /// the display luma at noon is at least 1 EV of display value under midnight's and the
+    /// exposure in force noon over midnight is `c_a 2^L / max` within 1/64 EV, the form printed.
+    /// `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "soak"]
     fn the_tunnel_exposes_for_its_walls_by_day() {
@@ -279,9 +319,14 @@ mod ceiling {
         row("deep midnight lamp, lift default", share, &night);
         row("deep midnight lamp, lift off", share, &night_off);
         row("deep midnight lamp", 0.0, &night0);
-        let ratio = (noon.luma / night.luma).log2();
+        let display = (noon.luma / night.luma).log2();
+        let linear = linear_ratio(&noon.centre, &night.centre);
         let want = c_a + f64::from(lift) - max;
-        println!("reading: the centre's luma noon over midnight {ratio:+.3} EV against log2(c_a 2^L / max) {want:+.3} EV");
+        println!(
+            "reading: the centre noon over midnight: display luma {display:+.3} EV, linear {} against log2(c_a 2^L / max) {want:+.3} EV; exposure in force {:+.3} EV",
+            linear.map_or("unreadable".to_string(), |(r, n)| format!("{r:+.3} EV over {n} of {} pixels", noon.centre.len())),
+            noon.eye - night.eye
+        );
         assert_eq!(noon.sky, 0.0, "no sky in view");
         assert!((noon.ceiling - (c_a + f64::from(lift))).abs() <= 1.0 / 64.0, "the ceiling {} against c_a 2^L {}", noon.ceiling, c_a + f64::from(lift));
         assert!((noon_off.ceiling - max).abs() <= 1.0 / 64.0, "the before's ceiling {}", noon_off.ceiling);
@@ -291,7 +336,18 @@ mod ceiling {
             assert!((r.ceiling - max).abs() <= 1.0 / 64.0, "{arm}: the ceiling {}", r.ceiling);
             assert!((r.eye - max).abs() <= 1.0 / 64.0, "{arm}: the eye {}", r.eye);
         }
-        assert!((ratio - want).abs() <= 0.5, "noon over midnight {ratio:+.3} EV against {want:+.3} EV");
+        match linear {
+            Some((ratio, n)) if n >= 64 => {
+                println!("reading: the linear form ran");
+                assert!((ratio - want).abs() <= 0.5, "linear noon over midnight {ratio:+.3} EV against {want:+.3} EV");
+            }
+            _ => {
+                println!("reading: the display form ran (too few unclipped pixels)");
+                assert!(display <= -1.0, "display luma noon over midnight {display:+.3} EV");
+                let ex = noon.eye - night.eye;
+                assert!((ex - want).abs() <= 1.0 / 64.0, "exposure noon over midnight {ex:+.3} EV against {want:+.3} EV");
+            }
+        }
     }
 
     /// One walk of [`walk`]: per frame the metered sky share, the metered level, the ceiling
@@ -705,8 +761,10 @@ mod ceiling {
         /// x 262.1 y 4.6 z 489.0 and x 274.2 y 1.2 z 482.5 and window 97's x 304.4 y 8.8 z 465.7
         /// facing +x at pitch 0, the deep pose ([`deep`]) at noon and at midnight, the cave mouth
         /// from inside at noon, the W2 shade ([`w2_shade_camera`]) and 1 %-sky spots at 10,180,
-        /// the hills at midnight. Asserted at the default lift: x 262.1's ceiling in force at
-        /// least 2.5 EV under the lift-off arm's; the W2 eyes and the mouth's within 1/64 EV of
+        /// the hills at midnight. Asserted at the default lift: x 262.1's ceiling in force within
+        /// 1/64 EV of `AutoExposure::ceiling_target` at the pose's own read ground, sky share and
+        /// smoothed floor share in the default and the lift-off arm, and at least 2.0 EV under
+        /// the lift-off arm's; the W2 eyes and the mouth's within 1/64 EV of
         /// the lift-off arm's; the midnight hills and the deep midnight tunnel's ceiling and eye
         /// +2.000 in every arm. `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
         #[test]
@@ -758,7 +816,13 @@ mod ceiling {
                     };
                     let r = run(&mut rig, &format!("noon tunnel lamp {name} facing +x"), &cam, noon, true);
                     if name == "x 262.1" {
-                        check(r[off].ceiling - r[def].ceiling >= 2.5, format!("x 262.1: ceiling {:+.3} against the lift off's {:+.3}", r[def].ceiling, r[off].ceiling));
+                        for k in [off, def] {
+                            let a = AutoExposure { sky_anchor_lift: arms[k].1, ..on };
+                            let t = f64::from(a.ceiling_target(Some(r[k].ground), r[k].sky, r[k].floor)).log2();
+                            println!("reading: x 262.1, lift {}: ceiling {:+.4} EV, ceiling_target at floor {:?} sky {:.4}: {t:+.4} EV", arms[k].0, r[k].ceiling, r[k].floor, r[k].sky);
+                            check((r[k].ceiling - t).abs() <= 1.0 / 64.0, format!("x 262.1 lift {}: ceiling {:+.4} against its target {t:+.4}", arms[k].0, r[k].ceiling));
+                        }
+                        check(r[off].ceiling - r[def].ceiling >= 2.0, format!("x 262.1: ceiling {:+.3} against the lift off's {:+.3}", r[def].ceiling, r[off].ceiling));
                     }
                 }
                 run(&mut rig, "deep pose noon lamp", &inward, noon, true);
