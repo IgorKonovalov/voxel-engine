@@ -323,7 +323,7 @@ fn dig_hold_flag() -> Flag<Parsing> {
              mean; off, the ring and the hole show the ray's seed until the re-bake [on]",
         |p: &mut Parsing, v| {
             p.args.outdoor.dig_hold =
-                Some(v.named(vxe_render::DigHold::from_name, "on, rays or off")?);
+                Some(v.named(vxe_render::DigHold::from_name, "on, land, rays or off")?);
             Ok(())
         },
     )

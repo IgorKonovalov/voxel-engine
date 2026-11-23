@@ -198,7 +198,11 @@ impl BakeQueue {
         let record = self.record_words();
         // A dig's ring bakes at the near tier's count whatever its chunk's band: the eye is on
         // it (ADR-0080 rule 2).
-        let brick_samples = self.near_count();
+        // Under `dig_land` the coarse pass's count where it is below that, so the dig lands
+        // within a frame or two; its block's count then lists it for a refinement.
+        let near = self.near_count();
+        let land = self.dig_land && self.coarse_samples > 0 && self.coarse_samples < near;
+        let brick_samples = if land { self.coarse_samples } else { near };
         let own_count = (brick_samples != self.settings.brick_samples).then_some(brick_samples);
         let mut jobs = Vec::new();
         for (_, _, c) in order {
@@ -262,6 +266,9 @@ impl BakeQueue {
                 Err(e) => return Err(e),
             };
             self.job_coarse.insert(c, store.is_coarse(coord));
+            if land {
+                self.job_count.insert(c, brick_samples);
+            }
             left += samples;
             jobs.push(Job {
                 coord,
@@ -271,7 +278,14 @@ impl BakeQueue {
                 samples,
                 brick_samples: own_count,
                 key_only: false,
-                tier: 0,
+                // The record's tier bits follow its count, as a listed job's do.
+                tier: if !land {
+                    0
+                } else if brick_samples <= self.tiers[2] {
+                    TIER_FAR
+                } else {
+                    TIER_MID
+                },
             });
             self.dig_open.insert(c, d);
         }

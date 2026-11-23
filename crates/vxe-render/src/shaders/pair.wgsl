@@ -421,88 +421,86 @@ fn dig_held_base(head: StoreHead, v: vec3<i32>, own: f32) -> f32 {
 }
 
 // The held sky visibility of direction `n` at hit `p` from the removed surface's `base`: `base`
-// times the hole's openness that way (`dig_openness`), at least DIG_HELD_FLOOR.
+// times the square root of the near openness that way (`dig_openness`; the root leans the
+// estimate toward the removed surface's value, the side a held value errs on), at least
+// DIG_HELD_FLOOR.
 fn dig_held_sky(base: f32, p: vec3<f32>, n: vec3<f32>) -> f32 {
-    return max(base * dig_openness(p, n), DIG_HELD_FLOOR);
+    return max(base * sqrt(dig_openness(p, n)), DIG_HELD_FLOOR);
 }
 
 // A held face's sky term at hit `rec` of voxel `v` (face normal `nf`, the removed surface's
 // `base`) in the baked term's form (`sky_baked_term`): each direction the smoothed normal leans
 // toward takes its own held visibility (`dig_held_sky` along that direction), as the landed
-// record's directions will hold their own, and no stale direction's value joins it.
+// record's directions will hold their own, and no stale direction's value joins it; no brighter
+// in luma than the removed surface's own term (`base` times the up direction's irradiance): a
+// held face is never lighter than the ground it was dug from.
 fn sky_held_term(v: vec3<i32>, base: f32, rec: HitRecord, nf: vec3<f32>) -> vec3<f32> {
     let own = dig_held_sky(base, rec.p, nf);
-    if ((params.lighting & LIGHTING_SKY_SMOOTHED) == 0u || rec.axis < 0) {
-        return own * sky_open_by_normal(rec.n);
-    }
-    let n = gradient27_normal(Hit(true, v, rec.axis, rec.t, rec.material), nf);
-    var sum = vec3<f32>(0.0);
-    var weight = 0.0;
-    for (var a = 0u; a < 3u; a++) {
-        let w = n[a] * n[a];
-        if (w >= 1e-4) {
-            var d = vec3<f32>(0.0);
-            d[a] = sign(n[a]);
-            sum += dig_held_sky(base, rec.p, d) * sky_open_irradiance(2u * a + select(0u, 1u, n[a] > 0.0)) * w;
-            weight += w;
+    var term = own * sky_open_by_normal(rec.n);
+    var n = rec.n;
+    if ((params.lighting & LIGHTING_SKY_SMOOTHED) != 0u && rec.axis >= 0) {
+        n = gradient27_normal(Hit(true, v, rec.axis, rec.t, rec.material), nf);
+        var sum = vec3<f32>(0.0);
+        var weight = 0.0;
+        for (var a = 0u; a < 3u; a++) {
+            let w = n[a] * n[a];
+            if (w >= 1e-4) {
+                var d = vec3<f32>(0.0);
+                d[a] = sign(n[a]);
+                let dir = 2u * a + select(0u, 1u, n[a] > 0.0);
+                let vis = select(dig_held_sky(base, rec.p, d), own, all(d == nf));
+                sum += vis * sky_open_irradiance(dir) * w;
+                weight += w;
+            }
         }
+        term = select(term, sum / weight, weight > 0.0);
     }
     let b = params.sky_bounce;
-    let term = select(own * sky_open_by_normal(rec.n), sum / weight, weight > 0.0);
-    return (1.0 - b) * term + b * own * sky_open_by_normal(n);
+    term = (1.0 - b) * term + b * own * sky_open_by_normal(n);
+    let cap = luminance(base * sky_open_irradiance(5u));
+    let l = luminance(term);
+    return select(term, term * (cap / l), l > cap && l > 0.0);
 }
 
-// The column map's distances (voxels) the openness reads in each direction: DIG_OPEN_STEPS of
-// them, DIG_OPEN_STEP apart from DIG_OPEN_STEP (a map cell each).
-const DIG_OPEN_STEPS: u32 = 6u;
-const DIG_OPEN_STEP: f32 = 2.0;
-// How far the openness lifts a hit off its face, in voxels: off the face, and no further, so a
-// floor's horizon is the hole's whole depth.
-const DIG_OPEN_LIFT: f32 = 0.5;
+// The near occlusion's fixed rays about a direction: DIG_OPEN_RINGS rings of DIG_OPEN_AZ, at
+// equal cosine-weighted shares of the hemisphere, each marched DIG_OPEN_REACH voxels a voxel
+// at a time.
+const DIG_OPEN_RINGS: u32 = 3u;
+const DIG_OPEN_AZ: u32 = 4u;
+const DIG_OPEN_REACH: u32 = 16u;
 
-// A dug face's openness from the column map's tops after the dig: hit `p` lifted DIG_OPEN_LIFT
-// voxels along its face normal `n` to `q`; the horizon's tangent `t` along a horizontal
-// direction the largest `(height - q.z) / d` over the distances (`dig_horizon`). A face that
-// looks up takes the smallest tangent of 8 directions (a hole closes every way, a tree beside a
-// face one way, so a face the dig left at the surface stays open) and `1 / (1 + t^2)`, the
-// cosine-weighted share of the sky above a horizon at that elevation; a face that looks down,
-// 0; a wall the mean over its own direction and the
-// two 45 degrees either side of `1 - sin(atan t)`, a vertical face's share of its sky.
+// A held face's near openness along axis direction `n` at hit `p`: the share of a fixed
+// cosine-weighted set of rays about `n` (DIG_OPEN_RINGS x DIG_OPEN_AZ, the same every frame)
+// that leave DIG_OPEN_REACH voxels without meeting a solid voxel, from the centre of the empty
+// voxel in front of the face (one value a voxel face, whatever the jitter). The removed
+// surface's record holds what lies further (a canopy, a hill); the rays see the hole the dig
+// made, its rim and the ground under a side direction's lower half, as the bake's rays do. A
+// face that looks down, 0.
 fn dig_openness(p: vec3<f32>, n: vec3<f32>) -> f32 {
-    let q = p + n * DIG_OPEN_LIFT;
-    var sum = 0.0;
     if (n.z < -0.5) {
         return 0.0;
     }
-    if (n.z < 0.5) {
-        let a0 = atan2(n.y, n.x);
-        for (var k = -1; k <= 1; k++) {
-            let a = a0 + f32(k) * 0.78539816;
-            let t = dig_horizon(q, vec2<f32>(cos(a), sin(a)));
-            sum += 1.0 - t / sqrt(1.0 + t * t);
-        }
-        return sum / 3.0;
-    }
-    var t_min = 3.0e38;
-    for (var k = 0u; k < 8u; k++) {
-        let a = f32(k) * 0.78539816;
-        t_min = min(t_min, dig_horizon(q, vec2<f32>(cos(a), sin(a))));
-    }
-    return 1.0 / (1.0 + t_min * t_min);
-}
-
-// The horizon's tangent from `q` along unit horizontal `u` over the column map's tops at the
-// distances DIG_OPEN_STEP apart (0 at the most where nothing stands above `q`).
-fn dig_horizon(q: vec3<f32>, u: vec2<f32>) -> f32 {
-    var t = 0.0;
-    for (var i = 1u; i <= DIG_OPEN_STEPS; i++) {
-        let d = f32(i) * DIG_OPEN_STEP;
-        let h = column_cell_height(vec2<i32>(floor((q.xy + u * d) / f32(COLUMN_CELL))));
-        if (h < 1.0e38) {
-            t = max(t, (h - q.z) / d);
+    let o = floor(p + n * 0.5) + vec3<f32>(0.5);
+    let a0 = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(n.z) > 0.5);
+    let t = normalize(a0 - n * dot(n, a0));
+    let b = cross(n, t);
+    var open = 0u;
+    for (var r = 0u; r < DIG_OPEN_RINGS; r++) {
+        let s2 = (f32(r) + 0.5) / f32(DIG_OPEN_RINGS);
+        let st = sqrt(s2);
+        let ct = sqrt(1.0 - s2);
+        for (var k = 0u; k < DIG_OPEN_AZ; k++) {
+            let a = (f32(k) + 0.5 * f32(r & 1u)) * 6.2831853 / f32(DIG_OPEN_AZ);
+            let d = n * ct + (t * cos(a) + b * sin(a)) * st;
+            // The bake's rule: a ray that does not rise is closed.
+            var hit = d.z <= 0.0;
+            for (var i = 1u; i <= DIG_OPEN_REACH && !hit; i++) {
+                hit = solid_at(vec3<i32>(floor(o + d * f32(i))));
+            }
+            open += select(1u, 0u, hit);
         }
     }
-    return t;
+    return f32(open) / f32(DIG_OPEN_RINGS * DIG_OPEN_AZ);
 }
 
 // Chunk `c`'s summary's sky visibility for `face`, a dig's stale mark ignored: -1 where the chunk

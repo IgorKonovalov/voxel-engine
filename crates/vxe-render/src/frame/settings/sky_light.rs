@@ -95,6 +95,11 @@ pub enum DigHold {
     /// the value fades to the record's. The default.
     #[default]
     On,
+    /// As `On`, and a dig's re-bake draws the live queue's coarse pass's count a brick
+    /// direction (where it is below the near tier's), so it lands within a frame or two and
+    /// the held value covers only those; its chunk is then a refinement's candidate at its
+    /// band's count.
+    Land,
     /// A stale ring face holds its record's term; a face in a held box shows its sky rays'
     /// running mean, seeded by its stale record or the column's answer.
     Rays,
@@ -104,6 +109,7 @@ pub enum DigHold {
 
 named_enum!(DigHold {
     On => "on",
+    Land => "land",
     Rays => "rays",
     Off => "off",
 });

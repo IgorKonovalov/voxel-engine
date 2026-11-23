@@ -795,7 +795,7 @@ mod flicker {
         /// `approach` (the approach penumbra); `before` (the fly-through's defaults before the
         /// picks: `hist`, `baked`, `blend`, `band` and `approach`, window W2's run 5 "no
         /// flash"); `pin` the
-        /// exposure manual at its settled value from the settle's end; `hold=on|rays|off`
+        /// exposure manual at its settled value from the settle's end; `hold=on|land|rays|off`
         /// (`Lighting::dig_hold`).
         pub(in super::super) fn dig_arm(f: &mut vxe_render::Frame, arm: &str) -> bool {
             let mut l = f.lighting();
@@ -825,6 +825,7 @@ mod flicker {
                     "approach" => l.penumbra = vxe_render::Penumbra::Approach,
                     "pin" => pin = true,
                     "hold=on" => l.dig_hold = vxe_render::DigHold::On,
+                    "hold=land" => l.dig_hold = vxe_render::DigHold::Land,
                     "hold=rays" => l.dig_hold = vxe_render::DigHold::Rays,
                     "hold=off" => l.dig_hold = vxe_render::DigHold::Off,
                     other => panic!("unknown dig arm token {other}"),
