@@ -415,7 +415,7 @@ pub struct Lighting {
 | 3: The owner's window W1 | human | run 2026-11-22 in two sittings (`live/session98.sh` at `e2963230`); verdicts in the log, amendment in the plan | the amendment's commit |
 | 4: The picks become the defaults | dev | not started; runs last, after W2 | |
 | 5: The far trees, a spike of render-side arms | dev | not started | |
-| 6: The picks under one flag, a landing fades in the store | dev | not started; runs first | |
+| 6: The picks under one flag, a landing fades in the store | dev | done (9e243955; the landing rows' cell count fae329ce); `--calm` takes the five picks, `landing fade` built and its data test passes; readings on the RTX in the log: the fade moves no pop (every landing reads 0 changed cells: the pop is the light pass's source switching to a new block, no store word); the gpu tier over `gpu_wobble` holds no unignored test | committed with this row |
 | 7: The owner's window W2 | human | not started | |
 
 ### Notes
