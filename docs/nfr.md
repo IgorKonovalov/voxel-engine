@@ -53,7 +53,7 @@ were lighting 6.0, denoise 3.0, upscale 1.5, headroom 2.1 and no bake line):
 | Primary rays (DDA, full detail + LOD) | 3.0 ms |
 | Lighting (direct light, the list lights' shadow rays, the baked store's read) | 4.0 ms |
 | Denoise (temporal + spatial) | 2.0 ms |
-| The live bake's slice | 1.0 ms |
+| The live bake's slice once nothing in view waits (while in view waits, the profile's drain value: Floor 1.5, Portable 6.0; Plan 0096) | 1.0 ms |
 | Upscale (FSR 2), tone map, post | 3.0 ms |
 | Headroom (entities, volumetrics, game work) | 2.6 ms |
 
@@ -141,6 +141,31 @@ Plan 0096 Phase 6 takes it as a lever. The RTX 3080 Laptop reads 3.0 to 3.4 and 
 inside it. The pre-roll is unchanged within 0.2 s (RTX) and 1.3 s (RENOIR); the key re-bake
 under the day cycle re-keys every marked block 2.3 to 5.7 s after a step on the RTX and 7.1 to
 49.5 s on the RENOIR.
+
+**The bake queue's drain and step** (Plan 0096, ADR-0080; pinned at its Phase 9, 2026-11-23,
+release at `91003891`'s tree, headless, `--source outdoor` from the first world frame, the
+forest at 15:00 and the hills at noon; RTX 3080 Laptop at Floor 1920 x 1080 with the drain
+slice 1.5 ms, RADV RENOIR at Portable 1280 x 720 with 6.0; exclusive perf lock, quiet unless
+said). The lines are the plan's, unmoved; a miss is disclosed with its cause and the plan that
+takes it.
+
+| line | RTX 3080 Laptop, Floor | RADV RENOIR, Portable | standing |
+|---|---|---|---|
+| In view landed after the first world frame: RTX at most 10 s, RENOIR at most 30 s | forest 36.5 s, hills 12.2 s | forest 27.1 s, hills 16.7 s | **RTX missed**: the queue's per-job cost on the render thread holds the step at 13 to 15 ms a frame; Plan 0099 (the bake step off the main thread) takes the line. RENOIR met (one forest run of four read 37.6 s) |
+| The whole residency empty: RTX at most 60 s, RENOIR at most 180 s | forest 49.1 s, hills 37.1 s | hills 152.5 s; forest not empty 220 s after the first world frame | **RENOIR forest missed**: once in view lands the slice is the 1.0 ms line, about 18 chunks a second there; Plan 0099 carries and re-reads the line |
+| The queue's step, regime B: p50 at most 1.0 ms, p99 at most 4.0 | forest 15.48 / 27.89, hills 12.86 / 25.85 | forest 1.04 / 9.55, hills 1.22 / 8.51 | **missed on both**: no longer the queue's depth (drained p50 0.076 ms on the RTX) but per job opened (`list`, `collect`, `submit`, `fades`, `summaries`) on the render thread; Plan 0099 |
+| The live bake's slice: the drain value while in view waits, 1.0 ms after; the Floor frame within 16.6 ms while draining | wall p50 26 ms (forest) and 30 (hills) while draining, 9 and 8 after | 46 and 37 while draining, 36 and 27 after | **the RTX's frame missed while draining**, CPU-bound by the step (above); Plan 0099. The submits draw 0.98 to 1.01 of the drain slice on both |
+| `update + poll + sync` p99 at most 16.6 ms (tester cave bench, RTX host) | 14.82 ms | not read | met |
+| `alloc` p99 at most 3.0 ms (the same bench) | 6.42 ms | not read | **missed**: the per-brick path as a whole (Plan 0096 Phase 7's profile); the backlog's "Slot words packed on the workers" |
+| `light place` p99 under 2 ms in a glide that evicts | 8.84 ms (p50 6.84), the 1/16 light-buffer glide, loaded (2.33), indicative | not read | **missed**: the eviction scan's retries are gone (Phase 7b); the rest is the wanted set's collection and sort; no plan takes it yet |
+| Lighting 4.0 ms: the Portable light pass on the hills at noon (RENOIR) | - | disc 2.42 ms; under the default approach penumbra 4.81 | **met on the disc base**; under approach, the default on every profile (ADR-0079), missed: the penumbra pick is Plan 0098's |
+| The same in the forest at 15:00 (a reading held against the line) | approach 2.98 ms, disc 1.09 | approach 17.38 ms, disc 5.13 | **RENOIR missed** under either penumbra; no lever Plan 0096 holds reaches it (its "What this plan does NOT do") |
+
+The drain values come from the owner's rule over a sweep (frame rate first; an arm whose in-view
+drain is over twice the shortest is out; Plan 0096's readings log, Phase 9): the RTX took 1.5 ms
+(wall p50 26 ms while draining against 39 and 37 at 4.0 and 8.0, landing in 36.5 s against 29.5
+and 25.1), the RENOIR kept 6.0. The window's readings (the owner's Plan 0096 Phase 8 at 2530 x
+1378, not against these lines) are in [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md).
 
 Every reading against this budget, with its machine, scene and commit, is in
 [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md); new readings go there.

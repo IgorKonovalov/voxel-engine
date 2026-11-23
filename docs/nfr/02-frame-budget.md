@@ -1088,3 +1088,39 @@ the dig's frame by +0.16 ms on the RTX (main +0.18) and +1.31 ms on the RENOIR (
 against 2.84 ms (RENOIR); the ring's samples a step on the RENOIR 424 442 against 514 367 (main),
 the same 1 971 264 on the RTX, each ring brick direction drawing `KEY_BAKE_RAYS` (64) key rays
 more (Plan 0095's readings log, Phase 10).
+
+**The bake queue's drain, step and the slow adapter's light pass (Plan 0096 Phase 9,
+2026-11-22/23, release `flythrough` at `91003891`'s tree, headless, `--source outdoor`, the
+forest `--spawn forest --trees forest --time 15:00` and the hills `--time 12:00` from the spawn;
+RTX 3080 Laptop at `--profile floor --render 1920x1080`, RADV RENOIR at `--profile portable
+--render 1280x720` (internal 853 x 480); exclusive perf lock per run, the 1-minute load at the
+lock under 2 (quiet) unless said; every row in `docs/plans/logs/0096.md`, Phase 9).** The drain
+sweep from the first world frame, quiet rows (in view landed / residency empty / wall p50 while
+in view waits / step B p50, p99): RTX forest at drain 1.5, 4.0, 8.0 ms: 36.5 / 49.1 s / 26 ms /
+15.5, 27.9; 29.5 / 42.6 / 39 / 14.8, 44.7; 25.1 / 41.4 / 37 / 14.1, 50.6. RTX hills: 12.2 /
+37.1 / 30 / 12.9, 25.9; 9.1 / 36.7 / 38 / 12.6, 39.6; 8.3 / 37.6 / 37 / 12.9, 29.6. RENOIR
+forest at 3.0, 6.0, 12.0: 50.4 / not empty at 220 s / 40 / 1.65, 8.13; 27.1 (37.6 on one of four
+runs) / not empty / 46 / 1.04, 9.55; 18.3 / not empty / 56 / 0.98, 14.67. RENOIR hills: 28.0 /
+167.7 / 31 / 1.60, 7.59; 16.7 / 152.5 / 37 / 1.22, 8.51; 10.1 / 146.2 / 48 / 0.92, 13.32. With
+no drain value (the budget alone) the RENOIR lands its view in 184.2 s (forest) and 95.7 s
+(hills). Picked by the owner's rule: Floor 1.5, Portable 6.0. The tester cave bench (RTX 1080p):
+`update + poll + sync` p99 14.82 ms, `alloc` p99 6.42; the 1/16 light-buffer glide (loaded,
+2.33): `light place` p50 / p99 6.84 / 8.84 ms. The light pass at rest (`PassTimer`, 900
+frames; light / frame ms), RENOIR at 720p: forest approach 17.38 / 32.70, disc 5.13 / 20.20,
+disc with the key cap and 2 a-trous 5.04 / 19.36; hills approach 4.81 / 24.20, disc 2.42 /
+21.86, both levers 2.34 / 21.20; drained within 0.15 ms of undrained. RTX at 1080p: forest
+approach 2.98 / 7.31, disc 1.09 / 5.36, both 0.98 / 4.98; hills 1.08 / 6.06, 0.66 / 5.98, 0.54
+/ 5.70. Against the lines: section 2's table "The bake queue's drain and step".
+
+**The owner's window at 2530 x 1378 (Plan 0096 Phase 8, 2026-11-22, release `1844a99b`,
+windowed, internal 1687 x 919 at FSR 2's 1.5, 3.79 times the Portable profile's pixels; not
+against the Portable line, which is defined at 720p).** RTX Floor, forest: frame CPU p50 28.0
+ms against a march GPU of 11.6, wall p50 / p99 28.3 / 59.1, the step in regime B 28.0 / 51.1,
+about 30 fps, in view not landed in 17.9 s; RTX hills at 17:00: in view landed 16.1 s after
+the first world frame, the residency empty at 27.5 s, wall p50 13.3 ms, 68 to 77 fps from 44 s;
+RTX forest at the profile's tiers: in view landed 22.3 s after the first world frame. RENOIR
+Portable (before Phase 9's 720p in a window): forest wall p50 106.8 ms, GPU 85.5 (hit 25.51,
+light 22.47, FSR 2 16.37, temporal 12.00, a-trous 6.18); hills at 17:00 97.5 ms, GPU 84.65,
+in view landed 35.2 s after the first world frame; the submits drew 8.8 to 9.7 ms of a granted
+6.0. The RTX cave glide: `light place` p50 / p99 2.16 / 6.19 ms, slowest sync 21.0 ms, the
+owner's "no stagger". Every run in `docs/plans/logs/0096.md`, Phase 8.
