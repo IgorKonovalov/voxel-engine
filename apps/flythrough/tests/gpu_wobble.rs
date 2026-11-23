@@ -869,6 +869,134 @@ fn hold_series(seg: &Segment, cls: &[u8], still_far_max: f64) -> f64 {
 mod reading {
     use super::*;
 
+    /// Plan 0097 Phase 3d bar 1: the auto exposure across a stop on the wobble rig's forest
+    /// (`forest_rig(8)`, the `VXE_WOBBLE` arm, `default` unset): 120 settle frames at the
+    /// spawn, a fly of `VXE_EYE_FLY` frames (20 unset) at the arm's speed, the stop held 30.
+    /// Per frame from the fly's last to stop +29: the exposure the frame used (`previous`,
+    /// log2) and its step from the frame before, the next frame's (`current`), the adapted and
+    /// metered levels, the exposure's target (`key / 2^metered`), the ceiling in force and
+    /// its target (`AutoExposure::ceiling_target` over the pass's ground, the metered sky
+    /// share and the smoothed floor share), the highlight's tail level, its smoothed level and
+    /// cap, which bound sets `current`, and the display's near pixels over 4 levels against
+    /// the frame before. `VXE_TEST_ADAPTER` picks the adapter.
+    #[test]
+    #[ignore = "reading"]
+    fn the_eye_across_a_stop() {
+        let arm = Arm::parse();
+        let fly_n: usize = std::env::var("VXE_EYE_FLY")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(20);
+        let Some((mut rig, cam0)) = forest_rig(8) else {
+            return;
+        };
+        let rig = &mut rig;
+        println!(
+            "the eye across a stop, arm {} on {}, fly {fly_n}",
+            arm.name, rig.adapter
+        );
+        let cam0 = Camera {
+            pitch: arm.pitch.to_radians(),
+            yaw: cam0.yaw + arm.yaw.to_radians(),
+            ..cam0
+        };
+        let f = frame_for(rig, &arm);
+        let a = match f.lighting().exposure {
+            vxe_render::Exposure::Auto(a) => a,
+            vxe_render::Exposure::Manual(_) => panic!("the rig's exposure is auto"),
+        };
+        let mut s = Stepper::new(rig, f);
+        for _ in 0..SETTLE {
+            queue_step(rig, &mut s.frame, &cam0);
+            s.run(rig, &cam0);
+        }
+        let step = arm.speed_m_s / 60.0;
+        let mut cams: Vec<(String, Camera)> = (1..=fly_n)
+            .map(|k| (format!("fly {k}"), moved(&cam0, step * k as f32)))
+            .collect();
+        let cam1 = cams.last().unwrap().1;
+        cams.extend((0..30).map(|k| (format!("stop +{k}"), cam1)));
+        let mut last: Option<(Vec<u8>, f64)> = None;
+        let mut max_step = (0.0f64, String::new());
+        for (i, (label, cam)) in cams.iter().enumerate() {
+            queue_step(rig, &mut s.frame, cam);
+            let shot = s.step(rig, cam);
+            let f = &s.frame;
+            let st = vxe_render::ExposureState::from_bytes(&vxe_render::debug::read_buffer(
+                &rig.device,
+                &rig.queue,
+                f.exposure_state(),
+                0,
+                32,
+            ));
+            let hi = vxe_render::ExposureHighlight::from_bytes(&vxe_render::debug::read_buffer(
+                &rig.device,
+                &rig.queue,
+                f.exposure_highlight(),
+                0,
+                16,
+            ));
+            let b =
+                vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.sky_irradiance(), 0, 96);
+            let up: Vec<f32> = b[80..96]
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect();
+            let ground = vxe_render::ground_irradiance([up[0], up[1], up[2]], up[3]);
+            let floor = f.sky_floor();
+            let gw = f.light_hit_positions().width() as usize;
+            let cls = classes(&shot.hits, &shot.source, gw, cam.position.to_array());
+            let y = lumas(&shot.display);
+            let used = f64::from(st.previous).log2();
+            let (near, d) = match &last {
+                Some((p, u)) => (change_by_class(p, &y, &cls, 4)[1].0, used - u),
+                None => (0.0, 0.0),
+            };
+            if i > 0 && d.abs() > max_step.0 {
+                max_step = (d.abs(), label.clone());
+            }
+            let target =
+                f64::from(a.key * a.compensation_ev.exp2()).log2() - f64::from(st.adapted_log2);
+            let goal =
+                f64::from(a.key * a.compensation_ev.exp2()).log2() - f64::from(st.metered_log2);
+            let c_target = a.ceiling_target(Some(ground), st.sky, floor);
+            let cap = hi.cap();
+            let cur = f64::from(st.current).log2();
+            let bound = if (cur - f64::from(a.min).log2()).abs() < 1e-4 {
+                "min"
+            } else if cap
+                .is_some_and(|c| (cur - f64::from(c).log2()).abs() < 1e-4 && c <= st.ceiling)
+            {
+                "cap"
+            } else if (cur - f64::from(st.ceiling).log2()).abs() < 1e-4 {
+                "ceiling"
+            } else {
+                "adapted"
+            };
+            if i + 1 >= fly_n && i < fly_n + 16 || i + 1 == cams.len() {
+                println!(
+                    "eye {label}: used {used:+.4} step {d:+.4} EV, next {cur:+.4}, adapted {:+.4} (key/2^a {target:+.4}), metered {:+.4} (goal {goal:+.4}), ceiling {:+.4} target {:+.4}, sky {:.5}, floor {}, hi now {:+.4} smooth {:+.4} cap {}, bound {bound}, ground {ground:.2}, near over 4 {near:.2} %",
+                    st.adapted_log2,
+                    st.metered_log2,
+                    f64::from(st.ceiling).log2(),
+                    f64::from(c_target).log2(),
+                    st.sky,
+                    floor.map_or("none".into(), |v| format!("{v:.4}")),
+                    hi.now_log2,
+                    hi.log2,
+                    cap.map_or("-".into(), |c| format!("{:+.4}", f64::from(c).log2())),
+                );
+            }
+            last = Some((y, used));
+        }
+        println!(
+            "eye: the largest one-frame step of the exposure used {:.4} EV at {}; the rate's {:.4} EV",
+            max_step.0,
+            max_step.1,
+            f64::from(a.rate_ev_s) / 60.0
+        );
+    }
+
     #[test]
     #[ignore = "reading"]
     fn wobble() {

@@ -17,6 +17,34 @@ Rules:
 
 ## Next up
 
+### Distant trees that do not wobble: a stable far representation (owner, 2026-11-22)
+
+What is left of the wobble after Plan 0098's calm picks is distant trees while moving: sparse
+leaves at 15 to 60 m flip between jitter positions under FSR 2 (the plan's readings log; a
+denser canopy wobbles less at window W1, and the owner rejected changing models: "we don't know
+what models will be used in the end and can't simplify models"). The owner's direction: do not
+re-decide distant things every frame; "just not change them, or make this change less frequent.
+Maybe use rasterised objects when they are in distance, and voxels only for something that is
+close and we can reliably calculate it". Three ways, none measured:
+
+1. **A cached or rasterized stand-in at distance** (impostors, or a far band rendered to a
+   texture and refreshed rarely). Calm because the texture is filtered and nothing changes
+   between refreshes. Costs: invalidation on edits and on the sun's move, the swap to voxels on
+   approach, a raster path (ADR-0001). At 15 to 60 m a walk changes the view fast, so it fits
+   best beyond that band. **Owner, 2026-11-22: folded into
+   [Plan 0033](plans/0033-far-field-clipmap-to-a-kilometre.md)**, which picks the far
+   representation anyway; its next re-read takes this in as an arm.
+2. **Partial coverage in the far voxel data**: a canopy cell answers a share of leaf, the pixel
+   blends it with what is behind; independent of where in the pixel the ray went; any model;
+   edits ride the LOD mips. Risk: soft trees (the owner disliked the solid canopy's look).
+3. **No jitter in the far band**: far rays through the pixel centre. The cheapest test of the
+   direction (with the upscaler off he saw no wobble on a turn, "not right" as a picture). It is
+   Plan 0098 Phase 5's `far jitter` arm, not built there because the hit pass has no previous
+   hit to read; it wants a small phase of its own.
+
+Order proposed by the orchestrator, not yet the owner's: 3 first, then 2 if 3 reads calm but
+ugly; 1 with Plan 0033. Pick up after Plan 0098's W2 shows what its two built arms do.
+
 ### The light placement's eviction scan in a windowed glide
 
 Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 7: the first-fit index and a distance-ordered victim index, the bytes asserted equal, a headless glide with a shrunk light buffer as the reproduction; the figures moved into the plan's context.
@@ -233,7 +261,29 @@ Found at the close ([Plan 0083](plans/done/0083-anything-from-a-vox-palette-mate
 
 ### Plan 0094's leftovers (close review, 2026-11-20)
 
-Found at the close ([Plan 0094](plans/done/0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md), v0.68.0); none blocked it, each is a small fix when the area is next open. **A tautology:** `the_tunnel_exposes_for_its_walls_by_day` (`apps/flythrough/tests/gpu_outdoor/ceiling.rs`, soak) asserts the noon-midnight luma clause only inside `if ratio.abs() <= 0.5`, so it can never fail; it reads +0.063 EV since Phase 8a, so a plain `assert!` is the fix. **A bar that does not see its mechanism:** `a_rare_hit_is_clamped` (`crates/vxe-render/tests/gpu_sun/history.rs`, soak) passes with the clamp off too (largest 0.1996 both ways); a clause on what the clamp changes, or a rig with more than one hit, would defend it. **Unread costs:** the no-record prior's arm A on the RENOIR at 1080p's half tier during a stamp's bake (a linear guess of 14.6 ms, `docs/nfr/02-frame-budget.md`; Plan 0096's RENOIR readings can take it) and the no-ray fade's temporal and composite cost.
+Found at the close ([Plan 0094](plans/done/0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md), v0.68.0); none blocked it, each is a small fix when the area is next open. **A tautology:** `the_tunnel_exposes_for_its_walls_by_day` (`apps/flythrough/tests/gpu_outdoor/ceiling.rs`, soak) asserts the noon-midnight luma clause only inside `if ratio.abs() <= 0.5`, so it can never fail; it reads +0.063 EV since Phase 8a, so a plain `assert!` is the fix (**done 2026-11-22, Plan 0097 Phase 3b:** a plain `assert!` on the centre's linear luminance, the tone curve inverted). **A bar that does not see its mechanism:** `a_rare_hit_is_clamped` (`crates/vxe-render/tests/gpu_sun/history.rs`, soak) passes with the clamp off too (largest 0.1996 both ways); a clause on what the clamp changes, or a rig with more than one hit, would defend it. **Unread costs:** the no-record prior's arm A on the RENOIR at 1080p's half tier during a stamp's bake (a linear guess of 14.6 ms, `docs/nfr/02-frame-budget.md`; Plan 0096's RENOIR readings can take it) and the no-ray fade's temporal and composite cost.
+
+### Plan 0097's leftovers (close review, 2026-11-23)
+
+Found at the close ([Plan 0097](plans/done/0097-the-exposures-anchor-by-the-sky-around-the-camera-the-floor-record-under-the-eye-a-time-constant-and-the-canopys-shade.md), v0.70.0); none blocked it.
+- **`SkyAround` is not reset on an exposure reset or a teleport.** Its `reset` runs only when
+  the floor's term is off (`frame/encode.rs`, `exposure_uniform`), so after a jump of the
+  camera the floor's share smooths over `tau_around` from the old place's value while the
+  ceiling jumps to a target read from it. What it takes: reset the smoother with
+  `Frame::reset_exposure`, and a clause in `the_floor_share_settles_at_tau`.
+- **The floor term and the lift reach the shader through soak tests alone**
+  (`the_shade_under_the_canopy_keeps_the_anchor`, `the_tunnel_exposes_for_its_walls_by_day`):
+  the gate reads the Rust model and the uniform's words, not `exposure.wgsl`'s
+  `ceiling_target` with the floor's bit set. The first of them was broken by the lift and
+  no gate saw it (fixed at the close's fix pass). A gate-size rig with a baked floor record
+  would close it.
+- **`tau_around` (1 s) has no word from the owner**; window 97 left its question unanswered.
+- **Readings owed quiet:** the stop guard's lavapipe time (8.65 and 8.95 s, loaded; its soak
+  mark comes off only on a quiet read under 10 s) and the floor walk's CPU time (0.226 us
+  mean, load 10.2).
+- **Owner questions open:** whether highlight protection wants an ADR of its own (ADR-0081's
+  Outcome records it meanwhile), and the gate's 1498 s against the 19 min line (`docs/nfr.md`
+  section 7).
 
 ### Hundreds or thousands of entities
 
@@ -590,6 +640,23 @@ Chebyshev distance per brick, mirror-side only, would lengthen the fixed 16-voxe
 Both pay in halls and outdoors and little in veins. Read the steps view's histogram first; pick
 up before Plan 0033's far field, whose rays are the long ones.
 
+**A second arm for the same spike: rasterized brick boxes (owner, 2026-11-22).** Draw a tight
+bounding box per occupied brick with the rasterizer and march only inside the box in the
+fragment shader, so the rasterizer and the depth buffer skip the empty space (Douglas Dwyer,
+"Drawing MILLIONS of voxels on an integrated GPU with parallax ray marching", Voxel Devlog #4,
+2022, youtube.com/watch?v=h81I8hR56vQ: 8 x 8 x 8 boxes from an octree, 36 volumes of 256 cubed
+at over 60 fps on Intel UHD; he left a compute ray marcher because it was bound by memory
+bandwidth on weak cards). Why it is here: the RENOIR's hit pass read 25 to 34 ms at Plan 0096's
+window (2530 x 1378, Portable). What it does not touch: the shadow, sky and lamp rays (his
+shadows are a rasterized shadow map) and the far trees' wobble. Known costs: a box list kept
+current under edits and streaming (a second mirror); a fragment that writes depth loses the
+early depth test (he writes true depth to a second target and fixes the depth buffer in a later
+pass, which holds only while boxes do not overlap); a ray that misses inside a box is a
+discard, and a sparse canopy stacks them, so the forest is the case to read; a raster pass is a
+change to ADR-0001's all-compute stack and needs its own ADR. The spike reads both arms on the
+RENOIR in the forest and the hall; the boxes are taken only if they beat the beam prepass
+clearly there.
+
 ### Narrower frame targets and fewer stores
 
 `hit_pos` is `rgba32float` and every screen pass taps it; a ray length in `r32float` would cut
@@ -623,6 +690,11 @@ Owed by nobody yet; none blocks anything.
 - **The committed `castle_gate.png`, `look_gradient27.png` and `look_trilinear8.png`** differ by
   a few pixels from the dev box's lavapipe (within the 0.1 % tolerance), at the plan's base and
   tip alike; CI's lavapipe blesses them. Re-bless on CI if one ever drifts past the tolerance.
+  **Read again 2026-11-22 (Plan 0097):** the same three differ from the dev box's render the
+  same way on main at 123964e7 and on the plan's tip (castle_gate 3376 pixels by at most
+  12/255, the two look files 196 and 228), and **`outdoor_night.png` joins them** (1827 pixels
+  by at most 2/255, main's render and the tip's byte-identical to each other); all four pass
+  their tests, none was re-blessed.
 - **The soak test `a_shown_hud_and_the_queue_line_wait_on_the_gpu_nowhere` failed, unrelated to
   Plan 0044 (fixed 2026-11-16 on branch chore-soak-frames: the test now matches `frames: {FRAMES} frames;`,
   accepts frame 0's `store reads not counted` queue line, and reads the age as the last item of
@@ -1305,6 +1377,33 @@ Seen 2026-11-21 at the diagnosis window (`docs/plans/logs/0098.md`, scene A; RTX
 cycling F9 to the `steps` view drops the window to about 14 fps and the compositor flags it
 unresponsive. Unread: whether the view's own pass is slow or it disables a cheaper path. Pick
 up with any work on the debug views.
+
+### The baked key record's cell blend carries light across a shadow edge
+
+Found 2026-11-22 by the tunnel-leak diagnosis (branch `diag-leak` at `4a6770db`, its log
+`docs/plans/logs/diag-leak.md` on that branch; owner's window 97b: a blinking sunlit wall and a
+white patch in a dark tunnel, on the builds before and after Plan 0097). With the far estimate
+forced on every face, `KeyFar::Baked`'s blend between brick-direction cells (ADR-0079) puts
+12 225 px bright where the truth is shadowed, against 912 for the column map's horizon, which
+errs dark through the tunnel's mouth instead. Neither symptom reproduced headless, and at the
+wall's distance (2 to 4 m) the far weight is 0, so how the window read the record there is
+unshown. **What it takes:** first a debug view of each pixel's key source tag, to catch the lit
+state live in a window; then, only if the record is shown to be the source, a blend that does
+not cross a shadow edge (the own cell only, a blend gated by the cells' agreement, or a finer
+record). **Pick up** after Plan 0098's window W1: if the owner picks `key far column` as the
+default, the record is a setting off by default and this stays parked. The white patch seen
+from the spawn is real light through a roof slot of the test world's generator (the valley
+dips under the tunnel's crown over x 192 to 266), the owner's call to close.
+
+### A mip by majority can drop a roof one or two voxels thick
+
+Raised 2026-11-22 by the same diagnosis, untested: at LOD 1 the mip's majority rule may remove
+a 1 to 2 voxel roof (the tunnel at x 266 to 290), which would let the sun into an enclosed
+place at a distance. It bears on any far geometry that reads a coarser mip (Plan 0098's
+candidate for the far hits that flip under the jitter): a mip read for visibility or for a
+stable far hit wants "any solid" coverage, not the majority. **What it takes:** a CPU test of
+the mip of a one-voxel slab over air, and a reading of the far shadow under it. Pick up with
+Plan 0098's Phase 5 amendment.
 
 ## Later apps
 

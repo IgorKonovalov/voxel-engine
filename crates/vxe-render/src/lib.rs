@@ -102,9 +102,9 @@ pub use entities::{
 };
 pub use exposure::{
     AutoExposure, DEFAULT_EXPOSURE_HIGHLIGHT, DEFAULT_EXPOSURE_RATE_EV_S, DEFAULT_SKY_ANCHOR_EV,
-    DEFAULT_SKY_ANCHOR_FLOOR, DEFAULT_SKY_ANCHOR_SHARE, DEFAULT_SKY_AROUND_TAU, EXPOSURE_WGSL,
-    Exposure, ExposureHighlight, ExposureReadout, ExposureState, HIGHLIGHT_WHITE, Metering,
-    SkyAround, ground_irradiance, white_exposed,
+    DEFAULT_SKY_ANCHOR_FLOOR, DEFAULT_SKY_ANCHOR_LIFT, DEFAULT_SKY_ANCHOR_SHARE,
+    DEFAULT_SKY_AROUND_TAU, EXPOSURE_WGSL, Exposure, ExposureHighlight, ExposureReadout,
+    ExposureState, HIGHLIGHT_WHITE, Metering, SkyAround, ground_irradiance, white_exposed,
 };
 pub use frame::{
     ATROUS_ITERATIONS, DEFAULT_KEY_HISTORY, DEFAULT_KEY_STEP, DEFAULT_LIGHT_FLOOR,

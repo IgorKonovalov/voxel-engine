@@ -202,7 +202,7 @@ fn exposure_mirror(name: &str) -> Mirror {
             sky_around,
             hi_tail,
             hi_white,
-            _pad0,
+            lift,
             _pad1
         }),
     }

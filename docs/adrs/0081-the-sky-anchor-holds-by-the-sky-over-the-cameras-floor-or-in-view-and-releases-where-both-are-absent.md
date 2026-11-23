@@ -1,8 +1,8 @@
-# ADR-0081: The sky anchor holds by the sky over the camera's floor (the baked record under the eye) or by the sky in view, and releases only where both are absent
+# ADR-0081: The sky anchor holds by the sky over the camera's floor (the baked record under the eye) or by the sky in view, and releases only where both are absent, by at most a lift over the daylight anchor
 
-> **Status:** proposed
+> **Status:** accepted (Plan 0097's close, 2026-11-23, with an Outcome; the lift added 2026-11-22, while proposed, at window 97b; the file keeps its slug)
 > **Date:** 2026-11-20
-> **Related plan(s):** [Plan 0097](../plans/0097-the-exposures-anchor-by-the-sky-around-the-camera-the-floor-record-under-the-eye-a-time-constant-and-the-canopys-shade.md).
+> **Related plan(s):** [Plan 0097](../plans/done/0097-the-exposures-anchor-by-the-sky-around-the-camera-the-floor-record-under-the-eye-a-time-constant-and-the-canopys-shade.md).
 > Amends the exposure's ceiling rule of [ADR-0076](0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
 > rule 5 (proposed; its clause of this date points here) and the sky-share meter Plan 0094
 > Phase 7b built on [ADR-0033](0033-eye-adaptation-as-an-asymmetric-two-stage-exposure-on-the-gpu.md)'s model.
@@ -70,6 +70,28 @@ eye past daylight plus `N` EV". Either is a reason to hold. Release needs both a
 tunnel past its mouth, a cave, a sealed room. Every scene Phase 7b anchored in full stays
 anchored bit for bit, so the open-sky goldens do not move.
 
+**Amended 2026-11-22 (owner, window 97b): the release is bounded by a lift `L`.** The owner
+in the noon tunnel at x 262.1 y 4.6 z 489.0, the floor's sky at 5 % and none in view, the
+ceiling released 5.5 EV over the daylight anchor to -1.29 EV: "there is blue light and it is
+very bright. such thing will never happen in real life. Should be much darker in this case";
+Plan 0097 Phase 3a's highlight cap was not binding (nothing clipped), so the complaint is the
+release itself. A place by day that the daylight reaches only through a crack is dark against
+the daylight it is cut from, and an eye that opens 5 EV in seconds shows it as a lit room. So
+the release's top is **`c_top = min(max, c_a 2^L)`** instead of `max`: `log2 c = mix(log2
+c_top, log2 c_a, min(s, 1))`, `s` the larger normalised share as above, `L` an `AutoExposure`
+field in EV (`sky_anchor_lift`; 4 the default, a guess read at the window; `None` the before,
+the top `max`). By day the eye opens at most `L` EV over the daylight anchor wherever the
+camera stands; the shares still decide where between `c_a` and `c_top` the target sits; the
+ceiling in force steps under the rate cap as before; the night (`c_a >= max`) is `max` at every
+share and every `L`; a sky share at `F` and over, or a floor share at `F_floor` and over, is
+`c_a` exactly, so nothing anchored in full moves. The reason for 4: the pupil's 2 to 8 mm is
+16 times, the fast part of adaptation; the rods' twenty minutes are not a game's daytime eye.
+At the readings' noon (`c_a` -6.75 EV, `max` +2) the tunnel's ceilings become -4.35 (floor
+5 %), -3.71 (3 %), -3.25 (1.6 %) and -3.13 (1.2 %) against -1.50, -0.10, +0.90 and +1.17,
+and a sealed cave by day -2.75 against +2.00, so the deep lamp tunnel by day is about 5 EV
+darker than window 94c's +2 (the window-97 before at +2.00 read "even worse", so that verdict
+is not the bar; the owner's eye at Plan 0097's Phase 3c is).
+
 ## Consequences
 
 ### Positive
@@ -83,6 +105,9 @@ anchored bit for bit, so the open-sky goldens do not move.
   the owner's "how much sky the position sees" asks.
 - The night is untouched (the clamp), the noon tunnel deep in is untouched (the tunnel floor's
   record reads 0), and the open-sky scenes are byte-identical (the `max`).
+- (2026-11-22) Dark places by day stay dark: the eye never shows a tunnel or a sealed room at
+  noon as a lit room, whatever its floor reads; the bound follows the daylight (`c_a` moves
+  with the sun's height), not the clock, and is one `min` and one multiply in the pass.
 
 ### Negative
 - The floor's hemisphere is the sky over the floor, not over the eye: under a low overhang the
@@ -97,6 +122,11 @@ anchored bit for bit, so the open-sky goldens do not move.
   target, bounded by `tau_around` and the rate cap, which the walk reading of Plan 0097 bars.
 - A flying camera far above the ground (over `AROUND_REACH`) reads its chunk's summary, a
   coarser answer, or none.
+- (2026-11-22) A lamp-lit tunnel or cave by day under an outdoor sky is dim: its ceiling is
+  `c_a 2^L`, about 5 EV under `max` at noon, so the lamp's near walls that clipped at +2 show
+  dark grey, and the same place at night opens to `max`. A consumer whose caves are its game
+  sets no sky (no anchor, no lift) or sets `L` higher. `L` is one more number on the exposure
+  model with a window's word behind it, not a derivation.
 
 ## Alternatives considered
 
@@ -139,7 +169,63 @@ crossing is still a step of the target, and the rules want fades (ADR-0076 rules
 time constant gives a ramp at every change and the rate cap bounds its speed; a pair of bars
 can be added over it if the walk reading shows the ramp is not enough.
 
-## Outcome
+### Alternative G: a slope in the floor's share instead of a lift (added 2026-11-22)
+The ceiling lifted by `k` EV for every EV the floor's sky is under `F_floor` (`k` 1 follows
+the local daylight exactly: every sky-lit floor shows at one brightness; under 1 in part), the
+full release to `max` kept for a floor that reads 0. Physically the right shape, and it keeps
+the deep lamp tunnel bright, but the owner's eye read the deep pose at +0.93 as overexposed
+(window 97, floor 1 to 2 %), so "the deeper, the brighter" is the wrong order on screen; and
+the release to `max` sits at the record's last quantum (1/255 to 0), a step of 6 EV or more
+where one ray decides. The lift bounds every place by the same daylight and has no such edge.
 
-_(Added at acceptance if implementation falsified something above. Dated. Never rewrite the
-body.)_
+### Alternative H: a slow release rate (added 2026-11-22)
+The ceiling released toward `max` at a fraction of the rate cap (the rods' minutes scaled to
+tens of seconds) and re-anchored at the full rate. The look then depends on how long the owner
+stood in the tunnel, which no still and no reading can judge, and a camera parked in the
+middle ends as bright as today. Rejected for a bound that holds at rest.
+
+### Alternative I: a lower `N`, or a lower `max` by day (added 2026-11-22)
+Both darken the W2 shade and the forest at 15:00, which the owner kept ("deep shade better",
+"fine"), and a day `max` as a constant does not follow the sun (the tunnel at 17:45 should open
+nearly to `max`, as `c_a 2^L` does at +1.92). The owner declined "a lower daytime ceiling" at
+window 97 already.
+
+## Outcome (2026-11-23, Plan 0097's close)
+
+Accepted as built. What the implementation read against the text above (the readings and
+their machines are in `docs/plans/logs/0097.md`; every wall time there was taken on a loaded
+box, the EV figures are at a fixed `dt` on a store baked whole and repeat to the digit):
+
+- **The source that answered:** the floor's record at every scene read and at every window
+  scene (the forest's two W2 poses 0.14 and 0.20, the tunnel, the mouth, the hills); the chunk
+  summary never answered in a reading. **Alternative E (camera rays) was not needed.**
+- **`F_floor` is 1/8** (the largest power of two between the W2 shade's 0.14 and the deep
+  tunnel's 0.012), kept at window 97 ("deep shade was better in new version").
+  **`tau_around` stays 1 s as a guess:** the window left its question unanswered; the canopy
+  walk between the W2 poses reads the eye's largest one-frame step at 0.051 EV (RTX) and
+  0.0625 EV (lavapipe) against the rate's 0.066. On that walk the view's own sky share holds
+  the anchor on every frame, so the walk bars the rate, not the floor term; the floor term
+  through the shader is defended by the W2 shade pose's test alone (soak).
+- **The lift `L` is 4**, kept at window 97c ("1a looks great"; 2 and 6 "not necessary").
+- **Falsified: "the noon tunnel deep in is untouched (the tunnel floor's record reads 0)."**
+  The deep pose's floor reads 3/255 (0.012), not 0: under the floor term alone its ceiling sat
+  at +1.18 EV, not `max`, and the owner read the lamp-lit tunnel as overexposed at window 97
+  on both builds. The lift is what answers it: the deep pose's ceiling is -3.13 EV by day and
+  +2.00 at night.
+- **The uniform's spare word was not enough.** The exposure uniform grew 112 to 128 B and a
+  16 B highlight state joined it (+32 B a frame), against "the uniform's spare word carries
+  the share".
+- **Highlight protection was added outside this ADR's text** (Plan 0097 Phase 3a, the owner's
+  pick at window 97 for the tunnel's clipping walls): the exposure is also capped so the level
+  over which the brightest `100 - P` percent of the hit pixels lie (`P` 99, the brightest
+  channel per meter tile, sky pixels left out) maps at or under 0.95 after the tone curve,
+  smoothed at the eye's own rate (`AutoExposure::highlight_percentile`, 0 is off). **The
+  rejected alternative: a lower daytime ceiling** (it darkens the W2 shade and the 15:00
+  forest the owner kept; declined at window 97). At the defaults it
+  binds in the open forest (the W2 1 %-sky pose: the eye -4.84 EV under a ceiling of -4.34)
+  and is idle in the tunnel, where the lift's ceiling sits under it; its gate test raises
+  `max` so the cap, not the ceiling, is the bound it reads. **Own ADR: owner question open** (whether this record is enough or highlight
+  protection wants a short ADR of its own; not assumed either way).
+- **Not this ADR's, read on the way:** near pixels that jump after a stop with the exposure
+  constant went to Plan 0098; a `SkyAround` that an exposure reset does not reset is in
+  `docs/backlog.md`.

@@ -360,7 +360,7 @@ dependencies = [
 
 [[package]]
 name = "chatty-guest"
-version = "0.69.0"
+version = "0.70.0"
 dependencies = [
  "vxe-net",
  "vxe-script-wasm",
@@ -863,7 +863,7 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
 name = "echo-guest"
-version = "0.69.0"
+version = "0.70.0"
 dependencies = [
  "vxe-net",
  "vxe-script-wasm",
@@ -965,7 +965,7 @@ dependencies = [
 
 [[package]]
 name = "flythrough"
-version = "0.69.0"
+version = "0.70.0"
 dependencies = [
  "criterion",
  "env_logger",
@@ -988,7 +988,7 @@ dependencies = [
 
 [[package]]
 name = "flythrough-logic"
-version = "0.69.0"
+version = "0.70.0"
 dependencies = [
  "vxe-net",
  "vxe-script-wasm",
@@ -1036,9 +1036,9 @@ checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
 
 [[package]]
 name = "form_urlencoded"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
+checksum = "afa489199eaffb1211795df1c6236ce1ad0d41a6fa45250add73e3b02420f06e"
 dependencies = [
  "percent-encoding",
 ]
@@ -1233,7 +1233,7 @@ dependencies = [
 
 [[package]]
 name = "greedy-guest"
-version = "0.69.0"
+version = "0.70.0"
 dependencies = [
  "vxe-net",
  "vxe-script-wasm",
@@ -1288,7 +1288,7 @@ checksum = "e17592d60ebacc7d5e169f4663c5f84f9161cc90328abcfe8456f41e4dfcb284"
 
 [[package]]
 name = "hog-guest"
-version = "0.69.0"
+version = "0.70.0"
 dependencies = [
  "vxe-net",
  "vxe-script-wasm",
@@ -2387,7 +2387,7 @@ dependencies = [
 
 [[package]]
 name = "probe-guest"
-version = "0.69.0"
+version = "0.70.0"
 dependencies = [
  "getrandom 0.4.3",
  "vxe-net",
@@ -2846,7 +2846,7 @@ dependencies = [
 
 [[package]]
 name = "spin-guest"
-version = "0.69.0"
+version = "0.70.0"
 dependencies = [
  "vxe-net",
  "vxe-script-wasm",
@@ -2963,7 +2963,7 @@ dependencies = [
 
 [[package]]
 name = "timer-guest"
-version = "0.69.0"
+version = "0.70.0"
 dependencies = [
  "vxe-net",
  "vxe-script-wasm",
@@ -3091,9 +3091,9 @@ checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
 
 [[package]]
 name = "url"
-version = "2.5.8"
+version = "2.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed"
+checksum = "f00cd2407bb42c0ef17be88d4cf020f5cceffd121665bac9b8b9493a369b3b1a"
 dependencies = [
  "form_urlencoded",
  "idna",
@@ -3131,7 +3131,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vxe-app"
-version = "0.69.0"
+version = "0.70.0"
 dependencies = [
  "log",
  "pollster",
@@ -3141,7 +3141,7 @@ dependencies = [
 
 [[package]]
 name = "vxe-assets"
-version = "0.69.0"
+version = "0.70.0"
 dependencies = [
  "vxe-entity",
  "vxe-world",
@@ -3149,7 +3149,7 @@ dependencies = [
 
 [[package]]
 name = "vxe-audio"
-version = "0.69.0"
+version = "0.70.0"
 dependencies = [
  "cpal",
  "criterion",
@@ -3160,14 +3160,14 @@ dependencies = [
 
 [[package]]
 name = "vxe-entity"
-version = "0.69.0"
+version = "0.70.0"
 dependencies = [
  "vxe-world",
 ]
 
 [[package]]
 name = "vxe-net"
-version = "0.69.0"
+version = "0.70.0"
 dependencies = [
  "criterion",
  "vxe-net",
@@ -3176,7 +3176,7 @@ dependencies = [
 
 [[package]]
 name = "vxe-render"
-version = "0.69.0"
+version = "0.70.0"
 dependencies = [
  "bytemuck",
  "criterion",
@@ -3192,7 +3192,7 @@ dependencies = [
 
 [[package]]
 name = "vxe-script-wasm"
-version = "0.69.0"
+version = "0.70.0"
 dependencies = [
  "bytes",
  "criterion",
@@ -3208,7 +3208,7 @@ dependencies = [
 
 [[package]]
 name = "vxe-sim"
-version = "0.69.0"
+version = "0.70.0"
 dependencies = [
  "criterion",
  "vxe-world",
@@ -3216,7 +3216,7 @@ dependencies = [
 
 [[package]]
 name = "vxe-tester"
-version = "0.69.0"
+version = "0.70.0"
 dependencies = [
  "crc32fast",
  "env_logger",
@@ -3229,7 +3229,7 @@ dependencies = [
 
 [[package]]
 name = "vxe-world"
-version = "0.69.0"
+version = "0.70.0"
 dependencies = [
  "criterion",
  "vxe-world",

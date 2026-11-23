@@ -156,6 +156,12 @@ pub struct AutoExposure {
     /// The time constant in seconds the floor's share is smoothed at before it reaches the
     /// exposure ([`SkyAround::step`]); 0 jumps. The default is [`DEFAULT_SKY_AROUND_TAU`].
     pub sky_around_tau: f32,
+    /// The lift `L` in EV (ADR-0081, amended): where the shares release the anchor, the
+    /// ceiling's target opens at most `L` EV over the anchored ceiling, `c_top = min(max, c_a
+    /// 2^L)` instead of `max` ([`AutoExposure::ceiling_target`]), so by day a dark place stays
+    /// at most `L` EV over the daylight anchor; a dark sky (`c_a` at `max`) is untouched.
+    /// `None` releases to `max`. The default is [`DEFAULT_SKY_ANCHOR_LIFT`].
+    pub sky_anchor_lift: Option<f32>,
     /// Highlight protection's percentile `P` in `(0, 100]`: the exposure is also capped so
     /// the level over which `100 - P` percent of the view's pixels lie (their brightest
     /// channel, per meter tile) maps at or under [`HIGHLIGHT_WHITE`] after the tone curve
@@ -185,11 +191,18 @@ pub const DEFAULT_SKY_ANCHOR_SHARE: f32 = 1.0 / 256.0;
 
 /// [`AutoExposure::sky_anchor_floor`]'s default: the anchor holds in full while 1/8 of the
 /// floor's hemisphere is open sky (Plan 0097 Phase 1's reading: the forest floor at window W2's
-/// two poses 0.14 and 0.20, the deep noon tunnel's 0.012; the largest power of two between).
+/// two poses 0.14 and 0.20, the deep noon tunnel's 0.012; the largest power of two between),
+/// kept at window 97 (the forest's deep shade "better" than with the view's share alone).
 pub const DEFAULT_SKY_ANCHOR_FLOOR: f32 = 1.0 / 8.0;
 
-/// [`AutoExposure::sky_around_tau`]'s default in seconds (ADR-0081's guess).
+/// [`AutoExposure::sky_around_tau`]'s default in seconds (ADR-0081's guess; window 97 left
+/// it unanswered, and the canopy walk of Plan 0097 Phase 4 reads the eye's steps under it).
 pub const DEFAULT_SKY_AROUND_TAU: f32 = 1.0;
+
+/// [`AutoExposure::sky_anchor_lift`]'s default in EV (ADR-0081's amendment: the pupil's 2 to
+/// 8 mm, 16 times), kept at window 97c (the noon tunnel with the lamp on "looks great" at 4;
+/// 2 and 6 not needed).
+pub const DEFAULT_SKY_ANCHOR_LIFT: f32 = 4.0;
 
 /// [`AutoExposure::highlight_percentile`]'s default (Plan 0097 Phase 3a's tunnel reading).
 pub const DEFAULT_EXPOSURE_HIGHLIGHT: f32 = 99.0;
@@ -218,6 +231,7 @@ impl AutoExposure {
             sky_anchor_share: DEFAULT_SKY_ANCHOR_SHARE,
             sky_anchor_floor: DEFAULT_SKY_ANCHOR_FLOOR,
             sky_around_tau: DEFAULT_SKY_AROUND_TAU,
+            sky_anchor_lift: Some(DEFAULT_SKY_ANCHOR_LIFT),
             highlight_percentile: DEFAULT_EXPOSURE_HIGHLIGHT,
             rate_ev_s: DEFAULT_EXPOSURE_RATE_EV_S,
         }
@@ -331,12 +345,13 @@ impl AutoExposure {
     /// metered share of sky is `sky` in `[0, 1]` and whose camera's floor sees the share
     /// `floor` of its hemisphere open (`None`: no record answered, ADR-0081): with the anchor
     /// in force ([`AutoExposure::ceiling`] `c_a`, a ground over 0) and
-    /// [`AutoExposure::sky_anchor_share`] `F` over 0, `log2 c = mix(log2 max, log2 c_a,
+    /// [`AutoExposure::sky_anchor_share`] `F` over 0, `log2 c = mix(log2 c_top, log2 c_a,
     /// min(s, 1))` with `s` the larger of `sky / F` and, with
     /// [`AutoExposure::sky_anchor_floor`] `F_floor` over 0 and a floor share, `floor /
-    /// F_floor` ([`AutoExposure::floor_term`]): the anchored ceiling at a share of `F` and
-    /// over or a floor share of `F_floor` and over, `max` with neither (`c_a` is never over
-    /// `max`); else `c_a`.
+    /// F_floor` ([`AutoExposure::floor_term`]), and `c_top` the release's top
+    /// ([`AutoExposure::release_top`]): the anchored ceiling at a share of `F` and over or a
+    /// floor share of `F_floor` and over, `c_top` with neither (`c_a` is never over `max`);
+    /// else `c_a`.
     pub fn ceiling_target(&self, ground: Option<f32>, sky: f32, floor: Option<f32>) -> f32 {
         let a = self.ceiling(ground);
         let around = self.floor_term(floor);
@@ -348,11 +363,25 @@ impl AutoExposure {
         {
             return a;
         }
-        let open = f64::from(self.max).log2();
+        let top = self.release_top(a);
+        if top <= a {
+            return a;
+        }
+        let open = f64::from(top).log2();
         let view = sky / self.sky_anchor_share;
         let t = f64::from(around.map_or(view, |s| view.max(s)));
         let l = open + (f64::from(a).log2() - open) * t;
         l.exp2() as f32
+    }
+
+    /// The top the anchor releases toward over the anchored ceiling `anchored` (`c_a`):
+    /// `min(max, c_a 2^L)` with [`AutoExposure::sky_anchor_lift`] `L` (under 0 reads 0),
+    /// `max` without it.
+    pub fn release_top(&self, anchored: f32) -> f32 {
+        match self.sky_anchor_lift {
+            Some(l) => (anchored * l.max(0.0).exp2()).min(self.max),
+            None => self.max,
+        }
     }
 
     /// The floor's normalised share `floor / F_floor` in `[0, 1]`, as the exposure uniform's
@@ -515,7 +544,9 @@ pub(crate) struct ExposureUniform {
     /// exposed value the tail is held at or under (`highlight.rs`).
     pub hi_tail: f32,
     pub hi_white: f32,
-    pub _pad0: f32,
+    /// `2^L` under the anchor with [`AutoExposure::sky_anchor_lift`] `L`, 0 without it (the
+    /// release's top is `max`).
+    pub lift: f32,
     pub _pad1: f32,
 }
 
@@ -549,6 +580,10 @@ impl ExposureUniform {
             auto.sky_anchor_share.max(0.0)
         } else {
             0.0
+        };
+        self.lift = match auto.sky_anchor_lift {
+            Some(l) if self.anchor > 0.0 => l.max(0.0).exp2(),
+            _ => 0.0,
         };
     }
 
