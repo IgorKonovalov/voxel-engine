@@ -554,6 +554,7 @@ direction bit and `VIS_BAKED` answers with its `+z` byte over 255. No `vxe-world
 | 3c: The short window | human | run 2026-11-22 (window 97c): "1a looks great", the lift stays 4 | the log |
 | 3d: The exposure's step just after a stop | dev | closed as amended: not reproduced; the guard soak-marked, bites on a forced jump (readings log) | bc359c32 |
 | 4: The picks as tests and the docs | dev | done; the walk's ceiling 0.0000 EV from `c_a`, step 0.0512 EV (RTX), 0.0625 (lavapipe soak, 12.5 s); no default moved | 80cd7134 (wip), the phase commit |
+| Fix pass (close review) | dev | done; majors 1 and 2, minor 3, nit 4 (Notes; readings log, "Fix pass") | 71e5003c, 8a8c36fb, 4b6e8cd4, committed with this row |
 
 ### Notes
 
@@ -648,6 +649,10 @@ each. Empty is fine.)_
   phase). **A finding for Plan 0098, not this plan's:** near-pixel jumps with the exposure
   constant, 18.67 % at fly 20's stop +3 and 2.26 % after +16 in the wobble table; the text to
   lift is in the readings log, "Finding for Plan 0098".
+
+- Fix pass: major 1 (71e5003c) the shade test's before asserts `release_top(c_a)`, a lift-off
+  arm `OUTDOOR_MAX`; major 2 and nit 4 (8a8c36fb) the highlight test's rig raises `max` to 2^8
+  (at 2^4 the ceiling is under the cap); minor 3 (4b6e8cd4) five tests read `frame_bytes`, not six.
 
 ### Close triggers
 
