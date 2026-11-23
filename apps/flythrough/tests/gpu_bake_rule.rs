@@ -175,3 +175,104 @@ fn a_dig_to_the_sky_the_step_after_the_rule_was_read_relists_the_cave() {
         assert!(!q.q().zeroed(ChunkCoord(c)), "{c:?} still zeroed");
     }
 }
+
+mod reading {
+    use std::collections::BTreeMap;
+
+    use super::*;
+
+    /// The chunk whose floor the reading prints: wholly inside the tall cave's footprint, its
+    /// air from z 80, the rock floor's `+z` faces on voxels z 79.
+    const FLOOR: [i32; 3] = [3, 4, 1];
+
+    /// The 7 x 7 x 7-chunk world of rock under air from z 320, with a closed cave of air over
+    /// x [190, 290), y [150, 322), z [80, 230) under a roof 90 voxels thick, no emitter; the
+    /// live queue at light radius 2 (a key ray's cap, `job.radius`, 128 voxels) over a sun at
+    /// elevation 40. From [`FLOOR`]'s floor a key ray toward the sun rises 82 voxels and runs
+    /// 93 along -y and 29 along +x within its cap, so every one ends in the cave's air, under
+    /// the roof and under every column's top (319). `rule` sets the queue's zero rule.
+    fn tall_cave_rig(rule: bool) -> Option<support::queue::Q> {
+        use support::queue::{Setup, box_op, rig, world_of};
+        let world = world_of([7, 7, 7], ROCK);
+        for (min, max) in [
+            ([0, 0, 320], [448, 448, 448]),
+            ([190, 150, 80], [290, 322, 230]),
+        ] {
+            world
+                .apply(&box_op(min, max, Mode::Carve))
+                .expect("the box is resident");
+        }
+        let mut q = rig(world, &Setup::at([224.0, 224.0, 400.0]))?;
+        q.frame.set_sky(Some(sun_sky(40.0)));
+        q.frame
+            .bake_queue_mut()
+            .expect("the queue started")
+            .zero_rule = rule;
+        Some(q)
+    }
+
+    /// [`FLOOR`]'s `+z` faces in `block`: their count, and how many read each key visibility
+    /// (`None` where the record holds no key words), with the records' raw key and sky words.
+    fn floor_key_words(block: &[u32]) -> (usize, BTreeMap<Option<u8>, usize>, Vec<[u32; 4]>) {
+        use vxe_render::internals::{BRICK_WORDS, record_key_visibility};
+        let mut faces = 0;
+        let mut by_key = BTreeMap::new();
+        let mut raw = Vec::new();
+        for slot in 0..512usize {
+            let dir = block[slot];
+            if dir == 0 {
+                continue;
+            }
+            let rec = &block[(dir >> 11) as usize - BRICK_WORDS..(dir >> 11) as usize];
+            if (rec[6] >> (16 + 5)) & 1 == 0 {
+                continue;
+            }
+            faces += 1;
+            let key = record_key_visibility(rec, 5).map(|v| (v * 255.0).round() as u8);
+            *by_key.entry(key).or_insert(0) += 1;
+            raw.push([rec[9], rec[10], rec[7], rec[8]]);
+        }
+        (faces, by_key, raw)
+    }
+
+    /// Plan 0096 Phase 10c: a key ray that ends in air at its cap under a roof. The tall cave's
+    /// floor chunk [`FLOOR`] is buried under the column map with no emitter in reach, so the
+    /// rule writes its zero record; with the rule off a GPU job bakes it. Prints, for both
+    /// records, the floor's `+z` face count, the faces by key visibility (u8, `None` with no
+    /// key words) and the distinct raw words (key 9, key 10, sky 7, sky 8). A reading: it
+    /// asserts only that both records exist.
+    #[test]
+    #[ignore = "reading"]
+    fn a_key_ray_that_ends_in_air_under_a_roof() {
+        let Some(mut ruled) = tall_cave_rig(true) else {
+            return;
+        };
+        let ruled_steps = ruled.settle();
+        let Some(mut baked) = tall_cave_rig(false) else {
+            return;
+        };
+        let baked_steps = baked.settle();
+        for (name, q, steps) in [("job", &baked, baked_steps), ("rule", &ruled, ruled_steps)] {
+            let block = q.target(FLOOR).expect("the floor chunk holds a block");
+            let (faces, by_key, raw) = floor_key_words(&block);
+            let mut distinct: Vec<[u32; 4]> = raw.clone();
+            distinct.sort_unstable();
+            distinct.dedup();
+            println!(
+                "{name}: zeroed {} after {steps} steps; {faces} floor +z faces; by key u8 \
+                 {by_key:?}; distinct raw words [key9, key10, sky7, sky8] (hex): {}",
+                q.q().zeroed(ChunkCoord(FLOOR)),
+                distinct
+                    .iter()
+                    .take(8)
+                    .map(|w| format!("{:08x} {:08x} {:08x} {:08x}", w[0], w[1], w[2], w[3]))
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            );
+        }
+        println!(
+            "the two blocks equal: {}",
+            ruled.target(FLOOR) == baked.target(FLOOR)
+        );
+    }
+}
