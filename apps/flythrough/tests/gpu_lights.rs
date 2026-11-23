@@ -481,6 +481,7 @@ fn dig_held_frames(hold: vxe_render::DigHold) -> Option<(Vec<Vec<Option<f32>>>, 
 /// frame, strictly between 0 and 1, and at most the removed surface's (N - 1's largest over the
 /// slab); under `DigHold::Rays` it differs between frames at some hole pixel.
 #[test]
+#[ignore = "soak"]
 fn a_fresh_hole_holds_one_value_between_black_and_white() {
     let Some((on, removed)) = dig_held_frames(vxe_render::DigHold::On) else {
         return;
