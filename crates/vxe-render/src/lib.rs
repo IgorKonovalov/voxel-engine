@@ -138,7 +138,8 @@ pub use loading::{
 pub use present::Presenter;
 pub use probes::{DEFAULT_H_MOVE, DEFAULT_PROBE_SPACING, ProbeVolume};
 pub use settings::{
-    ApplyClass, BakeKnobs, BuildSettings, Profile, RenderSettings, SettingsChange, UpscalerChoice,
+    ApplyClass, BakeKnobs, BuildSettings, DEFAULT_FAR_NORMAL, Profile, RenderSettings,
+    SettingsChange, UpscalerChoice,
 };
 pub use {glam, wgpu};
 

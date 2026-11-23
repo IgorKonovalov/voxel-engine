@@ -30,10 +30,11 @@ pub enum KeyFar {
     /// over one half under [`KeyFarMix::Step`]) the estimate with no key ray and no screen
     /// history, a switch of its source (the record's landing, a re-bake) riding one fade;
     /// between the band's ends the ray's running mean and the estimate by [`KeyFarMix`]; and a
-    /// reset key mean seeded from the estimate. Anywhere else the ray. The default.
-    #[default]
+    /// reset key mean seeded from the estimate. Anywhere else the ray.
     Baked,
     /// As [`KeyFar::Baked`] with the column map's horizon at every far face, record or not.
+    /// The default (ADR-0082).
+    #[default]
     Column,
     /// The per-pixel disc ray and its running mean at every distance (ADR-0027).
     Ray,
@@ -49,10 +50,11 @@ named_enum!(KeyFar {
 /// band.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum KeyFarMix {
-    /// `mix(mean, store, w)`, `w` the far normal's weight. The default.
-    #[default]
+    /// `mix(mean, store, w)`, `w` the far normal's weight.
     Blend,
-    /// The store's value where `w` is at least one half, else the mean.
+    /// The store's value where `w` is at least one half, else the mean. The default
+    /// (ADR-0082).
+    #[default]
     Step,
 }
 

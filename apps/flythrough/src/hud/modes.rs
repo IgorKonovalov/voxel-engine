@@ -849,17 +849,17 @@ impl Modes {
         }
     }
 
-    /// `calm, ` while the lighting and the far normal are `--calm`'s combination
-    /// ([`crate::cli::is_calm`]), then the rows off their default and the diagnosis switches
-    /// that are on, in words, as the line names them before the lighting's (`light history
-    /// off, key jitter off, stair rules off, queue freeze on, `); empty with all off.
+    /// The rows off their default and the diagnosis switches that are on, in words, as the
+    /// line names them before the lighting's (`light history on, key jitter off, stair rules
+    /// off, queue freeze on, `); empty with all off.
     pub fn write_diag(&self, out: &mut String) {
         let h = &self.diag.hooks;
-        if crate::cli::is_calm(&self.lighting, self.look.far_normal) {
-            out.push_str("calm, ");
-        }
-        if !self.lighting.light_history {
-            out.push_str("light history off, ");
+        if self.lighting.light_history != crate::default_lighting().light_history {
+            out.push_str(if self.lighting.light_history {
+                "light history on, "
+            } else {
+                "light history off, "
+            });
         }
         if self.lighting.landing_fade {
             out.push_str("landing fade on, ");

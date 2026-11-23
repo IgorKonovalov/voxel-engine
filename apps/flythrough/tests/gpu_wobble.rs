@@ -115,9 +115,9 @@ impl Arm {
     /// (`key_far_mix step`), `column` (`key_far column`), `pre=MS` (the queue's budget through
     /// the drain, the default's after it), `approach` / `disc` (the penumbra; the fly-through's
     /// default unless named), `absorb` (the leaves absorb, `--leaf-shadow absorb`), `turnf=N`
-    /// (the turn's frames), `nohist` (`light_history` off), `calm` (the fly-through's
-    /// `--calm` as window W1 picked it: `nohist`, `column`, `step`, `disc` and the far normal
-    /// 4..8), `native` (as `off1`), `scale=X` (the upscaler's scale), `farn=LO/HI` (the far
+    /// (the turn's frames), `nohist` (`light_history` off), `calm` (window W1's five
+    /// picks named, the fly-through's defaults (ADR-0082): `nohist`, `column`,
+    /// `step`, `disc` and the far normal 4..8), `native` (as `off1`), `scale=X` (the upscaler's scale), `farn=LO/HI` (the far
     /// normal's band), `lfade` (`Lighting::landing_fade` on), `sfade` (`Lighting::source_fade`
     /// on), `fly=N` (the fly's frames) and
     /// `normals` (the normals view); Plan 0098 Phase 5's arms `wide` (`far_light_wide`) and
@@ -235,7 +235,7 @@ impl Arm {
                     a.key_far = vxe_render::KeyFar::Column;
                     a.key_far_mix = vxe_render::KeyFarMix::Step;
                     a.penumbra = vxe_render::Penumbra::Disc;
-                    a.far_normal = flythrough::cli::CALM_FAR_NORMAL;
+                    a.far_normal = [4.0, 8.0];
                 }
                 "lfade" => a.landing_fade = true,
                 "sfade" => a.source_fade = true,
@@ -831,17 +831,18 @@ fn run_segment(
 /// that frame's step (chunks baked and key-only jobs ended; the blocks landed by how, refaded /
 /// over the fallback / another layout unfaded / bare unfaded; the landed cells whose words
 /// changed by read, directions / sky visibilities / sky flags / key visibilities / key flags /
-/// tail, then every cell they hold) and the blocks fading after it. Then the stop's largest near pair and its frame.
+/// tail, then every cell they hold) and the blocks fading after it, each pair with its mean
+/// |dY|. Then the stop's largest near pair and its frame; [`landing_rows`] returns that pair.
 const LANDING: std::ops::RangeInclusive<usize> = 36..=64;
 
 /// A stop frame's near pair over 4 levels, in %, over which [`landing_rows`] prints it.
 const LANDING_PAIR: f64 = 0.5;
 
-fn landing_rows(seg: &Segment, cls: &[u8]) {
+fn landing_rows(seg: &Segment, cls: &[u8]) -> f64 {
     let last = seg.frames.last().unwrap();
     let mut max = (0.0f64, 0usize);
     for i in 1..seg.frames.len() {
-        let pair = change_by_class(&seg.frames[i - 1], &seg.frames[i], cls, 4)[1].0;
+        let (pair, mean) = change_by_class(&seg.frames[i - 1], &seg.frames[i], cls, 4)[1];
         if pair > max.0 {
             max = (pair, i);
         }
@@ -858,7 +859,7 @@ fn landing_rows(seg: &Segment, cls: &[u8]) {
             .map(|k| (b.landing_cells[k] - a.landing_cells[k]).to_string())
             .collect();
         println!(
-            "    landing {} +{i}: pair near {pair:.2} %; to-final near {to_final:.2} %; landed baked {} keys {}; how {}; cells {}; fading {}",
+            "    landing {} +{i}: pair near {pair:.2} % (mean |dY| {mean:.2}); to-final near {to_final:.2} %; landed baked {} keys {}; how {}; cells {}; fading {}",
             seg.name,
             b.baked - a.baked,
             b.keys_baked - a.keys_baked,
@@ -877,6 +878,7 @@ fn landing_rows(seg: &Segment, cls: &[u8]) {
     if let Some(Some(r)) = seg.src.get(max.1) {
         println!("  {}: the largest pair's sources: {}", seg.name, fmt_src(r));
     }
+    max.0
 }
 
 /// The live queue's depth in words: its jobs and the chunks it waits on.
@@ -1181,11 +1183,20 @@ mod reading {
     }
 }
 
+/// What [`wobble_on`] reads of a run's stop, in % of the class's pixels over 4 levels: the near
+/// class from the stop's first frame to its last (`near0`), the stop's largest near pair
+/// (`near_pair`), and the far class 30 frames into the stop against its last (`far30`). Every
+/// field is NaN for a `probe` arm, which runs no stop.
+#[derive(Clone, Copy, Debug)]
+struct StopRead {
+    near0: f64,
+    near_pair: f64,
+    far30: f64,
+}
+
 /// The rig's protocol for `arm` on `rig` from the spawn's camera `cam0`: the table's rows
-/// printed, frames and maps under `live/wobble/<arm>/`. Returns the stop's near +0 (the near
-/// class's over-4 share from the stop's first frame to its last; NaN for a `probe` arm, which
-/// runs no stop).
-fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> f64 {
+/// printed, frames and maps under `live/wobble/<arm>/`. Returns what it read of the stop.
+fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> StopRead {
     QUEUE_ON.with(|q| q.set(true));
     {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1229,7 +1240,11 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> f64 {
                     OUT[1],
                 );
             }
-            return f64::NAN;
+            return StopRead {
+                near0: f64::NAN,
+                near_pair: f64::NAN,
+                far30: f64::NAN,
+            };
         }
         if let Some(ms) = arm.pre_ms {
             s.frame.set_bake_budget(vxe_render::Budget::PerFrame { ms });
@@ -1358,13 +1373,20 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> f64 {
             Some(fly.last.clone()),
         );
         summarise(&stop, "classes per frame");
-        let stop_near;
+        let stop_read;
         {
             let shot = support::defects::read(rig, &s.frame, None);
             let gw = s.frame.light_hit_positions().width() as usize;
             let cls = classes(&shot.hits, &shot.source, gw, cam1.position.to_array());
-            stop_near = hold_series(&stop, &cls, still_far_max);
-            landing_rows(&stop, &cls);
+            let near0 = hold_series(&stop, &cls, still_far_max);
+            let near_pair = landing_rows(&stop, &cls);
+            let far30 =
+                change_by_class(&stop.frames[30], stop.frames.last().unwrap(), &cls, 4)[3].0;
+            stop_read = StopRead {
+                near0,
+                near_pair,
+                far30,
+            };
             support::write_png(&dir.join("stop-final.png"), &shot.display, OUT[0], OUT[1]);
         }
         // The turn: `turn_deg` over `turn_frames` frames, then the hold.
@@ -1408,7 +1430,7 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> f64 {
             );
         }
         println!("done: {}", dir.display());
-        stop_near
+        stop_read
     }
 }
 
@@ -1429,7 +1451,7 @@ fn the_wobble_table_over_the_arm_set() {
     };
     let mut near = Vec::new();
     for spec in ["default", "albedo", "calm", "calm,native"] {
-        near.push((spec, wobble_on(&mut rig, cam0, &Arm::from_spec(spec))));
+        near.push((spec, wobble_on(&mut rig, cam0, &Arm::from_spec(spec)).near0));
     }
     let row: Vec<String> = near.iter().map(|(a, v)| format!("{a} {v:.2} %")).collect();
     println!("stop +0 near on {}: {}", rig.adapter, row.join(", "));
@@ -1438,6 +1460,67 @@ fn the_wobble_table_over_the_arm_set() {
         picks <= off + 2.0,
         "stop +0 near {picks:.2} % against the lighting-off {off:.2} % + 2"
     );
+}
+
+/// The far class's over-4 share 30 frames into the stop against its last under the picks with
+/// the exposure pinned (`calm,pin`), at the fly of 180 frames and of 20: the reading Plan 0098
+/// Phase 4 takes on the RTX 3080 Laptop at its base before the defaults move (the readings
+/// log, Phase 4: the quiet runs, 23.48 and 41.52 %; a loaded repeat read 13.59 and 36.45 %, the
+/// far still taking its records at the queue's pace), which [`the_defaults_hold_still_at_rest_and_the_far_holds`] bars against.
+const CALM_PIN_FAR30: [(usize, f64); 2] = [(180, CALM_FAR30_180), (20, CALM_FAR30_20)];
+const CALM_FAR30_180: f64 = 23.48;
+const CALM_FAR30_20: f64 = 41.52;
+
+/// Plan 0098 Phase 4's bars (ADR-0082; as restated at window W2): the rig's protocol
+/// ([`wobble_on`]) on the forest (`r` 8) at 1080p through FSR 2 at 1.5, no drain, the exposure
+/// pinned after the settle, the defaults with no token (the five picks), at the fly of 180
+/// frames and of 20. Near at rest: with the queue stopped after the settle
+/// (`default,pin,nqueue`), no frame pair of the stop moves more than 2.5 % of the near pixels
+/// over 4 levels (the arm read 0.49, 0.08 and 0.01 % in Phases 6 and 6b; the bar is the
+/// largest plus 2 points): with nothing landing the image holds still. Near at a landing:
+/// printed, not barred: with the queue stepping (`default,pin`) the rig prints every stop
+/// pair over 0.5 % with its frame, the blocks landed, the share over 4 levels and the mean
+/// change (accepted by eye at window W2). Far: the far class's over-4 share 30 frames into the
+/// stop against its last under `default,pin` is at most [`CALM_PIN_FAR30`] plus 2 points, a
+/// ratchet on what the owner accepted; `default,pin,native` (no upscaler, 1080p) is printed
+/// beside it as the distance left. `VXE_TEST_ADAPTER` picks the adapter (the RTX by hand;
+/// unset, lavapipe).
+#[test]
+#[ignore = "soak"]
+fn the_defaults_hold_still_at_rest_and_the_far_holds() {
+    let Some((mut rig, cam0)) = forest_rig(8) else {
+        return;
+    };
+    let mut fails = Vec::new();
+    for (fly, before) in CALM_PIN_FAR30 {
+        let mut read = |spec: &str| {
+            wobble_on(
+                &mut rig,
+                cam0,
+                &Arm::from_spec(&format!("{spec},fly={fly}")),
+            )
+        };
+        let rest = read("default,pin,nqueue");
+        let picks = read("default,pin");
+        let native = read("default,pin,native");
+        println!(
+            "fly {fly} on {}: at rest the largest stop near pair {:.2} % (bar 2.5 %); stepping the largest {:.2} %; far +30 {:.2} % against calm,pin's {before:.2} % + 2, native {:.2} %",
+            rig.adapter, rest.near_pair, picks.near_pair, picks.far30, native.far30
+        );
+        if rest.near_pair > 2.5 {
+            fails.push(format!(
+                "fly {fly}: a stop pair at rest moves {:.2} % of the near over 4",
+                rest.near_pair
+            ));
+        }
+        if picks.far30.is_nan() || picks.far30 > before + 2.0 {
+            fails.push(format!(
+                "fly {fly}: far +30 {:.2} % against {before:.2} % + 2",
+                picks.far30
+            ));
+        }
+    }
+    assert!(fails.is_empty(), "{}", fails.join("; "));
 }
 
 /// One run of the gate scene's protocol: the share of far pixels over 4 levels on each

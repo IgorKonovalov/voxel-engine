@@ -244,7 +244,8 @@ fn pose_starts_the_level_at_the_rigs_still_camera() {
     );
 }
 
-/// `V` steps the far normal through `[1, 2]`, off, `[4, 8]`, `[8, 12]` and `[2, 6]`, `Z` the sharpening through
+/// `V` steps the far normal from the default `[4, 8]` through `[8, 12]`, `[2, 6]`, `[1, 2]`, off
+/// and `[4, 8]`, `Z` the sharpening through
 /// 0.25, 0 and 0.5, and `Period` stops and starts `--pan`'s yaw; each press changes the
 /// banner's text to the new mode, and the stats HUD's aliasing row names all four.
 /// `--pan` parses a number of degrees a second and refuses a non-number and 0; FSR 2's
@@ -259,11 +260,11 @@ fn the_aliasing_toggles_show_in_the_banner() {
         run.banner().expect("a press shows the banner")
     };
     for want in [
+        "far normal 8..12",
+        "far normal 2..6",
         "far normal 1..2",
         "far normal off",
         "far normal 4..8",
-        "far normal 8..12",
-        "far normal 2..6",
     ] {
         let banner = press(&mut run, "far normal");
         assert!(banner.contains(want), "{want}: {banner}");
@@ -286,11 +287,11 @@ fn the_aliasing_toggles_show_in_the_banner() {
     assert_eq!(
         hud::aliasing_row(
             &run.modes.upscaler,
-            "far normal 2..6",
+            "far normal 4..8",
             &run.modes,
             run.modes.pan.as_ref()
         ),
-        "upscaler fsr2, scale 1.5, sharpen 0.5; far normal 2..6; store read normal, weights face, lighting half; pan 1.1 deg/s"
+        "upscaler fsr2, scale 1.5, sharpen 0.5; far normal 4..8; store read normal, weights face, lighting half; pan 1.1 deg/s"
     );
     let knobs = parse_args_from(argv(&["--jitter-phases", "8", "--dither", "on"]))
         .expect("the candidate knobs parse");
@@ -322,13 +323,14 @@ fn the_aliasing_toggles_show_in_the_banner() {
     }
 }
 
-/// The fly-through starts in the owner's pick of Plan 0061 Phase 4: far normal `[2, 6]`,
+/// The fly-through starts in the owner's picks of Plan 0061 Phase 4 and Plan 0098 (ADR-0082):
+/// far normal `[4, 8]`,
 /// the store read by the shading normal, the light's filters weighed by face, the light at
 /// half resolution; the start banner's mode rows and the aliasing row name all four.
 #[test]
 fn the_default_look_is_the_windows_pick() {
     use vxe_render::{LightWeights, StoreRead};
-    assert_eq!(LookPreset::DEFAULT.far_normal, [2.0, 6.0]);
+    assert_eq!(LookPreset::DEFAULT.far_normal, [4.0, 8.0]);
     let d = parse_args_from(argv(&[])).expect("parses");
     let l = d.start_lighting();
     assert_eq!(
@@ -339,7 +341,7 @@ fn the_default_look_is_the_windows_pick() {
             LightingResolution::Half
         )
     );
-    assert_eq!(d.start_look().far_normal, [2.0, 6.0]);
+    assert_eq!(d.start_look().far_normal, [4.0, 8.0]);
     let banner = d
         .start_modes(0.0)
         .banner(0.0)
@@ -348,7 +350,7 @@ fn the_default_look_is_the_windows_pick() {
     assert_eq!(
         rows[..3],
         [
-            "look face, far normal 2..6",
+            "look face, far normal 4..8",
             "source cave, lighting half",
             "store read normal, weights face"
         ]
@@ -361,7 +363,7 @@ fn the_default_look_is_the_windows_pick() {
             &run.modes,
             None
         ),
-        "upscaler off, scale 1; far normal 2..6; store read normal, weights face, lighting half; no pan"
+        "upscaler off, scale 1; far normal 4..8; store read normal, weights face, lighting half; no pan"
     );
 }
 
@@ -937,7 +939,7 @@ fn the_banner_names_the_probe_spacing_while_the_lamp_bounce_is_on() {
     assert!(spacing(m.banner(2000.0).unwrap()).contains("probes 32"));
 }
 
-/// The start's banner is `look face, far normal 2..6` over the lighting modes,
+/// The start's banner is `look face, far normal 4..8` over the lighting modes,
 /// `--far-normal` shows and takes the look's far normal, and `N`'s cycle reaches every
 /// preset from there.
 #[test]
@@ -949,7 +951,7 @@ fn the_start_banner_names_the_look_and_n_cycles() {
         .with_probe_spacing(a.light.probe_spacing);
     bare.set_auto(a.light.adaptation, a.start_auto());
     let lighting = bare.banner(0.0).expect("the start shows it");
-    assert_eq!(banner, format!("look face, far normal 2..6\n{lighting}"));
+    assert_eq!(banner, format!("look face, far normal 4..8\n{lighting}"));
     let knob = parse_args_from(argv(&["--far-normal", "3,10"])).unwrap();
     assert_eq!(knob.start_look().far_normal, [3.0, 10.0]);
     assert_eq!(
@@ -978,7 +980,7 @@ fn the_start_banner_names_the_look_and_n_cycles() {
 
 /// The banner and the look line name the far normal in face mode only, the one mode that
 /// reads it: from the default `N` reads `far normal off` in trilinear8 and gradient27 and
-/// `far normal 2..6` back in face, and `--look field --far-normal 2,6` starts off.
+/// `far normal 4..8` back in face, and `--look field --far-normal 2,6` starts off.
 #[test]
 fn the_far_normal_is_named_in_face_mode_only() {
     let a = parse_args_from(argv(&[])).unwrap();
@@ -991,11 +993,11 @@ fn the_far_normal_is_named_in_face_mode_only() {
     for (name, far) in [
         ("trilinear8", "off"),
         ("gradient27", "off"),
-        ("face", "2..6"),
+        ("face", "4..8"),
     ] {
         (n.flip)(&mut modes, t);
         let (preset, look) = (modes.preset, modes.look);
-        assert_eq!(look.far_normal, [2.0, 6.0], "{name}");
+        assert_eq!(look.far_normal, [4.0, 8.0], "{name}");
         let banner = modes.banner(t).expect("a press shows the banner");
         assert!(
             banner.starts_with(&format!("look {name}, far normal {far}\n")),

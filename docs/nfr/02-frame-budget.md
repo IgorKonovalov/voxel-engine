@@ -1137,3 +1137,29 @@ light pass and the hit. The owner: "frames around 25, softer acceptable". RTX, F
 a fresh start at `--bake-tiers 4096,4096,4096`: 49.6 fps with the bake step at 11.78 ms, 3 099
 waiting, the drain projected at 233.8 s (the cost of 4 096 in every band; the owner on the
 profile's tiers against it: "shadows are fine").
+
+**The calm light by default (Plan 0098 Phase 4, 2026-11-23, ADR-0082: no light history, key far
+column stepped at the band's half, far normal 4..8, the disc penumbra; release `flythrough`,
+headless, `--source outdoor --render 1920x1080 --frames 1500`, the Floor profile (FSR 2 at 1.5)
+on both adapters, the frame line's median of 30; the forest `--spawn forest --trees forest
+--time 15:00`, the low sun `--spawn forest --trees forest --sun 10,180`, the hills `--time
+12:00`; exclusive perf lock per run, nice 19, the 1-minute load at the lock 0.9 to 3.5; every row
+in `docs/plans/logs/0098.md`, Phase 4).** Light / temporal / a-trous / GPU frame in ms; before
+is the branch with Plan 0096 merged (`311c5e6a`) at its old defaults (light history on, key far
+baked blended, far normal 2..6, the approach penumbra) and with `--calm` (the five picks), after
+is the new defaults with no flag:
+
+| scene | RTX before | RTX before `--calm` | RTX after | RENOIR before | RENOIR before `--calm` | RENOIR after |
+|---|---|---|---|---|---|---|
+| forest 15:00 | 3.16 / 0.93 / 0.65 / 7.66 | 1.08 / 0.74 / 0.75 / 5.43 | 2.16 / 1.57 / 1.51 / 10.39 | **33.93** / 6.73 / 3.69 / 67.44 | **11.30** / 6.18 / 4.58 / 45.19 | **11.36** / 6.26 / 5.28 / 51.67 |
+| forest `--sun 10,180` | 2.37 / 0.89 / 0.62 / 6.74 | 0.58 / 0.78 / 0.78 / 5.00 | 1.27 / 1.71 / 1.57 / 10.20 | **27.69** / 6.71 / 3.69 / 61.12 | **6.17** / 6.15 / 4.58 / 40.04 | **6.21** / 6.23 / 5.28 / 43.85 |
+| hills 12:00 | 1.14 / 0.76 / 0.53 / 6.31 | 0.66 / 0.85 / 0.65 / 6.35 | 1.07 / 1.38 / 1.03 / 10.02 | **11.17** / 5.95 / 2.93 / 53.31 | **6.02** / 6.27 / 3.53 / 49.98 | **6.13** / 6.44 / 4.41 / 60.67 |
+
+The RTX's after column ran in a slower clock state than its before columns: read back to back
+at 15:48 (load 2.7), the forest under the old binary's `--calm` reads 2.45 / 1.78 / 1.64 / 11.70
+and the new defaults 2.32 / 1.69 / 1.61 / 11.10, so on the RTX the defaults cost what `--calm`
+did, and the before columns are the faster state's. On the RADV RENOIR (no such swing) the new
+defaults' light pass reads as `--calm`'s, 11.4, 6.2 and 6.1 ms against the old defaults' 33.9,
+27.7 and 11.2: the approach penumbra's cost is gone from the default (Plan 0095's table above),
+and the RENOIR at 1080p is still over the 4.0 ms lighting line by 1.5 to 2.8 times. The temporal
+pass holds (5.9 to 6.4 ms RENOIR) and the a-trous rises with no history (3.7 to 5.3 ms RENOIR).

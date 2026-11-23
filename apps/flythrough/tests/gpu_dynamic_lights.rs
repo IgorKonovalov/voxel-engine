@@ -430,6 +430,8 @@ fn a_list_light_with_the_lamp_off_survives_the_lamp_off_skips() {
 /// off, over 16 still frames after the first (which has no history) the list is unchanged,
 /// every stratum re-shades a lit pixel, and every stratum's lambda is at most 2^-10, one f16
 /// step (owner, 2026-11-15): the re-shade and the stored estimate differ by rounding alone.
+/// The gradient mode re-shades last frame's lighting, so the light history is on here
+/// (`Lighting::light_history`, off by default, ADR-0082).
 #[test]
 fn the_gradient_mode_holds_still_under_a_still_list() {
     let Some(mut rig) = box_rig() else {
@@ -437,6 +439,7 @@ fn the_gradient_mode_holds_still_under_a_still_list() {
     };
     rig.frame.set_lighting(Lighting {
         history: vxe_render::HistoryKill::Gradient,
+        light_history: true,
         ..rig.frame.lighting()
     });
     let camera = box_camera();

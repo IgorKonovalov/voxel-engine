@@ -59,22 +59,23 @@ mod flicker {
     /// `reading::dig_run`'s forest (the spawn at `--sun 10,180`, 30 degrees down, the
     /// fly-through's frame, FSR 2 from 640 x 360 to 960 x 540, the live queue stepped through
     /// [`DIG_DRAIN`] drain frames and a settle of 240), the 1 m dig ahead, read from N - 1 until its jobs
-    /// have landed plus 16 and [`reading::DIG_TAIL`] frames, under the five picks with
-    /// `Lighting::dig_hold` on (`calm,hold=on`) against the arm with the light history on
-    /// (`default`, window W2's run 5, "no flash"). In every frame from N: the ring's share
+    /// have landed plus 16 and [`reading::DIG_TAIL`] frames, under the defaults with no token
+    /// (`default`: the five picks, `Lighting::dig_hold` on; Plan 0098 Phase 4) against the
+    /// defaults before the picks with the light history on (`before`, window W2's run 5, "no
+    /// flash"). In every frame from N: the ring's share
     /// (`support::defects::DigRow`: display pixels whose hit is outside the dug box and inside it
     /// dilated by 64 voxels) darker by over 4 levels than both N - 1 and the settled frame is at
     /// most the history arm's largest plus 2 points; the hole's share (hits inside the box
     /// dilated by one voxel) brighter than the settled frame by over 4 levels is at most the
     /// history arm's largest plus 2 points, and the hole's mean luma's excess over its settled
     /// mean at most the history arm's largest plus 4 levels. `VXE_DIG`'s arm
-    /// (`support::defects::dig_spec`) replaces the calm arm: `forest/calm,hold=off` is the
+    /// (`support::defects::dig_spec`) replaces the defaults' arm: `forest/hold=off` is the
     /// fault the bar was written for.
     #[test]
     #[ignore = "soak"]
     fn a_dig_under_calm_neither_darkens_nor_flashes() {
-        let (scene, arm, drain) = super::support::defects::dig_spec(("forest", "calm,hold=on", DIG_DRAIN));
-        let Some((_, base, n1)) = reading::dig_run(&scene, "default", drain) else {
+        let (scene, arm, drain) = super::support::defects::dig_spec(("forest", "default", DIG_DRAIN));
+        let Some((_, base, n1)) = reading::dig_run(&scene, "before", drain) else {
             return;
         };
         let (_, rows, _) = reading::dig_run(&scene, &arm, drain).expect("the adapter");
@@ -85,7 +86,7 @@ mod flicker {
         let hole = (worst(&base, |r| r.hole_bright), worst(&rows, |r| r.hole_bright));
         let excess = (worst(&base, |r| r.hole_excess), worst(&rows, |r| r.hole_excess));
         println!(
-            "dig {scene} {arm} against default: ring dark {:.2} % against {:.2} %, hole bright {:.2} % against {:.2} %, hole excess {:+.1} against {:+.1}",
+            "dig {scene} {arm} against before: ring dark {:.2} % against {:.2} %, hole bright {:.2} % against {:.2} %, hole excess {:+.1} against {:+.1}",
             ring.1, ring.0, hole.1, hole.0, excess.1, excess.0
         );
         assert!(ring.1 <= ring.0 + 2.0, "the ring darkens: {:.2} % against {:.2} % + 2", ring.1, ring.0);
@@ -715,10 +716,12 @@ mod flicker {
         /// Frames read after the dig's jobs have landed and their fades ended.
         pub(in super::super) const DIG_TAIL: usize = 24;
 
-        /// The arm's tokens over the fly-through's defaults: `calm` (the five picks: light
-        /// history off, key far column, key far mix step, the band 4..8, the disc), then one put
-        /// back each: `hist` (light history on), `baked` (key far baked), `blend` (key far mix
-        /// blend), `band` (the default band), `approach` (the approach penumbra); `pin` the
+        /// The arm's tokens over the fly-through's defaults (the five picks of ADR-0082):
+        /// `calm` (the five picks named: light history off, key far column, key far
+        /// mix step, the band 4..8, the disc), then one put back each: `hist` (light history
+        /// on), `baked` (key far baked), `blend` (key far mix blend), `band` (the band 2..6),
+        /// `approach` (the approach penumbra); `before` (the defaults before the picks: `hist`,
+        /// `baked`, `blend` and `band`, the disc kept, window W2's run 5 "no flash"); `pin` the
         /// exposure manual at its settled value from the settle's end; `hold=on|off`
         /// (`Lighting::dig_hold`).
         pub(in super::super) fn dig_arm(f: &mut vxe_render::Frame, arm: &str) -> bool {
@@ -733,12 +736,18 @@ mod flicker {
                         l.key_far = vxe_render::KeyFar::Column;
                         l.key_far_mix = vxe_render::KeyFarMix::Step;
                         l.penumbra = vxe_render::Penumbra::Disc;
-                        look.far_normal = flythrough::cli::CALM_FAR_NORMAL;
+                        look.far_normal = [4.0, 8.0];
+                    }
+                    "before" => {
+                        l.light_history = true;
+                        l.key_far = vxe_render::KeyFar::Baked;
+                        l.key_far_mix = vxe_render::KeyFarMix::Blend;
+                        look.far_normal = [2.0, 6.0];
                     }
                     "hist" => l.light_history = true,
                     "baked" => l.key_far = vxe_render::KeyFar::Baked,
                     "blend" => l.key_far_mix = vxe_render::KeyFarMix::Blend,
-                    "band" => look.far_normal = flythrough::LookPreset::DEFAULT.far_normal,
+                    "band" => look.far_normal = [2.0, 6.0],
                     "approach" => l.penumbra = vxe_render::Penumbra::Approach,
                     "pin" => pin = true,
                     "hold=on" => l.dig_hold = true,

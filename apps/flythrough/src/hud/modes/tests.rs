@@ -545,7 +545,7 @@ fn the_banner_and_row_name_the_sky_anchor() {
 }
 
 /// The debug page's diagnosis switches: each is menu only, its row reads its mode (`penumbra
-/// disc`, `light history off`), and a flip shows the banner again with the switch's words on
+/// approach`, `light history on`), and a flip shows the banner again with the switch's words on
 /// the lighting line, which name it while it is off its default and not after the flip back.
 /// All off is the start: no hook and no freeze, the default penumbra and sky normal.
 #[test]
@@ -565,10 +565,10 @@ fn the_diagnosis_switches_name_their_mode_in_the_banner() {
     let line = |m: &Modes, t: f64| m.banner(t).map(|b| b.replace('\n', ", "));
     let mut t = 10_000.0;
     for (name, row, word) in [
-        ("penumbra", "penumbra disc", "penumbra disc, "),
+        ("penumbra", "penumbra approach", "penumbra approach, "),
         ("sky normal", "sky normal face", "sky normal face, "),
         ("filter", "filter off", "filter off"),
-        ("light history", "light history off", "light history off, "),
+        ("light history", "light history on", "light history on, "),
         ("key jitter", "key jitter off", "key jitter off, "),
         ("stair rules", "stair rules off", "stair rules off, "),
         ("queue freeze", "queue freeze on", "queue freeze on, "),

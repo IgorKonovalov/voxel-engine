@@ -41,7 +41,7 @@ pub struct OutdoorArgs {
     /// `--key-far-mix blend|step`: how the store's key visibility joins the ray inside the far
     /// normal's band.
     pub(crate) key_far_mix: vxe_render::KeyFarMix,
-    /// `--light-history on|off` (or `--calm`'s off): the light passes' screen history
+    /// `--light-history on|off`: the light passes' screen history
     /// (`Lighting::light_history`); unset, the renderer's default.
     pub(crate) light_history: Option<bool>,
     /// `--landing-fade on|off`: a landing block's sky visibilities ride the store's fade
@@ -113,21 +113,6 @@ impl OutdoorArgs {
     pub fn leaf_shadow(&self) -> crate::LeafShadow {
         self.leaf_shadow
     }
-}
-
-/// `--calm`'s far normal band in pixels a voxel (ADR-0082): window W1's pick (Plan 0098,
-/// 2026-11-22).
-pub const CALM_FAR_NORMAL: [f32; 2] = [4.0, 8.0];
-
-/// Whether `l` and the far normal band `far_normal` are `--calm`'s combination, window W1's
-/// five picks: no light history, the key light's far from the column map's horizon, stepped in
-/// at the band's half, the band [`CALM_FAR_NORMAL`] and the disc penumbra.
-pub fn is_calm(l: &vxe_render::Lighting, far_normal: [f32; 2]) -> bool {
-    !l.light_history
-        && l.key_far == vxe_render::KeyFar::Column
-        && l.key_far_mix == vxe_render::KeyFarMix::Step
-        && l.penumbra == vxe_render::Penumbra::Disc
-        && far_normal == CALM_FAR_NORMAL
 }
 
 /// The outdoor start exposure's floor: a sunlit ground reads about 200 to 300 frame radiance
@@ -385,7 +370,7 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
             "disc|approach",
             "the key light's penumbra: a ray to a random point of its disc a frame and its \
                  running mean, or one ray to its centre scored by how close it passes the rock \
-                 beside it, taken as the value with no history [approach]",
+                 beside it, taken as the value with no history [disc]",
             |p: &mut Parsing, v| {
                 p.args.outdoor.penumbra =
                     Some(v.named(vxe_render::Penumbra::from_name, "disc or approach")?);
@@ -398,7 +383,7 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
             "the key light's visibility where a voxel is small on screen, with no ray and no \
                  history: the store's baked value where fresh, else the column map's horizon \
                  toward the sun; or the horizon alone; or the per-pixel disc ray everywhere \
-                 [baked]",
+                 [column]",
             |p: &mut Parsing, v| {
                 p.args.outdoor.key_far =
                     v.named(vxe_render::KeyFar::from_name, "baked, column or ray")?;
@@ -410,7 +395,7 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
             "blend|step",
             "inside the far normal's band under --key-far baked or column: the ray's mean \
                  blended to the far estimate by the band's weight, or the estimate from its \
-                 half [blend]",
+                 half [step]",
             |p: &mut Parsing, v| {
                 p.args.outdoor.key_far_mix =
                     v.named(vxe_render::KeyFarMix::from_name, "blend or step")?;
@@ -422,7 +407,7 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
             "on|off",
             "the light passes read last frame's lighting through their history test; off, \
                  every lighting pixel is this frame's alone (the upscaler keeps its own \
-                 history) [on]",
+                 history) [off]",
             |p: &mut Parsing, v| {
                 p.args.outdoor.light_history = Some(v.on_off()?);
                 Ok(())
@@ -447,19 +432,6 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
             |p: &mut Parsing, v| {
                 p.args.outdoor.source_fade = Some(v.on_off()?);
                 Ok(())
-            },
-        ),
-        Flag::switch(
-            &["--calm"],
-            "the calm combination as window W1 picked it (ADR-0082): --light-history off \
-                 --key-far column --key-far-mix step --far-normal 4,8 --penumbra disc; a later \
-                 flag of the five overrides its part; the banner names calm while all five hold",
-            |p: &mut Parsing| {
-                p.args.outdoor.light_history = Some(false);
-                p.args.outdoor.key_far = vxe_render::KeyFar::Column;
-                p.args.outdoor.key_far_mix = vxe_render::KeyFarMix::Step;
-                p.args.outdoor.penumbra = Some(vxe_render::Penumbra::Disc);
-                p.given.far_normal = Some(CALM_FAR_NORMAL);
             },
         ),
         Flag::value(

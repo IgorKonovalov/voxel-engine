@@ -121,6 +121,35 @@ fn the_profiles_hold_the_owners_picks() {
     }
 }
 
+/// Plan 0098 Phase 4 (ADR-0082, window W2's picks): the library's lighting by default takes the
+/// five picks, no light history, the key light's far from the column map's horizon stepped in
+/// at the band's half and the disc penumbra, with the arms not picked off (the landing's two
+/// fades, the far's wide light, the far's light history); and every named profile holds the
+/// five, the far normal's band 4..8 among them.
+#[test]
+fn every_profile_holds_the_calm_picks() {
+    use crate::frame::{KeyFar, KeyFarMix, Penumbra};
+    let picks = |l: &Lighting| (l.light_history, l.key_far, l.key_far_mix, l.penumbra);
+    let calm = (false, KeyFar::Column, KeyFarMix::Step, Penumbra::Disc);
+    let l = Lighting::default();
+    assert_eq!(picks(&l), calm);
+    assert_eq!(
+        (
+            l.landing_fade,
+            l.source_fade,
+            l.far_light_wide,
+            l.light_history_far
+        ),
+        (false, false, false, false)
+    );
+    assert_eq!(DEFAULT_FAR_NORMAL, [4.0, 8.0]);
+    for p in Profile::ALL {
+        let s = RenderSettings::profile(p);
+        assert_eq!(picks(&s.lighting), calm, "{}", p.name());
+        assert_eq!(s.look.far_normal, DEFAULT_FAR_NORMAL, "{}", p.name());
+    }
+}
+
 /// Each field's test value changes that field alone.
 #[test]
 fn each_test_value_changes_its_field_alone() {

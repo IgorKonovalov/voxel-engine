@@ -278,6 +278,10 @@ crate::frame::named_enum!(Profile {
     High => "high",
 });
 
+/// The far normal's band every profile holds, in pixels a voxel (ADR-0082: window W1's pick, a
+/// part of the calm light by default).
+pub const DEFAULT_FAR_NORMAL: [f32; 2] = [4.0, 8.0];
+
 /// Bytes the fly-through's streamed mirror reserves for the floor's residency of 16 chunks
 /// full ([`crate::DEFAULT_BUDGET_BYTES`]).
 const FLOOR_MIRROR_BYTES: u64 = crate::gpu_world::DEFAULT_BUDGET_BYTES;
@@ -310,7 +314,7 @@ impl RenderSettings {
                 ..Lighting::default()
             },
             look: LookParams {
-                far_normal: [2.0, 6.0],
+                far_normal: DEFAULT_FAR_NORMAL,
                 ..LookParams::default()
             },
             lod: LodParams::default(),

@@ -899,7 +899,7 @@ pub struct Lighting {
     /// mean through a canopy holds four times the sky rays' frames while a 10-degree jump
     /// still resets it at once (the sky-change bit).
     pub key_history: u32,
-    /// The light passes read last frame's lighting (ADR-0082; default on): off, `Params::history`
+    /// The light passes read last frame's lighting (ADR-0082; default off): off, `Params::history`
     /// bit 0 is clear and every lighting pixel resets (age 0) while the upscaler keeps its own.
     pub light_history: bool,
     /// A landing block's sky visibilities ride the store's fade with its other words (default
@@ -921,10 +921,10 @@ pub struct Lighting {
     /// How the key light's shadow ray makes its penumbra ([`Penumbra`]; default `Disc`).
     pub penumbra: Penumbra,
     /// Where the key light's visibility comes from where a voxel is small on screen
-    /// ([`KeyFar`]; default `Baked`).
+    /// ([`KeyFar`]; default `Column`).
     pub key_far: KeyFar,
     /// How the store's key visibility joins the ray's mean inside the far normal's band
-    /// ([`KeyFarMix`]; default `Blend`).
+    /// ([`KeyFarMix`]; default `Step`).
     pub key_far_mix: KeyFarMix,
     /// The normal a cube face's baked sky term reads its visibilities by ([`SkyNormal`];
     /// default `Smoothed`).
@@ -998,15 +998,15 @@ impl Default for Lighting {
             sky_rays: DEFAULT_SKY_RAYS,
             sky_history: DEFAULT_SKY_HISTORY,
             key_history: DEFAULT_KEY_HISTORY,
-            light_history: true,
+            light_history: false,
             landing_fade: false,
             source_fade: false,
             dig_hold: true,
             light_history_far: false,
             far_light_wide: false,
             penumbra: Penumbra::Disc,
-            key_far: KeyFar::Baked,
-            key_far_mix: KeyFarMix::Blend,
+            key_far: KeyFar::Column,
+            key_far_mix: KeyFarMix::Step,
             sky_normal: SkyNormal::Smoothed,
             sky_bounce: 0.0,
             key_cap: 0.0,

@@ -337,6 +337,15 @@ fn read_frame(
     }
 }
 
+/// Turns the light history on (`Lighting::light_history`, off by default,
+/// ADR-0082): the tests of its ages and reprojection read it.
+fn with_light_history(rig: &mut LookRig) {
+    rig.frame.set_lighting(vxe_render::Lighting {
+        light_history: true,
+        ..rig.frame.lighting()
+    });
+}
+
 /// Whether `p` lies in the voxels `min ..= max` dilated by one voxel, faces included.
 fn in_dilated(p: [f32; 4], (min, max): (VoxelCoord, VoxelCoord)) -> bool {
     (0..3).all(|k| p[k] >= (min.0[k] - 1) as f32 && p[k] <= (max.0[k] + 2) as f32)
@@ -344,13 +353,15 @@ fn in_dilated(p: [f32; 4], (min, max): (VoxelCoord, VoxelCoord)) -> bool {
 
 /// A static camera over the cavity for 16 frames, then a radius-4 carve where the view
 /// axis meets the wall: the age reads 0 in every pixel whose hit lies in the carve's `aabb`
-/// dilated by one voxel and 16 in every other hit pixel; one more frame reads 1 and 17.
+/// dilated by one voxel and 16 in every other hit pixel; one more frame reads 1 and 17. The
+/// light history is on (`Lighting::light_history`, off by default, ADR-0082).
 #[test]
 fn history_dies_in_the_edit_box_and_ages_elsewhere() {
     let world = cavity_world();
     let Some(mut rig) = LookRig::new(&world, None) else {
         return;
     };
+    with_light_history(&mut rig);
     let camera = cavity_camera();
     let light = vxe_render::LightParams::headlamp();
     for _ in 0..16 {
@@ -395,13 +406,14 @@ fn history_dies_in_the_edit_box_and_ages_elsewhere() {
 
 /// A camera that moves one voxel sideways between two frames keeps age 1 or more in at least
 /// 95 % of the pixels that hit the cavity's unchanged material, and every pixel whose hit
-/// changed material (a `Replace` the frame is not told of) reads 0.
+/// changed material (a `Replace` the frame is not told of) reads 0. The light history is on.
 #[test]
 fn reprojection_holds_across_a_sideways_step_and_a_material_change_resets() {
     let world = cavity_world();
     let Some(mut rig) = LookRig::new(&world, None) else {
         return;
     };
+    with_light_history(&mut rig);
     let light = vxe_render::LightParams::headlamp();
     let mut camera = cavity_camera();
     rig.frame
@@ -574,8 +586,11 @@ fn lamp_cave(history: vxe_render::HistoryKill) -> Option<(LookRig, vxe_render::C
     for _ in 0..4 {
         rig.gpu.sync_now(&world, &rig.device, &rig.queue).unwrap();
     }
+    // The history kill's modes act on the light history, on here (off by default since Plan
+    // 0098 Phase 4).
     rig.frame.set_lighting(vxe_render::Lighting {
         history,
+        light_history: true,
         ..vxe_render::Lighting::default()
     });
     let camera = vxe_render::Camera {
