@@ -498,7 +498,11 @@ Floor, Performance and High `face`, `ray-record`, the picked hold; Portable `fac
   file of its own.
 - **Threading and memory:** no new thread, no new allocation in the frame path.
 
-**Questions for the owner** (the lane goes by the recommended option once he says go):
+**Questions for the owner** (the lane goes by the recommended option once he says go).
+**Answered 2026-11-24 (owner):** 1, the fix goes here as Phase 2; 2, he asked which arm is
+better for performance, which is `face` (no added cost expected, against up to four horizon
+marches a lit pixel for `face-smooth`), so the recommended option stands unless the window
+says otherwise; 3, 4 and 5, the recommended options.
 
 1. **Where the bake's key ray fix goes.** Recommended: here, as Phase 2, under ADR-0084,
    because the ADR that supersedes ADR-0079's clause is this plan's and the far cover source
