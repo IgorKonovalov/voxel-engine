@@ -238,7 +238,9 @@ mod ceiling {
     /// anchor holds by the floor's share: the settled eye is within 1 EV of the 1 %-sky pose's
     /// and both ceilings in force are within 1/64 EV of `c_a` (the ceiling under a share `F`
     /// of 0, the anchor whatever is in view). With `F_floor` 0 (the before) the shade pose's
-    /// ceiling releases to `OUTDOOR_MAX` within 1/64 EV. `VXE_TEST_ADAPTER` picks the adapter
+    /// ceiling releases to the release top under the default lift
+    /// (`AutoExposure::release_top(c_a)`, `min(max, c_a 2^L)`) within 1/64 EV, and with the
+    /// lift off as well to `OUTDOOR_MAX` within 1/64 EV. `VXE_TEST_ADAPTER` picks the adapter
     /// (unset: lavapipe).
     #[test]
     #[ignore = "soak"]
@@ -253,20 +255,30 @@ mod ceiling {
         let (s, fs) = read_with(&mut rig, &shade, sun, false, leaf, on, true);
         let (k, fk) = read_with(&mut rig, &w2_camera(W2_SKY), sun, false, leaf, on, true);
         let (b, _) = read_with(&mut rig, &shade, sun, false, leaf, AutoExposure { sky_anchor_floor: 0.0, ..on }, true);
+        let unlifted = AutoExposure {
+            sky_anchor_floor: 0.0,
+            sky_anchor_lift: None,
+            ..on
+        };
+        let (u, _) = read_with(&mut rig, &shade, sun, false, leaf, unlifted, true);
         let (h, _) = read_with(&mut rig, &shade, sun, false, leaf, AutoExposure { sky_anchor_share: 0.0, ..on }, false);
         let c_a = h.ceiling;
         println!("on {}: c_a {c_a:+.3} EV, floor shade {fs:?}, floor 1 % sky {fk:?}", rig.adapter);
         row("W2 shade, floor 1/8", 1.0 / 256.0, &s);
         row("W2 1 % sky, floor 1/8", 1.0 / 256.0, &k);
         row("W2 shade, floor off (the before)", 1.0 / 256.0, &b);
+        row("W2 shade, floor off, lift off", 1.0 / 256.0, &u);
         println!("reading: the eyes apart {:+.3} EV, the before's {:+.3} EV", s.eye - k.eye, b.eye - k.eye);
         assert_eq!(s.sky, 0.0, "no sky in view at the shade pose");
         assert!((s.eye - k.eye).abs() <= 1.0, "shade {} against 1 % sky {}", s.eye, k.eye);
         for (name, r) in [("shade", &s), ("1 % sky", &k)] {
             assert!((r.ceiling - c_a).abs() <= 1.0 / 64.0, "{name}: ceiling {} against c_a {c_a}", r.ceiling);
         }
+        let top = f64::from(on.release_top(c_a.exp2() as f32)).log2();
+        println!("reading: release top under the default lift {top:+.3} EV");
+        assert!((b.ceiling - top).abs() <= 1.0 / 64.0, "the before releases to the top: {} against {top}", b.ceiling);
         let max = f64::from(flythrough::cli::OUTDOOR_MAX).log2();
-        assert!((b.ceiling - max).abs() <= 1.0 / 64.0, "the before releases: {}", b.ceiling);
+        assert!((u.ceiling - max).abs() <= 1.0 / 64.0, "the before with the lift off releases: {}", u.ceiling);
     }
 
     /// Prints one row: the scene, the arm, and [`Read`]'s fields.
