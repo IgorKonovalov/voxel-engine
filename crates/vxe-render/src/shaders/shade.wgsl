@@ -94,10 +94,21 @@ fn sky_baked(v: vec3<i32>, face: u32) -> bool {
 // `view` to the temporal pass's far estimate, with no ray (ADR-0079): under LIGHTING_KEY_BAKED
 // (the record where fresh, else the column map's horizon; the horizon alone under
 // LIGHTING_KEY_COLUMN), where the far normal's weight is 1 (at least one half under
-// LIGHTING_KEY_STEP).
+// LIGHTING_KEY_STEP). Also at every distance where a cast sample would be shown nowhere
+// (ADR-0082): the light history's setting off (`Params::history` bit 0 clear on a frame whose
+// history is valid, bit 1 set), not the approach penumbra and no sky jump. There the temporal
+// pass's key branch resets at every pixel, and a reset mean under the far estimate is its
+// seed, the far estimate itself, which the no-ray branch shows too (`key_mean`, `key_far_fade`
+// with no history taken). A frame whose history is invalid clears both bits whatever the
+// setting, so it casts as it would without this clause, and a slot the history-on paths read
+// next frame is never left by it.
 fn key_from_store(rec: HitRecord, view: View) -> bool {
     if ((params.lighting & LIGHTING_KEY_BAKED) == 0u || !reads_store(rec)) {
         return false;
+    }
+    if ((params.history & 3u) == 2u
+        && (params.lighting & (LIGHTING_PENUMBRA_APPROACH | LIGHTING_SKY_CHANGED)) == 0u) {
+        return true;
     }
     let at = select(1.0, 0.5, (params.lighting & LIGHTING_KEY_STEP) != 0u);
     return far_normal_weight(view, rec.t) >= at;

@@ -1163,3 +1163,23 @@ defaults' light pass reads as `--calm`'s, 11.4, 6.2 and 6.1 ms against the old d
 27.7 and 11.2: the approach penumbra's cost is gone from the default (Plan 0095's table above),
 and the RENOIR at 1080p is still over the 4.0 ms lighting line by 1.5 to 2.8 times. The temporal
 pass holds (5.9 to 6.4 ms RENOIR) and the a-trous rises with no history (3.7 to 5.3 ms RENOIR).
+
+**The unshown key ray not cast (Plan 0098 Phase 13, 2026-11-23, ADR-0082): this row replaces the
+after columns above as the defaults' figures.** Under the defaults the light pass casts no key ray
+at a cube face wherever the light history's setting is off, the penumbra is not approach and the
+sky did not jump (the cast sample was shown nowhere). The same protocol as above, on the RTX
+3080 Laptop and the RADV RENOIR (`--adapter`), exclusive perf lock per run, nice 19, the 1-minute
+load at the lock 0.9 to 6.6; before is `4c61a3e8` (the Phase 4 defaults), after is the same tree
+with the skip (Plan 0098 Phase 13's commit); each read twice, interleaved (before, after, before,
+after, 19:42 to 20:09). Light / temporal / a-trous / GPU frame in ms, the first run, and the
+second run's light in brackets:
+
+| scene | RTX before | RTX after | RENOIR before | RENOIR after |
+|---|---|---|---|---|
+| forest 15:00 | 1.07 (1.64) / 0.78 / 0.78 / 5.50 | **0.22 (0.27)** / 1.04 / 0.96 / 5.77 | 11.30 (11.31) / 6.18 / 4.58 / 45.13 | **1.61 (1.61)** / 6.18 / 4.58 / 35.43 |
+| forest `--sun 10,180` | 0.89 (0.96) / 1.20 / 1.15 / 7.27 | **0.26 (0.27)** / 1.14 / 1.20 / 6.71 | 6.17 (6.22) / 6.15 / 4.58 / 39.93 | **1.61 (1.61)** / 6.15 / 4.57 / 35.36 |
+| hills 12:00 | 0.73 (0.68) / 0.93 / 0.72 / 6.95 | **0.40 (0.42)** / 0.85 / 0.69 / 6.23 | 6.02 (6.13) / 6.27 / 3.53 / 49.93 | **2.07 (2.07)** / 6.28 / 3.53 / 46.00 |
+
+On the RADV RENOIR the light pass falls 7.0, 3.8 and 2.9 times and is under the 4.0 ms lighting
+line in all three scenes; the RTX's GPU frame swings by its clock state run to run (5.5 to 8.0 ms
+before), so its frame column is not a gain.

@@ -575,9 +575,14 @@ fn outdoor_forest_sunset_golden() {
 
 /// Plan 0095 Phase 10 bar 4 (ADR-0079): `outdoor_forest_afternoon.png`, the `forest` spawn
 /// with `--trees forest` over the chunks within 2 of the spawn's (1 in z) at 15:00, under the
-/// picks (the far reads the record, else the column map's horizon, by the far normal's band;
-/// the approach penumbra near), no drain (no store baked: every far pixel reads its horizon),
-/// 64 frames, matches the bless with an SSIM of at least 0.98.
+/// defaults (ADR-0082: no light history, key far column with the step, the disc penumbra), no
+/// drain, 64 frames, matches the bless with an SSIM of at least 0.98. With no store baked the
+/// image is the defaults' honest one under cover: at every cube face the key light's
+/// visibility is the column map's horizon, 0 under the canopy at any sun angle, and with no
+/// record and no history the sky visibility shows the column's answer, 0 there too, so the
+/// ground under the canopy takes no sun and no sky and is dark, lit only where no canopy is
+/// overhead. A baked store gives the sky term back once its record lands; the sun under cover
+/// stays dark.
 #[test]
 fn outdoor_forest_afternoon_golden() {
     let Some(mut forest) = Hills::new(Spawn::Forest, TreeDensity::Forest, 2) else {
