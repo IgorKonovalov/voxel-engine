@@ -17,6 +17,14 @@ Rules:
 
 ## Next up
 
+### The record by rule at every opening, and the bake's key ray at its cap (2026-11-23)
+
+From [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 10 (its section "Phase 10 after its reading"; readings in `docs/plans/logs/0096.md`, "Phase 10a"). A small plan of its own, to run ahead of Plan 0099's Phase 1; not drafted.
+
+- **The reading:** ADR-0080 rule 1's zero record is applied only to a first bake with a full reach under final columns, so it answered 266, 241, 3 and 6 chunks on the four runs; of the jobs opened before the in-view landing it would have answered 11.4 % (RTX forest), 20.0 % (RTX hills), 12.0 % (RENOIR forest) and 10.1 % (RENOIR hills), and 5.1, 8.9, 5.1 and 6.5 % of the samples, mostly chunks with a partial reach. The win is bounded by those shares: about 1.4 s of the RENOIR forest's 27.3 and under 4 s of the RTX's 36.5 (arithmetic).
+- **First, the bake's key ray:** a key ray that reaches the job's radius without rock counts lit (`bake.wgsl`), so a floor under a closed cave taller than the radius would bake sunlit where the column clause says no sky. Plan 0096 Phase 10c reads it on a rig; if confirmed, the fix is the column clause at the key ray's cap (record bytes change; ADR-0079's bake), and it is an image question for the owner.
+- **Then the rule at every opening:** Plan 0096's Phase 10b as written, cases (1), (2) and (3), with fact (i) restated (every change of a top is a mirror change the re-list reads; a full chunk arriving over its LOD can lower a top) and the audit on the real scenes (every ruled chunk also baked and compared, 0 differ). ADR-0080's rule 1 sentence on the column map's finality is superseded there.
+
 ### The bake step off the main thread (2026-11-22)
 
 Taken by [Plan 0099](plans/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) and ADR-0083, approved 2026-11-22; its lane after Plan 0087.
@@ -275,7 +283,7 @@ Routed by the architect's amendment at the close review of [Plan 0096](plans/009
 - **The listing census reads no bands.** `--queue-census` counts every surface chunk as near ("mid 0, far 0" on all four runs of Phase 9), so it is taken without the far-normal band; the in-view line's bands are right. Give the census the view's `Bands`, with a CPU test that a synthetic listing of 4 near, 4 mid and 4 far chunks prints those counts.
 - **Faceless chunks at the residency's edge reach the listing** (16, 27, 0 and 8 on the four runs): the worker's verdict counts a neighbour not streamed as open, and the outer neighbour of an edge chunk never streams. One listing each, no job. Left as is unless a census shows the count growing with the radius faster than the sphere's surface.
 - **The Portable profile's 720p is stretched to the window's shape** (the fly-through, `cli/settings.rs` `fixed_output`): a 16:9 frame scaled to 2530 x 1378 is about 3 % wide, no letterbox. The fix proposed: the hint's pixel count at the window's aspect (1 301 x 708 there), so no stretch, no bars, the same budget. With it, if the owner picks it (the plan's question 2): the fixed output as a readable row of the engine's profile, so a game that picks `Profile::Portable` is told.
-- **If Phase 10's gate stays shut:** the record by rule answers 0.1 to 7 % of the buried chunks (the opening applies it to a first bake with a full reach under final columns only); the reading and the three exclusions are in the plan's Phase 10. This line leaves when Phase 10b lands.
+- **Phase 10b** left the plan at its reading: see "The record by rule at every opening" under Next up.
 
 ### Plan 0097's leftovers (close review, 2026-11-23)
 

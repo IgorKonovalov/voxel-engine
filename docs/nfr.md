@@ -167,13 +167,15 @@ drain is over twice the shortest is out; Plan 0096's readings log, Phase 9): the
 and 25.1), the RENOIR kept 6.0. The window's readings (the owner's Plan 0096 Phase 8 at 2530 x
 1378, not against these lines) are in [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md).
 
-**Not read, disclosed at the close review (2026-11-23):** the record by rule (ADR-0080 rule 1)
+**Disclosed at the close review (2026-11-23):** the record by rule (ADR-0080 rule 1)
 answered 236 of the 3 540 buried chunks of the RTX's forest (233 to 241 of 3 526 on the hills)
 and 1 to 12 of 1 019 on the RENOIR (6 of 1 066), because the opening applies it only to a
 first bake with a full reach under final columns; the others take GPU jobs, some twice (a
-provisional bake and its catch-up). What share of the in-view drain those jobs are is not
-read, so the standing column's causes above are the largest read, not the whole. Plan 0096
-Phase 10 reads it and, behind its gate, applies the rule at every opening.
+provisional bake and its catch-up). Read at Plan 0096 Phase 10a (`f0b55422`, quiet): of the
+jobs opened before the in-view landing the rule would have answered 11.4 % in the RTX's forest
+(20.0 % on the hills) and 12.0 % in the RENOIR's (10.1 %), and 5.1 (8.9) and 5.1 (6.5) % of
+the samples, so the causes in the standing column are the larger part and this is the rest.
+Applying the rule there is the backlog's "The record by rule at every opening".
 
 Every reading against this budget, with its machine, scene and commit, is in
 [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md); new readings go there.
