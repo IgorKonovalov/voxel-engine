@@ -21,6 +21,13 @@
 > far bar moves to the arm with the queue stopped; Phases 11 (the soak bars), 12 (the HUD's
 > `light:` row) and 13 (the key ray that is never shown is not cast, and a test of the
 > default's near key shadow) are new. **Order from here: 11, 12, 13 (beside W3), 10, the close.**
+> **Amended 2026-11-23 (owner, W3)**, at window W3's verdicts (section "Amendment at W3"): the
+> calm defaults stand on both adapters and light history on is rejected as an alternative; the
+> dig is not accepted, so Phase 14 (a fresh hole shows a held world value until its bake lands)
+> and Phase 15 (the owner's look at the dig alone) are new; the noon terraces, the coarse
+> tier's wobble and the sun under cover go to one follow-on plan, outlined there (the
+> architect's recommendation, owner confirm owed). **Order from here: 11, 12, 13, 14, 15, the
+> gate, the close.**
 > **Created:** 2026-11-21
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0082](../adrs/0082-the-light-pass-keeps-no-screen-history-by-default-and-reads-smooth-sources-to-the-mid-range.md)
@@ -444,6 +451,226 @@ for a broken sun.
    wait acceptable); the backlog entry carries "a better value before the bake". The other
    option: the default keeps the light history where a face has no record, which gives back
    the wobble there.
+
+## Amendment at W3 (2026-11-23; the owner's verdicts, the architect's routing)
+
+W3 ran on the evening of 2026-11-23 (`live/session98c.sh`, `live/bin98d` at `248d64db`: the
+calm picks as defaults, `dig hold` on; stills under `live/window98c/`). The owner's words are
+in [`logs/0098.md`](logs/0098.md) ("Phase 10: W3's verdicts"). **The verdicts are his and
+binding. The mechanisms named below are the architect's reading of the code and are suspects
+until a reading names them** (Phase 14's step 1 for the dig, the follow-on plan's for the
+rest). The routing in "What closes this plan" is the architect's recommendation; the lane
+goes on by it, and an owner's "no" moves a subject back into this plan.
+
+| question | W3's answer | what follows |
+|---|---|---|
+| the defaults against light history on (6a) | history on: "light edges are grainy, but overall light looks better", then "wobble comes back, and light only visible when I close", and "light only comes when I see it, even after turn looks completely unnatural" | **the defaults stand; light history on is not an alternative**, for the forest or the terraces |
+| **a dig under the defaults** (1b; 1a is `dig hold` off) | 1a: "not good"; 1b: "better but not ideal"; typed: "darken, have white flash". Stills: a pure white patch and pure black faces in the fresh hole (`1b-dig2-during.png`), fresh faces too bright with speckle on new grass side faces (`1b-dig1-during.png`) | **Phase 8's look failed. Phase 14, in this plan** |
+| the dig on the RENOIR at Portable (5, 5c) | "dots when I dig"; "dots disappear after light land"; at `--bake-tiers 4096,256,256`: "dots disappear faster" (`5-radeon-dig-dots.png`, `5-radeon-inside-hole-dots.png`, `5c-dig-during.png`, `5c-dig-after.png`) | the same class as the white hole: a wrong value until the bake lands, at 1,024 and 4,096 samples alike. **Phase 14**. Settled holes are clean at both counts, so the profile's 1,024 near tier stands (Plan 0096's leftover, answered) |
+| **the noon terraces** (2) | "light settles on slopes and wobbling"; typed: "wobble on slopes" (`2-noon-settling.png`, `2-noon-settled.png`: the slope covered in hard one-voxel shadow dashes) | Phase 9's route (i) is void: its switch is the light history, now rejected. **The follow-on plan's first subject** |
+| **near trunks and leaves** (3) | "slight wobble after stop and turn", "on trees, trunks and leaves nearby"; "once coarse light changes to a normal one, wobble stops" | a new finding: the wobble belongs to the coarse tier's record, not to the settled defaults (no regression against W2's 2a once loaded). **The follow-on plan's second subject** |
+| **the sun under cover** (6a) | the floor has no sun patches under the defaults; with them the light is "comparable to the trees" and better; the screen history's way of getting them is rejected | a requirement, recorded below and in the backlog. **The follow-on plan's third subject, with an ADR** |
+| the RENOIR at Portable under the defaults (4) | "its much better, light takes maybe 5 sec to load, and fps is around 30"; typed: "bearable" | accepted. Nothing owed here |
+| the frame rate at a dig and while the bake drains | about 30 fps on the RTX (HUD: bake step 26 to 31 ms) | the bake step on the main thread: Plan 0099, as before |
+| not run | 5d (1,024 at `--render window`) and 6b (the tunnel's roof slot) | 5d is moot (the settled hole is clean at 1,024); 6b moves to the follow-on plan's window |
+
+### The dig: why Phase 8's test passed and the owner's eye did not
+
+`flicker::a_dig_under_calm_neither_darkens_nor_flashes` (read by the architect:
+`apps/flythrough/tests/gpu_outdoor/flicker.rs`) asserts three figures of the defaults' arm
+against **the history-on arm's largest plus a margin**. Three faults, none of them the dev's:
+the bar was the plan's.
+
+1. **The baseline holds the fault.** The history-on arm's hole reads brighter than its
+   settled value by over 4 levels in 62.58 % of its pixels on the RTX and 31.24 % on
+   lavapipe, with a mean excess of +10.4 levels (the log, Phase 8). A bar of "no worse than
+   that plus 2 points" passes any hole that flashes as much as the history's does. The
+   owner's "no flash" at W2's run 5 was said of his pose in the window, and nothing checked
+   that the rig's baseline arm was clean in the rig.
+2. **The rig's pose does not make the white.** It digs once, 35 voxels ahead at 30 degrees
+   down, under the forest's canopy, in a chunk whose light is settled: the removed surface's
+   visibility is 0.055 and the hole's settled 0.033, both dark. The window's white needs a
+   surface under open sky on a pale material, dug into from above and dug again (the log
+   said so: "no rig here holds that pose"). On the RTX the rig's dig also lands in 1 to 3
+   frames; in the window the queue held thousands of chunks and 322 in view were waiting
+   (`1b-dig1-during.png`'s HUD).
+3. **The statistics cannot see three of the four faults.** A share of pixels brighter by
+   over 4 levels counts a white pixel the same as one 5 levels up; a mean hides a white
+   patch beside black faces; nothing reads darker-than-settled in the hole (black), and
+   nothing reads a pixel against its neighbours (speckle, dots).
+
+**What Phase 14's test measures instead:** each pixel against **its own values before and
+after** (no arm as the baseline), darker as well as brighter, isolated pixels against their
+neighbours, in the pose where the reading reproduces the white, and it is shown to fail on
+the tree before the fix.
+
+### The dig: what a fresh face shows today (read in the code, not on a rig)
+
+Confirmed by the architect in `temporal.wgsl`, `pair.wgsl`, `edits.wgsl`,
+`frame/encode.rs` and `bake/summary.rs` at `96b92ba2`:
+
+- **The hole takes its light from cast rays.** A pixel whose hit lies in a held dig box
+  (`in_dig_hold`) reprojects the sky's visibility pair alone (`dig_pair`, `pair_taken`). On
+  the dig's own frames the kill box (`in_edit`) refuses the reprojection, so the pair is
+  the seed (`pair_step` returns the estimate at the seed's age); after them it blends one
+  sky ray a frame (the HUD's `sky rays 1`), a sample of 0 or 1, at `1 / (age + 1)`.
+- **The seed is the removed surface's value, or 1, or 0.** Where the face's own cell holds
+  a record, stale or not, the seed is that record's visibility at `SEED_AGE` (8 samples).
+  Until its job lands a dug chunk's block is `provisional_block`'s: a kept brick keeps its
+  record, a new brick takes the mean of the records of the bricks around it, so a face a
+  metre down the hole holds the visibility of the surface that was dug away. Where the
+  cell holds no record the seed is `column_estimate`: 1 if the hit, lifted 2.5 voxels
+  (`SEED_LIFT`) along its face normal, is above its column's top, else 0, nothing between,
+  at `SEED_COLUMN` (2 samples).
+- **The ring's hold stops at the dig's bounding box.** `dig_ring_held` is false inside a
+  held box, and the box is the edit's bounds, so the ground at the corners of the box about
+  a round dig is ring by geometry and takes the hole's path, rays and all.
+- **The ring's hold needs a record.** It applies where the face's own cell holds a stale
+  record and the ray was cast (`sky_cast && rec_face`); a ring face with no record of its
+  own (a chunk at the coarse tier or not landed) is not held.
+- **The key term is the column map's horizon** in the hole as everywhere (the amendment
+  above); it does not change at the landing.
+
+What that predicts for each thing the owner saw. **Inferred, to be read in step 1:**
+
+| what the owner saw | the candidate from the code |
+|---|---|
+| a pure white patch, gone at the landing | the sky term at a visibility of 1 on pale rock: the removed open surface's record, or the column's 1 at a floor face whose lifted point is above its own column's new top. It leaves at the landing, so it is the sky term and not the key's |
+| pure black faces beside it | the column's 0 at a face whose lifted point lies under a rim cell's top, or a face with no record and no chain value (the HUD's `missing ... black`) |
+| fresh faces too bright (`1b-dig1`) | the removed surface's visibility on a face that will land far darker |
+| speckle on new grass side faces; pixel-size dots on the RENOIR, in the hole and on the ground around it, at any sample count, gone at the landing | a short mean of one binary ray a frame shown raw (a seed of 2 samples where the column seeded it); around the hole, the box's corners. Not the bake's sample count: the bake is not what is on screen yet |
+| "darken" (typed; not visible in the stills) | not known. Candidates: the auto exposure answering a white patch that fills the view from above (Phase 8's rig read the exposure moving under 0.2 %, with no white in it); ring faces with no record of their own (`1b-dig1`'s HUD: 322 in view waiting, 101 coarse), which the hold does not cover; the box's corners |
+
+### Routing the terraces, the coarse tier and the sun under cover
+
+**The noon terraces.** The cause as far as it is read (Phase 9, and the amendment at Phase
+4's findings): the shown key shadow is the column map's horizon, a hard edge one map cell
+wide, evaluated at the hit; the hit moves with the jitter and crosses the edge inside a
+voxel face (22 to 32 % of the moved pixels), and FSR 2 resolves a one-voxel edge from a
+half-rate lighting grid (60 to 76 %: nothing moves at the lighting pixel). With no upscaler
+and no jitter nothing moves. Three world-space candidates, none read:
+
+- **(a) The key shadow evaluated at the voxel face's centre (recommended as the first
+  arm).** One value per face, fixed in the world: a jittered hit cannot cross an edge
+  inside a face, and the shadow's edge falls on a face's edge, which FSR 2 already resolves
+  as it resolves an albedo edge (W1: albedo "no wobble"). It is a few lines where the
+  temporal pass calls `column_key_visibility`. It does not touch the 60 to 76 % directly;
+  whether an edge on a face's edge resolves calmly from the half-rate grid is the question
+  the spike answers. It gives up the horizon's ramp inside a face (the ramp becomes steps a
+  face wide).
+- **(b) The column map's answer filtered in the world** (bilinear over the map's cells, a
+  soft edge fixed in the world). The jitter then crosses a ramp, not a step. It needs the
+  horizon march to read four cells where it reads one, on every lit pixel.
+- **(c) The key term at the full rate.** It removes the half-rate resolve and pays the key
+  pass at 2.25 times the pixels; on the RENOIR that is the budget.
+
+**Not in this plan, though (a) is a few lines.** As a default it moves every sunlit golden
+and needs the owner's eye on the shadow's new look; as a setting nobody has looked at it
+calms nothing. And the third subject (a key term baked per face in the store) is the same
+idea done whole, a value fixed per face in the world, so (a) is its cheap probe and the
+two belong in one plan. The concrete next step: the follow-on plan's Phase 1 builds (a)
+default-off, reads it through Phase 9's rig as it stands
+(`gpu_wobble/terraces.rs`), and its window shows it.
+
+**The coarse tier's wobble on near trunks and leaves.** New at W3, read by nobody. A
+coarse block is the live queue's first pass over a chunk, refined later (`TABLE_COARSE`,
+`bake/record.rs`); the HUD names it `coarse 8/256` beside `bricks 8/4096`, the same brick
+edge at a sixteenth of the samples. How its records differ from the full tier's beyond the
+sample count is not read here. Hypotheses only: (1) at 256 samples two neighbouring
+bricks' values lie far apart (the bake's noise frozen as a step in space), and on thin
+geometry the jittered hit moves between them; (2) a face whose cell or direction the
+coarse block does not hold falls to the chain, and with no history the chain's last answer
+is the column's 0 or 1 at a lifted point that flips under sparse leaves; (3) the
+smoothed-normal mix (`sky_baked_term`) reads the neighbour directions' records, and which
+of them a coarse block holds changes the weights across a jitter step.
+The far normal's band is not a candidate at this range. Route: a reading (the wobble rig's
+near class with the store held at the coarse tier, the source word a pixel) and then a
+fix, in the follow-on plan. Plan 0099 shortens the time a face holds its coarse record; it
+does not make the record calm, so the finding is not left to it.
+
+**The sun under cover: the requirement.** Sun patches under canopies and through openings
+that are (1) steady at a still camera and while moving, (2) present at a distance, the
+same as near, and (3) present before the surface comes into view and after a turn. A
+screen history gives none of the three (W1, W3). So the source is in the world: a key
+term baked in the store (ADR-0079's key record, which today leaks: the bake's key ray
+counts lit at its cap, the backlog's "The record by rule at every opening, and the bake's
+key ray at its cap"), or a shadow source better than the column map. The backlog's "The
+sun's shadow near under the calm defaults" carries it, with W3's verdict and the stills.
+
+### What closes this plan, and what the next plan takes
+
+**This plan closes after the dig is fixed and looked at: Phases 11 to 13 (in flight),
+Phase 14, Phase 15, the gate, the close review.** Its subject is the calm defaults, and
+they are accepted on both adapters; the main push waits on this merge. The dig is inside
+because the owner ruled so at W2 and the defaults broke it. The other three are not:
+
+- The terraces wobbled before this plan (the diagnosis window's scene A, under every
+  switch) and the defaults did not make them worse; what W3 took away is the last switch
+  that hid them.
+- The coarse tier's wobble is the time before the bake lands, a state the owner called
+  "acceptable" at W2 and "no wobble anymore" once loaded.
+- The sun under cover is a design question with an ADR.
+
+**The next plan, to be drafted by the architect at this amendment's confirmation** (the
+next free plan number at drafting; one plan, three subjects, in this order):
+
+- **Title:** "A sun fixed in the world: the key shadow a face at a time, the coarse tier
+  held still, and sun under cover".
+- **1. The key shadow's edge under jitter (a spike, exploration).** Arms (a), then (b),
+  default-off, on Phase 9's rig; the owner's window on the noon slope picks. No ADR for
+  the spike; a pick that changes what ADR-0079's horizon is evaluated at is recorded in
+  the ADR of subject 3.
+- **2. The coarse tier's wobble (a reading, then a fix).** The three hypotheses above; the
+  fix is written once the reading names the source. An ADR only if the fix changes the
+  coarse record's layout or what the chain answers.
+- **3. The sun under cover (design, then phases).** **Needs an ADR**, superseding
+  ADR-0079's clause on the near key source and extending ADR-0082's limit: the baked key
+  term near against a better shadow source against the column map as it is. It depends
+  on the key ray's cap fix (the small plan the backlog names, or its first phase taken
+  here; the architect says which at drafting). Window runs: the forest floor at 15:00
+  from a distance and after a turn, and the tunnel's roof slot (W3's 6b, not run).
+- **The order's reason:** 1 is the cheapest and the one always on screen at noon, and its
+  result (does a value fixed per face calm the edge?) tells subject 3 whether a baked key
+  term will; 2 is independent and can run beside 1; 3 is the largest and is designed with
+  1's reading in hand.
+
+### Budgets and risks this amendment adds
+
+- **Phase 14 (guesses, measured there).** Nothing at rest. In flight, no more than Phase
+  8's readings (the temporal pass on against off: +0.04 ms on the RTX 3080 Laptop, +0.66
+  ms on the RADV RENOIR); if the fix shows a held value where the rays are cast today,
+  the light pass's rise in flight (0.13 to 0.40 ms and 1.16 to 3.94 ms) may fall, which is
+  a reading and not a bar. Any store word the fix adds is stated in bytes a block.
+- **Section 7.** Phase 14's image test is soak (its sibling is 62 s on lavapipe); the gate
+  grows only by its CPU test.
+- **The reading may not reproduce the white headless.** Then the phase stops with what the
+  pose shows, and the owner's window is the only instrument: the fix would be chosen from
+  the code alone, which this plan has been burned by, so the stop is real.
+- **No estimate is right for every hole.** A fresh face's true value needs the bake. The
+  aim is a value that is never white, never black, never noise, and close enough that the
+  one fade at the landing is small; the reading's error table says how close each
+  candidate is.
+- **`temporal.wgsl` is 31 lines under the file-size gate.** The fix's shader code goes to
+  `pair.wgsl` or a file of its own.
+- **Phase 13's skip and Phase 14 meet at the dig box.** Phase 13 does not skip the sky
+  cast because the dig hold reads it; if Phase 14's fix shows no ray in the box, the
+  followup on the unshown sky cast loses its exception. Phase 14 runs after 13 lands.
+
+### Questions for the owner (each with the recommended option; the lane goes on by them)
+
+1. **What closes Plan 0098.** Recommended: the dig fix (Phase 14) and one short look at
+   the dig alone (Phase 15), then the close; the terraces, the coarse tier and the sun
+   under cover go to the one follow-on plan above, drafted next. The other option: the
+   terraces' arm (a) is built here before the close, default-off, and Phase 15 looks at it
+   too (a day more, a second verdict to wait on, and a re-bless inside this plan if it is
+   picked).
+2. **The follow-on plan's order: the terraces' edge, the coarse tier, the sun under
+   cover.** Recommended: yes. The other option: the sun under cover first (the larger
+   change to the picture; the terraces then wait for its key term).
+3. **The Phase 8 hole path (the pair over cast rays) after Phase 14.** Recommended: it
+   stays reachable as a value of `--dig-hold` for Phase 15's before-and-after and is
+   removed at the close if the look passes (you rejected it at W3; it is not a cheap arm
+   someone may want). The other option: keep it as a setting.
 
 ## Decision
 
@@ -1009,6 +1236,164 @@ cherry-picks it; the orchestrator's call.
 | fix pass, only if W3 changes a pick or sends the dig back | dev | the default's row, its re-bless and Phase 13's test agree with the new pick |
 | the gate at the tip | dev | build, the gate tier on lavapipe under the perf lock, clippy, fmt, deny and the doc gates pass on the tree that holds 11 to 13 and main; the two soak tests of Phase 11 pass by name |
 | the close review | architect, a fresh session | the review is clean, ADR-0082 is accepted with its Outcome (the picks named as they are shown, the landing's step, the dig's rule, the limits under cover), the backlog holds what is parked, the plan moves to `done/` |
+
+### Phase 14: A fresh hole shows a held world value until its bake lands
+- **Owner skill:** dev
+- **What** (added 2026-11-23, owner at W3: Phase 8's look failed; "Amendment at W3" has what
+  the code shows today and why Phase 8's test passed). Not exploration: the look is after it
+  and the test lands with it. Three steps in order; **step 1 gates the fix.** No scene,
+  model, material or hole size changes so that a check passes; the camera's pose and the
+  sequence of digs are the rig's and are set to the owner's.
+  1. **The reading, in the owner's pose.** The dig rig (`flicker::reading`,
+     `support::defects`) gains a pose from above: the forest at `--sun 10,180` on open
+     ground (the stills' HUD: the eye at x 0.5 y 640.5 z 579.5 voxels, looking steeply down
+     at ground about 2 m off), the fly-through's dig (a sphere of radius 0.5 m), **three
+     digs down the same ray**, the second and third into the fresh hole, one of them made
+     while the dig before it is still in flight; and one arm where the first dig is made
+     before the view's light has left the coarse tier (`1b-dig1-during.png`: 322 in view
+     waiting, 101 coarse). The Phase 8 poses stay as they are beside it. Read from N - 1
+     until every dig job has landed plus 24 frames, on the **RTX 3080 Laptop** and the
+     **RADV RENOIR** (the RENOIR also at the Portable profile's march, 853 x 480, the forest
+     at 15:00, where the dots were seen). It must first **show the fault**: frames written
+     under `live/` in which the hole holds white and black faces. Then, for four classes of
+     display pixels in the hole and the ring, **white** (brighter than both its value at
+     N - 1 and its settled value), **black** (darker than both), **speckle and dots**
+     (apart from the median of their neighbourhood) and **the rest**, a row a frame of:
+     the sky source word (`sky_source`), whether the ray was cast, the pair's shown
+     visibility and age, which seed it took and its value (the record's, stale or not; the
+     column's 1 or 0), the store's table word (a block, coarse, none), the chain's value
+     (`store_fallback`: a value or black), the key term's value and source, whether the hit
+     lies in the kill box, the held box, the ring's hold, and the frame's exposure. For the
+     dots, the first stage that holds them: the lighting grid's pair, the filter's output,
+     the composite at the march's size, FSR 2's output. For the whole frame outside the
+     ring, the mean luma a frame (the owner's "darken"). And **an error table**: for each
+     candidate value of step 2, what it would have shown at each hole face against what
+     landed (the mean and the largest difference in display levels).
+     **Stop rules:** if no pose the dev can build shows the white headless, the dev stops
+     and reports what the pose shows. If the white, the black or the dots are not the
+     sources "Amendment at W3" names (a seed of 1 or 0, the removed surface's record, a
+     short mean of one ray a frame), the dev stops and reports what they are, and builds
+     nothing.
+  2. **The fix.** The rule: **from its first frame until its block lands, a face the dig
+     exposed, and a ring face the hold does not reach today, shows one value that is held,
+     not sampled; it is never the column's 0 or 1 and never a ray's raw sample; when the
+     block lands the value moves to the record's in one fade.** Candidates, chosen by step
+     1's error table:
+     - **(a) A held world estimate, no ray shown (recommended).** The value is the removed
+       surface's visibility (the provisional block's record, as today) times an openness
+       term that knows the hole, at most the removed surface's value and at least a floor
+       above black. Two openness terms to compare in the error table: **(a1)** the horizon
+       the column map's tops make about the hit in a few fixed directions (step 1 says
+       whether the map holds the dug columns in the dig's own frame); **(a2)** a fixed
+       fraction, the cheapest, a guess the table either supports or does not. The value
+       is the same every frame (no ray is blended into it) and the same for a pixel that
+       enters the view mid-wait. Where it lives is the dev's call inside the files below:
+       in the provisional block's records with a mark the light pass reads as "held, cast
+       no ray" (preferred: the world times it, ADR-0076 rule 3), or in the held box's path
+       in the temporal pass. The landing's fade is the one the held box already runs
+       (`no_ray_fade` over `FADE_F` frames, the box held 17 frames past the landing).
+     - **(b) The rays stay, shown only through a long mean seeded by (a)'s value.** The
+       fallback if a held value steps too far at the landing on the error table: the seed
+       counts as the cap's samples, so one ray a frame moves it a sixty-fourth at most.
+     - The ring: the hold reaches every ring face, inside the dig's bounding box too and
+       where the face holds no record of its own (its chunk's summary or the nearest
+       record's value, held).
+     Rejected: a screen history in the box (Phase 8's (b), what W3 saw); the dig's light
+     landing in the dig's frame (Plans 0096 and 0099's); a longer or shorter fade as the
+     fix (the fault is the value, not the step).
+     `Lighting::dig_hold` keeps its row: `on` is the new rule (the default), `rays` is
+     Phase 8's hole path (the before of Phase 15), `off` as it is. The banner, the HUD's
+     lighting row and the debug page name it off its default. With no dig in flight the
+     image is today's byte for byte under every value.
+  3. **The tests**, below.
+- **Files touched:** `apps/flythrough/tests/gpu_outdoor/flicker.rs`,
+  `apps/flythrough/tests/support/defects.rs`,
+  `crates/vxe-render/src/shaders/{temporal,pair,shade,edits}.wgsl` (or a new shader file:
+  `temporal.wgsl` is near the size gate), `crates/vxe-render/src/frame/{encode,state,settings}.rs`,
+  `crates/vxe-render/src/bake/{summary,store}.rs`, `crates/vxe-render/src/bake/queue/{step,tests}.rs`,
+  `crates/vxe-render/src/settings.rs`, `crates/vxe-render/tests/gpu_lights.rs` (or its
+  module for the edit box), `apps/flythrough/src/cli/outdoor.rs`,
+  `apps/flythrough/src/cli/tests/outdoor.rs`, `apps/flythrough/src/toggles.rs`,
+  `apps/flythrough/src/hud/modes.rs`, `docs/flythrough.md`, `docs/plans/logs/0098.md`.
+- **Done when:**
+  - Step 1's tables are in the log (both adapters, the owner's pose and the coarse-tier
+    arm), with the frames that show the fault under `live/`, the source named for the
+    white, the black, the speckle, the dots (and their stage) and the darkening, and the
+    error table; or a stop rule fired and the phase ends at its report.
+  - **The image test** `flicker::a_fresh_hole_holds_its_value_until_its_light_lands`
+    (`gpu_outdoor`, lavapipe, the pose and dig sequence in which step 1 shows the white;
+    born `#[ignore = "soak"]`: its sibling runs 62 s there, and this one renders three
+    digs, so about 2 to 3 min, a guess). No arm is its baseline: every pixel is read
+    against its own luma at N - 1 (`before`) and in the settled last frame (`after`). In
+    every frame from N to the last landing plus 24:
+    - **no white, no black:** the share of hole pixels brighter than the larger of
+      `before` and `after` by over 4 levels, or darker than the smaller by over 4, is at
+      most 2 %; the ring's share likewise;
+    - **no dots:** the share of hole and ring pixels over 8 levels from the median of the
+      display neighbourhood two march pixels across is at most the settled frame's own
+      share plus 1 point;
+    - **nothing darkens:** the ring's mean luma, and the mean of the frame outside the
+      ring, stay within 1 level of their value at N - 1 until the first landing (Phase 8
+      read the ring's mean falling 2.3 to 2.5 levels at the dip the owner saw, and 0.1
+      held);
+    - **one fade:** from each landing, the hole's mean luma is in no frame further from
+      its settled mean than in the frame before by over 1 level.
+    The 2 points and the 4 levels are this plan's tolerances (Phases 4, 8 and 11), not
+    derived for this statistic: step 1 prints each figure for two settled frames, and if
+    the first reads over 0.5 % or the dots' share moves over 0.5 points between them, the
+    dev stops and reports (the bar would sit in the noise).
+    **The same test on the tree before the fix (`dig hold rays`) fails its first claim,
+    printed once in the log**; if it passes there, the test does not see the fault and
+    the phase is not done.
+  - **A gate test of the mechanism** (`gpu_lights`, lavapipe, beside
+    `history_dies_in_the_edit_box_and_ages_elsewhere`; expected under 10 s, a guess from
+    that sibling, soak-marked and said so if over): a slab under an open sky, a carve from
+    above, the queue not stepped so the dig never lands. At every hole pixel on frames
+    N + 1 to N + 8 the shown sky visibility is the same value on every frame, strictly
+    between 0 and 1, and at most the removed surface's; with `dig hold rays` it differs
+    between frames at some pixel.
+  - **CPU** (`bake::queue::tests` or `bake::summary`'s, under 1 s), for any block content
+    or store word the fix writes: a new brick's held value, direction by direction, is at
+    most the mean of the records around it and at least the floor; a brick with no record
+    around it takes its chunk's summary's value, not none; the mark clears when the job
+    lands. `--dig-hold rays` parses and the lighting row names it (`cli/tests/outdoor.rs`).
+  - Readings in the log (RTX 3080 Laptop and RADV RENOIR, exclusive perf lock): step 1's
+    tables again with the fix; the light and temporal passes at rest and in flight, `on`
+    against `rays`.
+  - `flicker::a_dig_under_calm_neither_darkens_nor_flashes` still passes (its claim about
+    the ring stands); its doc comment says the hole's claim is defended by the new test.
+  - The phase's GPU run (lavapipe): `--binaries gpu_outdoor gpu_lights gpu_queue
+    gpu_outdoor_golden gpu_golden`, tests run over 0, every golden passing with no
+    re-bless (the image with no dig in flight has not moved); the two soak tests by name
+    with `--run-ignored only`. Quick tier, clippy, fmt, the file-size gate.
+
+### Phase 15: The owner's look at the dig
+- **Owner skill:** human
+- **What** (added 2026-11-23). One short session on Linux on the binary that holds Phase
+  14, every mode on screen, the dig alone:
+  1. The RTX, the forest at `--sun 10,180`, open ground, from above: dig down three or
+     four times into the same hole, once right after arriving (the light still loading).
+     Any white or black in the fresh hole? Speckle on the new side faces? Does the ground
+     around darken? Does the hole arrive in one soft change?
+  2. The same with `--dig-hold rays` (W3's 1b), for the before.
+  3. The RENOIR at the Portable profile, the forest at 15:00: dig, and look inside a dug
+     cavity. Dots in or around the hole before the light lands?
+- **Files touched:** `docs/plans/logs/0098.md` (the verdicts, in the owner's words).
+- **Done when:** the log holds a verdict per run. "Good" on runs 1 and 3 sends the plan
+  to its gate and close. Anything else is a fix pass on Phase 14 that starts by adding
+  the pose that showed it to the image test, with the still under `live/`.
+
+### The order to the close (restated 2026-11-23 after W3; it replaces the table above)
+
+| step | owner | done when |
+|---|---|---|
+| Phase 11 (in flight) | dev | the soak test passes on the RTX on the queue-stopped arm, or the dev stops with the three-run table |
+| Phase 12 (in flight) | dev | the `light:` row holds the queue's own tiers under a flag, a profile and a menu switch |
+| Phase 13 (in flight) | dev | the default's near key shadow has its test; the unshown key ray is not cast with every golden unmoved, or the skip is reverted and parked |
+| Phase 14 | dev | the reading shows the white hole headless and names its sources; the image test fails before the fix and passes after; a held value, the same every frame and never 0 or 1, is asserted in the gate |
+| Phase 15 | human | the owner calls the dig good on the RTX and the RENOIR, or names what is left (a fix pass on Phase 14) |
+| the gate at the tip | dev | build, the gate tier on lavapipe under the perf lock, clippy, fmt, deny and the doc gates pass on the tree that holds 11 to 14 and main; the soak tests of Phases 11 and 14 pass by name |
+| the close review | architect, a fresh session | the review is clean; ADR-0082 is accepted with its Outcome (the picks as they are shown, the landing's step, the dig's rule as Phase 14 built it, the limits under cover, light history on rejected at W3); the backlog holds the follow-on plan's three subjects; the plan moves to `done/` |
 
 ## Data shapes
 
