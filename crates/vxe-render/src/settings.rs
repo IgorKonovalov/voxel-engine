@@ -235,8 +235,12 @@ pub struct RenderSettings {
     pub bake: BakeKnobs,
     /// The mirror's, the streamer's and the entity pool's creation values; `Rebuild`.
     pub build: BuildSettings,
-    /// The output size a headless consumer renders at with none of its own; the consumer's
-    /// window wins. `Rebuild`: the frame never applies it.
+    /// The output size the profile is stated at. The engine never applies it: the consumer
+    /// picks its output (a headless one may take the hint, a windowed one its window's size).
+    /// A profile's frame line and its sample tiers (the bands read the output's focal length,
+    /// ADR-0080 rule 2) hold at the hint; a consumer that draws the Portable profile at a
+    /// larger output gets neither. The fly-through holds Portable at its hint in a window and
+    /// scales the frame up. `Rebuild`.
     pub output_hint: Option<[u32; 2]>,
     /// The colours a consumer marks entities with, the first and the second
     /// ([`crate::Frame::set_mark_colours`], ADR-0074); `Live`, the same in every profile.
