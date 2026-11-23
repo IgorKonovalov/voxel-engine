@@ -410,7 +410,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--missing-light black\|neighbour\|parent\|chain` | What a face with no baked value reads, ADR-0053 [chain] |
 | `--reach full\|partial` | Whether a near-band chunk waits for its whole light reach (a mid- or far-band chunk whose reach crosses the full radius bakes from the chunks resident either way, ADR-0080) [full] |
 | `--bake-drain off\|DRAIN,LINE` | The live queue's slice a frame in ms while a chunk in view waits for its tier's record (at least `--bake-budget`'s) and once none does, each 0.1 to 100; `off` is the budget alone. The `bake queue:` line names the slice `drain` or `line` [the profile's: 1.5,1 at floor, 6,1 at portable] |
-| `--bake-tiers NEAR,MID,FAR` | The live queue's samples a brick direction by a chunk's band on screen (the far-normal band at the output's focal length), each 16 to 65536 [the profile's: 4096,1024,256 at floor, 1024,256,256 at portable] |
+| `--bake-tiers NEAR,MID,FAR` | The live queue's samples a brick direction by a chunk's band on screen (the far-normal band at the output's focal length), each 16 to 65536; the HUD's `light:` row names the tiers in force as `bricks 8/NEAR,MID,FAR` (a profile switched in the menu brings its own) [the profile's: 4096,1024,256 at floor, 1024,256,256 at portable] |
 | `--queue-order score\|distance` | The live queue's order |
 | `--queue-weights A,R\|A,tier` | The score's angle and refine weights |
 | `--queue-withdraw on\|off` | Withdraw the jobs of chunks the camera passed |

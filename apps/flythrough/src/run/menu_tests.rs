@@ -1039,3 +1039,55 @@ fn the_wander_is_an_entry_with_no_key() {
         Some("wander on")
     );
 }
+
+/// The `light:` row's bricks: `bricks 8/` and the three tiers, near, mid and far, from `args`.
+fn queue_tiers(args: &crate::cli::Args) -> String {
+    let mut out = String::new();
+    crate::run::hud_feed::write_queue_banner_row(&mut out, args, "");
+    let at = out.find("bricks ").expect("the row names its bricks") + "bricks ".len();
+    out[at..].split(", ").next().unwrap().to_owned()
+}
+
+/// The `light:` row names the live queue's own tiers (Plan 0098 Phase 12): `--bake-tiers
+/// 2048,256,64` puts 2048, 256 and 64 in the row and no 4096 anywhere in it; `--profile
+/// portable` with no tier flag puts that profile's tiers; no flag puts
+/// `vxe_render::DEFAULT_TIERS`; after the menu's `profile` entry switches the profile, the next
+/// row holds the new profile's tiers.
+#[test]
+fn the_light_row_names_the_queues_own_tiers() {
+    use crate::test_support::argv;
+    use vxe_render::{Profile, RenderSettings};
+    let cell = vxe_render::internals::BRICK_CELL;
+    let words = |t: [u32; 3]| format!("{cell}/{},{},{}", t[0], t[1], t[2]);
+    let parse = |a: &[&str]| crate::cli::parse_args_from(argv(a)).expect("the flags parse");
+
+    let args = parse(&["--level", "--bake-tiers", "2048,256,64"]);
+    assert_eq!(queue_tiers(&args), words([2048, 256, 64]));
+    let mut row = String::new();
+    crate::run::hud_feed::write_queue_banner_row(&mut row, &args, "");
+    assert!(!row.contains("4096"), "{row}");
+    if args.bake.coarse > 0 {
+        assert!(
+            row.contains(&format!("near {} at 2048,", args.bake.near)),
+            "{row}"
+        );
+    }
+
+    let args = parse(&["--level", "--profile", "portable"]);
+    let portable = RenderSettings::profile(Profile::Portable).bake.tiers;
+    assert_ne!(portable, vxe_render::DEFAULT_TIERS);
+    assert_eq!(queue_tiers(&args), words(portable));
+
+    let args = parse(&["--level"]);
+    assert_eq!(queue_tiers(&args), words(vxe_render::DEFAULT_TIERS));
+
+    let mut run = bare_run(carved_rock());
+    let from = run.args.profile;
+    run.menu_act(Activated::Action(Act::Profile));
+    assert_ne!(run.args.profile, from);
+    let to = RenderSettings::profile(run.args.profile).bake.tiers;
+    assert_ne!(to, RenderSettings::profile(from).bake.tiers);
+    let row = run.queue_row();
+    let at = row.find("bricks ").unwrap() + "bricks ".len();
+    assert_eq!(row[at..].split(", ").next().unwrap(), words(to), "{row}");
+}
