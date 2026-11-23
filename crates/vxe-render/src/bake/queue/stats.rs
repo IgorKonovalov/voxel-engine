@@ -73,11 +73,9 @@ pub struct QueueStats {
     /// map's update under its lock ([`crate::bake::seal`]).
     pub seal_ns: u64,
     pub seal_max_ns: u64,
-    /// Full chunks the workers' verdicts hold sealed (no exposed face, no candidate), and the
-    /// shells the workers' map holds with their bytes.
+    /// Full chunks the workers' verdicts hold sealed (no exposed face, no candidate); the
+    /// shells behind them are read by [`BakeQueue::shells`], which takes the workers' lock.
     pub sealed: u64,
-    pub shells: u64,
-    pub shell_bytes: u64,
     /// The candidates at the last opening by where they lie against the view ([`VIEW_SHELL`],
     /// [`VIEW_IN`], [`VIEW_OUT`]): those with no block, and those with a coarse one.
     pub view_waiting: [[u64; 2]; 3],

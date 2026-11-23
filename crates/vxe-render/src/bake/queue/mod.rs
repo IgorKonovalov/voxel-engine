@@ -806,6 +806,14 @@ impl BakeQueue {
         self.census_due = true;
     }
 
+    /// The shells the stream workers' map holds and their bytes (0, 0 before the first worker
+    /// result): a diagnostic that takes the workers' lock, so a caller reads it on its own
+    /// cadence (a per-second line), not every frame; the step never does.
+    pub fn shells(&self) -> (u64, u64) {
+        let (n, b) = self.sealed.shells();
+        (n as u64, b as u64)
+    }
+
     /// The samples `c` still needs (class 1 with a block, `coarse` a coarse one): its brick
     /// directions ([`ChunkMasks::dirs_bound`] from its prepared masks, else six a brick) at its
     /// band's count ([`BakeQueue::want`]), and at the coarse count too where its first pass is

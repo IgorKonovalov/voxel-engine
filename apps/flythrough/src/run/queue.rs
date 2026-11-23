@@ -162,6 +162,7 @@ fn print_listing_census(
     }
     if let Some(q) = gfx.frame.bake_queue_mut() {
         let st = q.stats();
+        let (shells, shell_bytes) = q.shells();
         let c = q.listing_census(&gfx.mirror, world, view);
         println!("{}", listing_census_line(&c, st.depth));
         println!(
@@ -170,8 +171,8 @@ fn print_listing_census(
             st.hook_chunks,
             st.seal_ns as f64 / st.hook_chunks.max(1) as f64 / 1e3,
             st.seal_max_ns as f64 / 1e3,
-            st.shells,
-            st.shell_bytes,
+            shells,
+            shell_bytes,
         );
     }
 }
@@ -719,6 +720,8 @@ impl Run {
                 .map_or((vxe_render::StoreStats::default(), None), |(s, age)| {
                     (s, Some(age))
                 });
+            // The workers' shells under their lock, once a line.
+            let (shells, shell_bytes) = gfx.frame.bake_queue().map_or((0, 0), |q| q.shells());
             let pixels = gfx.frame.light_pixels().max(1);
             let reads = if gfx.frame.counts_store() {
                 format!(
@@ -791,8 +794,8 @@ impl Run {
                 st.zeroed,
                 st.zero_relisted,
                 st.sealed,
-                st.shells,
-                st.shell_bytes,
+                shells,
+                shell_bytes,
                 self.queue.drain_of(&st).text(),
                 class_ns,
             );
