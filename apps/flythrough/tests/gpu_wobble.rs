@@ -19,6 +19,8 @@
 #[path = "gpu_wobble/fsr.rs"]
 mod fsr;
 mod support;
+#[path = "gpu_wobble/terraces.rs"]
+mod terraces;
 
 use std::path::{Path, PathBuf};
 
@@ -119,7 +121,8 @@ impl Arm {
     /// normal's band), `lfade` (`Lighting::landing_fade` on), `sfade` (`Lighting::source_fade`
     /// on), `fly=N` (the fly's frames) and
     /// `normals` (the normals view); Plan 0098 Phase 5's arms `wide` (`far_light_wide`) and
-    /// `hfar` (`light_history_far`).
+    /// `hfar` (`light_history_far`); Plan 0098 Phase 9's `hist` (`light_history` on, after
+    /// `calm`) and `baked` (`key_far baked`).
     fn parse() -> Self {
         Self::from_spec(&std::env::var("VXE_WOBBLE").unwrap_or_else(|_| "default".into()))
     }
@@ -219,6 +222,8 @@ impl Arm {
                 "absorb" => a.leaves_absorb = true,
                 "turnf" => a.turn_frames = v.parse().unwrap(),
                 "nohist" => a.light_history = false,
+                "hist" => a.light_history = true,
+                "baked" => a.key_far = vxe_render::KeyFar::Baked,
                 "scale" => a.scale = v.parse().unwrap(),
                 "farn" => {
                     let (lo, hi) = v.split_once('/').expect("farn=LO/HI");
