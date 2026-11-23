@@ -959,51 +959,12 @@ fn bake_flags() -> Vec<Flag<Parsing>> {
                 Ok(())
             },
         ),
-        Flag::value(
-            &["--queue-order"],
-            "score|distance",
-            "the live queue's order",
-            |p: &mut Parsing, v| {
-                p.args.bake.queue_distance =
-                    v.word(&[("score", false), ("distance", true)], "score or distance")?;
-                Ok(())
-            },
-        ),
-        Flag::value(
-            &["--queue-weights"],
-            "A,R|A,tier",
-            "the score's angle and refine weights",
-            |p: &mut Parsing, v| {
-                let bad = || v.takes("A,R or A,tier");
-                let (a, r) = v.text.split_once(',').ok_or_else(bad)?;
-                let b = &mut p.args.bake;
-                b.queue_angle = a
-                    .parse()
-                    .ok()
-                    .filter(|x: &f32| x.is_finite() && *x >= 0.0)
-                    .ok_or_else(bad)?;
-                if r == "tier" {
-                    b.queue_tier = true;
-                } else {
-                    b.queue_refine = r
-                        .parse()
-                        .ok()
-                        .filter(|x: &f32| x.is_finite() && *x > 0.0)
-                        .ok_or_else(bad)?;
-                    b.queue_tier = false;
-                }
-                Ok(())
-            },
-        ),
-        Flag::value(
-            &["--queue-withdraw"],
-            "on|off",
-            "withdraw the jobs of chunks the camera passed",
-            |p: &mut Parsing, v| {
-                p.args.bake.queue_withdraw = v.on_off()?;
-                Ok(())
-            },
-        ),
+    ]
+}
+
+/// The light store's and the live queue's rows after the queue's own.
+fn bake_tail_flags() -> Vec<Flag<Parsing>> {
+    vec![
         Flag::value(
             &["--edit-ms"],
             "MS",
@@ -1034,26 +995,6 @@ fn bake_flags() -> Vec<Flag<Parsing>> {
 }
 
 /// The removed flags, each refused with its message; `--help` lists none.
-/// The live queue's reading switches.
-fn queue_reading_flags() -> Vec<Flag<Parsing>> {
-    vec![
-        Flag::switch(
-            &["--queue-rule-reading"],
-            "count the jobs opened for chunks the zero rule would answer (a reading)",
-            |p: &mut Parsing| {
-                p.args.bake.queue_rule_reading = true;
-            },
-        ),
-        Flag::switch(
-            &["--queue-census"],
-            "read the queue's view census at every opening, its listing once",
-            |p: &mut Parsing| {
-                p.args.bake.queue_census = true;
-            },
-        ),
-    ]
-}
-
 fn removed_flags() -> Vec<Flag<Parsing>> {
     vec![
         Flag::refused(GONE_SINCE_0057, gone_since_0057),
@@ -1185,7 +1126,8 @@ pub(crate) fn table() -> Table<Parsing> {
             flags: super::outdoor::with_drain_flags(
                 bake_flags()
                     .into_iter()
-                    .chain(queue_reading_flags())
+                    .chain(super::queue_flags::queue_flags())
+                    .chain(bake_tail_flags())
                     .collect(),
             ),
         },

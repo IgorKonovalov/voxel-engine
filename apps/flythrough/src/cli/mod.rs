@@ -302,6 +302,7 @@ mod loading;
 mod model;
 mod outdoor;
 mod parse;
+mod queue_flags;
 mod settings;
 pub mod table;
 
