@@ -1,6 +1,6 @@
 # 0096: Performance: the bake queue's drain (a record by rule, a tier by size on screen, a drain slice), the step off the depth, the slow adapter's light pass, and the sync's `alloc` and eviction scan
 
-> **Status:** implemented but for one gate test (dev, 2026-11-23): every phase landed; the tip gate fails `an_opening_without_a_mirror_event_rebuilds_nothing`, which awaits the architect's call (Implementation log, Notes), then the fresh close review. In progress from 2026-11-21. Approved 2026-11-20 (owner go; starts after Plan 0095 closes and merges). Owner picks, all as recommended: the drain slice 4.0 ms Floor / 6.0 ms Portable while in-view work waits, 1.0 once landed; a far chunk's 256-sample record is final until the camera brings it nearer; if the RENOIR forest stays over 4.0 ms the Portable profile owns the levers it picks and the Floor line stays with the miss disclosed; the window includes the 60 s cave glide. **Amended 2026-11-20 (owner)**, at Plan 0095's window W1: the far tiers' reach rule moves into this plan (ADR-0080 rule 4; a chunk whose reach crosses the full radius bakes its mid or far tier from the chunks resident, the near tier keeps the full reach), Phase 1's census counts reach-bound chunks by the exact test and names the no-record bricks if Plan 0095 Phase 6 cannot, Phase 6 (c) reads far pixels on the baked key or the column map's horizon, the landed state counts a LOD-ring face served by the horizon, and 0095's extra bake rays are conditional on its window W2. **Amended 2026-11-22 (architect, owner confirm owed)**, overnight at the Phase 6 checkpoint `2665f41f`: Phase 4's bar 2 is read at the default drain slice and the F2 rig's miss is a disclosed reading with its cause (the opening's candidate cap, routed to the Phase 5 bar 3 decision); Phase 6's lever (b) leaves bar 1 and the window (a no-op on cube faces, bounded at 0.16 ms by Phase 1's `--sky-rays 0` arm), the setting stays, and bar 1 becomes the key cap's test; Phase 6's paths fixed (`crates/vxe-render/tests/gpu_sun/key.rs`, `cli/outdoor.rs`). **Amended 2026-11-22 (architect, owner confirm owed)**, overnight at Phase 7's tip `8bb8857b`: Phase 7's bar 2 (the glide's `light place`) takes a Phase 7b, the write walk ending at the first refusal it cannot undo (outcomes identical, bar 1's test extended), before the Phase 8 window when it lands first; Phase 7's bar 3 (`alloc` and the sync lines) is disclosed, the per-brick packing routed to its own plan under ADR-0056 at this plan's close. **Amended 2026-11-22 (architect), at the Phase 8 window** (section "The window's verdict and what is left"): the verdicts are recorded with their standing; the three overnight amendments above and the readings log's five morning questions stand **on the recommended option under the owner's standing rule, not on his words**; Phase 6's base is `--penumbra disc` (Plan 0098's W1, owner confirm owed at its W2) and the approach penumbra's lever leaves this plan; the drain slice per profile is set by a headless sweep under a stated rule; Phase 9 is restated; the bake step off the main thread is a plan of its own, drafted now; the RENOIR's 85 ms frame was read at 3.79 times the Portable profile's pixels and is not a close trigger. **Owner picks, 2026-11-22**, on that section's four questions: the Portable profile renders at its 720p hint in a window; the bake-thread plan is drafted now and its lane runs after Plan 0087; the drain slice by frame rate first with the 2x drain guard; the rule 6 run and the 4096 arm go to Plan 0098's W2.
+> **Status:** implemented but for one gate test (dev, 2026-11-23): every phase landed; the tip gate fails `an_opening_without_a_mirror_event_rebuilds_nothing`, which awaits the architect's call (Implementation log, Notes), then the fresh close review. In progress from 2026-11-21. Approved 2026-11-20 (owner go; starts after Plan 0095 closes and merges). Owner picks, all as recommended: the drain slice 4.0 ms Floor / 6.0 ms Portable while in-view work waits, 1.0 once landed; a far chunk's 256-sample record is final until the camera brings it nearer; if the RENOIR forest stays over 4.0 ms the Portable profile owns the levers it picks and the Floor line stays with the miss disclosed; the window includes the 60 s cave glide. **Amended 2026-11-20 (owner)**, at Plan 0095's window W1: the far tiers' reach rule moves into this plan (ADR-0080 rule 4; a chunk whose reach crosses the full radius bakes its mid or far tier from the chunks resident, the near tier keeps the full reach), Phase 1's census counts reach-bound chunks by the exact test and names the no-record bricks if Plan 0095 Phase 6 cannot, Phase 6 (c) reads far pixels on the baked key or the column map's horizon, the landed state counts a LOD-ring face served by the horizon, and 0095's extra bake rays are conditional on its window W2. **Amended 2026-11-22 (architect, owner confirm owed)**, overnight at the Phase 6 checkpoint `2665f41f`: Phase 4's bar 2 is read at the default drain slice and the F2 rig's miss is a disclosed reading with its cause (the opening's candidate cap, routed to the Phase 5 bar 3 decision); Phase 6's lever (b) leaves bar 1 and the window (a no-op on cube faces, bounded at 0.16 ms by Phase 1's `--sky-rays 0` arm), the setting stays, and bar 1 becomes the key cap's test; Phase 6's paths fixed (`crates/vxe-render/tests/gpu_sun/key.rs`, `cli/outdoor.rs`). **Amended 2026-11-22 (architect, owner confirm owed)**, overnight at Phase 7's tip `8bb8857b`: Phase 7's bar 2 (the glide's `light place`) takes a Phase 7b, the write walk ending at the first refusal it cannot undo (outcomes identical, bar 1's test extended), before the Phase 8 window when it lands first; Phase 7's bar 3 (`alloc` and the sync lines) is disclosed, the per-brick packing routed to its own plan under ADR-0056 at this plan's close. **Amended 2026-11-22 (architect), at the Phase 8 window** (section "The window's verdict and what is left"): the verdicts are recorded with their standing; the three overnight amendments above and the readings log's five morning questions stand **on the recommended option under the owner's standing rule, not on his words**; Phase 6's base is `--penumbra disc` (Plan 0098's W1, owner confirm owed at its W2) and the approach penumbra's lever leaves this plan; the drain slice per profile is set by a headless sweep under a stated rule; Phase 9 is restated; the bake step off the main thread is a plan of its own, drafted now; the RENOIR's 85 ms frame was read at 3.79 times the Portable profile's pixels and is not a close trigger. **Owner picks, 2026-11-22**, on that section's four questions: the Portable profile renders at its 720p hint in a window; the bake-thread plan is drafted now and its lane runs after Plan 0087; the drain slice by frame rate first with the 2x drain guard; the rule 6 run and the 4096 arm go to Plan 0098's W2. **Amended 2026-11-23 (architect, owner confirm owed)**, at Phase 9's tip `a2d93d39` (section "The Phase 9 rulings"): the smallest-slice rigs' fix `501bcd95` stays (it restores the slice those tests state; the owner's rule on rigs applies, so his confirmation is owed); the failing opening test claims the candidates scored, not the index rebuilds; a dig's ring bakes at the profile's near tier, as ADR-0080 rule 2 says and as built; the RENOIR's 6.0 pick is accepted on the median of its quiet runs; what the close review checks about the four tests red since Phase 4 is in the Close triggers.
 > **Created:** 2026-11-20
 > **Milestone:** M10 (the outdoor scenes are where the queue never drains) and cross-cutting
 > like [Plan 0067](done/0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md):
@@ -725,6 +725,9 @@ names or hands over the 461 no-record pixels. If 0095 is still open when the lan
 - **Amended 2026-11-22 (architect): restated in the section below**, which adds the Portable
   profile's size in a window, the drain sweep and its rule, the disc base and the quiet
   re-reads, and says which lines are pinned as disclosed misses.
+- **Amended 2026-11-23 (architect, owner confirm owed): done-when (2) reads the profile's near
+  tier, not 4096**, and the failing opening test gets a new claim; both in the section "The
+  Phase 9 rulings".
 
 ## The window's verdict and what is left (amendment, 2026-11-22, architect)
 
@@ -884,6 +887,177 @@ after Plan 0087, the owner's order, 2026-11-22), then **slot words packed on the
 called the glide fine, so its lane can wait for Plan 0091's scopes), with the beam prepass
 where the backlog has it, before Plan 0033.
 
+## The Phase 9 rulings (amendment, 2026-11-23, architect, owner confirm owed)
+
+Phase 9 landed at `501bcd95` with one gate test failing and three calls open (Implementation
+log, Notes; readings log, Phase 9 (6) and (7)). The owner was not asked: each ruling below is
+the architect's, made by reading the rig, the tests, `bake/order.rs`, `bake/queue/digs.rs` and
+ADR-0080; ruling 1 sits on his rule about rigs and ruling 3 touches a look, so both are
+marked for his word. No production code changes; the dev's part is two test edits and one
+reading.
+
+### 1. The smallest-slice rigs run without the drain value: `501bcd95` stays (owner confirm owed)
+
+**It is a correction of Phase 4's side effect on the rig, not a rig bent to a check.** The
+owner's rule (2026-11-22, "we don't simplify for the sake of tests passing") forbids changing
+a scene, fixture or rig so a check passes. Read against it:
+
+- Every rig that sets `slice_ms: 1e-6` says in its doc comment what it is for: "the smallest
+  slice (a step draws the cap's floor, 16 384 samples)", and the tests' arithmetic is written
+  on that cap (`a_starved_queue_recovers` asserts `full > 2 * CAP`;
+  `a_still_camera_drains_and_withdraws_nothing` bounds its steps by the samples over 16 384).
+  They need jobs that outlast a step, so a move, a dig or an advance can meet a job still in
+  the loop. That is the condition under test (withdrawal, a dig that is never withdrawn, a
+  starved opening), and it predates this plan.
+- Phase 4 gave every queue a drain value by default (`Frame`'s knobs), and
+  `Drain::slice_ms` takes `drain_ms.max(budget)` while in-view work waits. The rigs never
+  asked for it: their stated slice was replaced, their jobs ended inside one step, and the
+  moves found nothing to withdraw. No test changed; the rig silently stopped being the rig.
+- `501bcd95` moves no assertion and no scene. It turns the drain value off, through the
+  product's own switch (`drain: None`, what `Frame::set_bake_drain(None)` and
+  `--bake-drain off` do), for a rig that states the smallest slice.
+- **The product is right as built and does not change.** Under ADR-0080 rule 3 the drain
+  value is "at least the budget's slice" while in-view work waits; a tiny budget under a
+  drain value draws the drain value, on purpose, and
+  `the_slice_is_the_drain_value_while_in_view_work_waits_and_the_line_after` holds that,
+  with its last line holding "no drain value: the budget alone". A consumer who wants a
+  starved queue turns the drain value off, as the rig now does. So option (c) (the product
+  honours a tiny slice over the drain value) would undo rule 3 for the sake of four rigs,
+  and option (b) (revert and re-derive the tests at the drain slice) would rewrite four
+  tests' scenes to fit the new default, which is the thing the owner's rule forbids.
+
+For the owner, in three sentences: the four tests were written to watch a queue that works
+slowly enough for a job to still be running when the camera moves, and they say so in their
+comments. Phase 4's new default sped the queue up underneath them, so they stopped testing
+that; the fix puts the slow queue back by switching the new default off in those rigs and
+changes nothing they assert. The engine's behaviour is untouched, and a game can still starve
+the queue the same way the rig does.
+
+### 2. `an_opening_without_a_mirror_event_rebuilds_nothing` claims the candidates scored
+
+The test's claim was "every opening after the first, on a still mirror with jobs ending
+between, scores nothing again", counted by `rebuilt`: before Phase 5 an opening that scored
+at all scored the whole order, so one rebuild was the unit of work. Phase 5 replaced the
+whole sort with walks that score a cell's candidates when an opening reaches it; `rebuilt`
+now counts only a change of the order's leads and reads 0 on any still camera, so asserting
+on it (the dev's option (b)) would hold whatever the walk did. The work an opening does is
+the candidates it scores, and Phase 5 already counts that: `QueueStats::visited` (the count
+`a_still_step_visits_no_candidate_and_a_one_chunk_move_visits_only_the_cone` reads on
+`Ordered` alone). No new counter is needed: a walk that starts again scores its cells
+again, so the sum of `visited` shows it.
+
+**Done when (dev, test edits only, `apps/flythrough/tests/gpu_queue_reach.rs`):**
+
+- `an_opening_without_a_mirror_event_rebuilds_nothing`, same rig, same order assertions
+  (`[2, 3, 1, 4, 0]`, then `[2, 3, 1, 4, 0, 7, 5, 6]`), same reach-walk count (7), and in
+  place of the `rebuilt` sums:
+  1. over the still stretch (from the first step until the five ready chunks have baked and
+     the jobs are empty) the sum of `st.visited` over **every step** is **exactly 7**: the
+     pool at the first opening is chunks 0 to 6 (chunk 7 waits to upload), in two order
+     cells (0 to 3 and 4 to 7), and each candidate is scored once, when the walk first
+     reaches its cell. Any walk started again on the still mirror reads over 7;
+  2. `st.rebuilt == 0` at every step of the test (no lead changes; kept as the cheap guard
+     it now is, not as the claim);
+  3. the 40 steps after the stretch read `visited == 0` each;
+  4. after `sync_one` mirrors chunk 7, the first step that scores reads `visited` **exactly
+     3**: the pool then is chunks 5, 6 and 7, all in the scanned cell 4 to 7, and chunk 7
+     joining it starts that lead's walk again, once (this replaces "chunk 7's arrival scores
+     the order once"). The sum of `visited` from there to the empty queue is printed as a
+     reading, not asserted: records land in that stretch, and a landing may score;
+  5. the doc comment says what is counted (candidates scored, each once; an arrival scores
+     its cell's again).
+- `a_still_step_scans_nothing` (same file): its 100 still steps assert
+  `(st.scanned, st.reach_checks, st.rebuilt, st.visited) == (0, 0, 0, 0)`. Its comment says
+  "score nothing" and `rebuilt` no longer measures that; this is Phase 5's bar 1 at the
+  queue's step, which the log notes was read on `Ordered` only.
+- **The numbers 7 and 3 are derived by reading the walk, not run** (no GPU work in the
+  amending session). If a reading differs, the dev stops and reports which candidate was
+  scored twice and what started the walk again; the number is not moved to the reading. A
+  rescoring on a still mirror is a Phase 5 defect, fixed in `bake/order.rs` or `open.rs`,
+  not in the test.
+- Binaries: `gpu_queue_reach` and `gpu_queue` (`test-changed.mjs --profile gpu --binaries`),
+  under the perf lock; about the binaries' usual wall, no new test.
+
+### 3. A dig's ring bakes at the profile's near tier: `91003891` stands (owner may look)
+
+**The plan means the tier.** ADR-0080 rule 2 reads "A dig's ring bakes at the near tier
+whatever its band. The counts are a settings row per profile", and rule 4 "the dig's ring
+keeps the near count". Done-when (2)'s "4096" was the Floor row's near count written as a
+number, not a second rule. Done-when (2) now reads: `a_digs_ring_bakes_at_the_near_tier_in_the_far_band`
+(`gpu_bake_tiers`, lavapipe, 5.9 s quiet): a dig at 48 m in the far band re-bakes its ring
+at the near tier's count, not its band's nor the queue's own (the same dig at near tiers 64
+and 32 draws samples in the ratio 2, a whole number of the near count a direction), the dug
+records marked near and the kept ones far. That is what the test asserts.
+
+Why the tier and not 4096 under Portable: at 4096 the ring would be the only light on the
+screen baked at four times its neighbours' count (every chunk the Portable player stands
+beside holds a 1024 record), so the dig would show as a patch cleaner than the wall around
+it, and it would land four times later on the adapter that reads 9.3 times the ns a sample,
+at the moment the player watches for the light to follow the dig (owner, 2026-11-20: no
+waiting for light). Nothing changes at Floor (near is 4096 there) or without bands.
+
+**What is left is a look question, and it is the Portable near tier's, not the dig's:**
+whether 1024 samples reads as grain at arm's length. The tiers stand by recommendation
+(the window's (b) was unjudged). It does not gate the close. A dig is added to the RENOIR
+run of Plan 0098's W2 (the orchestrator's run list; this plan does not edit Plan 0098): dig
+a wall at 720p Portable and look at the ring once it lands. If it reads grainy the answer
+is the Portable row's near count (2048 or 4096, a settings row, with the drain re-read), a
+follow-up, not a dig exception.
+
+### 4. Four gate tests were red from Phase 4 to Phase 9
+
+`a_dig_is_never_withdrawn`, `a_passed_chunk_is_withdrawn`,
+`a_still_camera_drains_and_withdraws_nothing`, `a_starved_queue_recovers` and the opening
+test failed from `b95913fb` or `e3b03e75` until the tip's gate, through five phases and the
+owner's window, because each phase ran the `gpu_*` binaries it named (the lane rule since
+2026-11-10) and Phases 4 to 7b named neither `gpu_queue` nor `gpu_queue_reach` while
+changing `bake/queue/`. No product behaviour was wrong (the four were the rig's slice, the
+fifth a counter that changed meaning), so the window's verdicts stand; but a real
+withdrawal defect would have hidden the same way. What the close review checks is in the
+Close triggers. **The rule is the harness's, not this plan's**: the per-phase run should
+pick the `gpu_*` binaries from the files a phase changed, not only from the names the plan
+gave (Followups).
+
+### 5. The RENOIR's drain pick: 6.0 accepted
+
+The rule fixed before the readings does not say which of an arm's runs is its reading; it
+is **the median of the arm's quiet runs** (a loaded run pins nothing, Phase 9 item 3). The
+6.0 arm's quiet runs read 37.6 and 27.1 s, median 32.4 against the guard's 36.7: in. The
+two loaded runs (27.0 and 27.0) can only have been slowed by their load and agree with the
+27.1. **The pick stays 6.0.** One more quiet read of the arm is asked of the dev when the
+lock is free (about 4 minutes), for the line, not the pick: the in-view line (30 s) is met
+on one quiet run of two, and `docs/nfr.md` says so (it already names the 37.6); with the
+third run it reads "met on k of 3 quiet runs". If the median of the three is over the
+guard the dev stops and reports (by the rule the arm is then out and 12.0 is the pick,
+which is the owner's rule to apply, not a silent flip). The stall behind the 37.6 (the
+drawn share fell to 0.180 once) has no cause named; it goes to Plan 0099's readings as an
+open item, since the submit moves to the bake thread there.
+
+### What the dev does to reach "implemented, awaiting the fresh close review"
+
+1. The two test edits of ruling 2, one commit (`test(flythrough): ...`); `gpu_queue_reach`
+   and `gpu_queue` pass under the perf lock, or the dev stops and reports as ruling 2 says.
+2. The third quiet RENOIR forest 6.0 read (ruling 5), its row in the readings log and the
+   `docs/nfr.md` wording; named as not read if no quiet window comes in the pass.
+3. **No second whole gate.** The tip's gate ran at `501bcd95` (1343 of 1344); the delta is
+   one test file, covered by step 1's two binaries, and the close review runs the gate
+   itself on the finished tree. The Close triggers' gate line states both facts.
+4. The Implementation log's Phase 9 row, the Notes (the three open items closed against
+   this section) and the `Status:` line ("implemented, awaiting the fresh close review").
+
+### Questions for the owner (each stands on its first option until he says otherwise)
+
+1. **The rig fix (ruling 1).** (a) Keep `501bcd95`: it restores the slow queue those tests
+   were written on (recommended, in force). (b) Revert it and rewrite the four tests for
+   the drain slice. (c) Change the engine so a tiny budget beats the drain value.
+2. **A dig under Portable (ruling 3).** (a) The ring bakes at Portable's near tier, 1024,
+   like everything near; look at one dig on the RENOIR at W2 (recommended, in force).
+   (b) A dig always bakes at 4096 whatever the profile. (c) Raise Portable's near tier.
+3. **The red tests nobody ran (ruling 4).** (a) A harness chore: the per-phase run picks
+   the `gpu_*` binaries from the changed files (recommended; not started without his go).
+   (b) Leave the rule; the tip's gate is the net, as it was here. (c) Every phase runs the
+   whole gpu tier again.
+
 ## Data shapes
 
 ```rust
@@ -1029,7 +1203,9 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **Budget readings:** `docs/nfr.md` section 2, "The bake queue's drain and step": in view landed RTX 36.5 s forest / 12.2 hills against 10 (missed), RENOIR 27.1 / 16.7 against 30; residency RTX 49.1 / 37.1 against 60, RENOIR hills 152.5, forest over 220 s against 180 (missed); step B RTX 15.48 / 27.89 ms, RENOIR 1.04 / 9.55 against 1.0 / 4.0 (missed); the RTX frame while draining wall p50 26 ms (missed); cave bench `update + poll + sync` p99 14.82 (met), `alloc` p99 6.42 against 3.0 (missed); the glide's `light place` p99 8.84 against 2 (missed, loaded); RENOIR Portable light pass on the hills 2.42 ms on the disc base (met), 4.81 under approach, forest 5.13 / 17.38 (missed).
 - **Gate at the tip:** `501bcd95`, `cargo nextest run --workspace --profile gate` under the perf lock after `scripts/build-guests.sh`, 12 jobs, 16 GiB cap: 1344 run, 1343 passed, 1 failed (`gpu_queue_reach::an_opening_without_a_mirror_event_rebuilds_nothing`), 229 skipped; **1437.1 s**, over section 7's 19 min; load 38.3 at the lock (the gate's own build just before) and 2.2 at the end, so loaded. Doctests 10 passed; workspace clippy, fmt and `cargo deny check` clean.
 - **Outstanding `human` phases:** none; Plan 0098's W2 carries rule 6 by eye, the far tier's 4096 arm and one RENOIR run at 720p in a window.
+- **For the close review (architect, 2026-11-23; section "The Phase 9 rulings"):** (1) five gate tests were red from Phase 4 or 5 to Phase 9 unseen. Diff `apps/flythrough/tests/gpu_queue.rs`, `gpu_queue_reach.rs` and `tests/support/` from the plan's base `123964e7` to the tip and confirm no assertion of the four rig tests moved and the only rig change is `501bcd95`'s; read the opening test against ruling 2's done-when (the sum of `visited`, exactly 7, not `rebuilt`). (2) Every rig at `slice_ms: 1e-6` ran under the drain value from Phase 4 to `501bcd95`, also the ones that stayed green: the review's own gate is the first whole run with all of them on their stated slice. (3) For each of Phases 4 to 7b, set the files changed under `crates/vxe-render/src/bake/` against the binaries its row says it ran, and name any other `gpu_*` binary that reads the queue and ran only at the tip. (4) The window (Phase 8) ran on a tree with these five red; confirm from the bisect in the readings log (Phase 9 (7)) that none was a product defect. (5) Rulings 1 and 3 await the owner's word; a close before it says so in the verdict.
 
 ## Followups
 
-- (empty at draft time)
+- **The per-phase GPU run picks its binaries from the changed files** (architect, 2026-11-23; the harness's, not this plan's; awaits the owner's go). Today a phase runs the `gpu_*` binaries its plan names (`test-changed.mjs --profile gpu --binaries`); five tests in `gpu_queue` and `gpu_queue_reach` stayed red from Phase 4 to the tip's gate because the phases that changed `bake/queue/` did not name them. The mechanical form: `test-changed.mjs` adds, to the named binaries, every `gpu_*` binary whose test file or support module names a changed module's public items (or a path map kept beside the script), and the lane rules say a phase's named binaries are a floor. To `docs/backlog.md` at the close unless a chore takes it first.
+- **The RENOIR forest's one stalled drain** (37.6 s against 27.1; the drawn share fell to 0.180 once): no cause named; an open reading for Plan 0099, where the submit moves to the bake thread.
