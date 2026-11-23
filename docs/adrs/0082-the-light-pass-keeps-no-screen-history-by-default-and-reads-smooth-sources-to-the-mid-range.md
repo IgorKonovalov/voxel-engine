@@ -73,7 +73,12 @@ turn is treated inside its path, by a reading first.
 - **A term that draws one random sample a frame has nothing to average it.** The disc
   penumbra, a sky ray where no record is fresh and the fired lights' visibility each show
   per-frame noise unless they become deterministic or read a smooth source. The owner saw "no
-  grain" outdoors with the approach penumbra; indoors under lamps is unseen.
+  grain" outdoors with the approach penumbra; indoors under lamps is unseen. **Amended
+  2026-11-23** (still proposed; Plan 0098's Phase 4 findings, read in the shaders): under the
+  picks the disc's sample is never shown on a world face. A pixel with no history shows the
+  mean's seed, the far estimate, so the sun's shadow is the column map's horizon at every
+  distance: no penumbra but the horizon's ramp, and no sun under any cover at any sun angle.
+  The per-frame sample is shown only at an entity or a field surface.
 - **Shadow detail at the mid range goes.** The column map's horizon is a heightfield shadow: a
   canopy reads as a soft block, and the owner saw "bright places around the trees when moving"
   in one run (cause unread).

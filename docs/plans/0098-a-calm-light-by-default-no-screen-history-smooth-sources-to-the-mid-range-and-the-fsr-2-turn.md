@@ -15,6 +15,12 @@
 > readings; Phase 8 (a dig under the calm picks neither darkens its surround nor flashes),
 > Phase 9 (the sunlit terraces at noon, a reading) and Phase 10 (the owner's look, W3) are new.
 > **Order from here: 8, 9, 4, 10.**
+> **Amended 2026-11-23 (architect's rulings, owner confirm owed)**, at Phase 4's findings
+> (section "Amendment at Phase 4's findings"): the shown key shadow under the defaults is the
+> column map's horizon at every distance, the disc's ray is cast and never shown; Phase 4's
+> far bar moves to the arm with the queue stopped; Phases 11 (the soak bars), 12 (the HUD's
+> `light:` row) and 13 (the key ray that is never shown is not cast, and a test of the
+> default's near key shadow) are new. **Order from here: 11, 12, 13 (beside W3), 10, the close.**
 > **Created:** 2026-11-21
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0082](../adrs/0082-the-light-pass-keeps-no-screen-history-by-default-and-reads-smooth-sources-to-the-mid-range.md)
@@ -259,6 +265,186 @@ is read before it is parked.
    around 25, softer acceptable"; the dig's light under Portable "grainy", bright specks) are
    Plan 0096's, on its binary, and are not this plan's work.
 
+## Amendment at Phase 4's findings (2026-11-23; architect's rulings, owner confirm owed)
+
+Phases 8, 9 and 4 are in ([`logs/0098.md`](logs/0098.md), their sections). The dev agents
+reported six findings. **Every ruling here is the architect's; the owner has not spoken on
+any of them.** The four that loosen or move a bar, or touch what the owner accepted by eye,
+are listed again under "Questions for the owner", each with a recommended option; the lane
+goes on by the rulings, and an owner's "no" is a fix pass.
+
+### What the default key shadow is (finding 2, read first: three others hang on it)
+
+**Confirmed in the shaders by the architect** (`temporal.wgsl`'s key branch, `pair.wgsl`
+`key_mean`, `light_history_at`, `column_key_visibility`, `shade.wgsl` `key_from_store`,
+`frame/settings.rs`'s lighting bits):
+
+- With light history off, `Params::history` bit 0 is clear, the temporal pass takes no taps,
+  `accepted` stays false and the key branch's `reset` is true at every pixel in every frame.
+  The dig hold reprojects the visibility pair alone and leaves `accepted` false.
+- `far_on` is `LIGHTING_KEY_BAKED` and a store face and no entity. `key far column` sets
+  `LIGHTING_KEY_BAKED` with `LIGHTING_KEY_COLUMN`, and "a store face" is a property of the
+  hit (`reads_store`: an opaque cube face entered from air), true with no store baked at all.
+- Under `far_on` and `reset`, `k_far` is the column map's horizon and `key_mean` returns the
+  seed, `k_far`. The cast sample `vis.y` reaches nothing. With `far_on` the band's mix, blend
+  or step, mixes `k_far` with `k_far`.
+- The light pass still casts the disc's ray wherever the far normal's weight is under one
+  half (`key_from_store` is false there).
+- `column_key_visibility` returns 0 wherever the hit, lifted along its face normal, lies
+  under its own column's top, at any sun elevation; elsewhere the horizon toward the sun with
+  the disc's width of ramp.
+
+**So, under the defaults, at every opaque cube face and at every distance, the key light's
+visibility is the column map's horizon.** No disc penumbra is shown, `key jitter` moves
+nothing (Phase 9: `knj` equals `calm` to the pixel), `key far mix` changes only where the
+ray is cast, and `key far baked` differs only where a fresh key record is held. `gpu_sun`'s
+roof slab agrees: a rise of 0 voxels under the defaults against 2.8 with the history on.
+
+**Inferred from the code, not read on a rig:**
+
+- A face under any cover gets no sun at any sun angle: a floor behind a window, a cave
+  mouth's floor at a low sun, the ground under a canopy at 15:00. The forest golden shows
+  the last (finding 6); no rig reads the first two.
+- At an entity hit and at a field surface `far_on` is false, so a reset mean shows the raw
+  sample: one random disc ray a frame with nothing to average it, at a shadow's edge falling
+  on an entity. `walker_shadow.png` moved 18 % at the re-bless; nobody has looked at it move.
+- Phase 9's key share (22 to 32 % of the moved step-shadow pixels show the key value moving
+  at the jittered hit) is the column horizon's hard edge sampled at a hit that moves with
+  the jitter: a one-voxel step's shadow is one map cell's edge, with no penumbra to spread
+  it and no mean to hold it. The history closing 57 to 68 % fits (with it the ray's mean is
+  shown and carried). The same cause is likely, not proven: no arm reads a soft edge with no
+  history, because none exists.
+
+**What follows.**
+
+1. **The picture the owner accepted is this picture.** W2's 1a ("looks great") and 2a ("all
+   looks correct") ran the five picks, so they showed the column horizon's key shadow near
+   and far. The accepted default is: sun shadows from the column map, hard-edged but for the
+   disc's ramp at the horizon, none of it under cover. The ruling keeps it. Nothing in this
+   plan adds a penumbra.
+2. **W1's "penumbra disc" over "approach" re-read.** The approach penumbra takes the cast
+   sample as it is with no history (`k = vis.y`), so under `calm` approach was the only arm
+   that showed a true ray near, and the column's answer from the band's half outward. Where
+   the two disagree (under a canopy, in the tunnel) the picture changed with distance: "light
+   rays are gone when I am distant" and the tunnel wall's blink are that seam. "Disc" under
+   `calm` showed the column's answer everywhere: no seam, so "no such behaviour" and "now it
+   doesn't blink". **The owner picked one source at every distance over a true ray near; the
+   word "disc" named it by accident.** The pick stands as he saw it. What it is called is
+   corrected in the docs (below) and in ADR-0082's Outcome at the close.
+3. **The docs stop claiming a disc penumbra by default.** Corrected with this amendment:
+   `docs/flythrough.md` (`--penumbra`, `--key-far`, `--key-far-mix`, the debug page's `key
+   jitter`) and ADR-0082 (still proposed; its Negative list said the disc shows per-frame
+   noise with no history, which is true only at an entity or a field surface). The plan's
+   earlier sections keep their words as history; "the disc" in the W1 and W2 amendments and
+   in Phase 4 reads as "the penumbra setting at `disc`", whose ray is not shown.
+4. **The ray that is cast and dropped is cost with no image**, in the light pass, on every
+   near cube face, every frame. Its share of the pass is unread. Skipping it is one more
+   clause in `key_from_store` behind settings that exist, and the goldens re-blessed in
+   Phase 4 pin the image it must not move: **Phase 13, in this plan, with a stop rule** (more
+   than that clause, or any golden moving, and it goes to the backlog instead). The sky ray
+   whose sample is never shown (Phase 6b) is **not** skipped here: the dig hold reads it
+   (`pair_taken` runs `pair_step` over the cast rays), so it stays a followup.
+5. **A soft near shadow with no screen history is a design question for a later plan**, with
+   the sun under cover beside it. The two known arms both fail something the owner said: a
+   true ray near shows the seam against the column (W1), and a running mean is the history
+   this plan removes. Backlog, dated today.
+
+### The rulings on the other findings
+
+**1. Phase 4's far bar: the far is asserted at rest, printed while the queue steps
+(options (b) and (c) together; (a) rejected).** One configuration reads far +30 at 13.59,
+23.48 and 26.43 % (fly 180) and 17.91, 36.45 and 41.52 % (fly 20) over runs: the queue
+still holds 1300 to 1400 chunks at the stop, their sky records land in the far during the
+stop at the machine's pace, and the reading is "to the stop's last frame", so it counts
+every landing after frame 30. It is the near bar's fault again (the W2 amendment: "a
+landing's frame is the machine's, not the rig's"), and the answer is the same split. With
+the queue stopped the arm read 9.98 % (fly 180) and 11.39 % (fly 20): that is the jitter
+and FSR 2 on the far trees with nothing landing, which is what "even distant wobble is not
+too bad" judged. A median of several runs (a) is rejected: it triples a 15-minute arm to
+average out the queue's timing, which is not the claim, and a median of 13, 23 and 26 still
+moves by more than 2 points with one more run. The bar's value is not known from one run a
+fly, so Phase 11 reads it three times and stops if the at-rest far is not steady either.
+
+**3. The HUD's `light:` row: fixed here, before the close (Phase 12).** The row prints
+`QUEUE_BRICK_SAMPLES` whatever the queue's tiers are; the owner's rule is that a toggle
+under test shows its true mode in the window, and W3's runs 4 and 5a to 5d
+(`live/session98c.sh`) compare tiers under Portable. **Until a binary with Phase 12 is in
+the session, those runs' tier is the one on the run's command line and in the run's title,
+not the banner's `4096`;** the session's notes say so.
+
+**4. `the_wobble_table_over_the_arm_set` keeps its table and loses its assertion; the claim
+moves to the at-rest arm.** The bar (Plan 0095 Phase 10: the default's stop +0 near, first
+frame to last, at most `albedo`'s plus 2 points) defended "the near does not go on settling
+after a stop". It has failed since Phase 1 for two reasons that are not that claim: an
+exposure step in the stop (14.5 of 19.83 points, Plan 0097's) and landings in the stop (a
+plateau that steps out between +40 and +60), the quantity the W2 amendment already ruled a
+reading. Restating it against the `before` arm is rejected (it would bar a configuration
+nobody ships, and `default, pinned` read 5.35 % there too). Retiring the test is rejected:
+Plans 0095 to 0098 re-read the wobble through its table. The claim is defended where it can
+be read: `default,pin,nqueue`'s stop +0 near, the same quantity with the same bar as
+written (`albedo`'s 0.05 % plus 2 points: 2.05 %), on the arm where nothing lands and the
+exposure is fixed; it read 1.02 % and 1.20 % in Phase 4. Phase 11 moves it.
+
+**5. The files past Phase 4's list: no assertion weakened, no scene or fixture changed;
+three things for Phase 11 and 13.** Read: the diffs of `gpu_sun.rs`, `gpu_exposure.rs`,
+`gpu_lights.rs`, `gpu_dynamic_lights.rs`, `gpu_outdoor/flicker.rs`, `menu.rs` and
+`gpu_wobble.rs` between `311c5e6a` and `248d64db`. Each mechanism test sets the
+configuration it reads (`light_history: true`) and keeps its assertions and its rig to the
+byte; `menu.rs` and the CLI tests pin the new defaults. What the close review should not
+have to find again:
+
+- **`gpu_sun.rs`'s `frame()` helper now sets history on, `key far baked` and blend for the
+  whole file**, so no test of `vxe-render` renders the default's near key shadow (the
+  nearest, `the_far_horizon_is_the_same_every_frame`, reads the far under `column`). The
+  picks' own image has the re-blessed goldens and nothing that names its property. Phase 13
+  adds the test.
+- **The dig test's baseline arm is not the arm the owner judged.** `before` keeps the disc;
+  the fly-through's default before Phase 4 was the approach penumbra, and W2's run 5 ("no
+  flash") ran it. The bars barely moved (ring 1.38 to 1.36 %, hole 31.24 to 31.11 %, excess
+  +0.0 to +0.1), so nothing was loosened to pass, but the doc comment claims run 5. Phase 11
+  puts `approach` into `before` and reads the test again.
+- **A reading that is not a number passes the near bar.** `rest.near_pair > 2.5` is false
+  for NaN (`wobble_on` returns NaN on one path); the far check tests for it. Phase 11.
+
+**6. `outdoor_forest_afternoon.png`: the golden stands as blessed and says what it shows; it
+is the defaults' honest picture with no store, and it is a finding.** Before: sunlit ground
+between the trunks at 15:00. After: black ground, lit only where no canopy is overhead
+(`live/p4/golden-before/` against `apps/flythrough/tests/golden/`). The log's reason (most
+of the frame past the band) is not it: by the code the same holds at every distance. Two
+terms go dark together. The key light: the column's answer is 0 under a canopy at any sun
+angle, **with or without a store**; the slanted sun between the trunks is gone under the
+defaults in the window too, and the owner looked at that forest at `--sun 10,180` (W2's 1a
+and 2a) and called it correct. The sky term: with no record the reset pair shows the column's
+answer, 0 under a canopy, and the cast sky ray is dropped; a baked store gives the face its
+record's visibility, so this half lasts only until the bake lands (W2's 2b: "acceptable").
+The golden defends that the default image with no store is what it is, frame for frame;
+blessing it was right. What it shows a consumer: **with no store bound, or before the bake
+lands, every face under cover is unlit by sun and sky.** That is a limit of the picks, said
+in ADR-0082's Outcome at the close and in the backlog entry of ruling 5; whether it is
+acceptable for a consumer that renders with no bake is the owner's (question 4). Phase 13
+makes the golden's doc comment say what the image is, so the next reader does not take it
+for a broken sun.
+
+### Questions for the owner (each with the recommended option; none holds W3)
+
+1. **The far bar moves to the queue-stopped arm, and the far with the queue stepping
+   becomes a printed reading** (ruling 1). Recommended: yes; it is the split you made for
+   the near at W2. The other option: keep the stepping bar and take the median of several runs
+   (the soak run several times over, and still not steady).
+2. **The old wobble table stops asserting; its claim is asserted on the queue-stopped arm at
+   the bar as written, 2.05 %** (ruling 4). Recommended: yes. The other options: retire the
+   table, or keep a test that has failed since Phase 1.
+3. **The default sun shadow has no penumbra and no sun under cover; you accepted the
+   picture without those words** (finding 2). Recommended: keep it as the default, name it
+   truthfully in ADR-0082 and the docs, and park the soft, true near shadow as a later plan.
+   The other option: a look before the close at one interior with a low sun through an
+   opening (no rig or window has shown one), and at a shadow's edge on a moving entity.
+4. **With no store, or before a bake lands, faces under cover are black** (finding 6).
+   Recommended: accept for this plan (the window bakes within seconds and you called the
+   wait acceptable); the backlog entry carries "a better value before the bake". The other
+   option: the default keeps the light history where a face has no record, which gives back
+   the wobble there.
+
 ## Decision
 
 **Ship the combination the owner called calm as the default once W1 confirms it; read FSR 2
@@ -392,7 +578,9 @@ cherry-picks it; the orchestrator's call.
       levels and the mean change (the log's 37.3 % and 17.7 levels at a first block over the
       chain). The owner accepted that step by eye at W2 (2a); the amendment says why no bar
       reads it.
-    - **far:** the far share over 4 levels 30 frames after the stop, the default arm with
+    - **far (superseded 2026-11-23 by Phase 11: asserted on the queue-stopped arm, printed
+      while the queue steps; the text below is the bar as Phase 4 ran it):** the far share
+      over 4 levels 30 frames after the stop, the default arm with
       `pin`, is at most the `calm,pin` reading plus 2 points. Phase 6's table reads 10.00 %,
       so 12.00 %; the dev reads `calm,pin` once more on the rig as committed, before the
       defaults move, and if that reading differs (the landings have since moved into the
@@ -703,6 +891,124 @@ cherry-picks it; the orchestrator's call.
   pass: the default's row and the re-bless) or sends the terraces to the backlog with Phase
   9's table. Run 3 does not hold the close: a wobble that is the picks' at 480p goes to the
   backlog beside the far trees', one that is the profile's to Plan 0096.
+- **Notes for the session (added 2026-11-23, architect).** The session is
+  `live/session98c.sh` on `live/bin98d`; its runs 4 and 5a to 5d are the Portable profile and
+  its bake tiers. (a) The banner's `light:` row prints `4096` for the near tier whatever the
+  tiers are, until a binary with Phase 12: the tier is the one in the run's title. (b) The
+  sun's shadow under the defaults is the column map's at every distance, with no penumbra
+  and no sun under cover ("Amendment at Phase 4's findings"); `key jitter` and `penumbra
+  disc` change nothing on world faces, `penumbra approach` puts a true ray near. (c) Run 2's
+  `light history on` is also the only arm that shows the disc's soft edge.
+
+### Phase 11: The soak bars read what holds still (a fix step)
+- **Owner skill:** dev
+- **What** (added 2026-11-23, architect's rulings 1, 4 and 5; owner confirm owed). No scene,
+  flight, class or threshold of the rig changes. In `gpu_wobble`:
+  1. `the_defaults_hold_still_at_rest_and_the_far_holds` asserts on `default,pin,nqueue`
+     alone, at both flies: the largest stop near pair (2.5 %, as it stands), the stop +0
+     near (first frame to last) at most 2.05 % (Plan 0095 Phase 10's bar as written, `albedo`
+     0.05 % plus 2 points), and the far +30 at most the largest of three readings of that
+     arm plus 2 points. `default,pin` (the queue stepping) and `default,pin,native` are
+     printed: far +30, far +0, the queue's depth at the stop's end, every landing row. The
+     constants `CALM_PIN_FAR30` go. A reading that is not a number fails the test.
+  2. `the_wobble_table_over_the_arm_set` keeps its arms and its printed table and loses its
+     assertion; it moves under `mod reading` (run by hand), its doc comment naming where its
+     claim is asserted now.
+  3. In `gpu_outdoor/flicker.rs`, the dig rig's `before` token takes the approach penumbra
+     (the fly-through's default before Phase 4, the arm W2's run 5 showed).
+- **Files touched:** `apps/flythrough/tests/gpu_wobble.rs`,
+  `apps/flythrough/tests/gpu_outdoor/flicker.rs`, `docs/plans/logs/0098.md`.
+- **Done when:**
+  - The log holds `default,pin,nqueue`'s far +30, stop +0 near and largest near pair from
+    three runs a fly (Phase 4's run and two more; `reading::wobble` by `VXE_WOBBLE`, RTX
+    3080 Laptop, exclusive perf lock, the load beside each), and the far bar a fly is the
+    largest plus 2 points (from Phase 4's one run: 11.98 % at fly 180 and 13.39 % at fly 20
+    if the two more read no higher). **If the three far readings of a fly span more than 2
+    points, or any stop +0 near is over 2.05 %, the dev stops and reports the table**: the
+    quantity is then not steady at rest either and the bar is the owner's.
+  - `the_defaults_hold_still_at_rest_and_the_far_holds` (soak; 27 min on the RTX in Phase 4, three
+    arms at two flies) passes on the RTX, 1 test run, and its output prints the stepping
+    arm's far beside the at-rest bar. Stepping the queue cannot fail it.
+  - `flicker::a_dig_under_calm_neither_darkens_nor_flashes` (soak, about 100 s on lavapipe)
+    passes with `before` on the approach penumbra, its three figures against the bars in
+    the log beside Phase 4's; if it does not pass, the dev stops and reports (the bar is not
+    moved).
+  - `gpu_wobble` still holds no unignored test; the phase's GPU run is the two soak tests by
+    name with `--run-ignored only`, the count of tests run in the log. Quick tier, clippy
+    and fmt over the changed crate.
+
+### Phase 12: The HUD's `light:` row names the queue's own tiers (a fix step)
+- **Owner skill:** dev
+- **What** (added 2026-11-23, architect's ruling 3). `write_queue_banner_row`
+  (`apps/flythrough/src/run/hud_feed.rs`) prints the live queue's sample tiers from the
+  run's settings (`Args::bake.tiers`: the profile's, `--bake-tiers`, a profile switched in
+  the menu), near, mid and far, in place of the constant `QUEUE_BRICK_SAMPLES` at both of
+  its places. The row's other words stay.
+- **Files touched:** `apps/flythrough/src/run/hud_feed.rs`, its tests under
+  `apps/flythrough/src/run/`, `docs/flythrough.md` (where the row is described),
+  `docs/plans/logs/0098.md`.
+- **Done when:**
+  - CPU (the run's tests, under 1 s): with `--bake-tiers 2048,256,64` the row holds 2048,
+    256 and 64 as its three tiers and no `4096`; with `--profile portable` and no tier flag
+    it holds that profile's three tiers, read from the profile and not written into the
+    test; with no flag it holds `vxe_render::DEFAULT_TIERS`; after the menu switches the
+    profile the next row holds the new profile's tiers.
+  - Quick tier, clippy and fmt over the changed crate. No GPU run.
+  - The orchestrator rebuilds the session's binary if W3's runs 4 and 5 are still ahead.
+
+### Phase 13: The key ray that is never shown is not cast, and the default's near key shadow has a test
+- **Owner skill:** dev
+- **What** (added 2026-11-23, architect's ruling on finding 2; owner confirm owed).
+  1. **The test first.** In `crates/vxe-render/tests/gpu_sun/key.rs`, on the slab-edge rig
+     at the near (the far normal's weight 0) under `Lighting::default()` with a sky set and
+     no override of history, key far or mix: the key slot at every floor pixel is the same
+     value on frames 1, 2 and 3 with `key jitter` on, some pixel lies strictly between 0 and
+     1 (the horizon's ramp is in view), and every pixel equals the same rig's value under
+     the far estimate alone (the file's `far_frame`, the far normal's weight 1). It names the default's
+     property: the near key shadow is the column map's horizon, the same every frame.
+  2. **The skip.** `key_from_store` (`shade.wgsl`) also answers true, so no key ray is cast
+     and the temporal pass takes its no-ray branch, where every condition holds that makes
+     the cast sample unshown: the far estimate on (`LIGHTING_KEY_BAKED`), a store face, the
+     penumbra not approach, and the light history's setting off for the pixel (off, and not
+     `light history far`). An entity, a field surface, the approach penumbra, the history
+     on and `key far ray` cast as they do today. The dev says in the log whether the
+     condition reads the setting or `Params::history`'s bit and why a frame with an invalid
+     history is safe.
+  3. **The golden's words.** `outdoor_forest_afternoon_golden`'s doc comment says what the
+     image is under the defaults with no store (no sun and no sky under the canopy, by the
+     column map), citing ADR-0082.
+  **Stop rule:** if the skip needs more than that predicate and its comment, or any golden
+  or `gpu_sun` test moves, the dev reverts the skip, keeps steps 1 and 3, and reports; the
+  skip then goes to the backlog entry.
+- **Files touched:** `crates/vxe-render/src/shaders/shade.wgsl`,
+  `crates/vxe-render/tests/gpu_sun/key.rs`, `apps/flythrough/tests/gpu_outdoor_golden.rs`
+  (a comment), `docs/nfr/02-frame-budget.md`, `docs/plans/logs/0098.md`.
+- **Done when:**
+  - The new `gpu_sun` test (lavapipe, expected under 10 s, a guess from its sibling
+    `the_far_horizon_is_the_same_every_frame`; over the soak line it is born
+    `#[ignore = "soak"]` and the log says so) passes before the skip and after it.
+  - With the skip: every golden passes with no re-bless, `gpu_sun` and `gpu_lights` pass
+    untouched (the history-on paths cast as before), and Phase 8's dig test passes.
+  - The light pass's time before and after, the three scenes of Phase 4's table, RTX 3080
+    Laptop and RADV RENOIR, exclusive perf lock, in the log; the after row replaces Phase
+    4's in `docs/nfr/02-frame-budget.md` with the machine and the commit. A fall under the
+    run-to-run spread is reported as "no measurable gain" and the skip stays (it is still a
+    ray not cast).
+  - The phase's GPU run (lavapipe): `--binaries gpu_sun gpu_lights gpu_outdoor
+    gpu_outdoor_golden gpu_golden`, tests run over 0; then the gate tier and the whole gpu
+    tier at the tip once Phases 11 and 12 are in (lane rules 4).
+
+### The order to the close (restated 2026-11-23)
+
+| step | owner | done when |
+|---|---|---|
+| Phase 11 | dev | the soak test passes on the RTX on the queue-stopped arm, or the dev stops with the three-run table |
+| Phase 12 | dev | the `light:` row holds the queue's own tiers under a flag, a profile and a menu switch |
+| Phase 13 | dev | the default's near key shadow has its test; the unshown ray is not cast with every golden unmoved, or the skip is reverted and parked |
+| Phase 10 (W3) | human | a verdict per run in the log; may run beside 11 to 13 (they take the GPU only when the session's lock is free) |
+| fix pass, only if W3 changes a pick or sends the dig back | dev | the default's row, its re-bless and Phase 13's test agree with the new pick |
+| the gate at the tip | dev | build, the gate tier on lavapipe under the perf lock, clippy, fmt, deny and the doc gates pass on the tree that holds 11 to 13 and main; the two soak tests of Phase 11 pass by name |
+| the close review | architect, a fresh session | the review is clean, ADR-0082 is accepted with its Outcome (the picks named as they are shown, the landing's step, the dig's rule, the limits under cover), the backlog holds what is parked, the plan moves to `done/` |
 
 ## Data shapes
 
@@ -846,6 +1152,10 @@ _(Facts for the architect.)_
   (skip the cast; the reading agrees, and it waits for Phase 8, which may want the sample at
   a dig); the key light's record under `key far baked` still steps at a landing with no
   history. The dig's ring is Phase 8's.
+- From Phase 4's findings (2026-11-23): a sun shadow near that is soft and true under cover
+  with no screen history, the raw disc sample at an entity or a field surface, the unshown
+  sky cast, and the black cover with no store are in the backlog ("The sun's shadow near
+  under the calm defaults"); Phase 13's skip joins it if its stop rule fires.
 - From W2 (2026-11-23): `source fade`'s mix is linear from black, so its first frames are
   large on the display (the log, "What the fade does"); dropped while the fade is off by
   default. Whatever Phase 9 and W3 leave of the noon terraces, and W3's word on the Portable
