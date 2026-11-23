@@ -1041,7 +1041,18 @@ linear scale of the RENOIR's 1.62 ms gives about 14.6 ms for the bake's length (
 the 4.0 ms lighting line), owed to Plan 0096, which reads the RENOIR's outdoor light pass. The exposure's rate cap and the
 ceiling's step are one clamp each in the exposure pass (0 ms by construction, not read); the
 no-ray fade's temporal and composite cost is not read separately. The exposure's meter tile
-grows 8 to 16 B and its uniform 96 to 112 B: +115 216 B at 1280 x 720 internal.
+grows 8 to 16 B and its uniform 96 to 112 B: +115 216 B at 1280 x 720 internal. **The
+exposure's floor walk (Plan 0097, ADR-0081):** the render thread's CPU reads the record under
+the eye once a frame (`sky_over_floor`); over the canopy walk between window W2's two poses
+(1130 frames at 15 voxels a second, the store baked along it) it reads 0.226 us mean and
+0.501 us max a frame, the RTX 3080 Laptop's host, release, `80cd7134`, exclusive perf lock,
+1-minute load 10.2 (loaded, indicative; `docs/plans/logs/0097.md`, Phase 4). Plan 0097 Phase
+1's 600 eyes on the shade pose's store read 1.694 us mean, 10.477 us max (`ea15d52f`, loaded).
+The GPU side is one `select`, one `max` and one `mix` in the exposure pass (not timed). Highlight
+protection (Plan 0097 Phase 3a) bins the tiles' maxima into a 128-bin workgroup histogram in
+the same pass (not timed), grows the uniform 112 to 128 B and adds a 16 B state: +32 B, so the
+exposure's growth since Plan 0094 is +115 248 B at 1280 x 720 internal (the frame inventories,
+lavapipe).
 
 **The key light with no screen history (Plan 0095, ADR-0079; 2026-11-20, release `flythrough`
 at `b46cb3eb`'s render code, `--headless --source outdoor --frames 1500 --render 1920x1080`,

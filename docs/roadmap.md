@@ -759,7 +759,7 @@ a cheap query.
   positional voice as an audio source through M4's occlusion.
 - **ADRs expected:** transport; voice codec.
 
-### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0; Plan 0032 closed 2026-11-17, v0.61.0; Plan 0086 closed 2026-11-19, v0.67.0; Plan 0094 closed 2026-11-20, v0.68.0; Plan 0095 closed 2026-11-21, v0.69.0)
+### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0; Plan 0032 closed 2026-11-17, v0.61.0; Plan 0086 closed 2026-11-19, v0.67.0; Plan 0094 closed 2026-11-20, v0.68.0; Plan 0095 closed 2026-11-21, v0.69.0; Plan 0097 closed 2026-11-23, v0.70.0)
 
 The open-sky half of the "Floor, profiles and scene scale" decision, as general engine
 mechanisms: the first consumer is underground, so nothing here is on its P0 list, and terrain
@@ -820,6 +820,15 @@ against the baked store: no probe or store term takes sun or sky light.
   better than before"). Left open: the far normal's band still casts the ray at most far pixels
   (the backlog), the RENOIR's light pass at 34 ms in the forest (Plan 0096 Phase 6), the
   landings' wait (Plan 0096), the exposure in deep shade (Plan 0097).
+- **The exposure's anchor by the sky around the camera** ([Plan 0097](plans/done/0097-the-exposures-anchor-by-the-sky-around-the-camera-the-floor-record-under-the-eye-a-time-constant-and-the-canopys-shade.md),
+  closed 2026-11-23, v0.70.0; ADR-0081 accepted with an Outcome): the ceiling's anchor holds
+  by the larger of the sky in view and the sky over the camera's floor (the baked record under
+  the eye, smoothed over 1 s), so a canopy closing over the last sky pixel no longer opens the
+  eye; where it releases, it opens at most a lift of 4 EV over the daylight anchor, so a
+  tunnel by day stays dark and opens to `max` at night; highlight protection caps the eye
+  under the brightest percent of the view. Three owner windows (97: "deep shade was better",
+  97b, 97c: "1a looks great"). Left open: whether highlight protection wants its own ADR (the
+  owner), the time constant's 1 s unjudged by eye, the near jumps after a stop (Plan 0098).
 - **A surface detail layer** ([Plan 0081](plans/0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md),
   drafted 2026-11-16, awaits the owner's go; ADR-0063 proposed): grass, moss, strands,
   fungus caps, flowers, pebbles and snow tufts as a procedural shell marched in the hit pass

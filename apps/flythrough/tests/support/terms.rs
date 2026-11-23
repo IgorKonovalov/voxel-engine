@@ -105,6 +105,23 @@ pub fn forest_rig() -> Option<(Rig, vxe_render::Camera)> {
     Some((rig, cam))
 }
 
+/// The forest of seed 1 at `LEAF_FILL` (`--source outdoor --trees forest`) generated about
+/// voxel `about`: the chunks within 4 of its chunk (2 in z), the mirror's focus there.
+pub fn forest_rig_about(about: [i32; 3]) -> Option<Rig> {
+    use flythrough::outdoor::OutdoorSource;
+    use flythrough::trees::{ForestSource, LEAF_FILL, TreeDensity};
+    use vxe_world::{ChunkExtent, VoxelCoord, World};
+    let source = ForestSource::new(OutdoorSource::new(1), TreeDensity::Forest, LEAF_FILL);
+    let eye = VoxelCoord(about);
+    let c = eye.chunk().0;
+    let extent = ChunkExtent::new(
+        [c[0] - 4, c[1] - 4, c[2] - 2],
+        [c[0] + 5, c[1] + 5, c[2] + 3],
+    );
+    let world = World::generate(extent, &source, &flythrough::outdoor_materials());
+    mirrored(world, eye)
+}
+
 /// The sky ray's hit rate per lighting pixel of a native 320 x 180 frame of `cam` (64 frames
 /// under `Sky::uniform(1.0)`, the filter and the key light off, exposure 1), `None` at a
 /// miss, and the grid's width.

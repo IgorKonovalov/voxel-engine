@@ -1047,8 +1047,24 @@ impl Frame {
             dt: self.dt,
             ..ExposureUniform::default()
         };
+        let mut around = self
+            .around
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        around.1 = None;
         if let Exposure::Auto(a) = &self.state.lighting.exposure {
             u.set_auto(a, self.sky.sky.is_some());
+            u.set_highlight(a, self.state.lighting.tone_map);
+            // The floor's term (ADR-0081): walked and smoothed only where it can move the
+            // ceiling, the anchor in force and `F_floor` over 0.
+            if u.anchor > 0.0 && u.sky_share > 0.0 && a.sky_anchor_floor > 0.0 {
+                let answer = crate::bake::sky_over_floor(&self.baked.store, p.views[0].origin)
+                    .map(|(f, _)| f);
+                around.1 = around.0.step(answer, self.dt, a.sky_around_tau);
+            } else {
+                around.0.reset();
+            }
+            u.set_around(a, around.1);
         }
         u
     }

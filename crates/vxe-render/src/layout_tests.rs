@@ -88,7 +88,7 @@ fn mirror_of(label: &str, name: &str) -> Option<Mirror> {
             changed,
             lamp
         }),
-        (_, "ExposureState" | "ExUniform") => exposure_mirror(name),
+        (_, "ExposureState" | "ExUniform" | "ExHighlight") => exposure_mirror(name),
         (_, "ProbeParams") => mirror!(crate::probes::ProbeUniform {
             origin,
             spacing,
@@ -159,8 +159,8 @@ fn mirror_of(label: &str, name: &str) -> Option<Mirror> {
     })
 }
 
-/// `ExposureState` (common.wgsl, exposure.wgsl's `ExState` reads the same buffer) and
-/// `ExUniform` in exposure.wgsl.
+/// `ExposureState` (common.wgsl, exposure.wgsl's `ExState` reads the same buffer),
+/// `ExUniform` and `ExHighlight` in exposure.wgsl.
 fn exposure_mirror(name: &str) -> Mirror {
     match name {
         "ExposureState" => mirror!(crate::exposure::ExposureState {
@@ -172,6 +172,12 @@ fn exposure_mirror(name: &str) -> Mirror {
             flags,
             ceiling,
             sky
+        }),
+        "ExHighlight" => mirror!(crate::exposure::ExposureHighlight {
+            now_log2,
+            log2,
+            cap,
+            seen
         }),
         _ => mirror!(crate::exposure::ExposureUniform {
             tiles,
@@ -193,6 +199,10 @@ fn exposure_mirror(name: &str) -> Mirror {
             rate_ev_s,
             max_rate_dt,
             sky_share,
+            sky_around,
+            hi_tail,
+            hi_white,
+            lift,
             _pad1
         }),
     }

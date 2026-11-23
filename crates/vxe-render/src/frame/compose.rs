@@ -18,7 +18,7 @@ use crate::bake::{
     BRICK_WORDS, KEY_BAKED, KEY_WORD, SKY_STALE, STORE_FLAGS, STORE_TABLE, TABLE_COARSE, VIS_BAKED,
     VIS_WORD,
 };
-use crate::exposure::STATE_HELD;
+use crate::exposure::{STATE_HELD, TAIL_BINS};
 use crate::field::{BAND_CUBES_BIT, CRISP_COUNT_BIT, SMOOTH_COUNT_BIT};
 use crate::gpu_world::{
     ABSENT, CLASS_SHIFT, CLASS_UNIFORM, CLASS_WIDE, EMPTY_BIT, ENTRY_WORD, FULL_BIT,
@@ -167,6 +167,7 @@ pub(crate) const PRELUDE: &[(&str, u32)] = &[
     ("EX_METER", EX_METER),
     ("EX_RESET", EX_RESET),
     ("STATE_HELD", STATE_HELD),
+    ("TAIL_BINS", TAIL_BINS),
     // The sky (`sky.rs`, `frame/sky.rs`): the uniform's flags and the LUTs' sizes.
     ("SKY_ON", SKY_ON),
     ("SKY_UNIFORM", SKY_UNIFORM),

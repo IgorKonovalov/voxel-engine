@@ -500,6 +500,10 @@ impl Modes {
             sky_anchor_ev: self.auto.1.sky_anchor_ev,
             compensation_ev: self.auto.1.compensation_ev,
             sky_anchor_share: self.auto.1.sky_anchor_share,
+            sky_anchor_floor: self.auto.1.sky_anchor_floor,
+            sky_around_tau: self.auto.1.sky_around_tau,
+            sky_anchor_lift: self.auto.1.sky_anchor_lift,
+            highlight_percentile: self.auto.1.highlight_percentile,
             rate_ev_s: self.auto.1.rate_ev_s,
             ..Adaptation::Symmetric.preset()
         }
@@ -657,11 +661,21 @@ impl Modes {
             }
             vxe_render::Exposure::Manual(_) => (None, None),
         };
-        row.sky_share = match row.ceiling {
+        (row.sky_share, row.floor_share) = match row.ceiling {
             Some((_, Some(_))) => self
                 .readout
                 .filter(|r| r.ceiling > 0.0)
-                .map(|r| r.sky_share),
+                .map_or((None, None), |r| (Some(r.sky_share), Some(r.sky_floor))),
+            _ => (None, None),
+        };
+        row.lift = match (row.ceiling, self.lighting.exposure) {
+            (Some((_, Some(_))), vxe_render::Exposure::Auto(a)) => Some(a.sky_anchor_lift),
+            _ => None,
+        };
+        row.highlight = match self.lighting.exposure {
+            vxe_render::Exposure::Auto(a) if a.highlight_percentile > 0.0 => {
+                self.readout.and_then(|r| r.highlight).map(f32::log2)
+            }
             _ => None,
         };
     }
@@ -748,12 +762,39 @@ impl Modes {
                         out.push_str("sky anchor share off, ");
                     }
                 }
+                if a.sky_anchor_ev.is_some()
+                    && a.sky_anchor_floor != vxe_render::DEFAULT_SKY_ANCHOR_FLOOR
+                {
+                    if a.sky_anchor_floor > 0.0 {
+                        let _ = write!(out, "sky anchor floor {}, ", a.sky_anchor_floor);
+                    } else {
+                        out.push_str("sky anchor floor off, ");
+                    }
+                }
+                if a.sky_anchor_ev.is_some() {
+                    match a.sky_anchor_lift {
+                        None => out.push_str("sky anchor lift off, "),
+                        Some(l) if l != vxe_render::DEFAULT_SKY_ANCHOR_LIFT => {
+                            let _ = write!(out, "sky anchor lift {l}, ");
+                        }
+                        Some(_) => {}
+                    }
+                }
             }
         }
         if let vxe_render::Exposure::Auto(a) = l.exposure
             && a.rate_ev_s != vxe_render::DEFAULT_EXPOSURE_RATE_EV_S
         {
             let _ = write!(out, "exposure rate {} EV/s, ", a.rate_ev_s);
+        }
+        if let vxe_render::Exposure::Auto(a) = l.exposure
+            && a.highlight_percentile != vxe_render::DEFAULT_EXPOSURE_HIGHLIGHT
+        {
+            if a.highlight_percentile > 0.0 {
+                let _ = write!(out, "exposure highlight {}, ", a.highlight_percentile);
+            } else {
+                out.push_str("exposure highlight off, ");
+            }
         }
         let _ = write!(
             out,

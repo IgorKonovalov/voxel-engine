@@ -58,12 +58,25 @@ pub struct OutdoorArgs {
     /// anchor holds in full (`AutoExposure::sky_anchor_share`), 0 for off; unset, the
     /// preset's (`vxe_render::DEFAULT_SKY_ANCHOR_SHARE`).
     pub(crate) sky_anchor_share: Option<f32>,
+    /// `--sky-anchor-floor X|off`: the share of the hemisphere over the camera's floor that
+    /// is open sky at and over which the anchor holds in full (`AutoExposure::
+    /// sky_anchor_floor`, ADR-0081), 0 for off; unset, the preset's
+    /// (`vxe_render::DEFAULT_SKY_ANCHOR_FLOOR`).
+    pub(crate) sky_anchor_floor: Option<f32>,
+    /// `--sky-anchor-lift L|off`: the most the released anchor opens over the anchored
+    /// ceiling, in EV (`AutoExposure::sky_anchor_lift`, ADR-0081), `None` for off; unset, the
+    /// preset's (`vxe_render::DEFAULT_SKY_ANCHOR_LIFT`).
+    pub(crate) sky_anchor_lift: Option<Option<f32>>,
     /// `--exposure-max EV`: the auto exposure's constant ceiling in EV; unset, the start's
     /// ([`OUTDOOR_MAX`] outdoors, the preset's elsewhere).
     pub(crate) exposure_max_ev: Option<f32>,
     /// `--exposure-rate EV/s`: the auto exposure's rate cap (`AutoExposure::rate_ev_s`, 0 for
     /// none); unset, the preset's (`vxe_render::DEFAULT_EXPOSURE_RATE_EV_S` for the eye).
     pub(crate) exposure_rate: Option<f32>,
+    /// `--exposure-highlight P|off`: highlight protection's percentile
+    /// (`AutoExposure::highlight_percentile`, 0 for off); unset, the preset's
+    /// (`vxe_render::DEFAULT_EXPOSURE_HIGHLIGHT`).
+    pub(crate) exposure_highlight: Option<f32>,
 }
 
 impl OutdoorArgs {
@@ -414,6 +427,38 @@ fn ceiling_flags() -> Vec<Flag<Parsing>> {
             },
         ),
         Flag::value(
+            &["--sky-anchor-floor"],
+            "X|off",
+            "the share of the sky over the camera's floor (the baked sky visibility of the \
+                 floor under the eye, 0 to 1) at and over which the sky anchor holds in full, \
+                 whatever is in view; the anchor holds by the larger of this and the view's \
+                 share, so it releases only where both are low (a tunnel, a cave); off \
+                 anchors by the view alone [0.125]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.sky_anchor_floor = Some(match v.text {
+                    "off" => 0.0,
+                    _ => v.parse_if(|n: &f32| *n > 0.0 && *n <= 1.0, "over 0 to 1, or off")?,
+                });
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--sky-anchor-lift"],
+            "L|off",
+            "by day, where the sky anchor releases (no sky in view, little over the floor), \
+                 the auto exposure opens at most L EV (0 to 12) over the anchored ceiling, so \
+                 a tunnel or cave stays dark against the daylight it is cut from; 0 holds the \
+                 anchor everywhere; a dark sky, as at night, is untouched; off releases to the \
+                 constant ceiling [4]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.sky_anchor_lift = Some(match v.text {
+                    "off" => None,
+                    _ => Some(v.parse_if(|n: &f32| (0.0..=12.0).contains(n), "0 to 12 or off")?),
+                });
+                Ok(())
+            },
+        ),
+        Flag::value(
             &["--column-wait"],
             "on|off",
             "on, the live queue bakes a chunk once every column over its reach holds all the \
@@ -455,6 +500,21 @@ fn ceiling_flags() -> Vec<Flag<Parsing>> {
             |p: &mut Parsing, v| {
                 p.args.outdoor.exposure_rate =
                     Some(v.parse_if(|n: &f32| (0.0..=64.0).contains(n), "0 to 64")?);
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--exposure-highlight"],
+            "P|off",
+            "highlight protection: the auto exposure is also capped so the brightest 100 - P \
+                 percent of the view (the hits' brightest channel, per 8 x 8 tile; never the \
+                 sky) stays at or under the tone curve's 0.95, 50 to 100; the HUD's exposure \
+                 row reads the cap as `hi`; off lets the bright tail clip [99]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.exposure_highlight = Some(match v.text {
+                    "off" => 0.0,
+                    _ => v.parse_if(|n: &f32| (50.0..=100.0).contains(n), "50 to 100, or off")?,
+                });
                 Ok(())
             },
         ),
