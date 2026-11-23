@@ -720,8 +720,9 @@ mod flicker {
         /// `calm` (the five picks named: light history off, key far column, key far
         /// mix step, the band 4..8, the disc), then one put back each: `hist` (light history
         /// on), `baked` (key far baked), `blend` (key far mix blend), `band` (the band 2..6),
-        /// `approach` (the approach penumbra); `before` (the defaults before the picks: `hist`,
-        /// `baked`, `blend` and `band`, the disc kept, window W2's run 5 "no flash"); `pin` the
+        /// `approach` (the approach penumbra); `before` (the fly-through's defaults before the
+        /// picks: `hist`, `baked`, `blend`, `band` and `approach`, window W2's run 5 "no
+        /// flash"); `pin` the
         /// exposure manual at its settled value from the settle's end; `hold=on|off`
         /// (`Lighting::dig_hold`).
         pub(in super::super) fn dig_arm(f: &mut vxe_render::Frame, arm: &str) -> bool {
@@ -743,6 +744,7 @@ mod flicker {
                         l.key_far = vxe_render::KeyFar::Baked;
                         l.key_far_mix = vxe_render::KeyFarMix::Blend;
                         look.far_normal = [2.0, 6.0];
+                        l.penumbra = vxe_render::Penumbra::Approach;
                     }
                     "hist" => l.light_history = true,
                     "baked" => l.key_far = vxe_render::KeyFar::Baked,

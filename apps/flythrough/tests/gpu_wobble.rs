@@ -1172,6 +1172,30 @@ mod reading {
         );
     }
 
+    /// Plan 0095 Phase 10's soak reading, run by hand: the rig's protocol ([`wobble_on`]) for
+    /// Plan 0098 Phase 1's arm set `default`, `albedo`, `calm` and `calm,native` (the last with
+    /// no upscaler, at 1080p native), no drain, on one forest (`r` 8) at 1080p through FSR 2 at
+    /// 1.5: each arm's rows printed with the queue's depth and the far's key source split, and
+    /// the stop +0 near of each in one row, so a later plan re-reads the wobble with the same
+    /// instrument. Nothing is asserted: the claim it carried (the near does not go on settling
+    /// after a stop, at most `albedo`'s plus 2 points) is asserted with the queue stopped and the
+    /// exposure pinned, where nothing lands and the exposure takes no step, by
+    /// [`super::the_defaults_hold_still_at_rest_and_the_far_holds`]. `VXE_TEST_ADAPTER` picks
+    /// the adapter (the RTX by hand; unset, lavapipe).
+    #[test]
+    #[ignore = "reading"]
+    fn the_wobble_table_over_the_arm_set() {
+        let Some((mut rig, cam0)) = forest_rig(8) else {
+            return;
+        };
+        let mut near = Vec::new();
+        for spec in ["default", "albedo", "calm", "calm,native"] {
+            near.push((spec, wobble_on(&mut rig, cam0, &Arm::from_spec(spec)).near0));
+        }
+        let row: Vec<String> = near.iter().map(|(a, v)| format!("{a} {v:.2} %")).collect();
+        println!("stop +0 near on {}: {}", rig.adapter, row.join(", "));
+    }
+
     #[test]
     #[ignore = "reading"]
     fn wobble() {
@@ -1185,13 +1209,16 @@ mod reading {
 
 /// What [`wobble_on`] reads of a run's stop, in % of the class's pixels over 4 levels: the near
 /// class from the stop's first frame to its last (`near0`), the stop's largest near pair
-/// (`near_pair`), and the far class 30 frames into the stop against its last (`far30`). Every
-/// field is NaN for a `probe` arm, which runs no stop.
-#[derive(Clone, Copy, Debug)]
+/// (`near_pair`), the far class from the stop's first frame (`far0`) and 30 frames into it
+/// (`far30`) against its last, and the live queue's depth at the stop's end in words
+/// (`depth`). Every figure is NaN for a `probe` arm, which runs no stop.
+#[derive(Clone, Debug)]
 struct StopRead {
     near0: f64,
     near_pair: f64,
+    far0: f64,
     far30: f64,
+    depth: String,
 }
 
 /// The rig's protocol for `arm` on `rig` from the spawn's camera `cam0`: the table's rows
@@ -1243,7 +1270,9 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> StopRead {
             return StopRead {
                 near0: f64::NAN,
                 near_pair: f64::NAN,
+                far0: f64::NAN,
                 far30: f64::NAN,
+                depth: depth(&s.frame),
             };
         }
         if let Some(ms) = arm.pre_ms {
@@ -1380,12 +1409,15 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> StopRead {
             let cls = classes(&shot.hits, &shot.source, gw, cam1.position.to_array());
             let near0 = hold_series(&stop, &cls, still_far_max);
             let near_pair = landing_rows(&stop, &cls);
-            let far30 =
-                change_by_class(&stop.frames[30], stop.frames.last().unwrap(), &cls, 4)[3].0;
+            let last = stop.frames.last().unwrap();
+            let far0 = change_by_class(&stop.frames[0], last, &cls, 4)[3].0;
+            let far30 = change_by_class(&stop.frames[30], last, &cls, 4)[3].0;
             stop_read = StopRead {
                 near0,
                 near_pair,
+                far0,
                 far30,
+                depth: depth(&s.frame),
             };
             support::write_png(&dir.join("stop-final.png"), &shot.display, OUT[0], OUT[1]);
         }
@@ -1434,57 +1466,36 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> StopRead {
     }
 }
 
-/// Plan 0095 Phase 10's soak reading: the rig's protocol ([`wobble_on`]) for Plan 0098 Phase
-/// 1's arm set `default`, `albedo`, `calm` and `calm,native` (the last with no upscaler, at 1080p
-/// native), no drain, on one forest (`r` 8) at 1080p through FSR 2 at 1.5: each arm's rows printed with the queue's depth and the far's key
-/// source split, so a later plan re-reads the wobble with the same instrument. Plan 0095 Phase
-/// 10's near bar (as amended 2026-11-21): the `default` arm's (the picks') stop +0 near, the near
-/// class's over-4 share from the stop's first frame to its last, is at most the `albedo` arm's
-/// (lighting off) read in the same run plus 2 points. The bar is read at 1080p only: at the gate
-/// scene's 320-pixel grid the far normal's band starts at about 2.2 m and most near pixels read
-/// the far estimate. `VXE_TEST_ADAPTER` picks the adapter (the RTX by hand; unset, lavapipe).
-#[test]
-#[ignore = "soak"]
-fn the_wobble_table_over_the_arm_set() {
-    let Some((mut rig, cam0)) = forest_rig(8) else {
-        return;
-    };
-    let mut near = Vec::new();
-    for spec in ["default", "albedo", "calm", "calm,native"] {
-        near.push((spec, wobble_on(&mut rig, cam0, &Arm::from_spec(spec)).near0));
-    }
-    let row: Vec<String> = near.iter().map(|(a, v)| format!("{a} {v:.2} %")).collect();
-    println!("stop +0 near on {}: {}", rig.adapter, row.join(", "));
-    let (picks, off) = (near[0].1, near[1].1);
-    assert!(
-        picks <= off + 2.0,
-        "stop +0 near {picks:.2} % against the lighting-off {off:.2} % + 2"
-    );
-}
+/// The far class's over-4 share 30 frames into the stop against its last at rest
+/// (`default,pin,nqueue`: the five picks, the exposure pinned, the queue stopped after the
+/// settle), at the fly of 180 frames and of 20: the largest of three readings on the RTX 3080
+/// Laptop (the readings log, Plan 0098 Phase 11: Phase 4's run and two more), which
+/// [`the_defaults_hold_still_at_rest_and_the_far_holds`] bars against plus 2 points.
+const REST_FAR30: [(usize, f64); 2] = [(180, REST_FAR30_180), (20, REST_FAR30_20)];
+const REST_FAR30_180: f64 = 9.98;
+const REST_FAR30_20: f64 = 11.39;
 
-/// The far class's over-4 share 30 frames into the stop against its last under the picks with
-/// the exposure pinned (`calm,pin`), at the fly of 180 frames and of 20: the reading Plan 0098
-/// Phase 4 takes on the RTX 3080 Laptop at its base before the defaults move (the readings
-/// log, Phase 4: the quiet runs, 23.48 and 41.52 %; a loaded repeat read 13.59 and 36.45 %, the
-/// far still taking its records at the queue's pace), which [`the_defaults_hold_still_at_rest_and_the_far_holds`] bars against.
-const CALM_PIN_FAR30: [(usize, f64); 2] = [(180, CALM_FAR30_180), (20, CALM_FAR30_20)];
-const CALM_FAR30_180: f64 = 23.48;
-const CALM_FAR30_20: f64 = 41.52;
+/// The near class's over-4 share from the stop's first frame to its last at rest, at most:
+/// Plan 0095 Phase 10's bar as written, the lighting-off arm's (`albedo`) 0.05 % plus 2 points.
+const REST_NEAR0: f64 = 2.05;
 
-/// Plan 0098 Phase 4's bars (ADR-0082; as restated at window W2): the rig's protocol
+/// The largest near pair of the stop at rest, at most (the arm read 0.49, 0.08 and 0.01 % in
+/// Plan 0098 Phases 6 and 6b; the bar is the largest plus 2 points).
+const REST_NEAR_PAIR: f64 = 2.5;
+
+/// Plan 0098 Phase 4's bars as ruled at its findings (ADR-0082): the rig's protocol
 /// ([`wobble_on`]) on the forest (`r` 8) at 1080p through FSR 2 at 1.5, no drain, the exposure
 /// pinned after the settle, the defaults with no token (the five picks), at the fly of 180
-/// frames and of 20. Near at rest: with the queue stopped after the settle
-/// (`default,pin,nqueue`), no frame pair of the stop moves more than 2.5 % of the near pixels
-/// over 4 levels (the arm read 0.49, 0.08 and 0.01 % in Phases 6 and 6b; the bar is the
-/// largest plus 2 points): with nothing landing the image holds still. Near at a landing:
-/// printed, not barred: with the queue stepping (`default,pin`) the rig prints every stop
-/// pair over 0.5 % with its frame, the blocks landed, the share over 4 levels and the mean
-/// change (accepted by eye at window W2). Far: the far class's over-4 share 30 frames into the
-/// stop against its last under `default,pin` is at most [`CALM_PIN_FAR30`] plus 2 points, a
-/// ratchet on what the owner accepted; `default,pin,native` (no upscaler, 1080p) is printed
-/// beside it as the distance left. `VXE_TEST_ADAPTER` picks the adapter (the RTX by hand;
-/// unset, lavapipe).
+/// frames and of 20. Asserted at rest only, with the queue stopped after the settle
+/// (`default,pin,nqueue`), where nothing lands and the exposure takes no step: no frame pair
+/// of the stop moves more than [`REST_NEAR_PAIR`] of the near pixels over 4 levels, the near
+/// from the stop's first frame to its last moves at most [`REST_NEAR0`], and the far 30 frames
+/// into the stop against its last at most [`REST_FAR30`] plus 2 points. A figure that is not a
+/// number fails. Printed, not barred: with the queue stepping (`default,pin`) and with no
+/// upscaler (`default,pin,native`, 1080p native, the distance left) the far +30 and +0, the
+/// queue's depth at the stop's end and every landing row with its frame: a landing's frame is
+/// the machine's pace, not the rig's (accepted by eye at window W2). `VXE_TEST_ADAPTER` picks
+/// the adapter (the RTX by hand; unset, lavapipe).
 #[test]
 #[ignore = "soak"]
 fn the_defaults_hold_still_at_rest_and_the_far_holds() {
@@ -1492,7 +1503,7 @@ fn the_defaults_hold_still_at_rest_and_the_far_holds() {
         return;
     };
     let mut fails = Vec::new();
-    for (fly, before) in CALM_PIN_FAR30 {
+    for (fly, bar) in REST_FAR30 {
         let mut read = |spec: &str| {
             wobble_on(
                 &mut rig,
@@ -1504,19 +1515,38 @@ fn the_defaults_hold_still_at_rest_and_the_far_holds() {
         let picks = read("default,pin");
         let native = read("default,pin,native");
         println!(
-            "fly {fly} on {}: at rest the largest stop near pair {:.2} % (bar 2.5 %); stepping the largest {:.2} %; far +30 {:.2} % against calm,pin's {before:.2} % + 2, native {:.2} %",
-            rig.adapter, rest.near_pair, picks.near_pair, picks.far30, native.far30
+            "fly {fly} on {}: at rest the largest stop near pair {:.2} % (bar {REST_NEAR_PAIR}), stop +0 near {:.2} % (bar {REST_NEAR0}), far +30 {:.2} % against {bar:.2} % + 2 (far +0 {:.2} %, {}); stepping (printed): far +30 {:.2} %, far +0 {:.2} %, the largest near pair {:.2} %, {}; native (printed): far +30 {:.2} %, far +0 {:.2} %, {}",
+            rig.adapter,
+            rest.near_pair,
+            rest.near0,
+            rest.far30,
+            rest.far0,
+            rest.depth,
+            picks.far30,
+            picks.far0,
+            picks.near_pair,
+            picks.depth,
+            native.far30,
+            native.far0,
+            native.depth,
         );
-        if rest.near_pair > 2.5 {
+        // A figure that is not a number fails.
+        if rest.near_pair.is_nan() || rest.near_pair > REST_NEAR_PAIR {
             fails.push(format!(
                 "fly {fly}: a stop pair at rest moves {:.2} % of the near over 4",
                 rest.near_pair
             ));
         }
-        if picks.far30.is_nan() || picks.far30 > before + 2.0 {
+        if rest.near0.is_nan() || rest.near0 > REST_NEAR0 {
             fails.push(format!(
-                "fly {fly}: far +30 {:.2} % against {before:.2} % + 2",
-                picks.far30
+                "fly {fly}: the stop +0 near at rest {:.2} % against {REST_NEAR0} %",
+                rest.near0
+            ));
+        }
+        if rest.far30.is_nan() || rest.far30 > bar + 2.0 {
+            fails.push(format!(
+                "fly {fly}: far +30 at rest {:.2} % against {bar:.2} % + 2",
+                rest.far30
             ));
         }
     }
@@ -1635,8 +1665,8 @@ fn gate_run(rig: &mut Rig, cam0: &Camera, arm: support::wobble::Arm, frozen: boo
 /// hold's last frame at +30 and +60, each at or under the before's plus 1 point. Printed, not
 /// asserted (as amended 2026-11-21): the near class's stop +0 beside the lighting-off (albedo)
 /// run's (at this 320-pixel grid the far normal's band starts at about 2.2 m, so most near
-/// pixels read the far estimate; the near bar is the 1080p soak reading's,
-/// [`the_wobble_table_over_the_arm_set`]), and the same segments undrained with the queue's
+/// pixels read the far estimate; the near bar is the 1080p soak test's at rest,
+/// [`the_defaults_hold_still_at_rest_and_the_far_holds`]), and the same segments undrained with the queue's
 /// depth, the picks' +60 beside the before's (Plan 0096's far tiers re-read it). Far is a hit 6 m out or more
 /// ([`support::wobble::NEAR_M`]: the far normal's weight at least 0.996 at this width). Every
 /// figure prints. `VXE_TEST_ADAPTER` picks the adapter (unset, lavapipe).
