@@ -562,7 +562,7 @@ pub struct Lighting {
 | 4: The picks become the defaults | dev | not started; runs last, after W2 | |
 | 5: The far trees, a spike of render-side arms | dev | done (the term split 689479db; arms 257cdd23; `far light wide` also widens the stored sky term's source 21fcdf67, the term the split names); `far jitter` not built (no previous hit in the hit pass); `far light wide` closes 61 % of calm-to-albedo at the turn's +10, `light history far` none; readings in the log | committed with this row |
 | 6: The picks under one flag, a landing fades in the store | dev | done (9e243955; the landing rows' cell count fae329ce); `--calm` takes the five picks, `landing fade` built and its data test passes; readings on the RTX in the log: the fade moves no pop (every landing reads 0 changed cells: the pop is the light pass's source switching to a new block, no store word); the gpu tier over `gpu_wobble` holds no unignored test | committed with this row |
-| 6b: A landing's switch of source fades by the block's landing frame | dev | not started | |
+| 6b: A landing's switch of source fades by the block's landing frame | dev | done (47e44039; the rig's reads 925859c9); step 1 confirms (fly 20's pop: 99.9 % of the moved near pixels in the landed chunk and switched from no value to the record; no cast sample shown with the history off); `LANDED_AT` a new head word; `source_faded` in pair.wgsl (temporal.wgsl at its cap); readings: the landing's mean near change falls 3.4 to 5.5 times but its share over 4 levels does not (a linear-light fade from black); default arms unchanged; readings in the log | committed with this row |
 | 7: The owner's window W2 | human | not started | |
 
 ### Notes
