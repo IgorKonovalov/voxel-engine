@@ -1124,3 +1124,16 @@ light 22.47, FSR 2 16.37, temporal 12.00, a-trous 6.18); hills at 17:00 97.5 ms,
 in view landed 35.2 s after the first world frame; the submits drew 8.8 to 9.7 ms of a granted
 6.0. The RTX cave glide: `light place` p50 / p99 2.16 / 6.19 ms, slowest sync 21.0 ms, the
 owner's "no stagger". Every run in `docs/plans/logs/0096.md`, Phase 8.
+
+**The owner's window W2 (2026-11-23, Plan 0098's session 98b, runs 6, 7 and 7b on Plan 0096's
+release at its Phase 9, windowed at 2530 x 1378; single HUD readings from the owner's stills,
+not medians, so indicative).** RENOIR, Portable, forest at 15:00, the profile at its hint in a
+window (**the march and the light pass at 853 x 480, FSR 2 to 1280 x 720, that stretched to
+the window**): 23.7 fps, frame 42 ms, GPU 33 ms (hit 8.30, light 13.54, temporal 3.99, FSR 2
+4.49), 244 chunks in view waiting, the drain projected at 9.8 s; a later still of the same run
+at rest reads 25.2 fps, wall p50 39.2 ms, GPU 34.7 (light 19.35). Against W96's 8 to 9 fps at
+the window's own size, and against the Portable line of 33.3 ms: over it, outdoors, by the
+light pass and the hit. The owner: "frames around 25, softer acceptable". RTX, Floor, forest,
+a fresh start at `--bake-tiers 4096,4096,4096`: 49.6 fps with the bake step at 11.78 ms, 3 099
+waiting, the drain projected at 233.8 s (the cost of 4 096 in every band; the owner on the
+profile's tiers against it: "shadows are fine").

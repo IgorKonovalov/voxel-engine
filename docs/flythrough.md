@@ -235,7 +235,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--library` | Print the entities library (each entry's parts, size in voxels, pool bytes and clips, the first marked `*`, or its error) and exit |
 | `--check-args` | Parse the arguments, print `arguments ok` and exit, opening nothing |
 | `--seed N` | The world's seed [1] |
-| `--render WxH\|window` | Fix the frame's output resolution, the window scaling it; `window` is the window's size, also under the portable profile. Without the flag a window draws at its own size, but the portable profile draws at its hint (1280 x 720) in a window too. The HUD's size row reads the internal, the output and the window's size (`fsr2 16.37 ms, 853x480 to 1280x720, window 2530x1378`) [the window's; portable's 1280x720] |
+| `--render WxH\|window` | Fix the frame's output resolution, the window scaling it; `window` is the window's size, also under the portable profile. Without the flag a window draws at its own size, but the portable profile draws at its hint (1280 x 720) in a window too: its march runs at 853 x 480 (FSR 2 at 1.5), FSR 2 makes 1280 x 720, and the window stretches that to its own shape (about 3 % at 2530 x 1378, no letterbox). The HUD's size row reads the internal, the output and the window's size (`fsr2 16.37 ms, 853x480 to 1280x720, window 2530x1378`) [the window's; portable's 1280x720] |
 | `--frames N` | Exit after `N` frames, printing the readings (`Enter`) over the last ones |
 | `--pace free\|compositor` | Wait for the compositor's frame callback before each present or not [free] |
 | `--bench N` | Send `N` bench inputs on the first frame |

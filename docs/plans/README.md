@@ -3,12 +3,12 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0100** (0096 is the performance plan below; 0097 the exposure's anchor by
+**Next free number: 0100** (0096 the performance plan, closed; 0097 the exposure's anchor by
 the sky around the camera; 0098 the calm light by default, drafted 2026-11-21; 0099 the bake
 step off the main thread, drafted 2026-11-22; ADRs are a separate sequence, see `../adrs/README.md` for its next
 free number). Plan 0095, the motion wobble (a calm key light in motion), closed 2026-11-21,
 v0.69.0. Plan 0097, the exposure's anchor by the sky around the camera, closed 2026-11-23,
-v0.70.0.
+v0.70.0. Plan 0096, the bake queue's drain, closed 2026-11-23, v0.71.0.
 
 ## Active roster
 
@@ -33,9 +33,8 @@ v0.70.0.
 | [0091](0091-the-frame-profiler-scopes-across-threads-a-gpu-lane-a-dump-for-agents-and-a-hud-ticker.md) | The frame profiler: scopes across the threads, a GPU lane, a dump the agent ranks, budget scopes, a HUD ticker | approved | M7, ADR-0077. After 0087 and 0089, before 0090 (owner). |
 | [0092](0092-wgsl-hot-reload-in-the-fly-through-an-mtime-poll-pipelines-rebuilt-and-the-old-ones-kept-on-an-error.md) | WGSL hot reload in the fly-through: an mtime poll, pipelines rebuilt from disk, the old kept on an error | approved | M7, no ADR. After 0091 in its lane, before 0090 (owner). |
 | [0093](0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) | The README rewrite with reproducible screenshots: a shot manifest, a shoot script, an image gate, the owner's picks | approved | M7 docs, no ADR. After 0087 merges, beside 0089, before 0091. |
-| [0096](0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) | Performance: the bake queue's drain, the step off its depth, the RENOIR light pass, `alloc` and the eviction scan | in progress, amended 11-23 | M10, ADR-0080 (proposed). Phase 10c, then close. Before 0087. |
 | [0098](0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md) | A calm light by default: no screen history, smooth sources to the mid range, the FSR 2 turn read first | approved 11-22 | M10, ADR-0082 (proposed). Needs `diag-edges`' switches. |
-| [0099](0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) | The bake step off the main thread: a bake thread, write lists, the in-view drain | approved 11-22 | ADR-0083 (proposed). After 0096, 0098, 0087. |
+| [0099](0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) | The bake step off the main thread: a bake thread, write lists, the in-view drain | approved 11-22 | ADR-0083 (proposed). After 0098, 0087. |
 <!-- roster:end -->
 
 ## Sequence
@@ -202,17 +201,17 @@ motion wobble the owner named after the window is a separate lane's. **Closed 20
 (windows 94b and 94c: the rate pinned at 3.75 EV/s, the ceiling by the sky in view, the night
 at `max`).
 
-**Plan 0096** (performance: the bake queue's drain as a budget, ADR-0080 proposed: a record by
-rule for a chunk with no face or buried with no emitter in reach, a sample tier by the chunk's
-size on screen through the far-normal band, a slice that drains what is in view and falls to the
-line once landed; the queue's step off its depth; the RENOIR's outdoor light pass lever by
-lever; the sync's `alloc` and the light placement's eviction scan from the backlog; drafted
-2026-11-20 from the owner's "address performance next" (2026-11-11) and window 94a's "if we have
-to wait for a minute for light to settle, something is wrong with the light", ADR-0076 rule 6;
-awaits the go): **after Plan 0095 (the motion wobble; closed 2026-11-21, v0.69.0) merges**,
-which followed Plan 0094; then Plan 0087 (owner's order, 2026-11-20: 0094,
-0095, 0096, 0087, 0089 and 0093, 0091, 0092, 0090, M10). Its Phase 1 is readings only, on both
-adapters, on the undrained image.
+**Plan 0096** (performance: the bake queue's drain as a budget, ADR-0080 accepted with an
+Outcome) **closed 2026-11-23, v0.71.0**: a record by rule for a chunk with no face or buried
+with no emitter in reach, a sample tier by the chunk's size on screen, a slice that drains what
+is in view, the step off the queue's depth, the light placement's indexes, the Portable profile
+at its hint in a window. The queue now lands (the forest never drained before); **the lines it
+set are mostly missed and disclosed** (`docs/nfr.md` section 2): the RTX lands its view in 36.5
+s against 10 at about 30 fps, bound by the step's CPU per job on the render thread, which Plan
+0099 takes. Two owner windows (W96, W2: the far tiers "shadows are fine", the RENOIR at 23.7
+fps against 8 to 9, its softer picture accepted). Left open: the dig under Portable ("grainy",
+not attributed; the next window on the merged tree), the buried chunks and the bake's key ray
+at its cap (a small plan ahead of Plan 0099, not drafted), the slot words on the workers.
 
 **Plan 0097** (the exposure's anchor by the sky around the camera, ADR-0081 accepted with an
 Outcome) **closed 2026-11-23, v0.70.0**: the anchor holds by the larger of the sky in view and
@@ -230,7 +229,7 @@ candidate cap; six phases, a split reading first, one owner window): **draft, 20
 awaits the owner's go and five answers**; its lane runs after Plans 0096, 0098 and 0087
 (owner, 2026-11-22).
 
-Every active plan but Plan 0096 is approved (Plan 0099 on 2026-11-22; Plans 0091, 0092 and 0093 on 2026-11-19; Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
+Every active plan is approved (Plan 0099 on 2026-11-22; Plans 0091, 0092 and 0093 on 2026-11-19; Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Approval accepts the design; a plan's lane
 starts only when the plans its "Starts after" line names have closed and merged, and where that
 line asks for it, after the architect has re-read the plan against the new tip. The approved
@@ -243,6 +242,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 | Plan | Title | Closed |
 |------|-------|--------|
 | [0097](done/0097-the-exposures-anchor-by-the-sky-around-the-camera-the-floor-record-under-the-eye-a-time-constant-and-the-canopys-shade.md) | The exposure's anchor by the sky over the camera's floor, a lift over the daylight, highlight protection | 2026-11-23, v0.70.0 |
+| [0096](done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) | Performance: the bake queue lands (a record by rule, tiers by size on screen, a drain slice), the step off its depth, the eviction scan; misses disclosed | 2026-11-23, v0.71.0 |
 | [0095](done/0095-a-calm-key-light-in-motion-the-column-maps-horizon-at-the-far-the-baked-record-where-it-lands-a-deterministic-penumbra-near-no-pre-roll.md) | A calm key light: the far's record else the column horizon, the approach penumbra near, key re-bakes; RENOIR over the line | 2026-11-21, v0.69.0 |
 | [0094](done/0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md) | Light transitions: the still tap, the no-record prior and a 16-frame fade, the exposure at 3.75 EV/s, the ceiling by the sky in view and at most `max` | 2026-11-20, v0.68.0 |
 | [0086](done/0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md) | Still outdoor light: a sky visibility baked per brick, the column map, the sky and key rays on a long history, canopies as bricks; ADR-0070 accepted; the leftovers to Plan 0094 | 2026-11-19, v0.67.0 |
