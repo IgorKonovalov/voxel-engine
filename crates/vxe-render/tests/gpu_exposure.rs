@@ -91,7 +91,8 @@ fn state(device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) -> ExposureS
     ))
 }
 
-/// The meter's tiles as `(sum, count, sky count)` triples (a tile is four `f32`, the last 0).
+/// The meter's tiles as `(sum, count, sky count)` triples (a tile is four `f32`, the last the
+/// largest log2 of its hit pixels' brightest channel, the highlight's input, not read here).
 fn tiles(device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) -> Vec<[f32; 3]> {
     let n = SIZE.map(|v| v.div_ceil(8));
     let bytes = vxe_render::debug::read_buffer(
@@ -211,6 +212,121 @@ fn the_tile_weights_are_the_documented_ones() {
     );
     assert!((read[0] + 8.16).abs() < 0.1, "average {}", read[0]);
     assert!((read[1] + 7.35).abs() < 0.15, "centre {}", read[1]);
+}
+
+/// The central square's wall ([`the_tile_weights_are_the_documented_ones`]: `2^-3` on 14.1 %
+/// of the view in a field of `2^-9`) when `square`, else a uniform wall of `2^-3`, mirrored.
+fn highlight_wall(device: &wgpu::Device, queue: &wgpu::Queue, square: bool) -> GpuWorld {
+    let table = two_emitters(2f32.powi(-3), 2f32.powi(-9));
+    let world = walled(
+        |v| {
+            let inside = (-5..5).contains(&v[0]) && (27..37).contains(&v[2]);
+            if inside || !square { 1 } else { 2 }
+        },
+        &table,
+    );
+    mirror(device, queue, &world)
+}
+
+/// `frame` over `gpu` under auto at the highlight percentile `p` (the eye, no sky set, `max`
+/// raised to `2^8` so the ceiling is over the cap), the lamp off, `dt` 1/60, the exposure
+/// reset before the first of 4 frames: the state and the highlight after the last.
+fn highlighted(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    frame: &mut Frame,
+    gpu: &GpuWorld,
+    p: f32,
+) -> (ExposureState, vxe_render::ExposureHighlight) {
+    frame.set_lighting(Lighting {
+        lamp: false,
+        candidates: 0,
+        exposure: Exposure::Auto(AutoExposure {
+            max: 2f32.powi(8),
+            highlight_percentile: p,
+            ..AutoExposure::eye()
+        }),
+        ..Lighting::default()
+    });
+    frame.set_dt(1.0 / 60.0);
+    frame.reset_exposure();
+    for _ in 0..4 {
+        frame.step(device, queue, gpu, &camera(), &LightParams::at_eye());
+    }
+    let hi = vxe_render::ExposureHighlight::from_bytes(&vxe_render::debug::read_buffer(
+        device,
+        queue,
+        frame.exposure_highlight(),
+        0,
+        16,
+    ));
+    (state(device, queue, frame), hi)
+}
+
+/// Highlight protection (Plan 0097 Phase 3a) on the central square: at P99 the tail's level
+/// `now_log2` is within one bin (0.25 EV) of the square's -3, and the exposure in force is
+/// `white_exposed(tone) / 2^log2` within 1/64 EV and under the ceiling; with the cap off
+/// (percentile 0, the before) the eye is higher. On a uniform wall of `2^-3` the cap is idle:
+/// the eye is the same in both arms.
+#[test]
+fn the_highlight_caps_the_eye_at_the_bright_tail() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let tone = Lighting::default().tone_map;
+    let p = vxe_render::DEFAULT_EXPOSURE_HIGHLIGHT;
+    let mut frame = Frame::new(&device, SIZE[0], SIZE[1]);
+    frame.set_resolution(&device, LightingResolution::Full);
+    let square = highlight_wall(&device, &queue, true);
+    let (on, hi) = highlighted(&device, &queue, &mut frame, &square, p);
+    let (off, _) = highlighted(&device, &queue, &mut frame, &square, 0.0);
+    let capped = f64::from(vxe_render::white_exposed(tone)).log2() - f64::from(hi.log2);
+    println!(
+        "square: metered {:+.3}, tail now {:+.3} smoothed {:+.3}, cap {:+.3} EV, eye {:+.3} EV (cap off {:+.3}), ceiling {:+.3} EV",
+        on.metered_log2,
+        hi.now_log2,
+        hi.log2,
+        f64::from(hi.cap).log2(),
+        ev(&on),
+        ev(&off),
+        f64::from(on.ceiling).log2()
+    );
+    assert!(
+        (f64::from(hi.now_log2) + 3.0).abs() <= 0.25,
+        "tail {}",
+        hi.now_log2
+    );
+    assert!(
+        (ev(&on) - capped).abs() <= 1.0 / 64.0,
+        "eye {} against the cap {capped}",
+        ev(&on)
+    );
+    assert!(
+        on.current < on.ceiling,
+        "{} under {}",
+        on.current,
+        on.ceiling
+    );
+    assert!(
+        ev(&off) > ev(&on),
+        "cap off {} against on {}",
+        ev(&off),
+        ev(&on)
+    );
+    let wall = highlight_wall(&device, &queue, false);
+    let (wall_on, wall_hi) = highlighted(&device, &queue, &mut frame, &wall, p);
+    let (wall_off, _) = highlighted(&device, &queue, &mut frame, &wall, 0.0);
+    println!(
+        "uniform wall: tail {:+.3}, cap {:+.3} EV, eye {:+.3} EV (cap off {:+.3})",
+        wall_hi.now_log2,
+        f64::from(wall_hi.cap).log2(),
+        ev(&wall_on),
+        ev(&wall_off)
+    );
+    assert_eq!(
+        wall_on.current, wall_off.current,
+        "the cap is idle on the wall"
+    );
 }
 
 /// The read-back: right after the first frame's submission it has nothing and returns at once;
