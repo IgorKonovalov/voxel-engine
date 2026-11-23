@@ -71,7 +71,7 @@ impl BakeQueue {
         self.stats.rebuilt = 0;
         let window = gpu.window();
         let dropped = store.rewindow(run.queue, window);
-        self.touched.extend(dropped);
+        self.rewindowed(dropped);
         self.laps.lap(S_REWINDOW);
         let seen = (Some(window), gpu.mirrored_chunks());
         let moved = seen != self.mirror_seen;

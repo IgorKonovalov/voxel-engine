@@ -591,3 +591,34 @@ fn the_kept_order_walks_as_a_full_sort_after_joins_and_leaves() {
         assert_eq!(have, want, "lead {lead}");
     }
 }
+
+/// The block counts follow the store's window: a queue holding counts for a 4 x 4 x 1 window's
+/// blocks, the window moved two chunks along x (the same size), keeps the 8 counts still inside
+/// and drops the 8 the move left behind, which are read again at the next opening; a window of
+/// another size drops every count.
+#[test]
+fn a_window_move_drops_the_block_counts_it_leaves_behind() {
+    use crate::bake::store::dropped_by_move;
+    let a = vxe_world::ChunkExtent::new([0, 0, 0], [4, 4, 1]);
+    let b = vxe_world::ChunkExtent::new([2, 0, 0], [6, 4, 1]);
+    let mut q = BakeQueue::new(BakeSettings::default(), 1.5);
+    for x in 0..4 {
+        for y in 0..4 {
+            q.block_count.insert([x, y, 0], 256);
+        }
+    }
+    let held: Vec<[i32; 3]> = q.block_count.keys().copied().collect();
+    q.rewindowed(dropped_by_move(Some(a), b, held.iter().copied()));
+    assert_eq!(q.block_count.len(), 8);
+    assert!(
+        q.block_count.keys().all(|c| c[0] >= 2),
+        "{:?}",
+        q.block_count
+    );
+    assert_eq!(q.touched.len(), 8);
+    assert!(q.touched.iter().all(|c| c[0] < 2));
+    let c = vxe_world::ChunkExtent::new([2, 0, 0], [10, 4, 1]);
+    let held: Vec<[i32; 3]> = q.block_count.keys().copied().collect();
+    q.rewindowed(dropped_by_move(Some(b), c, held.iter().copied()));
+    assert!(q.block_count.is_empty(), "another size empties the store");
+}

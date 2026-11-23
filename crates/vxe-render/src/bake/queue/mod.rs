@@ -648,6 +648,8 @@ impl BakeQueue {
             self.pool_stale = false;
             self.waiting_stale = true;
             self.touched.clear();
+            // A block dropped outside the queue (a one-shot dig's re-bake) takes its count.
+            self.block_count.retain(|c, _| store.blocks.contains_key(c));
         } else {
             let moved: Vec<[i32; 3]> = self
                 .pool_jobs
@@ -656,6 +658,10 @@ impl BakeQueue {
                 .collect();
             self.touched.extend(moved);
             for c in std::mem::take(&mut self.touched) {
+                // A block dropped outside the queue (a one-shot dig's re-bake) takes its count.
+                if !store.blocks.contains_key(&c) {
+                    self.block_count.remove(&c);
+                }
                 let now = self.candidacy(store, gpu, &in_job, c);
                 let was = self.pool.get(&c).copied();
                 if now == was {
@@ -780,6 +786,15 @@ impl BakeQueue {
     /// one in the cone or shell, or with no nearer such candidate.
     pub fn take_angle_needs(&mut self) -> Vec<f32> {
         std::mem::take(&mut self.angle_needs)
+    }
+
+    /// The chunks a move of the store's window dropped (`dropped`, [`Store::rewindow`]): their
+    /// block counts go, and they are read again at the next opening.
+    pub(super) fn rewindowed(&mut self, dropped: Vec<[i32; 3]>) {
+        for c in &dropped {
+            self.block_count.remove(c);
+        }
+        self.touched.extend(dropped);
     }
 
     /// Asks the next opening for the view's census: [`QueueStats::view_waiting`],

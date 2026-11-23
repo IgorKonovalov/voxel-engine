@@ -109,6 +109,7 @@ impl BakeQueue {
             if faces.faces() == 0 {
                 self.fades.remove(&c);
                 store.remove(run.queue, coord);
+                self.block_count.remove(&c);
                 self.faceless.insert(c);
                 self.touched.insert(c);
                 self.digs.remove(&c);
@@ -230,6 +231,7 @@ impl BakeQueue {
             }
             if faces.faces() == 0 {
                 store.remove(run.queue, coord);
+                self.block_count.remove(&c);
                 self.fades.remove(&c);
                 self.faceless.insert(c);
                 self.touched.insert(c);
