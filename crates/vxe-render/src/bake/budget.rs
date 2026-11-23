@@ -91,9 +91,11 @@ pub struct Drain {
     pub line_ms: f64,
 }
 
-/// The floor profile's drain: 4.0 ms a frame while in-view work waits, 1.0 once landed.
+/// The floor profile's drain: 1.5 ms a frame while in-view work waits (the floor budget's own
+/// slice: a longer slice landed the forest's view sooner but at a slower frame, Plan 0096
+/// Phase 9's sweep), 1.0 once landed.
 pub const DEFAULT_DRAIN: Drain = Drain {
-    drain_ms: 4.0,
+    drain_ms: 1.5,
     line_ms: 1.0,
 };
 
@@ -181,7 +183,11 @@ mod tests {
     /// least the budget's slice, and the line's once none does; `off` and `DRAIN,LINE` parse.
     #[test]
     fn the_drain_slice_is_the_drain_value_while_waiting_and_the_line_after() {
-        let d = DEFAULT_DRAIN;
+        let d = Drain {
+            drain_ms: 4.0,
+            line_ms: 1.0,
+        };
+        assert_eq!(DEFAULT_DRAIN.to_string(), "1.5,1");
         let f = Budget::PerFrame { ms: 1.5 };
         assert_eq!(d.slice_ms(&f, 1.0 / 60.0, true), 4.0);
         assert_eq!(d.slice_ms(&f, 1.0 / 60.0, false), 1.0);

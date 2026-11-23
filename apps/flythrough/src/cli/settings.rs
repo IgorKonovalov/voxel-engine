@@ -73,7 +73,7 @@ fn sections() -> Vec<Section<Parsing>> {
                 "off|DRAIN,LINE",
                 "the live queue's slice a frame in ms while a chunk in view waits for its tier's \
                  record (at least the budget's) and once none does, each 0.1 to 100; off is the \
-                 budget alone [the profile's: 4,1 at floor, 6,1 at portable]",
+                 budget alone [the profile's: 1.5,1 at floor, 6,1 at portable]",
                 |p: &mut Parsing, v| {
                     p.args.bake.drain = vxe_render::Drain::parse(v.text)?;
                     Ok(())

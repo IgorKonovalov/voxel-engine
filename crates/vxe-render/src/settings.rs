@@ -295,7 +295,7 @@ impl RenderSettings {
     /// | `build.mirror_budget_bytes` | 3 GiB | 3 GiB x (12 / 16)^3 | 3 GiB | 3 GiB |
     /// | `bake.budget` | 1.5 ms a frame | 0.75 ms a frame | 1.5 ms a frame | 1.5 ms a frame |
     /// | `bake.tiers` | 4096, 1024, 256 | 1024, 256, 256 | 4096, 1024, 256 | 4096, 1024, 256 |
-    /// | `bake.drain` | 4.0, 1.0 ms | 6.0, 1.0 ms | 4.0, 1.0 ms | 4.0, 1.0 ms |
+    /// | `bake.drain` | 1.5, 1.0 ms | 6.0, 1.0 ms | 1.5, 1.0 ms | 1.5, 1.0 ms |
     pub fn profile(p: Profile) -> Self {
         let floor = Self {
             lighting: Lighting {
@@ -423,10 +423,10 @@ impl RenderSettings {
         (
             "bake.drain",
             [
-                "Some(Drain { drain_ms: 4.0, line_ms: 1.0 })",
+                "Some(Drain { drain_ms: 1.5, line_ms: 1.0 })",
                 "Some(Drain { drain_ms: 6.0, line_ms: 1.0 })",
-                "Some(Drain { drain_ms: 4.0, line_ms: 1.0 })",
-                "Some(Drain { drain_ms: 4.0, line_ms: 1.0 })",
+                "Some(Drain { drain_ms: 1.5, line_ms: 1.0 })",
+                "Some(Drain { drain_ms: 1.5, line_ms: 1.0 })",
             ],
         ),
         (

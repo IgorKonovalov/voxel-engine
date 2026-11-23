@@ -401,7 +401,10 @@ fn a_far_band_chunk_whose_reach_crosses_the_full_radius_bakes_from_the_chunks_re
 fn the_slice_is_the_drain_value_while_in_view_work_waits_and_the_line_after() {
     let hz60 = 1.0 / 60.0;
     let mut q = BakeQueue::new(BakeSettings::default(), 1.5);
-    q.drain = Some(DEFAULT_DRAIN);
+    q.drain = Some(Drain {
+        drain_ms: 4.0,
+        line_ms: 1.0,
+    });
     let chunks = [[3, 0, 0], [4, 0, 0], [5, 0, 0]];
     q.view_waiting = chunks.iter().copied().collect();
     let mut landed: Vec<[i32; 3]> = Vec::new();
