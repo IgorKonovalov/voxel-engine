@@ -826,6 +826,23 @@ first line starting `frames: `. Match `frames: {FRAMES} frames;` instead.
 
 ## Tooling and process
 
+### A harness chore after Plan 0098's windows: rehearsed windows, live settings, live banners
+
+Raised 2026-11-23 (owner: "go" on the harness list after windows W2 and W3). Three windows
+cost the owner about an hour each and found faults a machine could have shown first: a white
+hole at a dig, a pick that changed nothing for weeks (the penumbra under the calm defaults),
+and a banner row that printed a constant (the bake tier). **What it takes**, as one chore plan:
+(1) a window rehearsal: before a live session opens, each run's pose is rendered headless
+(`--headless --frames`, the run's own flags and a scripted dig where the run digs), stills are
+saved beside the runner and an agent reads them, so an obvious fault never reaches the owner;
+(2) a test that every row of the render settings changes the image under the defaults in at
+least one fixture, or is listed as inert with its reason, and the banner marks an inert row;
+(3) a test that every banner and HUD row is derived from live state: flip each setting and
+flag, the row's text follows; (4) the gate tier's wall time, now about 36 min on the lane's
+tree against the 19 min line (see "The gate tier is over its wall-time budget" below): a cut,
+not another acceptance. Size M. **Pick up** before the next plan that needs an owner window,
+ahead of the follow-on light plan's first window.
+
 ### A bugs journal: date, hours lost, tags, the lesson
 
 Raised 2026-11-19 (Bonsai's `bugs.md`: one heading per bug with the date, the hours it cost,
