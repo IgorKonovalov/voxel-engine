@@ -808,3 +808,83 @@ fn images_are_unchanged_by_the_incremental_order() {
         assert_eq!(Some(b), fresh.get(c), "{c:?} against a one-shot bake");
     }
 }
+
+/// ADR-0080 rule 3 through the frame's own step, with no `request_census`: sixteen chunks in a
+/// row, a 16^3 rock cube over eight bricks of each (24 brick directions, 98 304 samples a chunk
+/// at 4096 a brick direction), the camera in chunk 8 looking +x, `near` 0, coarse off, the
+/// smallest budget and a drain of 0.2 ms over the line's 0.1 (both under the cap's floor of
+/// 16 384 samples, so a chunk takes about six steps). The queue drains the first view (the
+/// slice the drain's while chunks 8 to 15 wait) and reaches the line with chunks behind the
+/// camera still to bake; the camera then turns to look -x, and within `WAITING_EVERY` (8) steps
+/// the step reads `draining` and the drain's slice, from the queue's own read of its in-view
+/// set.
+#[test]
+fn a_turn_onto_unbaked_chunks_drains_without_a_census_request() {
+    let world = world_of([16, 1, 1], AIR);
+    for x in 0..16 {
+        fill(&world, [x * 64 + 16, 16, 16], [x * 64 + 32, 32, 32], ROCK);
+    }
+    let Some(mut q) = rig(
+        world,
+        &Setup {
+            near: 0,
+            slice_ms: 1e-6,
+            counts: BakeSettings {
+                brick_samples: 4096,
+                ..counts()
+            },
+            ..Setup::at([8.0 * 64.0 + 32.5, 32.5, 50.5])
+        },
+    ) else {
+        return;
+    };
+    let drain = vxe_render::Drain {
+        drain_ms: 0.2,
+        line_ms: 0.1,
+    };
+    q.frame.bake_queue_mut().expect("the queue started").drain = Some(drain);
+    let unbaked_behind = |q: &Q| {
+        (0..8)
+            .filter(|&x| q.target([x, 0, 0]).is_none())
+            .collect::<Vec<i32>>()
+    };
+    let (mut drained, mut landed) = (false, None);
+    for n in 0..MAX_STEPS {
+        let st = q.step();
+        if st.draining {
+            assert_eq!(st.slice_ms, drain.drain_ms, "step {n}: {st:?}");
+            drained = true;
+        } else if drained {
+            assert_eq!(st.slice_ms, drain.line_ms, "step {n}: {st:?}");
+            landed = Some(n);
+            break;
+        }
+    }
+    let landed = landed.expect("the first view drains and lands");
+    let behind = unbaked_behind(&q);
+    println!("the first view landed at step {landed}; behind still unbaked {behind:?}");
+    assert!(
+        !behind.is_empty(),
+        "chunks behind the camera wait at the turn"
+    );
+    for x in 8..16 {
+        assert!(q.target([x, 0, 0]).is_some(), "chunk {x} in the first view");
+    }
+    q.camera.yaw = std::f32::consts::PI;
+    let mut at = None;
+    for k in 1..=8 {
+        let st = q.step();
+        if st.draining {
+            assert_eq!(st.slice_ms, drain.drain_ms, "{st:?}");
+            assert!(st.drain_waiting > 0, "{st:?}");
+            at = Some(k);
+            break;
+        }
+    }
+    println!("draining {at:?} steps after the turn");
+    assert!(
+        at.is_some(),
+        "the turn drains within 8 steps: {:?}",
+        q.q().stats()
+    );
+}

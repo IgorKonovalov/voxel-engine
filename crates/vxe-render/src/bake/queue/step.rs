@@ -215,6 +215,7 @@ impl BakeQueue {
         view: &QueueView<'_>,
     ) -> Result<(u64, bool), BakeError> {
         let dig = !self.digs.is_empty() || !self.dig_open.is_empty();
+        self.refresh_waiting(store, view, false);
         let cap = view.samples.unwrap_or_else(|| {
             let slice = self.step_slice(view.interval_s);
             self.stats.slice_ms = slice;

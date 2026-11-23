@@ -859,10 +859,10 @@ impl Run {
 
 /// The per-second `bake queue slice:` line: the slice granted and whether it was the drain's
 /// value (ADR-0080 rule 3), the chunks in view still waiting for their tier, the slices drawn,
-/// and why the submits' plans stopped.
+/// why the submits' plans stopped, and the reads of the in-view set with their mean and longest cost.
 fn print_slice_line(t: f64, st: &vxe_render::QueueStats, p50: f64) {
     println!(
-        "bake queue slice: at {:.1} s, granted {:.2} ms ({}, {} in view waiting for their tier), drawn p50 {:.2} ms, plans stopped at the cap {} at the batch {} out of rounds {}, steps with every submit slot unread {}",
+        "bake queue slice: at {:.1} s, granted {:.2} ms ({}, {} in view waiting for their tier), drawn p50 {:.2} ms, plans stopped at the cap {} at the batch {} out of rounds {}, steps with every submit slot unread {}, the in-view set read {} times, mean {:.3} ms, max {:.3} ms",
         t / 1e3,
         st.slice_ms,
         if st.draining { "drain" } else { "line" },
@@ -872,5 +872,8 @@ fn print_slice_line(t: f64, st: &vxe_render::QueueStats, p50: f64) {
         st.plan_stops[1],
         st.plan_stops[2],
         st.in_flight_full,
+        st.waiting_reads,
+        st.waiting_ms / st.waiting_reads.max(1) as f64,
+        st.waiting_max_ms,
     );
 }

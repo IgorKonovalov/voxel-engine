@@ -30,6 +30,11 @@ pub struct QueueStats {
     /// ([`BakeQueue::view_waiting`]).
     pub draining: bool,
     pub drain_waiting: u64,
+    /// Reads of that set since the queue started ([`BakeQueue::refresh_waiting`]), their CPU
+    /// milliseconds summed, and the longest read's.
+    pub waiting_reads: u64,
+    pub waiting_ms: f64,
+    pub waiting_max_ms: f64,
     /// Since the queue started: the submits' plans that stopped at the sample cap, at the
     /// entries' batch, and out of rounds to plan; and the steps that sent no submit because
     /// [`crate::bake::IN_FLIGHT`] were unread.

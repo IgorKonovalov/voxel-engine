@@ -47,6 +47,10 @@ pub(super) const QUEUE_RECHECK: u64 = 30;
 /// Steps an opening that found nothing ready waits before sorting the candidates again.
 pub(super) const QUEUE_QUIET: u64 = 8;
 
+/// Steps at least between two reads of the drain's set ([`BakeQueue::refresh_waiting`]) while
+/// the view or the candidates keep changing.
+pub(crate) const WAITING_EVERY: u64 = 8;
+
 /// A hasher for chunk coordinates in the queue step's per-change sets: one multiply and rotate
 /// a word (FxHash's mix), where std's SipHash costs several times as much a key, and a flight
 /// hashes about a thousand mirror changes a step. No key comes from outside the process and no
@@ -213,10 +217,17 @@ pub struct BakeQueue {
     /// The slice's two values (ADR-0080 rule 3): the drain value while a chunk of
     /// [`BakeQueue::view_waiting`] waits, the line's once none does; `None` is the budget alone.
     pub drain: Option<Drain>,
-    /// The chunks in view the last census found waiting for their tier's record, each removed
-    /// as its record lands at its band's count, or as it leaves the mirror or turns out to hold
-    /// no face.
+    /// The chunks in the view cone or the near shell with no block or one below its band's
+    /// count, candidates or in a job, as [`BakeQueue::refresh_waiting`] last read them; each
+    /// removed as its record lands at its band's count, or as it leaves the mirror or turns
+    /// out to hold no face.
     pub(super) view_waiting: ChunkSet,
+    /// The view [`BakeQueue::view_waiting`] was last read under (the eye's chunk, the forward
+    /// direction's and the half-angle's bits, the near shell), the step it was read at, and
+    /// whether the pool changed since.
+    pub(super) waiting_view: Option<([i32; 3], [u32; 3], u32, i32)>,
+    pub(super) waiting_at: Option<u64>,
+    pub(super) waiting_stale: bool,
     /// A brick direction's samples in the coarse pass; 0 bakes every chunk at the full count.
     pub coarse_samples: u32,
     /// Chunks (Chebyshev) around the camera's that the score's angle term and the withdrawal
@@ -489,6 +500,9 @@ impl BakeQueue {
             budget: Budget::PerFrame { ms: slice_ms },
             drain: None,
             view_waiting: Default::default(),
+            waiting_view: None,
+            waiting_at: None,
+            waiting_stale: true,
             coarse_samples: DEFAULT_COARSE_SAMPLES,
             near: DEFAULT_NEAR,
             full_first: Some(DEFAULT_NEAR),
@@ -600,6 +614,7 @@ impl BakeQueue {
     pub(super) fn pool_insert(&mut self, c: [i32; 3], v: (u8, bool)) {
         let was = self.pool.insert(c, v).map(|w| w.0);
         self.ordered.insert(c, v.0, v.1, was);
+        self.waiting_stale = true;
     }
 
     /// `c` leaves the pool and the kept order: its value, if it was a candidate.
@@ -607,6 +622,7 @@ impl BakeQueue {
         let was = self.pool.remove(&c);
         if let Some((class, _)) = was {
             self.ordered.remove(c, class);
+            self.waiting_stale = true;
         }
         was
     }
@@ -630,6 +646,7 @@ impl BakeQueue {
             self.pool = pool;
             self.ordered.rebuild(self.pool.iter());
             self.pool_stale = false;
+            self.waiting_stale = true;
             self.touched.clear();
         } else {
             let moved: Vec<[i32; 3]> = self

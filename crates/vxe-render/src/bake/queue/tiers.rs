@@ -159,6 +159,64 @@ impl BakeQueue {
         self.stats.drain_waiting = self.view_waiting.len() as u64;
     }
 
+    /// Reads [`BakeQueue::view_waiting`] again when it is due: `force`d (an opening's census),
+    /// or when the view (the eye's chunk, the forward direction, the half-angle, the near
+    /// shell) or the pool changed since the last read and [`WAITING_EVERY`] steps have passed.
+    /// A read walks the pool and the jobs once, scoring each by its angle term alone
+    /// ([`angle_term`]), into the set's kept allocation.
+    pub(super) fn refresh_waiting(&mut self, store: &Store, view: &QueueView<'_>, force: bool) {
+        let eye = view.eye.map(|v| (v / 64.0).floor() as i32);
+        let key = (
+            eye,
+            view.forward.map(f32::to_bits),
+            view.half_angle.to_bits(),
+            self.near,
+        );
+        let changed = self.waiting_stale || self.waiting_view != Some(key);
+        let spaced = self
+            .waiting_at
+            .is_none_or(|at| self.steps >= at + WAITING_EVERY);
+        if !force && !(changed && spaced) {
+            return;
+        }
+        let t = stopwatch();
+        let (forward, half, near) = (view.forward, view.half_angle, self.near);
+        let in_view = |c: [i32; 3]| {
+            let o = [0, 1, 2].map(|k| c[k] - eye[k]);
+            angle_term(o, forward, half, near) <= 0.0
+        };
+        let mut set = std::mem::take(&mut self.view_waiting);
+        set.clear();
+        // A candidate with no block or a lesser one; a full block re-baking whole (ring 3) is
+        // not waiting for its light.
+        set.extend(
+            self.pool
+                .iter()
+                .filter(|&(&c, &(has, coarse))| (has == 0 || coarse) && in_view(c))
+                .map(|(&c, _)| c),
+        );
+        // A chunk in a job still waits for its light: one with no block or a lesser one, not
+        // a dig's or a key-only re-bake's.
+        for c in self.lp.chunks().map(|c| c.0) {
+            if in_view(c)
+                && !self.dig_open.contains_key(&c)
+                && !self.keys.holds(&c)
+                && (!store.blocks.contains_key(&c) || self.lesser(store, c))
+            {
+                set.insert(c);
+            }
+        }
+        self.view_waiting = set;
+        self.stats.drain_waiting = self.view_waiting.len() as u64;
+        self.waiting_view = Some(key);
+        self.waiting_at = Some(self.steps);
+        self.waiting_stale = false;
+        self.stats.waiting_reads += 1;
+        let ms = seconds_since(t) * 1e3;
+        self.stats.waiting_ms += ms;
+        self.stats.waiting_max_ms = self.stats.waiting_max_ms.max(ms);
+    }
+
     /// The step's slice in ms after a frame of `interval_s` seconds: the drain's value while a
     /// chunk of [`BakeQueue::view_waiting`] waits, its line's once none does, the budget's
     /// without a drain.
