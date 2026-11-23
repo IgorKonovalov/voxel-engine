@@ -44,6 +44,9 @@ close and we can reliably calculate it". Three ways, none measured:
 
 Order proposed by the orchestrator, not yet the owner's: 3 first, then 2 if 3 reads calm but
 ugly; 1 with Plan 0033. Pick up after Plan 0098's W2 shows what its two built arms do.
+**W2, 2026-11-23:** under the calm picks the owner calls the distant wobble "not too bad";
+`far light wide` is "not calmer" (it stays a setting, off). No arm of Plan 0098 is picked, so
+this entry is where the far trees stand.
 
 ### The light placement's eviction scan in a windowed glide
 

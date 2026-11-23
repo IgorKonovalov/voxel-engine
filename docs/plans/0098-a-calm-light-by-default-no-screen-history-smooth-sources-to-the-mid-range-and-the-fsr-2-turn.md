@@ -8,7 +8,13 @@
 > restated. **Amended 2026-11-23 (architect, owner confirm owed)**, at Phase 6's readings
 > (section "Amendment at the Phase 6 readings"): the landing pop is the light pass switching
 > source, no store word, so Phase 6b (the switch itself fades, by the block's landing frame) is
-> new and runs before W2; W2's runs 2 and 4 are restated. Order from here: 6b, 7, 4.
+> new and runs before W2; W2's runs 2 and 4 are restated.
+> **Amended 2026-11-23 (owner)**, at window W2's verdicts (section "Amendment at W2"): the calm
+> picks are accepted and become the defaults, light history off under lamps too; `landing fade`,
+> `source fade` and `far light wide` stay settings, off; Phase 4's near bar is restated from the
+> readings; Phase 8 (a dig under the calm picks neither darkens its surround nor flashes),
+> Phase 9 (the sunlit terraces at noon, a reading) and Phase 10 (the owner's look, W3) are new.
+> **Order from here: 8, 9, 4, 10.**
 > **Created:** 2026-11-21
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0082](../adrs/0082-the-light-pass-keeps-no-screen-history-by-default-and-reads-smooth-sources-to-the-mid-range.md)
@@ -174,6 +180,85 @@ builds nothing and reports.
 history off, every cast sky ray's sample is dropped (the reset pair shows its seed). If the
 reading agrees, the cast is cost with no image; skipping it is a followup, not this phase.
 
+## Amendment at W2 (2026-11-23; owner)
+
+W2 ran on 2026-11-23 (`live/session98b.sh`, `live/bin98b` at `925859c9`; its runs 6 and 7 on
+Plan 0096's binary, which holds none of this plan's picks). The owner's words are in
+[`logs/0098.md`](logs/0098.md) ("Phase 7: W2's verdicts"). The verdicts are his; the causes
+named below are suspects until Phases 8 and 9 read them.
+
+| question | W2's answer | what follows |
+|---|---|---|
+| the calm picks, the forest (1a, 2a) | "1a looks great, even distant wobble is not too bad"; "2a all looks correct, no wobble, only problem is dig" | the five picks are the defaults (Phase 4); the disc and `4..8` stand, `key jitter off` stays a setting (no word for it) |
+| under lamps (3) | "no flicker, all good with defaults of this window" (light history off) | light history is off everywhere; no split by term |
+| the landing's two fades (2b) | "a bit more wobble, but acceptable"; against 2a at the landings: "no difference"; "fade length is right", and the ground while it waits: "acceptable" | `landing fade` and `source fade` stay settings, off by default (owner, 2026-11-12: a cheap arm not picked stays a setting) |
+| `far light wide` (4) | "not calmer, framerates are around 70-90" | stays a setting, off; no far-trees arm is picked |
+| the distant trees | "not too bad" under calm | no work here; the backlog's "Distant trees that do not wobble" and Plan 0033's re-read carry what is left |
+| **a dig under calm** (1a, 2a) | "Problem with blink on digging is back, area around becomes darker, and the dig itself lights up"; without `--calm` on the same binary (5): "there is no flash on a dig" | **a finding, fixed here before the close: Phase 8** |
+| **the sunlit terraces at noon** (1b) | "on sunlighted spots I see wobble on slopes" (the steps' small shadow squares on the sunlit face move; `live/window98b/1b-sunlit-slope-wobble.png`) | **a finding, read here: Phase 9**; a fix only if cheap |
+| without the picks (5, 6, 7) | 5: "a slight wobble on slopes"; 6 and 7 (Plan 0096's binary): "wobble is back and hard, on slopes and trees alike" | the picks are what removes it; the Radeon at Portable under the picks is unjudged (Phase 10) |
+
+**Phase 4's near bar could not be met as written, and is restated.** It read: no stop pair
+moves more near pixels over 4 levels than `calm,pin,nqueue`'s largest plus 2 points. Three
+readings say it measured the wrong thing (the log, Phases 6 and 6b):
+
+- A landing's frame is the machine's, not the rig's: the same pop fell at stop +40 on a loaded
+  run, inside the fly on a quiet one, and in the settle once the rig read every settle frame
+  back. A bar on the stop reads a landing in one run and none in the next.
+- Where a landing is read, a first block over the chain moves 37.3 % of the near pixels over 4
+  levels in its frame under `calm` (a mean of 17.7 levels), and 15 to 20 % under the default
+  with the history on. `source fade` cuts the mean 3.4 to 5.5 times and leaves the share over
+  4 levels where it was (37.15 %): a fade from black in linear light is not under 4 levels a
+  frame, and no 16-frame fade of a 64-level change can be.
+- The owner looked at exactly this (2a against 2b) and saw "no difference", with 2a "all
+  looks correct".
+
+So the bar splits (Phase 4): **the image at rest with nothing landing is asserted** (the arm
+with the queue stopped), and **a landing's step is a recorded reading**, printed by the rig
+and written into ADR-0082's Outcome as accepted by eye at W2, not a bar. Rejected: a bar on
+the share over 4 levels at a landing (it would fail on the picture the owner accepted), and a
+bar on the fade's monotonic steps (the fades are off by default, so it would test a setting
+nobody runs).
+
+**The perceptual mix for `source fade` is dropped, not parked.** It was the answer to a bar
+that is gone; the owner sees no difference with the fade on, and the fade is off. If someone
+turns the setting on for a look later, the log's "What the fade does" has the two reasons and
+the options.
+
+**The dig under calm (Phase 8).** With `--calm` a dig darkens the area around the hole and
+the fresh hole shows white with black voxels until its light lands
+(`live/window98b/1a-dig-blink.png`); the same binary without `--calm` shows no flash. The
+orchestrator's suspect, unconfirmed: with the light history off nothing carries the dig's two
+switches of source. By the code, three places can step with no history: the dig's ring is
+marked stale, so its faces leave the baked term for the reset pair's seed (two estimates of
+one term, temporal.wgsl) and return when the re-bake lands, and the store's fade skips a stale
+word (Phase 6b's "not covered"); the hole's new faces hold no record of their own and show the
+seed (the column's answer, 1 for open) until the dig's block lands; and the key words in the
+ring re-bake with nothing to fade them. Any of the five picks could be the one, not only the
+history, so Phase 8's first step reads which.
+
+**The sunlit terraces (Phase 9).** W1 called the slopes calm under `calm` at approach and
+`8..12` on the forest slope; W2's noon slope ran the disc at `4..8`. What moves is the one-voxel
+shadow each step casts on the next at a high sun. Suspects, none read: the disc's one random
+ray a frame with no history to average it (W1's open risk), the far normal's band ending
+nearer than before (`4..8` against `8..12`), `key far column`'s mix step crossing the face, and
+FSR 2's jitter on a shadow under a pixel wide. The owner's priority is a stable image, so it
+is read before it is parked.
+
+**What else the log owed after W2, settled here.**
+
+1. **The rig's landing timing.** Landings fall where the machine puts them; the restated bar
+   does not depend on it, and the rig keeps printing every pop with its segment and frame.
+2. **The RADV RENOIR's pass times** (owed from Phase 6b) stay in Phase 4.
+3. **The cast sky ray whose sample is never shown** (history off: Phase 6b's reading agrees,
+   0.00 % of cast pixels show anything but the seed) stays a followup; Phase 8 may want that
+   sample at a dig, so nothing removes the cast before Phase 8 lands.
+4. **The Plan 0097 lane's finding** (18.67 % of the near at stop +3 after a short fly) is the
+   same switch of source at a landing (Phase 6b step 1) and falls under the reading above.
+5. **Runs 6, 7 and 7b** (far shadows at the profile's tiers "fine"; Portable at 720p "frames
+   around 25, softer acceptable"; the dig's light under Portable "grainy", bright specks) are
+   Plan 0096's, on its binary, and are not this plan's work.
+
 ## Decision
 
 **Ship the combination the owner called calm as the default once W1 confirms it; read FSR 2
@@ -202,7 +287,8 @@ flowchart LR
 
 Each phase ships as its own commit. Phases 1, 2, 5, 6 and 6b are **exploration** (they name
 readings, not image tests; CPU tests of data and flags stay with their phase). From the
-second amendment on the order is 6b, 7, 4. The lane needs the debug page's switches of `diag-edges` (`ac0d4132`): it
+W2 amendment on the order is 8, 9, 4, 10: Phases 8 and 4 assert (they are not exploration),
+Phase 9 is exploration, Phase 10 is the owner's. The lane needs the debug page's switches of `diag-edges` (`ac0d4132`): it
 stacks on `plan-0097` with that commit, or starts from main once Plan 0097 has merged and
 cherry-picks it; the orchestrator's call.
 
@@ -272,40 +358,55 @@ cherry-picks it; the orchestrator's call.
 - **Done when:** the log holds a verdict per run and the picks: light history's default (per
   scene kind if lamps need it), the band, the penumbra, and the FSR 2 lever or "none yet".
 
-### Phase 4: The picks become the defaults (runs last, after W2)
+### Phase 4: The picks become the defaults (after Phases 8 and 9, before W3)
 - **Owner skill:** dev
-- **What:** The defaults of `Lighting` and the fly-through take the picks as W2 confirms them
-  (W1's: light history off, `key far column`, `key far mix step`, far normal `4..8`,
-  `penumbra disc`; light history under lamps, the landing's two fades and a far-trees arm by
-  W2's verdicts); the
-  architect writes the picks into ADR-0082's Outcome at the close. An arm not picked that costs
-  nothing when off stays a setting (owner, 2026-11-12): the approach penumbra, `key far baked`,
-  light history on, each spike arm. `--calm` goes if the defaults equal it. The goldens that
-  the new defaults move are re-blessed on lavapipe.
-- **Files touched:** `crates/vxe-render/src/frame/settings.rs`, the fly-through's defaults
-  under `apps/flythrough/src/cli/`, the goldens under `apps/flythrough/tests/`,
+- **What** (restated 2026-11-23, owner, at W2): the defaults of `Lighting` and the fly-through
+  take W2's picks: light history off (every scene kind, lamps included), `key far column`,
+  `key far mix step`, far normal `4..8`, `penumbra disc` with its jitter on. Every arm not
+  picked stays a setting, off (owner, 2026-11-12): `landing fade`, `source fade`,
+  `far light wide`, `light history far`, light history on, the approach penumbra,
+  `key jitter off`, `key far baked`. The named profiles (ADR-0055) take the picks with the
+  defaults: no profile sets one of the five rows back (the Portable profile under the picks is
+  W3's run 3, not a reason to split it here). `--calm` goes if the defaults equal it; the
+  rig's token `calm` stays as the picks' name. Phase 8's switch stays on. The goldens that the
+  new defaults move are re-blessed on lavapipe. The architect writes the picks, the landing's
+  step accepted by eye and the dig's rule into ADR-0082's Outcome at the close.
+- **Files touched:** `crates/vxe-render/src/frame/settings.rs`,
+  `crates/vxe-render/src/settings.rs` (the profiles), the fly-through's defaults under
+  `apps/flythrough/src/cli/`, the goldens under `apps/flythrough/tests/`,
   `apps/flythrough/tests/gpu_wobble.rs`, `docs/flythrough.md`,
   `docs/nfr/02-frame-budget.md`, `docs/plans/logs/0098.md`.
-- **Done when** (amended 2026-11-22; each bar names the arm the owner judged):
-  - CPU (under 1 s): the default settings equal the picks, row by row.
+- **Done when** (restated 2026-11-23; each bar names an arm the owner judged):
+  - CPU (under 1 s): the default settings equal the five picks, row by row; `landing fade`,
+    `source fade`, `far light wide` and `light history far` are off; every named profile holds
+    the five picks.
   - `gpu_wobble` (soak, RTX by `VXE_TEST_ADAPTER=rtx`, about 15 min an arm; lavapipe also
-    soak), the default arm with the exposure pinned, the queue stepping and no drain, at the
-    rig's fly of 180 frames and at a fly of 20:
-    - **near (replaces the bar on the stop's first frame):** no frame pair of the stop moves
-      more near pixels over 4 levels than the arm `calm,pin,nqueue`'s largest pair plus 2
-      points (0.32 % in the log's run, so 2.32 %). The arm is the image with nothing landing;
-      the eye's side of it is W2 run 2, the fade against the pop. The share against the stop's
-      last frame is printed, not barred: light still arriving as one fade is ADR-0076's rule 6.
-    - **far:** the far share over 4 levels 30 frames after the stop is at most the reading of
-      the arm W2 judged plus 2 points (`calm` as picked, Phase 6's table; or the picked
-      far-trees arm, Phase 5's). Until a far-trees arm is picked this is a ratchet on what the owner accepted
-      ("only distant trees"), not a claim the trees are calm; the arm `calm,native` (0.0 %) is
-      printed beside it as the distance left.
-  - The light pass's time under the new defaults, both adapters, the three scenes, replaces
-    the readings in `docs/nfr/02-frame-budget.md` with the machine and the commit.
-  - The phase's GPU run: the golden binaries the re-bless touches (unignored). The bars above
-    are soak tests in `gpu_wobble`, run by name with `--run-ignored only` on the RTX, the
-    count of tests run in the log (amended 2026-11-23: the binary holds no unignored test).
+    soak), the exposure pinned, at the rig's fly of 180 frames and at a fly of 20:
+    - **near, at rest:** with the queue stopped after the settle (the default arm with
+      `pin,nqueue`), no frame pair of the stop moves more than 2.5 % of the near pixels over 4
+      levels. The arm read 0.49 % (Phase 6) and 0.08 % and 0.01 % (Phase 6b); the bar is the
+      largest of them plus 2 points. It defends: with nothing landing, the image the owner
+      called correct holds still.
+    - **near, at a landing: printed, not barred.** With the queue stepping, the rig prints
+      every pair over 2 % with its segment, its frame, the blocks landed, the share over 4
+      levels and the mean change (the log's 37.3 % and 17.7 levels at a first block over the
+      chain). The owner accepted that step by eye at W2 (2a); the amendment says why no bar
+      reads it.
+    - **far:** the far share over 4 levels 30 frames after the stop, the default arm with
+      `pin`, is at most the `calm,pin` reading plus 2 points. Phase 6's table reads 10.00 %,
+      so 12.00 %; the dev reads `calm,pin` once more on the rig as committed, before the
+      defaults move, and if that reading differs (the landings have since moved into the
+      settle) the bar is that reading plus 2 points, both readings in the log. It is a ratchet
+      on what the owner accepted ("even distant wobble is not too bad"), not a claim the
+      trees are calm; `calm,native` (0.0 %) is printed beside it as the distance left.
+  - Phase 8's dig test passes under the defaults with no flag set.
+  - The light pass's and the temporal pass's time under the new defaults, the RTX 3080 Laptop
+    and the RADV RENOIR (Phase 6b's owed readings with them), the three scenes, replace the
+    readings in `docs/nfr/02-frame-budget.md` with the machine and the commit.
+  - The phase's GPU run: the golden binaries the re-bless touches (unignored), then the gate
+    tier and the whole gpu tier at the tip (lane rules 4). The bars above are soak tests in
+    `gpu_wobble`, run by name with `--run-ignored only` on the RTX, the count of tests run in
+    the log (the binary holds no unignored test).
 
 ### Phase 5: The far trees, a spike of render-side arms (exploration)
 - **Owner skill:** dev
@@ -445,7 +546,7 @@ cherry-picks it; the orchestrator's call.
   - `live/bin98b` is rebuilt at the phase's commit and `live/session98b.sh` takes Phase 7's
     runs 2 and 4 as restated; its `--check-args` passes.
 
-### Phase 7: The owner's window W2 (the one further window)
+### Phase 7: The owner's window W2 (run 2026-11-23; its picks are in "Amendment at W2")
 - **Owner skill:** human
 - **What:** One session on Linux, the RTX 3080 Laptop, every mode shown on screen.
   1. The forest at `--sun 10,180` and the noon slope under `--calm` as picked: still calm on
@@ -469,6 +570,139 @@ cherry-picks it; the orchestrator's call.
   theirs), the landing's fades (on, off, or the pop accepted), and the far-trees arm or "none". If none, the trees' wobble goes to the backlog
   with Phase 2's and Phase 5's tables and this plan closes on the calm defaults; if an arm is
   picked that Phase 4 cannot make a default as a setting, it gets its own plan.
+
+### Phase 8: A dig under the calm picks neither darkens its surround nor flashes
+- **Owner skill:** dev
+- **What** (added 2026-11-23, owner: fixed before this plan closes). Three steps, in order;
+  step 1 gates the fix. No scene, hole size or flight changes so that a check passes.
+  1. **The reading.** The dig rigs as they stand (`gpu_outdoor`'s `flicker::reading::dig_split`
+     on the hills at noon, and the wobble rig's forest floor at `--sun 10,180`, where the owner
+     saw it), from the frame before the dig (N - 1) until every dig job has landed plus 24
+     frames. Arms: `default` (the history on: W2's run 5, "no flash"), `calm`, and `calm` with
+     each of the five picks put back alone. Per frame, over two classes of display pixels, the
+     **ring** (outside the dug box, inside the box dilated by 64 voxels) and the **hole** (the
+     faces the dig made): the mean luma, the share darker than at N - 1 by over 4 levels (the
+     ring) and brighter than the settled frame by over 4 levels (the hole), the sky source
+     word (`sky_source`: record, stale record, own summary, column) and whether the ray was
+     cast, the shown visibility, the key term's value, and the queue's dig state (the frame
+     the provisional block and the ring's re-bake land). It names, for the ring's dip and for
+     the hole's flash apart: the pick that brings it, the term that carries it and the switch
+     of source at its first and last frame. If the dip or the flash is not a switch of source
+     the history used to carry, the dev stops, reports what it is, and builds nothing.
+  2. **The fix.** Candidates, to be chosen by step 1's table:
+     - **(a) The old light holds until the new lands, then one fade by a world record
+       (recommended).** While a ring face's record is stale and the pixel takes no light
+       history, it keeps showing the baked term from the stale record (no move to the seed's
+       estimate and back); when the re-bake lands, the store's fade carries the stale words
+       to the new ones (today it skips a stale word) over `FADE_F` frames. A new face in the
+       hole shows, until its dig block lands, the value the reading names as the nearest
+       world estimate of what it will be (its cell's stale record or its chunk's summary, not
+       the column's open 1), then fades by the landing word as Phase 6b's mix does. It is
+       ADR-0082's rule and ADR-0076's rule 3 kept: timed by the world, right for a pixel that
+       enters the view mid-fade.
+     - **(b) A screen history for the dig's box alone**, for the frames until its jobs land
+       plus `FADE_F`. A few lines over the edit boxes the encode already holds, and it is what
+       run 5 showed. It gives back the history this plan removes inside the box, and a pixel
+       that enters mid-fade has none. The fallback if (a) needs a change to the store's layout
+       or more than the files below.
+     - **(c) The dig's light lands in the dig's own frame** at a low tier. Not here: the
+       queue's tiers and the frame's slice are Plans 0096 and 0099's.
+     Rejected: accepting the blink (the owner's verdict), and the history back on by default.
+     The fix is one setting, `Lighting::dig_hold` (default on once built; `--dig-hold on|off`,
+     the debug page's row `dig hold`, the HUD's lighting row and the banner name it while it
+     is off its default), so W3 can flip it. Off, the image is today's byte for byte; on, an
+     image with no dig in flight is today's byte for byte.
+  3. **The test.** An asserting test beside `a_dig_changes_nothing_outside_its_reach`.
+- **Files touched:** `apps/flythrough/tests/gpu_outdoor/flicker.rs`,
+  `apps/flythrough/tests/support/defects.rs`, `apps/flythrough/tests/gpu_wobble.rs`,
+  `crates/vxe-render/src/shaders/{temporal,pair,shade}.wgsl`,
+  `crates/vxe-render/src/bake/queue/{step,tests}.rs`, `crates/vxe-render/src/bake/store.rs`,
+  `crates/vxe-render/src/frame/{settings,encode}.rs`, `crates/vxe-render/src/settings.rs`,
+  `apps/flythrough/src/cli/outdoor.rs`, `apps/flythrough/src/cli/tests/outdoor.rs`,
+  `apps/flythrough/src/toggles.rs`, `apps/flythrough/src/hud/modes.rs`, `docs/flythrough.md`,
+  `docs/plans/logs/0098.md`.
+- **Done when:**
+  - Step 1's table is in the log (RTX 3080 Laptop, both scenes, the seven arms) and names the
+    pick, the term and the switch for the dip and for the flash, or refutes the suspect and
+    the phase stops there with a report.
+  - `gpu_outdoor` (`flicker`, lavapipe, the dig rig at 320 x 180; expected under 10 s, a
+    guess: over the soak line it is born `#[ignore = "soak"]`, the phase says so, and the
+    dev names the unignored test that still renders a dig through the changed code), under
+    the five picks with `dig hold` on, against the arm with the history on (the look the
+    owner called "no flash"), from N to the last dig landing plus 24 frames:
+    - **the surround does not darken:** in every frame the share of ring pixels darker by
+      over 4 levels than both their value at N - 1 and their settled value is at most the
+      history-on arm's largest such share plus 2 points;
+    - **the hole does not flash:** in every frame the share of hole pixels brighter than
+      their settled value by over 4 levels is at most the history-on arm's largest plus 2
+      points, and the hole's mean luma never exceeds its settled mean by more than the
+      history-on arm's largest excess plus 4 levels;
+    - with `dig hold` off the same test's first claim fails (printed once in the log: the bar
+      bites on the fault it was written for).
+  - CPU (`bake::queue::tests`, under 1 s) for any store word the fix moves or adds: a stale
+    word rides the fade from its old value to the re-bake's, no step further than the step's
+    share of the change plus one unit of rounding; `--dig-hold off` parses and the lighting
+    row names it (`cli/tests/outdoor.rs`).
+  - Readings in the log (RTX 3080 Laptop): step 1's table again with the fix on; the light
+    and temporal passes' time with a dig in flight and at rest, on against off; the RADV
+    RENOIR's the same.
+  - The phase's GPU run (lavapipe): `--binaries gpu_outdoor gpu_queue gpu_outdoor_golden`,
+    tests run over 0, the goldens passing with no re-bless (the image at rest has not moved).
+  - The owner's look is W3's run 1 (Phase 10).
+
+### Phase 9: The sunlit terraces at noon, a reading (exploration)
+- **Owner skill:** dev
+- **What** (added 2026-11-23, owner's finding at W2 run 1b). A reading that names the
+  mechanism, on the noon slope as the window ran it (`--source outdoor --time 12:00`, the
+  still's pose in `live/window98b/1b-sunlit-slope-wobble.png`: x -299.5 y 0.5 z 549.5), the
+  scene untouched. The class is the **step shadows**: display pixels on a key-lit face within
+  2 px of the key term's shadow edge, split by the far normal's weight (0, between, 1). At a
+  still camera over the jitter's phases and over the window's slow fly, the share of the
+  class moving over 4 levels pair to pair, and which term moves (the key visibility, the
+  shading normal's cosine, the sky term), for the arms: `calm`; `calm` with `key jitter off`;
+  with the approach penumbra; with the light history on; with the band at `8,12` and at
+  `2,6`; with `key far baked`; and `calm,native` (no FSR 2, no jitter). It names the arm
+  that closes more than half of the distance from `calm` to `calm,native`, or says none does,
+  and whether the class moves at a still camera at all.
+  **The fix is routed by the result:** (i) an existing switch closes it: nothing is built,
+  W3's run 2 shows `calm` against that switch and the owner picks (a changed pick is one
+  default's row and a re-bless, a fix pass after W3); (ii) a switch and a few lines of shader
+  in the files below would close it (for example the disc's ray fixed per world position
+  instead of drawn per frame): it is built default-off, its mode on the HUD's lighting row,
+  for the same run; (iii) anything larger: reported with the table, and the architect writes
+  a dated backlog entry at the close. No default changes in this phase.
+- **Files touched:** `apps/flythrough/tests/gpu_wobble.rs` (or a sibling under
+  `gpu_wobble/`), `crates/vxe-render/src/shaders/{shade,temporal}.wgsl` and
+  `crates/vxe-render/src/frame/settings.rs` (case ii only), `apps/flythrough/src/toggles.rs`,
+  `apps/flythrough/src/hud/modes.rs`, `docs/plans/logs/0098.md`.
+- **Done when:** the log holds the table (RTX 3080 Laptop, still and flying, a row an arm,
+  the three weights apart, the pass times beside it), names the mechanism or says none of
+  the arms holds it, and states which of (i), (ii), (iii) applies and what W3's run 2
+  compares. A built arm shows its mode on screen and leaves the image byte for byte when
+  off. Readings only, run by filter with `--run-ignored only`, the count of tests run in the
+  log; no golden, no bar.
+
+### Phase 10: The owner's look, window W3
+- **Owner skill:** human
+- **What** (added 2026-11-23). One session on Linux, every mode shown on screen, on a tree
+  that holds this plan through Phase 4 and Plan 0096's lane (the orchestrator's call which:
+  this branch with main merged in once Plan 0096 lands, or main).
+  1. **The dig under the defaults**, the forest floor at `--sun 10,180` and the noon slope:
+     dig three or four holes. Does the surround stay as it was? Does the hole arrive without
+     a white or bright flash? Then `dig hold` off on the debug page for the before.
+  2. **The noon terraces**, the cave mouth's slope at 12:00, the slow fly and a stop: the
+     defaults against what Phase 9 routed (a switch, a built arm, or nothing to compare).
+     Still wobbling on the sunlit steps? If an arm calms it, does the shadow still look right?
+  3. **The Radeon at the Portable profile**, 1280 x 720, the forest at 15:00, under the
+     defaults: W2's run 7 was "really hard" wobble on a binary with none of the picks and a
+     480p march, so the picks at that size are unjudged. Calm enough? (The frame rate and the
+     dig's grain there are Plan 0096's questions.)
+- **Files touched:** `docs/plans/logs/0098.md` (the verdicts, in the owner's words).
+- **Done when:** the log holds a verdict per run. Run 1 is this plan's: a dig that still
+  darkens or flashes goes back to Phase 8 as a fix pass. Run 2 either changes a pick (a fix
+  pass: the default's row and the re-bless) or sends the terraces to the backlog with Phase
+  9's table. Run 3 does not hold the close: a wobble that is the picks' at 480p goes to the
+  backlog beside the far trees', one that is the profile's to Plan 0096.
 
 ## Data shapes
 
@@ -496,7 +730,13 @@ pub struct Lighting {
   record's pixel (under 0.05 ms on the RTX 3080 Laptop, under 0.1 ms on the RADV RENOIR) and,
   for the 16 frames a chunk fades, one column map read and one irradiance mix a pixel (under
   0.1 ms and 0.3 ms with every chunk in view fading).
-- **Section 7, the gate's wall time.** Unchanged: every new GPU test is soak.
+- **Phase 8 (guesses, measured there).** No new store word if the landing word and the stale
+  bit suffice; in the temporal pass, for the pixels of a dig's ring and hole while its jobs
+  are in flight, one more store read and one mix (under 0.05 ms on the RTX 3080 Laptop, under
+  0.2 ms on the RADV RENOIR, nothing at rest); the store's fade stage takes the ring's stale
+  words for `FADE_F` frames a dig (read in its lap, `S_FADES`).
+- **Section 7, the gate's wall time.** Every new GPU test is soak, but Phase 8's dig test if it
+  reads under 10 s on lavapipe; then the gate grows by that time, stated at the close.
 
 ## Risks & open questions
 
@@ -533,6 +773,19 @@ pub struct Lighting {
   no sky light (the column's answer is 0 or 1). A 16-frame fade from that is calm and still a
   visible brightening; if the owner minds the wait and not the step, the fix is a better value
   before the bake (Plan 0096's ground), not a longer fade.
+- **The dig's blink may not be the history's.** Phase 8's suspect is the orchestrator's and
+  the architect's reading of the code, not a measurement; four other picks changed with
+  `--calm`. The phase's first step is the bisect, and it stops if the suspect falls.
+- **A new face in a hole has no old light.** Candidate (a) shows the nearest world estimate
+  until the dig's block lands; if that estimate is far from the landed value the hole still
+  steps, softly. The bar is tied to the history-on arm the owner called "no flash", so the
+  test says whether it is at least that good.
+- **The terraces' wobble may be the disc itself.** One random ray a frame with nothing to
+  average it was W1's open risk; if Phase 9 names it, the cheap arms are the centre ray (a
+  hard shadow) or a ray fixed in the world, and the choice is the owner's eye at W3, not a
+  reading's.
+- **W3 may change a pick after Phase 4 lands.** Then one default's row and its goldens move
+  again in a fix pass; accepted, so that the window judges the true defaults.
 - Determinism, memory and threading: none touched (render settings only; no world code).
 
 ## What this plan does NOT do
@@ -547,6 +800,11 @@ pub struct Lighting {
 - It does not change a scene, a model, the leaf fill or a rig's flight so that a bar passes
   (owner, 2026-11-22).
 - It does not change FSR 2's arithmetic, its scale or its phases (W1: no lever beats today's).
+- It does not calm the distant trees (W2: "not too bad"; no arm picked): the backlog's stable
+  far representation and Plan 0033's re-read carry them.
+- It does not change how a dug hole looks once its light has landed (the backlog's lit floor
+  and darker interiors), nor the dig's tier, grain or timing under a profile (Plan 0096).
+- It does not make `source fade` perceptual or default (W2: no difference by eye).
 
 ## Implementation log
 
@@ -559,11 +817,14 @@ pub struct Lighting {
 | 1: The calm combination as one setting | dev | done (6370f2c4); `Lighting::light_history` (the plan's `history` is taken by `HistoryKill`); the setting row in `crates/vxe-render/src/settings.rs`; `start_lighting` in `cli/mod.rs`; the menu's far normal steps 4..8 and 8..12 too (`cli/parse.rs`, `run/tests.rs`); the hook's three lines dropped from `gpu_outdoor/canopy.rs`; readings in the log | committed with this row |
 | 2: Where FSR 2 loses the far trees | dev | done (e2963230; the table and the motion fix with the next row's commit); instrument in; the reading is `mod reading` (`gpu_wobble/fsr.rs`), not soak; the levers' switches need `run/keys.rs` and `run/profile.rs`; readings in the log | committed with this row |
 | 3: The owner's window W1 | human | run 2026-11-22 in two sittings (`live/session98.sh` at `e2963230`); verdicts in the log, amendment in the plan | the amendment's commit |
-| 4: The picks become the defaults | dev | not started; runs last, after W2 | |
+| 4: The picks become the defaults | dev | not started; runs after Phases 8 and 9 | |
 | 5: The far trees, a spike of render-side arms | dev | done (the term split 689479db; arms 257cdd23; `far light wide` also widens the stored sky term's source 21fcdf67, the term the split names); `far jitter` not built (no previous hit in the hit pass); `far light wide` closes 61 % of calm-to-albedo at the turn's +10, `light history far` none; readings in the log | committed with this row |
 | 6: The picks under one flag, a landing fades in the store | dev | done (9e243955; the landing rows' cell count fae329ce); `--calm` takes the five picks, `landing fade` built and its data test passes; readings on the RTX in the log: the fade moves no pop (every landing reads 0 changed cells: the pop is the light pass's source switching to a new block, no store word); the gpu tier over `gpu_wobble` holds no unignored test | committed with this row |
 | 6b: A landing's switch of source fades by the block's landing frame | dev | done (47e44039; the rig's reads 925859c9); step 1 confirms (fly 20's pop: 99.9 % of the moved near pixels in the landed chunk and switched from no value to the record; no cast sample shown with the history off); `LANDED_AT` a new head word; `source_faded` in pair.wgsl (temporal.wgsl at its cap); readings: the landing's mean near change falls 3.4 to 5.5 times but its share over 4 levels does not (a linear-light fade from black); default arms unchanged; readings in the log | committed with this row |
-| 7: The owner's window W2 | human | not started | |
+| 7: The owner's window W2 | human | run 2026-11-23 (`live/session98b.sh`, `live/bin98b` at `925859c9`; runs 6 and 7 on Plan 0096's binary); verdicts in the log, amendment in the plan | the amendment's commit |
+| 8: A dig under the calm picks neither darkens nor flashes | dev | not started | |
+| 9: The sunlit terraces at noon, a reading | dev | not started | |
+| 10: The owner's look, window W3 | human | not started | |
 
 ### Notes
 
@@ -582,8 +843,13 @@ _(Facts for the architect.)_
 ## Followups
 
 - From Phase 6b (2026-11-23): with the history off a cast sky ray's sample is never shown
-  (skip the cast, if the reading agrees); the key light's record under `key far baked` and a
-  dig's ring both still step at a landing with no history.
+  (skip the cast; the reading agrees, and it waits for Phase 8, which may want the sample at
+  a dig); the key light's record under `key far baked` still steps at a landing with no
+  history. The dig's ring is Phase 8's.
+- From W2 (2026-11-23): `source fade`'s mix is linear from black, so its first frames are
+  large on the display (the log, "What the fade does"); dropped while the fade is off by
+  default. Whatever Phase 9 and W3 leave of the noon terraces, and W3's word on the Portable
+  profile under the picks, go to the backlog at the close.
 
 - The slope's step lines and the narrowed key band (backlog) are taken here through the
   widened band; whatever W1 leaves of them returns to the backlog at the close.
