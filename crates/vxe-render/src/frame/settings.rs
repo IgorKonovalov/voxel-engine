@@ -970,22 +970,17 @@ pub struct Lighting {
     /// mean through a canopy holds four times the sky rays' frames while a 10-degree jump
     /// still resets it at once (the sky-change bit).
     pub key_history: u32,
-    /// The light passes read last frame's lighting through the history test (ADR-0082; default
-    /// on): off, `Params::history` bit 0 is clear every frame, so every lighting pixel resets
-    /// (age 0, this frame's sample) while the upscaler keeps its own history (bit 1).
+    /// The light passes read last frame's lighting (ADR-0082; default on): off, `Params::history`
+    /// bit 0 is clear and every lighting pixel resets (age 0) while the upscaler keeps its own.
     pub light_history: bool,
-    /// A landing block's sky visibilities ride the store's fade with its direction values and
-    /// key visibilities (default off): off, they change in the frame the block lands, and only
-    /// the light pass's screen history (the no-ray fade) softens it.
+    /// A landing block's sky visibilities ride the store's fade with its other words (default
+    /// off): off, they change in the frame it lands, softened only by the no-ray fade's history.
     pub landing_fade: bool,
-    /// A spike arm (Plan 0098 Phase 5, default off): with [`Lighting::light_history`] off, the
-    /// light passes keep their history where the far normal's weight is 1, the far trees alone.
+    /// A spike arm (Plan 0098 Phase 5, default off): with no light history, keep it at the far.
     pub light_history_far: bool,
-    /// A spike arm (Plan 0098 Phase 5, default off): the a-trous filter's plane and normal
-    /// edge stops relax by the far normal's weight, so the key light of two hits a jitter step
-    /// apart is one spatial mean at the far; and the stored sky term, which passes around the
-    /// filter, mixes a face's baked visibility toward its chunk summary's by the same weight
-    /// (temporal.wgsl).
+    /// A spike arm (Plan 0098 Phase 5, default off): by the far normal's weight the a-trous
+    /// filter's edge stops relax and the stored sky term (which skips the filter) reads toward
+    /// its chunk summary's, so two hits a jitter step apart light alike at the far.
     pub far_light_wide: bool,
     /// How the key light's shadow ray makes its penumbra ([`Penumbra`]; default `Disc`).
     pub penumbra: Penumbra,
@@ -1035,10 +1030,8 @@ pub const DEFAULT_SKY_RAYS: u32 = 1;
 
 impl Lighting {
     /// `Params::history`'s light bits for a frame whose history is `valid`: bit 0 the light
-    /// passes read it ([`Lighting::light_history`], or under [`Lighting::light_history_far`] bit
-    /// 2 too: at the far alone, temporal.wgsl `light_history_at`), bit 3 the a-trous filter's
-    /// edges relax and the stored sky term widens at the far ([`Lighting::far_light_wide`],
-    /// atrous.wgsl `far_wide`, temporal.wgsl).
+    /// passes read it, bit 2 at the far alone ([`Lighting::light_history_far`], temporal.wgsl
+    /// `light_history_at`), bit 3 [`Lighting::far_light_wide`] (atrous.wgsl, temporal.wgsl).
     pub(crate) fn light_history_bits(&self, valid: bool) -> u32 {
         let far_only = !self.light_history && self.light_history_far;
         u32::from(valid && (self.light_history || far_only))
