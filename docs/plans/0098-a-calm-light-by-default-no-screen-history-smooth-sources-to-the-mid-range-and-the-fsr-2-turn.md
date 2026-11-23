@@ -5,7 +5,10 @@
 > `key far mix step`, the band `4..8` and `penumbra disc`; Phase 6 (a bake landing fades in the
 > store) and Phase 7 (the one further window, W2) are new; Phase 5 becomes a spike of
 > render-side arms for the far trees, no content changed; Phase 4 runs last with its bars
-> restated. Order from here: 6, 5, 7, 4.
+> restated. **Amended 2026-11-23 (architect, owner confirm owed)**, at Phase 6's readings
+> (section "Amendment at the Phase 6 readings"): the landing pop is the light pass switching
+> source, no store word, so Phase 6b (the switch itself fades, by the block's landing frame) is
+> new and runs before W2; W2's runs 2 and 4 are restated. Order from here: 6b, 7, 4.
 > **Created:** 2026-11-21
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0082](../adrs/0082-the-light-pass-keeps-no-screen-history-by-default-and-reads-smooth-sources-to-the-mid-range.md)
@@ -116,6 +119,61 @@ them. What they settle, and what they do not:
 and on the leaf fill): no scene, model or fixture is simplified so that a check passes. The
 wobble rig's forest, its leaf fill and its fly lengths stay as they are.
 
+## Amendment at the Phase 6 readings (2026-11-23; architect, owner confirm owed)
+
+Phase 6 built what it was written to build and the pop did not move
+([`logs/0098.md`](logs/0098.md), "Phase 6 readings"): `landing fade` changes no stop pair by
+more than 0.07 points (`calm,pin` 15.57 % off, 15.59 % on; fly 20: 36.72 % both), every pop
+falls in a frame where one block lands over the fallback chain, and every such landing reads
+0 changed cells. The W1 amendment guessed the pop was a store word (the key words); that guess
+was wrong. **What the readings and the code say instead** (a strong suspect, not yet read per
+pixel; Phase 6b's first step reads it):
+
+- A face whose chunk holds no block has no record, so the light pass casts its sky ray and the
+  temporal pass shows the visibility pair. With no light history the pair is reset every frame,
+  and a reset pair holds its seed alone (`pair_step`, pair.wgsl): the column map's answer at
+  the hit (`column_estimate`), which is 1 above the column's top and 0 under it. The ray's
+  sample is never shown.
+- The frame the chunk's first block lands, the face's own cell holds a baked visibility
+  (`sky_baked`, shade.wgsl), no ray is cast, and the pixel shows the baked term
+  (`sky_baked_term`, temporal.wgsl). Under a canopy that is a step from no sky light to the
+  baked share, in one frame, over every pixel of the chunk. No word in the store changed: the
+  chain holds no sky visibility to fade from.
+- With the history on, the step rides `no_ray_fade` (2.26 % under `default,pin`); `calm` has
+  no history to carry it.
+
+**The decision.** The switch of source fades in the light pass, timed by a world record and not
+by a screen history: the block carries the frame it first landed, and for the fade's frames
+the temporal pass mixes what the pixel showed before the block toward the block's baked term
+(Phase 6b). The "before" needs no second ray: it is the column's answer, one map read. Rejected
+here: a screen history kept only for pixels whose source just switched (it is the history
+this plan removes, and a pixel that enters the view mid-fade has none), and accepting the pop
+(the owner's rule: a stable image first). If the per-pixel reading refutes the suspect, 6b
+builds nothing and reports.
+
+**Four smaller things settled here.**
+
+1. **Phase 5's `far light wide` is within the phase as written**: its text says that where the
+   named term does not pass through the filter, the arm widens that term's own source, and the
+   log says which (`21fcdf67`: the face's baked sky visibility mixed toward its chunk
+   summary's by the far normal's weight). Two notes: the filter's relaxation stayed under the
+   same switch, so W2 judges both as one arm; and a chunk summary is one value a direction
+   over 6.4 m, read with no blend across chunks, so the reading's 7.35 % against `calm`'s
+   13.78 % says calmer, not right. W2's run 4 asks both.
+2. **`light history far` leaves W2.** It read 35.21 % at the turn's +10 against `calm`'s
+   13.78 %, and it was "the last to build and the first to drop". It stays a setting on the
+   debug page (it costs nothing when off); the session does not walk the owner through it.
+3. **`--binaries gpu_wobble` checks nothing**: every test in the binary is ignored (readings
+   and soak), so the run reports 0 tests. From here a phase's GPU run is two things, both
+   named: an unignored `gpu_*` binary that renders through the files the phase touched, and
+   each reading by its exact filter with `--run-ignored only`, with the count of tests run
+   (over 0) in the log. Phases 6b and 4 say which.
+4. **W2's run 2** compares both fades off against both on (Phase 7).
+
+**One thing the code reading adds, for the dev to confirm and nothing more:** with the light
+history off, every cast sky ray's sample is dropped (the reset pair shows its seed). If the
+reading agrees, the cast is cost with no image; skipping it is a followup, not this phase.
+
 ## Decision
 
 **Ship the combination the owner called calm as the default once W1 confirms it; read FSR 2
@@ -142,9 +200,9 @@ flowchart LR
 
 ## Implementation phases
 
-Each phase ships as its own commit. Phases 1, 2, 5 and 6 are **exploration** (they name
+Each phase ships as its own commit. Phases 1, 2, 5, 6 and 6b are **exploration** (they name
 readings, not image tests; CPU tests of data and flags stay with their phase). From the
-amendment on the order is 6, 5, 7, 4. The lane needs the debug page's switches of `diag-edges` (`ac0d4132`): it
+second amendment on the order is 6b, 7, 4. The lane needs the debug page's switches of `diag-edges` (`ac0d4132`): it
 stacks on `plan-0097` with that commit, or starts from main once Plan 0097 has merged and
 cherry-picks it; the orchestrator's call.
 
@@ -218,7 +276,8 @@ cherry-picks it; the orchestrator's call.
 - **Owner skill:** dev
 - **What:** The defaults of `Lighting` and the fly-through take the picks as W2 confirms them
   (W1's: light history off, `key far column`, `key far mix step`, far normal `4..8`,
-  `penumbra disc`; light history under lamps and a far-trees arm by W2's verdicts); the
+  `penumbra disc`; light history under lamps, the landing's two fades and a far-trees arm by
+  W2's verdicts); the
   architect writes the picks into ADR-0082's Outcome at the close. An arm not picked that costs
   nothing when off stays a setting (owner, 2026-11-12): the approach penumbra, `key far baked`,
   light history on, each spike arm. `--calm` goes if the defaults equal it. The goldens that
@@ -244,7 +303,9 @@ cherry-picks it; the orchestrator's call.
       printed beside it as the distance left.
   - The light pass's time under the new defaults, both adapters, the three scenes, replaces
     the readings in `docs/nfr/02-frame-budget.md` with the machine and the commit.
-  - `--binaries gpu_wobble` plus the golden binaries the re-bless touches.
+  - The phase's GPU run: the golden binaries the re-bless touches (unignored). The bars above
+    are soak tests in `gpu_wobble`, run by name with `--run-ignored only` on the RTX, the
+    count of tests run in the log (amended 2026-11-23: the binary holds no unignored test).
 
 ### Phase 5: The far trees, a spike of render-side arms (exploration)
 - **Owner skill:** dev
@@ -319,21 +380,93 @@ cherry-picks it; the orchestrator's call.
     frame, beside the arm `calm,pin,nqueue`'s; and the `default,pin,nqueue` row the log owes.
   - `--binaries gpu_wobble` plus the bake binary the data test lives in.
 
+### Phase 6b: A landing's switch of source fades by the block's landing frame (exploration)
+- **Owner skill:** dev
+- **What** (added 2026-11-23, architect; owner confirm owed). Three steps, in order; step 1
+  gates the other two.
+  1. **The reading.** The rig's landing rows gain the near class's sources: at the pop pair of
+     `calm,pin` (fly 180 and fly 20), over the near pixels that move over 4 levels, the share
+     that lies in the landed chunk, the share whose sky source went from no value with the ray
+     cast to the record (`sky_source`'s words), and the pair's visibility before and after. If
+     under half of the moved pixels switched source, stop: nothing is built, the log says what
+     the pixels did instead, and W2's run 2 falls back (Phase 7). The same reading says what
+     the pixel showed before (the column's answer, by the code) and whether a cast sample is
+     ever shown with the history off.
+  2. **The record.** A block carries one word, the frame its chunk's **first** block landed
+     plus one, 0 for none: written with the block's words at a landing over the fallback
+     chain or a bare one, kept by every later landing of the chunk (a refinement, a key
+     re-bake, a dig), 0 for a block placed before the first frame (the pre-roll) and whenever
+     the switch is off. A new head word (4 bytes a block) unless the dev finds spare bits that
+     `Store::summarise` does not rewrite; the log says which. The store's fade stage does no
+     new work: nothing is written per frame.
+  3. **The mix.** In the temporal pass, at a face whose sky term comes from its record with no
+     ray and whose pixel takes no light history (history off, or a reset pixel): with
+     `p = (frame - landed + 1) / FADE_F` under 1, the sky term is the term the pixel showed
+     before the block (step 1 names its form; by the code `column_estimate` at the hit times
+     the sky's irradiance about the shading normal) mixed toward `sky_baked_term` by `p`. One
+     fade of `FADE_F` frames, ADR-0076's rule 3, the same length as `no_ray_fade`. A pixel
+     whose history is taken keeps `no_ray_fade` as it is; the two never stack. `shade.wgsl`
+     does not change (the ray stays uncast once the record is there).
+  The setting is `Lighting::source_fade` (default off), `--source-fade on|off`, the debug
+  page's row `source fade`, the HUD's lighting row and the banner `source fade on`, the rig's
+  token `sfade`. Off, the word is 0 everywhere and the image is today's byte for byte.
+  **Not covered, and said so:** the key light's record under `key far baked` with the history
+  off (not a pick: `calm` reads the column), and a dig's ring, whose stale record steps to its
+  re-bake's (the store's fade skips a stale word); both go to Followups. The term before the
+  block passed through the a-trous filter and the faded one rides around it; a step at the
+  fade's first frame, if the reading shows one, is reported and not chased tonight.
+- **Files touched:** `crates/vxe-render/src/bake/{record,store,summary}.rs`,
+  `crates/vxe-render/src/bake/queue/{step,mod,tests}.rs`, `crates/vxe-render/src/frame/baked.rs`
+  (the frame's number to the queue), `crates/vxe-render/src/frame/{settings,encode}.rs`,
+  `crates/vxe-render/src/settings.rs`, `crates/vxe-render/src/shaders/{temporal,hitrec}.wgsl`,
+  `apps/flythrough/src/cli/{outdoor,mod}.rs`, `apps/flythrough/src/cli/tests/outdoor.rs`,
+  `apps/flythrough/src/toggles.rs`, `apps/flythrough/src/hud/modes.rs`,
+  `apps/flythrough/tests/gpu_wobble.rs`, `docs/flythrough.md`, `docs/plans/logs/0098.md`.
+- **Done when:**
+  - Step 1's table is in the log (RTX 3080 Laptop) and names the switch of source, or refutes
+    it and the phase ends there.
+  - CPU (`bake::queue::tests`, under 1 s): under the switch a first landing over the fallback
+    chain and a bare one both write the landing frame plus one; a refinement and a key re-bake
+    landing on the chunk keep the first value; with the switch off, and for a block placed
+    with no frame, the word is 0. CPU (`cli/tests/outdoor.rs`, under 1 s): `--source-fade on`
+    parses, the lighting row reads `source fade on`, and `--calm` alone leaves it off.
+  - Readings in the log (RTX 3080 Laptop, the exposure pinned, fly 180 and fly 20):
+    `calm,pin,sfade` and `calm,pin,lfade,sfade` beside `calm,pin` and `calm,pin,nqueue`: the
+    stop's largest near pair over 4 levels and its frame, the landing rows, and whether the
+    largest pair is within 2 points of `calm,pin,nqueue`'s (Phase 4's near bar; here a
+    reading). `default,pin,sfade` beside `default,pin`: no figure worse. The light and
+    temporal passes' time off and on, at the hold and over a fresh start's first 60 frames
+    (every chunk fading), on the RTX; the RADV RENOIR's the same if the night allows, else
+    owed to Phase 4 and said.
+  - The phase's GPU run (lavapipe): `--binaries gpu_outdoor gpu_queue`, each with tests run
+    over 0 and the switch off (the default image has not moved); if either holds no unignored
+    test through the sky term and the store, the dev names the binary that does. The readings
+    run by filter (`reading::wobble`, `--run-ignored only`) on the RTX.
+  - `live/bin98b` is rebuilt at the phase's commit and `live/session98b.sh` takes Phase 7's
+    runs 2 and 4 as restated; its `--check-args` passes.
+
 ### Phase 7: The owner's window W2 (the one further window)
 - **Owner skill:** human
 - **What:** One session on Linux, the RTX 3080 Laptop, every mode shown on screen.
   1. The forest at `--sun 10,180` and the noon slope under `--calm` as picked: still calm on
      the slopes at `4..8` with the disc? Grain in the disc's penumbra with no history? The
      disc against `key jitter off`. The sun patches at a distance.
-  2. The forest floor, a short fly and a stop, eyes on the near ground for 3 s: `landing fade`
-     off against on. A pop without it, none with it?
+  2. The forest floor, a short fly and a stop, eyes on the near ground for 3 s (restated
+     2026-11-23): `--calm` against `--calm --landing-fade on --source-fade on`, the banner
+     naming both. A pop without them, one soft fade with them? Is the fade's length right?
+     And what the ground shows before its light lands (under a canopy, no sky light): is that
+     acceptable while it waits? If Phase 6b ended at its reading, this run is `--calm` against
+     `--calm --light-history on` and asks which the owner takes for the near ground.
   3. The castle's hall under lamps: light history off against on. Grain, flicker?
-  4. The forest under `--calm`, flying and turning: each Phase 5 arm against none. Does any
-     calm the distant trees, does the picture still look right, at what frame rate?
+  4. The forest under `--calm`, flying and turning (restated 2026-11-23): `far light wide`
+     off against on. Are the distant trees calmer? Do they still look right: canopies gone
+     flat, blocks or seams of light about 6 m across on the far canopy and ground, shade lost
+     under far trees? At what frame rate? (`light history far` is not walked; it stays on the
+     debug page.)
 - **Files touched:** `docs/plans/logs/0098.md` (the verdicts, in the owner's words).
 - **Done when:** the log holds a verdict per run and the picks: the penumbra and the band
   confirmed or changed, light history under lamps (off everywhere, or the lamp terms keep
-  theirs), and the far-trees arm or "none". If none, the trees' wobble goes to the backlog
+  theirs), the landing's fades (on, off, or the pop accepted), and the far-trees arm or "none". If none, the trees' wobble goes to the backlog
   with Phase 2's and Phase 5's tables and this plan closes on the calm defaults; if an arm is
   picked that Phase 4 cannot make a default as a setting, it gets its own plan.
 
@@ -358,7 +491,11 @@ pub struct Lighting {
 - **Section 2, the frame at the default scale.** W1 picked no FSR 2 lever, so the scale holds
   at 1.5. Phase 5's table carries the light pass's and the frame's time per arm so W2's pick
   is made with its cost; Phase 6's fade adds words to the store's fade stage (`S_FADES`),
-  read in its lap beside the before.
+  read in its lap beside the before. Phase 6b (guesses, measured there): 4 bytes a block in
+  the store; no work in the queue's step; in the temporal pass one more store word read at a
+  record's pixel (under 0.05 ms on the RTX 3080 Laptop, under 0.1 ms on the RADV RENOIR) and,
+  for the 16 frames a chunk fades, one column map read and one irradiance mix a pixel (under
+  0.1 ms and 0.3 ms with every chunk in view fading).
 - **Section 7, the gate's wall time.** Unchanged: every new GPU test is soak.
 
 ## Risks & open questions
@@ -387,6 +524,15 @@ pub struct Lighting {
   falls away and its levers are read on the disc. Its Phases 3 to 5 (the
   tiers, the drain slice, the step) stand: the window showed a frozen queue is worse, not
   better.
+- **Phase 6b and Plan 0099.** The landing frame is written once, with the block's words, so it
+  rides Plan 0099's write list as a block word and adds nothing to the fades its bake thread
+  paces. The frame is the one in that plan's message; a list applied late starts the fade
+  part-way (one larger first step, never backwards), which is the owner's answer to its
+  question 2. The clock is the shader's, so a late bake step cannot stall this fade.
+- **The fade may show what the pop hid.** Before its block lands a face under a canopy shows
+  no sky light (the column's answer is 0 or 1). A 16-frame fade from that is calm and still a
+  visible brightening; if the owner minds the wait and not the step, the fix is a better value
+  before the bake (Plan 0096's ground), not a longer fade.
 - Determinism, memory and threading: none touched (render settings only; no world code).
 
 ## What this plan does NOT do
@@ -416,6 +562,7 @@ pub struct Lighting {
 | 4: The picks become the defaults | dev | not started; runs last, after W2 | |
 | 5: The far trees, a spike of render-side arms | dev | done (the term split 689479db; arms 257cdd23; `far light wide` also widens the stored sky term's source 21fcdf67, the term the split names); `far jitter` not built (no previous hit in the hit pass); `far light wide` closes 61 % of calm-to-albedo at the turn's +10, `light history far` none; readings in the log | committed with this row |
 | 6: The picks under one flag, a landing fades in the store | dev | done (9e243955; the landing rows' cell count fae329ce); `--calm` takes the five picks, `landing fade` built and its data test passes; readings on the RTX in the log: the fade moves no pop (every landing reads 0 changed cells: the pop is the light pass's source switching to a new block, no store word); the gpu tier over `gpu_wobble` holds no unignored test | committed with this row |
+| 6b: A landing's switch of source fades by the block's landing frame | dev | not started | |
 | 7: The owner's window W2 | human | not started | |
 
 ### Notes
@@ -433,6 +580,10 @@ _(Facts for the architect.)_
 - **Outstanding `human` phases:**
 
 ## Followups
+
+- From Phase 6b (2026-11-23): with the history off a cast sky ray's sample is never shown
+  (skip the cast, if the reading agrees); the key light's record under `key far baked` and a
+  dig's ring both still step at a landing with no history.
 
 - The slope's step lines and the narrowed key band (backlog) are taken here through the
   widened band; whatever W1 leaves of them returns to the backlog at the close.

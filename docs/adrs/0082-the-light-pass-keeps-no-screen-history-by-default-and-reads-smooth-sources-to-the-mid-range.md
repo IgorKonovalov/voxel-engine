@@ -43,7 +43,11 @@ the mid range; its values, and the near penumbra's form (approach made world-fix
 or the disc's centre ray alone), are the owner's picks at Plan 0098's window, recorded in this
 ADR's Outcome. **A change in a world record (a bake landing, a refinement) fades in the store,
 every word the image reads, since no screen history is left to soften it** (amended
-2026-11-22, below). The history stays a render setting (`light history on`), off by default. The
+2026-11-22, below). **A landing that changes no word but switches a pixel's source (its own
+ray or the column's answer before the block, the block's record after) fades in the light
+pass by the frame the block records for its landing: a world record's clock, no screen
+history** (amended 2026-11-23, still proposed: Plan 0098's Phase 6 read the store's fade
+moving no pop, because no word changed). The history stays a render setting (`light history on`), off by default. The
 upscaler keeps its own history; FSR 2 stays the default upscaler, and its behaviour after a
 turn is treated inside its path, by a reading first.
 
