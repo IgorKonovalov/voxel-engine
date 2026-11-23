@@ -492,6 +492,36 @@ const DIAG_AT: [usize; 6] = [0, 8, 30, 60, 120, 240];
 /// The frames after the drain (none by default) before the segments, for the exposure.
 const SETTLE: usize = 120;
 
+/// A frame pair's near share over 4 levels, in %, over which [`pop_line`] prints it.
+const POP_PRINT: f64 = 2.0;
+
+/// Prints a pair of segment `name` at frame `k` whose near share over 4 levels (`c`, from
+/// [`change_by_class`]) is over [`POP_PRINT`] %: that share, the near's mean |dY|, and the
+/// queue's blocks landed between the counters `a` and `b`.
+fn pop_line(
+    name: &str,
+    k: usize,
+    c: &[(f64, f64); 5],
+    a: &vxe_render::QueueStats,
+    b: &vxe_render::QueueStats,
+) {
+    if c[1].0 > POP_PRINT {
+        println!(
+            "    pop {name} +{k}: near {:.2} % / {:.3}; landed baked {} (how {})",
+            c[1].0,
+            c[1].1,
+            b.baked - a.baked,
+            (0..4)
+                .map(|i| (b.landings[i] - a.landings[i]).to_string())
+                .collect::<Vec<_>>()
+                .join("/")
+        );
+    }
+}
+
+/// The settle's first frames timed pass by pass: a fresh start, its chunks landing and fading.
+const FRESH: usize = 60;
+
 /// The far's key source over the far lighting pixels (hit over 15 m) where the key light falls:
 /// shares of the record, the horizon, a landing's fade and the ray (the light pass's sample's b
 /// says a ray was cast; else the key slot's tag, pair.wgsl's `key_slot_decode`).
@@ -721,6 +751,11 @@ fn run_segment(
         }
         if let Some(p) = &last {
             pairs.push(change_by_class(p, &y, &cls, 4));
+            if let (Some(a), Some(b)) =
+                (queue.len().checked_sub(2).map(|i| &queue[i]), queue.last())
+            {
+                pop_line(name, k, pairs.last().unwrap(), a, b);
+            }
             for i in 0..n {
                 map[i] += f64::from(p[i].abs_diff(y[i]));
             }
@@ -1207,10 +1242,41 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> f64 {
             "  queue drained {drained} after {n} frames ({:.1} s)",
             t.elapsed().as_secs_f64()
         );
-        for _ in 0..SETTLE {
+        // The settle's first FRESH frames are timed (every chunk in view fading as it lands).
+        // Every settle frame is read: a near pair over POP_PRINT % is printed (the spawn's own
+        // chunks land here).
+        let mut fresh = Vec::<f64>::new();
+        let mut prev: Option<Vec<u8>> = None;
+        let mut q_prev = s.frame.bake_queue().map(|q| q.stats()).unwrap_or_default();
+        for k in 0..SETTLE {
             queue_step(rig, &mut s.frame, &cam0);
-            s.run(rig, &cam0);
+            let shot = s.step(rig, &cam0);
+            if k < FRESH {
+                fresh.resize(fresh.len().max(shot.passes.len()), 0.0);
+                for (a, b) in fresh.iter_mut().zip(&shot.passes) {
+                    *a += b / FRESH as f64;
+                }
+            }
+            let gw = s.frame.light_hit_positions().width() as usize;
+            let cls = classes(&shot.hits, &shot.source, gw, cam0.position.to_array());
+            let y = lumas(&shot.display);
+            let q = s.frame.bake_queue().map(|q| q.stats()).unwrap_or_default();
+            if let Some(p) = &prev {
+                pop_line("settle", k, &change_by_class(p, &y, &cls, 4), &q_prev, &q);
+            }
+            q_prev = q;
+            prev = Some(y);
         }
+        let fresh_ms: Vec<String> = vxe_render::FRAME_PASSES
+            .iter()
+            .zip(&fresh)
+            .filter(|(n, _)| ["light", "temporal", "atrous", "hit"].contains(n))
+            .map(|(n, v)| format!("{n} {v:.2}"))
+            .collect();
+        println!(
+            "  fresh start's first {FRESH} frames, pass ms: {}",
+            fresh_ms.join(", ")
+        );
         if arm.nqueue {
             QUEUE_ON.with(|q| q.set(false));
         }
