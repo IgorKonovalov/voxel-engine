@@ -539,6 +539,9 @@ fn the_exposure_row_names_the_mode_and_the_scene() {
         target_ev: None,
         ceiling: None,
         sky_share: None,
+        floor_share: None,
+        lift: None,
+        highlight: None,
     });
     s.write_rows(&mut out, &mut colours);
     let lines: Vec<&str> = out.lines().collect();
@@ -551,11 +554,24 @@ fn the_exposure_row_names_the_mode_and_the_scene() {
         target_ev: Some(5.526),
         ceiling: Some((2.0, None)),
         sky_share: None,
+        floor_share: None,
+        lift: None,
+        highlight: None,
     });
     s.write_rows(&mut out, &mut colours);
     assert_eq!(
         out.lines().nth(3),
         Some("exposure auto eye +2.41 EV  scene n/a  settles +5.53 EV  ceiling +2.00 EV")
+    );
+    if let Some(e) = s.exposure.as_mut() {
+        e.highlight = Some(0.8);
+    }
+    s.write_rows(&mut out, &mut colours);
+    assert_eq!(
+        out.lines().nth(3),
+        Some(
+            "exposure auto eye +2.41 EV  scene n/a  settles +5.53 EV  ceiling +2.00 EV  hi +0.80 EV"
+        )
     );
 }
 

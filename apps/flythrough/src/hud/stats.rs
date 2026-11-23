@@ -435,11 +435,22 @@ pub struct ExposureRow {
     pub ceiling: Option<(f32, Option<f32>)>,
     /// The metered share of sky in `[0, 1]` (`ExposureReadout::sky_share`).
     pub sky_share: Option<f32>,
+    /// With the sky share, the sky share over the camera's floor fed to the exposure
+    /// (`ExposureReadout::sky_floor`), `Some(None)` while absent or off.
+    pub floor_share: Option<Option<f32>>,
+    /// With the anchor, the lift in EV (`AutoExposure::sky_anchor_lift`), `Some(None)` while
+    /// off; `None` hides it.
+    pub lift: Option<Option<f32>>,
+    /// The highlight cap in force in EV (`ExposureReadout::highlight`), `None` while off or
+    /// not yet read back.
+    pub highlight: Option<f32>,
 }
 
 impl fmt::Display for ExposureRow {
     /// `exposure manual +0.00 EV  scene -7.9 EV`, with `  settles +5.53 EV  ceiling +2.00 EV
-    /// (anchor 4, sky 23 %)` in auto.
+    /// (anchor 4, lift 4, sky 23 %, floor 12 %)  hi +0.80 EV` in auto (`lift off` without the
+    /// lift, `floor -` while the floor's share is absent; `hi` the highlight cap, while it is
+    /// on).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "exposure {} {:+.2} EV", self.mode, self.ev)?;
         match self.scene_ev {
@@ -451,15 +462,34 @@ impl fmt::Display for ExposureRow {
         }
         match self.ceiling {
             Some((c, Some(n))) => match self.sky_share {
-                Some(s) => write!(
-                    f,
-                    "  ceiling {c:+.2} EV (anchor {n}, sky {:.0} %)",
-                    100.0 * s
-                )?,
-                None => write!(f, "  ceiling {c:+.2} EV (anchor {n})")?,
+                Some(s) => {
+                    write!(f, "  ceiling {c:+.2} EV (anchor {n}")?;
+                    match self.lift {
+                        Some(Some(l)) => write!(f, ", lift {l}")?,
+                        Some(None) => f.write_str(", lift off")?,
+                        None => {}
+                    }
+                    write!(f, ", sky {:.0} %", 100.0 * s)?;
+                    match self.floor_share {
+                        Some(Some(v)) => write!(f, ", floor {:.0} %)", 100.0 * v)?,
+                        Some(None) => f.write_str(", floor -)")?,
+                        None => f.write_str(")")?,
+                    }
+                }
+                None => {
+                    write!(f, "  ceiling {c:+.2} EV (anchor {n}")?;
+                    match self.lift {
+                        Some(Some(l)) => write!(f, ", lift {l})")?,
+                        Some(None) => f.write_str(", lift off)")?,
+                        None => f.write_str(")")?,
+                    }
+                }
             },
             Some((c, None)) => write!(f, "  ceiling {c:+.2} EV")?,
             None => {}
+        }
+        if let Some(h) = self.highlight {
+            write!(f, "  hi {h:+.2} EV")?;
         }
         Ok(())
     }

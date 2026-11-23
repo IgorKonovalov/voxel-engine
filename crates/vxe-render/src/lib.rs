@@ -86,13 +86,13 @@ pub mod internals {
 }
 
 pub use bake::{
-    BakeError, BakeProgress, BakeQueue, BakeReport, BakeSettings, Band, Bands, Budget,
-    DEFAULT_BAKE_EDIT_MS, DEFAULT_BAKE_SLICE_MS, DEFAULT_COARSE_SAMPLES, DEFAULT_DRAIN,
-    DEFAULT_NEAR, DEFAULT_TIERS, DigReport, Drain, FaceOutcome, InViewWaiting, ListingCensus,
-    MissingLight, PreRoll, PreRollConfig, PreRollError, PreRollState, PreRollSummary,
-    QUEUE_ANGLE_WEIGHT, QUEUE_BRICK_SAMPLES, QUEUE_REFINE_WEIGHT, QueueOrder, QueueStats,
-    QueueView, ReachMode, Refine, Store, StoreStats, chunk_nearest, finality_blockers,
-    in_view_census, queue_settings, reach_crosses,
+    AROUND_REACH, AroundSource, BakeError, BakeProgress, BakeQueue, BakeReport, BakeSettings, Band,
+    Bands, Budget, DEFAULT_BAKE_EDIT_MS, DEFAULT_BAKE_SLICE_MS, DEFAULT_COARSE_SAMPLES,
+    DEFAULT_DRAIN, DEFAULT_NEAR, DEFAULT_TIERS, DigReport, Drain, FaceOutcome, InViewWaiting,
+    ListingCensus, MissingLight, PreRoll, PreRollConfig, PreRollError, PreRollState,
+    PreRollSummary, QUEUE_ANGLE_WEIGHT, QUEUE_BRICK_SAMPLES, QUEUE_REFINE_WEIGHT, QueueOrder,
+    QueueStats, QueueView, ReachMode, Refine, Store, StoreStats, chunk_nearest, finality_blockers,
+    in_view_census, queue_settings, reach_crosses, sky_over_floor,
 };
 pub use camera::{Camera, View};
 pub use entities::{
@@ -100,8 +100,10 @@ pub use entities::{
     MARK_BUFFER_BYTES, MARK_COLOURS, MAX_ENTITIES, MAX_ENTITY_PARTS, Mark, ModelHandle,
 };
 pub use exposure::{
-    AutoExposure, DEFAULT_EXPOSURE_RATE_EV_S, DEFAULT_SKY_ANCHOR_EV, DEFAULT_SKY_ANCHOR_SHARE,
-    EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState, Metering, ground_irradiance,
+    AutoExposure, DEFAULT_EXPOSURE_HIGHLIGHT, DEFAULT_EXPOSURE_RATE_EV_S, DEFAULT_SKY_ANCHOR_EV,
+    DEFAULT_SKY_ANCHOR_FLOOR, DEFAULT_SKY_ANCHOR_LIFT, DEFAULT_SKY_ANCHOR_SHARE,
+    DEFAULT_SKY_AROUND_TAU, EXPOSURE_WGSL, Exposure, ExposureHighlight, ExposureReadout,
+    ExposureState, HIGHLIGHT_WHITE, Metering, SkyAround, ground_irradiance, white_exposed,
 };
 pub use frame::{
     ATROUS_ITERATIONS, DEFAULT_KEY_HISTORY, DEFAULT_KEY_STEP, DEFAULT_LIGHT_FLOOR,

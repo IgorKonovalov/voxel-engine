@@ -265,7 +265,29 @@ Found at the close ([Plan 0083](plans/done/0083-anything-from-a-vox-palette-mate
 
 ### Plan 0094's leftovers (close review, 2026-11-20)
 
-Found at the close ([Plan 0094](plans/done/0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md), v0.68.0); none blocked it, each is a small fix when the area is next open. **A tautology:** `the_tunnel_exposes_for_its_walls_by_day` (`apps/flythrough/tests/gpu_outdoor/ceiling.rs`, soak) asserts the noon-midnight luma clause only inside `if ratio.abs() <= 0.5`, so it can never fail; it reads +0.063 EV since Phase 8a, so a plain `assert!` is the fix. **A bar that does not see its mechanism:** `a_rare_hit_is_clamped` (`crates/vxe-render/tests/gpu_sun/history.rs`, soak) passes with the clamp off too (largest 0.1996 both ways); a clause on what the clamp changes, or a rig with more than one hit, would defend it. **Unread costs:** the no-record prior's arm A on the RENOIR at 1080p's half tier during a stamp's bake (a linear guess of 14.6 ms, `docs/nfr/02-frame-budget.md`; Plan 0096's RENOIR readings can take it) and the no-ray fade's temporal and composite cost.
+Found at the close ([Plan 0094](plans/done/0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md), v0.68.0); none blocked it, each is a small fix when the area is next open. **A tautology:** `the_tunnel_exposes_for_its_walls_by_day` (`apps/flythrough/tests/gpu_outdoor/ceiling.rs`, soak) asserts the noon-midnight luma clause only inside `if ratio.abs() <= 0.5`, so it can never fail; it reads +0.063 EV since Phase 8a, so a plain `assert!` is the fix (**done 2026-11-22, Plan 0097 Phase 3b:** a plain `assert!` on the centre's linear luminance, the tone curve inverted). **A bar that does not see its mechanism:** `a_rare_hit_is_clamped` (`crates/vxe-render/tests/gpu_sun/history.rs`, soak) passes with the clamp off too (largest 0.1996 both ways); a clause on what the clamp changes, or a rig with more than one hit, would defend it. **Unread costs:** the no-record prior's arm A on the RENOIR at 1080p's half tier during a stamp's bake (a linear guess of 14.6 ms, `docs/nfr/02-frame-budget.md`; Plan 0096's RENOIR readings can take it) and the no-ray fade's temporal and composite cost.
+
+### Plan 0097's leftovers (close review, 2026-11-23)
+
+Found at the close ([Plan 0097](plans/done/0097-the-exposures-anchor-by-the-sky-around-the-camera-the-floor-record-under-the-eye-a-time-constant-and-the-canopys-shade.md), v0.70.0); none blocked it.
+- **`SkyAround` is not reset on an exposure reset or a teleport.** Its `reset` runs only when
+  the floor's term is off (`frame/encode.rs`, `exposure_uniform`), so after a jump of the
+  camera the floor's share smooths over `tau_around` from the old place's value while the
+  ceiling jumps to a target read from it. What it takes: reset the smoother with
+  `Frame::reset_exposure`, and a clause in `the_floor_share_settles_at_tau`.
+- **The floor term and the lift reach the shader through soak tests alone**
+  (`the_shade_under_the_canopy_keeps_the_anchor`, `the_tunnel_exposes_for_its_walls_by_day`):
+  the gate reads the Rust model and the uniform's words, not `exposure.wgsl`'s
+  `ceiling_target` with the floor's bit set. The first of them was broken by the lift and
+  no gate saw it (fixed at the close's fix pass). A gate-size rig with a baked floor record
+  would close it.
+- **`tau_around` (1 s) has no word from the owner**; window 97 left its question unanswered.
+- **Readings owed quiet:** the stop guard's lavapipe time (8.65 and 8.95 s, loaded; its soak
+  mark comes off only on a quiet read under 10 s) and the floor walk's CPU time (0.226 us
+  mean, load 10.2).
+- **Owner questions open:** whether highlight protection wants an ADR of its own (ADR-0081's
+  Outcome records it meanwhile), and the gate's 1498 s against the 19 min line (`docs/nfr.md`
+  section 7).
 
 ### Hundreds or thousands of entities
 
@@ -672,6 +694,11 @@ Owed by nobody yet; none blocks anything.
 - **The committed `castle_gate.png`, `look_gradient27.png` and `look_trilinear8.png`** differ by
   a few pixels from the dev box's lavapipe (within the 0.1 % tolerance), at the plan's base and
   tip alike; CI's lavapipe blesses them. Re-bless on CI if one ever drifts past the tolerance.
+  **Read again 2026-11-22 (Plan 0097):** the same three differ from the dev box's render the
+  same way on main at 123964e7 and on the plan's tip (castle_gate 3376 pixels by at most
+  12/255, the two look files 196 and 228), and **`outdoor_night.png` joins them** (1827 pixels
+  by at most 2/255, main's render and the tip's byte-identical to each other); all four pass
+  their tests, none was re-blessed.
 - **The soak test `a_shown_hud_and_the_queue_line_wait_on_the_gpu_nowhere` failed, unrelated to
   Plan 0044 (fixed 2026-11-16 on branch chore-soak-frames: the test now matches `frames: {FRAMES} frames;`,
   accepts frame 0's `store reads not counted` queue line, and reads the age as the last item of

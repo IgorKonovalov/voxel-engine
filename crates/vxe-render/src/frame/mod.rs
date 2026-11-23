@@ -84,6 +84,9 @@ pub struct Frame {
     dt: f32,
     /// The next encode's exposure pass jumps the adapted level to the meter.
     reset_exposure: std::sync::atomic::AtomicBool,
+    /// The sky share over the camera's floor, smoothed (ADR-0081), and the value the last
+    /// encode fed the exposure pass (`None`: absent or off).
+    around: std::sync::Mutex<(crate::exposure::SkyAround, Option<f32>)>,
     /// A copy of the composite's image at the internal size, taken right after the composite
     /// pass ([`Frame::set_composite_capture`]); `None` unless a test or tool asked for it.
     composite_capture: Option<wgpu::Texture>,
@@ -135,6 +138,7 @@ impl Frame {
             metering: Metering::default(),
             dt: 1.0 / 60.0,
             reset_exposure: std::sync::atomic::AtomicBool::new(true),
+            around: std::sync::Mutex::default(),
             composite_capture: None,
             entities: crate::entities::EntityMirror::new(
                 device,
@@ -186,13 +190,31 @@ impl Frame {
     /// (two or three frames late), else the last one read; `None` until the first. Each
     /// encode's commands must be submitted before the next encode or this call.
     pub fn exposure_readout(&self, device: &wgpu::Device) -> Option<ExposureReadout> {
-        self.exposure.readout(device)
+        self.exposure.readout(device).map(|r| ExposureReadout {
+            sky_floor: self.sky_floor(),
+            ..r
+        })
+    }
+
+    /// The sky share over the camera's floor the last encode fed the exposure pass, smoothed
+    /// (ADR-0081); `None` while absent, with the floor's term off, or in manual.
+    pub fn sky_floor(&self) -> Option<f32> {
+        self.around
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .1
     }
 
     /// The exposure state buffer the exposure pass writes (32 bytes, `COPY_SRC`:
     /// [`crate::exposure::ExposureState::from_bytes`] reads a copy), for tests and tools.
     pub fn exposure_state(&self) -> &wgpu::Buffer {
         self.exposure.state()
+    }
+
+    /// The exposure's highlight state the exposure pass writes (16 bytes, `COPY_SRC`:
+    /// [`crate::exposure::ExposureHighlight::from_bytes`] reads a copy), for tests and tools.
+    pub fn exposure_highlight(&self) -> &wgpu::Buffer {
+        self.exposure.highlight()
     }
 
     /// The meter's tiles the composite writes (`COPY_SRC`): per 8 x 8 workgroup of the

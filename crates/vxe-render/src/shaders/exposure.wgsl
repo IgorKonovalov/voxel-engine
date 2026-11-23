@@ -9,9 +9,12 @@
 //   2  storage, read     tiles           the composite's tiles: per 8 x 8 workgroup of the
 //                                        internal target, row-major, the sum of the clamped
 //                                        log2 luminance of its pixels, their count, the count
-//                                        of those that are sky, and 0
+//                                        of those that are sky, and the largest log2 of their
+//                                        brightest channel
 //   3  storage, read     sky_e           `E_sky` (sky_irradiance.wgsl): six vec4, `+z`'s w the
 //                                        key light's horizontal irradiance in luminance
+//   4  storage, rw       hi              the highlight's state (`ExposureHighlight` in
+//                                        exposure/highlight.rs)
 //
 // Tile `i` weighs `w_i = 1 + strength exp(-r_i^2 / (2 sigma^2))`, `r_i` the distance of the
 // tile's centre (its 8 x 8 square's centre, in pixels) from the centre of the view whose
@@ -34,16 +37,27 @@
 // `c_a = min(anchor key / (0.5 E / pi), max_e)`, `E` being `E_sky(+z)`'s luminance plus its w:
 // the anchor lowers the ceiling and never lifts it over `max_e` (a dark sky leaves `max_e`). With
 // `sky_share` (`F`) over 0 the anchor holds by the sky in view (`AutoExposure::ceiling_target`):
-// `log2 c = mix(log2 max_e, log2 c_a, min(f_sky / F, 1))`, so with no sky in view the anchor
-// releases to `max_e`. Under the anchor with
+// `log2 c = mix(log2 c_top, log2 c_a, min(s, 1))` with `s = f_sky / F`, or under the mode's
+// bit 3 the larger of that and `sky_around`, the floor's sky share over `F_floor` the CPU
+// smoothed and normalised (ADR-0081, `AutoExposure::ceiling_target`), so the anchor releases to
+// `c_top` only with no sky in view and no sky over the floor; `c_top` is `min(max_e, c_a lift)`
+// with `lift` (`2^L`, ADR-0081's amendment) over 0, else `max_e`. Under the anchor with
 // `F` and the rate over 0 the ceiling in force steps toward its target by at most the rate
 // cap's step in log2 (ADR-0076 rule 5, `AutoExposure::step_ceiling`); else, on the reset bit
 // or from a state with no ceiling yet, it is the target.
+//
+// Highlight protection (exposure/highlight.rs), in auto with `hi_tail` over 0: the tiles'
+// brightest-channel maxima are binned by pixel count into `TAIL_BINS` bins of `TAIL_BIN_EV`
+// over [-16, 16), the level over which the share `hi_tail` of the metered pixels lies is read
+// linear within its bin, smoothed by `step_capped` (the eye's step; a reset or the first
+// metered frame jumps), and `current` is clamped under `hi_white / 2^level` besides the
+// ceiling. Without a meter the level holds.
 
 struct ExUniform {
     tiles: vec2<u32>,
     view_count: u32,
-    // Bit 0: auto; bit 1: meter (the shaded view ran); bit 2: reset (jump to the meter).
+    // Bit 0: auto; bit 1: meter (the shaded view ran); bit 2: reset (jump to the meter); bit
+    // 3: `sky_around` holds the floor's share.
     mode: u32,
     // The views' rectangles (x, y, w, h) in internal pixels.
     rects: array<vec4<f32>, 2>,
@@ -71,6 +85,14 @@ struct ExUniform {
     // The sky share `F` at and over which the anchor holds in full; 0 holds it whatever is in
     // view.
     sky_share: f32,
+    // The sky share over the camera's floor over `F_floor`, in [0, 1], under mode bit 3.
+    sky_around: f32,
+    // Highlight protection: the tail's share of the view (0: off) and the exposed value the
+    // tail is held at or under.
+    hi_tail: f32,
+    hi_white: f32,
+    // `2^L`, the release's top over `c_a` (ADR-0081's lift); 0: the top is `max_e`.
+    lift: f32,
     _pad1: f32,
 };
 
@@ -91,7 +113,38 @@ struct ExState {
 @group(0) @binding(2) var<storage, read> tiles: array<vec4<f32>>;
 @group(0) @binding(3) var<storage, read> sky_e: array<vec4<f32>, 6>;
 
+// `ExposureHighlight` in exposure/highlight.rs.
+struct ExHighlight {
+    now_log2: f32,
+    log2: f32,
+    cap: f32,
+    seen: u32,
+};
+
+@group(0) @binding(4) var<storage, read_write> hi: ExHighlight;
+
 const TILE: f32 = 8.0;
+// The tail's bins span the meter's clamp, [-16, 16) in log2 (`TAIL_BINS` from the prelude).
+const TAIL_LO: f32 = -16.0;
+const TAIL_BIN_EV: f32 = 32.0 / f32(TAIL_BINS);
+
+var<workgroup> tail: array<atomic<u32>, TAIL_BINS>;
+
+// The level over which the share `hi_tail` of `total` binned pixels lies, linear within its
+// bin; the bottom of the range for an empty histogram.
+fn tail_level(total: f32) -> f32 {
+    let goal = ex.hi_tail * total;
+    var above = 0.0;
+    for (var b = i32(TAIL_BINS) - 1; b >= 0; b--) {
+        let n = f32(atomicLoad(&tail[b]));
+        if (n > 0.0 && above + n >= goal) {
+            let top = TAIL_LO + TAIL_BIN_EV * f32(b + 1);
+            return top - TAIL_BIN_EV * clamp((goal - above) / n, 0.0, 1.0);
+        }
+        above += n;
+    }
+    return TAIL_LO;
+}
 
 // `exp(-dt / tau)`, 0 for a constant of 0.
 fn decay(dt: f32, tau: f32) -> f32 {
@@ -155,12 +208,19 @@ fn ceiling_target(f_sky: f32) -> f32 {
     if (ex.anchor <= 0.0 || ex.sky_share <= 0.0) {
         return a;
     }
-    // At a share of `F` and over the anchored ceiling exactly, bit for bit today's; an
-    // anchor clamped to `max_e` (a dark sky) is `max_e` at every share.
-    if (f_sky >= ex.sky_share || a >= ex.max_e) {
+    let around = (ex.mode & 8u) != 0u;
+    // At a share of `F` and over, or a floor share of `F_floor` and over, the anchored
+    // ceiling exactly; an anchor clamped to `max_e` (a dark sky) is `max_e` at every share.
+    if (f_sky >= ex.sky_share || (around && ex.sky_around >= 1.0) || a >= ex.max_e) {
         return a;
     }
-    return exp2(mix(log2(ex.max_e), log2(a), f_sky / ex.sky_share));
+    let view = f_sky / ex.sky_share;
+    let s = select(view, max(view, ex.sky_around), around);
+    let top = select(ex.max_e, min(ex.max_e, a * ex.lift), ex.lift > 0.0);
+    if (top <= a) {
+        return a;
+    }
+    return exp2(mix(log2(top), log2(a), s));
 }
 
 // The ceiling in force after a frame from `c` toward its target `goal` (the header).
@@ -193,11 +253,21 @@ fn tile_weight(i: u32) -> f32 {
 @compute @workgroup_size(256, 1, 1)
 fn exposure(@builtin(local_invocation_index) lane: u32) {
     let n = ex.tiles.x * ex.tiles.y;
+    if (lane < TAIL_BINS) {
+        atomicStore(&tail[lane], 0u);
+    }
+    workgroupBarrier();
+    let binning = ex.hi_tail > 0.0;
     var acc = vec4<f32>(0.0);
     if ((ex.mode & EX_METER) != 0u) {
         for (var i = lane; i < n; i += 256u) {
+            let t = tiles[i];
             let w = tile_weight(i);
-            acc += w * tiles[i];
+            acc += w * vec4<f32>(t.xyz, 0.0);
+            if (binning && t.y > 0.0) {
+                let b = clamp(i32(floor((t.w - TAIL_LO) / TAIL_BIN_EV)), 0, i32(TAIL_BINS) - 1);
+                atomicAdd(&tail[b], u32(t.y));
+            }
         }
     }
     partial[lane] = acc;
@@ -231,10 +301,36 @@ fn exposure(@builtin(local_invocation_index) lane: u32) {
         }
         let reset = (ex.mode & EX_RESET) != 0u;
         s.ceiling = step_ceiling(s.ceiling, ceiling_target(s.sky), reset);
-        s.current = clamp(ex.key / exp2(s.adapted_log2), ex.min_e, max(s.ceiling, ex.min_e));
+        var h = hi;
+        var upper = s.ceiling;
+        if (binning) {
+            if (metered) {
+                // The binned total is the unweighted pixel count.
+                var total = 0u;
+                for (var b = 0u; b < TAIL_BINS; b++) {
+                    total += atomicLoad(&tail[b]);
+                }
+                h.now_log2 = tail_level(f32(total));
+                if (reset || h.seen == 0u) {
+                    h.log2 = h.now_log2;
+                } else if (ex.dt > 0.0) {
+                    h.log2 = step_capped(h.log2, h.now_log2, ex.dt);
+                }
+                h.seen = 1u;
+            }
+            if (h.seen != 0u) {
+                h.cap = ex.hi_white / exp2(h.log2);
+                upper = min(upper, h.cap);
+            }
+        } else {
+            h = ExHighlight(0.0, 0.0, 0.0, 0u);
+        }
+        hi = h;
+        s.current = clamp(ex.key / exp2(s.adapted_log2), ex.min_e, max(upper, ex.min_e));
     } else {
         s.ceiling = ex.max_e;
         s.current = ex.manual;
+        hi = ExHighlight(0.0, 0.0, 0.0, 0u);
     }
     s.frame += 1u;
     state = s;
