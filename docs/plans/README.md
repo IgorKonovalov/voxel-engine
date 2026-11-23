@@ -3,9 +3,9 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0100** (0096 the performance plan, closed; 0097 the exposure's anchor by
+**Next free number: 0101** (0096 the performance plan, closed; 0097 the exposure's anchor by
 the sky around the camera; 0098 the calm light by default, drafted 2026-11-21; 0099 the bake
-step off the main thread, drafted 2026-11-22; ADRs are a separate sequence, see `../adrs/README.md` for its next
+step off the main thread, drafted 2026-11-22; 0100 a sun fixed in the world, drafted 2026-11-23; ADRs are a separate sequence, see `../adrs/README.md` for its next
 free number). Plan 0095, the motion wobble (a calm key light in motion), closed 2026-11-21,
 v0.69.0. Plan 0097, the exposure's anchor by the sky around the camera, closed 2026-11-23,
 v0.70.0. Plan 0096, the bake queue's drain, closed 2026-11-23, v0.71.0.
@@ -35,6 +35,7 @@ v0.70.0. Plan 0096, the bake queue's drain, closed 2026-11-23, v0.71.0.
 | [0093](0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) | The README rewrite with reproducible screenshots: a shot manifest, a shoot script, an image gate, the owner's picks | approved | M7 docs, no ADR. After 0087 merges, beside 0089, before 0091. |
 | [0098](0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md) | A calm light by default: no screen history, smooth sources to the mid range, the FSR 2 turn read first | approved 11-22 | M10, ADR-0082 (proposed). Needs `diag-edges`' switches. |
 | [0099](0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) | The bake step off the main thread: a bake thread, write lists, the in-view drain | approved 11-22 | ADR-0083 (proposed). After 0098, 0087. |
+| [0100](0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md) | A sun fixed in the world: the key shadow a face at a time, the coarse tier held still, sun under cover | draft 11-23 | M10, ADR-0084 (proposed). After 0098, beside 0099. |
 <!-- roster:end -->
 
 ## Sequence
@@ -228,6 +229,15 @@ Plan 0096's Phase 8 window, the RTX at about 30 fps while the forest's queue dra
 candidate cap; six phases, a split reading first, one owner window): **draft, 2026-11-22,
 awaits the owner's go and five answers**; its lane runs after Plans 0096, 0098 and 0087
 (owner, 2026-11-22).
+
+**Plan 0100** (a sun fixed in the world, ADR-0084 proposed, superseding two clauses of ADR-0079
+at acceptance; from Plan 0098's window W3, the three faults the calm defaults leave: the noon
+terraces' shadow edge under the jitter, near trunks and leaves under the coarse tier, no sun
+under cover; the key shadow evaluated at the face's centre, a reading then a fix for the coarse
+tier, a ray from the face's centre near and the baked key record far where the column map
+reads shadow, the bake's key ray at its cap; exploration to one owner window): **draft,
+2026-11-23, awaits the owner's go and five answers**; its lane starts when Plan 0098 has
+merged and runs beside Plan 0099's (owner, 2026-11-23).
 
 Every active plan is approved (Plan 0099 on 2026-11-22; Plans 0091, 0092 and 0093 on 2026-11-19; Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Approval accepts the design; a plan's lane

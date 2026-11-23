@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0084** (0079 accepted at Plan 0095's close, 2026-11-21; 0080 accepted at Plan 0096's close, 2026-11-23; 0081 is Plan 0097's; 0082 is Plan 0098's; 0083 is Plan 0099's).
+**Next free number: 0085** (0079 accepted at Plan 0095's close, 2026-11-21; 0080 accepted at Plan 0096's close, 2026-11-23; 0081 is Plan 0097's; 0082 is Plan 0098's; 0083 is Plan 0099's; 0084 is Plan 0100's).
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -98,6 +98,7 @@ the status.
 | [0081](0081-the-sky-anchor-holds-by-the-sky-over-the-cameras-floor-or-in-view-and-releases-where-both-are-absent.md) | The sky anchor holds by the sky over the camera's floor or by the sky in view, and releases only where both are absent, by at most a lift over the daylight anchor | accepted (Plan 0097), Outcome |
 | [0082](0082-the-light-pass-keeps-no-screen-history-by-default-and-reads-smooth-sources-to-the-mid-range.md) | The light pass keeps no screen history by default and reads smooth sources to the mid range | proposed (Plan 0098) |
 | [0083](0083-the-live-bake-queue-runs-on-a-bake-thread-the-render-thread-applies-its-write-lists-and-issues-its-submits.md) | The live bake queue runs on a bake thread; the render thread applies its write lists and issues its submits | proposed (Plan 0099); extends ADR-0017 |
+| [0084](0084-the-key-lights-visibility-on-a-world-face-is-fixed-per-face-the-columns-horizon-where-lit-a-cover-source-where-shadowed.md) | The key light's visibility on a world face is fixed per face: the column's horizon where lit, a cover source where shadowed | proposed (Plan 0100) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded
