@@ -409,3 +409,13 @@ frame (the frame line's `store`): the forest at 15:00 12.7 MB over 1585 to 1596 
 adapters); the hills at noon 11.0 to 12.0 MB over 1581 to 1773 blocks. Plan 0086's close read
 11.9 MB in the forest over 1720 blocks and 10.6 MB on the hills over 1773 at 9 words. The frame
 targets are unchanged.
+
+**The stream workers' shells map (Plan 0096, ADR-0080 rule 1; the `bake queue:` and `bake
+queue census:` lines of the lane's runs under `live/p9r/`, release at `91003891`'s tree,
+headless, Ryzen 9 5900HS, 2026-11-23).** The map the workers keep for the no-face verdict (a
+full chunk's six border layers' opaque and solid bits and its verdict, `bake/seal.rs`) holds,
+at full residency: the forest at 15:00 52 210 056 B over 17 077 shells at Floor (r_full 16)
+and 22 938 088 B over 7 153 at Portable (r_full 12); the hills at noon 48 686 472 B and
+21 332 456 B. That is 2 851 to 3 207 B a shell (arithmetic), CPU memory, about 1.2 % of
+section 3's 4 GB line for the world in RAM. The verdict costs a worker 29.6 to 39.3 us a
+chunk in the mean. Not checked: whether the resident chunks' figure above counts the map.

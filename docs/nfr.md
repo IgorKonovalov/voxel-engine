@@ -167,6 +167,14 @@ drain is over twice the shortest is out; Plan 0096's readings log, Phase 9): the
 and 25.1), the RENOIR kept 6.0. The window's readings (the owner's Plan 0096 Phase 8 at 2530 x
 1378, not against these lines) are in [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md).
 
+**Not read, disclosed at the close review (2026-11-23):** the record by rule (ADR-0080 rule 1)
+answered 236 of the 3 540 buried chunks of the RTX's forest (233 to 241 of 3 526 on the hills)
+and 1 to 12 of 1 019 on the RENOIR (6 of 1 066), because the opening applies it only to a
+first bake with a full reach under final columns; the others take GPU jobs, some twice (a
+provisional bake and its catch-up). What share of the in-view drain those jobs are is not
+read, so the standing column's causes above are the largest read, not the whole. Plan 0096
+Phase 10 reads it and, behind its gate, applies the rule at every opening.
+
 Every reading against this budget, with its machine, scene and commit, is in
 [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md); new readings go there.
 
@@ -186,6 +194,13 @@ the frame dropping.
 
 The baked light store's record is 11 words (44 B) since Plan 0095 (the key light's visibility
 per brick direction, ADR-0079): 11.0 to 13.6 MB live outdoors at 1080p (2026-11-20).
+
+The stream workers' shells map (the input of the no-face verdict, ADR-0080 rule 1, Plan 0096)
+is CPU memory beside the resident chunks: 52 210 056 B over 17 077 shells in the forest at the
+Floor residency (48 686 472 B on the hills) and 22 938 088 B over 7 153 at Portable
+(21 332 456), about 3.0 KB a full chunk held, about 1.2 % of the 4 GB line (the queue line of
+the release at `91003891`'s tree, Ryzen 9 5900HS, 2026-11-23). A reading; it has no line of
+its own.
 
 Every reading against this budget, with its machine, scene and commit, is in
 [`docs/nfr/03-memory.md`](nfr/03-memory.md); new readings go there.

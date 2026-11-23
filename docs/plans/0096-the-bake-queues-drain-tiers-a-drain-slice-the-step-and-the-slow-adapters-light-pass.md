@@ -1,6 +1,6 @@
 # 0096: Performance: the bake queue's drain (a record by rule, a tier by size on screen, a drain slice), the step off the depth, the slow adapter's light pass, and the sync's `alloc` and eviction scan
 
-> **Status:** implemented, awaiting the fresh close review (dev, 2026-11-23): every phase landed, the Phase 9 rulings' test edits and third RENOIR read included (Implementation log, Close triggers). In progress from 2026-11-21. Approved 2026-11-20 (owner go; starts after Plan 0095 closes and merges). Owner picks, all as recommended: the drain slice 4.0 ms Floor / 6.0 ms Portable while in-view work waits, 1.0 once landed; a far chunk's 256-sample record is final until the camera brings it nearer; if the RENOIR forest stays over 4.0 ms the Portable profile owns the levers it picks and the Floor line stays with the miss disclosed; the window includes the 60 s cave glide. **Amended 2026-11-20 (owner)**, at Plan 0095's window W1: the far tiers' reach rule moves into this plan (ADR-0080 rule 4; a chunk whose reach crosses the full radius bakes its mid or far tier from the chunks resident, the near tier keeps the full reach), Phase 1's census counts reach-bound chunks by the exact test and names the no-record bricks if Plan 0095 Phase 6 cannot, Phase 6 (c) reads far pixels on the baked key or the column map's horizon, the landed state counts a LOD-ring face served by the horizon, and 0095's extra bake rays are conditional on its window W2. **Amended 2026-11-22 (architect, owner confirm owed)**, overnight at the Phase 6 checkpoint `2665f41f`: Phase 4's bar 2 is read at the default drain slice and the F2 rig's miss is a disclosed reading with its cause (the opening's candidate cap, routed to the Phase 5 bar 3 decision); Phase 6's lever (b) leaves bar 1 and the window (a no-op on cube faces, bounded at 0.16 ms by Phase 1's `--sky-rays 0` arm), the setting stays, and bar 1 becomes the key cap's test; Phase 6's paths fixed (`crates/vxe-render/tests/gpu_sun/key.rs`, `cli/outdoor.rs`). **Amended 2026-11-22 (architect, owner confirm owed)**, overnight at Phase 7's tip `8bb8857b`: Phase 7's bar 2 (the glide's `light place`) takes a Phase 7b, the write walk ending at the first refusal it cannot undo (outcomes identical, bar 1's test extended), before the Phase 8 window when it lands first; Phase 7's bar 3 (`alloc` and the sync lines) is disclosed, the per-brick packing routed to its own plan under ADR-0056 at this plan's close. **Amended 2026-11-22 (architect), at the Phase 8 window** (section "The window's verdict and what is left"): the verdicts are recorded with their standing; the three overnight amendments above and the readings log's five morning questions stand **on the recommended option under the owner's standing rule, not on his words**; Phase 6's base is `--penumbra disc` (Plan 0098's W1, owner confirm owed at its W2) and the approach penumbra's lever leaves this plan; the drain slice per profile is set by a headless sweep under a stated rule; Phase 9 is restated; the bake step off the main thread is a plan of its own, drafted now; the RENOIR's 85 ms frame was read at 3.79 times the Portable profile's pixels and is not a close trigger. **Owner picks, 2026-11-22**, on that section's four questions: the Portable profile renders at its 720p hint in a window; the bake-thread plan is drafted now and its lane runs after Plan 0087; the drain slice by frame rate first with the 2x drain guard; the rule 6 run and the 4096 arm go to Plan 0098's W2. **Amended 2026-11-23 (architect, owner confirm owed)**, at Phase 9's tip `a2d93d39` (section "The Phase 9 rulings"): the smallest-slice rigs' fix `501bcd95` stays (it restores the slice those tests state; the owner's rule on rigs applies, so his confirmation is owed); the failing opening test claims the candidates scored, not the index rebuilds; a dig's ring bakes at the profile's near tier, as ADR-0080 rule 2 says and as built; the RENOIR's 6.0 pick is accepted on the median of its quiet runs; what the close review checks about the four tests red since Phase 4 is in the Close triggers.
+> **Status:** implemented, awaiting the fresh close review (dev, 2026-11-23): every phase landed, the Phase 9 rulings' test edits and third RENOIR read included (Implementation log, Close triggers). In progress from 2026-11-21. Approved 2026-11-20 (owner go; starts after Plan 0095 closes and merges). Owner picks, all as recommended: the drain slice 4.0 ms Floor / 6.0 ms Portable while in-view work waits, 1.0 once landed; a far chunk's 256-sample record is final until the camera brings it nearer; if the RENOIR forest stays over 4.0 ms the Portable profile owns the levers it picks and the Floor line stays with the miss disclosed; the window includes the 60 s cave glide. **Amended 2026-11-20 (owner)**, at Plan 0095's window W1: the far tiers' reach rule moves into this plan (ADR-0080 rule 4; a chunk whose reach crosses the full radius bakes its mid or far tier from the chunks resident, the near tier keeps the full reach), Phase 1's census counts reach-bound chunks by the exact test and names the no-record bricks if Plan 0095 Phase 6 cannot, Phase 6 (c) reads far pixels on the baked key or the column map's horizon, the landed state counts a LOD-ring face served by the horizon, and 0095's extra bake rays are conditional on its window W2. **Amended 2026-11-22 (architect, owner confirm owed)**, overnight at the Phase 6 checkpoint `2665f41f`: Phase 4's bar 2 is read at the default drain slice and the F2 rig's miss is a disclosed reading with its cause (the opening's candidate cap, routed to the Phase 5 bar 3 decision); Phase 6's lever (b) leaves bar 1 and the window (a no-op on cube faces, bounded at 0.16 ms by Phase 1's `--sky-rays 0` arm), the setting stays, and bar 1 becomes the key cap's test; Phase 6's paths fixed (`crates/vxe-render/tests/gpu_sun/key.rs`, `cli/outdoor.rs`). **Amended 2026-11-22 (architect, owner confirm owed)**, overnight at Phase 7's tip `8bb8857b`: Phase 7's bar 2 (the glide's `light place`) takes a Phase 7b, the write walk ending at the first refusal it cannot undo (outcomes identical, bar 1's test extended), before the Phase 8 window when it lands first; Phase 7's bar 3 (`alloc` and the sync lines) is disclosed, the per-brick packing routed to its own plan under ADR-0056 at this plan's close. **Amended 2026-11-22 (architect), at the Phase 8 window** (section "The window's verdict and what is left"): the verdicts are recorded with their standing; the three overnight amendments above and the readings log's five morning questions stand **on the recommended option under the owner's standing rule, not on his words**; Phase 6's base is `--penumbra disc` (Plan 0098's W1, owner confirm owed at its W2) and the approach penumbra's lever leaves this plan; the drain slice per profile is set by a headless sweep under a stated rule; Phase 9 is restated; the bake step off the main thread is a plan of its own, drafted now; the RENOIR's 85 ms frame was read at 3.79 times the Portable profile's pixels and is not a close trigger. **Owner picks, 2026-11-22**, on that section's four questions: the Portable profile renders at its 720p hint in a window; the bake-thread plan is drafted now and its lane runs after Plan 0087; the drain slice by frame rate first with the 2x drain guard; the rule 6 run and the 4096 arm go to Plan 0098's W2. **Amended 2026-11-23 (architect, owner confirm owed)**, at Phase 9's tip `a2d93d39` (section "The Phase 9 rulings"): the smallest-slice rigs' fix `501bcd95` stays (it restores the slice those tests state; the owner's rule on rigs applies, so his confirmation is owed); the failing opening test claims the candidates scored, not the index rebuilds; a dig's ring bakes at the profile's near tier, as ADR-0080 rule 2 says and as built; the RENOIR's 6.0 pick is accepted on the median of its quiet runs; what the close review checks about the four tests red since Phase 4 is in the Close triggers. **Amended 2026-11-23 (architect, owner confirm owed)**, at the fresh close review's findings on `05d0e6fe` (section "The close review's rulings"): ADR-0080 rule 1's zero record answered 0.1 to 7 % of the buried chunks in the plan's own scenes, so the plan gains **Phase 10** (a reading first, then the rule applied whatever the class, the reach or the columns' finality, behind a gate and an audit) and does not close before it; the workers' shells map is pinned in `docs/nfr.md` section 3; Phase 2's bar 5 and the census's bands, the Portable size rule's place and its aspect stretch, and the glide's `light place` are disclosed and routed; two facts about the drain picks are stated for the owner.
 > **Created:** 2026-11-20
 > **Milestone:** M10 (the outdoor scenes are where the queue never drains) and cross-cutting
 > like [Plan 0067](done/0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md):
@@ -729,6 +729,78 @@ names or hands over the 461 no-record pixels. If 0095 is still open when the lan
   tier, not 4096**, and the failing opening test gets a new claim; both in the section "The
   Phase 9 rulings".
 
+### Phase 10: The rule reaches the buried chunks: a reading, then the rule at every opening
+- **Owner skill:** dev
+- **What:** (Amended 2026-11-23, architect, owner confirm owed; the reasons are in "The close
+  review's rulings", ruling 1.) Two steps, the second behind the first's gate.
+  **10a, the reading (no behaviour change).** Behind a reading flag (the existing
+  `--queue-census` or a new one, dev's call; the default step is unchanged), the queue counts
+  every GPU job it opens for a chunk the rule would answer at that opening (`buried` under the
+  tops as they stand and no emitter near, read whatever the class, the reach and the columns'
+  finality), split by what kept the rule from it, the first that applies in this order:
+  `provisional` (a column over the reach not final), `partial` (the reach crosses the full
+  radius), `class 1` (a catch-up or a refinement of a block it already holds); with each
+  split's samples, and the same counts again for jobs opened before the in-view landing on
+  chunks in the view cone. The counts go on the `bake queue:` line and into `run.json`. Runs:
+  Phase 9 (2)'s rig, quiet, the forest at 15:00 and the hills at noon, RTX at Floor 1080p
+  (1.5) and RENOIR at Portable 720p (6.0), from the first world frame to the empty queue (the
+  RENOIR forest to its in-view landing plus 60 s).
+  **The gate, fixed before the reading:** 10b proceeds if, in the RTX's or the RENOIR's
+  forest, the jobs counted before the in-view landing are at least 10 % of the jobs, or their
+  samples at least 10 % of the samples, opened before that landing. Under it on both: no
+  mechanism, the reading is the disclosure, and ruling 1's backlog line stands.
+  **10b, the mechanism.** The opening applies the rule to every candidate it holds for, in
+  place of `class == 0 && !partial && !provisional` (`bake/queue/open.rs`): (1) the catch-up
+  of a provisional block whose columns turned final writes the zero record with no job, and
+  lands as a catch-up lands today (one fade from the provisional block); (2) a first opening
+  under a column not final reads the rule on the tops as they stand, and the record it writes
+  is final, not provisional (no catch-up follows); (3) a candidate whose reach crosses the
+  full radius reads the rule on the chunks resident, and its zero record is not flagged
+  partial. Each stays exact by the re-list the rule already has (`relist_zeroed`), which must
+  see every mirror change over the footprint's columns: a dig, an arrival, an eviction, a
+  swap to LOD. **Three facts the dev confirms by reading before any code, and stops and
+  reports if one is false:** (i) a column's lowest top never falls when a chunk arrives (it
+  falls only by a dig, an eviction or a swap to LOD, each a mirror change the re-list reads),
+  so a chunk buried under tops not yet final is buried under the final ones; (ii)
+  `emitters_near` reads the same emitters a job on that reach would sample, so a partial job
+  sees none the rule missed; (iii) a chunk arriving in a ruled chunk's reach with an emitter,
+  at the full radius's edge too, is a change the re-list reads. A false fact drops its case
+  ((2) for (i), (3) for (ii) or (iii)) and the others go on. No other mechanism rides here.
+- **Files touched:** `crates/vxe-render/src/bake/queue/{open,list,rule,mod,stats}.rs`,
+  `crates/vxe-render/src/bake/queue/tests.rs`, `apps/flythrough/tests/gpu_bake.rs`,
+  `apps/flythrough/src/run/queue.rs`, `apps/flythrough/src/report.rs`, the flag in
+  `apps/flythrough/src/cli/`, `docs/flythrough.md`, `docs/plans/logs/0096.md`, `docs/nfr.md`
+  and `docs/nfr/02-frame-budget.md` (the re-read rows).
+- **Done when:** **10a:** the readings log holds the table (per run: the buried count of the
+  census, the zero records, the jobs and samples counted by split, whole and before the
+  in-view landing, against the run's jobs and samples) and states the gate's verdict in one
+  line. **10b, if the gate opens:** (1) Phase 2 bar 1's rig
+  (`a_buried_chunk_with_no_emitter_in_reach_gets_the_bakes_bytes_without_a_job`, `gpu_bake`,
+  lavapipe) run twice more, once with a chunk over the cave still waiting to upload at the
+  opening and once with the full radius shrunk so the cave's reach crosses it: the ruled
+  records equal byte for byte a GPU bake of the same chunks in the whole world, 0 jobs were
+  submitted for them, and they are neither provisional nor partial in the queue's maps (about
+  8 s each, a guess; born `#[ignore = "soak"]` over the 10 s line). (2)
+  `a_catch_up_the_rule_answers_writes_the_zero_record_without_a_job` (CPU, under 2 s): a
+  buried chunk baked provisional takes no second job when its columns turn final, its block
+  is the zero record, and its fade runs once. (3)
+  `a_ruled_chunk_is_relisted_when_the_rule_stops_holding` (CPU, under 2 s, three cases on a
+  chunk ruled under a column not final or a partial reach): a column carved from the surface
+  into it; a chunk with an emitter arriving within its reach; the chunk over it evicted so
+  the lowest top falls under its box; each re-lists it with a job. Phase 2's bars 2 and 3
+  still pass. (4) **The audit on the plan's scenes** (a reading flag, release, both
+  adapters, the forest and the hills from the first world frame to the empty queue): every
+  chunk the rule answers is also baked by a job in that arm and the two blocks are compared;
+  **0 blocks differ**, with the count compared in the log. A block that differs stops the
+  phase: the dev reports the chunk, the words (emitter, sky, key) and the case, that case is
+  not turned on, and nothing is tuned to make the audit pass. (5) Phase 9 (3)'s drain rows
+  re-read quiet on the four runs, with the zero records against the census's buried count and
+  the jobs opened; the new readings sit beside the old in `docs/nfr.md` section 2 and the
+  lines do not move (the RTX's 10 s is still expected missed: the step's CPU is Plan 0099's).
+  (6) No golden moves; `gpu_golden` is unchanged. Binaries, every one that reads the queue
+  (ruling 4 of the Phase 9 rulings): `gpu_bake`, `gpu_bake_tiers`, `gpu_queue`,
+  `gpu_queue_reach`.
+
 ## The window's verdict and what is left (amendment, 2026-11-22, architect)
 
 Phase 8 ran on 2026-11-22 from 21:19 to 21:29 on the dev box, release `1844a99b`
@@ -1057,6 +1129,177 @@ open item, since the submit moves to the bake thread there.
    the `gpu_*` binaries from the changed files (recommended; not started without his go).
    (b) Leave the rule; the tip's gate is the net, as it was here. (c) Every phase runs the
    whole gpu tier again.
+
+## The close review's rulings (amendment, 2026-11-23, architect, owner confirm owed)
+
+The fresh close review of `05d0e6fe` came back not clean. Its code findings (M1, m1, m2, m3)
+are the dev's fix pass. These are the findings that are design or disclosure questions. The
+owner was not asked; each ruling is the architect's, from the lane's logs under `live/p9r/`,
+`bake/queue/{open,list,rule,mod}.rs` and `cli/settings.rs`. No GPU run was made in the
+amending session, so every figure below is a log's or arithmetic on one, and says which.
+
+### 1. Rule 1's zero record is almost inert in the plan's scenes: Phase 10 (review M2)
+
+**The reading** (the last `bake queue:` line of each quiet run against the census at the
+first world frame, readings log Phase 9 (2) and (5)):
+
+| run | buried, no emitter in reach (census) | zero records by the rule | provisional opened / catch-ups | opened partial | baked |
+|---|---|---|---|---|---|
+| RTX forest, Floor | 3 540, all under a column not final | 236 | 3 088 / 3 061 | 7 375 | 12 670 |
+| RTX hills, Floor | 3 526, all under a column not final | 233 to 241 | 4 158 to 4 176 / 3 609 to 3 710 | 7 816 | 13 341 |
+| RENOIR forest, Portable | 1 019, columns final | 1 to 12 | 537 to 898 / 406 to 706 | 3 288 | 4 545 |
+| RENOIR hills, Portable | 1 066, columns final | 6 | 1 195 / 646 | 3 167 | 5 142 |
+
+The rule answered 7 % of the chunks it describes on the RTX and about 1 % on the RENOIR. No
+done-when is broken: ADR-0080 words it so ("where the column map is not final for the
+footprint the chunk is baked, not ruled") and the opening applies it only when `class == 0
+&& !partial && !provisional`. But the plan's first mechanism "in the order they pay" pays
+almost nothing where the plan was aimed, nothing said so, and `docs/nfr.md` gave the RTX's
+in-view miss wholly to the step's CPU (a sentence there now says what is not read).
+
+**The cause is wider than the review's.** The review names the provisional bake and its
+catch-up. On the RENOIR the columns were final at the census and the rule still answered 1 to
+12 of over 1 000, so there the exclusion is the partial reach (most of the sphere crosses the
+full radius, rule 4) or the class (a block baked provisional in the pre-roll comes back as
+class 1). Which, and in what shares, is not read. **Arithmetic, not a reading:** in the RTX
+forest about 3 300 buried chunks took at least one GPU job among about 9 600 first bakes,
+about a third of the jobs, on an adapter whose drain is bound by the CPU a job opened costs;
+their samples, and how many fell before the in-view landing, are unknown.
+
+**Why a phase here and not Plan 0099 or a disclosure.** (a) It is this plan's mechanism and
+its ADR is still proposed; accepting ADR-0080 with an Outcome that says rule 1 is inert and
+superseding it days later is the worse record. (b) Plan 0099 asserts the store's bytes equal
+across its modes and reads its base in Phase 1; a rule change belongs under that base, not
+inside a threading plan, and its lane is behind Plans 0098 and 0087. (c) The RTX forest lands
+in 36.5 s against 10 and the owner's rule is no waiting for light; a third of the jobs is the
+largest lever left that needs no new thread. (d) Disclosure alone leaves a known cheap win
+unread. Against it: the plan is in its fifth day, and the rule's reach grows about fifteen
+times, into the area where a mistake is a dark cave. So the phase is **a reading first, with
+a gate fixed now**, the mechanism only the three exclusions lifted, and **an audit on the
+real scenes** (every ruled chunk also baked and compared, 0 differ) before it is the default.
+
+**Should a buried chunk bake provisional at all? No, if fact (i) of Phase 10 holds.** A
+provisional bake exists because a column's tops may still rise, which can turn sky into no
+sky. The rule only asks that the box is under the lowest top; a top that rises keeps it
+under. So the rule read on tops not yet final is already the final answer, and what can
+undo it (a dig, an eviction, a swap to LOD) is a mirror change the re-list reads. The same
+argument carries the partial reach: the job would sample only the emitters resident, which
+is what the rule reads, and an emitter arriving later is a change the re-list reads. Both
+are arguments from reading the code, not tests; Phase 10 makes the dev confirm each fact
+before coding and drops the case whose fact fails.
+
+**ADR-0080** is not edited here: at the close its rule 1 is amended while proposed (the
+sentence on the column map's finality replaced by the re-list rule) if Phase 10b lands, or
+its Outcome states the 0.1 to 7 % if the gate stays shut. The reviewer's ceremony writes it.
+
+### 2. The workers' shells map is a reading, pinned in section 3 (review M3)
+
+52 210 056 B over 17 077 shells in the forest at Floor (48 686 472 on the hills) and
+22 938 088 B over 7 153 at Portable (21 332 456), about 3.0 KB a full chunk held, printed on
+the queue line and recorded nowhere. It is CPU memory, about 1.2 % of section 3's 4 GB line
+for the world in RAM. **Pinned as a reading** in `docs/nfr.md` section 3 and
+`docs/nfr/03-memory.md` in this amendment's commit. It needs no acceptance from the owner
+and no backlog entry for a cut: it is not near a line, and the map is what moved the
+no-face verdict off the main thread (the 2026-11-21 amendment). Not checked: whether the
+world-RAM figure of section 3 already counts it.
+
+### 3. Phase 2's bar 5 and the census's bands: disclosed (review m4)
+
+- **Bar 5 as amended ("the faceless count admitted to the queue is 0") reads 16, 27, 0 and
+  8, missed**, all at the residency's edge. The cause is the 2026-11-21 amendment's own rule:
+  a neighbour not yet streamed counts as open, and at the edge the outer neighbour never
+  streams, so the worker's verdict errs toward a job and the listing finds no face. Each
+  costs one listing and no job. The bar was written too tight for the mechanism beside it;
+  it is **not rewritten after its reading**, it stands missed with this cause, and no fix
+  rides: the count is bounded by the sphere's surface and 27 is the largest read.
+- **The census reads every surface chunk as near** ("mid 0, far 0") on all four runs, so it
+  was taken without the bands, and Phase 1 (2)'s "surface chunks by band" was never read by
+  band; Phase 3 was sized from the in-view line's bands instead (which do read mid and far).
+  Disclosed; the census is a reading flag, and its fix is a backlog line (`docs/backlog.md`,
+  "Plan 0096's leftovers").
+
+### 4. Where "Portable renders 720p in a window" lives, and the stretch (review m5; the owner's)
+
+As built the rule is the fly-through's (`cli/settings.rs`, `fixed_output`): `vxe-render` is
+untouched and `RenderSettings::output_hint`'s doc says "the consumer's window wins". So a
+game that picks `Profile::Portable` draws at its window's size with no warning, while the
+Portable frame line (33.3 ms at 720p) and rule 2's bands (the output's focal length) presume
+720p. And the fly-through scales a 16:9 frame to the window's shape with no letterbox: at
+2530 x 1378 that is a stretch of about 3 %.
+
+- **In force now, without the owner (the dev's, in the fix pass):** `output_hint`'s doc
+  comment says what is true: the engine never applies the hint; the Portable profile's frame
+  line and its tiers are stated at the hint; a consumer that draws Portable at a larger
+  output gets neither; the fly-through holds the hint in a window. `docs/flythrough.md`
+  already names the rule.
+- **Recommended, on the owner's word only:** the rule is the profile's, as a readable row
+  the consumer honours. ADR-0055 makes a profile the engine's statement of what a class of
+  machine can draw, and "this profile's output is fixed at its hint" is part of that
+  statement; the engine still never sizes a window (it is a library). Built as a step of the
+  fix pass, **done when**: `RenderSettings` carries a row (a name like `output_fixed`, dev's
+  to name) true for Portable and false for the others, listed with the profile's rows; the
+  fly-through's `fixed_output` reads the row, not `Profile::Portable`; a CPU test reads the
+  row per profile and the fly-through's resolution from it, `--render` overriding both ways
+  as today.
+- **The stretch is a backlog line, not a defect before the close.** About 3 % on a window
+  the owner has not yet seen at this size (the RENOIR run of Plan 0098's W2 shows it). The
+  fix proposed there: the hint's pixel count at the window's aspect (1 301 x 708 for that
+  window, arithmetic), so no stretch, no bars and the same budget.
+
+### 5. The glide's `light place`: confirmed, with one change (review m7)
+
+Confirmed: a backlog entry now (`docs/backlog.md`, "Plan 0096's leftovers"), taken as a
+phase of the "Slot words packed on the workers" plan (ADR-0056), which is the sync's CPU on
+the render thread and uses the same bench and glide. **The change:** the 1/16 buffer is a
+stress rig (it holds a small fraction of the demand by design, Phase 7's amendment), so the
+line "under 2 ms in a glide that evicts" is judged where a default buffer evicts, which so
+far is only the window. The `docs/nfr.md` row is reworded once the dev has one quiet read at
+the default buffer (the cave bench's `light place` p99, read 1.07 at load 1.78, re-read in
+Phase 10a's lock time): "met where nothing evicts (bench), missed in an evicting glide (the
+window's 2.16 / 6.19 ms p50 / p99 at the default buffer; 6.84 / 8.84 on the 1/16 stress
+rig, loaded)", taken by the backlog entry, in place of "no plan takes it yet".
+
+### 6. Two facts about the drain picks, disclosed for the owner (not decided)
+
+- **"The median of the arm's quiet runs" was defined after the 37.6 s run had been seen**
+  (ruling 5 of the Phase 9 rulings). The rule as fixed before the readings does not say
+  which run is an arm's reading. Read strictly on the first quiet run, the RENOIR's 6.0 arm
+  was out of the 2x guard by 0.9 s (37.6 against 36.7) and 12.0 was the pick. The two later
+  quiet runs read 27.1 and 27.0. The pick in force is 6.0; whether it stands is the owner's.
+- **Floor's 1.5 ms equals the old default `frame:1.5`.** So on Floor, rule 3 changes nothing
+  while in-view work waits and lowers the slice to 1.0 once it has landed: the RTX's gain in
+  this plan is rules 1, 2 and 4 and Phase 5, not the drain slice, and what is out of view
+  drains at two thirds of the old rate after the landing.
+
+### What the dev does after the current fix pass
+
+1. The `output_hint` doc comment (ruling 4, in force), with the fix pass's commits.
+2. **Phase 10a**, at once: the counters behind the reading flag, the four quiet runs, the
+   table and the gate's verdict in the readings log; the cave bench's quiet `light place`
+   beside them (ruling 5) and the `docs/nfr.md` row's rewording.
+3. **Phase 10b** only if the gate opens, the three facts confirmed first. It stands on the
+   recommended option (question 1 below) unless the owner says otherwise this morning.
+4. The row for Phase 10 in the Implementation log, the Close triggers' budget line, and the
+   pointer for a fresh review **of Phase 10's commits and the fix pass only**; the first
+   review's findings on the rest stand. The close ceremony follows that review and the
+   owner's words.
+
+### Questions for the owner (the first option is the recommendation)
+
+The three questions of the Phase 9 rulings stay open beside these.
+
+1. **The inert rule (ruling 1).** (a) Phase 10 in this plan: the reading now, the fix if the
+   gate opens, the close after it (recommended, in force). (b) Close now with the miss
+   disclosed and hand the reading and the fix to Plan 0099. (c) Disclose only.
+2. **Where the 720p rule lives (ruling 4).** (a) A row of the engine's profile that the
+   consumer reads, the fly-through honouring it; built in the fix pass (recommended; not
+   built without his word). (b) It stays the fly-through's rule; the engine's doc states the
+   presumption (in force). (c) The engine itself draws at the hint and scales.
+3. **The 3 % stretch (ruling 4).** (a) A backlog line; look at the RENOIR run at W2
+   (recommended, in force). (b) Fix before the close: the hint's pixel count at the window's
+   aspect. (c) Fix before the close with a letterbox.
+4. **The RENOIR's drain pick (ruling 6).** (a) 6.0 stays, on the median of three quiet runs
+   (recommended, in force). (b) The rule read strictly on the first quiet run: 12.0.
 
 ## Data shapes
 
