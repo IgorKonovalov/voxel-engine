@@ -545,20 +545,24 @@ fn source_fade_parses_and_the_defaults_leave_it_off() {
     assert!(parse_args_from(argv(&["--source-fade", "maybe"])).is_err());
 }
 
-/// Plan 0098 Phase 8: `Lighting::dig_hold` is on by default and the row does not name it;
-/// `--dig-hold off` clears it and the lighting row and the banner read `dig hold off`.
+/// Plan 0098 Phases 8 and 14: `Lighting::dig_hold` is `on` by default and the row does not
+/// name it; `--dig-hold rays` and `--dig-hold off` set it and the lighting row and the banner
+/// name it.
 #[test]
-fn dig_hold_is_on_and_off_names_itself() {
+fn dig_hold_is_on_rays_and_off_names_itself() {
+    use vxe_render::DigHold;
     let base = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
-    assert!(base.start_lighting().dig_hold);
+    assert_eq!(base.start_lighting().dig_hold, DigHold::On);
     let banner = base.start_modes(0.0).banner(0.0).unwrap();
     assert!(!banner.contains("dig hold"), "{banner}");
-    let r = parse_args_from(argv(&["--source", "outdoor", "--dig-hold", "off"])).unwrap();
-    assert!(!r.start_lighting().dig_hold);
-    let banner = r.start_modes(0.0).banner(0.0).unwrap().replace('\n', ", ");
-    assert!(banner.contains("dig hold off, "), "{banner}");
-    let mut row = String::new();
-    r.start_modes(0.0).write_diag(&mut row);
-    assert!(row.contains("dig hold off, "), "{row}");
+    for (v, d) in [("rays", DigHold::Rays), ("off", DigHold::Off)] {
+        let r = parse_args_from(argv(&["--source", "outdoor", "--dig-hold", v])).unwrap();
+        assert_eq!(r.start_lighting().dig_hold, d);
+        let banner = r.start_modes(0.0).banner(0.0).unwrap().replace('\n', ", ");
+        assert!(banner.contains(&format!("dig hold {v}, ")), "{banner}");
+        let mut row = String::new();
+        r.start_modes(0.0).write_diag(&mut row);
+        assert!(row.contains(&format!("dig hold {v}, ")), "{row}");
+    }
     assert!(parse_args_from(argv(&["--dig-hold", "maybe"])).is_err());
 }

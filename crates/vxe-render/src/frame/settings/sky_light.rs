@@ -83,3 +83,35 @@ named_enum!(SkyNormal {
     Face => "face",
     Smoothed => "smoothed",
 });
+
+/// What a dig shows until its re-bake lands with no light history (Plan 0098 Phases 8 and 14,
+/// ADR-0082): every edit box is held from its frame until the live queue holds no dig and a
+/// fade's frames more.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DigHold {
+    /// A face in a held box, and a stale ring face, shows one held sky visibility, the same
+    /// every frame and cast by no ray: the removed surface's (pair.wgsl's `dig_held_sky`). A
+    /// ring face whose cell holds no record shows its chunk's summary's, held. At the landing
+    /// the value fades to the record's. The default.
+    #[default]
+    On,
+    /// A stale ring face holds its record's term; a face in a held box shows its sky rays'
+    /// running mean, seeded by its stale record or the column's answer.
+    Rays,
+    /// Neither: the cast rays' seed until the landing.
+    Off,
+}
+
+named_enum!(DigHold {
+    On => "on",
+    Rays => "rays",
+    Off => "off",
+});
+
+impl DigHold {
+    /// The value after this one in [`DigHold::ALL`], the first after the last.
+    pub fn next(self) -> Self {
+        let i = Self::ALL.iter().position(|&d| d == self).unwrap_or(0);
+        Self::ALL[(i + 1) % Self::ALL.len()]
+    }
+}

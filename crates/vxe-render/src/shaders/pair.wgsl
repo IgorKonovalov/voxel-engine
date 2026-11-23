@@ -391,6 +391,137 @@ fn dig_ring_held(hist: bool, p: vec3<f32>) -> bool {
     return (params.history & 32u) != 0u && !hist && !in_dig_hold(p);
 }
 
+// The held value's bit (`Params::history` bit 6, `DigHold::On`; ADR-0082): a held box's face,
+// and a ring face whose cell holds no record of its own, show a held sky visibility in place
+// of the cast rays' mean, at the cap, in the baked term's form (`sky_held_term` in the box).
+fn dig_held_on() -> bool {
+    return (params.history & 64u) != 0u;
+}
+
+// The store cells above a face the held value walks for the removed surface's record.
+const DIG_HELD_CELLS: i32 = 4;
+// The held value's floor: never black.
+const DIG_HELD_FLOOR: f32 = 0.02;
+
+// The removed surface's sky visibility over a face of voxel `v` in a held dig box (one value
+// until its block lands, no ray): the up (+z) visibility of the nearest cell record at or above
+// the face's own cell within DIG_HELD_CELLS (stale or not: the surface the dig cut through, or
+// a landed hole above it), else the chunk's summary's up visibility, stale or not; no more than
+// `own` (the face's own record's visibility, negative for none); -1 with neither.
+fn dig_held_base(head: StoreHead, v: vec3<i32>, own: f32) -> f32 {
+    var up = -1.0;
+    for (var k = 0; k < DIG_HELD_CELLS && up < 0.0; k++) {
+        let r = store_sky_cell(head, (v >> vec3<u32>(head.shift)) + vec3<i32>(0, 0, k), 5u);
+        up = select(up, r.x, r.y > 0.0);
+    }
+    if (up < 0.0) {
+        up = summary_sky_any(head, v >> vec3<u32>(6u), 5u, false);
+    }
+    return select(select(up, own, up < 0.0), min(up, own), own >= 0.0 && up >= 0.0);
+}
+
+// The held sky visibility of direction `n` at hit `p` from the removed surface's `base`: `base`
+// times the hole's openness that way (`dig_openness`), at least DIG_HELD_FLOOR.
+fn dig_held_sky(base: f32, p: vec3<f32>, n: vec3<f32>) -> f32 {
+    return max(base * dig_openness(p, n), DIG_HELD_FLOOR);
+}
+
+// A held face's sky term at hit `rec` of voxel `v` (face normal `nf`, the removed surface's
+// `base`) in the baked term's form (`sky_baked_term`): each direction the smoothed normal leans
+// toward takes its own held visibility (`dig_held_sky` along that direction), as the landed
+// record's directions will hold their own, and no stale direction's value joins it.
+fn sky_held_term(v: vec3<i32>, base: f32, rec: HitRecord, nf: vec3<f32>) -> vec3<f32> {
+    let own = dig_held_sky(base, rec.p, nf);
+    if ((params.lighting & LIGHTING_SKY_SMOOTHED) == 0u || rec.axis < 0) {
+        return own * sky_open_by_normal(rec.n);
+    }
+    let n = gradient27_normal(Hit(true, v, rec.axis, rec.t, rec.material), nf);
+    var sum = vec3<f32>(0.0);
+    var weight = 0.0;
+    for (var a = 0u; a < 3u; a++) {
+        let w = n[a] * n[a];
+        if (w >= 1e-4) {
+            var d = vec3<f32>(0.0);
+            d[a] = sign(n[a]);
+            sum += dig_held_sky(base, rec.p, d) * sky_open_irradiance(2u * a + select(0u, 1u, n[a] > 0.0)) * w;
+            weight += w;
+        }
+    }
+    let b = params.sky_bounce;
+    let term = select(own * sky_open_by_normal(rec.n), sum / weight, weight > 0.0);
+    return (1.0 - b) * term + b * own * sky_open_by_normal(n);
+}
+
+// The column map's distances (voxels) the openness reads in each direction: DIG_OPEN_STEPS of
+// them, DIG_OPEN_STEP apart from DIG_OPEN_STEP (a map cell each).
+const DIG_OPEN_STEPS: u32 = 6u;
+const DIG_OPEN_STEP: f32 = 2.0;
+// How far the openness lifts a hit off its face, in voxels: off the face, and no further, so a
+// floor's horizon is the hole's whole depth.
+const DIG_OPEN_LIFT: f32 = 0.5;
+
+// A dug face's openness from the column map's tops after the dig: hit `p` lifted DIG_OPEN_LIFT
+// voxels along its face normal `n` to `q`; the horizon's tangent `t` along a horizontal
+// direction the largest `(height - q.z) / d` over the distances (`dig_horizon`). A face that
+// looks up takes the smallest tangent of 8 directions (a hole closes every way, a tree beside a
+// face one way, so a face the dig left at the surface stays open) and `1 / (1 + t^2)`, the
+// cosine-weighted share of the sky above a horizon at that elevation; a face that looks down,
+// 0; a wall the mean over its own direction and the
+// two 45 degrees either side of `1 - sin(atan t)`, a vertical face's share of its sky.
+fn dig_openness(p: vec3<f32>, n: vec3<f32>) -> f32 {
+    let q = p + n * DIG_OPEN_LIFT;
+    var sum = 0.0;
+    if (n.z < -0.5) {
+        return 0.0;
+    }
+    if (n.z < 0.5) {
+        let a0 = atan2(n.y, n.x);
+        for (var k = -1; k <= 1; k++) {
+            let a = a0 + f32(k) * 0.78539816;
+            let t = dig_horizon(q, vec2<f32>(cos(a), sin(a)));
+            sum += 1.0 - t / sqrt(1.0 + t * t);
+        }
+        return sum / 3.0;
+    }
+    var t_min = 3.0e38;
+    for (var k = 0u; k < 8u; k++) {
+        let a = f32(k) * 0.78539816;
+        t_min = min(t_min, dig_horizon(q, vec2<f32>(cos(a), sin(a))));
+    }
+    return 1.0 / (1.0 + t_min * t_min);
+}
+
+// The horizon's tangent from `q` along unit horizontal `u` over the column map's tops at the
+// distances DIG_OPEN_STEP apart (0 at the most where nothing stands above `q`).
+fn dig_horizon(q: vec3<f32>, u: vec2<f32>) -> f32 {
+    var t = 0.0;
+    for (var i = 1u; i <= DIG_OPEN_STEPS; i++) {
+        let d = f32(i) * DIG_OPEN_STEP;
+        let h = column_cell_height(vec2<i32>(floor((q.xy + u * d) / f32(COLUMN_CELL))));
+        if (h < 1.0e38) {
+            t = max(t, (h - q.z) / d);
+        }
+    }
+    return t;
+}
+
+// Chunk `c`'s summary's sky visibility for `face`, a dig's stale mark ignored: -1 where the chunk
+// holds no block or its summary lacks the direction or was baked with no sky, and with
+// `stale_only` where the summary is not marked stale (no dig waits on the chunk).
+fn summary_sky_any(head: StoreHead, c: vec3<i32>, face: u32, stale_only: bool) -> f32 {
+    let block = store_table(head, c) & ~TABLE_COARSE;
+    if (block == 0u) {
+        return -1.0;
+    }
+    let rec = block + STORE_SUMMARY_AT;
+    if (((store[rec + 6u] >> (16u + face)) & 1u) == 0u
+        || (store[rec + VIS_WORD + 1u] & VIS_BAKED) == 0u
+        || (stale_only && (store[rec + VIS_WORD + 1u] & SKY_STALE) == 0u)) {
+        return -1.0;
+    }
+    return f32((store[rec + VIS_WORD + face / 4u] >> (8u * (face % 4u))) & 255u) / 255.0;
+}
+
 // Whether hit `rec` of lighting pixel `gid` reads the light passes' history: `Params::history`
 // bit 0, and under bit 2 (`Lighting::light_history_far`, a spike arm) only where the far
 // normal's weight is 1.

@@ -910,8 +910,8 @@ fn flip(b: &mut bool) {
 fn lighting_test_value(l: &mut Lighting, name: &str) -> bool {
     use crate::exposure::Exposure;
     use crate::frame::{
-        EntityLight, HistoryKill, KeyFar, KeyFarMix, LightWeights, Penumbra, ShadowWalk, SkyNormal,
-        StoreRead, ToneMap, YoungFilter,
+        DigHold, EntityLight, HistoryKill, KeyFar, KeyFarMix, LightWeights, Penumbra, ShadowWalk,
+        SkyNormal, StoreRead, ToneMap, YoungFilter,
     };
     match name {
         "exposure" => {
@@ -930,7 +930,7 @@ fn lighting_test_value(l: &mut Lighting, name: &str) -> bool {
         "light_history" => flip(&mut l.light_history),
         "landing_fade" => flip(&mut l.landing_fade),
         "source_fade" => flip(&mut l.source_fade),
-        "dig_hold" => flip(&mut l.dig_hold),
+        "dig_hold" => other(&mut l.dig_hold, DigHold::On, DigHold::Rays),
         "light_history_far" => flip(&mut l.light_history_far),
         "far_light_wide" => flip(&mut l.far_light_wide),
         "penumbra" => other(&mut l.penumbra, Penumbra::Disc, Penumbra::Approach),

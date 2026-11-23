@@ -909,9 +909,9 @@ pub struct Lighting {
     /// frame its chunk's first block landed, and where a pixel takes no light history its sky
     /// term mixes from the column's answer to the block's baked term over that block's fade.
     pub source_fade: bool,
-    /// A dig holds its light (Plan 0098 Phase 8, default on): with no light history a stale ring
-    /// face keeps its record's term, and the dug box's sky mean takes history until it lands.
-    pub dig_hold: bool,
+    /// What a dig shows until its re-bake lands with no light history ([`DigHold`]; default
+    /// `On`, a held value).
+    pub dig_hold: DigHold,
     /// A spike arm (Plan 0098 Phase 5, default off): with no light history, keep it at the far.
     pub light_history_far: bool,
     /// A spike arm (Plan 0098 Phase 5, default off): by the far normal's weight the a-trous
@@ -1001,7 +1001,7 @@ impl Default for Lighting {
             light_history: false,
             landing_fade: false,
             source_fade: false,
-            dig_hold: true,
+            dig_hold: DigHold::On,
             light_history_far: false,
             far_light_wide: false,
             penumbra: Penumbra::Disc,

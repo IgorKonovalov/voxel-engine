@@ -70,7 +70,9 @@ mod flicker {
     /// history arm's largest plus 2 points, and the hole's mean luma's excess over its settled
     /// mean at most the history arm's largest plus 4 levels. `VXE_DIG`'s arm
     /// (`support::defects::dig_spec`) replaces the defaults' arm: `forest/hold=off` is the
-    /// fault the bar was written for.
+    /// fault the bar was written for. Its claim is the ring's: the hole's is defended by
+    /// [`a_fresh_hole_holds_its_value_until_its_light_lands`], whose pose shows the white hole
+    /// this rig's does not and which reads no arm as its baseline.
     #[test]
     #[ignore = "soak"]
     fn a_dig_under_calm_neither_darkens_nor_flashes() {
@@ -92,6 +94,76 @@ mod flicker {
         assert!(ring.1 <= ring.0 + 2.0, "the ring darkens: {:.2} % against {:.2} % + 2", ring.1, ring.0);
         assert!(hole.1 <= hole.0 + 2.0, "the hole flashes: {:.2} % against {:.2} % + 2", hole.1, hole.0);
         assert!(excess.1 <= excess.0 + 4.0, "the hole's mean: {:+.1} against {:+.1} + 4", excess.1, excess.0);
+    }
+
+    /// Plan 0098 Phase 14: a fresh hole holds its value until its light lands.
+    /// `reading::hole_run`'s scene `above` (the owner's pose at W3: the forest's spawn at
+    /// `--sun 10,180`, looking steeply down at open ground; the fly-through's frame, FSR 2 from
+    /// 640 x 360 to 960 x 540, the live queue stepped [`DIG_DRAIN`] frames and settled 240) and
+    /// the fly-through's dig three times down one ray, the third while the second is in flight,
+    /// under the defaults (`DigHold::On`). No arm is the baseline: every display pixel is read
+    /// against its own luma before its dig group (`before`) and in the group's settled last
+    /// frame (`after`; `support::defects::before_after`). In every frame from the first dig to
+    /// the last landing plus 24: the hole's share brighter than the larger of `before` and
+    /// `after` by over 4 levels, or darker than the smaller by over 4, is at most 2 %, and the
+    /// ring's likewise; the hole's and ring's share of dots (`support::defects::is_dot`) is at
+    /// most the settled frame's own plus 1 point; until the first landing the ring's mean luma
+    /// and the frame's outside the ring stay within 1 level of N - 1's over the same pixels;
+    /// from each group's landing the hole's mean is in no frame further from the group's
+    /// settled mean than in the frame before by over 1 level. `VXE_DIG`'s arm
+    /// (`support::defects::dig_spec`; `hold=rays` the tree before the fix) replaces the defaults'.
+    #[test]
+    #[ignore = "soak"]
+    fn a_fresh_hole_holds_its_value_until_its_light_lands() {
+        use super::support::defects::{hole_figures, hole_groups, hole_landings};
+        let (scene, arm, drain) = super::support::defects::dig_spec(("above", "default", DIG_DRAIN));
+        let Some((run, _)) = reading::hole_run(&scene, &arm, drain, false, None) else {
+            return;
+        };
+        let (figs, _) = hole_figures(&run);
+        let landings = hole_landings(&run);
+        let first = run.digs[0].0;
+        let last_landing = landings
+            .iter()
+            .map(|l| l.expect("every dig lands"))
+            .max()
+            .expect("three digs");
+        let end = (last_landing + 24).min(run.frames.len() - 1);
+        let settled_dots = figs[run.frames.len() - 1].dots;
+        let first_landing = landings.iter().flatten().min().copied().expect("a landing");
+        let span = &figs[first..=end];
+        let worst = |k: fn(&super::support::defects::HoleFigures) -> f64| span.iter().map(k).fold(0.0f64, f64::max);
+        let (wh, bh) = (worst(|f| f.white_hole), worst(|f| f.black_hole));
+        let (wr, br, dots) = (worst(|f| f.white_ring), worst(|f| f.black_ring), worst(|f| f.dots));
+        let shift = figs[first..first_landing]
+            .iter()
+            .map(|f| f.ring_shift.abs().max(f.out_shift.abs()))
+            .fold(0.0f64, f64::max);
+        // The one fade: the largest step away from the group's settled mean after its landing.
+        let mut away = 0.0f64;
+        for (g, &(start, gend)) in hole_groups(&run).iter().enumerate() {
+            let l = (0..run.digs.len())
+                .filter(|&k| run.digs[k].0 >= start && run.digs[k].0 <= gend)
+                .filter_map(|k| landings[k])
+                .max()
+                .expect("the group lands");
+            let settled = figs[gend].hole_mean;
+            for fi in l + 1..=gend {
+                let step = (figs[fi].hole_mean - settled).abs() - (figs[fi - 1].hole_mean - settled).abs();
+                away = away.max(step);
+            }
+            println!("hole group {g}: frames {start}..={gend}, landed at {l}");
+        }
+        println!(
+            "hole {scene} {arm}: white hole {wh:.2} % ring {wr:.2} %, black hole {bh:.2} % ring {br:.2} %, dots {dots:.2} % (settled {settled_dots:.2} %), shift before the landing {shift:.2}, fade away {away:+.2}; frames {first}..={end}"
+        );
+        assert!(wh <= 2.0, "the hole whitens: {wh:.2} % of its pixels over 4 levels above before and after");
+        assert!(bh <= 2.0, "the hole blackens: {bh:.2} % of its pixels over 4 levels below before and after");
+        assert!(wr <= 2.0, "the ring whitens: {wr:.2} %");
+        assert!(br <= 2.0, "the ring blackens: {br:.2} %");
+        assert!(dots <= settled_dots + 1.0, "dots: {dots:.2} % against the settled {settled_dots:.2} % + 1");
+        assert!(shift <= 1.0, "the ring or the frame darkens before the landing: {shift:.2} levels");
+        assert!(away <= 1.0, "the landing is not one fade: a step {away:+.2} levels away from the settled mean");
     }
 
     /// The frames [`a_dig_under_calm_neither_darkens_nor_flashes`] drains its queue at most
@@ -723,7 +795,7 @@ mod flicker {
         /// `approach` (the approach penumbra); `before` (the fly-through's defaults before the
         /// picks: `hist`, `baked`, `blend`, `band` and `approach`, window W2's run 5 "no
         /// flash"); `pin` the
-        /// exposure manual at its settled value from the settle's end; `hold=on|off`
+        /// exposure manual at its settled value from the settle's end; `hold=on|rays|off`
         /// (`Lighting::dig_hold`).
         pub(in super::super) fn dig_arm(f: &mut vxe_render::Frame, arm: &str) -> bool {
             let mut l = f.lighting();
@@ -752,8 +824,9 @@ mod flicker {
                     "band" => look.far_normal = [2.0, 6.0],
                     "approach" => l.penumbra = vxe_render::Penumbra::Approach,
                     "pin" => pin = true,
-                    "hold=on" => l.dig_hold = true,
-                    "hold=off" => l.dig_hold = false,
+                    "hold=on" => l.dig_hold = vxe_render::DigHold::On,
+                    "hold=rays" => l.dig_hold = vxe_render::DigHold::Rays,
+                    "hold=off" => l.dig_hold = vxe_render::DigHold::Off,
                     other => panic!("unknown dig arm token {other}"),
                 }
             }
@@ -840,6 +913,142 @@ mod flicker {
             println!("dig {scene} {arm}: landed {}", tail.is_some());
             let rows = support::defects::dig_rows(&frames, 1);
             Some((frames, rows, 1))
+        }
+
+        /// The pitch of the dig from above (degrees, up positive): the owner's pose at W3
+        /// (`1b-dig2-during.png`: the forest's spawn, looking steeply down at open ground).
+        const ABOVE_PITCH: f32 = -65.0;
+
+        /// The eye of the owner's dig on the RADV RENOIR at Portable (W3's run 5,
+        /// `5-radeon-dig-dots.png`'s HUD), voxels.
+        const PORTABLE_EYE: [f32; 3] = [1501.0, 1245.5, 564.3];
+
+        /// Plan 0098 Phase 14 step 1: the fly-through's dig (`support::defects::dig_along`)
+        /// three times down one ray from above, in the owner's pose (the forest's spawn at
+        /// `--sun 10,180`, [`ABOVE_PITCH`]). The scene `above` steps the queue at most `drain`
+        /// frames until no chunk in view waits, then settles 240 frames; `coarse` digs at the
+        /// first step whose queue holds a coarse block with chunks in view waiting; `portable`
+        /// and `portable-coarse` likewise at [`PORTABLE_EYE`] facing +x, the forest at 15:00,
+        /// the Portable profile's march (853 x 480 to 1280 x 720) and queue. Frames N - 2
+        /// and N - 1, the first dig, frames until it lands plus 16 and [`DIG_TAIL`], the second
+        /// dig, one frame, the third (the second still in flight where the queue says so), and
+        /// frames until both land plus 16 and [`DIG_TAIL`]. With the rig after the digs; `None`
+        /// without an adapter.
+        pub(in super::super) fn hole_run(
+            scene: &str,
+            arm: &str,
+            drain: u32,
+            stages: bool,
+            png: Option<&std::path::Path>,
+        ) -> Option<(support::defects::HoleRun, Rig)> {
+            use support::defects::{HoleFrame, dig_along, hole_frame};
+            let portable = scene.starts_with("portable");
+            let (mut rig, cam, clock, sizes) = if portable {
+                let rig = support::terms::forest_rig_about(PORTABLE_EYE.map(|v| v as i32))?;
+                let cam = flythrough::camera_looking_at(PORTABLE_EYE, [PORTABLE_EYE[0] + 1.0, PORTABLE_EYE[1], PORTABLE_EYE[2]]);
+                let clock = flythrough::daylight::Clock {
+                    minutes: 15.0 * 60.0,
+                    ..Default::default()
+                };
+                (rig, cam, clock, [[853, 480], [1280, 720]])
+            } else {
+                let (rig, cam) = support::terms::forest_rig()?;
+                let clock = flythrough::daylight::Clock {
+                    fixed_sun: Some([10.0, 180.0]),
+                    ..Default::default()
+                };
+                (rig, cam, clock, [INTERNAL, OUT])
+            };
+            let sky = clock.sky(flythrough::outdoor::BASE_Z as f32);
+            let cam = pitched(&cam, ABOVE_PITCH);
+            let mut f = flicker_frame_at(&rig, sky, None, false, flythrough::LeafShadow::Voxel, sizes);
+            if portable {
+                // The Portable profile's queue and lamp (`RenderSettings::profile`).
+                let p = vxe_render::RenderSettings::profile(vxe_render::Profile::Portable);
+                f.set_bake_budget(p.bake.budget);
+                f.set_bake_tiers(p.bake.tiers);
+                f.set_bake_drain(p.bake.drain);
+                f.set_lighting(vxe_render::Lighting {
+                    lamp_bounce: p.lighting.lamp_bounce,
+                    ..f.lighting()
+                });
+            }
+            let out = sizes[1];
+            dig_arm(&mut f, arm);
+            let hold = f.lighting().dig_hold != vxe_render::DigHold::Off;
+            let mut s = Stepper::new(&rig, f);
+            let mut n = 0;
+            loop {
+                let q = queue_step(&mut rig, &mut s.frame, &cam);
+                s.run(&rig, &cam);
+                n += 1;
+                let done = match scene {
+                    "coarse" | "portable-coarse" => q.coarse > 0 && q.drain_waiting > 0,
+                    _ => q.drain_waiting == 0 && n > 1,
+                };
+                if done || n >= drain {
+                    println!(
+                        "hole {scene} {arm}: adapter {}, after {n} frames in view waiting {}, coarse {}, depth {}",
+                        rig.adapter, q.drain_waiting, q.coarse, q.depth
+                    );
+                    break;
+                }
+            }
+            if !scene.ends_with("coarse") {
+                settle(&mut rig, &mut s, &cam, 240);
+            }
+            let eye = cam.position.to_array();
+            let ground = support::defects::march(&rig.world, eye, cam.basis().0.to_array(), 400.0);
+            println!("hole {scene} {arm}: eye {eye:?}, ground {ground:?} voxels along the view");
+            let (mut frames, mut digs): (Vec<HoleFrame>, _) = (Vec::new(), Vec::new());
+            let read = |rig: &mut Rig, s: &mut Stepper, frames: &mut Vec<HoleFrame>, label: String| {
+                let q = queue_step(rig, &mut s.frame, &cam);
+                let path = png.map(|d| d.join(format!("{:03}-{label}.png", frames.len())));
+                frames.push(hole_frame(rig, s, &cam, q, label, out, stages, path.as_deref()));
+                q
+            };
+            for k in [2, 1] {
+                read(&mut rig, &mut s, &mut frames, format!("N-{k}"));
+            }
+            for d in 1..=3 {
+                let dug = dig_along(&mut rig, &mut s.frame, &cam).expect("the dig changed voxels");
+                digs.push((frames.len(), dug.0, dug.1));
+                let mut tail = None;
+                for k in 0..1200usize {
+                    let q = read(&mut rig, &mut s, &mut frames, format!("D{d}+{k}"));
+                    if d == 2 {
+                        println!("hole {scene} {arm}: the third dig with digs {} in flight", q.digs);
+                        break;
+                    }
+                    if q.digs == 0 && k > 0 && tail.is_none() {
+                        tail = Some(k + 16 + DIG_TAIL);
+                    }
+                    if tail == Some(k) {
+                        break;
+                    }
+                }
+            }
+            println!("hole {scene} {arm}: {} frames, digs {digs:?}", frames.len());
+            Some((support::defects::HoleRun { frames, n1: 1, digs, out, hold, eye }, rig))
+        }
+
+        /// Plan 0098 Phase 14 step 1's reading ([`hole_run`]; `VXE_DIG`'s scene `above` or
+        /// `coarse`, its arm and drain): the frames under `live/flicker/dig-above/<scene>-<arm>/`
+        /// and the tables (`support::defects::hole_tables`) in `tables.txt` beside them.
+        #[test]
+        #[ignore = "reading"]
+        fn dig_from_above() {
+            let (scene, arm, drain) = support::defects::dig_spec(("above", "default", 30_000));
+            let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../live/flicker/dig-above")
+                .join(format!("{scene}-{}", arm.replace([',', '='], "-")));
+            std::fs::create_dir_all(&dir).expect("the reading's directory");
+            let Some((run, rig)) = hole_run(&scene, &arm, drain, true, Some(&dir)) else {
+                return;
+            };
+            let text = support::defects::hole_tables(&run, &rig.world);
+            println!("{text}");
+            std::fs::write(dir.join("tables.txt"), text).expect("the tables");
         }
 
         /// The split's sky: noon, or the clock at `VXE_SPLIT_TIME` (`HH:MM`).
@@ -1452,7 +1661,19 @@ mod flicker {
             key_off: bool,
             leaf: flythrough::LeafShadow,
         ) -> vxe_render::Frame {
-            let mut f = vxe_render::Frame::with_sizes(&rig.device, INTERNAL, OUT);
+            flicker_frame_at(rig, sky, pin, key_off, leaf, [INTERNAL, OUT])
+        }
+
+        /// [`flicker_frame_with`] at the internal and output sizes `sizes`.
+        fn flicker_frame_at(
+            rig: &Rig,
+            sky: vxe_render::sky::Sky,
+            pin: Option<f32>,
+            key_off: bool,
+            leaf: flythrough::LeafShadow,
+            sizes: [[u32; 2]; 2],
+        ) -> vxe_render::Frame {
+            let mut f = vxe_render::Frame::with_sizes(&rig.device, sizes[0], sizes[1]);
             f.set_upscaler_kind(
                 &rig.device,
                 vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default()),

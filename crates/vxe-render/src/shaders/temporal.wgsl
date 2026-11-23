@@ -746,9 +746,13 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     var estimate = -1.0;
     // The normal the column test lifts the hit along: the store face's, else the shading one.
     var lift_n = rec.n;
-    // A cube face whose own cell holds a sky record: its voxel, face and face normal, for the
-    // cast path's term in the baked term's form.
+    // A cube face whose own cell holds a sky record (`rec_face`), and any store face's voxel,
+    // face and face normal, for the cast path's term in the baked term's form.
     var rec_face = false;
+    // DigHold::On's held value at a cast face: 1 a ring face's, 2 a held box's (`sky_held_term`
+    // for its term); 0 none. Both take the baked term's form.
+    var held_kind = 0u;
+    var held_base = 0.0;
     var rec_voxel = vec3<i32>(0);
     var rec_dir = 0u;
     var rec_nf = vec3<f32>(0.0);
@@ -828,12 +832,12 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         var sky_term = vec3<f32>(0.0);
         if (!on_entity && sky_on()) {
             let rv = store_sky_visibility(head, store_voxel(rec.p, nf), face);
+            rec_voxel = store_voxel(rec.p, nf);
+            rec_dir = face;
+            rec_nf = nf;
             if (rv.y > 0.0) {
                 estimate = rv.x;
                 rec_face = true;
-                rec_voxel = store_voxel(rec.p, nf);
-                rec_dir = face;
-                rec_nf = nf;
             }
             var sv = rv;
             if (sv.y == 0.0) {
@@ -1066,6 +1070,22 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         // below stays its record's baked term until the re-bake lands.
         pair = vec4<f32>(estimate, 0.0, estimate, f32(max(sky.sky_history, 1u)));
     }
+    if (sky_cast && stored && !rec.entity && sky_on() && dig_held_on() && !hist) {
+        // DigHold::On: a held box's face shows the removed surface's visibility, a ring face
+        // with no record its chunk's summary's, held at the cap and cast by no ray shown.
+        var hv = -1.0;
+        if (dig_pair) {
+            held_base = dig_held_base(store_head(), rec_voxel, select(-1.0, estimate, rec_face));
+            hv = select(-1.0, dig_held_sky(held_base, rec.p, lift_n), held_base >= 0.0);
+            held_kind = select(0u, 2u, hv >= 0.0);
+        } else if (!rec_face) {
+            hv = summary_sky_any(store_head(), rec_voxel >> vec3<u32>(6u), rec_dir, true);
+            held_kind = select(0u, 1u, hv >= 0.0);
+        }
+        if (hv >= 0.0) {
+            pair = vec4<f32>(hv, 0.0, hv, f32(max(sky.sky_history, 1u)));
+        }
+    }
     if (no_ray) {
         // The no-ray value rides one fade.
         let fx = no_ray_fade(seed.x, hp, pair_ok, seed.w);
@@ -1084,13 +1104,14 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     // The moments' w: 0 a pixel the filter takes whole, 1 a stored pixel (its stored part passes
     // around the filter), 2 a stored pixel whose pair's sky term passes around it too.
     var kind = select(0.0, 1.0, stored);
-    if (sky_cast && rec_face && sky_on() && (params.lighting & LIGHTING_HOOK_SKY_RAY_ALWAYS) == 0u
+    if (sky_cast && (rec_face || held_kind != 0u) && sky_on() && (params.lighting & LIGHTING_HOOK_SKY_RAY_ALWAYS) == 0u
         && pair.w >= f32(max(sky.sky_history, 1u))) {
-        // A stale ring face whose pair holds the record's estimate: its term in the baked
-        // term's form with the pair's mean as the face's own visibility, carried by the stored
-        // part as the baked term is. With the filter off the composite adds `sky_pair_term`
-        // from the pair, so the stored part carries the difference instead.
-        let t_baked = sky_baked_term(store_head(), rec_voxel, rec_dir, pair.x, rec, rec_nf) * exposure_now();
+        // A stale ring face whose pair holds the record's estimate, or a held face: its
+        // term in the baked term's form with the pair's mean as the face's own visibility,
+        // carried by the stored part as the baked term is. With the filter off the composite
+        // adds `sky_pair_term` from the pair, so the stored part carries the difference.
+        let t_baked = select(sky_baked_term(store_head(), rec_voxel, rec_dir, pair.x, rec, rec_nf),
+            sky_held_term(rec_voxel, held_base, rec, rec_nf), held_kind == 2u) * exposure_now();
         if ((params.lighting & LIGHTING_FILTER_OFF) != 0u) {
             accum = vec4<f32>(max(accum.xyz + t_baked - t_sky, vec3<f32>(0.0)), accum.w);
         } else {

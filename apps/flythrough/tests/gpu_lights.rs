@@ -404,6 +404,118 @@ fn history_dies_in_the_edit_box_and_ages_elsewhere() {
     }
 }
 
+/// The hole's shown sky visibility of a slab under a uniform sky, the live queue baked to its
+/// end, then a radius-6 carve from above and one queue step (the provisional block written, the
+/// dig in flight) and no more, under `dig_hold`: per frame from N + 1 to N + 8, the pair's x at
+/// every lighting pixel whose hit lies in the carve's bounds dilated by one voxel, and N - 1's
+/// largest x over the slab (the removed surface's).
+fn dig_held_frames(hold: vxe_render::DigHold) -> Option<(Vec<Vec<Option<f32>>>, f32)> {
+    use support::queue::{Setup, fill, rig};
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        &UniformSource(AIR),
+        &cave_materials(),
+    );
+    fill(&world, [0, 0, 0], [63, 63, 31], flythrough::cave::ROCK);
+    let eye = [32.5, 32.5, 50.0];
+    let mut q = rig(world, &Setup::at(eye))?;
+    q.camera = vxe_render::Camera {
+        position: eye.into(),
+        yaw: 0.0,
+        pitch: -1.5,
+        vfov: 70f32.to_radians(),
+    };
+    q.frame.set_sky(Some(vxe_render::sky::Sky::uniform(1.0)));
+    q.frame.set_lighting(vxe_render::Lighting {
+        dig_hold: hold,
+        ..q.frame.lighting()
+    });
+    q.settle();
+    let read = |q: &mut support::queue::Q| {
+        q.render();
+        let pos =
+            vxe_render::debug::read_rgba32f(&q.device, &q.queue, q.frame.light_hit_positions());
+        let pair = vxe_render::debug::read_rgba16f(&q.device, &q.queue, q.frame.visibility_pair());
+        (pos, pair)
+    };
+    for _ in 0..4 {
+        read(&mut q);
+    }
+    let (pos, pair) = read(&mut q);
+    let removed = (0..pos.len())
+        .filter(|&i| pos[i][3] < 1e30)
+        .map(|i| pair[i][0])
+        .fold(0.0f32, f32::max);
+    let r = q
+        .world
+        .apply(&EditOp::sphere(
+            centre_of_voxel([32, 32, 31]),
+            6 * FIXED_ONE,
+            Mode::Carve,
+        ))
+        .expect("the carve is resident");
+    let aabb = r.aabb.expect("the carve removes rock");
+    q.gpu
+        .sync_now(&q.world, &q.device, &q.queue)
+        .expect("the mirror fits");
+    q.frame.invalidate(aabb.0.0, aabb.1.0);
+    let st = q.step();
+    assert!(st.digs > 0, "the dig is in flight after its step: {st:?}");
+    let mut frames = Vec::new();
+    for k in 0..9 {
+        let (pos, pair) = read(&mut q);
+        if k > 0 {
+            frames.push(
+                (0..pos.len())
+                    .map(|i| in_dilated(pos[i], aabb).then_some(pair[i][0]))
+                    .collect(),
+            );
+        }
+    }
+    Some((frames, removed))
+}
+
+/// Plan 0098 Phase 14: under `DigHold::On` a fresh hole's sky visibility is held: at every
+/// hole pixel (a hit in the carve's bounds dilated by one voxel) on frames N + 1 to N + 8, the
+/// dig in flight and never landing ([`dig_held_frames`]), the pair's x is the same on every
+/// frame, strictly between 0 and 1, and at most the removed surface's (N - 1's largest over the
+/// slab); under `DigHold::Rays` it differs between frames at some hole pixel.
+#[test]
+fn a_fresh_hole_holds_one_value_between_black_and_white() {
+    let Some((on, removed)) = dig_held_frames(vxe_render::DigHold::On) else {
+        return;
+    };
+    let mut n = 0;
+    for i in 0..on[0].len() {
+        let Some(x0) = on[0][i] else {
+            continue;
+        };
+        n += 1;
+        for (k, f) in on.iter().enumerate() {
+            let x = f[i].expect("the pixel stays in the hole at a still camera");
+            assert_eq!(
+                x,
+                x0,
+                "pixel {i} at N + {}: {x} against {x0} at N + 1",
+                k + 1
+            );
+        }
+        assert!(x0 > 0.0 && x0 < 1.0, "pixel {i}: {x0}");
+        assert!(
+            x0 <= removed,
+            "pixel {i}: {x0} over the removed surface's {removed}"
+        );
+    }
+    println!("held: {n} hole pixels, the removed surface's visibility {removed}");
+    assert!(n > 0, "no hole pixel");
+    let (rays, _) = dig_held_frames(vxe_render::DigHold::Rays).expect("the adapter");
+    let moved = (0..rays[0].len())
+        .filter(|&i| rays[0][i].is_some() && rays.iter().any(|f| f[i] != rays[0][i]))
+        .count();
+    println!("rays: {moved} hole pixels move");
+    assert!(moved > 0, "under rays no hole pixel moves");
+}
+
 /// A camera that moves one voxel sideways between two frames keeps age 1 or more in at least
 /// 95 % of the pixels that hit the cavity's unchanged material, and every pixel whose hit
 /// changed material (a `Replace` the frame is not told of) reads 0. The light history is on.

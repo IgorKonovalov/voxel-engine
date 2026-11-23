@@ -1042,9 +1042,9 @@ pub static TOGGLES: &[Toggle] = &[
     ),
     diag!(
         "dig hold",
-        |m| format!("dig hold {}", on(m.lighting.dig_hold)),
+        |m| format!("dig hold {}", m.lighting.dig_hold.name()),
         |m| {
-            m.lighting.dig_hold = !m.lighting.dig_hold;
+            m.lighting.dig_hold = m.lighting.dig_hold.next();
         }
     ),
     diag!(

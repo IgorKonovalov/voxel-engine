@@ -370,7 +370,7 @@ impl Frame {
                 edits.boxes[2 * i + 1] = [max[0], max[1], max[2], 0];
             }
             edits.count = h.edits.len() as u32;
-            // The held dig boxes after the kill boxes, and `Params::history` bit 5.
+            // The held dig boxes after the kill boxes, and `Params::history` bits 5 and 6.
             p.history |= self.hold_digs(&mut h, &mut edits) << 5;
             boxes = std::mem::take(&mut h.edits);
             h.overflow = false;
@@ -487,10 +487,12 @@ impl Frame {
 
     /// The held dig boxes (`Lighting::dig_hold`): every edit box from its frame until the live
     /// queue holds no dig (with none, its frame) and DIG_HOLD_FADE frames more, written into
-    /// `edits` after its kill boxes in the room left. Returns the hold's bit (1 under the
-    /// setting); off, the boxes are dropped.
+    /// `edits` after its kill boxes in the room left. Returns the hold's bits: 1 under
+    /// `DigHold::Rays`, and under `DigHold::On` with no box held; 3 under `On` while a box is
+    /// held (the held value's bit too, so nothing reads it at rest); under `Off` none, and the
+    /// boxes are dropped.
     fn hold_digs(&self, h: &mut History, edits: &mut EditsUniform) -> u32 {
-        if !self.state.lighting.dig_hold {
+        if self.state.lighting.dig_hold == DigHold::Off {
             h.dig_held.clear();
             h.dig_left = 0;
             return 0;
@@ -515,7 +517,11 @@ impl Frame {
             edits.boxes[2 * (at + i) + 1] = [max[0], max[1], max[2], 0];
         }
         edits.held = h.dig_held.len().min(MAX_EDITS - at) as u32;
-        1
+        if self.state.lighting.dig_hold == DigHold::On && edits.held > 0 {
+            3
+        } else {
+            1
+        }
     }
 
     /// The encode's bind groups of the hit, light and temporal passes, of the filter and of

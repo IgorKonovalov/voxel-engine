@@ -50,9 +50,9 @@ pub struct OutdoorArgs {
     /// `--source-fade on|off`: a landing's switch of source fades by the block's landing frame
     /// (`Lighting::source_fade`); unset, the renderer's default.
     pub(crate) source_fade: Option<bool>,
-    /// `--dig-hold on|off`: a dig holds its light until its re-bake lands
+    /// `--dig-hold on|rays|off`: what a dig shows until its re-bake lands
     /// (`Lighting::dig_hold`); unset, the renderer's default.
-    pub(crate) dig_hold: Option<bool>,
+    pub(crate) dig_hold: Option<vxe_render::DigHold>,
     /// `--sky-normal face|smoothed`: the normal the baked sky term reads its visibilities by.
     pub(crate) sky_normal: vxe_render::SkyNormal,
     /// `--sky-bounce B`: the baked sky term's bounce floor, 0 to 1.
@@ -311,17 +311,19 @@ pub(super) fn with_drain_flags(mut flags: Vec<Flag<Parsing>>) -> Vec<Flag<Parsin
     flags
 }
 
-/// `--dig-hold`: a dig holds its light until its re-bake lands (`Lighting::dig_hold`).
+/// `--dig-hold`: what a dig shows until its re-bake lands (`Lighting::dig_hold`).
 fn dig_hold_flag() -> Flag<Parsing> {
     Flag::value(
         &["--dig-hold"],
-        "on|off",
-        "a dig holds its light until its re-bake lands: with no light history a stale ring \
-             face keeps its record's term, and the dug box's sky visibility takes history \
-             until the dig lands and its fade ends; off, the ring and the hole show the \
-             ray's seed until the re-bake [on]",
+        "on|rays|off",
+        "what a dig shows until its re-bake lands, with no light history: on, the dug faces \
+             show one held sky visibility, the surface's the dig cut through, and the ring \
+             keeps its records' or its chunk's value, then one fade at the landing; rays, the \
+             ring keeps its records' term and the dug faces show their sky rays' running \
+             mean; off, the ring and the hole show the ray's seed until the re-bake [on]",
         |p: &mut Parsing, v| {
-            p.args.outdoor.dig_hold = Some(v.on_off()?);
+            p.args.outdoor.dig_hold =
+                Some(v.named(vxe_render::DigHold::from_name, "on, rays or off")?);
             Ok(())
         },
     )
