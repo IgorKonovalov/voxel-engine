@@ -3,6 +3,10 @@
 use super::output_binds::OutputBinds;
 use super::*;
 
+/// The frames a held dig box stays after the live queue's last dig landed: the no-ray fade's
+/// FADE_F (temporal.wgsl) plus the landing's own frame.
+const DIG_HOLD_FADE: u32 = 17;
+
 /// Passes of a frame in encode order, as [`Frame::encode`] times them: pass `i` writes
 /// timestamps `2 i` and `2 i + 1` of the timer it is given.
 /// The nine before the last are FSR 2's ([`crate::fsr2::FSR2_PASSES`]); in FSR mode `upscale`
@@ -339,11 +343,7 @@ impl Frame {
         let mut light_window = false;
         let mut moves = Vec::new();
         let mut boxes: Vec<[[i32; 3]; 2]> = Vec::new();
-        let mut edits = EditsUniform {
-            count: 0,
-            _pad: [0; 3],
-            boxes: [[0; 4]; 2 * MAX_EDITS],
-        };
+        let mut edits: EditsUniform = bytemuck::Zeroable::zeroed();
         let mut old_list = now;
         if keep == Keep::History {
             let mut h = self
@@ -364,6 +364,8 @@ impl Frame {
                 edits.boxes[2 * i + 1] = [max[0], max[1], max[2], 0];
             }
             edits.count = h.edits.len() as u32;
+            // The held dig boxes after the kill boxes, and `Params::history` bit 5.
+            p.history |= self.hold_digs(&mut h, &mut edits) << 5;
             boxes = std::mem::take(&mut h.edits);
             h.overflow = false;
             h.last_views = params.views;
@@ -475,6 +477,39 @@ impl Frame {
             moves,
             bouncing: now.bouncing().map(|(_, l)| l.pos).collect(),
         }
+    }
+
+    /// The held dig boxes (`Lighting::dig_hold`): every edit box from its frame until the live
+    /// queue holds no dig (with none, its frame) and DIG_HOLD_FADE frames more, written into
+    /// `edits` after its kill boxes in the room left. Returns the hold's bit (1 under the
+    /// setting); off, the boxes are dropped.
+    fn hold_digs(&self, h: &mut History, edits: &mut EditsUniform) -> u32 {
+        if !self.state.lighting.dig_hold {
+            h.dig_held.clear();
+            h.dig_left = 0;
+            return 0;
+        }
+        let digs = self
+            .baked
+            .queue
+            .as_ref()
+            .is_some_and(|q| q.stats().digs > 0);
+        h.dig_left = if digs || !h.edits.is_empty() {
+            DIG_HOLD_FADE
+        } else {
+            h.dig_left.saturating_sub(1)
+        };
+        h.dig_held.extend(h.edits.iter().copied());
+        if h.dig_left == 0 {
+            h.dig_held.clear();
+        }
+        let at = h.edits.len();
+        for (i, [min, max]) in h.dig_held.iter().take(MAX_EDITS - at).enumerate() {
+            edits.boxes[2 * (at + i)] = [min[0], min[1], min[2], 0];
+            edits.boxes[2 * (at + i) + 1] = [max[0], max[1], max[2], 0];
+        }
+        edits.held = h.dig_held.len().min(MAX_EDITS - at) as u32;
+        1
     }
 
     /// The encode's bind groups of the hit, light and temporal passes, of the filter and of

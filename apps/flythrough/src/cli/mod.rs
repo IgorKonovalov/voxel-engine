@@ -1005,6 +1005,10 @@ impl Args {
                 .outdoor
                 .source_fade
                 .unwrap_or(crate::default_lighting().source_fade),
+            dig_hold: self
+                .outdoor
+                .dig_hold
+                .unwrap_or(crate::default_lighting().dig_hold),
             penumbra: self.outdoor.penumbra.unwrap_or(crate::DEFAULT_PENUMBRA),
             key_far: self.outdoor.key_far,
             key_far_mix: self.outdoor.key_far_mix,

@@ -557,3 +557,28 @@ fn source_fade_parses_and_calm_leaves_it_off() {
     assert!(row.contains("source fade on, "), "{row}");
     assert!(parse_args_from(argv(&["--source-fade", "maybe"])).is_err());
 }
+
+/// Plan 0098 Phase 8: `Lighting::dig_hold` is on by default and the row does not name it;
+/// `--dig-hold off` clears it and the lighting row and the banner read `dig hold off`.
+#[test]
+fn dig_hold_is_on_and_off_names_itself() {
+    let calm = parse_args_from(argv(&["--source", "outdoor", "--calm"])).unwrap();
+    assert!(calm.start_lighting().dig_hold);
+    let banner = calm.start_modes(0.0).banner(0.0).unwrap();
+    assert!(!banner.contains("dig hold"), "{banner}");
+    let r = parse_args_from(argv(&[
+        "--source",
+        "outdoor",
+        "--calm",
+        "--dig-hold",
+        "off",
+    ]))
+    .unwrap();
+    assert!(!r.start_lighting().dig_hold);
+    let banner = r.start_modes(0.0).banner(0.0).unwrap().replace('\n', ", ");
+    assert!(banner.contains("dig hold off, "), "{banner}");
+    let mut row = String::new();
+    r.start_modes(0.0).write_diag(&mut row);
+    assert!(row.contains("dig hold off, "), "{row}");
+    assert!(parse_args_from(argv(&["--dig-hold", "maybe"])).is_err());
+}

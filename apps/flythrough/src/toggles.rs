@@ -1041,6 +1041,13 @@ pub static TOGGLES: &[Toggle] = &[
         }
     ),
     diag!(
+        "dig hold",
+        |m| format!("dig hold {}", on(m.lighting.dig_hold)),
+        |m| {
+            m.lighting.dig_hold = !m.lighting.dig_hold;
+        }
+    ),
+    diag!(
         "far light wide",
         |m| format!("far light wide {}", on(m.lighting.far_light_wide)),
         |m| {

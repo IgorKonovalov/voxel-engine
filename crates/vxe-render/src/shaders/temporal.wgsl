@@ -899,9 +899,14 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     var a_direct = 1.0;
     var a_mom = 1.0;
     var m_hist = vec2<f32>(0.0);
-    if (rec.found && light_history_at(gid.xy, rec) && !in_edit(rec.p)) {
+    // The dig hold (`in_dig_hold`): a pixel with no light history in a held box reprojects the
+    // pair alone, taken in `pair_taken`.
+    let hist = light_history_at(gid.xy, rec);
+    let dig_pair = !hist && rec.found && in_dig_hold(rec.p);
+    var pair_taken = false;
+    if (rec.found && (hist || dig_pair) && !in_edit(rec.p)) {
         let vi = view_of(full_px(gid.xy));
-        if (!rec.entity && !rec.field && rec.axis >= 0 && normal_mode() == NORMAL_FACE
+        if (hist && !rec.entity && !rec.field && rec.axis >= 0 && normal_mode() == NORMAL_FACE
             && (params.lighting & LIGHTING_HOOK_NO_STAIR) == 0u) {
             stair_w = far_normal_weight(params.views[vi], rec.t);
         }
@@ -981,7 +986,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 m = textureLoad(prev_moments_in, tap, 0).xyz;
             }
         }
-        if (COUNT_STORE) {
+        if (COUNT_STORE && hist) {
             atomicAdd(&counters[5], 1u);
             if (w_sum <= 1e-3) {
                 var prev = HitRecord();
@@ -991,7 +996,10 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 count_rejection(prev, rec, still && all(near == px));
             }
         }
-        if (w_sum > 1e-3) {
+        if (w_sum > 1e-3 && dig_pair) {
+            hp = hp / w_sum;
+            pair_taken = true;
+        } else if (w_sum > 1e-3) {
             let ratio = exposure_ratio();
             h = h / w_sum * ratio;
             hd = hd / w_sum * ratio;
@@ -1051,15 +1059,21 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (estimate < 0.0) {
         estimate = column_estimate(rec.p, lift_n);
     }
-    var pair = select(seed, pair_step(vis.x, hp, accepted, estimate, seed_age), sky_cast);
+    let pair_ok = accepted || pair_taken;
+    var pair = select(seed, pair_step(vis.x, hp, pair_ok, estimate, seed_age), sky_cast);
+    if (sky_cast && rec_face && sky_on() && dig_ring_held(hist, rec.p)) {
+        // A stale ring face under the dig hold: its record's estimate at the cap, so the term
+        // below stays its record's baked term until the re-bake lands.
+        pair = vec4<f32>(estimate, 0.0, estimate, f32(max(sky.sky_history, 1u)));
+    }
     if (no_ray) {
         // The no-ray value rides one fade.
-        let fx = no_ray_fade(seed.x, hp, accepted, seed.w);
+        let fx = no_ray_fade(seed.x, hp, pair_ok, seed.w);
         pair = vec4<f32>(fx.x, pair.y, fx.x, fx.y);
     }
     if (no_ray) {
         var t_nr = sky_baked_term(store_head(), nr_voxel, nr_face, pair.x, rec, nr_nf);
-        if (rec_face && !accepted) {
+        if (rec_face && !pair_ok) {
             // A record's term at a pixel with no history: its switch of source fades
             // (`source_faded`); a taken history keeps `no_ray_fade` alone.
             t_nr = source_faded(t_nr, store_head(), nr_voxel, rec, lift_n);

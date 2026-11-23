@@ -861,6 +861,13 @@ impl Modes {
         if self.lighting.source_fade {
             out.push_str("source fade on, ");
         }
+        if self.lighting.dig_hold != crate::default_lighting().dig_hold {
+            out.push_str(if self.lighting.dig_hold {
+                "dig hold on, "
+            } else {
+                "dig hold off, "
+            });
+        }
         if self.lighting.light_history_far {
             out.push_str("light history far on, ");
         }

@@ -363,6 +363,33 @@ fn source_faded(term: vec3<f32>, head: StoreHead, v: vec3<i32>, rec: HitRecord, 
     return mix(before, term, f32(d + 1u) / FADE_F);
 }
 
+// A dig holds its light (`Params::history` bit 5, `Lighting::dig_hold`; ADR-0082 with no light
+// history). Whether `p` lies in a held dig box dilated by one voxel (as `in_edit`): the edit
+// boxes the encode keeps after the kill boxes from the edit's frame until the live queue holds
+// no dig and a fade's frames more. There a pixel with no light history reprojects the sky's
+// visibility pair alone (`pair_step` over the cast rays, then `no_ray_fade` at the landing),
+// as a pixel with the history does; its other parts keep none.
+fn in_dig_hold(p: vec3<f32>) -> bool {
+    if ((params.history & 32u) == 0u) {
+        return false;
+    }
+    for (var i = edits.count; i < edits.count + edits.held; i++) {
+        let lo = vec3<f32>(edits.boxes[2u * i].xyz - 1);
+        let hi = vec3<f32>(edits.boxes[2u * i + 1u].xyz + 2);
+        if (all(p >= lo) && all(p <= hi)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Whether a stale ring face's pair holds its record's estimate at the cap under the dig hold:
+// the bit set, the pixel with no light history (`hist`) and outside a held box. Its term is
+// then the record's baked term (temporal.wgsl's stale-ring path), the one it showed before the
+// dig marked the record stale, until the re-bake lands.
+fn dig_ring_held(hist: bool, p: vec3<f32>) -> bool {
+    return (params.history & 32u) != 0u && !hist && !in_dig_hold(p);
+}
 
 // Whether hit `rec` of lighting pixel `gid` reads the light passes' history: `Params::history`
 // bit 0, and under bit 2 (`Lighting::light_history_far`, a spike arm) only where the far
