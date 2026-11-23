@@ -298,3 +298,66 @@ fn a_landing_moves_every_read_word_over_the_fade() {
     let from = fallback_block(&new, &chain, BRICK_WORDS, false);
     assert_eq!(from[cell + VIS_WORD], new[cell + VIS_WORD]);
 }
+
+/// Plan 0098 Phase 6b: under `Lighting::source_fade` a chunk's first block, landing over the
+/// missing-light chain or bare, writes the landing frame plus one at [`LANDED_AT`]; a
+/// refinement and a key re-bake landing on the chunk keep that first value; with the switch off,
+/// and for a block placed with no frame (the pre-roll), the word is 0. The word rides the
+/// block's fade unchanged in every frame (the fade stage writes nothing new).
+#[test]
+fn a_first_landing_writes_its_frame_and_later_landings_keep_it() {
+    use super::step::landed_word;
+    let at = LANDED_AT as usize;
+    let land = |old: Option<&[u32]>, word: Option<u32>, vis: [f32; 6]| {
+        let mut b = two_cell_block([[0.5, 0.5, 0.5]; 2], [vis; 2], [[0.5; 6]; 2]);
+        b[at] = landed_word(old, word);
+        b
+    };
+    let mut chain = [0u32; BRICK_WORDS];
+    chain[..6].fill(rgb9e5_pack([1.0, 1.5, 0.5]));
+    chain[6] = 0x3F << 16;
+    chain[VIS_WORD..VIS_WORD + 2].copy_from_slice(&visibility_words([0.4; 6]));
+
+    // A first block over the chain, at frame 41: the word is 42, and its fade from the chain's
+    // values shows 42 in every frame.
+    let first = land(None, Some(42), [0.2; 6]);
+    assert_eq!(first[at], 42, "a first block over the chain");
+    let from = fallback_block(&first, &chain, BRICK_WORDS, true);
+    for f in fade_frames(&from, &first, true) {
+        assert_eq!(f[at], 42, "the fade carries the word");
+    }
+    // A bare first block (no chain) writes the same.
+    assert_eq!(land(None, Some(7), [0.2; 6])[at], 7, "a bare first block");
+
+    // A refinement landing frames later keeps the first value, and so does its fade.
+    let refined = land(Some(&first), Some(90), [0.6; 6]);
+    assert_eq!(
+        refined[at], 42,
+        "a refinement keeps the first landing's word"
+    );
+    for f in fade_frames(&first, &refined, true) {
+        assert_eq!(f[at], 42);
+    }
+    // A key re-bake keeps the block's words but its key visibilities, the word with them.
+    let mut keyed = two_cell_block([[0.5, 0.5, 0.5]; 2], [[0.6; 6]; 2], [[0.9; 6]; 2]);
+    keyed[at] = landed_word(Some(&refined), Some(120));
+    assert_eq!(
+        keyed[at], 42,
+        "a key re-bake keeps the first landing's word"
+    );
+
+    // Switch off: 0, first or later; a block placed with no frame (the pre-roll): 0, kept.
+    assert_eq!(land(None, None, [0.2; 6])[at], 0, "off: a first block");
+    assert_eq!(
+        land(Some(&first), None, [0.6; 6])[at],
+        0,
+        "off: a refinement"
+    );
+    let pre = land(None, Some(0), [0.2; 6]);
+    assert_eq!(pre[at], 0, "the pre-roll's block");
+    assert_eq!(
+        land(Some(&pre), Some(300), [0.6; 6])[at],
+        0,
+        "a refinement of a pre-roll's block keeps 0"
+    );
+}

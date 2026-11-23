@@ -47,6 +47,9 @@ pub struct OutdoorArgs {
     /// `--landing-fade on|off`: a landing block's sky visibilities ride the store's fade
     /// (`Lighting::landing_fade`); unset, the renderer's default.
     pub(crate) landing_fade: Option<bool>,
+    /// `--source-fade on|off`: a landing's switch of source fades by the block's landing frame
+    /// (`Lighting::source_fade`); unset, the renderer's default.
+    pub(crate) source_fade: Option<bool>,
     /// `--sky-normal face|smoothed`: the normal the baked sky term reads its visibilities by.
     pub(crate) sky_normal: vxe_render::SkyNormal,
     /// `--sky-bounce B`: the baked sky term's bounce floor, 0 to 1.
@@ -406,6 +409,17 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
                  they change in the frame it lands and only the light history softens it [off]",
             |p: &mut Parsing, v| {
                 p.args.outdoor.landing_fade = Some(v.on_off()?);
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--source-fade"],
+            "on|off",
+            "a landing's switch of source fades: where a pixel takes no light history, its sky \
+                 term mixes from the column's answer to the landed block's over the block's \
+                 fade, timed by the frame its chunk's first block landed [off]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.source_fade = Some(v.on_off()?);
                 Ok(())
             },
         ),

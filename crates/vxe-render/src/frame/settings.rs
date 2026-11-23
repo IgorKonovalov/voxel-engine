@@ -976,6 +976,10 @@ pub struct Lighting {
     /// A landing block's sky visibilities ride the store's fade with its other words (default
     /// off): off, they change in the frame it lands, softened only by the no-ray fade's history.
     pub landing_fade: bool,
+    /// A landing's switch of source fades (Plan 0098 Phase 6b, default off): a block records the
+    /// frame its chunk's first block landed, and where a pixel takes no light history its sky
+    /// term mixes from the column's answer to the block's baked term over that block's fade.
+    pub source_fade: bool,
     /// A spike arm (Plan 0098 Phase 5, default off): with no light history, keep it at the far.
     pub light_history_far: bool,
     /// A spike arm (Plan 0098 Phase 5, default off): by the far normal's weight the a-trous
@@ -1028,18 +1032,6 @@ pub const MAX_SKY_RAYS: u32 = 4;
 /// [`Lighting::sky_rays`] by default.
 pub const DEFAULT_SKY_RAYS: u32 = 1;
 
-impl Lighting {
-    /// `Params::history`'s light bits for a frame whose history is `valid`: bit 0 the light
-    /// passes read it, bit 2 at the far alone ([`Lighting::light_history_far`], temporal.wgsl
-    /// `light_history_at`), bit 3 [`Lighting::far_light_wide`] (atrous.wgsl, temporal.wgsl).
-    pub(crate) fn light_history_bits(&self, valid: bool) -> u32 {
-        let far_only = !self.light_history && self.light_history_far;
-        u32::from(valid && (self.light_history || far_only))
-            | u32::from(far_only) << 2
-            | u32::from(self.far_light_wide) << 3
-    }
-}
-
 impl Default for Lighting {
     fn default() -> Self {
         Self {
@@ -1068,6 +1060,7 @@ impl Default for Lighting {
             key_history: DEFAULT_KEY_HISTORY,
             light_history: true,
             landing_fade: false,
+            source_fade: false,
             light_history_far: false,
             far_light_wide: false,
             penumbra: Penumbra::Disc,

@@ -334,6 +334,11 @@ pub struct BakeQueue {
     /// [`crate::Lighting::landing_fade`], set by the frame each step: a landing block's sky
     /// visibilities fade with its direction values ([`fade_mix`]).
     pub landing_fade: bool,
+    /// [`crate::Lighting::source_fade`] and the frame, set by the frame each step: `None` off
+    /// (every block's [`LANDED_AT`] word 0); else the word a chunk's first block writes there,
+    /// the frame plus one, or 0 for a block placed before the first frame (the pre-roll). A
+    /// later landing of the chunk keeps its block's word.
+    pub landed_word: Option<u32>,
     /// The key-only re-bakes waiting and in a job.
     pub(super) keys: keys::KeyJobs,
     /// Chunks whose block was baked while a column over its reach was not final (the wait
@@ -546,6 +551,7 @@ impl BakeQueue {
             column_wait: false,
             key_step: crate::frame::DEFAULT_KEY_STEP,
             landing_fade: false,
+            landed_word: None,
             keys: Default::default(),
             provisional: Default::default(),
             job_provisional: Default::default(),

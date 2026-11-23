@@ -1034,6 +1034,13 @@ pub static TOGGLES: &[Toggle] = &[
         }
     ),
     diag!(
+        "source fade",
+        |m| format!("source fade {}", on(m.lighting.source_fade)),
+        |m| {
+            m.lighting.source_fade = !m.lighting.source_fade;
+        }
+    ),
+    diag!(
         "far light wide",
         |m| format!("far light wide {}", on(m.lighting.far_light_wide)),
         |m| {

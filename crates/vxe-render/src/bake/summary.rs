@@ -475,6 +475,10 @@ pub(super) fn provisional_block(
     let (head, words) = layout(faces, record);
     let mut block = head;
     block.reserve(words as usize);
+    // The chunk's landing word stays its block's (a dig is a later landing).
+    if let Some(b) = store.words.get(&c) {
+        block[LANDED_AT as usize] = b[LANDED_AT as usize];
+    }
     let record_at = |chunk: [i32; 3], slot: usize| -> Option<&[u32]> {
         let b = store.words.get(&chunk)?;
         let d = b[slot];
@@ -759,16 +763,21 @@ mod tests {
             glass: Vec::new(),
         };
         // The directory's 512 words, then the summary's 11 (ADR-0053; seven words, ADR-0070's
-        // two of sky visibility and ADR-0079's two of key visibility), then the records.
+        // two of sky visibility and ADR-0079's two of key visibility), then the landing word
+        // (`LANDED_AT`, Plan 0098 Phase 6b), then the records.
         let (d, words) = layout(&faces, record_words(8));
-        assert_eq!(d.len(), 512 + 11, "the head: directory and summary");
-        assert_eq!(d[3], (512 + 11 + 11) << 11);
-        assert_eq!(d[9], (512 + 11 + 22) << 11);
+        assert_eq!(
+            d.len(),
+            512 + 11 + 1,
+            "the head: directory, summary, landing word"
+        );
+        assert_eq!(d[3], (512 + 12 + 11) << 11);
+        assert_eq!(d[9], (512 + 12 + 22) << 11);
         assert_eq!(d[4], 0);
-        assert_eq!(words, 512 + 11 + 22);
+        assert_eq!(words, 512 + 12 + 22);
         let (d, words) = layout(&faces, record_words(4));
-        assert_eq!(d[9], (512 + 11 + 2 * 88) << 11);
-        assert_eq!(words, 512 + 11 + 2 * 88);
+        assert_eq!(d[9], (512 + 12 + 2 * 88) << 11);
+        assert_eq!(words, 512 + 12 + 2 * 88);
     }
 
     /// A fade mixes the key visibilities byte by byte where both blocks hold KEY_BAKED, keeping
@@ -1087,6 +1096,7 @@ mod tests {
         let wgsl = include_str!("../shaders/temporal.wgsl");
         let hitrec = include_str!("../shaders/hitrec.wgsl");
         assert!(hitrec.contains(&format!("const STORE_SUMMARY_AT: u32 = {SUMMARY_AT}u;")));
+        assert!(hitrec.contains(&format!("const STORE_LANDED_AT: u32 = {LANDED_AT}u;")));
         assert!(wgsl.contains("(store[STORE_FLAGS] >> 2u) & 3u"));
         assert_eq!(FLAG_MISSING_SHIFT, 2);
         assert_eq!(MissingLight::Neighbour.bits(), 1);

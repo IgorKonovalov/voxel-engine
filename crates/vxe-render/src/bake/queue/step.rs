@@ -260,6 +260,7 @@ impl BakeQueue {
             steps: self.steps,
             record: record_words(self.settings.cell),
             landing_fade: self.landing_fade,
+            landed_word: self.landed_word,
         };
         let mut sink = |store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>| {
             let t = stopwatch();
@@ -401,6 +402,8 @@ struct Placement<'a> {
     record: usize,
     /// [`BakeQueue::landing_fade`].
     landing_fade: bool,
+    /// [`BakeQueue::landed_word`].
+    landed_word: Option<u32>,
 }
 
 impl Placement<'_> {
@@ -427,6 +430,7 @@ impl Placement<'_> {
             }
             return;
         }
+        let mut block = block;
         if keyed {
             // A key-only job keeps the block's words but its key visibilities: its place,
             // reach and provisional flags stay; the light pass fades the key words' change.
@@ -439,6 +443,7 @@ impl Placement<'_> {
                     w.len() == block.len() && w[..CHUNK_BRICKS] == block[..CHUNK_BRICKS]
                 })
             {
+                block[LANDED_AT as usize] = landed_word(Some(&from), self.landed_word);
                 self.refade(store, coord, (first, f), from, block, false);
             } else {
                 store.release(first, block.len() as u64);
@@ -482,6 +487,9 @@ impl Placement<'_> {
             .blocks
             .get(&coord.0)
             .and_then(|&(f, _)| store.words.get(&coord.0).map(|w| (f, w.clone())));
+        // The chunk's landing word: kept from its block, else this frame's (a first block).
+        block[LANDED_AT as usize] =
+            landed_word(old.as_ref().map(|(_, w)| w.as_slice()), self.landed_word);
         match old {
             Some((f, from))
                 if from.len() == block.len() && from[..CHUNK_BRICKS] == block[..CHUNK_BRICKS] =>
@@ -566,6 +574,18 @@ impl Placement<'_> {
             },
         );
     }
+}
+
+/// The landing word ([`LANDED_AT`]) of a block landing on a chunk whose block was `old`: under
+/// the switch (`word` the queue's [`BakeQueue::landed_word`]) the old block's where the chunk
+/// held one (a refinement, a key re-bake, a dig), else `word` (a first block over the
+/// missing-light chain or a bare one: the frame plus one, 0 in the pre-roll); 0 with the switch
+/// off.
+pub(super) fn landed_word(old: Option<&[u32]>, word: Option<u32>) -> u32 {
+    let Some(w) = word else {
+        return 0;
+    };
+    old.map_or(w, |b| b.get(LANDED_AT as usize).copied().unwrap_or(0))
 }
 
 /// Counts into `cells` ([`QueueStats::landing_cells`]) the cells of a landing block `to` whose

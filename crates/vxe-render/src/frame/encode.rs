@@ -425,6 +425,9 @@ impl Frame {
         } else {
             p.history = 0;
         }
+        // Bit 4: a landing's switch of source fades (temporal.wgsl `source_faded`), whatever
+        // the history.
+        p.history |= u32::from(self.state.lighting.source_fade) << 4;
         if now.count > 0 || self.sky.lights_direct(self.state.lighting.sky_rays) {
             p.lighting |= LIGHTING_DIRECT;
         }
@@ -1096,5 +1099,17 @@ impl Frame {
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         self.encode_with(device, queue, &mut enc, world, params, None, Keep::Alone);
         queue.submit([enc.finish()]);
+    }
+}
+
+impl Lighting {
+    /// `Params::history`'s light bits for a frame whose history is `valid`: bit 0 the light
+    /// passes read it, bit 2 at the far alone ([`Lighting::light_history_far`], temporal.wgsl
+    /// `light_history_at`), bit 3 [`Lighting::far_light_wide`] (atrous.wgsl, temporal.wgsl).
+    pub(crate) fn light_history_bits(&self, valid: bool) -> u32 {
+        let far_only = !self.light_history && self.light_history_far;
+        u32::from(valid && (self.light_history || far_only))
+            | u32::from(far_only) << 2
+            | u32::from(self.far_light_wide) << 3
     }
 }

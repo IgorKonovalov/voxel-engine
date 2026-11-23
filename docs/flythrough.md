@@ -126,7 +126,10 @@ the lighting row and in the banner when it is off its default: `penumbra` (appro
 or off; `--filter`), `light history` (off: every lighting pixel restarts each frame, the
 upscaler keeps its history; `--light-history`, a render setting), `landing fade` (on: a
 landing block's sky visibilities ride the store's fade with its light, so a landing arrives
-softly with no light history; `--landing-fade`, a render setting), `far light wide` (on: the
+softly with no light history; `--landing-fade`, a render setting), `source fade` (on: where a
+pixel takes no light history, a face whose chunk's first block just landed mixes its sky term
+from the column's answer to the block's over 16 frames, so the switch of source is one fade;
+`--source-fade`, a render setting), `far light wide` (on: the
 a-trous filter's plane and normal edges relax by the far normal's weight, a far-trees spike arm),
 `light history far` (on, with light history off: the light passes keep their history where the
 far normal's weight is 1, a far-trees spike arm), `key jitter` (off: the key light's shadow ray runs along the
@@ -303,6 +306,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--key-far-mix blend\|step` | Inside the far normal's band under `--key-far baked` or `column`: the ray's mean blended to the far estimate by the band's weight, or the estimate from the weight's half [blend] |
 | `--light-history on\|off` | The light passes read last frame's lighting through their history test (`Lighting::light_history`, ADR-0082); off, every lighting pixel is this frame's alone and the upscaler keeps its own history; the lighting row and the banner read `light history off`, and the debug page's `light history` switches it [on] |
 | `--landing-fade on\|off` | A landing block's sky visibilities ride the store's fade with its direction values and key visibilities (`Lighting::landing_fade`); off, they change in the frame the block lands and only the light history softens it; the banner reads `landing fade on`, and the debug page's `landing fade` switches it [off] |
+| `--source-fade on\|off` | A landing's switch of source fades (`Lighting::source_fade`): a block records the frame its chunk's first block landed, and where a pixel takes no light history its sky term mixes from the column's answer to the block's baked term over 16 frames; off, the term switches in the frame the block lands; the banner reads `source fade on`, and the debug page's `source fade` switches it [off] |
 | `--calm` | The calm combination as window W1 picked it (ADR-0082): `--light-history off --key-far column --key-far-mix step --far-normal 4,8 --penumbra disc`; a later flag of the five overrides its part; the lighting row and the banner read `calm` while all five hold |
 | `--penumbra disc\|approach` | The key light's penumbra near (ADR-0079): `approach` casts one shadow ray toward the sun's or moon's disc centre and scores how close it passes the rock beside it (a voxel of an absorbing material, such as `--leaf-shadow absorb`'s leaves, does not count), times the ray's transmittance, taken as the value with no history: the same every frame, on the lit side of an edge only; `disc` casts one ray a frame toward a random point of the disc and keeps its running mean; the banner reads `penumbra disc` with a sky set (nothing for the default) [approach] |
 | `--sky-normal face\|smoothed` | The normal a cube face's baked sky light reads its visibilities by: the face's own (the far normal's blend far off), or the 27-count gradient's at every distance, so a tread and a riser of a one-voxel stair read the slope's blend; the surface and the sun keep the face normal; the banner reads `sky normal face` with a sky set [smoothed] |

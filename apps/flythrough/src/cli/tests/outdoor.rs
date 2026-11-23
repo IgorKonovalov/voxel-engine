@@ -529,3 +529,31 @@ fn calm_sets_the_five_picks_and_a_later_flag_wins() {
     assert!(banner.contains("landing fade on, "), "{banner}");
     assert!(parse_args_from(argv(&["--landing-fade", "maybe"])).is_err());
 }
+
+/// Plan 0098 Phase 6b: `--source-fade on` sets `Lighting::source_fade` and the lighting row reads
+/// `source fade on`; `--calm` alone leaves it off and the row does not name it.
+#[test]
+fn source_fade_parses_and_calm_leaves_it_off() {
+    let calm = parse_args_from(argv(&["--source", "outdoor", "--calm"])).unwrap();
+    assert!(!calm.start_lighting().source_fade);
+    let banner = calm.start_modes(0.0).banner(0.0).unwrap();
+    assert!(!banner.contains("source fade"), "{banner}");
+    let r = parse_args_from(argv(&[
+        "--source",
+        "outdoor",
+        "--calm",
+        "--landing-fade",
+        "on",
+        "--source-fade",
+        "on",
+    ]))
+    .unwrap();
+    assert!(r.start_lighting().source_fade);
+    let banner = r.start_modes(0.0).banner(0.0).unwrap().replace('\n', ", ");
+    assert!(banner.contains("source fade on, "), "{banner}");
+    assert!(banner.contains("landing fade on, "), "{banner}");
+    let mut row = String::new();
+    r.start_modes(0.0).write_diag(&mut row);
+    assert!(row.contains("source fade on, "), "{row}");
+    assert!(parse_args_from(argv(&["--source-fade", "maybe"])).is_err());
+}

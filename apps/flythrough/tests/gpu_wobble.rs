@@ -91,6 +91,9 @@ struct Arm {
     /// `Lighting::landing_fade` (`lfade`): a landing block's sky visibilities ride the store's
     /// fade.
     landing_fade: bool,
+    /// `Lighting::source_fade` (`sfade`): a landing's switch of source fades by the block's
+    /// landing frame.
+    source_fade: bool,
     /// The fly's frames (`fly=N`, 180 by default; 20 is the short fly of Plan 0097's finding).
     fly: usize,
     /// The normals view (`normals`): the shading normal as colour, for the term split.
@@ -113,7 +116,8 @@ impl Arm {
     /// (the turn's frames), `nohist` (`light_history` off), `calm` (the fly-through's
     /// `--calm` as window W1 picked it: `nohist`, `column`, `step`, `disc` and the far normal
     /// 4..8), `native` (as `off1`), `scale=X` (the upscaler's scale), `farn=LO/HI` (the far
-    /// normal's band), `lfade` (`Lighting::landing_fade` on), `fly=N` (the fly's frames) and
+    /// normal's band), `lfade` (`Lighting::landing_fade` on), `sfade` (`Lighting::source_fade`
+    /// on), `fly=N` (the fly's frames) and
     /// `normals` (the normals view); Plan 0098 Phase 5's arms `wide` (`far_light_wide`) and
     /// `hfar` (`light_history_far`).
     fn parse() -> Self {
@@ -162,6 +166,7 @@ impl Arm {
             light_history: flythrough::default_lighting().light_history,
             scale: 1.5,
             landing_fade: flythrough::default_lighting().landing_fade,
+            source_fade: flythrough::default_lighting().source_fade,
             fly: 180,
             normals: false,
             far_light_wide: false,
@@ -228,6 +233,7 @@ impl Arm {
                     a.far_normal = flythrough::cli::CALM_FAR_NORMAL;
                 }
                 "lfade" => a.landing_fade = true,
+                "sfade" => a.source_fade = true,
                 "normals" => a.normals = true,
                 "wide" => a.far_light_wide = true,
                 "hfar" => a.light_history_far = true,
@@ -328,6 +334,7 @@ fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
         penumbra: arm.penumbra,
         light_history: arm.light_history,
         landing_fade: arm.landing_fade,
+        source_fade: arm.source_fade,
         far_light_wide: arm.far_light_wide,
         light_history_far: arm.light_history_far,
         store_read: if arm.store_read_face {
@@ -527,8 +534,118 @@ fn fmt_sources(v: &[f64; 4]) -> String {
     )
 }
 
+/// A lighting pixel's state for the near class's source reading ([`SrcRow`]): its sky source
+/// word, whether the sky ray was cast, the visibility pair's mean, and whether its hit's chunk
+/// holds a block in the store.
+struct SrcState {
+    source: Vec<u8>,
+    cast: Vec<bool>,
+    pair: Vec<f32>,
+    block: Vec<bool>,
+}
+
+/// One stop pair's near sources (Plan 0098 Phase 6b's reading): over the near display pixels
+/// (this frame's classes) whose luma moved over 4 levels, how many; of them, those whose hit's
+/// chunk had no block the frame before and holds one now (in a landed chunk), and those whose
+/// sky source went from no value with the ray cast to the record; the pair's mean before and
+/// after over the moved pixels and its share at exactly 0 and 1 before (the column's answer);
+/// and over every lighting pixel that cast the sky ray this frame, the share whose pair is
+/// neither 0 nor 1 (a shown value other than the column's: a cast sample or a record).
+#[derive(Clone, Copy, Default)]
+struct SrcRow {
+    moved: usize,
+    landed: usize,
+    switched: usize,
+    vis_before: f64,
+    vis_after: f64,
+    before0: usize,
+    before1: usize,
+    cast: usize,
+    cast_other: usize,
+}
+
+/// The [`SrcState`] of `f`'s last frame: the shot's source and cast words, the pair read back,
+/// and each hit's chunk (the hit nudged along the view ray into the solid) looked up in the
+/// store.
+fn src_state(rig: &Rig, f: &Frame, shot: &support::defects::Shot, eye: [f32; 3]) -> SrcState {
+    let pair = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, f.visibility_pair());
+    let mut held = std::collections::HashMap::<[i32; 3], bool>::new();
+    let block = shot
+        .hits
+        .iter()
+        .map(|h| {
+            if h[3] > 1e30 || !h[3].is_finite() {
+                return false;
+            }
+            let d = [h[0] - eye[0], h[1] - eye[1], h[2] - eye[2]];
+            let l = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt().max(1e-6);
+            let c = [0, 1, 2].map(|k| ((h[k] + 0.01 * d[k] / l) / 64.0).floor() as i32);
+            *held
+                .entry(c)
+                .or_insert_with(|| f.store().block(vxe_world::ChunkCoord(c)).is_some())
+        })
+        .collect();
+    SrcState {
+        source: shot.source.clone(),
+        cast: shot.cast.clone(),
+        pair: pair.iter().map(|p| p[0]).collect(),
+        block,
+    }
+}
+
+/// The [`SrcRow`] of the pair `a` to `b` (display lumas) over classes `cls`, lighting states
+/// `pa` to `pb` on a grid `gw` wide.
+fn src_row(a: &[u8], b: &[u8], cls: &[u8], pa: &SrcState, pb: &SrcState, gw: usize) -> SrcRow {
+    let (dw, dh) = (OUT[0] as usize, OUT[1] as usize);
+    let gl = pb.source.len();
+    let mut r = SrcRow::default();
+    for i in 0..a.len() {
+        if cls[i] != 1 || a[i].abs_diff(b[i]) <= 4 {
+            continue;
+        }
+        let g = grid_of(i, dw, dh, gw, gl);
+        r.moved += 1;
+        r.landed += usize::from(!pa.block[g] && pb.block[g]);
+        r.switched += usize::from(
+            pa.source[g] == support::defects::SOURCE_NO_VALUE
+                && pa.cast[g]
+                && pb.source[g] == support::defects::SOURCE_RECORD,
+        );
+        r.vis_before += f64::from(pa.pair[g]);
+        r.vis_after += f64::from(pb.pair[g]);
+        r.before0 += usize::from(pa.pair[g] == 0.0);
+        r.before1 += usize::from(pa.pair[g] == 1.0);
+    }
+    for g in 0..gl {
+        if pb.cast[g] {
+            r.cast += 1;
+            r.cast_other += usize::from(pb.pair[g] != 0.0 && pb.pair[g] != 1.0);
+        }
+    }
+    r
+}
+
+fn fmt_src(r: &SrcRow) -> String {
+    let m = r.moved.max(1) as f64;
+    format!(
+        "near moved {}: in a landed chunk {:.1} %, no value (cast) to record {:.1} %; pair before {:.3} after {:.3}, before at 0 {:.1} % at 1 {:.1} %; cast px {} of them pair not 0 or 1 {:.2} %",
+        r.moved,
+        100.0 * r.landed as f64 / m,
+        100.0 * r.switched as f64 / m,
+        r.vis_before / m,
+        r.vis_after / m,
+        100.0 * r.before0 as f64 / m,
+        100.0 * r.before1 as f64 / m,
+        r.cast,
+        100.0 * r.cast_other as f64 / r.cast.max(1) as f64
+    )
+}
+
 struct Segment {
     name: &'static str,
+    /// Per frame of a kept segment, against the frame before (none at its first): the near
+    /// class's sources ([`SrcRow`]).
+    src: Vec<Option<SrcRow>>,
     /// Per pair: the change by class over 4 levels and the mean |dY|.
     pairs: Vec<[(f64, f64); 5]>,
     /// The per-pixel mean |dY| over the segment.
@@ -568,13 +685,15 @@ fn run_segment(
     let mut map = vec![0f64; n];
     let mut pairs = Vec::new();
     let mut last = prev;
-    let mut frames = Vec::new();
+    let mut frames: Vec<Vec<u8>> = Vec::new();
     let mut diag = Vec::new();
     let mut gw = 1usize;
     let mut k = 0usize;
     let mut sources = Vec::new();
     let mut sum_pass = Vec::<f64>::new();
     let mut queue = Vec::new();
+    let mut src = Vec::new();
+    let mut src_prev: Option<SrcState> = None;
     for cam in cams {
         queue_step(rig, &mut s.frame, &cam);
         queue.push(s.frame.bake_queue().map(|q| q.stats()).unwrap_or_default());
@@ -617,6 +736,13 @@ fn run_segment(
             );
         }
         if keep {
+            let now = src_state(rig, &s.frame, &shot, cam.position.to_array());
+            let row = match (&src_prev, frames.last()) {
+                (Some(pa), Some(a)) => Some(src_row(a, &y, &cls, pa, &now, gw)),
+                _ => None,
+            };
+            src.push(row);
+            src_prev = Some(now);
             frames.push(y.clone());
         }
         last = Some(y);
@@ -647,6 +773,7 @@ fn run_segment(
     );
     Segment {
         name,
+        src,
         pairs,
         map,
         last: last.unwrap(),
@@ -699,11 +826,17 @@ fn landing_rows(seg: &Segment, cls: &[u8]) {
             cells.join("/"),
             b.fading
         );
+        if let Some(Some(r)) = seg.src.get(i) {
+            println!("      sources +{i}: {}", fmt_src(r));
+        }
     }
     println!(
         "  {}: largest near pair {:.2} % at +{}",
         seg.name, max.0, max.1
     );
+    if let Some(Some(r)) = seg.src.get(max.1) {
+        println!("  {}: the largest pair's sources: {}", seg.name, fmt_src(r));
+    }
 }
 
 /// The live queue's depth in words: its jobs and the chunks it waits on.

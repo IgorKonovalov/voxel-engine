@@ -217,8 +217,14 @@ pub(crate) fn record_words(cell: u32) -> usize {
 /// just past the directory, so the chunk table's word reaches it with no second read.
 pub const SUMMARY_AT: u64 = DIRECTORY_WORDS;
 
-/// A block's words before its first brick record: the directory, then the summary.
-pub(crate) const BLOCK_HEAD_WORDS: u64 = DIRECTORY_WORDS + BRICK_WORDS as u64;
+/// A block's word holding the frame its chunk's first block landed plus one under
+/// [`crate::Lighting::source_fade`] (Plan 0098 Phase 6b), 0 for none: written with the block's
+/// words at a first landing, kept by every later landing of the chunk, never written per frame.
+/// Just past the summary, which [`Store::summarise`] rewrites and this word is not part of.
+pub const LANDED_AT: u64 = SUMMARY_AT + BRICK_WORDS as u64;
+
+/// A block's words before its first brick record: the directory, the summary, the landing word.
+pub(crate) const BLOCK_HEAD_WORDS: u64 = LANDED_AT + 1;
 
 /// The flags word's bits 2 and 3: the missing-light mode ([`MissingLight::bits`]).
 pub(crate) const FLAG_MISSING_SHIFT: u32 = 2;
