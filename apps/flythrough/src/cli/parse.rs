@@ -107,6 +107,8 @@ impl Args {
             settings: false,
             profile: vxe_render::Profile::Floor,
             light_cap: vxe_render::MAX_LIGHTS as u32,
+            light_samples: None,
+            light_hooks: vxe_render::LightHooks::default(),
             output_hint: None,
             audio: AudioArgs {
                 on: false,
@@ -139,6 +141,8 @@ impl Args {
             bake: BakeArgs {
                 budget: vxe_render::Budget::default(),
                 coarse: vxe_render::DEFAULT_COARSE_SAMPLES,
+                tiers: vxe_render::DEFAULT_TIERS,
+                drain: Some(vxe_render::DEFAULT_DRAIN),
                 near: vxe_render::DEFAULT_NEAR,
                 full_first: None,
                 missing_light: vxe_render::MissingLight::Chain,
@@ -149,6 +153,7 @@ impl Args {
                 queue_tier: true,
                 queue_withdraw: true,
                 queue_census: false,
+                queue_rule_reading: false,
                 edit_ms: vxe_render::DEFAULT_BAKE_EDIT_MS,
                 dig_reach: true,
                 read_missing: false,

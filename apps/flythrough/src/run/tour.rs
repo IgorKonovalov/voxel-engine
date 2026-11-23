@@ -81,6 +81,7 @@ impl Run {
             streaming: None,
             load_ms: None,
             load_stages: Vec::new(),
+            queue: self.queue.stats.map(|st| self.queue.drain_of(&st)),
             ended: if self.failure.is_some() {
                 "failed"
             } else {

@@ -107,10 +107,10 @@ struct Params {
     light_scale: u32,
     light_offset: u32,
     prev_light_offset: u32,
-    _pad8: u32,
+    lighting2: u32,
     // The size of the frame's image (the upscale pass's output); `size` without the upscaler.
     output_size: vec2<u32>,
-    _pad10: u32,
+    key_cap: f32,
     // The face look's far shading normal (`LookParams::far_normal`), in pixels per voxel:
     // `far_hi <= far_lo` is off.
     far_lo: f32,

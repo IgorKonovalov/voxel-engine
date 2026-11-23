@@ -109,6 +109,7 @@ impl BakeQueue {
             if faces.faces() == 0 {
                 self.fades.remove(&c);
                 store.remove(run.queue, coord);
+                self.block_count.remove(&c);
                 self.faceless.insert(c);
                 self.touched.insert(c);
                 self.digs.remove(&c);
@@ -167,7 +168,8 @@ impl BakeQueue {
     /// loop holds under two slices of `cap` samples (one at least): ring-1 chunks first, then by
     /// distance from the camera's chunk. Each is listed again on this thread and keeps every
     /// brick record outside its dig bricks (a whole dig, which held no block, keeps none and
-    /// bakes every listed brick); a chunk left with no face drops its block.
+    /// bakes every listed brick) and bakes them at the near tier's count, whatever its band; a
+    /// chunk left with no face drops its block.
     pub(in crate::bake) fn open_digs(
         &mut self,
         run: &BakeRun<'_>,
@@ -194,7 +196,10 @@ impl BakeQueue {
         let mut left: u64 = self.lp.dig_samples_left(|c| self.dig_open.contains_key(c));
         let classes = self.classes(run.world.materials());
         let record = self.record_words();
-        let brick_samples = self.settings.brick_samples;
+        // A dig's ring bakes at the near tier's count whatever its chunk's band: the eye is on
+        // it (ADR-0080 rule 2).
+        let brick_samples = self.near_count();
+        let own_count = (brick_samples != self.settings.brick_samples).then_some(brick_samples);
         let mut jobs = Vec::new();
         for (_, _, c) in order {
             if left >= 2 * cap && !jobs.is_empty() {
@@ -226,6 +231,7 @@ impl BakeQueue {
             }
             if faces.faces() == 0 {
                 store.remove(run.queue, coord);
+                self.block_count.remove(&c);
                 self.fades.remove(&c);
                 self.faceless.insert(c);
                 self.touched.insert(c);
@@ -263,8 +269,9 @@ impl BakeQueue {
                 first_word,
                 kept_bricks: kept,
                 samples,
-                brick_samples: None,
+                brick_samples: own_count,
                 key_only: false,
+                tier: 0,
             });
             self.dig_open.insert(c, d);
         }

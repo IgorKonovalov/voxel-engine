@@ -65,7 +65,12 @@ fn a_shown_hud_s_refresh_and_banner_allocate_nothing_after_the_first_frame() {
         pressure: 0.25,
         budget_bytes: 64 << 20,
         light_samples: 4096,
-        upscale: Some([[640, 360], [960, 540]]),
+        sizes: Some(hud::FrameSizes {
+            internal: [640, 360],
+            output: [960, 540],
+            window: Some([1920, 1080]),
+            upscaling: true,
+        }),
     };
     run.start = now();
     let mut per_frame = Vec::with_capacity(100);
@@ -471,7 +476,7 @@ fn the_banner_names_the_queue_order_and_its_weights() {
         assert_eq!(
             row,
             format!(
-                "in view: 0 waiting (0 coarse), withdrawn 0, step 0.00 ms; {want}; withdraw on; full-first 2; reach full; budget frame:1.5"
+                "in view: 0 waiting (0 coarse), drain 0.0 s, withdrawn 0, step 0.00 ms; {want}; withdraw on; full-first 2; reach full; budget frame:1.5"
             )
         );
     };
@@ -574,7 +579,7 @@ fn the_banner_names_the_withdrawal() {
     run.refresh_hud_stats(None);
     let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
     assert!(
-        row.starts_with("in view: 0 waiting (0 coarse), withdrawn 7, step 0.00 ms; "),
+        row.starts_with("in view: 0 waiting (0 coarse), drain 0.0 s, withdrawn 7, step 0.00 ms; "),
         "{row}"
     );
     let w =

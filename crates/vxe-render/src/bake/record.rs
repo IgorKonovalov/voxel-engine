@@ -97,6 +97,22 @@ pub(crate) const SKY_STALE: u32 = 1 << 17;
 /// A record's first key light visibility word (ADR-0079).
 pub(crate) const KEY_WORD: usize = 9;
 
+/// The record's tier (ADR-0080): two bits of the second visibility word's free bits, 0 at the
+/// settings' count (the live queue's near tier, and every one-off bake), [`TIER_MID`] at its
+/// mid count, [`TIER_FAR`] at its far or coarse count. The reads mask them off.
+pub(crate) const TIER_SHIFT: u32 = 18;
+
+/// [`TIER_SHIFT`]'s mid tier.
+pub(crate) const TIER_MID: u8 = 1;
+
+/// [`TIER_SHIFT`]'s far tier.
+pub(crate) const TIER_FAR: u8 = 2;
+
+/// The tier bits of the cell record `r` ([`TIER_SHIFT`]).
+pub fn record_tier(r: &[u32]) -> u8 {
+    ((r[VIS_WORD + 1] >> TIER_SHIFT) & 3) as u8
+}
+
 /// The second key visibility word's flag: the record's key visibilities were baked under a key
 /// light. They share the sky's [`SKY_STALE`]: a dig's ring marks both channels.
 pub(crate) const KEY_BAKED: u32 = 1 << 16;
@@ -147,6 +163,11 @@ pub fn unpack_direction(w: u32) -> Option<[f32; 3]> {
 /// Sky rays a brick direction draws at most in the bake (ADR-0070's `SKY_BAKE_RAYS`, a guess:
 /// the binomial standard deviation at a half open sky is 1/32).
 pub const SKY_BAKE_RAYS: u32 = 256;
+
+/// Sky rays a brick direction draws at most in a far-tier record ([`TIER_FAR`], ADR-0080 rule
+/// 2): the sky channel follows the tier where a voxel spans under the far-normal band's bottom
+/// (a guess: the binomial standard deviation at a half open sky is 1/16).
+pub(crate) const SKY_FAR_RAYS: u32 = 64;
 
 /// Direction `face`'s sky visibility in [0, 1] of record `r`, `None` where it was baked with no
 /// sky or lacks the direction.
@@ -234,6 +255,7 @@ pub(super) fn brick_record(
     cell: u32,
     sky: bool,
     key: bool,
+    tier: u8,
 ) -> Vec<u32> {
     let side = (8 / cell) as usize;
     let cells = side * side * side;
@@ -293,6 +315,7 @@ pub(super) fn brick_record(
         if key {
             r[KEY_WORD..KEY_WORD + 2].copy_from_slice(&key_words(mean(lit[c])));
         }
+        r[VIS_WORD + 1] |= u32::from(tier) << TIER_SHIFT;
     }
     out
 }

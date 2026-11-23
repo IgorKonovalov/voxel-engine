@@ -6,10 +6,19 @@ mod digs;
 mod keys;
 mod list;
 mod open;
+mod reach;
+mod rule;
+mod sealed;
 mod stats;
 mod step;
+mod tiers;
 
-pub use self::stats::QueueStats;
+pub use self::open::in_view_census;
+use self::reach::reach_of;
+pub use self::stats::{
+    Band, Bands, InViewWaiting, ListingCensus, QueueStats, RuleMissed, chunk_nearest,
+};
+pub use self::tiers::DEFAULT_TIERS;
 
 /// Frames a re-baked block's values move over, from what it showed to its new values.
 pub const FADE: u32 = 16;
@@ -39,6 +48,10 @@ pub(super) const QUEUE_RECHECK: u64 = 30;
 
 /// Steps an opening that found nothing ready waits before sorting the candidates again.
 pub(super) const QUEUE_QUIET: u64 = 8;
+
+/// Steps at least between two reads of the drain's set ([`BakeQueue::refresh_waiting`]) while
+/// the view or the candidates keep changing.
+pub(crate) const WAITING_EVERY: u64 = 8;
 
 /// A hasher for chunk coordinates in the queue step's per-change sets: one multiply and rotate
 /// a word (FxHash's mix), where std's SipHash costs several times as much a key, and a flight
@@ -165,6 +178,9 @@ pub struct QueueView<'a> {
     /// will hold, which a column must have mirrored before the bake reads its top
     /// ([`reach_columns_final`]); `None` waits only for the chunks pending upload.
     pub lod_radius: Option<i32>,
+    /// The output's focal length in pixels ([`Bands::focal_px`]), which with
+    /// [`BakeQueue::far_normal`] sets each chunk's [`Band`]; `None` reads every chunk as near.
+    pub focal_px: Option<f32>,
 }
 
 /// The live queue (ADR-0046's scheduler, Plan 0059 Phase 8 as re-read at Phase 7b): the brick
@@ -200,6 +216,20 @@ pub struct BakeQueue {
     /// The bake budget: the slice a frame, or milliseconds a second sized by the view's
     /// interval ([`QueueView::interval_s`]).
     pub budget: Budget,
+    /// The slice's two values (ADR-0080 rule 3): the drain value while a chunk of
+    /// [`BakeQueue::view_waiting`] waits, the line's once none does; `None` is the budget alone.
+    pub drain: Option<Drain>,
+    /// The chunks in the view cone or the near shell with no block or one below its band's
+    /// count, candidates or in a job, as [`BakeQueue::refresh_waiting`] last read them; each
+    /// removed as its record lands at its band's count, or as it leaves the mirror or turns
+    /// out to hold no face.
+    pub(super) view_waiting: ChunkSet,
+    /// The view [`BakeQueue::view_waiting`] was last read under (the eye's chunk, the forward
+    /// direction's and the half-angle's bits, the near shell), the step it was read at, and
+    /// whether the pool changed since.
+    pub(super) waiting_view: Option<([i32; 3], [u32; 3], u32, i32)>,
+    pub(super) waiting_at: Option<u64>,
+    pub(super) waiting_stale: bool,
     /// A brick direction's samples in the coarse pass; 0 bakes every chunk at the full count.
     pub coarse_samples: u32,
     /// Chunks (Chebyshev) around the camera's that the score's angle term and the withdrawal
@@ -251,6 +281,9 @@ pub struct BakeQueue {
     /// nothing and the queue drains.
     pub(super) job_eye: std::collections::HashMap<[i32; 3], u64>,
     pub(super) faceless: std::collections::HashSet<[i32; 3]>,
+    /// The stream workers' no-face verdicts ([`crate::bake::seal`]), each with its point of the
+    /// shells' order, and their handle once a result brought it ([`sealed::Sealed`]).
+    pub(super) sealed: sealed::Sealed,
     /// Chunks an edit touched while their job ran: the job's block is thrown away.
     pub(super) stale: std::collections::HashSet<[i32; 3]>,
     /// Candidates not ready at a check, and the step that checked them.
@@ -288,6 +321,15 @@ pub struct BakeQueue {
     /// one after a [`BakeQueue::request_census`]: a reading, which costs the step about a
     /// census (0.8 ms over the streamed cave's 17 000 candidates) at each opening.
     pub census_every_opening: bool,
+    /// A reading: counts the GPU jobs opened for chunks the rule would answer at that opening
+    /// ([`QueueStats::rule_missed`]); off by default, the step unchanged.
+    pub rule_reading: bool,
+    /// The opening's checked candidates the reading counts if their job opens: the exclusion
+    /// that kept the rule from each, and whether it lies in the view cone or the near shell.
+    pub(super) rule_missed_checked: ChunkMap<(usize, bool)>,
+    /// Whether a read of the drain's set found it not empty since the queue started (the
+    /// in-view landing is the first empty set after it, [`RuleMissed::landed_at`]).
+    pub(super) waiting_armed: bool,
     pub(super) stats: QueueStats,
     /// The current step's stage laps.
     pub(super) laps: Laps,
@@ -304,14 +346,15 @@ pub struct BakeQueue {
     /// The jobs' chunks at the last reading of the pool: a chunk joining or leaving a job is
     /// read again.
     pub(super) pool_jobs: std::collections::HashSet<[i32; 3]>,
-    /// The pool's candidates in their order, and the view they were scored under; dirty when
-    /// a candidate joined the pool or changed class.
+    /// The pool's candidates in their order, walked from the camera outward and kept in step
+    /// with the pool ([`BakeQueue::pool_insert`], [`BakeQueue::pool_remove`]).
     pub(super) ordered: Ordered,
-    pub(super) order_view: Option<OrderView>,
-    pub(super) order_dirty: bool,
     /// Each checked candidate's reach verdict ([`reach_ready`]), dropped when a chunk within
     /// the light radius and one of it changes in the mirror.
-    pub(super) reach_cache: ChunkMap<Reach>,
+    /// Each verdict with whether its walk stopped at the first chunk not resident full
+    /// ([`reach_of`]'s `first`), whose [`Reach::Partial`] does not say that nothing in the reach
+    /// waits to upload.
+    pub(super) reach_cache: ChunkMap<(Reach, bool)>,
     /// Chunks whose block was baked from a partial reach ([`ReachMode::Partial`]).
     pub(super) partial: ChunkSet,
     /// The jobs pending or open that bake from a partial reach.
@@ -331,6 +374,34 @@ pub struct BakeQueue {
     pub key_step: f32,
     /// The key-only re-bakes waiting and in a job.
     pub(super) keys: keys::KeyJobs,
+    /// Whether a candidate the rule answers ([`rule::buried`], no exposed emitter within the
+    /// light radius) takes a zero record written on the CPU instead of a GPU job (ADR-0080).
+    pub zero_rule: bool,
+    /// Chunks whose block is the rule's zero record: baked again when a change near them
+    /// breaks the rule ([`BakeQueue::relist_zeroed`]).
+    pub(super) zeroed: ChunkSet,
+    /// Chunks the opening's checks found answered by the rule, read when listed.
+    pub(super) ruled_checked: ChunkSet,
+    /// Ruled chunks listed this step, their place and faces: their zero blocks are placed at
+    /// the step's submit.
+    pub(super) ruled: Vec<(ChunkCoord, u64, ChunkFaces, u8)>,
+    /// The sample tiers a brick direction by band, near, mid and far (ADR-0080 rule 2); with a
+    /// view's focal length a chunk's job draws its band's count past its coarse pass, else
+    /// [`BakeSettings::brick_samples`].
+    pub tiers: [u32; 3],
+    /// Each block's samples a brick direction ([`BakeQueue::tiers`]), and each job's.
+    pub(super) block_count: std::collections::HashMap<[i32; 3], u32>,
+    pub(super) job_count: std::collections::HashMap<[i32; 3], u32>,
+    /// The bands the last step read ([`tiers`]), `None` without a focal length, and the centre
+    /// of the camera's chunk in voxels they are read from.
+    pub(super) bands: Option<Bands>,
+    pub(super) eye_c: [f32; 3],
+    /// The step's lowest column tops by chunk column ([`GpuWorld::column_lowest`]), emptied
+    /// each step.
+    pub(super) columns_lowest: std::collections::HashMap<[i32; 2], i32>,
+    /// `LookParams::far_normal` (`[lo, hi]` pixels a voxel), set by the frame each step: with
+    /// [`QueueView::focal_px`] the band a chunk's size on screen puts it in ([`Bands`]).
+    pub far_normal: [f32; 2],
     /// Chunks whose block was baked while a column over its reach was not final (the wait
     /// off): baked again once when those columns turn final ([`BakeQueue::catch_up`]).
     pub(super) provisional: ChunkSet,
@@ -432,58 +503,17 @@ pub(super) fn held_by_streamer(
     })
 }
 
-/// `coord`'s reach as [`reach_ready`] reads it: [`Reach::Waiting`] at the first chunk within it
-/// waiting to upload, else [`Reach::Partial`] if a chunk within it is not resident full (a
-/// streamed world only), else [`Reach::Ready`]. With `first`, the walk stops at the first chunk
-/// that is not ready either way and reads it as [`Reach::Partial`]: a caller that asks only
-/// whether the reach is ready ([`ReachMode::Full`], the census) walks no further than that.
-pub(super) fn reach_of(
-    run: &BakeRun<'_>,
-    coord: ChunkCoord,
-    lr: i32,
-    resident: Option<&dyn Fn(ChunkCoord) -> bool>,
-    first: bool,
-) -> Reach {
-    let gpu = run.gpu;
-    if resident.is_none() && gpu.pending_chunks() == 0 {
-        return Reach::Ready;
-    }
-    let r = lr + 1;
-    let mut partial = false;
-    for z in -r..=r {
-        for y in -r..=r {
-            for x in -r..=r {
-                if !in_reach([x, y, z], lr) {
-                    continue;
-                }
-                let n = ChunkCoord([coord.0[0] + x, coord.0[1] + y, coord.0[2] + z]);
-                if gpu.is_pending(n) {
-                    return Reach::Waiting;
-                }
-                if let Some(res) = resident
-                    && !(res(n) && gpu.is_mirrored(n) && !gpu.is_lod(n))
-                {
-                    if first {
-                        return Reach::Partial;
-                    }
-                    partial = true;
-                }
-            }
-        }
-    }
-    if partial {
-        Reach::Partial
-    } else {
-        Reach::Ready
-    }
-}
-
 impl BakeQueue {
     /// A queue whose budget is `slice_ms` a frame ([`Budget::PerFrame`]).
     pub fn new(settings: BakeSettings, slice_ms: f64) -> Self {
         Self {
             settings,
             budget: Budget::PerFrame { ms: slice_ms },
+            drain: None,
+            view_waiting: Default::default(),
+            waiting_view: None,
+            waiting_at: None,
+            waiting_stale: true,
             coarse_samples: DEFAULT_COARSE_SAMPLES,
             near: DEFAULT_NEAR,
             full_first: Some(DEFAULT_NEAR),
@@ -524,6 +554,9 @@ impl BakeQueue {
             reach_census_at: 0,
             census_due: true,
             census_every_opening: false,
+            rule_reading: false,
+            rule_missed_checked: Default::default(),
+            waiting_armed: false,
             stats: QueueStats {
                 ns_per_sample: 20.0,
                 ..QueueStats::default()
@@ -534,13 +567,23 @@ impl BakeQueue {
             pool_stale: true,
             pool_jobs: Default::default(),
             ordered: Ordered::default(),
-            order_view: None,
-            order_dirty: true,
             reach_cache: Default::default(),
             columns_final: Default::default(),
             column_wait: false,
             key_step: crate::frame::DEFAULT_KEY_STEP,
             keys: Default::default(),
+            far_normal: [0.0; 2],
+            zero_rule: true,
+            sealed: Default::default(),
+            zeroed: Default::default(),
+            ruled_checked: Default::default(),
+            ruled: Vec::new(),
+            tiers: DEFAULT_TIERS,
+            block_count: Default::default(),
+            job_count: Default::default(),
+            bands: None,
+            eye_c: [32.0; 3],
+            columns_lowest: Default::default(),
             provisional: Default::default(),
             job_provisional: Default::default(),
             provisional_checked: Default::default(),
@@ -567,7 +610,7 @@ impl BakeQueue {
             return None;
         }
         let has = store.blocks.contains_key(&c);
-        let coarse = has && store.is_coarse(cc);
+        let coarse = has && self.lesser(store, c);
         let wants = !has
             || coarse
             || self.reach.contains(&c)
@@ -575,15 +618,32 @@ impl BakeQueue {
             || (!self.provisional_due.is_empty() && self.provisional_due.contains(&c));
         (wants
             && !self.faceless.contains(&c)
+            && !self.sealed.holds(c)
             && !in_job.contains(&c)
             && !self.digs.contains_key(&c))
         .then_some((u8::from(has), coarse))
     }
 
+    /// `c` joins the pool as `v`, or its value changes, in the pool and the kept order.
+    pub(super) fn pool_insert(&mut self, c: [i32; 3], v: (u8, bool)) {
+        let was = self.pool.insert(c, v).map(|w| w.0);
+        self.ordered.insert(c, v.0, v.1, was);
+        self.waiting_stale = true;
+    }
+
+    /// `c` leaves the pool and the kept order: its value, if it was a candidate.
+    pub(super) fn pool_remove(&mut self, c: [i32; 3]) -> Option<(u8, bool)> {
+        let was = self.pool.remove(&c);
+        if let Some((class, _)) = was {
+            self.ordered.remove(c, class);
+            self.waiting_stale = true;
+        }
+        was
+    }
+
     /// Brings the pool up to date: whole when it is stale, else for the chunks touched since,
     /// the store's changed blocks and the chunks that joined or left a job. A candidate that
-    /// joins or changes class leaves the kept order dirty; one that leaves is skipped by the
-    /// walk.
+    /// joins, changes or leaves moves in the kept order with it.
     pub(super) fn sync_pool(&mut self, run: &BakeRun<'_>, store: &mut Store) {
         let gpu = run.gpu;
         let in_job: std::collections::HashSet<[i32; 3]> = self.lp.chunks().map(|c| c.0).collect();
@@ -598,9 +658,12 @@ impl BakeQueue {
                 .collect();
             self.stats.scanned += gpu.mirrored_chunks() as u64;
             self.pool = pool;
+            self.ordered.rebuild(self.pool.iter());
             self.pool_stale = false;
-            self.order_dirty = true;
+            self.waiting_stale = true;
             self.touched.clear();
+            // A block dropped outside the queue (a one-shot dig's re-bake) takes its count.
+            self.block_count.retain(|c, _| store.blocks.contains_key(c));
         } else {
             let moved: Vec<[i32; 3]> = self
                 .pool_jobs
@@ -609,18 +672,19 @@ impl BakeQueue {
                 .collect();
             self.touched.extend(moved);
             for c in std::mem::take(&mut self.touched) {
+                // A block dropped outside the queue (a one-shot dig's re-bake) takes its count.
+                if !store.blocks.contains_key(&c) {
+                    self.block_count.remove(&c);
+                }
                 let now = self.candidacy(store, gpu, &in_job, c);
                 let was = self.pool.get(&c).copied();
                 if now == was {
                     continue;
                 }
                 match now {
-                    Some(v) => {
-                        self.pool.insert(c, v);
-                        self.order_dirty = true;
-                    }
+                    Some(v) => self.pool_insert(c, v),
                     None => {
-                        self.pool.remove(&c);
+                        self.pool_remove(c);
                     }
                 }
             }
@@ -634,49 +698,6 @@ impl BakeQueue {
                 .filter_map(|c| self.candidacy(store, gpu, jobs, c.0).map(|v| (c.0, v)))
                 .collect();
             debug_assert_eq!(self.pool, whole, "the kept pool against a whole reading");
-        }
-    }
-
-    /// [`reach_ready`] through the cache of verdicts; a bounded world with nothing waiting to
-    /// upload is ready without a walk. A miss counts in [`QueueStats::reach_checks`].
-    pub(super) fn reach_cached(
-        &mut self,
-        run: &BakeRun<'_>,
-        coord: ChunkCoord,
-        lr: i32,
-        resident: Option<&dyn Fn(ChunkCoord) -> bool>,
-    ) -> Reach {
-        if resident.is_none() && run.gpu.pending_chunks() == 0 {
-            return Reach::Ready;
-        }
-        if let Some(&v) = self.reach_cache.get(&coord.0) {
-            // A streamer's residency can move a frame ahead of the mirror; a bounded world's
-            // verdict reads the mirror alone.
-            debug_assert!(
-                resident.is_some()
-                    || v == reach_of(run, coord, lr, resident, self.reach_mode == ReachMode::Full),
-                "the cached reach of {coord:?}"
-            );
-            return v;
-        }
-        self.stats.reach_checks += 1;
-        let v = reach_of(run, coord, lr, resident, self.reach_mode == ReachMode::Full);
-        self.reach_cache.insert(coord.0, v);
-        v
-    }
-
-    /// Whether a chunk whose reach is not resident full bakes from the chunks that are.
-    pub fn reach_mode(&self) -> ReachMode {
-        self.reach_mode
-    }
-
-    /// Sets [`BakeQueue::reach_mode`]. A change drops the cached reach verdicts: under
-    /// [`ReachMode::Full`] a walk stops at the first chunk not resident full, so its
-    /// [`Reach::Partial`] does not say that nothing in the reach waits to upload.
-    pub fn set_reach_mode(&mut self, mode: ReachMode) {
-        if mode != self.reach_mode {
-            self.reach_mode = mode;
-            self.reach_cache.clear();
         }
     }
 
@@ -754,126 +775,6 @@ impl BakeQueue {
         }
     }
 
-    /// [`BakeQueue::bakeable`]'s reach verdict, before the columns.
-    fn bakeable_reach(
-        &mut self,
-        run: &BakeRun<'_>,
-        coord: ChunkCoord,
-        lr: i32,
-        view: &QueueView<'_>,
-        eye: [i32; 3],
-    ) -> Option<bool> {
-        match self.reach_cached(run, coord, lr, view.resident) {
-            Reach::Ready => Some(false),
-            Reach::Partial
-                if self.reach_mode == ReachMode::Partial
-                    && view
-                        .full_radius
-                        .is_some_and(|r| reach_crosses(coord, eye, lr, r)) =>
-            {
-                Some(true)
-            }
-            _ => None,
-        }
-    }
-
-    /// Re-queues as a refinement each chunk flagged partial (its block, or its job's) within
-    /// whose reach a chunk of `changed` is now held full: a chunk arriving, or a held one
-    /// changing. `None` (the changes went untracked) re-queues every flagged chunk. Nothing to
-    /// do under [`ReachMode::Full`], which flags none.
-    pub(super) fn requeue_partial(&mut self, gpu: &GpuWorld, changed: Option<&[ChunkCoord]>) {
-        if self.partial.is_empty() && self.job_partial.is_empty() {
-            return;
-        }
-        let due: Vec<[i32; 3]> = match changed {
-            None => self
-                .partial
-                .iter()
-                .chain(self.job_partial.iter())
-                .copied()
-                .collect(),
-            Some(ch) => {
-                let lr = gpu.light_radius();
-                let held: ChunkSet = ch
-                    .iter()
-                    .filter(|c| gpu.is_mirrored(**c) && !gpu.is_lod(**c))
-                    .map(|c| c.0)
-                    .collect();
-                if held.is_empty() {
-                    return;
-                }
-                let flagged =
-                    |c: &[i32; 3]| self.partial.contains(c) || self.job_partial.contains(c);
-                let mut due = Vec::new();
-                // Each side walks its reach over the other's set: the smaller side walks.
-                if self.partial.len() + self.job_partial.len() <= held.len() {
-                    for p in self.partial.iter().chain(self.job_partial.iter()) {
-                        let near = reach_offsets(lr)
-                            .any(|o| held.contains(&[p[0] + o[0], p[1] + o[1], p[2] + o[2]]));
-                        if near {
-                            due.push(*p);
-                        }
-                    }
-                } else {
-                    for n in &held {
-                        for o in reach_offsets(lr) {
-                            let p = [n[0] + o[0], n[1] + o[1], n[2] + o[2]];
-                            if flagged(&p) {
-                                due.push(p);
-                            }
-                        }
-                    }
-                }
-                due
-            }
-        };
-        for p in due {
-            if self.partial_due.insert(p) {
-                self.stats.partial_requeued += 1;
-                self.touched.insert(p);
-                self.counted_idle = false;
-                self.quiet_until = self.steps;
-            }
-        }
-    }
-
-    /// Drops the cached reach verdicts within `lr + 1` chunks (Chebyshev) of a chunk of
-    /// `changed`; too many pairs to compare drop them all.
-    pub(super) fn drop_reach(&mut self, changed: &[ChunkCoord], lr: i32) {
-        if changed.is_empty() || self.reach_cache.is_empty() {
-            return;
-        }
-        if changed.len().saturating_mul(self.reach_cache.len()) > 1 << 22 {
-            self.reach_cache.clear();
-            return;
-        }
-        let r = lr + 1;
-        // The verdicts within `r` (Chebyshev) of a changed chunk go. Removing each changed
-        // chunk's neighbourhood by key costs `(2 r + 1)^3` lookups a change; a scan of the cache
-        // costs its length times the changes. In a flight a few chunks change a step against
-        // thousands of cached verdicts, so the keys are removed directly unless the scan is
-        // smaller. Either way the same verdicts go.
-        let side = (2 * r + 1) as usize;
-        if changed.len().saturating_mul(side * side * side) < self.reach_cache.len() {
-            for n in changed {
-                for dz in -r..=r {
-                    for dy in -r..=r {
-                        for dx in -r..=r {
-                            self.reach_cache
-                                .remove(&[n.0[0] + dx, n.0[1] + dy, n.0[2] + dz]);
-                        }
-                    }
-                }
-            }
-            return;
-        }
-        self.reach_cache.retain(|c, _| {
-            !changed
-                .iter()
-                .any(|n| (0..3).all(|k| (n.0[k] - c[k]).abs() <= r))
-        });
-    }
-
     pub fn stats(&self) -> QueueStats {
         self.stats
     }
@@ -901,6 +802,15 @@ impl BakeQueue {
         std::mem::take(&mut self.angle_needs)
     }
 
+    /// The chunks a move of the store's window dropped (`dropped`, [`Store::rewindow`]): their
+    /// block counts go, and they are read again at the next opening.
+    pub(super) fn rewindowed(&mut self, dropped: Vec<[i32; 3]>) {
+        for c in &dropped {
+            self.block_count.remove(c);
+        }
+        self.touched.extend(dropped);
+    }
+
     /// Asks the next opening for the view's census: [`QueueStats::view_waiting`],
     /// [`QueueStats::weight_census`], [`QueueStats::cone_only`], [`QueueStats::view_median`]
     /// and [`QueueStats::view_reach`] keep the last census's values until then. A caller that
@@ -908,6 +818,29 @@ impl BakeQueue {
     /// them at every opening.
     pub fn request_census(&mut self) {
         self.census_due = true;
+    }
+
+    /// The shells the stream workers' map holds and their bytes (0, 0 before the first worker
+    /// result): a diagnostic that takes the workers' lock, so a caller reads it on its own
+    /// cadence (a per-second line), not every frame; the step never does.
+    pub fn shells(&self) -> (u64, u64) {
+        let (n, b) = self.sealed.shells();
+        (n as u64, b as u64)
+    }
+
+    /// The samples `c` still needs (class 1 with a block, `coarse` a coarse one): its brick
+    /// directions ([`ChunkMasks::dirs_bound`] from its prepared masks, else six a brick) at its
+    /// band's count ([`BakeQueue::want`]), and at the coarse count too where its first pass is
+    /// still to come and is the coarse one.
+    pub(super) fn need_samples(&self, c: [i32; 3], class: u8, eye: [i32; 3]) -> u64 {
+        let dirs = self
+            .prepared
+            .get(&c)
+            .map_or(CHUNK_BRICKS as u64 * 6, |m| m.masks.dirs_bound());
+        let want = self.want(c);
+        let first = self.count_for(c, class, eye).0;
+        let per = u64::from(want) + if first < want { u64::from(first) } else { 0 };
+        dirs * per
     }
 
     /// Where `c` lies against `view` from the camera's chunk `eye`: [`VIEW_SHELL`],
@@ -942,6 +875,7 @@ impl BakeQueue {
             ("reach", self.reach.contains(&c)),
             ("listed", self.listed.contains_key(&c)),
             ("faceless", self.faceless.contains(&c)),
+            ("sealed", self.sealed.holds(c)),
             ("blocked", self.blocked.contains_key(&c)),
             ("job_coarse", self.job_coarse.contains_key(&c)),
             ("stale", self.stale.contains(&c)),
@@ -952,6 +886,7 @@ impl BakeQueue {
             ("job_provisional", self.job_provisional.contains(&c)),
             ("provisional_due", self.provisional_due.contains(&c)),
             ("keys", self.keys.holds(&c)),
+            ("zeroed", self.zeroed.contains(&c)),
         ]
         .into_iter()
         .filter_map(|(name, held)| held.then_some(name))
@@ -988,8 +923,9 @@ impl BakeQueue {
     /// Whether `c` holds its block at the full count or is known to have none: no face, or
     /// (`absent`) no chunk.
     pub fn settled(&self, store: &Store, c: ChunkCoord, absent: bool) -> bool {
-        ((store.blocks.contains_key(&c.0) && !store.is_coarse(c))
+        ((store.blocks.contains_key(&c.0) && !self.lesser(store, c.0))
             || self.faceless.contains(&c.0)
+            || self.sealed.holds(c.0)
             || absent)
             && !self.lp.chunks().any(|j| j == c)
             && !self.digs.contains_key(&c.0)
@@ -1003,6 +939,7 @@ impl BakeQueue {
     pub fn passed(&self, store: &Store, c: ChunkCoord) -> bool {
         store.blocks.contains_key(&c.0)
             || self.faceless.contains(&c.0)
+            || self.sealed.holds(c.0)
             || self.blocked.contains_key(&c.0)
     }
 
@@ -1035,9 +972,13 @@ impl BakeQueue {
             self.stats.hook_chunks += 1;
             self.stats.hook_ns += m.ns;
             self.stats.hook_max_ns = self.stats.hook_max_ns.max(m.ns);
+            self.stats.seal_ns += m.seal_ns;
+            self.stats.seal_max_ns = self.stats.seal_max_ns.max(m.seal_ns);
             if m.classes.as_slice() != classes {
                 continue;
             }
+            let changed = self.sealed.take(&m);
+            self.touched.extend(changed);
             self.prepared_bytes += m.masks.bytes();
             if let Some(old) = self.prepared.insert(c.0, m) {
                 self.prepared_bytes -= old.masks.bytes();
@@ -1072,6 +1013,7 @@ impl BakeQueue {
     /// box's rings are read at the next step.
     pub fn invalidate(&mut self, min: [i32; 3], max: [i32; 3]) {
         self.boxes.push([min, max]);
+        self.sealed.forget(min, max);
         let lo = min.map(|v| (v - 1).div_euclid(64));
         let hi = max.map(|v| (v + 1).div_euclid(64));
         for z in lo[2]..=hi[2] {

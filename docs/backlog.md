@@ -17,6 +17,18 @@ Rules:
 
 ## Next up
 
+### The record by rule at every opening, and the bake's key ray at its cap (2026-11-23)
+
+From [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 10 (its section "Phase 10 after its reading"; readings in `docs/plans/logs/0096.md`, "Phase 10a"). A small plan of its own, to run ahead of Plan 0099's Phase 1 (ruled at Plan 0096's close, 2026-11-23, v0.71.0); not drafted.
+
+- **The reading:** ADR-0080 rule 1's zero record is applied only to a first bake with a full reach under final columns, so it answered 266, 241, 3 and 6 chunks on the four runs; of the jobs opened before the in-view landing it would have answered 11.4 % (RTX forest), 20.0 % (RTX hills), 12.0 % (RENOIR forest) and 10.1 % (RENOIR hills), and 5.1, 8.9, 5.1 and 6.5 % of the samples, mostly chunks with a partial reach. The win is bounded by those shares: about 1.4 s of the RENOIR forest's 27.3 and under 4 s of the RTX's 36.5 (arithmetic).
+- **First, the bake's key ray:** a key ray that reaches the job's radius without rock counts lit (`bake.wgsl`), so a floor under a closed cave taller than the radius would bake sunlit where the column clause says no sky. **Confirmed** by Plan 0096 Phase 10c (`7b24002f`, lavapipe: the job's record reads key 255 on 64 of 64 floor faces under a closed roof, the rule's 0). The fix is the column clause at the key ray's cap; it changes record bytes and what ADR-0079's bake writes, and ADR-0079 is accepted, so **it takes an ADR superseding that clause, drafted with this plan**. An image question: the owner's word on its place is owed (this plan's first phase, recommended, or a fix pass on Plan 0098).
+- **Then the rule at every opening:** Plan 0096's Phase 10b as written, cases (1), (2) and (3), with fact (i) restated (every change of a top is a mirror change the re-list reads; a full chunk arriving over its LOD can lower a top) and the audit on the real scenes (every ruled chunk also baked and compared, 0 differ). ADR-0080's rule 1 sentence on the column map's finality is superseded there.
+
+### The bake step off the main thread (2026-11-22)
+
+Taken by [Plan 0099](plans/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) and ADR-0083, approved 2026-11-22; its lane after Plan 0087.
+
 ### Distant trees that do not wobble: a stable far representation (owner, 2026-11-22)
 
 What is left of the wobble after Plan 0098's calm picks is distant trees while moving: sparse
@@ -47,11 +59,11 @@ ugly; 1 with Plan 0033. Pick up after Plan 0098's W2 shows what its two built ar
 
 ### The light placement's eviction scan in a windowed glide
 
-Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 7: the first-fit index and a distance-ordered victim index, the bytes asserted equal, a headless glide with a shrunk light buffer as the reproduction; the figures moved into the plan's context.
+**Done in part** by [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phases 7 and 7b (closed 2026-11-23, v0.71.0; the owner's glide: "no stagger"; what is left is under "Plan 0096's leftovers"). As taken 2026-11-20, Phase 7: the first-fit index and a distance-ordered victim index, the bytes asserted equal, a headless glide with a shrunk light buffer as the reproduction; the figures moved into the plan's context.
 
 ### The CPU settle outdoors: the bake queue's step on a world with no emitter, and the forest's sync p99
 
-Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) and [ADR-0080](adrs/0080-the-live-queue-bakes-what-the-image-reads-a-record-by-rule-a-tier-by-size-on-screen-and-a-drain-slice.md): a record by rule for a chunk with no face or buried with no emitter in reach (Phase 2), the step off the queue's depth (Phase 5), the forest's sync p99 (Phase 7); the readings quoted in the plan's context.
+Taken by [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) (closed 2026-11-23, v0.71.0) and [ADR-0080](adrs/0080-the-live-queue-bakes-what-the-image-reads-a-record-by-rule-a-tier-by-size-on-screen-and-a-drain-slice.md): a record by rule for a chunk with no face or buried with no emitter in reach (Phase 2), the step off the queue's depth (Phase 5), the forest's sync p99 (Phase 7); the readings quoted in the plan's context. What Phase 5 left (2026-11-22): the step no longer grows with the depth (candidates scored a step 0 to 56 of a pool of 9 361, the drained step 0.065 ms p50), but while baking it costs per job opened (`list`, `collect`, `submit`, `fades`, `summaries`; regime B 20.7 / 55.0 ms p50/p99 on the RTX forest, loaded). **That per-job cost is re-pointed (Plan 0096 Phase 9) at [Plan 0099](plans/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) (the bake step off the main thread).**
 
 ### The streamed benches on Windows: CPU frames of 20 to 256 ms on a desktop
 
@@ -81,7 +93,7 @@ Windows and a Linux screenshot of the same pose by pixel values, and swap `fs_sr
 
 ### The sync's `alloc` stage: the sync plan after the eviction scan
 
-Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 7 (`alloc` p99 at most 3.0 ms, `update + poll + sync` p99 at most 16.6 in the tester cave bench), after Phase 1 (6)'s profile of the stage.
+Read, not met, by [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) (closed 2026-11-23, v0.71.0: `alloc` p99 6.42 ms against 3.0, `update + poll + sync` 14.82 against 16.6, met). As taken 2026-11-20, Phase 7 (`alloc` p99 at most 3.0 ms, `update + poll + sync` p99 at most 16.6 in the tester cave bench), after Phase 1 (6)'s profile of the stage. Read 2026-11-22 at Plan 0096 Phase 7 (`8bb8857b`, RTX host, cave bench, `docs/plans/logs/0096.md`): `alloc` p99 9.4 ms of a sync p99 19.4 on the Phase 6 and Phase 7 binaries alike, and the frame-pointer profile spreads it over the per-brick path as a whole (`upload_record`'s brick loop, `upload_brick`, `fill_slot`, the belt view's drop), about 9.5 µs a brick packed, no item a third of it. The miss is disclosed in that plan (architect amendment, owner confirm owed) and this entry closes into "Slot words packed on the workers" below, whose mechanism is the fix.
 
 ### Done: test tiers by marks, not by copied lists
 
@@ -263,6 +275,21 @@ Found at the close ([Plan 0083](plans/done/0083-anything-from-a-vox-palette-mate
 
 Found at the close ([Plan 0094](plans/done/0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md), v0.68.0); none blocked it, each is a small fix when the area is next open. **A tautology:** `the_tunnel_exposes_for_its_walls_by_day` (`apps/flythrough/tests/gpu_outdoor/ceiling.rs`, soak) asserts the noon-midnight luma clause only inside `if ratio.abs() <= 0.5`, so it can never fail; it reads +0.063 EV since Phase 8a, so a plain `assert!` is the fix (**done 2026-11-22, Plan 0097 Phase 3b:** a plain `assert!` on the centre's linear luminance, the tone curve inverted). **A bar that does not see its mechanism:** `a_rare_hit_is_clamped` (`crates/vxe-render/tests/gpu_sun/history.rs`, soak) passes with the clamp off too (largest 0.1996 both ways); a clause on what the clamp changes, or a rig with more than one hit, would defend it. **Unread costs:** the no-record prior's arm A on the RENOIR at 1080p's half tier during a stamp's bake (a linear guess of 14.6 ms, `docs/nfr/02-frame-budget.md`; Plan 0096's RENOIR readings can take it) and the no-ray fade's temporal and composite cost.
 
+### Plan 0096's leftovers (close review's rulings and the close, 2026-11-23)
+
+Routed by the architect's amendment at the close review of [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) (its section "The close review's rulings"); none blocked the close (v0.71.0). The close's own are the last five.
+
+- **The glide's `light place` where a default buffer evicts.** Phase 7's indexes and Phase 7b's stop took the eviction scan from up to 1 186 ms a sync to 2.16 / 6.19 ms p50 / p99 in the owner's windowed cave glide (the default buffer, 158 / 1 279 chunks evicted a sync) and 6.84 / 8.84 on the 1/16 stress rig (loaded), against "under 2 ms in a glide that evicts"; the bench, which evicts nothing, reads 1.07. What is left is the wanted set's collection (58 %) and sort (40 %) at every sync (`place_lights`, `crates/vxe-render/src/gpu_world/lights.rs`). The lever: keep the wanted set ordered across syncs and re-sort on a focus move only. **Taken as a phase of the "Slot words packed on the workers" plan** (ADR-0056) when it is drafted: the same thread, bench and glide.
+- **The listing census reads no bands.** `--queue-census` counts every surface chunk as near ("mid 0, far 0" on all four runs of Phase 9), so it is taken without the far-normal band; the in-view line's bands are right. Give the census the view's `Bands`, with a CPU test that a synthetic listing of 4 near, 4 mid and 4 far chunks prints those counts.
+- **Faceless chunks at the residency's edge reach the listing** (16, 27, 0 and 8 on the four runs): the worker's verdict counts a neighbour not streamed as open, and the outer neighbour of an edge chunk never streams. One listing each, no job. Left as is unless a census shows the count growing with the radius faster than the sphere's surface.
+- **The Portable profile's 720p is stretched to the window's shape** (the fly-through, `cli/settings.rs` `fixed_output`): a 16:9 frame scaled to 2530 x 1378 is about 3 % wide, no letterbox. The fix proposed: the hint's pixel count at the window's aspect (1 301 x 708 there), so no stretch, no bars, the same budget. With it, if the owner picks it (the plan's question 2): the fixed output as a readable row of the engine's profile, so a game that picks `Profile::Portable` is told.
+- **Phase 10b** left the plan at its reading: see "The record by rule at every opening" under Next up.
+- **The dig under Portable reads grainy, with bright spots (owner, window W2 run 7b, 2026-11-23).** On the RENOIR at Portable the fresh hole "lights up", blinks, shows bright single-voxel specks, and once landed reads "yes grainy" (`7b-radeon-dig.png` in Plan 0098's `live/window98b/`). Not attributed: the ring bakes at Portable's near tier (1 024 samples a brick direction), the march runs at 853 x 480 stretched to the window, the still's queue had 7 jobs running, and the binary had none of Plan 0098's calm picks. **The next window on the merged tree separates them, with no code:** the dig under Portable with calm at `--bake-tiers 1024,256,256`, `2048,256,256` and `4096,256,256`, and the 1 024 arm again at `--render window`. If the count is what shows, the fix is the Portable row's near count with the in-view drain re-read (Plan 0096's Phase 9 ruling 3), not a dig exception; if the march, it is the profile's size. Also to check there: the still's `light:` line reads "bricks 8/4096 ... near 2 at 4096" under Portable (whether that line prints the profile's tier was not checked).
+- **The Portable picture under calm is unjudged.** Run 7's "wobble is too hard" was on a binary without Plan 0098's calm picks, at a 480-line march. Same window: the forest at Portable with calm.
+- **The fixed output as a row of the engine's profile** (the close's ruling 2): `RenderSettings` carries a row true for Portable, the fly-through's `fixed_output` reads it, a CPU test reads the row per profile. With the aspect item above; the owner called the stretch itself acceptable at W2, so neither is urgent.
+- **The per-phase GPU run picks its binaries from the changed files** (the harness's; awaits the owner's go). Five tests in `gpu_queue` and `gpu_queue_reach` stayed red from Plan 0096's Phase 4 to its tip's gate, because the phases that changed `bake/queue/` did not name those binaries. `test-changed.mjs` adds, to the named binaries, every `gpu_*` binary whose test file or support module names a changed module's public items (or a path map kept beside the script), and the lane rules say a phase's named binaries are a floor.
+- **The RENOIR forest's one stalled drain** (37.6 s in view against 27.1 and 27.0; the drawn share fell to 0.180 once): no cause named. An open reading for Plan 0099, where the submit moves to the bake thread.
+
 ### Plan 0097's leftovers (close review, 2026-11-23)
 
 Found at the close ([Plan 0097](plans/done/0097-the-exposures-anchor-by-the-sky-around-the-camera-the-floor-record-under-the-eye-a-time-constant-and-the-canopys-shade.md), v0.70.0); none blocked it.
@@ -439,11 +466,11 @@ Parked 2026-11-10 at Plan 0060's Phase 1 stop rules, owed to the backlog at its 
 
 ### The queue step's remaining `filter` cost on a moving camera
 
-Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 5 (one walk of the mirror's change list for `gone`, `drop_reach`, `touched` and `forget`; the change count printed in Phase 1).
+**Done** by [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 5 (closed 2026-11-23, v0.71.0; as built `gone` and `forget` share one walk, the others keep theirs). As taken 2026-11-20: (one walk of the mirror's change list for `gone`, `drop_reach`, `touched` and `forget`; the change count printed in Phase 1).
 
 ### The RTX's submits draw less than their per-second slice
 
-Taken 2026-11-20 (draft, awaits the go) by [Plan 0096](plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 4: a lap on `plan_rounds`, `send` and the `IN_FLIGHT` wait, then the fix it names; the bar is 85 % of the granted slice drawn.
+Read by [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 4 (closed 2026-11-23, v0.71.0) and re-pointed, below: a lap on `plan_rounds`, `send` and the `IN_FLIGHT` wait, then the fix it names; the bar is 85 % of the granted slice drawn. Read 2026-11-22 (Plan 0096 Phase 4, `docs/plans/logs/0096.md`): the plans stop out of rounds, not at the cap or the slots; the submit is short of jobs because the opening admits at most `QUEUE_CHECKS` (16) candidates a step, each listed on the render thread. At the drain slice the submits draw 0.94 to 0.99 of it; at the per-second form (`second:150,0.25`) 0.60 to 0.69. **Re-pointed (Plan 0096 Phase 9) at [Plan 0099](plans/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) (the bake step off the main thread)**, which takes the opening's cap with the listing.
 
 ### The first-block fallback fade's CPU under `chain`
 
@@ -597,7 +624,7 @@ the baked light's shader waste and the queue's scan to
   1080, loaded; `docs/plans/logs/0061.md`, Phase 2 done-when 6). Routed at Plan 0061's close to
   Plan 0067 (the frame's cost) and Plan 0069 (a per-profile default for the weights is its
   question).
-- **The bake's slice and the queue's step have no line.** Taken 2026-11-20 by Plan 0096 (draft): a drain and a landed value for the slice, a step line, an in-view drain budget. 1.5 ms of GPU a frame while the queue
+- **The bake's slice and the queue's step have no line.** **Done** by Plan 0096 (closed 2026-11-23, v0.71.0): a drain and a landed value for the slice, a step line, an in-view drain budget, pinned in `docs/nfr.md` section 2 with their misses. 1.5 ms of GPU a frame while the queue
   works (max 10.8 ms on record) and 1.0 ms of CPU sit outside section 2's split. Give them a
   line at the next `docs/nfr.md` revision. Plan 0060's close left it: the step reads one of two
   states (about 1 and 9 ms p50), and Plan 0067 pins the state and reads the step.
@@ -726,7 +753,14 @@ read again at Plan 0074's Phase 4 with `light_note` cut (`docs/plans/logs/0074.m
 the tip cave's `size` p99 2.8 to 3.8 ms and `pack` 2 us, 17.1 to 17.9 % of the sync p99 on the
 RTX (16.5 to 21.1 ms) and 16.6 to 17.1 % on the Radeon (16.1 to 16.8), still under half;
 the lane's drafts (`live/p2_wire.py`, `live/p2-draft/`) stay untracked in the plan-0070
-worktree and leave with it.
+worktree and leave with it. **Read 2026-11-22 at Plan 0096 Phase 7 (`8bb8857b`, RTX host, cave
+bench):** with `light_note` and the eviction scan cut, `alloc` p99 is 9.4 ms of a sync p99 of
+19.4 (48 %) and its profile is the per-brick packing path as a whole (about 9.5 µs a brick,
+13 383 bricks at the slowest sync; `pack + size` p99 3.0 ms beside it): the rule is met in
+substance, since `alloc` is the packing this entry moves. **Pick up at Plan 0096's close:** its
+own plan under ADR-0056 (the Outcome extended with this reading), the lines it chases Plan 0096's
+bar 3 (`alloc` p99 3.0 ms, `update + poll + sync` p99 16.6, the forest at leaf fill 128 sync p99
+6). Architect's routing, owner confirm owed.
 
 ### The sync's `light_note` stage and the windowed glide's light walks
 
@@ -961,8 +995,8 @@ table: the arms' light pipelines 39 to 44 s inside their loading stage after the
 49 s). Plan 0096 takes two items: an engine `wgpu::PipelineCache` for hardware adapters in the
 app (the test-support cache read 29.4 s cold against 0.24 s warm on the RTX, 2.0 MB), and the
 default-off arms built in the background after the first world frame rather than inside the
-loading stage (the runtime pick's hitch with them). This entry leaves when 0096's phase takes
-them; the lavapipe compile-cost reading above stays here.
+loading stage (the runtime pick's hitch with them). **Plan 0096 closed (2026-11-23) without
+taking either** (its "What this plan does NOT do" names the pipeline cache as the backlog's); both stay here; the lavapipe compile-cost reading above stays here.
 
 ### Comment, manifest and index drift found by the 2026-11-12 review
 

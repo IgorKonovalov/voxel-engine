@@ -191,29 +191,52 @@ impl ChunkMasks {
 }
 
 /// The stream workers' hook (ADR-0017, `vxe_world::ChunkPrep`): each full chunk's
-/// [`ChunkMasks`] under the material classes it was made with, for [`list_faces_by`].
+/// [`ChunkMasks`] under the material classes it was made with, for [`list_faces_by`], and its
+/// no-face verdict and its neighbours' from the shared shells (ADR-0080, [`super::seal`]).
 pub struct FacePrep {
-    pub classes: Arc<Vec<u8>>,
+    pub(crate) classes: Arc<Vec<u8>>,
+    pub(crate) shells: SharedShells,
+}
+
+impl FacePrep {
+    /// A hook under `classes` ([`face_classes`]) with no shell yet.
+    pub fn new(classes: Arc<Vec<u8>>) -> Self {
+        Self {
+            classes,
+            shells: SharedShells::default(),
+        }
+    }
 }
 
 impl vxe_world::ChunkPrep for FacePrep {
-    fn prepare(&self, _coord: ChunkCoord, chunk: &Chunk) -> vxe_world::Prepared {
+    fn prepare(&self, coord: ChunkCoord, chunk: &Chunk) -> vxe_world::Prepared {
         let t = stopwatch();
         let masks = ChunkMasks::of(chunk, &self.classes);
+        let ns = (seconds_since(t) * 1e9) as u64;
+        let t = stopwatch();
+        let shell = Shell::of(&masks);
+        let verdicts = seal::lock(&self.shells).admit(coord.0, shell);
         vxe_world::Prepared(Arc::new(PreparedMasks {
             classes: self.classes.clone(),
             masks,
-            ns: (seconds_since(t) * 1e9) as u64,
+            ns,
+            seal_ns: (seconds_since(t) * 1e9) as u64,
+            verdicts,
+            shells: self.shells.clone(),
         }))
     }
 }
 
-/// What [`FacePrep`] hands back: the masks and the classes they were taken under, and the
-/// nanoseconds the worker took over them.
+/// What [`FacePrep`] hands back: the masks and the classes they were taken under, the
+/// nanoseconds the worker took over the masks and over the verdict (`seal_ns`: the shell and
+/// the shared map's update under its lock), the verdicts that load read, and the shells' handle.
 pub(crate) struct PreparedMasks {
     pub classes: Arc<Vec<u8>>,
     pub masks: ChunkMasks,
     pub ns: u64,
+    pub seal_ns: u64,
+    pub verdicts: Vec<Verdict>,
+    pub shells: SharedShells,
 }
 
 /// `chunk`'s faces, across brick and chunk borders: an opaque voxel's toward a voxel that is not

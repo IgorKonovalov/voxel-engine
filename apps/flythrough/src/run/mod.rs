@@ -365,7 +365,7 @@ impl Run {
 
     /// What [`build_gfx`] builds the run's GPU objects from, read from the run and the device.
     fn gfx_plan(&self, gpu: &Gpu) -> GfxPlan {
-        let output = self.args.render.unwrap_or(gpu.size);
+        let output = self.args.output_size(gpu.size);
         let (kind, scale, jitter) = self.args.upscaler_settings(self.modes.upscaler.mode);
         let streamed = self.stream.is_some();
         let mirror = if streamed {
@@ -432,19 +432,22 @@ impl Run {
         MirrorConfig {
             budget_bytes: self.mirror_budget(),
             light_radius: self.args.light.radius(),
+            light_samples: self.args.light_samples.unwrap_or(cfg.light_samples),
             ..cfg
         }
     }
 
-    /// Sizes the frame to the window (`gpu.size`) unless `--render` fixes it. While the
-    /// loading screen's worker holds the frame there is none to size: the hand-back sizes it.
+    /// Sizes the frame to the window (`gpu.size`) unless `--render` or the profile fixes it
+    /// (`Args::output_size`). While the loading screen's worker holds the frame there is none
+    /// to size: the hand-back sizes it.
     pub(crate) fn resized(&mut self, gpu: &Gpu) {
-        if let (Some(gfx), None) = (self.gfx.as_mut(), self.args.render)
-            && gfx.frame.output_size() != gpu.size
+        let output = self.args.output_size(gpu.size);
+        if let Some(gfx) = self.gfx.as_mut()
+            && gfx.frame.output_size() != output
         {
             let (_, scale, _) = self.args.upscaler_settings(self.modes.upscaler.mode);
             gfx.frame
-                .set_sizes(&gpu.device, scale.internal(gpu.size), gpu.size);
+                .set_sizes(&gpu.device, scale.internal(output), output);
         }
     }
 

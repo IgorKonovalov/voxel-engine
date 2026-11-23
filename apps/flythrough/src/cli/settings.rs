@@ -47,9 +47,77 @@ fn sections() -> Vec<Section<Parsing>> {
                     Ok(())
                 },
             ),
+            Flag::value(
+                &["--bake-tiers"],
+                "NEAR,MID,FAR",
+                "the live queue's samples a brick direction by a chunk's band on screen (the \
+                 far-normal band at the output's focal length), each 16 to 65536 [the profile's: \
+                 4096,1024,256 at floor]",
+                |p: &mut Parsing, v| {
+                    let n: Vec<u32> = v
+                        .string()
+                        .split(',')
+                        .map(|t| t.parse::<u32>().map_err(|e| e.to_string()))
+                        .collect::<Result<_, _>>()?;
+                    match n[..] {
+                        [a, b, c] if [a, b, c].iter().all(|x| (16..=65536).contains(x)) => {
+                            p.args.bake.tiers = [a, b, c];
+                            Ok(())
+                        }
+                        _ => Err("--bake-tiers takes NEAR,MID,FAR, each 16 to 65536".into()),
+                    }
+                },
+            ),
+            Flag::value(
+                &["--bake-drain"],
+                "off|DRAIN,LINE",
+                "the live queue's slice a frame in ms while a chunk in view waits for its tier's \
+                 record (at least the budget's) and once none does, each 0.1 to 100; off is the \
+                 budget alone [the profile's: 1.5,1 at floor, 6,1 at portable]",
+                |p: &mut Parsing, v| {
+                    p.args.bake.drain = vxe_render::Drain::parse(v.text)?;
+                    Ok(())
+                },
+            ),
+            Flag::value(
+                &["--light-hooks"],
+                "NAME[,NAME]",
+                "the light passes' reading hooks (a reading lever): keyoff (no key light ray), \
+                 skyalways (the sky ray cast whatever the record) [none]",
+                |p: &mut Parsing, v| {
+                    for name in v.string().split(',') {
+                        match name {
+                            "keyoff" => p.args.light_hooks.key_off = true,
+                            "skyalways" => p.args.light_hooks.sky_ray_always = true,
+                            _ => {
+                                return Err(format!(
+                                    "--light-hooks takes keyoff or skyalways, not {name}"
+                                ));
+                            }
+                        }
+                    }
+                    Ok(())
+                },
+            ),
+            Flag::value(
+                &["--light-samples"],
+                "N",
+                "the mirror's light-sample buffer in samples, 1024 to 1048576 (a reading lever: \
+                 a smaller buffer fills and evicts) [1048576]",
+                |p: &mut Parsing, v| {
+                    p.args.light_samples = Some(v.parse_if(
+                        |n: &u32| (1024..=vxe_render::DEFAULT_LIGHT_SAMPLES).contains(n),
+                        "1024 to 1048576",
+                    )?);
+                    Ok(())
+                },
+            ),
         ],
     }]
 }
+
+/// The window's first size, and a headless target's, with no `--render` and no profile hint.
+const DEFAULT_SURFACE: [u32; 2] = [1280, 720];
 
 /// The names `--profile` takes.
 const PROFILE_NAMES: &str = "floor, portable, performance or high";
@@ -90,8 +158,45 @@ impl Args {
             });
         self.residency = s.build.residency;
         self.bake.budget = s.bake.budget;
+        self.bake.tiers = s.bake.tiers;
+        self.bake.drain = s.bake.drain;
         self.light_cap = s.light_cap;
         self.output_hint = s.output_hint;
+    }
+
+    /// `--render WxH`'s size; none without the flag or under `--render window`.
+    pub(crate) fn render_fixed(&self) -> Option<[u32; 2]> {
+        match self.render {
+            Some(super::RenderSize::Fixed(s)) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// The output size a window does not change, the window scaling the frame to it:
+    /// `--render WxH`'s; none under `--render window`; without the flag the portable
+    /// profile's hint (it renders at 720p in a window too, so the slow adapter draws the
+    /// pixels its frame line names), none for the other profiles (they draw at the window's).
+    pub(crate) fn fixed_output(&self) -> Option<[u32; 2]> {
+        match self.render {
+            Some(super::RenderSize::Fixed(s)) => Some(s),
+            Some(super::RenderSize::Window) => None,
+            None => self
+                .output_hint
+                .filter(|_| self.profile == Profile::Portable),
+        }
+    }
+
+    /// The frame's output size on a surface (a window, or a headless target) of `surface`.
+    pub(crate) fn output_size(&self, surface: [u32; 2]) -> [u32; 2] {
+        self.fixed_output().unwrap_or(surface)
+    }
+
+    /// The size the window opens at, or the headless target's: `--render WxH`'s, else the
+    /// profile's hint, else 1280 x 720.
+    pub(crate) fn surface_size(&self) -> [u32; 2] {
+        self.render_fixed()
+            .or(self.output_hint)
+            .unwrap_or(DEFAULT_SURFACE)
     }
 
     /// The streamed mirror's budget unless `--mirror-budget` is given: the profile's.
@@ -169,6 +274,8 @@ impl Args {
                 reach: b.reach,
                 edit_ms: b.edit_ms,
                 dig_reach: b.dig_reach,
+                tiers: b.tiers,
+                drain: b.drain,
             },
             build: BuildSettings {
                 mirror_budget_bytes: self
@@ -183,7 +290,7 @@ impl Args {
                 workers: self.workers,
                 ..BuildSettings::default()
             },
-            output_hint: self.render.or(self.output_hint),
+            output_hint: self.render_fixed().or(self.output_hint),
             mark_colours: vxe_render::MARK_COLOURS,
         }
     }
@@ -316,5 +423,43 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// In a window the portable profile renders at its hint, 1280 x 720, and the window
+    /// scales it; the other profiles, and no profile, at the window's size; `--render WxH`
+    /// fixes the output under any profile and `--render window` gives the portable profile
+    /// the window's size. The window opens at the fixed size or the hint.
+    #[test]
+    fn the_output_follows_the_window_but_for_portable_and_render_overrides_both_ways() {
+        let window = [2530, 1378];
+        let out = |a: &[&str]| {
+            let a = parse_args_from(argv(a)).expect("parses");
+            (a.output_size(window), a.surface_size())
+        };
+        assert_eq!(out(&[]), (window, [1280, 720]), "no profile");
+        for p in Profile::ALL {
+            let hint = RenderSettings::profile(p).output_hint;
+            let (output, surface) = out(&["--profile", p.name()]);
+            let want = if p == Profile::Portable {
+                [1280, 720]
+            } else {
+                window
+            };
+            assert_eq!(output, want, "{}", p.name());
+            assert_eq!(surface, hint.unwrap_or([1280, 720]), "{}", p.name());
+            assert_eq!(
+                out(&["--profile", p.name(), "--render", "800x600"]),
+                ([800, 600], [800, 600]),
+                "{} with --render 800x600",
+                p.name()
+            );
+            assert_eq!(
+                out(&["--render", "window", "--profile", p.name()]).0,
+                window,
+                "{} with --render window",
+                p.name()
+            );
+        }
+        assert!(parse_args_from(argv(&["--render", "wide"])).is_err());
     }
 }

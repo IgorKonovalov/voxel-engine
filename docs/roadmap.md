@@ -759,7 +759,7 @@ a cheap query.
   positional voice as an audio source through M4's occlusion.
 - **ADRs expected:** transport; voice codec.
 
-### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0; Plan 0032 closed 2026-11-17, v0.61.0; Plan 0086 closed 2026-11-19, v0.67.0; Plan 0094 closed 2026-11-20, v0.68.0; Plan 0095 closed 2026-11-21, v0.69.0; Plan 0097 closed 2026-11-23, v0.70.0)
+### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0; Plan 0032 closed 2026-11-17, v0.61.0; Plan 0086 closed 2026-11-19, v0.67.0; Plan 0094 closed 2026-11-20, v0.68.0; Plan 0095 closed 2026-11-21, v0.69.0; Plan 0097 closed 2026-11-23, v0.70.0; Plan 0096 closed 2026-11-23, v0.71.0)
 
 The open-sky half of the "Floor, profiles and scene scale" decision, as general engine
 mechanisms: the first consumer is underground, so nothing here is on its P0 list, and terrain
@@ -829,6 +829,21 @@ against the baked store: no probe or store term takes sun or sky light.
   under the brightest percent of the view. Three owner windows (97: "deep shade was better",
   97b, 97c: "1a looks great"). Left open: whether highlight protection wants its own ADR (the
   owner), the time constant's 1 s unjudged by eye, the near jumps after a stop (Plan 0098).
+- **The bake queue's drain as a budget** ([Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md),
+  closed 2026-11-23, v0.71.0; ADR-0080 accepted with an Outcome): a chunk with no face or
+  buried with no emitter in reach gets its record without a GPU job, every other chunk bakes at
+  a sample tier set by its size on screen (the far tiers from the chunks resident), and the
+  slice holds a drain value while in-view work waits; the queue's step no longer grows with
+  its depth and the eviction scan's stagger is gone (the owner: "no stagger"). The outdoor
+  queue now lands, which it never did. **Its lines are mostly missed and disclosed:** the RTX
+  lands the forest's view in 36.5 s against 10 at about 30 fps, bound by the step's CPU per
+  job on the render thread (Plan 0099); the RENOIR at Portable lands in 27.1 s against 30 and
+  draws 23.7 fps in a window (its march at 853 x 480, FSR 2 to 1280 x 720, stretched; the
+  owner: softer, "acceptable"). Two owner windows (W96, W2: the far tiers' "shadows are
+  fine"). Left open: the dig under Portable (bright spots, "grainy", not attributed), the
+  record by rule at every opening and the bake's key ray at its cap (a small plan ahead of
+  Plan 0099), `alloc` and the glide's `light place` (the slot words on the workers), the
+  RENOIR's hit pass (the beam prepass).
 - **A surface detail layer** ([Plan 0081](plans/0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md),
   drafted 2026-11-16, awaits the owner's go; ADR-0063 proposed): grass, moss, strands,
   fungus caps, flowers, pebbles and snow tufts as a procedural shell marched in the hit pass

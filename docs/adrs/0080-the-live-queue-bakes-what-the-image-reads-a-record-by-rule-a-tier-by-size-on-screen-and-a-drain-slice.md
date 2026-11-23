@@ -1,11 +1,11 @@
 # ADR-0080: The live queue bakes what the image reads: a record by rule where no ray is needed, a sample tier by the chunk's size on screen, and a slice that drains what is in view
 
-> **Status:** proposed. **Amended 2026-11-20 (owner)**, while proposed, at Plan 0095's window
+> **Status:** accepted 2026-11-23 at Plan 0096's close (v0.71.0), with an Outcome. **Amended 2026-11-20 (owner)**, while proposed, at Plan 0095's window
 > W1: the far tiers gain a reach clause (rule 4), since under the default reach rule no chunk
 > past about 11.2 chunks ever bakes and the far tier would have had nothing to bake; see
 > "Context, amended" and Alternatives E to G
 > **Date:** 2026-11-20
-> **Related plan(s):** [Plan 0096](../plans/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md)
+> **Related plan(s):** [Plan 0096](../plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md)
 > **Builds on:** [ADR-0046](0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
 > (the per-chunk store and its queue), [ADR-0048](0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md)
 > (the order by the view, the withdrawal), [ADR-0052](0052-the-live-queues-bake-budget-is-time-per-second-not-a-slice-per-frame.md)
@@ -195,5 +195,46 @@ trigger; kept for the dig's ring, whose near count wants the full reach.
 
 ## Outcome
 
-_(Added only at acceptance if implementation falsified something above. Dated. Never rewrite the
-body.)_
+**2026-11-23, at Plan 0096's close.** The four rules are built as written. The readings are in
+`docs/nfr.md` section 2 ("The bake queue's drain and step") and `docs/plans/logs/0096.md`;
+what the implementation falsified or left open:
+
+- **Falsified: "three rules, in the order they pay", for rule 1.** The zero record answered
+  236 of the 3 540 buried chunks of the RTX's forest and 1 to 12 of 1 019 on the RENOIR,
+  because the opening applies it only to a first bake with a full reach under final columns;
+  the others take GPU jobs, some twice (a provisional bake and its catch-up). Applied at every
+  opening it would have answered 10.1 to 20.0 % of the jobs opened before the in-view landing
+  and 5.1 to 8.9 % of their samples (Plan 0096 Phase 10a). The no-face half of the rule moved
+  to the stream workers and holds. Widening the zero record is a plan of its own
+  (`docs/backlog.md`, "The record by rule at every opening"); **the sentence "where the column
+  map is not final for the footprint the chunk is baked, not ruled" is what that plan's ADR
+  supersedes** (what exactness needs is that every change of a top over the footprint is a
+  mirror change the re-list reads, which holds).
+- **The rule and a GPU bake disagree under a closed cave taller than the job's radius, and the
+  rule is the side that is right.** The bake's key ray counts lit where it reaches the radius
+  in air (64 of 64 floor faces on Plan 0096 Phase 10c's rig, the rule's record 0). That is
+  ADR-0079's bake, not this rule; its fix takes an ADR superseding that clause.
+- **Falsified: the in-view budget on the RTX.** The landed state exists and is reached (before
+  the plan the forest never drained in 30 000 frames), but the RTX at Floor lands its view in
+  36.5 s (forest) and 12.2 s (hills) against 10; the RENOIR at Portable in 27.1 and 16.7 s
+  against 30. The RTX's bound is not the slice but the queue's CPU per job opened on the
+  render thread (the step 15.5 / 27.9 ms p50 / p99 while baking, about 30 fps in the owner's
+  window). ADR-0083 (Plan 0099) takes it; the lines stay as proposed, disclosed as missed.
+- **Rule 3's drain value was not picked by eye.** The owner declined ("wherever best
+  performance on synthetic") and set a rule instead: frame rate first, an arm whose in-view
+  drain is over twice the shortest is out. It picked 1.5 ms at Floor and 6.0 at Portable.
+  Floor's 1.5 equals the default before this ADR, so on Floor rule 3 changes nothing while
+  in-view work waits and lowers the slice to 1.0 once it has landed. The RENOIR's 6.0 rests
+  on the median of three quiet runs, a reading defined after one stalled run (37.6 s) had
+  been seen.
+- **The far tier's look is accepted.** Floor 4 096 / 1 024 / 256 and Portable 1 024 / 256 /
+  256; the owner, shown the profile's tiers against 4 096 in every band: "shadows are fine"
+  (window W2, 2026-11-23). The "Negative" bullet's fallback (the mid count as the far tier) is
+  not taken.
+- **Open: the near tier under Portable.** A dig's ring bakes at the profile's near tier
+  (1 024 at Portable), as rule 2 says. At W2 the owner read the fresh hole on the RENOIR as
+  bright spots and, landed, as grainy. Not attributed: that picture is marched at 853 x 480
+  and stretched to the window, on a binary without Plan 0098's calm picks. If a reading names
+  the count, the answer is the Portable row's near count, not a dig exception.
+- **Rule 4 as built:** partial far records land and are refined by the band promotion; the
+  owner's windows raised nothing on the seam at the sphere or on a partial record's look.

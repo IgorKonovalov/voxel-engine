@@ -16,6 +16,8 @@ impl Run {
         s.upscaler = UpscalerChoice::of(&kind);
         (s.scale, s.jitter) = (scale, jitter);
         s.bake.budget = self.modes.queue.budget;
+        s.bake.tiers = self.args.bake.tiers;
+        s.bake.drain = self.args.bake.drain;
         s
     }
 
@@ -30,6 +32,7 @@ impl Run {
             .unwrap_or(0);
         let next = Profile::ALL[(i + 1) % Profile::ALL.len()];
         let to = RenderSettings::profile(next);
+        let fixed = self.args.fixed_output();
         self.args.profile = next;
         self.args.look.translucent_layers = to.look.translucent_layers;
         self.modes.look.translucent_layers = to.look.translucent_layers;
@@ -37,6 +40,9 @@ impl Run {
         self.modes.lighting.lamp_bounce = to.lighting.lamp_bounce;
         self.args.light_cap = to.light_cap;
         self.args.output_hint = to.output_hint;
+        // The portable profile's output is its hint in a window too: a change resizes the
+        // frame with the upscaler's rebuild.
+        self.upscaler_changed |= self.args.fixed_output() != fixed;
         if self.args.look.internal_scale != to.scale {
             self.args.look.internal_scale = to.scale;
             self.modes.scale = to.scale.name();
@@ -45,9 +51,13 @@ impl Run {
             }
         }
         self.args.bake.budget = to.bake.budget;
+        self.args.bake.tiers = to.bake.tiers;
+        self.args.bake.drain = to.bake.drain;
         self.modes.queue.budget = to.bake.budget;
         if let Some(g) = self.gfx.as_mut() {
             g.frame.set_bake_budget(to.bake.budget);
+            g.frame.set_bake_tiers(to.bake.tiers);
+            g.frame.set_bake_drain(to.bake.drain);
         }
         let pending = to.changed_fields(&self.live_settings());
         self.modes.profile = self.args.profile_row(&self.live_settings(), &pending);

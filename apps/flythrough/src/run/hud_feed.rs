@@ -522,7 +522,7 @@ impl Run {
                 write_queue_note(&mut row.store_note, self.queue.stats);
                 row.modes.clear();
                 self.modes.write_line(&mut row.modes);
-                row.upscale = g.upscale;
+                row.sizes = g.sizes;
             }
             _ => self.hud.stats.lighting = None,
         }
@@ -574,6 +574,7 @@ impl Run {
         hud::write_queue_row(
             queue,
             &self.queue.stats.unwrap_or_default(),
+            self.queue.line_rate,
             self.queue.line_step_p50,
         );
         queue.push_str("; ");
@@ -806,7 +807,8 @@ impl Run {
     /// Formats this frame's rows and strip into the overlay, timing the formatting; the belt
     /// under them in placement mode ([`Run::belt_rows`]).
     pub(crate) fn update_hud(&mut self, gpu: &Gpu) {
-        self.fill_hud(self.gfx.as_ref().map(GfxSample::of));
+        let window = (!self.args.headless).then_some(gpu.size);
+        self.fill_hud(self.gfx.as_ref().map(|g| GfxSample::of(g, window)));
         let belt = self.belt_rows(gpu.size, false);
         let h = &mut self.hud;
         let Some(gfx) = self.gfx.as_mut() else { return };

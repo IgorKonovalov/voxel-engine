@@ -602,6 +602,7 @@ mod flicker {
                     frustum: None,
                     full_radius: Some(residency.r_full),
                     lod_radius: Some(residency.r_lod.max(residency.r_full)),
+                    focal_px: None,
                 };
                 f.bake_queue_step(&rig.device, &rig.queue, &mut rig.gpu, &rig.world, &view)
                     .expect("the queue runs")

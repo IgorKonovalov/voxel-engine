@@ -107,6 +107,7 @@ use crate::field::FieldBindings;
 mod alloc;
 mod columns;
 mod emitters;
+mod fit;
 mod format;
 mod lights;
 mod slot;
@@ -241,10 +242,11 @@ pub struct SyncStats {
     pub light_fresh_records: u64,
     /// Chunks whose samples were written into a range of the light-sample buffer.
     pub light_chunks_written: u64,
-    /// The placement's search steps: free ranges walked by the first fit, plus chunks walked
-    /// by the eviction's scans for the farthest range (one scan per eviction, and the last
-    /// that finds none).
-    pub light_scan_steps: u64,
+    /// The placement's search steps: the first fit's (index nodes and free ranges visited),
+    /// and the victims' (index reads, plus the placed chunks re-indexed when the focus moved
+    /// since the index was built).
+    pub light_fit_steps: u64,
+    pub light_victim_steps: u64,
     /// Free ranges of the light-sample buffer below its high-water mark after the sync.
     pub light_free_ranges: u64,
     /// Bytes copied into the mirror's buffers.
@@ -606,6 +608,14 @@ impl GpuWorld {
     pub fn column_top(&self, x: i32, y: i32) -> i32 {
         let (min, size) = (self.window.min[2], self.window.size[2].max(1));
         self.columns.top_at(x, y, min..min + size)
+    }
+
+    /// The lowest top the column map holds, once synced, over chunk column `(cx, cy)`'s
+    /// footprint: [`COLUMN_NONE`] where a cell of it holds no opaque voxel among the resident
+    /// chunks of the window.
+    pub fn column_lowest(&self, cx: i32, cy: i32) -> i32 {
+        let (min, size) = (self.window.min[2], self.window.size[2].max(1));
+        self.columns.lowest_top([cx, cy], min..min + size)
     }
 
     /// Whether chunk column `(cx, cy)` is final: no chunk of it within the window waits to
@@ -1064,7 +1074,7 @@ impl GpuWorld {
         self.flush_table(enc, &mut st);
         st.column_tiles = self.columns.flush(queue, self.window.min, self.window.size) as u64;
         st.pending_chunks = self.window.pending.len() as u64;
-        st.light_free_ranges = self.lights.free.len() as u64;
+        st.light_free_ranges = self.lights.ranges.free_count() as u64;
         self.up.bytes_written += st.bytes;
         result.map(|()| st)
     }
