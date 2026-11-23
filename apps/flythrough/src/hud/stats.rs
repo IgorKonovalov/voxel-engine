@@ -383,14 +383,16 @@ pub struct HudStats {
     pub modes: String,
 }
 
-/// The live queue's row: the chunks in the view cone beyond the near shell still waiting for
-/// their light, and of them those with a coarse block, the jobs withdrawn since the start, the
-/// queue step's CPU p50 over the last second, then `mode` (the order and the withdrawal in
-/// words) after a semicolon when it is not empty:
-/// `in view: 12 waiting (5 coarse), withdrawn 3, step 1.25 ms; order distance; withdraw on`.
-pub fn queue_row(st: &vxe_render::QueueStats, step_ms: f64, mode: &str) -> String {
+/// The live queue's row: the chunks in view (the view cone and the near shell) still waiting
+/// for their light ([`vxe_render::QueueStats::in_view`]), and of them those with a coarse
+/// block, the seconds their need takes at `rate` samples a second
+/// ([`vxe_render::InViewWaiting::drain_s`]), the jobs withdrawn since the start, the queue
+/// step's CPU p50 over the last second, then `mode` (the order and the withdrawal in words)
+/// after a semicolon when it is not empty: `in view: 12 waiting (5 coarse), drain 4.0 s,
+/// withdrawn 3, step 1.25 ms; order distance; withdraw on`.
+pub fn queue_row(st: &vxe_render::QueueStats, rate: f64, step_ms: f64, mode: &str) -> String {
     let mut row = String::new();
-    write_queue_row(&mut row, st, step_ms);
+    write_queue_row(&mut row, st, rate, step_ms);
     if !mode.is_empty() {
         row.push_str("; ");
         row.push_str(mode);
@@ -399,16 +401,21 @@ pub fn queue_row(st: &vxe_render::QueueStats, step_ms: f64, mode: &str) -> Strin
 }
 
 /// Appends [`queue_row`]'s text before its mode to `out`:
-/// `in view: 12 waiting (5 coarse), withdrawn 3, step 1.25 ms`, then `, key 40` while blocks
-/// wait for or run a key-only re-bake (ADR-0079).
-pub fn write_queue_row(out: &mut String, st: &vxe_render::QueueStats, step_ms: f64) {
-    let [blank, coarse] = st.view_waiting[vxe_render::internals::VIEW_IN];
+/// `in view: 12 waiting (5 coarse), drain 4.0 s, withdrawn 3, step 1.25 ms`, then `, key 40`
+/// while blocks wait for or run a key-only re-bake (ADR-0079).
+pub fn write_queue_row(out: &mut String, st: &vxe_render::QueueStats, rate: f64, step_ms: f64) {
+    let [_, coarse] = st.in_view.by_class();
     let _ = write!(
         out,
-        "in view: {} waiting ({coarse} coarse), withdrawn {}, step {step_ms:.2} ms",
-        blank + coarse,
-        st.withdrawn
+        "in view: {} waiting ({coarse} coarse), drain ",
+        st.in_view.total()
     );
+    // Written in place: the HUD's refresh allocates nothing after its first frame.
+    let _ = match st.in_view.drain_s(rate) {
+        Some(s) => write!(out, "{s:.1} s"),
+        None => write!(out, "n/a"),
+    };
+    let _ = write!(out, ", withdrawn {}, step {step_ms:.2} ms", st.withdrawn);
     if st.keys > 0 {
         let _ = write!(out, ", key {}", st.keys);
     }
@@ -526,8 +533,20 @@ pub struct LightingRow {
     /// took a fallback and those left black; empty, nothing.
     pub missing_light: &'static str,
     pub modes: String,
-    /// The internal and output sizes while the upscaler runs: a row then reads its passes.
-    pub upscale: Option<[[u32; 2]; 2]>,
+    /// The frame's sizes, while the upscaler runs or in a window: a row then reads them, and
+    /// the upscaler's passes while it runs.
+    pub sizes: Option<FrameSizes>,
+}
+
+/// The frame's sizes the HUD's size row reads: the internal (the march's), the output (the
+/// upscaler's target) and, in a window, the window's, which scales the output when they differ.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct FrameSizes {
+    pub internal: [u32; 2],
+    pub output: [u32; 2],
+    pub window: Option<[u32; 2]>,
+    /// Whether an upscaler runs (the row then reads its passes first).
+    pub upscaling: bool,
 }
 
 /// The mirror's pressure (the fuller of its pool units and records), its reservation in bytes,
@@ -912,31 +931,37 @@ fn lighting_rows(
         out.write_str(&l.store_note)?;
     }
     row(out, HudColour::White, format_args!("; {}", l.modes))?;
-    if let Some([[iw, ih], [ow, oh]]) = l.upscale {
-        // Yellow when the composite, upscale and sharpen passes and FSR 2's exceed the
-        // upscale line. FSR 2's passes, when they ran, read as one total.
-        let fsr: f32 = l
-            .passes
-            .iter()
-            .filter(|(n, _)| n.starts_with("fsr2 "))
-            .map(|&(_, v)| v)
-            .sum();
-        let post = ms("composite") + ms("upscale") + ms("sharpen") + fsr;
-        if fsr > 0.0 {
-            write!(out, "fsr2 {fsr:.2} ms")?;
+    if let Some(z) = l.sizes {
+        let ([iw, ih], [ow, oh]) = (z.internal, z.output);
+        let colour = if z.upscaling {
+            // Yellow when the composite, upscale and sharpen passes and FSR 2's exceed the
+            // upscale line. FSR 2's passes, when they ran, read as one total.
+            let fsr: f32 = l
+                .passes
+                .iter()
+                .filter(|(n, _)| n.starts_with("fsr2 "))
+                .map(|&(_, v)| v)
+                .sum();
+            let post = ms("composite") + ms("upscale") + ms("sharpen") + fsr;
+            if fsr > 0.0 {
+                write!(out, "fsr2 {fsr:.2} ms, {iw}x{ih} to {ow}x{oh}")?;
+            } else {
+                write!(
+                    out,
+                    "upscale {:.2} sharpen {:.2} ms, {iw}x{ih} to {ow}x{oh}",
+                    ms("upscale"),
+                    ms("sharpen")
+                )?;
+            }
+            over(post, UPSCALE_LINE_MS)
         } else {
-            write!(
-                out,
-                "upscale {:.2} sharpen {:.2} ms",
-                ms("upscale"),
-                ms("sharpen")
-            )?;
+            write!(out, "frame {ow}x{oh}")?;
+            HudColour::White
+        };
+        match z.window {
+            Some([ww, wh]) => row(out, colour, format_args!(", window {ww}x{wh}"))?,
+            None => row(out, colour, format_args!(""))?,
         }
-        row(
-            out,
-            over(post, UPSCALE_LINE_MS),
-            format_args!(", {iw}x{ih} to {ow}x{oh}"),
-        )?;
     }
     Ok(())
 }

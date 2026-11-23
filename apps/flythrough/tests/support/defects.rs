@@ -268,6 +268,7 @@ pub fn queue_step(rig: &mut Rig, f: &mut Frame, cam: &Camera) -> QueueStats {
         frustum: None,
         full_radius: None,
         lod_radius: None,
+        focal_px: None,
     };
     f.bake_queue_step(&rig.device, &rig.queue, &mut rig.gpu, &rig.world, &view)
         .expect("the queue runs")

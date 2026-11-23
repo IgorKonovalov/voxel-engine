@@ -13,6 +13,9 @@ use vxe_render::SyncStats;
 
 use crate::path::WARMUP_S;
 
+mod queue;
+pub use queue::{QueueDrain, drain_words};
+
 /// The `schema` field: bumped when a field changes meaning or goes away.
 pub const SCHEMA: u32 = 2;
 
@@ -124,6 +127,8 @@ pub struct RunReport {
     pub load_ms: Option<f64>,
     /// The loading stages in order and the step time each took, in ms (schema 2).
     pub load_stages: Vec<(&'static str, f64)>,
+    /// The live queue's in-view drain at the run's end; `None` without the live queue.
+    pub queue: Option<QueueDrain>,
     /// `completed` or `aborted`; `failed` when the session ended on an error.
     pub ended: &'static str,
 }
@@ -155,12 +160,13 @@ pub const SYNC_FIELDS: [&str; SYNC_N] = [
     "light_samples",
     "light_evicted",
     "light_refused",
-    "light_scan_steps",
+    "light_fit_steps",
+    "light_victim_steps",
     "light_free_ranges",
 ];
 
 /// Entries of [`SYNC_FIELDS`].
-pub const SYNC_N: usize = 22;
+pub const SYNC_N: usize = 23;
 
 /// The first of [`SYNC_FIELDS`]' light counters, and their short names on the `sync:` line.
 const LIGHT_FIELDS: usize = 13;
@@ -172,7 +178,8 @@ const LIGHT_NAMES: [&str; SYNC_N - LIGHT_FIELDS] = [
     "samples",
     "evicted",
     "refused",
-    "scan steps",
+    "fit steps",
+    "victim steps",
     "free ranges",
 ];
 
@@ -205,7 +212,8 @@ pub fn sync_values(s: &SyncStats) -> [f64; SYNC_N] {
         s.light_samples,
         s.light_evicted,
         s.light_refused,
-        s.light_scan_steps,
+        s.light_fit_steps,
+        s.light_victim_steps,
         s.light_free_ranges,
     ]
     .into_iter()
@@ -531,6 +539,11 @@ impl RunReport {
             o.push('}');
         }
         o.push(']');
+        field(&mut o, "queue");
+        match &self.queue {
+            Some(q) => q.write_json(&mut o),
+            None => o.push_str("null"),
+        }
         field(&mut o, "ended");
         write_json_string(&mut o, self.ended);
         o.push_str("\n}\n");
@@ -922,6 +935,7 @@ mod tests {
             streaming: None,
             load_ms: None,
             load_stages: Vec::new(),
+            queue: None,
             ended: "completed",
         }
     }

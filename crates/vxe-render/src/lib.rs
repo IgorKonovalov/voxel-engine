@@ -54,7 +54,7 @@ pub mod internals {
         BAKE_ROUND, BRICK_CELL, BRICK_WORDS, ChunkFaces, DIG_FADE, FADE, FacePrep, KEY_BAKE_RAYS,
         KEY_SUN_AT, LANDED_AT, QUEUE_VIEW_MARGIN_DEG, SKY_BAKE_RAYS, STORE_COARSE_READS,
         SUMMARY_AT, VIEW_IN, VIEW_OUT, VIEW_SHELL, angle_term, dig_ring, face_classes,
-        in_near_shell, list_world_chunk, record_key_visibility, record_sky_stale,
+        in_near_shell, list_world_chunk, record_key_visibility, record_sky_stale, record_tier,
         record_visibility, rgb9e5_unpack, tone_level, unpack_direction, view_half_angle,
         view_half_angles,
     };
@@ -87,14 +87,15 @@ pub mod internals {
 }
 
 pub use bake::{
-    AROUND_REACH, AroundSource, BakeError, BakeProgress, BakeQueue, BakeReport, BakeSettings,
-    Budget, DEFAULT_BAKE_EDIT_MS, DEFAULT_BAKE_SLICE_MS, DEFAULT_COARSE_SAMPLES, DEFAULT_NEAR,
-    DigReport, FaceOutcome, LANDED_BARE, LANDED_FALLBACK, LANDED_REFADED, LANDED_UNFADED,
-    LANDING_DIRECTIONS, LANDING_KEY, LANDING_KEY_FLAG, LANDING_RECORDS, LANDING_TAIL, LANDING_VIS,
-    LANDING_VIS_FLAG, MissingLight, PreRoll, PreRollConfig, PreRollError, PreRollState,
-    PreRollSummary, QUEUE_ANGLE_WEIGHT, QUEUE_BRICK_SAMPLES, QUEUE_REFINE_WEIGHT, QueueOrder,
-    QueueStats, QueueView, ReachMode, Refine, Store, StoreStats, finality_blockers, queue_settings,
-    reach_crosses, sky_over_floor,
+    AROUND_REACH, AroundSource, BakeError, BakeProgress, BakeQueue, BakeReport, BakeSettings, Band,
+    Bands, Budget, DEFAULT_BAKE_EDIT_MS, DEFAULT_BAKE_SLICE_MS, DEFAULT_COARSE_SAMPLES,
+    DEFAULT_DRAIN, DEFAULT_NEAR, DEFAULT_TIERS, DigReport, Drain, FaceOutcome, InViewWaiting,
+    LANDED_BARE, LANDED_FALLBACK, LANDED_REFADED, LANDED_UNFADED, LANDING_DIRECTIONS, LANDING_KEY,
+    LANDING_KEY_FLAG, LANDING_RECORDS, LANDING_TAIL, LANDING_VIS, LANDING_VIS_FLAG, ListingCensus,
+    MissingLight, PreRoll, PreRollConfig, PreRollError, PreRollState, PreRollSummary,
+    QUEUE_ANGLE_WEIGHT, QUEUE_BRICK_SAMPLES, QUEUE_REFINE_WEIGHT, QueueOrder, QueueStats,
+    QueueView, ReachMode, Refine, RuleMissed, Store, StoreStats, chunk_nearest, finality_blockers,
+    in_view_census, queue_settings, reach_crosses, sky_over_floor,
 };
 pub use camera::{Camera, View};
 pub use entities::{

@@ -1246,6 +1246,7 @@ fn caught_up_queue(
             frustum: None,
             full_radius: Some(8),
             lod_radius: Some(8),
+            focal_px: None,
         };
         f.bake_queue_step(device, queue, &mut gpu, world, &view)
             .expect("the queue runs")

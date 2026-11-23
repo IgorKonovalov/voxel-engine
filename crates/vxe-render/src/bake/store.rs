@@ -123,6 +123,21 @@ pub struct Store {
     pub(super) summary_ms: f64,
 }
 
+/// The chunks of `held` a move of the store's window from `old` to `window` drops: those outside
+/// `window`, or every one when the size changes (the store empties).
+pub(crate) fn dropped_by_move(
+    old: Option<ChunkExtent>,
+    window: ChunkExtent,
+    held: impl Iterator<Item = [i32; 3]>,
+) -> Vec<[i32; 3]> {
+    let size = window.size();
+    if old.map(|w| w.size()) != Some(size) {
+        return held.collect();
+    }
+    let inside = |c: &[i32; 3]| (0..3).all(|k| (0..size[k]).contains(&(c[k] - window.min.0[k])));
+    held.filter(|c| !inside(c)).collect()
+}
+
 impl Store {
     /// The flags word: the cell bit and the missing-light mode.
     pub(super) fn flags(&self) -> u32 {
@@ -365,17 +380,13 @@ impl Store {
             return Vec::new();
         }
         let size = window.size();
-        let dropped: Vec<[i32; 3]> = if self.window.map(|w| w.size()) != Some(size) {
-            let all = self.blocks.keys().copied().collect();
+        let dropped = dropped_by_move(self.window, window, self.blocks.keys().copied());
+        if self.window.map(|w| w.size()) != Some(size) {
             let cell = self.cell;
             self.reset(queue, window);
             self.set_cell(queue, cell);
-            return all;
-        } else {
-            let inside =
-                |c: &[i32; 3]| (0..3).all(|k| (0..size[k]).contains(&(c[k] - window.min.0[k])));
-            self.blocks.keys().copied().filter(|c| !inside(c)).collect()
-        };
+            return dropped;
+        }
         for c in &dropped {
             if let Some((first, words)) = self.blocks.remove(c) {
                 self.free_place(first, words);

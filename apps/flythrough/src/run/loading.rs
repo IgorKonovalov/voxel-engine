@@ -666,10 +666,14 @@ impl Run {
         frame.set_bake_coarse(self.args.bake.coarse, self.args.bake.near);
         frame.set_bake_digs(self.args.bake.edit_ms, self.args.bake.dig_reach);
         frame.set_bake_reach(self.args.bake.reach);
+        frame.set_bake_tiers(self.args.bake.tiers);
+        frame.set_bake_drain(self.args.bake.drain);
         if let Some(q) = frame.bake_queue_mut() {
             q.order = self.args.queue_order();
             q.withdraw = self.args.bake.queue_withdraw;
             q.census_every_opening = self.args.bake.queue_census;
+            q.rule_reading = self.args.bake.queue_rule_reading;
+            self.queue.listing_due = self.args.bake.queue_census;
         }
         println!("{}", self.queue_row());
         frame.take_prepared(&std::mem::take(&mut self.queue.prepared), &self.world);
@@ -741,7 +745,7 @@ impl Run {
             .is_some()
             .then_some(&resident_fn as &dyn Fn(ChunkCoord) -> bool);
         let (forward, _, _) = camera.basis();
-        let (half_angle, frustum) = queue_view_angles(camera.vfov, frame.output_size());
+        let (half_angle, frustum, focal) = queue_view_angles(camera.vfov, frame.output_size());
         let view = vxe_render::QueueView {
             eye: camera.position.to_array(),
             forward: forward.to_array(),
@@ -756,6 +760,7 @@ impl Run {
                 let r = s.streamer.config().residency;
                 r.r_lod.max(r.r_full)
             }),
+            focal_px: Some(focal),
         };
         let state = p.pre.step(
             frame,

@@ -67,6 +67,15 @@ pub enum ReachMode {
     Partial,
 }
 
+impl ReachMode {
+    /// What the near tier's mode is, the mid and far tiers bake as (ADR-0080 rule 4): a mid- or
+    /// far-band chunk bakes from the chunks resident whatever the near tier's mode, and its
+    /// partial record is refined by its band's promotion, not by its reach filling.
+    pub(super) fn for_band(self, near: bool) -> ReachMode {
+        if near { self } else { ReachMode::Partial }
+    }
+}
+
 named_enum!(ReachMode {
     Full => "full",
     Partial => "partial",

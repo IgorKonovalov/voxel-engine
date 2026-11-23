@@ -290,12 +290,11 @@ fn run_flags() -> Vec<Flag<Parsing>> {
         ),
         Flag::value(
             &["--render"],
-            "WxH",
-            "the frame's output resolution",
+            "WxH|window",
+            "the frame's output resolution, the window scaling it; window is the window's size \
+             [the window's; the portable profile's hint, 1280x720, in a window too]",
             |p: &mut Parsing, v| {
-                let (w, h) = v.text.split_once('x').ok_or("--render takes WxH")?;
-                let parse = |s: &str| s.parse::<u32>().map_err(|e| format!("--render: {e}"));
-                p.args.render = Some([parse(w)?, parse(h)?]);
+                p.args.render = Some(super::RenderSize::parse(v.text)?);
                 Ok(())
             },
         ),
@@ -954,64 +953,18 @@ fn bake_flags() -> Vec<Flag<Parsing>> {
         Flag::value(
             &["--reach"],
             "full|partial",
-            "whether a chunk waits for its whole light reach",
+            "whether a near-band chunk waits for its whole light reach (mid and far: partial)",
             |p: &mut Parsing, v| {
                 p.args.bake.reach = vxe_render::ReachMode::parse(v.text)?;
                 Ok(())
             },
         ),
-        Flag::value(
-            &["--queue-order"],
-            "score|distance",
-            "the live queue's order",
-            |p: &mut Parsing, v| {
-                p.args.bake.queue_distance =
-                    v.word(&[("score", false), ("distance", true)], "score or distance")?;
-                Ok(())
-            },
-        ),
-        Flag::value(
-            &["--queue-weights"],
-            "A,R|A,tier",
-            "the score's angle and refine weights",
-            |p: &mut Parsing, v| {
-                let bad = || v.takes("A,R or A,tier");
-                let (a, r) = v.text.split_once(',').ok_or_else(bad)?;
-                let b = &mut p.args.bake;
-                b.queue_angle = a
-                    .parse()
-                    .ok()
-                    .filter(|x: &f32| x.is_finite() && *x >= 0.0)
-                    .ok_or_else(bad)?;
-                if r == "tier" {
-                    b.queue_tier = true;
-                } else {
-                    b.queue_refine = r
-                        .parse()
-                        .ok()
-                        .filter(|x: &f32| x.is_finite() && *x > 0.0)
-                        .ok_or_else(bad)?;
-                    b.queue_tier = false;
-                }
-                Ok(())
-            },
-        ),
-        Flag::value(
-            &["--queue-withdraw"],
-            "on|off",
-            "withdraw the jobs of chunks the camera passed",
-            |p: &mut Parsing, v| {
-                p.args.bake.queue_withdraw = v.on_off()?;
-                Ok(())
-            },
-        ),
-        Flag::switch(
-            &["--queue-census"],
-            "read the queue's view census at every opening",
-            |p: &mut Parsing| {
-                p.args.bake.queue_census = true;
-            },
-        ),
+    ]
+}
+
+/// The light store's and the live queue's rows after the queue's own.
+fn bake_tail_flags() -> Vec<Flag<Parsing>> {
+    vec![
         Flag::value(
             &["--edit-ms"],
             "MS",
@@ -1170,7 +1123,13 @@ pub(crate) fn table() -> Table<Parsing> {
         },
         Section {
             title: "Light store and queue",
-            flags: super::outdoor::with_drain_flags(bake_flags()),
+            flags: super::outdoor::with_drain_flags(
+                bake_flags()
+                    .into_iter()
+                    .chain(super::queue_flags::queue_flags())
+                    .chain(bake_tail_flags())
+                    .collect(),
+            ),
         },
         Section {
             title: "Model viewer and assets",

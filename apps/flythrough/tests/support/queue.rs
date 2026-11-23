@@ -69,7 +69,13 @@ pub struct Q {
     pub full_radius: Option<i32>,
     /// The streamer's LOD radius the view hands the queue; `None` waits for no column chunk.
     pub lod_radius: Option<i32>,
+    /// The output's focal length in pixels the view hands the queue (its bands, ADR-0080);
+    /// `None` reads every chunk near.
+    pub focal_px: Option<f32>,
 }
+
+/// A `Setup::slice_ms` under this asks for the smallest slice (a step draws the cap's floor).
+pub const SMALLEST_SLICE_MS: f64 = 1e-3;
 
 /// How a rig's queue and mirror start.
 pub struct Setup {
@@ -149,6 +155,11 @@ pub fn rig(world: World, setup: &Setup) -> Option<Q> {
     let mut frame = new_frame(&device, setup.pool_bytes);
     frame.start_bake_queue(&queue, &gpu, setup.counts.clone(), setup.slice_ms);
     frame.set_bake_coarse(setup.coarse, setup.near);
+    if setup.slice_ms < SMALLEST_SLICE_MS {
+        // The smallest slice holds jobs in the loop over several steps; the drain value would
+        // replace it while chunks in view wait (ADR-0080 rule 3), so such a rig runs without one.
+        frame.bake_queue_mut().expect("the queue started").drain = None;
+    }
     if let Some(order) = setup.order {
         frame.bake_queue_mut().expect("the queue started").order = order;
     }
@@ -166,6 +177,7 @@ pub fn rig(world: World, setup: &Setup) -> Option<Q> {
         resident: None,
         full_radius: None,
         lod_radius: None,
+        focal_px: None,
     })
 }
 
@@ -201,6 +213,7 @@ impl Q {
             frustum: None,
             full_radius: self.full_radius,
             lod_radius: self.lod_radius,
+            focal_px: self.focal_px,
         };
         #[allow(
             clippy::disallowed_methods,

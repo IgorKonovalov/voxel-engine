@@ -127,6 +127,8 @@ pub(crate) struct QueueRun {
     /// The steps' stages since the last line, and over the run by the regime of their second
     /// (the `frames:` summary's `queue step` lines).
     pub(crate) line_stages: Vec<vxe_render::debug::StepStages>,
+    /// The queue's candidates scored at the last step line ([`vxe_render::QueueStats::visited_total`]).
+    pub(crate) line_visited: u64,
     pub(crate) tally: vxe_render::debug::StepTally,
     /// The jobs and the openings at the last line, and the last line's step p50 (the HUD's).
     pub(crate) line_openings: u64,
@@ -136,6 +138,96 @@ pub(crate) struct QueueRun {
     /// The samples by view class and passed at the last line.
     pub(crate) line_view: [u64; 3],
     pub(crate) line_passed: u64,
+    /// The samples a second over the last line's second: the in-view drain's rate.
+    pub(crate) line_rate: f64,
+    /// [`vxe_render::QueueStats::class_samples`] and `class_ms` at the last line.
+    pub(crate) line_class: ([u64; 2], [f64; 2]),
+    /// [`vxe_render::QueueStats::mirror_changes`] at the last line.
+    pub(crate) line_changes: u64,
+    /// Whether the next step prints `--queue-census`'s listing census (set once at the hand-
+    /// over to the live queue).
+    pub(crate) listing_due: bool,
+}
+
+/// Prints `--queue-census`'s listing census of the live queue under `view` when `q` has one
+/// due ([`QueueRun::listing_due`]), once.
+fn print_listing_census(
+    gfx: &mut crate::run::Gfx,
+    world: &vxe_world::World,
+    view: &vxe_render::QueueView<'_>,
+    q: &mut QueueRun,
+) {
+    if !std::mem::take(&mut q.listing_due) {
+        return;
+    }
+    if let Some(q) = gfx.frame.bake_queue_mut() {
+        let st = q.stats();
+        let (shells, shell_bytes) = q.shells();
+        let c = q.listing_census(&gfx.mirror, world, view);
+        println!("{}", listing_census_line(&c, st.depth));
+        println!(
+            "bake queue census: sealed by the workers {} of {} chunks, the verdict mean {:.1} us max {:.1} us a chunk; {} shells, {} B",
+            st.sealed,
+            st.hook_chunks,
+            st.seal_ns as f64 / st.hook_chunks.max(1) as f64 / 1e3,
+            st.seal_max_ns as f64 / 1e3,
+            shells,
+            shell_bytes,
+        );
+    }
+}
+
+/// `--queue-census`'s `bake queue census:` line of a listing census.
+pub(crate) fn listing_census_line(c: &vxe_render::ListingCensus, depth: u64) -> String {
+    let band = |k: usize| {
+        format!(
+            "{} {} ({} in view, {} reach-bound)",
+            vxe_render::Band::ALL[k].name(),
+            c.surface[k][0] + c.surface[k][1],
+            c.surface[k][1],
+            c.reach_bound[k]
+        )
+    };
+    format!(
+        "bake queue census: depth {depth}, listed {}, no face {} ({} at the residency's edge), buried with no emitter in reach {} (+{} under a column not final), surface {}: {}, {}, {}; {:.1} ms",
+        c.listed,
+        c.no_face,
+        c.no_face_edge,
+        c.buried,
+        c.buried_unfinal,
+        c.surface.iter().flatten().sum::<u64>(),
+        band(0),
+        band(1),
+        band(2),
+        c.ms,
+    )
+}
+
+impl QueueRun {
+    /// The in-view drain of `st` at the last line's rate.
+    pub(crate) fn drain_of(&self, st: &vxe_render::QueueStats) -> crate::report::QueueDrain {
+        crate::report::QueueDrain {
+            depth: st.depth,
+            waiting: st.in_view,
+            samples_per_s: self.line_rate,
+            rule_missed: (st.rule_missed != vxe_render::RuleMissed::default())
+                .then_some(st.rule_missed),
+        }
+    }
+}
+
+/// The ns a sample of each job class over a line (`samples`, `ms` since the last), attributed
+/// by the submits' sample shares: `ns a sample full 5.1 coarse 4.0 (attributed)`, `-` for a
+/// class that drew nothing.
+pub(crate) fn class_ns_text(samples: [u64; 2], ms: [f64; 2]) -> String {
+    let ns = |k: usize| {
+        if samples[k] == 0 {
+            "-".to_owned()
+        } else {
+            format!("{:.1}", ms[k] * 1e6 / samples[k] as f64)
+        }
+    };
+    format!("ns a sample full {} coarse {} (attributed)", ns(0), ns(1))
 }
 
 /// The per-second `bake queue step:` line: the second's regime from its samples a baked chunk
@@ -175,7 +267,7 @@ pub(crate) fn queue_step_line(
     let opened = steps.iter().filter(|s| s.opened).count();
     let [blank, coarse] = st.view_waiting[VIEW_IN];
     let mut line = format!(
-        "bake queue step: at {at_s:.1} s, regime {} ({} samples a baked chunk, +{baked} chunks in {secs:.1} s, jobs {}, coarse {}), bake {bake_ms_per_s:.1} ms/s, opened {opened} of {} steps ({} since the start, {} starved), step p50 {:.3} ms (open {:.3}, not {:.3}), reach-bound {} of {} in view waiting, reach {} ({} partial, {} opened partial, {} re-queued); stage means ms:",
+        "bake queue step: at {at_s:.1} s, regime {} ({} samples a baked chunk, +{baked} chunks in {secs:.1} s, jobs {}, coarse {}), bake {bake_ms_per_s:.1} ms/s, opened {opened} of {} steps ({} since the start, {} starved), step p50 {:.3} ms (open {:.3}, not {:.3}), reach-bound {} near (waiting), {} mid/far (partial) of {} in view waiting, reach {} ({} partial, {} opened partial, {} re-queued); stage means ms:",
         regime.map_or("idle", Regime::name),
         if baked > 0 {
             format!("{:.3e}", samples as f64 / baked as f64)
@@ -190,7 +282,8 @@ pub(crate) fn queue_step_line(
         q.line_step_p50,
         p50(Some(true)),
         p50(Some(false)),
-        st.reach_bound,
+        st.reach_bound[0],
+        st.reach_bound[1],
         blank + coarse,
         reach.name(),
         st.partial,
@@ -204,6 +297,18 @@ pub(crate) fn queue_step_line(
         let mean = steps.iter().map(|s| s.ms[k]).sum::<f64>() / n;
         let _ = write!(line, " {stage} {mean:.3}");
     }
+    let _ = write!(
+        line,
+        "; mirror changes a step mean {:.1}",
+        (st.mirror_changes - q.line_changes) as f64 / n
+    );
+    q.line_changes = st.mirror_changes;
+    let _ = write!(
+        line,
+        "; candidates scored a step mean {:.1}",
+        (st.visited_total - q.line_visited) as f64 / n
+    );
+    q.line_visited = st.visited_total;
     line
 }
 
@@ -225,12 +330,14 @@ pub(crate) struct DigWatch {
 /// The camera the run starts at: the castle's shot, the showcase's shot, `--pose`'s still
 /// camera, or the spawn facing +x.
 /// The live queue's view angles for a camera of `vfov` drawn at `size` (output pixels): the
-/// cone's half-angle (the wider of the two) and the frustum's horizontal and vertical ones.
-pub(crate) fn queue_view_angles(vfov: f32, size: [u32; 2]) -> (f32, [f32; 2]) {
+/// cone's half-angle (the wider of the two) and the frustum's horizontal and vertical ones;
+/// and the output's focal length in pixels ([`vxe_render::Bands::focal_px`]).
+pub(crate) fn queue_view_angles(vfov: f32, size: [u32; 2]) -> (f32, [f32; 2], f32) {
     let aspect = size[0].max(1) as f32 / size[1].max(1) as f32;
     (
         vxe_render::internals::view_half_angle(vfov, aspect),
         vxe_render::internals::view_half_angles(vfov, aspect),
+        vxe_render::Bands::focal_px(size[1], vfov),
     )
 }
 
@@ -355,7 +462,7 @@ impl Run {
         let resident: Option<&dyn Fn(ChunkCoord) -> bool> = stream
             .is_some()
             .then_some(&resident_fn as &dyn Fn(ChunkCoord) -> bool);
-        let (half_angle, frustum) =
+        let (half_angle, frustum, focal) =
             queue_view_angles(self.fly.camera.vfov, gfx.frame.output_size());
         let t_step = ms_since(self.start);
         let dt = self.queue.step_ms.replace(t_step).map(|at| t_step - at);
@@ -373,6 +480,7 @@ impl Run {
                 let r = s.streamer.config().residency;
                 r.r_lod.max(r.r_full)
             }),
+            focal_px: Some(focal),
         };
         let dug = gfx.frame.bake_queue().is_some_and(|q| !q.digs_settled());
         let new_box = gfx.frame.bake_queue().is_some_and(|q| q.boxes_waiting());
@@ -405,6 +513,8 @@ impl Run {
                 .bake_queue_step(&gpu.device, &gpu.queue, &mut gfx.mirror, &self.world, &view);
         self.queue.last_step_cpu = ms_since(t_cpu);
         self.queue.step_cpu.push(self.queue.last_step_cpu);
+        // After the step: the queue holds the frame's far-normal band by then.
+        print_listing_census(gfx, &self.world, &view, &mut self.queue);
         match stepped {
             Some(Ok(st)) => {
                 if st.samples > 0 {
@@ -613,6 +723,8 @@ impl Run {
                 .map_or((vxe_render::StoreStats::default(), None), |(s, age)| {
                     (s, Some(age))
                 });
+            // The workers' shells under their lock, once a line.
+            let (shells, shell_bytes) = gfx.frame.bake_queue().map_or((0, 0), |q| q.shells());
             let pixels = gfx.frame.light_pixels().max(1);
             let reads = if gfx.frame.counts_store() {
                 format!(
@@ -645,8 +757,15 @@ impl Run {
             let p50 = sl.get(sl.len() / 2).copied().unwrap_or(0.0);
             let max = sl.last().copied().unwrap_or(0.0);
             let mut cpu = std::mem::take(&mut self.queue.step_cpu);
+            self.queue.line_rate = (st.total_samples - self.queue.line_samples) as f64 / secs;
+            let (cs, cm) = self.queue.line_class;
+            let class_ns = class_ns_text(
+                [0, 1].map(|k| st.class_samples[k] - cs[k]),
+                [0, 1].map(|k| st.class_ms[k] - cm[k]),
+            );
+            self.queue.line_class = (st.class_samples, st.class_ms);
             println!(
-                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample, fading {}, coarse {} chunks, {}, eye {:.0} {:.0} {:.0}, step CPU p50 {:.3} max {:.3} ms, provisional {} (opened {}, catch-ups {}), key {} (landed {})",
+                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample, fading {}, coarse {} chunks, {}, eye {:.0} {:.0} {:.0}, step CPU p50 {:.3} max {:.3} ms, provisional {} (opened {}, catch-ups {}), key {} (landed {}), zero by rule {} (re-listed {}), sealed by the workers {} ({} shells, {} B), {}, {}",
                 t / 1e3,
                 self.frame,
                 st.depth,
@@ -675,7 +794,15 @@ impl Run {
                 st.provisional_requeued,
                 st.keys,
                 st.keys_baked,
+                st.zeroed,
+                st.zero_relisted,
+                st.sealed,
+                shells,
+                shell_bytes,
+                self.queue.drain_of(&st).text(),
+                class_ns,
             );
+            print_slice_line(t, &st, p50);
             let needs = gfx
                 .frame
                 .bake_queue_mut()
@@ -734,4 +861,25 @@ impl Run {
         write_queue_banner_row(&mut out, &self.args, &self.args.queue_words());
         out
     }
+}
+
+/// The per-second `bake queue slice:` line: the slice granted and whether it was the drain's
+/// value (ADR-0080 rule 3), the chunks in view still waiting for their tier, the slices drawn,
+/// why the submits' plans stopped, and the reads of the in-view set with their mean and longest cost.
+fn print_slice_line(t: f64, st: &vxe_render::QueueStats, p50: f64) {
+    println!(
+        "bake queue slice: at {:.1} s, granted {:.2} ms ({}, {} in view waiting for their tier), drawn p50 {:.2} ms, plans stopped at the cap {} at the batch {} out of rounds {}, steps with every submit slot unread {}, the in-view set read {} times, mean {:.3} ms, max {:.3} ms",
+        t / 1e3,
+        st.slice_ms,
+        if st.draining { "drain" } else { "line" },
+        st.drain_waiting,
+        p50,
+        st.plan_stops[0],
+        st.plan_stops[1],
+        st.plan_stops[2],
+        st.in_flight_full,
+        st.waiting_reads,
+        st.waiting_ms / st.waiting_reads.max(1) as f64,
+        st.waiting_max_ms,
+    );
 }

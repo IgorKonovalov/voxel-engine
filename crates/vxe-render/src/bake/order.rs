@@ -105,34 +105,232 @@ impl Ord for HeapCand {
     }
 }
 
-/// The kept candidates in their order, sorted only as far as an opening walks: the walked
-/// head in order, the rest a heap popped on demand. The keys are unique, so the walk sees the
-/// order a full sort gives.
+/// Chunks a side of a cell of the order's spatial index ([`Ordered`]).
+const ORDER_CELL: i32 = 4;
+
+/// The cell of the order's index chunk `c` lies in.
+fn order_cell(c: [i32; 3]) -> [i32; 3] {
+    c.map(|v| v.div_euclid(ORDER_CELL))
+}
+
+/// One lead's walk of the kept order: the walked head in order, the scored candidates of the
+/// scanned cells in a heap, and the cells not scanned yet under their least key.
+#[derive(Debug, Default)]
+struct Walk {
+    done: Vec<Cand>,
+    heap: std::collections::BinaryHeap<HeapCand>,
+    cells: std::collections::BinaryHeap<std::cmp::Reverse<(u64, [i32; 3])>>,
+    scanned: std::collections::HashSet<[i32; 3]>,
+    /// The class and coarse flag each candidate was scored with since the walk started: a
+    /// candidate that leaves and joins again unchanged (a refused place) keeps its entry.
+    scored: std::collections::HashMap<[i32; 3], (u8, bool)>,
+    /// The cells are read again at the next [`Ordered::get`].
+    stale: bool,
+}
+
+/// The kept candidates in their order, scored only as far as an opening walks (Plan 0096 Phase
+/// 5): the pool in a spatial index of [`ORDER_CELL`]-chunk cells per lead, each lead walked
+/// from the camera outward. A cell's least key (the key of a chunk at its nearest point, no
+/// key of a chunk in it is less: the score is at least the distance) orders the cells; a
+/// candidate leaves the heap only once its key is under every unscanned cell's, so the walk
+/// sees the order a full sort gives. A still camera with no candidate joining scores nothing;
+/// a view change or a candidate joining a scanned cell starts its lead's walk again, which
+/// scores only the cells it reaches.
 #[derive(Debug, Default)]
 pub(super) struct Ordered {
-    pub(super) done: Vec<Cand>,
-    pub(super) heap: std::collections::BinaryHeap<HeapCand>,
+    index: [std::collections::HashMap<[i32; 3], Vec<[i32; 3]>>; 2],
+    walks: [Walk; 2],
+    view: Option<OrderView>,
+    forward: [f32; 3],
+    half_angle: f32,
+    /// Candidates scored since the last [`Ordered::take_visited`].
+    visited: u64,
 }
 
 impl Ordered {
-    pub(super) fn new(cands: Vec<Cand>) -> Self {
-        Self {
-            done: Vec::new(),
-            heap: cands.into_iter().map(HeapCand).collect(),
+    /// The lead (the order's leading key) of a candidate of `class` under `order`.
+    fn lead(order: QueueOrder, class: u8) -> usize {
+        match order {
+            QueueOrder::Score {
+                refine: Refine::Weight(_),
+                ..
+            } => 0,
+            _ => usize::from(class.min(1)),
         }
     }
 
-    /// The `i`th candidate in order, sorting the heap's head as far as `i`.
-    pub(super) fn get(&mut self, i: usize) -> Option<Cand> {
-        while self.done.len() <= i {
-            self.done.push(self.heap.pop()?.0);
+    /// The order's view: a change (or a new order) starts both walks again. True when the
+    /// order's leads moved, so the index is to be read again ([`Ordered::rebuild`]).
+    pub(super) fn set_view(&mut self, key: OrderView, forward: [f32; 3], half_angle: f32) -> bool {
+        if self.view == Some(key) {
+            return false;
         }
-        Some(self.done[i])
+        let relead = self
+            .view
+            .is_some_and(|v| Self::lead(v.order, 1) != Self::lead(key.order, 1));
+        self.view = Some(key);
+        self.forward = forward;
+        self.half_angle = half_angle;
+        for w in &mut self.walks {
+            w.stale = true;
+        }
+        relead
     }
 
-    /// Every candidate, in no order.
-    pub(super) fn all(&self) -> impl Iterator<Item = &Cand> + '_ {
-        self.done.iter().chain(self.heap.iter().map(|h| &h.0))
+    /// The index read whole from `pool`, both walks started again.
+    pub(super) fn rebuild<'a>(
+        &mut self,
+        pool: impl Iterator<Item = (&'a [i32; 3], &'a (u8, bool))>,
+    ) {
+        self.index = Default::default();
+        let order = self.view.map_or(QueueOrder::default(), |v| v.order);
+        for (&c, &(class, _)) in pool {
+            self.index[Self::lead(order, class)]
+                .entry(order_cell(c))
+                .or_default()
+                .push(c);
+        }
+        for w in &mut self.walks {
+            w.stale = true;
+        }
+    }
+
+    /// `c` joined the pool, or its value changed, as `class`: in the index, and its lead's walk
+    /// started again where it already scanned `c`'s cell.
+    pub(super) fn insert(&mut self, c: [i32; 3], class: u8, coarse: bool, was: Option<u8>) {
+        let order = self.view.map_or(QueueOrder::default(), |v| v.order);
+        if let Some(w) = was {
+            self.remove(c, w);
+        }
+        let lead = Self::lead(order, class);
+        let cell = order_cell(c);
+        let members = self.index[lead].entry(cell).or_default();
+        let new_cell = members.is_empty();
+        members.push(c);
+        let key = self.cell_key(cell);
+        let walk = &mut self.walks[lead];
+        if walk.scanned.contains(&cell) {
+            walk.stale |= walk.scored.get(&c) != Some(&(class, coarse));
+        } else if new_cell && !walk.stale {
+            // A cell the walk's heap of cells did not hold joins it (a cell held twice is
+            // scanned once), unless the walk already passed its key.
+            if walk.done.last().is_some_and(|d| key < d.key) {
+                walk.stale = true;
+            } else {
+                walk.cells.push(std::cmp::Reverse((key, cell)));
+            }
+        }
+    }
+
+    /// `c` of `class` left the pool: out of the index (a walked entry is skipped by the
+    /// walker's pool check).
+    pub(super) fn remove(&mut self, c: [i32; 3], class: u8) {
+        let order = self.view.map_or(QueueOrder::default(), |v| v.order);
+        let cell = order_cell(c);
+        let m = &mut self.index[Self::lead(order, class)];
+        if let Some(v) = m.get_mut(&cell)
+            && let Some(i) = v.iter().position(|&x| x == c)
+        {
+            v.swap_remove(i);
+            if v.is_empty() {
+                m.remove(&cell);
+            }
+        }
+    }
+
+    /// The key no chunk of `cell` scores under from the view's eye.
+    fn cell_key(&self, cell: [i32; 3]) -> u64 {
+        let Some(v) = self.view else { return 0 };
+        let d2: i64 = (0..3)
+            .map(|k| {
+                let lo = cell[k] * ORDER_CELL;
+                let hi = lo + ORDER_CELL - 1;
+                let e = v.eye[k];
+                i64::from((lo - e).max(e - hi).max(0)).pow(2)
+            })
+            .sum();
+        match v.order {
+            QueueOrder::Distance => d2 as u64,
+            QueueOrder::Score { angle, refine } => {
+                let r = match refine {
+                    Refine::Weight(r) => r.min(1.0),
+                    Refine::Tier => 1.0,
+                };
+                if angle < 0.0 || r < 0.0 {
+                    return 0;
+                }
+                let o = (d2 as f32).sqrt();
+                u64::from((o * r).to_bits())
+            }
+        }
+    }
+
+    /// The `i`th candidate of lead `lead` in order, scanning cells and sorting the heap's head
+    /// as far as `i`. Every candidate a scanned cell holds is scored, and counted.
+    pub(super) fn get(
+        &mut self,
+        lead: usize,
+        i: usize,
+        pool: &std::collections::HashMap<[i32; 3], (u8, bool)>,
+    ) -> Option<Cand> {
+        let v = self.view?;
+        if self.walks[lead].stale {
+            let cells: Vec<_> = self.index[lead]
+                .keys()
+                .map(|&cell| std::cmp::Reverse((self.cell_key(cell), cell)))
+                .collect();
+            let w = &mut self.walks[lead];
+            w.done.clear();
+            w.heap.clear();
+            w.scanned.clear();
+            w.scored.clear();
+            w.cells = cells.into();
+            w.stale = false;
+        }
+        while self.walks[lead].done.len() <= i {
+            let w = &mut self.walks[lead];
+            let head = w.heap.peek().map(|h| h.0.key);
+            let bound = w.cells.peek().map(|r| r.0.0);
+            match (head, bound) {
+                (Some(k), b) if b.is_none_or(|b| k < b) => {
+                    let c = w.heap.pop()?.0;
+                    w.done.push(c);
+                }
+                (_, Some(_)) => {
+                    let std::cmp::Reverse((_, cell)) = w.cells.pop()?;
+                    if !w.scanned.insert(cell) {
+                        continue;
+                    }
+                    let members = self.index[lead].get(&cell).cloned().unwrap_or_default();
+                    for c in members {
+                        let Some(&(class, coarse)) = pool.get(&c) else {
+                            continue;
+                        };
+                        let k = cand_at(
+                            c,
+                            class,
+                            coarse,
+                            v.eye,
+                            self.forward,
+                            self.half_angle,
+                            v.order,
+                            v.near,
+                        );
+                        self.visited += 1;
+                        let w = &mut self.walks[lead];
+                        w.scored.insert(c, (class, coarse));
+                        w.heap.push(HeapCand(k));
+                    }
+                }
+                _ => return None,
+            }
+        }
+        Some(self.walks[lead].done[i])
+    }
+
+    /// The candidates scored since the last call.
+    pub(super) fn take_visited(&mut self) -> u64 {
+        std::mem::take(&mut self.visited)
     }
 }
 
@@ -158,11 +356,38 @@ pub(super) fn cand_of(
     order: QueueOrder,
     near: i32,
 ) -> Cand {
+    cand_at(
+        c,
+        class,
+        coarse,
+        eye,
+        view.forward,
+        view.half_angle,
+        order,
+        near,
+    )
+}
+
+/// [`cand_of`] from the view's forward direction and half-angle.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the candidate, its class and the view's five terms are independent"
+)]
+pub(super) fn cand_at(
+    c: [i32; 3],
+    class: u8,
+    coarse: bool,
+    eye: [i32; 3],
+    forward: [f32; 3],
+    half_angle: f32,
+    order: QueueOrder,
+    near: i32,
+) -> Cand {
     let d = [0, 1, 2].map(|k| c[k] - eye[k]);
     let d2: i64 = d.iter().map(|&v| i64::from(v).pow(2)).sum();
     let len = (d2 as f32).sqrt().max(1.0);
-    let dot: f32 = (0..3).map(|k| d[k] as f32 * view.forward[k]).sum::<f32>() / len;
-    let a = angle_term(d, view.forward, view.half_angle, near);
+    let dot: f32 = (0..3).map(|k| d[k] as f32 * forward[k]).sum::<f32>() / len;
+    let a = angle_term(d, forward, half_angle, near);
     let (lead, key) = match order {
         QueueOrder::Distance => (class, d2 as u64),
         QueueOrder::Score {

@@ -53,7 +53,7 @@ were lighting 6.0, denoise 3.0, upscale 1.5, headroom 2.1 and no bake line):
 | Primary rays (DDA, full detail + LOD) | 3.0 ms |
 | Lighting (direct light, the list lights' shadow rays, the baked store's read) | 4.0 ms |
 | Denoise (temporal + spatial) | 2.0 ms |
-| The live bake's slice | 1.0 ms |
+| The live bake's slice once nothing in view waits (while in view waits, the profile's drain value: Floor 1.5, Portable 6.0; Plan 0096) | 1.0 ms |
 | Upscale (FSR 2), tone map, post | 3.0 ms |
 | Headroom (entities, volumetrics, game work) | 2.6 ms |
 
@@ -142,6 +142,42 @@ inside it. The pre-roll is unchanged within 0.2 s (RTX) and 1.3 s (RENOIR); the 
 under the day cycle re-keys every marked block 2.3 to 5.7 s after a step on the RTX and 7.1 to
 49.5 s on the RENOIR.
 
+**The bake queue's drain and step** (Plan 0096, ADR-0080; pinned at its Phase 9, 2026-11-23,
+release at `91003891`'s tree, headless, `--source outdoor` from the first world frame, the
+forest at 15:00 and the hills at noon; RTX 3080 Laptop at Floor 1920 x 1080 with the drain
+slice 1.5 ms, RADV RENOIR at Portable 1280 x 720 with 6.0; exclusive perf lock, quiet unless
+said; "720p" and "1280 x 720" here are the output FSR 2 makes at 1.5 from a march and light pass
+at 853 x 480). The lines are the plan's, unmoved; a miss is disclosed with its cause and the plan that
+takes it.
+
+| line | RTX 3080 Laptop, Floor | RADV RENOIR, Portable | standing |
+|---|---|---|---|
+| In view landed after the first world frame: RTX at most 10 s, RENOIR at most 30 s | forest 36.5 s, hills 12.2 s | forest 27.1 s, hills 16.7 s | **RTX missed**: the queue's per-job cost on the render thread holds the step at 13 to 15 ms a frame; Plan 0099 (the bake step off the main thread) takes the line. RENOIR met on 2 of 3 quiet forest runs (37.6, 27.1 and 27.0 s; median 27.1) |
+| The whole residency empty: RTX at most 60 s, RENOIR at most 180 s | forest 49.1 s, hills 37.1 s | hills 152.5 s; forest not empty 220 s after the first world frame | **RENOIR forest missed**: once in view lands the slice is the 1.0 ms line, about 18 chunks a second there; Plan 0099 carries and re-reads the line |
+| The queue's step, regime B: p50 at most 1.0 ms, p99 at most 4.0 | forest 15.48 / 27.89, hills 12.86 / 25.85 | forest 1.04 / 9.55, hills 1.22 / 8.51 | **missed on both**: no longer the queue's depth (drained p50 0.076 ms on the RTX) but per job opened (`list`, `collect`, `submit`, `fades`, `summaries`) on the render thread; Plan 0099 |
+| The live bake's slice: the drain value while in view waits, 1.0 ms after; the Floor frame within 16.6 ms while draining | wall p50 26 ms (forest) and 30 (hills) while draining, 9 and 8 after | 46 and 37 while draining, 36 and 27 after | **the RTX's frame missed while draining**, CPU-bound by the step (above); Plan 0099. The submits draw 0.98 to 1.01 of the drain slice on both |
+| `update + poll + sync` p99 at most 16.6 ms (tester cave bench, RTX host) | 14.82 ms | not read | met |
+| `alloc` p99 at most 3.0 ms (the same bench) | 6.42 ms | not read | **missed**: the per-brick path as a whole (Plan 0096 Phase 7's profile); the backlog's "Slot words packed on the workers" |
+| `light place` p99 under 2 ms in a glide that evicts | met where nothing evicts: the cave bench 1.03 ms (p99, quiet, 2026-11-23); missed in an evicting glide: the window's 2.16 / 6.19 ms p50 / p99 at the default buffer, 6.84 / 8.84 on the 1/16 stress rig (loaded, indicative) | not read | **missed** in an evicting glide: the eviction scan's retries are gone (Phase 7b); the rest is the wanted set's collection and sort; taken by the backlog's "Plan 0096's leftovers" (the slot words on the workers plan) |
+| Lighting 4.0 ms: the Portable light pass on the hills at noon (RENOIR) | - | disc 2.42 ms; under the default approach penumbra 4.81 | **met on the disc base**; under approach, the default on every profile (ADR-0079), missed: the penumbra pick is Plan 0098's |
+| The same in the forest at 15:00 (a reading held against the line) | approach 2.98 ms, disc 1.09 | approach 17.38 ms, disc 5.13 | **RENOIR missed** under either penumbra; no lever Plan 0096 holds reaches it (its "What this plan does NOT do") |
+
+The drain values come from the owner's rule over a sweep (frame rate first; an arm whose in-view
+drain is over twice the shortest is out; Plan 0096's readings log, Phase 9): the RTX took 1.5 ms
+(wall p50 26 ms while draining against 39 and 37 at 4.0 and 8.0, landing in 36.5 s against 29.5
+and 25.1), the RENOIR kept 6.0. The window's readings (the owner's Plan 0096 Phase 8 at 2530 x
+1378, not against these lines) are in [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md).
+
+**Disclosed at the close review (2026-11-23):** the record by rule (ADR-0080 rule 1)
+answered 236 of the 3 540 buried chunks of the RTX's forest (233 to 241 of 3 526 on the hills)
+and 1 to 12 of 1 019 on the RENOIR (6 of 1 066), because the opening applies it only to a
+first bake with a full reach under final columns; the others take GPU jobs, some twice (a
+provisional bake and its catch-up). Read at Plan 0096 Phase 10a (`f0b55422`, quiet): of the
+jobs opened before the in-view landing the rule would have answered 11.4 % in the RTX's forest
+(20.0 % on the hills) and 12.0 % in the RENOIR's (10.1 %), and 5.1 (8.9) and 5.1 (6.5) % of
+the samples, so the causes in the standing column are the larger part and this is the rest.
+Applying the rule there is the backlog's "The record by rule at every opening".
+
 Every reading against this budget, with its machine, scene and commit, is in
 [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md); new readings go there.
 
@@ -161,6 +197,13 @@ the frame dropping.
 
 The baked light store's record is 11 words (44 B) since Plan 0095 (the key light's visibility
 per brick direction, ADR-0079): 11.0 to 13.6 MB live outdoors at 1080p (2026-11-20).
+
+The stream workers' shells map (the input of the no-face verdict, ADR-0080 rule 1, Plan 0096)
+is CPU memory beside the resident chunks: 52 210 056 B over 17 077 shells in the forest at the
+Floor residency (48 686 472 B on the hills) and 22 938 088 B over 7 153 at Portable
+(21 332 456), about 3.0 KB a full chunk held, about 1.2 % of the 4 GB line (the queue line of
+the release at `91003891`'s tree, Ryzen 9 5900HS, 2026-11-23). A reading; it has no line of
+its own.
 
 Every reading against this budget, with its machine, scene and commit, is in
 [`docs/nfr/03-memory.md`](nfr/03-memory.md); new readings go there.
@@ -536,6 +579,7 @@ Every reading against these budgets, with its machine and commit, is in
   **Reading (Plan 0086 close review, 2026-11-19, the plan's tip f8cbcb2d (main 901a9e26 merged), dev reference on lavapipe, exclusive perf lock, 16G cap, the gate's binaries built before the lock, `--status-level pass`, one other lane's worktree idle, load 1.40 at the lock and 2.43 at the end, quiet):** 1255 tests, all passed, 192 skipped: nextest **1792.6 s, over the 19 min budget** by 653 s; 29 min 53 s wall; 36.1 min serial, 61 tests over the 10 s line (14.3 min of it), every one of them a test main already had (the plan's four over the line are soak marks since Phase 24i). The dev's quiet readings on the same branch: 2096.4 s at 47cc3feb before the column map's flush was fixed (c682fa9d: `a_source_switch_shows_the_loading_frames_before_the_new_world` 200.2 s back to 16.9 here) and 1883.9 s at 23a89c7b. The rest of the growth over main's 1132 s is the light pass's pipeline compile on lavapipe, +2.2 to 2.6 s on every test that builds a frame (the readings log, "The gate's slowdown"; the penumbra spike's branch +1.25 s of the light stage's +2.85): **accepted by the owner 2026-11-19 as a disclosed reading**, Plan 0094 moves the default-off arms out of the default pipeline and gives the GPU tests a pipeline cache. `cargo deny check` reads advisories FAILED on main's wasmtime 49.0.5 pin (`docs/backlog.md`), as at Plan 0083's close.
   **Reading (Plan 0094, 2026-11-20, dev reference on lavapipe, exclusive perf lock, the gate's binaries built before the lock):** the dev's quiet tip gate at `fbe9af7c` (load 1.82 at the lock, 2.02 at the end, quiet): 1281 run, 1277 passed (four frame inventories missing the exposure's +115 216 B, fixed and re-read by name), 210 skipped, **1711.4 s, over the 19 min budget** by 571 s; the close review's gate at `0d956f17` (main `982a953a` merged; load about 3 at the lock and 1.70 at the end, two other lanes open, loaded: indicative): 1280 tests, all passed, 211 skipped, **1588.2 s**, 32.5 min serial, 38 tests over the 10 s line, none of them this plan's. The light pass's default-off arms left the default pipeline (its stage 5.1 to 3.7 s on lavapipe debug); the plan's gate tests sum to 25.4 s. **The wall over the line is accepted by the owner as a reading (2026-11-20)**; cutting it is a later test-cost chore.
   **Reading (Plan 0097 close review, 2026-11-22, the plan's tip `339e4f18` (main `ed2fb525` merged), dev reference on lavapipe, exclusive perf lock, 6G cap, 2 test threads, the gate's binaries built before the lock):** 1316 run, 1316 passed, 226 skipped, **1498.0 s, over the 19 min line** by 358 s; load 3.15 at the lock and 1.13 at the end with three lanes active, so **loaded, indicative**; 21 tests over the 10 s line, none of them this plan's (its gate tests are CPU tests under 0.1 s and one `gpu_exposure` test at 4.3 s, added by the fix pass and read apart). **The owner's acceptance of this wall is owed** (not assumed); the owner agreed on 2026-11-22 to the chore that reads the lavapipe group at two threads ([the backlog review](reviews/2026-11-22-backlog-review.md), answer 3).
+  **Reading (Plan 0096 close review, 2026-11-23, the plan's tip `466460bd` (main `3e268ad0` merged), dev reference on lavapipe, exclusive perf lock, 16G cap, 12 build jobs, the gate's binaries built before the lock):** 1348 run, 1348 passed, 230 skipped, **1470.4 s, over the 19 min line** by 330 s; load 17.66 at the lock (the gate's own build just before) and 1.21 at the end, two lanes active, so **loaded, indicative**; 29.6 min serial, 27 tests over the 10 s line (6.0 min of it; `docs/backlog.md`, the gate entry). The first review's run at `05d0e6fe`: 1344 of 1344, 1463.3 s; the dev's tip run at `501bcd95`: 1437.1 s with one failure, fixed before the reviews. **The owner's acceptance of this wall is owed** (not assumed).
   **Reading (CI after Plan 0072, 2026-11-13, GitHub-hosted runners):** run 43377881019 on 9c256bb (cold cache, the profile change): Linux 26 min 29 s, Windows 33 min 9 s; gate on Linux 844 passed, 78 skipped, 437.6 s. Run 43395622401 on 393ed45 (warm): **Linux 15 min 6 s, Windows 18 min 47 s**, over Plan 0072's under-10 and under-15 min proposals. **Accepted by the owner 2026-11-13 ("record this time as accepted, let it be")**: these walls are the CI line; no further cut is owed.
   **Reading (CI run 41332396750 on 929d1b3, 2026-11-01, the Linux arm, lavapipe, 745 tests,
   the `ci` profile before the re-cut):** 5386 s wall for the test step, 354 min of serial

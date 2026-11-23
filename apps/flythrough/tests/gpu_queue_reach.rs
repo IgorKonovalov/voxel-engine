@@ -858,8 +858,8 @@ fn a_still_step_scans_nothing() {
     for n in 0..100 {
         let st = q.step_with(false);
         assert_eq!(
-            (st.scanned, st.reach_checks, st.rebuilt),
-            (0, 0, 0),
+            (st.scanned, st.reach_checks, st.rebuilt, st.visited),
+            (0, 0, 0, 0),
             "still step {n}: {st:?}"
         );
     }
@@ -893,11 +893,18 @@ fn a_still_step_scans_nothing() {
 
 /// The eight-chunk row with chunk 7 waiting to upload, at 1024 samples a brick direction and
 /// the smallest slice: one job opens at a time, nearest first with the view's tie (2, 3, 1,
-/// 4, 0), as the start commit opens them. Every opening after the first, the mirror still and
-/// jobs ending between them, scores nothing again, and each candidate's reach is walked once
-/// over the run (0 to 6).
-/// Mirroring chunk 7 makes the next opening score once; 7 opens, then 5 and 6 once their
-/// last check is old enough to be read again.
+/// 4, 0), as the start commit opens them, and each candidate's reach is walked once over the
+/// run (0 to 6).
+///
+/// What is counted is the candidates the order scores (`visited`), each once: the pool at the
+/// first opening is chunks 0 to 6 in two order cells (0 to 3 and 4 to 7), and a walk scores a
+/// cell's candidates when it first reaches the cell, so the still stretch, the mirror still
+/// and jobs ending between openings, scores exactly 7 in all; a walk started again on the
+/// still mirror would read more. No step changes the order's leads (`rebuilt` 0 throughout),
+/// and the 40 still steps after score nothing. Mirroring chunk 7 adds it to the scanned cell
+/// 4 to 7, so its arrival starts that cell's walk again once: the first step that scores
+/// after it scores exactly chunks 5, 6 and 7. 7 opens, then 5 and 6 once their last check is
+/// old enough to be read again.
 #[test]
 fn an_opening_without_a_mirror_event_rebuilds_nothing() {
     let Some(mut q) = row_n(
@@ -915,21 +922,18 @@ fn an_opening_without_a_mirror_event_rebuilds_nothing() {
         return;
     };
     let mut order: Vec<i32> = Vec::new();
-    let (mut checks, mut openings, mut rebuilt) = (0, 0, 0);
+    let (mut checks, mut openings, mut visited) = (0, 0, 0);
     let mut steps = 0;
     while !(q.q().jobs().is_empty() && order.len() == 5) {
         steps += 1;
         assert!(steps <= MAX_STEPS, "the five ready chunks bake");
         let before = q.q().stats().openings;
         let st = q.step_with(false);
+        assert_eq!(st.rebuilt, 0, "still stretch step {steps}: {st:?}");
         checks += st.reach_checks;
+        visited += st.visited;
         if st.openings > before {
             openings += 1;
-            rebuilt += st.rebuilt;
-            assert!(
-                openings == 1 || st.rebuilt == 0,
-                "opening {openings} scores again: {st:?}"
-            );
         }
         for c in q.q().jobs() {
             if !order.contains(&c.0[0]) {
@@ -937,27 +941,30 @@ fn an_opening_without_a_mirror_event_rebuilds_nothing() {
             }
         }
     }
-    for _ in 0..40 {
-        checks += q.step_with(false).reach_checks;
+    for n in 0..40 {
+        let st = q.step_with(false);
+        assert_eq!(
+            (st.rebuilt, st.visited),
+            (0, 0),
+            "still step {n} after the stretch: {st:?}"
+        );
+        checks += st.reach_checks;
     }
-    println!("order {order:?}, {openings} openings, {rebuilt} scored, {checks} reach walks");
+    println!("order {order:?}, {openings} openings, {visited} scored, {checks} reach walks");
     assert_eq!(order, [2, 3, 1, 4, 0]);
     assert!(openings >= 5, "one opening a job at least");
-    assert_eq!(rebuilt, 1, "only the first opening scores");
+    assert_eq!(visited, 7, "chunks 0 to 6 each scored once");
     assert_eq!(checks, 7, "chunks 0 to 6 each walked once");
     sync_one(&mut q);
-    let mut rebuilt = None;
-    for _ in 0..20 {
-        let before = q.q().stats().openings;
+    let mut arrival = None;
+    let mut after = 0;
+    for n in 0..MAX_STEPS {
         let st = q.step_with(false);
-        if st.openings > before {
-            rebuilt = Some(st.rebuilt);
-            break;
+        assert_eq!(st.rebuilt, 0, "step {n} after chunk 7's arrival: {st:?}");
+        if arrival.is_none() && st.visited > 0 {
+            arrival = Some(st.visited);
         }
-    }
-    assert_eq!(rebuilt, Some(1), "chunk 7's arrival scores the order once");
-    for _ in 0..MAX_STEPS {
-        q.step_with(false);
+        after += st.visited;
         for c in q.q().jobs() {
             if !order.contains(&c.0[0]) {
                 order.push(c.0[0]);
@@ -967,6 +974,12 @@ fn an_opening_without_a_mirror_event_rebuilds_nothing() {
             break;
         }
     }
+    println!("from chunk 7's arrival to the empty queue: {after} scored");
+    assert_eq!(
+        arrival,
+        Some(3),
+        "chunk 7's arrival scores chunks 5, 6 and 7 once"
+    );
     // 5 and 6 were found blocked at the last openings and wait out the recheck: 7 first.
     assert_eq!(order, [2, 3, 1, 4, 0, 7, 5, 6]);
 }

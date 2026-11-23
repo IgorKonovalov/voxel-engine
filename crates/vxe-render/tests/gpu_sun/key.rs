@@ -479,3 +479,85 @@ fn a_post_casts_a_dark_shadow_and_a_lit_side_under_the_approach() {
     }
     assert!(dark > 300 && lit > 300, "{dark} dark, {lit} lit pixels");
 }
+
+/// One 320 x 180 frame's light pass of the mirrored world `gpu` under a noon sun (no sky ray,
+/// the filter off, the disc penumbra, `key_far ray` so every pixel's key is its ray with no far
+/// estimate to seed or replace it) with the key cap `cap` (0: none), from 4 voxels over the floor at x 48 looking along -x, 10 degrees
+/// up: per lighting pixel its hit position and its visibility pair (`y` the key light's ray
+/// mean, one frame: the ray's value).
+fn lever_shot(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    gpu: &GpuWorld,
+    cap: f32,
+) -> (Vec<[f32; 4]>, Vec<[f32; 4]>) {
+    let mut f = frame(device, [320, 180], ShadowWalk::Full);
+    f.set_lighting(Lighting {
+        key_far: vxe_render::KeyFar::Ray,
+        key_cap: cap,
+        ..f.lighting()
+    });
+    f.set_sky(Some(sky(dir(90.0, 0.0), dir(-40.0, 0.0), [[1.0; 3], [0.0; 3]])));
+    let cam = Camera {
+        position: Vec3::new(48.0, 32.0, FLOOR as f32 + 4.0),
+        yaw: std::f32::consts::PI,
+        pitch: 10f32.to_radians(),
+        vfov: 60f32.to_radians(),
+    };
+    f.step(device, queue, gpu, &cam, &LightParams::headlamp());
+    let h = vxe_render::debug::read_rgba32f(device, queue, f.light_hit_positions());
+    let pair = vxe_render::debug::read_rgba16f(device, queue, f.visibility_pair());
+    (h, pair)
+}
+
+/// Plan 0096 Phase 6 bar 1: the slow adapter's key cap counts a key ray clear for `cap` voxels
+/// lit, so it changes the image only where a ray is longer than the cap. An open floor at noon
+/// (every ray clear) renders bit-identical with the cap at 4 voxels and with none. Under a slab
+/// at z 26..28 over x < 24 (an overhang 10 voxels over the floor, no post), the cap at 4 voxels,
+/// under that clearance, lifts the floor under the slab from dark to lit; every pixel that
+/// differs is a floor hit (z 16) at x < 24.1 (the slab's edge plus the sun disc's lean over the
+/// 10 voxels, about 0.05), and the slab's own faces and the open floor past it are unchanged.
+#[test]
+#[ignore = "soak"]
+fn the_key_cap_leaves_the_lit_image_unchanged_where_no_ray_is_longer() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    const CAP: f32 = 4.0;
+    let under = FLOOR + 10;
+    let bits = |v: &[f32; 4]| v.map(f32::to_bits);
+    let open = mirror(&device, &queue, &styled_world(|_| AIR), None);
+    let base = lever_shot(&device, &queue, &open, 0.0).1;
+    let capped = lever_shot(&device, &queue, &open, CAP).1;
+    let moved = (0..base.len()).filter(|&i| bits(&base[i]) != bits(&capped[i]));
+    assert_eq!(moved.count(), 0, "the open floor under the cap");
+    let slab_world = styled_world(move |p| {
+        let deck = (under..under + 2).contains(&p[2]) && p[0] < 24;
+        if deck { ROCK } else { AIR }
+    });
+    let slab = mirror(&device, &queue, &slab_world, None);
+    let (h, plain) = lever_shot(&device, &queue, &slab, 0.0);
+    let (hc, cap) = lever_shot(&device, &queue, &slab, CAP);
+    assert!(h.iter().zip(&hc).all(|(a, b)| bits(a) == bits(b)), "the cap moves a hit");
+    let floor = |i: usize| h[i][3] < 1e30 && (h[i][2] - FLOOR as f32).abs() < 0.01;
+    let shaded: Vec<usize> = (0..h.len())
+        .filter(|&i| floor(i) && h[i][0] < 23.0)
+        .collect();
+    let differ: Vec<usize> = (0..h.len())
+        .filter(|&i| bits(&plain[i]) != bits(&cap[i]))
+        .collect();
+    println!(
+        "{} pixels differ, {} on the floor well under the slab",
+        differ.len(),
+        shaded.len()
+    );
+    assert!(shaded.len() > 300, "{} floor pixels under the slab", shaded.len());
+    for &i in &shaded {
+        let pair = (plain[i][1], cap[i][1]);
+        assert_eq!(pair, (0.0, 1.0), "pixel {i} under the slab, hit {:?}", h[i]);
+    }
+    for i in differ {
+        let under_slab = floor(i) && h[i][0] < 24.1;
+        assert!(under_slab, "pixel {i} differs off the floor under the slab: hit {:?}", h[i]);
+    }
+}

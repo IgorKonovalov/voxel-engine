@@ -129,6 +129,7 @@ impl Run {
                 let r = s.streamer.config().residency;
                 r.r_lod.max(r.r_full)
             }),
+            focal_px: None,
         };
         for l in black_dump_lines(&gfx.mirror, &gfx.frame, &hits, &view, self.frame, black) {
             println!("{l}");

@@ -18,6 +18,11 @@ pub(crate) struct SubmitDone {
     pub seconds: f64,
     /// The dispatch's milliseconds on the GPU's timestamps, where the loop times its submits.
     pub gpu_ms: Option<f64>,
+    /// Of `samples`, those of jobs at the full count and those at a job's own count (the
+    /// coarse pass), and `gpu_ms` split between them by those samples: an attribution of the
+    /// dispatch's time by its share of the samples, not a measurement of each class.
+    pub class_samples: [u64; 2],
+    pub class_ms: [f64; 2],
 }
 
 /// Lanes of a workgroup that share an entry's samples (`BAKE_LANES` in bake.wgsl).
@@ -71,6 +76,9 @@ pub(crate) struct JobLoop {
     pub(super) timer: Option<Option<LoopTimer>>,
     /// The samples the last [`JobLoop::dispatch`] planned: 0 when it dispatched nothing.
     pub last_samples: u64,
+    /// The dispatches' plans that stopped at the sample cap, at the entries' batch, and out of
+    /// rounds to plan, since the loop started.
+    pub plan_stops: [u64; 3],
     /// The light epoch the open jobs' tables were last written at ([`JobLoop::refresh_tables`]).
     pub(super) tables_at: Option<u64>,
     /// Each ended job's chunk and the samples its faces drew, where the loop keeps them
@@ -103,6 +111,7 @@ impl JobLoop {
             timed: false,
             timer: None,
             last_samples: 0,
+            plan_stops: [0; 3],
             tables_at: None,
             ended: None,
         }
@@ -145,6 +154,11 @@ impl JobLoop {
     /// Submits not read back yet.
     pub(crate) fn in_flight(&self) -> usize {
         self.in_flight.len()
+    }
+
+    /// The chunks of the jobs pending, not yet opened.
+    pub(crate) fn pending_chunks(&self) -> impl Iterator<Item = ChunkCoord> + '_ {
+        self.pending.iter().map(|j| j.coord)
     }
 
     /// The chunks of the jobs pending or open.
@@ -337,6 +351,14 @@ impl JobLoop {
             return false;
         }
         self.last_samples = budget.samples;
+        let stop = if budget.samples >= budget.cap {
+            0
+        } else if budget.entries >= budget.batch {
+            1
+        } else {
+            2
+        };
+        self.plan_stops[stop] += 1;
         let (input, entries, jobs_in) = self.fill_entries(&plan, round, budget.entries);
         self.send(run, bind, settings, &input, entries, jobs_in);
         true
@@ -634,6 +656,7 @@ impl JobLoop {
             let out_words: &[u32] = bytemuck::cast_slice(&bytes[STAMP_BYTES as usize..]);
             let mut e = 0usize;
             let mut at = 0usize;
+            let mut class_samples = [0u64; 2];
             for &(slot, i, r) in &f.entries {
                 if self.open.get(at).is_none_or(|j| j.slot != slot) {
                     match self.open.iter().position(|j| j.slot == slot) {
@@ -655,6 +678,7 @@ impl JobLoop {
                         }
                     }
                 }
+                let class = usize::from(self.open[at].own_count);
                 let s = &mut self.open[at].states[i];
                 for _ in 0..r {
                     let words = &out_words[e * FACE_WORDS..(e + 1) * FACE_WORDS];
@@ -667,6 +691,7 @@ impl JobLoop {
                         report.wasted += u64::from(samples);
                         continue;
                     }
+                    class_samples[class] += u64::from(samples);
                     report.rays += u64::from(words[15]);
                     report.ray_len += f64::from(f32::from_bits(words[16]));
                     report.samples += u64::from(samples);
@@ -701,6 +726,18 @@ impl JobLoop {
             out.seconds += seconds;
             if let Some(ms) = gpu_ms {
                 *out.gpu_ms.get_or_insert(0.0) += ms;
+                let all = class_samples[0] + class_samples[1];
+                for ((s, m), &n) in out
+                    .class_samples
+                    .iter_mut()
+                    .zip(&mut out.class_ms)
+                    .zip(&class_samples)
+                {
+                    *s += n;
+                    if all > 0 {
+                        *m += ms * n as f64 / all as f64;
+                    }
+                }
             }
             self.close_ended(run, store, settings, sink);
             progress(&self.done);
@@ -803,6 +840,11 @@ pub(super) struct OpenJob {
     pub(super) kept_bricks: KeptBricks,
     /// [`Job::key_only`].
     pub(super) key_only: bool,
+    /// Whether the job draws its own count ([`Job::brick_samples`], the coarse pass): its
+    /// samples' class in [`SubmitDone::class_samples`].
+    pub(super) own_count: bool,
+    /// [`Job::tier`].
+    pub(super) tier: u8,
     pub(super) states: Vec<FaceState>,
     /// The faces still running.
     pub(super) live: Vec<usize>,
@@ -828,11 +870,13 @@ impl JobCtx<'_, '_> {
             samples: _,
             brick_samples,
             key_only,
+            tier,
         } = job;
         write_job_table(self.run, coord, slot);
         // A job's own count (the live queue's coarse pass) on cells of a brick draws each
         // direction's samples on `ceil(count / BAKE_LANES)` of its faces, spread evenly through
         // them in key order, so each entry fills its workgroup; the record is their mean.
+        let own_count = brick_samples.is_some();
         let subset = brick_samples.is_some() && self.settings.cell == 8;
         let brick_samples = brick_samples.unwrap_or(self.settings.brick_samples);
         let mut states: Vec<FaceState> = Vec::with_capacity(faces.faces());
@@ -895,7 +939,12 @@ impl JobCtx<'_, '_> {
                     snapshots: Vec::new(),
                     done: !wanted,
                     sky_n: if self.run.sky & BAKE_SKY_ON != 0 && !key_only {
-                        SKY_BAKE_RAYS.div_ceil(drawn[d].max(1)).min(n)
+                        let rays = if tier == TIER_FAR {
+                            SKY_FAR_RAYS
+                        } else {
+                            SKY_BAKE_RAYS
+                        };
+                        rays.div_ceil(drawn[d].max(1)).min(n)
                     } else {
                         0
                     },
@@ -913,6 +962,8 @@ impl JobCtx<'_, '_> {
             first_word,
             kept_bricks,
             key_only,
+            own_count,
+            tier,
             states,
             live,
             slot,
@@ -964,6 +1015,7 @@ impl JobCtx<'_, '_> {
                     cell,
                     self.run.sky & BAKE_SKY_ON != 0,
                     self.run.key.is_some(),
+                    job.tier,
                 )
             };
             let record = match job.kept_bricks.get(slot) {

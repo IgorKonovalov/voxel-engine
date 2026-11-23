@@ -230,7 +230,7 @@ fn shade_px(gid: vec3<u32>) {
                 walk_steps = 0u;
                 loads = 0u;
                 approach_on = approach;
-                sky_shadowed(o + ray_lift, d, KEY_RAY_LEN);
+                sky_shadowed(o + ray_lift, d, key_ray_len());
                 approach_on = false;
                 key = vec4<f32>(f32(walk_steps), f32(counted_loads()), f32(counted_pool_reads()), 1.0);
             }

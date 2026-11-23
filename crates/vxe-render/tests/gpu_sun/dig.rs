@@ -53,6 +53,7 @@ fn dig_queue_step(
         frustum: None,
         full_radius: Some(8),
         lod_radius: Some(8),
+        focal_px: None,
     };
     f.bake_queue_step(device, queue, gpu, world, &view)
         .expect("the queue runs")

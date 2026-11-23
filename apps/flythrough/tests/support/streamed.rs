@@ -138,6 +138,7 @@ pub fn streamed_with(
             frustum: None,
             full_radius: Some(residency.r_full),
             lod_radius: Some(residency.r_lod.max(residency.r_full)),
+            focal_px: None,
         };
         let st = frame
             .bake_queue_step(&device, &queue, &mut gpu, &world, &view)

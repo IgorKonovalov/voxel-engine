@@ -28,6 +28,9 @@ macro_rules! named_enum {
 }
 pub(crate) use named_enum;
 
+mod sky_light;
+pub use self::sky_light::*;
+
 /// Workgroup edge in pixels; must match `@workgroup_size` in every frame shader.
 pub(crate) const WORKGROUP: u32 = 8;
 
@@ -91,10 +94,13 @@ pub struct Params {
     pub light_scale: u32,
     pub light_offset: u32,
     pub prev_light_offset: u32,
-    pub _pad8: u32,
+    /// [`LIGHTING2_SKY_DOWN_SKIP`]: the light pass's second word of switches.
+    pub lighting2: u32,
     /// The size of the frame's image: the output size with the upscaler, else `size`.
     pub output_size: [u32; 2],
-    pub _pad10: u32,
+    /// [`Lighting::key_cap`]: the key ray's length in voxels, past which the face counts lit;
+    /// 0 for no cap.
+    pub key_cap: f32,
     /// [`LookParams::far_normal`].
     pub far_normal: [f32; 2],
     /// [`Lighting::sky_bounce`] clamped to 0 ..= 1.
@@ -282,6 +288,10 @@ pub(crate) const LIGHTING_KEY_COLUMN: u32 = 1 << 31;
 /// `Params::lighting` bit: inside the far normal's band the store's key visibility steps in at
 /// the weight's half ([`KeyFarMix::Step`]); clear, it blends by the weight.
 pub(crate) const LIGHTING_KEY_STEP: u32 = 1 << 26;
+
+/// `Params::lighting2` bit ([`Lighting::sky_down_skip`]): no sky ray from a face whose normal
+/// points down.
+pub(crate) const LIGHTING2_SKY_DOWN_SKIP: u32 = 1;
 
 /// The light passes' reading hooks ([`Frame::set_light_hooks`]): switches that take a term or a
 /// test out of the frame to attribute what the image does to it. All off by default; each is
@@ -652,87 +662,6 @@ named_enum!(ShadowWalk {
     Coarse => "coarse",
 });
 
-/// How the key light's shadow ray makes its penumbra (Plan 0086 Phase 7's spike).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Penumbra {
-    /// One ray toward a uniform point of the body's disc a pixel and frame: the penumbra is the
-    /// mean over frames and pixels. The default.
-    #[default]
-    Disc,
-    /// One ray toward the body's centre that keeps, along its walk, the smallest ratio of the
-    /// distance from the ray to a solid 2^3 block beside it (probed two voxels across the ray's
-    /// dominant axis, about every two voxels through cells of a brick's edge or less) to
-    /// `t tan r`, `r` the body's angular radius: the visibility is that ratio clamped to 1, 0
-    /// where the ray hits. The same every frame; a penumbra on the lit side of the edge only.
-    Approach,
-}
-
-named_enum!(Penumbra {
-    Disc => "disc",
-    Approach => "approach",
-});
-
-/// Where the key light's visibility comes from where a voxel is small on screen (ADR-0079).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum KeyFar {
-    /// The far estimate at a cube face: the store's baked key visibility where its cell holds
-    /// a fresh one (`KEY_BAKED`, not `SKY_STALE`), read bilinear, else the column map's horizon
-    /// toward the sun softened by the disc's radius. Where the far normal's weight is 1 (at and
-    /// over one half under [`KeyFarMix::Step`]) the estimate with no key ray and no screen
-    /// history, a switch of its source (the record's landing, a re-bake) riding one fade;
-    /// between the band's ends the ray's running mean and the estimate by [`KeyFarMix`]; and a
-    /// reset key mean seeded from the estimate. Anywhere else the ray. The default.
-    #[default]
-    Baked,
-    /// As [`KeyFar::Baked`] with the column map's horizon at every far face, record or not.
-    Column,
-    /// The per-pixel disc ray and its running mean at every distance (ADR-0027).
-    Ray,
-}
-
-named_enum!(KeyFar {
-    Baked => "baked",
-    Column => "column",
-    Ray => "ray",
-});
-
-/// How [`KeyFar::Baked`] joins the ray's mean and the store's value inside the far normal's
-/// band.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum KeyFarMix {
-    /// `mix(mean, store, w)`, `w` the far normal's weight. The default.
-    #[default]
-    Blend,
-    /// The store's value where `w` is at least one half, else the mean.
-    Step,
-}
-
-named_enum!(KeyFarMix {
-    Blend => "blend",
-    Step => "step",
-});
-
-/// The normal a cube face's baked sky term (ADR-0070) reads its visibilities by (Plan 0086
-/// Phase 13's arms).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SkyNormal {
-    /// The shading normal: the face's own direction near, the far normal's blend far.
-    Face,
-    /// The 27-count gradient's normal `g` at every distance: the face's term is the mix over
-    /// the directions `g` leans toward, `2a + (g_a > 0)` weighted `g_a^2`, of each direction's
-    /// baked visibility times the sky's irradiance above the horizon about it, over the
-    /// directions whose visibility is held; a tread and a riser of a one-voxel stair read the
-    /// slope's blend. The surface and the key light keep the face normal; a face whose sky
-    /// rays were cast (no fresh bake) keeps the shading normal. The default.
-    #[default]
-    Smoothed,
-}
-
-named_enum!(SkyNormal {
-    Face => "face",
-    Smoothed => "smoothed",
-});
-
 /// How a cube face's hit reads its emissive part from the store (ADR-0049).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum StoreRead {
@@ -1005,6 +934,14 @@ pub struct Lighting {
     /// n.d) / 2` over those it holds (a crude bounce from the brick's neighbourhood, one more
     /// record read, no ray). Read where the store holds a baked visibility.
     pub sky_bounce: f32,
+    /// The key light's shadow ray's length in voxels, past which a face counts lit (0, the
+    /// default: no cap; Plan 0096 Phase 6's lever (a), 1536 its first guess): a slow adapter's
+    /// light pass skips the ray's far march.
+    pub key_cap: f32,
+    /// No sky ray from a face whose normal points down (`n.z < -0.5`): its sky visibility reads
+    /// 0, as the ground under it reaches no sky under the column rule (default off; Plan 0096
+    /// Phase 6's lever (b)).
+    pub sky_down_skip: bool,
     /// The live queue's column wait (ADR-0070's amendment of the second window; default off): on,
     /// a chunk bakes only once every column over its reach's footprint is final (holds every
     /// chunk the streamer will hold, [`crate::QueueView::lod_radius`]); off, once no chunk of
@@ -1072,6 +1009,8 @@ impl Default for Lighting {
             key_far_mix: KeyFarMix::Blend,
             sky_normal: SkyNormal::Smoothed,
             sky_bounce: 0.0,
+            key_cap: 0.0,
+            sky_down_skip: false,
             column_wait: false,
             key_step: DEFAULT_KEY_STEP,
         }

@@ -5,7 +5,7 @@
 > drafted now, the lane after the rename; then 0089 and 0093, 0091, ...).
 > **Created:** 2026-11-22
 > **Milestone:** M10 (the outdoor scenes are where the queue is deep) and cross-cutting, like
-> [Plan 0096](0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md):
+> [Plan 0096](done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md):
 > it serves `docs/nfr.md` section 2's streaming line, the bake queue's step inside it and the
 > Floor frame, and takes the lines Plan 0096 closes with as disclosed misses.
 > **Related ADRs:** [ADR-0083](../adrs/0083-the-live-bake-queue-runs-on-a-bake-thread-the-render-thread-applies-its-write-lists-and-issues-its-submits.md)

@@ -184,6 +184,7 @@ impl BakeQueue {
                 samples,
                 brick_samples: None,
                 key_only: true,
+                tier: 0,
             });
             self.keys.open.insert(c);
         }

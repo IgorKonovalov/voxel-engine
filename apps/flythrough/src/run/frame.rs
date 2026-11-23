@@ -835,6 +835,9 @@ impl Run {
         };
         gfx.frame.set_lights(&lights);
         gfx.frame.set_light_cap(self.args.light_cap);
+        if self.args.light_hooks != vxe_render::LightHooks::default() {
+            gfx.frame.set_light_hooks(self.args.light_hooks);
+        }
         if let Some(words) = crate::entities::feed(
             &mut self.modes.walkers,
             &self.world,
@@ -847,7 +850,7 @@ impl Run {
         }
         if std::mem::take(&mut self.upscaler_changed) {
             let (kind, scale, jitter) = self.args.upscaler_settings(self.modes.upscaler.mode);
-            let output = gfx.frame.output_size();
+            let output = self.args.output_size(gpu.size);
             gfx.frame.set_jitter(&gpu.device, jitter);
             gfx.frame.set_upscaler_kind(&gpu.device, kind);
             gfx.frame
@@ -940,7 +943,8 @@ impl Run {
         }
         self.sample_world();
         self.sample_probes(gpu);
-        self.refresh_hud_stats(self.gfx.as_ref().map(GfxSample::of));
+        let window = (!self.args.headless).then_some(gpu.size);
+        self.refresh_hud_stats(self.gfx.as_ref().map(|g| GfxSample::of(g, window)));
         let mut stats = self.hud.stats.clone();
         stats.world.age_frames = 0;
         println!("hud:\n{stats}");
