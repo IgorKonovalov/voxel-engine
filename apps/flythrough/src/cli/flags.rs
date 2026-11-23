@@ -1004,13 +1004,6 @@ fn bake_flags() -> Vec<Flag<Parsing>> {
                 Ok(())
             },
         ),
-        Flag::switch(
-            &["--queue-census"],
-            "read the queue's view census at every opening, its listing once",
-            |p: &mut Parsing| {
-                p.args.bake.queue_census = true;
-            },
-        ),
         Flag::value(
             &["--edit-ms"],
             "MS",
@@ -1041,6 +1034,26 @@ fn bake_flags() -> Vec<Flag<Parsing>> {
 }
 
 /// The removed flags, each refused with its message; `--help` lists none.
+/// The live queue's reading switches.
+fn queue_reading_flags() -> Vec<Flag<Parsing>> {
+    vec![
+        Flag::switch(
+            &["--queue-rule-reading"],
+            "count the jobs opened for chunks the zero rule would answer (a reading)",
+            |p: &mut Parsing| {
+                p.args.bake.queue_rule_reading = true;
+            },
+        ),
+        Flag::switch(
+            &["--queue-census"],
+            "read the queue's view census at every opening, its listing once",
+            |p: &mut Parsing| {
+                p.args.bake.queue_census = true;
+            },
+        ),
+    ]
+}
+
 fn removed_flags() -> Vec<Flag<Parsing>> {
     vec![
         Flag::refused(GONE_SINCE_0057, gone_since_0057),
@@ -1169,7 +1182,12 @@ pub(crate) fn table() -> Table<Parsing> {
         },
         Section {
             title: "Light store and queue",
-            flags: super::outdoor::with_drain_flags(bake_flags()),
+            flags: super::outdoor::with_drain_flags(
+                bake_flags()
+                    .into_iter()
+                    .chain(queue_reading_flags())
+                    .collect(),
+            ),
         },
         Section {
             title: "Model viewer and assets",

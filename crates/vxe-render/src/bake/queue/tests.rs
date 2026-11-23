@@ -622,3 +622,19 @@ fn a_window_move_drops_the_block_counts_it_leaves_behind() {
     q.rewindowed(dropped_by_move(Some(b), c, held.iter().copied()));
     assert!(q.block_count.is_empty(), "another size empties the store");
 }
+
+/// The rule reading counts a job by its exclusion whole, and before the in-view landing only
+/// when it lies in view; every job counts among those opened, and before the landing until it.
+#[test]
+fn the_rule_reading_splits_the_jobs_by_exclusion_and_the_landing() {
+    let mut r = RuleMissed::default();
+    r.note(Some((0, true)), 100);
+    r.note(Some((1, false)), 50);
+    r.note(None, 10);
+    r.landed_at = Some(7);
+    r.note(Some((2, true)), 30);
+    assert_eq!((r.jobs, r.samples), ([1, 1, 1], [100, 50, 30]));
+    assert_eq!((r.before_jobs, r.before_samples), ([1, 0, 0], [100, 0, 0]));
+    assert_eq!((r.opened, r.opened_before), ([4, 190], [3, 160]));
+    assert_eq!(r.before_shares(), [1.0 / 3.0, 100.0 / 160.0]);
+}

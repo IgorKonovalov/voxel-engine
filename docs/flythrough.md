@@ -390,6 +390,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--queue-weights A,R\|A,tier` | The score's angle and refine weights |
 | `--queue-withdraw on\|off` | Withdraw the jobs of chunks the camera passed |
 | `--queue-census` | Read the queue's view census at every opening, its listing once |
+| `--queue-rule-reading` | Count the jobs opened for chunks the zero rule would answer (a reading) |
 | `--edit-ms MS` | The slice's growth while a dig waits, 0 to 100 ms [3] |
 | `--dig-reach on\|off` | A dig re-bakes the chunks within the light radius [on] |
 | `--read-missing` | Read the store's no-value count while a dig waits |

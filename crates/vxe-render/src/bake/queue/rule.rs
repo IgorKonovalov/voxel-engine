@@ -154,4 +154,39 @@ impl BakeQueue {
             self.quiet_until = self.steps;
         }
     }
+
+    /// The rule reading's check of a candidate the opening found ready and the rule did not
+    /// answer: when the rule holds on the tops as they stand, notes the first exclusion that
+    /// applies (`provisional`, `partial`, a held block's class 1) and whether `c` lies in the
+    /// view cone or the near shell, for its job's count ([`QueueStats::rule_missed`]).
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the opening's check, read in place"
+    )]
+    pub(super) fn note_rule_missed(
+        &mut self,
+        gpu: &GpuWorld,
+        view: &QueueView<'_>,
+        eye: [i32; 3],
+        c: [i32; 3],
+        class: u8,
+        partial: bool,
+        provisional: bool,
+    ) {
+        let why = if provisional {
+            0
+        } else if partial {
+            1
+        } else if class != 0 {
+            2
+        } else {
+            return;
+        };
+        if !self.rule_holds(gpu, ChunkCoord(c), gpu.light_radius()) {
+            return;
+        }
+        let o = [0, 1, 2].map(|k| c[k] - eye[k]);
+        let cone = angle_term(o, view.forward, view.half_angle, self.near) <= 0.0;
+        self.rule_missed_checked.insert(c, (why, cone));
+    }
 }

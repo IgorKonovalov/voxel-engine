@@ -140,6 +140,9 @@ impl BakeQueue {
                 self.ruled_checked.insert(c);
             } else {
                 self.ruled_checked.remove(&c);
+                if self.rule_reading && self.zero_rule {
+                    self.note_rule_missed(gpu, view, eye, c, class, partial, provisional);
+                }
             }
             if class == 0 {
                 ready0 += 1;
@@ -174,6 +177,7 @@ impl BakeQueue {
         self.partial_checked.clear();
         self.provisional_checked.clear();
         self.ruled_checked.clear();
+        self.rule_missed_checked.clear();
         Ok(())
     }
 

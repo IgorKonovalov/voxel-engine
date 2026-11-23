@@ -15,7 +15,9 @@ mod tiers;
 
 pub use self::open::in_view_census;
 use self::reach::reach_of;
-pub use self::stats::{Band, Bands, InViewWaiting, ListingCensus, QueueStats, chunk_nearest};
+pub use self::stats::{
+    Band, Bands, InViewWaiting, ListingCensus, QueueStats, RuleMissed, chunk_nearest,
+};
 pub use self::tiers::DEFAULT_TIERS;
 
 /// Frames a re-baked block's values move over, from what it showed to its new values.
@@ -319,6 +321,15 @@ pub struct BakeQueue {
     /// one after a [`BakeQueue::request_census`]: a reading, which costs the step about a
     /// census (0.8 ms over the streamed cave's 17 000 candidates) at each opening.
     pub census_every_opening: bool,
+    /// A reading: counts the GPU jobs opened for chunks the rule would answer at that opening
+    /// ([`QueueStats::rule_missed`]); off by default, the step unchanged.
+    pub rule_reading: bool,
+    /// The opening's checked candidates the reading counts if their job opens: the exclusion
+    /// that kept the rule from each, and whether it lies in the view cone or the near shell.
+    pub(super) rule_missed_checked: ChunkMap<(usize, bool)>,
+    /// Whether a read of the drain's set found it not empty since the queue started (the
+    /// in-view landing is the first empty set after it, [`RuleMissed::landed_at`]).
+    pub(super) waiting_armed: bool,
     pub(super) stats: QueueStats,
     /// The current step's stage laps.
     pub(super) laps: Laps,
@@ -543,6 +554,9 @@ impl BakeQueue {
             reach_census_at: 0,
             census_due: true,
             census_every_opening: false,
+            rule_reading: false,
+            rule_missed_checked: Default::default(),
+            waiting_armed: false,
             stats: QueueStats {
                 ns_per_sample: 20.0,
                 ..QueueStats::default()

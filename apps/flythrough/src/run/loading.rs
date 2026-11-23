@@ -672,6 +672,7 @@ impl Run {
             q.order = self.args.queue_order();
             q.withdraw = self.args.bake.queue_withdraw;
             q.census_every_opening = self.args.bake.queue_census;
+            q.rule_reading = self.args.bake.queue_rule_reading;
             self.queue.listing_due = self.args.bake.queue_census;
         }
         println!("{}", self.queue_row());

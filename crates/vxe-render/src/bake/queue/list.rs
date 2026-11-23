@@ -143,6 +143,7 @@ impl BakeQueue {
         let partial = self.partial_checked.remove(&c);
         let provisional = self.provisional_checked.remove(&c);
         let ruled = self.ruled_checked.remove(&c);
+        let missed = self.rule_missed_checked.remove(&c);
         self.zeroed.remove(&c);
         if faces.faces() == 0 {
             self.reach.remove(&c);
@@ -220,6 +221,9 @@ impl BakeQueue {
         self.job_count.insert(c, count);
         self.job_eye.insert(c, self.eye_moves);
         self.stats.coarse_opened += u64::from(coarse);
+        if self.rule_reading {
+            self.stats.rule_missed.note(missed, samples);
+        }
         Ok(samples)
     }
 

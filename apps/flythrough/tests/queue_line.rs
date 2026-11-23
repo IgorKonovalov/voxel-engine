@@ -65,6 +65,7 @@ fn the_queue_line_reports_in_view_waiting_by_band_and_a_drain_projection() {
         depth: 13,
         waiting,
         samples_per_s: 2.0e6,
+        rule_missed: None,
     };
     assert_eq!(drain.drain_s(), Some(3.0));
     let text = drain.text();
@@ -96,5 +97,32 @@ fn the_queue_line_reports_in_view_waiting_by_band_and_a_drain_projection() {
     assert_eq!(
         parse(&idle.json()).expect("parses").get("drain_s"),
         Some(&Value::Null)
+    );
+    // The rule reading: 30 of 120 jobs before the landing (25 %), 1.0e6 of 8.0e6 samples.
+    let r = vxe_render::RuleMissed {
+        jobs: [40, 5, 2],
+        samples: [4_000_000, 500_000, 200_000],
+        before_jobs: [25, 4, 1],
+        before_samples: [800_000, 150_000, 50_000],
+        opened: [300, 20_000_000],
+        opened_before: [120, 8_000_000],
+        landed_at: Some(900),
+    };
+    assert_eq!(r.before_shares(), [0.25, 0.125]);
+    let read = QueueDrain {
+        rule_missed: Some(r),
+        ..drain
+    };
+    let text = read.text();
+    assert!(
+        text.contains("rule missed jobs prov/partial/class1 40/5/2")
+            && text.contains("(25.0 % of jobs, 12.5 % of samples), landed at step 900"),
+        "{text}"
+    );
+    assert!(
+        read.json()
+            .contains("\"rule_missed\": {\"jobs\": [40, 5, 2]"),
+        "{}",
+        read.json()
     );
 }

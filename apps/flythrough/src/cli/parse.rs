@@ -153,6 +153,7 @@ impl Args {
                 queue_tier: true,
                 queue_withdraw: true,
                 queue_census: false,
+                queue_rule_reading: false,
                 edit_ms: vxe_render::DEFAULT_BAKE_EDIT_MS,
                 dig_reach: true,
                 read_missing: false,

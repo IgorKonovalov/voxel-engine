@@ -404,6 +404,13 @@ impl BakeQueue {
         }
         self.advance_fades(run.queue, store, record);
         self.land_waiting(run.gpu, store);
+        if self.stats.rule_missed.landed_at.is_none() {
+            if !self.view_waiting.is_empty() {
+                self.waiting_armed = true;
+            } else if self.waiting_armed {
+                self.stats.rule_missed.landed_at = Some(self.steps);
+            }
+        }
         self.stats.jobs = self.lp.chunks().count() as u64;
         self.stats.fading = self.fades.len() as u64;
         self.stats.coarse = store.coarse.len() as u64;

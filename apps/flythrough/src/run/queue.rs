@@ -210,6 +210,8 @@ impl QueueRun {
             depth: st.depth,
             waiting: st.in_view,
             samples_per_s: self.line_rate,
+            rule_missed: (st.rule_missed != vxe_render::RuleMissed::default())
+                .then_some(st.rule_missed),
         }
     }
 }

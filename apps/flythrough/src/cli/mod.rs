@@ -610,6 +610,10 @@ pub struct BakeArgs {
     /// the HUD's queue row, and no angle weights), and at its first live step the census of
     /// its listing (`vxe_render::BakeQueue::listing_census`, the `bake queue census:` line).
     pub(crate) queue_census: bool,
+    /// `--queue-rule-reading`: the live queue counts the GPU jobs it opens for chunks its zero
+    /// rule would answer at that opening, by what kept the rule from them
+    /// (`vxe_render::RuleMissed`), on the `bake queue:` line and in `run.json`'s `queue`.
+    pub(crate) queue_rule_reading: bool,
     /// `--edit-ms MS`: the live queue's slice grows by `MS` a frame while a dig's bricks wait
     /// (default `vxe_render::DEFAULT_BAKE_EDIT_MS`).
     pub(crate) edit_ms: f64,

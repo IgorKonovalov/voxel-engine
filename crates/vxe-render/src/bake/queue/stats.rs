@@ -166,6 +166,8 @@ pub struct QueueStats {
     /// having broken the rule.
     pub zeroed: u64,
     pub zero_relisted: u64,
+    /// The jobs the rule would have answered, while [`BakeQueue::rule_reading`] is on.
+    pub rule_missed: RuleMissed,
     /// Blocks whose band changed as the camera's chunk changed (their candidacy read again),
     /// and pending jobs withdrawn above their new band's count, since the queue started.
     pub retiered: u64,
@@ -320,4 +322,59 @@ pub struct ListingCensus {
     pub reach_bound: [u64; 3],
     /// The census's CPU milliseconds.
     pub ms: f64,
+}
+
+/// A reading of the GPU jobs the queue opened for chunks the rule would answer at that opening
+/// (buried under the column tops as they stand with no exposed emitter near), by the first
+/// exclusion that kept the rule from them: a column over the reach not final (`provisional`,
+/// 0), the reach crossing the full radius (`partial`, 1), a block already held (class 1, 2).
+/// Counted while [`BakeQueue::rule_reading`] is on, since it was set.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RuleMissed {
+    /// The jobs and their samples by exclusion, every opening.
+    pub jobs: [u64; 3],
+    pub samples: [u64; 3],
+    /// The same for the jobs opened before the in-view landing on chunks in the view cone or
+    /// the near shell.
+    pub before_jobs: [u64; 3],
+    pub before_samples: [u64; 3],
+    /// Every job opened and its samples, and those opened before the in-view landing.
+    pub opened: [u64; 2],
+    pub opened_before: [u64; 2],
+    /// The step of the in-view landing: the first at which the drain's set is empty after a
+    /// read found it not ([`BakeQueue::refresh_waiting`]); `None` until it lands.
+    pub landed_at: Option<u64>,
+}
+
+impl RuleMissed {
+    /// Counts a job opened with `samples`, and its exclusion and place in view where the
+    /// reading noted the rule held for it.
+    pub(super) fn note(&mut self, missed: Option<(usize, bool)>, samples: u64) {
+        let before = self.landed_at.is_none();
+        self.opened[0] += 1;
+        self.opened[1] += samples;
+        if before {
+            self.opened_before[0] += 1;
+            self.opened_before[1] += samples;
+        }
+        if let Some((why, cone)) = missed {
+            self.jobs[why] += 1;
+            self.samples[why] += samples;
+            if before && cone {
+                self.before_jobs[why] += 1;
+                self.before_samples[why] += samples;
+            }
+        }
+    }
+
+    /// The jobs and samples the reading counted before the in-view landing, every exclusion,
+    /// as shares of those opened before it.
+    pub fn before_shares(&self) -> [f64; 2] {
+        let j: u64 = self.before_jobs.iter().sum();
+        let s: u64 = self.before_samples.iter().sum();
+        [
+            j as f64 / self.opened_before[0].max(1) as f64,
+            s as f64 / self.opened_before[1].max(1) as f64,
+        ]
+    }
 }
