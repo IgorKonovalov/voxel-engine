@@ -21,6 +21,9 @@ impl BakeQueue {
         self.laps.lap(S_SETUP);
         let (changes, unheld) = self.follow_window(run, store, view);
         let changed = changes.as_ref().is_none_or(|c| !c.is_empty());
+        // The column tops are read again this step, after the mirror's sync: the memo of the
+        // last step's opening would answer the rule from before an edit (a dig to the sky).
+        self.columns_lowest.clear();
         self.relist_zeroed(run.gpu, store, changes.as_deref());
         let world = run.world.store();
         self.sealed
@@ -135,7 +138,6 @@ impl BakeQueue {
         unheld: &[[i32; 3]],
     ) {
         self.columns_final.clear();
-        self.columns_lowest.clear();
         // What the queue knows of a chunk the mirror does not hold full goes with it, block or
         // none (a faceless or blocked chunk has none): the chunk is listed afresh if it returns.
         // A job in flight for it ends in the sink, which drops its block.
