@@ -1,6 +1,6 @@
 # 0097: The exposure's anchor by the sky around the camera: the floor record under the eye, a time constant, and the canopy's shade kept in daylight
 
-> **Status:** implemented, awaits the fresh close review (lane plan-0097 from main 123964e7, 2026-11-21). **Amended 2026-11-22
+> **Status:** done, closed 2026-11-23, v0.70.0: the close review of 2026-11-22 sent two majors back (a soak test the lift broke, highlight protection with no asserting GPU test), the fix pass met both and the review is clean; the gate 1316 of 1316 on lavapipe (lane plan-0097 from main 123964e7, 2026-11-21). **Amended 2026-11-22
 > (owner), window 97b: the lift, Phases 3b and 3c (dark places stay dark; ADR-0081 amended).**
 > **Amended 2026-11-22 by the architect at window 97c's verdicts (the owner: "1a looks great", the
 > lift stays 4): Phase 3b's bars 2 and 3 restated, Phase 3d added (the exposure's step just after a
@@ -13,16 +13,16 @@
 > lines to the backlog). **The lane starts after Plan 0095 closes and merges** (owner's
 > order, 2026-11-20).
 > **Created:** 2026-11-20
-> **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md); Plan 0094's exposure
+> **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../../roadmap.md); Plan 0094's exposure
 > follow-up.
-> **Related ADRs:** [ADR-0081](../adrs/0081-the-sky-anchor-holds-by-the-sky-over-the-cameras-floor-or-in-view-and-releases-where-both-are-absent.md)
+> **Related ADRs:** [ADR-0081](../../adrs/0081-the-sky-anchor-holds-by-the-sky-over-the-cameras-floor-or-in-view-and-releases-where-both-are-absent.md)
 > (proposed with this plan: the anchor holds by the sky over the camera's floor or in view,
 > releases where both are absent); it rests on
-> [ADR-0033](../adrs/0033-eye-adaptation-as-an-asymmetric-two-stage-exposure-on-the-gpu.md)
+> [ADR-0033](../../adrs/0033-eye-adaptation-as-an-asymmetric-two-stage-exposure-on-the-gpu.md)
 > (the exposure model and its `[min, max]`),
-> [ADR-0070](../adrs/0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md)
+> [ADR-0070](../../adrs/0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md)
 > (the baked sky visibility per record, the source it reads) and
-> [ADR-0076](../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
+> [ADR-0076](../../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
 > rule 5 (the ceiling moves under the rate cap and follows the surroundings; its clause of this
 > date points at ADR-0081) and rule 6 (the coarse stable answer first).
 
@@ -546,7 +546,7 @@ direction bit and `VIS_BAKED` answers with its `+z` byte over 255. No `vxe-world
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The reading: the sky over the floor | dev | done; `F_floor` 1/8; readings in [`logs/0097.md`](logs/0097.md) | ea15d52f |
+| 1: The reading: the sky over the floor | dev | done; `F_floor` 1/8; readings in [`logs/0097.md`](../logs/0097.md) | ea15d52f |
 | 2: The anchor by the floor's sky | dev | done; bar 4's baked deep noon tunnel at +1.18 EV, not `max` (Notes) | 5d1cbf77 |
 | 3: The owner's window | human | done, window 97 (2026-11-21); words in the amendment and the readings log | b3277359 (setup) |
 | 3a: Highlight protection | dev | built, P99 default; short window awaits the owner | 8ff3bbe4 |

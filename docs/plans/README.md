@@ -7,7 +7,8 @@ state from `git log`. Completed plans move to `done/`.
 the sky around the camera; 0098 the calm light by default, drafted 2026-11-21; 0099 the bake
 step off the main thread, drafted 2026-11-22; ADRs are a separate sequence, see `../adrs/README.md` for its next
 free number). Plan 0095, the motion wobble (a calm key light in motion), closed 2026-11-21,
-v0.69.0.
+v0.69.0. Plan 0097, the exposure's anchor by the sky around the camera, closed 2026-11-23,
+v0.70.0.
 
 ## Active roster
 
@@ -33,7 +34,6 @@ v0.69.0.
 | [0092](0092-wgsl-hot-reload-in-the-fly-through-an-mtime-poll-pipelines-rebuilt-and-the-old-ones-kept-on-an-error.md) | WGSL hot reload in the fly-through: an mtime poll, pipelines rebuilt from disk, the old kept on an error | approved | M7, no ADR. After 0091 in its lane, before 0090 (owner). |
 | [0093](0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) | The README rewrite with reproducible screenshots: a shot manifest, a shoot script, an image gate, the owner's picks | approved | M7 docs, no ADR. After 0087 merges, beside 0089, before 0091. |
 | [0096](0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) | Performance: the bake queue's drain, the step off its depth, the RENOIR light pass, `alloc` and the eviction scan | approved, amended 11-20 | M10, cross-cutting, ADR-0080 (proposed). After 0095, before 0087. |
-| [0097](0097-the-exposures-anchor-by-the-sky-around-the-camera-the-floor-record-under-the-eye-a-time-constant-and-the-canopys-shade.md) | The exposure's anchor by the sky around the camera: the floor record, a time constant, the lift | in-progress, amended 11-22 | M10, ADR-0081 (proposed). Phase 3b, then window 3c. |
 | [0098](0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md) | A calm light by default: no screen history, smooth sources to the mid range, the FSR 2 turn read first | approved 11-22 | M10, ADR-0082 (proposed). Needs `diag-edges`' switches. |
 | [0099](0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) | The bake step off the main thread: a bake thread, write lists, the in-view drain | approved 11-22 | ADR-0083 (proposed). After 0096, 0098, 0087. |
 <!-- roster:end -->
@@ -214,16 +214,12 @@ which followed Plan 0094; then Plan 0087 (owner's order, 2026-11-20: 0094,
 0095, 0096, 0087, 0089 and 0093, 0091, 0092, 0090, M10). Its Phase 1 is readings only, on both
 adapters, on the undrained image.
 
-**Plan 0097** (the exposure's anchor by the sky around the camera, ADR-0081 proposed: Plan 0094
-Phase 7b anchors the ceiling by the share of sky in view, and at window W2 (2026-11-20, the
-forest at `--sun 10,180`) one canopy closing over the last sky pixel released the ceiling by
-about 5 EV, the owner's "when I reach really shadowed spot - too bright"; the anchor now holds
-by the larger of the sky in view and the `+z` sky visibility of the baked floor record under
-the eye, smoothed by a time constant, so a tunnel or cave still releases and the night stays at
-+2 EV; four phases, a reading before the threshold, the mechanism, the owner's window with the
-owed open hills at midnight, the picks as tests): **approved 2026-11-20 by the owner's picks at
-W2 (all as recommended); its lane starts after Plan 0095 closes and merges**, beside or after
-Plan 0096 as the owner orders then. The slope's step lines seen at W2 went to the backlog.
+**Plan 0097** (the exposure's anchor by the sky around the camera, ADR-0081 accepted with an
+Outcome) **closed 2026-11-23, v0.70.0**: the anchor holds by the larger of the sky in view and
+the baked `+z` sky visibility of the floor record under the eye, the release is bounded by a
+lift of 4 EV over the daylight anchor (window 97b: dark places stay dark), and highlight
+protection caps the eye under the view's bright tail. Three owner windows (97, 97b, 97c). The
+near jumps after a stop read with the exposure constant went to Plan 0098.
 
 **Plan 0099** (the bake step off the main thread, ADR-0083 proposed, extending ADR-0017: the
 live queue's books and per-job CPU work on one bake thread, the render thread applying write
@@ -246,6 +242,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0097](done/0097-the-exposures-anchor-by-the-sky-around-the-camera-the-floor-record-under-the-eye-a-time-constant-and-the-canopys-shade.md) | The exposure's anchor by the sky over the camera's floor, a lift over the daylight, highlight protection | 2026-11-23, v0.70.0 |
 | [0095](done/0095-a-calm-key-light-in-motion-the-column-maps-horizon-at-the-far-the-baked-record-where-it-lands-a-deterministic-penumbra-near-no-pre-roll.md) | A calm key light: the far's record else the column horizon, the approach penumbra near, key re-bakes; RENOIR over the line | 2026-11-21, v0.69.0 |
 | [0094](done/0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md) | Light transitions: the still tap, the no-record prior and a 16-frame fade, the exposure at 3.75 EV/s, the ceiling by the sky in view and at most `max` | 2026-11-20, v0.68.0 |
 | [0086](done/0086-still-outdoor-light-baked-sky-visibility-a-long-history-solid-canopy-shadows-and-stair-history.md) | Still outdoor light: a sky visibility baked per brick, the column map, the sky and key rays on a long history, canopies as bricks; ADR-0070 accepted; the leftovers to Plan 0094 | 2026-11-19, v0.67.0 |

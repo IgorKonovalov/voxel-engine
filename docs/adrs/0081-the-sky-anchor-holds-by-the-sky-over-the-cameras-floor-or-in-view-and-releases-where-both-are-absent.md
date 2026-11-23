@@ -1,8 +1,8 @@
 # ADR-0081: The sky anchor holds by the sky over the camera's floor (the baked record under the eye) or by the sky in view, and releases only where both are absent, by at most a lift over the daylight anchor
 
-> **Status:** proposed (the lift added 2026-11-22, while proposed, at Plan 0097's window 97b; the file keeps its slug)
+> **Status:** accepted (Plan 0097's close, 2026-11-23, with an Outcome; the lift added 2026-11-22, while proposed, at window 97b; the file keeps its slug)
 > **Date:** 2026-11-20
-> **Related plan(s):** [Plan 0097](../plans/0097-the-exposures-anchor-by-the-sky-around-the-camera-the-floor-record-under-the-eye-a-time-constant-and-the-canopys-shade.md).
+> **Related plan(s):** [Plan 0097](../plans/done/0097-the-exposures-anchor-by-the-sky-around-the-camera-the-floor-record-under-the-eye-a-time-constant-and-the-canopys-shade.md).
 > Amends the exposure's ceiling rule of [ADR-0076](0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
 > rule 5 (proposed; its clause of this date points here) and the sky-share meter Plan 0094
 > Phase 7b built on [ADR-0033](0033-eye-adaptation-as-an-asymmetric-two-stage-exposure-on-the-gpu.md)'s model.
@@ -190,7 +190,42 @@ Both darken the W2 shade and the forest at 15:00, which the owner kept ("deep sh
 nearly to `max`, as `c_a 2^L` does at +1.92). The owner declined "a lower daytime ceiling" at
 window 97 already.
 
-## Outcome
+## Outcome (2026-11-23, Plan 0097's close)
 
-_(Added at acceptance if implementation falsified something above. Dated. Never rewrite the
-body.)_
+Accepted as built. What the implementation read against the text above (the readings and
+their machines are in `docs/plans/logs/0097.md`; every wall time there was taken on a loaded
+box, the EV figures are at a fixed `dt` on a store baked whole and repeat to the digit):
+
+- **The source that answered:** the floor's record at every scene read and at every window
+  scene (the forest's two W2 poses 0.14 and 0.20, the tunnel, the mouth, the hills); the chunk
+  summary never answered in a reading. **Alternative E (camera rays) was not needed.**
+- **`F_floor` is 1/8** (the largest power of two between the W2 shade's 0.14 and the deep
+  tunnel's 0.012), kept at window 97 ("deep shade was better in new version").
+  **`tau_around` stays 1 s as a guess:** the window left its question unanswered; the canopy
+  walk between the W2 poses reads the eye's largest one-frame step at 0.051 EV (RTX) and
+  0.0625 EV (lavapipe) against the rate's 0.066. On that walk the view's own sky share holds
+  the anchor on every frame, so the walk bars the rate, not the floor term; the floor term
+  through the shader is defended by the W2 shade pose's test alone (soak).
+- **The lift `L` is 4**, kept at window 97c ("1a looks great"; 2 and 6 "not necessary").
+- **Falsified: "the noon tunnel deep in is untouched (the tunnel floor's record reads 0)."**
+  The deep pose's floor reads 3/255 (0.012), not 0: under the floor term alone its ceiling sat
+  at +1.18 EV, not `max`, and the owner read the lamp-lit tunnel as overexposed at window 97
+  on both builds. The lift is what answers it: the deep pose's ceiling is -3.13 EV by day and
+  +2.00 at night.
+- **The uniform's spare word was not enough.** The exposure uniform grew 112 to 128 B and a
+  16 B highlight state joined it (+32 B a frame), against "the uniform's spare word carries
+  the share".
+- **Highlight protection was added outside this ADR's text** (Plan 0097 Phase 3a, the owner's
+  pick at window 97 for the tunnel's clipping walls): the exposure is also capped so the level
+  over which the brightest `100 - P` percent of the hit pixels lie (`P` 99, the brightest
+  channel per meter tile, sky pixels left out) maps at or under 0.95 after the tone curve,
+  smoothed at the eye's own rate (`AutoExposure::highlight_percentile`, 0 is off). **The
+  rejected alternative: a lower daytime ceiling** (it darkens the W2 shade and the 15:00
+  forest the owner kept; declined at window 97). At the defaults it
+  binds in the open forest (the W2 1 %-sky pose: the eye -4.84 EV under a ceiling of -4.34)
+  and is idle in the tunnel, where the lift's ceiling sits under it; its gate test raises
+  `max` so the cap, not the ceiling, is the bound it reads. **Own ADR: owner question open** (whether this record is enough or highlight
+  protection wants a short ADR of its own; not assumed either way).
+- **Not this ADR's, read on the way:** near pixels that jump after a stop with the exposure
+  constant went to Plan 0098; a `SkyAround` that an exposure reset does not reset is in
+  `docs/backlog.md`.

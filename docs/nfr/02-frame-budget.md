@@ -1048,7 +1048,11 @@ the eye once a frame (`sky_over_floor`); over the canopy walk between window W2'
 0.501 us max a frame, the RTX 3080 Laptop's host, release, `80cd7134`, exclusive perf lock,
 1-minute load 10.2 (loaded, indicative; `docs/plans/logs/0097.md`, Phase 4). Plan 0097 Phase
 1's 600 eyes on the shade pose's store read 1.694 us mean, 10.477 us max (`ea15d52f`, loaded).
-The GPU side is one `select`, one `max` and one `mix` in the exposure pass (not timed).
+The GPU side is one `select`, one `max` and one `mix` in the exposure pass (not timed). Highlight
+protection (Plan 0097 Phase 3a) bins the tiles' maxima into a 128-bin workgroup histogram in
+the same pass (not timed), grows the uniform 112 to 128 B and adds a 16 B state: +32 B, so the
+exposure's growth since Plan 0094 is +115 248 B at 1280 x 720 internal (the frame inventories,
+lavapipe).
 
 **The key light with no screen history (Plan 0095, ADR-0079; 2026-11-20, release `flythrough`
 at `b46cb3eb`'s render code, `--headless --source outdoor --frames 1500 --render 1920x1080`,

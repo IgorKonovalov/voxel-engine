@@ -116,7 +116,9 @@ in the counter; until then they are the guesses Plan 0090 names.
    reach really shadowed spot - too bright"; ADR-0081, Plan 0097): the anchor holds by the
    larger of the sky share in view and the sky over the camera's floor (the baked record
    under the eye, smoothed by a time constant), and releases only where both are absent, so
-   the surroundings decide and not the pixel a leaf covers.
+   the surroundings decide and not the pixel a leaf covers. Where it releases, the target
+   opens at most a lift `L` (4 EV) over the daylight anchor (added 2026-11-23 at Plan 0097's
+   close; ADR-0081's amendment of 2026-11-22 carries the bound).
 6. **No waiting: the image before the bake lands is the judged image.** (Added 2026-11-20,
    the owner at Plan 0094's window: "if we have to wait for a minute for light to settle,
    something is wrong with the light and we need approximate things, it is not acceptable for
