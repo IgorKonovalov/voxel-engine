@@ -951,10 +951,6 @@ fn the_split_walk_moves_no_hit_record() {
 /// buffer's 4096 B, ADR-0074), and the visibility pair and its samples (VIS_PAIR, 20 B a
 /// lighting pixel, ADR-0070, `gpu_upscale.rs`'s `frame_bytes_hold_the_visibility_pair`).
 const DEFAULT_FRAME_BYTES: u64 = 124_737_616 + VIS_PAIR + ENTITY_MIRROR + EXPOSURE_GROWTH;
-/// The exposure's growth (Plan 0094 Phases 4 and 7b, Plan 0097 Phase 3a): the meter
-/// tile from 8 to 16 B over 160 x 90 tiles at 1280 x 720 internal, the pass's uniform from 96 to
-/// 128 B, and the highlight state's 16 B buffer (`ExposureHighlight`).
-const EXPOSURE_GROWTH: u64 = (16 - 8) * 160 * 90 + (128 - 96) + 16;
 const VIS_PAIR: u64 = (2 * 8 + 4) * 640 * 360;
 const ENTITY_MIRROR: u64 = 4096 + 65_536 + (8 << 20) + 4096;
 const DEFAULT_MAIN: u64 = 130_267_168;

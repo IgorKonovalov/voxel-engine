@@ -16,12 +16,6 @@ use vxe_world::*;
 /// the instances 65 536 B and the pool 8 MiB; and its marks buffer, 4096 B (ADR-0074).
 const ENTITY_MIRROR: u64 = 4096 + 65_536 + (8 << 20) + 4096;
 
-/// The exposure's growth over the figures main's frame held (Plan 0094 Phases 4 and 7b): the
-/// meter tile from 8 to 16 B (the sky count) over 160 x 90 tiles at 1280 x 720 internal, the
-/// pass's uniform from 96 to 128 B (the rate, the sky share; the highlight's words, Plan 0097
-/// Phase 3a) and the highlight state's 16 B buffer (`ExposureHighlight`, Phase 3a).
-const EXPOSURE_GROWTH: u64 = (16 - 8) * 160 * 90 + (128 - 96) + 16;
-
 /// `world` mirrored over its extent on the software adapter, with a frame of `internal`
 /// pixels for an `output` image, lighting at full resolution; `None` without the adapter.
 fn rig(world: &World, internal: [u32; 2], output: [u32; 2]) -> Option<LookRig> {
@@ -737,7 +731,7 @@ fn with_direct_inventory(w: u32, h: u32) -> u64 {
         + tiles
         + 32
         + 16
-        + 976
+        + EXPOSURE_BUFFERS
         + ENTITY_MIRROR
         + 3 * 8 * lit
 }
@@ -758,9 +752,8 @@ fn frame_bytes_hold_the_direct_pair() {
     // The inventory at the half tier: the hit buffers twice and the layers, transmittance; the
     // output; the half grid's hit buffers twice; the irradiance, direct, two accumulations, two
     // direct accumulations, two moments, two filters, the indirect; the strata; the tiles; the
-    // split walk's stub (32 B) and dispatch (16 B); the exposure's buffers (976 B: the state
-    // twice, the 128-byte uniform, the 16-byte highlight state, the ring); and the entity
-    // mirror. A meter tile is 16 B.
+    // split walk's stub (32 B) and dispatch (16 B); the exposure's buffers (`EXPOSURE_BUFFERS`);
+    // and the entity mirror. A meter tile is 16 B.
     let strata = 640u64.div_ceil(3) * 360u64.div_ceil(3);
     let tiles = 16 * u64::from(1280u32.div_ceil(8) * 720u32.div_ceil(8));
     let without_direct = px * (2 * (16 + 8) + 8)
@@ -770,7 +763,7 @@ fn frame_bytes_hold_the_direct_pair() {
         + tiles
         + 32
         + 16
-        + 976
+        + EXPOSURE_BUFFERS
         + ENTITY_MIRROR;
     let direct = 3 * 8 * lit;
     println!(

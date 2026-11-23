@@ -23,6 +23,17 @@ use flythrough::cave_materials;
 use vxe_render::{Camera, MirrorError, SyncStats, wgpu};
 use vxe_world::*;
 
+/// The exposure's buffers in `Frame::frame_bytes`: the state twice (32 B each), the
+/// highlight state (`ExposureHighlight`, 16 B), the pass's 128-byte uniform and the read-back
+/// ring (3 x 256 B): 976 B.
+pub const EXPOSURE_BUFFERS: u64 = 2 * 32 + 16 + 128 + 3 * 256;
+
+/// The exposure's growth over the figures main's frame held before the sky count and the
+/// highlight: the meter tile from 8 to 16 B over 160 x 90 tiles at 1280 x 720 internal, the
+/// pass's uniform from 96 to 128 B (the rate, the sky share, the highlight's words), and the
+/// highlight state's 16 B buffer.
+pub const EXPOSURE_GROWTH: u64 = (16 - 8) * 160 * 90 + (128 - 96) + 16;
+
 pub const WIDTH: u32 = 320;
 pub const HEIGHT: u32 = 180;
 
