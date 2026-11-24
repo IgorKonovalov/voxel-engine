@@ -30,25 +30,34 @@
 #          reaches it, which a profile cannot set, so the soak and full commands above pass it.
 #          `node scripts/test-times.mjs <log>` ranks a run's tests by time and names the ones
 #          over the line; a run logs per-test times with `--status-level pass`.
+# SOLE     a lavapipe test over that line that is the gate's only test of its mechanism and
+#          cannot be shortened without weakening its claim is
+#          `#[ignore = "sole: <the mechanism>"]` (owner, 2026-11-24): soak and full run it as
+#          they run a soak mark, and `node scripts/test-changed.mjs` runs it whenever its
+#          package or a dependency changed (a second `--run-ignored only` run after the tier;
+#          `--sole` alone at a plan's tip, `--list-sole` names every one). CI's push run does
+#          not, so the weekly soak is its only other net.
 # READING  a measurement run by hand (it prints numbers and asserts nothing a tier runs) is
 #          `#[ignore]`d inside a `mod reading`; soak and full leave out
 #          `test(/(^|::)reading::/)`. Run one with
 #          `cargo nextest run -p <package> --run-ignored only -E 'test(=reading::<name>)'`.
 #
 # `node scripts/check-test-tiers.mjs` fails when a test file that reaches a device lacks the
-# prefix, when an `#[ignore]` is neither "soak" nor inside `mod reading`, or when a profile
+# prefix, when an `#[ignore]` is neither "soak", "sole: <mechanism>" nor inside `mod reading`, or when a profile
 # below drifts from these forms.
 
-# One lavapipe process already spreads over every core, so two at once only contend on a
-# shared dev box. The `ci` profiles lift the cap on a dedicated runner.
+# Two lavapipe tests at a time (owner, 2026-11-22; read 2026-11-24, docs/nfr.md section 7): a
+# GPU test's time is mostly single-threaded pipeline compilation, so one at a time left most of
+# the dev reference's 16 threads idle (load about 3) and the gate's wall was the group's serial
+# sum. The `ci` profiles lift the cap on a dedicated runner.
 [test-groups]
-lavapipe = { max-threads = 1 }
+lavapipe = { max-threads = 2 }
 
 [profile.default]
 default-filter = 'all()'
 slow-timeout = { period = "30s" }
 
-# GPU: the gpu tests share one lavapipe at a time.
+# GPU: the gpu tests share the lavapipe group, two at a time.
 [[profile.default.overrides]]
 filter = 'binary(/^gpu_/)'
 test-group = 'lavapipe'
