@@ -25,18 +25,23 @@ From [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-s
 - **First, the bake's key ray:** a key ray that reaches the job's radius without rock counts lit (`bake.wgsl`), so a floor under a closed cave taller than the radius would bake sunlit where the column clause says no sky. **Confirmed** by Plan 0096 Phase 10c (`7b24002f`, lavapipe: the job's record reads key 255 on 64 of 64 floor faces under a closed roof, the rule's 0). The fix is the column clause at the key ray's cap; it changes record bytes and what ADR-0079's bake writes, and ADR-0079 is accepted, so **it takes an ADR superseding that clause, drafted with this plan**. An image question: the owner's word on its place is owed (this plan's first phase, recommended, or a fix pass on Plan 0098). **2026-11-23:** [Plan 0100](plans/0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md) (draft) proposes to take the key ray's fix as its Phase 2 under ADR-0084, which supersedes that clause; this small plan then keeps the rule at every opening alone and starts from that commit. **Answered 2026-11-24 (owner, Plan 0100's question 1):** the fix goes to Plan 0100 as its Phase 2.
 - **Then the rule at every opening:** Plan 0096's Phase 10b as written, cases (1), (2) and (3), with fact (i) restated (every change of a top is a mirror change the re-list reads; a full chunk arriving over its LOD can lower a top) and the audit on the real scenes (every ruled chunk also baked and compared, 0 differ). ADR-0080's rule 1 sentence on the column map's finality is superseded there.
 
-### The sun's shadow near under the calm defaults: soft, true under cover, no screen history (2026-11-23)
-
-From [Plan 0098](plans/done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md)'s "Amendment at Phase 4's findings" (architect, read in `temporal.wgsl` and `pair.wgsl`; the owner's word is owed on its questions 3 and 4). A design question for a plan of its own, not drafted; pick up when the owner asks for a penumbra, a sunbeam indoors, or a consumer renders with no bake.
-
-- **What the defaults show:** with light history off the key light's visibility on a world face is the column map's horizon at every distance: a hard edge but for the horizon's ramp, 0 under any cover at any sun angle (a floor behind a window, a cave mouth, the ground under a canopy at a low sun). The owner accepted the forest so at W2; no rig or window has shown an interior with a low sun.
-- **Why it is not a switch:** a true ray near (`penumbra approach`) seams against the column where they disagree (W1: sun patches lost at a distance, the tunnel's blink), and a running mean is the history ADR-0082 removes. Candidates, none read: a baked key record near (ADR-0079's, fresh records only), a ray fixed per world position, a column test that walks the sun's slant under a cover.
-- **Beside it:** the noon terraces' step shadows (Plan 0098 Phase 9: the hard edge at a jittered hit is 22 to 32 % of what moves; the history closes 57 to 68 %); an entity or a field surface shows the raw disc sample, one ray a frame (inferred, unread); the sky ray cast where no record is fresh is never shown with the history off but the dig hold reads it, so skipping it needs the hold's box as its exception; with no store bound, or before a bake lands, a face under cover has no sky light either (`outdoor_forest_afternoon.png`), so "a better value before the bake" belongs here or with the bake queue.
-- **W3's verdict (owner, 2026-11-23; Plan 0098's "Amendment at W3"):** under the defaults the forest floor has no sun patches while the canopies are lit; with light history on the patches are there and the light is "comparable to the trees", but "wobble comes back, and light only visible when I close", and "light only comes when I see it, even after turn looks completely unnatural". Light history on is rejected as the way. **The requirement:** sun patches under canopies and through openings that are steady (still and moving), present at a distance the same as near, and present before the surface comes into view and after a turn: so a source in the world (a key term baked in the store, which needs the key ray's cap fixed first, the entry above; or a shadow source better than the column map). Stills in Plan 0098's `live/window98c/`: `6a-forest-history-on.png` (the patches, with the history), `2-noon-settling.png` and `2-noon-settled.png` (the terraces' hard dashes under the defaults). The tunnel's roof slot (W3's run 6b) was not run. **Taken by Plan 0100** (the entry below), its third subject, with ADR-0084 (proposed). What stays here: a penumbra of the disc's true width, a shadow's edge on an entity or a field surface, and the sky term under cover with no store bound.
-
 ### The plan after 0098: a sun fixed in the world (2026-11-23)
 
-Taken by [Plan 0100](plans/0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md) and ADR-0084 (proposed), approved 2026-11-24 (owner); its lane starts once Plan 0098 (closed 2026-11-24, v0.72.0) has merged, beside Plan 0099's. Its three subjects: the noon terraces' key shadow under the jitter, the coarse tier's wobble on near trunks and leaves, the sun under cover.
+Taken by [Plan 0100](plans/0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md) and ADR-0084 (proposed), approved 2026-11-24 (owner). Plan 0098 has closed and merged (v0.72.0), so its lane is open, beside Plan 0099's. Its three subjects: the noon terraces' key shadow under the jitter, the coarse tier's wobble on near trunks and leaves, the sun under cover.
+
+### The bake step off the main thread (2026-11-22)
+
+Taken by [Plan 0099](plans/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) and ADR-0083, approved 2026-11-22; its lane after Plan 0087.
+
+### The sun's shadow near under the calm defaults: soft, true under cover, no screen history (2026-11-23)
+
+From [Plan 0098](plans/done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md)'s "Amendment at Phase 4's findings" and its window W3 (2026-11-23). The requirement the owner set at W3 (sun patches under canopies and through openings that are steady, the same at a distance as near, present before the surface is seen and after a turn) is **taken by [Plan 0100](plans/0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md)** as its third subject, with ADR-0084 (proposed); light history on was rejected as the way. What stays here, none of it read, for a plan of its own when the owner asks for a penumbra or a consumer renders with no bake:
+
+- **A penumbra of the disc's true width.** Under the defaults the key light's visibility on a world face is the column map's horizon at every distance: a hard edge but for the horizon's ramp. A true ray near (`penumbra approach`) seams against the column where they disagree (W1), and a running mean is the history ADR-0082 removes.
+- **A shadow's edge on an entity or a field surface:** the raw disc sample, one ray a frame (inferred, unread).
+- **The sky term under cover with no store bound**, or before a bake lands: such a face has no sky light (`outdoor_forest_afternoon.png`). The sky ray cast where no record is fresh is never shown with the history off, but the dig hold reads it, so skipping it needs the hold's box as its exception.
+
+The W3 verdict's words and stills are in Plan 0098's "Amendment at W3" and its `live/window98c/`.
 
 ### A dig's landing: the slight colour change, and the dig delayed until its light is ready (owner, 2026-11-24)
 
@@ -46,10 +51,6 @@ From [Plan 0098](plans/done/0098-a-calm-light-by-default-no-screen-history-smoot
 - **Way 1, a held value nearer the landed one:** the estimate is a value a cell and direction from 12 short rays and the removed surface's record (`bake/held.rs`); more rays, the brick's own emitters, or the chunk's coarse answer as a second term. Cheap to try on the rig; the error table of Plan 0098's Phase 14 is the instrument.
 - **Way 2, the owner's delay (staged records):** the old picture is held until the dig's light is ready, a lag of 2 to 3 frames on the RTX and about 6 on the Radeon. Feasible only with staged mirror records (a dug chunk written to a fresh record and fresh slots, the table's flip delayed, the bake reading the staged chunks, the column map carrying the staged tops for the bake alone); a two-phase commit in `gpu_world` under ADR-0013 and ADR-0022, so a plan with its own ADR. The design and the five rejected lines are in Plan 0098's "Amendment at window 98d" and ADR-0082's Outcome.
 - **Beside it, two switches with no fade:** a new dig into a chunk whose dig fade still runs ends that fade with a step (`take_boxes`, `bake/queue/digs.rs`), and a stale ring record steps to its re-bake's in one frame (read under 4 levels in Plan 0098's Phase 8).
-
-### The bake step off the main thread (2026-11-22)
-
-Taken by [Plan 0099](plans/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) and ADR-0083, approved 2026-11-22; its lane after Plan 0087.
 
 ### Distant trees that do not wobble: a stable far representation (owner, 2026-11-22)
 
@@ -77,33 +78,12 @@ close and we can reliably calculate it". Three ways, none measured:
    hit to read; it wants a small phase of its own.
 
 Order proposed by the orchestrator, not yet the owner's: 3 first, then 2 if 3 reads calm but
-ugly; 1 with Plan 0033. Pick up after Plan 0098's W2 shows what its two built arms do.
+ugly; 1 with Plan 0033.
 **W2, 2026-11-23:** under the calm picks the owner calls the distant wobble "not too bad";
 `far light wide` is "not calmer" (it stays a setting, off). No arm of Plan 0098 is picked, so
-this entry is where the far trees stand.
-
-### The light placement's eviction scan in a windowed glide
-
-**Done in part** by [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phases 7 and 7b (closed 2026-11-23, v0.71.0; the owner's glide: "no stagger"; what is left is under "Plan 0096's leftovers"). As taken 2026-11-20, Phase 7: the first-fit index and a distance-ordered victim index, the bytes asserted equal, a headless glide with a shrunk light buffer as the reproduction; the figures moved into the plan's context.
-
-### The CPU settle outdoors: the bake queue's step on a world with no emitter, and the forest's sync p99
-
-Taken by [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) (closed 2026-11-23, v0.71.0) and [ADR-0080](adrs/0080-the-live-queue-bakes-what-the-image-reads-a-record-by-rule-a-tier-by-size-on-screen-and-a-drain-slice.md): a record by rule for a chunk with no face or buried with no emitter in reach (Phase 2), the step off the queue's depth (Phase 5), the forest's sync p99 (Phase 7); the readings quoted in the plan's context. What Phase 5 left (2026-11-22): the step no longer grows with the depth (candidates scored a step 0 to 56 of a pool of 9 361, the drained step 0.065 ms p50), but while baking it costs per job opened (`list`, `collect`, `submit`, `fades`, `summaries`; regime B 20.7 / 55.0 ms p50/p99 on the RTX forest, loaded). **That per-job cost is re-pointed (Plan 0096 Phase 9) at [Plan 0099](plans/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) (the bake step off the main thread).**
-
-### The streamed benches on Windows: CPU frames of 20 to 256 ms on a desktop
-
-Read 2026-11-15 from an outside tester's archive (v0.51.0, before Plan 0070's and 0074's sync cuts; Windows 10.0.26200, Ryzen 5 7600X 6 cores / 12 threads, 32 GB, desktop RTX 3080 on Vulkan, 1920 x 1080, upscaler off; the files kept in the main checkout at `live/tester-2026-11-15/`). `showcase`: wall p50 3.0 ms, p99 4.5, CPU p50 0.76. `cave`: wall p50 20.8 ms, p95 271, p99 402, CPU-bound (CPU p50 20.3, GPU 4.5), 217 of 1073 frames over 100 ms. `castle`: 97 frames in 31.5 s, CPU p50 256 ms, max 3295, GPU p50 30.2. Our Linux headless benches at the matching base read `update + poll + sync` p99 43 to 47 ms, so the castle is about 5x to 70x worse there, and the tester called it "massive stutters". Unknown: whether it is Windows (timer and sleep granularity, the allocator, thread scheduling on 6 cores), the CPU's core count, or the build. What it takes: the owed Plan 0068 Windows run on today's main with the sync's stage lines, then a plan. Pick up before the next tester archive goes out. **The owner's run (2026-11-15, v0.54.0, Windows 10.0.19045, Ryzen 9 5900HS 8 cores / 16 threads, RTX 3080 Laptop on Vulkan, FSR 2 at 1.5; files in `live/windows-run-2026-11-15/`) did not reproduce it:** CPU p50 cave 8.8 ms, showcase 1.4, castle 7.2; castle wall p95 28.2 ms, 87 frames over 33 ms, 2 over 100, the sync's p95 mostly `alloc`. Still open for the tester's machine; the next archive's `--workers 4` run tells starvation apart. **The tester's rerun (2026-11-16, v0.54.0, same machine; files in `live/tester-2026-11-16/`) settles it: the 0.51.0 stutters were the build, not Windows.** Default workers: cave wall p50 4.1 ms, p99 25.5, 32 frames over 33 ms, 1 over 100; showcase p50 2.8, p99 3.7; castle p50 4.2, p99 30.1, max 90, 20 over 33 ms, none over 100 (from p50 256 ms on 0.51.0). `--workers 4` on the castle: p99 17.6, max 66, 2 over 33 ms; the sync's p99 7.3 ms to 3.8 and light's 2.1 to 0.8. So more workers than physical cores (11 on 6 cores) still costs the tail. What it takes now: a default worker count capped at the physical cores minus one (or a measured sweep on a 6-core part), as a small chore; the entry closes with it. **Done 2026-11-16 (chore `chore-default-workers`):** the fly-through's default `--workers` is now half the logical cores, at least 1 (6 on the tester's 12 threads, where `--workers 4` read the best castle tail; no sweep between 4 and 6 was taken); the tester's next archive reads it.
-
-Beside it, 2026-11-17, an outside tester's Linux archive (v0.54.0 at 5efd884d; Ubuntu 26.04,
-Wayland, Ryzen 7 5700X 8 cores / 16 threads, 32 GB, desktop RTX 3060 on Vulkan, 1920 x 1080
-display, benches at 1280 x 720 with FSR 2 at 1.5, lamp off; kept at `live/tester-2026-11-17/`).
-GPU p50 2.3 to 2.4 ms in every scene. `showcase`: wall p50 2.7 ms, p99 3.2, max 16. `cave`: wall
-p50 4.5 ms, p95 8.1, p99 23.0, max 65, 38 of 12 887 frames over 33 ms, CPU p99 22.1 with
-`sync_us` p99 9.5 ms (max 20.9) and `light_us` p99 2.6 ms (max 10.3). `castle`: wall p50 4.3 ms,
-p95 10.7, p99 24.5, max 95, 24 of 5 572 frames over 33 ms, CPU p99 24.2, `sync_us` p99 9.0 ms.
-So on Linux the streamed scenes are CPU-spike bound (the sync and light stages, the alloc entry
-below), not the Windows-scale stall; whether Windows is the OS or the older base stays open.
-`holds_pool` reads false only because the RTX 3060's binding limit is 4 bytes under 2 GiB.
+this entry is where the far trees stand. Plan 0100's second
+subject (the coarse tier's wobble on near trunks and leaves) is the near half; this entry is
+the far half.
 
 ### Windows draws the whole image two to three times darker than Linux
 
@@ -116,22 +96,6 @@ the surface format and colour space at start (and into `system.json`/`run.json`)
 Windows and a Linux screenshot of the same pose by pixel values, and swap `fs_srgb`'s
 `pow 2.2` for the exact sRGB decode. Pick up before the next tester archive. **Code side done 2026-11-16** (chore-surface-format: the format and colour space logged and in `run.json`, 8-bit UNORM preferred, the exact decode): by code read the Windows run used `Bgra8Unorm` and a straight copy, so no code path explains a uniform 2-3x drop. Left: a Windows screenshot and a Linux one of the same pose compared by pixel values (equal bytes: the display or OS, e.g. HDR's SDR brightness, Vari-Bright).
 
-### The sync's `alloc` stage: the sync plan after the eviction scan
-
-Read, not met, by [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) (closed 2026-11-23, v0.71.0: `alloc` p99 6.42 ms against 3.0, `update + poll + sync` 14.82 against 16.6, met). As taken 2026-11-20, Phase 7 (`alloc` p99 at most 3.0 ms, `update + poll + sync` p99 at most 16.6 in the tester cave bench), after Phase 1 (6)'s profile of the stage. Read 2026-11-22 at Plan 0096 Phase 7 (`8bb8857b`, RTX host, cave bench, `docs/plans/logs/0096.md`): `alloc` p99 9.4 ms of a sync p99 19.4 on the Phase 6 and Phase 7 binaries alike, and the frame-pointer profile spreads it over the per-brick path as a whole (`upload_record`'s brick loop, `upload_brick`, `fill_slot`, the belt view's drop), about 9.5 µs a brick packed, no item a third of it. The miss is disclosed in that plan (architect amendment, owner confirm owed) and this entry closes into "Slot words packed on the workers" below, whose mechanism is the fix.
-
-### Done: test tiers by marks, not by copied lists
-
-Done 2026-11-10 (50b2193, 4a15e60): GPU test files are `tests/gpu_*.rs`, long series `#[ignore = "soak"]`, kept by `scripts/check-test-tiers.mjs`.
-
-### A headless run at `--residency 3,4` hangs before its first frame
-
-Noted 2026-11-17 by the Plan 0032 lane (`docs/plans/logs/0032.md`, Phase 3): a headless
-fly-through with `--residency 3,4` hangs after the live queue starts and before frame 1, on the
-plain cave as well as the outdoor source, so it predates that plan; `6,8` and `8,12` run. Not
-yet bisected. Take it as a chore when a small residency is next needed (a test rig or the
-Portable profile's floor), starting from which stage waits.
-
 ### `--adapter NAME` that matches nothing falls back silently
 
 Noted 2026-11-17 by the Plan 0032 lane (Phase 6 readings): `--adapter radeon` and `--adapter rtx`
@@ -140,14 +104,13 @@ iGPU needs `--adapter AMD`. A reading taken that way is labelled with the wrong 
 chore: refuse (or print the adapters and exit) when no adapter matches, and accept the short
 names the tests' `VXE_TEST_ADAPTER` takes.
 
-### `StampedSource` shares its prefabs across placements
+### A headless run at `--residency 3,4` hangs before its first frame
 
-Noted 2026-11-17 by the Plan 0032 lane (Phase 8, `docs/plans/logs/0032.md`): `vxe_world::StampedSource`
-keeps its own rotated copy of the prefab for every placement, so a forest of about 3,850 trees
-would hold 3,850 copies (estimated 1 to 2 GB, not measured). The lane wrote a fly-through
-`ForestSource` over 64 shared prefabs instead. Engine follow-up: placements reference a shared
-prefab and rotation (an `Arc` and an orientation), so a dense generation-time scatter costs its
-distinct prefabs, not its placements. Pick up at Plan 0032's close or before the next scatter.
+Noted 2026-11-17 by the Plan 0032 lane (`docs/plans/logs/0032.md`, Phase 3): a headless
+fly-through with `--residency 3,4` hangs after the live queue starts and before frame 1, on the
+plain cave as well as the outdoor source, so it predates that plan; `6,8` and `8,12` run. Not
+yet bisected. Take it as a chore when a small residency is next needed (a test rig or the
+Portable profile's floor), starting from which stage waits.
 
 ### The profile row's `restart for:` names live fields
 
@@ -161,6 +124,15 @@ fly-through sizes itself) shows on every cycle. Plan 0069's behaviour. Fix as a 
 the pending list to the `Rebuild` class and to fields the fly-through does not set itself, with
 a test that flips the lamp and cycles. Pick up with Plan 0073's settings pages, which show the
 same classes.
+
+### `StampedSource` shares its prefabs across placements
+
+Noted 2026-11-17 by the Plan 0032 lane (Phase 8, `docs/plans/logs/0032.md`): `vxe_world::StampedSource`
+keeps its own rotated copy of the prefab for every placement, so a forest of about 3,850 trees
+would hold 3,850 copies (estimated 1 to 2 GB, not measured). The lane wrote a fly-through
+`ForestSource` over 64 shared prefabs instead. Engine follow-up: placements reference a shared
+prefab and rotation (an `Arc` and an orientation), so a dense generation-time scatter costs its
+distinct prefabs, not its placements. Pick up before the next scatter (Plan 0032 closed 2026-11-17 without it).
 
 ### The menu with a gamepad, in a window
 
@@ -211,118 +183,32 @@ Plan 0098's merge and of the merged tip, back to back, per-binary sums compared
 (`scripts/test-times.mjs`); if the shaders are the cause, the engine's pipeline cache entry
 below is the lever.
 
+### The light placement's eviction scan in a windowed glide
+
+Taken by [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phases 7 and 7b (closed 2026-11-23, v0.71.0; the owner's glide: "no stagger"). What is left, the wanted set's collection and sort at every sync, is the first item of "Plan 0096's leftovers".
+
+### The CPU settle outdoors: the bake queue's step on a world with no emitter, and the forest's sync p99
+
+Taken by [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) (closed 2026-11-23, v0.71.0) and [ADR-0080](adrs/0080-the-live-queue-bakes-what-the-image-reads-a-record-by-rule-a-tier-by-size-on-screen-and-a-drain-slice.md). What it left, the step's per-job cost while baking (`list`, `collect`, `submit`, `fades`, `summaries`; 20.7 / 55.0 ms p50/p99 on the RTX forest, loaded), is [Plan 0099](plans/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md)'s.
+
+### The sync's `alloc` stage: the sync plan after the eviction scan
+
+Read, not met, by [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) (closed 2026-11-23, v0.71.0: `alloc` p99 6.42 ms against 3.0). Merged into "Slot words packed on the workers" (Performance), whose mechanism is the fix.
+
+### The streamed benches on Windows: CPU frames of 20 to 256 ms on a desktop
+
+Done 2026-11-16 (chore `chore-default-workers`): the 0.51.0 stutters were the build, not Windows (the tester's rerun on v0.54.0: castle wall p50 4.2 ms from 256), and the fly-through's default `--workers` is half the logical cores. No sweep between 4 and 6 workers was taken; the next tester archive reads the default. The readings (three Windows runs and one Linux tester's archive; the files under `live/tester-2026-11-15/`, `live/windows-run-2026-11-15/`, `live/tester-2026-11-16/` and `live/tester-2026-11-17/` in the main checkout) are in this file's history at `193cae15`.
+
+### Done: test tiers by marks, not by copied lists
+
+Done 2026-11-10 (50b2193, 4a15e60): GPU test files are `tests/gpu_*.rs`, long series `#[ignore = "soak"]`, kept by `scripts/check-test-tiers.mjs`.
+
 ### The live queue's order and cancellation, after Plan 0059
 
 Taken 2026-11-10 by [Plan 0060](plans/done/0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md) and [ADR-0048](adrs/0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md); the hall's aliasing goes to the antialiasing plan below.
 
 
 ## Engine mechanisms
-
-### Chunk-scale world dynamics: a cellular material step and an event scheduler
-
-Parked 2026-11-03 and 2026-11-04. The owner wants Noita or Teardown style dynamics (sand, flowing
-liquids, fire, reactions) and "large world events" that run over many chunks. Today the storage
-layer is ready and the simulation layer is absent: 64³ chunks behind per-chunk locks, two-tier
-streaming residency, every op returning its touched chunks, the coarse grid updated from that
-result, and a server tick that only changes the world when an op is applied. Nothing revisits
-chunks over time, there is no active set or dirty-chunk scheduler, and collapse (ADR-0008) is
-pull-based and per edit.
-
-Feasibility read (2026-11-03): powders, liquids, fire and material-pair reactions fit as one
-deterministic op kind, "step N with seed S", through the op log, over resident chunks only, with
-a brick checkerboard for order and a per-chunk dirty bitmap as the active set; cost is set by
-active voxels, not resident ones, and the GPU mirror's re-upload of every active brick may
-starve before the CPU does. Rigid bodies and rotating pieces conflict with ADR-0008 and stay on
-the cosmetic client-side layer. Gas as voxels conflicts with M8's separate coarse volume.
-
-What it takes: an ADR that generalises M10's "flowing liquids" item into the cellular step plus a
-per-tick chunk scheduler (active set, per-tick budget, resident chunks only; rejected: GPU-side
-authoritative simulation, a rigid-body engine), then a plan with a headless proof (a sand column
-released over a pit lands as the same pile with the same hash on both CI arms) and a per-tick
-reading against a new `nfr.md` line.
-
-Pick up when the lighting base is settled: Plans 0056, 0057 and 0058 closed.
-
-### The first near-lighting step stalls 130 to 210 ms on a cold driver cache
-
-Noted 2026-11-16 from Plan 0075 Phase 7b (`docs/plans/logs/0075.md`, session 75c; RTX host). With
-every pipeline built on the start-up worker, one loading gap stays at the first "lighting the near
-chunks" frames, cold only (warm max 87 ms). Every `vxe-render` compute pipeline exists before it,
-so the time is something else the driver does on first use. The owner noticed no hitch and
-accepted it. Pick up when a start-up or first-frame plan needs the bar, with a driver trace.
-
-### The bake queue ordered by what the march touched (2026-11-20)
-
-From a devlog (voxelbee, "Adding A CACHE To My Custom VOXEL Game Engine", devlog 5): a GPU-run
-cache where every voxel a ray renders moves to the front, so residency follows visibility. We
-do not want its eviction (a turn would reveal unloaded data: pop-in against the stable-image
-rule; the mirror's distance window, ADR-0013, stays). The part worth taking is the signal: the
-march sets a bit per chunk it hit this frame, read back a frame late. Plan 0096's in-view drain
-orders jobs by an estimated size on screen; the touched set would order them by actual
-visibility, skipping chunks behind hills or the camera, and could order the mirror's uploads
-the same way. Cost guess (not measured): one atomic-free store per hit into a bitset of the
-window's chunks, one small readback. Pick up inside Plan 0096 if its in-view drain misses the
-10 s bar.
-
-### A wgpu pipeline cache owned by the engine
-
-Noted 2026-11-16 from the NVIDIA GLCache overflow (over 1 GB, so nothing new was kept and every
-start recompiled). `wgpu::PipelineCache` on Vulkan, saved under the game's cache directory, would
-make a warm start independent of the driver's own cache size and eviction. Pick up with the next
-start-up time plan, or when a tester reports long starts. Readings: Plan 0094 Phase 2a, the
-RTX's light stage 16.5 to 18.1 s cold against 0.1 s warm, and its window 94a's run 6, where
-`--leaf-shadow absorb` (a default-off arm, its light pipelines built when picked) cost 18.2 s
-on the first world frame on a cold driver cache (`docs/plans/logs/0094.md`, Phase 7); Plan 0094
-Phase 7a moves that build into the loading stage, the cost itself stays this entry's.
-
-### `.vox` import: down-scaling, a traced preview, a row's class changed live
-
-Parked 2026-11-16 at the drafting of Plans 0083 and 0084 (the owner's "import nearly anything
-that can be created as a .vox file"). Three pieces those plans leave out. **Down-scaling** a model
-(a majority vote per 2³, or a non-integer scale): Plan 0083 scales up by an integer only, since a
-vote changes thin features and the owner judges detail by eye; pick up if a scene authored at a
-finer grid than 10 cm is wanted. **A traced preview** of a structure at the crosshair before it
-is placed: taken 2026-11-18 by Plan 0083's Phase 7b after the owner's window ("something
-simplified at least to understand what it is"): a coarse grain per entity part and a one-part
-coarse copy of the structure in its marked frame; what stays parked is a full-detail preview,
-which the pool's 64-voxel parts (ADR-0050) cannot hold. **A row's class
-changed live** (stone to glass without a restart): ADR-0065 fixes a row's translucent, emissive
-and opaque class for the world's life because the mirror's slot packing and the bake's emitter
-lists read it at the first sync; lifting it means re-packing every brick that holds the row and
-re-baking its chunks. Pick up if the materials file's reload hits the `restart` banner often.
-
-### A foundation under a snapped structure
-
-Parked 2026-11-19 from Plan 0083's Phase 7c verdict (window 83c: the castle's ghost floated
-over the hills). Phase 7d snaps a structure's box to the terrain under its footprint, one column
-winning (the lowest, owner question 9), so on a slope one side is sunk or floats. A foundation
-that fills the footprint's columns from the base down to the terrain would remove the choice; it
-is a stamp that writes into air only, which Plan 0084's write policy (ADR-0067) gives a stamp.
-Pick up when 0084 lands: a `foundation on|off` beside `clear box`, the fill in the structure's
-most-used row, as a third stamp of the click.
-
-### Plan 0083's leftovers (close review, 2026-11-19)
-
-Found at the close ([Plan 0083](plans/done/0083-anything-from-a-vox-palette-materials-a-material-file-and-large-scenes-stamped-into-the-world.md), v0.66.0); none blocked it, each is a small fix pass when the area is next open. **Pending placements (`vxe-world`, ADR-0066's Outcome).** `World::stamp` takes `&Prefab`, so a placement past residency copies the prefab into a fresh `Arc` (`stamp.rs`, the `Placement` push) instead of sharing the registry's, and a rotated stamp materialises its rotation once more: bounded by the pending prefabs' bytes (the castle's 45 MB again at most), a `stamp` over the `Arc` removes it. The poll thread blits every placement an inserted chunk lists under the store's write lock (`stream/mod.rs`, `commit_residency`), up to a 64³ blit per placement while every reader waits; blit into the held chunk first, then apply only what arrived since under the lock. A placement whose remaining coordinates lie outside a finite `World::extent`, or where the camera never goes, lives for the session; drop the coordinates a finite extent can never stream at stamp time and report the pending bytes beside the count. Two stamps on one world at once (not reachable through the server, whose ops are serial) can order an overlap differently in resident and pending chunks: say in `stamp`'s doc that the caller serialises stamps. **Scenes (`vxe-assets`).** `VoxScene::load` honours a hidden layer only on the outermost layered transform of a path (`scene.rs`, the group arm): a shape on a hidden layer under a group on a visible one is hidden in MagicaVoxel and placed here; check every transform's layer and add the nested case to `hidden_layers_and_nodes_are_not_placed`. The grammar example in `materials.rs`'s crate doc and a comment in `rows.rs` name the fly-through's castle and torch; a neutral example costs nothing. **The coarse grain (`vxe-render`).** Instance word 27 and the inverse map are derived from the one f32 grain `detail / coarse` and inverted, one ulp off for coarse 7, 13, 14 and 15; write word 27 as `coarse / detail` directly. **The testbed.** The placed notice counts the ops submitted, not the tick's applied events, and `register_prefab`'s errors are dropped, so a stamp refused at the tick still reads `placed`. A click while the ghost body's worker is building the same scaled scene builds it again on the frame thread (`scene_at`); refuse with `building` or wait on the worker. `Entry::refusal` adds the 1 m margin on every axis while the air box adds it above only and `clear box` off adds none, and prints the un-margined size it did not check. `Modes::edit_axis_max` starts at the default until a slot is entered, so the chooser's belt row can show the wrong verdict on a world with another limit. `a_key_places_as_the_click_does` compares prefab ids, not `(prefab, origin, rot)`; `a_placed_structure_is_logged_stamps` pins the chapel's per-row counts as a sorted list, losing row identity. `run/structure_tests.rs` is at 1169 of 1200 lines; the next test splits it (the ghost and icon tests to a sibling). **Owed readings (the plan's Budgets table).** The live queue's settle after a runtime castle (two 1500-frame headless runs never drained the queue, with or without the castle, `docs/plans/logs/0083.md` Phase 8: a longer run or a quiet queue is needed), `VmHWM` at `--frames 3000` with and without `--castle` (the prefab bytes fell from 343 MB to 45 MB; the RSS was not re-read), the first frame with `--vox chapel` against the plain cave over three runs, the material term of `GpuWorld::mirror_bytes` with the chapel's 255 rows, and `--census` for `Wide` bricks with the castle placed. Pick up with the next plan on structures (0084) or a readings chore.
-
-### Plan 0094's leftovers (close review, 2026-11-20)
-
-Found at the close ([Plan 0094](plans/done/0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md), v0.68.0); none blocked it, each is a small fix when the area is next open. **A tautology:** `the_tunnel_exposes_for_its_walls_by_day` (`apps/flythrough/tests/gpu_outdoor/ceiling.rs`, soak) asserts the noon-midnight luma clause only inside `if ratio.abs() <= 0.5`, so it can never fail; it reads +0.063 EV since Phase 8a, so a plain `assert!` is the fix (**done 2026-11-22, Plan 0097 Phase 3b:** a plain `assert!` on the centre's linear luminance, the tone curve inverted). **A bar that does not see its mechanism:** `a_rare_hit_is_clamped` (`crates/vxe-render/tests/gpu_sun/history.rs`, soak) passes with the clamp off too (largest 0.1996 both ways); a clause on what the clamp changes, or a rig with more than one hit, would defend it. **Unread costs:** the no-record prior's arm A on the RENOIR at 1080p's half tier during a stamp's bake (a linear guess of 14.6 ms, `docs/nfr/02-frame-budget.md`; Plan 0096's RENOIR readings can take it) and the no-ray fade's temporal and composite cost.
-
-### Plan 0096's leftovers (close review's rulings and the close, 2026-11-23)
-
-Routed by the architect's amendment at the close review of [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) (its section "The close review's rulings"); none blocked the close (v0.71.0). The close's own are the last five.
-
-- **The glide's `light place` where a default buffer evicts.** Phase 7's indexes and Phase 7b's stop took the eviction scan from up to 1 186 ms a sync to 2.16 / 6.19 ms p50 / p99 in the owner's windowed cave glide (the default buffer, 158 / 1 279 chunks evicted a sync) and 6.84 / 8.84 on the 1/16 stress rig (loaded), against "under 2 ms in a glide that evicts"; the bench, which evicts nothing, reads 1.07. What is left is the wanted set's collection (58 %) and sort (40 %) at every sync (`place_lights`, `crates/vxe-render/src/gpu_world/lights.rs`). The lever: keep the wanted set ordered across syncs and re-sort on a focus move only. **Taken as a phase of the "Slot words packed on the workers" plan** (ADR-0056) when it is drafted: the same thread, bench and glide.
-- **The listing census reads no bands.** `--queue-census` counts every surface chunk as near ("mid 0, far 0" on all four runs of Phase 9), so it is taken without the far-normal band; the in-view line's bands are right. Give the census the view's `Bands`, with a CPU test that a synthetic listing of 4 near, 4 mid and 4 far chunks prints those counts.
-- **Faceless chunks at the residency's edge reach the listing** (16, 27, 0 and 8 on the four runs): the worker's verdict counts a neighbour not streamed as open, and the outer neighbour of an edge chunk never streams. One listing each, no job. Left as is unless a census shows the count growing with the radius faster than the sphere's surface.
-- **The Portable profile's 720p is stretched to the window's shape** (the fly-through, `cli/settings.rs` `fixed_output`): a 16:9 frame scaled to 2530 x 1378 is about 3 % wide, no letterbox. The fix proposed: the hint's pixel count at the window's aspect (1 301 x 708 there), so no stretch, no bars, the same budget. With it, if the owner picks it (the plan's question 2): the fixed output as a readable row of the engine's profile, so a game that picks `Profile::Portable` is told.
-- **Phase 10b** left the plan at its reading: see "The record by rule at every opening" under Next up.
-- **The dig under Portable reads grainy, with bright spots (owner, window W2 run 7b, 2026-11-23).** On the RENOIR at Portable the fresh hole "lights up", blinks, shows bright single-voxel specks, and once landed reads "yes grainy" (`7b-radeon-dig.png` in Plan 0098's `live/window98b/`). Not attributed: the ring bakes at Portable's near tier (1 024 samples a brick direction), the march runs at 853 x 480 stretched to the window, the still's queue had 7 jobs running, and the binary had none of Plan 0098's calm picks. **The next window on the merged tree separates them, with no code:** the dig under Portable with calm at `--bake-tiers 1024,256,256`, `2048,256,256` and `4096,256,256`, and the 1 024 arm again at `--render window`. If the count is what shows, the fix is the Portable row's near count with the in-view drain re-read (Plan 0096's Phase 9 ruling 3), not a dig exception; if the march, it is the profile's size. Also to check there: the still's `light:` line reads "bricks 8/4096 ... near 2 at 4096" under Portable (whether that line prints the profile's tier was not checked). **Answered at Plan 0098's W3 (2026-11-23, `live/window98c/`, on the RENOIR under the calm defaults):** the bright dots show before the dig's light lands at 1 024 and at 4 096 samples alike and go when it lands ("dots disappear after light land"); settled holes are clean at both. So the count is not what shows, **the Portable row's 1 024 near tier stands**, and the dots are the dig's value before its bake (Plan 0098 Phase 14). The `--render window` arm was not run and is moot; the `light:` line printed a constant (Plan 0098 Phase 12).
-- **The Portable picture under calm is unjudged.** Run 7's "wobble is too hard" was on a binary without Plan 0098's calm picks, at a 480-line march. Same window: the forest at Portable with calm. **Judged at Plan 0098's W3 (2026-11-23):** "its much better, light takes maybe 5 sec to load, and fps is around 30"; typed: "bearable". Accepted; nothing owed.
-- **The fixed output as a row of the engine's profile** (the close's ruling 2): `RenderSettings` carries a row true for Portable, the fly-through's `fixed_output` reads it, a CPU test reads the row per profile. With the aspect item above; the owner called the stretch itself acceptable at W2, so neither is urgent.
-- **The per-phase GPU run picks its binaries from the changed files** (the harness's; awaits the owner's go). Five tests in `gpu_queue` and `gpu_queue_reach` stayed red from Plan 0096's Phase 4 to its tip's gate, because the phases that changed `bake/queue/` did not name those binaries. `test-changed.mjs` adds, to the named binaries, every `gpu_*` binary whose test file or support module names a changed module's public items (or a path map kept beside the script), and the lane rules say a phase's named binaries are a floor.
-- **The RENOIR forest's one stalled drain** (37.6 s in view against 27.1 and 27.0; the drawn share fell to 0.180 once): no cause named. An open reading for Plan 0099, where the submit moves to the bake thread.
 
 ### Plan 0098's leftovers (close review, 2026-11-24)
 
@@ -364,6 +250,19 @@ Found at the close ([Plan 0098](plans/done/0098-a-calm-light-by-default-no-scree
   1966 of 2000, `bake/queue/mod.rs` 1060 and `bake/job_loop.rs` 1047 of 1200. Plans 0099 and
   0100 both add to them; new code goes to files of its own.
 
+### Plan 0096's leftovers (close review's rulings and the close, 2026-11-23)
+
+Routed by the architect's amendment at the close review of [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) (its section "The close review's rulings"); none blocked the close (v0.71.0).
+
+- **The glide's `light place` where a default buffer evicts.** Phase 7's indexes and Phase 7b's stop took the eviction scan from up to 1 186 ms a sync to 2.16 / 6.19 ms p50 / p99 in the owner's windowed cave glide (the default buffer, 158 / 1 279 chunks evicted a sync) and 6.84 / 8.84 on the 1/16 stress rig (loaded), against "under 2 ms in a glide that evicts"; the bench, which evicts nothing, reads 1.07. What is left is the wanted set's collection (58 %) and sort (40 %) at every sync (`place_lights`, `crates/vxe-render/src/gpu_world/lights.rs`). The lever: keep the wanted set ordered across syncs and re-sort on a focus move only. **Taken as a phase of the "Slot words packed on the workers" plan** (ADR-0056) when it is drafted: the same thread, bench and glide.
+- **The listing census reads no bands.** `--queue-census` counts every surface chunk as near ("mid 0, far 0" on all four runs of Phase 9), so it is taken without the far-normal band; the in-view line's bands are right. Give the census the view's `Bands`, with a CPU test that a synthetic listing of 4 near, 4 mid and 4 far chunks prints those counts.
+- **Faceless chunks at the residency's edge reach the listing** (16, 27, 0 and 8 on the four runs): the worker's verdict counts a neighbour not streamed as open, and the outer neighbour of an edge chunk never streams. One listing each, no job. Left as is unless a census shows the count growing with the radius faster than the sphere's surface.
+- **The Portable profile's 720p is stretched to the window's shape** (the fly-through, `cli/settings.rs` `fixed_output`): a 16:9 frame scaled to 2530 x 1378 is about 3 % wide, no letterbox. The fix proposed: the hint's pixel count at the window's aspect (1 301 x 708 there), so no stretch, no bars, the same budget. With it, if the owner picks it (the plan's question 2): the fixed output as a readable row of the engine's profile, so a game that picks `Profile::Portable` is told.
+- **Phase 10b** left the plan at its reading: see "The record by rule at every opening" under Next up.
+- **The fixed output as a row of the engine's profile** (the close's ruling 2): `RenderSettings` carries a row true for Portable, the fly-through's `fixed_output` reads it, a CPU test reads the row per profile. With the aspect item above; the owner called the stretch itself acceptable at W2, so neither is urgent.
+- **The per-phase GPU run picks its binaries from the changed files** (the harness's; awaits the owner's go). Five tests in `gpu_queue` and `gpu_queue_reach` stayed red from Plan 0096's Phase 4 to its tip's gate, because the phases that changed `bake/queue/` did not name those binaries. `test-changed.mjs` adds, to the named binaries, every `gpu_*` binary whose test file or support module names a changed module's public items (or a path map kept beside the script), and the lane rules say a phase's named binaries are a floor.
+- **The RENOIR forest's one stalled drain** (37.6 s in view against 27.1 and 27.0; the drawn share fell to 0.180 once): no cause named. An open reading for Plan 0099, where the submit moves to the bake thread.
+
 ### Plan 0097's leftovers (close review, 2026-11-23)
 
 Found at the close ([Plan 0097](plans/done/0097-the-exposures-anchor-by-the-sky-around-the-camera-the-floor-record-under-the-eye-a-time-constant-and-the-canopys-shade.md), v0.70.0); none blocked it.
@@ -386,21 +285,234 @@ Found at the close ([Plan 0097](plans/done/0097-the-exposures-anchor-by-the-sky-
   Outcome records it meanwhile), and the gate's 1498 s against the 19 min line (`docs/nfr.md`
   section 7).
 
-### Hundreds or thousands of entities
+### Plan 0094's leftovers (close review, 2026-11-20)
 
-Parked 2026-11-16 by the owner ("minecraft can have thousands of entities"). Today: `MAX_ENTITIES` 64, `MAX_ENTITY_PARTS` 512 (`vxe-render` `entities.rs`), 6 instance bits in the hit record. The cost is the trace, not the caps: Plan 0062 Phase 4 (`docs/plans/logs/0062.md`) read 64 walkers at +3.4 to 4.4 ms on the RTX 3080 Laptop and +32 to 34 ms on the Radeon iGPU, growing with screen cover and shadowing lights. **Hundreds:** wider caps and hit bits, the instance tree built on the GPU, coarse far models, shadow rays testing only entities near their light (one or two plans, no ADR). **Thousands:** entities rasterized into the hit buffer beside the traced world, which reverses ADR-0050's choice: an ADR and a spike first. **The owner's direction (2026-11-16): trace only the near ones, merge the crowded ones.** Distance tiers: near entities traced in full; mid ones traced on a coarse merged model (parts folded into one volume at detail 1); far ones as one box or impostor, or dropped below a pixel. Clusters: entities sharing a spot re-voxelized together at low resolution on the GPU each frame (or every few) into one cluster volume, walked once per ray instead of once per overlapping entity. Shadow rays test the near tier only. The server's ray query stays exact per entity; the tiers are render-only. Pick up when a consumer needs more than 64 on screen. Sharpened 2026-11-19 (Bonsai's 1.1.0 and 1.3.10 notes): the CPU side needs a per-chunk entity list as the broadphase (the mover's sweeps and the entity ray query walk the chunk's list, not every instance) and an LRU eviction of models from the pool when the library outgrows it, on top of Plan 0078's free list.
+Found at the close ([Plan 0094](plans/done/0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md), v0.68.0); none blocked it, each is a small fix when the area is next open. **A bar that does not see its mechanism:** `a_rare_hit_is_clamped` (`crates/vxe-render/tests/gpu_sun/history.rs`, soak) passes with the clamp off too (largest 0.1996 both ways); a clause on what the clamp changes, or a rig with more than one hit, would defend it. **Unread costs:** the no-record prior's arm A on the RENOIR at 1080p's half tier during a stamp's bake (a linear guess of 14.6 ms, `docs/nfr/02-frame-budget.md`; Plan 0096's RENOIR readings can take it) and the no-ray fade's temporal and composite cost.
 
-### A timeline for clips, kept open
+### Plan 0083's leftovers (close review, 2026-11-19)
 
-Parked 2026-11-16 at Plan 0063's window. (b): typed keys are enough "for now, but keep it open": a timeline or curve view stays out of the engine (ADR-0051, Plan 0082's not-do list); if typed keys fail on a longer clip, ADR-0051's Alternative A (glTF from Blender) is re-read first.
+Found at the close ([Plan 0083](plans/done/0083-anything-from-a-vox-palette-materials-a-material-file-and-large-scenes-stamped-into-the-world.md), v0.66.0); none blocked it, each is a small fix pass when the area is next open. **Pending placements (`vxe-world`, ADR-0066's Outcome).** `World::stamp` takes `&Prefab`, so a placement past residency copies the prefab into a fresh `Arc` (`stamp.rs`, the `Placement` push) instead of sharing the registry's, and a rotated stamp materialises its rotation once more: bounded by the pending prefabs' bytes (the castle's 45 MB again at most), a `stamp` over the `Arc` removes it. The poll thread blits every placement an inserted chunk lists under the store's write lock (`stream/mod.rs`, `commit_residency`), up to a 64³ blit per placement while every reader waits; blit into the held chunk first, then apply only what arrived since under the lock. A placement whose remaining coordinates lie outside a finite `World::extent`, or where the camera never goes, lives for the session; drop the coordinates a finite extent can never stream at stamp time and report the pending bytes beside the count. Two stamps on one world at once (not reachable through the server, whose ops are serial) can order an overlap differently in resident and pending chunks: say in `stamp`'s doc that the caller serialises stamps. **Scenes (`vxe-assets`).** `VoxScene::load` honours a hidden layer only on the outermost layered transform of a path (`scene.rs`, the group arm): a shape on a hidden layer under a group on a visible one is hidden in MagicaVoxel and placed here; check every transform's layer and add the nested case to `hidden_layers_and_nodes_are_not_placed`. The grammar example in `materials.rs`'s crate doc and a comment in `rows.rs` name the fly-through's castle and torch; a neutral example costs nothing. **The coarse grain (`vxe-render`).** Instance word 27 and the inverse map are derived from the one f32 grain `detail / coarse` and inverted, one ulp off for coarse 7, 13, 14 and 15; write word 27 as `coarse / detail` directly. **The testbed.** The placed notice counts the ops submitted, not the tick's applied events, and `register_prefab`'s errors are dropped, so a stamp refused at the tick still reads `placed`. A click while the ghost body's worker is building the same scaled scene builds it again on the frame thread (`scene_at`); refuse with `building` or wait on the worker. `Entry::refusal` adds the 1 m margin on every axis while the air box adds it above only and `clear box` off adds none, and prints the un-margined size it did not check. `Modes::edit_axis_max` starts at the default until a slot is entered, so the chooser's belt row can show the wrong verdict on a world with another limit. `a_key_places_as_the_click_does` compares prefab ids, not `(prefab, origin, rot)`; `a_placed_structure_is_logged_stamps` pins the chapel's per-row counts as a sorted list, losing row identity. `run/structure_tests.rs` is at 1169 of 1200 lines; the next test splits it (the ghost and icon tests to a sibling). **Owed readings (the plan's Budgets table).** The live queue's settle after a runtime castle (two 1500-frame headless runs never drained the queue, with or without the castle, `docs/plans/logs/0083.md` Phase 8: a longer run or a quiet queue is needed), `VmHWM` at `--frames 3000` with and without `--castle` (the prefab bytes fell from 343 MB to 45 MB; the RSS was not re-read), the first frame with `--vox chapel` against the plain cave over three runs, the material term of `GpuWorld::mirror_bytes` with the chapel's 255 rows, and `--census` for `Wide` bricks with the castle placed. Pick up with the next plan on structures (0084) or a readings chore.
 
-### Jelly entities: see-through glowing voxels, and true soft bodies
+### A pipeline cache owned by the engine, for the renderer's shaders
 
-Parked 2026-11-16 by the owner's question "jelly-like entities, slimes - will it be possible?". The part taken: Plan 0082, a scale per axis per part in the pose and the clips (squash and stretch; ADR-0064). Two parts left. **See-through glowing jelly:** an entity voxel is an opaque honest cube (Plan 0062 draws a translucent material on an entity opaque); it waits for Plan 0034's translucent voxels and then an amendment that runs the entity walk inside the translucent march. **True soft bodies:** a blob that bends round a corner, splits or merges needs the voxels themselves to move (a lattice or field over the part's volume, sampled by the ray), which the pool (one volume per model), the regular grid walk and the query's determinism all rest against; ADR-0064's Alternative C names it. What it takes: an ADR and a spike that reads the walk's cost under a deformation field on both adapters. Pick up when a consumer asks for a creature that bends, splits, merges or is seen through.
+Two entries merged 2026-11-24: the architecture review's (2026-11-12, section 1.4, under Tooling until now) and the start-up side's (2026-11-16, the NVIDIA GLCache overflow: over 1 GB, so nothing new was kept and every start recompiled). A `wgpu::PipelineCache` whose bytes the game keeps would make a warm start independent of the driver's own cache size and eviction. wgpu 30's cache is Vulkan-only and keyed by the driver, so it helps a second start on the same machine, not the first.
 
-### Per-entity voxel damage: real holes carved into one instance's parts
+- **What exists (Plan 0094 Phase 2a):** a test hook. `vxe_render::debug::set_pipeline_cache` sets a process-wide cache every compute pipeline is created through, and the test support opens one per hardware adapter from a file under `target/vxe-pipeline-cache/`, keyed by wgpu's adapter key and a hash of the composed shader sources. The frame's own path sets none, and the three render pipelines (`hud.rs`, `loading.rs`, `present.rs`) pass `cache: None`.
+- **Readings:** cold creation of the eleven pipelines 1396 ms on the RTX, 458 ms on RADV, 299 ms on lavapipe (Plan 0046). `gpu_frame`'s `the_pipeline_cache_pays` (Plan 0094 Phase 2a, `docs/plans/logs/0094.md`): the RTX 29.4 s cold on an emptied driver cache, 0.24 s warm, 2.0 MB of data; lavapipe 5.85 s cold, 5.68 s warm, 84 B (no compiled code), so the cache pays on hardware adapters only. Plan 0094's windows: the RTX's light stage 16.5 to 18.1 s cold against 0.1 s warm; `--leaf-shadow absorb` 18.2 s on its first world frame cold (94a), and a 70 s cold start with the arms in the loading stage (94b; the owner: "start is slow, 70 sec").
+- **Routed to Plan 0096 (2026-11-20), which closed without it** (its "What this plan does NOT do"): an engine cache for hardware adapters in the app, and the default-off arms built in the background after the first world frame rather than inside the loading stage.
+- **Beside it, where the cache does not help:** the light pass's default-on compile cost on lavapipe (the fly-through's light-pass build stage 3.7 s against the base's 2.7, about 1.4 s a frame-building test of the gate); the next step there is a per-module compile reading (`pipeline_times` per `PASSES` row). Plan 0092's hot reload rebuilds a pass's pipeline from a file, a compile the cache has not seen, so the two are read together.
 
-Parked 2026-11-16 at Plan 0085's draft (the owner's "healthy, damaged, dead" question). Plan 0085 gives an entity modes without touching its voxels: a variant hides a part, swaps its volume for another `.vox` node or remaps a material, and a dead entity is stamped into the world. What it does not give is a bite taken out of one spider's abdomen where the pick struck. **What it takes:** copy-on-write volumes per instance (an edit on an entity's part copies the shared volume into the pool, under ADR-0060's allocator, and the instance's volume word names the copy), a per-instance pool budget and an eviction rule, an edit op on an entity (shape in the part's frame, carried through the composed pose in fixed point, so the server's query and the picture agree) that reports what it removed per material as a world edit does, the op in the log (an entity op kind, which needs the model and pose in the save, ADR-0069's Alternative A), and a rule for the headless query's volumes (a per-entity `Arc<Prefab>` copy beside the model's). About a plan and an ADR. **Pick up when** a consumer asks for damage that shows where it landed, not which state it reached.
+Pick up with the next start-up time plan, or when a tester reports long starts.
+
+### Remove `own`, the engine's own upscaler
+
+Parked 2026-11-10 (owner, plan review). FSR 2 at 1.5 is the default (Plan 0056) and `own` is
+opt-in. Removing it deletes `Upscaler`'s pass, `upscale.wgsl`, the `own` arms of `gpu_upscale.rs`
+and its goldens, and re-bases the frame ledger's `own` line. That is a behaviour change, so it is
+its own small plan, not Plan 0045's, which only moves the code it finds. Accepted ADR-0024 and
+ADR-0034 still name Plan 0045 for it; the removal plan's ADR note corrects that. Draft after
+Plan 0061's picks; it runs after Plan 0069 (owner, 2026-11-11) and before M10.
+Noted 2026-11-10 (static performance review): `own` is the only upscaler on record under or near
+section 2's 1.5 ms upscale line (0.93 to 1.3 ms at the owner's window against FSR 2's 2.9 ms) and
+reads 6 to 7 ms less on the Radeon. Removing it before the profile plan arbitrates removes the
+slow adapter's cheaper arm; the removal plan should say what the portable profile uses instead.
+Answered 2026-11-11 (owner, Plan 0069's answer 2): Portable uses FSR 2 at 720p output, and the
+removal plan goes ahead after Plan 0069.
+
+### The first near-lighting step stalls 130 to 210 ms on a cold driver cache
+
+Noted 2026-11-16 from Plan 0075 Phase 7b (`docs/plans/logs/0075.md`, session 75c; RTX host). With
+every pipeline built on the start-up worker, one loading gap stays at the first "lighting the near
+chunks" frames, cold only (warm max 87 ms). Every `vxe-render` compute pipeline exists before it,
+so the time is something else the driver does on first use. The owner noticed no hitch and
+accepted it. Pick up when a start-up or first-frame plan needs the bar, with a driver trace.
+
+### The loading frames stutter on the streamed worlds
+
+Noted 2026-11-16 at Plan 0075's close (its Followups; `docs/plans/logs/0075.md`, Phases 5 and 6).
+On the cave and the castle the loading frames run near 24 fps (interval p95 96 to 104 ms on the
+RTX); the owner saw it ("like fps in 30-40") and accepted it. A pre-roll bake step runs 70 to 140
+ms against the 25 ms slice, and each loading frame waits for the previous slice's GPU work. What
+it takes: a bake step split under the slice (fewer samples a step, or a step bounded by time),
+read on the castle. Pick up with the next start-up plan, or when a tester reports a jerky load.
+
+### A CPU-drawn first frame before the device
+
+Parked 2026-11-16 by the owner at Plan 0075's Phase 6b (`docs/plans/logs/0075.md`). Since 6b the window shows a static loading frame 0.3 to 0.4 s after process start on the RTX (0.2 to 0.3 s on the Radeon iGPU), drawn by the GPU right after the device. What is left before it is the instance (78 to 244 ms), the device and the surface's configure. In two runs, the first launch after a pause, the instance took about 1.6 s (a guess: the NVIDIA dGPU waking; not confirmed). On Wayland nothing shows until a buffer is attached, so a frame before the device needs a CPU-filled buffer: the `softbuffer` crate (rust-windowing, winit's org; wl_shm on Linux, GDI on Windows), or the same by hand per platform. Windows already paints a window's class background at once. Cost: a dependency and its ADR, about 100 lines in `vxe-app`'s shell, and the window's surface handed from the CPU buffer to wgpu's swapchain, read on both platforms. What it takes: a reading of how often the slow instance happens on testers' machines (the `start-up:` lines in run logs), then a small plan. Pick up if a tester reports a blank window at start.
+
+### The baked key record's cell blend carries light across a shadow edge
+
+Found 2026-11-22 by the tunnel-leak diagnosis (branch `diag-leak` at `4a6770db`, its log
+`docs/plans/logs/diag-leak.md` on that branch; owner's window 97b: a blinking sunlit wall and a
+white patch in a dark tunnel, on the builds before and after Plan 0097). With the far estimate
+forced on every face, `KeyFar::Baked`'s blend between brick-direction cells (ADR-0079) puts
+12 225 px bright where the truth is shadowed, against 912 for the column map's horizon, which
+errs dark through the tunnel's mouth instead. Neither symptom reproduced headless, and at the
+wall's distance (2 to 4 m) the far weight is 0, so how the window read the record there is
+unshown. **What it takes:** first a debug view of each pixel's key source tag, to catch the lit
+state live in a window; then, only if the record is shown to be the source, a blend that does
+not cross a shadow edge (the own cell only, a blend gated by the cells' agreement, or a finer
+record). Plan 0098 made the column's horizon the default at every distance, so the record is off
+by default. **Plan 0100 reads the baked key record far where the column map reads shadow
+(ADR-0084), so this is a risk its lane reads first.** The white patch seen
+from the spawn is real light through a roof slot of the test world's generator (the valley
+dips under the tunnel's crown over x 192 to 266), the owner's call to close.
+
+### A mip by majority can drop a roof one or two voxels thick
+
+Raised 2026-11-22 by the same diagnosis, untested: at LOD 1 the mip's majority rule may remove
+a 1 to 2 voxel roof (the tunnel at x 266 to 290), which would let the sun into an enclosed
+place at a distance. It bears on any far geometry that reads a coarser mip (Plan 0098's
+candidate for the far hits that flip under the jitter): a mip read for visibility or for a
+stable far hit wants "any solid" coverage, not the majority. **What it takes:** a CPU test of
+the mip of a one-voxel slab over air, and a reading of the far shadow under it. Plan 0098
+closed without it (no arm of its Phase 5 was picked). Pick up with the far-field work (Plan
+0033's re-read), which reads coarser mips for far hits.
+
+### How dug interiors should look: darker, less sky than the true aperture
+
+Parked 2026-11-20 by the owner at Plan 0094's window 94a verdict ("the hole reads lit";
+`live/window94a/1-forest-dig-lit-hole.png`, `4-dig-hole-lit.png`: a radius-0.5 m hole's floor
+blue-grey under a shaded hill and under a canopy, its walls dark brown). Plan 0094 Phase 7a (6)
+reads whether the baked visibility matches the hole's true aperture; the owner's call is that
+**even a correct aperture is not the look**: a dug interior should read darker and take less sky
+than the geometry gives, so a hole reads as a hole beside the ground it was dug from. A look
+plan, later (the motion lane it waited for closed with Plans 0095 and 0098): candidates are the hole's walls' bounce in the baked term
+(the walls' own low value folded into the floor's, which the bake's bounce cell mean may already
+carry too little of), a darker soil row at the material table (a consumer's palette call, not
+the engine's), or an occlusion term at concave faces read from the column map or the coarse
+grid. Read first on the 94a stills' scenes (the hills at 16:00, the forest at `10,180`) with
+the true aperture printed beside the stored value; the pick is the owner's eye.
+**Read (Plan 0094 Phase 7a, `gpu_sun`
+`reading::the_dug_floors_baked_visibility_against_its_aperture`, lavapipe): `geometry`.** The
+record is right for its cell, but the cell is the 8-voxel brick: a radius-5 sphere's record
+reads 0.718 where the bowl's own faces see 0.473, so a small hole's floor shows the brick's
+mean with the open ground beside it, not its own sky.
+
+### A second `Frame` on one rig does not drain its bake queue
+
+Noted 2026-11-19 by Plan 0094 Phases 1 and 2 (`docs/plans/logs/0094.md`, bars 2 and 4 of
+Phase 1, bar 1 of Phase 2): on the hills, the castle's arms (b) and (c) and the forest's turn
+(twice on a fresh rig) the queue did not drain in 30 000 stepped frames, where a fresh process
+drained the same scene in 1200 to 3300; the undrained arms read up to 16 % of pixels over 4 at
+rest against under 1 % drained. Plan 0094 runs every arm in its own process. What it would take:
+a reading of the queue's depth and the job at its head on the second frame (a job that never
+lands, or a rig that re-marks what the first frame baked). A chore or the perf plan's; read
+before any gate test shares a rig between two frames. Possibly the same cause as "The dig rig's queue
+never drains" (Plan 0098's leftovers: a rig's frames submitted with no wait on the device);
+read that one first.
+
+### A dug chunk's settled light differs from a one-shot bake
+
+Read 2026-11-10 in Plan 0060 Phase 3 (`docs/plans/logs/0060.md`, `a_dig_is_never_withdrawn`). In that test's rig, after the dig settles, chunk [2, 0, 0] differs from a one-shot bake of the edited world. Chunks 0, 1 and 3 to 7 match, and so does the dug chunk the test now compares. The difference reads the same under the score order with withdrawal on, under `distance` with withdrawal off, and at the default `edit_ms` (the lane's `live/p3-digexp.log` and `p3-digexp2.log`, untracked). So it is not the withdrawal and not the order. It predates Plan 0060 by that reading, but it was not read at the base. A guess, not isolated: a neighbour chunk whose light reads the dug chunk is not re-baked after the dig, or is re-baked before the dig's own job lands. What it takes: a headless test that digs, settles and compares every chunk with a one-shot bake, read at main first, then a fix in the live queue's dirty-neighbour rule. Added at the owner's call (2026-11-11).
+
+### A `Uniform` emitter brick gives no light samples
+
+Noted 2026-11-13 from the tree at `98e69b8` (Plan 0074's draft, its owner answer 5).
+`note_lights` scans `Full` bricks only, so a brick made entirely of one emissive material
+contributes no light samples, even on its faces toward air. Not seen on screen. Fixing it changes
+the light, which Plan 0074's byte guard forbids. Pick up after Plan 0074 as a look check: place a
+solid emissive block of 8 or more voxels a side in the cave and compare it with a hollow one.
+
+### The bake queue ordered by what the march touched (2026-11-20)
+
+From a devlog (voxelbee, "Adding A CACHE To My Custom VOXEL Game Engine", devlog 5): a GPU-run
+cache where every voxel a ray renders moves to the front, so residency follows visibility. We
+do not want its eviction (a turn would reveal unloaded data: pop-in against the stable-image
+rule; the mirror's distance window, ADR-0013, stays). The part worth taking is the signal: the
+march sets a bit per chunk it hit this frame, read back a frame late. Plan 0096's in-view drain
+orders jobs by an estimated size on screen; the touched set would order them by actual
+visibility, skipping chunks behind hills or the camera, and could order the mirror's uploads
+the same way. Cost guess (not measured): one atomic-free store per hit into a bitset of the
+window's chunks, one small readback. Plan 0096 closed (2026-11-23) with the in-view drain at
+36.5 s against 10 on the RTX, bound by the step's CPU per job, which Plan 0099 takes. Pick up
+if the drain still misses once that CPU is off the render thread.
+
+### The near shell's cost in a flight, and the streaming edge
+
+Parked 2026-11-10 at Plan 0060's Phase 1 stop rules, owed to the backlog at its close (owner's amendment). In the streamed cave at `--glide 300` the near shell (Chebyshev 2, baked at the full count) takes 98 to 99 % of the slice, and about 0.70 of the in-view chunks still waiting have their reach not ready (the mirror's edge), so neither the order nor the withdrawal can light them. What it would take: a shell baked coarse first in a flight, or a smaller shell at speed; and a streamer that loads the light radius ahead of the view. Plan 0067 (closed 2026-11-12) did not take it, and Plan 0096 has since changed what the shell bakes at (a sample tier by size on screen, ADR-0080), so the flight is read again on today's tree first (`docs/plans/logs/0060.md`, Phase 1, holds the old reading). Pick up with the next plan that reads a flight's light.
+
+### The first-block fallback fade's CPU under `chain`
+
+Parked 2026-11-12 at Plan 0067's close review (`docs/plans/logs/0067.md`, Phase 7, the opening row). Under the default missing light, `chain`, every chunk's first block fades over `FADE` frames from its fallback value, and the render thread rewrites the fading block (`advance_fades`) and its summary and two parent records (`Store::show`) every frame of the fade. In regime B, where nearly every step opens, that reads `fades` 1.05 to 1.10 ms p50 and `summaries` 0.61 to 0.63 on the RTX 3080 Laptop (`--near 0`, rig (c)), against 0.002 and 0.05 under `black`, and takes the opening step from 0.75 to 0.86 to 0.88 of the start commit's (bar 0.8); the default glide's `summaries` read 0.965 ms p50, p99 2.86. The owner saw no lag at this cost in the window. Levers, unbuilt: a shorter fade for a first block (a look change, the owner's eye), the summary and parents written once at the fade's end instead of every frame (ADR-0053 has a parent fade with its children, so this one needs an Outcome there), or the blend on the GPU (the temporal read mixes the fallback with the block by a per-chunk weight). `fades` and `summaries` are among the per-job stages Plan 0099 moves off the render thread; read them again after it, and pick up only if they still show there.
+
+### The pre-roll never settles at small residencies
+
+Seen 2026-11-15 by Plan 0075's lane while sizing its streamed test (`docs/plans/logs/0075.md`): with `--residency 2,3` or `4,6` and `--near 0`, the start-up pre-roll runs to its 120 s cap, with the loading screen on or off; the camera's chunk never reports its light settled. Not read further. A guess, not isolated: the pre-roll's "near chunks hold their light" condition waits on a chunk the small window never makes resident, or keeps evicting and reloading. What it takes: a headless repro at main with the pre-roll's wait condition logged per chunk, then a fix in that condition. Pick up before a consumer runs small residencies.
+
+### The fired lights' grain: the list lights' visibility on a running mean
+
+Parked 2026-11-18 by Plan 0086 Phase 22 (the second window's defect 3: "when I shoot light,
+walls becoming grainy", 20.png, the noon tunnel under anchor 0). Phase 16 read it as Plan
+0058's, not the sky's (`docs/plans/logs/0086.md`, Phase 16's table and Phase 22): with five
+lights fired the lit patch's p99 change is 25 to 28 levels in flight and 5 to 6 at rest, the
+same with the sky off; no sky ray returns over the lights; the light pass's rise (0.13 to 4.6
+ms, loaded) is the five lights' shadow rays. In flight the list changes every frame and
+`LIGHTING_LIGHTS_CHANGED` takes the direct part's sample as it is. What it would take: the
+list lights' shadow visibility on a running mean of its own, as the key light's is on the
+visibility pair's `g` (Plan 0086 Phase 19), reprojected and reset where the light moves. Plan
+0086 closed without a ruling on it, and a running mean is a screen history, which ADR-0082
+took out of the default light pass: the mechanism is chosen again under that ADR, after the
+grain is read under today's defaults. Pick up when a consumer fires lights at walls in the
+dark, or the owner calls the grain.
+
+### Settle early: a coarse area answer where an estimate is not still, and a hold once it is
+
+Parked 2026-11-19 (owner, at Plan 0094's Phase 1 and 2 readings: "light that is not still can be approximated around area and settle exit early; we don't need super precision if it becomes flicker", and "this exit early strategy can be used a lot around similar cases"). The principle: while an estimate is young or restarting, show a coarse answer pooled over its neighbourhood and narrow it as it ages; once it is still, hold it and move again only through one fade.
+
+**Outcome (Plan 0094, closed 2026-11-20):** the principle is ADR-0076 rule 6 (a coarse stable answer while the precise one has not landed, one fade when it does, every reading on the undrained image too). Both forms built for the visibility pair left: the hold at the cap (`settle_at_cap`, `--settle`) was rejected at window 94a and its code removed (ADR-0076's Alternative F is its record), and the age-weighted pool is off by default. The first place the rule pointed at, the bake queue's drain, went to Plan 0096. The readings of both forms are in `docs/plans/logs/0094.md` (Phases 3 and 6).
+
+**Places it might still apply, each unread:** the exposure (a hold once the meter is within 1/64 EV), the probes or lamp channel (hold a probe whose samples sit in its band), the denoiser's footprint (wide while the variance is young, none once settled), the fired lights' grain (the entry above), the entity lighting (a part's coarse grain holds its light until the part moves), the far field and LOD transitions (hold a tile's converged value across a mip switch, fade the switch). Pick up per place when its flicker is read; Plan 0090's counter names the places.
+
+### A held fallback still moves on screen
+
+Parked 2026-11-05 from the ruling on `the_vein_wall_patches_are_counted`. With the table's read off at the patch pose on 299b5c8, the accumulation is bit-identical over the window (0 pixels changed), yet the filter's output reads 90.95 patches a step and the composite 51.10. The lamp is off and the gather is not added, so the filter is the only part left that moves. By reading the code (not isolated): `temporal.wgsl` keeps blending each frame's noisy sample into the moments after the emissive part holds, and `atrous.wgsl` weights its taps by that variance. `a_still_fallback_pixel_holds_still` reads the accumulation, so it does not see this. Plan 0059 keeps the fallback for no-face hits, so glass and the field look may shimmer at rest. That patch-pose run makes every hit a fallback, so it is an extreme case; a translucent surface has not been read. What it takes: a spike that reads a translucent wall's composite at rest, then a fix that holds the moments with the mean, or passes a held part around the filter as the table's part does. Plan 0059 closed (2026-11-09) with no answer recorded here, and ADR-0082 has since taken the screen history out of the default light pass; read a glass pane at rest under today's defaults before any fix.
+
+### Plan 0090 owes a stamp scene (a freshly placed castle under the sky) and a reading of the key mean's fade-in against `F`
+
+Parked 2026-11-18, twice: from Plan 0083's Phase 7 verdict (session 83b, `--source outdoor --time 12:00`, 25.png: inside a castle placed from the belt a moment before, the walls clipped white and blue and the vault was dark and grainy, "castle flickers badly"; HUD queue depth 10 751, missing 0, scene -4.1 EV, eye +1.34 EV) and from Plan 0086's flicker amendment (the stamped chunks baked behind the carve's dig ring and every reset pixel on the new walls ran the sky ray's mean from one raw sample; `docs/plans/logs/0086.md`, the flicker section). Plan 0086's Phases 21 (a) and 21a took the fix. What is owed is an architect amendment to [Plan 0090](plans/0090-the-pop-counter-scenes-on-lavapipe-count-the-pixels-that-break-the-light-rules-a-ratchet.md) before its lane starts; its scene table has the castle's hall with no sky, not a stamp under one:
+
+1. **A scene:** a prefab stamped on the hills at noon with the eye inside it, counting the pixels that break rules 1 to 5 over its settle, by source, so the class cannot return unseen.
+2. **A reading of the key light's mean** (`key_mean`, Plan 0086 Phase 19) at an edit-cast shadow outside its edit box, which fades in over up to `sky_history` frames, against the `F` the owner calibrates in Plan 0090 Phase 5; if `F` is shorter, the key mean takes a band test as `pair_step` has for the sky. Under ADR-0082's defaults the light pass keeps no screen history, so this reading applies with light history on only; the amendment says whether it still earns a scene.
+
+### The bake and strip examples drift from the fly-through's lighting defaults
+
+Parked 2026-11-13 (orchestrator default while the owner was away). The hero fix (5b35aa3) gave `examples/hero.rs` the shared `flythrough::default_lighting()`. Two tools still build the library's `Lighting` and so miss the Plan 0061 store-read and light-weight defaults: `apps/flythrough/examples/bake.rs` and `apps/flythrough/examples/strip.rs`. Their readings and stills differ from what the window shows. The fix is to call `default_lighting()` and re-read anything that cites their figures. Pick it up when a plan next reads a strip or a bake figure, or when the owner asks.
+
+### Overlapping coloured lights go white: a hue-keeping tone map
+
+Parked 2026-11-15 from Plan 0058's re-window (step 1b, the plan-0058 worktree's `live/10.png`; orchestrator default, the owner said "not sure colours mix well" and passed (k)). Two dropped lights at 600 overlap as plain white, with cyan only on the green and blue edge: auto exposure sits at its +4 EV ceiling (the scene reads -3.3 EV), so every channel clips. The lights add correctly; the tone map's per-channel clip loses the hue. What it takes: a tone map that desaturates toward white only past a luminance shoulder (hue kept), or a lower light intensity; either moves goldens and is the owner's eye. Pick up at the render-settings profiles (Plan 0069) or the next look plan. **Extended 2026-11-20** by the review [`reviews/2026-11-20-crystal-islands-look.md`](reviews/2026-11-20-crystal-islands-look.md) (trait 2): the Crystal Islands frames clip the same way (saturated bodies, white tips, 1:00's giant crystals flat white), so the per-channel curve is not what separates the looks; this entry is a refinement ranked second of that review's engine levers, after the per-voxel variation, and the content pass (dimmer, more varied emission) comes first.
+
+### Per-voxel albedo variation by a seeded hash, an amplitude per material
+
+Parked 2026-11-20 from the review
+[`reviews/2026-11-20-crystal-islands-look.md`](reviews/2026-11-20-crystal-islands-look.md)
+(trait 4), the first of its engine levers. John Lin's Crystal Islands frames put a fixed
+per-voxel speckle of two to four shades on nearly every material (foliage crowns, crystal
+faces, rock), and it is most of what reads as texture there. We have one `albedo` per row and
+nothing varies it (`composite.wgsl` reads `materials[rec.material * 4u].xyz`); the procedural
+sources put one row on everything. **The mechanism:** at the composite, scale (or hue-shift)
+the albedo by a hash of the hit voxel's integer position (ADR-0043's key `floor(p - 0.5 n)`)
+times a per-material amplitude; optionally the emission too (the frames' crystal bodies are
+darker than their tips). Stateless, no history, no random stream: a static pattern under FSR 2
+and invisible to Plan 0090's pop counter. Cost a guess: one hash and one multiply a pixel.
+**Owner, 2026-11-20:** the amplitude lives in the render settings (ADR-0063's render-side
+per-material style word), not on the material row. Size S; a look spike with an owner window, the content pass it
+waited for is done (2026-11-20, the showcase's palette).
+
+### Ambient occlusion driving a per-material colour ramp
+
+Parked 2026-11-12 (owner, from the video "the voxel rendering tech nobody talks about", youtube.com/watch?v=1gxcNUUc37Y). Instead of darkening albedo by AO, AO picks a colour along a per-material ramp: snow white to cyan to deep blue in crevices, sand yellow to red, grass bright to deep green. The video's form: per material `light`/`mid`/`dark` colours plus `t_mid`/`t_high` thresholds, `mix(mix(dark, mid, smoothstep(0, t_mid, ao)), bright, smoothstep(t_high, 1, ao))`; AO is per-corner neighbour occupancy shaped by `pow(ao, 1.5)`; fixed face weights (up 1.0, down 0.1, x 0.5, z 0.9) and side faces capped at 0.7 of the ramp; each colour hue-rotated by low simplex noise over world xz for variety.
+- **Our gap:** `vxe-render` has no AO term; ambient comes from the baked brick light (Plan 0059). `Material` carries one `albedo`.
+- **The cheap input:** at a ray hit the voxel and face are known, so the face's 8 neighbours give corner AO, interpolated at the hit point. Analytic, no noise, no history, so it keeps the image stable.
+- **Open look question:** drive the ramp by local corner AO, by the baked sky or ambient light, or both, so a cave reads tinted rather than only dark. Decide by eye in the window.
+- **What it takes:** a look spike (corner AO at the hit, an optional ramp beside `albedo`, the hue jitter) with an owner window; an ADR if the material row changes shape.
+
+Pick up after the current lighting plans close (0058 and those ahead of it). 2026-11-20: the
+hue jitter named here has its own entry now, "Per-voxel albedo variation by a seeded hash"
+(from the review [`reviews/2026-11-20-crystal-islands-look.md`](reviews/2026-11-20-crystal-islands-look.md)),
+whose frames show the jitter without any ramp; a spike on this entry shares its hash and its
+place in the composite.
 
 ### Darker scenes, and light intensity varied by seed
 
@@ -414,6 +526,32 @@ a correct image. 2026-11-20: the review
 [`reviews/2026-11-20-crystal-islands-look.md`](reviews/2026-11-20-crystal-islands-look.md)
 (trait 3) gives it a reference: the Crystal Islands caves sit one to two EV under our key with
 the emitters dimmer and more varied; its "showcase's palette" entry carries the testbed half.
+
+### A cheaper `absorb` canopy shadow
+
+Parked 2026-11-18 at Plan 0086's Phase 15 window (owner: "shadows are good but fps dropped
+significantly - around 20"; pick C: `absorb` stays an off-by-default setting). As built (Phase
+14, `walk.wgsl`'s translucent walk through flagged bricks, `exp(-sigma x)` over the leaf
+voxels' path, sigma 0.15 a voxel) the forest's light pass reads 17.4 to 18.1 ms on the RTX
+3080 Laptop against voxel's 4.1 to 4.5, and 87.7 to 88.3 ms on the RADV RENOIR against 18.4 to
+20.3 (`docs/plans/logs/0086.md`, Phase 14 bar 4): 4.1 to 4.8 times, every shadow ray stepping
+voxel by voxel inside every leaf brick. Also read there: 49 % of the canopy's brick projection
+holds columns with no leaf voxel, which the per-voxel walk leaves at the open value. What it
+would take: a per-brick leaf density (one byte, the brick's fill, from the mirror's masks at
+upload) so the walk steps bricks and adds `sigma x fill x path` per brick, or the 2^3 coarse
+masks' count as that density per coarse cell; both make the transmittance a brick-scale blur
+of the voxel truth, which is also what fills the no-leaf columns. Pick up when a canopy's
+continuous shadow is wanted as a default or by a consumer, with Phase 14's rig as the bar.
+
+### Light shafts inside structures: visible sun beams through openings
+
+Noted 2026-11-20 by the owner at Plan 0094's window 94a, inside the castle's keep: "it would be
+nice in the future rays of light inside such structures". Visible beams where sunlight enters an
+interior through windows, doors or breaches, with the air lit along the ray. It belongs with the
+volumetrics (Plan 0035's froxel or march work; ADR-0030 names the cloud shell): a low-resolution
+in-scattering march along the view ray that samples the key light's shadow, reduced and
+temporally stable (the owner's stable-image rule; no grain while it converges). Cost is a guess
+until measured on the slow adapter against the headroom line in `docs/nfr.md` section 2.
 
 ### Per-source indirect light
 
@@ -464,170 +602,45 @@ Parked 2026-11-10 (plan review). Plan 0033 gives a far-field hit no store value,
 emitters do not light far terrain. A coarse store block per clip brick is ADR-0028's
 Alternative F, picked up only if a reading or the owner's flight asks.
 
-### A cheaper `absorb` canopy shadow
+### A consumer's settings file in the render example
 
-Parked 2026-11-18 at Plan 0086's Phase 15 window (owner: "shadows are good but fps dropped
-significantly - around 20"; pick C: `absorb` stays an off-by-default setting). As built (Phase
-14, `walk.wgsl`'s translucent walk through flagged bricks, `exp(-sigma x)` over the leaf
-voxels' path, sigma 0.15 a voxel) the forest's light pass reads 17.4 to 18.1 ms on the RTX
-3080 Laptop against voxel's 4.1 to 4.5, and 87.7 to 88.3 ms on the RADV RENOIR against 18.4 to
-20.3 (`docs/plans/logs/0086.md`, Phase 14 bar 4): 4.1 to 4.8 times, every shadow ray stepping
-voxel by voxel inside every leaf brick. Also read there: 49 % of the canopy's brick projection
-holds columns with no leaf voxel, which the per-voxel walk leaves at the open value. What it
-would take: a per-brick leaf density (one byte, the brick's fill, from the mirror's masks at
-upload) so the walk steps bricks and adds `sigma x fill x path` per brick, or the 2^3 coarse
-masks' count as that density per coarse cell; both make the transmittance a brick-scale blur
-of the voxel truth, which is also what fills the no-leaf columns. Pick up when a canopy's
-continuous shadow is wanted as a default or by a consumer, with Phase 14's rig as the bar.
-
-### Remove `own`, the engine's own upscaler
-
-Parked 2026-11-10 (owner, plan review). FSR 2 at 1.5 is the default (Plan 0056) and `own` is
-opt-in. Removing it deletes `Upscaler`'s pass, `upscale.wgsl`, the `own` arms of `gpu_upscale.rs`
-and its goldens, and re-bases the frame ledger's `own` line. That is a behaviour change, so it is
-its own small plan, not Plan 0045's, which only moves the code it finds. Accepted ADR-0024 and
-ADR-0034 still name Plan 0045 for it; the removal plan's ADR note corrects that. Draft after
-Plan 0061's picks; it runs after Plan 0069 (owner, 2026-11-11) and before M10.
-Noted 2026-11-10 (static performance review): `own` is the only upscaler on record under or near
-section 2's 1.5 ms upscale line (0.93 to 1.3 ms at the owner's window against FSR 2's 2.9 ms) and
-reads 6 to 7 ms less on the Radeon. Removing it before the profile plan arbitrates removes the
-slow adapter's cheaper arm; the removal plan should say what the portable profile uses instead.
-Answered 2026-11-11 (owner, Plan 0069's answer 2): Portable uses FSR 2 at 720p output, and the
-removal plan goes ahead after Plan 0069.
-
-### The lamp channel's faults
-
-Parked 2026-11-05 at Plan 0057's close; taken by Plan 0058's Phase 3 (the furnace test's independent `D` and the lamp-step test over more than one probe; the inside-probe trace is a reading there).
-
-### Far light on a slow adapter: a bake budget per second, and no black for missing light
-
-Read 2026-11-11 in Plan 0060's Phase 4 window (`docs/plans/logs/0060.md`): the far caves stay coarse on the RTX and black on the Radeon, because the bake's slice is per frame and a brick with no light value renders black. Taken by [Plan 0067](plans/done/0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md) (approved 2026-11-11) and ADR-0052 and ADR-0053.
-
-### A CPU-drawn first frame before the device
-
-Parked 2026-11-16 by the owner at Plan 0075's Phase 6b (`docs/plans/logs/0075.md`). Since 6b the window shows a static loading frame 0.3 to 0.4 s after process start on the RTX (0.2 to 0.3 s on the Radeon iGPU), drawn by the GPU right after the device. What is left before it is the instance (78 to 244 ms), the device and the surface's configure. In two runs, the first launch after a pause, the instance took about 1.6 s (a guess: the NVIDIA dGPU waking; not confirmed). On Wayland nothing shows until a buffer is attached, so a frame before the device needs a CPU-filled buffer: the `softbuffer` crate (rust-windowing, winit's org; wl_shm on Linux, GDI on Windows), or the same by hand per platform. Windows already paints a window's class background at once. Cost: a dependency and its ADR, about 100 lines in `vxe-app`'s shell, and the window's surface handed from the CPU buffer to wgpu's swapchain, read on both platforms. What it takes: a reading of how often the slow instance happens on testers' machines (the `start-up:` lines in run logs), then a small plan. Pick up if a tester reports a blank window at start.
-
-### The loading frames stutter on the streamed worlds
-
-Noted 2026-11-16 at Plan 0075's close (its Followups; `docs/plans/logs/0075.md`, Phases 5 and 6).
-On the cave and the castle the loading frames run near 24 fps (interval p95 96 to 104 ms on the
-RTX); the owner saw it ("like fps in 30-40") and accepted it. A pre-roll bake step runs 70 to 140
-ms against the 25 ms slice, and each loading frame waits for the previous slice's GPU work. What
-it takes: a bake step split under the slice (fewer samples a step, or a step bounded by time),
-read on the castle. Pick up with the next start-up plan, or when a tester reports a jerky load.
+Parked 2026-11-12 (owner, at the settings-menu interview). The fly-through and the tester keep render settings in a TOML file through an app-side field table ([Plan 0073](plans/0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md), ADR-0058); the engine stays file-free (ADR-0055). A later example could show a consumer doing the same, so a game sees how. The natural home is [Plan 0071](plans/0071-the-consumers-path-a-render-example-a-renderer-tested-alone-names-and-errors.md)'s render example, or a second example beside it. Pick up after Plan 0073 closes, if 0071 has not taken it by then.
 
 ### Rebuild the world live behind the loading screen
 
 Parked 2026-11-15 by Plan 0075 ("What this plan does NOT do"). A settings change of Plan 0069's
 `Rebuild` class could drop to the loading screen, rebuild, and step back in, instead of a restart.
 What it takes: the run's stages re-entered from a live run, the world and mirror torn down in
-place. Pick up after Plan 0069 lands, if a rebuild-class setting proves common. Sharpened
+place. Pick up if a rebuild-class setting proves common (Plan 0069 closed 2026-11-17). Sharpened
 2026-11-19: it needs a drop-and-recreate test first, headless: build, drop, build again, and
 assert the mirror's VRAM reservation and the process's RSS return to the first build's figures
 (within a stated slack); a leak there is what makes a live rebuild worse than a restart.
 
-### The pre-roll never settles at small residencies
+### A foundation under a snapped structure
 
-Seen 2026-11-15 by Plan 0075's lane while sizing its streamed test (`docs/plans/logs/0075.md`): with `--residency 2,3` or `4,6` and `--near 0`, the start-up pre-roll runs to its 120 s cap, with the loading screen on or off; the camera's chunk never reports its light settled. Not read further. A guess, not isolated: the pre-roll's "near chunks hold their light" condition waits on a chunk the small window never makes resident, or keeps evicting and reloading. What it takes: a headless repro at main with the pre-roll's wait condition logged per chunk, then a fix in that condition. Pick up before a consumer runs small residencies.
+Parked 2026-11-19 from Plan 0083's Phase 7c verdict (window 83c: the castle's ghost floated
+over the hills). Phase 7d snaps a structure's box to the terrain under its footprint, one column
+winning (the lowest, owner question 9), so on a slope one side is sunk or floats. A foundation
+that fills the footprint's columns from the base down to the terrain would remove the choice; it
+is a stamp that writes into air only, which Plan 0084's write policy (ADR-0067) gives a stamp.
+Pick up when 0084 lands: a `foundation on|off` beside `clear box`, the fill in the structure's
+most-used row, as a third stamp of the click.
 
-### A dug chunk's settled light differs from a one-shot bake
+### `.vox` import: down-scaling, a traced preview, a row's class changed live
 
-Read 2026-11-10 in Plan 0060 Phase 3 (`docs/plans/logs/0060.md`, `a_dig_is_never_withdrawn`). In that test's rig, after the dig settles, chunk [2, 0, 0] differs from a one-shot bake of the edited world. Chunks 0, 1 and 3 to 7 match, and so does the dug chunk the test now compares. The difference reads the same under the score order with withdrawal on, under `distance` with withdrawal off, and at the default `edit_ms` (the lane's `live/p3-digexp.log` and `p3-digexp2.log`, untracked). So it is not the withdrawal and not the order. It predates Plan 0060 by that reading, but it was not read at the base. A guess, not isolated: a neighbour chunk whose light reads the dug chunk is not re-baked after the dig, or is re-baked before the dig's own job lands. What it takes: a headless test that digs, settles and compares every chunk with a one-shot bake, read at main first, then a fix in the live queue's dirty-neighbour rule. Added at the owner's call (2026-11-11).
-
-### The near shell's cost in a flight, and the streaming edge
-
-Parked 2026-11-10 at Plan 0060's Phase 1 stop rules, owed to the backlog at its close (owner's amendment). In the streamed cave at `--glide 300` the near shell (Chebyshev 2, baked at the full count) takes 98 to 99 % of the slice, and about 0.70 of the in-view chunks still waiting have their reach not ready (the mirror's edge), so neither the order nor the withdrawal can light them. What it would take: a shell baked coarse first in a flight, or a smaller shell at speed; and a streamer that loads the light radius ahead of the view. Pick up with Plan 0067's bake budget by time, which reads the same flight (`docs/plans/logs/0060.md`, Phase 1).
-
-### The queue step's remaining `filter` cost on a moving camera
-
-**Done** by [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 5 (closed 2026-11-23, v0.71.0; as built `gone` and `forget` share one walk, the others keep theirs). As taken 2026-11-20: (one walk of the mirror's change list for `gone`, `drop_reach`, `touched` and `forget`; the change count printed in Phase 1).
-
-### The RTX's submits draw less than their per-second slice
-
-Read by [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 4 (closed 2026-11-23, v0.71.0) and re-pointed, below: a lap on `plan_rounds`, `send` and the `IN_FLIGHT` wait, then the fix it names; the bar is 85 % of the granted slice drawn. Read 2026-11-22 (Plan 0096 Phase 4, `docs/plans/logs/0096.md`): the plans stop out of rounds, not at the cap or the slots; the submit is short of jobs because the opening admits at most `QUEUE_CHECKS` (16) candidates a step, each listed on the render thread. At the drain slice the submits draw 0.94 to 0.99 of it; at the per-second form (`second:150,0.25`) 0.60 to 0.69. **Re-pointed (Plan 0096 Phase 9) at [Plan 0099](plans/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) (the bake step off the main thread)**, which takes the opening's cap with the listing.
-
-### The first-block fallback fade's CPU under `chain`
-
-Parked 2026-11-12 at Plan 0067's close review (`docs/plans/logs/0067.md`, Phase 7, the opening row). Under the default missing light, `chain`, every chunk's first block fades over `FADE` frames from its fallback value, and the render thread rewrites the fading block (`advance_fades`) and its summary and two parent records (`Store::show`) every frame of the fade. In regime B, where nearly every step opens, that reads `fades` 1.05 to 1.10 ms p50 and `summaries` 0.61 to 0.63 on the RTX 3080 Laptop (`--near 0`, rig (c)), against 0.002 and 0.05 under `black`, and takes the opening step from 0.75 to 0.86 to 0.88 of the start commit's (bar 0.8); the default glide's `summaries` read 0.965 ms p50, p99 2.86. The owner saw no lag at this cost in the window. Levers, unbuilt: a shorter fade for a first block (a look change, the owner's eye), the summary and parents written once at the fade's end instead of every frame (ADR-0053 has a parent fade with its children, so this one needs an Outcome there), or the blend on the GPU (the temporal read mixes the fallback with the block by a per-chunk weight). Pick up with the next frame-CPU plan, or if a profile (Plan 0069) runs regime B by default (`full_first` off).
-
-### The bake and strip examples drift from the fly-through's lighting defaults
-
-Parked 2026-11-13 (orchestrator default while the owner was away). The hero fix (5b35aa3) gave `examples/hero.rs` the shared `flythrough::default_lighting()`. Two tools still build the library's `Lighting` and so miss the Plan 0061 store-read and light-weight defaults: `apps/flythrough/examples/bake.rs` and `apps/flythrough/examples/strip.rs`. Their readings and stills differ from what the window shows. The fix is to call `default_lighting()` and re-read anything that cites their figures. Pick it up when a plan next reads a strip or a bake figure, or when the owner asks.
-
-### Overlapping coloured lights go white: a hue-keeping tone map
-
-Parked 2026-11-15 from Plan 0058's re-window (step 1b, the plan-0058 worktree's `live/10.png`; orchestrator default, the owner said "not sure colours mix well" and passed (k)). Two dropped lights at 600 overlap as plain white, with cyan only on the green and blue edge: auto exposure sits at its +4 EV ceiling (the scene reads -3.3 EV), so every channel clips. The lights add correctly; the tone map's per-channel clip loses the hue. What it takes: a tone map that desaturates toward white only past a luminance shoulder (hue kept), or a lower light intensity; either moves goldens and is the owner's eye. Pick up at the render-settings profiles (Plan 0069) or the next look plan. **Extended 2026-11-20** by the review [`reviews/2026-11-20-crystal-islands-look.md`](reviews/2026-11-20-crystal-islands-look.md) (trait 2): the Crystal Islands frames clip the same way (saturated bodies, white tips, 1:00's giant crystals flat white), so the per-channel curve is not what separates the looks; this entry is a refinement ranked second of that review's engine levers, after the per-voxel variation, and the content pass (dimmer, more varied emission) comes first.
-
-### The hall's headless render went dark: `showcase_hall_golden_is_lit_by_its_four_ores`
-
-Read 2026-11-11 at Plan 0060's close review: the soak test failed with 98.6927 % of pixels over 2/255, the same on the base a8b1a2c. Re-blessed 2026-11-11 at Plan 0061's close (fix pass 6287e88): the new golden pins today's render, which Plan 0061's defaults do not move (the library's read and weights give the same pixels), but it is not a correct hall. Mean sRGB luma fell from 11.97 (Plan 0057's image, 2de29c6) to 2.73; the walls are black and only the ores' faces are lit; ember covers 0 pixels. The test still fails its hue assert (`[336, 0, 209, 121]`) and would fail its luma band (11..40). The owner's window at Plan 0061 saw a lit hall, so the likely cause is the headless rig (`gpu_golden.rs`'s `showcase_hall`: its bake or settle state under the baked light since Plan 0059), not the look; unverified. What it takes: bisect the rig's render between 2de29c6 and today, fix the rig, re-bless after a look, and keep the hue and luma asserts as they are. The weekly soak fails on it until then. **Done 2026-11-16 (chore `chore-showcase-golden`, b09e018):** the rig, not the look. `showcase_hall` synced the mirror and stepped frames but never baked the light store, which the fly-through's pre-roll and coarse pass fill before its first frame; since Plan 0059 the cube faces read only that store, so unbaked walls read no light and only the ores' own emission showed. The rig now bakes the whole showcase world (64 samples a brick direction, as the dark cave and castle goldens do) before its 64 frames. On lavapipe: mean sRGB luma 14.4/255, hue shares amber 4.31 %, ember 0.26 %, cyan 4.55 %, violet 0.36 %, 0 pixels over 2/255 with the emission off; every assert as written passes. `showcase_hall.png` re-blessed; it matches Plan 0057's image (2de29c6) by eye.
-
-### Automatic extremity bounds from declarative noise layers
-
-Parked 2026-11-12 (owner, from the video "500 million voxels/sec - Voxel engine optimizations", youtube.com/watch?v=ru_oz09Zo-s). Today world generation is the consumer's: `WorldSource` is a trait, and the flythrough's cave (`apps/flythrough/src/cave.rs`) already aligns its noise lattices with bricks (one corner set per brick) and proves a brick uniform from its eight corners. The idea the engine lacks: when terrain is described as data (named noise layers, each with a range, mapping, scale and upsample factor), the generator derives each column's or brick's guaranteed solid-below and air-above bounds from the layer config itself, so a new biome skips noise evaluation outside its band with no hand-written proof; layers whose range is unbounded (domain warps) switch the bound off. Same video, also not taken: noise shared by name across biomes and computed once per position. Rejected for storage: RLE columns (slow random access and edits, which collision, acoustics and runtime digging need). Pick up only if the engine ever ships a configurable terrain generator; the requirement would arrive through `project-context.md`.
-
-### Ambient occlusion driving a per-material colour ramp
-
-Parked 2026-11-12 (owner, from the video "the voxel rendering tech nobody talks about", youtube.com/watch?v=1gxcNUUc37Y). Instead of darkening albedo by AO, AO picks a colour along a per-material ramp: snow white to cyan to deep blue in crevices, sand yellow to red, grass bright to deep green. The video's form: per material `light`/`mid`/`dark` colours plus `t_mid`/`t_high` thresholds, `mix(mix(dark, mid, smoothstep(0, t_mid, ao)), bright, smoothstep(t_high, 1, ao))`; AO is per-corner neighbour occupancy shaped by `pow(ao, 1.5)`; fixed face weights (up 1.0, down 0.1, x 0.5, z 0.9) and side faces capped at 0.7 of the ramp; each colour hue-rotated by low simplex noise over world xz for variety.
-- **Our gap:** `vxe-render` has no AO term; ambient comes from the baked brick light (Plan 0059). `Material` carries one `albedo`.
-- **The cheap input:** at a ray hit the voxel and face are known, so the face's 8 neighbours give corner AO, interpolated at the hit point. Analytic, no noise, no history, so it keeps the image stable.
-- **Open look question:** drive the ramp by local corner AO, by the baked sky or ambient light, or both, so a cave reads tinted rather than only dark. Decide by eye in the window.
-- **What it takes:** a look spike (corner AO at the hit, an optional ramp beside `albedo`, the hue jitter) with an owner window; an ADR if the material row changes shape.
-
-Pick up after the current lighting plans close (0058 and those ahead of it). 2026-11-20: the
-hue jitter named here has its own entry now, "Per-voxel albedo variation by a seeded hash"
-(from the review [`reviews/2026-11-20-crystal-islands-look.md`](reviews/2026-11-20-crystal-islands-look.md)),
-whose frames show the jitter without any ramp; a spike on this entry shares its hash and its
-place in the composite.
-
-### Thin step lines along voxel slopes
-
-Seen 2026-11-20 by the owner at window W2 (the forest at 15:00 and at `--sun 10,180`, in both
-arms of Plan 0095's spike, so not the motion lane's and not the exposure's): the terrain's
-slopes at mid range show thin lines along each voxel step, where a step's one-voxel vertical
-face reads a different shade from the ground beside it (the key light and the sky term at a
-face whose normal is 90 degrees off the slope's), a staircase drawn as contour lines. The sky
-term already reads one slope at every distance through the 27-count gradient (`sky_normal
-smoothed`, ADR-0070's Outcome); the key light's shadow ray and the face's own shade do not.
-Options, to decide by eye in a look plan's window: (a) smooth the shading normal across the
-steps at mid range, the gradient normal replacing the face normal past a distance band for
-every term, not the sky's alone; (b) blend each step's vertical face with the ground below it
-over the far-normal band, so the riser takes the tread's shade as it shrinks toward a pixel;
-(c) the field surface for terrain (Plan 0054's, opt-in), which has no steps to draw. What it
-takes: a short look spike with two stills per arm at W2's poses and an owner window; a change
-to the far-normal band is ADR-0063's table. Pick up after Plans 0095 and 0097; not Plan
-0097's.
-
-Taken 2026-11-21 by [Plan 0098](plans/done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md) (option (a) through the widened band, judged at its window W1).
-
-### Plan 0090 owes a stamp scene and a reading of the key mean's fade-in against `F`
-
-Parked 2026-11-18 by Plan 0086's flicker amendment (the architect, overnight). A freshly
-placed castle on the hills at noon flickered in the Plan 0083 window (25.png): the stamped
-chunks baked behind the carve's dig ring and every reset pixel on the new walls ran the sky
-ray's mean from one raw sample (`docs/plans/logs/0086.md`, the flicker section). Plan 0086
-Phase 21 (a) and Phase 21a take the fix; what is owed on main is (1) a scene in Plan 0090's
-table, a prefab placed on the hills at noon with the eye inside it, read under rules 3, 4 and
-5, so the class cannot return unseen; and (2) a reading of the key light's mean (`key_mean`,
-Plan 0086 Phase 19) at an edit-cast shadow outside its edit box, which fades in over up to
-`sky_history` frames, against the `F` the owner calibrates in Plan 0090 Phase 5; if `F` is
-shorter, the key mean takes a band test as `pair_step` has for the sky. An architect amendment
-to Plan 0090, at Plan 0086's close.
-
-### A consumer's settings file in the render example
-
-Parked 2026-11-12 (owner, at the settings-menu interview). The fly-through and the tester keep render settings in a TOML file through an app-side field table ([Plan 0073](plans/0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md), ADR-0058); the engine stays file-free (ADR-0055). A later example could show a consumer doing the same, so a game sees how. The natural home is [Plan 0071](plans/0071-the-consumers-path-a-render-example-a-renderer-tested-alone-names-and-errors.md)'s render example, or a second example beside it. Pick up after Plan 0073 closes, if 0071 has not taken it by then.
-
-### A freshly placed castle's interior under the sky, as a pop-counter scene
-
-Parked 2026-11-18 from Plan 0083's Phase 7 verdict (session 83b, `--source outdoor --time
-12:00`, 25.png): inside a castle placed from the belt a moment before, the walls clipped white
-and blue and the vault was dark and grainy with sparkles ("castle flickers badly"; HUD queue
-depth 10 751, missing 0, scene -4.1 EV, eye +1.34 EV). A freshly stamped large structure under
-a sky is the sky ray's region at rest on a young history with the exposure moving on it: what
-ADR-0076's rules 1 to 3 forbid. Plan 0083 does not fix it. Pick up in Plan 0090 Phase 4 (the
-other stills) or Plan 0086's close: a fixed scene that stamps the castle's hall on the hills
-and counts the pixels that break rules 1 to 3 over its settle, by source.
+Parked 2026-11-16 at the drafting of Plans 0083 and 0084 (the owner's "import nearly anything
+that can be created as a .vox file"). Three pieces those plans leave out. **Down-scaling** a model
+(a majority vote per 2³, or a non-integer scale): Plan 0083 scales up by an integer only, since a
+vote changes thin features and the owner judges detail by eye; pick up if a scene authored at a
+finer grid than 10 cm is wanted. **A traced preview** of a structure at the crosshair before it
+is placed: taken 2026-11-18 by Plan 0083's Phase 7b after the owner's window ("something
+simplified at least to understand what it is"): a coarse grain per entity part and a one-part
+coarse copy of the structure in its marked frame; what stays parked is a full-detail preview,
+which the pool's 64-voxel parts (ADR-0050) cannot hold. **A row's class
+changed live** (stone to glass without a restart): ADR-0065 fixes a row's translucent, emissive
+and opaque class for the world's life because the mirror's slot packing and the bake's emitter
+lists read it at the first sync; lifting it means re-packing every brick that holds the row and
+re-baking its chunks. Pick up if the materials file's reload hits the `restart` banner often.
 
 ### Entity placement extras parked at Plan 0077's amendment
 
@@ -642,41 +655,124 @@ belt** (Minecraft's middle click) and **several belts** (Satisfactory's ten). Pi
 consumer or the owner asks for one; the first two are small plans, the last two are rows in
 Plan 0077's key table.
 
-### Light shafts inside structures: visible sun beams through openings
+### The spider's mover tick costs twice the guess
 
-Noted 2026-11-20 by the owner at Plan 0094's window 94a, inside the castle's keep: "it would be
-nice in the future rays of light inside such structures". Visible beams where sunlight enters an
-interior through windows, doors or breaches, with the air lit along the ray. It belongs with the
-volumetrics (Plan 0035's froxel or march work; ADR-0030 names the cloud shell): a low-resolution
-in-scattering march along the view ray that samples the key light's shadow, reduced and
-temporally stable (the owner's stable-image rule; no grain while it converges). Cost is a guess
-until measured on the slow adapter against the headroom line in `docs/nfr.md` section 2.
+Read 2026-11-18 at Plan 0079's close (`docs/nfr.md` section 8, `docs/plans/logs/0079.md` Phase 4,
+loaded): 64 spiders' movers read 1.4 ms a tick in the room course and 2.8 ms on the showcase
+(36 drawn), +3.07 ms of frame CPU against the plan's +1.5 ms guess, while 64 walkers read 0.35 ms.
+The owner's window did not notice it. Suspects, none attributed: the pose work per tick
+(`sample` of a fourteen-part clip, `blend` while fading, the `Pose` clones into `set_pose` and
+`prev`, all allocating), the sphere sweep's candidate boxes where a spider dwells at a pillar's
+vertical edge (up to 220 ticks), and `solid_gradient` at `half` 6 (0.92 µs alone). **What it
+takes:** a profile of `Walkers::tick` at 64 spiders on the showcase, then the cut the profile
+names (a pose written in place, a tick every other frame for bodies out of view, or a cheaper
+dwell). **Pick up when** a scene needs more than about 30 crawlers, or before the first consumer
+runs creatures on its server tick.
 
-### Per-voxel albedo variation by a seeded hash, an amplitude per material
+### Pathfinding over the coarse grid and the walkable map
 
-Parked 2026-11-20 from the review
-[`reviews/2026-11-20-crystal-islands-look.md`](reviews/2026-11-20-crystal-islands-look.md)
-(trait 4), the first of its engine levers. John Lin's Crystal Islands frames put a fixed
-per-voxel speckle of two to four shades on nearly every material (foliage crowns, crystal
-faces, rock), and it is most of what reads as texture there. We have one `albedo` per row and
-nothing varies it (`composite.wgsl` reads `materials[rec.material * 4u].xyz`); the procedural
-sources put one row on everything. **The mechanism:** at the composite, scale (or hue-shift)
-the albedo by a hash of the hit voxel's integer position (ADR-0043's key `floor(p - 0.5 n)`)
-times a per-material amplitude; optionally the emission too (the frames' crystal bodies are
-darker than their tips). Stateless, no history, no random stream: a static pattern under FSR 2
-and invisible to Plan 0090's pop counter. Cost a guess: one hash and one multiply a pixel.
-**Owner, 2026-11-20:** the amplitude lives in the render settings (ADR-0063's render-side
-per-material style word), not on the material row. Size S; a look spike with an owner window, after the content pass below shows
-what the palette alone gives.
+Parked 2026-11-18 at Plan 0079's close (owner question 3 took the recommendation: a seeded
+wander in the fly-through, no pathfinding). The engine now has the movers (`vxe-sim`'s cylinder
+controller and sphere surface mover), `probe_ahead`, the coarse grid and the per-brick walkable
+map (0.8 m cells); a creature that goes somewhere needs a path over them. **What it takes:** a
+search over the walkable cells (and, for a crawler, over faces: the gradient and the contact
+normals say which cells are climbable), integer costs so the server's path is the same on every
+platform, a string-pull to waypoints the mover's heading can follow, invalidation when an edit
+changes a cell (M3's region notifications), and a budget per tick for many creatures. About a
+plan and an ADR (the graph: cells, faces or both). **Pick up when** the first consumer asks for a
+creature that hunts or flees rather than wanders.
+
+### Hundreds or thousands of entities
+
+Parked 2026-11-16 by the owner ("minecraft can have thousands of entities"). Today: `MAX_ENTITIES` 64, `MAX_ENTITY_PARTS` 512 (`vxe-render` `entities.rs`), 6 instance bits in the hit record. The cost is the trace, not the caps: Plan 0062 Phase 4 (`docs/plans/logs/0062.md`) read 64 walkers at +3.4 to 4.4 ms on the RTX 3080 Laptop and +32 to 34 ms on the Radeon iGPU, growing with screen cover and shadowing lights. **Hundreds:** wider caps and hit bits, the instance tree built on the GPU, coarse far models, shadow rays testing only entities near their light (one or two plans, no ADR). **Thousands:** entities rasterized into the hit buffer beside the traced world, which reverses ADR-0050's choice: an ADR and a spike first. **The owner's direction (2026-11-16): trace only the near ones, merge the crowded ones.** Distance tiers: near entities traced in full; mid ones traced on a coarse merged model (parts folded into one volume at detail 1); far ones as one box or impostor, or dropped below a pixel. Clusters: entities sharing a spot re-voxelized together at low resolution on the GPU each frame (or every few) into one cluster volume, walked once per ray instead of once per overlapping entity. Shadow rays test the near tier only. The server's ray query stays exact per entity; the tiers are render-only. Pick up when a consumer needs more than 64 on screen. Sharpened 2026-11-19 (Bonsai's 1.1.0 and 1.3.10 notes): the CPU side needs a per-chunk entity list as the broadphase (the mover's sweeps and the entity ray query walk the chunk's list, not every instance) and an LRU eviction of models from the pool when the library outgrows it, on top of Plan 0078's free list.
+
+### Jelly entities: see-through glowing voxels, and true soft bodies
+
+Parked 2026-11-16 by the owner's question "jelly-like entities, slimes - will it be possible?". The part taken: Plan 0082, a scale per axis per part in the pose and the clips (squash and stretch; ADR-0064). Two parts left. **See-through glowing jelly:** an entity voxel is an opaque honest cube (Plan 0062 draws a translucent material on an entity opaque); it waits for Plan 0034's translucent voxels and then an amendment that runs the entity walk inside the translucent march. **True soft bodies:** a blob that bends round a corner, splits or merges needs the voxels themselves to move (a lattice or field over the part's volume, sampled by the ray), which the pool (one volume per model), the regular grid walk and the query's determinism all rest against; ADR-0064's Alternative C names it. What it takes: an ADR and a spike that reads the walk's cost under a deformation field on both adapters. Pick up when a consumer asks for a creature that bends, splits, merges or is seen through.
+
+### Per-entity voxel damage: real holes carved into one instance's parts
+
+Parked 2026-11-16 at Plan 0085's draft (the owner's "healthy, damaged, dead" question). Plan 0085 gives an entity modes without touching its voxels: a variant hides a part, swaps its volume for another `.vox` node or remaps a material, and a dead entity is stamped into the world. What it does not give is a bite taken out of one spider's abdomen where the pick struck. **What it takes:** copy-on-write volumes per instance (an edit on an entity's part copies the shared volume into the pool, under ADR-0060's allocator, and the instance's volume word names the copy), a per-instance pool budget and an eviction rule, an edit op on an entity (shape in the part's frame, carried through the composed pose in fixed point, so the server's query and the picture agree) that reports what it removed per material as a world edit does, the op in the log (an entity op kind, which needs the model and pose in the save, ADR-0069's Alternative A), and a rule for the headless query's volumes (a per-entity `Arc<Prefab>` copy beside the model's). About a plan and an ADR. **Pick up when** a consumer asks for damage that shows where it landed, not which state it reached.
+
+### A timeline for clips, kept open
+
+Parked 2026-11-16 at Plan 0063's window. (b): typed keys are enough "for now, but keep it open": a timeline or curve view stays out of the engine (ADR-0051, Plan 0082's not-do list); if typed keys fail on a longer clip, ADR-0051's Alternative A (glTF from Blender) is re-read first.
+
+### Chunk-scale world dynamics: a cellular material step and an event scheduler
+
+Parked 2026-11-03 and 2026-11-04. The owner wants Noita or Teardown style dynamics (sand, flowing
+liquids, fire, reactions) and "large world events" that run over many chunks. Today the storage
+layer is ready and the simulation layer is absent: 64³ chunks behind per-chunk locks, two-tier
+streaming residency, every op returning its touched chunks, the coarse grid updated from that
+result, and a server tick that only changes the world when an op is applied. Nothing revisits
+chunks over time, there is no active set or dirty-chunk scheduler, and collapse (ADR-0008) is
+pull-based and per edit.
+
+Feasibility read (2026-11-03): powders, liquids, fire and material-pair reactions fit as one
+deterministic op kind, "step N with seed S", through the op log, over resident chunks only, with
+a brick checkerboard for order and a per-chunk dirty bitmap as the active set; cost is set by
+active voxels, not resident ones, and the GPU mirror's re-upload of every active brick may
+starve before the CPU does. Rigid bodies and rotating pieces conflict with ADR-0008 and stay on
+the cosmetic client-side layer. Gas as voxels conflicts with M8's separate coarse volume.
+
+What it takes: an ADR that generalises M10's "flowing liquids" item into the cellular step plus a
+per-tick chunk scheduler (active set, per-tick budget, resident chunks only; rejected: GPU-side
+authoritative simulation, a rigid-body engine), then a plan with a headless proof (a sand column
+released over a pit lands as the same pile with the same hash on both CI arms) and a per-tick
+reading against a new `nfr.md` line.
+
+Pick up when the lighting base is settled. As written the condition is met (Plans 0056, 0057
+and 0058 closed, the last on 2026-11-15), but the light is still in work (Plans 0099 and 0100),
+so the owner's word starts it.
+
+### Automatic extremity bounds from declarative noise layers
+
+Parked 2026-11-12 (owner, from the video "500 million voxels/sec - Voxel engine optimizations", youtube.com/watch?v=ru_oz09Zo-s). Today world generation is the consumer's: `WorldSource` is a trait, and the flythrough's cave (`apps/flythrough/src/cave.rs`) already aligns its noise lattices with bricks (one corner set per brick) and proves a brick uniform from its eight corners. The idea the engine lacks: when terrain is described as data (named noise layers, each with a range, mapping, scale and upsample factor), the generator derives each column's or brick's guaranteed solid-below and air-above bounds from the layer config itself, so a new biome skips noise evaluation outside its band with no hand-written proof; layers whose range is unbounded (domain warps) switch the bound off. Same video, also not taken: noise shared by name across biomes and computed once per position. Rejected for storage: RLE columns (slow random access and edits, which collision, acoustics and runtime digging need). Pick up only if the engine ever ships a configurable terrain generator; the requirement would arrive through `project-context.md`.
+
+### The bake queue's backlog at a still camera: minutes to drain what is in view
+
+Taken by [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) (closed 2026-11-23, v0.71.0) and ADR-0080: the drain is a budget in `docs/nfr.md` section 2 and the queue lands. The RTX's 36.5 s against 10 is the step's CPU per job, [Plan 0099](plans/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md)'s.
+
+### The dug hole's light: the first frames and the lit floor
+
+**The first frames:** taken by [Plan 0098](plans/done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md) (closed 2026-11-24: a dig's ring 1 jumps the queue, the hole holds a record until it lands, one 4-frame fade a landing); what is left is "A dig's landing" under Next up. **The lit floor:** read `geometry` by Plan 0094 Phase 7a, so it is a look question, merged into "How dug interiors should look".
+
+### The key term's grain at rest on a penumbra, and the a-trous's spatial variance (ii)
+
+Superseded by ADR-0082 (Plan 0098, closed 2026-11-24): the estimator this entry read (the key light's running mean at its cap, `key_history` 256) is a screen history the defaults no longer keep, and the key shadow on a world face is the column map's horizon. The penumbra question lives in "The sun's shadow near under the calm defaults" (Next up). SVGF's spatial variance on the key term (ii) was never built and returns only if light history does.
+
+### Thin step lines along voxel slopes
+
+Taken 2026-11-21 by [Plan 0098](plans/done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md) (closed 2026-11-24): option (a) through the far normal's widened band (`4..8`), judged at its window W1. The other two options (a riser blended with its tread, the field surface for terrain) were not built.
+
+### Narrow the far normal's band so far pixels stop casting the ray
+
+Taken 2026-11-21 by [Plan 0098](plans/done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md) (closed 2026-11-24): `key far mix step` with the band widened, judged at its window W1. Under its defaults the key shadow is the column's horizon at every distance, so no far pixel casts the ray.
+
+### The queue step's remaining `filter` cost on a moving camera
+
+**Done** by [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 5 (closed 2026-11-23, v0.71.0; as built `gone` and `forget` share one walk, the others keep theirs). As taken 2026-11-20: (one walk of the mirror's change list for `gone`, `drop_reach`, `touched` and `forget`; the change count printed in Phase 1).
+
+### The RTX's submits draw less than their per-second slice
+
+Read by [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 4 (closed 2026-11-23, v0.71.0) and re-pointed, below: a lap on `plan_rounds`, `send` and the `IN_FLIGHT` wait, then the fix it names; the bar is 85 % of the granted slice drawn. Read 2026-11-22 (Plan 0096 Phase 4, `docs/plans/logs/0096.md`): the plans stop out of rounds, not at the cap or the slots; the submit is short of jobs because the opening admits at most `QUEUE_CHECKS` (16) candidates a step, each listed on the render thread. At the drain slice the submits draw 0.94 to 0.99 of it; at the per-second form (`second:150,0.25`) 0.60 to 0.69. **Re-pointed (Plan 0096 Phase 9) at [Plan 0099](plans/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) (the bake step off the main thread)**, which takes the opening's cap with the listing.
+
+### Far light on a slow adapter: a bake budget per second, and no black for missing light
+
+Read 2026-11-11 in Plan 0060's Phase 4 window (`docs/plans/logs/0060.md`): the far caves stay coarse on the RTX and black on the Radeon, because the bake's slice is per frame and a brick with no light value renders black. Taken by [Plan 0067](plans/done/0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md) (approved 2026-11-11) and ADR-0052 and ADR-0053.
+
+### The lamp channel's faults
+
+Parked 2026-11-05 at Plan 0057's close; taken by Plan 0058's Phase 3 (the furnace test's independent `D` and the lamp-step test over more than one probe; the inside-probe trace is a reading there).
+
+### The hall's headless render went dark: `showcase_hall_golden_is_lit_by_its_four_ores`
+
+Done 2026-11-16 (chore `chore-showcase-golden`, b09e018): the rig, not the look. `showcase_hall` stepped frames without baking the light store; it now bakes the showcase world first, every assert passes as written, and `showcase_hall.png` was re-blessed.
 
 ### Done: the showcase's palette after the Crystal Islands review: pale rock, more and dimmer glowing rows, a darker key
 
-Done 2026-11-20 (419a0039, 7d3a9c7a, 6abc8a17; merged over v0.68.0 at 60ff48ad, goldens
-re-blessed at db103e2b): the showcase's pale tinted rock, five-hued dimmer crystals and veins,
-the trees' three leaf rows by hash, and `--exposure-comp EV` on the auto exposure. The owner's
-window P1 picked the walls taking the hues, the ore at the cave ore's full glow, compensation
-0 on every source (the darker key was not taken; the flag stays) and the forest's three greens
-as they are.
+Done 2026-11-20 (419a0039, 7d3a9c7a, 6abc8a17; goldens re-blessed at db103e2b): pale tinted rock, five-hued dimmer crystals and veins, the trees' three leaf rows by hash, `--exposure-comp EV`. The owner's window P1 kept compensation 0 on every source (the darker key was not taken; the flag stays).
+
 
 ## Performance: the static review of 2026-11-10
 
@@ -690,47 +786,58 @@ the baked light's shader waste and the queue's scan to
 
 ### Budget lines over with no owner
 
-- **Upscale, 1.5 ms:** FSR 2 reads 2.1 to 2.4 ms on the RTX and 15.7 to 16.1 ms on the Radeon
-  at 2530 x 1378 after Plan 0065 (closed 2026-11-11); every plan "reads its delta and does not
-  claim the line". Either the line moves or a profile owns it: the render-profile plan's call.
-- **Denoise, 3.0 ms, on the Radeon with the face weights:** at the vein the a-trous pass reads
-  3.19 ms with Plan 0061's default face weights against 2.70 ms without (RADV RENOIR, 1920 x
-  1080, loaded; `docs/plans/logs/0061.md`, Phase 2 done-when 6). Routed at Plan 0061's close to
-  Plan 0067 (the frame's cost) and Plan 0069 (a per-profile default for the weights is its
-  question).
-- **The bake's slice and the queue's step have no line.** **Done** by Plan 0096 (closed 2026-11-23, v0.71.0): a drain and a landed value for the slice, a step line, an in-view drain budget, pinned in `docs/nfr.md` section 2 with their misses. 1.5 ms of GPU a frame while the queue
-  works (max 10.8 ms on record) and 1.0 ms of CPU sit outside section 2's split. Give them a
-  line at the next `docs/nfr.md` revision. Plan 0060's close left it: the step reads one of two
-  states (about 1 and 9 ms p50), and Plan 0067 pins the state and reads the step.
-- **Streaming CPU p50, 1.0 ms:** 3.4 to 4.2 ms on record. Plan 0064 (closed 2026-11-11) left
-  it where it was: its sync time budget cost residency and stays off, and the upload's copy
-  into mapped memory stays (see "Slot words packed on the workers").
-- **The frame ledger's split**: its totals were re-based at Plan 0065's close (2026-11-11,
-  `docs/nfr/02-frame-budget.md`, "Frame ledger"), but its scenario tables still read `own`, the
-  table light and the probes, with no row for the list lights or the bake's slice. Rewrite them
-  with the render-profile plan, which sets the lines.
-- **Time to first frame, 3 s:** 7137 ms at the vein under the baked light; Plan 0060 bars only
-  its delta.
+Most of this entry's lines found an owner; what is left is the last three items.
 
-Pick up: at the render-profile plan's interview, or at the next close that touches the line.
-Plan 0069 (approved 2026-11-11, its answer 4) proposes the upscale, bake-slice and split lines
-under its "Budgets", sets them at its close from the readings and rewrites the ledger then.
-Sharpened 2026-11-19: Plan 0091's budget scopes (a scope that carries its `nfr.md` line and
-counts its overruns into `run.json`) make each line above executable; a line with no owner
-then at least has a counter, and the tester's report says how often it was crossed.
+- **Set at Plan 0069's close (2026-11-17):** the Floor split in `docs/nfr.md` section 2 was rebalanced: upscale (FSR 2), tone map and post 3.0 ms (from 1.5), denoise 2.0, a line for the live bake's slice. The Radeon at Portable reads FSR 2 at 4.06 to 4.08 ms against the 3.0 (`docs/nfr/02-frame-budget.md`, "The render profiles").
+- **Set at Plan 0096's close (2026-11-23):** the bake's drain and the queue's step have lines, pinned in section 2 with their misses; the step's is Plan 0099's.
+- **Streaming CPU p50, 1.0 ms:** 3.4 to 4.2 ms on record. Plan 0064 (closed 2026-11-11) left it where it was; see "Slot words packed on the workers".
+- **The frame ledger** (`docs/nfr/02-frame-budget.md`, "Frame ledger (2026-10-31)"): its scenario tables still read `own`, the table light and the probes, with no row for the list lights or the bake's slice. Rewrite them when `own` goes (the removal's plan) or at the next close that re-reads the split.
+- **Time to first frame, 3 s** (section 7, a proposal): 7137 ms at the vein under the baked light when Plan 0060 read it; no plan owns the line. The pipeline-cache entry is its first lever.
 
-### The a-trous under the baked light: fewer iterations, or none
+Sharpened 2026-11-19: Plan 0091's budget scopes (a scope that carries its `nfr.md` line and counts its overruns into `run.json`) make each line executable; a line with no owner then at least has a counter.
 
-Plan 0065 (closed 2026-11-11) skips the filter only with the lamp off, where its input is zero;
-with the lamp on it filters as before. There its input is an analytic light with a binary shadow, no Monte Carlo noise; four iterations may be one or two,
-and with the lamp off and the `face` look the whole pass could be skipped on the CPU side. Both
-change shadow softness or the rare fallback pixels, so they are the owner's eye. Pick up after
-Plan 0058, which widens the filter to rgb.
-Checked 2026-11-13 at Plan 0058's refresh: its Phase 1 moves the lamp-off skips onto "some light
-is shaded" (`LIGHTING_DIRECT`), so after it the skip holds with the lamp off and an empty list;
-the iterations are taken by Plan 0058 (owner, 2026-11-13, its answer 8): a 1, 2 or 4 iteration
-render setting in its Phase 2, judged in its Phase 4 window. Skipping the whole pass with the
-lamp off and the `face` look stays here for after it.
+### Slot words packed on the workers
+
+The mirror packs and copies a chunk's bricks on the render thread; `docs/roadmap.md` names an
+"upload-copy ADR" that was never drafted. The workers already prepare face masks. Moving the
+packing there needs the mirror's slot format across a thread boundary, so it is an ADR and a
+plan. Read 2026-11-11 at Plan 0064's close: its time budget (`--sync-ms`, off by default) does
+leave residency short, p95 2.7 to 6.9 s at 2 to 8 ms against 0.30 s without one, at about
+0.3 ms of render-thread time a chunk (RTX, `docs/plans/logs/0064.md`, Phase 4b). A budget
+pays only once a chunk's upload is cheaper; this entry is that cheaper upload, and the
+budget's mechanism and flag are in the tree for it. Pick up after Plan 0067, with the
+upload-copy ADR.
+Drafted 2026-11-12 (the architecture review) as [Plan 0070](plans/done/0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md)
+and ADR-0056. Deferred 2026-11-13 by Plan 0070's Phase 1: the packing is about 1.5 ms of a cave
+sync p99 of 44 to 47 ms (RTX host). Read again at Plan 0070's Phase 5 (`ef0b55c`, the rescan set
+dense and the light walks on change, `hpet` clocksource): `pack + size` p99 is 2.8 to 3.1 ms of
+a cave sync p99 of 20.9 to 22.3 ms, 13.5 to 14.2 % on both adapters; the larger stages are
+`light_note` (8.2 to 8.4 ms, `note_lights` in `exposed_emitters`) and `alloc` (6.9 to 7.4 ms).
+Pick up when `pack + size` reads half or more of the sync p99 left after those two are cut;
+read again at Plan 0074's Phase 4 with `light_note` cut (`docs/plans/logs/0074.md`, lamp off):
+the tip cave's `size` p99 2.8 to 3.8 ms and `pack` 2 us, 17.1 to 17.9 % of the sync p99 on the
+RTX (16.5 to 21.1 ms) and 16.6 to 17.1 % on the Radeon (16.1 to 16.8), still under half;
+the lane's drafts (`live/p2_wire.py`, `live/p2-draft/`) stay untracked in the plan-0070
+worktree and leave with it. **Read 2026-11-22 at Plan 0096 Phase 7 (`8bb8857b`, RTX host, cave
+bench):** with `light_note` and the eviction scan cut, `alloc` p99 is 9.4 ms of a sync p99 of
+19.4 (48 %) and its profile is the per-brick packing path as a whole (about 9.5 µs a brick,
+13 383 bricks at the slowest sync; `pack + size` p99 3.0 ms beside it): the rule is met in
+substance, since `alloc` is the packing this entry moves. **Ripe since Plan 0096's close (2026-11-23), not drafted:** its
+own plan under ADR-0056 (the Outcome extended with this reading), the lines it chases Plan 0096's
+bar 3 (`alloc` p99 3.0 ms, `update + poll + sync` p99 16.6, the forest at leaf fill 128 sync p99
+6). Architect's routing, owner confirm owed. The same plan takes the glide's `light place` (the
+first of Plan 0096's leftovers) and closes "The sync's `alloc` stage".
+
+### The slow adapter's walk-speed spike
+
+Owed since Plan 0054 (ADR-0034 and ADR-0041 name it) and in no plan or backlog entry until now:
+why the Radeon's hit pass reads 7 to 8 times the RTX's when the light pass under the store reads
+about twice. Run with the shader toolchain spike, when no lane holds the GPU.
+Noted 2026-11-12 (the architecture review): the slot is Plan 0069's Phase 4, which reads both
+adapters anyway; the review's amendment note asks it to read the hit pass alone at Portable's
+internal size on the RENOIR and to run this spike before Phase 6 if the hit reads over 10 ms there.
+Plan 0069's Phase 4 read it (RADV RENOIR at 853 x 480: hit 10.53 ms) and the owner accepted it
+with no spike before Phase 6 (amendment 3903f104, 2026-11-17). The spike itself is still owed.
 
 ### A beam prepass, or a distance value per brick
 
@@ -757,6 +864,19 @@ discard, and a sparse canopy stacks them, so the forest is the case to read; a r
 change to ADR-0001's all-compute stack and needs its own ADR. The spike reads both arms on the
 RENOIR in the forest and the hall; the boxes are taken only if they beat the beam prepass
 clearly there.
+
+### The a-trous under the baked light: fewer iterations, or none
+
+Plan 0065 (closed 2026-11-11) skips the filter only with the lamp off, where its input is zero;
+with the lamp on it filters as before. There its input is an analytic light with a binary shadow, no Monte Carlo noise; four iterations may be one or two,
+and with the lamp off and the `face` look the whole pass could be skipped on the CPU side. Both
+change shadow softness or the rare fallback pixels, so they are the owner's eye. Pick up after
+Plan 0058, which widens the filter to rgb.
+Checked 2026-11-13 at Plan 0058's refresh: its Phase 1 moves the lamp-off skips onto "some light
+is shaded" (`LIGHTING_DIRECT`), so after it the skip holds with the lamp off and an empty list;
+the iterations are taken by Plan 0058 (owner, 2026-11-13, its answer 8): a 1, 2 or 4 iteration
+render setting in its Phase 2, judged in its Phase 4 window. Skipping the whole pass with the
+lamp off and the `face` look stays here for after it.
 
 ### Narrower frame targets and fewer stores
 
@@ -786,7 +906,7 @@ Owed by nobody yet; none blocks anything.
   upscalers**, not the exposure modes, the full lighting tier, the store read, the shadow walk
   or the debug views. A mode that rebuilds a group every frame there would not be caught.
   Widen the test when Plan 0069's settings surface lists the modes.
-- **`frame/encode.rs` is at 1190 of the 1200-line cap.** The next pass that adds to the encode
+- **`frame/encode.rs` is at 1160 of the 1200-line cap (read 2026-11-24).** The next pass that adds to the encode
   splits it first.
 - **The committed `castle_gate.png`, `look_gradient27.png` and `look_trilinear8.png`** differ by
   a few pixels from the dev box's lavapipe (within the 0.1 % tolerance), at the plan's base and
@@ -796,49 +916,6 @@ Owed by nobody yet; none blocks anything.
   12/255, the two look files 196 and 228), and **`outdoor_night.png` joins them** (1827 pixels
   by at most 2/255, main's render and the tip's byte-identical to each other); all four pass
   their tests, none was re-blessed.
-- **The soak test `a_shown_hud_and_the_queue_line_wait_on_the_gpu_nowhere` failed, unrelated to
-  Plan 0044 (fixed 2026-11-16 on branch chore-soak-frames: the test now matches `frames: {FRAMES} frames;`,
-  accepts frame 0's `store reads not counted` queue line, and reads the age as the last item of
-  the line's parenthesis; it passes in 8.9 s on lavapipe).** Its `find(|l| l.starts_with("frames: "))` takes the queue step's tally line
-  (`frames: queue step A: ...`, printed first since 87bf0d2, Plan 0067 Phase 1) instead of the run's
-  `frames: N frames; ...` line. Fix: match `frames: {FRAMES} frames;` in the test. Read at the
-  close review's soak run (whole workspace, 73 run, 71 passed; the other failure is the hall
-  entry above).
-
-### Slot words packed on the workers
-
-The mirror packs and copies a chunk's bricks on the render thread; `docs/roadmap.md` names an
-"upload-copy ADR" that was never drafted. The workers already prepare face masks. Moving the
-packing there needs the mirror's slot format across a thread boundary, so it is an ADR and a
-plan. Read 2026-11-11 at Plan 0064's close: its time budget (`--sync-ms`, off by default) does
-leave residency short, p95 2.7 to 6.9 s at 2 to 8 ms against 0.30 s without one, at about
-0.3 ms of render-thread time a chunk (RTX, `docs/plans/logs/0064.md`, Phase 4b). A budget
-pays only once a chunk's upload is cheaper; this entry is that cheaper upload, and the
-budget's mechanism and flag are in the tree for it. Pick up after Plan 0067, with the
-upload-copy ADR.
-Drafted 2026-11-12 (the architecture review) as [Plan 0070](plans/done/0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md)
-and ADR-0056. Deferred 2026-11-13 by Plan 0070's Phase 1: the packing is about 1.5 ms of a cave
-sync p99 of 44 to 47 ms (RTX host). Read again at Plan 0070's Phase 5 (`ef0b55c`, the rescan set
-dense and the light walks on change, `hpet` clocksource): `pack + size` p99 is 2.8 to 3.1 ms of
-a cave sync p99 of 20.9 to 22.3 ms, 13.5 to 14.2 % on both adapters; the larger stages are
-`light_note` (8.2 to 8.4 ms, `note_lights` in `exposed_emitters`) and `alloc` (6.9 to 7.4 ms).
-Pick up when `pack + size` reads half or more of the sync p99 left after those two are cut;
-read again at Plan 0074's Phase 4 with `light_note` cut (`docs/plans/logs/0074.md`, lamp off):
-the tip cave's `size` p99 2.8 to 3.8 ms and `pack` 2 us, 17.1 to 17.9 % of the sync p99 on the
-RTX (16.5 to 21.1 ms) and 16.6 to 17.1 % on the Radeon (16.1 to 16.8), still under half;
-the lane's drafts (`live/p2_wire.py`, `live/p2-draft/`) stay untracked in the plan-0070
-worktree and leave with it. **Read 2026-11-22 at Plan 0096 Phase 7 (`8bb8857b`, RTX host, cave
-bench):** with `light_note` and the eviction scan cut, `alloc` p99 is 9.4 ms of a sync p99 of
-19.4 (48 %) and its profile is the per-brick packing path as a whole (about 9.5 µs a brick,
-13 383 bricks at the slowest sync; `pack + size` p99 3.0 ms beside it): the rule is met in
-substance, since `alloc` is the packing this entry moves. **Pick up at Plan 0096's close:** its
-own plan under ADR-0056 (the Outcome extended with this reading), the lines it chases Plan 0096's
-bar 3 (`alloc` p99 3.0 ms, `update + poll + sync` p99 16.6, the forest at leaf fill 128 sync p99
-6). Architect's routing, owner confirm owed.
-
-### The sync's `light_note` stage and the windowed glide's light walks
-
-Taken 2026-11-13 by [Plan 0074](plans/done/0074-the-syncs-light-stages-placement-spikes-attributed-and-exposed-emitters-by-masks.md) (closed 2026-11-14): `light_note` cut by masks; the placement's spikes are "The light placement's eviction scan in a windowed glide" under Next up.
 
 ### The tester cave's coarse light is slow to settle
 
@@ -847,22 +924,6 @@ base the same): "coarse light are slow to settle". Not Plan 0074's stages (its t
 differ only in the sync's light note and read the same). A reading of the bake queue's coarse
 pass and its settle on a moving path; no run read it. Pick up with the next look or bake-queue
 plan that walks the tester's paths.
-
-### The slow adapter's walk-speed spike
-
-Owed since Plan 0054 (ADR-0034 and ADR-0041 name it) and in no plan or backlog entry until now:
-why the Radeon's hit pass reads 7 to 8 times the RTX's when the light pass under the store reads
-about twice. Run with the shader toolchain spike, when no lane holds the GPU.
-Noted 2026-11-12 (the architecture review): the slot is Plan 0069's Phase 4, which reads both
-adapters anyway; the review's amendment note asks it to read the hit pass alone at Portable's
-internal size on the RENOIR and to run this spike before Phase 6 if the hit reads over 10 ms there.
-
-### The dev box presents across two GPUs
-
-The panel hangs off the AMD iGPU, Hyprland composites there, and the RTX has no connected
-output, so a windowed frame crosses GPUs before it shows. Windowed readings should say so, and
-`references/project-context.md`'s machine facts should carry it. An external display on the
-RTX's port would give a windowed reading without the crossing.
 
 ### Costs that multiply across the approved plans
 
@@ -879,8 +940,14 @@ lot with the window's workspace in or out of focus. Expected for `--pace composi
 Hyprland throttles frame callbacks for a hidden window; whether it also moves `--pace free`,
 the default, is not isolated, and Plan 0064's discarded session (`live/session64b.log`) was
 spoiled by it. What it takes: one windowed pair per pacing, focused and on another workspace,
-read with the `frames:` line's wall time. Pick up at the next windowed perf session (Plan
-0067's window), or if the owner reports the game slowing when tabbed back.
+read with the `frames:` line's wall time. Pick up at the next windowed perf session, or if the owner reports the game slowing when tabbed back.
+
+### The dev box presents across two GPUs
+
+The panel hangs off the AMD iGPU, Hyprland composites there, and the RTX has no connected
+output, so a windowed frame crosses GPUs before it shows. Windowed readings should say so, and
+`references/project-context.md`'s machine facts should carry it. An external display on the
+RTX's port would give a windowed reading without the crossing.
 
 ### The frame path's GPU waits in the gate
 
@@ -897,6 +964,11 @@ bytes first) (read 2026-11-14 at Plan 0074's close review, soak tier of the chan
 not this plan's code): the exit's queue tally prints `frames: queue step ...` lines
 (`run/mod.rs`, `Drop for Run`) before the `frames: N frames;` line, and the test takes the
 first line starting `frames: `. Match `frames: {FRAMES} frames;` instead.
+
+### The sync's `light_note` stage and the windowed glide's light walks
+
+Taken 2026-11-13 by [Plan 0074](plans/done/0074-the-syncs-light-stages-placement-spikes-attributed-and-exposed-emitters-by-masks.md) (closed 2026-11-14): `light_note` cut by masks; the placement's spikes are "The light placement's eviction scan in a windowed glide" under Next up.
+
 
 ## Tooling and process
 
@@ -917,16 +989,18 @@ tree against the 19 min line (see "The gate tier is over its wall-time budget" b
 not another acceptance. Size M. **Pick up** before the next plan that needs an owner window,
 ahead of the follow-on light plan's first window.
 
-### A bugs journal: date, hours lost, tags, the lesson
+### Two process-spawning GPU tests skip silently without lavapipe
 
-Raised 2026-11-19 (Bonsai's `bugs.md`: one heading per bug with the date, the hours it cost,
-whether it is closed, tags such as `concurrency`, and a paragraph on what it was and what to
-remember). Our defects live in plan logs and close reviews, spread over many files, so the
-same class of mistake (a held lock, an unstable clock, a stale golden) is not counted. **What
-it takes:** `docs/bugs.md` with that heading form, appended at every fix pass and close review
-that names a defect; `scripts/velocity.mjs` can count its headings by tag later. Size S. Low
-priority. **Pick up** when the owner wants the recurring classes named, or at a review that
-finds the same defect twice.
+Found 2026-11-17 at Plan 0088's close review. `apps/flythrough/tests/gpu_path.rs`
+(`a_path_run_writes_its_report`, soak) and `gpu_frame_waits.rs` print "skipped: no adapter" and
+pass when the fly-through finds no adapter, without the `VXE_REQUIRE_SOFTWARE_ADAPTER=1` panic
+that `gpu_loading.rs`'s first helper has. `soak.yml` and `ci.yml`'s Linux arm set the variable,
+so a runner without lavapipe passes these tests green. What it takes: the same three-line check
+in both, or one helper in `tests/support/` they call. A dev chore of minutes.
+
+### Comment, manifest and index drift found by the 2026-11-12 review
+
+Parked 2026-11-12; a dev chore of one commit, no plan. Read again 2026-11-24, all still there: `apps/flythrough/examples/world_budget.rs` describes ADR-0011's attribute pages and planes ("contour" lines), removed in Plan 0054. `apps/flythrough/tests/gpu_lights.rs` says "the emissive table's path" (deleted in Plan 0059) and "Reservoir reuse's bar", `crates/vxe-render/src/exposure.rs` "reservoirs", `apps/flythrough/tests/gpu_upscale.rs` "reservoir textures" (Plan 0057). `crates/vxe-world/Cargo.toml` and `crates/vxe-render/Cargo.toml` carry `description = "placeholder; see docs/roadmap.md"`, and no crate sets `publish = false`. `vxe-render/tests/gpu_frame.rs` calls `lamp_bounce` off "the default", which is the library's default and not the fly-through's. Pick up with the next chore lane, or with Plan 0087 (the rename), which rewrites the manifests anyway.
 
 ### The 64 private-intra-doc-link warnings in `cargo doc -p vxe-render`
 
@@ -935,77 +1009,7 @@ Noted 2026-11-17 from Plan 0069 Phase 2 (`docs/plans/logs/0069.md`): `cargo doc 
 wrote; its done-when was amended to "no new warnings from this plan's files". Owner 2026-11-17: fix
 them in a separate chore later. What it takes: make each linked item `pub` or `pub(crate)`-doc it
 with a plain code span, then a CI step or `RUSTDOCFLAGS=-D warnings` doc build so the count cannot
-grow again. Pick up after Plan 0069 merges, so the chore reads the settled `settings.rs`.
-
-### The tester mode's key filter is structural, not tested in the frame loop
-
-Owed 2026-11-15 from Plan 0068's close (its phase review's M2). Under `--tester` the frame loop
-(`apps/flythrough/src/run/frame.rs`) skips `handle_input` and calls
-`flythrough::path::tester_action` only for keys it already chose (`F1`, the left click), so the
-unit test of `tester_action` cannot catch a debug key read outside `handle_input`, as `F2` is.
-What it takes: route every key the frame loop reads under `--tester` through `tester_action`, or a
-test that drives the loop's input handling with the filter on. Taken 2026-11-16 by
-[Plan 0080](plans/done/0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md)
-Phase 2 (a test drives the loop's input step with the filter on; `Tab` and `Start` map to
-nothing); the entry leaves when that plan closes.
-
-### Mouse pointing and text events for the apps' menu
-
-Parked 2026-11-16 from Plan 0080's draft (owner question 4, recommended later; ADR-0061's
-negatives). `vxe_app::Input` reports no cursor position and no text events, so the menu is keys,
-wheel and clicks, and its palette types from `KeyCode` (wrong letters on a non-QWERTY layout).
-What it takes: `Input::cursor` from winit's `CursorMoved`, the cursor unlocked and shown while
-the menu is open (the shell's `lock_cursor` toggled at run time, with the Wayland grab quirks
-the dev box has shown), a hit test per row (one division on the overlay's cell grid), and
-`KeyEvent::text` passed through as bytes for the filter. Pick up when the owner asks to point
-at the menu, or when a non-QWERTY layout types wrong.
-
-### A radial or hold menu for the pad
-
-Parked 2026-11-16 from Plan 0080's draft (owner question 5). The pad walks the same tree as the
-keyboard (`Start`, the D-pad, `South`, `East`). A radial menu held on a button, or a hold-to-open
-wheel for the entries used most, is a second view over the same `menu::entries()`, drawn on the
-overlay's cell grid as a ring of labels. Pick up after Plan 0080's window, if the owner plays
-with the pad and the tree is too slow.
-
-### Plan 0068's leftovers from the owner's runs
-
-Noted 2026-11-15 at Plan 0068's close. Not seen in either release run: "run all benchmarks" from
-the Linux archive (only a castle tour; the three-run zip was read twice from local release
-builds) and a free flight in each scene (the Windows report holds the three benchmarks). The next
-tester archive's own run covers both; no work unless it fails.
-
-### The HUD paints a bounded level's full record reservation as mirror pressure
-
-Read 2026-11-15 in Plan 0058's Phase 5f (`docs/plans/logs/0058.md`, the owner's `live/7.png` and `9.png`). On the level the HUD shows `mirror pressure 1.000` in yellow. `GpuWorld::pressure` (ADR-0013) is the larger of the pool-unit term and the record term. `scene::level_mirror_budget` reserves exactly one record per chunk of a bounded level, so once every chunk is mirrored the record term is 1.000 by construction (3200 of 3200; the unit term reads 0.30). No brick was refused and no radius narrowed. It read the same at the plan's start commit. The yellow at `hud::PRESSURE_HIGH` (0.9) therefore warns about a reservation that is full by design. What it takes: the HUD (or `pressure`) leaves out the record term when the reservation covers every chunk of a bounded world, or shows the two terms apart. It is a testbed-and-HUD change with a unit test. Pick up with the next HUD or mirror-budget change.
-
-### The RTX laptop's TSC is marked unstable: hot-loop timings since 2026-11-05 are inflated
-
-Noted 2026-11-13 (Plan 0070 Phase 1, `docs/plans/logs/0070.md`). Every boot of the RTX laptop
-since 2026-11-05 logs `clocksource: Marking clocksource tsc unstable due to frequency skew` (not
-those of 11-01 to 11-03) and falls back to `hpet`; one `CLOCK_MONOTONIC` read costs about
-1.7 us. Readings since then that read the clock inside a hot loop (per brick, per voxel, per
-sample) are inflated; Plan 0070's per-brick stage laps turned a 42 to 64 ms sync p99 into 303 ms.
-Per-frame and per-chunk readings are affected little. Readings should name the clocksource
-(`/sys/devices/system/clocksource/clocksource0/current_clocksource`). Whether to boot with
-`tsc=reliable` or `clocksource=tsc`, or find the skew's cause (firmware, a kernel change at that
-boot), is the owner's call. Pick up: at the owner's next reboot, or before any plan's budget
-readings are compared with ones from before 2026-11-05. Sharpened 2026-11-19: Plan 0091's
-profiler reads `Instant` (through its backend) and the GPU timestamps, never a raw `rdtsc` as
-Bonsai does, so this entry stays a question of reading cost, not of correctness; per-brick laps
-inside hot loops stay out of the profiler's scopes for the same reason.
-
-### Done: the tester's benchmarks with the lamp off
-
-Done 2026-11-13 (4ea561f): a `--path` benchmark starts the lamp off unless `--lamp` is given, and `run.json` names it. **Bench readings of the cave and castle paths from before 4ea561f ran with the lamp on and are not compared with readings after it.**
-
-### A `Uniform` emitter brick gives no light samples
-
-Noted 2026-11-13 from the tree at `98e69b8` (Plan 0074's draft, its owner answer 5).
-`note_lights` scans `Full` bricks only, so a brick made entirely of one emissive material
-contributes no light samples, even on its faces toward air. Not seen on screen. Fixing it changes
-the light, which Plan 0074's byte guard forbids. Pick up after Plan 0074 as a look check: place a
-solid emissive block of 8 or more voxels a side in the cave and compare it with a hollow one.
+grow again. Ripe: Plan 0069 merged 2026-11-17.
 
 ### Five lavapipe gate tests over the 10 s line
 
@@ -1029,15 +1033,6 @@ of Plan 0058's own: `gpu_dynamic_lights::a_pulsing_emitter_marks_only_where_its_
 rings test renders three 32-frame images (no light, white, red); fewer still frames or the soak
 mark brings it under. Plan 0062 runs on these binaries next and can take them.
 
-### Plan 0072's CI readings: accepted, one reading left open
-
-Parked 2026-11-13 at Plan 0072's close. Read 2026-11-13 on the first two pushes: warm Linux
-15 min 6 s and Windows 18 min 47 s (over the under-10 and under-15 min proposals), gate count on
-CI unchanged (844 passed). The owner accepted these walls the same day ("record this time as
-accepted, let it be"); they are the CI line in `docs/nfr.md` section 7. Left open, no longer
-owed: one manual `workflow_dispatch` run with `fingerprint` set on a prefix-restored cache, to
-name why `proc-macro2` and the like recompile. Pick it up only if CI time becomes a complaint.
-
 ### The lavapipe group at two threads (owner question)
 
 Parked 2026-11-13 at Plan 0072's close. At `max-threads = 2` the gate read 354.6 to 368.2 s
@@ -1057,51 +1052,113 @@ wasm32, and a profile cannot scope it to a target. The Linux-only form is `rustf
 `.cargo/config.toml`; it changes every Linux build's flags (CI's too, unless scoped), so it is
 the owner's call. Not added at the close (the default). Pick up on the owner's answer.
 
-### A pipeline cache for the renderer's shaders
+### Plan 0072's CI readings: accepted, one reading left open
 
-Parked 2026-11-12 (the architecture review, section 1.4). Every pipeline creates its own shader
-module and (at the entry's date) 13 of them prepended the 2496-line `march.wgsl` (since Plan
-0045 each pass composes only the modules its `PASSES` row names); no descriptor passes a
-`wgpu::PipelineCache` (`cache: None` everywhere). Cold creation of the eleven pipelines read
-1396 ms on the RTX, 458 ms on RADV, 299 ms on lavapipe (Plan 0046). wgpu 30's `PipelineCache`
-is Vulkan-only and keyed by the driver, so it helps a second start on the same machine, not the
-first; the driver's own disk cache already does part of that. What it takes: `pipeline_times`
-read with and without a cache file across two starts, on both adapters, after Plan 0045's
-Phase 4 has split the shaders (which changes what is compiled). Ready since 0045's close
-(2026-11-13): `pipeline_times` reads `internals::shader_sources()`. Sharpened 2026-11-19: Plan
-0092 (WGSL hot reload) rebuilds a pass's pipeline from a file on disk; a reloaded pipeline is a
-new compile the cache has not seen, so the cache and the reload are read together when this is
-picked up (the engine entry above is the same question from the start-up side). Read by Plan
-0094 Phase 2a (2026-11-19, `docs/plans/logs/0094.md`): the test supports' `wgpu::PipelineCache`
-pays 0.01 on the RTX against an empty driver cache (29.4 s cold, 0.24 s warm, 2.0 MB) and
-nothing on lavapipe (0.97, 84 B: no compiled code), so Plan 0094 keeps it for hardware adapters
-only. What that plan leaves here (owner, 2026-11-19): the light pass's default-on compile cost
-on lavapipe, the fly-through's light-pass build stage 3.7 s against the base's 2.7 (debug) with
-every default-off arm already out of the default pipelines, about 1.0 s a device of default-on
-code, about 1.4 s a frame-building test of the gate; the next step is a per-module compile
-reading (`pipeline_times` per `PASSES` row) to name the module that grew. **Routed to Plan
-0096 (performance) 2026-11-20**, after Plan 0094's window 94b: `absorb`'s cold start on an
-emptied driver cache read 70 s (the owner: "start is slow, 70 sec"; Plan 0094 Phase 7a's
-table: the arms' light pipelines 39 to 44 s inside their loading stage after the base's 25 to
-49 s). Plan 0096 takes two items: an engine `wgpu::PipelineCache` for hardware adapters in the
-app (the test-support cache read 29.4 s cold against 0.24 s warm on the RTX, 2.0 MB), and the
-default-off arms built in the background after the first world frame rather than inside the
-loading stage (the runtime pick's hitch with them). **Plan 0096 closed (2026-11-23) without
-taking either** (its "What this plan does NOT do" names the pipeline cache as the backlog's); both stay here; the lavapipe compile-cost reading above stays here.
+Parked 2026-11-13 at Plan 0072's close. Read 2026-11-13 on the first two pushes: warm Linux
+15 min 6 s and Windows 18 min 47 s (over the under-10 and under-15 min proposals), gate count on
+CI unchanged (844 passed). The owner accepted these walls the same day ("record this time as
+accepted, let it be"); they are the CI line in `docs/nfr.md` section 7. Left open, no longer
+owed: one manual `workflow_dispatch` run with `fingerprint` set on a prefix-restored cache, to
+name why `proc-macro2` and the like recompile. Pick it up only if CI time becomes a complaint.
 
-### Comment, manifest and index drift found by the 2026-11-12 review
+### The gate tier is over its wall-time budget
 
-Parked 2026-11-12; a dev chore of one commit, no plan. `apps/flythrough/examples/world_budget.rs`
-describes ADR-0011's attribute pages and planes (26 "contour" lines; :35, :41, :656), removed in
-Plan 0054. `apps/flythrough/tests/gpu_lights.rs:610` "the emissive table's path" (deleted in
-Plan 0059), `:614` and `:687` "Reservoir reuse's bar", `crates/vxe-render/src/exposure.rs:21`
-"reservoirs", `apps/flythrough/tests/gpu_upscale.rs:635` "reservoir textures" (Plan 0057).
-`crates/vxe-world/Cargo.toml` and `crates/vxe-render/Cargo.toml` carry
-`description = "placeholder; see docs/roadmap.md"`, and no crate sets `publish = false`.
-`vxe-render/tests/gpu_frame.rs:86` calls `lamp_bounce` off "the default", which is the
-library's default and not the fly-through's (Plan 0069's amendment note takes the default
-itself). (The `CLAUDE.md` part was fixed 2026-11-13.) Pick up with the next chore
-lane; it touches no file a plan lane edits except `gpu_lights.rs` (Plan 0058's).
+Read 2026-11-05 on 7cd77ad (`docs/nfr.md` section 7): 1313.4 s, about 22 minutes, loaded, against the 12 min proposal, with the two tests then over the 30 s line already on the soak list. `flythrough::settle` is the largest binary at 338 s. Ruled 2026-11-05 on the four tests over the line in that run: `the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose` split (the every-pose test on the soak list; the primary pose alone stays in the gate at 9.2 s), `castle_gate_golden` went back under with its warm-up removed (25.7 s cold, 7.4 s warm, alone), and `smoothed_normals_cut_the_normal_error_and_move_no_hit` and `a_face_hidden_from_every_eye_is_settled_before_it_is_seen` stay (23.9 s and 24.1 s alone). Those two move only if a gate run started on a quiet machine reads them over the line. Moving all four would save at most about 95 s of serial time, so this is not how the budget gets met. Still owed: either cut the slowest `settle` and `golden` tests or re-set the proposal. Much of `settle`'s time goes with the table at Plan 0059's deletion, so re-read then. `the_lamp_toggle_opens_the_light_window` read 98.0 s on CI's last red run, on an older tree, and reads 18.0 s here, so it stays in the gate; CI's next run shows whether it is still over the 60 s line. Pick up as a dev chore when the owner next wants the gate faster or CI green. Read 2026-11-12 (the architecture review, on `live/plan-0068/merge-gate.log`): 809 tests, 610 s; the 177 lavapipe tests sum to 610 s serial, the whole wall, the 632 CPU tests to 273 s beside them, so the lever is the lavapipe group's thread count or the GPU tests' pixels, not the CPU tests; [Plan 0072](plans/done/0072-development-speed-the-build-graph-a-narrowed-gate-and-one-compile-per-ci-profile.md) Phase 4 measures the group at 2 and 3 (drafted, awaiting go). Read 2026-11-09 at Plan 0059's close (`docs/nfr.md` section 7): 850.2 s with `settle` back in the gate and none over the 30 s line, still over the 12 min proposal; the re-read of the proposal stays owed. Read 2026-11-08 on CI's Linux arm, Mesa 26.2.6, the GPU tests in parallel: the same tests move 25 to 40 % between runs (`a_face_hidden_from_every_eye_is_settled_before_it_is_seen` 55.6 s on run 42470428595 and 77.6 s on 42477325818; `the_lamp_toggle_opens_the_light_window` 53.2 then 70.5; `fsr2_adds_little_flicker_on_a_still_vein` 49.8 then 62.8), with several more between 45 and 58 s, so moving tests one push at a time does not converge. Ruled 2026-11-08 (owner): CI's budget step warns per test over 60 s instead of failing the push, until the light work settles; a test that stays over moves to the soak list by hand. Still owed: the architect re-reads `docs/nfr.md` section 7's 60 s line (it says a test over the line moves to the soak list; CI no longer enforces it), at Plan 0059's deletion or when the owner next wants the gate faster. Also ruled 2026-11-08 (owner), from run 42477325818 (2972 s summed over 727 gate tests, 27 tests at 30 s or more holding 41 % of it): the whole `flythrough::settle` binary (34 tests, 746 s) moves to the soak list until Plan 0059's deletion phase decides the table, and CI's Windows arm runs every CPU test but only a GPU smoke set (the `ci-windows` profile: the shutdown and walk binaries and one golden), since WARP skips the image bars and runs a test 10 to 20 times slower than lavapipe. Both are tier moves, not deletions. **Read 2026-11-18 at Plan 0079's close** (`docs/nfr.md` section 7): 1208.2 s on 1174 tests, loaded (load 16.9 at the lock), over the 19 min line the owner set the same day; the plan's own tests add about 17 s outside the serial lavapipe group. A quiet re-read is owed before the line is judged again.
+
+### `vxe-render::exposure` hangs on WARP since Plan 0057 Phase 7
+
+Read 2026-11-06 to 2026-11-09 over seven CI runs; the full record with its tables is in this file's history at `193cae15`. On WARP (`Microsoft Basic Render Driver`, DX12, wgpu `=30.0.1`) frame 0 never finished whenever the per-face table's preload ran: any submission between the preload's args pass and `shade_preload` that touched a buffer `shade_preload` then used hung it, at any table size. The words read back were right, no unbounded loop or bad barrier was found on paper, and the D3D12 debug layer without GPU-based validation cleared the hang and reported no misuse, which points at a race inside WARP, not at a state wgpu records.
+
+**Ruled 2026-11-09 (owner): no GPU tests on WARP.** The `ci-windows` profile runs the CPU tests only (`.config/nextest.toml`); Windows still creates every pipeline on DX12 (the pipeline-times step). Plan 0059 (closed 2026-11-09) deleted the preload, its sweep and `shade_preload`; the fly-through's `diag:` lines stay (`apps/flythrough/src/app.rs`).
+
+**Owed, the owner's call:** one push that runs a GPU smoke set on WARP again. Clean, the `diag:` lines go and this entry closes; still hung, the hang was not the preload's.
+
+### llvmpipe SIGSEGV on CI's Ubuntu since Plan 0057 Phase 7
+
+Done 2026-11-08 and 2026-11-09. The crash was Mesa 26.0.x's own: it reproduced on a local build of the 26.0.8 tarball against LLVM 21 and against LLVM 23, and Mesa 26.2.6 passes, so it was neither concurrency nor LLVM. Ruled 2026-11-08 (owner): no package source that cannot be pinned; CI's Linux arm and the weekly soak build lavapipe from the Mesa 26.2.6 release tarball, checked by its sha256 and cached by it, in the composite action `.github/actions/lavapipe`. **Left:** the build comes out once the runner image ships Mesa 26.2 or later. The bisect, the build options and the hashes are in this file's history at `193cae15`.
+
+### The RTX laptop's TSC is marked unstable: hot-loop timings since 2026-11-05 are inflated
+
+Noted 2026-11-13 (Plan 0070 Phase 1, `docs/plans/logs/0070.md`). Every boot of the RTX laptop
+since 2026-11-05 logs `clocksource: Marking clocksource tsc unstable due to frequency skew` (not
+those of 11-01 to 11-03) and falls back to `hpet`; one `CLOCK_MONOTONIC` read costs about
+1.7 us. Readings since then that read the clock inside a hot loop (per brick, per voxel, per
+sample) are inflated; Plan 0070's per-brick stage laps turned a 42 to 64 ms sync p99 into 303 ms.
+Per-frame and per-chunk readings are affected little. Readings should name the clocksource
+(`/sys/devices/system/clocksource/clocksource0/current_clocksource`). Whether to boot with
+`tsc=reliable` or `clocksource=tsc`, or find the skew's cause (firmware, a kernel change at that
+boot), is the owner's call. Pick up: at the owner's next reboot, or before any plan's budget
+readings are compared with ones from before 2026-11-05. Sharpened 2026-11-19: Plan 0091's
+profiler reads `Instant` (through its backend) and the GPU timestamps, never a raw `rdtsc` as
+Bonsai does, so this entry stays a question of reading cost, not of correctness; per-brick laps
+inside hot loops stay out of the profiler's scopes for the same reason.
+
+### The HUD paints a bounded level's full record reservation as mirror pressure
+
+Read 2026-11-15 in Plan 0058's Phase 5f (`docs/plans/logs/0058.md`, the owner's `live/7.png` and `9.png`). On the level the HUD shows `mirror pressure 1.000` in yellow. `GpuWorld::pressure` (ADR-0013) is the larger of the pool-unit term and the record term. `scene::level_mirror_budget` reserves exactly one record per chunk of a bounded level, so once every chunk is mirrored the record term is 1.000 by construction (3200 of 3200; the unit term reads 0.30). No brick was refused and no radius narrowed. It read the same at the plan's start commit. The yellow at `hud::PRESSURE_HIGH` (0.9) therefore warns about a reservation that is full by design. What it takes: the HUD (or `pressure`) leaves out the record term when the reservation covers every chunk of a bounded world, or shows the two terms apart. It is a testbed-and-HUD change with a unit test. Pick up with the next HUD or mirror-budget change.
+
+### The F9 steps view drops the window to about 14 fps
+
+Seen 2026-11-21 at the diagnosis window (`docs/plans/logs/0098.md`, scene A; RTX 3080 Laptop):
+cycling F9 to the `steps` view drops the window to about 14 fps and the compositor flags it
+unresponsive. Unread: whether the view's own pass is slow or it disables a cheaper path. Pick
+up with any work on the debug views.
+
+### Plan 0068's leftovers from the owner's runs
+
+Noted 2026-11-15 at Plan 0068's close. Not seen in either release run: "run all benchmarks" from
+the Linux archive (only a castle tour; the three-run zip was read twice from local release
+builds) and a free flight in each scene (the Windows report holds the three benchmarks). The next
+tester archive's own run covers both; no work unless it fails.
+
+### The built-in walker and its scripted circle go with the library in the tester archive
+
+Parked 2026-11-18 at Plan 0079's close (its Decision 5). `apps/flythrough/src/entities/walker.rs`
+(the four-part walker made in code) and `Walkers::walk_pose` (its `f32` circle under the `wander`
+toggle) exist only for a run with no entities library: `scripts/package-tester.sh` ships none, so
+the tester archive falls back to them. **What it takes:** the archive packs
+`apps/flythrough/assets/entities/`, `library::builtin` and the circle go, the `with_walker` table
+rows and the tests that place the built-in walker move to the library's walker. A chore, no ADR.
+**Pick up** with the next tester release that ships the library.
+
+### Shader toolchain spike
+
+Parked 2026-10-31. Compare naga's SPIR-V against `spirv-opt -O` on the hit shader (VGPRs,
+milliseconds, both adapters), then try wgpu subgroups and `shader-f16` on the walk. Rust versus
+C for the CPU side was asked and answered no (GPU about 9 of 10.6 ms, CPU about 1 ms). Run when
+no lane holds the GPU. Sharpened 2026-11-19: Plan 0092's hot reload is this spike's loop made
+short (edit the WGSL, see the frame and the pass's timestamp without a restart), so run the
+spike after it lands; the spike's own question, a different compiler on the same WGSL, stays.
+
+### A bugs journal: date, hours lost, tags, the lesson
+
+Raised 2026-11-19 (Bonsai's `bugs.md`: one heading per bug with the date, the hours it cost,
+whether it is closed, tags such as `concurrency`, and a paragraph on what it was and what to
+remember). Our defects live in plan logs and close reviews, spread over many files, so the
+same class of mistake (a held lock, an unstable clock, a stale golden) is not counted. **What
+it takes:** `docs/bugs.md` with that heading form, appended at every fix pass and close review
+that names a defect; `scripts/velocity.mjs` can count its headings by tag later. Size S. Low
+priority. **Pick up** when the owner wants the recurring classes named, or at a review that
+finds the same defect twice.
+
+### Mouse pointing and text events for the apps' menu
+
+Parked 2026-11-16 from Plan 0080's draft (owner question 4, recommended later; ADR-0061's
+negatives). `vxe_app::Input` reports no cursor position and no text events, so the menu is keys,
+wheel and clicks, and its palette types from `KeyCode` (wrong letters on a non-QWERTY layout).
+What it takes: `Input::cursor` from winit's `CursorMoved`, the cursor unlocked and shown while
+the menu is open (the shell's `lock_cursor` toggled at run time, with the Wayland grab quirks
+the dev box has shown), a hit test per row (one division on the overlay's cell grid), and
+`KeyEvent::text` passed through as bytes for the filter. Pick up when the owner asks to point
+at the menu, or when a non-QWERTY layout types wrong.
+
+### A radial or hold menu for the pad
+
+Parked 2026-11-16 from Plan 0080's draft (owner question 5). The pad walks the same tree as the
+keyboard (`Start`, the D-pad, `South`, `East`). A radial menu held on a button, or a hold-to-open
+wheel for the entries used most, is a second view over the same `menu::entries()`, drawn on the
+overlay's cell grid as a ring of labels. Pick up after Plan 0080's window, if the owner plays
+with the pad and the tree is too slow.
 
 ### A documentation site
 
@@ -1115,176 +1172,14 @@ so it takes an ADR. Pick up when the owner asks. Sharpened 2026-11-19: a cheap f
 needs no site: four numbered guides in `docs/` the way Bonsai's `docs/00_getting_started.md`
 to `03_async.md` read (get started, build, a first consumer, the threads), each under a page.
 
-### Shader toolchain spike
+### The tester mode's key filter is structural, not tested in the frame loop
 
-Parked 2026-10-31. Compare naga's SPIR-V against `spirv-opt -O` on the hit shader (VGPRs,
-milliseconds, both adapters), then try wgpu subgroups and `shader-f16` on the walk. Rust versus
-C for the CPU side was asked and answered no (GPU about 9 of 10.6 ms, CPU about 1 ms). Run when
-no lane holds the GPU. Sharpened 2026-11-19: Plan 0092's hot reload is this spike's loop made
-short (edit the WGSL, see the frame and the pass's timestamp without a restart), so run the
-spike after it lands; the spike's own question, a different compiler on the same WGSL, stays.
+Taken by [Plan 0080](plans/done/0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md) Phase 2 (closed 2026-11-17, v0.62.0): a test drives the frame loop's input step with the filter on (`apps/flythrough/src/run/menu_tests.rs`); `Tab` and `Start` map to nothing.
 
-### A held fallback still moves on screen
+### Done: the tester's benchmarks with the lamp off
 
-Parked 2026-11-05 from the ruling on `the_vein_wall_patches_are_counted`. With the table's read off at the patch pose on 299b5c8, the accumulation is bit-identical over the window (0 pixels changed), yet the filter's output reads 90.95 patches a step and the composite 51.10. The lamp is off and the gather is not added, so the filter is the only part left that moves. By reading the code (not isolated): `temporal.wgsl` keeps blending each frame's noisy sample into the moments after the emissive part holds, and `atrous.wgsl` weights its taps by that variance. `a_still_fallback_pixel_holds_still` reads the accumulation, so it does not see this. Plan 0059 keeps the fallback for no-face hits, so glass and the field look may shimmer at rest. That patch-pose run makes every hit a fallback, so it is an extreme case; a translucent surface has not been read. What it takes: a spike that reads a translucent wall's composite at rest, then a fix that holds the moments with the mean, or passes a held part around the filter as the table's part does. Plan 0059's Phase 2 reads a glass pane at rest and its Phase 3 window looks at it (owner, 2026-11-05); pick up on that answer.
+Done 2026-11-13 (4ea561f): a `--path` benchmark starts the lamp off unless `--lamp` is given, and `run.json` names it. **Bench readings of the cave and castle paths from before 4ea561f ran with the lamp on and are not compared with readings after it.**
 
-### Two process-spawning GPU tests skip silently without lavapipe
-
-Found 2026-11-17 at Plan 0088's close review. `apps/flythrough/tests/gpu_path.rs`
-(`a_path_run_writes_its_report`, soak) and `gpu_frame_waits.rs` print "skipped: no adapter" and
-pass when the fly-through finds no adapter, without the `VXE_REQUIRE_SOFTWARE_ADAPTER=1` panic
-that `gpu_loading.rs`'s first helper has. `soak.yml` and `ci.yml`'s Linux arm set the variable,
-so a runner without lavapipe passes these tests green. What it takes: the same three-line check
-in both, or one helper in `tests/support/` they call. A dev chore of minutes.
-
-### The gate tier is over its wall-time budget
-
-Read 2026-11-05 on 7cd77ad (`docs/nfr.md` section 7): 1313.4 s, about 22 minutes, loaded, against the 12 min proposal, with the two tests then over the 30 s line already on the soak list. `flythrough::settle` is the largest binary at 338 s. Ruled 2026-11-05 on the four tests over the line in that run: `the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose` split (the every-pose test on the soak list; the primary pose alone stays in the gate at 9.2 s), `castle_gate_golden` went back under with its warm-up removed (25.7 s cold, 7.4 s warm, alone), and `smoothed_normals_cut_the_normal_error_and_move_no_hit` and `a_face_hidden_from_every_eye_is_settled_before_it_is_seen` stay (23.9 s and 24.1 s alone). Those two move only if a gate run started on a quiet machine reads them over the line. Moving all four would save at most about 95 s of serial time, so this is not how the budget gets met. Still owed: either cut the slowest `settle` and `golden` tests or re-set the proposal. Much of `settle`'s time goes with the table at Plan 0059's deletion, so re-read then. `the_lamp_toggle_opens_the_light_window` read 98.0 s on CI's last red run, on an older tree, and reads 18.0 s here, so it stays in the gate; CI's next run shows whether it is still over the 60 s line. Pick up as a dev chore when the owner next wants the gate faster or CI green. Read 2026-11-12 (the architecture review, on `live/plan-0068/merge-gate.log`): 809 tests, 610 s; the 177 lavapipe tests sum to 610 s serial, the whole wall, the 632 CPU tests to 273 s beside them, so the lever is the lavapipe group's thread count or the GPU tests' pixels, not the CPU tests; [Plan 0072](plans/done/0072-development-speed-the-build-graph-a-narrowed-gate-and-one-compile-per-ci-profile.md) Phase 4 measures the group at 2 and 3 (drafted, awaiting go). Read 2026-11-09 at Plan 0059's close (`docs/nfr.md` section 7): 850.2 s with `settle` back in the gate and none over the 30 s line, still over the 12 min proposal; the re-read of the proposal stays owed. Read 2026-11-08 on CI's Linux arm, Mesa 26.2.6, the GPU tests in parallel: the same tests move 25 to 40 % between runs (`a_face_hidden_from_every_eye_is_settled_before_it_is_seen` 55.6 s on run 42470428595 and 77.6 s on 42477325818; `the_lamp_toggle_opens_the_light_window` 53.2 then 70.5; `fsr2_adds_little_flicker_on_a_still_vein` 49.8 then 62.8), with several more between 45 and 58 s, so moving tests one push at a time does not converge. Ruled 2026-11-08 (owner): CI's budget step warns per test over 60 s instead of failing the push, until the light work settles; a test that stays over moves to the soak list by hand. Still owed: the architect re-reads `docs/nfr.md` section 7's 60 s line (it says a test over the line moves to the soak list; CI no longer enforces it), at Plan 0059's deletion or when the owner next wants the gate faster. Also ruled 2026-11-08 (owner), from run 42477325818 (2972 s summed over 727 gate tests, 27 tests at 30 s or more holding 41 % of it): the whole `flythrough::settle` binary (34 tests, 746 s) moves to the soak list until Plan 0059's deletion phase decides the table, and CI's Windows arm runs every CPU test but only a GPU smoke set (the `ci-windows` profile: the shutdown and walk binaries and one golden), since WARP skips the image bars and runs a test 10 to 20 times slower than lavapipe. Both are tier moves, not deletions. **Read 2026-11-18 at Plan 0079's close** (`docs/nfr.md` section 7): 1208.2 s on 1174 tests, loaded (load 16.9 at the lock), over the 19 min line the owner set the same day; the plan's own tests add about 17 s outside the serial lavapipe group. A quiet re-read is owed before the line is judged again.
-
-### `vxe-render::exposure` hangs on WARP since Plan 0057 Phase 7
-
-Read 2026-11-06 from CI run 42062512872 on 7914635. Windows' gate step ran over 2 h until the owner cancelled it. The previous run (41886647253, 9dbb933, before Phase 7) took 28 to 81 s for each of these tests on WARP. On 7914635: `auto_exposure_finds_the_key` 45 s (2 frames), `limits_compensation_and_dt` 94 s, `light_adaptation_is_fast` 120 s, `dark_adaptation_runs_in_two_stages` 412 s (602 frames), `a_flash_leaves_the_eye_glared` 4001 s. Still running at the cancel, with their elapsed times: `a_wall_split_in_half_meters_the_mean_of_its_halves` about 11 800 s, `history_survives_an_exposure_step` about 11 760 s, `no_target_overflows_at_the_glare` about 11 160 s, and `the_readout_arrives_within_four_frames_without_waiting` about 7 800 s. On local lavapipe at 7914635 all 11 take 3.8 to 7.2 s, as on CI's Ubuntu before. A guess, not isolated: a four-frame test stuck for hours is a GPU wait that never returns on WARP (`device.poll(wait_indefinitely)` or a blocking readback), and the rest pay a WARP-only cost that grows with the frame count, about 0.6 s a frame extra. The suspect is the full 201 MB table at `DEFAULT_TABLE_CELLS`, which WARP's binding limit allows while lavapipe's 128 MiB halves it. Ruled 2026-11-06 (owner): the ci profile kills a test at 600 s, so Windows fails red by name instead of hanging, and stays red until a dev chore profiles Phase 7's passes on WARP through CI diagnostic runs, after Plan 0059 Phase 3. The same run (42222147229) read it again: `flythrough::shutdown the_headless_flythrough_exits_through_every_teardown_stage_within_bound`, a 3-frame headless run at 64 x 36, was killed by its own 120 s bound with an empty stderr. Plan 0059's Phase 3 is past, so the chore is unblocked; the owner started it on 2026-11-08 in the same lane as the Mesa fix. Read 2026-11-08 in that lane: the empty stderr does not place the hang. The test discarded the run's stdout, where the adapter, `device ready`, the mirror, `near residency` and `first frame` lines go, and the fly-through logs nothing at info before its teardown, so a run stuck anywhere from the adapter request to frame 2 leaves the same empty stderr. `a_mirror_that_cannot_sync_exits_1_after_the_teardown` passed in 17.8 s in that run, so on WARP the adapter, the device and the frame's creation return. The lane's diagnostics, for one push: the test now prints the run's stdout with its stderr on a kill; the headless fly-through logs timestamped `diag:` lines through start-up (adapter with its binding limit, device, frame with its table cells and bytes, each streaming sync, init) and each frame (start, submitted, the GPU wait and its return); and a Windows CI step runs the debug fly-through on WARP six times, killed past 180 s each: as the test runs it, 35 frames (the median GPU time per pass), 35 frames with a 2^16-cell table (`VXE_DIAG_TABLE_CELLS`), with `--preload off`, with `--cutaway on` (no fill or preload), and on the fixed `--level`. Locally on lavapipe the 3-frame run reaches `init done` at 5.4 s and exits at 7.9 s (loaded, load 5.6), and a 35-frame run with the small table reads the per-pass line (light 81.4 ms of a 112.7 ms GPU frame at 64 x 36), so each variant prints what the push needs.
-
-Read 2026-11-08 from CI run 42470428595 on 22970c8, the diagnostic step: WARP (`Microsoft Basic Render Driver`, Dx12, static DXC, driver 10.0.26100.33648), the debug fly-through at 64 x 36, each run killed past 180 s. In every run the device is ready at 0.2 to 0.5 s (6.6 s for `--level`) and the frame, its pipelines created, at 13.0 to 15.5 s.
-
-| Run | Outcome | Frame 0 on the GPU |
-|---|---|---|
-| 3 frames, as the shutdown test runs it | killed at 180 s | submitted at 17.7 s, the wait never returned |
-| 35 frames | killed at 180 s | submitted at 17.6 s, never returned |
-| 35 frames, a 2^16-cell table | killed at 180 s | submitted at 16.8 s, never returned |
-| 35 frames, `--preload off` | exited 0 at 62 s | 17.3 s (17.4 to 34.7 s); each later frame about 0.4 s |
-| 35 frames, `--cutaway on` (no fill or preload) | exited 0 at 58 s | 14.1 s (17.3 to 31.4 s) |
-| 35 frames, `--level` | killed at 180 s | submitted at 23.1 s, never returned |
-
-The preload-off run's per-pass GPU medians over 30 frames: frame 57.7 ms, hit 13.5, gradient 0.28, light 5.2, fill 0.02, blend 2.1, temporal 0.37, atrous 2.5, probes 22.6, gather 0.58, composite 0.83, the FSR 2 passes 9.6 in all (accumulate 5.7, depth clip 1.5), exposure 0.08; march GPU p50 57.1 ms, p99 81.6 ms. Cutaway's frame is 27.4 ms (hit 13.3, light 0.1, probes 0). The gate step ran 429 of 730 tests before fail-fast cancelled it: the shutdown test failed at 122.5 s, and `vxe-render::exposure a_wall_split_in_half_meters_the_mean_of_its_halves` was killed at 600.2 s, while `auto_exposure_finds_the_key` passed in 65.7 s and `a_flash_leaves_the_eye_glared` in 71.5 s. The exposure tests split the same way as the runs. `BoxRig` sets `candidates: 0`, which turns the preload off (`preload_want` in marcher.rs), and those tests finish. The split wall and `ceiling_frame` (the tests stuck for hours on 7914635) keep the default candidates, so the preload is on, and they never finish. So on WARP, frame 0 never finishes whenever the preload runs, at any table size. Most fly-through GPU tests skip on Windows, since their device is Vulkan-only.
-
-Read 2026-11-08 in the chore-ci-preload lane, with no root cause found. Frame 0's preload work is small: the args pass (one workgroup), the sweep (8 x B = 1024 workgroups of 64 lanes) and `shade_preload` with its light rows only, because the fill and probe lists stay empty until frame 1. So one huge dispatch is not what WARP stalls on. A read of `cache_fill.wgsl`, light.wgsl's `cache_claim`, `cache_find` and `cache_seen`, march.wgsl's walk helpers, naga's HLSL of the preload's entry points, and wgpu 30's DX12 indirect path (the `num_workgroups` root constants after its indirect validation) found:
-- no unbounded loop: the one retry loop, `cache_claim`'s compare-exchange, exits in naga's HLSL, which sets `exchanged` to `old == 0`;
-- no barrier or `workgroupUniformLoad` behind a branch that is not workgroup-uniform;
-- no index out of range;
-- no dispatch that is unbounded.
-
-Mesa 26.0.8 does not place the fault either. With `shade_px` removed from `shade_preload`, frame 0 completes and frame 1 dies in `preload_sweep`. With `--preload off` it dies in `shade`. The 26.0.x compiler bug hits any large entry point of this module, not a preload construct, so it is a separate fault from WARP's, which finishes with the preload off. On lavapipe 26.2.5 (LLVM 23, loaded), pipeline creation reads `shade` 148 ms, `shade_preload` 290 ms, `preload_sweep` 58 ms and `preload_args` 16 ms, so no compile blows up there. Still unknown: which of frame 0's three preload dispatches never finishes on WARP, and why. The next step is the owner's call:
-- (a) a diagnostic push that names the dispatch. The headless fly-through's frame 0 would submit the args pass, the sweep and the light pass separately, with a GPU wait and a `diag:` line after each. Or variants could skip the sweep, or run `shade` in place of `shade_preload` with the args pass and the sweep kept.
-- (b) cap or split the preload's dispatches. The readings above argue against it.
-- (c) a WARP-only path. It branches on the backend, so it needs an ADR.
-- (d) leave Windows red on these tests in the meantime.
-
-Read 2026-11-08 from CI run 42477325818 on 7e8e15a, option (a): the headless fly-through on WARP, 3 frames at 64 x 36, frame 0's preload and light dispatches each submitted alone with a GPU wait after each, killed past 180 s.
-
-| Run | Outcome | Frame 0 |
-|---|---|---|
-| split | killed at 180 s | the passes before the preload 9.5 s, the args pass 0.03 s, the sweep 0.9 s, then `shade_preload` never finishes |
-| split, sweep skipped | exited 0 at 45 s | `shade_preload` 14.5 s |
-| split, `shade` in place of `shade_preload` | exited 0 at 42 s | the sweep, then `shade` 7.7 s (its pipeline built lazily within that time) |
-| no split, `shade` | exited 0 at 32 s | |
-| `--preload off` | exited 0 at 32 s | |
-
-So the hang needs both the sweep and `shade_preload`. Read the same day in the chore-ci-preload-fix lane on lavapipe (Mesa 26.2.5, LLVM 23.1.3), exclusive perf lock, with a temporary readback of `PreloadStats` and `TableStats` after each headless frame at the same start pose. It rules out work per dispatch as frame 0's cause:
-- Frame 0's `shade_preload` runs no fill or probe workgroup. Its input lists are the last frame's outputs, empty on frame 0 by the parity swap; the readback reads `list` 0 and `probes` 0. The sweep visits 128 bricks and scans 0 slabs (every slab stamped done by the brick early-out); it lists nothing and claims nothing (the sweep never claims; the probes do, a frame later). So after the sweep, frame 0's `shade_preload` does the same work as without it: the light rows only. No word the sweep writes on frame 0 (the slab stamps, its counters) is read by `shade_px`.
-- The split on lavapipe (load 12.5, loaded): `shade_preload` 17 ms after the sweep, 13 ms with the sweep skipped, `shade` 11 ms after the sweep; within noise.
-- From frame 2 on the preload's work is real but spread one sample a lane: the fill gives each drawing entry FILL_LANES lanes of one sample, the probes a lane a sample, so no thread loops over a cell's samples. Over 35 frames: the probes sampled 44 to 4605 faces a frame (8 samples each), the fill drew 2048 cells (the S_PRE cap, 16 samples each) out of an input list that grew to 21 589 entries, 32 656 to 69 592 preload samples a frame against 264 lighting pixels. The median light pass (`shade_preload`) read 73.4 ms of a 99.2 ms GPU frame (load 0.95, quiet); with `--preload off` the light pass reads 1.8 ms of 31.7 ms (load 4.9 to 8.0, loaded). The cap bounds the fill in samples (`draw_cells` x 16) but not the probes (up to PRELOAD_PROBE_LIST_MAX x 8 = 131 072 samples a frame) nor the dispatch's workgroups (one per 4 input entries, drawing or not, up to 8192). That is a cost on every adapter, not WARP's frame-0 hang.
-
-Still unknown: what the sweep's dispatch changes for the next `shade_preload` on WARP, and whether that `shade_preload` is hung or only slow past 155 s. Ruled 2026-11-08 (owner): one more diagnostic push from the same lane, every run split, the meaning of each outcome printed in the step's log: a control with the sweep skipped (180 s kill); (b) `VXE_DIAG_PRELOAD=empty-sweep`, the sweep's dispatch recorded indirect from a buffer of zero workgroups, the dispatch without its writes (180 s); (c) `direct-sweep`, the sweep dispatched directly with the workgroups the args pass would write (180 s); (a) the run as before with a 600 s kill, hung or slow. Worst case 19 min in the step's 25. Locally on lavapipe both new modes exit 0 over 35 frames: `empty-sweep` reads 0 preload samples (the lists never fill), `direct-sweep` 32 656 samples and a 67.5 ms light pass, as the indirect sweep does. The diagnostic code stays in until the cause is placed. The preload's cost from frame 2 on is a separate finding, parked for Plan 0059 below.
-
-Read 2026-11-08 from CI run 42483023036 on f45523f, the step as ruled above, WARP (driver 10.0.26100.33648), every run split:
-
-| Run | Outcome | Frame 0 |
-|---|---|---|
-| control, sweep skipped | exited 0 at 40 s | the passes before the preload 7.8 s, the args pass 0.03 s, `shade_preload` 11.8 s |
-| (b) `empty-sweep` | killed at 180 s | the args pass 0.02 s, the sweep (zero workgroups) 0.7 s, then `shade_preload` never finishes |
-| (c) `direct-sweep` | killed at 180 s | the args pass 0.02 s, the sweep (1024 workgroups) 0.7 s, then the same |
-| (a) as before, 600 s kill | killed at 600 s | the sweep 0.7 s, then no `shade_preload` line in ten minutes |
-
-So it is a hang, not a slow pass, and recording the sweep's dispatch at all, even of zero workgroups and so without its writes, in an earlier submission waited for, is enough. The sweep's stage reads 0.7 s whatever its work, against the args pass's 0.02 s: a fixed cost per dispatch of that pipeline (WARP compiling it at first use, a guess). Read the same day in the chore-ci-warp-args lane, on paper, wgpu `=30.0.1` (`dx12`, `static-dxc`). Every buffer is bound whole (`as_entire_binding`):
-
-| Dispatch | Group 0 | Group 2 | Group 3 | Dispatched |
-|---|---|---|---|---|
-| `preload_args` | none | table (3) and counters (4), read-write | the preload uniform (1); `preload_dispatch` (2), read-write | directly, 1 x 1 |
-| `preload_sweep` | the world, read-only | table (3) and counters (4), read-write | the preload uniform (1) | indirect from `preload_dispatch` at 0 |
-| `shade_preload` | the world, read-only | the hit textures (0, 1), irradiance storage texture (2), table (3) and counters (4) read-write, edits uniform (5) | the preload uniform (1) | indirect from `preload_dispatch` at 12; reads `@builtin(num_workgroups)` |
-
-The suspect the lane started from does not hold: `preload_dispatch`, the only indirect args buffer, is bound read-write by the args pass alone, never by the sweep, and in (b) and (c) the sweep does not even read it. No buffer is read-only in one of these passes and read-write in the other, and no two bindings cover different ranges of one buffer. What the sweep and `shade_preload` share read-write is the table and the counters, which the args pass binds read-write too, so their state between the args pass and `shade_preload` is the same with the sweep as without. On DX12, wgpu 30 gives every pipeline layout three root constants for the special builtins and, with indirect validation on, a command signature that sets them; each indirect dispatch first runs wgpu's validation pass, which copies the three words into one device-wide buffer, and dispatches from that. (c)'s sweep is direct and skips that path, so the sweep's indirect path is not it either. wgpu's issues name nothing that matches. The nearest are #10632 (DX12 drops the UAV barrier between two writes to a write-only or atomic storage texture, WARP included: a hazard inside a submission, which cannot hang submissions waited for one by one) and #8368 (device removals on WARP in wgpu's own tests). So the paper reading is not conclusive, and no fix is prepared. One more diagnostic push from the lane, every run split and killed past 180 s, worst case 15 min of the step's 25 (`VXE_DIAG_PRELOAD` now takes comma-separated switches):
-- control: `skip-sweep,read-args`, the words read back where the light pass is recorded, as the reference;
-- (1) `read-args`: `preload_dispatch`'s six words and the counters' `pre_fill_groups` and `pre_groups`, read back after the sweep and before `shade_preload` is recorded, as a `diag: frame 0 split: args read back: ...` line. The copy moves the words' buffer to a copy source before the indirect read, so an exit 0 here would itself place the buffer's state;
-- (2) `direct-shade`: the same read, then `shade_preload` dispatched directly with the x and y read back;
-- (3) `scratch-sweep`: the empty sweep with its group 2 bound to scratch buffers no other pass binds, so it shares no read-write buffer with `shade_preload`;
-- (a) the normal split, to show the hang still reproduces in that build.
-
-Locally on lavapipe (Mesa 26.2.5, LLVM 23.1.3), exclusive perf lock, load 1.4 to 6.8 (loaded from the third run on), every mode exits 0 over 3 frames, `shade_preload` 11 to 17 ms after the sweep. Each read reads the sweep's words [1024, 1, 1], `shade_preload`'s [3, 2, 1] (3 columns and the 2 rows of the lighting grid, no preload rows) and 0 fill and 0 preload groups, with the sweep skipped or not. Those are the words WARP should read in (1) if its args pass and the sweep are right.
-
-Read 2026-11-08 from CI run 42489194343 on f23c5b3 (WARP, 3 frames, split, each killed past 180 s):
-
-| Run | Result | Read back |
-|---|---|---|
-| control: `skip-sweep,read-args` | **killed** after the read-back line | sweep [1024, 1, 1], `shade_preload` [3, 2, 1], 0 fill, 0 preload groups |
-| (1) `read-args` | killed after the read-back line | the same words |
-| (2) `direct-shade` | killed after the read-back line | the same words |
-| (3) `scratch-sweep` | **exits 0 in 59 s**; `shade_preload` 18.9 s after the sweep | none |
-| (a) the normal split | killed after "preload sweep done" | none |
-
-- **The words are right.** WARP reads exactly lavapipe's words, so the hang is not a garbage dispatch.
-- **The read-back alone hangs it.** The control was the sweep-skipped run that exits 0 in runs 42477325818 and 42483023036, but with the read-back added it was killed. So a separate submission that only copies `preload_dispatch` between the args pass and `shade_preload` is enough, with no sweep at all.
-- **(2) says nothing about the indirect path,** because it carried the same read-back.
-- **(3) is clean.** With its table and counters on scratch buffers, the empty sweep leaves `shade_preload` running.
-- **Reading:** on WARP, any submission between the args pass and `shade_preload` that touches a buffer `shade_preload` then uses (the table and counters bound read-write, or `preload_dispatch` copied) makes `shade_preload` hang. Both the in-frame path and the split hang, so it is not only a cross-submission effect. This is a guess until a debug layer reads it.
-- **Next candidates, the owner's pick:** the D3D12 debug layer with GPU-based validation on the WARP runs, which names a bad state or hazard if wgpu emits one; wgpu newer than 30.0.1 on WARP; and (2) without the read-back.
-
-Pushed 2026-11-08 from the chore-ci-warp-debug lane, the owner's pick: the debug layer on the WARP runs. The fly-through's headless instance already reads wgpu's `WGPU_VALIDATION` and `WGPU_GPU_BASED_VALIDATION` (`with_env`). The debug build has asked for `VALIDATION` all along, but wgpu-hal skips the layer without a word when the Graphics Tools feature (`d3d12SDKLayers.dll`) is missing, and no D3D12 line ever reached the earlier logs, so the layer probably never loaded. The step now checks for the DLL, installs the feature with DISM if it is missing (killed past 480 s, not fatal), and skips the runs if it is still absent. The layer's output is logged at trace and printed deduplicated, with the `diag:` lines and a new `diag: instance flags` line. Three runs, every one split: (a) the normal split with the layer and GBV (180 s); (b) `scratch-sweep` with the same, which should exit 0 and so gives the baseline lines (300 s); (c) the normal split with the layer and no GBV (180 s). The read-args and direct-shade runs are dropped. Worst case 19 min of the step's 25. Locally on lavapipe all three exit 0 in 10 to 23 s (load 27, loaded), and with no Vulkan validation layer installed they print no layer lines.
-
-Read 2026-11-09 from CI run 42573270474 on e5d6646 (WARP, driver 10.0.26100.33648). The image already has `d3d12SDKLayers.dll`, so DISM did not run. Each run's `diag: instance flags` line shows the request it made. The gate's shutdown test still failed at 122 s, without the layer.
-
-| Run | Flags | Outcome | Layer lines |
-|---|---|---|---|
-| (a) normal split, GBV | DEBUG, VALIDATION, GPU_BASED_VALIDATION | crashed at 23 s, 0xC0000005 (access violation), last line `frame 0: start` | none |
-| (b) scratch sweep, GBV | the same | crashed at 23 s, 0xC0000374 (heap corruption), last line `frame 0: start` | none |
-| (c) normal split, no GBV | DEBUG, VALIDATION | **exited 0 after 62 s**: preload sweep done at 30.7 s, `shade_preload` done at 50.2 s, all 3 frames | none |
-
-- **Reading:** GBV crashes WARP before the first stage of frame 0, including on the scratch baseline that exits 0 without it, so (a) and (b) say nothing about the hang. With the debug layer on and GBV off, the split that hung past 600 s in every earlier run completes, and the layer reports no misuse of states or barriers. The layer's own work at record and submit time clears the hang. That points at a race inside WARP across submissions on buffers `shade_preload` uses, not at a bad state that wgpu records. crates.io's newest wgpu is still 30.0.1, so a newer wgpu is not available to try.
-- **Next candidates, the owner's pick:** run the Windows GPU smoke set with `WGPU_VALIDATION=1` (the layer that cleared the hang), which also keeps validation running on Windows; take the GPU smoke set off WARP and keep Windows on CPU tests until the preload's fate in Plan 0059; or a backend-neutral change that keeps other submissions off the preload's buffers between its args pass and `shade_preload`, which the scratch sweep showed runs.
-- **Ruled 2026-11-09 (owner): no GPU tests on WARP.** The `ci-windows` profile runs the quick tier's filter, the CPU tests only, and the debug-layer step is gone from `ci.yml`. Windows still creates every pipeline on DX12 (the pipeline-times step). The env-gated switches in the code (`VXE_DIAG_PRELOAD`, `VXE_DIAG_SPLIT_FRAME0`, the `diag:` lines) stay until Plan 0059 settles the preload. If the path stays, this entry is how to put a GPU smoke set back on Windows; if it goes, they go with it and this entry closes.
-- **Plan 0059 closed 2026-11-09 on "baked":** the preload, its sweep and `shade_preload` are deleted, and with them `VXE_DIAG_PRELOAD` and `VXE_DIAG_SPLIT_FRAME0`; the `diag:` lines stay (`apps/flythrough/src/main.rs` then; `app.rs`'s `diag` since Plan 0045, whose headless runner dropped the start, device and per-frame ones for `headless:` lines). Next, the owner's call: one push that runs the GPU smoke set on WARP again. Clean, the `diag:` lines go and this entry closes; still hung, the hang was not the preload's.
-
-### llvmpipe SIGSEGV on CI's Ubuntu since Plan 0057 Phase 7
-
-Read 2026-11-06 from the same run. Three gate tests died with SIGSEGV on lavapipe: `flythrough::castle_golden castle_gate_golden` (57.5 s, 20.8 s on the run before), `flythrough::fsr2 a_sideways_step_keeps_fsr2s_history` (20.8 s) and `a_still_camera_has_no_disocclusion` (27.7 s). The driver was the same on both runs: `mesa-vulkan-drivers 26.0.8-1ubuntu0.3`, LLVM 21.1.8, image ubuntu-26.04. Every test in that run that rendered a shaded frame crashed. The GPU tests that passed render none (`frame_bytes_under_fsr2_swap_the_histories_for_fsr2s_inventory`) or render cutaway, where the fill and preload do not run. Memory is not it: each test peaks at 0.73 to 0.92 GB and four at once at 3.7 GB locally, against the runner's 16 GB. It does not reproduce on local lavapipe (Mesa 26.2.5, LLVM 23): the ci profile at four threads passed 729 of 729. A guess: a Mesa 26.0.8 llvmpipe crash on a Phase 7 shader, not concurrency. Read 2026-11-08 from CI run 42222147229 on 7c73b37, the GPU tests one at a time: `castle_gate_golden` still died with SIGSEGV at 60 s on the same driver, so concurrency is ruled out and the driver crash stands; the ci profile's `@global` line is back. The owner chose (2026-11-08) a chore lane: a newer Mesa on the runner first, a local Mesa 26.0.x bisect of the pass if that is not available. Read 2026-11-08 in that lane (Launchpad, the day's indexes): the kisak-mesa PPA publishes `26.2.6~kisak1~r` for resolute (26.04) amd64, with its libdrm `2.4.134-3~kisak~r`, and the runner's archive has 26.0.8-1ubuntu0.3 at most; oibaf's PPA publishes no mesa at all. kisak's resolute build links Ubuntu's `libllvm21`, so it would have moved the runner to Mesa 26.2.6 on the same LLVM 21.1.8, not to the local pair (Mesa 26.2.5, LLVM 23). Ruled 2026-11-08 (owner): no kisak-mesa PPA and no other package source whose version cannot be pinned; the owner does not trust packages that can't be pinned, and the PPA indexes its latest build only. The runner keeps its stock Mesa 26.0.8. The LLVM 21 suspicion is accepted, and the pass is to be found on a local build of Mesa 26.0.8 from the release tarball against LLVM 21. Read 2026-11-08 in that lane, on local builds under `~/build/mesa-26.0.8`: the tarball `mesa-26.0.8.tar.xz` from mesa.freedesktop.org, sha256 caf1c0061a68e88dfa74967a7e780c0e85d65b6c4e334cd69095a5dc54ad78bc as published in its release notes, signature good from Eric Engestrom's key 57551DE15B968F6341C248F68D8E31AFC32428A6; LLVM 21.1.8 from Arch's extra `llvm21` and `llvm21-libs` 21.1.8-1, signatures and sync-db sha256 checked, extracted rather than installed. Lavapipe only, meson 1.9.1 with `-Dbuildtype=debugoptimized -Db_ndebug=true -Dvulkan-drivers=swrast -Dgallium-drivers=llvmpipe -Dplatforms= -Dopengl=false -Dglx=disabled -Degl=disabled -Dgbm=disabled -Dgles1=disabled -Dgles2=disabled -Dllvm=enabled -Dshared-llvm=enabled -Dvideo-codecs= -Dvalgrind=disabled -Dlibunwind=disabled -Dbuild-tests=false`, 804 steps in 53 s at `ninja -j12` on the dev box. It reproduces: `castle_gate_golden` dies with SIGSEGV at 24.6 s (adapter `Mesa 26.0.8 (LLVM 21.1.8)`), and so do `a_sideways_step_keeps_fsr2s_history` and `a_still_camera_has_no_disocclusion`. The core's crashing thread is a llvmpipe compute worker in JIT code with no symbols (`mov (%rbx),%rax` with rbx 0, a null pointer loaded from the shader's stack frame); its registers hold the table's mask 0x1fffff, the last cell's byte offset 0x5ffffd0 and the blend header's dirty word at 0x6000004, so the shader was addressing the per-face table. A local dispatch trace in lavapipe (a patch kept beside the build, not in the repo) names the dispatch: with the preload on, the last dispatch before the crash is the indirect 8 x 8 one, `shade_preload` (cache_fill.wgsl, the light pass with the preload's fill and probes); with `--preload off` it is the plain light pass `shade` (light.wgsl). Both run `shade_px`. Not Phase 7 alone: a bisect of the fly-through's 3-frame headless run on this build passes on 9dbb933 (main, CI's last green) and on 2bf4568 (plan 0057 Phase 4 part 2), and crashes on their merge a337f76 and every later point read (dc2a470, ef8cf7d, ca2b0e9, 4de5c4e, 41cda0c). The merge's only change to march.wgsl is Params' 16-byte tail (`emitter_cap`, `dither`), so the crash follows the shader's build, not a single feature, which is what a compiler bug looks like. Not LLVM 21: the same Mesa 26.0.8 tarball built against Arch's LLVM 23.1.3 crashes the same test, and Mesa 26.2.6 (sha256 b9436b3e1a8be76fbd4823dc884f90596ab7c6ac5e1867a305e66ffccfb31a92, same signer, same options) built against the same LLVM 21.1.8 passes all three tests. The accepted LLVM 21 suspicion is refuted: the crash is Mesa 26.0.x's own, fixed by 26.2. The owner's options, no shader changed: CI builds the pinned 26.2.6 tarball against the runner's LLVM 21 (55 s here at 12 jobs; the runner has 4 cores, and the build could be cached by its hash), or waits for the runner's image to ship Mesa 26.2. Ruled 2026-11-08 (owner): (a). CI's Linux arm builds lavapipe from the 26.2.6 release tarball, checked by its sha256 (no signature check, which would need an unpinned keyserver fetch), against the runner's own `llvm-21-dev`, with the options above and meson 1.9.1, ninja 1.13.0, mako 1.3.10, packaging 25.0 and pyyaml 6.0.3 from PyPI. It caches the install by the hash, the options and the runner image, points `VK_DRIVER_FILES` and `VK_ICD_FILENAMES` at it, and fails the job unless vulkaninfo reports Mesa 26.2.6. The workflow's exact steps, run in an `ubuntu:26.04` container capped at 4 CPUs, built it in 102 s and the loader reported `Mesa 26.2.6 (LLVM 21.1.8)`. The build comes out once the runner image ships Mesa 26.2 or later. Read 2026-11-09 from Soak run 42602069520 on 8092b6c, the first weekly soak: `soak.yml` still used the runner's Mesa 26.0.8, and 67 of its 79 tests died with SIGSEGV. The build moved into a composite action, `.github/actions/lavapipe`, which both workflows call, under the same cache key.
-
-### Pathfinding over the coarse grid and the walkable map
-
-Parked 2026-11-18 at Plan 0079's close (owner question 3 took the recommendation: a seeded
-wander in the fly-through, no pathfinding). The engine now has the movers (`vxe-sim`'s cylinder
-controller and sphere surface mover), `probe_ahead`, the coarse grid and the per-brick walkable
-map (0.8 m cells); a creature that goes somewhere needs a path over them. **What it takes:** a
-search over the walkable cells (and, for a crawler, over faces: the gradient and the contact
-normals say which cells are climbable), integer costs so the server's path is the same on every
-platform, a string-pull to waypoints the mover's heading can follow, invalidation when an edit
-changes a cell (M3's region notifications), and a budget per tick for many creatures. About a
-plan and an ADR (the graph: cells, faces or both). **Pick up when** the first consumer asks for a
-creature that hunts or flees rather than wanders.
-
-### The built-in walker and its scripted circle go with the library in the tester archive
-
-Parked 2026-11-18 at Plan 0079's close (its Decision 5). `apps/flythrough/src/entities/walker.rs`
-(the four-part walker made in code) and `Walkers::walk_pose` (its `f32` circle under the `wander`
-toggle) exist only for a run with no entities library: `scripts/package-tester.sh` ships none, so
-the tester archive falls back to them. **What it takes:** the archive packs
-`apps/flythrough/assets/entities/`, `library::builtin` and the circle go, the `with_walker` table
-rows and the tests that place the built-in walker move to the library's walker. A chore, no ADR.
-**Pick up** with the next tester release that ships the library.
-
-### The spider's mover tick costs twice the guess
-
-Read 2026-11-18 at Plan 0079's close (`docs/nfr.md` section 8, `docs/plans/logs/0079.md` Phase 4,
-loaded): 64 spiders' movers read 1.4 ms a tick in the room course and 2.8 ms on the showcase
-(36 drawn), +3.07 ms of frame CPU against the plan's +1.5 ms guess, while 64 walkers read 0.35 ms.
-The owner's window did not notice it. Suspects, none attributed: the pose work per tick
-(`sample` of a fourteen-part clip, `blend` while fading, the `Pose` clones into `set_pose` and
-`prev`, all allocating), the sphere sweep's candidate boxes where a spider dwells at a pillar's
-vertical edge (up to 220 ticks), and `solid_gradient` at `half` 6 (0.92 µs alone). **What it
-takes:** a profile of `Walkers::tick` at 64 spiders on the showcase, then the cut the profile
-names (a pose written in place, a tick every other frame for bodies out of view, or a cheaper
-dwell). **Pick up when** a scene needs more than about 30 crawlers, or before the first consumer
-runs creatures on its server tick.
 
 ## Ideas from Bonsai
 
@@ -1301,6 +1196,100 @@ deterministic (ADR-0001, the non-negotiables), and a GPU source would break repl
 plus log (ADR-0007). Its 1.6.2 stores a 16-bit HSV colour per voxel; ours stores a material id
 whose row carries colour, class and an opaque payload (ADR-0065), so a colour change is a row
 edit, not a re-write of every voxel.
+
+### A hybrid far field: raster the far LOD as meshes, march near
+
+Raised 2026-11-19 in the Bonsai comparison: Bonsai rasterizes meshed chunks. For us the hit pass
+reads 1.4 to 1.9 ms of a 7.8 ms GPU frame (RTX 3080, hills, the 86c window's HUD); the rest is
+light, denoise and FSR 2, which raster would not remove. Meshing every 10 cm voxel would also cost
+triangles, edit latency and memory beside the brick map. Where raster can win is a long view, where
+the march crosses much empty space to the far LOD. **What it takes:** meshes of the far mips only
+(they are not edited at that scale), drawn into the hit buffer's depth and normal before the march,
+which then starts at the near band. An ADR, and measurements on both adapters. **Pick up when** a
+reading names the far field's march as the frame's largest stage, or a view-distance budget
+cannot be met on the baseline GPU. **If picked up (2026-11-20):** the mesher to start from is
+binary greedy meshing (Davis Morley, "Greedy Meshing Voxels Fast", Handmade Seattle 2022): one
+64-bit occupancy mask per column, faces found by `col & !(col << 1)` per axis, rows merged by
+bit runs, quads packed in 32 bits; the talk reports meshing in tens of microseconds a 64^3
+chunk, which would make re-meshing an edited far mip cheap. His "global lattice" (raster one
+plane per voxel slice and look the voxel up per fragment) is rejected for us: it is a renderer
+in place of the march, with its overdraw.
+**Owner, 2026-11-20:** leans to this hybrid as the answer for long-distance rendering. Plan
+0033 (the marched clipmap, ADR-0028) is re-read against it before its lane starts: raster the
+clip levels' meshes against marching them, measured on both adapters, as an ADR either way.
+**Owner, later 2026-11-20:** "agreed on far distance": the hybrid is the agreed direction for
+the far field, not only a lean. The re-read runs after Plan 0087 (the rename), as the first M10
+step; the meshing explainer and Morley's talk are in `references/voxel-optimizations.md`.
+The key light's far pixels casting the ray inside the far normal's band ("Narrow the far
+normal's band", under Engine mechanisms) was taken by Plan 0098.
+
+### World-space debug lines: lines, boxes and a highlighted voxel over the frame
+
+Raised 2026-11-19 (Bonsai's `src/engine/debug_draw.cpp`: lines, AABBs, a highlighted voxel,
+chunk boxes). We have a cutaway view, the HUD's text grid and the entity mark (ADR-0074); no
+way to draw a chunk's box, a sweep's path, a light's reach or a job's chunk in the world.
+**What it takes:** a line list the app fills each frame (world-space segments with a colour),
+drawn by one render pass after the composite and depth-tested against the hit buffer's
+distance, so a line behind rock hides; `vxe-render` owns the pass, the app owns the list.
+Size M. M7's debug views (material ids, coarse grids, flags) need it as their canvas.
+**Pick up** with the first M7 debug view, or when a streaming or collision entry above needs
+to see where a job or a sweep went.
+
+### Per-job performance tracking: reserve, retire and scopes per streaming and bake job
+
+Raised 2026-11-19 (Bonsai's `work_queue.h` `TrackPerformance` flag; its debug view draws a
+job's scopes over its reserve-to-retire span). Our streaming workers (`vxe-world`
+`stream/mod.rs`) and the bake queue's jobs are timed as stages and per-second lines, never as
+one job from its queueing to its retirement, so a job that waits long and runs short reads the
+same as one that runs long. **What it takes:** a job id and a reserve and retire frame index on
+each job, recorded into the profiler's frames as a span on the job's worker lane with the
+frame it was asked for and the frame it landed; a tally of jobs retired late per second on the
+HUD. Size S on top of Plan 0091, which owns the lanes. **Pick up** after Plan 0091, when a
+streaming or settle entry above asks why a chunk arrived late rather than why it ran slow.
+
+### Fan-in continuations: "generate these chunks, then bake their light" as one dependency
+
+Raised 2026-11-19 (Bonsai's `OnComplete`, `docs/03_async.md`): a job may name a continuation
+that runs once every job in its group has retired, so a fan-out of chunk jobs fans in without
+polling. Ours poll: the live queue re-checks each frame whether a chunk's reach is resident
+before its bake may run (the "reach-bound" census). **What it takes:** a group counter on the
+streaming pool's jobs and a continuation the last one fires (the bake request for the group),
+scheduling only, no change to what a job computes, so determinism holds. Size S to M, in
+`vxe-world`'s pool with the bake queue as the first client. **Pick up** when the settle
+readings (the entries under Next up) name the poll's latency, not the bake, as the wait.
+
+### Edit coalescing per chunk per tick: a check first
+
+Raised 2026-11-19 (Bonsai's 1.6.1 notes, per the research pass: several edits on one chunk in a
+tick give one re-mesh). Ours should already coalesce: `sync` visits the world's dirty-chunk set
+(`vxe-render` `gpu_world/mod.rs`), a set, so two ops on one chunk between syncs should give one
+upload. Not asserted anywhere read. **What it takes:** a headless test that applies two carves
+on one chunk, syncs once, and reads one chunk upload from the sync's counters; if it reads two,
+the fix is in the dirty set's handling. Size S. **Pick up** at the next sync or edit-cost plan.
+
+### Hot-reload a logic component, then replay to the current tick
+
+Bonsai reloads its game library when the file changes (`game_loader.cpp`). We can go further:
+swap the WASM component when it is rebuilt, then replay the op and input log from the seed to
+the current tick, so state stays exact (determinism is what makes this possible). **What it
+takes:** a watcher in the fly-through and a re-instance in `vxe-script-wasm`, driven through
+`vxe-net`'s log. Size S to M. **Pick up with** the authoring loop (ADR-0072), or sooner if
+writing logic gets slow. Sharpened 2026-11-19: one mtime watcher in the fly-through should
+serve every reloadable file: the WGSL (Plan 0092 builds the watcher), this component, and the
+settings file (Bonsai's `settings.init` and `hotkeys.init` are parsed by struct member name,
+its 1.4.2 notes), so a second reload adds a path and a handler, not a second poll.
+
+### A two-stage world source: shape, then decorate by slope
+
+Bonsai's generation shapes (solid or air, with colour), takes the gradient, then decorates with
+the surface normal in hand: cliff rock on steep faces, grass on flat ground. Its user stages
+hot-reload in a playground (`docs/terrain_gen.md`). **What it takes:** a `WorldSource` helper in
+`vxe-world`, on the CPU, because Bonsai's GPU generation would break the headless world. Add a
+reloadable parameters file in the fly-through for tuning. Size S to M.
+**Pick up with** M10's outdoor work or a consumer's surface source. Sharpened 2026-11-19: the
+part worth copying first is Bonsai's noise-to-value remap through a polyline (a table of
+`(in, out)` points, integer-friendly) and the small visualizer that draws the curve while it is
+edited (its 1.3.0 release notes); terrace, plateau and cliff come from that one remap.
 
 ### Edit algebra: smooth booleans, shape modifiers, more primitives
 
@@ -1339,17 +1328,24 @@ hand-made sample would give endless cave or room variants. **What it takes:** ba
 whether Bonsai 2.0 still wires it into generation. **Pick up when** a consumer wants generated
 interiors from samples.
 
-### A two-stage world source: shape, then decorate by slope
+### Versioned saves and logs, migrated on load
 
-Bonsai's generation shapes (solid or air, with colour), takes the gradient, then decorates with
-the surface normal in hand: cliff rock on steep faces, grass on flat ground. Its user stages
-hot-reload in a playground (`docs/terrain_gen.md`). **What it takes:** a `WorldSource` helper in
-`vxe-world`, on the CPU, because Bonsai's GPU generation would break the headless world. Add a
-reloadable parameters file in the fly-through for tuning. Size S to M.
-**Pick up with** M10's outdoor work or a consumer's surface source. Sharpened 2026-11-19: the
-part worth copying first is Bonsai's noise-to-value remap through a polyline (a table of
-`(in, out)` points, integer-friendly) and the small visualizer that draws the curve while it is
-edited (its 1.3.0 release notes); terrace, plateau and cliff come from that one remap.
+Bonsai's serialisation versions each struct and keeps the old layouts (`world_edit_0`), which it
+converts forward on load (`serdes.h`). Our spill and log files refuse any other version
+(`persist.rs`, `wire.rs`). **What it takes:** pure migration functions in `vxe-world`, one per
+version step, each tested on fixed vectors. Size S to M. **Pick up before** the first consumer
+ships a save or a recorded log that must survive an engine upgrade.
+
+### Inspector rows derived from struct annotations
+
+Bonsai's `poof(@do_editor_ui ...)` generates a live inspector for any struct, with ranges,
+conditions and skip flags, so brushes, particles and nodes need no hand-written UI. Our field
+table (ADR-0058) covers only the render settings. **What it takes:** a small proc-macro crate
+that derives overlay menu rows, used by the apps. Materials, brushes, sources and poses would
+then get rows for free. `crates/` gains no UI dependency. Size M. **Pick up with** the
+editor-interface entry under Later apps. Sharpened 2026-11-19: the annotation set to copy is
+small: a range (`@ui_value_range`), a skip (`@ui_skip`) and an escape to a hand-written row
+(`@custom_ui`), as Bonsai's `render_settings.h` uses them; the derive needs no more at first.
 
 ### Bloom from HDR emission
 
@@ -1372,172 +1368,12 @@ array (`src/engine/card.h`). Uses: markers, decals, cheap debris, and the impost
 of entities" names. **What it takes:** sprites traced or merged into `vxe-render`'s hit buffer,
 which touches its layout. Size M. **Pick up when** far entities or decals are asked for.
 
-### Hot-reload a logic component, then replay to the current tick
-
-Bonsai reloads its game library when the file changes (`game_loader.cpp`). We can go further:
-swap the WASM component when it is rebuilt, then replay the op and input log from the seed to
-the current tick, so state stays exact (determinism is what makes this possible). **What it
-takes:** a watcher in the fly-through and a re-instance in `vxe-script-wasm`, driven through
-`vxe-net`'s log. Size S to M. **Pick up with** the authoring loop (ADR-0072), or sooner if
-writing logic gets slow. Sharpened 2026-11-19: one mtime watcher in the fly-through should
-serve every reloadable file: the WGSL (Plan 0092 builds the watcher), this component, and the
-settings file (Bonsai's `settings.init` and `hotkeys.init` are parsed by struct member name,
-its 1.4.2 notes), so a second reload adds a path and a handler, not a second poll.
-
-### Versioned saves and logs, migrated on load
-
-Bonsai's serialisation versions each struct and keeps the old layouts (`world_edit_0`), which it
-converts forward on load (`serdes.h`). Our spill and log files refuse any other version
-(`persist.rs`, `wire.rs`). **What it takes:** pure migration functions in `vxe-world`, one per
-version step, each tested on fixed vectors. Size S to M. **Pick up before** the first consumer
-ships a save or a recorded log that must survive an engine upgrade.
-
-### Inspector rows derived from struct annotations
-
-Bonsai's `poof(@do_editor_ui ...)` generates a live inspector for any struct, with ranges,
-conditions and skip flags, so brushes, particles and nodes need no hand-written UI. Our field
-table (ADR-0058) covers only the render settings. **What it takes:** a small proc-macro crate
-that derives overlay menu rows, used by the apps. Materials, brushes, sources and poses would
-then get rows for free. `crates/` gains no UI dependency. Size M. **Pick up with** the
-editor-interface entry under Later apps. Sharpened 2026-11-19: the annotation set to copy is
-small: a range (`@ui_value_range`), a skip (`@ui_skip`) and an escape to a hand-written row
-(`@custom_ui`), as Bonsai's `render_settings.h` uses them; the derive needs no more at first.
-
-### Per-job performance tracking: reserve, retire and scopes per streaming and bake job
-
-Raised 2026-11-19 (Bonsai's `work_queue.h` `TrackPerformance` flag; its debug view draws a
-job's scopes over its reserve-to-retire span). Our streaming workers (`vxe-world`
-`stream/mod.rs`) and the bake queue's jobs are timed as stages and per-second lines, never as
-one job from its queueing to its retirement, so a job that waits long and runs short reads the
-same as one that runs long. **What it takes:** a job id and a reserve and retire frame index on
-each job, recorded into the profiler's frames as a span on the job's worker lane with the
-frame it was asked for and the frame it landed; a tally of jobs retired late per second on the
-HUD. Size S on top of Plan 0091, which owns the lanes. **Pick up** after Plan 0091, when a
-streaming or settle entry above asks why a chunk arrived late rather than why it ran slow.
-
-### Fan-in continuations: "generate these chunks, then bake their light" as one dependency
-
-Raised 2026-11-19 (Bonsai's `OnComplete`, `docs/03_async.md`): a job may name a continuation
-that runs once every job in its group has retired, so a fan-out of chunk jobs fans in without
-polling. Ours poll: the live queue re-checks each frame whether a chunk's reach is resident
-before its bake may run (the "reach-bound" census). **What it takes:** a group counter on the
-streaming pool's jobs and a continuation the last one fires (the bake request for the group),
-scheduling only, no change to what a job computes, so determinism holds. Size S to M, in
-`vxe-world`'s pool with the bake queue as the first client. **Pick up** when the settle
-readings (the entries under Next up) name the poll's latency, not the bake, as the wait.
-
-### World-space debug lines: lines, boxes and a highlighted voxel over the frame
-
-Raised 2026-11-19 (Bonsai's `src/engine/debug_draw.cpp`: lines, AABBs, a highlighted voxel,
-chunk boxes). We have a cutaway view, the HUD's text grid and the entity mark (ADR-0074); no
-way to draw a chunk's box, a sweep's path, a light's reach or a job's chunk in the world.
-**What it takes:** a line list the app fills each frame (world-space segments with a colour),
-drawn by one render pass after the composite and depth-tested against the hit buffer's
-distance, so a line behind rock hides; `vxe-render` owns the pass, the app owns the list.
-Size M. M7's debug views (material ids, coarse grids, flags) need it as their canvas.
-**Pick up** with the first M7 debug view, or when a streaming or collision entry above needs
-to see where a job or a sweep went.
-
-### Edit coalescing per chunk per tick: a check first
-
-Raised 2026-11-19 (Bonsai's 1.6.1 notes, per the research pass: several edits on one chunk in a
-tick give one re-mesh). Ours should already coalesce: `sync` visits the world's dirty-chunk set
-(`vxe-render` `gpu_world/mod.rs`), a set, so two ops on one chunk between syncs should give one
-upload. Not asserted anywhere read. **What it takes:** a headless test that applies two carves
-on one chunk, syncs once, and reads one chunk upload from the sync's counters; if it reads two,
-the fix is in the dirty set's handling. Size S. **Pick up** at the next sync or edit-cost plan.
-
 ### Allocation counting per frame in the apps
 
-Raised 2026-11-19 (Bonsai counts every arena push into per-thread tables and prints
-`Allocations Pushes` on its status bar). Taken by Plan 0091 Phase 6 (proposed: a counting
-`#[global_allocator]` wrapper in the apps under its feature, the count on the HUD and in
-`run.json`); this line stays until that plan is approved, then leaves.
+Taken by [Plan 0091](plans/0091-the-frame-profiler-scopes-across-threads-a-gpu-lane-a-dump-for-agents-and-a-hud-ticker.md) Phase 6 (approved 2026-11-19): a counting `#[global_allocator]` wrapper in the apps under its feature, the count on the HUD and in `run.json`.
 
-### A hybrid far field: raster the far LOD as meshes, march near
-
-Raised 2026-11-19 in the Bonsai comparison: Bonsai rasterizes meshed chunks. For us the hit pass
-reads 1.4 to 1.9 ms of a 7.8 ms GPU frame (RTX 3080, hills, the 86c window's HUD); the rest is
-light, denoise and FSR 2, which raster would not remove. Meshing every 10 cm voxel would also cost
-triangles, edit latency and memory beside the brick map. Where raster can win is a long view, where
-the march crosses much empty space to the far LOD. **What it takes:** meshes of the far mips only
-(they are not edited at that scale), drawn into the hit buffer's depth and normal before the march,
-which then starts at the near band. An ADR, and measurements on both adapters. **Pick up when** a
-reading names the far field's march as the frame's largest stage, or a view-distance budget
-cannot be met on the baseline GPU. **If picked up (2026-11-20):** the mesher to start from is
-binary greedy meshing (Davis Morley, "Greedy Meshing Voxels Fast", Handmade Seattle 2022): one
-64-bit occupancy mask per column, faces found by `col & !(col << 1)` per axis, rows merged by
-bit runs, quads packed in 32 bits; the talk reports meshing in tens of microseconds a 64^3
-chunk, which would make re-meshing an edited far mip cheap. His "global lattice" (raster one
-plane per voxel slice and look the voxel up per fragment) is rejected for us: it is a renderer
-in place of the march, with its overdraw.
-**Owner, 2026-11-20:** leans to this hybrid as the answer for long-distance rendering. Plan
-0033 (the marched clipmap, ADR-0028) is re-read against it before its lane starts: raster the
-clip levels' meshes against marching them, measured on both adapters, as an ADR either way.
-**Owner, later 2026-11-20:** "agreed on far distance": the hybrid is the agreed direction for
-the far field, not only a lean. The re-read runs after Plan 0087 (the rename), as the first M10
-step; the meshing explainer and Morley's talk are in `references/voxel-optimizations.md`.
-The key light's far pixels still cast the ray inside the far normal's band: see "Narrow the far
-normal's band so far pixels stop casting the ray" below, for whichever far-field plan runs first.
-
-### Narrow the far normal's band so far pixels stop casting the ray
-
-Raised 2026-11-20 at Plan 0095 Phase 10's amendment (owner: "no worse than the before" at the
-far; narrowing is the far-field work's). ADR-0079's far reads the record, else the column map's
-horizon, only at the far normal's weight 1; inside the band (`[2, 6]` pixels a voxel) it still
-casts the key ray, and the Phase 9 readings (`docs/plans/logs/0095.md`, "Phase 9 readings", RTX,
-1080p, the forest's hold) put 96.9 % of the far's key samples on the ray, 1.8 % on the horizon,
-1.3 % on the record. So the far's motion bars read about the before's (hold +60 27.2 % against
-30.8 %, queue frozen). **What it takes:** a narrower band for the key's far gate only (its own
-pair of pixel sizes beside the shading normal's), or the far estimate inside the band blended
-with the ray instead of switched, read on the wobble rig (`gpu_wobble`'s soak reading) on both
-adapters; an owner window, since the far's shadows change where the ray gives way. **Pick up**
-with the hybrid far field above or Plan 0096's far tiers, whichever runs first.
-
-Taken 2026-11-21 by [Plan 0098](plans/done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md) (`key far mix step` with the band widened, judged at its window W1).
-
-### The F9 steps view drops the window to about 14 fps
-
-Seen 2026-11-21 at the diagnosis window (`docs/plans/logs/0098.md`, scene A; RTX 3080 Laptop):
-cycling F9 to the `steps` view drops the window to about 14 fps and the compositor flags it
-unresponsive. Unread: whether the view's own pass is slow or it disables a cheaper path. Pick
-up with any work on the debug views.
-
-### The baked key record's cell blend carries light across a shadow edge
-
-Found 2026-11-22 by the tunnel-leak diagnosis (branch `diag-leak` at `4a6770db`, its log
-`docs/plans/logs/diag-leak.md` on that branch; owner's window 97b: a blinking sunlit wall and a
-white patch in a dark tunnel, on the builds before and after Plan 0097). With the far estimate
-forced on every face, `KeyFar::Baked`'s blend between brick-direction cells (ADR-0079) puts
-12 225 px bright where the truth is shadowed, against 912 for the column map's horizon, which
-errs dark through the tunnel's mouth instead. Neither symptom reproduced headless, and at the
-wall's distance (2 to 4 m) the far weight is 0, so how the window read the record there is
-unshown. **What it takes:** first a debug view of each pixel's key source tag, to catch the lit
-state live in a window; then, only if the record is shown to be the source, a blend that does
-not cross a shadow edge (the own cell only, a blend gated by the cells' agreement, or a finer
-record). **Pick up** after Plan 0098's window W1: if the owner picks `key far column` as the
-default, the record is a setting off by default and this stays parked. The white patch seen
-from the spawn is real light through a roof slot of the test world's generator (the valley
-dips under the tunnel's crown over x 192 to 266), the owner's call to close.
-
-### A mip by majority can drop a roof one or two voxels thick
-
-Raised 2026-11-22 by the same diagnosis, untested: at LOD 1 the mip's majority rule may remove
-a 1 to 2 voxel roof (the tunnel at x 266 to 290), which would let the sun into an enclosed
-place at a distance. It bears on any far geometry that reads a coarser mip (Plan 0098's
-candidate for the far hits that flip under the jitter): a mip read for visibility or for a
-stable far hit wants "any solid" coverage, not the majority. **What it takes:** a CPU test of
-the mip of a one-voxel slab over air, and a reading of the far shadow under it. Pick up with
-Plan 0098's Phase 5 amendment.
 
 ## Later apps
-
-### Web demo as a separate app
-
-Decided 2026-10-16: a WebGPU and wasm demo for blog interactivity is a later, for-fun item and
-its own app under `apps/`. The fly-through and the native paths never change or lose performance
-for it; any crate support is target-gated. Not before the engine has steady lighting, coloured
-materials, a sky and a way to build interesting architecture.
 
 ### Designer authoring: level and logic text, a separate compiler, an editor over the text
 
@@ -1587,6 +1423,12 @@ scale gizmos with their limits shown, a preview that tells what will be cleared,
 keyboard, mouse and pad parity. Then a design that this entry's plan and the editor app share.
 **Pick up with** the editor-interface entry above.
 
+### Web demo as a separate app
+
+Decided 2026-10-16: a WebGPU and wasm demo for blog interactivity is a later, for-fun item and
+its own app under `apps/`. The fly-through and the native paths never change or lose performance
+for it; any crate support is target-gated. Not before the engine has steady lighting, coloured
+materials, a sky and a way to build interesting architecture.
 
 ### A second consumer in mind: a user-built, multiplayer game platform
 
@@ -1610,152 +1452,3 @@ input and the app lifecycle** (suspend, surface loss). **Wasmtime on iOS** has n
 (its interpreter) or ahead-of-time components. **aarch64 determinism vectors in CI.** A new
 target is an ADR (ADR-0001 names Linux and Windows) and about a milestone's work; the cheap first
 step is the limits audit, which says what the rest costs. Tablets before phones.
-
-### The fired lights' grain: the list lights' visibility on a running mean
-
-Parked 2026-11-18 by Plan 0086 Phase 22 (the second window's defect 3: "when I shoot light,
-walls becoming grainy", 20.png, the noon tunnel under anchor 0). Phase 16 read it as Plan
-0058's, not the sky's (`docs/plans/logs/0086.md`, Phase 16's table and Phase 22): with five
-lights fired the lit patch's p99 change is 25 to 28 levels in flight and 5 to 6 at rest, the
-same with the sky off; no sky ray returns over the lights; the light pass's rise (0.13 to 4.6
-ms, loaded) is the five lights' shadow rays. In flight the list changes every frame and
-`LIGHTING_LIGHTS_CHANGED` takes the direct part's sample as it is. What it would take: the
-list lights' shadow visibility on a running mean of its own, as the key light's is on the
-visibility pair's `g` (Plan 0086 Phase 19), reprojected and reset where the light moves. Pick
-up when the third window (Plan 0086 Phase 24 run 3) judges the walls under the default anchor
-4 still grainy, or a consumer fires lights at walls in the dark.
-
-### Settle early: a coarse area answer where an estimate is not still, and a hold once it is
-
-Parked 2026-11-19 (owner, at Plan 0094's Phase 1 and 2 readings: "light that is not still can be
-approximated around area and settle exit early; we don't need super precision if it becomes
-flicker", and "this exit early strategy can be used a lot around similar cases"). The principle:
-when an estimate is young or restarting, show a coarse answer pooled over its neighbourhood and
-narrow it as it ages; once its samples sit inside its band, hold it and move again only through
-one fade when the band is left. Plan 0094 takes the two forms for the visibility pair (Phase 3's
-settle on both means, Phase 6's age-weighted pool), and its window judges them. **A candidate
-rule for ADR-0076** ("an estimator at rest holds by construction, not by its cap"; the rejected
-alternative is a filter at a converged age), to be written at Plan 0094 Phase 7's verdict.
-Where else it might apply, each unread: **the exposure** (ADR-0033's two-stage already has a
-dead band in rule 5's still clause; a hold once the meter is within 1/64 EV); **the probes or
-lamp channel** (hold a probe whose samples sit in its band, Plan 0051's lamp channel grains at
-rest); **the denoiser's footprint** (the a-trous wide while the variance is young, none once
-settled, which is SVGF's intent and this plan's pool); **the fired lights' grain** (the entry
-above: a running mean that settles instead of a per-frame sample); **the entity lighting**
-(a part's coarse grain holds its light until the part moves); **the far field and LOD
-transitions** (hold a tile's converged value across a mip switch, fade the switch); **the bake
-queue's fresh chunks** (a landed chunk's summary as the coarse answer for its faces until the
-pair converges, then hold). Pick up per place when its flicker is read; Plan 0090's counter
-names the places.
-
-**2026-11-19, Plan 0094 Phase 3: the settle on the pair left the plan by its stop rule**
-(`docs/plans/logs/0094.md`, Phase 3's re-read). As built (`temporal.wgsl` `settle_at_cap`: the
-band at the cap only, a hold after 16 in-band frames, a release after 4 consecutive frames out
-of it into a 1/16 fade; `Lighting::settle`, `--settle on|off`, default off): at rest it holds
-93 % of the forest's pixels and the ages match the settle off, but the trunks' pops at rest do
-not fall (0.352 % on, 0.367 % off at `10,180`) and the turn's return frame reads 37.6 % over 8
-on against 21.9 % off; the clock at 1x releases 40.6 pixels a frame with 1.04 % of them a
-`Flash`. Unread: why the return frame doubles (the trace the amendment names, the key mean's
-age per frame at a returned penumbra pixel), and whether the pops at rest are the direct
-part's own blend rather than the means'.
-
-**2026-11-20, Plan 0094 Phase 7's verdict: the hold form is rejected, the principle becomes
-ADR-0076 rule 6.** The owner's eye agreed with the readings (window 94a: settle on against off
-"no significant difference" at rest, "3a looks better than 3b, especially in motion"); the
-settle's code is removed by the owner's call (Plan 0094 Phase 7a) and ADR-0076's Alternative F
-is its record. The age-weighted pool (Phase 6) lowered none of the hole band's shares and
-raised Slow 0.4 to 2.4 %, and is off by default from Phase 7a. What the owner asked for at the
-window ("if we have to wait for a minute for light to settle, something is wrong with the light
-and we need approximate things") is written as rule 6: a coarse stable answer while the precise
-one has not landed, one fade when it does, and every reading on the undrained image too. The
-places listed above stay candidates; the first one the rule points at is the bake queue's drain
-(the entry below, "The bake queue's backlog at a still camera").
-
-### A second `Frame` on one rig does not drain its bake queue
-
-Noted 2026-11-19 by Plan 0094 Phases 1 and 2 (`docs/plans/logs/0094.md`, bars 2 and 4 of
-Phase 1, bar 1 of Phase 2): on the hills, the castle's arms (b) and (c) and the forest's turn
-(twice on a fresh rig) the queue did not drain in 30 000 stepped frames, where a fresh process
-drained the same scene in 1200 to 3300; the undrained arms read up to 16 % of pixels over 4 at
-rest against under 1 % drained. Plan 0094 runs every arm in its own process. What it would take:
-a reading of the queue's depth and the job at its head on the second frame (a job that never
-lands, or a rig that re-marks what the first frame baked). A chore or the perf plan's; read
-before any gate test shares a rig between two frames.
-
-### The bake queue's backlog at a still camera: minutes to drain what is in view
-
-Noted 2026-11-20 at Plan 0094's window 94a (`docs/plans/logs/0094.md`, Phase 7; the session
-log's `bake queue:` lines): in the forest and on the hills the HUD read a queue depth of 12 752
-to 16 150 jobs through every run, at a still camera after full residency (17 077 full chunks at
-29.9 s), with `in view 3652 waiting (1030 coarse)`, `missing 244 (fallback 232, black 12)` at
-the 15:00 still, and `baked` rising by 9 to 38 chunks a second at `budget frame:1.5`, which is 7
-to 30 minutes to the drain. The owner's rule from that window (ADR-0076 rule 6): the image
-meanwhile is the judged image. What it would take, in order: the drain's rate as a figure in
-`docs/nfr.md` (jobs a second and the seconds until every chunk in view has a record, at a still
-camera, on both adapters) with the HUD showing it; the in-view jobs ahead of the rest and the
-budget sized to land them within seconds (ADR-0048's order already scores the view; the step's
-6.3 ms on the main thread, Plan 0086 Phase 24c, is the other half); and the coarse pass as the
-rule's "coarse answer" for what is not landed (it exists: `coarse 1479 chunks` in the same
-line). The perf plan's first item; a related finding is "A second `Frame` on one rig does not
-drain its bake queue" above.
-
-### The dug hole's light: the first frames and the lit floor
-
-Noted 2026-11-20 at Plan 0094's window 94a (runs 1 and 4: "dig still flashes, hole lit";
-`live/window94a/4-dig-hole-lit.png`); the owner: "can even accept that", and it does not matter
-in tunnels under the headlamp. Two halves. **The first frames** ("bright spots that settle for a
-few frames"): Plan 0094 Phase 2 bar 2's thirds, the column's seed at the hole's new faces (open,
-1.0, at `SEED_COLUMN` 2 until the dig's job lands, one frame on the RTX, two on the RENOIR) and
-the key mean's restart on the new faces (the edit box's reset, ADR-0018); Phase 6's table
-(`flicker::reading::hole_band`): flash plus dip plus overshoot 14.5 to 23.7 % of the hole band
-in every arm, the pool included. Both are history mechanics; the motion lane that takes the
-turn's wobble inherits them (a seed that carries the pre-dig value as rule 3's `old` across the
-edit box's reset is the candidate rule 6 names). **The lit floor** (blue-grey under a shaded
-hill, HUD `missing 0`, so the baked visibility): Plan 0094 Phase 7a (6) reads the stored
-visibility against a brute-force aperture over the dug voxels and writes the word here:
-`geometry` (a radius-0.5 m sphere's floor sees about half the sky and a grey face under a blue
-sky reads blue beside grass; then the look is the hole's walls' bounce and a darker soil, a look
-plan's) or `overstated` (a bake finding). **Read: `geometry`** (`gpu_sun`
-`reading::the_dug_floors_baked_visibility_against_its_aperture`, lavapipe, the flat floor under
-`Sky::uniform(1.0)` standing in for the hills): the 10-voxel box's record 0.184 against 0.209
-over its cell's faces; the radius-5 sphere's record 0.718 against 0.748, but its record cell is
-the 8-voxel brick, so the bowl's own faces (aperture 0.473) share one value with the open
-ground beside them: at brick resolution a small hole's floor shows the brick's mean, not its
-own sky. Pick up after the motion lane, or with the next dig look.
-**Plan 0095's close (2026-11-21) adds a reading** (`docs/plans/logs/0095.md`, Phase 10, the dig
-split at `85fb3de7` against main `e6582b9e`): with the key words in the dig's ring, the dug box's
-share over 4 levels at the dig's frame rose from 1.21 to 3.54 % on the RTX and from 1.26 to
-2.97 % on the RENOIR (the outside's unchanged at about 1.1 %), and the RENOIR's ring landed 138
-dig bricks by N + 2 against 368 (its samples a step about +21 % each). Not attributed; read it
-with the first frames above.
-
-### The key term's grain at rest on a penumbra, and the a-trous's spatial variance (ii)
-
-Noted 2026-11-20 at Plan 0094's window 94a, run 2 (the forest at 15:00: "still some grain" on
-the penumbra edges of the trunks' shadows and the sun patch; queue depth 12 752, missing 244).
-Plan 0094 removed the restarts at a still camera (Phase 3: rejections 416 to 0 a frame, the
-trunks under age 64 4.67 to 0.17 %) and what remains at rest is the key light's own estimator
-at its cap (`key_history` 256): the forest's trunks p99 23, mean 2.37 against the 1200-frame
-reference at 512 frames; the hills' over-4 share at rest 0.154 % with the key light, 0.012 %
-without (Phase 1 bar 2). A penumbra is where `g` is near one half and the variance largest.
-The plan's (ii), SVGF's spatial variance estimate on the key term alone at a converged age in
-the a-trous (ADR-0018; a guess of +0.05 ms RTX, +0.4 ms RENOIR), was not built: its clause (the
-owner's word on run 1) did not fire, run 2's grain has the missing records and the moving
-exposure as the other leads, and a spatial filter on the key term interacts with the temporal
-pass the motion lane owns. Pick up in that lane, with the reading first: the penumbra's
-frame-to-frame p99 at rest split by the key term, the sky's young pixels and the exposure.
-
-### How dug interiors should look: darker, less sky than the true aperture
-
-Parked 2026-11-20 by the owner at Plan 0094's window 94a verdict ("the hole reads lit";
-`live/window94a/1-forest-dig-lit-hole.png`, `4-dig-hole-lit.png`: a radius-0.5 m hole's floor
-blue-grey under a shaded hill and under a canopy, its walls dark brown). Plan 0094 Phase 7a (6)
-reads whether the baked visibility matches the hole's true aperture; the owner's call is that
-**even a correct aperture is not the look**: a dug interior should read darker and take less sky
-than the geometry gives, so a hole reads as a hole beside the ground it was dug from. A look
-plan, later, after the motion lane: candidates are the hole's walls' bounce in the baked term
-(the walls' own low value folded into the floor's, which the bake's bounce cell mean may already
-carry too little of), a darker soil row at the material table (a consumer's palette call, not
-the engine's), or an occlusion term at concave faces read from the column map or the coarse
-grid. Read first on the 94a stills' scenes (the hills at 16:00, the forest at `10,180`) with
-the true aperture printed beside the stored value; the pick is the owner's eye.
