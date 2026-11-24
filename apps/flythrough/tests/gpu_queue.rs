@@ -888,3 +888,160 @@ fn a_turn_onto_unbaked_chunks_drains_without_a_census_request() {
         q.q().stats()
     );
 }
+
+/// A block's brick records by directory slot, at the brick cell (`BRICK_WORDS` words each, the
+/// directory word's run end above bit 11).
+fn slot_records(block: &[u32]) -> std::collections::BTreeMap<usize, Vec<u32>> {
+    use vxe_render::internals::{BRICK_WORDS, SUMMARY_AT};
+    block[..SUMMARY_AT as usize]
+        .iter()
+        .enumerate()
+        .filter(|(_, d)| **d != 0)
+        .map(|(slot, &d)| {
+            let end = (d >> 11) as usize;
+            (slot, block[end - BRICK_WORDS..end].to_vec())
+        })
+        .collect()
+}
+
+/// Whether the brick with lowest voxel `b` lies within a voxel of the box `lo ..= hi`.
+fn in_ring1(b: [i32; 3], lo: [i64; 3], hi: [i64; 3]) -> bool {
+    (0..3).all(|k| i64::from(b[k]) + 7 >= lo[k] - 1 && i64::from(b[k]) <= hi[k] + 1)
+}
+
+/// Plan 0098 Phase 16: a dig's faces jump the queue. Forty-seven chunks of an 8^3 cube each and
+/// a 64 x 64 x 8 slab in chunk 0 (the camera's), at 4096 samples a brick direction, no coarse
+/// pass: stepped at a pre-roll's sample count until chunk 0 holds a block, every table slot holds
+/// an open job that is not a dig's and jobs pend behind them; then sliced at the smallest slice.
+/// A carve in the slab: the step that reads it plans the dig's ring-1 job (every brick it draws
+/// within a voxel of the box) first in the open list, its rounds in flight; the chunk's ring-2
+/// bricks open as a second job only once that job's block is placed. A second carve in the slab
+/// the step after that placement: its step holds no stale job for the chunk (the first dig's
+/// ring-2 job is withdrawn, not run to its end), plans the new ring-1 job first, and the first
+/// dig's ring-1 records the second box does not touch keep their landed words (but the ring's
+/// stale flag). Settled, chunk 0 is bit-identical to a one-shot bake of the edited world.
+#[test]
+fn a_dig_jumps_every_open_job_and_withdraws_its_stale_one() {
+    let world = world_of([8, 6, 1], AIR);
+    for x in 0..8i64 {
+        for y in 0..6i64 {
+            if (x, y) != (0, 0) {
+                fill(
+                    &world,
+                    [x * 64 + 24, y * 64 + 24, 24],
+                    [x * 64 + 32, y * 64 + 32, 32],
+                    ROCK,
+                );
+            }
+        }
+    }
+    fill(&world, [0, 0, 24], [64, 64, 32], ROCK);
+    let Some(mut q) = rig(
+        world,
+        &Setup {
+            near: 0,
+            slice_ms: 1e-6,
+            counts: BakeSettings {
+                brick_samples: 4096,
+                ..counts()
+            },
+            ..Setup::at([32.5, 32.5, 50.5])
+        },
+    ) else {
+        return;
+    };
+    let zero = ChunkCoord([0, 0, 0]);
+    q.samples = Some(1 << 20);
+    let mut n = 0;
+    loop {
+        q.step();
+        n += 1;
+        let t = q.q().dig_trace();
+        if q.frame.store().block(zero).is_some() && t.open == 16 && t.pending > 0 {
+            break;
+        }
+        assert!(n < MAX_STEPS, "the slots fill: {t:?}");
+    }
+    println!("slots full after {n} steps");
+    q.samples = None;
+    let carve = |q: &mut Q, lo: [i64; 3], hi: [i64; 3]| {
+        q.edit(&box_op(lo, [hi[0] + 1, hi[1] + 1, hi[2] + 1], Mode::Carve));
+        let w0 = q.q().stats().dig_withdrawn;
+        q.step();
+        let t = q.q().dig_trace();
+        println!("after the carve: {t:?}");
+        let first = t
+            .jobs
+            .iter()
+            .find(|j| j.open && j.at == 0)
+            .expect("a watched job is first in the open list");
+        assert_eq!(first.coord, zero.0, "the dig's job is planned first: {t:?}");
+        assert!(first.dig && !first.stale, "{first:?}");
+        assert!(first.totals()[1] > 0, "its rounds are in flight: {first:?}");
+        assert!(
+            first.bricks.iter().all(|b| in_ring1(b.0, lo, hi)),
+            "the first job draws ring 1 alone: {first:?}"
+        );
+        assert!(
+            !t.jobs.iter().any(|j| j.coord == zero.0 && j.stale),
+            "no stale job for the chunk: {t:?}"
+        );
+        q.q().stats().dig_withdrawn - w0
+    };
+    let (lo1, hi1) = ([8, 8, 28], [11, 11, 31]);
+    carve(&mut q, lo1, hi1);
+    // Until ring 1's block is placed no other job of the chunk runs; then ring 2's opens.
+    let mut ring2 = false;
+    for _ in 0..MAX_STEPS {
+        q.step();
+        let jobs: Vec<_> = q
+            .q()
+            .dig_trace()
+            .jobs
+            .into_iter()
+            .filter(|j| j.coord == zero.0)
+            .collect();
+        match jobs.first() {
+            Some(j) if j.bricks.iter().all(|b| in_ring1(b.0, lo1, hi1)) => {}
+            Some(j) => {
+                assert!(j.dig, "{j:?}");
+                ring2 = true;
+                break;
+            }
+            None => {}
+        }
+    }
+    assert!(ring2, "ring 2's job opens after ring 1's is placed");
+    let landed = slot_records(q.frame.store().block_words(zero).expect("chunk 0's block"));
+    let (lo2, hi2) = ([40, 40, 28], [43, 43, 31]);
+    let withdrawn = carve(&mut q, lo2, hi2);
+    assert!(withdrawn > 0, "the first dig's ring-2 job is withdrawn");
+    let now = slot_records(q.frame.store().block_words(zero).expect("chunk 0's block"));
+    let mut kept = 0;
+    for (slot, r) in &landed {
+        let b = [slot % 8, slot / 8 % 8, slot / 64].map(|v| v as i32 * 8);
+        if !in_ring1(b, lo1, hi1) || in_ring1(b, lo2, hi2) {
+            continue;
+        }
+        let mut a = now
+            .get(slot)
+            .expect("the landed brick keeps its record")
+            .clone();
+        let mut r = r.clone();
+        // The ring's stale flag (the second sky word's bit 17) is the edit's mark.
+        a[8] &= !(1 << 17);
+        r[8] &= !(1 << 17);
+        assert_eq!(a, r, "ring-1 brick {slot} keeps its landed record");
+        kept += 1;
+    }
+    assert!(
+        kept > 0,
+        "some first ring-1 brick lies outside the second box"
+    );
+    q.settle();
+    assert_eq!(
+        q.blocks().get(&zero.0),
+        q.fresh().get(&zero.0),
+        "chunk 0 against a one-shot bake of the edited world"
+    );
+}

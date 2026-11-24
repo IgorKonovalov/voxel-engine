@@ -170,15 +170,15 @@ mod flicker {
     /// before the settle: none (on lavapipe the view's records are in after the settle's 240).
     const DIG_DRAIN: u32 = 0;
 
-    mod reading {
+    pub(super) mod reading {
         use super::super::support;
         use support::defects::{Shot, Stepper, dig_ahead, grid_of, queue_step};
         use support::terms::Rig;
         use vxe_render::Camera;
 
         /// The strips' internal size; FSR 2 at 1.5 takes it to [`OUT`].
-        const INTERNAL: [u32; 2] = [640, 360];
-        const OUT: [u32; 2] = [960, 540];
+        pub(in super::super) const INTERNAL: [u32; 2] = [640, 360];
+        pub(in super::super) const OUT: [u32; 2] = [960, 540];
         /// Frames a strip holds.
         const STRIP: usize = 32;
         /// The display levels a pixel's largest channel must change by between consecutive
@@ -825,7 +825,6 @@ mod flicker {
                     "approach" => l.penumbra = vxe_render::Penumbra::Approach,
                     "pin" => pin = true,
                     "hold=on" => l.dig_hold = vxe_render::DigHold::On,
-                    "hold=land" => l.dig_hold = vxe_render::DigHold::Land,
                     "hold=rays" => l.dig_hold = vxe_render::DigHold::Rays,
                     "hold=off" => l.dig_hold = vxe_render::DigHold::Off,
                     other => panic!("unknown dig arm token {other}"),
@@ -918,7 +917,7 @@ mod flicker {
 
         /// The pitch of the dig from above (degrees, up positive): the owner's pose at W3
         /// (`1b-dig2-during.png`: the forest's spawn, looking steeply down at open ground).
-        const ABOVE_PITCH: f32 = -65.0;
+        pub(in super::super) const ABOVE_PITCH: f32 = -65.0;
 
         /// The eye of the owner's dig on the RADV RENOIR at Portable (W3's run 5,
         /// `5-radeon-dig-dots.png`'s HUD), voxels.
@@ -1601,7 +1600,7 @@ mod flicker {
         }
 
         /// `cam` with its heading kept and its pitch set to `deg` (up positive).
-        fn pitched(cam: &Camera, deg: f32) -> Camera {
+        pub(in super::super) fn pitched(cam: &Camera, deg: f32) -> Camera {
             let p = cam.position.to_array();
             let f = cam.basis().0.to_array();
             let h = (f[0] * f[0] + f[1] * f[1]).sqrt().max(1e-6);
@@ -1666,7 +1665,7 @@ mod flicker {
         }
 
         /// [`flicker_frame_with`] at the internal and output sizes `sizes`.
-        fn flicker_frame_at(
+        pub(in super::super) fn flicker_frame_at(
             rig: &Rig,
             sky: vxe_render::sky::Sky,
             pin: Option<f32>,
@@ -1721,7 +1720,7 @@ mod flicker {
             f
         }
 
-        fn settle(rig: &mut Rig, s: &mut Stepper, cam: &Camera, frames: u32) {
+        pub(in super::super) fn settle(rig: &mut Rig, s: &mut Stepper, cam: &Camera, frames: u32) {
             for _ in 0..frames {
                 queue_step(rig, &mut s.frame, cam);
                 s.run(rig, cam);

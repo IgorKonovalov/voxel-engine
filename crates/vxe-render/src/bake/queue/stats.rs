@@ -104,6 +104,10 @@ pub struct QueueStats {
     /// faces had drawn: lost.
     pub withdrawn: u64,
     pub withdrawn_samples: u64,
+    /// Jobs an edit withdrew from its ring ([`BakeQueue::withdraw_at`]) since the queue
+    /// started, and the samples their faces had drawn: lost.
+    pub dig_withdrawn: u64,
+    pub dig_withdrawn_samples: u64,
     /// The last step's CPU time by stage ([`StepStages`]).
     pub stages: StepStages,
     /// Steps that ran an opening since the queue started.
@@ -411,3 +415,143 @@ pub const LANDING_KEY_FLAG: usize = 4;
 pub const LANDING_TAIL: usize = 5;
 /// Every cell record of the faded landings, changed or not: 0 for blocks with no surface brick.
 pub const LANDING_RECORDS: usize = 6;
+
+/// One job of a [`DigTrace`]: its chunk, whether it is open (else pending) and its place in
+/// its list, whether it is a dig's ([`BakeQueue::dig_open`]) and whether an edit made it stale
+/// (its block is thrown away when it ends), and per brick with a live face the brick's lowest
+/// voxel, the samples its faces still have to submit, have in flight and have drawn.
+#[derive(Clone, Debug, Default)]
+pub struct DigTraceJob {
+    pub coord: [i32; 3],
+    pub open: bool,
+    pub at: usize,
+    pub dig: bool,
+    pub stale: bool,
+    pub bricks: Vec<([i32; 3], u64, u64, u64)>,
+}
+
+impl DigTraceJob {
+    /// The job's samples left, in flight and drawn, over its bricks.
+    pub fn totals(&self) -> [u64; 3] {
+        self.bricks
+            .iter()
+            .fold([0; 3], |a, b| [a[0] + b.1, a[1] + b.2, a[2] + b.3])
+    }
+}
+
+/// The queue's state a reading reads a dig's timeline from ([`BakeQueue::dig_trace`]): the
+/// chunks waiting in `digs` (each with its ring-1 flag, its dig bricks, and whether a job holds
+/// it), the jobs of chunks in `digs`, `dig_open` or `stale` (every other job is summed), the
+/// free table slots, the pending and open jobs' counts, the submits in flight and the
+/// withdrawn jobs whose rounds are.
+#[derive(Clone, Debug, Default)]
+pub struct DigTrace {
+    pub waiting: Vec<([i32; 3], bool, usize, bool)>,
+    pub jobs: Vec<DigTraceJob>,
+    /// Every other job's samples left, in flight and drawn, summed.
+    pub others: [u64; 3],
+    pub free_slots: usize,
+    pub pending: usize,
+    pub open: usize,
+    pub in_flight: usize,
+    pub withdrawn: usize,
+    /// The loop's report: the samples read back, those read into nothing, and the submits.
+    pub read: [u64; 3],
+}
+
+impl BakeQueue {
+    /// The queue's state for a dig's timeline ([`DigTrace`]); a reading, not read by the frame.
+    pub fn dig_trace(&self) -> DigTrace {
+        let lp = &self.lp;
+        let in_job: std::collections::HashSet<[i32; 3]> = lp.chunks().map(|c| c.0).collect();
+        let waiting = self
+            .digs
+            .iter()
+            .map(|(c, d)| (*c, d.near, d.slots.len(), in_job.contains(c)))
+            .collect();
+        let watched = |c: &[i32; 3]| {
+            self.digs.contains_key(c) || self.dig_open.contains_key(c) || self.stale.contains(c)
+        };
+        let mut t = DigTrace {
+            waiting,
+            free_slots: lp.free.len(),
+            pending: lp.pending.len(),
+            open: lp.open.len(),
+            in_flight: lp.in_flight.len(),
+            withdrawn: lp.withdrawn.len(),
+            read: [lp.report.samples, lp.report.wasted, lp.report.submits],
+            ..DigTrace::default()
+        };
+        let bricks_of = |states: &[crate::bake::job::FaceState]| {
+            let mut by: BTreeMap<[i32; 3], (u64, u64, u64)> = BTreeMap::new();
+            for s in states {
+                let b = s.voxel.map(|v| v.div_euclid(8) * 8);
+                let e = by.entry(b).or_default();
+                if !s.done {
+                    e.0 += u64::from(s.n_max.saturating_sub(s.n + s.queued));
+                }
+                e.1 += u64::from(s.queued);
+                e.2 += u64::from(s.n);
+            }
+            by.into_iter()
+                .filter(|(_, v)| *v != (0, 0, 0))
+                .map(|(b, v)| (b, v.0, v.1, v.2))
+                .collect::<Vec<_>>()
+        };
+        for (at, j) in lp.open.iter().enumerate() {
+            let c = j.coord.0;
+            let bricks = bricks_of(&j.states);
+            if !watched(&c) {
+                for b in &bricks {
+                    t.others = [t.others[0] + b.1, t.others[1] + b.2, t.others[2] + b.3];
+                }
+                continue;
+            }
+            t.jobs.push(DigTraceJob {
+                coord: c,
+                open: true,
+                at,
+                dig: self.dig_open.contains_key(&c),
+                stale: self.stale.contains(&c),
+                bricks,
+            });
+        }
+        for (at, j) in lp.pending.iter().enumerate() {
+            let c = j.coord.0;
+            if !watched(&c) {
+                t.others[0] += j.samples;
+                continue;
+            }
+            // A pending dig job's bricks: its dig bricks' directions at its count.
+            let bricks = match self.dig_open.get(&c) {
+                Some(d) => {
+                    let n = u64::from(j.brick_samples.unwrap_or(self.settings.brick_samples));
+                    j.faces
+                        .bricks
+                        .iter()
+                        .filter(|(slot, _)| d.slots.contains(slot))
+                        .map(|(slot, keys)| {
+                            let b = brick_of_slot(usize::from(*slot));
+                            let mut dirs = [false; 6];
+                            for k in keys {
+                                dirs[usize::from(k & 7)] = true;
+                            }
+                            let left = dirs.iter().filter(|d| **d).count() as u64 * n;
+                            ([0, 1, 2].map(|k| c[k] * 64 + b[k] as i32 * 8), left, 0, 0)
+                        })
+                        .collect()
+                }
+                None => vec![(c.map(|v| v * 64), j.samples, 0, 0)],
+            };
+            t.jobs.push(DigTraceJob {
+                coord: c,
+                open: false,
+                at,
+                dig: self.dig_open.contains_key(&c),
+                stale: self.stale.contains(&c),
+                bricks,
+            });
+        }
+        t
+    }
+}

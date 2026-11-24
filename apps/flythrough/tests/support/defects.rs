@@ -362,6 +362,8 @@ pub struct DigFrame {
     pub q: QueueStats,
     pub light_ms: f64,
     pub temporal_ms: f64,
+    /// The frame's passes summed (the pass timer's ms).
+    pub gpu_ms: f64,
 }
 
 /// The frame `s` steps at `cam` read for the dig `min ..= max` at the display size `out`.
@@ -434,6 +436,7 @@ pub fn dig_frame(
         q,
         light_ms: ms("light"),
         temporal_ms: ms("temporal"),
+        gpu_ms: shot.passes.iter().filter(|v| v.is_finite()).sum(),
     }
 }
 
@@ -626,6 +629,8 @@ pub struct HoleFrame {
     pub q: QueueStats,
     pub light_ms: f64,
     pub temporal_ms: f64,
+    /// The frame's passes summed (the pass timer's ms).
+    pub gpu_ms: f64,
 }
 
 /// The frame `s` steps at `cam`, read ([`HoleFrame`]) at the display size `out`; the stages
@@ -728,6 +733,7 @@ pub fn hole_frame(
         q,
         light_ms: ms("light"),
         temporal_ms: ms("temporal"),
+        gpu_ms: shot.passes.iter().filter(|v| v.is_finite()).sum(),
     }
 }
 

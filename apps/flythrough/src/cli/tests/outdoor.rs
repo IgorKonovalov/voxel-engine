@@ -555,11 +555,11 @@ fn dig_hold_is_on_rays_and_off_names_itself() {
     assert_eq!(base.start_lighting().dig_hold, DigHold::On);
     let banner = base.start_modes(0.0).banner(0.0).unwrap();
     assert!(!banner.contains("dig hold"), "{banner}");
-    for (v, d) in [
-        ("land", DigHold::Land),
-        ("rays", DigHold::Rays),
-        ("off", DigHold::Off),
-    ] {
+    assert!(
+        parse_args_from(argv(&["--source", "outdoor", "--dig-hold", "land"])).is_err(),
+        "land is refused"
+    );
+    for (v, d) in [("rays", DigHold::Rays), ("off", DigHold::Off)] {
         let r = parse_args_from(argv(&["--source", "outdoor", "--dig-hold", v])).unwrap();
         assert_eq!(r.start_lighting().dig_hold, d);
         let banner = r.start_modes(0.0).banner(0.0).unwrap().replace('\n', ", ");

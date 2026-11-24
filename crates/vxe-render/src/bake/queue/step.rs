@@ -2,6 +2,7 @@
 
 use super::rule::zero_block;
 use super::*;
+use crate::bake::job_loop::JobCtx;
 
 impl BakeQueue {
     /// One frame's step: follow the window, free the blocks of chunks the mirror dropped, open
@@ -269,6 +270,14 @@ impl BakeQueue {
         // submit's laps.
         let place_ms = std::cell::Cell::new(0.0f64);
         let ruled = std::mem::take(&mut self.ruled);
+        // The ring-1 dig jobs ([`BakeQueue::open_digs`]): opened into the slots the read back
+        // frees, and planned ahead of every other job.
+        let ring1: ChunkSet = self
+            .dig_open
+            .iter()
+            .filter(|(_, d)| d.near)
+            .map(|(c, _)| *c)
+            .collect();
         let (cell, clamp) = (self.settings.cell, self.settings.clamp);
         let mut placement = Placement {
             gpu: run.gpu,
@@ -334,6 +343,27 @@ impl BakeQueue {
             laps.ms[S_PLACE] += p;
         };
         lap(&mut self.laps, S_COLLECT);
+        if !ring1.is_empty() {
+            let ctx = JobCtx {
+                run,
+                settings: &settings,
+                round: settings.round.max(1),
+                rounds_cap: 0,
+            };
+            while let Some(k) = self
+                .lp
+                .pending
+                .iter()
+                .position(|j| ring1.contains(&j.coord.0))
+            {
+                let Some(slot) = self.lp.free.pop() else {
+                    break;
+                };
+                let job = self.lp.pending.remove(k).expect("found above");
+                self.lp.open.push(ctx.open(job, slot));
+            }
+            self.lp.promote(|c| ring1.contains(&c.0));
+        }
         let room = self.lp.in_flight() < IN_FLIGHT;
         let in_flight_full = !room && !self.lp.idle();
         let sent = room

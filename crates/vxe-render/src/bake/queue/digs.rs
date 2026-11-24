@@ -1,13 +1,16 @@
 //! The queue's digs: the boxes to rebake, their opening, and the fades they start.
 
 use super::*;
+use crate::bake::job_loop::JobCtx;
 
 impl BakeQueue {
     /// Reads the edit boxes since the last step into the waiting digs, against the store as the
-    /// edits left it (no re-bake has run since): each ring chunk with a block takes its ring's
-    /// bricks, merged with what a dig job running there re-bakes (that job is thrown away), and a
-    /// job of any kind running in a ring chunk is thrown away. A touched brick that held light
-    /// opens ring 3. Each chunk holding a touched brick is listed again at once and takes a
+    /// edits left it (no re-bake has run since): a job of any kind but a key-only one in a ring-1
+    /// chunk (one holding a brick a box dilated by one voxel touches), and a dig's job in any
+    /// ring chunk, is withdrawn ([`BakeQueue::withdraw_at`]): a dig's bricks rejoin its chunk's
+    /// digs, any other job's chunk is a candidate again. Each ring chunk with a block then takes
+    /// its ring's bricks, its ring-1 bricks marked; a job still running in a ring chunk is
+    /// thrown away when it ends. A touched brick that held light opens ring 3. Each chunk holding a touched brick is listed again at once and takes a
     /// provisional block ([`provisional_block`]): its kept bricks' records, and a brick the edit
     /// opened its neighbours' mean, so no dug face reads no value while its job waits; the job
     /// then fades from it.
@@ -33,10 +36,20 @@ impl BakeQueue {
                 })
             })
         };
+        let ring = dig_ring(&boxes, piece);
+        let withdrawn: std::collections::HashSet<[i32; 3]> = ring
+            .iter()
+            .filter(|(c, slots)| {
+                !self.keys.open.contains(*c)
+                    && (self.dig_open.contains_key(*c) || slots.iter().any(|&s| touches(**c, s)))
+            })
+            .map(|(c, _)| *c)
+            .collect();
+        self.withdraw_at(store, &withdrawn);
         let in_job: std::collections::HashSet<[i32; 3]> = self.lp.chunks().map(|c| c.0).collect();
         let mut lit = false;
         let mut dug = Vec::new();
-        for (c, slots) in dig_ring(&boxes, piece) {
+        for (c, slots) in ring {
             // The ring's visibilities predate the edit: the light pass casts the sky rays at
             // their faces until the re-bake lands.
             store.mark_sky_stale(run.queue, ChunkCoord(c), &slots, record);
@@ -69,6 +82,7 @@ impl BakeQueue {
                 e.near |= open.near;
             }
             e.slots.extend(slots);
+            e.ring1.extend(near.iter().copied());
             e.near |= !near.is_empty();
             if !near.is_empty() {
                 dug.push((c, near));
@@ -164,12 +178,17 @@ impl BakeQueue {
         Ok(())
     }
 
-    /// Opens jobs for the waiting dig chunks not in a job, ahead of every pending job, while the
-    /// loop holds under two slices of `cap` samples (one at least): ring-1 chunks first, then by
-    /// distance from the camera's chunk. Each is listed again on this thread and keeps every
-    /// brick record outside its dig bricks (a whole dig, which held no block, keeps none and
-    /// bakes every listed brick) and bakes them at the near tier's count, whatever its band; a
-    /// chunk left with no face drops its block.
+    /// Opens jobs for the waiting dig chunks not in a job, ahead of every pending job: ring-1
+    /// chunks first, then by distance from the camera's chunk. A ring-1 chunk's job re-bakes
+    /// its ring-1 bricks alone and keeps every other record (ring 2's stale ones too, which the
+    /// ring's hold shows); its other dig bricks wait in `digs` until it is placed, then open as
+    /// a second job. Every ring-1 job opens in this step, outside the two slices, into a table
+    /// slot (where none is free, the last open job that is not a dig's is withdrawn to the
+    /// candidates), and the submit plans its rounds first. The rest open while the loop holds
+    /// under two slices of `cap` samples (one at least). Each chunk is listed again on this
+    /// thread and keeps every brick record outside its job's bricks (a whole dig, which held no
+    /// block, keeps none and bakes every listed brick) and bakes them at the near tier's
+    /// count, whatever its band; a chunk left with no face drops its block.
     pub(in crate::bake) fn open_digs(
         &mut self,
         run: &BakeRun<'_>,
@@ -198,21 +217,33 @@ impl BakeQueue {
         let record = self.record_words();
         // A dig's ring bakes at the near tier's count whatever its chunk's band: the eye is on
         // it (ADR-0080 rule 2).
-        // Under `dig_land` the coarse pass's count where it is below that, so the dig lands
-        // within a frame or two; its block's count then lists it for a refinement.
-        let near = self.near_count();
-        let land = self.dig_land && self.coarse_samples > 0 && self.coarse_samples < near;
-        let brick_samples = if land { self.coarse_samples } else { near };
+        let brick_samples = self.near_count();
         let own_count = (brick_samples != self.settings.brick_samples).then_some(brick_samples);
         let mut jobs = Vec::new();
+        let mut first = 0;
         for (_, _, c) in order {
-            if left >= 2 * cap && !jobs.is_empty() {
+            let ring1 = self.digs.get(&c).is_some_and(|d| d.near);
+            if !ring1 && left >= 2 * cap && !jobs.is_empty() {
                 break;
             }
             self.touched.insert(c);
-            let Some(d) = self.digs.remove(&c) else {
+            let Some(mut d) = self.digs.remove(&c) else {
                 continue;
             };
+            // A ring-1 chunk's first job: its ring-1 bricks; the rest wait for its placing.
+            if !d.whole && !d.ring1.is_empty() && d.ring1.len() < d.slots.len() {
+                let rest: std::collections::BTreeSet<u16> =
+                    d.slots.difference(&d.ring1).copied().collect();
+                self.digs.insert(
+                    c,
+                    DigChunk {
+                        slots: rest,
+                        ..DigChunk::default()
+                    },
+                );
+                d.slots = std::mem::take(&mut d.ring1);
+                d.ring1 = d.slots.clone();
+            }
             let coord = ChunkCoord(c);
             let kept: KeptBricks = match store.words.get(&c) {
                 Some(block) => records_of(block, record)
@@ -226,7 +257,6 @@ impl BakeQueue {
                 Some(f) => f,
                 None => self.list(run.world, coord, &classes).0,
             };
-            let mut d = d;
             if d.whole {
                 d.slots = faces.bricks.iter().map(|(slot, _)| *slot).collect();
             }
@@ -239,6 +269,7 @@ impl BakeQueue {
                 self.fades.remove(&c);
                 self.faceless.insert(c);
                 self.touched.insert(c);
+                self.digs.remove(&c);
                 continue;
             }
             let samples = faces
@@ -256,8 +287,12 @@ impl BakeQueue {
             let first_word = match store.alloc(layout(&faces, record).1) {
                 Ok(first) => first,
                 Err(BakeError::PoolFull { .. }) => {
-                    // The dig waits for a place, listed: no later dig opens ahead of it.
+                    // The dig waits for a place, listed: no later dig opens ahead of it. A
+                    // split chunk's bricks join again.
                     self.stats.pool_full += 1;
+                    if let Some(rest) = self.digs.remove(&c) {
+                        d.slots.extend(rest.slots);
+                    }
                     self.digs.insert(c, d);
                     self.touched.insert(c);
                     self.listed.insert(c, faces);
@@ -266,10 +301,8 @@ impl BakeQueue {
                 Err(e) => return Err(e),
             };
             self.job_coarse.insert(c, store.is_coarse(coord));
-            if land {
-                self.job_count.insert(c, brick_samples);
-            }
             left += samples;
+            first += usize::from(d.near);
             jobs.push(Job {
                 coord,
                 faces,
@@ -278,14 +311,7 @@ impl BakeQueue {
                 samples,
                 brick_samples: own_count,
                 key_only: false,
-                // The record's tier bits follow its count, as a listed job's do.
-                tier: if !land {
-                    0
-                } else if brick_samples <= self.tiers[2] {
-                    TIER_FAR
-                } else {
-                    TIER_MID
-                },
+                tier: 0,
             });
             self.dig_open.insert(c, d);
         }
@@ -293,9 +319,101 @@ impl BakeQueue {
         for job in jobs.into_iter().rev() {
             self.lp.push_front(job);
         }
+        self.open_now(run, store, first);
         let dig_open = &self.dig_open;
         self.lp.promote(|c| dig_open.contains_key(&c.0));
+        self.lp
+            .promote(|c| dig_open.get(&c.0).is_some_and(|d| d.near));
         Ok(())
+    }
+
+    /// Opens the first `n` pending jobs (the ring-1 jobs [`BakeQueue::open_digs`] pushed) into
+    /// table slots now: where too few are free, the last open jobs that are neither a dig's nor
+    /// key-only are withdrawn to the candidates, those with no rounds in flight first (a job's
+    /// slot with rounds in flight frees once they are read back). A job not opened for want of
+    /// a slot stays at the front of the pending ones, which the next submit opens first.
+    fn open_now(&mut self, run: &BakeRun<'_>, store: &mut Store, n: usize) {
+        if n == 0 {
+            return;
+        }
+        let want = n.saturating_sub(self.lp.free.len());
+        if want > 0 {
+            let (dig_open, keys) = (&self.dig_open, &self.keys.open);
+            let mut out: Vec<(bool, usize, [i32; 3])> = self
+                .lp
+                .open
+                .iter()
+                .enumerate()
+                .filter(|(_, j)| !dig_open.contains_key(&j.coord.0) && !keys.contains(&j.coord.0))
+                .map(|(k, j)| {
+                    (
+                        j.states.iter().any(|s| s.queued > 0),
+                        usize::MAX - k,
+                        j.coord.0,
+                    )
+                })
+                .collect();
+            out.sort_unstable();
+            let chunks: std::collections::HashSet<[i32; 3]> =
+                out.iter().take(want).map(|o| o.2).collect();
+            self.withdraw_at(store, &chunks);
+        }
+        let settings = self.settings.clone();
+        let ctx = JobCtx {
+            run,
+            settings: &settings,
+            round: settings.round.max(1),
+            rounds_cap: 0,
+        };
+        for _ in 0..n {
+            let Some(slot) = self.lp.free.pop() else {
+                break;
+            };
+            let Some(job) = self.lp.pending.pop_front() else {
+                self.lp.free.push(slot);
+                break;
+            };
+            // A job with no live face closes at the next read back, its block to the sink.
+            self.lp.open.push(ctx.open(job, slot));
+        }
+    }
+
+    /// Withdraws the pending and open jobs in `chunks` (`JobLoop::withdraw`): each place is
+    /// released and the job's books dropped; a dig's bricks (and which of them are ring 1)
+    /// rejoin its chunk's waiting digs; any other job's chunk keeps the block it had and is a
+    /// candidate again.
+    pub(in crate::bake) fn withdraw_at(
+        &mut self,
+        store: &mut Store,
+        chunks: &std::collections::HashSet<[i32; 3]>,
+    ) {
+        if chunks.is_empty() {
+            return;
+        }
+        let record = self.record_words();
+        for w in self.lp.withdraw(|c| chunks.contains(&c.0), record) {
+            let c = w.coord.0;
+            store.release(w.first_word, w.words);
+            self.job_coarse.remove(&c);
+            self.job_count.remove(&c);
+            self.job_eye.remove(&c);
+            self.job_partial.remove(&c);
+            self.job_provisional.remove(&c);
+            self.stale.remove(&c);
+            self.stats.dig_withdrawn += 1;
+            self.stats.dig_withdrawn_samples += w.drawn;
+            if let Some(d) = self.dig_open.remove(&c) {
+                let e = self.digs.entry(c).or_default();
+                e.slots.extend(d.slots);
+                e.ring1.extend(d.ring1);
+                e.near |= d.near;
+                e.whole |= d.whole;
+            }
+            self.touched.insert(c);
+        }
+        // The candidates are counted and sorted again this step.
+        self.counted_idle = false;
+        self.quiet_until = self.steps;
     }
 
     /// A brick record's words under the settings' cell.

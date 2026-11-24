@@ -488,7 +488,7 @@ impl Frame {
     /// The held dig boxes (`Lighting::dig_hold`): every edit box from its frame until the live
     /// queue holds no dig (with none, its frame) and DIG_HOLD_FADE frames more, written into
     /// `edits` after its kill boxes in the room left. Returns the hold's bits: 1 under
-    /// `DigHold::Rays`, and under `DigHold::On` or `Land` with no box held; 3 under those while a box is
+    /// `DigHold::Rays`, and under `DigHold::On` with no box held; 3 under it while a box is
     /// held (the held value's bit too, so nothing reads it at rest); under `Off` none, and the
     /// boxes are dropped.
     fn hold_digs(&self, h: &mut History, edits: &mut EditsUniform) -> u32 {
@@ -517,7 +517,7 @@ impl Frame {
             edits.boxes[2 * (at + i) + 1] = [max[0], max[1], max[2], 0];
         }
         edits.held = h.dig_held.len().min(MAX_EDITS - at) as u32;
-        if matches!(self.state.lighting.dig_hold, DigHold::On | DigHold::Land) && edits.held > 0 {
+        if matches!(self.state.lighting.dig_hold, DigHold::On) && edits.held > 0 {
             3
         } else {
             1
