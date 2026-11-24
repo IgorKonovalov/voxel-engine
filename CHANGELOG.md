@@ -6,6 +6,17 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+## [0.74.0] - 2026-11-25
+
+Plan 0102 (a minor bump: public API removed from `svet-render`, a breaking change in 0.x; ADR-0086 accepted with an Outcome, superseding ADR-0024 and ADR-0034's opt-in clause). The engine's own upscaler is removed: FSR 2 is the only upscaler, and a frame without it renders at its output size. The default picture does not move (every golden but the deleted `upscaled.png` matches with no re-bless). The last tree with the upscaler is the local tag `archive/own-upscaler` (`be97152a`).
+
+- **Removed (`svet-render`): `UpscalerChoice::Own`, `UpscalerKind::Own`, `Upscaler`; `RenderSettings::{jitter, sharpness, own}` and their rows of the class and setter tables; `Frame::{set_jitter, jitter, set_sharpness, sharpness, set_upscaler, upscaler, upscale_history}`; `UPSCALE_WGSL`, `SHARPEN_WGSL`, `internals::JITTER_PHASES`; the passes `upscale` and `sharpen` (`FRAME_PASSES` has 22 entries, a new frame builds 13 compute pipelines).**
+- **Changed (`svet-render`): with `UpscalerChoice::Off` a frame renders at its output size. `RenderSettings::scale` applies and reads back as 1 without FSR 2 (`RenderSettings::clamped`, new); `Frame::with_sizes` and `Frame::set_sizes` keep the internal size for FSR 2. `UpscalerChoice::kind` takes the FSR 2 settings alone.**
+- **Changed (`svet-render`): FSR 2's light-change thresholds are constants of the frame (`internals::{CHANGE_REL, CHANGE_ABS}`, 0.1 and 0.01, over 24 frames: the values every profile had), no longer the `own.change_*` settings; `fsr2/input.wgsl` binding 5 is `LightChange` (16 B).**
+- **Removed (fly-through): `--upscaler own` and `--jitter on|off` are refused at the parse with a line naming the removal; `F10` cycles `off` and `fsr2`. The examples `strip`, `hero`, `clip` and `settle` refuse their `own` flags the same way.**
+- **Tests: `gpu_upscale` and the `upscaled.png` golden are gone; the frame's inventory tests moved to `svet-render`'s `gpu_frame`; FSR 2's soak bars stand on their own figures (the still vein at 0.40/255 and 1.15 %, the shadow wobble on a clean reference and FSR 2's own reading plus 10 %).**
+- **Readings: at Portable on the RADV RENOIR the removed passes read 1.790 ms against FSR 2's 4.077 ms (loaded); the gate tier reads 868.3 s against 894.3 s (loaded) (`docs/nfr.md` section 7, `docs/nfr/02-frame-budget.md`).**
+
 ## [0.73.0] - 2026-11-24
 
 Plan 0087 (a minor bump: the rename to `svet`, a breaking change in 0.x). Renamed: `vxe-*` to `svet-*` (crates; `vxe_*::` paths to `svet_*::`), `VXE_*` to `SVET_*` (environment variables, no aliases), `vxe:logic` to `svet:logic` (the WIT package; components built against the old package are refused), `vxe-tester` to `svet-tester` (the launcher, its archive `svet-tester-<version>-<os>-x86_64` and report folder), and the repository URL to `https://github.com/IgorKonovalov/svet`. Entries below keep the names they were written with.

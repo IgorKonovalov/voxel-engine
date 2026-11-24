@@ -9,7 +9,7 @@
 //! Every reading runs on the adapter `--adapter` names (unset: lavapipe). The filters narrow
 //! the runs, each a comma list: `--poses` (patch, vein), `--events` (flyin, flyin-pinned,
 //! toggle, dig, dig100, yaw10, yaw30, yaw118, yaw180), `--lamp` and `--indirect` (on, off),
-//! `--auto` (pinned, auto), `--upscaler` (up, s1, bridge) and `--k-runs` (yaw, flight).
+//! `--auto` (pinned, auto), `--upscaler` (up, s1) and `--k-runs` (yaw, flight).
 //! `settle_readings` takes each run's `N_step` from the composite's `sigma_view` in a
 //! `wander_readings` log on the same adapter (`--wander-log`); `--dry` prints the `N_step` of
 //! each run's first seed and runs no more.
@@ -124,7 +124,7 @@ fn filter_flags() -> Vec<Flag<Args>> {
         list_flag(
             &["--upscaler"],
             "LIST",
-            "the upscalers: up (FSR 2 at 1.5), s1 (scale 1), bridge (ours over FACE); default up",
+            "the upscalers: up (FSR 2 at 1.5), s1 (scale 1); default up",
             |a| &mut a.upscaler,
         ),
         list_flag(
@@ -425,6 +425,11 @@ impl Args {
             .map(|s| s == "auto")
             .collect();
         let up = list(&self.upscaler, &["up"]);
+        assert!(
+            up.iter().all(|u| u != "bridge"),
+            "{}",
+            flythrough::cli::gone_since_0102("--upscaler bridge")
+        );
         let mut out = Vec::new();
         for probe_freeze in self.freezes() {
             for up in &up {
@@ -436,7 +441,6 @@ impl Args {
                                 indirect,
                                 auto: a,
                                 upscaler: up != "s1",
-                                bridge: up == "bridge",
                                 probe_freeze,
                                 probe_move: self.probe_move,
                             });
@@ -497,7 +501,6 @@ impl Args {
             indirect: true,
             auto: false,
             upscaler: false,
-            bridge: false,
             probe_freeze: None,
             probe_move: self.probe_move,
         }
@@ -510,7 +513,6 @@ impl Args {
             indirect: true,
             auto,
             upscaler: true,
-            bridge: false,
             probe_freeze: None,
             probe_move: self.probe_move,
         }

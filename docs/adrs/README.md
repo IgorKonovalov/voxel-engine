@@ -11,7 +11,7 @@ and `vxe-<x>` reads as `svet-<x>`.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0088** (0085 is Plan 0101's; 0086 is Plan 0102's; 0087 is Plan 0103's; 0079 accepted at Plan 0095's close, 2026-11-21; 0080 accepted at Plan 0096's close, 2026-11-23; 0081 is Plan 0097's; 0082 accepted at Plan 0098's close, 2026-11-24; 0083 is Plan 0099's; 0084 is Plan 0100's).
+**Next free number: 0088** (0085 is Plan 0101's; 0086 accepted at Plan 0102's close, 2026-11-25; 0087 is Plan 0103's; 0079 accepted at Plan 0095's close, 2026-11-21; 0080 accepted at Plan 0096's close, 2026-11-23; 0081 is Plan 0097's; 0082 accepted at Plan 0098's close, 2026-11-24; 0083 is Plan 0099's; 0084 is Plan 0100's).
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -42,7 +42,7 @@ the status.
 | [0021](0021-echo-and-tail-levels-by-room-size-curves-and-a-tail-handed-between-two-networks.md) | Echo and tail levels follow listening-fitted curves of the room's mean free path, and a room change hands the tail to a second network | accepted (Plan 0020) |
 | [0022](0022-mirror-uploads-through-a-staging-belt-and-copy-commands.md) | Mirror uploads go through a persistently mapped staging belt and copy commands, not `Queue::write_buffer` | accepted (Plan 0027; Outcome: belt share a miss); supersedes ADR-0017's Alternative B rejection in part |
 | [0023](0023-indirect-light-from-a-scrolling-probe-volume.md) | Indirect light comes from a scrolling volume of irradiance probes around the camera, refreshed by a few rays per probe per frame and gathered with visibility weights | accepted (Plan 0029, Outcome; Plan 0047); rays, blend amended by ADR-0043 |
-| [0024](0024-own-temporal-upscaler-on-the-hit-buffer.md) | The upscaler is a temporal upscaler of our own, driven by jittered rays and the hit buffer, with a sharpening pass | accepted (Plan 0030); superseded in part by ADR-0034; opt-in since Plan 0055 |
+| [0024](0024-own-temporal-upscaler-on-the-hit-buffer.md) | The upscaler is a temporal upscaler of our own, driven by jittered rays and the hit buffer, with a sharpening pass | superseded by ADR-0086 (Plan 0102, 2026-11-25); accepted at Plan 0030, opt-in since Plan 0055 |
 | [0025](0025-light-candidates-from-a-power-over-distance-table-of-near-emitter-chunks.md) | Light candidates come from a power-over-distance table of the emitter chunks near the camera, and only those chunks hold light samples on the GPU | accepted (Plan 0024) |
 | [0026](0026-atmosphere-from-hillaire-luts-built-on-the-gpu-at-runtime.md) | The atmosphere is Hillaire's LUTs, built on the GPU at runtime from parameters the game sets | accepted (Plan 0032), Outcome: sky-view LUT rgba32float, `textureLoad` taps, twilight residue a reading |
 | [0027](0027-the-sun-shadow-is-one-per-pixel-ray-in-the-light-pass.md) | The sun's shadow is one per-pixel ray in the light pass, a dedicated directional sample beside the emissive one | accepted (Plan 0032), Outcome 2026-11-17: absent is sky, the sky ray at rest replaced by ADR-0070 |
@@ -52,7 +52,7 @@ the status.
 | [0031](0031-weather-is-cosmetic-client-state-rendered-against-a-fall-map.md) | Weather is cosmetic client state stepped by the game's ticks, and rain, snow, wetness and snow cover are rendered against a fall map traced through the mirror, never written as voxels | proposed (Plan 0036; refreshed 2026-11-10) |
 | [0032](0032-night-sky-drawn-analytically-on-miss-pixels-with-a-marched-aurora-shell.md) | The night sky is drawn analytically on miss pixels (a binned star catalogue, sky bodies the game lists, an aurora shell lighting the scene via a hemisphere map), and the night look is a luminance tint | proposed (Plan 0037) |
 | [0033](0033-eye-adaptation-as-an-asymmetric-two-stage-exposure-on-the-gpu.md) | Exposure adapts like an eye: fast toward bright, slow toward dark in two stages, metered and stepped on the GPU, applied as pre-exposure | accepted, Outcome (Plan 0040) |
-| [0034](0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md) | AMD FSR 2.2.1 ported to WGSL is the upscaler's default candidate; our own upscaler stays opt-in | accepted, Outcome (Plans 0041, 0055, 0061): at 1.5 the default; at 1 a quality setting |
+| [0034](0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md) | AMD FSR 2.2.1 ported to WGSL is the upscaler's default candidate; our own upscaler stays opt-in | accepted, Outcome (Plans 0041, 0055, 0061): at 1.5 the default; its opt-in clause superseded by ADR-0086 |
 | [0035](0035-dx12-shaders-compile-with-wgpus-bundled-static-dxc.md) | DX12 shaders compile with wgpu's bundled static DXC, never FXC | accepted, Outcome (Plan 0046) |
 | [0036](0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md) | Static emissive light accumulates on a long full-precision history, guarded by an emissive-only gradient | accepted, Outcome (Plan 0047); superseded by ADR-0043 |
 | [0037](0037-probe-rays-direct-light-keeps-its-energy-apart-from-the-screen-firefly-clamp.md) | The probe rays' direct light keeps its energy, under a scheme of its own apart from the screen's firefly clamp | rejected, never accepted (Plan 0048 dropped 2026-11-04); moot under ADR-0043 |
@@ -104,7 +104,7 @@ the status.
 | [0083](0083-the-live-bake-queue-runs-on-a-bake-thread-the-render-thread-applies-its-write-lists-and-issues-its-submits.md) | The live bake queue runs on a bake thread; the render thread applies its write lists and issues its submits | proposed (Plan 0099); extends ADR-0017 |
 | [0084](0084-the-key-lights-visibility-on-a-world-face-is-fixed-per-face-the-columns-horizon-where-lit-a-cover-source-where-shadowed.md) | The key light's visibility on a world face is fixed per face: the column's horizon where lit, a cover source where shadowed | proposed (Plan 0100) |
 | [0085](0085-the-zero-record-is-ruled-on-the-mirror-as-it-stands-exact-by-the-re-list-not-by-the-columns-finality.md) | The zero record is ruled on the mirror as it stands: exact by the re-list, not by the columns' finality | proposed (Plan 0101) |
-| [0086](0086-fsr-2-is-the-only-upscaler-the-upscaler-of-our-own-is-removed.md) | FSR 2 is the engine's only upscaler; the upscaler of our own is removed | proposed (Plan 0102); at acceptance supersedes ADR-0024 and ADR-0034's opt-in clause |
+| [0086](0086-fsr-2-is-the-only-upscaler-the-upscaler-of-our-own-is-removed.md) | FSR 2 is the engine's only upscaler; the upscaler of our own is removed | accepted 2026-11-25, Outcome (Plan 0102); supersedes ADR-0024 and ADR-0034's opt-in clause |
 | [0087](0087-the-renderers-pipeline-cache-is-the-drivers-through-wgpu-as-bytes-the-consumer-keeps.md) | The renderer's pipeline cache is the driver's, through wgpu, as bytes the consumer keeps | proposed (Plan 0103) |
 <!-- roster:end -->
 

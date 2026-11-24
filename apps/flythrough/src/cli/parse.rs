@@ -6,8 +6,7 @@ use super::{AudioArgs, BakeArgs, LightingArgs, LoadingArgs, LookArgs, RunMode};
 use crate::audio::{CAVE_ACOUSTIC, Mix};
 use crate::castle;
 use crate::cli::{
-    Args, DEFAULT_JITTER, DEFAULT_SCALE, DEFAULT_SHARPEN, SAVE_NEEDS_LEVEL, SHOWCASE_LIGHT_RADIUS,
-    walk_allowed,
+    Args, DEFAULT_SCALE, DEFAULT_SHARPEN, SAVE_NEEDS_LEVEL, SHOWCASE_LIGHT_RADIUS, walk_allowed,
 };
 use crate::fly::CutawayMode;
 use crate::outdoor::Spawn;
@@ -130,8 +129,6 @@ impl Args {
                 crisp: CrispRows::None,
                 band_census: false,
                 internal_scale: DEFAULT_SCALE,
-                jitter: DEFAULT_JITTER,
-                jitter_set: false,
                 sharpen: DEFAULT_SHARPEN,
                 pan: None,
                 jitter_phases: None,

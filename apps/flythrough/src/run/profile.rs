@@ -9,12 +9,12 @@ impl Run {
     /// lighting, the look, the lighting resolution, the upscaler and the bake budget).
     pub(crate) fn live_settings(&self) -> RenderSettings {
         let mut s = self.args.render_settings();
-        let (kind, scale, jitter) = self.args.upscaler_settings(self.modes.upscaler.mode);
+        let (kind, scale) = self.args.upscaler_settings(self.modes.upscaler.mode);
         s.lighting = self.modes.lighting;
         s.look = self.modes.look;
         s.lighting_resolution = self.modes.resolution;
         s.upscaler = UpscalerChoice::of(&kind);
-        (s.scale, s.jitter) = (scale, jitter);
+        s.scale = scale;
         s.bake.budget = self.modes.queue.budget;
         s.bake.tiers = self.args.bake.tiers;
         s.bake.drain = self.args.bake.drain;

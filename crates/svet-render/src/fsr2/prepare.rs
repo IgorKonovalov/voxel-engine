@@ -50,7 +50,7 @@ pub(crate) struct InputUniform {
 }
 
 /// The frame's targets FSR reads and writes: this frame's hit buffer and translucent layers,
-/// the edit boxes and the upscale pass's tuning uniforms (the older lamp), the frame's rgba8
+/// the edit boxes and the light-change thresholds' uniform (the older lamp), the frame's rgba8
 /// image, and the copy of the double-buffered resources this frame writes (the other is last
 /// frame's).
 pub(crate) struct FrameInputs<'a> {

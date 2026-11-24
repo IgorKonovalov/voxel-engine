@@ -9,9 +9,9 @@ const DIG_HOLD_FADE: u32 = 17;
 
 /// Passes of a frame in encode order, as [`Frame::encode`] times them: pass `i` writes
 /// timestamps `2 i` and `2 i + 1` of the timer it is given.
-/// The nine before the last are FSR 2's ([`crate::fsr2::FSR2_PASSES`]); in FSR mode `upscale`
-/// and `sharpen` are empty, and otherwise FSR's are. `exposure` runs last, after either.
-pub const FRAME_PASSES: [&str; 24] = [
+/// The nine before the last are FSR 2's ([`crate::fsr2::FSR2_PASSES`]), empty without FSR 2.
+/// `exposure` runs last.
+pub const FRAME_PASSES: [&str; 22] = [
     "sky transmittance",
     "sky multiscatter",
     "sky view",
@@ -24,8 +24,6 @@ pub const FRAME_PASSES: [&str; 24] = [
     "probes",
     "gather",
     "composite",
-    "upscale",
-    "sharpen",
     "fsr2 input",
     "fsr2 spd",
     "fsr2 spd tail",
@@ -167,8 +165,7 @@ impl Frame {
 
     /// The uniform block for `views` (at most [`MAX_VIEWS`]; a pixel outside every rectangle
     /// takes the first) over `world`, lit by `light` placed relative to `camera`. Each view's
-    /// jitter is the frame's ([`Frame::set_jitter`]). [`Frame::encode`] fills in the history
-    /// fields.
+    /// jitter is FSR 2's, and none without it. [`Frame::encode`] fills in the history fields.
     pub fn params_for(
         &self,
         world: &GpuWorld,
@@ -194,8 +191,6 @@ impl Frame {
             let [w, _] = self.internal_size();
             let [x, y] = jitter_at(self.state.frame, f.settings().phases(w, self.output[0]));
             [-x, -y]
-        } else if self.up.jitter {
-            jitter_at(self.state.frame, JITTER_PHASES)
         } else {
             [0.0; 2]
         };
@@ -413,7 +408,7 @@ impl Frame {
                 light_window = true;
                 h.light_window -= 1;
             }
-            let back = (self.up.upscaler.change_frames.max(1) as usize).min(LAMP_FRAMES);
+            let back = CHANGE_FRAMES.clamp(1, LAMP_FRAMES);
             old_list = h
                 .lists
                 .len()
@@ -444,12 +439,6 @@ impl Frame {
             LightsUniform::of(&now, &old_list, params.lighting & LIGHTING_LAMP != 0),
         );
         queue.write_buffer(&self.state.edits, 0, bytemuck::bytes_of(&edits));
-        let scale = self.output[0] as f32 / self.targets.width as f32;
-        queue.write_buffer(
-            &self.up.params,
-            0,
-            bytemuck::bytes_of(&self.up.upscaler.uniform(scale)),
-        );
         let table = light_table(world, p.views[0].origin, &self.state.light_near);
         let used = (1 + table.count as usize) * 16;
         queue.write_buffer(
@@ -738,7 +727,6 @@ impl Frame {
         );
         p.cam_chunk = cam_chunk(&p.views[0]);
         queue.write_buffer(&self.state.params, 0, bytemuck::bytes_of(&p));
-        let [upscale, sharpen] = self.upscale_dispatches(device, binds);
         let fsr_passes = fsr_binds
             .as_ref()
             .map(|(f, b)| b.passes(f, world))
@@ -781,8 +769,6 @@ impl Frame {
                     2,
                     full,
                 )),
-                upscale,
-                sharpen,
             ])
             .chain(fsr_passes);
         self.record_passes(device, queue, encoder, passes, &p, timer);
@@ -812,7 +798,7 @@ impl Frame {
                         layer: &t.layer,
                         emissive: &t.accum[c],
                         edits: &self.state.edits,
-                        lamp: &self.up.params,
+                        lamp: &self.up.light_change,
                         output: &t.output,
                         blue_noise: &self.state.blue_noise,
                         cur: c,
@@ -885,36 +871,6 @@ impl Frame {
             .atrous_dispatches
             .store(iterations, std::sync::atomic::Ordering::Relaxed);
         [gradient, atrous]
-    }
-
-    /// The engine's own upscale and sharpen dispatches at the output size, empty without its
-    /// history (FSR mode or no upscaling).
-    fn upscale_dispatches<'a>(
-        &'a self,
-        device: &wgpu::Device,
-        binds: &'a Binds<'_>,
-    ) -> [Dispatches<'a>; 2] {
-        let world = &binds.world_bind;
-        let mut upscale = Dispatches::default();
-        let mut sharpen = Dispatches::default();
-        if let (Some(u), Some(r)) = (&binds.out.upscale_bind, &binds.out.sharpen_bind) {
-            let out = self.output.map(|n| n.div_ceil(WORKGROUP));
-            upscale.push(frame_pass(
-                world,
-                self.pipes.pipeline(device, P_UPSCALE),
-                u,
-                2,
-                out,
-            ));
-            sharpen.push(frame_pass(
-                world,
-                self.pipes.pipeline(device, P_SHARPEN),
-                r,
-                3,
-                out,
-            ));
-        }
-        [upscale, sharpen]
     }
 
     /// Records each pass of `passes` in [`FRAME_PASSES`] order (an empty one only under a

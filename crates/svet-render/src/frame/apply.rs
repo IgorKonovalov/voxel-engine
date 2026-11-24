@@ -5,8 +5,9 @@ use super::*;
 use crate::settings::{ApplyClass, BuildSettings, RenderSettings, SettingsChange, UpscalerChoice};
 
 impl Frame {
-    /// Every setting the frame holds: what its setters last set, the scale its sizes make, and
-    /// the `Rebuild` values of the last [`Frame::built_with`].
+    /// Every setting the frame holds: what its setters last set, the scale its sizes make (1
+    /// without FSR 2, which renders at the output size), and the `Rebuild` values of the last
+    /// [`Frame::built_with`].
     pub fn settings(&self) -> RenderSettings {
         let [internal, output] = [self.internal_size(), self.output];
         let scale = if self.scale.internal(output) == internal {
@@ -24,10 +25,7 @@ impl Frame {
             lighting_resolution: self.resolution,
             scale,
             upscaler: UpscalerChoice::of(&self.up.kind),
-            jitter: self.up.jitter,
-            sharpness: self.up.sharpness,
             fsr2: self.up.fsr2,
-            own: self.up.upscaler,
             light_cap: self.light_cap(),
             metering: self.metering,
             field_split: self.state.field_split,
@@ -41,9 +39,11 @@ impl Frame {
         }
     }
 
-    /// Applies every `Live` and `Settle` field of `s` that differs from [`Frame::settings`]
-    /// through the frame's setters, and names each changed field by its class. The `Rebuild`
-    /// fields are left as they are: the caller recreates what they need and then calls
+    /// Applies every `Live` and `Settle` field of `s` as the frame takes it
+    /// ([`RenderSettings::clamped`]: no FSR 2, scale 1) that differs from [`Frame::settings`]
+    /// through the frame's setters, and names each changed field by its class. A change of the
+    /// upscaler and the scale together replaces the targets once. The `Rebuild` fields are
+    /// left as they are: the caller recreates what they need and then calls
     /// [`Frame::built_with`].
     pub fn apply_settings(
         &mut self,
@@ -51,6 +51,7 @@ impl Frame {
         queue: &wgpu::Queue,
         s: &RenderSettings,
     ) -> SettingsChange {
+        let s = &s.clamped();
         let old = self.settings();
         let changed = old.changed_fields(s);
         let mut out = SettingsChange::default();
@@ -81,27 +82,21 @@ impl Frame {
         if any("lighting_resolution") {
             self.set_resolution(device, s.lighting_resolution);
         }
-        if any("sharpness") {
-            self.set_sharpness(queue, s.sharpness);
-        }
-        if any("own.") {
-            self.set_upscaler(s.own);
-        }
         if any("fsr2.") {
             self.up.fsr2 = s.fsr2;
             if self.up.kind.is_fsr2() && !any("upscaler") {
                 self.set_upscaler_kind(device, UpscalerKind::Fsr2(s.fsr2));
             }
         }
-        if any("jitter") {
-            self.set_jitter(device, s.jitter);
-        }
-        if any("upscaler") {
-            self.set_upscaler_kind(device, s.upscaler.kind(s.own, s.fsr2));
-        }
-        if any("scale") {
+        if any("upscaler") || any("scale") {
             self.scale = s.scale;
-            self.set_sizes(device, s.scale.internal(self.output), self.output);
+            self.up.requested = s.scale.internal(self.output);
+            if any("upscaler") {
+                // A change of upscaler replaces the targets at the requested size.
+                self.set_upscaler_kind(device, s.upscaler.kind(s.fsr2));
+            } else {
+                self.set_sizes(device, self.up.requested, self.output);
+            }
         }
         if any("light_cap") {
             self.set_light_cap(s.light_cap);

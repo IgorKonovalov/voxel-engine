@@ -991,9 +991,7 @@ mod reading {
                     );
                     f
                 } else {
-                    let mut f = svet_render::Frame::with_sizes(&device, output, output);
-                    f.set_jitter(&device, false);
-                    f
+                    svet_render::Frame::with_sizes(&device, output, output)
                 };
                 frame.set_lighting(Lighting {
                     lamp: false,
@@ -1808,12 +1806,12 @@ mod reading {
     /// y 26..38, to z 30) hiding the edge. After 64 frames the pillar is carved (its box
     /// invalidated); the pixels it uncovered on the floor within 3 voxels of x 94 are the band.
     /// Per run frame after the carve, the display's rms against the frame 256 after it, over the
-    /// band, relative to the band's mean (output 192 x 108, no upscaler, FSR 2 and ours at 1.5
-    /// from 128 x 72), under each `YoungFilter`. Runs on `SVET_TEST_ADAPTER`.
+    /// band, relative to the band's mean (output 192 x 108, no upscaler, and FSR 2 at 1.5 from
+    /// 128 x 72), under each `YoungFilter`. Runs on `SVET_TEST_ADAPTER`.
     #[test]
     #[ignore]
     fn reading_a_shadow_edge_after_a_disocclusion() {
-        use svet_render::{GpuWorld, MirrorConfig, UpscalerKind, Window, YoungFilter};
+        use svet_render::{GpuWorld, MirrorConfig, Window, YoungFilter};
         let pillar = ([104i64, 26, 2], [108i64, 38, 30]);
         let world = light_box();
         support::bake::fill(&world, [74, 2, 2], [76, 62, 14], ROCK);
@@ -1846,11 +1844,7 @@ mod reading {
                     .expect("fits");
             }
         };
-        let kinds = [
-            None,
-            Some(support::rigs::fsr2_kind()),
-            Some(UpscalerKind::Own(svet_render::Upscaler::default())),
-        ];
+        let kinds = [None, Some(support::rigs::fsr2_kind())];
         let youngs = [YoungFilter::Luma, YoungFilter::Edges];
         for (kind, young) in kinds.into_iter().flat_map(|k| youngs.map(|y| (k, y))) {
             support::bake::fill(&rig.world, pillar.0, pillar.1, ROCK);
@@ -1861,7 +1855,6 @@ mod reading {
                 [192, 108]
             };
             rig.frame = box_frame(&rig.device, internal, [192, 108], kind);
-            rig.frame.set_jitter(&rig.device, kind.is_some());
             rig.frame.set_lighting(Lighting {
                 young_filter: young,
                 ..box_lighting()

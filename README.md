@@ -63,7 +63,7 @@ own loop and entity model.
   (ADR-0046). A list of analytic point and spot lights, the headlamp among them, is shaded
   exactly with one shadow ray each (ADR-0044), with a probe channel for the lamp's bounce.
   The direct part is denoised in a target of its own and the frame is upscaled by a WGSL
-  port of FSR 2 (the default, at 1.5) or by an upscaler of our own.
+  port of FSR 2 (the default, at 1.5), or with the upscaler off rendered at the output size.
 - **A sun and a sky.** Hillaire's atmosphere as LUTs built on the GPU from a `Sky` the game
   sets, a time of day the game steps, the sun or moon as one directional sample with a shadow
   ray and the sky's light from a sky ray (ADR-0026, ADR-0027). A frame with no sky set builds
@@ -197,7 +197,7 @@ cargo run --release -p flythrough -- --help                   # every flag
 | `F2` | Toggle the stats overlay |
 | `F4` | The next render profile: floor, portable, performance, high |
 | `F7` | Toggle the headlamp |
-| `F10` | Cycle the upscaler: off, own, fsr2 |
+| `F10` | Cycle the upscaler: off, fsr2 |
 | `G` | Toggle fly and walk mode (bounded worlds only); walking, `Space` jumps or climbs a ledge |
 | `Esc` | Close the menu (a page at a time); with it closed, quit |
 
