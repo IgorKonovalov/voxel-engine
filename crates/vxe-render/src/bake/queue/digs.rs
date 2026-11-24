@@ -234,10 +234,16 @@ impl BakeQueue {
         }
         let eye = self.eye;
         let in_job: std::collections::HashSet<[i32; 3]> = self.lp.chunks().map(|c| c.0).collect();
+        // A dig chunk with no ring-1 brick (ring 2 of a split chunk, or a ring chunk the box
+        // does not touch) waits while the chunk's block runs a dig's fade: its landing would
+        // start a new fade from the shown values, so the records the running one moves would
+        // leave their linear ramp of `DIG_FADE` frames for a slower one (ADR-0076 rule 3, one
+        // fade a switch). Ring 1 never waits: a new edit's provisional block ends the fade.
+        let fading = |c: &[i32; 3]| self.fades.get(c).is_some_and(|f| f.frames == DIG_FADE);
         let mut order: Vec<(bool, i64, [i32; 3])> = self
             .digs
             .iter()
-            .filter(|(c, _)| !in_job.contains(*c))
+            .filter(|(c, d)| !in_job.contains(*c) && (d.near || !fading(c)))
             .map(|(c, d)| {
                 let d2: i64 = (0..3).map(|k| i64::from(c[k] - eye[k]).pow(2)).sum();
                 (!d.near, d2, *c)
