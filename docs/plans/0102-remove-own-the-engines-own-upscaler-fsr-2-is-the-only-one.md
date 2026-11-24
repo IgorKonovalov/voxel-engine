@@ -344,7 +344,7 @@ Readings: [`logs/0102.md`](logs/0102.md).
 | 1: The census and three readings | dev | done; readings loaded (three lanes) | `47fb7d1f` |
 | 2: `own` leaves `svet-render` | dev | done; carries the fly-through callers, tests and CLI refusals the compiler forced (see Notes) | `00b815d1` |
 | 3: The fly-through, the tests and the golden | dev | done; its code landed in `00b815d1`, this commit deletes `upscaled.png`; the shadow bar is renamed | `860c0ae6` |
-| 4: Docs, the ledger, the gate's time | dev | done; the gate saves 26.0 s (under the 30 s expected), both runs loaded | committed with this row |
+| 4: Docs, the ledger, the gate's time | dev | done; the gate saves 26.0 s (under the 30 s expected), both runs loaded | `ec97f77b` |
 
 ### Notes
 
