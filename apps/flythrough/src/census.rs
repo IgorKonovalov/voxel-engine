@@ -2,8 +2,8 @@
 //! a chunk holds and a hash of chunks' voxels.
 
 use std::sync::Arc;
-use vxe_world::hash::Fnv1a;
-use vxe_world::{BRICK_VOXELS, Brick, Chunk, ChunkCoord, ChunkMips, World};
+use svet_world::hash::Fnv1a;
+use svet_world::{BRICK_VOXELS, Brick, Chunk, ChunkCoord, ChunkMips, World};
 
 /// The field surface's band over a set of chunks (ADR-0040 Alternative B): a voxel is in the
 /// band when its 27-count, the solid voxels of the 3 x 3 x 3 block around it with itself, is
@@ -48,7 +48,7 @@ pub fn brick_counts(
     around: &[Option<&Chunk>; 27],
     slot: usize,
 ) -> Option<([u8; BRICK_VOXELS], [u64; 8])> {
-    let l = vxe_world::brick_of_slot(slot);
+    let l = svet_world::brick_of_slot(slot);
     // The 27 bricks around, as their solid bits; `kinds` says whether all are one uniform kind.
     let mut bits = [[0u64; 8]; 27];
     let (mut any_solid, mut any_air, mut any_full) = (false, false, false);
@@ -57,9 +57,9 @@ pub fn brick_counts(
         let b = [0, 1, 2].map(|a| l[a] + d[a]);
         let cd = b.map(|v| v.div_euclid(8));
         let ci = ((cd[0] + 1) + 3 * (cd[1] + 1) + 9 * (cd[2] + 1)) as usize;
-        let brick = around[ci].map(|c| c.brick(vxe_world::brick_slot(b.map(|v| v.rem_euclid(8)))));
+        let brick = around[ci].map(|c| c.brick(svet_world::brick_slot(b.map(|v| v.rem_euclid(8)))));
         match brick {
-            None | Some(Brick::Uniform(vxe_world::AIR)) => any_air = true,
+            None | Some(Brick::Uniform(svet_world::AIR)) => any_air = true,
             Some(Brick::Uniform(_)) => {
                 any_solid = true;
                 *out = [u64::MAX; 8];
@@ -159,7 +159,7 @@ pub fn band_census(world: &World, chunks: &[ChunkCoord]) -> BandCensus {
         let Some(centre) = around[13] else {
             continue;
         };
-        for slot in 0..vxe_world::CHUNK_BRICKS {
+        for slot in 0..svet_world::CHUNK_BRICKS {
             let Some((counts, surface)) = brick_counts(&around, slot) else {
                 continue;
             };
@@ -190,7 +190,7 @@ pub fn band_census(world: &World, chunks: &[ChunkCoord]) -> BandCensus {
             }
             match brick {
                 Brick::Full(_) => cs.full_bricks += 1,
-                Brick::Uniform(vxe_world::AIR) => cs.air_bricks += 1,
+                Brick::Uniform(svet_world::AIR) => cs.air_bricks += 1,
                 Brick::Uniform(_) => cs.solid_bricks += 1,
             }
             let header = if full { 0 } else { 2 };
@@ -231,8 +231,8 @@ pub fn chunk_ram(chunk: &Chunk) -> u64 {
 
 /// RAM a LOD-only chunk holds: its 73 mip-brick slots and the class boxes of its `Full` ones.
 pub fn mips_ram(mips: &ChunkMips) -> u64 {
-    let slots: usize = vxe_world::MIP_BRICKS.iter().sum();
-    let payload: usize = (1..=vxe_world::MIP_LEVELS)
+    let slots: usize = svet_world::MIP_BRICKS.iter().sum();
+    let payload: usize = (1..=svet_world::MIP_LEVELS)
         .flat_map(|n| mips.level(n))
         .map(Brick::payload_bytes)
         .sum();

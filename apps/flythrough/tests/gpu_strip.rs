@@ -6,7 +6,7 @@
 mod support;
 
 use support::aliasing::{self, Hits, Mask};
-use vxe_render::{Exposure, Frame, GpuWorld, Lighting, MirrorConfig, Window};
+use svet_render::{Exposure, Frame, GpuWorld, Lighting, MirrorConfig, Window};
 
 /// 72 frames of 10 000 pixels (100 x 100) at 18 phases.
 const FOLD_SIDE: usize = 100;
@@ -287,7 +287,7 @@ fn the_eye_lamp_holds_the_native_frame_bit_identical() {
     let mut frames = Vec::new();
     for _ in 0..=128 {
         frame.step(&device, &queue, &gpu, &camera, &light);
-        frames.push(vxe_render::debug::read_rgba8(
+        frames.push(svet_render::debug::read_rgba8(
             &device,
             &queue,
             frame.target(),
@@ -339,7 +339,7 @@ fn the_pan_moves_the_centre_band_one_pixel() {
     let mut frames = Vec::new();
     for _ in 0..8 {
         frame.step(&device, &queue, &gpu, &camera, &light);
-        frames.push(vxe_render::debug::read_rgba8(
+        frames.push(svet_render::debug::read_rgba8(
             &device,
             &queue,
             frame.target(),

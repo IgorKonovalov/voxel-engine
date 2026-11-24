@@ -1,15 +1,15 @@
 //! The surface-look harness on the software adapter (lavapipe): normal error in a carved sphere,
 //! silhouette error of a rock ball, the far normal, every mode, and the look's flag bits leaving
-//! the goldens alone. `VXE_BLESS=1` rewrites the look goldens.
+//! the goldens alone. `SVET_BLESS=1` rewrites the look goldens.
 
 mod support;
 
 use support::look::*;
 use support::*;
 
-use vxe_render::internals::PAGE_UNITS;
-use vxe_render::{LightParams, LookParams, NormalMode, ViewMode};
-use vxe_world::World;
+use svet_render::internals::PAGE_UNITS;
+use svet_render::{LightParams, LookParams, NormalMode, ViewMode};
+use svet_world::World;
 
 #[test]
 fn face_normals_baseline() {
@@ -60,7 +60,7 @@ fn a_wall_facing_minus_x_reads_minus_x_in_face_mode() {
 /// default: shaded, face normals.
 #[test]
 fn the_default_look_leaves_the_goldens_byte_for_byte() {
-    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
         return;
     }
     let default = LookParams {
@@ -68,7 +68,7 @@ fn the_default_look_leaves_the_goldens_byte_for_byte() {
         view: ViewMode::Shaded,
         translucent_layers: 4,
         cutaway: false,
-        tuning: vxe_render::SurfaceTuning::default(),
+        tuning: svet_render::SurfaceTuning::default(),
         far_normal: [0.0; 2],
     };
     assert_eq!(default, LookParams::default());
@@ -209,7 +209,7 @@ type Scene<'a> = (&'a World, &'a [(&'a str, LightParams)], bool);
 #[test]
 #[ignore = "soak"]
 fn band_slots_leave_the_face_goldens_byte_for_byte() {
-    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
         return;
     }
     let face = LookParams::default();
@@ -295,7 +295,7 @@ fn contour_dark_specks_with_and_without_shadows() {
         shadows: false,
         ..LightParams::headlamp()
     };
-    if std::env::var("VXE_BLESS").as_deref() != Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() != Ok("1") {
         // The golden is drawn at the default walk.
         let on_img = rig.render(
             &scene_camera(),
@@ -311,8 +311,8 @@ fn contour_dark_specks_with_and_without_shadows() {
     }
     // The full walk: the claim is the shadow ray's origin, and the coarse walk's own darkening
     // of grazing rays (any 2^3 block with rock is solid) confounds it.
-    rig.frame.set_lighting(vxe_render::Lighting {
-        shadow_walk: vxe_render::ShadowWalk::Full,
+    rig.frame.set_lighting(svet_render::Lighting {
+        shadow_walk: svet_render::ShadowWalk::Full,
         ..rig.frame.lighting()
     });
     let mut only_with = Vec::new();
@@ -376,7 +376,7 @@ fn the_far_normal_is_face_up_close_and_gradient27_far() {
     let Some(mut rig) = LookRig::new(&world, None) else {
         return;
     };
-    let camera = |d: f32| vxe_render::Camera {
+    let camera = |d: f32| svet_render::Camera {
         position: [PILLAR_CENTRE[0] - d, PILLAR_CENTRE[1], PILLAR_CENTRE[2]].into(),
         ..pillar_camera()
     };

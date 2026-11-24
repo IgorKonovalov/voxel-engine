@@ -12,8 +12,8 @@ use crate::run::hud_lines::{banner_colour, look_line};
 use crate::setup::GfxSample;
 use crate::{LookPreset, percentile};
 use std::fmt::Write as _;
-use vxe_app::{Gpu, Pacing};
-use vxe_render::{FRAME_PASSES, HudBox, HudColour, NormalMode, SyncStats};
+use svet_app::{Gpu, Pacing};
+use svet_render::{FRAME_PASSES, HudBox, HudColour, NormalMode, SyncStats};
 
 /// Frames the readings (`Enter`) average over.
 pub(crate) const SAMPLES: usize = 30;
@@ -33,7 +33,7 @@ pub(crate) const HUD_STATS_EVERY: u32 = 240;
 pub(crate) fn print_moving_exposure(
     last: &mut Option<(f64, f32)>,
     modes: &hud::Modes,
-    readout: Option<vxe_render::ExposureReadout>,
+    readout: Option<svet_render::ExposureReadout>,
     now_ms: f64,
 ) {
     let Some(r) = readout else { return };
@@ -183,13 +183,13 @@ pub(crate) struct Hud {
     /// The probe volume's live probes at the last world sample, with the lamp's bounce on.
     pub(crate) live_probes: Option<u32>,
     /// The store's counts at the last sample.
-    pub(crate) store: Option<vxe_render::StoreStats>,
+    pub(crate) store: Option<svet_render::StoreStats>,
     /// The last frame's steps view, read back while that view and the HUD are on.
     pub(crate) steps: Option<hud::StepsSample>,
     /// The last frame's cracks view, read back while that view and the HUD are on.
-    pub(crate) cracks: Option<vxe_render::CrackShares>,
+    pub(crate) cracks: Option<svet_render::CrackShares>,
     /// The exposure state as last read back (`Frame::exposure_readout`), a few frames late.
-    pub(crate) exposure: Option<vxe_render::ExposureReadout>,
+    pub(crate) exposure: Option<svet_render::ExposureReadout>,
     pub(crate) format_us: u32,
     pub(crate) page_bytes: u64,
     /// Reused buffers: the rows' text, their colours, the strip's samples and the banner's
@@ -209,7 +209,7 @@ pub(crate) struct Hud {
     /// The far normal's words and the live queue's order and withdrawal in words, remade
     /// only when what they name changes.
     pub(crate) far_normal_words: Cached<(NormalMode, [f32; 2])>,
-    pub(crate) queue_words: Cached<(vxe_render::QueueOrder, bool)>,
+    pub(crate) queue_words: Cached<(svet_render::QueueOrder, bool)>,
     /// The whole run's frame times, shown or not.
     pub(crate) run: RunTimes,
 }
@@ -357,10 +357,10 @@ impl FieldSamples {
 
 /// The cracks view's shares of the frame `frame` last rendered, read back from its hit pass's
 /// layers and records: a blocking copy of each.
-pub(crate) fn crack_shares(gpu: &Gpu, frame: &vxe_render::Frame) -> vxe_render::CrackShares {
-    let layers = vxe_render::debug::read_rgba16f(&gpu.device, &gpu.queue, frame.layers());
-    let records = vxe_render::debug::read_rgba16u(&gpu.device, &gpu.queue, frame.hit_records());
-    vxe_render::CrackShares::from_layers(&layers, &records)
+pub(crate) fn crack_shares(gpu: &Gpu, frame: &svet_render::Frame) -> svet_render::CrackShares {
+    let layers = svet_render::debug::read_rgba16f(&gpu.device, &gpu.queue, frame.layers());
+    let records = svet_render::debug::read_rgba16u(&gpu.device, &gpu.queue, frame.hit_records());
+    svet_render::CrackShares::from_layers(&layers, &records)
 }
 
 /// Appends the banner's pacing row, `pace free`, to `out` as a banner row (`hud::start_row`)
@@ -390,18 +390,18 @@ impl std::fmt::Display for FullFirstWords {
 
 /// Appends the HUD queue row's reach part to `out`: `; reach full`, or `; reach partial (N
 /// partial)` with the chunks whose block was baked from a partial reach.
-pub(crate) fn write_reach_note(out: &mut String, reach: vxe_render::ReachMode, partial: u64) {
+pub(crate) fn write_reach_note(out: &mut String, reach: svet_render::ReachMode, partial: u64) {
     let _ = write!(out, "; reach {}", reach.name());
-    if reach == vxe_render::ReachMode::Partial {
+    if reach == svet_render::ReachMode::Partial {
         let _ = write!(out, " ({partial} partial)");
     }
 }
 
 /// Appends the HUD queue row's budget part to `out`: `; budget frame:1.5`, and the last step's
 /// slice under a per-second budget, `; budget second:150,0.25 (slice 2.31 ms)`.
-pub(crate) fn write_budget_note(out: &mut String, budget: vxe_render::Budget, slice_ms: f64) {
+pub(crate) fn write_budget_note(out: &mut String, budget: svet_render::Budget, slice_ms: f64) {
     let _ = write!(out, "; budget {budget}");
-    if matches!(budget, vxe_render::Budget::PerSecond { .. }) {
+    if matches!(budget, svet_render::Budget::PerSecond { .. }) {
         let _ = write!(out, " (slice {slice_ms:.2} ms)");
     }
 }
@@ -415,13 +415,13 @@ pub(crate) fn write_queue_banner_row(out: &mut String, args: &Args, words: &str)
     let _ = write!(
         out,
         "light: live queue, bricks {}/{near},{mid},{far}, ",
-        vxe_render::internals::BRICK_CELL,
+        svet_render::internals::BRICK_CELL,
     );
     if args.bake.coarse > 0 {
         let _ = write!(
             out,
             "coarse {}/{} first, near {} at {near}",
-            vxe_render::internals::BRICK_CELL,
+            svet_render::internals::BRICK_CELL,
             args.bake.coarse,
             args.bake.near,
         );
@@ -442,7 +442,7 @@ pub(crate) fn write_queue_banner_row(out: &mut String, args: &Args, words: &str)
 
 /// Appends the HUD store row's queue part to `out`: `, queue depth N, coarse C, jobs J, slice
 /// X ms` and `, pool full P` when the pool refused any; nothing without the queue's stats.
-pub(crate) fn write_queue_note(out: &mut String, stats: Option<vxe_render::QueueStats>) {
+pub(crate) fn write_queue_note(out: &mut String, stats: Option<svet_render::QueueStats>) {
     if let Some(st) = stats {
         let _ = write!(
             out,
@@ -861,7 +861,7 @@ impl Run {
             && gfx.mirror.field_surface()
         {
             let records =
-                vxe_render::debug::read_rgba16u(&gpu.device, &gpu.queue, gfx.frame.hit_records());
+                svet_render::debug::read_rgba16u(&gpu.device, &gpu.queue, gfx.frame.hit_records());
             let table = self.world.materials();
             let (mut hits, mut smooth) = (0u64, 0u64);
             for r in &records {
@@ -921,7 +921,7 @@ impl Run {
 }
 
 /// The sky's HUD row while a sky is set and the passes were timed: the sky passes' GPU time
-/// summed, the light pass's, the exposure and the body [`vxe_render::sky::Sky::key_light`]
+/// summed, the light pass's, the exposure and the body [`svet_render::sky::Sky::key_light`]
 /// names; `None` otherwise.
 fn sky_row(modes: &crate::hud::Modes, pass_ms: Option<&[f64]>) -> Option<hud::SkyRow> {
     let passes = pass_ms.filter(|_| modes.sky)?;
@@ -934,8 +934,8 @@ fn sky_row(modes: &crate::hud::Modes, pass_ms: Option<&[f64]>) -> Option<hud::Sk
             .sum()
     };
     let body = match modes.clock.sky(crate::outdoor::BASE_Z as f32).key_light() {
-        Some((vxe_render::sky::KeyBody::Sun, _)) => "sun",
-        Some((vxe_render::sky::KeyBody::Moon, _)) => "moon",
+        Some((svet_render::sky::KeyBody::Sun, _)) => "sun",
+        Some((svet_render::sky::KeyBody::Moon, _)) => "moon",
         None => "none",
     };
     Some(hud::SkyRow {
@@ -958,7 +958,7 @@ mod tests {
     /// recording a frame time, refreshing the values a frame changes, and formatting the
     /// rows and the strip, with a last edit held; frames 2 to 100 allocate 0 bytes. The
     /// overlay's half (rows and samples written, the pass encoded) is
-    /// `vxe-render`'s `the_overlay_allocates_nothing_after_its_first_frame`.
+    /// `svet-render`'s `the_overlay_allocates_nothing_after_its_first_frame`.
     #[test]
     fn a_shown_hud_allocates_nothing_after_its_first_frame() {
         let mut hud = Hud::new(true);

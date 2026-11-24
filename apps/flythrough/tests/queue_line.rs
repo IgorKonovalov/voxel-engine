@@ -3,7 +3,7 @@
 
 use flythrough::report::QueueDrain;
 use flythrough::report::json::{Value, parse};
-use vxe_render::{Band, Bands, QueueView, in_view_census};
+use svet_render::{Band, Bands, QueueView, in_view_census};
 
 /// The fly-through's vertical field, 70 degrees.
 const VFOV: f32 = 70.0 * std::f32::consts::PI / 180.0;
@@ -99,7 +99,7 @@ fn the_queue_line_reports_in_view_waiting_by_band_and_a_drain_projection() {
         Some(&Value::Null)
     );
     // The rule reading: 30 of 120 jobs before the landing (25 %), 1.0e6 of 8.0e6 samples.
-    let r = vxe_render::RuleMissed {
+    let r = svet_render::RuleMissed {
         jobs: [40, 5, 2],
         samples: [4_000_000, 500_000, 200_000],
         before_jobs: [25, 4, 1],

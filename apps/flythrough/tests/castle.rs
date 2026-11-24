@@ -3,14 +3,14 @@
 
 use flythrough::castle::{self, GLASS, IRON, ORIGIN, STONE, TORCH, TRIM};
 use flythrough::cave::{HallSource, ROCK};
-use vxe_world::{
+use svet_world::{
     AIR, BRICK_VOXELS, Chunk, ChunkCoord, MaterialId, StampedSource, VoxelCoord, WorldSource,
 };
 
 /// The castle's source the way `--castle` builds it: generated, encoded, parsed, mapped.
-fn source(file: &vxe_assets::VoxFile) -> StampedSource<HallSource> {
-    let bytes = vxe_assets::encode(file);
-    let parsed = vxe_assets::VoxFile::parse(&bytes).expect("the castle parses");
+fn source(file: &svet_assets::VoxFile) -> StampedSource<HallSource> {
+    let bytes = svet_assets::encode(file);
+    let parsed = svet_assets::VoxFile::parse(&bytes).expect("the castle parses");
     assert_eq!(&parsed, file, "the castle round-trips through its bytes");
     castle::castle_source(
         1,
@@ -59,11 +59,11 @@ fn count(src: &impl WorldSource, chunks: &[ChunkCoord], m: MaterialId) -> u64 {
 
 #[test]
 fn the_castle_encodes_to_the_same_bytes_on_any_thread_count() {
-    let a = vxe_assets::encode(&castle::castle_vox_on(1));
-    let b = vxe_assets::encode(&castle::castle_vox_on(4));
+    let a = svet_assets::encode(&castle::castle_vox_on(1));
+    let b = svet_assets::encode(&castle::castle_vox_on(4));
     assert_eq!(a.len(), b.len());
     assert!(a == b, "the castle's bytes depend on the thread count");
-    assert_eq!(vxe_assets::encode(&castle::castle_vox_on(4)), b);
+    assert_eq!(svet_assets::encode(&castle::castle_vox_on(4)), b);
 }
 
 #[test]
@@ -206,10 +206,10 @@ fn the_castle_loads_through_the_scene() {
     // The two mappings of the 21 tiles side by side: each is seconds in a test build.
     let (scene, hall) = std::thread::scope(|s| {
         let scene = s.spawn(|| {
-            vxe_assets::VoxScene::load(
+            svet_assets::VoxScene::load(
                 &file,
                 &castle::dungeon_map(),
-                vxe_assets::SceneOptions::default(),
+                svet_assets::SceneOptions::default(),
             )
         });
         let hall = castle::castle_prefabs(&file).expect("mapped");
@@ -234,8 +234,8 @@ fn the_castle_loads_through_the_scene() {
     let mut table = base.clone();
     flythrough::structures::add_library_rows(dir, None, &mut table);
     let mut m = flythrough::hud::Modes::new(
-        vxe_render::Lighting::default(),
-        vxe_render::LightingResolution::default(),
+        svet_render::Lighting::default(),
+        svet_render::LightingResolution::default(),
         0.0,
     );
     m.structures = flythrough::structures::Library::load(dir, &table, &base);

@@ -1,7 +1,7 @@
 //! The look presets the fly-through starts in and `N` cycles, and the light store's default
 //! read and weights.
 
-use vxe_render::{NormalMode, SurfaceTuning};
+use svet_render::{NormalMode, SurfaceTuning};
 
 /// A named look of the window: a normal mode and the surface tuning. `--look` starts in one, `N` cycles them in [`LookPreset::ALL`] order.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -36,11 +36,11 @@ impl LookPreset {
     pub const ALL: [Self; 4] = [Self::FACE, Self::FIELD, Self::TRILINEAR8, Self::GRADIENT27];
 
     /// The look the fly-through starts in without `--look`: honest cubes (ADR-0041) with the
-    /// far normal at the profiles' band, `[4, 8]` (`vxe_render::DEFAULT_FAR_NORMAL`, ADR-0082),
+    /// far normal at the profiles' band, `[4, 8]` (`svet_render::DEFAULT_FAR_NORMAL`, ADR-0082),
     /// read with [`DEFAULT_STORE_READ`] and [`DEFAULT_LIGHT_WEIGHTS`]. `--look face` is the same
     /// cubes with the far normal off.
     pub const DEFAULT: Self = Self {
-        far_normal: vxe_render::DEFAULT_FAR_NORMAL,
+        far_normal: svet_render::DEFAULT_FAR_NORMAL,
         ..Self::FACE
     };
 
@@ -93,26 +93,26 @@ impl LookPreset {
 /// shading normal (ADR-0049), so where the far normal leans a face's normal the stored light
 /// is the mix of the cell's direction values it leans toward; near faces read their own
 /// direction, as `StoreRead::Face`, the library's default, does everywhere.
-pub const DEFAULT_STORE_READ: vxe_render::StoreRead = vxe_render::StoreRead::Normal;
+pub const DEFAULT_STORE_READ: svet_render::StoreRead = svet_render::StoreRead::Normal;
 
 /// The normal the fly-through's half-resolution light filters compare without
 /// `--light-weights`: the hit's face normal (ADR-0049's weight rule), so a far riser's and
 /// tread's taps stay apart under the far normal. The library's default is `Normal`.
-pub const DEFAULT_LIGHT_WEIGHTS: vxe_render::LightWeights = vxe_render::LightWeights::Face;
+pub const DEFAULT_LIGHT_WEIGHTS: svet_render::LightWeights = svet_render::LightWeights::Face;
 
 /// The key light's penumbra the fly-through starts with without `--penumbra`: the library's,
 /// one ray a frame toward a random point of the disc (ADR-0082: window W1's pick).
-pub const DEFAULT_PENUMBRA: vxe_render::Penumbra = vxe_render::Penumbra::Disc;
+pub const DEFAULT_PENUMBRA: svet_render::Penumbra = svet_render::Penumbra::Disc;
 
 /// The lighting the fly-through's flags start from: the library's `Lighting::default()` read
 /// with [`DEFAULT_STORE_READ`] and [`DEFAULT_LIGHT_WEIGHTS`]. The fly-through's flag defaults
 /// and every example that renders the fly-through's image take this one base, so the two
 /// cannot drift. The lamp, its bounce and the exposure stay the library's here; each program
 /// settles them from its own flags.
-pub fn default_lighting() -> vxe_render::Lighting {
-    vxe_render::Lighting {
+pub fn default_lighting() -> svet_render::Lighting {
+    svet_render::Lighting {
         store_read: DEFAULT_STORE_READ,
         light_weights: DEFAULT_LIGHT_WEIGHTS,
-        ..vxe_render::Lighting::default()
+        ..svet_render::Lighting::default()
     }
 }

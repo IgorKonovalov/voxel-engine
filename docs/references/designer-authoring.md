@@ -227,7 +227,7 @@ on an unverified line. Numbers are the sources' own.
   (component-model.bytecodealliance.org); wit-bindgen (GitHub README).** WIT "defines only
   contracts between components"; packages carry a semver id; WASI 0.2.0 (2024-01-25) is a stable
   pin; wit-bindgen generates guest bindings for Rust, C, C++, C#, Go and MoonBit, and the host
-  side is `wasmtime`'s `bindgen!`. What we take: `vxe:logic@0.1.0` is already the stable seam;
+  side is `wasmtime`'s `bindgen!`. What we take: `svet:logic@0.1.0` is already the stable seam;
   the compiler's only job is to emit a component for it; a new source language gets a component
   cheaply if it lowers to a supported guest language or emits core wasm plus the canonical ABI
   through `wasm-tools`.
@@ -319,7 +319,7 @@ on an unverified line. Numbers are the sources' own.
   diffed state after every step, about 100 bugs in eight days, 15 seeds at parity; the quirks
   were uninitialised fields, an extra random draw, and real-time dependencies that never fired
   headless. What we take: "same seed, two builds, diff every step" is the most agent-leverageable
-  harness in this list, and we own its preconditions (deterministic `vxe-world`, the op log,
+  harness in this list, and we own its preconditions (deterministic `svet-world`, the op log,
   the native-versus-component equality test); anything that reads time breaks it.
 - **Max Polaczuk, "Stop Benchmarking AI Coding Agents on Todo Apps. Make Them Build an MMO.",
   DEV Community.** A 48-hour agent build whose enablers were one deterministic simulation

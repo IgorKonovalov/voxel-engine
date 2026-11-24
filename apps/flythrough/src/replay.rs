@@ -6,8 +6,8 @@ use crate::logic::DigLogic;
 use crate::scene::cave_materials;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use vxe_net::{Logic, Server};
-use vxe_world::{ChunkExtent, LogFile, MaterialTable, OpLog, WireError, World};
+use svet_net::{Logic, Server};
+use svet_world::{ChunkExtent, LogFile, MaterialTable, OpLog, WireError, World};
 
 impl CaveSource {
     /// The cave's generation version, written into a save's header. A save made under
@@ -28,7 +28,7 @@ pub enum LogicChoice {
     /// [`DigLogic`] linked into the binary.
     #[default]
     Native,
-    /// The `flythrough-logic` component at this path, hosted by `vxe-script-wasm`.
+    /// The `flythrough-logic` component at this path, hosted by `svet-script-wasm`.
     Wasm(PathBuf),
 }
 
@@ -65,8 +65,8 @@ impl std::fmt::Display for LogicChoice {
 
 #[cfg(feature = "wasm")]
 fn load_component(path: &Path) -> Result<Box<dyn Logic>, String> {
-    let config = vxe_script_wasm::WasmConfig::default();
-    match vxe_script_wasm::WasmLogic::load(path, &config) {
+    let config = svet_script_wasm::WasmConfig::default();
+    match svet_script_wasm::WasmLogic::load(path, &config) {
         Ok(logic) => Ok(Box::new(logic)),
         Err(e) => Err(e.to_string()),
     }

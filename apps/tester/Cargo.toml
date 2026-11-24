@@ -1,5 +1,5 @@
 [package]
-name = "vxe-tester"
+name = "svet-tester"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,11 +12,11 @@ publish = false
 workspace = true
 
 [lib]
-name = "vxe_tester"
+name = "svet_tester"
 path = "src/lib.rs"
 
 [[bin]]
-name = "vxe-tester"
+name = "svet-tester"
 path = "src/main.rs"
 
 [dependencies]
@@ -24,8 +24,8 @@ crc32fast.workspace = true
 env_logger.workspace = true
 flythrough = { path = "../flythrough" }
 log.workspace = true
-vxe-app.workspace = true
-vxe-render.workspace = true
+svet-app.workspace = true
+svet-render.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true

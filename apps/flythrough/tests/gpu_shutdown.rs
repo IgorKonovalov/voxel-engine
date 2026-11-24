@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use flythrough::cave::CaveSource;
 use flythrough::{RESIDENCY, cave_materials};
-use vxe_world::*;
+use svet_world::*;
 
 const DROP_BOUND: Duration = Duration::from_secs(5);
 
@@ -137,7 +137,7 @@ fn headless_run(extra: &[&str]) -> Option<(std::process::ExitStatus, String)> {
             "0",
         ])
         .args(extra)
-        .env("RUST_LOG", "flythrough=info,vxe_app=info")
+        .env("RUST_LOG", "flythrough=info,svet_app=info")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -170,8 +170,8 @@ fn headless_run(extra: &[&str]) -> Option<(std::process::ExitStatus, String)> {
     let err = reader.join().expect("stderr is read");
     let _ = out_reader.join();
     if !status.success() && err.contains("no adapter") {
-        if std::env::var("VXE_REQUIRE_SOFTWARE_ADAPTER").as_deref() == Ok("1") {
-            panic!("VXE_REQUIRE_SOFTWARE_ADAPTER=1 but the fly-through found no adapter: {err}");
+        if std::env::var("SVET_REQUIRE_SOFTWARE_ADAPTER").as_deref() == Ok("1") {
+            panic!("SVET_REQUIRE_SOFTWARE_ADAPTER=1 but the fly-through found no adapter: {err}");
         }
         println!("skipped: no adapter ({})", err.trim());
         return None;
@@ -199,7 +199,7 @@ fn assert_stages(lines: &[&str], expected: &[&str]) {
 /// read error is printed once and the process exits with status 1.
 #[test]
 fn a_replay_log_that_does_not_read_exits_1_after_the_teardown() {
-    let missing = std::env::temp_dir().join("vxe-flythrough-no-such-replay.vxlog");
+    let missing = std::env::temp_dir().join("svet-flythrough-no-such-replay.vxlog");
     assert!(!missing.exists(), "{} exists", missing.display());
     let path = missing.to_str().expect("a UTF-8 temp path");
     let Some((status, err)) = headless_run(&["--level", "--replay", path]) else {

@@ -4,7 +4,9 @@
 use super::Args;
 use super::flags::Parsing;
 use super::table::{Flag, Section};
-use vxe_render::{BakeKnobs, BuildSettings, Profile, RenderSettings, UpscalerChoice, UpscalerKind};
+use svet_render::{
+    BakeKnobs, BuildSettings, Profile, RenderSettings, UpscalerChoice, UpscalerKind,
+};
 
 /// The sections `--help` lists after the audio's: the loading screen's, then the settings'.
 pub(super) fn late_sections() -> Vec<Section<Parsing>> {
@@ -27,7 +29,7 @@ fn sections() -> Vec<Section<Parsing>> {
             Flag::value(
                 &["--profile"],
                 "floor|portable|performance|high",
-                "the render profile (vxe_render::Profile) every other flag edits; F4 (or \
+                "the render profile (svet_render::Profile) every other flag edits; F4 (or \
                  the menu's profile entry) cycles it, applying its live and settle fields [floor]",
                 |p: &mut Parsing, v| {
                     p.args.profile = v.named(Profile::from_name, PROFILE_NAMES)?;
@@ -41,7 +43,7 @@ fn sections() -> Vec<Section<Parsing>> {
                  profile's]",
                 |p: &mut Parsing, v| {
                     p.args.light_cap = v.parse_if(
-                        |n: &u32| (1..=vxe_render::MAX_LIGHTS as u32).contains(n),
+                        |n: &u32| (1..=svet_render::MAX_LIGHTS as u32).contains(n),
                         "1 to 16",
                     )?;
                     Ok(())
@@ -75,7 +77,7 @@ fn sections() -> Vec<Section<Parsing>> {
                  record (at least the budget's) and once none does, each 0.1 to 100; off is the \
                  budget alone [the profile's: 1.5,1 at floor, 6,1 at portable]",
                 |p: &mut Parsing, v| {
-                    p.args.bake.drain = vxe_render::Drain::parse(v.text)?;
+                    p.args.bake.drain = svet_render::Drain::parse(v.text)?;
                     Ok(())
                 },
             ),
@@ -106,7 +108,7 @@ fn sections() -> Vec<Section<Parsing>> {
                  a smaller buffer fills and evicts) [1048576]",
                 |p: &mut Parsing, v| {
                     p.args.light_samples = Some(v.parse_if(
-                        |n: &u32| (1024..=vxe_render::DEFAULT_LIGHT_SAMPLES).contains(n),
+                        |n: &u32| (1024..=svet_render::DEFAULT_LIGHT_SAMPLES).contains(n),
                         "1024 to 1048576",
                     )?);
                     Ok(())
@@ -151,7 +153,7 @@ impl Args {
         self.light.lamp_bounce = s.lighting.lamp_bounce;
         self.look.internal_scale = s.scale;
         self.look.upscaler =
-            (s.scale == vxe_render::RenderScale::One).then_some(match s.upscaler {
+            (s.scale == svet_render::RenderScale::One).then_some(match s.upscaler {
                 UpscalerChoice::Off => crate::hud::UpscalerMode::Off,
                 UpscalerChoice::Own => crate::hud::UpscalerMode::Own,
                 UpscalerChoice::Fsr2 => crate::hud::UpscalerMode::Fsr2,
@@ -249,7 +251,7 @@ impl Args {
         RenderSettings {
             lighting: self.start_lighting(),
             look: self.start_look(),
-            lod: vxe_render::LodParams {
+            lod: svet_render::LodParams {
                 r_full: self.residency.r_full,
                 forced_level: None,
             },
@@ -259,7 +261,7 @@ impl Args {
             jitter,
             sharpness: self.look.sharpen,
             fsr2,
-            own: vxe_render::Upscaler::default(),
+            own: svet_render::Upscaler::default(),
             light_cap: self.light_cap,
             metering: self.light.metering,
             field_split: true,
@@ -291,7 +293,7 @@ impl Args {
                 ..BuildSettings::default()
             },
             output_hint: self.render_fixed().or(self.output_hint),
-            mark_colours: vxe_render::MARK_COLOURS,
+            mark_colours: svet_render::MARK_COLOURS,
         }
     }
 }

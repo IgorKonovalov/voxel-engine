@@ -8,7 +8,7 @@
 //! ```
 
 use flythrough::{castle, now};
-use vxe_world::{Chunk, ChunkCoord, WorldSource};
+use svet_world::{Chunk, ChunkCoord, WorldSource};
 
 #[allow(
     clippy::disallowed_methods,

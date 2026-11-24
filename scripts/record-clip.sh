@@ -20,7 +20,7 @@
 # Everything after `--` goes to the example (`--rig`, `--clip`, `--orbit`, `--size`, `--loops`,
 # `--seconds`, `--settle`, `--exposure`, `--adapter` ...; `cargo run --release -p flythrough
 # --example clip -- --help` lists them). The example's `--fps` and `--out-dir` are this
-# script's. The render runs under the repo's GPU lock (`.git/vxe-perf.lock`) when flock is
+# script's. The render runs under the repo's GPU lock (`.git/svet-perf.lock`) when flock is
 # installed, and in a systemd scope capped at RECORD_MEMORY_MAX (6G) when systemd-run is.
 set -euo pipefail
 
@@ -85,7 +85,7 @@ if [[ -z "$input" ]]; then
   lock=""
   if git_dir="$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
   then
-    lock="$git_dir/vxe-perf.lock"
+    lock="$git_dir/svet-perf.lock"
   fi
   start=$SECONDS
   # The example resolves its default rig against the workspace root.

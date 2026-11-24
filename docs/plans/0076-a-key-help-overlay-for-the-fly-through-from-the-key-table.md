@@ -53,7 +53,7 @@ What the tree has (main 50baf7be):
   hand in `run/keys.rs`, `run/frame.rs` and `fly.rs`. `ACTION_KEYS` lists their key codes only,
   with no words, for `no_two_inputs_share_a_key`. Nothing stops a key being read in the source
   and left out of `ACTION_KEYS`.
-- **The overlay** is `vxe_render::HudOverlay`: a 256 x 128 cell grid of 8 x 8 glyphs at
+- **The overlay** is `svet_render::HudOverlay`: a 256 x 128 cell grid of 8 x 8 glyphs at
   `HUD_SCALE` 2, coloured rows from the top-left, each glyph with a 0.75-alpha shadow. With the
   stats HUD (`F2`) on it draws the stats rows and the mode banner under them; off, the banner
   alone. At 1280 x 720 it shows 80 x 45 cells.
@@ -113,7 +113,7 @@ flowchart LR
         S[tests/help.rs<br/>source scan + coverage]
         P[--keys<br/>prints the panel]
     end
-    subgraph render["vxe-render"]
+    subgraph render["svet-render"]
         O[HudOverlay::set_lines]
     end
     T --> K
@@ -199,7 +199,7 @@ phase writes a GPU test; the overlay's drawing is unchanged and `gpu_hud_golden`
     names `Enter`, the 2026-10-17 reading kept as read under `F1`).
   - Left as written, being records of their day: ADR-0009 and ADR-0011 (accepted),
     `docs/nfr/02-frame-budget.md`'s 2026 readings, the readings logs and closed plans. Not the
-    readings key: `vxe-sim`'s and `vxe-world`'s `F1` to `F6` fixtures, the backlog's "followup
+    readings key: `svet-sim`'s and `svet-world`'s `F1` to `F6` fixtures, the backlog's "followup
     F1" (Plan 0067), `dist/README-TESTER.txt` and `--tester`'s help (the tester's `F1` stays
     help). No skill under `.claude/` names the key, and `run.json` carries no `F1` field (its
     numbers come from the run, not the key). `plan-0062` and `plan-0075` add no `F1` use in
@@ -245,7 +245,7 @@ phase writes a GPU test; the overlay's drawing is unchanged and `gpu_hud_golden`
   cells, with a `gpu_hud` golden case on lavapipe (`gpu_hud_golden` binary, under 10 s);
   otherwise nothing under `crates/` changes.
 - **Files touched:** the Phase 1 and 2 files as the picks need; only with a backdrop,
-  `crates/vxe-render/src/hud.rs`, `crates/vxe-render/src/shaders/hud.wgsl` and the golden.
+  `crates/svet-render/src/hud.rs`, `crates/svet-render/src/shaders/hud.wgsl` and the golden.
 - **Done when:** each pick from the readings log is in the panel and its Phase 1 and 2 tests
   still pass with the new wording; the gate tier (`cargo nextest run --profile gate`), clippy,
   fmt and the doc gates exit 0 at the tip.
@@ -319,7 +319,7 @@ their content; only their key changes.
   stdout as today, and the group says `(with --audio)`.
 - **No reflow for small windows, no scrolling, no search.**
 - **No engine UI facility** unless Phase 3 asks for the backdrop; nothing under `crates/` names
-  a key, a toggle or the fly-through, and `vxe-app`'s input is unchanged.
+  a key, a toggle or the fly-through, and `svet-app`'s input is unchanged.
 - **No edits to accepted ADRs or past readings** that name `F1`.
 - **No Windows window check** for this plan.
 - **No new GPU test** unless Phase 4 adds the backdrop.

@@ -12,11 +12,11 @@ use flythrough::cave::ROCK;
 use flythrough::viewer::{Loaded, Viewer};
 use flythrough::{cave_materials, entities, walker};
 use support::bake::{Rig, rig_on};
-use vxe_assets::{VoxText, encode};
-use vxe_entity::{Model, Part, Pose};
-use vxe_render::glam::Vec3;
-use vxe_render::{Camera, EntityMirror, ViewMode};
-use vxe_world::{
+use svet_assets::{VoxText, encode};
+use svet_entity::{Model, Part, Pose};
+use svet_render::glam::Vec3;
+use svet_render::{Camera, EntityMirror, ViewMode};
+use svet_world::{
     ChunkExtent, EditOp, FIXED_ONE, Fixed3, Material, MaterialId, MaterialTable, Mode, Prefab,
     UniformSource, World,
 };
@@ -301,8 +301,8 @@ fn a_fragmented_pool_resets_and_the_walkers_stay() {
 
 // ---- Phase 3: stable instance slots, generations and ghost leaves ----
 
-use vxe_entity::{EntityId, EntitySet};
-use vxe_render::{Light, ModelHandle};
+use svet_entity::{EntityId, EntitySet};
+use svet_render::{Light, ModelHandle};
 
 /// `model` posed with its root at `at` voxels, unturned.
 fn posed(model: &Model, at: [f32; 3]) -> Pose {
@@ -327,20 +327,20 @@ fn place(
 }
 
 /// A buffer the target's rgba8 rows are copied into, row pitch 256-byte aligned.
-fn readback_buffer(rig: &Rig) -> vxe_render::wgpu::Buffer {
+fn readback_buffer(rig: &Rig) -> svet_render::wgpu::Buffer {
     rig.device
-        .create_buffer(&vxe_render::wgpu::BufferDescriptor {
+        .create_buffer(&svet_render::wgpu::BufferDescriptor {
             label: Some("target readback"),
             size: u64::from(W * 4 * H),
-            usage: vxe_render::wgpu::BufferUsages::COPY_DST
-                | vxe_render::wgpu::BufferUsages::MAP_READ,
+            usage: svet_render::wgpu::BufferUsages::COPY_DST
+                | svet_render::wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         })
 }
 
 /// Submits a copy of the frame's target into `buf`, without waiting.
-fn copy_target(rig: &Rig, buf: &vxe_render::wgpu::Buffer) {
-    use vxe_render::wgpu;
+fn copy_target(rig: &Rig, buf: &svet_render::wgpu::Buffer) {
+    use svet_render::wgpu;
     let mut enc = rig
         .device
         .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -361,11 +361,11 @@ fn copy_target(rig: &Rig, buf: &vxe_render::wgpu::Buffer) {
 }
 
 /// Maps `buf` and returns its bytes, waiting for the device.
-fn read_buffer(rig: &Rig, buf: &vxe_render::wgpu::Buffer) -> Vec<u8> {
+fn read_buffer(rig: &Rig, buf: &svet_render::wgpu::Buffer) -> Vec<u8> {
     let slice = buf.slice(..);
-    slice.map_async(vxe_render::wgpu::MapMode::Read, |r| r.expect("maps"));
+    slice.map_async(svet_render::wgpu::MapMode::Read, |r| r.expect("maps"));
     rig.device
-        .poll(vxe_render::wgpu::PollType::wait_indefinitely())
+        .poll(svet_render::wgpu::PollType::wait_indefinitely())
         .expect("the device finishes");
     let bytes = slice.get_mapped_range().expect("mapped").to_vec();
     buf.unmap();
@@ -437,14 +437,14 @@ fn a_reused_pool_slot_shows_the_new_model_and_the_old_frame_the_old() {
 
 /// The hit records' instance field (flags bits 6..15) at pixel `i`, when it is an entity hit.
 fn instance_field(rig: &Rig, i: usize) -> Option<u16> {
-    let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let rec = svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     let f = rec[i][3];
     (f & 1 != 0 && f & 32 != 0).then_some(f >> 6)
 }
 
 /// The temporal pass's accumulated direct part's luminance at pixel `i`.
 fn direct_acc_at(rig: &Rig, i: usize) -> f32 {
-    vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.direct_accumulated())[i][3]
+    svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.direct_accumulated())[i][3]
 }
 
 /// A 16 x 16 x 2 slab of `m`, its pivot at its top centre, detail 1.
@@ -548,7 +548,7 @@ fn a_removed_entity_takes_its_shadow_with_it() {
         rig.frame.set_entities(&rig.queue, &set, &[(id, h)]);
         rig.step(&camera);
     }
-    let pos = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let pos = svet_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
     let under = (0..pos.len())
         .filter(|&i| (pos[i][2] - 2.0).abs() < 1e-3)
         .min_by(|&i, &j| {
@@ -660,7 +660,7 @@ fn a_reload_keeps_the_picture_steady() {
     rig.frame.set_entities(&rig.queue, &set, &[(id, h3)]);
     rig.step(&camera);
     let n2 = rig.display();
-    let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let rec = svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     let slot = |i: usize| {
         let f = rec[i][3];
         (f & 1 != 0 && f & 32 != 0).then_some((f >> 6) & 511)

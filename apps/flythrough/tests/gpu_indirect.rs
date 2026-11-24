@@ -4,10 +4,10 @@
 mod support;
 
 use support::*;
-use vxe_render::GpuWorld;
-use vxe_render::{LightParams, Lighting, ToneMap};
-use vxe_render::{internals::TestProbe, internals::WINDOW_FRAMES};
-use vxe_world::*;
+use svet_render::GpuWorld;
+use svet_render::{LightParams, Lighting, ToneMap};
+use svet_render::{internals::TestProbe, internals::WINDOW_FRAMES};
+use svet_world::*;
 
 /// The lighting of the probe-preset tests: no lamp, no filter, the identity tone map, the
 /// channel on over the whole 32-probe volume (no reach cut; the cavity's table has no emissive
@@ -45,9 +45,9 @@ fn render_preset(
     let rgba = rig.render(
         &camera,
         &LightParams::headlamp(),
-        vxe_render::LookParams::default(),
+        svet_render::LookParams::default(),
     );
-    let info = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let info = svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     (rgba, info)
 }
 
@@ -187,8 +187,8 @@ fn furnace_world() -> (World, MaterialId) {
 /// A 1 x 1 frame looking straight down at the floor centre of the box whose interior spans
 /// x in `[x0, x0 + 24)`, at full lighting resolution, lamp off, filter off, indirect on.
 struct FloorProbe {
-    frame: vxe_render::Frame,
-    camera: vxe_render::Camera,
+    frame: svet_render::Frame,
+    camera: svet_render::Camera,
     light: LightParams,
 }
 
@@ -197,16 +197,16 @@ struct FloorProbe {
 const WALL_LAMP: [f32; 3] = [30.0, 32.0, 37.0];
 
 impl FloorProbe {
-    fn new(device: &vxe_render::wgpu::Device, x0: i64) -> Self {
-        let mut frame = vxe_render::Frame::new(device, 1, 1);
-        frame.set_resolution(device, vxe_render::LightingResolution::Full);
+    fn new(device: &svet_render::wgpu::Device, x0: i64) -> Self {
+        let mut frame = svet_render::Frame::new(device, 1, 1);
+        frame.set_resolution(device, svet_render::LightingResolution::Full);
         frame.set_lighting(Lighting {
             lamp: false,
             filter: false,
             lamp_bounce: true,
             ..Lighting::default()
         });
-        let camera = vxe_render::Camera {
+        let camera = svet_render::Camera {
             position: [x0 as f32 + 12.0, 32.0, 37.0].into(),
             yaw: 0.0,
             pitch: -std::f32::consts::FRAC_PI_2,
@@ -224,7 +224,7 @@ impl FloorProbe {
     /// 5 degrees off the vertical toward +y (yaw 90 degrees, so the camera's right is +x), the
     /// lamp turned 90 degrees onto +x. The floor centre's upper hemisphere sees the lit wall, so
     /// the channel's one bounce reaches it.
-    fn wall_lamp(device: &vxe_render::wgpu::Device, x0: i64) -> Self {
+    fn wall_lamp(device: &svet_render::wgpu::Device, x0: i64) -> Self {
         let mut f = Self::new(device, x0);
         f.frame.set_lighting(Lighting {
             lamp: true,
@@ -233,7 +233,7 @@ impl FloorProbe {
         f.camera.yaw = std::f32::consts::FRAC_PI_2;
         f.camera.pitch = -std::f32::consts::FRAC_PI_2 + 5f32.to_radians();
         let (_, right, up) = f.camera.basis();
-        let to = vxe_render::glam::Vec3::from(WALL_LAMP) - f.camera.position;
+        let to = svet_render::glam::Vec3::from(WALL_LAMP) - f.camera.position;
         f.light = LightParams {
             offset_right: to.dot(right),
             offset_down: -to.dot(up),
@@ -246,8 +246,8 @@ impl FloorProbe {
     /// Steps `n` frames.
     fn run(
         &mut self,
-        device: &vxe_render::wgpu::Device,
-        queue: &vxe_render::wgpu::Queue,
+        device: &svet_render::wgpu::Device,
+        queue: &svet_render::wgpu::Queue,
         gpu: &GpuWorld,
         n: u32,
     ) {
@@ -260,10 +260,11 @@ impl FloorProbe {
     /// The gathered indirect irradiance at the floor centre (rgb).
     fn indirect(
         &self,
-        device: &vxe_render::wgpu::Device,
-        queue: &vxe_render::wgpu::Queue,
+        device: &svet_render::wgpu::Device,
+        queue: &svet_render::wgpu::Queue,
     ) -> [f32; 3] {
-        let e = vxe_render::debug::read_rgba16f(device, queue, self.frame.indirect_irradiance())[0];
+        let e =
+            svet_render::debug::read_rgba16f(device, queue, self.frame.indirect_irradiance())[0];
         [e[0], e[1], e[2]]
     }
 }
@@ -272,12 +273,12 @@ impl FloorProbe {
 /// centre of voxel (32, 32, 32), its centre probe `(2, 2, 2)`'s position, with the lamp at the
 /// eye lighting every direction (cone 172 to 180 degrees, no shadow ray: from the eye every
 /// lit point is visible), the channel over the whole volume, its freeze at the cap.
-fn lamp_furnace(device: &vxe_render::wgpu::Device) -> FloorProbe {
+fn lamp_furnace(device: &svet_render::wgpu::Device) -> FloorProbe {
     let mut f = FloorProbe::new(device, BOX_MIN[0]);
     f.frame.set_lighting(Lighting {
         lamp: true,
         lamp_reach: 0.0,
-        probe_freeze: vxe_render::internals::MAX_AGE,
+        probe_freeze: svet_render::internals::MAX_AGE,
         ..f.frame.lighting()
     });
     f.camera.position = [32.5, 32.5, 32.5].into();
@@ -308,7 +309,7 @@ fn octa_unfold(p: [f64; 2]) -> [f64; 3] {
 /// `D_t = sum(max(0, d_t . w) E(w)) / sum(max(0, d_t . w))` with `d_t` the texel's direction:
 /// the normalisation the probe blend's `PI sum(L c) / sum(c)` gives for `L = albedo / PI E`,
 /// so the texel's fixed point is `albedo D_t`. No value read back from the shader enters it.
-fn furnace_reference(light: &vxe_render::Light, floor: f32, o: [f64; 3], n: u32) -> Vec<f64> {
+fn furnace_reference(light: &svet_render::Light, floor: f32, o: [f64; 3], n: u32) -> Vec<f64> {
     let (lo, hi) = (BOX_MIN.map(|v| v as f64), BOX_MAX.map(|v| v as f64));
     let golden = std::f64::consts::PI * (3.0 - 5f64.sqrt());
     let samples: Vec<([f64; 3], f64)> = (0..n)
@@ -351,11 +352,11 @@ fn furnace_reference(light: &vxe_render::Light, floor: f32, o: [f64; 3], n: u32)
 /// [`furnace_reference`] over 16384 directions; returns the texel mean, `0.5` times the mean
 /// `D_t`, and the worst texel's ratio less one.
 fn furnace_reading(
-    device: &vxe_render::wgpu::Device,
-    queue: &vxe_render::wgpu::Queue,
+    device: &svet_render::wgpu::Device,
+    queue: &svet_render::wgpu::Queue,
     gpu: &GpuWorld,
     f: &mut FloorProbe,
-    light: &vxe_render::Light,
+    light: &svet_render::Light,
     name: &str,
 ) -> (f64, f64, f64) {
     f.run(device, queue, gpu, 256);
@@ -404,7 +405,7 @@ fn the_lamp_furnace_reads_its_albedo_times_the_direct_mean() {
     let mut gpu = GpuWorld::new(&device, world.extent());
     gpu.sync_now(&world, &device, &queue).unwrap();
     let mut f = lamp_furnace(&device);
-    let lamp = vxe_render::Light::headlamp(&f.camera, &f.light);
+    let lamp = svet_render::Light::headlamp(&f.camera, &f.light);
     let (mm, half_d, worst) = furnace_reading(&device, &queue, &gpu, &mut f, &lamp, "lamp");
     assert!(half_d > 0.0, "{half_d}");
     assert!((mm / half_d - 1.0).abs() <= 0.04, "{mm} against {half_d}");
@@ -430,9 +431,9 @@ fn a_flagged_lights_furnace_reads_its_albedo_times_the_analytic_direct_mean() {
         light_floor: 0.0,
         ..f.frame.lighting()
     });
-    let light = vxe_render::Light {
-        flags: vxe_render::Light::ON | vxe_render::Light::BOUNCE,
-        ..vxe_render::Light::point([32.5; 3], 1200.0)
+    let light = svet_render::Light {
+        flags: svet_render::Light::ON | svet_render::Light::BOUNCE,
+        ..svet_render::Light::point([32.5; 3], 1200.0)
     };
     f.frame.set_lights(&[light]);
     let (mm, half_d, worst) = furnace_reading(&device, &queue, &gpu, &mut f, &light, "list light");
@@ -507,11 +508,11 @@ fn the_channel_holds_the_lamps_bounce_only() {
     let v = lit.frame.probes();
     let origin = v.origin_for(lit.camera.position.to_array());
     let reach = lit.frame.lighting().lamp_reach;
-    let lamp = vxe_render::glam::Vec3::from(WALL_LAMP);
+    let lamp = svet_render::glam::Vec3::from(WALL_LAMP);
     let (mut compared, mut worst, mut lit_texels) = (0, 0.0f32, 0);
     for s in 0..v.count() {
         let w = v.slot_probe(origin, s);
-        if (vxe_render::glam::Vec3::from(v.probe_position(w)) - lamp).length() > reach {
+        if (svet_render::glam::Vec3::from(v.probe_position(w)) - lamp).length() > reach {
             continue;
         }
         let a = v.read_probe(&device, &queue, s);
@@ -658,7 +659,7 @@ fn a_scroll_keeps_the_probes_that_stay_and_enters_new_ones_at_age_zero() {
     }
     let probes = rig.frame.probes();
     let before_origin = probes.origin_for(camera.position.to_array());
-    let before = vxe_render::debug::read_buffer(
+    let before = svet_render::debug::read_buffer(
         &rig.device,
         &rig.queue,
         probes.data(),
@@ -677,7 +678,7 @@ fn a_scroll_keeps_the_probes_that_stay_and_enters_new_ones_at_age_zero() {
         [before_origin[0] + 20, before_origin[1], before_origin[2]]
     );
     let states = probes.read_states(&rig.device, &rig.queue);
-    let after = vxe_render::debug::read_buffer(
+    let after = svet_render::debug::read_buffer(
         &rig.device,
         &rig.queue,
         probes.data(),
@@ -897,7 +898,7 @@ fn lamp_switch_run(frames: u32) -> Option<(f32, [SwitchSeries; 2])> {
         for _ in 0..frames {
             f.run(&device, &queue, &gpu, 1);
             s.indirect.push(f.indirect(&device, &queue)[0]);
-            let px = vxe_render::debug::read_rgba8(&device, &queue, f.frame.target());
+            let px = svet_render::debug::read_rgba8(&device, &queue, f.frame.target());
             s.output.push(px[..3].iter().copied().max().unwrap_or(0));
             s.window.push(f.frame.probe_light_window());
             s.dispatches.push(f.frame.probe_dispatches());
@@ -963,7 +964,7 @@ fn switching_the_lamp_off_drops_the_probe_history() {
 /// same frame records all three.
 #[test]
 fn the_lamp_off_encodes_no_probe_pass() {
-    use vxe_render::FRAME_PASSES;
+    use svet_render::FRAME_PASSES;
     let Some((device, queue)) = software_device(64 << 20) else {
         return;
     };
@@ -971,7 +972,7 @@ fn the_lamp_off_encodes_no_probe_pass() {
     let mut gpu = GpuWorld::new(&device, world.extent());
     gpu.sync_now(&world, &device, &queue).unwrap();
     let mut f = FloorProbe::wall_lamp(&device, BOX_MIN[0]);
-    let timer = vxe_render::PassTimer::with_passes(&device, &queue, FRAME_PASSES.len() as u32);
+    let timer = svet_render::PassTimer::with_passes(&device, &queue, FRAME_PASSES.len() as u32);
     let slot = |name: &str| FRAME_PASSES.iter().position(|&n| n == name).expect(name);
     let (probes, gather) = (slot("probes"), slot("gather"));
     let step = |f: &mut FloorProbe| -> Option<(f64, f64)> {
@@ -1085,8 +1086,8 @@ fn a_lamp_switch_drops_the_lamp_s_direct_history() {
     };
     let lamp_part = |f: &FloorProbe| {
         let acc =
-            vxe_render::debug::read_float(&device, &queue, f.frame.direct_accumulated())[0][3];
-        let raw = vxe_render::debug::read_rgba16f(&device, &queue, f.frame.direct())[0][3];
+            svet_render::debug::read_float(&device, &queue, f.frame.direct_accumulated())[0][3];
+        let raw = svet_render::debug::read_rgba16f(&device, &queue, f.frame.direct())[0][3];
         (acc, raw)
     };
     f.frame.set_lighting(on);
@@ -1111,7 +1112,11 @@ fn a_lamp_switch_drops_the_lamp_s_direct_history() {
 
 /// The long light box of `support::lights` (124 x 60 x 48 interior voxels, no emitter) synced
 /// to a mirror on the software adapter.
-fn bounce_box() -> Option<(vxe_render::wgpu::Device, vxe_render::wgpu::Queue, GpuWorld)> {
+fn bounce_box() -> Option<(
+    svet_render::wgpu::Device,
+    svet_render::wgpu::Queue,
+    GpuWorld,
+)> {
     let world = support::lights::light_box();
     let (device, queue) = software_device(128 << 20)?;
     let mut gpu = GpuWorld::new(&device, world.extent());
@@ -1124,7 +1129,7 @@ fn bounce_box() -> Option<(vxe_render::wgpu::Device, vxe_render::wgpu::Queue, Gp
 /// 8-probe volume at the 16-voxel spacing), freezing at `freeze` visits.
 const BOUNCE_EYE: [f32; 3] = [64.0, 32.0, 26.0];
 
-fn bounce_frame(device: &vxe_render::wgpu::Device, freeze: u32) -> FloorProbe {
+fn bounce_frame(device: &svet_render::wgpu::Device, freeze: u32) -> FloorProbe {
     let mut f = FloorProbe::new(device, 52);
     f.frame.set_lighting(Lighting {
         probe_freeze: freeze,
@@ -1135,10 +1140,15 @@ fn bounce_frame(device: &vxe_render::wgpu::Device, freeze: u32) -> FloorProbe {
 }
 
 /// A white point light of 1200 at `pos`, its bounce flag `bounce`.
-fn list_light(pos: [f32; 3], bounce: bool) -> vxe_render::Light {
-    let l = vxe_render::Light::point(pos, 1200.0);
-    vxe_render::Light {
-        flags: l.flags | if bounce { vxe_render::Light::BOUNCE } else { 0 },
+fn list_light(pos: [f32; 3], bounce: bool) -> svet_render::Light {
+    let l = svet_render::Light::point(pos, 1200.0);
+    svet_render::Light {
+        flags: l.flags
+            | if bounce {
+                svet_render::Light::BOUNCE
+            } else {
+                0
+            },
         ..l
     }
 }
@@ -1159,7 +1169,7 @@ fn a_flagged_light_feeds_the_channel_and_an_unflagged_one_does_not() {
     let Some((device, queue, gpu)) = bounce_box() else {
         return;
     };
-    let mut f = bounce_frame(&device, vxe_render::Lighting::default().probe_freeze);
+    let mut f = bounce_frame(&device, svet_render::Lighting::default().probe_freeze);
     let centre = [64.0, 32.0, 26.0];
     f.frame.set_lights(&[list_light(centre, false)]);
     for i in 0..64 {
@@ -1202,7 +1212,7 @@ fn a_light_beyond_the_bounce_reach_lists_no_probe() {
     let Some((device, queue, gpu)) = bounce_box() else {
         return;
     };
-    let mut f = bounce_frame(&device, vxe_render::Lighting::default().probe_freeze);
+    let mut f = bounce_frame(&device, svet_render::Lighting::default().probe_freeze);
     let at = [40.0, 32.0, 26.0];
     f.frame.set_lights(&[list_light(at, true)]);
     f.run(&device, &queue, &gpu, 64);
@@ -1248,8 +1258,8 @@ fn a_light_beyond_the_bounce_reach_lists_no_probe() {
 type MoveWords = [Vec<support::lights::ProbeWords>; 3];
 
 fn move_run(
-    device: &vxe_render::wgpu::Device,
-    queue: &vxe_render::wgpu::Queue,
+    device: &svet_render::wgpu::Device,
+    queue: &svet_render::wgpu::Queue,
     gpu: &GpuWorld,
     f: &mut FloorProbe,
     a: [f32; 3],
@@ -1387,14 +1397,14 @@ fn a_flagged_list_light_lights_what_it_does_not_see() {
             .sync_now(&rig.world, &rig.device, &rig.queue)
             .expect("fits");
     }
-    let far = vxe_render::Camera {
+    let far = svet_render::Camera {
         position: [120.0, 32.0, 45.0].into(),
         yaw: std::f32::consts::PI,
         pitch: -0.9,
         vfov: 1.2,
     };
     let mut pixel = None;
-    let mut run = |lights: &[vxe_render::Light]| {
+    let mut run = |lights: &[svet_render::Light]| {
         rig.frame.set_lights(lights);
         rig.frame.reset_history();
         for _ in 0..32 {
@@ -1405,13 +1415,18 @@ fn a_flagged_list_light_lights_what_it_does_not_see() {
             println!("the shadowed floor pixel {i} at {p:?}");
             i
         });
-        let rgba = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+        let rgba = svet_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
         [rgba[4 * i], rgba[4 * i + 1], rgba[4 * i + 2]]
     };
     let light = |bounce: bool| {
-        let l = vxe_render::Light::point([64.0, 32.0, 22.0], 600.0);
-        vxe_render::Light {
-            flags: l.flags | if bounce { vxe_render::Light::BOUNCE } else { 0 },
+        let l = svet_render::Light::point([64.0, 32.0, 22.0], 600.0);
+        svet_render::Light {
+            flags: l.flags
+                | if bounce {
+                    svet_render::Light::BOUNCE
+                } else {
+                    0
+                },
             ..l
         }
     };
@@ -1444,7 +1459,7 @@ mod reading {
         let Some((device, queue, gpu)) = bounce_box() else {
             return;
         };
-        let mut f = bounce_frame(&device, vxe_render::Lighting::default().probe_freeze);
+        let mut f = bounce_frame(&device, svet_render::Lighting::default().probe_freeze);
         let start = [30.0, 32.0, 26.0];
         f.frame.set_lights(&[list_light(start, true)]);
         f.run(&device, &queue, &gpu, 128);

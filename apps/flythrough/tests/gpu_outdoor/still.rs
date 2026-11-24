@@ -4,7 +4,7 @@
 mod still {
     use super::support;
     use support::terms::Rig;
-    use vxe_render::{
+    use svet_render::{
         AutoExposure, Camera, Exposure, Frame, LightParams, Lighting, UpscalerKind,
     };
 
@@ -46,15 +46,15 @@ mod still {
             let mut f = Frame::with_sizes(&rig.device, [320, 180], [480, 270]);
             f.set_upscaler_kind(
                 &rig.device,
-                UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default()),
+                UpscalerKind::Fsr2(svet_render::Fsr2Settings::default()),
             );
             f
         } else {
             Frame::new(&rig.device, 320, 180)
         };
-        f.set_look(vxe_render::LookParams {
+        f.set_look(svet_render::LookParams {
             far_normal: flythrough::LookPreset::DEFAULT.far_normal,
-            ..vxe_render::LookParams::default()
+            ..svet_render::LookParams::default()
         });
         let defaults = flythrough::default_lighting();
         let base = Lighting {
@@ -63,7 +63,7 @@ mod still {
             ..defaults
         };
         f.set_count_store(true);
-        f.set_light_hooks(vxe_render::LightHooks {
+        f.set_light_hooks(svet_render::LightHooks {
             key_off: arm.key_off,
             ..Default::default()
         });
@@ -94,12 +94,12 @@ mod still {
                 &mut rig.gpu,
                 &rig.world,
                 rig.world.extent(),
-                &vxe_render::BakeSettings::default(),
+                &svet_render::BakeSettings::default(),
                 &mut |_| {},
             )
             .expect("the store fits");
             if arm.chain_off {
-                f.set_missing_light(&rig.queue, vxe_render::MissingLight::Black);
+                f.set_missing_light(&rig.queue, svet_render::MissingLight::Black);
             }
         }
         f.set_dt(1.0 / 60.0);
@@ -107,13 +107,13 @@ mod still {
         for _ in 0..64 {
             f.step(&rig.device, &rig.queue, &rig.gpu, cam, &light);
         }
-        let st = vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_state(), 0, 32);
-        let e = vxe_render::ExposureState::from_bytes(&st).current;
+        let st = svet_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_state(), 0, 32);
+        let e = svet_render::ExposureState::from_bytes(&st).current;
         f.set_lighting(Lighting {
             exposure: Exposure::Manual(e),
             ..base
         });
-        let read = |f: &Frame| vxe_render::debug::read_rgba8(&rig.device, &rig.queue, f.target());
+        let read = |f: &Frame| svet_render::debug::read_rgba8(&rig.device, &rig.queue, f.target());
         let mut last = read(&f);
         let mut per_px: Vec<Vec<u8>> = vec![Vec::new(); last.len() / 4];
         let mut rejections = Vec::new();
@@ -126,7 +126,7 @@ mod still {
             }
             last = now;
         }
-        let mom = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, f.moments());
+        let mom = svet_render::debug::read_rgba16f(&rig.device, &rig.queue, f.moments());
         Changes {
             px: per_px,
             width: f.target().width() as usize,
@@ -261,7 +261,7 @@ mod still {
     /// band (the sky ray's hit rate 0.3 to 0.6) is at or under the headlamp's over the same
     /// region at the same pose with the sky off, under the same upscaler. The far end's (under
     /// 0.05) is printed beside the headlamp's, not asserted: its remainder is attributed by term
-    /// in `reading::the_tunnel_far_end_by_term`. `VXE_TEST_ADAPTER` picks the adapter (unset:
+    /// in `reading::the_tunnel_far_end_by_term`. `SVET_TEST_ADAPTER` picks the adapter (unset:
     /// lavapipe).
     #[test]
     #[ignore = "soak"]
@@ -277,7 +277,7 @@ mod still {
         /// Plan 0086 Phase 25 bar 1's native form as a reading (the rim's p99 over a still
         /// headlamp's 0 natively, where the headlamp is a fixed light with no estimator): 32
         /// frames at native 320 x 180. The FSR 2 form is the soak test
-        /// `the_tunnel_is_as_still_as_the_lamp_lit_floor`. `VXE_TEST_ADAPTER` picks the adapter
+        /// `the_tunnel_is_as_still_as_the_lamp_lit_floor`. `SVET_TEST_ADAPTER` picks the adapter
         /// (unset: lavapipe).
         #[test]
         #[ignore = "reading"]
@@ -286,7 +286,7 @@ mod still {
         }
 
         /// Plan 0094 Phase 1 bar 3: the far end's p99 split by term (`tunnel_far_end_by_term`),
-        /// 128 frames under FSR 2 at 1.5. `VXE_TEST_ADAPTER` picks the adapter.
+        /// 128 frames under FSR 2 at 1.5. `SVET_TEST_ADAPTER` picks the adapter.
         #[test]
         #[ignore = "reading"]
         fn the_tunnel_far_end_by_term() {

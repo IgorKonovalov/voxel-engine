@@ -2,7 +2,7 @@
 //! `gpu_look` binaries take.
 
 use super::*;
-use vxe_render::{LightParams, LookParams, NormalMode, ViewMode};
+use svet_render::{LightParams, LookParams, NormalMode, ViewMode};
 
 pub fn look(normal_mode: NormalMode, view: ViewMode) -> LookParams {
     LookParams {

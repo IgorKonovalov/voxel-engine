@@ -5,7 +5,7 @@
 /// settled image, for `arm` on [`support::wobble`]'s scene: 120 settle frames, the settled
 /// frame, a 90-degree yaw over 10 frames, 64 held, back over 10, the queue stepping throughout
 /// (no drain). Returns the share and the far class's share of the display at the return frame.
-fn far_return(rig: &mut support::terms::Rig, cam: &vxe_render::Camera, arm: support::wobble::Arm) -> (f64, f64) {
+fn far_return(rig: &mut support::terms::Rig, cam: &svet_render::Camera, arm: support::wobble::Arm) -> (f64, f64) {
     use support::wobble::{FAR, frame, over, share, step, yawed};
     let mut f = frame(rig, arm);
     for _ in 0..120 {

@@ -1,7 +1,7 @@
 //! Start-up as stages of steps (ADR-0059): the pipelines built ahead of the first world frame
-//! (the frame's own and the entity set, [`vxe_render::Frame::prepare_entities`]), the level's
+//! (the frame's own and the entity set, [`svet_render::Frame::prepare_entities`]), the level's
 //! first upload or the streamed world's near residency, the light pre-roll
-//! ([`vxe_render::PreRoll`]) and the field's initial fill.
+//! ([`svet_render::PreRoll`]) and the field's initial fill.
 //! Under `--loading-screen off` [`Run::load_all`] steps them to the end inside `init`; under
 //! `on` the pipelines build on a worker thread ([`Build`]) while the frame loop keeps drawing,
 //! and each frame spends `--load-slice` of wall time on steps (or waiting on the worker), then
@@ -24,12 +24,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-use vxe_app::{Flow, Gpu, Input, KeyCode};
-use vxe_render::{
+use svet_app::{Flow, Gpu, Input, KeyCode};
+use svet_render::{
     Camera, EasedBar, LoadProgress, LoadingScreen, LoadingView, PreRoll, PreRollConfig,
     PreRollState, SyncStats, wgpu,
 };
-use vxe_world::ChunkCoord;
+use svet_world::ChunkCoord;
 
 /// The pre-roll's cap on its step time, in ms.
 pub(crate) const PRE_ROLL_CAP_MS: f64 = 120_000.0;
@@ -655,12 +655,12 @@ impl Run {
             &mut gfx.frame,
         );
         let frame = &mut gfx.frame;
-        let settings = vxe_render::queue_settings();
+        let settings = svet_render::queue_settings();
         frame.start_bake_queue(
             &gpu.queue,
             &gfx.mirror,
             settings,
-            vxe_render::DEFAULT_BAKE_SLICE_MS,
+            svet_render::DEFAULT_BAKE_SLICE_MS,
         );
         frame.set_bake_budget(self.args.bake.budget);
         frame.set_bake_coarse(self.args.bake.coarse, self.args.bake.near);
@@ -739,14 +739,14 @@ impl Run {
         mirror.set_focus(voxel_of(camera.position));
         let stream = self.stream.as_ref();
         let resident_fn = |c: ChunkCoord| {
-            stream.is_some_and(|s| s.streamer.tier(c) == Some(vxe_world::Tier::Full))
+            stream.is_some_and(|s| s.streamer.tier(c) == Some(svet_world::Tier::Full))
         };
         let resident: Option<&dyn Fn(ChunkCoord) -> bool> = stream
             .is_some()
             .then_some(&resident_fn as &dyn Fn(ChunkCoord) -> bool);
         let (forward, _, _) = camera.basis();
         let (half_angle, frustum, focal) = queue_view_angles(camera.vfov, frame.output_size());
-        let view = vxe_render::QueueView {
+        let view = svet_render::QueueView {
             eye: camera.position.to_array(),
             forward: forward.to_array(),
             resident,
@@ -813,9 +813,9 @@ impl Run {
     /// Prints the pre-roll's lines and hands the live queue its full-first radius.
     fn end_pre_roll(
         &mut self,
-        frame: &mut vxe_render::Frame,
+        frame: &mut svet_render::Frame,
         p: &PreRollRun,
-        s: &vxe_render::PreRollSummary,
+        s: &svet_render::PreRollSummary,
     ) {
         let st = frame.bake_queue().map(|q| q.stats()).unwrap_or_default();
         if s.capped {

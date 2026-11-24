@@ -7,8 +7,8 @@ use std::sync::Arc;
 use flythrough::entities::icon::{ICON_PX, icon};
 use flythrough::entities::{self, library};
 use flythrough::{cave_materials, showcase_materials, walker};
-use vxe_entity::Model;
-use vxe_world::MaterialTable;
+use svet_entity::Model;
+use svet_world::MaterialTable;
 
 /// FNV-1a 64 over `bytes`.
 fn fnv(bytes: &[u8]) -> u64 {
@@ -156,7 +156,7 @@ fn the_spider_icon_is_fixed() {
 const WALKER_ICON: u64 = 0xcd07_06e0_5e4b_9c08;
 const SPIDER_ICON: u64 = 0xf1ab_3d3a_97e5_0c96;
 
-/// The icon's CPU time per entry, release build, by wall clock; with `VXE_ICON_DIR` set,
+/// The icon's CPU time per entry, release build, by wall clock; with `SVET_ICON_DIR` set,
 /// each icon's raw RGBA8 bytes written there as `<name>.rgba`. A reading: it prints and
 /// asserts nothing.
 mod reading {
@@ -179,7 +179,7 @@ mod reading {
                 ms.push(t.elapsed().as_secs_f64() * 1e3);
             }
             ms.sort_by(f64::total_cmp);
-            if let (Ok(dir), Some(px)) = (std::env::var("VXE_ICON_DIR"), icon(&m, &show)) {
+            if let (Ok(dir), Some(px)) = (std::env::var("SVET_ICON_DIR"), icon(&m, &show)) {
                 let path = Path::new(&dir).join(format!("{name}.rgba"));
                 std::fs::write(&path, px).expect("the icon's file");
             }

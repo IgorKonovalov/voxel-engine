@@ -48,7 +48,7 @@
 //! units of raw ids, so 2, 3, 4, 6 or 18 units; it is allocated from the smallest bin of
 //! `gpu_world::BINS` units that holds it. A record is 2112 B (no palette). With contour
 //! attributes a full chunk's brick with `n > 0` *chunk-local surface* voxels
-//! (`vxe_world::surface_mask`: non-air voxels with an air face neighbour inside the chunk, a
+//! (`svet_world::surface_mask`: non-air voxels with an air face neighbour inside the chunk, a
 //! chunk face counting as air) adds a unit of surface mask and `ceil(n / 32)` units of `u16`
 //! attributes. `--surface` prints, per packed class, its units, bricks, exact plane voxels,
 //! chunk-local surface voxels and attribute units, then the projected mirror of each look:
@@ -60,15 +60,15 @@ use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
 use flythrough::cave::CaveSource;
 use flythrough::showcase::{SHOWCASE_CHUNKS, ShowcaseSource};
 use flythrough::{cave_materials, chunk_ram, mips_ram, now, stream_record_chunks, window_side};
-use vxe_render::{
+use svet_render::{
     internals::BIN_COUNT, internals::MATERIAL_FLOATS, internals::PAGE_UNITS,
     internals::RECORD_BYTES, internals::SLOT_BINS, internals::UNIT_BYTES, internals::bin_of,
     internals::budget_for, internals::class_code, internals::payload_units, internals::slot_units,
     internals::slots_per_page,
 };
-use vxe_world::hash::{ValueNoise, hash3};
-use vxe_world::packed::PackedClass;
-use vxe_world::{
+use svet_world::hash::{ValueNoise, hash3};
+use svet_world::packed::PackedClass;
+use svet_world::{
     AIR, BRICK_EDGE, BRICK_VOXELS, Brick, BrickCensus, CHUNK_BRICKS, CHUNK_EDGE, Chunk, ChunkCoord,
     ChunkExtent, ChunkMips, CoarseGrid, Material, MaterialFlags, MaterialId, MaterialTable,
     PersistConfig, Residency, StreamConfig, Streamer, World, WorldCensus, WorldLimits, WorldSource,
@@ -95,7 +95,7 @@ fn chunk_surface(bricks: &[Brick], slot: usize) -> [u64; 8] {
         std::array::from_fn(|d| {
             let mut n = b;
             n[k] += if d == 0 { -1 } else { 1 };
-            (0..vxe_world::CHUNK_EDGE_BRICKS)
+            (0..svet_world::CHUNK_EDGE_BRICKS)
                 .contains(&n[k])
                 .then(|| solid_mask(&bricks[brick_slot(n)]))
         })
@@ -240,7 +240,7 @@ fn main() {
 /// `--veins N`: air where a seeded value noise of 16-voxel cells is below -4600 (about a third
 /// of the voxels), otherwise material `1 + hash3(seed, cell) % (N - 1)` per 2^3 cell. 64 cells
 /// drawing from `N - 1` ids give a solid brick about 7, 15 and 40 distinct materials at `N` 8,
-/// 16 and 64. `vxe-world`'s `tests/census.rs` holds the same source and asserts the majority
+/// 16 and 64. `svet-world`'s `tests/census.rs` holds the same source and asserts the majority
 /// bin.
 struct Veins {
     seed: u64,
@@ -291,7 +291,7 @@ fn veined(seed: u64, n: u64, chunks: [i32; 3]) {
     let air = world
         .count_in_box(
             extent.min.min_voxel(),
-            vxe_world::VoxelCoord(extent.max.min_voxel().0.map(|v| v - 1)),
+            svet_world::VoxelCoord(extent.max.min_voxel().0.map(|v| v - 1)),
         )
         .expect("the world's limits hold its whole extent");
     let air = air.iter().find(|(m, _)| *m == AIR).map_or(0, |&(_, n)| n);
@@ -373,7 +373,7 @@ fn bounded(seed: u64, chunks: [i32; 3], census: bool, showcase: bool) {
     let air = world
         .count_in_box(
             extent.min.min_voxel(),
-            vxe_world::VoxelCoord(extent.max.min_voxel().0.map(|v| v - 1)),
+            svet_world::VoxelCoord(extent.max.min_voxel().0.map(|v| v - 1)),
         )
         .expect("the world's limits hold its whole extent");
     let air = air.iter().find(|(m, _)| *m == 0).map_or(0, |&(_, n)| n);
@@ -484,7 +484,7 @@ fn streamed(seed: u64, r: Residency, census: bool, surface: bool) {
         let mips = world.lod(c).expect("LOD-only");
         mip_full += mips.full_bricks();
         cpu_lod += mips_ram(&mips);
-        for n in 1..=vxe_world::MIP_LEVELS {
+        for n in 1..=svet_world::MIP_LEVELS {
             let level = mips.level(n);
             for i in 0..level.len() {
                 add_slot(&mut mip_bins, level, i, &table, false);

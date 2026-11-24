@@ -16,16 +16,16 @@ use support::queue::*;
 
 use flythrough::cave::{ORE, ROCK};
 use std::collections::{BTreeMap, BTreeSet};
-use vxe_render::Window;
-use vxe_render::{BakeSettings, QueueStats};
-use vxe_world::{AIR, ChunkCoord, Mode, World};
+use svet_render::Window;
+use svet_render::{BakeSettings, QueueStats};
+use svet_world::{AIR, ChunkCoord, Mode, World};
 
 /// The record words of `block` that hold a direction's value: each surface brick's six
 /// direction words.
 fn value_words(block: &[u32]) -> impl Iterator<Item = usize> + '_ {
     block[..512].iter().filter(|&&d| d != 0).flat_map(|&d| {
         let end = (d >> 11) as usize;
-        end - vxe_render::internals::BRICK_WORDS..end - vxe_render::internals::BRICK_WORDS + 6
+        end - svet_render::internals::BRICK_WORDS..end - svet_render::internals::BRICK_WORDS + 6
     })
 }
 
@@ -51,12 +51,12 @@ fn assert_fade(what: &str, from: &[u32], shown: &[Vec<u32>], to: &[u32], frames:
     for (k, now) in shown.iter().enumerate() {
         for w in value_words(to) {
             let (a, b) = (
-                vxe_render::internals::rgb9e5_unpack(prev[w]),
-                vxe_render::internals::rgb9e5_unpack(now[w]),
+                svet_render::internals::rgb9e5_unpack(prev[w]),
+                svet_render::internals::rgb9e5_unpack(now[w]),
             );
             let (x, y) = (
-                vxe_render::internals::rgb9e5_unpack(from[w]),
-                vxe_render::internals::rgb9e5_unpack(to[w]),
+                svet_render::internals::rgb9e5_unpack(from[w]),
+                svet_render::internals::rgb9e5_unpack(to[w]),
             );
             let ulp = step_of(prev[w]).max(step_of(now[w]));
             for ch in 0..3 {
@@ -142,7 +142,7 @@ fn a_fade_moves_a_record_by_its_share_a_frame() {
         from,
         shown,
         to,
-        vxe_render::internals::FADE,
+        svet_render::internals::FADE,
     );
     // A carve in the lit top of the box, inside chunk 1.
     q.edit(&box_op([70, 26, 37], [74, 30, 40], Mode::Carve));
@@ -154,7 +154,7 @@ fn a_fade_moves_a_record_by_its_share_a_frame() {
             from,
             shown,
             to,
-            vxe_render::internals::DIG_FADE,
+            svet_render::internals::DIG_FADE,
         );
     }
 }
@@ -167,7 +167,7 @@ fn a_fade_moves_a_record_by_its_share_a_frame() {
 /// block's value. Under `black` that step shows the block itself.
 #[test]
 fn a_first_block_fades_from_its_fallback() {
-    use vxe_render::{MissingLight, debug::LightSummaries};
+    use svet_render::{MissingLight, debug::LightSummaries};
     for mode in [MissingLight::Chain, MissingLight::Black] {
         let world = world_of([2, 1, 1], AIR);
         fill(&world, [16, 12, 16], [28, 16, 28], ROCK);
@@ -222,19 +222,20 @@ fn a_first_block_fades_from_its_fallback() {
             if d == 0 {
                 continue;
             }
-            let start = (d >> 11) as usize - vxe_render::internals::BRICK_WORDS;
+            let start = (d >> 11) as usize - svet_render::internals::BRICK_WORDS;
             for f in 0..6 {
                 let w = start + f;
                 let from = if fallback[6] >> (16 + f) & 1 != 0 {
-                    vxe_render::internals::rgb9e5_unpack(fallback[f])
+                    svet_render::internals::rgb9e5_unpack(fallback[f])
                 } else {
                     [0.0; 3]
                 };
-                let target = vxe_render::internals::rgb9e5_unpack(to[w]);
-                let got = vxe_render::internals::rgb9e5_unpack(shown[w]);
+                let target = svet_render::internals::rgb9e5_unpack(to[w]);
+                let got = svet_render::internals::rgb9e5_unpack(shown[w]);
                 let ulp = step_of(shown[w]);
                 for k in 0..3 {
-                    let want = from[k] + (target[k] - from[k]) / vxe_render::internals::FADE as f32;
+                    let want =
+                        from[k] + (target[k] - from[k]) / svet_render::internals::FADE as f32;
                     assert!(
                         (got[k] - want).abs() <= ulp * 1.0001 + want.abs() * 1e-6,
                         "word {w} channel {k}: {} against {want} (fallback {}, block {})",
@@ -353,7 +354,7 @@ fn a_partial_reach_chunk_bakes_and_is_rebaked_when_its_reach_arrives() {
         "under full the centre waits for its reach"
     );
     assert_eq!(q.q().stats().partial_opened, 0);
-    q.frame.set_bake_reach(vxe_render::ReachMode::Partial);
+    q.frame.set_bake_reach(svet_render::ReachMode::Partial);
     let n = q.settle();
     println!("partial: settled in {n} steps, {:?}", q.q().stats());
     assert!(
@@ -493,14 +494,14 @@ fn far_end(blocks: &BTreeMap<[i32; 3], Vec<u32>>) -> BTreeMap<([i32; 3], usize),
     let mut out = BTreeMap::new();
     for (&c, block) in blocks {
         for (slot, &d) in block[..512].iter().enumerate() {
-            let b = vxe_world::brick_of_slot(slot);
+            let b = svet_world::brick_of_slot(slot);
             if d == 0 || c[0] * 8 + b[0] < 9 {
                 continue;
             }
             let end = (d >> 11) as usize;
             out.insert(
                 (c, slot),
-                block[end - vxe_render::internals::BRICK_WORDS..end].to_vec(),
+                block[end - svet_render::internals::BRICK_WORDS..end].to_vec(),
             );
         }
     }
@@ -720,7 +721,7 @@ fn a_full_pool_keeps_the_queue_alive() {
 /// 20 steps of the row with the coarse pass on from the start, timed from outside each
 /// `bake_queue_step` call: each step's stages and opening flag, its own time, and the queue's
 /// openings before and after.
-fn staged_steps() -> Option<(Vec<(vxe_render::debug::StepStages, f64)>, u64)> {
+fn staged_steps() -> Option<(Vec<(svet_render::debug::StepStages, f64)>, u64)> {
     let mut q = rig(
         row(&[0, 1, 2, 3, 4, 5]),
         &Setup {
@@ -753,7 +754,7 @@ fn the_step_s_stages_sum_to_its_time() {
             assert!(
                 *ms >= 0.0,
                 "{} reads {ms}",
-                vxe_render::debug::STEP_STAGES[k]
+                svet_render::debug::STEP_STAGES[k]
             );
         }
     }
@@ -863,7 +864,7 @@ fn a_still_step_scans_nothing() {
             "still step {n}: {st:?}"
         );
     }
-    q.gpu.apply_events(&vxe_world::StreamEvents {
+    q.gpu.apply_events(&svet_world::StreamEvents {
         evicted: vec![ChunkCoord([3, 0, 0])],
         ..Default::default()
     });
@@ -1029,8 +1030,8 @@ const FLIGHT_ORDER: [i32; 10] = [0, 1, 2, 3, 4, 5, 2, 3, 4, 5];
 /// The samples of `c`'s job at `brick_samples` a brick direction: its listed bricks' distinct
 /// directions times the count, as the queue sizes a job.
 fn job_samples(world: &World, c: [i32; 3], brick_samples: u32) -> u64 {
-    let classes = vxe_render::internals::face_classes(world.materials());
-    let faces = vxe_render::internals::list_world_chunk(world, ChunkCoord(c), &classes)
+    let classes = svet_render::internals::face_classes(world.materials());
+    let faces = svet_render::internals::list_world_chunk(world, ChunkCoord(c), &classes)
         .expect("the chunk is held");
     faces
         .bricks

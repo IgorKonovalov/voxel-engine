@@ -1,5 +1,5 @@
 //! A placed body's mover (ADR-0062): a rig with a `body` line moves through the world at the
-//! movers' tick, a ground body through `vxe_sim`'s character controller and a surface body
+//! movers' tick, a ground body through `svet_sim`'s character controller and a surface body
 //! through its surface mover, and its pose follows the state. Ground: the root is the foot,
 //! turned to face the forward with `+z` up. Surface: the root is the contact point (the
 //! centre moved `radius` against the normal), turned to face the forward with the smoothed
@@ -9,13 +9,13 @@
 //! while the wander is off its playback's clip plays by time. A mover keeps its last two
 //! poses, so the frame draws between ticks.
 
-use vxe_assets::RigBody;
-use vxe_entity::{Clip, Pose, Quat, blend, sample};
-use vxe_sim::{
+use svet_assets::RigBody;
+use svet_entity::{Clip, Pose, Quat, blend, sample};
+use svet_sim::{
     CharacterController, CharacterState, ControllerParams, MoveInput, SurfaceEvent, SurfaceMover,
     SurfaceParams, SurfaceState, isqrt, normalise,
 };
-use vxe_world::{Fixed3, World};
+use svet_world::{Fixed3, World};
 
 use super::wander::{SURFACE_SPEED, Wander};
 use crate::viewer::{Loaded, Play};

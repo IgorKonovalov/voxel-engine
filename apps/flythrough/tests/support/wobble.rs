@@ -6,7 +6,7 @@
 
 use super::defects::{grid_of, queue_step};
 use super::terms::Rig;
-use vxe_render::{Camera, Frame};
+use svet_render::{Camera, Frame};
 
 /// The frame's sizes: FSR 2 at 1.5.
 pub const INTERNAL: [u32; 2] = [320, 180];
@@ -58,7 +58,7 @@ impl Arm {
 pub fn forest() -> Option<(Rig, Camera)> {
     use flythrough::outdoor::{OutdoorSource, Spawn};
     use flythrough::trees::{ForestSource, LEAF_FILL, TreeDensity};
-    use vxe_world::{ChunkExtent, World};
+    use svet_world::{ChunkExtent, World};
     let source = ForestSource::new(OutdoorSource::new(1), TreeDensity::Forest, LEAF_FILL);
     let (eye, facing) = source.base().spawn(Spawn::Forest);
     let c = eye.chunk().0;
@@ -87,20 +87,20 @@ pub fn frame(rig: &Rig, arm: Arm) -> Frame {
     let mut f = Frame::with_sizes(&rig.device, INTERNAL, OUT);
     f.set_upscaler_kind(
         &rig.device,
-        vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+        svet_render::UpscalerKind::Fsr2(svet_render::Fsr2Settings {
             sharpness: 0.5,
             ..Default::default()
         }),
     );
     f.set_count_store(true);
-    f.set_look(vxe_render::LookParams {
+    f.set_look(svet_render::LookParams {
         far_normal: flythrough::LookPreset::DEFAULT.far_normal,
         view: if arm == Arm::Albedo {
-            vxe_render::ViewMode::Albedo
+            svet_render::ViewMode::Albedo
         } else {
-            vxe_render::ViewMode::Shaded
+            svet_render::ViewMode::Shaded
         },
-        ..vxe_render::LookParams::default()
+        ..svet_render::LookParams::default()
     });
     f.set_material_styles(
         &rig.queue,
@@ -109,16 +109,16 @@ pub fn frame(rig: &Rig, arm: Arm) -> Frame {
     let base = flythrough::default_lighting();
     let (key_far, penumbra) = match arm {
         Arm::Picks | Arm::Albedo => (base.key_far, flythrough::DEFAULT_PENUMBRA),
-        Arm::Before => (vxe_render::KeyFar::Ray, vxe_render::Penumbra::Disc),
+        Arm::Before => (svet_render::KeyFar::Ray, svet_render::Penumbra::Disc),
     };
-    f.set_lighting(vxe_render::Lighting {
+    f.set_lighting(svet_render::Lighting {
         lamp: false,
         key_far,
         penumbra,
-        exposure: vxe_render::Exposure::Auto(vxe_render::AutoExposure {
+        exposure: svet_render::Exposure::Auto(svet_render::AutoExposure {
             min: flythrough::cli::OUTDOOR_MIN,
             max: flythrough::cli::OUTDOOR_MAX,
-            ..vxe_render::AutoExposure::default()
+            ..svet_render::AutoExposure::default()
         }),
         ..base
     });
@@ -132,8 +132,8 @@ pub fn frame(rig: &Rig, arm: Arm) -> Frame {
     f.start_bake_queue(
         &rig.queue,
         &rig.gpu,
-        vxe_render::queue_settings(),
-        vxe_render::DEFAULT_BAKE_SLICE_MS,
+        svet_render::queue_settings(),
+        svet_render::DEFAULT_BAKE_SLICE_MS,
     );
     f.set_bake_coarse(8, 2);
     f
@@ -155,7 +155,7 @@ pub fn step(rig: &mut Rig, f: &mut Frame, cam: &Camera, queue: bool) -> Read {
         &rig.queue,
         &rig.gpu,
         cam,
-        &vxe_render::LightParams::headlamp(),
+        &svet_render::LightParams::headlamp(),
     );
     read(rig, f, cam)
 }
@@ -164,8 +164,8 @@ pub fn step(rig: &mut Rig, f: &mut Frame, cam: &Camera, queue: bool) -> Read {
 /// display pixel by its lighting pixel's hit: [`SKY`] at a miss, [`NEAR`] under [`NEAR_M`],
 /// else [`FAR`].
 pub fn read(rig: &Rig, f: &Frame, cam: &Camera) -> Read {
-    let rgba = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, f.target());
-    let hits = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, f.light_hit_positions());
+    let rgba = svet_render::debug::read_rgba8(&rig.device, &rig.queue, f.target());
+    let hits = svet_render::debug::read_rgba32f(&rig.device, &rig.queue, f.light_hit_positions());
     let luma = rgba
         .chunks(4)
         .map(|p| {

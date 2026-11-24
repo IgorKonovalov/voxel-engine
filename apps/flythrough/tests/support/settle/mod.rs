@@ -47,9 +47,9 @@ use std::collections::HashMap;
 use super::stillness::{FULL_LOG2, PATCH_POSE, Pose, SIZE, TILE, VEIN_POSE, VeinLevel, meter_log2};
 use super::*;
 use flythrough::LookPreset;
-use vxe_render::ExposureState;
-use vxe_render::glam::Vec3;
-use vxe_render::{
+use svet_render::ExposureState;
+use svet_render::glam::Vec3;
+use svet_render::{
     AutoExposure, Exposure, Frame, Fsr2Settings, LightParams, Lighting, LookParams, UpscalerKind,
 };
 
@@ -198,7 +198,7 @@ pub fn make_frame(level: &VeinLevel, pose: &Pose, setting: Setting) -> Frame {
     let mut frame = if setting.bridge {
         let mut f = Frame::with_sizes(device, SIZE, OUTPUT);
         f.set_jitter(device, true);
-        f.set_upscaler_kind(device, UpscalerKind::Own(vxe_render::Upscaler::default()));
+        f.set_upscaler_kind(device, UpscalerKind::Own(svet_render::Upscaler::default()));
         f.set_sharpness(queue, 0.5);
         f.set_look(look_of(LookPreset::FACE));
         f
@@ -229,8 +229,8 @@ fn lighting(pose: &Pose, setting: Setting) -> Lighting {
         lamp_bounce: setting.indirect,
         probe_freeze: setting
             .probe_freeze
-            .unwrap_or(vxe_render::DEFAULT_PROBE_FREEZE),
-        probe_move_blend: setting.probe_move.unwrap_or(vxe_render::DEFAULT_H_MOVE),
+            .unwrap_or(svet_render::DEFAULT_PROBE_FREEZE),
+        probe_move_blend: setting.probe_move.unwrap_or(svet_render::DEFAULT_H_MOVE),
         exposure: if setting.auto {
             Exposure::Auto(AutoExposure::eye())
         } else {
@@ -272,7 +272,7 @@ fn read(level: &VeinLevel, frame: &Frame, camera: Camera, want: Want) -> Pixels 
     let (device, queue) = (&level.device, &level.queue);
     let [tw, th] = SIZE.map(|n| n.div_ceil(TILE));
     let n = (tw * th) as u64;
-    let b = vxe_render::debug::read_buffer(device, queue, frame.exposure_tiles(), 0, 16 * n);
+    let b = svet_render::debug::read_buffer(device, queue, frame.exposure_tiles(), 0, 16 * n);
     let meter = b
         .chunks_exact(16)
         .map(|c| {
@@ -282,7 +282,7 @@ fn read(level: &VeinLevel, frame: &Frame, camera: Camera, want: Want) -> Pixels 
             (m, k >= (TILE * TILE) as f32 && m > FULL_LOG2)
         })
         .collect();
-    let st = vxe_render::debug::read_buffer(device, queue, frame.exposure_state(), 0, 32);
+    let st = svet_render::debug::read_buffer(device, queue, frame.exposure_state(), 0, 32);
     let exposure = ExposureState::from_bytes(&st).previous;
     let acc = frame.accumulated();
     let grid = [acc.width(), acc.height()];
@@ -291,7 +291,7 @@ fn read(level: &VeinLevel, frame: &Frame, camera: Camera, want: Want) -> Pixels 
         camera,
         exposure,
         meter,
-        display: vxe_render::debug::read_rgba8(device, queue, t),
+        display: svet_render::debug::read_rgba8(device, queue, t),
         display_size: [t.width(), t.height()],
         composite: if want.composite {
             read_composite(level, frame)
@@ -299,21 +299,21 @@ fn read(level: &VeinLevel, frame: &Frame, camera: Camera, want: Want) -> Pixels 
             Vec::new()
         },
         grid,
-        accum: vxe_render::debug::read_float(device, queue, acc),
-        filtered: vxe_render::debug::read_float(device, queue, frame.filtered()),
-        gather: vxe_render::debug::read_float(device, queue, frame.indirect_irradiance()),
+        accum: svet_render::debug::read_float(device, queue, acc),
+        filtered: svet_render::debug::read_float(device, queue, frame.filtered()),
+        gather: svet_render::debug::read_float(device, queue, frame.indirect_irradiance()),
         moments: if want.moments {
-            vxe_render::debug::read_float(device, queue, frame.moments())
+            svet_render::debug::read_float(device, queue, frame.moments())
         } else {
             Vec::new()
         },
         hit_pos: if want.hits {
-            vxe_render::debug::read_float(device, queue, frame.hit_positions())
+            svet_render::debug::read_float(device, queue, frame.hit_positions())
         } else {
             Vec::new()
         },
         hit_info: if want.hits {
-            vxe_render::debug::read_rgba16u(device, queue, frame.hit_records())
+            svet_render::debug::read_rgba16u(device, queue, frame.hit_records())
         } else {
             Vec::new()
         },
@@ -329,13 +329,13 @@ fn read_composite(level: &VeinLevel, frame: &Frame) -> Vec<[f32; 3]> {
             let x = x.max(0.0);
             ((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)).clamp(0.0, 1.0)
         };
-        return vxe_render::debug::read_float(device, queue, fsr.colour_in())
+        return svet_render::debug::read_float(device, queue, fsr.colour_in())
             .into_iter()
             .map(|c| [c[0], c[1], c[2]].map(|v| aces(v).powf(1.0 / 2.2)))
             .collect();
     }
     let capture = frame.composite_capture().expect("captured");
-    vxe_render::debug::read_rgba8(device, queue, capture)
+    svet_render::debug::read_rgba8(device, queue, capture)
         .chunks_exact(4)
         .map(|c| [c[0], c[1], c[2]].map(|v| f32::from(v) / 255.0))
         .collect()
@@ -949,11 +949,11 @@ pub fn reset_world(level: &mut VeinLevel) {
         &source,
         &flythrough::with_emissive_ore(&flythrough::cave_materials()),
     );
-    let cfg = vxe_render::MirrorConfig {
+    let cfg = svet_render::MirrorConfig {
         budget_bytes: 256 << 20,
-        ..vxe_render::MirrorConfig::new(vxe_render::Window::Fixed(level.world.extent()))
+        ..svet_render::MirrorConfig::new(svet_render::Window::Fixed(level.world.extent()))
     };
-    level.gpu = vxe_render::GpuWorld::with_config(&level.device, cfg);
+    level.gpu = svet_render::GpuWorld::with_config(&level.device, cfg);
     level.gpu.set_focus(source.spawn());
     for _ in 0..4 {
         level

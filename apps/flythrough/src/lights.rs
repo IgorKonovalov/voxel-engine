@@ -1,4 +1,4 @@
-//! The fly-through's list of analytic lights (`vxe_render::Light`, ADR-0044): `1` drops one at
+//! The fly-through's list of analytic lights (`svet_render::Light`, ADR-0044): `1` drops one at
 //! the looked-at point, `2` carries the newest in front of the camera, `3` cycles the picked
 //! colour and recolours the newest, `6` fires one along the view ray, `4` removes the newest,
 //! `5` flips the newest's bounce flag;
@@ -7,7 +7,7 @@
 //! samples (`--light-radius`, the emissive voxels' candidates).
 
 use std::fmt::Write as _;
-use vxe_render::{Light, MAX_LIGHTS};
+use svet_render::{Light, MAX_LIGHTS};
 
 /// A dropped or fired light's intensity (owner, 2026-11-14: half the headlamp's 1200), reaching
 /// 77.5 voxels at the default light floor.

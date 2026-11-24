@@ -15,7 +15,7 @@
 //! the air test (`tests/path.rs`) checks every keyframe and every quarter-second sample against
 //! the scene's source, so a generator change that moves rock into a path fails the gate.
 
-use vxe_app::{Axis, Input, KeyCode, MouseButton, PadButton};
+use svet_app::{Axis, Input, KeyCode, MouseButton, PadButton};
 
 /// The world seed every path is laid against: the fly-through's default `--seed`.
 pub const PATH_SEED: u64 = 1;

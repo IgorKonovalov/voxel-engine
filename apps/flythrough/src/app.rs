@@ -1,4 +1,4 @@
-//! The fly-through as a `vxe_app` app ([`Flythrough`]), its headless loop and the session's
+//! The fly-through as a `svet_app` app ([`Flythrough`]), its headless loop and the session's
 //! outcome.
 
 use crate::ScrollSteps;
@@ -21,10 +21,10 @@ use crate::streaming::{STREAM_POOL_BYTES, Stream};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Instant;
-use vxe_app::{App, Flow, Gpu, Input};
-use vxe_net::Logic;
-use vxe_render::{Camera, LightParams, LoadingScreen, LoadingView, wgpu};
-use vxe_world::{Streamer, World};
+use svet_app::{App, Flow, Gpu, Input};
+use svet_net::Logic;
+use svet_render::{Camera, LightParams, LoadingScreen, LoadingView, wgpu};
+use svet_world::{Streamer, World};
 
 #[allow(
     clippy::disallowed_methods,
@@ -305,7 +305,7 @@ impl App for Flythrough {
             println!(
                 "headless on {} ({})",
                 info.name,
-                vxe_app::backend_label(info.backend)
+                svet_app::backend_label(info.backend)
             );
         }
         if let Some(pending) = self.pending.take() {
@@ -371,21 +371,21 @@ pub fn run(app: Flythrough) -> Result<(), String> {
     if app.args.headless {
         // On the high-performance adapter, or with `--adapter` the first whose name contains
         // its substring, and an offscreen target in place of the surface.
-        let config = vxe_app::HeadlessConfig {
+        let config = svet_app::HeadlessConfig {
             size,
             adapter: app.args.adapter.clone(),
-            ..vxe_app::HeadlessConfig::default()
+            ..svet_app::HeadlessConfig::default()
         };
-        vxe_app::run_headless(app, config)
+        svet_app::run_headless(app, config)
             .map_err(|e| e.to_string())
             .and_then(|()| session_outcome(&failure))
     } else {
-        let config = vxe_app::ShellConfig {
+        let config = svet_app::ShellConfig {
             start: Some(app.start),
             ..shell_config(&app.args, size, app.args.pace)
         };
         diag(format_args!("set up, the shell starting"));
-        vxe_app::run(config, app)
+        svet_app::run(config, app)
             .map_err(|e| e.to_string())
             .and_then(|()| session_outcome(&failure))
     }

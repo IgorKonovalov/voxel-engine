@@ -1,0 +1,15 @@
+[package]
+name = "svet-assets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "MagicaVoxel .vox import, the palette-to-material map, rig files and voxels from text"
+
+[lints]
+workspace = true
+
+[dependencies]
+svet-entity.workspace = true
+svet-world.workspace = true

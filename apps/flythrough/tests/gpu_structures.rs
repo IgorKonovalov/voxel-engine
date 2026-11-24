@@ -1,14 +1,14 @@
 //! `chapel.png`: the chapel of the structures library placed in the dark cave ahead of the
 //! spawn (`--vox`'s path), lit by its own lamps and the headlamp, on the software adapter
 //! (lavapipe).
-//! `VXE_BLESS=1` rewrites it.
+//! `SVET_BLESS=1` rewrites it.
 
 mod support;
 
 use flythrough::cave::CaveSource;
 use flythrough::structures::{self, CHAPEL_GLASS, CHAPEL_LAMP};
-use vxe_render::{Camera, LightParams, Lighting};
-use vxe_world::{ChunkExtent, FIXED_ONE, Fixed3, MaterialId, MaterialTable, VoxelCoord, World};
+use svet_render::{Camera, LightParams, Lighting};
+use svet_world::{ChunkExtent, FIXED_ONE, Fixed3, MaterialId, MaterialTable, VoxelCoord, World};
 
 /// The chapel's nave: 40 x 16 voxels in plan, its door in the east wall.
 const NAVE: [u32; 2] = [40, 16];
@@ -44,7 +44,7 @@ fn chapel_world() -> (World, [i32; 3], MaterialId, MaterialId) {
         .expect("the nave");
     let eye = [0, 1, 2].map(|k| nave_at.0[k] + offset[k]);
     let row = |i: u8| {
-        let name = vxe_assets::palette_row(&file, i, 0.0).name;
+        let name = svet_assets::palette_row(&file, i, 0.0).name;
         table
             .rows()
             .iter()
@@ -114,7 +114,7 @@ fn chapel_golden() {
     let eye = camera.position.to_array().map(|v| v.floor() as i32);
     assert_eq!(
         world.material_at(VoxelCoord(eye)),
-        Some(vxe_world::AIR),
+        Some(svet_world::AIR),
         "the eye in the nave's air"
     );
     let Some(mut rig) = LookRig::new(&world, None) else {
@@ -140,7 +140,7 @@ fn chapel_golden() {
             &LightParams::headlamp(),
         );
     }
-    let img = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+    let img = svet_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
 
     let hits: Vec<_> = (0..HEIGHT)
         .flat_map(|r| (0..WIDTH).map(move |c| (c, r)))

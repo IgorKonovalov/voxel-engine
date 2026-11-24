@@ -2,8 +2,8 @@
 
 use std::fmt::{self, Write as _};
 
-use vxe_render::HudColour;
-use vxe_world::{BRICK_VOXELS, Chunk, MaterialId, WorldStats};
+use svet_render::HudColour;
+use svet_world::{BRICK_VOXELS, Chunk, MaterialId, WorldStats};
 
 /// Frame durations the window holds: 240 frames, 4 s at 60 fps.
 pub const RING: usize = 240;
@@ -336,7 +336,7 @@ pub struct HudStats {
     pub frame_ms: FrameMs,
     /// Render-thread CPU of this frame, from its start to its submit.
     pub cpu_ms: f32,
-    /// The window's pacing word (`vxe_app::Pacing::word`); `None` hides the `pace` row.
+    /// The window's pacing word (`svet_app::Pacing::word`); `None` hides the `pace` row.
     pub pace: Option<&'static str>,
     /// GPU time of the march and the HUD pass; `None` without `TIMESTAMP_QUERY`.
     pub march_ms: Option<f32>,
@@ -363,7 +363,7 @@ pub struct HudStats {
     /// The steps view's reading of the last frame, while that view is on.
     pub steps: Option<StepsSample>,
     /// The cracks view's reading of the last frame, while that view is on.
-    pub cracks: Option<vxe_render::CrackShares>,
+    pub cracks: Option<svet_render::CrackShares>,
     /// The mirror's pressure against its reservation; `None` hides its row.
     pub pressure: Option<Pressure>,
     /// The gamepad row; `None` (no pad source in this run) hides it.
@@ -384,13 +384,13 @@ pub struct HudStats {
 }
 
 /// The live queue's row: the chunks in view (the view cone and the near shell) still waiting
-/// for their light ([`vxe_render::QueueStats::in_view`]), and of them those with a coarse
+/// for their light ([`svet_render::QueueStats::in_view`]), and of them those with a coarse
 /// block, the seconds their need takes at `rate` samples a second
-/// ([`vxe_render::InViewWaiting::drain_s`]), the jobs withdrawn since the start, the queue
+/// ([`svet_render::InViewWaiting::drain_s`]), the jobs withdrawn since the start, the queue
 /// step's CPU p50 over the last second, then `mode` (the order and the withdrawal in words)
 /// after a semicolon when it is not empty: `in view: 12 waiting (5 coarse), drain 4.0 s,
 /// withdrawn 3, step 1.25 ms; order distance; withdraw on`.
-pub fn queue_row(st: &vxe_render::QueueStats, rate: f64, step_ms: f64, mode: &str) -> String {
+pub fn queue_row(st: &svet_render::QueueStats, rate: f64, step_ms: f64, mode: &str) -> String {
     let mut row = String::new();
     write_queue_row(&mut row, st, rate, step_ms);
     if !mode.is_empty() {
@@ -403,7 +403,7 @@ pub fn queue_row(st: &vxe_render::QueueStats, rate: f64, step_ms: f64, mode: &st
 /// Appends [`queue_row`]'s text before its mode to `out`:
 /// `in view: 12 waiting (5 coarse), drain 4.0 s, withdrawn 3, step 1.25 ms`, then `, key 40`
 /// while blocks wait for or run a key-only re-bake (ADR-0079).
-pub fn write_queue_row(out: &mut String, st: &vxe_render::QueueStats, rate: f64, step_ms: f64) {
+pub fn write_queue_row(out: &mut String, st: &svet_render::QueueStats, rate: f64, step_ms: f64) {
     let [_, coarse] = st.in_view.by_class();
     let _ = write!(
         out,
@@ -526,7 +526,7 @@ pub struct LightingRow {
     pub light_samples: u64,
     pub live_probes: Option<u32>,
     /// The store's counts at the last sample.
-    pub store: Option<vxe_render::StoreStats>,
+    pub store: Option<svet_render::StoreStats>,
     /// The light queue's state in words (the fly-through's queue note), after the store's counts.
     pub store_note: String,
     /// The missing-light mode's name (ADR-0053), after the missing count with the pixels that
@@ -560,7 +560,7 @@ pub struct Pressure {
 
 /// The cracks row: the field walk's leaks' share of the hit pixels, in percent:
 /// `cracks leaks 0.31 %`.
-pub fn cracks_row(c: &vxe_render::CrackShares) -> String {
+pub fn cracks_row(c: &svet_render::CrackShares) -> String {
     format!("cracks leaks {:.2} %", 100.0 * c.leak_share())
 }
 
@@ -579,7 +579,7 @@ pub struct StepsSample {
 }
 
 impl StepsSample {
-    pub fn from_histogram(h: &vxe_render::debug::StepHistogram) -> Self {
+    pub fn from_histogram(h: &svet_render::debug::StepHistogram) -> Self {
         Self {
             mean_steps: h.mean_steps() as f32,
             p99_steps: h.p99_steps(),

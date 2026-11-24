@@ -38,4 +38,4 @@ material file's castle rows, added when the scene has none.
 
 | Structure | What it shows |
 |---|---|
-| `chapel/` | rows +255. A nave with blue glass windows and two lamps, a transept placed twice through a reflected frame, a west tower, and a scaffold on a hidden layer: about 48 x 32 x 40 voxels. `chapel.voxtext` draws the models; `chapel.vox` adds the `MATL`, the layers and the mirror (`structures::chapel_vox`; `VXE_BLESS_CHAPEL=1 cargo nextest run -p flythrough --test structures` writes it) |
+| `chapel/` | rows +255. A nave with blue glass windows and two lamps, a transept placed twice through a reflected frame, a west tower, and a scaffold on a hidden layer: about 48 x 32 x 40 voxels. `chapel.voxtext` draws the models; `chapel.vox` adds the `MATL`, the layers and the mirror (`structures::chapel_vox`; `SVET_BLESS_CHAPEL=1 cargo nextest run -p flythrough --test structures` writes it) |

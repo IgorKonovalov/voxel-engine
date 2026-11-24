@@ -92,7 +92,7 @@ logic; inside the shell the update falls back to every pixel.
 - The noise is generated from a seed on the GPU, so no texture asset ships and two consumers
   with different seeds get different skies; the weather map is the one input Plan 0036
   drives (coverage, type, precipitation, wind offset).
-- Clouds are cosmetic and client-side: nothing here touches `vxe-world` or determinism.
+- Clouds are cosmetic and client-side: nothing here touches `svet-world` or determinism.
 
 ### Negative
 - Temporal reconstruction ghosts where history is wrong: a fast turn reveals screen edges with

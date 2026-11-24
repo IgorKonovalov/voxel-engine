@@ -20,7 +20,7 @@ fn a_field_change_reloads_and_a_shape_change_waits() {
     let selection = Selection::cave_and(&CASTLE_ROWS, &[], true, CrispRows::None);
     // The running table: the castle scene's rows, then rows the start added after them.
     let mut running = selection.compose(&file).unwrap();
-    running.push(vxe_world::Material::named("walker"));
+    running.push(svet_world::Material::named("walker"));
 
     let r = reload(&file, &selection, &running, &text);
     let Reload::Rewrite { changed, .. } = &r else {

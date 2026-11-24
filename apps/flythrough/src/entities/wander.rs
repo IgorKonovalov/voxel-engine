@@ -6,11 +6,11 @@
 //! body does not avoid (a wall ahead is a concave edge it climbs, a drop a convex edge it
 //! rounds). Everything is an integer, so a seed gives the same walk on every platform.
 
-use vxe_sim::{
+use svet_sim::{
     Ahead, CharacterController, CharacterState, MoveInput, MoveResult, SurfaceInput, normalise,
     probe_ahead,
 };
-use vxe_world::{Fixed3, World};
+use svet_world::{Fixed3, World};
 
 /// A ground body's speed: 43 fixed units a tick, 1 m/s at 60 Hz (`2560 / 60 = 42.7`).
 pub const GROUND_SPEED: i64 = 43;

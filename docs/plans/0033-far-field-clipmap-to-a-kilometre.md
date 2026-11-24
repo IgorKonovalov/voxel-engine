@@ -70,7 +70,7 @@ Read at main 3b3986d0 (Plan 0032 closed, v0.61.0: absent is sky; Plan 0069 close
 the settings surface) against the `plan-0080` lane (the menu) and Plans 0086 and 0081
 (approved, ahead of this plan). The lane branches from main once Plan 0081 has merged; the
 tree's names win. The Decision and the phases stand except where this section says otherwise;
-`dev` reads it as the phases' errata. Crate names are `vxe-*`; if Plan 0087 has merged first
+`dev` reads it as the phases' errata. Crate names are `svet-*`; if Plan 0087 has merged first
 they read `svet-*` through its map.
 
 ### Name mapping (the plan's name, then the tree's)
@@ -78,14 +78,14 @@ they read `svet-*` through its map.
 | The plan says | The tree has |
 |---|---|
 | "the per-call `march` argument Plan 0032 gives the lighting rays", "the per-call absent-chunk argument" | **none.** `march(o, d, t_limit, cutaway)` (`walk.wgsl`) has no lighting argument; Plan 0032 Phase 5 made the absent-chunk rule a walk-scope variable set around `march` (as `shadowed()` in `light.wgsl` sets `coarse_span`) and Phase 10 removed it. This plan's "takes the far field" and "level origin" are two walk-scope variables of the same kind, set by the caller around its `march` (the hit pass for the primary ray, `sky_light.wgsl`'s `key_sample` and `sky_ray_sample` for the lighting rays), and left at "no far field" by every other caller; `bake_source()` (`bake/pipeline.rs`) compiles with them at their default |
-| `Coarse { Unsupported, Uniform, Cells }` | the name is taken twice: `vxe_world::coarse::{CoarseCell, CoarseGrid}` (the brick-summary grid) and the fly-through's `edits::Coarse`. This plan's enum is **`ClipFill`**; `ClipCoord`, `ClipChunk`, `ClipResidency` and `MipRule` stand |
-| `--far-field`, `--clip-radius`, `--clip-rule`, `--settle-clip`, "clip" in flags and HUD words | "clip" is a recording clip (`examples/clip.rs --clip NAME`) and an animation clip (`KEY_CLIP_*`, `--clip`) in the fly-through. The flags are **`--far-field off\|on`, `--far-radius R`, `--far-rule level\|volume`, `--settle-far`**; the HUD and banner words say `far field`, `far levels`, `far rule`; the Rust types keep `Clip*` inside `vxe-world` and `vxe-render` |
-| `WorldSource` (`source.rs`), `UniformSource` | `crates/vxe-world/src/source.rs` (`chunk` is its one method; `FnSource`, `StampedSource` beside it, the latter forwarding `chunk` only) |
+| `Coarse { Unsupported, Uniform, Cells }` | the name is taken twice: `svet_world::coarse::{CoarseCell, CoarseGrid}` (the brick-summary grid) and the fly-through's `edits::Coarse`. This plan's enum is **`ClipFill`**; `ClipCoord`, `ClipChunk`, `ClipResidency` and `MipRule` stand |
+| `--far-field`, `--clip-radius`, `--clip-rule`, `--settle-clip`, "clip" in flags and HUD words | "clip" is a recording clip (`examples/clip.rs --clip NAME`) and an animation clip (`KEY_CLIP_*`, `--clip`) in the fly-through. The flags are **`--far-field off\|on`, `--far-radius R`, `--far-rule level\|volume`, `--settle-far`**; the HUD and banner words say `far field`, `far levels`, `far rule`; the Rust types keep `Clip*` inside `svet-world` and `svet-render` |
+| `WorldSource` (`source.rs`), `UniformSource` | `crates/svet-world/src/source.rs` (`chunk` is its one method; `FnSource`, `StampedSource` beside it, the latter forwarding `chunk` only) |
 | `mips.rs` `ChunkMips::build` (any-solid, majority material) | as named (`MIP_LEVELS` 3, `MIP_BRICKS [64, 8, 1]`, `majority`); built on the stream workers (`stream/workers.rs`), in `hash.rs` and in `world_budget` |
 | `World::{insert_clip, clip, ..}` beside the LOD mips | `store.rs`: `lods: RwLock<HashMap<ChunkCoord, Arc<ChunkMips>>>`, `lod`, `insert_lod`, `remove_lod`, `lod_coords`, `World::generate` |
-| `stream.rs`, `Residency`, `set_radii` | `crates/vxe-world/src/stream/{mod,residency,workers}.rs`: `Residency { r_full, r_lod, hysteresis }`, `StreamConfig`, `Tier { Full, LodOnly }`, `set_radii(r_full, r_lod)`, `update`, `poll`, `chunks_in_ball`, `StreamStats`, `StreamEvents`; `ResidencyPlan` in `residency.rs` |
+| `stream.rs`, `Residency`, `set_radii` | `crates/svet-world/src/stream/{mod,residency,workers}.rs`: `Residency { r_full, r_lod, hysteresis }`, `StreamConfig`, `Tier { Full, LodOnly }`, `set_radii(r_full, r_lod)`, `update`, `poll`, `chunks_in_ball`, `StreamStats`, `StreamEvents`; `ResidencyPlan` in `residency.rs` |
 | `r_lod` kept equal to `r_full` (Decision, Phases 3 and 8) | `LodParams` (`frame/settings.rs`) has `r_full` and `forced_level` only (Plan 0032 Phase 10 removed its `r_lod`); the ring's radius lives in `Residency::r_lod`, `BuildSettings::residency` (16, 24, 1 in `settings.rs`; Portable 12, 18) and the pressure rule's call `stream.streamer.set_radii(r_full, r.r_lod)` in `run/frame.rs` (`RadiusRule`, `streaming.rs`). "Keep `r_lod` equal to `r_full`" edits those three, not the renderer |
-| `gpu_world.rs` | `crates/vxe-render/src/gpu_world/{mod,window,slot,format,alloc,stage}.rs`: one wrapped window (`WindowQueue`, `table_index` = `rem_euclid` per axis, `Window::{Fixed, Follow}`), `MirrorConfig { budget_bytes, record_chunks, .. }`, `ShardLayout` (ADR-0013), `GpuWorld::pressure()`, Plan 0028's `BINS`/`SLOT_BINS`/`BinAlloc`; entries `ABSENT` = `u32::MAX`, `MATERIAL_MASK` 0xFFFF, `EMPTY_BIT` 1<<29, `LOD_BIT` 1<<30, **bit 31 free** (the uniform-material entry), `RECORD_WORDS` 528 (2112 B, as the plan says) |
+| `gpu_world.rs` | `crates/svet-render/src/gpu_world/{mod,window,slot,format,alloc,stage}.rs`: one wrapped window (`WindowQueue`, `table_index` = `rem_euclid` per axis, `Window::{Fixed, Follow}`), `MirrorConfig { budget_bytes, record_chunks, .. }`, `ShardLayout` (ADR-0013), `GpuWorld::pressure()`, Plan 0028's `BINS`/`SLOT_BINS`/`BinAlloc`; entries `ABSENT` = `u32::MAX`, `MATERIAL_MASK` 0xFFFF, `EMPTY_BIT` 1<<29, `LOD_BIT` 1<<30, **bit 31 free** (the uniform-material entry), `RECORD_WORDS` 528 (2112 B, as the plan says) |
 | `marcher.rs` (`Params`, the levels) | `frame/settings.rs` (`Params`: `forced_level`, `lod1_r2`, `lod2_r2`, `cam_chunk_*`; five free pad words, not fifteen) and `frame/encode.rs` (packs them, **1193 of 1200 lines**). This plan's fifteen words (`clip_levels`, `clip_window`, `clip_min[3]`, `clip_switch`, `clip_band`, the bounds, `far_limit`, `clip_normals`) are a **uniform of their own** at group 0's next free binding (19; 5 and 6 are also unused), packed in a new `frame/far_field.rs`, not in `Params` or `encode.rs`. The level choice is `lod_level(chunk)` in `walk.wgsl`, applied where the entry has `LOD_BIT` |
 | `march.wgsl` | `walk.wgsl` (`march`, `descend`, `lookup`, `lod_level`, `absent_descent`, `far_normal_weight`, `surface_normal`), `hit.wgsl` (the primary ray, `translucent_march`, the split pixel's resume), `field_walk.wgsl`, `hitrec.wgsl` (`reads_store` = `found && axis >= 0 && !field`, `shadow_origin`), `common.wgsl` (`Params`, `blue_noise` at binding 12, `rand(px, dim)`) |
 | `light.wgsl`'s directional shadow ray | `sky_light.wgsl`: `key_sample` is the one place the directional sample's visibility is computed (`sky_shadowed` = `shadowed() \|\| entity_march`), `sky_ray_sample` the sky ray's, `SKY_RAY_VOXELS` 512; `shade.wgsl` (the light pass's entry) **re-casts the key ray in the steps view** (`key_ray_steps`), so Phase 6 changes both. `light.wgsl` is the list lights' `shadowed()` |
@@ -93,7 +93,7 @@ they read `svet-*` through its map.
 | "two free hit-flag bits" | bits 6 to 15 of `info.w` are the entity instance when `HIT_ENTITY` (bit 5) is set (`unpack_hit` decodes `flags >> 6` on every record), and Plan 0081 takes bit 6 (`HIT_DETAIL`) and bits 8 to 15 (`s`). A clip hit is never an entity hit nor a detail hit (the layer fades out far inside `s_1`), so the payload is **kind-dependent**: this plan's level is bits 7 and 8 and its fallback mark bit 9, read only when bits 5 and 6 are clear; `dev` writes the decode as one kind switch in `unpack_hit` and gates every reader of `rec.instance` by `rec.entity` |
 | `reads_store` false for a clip hit, `store_missing` | `hitrec.wgsl` `reads_store` gains `&& level == 0`; `temporal.wgsl` `counters[0]` is the missing count |
 | `bake.rs` `bake_source()`, `bake_origin_chunk` | `bake/pipeline.rs` (`LOD_ORIGIN` replaced by `bake_origin_chunk()` of `bake.wgsl`); the bake's layout is the shared `world_layout`, so the far-field uniform enters its layout and not its module |
-| `tests/gpu_mirror.rs` | `crates/vxe-render/tests/gpu_mirror_{alloc,budget,tiers}.rs`; the level tables' test goes beside the LOD tiers in `gpu_mirror_tiers.rs` |
+| `tests/gpu_mirror.rs` | `crates/svet-render/tests/gpu_mirror_{alloc,budget,tiers}.rs`; the level tables' test goes beside the LOD tiers in `gpu_mirror_tiers.rs` |
 | Plan 0032's trees, "`trees.rs`'s per-voxel function" | `trees::ForestSource` (Phase 8's note: 64 shared prefabs, 16 variants by 4 turns, placements written in order over `OutdoorSource`; `StampedSource` is not used) with `ForestSource::material(p)` as the per-voxel function; `TREE_CELL` 48, **`LEAF_FILL` 64** (the owner's pick; the plan's tables assume 128), `TREE_BOX_EDGE` 3072 (**the forest is a finite 307 m square** between `MOUTH` and `FOREST`, bare hills beyond it); the default `--trees` is **`sparse`**, so every bare-hills run passes `--trees none` |
 | `OutdoorSource`'s column bound | `outdoor.rs` `height(x, y)` is three `ValueNoise` samples (cheap per column); there is no footprint min or max helper. Phase 2's bound is a scan of the footprint's corners and centre or the analytic amplitude bound (`BASE_Z` 512 plus or minus 200), `dev`'s pick |
 | `examples/world_budget.rs` | exists (935 lines); `--source showcase\|level`, `--stream R_FULL,R_LOD`; Phase 2 adds `outdoor`, `--far LEVELS,R`, `--trees`, `--far-rule`, `--leaf-fill` |
@@ -170,8 +170,8 @@ pair, is computed in `key_sample` where this plan's far occluder enters, before 
 
 ### Phases: what changes
 
-- **Phase 1** files: `crates/vxe-world/src/{source,mips,store,lib}.rs` and the new `clip.rs`
-  (`ClipFill`, not `Coarse`); `crates/vxe-render/src/gpu_world/{mod,window,slot,format}.rs`,
+- **Phase 1** files: `crates/svet-world/src/{source,mips,store,lib}.rs` and the new `clip.rs`
+  (`ClipFill`, not `Coarse`); `crates/svet-render/src/gpu_world/{mod,window,slot,format}.rs`,
   the new `frame/far_field.rs` (the uniform, its binding in `frame/pipelines.rs`),
   `shaders/{walk,hit,hitrec,temporal}.wgsl`, `bake/pipeline.rs`; `apps/flythrough/tests/
   gpu_far_field.rs` (new, the goldens included), `gpu_bake.rs`, `tests/support/mod.rs`. Bar 1's
@@ -366,11 +366,11 @@ residency latency).
 **Three clip levels of clip chunks, generated by the source, mirrored as chunks** (ADR-0028).
 `WorldSource::coarse_chunk(at: ClipCoord, rule: MipRule, out: &mut Chunk) -> Coarse` is a
 provided method answering `Unsupported`; a source that implements it fills a level's 64³ cells
-under the half rule or answers `Uniform(material)`. `vxe-world` gains `clip.rs`: `ClipCoord`,
+under the half rule or answers `Uniform(material)`. `svet-world` gains `clip.rs`: `ClipCoord`,
 `ClipChunk` (`Uniform` or `Cells(Chunk)`), the `ClipResidency` (levels 1 to 3, `r_clip`,
 hysteresis, rule) the `Streamer` drives as more tiers on its worker pool, and the edit overlay
 (`ChunkMips` built under the residency's rule, kept per edited chunk beside its persistence
-entry). The `World` holds resident clip chunks as it holds LOD mips today. `vxe-render`'s
+entry). The `World` holds resident clip chunks as it holds LOD mips today. `svet-render`'s
 mirror gives each level a wrapped table window at the tail of the chunk table; a `Uniform`
 clip chunk is a table entry with no record, a `Cells` clip chunk a record and slots from Plan
 0028's bins under ADR-0013's reservation, with clip records reserved apart from the near ones.
@@ -427,13 +427,13 @@ followup a reading would have to ask for.
 
 ```mermaid
 flowchart LR
-    subgraph world [vxe-world]
+    subgraph world [svet-world]
         S[WorldSource\ncoarse_chunk] --> W[Streamer\nfull + clip tiers\non workers]
         E[edit result\ntouched chunks] --> O[edit overlay\nhalf-rule mips]
         O --> W
         W --> C[(World: full chunks,\nclip chunks per level)]
     end
-    subgraph render [vxe-render]
+    subgraph render [svet-render]
         C --> M[mirror sync\nnear window + 3 level\ntables, pool, records]
         M --> H[march.wgsl\nlevel rule per caller,\nband, bounds, level flag]
         H --> L[light.wgsl\ndirectional shadow ray\nfrom the hit level]
@@ -481,9 +481,9 @@ done-whens name the mode's word on the banner, not the key.
   `temporal.wgsl` not counting it missing; `bake_source()` compiled so the bake's rays take no
   far field; `UniformSource` answers `Uniform`; a test source `PlaneBoxSource` (voxels with
   `z < 0` material 3, plus axis-aligned boxes) whose coarse path is exact.
-- **Files touched:** `crates/vxe-world/src/{source.rs, clip.rs (new), mips.rs, store.rs, lib.rs}`,
-  `crates/vxe-world/tests/clip.rs` (new, CPU), `crates/vxe-render/src/{gpu_world.rs, marcher.rs,
-  bake.rs}`, `crates/vxe-render/src/shaders/{march.wgsl, temporal.wgsl}`,
+- **Files touched:** `crates/svet-world/src/{source.rs, clip.rs (new), mips.rs, store.rs, lib.rs}`,
+  `crates/svet-world/tests/clip.rs` (new, CPU), `crates/svet-render/src/{gpu_world.rs, marcher.rs,
+  bake.rs}`, `crates/svet-render/src/shaders/{march.wgsl, temporal.wgsl}`,
   `apps/flythrough/tests/gpu_far_field.rs` (new), `apps/flythrough/tests/gpu_bake.rs`,
   `apps/flythrough/tests/support/mod.rs`, `apps/flythrough/tests/golden/far_skeleton.png` (new).
 - **Done when:**
@@ -539,7 +539,7 @@ done-whens name the mode's word on the banner, not the key.
   voxels a cell) to its full-detail `leaf` volume.
 - **Files touched:** `apps/flythrough/src/outdoor.rs` and `apps/flythrough/src/trees.rs`
   (Plan 0032's; the names follow the tree), `apps/flythrough/examples/world_budget.rs`,
-  `crates/vxe-world/src/census.rs`, `crates/vxe-world/tests/clip.rs`,
+  `crates/svet-world/src/census.rs`, `crates/svet-world/tests/clip.rs`,
   `apps/flythrough/tests/far_field_source.rs` (new, CPU), `docs/nfr/03-memory.md` and
   `docs/nfr.md` §5 (projection rows, labelled arithmetic).
 - **Done when:**
@@ -604,8 +604,8 @@ done-whens name the mode's word on the banner, not the key.
   the rest (the fallback); `poll` inserts and evicts clip chunks and reports them in
   `StreamEvents` with per-level latency ticks; a source answering `Unsupported` leaves the
   clip tiers empty and says so once in `StreamStats`; `set_radii` leaves the clip tiers alone.
-- **Files touched:** `crates/vxe-world/src/{stream.rs, clip.rs, store.rs}`,
-  `crates/vxe-world/tests/clip_stream.rs` (new, CPU).
+- **Files touched:** `crates/svet-world/src/{stream.rs, clip.rs, store.rs}`,
+  `crates/svet-world/tests/clip_stream.rs` (new, CPU).
 - **Done when:** (all in `clip_stream.rs`; the settled runs use `r_clip` 6 so they stay in the
   quick tier)
   1. `a_settled_level_holds_its_ball` (about 3 s): with `UniformSource`, the plane source and a
@@ -639,8 +639,8 @@ done-whens name the mode's word on the banner, not the key.
   at `s_k - w_k / 2` otherwise); the far limit at `(r_clip - 2) x 64 x 8` voxels; the clip
   normal mode (`face` or `gradient`) written to a clip hit's normal, with ADR-0042's blend
   skipped for it; a `levels` view that tints hits by level.
-- **Files touched:** `crates/vxe-render/src/{gpu_world.rs, marcher.rs, lib.rs}`,
-  `crates/vxe-render/src/shaders/march.wgsl`, `crates/vxe-render/tests/gpu_mirror.rs`,
+- **Files touched:** `crates/svet-render/src/{gpu_world.rs, marcher.rs, lib.rs}`,
+  `crates/svet-render/src/shaders/march.wgsl`, `crates/svet-render/tests/gpu_mirror.rs`,
   `apps/flythrough/tests/gpu_far_field.rs`, `apps/flythrough/tests/golden/{far_field.png,
   far_levels.png}`.
 - **Done when:**
@@ -676,8 +676,8 @@ done-whens name the mode's word on the banner, not the key.
   whose footprint holds it and marks them dirty; `coarse_chunk` results take the overlay
   before insertion; an overlay entry lives while its chunk's persistence entry does (RAM or
   spill); `StreamStats` reports overlay entries and bytes.
-- **Files touched:** `crates/vxe-world/src/{clip.rs, stream.rs, persist.rs}`,
-  `crates/vxe-world/tests/clip_edits.rs` (new, CPU), `apps/flythrough/src/main.rs` (passes
+- **Files touched:** `crates/svet-world/src/{clip.rs, stream.rs, persist.rs}`,
+  `crates/svet-world/tests/clip_edits.rs` (new, CPU), `apps/flythrough/src/main.rs` (passes
   touched chunks).
 - **Done when:** `a_carve_folds_into_every_level` (`clip_edits.rs`, about 3 s): in a world of
   `UniformSource(3)` (coarse path `Uniform(3)`), streamed at `r_full` 2, `r_clip` 4, `h` 1,
@@ -704,8 +704,8 @@ done-whens name the mode's word on the banner, not the key.
   the level of its origin. Probe rays, the bake's rays, the translucent walk and the glass
   reflection pass no far field and are unchanged. A clip hit takes the direct terms and no
   store value (Phase 1's rule).
-- **Files touched:** `crates/vxe-render/src/shaders/{light.wgsl, march.wgsl, probe_update.wgsl}`,
-  `crates/vxe-render/src/marcher.rs`, `apps/flythrough/tests/gpu_far_field.rs`.
+- **Files touched:** `crates/svet-render/src/shaders/{light.wgsl, march.wgsl, probe_update.wgsl}`,
+  `crates/svet-render/src/marcher.rs`, `apps/flythrough/tests/gpu_far_field.rs`.
 - **Done when:**
   1. `a_far_wall_shadows_the_ground_at_the_camera` (`gpu_far_field.rs`, about 15 s): on the
      ground plane with a wall at x in [4000, 4200), |y| < 2000, z in [0, 1000) voxels (aligned
@@ -774,7 +774,7 @@ done-whens name the mode's word on the banner, not the key.
   not from the distance (the fallback pixels); the outdoor autopilot flight at 10 m/s with the
   far field on and off; the readings below on the NVIDIA card and the AMD iGPU.
 - **Files touched:** `apps/flythrough/src/{main.rs, hud.rs, lib.rs}`,
-  `apps/flythrough/tests/gpu_hud_golden.rs`, `crates/vxe-render/src/shaders/march.wgsl` (the
+  `apps/flythrough/tests/gpu_hud_golden.rs`, `crates/svet-render/src/shaders/march.wgsl` (the
   fallback mark), the root `README.md` (the flags and keys), `docs/nfr/02-frame-budget.md`,
   `docs/nfr/03-memory.md`, `docs/nfr.md` §5.
 - **Done when:**
@@ -856,7 +856,7 @@ done-whens name the mode's word on the banner, not the key.
 ## Data shapes
 
 ```rust
-// illustrative: vxe-world
+// illustrative: svet-world
 pub struct ClipCoord { pub level: u8, pub chunk: ChunkCoord } // level 1..=3; spans 64 << level voxels
 pub enum Coarse { Unsupported, Uniform(MaterialId), Cells }   // Cells: `out` holds the 64^3 cells
 pub enum ClipChunk { Uniform(MaterialId), Cells(Chunk) }

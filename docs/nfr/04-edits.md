@@ -7,7 +7,7 @@
 
 ## Cost
 
-**Readings (dev reference, AMD Ryzen 9 5900HS, Plan 0001):** `cargo bench -p vxe-world
+**Readings (dev reference, AMD Ryzen 9 5900HS, Plan 0001):** `cargo bench -p svet-world
 --bench edits` (100 radius-10 carves on a fresh solid world, every carve expanding uniform
 bricks, the worst case): 4.92 ms (CI 4.87 to 4.98 ms), Phase 4 commit. In the fly-through
 (`B` key, carves into an already dug cave, 1d61aba): 3.07 to 4.63 ms over about 20 runs.
@@ -18,7 +18,7 @@ edit cost gets its own plan after Plan 0002.
 reads 3.656 ms (CI 3.641 to 3.672 ms) with the dev box under outside load (load average
 about 10), against 4.548 to 4.641 ms for the Plan 0001 edit path run alternately in the same
 window; the fly-through `B` line (`--level --seed 1`) reads 3.33 to 3.41 ms against 4.42 to
-4.46 ms. **Quiet-box reading at the Plan 0003 close** (a958ec1, same `vxe-world` tree,
+4.46 ms. **Quiet-box reading at the Plan 0003 close** (a958ec1, same `svet-world` tree,
 exclusive perf lock, 1-minute load under 3.5 and falling, nothing else running): `worst`
 3.556 to 3.566 ms (CI 3.552 to 3.572 ms over two runs), `mixed` 2.586 to 2.596 ms, `tool`
 8.119 to 8.120 ms; the fly-through `B` line 3.30 to 3.34 ms. It misses the 2 ms budget; the
@@ -52,7 +52,7 @@ have called for per-class pools.
 **Quiet-box re-read (dev reference, AMD Ryzen 9 5900HS, on AC with the performance profile
 and governor, 2796062, exclusive perf lock, 1-minute load 1.81 at the start):** `worst`
 1.793 ms, `worst_warm` 1.794 ms, `mixed` 1.417 ms, `tool` 5.823 ms, `tool_warm` 5.821 ms.
-Paired with 8440aa9 (the Plan 0021 Phase 8 tree; `vxe-world` is unchanged since),
+Paired with 8440aa9 (the Plan 0021 Phase 8 tree; `svet-world` is unchanged since),
 alternated twice at load 1.76 to 2.27: `worst_warm` 1.785 and 1.789 ms on main against
 1.783 and 1.783 ms, so the gap to the 1.34 to 1.52 ms above is machine state, not code, and
 is unexplained. The fly-through `B` line reads **2.06, 2.07 and 2.09 ms**, over 2 ms and
@@ -81,7 +81,7 @@ one arena of slabs, one per brick row it reaches, instead of a table over the op
 bounds: a diagonal capsule of 999 voxels at radius 2 writes 13 828 span entries against the
 338 724 rows of its bounds (the arena is reserved for the bounds, about 5.4 MB of address
 space, and only the reached rows are written). **Readings** (dev reference, AMD Ryzen 9
-5900HS, `cargo bench -p vxe-world --bench edits -- "^tool"`, exclusive perf lock, criterion
+5900HS, `cargo bench -p svet-world --bench edits -- "^tool"`, exclusive perf lock, criterion
 medians; base binary built from `a392e47`'s `edit.rs` with the current bench file): quiet run,
 tip then base, 1-minute load 1.47 to 1.97: tip `tool` 4.8885 ms, `tool_warm` 4.8714 ms,
 `tool_long` 5.8762 ms; base 4.8221, 4.8096 and 5.8850 ms. `tool` +1.4 %, `tool_warm` +1.3 %
@@ -93,7 +93,7 @@ voxels long).
 ## Stamp cost
 
 **Readings (dev reference, AMD Ryzen 9 5900HS, `cargo bench -p
-vxe-world --bench stamp`, exclusive perf lock, box under outside load of about 2 to 5,
+svet-world --bench stamp`, exclusive perf lock, box under outside load of about 2 to 5,
 commits 83ab811 and 39d3700):** `vault16` 22.6 to 22.8 µs; `prefab64_mixed` 2.02 to 2.07 ms;
 `prefab64_uniform` 1.455 ms. Both under their proposals; the proposals stand as budgets.
 
@@ -129,7 +129,7 @@ queue to time (`docs/plans/logs/0083.md`, Phase 8).
 ## Replay throughput
 
 **Reading (dev reference, AMD Ryzen 9 5900HS, Plan
-0007 Phase 6, exclusive perf lock, 1-minute load 1.45):** `cargo bench -p vxe-world --bench
+0007 Phase 6, exclusive perf lock, 1-minute load 1.45):** `cargo bench -p svet-world --bench
 replay`, decode plus replay of a 470 060-byte log file of 10 000 radius-1 m carves on a
 solid 4³-chunk world: 279.07 ms (CI 278.48 to 279.70 ms), about 35 800 ops per second.
 
@@ -140,7 +140,7 @@ solid 4³-chunk world: 279.07 ms (CI 278.48 to 279.70 ms), about 35 800 ops per 
 ## Tick overhead
 
 **Reading (dev reference, AMD Ryzen 9 5900HS, Plan 0007 Phase 6, exclusive perf lock,
-1-minute load 1.66):** `cargo bench -p vxe-net --bench tick`: 3.4706 ms (CI 3.4663 to
+1-minute load 1.66):** `cargo bench -p svet-net --bench tick`: 3.4706 ms (CI 3.4663 to
 3.4756 ms) through `EchoLogic` against 3.3859 ms (CI 3.3782 to 3.3990 ms) direct, an
 overhead of 84.7 µs per 100 inputs.
 
@@ -179,7 +179,7 @@ against 64.7, 63.5 and 70.4 µs for 2796062 in the same window (1.4913 / 1.4266 
 
 **Readings (dev reference, AMD Ryzen 9 5900HS, Linux, `wasmtime` 49.0.3, Plan 0011 Phase 4
 at 07a3be1 (70b40ec plus the bench), exclusive perf lock, 1-minute load 1.87 before and 1.66
-after two runs):** `cargo bench -p vxe-script-wasm --bench boundary`, each tick on a fresh
+after two runs):** `cargo bench -p svet-script-wasm --bench boundary`, each tick on a fresh
 `solid3_world()` through a host straight on the world: 100 carves through the echo
 component 3.1181 and 3.1225 ms against native `EchoLogic` 2.9765 and 2.9858 ms, so 1.42 and
 1.37 µs per host call, the tick's entry and the inputs' lowering included (an empty

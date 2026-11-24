@@ -14,10 +14,10 @@ use crate::logic::{DROP_VERB, PILE_VERB};
 use crate::now;
 use crate::run::Run;
 use crate::run::hud_lines::field_pass_line;
-use vxe_app::Gpu;
-use vxe_net::Event;
-use vxe_render::wgpu;
-use vxe_world::{EditResult, FIXED_ONE, Fixed3, LogFile, OpResult};
+use svet_app::Gpu;
+use svet_net::Event;
+use svet_render::wgpu;
+use svet_world::{EditResult, FIXED_ONE, Fixed3, LogFile, OpResult};
 
 impl Run {
     /// Prints the edit's line and keeps it for the HUD.

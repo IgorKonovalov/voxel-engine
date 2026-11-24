@@ -9,7 +9,7 @@
 
 use std::fmt::Write as _;
 
-use vxe_render::SyncStats;
+use svet_render::SyncStats;
 
 use crate::path::WARMUP_S;
 
@@ -28,8 +28,8 @@ pub const OVER_33_MS: f64 = 33.3;
 /// A wall frame over this is a stall the report counts (`over_100ms`).
 pub const OVER_100_MS: f64 = 100.0;
 
-/// The commit the binary was built from: `VXE_COMMIT` at build time, `unknown` without it.
-pub const COMMIT: &str = match option_env!("VXE_COMMIT") {
+/// The commit the binary was built from: `SVET_COMMIT` at build time, `unknown` without it.
+pub const COMMIT: &str = match option_env!("SVET_COMMIT") {
     Some(c) => c,
     None => "unknown",
 };

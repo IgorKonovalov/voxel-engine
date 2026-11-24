@@ -1,5 +1,5 @@
 //! The fly-through's stats HUD: what it reads each frame, the cadence at which it samples the
-//! world, and the rows it prints, on screen through `vxe_render::HudOverlay` and at exit as
+//! world, and the rows it prints, on screen through `svet_render::HudOverlay` and at exit as
 //! text. The overlay draws whatever rows it is handed; the rows here are the testbed's.
 //!
 //! Per-frame fields come only from sources that cost nothing to read: the [`FrameStats`]

@@ -10,11 +10,11 @@
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 
-use vxe_entity::{ComposedPose, EntitySet, Model, Pose};
-use vxe_world::{Face, Fixed3, MaterialTable};
+use svet_entity::{ComposedPose, EntitySet, Model, Pose};
+use svet_world::{Face, Fixed3, MaterialTable};
 
 /// An icon's side in pixels: the overlay's tile.
-pub const ICON_PX: u32 = vxe_render::TILE_PX;
+pub const ICON_PX: u32 = svet_render::TILE_PX;
 /// The model's larger projected side, in pixels: 7/8 of the tile.
 pub const FIT_PX: i64 = (ICON_PX as i64) * 7 / 8;
 
@@ -47,7 +47,7 @@ pub fn icon(model: &Arc<Model>, table: &MaterialTable) -> Option<Vec<u8>> {
         for z in 0..sz {
             for y in 0..sy {
                 for x in 0..sx {
-                    if v.get([x, y, z]).is_none_or(|m| m == vxe_world::AIR) {
+                    if v.get([x, y, z]).is_none_or(|m| m == svet_world::AIR) {
                         continue;
                     }
                     for c in 0..8 {
@@ -230,7 +230,7 @@ impl Icons {
 
     /// Whether entry `i`'s icon has arrived and fits the overlay's atlas: its tile is `i`.
     pub fn ready(&self, i: usize) -> bool {
-        i < vxe_render::MAX_TILES as usize && self.slots.get(i).is_some_and(|s| s.made)
+        i < svet_render::MAX_TILES as usize && self.slots.get(i).is_some_and(|s| s.made)
     }
 
     /// The icons arrived and not yet given to the overlay, by entry: each tile's index and
@@ -239,7 +239,7 @@ impl Icons {
         self.slots
             .iter_mut()
             .enumerate()
-            .take(vxe_render::MAX_TILES as usize)
+            .take(svet_render::MAX_TILES as usize)
             .filter_map(|(i, s)| Some((i as u32, s.upload.take()?)))
     }
 }

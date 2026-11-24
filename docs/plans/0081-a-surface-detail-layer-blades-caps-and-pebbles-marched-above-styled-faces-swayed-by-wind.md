@@ -44,14 +44,14 @@ Read at main 3b3986d0 (Plan 0032 closed, v0.61.0; Plan 0069 closed, v0.60.0) aga
 `plan-0080` lane (the menu) and Plan 0086 (approved, its lane open). The lane branches from
 main once Plan 0086 and Plan 0080 have merged; the tree's names win. The Decision, the
 Interface and the phases stand except where this section says otherwise; `dev` reads it as
-the phases' errata. Crate names here are `vxe-*`; if Plan 0087 has merged first they read
+the phases' errata. Crate names here are `svet-*`; if Plan 0087 has merged first they read
 `svet-*` through that plan's map.
 
 ### Name mapping (the plan's name, then the tree's)
 
 | The plan says | The tree has |
 |---|---|
-| "`frame/marcher.rs` or the frame module that owns group 0" | `crates/vxe-render/src/frame/pipelines.rs` (`world_layout`, `world_bind`; bindings 0 to 18 used, 5 and 6 unused, 19 the next); `frame/marcher.rs` is the hit pass's pipelines only |
+| "`frame/marcher.rs` or the frame module that owns group 0" | `crates/svet-render/src/frame/pipelines.rs` (`world_layout`, `world_bind`; bindings 0 to 18 used, 5 and 6 unused, 19 the next); `frame/marcher.rs` is the hit pass's pipelines only |
 | the style lane in the material row (`gpu_world/format.rs`) | **none.** The rows are `GpuWorld`'s (`gpu_world/stage.rs` `material_rows`, lanes 8, 9 and 11 to 15 spare) and `Frame` cannot mark them dirty. The per-material word is `Frame`-owned, as `emission_scale` is (binding 11, `Frame::set_emission_scales`): see "Interface changes" |
 | `shaders/light.wgsl` (the light pass) | the light pass's entry is `shade.wgsl`; `light.wgsl` is the list lights' walk and `sky_light.wgsl` the key light and the sky ray. The shadow-ray origins are `light.wgsl` (`shadowed`), `emissive.wgsl` and `sky_light.wgsl` (`shadow_origin`, `hitrec.wgsl`) |
 | "the baked emissive light is read for the face under the element" (in the light pass) | the store is read in the **temporal** pass: `store_voxel(rec.p, nf)` = `floor(p - 0.5 nf)` (`hitrec.wgsl`, called from `temporal.wgsl`). A detail hit up to 4 voxels above its face reads air there: Phase 1 makes the read find the face voxel for a `HIT_DETAIL` record (a step along `-n_face` to the first solid voxel, at most `DETAIL_HEIGHT_MAX + 1`, or the face cell's offset in the record's free bits; `dev` picks, the log says which) |
@@ -66,7 +66,7 @@ the phases' errata. Crate names here are `vxe-*`; if Plan 0087 has merged first 
 | `tests/strip.rs` | `apps/flythrough/examples/strip.rs` (1554 lines), whose `--source` takes `showcase\|level` only: Phase 3 bar 4 adds an `outdoor` arm to it (a small addition, in Phase 3's files) |
 | `apps/flythrough/tests/gpu_golden.rs` (the goldens) | at 1885 of 2000 lines: `outdoor_noon_detail` goes in `gpu_outdoor_golden.rs` (the outdoor goldens' file, `Hills` rig) and `cave_detail` in a new `gpu_detail_golden.rs` or beside it |
 | "a cyan emission near the ore's" (the cave preset) | the cave's ore is orange (`ORE_EMISSION`, `--emissive-ore on`); cyan is the showcase's crystal. The cap's emission is `dev`'s pick near one of them; the log says which |
-| `SurfaceDetailSettings` in `frame/settings.rs` | the struct may live in `detail.rs`; its `FIELDS` rows, `with_test_value` arms and `PROFILE_PICKS` are `crates/vxe-render/src/settings.rs` (1146 lines), and the fly-through fills it in `cli/settings.rs` `render_settings()` |
+| `SurfaceDetailSettings` in `frame/settings.rs` | the struct may live in `detail.rs`; its `FIELDS` rows, `with_test_value` arms and `PROFILE_PICKS` are `crates/svet-render/src/settings.rs` (1146 lines), and the fly-through fills it in `cli/settings.rs` `render_settings()` |
 
 ### Interface changes
 
@@ -152,7 +152,7 @@ written as the pixel's hit record and lit by the light pass like any hit, with t
 the list lights' shadow rays and the face's baked light. The layer fades to the face's own
 albedo by the voxel's size on screen, so it is never thinner than a pixel, and a wind vector
 the game sets bends the tips while the reprojection sees the rest position. The description
-is a render-side table of styles bound to material ids; `vxe-world`, the op log, the queries
+is a render-side table of styles bound to material ids; `svet-world`, the op log, the queries
 and the bake are untouched, and nothing in `crates/` names grass. The first thing a reader
 sees: Phase 1's blades on the outdoor source's grass at noon, in the window and in a reading's
 screenshot. Then Phase 4's cave preset, strands and a few glowing caps on the cave's rock
@@ -207,7 +207,7 @@ flowchart LR
         ST[style table\nper material id] --> F[Frame::set_surface_details]
         W[wind vector] --> F2[Frame::set_detail_wind]
     end
-    subgraph render [vxe-render]
+    subgraph render [svet-render]
         F --> MR[material rows\nspare lane = style index]
         F --> SB[style buffer]
         H[hit pass: world walk] -->|styled face| SH[shell march\ncells crossed, probes]
@@ -227,7 +227,7 @@ flowchart LR
 What the fly-through, Plan 0036 and a consumer may rely on. A name here is a contract; `dev`
 may add to it and does not rename it without an architect amendment.
 
-- **Rust, `vxe_render::detail`.** `SurfaceDetail` (Data shapes), `Frame::set_surface_details(&[(MaterialId, SurfaceDetail)])`
+- **Rust, `svet_render::detail`.** `SurfaceDetail` (Data shapes), `Frame::set_surface_details(&[(MaterialId, SurfaceDetail)])`
   (at most `MAX_STYLES` = 64 entries; a second entry for the same material id is an error),
   `Frame::set_detail_wind([f32; 2])` in voxels per second along world x and y, and the
   `RenderSettings` field `surface_detail: SurfaceDetailSettings` (Data shapes). Setting an
@@ -297,13 +297,13 @@ degrees, 5.2; at 60, 1.7.
     to 3 voxels, root width 0.15, bend 0.3, root colour darker than the row's albedo and tip
     lighter so the mean is near it), a menu entry on Plan 0080's menu that cycles the preset
     and shows `detail grass` in the banner, and `--detail-wind X,Y` parsed now for Phase 3.
-- **Files touched:** new `crates/vxe-render/src/detail.rs`, `crates/vxe-render/src/lib.rs`,
-  `crates/vxe-render/src/gpu_world/format.rs` (the style lane), `frame/settings.rs`
+- **Files touched:** new `crates/svet-render/src/detail.rs`, `crates/svet-render/src/lib.rs`,
+  `crates/svet-render/src/gpu_world/format.rs` (the style lane), `frame/settings.rs`
   (`SurfaceDetailSettings`), `frame/marcher.rs` or the frame module that owns group 0 (the
   style buffer and its binding), `shaders/hit.wgsl`, new `shaders/detail.wgsl` (the hash, the
   element placement and tests, shared by the hit pass, the light pass and the composite),
   `shaders/hitrec.wgsl` (`HIT_DETAIL`, `s`), `shaders/light.wgsl`, `shaders/composite.wgsl`,
-  `crates/vxe-render/tests/gpu_shader_portability.rs`, `apps/flythrough/src/main.rs` (flags),
+  `crates/svet-render/tests/gpu_shader_portability.rs`, `apps/flythrough/src/main.rs` (flags),
   `apps/flythrough/src/lib.rs` (the presets beside `cave_materials()`), the menu's table
   (Plan 0080's file), `hud.rs`, new `apps/flythrough/tests/detail.rs` (CPU bars), new
   `apps/flythrough/tests/gpu_detail.rs` (readings now, tests in Phase 6), the root
@@ -534,7 +534,7 @@ degrees, 5.2; at 60, 1.7.
 ## Data shapes
 
 ```rust
-// illustrative: crates/vxe-render/src/detail.rs
+// illustrative: crates/svet-render/src/detail.rs
 pub enum Primitive { Stalk, Cap, Pebble }
 bitflags! { pub struct FaceMask: u8 { PX, NX, PY, NY, PZ, NZ } }   // which faces grow it
 pub struct SurfaceDetail {
@@ -627,7 +627,7 @@ at main after Plan 0032 merges, and Phase 1 reads it again.
   `dev` reads the tree and the README says which bits.
 - **Plan 0080's menu.** The toggle is a menu entry, not a key (ADR-0061); if Plan 0080 has not
   merged when this lane starts, the entry is a key `dev` picks and the README says which.
-- **Determinism:** `vxe-world`, the op log, the queries and the bake are untouched; the
+- **Determinism:** `svet-world`, the op log, the queries and the bake are untouched; the
   layer is a render-side function of the frame's state. The hash is integer in WGSL; the
   placement is a function of the world cell, so it does not depend on the camera, the frame
   or the adapter's rounding (the element tests do, as every float in the frame does).
@@ -640,7 +640,7 @@ at main after Plan 0032 merges, and Phase 1 reads it again.
 
 ## What this plan does NOT do
 
-- **World data.** No voxel, op, query, collision or bake change; `vxe-world` is untouched.
+- **World data.** No voxel, op, query, collision or bake change; `svet-world` is untouched.
   The server never knows an element exists.
 - **Shadows cast by elements, or light from a glowing style on anything but itself.**
 - **Fur on entities, cobwebs, pressed grass** (Risks).
@@ -649,7 +649,7 @@ at main after Plan 0032 merges, and Phase 1 reads it again.
 - **Snow on the layer.** Plan 0036's snow cover may swap a face's style for a white `Cap` set
   at cover 1; that is 0036's phase to add, named here so its interface is ready.
 - **The far field.** Plan 0033 draws the face albedo; the layer has faded by its first seam.
-- **A `.vox` or `.rig` style mapping** in `vxe-assets`: a consumer binds styles in code.
+- **A `.vox` or `.rig` style mapping** in `svet-assets`: a consumer binds styles in code.
 - **Baseline-GPU readings.** The card is not on hand.
 
 ## Implementation log

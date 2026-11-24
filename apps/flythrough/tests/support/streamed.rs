@@ -1,16 +1,16 @@
 //! A world streamed in process around an eye, reached as by a jump, with the live bake queue
 //! and a frame stepped each frame (`streamed`): the readings of the first seconds after a jump.
 
-use vxe_render::{Exposure, Frame, LightParams, Lighting};
+use svet_render::{Exposure, Frame, LightParams, Lighting};
 
 /// A streamed rig ([`streamed`]): the world's source, the eye the streamer follows, the
 /// camera, the sky, the material styles, the full radius, the sky rays and the frames read.
 pub struct Streamed {
     pub label: &'static str,
-    pub source: std::sync::Arc<dyn vxe_world::WorldSource + Send + Sync>,
-    pub eye: vxe_world::VoxelCoord,
-    pub camera: vxe_render::Camera,
-    pub sky: vxe_render::sky::Sky,
+    pub source: std::sync::Arc<dyn svet_world::WorldSource + Send + Sync>,
+    pub eye: svet_world::VoxelCoord,
+    pub camera: svet_render::Camera,
+    pub sky: svet_render::sky::Sky,
     pub styles: Vec<u32>,
     pub r: i32,
     pub rays: u32,
@@ -23,13 +23,13 @@ pub struct Streamed {
 /// default 3 GiB budget with the fly-through's record count and window, the column wait on or
 /// off (`Lighting::column_wait`), and at the end the unbaked chunks within the full radius,
 /// each with the chunks that hold its reach's columns from final
-/// ([`vxe_render::finality_blockers`]) and why.
+/// ([`svet_render::finality_blockers`]) and why.
 #[derive(Clone, Copy, Debug)]
 pub struct Hold {
     pub r_lod: i32,
     pub wait: bool,
     /// The live queue's reach mode (`--reach`; the fly-through's default `Full`).
-    pub reach: vxe_render::ReachMode,
+    pub reach: svet_render::ReachMode,
 }
 
 /// What [`streamed`] read at a frame: the hit pixels' mean luminance of the accumulated
@@ -43,7 +43,7 @@ pub struct StreamedRead {
     pub missing: u32,
     pub black: u32,
     /// Under a [`Hold`]: the full chunks mirrored within the full radius whose reach does not
-    /// cross it by the queue's test ([`vxe_render::reach_crosses`]), not faceless and holding
+    /// cross it by the queue's test ([`svet_render::reach_crosses`]), not faceless and holding
     /// no block; 0 without a hold.
     pub unbaked_inner: u32,
     /// The chunks the lighting pixels hit that hold no block.
@@ -67,11 +67,11 @@ pub fn streamed(s: Streamed) -> Vec<StreamedRead> {
 /// the queue and the frame, which it may change).
 pub fn streamed_with(
     s: Streamed,
-    mut each: impl FnMut(u32, &vxe_render::wgpu::Device, &vxe_render::wgpu::Queue, &mut Frame),
+    mut each: impl FnMut(u32, &svet_render::wgpu::Device, &svet_render::wgpu::Queue, &mut Frame),
 ) -> Vec<StreamedRead> {
     use super::SyncNow;
-    use vxe_render::{GpuWorld, MirrorConfig, QueueView, Window};
-    use vxe_world::{ChunkCoord, PersistConfig, Residency, StreamConfig, Streamer, Tier, World};
+    use svet_render::{GpuWorld, MirrorConfig, QueueView, Window};
+    use svet_world::{ChunkCoord, PersistConfig, Residency, StreamConfig, Streamer, Tier, World};
     let mut out = Vec::new();
     let r = s.r;
     let residency = Residency {
@@ -82,7 +82,7 @@ pub fn streamed_with(
     let side = 2 * (residency.r_lod + residency.hysteresis) + 1;
     let budget = s
         .hold
-        .map_or(1u64 << 30, |_| vxe_render::DEFAULT_BUDGET_BYTES);
+        .map_or(1u64 << 30, |_| svet_render::DEFAULT_BUDGET_BYTES);
     let Some((device, queue, adapter)) = super::reading_device(budget) else {
         return out;
     };
@@ -133,7 +133,7 @@ pub fn streamed_with(
             hold: Some(residency.r_full + gpu.light_radius() + 1),
             half_angle: {
                 let [w, h] = frame.output_size();
-                vxe_render::internals::view_half_angle(camera.vfov, w as f32 / h as f32)
+                svet_render::internals::view_half_angle(camera.vfov, w as f32 / h as f32)
             },
             frustum: None,
             full_radius: Some(residency.r_full),
@@ -153,10 +153,10 @@ pub fn streamed_with(
         if !s.reads.contains(&f) {
             continue;
         }
-        let hits = vxe_render::debug::read_rgba32f(&device, &queue, frame.light_hit_positions());
-        let acc = vxe_render::debug::read_rgba16f(&device, &queue, frame.accumulated());
-        let dir = vxe_render::debug::read_rgba16f(&device, &queue, frame.direct_accumulated());
-        let vis = vxe_render::debug::read_rgba8(&device, &queue, frame.visibility_samples());
+        let hits = svet_render::debug::read_rgba32f(&device, &queue, frame.light_hit_positions());
+        let acc = svet_render::debug::read_rgba16f(&device, &queue, frame.accumulated());
+        let dir = svet_render::debug::read_rgba16f(&device, &queue, frame.direct_accumulated());
+        let vis = svet_render::debug::read_rgba8(&device, &queue, frame.visibility_samples());
         let ss = frame.read_store_stats(&device, &queue);
         let (mut n, mut a, mut d, mut cast, mut open) = (0usize, 0.0f64, 0.0f64, 0usize, 0.0f64);
         for i in 0..hits.len() {
@@ -207,14 +207,14 @@ pub fn streamed_with(
 /// lamp off, `s`'s sky rays, sky and styles, the column wait and reach of `s.hold` (else the
 /// defaults), the store's counters on, and the live queue at the fly-through's settings.
 fn streamed_frame(
-    device: &vxe_render::wgpu::Device,
-    queue: &vxe_render::wgpu::Queue,
-    gpu: &vxe_render::GpuWorld,
+    device: &svet_render::wgpu::Device,
+    queue: &svet_render::wgpu::Queue,
+    gpu: &svet_render::GpuWorld,
     s: &Streamed,
     r_full: i32,
 ) -> Frame {
     let mut frame = Frame::new(device, 320, 180);
-    frame.set_lod(vxe_render::LodParams {
+    frame.set_lod(svet_render::LodParams {
         r_full,
         forced_level: None,
     });
@@ -234,8 +234,8 @@ fn streamed_frame(
     frame.start_bake_queue(
         queue,
         gpu,
-        vxe_render::queue_settings(),
-        vxe_render::DEFAULT_BAKE_SLICE_MS,
+        svet_render::queue_settings(),
+        svet_render::DEFAULT_BAKE_SLICE_MS,
     );
     frame.set_bake_coarse(8, 2);
     if let Some(h) = s.hold {
@@ -247,22 +247,22 @@ fn streamed_frame(
 /// [`StreamedRead::unbaked_inner`] and [`StreamedRead::hit_unbaked`] (`hits`, the lighting
 /// grid's hit positions).
 fn unbaked(
-    gpu: &vxe_render::GpuWorld,
-    frame: &vxe_render::Frame,
+    gpu: &svet_render::GpuWorld,
+    frame: &svet_render::Frame,
     hits: &[[f32; 4]],
-    eye: vxe_world::VoxelCoord,
+    eye: svet_world::VoxelCoord,
     r_full: i32,
 ) -> (u32, u32) {
     let e = eye.0.map(|v| v.div_euclid(64));
     let lr = gpu.light_radius();
     let q = frame.bake_queue().expect("the queue runs");
-    let no_block = |c: vxe_world::ChunkCoord| frame.store().block(c).is_none();
+    let no_block = |c: svet_world::ChunkCoord| frame.store().block(c).is_none();
     let inner = gpu
         .full_chunks()
         .filter(|c| {
             let d2: i64 = (0..3).map(|k| i64::from(c.0[k] - e[k]).pow(2)).sum();
             d2 <= i64::from(r_full).pow(2)
-                && !vxe_render::reach_crosses(*c, e, lr, r_full)
+                && !svet_render::reach_crosses(*c, e, lr, r_full)
                 && no_block(*c)
                 && !q.tracks(*c).contains(&"faceless")
         })
@@ -271,16 +271,16 @@ fn unbaked(
         .iter()
         .filter(|h| h[3] < 1.0e30)
         .map(|h| [0, 1, 2].map(|k| (h[k].floor() as i32).div_euclid(64)))
-        .filter(|c| no_block(vxe_world::ChunkCoord(*c)))
+        .filter(|c| no_block(svet_world::ChunkCoord(*c)))
         .collect();
     (inner, hit.len() as u32)
 }
 
 /// A shared world source as the streamer takes it.
-struct DynSource(std::sync::Arc<dyn vxe_world::WorldSource + Send + Sync>);
+struct DynSource(std::sync::Arc<dyn svet_world::WorldSource + Send + Sync>);
 
-impl vxe_world::WorldSource for DynSource {
-    fn chunk(&self, coord: vxe_world::ChunkCoord, out: &mut vxe_world::Chunk) {
+impl svet_world::WorldSource for DynSource {
+    fn chunk(&self, coord: svet_world::ChunkCoord, out: &mut svet_world::Chunk) {
         self.0.chunk(coord, out);
     }
 }
@@ -290,10 +290,10 @@ impl vxe_world::WorldSource for DynSource {
 /// reach's columns from final, each named pending, or wanted and absent with the streamer's
 /// distance from the eye's chunk and whether it lies inside the mirror's window.
 fn held_report(
-    gpu: &vxe_render::GpuWorld,
-    frame: &vxe_render::Frame,
-    view: &vxe_render::QueueView<'_>,
-    eye: vxe_world::VoxelCoord,
+    gpu: &svet_render::GpuWorld,
+    frame: &svet_render::Frame,
+    view: &svet_render::QueueView<'_>,
+    eye: svet_world::VoxelCoord,
     r_full: i32,
 ) {
     let e = eye.0.map(|v| v.div_euclid(64));
@@ -321,7 +321,7 @@ fn held_report(
     );
     let mut blockers = std::collections::BTreeMap::<[i32; 3], (bool, usize)>::new();
     for (c, tracks) in &unbaked {
-        let b = vxe_render::finality_blockers(gpu, *c, lr, view);
+        let b = svet_render::finality_blockers(gpu, *c, lr, view);
         println!(
             "reading: held: unbaked {:?} tracks {:?}: {} blockers",
             c.0,
@@ -346,26 +346,26 @@ fn held_report(
 /// lighting pixels that hit it, its queue tracks, its streamer tier, whether the mirror holds it
 /// full, and the chunks that hold its columns from final.
 fn held_hits(
-    device: &vxe_render::wgpu::Device,
-    queue: &vxe_render::wgpu::Queue,
-    gpu: &vxe_render::GpuWorld,
-    frame: &vxe_render::Frame,
-    view: &vxe_render::QueueView<'_>,
-    tier: &dyn Fn(vxe_world::ChunkCoord) -> Option<vxe_world::Tier>,
+    device: &svet_render::wgpu::Device,
+    queue: &svet_render::wgpu::Queue,
+    gpu: &svet_render::GpuWorld,
+    frame: &svet_render::Frame,
+    view: &svet_render::QueueView<'_>,
+    tier: &dyn Fn(svet_world::ChunkCoord) -> Option<svet_world::Tier>,
 ) {
-    let hits = vxe_render::debug::read_rgba32f(device, queue, frame.light_hit_positions());
+    let hits = svet_render::debug::read_rgba32f(device, queue, frame.light_hit_positions());
     let mut by = std::collections::BTreeMap::<[i32; 3], usize>::new();
     for h in hits.iter().filter(|h| h[3] < 1.0e30) {
         let c = [0, 1, 2].map(|k| (h[k].floor() as i32).div_euclid(64));
-        if frame.store().block(vxe_world::ChunkCoord(c)).is_none() {
+        if frame.store().block(svet_world::ChunkCoord(c)).is_none() {
             *by.entry(c).or_default() += 1;
         }
     }
-    if let Ok(path) = std::env::var("VXE_HELD_PNG") {
+    if let Ok(path) = std::env::var("SVET_HELD_PNG") {
         // The display, and beside it the lighting grid: red where the hit's chunk holds no
         // block, grey where it does, black at a miss.
         let t = frame.target();
-        let disp = vxe_render::debug::read_rgba8(device, queue, t);
+        let disp = svet_render::debug::read_rgba8(device, queue, t);
         super::write_png(&path.clone().into(), &disp, t.width(), t.height());
         let g = frame.light_hit_positions();
         let mask: Vec<u8> = hits
@@ -375,7 +375,7 @@ fn held_hits(
                     return [0, 0, 0, 255];
                 }
                 let c = [0, 1, 2].map(|k| (h[k].floor() as i32).div_euclid(64));
-                if frame.store().block(vxe_world::ChunkCoord(c)).is_none() {
+                if frame.store().block(svet_world::ChunkCoord(c)).is_none() {
                     [255, 0, 0, 255]
                 } else {
                     [128, 128, 128, 255]
@@ -398,8 +398,8 @@ fn held_hits(
     let jobs = q.jobs();
     println!("reading: held hits: {} chunks hit with no block", by.len());
     for (c, n) in by {
-        let cc = vxe_world::ChunkCoord(c);
-        let b = vxe_render::finality_blockers(gpu, cc, gpu.light_radius(), view);
+        let cc = svet_world::ChunkCoord(c);
+        let b = svet_render::finality_blockers(gpu, cc, gpu.light_radius(), view);
         println!(
             "reading: held hit chunk {c:?}: {n} px, tracks {:?}, in a job {}, tier {:?}, mirrored {} lod {} pending {}, {} blockers {:?}",
             q.tracks(cc),

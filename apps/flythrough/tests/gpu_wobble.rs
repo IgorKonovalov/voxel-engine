@@ -7,7 +7,7 @@
 //! fly-through's budget from the first frame), 120 settle frames, a still strip of 33, a fly of
 //! 180 at 1 m/s, a stop held 300, a 60-degree turn over 40, a hold of 300; `drain=N` is the
 //! drained control.
-//! `VXE_WOBBLE` names the arm (see `Arm::parse`), `VXE_TEST_ADAPTER` the adapter. Frames and
+//! `SVET_WOBBLE` names the arm (see `Arm::parse`), `SVET_TEST_ADAPTER` the adapter. Frames and
 //! maps go under `live/wobble/<arm>/`.
 #![allow(
     dead_code,
@@ -36,7 +36,7 @@ fn queue_step(rig: &mut Rig, f: &mut Frame, cam: &Camera) {
     }
 }
 use support::terms::Rig;
-use vxe_render::{Camera, Frame};
+use svet_render::{Camera, Frame};
 
 /// The frame's sizes: FSR 2 and our upscaler at 1.5, `off` at 1.
 const INTERNAL: [u32; 2] = [1280, 720];
@@ -77,11 +77,11 @@ struct Arm {
     hold: usize,
     key_history: u32,
     sky_history: u32,
-    key_far: vxe_render::KeyFar,
-    key_far_mix: vxe_render::KeyFarMix,
+    key_far: svet_render::KeyFar,
+    key_far_mix: svet_render::KeyFarMix,
     /// The queue's budget a frame through the drain, in ms (`pre=MS`); `None` the default.
     pre_ms: Option<f64>,
-    penumbra: vxe_render::Penumbra,
+    penumbra: svet_render::Penumbra,
     leaves_absorb: bool,
     /// The turn's frames (`turnf=N`, 40 by default): 240 is a slow pan.
     turn_frames: usize,
@@ -107,7 +107,7 @@ struct Arm {
 }
 
 impl Arm {
-    /// `VXE_WOBBLE`: comma-separated tokens over the defaults (`default` alone is the
+    /// `SVET_WOBBLE`: comma-separated tokens over the defaults (`default` alone is the
     /// fly-through's frame): `off1` (no upscaler, scale 1), `own` (ours at 1.5), `s0`
     /// (sharpen 0), `albedo`, `full`, `nofilter`, `farn0`, `pin`, `anyhist`, `keyoff`,
     /// `sky0`, `brick`, `sun=EL/AZ`, `speed=M_S`, `turn=DEG`, `drain=N`, `face` (store read
@@ -124,7 +124,7 @@ impl Arm {
     /// `hfar` (`light_history_far`); Plan 0098 Phase 9's `hist` (`light_history` on, after
     /// `calm`) and `baked` (`key_far baked`).
     fn parse() -> Self {
-        Self::from_spec(&std::env::var("VXE_WOBBLE").unwrap_or_else(|_| "default".into()))
+        Self::from_spec(&std::env::var("SVET_WOBBLE").unwrap_or_else(|_| "default".into()))
     }
 
     /// The arm `spec` names ([`Arm::parse`]'s tokens).
@@ -213,17 +213,17 @@ impl Arm {
                 "hold" => a.hold = v.parse().unwrap(),
                 "kh" => a.key_history = v.parse().unwrap(),
                 "sh" => a.sky_history = v.parse().unwrap(),
-                "ray" => a.key_far = vxe_render::KeyFar::Ray,
-                "column" => a.key_far = vxe_render::KeyFar::Column,
-                "step" => a.key_far_mix = vxe_render::KeyFarMix::Step,
+                "ray" => a.key_far = svet_render::KeyFar::Ray,
+                "column" => a.key_far = svet_render::KeyFar::Column,
+                "step" => a.key_far_mix = svet_render::KeyFarMix::Step,
                 "pre" => a.pre_ms = Some(v.parse().unwrap()),
-                "approach" => a.penumbra = vxe_render::Penumbra::Approach,
-                "disc" => a.penumbra = vxe_render::Penumbra::Disc,
+                "approach" => a.penumbra = svet_render::Penumbra::Approach,
+                "disc" => a.penumbra = svet_render::Penumbra::Disc,
                 "absorb" => a.leaves_absorb = true,
                 "turnf" => a.turn_frames = v.parse().unwrap(),
                 "nohist" => a.light_history = false,
                 "hist" => a.light_history = true,
-                "baked" => a.key_far = vxe_render::KeyFar::Baked,
+                "baked" => a.key_far = svet_render::KeyFar::Baked,
                 "scale" => a.scale = v.parse().unwrap(),
                 "farn" => {
                     let (lo, hi) = v.split_once('/').expect("farn=LO/HI");
@@ -232,9 +232,9 @@ impl Arm {
                 "native" => a.upscaler = "off",
                 "calm" => {
                     a.light_history = false;
-                    a.key_far = vxe_render::KeyFar::Column;
-                    a.key_far_mix = vxe_render::KeyFarMix::Step;
-                    a.penumbra = vxe_render::Penumbra::Disc;
+                    a.key_far = svet_render::KeyFar::Column;
+                    a.key_far_mix = svet_render::KeyFarMix::Step;
+                    a.penumbra = svet_render::Penumbra::Disc;
                     a.far_normal = [4.0, 8.0];
                 }
                 "lfade" => a.landing_fade = true,
@@ -255,7 +255,7 @@ impl Arm {
 fn forest_rig(r: i32) -> Option<(Rig, Camera)> {
     use flythrough::outdoor::{OutdoorSource, Spawn};
     use flythrough::trees::{ForestSource, LEAF_FILL, TreeDensity};
-    use vxe_world::{ChunkExtent, World};
+    use svet_world::{ChunkExtent, World};
     let source = ForestSource::new(OutdoorSource::new(1), TreeDensity::Forest, LEAF_FILL);
     let (eye, facing) = source.base().spawn(Spawn::Forest);
     let c = eye.chunk().0;
@@ -288,7 +288,7 @@ fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
     match arm.upscaler {
         "fsr2" => f.set_upscaler_kind(
             &rig.device,
-            vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+            svet_render::UpscalerKind::Fsr2(svet_render::Fsr2Settings {
                 sharpness: arm.sharpen,
                 jitter_phases: arm.jitter_phases,
                 dither: arm.dither,
@@ -298,27 +298,27 @@ fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
         "own" => {
             f.set_upscaler_kind(
                 &rig.device,
-                vxe_render::UpscalerKind::Own(Default::default()),
+                svet_render::UpscalerKind::Own(Default::default()),
             );
             f.set_jitter(&rig.device, true);
             f.set_sharpness(&rig.queue, arm.sharpen);
         }
         _ => {
-            f.set_upscaler_kind(&rig.device, vxe_render::UpscalerKind::Off);
+            f.set_upscaler_kind(&rig.device, svet_render::UpscalerKind::Off);
             f.set_jitter(&rig.device, false);
         }
     }
     f.set_count_store(true);
-    f.set_look(vxe_render::LookParams {
+    f.set_look(svet_render::LookParams {
         far_normal: arm.far_normal,
         view: if arm.albedo {
-            vxe_render::ViewMode::Albedo
+            svet_render::ViewMode::Albedo
         } else if arm.normals {
-            vxe_render::ViewMode::Normals
+            svet_render::ViewMode::Normals
         } else {
-            vxe_render::ViewMode::Shaded
+            svet_render::ViewMode::Shaded
         },
-        ..vxe_render::LookParams::default()
+        ..svet_render::LookParams::default()
     });
     let leaf = if arm.leaves_brick {
         flythrough::LeafShadow::Brick
@@ -328,7 +328,7 @@ fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
         flythrough::LeafShadow::Voxel
     };
     f.set_material_styles(&rig.queue, &flythrough::outdoor_styles(leaf));
-    f.set_lighting(vxe_render::Lighting {
+    f.set_lighting(svet_render::Lighting {
         lamp: false,
         filter: arm.filter,
         sky_rays: arm.sky_rays,
@@ -343,26 +343,26 @@ fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
         far_light_wide: arm.far_light_wide,
         light_history_far: arm.light_history_far,
         store_read: if arm.store_read_face {
-            vxe_render::StoreRead::Face
+            svet_render::StoreRead::Face
         } else {
             flythrough::default_lighting().store_read
         },
         light_weights: if arm.weights_normal {
-            vxe_render::LightWeights::Normal
+            svet_render::LightWeights::Normal
         } else {
             flythrough::default_lighting().light_weights
         },
-        exposure: vxe_render::Exposure::Auto(vxe_render::AutoExposure {
+        exposure: svet_render::Exposure::Auto(svet_render::AutoExposure {
             min: flythrough::cli::OUTDOOR_MIN,
             max: flythrough::cli::OUTDOOR_MAX,
-            ..vxe_render::AutoExposure::default()
+            ..svet_render::AutoExposure::default()
         }),
         ..flythrough::default_lighting()
     });
     if arm.lighting_full {
-        f.set_resolution(&rig.device, vxe_render::LightingResolution::Full);
+        f.set_resolution(&rig.device, svet_render::LightingResolution::Full);
     }
-    f.set_light_hooks(vxe_render::LightHooks {
+    f.set_light_hooks(svet_render::LightHooks {
         any_history: arm.any_history,
         key_off: arm.key_off,
         no_stair: arm.no_stair,
@@ -379,8 +379,8 @@ fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
     f.start_bake_queue(
         &rig.queue,
         &rig.gpu,
-        vxe_render::queue_settings(),
-        vxe_render::DEFAULT_BAKE_SLICE_MS,
+        svet_render::queue_settings(),
+        svet_render::DEFAULT_BAKE_SLICE_MS,
     );
     f.set_bake_coarse(8, 2);
     f
@@ -507,8 +507,8 @@ fn pop_line(
     name: &str,
     k: usize,
     c: &[(f64, f64); 5],
-    a: &vxe_render::QueueStats,
-    b: &vxe_render::QueueStats,
+    a: &svet_render::QueueStats,
+    b: &svet_render::QueueStats,
 ) {
     if c[1].0 > POP_PRINT {
         println!(
@@ -531,9 +531,9 @@ const FRESH: usize = 60;
 /// shares of the record, the horizon, a landing's fade and the ray (the light pass's sample's b
 /// says a ray was cast; else the key slot's tag, pair.wgsl's `key_slot_decode`).
 fn far_sources(rig: &Rig, f: &Frame, eye: [f32; 3]) -> [f64; 4] {
-    let hits = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, f.light_hit_positions());
-    let pair = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, f.visibility_pair());
-    let vis = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, f.visibility_samples());
+    let hits = svet_render::debug::read_rgba32f(&rig.device, &rig.queue, f.light_hit_positions());
+    let pair = svet_render::debug::read_rgba16f(&rig.device, &rig.queue, f.visibility_pair());
+    let vis = svet_render::debug::read_rgba8(&rig.device, &rig.queue, f.visibility_samples());
     let mut n = [0usize; 4];
     for (i, h) in hits.iter().enumerate() {
         if h[3] > 1e30 || !h[3].is_finite() {
@@ -603,7 +603,7 @@ struct SrcRow {
 /// and each hit's chunk (the hit nudged along the view ray into the solid) looked up in the
 /// store.
 fn src_state(rig: &Rig, f: &Frame, shot: &support::defects::Shot, eye: [f32; 3]) -> SrcState {
-    let pair = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, f.visibility_pair());
+    let pair = svet_render::debug::read_rgba16f(&rig.device, &rig.queue, f.visibility_pair());
     let mut held = std::collections::HashMap::<[i32; 3], bool>::new();
     let block = shot
         .hits
@@ -617,7 +617,7 @@ fn src_state(rig: &Rig, f: &Frame, shot: &support::defects::Shot, eye: [f32; 3])
             let c = [0, 1, 2].map(|k| ((h[k] + 0.01 * d[k] / l) / 64.0).floor() as i32);
             *held
                 .entry(c)
-                .or_insert_with(|| f.store().block(vxe_world::ChunkCoord(c)).is_some())
+                .or_insert_with(|| f.store().block(svet_world::ChunkCoord(c)).is_some())
         })
         .collect();
     SrcState {
@@ -694,7 +694,7 @@ struct Segment {
     /// Per frame: the far's key sources ([`far_sources`]).
     sources: Vec<[f64; 4]>,
     /// Per frame after its queue step: the live queue's counters (the default's with no queue).
-    queue: Vec<vxe_render::QueueStats>,
+    queue: Vec<svet_render::QueueStats>,
 }
 
 /// A sampled frame's diagnostic: its index, and per lighting pixel the age, the source word,
@@ -744,7 +744,7 @@ fn run_segment(
         let y = lumas(&shot.display);
         sources.push(far_sources(rig, &s.frame, cam.position.to_array()));
         if keep && DIAG_AT.contains(&k) {
-            let mom = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, s.frame.moments());
+            let mom = svet_render::debug::read_rgba16f(&rig.device, &rig.queue, s.frame.moments());
             let kind: Vec<u8> = mom.iter().map(|p| p[3].floor() as u8).collect();
             diag.push((
                 k,
@@ -793,7 +793,7 @@ fn run_segment(
         *v /= pairs_n;
     }
     write_map(dir, &format!("{name}-diff.png"), &map, 8.0);
-    let names = vxe_render::FRAME_PASSES;
+    let names = svet_render::FRAME_PASSES;
     let ms: Vec<String> = names
         .iter()
         .zip(&sum_pass)
@@ -1045,20 +1045,20 @@ mod reading {
     use super::*;
 
     /// Plan 0097 Phase 3d bar 1: the auto exposure across a stop on the wobble rig's forest
-    /// (`forest_rig(8)`, the `VXE_WOBBLE` arm, `default` unset): 120 settle frames at the
-    /// spawn, a fly of `VXE_EYE_FLY` frames (20 unset) at the arm's speed, the stop held 30.
+    /// (`forest_rig(8)`, the `SVET_WOBBLE` arm, `default` unset): 120 settle frames at the
+    /// spawn, a fly of `SVET_EYE_FLY` frames (20 unset) at the arm's speed, the stop held 30.
     /// Per frame from the fly's last to stop +29: the exposure the frame used (`previous`,
     /// log2) and its step from the frame before, the next frame's (`current`), the adapted and
     /// metered levels, the exposure's target (`key / 2^metered`), the ceiling in force and
     /// its target (`AutoExposure::ceiling_target` over the pass's ground, the metered sky
     /// share and the smoothed floor share), the highlight's tail level, its smoothed level and
     /// cap, which bound sets `current`, and the display's near pixels over 4 levels against
-    /// the frame before. `VXE_TEST_ADAPTER` picks the adapter.
+    /// the frame before. `SVET_TEST_ADAPTER` picks the adapter.
     #[test]
     #[ignore = "reading"]
     fn the_eye_across_a_stop() {
         let arm = Arm::parse();
-        let fly_n: usize = std::env::var("VXE_EYE_FLY")
+        let fly_n: usize = std::env::var("SVET_EYE_FLY")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(20);
@@ -1077,8 +1077,8 @@ mod reading {
         };
         let f = frame_for(rig, &arm);
         let a = match f.lighting().exposure {
-            vxe_render::Exposure::Auto(a) => a,
-            vxe_render::Exposure::Manual(_) => panic!("the rig's exposure is auto"),
+            svet_render::Exposure::Auto(a) => a,
+            svet_render::Exposure::Manual(_) => panic!("the rig's exposure is auto"),
         };
         let mut s = Stepper::new(rig, f);
         for _ in 0..SETTLE {
@@ -1097,14 +1097,14 @@ mod reading {
             queue_step(rig, &mut s.frame, cam);
             let shot = s.step(rig, cam);
             let f = &s.frame;
-            let st = vxe_render::ExposureState::from_bytes(&vxe_render::debug::read_buffer(
+            let st = svet_render::ExposureState::from_bytes(&svet_render::debug::read_buffer(
                 &rig.device,
                 &rig.queue,
                 f.exposure_state(),
                 0,
                 32,
             ));
-            let hi = vxe_render::ExposureHighlight::from_bytes(&vxe_render::debug::read_buffer(
+            let hi = svet_render::ExposureHighlight::from_bytes(&svet_render::debug::read_buffer(
                 &rig.device,
                 &rig.queue,
                 f.exposure_highlight(),
@@ -1112,12 +1112,12 @@ mod reading {
                 16,
             ));
             let b =
-                vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.sky_irradiance(), 0, 96);
+                svet_render::debug::read_buffer(&rig.device, &rig.queue, f.sky_irradiance(), 0, 96);
             let up: Vec<f32> = b[80..96]
                 .chunks_exact(4)
                 .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
                 .collect();
-            let ground = vxe_render::ground_irradiance([up[0], up[1], up[2]], up[3]);
+            let ground = svet_render::ground_irradiance([up[0], up[1], up[2]], up[3]);
             let floor = f.sky_floor();
             let gw = f.light_hit_positions().width() as usize;
             let cls = classes(&shot.hits, &shot.source, gw, cam.position.to_array());
@@ -1180,7 +1180,7 @@ mod reading {
     /// instrument. Nothing is asserted: the claim it carried (the near does not go on settling
     /// after a stop, at most `albedo`'s plus 2 points) is asserted with the queue stopped and the
     /// exposure pinned, where nothing lands and the exposure takes no step, by
-    /// [`super::the_defaults_hold_still_at_rest_and_the_far_holds`]. `VXE_TEST_ADAPTER` picks
+    /// [`super::the_defaults_hold_still_at_rest_and_the_far_holds`]. `SVET_TEST_ADAPTER` picks
     /// the adapter (the RTX by hand; unset, lavapipe).
     #[test]
     #[ignore = "reading"]
@@ -1276,7 +1276,8 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> StopRead {
             };
         }
         if let Some(ms) = arm.pre_ms {
-            s.frame.set_bake_budget(vxe_render::Budget::PerFrame { ms });
+            s.frame
+                .set_bake_budget(svet_render::Budget::PerFrame { ms });
         }
         let t = std::time::Instant::now();
         let mut n = 0;
@@ -1286,7 +1287,7 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> StopRead {
             n += 1;
         }
         let drained = s.frame.bake_queue().is_some_and(|q| q.empty());
-        s.frame.set_bake_budget(vxe_render::Budget::default());
+        s.frame.set_bake_budget(svet_render::Budget::default());
         println!(
             "  queue drained {drained} after {n} frames ({:.1} s)",
             t.elapsed().as_secs_f64()
@@ -1316,7 +1317,7 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> StopRead {
             q_prev = q;
             prev = Some(y);
         }
-        let fresh_ms: Vec<String> = vxe_render::FRAME_PASSES
+        let fresh_ms: Vec<String> = svet_render::FRAME_PASSES
             .iter()
             .zip(&fresh)
             .filter(|(n, _)| ["light", "temporal", "atrous", "hit"].contains(n))
@@ -1335,8 +1336,8 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> StopRead {
                 .exposure_readout(&rig.device)
                 .map(|r| r.exposure)
                 .expect("a read-back");
-            s.frame.set_lighting(vxe_render::Lighting {
-                exposure: vxe_render::Exposure::Manual(e),
+            s.frame.set_lighting(svet_render::Lighting {
+                exposure: svet_render::Exposure::Manual(e),
                 ..s.frame.lighting()
             });
             for _ in 0..32 {
@@ -1494,7 +1495,7 @@ const REST_NEAR_PAIR: f64 = 2.5;
 /// number fails. Printed, not barred: with the queue stepping (`default,pin`) and with no
 /// upscaler (`default,pin,native`, 1080p native, the distance left) the far +30 and +0, the
 /// queue's depth at the stop's end and every landing row with its frame: a landing's frame is
-/// the machine's pace, not the rig's (accepted by eye at window W2). `VXE_TEST_ADAPTER` picks
+/// the machine's pace, not the rig's (accepted by eye at window W2). `SVET_TEST_ADAPTER` picks
 /// the adapter (the RTX by hand; unset, lavapipe).
 #[test]
 #[ignore = "soak"]
@@ -1669,7 +1670,7 @@ fn gate_run(rig: &mut Rig, cam0: &Camera, arm: support::wobble::Arm, frozen: boo
 /// [`the_defaults_hold_still_at_rest_and_the_far_holds`]), and the same segments undrained with the queue's
 /// depth, the picks' +60 beside the before's (Plan 0096's far tiers re-read it). Far is a hit 6 m out or more
 /// ([`support::wobble::NEAR_M`]: the far normal's weight at least 0.996 at this width). Every
-/// figure prints. `VXE_TEST_ADAPTER` picks the adapter (unset, lavapipe).
+/// figure prints. `SVET_TEST_ADAPTER` picks the adapter (unset, lavapipe).
 #[test]
 #[ignore = "soak"]
 fn the_far_moves_no_worse_than_the_before() {

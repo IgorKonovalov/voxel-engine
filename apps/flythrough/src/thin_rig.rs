@@ -6,7 +6,7 @@
 //! by at least 4 voxels; the branches, rods and sheets are of the rig's second material (its
 //! "wood"), the trunk and floor of rock.
 
-use vxe_world::{
+use svet_world::{
     AIR, BRICK_EDGE, Brick, CHUNK_BRICKS, Chunk, ChunkCoord, ChunkExtent, MaterialId, VoxelCoord,
     WorldSource, brick_of_slot,
 };

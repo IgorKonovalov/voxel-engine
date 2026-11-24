@@ -2,14 +2,14 @@
 //! ([`MirrorPool`]) or the bookkeeping alone in a test, with the free, retry and reset path of
 //! a full or fragmented pool ([`sync_models`]), and one frame's feed ([`feed`]).
 
-use vxe_entity::Model;
-use vxe_render::{EntityUploadError, ModelHandle};
-use vxe_world::{Fixed3, MaterialTable};
+use svet_entity::Model;
+use svet_render::{EntityUploadError, ModelHandle};
+use svet_world::{Fixed3, MaterialTable};
 
 use super::Walkers;
 
 /// What [`sync_models`] needs of an entity pool: the frame's mirror with its queue
-/// ([`MirrorPool`]), or the bookkeeping alone ([`vxe_render::internals::VolumePool`]) in a test.
+/// ([`MirrorPool`]), or the bookkeeping alone ([`svet_render::internals::VolumePool`]) in a test.
 pub trait ModelPool {
     fn upload(
         &mut self,
@@ -23,13 +23,13 @@ pub trait ModelPool {
     fn total_bytes(&self) -> u64;
 }
 
-impl ModelPool for vxe_render::internals::VolumePool {
+impl ModelPool for svet_render::internals::VolumePool {
     fn upload(
         &mut self,
         model: &Model,
         table: &MaterialTable,
     ) -> Result<ModelHandle, EntityUploadError> {
-        vxe_render::internals::VolumePool::upload(self, model, table).map(|u| u.handle)
+        svet_render::internals::VolumePool::upload(self, model, table).map(|u| u.handle)
     }
 
     fn free(&mut self, handle: ModelHandle) {
@@ -37,22 +37,22 @@ impl ModelPool for vxe_render::internals::VolumePool {
     }
 
     fn clear(&mut self) {
-        vxe_render::internals::VolumePool::clear(self);
+        svet_render::internals::VolumePool::clear(self);
     }
 
     fn used_bytes(&self) -> u64 {
-        vxe_render::internals::VolumePool::used_bytes(self)
+        svet_render::internals::VolumePool::used_bytes(self)
     }
 
     fn total_bytes(&self) -> u64 {
-        vxe_render::internals::VolumePool::total_bytes(self)
+        svet_render::internals::VolumePool::total_bytes(self)
     }
 }
 
 /// The frame's entity mirror and the queue its uploads are written through.
 pub struct MirrorPool<'a> {
-    pub mirror: &'a mut vxe_render::EntityMirror,
-    pub queue: &'a vxe_render::wgpu::Queue,
+    pub mirror: &'a mut svet_render::EntityMirror,
+    pub queue: &'a svet_render::wgpu::Queue,
 }
 
 impl ModelPool for MirrorPool<'_> {
@@ -263,10 +263,10 @@ fn refuse_entry(walkers: &mut Walkers, i: usize) {
 /// banner's words from the sync, when there are any.
 pub fn feed(
     walkers: &mut Walkers,
-    world: &vxe_world::World,
+    world: &svet_world::World,
     eye: [f32; 3],
-    frame: &mut vxe_render::Frame,
-    queue: &vxe_render::wgpu::Queue,
+    frame: &mut svet_render::Frame,
+    queue: &svet_render::wgpu::Queue,
 ) -> Option<String> {
     if walkers.ring > 0 {
         let floor_below = |p: [f32; 3], search: i64| {

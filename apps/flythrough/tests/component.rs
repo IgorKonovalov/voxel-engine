@@ -8,8 +8,8 @@ use std::sync::Arc;
 use flythrough::cave::CaveSource;
 use flythrough::logic::{BENCH_CARVES, DigInput, DigLogic};
 use flythrough::{LogicChoice, Mode as Replay, cave_materials, replay_file_with};
-use vxe_net::{Client, Event, Logic, MemChannel, Server};
-use vxe_world::*;
+use svet_net::{Client, Event, Logic, MemChannel, Server};
+use svet_world::*;
 
 #[path = "support/vectors.rs"]
 mod vectors;
@@ -126,7 +126,7 @@ struct Answers {
     pile: OpResult,
 }
 
-impl vxe_net::Host for Answers {
+impl svet_net::Host for Answers {
     fn apply(&mut self, op: Op) -> Result<OpResult, EditError> {
         Ok(match op {
             Op::Drop { .. } => self.drop.clone(),
@@ -171,7 +171,7 @@ fn component_fall_lines(host: &mut Answers) -> Vec<String> {
         dir: [256, 0, 0],
         radius: FIXED_ONE,
     };
-    let input = vxe_net::ClientInput {
+    let input = svet_net::ClientInput {
         client: 0,
         bytes: dig.encode(),
     };

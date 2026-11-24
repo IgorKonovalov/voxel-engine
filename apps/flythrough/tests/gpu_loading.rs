@@ -36,8 +36,10 @@ fn room_wait(run: Child) -> Option<(String, String)> {
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     if !out.status.success() && stderr.contains("no adapter") {
-        if std::env::var("VXE_REQUIRE_SOFTWARE_ADAPTER").as_deref() == Ok("1") {
-            panic!("VXE_REQUIRE_SOFTWARE_ADAPTER=1 but the fly-through found no adapter: {stderr}");
+        if std::env::var("SVET_REQUIRE_SOFTWARE_ADAPTER").as_deref() == Ok("1") {
+            panic!(
+                "SVET_REQUIRE_SOFTWARE_ADAPTER=1 but the fly-through found no adapter: {stderr}"
+            );
         }
         println!("skipped: no adapter ({})", stderr.trim());
         return None;
@@ -190,7 +192,7 @@ fn the_streamed_load_reports_its_stages_in_order_and_ends_at_one() {
 /// 130` at 64 x 36 on lavapipe, its report written to a scratch folder, with `screen`.
 fn bench_counts(screen: &str) -> Option<(f64, f64, f64)> {
     let dir = std::env::temp_dir().join(format!(
-        "vxe-gpu-loading-{}-bench-{screen}",
+        "svet-gpu-loading-{}-bench-{screen}",
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&dir);

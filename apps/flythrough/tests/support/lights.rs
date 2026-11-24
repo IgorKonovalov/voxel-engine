@@ -5,10 +5,10 @@
 
 use flythrough::cave::ROCK;
 use flythrough::cave_materials;
-use vxe_render::{
+use svet_render::{
     Camera, Exposure, Frame, LightParams, Lighting, LightingResolution, UpscalerKind, wgpu,
 };
-use vxe_world::{ChunkExtent, EditOp, FIXED_ONE, Fixed3, Mode, UniformSource, World};
+use svet_world::{ChunkExtent, EditOp, FIXED_ONE, Fixed3, Mode, UniformSource, World};
 
 use super::bake::{Rig, rig_on};
 
@@ -118,7 +118,7 @@ pub fn step(rig: &mut Rig, camera: &Camera) {
 
 /// The hits of `frame`'s last frame: (pixel, hit point, on the floor), for each pixel that hit.
 pub fn hits_of(rig: &Rig, frame: &Frame) -> Vec<(usize, [f32; 3], bool)> {
-    let pos = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, frame.hit_positions());
+    let pos = svet_render::debug::read_rgba32f(&rig.device, &rig.queue, frame.hit_positions());
     pos.iter()
         .enumerate()
         .filter(|(_, p)| p[3] > 0.0 && p[3] < 1e30)
@@ -163,7 +163,7 @@ pub struct ProbeWords {
 /// Every slot's [`ProbeWords`] of `frame`'s probe volume, read back in one copy.
 pub fn probe_words(device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) -> Vec<ProbeWords> {
     let v = frame.probes();
-    let bytes = vxe_render::debug::read_buffer(device, queue, v.data(), 0, v.data().size());
+    let bytes = svet_render::debug::read_buffer(device, queue, v.data(), 0, v.data().size());
     let words: Vec<u32> = bytes
         .chunks_exact(4)
         .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))

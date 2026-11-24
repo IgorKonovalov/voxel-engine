@@ -7,7 +7,7 @@
 //! surface body's on the face it hits, [`Stand::Surface`]). A slot holds an entity or a
 //! structure ([`Item`]); a structure's box stands by [`stand_box`].
 
-use vxe_render::{HudBox, HudColour, HudTile};
+use svet_render::{HudBox, HudColour, HudTile};
 
 use super::library::BUILTIN_NAME;
 use crate::hud::Modes;
@@ -20,7 +20,7 @@ pub enum Item {
     Structure(usize),
 }
 
-/// What the overlay lays over a belt's or a chooser's rows (`vxe_render::HudPaint`): the
+/// What the overlay lays over a belt's or a chooser's rows (`svet_render::HudPaint`): the
 /// spans recoloured and the icons' tiles, kept across frames.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Paint {
@@ -35,8 +35,8 @@ impl Paint {
     }
 
     /// The overlay's paint over these spans and tiles, with the `backdrops`' boxes.
-    pub fn with<'a>(&'a self, backdrops: &'a [HudBox]) -> vxe_render::HudPaint<'a> {
-        vxe_render::HudPaint {
+    pub fn with<'a>(&'a self, backdrops: &'a [HudBox]) -> svet_render::HudPaint<'a> {
+        svet_render::HudPaint {
             backdrops,
             spans: &self.spans,
             tiles: &self.tiles,
@@ -861,7 +861,7 @@ mod reading {
     #[ignore = "a reading"]
     fn the_snap_costs() {
         use crate::outdoor::{OutdoorSource, Spawn};
-        use vxe_world::{CHUNK_EDGE, ChunkExtent, World};
+        use svet_world::{CHUNK_EDGE, ChunkExtent, World};
         let source = OutdoorSource::new(1);
         let (eye, _) = source.spawn(Spawn::Outside);
         let c = eye.0.map(|v| v.div_euclid(CHUNK_EDGE));

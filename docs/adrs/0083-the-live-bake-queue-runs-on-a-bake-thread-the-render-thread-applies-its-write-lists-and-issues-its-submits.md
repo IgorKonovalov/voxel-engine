@@ -82,7 +82,7 @@ does them at one fixed point in the frame, from lists the bake thread prepared.*
   call, on the calling thread) as a setting. The pre-roll, a one-shot bake, a dig's ring where
   the consumer asks for it at once, and every test or headless run that asserts bytes before
   the queue has drained use lockstep. A window defaults to the thread.
-- **`vxe-world` is untouched in kind.** The bake thread reads chunks through the per-chunk
+- **`svet-world` is untouched in kind.** The bake thread reads chunks through the per-chunk
   locks the stream workers already use and holds one for no longer than one chunk's listing.
   The world gains no GPU type, no clock and no bake concept.
 

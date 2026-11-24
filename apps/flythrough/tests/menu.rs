@@ -11,8 +11,8 @@ use flythrough::hud::menu::{Group, entries, keys_text, unlisted_keys};
 use flythrough::hud::{HudRow, Modes};
 use flythrough::toggles::{ACTIONS, TOGGLES};
 use flythrough::toggles::{Press, Toggle, press};
-use vxe_app::{Axis, Input, KeyCode, MouseButton, PadButton};
-use vxe_render::{HudBox, HudColour, Lighting, LightingResolution};
+use svet_app::{Axis, Input, KeyCode, MouseButton, PadButton};
+use svet_render::{HudBox, HudColour, Lighting, LightingResolution};
 
 fn argv(args: &[&str]) -> Vec<String> {
     args.iter().map(|s| (*s).to_owned()).collect()
@@ -813,11 +813,11 @@ fn the_key_far_row_cycles_its_three_sources() {
         assert_eq!(
             words,
             match m.lighting.key_far {
-                vxe_render::KeyFar::Column => String::new(),
+                svet_render::KeyFar::Column => String::new(),
                 k => format!("key far {}, ", k.name()),
             }
         );
     }
-    use vxe_render::KeyFar;
+    use svet_render::KeyFar;
     assert_eq!(seen, [KeyFar::Ray, KeyFar::Baked, KeyFar::Column]);
 }

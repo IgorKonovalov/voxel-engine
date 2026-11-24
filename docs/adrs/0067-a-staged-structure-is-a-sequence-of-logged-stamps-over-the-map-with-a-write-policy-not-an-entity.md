@@ -14,7 +14,7 @@ The two representations the engine has are far apart. An **entity** (ADR-0050) i
 rigid parts of at most 64 voxels a side in a pool of its own, traced after the world march,
 posed in fixed point; nothing digs it, nothing collides with it but the ray query, the baked
 light does not see it, and a castle of 600 voxels a side does not fit its caps. **The world**
-is dug by carve ops that report what they removed, collides through `vxe-sim`, takes the baked
+is dug by carve ops that report what they removed, collides through `svet-sim`, takes the baked
 light per chunk, collapses through the support query, and every change to it is a logged
 deterministic op (ADR-0007, ADR-0014). Edits are operations, not diffs (`CLAUDE.md`).
 
@@ -37,11 +37,11 @@ drawbridge, a crane) is an entity.**
   world holds the prefab's material there). `region` is an inclusive voxel box in the prefab's
   rotated local frame; only masked voxels inside it are considered. The result reports, per
   old material, what changed, and how many masked voxels the policy skipped.
-- **The stages.** `vxe-assets` reads a structure's stages from its `.vox`: one stage per layer
+- **The stages.** `svet-assets` reads a structure's stages from its `.vox`: one stage per layer
   in layer order (MagicaVoxel `LAYR`, the nodes' `_layer_id`), or per top-level group named
   `stage <n> ...`. A stage is the prefabs and placements of its models. The engine has no
   "structure" type with state: the game keeps the structure's cursor (which stage, how far).
-- **The planner.** `vxe_world::reveal(stage, slab)` is a pure function: the ops that stamp a
+- **The planner.** `svet_world::reveal(stage, slab)` is a pure function: the ops that stamp a
   stage slab by slab along an axis (`region` boxes of `slab` voxels), in order, with a policy.
   Demolition is the same ops with `Erase`, in reverse. What falls afterwards is the game's
   support query and drop ops (ADR-0008).

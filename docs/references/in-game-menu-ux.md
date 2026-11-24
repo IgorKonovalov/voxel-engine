@@ -127,7 +127,7 @@ has no written source behind it, the section says so rather than inventing one.
   <https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-systemparametersinfoa>
   The OS keyboard repeat ranges from about 250 ms to 1 s of delay and 2.5 to 30 repeats a
   second. What we take: 275 ms and 20 a second sit inside the range every Windows user has
-  felt; the menu does its own repeat because `vxe_app::Input::pressed` ignores the OS repeat.
+  felt; the menu does its own repeat because `svet_app::Input::pressed` ignores the OS repeat.
 - **Microsoft, "Xbox Accessibility Guideline 107: Input".**
   <https://learn.microsoft.com/en-us/gaming/accessibility/xbox-accessibility-guidelines/107>
   "A UI should be navigable by using single, non-simultaneous key presses"; Minecraft's slider
@@ -240,7 +240,7 @@ has no written source behind it, the section says so rather than inventing one.
 - **Dear ImGui, `imgui.h`** (above): FaceDown is "A (Xbox) | B (Switch) | Cross (PS)" and
   `io.ConfigNavSwapGamepadButtons` swaps activate and cancel for a Nintendo layout. What we
   take: the D-pad's up and down tweak a number only inside the edit mode, left and right keep
-  their page meaning; `vxe_app::PadButton::South` and `East` are positional, so a Switch pad activates on
+  their page meaning; `svet_app::PadButton::South` and `East` are positional, so a Switch pad activates on
   its B as the layout expects; a swap setting is not taken (a backlog item if a Switch pad is
   ever plugged in). **Not found:** an official Nintendo statement of the layout; the fact is
   from ImGui's table.

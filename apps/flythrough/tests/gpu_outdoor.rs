@@ -49,8 +49,8 @@ fn run(extra: &[&str], bound: Duration) -> Option<String> {
         String::from_utf8_lossy(&out.stderr).into_owned(),
     );
     if !out.status.success() && stderr.contains("no adapter") {
-        if std::env::var("VXE_REQUIRE_SOFTWARE_ADAPTER").as_deref() == Ok("1") {
-            panic!("VXE_REQUIRE_SOFTWARE_ADAPTER=1 but no adapter: {stderr}");
+        if std::env::var("SVET_REQUIRE_SOFTWARE_ADAPTER").as_deref() == Ok("1") {
+            panic!("SVET_REQUIRE_SOFTWARE_ADAPTER=1 but no adapter: {stderr}");
         }
         println!("skipped: no adapter ({})", stderr.trim());
         return None;
@@ -134,7 +134,7 @@ fn a_tree_shadow_travels_with_the_sun_at_320x180() {
 }
 
 fn tree_shadow_bar(size: [u32; 2], tolerance: f64) {
-    let Some(r) = reading::tree_shadow(&[vxe_render::ShadowWalk::Full], size) else {
+    let Some(r) = reading::tree_shadow(&[svet_render::ShadowWalk::Full], size) else {
         return;
     };
     for (got, want) in [(r[0], [0.5, 46.98]), (r[1], [139.93, 0.5])] {
@@ -210,13 +210,13 @@ mod reading {
     use super::support;
     use support::stillness::{Pose, SIZE, outdoor_level_on, run_under_sky};
     use support::terms::*;
-    use vxe_render::{AutoExposure, Exposure, Frame, LightParams, Lighting};
+    use svet_render::{AutoExposure, Exposure, Frame, LightParams, Lighting};
 
     /// Plan 0032 Phase 7 bar 4: the stillness rig's statistics at `outdoor_noon`'s pose (the
     /// `outside` spawn facing the mouth, 12:00, the day cycle off, the lamp off) under a manual
     /// exposure pinned at what the outdoor auto exposure (instant adaptation, the outdoor
     /// floor and ceiling) reads after 64 frames of the same pose. Prints them; no bar.
-    /// `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    /// `SVET_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
     fn outdoor_noon_stillness() {
@@ -280,16 +280,16 @@ mod reading {
         reason = "a rig's parts, destructured at once by its two callers"
     )]
     fn tree_rig() -> Option<(
-        vxe_render::wgpu::Device,
-        vxe_render::wgpu::Queue,
+        svet_render::wgpu::Device,
+        svet_render::wgpu::Queue,
         String,
-        Vec<vxe_render::GpuWorld>,
-        vxe_render::Camera,
+        Vec<svet_render::GpuWorld>,
+        svet_render::Camera,
     )> {
         use flythrough::trees::{TRUNK_SINK, TreeShape, build_tree};
         use support::SyncNow;
-        use vxe_render::{Camera, GpuWorld, MirrorConfig, Window, glam::Vec3};
-        use vxe_world::{AIR, ChunkExtent, FnSource, World};
+        use svet_render::{Camera, GpuWorld, MirrorConfig, Window, glam::Vec3};
+        use svet_world::{AIR, ChunkExtent, FnSource, World};
         let shape = TreeShape {
             trunk_r: 2,
             height: 80,
@@ -318,7 +318,7 @@ mod reading {
         };
         let worlds = [world_of(false), world_of(true)];
         let pool =
-            flythrough::level_pool_units(&worlds[1], false) * vxe_render::internals::UNIT_BYTES;
+            flythrough::level_pool_units(&worlds[1], false) * svet_render::internals::UNIT_BYTES;
         let (device, queue, adapter) = support::reading_device(pool)?;
         let gpus: Vec<GpuWorld> = worlds
             .iter()
@@ -352,12 +352,12 @@ mod reading {
     /// run under the same sun (held or drifting, so the lit floor's own lag reads no
     /// occlusion), the sun's elevation, and the centroids' distance in voxels (the bar at 60:
     /// under 0.5). Printed, with the drifting run's centroid against the held open floor.
-    /// `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    /// `SVET_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
     fn a_drift_lags_under_half_a_voxel() {
-        use vxe_render::sky::{Body, SUN_ANGULAR_RADIUS, Sky};
-        use vxe_render::{Frame, GpuWorld, LightingResolution};
+        use svet_render::sky::{Body, SUN_ANGULAR_RADIUS, Sky};
+        use svet_render::{Frame, GpuWorld, LightingResolution};
         let Some((device, queue, adapter, gpus, camera)) = tree_rig() else {
             return;
         };
@@ -395,9 +395,9 @@ mod reading {
                 f.step(&device, &queue, gpu, &camera, &LightParams::headlamp());
                 if k % 16 == 15 {
                     let d =
-                        vxe_render::debug::read_rgba16f(&device, &queue, f.direct_accumulated());
+                        svet_render::debug::read_rgba16f(&device, &queue, f.direct_accumulated());
                     let h =
-                        vxe_render::debug::read_rgba32f(&device, &queue, f.light_hit_positions());
+                        svet_render::debug::read_rgba32f(&device, &queue, f.light_hit_positions());
                     let lum: Vec<f64> = d
                         .iter()
                         .map(|p| f64::from(0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]))
@@ -465,14 +465,14 @@ mod reading {
     /// positions, over floor pixels at least 4 voxels to either side of the shadow's axis; at
     /// 60/180 against (0.5, 46.98) and 30/270 against (139.93, 0.5); and the sum of `w` at 30 over
     /// 60 against `sin 60 / sin 30 = 1.732`, under each of `walks`: per walk the two centroids,
-    /// then `[ratio, 0]`. `None` without an adapter. `VXE_TEST_ADAPTER` picks the adapter (unset:
+    /// then `[ratio, 0]`. `None` without an adapter. `SVET_TEST_ADAPTER` picks the adapter (unset:
     /// lavapipe).
     pub(super) fn tree_shadow(
-        walks: &[vxe_render::ShadowWalk],
+        walks: &[svet_render::ShadowWalk],
         size: [u32; 2],
     ) -> Option<Vec<[f64; 2]>> {
-        use vxe_render::sky::{Body, SUN_ANGULAR_RADIUS, Sky};
-        use vxe_render::{Frame, GpuWorld, LightingResolution, ShadowWalk};
+        use svet_render::sky::{Body, SUN_ANGULAR_RADIUS, Sky};
+        use svet_render::{Frame, GpuWorld, LightingResolution, ShadowWalk};
         let (device, queue, adapter, gpus, camera) = tree_rig()?;
         // Per lighting pixel: the 16-frame mean luminance of the direct part and the hit.
         // One frame for every run: its pipelines are built once.
@@ -485,7 +485,7 @@ mod reading {
                 shadow_walk: walk,
                 exposure: Exposure::Manual(1.0),
                 sky_rays: 0,
-                key_far: vxe_render::KeyFar::Ray,
+                key_far: svet_render::KeyFar::Ray,
                 ..Lighting::default()
             });
             let body = |direction| Body {
@@ -505,13 +505,13 @@ mod reading {
             for _ in 0..16 {
                 frame.step(&device, &queue, gpu, &camera, &LightParams::headlamp());
                 let d =
-                    vxe_render::debug::read_rgba16f(&device, &queue, frame.direct_accumulated());
+                    svet_render::debug::read_rgba16f(&device, &queue, frame.direct_accumulated());
                 for (s, p) in sum.iter_mut().zip(&d) {
                     *s += f64::from(0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]) / 16.0;
                 }
             }
             let hits =
-                vxe_render::debug::read_rgba32f(&device, &queue, frame.light_hit_positions());
+                svet_render::debug::read_rgba32f(&device, &queue, frame.light_hit_positions());
             (sum, hits)
         };
         let mut out = Vec::new();
@@ -568,11 +568,11 @@ mod reading {
     }
 
     /// Plan 0032 Phase 8 bar 5 under the coarse walk, printed (the bar is on the full walk).
-    /// `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    /// `SVET_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
     fn a_tree_shadow_travels_with_the_sun_under_the_coarse_walk() {
-        tree_shadow(&[vxe_render::ShadowWalk::Coarse], [640, 360]);
+        tree_shadow(&[svet_render::ShadowWalk::Coarse], [640, 360]);
     }
 
     /// Plan 0032 Phase 10 bar 3, as a reading: the outdoor hills of seed 1 streamed in
@@ -584,15 +584,15 @@ mod reading {
     /// updates, polls and syncs the stream with no time budget, then renders. At
     /// frames 2, 30 and 120 it prints the direct target's mean luminance over the farthest
     /// third of the lighting grid's hit pixels (by `t`), with the mirrored chunk count. No
-    /// bar. `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    /// bar. `SVET_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
     fn the_far_ground_is_lit_while_the_stream_fills() {
         use flythrough::outdoor::{OutdoorSource, Spawn};
         use std::sync::Arc;
         use support::SyncNow;
-        use vxe_render::{GpuWorld, LodParams, MirrorConfig, Window};
-        use vxe_world::{PersistConfig, Residency, StreamConfig, Streamer, World};
+        use svet_render::{GpuWorld, LodParams, MirrorConfig, Window};
+        use svet_world::{PersistConfig, Residency, StreamConfig, Streamer, World};
         const SIZE: [u32; 2] = [320, 180];
         const READS: [u32; 3] = [2, 30, 120];
         let residency = Residency {
@@ -670,8 +670,8 @@ mod reading {
             if !READS.contains(&f) {
                 continue;
             }
-            let d = vxe_render::debug::read_rgba16f(&device, &queue, frame.direct());
-            let h = vxe_render::debug::read_rgba32f(&device, &queue, frame.light_hit_positions());
+            let d = svet_render::debug::read_rgba16f(&device, &queue, frame.direct());
+            let h = svet_render::debug::read_rgba32f(&device, &queue, frame.light_hit_positions());
             let mut ground: Vec<(f32, f32)> = h
                 .iter()
                 .zip(&d)
@@ -701,16 +701,16 @@ mod reading {
     /// off, and with no sky and the lamp on, each settled 64 frames under its auto exposure
     /// (instant; the outdoor floor and ceiling under the sky) and then pinned there for 64 frames:
     /// the 99th percentile over each region of the per-pixel change of the displayed image between
-    /// consecutive frames (the largest channel, levels of 255). Prints them. `VXE_TEST_ADAPTER`
+    /// consecutive frames (the largest channel, levels of 255). Prints them. `SVET_TEST_ADAPTER`
     /// picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
     fn the_tunnel_under_one_sky_ray() {
         use flythrough::outdoor::{BASE_Z, OutdoorSource, Spawn};
         use support::SyncNow;
-        use vxe_render::sky::Sky;
-        use vxe_render::{Camera, GpuWorld, MirrorConfig, UpscalerKind, Window};
-        use vxe_world::{ChunkExtent, World};
+        use svet_render::sky::Sky;
+        use svet_render::{Camera, GpuWorld, MirrorConfig, UpscalerKind, Window};
+        use svet_world::{ChunkExtent, World};
         let source = OutdoorSource::new(1);
         let (eye, facing) = source.spawn(Spawn::Inside);
         // 3 chunks around the spawn's chunk, and on to 10 along +x and 4 down: the whole tunnel
@@ -721,7 +721,7 @@ mod reading {
             [c[0] + 11, c[1] + 4, c[2] + 2],
         );
         let world = World::generate(extent, &source, &flythrough::outdoor_materials());
-        let pool = flythrough::level_pool_units(&world, false) * vxe_render::internals::UNIT_BYTES;
+        let pool = flythrough::level_pool_units(&world, false) * svet_render::internals::UNIT_BYTES;
         let Some((device, queue, adapter)) = support::reading_device(pool) else {
             return;
         };
@@ -757,13 +757,13 @@ mod reading {
             for _ in 0..64 {
                 f.step(&device, &queue, &gpu, cam, &light);
                 // The sky rays' share that reached the sky (ADR-0070), in r of 255.
-                let px = vxe_render::debug::read_rgba8(&device, &queue, f.visibility_samples());
+                let px = svet_render::debug::read_rgba8(&device, &queue, f.visibility_samples());
                 sum.resize(px.len() / 4, 0.0);
                 for (s, p) in sum.iter_mut().zip(px.chunks(4)) {
                     *s += f64::from(p[0]) / 255.0 / 64.0;
                 }
             }
-            let hits = vxe_render::debug::read_rgba32f(&device, &queue, f.light_hit_positions());
+            let hits = svet_render::debug::read_rgba32f(&device, &queue, f.light_hit_positions());
             let rate: Vec<Option<f64>> = sum
                 .iter()
                 .zip(&hits)
@@ -776,7 +776,7 @@ mod reading {
             let mut f = Frame::with_sizes(&device, [320, 180], [480, 270]);
             f.set_upscaler_kind(
                 &device,
-                UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default()),
+                UpscalerKind::Fsr2(svet_render::Fsr2Settings::default()),
             );
             let auto = if sky {
                 AutoExposure {
@@ -805,7 +805,7 @@ mod reading {
                 exposure: Exposure::Manual(e),
                 ..base
             });
-            let read = |f: &Frame| vxe_render::debug::read_rgba8(&device, &queue, f.target());
+            let read = |f: &Frame| svet_render::debug::read_rgba8(&device, &queue, f.target());
             let mut last = read(&f);
             let mut per_px: Vec<Vec<u8>> = vec![Vec::new(); last.len() / 4];
             for _ in 0..64 {
@@ -857,7 +857,7 @@ mod reading {
     /// through `cells()`: per region (in the tunnel the rim band, the hits at a sky-ray rate of
     /// 0.3 to 0.6, and the far end, under 0.05; in the forest every hit) the p99 and mean
     /// frame-to-frame change of the display, the firefly rate, and the history's reset share
-    /// by cause. Prints the table and each region's hit rate. `VXE_TEST_ADAPTER` picks the
+    /// by cause. Prints the table and each region's hit rate. `SVET_TEST_ADAPTER` picks the
     /// adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
@@ -920,7 +920,7 @@ mod reading {
 
     /// Plan 0086 Phase 2 bar 5: in the forest, the key ray's steps at `--sun 10,180` and the
     /// stillness at `60,180` (the defaults' cell) with the leaf's SHADOW_AS_BRICK set and clear.
-    /// `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    /// `SVET_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
     fn forest_leaf_shadow() {
@@ -944,7 +944,7 @@ mod reading {
                 &cam,
                 sky_at([10.0, 180.0]),
                 leaf,
-                vxe_render::Penumbra::Disc,
+                svet_render::Penumbra::Disc,
             );
             println!(
                 "reading: forest 10/180 leaf {}: key ray steps mean {mean:.2} p99 {p99}",
@@ -963,7 +963,7 @@ mod reading {
 
     /// Plan 0086 Phase 3 bar 4: the forest's statistics at `60,180` with the leaf's
     /// SHADOW_AS_BRICK set, with the far normal's stair rules hooked off (before the phase) and
-    /// on. `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    /// on. `SVET_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
     fn forest_stairs() {
@@ -999,7 +999,7 @@ mod reading {
     /// end by the sky ray's hit rate), the defaults' cell (FSR 2 at 1.5, the filter on): the
     /// ray alone as before (no bake), the store baked whole with `sky_rays` 0 (the bake only),
     /// and baked with the ray on (cast, and dropped where the store holds a visibility). Per
-    /// row Phase 1's statistics and each region's mean display level. `VXE_TEST_ADAPTER`
+    /// row Phase 1's statistics and each region's mean display level. `SVET_TEST_ADAPTER`
     /// picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
@@ -1054,12 +1054,12 @@ mod reading {
 
     /// Plan 0086 Phase 7 bar 2: the forest at `60,180` and `10,180` with the penumbra as the
     /// disc's and the closest approach's: the key ray's steps and loads, and the statistics of
-    /// the defaults' cell (the leaf's SHADOW_AS_BRICK set) at `60,180`. `VXE_TEST_ADAPTER` picks
+    /// the defaults' cell (the leaf's SHADOW_AS_BRICK set) at `60,180`. `SVET_TEST_ADAPTER` picks
     /// the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
     fn forest_approach() {
-        use vxe_render::Penumbra;
+        use svet_render::Penumbra;
         let sky_at = |sun: [f32; 2]| {
             flythrough::daylight::Clock {
                 fixed_sun: Some(sun),
@@ -1100,13 +1100,13 @@ mod reading {
     /// The lighting grid's hit pixels of `f`'s last frame: their count, the mean luminance of
     /// the accumulated stored part, and the mean luminance of the accumulated direct part.
     fn hit_parts(
-        device: &vxe_render::wgpu::Device,
-        queue: &vxe_render::wgpu::Queue,
+        device: &svet_render::wgpu::Device,
+        queue: &svet_render::wgpu::Queue,
         f: &Frame,
     ) -> (usize, f64, f64) {
-        let hits = vxe_render::debug::read_rgba32f(device, queue, f.light_hit_positions());
-        let acc = vxe_render::debug::read_rgba16f(device, queue, f.accumulated());
-        let dir = vxe_render::debug::read_rgba16f(device, queue, f.direct_accumulated());
+        let hits = svet_render::debug::read_rgba32f(device, queue, f.light_hit_positions());
+        let acc = svet_render::debug::read_rgba16f(device, queue, f.accumulated());
+        let dir = svet_render::debug::read_rgba16f(device, queue, f.direct_accumulated());
         let lum = |p: &[f32; 4]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
         let (mut n, mut a, mut d) = (0usize, 0.0f64, 0.0f64);
         for i in 0..hits.len() {
@@ -1122,17 +1122,17 @@ mod reading {
 
     /// Plan 0086 Phase 8 diagnosis: the owner's run-12 eye underground (743, 131, 14.7; seed 1,
     /// no trees, caverns closed to the sky). The world generated whole over chunks
-    /// `x, y` within `VXE_UNDER_R` (default 3) of the eye's chunk and `z` -3..9 (over the
+    /// `x, y` within `SVET_UNDER_R` (default 3) of the eye's chunk and `z` -3..9 (over the
     /// surface at about 501), mirrored whole. Per view (six axes and a
     /// reference over the surface looking down): the sky ray's hit rate (`hit_rates`); then the
     /// store baked whole under the noon sky and the baked visibility of every brick face within
     /// 6 bricks of the eye's brick; then the noon frame at manual exposure 1 with the bake, at
     /// `sky_rays` 1 and 0, the mean luminance of the accumulated stored part and direct part at
-    /// the hits. Printed. `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    /// the hits. Printed. `SVET_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
     fn the_underground_eye() {
-        let r = std::env::var("VXE_UNDER_R")
+        let r = std::env::var("SVET_UNDER_R")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(3);
@@ -1150,7 +1150,7 @@ mod reading {
     /// [`the_underground_eye`]'s rig at `r`, printed; `None` with no adapter.
     pub(super) fn underground_eye(r: i32) -> Option<UnderEye> {
         use flythrough::outdoor::OutdoorSource;
-        use vxe_world::{ChunkExtent, VoxelCoord, World};
+        use svet_world::{ChunkExtent, VoxelCoord, World};
         let zhi = 9;
         let source = OutdoorSource::new(1);
         let eye = VoxelCoord([743, 131, 15]);
@@ -1171,7 +1171,7 @@ mod reading {
         println!("reading: adapter {}", rig.adapter);
         let p = [743.5f32, 131.5, 14.7];
         let top = source.height(743, 131) as f32 + 20.0;
-        let mut views: Vec<(String, vxe_render::Camera)> = [
+        let mut views: Vec<(String, svet_render::Camera)> = [
             ("+x", [1.0, 0.0, 0.0]),
             ("-x", [-1.0, 0.0, 0.0]),
             ("+y", [0.0, 1.0, 0.0]),
@@ -1213,7 +1213,7 @@ mod reading {
                 &mut rig.gpu,
                 &rig.world,
                 rig.world.extent(),
-                &vxe_render::BakeSettings::default(),
+                &svet_render::BakeSettings::default(),
                 &mut |_| {},
             )
             .expect("the store fits");
@@ -1290,9 +1290,9 @@ mod reading {
     }
 
     /// Plan 0086 Phase 8 diagnosis, streamed: the run-12 eye underground (743, 131, 14.7;
-    /// seed 1, no trees) reached as by a jump (`support::streamed::streamed`), `VXE_UNDER_R` full (default 6),
-    /// `sky_rays` `VXE_UNDER_RAYS` (default 1), facing +x, at 12:00. Printed at listed frames.
-    /// `VXE_TEST_ADAPTER` picks the adapter.
+    /// seed 1, no trees) reached as by a jump (`support::streamed::streamed`), `SVET_UNDER_R` full (default 6),
+    /// `sky_rays` `SVET_UNDER_RAYS` (default 1), facing +x, at 12:00. Printed at listed frames.
+    /// `SVET_TEST_ADAPTER` picks the adapter.
     #[test]
     #[ignore = "reading"]
     fn the_underground_eye_streamed() {
@@ -1303,8 +1303,8 @@ mod reading {
                 .unwrap_or(d)
         };
         underground_streamed(
-            env("VXE_UNDER_R", 6),
-            env("VXE_UNDER_RAYS", 1) as u32,
+            env("SVET_UNDER_R", 6),
+            env("SVET_UNDER_RAYS", 1) as u32,
             &[1, 3, 10, 30, 60, 120, 240, 480, 720, 960, 1440, 1920],
         );
     }
@@ -1380,7 +1380,7 @@ mod reading {
         support::streamed::streamed(support::streamed::Streamed {
             label: "the_underground_eye_streamed",
             source,
-            eye: vxe_world::VoxelCoord([743, 131, 15]),
+            eye: svet_world::VoxelCoord([743, 131, 15]),
             camera,
             sky: flythrough::daylight::Clock::default().sky(flythrough::outdoor::BASE_Z as f32),
             styles: Vec::new(),
@@ -1395,7 +1395,7 @@ mod reading {
     /// sky at the defaults; at eleven stations along the tunnel's axis (fraction 0 at the mouth,
     /// 1 at the chamber's centre), the baked visibility of the brick faces within 4 bricks of
     /// the station, by face direction: count and mean. Printed. Run once as built and once with
-    /// the bake's sky cap raised by hand, to split the cap's share. `VXE_TEST_ADAPTER` picks the
+    /// the bake's sky cap raised by hand, to split the cap's share. `SVET_TEST_ADAPTER` picks the
     /// adapter.
     #[test]
     #[ignore = "reading"]
@@ -1414,7 +1414,7 @@ mod reading {
             &mut rig.gpu,
             &rig.world,
             rig.world.extent(),
-            &vxe_render::BakeSettings::default(),
+            &svet_render::BakeSettings::default(),
             &mut |_| {},
         )
         .expect("the store fits");
@@ -1452,7 +1452,7 @@ mod reading {
     /// the far end's mean display level), the hills at noon (`outside`; the whole frame's mean
     /// level) and the forest at 17:45 (`outdoor_forest_sunset`'s clock), with the metered sky
     /// share (Plan 0094 Phase 7b) beside each. Printed; the window
-    /// picks. `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    /// picks. `SVET_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
     fn the_tunnel_under_each_ceiling() {
@@ -1518,12 +1518,12 @@ mod reading {
     /// `sky_bounce` 0 and 0.3: the tunnel at noon out of and into it, and the hills at noon
     /// (`outside`). Per row Phase 1's statistics (`print_row`; the tunnel's rim band and far
     /// end, the hills' every hit) and the stripe metric: the treads' over the risers' mean
-    /// light within 48 voxels (`CellReading::stripe`). `VXE_TEST_ADAPTER` picks the adapter
+    /// light within 48 voxels (`CellReading::stripe`). `SVET_TEST_ADAPTER` picks the adapter
     /// (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
     fn the_stripes_under_each_arm() {
-        use vxe_render::SkyNormal;
+        use svet_render::SkyNormal;
         let noon = flythrough::daylight::Clock::default().sky(flythrough::outdoor::BASE_Z as f32);
         let arms = [
             (SkyNormal::Face, 0.0),
@@ -1586,7 +1586,7 @@ mod reading {
     /// lighting pixels whose direct sample changes between lit and 0 between two frames at
     /// least once (the key ray's flips; the key-alone rows), and the last frame's stored and
     /// direct parts' mean luminance; then the hills (`outside`) under both as the open
-    /// ground's. `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    /// ground's. `SVET_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
     fn the_forest_floor_by_term() {
@@ -1675,24 +1675,24 @@ mod reading {
     )]
     pub(super) fn forest_floor_run(
         rig: &mut Rig,
-        cam: &vxe_render::Camera,
-        sky: Option<vxe_render::sky::Sky>,
+        cam: &svet_render::Camera,
+        sky: Option<svet_render::sky::Sky>,
         turn: bool,
     ) -> FloorRun {
         use flythrough::outdoor::{BARK, is_leaf};
-        use vxe_render::{UpscalerKind, glam::Vec3};
+        use svet_render::{UpscalerKind, glam::Vec3};
         let mut f = Frame::with_sizes(&rig.device, [320, 180], [480, 270]);
         f.set_upscaler_kind(
             &rig.device,
-            UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default()),
+            UpscalerKind::Fsr2(svet_render::Fsr2Settings::default()),
         );
         let base = Lighting {
             lamp: sky.is_none(),
             ..flythrough::default_lighting()
         };
-        f.set_look(vxe_render::LookParams {
+        f.set_look(svet_render::LookParams {
             far_normal: flythrough::LookPreset::DEFAULT.far_normal,
-            ..vxe_render::LookParams::default()
+            ..svet_render::LookParams::default()
         });
         f.set_material_styles(
             &rig.queue,
@@ -1702,7 +1702,7 @@ mod reading {
             exposure: Exposure::Auto(AutoExposure {
                 min: flythrough::cli::OUTDOOR_MIN,
                 max: flythrough::cli::OUTDOOR_MAX,
-                sky_anchor_ev: Some(vxe_render::DEFAULT_SKY_ANCHOR_EV),
+                sky_anchor_ev: Some(svet_render::DEFAULT_SKY_ANCHOR_EV),
                 ..AutoExposure::instant()
             }),
             ..base
@@ -1717,7 +1717,7 @@ mod reading {
                 &mut rig.gpu,
                 &rig.world,
                 rig.world.extent(),
-                &vxe_render::BakeSettings::default(),
+                &svet_render::BakeSettings::default(),
                 &mut |_| {},
             )
             .expect("the store fits");
@@ -1728,8 +1728,9 @@ mod reading {
         for _ in 0..64 {
             f.step(&rig.device, &rig.queue, &rig.gpu, cam, &light);
         }
-        let st = vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_state(), 0, 32);
-        let exposure = vxe_render::ExposureState::from_bytes(&st).current;
+        let st =
+            svet_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_state(), 0, 32);
+        let exposure = svet_render::ExposureState::from_bytes(&st).current;
         f.set_lighting(Lighting {
             exposure: Exposure::Manual(exposure),
             ..base
@@ -1741,12 +1742,12 @@ mod reading {
                     (p[a] + o).floor() as i32
                 });
                 matches!(
-                    rig.world.material_at(vxe_world::VoxelCoord(v)),
+                    rig.world.material_at(svet_world::VoxelCoord(v)),
                     Some(m) if is_leaf(m) || m == BARK
                 )
             })
         };
-        let read = |f: &Frame| vxe_render::debug::read_rgba8(&rig.device, &rig.queue, f.target());
+        let read = |f: &Frame| svet_render::debug::read_rgba8(&rig.device, &rig.queue, f.target());
         let mut last = read(&f);
         let mut frames = Vec::new();
         let steps = if turn { 74 } else { 64 };
@@ -1757,7 +1758,7 @@ mod reading {
             }
             f.step(&rig.device, &rig.queue, &rig.gpu, &c, &light);
             let now = read(&f);
-            let hits = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, f.hit_positions());
+            let hits = svet_render::debug::read_rgba32f(&rig.device, &rig.queue, f.hit_positions());
             let (hw, dw) = (
                 f.hit_positions().width() as usize,
                 f.target().width() as usize,
@@ -1794,7 +1795,7 @@ mod reading {
 
     /// Plan 0086 Phase 19 bar 3: [`forest_floor_run`] at rest at `60,180` and `10,180` and the
     /// headlamp alone at the same pose: the floor's and the canopy's p99 and mean change, each
-    /// the mean over the 64 read frames. Printed. `VXE_TEST_ADAPTER` picks the adapter (unset:
+    /// the mean over the 64 read frames. Printed. `SVET_TEST_ADAPTER` picks the adapter (unset:
     /// lavapipe).
     #[test]
     #[ignore = "reading"]
@@ -1818,7 +1819,7 @@ mod reading {
     }
 
     /// The testbed's sky with the sun fixed at elevation `el`, azimuth 180.
-    pub(super) fn fixed_sun_sky(el: f32) -> vxe_render::sky::Sky {
+    pub(super) fn fixed_sun_sky(el: f32) -> svet_render::sky::Sky {
         flythrough::daylight::Clock {
             fixed_sun: Some([el, 180.0]),
             ..Default::default()
@@ -1837,7 +1838,7 @@ mod reading {
 #[ignore = "soak"]
 fn the_sunlit_forest_floor_does_not_clip() {
     let Some((share, mean)) =
-        defects::reading::treads_clip(Some(vxe_render::DEFAULT_SKY_ANCHOR_EV), 64)
+        defects::reading::treads_clip(Some(svet_render::DEFAULT_SKY_ANCHOR_EV), 64)
     else {
         return;
     };

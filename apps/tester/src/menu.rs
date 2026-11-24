@@ -4,8 +4,8 @@
 //! the rows out as the text overlay draws them.
 
 use flythrough::path::{PathMode, Scene};
-use vxe_app::KeyCode;
-use vxe_render::HudColour;
+use svet_app::KeyCode;
+use svet_render::HudColour;
 
 use crate::run::{Output, Profile, RunSpec};
 

@@ -4,7 +4,7 @@
 //! sticks and the analog triggers, [`BUTTONS`] for the digital buttons.
 
 use gilrs::{EventType, GamepadId, Gilrs, PowerInfo};
-use vxe_app::{Axis, Input, PadButton};
+use svet_app::{Axis, Input, PadButton};
 
 use crate::hud::{PadPower, PadRow};
 

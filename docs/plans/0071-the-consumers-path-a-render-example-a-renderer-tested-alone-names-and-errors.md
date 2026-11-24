@@ -17,16 +17,16 @@
 ## TL;DR
 
 The engine has every mechanism the first consumer's P0 list asks for, and no written way to call
-it: `vxe-render`'s crate doc is six lines, the README has no Rust, and the twelve steps from a
+it: `svet-render`'s crate doc is six lines, the README has no Rust, and the twelve steps from a
 `World` to a presented frame exist only in the testbed's `main.rs`. `Frame` has 98 public
 methods, 52 used by nothing under `crates/`. This plan writes **one compiled example per
 consumer-facing crate** (the render one is the contract of ADR-0057: a world from a closure to
-a PNG, headless, under 60 lines, run in CI), gives `vxe-render` a **world-only test rig** so
+a PNG, headless, under 60 lines, run in CI), gives `svet-render` a **world-only test rig** so
 the renderer's tests stop needing the cave, **narrows `Frame`** to what the example, the tests
 and the testbed call, makes **names consistent** (one word for the mirror, one suffix for a
 settings type, one shape for a ray query, the voxel scale in one place) with deprecated
 re-exports for one minor, gives the two error types that lack it a `Display` and an `Error`
-impl, and turns on `missing_docs`. The first thing anyone sees: `cargo run -p vxe-render
+impl, and turns on `missing_docs`. The first thing anyone sees: `cargo run -p svet-render
 --example one_frame` writes `one_frame.png` of a lit box, from a `main` that fits on a screen.
 
 ## Context & problem
@@ -34,10 +34,10 @@ impl, and turns on `missing_docs`. The first thing anyone sees: `cargo run -p vx
 Counts are from the review of 2026-11-12 (read-only, `grep` and `wc` at `56008fa`); re-read at
 this plan's start, since Plans 0045 and 0069 will have moved them.
 
-- **No path.** `crates/vxe-render/src/lib.rs:1-6` has no example; `vxe-app` and
-  `vxe-script-wasm` have none; `README.md` has `sh` blocks only. The seven `examples/` are
+- **No path.** `crates/svet-render/src/lib.rs:1-6` has no example; `svet-app` and
+  `svet-script-wasm` have none; `README.md` has `sh` blocks only. The seven `examples/` are
   tools. A consumer follows `main.rs:4033-4120` and `:5760-5830`: adapter and device (the
-  library offers no helper; `vxe_render::limits_for` must be called), `World` and `Streamer`,
+  library offers no helper; `svet_render::limits_for` must be called), `World` and `Streamer`,
   `GpuWorld::with_config(MirrorConfig::new(Window::...))`, `Frame::new`, `Presenter::new`;
   per frame `apply_events`, `set_focus`, `sync`, `invalidate` after edits, `params`, `encode`,
   `advance`, `presenter.encode`, `submit`.
@@ -47,9 +47,9 @@ this plan's start, since Plans 0045 and 0069 will have moved them.
   `digs_pending`, `pending_digs`, `probe_emission_scale`, `emission_scales`, `transmittance`).
   `GpuWorld`: 62 pub fns, 8 with no caller outside the file. `Params` (38 fields) and
   `View::_pad`, `_pad2` are public. `Upscaler` is taken by `set_upscaler` and not re-exported.
-  No crate sets `missing_docs`; pub items with no doc line: `vxe-world` 63, `vxe-render` 55.
+  No crate sets `missing_docs`; pub items with no doc line: `svet-world` 63, `svet-render` 55.
 - **The renderer is tested through the testbed.** 18 `gpu_*` files, 20 711 lines, in
-  `apps/flythrough/tests/`; 8 files, 5115 lines, in `crates/vxe-render/tests/`. Plan 0045 leaves
+  `apps/flythrough/tests/`; 8 files, 5115 lines, in `crates/svet-render/tests/`. Plan 0045 leaves
   that ("they need the cave scene builders"); the queue, bake, FSR 2 history and frame-wait
   tests need a world, not a cave.
 - **Names.** `GpuWorld` / `MirrorConfig` / `MirrorError` / `sync` / "upload" (57 doc hits) /
@@ -59,8 +59,8 @@ this plan's start, since Plans 0045 and 0069 will have moved them.
   `Host::unsupported(&[CellCoord])` against `find_unsupported(&[CellChange])`; `WalkableMap`'s
   `(ChunkCoord, u16)`. `tick` (server, logic, controller, log) against `Frame::step`,
   `AutoExposure::step`, `Frame::advance`. `HudColour` against `TextColor`. The voxel scale:
-  `VOXELS_PER_METRE = 10.0` private in `vxe-render/src/light.rs:5`; `metres_per_voxel` an
-  argument in `vxe-audio` (`Mixer::new`, 23 uses); the roadmap: "voxel size one scalar per world".
+  `VOXELS_PER_METRE = 10.0` private in `svet-render/src/light.rs:5`; `metres_per_voxel` an
+  argument in `svet-audio` (`Mixer::new`, 23 uses); the roadmap: "voxel size one scalar per world".
 - **Errors.** 16 public error types, hand-written; `SpillError` (`persist.rs:62`) and
   `StreamError` (`stream.rs:90`) have no `Display` or `Error`; `AudioError` and `ShellError`
   carry `String`s. `Streamer::update` takes an unused `_world` (`stream.rs:376`).
@@ -75,7 +75,7 @@ Build ADR-0057. Three objects, a settings struct, a compiled example as the cont
 surface is what the example, the tests and the testbed call; readbacks live behind one module.
 Names change with a deprecated re-export kept for one minor (0.x: "any minor may break", the
 CHANGELOG's rule), each listed in the CHANGELOG. The voxel scale becomes a field of the world
-(`World::voxel_size`, metres, default 0.1) that `vxe-render` and `vxe-audio` read, as the roadmap
+(`World::voxel_size`, metres, default 0.1) that `svet-render` and `svet-audio` read, as the roadmap
 decided; no new ADR, since the decision exists. We rejected a `Renderer` facade (ADR-0057 A), a
 C ABI (B) and a guide without a gate (C).
 
@@ -89,7 +89,7 @@ flowchart LR
         M --> F[Frame::new + apply_settings + encode]
         F --> P[Presenter or a PNG readback]
     end
-    subgraph render[vxe-render]
+    subgraph render[svet-render]
         F -. pub .-> S[RenderSettings, Camera, View]
         F -. pub debug .-> R[readback: textures, timers, stats]
         T[test-support: software_device, world_rig] -. dev-dep .-> F
@@ -105,47 +105,47 @@ byte-identical at every phase (a rename is a rename).
 
 ### Phase 1: `one_frame`, the contract (walking skeleton)
 - **Owner skill:** dev
-- **What:** `crates/vxe-render/examples/one_frame.rs`: a 4 x 4 x 4 chunk world from a closure
+- **What:** `crates/svet-render/examples/one_frame.rs`: a 4 x 4 x 4 chunk world from a closure
   (a lit box: rock walls, one emissive material), a software or any device through a
-  `vxe_render::test_support::software_device`-like helper that is **not** test-only
-  (`vxe_render::headless_device(preference) -> Result<(Device, Queue), LimitsError>`, the
+  `svet_render::test_support::software_device`-like helper that is **not** test-only
+  (`svet_render::headless_device(preference) -> Result<(Device, Queue), LimitsError>`, the
   one device helper the library offers, built on `limits_for`), `GpuWorld`, `Frame` with
   `RenderSettings::profile(Floor)`, `sync`, `encode`, `advance`, a readback of the composite to
   `one_frame.png`. Consumer code (after `use`) under 60 lines. CI builds and runs it on lavapipe
-  (`cargo run -p vxe-render --example one_frame`) and a test asserts the PNG is not black. The
-  crate doc of `vxe-render` quotes the example's body as a doctest (`compile_fail`-free, marked
+  (`cargo run -p svet-render --example one_frame`) and a test asserts the PNG is not black. The
+  crate doc of `svet-render` quotes the example's body as a doctest (`compile_fail`-free, marked
   `no_run`), and `README.md` gains a "Render a frame" section with the same code.
-- **Files touched:** `crates/vxe-render/examples/one_frame.rs` (new),
-  `crates/vxe-render/src/lib.rs`, `crates/vxe-render/Cargo.toml` (the example, `png` as a
-  dev-dependency, pinned), `crates/vxe-render/tests/gpu_one_frame.rs` (new), `README.md`,
+- **Files touched:** `crates/svet-render/examples/one_frame.rs` (new),
+  `crates/svet-render/src/lib.rs`, `crates/svet-render/Cargo.toml` (the example, `png` as a
+  dev-dependency, pinned), `crates/svet-render/tests/gpu_one_frame.rs` (new), `README.md`,
   `.github/workflows/ci.yml`.
 - **Done when:**
   - `the_example_renders_a_lit_box` (`gpu_one_frame.rs`, lavapipe, about 3 s at 320 x 180): the
     example's function, called with a fixed seed, returns an image whose mean luma is over 8 of
     255 and whose centre pixel is not the clear colour; the image's hash is pinned on lavapipe.
-  - `cargo test --doc -p vxe-render` runs the crate-doc example (compiles; `no_run`).
+  - `cargo test --doc -p svet-render` runs the crate-doc example (compiles; `no_run`).
   - The example's consumer code is under 60 lines (`wc -l` from the first statement of `main` to
     its close, asserted by a CPU test over the file).
 
 ### Phase 2: a renderer tested with a world, not a cave
 - **Owner skill:** dev
-- **What:** `vxe-render`'s `test-support` feature (Plan 0044 Phase 8's device helper) gains a
+- **What:** `svet-render`'s `test-support` feature (Plan 0044 Phase 8's device helper) gains a
   `world_rig`: a seeded `FnSource` world of N chunks, a `GpuWorld` synced to full residency, a
   `Frame` at a size, a camera at a named pose, a readback of any target; the bake queue drivable
   by frames. The fly-through's `tests/support/mod.rs` uses it for its device and world (its cave
-  builders stay). Every **new** renderer test from this plan on lives in `crates/vxe-render/tests`
+  builders stay). Every **new** renderer test from this plan on lives in `crates/svet-render/tests`
   unless it needs a scene. Three existing fly-through tests that need only a world move as the
   proof: one queue test (`gpu_queue.rs`'s `the_score_blends_distance_and_the_view`, 10.8 s
   today), one frame-wait test, one FSR 2 history test; each keeps its name, mark and time.
-- **Files touched:** `crates/vxe-render/src/test_support.rs`, `crates/vxe-render/Cargo.toml`,
-  `crates/vxe-render/tests/gpu_queue.rs` (new), `gpu_frame_waits.rs` (new), `gpu_fsr2.rs`
+- **Files touched:** `crates/svet-render/src/test_support.rs`, `crates/svet-render/Cargo.toml`,
+  `crates/svet-render/tests/gpu_queue.rs` (new), `gpu_frame_waits.rs` (new), `gpu_fsr2.rs`
   (new), `apps/flythrough/tests/{support/mod.rs,gpu_queue.rs,gpu_frame_waits.rs,gpu_fsr2.rs}`.
 - **Done when:**
   - The three moved tests pass in their new binaries with the same assertions, byte for byte in
     the assertion bodies (shown by `git diff --color-moved`), and the fly-through's binaries lose
     exactly those three (`cargo nextest list` counts before and after; the gate's total is
     unchanged).
-  - `world_rig_is_deterministic` (`vxe-render/tests/gpu_frame.rs`, lavapipe, about 2 s): two
+  - `world_rig_is_deterministic` (`svet-render/tests/gpu_frame.rs`, lavapipe, about 2 s): two
     rigs from one seed give equal mirror bytes and equal first-frame hit buffers.
   - `check-test-tiers.mjs` passes (the new files carry `gpu_`).
 
@@ -156,14 +156,14 @@ byte-identical at every phase (a rename is a rename).
   Phase 3 re-greps). Methods only the fly-through calls stay public and gain a doc line that
   names them a tool ("A reading for the testbed and tests; not needed to render a frame").
   Raw-texture getters, timers, store readbacks and `CrackShares` move behind `pub mod debug`,
-  re-exported at their old paths with `#[deprecated(since = "0.X", note = "use vxe_render::debug::...")]`
+  re-exported at their old paths with `#[deprecated(since = "0.X", note = "use svet_render::debug::...")]`
   for one minor. `Params`'s fields and `View::_pad*` go `pub(crate)` or `#[doc(hidden)]`.
   `Upscaler` is re-exported where `UpscalerKind` is (or leaves with the `own` removal plan,
   whichever lands first).
-- **Files touched:** `crates/vxe-render/src/{marcher.rs or frame/*,gpu_world.rs or gpu_world/*,lib.rs,camera.rs}`,
+- **Files touched:** `crates/svet-render/src/{marcher.rs or frame/*,gpu_world.rs or gpu_world/*,lib.rs,camera.rs}`,
   `CHANGELOG.md`.
 - **Done when:**
-  - A CPU test (`vxe-render/tests/surface.rs`, under 1 s) parses `src/lib.rs`'s re-export list
+  - A CPU test (`svet-render/tests/surface.rs`, under 1 s) parses `src/lib.rs`'s re-export list
     and asserts the count of `pub fn` on `Frame` is at most 60 and on `GpuWorld` at most 45
     (proposals from today's 98 and 62 less the dead and the debug moves; Phase 3 states the
     reached numbers in the log and the test pins them).
@@ -191,10 +191,10 @@ byte-identical at every phase (a rename is a rename).
   - `HudColour` becomes `HudColor` to match `TextColor` (the codebase's spelling elsewhere is
     American in identifiers: `color_in`).
   - `Streamer::update` loses `_world`.
-- **Files touched:** `crates/vxe-render/src/*`, `crates/vxe-net/src/logic.rs`,
-  `crates/vxe-world/src/{stream.rs,support.rs,walkable.rs}`, `crates/vxe-sim/src/controller.rs`,
-  `crates/vxe-audio/src/voice.rs`, `apps/flythrough/src/*`, `apps/tester/src/*`,
-  `CHANGELOG.md`. The logic component's WIT (`crates/vxe-script-wasm/wit/`) is **not**
+- **Files touched:** `crates/svet-render/src/*`, `crates/svet-net/src/logic.rs`,
+  `crates/svet-world/src/{stream.rs,support.rs,walkable.rs}`, `crates/svet-sim/src/controller.rs`,
+  `crates/svet-audio/src/voice.rs`, `apps/flythrough/src/*`, `apps/tester/src/*`,
+  `CHANGELOG.md`. The logic component's WIT (`crates/svet-script-wasm/wit/`) is **not**
   touched: the `Host` change is Rust-side; the WIT's raycast keeps its shape and the host
   adapts, asserted by the equality tests.
 - **Done when:**
@@ -202,7 +202,7 @@ byte-identical at every phase (a rename is a rename).
     sites (the apps use the new names); with the default lints the old names compile through
     the deprecated re-exports (a CPU test in each renamed crate uses each old name once under
     `#[allow(deprecated)]`).
-  - `crates/vxe-script-wasm/tests/equality.rs` and the fly-through's `component` test give
+  - `crates/svet-script-wasm/tests/equality.rs` and the fly-through's `component` test give
     equal bytes.
   - Every pinned hash and golden is unchanged.
 
@@ -211,20 +211,20 @@ byte-identical at every phase (a rename is a rename).
 - **What:** `SpillError` and `StreamError` implement `Display` and `std::error::Error`;
   `AudioError::{Format, Stream}` and `ShellError::Setup` keep their `String` (they wrap `cpal`
   and `winit` messages) and say so in the doc. `#![warn(missing_docs)]` goes on every crate and
-  the lane documents every public item it flags (the review counted 63 in `vxe-world`, 55 in
-  `vxe-render`, 21 in `vxe-audio`; one line each); at the tip it becomes `deny` in
+  the lane documents every public item it flags (the review counted 63 in `svet-world`, 55 in
+  `svet-render`, 21 in `svet-audio`; one line each); at the tip it becomes `deny` in
   `[workspace.lints]`. The voxel scale: `World` gains `voxel_size: f32` (metres, default 0.1)
   set at `World::new`/`generate` through `MaterialTable`'s sibling `WorldScale` or a builder
-  argument (`dev` picks the smaller change); `vxe-render`'s `light.rs` constant and
-  `vxe-audio`'s `metres_per_voxel` arguments read it from the `World` they are given, the
+  argument (`dev` picks the smaller change); `svet-render`'s `light.rs` constant and
+  `svet-audio`'s `metres_per_voxel` arguments read it from the `World` they are given, the
   arguments deprecated for one minor.
-- **Files touched:** `crates/vxe-world/src/{persist.rs,stream.rs,store.rs,lib.rs}`,
-  `crates/vxe-render/src/light.rs`, `crates/vxe-audio/src/{mixer.rs,acoustics.rs}`, every
+- **Files touched:** `crates/svet-world/src/{persist.rs,stream.rs,store.rs,lib.rs}`,
+  `crates/svet-render/src/light.rs`, `crates/svet-audio/src/{mixer.rs,acoustics.rs}`, every
   `src/lib.rs`, `Cargo.toml` (`[workspace.lints.rust] missing_docs = "deny"` at the tip).
 - **Done when:**
   - `cargo clippy --workspace --all-targets -- -D warnings` exits 0 with `missing_docs` denied.
-  - `every_error_type_is_an_error` (`vxe-world/tests/errors.rs`, CPU, under 1 s): each public
-    error type of `vxe-world` is passed to a `fn takes(_: &dyn std::error::Error)`.
+  - `every_error_type_is_an_error` (`svet-world/tests/errors.rs`, CPU, under 1 s): each public
+    error type of `svet-world` is passed to a `fn takes(_: &dyn std::error::Error)`.
   - `the_scale_is_read_not_assumed`: a world at `voxel_size` 0.05 gives the audio
     `occlusion` twice the voxel distance of the same scene at 0.1, and the lamp's reach in
     voxels doubles (CPU for audio, lavapipe about 1 s for the lamp; the light's test reads
@@ -237,8 +237,8 @@ byte-identical at every phase (a rename is a rename).
   render, sim, audio, net + logic), each quoting that crate's example, plus the one-line answers
   the review listed (hardness is the game's; emission at runtime is a replace op or a render
   scale; notifications are return values; indestructible is per material; the coarse cell is
-  0.8 m). Examples for `vxe-world` (`edit_and_query.rs`), `vxe-sim` (`walk.rs`), `vxe-audio`
-  (`knock.rs`, headless mixer to a WAV), `vxe-net` (`solo_server.rs`), each under 60 lines and
+  0.8 m). Examples for `svet-world` (`edit_and_query.rs`), `svet-sim` (`walk.rs`), `svet-audio`
+  (`knock.rs`, headless mixer to a WAV), `svet-net` (`solo_server.rs`), each under 60 lines and
   built in CI (`cargo build --workspace --examples` is already in nextest's build; a run step
   for the headless ones). The first consumer's checkout (`~/Work/voxel-roguelite`) is grepped
   for every engine item it uses, and each is in the guide or named in the log as not yet used.
@@ -275,10 +275,10 @@ CI run step is bounded at 30 s each.
   re-exports make the break a warning for one minor. The owner may prefer no aliases (review
   question 3).
 - **Plan 0069's shape.** If `RenderSettings` absorbs `Lighting`, `LookParams` and `LodParams`,
-  Phase 4's `*Settings` row shrinks to the crates outside `vxe-render`; re-read at the start.
+  Phase 4's `*Settings` row shrinks to the crates outside `svet-render`; re-read at the start.
 - **Plan 0045's cut.** Phase 3's counts depend on what 0045's curated list left; the test pins
   the numbers Phase 3 reaches, not the review's guesses.
-- **The scale.** Reading `voxel_size` from the world in `vxe-audio` changes the `Mixer::new`
+- **The scale.** Reading `voxel_size` from the world in `svet-audio` changes the `Mixer::new`
   signature the consumer sees; the deprecated argument form stays one minor. No determinism
   risk: the scale never enters an edit or a hash (edits are in voxel units; the test asserts
   `voxel_hash` unchanged at any scale).
@@ -291,7 +291,7 @@ CI run step is bounded at 30 s each.
   Plan 0069's amendment note.)
 - Move every render test out of the testbed: three move as the proof, the rig makes the rest
   possible, a followup lists them.
-- Remove `own` (its owed plan), or touch the WIT world of `vxe-script-wasm`.
+- Remove `own` (its owed plan), or touch the WIT world of `svet-script-wasm`.
 - A documentation site (backlog) or rustdoc hosting; the guide is markdown in `docs/`.
 - Split files: Plan 0045.
 

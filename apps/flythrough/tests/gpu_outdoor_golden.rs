@@ -3,7 +3,7 @@
 //! (Plan 0095) the forest at 15:00 under ADR-0079's key light, each at the testbed's picks
 //! (both bodies at `daylight::BODY_RADIUS_DEG`, one sky ray, the half lighting tier, the
 //! outdoor auto exposure, `--trees sparse` at `LEAF_FILL` unless a test names another).
-//! Lavapipe, 320 x 180, blessed with `VXE_BLESS=1`.
+//! Lavapipe, 320 x 180, blessed with `SVET_BLESS=1`.
 
 mod support;
 
@@ -11,12 +11,12 @@ use flythrough::daylight::{BODY_RADIUS_DEG, Clock};
 use flythrough::outdoor::{BASE_Z, GRASS, OutdoorSource, SOIL, Spawn};
 use flythrough::trees::{ForestSource, LEAF_FILL, TreeDensity};
 use support::{HEIGHT, SyncNow, WIDTH, assert_golden, fraction_differing, software_device};
-use vxe_render::sky::{Body, Sky};
-use vxe_render::{
+use svet_render::sky::{Body, Sky};
+use svet_render::{
     AutoExposure, Camera, Exposure, Frame, GpuWorld, LightParams, Lighting, LightingResolution,
     MirrorConfig, Window, glam::Vec3, wgpu,
 };
-use vxe_world::*;
+use svet_world::*;
 
 /// A unit direction at elevation `el` and azimuth `az` (degrees, clockwise from north).
 fn dir(el: f32, az: f32) -> [f32; 3] {
@@ -118,7 +118,7 @@ impl Empty {
             camera,
             &LightParams::headlamp(),
         );
-        vxe_render::debug::read_rgba8(&self.device, &self.queue, self.frame.target())
+        svet_render::debug::read_rgba8(&self.device, &self.queue, self.frame.target())
     }
 }
 
@@ -206,7 +206,7 @@ impl Hills {
             [0, 1, 2].map(|k| c[k] + hi[k] + 1),
         );
         let world = World::generate(extent, &source, &flythrough::outdoor_materials());
-        let pool = flythrough::level_pool_units(&world, false) * vxe_render::internals::UNIT_BYTES;
+        let pool = flythrough::level_pool_units(&world, false) * svet_render::internals::UNIT_BYTES;
         let (device, queue) = software_device(pool)?;
         let cfg = MirrorConfig {
             budget_bytes: 256 << 20,
@@ -286,14 +286,14 @@ impl Hills {
         let camera = self.camera();
         let mut frame = self.frame(clock, |l| l);
         self.settle(&mut frame, &camera, 64);
-        let st = vxe_render::debug::read_buffer(
+        let st = svet_render::debug::read_buffer(
             &self.device,
             &self.queue,
             frame.exposure_state(),
             0,
             32,
         );
-        let st = vxe_render::ExposureState::from_bytes(&st);
+        let st = svet_render::ExposureState::from_bytes(&st);
         println!(
             "reading: at {:.0} min metered {:+.3}, ceiling {:+.3} EV, eye {:+.3} EV",
             clock.minutes,
@@ -301,7 +301,7 @@ impl Hills {
             st.ceiling.log2(),
             st.current.log2()
         );
-        vxe_render::debug::read_rgba8(&self.device, &self.queue, frame.target())
+        svet_render::debug::read_rgba8(&self.device, &self.queue, frame.target())
     }
 }
 
@@ -402,7 +402,7 @@ fn the_cave_mouth_is_lit_from_outside() {
     // The walls' mean over their rectangles: the filter's irradiance's luminance (scaled to the
     // lighting grid) and the display's luma.
     let walls = |h: &mut Hills, frame: &Frame| {
-        let f = vxe_render::debug::read_rgba16f(&h.device, &h.queue, frame.filtered());
+        let f = svet_render::debug::read_rgba16f(&h.device, &h.queue, frame.filtered());
         let (w, hh) = (frame.filtered().width(), frame.filtered().height());
         let lum = |p: &[f32; 4]| f64::from(0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]);
         let mut s = (0.0, 0usize);
@@ -420,7 +420,7 @@ fn the_cave_mouth_is_lit_from_outside() {
                 }
             }
         }
-        let img = vxe_render::debug::read_rgba8(&h.device, &h.queue, frame.target());
+        let img = svet_render::debug::read_rgba8(&h.device, &h.queue, frame.target());
         let lit = WALLS_IN
             .iter()
             .map(|r| rect_mean(&img, 4, *r, luma8))
@@ -429,7 +429,7 @@ fn the_cave_mouth_is_lit_from_outside() {
         (s.0 / s.1 as f64, lit)
     };
     let mut open = h.frame(at([12, 0]), dark);
-    open.set_light_hooks(vxe_render::LightHooks {
+    open.set_light_hooks(svet_render::LightHooks {
         key_off: true,
         ..Default::default()
     });
@@ -551,8 +551,8 @@ fn outdoor_forest_sunset_golden() {
             ..l
         });
         h.settle(&mut frame, &camera, 64);
-        let img = vxe_render::debug::read_rgba8(&h.device, &h.queue, frame.target());
-        let rec = vxe_render::debug::read_rgba16u(&h.device, &h.queue, frame.hit_records());
+        let img = svet_render::debug::read_rgba8(&h.device, &h.queue, frame.target());
+        let rec = svet_render::debug::read_rgba16u(&h.device, &h.queue, frame.hit_records());
         let (mut s, mut n) = (0.0, 0usize);
         for (p, r) in img.chunks(4).zip(&rec) {
             if r[3] & 1 == 1 && (r[2] == GRASS || r[2] == SOIL) {
@@ -602,7 +602,7 @@ fn outdoor_forest_afternoon_golden() {
             &LightParams::headlamp(),
         );
     }
-    let img = vxe_render::debug::read_rgba8(&forest.device, &forest.queue, frame.target());
+    let img = svet_render::debug::read_rgba8(&forest.device, &forest.queue, frame.target());
     support::assert_golden_ssim("outdoor_forest_afternoon.png", &img, 0.98);
 }
 
@@ -622,8 +622,8 @@ mod reading {
             let mut frame = h.frame(clock, |l| l);
             frame.set_count_store(true);
             h.settle(&mut frame, &camera, 64);
-            let img = vxe_render::debug::read_rgba8(&h.device, &h.queue, frame.target());
-            let m = vxe_render::debug::read_rgba16f(&h.device, &h.queue, frame.moments());
+            let img = svet_render::debug::read_rgba8(&h.device, &h.queue, frame.target());
+            let m = svet_render::debug::read_rgba16f(&h.device, &h.queue, frame.moments());
             let (gw, gh) = (frame.moments().width(), frame.moments().height());
             let (golden, _, _) = support::read_png(&support::golden_path(name));
             let (mut all, mut moved) = ([0usize; 7], [0usize; 7]);

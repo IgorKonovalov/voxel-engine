@@ -12,9 +12,9 @@ use super::structure_tests::{
 use super::*;
 use crate::entities::belt::{self, BELT_ROWS};
 use crate::structures as st;
-use vxe_assets::VoxScene;
-use vxe_render::HudColour;
-use vxe_world::WorldLimits;
+use svet_assets::VoxScene;
+use svet_render::HudColour;
+use svet_world::WorldLimits;
 
 /// The belt drawn on an 80 x 45 grid at `now_ms`: its name row, the row's colour, and whether
 /// a red span starts at `col` on it.

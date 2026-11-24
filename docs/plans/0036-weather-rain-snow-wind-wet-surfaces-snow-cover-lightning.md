@@ -63,14 +63,14 @@ Read at main 3b3986d0 (Plan 0032 closed, v0.61.0; Plan 0069 closed, v0.60.0) aga
 `plan-0080` lane (the menu) and Plans 0086, 0081, 0033, 0034 and 0035 (approved, ahead of this
 plan). The lane branches from main once the plan before it in the order has merged (owner
 question 2); the tree's names win. The Decision and the phases stand except where this section
-says otherwise; `dev` reads it as the phases' errata. Crate names are `vxe-*`; if Plan 0087 has
+says otherwise; `dev` reads it as the phases' errata. Crate names are `svet-*`; if Plan 0087 has
 merged first they read `svet-*` through its map.
 
 ### Name mapping (the plan's name, then the tree's)
 
 | The plan says | The tree has |
 |---|---|
-| `marcher.rs` (the `Frame`, the passes) | `frame/mod.rs` (`Frame`, `Frame::invalidate`, `frame_bytes`), `frame/encode.rs` (`FRAME_PASSES`, 23 names, **1193 of 1200 lines**; `fsrs_passes_close_the_frame_passes` in `fsr2/mod.rs` pins the tail, so the fall map's two passes go before `upscale`), `frame/targets.rs` (`Targets`; the output is `rgba8` at the output size with `STORAGE \| TEXTURE \| COPY_SRC` and **no `RENDER_ATTACHMENT`**, which the precip pass adds), `frame/pipelines.rs`. The weather's GPU state goes in a new `frame/weather.rs` on `frame/sky.rs`'s pattern; the CPU `weather` module stays `crates/vxe-render/src/weather.rs` |
+| `marcher.rs` (the `Frame`, the passes) | `frame/mod.rs` (`Frame`, `Frame::invalidate`, `frame_bytes`), `frame/encode.rs` (`FRAME_PASSES`, 23 names, **1193 of 1200 lines**; `fsrs_passes_close_the_frame_passes` in `fsr2/mod.rs` pins the tail, so the fall map's two passes go before `upscale`), `frame/targets.rs` (`Targets`; the output is `rgba8` at the output size with `STORAGE \| TEXTURE \| COPY_SRC` and **no `RENDER_ATTACHMENT`**, which the precip pass adds), `frame/pipelines.rs`. The weather's GPU state goes in a new `frame/weather.rs` on `frame/sky.rs`'s pattern; the CPU `weather` module stays `crates/svet-render/src/weather.rs` |
 | `gpu_world.rs` "report the chunks a `sync` wrote" | `gpu_world/mod.rs` `GpuWorld::sync` returns `SyncStats` and **no accessor lists the chunks written**; Phase 2 adds one (a `Vec<ChunkCoord>` the sync fills and the frame drains) |
 | `precip.wgsl`, "a render pass on the output target after the frame's last colour pass (`fsr2 tone` under FSR 2)" | no render pipeline exists in `frame/` (the HUD, `present.rs` and `loading.rs` draw on the surface); group 0's `world_layout` is **compute-only** visibility, so the precip pipeline has its own layout (the hit buffer, the fall map, the uniform, the output). **Under FSR 2 with sharpening on (the Floor default, `fsr2.sharpness` 0.5) the last colour pass is `fsr2 rcas`, not `fsr2 tone`**; under `own` it is `sharpen`. `dev` draws after whichever the pass list ends with before `exposure`, read at the base |
 | `composite.wgsl` | the albedo view stores linear albedo straight (no 2.2 encoding; Phase 1 bar 3's "as the albedo view encodes it" means that), the hit's `albedo * lit_at / PI` then emission, the translucent layer `c = layer * ex + T * c`, then `select(display(c), c, HDR_TARGET)` and `meter_of(c / ex)`. "The flash after the meter" takes `meter_of` before the flash is added and stored. **The composite composes no mirror or walk module** (its modules are common, hitrec, the sky's and its own) though group 0 binds the pools; see "the cover's normal" below |
@@ -79,7 +79,7 @@ merged first they read `svet-*` through its map.
 | `fsr2/input.wgsl` "and any other upscaler input" | `upscale.wgsl` (the `own` upscaler, still in the tree) takes the pair too |
 | `sky_radiance(d)` toward the horizon | under `Sky::uniform` it returns 0 for `d.z <= 0`: the particles' and the veil's horizon read uses a direction with `d.z` just above 0 |
 | `material.rs` `roughness` as porosity | `Material::roughness` exists and the GPU row carries it in lane 3, which **no shader reads today**; every fly-through row is 1.0 but `castle iron` (0.5), so the wet darkening is full on every outdoor row, as Phase 4's bars assume |
-| `splitmix64` | `vxe_world::hash::SplitMix64` |
+| `splitmix64` | `svet_world::hash::SplitMix64` |
 | `apps/flythrough/src/main.rs`, `hud.rs` | `cli/outdoor.rs` (`--weather`, `--wind`, `--fall-tiles` beside `--trees`; `cli/flags.rs` is at 1190 lines), `cli/tests.rs`, `toggles.rs` (the entries), `run/frame.rs` (`set_dt`, `set_sky`; `Weather::step` with the frame's ticks goes there), `run/keys.rs`, `hud/modes.rs` (**1197 of 1200 lines**: the weather words go in a new module or a split `dev` makes first; its `Modes` tests likewise), `hud/stats.rs` (`SkyRow` is the model for the weather row), `run/hud_feed.rs`, `docs/flythrough.md` (every key and flag; the root README links it) |
 | `gpu_golden.rs` (the goldens) | at 1885 of 2000 lines: this plan's goldens are synthetic scenes and live in `gpu_weather.rs` (new) with the harness's `assert_golden` from `tests/support/mod.rs` |
 | `gpu_indirect.rs` `the_lamp_furnace_reads_its_albedo_times_the_direct_mean` | exists, soak-marked, as named |
@@ -213,11 +213,11 @@ Facts the design rests on:
 
 ## Decision
 
-The decision is ADR-0031, built in `vxe-render`:
+The decision is ADR-0031, built in `svet-render`:
 
 - **`weather` module, CPU only, no `wgpu` types.** It holds `WeatherState`, `Weather` (set a
   target, step by ticks, force a strike, read the current state), `WeatherEvent` and a `Pod`
-  `WeatherUniform`. It lives in `vxe-render` because it is cosmetic client state (ADR-0031):
+  `WeatherUniform`. It lives in `svet-render` because it is cosmetic client state (ADR-0031):
   a game whose weather is gameplay owns the schedule in its own deterministic logic (risk 10)
   and hands this module targets and strikes.
 - **`FallMap`.** Two `rg32float` maps and a dirty-tile mask per map. `fall_map.wgsl` has a
@@ -238,10 +238,10 @@ The decision is ADR-0031, built in `vxe-render`:
   now-and-then pair in the upscalers' change mask; plus a glow term this plan adds to Plan
   0035's cloud march.
 
-The game hears strikes as events, and nothing in `vxe-audio` changes. No weather term enters
+The game hears strikes as events, and nothing in `svet-audio` changes. No weather term enters
 the bake's source or bindings, the probe volume's gather, or the direct target.
 
-Rejected (ADR-0031): snow and wetness as voxels in `vxe-world`; a CPU height map from the
+Rejected (ADR-0031): snow and wetness as voxels in `svet-world`; a CPU height map from the
 coarse grid; per-pixel and per-particle sky rays; screen-space rain layers; a second, sky-only
 glossy reflection for wet faces. In this plan we also reject simulated particle buffers: they
 need a state buffer, a simulation dispatch and a respawn rule, where hashed positions wrapped
@@ -258,7 +258,7 @@ flowchart LR
     subgraph game [the consumer]
         G[set_target, step ticks,\nstrike] --> EV[WeatherEvent::Lightning\nthunder is the game's]
     end
-    subgraph render [vxe-render]
+    subgraph render [svet-render]
         W[Weather\nCPU, no clock] --> U[(WeatherUniform\nflash now and then)]
         ED[edit boxes, synced chunks,\nscroll, slant change] --> FM[fall_map.wgsl\ntrace, close]
         FM --> MAP[(fall map\nrg32float x2)]
@@ -336,8 +336,8 @@ names the word the banner shows, and the root `README.md` names the key `dev` pi
   `snow_cover` applied in the composite with `sky_open` fixed at 1 (no map yet); the
   fly-through's `--weather clear|rain|storm|snow|blizzard` presets, defined in the testbed,
   and a free key cycling them with the mode banner naming the preset.
-- **Files touched:** new `crates/vxe-render/src/weather.rs`, new
-  `crates/vxe-render/src/shaders/weather.wgsl`, `composite.wgsl`, `marcher.rs` (the `Frame`),
+- **Files touched:** new `crates/svet-render/src/weather.rs`, new
+  `crates/svet-render/src/shaders/weather.wgsl`, `composite.wgsl`, `marcher.rs` (the `Frame`),
   `lib.rs`, `apps/flythrough/src/main.rs`, `apps/flythrough/src/hud.rs` (the banner's modes),
   new `apps/flythrough/tests/gpu_weather.rs`.
 - **Done when:**
@@ -394,8 +394,8 @@ names the word the banner shows, and the root `README.md` names the key `dev` pi
 
   `rg32float` is not filterable, so every reader of the map does four `textureLoad`s and
   weights them itself.
-- **Files touched:** new `crates/vxe-render/src/fall_map.rs`, new
-  `crates/vxe-render/src/shaders/fall_map.wgsl`, `gpu_world.rs` (report the chunks a `sync`
+- **Files touched:** new `crates/svet-render/src/fall_map.rs`, new
+  `crates/svet-render/src/shaders/fall_map.wgsl`, `gpu_world.rs` (report the chunks a `sync`
   wrote), `marcher.rs`, `lib.rs`, `gpu_weather.rs`.
 - **Done when:** in `gpu_weather.rs`, the test world has a flat ground whose top is `z = 0`
   and a roof slab `z` in `[40, 48)` over `x, y` in `[0, 128)`. Each test below is about 3 to
@@ -454,8 +454,8 @@ names the word the banner shows, and the root `README.md` names the key `dev` pi
     `sky_radiance(horizon) x exposure_now()`, applied only at hits the map calls open. It is
     scene radiance and is metered.
   - **Wind** slants the map (Phase 2's quantized `s`) and the particles.
-- **Files touched:** new `crates/vxe-render/src/shaders/precip.wgsl`, new
-  `crates/vxe-render/src/precip.rs`, `weather.rs`, `composite.wgsl`, `marcher.rs` (the pass
+- **Files touched:** new `crates/svet-render/src/shaders/precip.wgsl`, new
+  `crates/svet-render/src/precip.rs`, `weather.rs`, `composite.wgsl`, `marcher.rs` (the pass
   after the last colour pass; the output texture gains `RENDER_ATTACHMENT`), `gpu_weather.rs`,
   `apps/flythrough/tests/gpu_golden.rs`.
 - **Done when:** the test world is the cave-mouth scene: a hill 128 x 128 x 64 voxels with a
@@ -680,7 +680,7 @@ names the word the banner shows, and the root `README.md` names the key `dev` pi
 ## Data shapes
 
 ```rust
-// illustrative: the game-facing API (vxe-render::weather, no wgpu types)
+// illustrative: the game-facing API (svet-render::weather, no wgpu types)
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct WeatherState {
     pub rain: f32,                 // 0..1 of the heaviest rain; rain and snow together are sleet
@@ -770,11 +770,11 @@ pass; the close replaces it with Phase 6's readings.
    0034's. Followup.
 10. **If weather becomes gameplay.** The game owns the schedule in its deterministic logic (its
     ticks, its seed, its op log or messages). It sets `lightning_per_minute` to 0 and calls
-    `strike` from its own decisions. It answers "is this spot sheltered?" from `vxe-world` (a
+    `strike` from its own decisions. It answers "is this spot sheltered?" from `svet-world` (a
     raycast up, or the coarse grid), never from the fall map. A headless server that wants
-    this module's strike ticks would link `vxe-render`, and so `wgpu`; moving the CPU-only
+    this module's strike ticks would link `svet-render`, and so `wgpu`; moving the CPU-only
     `weather` state to a crate without it is a followup, taken when a consumer asks.
-11. **Determinism.** Nothing touches `vxe-world`. The strike schedule is integer-hashed, so the
+11. **Determinism.** Nothing touches `svet-world`. The strike schedule is integer-hashed, so the
     same seed gives the same strike ticks on every client. The rest is f32 and cosmetic.
     Goldens are deterministic per adapter and blessed on lavapipe.
 12. **Adapter features.** `rg32float` storage textures with write access are in WebGPU's core
@@ -794,7 +794,7 @@ pass; the close replaces it with Phase 6's readings.
 - **Wind on liquids.** `LiquidParams` is the game's to set, and a game may set its waves from
   the same wind it hands `WeatherState`; no phase here does it.
 - **Rain audio:** the rain hiss, its occlusion indoors, and drops on materials are a followup
-  for `vxe-audio`. **Thunder** is the game's sound, fed by `WeatherEvent`.
+  for `svet-audio`. **Thunder** is the game's sound, fed by `WeatherEvent`.
 - **Splashes, drips from ledges, rain rings on liquid surfaces, a visible lightning bolt, wind
   on vegetation or entities, a wet sheen or sun glint, a per-place rain rate:** followups.
 - **The flash in the probe volume, the baked store or the direct target:** the flash is direct
@@ -873,7 +873,7 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 ## Followups
 
-- Rain audio in `vxe-audio`: a hiss bed whose level follows the rain rate and the listener's
+- Rain audio in `svet-audio`: a hiss bed whose level follows the rain rate and the listener's
   shelter, read on the CPU as an upward ray fan through the material table, the way ADR-0015's
   room fan works.
 - Rain rings on Plan 0034's liquid surfaces, splashes on open ground, drips at drip lines.

@@ -16,7 +16,7 @@ axis that changes over the clip.
 Three facts shape the choice. The renderer already carries a full 3 x 4 affine map per part
 instance and transforms each ray into the part's own space before it walks the voxel grid
 (`entity.wgsl`), so a diagonal scale costs it nothing new. The headless query does the same in
-exact fractions (`vxe-entity`'s `raycast.rs`), where the part's map must stay something an
+exact fractions (`svet-entity`'s `raycast.rs`), where the part's map must stay something an
 integer walk can invert. And a non-uniform scale that reaches a rotated child shears the child:
 its linear map stops being a rotation times a diagonal, its face normals stop being its rotated
 axes, and the renderer's cheap inverse (the transpose over the detail) stops being an inverse.

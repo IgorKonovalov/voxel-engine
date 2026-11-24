@@ -12,9 +12,9 @@
 ## TL;DR
 
 `flythrough --watch-shaders [DIR]` polls the mtimes of the WGSL modules under
-`crates/vxe-render/src/shaders/` four times a second; when one changes, the fly-through reads
+`crates/svet-render/src/shaders/` four times a second; when one changes, the fly-through reads
 the modules from disk and asks the renderer to rebuild the frame passes that join the changed
-module (`Frame::reload_shaders`, new in `vxe-render`), inside a wgpu error scope. A clean
+module (`Frame::reload_shaders`, new in `svet-render`), inside a wgpu error scope. A clean
 compile swaps the pipelines in and prints and shows `shaders: reloaded composite.wgsl, 3
 pipelines, 412 ms`; a compile error leaves the old pipelines drawing, prints naga's message to
 stdout and draws its first lines as a red band on the window until the next clean reload. Off by
@@ -24,7 +24,7 @@ after the save, and a missing semicolon shows its line on the window instead of 
 
 ## Context & problem
 
-Every pipeline's WGSL is compiled in at build time: `crates/vxe-render/src/lib.rs` holds the
+Every pipeline's WGSL is compiled in at build time: `crates/svet-render/src/lib.rs` holds the
 modules as `include_str!` constants, `frame/compose.rs` joins a pass's modules behind a prelude
 of Rust-defined constants, and `frame/pipelines.rs` builds the 15 frame passes of `PASSES` from
 that (`Pipelines::new`, the lazy ones on first use). A change to a shader is a `cargo build`
@@ -60,7 +60,7 @@ names an overridden module (and the hit pass), and only on a clean result swaps 
 `Pipelines` and drops the bind-group cache entries those passes own. The fly-through owns the
 poll, the file reads, the stdout line, the banner, the menu row and the error band. The device
 is never asked to compile without an error scope, so a bad shader is an `Err`, not a panic. GPU
-code stays in `vxe-render`; nothing branches on the backend: naga's error text is what wgpu
+code stays in `svet-render`; nothing branches on the backend: naga's error text is what wgpu
 returns on any backend.
 
 We rejected a file watcher crate (`notify`): a dependency for a 250 ms poll over about twenty
@@ -78,7 +78,7 @@ flowchart LR
         C -->|Ok| B[banner + menu row + stdout]
         C -->|Err| E[error band on the overlay, old pipelines keep drawing]
     end
-    subgraph render[vxe-render]
+    subgraph render[svet-render]
         C --> O[compose with overrides]
         O --> P[Pipelines: rebuild the affected passes in an error scope]
         P -->|clean| S[swap in, drop their bind groups]
@@ -106,10 +106,10 @@ Every phase carries exactly one `**Owner skill:**`: `dev` or `human`.
   `BindCache` entries of the rebuilt passes, and returns `Reloaded { passes: Vec<&'static str>,
   ms: f64 }`; on `Err` nothing in `Frame` changes. `ShaderError` carries naga's message as wgpu
   gives it (the `Validation` error's `Display`) and the module names tried.
-- **Files touched:** `crates/vxe-render/src/frame/compose.rs`,
-  `crates/vxe-render/src/frame/pipelines.rs`, `crates/vxe-render/src/frame/marcher.rs`,
-  `crates/vxe-render/src/frame/mod.rs`, `crates/vxe-render/src/lib.rs` (the exports),
-  `crates/vxe-render/tests/gpu_reload.rs` (new).
+- **Files touched:** `crates/svet-render/src/frame/compose.rs`,
+  `crates/svet-render/src/frame/pipelines.rs`, `crates/svet-render/src/frame/marcher.rs`,
+  `crates/svet-render/src/frame/mod.rs`, `crates/svet-render/src/lib.rs` (the exports),
+  `crates/svet-render/tests/gpu_reload.rs` (new).
 - **Done when:** `gpu_reload.rs`, on lavapipe, builds a `Frame` on the level fixture and
   renders 16 frames (the mean of the display read); then `reload_shaders` with an override of
   `composite.wgsl` whose last line writes a constant colour returns `Ok` naming `composite` (and
@@ -179,7 +179,7 @@ Every phase carries exactly one `**Owner skill:**`: `dev` or `human`.
 ## Data shapes
 
 ```rust
-// illustrative, vxe-render
+// illustrative, svet-render
 /// A module's text read from disk, keyed by its file name (`composite.wgsl`).
 pub type ModuleOverrides = std::collections::BTreeMap<String, String>;
 pub struct Reloaded { pub passes: Vec<&'static str>, pub ms: f64 }

@@ -45,7 +45,7 @@ slower in compute-bound work than the same box at full clock.
   same boot, `p9-gate3.log` in its archive), the tests both runs share (1 s or more) read a
   median 1.44 times longer on the GPU and 1.25 on the CPU (`castle_vector` 16.7 to 20.0 s,
   `showcase_vector` 11.8 to 15.3, `the_castle_path_flies_in_air` 12.3 to 17.4). Between those
-  commits `vxe-world`, `vxe-sim`, `determinism.rs` and `path.rs` are unchanged and the
+  commits `svet-world`, `svet-sim`, `determinism.rs` and `path.rs` are unchanged and the
   manifests differ only in version numbers, so the CPU tests' growth is the box. The clock cap
   above (set at 15:14 that day, after that run) is 1.42 times, which accounts for the GPU
   tests' 1.44 within about 1 %; the CPU tests scale less than the clock (memory-bound work).

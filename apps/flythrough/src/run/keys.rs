@@ -18,10 +18,10 @@ use crate::run::Run;
 use crate::run::hud_feed::Samples;
 use crate::setup::{castle_banner, castle_camera};
 use crate::toggles::{ACTIONS, Act, BELT_KEYS, TOGGLES, press};
-use vxe_app::{Axis, Input, KeyCode, MouseButton, PadButton};
-use vxe_audio::{Command, PlayParams};
-use vxe_render::Camera;
-use vxe_world::{FIXED_ONE, Face, Fixed3};
+use svet_app::{Axis, Input, KeyCode, MouseButton, PadButton};
+use svet_audio::{Command, PlayParams};
+use svet_render::Camera;
+use svet_world::{FIXED_ONE, Face, Fixed3};
 
 /// A trigger presses (`R2` digs, `L2` fills) once pulled past this, and lets go under
 /// [`TRIGGER_RELEASE`], so a trigger resting near a threshold does not repeat.
@@ -447,7 +447,7 @@ impl Run {
     }
 
     /// Reads the placed entity under the crosshair into the entities' `aimed`: the first along
-    /// the camera's ray before the world's surface ([`vxe_entity::EntitySet::raycast`] with
+    /// the camera's ray before the world's surface ([`svet_entity::EntitySet::raycast`] with
     /// the world hit's distance as its reach; [`AIM_RANGE`] voxels with no hit).
     pub(crate) fn aim_entities(&mut self) {
         let w = &mut self.modes.walkers;
@@ -619,7 +619,7 @@ impl Run {
         let extent = w.extent_of(entry, table);
         let body = entry.and_then(|i| w.library.entries.get(i)?.viewer()?.body);
         let kind = match body {
-            Some(vxe_assets::RigBody::Surface { .. }) => belt::Stand::Surface,
+            Some(svet_assets::RigBody::Surface { .. }) => belt::Stand::Surface,
             _ => belt::Stand::Floor,
         };
         let (point, up, eye) = self.aim_feet(extent, kind);
@@ -765,7 +765,7 @@ impl Run {
         };
         let words = match w.pick_at(i) {
             Pick::Refused(why) => why,
-            _ if w.placed.len() >= vxe_render::MAX_ENTITIES => full_words(),
+            _ if w.placed.len() >= svet_render::MAX_ENTITIES => full_words(),
             _ => match w.place_preview() {
                 Some(_) => {
                     w.newest.push(true);

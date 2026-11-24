@@ -6,8 +6,8 @@
 
 use std::collections::VecDeque;
 
-use vxe_entity::EntityId;
-use vxe_world::World;
+use svet_entity::EntityId;
+use svet_world::World;
 
 use super::Walkers;
 use super::mover::{MoverStep, TICK_HZ};

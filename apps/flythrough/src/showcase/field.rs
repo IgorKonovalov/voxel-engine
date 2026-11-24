@@ -3,7 +3,7 @@
 
 use super::*;
 
-use vxe_world::hash::ValueNoise;
+use svet_world::hash::ValueNoise;
 
 /// The noises of one source.
 #[derive(Clone, Copy, Debug)]

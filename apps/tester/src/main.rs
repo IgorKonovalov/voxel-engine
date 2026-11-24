@@ -1,18 +1,18 @@
-//! `vxe-tester`: the tester build's launcher (ADR-0054).
+//! `svet-tester`: the tester build's launcher (ADR-0054).
 //!
-//! With no arguments it opens a small window with the menu (`vxe_tester::menu`): the scene,
+//! With no arguments it opens a small window with the menu (`svet_tester::menu`): the scene,
 //! benchmark or tour, the output and the render profile; run, run all benchmarks, save report,
 //! open report folder, quit. Each run starts the fly-through found next to this executable as a
-//! child process in the report folder, with paths relative to it (`vxe_tester::run`), and the
+//! child process in the report folder, with paths relative to it (`svet_tester::run`), and the
 //! window shows its state, then its wall p50 and p95,
 //! or its exit code and the log's last lines. The first run or save makes the report folder
 //! under `reports/` beside the executable (the OS's temp directory when that is not writable),
 //! writes its `system.json` and logs every command line and exit code to its `tester.log`;
 //! "save report" zips it beside itself. The window names both paths.
 //!
-//! `vxe-tester --auto` does "run all benchmarks", then "save report", then quits, with the
-//! menu's defaults: an unattended reading. `vxe-tester --system-json PATH` writes the machine's
-//! `system.json` (`vxe_tester::system`) to `PATH` without a window, prints it and exits 0;
+//! `svet-tester --auto` does "run all benchmarks", then "save report", then quits, with the
+//! menu's defaults: an unattended reading. `svet-tester --system-json PATH` writes the machine's
+//! `system.json` (`svet_tester::system`) to `PATH` without a window, prints it and exits 0;
 //! `--displays` after it also asks the window system for the displays. A file that cannot be
 //! written exits 1.
 
@@ -23,14 +23,14 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use flythrough::path::{PathMode, Scene};
 use flythrough::report::json::{self, Value};
-use vxe_app::{App, Flow, Gpu, Input, KeyCode, Pacing, ShellConfig, wgpu};
-use vxe_render::{HudColour, HudOverlay};
-use vxe_tester::menu::{Command, Menu};
-use vxe_tester::run::{
+use svet_app::{App, Flow, Gpu, Input, KeyCode, Pacing, ShellConfig, wgpu};
+use svet_render::{HudColour, HudOverlay};
+use svet_tester::menu::{Command, Menu};
+use svet_tester::run::{
     Outcome, Output, Profile, ReportDir, RunSpec, child_command, fly_args, flythrough_beside,
     logged_command, report_name, run_child, utc_stamp,
 };
-use vxe_tester::system::{SystemInfo, adapters, displays};
+use svet_tester::system::{SystemInfo, adapters, displays};
 
 /// Glyph pixels per target pixel of the menu's text.
 const TEXT_SCALE: u32 = 2;
@@ -49,7 +49,7 @@ fn main() {
         [] => launcher(false),
         ["--auto"] => launcher(true),
         _ => {
-            eprintln!("vxe-tester: usage: vxe-tester [--auto] | --system-json PATH [--displays]");
+            eprintln!("svet-tester: usage: svet-tester [--auto] | --system-json PATH [--displays]");
             std::process::exit(2);
         }
     }
@@ -60,7 +60,7 @@ fn system_json(path: &str, with_displays: bool) {
     let json = SystemInfo::collect(adapters(), shown).to_json();
     print!("{json}");
     if let Err(e) = std::fs::write(path, &json) {
-        eprintln!("vxe-tester: --system-json {path}: {e}");
+        eprintln!("svet-tester: --system-json {path}: {e}");
         std::process::exit(1);
     }
 }
@@ -155,11 +155,11 @@ impl Worker {
             if let Some(dir) = self.exe.parent() {
                 bases.push(dir.join("reports"));
             }
-            bases.push(std::env::temp_dir().join("vxe-reports"));
+            bases.push(std::env::temp_dir().join("svet-reports"));
             match ReportDir::create(&bases, &name) {
                 Ok(mut r) => {
                     r.log(&format!(
-                        "vxe-tester {} ({})",
+                        "svet-tester {} ({})",
                         env!("CARGO_PKG_VERSION"),
                         flythrough::report::COMMIT
                     ));
@@ -335,7 +335,7 @@ impl Launcher {
         self.text.clear();
         self.colours.clear();
         self.text.push_str(&format!(
-            "vxe-tester {}: arrows and Enter, or a number\n\n",
+            "svet-tester {}: arrows and Enter, or a number\n\n",
             env!("CARGO_PKG_VERSION")
         ));
         self.colours.extend([HudColour::White, HudColour::White]);
@@ -368,7 +368,7 @@ fn open_folder(path: &Path) {
         "xdg-open"
     };
     if let Err(e) = Process::new(opener).arg(path).spawn() {
-        eprintln!("vxe-tester: {opener} {}: {e}", path.display());
+        eprintln!("svet-tester: {opener} {}: {e}", path.display());
     }
 }
 
@@ -378,11 +378,11 @@ impl App for Launcher {
         let adapter = format!(
             "{} ({}), surface {:?} {:?}",
             info.name,
-            vxe_app::backend_label(info.backend),
+            svet_app::backend_label(info.backend),
             gpu.surface_format,
             gpu.surface_color_space.unwrap_or_default()
         );
-        println!("vxe-tester: window on {adapter}");
+        println!("svet-tester: window on {adapter}");
         lock(&self.status).window_adapter = Some(adapter);
         self.hud = Some(HudOverlay::new(&gpu.device, gpu.surface_format, TEXT_SCALE));
         if self.auto.is_some() {
@@ -442,7 +442,7 @@ impl App for Launcher {
 }
 
 fn launcher(auto: bool) {
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("vxe-tester"));
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("svet-tester"));
     let status = Arc::new(Mutex::new(Status::default()));
     let (jobs, rx) = channel();
     let worker = Worker {
@@ -464,14 +464,14 @@ fn launcher(auto: bool) {
     // The launcher draws a menu: the low-power adapter, vsync and ten frames a second keep it
     // off the GPU and the cores the runs measure.
     let config = ShellConfig {
-        title: "vxe-tester".to_owned(),
+        title: "svet-tester".to_owned(),
         size: [960, 600],
         present_mode: wgpu::PresentMode::AutoVsync,
         power_preference: wgpu::PowerPreference::LowPower,
         pacing: Pacing::Cap { hz: LAUNCHER_HZ },
         ..ShellConfig::default()
     };
-    let result = vxe_app::run(config, app);
+    let result = svet_app::run(config, app);
     // The window is gone; a run still going ends with its own window.
     drop(handle);
     let s = lock(&status);
@@ -479,7 +479,7 @@ fn launcher(auto: bool) {
         println!("{l}");
     }
     if let Err(e) = result {
-        eprintln!("vxe-tester: {e}");
+        eprintln!("svet-tester: {e}");
         std::process::exit(1);
     }
 }

@@ -1,15 +1,15 @@
-//! Golden images of the cave on the software adapter (lavapipe). `VXE_BLESS=1` rewrites them.
+//! Golden images of the cave on the software adapter (lavapipe). `SVET_BLESS=1` rewrites them.
 
 mod support;
 
 use flythrough::cave::ROCK;
 use flythrough::cave_materials;
 use support::*;
-use vxe_render::{
+use svet_render::{
     Camera, Frame, GpuWorld, LightParams, LodParams, MirrorConfig, ShadowWalk, Window, wgpu,
 };
-use vxe_render::{internals::PAGE_UNITS, internals::UNIT_BYTES};
-use vxe_world::*;
+use svet_render::{internals::PAGE_UNITS, internals::UNIT_BYTES};
+use svet_world::*;
 
 /// The scene from the spawn pose under each of `lights`, on one device.
 fn render(world: &World, lights: &[LightParams]) -> Option<Vec<Vec<u8>>> {
@@ -35,17 +35,17 @@ fn render_lit(
     gpu.sync_now(world, &device, &queue)
         .expect("mirror fits the adapter");
     let mut frame = Frame::new(&device, WIDTH, HEIGHT);
-    frame.set_resolution(&device, vxe_render::LightingResolution::Full);
-    frame.set_lighting(vxe_render::Lighting {
+    frame.set_resolution(&device, svet_render::LightingResolution::Full);
+    frame.set_lighting(svet_render::Lighting {
         filter,
-        ..vxe_render::Lighting::default()
+        ..svet_render::Lighting::default()
     });
     Some(
         lights
             .iter()
             .map(|light| {
                 frame.render(&device, &queue, &gpu, camera, light);
-                vxe_render::debug::read_rgba8(&device, &queue, frame.target())
+                svet_render::debug::read_rgba8(&device, &queue, frame.target())
             })
             .collect(),
     )
@@ -110,7 +110,7 @@ fn the_walk_renders_the_same_bytes_with_every_skip_on_or_off() {
     let Some((device, queue)) = software_device(64 << 20) else {
         return;
     };
-    let bless = std::env::var("VXE_BLESS").as_deref() == Ok("1");
+    let bless = std::env::var("SVET_BLESS").as_deref() == Ok("1");
     let carved = carved_world();
     let lod = lod_scene();
     let scenes = [
@@ -314,7 +314,7 @@ fn translucent_golden_composites_the_slab_over_the_wall() {
         lod,
     );
     assert_golden("translucent.png", &glass[0]);
-    if std::env::var("VXE_BLESS").as_deref() != Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() != Ok("1") {
         let differing = differing_bytes(&glass[0], &read_png(&golden_path("translucent.png")).0);
         assert_eq!(
             differing, 0,
@@ -334,7 +334,7 @@ fn translucent_golden_composites_the_slab_over_the_wall() {
 /// over two to four: the mirror's layout changes no pixel. One scene, one device.
 #[test]
 fn goldens_match_bit_exactly_over_one_and_several_shards() {
-    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
         return;
     }
     let world = carved_world();
@@ -348,7 +348,7 @@ fn goldens_match_bit_exactly_over_one_and_several_shards() {
     ]
     .map(|(name, light)| (name, light, read_png(&golden_path(name)).0));
     let mut frame = Frame::new(&device, WIDTH, HEIGHT);
-    frame.set_resolution(&device, vxe_render::LightingResolution::Full);
+    frame.set_resolution(&device, svet_render::LightingResolution::Full);
     // One shard first; its pages size the cap that spreads the next mirror over several.
     let mut pages = 0u32;
     for several in [false, true] {
@@ -372,7 +372,7 @@ fn goldens_match_bit_exactly_over_one_and_several_shards() {
         }
         for (name, light, golden) in &goldens {
             frame.render(&device, &queue, &gpu, &scene_camera(), light);
-            let img = vxe_render::debug::read_rgba8(&device, &queue, frame.target());
+            let img = svet_render::debug::read_rgba8(&device, &queue, frame.target());
             let differing = img.iter().zip(golden).filter(|(a, b)| a != b).count();
             assert_eq!(
                 differing, 0,
@@ -416,8 +416,8 @@ fn render_walk(
     gpu.sync_now(world, device, queue)
         .expect("mirror fits the adapter");
     let mut frame = Frame::new(device, WIDTH, HEIGHT);
-    frame.set_resolution(device, vxe_render::LightingResolution::Full);
-    frame.set_lighting(vxe_render::Lighting {
+    frame.set_resolution(device, svet_render::LightingResolution::Full);
+    frame.set_lighting(svet_render::Lighting {
         shadow_walk: walk,
         ..frame.lighting()
     });
@@ -426,7 +426,7 @@ fn render_walk(
         .iter()
         .map(|light| {
             frame.render(device, queue, &gpu, camera, light);
-            vxe_render::debug::read_rgba8(device, queue, frame.target())
+            svet_render::debug::read_rgba8(device, queue, frame.target())
         })
         .collect()
 }
@@ -615,10 +615,10 @@ fn outside_level_camera() -> Camera {
 }
 
 /// The cutaway look: face normals, shaded.
-fn cutaway_look() -> vxe_render::LookParams {
-    vxe_render::LookParams {
+fn cutaway_look() -> svet_render::LookParams {
+    svet_render::LookParams {
         cutaway: true,
-        ..vxe_render::LookParams::default()
+        ..svet_render::LookParams::default()
     }
 }
 
@@ -649,8 +649,8 @@ fn cutaway_level_golden_shows_sky_and_lit_rock() {
     let mask = rig.render(
         &outside_level_camera(),
         &LightParams::headlamp(),
-        vxe_render::LookParams {
-            view: vxe_render::ViewMode::HitMask,
+        svet_render::LookParams {
+            view: svet_render::ViewMode::HitMask,
             ..cutaway_look()
         },
     );
@@ -706,10 +706,13 @@ fn hit_buffer_views_match_the_single_pass_march() {
                     if let Some(lod) = lod {
                         rig.frame.set_lod(lod);
                     }
-                    for view in [vxe_render::ViewMode::HitMask, vxe_render::ViewMode::Normals] {
-                        let look = vxe_render::LookParams {
+                    for view in [
+                        svet_render::ViewMode::HitMask,
+                        svet_render::ViewMode::Normals,
+                    ] {
+                        let look = svet_render::LookParams {
                             view,
-                            ..vxe_render::LookParams::default()
+                            ..svet_render::LookParams::default()
                         };
                         let img = rig.render(&camera, &LightParams::headlamp(), look);
                         let name = format!("split_{}_{scene}.png", view.name());
@@ -734,17 +737,17 @@ fn the_identity_tone_map_reproduces_the_single_pass_carve() {
     let Some(mut rig) = LookRig::new(&carved_world(), None) else {
         return;
     };
-    rig.frame.set_lighting(vxe_render::Lighting {
-        exposure: vxe_render::Exposure::Manual(1.0),
-        tone_map: vxe_render::ToneMap::Identity,
+    rig.frame.set_lighting(svet_render::Lighting {
+        exposure: svet_render::Exposure::Manual(1.0),
+        tone_map: svet_render::ToneMap::Identity,
         filter: false,
         light_floor: 0.0,
-        ..vxe_render::Lighting::default()
+        ..svet_render::Lighting::default()
     });
     let img = rig.render(
         &scene_camera(),
         &LightParams::at_eye(),
-        vxe_render::LookParams::default(),
+        svet_render::LookParams::default(),
     );
     let (old, _, _) = read_png(&golden_path("primary_pre_split.png"));
     let worst = img
@@ -773,28 +776,28 @@ fn an_asymmetric_view_renders_the_left_half_of_the_symmetric_one() {
     let camera = scene_camera();
     let light = LightParams::headlamp();
     // Unfiltered: the filter's neighbourhoods differ along the half view's right edge.
-    let unfiltered = vxe_render::Lighting {
+    let unfiltered = svet_render::Lighting {
         filter: false,
-        ..vxe_render::Lighting::default()
+        ..svet_render::Lighting::default()
     };
     let mut whole = Frame::new(&device, WIDTH, HEIGHT);
-    whole.set_resolution(&device, vxe_render::LightingResolution::Full);
+    whole.set_resolution(&device, svet_render::LightingResolution::Full);
     whole.set_lighting(unfiltered);
     whole.render(&device, &queue, &gpu, &camera, &light);
-    let whole_px = vxe_render::debug::read_rgba8(&device, &queue, whole.target());
+    let whole_px = svet_render::debug::read_rgba8(&device, &queue, whole.target());
 
     let half_w = WIDTH / 2;
     let mut half = Frame::new(&device, half_w, HEIGHT);
-    half.set_resolution(&device, vxe_render::LightingResolution::Full);
+    half.set_resolution(&device, svet_render::LightingResolution::Full);
     half.set_lighting(unfiltered);
     let ty = (camera.vfov * 0.5).tan();
     let t = ty * (WIDTH as f32 / HEIGHT as f32);
     let aspect = WIDTH as f32 / HEIGHT as f32;
     let view =
-        vxe_render::View::with_tangents(&camera, [t, 0.0, ty, ty], aspect, [0, 0, half_w, HEIGHT]);
+        svet_render::View::with_tangents(&camera, [t, 0.0, ty, ty], aspect, [0, 0, half_w, HEIGHT]);
     let params = half.params_for(&gpu, &[view], &camera, &light);
     half.submit(&device, &queue, &gpu, &params);
-    let half_px = vxe_render::debug::read_rgba8(&device, &queue, half.target());
+    let half_px = svet_render::debug::read_rgba8(&device, &queue, half.target());
 
     let mut worst = 0;
     for row in 0..HEIGHT as usize {
@@ -837,7 +840,7 @@ const SETTLE_FRAMES: u32 = 32;
 /// The carved scene's rig under `table`, the lamp off, after [`SETTLE_FRAMES`] frames from
 /// [`vein_camera`] with history; `None` without a software adapter.
 fn settled_dark_cave(table: &MaterialTable) -> Option<(World, LookRig)> {
-    settled_dark_cave_at(table, vxe_render::LightingResolution::Full)
+    settled_dark_cave_at(table, svet_render::LightingResolution::Full)
 }
 
 /// [`settled_dark_cave`] with the lighting passes at `resolution`.
@@ -846,14 +849,14 @@ const DARK_CAVE_BAKE: (i32, u32) = (1, 64);
 
 fn settled_dark_cave_at(
     table: &MaterialTable,
-    resolution: vxe_render::LightingResolution,
+    resolution: svet_render::LightingResolution,
 ) -> Option<(World, LookRig)> {
     let world = carved_world_under(table);
     let mut rig = LookRig::new(&world, None)?;
     rig.frame.set_resolution(&rig.device, resolution);
-    rig.frame.set_lighting(vxe_render::Lighting {
+    rig.frame.set_lighting(svet_render::Lighting {
         lamp: false,
-        ..vxe_render::Lighting::default()
+        ..svet_render::Lighting::default()
     });
     // The light radius around the camera, its ranges written over the syncs the budget needs.
     rig.gpu.set_focus(VoxelCoord(
@@ -887,7 +890,7 @@ fn box_projection(camera: &Camera, (min, max): (VoxelCoord, VoxelCoord)) -> [f32
     let aspect = WIDTH as f32 / HEIGHT as f32;
     let mut r = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
     for c in 0..8 {
-        let corner = vxe_render::glam::Vec3::new(
+        let corner = svet_render::glam::Vec3::new(
             if c & 1 == 0 {
                 min.0[0] - 1
             } else {
@@ -970,9 +973,9 @@ fn carve_reading(
         &camera,
         &LightParams::headlamp(),
     );
-    let after = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
-    let now = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
-    let age = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, rig.frame.moments());
+    let after = svet_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+    let now = svet_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let age = svet_render::debug::read_rgba16f(&rig.device, &rig.queue, rig.frame.moments());
     let rect = box_projection(&camera, aabb);
     let mut out = CarveReading {
         in_box: 0,
@@ -1034,7 +1037,7 @@ fn dark_cave_golden_is_lit_by_its_ore_alone() {
     else {
         return;
     };
-    let before = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+    let before = svet_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
     assert_golden("dark_cave.png", &before);
     let samples = rig.gpu.light_samples();
     let bright = before
@@ -1054,8 +1057,8 @@ fn dark_cave_golden_is_lit_by_its_ore_alone() {
 
     // The carve at the brightest rock pixel 15 to 25 voxels away, and the frame right after
     // it.
-    let pos = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
-    let info = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let pos = svet_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let info = svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     let target = (0..pos.len())
         .filter(|&i| {
             // The radius-6 sphere stays inside the scene's 384-voxel extent.
@@ -1101,7 +1104,7 @@ fn dark_cave_golden_is_lit_by_its_ore_alone() {
 
     let (_, off) = settled_dark_cave(&cave_materials()).unwrap();
     assert_eq!(off.gpu.light_samples(), 0);
-    let off = vxe_render::debug::read_rgba8(&off.device, &off.queue, off.frame.target());
+    let off = svet_render::debug::read_rgba8(&off.device, &off.queue, off.frame.target());
     let lit_off = off.chunks(4).filter(|p| p[..3] != [0, 0, 0]).count();
     assert_eq!(
         lit_off, 0,
@@ -1131,15 +1134,15 @@ fn slab_world(hole: Option<[i64; 2]>) -> World {
 }
 
 /// The slab scene's renders under the headlamp in `walk`, shadows on and off.
-fn slab_renders(world: &World, walk: vxe_render::ShadowWalk) -> Option<[Vec<u8>; 2]> {
+fn slab_renders(world: &World, walk: svet_render::ShadowWalk) -> Option<[Vec<u8>; 2]> {
     let mut rig = LookRig::new(world, None)?;
-    rig.frame.set_lighting(vxe_render::Lighting {
+    rig.frame.set_lighting(svet_render::Lighting {
         shadow_walk: walk,
-        ..vxe_render::Lighting::default()
+        ..svet_render::Lighting::default()
     });
     let camera = occluder_camera();
     let lit = LightParams::headlamp();
-    let look = vxe_render::LookParams::default();
+    let look = svet_render::LookParams::default();
     let shadowed = rig.render(&camera, &lit, look);
     let plain = rig.render(
         &camera,
@@ -1170,7 +1173,7 @@ fn darkened(shadowed: &[u8], plain: &[u8]) -> usize {
 #[test]
 #[ignore = "soak"]
 fn the_coarse_shadow_walk_closes_a_one_voxel_hole() {
-    use vxe_render::ShadowWalk::{Coarse, Full};
+    use svet_render::ShadowWalk::{Coarse, Full};
     let Some([full_solid, plain]) = slab_renders(&slab_world(None), Full) else {
         return;
     };
@@ -1216,10 +1219,10 @@ fn the_coarse_shadow_walk_closes_a_one_voxel_hole() {
 #[test]
 fn half_resolution_dark_cave_golden_stays_near_the_full_one() {
     let table = flythrough::with_emissive_ore(&cave_materials());
-    let Some((_, rig)) = settled_dark_cave_at(&table, vxe_render::LightingResolution::Half) else {
+    let Some((_, rig)) = settled_dark_cave_at(&table, svet_render::LightingResolution::Half) else {
         return;
     };
-    let half = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+    let half = svet_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
     assert_golden("dark_cave_half.png", &half);
     let (full, _, _) = read_png(&golden_path("dark_cave.png"));
     let n = (WIDTH * HEIGHT) as f64;
@@ -1260,13 +1263,13 @@ fn upscaled_cavity(sharpness: &[f32]) -> Option<(Vec<Vec<u8>>, History16)> {
             );
         }
         let history = first.then(|| {
-            vxe_render::debug::read_rgba16f(
+            svet_render::debug::read_rgba16f(
                 &rig.device,
                 &rig.queue,
                 frame.upscale_history().expect("the upscaler runs"),
             )
         });
-        let image = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, frame.target());
+        let image = svet_render::debug::read_rgba8(&rig.device, &rig.queue, frame.target());
         (image, history)
     };
     let shots: Vec<(Vec<u8>, Option<History16>)> = std::thread::scope(|sc| {
@@ -1304,7 +1307,7 @@ fn upscaled_golden_sharpens_within_the_neighbourhood() {
     let (plain, sharp) = (&images[0], &images[1]);
     let [w, h] = UPSCALED_OUTPUT.map(|n| n as usize);
     let path = golden_path("upscaled.png");
-    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
         write_png(&path, sharp, w as u32, h as u32);
         println!("blessed {path:?}");
     } else {
@@ -1375,14 +1378,14 @@ fn upscaled_golden_sharpens_within_the_neighbourhood() {
 fn showcase_hall(
     table: &MaterialTable,
     frames: u32,
-    profile: Option<vxe_render::Profile>,
+    profile: Option<svet_render::Profile>,
 ) -> Option<(Vec<u8>, u64)> {
     use flythrough::showcase::{SHOTS, ShowcaseSource};
     let source = ShowcaseSource::new(1);
     let world = World::generate(source.extent(), &source, table);
     let look = flythrough::LookPreset::DEFAULT;
     // The default look's mirror: band slots only under the field look.
-    let field = look.normal_mode == vxe_render::NormalMode::Contour;
+    let field = look.normal_mode == svet_render::NormalMode::Contour;
     let pool = flythrough::level_pool_units(&world, field) * UNIT_BYTES;
     let (device, queue) = software_device(pool)?;
     let chunks = world.extent().len() as u64;
@@ -1414,34 +1417,34 @@ fn showcase_hall(
     }
     // The fly-through's default upscaler: FSR 2 at internal scale 1.5 with sharpening 0.5.
     let output = [WIDTH, HEIGHT];
-    let settings = profile.map(vxe_render::RenderSettings::profile);
+    let settings = profile.map(svet_render::RenderSettings::profile);
     let scale = settings
         .as_ref()
-        .map_or(vxe_render::RenderScale::OneHalf, |s| s.scale);
+        .map_or(svet_render::RenderScale::OneHalf, |s| s.scale);
     let mut frame = Frame::with_sizes(&device, scale.internal(output), output);
     frame.set_upscaler_kind(
         &device,
-        vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+        svet_render::UpscalerKind::Fsr2(svet_render::Fsr2Settings {
             sharpness: 0.5,
-            ..vxe_render::Fsr2Settings::default()
+            ..svet_render::Fsr2Settings::default()
         }),
     );
-    frame.set_lighting(vxe_render::Lighting {
+    frame.set_lighting(svet_render::Lighting {
         lamp: false,
         lamp_bounce: true,
-        exposure: vxe_render::Exposure::Manual(shot.exposure_milli as f32 / 1000.0),
+        exposure: svet_render::Exposure::Manual(shot.exposure_milli as f32 / 1000.0),
         store_read: flythrough::DEFAULT_STORE_READ,
         light_weights: flythrough::DEFAULT_LIGHT_WEIGHTS,
-        ..vxe_render::Lighting::default()
+        ..svet_render::Lighting::default()
     });
-    frame.set_look(vxe_render::LookParams {
+    frame.set_look(svet_render::LookParams {
         normal_mode: look.normal_mode,
         tuning: look.tuning,
         far_normal: look.far_normal,
-        ..vxe_render::LookParams::default()
+        ..svet_render::LookParams::default()
     });
     if let Some(mut s) = settings {
-        s.lighting.exposure = vxe_render::Exposure::Manual(shot.exposure_milli as f32 / 1000.0);
+        s.lighting.exposure = svet_render::Exposure::Manual(shot.exposure_milli as f32 / 1000.0);
         frame.apply_settings(&device, &queue, &s);
     }
     let camera = Camera {
@@ -1467,7 +1470,7 @@ fn showcase_hall(
         frame.step(&device, &queue, &gpu, &camera, &LightParams::headlamp());
     }
     Some((
-        vxe_render::debug::read_rgba8(&device, &queue, frame.target()),
+        svet_render::debug::read_rgba8(&device, &queue, frame.target()),
         gpu.light_samples(),
     ))
 }
@@ -1557,8 +1560,8 @@ fn showcase_hall_golden_is_lit_by_its_four_ores() {
 /// `profile_<name>_hall.png`: the showcase's hall in `p`, held to the goldens' floor (0.1 %
 /// of pixels over 2/255), and differing from the floor profile's image at the same pose in
 /// more than that share, so the profile reached the frame.
-fn profile_hall_golden(p: vxe_render::Profile) {
-    use vxe_render::Profile;
+fn profile_hall_golden(p: svet_render::Profile) {
+    use svet_render::Profile;
     let table = flythrough::showcase_materials();
     let Some((img, _)) = showcase_hall(&table, SHOWCASE_FRAMES, Some(p)) else {
         return;
@@ -1583,13 +1586,13 @@ fn profile_hall_golden(p: vxe_render::Profile) {
 #[test]
 #[ignore = "soak"]
 fn performance_profile_golden() {
-    profile_hall_golden(vxe_render::Profile::Performance);
+    profile_hall_golden(svet_render::Profile::Performance);
 }
 
 #[test]
 #[ignore = "soak"]
 fn high_profile_golden() {
-    profile_hall_golden(vxe_render::Profile::High);
+    profile_hall_golden(svet_render::Profile::High);
 }
 
 /// The level's spawn pose as the fly-through starts there: the spawn voxel's centre, yaw 0,
@@ -1646,9 +1649,9 @@ fn the_lighting_targets_are_scale_free() {
     let camera = level_spawn_camera();
     let shot = |s: f32| {
         let mut frame = Frame::new(&device, 192, 108);
-        frame.set_lighting(vxe_render::Lighting {
-            exposure: vxe_render::Exposure::Manual(1.0 / s),
-            ..vxe_render::Lighting::default()
+        frame.set_lighting(svet_render::Lighting {
+            exposure: svet_render::Exposure::Manual(1.0 / s),
+            ..svet_render::Lighting::default()
         });
         for &m in &emitters {
             frame.set_emission_scale(&queue, m, s);
@@ -1660,7 +1663,7 @@ fn the_lighting_targets_are_scale_free() {
         for _ in 0..64 {
             frame.step(&device, &queue, &gpu, &camera, &light);
         }
-        vxe_render::debug::read_rgba8(&device, &queue, frame.target())
+        svet_render::debug::read_rgba8(&device, &queue, frame.target())
     };
     let base = shot(1.0);
     let lit = base
@@ -1694,7 +1697,7 @@ struct Fsr2Shot {
     image: Vec<u8>,
     accumulated: History16,
     sharpened: bool,
-    lighting: vxe_render::Lighting,
+    lighting: svet_render::Lighting,
 }
 
 /// FSR 2's golden scene: the cavity from its centre under the headlamp at 256 x 144 internal
@@ -1707,7 +1710,7 @@ fn fsr2_cavity(sharpness: &[f32]) -> Option<Vec<Fsr2Shot>> {
         let mut frame = Frame::with_sizes(&rig.device, UPSCALED_INTERNAL, UPSCALED_OUTPUT);
         frame.set_upscaler_kind(
             &rig.device,
-            vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+            svet_render::UpscalerKind::Fsr2(svet_render::Fsr2Settings {
                 sharpness: s,
                 ..Default::default()
             }),
@@ -1723,8 +1726,8 @@ fn fsr2_cavity(sharpness: &[f32]) -> Option<Vec<Fsr2Shot>> {
         }
         let fsr = frame.fsr2().expect("FSR mode");
         Fsr2Shot {
-            image: vxe_render::debug::read_rgba8(&rig.device, &rig.queue, frame.target()),
-            accumulated: vxe_render::debug::read_rgba16f(
+            image: svet_render::debug::read_rgba8(&rig.device, &rig.queue, frame.target()),
+            accumulated: svet_render::debug::read_rgba16f(
                 &rig.device,
                 &rig.queue,
                 fsr.upscaled(frame.current_copy()),
@@ -1756,7 +1759,7 @@ fn fsr2_golden_matches_and_rcas_is_bypassed_at_zero() {
     let (plain, sharp) = (&zero.image, &half.image);
     let [w, h] = UPSCALED_OUTPUT.map(|n| n as usize);
     let path = golden_path("fsr2.png");
-    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
         write_png(&path, sharp, w as u32, h as u32);
         println!("blessed {path:?}");
     } else {
@@ -1828,25 +1831,25 @@ fn lights_box_golden_holds_two_coloured_lights() {
         return;
     };
     rig.frame
-        .set_resolution(&rig.device, vxe_render::LightingResolution::Half);
+        .set_resolution(&rig.device, svet_render::LightingResolution::Half);
     rig.frame.set_lights(&[
-        vxe_render::Light {
+        svet_render::Light {
             colour: [1.0, 0.0, 0.0],
-            ..vxe_render::Light::point([54.0, 32.0, 22.0], 1200.0)
+            ..svet_render::Light::point([54.0, 32.0, 22.0], 1200.0)
         },
-        vxe_render::Light {
+        svet_render::Light {
             colour: [0.0, 0.0, 1.0],
-            ..vxe_render::Light::point([74.0, 32.0, 22.0], 1200.0)
+            ..svet_render::Light::point([74.0, 32.0, 22.0], 1200.0)
         },
     ]);
     let camera = support::lights::box_camera();
     for _ in 0..16 {
         support::lights::step(&mut rig, &camera);
     }
-    let rgba = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+    let rgba = svet_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
     let (w, h) = (192, 108);
     let path = golden_path("lights_box.png");
-    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
         write_png(&path, &rgba, w, h);
         println!("blessed {path:?}");
         return;
@@ -1880,7 +1883,7 @@ mod reading {
         if fsr2 {
             frame.set_upscaler_kind(
                 &rig.device,
-                vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+                svet_render::UpscalerKind::Fsr2(svet_render::Fsr2Settings {
                     sharpness: 0.5,
                     ..Default::default()
                 }),
@@ -1898,7 +1901,7 @@ mod reading {
                 &LightParams::headlamp(),
             );
         }
-        Some(vxe_render::debug::read_rgba8(
+        Some(svet_render::debug::read_rgba8(
             &rig.device,
             &rig.queue,
             frame.target(),
@@ -1955,7 +1958,7 @@ mod reading {
         let world = seed_1_level();
         let pool_bytes = flythrough::level_pool_units(&world, false) * UNIT_BYTES;
         let Some((device, queue, adapter)) =
-            vxe_render::test_support::high_performance_device(pool_bytes, wgpu::Features::empty())
+            svet_render::test_support::high_performance_device(pool_bytes, wgpu::Features::empty())
         else {
             return;
         };
@@ -1968,10 +1971,10 @@ mod reading {
             .expect("mirror fits the adapter");
         let (w, h) = (1920, 1080);
         let mut frame = Frame::new(&device, w, h);
-        frame.set_resolution(&device, vxe_render::LightingResolution::Full);
+        frame.set_resolution(&device, svet_render::LightingResolution::Full);
         for cutaway in [false, true] {
-            frame.set_look(vxe_render::LookParams {
-                view: vxe_render::ViewMode::Steps,
+            frame.set_look(svet_render::LookParams {
+                view: svet_render::ViewMode::Steps,
                 cutaway,
                 ..cutaway_look()
             });
@@ -1982,8 +1985,8 @@ mod reading {
                 &outside_level_camera(),
                 &LightParams::headlamp(),
             );
-            let px = vxe_render::debug::read_rgba8(&device, &queue, frame.target());
-            let hist = vxe_render::debug::StepHistogram::from_rgba8(&px, w as usize);
+            let px = svet_render::debug::read_rgba8(&device, &queue, frame.target());
+            let hist = svet_render::debug::StepHistogram::from_rgba8(&px, w as usize);
             let saturated = px.chunks(4).filter(|p| p[0] == 255).count();
             println!(
                 "{} at {w}x{h}, cutaway {cutaway}: steps per ray mean {:.2} p99 {}, rays at the 255 clamp {saturated} of {}",

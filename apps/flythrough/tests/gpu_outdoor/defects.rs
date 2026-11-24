@@ -9,21 +9,21 @@ mod defects {
         /// streamed about 21.png's eye (`-352.5 -30.2 671.8`, chunk `-6 -1 10`; the HUD hid the x
         /// to its last digit, so the chunk's middle), looking 30 degrees down, at the fly-through's
         /// residency (16, 24) and mirror (`support::streamed::Hold`), the column wait on
-        /// (`VXE_HELD_WAIT=0` off), the reach `full` (`VXE_HELD_REACH=partial`: Phase 18 bar 6),
-        /// 1800 frames (`VXE_HELD_FRAMES`): every 60 frames the store's counts and the queue's;
+        /// (`SVET_HELD_WAIT=0` off), the reach `full` (`SVET_HELD_REACH=partial`: Phase 18 bar 6),
+        /// 1800 frames (`SVET_HELD_FRAMES`): every 60 frames the store's counts and the queue's;
         /// at the end every unbaked chunk within the full radius and what holds its columns from
         /// final, and the fly-through's `--dump-black` lines; the first read frame whose black
-        /// count is under 1 % of the 57 600 lighting pixels. `VXE_TEST_ADAPTER` picks the
+        /// count is under 1 % of the 57 600 lighting pixels. `SVET_TEST_ADAPTER` picks the
         /// adapter.
         #[test]
         #[ignore = "reading"]
         fn the_hills_at_dusk_held() {
-            let wait = std::env::var("VXE_HELD_WAIT").as_deref() != Ok("0");
-            let reach = match std::env::var("VXE_HELD_REACH").as_deref() {
-                Ok("partial") => vxe_render::ReachMode::Partial,
-                _ => vxe_render::ReachMode::Full,
+            let wait = std::env::var("SVET_HELD_WAIT").as_deref() != Ok("0");
+            let reach = match std::env::var("SVET_HELD_REACH").as_deref() {
+                Ok("partial") => svet_render::ReachMode::Partial,
+                _ => svet_render::ReachMode::Full,
             };
-            let frames: u32 = std::env::var("VXE_HELD_FRAMES")
+            let frames: u32 = std::env::var("SVET_HELD_FRAMES")
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(1800);
@@ -42,8 +42,8 @@ mod defects {
         #[test]
         #[ignore = "reading"]
         fn the_hills_at_dusk_under_each_wait() {
-            let on = hills_at_dusk(true, vxe_render::ReachMode::Full, 1800);
-            let off = hills_at_dusk(false, vxe_render::ReachMode::Full, 1800);
+            let on = hills_at_dusk(true, svet_render::ReachMode::Full, 1800);
+            let off = hills_at_dusk(false, svet_render::ReachMode::Full, 1800);
             if on.is_empty() {
                 return;
             }
@@ -75,7 +75,7 @@ mod defects {
         /// `frames` frames under the column wait `wait` and the reach `reach`, read every 60.
         fn hills_at_dusk(
             wait: bool,
-            reach: vxe_render::ReachMode,
+            reach: svet_render::ReachMode,
             frames: u32,
         ) -> Vec<support::streamed::StreamedRead> {
             let camera = flythrough::Pose {
@@ -95,7 +95,7 @@ mod defects {
             support::streamed::streamed(support::streamed::Streamed {
                 label: "the_hills_at_dusk_held",
                 source: std::sync::Arc::new(flythrough::outdoor::OutdoorSource::new(1)),
-                eye: vxe_world::VoxelCoord([-353, -31, 671]),
+                eye: svet_world::VoxelCoord([-353, -31, 671]),
                 camera,
                 sky,
                 styles: Vec::new(),
@@ -116,7 +116,7 @@ mod defects {
         /// lighting pixel the sky term's source (the pair where the ray was cast, the chain's
         /// fallback, black, the store otherwise) and the cast pixels' mean visibility, under
         /// the column wait off and on with the reach `full`, and the wait off with `partial`.
-        /// `VXE_TEST_ADAPTER` picks the adapter.
+        /// `SVET_TEST_ADAPTER` picks the adapter.
         #[test]
         #[ignore = "reading"]
         fn the_tunnel_ray_region() {
@@ -130,15 +130,15 @@ mod defects {
             let noon =
                 flythrough::daylight::Clock::default().sky(flythrough::outdoor::BASE_Z as f32);
             for (wait, reach) in [
-                (false, vxe_render::ReachMode::Full),
-                (true, vxe_render::ReachMode::Full),
-                (false, vxe_render::ReachMode::Partial),
+                (false, svet_render::ReachMode::Full),
+                (true, svet_render::ReachMode::Full),
+                (false, svet_render::ReachMode::Partial),
             ] {
                 println!("reading: the tunnel ray region, column wait {wait}, reach {reach:?}, spawn eye {eye:?}");
                 support::streamed::streamed(support::streamed::Streamed {
                     label: "the_tunnel_ray_region",
                     source: std::sync::Arc::new(OutdoorSource::new(1)),
-                    eye: vxe_world::VoxelCoord([221, -5, 493]),
+                    eye: svet_world::VoxelCoord([221, -5, 493]),
                     camera,
                     sky: noon,
                     styles: Vec::new(),
@@ -169,7 +169,7 @@ mod defects {
         /// switch's frame: (ii)'s line), the mean and p99 of `|old - new|`, the mean
         /// `|old - new| / max(new, 8)`, and the step's sign (old under new, over). The
         /// frame-to-frame p99 over the cast pixels at frames 60 and 120. Printed.
-        /// `VXE_TEST_ADAPTER` picks the adapter.
+        /// `SVET_TEST_ADAPTER` picks the adapter.
         #[test]
         #[ignore = "reading"]
         fn the_ray_region_lands() {
@@ -191,7 +191,7 @@ mod defects {
                 support::streamed::Streamed {
                     label: "the_ray_region_lands",
                     source: std::sync::Arc::new(OutdoorSource::new(1)),
-                    eye: vxe_world::VoxelCoord([221, -5, 493]),
+                    eye: svet_world::VoxelCoord([221, -5, 493]),
                     camera,
                     sky: noon,
                     styles: Vec::new(),
@@ -201,14 +201,14 @@ mod defects {
                     hold: Some(support::streamed::Hold {
                         r_lod: 24,
                         wait: false,
-                        reach: vxe_render::ReachMode::Full,
+                        reach: svet_render::ReachMode::Full,
                     }),
                 },
                 |f, device, queue, frame| {
-                    use vxe_render::debug::{read_rgba8, read_rgba32f};
+                    use svet_render::debug::{read_rgba8, read_rgba32f};
                     if f == 0 {
-                        frame.set_lighting(vxe_render::Lighting {
-                            exposure: vxe_render::Exposure::Manual((-10.75f32).exp2()),
+                        frame.set_lighting(svet_render::Lighting {
+                            exposure: svet_render::Exposure::Manual((-10.75f32).exp2()),
                             ..frame.lighting()
                         });
                     }
@@ -381,8 +381,8 @@ mod defects {
 
         /// The sky visibility face `face` of voxel `v`'s own cell record holds in `store`
         /// (`store_sky_cell`), `None` where it holds none baked.
-        fn cell_sky(store: &vxe_render::Store, v: [i32; 3], face: u8, cell: i32) -> Option<f32> {
-            let block = store.block_words(vxe_world::ChunkCoord(v.map(|c| c.div_euclid(64))))?;
+        fn cell_sky(store: &svet_render::Store, v: [i32; 3], face: u8, cell: i32) -> Option<f32> {
+            let block = store.block_words(svet_world::ChunkCoord(v.map(|c| c.div_euclid(64))))?;
             let l = v.map(|c| c.rem_euclid(64));
             let b = l.map(|c| c / 8);
             let dir = block[(b[0] + 8 * (b[1] + 8 * b[2])) as usize];
@@ -392,10 +392,10 @@ mod defects {
             let n = 8 / cell;
             let c = l.map(|k| (k % 8) / cell);
             let sub = (c[0] + n * (c[1] + n * c[2])) as usize;
-            let w = vxe_render::internals::BRICK_WORDS;
+            let w = svet_render::internals::BRICK_WORDS;
             let end = (dir >> 11) as usize;
             let at = (end + w * sub).checked_sub(w * (n * n * n) as usize)?;
-            vxe_render::internals::record_visibility(block.get(at..at + w)?, usize::from(face))
+            svet_render::internals::record_visibility(block.get(at..at + w)?, usize::from(face))
         }
 
         /// A frame on `rig` for Phase 16's readings: 320 x 180 native, the store's counters on, the
@@ -403,44 +403,44 @@ mod defects {
         /// the world baked whole when `bake`.
         fn defect_frame(
             rig: &mut support::terms::Rig,
-            sky: Option<vxe_render::sky::Sky>,
-            lighting: impl Fn(vxe_render::Lighting) -> vxe_render::Lighting,
-            hooks: vxe_render::LightHooks,
+            sky: Option<svet_render::sky::Sky>,
+            lighting: impl Fn(svet_render::Lighting) -> svet_render::Lighting,
+            hooks: svet_render::LightHooks,
             bake: bool,
-        ) -> vxe_render::Frame {
+        ) -> svet_render::Frame {
             defect_frame_fsr(rig, sky, lighting, hooks, bake, false)
         }
 
         /// [`defect_frame`], with `fsr2` at 320 x 180 internal under FSR 2 to 480 x 270.
         fn defect_frame_fsr(
             rig: &mut support::terms::Rig,
-            sky: Option<vxe_render::sky::Sky>,
-            lighting: impl Fn(vxe_render::Lighting) -> vxe_render::Lighting,
-            hooks: vxe_render::LightHooks,
+            sky: Option<svet_render::sky::Sky>,
+            lighting: impl Fn(svet_render::Lighting) -> svet_render::Lighting,
+            hooks: svet_render::LightHooks,
             bake: bool,
             fsr2: bool,
-        ) -> vxe_render::Frame {
+        ) -> svet_render::Frame {
             let mut f = if fsr2 {
-                let mut f = vxe_render::Frame::with_sizes(&rig.device, [320, 180], [480, 270]);
+                let mut f = svet_render::Frame::with_sizes(&rig.device, [320, 180], [480, 270]);
                 f.set_upscaler_kind(
                     &rig.device,
-                    vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default()),
+                    svet_render::UpscalerKind::Fsr2(svet_render::Fsr2Settings::default()),
                 );
                 f
             } else {
-                vxe_render::Frame::new(&rig.device, 320, 180)
+                svet_render::Frame::new(&rig.device, 320, 180)
             };
             f.set_count_store(true);
             f.set_light_hooks(hooks);
-            f.set_look(vxe_render::LookParams {
+            f.set_look(svet_render::LookParams {
                 far_normal: flythrough::LookPreset::DEFAULT.far_normal,
-                ..vxe_render::LookParams::default()
+                ..svet_render::LookParams::default()
             });
             f.set_material_styles(
                 &rig.queue,
                 &flythrough::outdoor_styles(flythrough::LeafShadow::Voxel),
             );
-            f.set_lighting(lighting(vxe_render::Lighting {
+            f.set_lighting(lighting(svet_render::Lighting {
                 lamp: false,
                 ..flythrough::default_lighting()
             }));
@@ -452,7 +452,7 @@ mod defects {
                     &mut rig.gpu,
                     &rig.world,
                     rig.world.extent(),
-                    &vxe_render::BakeSettings::default(),
+                    &svet_render::BakeSettings::default(),
                     &mut |_| {},
                 )
                 .expect("the store fits");
@@ -472,7 +472,7 @@ mod defects {
         /// frames after the last light stops on), the share of its edge's lighting pixels whose
         /// direct sample is off its at-rest mean by over 75 % a frame, the light pass's ms, the
         /// sky rays cast and the store's black count. Arms: the sky at the defaults, `sky_rays` 0,
-        /// and no sky (the lights alone: Plan 0058's mechanism). `VXE_TEST_ADAPTER` picks the
+        /// and no sky (the lights alone: Plan 0058's mechanism). `SVET_TEST_ADAPTER` picks the
         /// adapter.
         #[test]
         #[ignore = "reading"]
@@ -496,18 +496,18 @@ mod defects {
                 ("sky, rays 1, FSR 2, auto anchor 4", Some(noon), 1, true, Some(4.0)),
                 ("sky, rays 1, FSR 2, auto anchor 0", Some(noon), 1, true, Some(0.0)),
             ] {
-                let exposure = anchor.map_or(vxe_render::Exposure::Manual(e), |a| {
-                    vxe_render::Exposure::Auto(vxe_render::AutoExposure {
+                let exposure = anchor.map_or(svet_render::Exposure::Manual(e), |a| {
+                    svet_render::Exposure::Auto(svet_render::AutoExposure {
                         min: flythrough::cli::OUTDOOR_MIN,
                         max: flythrough::cli::OUTDOOR_MAX,
                         sky_anchor_ev: Some(a),
-                        ..vxe_render::AutoExposure::default()
+                        ..svet_render::AutoExposure::default()
                     })
                 });
                 let f = defect_frame_fsr(
                     &mut rig,
                     sky,
-                    |l| vxe_render::Lighting {
+                    |l| svet_render::Lighting {
                         exposure,
                         sky_rays: rays,
                         ..l
@@ -665,7 +665,7 @@ mod defects {
         /// frame and over 2 times the 5 x 5 neighbourhood's mean there), the share changing by over
         /// 16 levels, the sky rays cast and the history's mean age over the region, and the
         /// queue's dig state. Arms: `sky_rays` 0, 1, 1 with `no_clamp`, and the sun off
-        /// (`key_off`). `VXE_TEST_ADAPTER` picks the adapter.
+        /// (`key_off`). `SVET_TEST_ADAPTER` picks the adapter.
         #[test]
         #[ignore = "reading"]
         #[allow(clippy::too_many_lines, reason = "a reading's arms in one place")]
@@ -691,20 +691,20 @@ mod defects {
                     let d = [f[0] / h * c, f[1] / h * c, -s];
                     flythrough::camera_looking_at(p, [p[0] + d[0], p[1] + d[1], p[2] + d[2]])
                 };
-                let auto = vxe_render::Exposure::Auto(vxe_render::AutoExposure {
+                let auto = svet_render::Exposure::Auto(svet_render::AutoExposure {
                     min: flythrough::cli::OUTDOOR_MIN,
                     max: flythrough::cli::OUTDOOR_MAX,
-                    ..vxe_render::AutoExposure::instant()
+                    ..svet_render::AutoExposure::instant()
                 });
                 let mut f = defect_frame(
                     &mut rig,
                     Some(noon),
-                    |l| vxe_render::Lighting {
+                    |l| svet_render::Lighting {
                         exposure: auto,
                         sky_rays: rays,
                         ..l
                     },
-                    vxe_render::LightHooks {
+                    svet_render::LightHooks {
                         no_clamp,
                         key_off,
                         ..Default::default()
@@ -714,8 +714,8 @@ mod defects {
                 f.start_bake_queue(
                     &rig.queue,
                     &rig.gpu,
-                    vxe_render::queue_settings(),
-                    vxe_render::DEFAULT_BAKE_SLICE_MS,
+                    svet_render::queue_settings(),
+                    svet_render::DEFAULT_BAKE_SLICE_MS,
                 );
                 f.set_bake_coarse(8, 2);
                 let mut drained = None;
@@ -726,7 +726,7 @@ mod defects {
                         &rig.queue,
                         &rig.gpu,
                         &cam,
-                        &vxe_render::LightParams::headlamp(),
+                        &svet_render::LightParams::headlamp(),
                     );
                     if f.bake_queue().is_some_and(|q| q.empty()) {
                         drained = Some(i);
@@ -734,11 +734,11 @@ mod defects {
                     }
                 }
                 let st =
-                    vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_state(), 0, 32);
-                let ex = vxe_render::ExposureState::from_bytes(&st).current;
+                    svet_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_state(), 0, 32);
+                let ex = svet_render::ExposureState::from_bytes(&st).current;
                 let l = f.lighting();
-                f.set_lighting(vxe_render::Lighting {
-                    exposure: vxe_render::Exposure::Manual(ex),
+                f.set_lighting(svet_render::Lighting {
+                    exposure: svet_render::Exposure::Manual(ex),
                     ..l
                 });
                 let mut s = Stepper::new(&rig, f);
@@ -844,7 +844,7 @@ mod defects {
         }
 
         /// Plan 0086 Phase 16 reading 4 (defect 6, the clipped treads): [`treads_clip`] over
-        /// 128 frames under `sky_anchor_ev` none and 4, printed. `VXE_TEST_ADAPTER` picks the
+        /// 128 frames under `sky_anchor_ev` none and 4, printed. `SVET_TEST_ADAPTER` picks the
         /// adapter.
         #[test]
         #[ignore = "reading"]
@@ -861,7 +861,7 @@ mod defects {
         /// 4 times the stored one) mean level, printed with the exposure and the ceiling. `None`
         /// without an adapter.
         pub(in super::super) fn treads_clip(anchor: Option<f32>, frames: u32) -> Option<(f64, f64)> {
-            use vxe_render::debug::{read_rgba8, read_rgba16f, read_rgba32f};
+            use svet_render::debug::{read_rgba8, read_rgba16f, read_rgba32f};
             let (mut rig, cam) = support::terms::forest_rig()?;
             let sky = flythrough::daylight::Clock {
                 minutes: 15.0 * 60.0,
@@ -871,12 +871,12 @@ mod defects {
             let f = defect_frame(
                 &mut rig,
                 Some(sky),
-                |l| vxe_render::Lighting {
-                    exposure: vxe_render::Exposure::Auto(vxe_render::AutoExposure {
+                |l| svet_render::Lighting {
+                    exposure: svet_render::Exposure::Auto(svet_render::AutoExposure {
                         min: flythrough::cli::OUTDOOR_MIN,
                         max: flythrough::cli::OUTDOOR_MAX,
                         sky_anchor_ev: anchor,
-                        ..vxe_render::AutoExposure::instant()
+                        ..svet_render::AutoExposure::instant()
                     }),
                     ..l
                 },
@@ -909,8 +909,8 @@ mod defects {
                     tread_sum += f64::from(v);
                 }
             }
-            let st = vxe_render::debug::read_buffer(d, q, f.exposure_state(), 0, 32);
-            let state = vxe_render::ExposureState::from_bytes(&st);
+            let st = svet_render::debug::read_buffer(d, q, f.exposure_state(), 0, 32);
+            let state = svet_render::ExposureState::from_bytes(&st);
             let share = 100.0 * clip as f64 / hit.max(1) as f64;
             let mean = tread_sum / tread.max(1) as f64;
             println!(

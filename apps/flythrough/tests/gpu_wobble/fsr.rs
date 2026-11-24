@@ -2,12 +2,12 @@
 //! arm on the wobble rig's forest: the settle, eight still frames whose render-size hits are
 //! compared phase to phase, a 60-degree turn over 40 frames whose last 10 have their motion
 //! vectors checked against the hits' exact reprojection, then a hold of 120 frames whose first
-//! 31 read the accumulate pass's stage code (`vxe_render::Fsr2Stage`) per display pixel. The
+//! 31 read the accumulate pass's stage code (`svet_render::Fsr2Stage`) per display pixel. The
 //! still's changed far hits are split by distance band and by leaf or other material. Each row
 //! is printed; nothing is asserted.
 
 use super::*;
-use vxe_render::{Fsr2Stage, View, wgpu};
+use svet_render::{Fsr2Stage, View, wgpu};
 
 /// The hold's frames whose stage code is read (+0 to +30).
 const STAGED: usize = 31;
@@ -272,8 +272,8 @@ pub(super) fn fsr_split(rig: &mut Rig, cam0: Camera, arm: &Arm) {
         queue_step(rig, &mut s.frame, &cam0);
         s.run(rig, &cam0);
         let hits =
-            vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, s.frame.hit_positions());
-        let recs = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, s.frame.hit_records());
+            svet_render::debug::read_rgba32f(&rig.device, &rig.queue, s.frame.hit_positions());
+        let recs = svet_render::debug::read_rgba16u(&rig.device, &rig.queue, s.frame.hit_records());
         if let Some((a, ra)) = &last {
             changes.push(hit_change(a, &hits, eye0));
             let f = flip_split((a, ra), (&hits, &recs), eye0);
@@ -306,11 +306,11 @@ pub(super) fn fsr_split(rig: &mut Rig, cam0: Camera, arm: &Arm) {
         if fsr && k > MOTION_FROM {
             let x = s.frame.fsr2().unwrap();
             let hits =
-                vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, s.frame.hit_positions());
+                svet_render::debug::read_rgba32f(&rig.device, &rig.queue, s.frame.hit_positions());
             let mv = read_rg32f(rig, x.motion());
             let jitter = s
                 .frame
-                .params(&rig.gpu, &c, &vxe_render::LightParams::headlamp())
+                .params(&rig.gpu, &c, &svet_render::LightParams::headlamp())
                 .views[0]
                 .jitter;
             let rect = [0, 0, size[0], size[1]];
@@ -406,8 +406,8 @@ fn term_sums(rig: &mut Rig, cam0: Camera, arm: &Arm, exposure: Option<f32>) -> (
         .exposure_readout(&rig.device)
         .map(|r| r.exposure)
         .expect("a read-back");
-    s.frame.set_lighting(vxe_render::Lighting {
-        exposure: vxe_render::Exposure::Manual(exposure.unwrap_or(e)),
+    s.frame.set_lighting(svet_render::Lighting {
+        exposure: svet_render::Exposure::Manual(exposure.unwrap_or(e)),
         ..s.frame.lighting()
     });
     QUEUE_ON.with(|q| q.set(false));
@@ -493,14 +493,14 @@ pub(super) fn term_split(rig: &mut Rig, cam0: Camera, specs: &[&str]) {
 mod reading {
     use super::*;
 
-    /// Plan 0098 Phase 2's table: [`fsr_split`] over `VXE_WOBBLE_FSR` (arms separated by `;`,
+    /// Plan 0098 Phase 2's table: [`fsr_split`] over `SVET_WOBBLE_FSR` (arms separated by `;`,
     /// in [`Arm::from_spec`]'s tokens), by default the `calm` arm, its levers (the scale 1.3 and
     /// 1, 8 and 32 jitter phases, the far normal 2..6) and `albedo` at 1.5 and 1, on the
-    /// wobble rig's forest. `VXE_TEST_ADAPTER` picks the adapter.
+    /// wobble rig's forest. `SVET_TEST_ADAPTER` picks the adapter.
     #[test]
     #[ignore = "reading"]
     fn the_fsr2_stages_after_the_turn() {
-        let specs = std::env::var("VXE_WOBBLE_FSR").unwrap_or_else(|_| {
+        let specs = std::env::var("SVET_WOBBLE_FSR").unwrap_or_else(|_| {
             "calm;calm,scale=1.3;calm,scale=1;calm,phases=8;calm,phases=32;calm,farn=2/6;\
              albedo;albedo,scale=1"
                 .into()
@@ -513,15 +513,15 @@ mod reading {
         }
     }
 
-    /// Plan 0098 Phase 5's term split: [`term_split`] over `VXE_WOBBLE_TERMS` (arms separated
+    /// Plan 0098 Phase 5's term split: [`term_split`] over `SVET_WOBBLE_TERMS` (arms separated
     /// by `;`, the full arm first), by default `calm` (every term), `calm,keyoff` (the key
     /// light out: the sky term and the albedo), `albedo` (the albedo alone) and
     /// `calm,normals` (the normals view: the shading normal). The rig's forest has no lamp
-    /// (`lamp: false`), so the lamp terms read 0 here. `VXE_TEST_ADAPTER` picks the adapter.
+    /// (`lamp: false`), so the lamp terms read 0 here. `SVET_TEST_ADAPTER` picks the adapter.
     #[test]
     #[ignore = "reading"]
     fn the_far_flips_by_term() {
-        let specs = std::env::var("VXE_WOBBLE_TERMS")
+        let specs = std::env::var("SVET_WOBBLE_TERMS")
             .unwrap_or_else(|_| "calm;calm,keyoff;albedo;calm,normals".into());
         let Some((mut rig, cam0)) = forest_rig(8) else {
             return;

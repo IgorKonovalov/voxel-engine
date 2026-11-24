@@ -17,6 +17,13 @@ Rules:
 
 ## Next up
 
+### The rename's two owed steps: the GitHub repository and the manual release run (2026-11-24)
+
+From [Plan 0087](plans/done/0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md)'s close (v0.73.0, closed with both owed; nothing was pushed that night). Both are the owner's, in this order; the outputs go to `docs/plans/logs/0087.md` and this entry leaves when both are in.
+
+1. **Phase 5, before the merged main is pushed.** Rename `IgorKonovalov/voxel-engine` to `svet` in GitHub's Settings (General, Repository name), and make no repository under the old name (the redirect dies if one appears). Then in the main checkout: `git remote set-url origin https://github.com/IgorKonovalov/svet.git`. Checks: `gh repo view IgorKonovalov/svet --json name,url`; `git remote -v`; `git fetch origin`; `curl -sI https://github.com/IgorKonovalov/voxel-engine` answers `301` with a `location:` on `/IgorKonovalov/svet`. Until then the README's badge and releases link and `Cargo.toml`'s `repository` point at a URL that does not exist yet.
+2. **Phase 3's manual run, on main after the push the owner asks for** (`git push origin main`): `gh workflow run release.yml --ref main`, then `gh run watch`. Done when it uploads artifacts named `svet-tester-linux-x86_64` and `svet-tester-windows-x86_64` and both smoke steps are green (`gh run view`). It makes artifacts only, no Release and no tag; the next `v*` tag ships the first `svet-tester-*` archive.
+
 ### The record by rule at every opening, and the bake's key ray at its cap (2026-11-23)
 
 From [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 10 (its section "Phase 10 after its reading"; readings in `docs/plans/logs/0096.md`, "Phase 10a"). A small plan of its own, to run ahead of Plan 0099's Phase 1 (ruled at Plan 0096's close, 2026-11-23, v0.71.0). **Drafted 2026-11-24 as [Plan 0101](plans/0101-the-record-by-rule-at-every-opening-an-audit-on-the-real-scenes-first-then-the-three-exclusions-lifted.md) with [ADR-0085](adrs/0085-the-zero-record-is-ruled-on-the-mirror-as-it-stands-exact-by-the-re-list-not-by-the-columns-finality.md) (proposed); awaits the owner's go.** The draft carries the rule alone (the key ray is Plan 0100's Phase 2), puts the audit on the real scenes ahead of any behaviour change, and recommends running after Plan 0099 closes instead of ahead of its Phase 1 (its question 1); this entry leaves when the owner answers.
@@ -102,7 +109,7 @@ Noted 2026-11-17 by the Plan 0032 lane (Phase 6 readings): `--adapter radeon` an
 match no adapter name on the dev box and the fly-through runs on the RTX without a word; the
 iGPU needs `--adapter AMD`. A reading taken that way is labelled with the wrong machine. Fix as a
 chore: refuse (or print the adapters and exit) when no adapter matches, and accept the short
-names the tests' `VXE_TEST_ADAPTER` takes.
+names the tests' `SVET_TEST_ADAPTER` takes.
 
 ### A headless run at `--residency 3,4` hangs before its first frame
 
@@ -127,7 +134,7 @@ same classes.
 
 ### `StampedSource` shares its prefabs across placements
 
-Noted 2026-11-17 by the Plan 0032 lane (Phase 8, `docs/plans/logs/0032.md`): `vxe_world::StampedSource`
+Noted 2026-11-17 by the Plan 0032 lane (Phase 8, `docs/plans/logs/0032.md`): `svet_world::StampedSource`
 keeps its own rotated copy of the prefab for every placement, so a forest of about 3,850 trees
 would hold 3,850 copies (estimated 1 to 2 GB, not measured). The lane wrote a fly-through
 `ForestSource` over 64 shared prefabs instead. Engine follow-up: placements reference a shared
@@ -144,8 +151,8 @@ back, Select for the stats; at the next window session that has a pad.
 
 ### The gate tier's tests over the 10 s line, and its wall time
 
-Noted 2026-11-17 (Plan 0032's fix pass): a loaded gate run over flythrough, vxe-render and
-vxe-tester showed 22 tests over the 10 s line, all in flythrough GPU binaries (gpu_golden,
+Noted 2026-11-17 (Plan 0032's fix pass): a loaded gate run over flythrough, svet-render and
+svet-tester showed 22 tests over the 10 s line, all in flythrough GPU binaries (gpu_golden,
 gpu_fsr2, gpu_queue, gpu_loading and others); the log is archived at
 `~/Work/vxe-live-archive/plan-0032/m1-gate.log`. On lavapipe a `Frame::new` costs 2.4 to 2.8 s
 and a 16-frame mean about 0.08 s, so sharing one Frame across a test's arms cuts more than
@@ -190,6 +197,11 @@ threads and eight tests' independent arms on threads read **1133.2 s at `909a255
 line**, no test moved tier. Left: the ten GPU tests over the line at full clock by the ratio,
 listed in that file, each the gate's only test of its mechanism; the per-test fixed cost
 (pipeline compilation) is the engine pipeline cache's.
+
+Plan 0087's close (2026-11-24, `docs/nfr.md` section 7): 849.9 s quiet, the first gate at the
+full clock, under the line; 31 tests over the 10 s line there (`node scripts/test-times.mjs` on
+the lane's log), against the ten the chore expected by the ratio. Not read further at that
+close: which of the 31 share the two lavapipe threads with a neighbour and which are over alone.
 
 ### The light placement's eviction scan in a windowed glide
 
@@ -279,7 +291,7 @@ CI net for soak and sole marks, so a red run is owed a reading each week.
 
 Routed by the architect's amendment at the close review of [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) (its section "The close review's rulings"); none blocked the close (v0.71.0).
 
-- **The glide's `light place` where a default buffer evicts.** Phase 7's indexes and Phase 7b's stop took the eviction scan from up to 1 186 ms a sync to 2.16 / 6.19 ms p50 / p99 in the owner's windowed cave glide (the default buffer, 158 / 1 279 chunks evicted a sync) and 6.84 / 8.84 on the 1/16 stress rig (loaded), against "under 2 ms in a glide that evicts"; the bench, which evicts nothing, reads 1.07. What is left is the wanted set's collection (58 %) and sort (40 %) at every sync (`place_lights`, `crates/vxe-render/src/gpu_world/lights.rs`). The lever: keep the wanted set ordered across syncs and re-sort on a focus move only. **Taken as a phase of the "Slot words packed on the workers" plan** (ADR-0056) when it is drafted: the same thread, bench and glide.
+- **The glide's `light place` where a default buffer evicts.** Phase 7's indexes and Phase 7b's stop took the eviction scan from up to 1 186 ms a sync to 2.16 / 6.19 ms p50 / p99 in the owner's windowed cave glide (the default buffer, 158 / 1 279 chunks evicted a sync) and 6.84 / 8.84 on the 1/16 stress rig (loaded), against "under 2 ms in a glide that evicts"; the bench, which evicts nothing, reads 1.07. What is left is the wanted set's collection (58 %) and sort (40 %) at every sync (`place_lights`, `crates/svet-render/src/gpu_world/lights.rs`). The lever: keep the wanted set ordered across syncs and re-sort on a focus move only. **Taken as a phase of the "Slot words packed on the workers" plan** (ADR-0056) when it is drafted: the same thread, bench and glide.
 - **The listing census reads no bands.** `--queue-census` counts every surface chunk as near ("mid 0, far 0" on all four runs of Phase 9), so it is taken without the far-normal band; the in-view line's bands are right. Give the census the view's `Bands`, with a CPU test that a synthetic listing of 4 near, 4 mid and 4 far chunks prints those counts.
 - **Faceless chunks at the residency's edge reach the listing** (16, 27, 0 and 8 on the four runs): the worker's verdict counts a neighbour not streamed as open, and the outer neighbour of an edge chunk never streams. One listing each, no job. Left as is unless a census shows the count growing with the radius faster than the sphere's surface.
 - **The Portable profile's 720p is stretched to the window's shape** (the fly-through, `cli/settings.rs` `fixed_output`): a 16:9 frame scaled to 2530 x 1378 is about 3 % wide, no letterbox. The fix proposed: the hint's pixel count at the window's aspect (1 301 x 708 there), so no stretch, no bars, the same budget. With it, if the owner picks it (the plan's question 2): the fixed output as a readable row of the engine's profile, so a game that picks `Profile::Portable` is told.
@@ -312,11 +324,11 @@ Found at the close ([Plan 0097](plans/done/0097-the-exposures-anchor-by-the-sky-
 
 ### Plan 0094's leftovers (close review, 2026-11-20)
 
-Found at the close ([Plan 0094](plans/done/0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md), v0.68.0); none blocked it, each is a small fix when the area is next open. **A bar that does not see its mechanism:** `a_rare_hit_is_clamped` (`crates/vxe-render/tests/gpu_sun/history.rs`, soak) passes with the clamp off too (largest 0.1996 both ways); a clause on what the clamp changes, or a rig with more than one hit, would defend it. **Unread costs:** the no-record prior's arm A on the RENOIR at 1080p's half tier during a stamp's bake (a linear guess of 14.6 ms, `docs/nfr/02-frame-budget.md`; Plan 0096's RENOIR readings can take it) and the no-ray fade's temporal and composite cost.
+Found at the close ([Plan 0094](plans/done/0094-light-transitions-the-key-means-age-the-no-ray-prior-and-its-fades-the-hole-band-and-the-castle-fill-in.md), v0.68.0); none blocked it, each is a small fix when the area is next open. **A bar that does not see its mechanism:** `a_rare_hit_is_clamped` (`crates/svet-render/tests/gpu_sun/history.rs`, soak) passes with the clamp off too (largest 0.1996 both ways); a clause on what the clamp changes, or a rig with more than one hit, would defend it. **Unread costs:** the no-record prior's arm A on the RENOIR at 1080p's half tier during a stamp's bake (a linear guess of 14.6 ms, `docs/nfr/02-frame-budget.md`; Plan 0096's RENOIR readings can take it) and the no-ray fade's temporal and composite cost.
 
 ### Plan 0083's leftovers (close review, 2026-11-19)
 
-Found at the close ([Plan 0083](plans/done/0083-anything-from-a-vox-palette-materials-a-material-file-and-large-scenes-stamped-into-the-world.md), v0.66.0); none blocked it, each is a small fix pass when the area is next open. **Pending placements (`vxe-world`, ADR-0066's Outcome).** `World::stamp` takes `&Prefab`, so a placement past residency copies the prefab into a fresh `Arc` (`stamp.rs`, the `Placement` push) instead of sharing the registry's, and a rotated stamp materialises its rotation once more: bounded by the pending prefabs' bytes (the castle's 45 MB again at most), a `stamp` over the `Arc` removes it. The poll thread blits every placement an inserted chunk lists under the store's write lock (`stream/mod.rs`, `commit_residency`), up to a 64³ blit per placement while every reader waits; blit into the held chunk first, then apply only what arrived since under the lock. A placement whose remaining coordinates lie outside a finite `World::extent`, or where the camera never goes, lives for the session; drop the coordinates a finite extent can never stream at stamp time and report the pending bytes beside the count. Two stamps on one world at once (not reachable through the server, whose ops are serial) can order an overlap differently in resident and pending chunks: say in `stamp`'s doc that the caller serialises stamps. **Scenes (`vxe-assets`).** `VoxScene::load` honours a hidden layer only on the outermost layered transform of a path (`scene.rs`, the group arm): a shape on a hidden layer under a group on a visible one is hidden in MagicaVoxel and placed here; check every transform's layer and add the nested case to `hidden_layers_and_nodes_are_not_placed`. The grammar example in `materials.rs`'s crate doc and a comment in `rows.rs` name the fly-through's castle and torch; a neutral example costs nothing. **The coarse grain (`vxe-render`).** Instance word 27 and the inverse map are derived from the one f32 grain `detail / coarse` and inverted, one ulp off for coarse 7, 13, 14 and 15; write word 27 as `coarse / detail` directly. **The testbed.** The placed notice counts the ops submitted, not the tick's applied events, and `register_prefab`'s errors are dropped, so a stamp refused at the tick still reads `placed`. A click while the ghost body's worker is building the same scaled scene builds it again on the frame thread (`scene_at`); refuse with `building` or wait on the worker. `Entry::refusal` adds the 1 m margin on every axis while the air box adds it above only and `clear box` off adds none, and prints the un-margined size it did not check. `Modes::edit_axis_max` starts at the default until a slot is entered, so the chooser's belt row can show the wrong verdict on a world with another limit. `a_key_places_as_the_click_does` compares prefab ids, not `(prefab, origin, rot)`; `a_placed_structure_is_logged_stamps` pins the chapel's per-row counts as a sorted list, losing row identity. `run/structure_tests.rs` is at 1169 of 1200 lines; the next test splits it (the ghost and icon tests to a sibling). **Owed readings (the plan's Budgets table).** The live queue's settle after a runtime castle (two 1500-frame headless runs never drained the queue, with or without the castle, `docs/plans/logs/0083.md` Phase 8: a longer run or a quiet queue is needed), `VmHWM` at `--frames 3000` with and without `--castle` (the prefab bytes fell from 343 MB to 45 MB; the RSS was not re-read), the first frame with `--vox chapel` against the plain cave over three runs, the material term of `GpuWorld::mirror_bytes` with the chapel's 255 rows, and `--census` for `Wide` bricks with the castle placed. Pick up with the next plan on structures (0084) or a readings chore.
+Found at the close ([Plan 0083](plans/done/0083-anything-from-a-vox-palette-materials-a-material-file-and-large-scenes-stamped-into-the-world.md), v0.66.0); none blocked it, each is a small fix pass when the area is next open. **Pending placements (`svet-world`, ADR-0066's Outcome).** `World::stamp` takes `&Prefab`, so a placement past residency copies the prefab into a fresh `Arc` (`stamp.rs`, the `Placement` push) instead of sharing the registry's, and a rotated stamp materialises its rotation once more: bounded by the pending prefabs' bytes (the castle's 45 MB again at most), a `stamp` over the `Arc` removes it. The poll thread blits every placement an inserted chunk lists under the store's write lock (`stream/mod.rs`, `commit_residency`), up to a 64³ blit per placement while every reader waits; blit into the held chunk first, then apply only what arrived since under the lock. A placement whose remaining coordinates lie outside a finite `World::extent`, or where the camera never goes, lives for the session; drop the coordinates a finite extent can never stream at stamp time and report the pending bytes beside the count. Two stamps on one world at once (not reachable through the server, whose ops are serial) can order an overlap differently in resident and pending chunks: say in `stamp`'s doc that the caller serialises stamps. **Scenes (`svet-assets`).** `VoxScene::load` honours a hidden layer only on the outermost layered transform of a path (`scene.rs`, the group arm): a shape on a hidden layer under a group on a visible one is hidden in MagicaVoxel and placed here; check every transform's layer and add the nested case to `hidden_layers_and_nodes_are_not_placed`. The grammar example in `materials.rs`'s crate doc and a comment in `rows.rs` name the fly-through's castle and torch; a neutral example costs nothing. **The coarse grain (`svet-render`).** Instance word 27 and the inverse map are derived from the one f32 grain `detail / coarse` and inverted, one ulp off for coarse 7, 13, 14 and 15; write word 27 as `coarse / detail` directly. **The testbed.** The placed notice counts the ops submitted, not the tick's applied events, and `register_prefab`'s errors are dropped, so a stamp refused at the tick still reads `placed`. A click while the ghost body's worker is building the same scaled scene builds it again on the frame thread (`scene_at`); refuse with `building` or wait on the worker. `Entry::refusal` adds the 1 m margin on every axis while the air box adds it above only and `clear box` off adds none, and prints the un-margined size it did not check. `Modes::edit_axis_max` starts at the default until a slot is entered, so the chooser's belt row can show the wrong verdict on a world with another limit. `a_key_places_as_the_click_does` compares prefab ids, not `(prefab, origin, rot)`; `a_placed_structure_is_logged_stamps` pins the chapel's per-row counts as a sorted list, losing row identity. `run/structure_tests.rs` is at 1169 of 1200 lines; the next test splits it (the ghost and icon tests to a sibling). **Owed readings (the plan's Budgets table).** The live queue's settle after a runtime castle (two 1500-frame headless runs never drained the queue, with or without the castle, `docs/plans/logs/0083.md` Phase 8: a longer run or a quiet queue is needed), `VmHWM` at `--frames 3000` with and without `--castle` (the prefab bytes fell from 343 MB to 45 MB; the RSS was not re-read), the first frame with `--vox chapel` against the plain cave over three runs, the material term of `GpuWorld::mirror_bytes` with the chapel's 255 rows, and `--census` for `Wide` bricks with the castle placed. Pick up with the next plan on structures (0084) or a readings chore.
 
 ### A pipeline cache owned by the engine, for the renderer's shaders
 
@@ -347,7 +359,7 @@ Drafted 2026-11-24 as [Plan 0102](plans/0102-remove-own-the-engines-own-upscaler
 
 Noted 2026-11-16 from Plan 0075 Phase 7b (`docs/plans/logs/0075.md`, session 75c; RTX host). With
 every pipeline built on the start-up worker, one loading gap stays at the first "lighting the near
-chunks" frames, cold only (warm max 87 ms). Every `vxe-render` compute pipeline exists before it,
+chunks" frames, cold only (warm max 87 ms). Every `svet-render` compute pipeline exists before it,
 so the time is something else the driver does on first use. The owner noticed no hitch and
 accepted it. Pick up when a start-up or first-frame plan needs the bar, with a driver trace.
 
@@ -362,7 +374,7 @@ read on the castle. Pick up with the next start-up plan, or when a tester report
 
 ### A CPU-drawn first frame before the device
 
-Parked 2026-11-16 by the owner at Plan 0075's Phase 6b (`docs/plans/logs/0075.md`). Since 6b the window shows a static loading frame 0.3 to 0.4 s after process start on the RTX (0.2 to 0.3 s on the Radeon iGPU), drawn by the GPU right after the device. What is left before it is the instance (78 to 244 ms), the device and the surface's configure. In two runs, the first launch after a pause, the instance took about 1.6 s (a guess: the NVIDIA dGPU waking; not confirmed). On Wayland nothing shows until a buffer is attached, so a frame before the device needs a CPU-filled buffer: the `softbuffer` crate (rust-windowing, winit's org; wl_shm on Linux, GDI on Windows), or the same by hand per platform. Windows already paints a window's class background at once. Cost: a dependency and its ADR, about 100 lines in `vxe-app`'s shell, and the window's surface handed from the CPU buffer to wgpu's swapchain, read on both platforms. What it takes: a reading of how often the slow instance happens on testers' machines (the `start-up:` lines in run logs), then a small plan. Pick up if a tester reports a blank window at start.
+Parked 2026-11-16 by the owner at Plan 0075's Phase 6b (`docs/plans/logs/0075.md`). Since 6b the window shows a static loading frame 0.3 to 0.4 s after process start on the RTX (0.2 to 0.3 s on the Radeon iGPU), drawn by the GPU right after the device. What is left before it is the instance (78 to 244 ms), the device and the surface's configure. In two runs, the first launch after a pause, the instance took about 1.6 s (a guess: the NVIDIA dGPU waking; not confirmed). On Wayland nothing shows until a buffer is attached, so a frame before the device needs a CPU-filled buffer: the `softbuffer` crate (rust-windowing, winit's org; wl_shm on Linux, GDI on Windows), or the same by hand per platform. Windows already paints a window's class background at once. Cost: a dependency and its ADR, about 100 lines in `svet-app`'s shell, and the window's surface handed from the CPU buffer to wgpu's swapchain, read on both platforms. What it takes: a reading of how often the slow instance happens on testers' machines (the `start-up:` lines in run logs), then a small plan. Pick up if a tester reports a blank window at start.
 
 ### The baked key record's cell blend carries light across a shadow edge
 
@@ -527,7 +539,7 @@ waited for is done (2026-11-20, the showcase's palette).
 ### Ambient occlusion driving a per-material colour ramp
 
 Parked 2026-11-12 (owner, from the video "the voxel rendering tech nobody talks about", youtube.com/watch?v=1gxcNUUc37Y). Instead of darkening albedo by AO, AO picks a colour along a per-material ramp: snow white to cyan to deep blue in crevices, sand yellow to red, grass bright to deep green. The video's form: per material `light`/`mid`/`dark` colours plus `t_mid`/`t_high` thresholds, `mix(mix(dark, mid, smoothstep(0, t_mid, ao)), bright, smoothstep(t_high, 1, ao))`; AO is per-corner neighbour occupancy shaped by `pow(ao, 1.5)`; fixed face weights (up 1.0, down 0.1, x 0.5, z 0.9) and side faces capped at 0.7 of the ramp; each colour hue-rotated by low simplex noise over world xz for variety.
-- **Our gap:** `vxe-render` has no AO term; ambient comes from the baked brick light (Plan 0059). `Material` carries one `albedo`.
+- **Our gap:** `svet-render` has no AO term; ambient comes from the baked brick light (Plan 0059). `Material` carries one `albedo`.
 - **The cheap input:** at a ray hit the voxel and face are known, so the face's 8 neighbours give corner AO, interpolated at the hit point. Analytic, no noise, no history, so it keeps the image stable.
 - **Open look question:** drive the ramp by local corner AO, by the baked sky or ambient light, or both, so a cave reads tinted rather than only dark. Decide by eye in the window.
 - **What it takes:** a look spike (corner AO at the hit, an optional ramp beside `albedo`, the hue jitter) with an owner window; an ADR if the material row changes shape.
@@ -674,7 +686,7 @@ sources show and the plan does not take: **a translucent ghost** (Valheim's look
 translucent entity voxels in `entity.wgsl`, composited with the world's layers), **model icons
 as an engine facility** (the plan makes them in the fly-through on the CPU through
 `EntitySet::raycast`; a consumer with an inventory wants the same renderer, so it moves to
-`vxe-entity` or `vxe-assets` when a second user appears), **"pick" the aimed entity into the
+`svet-entity` or `svet-assets` when a second user appears), **"pick" the aimed entity into the
 belt** (Minecraft's middle click) and **several belts** (Satisfactory's ten). Pick up when a
 consumer or the owner asks for one; the first two are small plans, the last two are rows in
 Plan 0077's key table.
@@ -696,7 +708,7 @@ runs creatures on its server tick.
 ### Pathfinding over the coarse grid and the walkable map
 
 Parked 2026-11-18 at Plan 0079's close (owner question 3 took the recommendation: a seeded
-wander in the fly-through, no pathfinding). The engine now has the movers (`vxe-sim`'s cylinder
+wander in the fly-through, no pathfinding). The engine now has the movers (`svet-sim`'s cylinder
 controller and sphere surface mover), `probe_ahead`, the coarse grid and the per-brick walkable
 map (0.8 m cells); a creature that goes somewhere needs a path over them. **What it takes:** a
 search over the walkable cells (and, for a crawler, over faces: the gradient and the contact
@@ -708,7 +720,7 @@ creature that hunts or flees rather than wanders.
 
 ### Hundreds or thousands of entities
 
-Parked 2026-11-16 by the owner ("minecraft can have thousands of entities"). Today: `MAX_ENTITIES` 64, `MAX_ENTITY_PARTS` 512 (`vxe-render` `entities.rs`), 6 instance bits in the hit record. The cost is the trace, not the caps: Plan 0062 Phase 4 (`docs/plans/logs/0062.md`) read 64 walkers at +3.4 to 4.4 ms on the RTX 3080 Laptop and +32 to 34 ms on the Radeon iGPU, growing with screen cover and shadowing lights. **Hundreds:** wider caps and hit bits, the instance tree built on the GPU, coarse far models, shadow rays testing only entities near their light (one or two plans, no ADR). **Thousands:** entities rasterized into the hit buffer beside the traced world, which reverses ADR-0050's choice: an ADR and a spike first. **The owner's direction (2026-11-16): trace only the near ones, merge the crowded ones.** Distance tiers: near entities traced in full; mid ones traced on a coarse merged model (parts folded into one volume at detail 1); far ones as one box or impostor, or dropped below a pixel. Clusters: entities sharing a spot re-voxelized together at low resolution on the GPU each frame (or every few) into one cluster volume, walked once per ray instead of once per overlapping entity. Shadow rays test the near tier only. The server's ray query stays exact per entity; the tiers are render-only. Pick up when a consumer needs more than 64 on screen. Sharpened 2026-11-19 (Bonsai's 1.1.0 and 1.3.10 notes): the CPU side needs a per-chunk entity list as the broadphase (the mover's sweeps and the entity ray query walk the chunk's list, not every instance) and an LRU eviction of models from the pool when the library outgrows it, on top of Plan 0078's free list.
+Parked 2026-11-16 by the owner ("minecraft can have thousands of entities"). Today: `MAX_ENTITIES` 64, `MAX_ENTITY_PARTS` 512 (`svet-render` `entities.rs`), 6 instance bits in the hit record. The cost is the trace, not the caps: Plan 0062 Phase 4 (`docs/plans/logs/0062.md`) read 64 walkers at +3.4 to 4.4 ms on the RTX 3080 Laptop and +32 to 34 ms on the Radeon iGPU, growing with screen cover and shadowing lights. **Hundreds:** wider caps and hit bits, the instance tree built on the GPU, coarse far models, shadow rays testing only entities near their light (one or two plans, no ADR). **Thousands:** entities rasterized into the hit buffer beside the traced world, which reverses ADR-0050's choice: an ADR and a spike first. **The owner's direction (2026-11-16): trace only the near ones, merge the crowded ones.** Distance tiers: near entities traced in full; mid ones traced on a coarse merged model (parts folded into one volume at detail 1); far ones as one box or impostor, or dropped below a pixel. Clusters: entities sharing a spot re-voxelized together at low resolution on the GPU each frame (or every few) into one cluster volume, walked once per ray instead of once per overlapping entity. Shadow rays test the near tier only. The server's ray query stays exact per entity; the tiers are render-only. Pick up when a consumer needs more than 64 on screen. Sharpened 2026-11-19 (Bonsai's 1.1.0 and 1.3.10 notes): the CPU side needs a per-chunk entity list as the broadphase (the mover's sweeps and the entity ray query walk the chunk's list, not every instance) and an LRU eviction of models from the pool when the library outgrows it, on top of Plan 0078's free list.
 
 ### Jelly entities: see-through glowing voxels, and true soft bodies
 
@@ -1018,18 +1030,18 @@ ahead of the follow-on light plan's first window. Item (4) done 2026-11-24 on br
 
 Found 2026-11-17 at Plan 0088's close review. `apps/flythrough/tests/gpu_path.rs`
 (`a_path_run_writes_its_report`, soak) and `gpu_frame_waits.rs` print "skipped: no adapter" and
-pass when the fly-through finds no adapter, without the `VXE_REQUIRE_SOFTWARE_ADAPTER=1` panic
+pass when the fly-through finds no adapter, without the `SVET_REQUIRE_SOFTWARE_ADAPTER=1` panic
 that `gpu_loading.rs`'s first helper has. `soak.yml` and `ci.yml`'s Linux arm set the variable,
 so a runner without lavapipe passes these tests green. What it takes: the same three-line check
 in both, or one helper in `tests/support/` they call. A dev chore of minutes.
 
 ### Comment, manifest and index drift found by the 2026-11-12 review
 
-Parked 2026-11-12; a dev chore of one commit, no plan. Read again 2026-11-24, all still there: `apps/flythrough/examples/world_budget.rs` describes ADR-0011's attribute pages and planes ("contour" lines), removed in Plan 0054. `apps/flythrough/tests/gpu_lights.rs` says "the emissive table's path" (deleted in Plan 0059) and "Reservoir reuse's bar", `crates/vxe-render/src/exposure.rs` "reservoirs", `apps/flythrough/tests/gpu_upscale.rs` "reservoir textures" (Plan 0057). `crates/vxe-world/Cargo.toml` and `crates/vxe-render/Cargo.toml` carry `description = "placeholder; see docs/roadmap.md"`, and no crate sets `publish = false`. `vxe-render/tests/gpu_frame.rs` calls `lamp_bounce` off "the default", which is the library's default and not the fly-through's. Pick up with the next chore lane, or with Plan 0087 (the rename), which rewrites the manifests anyway.
+Parked 2026-11-12; a dev chore of one commit, no plan. Read again 2026-11-24, all still there: `apps/flythrough/examples/world_budget.rs` describes ADR-0011's attribute pages and planes ("contour" lines), removed in Plan 0054. `apps/flythrough/tests/gpu_lights.rs` says "the emissive table's path" (deleted in Plan 0059) and "Reservoir reuse's bar", `crates/svet-render/src/exposure.rs` "reservoirs", `apps/flythrough/tests/gpu_upscale.rs` "reservoir textures" (Plan 0057). `crates/svet-world/Cargo.toml` and `crates/svet-render/Cargo.toml` carry `description = "placeholder; see docs/roadmap.md"`, and no crate sets `publish = false`. `svet-render/tests/gpu_frame.rs` calls `lamp_bounce` off "the default", which is the library's default and not the fly-through's. Pick up with the next chore lane, or with Plan 0087 (the rename), which rewrites the manifests anyway.
 
-### The 64 private-intra-doc-link warnings in `cargo doc -p vxe-render`
+### The 64 private-intra-doc-link warnings in `cargo doc -p svet-render`
 
-Noted 2026-11-17 from Plan 0069 Phase 2 (`docs/plans/logs/0069.md`): `cargo doc -p vxe-render
+Noted 2026-11-17 from Plan 0069 Phase 2 (`docs/plans/logs/0069.md`): `cargo doc -p svet-render
 --no-deps` prints 64 `private_intra_doc_links` warnings (cargo's count), none on a line that plan
 wrote; its done-when was amended to "no new warnings from this plan's files". Owner 2026-11-17: fix
 them in a separate chore later. What it takes: make each linked item `pub` or `pub(crate)`-doc it
@@ -1078,7 +1090,7 @@ Three threads is an owner question from that chore.
 ### `split-debuginfo` on Linux only (owner question)
 
 Parked 2026-11-13 at Plan 0072's close. `[profile.dev] split-debuginfo = "unpacked"` cut the
-`vxe-world` quick-tier rebuild further (12.2 to 12.5 s against 17.8 to 22.4 with line tables
+`svet-world` quick-tier rebuild further (12.2 to 12.5 s against 17.8 to 22.4 with line tables
 alone; the target dir 7.6 GB against 12.2) but rustc rejects it on `x86_64-pc-windows-msvc` and
 wasm32, and a profile cannot scope it to a target. The Linux-only form is `rustflags =
 ["-Csplit-debuginfo=unpacked"]` under `[target.x86_64-unknown-linux-gnu]` in a new
@@ -1102,7 +1114,7 @@ history below stays until the architect's clean-up.
 
 Read 2026-11-05 on 7cd77ad (`docs/nfr.md` section 7): 1313.4 s, about 22 minutes, loaded, against the 12 min proposal, with the two tests then over the 30 s line already on the soak list. `flythrough::settle` is the largest binary at 338 s. Ruled 2026-11-05 on the four tests over the line in that run: `the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose` split (the every-pose test on the soak list; the primary pose alone stays in the gate at 9.2 s), `castle_gate_golden` went back under with its warm-up removed (25.7 s cold, 7.4 s warm, alone), and `smoothed_normals_cut_the_normal_error_and_move_no_hit` and `a_face_hidden_from_every_eye_is_settled_before_it_is_seen` stay (23.9 s and 24.1 s alone). Those two move only if a gate run started on a quiet machine reads them over the line. Moving all four would save at most about 95 s of serial time, so this is not how the budget gets met. Still owed: either cut the slowest `settle` and `golden` tests or re-set the proposal. Much of `settle`'s time goes with the table at Plan 0059's deletion, so re-read then. `the_lamp_toggle_opens_the_light_window` read 98.0 s on CI's last red run, on an older tree, and reads 18.0 s here, so it stays in the gate; CI's next run shows whether it is still over the 60 s line. Pick up as a dev chore when the owner next wants the gate faster or CI green. Read 2026-11-12 (the architecture review, on `live/plan-0068/merge-gate.log`): 809 tests, 610 s; the 177 lavapipe tests sum to 610 s serial, the whole wall, the 632 CPU tests to 273 s beside them, so the lever is the lavapipe group's thread count or the GPU tests' pixels, not the CPU tests; [Plan 0072](plans/done/0072-development-speed-the-build-graph-a-narrowed-gate-and-one-compile-per-ci-profile.md) Phase 4 measures the group at 2 and 3 (drafted, awaiting go). Read 2026-11-09 at Plan 0059's close (`docs/nfr.md` section 7): 850.2 s with `settle` back in the gate and none over the 30 s line, still over the 12 min proposal; the re-read of the proposal stays owed. Read 2026-11-08 on CI's Linux arm, Mesa 26.2.6, the GPU tests in parallel: the same tests move 25 to 40 % between runs (`a_face_hidden_from_every_eye_is_settled_before_it_is_seen` 55.6 s on run 42470428595 and 77.6 s on 42477325818; `the_lamp_toggle_opens_the_light_window` 53.2 then 70.5; `fsr2_adds_little_flicker_on_a_still_vein` 49.8 then 62.8), with several more between 45 and 58 s, so moving tests one push at a time does not converge. Ruled 2026-11-08 (owner): CI's budget step warns per test over 60 s instead of failing the push, until the light work settles; a test that stays over moves to the soak list by hand. Still owed: the architect re-reads `docs/nfr.md` section 7's 60 s line (it says a test over the line moves to the soak list; CI no longer enforces it), at Plan 0059's deletion or when the owner next wants the gate faster. Also ruled 2026-11-08 (owner), from run 42477325818 (2972 s summed over 727 gate tests, 27 tests at 30 s or more holding 41 % of it): the whole `flythrough::settle` binary (34 tests, 746 s) moves to the soak list until Plan 0059's deletion phase decides the table, and CI's Windows arm runs every CPU test but only a GPU smoke set (the `ci-windows` profile: the shutdown and walk binaries and one golden), since WARP skips the image bars and runs a test 10 to 20 times slower than lavapipe. Both are tier moves, not deletions. **Read 2026-11-18 at Plan 0079's close** (`docs/nfr.md` section 7): 1208.2 s on 1174 tests, loaded (load 16.9 at the lock), over the 19 min line the owner set the same day; the plan's own tests add about 17 s outside the serial lavapipe group. A quiet re-read is owed before the line is judged again.
 
-### `vxe-render::exposure` hangs on WARP since Plan 0057 Phase 7
+### `svet-render::exposure` hangs on WARP since Plan 0057 Phase 7
 
 Read 2026-11-06 to 2026-11-09 over seven CI runs; the full record with its tables is in this file's history at `193cae15`. On WARP (`Microsoft Basic Render Driver`, DX12, wgpu `=30.0.1`) frame 0 never finished whenever the per-face table's preload ran: any submission between the preload's args pass and `shade_preload` that touched a buffer `shade_preload` then used hung it, at any table size. The words read back were right, no unbounded loop or bad barrier was found on paper, and the D3D12 debug layer without GPU-based validation cleared the hang and reported no misuse, which points at a race inside WARP, not at a state wgpu records.
 
@@ -1133,6 +1145,9 @@ in. What did: the driver re-registered (`passive` then `active` written to
 re-register leaves the energy preference at `balance_performance`. Readings from 2026-11-23
 15:14 to then are at the cap; the gate's 1133.2 s is one of them and is owed a re-read at the
 full clock. The lane rules' check is still owed.
+
+**Re-read 2026-11-24 (Plan 0087's gate, `27cb1c65`):** 849.9 s quiet at the full clock, 1363
+tests (`docs/nfr.md` section 7). The lane rules' check is still owed.
 
 ### The RTX laptop's TSC is marked unstable: hot-loop timings since 2026-11-05 are inflated
 
@@ -1201,7 +1216,7 @@ finds the same defect twice.
 ### Mouse pointing and text events for the apps' menu
 
 Parked 2026-11-16 from Plan 0080's draft (owner question 4, recommended later; ADR-0061's
-negatives). `vxe_app::Input` reports no cursor position and no text events, so the menu is keys,
+negatives). `svet_app::Input` reports no cursor position and no text events, so the menu is keys,
 wheel and clicks, and its palette types from `KeyCode` (wrong letters on a non-QWERTY layout).
 What it takes: `Input::cursor` from winit's `CursorMoved`, the cursor unlocked and shown while
 the menu is open (the shell's `lock_cursor` toggled at run time, with the Wayland grab quirks
@@ -1248,7 +1263,7 @@ sky. A second pass (2026-11-19, read against this file) added the entries from "
 performance tracking" on, the profiler (Plan 0091) and WGSL hot reload (Plan 0092).
 
 **Rejected as alternatives (2026-11-19), so nobody re-opens them from Bonsai:** its 2.0 moved
-generation and editing to the GPU; ours stay on the CPU in `vxe-world`, headless and
+generation and editing to the GPU; ours stay on the CPU in `svet-world`, headless and
 deterministic (ADR-0001, the non-negotiables), and a GPU source would break replay from seed
 plus log (ADR-0007). Its 1.6.2 stores a 16-bit HSV colour per voxel; ours stores a material id
 whose row carries colour, class and an opaque payload (ADR-0065), so a colour change is a row
@@ -1287,7 +1302,7 @@ chunk boxes). We have a cutaway view, the HUD's text grid and the entity mark (A
 way to draw a chunk's box, a sweep's path, a light's reach or a job's chunk in the world.
 **What it takes:** a line list the app fills each frame (world-space segments with a colour),
 drawn by one render pass after the composite and depth-tested against the hit buffer's
-distance, so a line behind rock hides; `vxe-render` owns the pass, the app owns the list.
+distance, so a line behind rock hides; `svet-render` owns the pass, the app owns the list.
 Size M. M7's debug views (material ids, coarse grids, flags) need it as their canvas.
 **Pick up** with the first M7 debug view, or when a streaming or collision entry above needs
 to see where a job or a sweep went.
@@ -1295,7 +1310,7 @@ to see where a job or a sweep went.
 ### Per-job performance tracking: reserve, retire and scopes per streaming and bake job
 
 Raised 2026-11-19 (Bonsai's `work_queue.h` `TrackPerformance` flag; its debug view draws a
-job's scopes over its reserve-to-retire span). Our streaming workers (`vxe-world`
+job's scopes over its reserve-to-retire span). Our streaming workers (`svet-world`
 `stream/mod.rs`) and the bake queue's jobs are timed as stages and per-second lines, never as
 one job from its queueing to its retirement, so a job that waits long and runs short reads the
 same as one that runs long. **What it takes:** a job id and a reserve and retire frame index on
@@ -1312,14 +1327,14 @@ polling. Ours poll: the live queue re-checks each frame whether a chunk's reach 
 before its bake may run (the "reach-bound" census). **What it takes:** a group counter on the
 streaming pool's jobs and a continuation the last one fires (the bake request for the group),
 scheduling only, no change to what a job computes, so determinism holds. Size S to M, in
-`vxe-world`'s pool with the bake queue as the first client. **Pick up** when the settle
+`svet-world`'s pool with the bake queue as the first client. **Pick up** when the settle
 readings (the entries under Next up) name the poll's latency, not the bake, as the wait.
 
 ### Edit coalescing per chunk per tick: a check first
 
 Raised 2026-11-19 (Bonsai's 1.6.1 notes, per the research pass: several edits on one chunk in a
 tick give one re-mesh). Ours should already coalesce: `sync` visits the world's dirty-chunk set
-(`vxe-render` `gpu_world/mod.rs`), a set, so two ops on one chunk between syncs should give one
+(`svet-render` `gpu_world/mod.rs`), a set, so two ops on one chunk between syncs should give one
 upload. Not asserted anywhere read. **What it takes:** a headless test that applies two carves
 on one chunk, syncs once, and reads one chunk upload from the sync's counters; if it reads two,
 the fix is in the dirty set's handling. Size S. **Pick up** at the next sync or edit-cost plan.
@@ -1329,8 +1344,8 @@ the fix is in the dirty set's handling. Size S. **Pick up** at the next sync or 
 Bonsai reloads its game library when the file changes (`game_loader.cpp`). We can go further:
 swap the WASM component when it is rebuilt, then replay the op and input log from the seed to
 the current tick, so state stays exact (determinism is what makes this possible). **What it
-takes:** a watcher in the fly-through and a re-instance in `vxe-script-wasm`, driven through
-`vxe-net`'s log. Size S to M. **Pick up with** the authoring loop (ADR-0072), or sooner if
+takes:** a watcher in the fly-through and a re-instance in `svet-script-wasm`, driven through
+`svet-net`'s log. Size S to M. **Pick up with** the authoring loop (ADR-0072), or sooner if
 writing logic gets slow. Sharpened 2026-11-19: one mtime watcher in the fly-through should
 serve every reloadable file: the WGSL (Plan 0092 builds the watcher), this component, and the
 settings file (Bonsai's `settings.init` and `hotkeys.init` are parsed by struct member name,
@@ -1341,7 +1356,7 @@ its 1.4.2 notes), so a second reload adds a path and a handler, not a second pol
 Bonsai's generation shapes (solid or air, with colour), takes the gradient, then decorates with
 the surface normal in hand: cliff rock on steep faces, grass on flat ground. Its user stages
 hot-reload in a playground (`docs/terrain_gen.md`). **What it takes:** a `WorldSource` helper in
-`vxe-world`, on the CPU, because Bonsai's GPU generation would break the headless world. Add a
+`svet-world`, on the CPU, because Bonsai's GPU generation would break the headless world. Add a
 reloadable parameters file in the fly-through for tuning. Size S to M.
 **Pick up with** M10's outdoor work or a consumer's surface source. Sharpened 2026-11-19: the
 part worth copying first is Bonsai's noise-to-value remap through a polyline (a table of
@@ -1353,8 +1368,8 @@ edited (its 1.3.0 release notes); terrace, plateau and cliff come from that one 
 Bonsai's edits union, intersect and subtract, each also smooth with a blend radius, and every
 shape takes hollow, rounding, stretch, repeat and rotation over rect, sphere, line, cylinder,
 plane, torus and pyramid (`src/engine/editor.h`, `shaders/terrain/world_edit.fragmentshader`).
-We have sphere, box and capsule with carve, fill and replace (`vxe-world` `shape.rs`). **What it
-takes:** new shape kinds and modifiers in `vxe-world`, with the smooth minimum in fixed point (a
+We have sphere, box and capsule with carve, fill and replace (`svet-world` `shape.rs`). **What it
+takes:** new shape kinds and modifiers in `svet-world`, with the smooth minimum in fixed point (a
 polynomial one), each still one logged op that reports what it changed. Size M. **Pick up when**
 a consumer wants arches, rounded rooms or hollow shells as single edits.
 
@@ -1363,8 +1378,8 @@ a consumer wants arches, rounded rooms or hollow shells as single edits.
 A Bonsai brush stacks up to 16 layers. Each layer is a shape or a noise (Perlin, Voronoi, white,
 lattice), with a blend (add, subtract, multiply) and clamps or thresholds, and is saved as a
 `.brush` file (`docs/editor.md`). That gives crater, erosion and growth brushes instead of perfect
-spheres. **What it takes:** an op kind in `vxe-world` that names its brush by content id, like
-ADR-0014's prefabs; seeded integer noise; the brush file in `vxe-assets`. Size M to L, likely an
+spheres. **What it takes:** an op kind in `svet-world` that names its brush by content id, like
+ADR-0014's prefabs; seeded integer noise; the brush file in `svet-assets`. Size M to L, likely an
 ADR. **Pick up after** the edit algebra above.
 
 ### Edits you can still change: named layers, hide, reorder, regenerate
@@ -1381,7 +1396,7 @@ against ADR-0072's authoring text first. **Pick up with** the editor entries und
 `src/engine/voxel_synthesis.cpp` cuts a `.vox` into 8-cubed tiles, records the six-direction
 adjacencies and solves a new volume by constraint propagation, in the style of WFC. One
 hand-made sample would give endless cave or room variants. **What it takes:** baking the rules in
-`vxe-assets`, and a seeded solver as a `WorldSource` in `vxe-world`. Size M to L. Unverified:
+`svet-assets`, and a seeded solver as a `WorldSource` in `svet-world`. Size M to L. Unverified:
 whether Bonsai 2.0 still wires it into generation. **Pick up when** a consumer wants generated
 interiors from samples.
 
@@ -1389,7 +1404,7 @@ interiors from samples.
 
 Bonsai's serialisation versions each struct and keeps the old layouts (`world_edit_0`), which it
 converts forward on load (`serdes.h`). Our spill and log files refuse any other version
-(`persist.rs`, `wire.rs`). **What it takes:** pure migration functions in `vxe-world`, one per
+(`persist.rs`, `wire.rs`). **What it takes:** pure migration functions in `svet-world`, one per
 version step, each tested on fixed vectors. Size S to M. **Pick up before** the first consumer
 ships a save or a recorded log that must survive an engine upgrade.
 
@@ -1409,7 +1424,7 @@ small: a range (`@ui_value_range`), a skip (`@ui_skip`) and an escape to a hand-
 Bonsai gathers emission above 1.0 into a luminance target and blurs it through a three-level
 downsample and upsample chain (`src/engine/bloom.h`, `shaders/bloom_*`). We have no bloom.
 Glowing lamps and ores in the dark suit the first consumer. **What it takes:** a pass in
-`vxe-render` after the upscaler, as a render setting (ADR-0055). It must add no flicker
+`svet-render` after the upscaler, as a render setting (ADR-0055). It must add no flicker
 (ADR-0076), and the owner judges it in a window. Size S to M. **Pick up after** Plan 0090's pop
 counter, which can hold it to rule 1. **Weakened 2026-11-20** by the review
 [`reviews/2026-11-20-crystal-islands-look.md`](reviews/2026-11-20-crystal-islands-look.md)
@@ -1422,7 +1437,7 @@ engine levers.
 Bonsai's cards are instanced quads written into the g-buffer, so they are depth-tested, lit and
 occluded like geometry. They can billboard, take a tint and an alpha cutoff, and share one sprite
 array (`src/engine/card.h`). Uses: markers, decals, cheap debris, and the impostors that "hundreds
-of entities" names. **What it takes:** sprites traced or merged into `vxe-render`'s hit buffer,
+of entities" names. **What it takes:** sprites traced or merged into `svet-render`'s hit buffer,
 which touches its layout. Size M. **Pick up when** far entities or decals are asked for.
 
 ### Allocation counting per frame in the apps
@@ -1491,7 +1506,7 @@ materials, a sky and a way to build interesting architecture.
 
 Parked 2026-11-17 (owner asked whether the engine could carry a Roblox-style game). Already fits:
 runtime edits as logged deterministic ops, sandboxed logic components (fuel, memory cap,
-deterministic clocks), `vxe-net`'s server tick and op logs, voxel-model entities and prefabs,
+deterministic clocks), `svet-net`'s server tick and op logs, voxel-model entities and prefabs,
 ADR-0072's authoring stack. Missing in the engine: rigid bodies (they conflict with ADR-0008 and
 need an ADR), the network at scale (QUIC, interest management, dozens of players per server),
 platforms beyond Linux and Windows (next entry). The platform itself (accounts, avatars,

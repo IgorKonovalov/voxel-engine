@@ -5,11 +5,11 @@ use crate::app::ms_since;
 use crate::now;
 use crate::run::hud_feed::SAMPLES;
 use crate::{LookPreset, percentile};
-use vxe_render::debug::StepHistogram;
-use vxe_render::{BELT_CHUNK_BYTES, FRAME_PASSES, GpuWorld, HudColour, LookParams, ShadowWalk};
+use svet_render::debug::StepHistogram;
+use svet_render::{BELT_CHUNK_BYTES, FRAME_PASSES, GpuWorld, HudColour, LookParams, ShadowWalk};
 
 /// The probe volume's bytes inside `Frame::frame_bytes`, by part.
-pub(crate) fn probe_bytes_line(p: &vxe_render::ProbeVolume) -> String {
+pub(crate) fn probe_bytes_line(p: &svet_render::ProbeVolume) -> String {
     format!(
         "probe volume {} B in frame_bytes (atlases {} B, state {} B, update list, rays and uniform {} B), spacing {} voxels",
         p.bytes(),
@@ -57,7 +57,7 @@ pub(crate) fn field_line(mirror: &GpuWorld) -> String {
     format!(
         "field band: {} band bricks, {} B of band slots, mirror {} B live, {} B allocated",
         mirror.band_bricks(),
-        mirror.band_units() * vxe_render::internals::UNIT_BYTES,
+        mirror.band_units() * svet_render::internals::UNIT_BYTES,
         mirror.mirror_bytes(),
         mirror.allocated_bytes()
     )
@@ -65,8 +65,8 @@ pub(crate) fn field_line(mirror: &GpuWorld) -> String {
 
 /// The band census (`flythrough::band_census`) over the chunks `mirror` holds full, against
 /// the mirror's live bytes.
-pub(crate) fn band_census_line(world: &vxe_world::World, mirror: &GpuWorld) -> String {
-    let chunks: Vec<vxe_world::ChunkCoord> = world
+pub(crate) fn band_census_line(world: &svet_world::World, mirror: &GpuWorld) -> String {
+    let chunks: Vec<svet_world::ChunkCoord> = world
         .store()
         .coords()
         .into_iter()

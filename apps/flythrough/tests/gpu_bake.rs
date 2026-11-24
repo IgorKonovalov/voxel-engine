@@ -18,10 +18,10 @@ use support::bake::{
 };
 use support::cave_table;
 use support::rigs::tone_bytes;
-use vxe_render::BakeSettings;
-use vxe_render::LightingResolution;
-use vxe_render::{Camera, Exposure, Frame, Lighting, wgpu};
-use vxe_world::{ChunkCoord, ChunkExtent, EditOp, FIXED_ONE, Fixed3, MaterialTable, Mode, World};
+use svet_render::BakeSettings;
+use svet_render::LightingResolution;
+use svet_render::{Camera, Exposure, Frame, Lighting, wgpu};
+use svet_world::{ChunkCoord, ChunkExtent, EditOp, FIXED_ONE, Fixed3, MaterialTable, Mode, World};
 
 /// A rock block under an ore plate over chunks `[0, 2)^3`: about 1700 faces, three of the block's
 /// sides in the camera's view, with a 64 x 36 frame looking at it.
@@ -58,10 +58,10 @@ fn a_baked_face_ignores_the_sky() {
         "visibility words with no sky"
     );
     assert!(vis.values().all(Option::is_none));
-    let sun = vxe_render::sky::Body::sun([0.0, 0.0, 1.0]);
-    let moon = vxe_render::sky::Body::moon([0.0, 0.0, -1.0]);
+    let sun = svet_render::sky::Body::sun([0.0, 0.0, 1.0]);
+    let moon = svet_render::sky::Body::moon([0.0, 0.0, -1.0]);
     rig.frame
-        .set_sky(Some(vxe_render::sky::Sky::new(sun, moon)));
+        .set_sky(Some(svet_render::sky::Sky::new(sun, moon)));
     rig.bake(&counts);
     assert_eq!(rig.cells(), none, "a noon sky changed the emissive words");
     let (vis, _) = sky_cells_of(&rig.blocks());
@@ -73,7 +73,7 @@ fn a_baked_face_ignores_the_sky() {
 
 /// Every brick record of `blocks` in block and slot order, as its words.
 fn records(blocks: &BTreeMap<[i32; 3], Vec<u32>>) -> Vec<Vec<u32>> {
-    let w = vxe_render::internals::BRICK_WORDS;
+    let w = svet_render::internals::BRICK_WORDS;
     let mut out = Vec::new();
     for block in blocks.values() {
         for &dir in &block[..512] {
@@ -87,11 +87,11 @@ fn records(blocks: &BTreeMap<[i32; 3], Vec<u32>>) -> Vec<Vec<u32>> {
 
 /// A sky over the small box whose sun is at elevation `el` degrees (the moon under the
 /// horizon): no key light at a negative `el`.
-fn sun_sky(el: f32) -> vxe_render::sky::Sky {
+fn sun_sky(el: f32) -> svet_render::sky::Sky {
     let e = el.to_radians();
-    vxe_render::sky::Sky::new(
-        vxe_render::sky::Body::sun([0.3 * e.cos(), -(0.91f32).sqrt() * e.cos(), e.sin()]),
-        vxe_render::sky::Body::moon([0.0, 0.0, -1.0]),
+    svet_render::sky::Sky::new(
+        svet_render::sky::Body::sun([0.3 * e.cos(), -(0.91f32).sqrt() * e.cos(), e.sin()]),
+        svet_render::sky::Body::moon([0.0, 0.0, -1.0]),
     )
 }
 
@@ -161,7 +161,7 @@ fn a_bake_does_not_depend_on_its_slicing_or_order() {
         return;
     };
     // Under a sky, so the records' sky visibility words (ADR-0070) are compared too.
-    rig.frame.set_sky(Some(vxe_render::sky::Sky::uniform(1.0)));
+    rig.frame.set_sky(Some(svet_render::sky::Sky::uniform(1.0)));
     let one = BakeSettings {
         batch_faces: 65_536,
         ..test_counts(1024)
@@ -199,7 +199,7 @@ fn four_ways(rig: &mut Rig) {
         keep_faces: true,
         ..test_counts(4096)
     };
-    let samples_of = |r: &vxe_render::BakeReport| -> HashMap<([i32; 3], u8), u32> {
+    let samples_of = |r: &svet_render::BakeReport| -> HashMap<([i32; 3], u8), u32> {
         r.outcomes
             .iter()
             .map(|o| ((o.voxel, o.face), o.samples))
@@ -284,10 +284,10 @@ fn a_baked_view_is_final_on_its_first_frame() {
     rig.frame.set_count_store(true);
     rig.step(&camera);
     let first = rig.display();
-    let accum = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.accumulated());
-    let pos = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
-    let info = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
-    let light = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.irradiance());
+    let accum = svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.accumulated());
+    let pos = svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let info = svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let light = svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.irradiance());
     let stats = rig.frame.read_store_stats(&rig.device, &rig.queue);
     assert_eq!(stats.missing, 0, "store_missing");
     let eye = camera.position.to_array();
@@ -369,7 +369,7 @@ fn the_store_counters_count_with_the_override_on() {
         pitch: (-80f32).to_radians(),
         vfov: 90f32.to_radians(),
     };
-    let counts = |s: vxe_render::StoreStats| [s.missing, s.brick_reads, s.coarse_reads];
+    let counts = |s: svet_render::StoreStats| [s.missing, s.brick_reads, s.coarse_reads];
     rig.frame.set_count_store(true);
     rig.step(&camera);
     let on = counts(rig.frame.read_store_stats(&rig.device, &rig.queue));
@@ -441,7 +441,7 @@ fn fallback_camera() -> Camera {
 /// words are the CPU's.
 #[test]
 fn a_missing_brick_reads_its_neighbour_then_its_parent() {
-    use vxe_render::MissingLight;
+    use svet_render::MissingLight;
     let Some(mut rig) = fallback_rig([128, 72]) else {
         return;
     };
@@ -464,9 +464,9 @@ fn a_missing_brick_reads_its_neighbour_then_its_parent() {
             .frame
             .read_store_block(&rig.device, &rig.queue, ChunkCoord(c))
             .expect("a baked block");
-        let at = vxe_render::internals::SUMMARY_AT as usize;
+        let at = svet_render::internals::SUMMARY_AT as usize;
         assert_eq!(
-            block[at..at + vxe_render::internals::BRICK_WORDS],
+            block[at..at + svet_render::internals::BRICK_WORDS],
             s,
             "{c:?}'s pool summary"
         );
@@ -486,9 +486,10 @@ fn a_missing_brick_reads_its_neighbour_then_its_parent() {
         rig.frame.set_missing_light(&rig.queue, mode);
         rig.step(&camera);
         let accum = rig.accum();
-        let pos = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+        let pos =
+            svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
         let info =
-            vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+            svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
         let stats = rig.frame.read_store_stats(&rig.device, &rig.queue);
         assert_eq!(
             *missing.get_or_insert(stats.missing),
@@ -510,7 +511,7 @@ fn a_missing_brick_reads_its_neighbour_then_its_parent() {
                 .chain(c, mode)
                 .filter(|r| r[6] >> (16 + u32::from(f)) & 1 != 0)
                 .map_or([0.0; 3], |r| {
-                    vxe_render::internals::rgb9e5_unpack(r[usize::from(f)])
+                    svet_render::internals::rgb9e5_unpack(r[usize::from(f)])
                 });
             if want.iter().any(|&x| x > 0.0) {
                 fallback += 1;
@@ -550,7 +551,7 @@ fn a_missing_brick_reads_its_neighbour_then_its_parent() {
             t
         };
         let all_near = |c: [i32; 3], w: u32| {
-            let want = vxe_render::internals::rgb9e5_unpack(w);
+            let want = svet_render::internals::rgb9e5_unpack(w);
             let step = 2f32.powi((w >> 27) as i32 - 24);
             reads(c)
                 .iter()
@@ -602,7 +603,7 @@ fn the_missing_light_golden() {
     };
     assert_eq!(
         rig.frame.missing_light(),
-        vxe_render::MissingLight::Chain,
+        svet_render::MissingLight::Chain,
         "the default missing light"
     );
     rig.step(&fallback_camera());
@@ -632,8 +633,8 @@ fn the_baked_light_shows_with_the_filter_off() {
         rig.display()
     };
     let on = frames(&mut rig, true);
-    let pos = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
-    let info = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let pos = svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let info = svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     let off = frames(&mut rig, false);
     let eye = camera.position.to_array();
     let lit: Vec<usize> = (0..pos.len())
@@ -678,9 +679,10 @@ fn a_moving_camera_reads_what_a_still_one_reads() {
     };
     rig.bake(&test_counts(1024));
     let faced = |rig: &Rig, cam: &Camera, img: &[u8]| -> Vec<(usize, [u8; 4])> {
-        let pos = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+        let pos =
+            svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
         let info =
-            vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+            svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
         (0..pos.len())
             .filter(|&i| hit_face(cam.position.to_array(), pos[i], info[i]).is_some())
             .map(|i| {
@@ -748,7 +750,7 @@ fn in_ring(
             let c = g.map(|x| x.div_euclid(8));
             let b = g.map(|x| x.rem_euclid(8));
             ring.get(&c)
-                .is_some_and(|s| s.contains(&(vxe_world::brick_slot(b) as u16)))
+                .is_some_and(|s| s.contains(&(svet_world::brick_slot(b) as u16)))
         })
         .map(|(k, v)| (*k, *v))
         .collect()
@@ -768,7 +770,7 @@ fn a_dug_hole_is_final_on_its_first_frame() {
     let (dig, aabb) = rig.dig(&sphere([48, 48, 56], 3, Mode::Carve), &dig_counts());
     assert!(dig.bake.faces > 0, "the dig baked no face");
     let piece = rig.world.extent();
-    let ring = vxe_render::internals::dig_ring(&[aabb], piece);
+    let ring = svet_render::internals::dig_ring(&[aabb], piece);
     let after = rig.cells();
     let fresh = rig.fresh_cells(piece, &dig_counts());
     let (a, f) = (in_ring(&after, &ring), in_ring(&fresh, &ring));
@@ -787,8 +789,8 @@ fn a_dug_hole_is_final_on_its_first_frame() {
     rig.frame.set_count_store(true);
     rig.step(&camera);
     let first = rig.display();
-    let pos = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
-    let info = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let pos = svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let info = svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     let eye = camera.position.to_array();
     let on_screen = (0..pos.len())
         .filter_map(|i| hit_face(eye, pos[i], info[i]))
@@ -831,7 +833,7 @@ fn a_dug_emitter_leaves_the_near_ring_at_once() {
         &dig_counts(),
     );
     let piece = rig.world.extent();
-    let ring = vxe_render::internals::dig_ring(&[aabb], piece);
+    let ring = svet_render::internals::dig_ring(&[aabb], piece);
     let after = in_ring(&rig.cells(), &ring);
     println!("{} directions in the ring", after.len());
     // The slab's 16 bricks, each with its +z and -z.
@@ -955,11 +957,11 @@ fn a_glass_pane_does_not_brighten_what_it_covers() {
     let rock = t.get(ROCK).expect("rock").clone();
     for translucent in [true, false] {
         let flags = if translucent {
-            rock.flags | vxe_world::MaterialFlags::TRANSLUCENT
+            rock.flags | svet_world::MaterialFlags::TRANSLUCENT
         } else {
             rock.flags
         };
-        t.push(vxe_world::Material {
+        t.push(svet_world::Material {
             name: format!("pane {}", if translucent { "glass" } else { "opaque" }),
             albedo: [0.10, 0.10, 0.14],
             emission: [0.0; 3],
@@ -969,8 +971,8 @@ fn a_glass_pane_does_not_brighten_what_it_covers() {
         });
     }
     let (glass_id, opaque_id) = (
-        (t.len() - 2) as vxe_world::MaterialId,
-        (t.len() - 1) as vxe_world::MaterialId,
+        (t.len() - 2) as svet_world::MaterialId,
+        (t.len() - 1) as svet_world::MaterialId,
     );
     let (_, camera) = small_box();
     let world = air_world([2, 2, 2], &t);
@@ -986,7 +988,7 @@ fn a_glass_pane_does_not_brighten_what_it_covers() {
             rig.step(&camera);
         }
         let info =
-            vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+            svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
         let covered = info.iter().filter(|r| r[3] & 4 != 0).count();
         println!("{name}: {covered} pixels behind a translucent voxel");
         (rig.display(), covered)
@@ -1045,13 +1047,13 @@ fn hit_radiance(
     ex: f32,
 ) -> Vec<[f32; 3]> {
     let filter = frame.lighting().filter;
-    let info = vxe_render::debug::read_rgba16u(device, queue, frame.hit_records());
+    let info = svet_render::debug::read_rgba16u(device, queue, frame.hit_records());
     let lit_tex = if filter {
         frame.filtered()
     } else {
         frame.irradiance()
     };
-    let lit = vxe_render::debug::read_float(device, queue, lit_tex);
+    let lit = svet_render::debug::read_float(device, queue, lit_tex);
     info.iter()
         .zip(&lit)
         .map(|(r, l)| {
@@ -1110,22 +1112,22 @@ fn a_glass_pane_filters_by_path_length() {
     let mut t = cave_table();
     let rock = t.get(ROCK).expect("rock").clone();
     let albedo = [0.25, 0.35, 0.85];
-    t.push(vxe_world::Material {
+    t.push(svet_world::Material {
         name: "glass".to_owned(),
         albedo,
         emission: [0.0; 3],
         opacity: 0.6,
-        flags: rock.flags | vxe_world::MaterialFlags::TRANSLUCENT,
+        flags: rock.flags | svet_world::MaterialFlags::TRANSLUCENT,
         ..rock.clone()
     });
-    let glass_id = (t.len() - 1) as vxe_world::MaterialId;
-    t.push(vxe_world::Material {
+    let glass_id = (t.len() - 1) as svet_world::MaterialId;
+    t.push(svet_world::Material {
         name: "black".to_owned(),
         albedo: [0.0; 3],
         emission: [0.0; 3],
         ..rock.clone()
     });
-    let black_id = (t.len() - 1) as vxe_world::MaterialId;
+    let black_id = (t.len() - 1) as svet_world::MaterialId;
     let mats = t.clone();
     let world = air_world([2, 2, 2], &t);
     // The wall and its ore strip above, out of the views.
@@ -1194,8 +1196,9 @@ fn a_glass_pane_filters_by_path_length() {
         settle(&mut rig, camera);
         let shown = luma(&rig.display());
         let info =
-            vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
-        let pos = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+            svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+        let pos =
+            svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
         let eye = camera.position.to_array().map(f64::from);
         let (mut worst, mut n) = (0f32, 0usize);
         let mut by_half: [Vec<f64>; 2] = [Vec::new(), Vec::new()];
@@ -1256,9 +1259,9 @@ fn a_glass_pane_filters_by_path_length() {
     // The lit pane over the black wall: its reflected share from its +x face's brick record.
     settle(&mut rig, &lit_view);
     let shown = luma(&rig.display());
-    let info = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
-    let pos = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
-    let layer = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.layers());
+    let info = svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let pos = svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let layer = svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.layers());
     let cells = rig.cells();
     let scale = rig.frame.emission_scale(ORE);
     let eye = lit_view.position.to_array().map(f64::from);
@@ -1320,7 +1323,7 @@ fn a_glass_pane_filters_by_path_length() {
         &settings,
     );
     settle(&mut rig, &lit_view);
-    let layer = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.layers());
+    let layer = svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.layers());
     let unlit = lit
         .iter()
         .filter(|&&i| layer[i][0] != 0.0 || layer[i][1] != 0.0 || layer[i][2] != 0.0)
@@ -1423,7 +1426,7 @@ fn a_piece_reads_what_the_whole_world_reads() {
 /// 2/255; lavapipe).
 #[test]
 fn a_small_far_staircase_reads_the_mix_and_matches_its_golden() {
-    use vxe_render::{LightWeights, NormalMode, StoreRead};
+    use svet_render::{LightWeights, NormalMode, StoreRead};
     const SIZE: [u32; 2] = [96, 54];
     const LINE: f32 = 36.0;
     let [camera, _] = stair_cameras(SIZE);
@@ -1507,7 +1510,7 @@ fn a_small_far_staircase_reads_the_mix_and_matches_its_golden() {
         ),
     );
     let path = support::golden_path("far_staircase_store_normal.png");
-    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
         support::write_png(&path, &defaults.display, SIZE[0], SIZE[1]);
         println!("blessed {path:?}");
         return;
@@ -1560,7 +1563,7 @@ fn frame_diff(a: &StairFrame, b: &StairFrame) -> (usize, usize) {
 /// every distance) with the read on, every stored part of the far camera's frame is finite.
 #[test]
 fn the_store_read_by_normal_leaves_near_faces_alone() {
-    use vxe_render::{LightWeights, NormalMode, StoreRead};
+    use svet_render::{LightWeights, NormalMode, StoreRead};
     const SIZE: [u32; 2] = [192, 108];
     const NEAR: f32 = 64.0;
     let [camera, near_camera] = stair_cameras(SIZE);
@@ -1635,7 +1638,7 @@ fn the_store_read_by_normal_leaves_near_faces_alone() {
 /// read and weights against the library's (`Face`, `Normal`) at half.
 #[test]
 fn the_face_weights_leave_near_faces_alone() {
-    use vxe_render::{LightWeights, NormalMode, StoreRead};
+    use svet_render::{LightWeights, NormalMode, StoreRead};
     const SIZE: [u32; 2] = [96, 54];
     let Some(mut rig) = baked_staircase(SIZE) else {
         return;
@@ -1705,20 +1708,20 @@ fn the_face_weights_leave_near_faces_alone() {
 fn a_sealed_cavern_wider_than_the_cap_reads_no_sky() {
     let f = |p: [i32; 3]| {
         if p.iter().all(|&v| (80..368).contains(&v)) {
-            vxe_world::AIR
+            svet_world::AIR
         } else {
             ROCK
         }
     };
     let world = World::generate(
         ChunkExtent::new([0, 0, 0], [7, 7, 7]),
-        &vxe_world::FnSource(f),
+        &svet_world::FnSource(f),
         &cave_table(),
     );
     let Some(mut rig) = rig_on(world, [16, 16], None) else {
         return;
     };
-    rig.frame.set_sky(Some(vxe_render::sky::Sky::uniform(1.0)));
+    rig.frame.set_sky(Some(svet_render::sky::Sky::uniform(1.0)));
     let settings = BakeSettings {
         filter: Some(std::sync::Arc::new(|v: [i32; 3], f: u8| {
             v[0].div_euclid(64) == 3 && v[1].div_euclid(64) == 3 && v[2] == 79 && f == 5
@@ -1726,7 +1729,7 @@ fn a_sealed_cavern_wider_than_the_cap_reads_no_sky() {
         ..test_counts(256)
     };
     let mut read = |end_is_sky: bool| {
-        rig.frame.set_light_hooks(vxe_render::LightHooks {
+        rig.frame.set_light_hooks(svet_render::LightHooks {
             sky_end_is_sky: end_is_sky,
             ..Default::default()
         });
@@ -1781,7 +1784,7 @@ mod reading {
                 Fixed3([215, 215, 55].map(|v| v * FIXED_ONE)),
                 Mode::Replace {
                     from: ROCK,
-                    to: vxe_world::AIR,
+                    to: svet_world::AIR,
                 },
             ))
             .expect("the box is resident");
@@ -1794,7 +1797,7 @@ mod reading {
         let Some(mut rig) = rig_on(world, [16, 16], None) else {
             return;
         };
-        rig.frame.set_sky(Some(vxe_render::sky::Sky::uniform(1.0)));
+        rig.frame.set_sky(Some(svet_render::sky::Sky::uniform(1.0)));
         let wanted: Vec<([i32; 3], u8)> = rigs.iter().map(|r| (r.1, r.2)).collect();
         let report = rig.bake(&BakeSettings {
             filter: Some(std::sync::Arc::new(move |v: [i32; 3], f: u8| {

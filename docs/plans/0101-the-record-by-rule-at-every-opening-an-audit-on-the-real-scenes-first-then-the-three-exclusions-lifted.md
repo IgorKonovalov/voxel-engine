@@ -42,7 +42,7 @@ RTX 3080 Laptop GPU at the Floor profile, 1920 x 1080; "RENOIR" the AMD Radeon G
 RENOIR), the slow adapter of `docs/nfr.md` section 1, at Portable, 1280 x 720 (FSR 2's
 output from a march at 853 x 480).
 
-**What the opening does today** (`crates/vxe-render/src/bake/queue/open.rs`): a ready
+**What the opening does today** (`crates/svet-render/src/bake/queue/open.rs`): a ready
 candidate takes the rule only when `zero_rule && class == 0 && !partial && !provisional &&
 rule_holds(..)`. `rule_holds` (`queue/rule.rs`) is `buried` (the chunk's box dilated by the
 light radius lies under the lowest column top of every chunk column of the footprint, none
@@ -156,7 +156,7 @@ must not go.
 
 ```mermaid
 flowchart TD
-    subgraph vxe-render
+    subgraph svet-render
         M[mirror: uploads, drops, LOD swaps] -->|note_change| C[take_changes]
         C --> R[relist_zeroed: rule read again near each changed column]
         O[opening: a ready candidate] --> H{rule_holds on the tops and emitters as they stand}
@@ -218,8 +218,8 @@ clause). Dev confirms it before Phase 1 by running that phase's test
   `bake queue:` line and into `run.json`. Then the runs: the four of Phase 10a with the
   audit on, and the four again with only `--queue-rule-reading` (the shares on this base).
   The three facts above are read again against the tree, one line each in the log.
-- **Files touched:** `crates/vxe-render/src/bake/queue/{open,list,rule,step,stats,mod}.rs`
-  (or their halves after Plan 0099), `crates/vxe-render/src/bake/queue/tests.rs`,
+- **Files touched:** `crates/svet-render/src/bake/queue/{open,list,rule,step,stats,mod}.rs`
+  (or their halves after Plan 0099), `crates/svet-render/src/bake/queue/tests.rs`,
   `apps/flythrough/src/run/queue.rs`, `apps/flythrough/src/report.rs`,
   `apps/flythrough/src/cli/queue_flags.rs`, `apps/flythrough/tests/queue_line.rs`,
   `docs/flythrough.md`, `docs/plans/logs/0101.md` (new).
@@ -260,8 +260,8 @@ clause). Dev confirms it before Phase 1 by running that phase's test
   A dig's jobs, the key-only jobs and the held record of an edit are not listing jobs and
   are untouched. With the audit flag on, the rule is held back as in Phase 1. No setting is
   added (`zero_rule` off is still the arm with no rule), so there is no profile row.
-- **Files touched:** `crates/vxe-render/src/bake/queue/{open,list,rule,mod,stats}.rs` (or
-  their halves), `crates/vxe-render/src/bake/queue/tests.rs`,
+- **Files touched:** `crates/svet-render/src/bake/queue/{open,list,rule,mod,stats}.rs` (or
+  their halves), `crates/svet-render/src/bake/queue/tests.rs`,
   `apps/flythrough/tests/gpu_bake_rule.rs`, `docs/plans/logs/0101.md`.
 - **Done when:**
   1. `a_catch_up_the_rule_answers_writes_the_zero_record_without_a_job` (CPU, under 2 s): a
@@ -302,7 +302,7 @@ clause). Dev confirms it before Phase 1 by running that phase's test
   `docs/nfr.md` section 2 and `docs/nfr/02-frame-budget.md`; `docs/flythrough.md` gains the
   flag; the gate runs once.
 - **Files touched:** `docs/nfr.md`, `docs/nfr/02-frame-budget.md`, `docs/flythrough.md`,
-  `docs/plans/logs/0101.md`; `crates/vxe-render/src/bake/queue/rule.rs` only if the re-list
+  `docs/plans/logs/0101.md`; `crates/svet-render/src/bake/queue/rule.rs` only if the re-list
   takes its index.
 - **Done when:**
   1. **The audit at the tip:** on all four runs with `--queue-rule-audit`, 0 blocks differ
@@ -387,7 +387,7 @@ each and the set's overhead); no VRAM change.
   text does not name either.
 - **A changes list that overflowed** re-reads every zeroed chunk in one step (the rule's own
   fallback). Correct, and a spike; counted in Phase 3 (4)'s lap.
-- **Determinism.** Nothing here runs on the server side or in `vxe-world`. The zero record
+- **Determinism.** Nothing here runs on the server side or in `svet-world`. The zero record
   is written on the CPU from the listing, so it is the same bytes on every adapter by
   construction. The order chunks are ruled in follows the opening's order, which is the
   queue's as today.

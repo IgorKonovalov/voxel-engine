@@ -16,9 +16,9 @@ workspace = true
 # build; `scripts/build-guests.sh` builds the component from it as a `cdylib` for
 # `wasm32-wasip2` with this feature (`cargo rustc --crate-type cdylib`), so the native build
 # links no second artifact.
-component = ["dep:vxe-script-wasm"]
+component = ["dep:svet-script-wasm"]
 
 [dependencies]
-vxe-net.workspace = true
-vxe-world.workspace = true
-vxe-script-wasm = { workspace = true, features = ["guest"], optional = true }
+svet-net.workspace = true
+svet-world.workspace = true
+svet-script-wasm = { workspace = true, features = ["guest"], optional = true }

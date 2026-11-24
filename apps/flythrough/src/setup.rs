@@ -17,10 +17,10 @@ use crate::showcase::{SHOWCASE_CHUNKS, Shot, ShowcaseSource};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
-use vxe_app::{Gpu, ShellConfig};
-use vxe_net::Logic;
-use vxe_render::{Camera, Frame, GpuWorld, HudOverlay, MarchTimer, PassTimer, Presenter, wgpu};
-use vxe_world::{
+use svet_app::{Gpu, ShellConfig};
+use svet_net::Logic;
+use svet_render::{Camera, Frame, GpuWorld, HudOverlay, MarchTimer, PassTimer, Presenter, wgpu};
+use svet_world::{
     ChunkExtent, MaterialTable, PersistConfig, StreamConfig, Streamer, VoxelCoord, World,
 };
 
@@ -103,7 +103,7 @@ impl Gfx {
 }
 
 /// The window's shell: `size`, the cursor locked, `pace`, and `--adapter`'s substring.
-pub(crate) fn shell_config(args: &Args, size: [u32; 2], pace: vxe_app::Pacing) -> ShellConfig {
+pub(crate) fn shell_config(args: &Args, size: [u32; 2], pace: svet_app::Pacing) -> ShellConfig {
     ShellConfig {
         title: "flythrough".to_owned(),
         size,
@@ -168,7 +168,7 @@ pub(crate) fn table_before_entities(args: &Args, table: &MaterialTable) -> Mater
 pub(crate) fn base_table(args: &Args, table: &MaterialTable) -> MaterialTable {
     let mut t = crate::walker::with_walker(table);
     if let Some(path) = &args.model {
-        crate::viewer::palette_rows(path, &mut t, vxe_assets::DEFAULT_EMISSION_FACTOR);
+        crate::viewer::palette_rows(path, &mut t, svet_assets::DEFAULT_EMISSION_FACTOR);
     }
     if let Some(v) = &args.vox
         && let Ok(file) = crate::structures::read(&v.path)
@@ -198,12 +198,12 @@ pub(crate) fn vox_ops(args: &Args, table: &MaterialTable) -> Option<crate::struc
 
 /// `--vox`'s scene over `base` (`crate::structures`), its rows in `table`: the source and its
 /// printed line. A file that does not read or load ends the process with status 1.
-fn vox_source<S: vxe_world::WorldSource>(
+fn vox_source<S: svet_world::WorldSource>(
     args: &Args,
     table: &MaterialTable,
     spawn: VoxelCoord,
     base: S,
-) -> vxe_world::StampedSource<crate::structures::ClearedSource<S>> {
+) -> svet_world::StampedSource<crate::structures::ClearedSource<S>> {
     use crate::structures as st;
     let v = args.vox.as_ref().expect("--vox given");
     let t = now();
@@ -238,7 +238,7 @@ fn vox_source<S: vxe_world::WorldSource>(
 pub(crate) fn model_rows_added(args: &Args) -> usize {
     args.model.as_ref().map_or(0, |path| {
         let mut t = crate::walker::with_walker(&materials(args));
-        crate::viewer::palette_rows(path, &mut t, vxe_assets::DEFAULT_EMISSION_FACTOR)
+        crate::viewer::palette_rows(path, &mut t, svet_assets::DEFAULT_EMISSION_FACTOR)
     })
 }
 
@@ -277,7 +277,7 @@ impl CrispRows {
                 Self::All => !row.is_translucent(),
             };
             if pick {
-                row.flags = row.flags | vxe_world::MaterialFlags::CRISP;
+                row.flags = row.flags | svet_world::MaterialFlags::CRISP;
             }
             t.push(row);
         }
@@ -290,7 +290,7 @@ impl CrispRows {
             .rows()
             .iter()
             .enumerate()
-            .filter(|&(id, _)| table.is_crisp(id as vxe_world::MaterialId))
+            .filter(|&(id, _)| table.is_crisp(id as svet_world::MaterialId))
             .map(|(_, m)| m.name.as_str())
             .collect();
         format!(
@@ -387,7 +387,7 @@ pub(crate) fn castle_banner(shot: castle::CastleShot) -> String {
 pub(crate) fn castle_source(
     seed: u64,
     out: Option<&std::path::Path>,
-) -> vxe_world::StampedSource<crate::cave::HallSource> {
+) -> svet_world::StampedSource<crate::cave::HallSource> {
     let t = now();
     let file = castle::castle_vox();
     let listed: usize = file.models.iter().map(|m| m.voxels.len()).sum();
@@ -397,7 +397,7 @@ pub(crate) fn castle_source(
         ms_since(t)
     );
     let t = now();
-    let bytes = vxe_assets::encode(&file);
+    let bytes = svet_assets::encode(&file);
     drop(file);
     println!(
         "castle: encoded {} bytes of .vox in {:.0} ms",
@@ -411,7 +411,7 @@ pub(crate) fn castle_source(
         }
     }
     let t = now();
-    let file = vxe_assets::VoxFile::parse(&bytes).unwrap_or_else(|e| {
+    let file = svet_assets::VoxFile::parse(&bytes).unwrap_or_else(|e| {
         eprintln!("flythrough: the generated castle does not parse: {e}");
         std::process::exit(1);
     });
@@ -686,8 +686,8 @@ fn start_streaming(
     workers: usize,
     spawn: VoxelCoord,
 ) -> (World, Streamer, usize) {
-    streamer.set_prep(Some(Arc::new(vxe_render::internals::FacePrep::new(
-        Arc::new(vxe_render::internals::face_classes(world.materials())),
+    streamer.set_prep(Some(Arc::new(svet_render::internals::FacePrep::new(
+        Arc::new(svet_render::internals::face_classes(world.materials())),
     ))));
     streamer.update(&world, &[spawn]);
     (world, streamer, workers)

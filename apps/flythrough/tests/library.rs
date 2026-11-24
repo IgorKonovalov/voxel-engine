@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use flythrough::entities::library::{self, LINE_BYTES, Library, Source, scan};
 use flythrough::viewer::Viewer;
 use flythrough::{cave_materials, showcase_materials, walker};
-use vxe_world::MaterialTable;
+use svet_world::MaterialTable;
 
 fn committed() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/entities")

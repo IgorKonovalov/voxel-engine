@@ -4,8 +4,8 @@
 use super::*;
 use std::collections::BTreeMap;
 
-use vxe_world::hash::{ValueNoise, hash3};
-use vxe_world::{
+use svet_world::hash::{ValueNoise, hash3};
+use svet_world::{
     AIR, BRICK_EDGE, Brick, CHUNK_BRICKS, CHUNK_EDGE, Chunk, ChunkCoord, ChunkExtent, MaterialId,
     VoxelCoord, WorldSource, brick_of_slot,
 };

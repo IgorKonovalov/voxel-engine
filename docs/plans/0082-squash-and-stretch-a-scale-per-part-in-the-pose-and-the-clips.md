@@ -85,16 +85,16 @@ scale is wanted later, the replace rule is re-read with it (as the rotation note
 
 ```mermaid
 flowchart LR
-    subgraph vxe-assets
+    subgraph svet-assets
         R[.rig: key tick part scale x y z] --> K[Key.s, 1/256, 64..1024]
     end
-    subgraph vxe-entity [vxe-entity: headless, deterministic]
+    subgraph svet-entity [svet-entity: headless, deterministic]
         K --> S[sample / blend: linear, round toward zero]
         S --> P[PartPose.s]
         P --> C[compose: child t scaled by parent s, one rounding with the rotation]
         C --> Q[part_raycast: scaled grid, exact fractions, same t]
     end
-    subgraph vxe-render
+    subgraph svet-render
         C --> X[PartXform: R S / detail and its true inverse]
         X --> I[(instance: unchanged 128 B)]
         I --> W[entity.wgsl: walk and normal unchanged]
@@ -119,7 +119,7 @@ times `(1 - (d / r)^4)^2`: **9.40** at 20 voxels straight below the light, **3.3
 surface 20 below and 20 to the side, and **5.92** on a level surface 20 below and 12 to the
 side (`d^2` 544, `cos` 0.8575, window 0.9959).
 
-### Phase 1: the scale in `vxe-entity`: the pose, the composition, the exact query, the clips
+### Phase 1: the scale in `svet-entity`: the pose, the composition, the exact query, the clips
 - **Owner skill:** dev
 - **What:**
   - **`PartPose.s: [u16; 3]`**, `SCALE_ONE` = 256, `SCALE_MIN` 64, `SCALE_MAX` 1024. `Default`
@@ -148,9 +148,9 @@ side (`d^2` 544, `cos` 0.8575, window 0.9959).
   - **Vectors.** The committed constants of `entity_hits_match_the_fixed_vectors` and
     `clip_poses_match_the_fixed_vectors` stand (their writers name their fields; nothing they
     hash changes at scale one). Two new vectors hash scaled poses and hits.
-- **Files touched:** `crates/vxe-entity/src/pose.rs`, `model.rs` (the scaled reach, or in
+- **Files touched:** `crates/svet-entity/src/pose.rs`, `model.rs` (the scaled reach, or in
   `set.rs`), `raycast.rs`, `set.rs`, `clip.rs`, `lib.rs` (the constants), `tests/raycast.rs`,
-  `tests/clip.rs`, `tests/determinism.rs`, `crates/vxe-render/src/entities.rs` only if the
+  `tests/clip.rs`, `tests/determinism.rs`, `crates/svet-render/src/entities.rs` only if the
   build breaks on the new field (the real change is Phase 2), `docs/plans/logs/0082.md` (new).
 - **Done when:**
   1. `a_scaled_part_is_hit_where_its_scale_puts_it`: Plan 0062's one-part model (an 8 x 8 x 8
@@ -213,7 +213,7 @@ side (`d^2` 544, `cos` 0.8575, window 0.9959).
     the shader only if a test shows one false and says so in the Notes.
   - **The shadow offset.** `entity_shadow_scale` stays `1 / detail` unless done-when 6 shows
     acne; then it becomes `min(s) / (256 * detail)` and the Notes say so.
-- **Files touched:** `crates/vxe-render/src/entities.rs`, `apps/flythrough/tests/gpu_entities.rs`
+- **Files touched:** `crates/svet-render/src/entities.rs`, `apps/flythrough/tests/gpu_entities.rs`
   (and its `reading.rs`), a baseline under `tests/golden/` only if a new golden is named here
   (none is), `docs/plans/logs/0082.md`.
 - **Done when:**
@@ -274,7 +274,7 @@ side (`d^2` 544, `cos` 0.8575, window 0.9959).
     `tests/entities.rs` (the chore's) covers the new directory as it covers the others.
   - **The ring.** If `--entities N` places the built-in walker regardless of `--model` at the
     start commit, it places the loaded model when one is given, so the crowd reading below runs.
-- **Files touched:** `crates/vxe-assets/src/rig.rs`, `tests/rig.rs`,
+- **Files touched:** `crates/svet-assets/src/rig.rs`, `tests/rig.rs`,
   `apps/flythrough/assets/entities/slime/` (new, three files), `entities/README.md`,
   `docs/entities.md`, `apps/flythrough/src/` (the ring, if needed; the showcase's table row,
   if added), `apps/flythrough/tests/entities.rs`, `tests/gpu_entities.rs`, a baseline under
@@ -326,7 +326,7 @@ side (`d^2` 544, `cos` 0.8575, window 0.9959).
 ## Data shapes
 
 ```rust
-// illustrative: vxe-entity
+// illustrative: svet-entity
 pub const SCALE_ONE: u16 = 256;             // 64..=1024: a quarter to four times
 pub struct PartPose { pub t: [i32; 3], pub q: Quat, pub s: [u16; 3] }
 pub struct Key { pub tick: u32, pub t: [i32; 3], pub q: Quat, pub s: [u16; 3] }
@@ -389,7 +389,7 @@ The instance (128 B), the pool's volume layout and the tree node are unchanged.
   on a `part` line.
 - **Shear, mirroring (negative scale) or a scale outside a quarter to four times.** A mirrored
   part is a second `.vox` node.
-- **Scale in `vxe-sim`'s bodies** (Plan 0079's `body` is a fixed radius and height), in the
+- **Scale in `svet-sim`'s bodies** (Plan 0079's `body` is a fixed radius and height), in the
   entity's audio footprint, or in the hit record's instance bits.
 - **A timeline or curve editor.** Keys are typed (ADR-0051).
 - **Light from a scaled emissive part onto the world**: a list light the consumer attaches
@@ -423,7 +423,7 @@ Each with the recommended option first. An answer of "go" takes every first opti
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the scale in `vxe-entity` | dev | not started | |
+| 1: the scale in `svet-entity` | dev | not started | |
 | 2: the renderer | dev | not started | |
 | 3: the `.rig` grammar, the slime, a golden and a reading | dev | not started | |
 | 4: the owner's window | human | not started | |

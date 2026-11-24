@@ -103,8 +103,8 @@ slow-timeout = { period = "60s", terminate-after = 10 }
 # The gate tier for CI's Windows arm: the CPU tests only, the quick tier's filter. On WARP,
 # frame 0's `shade_preload` hangs once anything touches its buffers between the preload's
 # args pass and it, and only the D3D12 debug layer clears that (docs/backlog.md,
-# "`vxe-render::exposure` hangs on WARP since Plan 0057 Phase 7", the binary now
-# `vxe-render::gpu_exposure`). No GPU test runs on Windows until Plan 0059 settles the preload
+# "`svet-render::exposure` hangs on WARP since Plan 0057 Phase 7", the binary now
+# `svet-render::gpu_exposure`). No GPU test runs on Windows until Plan 0059 settles the preload
 # (owner, 2026-11-09). `node scripts/check-test-tiers.mjs` checks the copy.
 [profile.ci-windows]
 inherits = "ci"

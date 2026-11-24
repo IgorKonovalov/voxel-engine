@@ -9,7 +9,7 @@
 
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS};
 use flythrough::{RUBBLE, cave_materials};
-use vxe_world::*;
+use svet_world::*;
 
 /// Iterations of the full sweep.
 const SWEEP: usize = 40_000;

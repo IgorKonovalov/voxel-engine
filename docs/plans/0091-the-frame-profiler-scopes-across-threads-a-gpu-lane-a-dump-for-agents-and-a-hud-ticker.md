@@ -29,7 +29,7 @@ fly-through, the tester and every `crates/` build carry no collector and no scop
 ## Context & problem
 
 Roadmap M7 owes "an in-app profiler overlay with GPU timestamps"; the GPU half exists
-(`crates/vxe-render/src/frame/timer.rs`, `PassTimer`, 23 passes of `FRAME_PASSES`, read
+(`crates/svet-render/src/frame/timer.rs`, `PassTimer`, 23 passes of `FRAME_PASSES`, read
 without waiting through a readback ring) and the HUD prints its rows against `nfr.md`
 section 2 (`apps/flythrough/src/hud/stats.rs`). The CPU half is a set of lap tables written
 one stall at a time: `StageClock` in `gpu_world/window.rs`, `StepStages` in
@@ -52,12 +52,12 @@ allocation count on the status bar, and `WARN_TIMED_FUNCTION` for a scope with a
 
 The figures it touches: `nfr.md` section 2 (the frame's CPU, which must not move with the
 feature off and moves by a stated amount with it on) and section 7 (the build; the feature adds
-two crates to one build). The dependency rule: `vxe-world` takes nothing; the engine is a
+two crates to one build). The dependency rule: `svet-world` takes nothing; the engine is a
 library, so a consumer pays nothing unless it enables a collector (ADR-0077).
 
 ## Decision
 
-We instrument with the `profiling` facade at the lockfile's `=1.0.18`, in `vxe-render` and the
+We instrument with the `profiling` facade at the lockfile's `=1.0.18`, in `svet-render` and the
 apps, and collect with puffin 0.20.0 behind the fly-through's `profiler` feature (ADR-0077).
 Our exporter owns the GPU lane, the Chrome trace, the text tree and `scopes_top`; the HUD owns
 the in-app view on the overlay's text grid. We rejected `tracing` plus Tracy (two facades, a
@@ -71,7 +71,7 @@ viewer (it adds `crossbeam-channel` and puffin's `packing` features).
 
 ```mermaid
 flowchart LR
-    subgraph render[vxe-render]
+    subgraph render[svet-render]
         E[encode / submit scopes]
         S[sync stage scopes]
         Q[queue step scopes]
@@ -97,7 +97,7 @@ flowchart LR
     R --> V[Perfetto]
 ```
 
-`vxe-world` is absent from the diagram on purpose: its ops and its streaming workers are timed
+`svet-world` is absent from the diagram on purpose: its ops and its streaming workers are timed
 from outside, by the scopes around the calls that enter it.
 
 ## Implementation phases
@@ -109,21 +109,21 @@ script are asserted by tests as each phase names.
 ### Phase 1: The walking skeleton: scopes on the frame loop, puffin behind `profiler`, `--profiler-dump` writes a Chrome trace
 - **Owner skill:** dev
 - **What:** `profiling = { version = "=1.0.18", default-features = false }` in the workspace
-  table, a dependency of `vxe-render` and `flythrough`; the fly-through gains the feature
+  table, a dependency of `svet-render` and `flythrough`; the fly-through gains the feature
   `profiler = ["dep:puffin", "profiling/profile-with-puffin"]` with `puffin = { version =
   "=0.20.0", default-features = false, optional = true }`. Scopes on the frame loop (`frame`,
   `update`, `poll`, `sync`, `queue step`, `encode`, `submit`, `present`) and
-  `profiling::finish_frame!()` once per frame; `vxe-render`'s `Frame::encode` and the sync's
+  `profiling::finish_frame!()` once per frame; `svet-render`'s `Frame::encode` and the sync's
   entry get a `profiling::scope!`. A new module `apps/flythrough/src/profiler/` (`mod.rs`,
   `chrome.rs`) holds the collector's on/off, the frame view of the last 240 frames (the HUD's
   `RING`) and the Chrome trace writer: one `X` event per scope (`name`, `ts` and `dur` in
   microseconds, `pid` the process, `tid` the thread's index, `args.thread` its name), written
   by `--profiler-dump DIR` at exit, or at the moment a frozen frame is taken (Phase 7). Under
   the feature off, `--profiler-dump` prints `profiler: built without the feature` and exits 2.
-- **Files touched:** `Cargo.toml`, `Cargo.lock`, `crates/vxe-render/Cargo.toml`,
-  `crates/vxe-render/src/frame/encode.rs` (one line; the file is at 1194 of 1200, so the scope
+- **Files touched:** `Cargo.toml`, `Cargo.lock`, `crates/svet-render/Cargo.toml`,
+  `crates/svet-render/src/frame/encode.rs` (one line; the file is at 1194 of 1200, so the scope
   goes in `Frame::encode`'s caller in `frame/mod.rs` if it does not fit),
-  `crates/vxe-render/src/gpu_world/mod.rs`, `apps/flythrough/Cargo.toml`,
+  `crates/svet-render/src/gpu_world/mod.rs`, `apps/flythrough/Cargo.toml`,
   `apps/flythrough/src/profiler/{mod.rs,chrome.rs}`, `apps/flythrough/src/run/frame.rs`,
   `apps/flythrough/src/cli/flags.rs`, `apps/flythrough/src/cli/mod.rs`, `docs/flythrough.md`,
   `.github/workflows/ci.yml` (one `cargo check -p flythrough --features profiler` beside the
@@ -147,18 +147,18 @@ script are asserted by tests as each phase names.
 - **What:** the sync's stages (`gpu_world/window.rs` `StageClock`'s lap sites, each a scope
   with the stage's `SYNC_FIELDS` name), the queue step's stages (`bake/stages.rs` `Laps`' lap
   sites, each a scope with the `STEP_STAGES` name), the bake loop's submit and wait, the
-  belt's copy; in the fly-through, `server.tick` (the tick's scope wraps `vxe-net`'s call,
-  which stays unscoped inside), `Walkers::tick` (wraps `vxe-sim`'s movers from outside), the
+  belt's copy; in the fly-through, `server.tick` (the tick's scope wraps `svet-net`'s call,
+  which stays unscoped inside), `Walkers::tick` (wraps `svet-sim`'s movers from outside), the
   audio feed's call, the entities' pose work; every thread the fly-through spawns registers a
-  name (`profiling::register_thread!`): `loading`, `gen <n>`, `icons`. `vxe-world`'s streaming
+  name (`profiling::register_thread!`): `loading`, `gen <n>`, `icons`. `svet-world`'s streaming
   workers (`stream/mod.rs`) stay uninstrumented: their work shows as the gap between a chunk's
   request and its arrival, which the backlog's per-job tracking entry takes later. The
   `wgpu-core` scopes that light up under the feature are folded by the exporter under the
   engine scope that called them (a `fold` list of prefixes: `wgpu_core::`, `wgpu_hal::`), so
   the tree and the HUD show engine scopes, and the Chrome trace keeps them all.
-- **Files touched:** `crates/vxe-render/src/gpu_world/window.rs`,
-  `crates/vxe-render/src/gpu_world/stage.rs`, `crates/vxe-render/src/bake/stages.rs`,
-  `crates/vxe-render/src/bake/queue/step.rs`, `crates/vxe-render/src/bake/*.rs` (the loop's
+- **Files touched:** `crates/svet-render/src/gpu_world/window.rs`,
+  `crates/svet-render/src/gpu_world/stage.rs`, `crates/svet-render/src/bake/stages.rs`,
+  `crates/svet-render/src/bake/queue/step.rs`, `crates/svet-render/src/bake/*.rs` (the loop's
   submit), `apps/flythrough/src/run/frame.rs`, `apps/flythrough/src/run/loading.rs`,
   `apps/flythrough/src/setup.rs`, `apps/flythrough/src/entities/icon.rs`,
   `apps/flythrough/src/profiler/chrome.rs`.
@@ -169,8 +169,8 @@ script are asserted by tests as each phase names.
   log with the clocksource named (the TSC entry in `docs/backlog.md`). The `profiler.rs` test
   gains a case: a trace built from two named threads lists both `tid`s with their names, and a
   scope whose name starts with `wgpu_core::` is absent from the tree while present in the
-  trace. Nothing in `crates/vxe-world/`, `crates/vxe-net/`, `crates/vxe-sim/` or
-  `crates/vxe-audio/` changes (`git diff --stat` of the phase).
+  trace. Nothing in `crates/svet-world/`, `crates/svet-net/`, `crates/svet-sim/` or
+  `crates/svet-audio/` changes (`git diff --stat` of the phase).
 
 ### Phase 3: The text tree, `scopes_top` in `run.json`, and the ranking script
 - **Owner skill:** dev
@@ -275,7 +275,7 @@ script are asserted by tests as each phase names.
   frame. `profiler dump` (a second entry) writes the dump of the frozen 240 frames to the
   `--profiler-dump` directory or `./profile-<time>` at once. Without the feature the entries
   read `profiler: built without the feature` and are grey. Mouse click on a bar is not in this
-  phase: `vxe_app::Input` reports no cursor position (the backlog's "Mouse pointing and text
+  phase: `svet_app::Input` reports no cursor position (the backlog's "Mouse pointing and text
   events" entry), and the cursor is locked in flight; the keyboard pick does the same job.
 - **Files touched:** `apps/flythrough/src/hud/stats.rs`, `apps/flythrough/src/hud/stats/` (a
   new `ticker.rs` and `frozen.rs`; `stats.rs` is at 949 lines), `apps/flythrough/src/hud/menu/
@@ -392,10 +392,10 @@ events for thread names, `i` instant events for overruns, `C` counter events for
   question 1:** take it as drafted (recommended: the pointing entry's Wayland grab quirks are
   their own plan), or add `Input::cursor` and an unlocked cursor while frozen in Phase 7 (S to
   M, and the first consumer of the backlog's pointing entry).
-- **Audio.** The device callback runs inside `vxe-audio` on cpal's thread; a scope there needs
-  `profiling` as a dependency of `vxe-audio` (no-op by default, no new crate). **Owner question
-  2:** leave `vxe-audio` unscoped and time the app's feed call only (recommended: the crate's
-  "depends on `vxe-world` only" stays true, and the callback's cost has a figure already in
+- **Audio.** The device callback runs inside `svet-audio` on cpal's thread; a scope there needs
+  `profiling` as a dependency of `svet-audio` (no-op by default, no new crate). **Owner question
+  2:** leave `svet-audio` unscoped and time the app's feed call only (recommended: the crate's
+  "depends on `svet-world` only" stays true, and the callback's cost has a figure already in
   `nfr.md` section 9), or add the facade there.
 - **The flag's name.** `--profile NAME` is the render profile (ADR-0055); the plan names the
   feature `profiler` and the flag `--profiler-dump` to keep the words apart. **Owner question
@@ -412,7 +412,7 @@ events for thread names, `i` instant events for overruns, `C` counter events for
 - No `puffin_http` server or `puffin_viewer`: Perfetto reads the dump, the HUD is the live
   view; one line and two crates if the owner asks.
 - No Tracy backend: a later `profiler-tracy` feature through the same facade (ADR-0077).
-- No scopes in `vxe-world`, `vxe-net`, `vxe-sim` or `vxe-audio` (question 2 aside): the callers
+- No scopes in `svet-world`, `svet-net`, `svet-sim` or `svet-audio` (question 2 aside): the callers
   time them. No per-job tracking of the streaming and bake jobs (reserve and retire frames):
   the backlog's entry, S on top of this plan.
 - No sampling profiler: `perf` stays the tool for a hot loop with no scope.

@@ -15,7 +15,7 @@ pub use page::*;
 pub use route::*;
 pub use write::*;
 
-use vxe_app::{KeyCode, PadButton};
+use svet_app::{KeyCode, PadButton};
 
 /// A page of the menu: the entries of one group, in the order the root page lists them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

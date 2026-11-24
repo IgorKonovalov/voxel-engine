@@ -3,17 +3,17 @@
 
 use crate::cli::parse_args_from;
 use crate::test_support::argv;
-use vxe_render::Exposure;
+use svet_render::Exposure;
 
 /// `--penumbra`: disc unless named (Plan 0098 Phase 4, the fly-through's `DEFAULT_PENUMBRA`),
 /// which the banner leaves out; approach reaches the lighting and the banner.
 #[test]
 fn penumbra_is_disc_unless_named() {
     let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
-    assert_eq!(r.start_lighting().penumbra, vxe_render::Penumbra::Disc);
+    assert_eq!(r.start_lighting().penumbra, svet_render::Penumbra::Disc);
     assert!(!r.start_modes(0.0).line().contains("penumbra"));
     let r = parse_args_from(argv(&["--source", "outdoor", "--penumbra", "approach"])).unwrap();
-    assert_eq!(r.start_lighting().penumbra, vxe_render::Penumbra::Approach);
+    assert_eq!(r.start_lighting().penumbra, svet_render::Penumbra::Approach);
     assert!(r.start_modes(0.0).line().contains("penumbra approach, "));
     assert!(parse_args_from(argv(&["--penumbra", "soft"])).is_err());
 }
@@ -23,7 +23,7 @@ fn penumbra_is_disc_unless_named() {
 /// reach the lighting and the banner with a sky set.
 #[test]
 fn key_far_is_column_step_unless_named() {
-    use vxe_render::{KeyFar, KeyFarMix};
+    use svet_render::{KeyFar, KeyFarMix};
     let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
     let l = r.start_lighting();
     assert_eq!(
@@ -100,7 +100,7 @@ fn the_sky_term_flags_reach_the_lighting() {
     let l = r.start_lighting();
     assert_eq!(
         (l.sky_normal, l.sky_bounce),
-        (vxe_render::SkyNormal::Smoothed, 0.0)
+        (svet_render::SkyNormal::Smoothed, 0.0)
     );
     assert!(!r.start_modes(0.0).line().contains("sky normal"));
     assert!(!r.start_modes(0.0).line().contains("sky bounce"));
@@ -116,7 +116,7 @@ fn the_sky_term_flags_reach_the_lighting() {
     let l = r.start_lighting();
     assert_eq!(
         (l.sky_normal, l.sky_bounce),
-        (vxe_render::SkyNormal::Face, 0.3)
+        (svet_render::SkyNormal::Face, 0.3)
     );
     let line = r.start_modes(0.0).line();
     assert!(line.contains("sky normal face, sky bounce 0.3, "), "{line}");
@@ -161,9 +161,9 @@ fn the_exposure_rate_reaches_the_run() {
     let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
     assert_eq!(
         r.start_auto().rate_ev_s,
-        vxe_render::DEFAULT_EXPOSURE_RATE_EV_S
+        svet_render::DEFAULT_EXPOSURE_RATE_EV_S
     );
-    assert_eq!(vxe_render::DEFAULT_EXPOSURE_RATE_EV_S, 3.75);
+    assert_eq!(svet_render::DEFAULT_EXPOSURE_RATE_EV_S, 3.75);
     assert!(!r.start_modes(0.0).line().contains("exposure rate"));
     let r = parse_args_from(argv(&["--source", "outdoor", "--exposure-rate", "3.75"])).unwrap();
     assert!(!r.start_modes(0.0).line().contains("exposure rate"));
@@ -256,7 +256,7 @@ fn the_pre_roll_drain_takes_seconds_and_its_banner_names_the_state() {
     assert_eq!(drain(&["--pre-roll-drain", "90"]), Ok(Some(90.0)));
     assert!(drain(&["--pre-roll-drain", "0"]).is_err());
     assert!(drain(&["--pre-roll-drain", "601"]).is_err());
-    let stats = vxe_render::QueueStats {
+    let stats = svet_render::QueueStats {
         jobs: 12,
         coarse: 340,
         ..Default::default()
@@ -296,7 +296,7 @@ fn the_sky_anchor_floor_reaches_the_run() {
     assert_eq!(r.start_auto().sky_anchor_floor, 0.125);
     assert_eq!(
         r.start_auto().sky_anchor_floor,
-        vxe_render::DEFAULT_SKY_ANCHOR_FLOOR
+        svet_render::DEFAULT_SKY_ANCHOR_FLOOR
     );
     assert!(!r.start_modes(0.0).line().contains("sky anchor floor"));
     for (v, floor, word) in [
@@ -334,7 +334,7 @@ fn the_sky_anchor_lift_reaches_the_run() {
     assert_eq!(r.start_auto().sky_anchor_lift, Some(4.0));
     assert_eq!(
         r.start_auto().sky_anchor_lift,
-        Some(vxe_render::DEFAULT_SKY_ANCHOR_LIFT)
+        Some(svet_render::DEFAULT_SKY_ANCHOR_LIFT)
     );
     assert!(!r.start_modes(0.0).line().contains("sky anchor lift"));
     for (v, lift, word) in [
@@ -369,7 +369,7 @@ fn the_exposure_highlight_reaches_the_run() {
     assert_eq!(r.start_auto().highlight_percentile, 99.0);
     assert_eq!(
         r.start_auto().highlight_percentile,
-        vxe_render::DEFAULT_EXPOSURE_HIGHLIGHT
+        svet_render::DEFAULT_EXPOSURE_HIGHLIGHT
     );
     assert!(!r.start_modes(0.0).line().contains("exposure highlight"));
     for (v, p, word) in [
@@ -399,7 +399,7 @@ fn the_sky_anchor_share_reaches_the_run() {
     assert_eq!(r.start_auto().sky_anchor_share, 1.0 / 256.0);
     assert_eq!(
         r.start_auto().sky_anchor_share,
-        vxe_render::DEFAULT_SKY_ANCHOR_SHARE
+        svet_render::DEFAULT_SKY_ANCHOR_SHARE
     );
     assert!(!r.start_modes(0.0).line().contains("sky anchor share"));
     for (v, share, word) in [
@@ -438,7 +438,7 @@ fn the_sky_anchor_share_reaches_the_run() {
 #[test]
 fn the_defaults_are_the_five_picks_and_a_flag_names_its_row() {
     use crate::hud::HudRow;
-    use vxe_render::{KeyFar, KeyFarMix, Penumbra};
+    use svet_render::{KeyFar, KeyFarMix, Penumbra};
     let base = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
     let l = base.start_lighting();
     assert_eq!(
@@ -471,7 +471,7 @@ fn the_defaults_are_the_five_picks_and_a_flag_names_its_row() {
     let r = parse_args_from(argv(&["--source", "outdoor", "--light-history", "on"])).unwrap();
     assert_eq!(
         r.start_lighting(),
-        vxe_render::Lighting {
+        svet_render::Lighting {
             light_history: true,
             ..l
         },
@@ -550,7 +550,7 @@ fn source_fade_parses_and_the_defaults_leave_it_off() {
 /// banner name it; `--dig-hold land` and `--dig-hold near` are refused.
 #[test]
 fn dig_hold_is_on_rays_and_off_names_itself() {
-    use vxe_render::DigHold;
+    use svet_render::DigHold;
     let base = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
     assert_eq!(base.start_lighting().dig_hold, DigHold::On);
     let banner = base.start_modes(0.0).banner(0.0).unwrap();

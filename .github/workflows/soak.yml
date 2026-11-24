@@ -32,4 +32,4 @@ jobs:
       # Per-test times in the log, so `node scripts/test-times.mjs` can rank them.
       - run: cargo nextest run --workspace --profile ci-soak --run-ignored only --no-fail-fast --status-level pass
         env:
-          VXE_REQUIRE_SOFTWARE_ADAPTER: "1"
+          SVET_REQUIRE_SOFTWARE_ADAPTER: "1"

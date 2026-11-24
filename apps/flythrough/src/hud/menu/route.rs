@@ -11,7 +11,7 @@
 use super::page::{Activated, Menu, MenuInput};
 use super::{FIXED_KEYS, RunView, bound_keys};
 use crate::hud::Modes;
-use vxe_app::{Axis, Input, KeyCode, MouseButton, PadButton};
+use svet_app::{Axis, Input, KeyCode, MouseButton, PadButton};
 
 /// An input the rule sorts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

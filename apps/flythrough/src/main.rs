@@ -7,7 +7,7 @@ fn main() {
     // The fly-through's own lines and the shell's teardown trace show by default; RUST_LOG
     // overrides.
     env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("error,vxe_app=info,flythrough=info"),
+        env_logger::Env::default().default_filter_or("error,svet_app=info,flythrough=info"),
     )
     .init();
     let start = flythrough::app::start_clock();

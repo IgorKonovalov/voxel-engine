@@ -4,7 +4,7 @@
 //! view's centre, and the live queue stepped on a bounded world.
 
 use super::terms::Rig;
-use vxe_render::{Camera, Frame, LightParams, QueueStats, QueueView};
+use svet_render::{Camera, Frame, LightParams, QueueStats, QueueView};
 
 /// One frame's read-backs ([`Stepper::step`]).
 pub struct Shot {
@@ -23,7 +23,7 @@ pub struct Shot {
     pub source: Vec<u8>,
     /// The light pass's ms, where the adapter has timestamps.
     pub light_ms: Option<f64>,
-    /// Every pass's ms in [`vxe_render::FRAME_PASSES`]' order, where the adapter has
+    /// Every pass's ms in [`svet_render::FRAME_PASSES`]' order, where the adapter has
     /// timestamps; empty from [`read`].
     pub passes: Vec<f64>,
     /// The store's black and missing counts.
@@ -33,18 +33,18 @@ pub struct Shot {
     pub chained: u32,
 }
 
-/// A frame on a rig stepped by hand so its passes are timed ([`vxe_render::PassTimer`]).
+/// A frame on a rig stepped by hand so its passes are timed ([`svet_render::PassTimer`]).
 pub struct Stepper {
     pub frame: Frame,
-    timer: Option<vxe_render::PassTimer>,
+    timer: Option<svet_render::PassTimer>,
 }
 
 impl Stepper {
     pub fn new(rig: &Rig, frame: Frame) -> Self {
-        let n = vxe_render::FRAME_PASSES.len() as u32;
+        let n = svet_render::FRAME_PASSES.len() as u32;
         Self {
             frame,
-            timer: vxe_render::PassTimer::with_passes(&rig.device, &rig.queue, n),
+            timer: svet_render::PassTimer::with_passes(&rig.device, &rig.queue, n),
         }
     }
 
@@ -79,7 +79,7 @@ impl Stepper {
         }
         rig.queue.submit([enc.finish()]);
         let passes = self.timer.as_ref()?.read_all_ms(&rig.device);
-        vxe_render::FRAME_PASSES
+        svet_render::FRAME_PASSES
             .iter()
             .position(|&n| n == "light")
             .and_then(|slot| passes.get(slot).copied())
@@ -108,7 +108,7 @@ impl Stepper {
             .as_ref()
             .map(|t| t.read_all_ms(&rig.device))
             .unwrap_or_default();
-        let light_ms = vxe_render::FRAME_PASSES
+        let light_ms = svet_render::FRAME_PASSES
             .iter()
             .position(|&n| n == "light")
             .and_then(|slot| passes.get(slot).copied());
@@ -121,7 +121,7 @@ impl Stepper {
 
 /// The read-backs of `f`'s last frame.
 pub fn read(rig: &Rig, f: &Frame, light_ms: Option<f64>) -> Shot {
-    use vxe_render::debug::{read_rgba8, read_rgba16f, read_rgba32f};
+    use svet_render::debug::{read_rgba8, read_rgba16f, read_rgba32f};
     let (d, q) = (&rig.device, &rig.queue);
     let lum = |p: &[f32; 4]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
     let ss = f.read_store_stats(d, q);
@@ -186,13 +186,13 @@ pub fn grid_of(i: usize, dw: usize, dh: usize, gw: usize, gl: usize) -> usize {
 
 /// The first solid voxel of `world` along `dir` from `eye`, by steps of 0.05 voxel, within
 /// `reach` voxels: its distance.
-pub fn march(world: &vxe_world::World, eye: [f32; 3], dir: [f32; 3], reach: f32) -> Option<f32> {
+pub fn march(world: &svet_world::World, eye: [f32; 3], dir: [f32; 3], reach: f32) -> Option<f32> {
     let mut t = 0.0;
     while t < reach {
         let p = [0, 1, 2].map(|k| (eye[k] + dir[k] * t).floor() as i32);
         if world
-            .material_at(vxe_world::VoxelCoord(p))
-            .is_some_and(|m| m != vxe_world::AIR)
+            .material_at(svet_world::VoxelCoord(p))
+            .is_some_and(|m| m != svet_world::AIR)
         {
             return Some(t);
         }
@@ -241,7 +241,7 @@ pub fn dig_ahead(rig: &mut Rig, f: &mut Frame, cam: &Camera) -> ([i64; 3], [i64;
     let (min, max) = (c.map(|v| v - 5), c.map(|v| v + 5));
     let r = rig
         .world
-        .apply(&super::queue::box_op(min, max, vxe_world::Mode::Carve))
+        .apply(&super::queue::box_op(min, max, svet_world::Mode::Carve))
         .expect("the dig is resident");
     let (lo, hi) = r.aabb.expect("the dig changed voxels");
     rig.gpu
@@ -263,7 +263,7 @@ pub fn queue_step(rig: &mut Rig, f: &mut Frame, cam: &Camera) -> QueueStats {
         hold: None,
         half_angle: {
             let [w, h] = f.output_size();
-            vxe_render::internals::view_half_angle(cam.vfov, w as f32 / h as f32)
+            svet_render::internals::view_half_angle(cam.vfov, w as f32 / h as f32)
         },
         frustum: None,
         full_radius: None,
@@ -275,18 +275,18 @@ pub fn queue_step(rig: &mut Rig, f: &mut Frame, cam: &Camera) -> QueueStats {
         .expect("the queue's step")
 }
 
-/// Plan 0098 Phase 8's dig run, from `VXE_DIG` (`SCENE/ARM/DRAIN`, each part optional, else
+/// Plan 0098 Phase 8's dig run, from `SVET_DIG` (`SCENE/ARM/DRAIN`, each part optional, else
 /// the part of `default`): the scene (`hills` or `forest`), the arm's comma-separated tokens,
 /// and the most frames the queue drains before the settle.
 pub fn dig_spec(default: (&str, &str, u32)) -> (String, String, u32) {
-    let v = std::env::var("VXE_DIG").unwrap_or_default();
+    let v = std::env::var("SVET_DIG").unwrap_or_default();
     let mut it = v.split('/');
     let mut part = |d: &str| it.next().filter(|s| !s.is_empty()).unwrap_or(d).to_string();
     let scene = part(default.0);
     let arm = part(default.1);
     let drain = part(&default.2.to_string())
         .parse()
-        .expect("VXE_DIG's drain");
+        .expect("SVET_DIG's drain");
     (scene, arm, drain)
 }
 
@@ -376,12 +376,12 @@ pub fn dig_frame(
     label: String,
     out: [u32; 2],
 ) -> DigFrame {
-    use vxe_render::debug::{read_buffer, read_rgba16f};
+    use svet_render::debug::{read_buffer, read_rgba16f};
     let shot = s.step(rig, cam);
     let (d, qu) = (&rig.device, &rig.queue);
     let f = &s.frame;
     let exposure =
-        vxe_render::ExposureState::from_bytes(&read_buffer(d, qu, f.exposure_state(), 0, 32))
+        svet_render::ExposureState::from_bytes(&read_buffer(d, qu, f.exposure_state(), 0, 32))
             .previous;
     let lum = |p: &[f32; 4]| f64::from(0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]);
     let pair = read_rgba16f(d, qu, f.visibility_pair());
@@ -421,7 +421,7 @@ pub fn dig_frame(
         })
         .collect();
     let ms = |name: &str| {
-        vxe_render::FRAME_PASSES
+        svet_render::FRAME_PASSES
             .iter()
             .position(|&p| p == name)
             .and_then(|i| shot.passes.get(i).copied())
@@ -567,7 +567,7 @@ pub fn p99_mean(mut changes: Vec<u8>) -> (u8, f64) {
 }
 
 /// The fly-through's dig radius (`edits::DIG_RADIUS`, crate-private there): 0.5 m.
-pub const FLY_DIG_RADIUS: i64 = 5 * vxe_world::FIXED_ONE;
+pub const FLY_DIG_RADIUS: i64 = 5 * svet_world::FIXED_ONE;
 
 /// The fly-through's dig (`flythrough_logic`'s `Dig` input, Plan 0098 Phase 14): a capsule of
 /// [`FLY_DIG_RADIUS`] from the eye to the first solid voxel along the view (the logic's reach),
@@ -576,7 +576,7 @@ pub const FLY_DIG_RADIUS: i64 = 5 * vxe_world::FIXED_ONE;
 /// where nothing changed.
 pub fn dig_along(rig: &mut Rig, f: &mut Frame, cam: &Camera) -> Option<([i64; 3], [i64; 3])> {
     use super::SyncNow;
-    use vxe_world::{EditOp, FIXED_ONE, Fixed3, Mode};
+    use svet_world::{EditOp, FIXED_ONE, Fixed3, Mode};
     let one = FIXED_ONE as f32;
     let origin = cam.position.to_array().map(|v| (v * one).floor() as i64);
     let dir = cam.basis().0.to_array().map(|v| (v * one).round() as i64);
@@ -649,12 +649,12 @@ pub fn hole_frame(
     stages: bool,
     png: Option<&std::path::Path>,
 ) -> HoleFrame {
-    use vxe_render::debug::{read_buffer, read_rgba16f, read_rgba32f};
+    use svet_render::debug::{read_buffer, read_rgba16f, read_rgba32f};
     let shot = s.step(rig, cam);
     let (d, qu) = (&rig.device, &rig.queue);
     let f = &s.frame;
     let exposure =
-        vxe_render::ExposureState::from_bytes(&read_buffer(d, qu, f.exposure_state(), 0, 32))
+        svet_render::ExposureState::from_bytes(&read_buffer(d, qu, f.exposure_state(), 0, 32))
             .previous;
     let lum = |p: &[f32; 4]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
     let pair = read_rgba16f(d, qu, f.visibility_pair());
@@ -666,7 +666,7 @@ pub fn hole_frame(
             if h[3] >= 1e30 || !h[3].is_finite() {
                 return 0;
             }
-            let c = vxe_world::ChunkCoord([0, 1, 2].map(|k| (h[k].floor() as i32).div_euclid(64)));
+            let c = svet_world::ChunkCoord([0, 1, 2].map(|k| (h[k].floor() as i32).div_euclid(64)));
             match (store.block(c).is_some(), store.is_coarse(c)) {
                 (_, true) => 2,
                 (true, false) => 1,
@@ -703,7 +703,7 @@ pub fn hole_frame(
         super::write_png(&p.to_path_buf(), &shot.display, out[0], out[1]);
     }
     let ms = |name: &str| {
-        vxe_render::FRAME_PASSES
+        svet_render::FRAME_PASSES
             .iter()
             .position(|&p| p == name)
             .and_then(|i| shot.passes.get(i).copied())
@@ -1057,7 +1057,7 @@ fn rel_from_median(v: &[f32], w: usize, i: usize) -> f32 {
 /// The top of solid of the column map's cell (`COLUMN_CELL` 2 voxels an edge) holding voxel
 /// column `xy`, scanned from `z0` down 256 voxels: the top voxel's z plus 1, or none.
 fn cell_top(
-    world: &vxe_world::World,
+    world: &svet_world::World,
     cache: &mut std::collections::HashMap<[i32; 2], Option<i32>>,
     xy: [i32; 2],
     z0: i32,
@@ -1066,8 +1066,8 @@ fn cell_top(
     *cache.entry(c).or_insert_with(|| {
         (z0 - 256..=z0).rev().find_map(|z| {
             let solid = (0..4).any(|k| {
-                let v = vxe_world::VoxelCoord([c[0] * 2 + (k & 1), c[1] * 2 + (k >> 1), z]);
-                world.material_at(v).is_some_and(|m| m != vxe_world::AIR)
+                let v = svet_world::VoxelCoord([c[0] * 2 + (k & 1), c[1] * 2 + (k >> 1), z]);
+                world.material_at(v).is_some_and(|m| m != svet_world::AIR)
             });
             solid.then_some(z + 1)
         })
@@ -1079,7 +1079,7 @@ fn cell_top(
 /// in each of 8 horizontal directions, the largest over the distances 2, 4 .. 12 voxels; the
 /// smallest of the 8 (a hole closes every way, a tree beside a face one way); `1 / (1 + t^2)`.
 fn openness_min(
-    world: &vxe_world::World,
+    world: &svet_world::World,
     cache: &mut std::collections::HashMap<[i32; 2], Option<i32>>,
     p: [f32; 3],
     eye: [f32; 3],
@@ -1115,7 +1115,7 @@ fn openness_min(
 /// horizontal directions of `cos^2` of the horizon the cells' tops make within 32 voxels (the
 /// cosine-weighted share of the sky above a horizon at that elevation).
 fn openness(
-    world: &vxe_world::World,
+    world: &svet_world::World,
     cache: &mut std::collections::HashMap<[i32; 2], Option<i32>>,
     p: [f32; 3],
     eye: [f32; 3],
@@ -1160,7 +1160,7 @@ fn openness(
 /// what landed (the mean and the largest distance), by the landed pixel's luma scaled by the
 /// candidate's visibility over the landed one to the power 1 / 2.2 (a guess at the display's
 /// transfer; pixels whose landed visibility is under 0.02 or luma under 4 are left out).
-pub fn hole_tables(run: &HoleRun, world: &vxe_world::World) -> String {
+pub fn hole_tables(run: &HoleRun, world: &svet_world::World) -> String {
     use std::fmt::Write;
     let (figs, classes) = hole_figures(run);
     let landings = hole_landings(run);
@@ -1347,7 +1347,7 @@ fn kind_rows(
 /// [`hole_tables`]' error table, per dig group ([`hole_groups`]), into `out`.
 fn error_table(
     run: &HoleRun,
-    world: &vxe_world::World,
+    world: &svet_world::World,
     classes: &[Vec<u8>],
     groups: &[(usize, usize)],
     out: &mut String,

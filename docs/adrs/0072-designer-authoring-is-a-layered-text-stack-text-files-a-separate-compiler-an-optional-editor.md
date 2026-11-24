@@ -10,7 +10,7 @@
 > be"). Builds on ADR-0010 (the logic component), ADR-0007 (the op log and replay), ADR-0014
 > (prefab identity in the log), ADR-0051 (`.rig` text), ADR-0065 (the material file), ADR-0067
 > (staged structures as logged stamps), ADR-0054 (the tester and `run.json`).
-> **Names:** the tree keeps `vxe-*` until Plan 0087 merges (ADR-0071); this record uses the
+> **Names:** the tree keeps `svet-*` until Plan 0087 merges (ADR-0071); this record uses the
 > names as they are today and names the new crates it proposes with the `svet-` prefix they will
 > be born with.
 
@@ -29,10 +29,10 @@ What exists today, and what the stack would stand on:
 
 - **The logic boundary is built and deterministic.** A game's server logic is a component
   behind the `Logic` trait (ADR-0010): `init(seed)`, `tick(tick, inputs) -> bytes`, and a
-  `Host` of queries and edits. The WIT world `vxe:logic@0.1.0`
-  (`crates/vxe-script-wasm/wit/logic.wit`) imports `apply`, `material-at`, `raycast`,
+  `Host` of queries and edits. The WIT world `svet:logic@0.1.0`
+  (`crates/svet-script-wasm/wit/logic.wit`) imports `apply`, `material-at`, `raycast`,
   `count-in-box` and `unsupported`; compound values cross as the op log's wire bytes. The host
-  (`vxe-script-wasm`) gives the component tick clocks, seeded entropy, canonical NaNs, fuel
+  (`svet-script-wasm`) gives the component tick clocks, seeded entropy, canonical NaNs, fuel
   per call and a memory cap, so whatever runs in it replays bit-identically through the op log
   (ADR-0007). The one component in the tree is the fly-through's dig logic
   (`apps/flythrough/logic`), Rust, built natively and as a `wasm32-wasip2` component by
@@ -103,8 +103,8 @@ flowchart LR
     GL[game logic, Rust: verbs]
   end
   subgraph L1["1: engine crates"]
-    HOST[vxe-script-wasm host]
-    WORLD[vxe-world: stamps, regions]
+    HOST[svet-script-wasm host]
+    WORLD[svet-world: stamps, regions]
   end
   ED <--> LVL
   ED <--> RUL
@@ -178,12 +178,12 @@ interpreter is cheaper to build and needs no Rust toolchain on a designer's mach
 
 | Option | What | For | Against |
 |---|---|---|---|
-| **(a) This repository** (recommended): a grammar library crate (`svet-lang`: parse, check, lower; the one implementation the compiler, the LSP and any editor share) and a thin CLI (`tools/svetc`), neither a default workspace member, like `vxe-script-wasm` | Versioned with the WIT world it targets and the wire encoding it emits; CI runs the native-vs-component equality test against a compiled rule set; the repo's gates (fmt, clippy, deny, the hooks, the doc scripts) apply with no new harness | The repository grows a second product. The parser and LSP dependencies enter `cargo deny`. `CLAUDE.md`'s map gains a `tools/` row |
+| **(a) This repository** (recommended): a grammar library crate (`svet-lang`: parse, check, lower; the one implementation the compiler, the LSP and any editor share) and a thin CLI (`tools/svetc`), neither a default workspace member, like `svet-script-wasm` | Versioned with the WIT world it targets and the wire encoding it emits; CI runs the native-vs-component equality test against a compiled rule set; the repo's gates (fmt, clippy, deny, the hooks, the doc scripts) apply with no new harness | The repository grows a second product. The parser and LSP dependencies enter `cargo deny`. `CLAUDE.md`'s map gains a `tools/` row |
 | (b) A separate repository | Its own release cadence; the engine repo stays an engine | Version skew against the WIT world and the wire encoding, a second CI, and path or git dependencies across repos, the pain the first consumer already carries |
 | (c) The consumer's repository | The verbs are the game's, so the language's vocabulary is partly the game's | The grammar, the checker and the back end are engine-level; a second consumer would need them. Only the verb table is the game's, and it is an input to the compiler, not part of it |
 
 **Recommendation: (a).** The grammar library stays out of every runtime crate's dependency
-graph (`vxe-world` and `vxe-net` never depend on it), so the engine a game links knows nothing
+graph (`svet-world` and `svet-net` never depend on it), so the engine a game links knows nothing
 of the language; the CLI, the LSP and a game's own in-process hot-reload (layer 2 may link the
 library at development time) are front ends on it.
 
@@ -215,7 +215,7 @@ All of it general, none of it a language or an editor:
 | Named regions and their events | Axis-aligned voxel boxes with an opaque id, registered by the logic through the host; per tick, the engine reports which tracked positions entered or left which region, as an input to `tick` or a host import | Roadmap M3's "region change notifications", unbuilt; `count-in-box` exists |
 | A logic component swapped at a tick boundary | Two routes: (i) **replay-based**: the server restarts the new component from the seed and re-simulates the input log to the current tick, so hot reload is a replay and no state migrates; (ii) state hand-off exports (`save-state`/`load-state` as opaque bytes) when replay is too slow for a long session | `--replay PATH` re-simulates a saved session; ADR-0010's native-vs-component equality is the proof the two routes must pass |
 | Machine-readable run output | Beside `run.json`: the logic's events per tick as JSON lines, a still from a named point at a named tick, the world hash at exit, all headless | `run.json` schema 2, the broadcast lines as text, goldens in tests, the world hash in the replay tests |
-| WIT growth | The host imports the verbs need and the engine can answer generally: region registration and events, and the entity snapshots owed by M6 | `vxe:logic@0.1.0` with five imports |
+| WIT growth | The host imports the verbs need and the engine can answer generally: region registration and events, and the entity snapshots owed by M6 | `svet:logic@0.1.0` with five imports |
 
 **Recommendation: build (i) first for the hot swap.** Deterministic replay is the engine's
 own mechanism, and it makes a code change checkable by construction: the same inputs, the new
@@ -257,7 +257,7 @@ Not now. When the owner opens it, the first plan is a **spike, not a build**:
    an agent, and the replay-based hot swap's time for a 10-minute session.
 
 The ADRs that would follow: the language itself (grammar and semantics, once picked), the level
-format and its baked encoding, and the region mechanism's shape in `vxe-world`.
+format and its baked encoding, and the region mechanism's shape in `svet-world`.
 
 ## Consequences
 
@@ -304,8 +304,8 @@ over text.
 
 ### Alternative B: scripting inside `crates/`
 
-A script runtime (Lua through `mlua`, or a rule interpreter) linked into `vxe-world` or
-`vxe-net`, with hooks the engine calls. It lost because the engine would then know gameplay
+A script runtime (Lua through `mlua`, or a rule interpreter) linked into `svet-world` or
+`svet-net`, with hooks the engine calls. It lost because the engine would then know gameplay
 and a language, the boundary of ADR-0010 (queries, edits and bytes) would gain a second,
 wider one, and determinism would depend on the script runtime's discipline instead of on the
 component sandbox. ADR-0010 deferred Lua for client scripts; nothing here changes that.

@@ -25,7 +25,7 @@ so the resampled prefab must carry a mask of its own.
 
 ## Decision
 
-`vxe-entity` gains a pure, deterministic **bake**: given a model, a pose and a variant it
+`svet-entity` gains a pure, deterministic **bake**: given a model, a pose and a variant it
 returns a `Prefab` on the world grid and its origin, with a mask set only where the posed
 model is solid, built by integer sampling of each drawn part's chosen volume at the sub-centres
 of every world voxel in the part's world box (one sample at detail 1, eight at 2, sixty-four
@@ -72,7 +72,7 @@ the entity. No wire format, op kind or save format changes.
 The server and every client re-bake at apply time; the op is about 450 B whatever the model's
 size, and the save carries no corpse content. It lost for now because it needs a model registry
 beside the prefab registry, a model table in the save header (parts, pivots, details, their
-prefabs), a new wire kind in `vxe-world`, `vxe-net` and the host, and a bake on every peer. The
+prefabs), a new wire kind in `svet-world`, `svet-net` and the host, and a bake on every peer. The
 bake's determinism keeps this door open; the save-growth reading says when to walk through it
 (M9, with the content channel).
 

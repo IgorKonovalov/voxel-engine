@@ -3,9 +3,9 @@
 use crate::edits::{Failure, ball};
 use crate::run::hud_feed::FieldSamples;
 use std::time::Instant;
-use vxe_app::Flow;
-use vxe_render::glam::Vec3;
-use vxe_world::{ChunkCoord, FIXED_ONE};
+use svet_app::Flow;
+use svet_render::glam::Vec3;
+use svet_world::{ChunkCoord, FIXED_ONE};
 
 /// Autopilot: dig reach (30 m) and radius (1 m), flight speed (10 m/s) and leg length.
 pub(crate) const PILOT_REACH: i64 = 300 * FIXED_ONE;
@@ -194,7 +194,7 @@ impl SettleClock {
 mod tests {
     use super::*;
 
-    use vxe_app::Flow;
+    use svet_app::Flow;
 
     use crate::edits::Failure;
 

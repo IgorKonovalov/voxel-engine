@@ -12,15 +12,15 @@ use crate::entities::library;
 use crate::hud::menu::{Activated, PageId, Row};
 use crate::run::hud_feed::Overlay;
 use crate::test_support::bare_run;
-use vxe_app::{Axis, Flow, Input, KeyCode, MouseButton, PadButton};
-use vxe_world::{ChunkExtent, EditOp, FIXED_ONE, Fixed3, MaterialTable, Mode, OpResult, World};
+use svet_app::{Axis, Flow, Input, KeyCode, MouseButton, PadButton};
+use svet_world::{ChunkExtent, EditOp, FIXED_ONE, Fixed3, MaterialTable, Mode, OpResult, World};
 
 /// A rock box of `table` hollow over `[-8, x_end) x [-30, 30) x [-8, 30)`: the floor's top at
 /// z = -8, the far wall's face at x = `x_end`.
 fn rock_box(table: &MaterialTable, x_end: i64) -> World {
     let world = World::generate(
         ChunkExtent::new([-1, -1, -1], [2, 1, 1]),
-        &vxe_world::UniformSource(crate::cave::ROCK),
+        &svet_world::UniformSource(crate::cave::ROCK),
         table,
     );
     world
@@ -118,7 +118,7 @@ fn tick_ops(run: &mut Run) -> usize {
 
 /// The camera at `at`, `pitch_deg` above the horizon, looking along +x.
 fn look(run: &mut Run, at: [f32; 3], pitch_deg: f32) {
-    run.fly.camera.position = vxe_render::glam::Vec3::from_array(at);
+    run.fly.camera.position = svet_render::glam::Vec3::from_array(at);
     run.fly.camera.yaw = 0.0;
     run.fly.camera.pitch = pitch_deg.to_radians();
 }
@@ -240,7 +240,7 @@ fn the_wheel_and_the_digits_enter_the_mode() {
 /// The chooser's overlay at 1280 x 720 (80 x 45 cells at the menu's scale 2): the rows
 /// `Run::place_menu` writes with the belt `Run::chooser_belt` appends under them, the menu's
 /// backdrop box and the belt's.
-fn chooser_overlay(run: &mut Run) -> (Vec<String>, vxe_render::HudBox, vxe_render::HudBox) {
+fn chooser_overlay(run: &mut Run) -> (Vec<String>, svet_render::HudBox, svet_render::HudBox) {
     run.write_menu();
     let menu = run.place_menu([1280, 720]);
     let belt = run
@@ -270,7 +270,7 @@ fn assert_belt_under(run: &mut Run, slot: usize) {
     );
     assert_eq!(
         belt,
-        vxe_render::HudBox {
+        svet_render::HudBox {
             col: 3,
             row: first as u32 + 1,
             cols: 74,
@@ -618,7 +618,7 @@ fn the_ghost_is_marked_and_the_placed_are_not() {
     look(&mut run, [0.0, 0.0, 9.0], -40.0);
     frame_keys(&mut run, &wheel_down());
     let ghost = |run: &Run| run.modes.walkers.preview.as_ref().expect("a ghost").id;
-    let mark = |colour| vxe_render::Mark {
+    let mark = |colour| svet_render::Mark {
         colour,
         outline: true,
         tint: 0.35,
@@ -627,7 +627,7 @@ fn the_ghost_is_marked_and_the_placed_are_not() {
     run.modes.walkers.refresh_displays();
     assert_eq!(
         run.modes.walkers.marks(),
-        [(g, mark(vxe_render::MARK_COLOURS[0]))]
+        [(g, mark(svet_render::MARK_COLOURS[0]))]
     );
     frame_keys(&mut run, &click(MouseButton::Left));
     let red = [1.0, 0.0, 0.0];
@@ -643,13 +643,13 @@ fn the_ghost_is_marked_and_the_placed_are_not() {
 }
 
 /// The cell words of `text` (one row a line, white) with `colours` per row and `paint`
-/// laid over them, as the overlay writes them: rows of `vxe_render::HUD_GRID_COLS` words.
+/// laid over them, as the overlay writes them: rows of `svet_render::HUD_GRID_COLS` words.
 fn cell_words(
     text: &str,
-    colours: &[vxe_render::HudColour],
-    paint: vxe_render::HudPaint<'_>,
+    colours: &[svet_render::HudColour],
+    paint: svet_render::HudPaint<'_>,
 ) -> Vec<u32> {
-    let cols = vxe_render::HUD_GRID_COLS as usize;
+    let cols = svet_render::HUD_GRID_COLS as usize;
     let mut cells = vec![0u32; text.split('\n').count().max(45) * cols];
     for (r, line) in text.split('\n').enumerate() {
         for (c, b) in line.bytes().enumerate().take(cols) {
@@ -677,7 +677,7 @@ fn the_belt_draws_its_slots() {
     let at = w.belt.changed_at.expect("a change");
     let draw = |now: f64| {
         let mut text = String::from("row a\nrow b");
-        let mut colours = vec![vxe_render::HudColour::White; 2];
+        let mut colours = vec![svet_render::HudColour::White; 2];
         let mut paint = belt::Paint::default();
         let b = belt::append_belt(
             &mut text,
@@ -712,14 +712,14 @@ fn the_belt_draws_its_slots() {
     assert_eq!(belt[4], format!("{}|      |", pad(4)));
     assert_eq!(belt[5], belt[4]);
     assert_eq!(belt[6], belt[1]);
-    use vxe_render::HudColour::{White, Yellow};
+    use svet_render::HudColour::{White, Yellow};
     assert_eq!(
         &colours[45 - BELT_ROWS..],
         [Yellow, White, White, White, White, White, White]
     );
     assert!(paint.tiles.is_empty(), "no icon has arrived");
     let cells = cell_words(&text, &colours, paint.with(&[b]));
-    let cols = vxe_render::HUD_GRID_COLS as usize;
+    let cols = svet_render::HUD_GRID_COLS as usize;
     let mut framed = 0;
     for (r, line) in rows.iter().enumerate().skip(45 - BELT_ROWS + 1) {
         for c in 0..80 {
@@ -734,7 +734,7 @@ fn the_belt_draws_its_slots() {
     assert_eq!(framed, 2 * 8 + 2 * 4, "the selected slot's frame");
     assert_eq!(
         b,
-        vxe_render::HudBox {
+        svet_render::HudBox {
             col: 3,
             row: 39,
             cols: 74,
@@ -764,7 +764,7 @@ fn the_belt_draws_its_slots() {
 #[test]
 fn the_icon_arrives_after_the_words() {
     let from = std::path::Path::new(library::DEFAULT_DIR);
-    let dir = std::env::temp_dir().join(format!("vxe-icon-reload-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("svet-icon-reload-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     for name in ["walker", "spider"] {
         std::fs::create_dir_all(dir.join(name)).expect("dir");
@@ -805,7 +805,7 @@ fn the_icon_arrives_after_the_words() {
     run.modes.walkers.icons.wait();
     assert!(run.modes.walkers.icons.ready(wi));
     let (text, colours, b, paint) = belt_of(&run);
-    let tile = vxe_render::HudTile {
+    let tile = svet_render::HudTile {
         col: 4 + 2,
         row: (45 - BELT_ROWS + 2) as u32,
         index: wi as u32,
@@ -813,11 +813,11 @@ fn the_icon_arrives_after_the_words() {
     assert_eq!(paint.tiles, [tile]);
     assert!(!text.split('\n').nth(45 - 4).unwrap().contains("walker"));
     let cells = cell_words(&text, &colours, paint.with(&[b]));
-    let cols = vxe_render::HUD_GRID_COLS as usize;
+    let cols = svet_render::HUD_GRID_COLS as usize;
     for r in 0..45 {
         for c in 0..80 {
             let inside = (6..10).contains(&c) && (40..44).contains(&r);
-            let bit = cells[r * cols + c] & vxe_render::TILE_BIT != 0;
+            let bit = cells[r * cols + c] & svet_render::TILE_BIT != 0;
             assert_eq!(bit, inside, "cell ({c}, {r})");
         }
     }
@@ -975,7 +975,7 @@ fn the_remove_key_takes_the_aimed_entity() {
 
 /// Three walkers standing on the floor across the view, the second dead ahead; `4`'s marks
 /// pushed as a placement pushes them.
-fn three_in_a_row(run: &mut Run) -> Vec<vxe_entity::EntityId> {
+fn three_in_a_row(run: &mut Run) -> Vec<svet_entity::EntityId> {
     let table = run.world.materials().clone();
     let walker = entry(run, "walker");
     let ids = [-12.0, 0.5, 12.0].map(|y| {

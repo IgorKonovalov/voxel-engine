@@ -69,24 +69,24 @@ Read at main 3b3986d0 (Plan 0032 closed, v0.61.0; Plan 0069 closed, v0.60.0) aga
 of this plan as approved; Plan 0036's owner question 2 may put this plan before 0036). The
 lane branches from main once the plan before it has merged; the tree's names win. The Decision
 and the phases stand except where this section says otherwise; `dev` reads it as the phases'
-errata. Crate names are `vxe-*`; if Plan 0087 has merged first they read `svet-*` through its
+errata. Crate names are `svet-*`; if Plan 0087 has merged first they read `svet-*` through its
 map.
 
 ### Name mapping (the plan's name, then the tree's)
 
 | The plan says | The tree has |
 |---|---|
-| `marcher.rs` (the `Frame` owns the night state) | `frame/mod.rs` (`Frame`; `sky: SkyState` is the model), `frame/encode.rs` (`FRAME_PASSES`, 23 names, **1193 of 1200 lines**; `night_light` goes before `light`, `aurora` and `aurora_reconstruct` between `gather` and `composite`, all before `upscale`, which `fsrs_passes_close_the_frame_passes` pins), `frame/pipelines.rs`, `frame/compose.rs` (`shader_sources`). The night's GPU state goes in a new `frame/night.rs` on `frame/sky.rs`'s pattern; the CPU `night` module stays `crates/vxe-render/src/night.rs` |
+| `marcher.rs` (the `Frame` owns the night state) | `frame/mod.rs` (`Frame`; `sky: SkyState` is the model), `frame/encode.rs` (`FRAME_PASSES`, 23 names, **1193 of 1200 lines**; `night_light` goes before `light`, `aurora` and `aurora_reconstruct` between `gather` and `composite`, all before `upscale`, which `fsrs_passes_close_the_frame_passes` pins), `frame/pipelines.rs`, `frame/compose.rs` (`shader_sources`). The night's GPU state goes in a new `frame/night.rs` on `frame/sky.rs`'s pattern; the CPU `night` module stays `crates/svet-render/src/night.rs` |
 | `sky.rs` `body_disc`, `sky.wgsl` | `sky.wgsl` `body_disc` and `disc_of` (`cover * E * T / Omega`, a pixel-wide edge from `params.views[0]`), `sky_radiance`, `transmittance`, `key_light_of`, `sky_light_changed`; `sky.rs` `Body { direction, illuminance, angular_radius }`, `Body::sun`, `Body::moon`, `Sky::key_light`, `KeyBody`, `SkyKey::jumped_from`, `body_direction`, **`SUN_ILLUMINANCE` 3000** (the plan's `E_sun` guess holds), `MOON_OVER_SUN` 1/400 000, `MOON_ANGULAR_RADIUS`; `SkyUniform` (in `sky.rs`, one free word, so the night uniform is its own) |
 | the moon today | always full and opposite the sun: `daylight.rs` places it at `body_direction(h + PI, -DECLINATION, lat)`, and `--sun` at the antipode; `--moon-radius` defaults to 3 degrees (the owner's pick); it is the key light when the sun is down (`gpu_sun.rs` `the_moon_lights_the_floor_at_night`) and scatters into the sky-view LUT. Phase 4's `--moon-phase` moves it to the sun's hour angle plus `180 - DEG`, as written |
 | `light.wgsl` (where the sky ray reads) | `sky_light.wgsl` `sky_ray_sample` (compiled into the light pass alone); `light.wgsl` is the list lights' walk and the bake compiles it |
 | `upscale.wgsl`, `fsr2/input.wgsl` change mask | both call `sky_light_changed` (`sky.wgsl`); Decision 8's now-and-then pair goes into or beside it, in both (the `own` upscaler is still in the tree) |
 | `LIGHTING_LIGHTS_CHANGED`, `LIGHTING_EMISSION_CHANGED` | `frame/settings.rs` (bits 11 and 16 up are free; `LIGHTING_SKY_CHANGED` is bit 10) |
-| `fsr2::jitter_phases`, `jitter_offset`; `marcher::jitter_at`, `JITTER_PHASES` | `fsr2/settings.rs` (18 at 1.5); `frame/upscale.rs` (exported as `vxe_render::jitter_at`, `internals::JITTER_PHASES` 16) |
+| `fsr2::jitter_phases`, `jitter_offset`; `marcher::jitter_at`, `JITTER_PHASES` | `fsr2/settings.rs` (18 at 1.5); `frame/upscale.rs` (exported as `svet_render::jitter_at`, `internals::JITTER_PHASES` 16) |
 | the composite's miss site, the tint's place | `composite.wgsl`: the miss `c = (sky_radiance(d) + body_disc(d)) * ex`; the layer `c = layer * ex + T * c`; then `select(display(c), c, HDR_TARGET)` and `meter_of(c / ex)`. The night terms join the miss site; Plan 0035's media section follows; the tint sits after the layer and before the store, with the meter term taken first. Group 2 uses bindings 0 to 10 (11 the next), declared in three places (`frame/pipelines.rs`, `frame/upscale.rs` `composite_hdr_pass`, `frame/encode.rs`) |
 | "probe dispatch" | no such harness exists; Phase 1 builds the test-only entry point in `night.wgsl` the plan describes (a compute entry over a grid into a storage buffer) |
 | the analytic rig's "90 degree horizontal field" | the render-crate tests set their own `Camera` (`camera.rs` `vfov`), so the rig stands; the fly-through's goldens (`Hills` rig, `gpu_outdoor_golden.rs`) use `vfov` 70, not 90 |
-| `exposure.rs` `AutoExposure`, `eye()`, `OUTDOOR_MIN`/`OUTDOOR_MAX` | `crates/vxe-render/src/exposure.rs` (`eye()`: key 0.18, min 2^-6, max 2^4; `instant`); `cli/outdoor.rs` `OUTDOOR_MIN` 1e-4, **`OUTDOOR_MAX` 4.0** (Phase 9 bar 1's value holds); `exposure_now()` in `common.wgsl` |
+| `exposure.rs` `AutoExposure`, `eye()`, `OUTDOOR_MIN`/`OUTDOOR_MAX` | `crates/svet-render/src/exposure.rs` (`eye()`: key 0.18, min 2^-6, max 2^4; `instant`); `cli/outdoor.rs` `OUTDOOR_MIN` 1e-4, **`OUTDOOR_MAX` 4.0** (Phase 9 bar 1's value holds); `exposure_now()` in `common.wgsl` |
 | `daylight.rs` (the clock) | `Clock { minutes, running, day_length_s, sun_radius, moon_radius, fixed_sun }`, `hour_angle` = `(h - 12) x 15` degrees, `LATITUDE_DEG` 45, `DECLINATION` 0 (an equinox, so the sidereal angle is the hour angle as the plan assumes), `DEFAULT_DAY_LENGTH_S` 1200; keys `Home`, `PageUp`, `End`, `CapsLock` (menu entries at Plan 0080's merge) |
 | `apps/flythrough/src/main.rs`, `hud.rs`, `night.rs` | `cli/outdoor.rs` (`--night`, `--night-tint`, `--night-tint-strength`, `--moon-phase`, `--star-gain`, `--aurora`, `--aurora-update` beside `--trees`; `cli/flags.rs` is at 1190 lines), `cli/tests.rs`, `toggles.rs` (the entries), `run/frame.rs` (the clock's `advance` then `set_sky`: `set_night` goes there), the new `apps/flythrough/src/night.rs` beside `daylight.rs`, `hud/modes.rs` (**1197 of 1200 lines**: the night words go in a new module or a split `dev` makes first), `hud/stats.rs` (`SkyRow` the model; `run/hud_feed.rs` `sky_row` sums passes named `sky *`, so `night_light` is its own row), `examples/hero.rs` (exists), `docs/flythrough.md` (every key and flag; the root README links it) |
 | `apps/flythrough/tests/gpu_golden.rs` (the five goldens, `the_night_goldens_differ`) | at 1885 of 2000 lines: they go in a new `gpu_night_golden.rs` on `gpu_outdoor_golden.rs`'s rigs (`Empty`, `Hills`), never there; "the goldens of Plans 0032 to 0036 pass `--night off`" reads: those goldens drive `Frame` directly (no CLI) and set no `Night`, so the testbed's new defaults leave them alone by construction |
@@ -292,7 +292,7 @@ VRAM" (Data shapes), section 7 time to first frame (the catalogue's generation).
 
 ## Decision
 
-We build ADR-0032's night sky in `vxe-render`, in a new `night` module behind
+We build ADR-0032's night sky in `svet-render`, in a new `night` module behind
 `Frame::set_night(Option<Night>)`. `None` is the default, and with `None` every image is byte
 for byte the same.
 
@@ -421,7 +421,7 @@ flowchart LR
     subgraph game [game or testbed]
         T[its own clock:\nsidereal angle, time_s,\nbody list, aurora state]
     end
-    subgraph render [vxe-render]
+    subgraph render [svet-render]
         T --> N[Night uniform\nbodies buffer]
         SC[(star catalogue\ncube-binned)] --> C
         N --> NL[night_light map\naurora 16 steps + airglow\n+ mean starlight]
@@ -450,7 +450,7 @@ off` and `--night-tint off`, so the testbed's new defaults leave them alone.
 **Tests and tiers.** A phase gates on `node scripts/test-changed.mjs --profile quick` and, for
 a render phase, `--profile gpu` under the perf lock; the tip gates on `cargo nextest run
 --profile gate`. A test that opens a GPU device lives in a `tests/gpu_*.rs` file. A CPU-only
-bar is a unit test in `crates/vxe-render/src/night.rs` or in the fly-through's sources, so it
+bar is a unit test in `crates/svet-render/src/night.rs` or in the fly-through's sources, so it
 stays in the quick tier. Each named test carries its expected wall time on lavapipe. **Every
 time below is an estimate: nothing was run.** `dev` reads each test's time with `node
 scripts/test-times.mjs`; a test over 30 s on lavapipe (60 s on CI) is marked `#[ignore =
@@ -478,10 +478,10 @@ banner's mode word, not the key, is the contract.
   transmittance factor. The composite adds the stars at the miss site, multiplied by
   `transmittance`, before `sky_radiance`. The fly-through gets `--night off|on` and a stars
   key cycling `stars off` and `stars on`, shown on the mode banner.
-- **Files touched:** new `crates/vxe-render/src/night.rs` (with its unit tests), new
-  `crates/vxe-render/src/shaders/night.wgsl`, `composite.wgsl`, `marcher.rs` (the `Frame`
+- **Files touched:** new `crates/svet-render/src/night.rs` (with its unit tests), new
+  `crates/svet-render/src/shaders/night.wgsl`, `composite.wgsl`, `marcher.rs` (the `Frame`
   owns the night state and its buffers), `lib.rs`, new
-  `crates/vxe-render/tests/gpu_night.rs`, `apps/flythrough/src/main.rs`, `hud.rs`,
+  `crates/svet-render/tests/gpu_night.rs`, `apps/flythrough/src/main.rs`, `hud.rs`,
   `apps/flythrough/tests/gpu_golden.rs`, new golden `night_empty_stars.png`.
 - **Done when:**
   1. **The magnitude law holds within one.** `the_seeded_magnitude_law_counts_within_one`, a
@@ -543,7 +543,7 @@ banner's mode word, not the key, is the contract.
   that amendment are a wider splat with the flux kept, a star term marked reactive so FSR 2's
   lock does not hold it, or stars added after the upscaler at output resolution; none is built
   without the reading.
-- **Files touched:** `crates/vxe-render/tests/gpu_night.rs`, `night.rs` (the default
+- **Files touched:** `crates/svet-render/tests/gpu_night.rs`, `night.rs` (the default
   `star_psf_px`), `docs/plans/logs/0037.md`.
 - **Done when:**
   1. **The reading exists.** The log holds the table for every upscaler and point-spread
@@ -567,7 +567,7 @@ banner's mode word, not the key, is the contract.
   size up to 1024, with mips) and `Night::texture_scale`. The star loop's skip rule against
   the sky's radiance. The stars key gains `stars twinkle`.
 - **Files touched:** `night.rs`, `night.wgsl`, `composite.wgsl`, `marcher.rs`,
-  `crates/vxe-render/tests/gpu_night.rs`, `apps/flythrough/src/main.rs`, `hud.rs`.
+  `crates/svet-render/tests/gpu_night.rs`, `apps/flythrough/src/main.rs`, `hud.rs`.
 - **Done when:**
   1. **Colour runs with temperature.** `the_blackbody_table_runs_red_to_blue`, a unit test in
      `night.rs` (under 1 s): the 3000 K entry has `R > G > B`, the 15 000 K entry has `B > G >
@@ -614,7 +614,7 @@ banner's mode word, not the key, is the contract.
   steps the position by 45 degrees. The testbed passes `moon_phase_illuminance(E_sun /
   400 000, alpha)` as the moon's illuminance and `Lit { earthshine: 0.002 }` (a guess).
 - **Files touched:** `night.rs`, `night.wgsl`, `sky.wgsl` (`body_disc`), `sky.rs`,
-  `composite.wgsl`, `marcher.rs`, `crates/vxe-render/tests/gpu_night.rs`, new
+  `composite.wgsl`, `marcher.rs`, `crates/svet-render/tests/gpu_night.rs`, new
   `apps/flythrough/src/night.rs` (the testbed's moon and, later, its presets),
   `apps/flythrough/src/main.rs`, `hud.rs`.
 - **Done when:**
@@ -659,7 +659,7 @@ banner's mode word, not the key, is the contract.
   1.0 s lives, 10 to 30 degrees per second away from the radiant, and a trail `Toward` the
   radiant. A bodies key cycles `sky bodies none`, `comet` and `meteors`.
 - **Files touched:** `night.rs`, `night.wgsl`, `composite.wgsl`, `marcher.rs`,
-  `crates/vxe-render/tests/gpu_night.rs`, `apps/flythrough/src/night.rs`, `main.rs`, `hud.rs`,
+  `crates/svet-render/tests/gpu_night.rs`, `apps/flythrough/src/night.rs`, `main.rs`, `hud.rs`,
   `apps/flythrough/tests/gpu_golden.rs`, new golden `dusk_comet.png`.
 - **Done when** (probe dispatch or lavapipe readback of pre-display radiance, a uniform test
   sky with transmittance 1, jitter off; each test in `gpu_night.rs`, about 3 to 4 s):
@@ -702,10 +702,10 @@ banner's mode word, not the key, is the contract.
   edge colour on and fast drift, 2e-3. All three intensities are guesses tuned at Phase 10.
   `--aurora` and an aurora key choose the preset, and `--aurora-update
   every|one-in-four|one-in-sixteen` chooses the update.
-- **Files touched:** new `crates/vxe-render/src/shaders/aurora.wgsl`, `night.rs`,
+- **Files touched:** new `crates/svet-render/src/shaders/aurora.wgsl`, `night.rs`,
   `night.wgsl`, `clouds.rs` and Plan 0035's cloud shaders (`cloud_segment` shared, `cloud_reconstruct`
   bindable for the aurora's buffers, if it is not already), `composite.wgsl`,
-  `marcher.rs`, new `crates/vxe-render/tests/gpu_aurora.rs`, `apps/flythrough/src/night.rs`,
+  `marcher.rs`, new `crates/svet-render/tests/gpu_aurora.rs`, `apps/flythrough/src/night.rs`,
   `main.rs`, `hud.rs`, `apps/flythrough/tests/gpu_golden.rs`, new golden `night_aurora.png`.
 - **Done when** (lavapipe, an empty world, the sun and the moon at -45 degrees, stars off,
   clouds off, update `Every`; each test in `gpu_aurora.rs`):
@@ -783,7 +783,7 @@ banner's mode word, not the key, is the contract.
 - **Files touched:** `aurora.wgsl` (the map's entry point), `night.wgsl`, `light.wgsl` (or
   wherever Plan 0032's sky ray reads the sky), the liquid shader of Plan 0034,
   `cloud_shadow.wgsl` of Plan 0035 (the `cloud_sky` map's background), the upscalers' change-mask inputs (`upscale.wgsl` and `fsr2/input.wgsl`
-  at `82ea836`), `night.rs`, `marcher.rs`, `crates/vxe-render/tests/gpu_aurora.rs`, new
+  at `82ea836`), `night.rs`, `marcher.rs`, `crates/svet-render/tests/gpu_aurora.rs`, new
   `apps/flythrough/tests/gpu_night_light.rs`, `apps/flythrough/tests/gpu_bake.rs`,
   `docs/plans/logs/0037.md`.
 - **Done when** (lavapipe, Plan 0032 Phase 6's level scene of a 1024 x 1024 voxel rock floor,
@@ -859,7 +859,7 @@ banner's mode word, not the key, is the contract.
   pixel) in place of the pixel's own.
 - **Files touched:** `night.rs` (`NightTint`), `composite.wgsl`, `night.wgsl` (the tint
   function and its probe entry), `marcher.rs`, `lib.rs`,
-  `crates/vxe-render/tests/gpu_night.rs`, new `apps/flythrough/tests/gpu_night_tint.rs`,
+  `crates/svet-render/tests/gpu_night.rs`, new `apps/flythrough/tests/gpu_night_tint.rs`,
   `apps/flythrough/src/main.rs`, `hud.rs`, `apps/flythrough/tests/gpu_golden.rs`, new golden
   `night_tint_moonless.png`.
 - **Done when:**
@@ -994,7 +994,7 @@ banner's mode word, not the key, is the contract.
 ## Data shapes
 
 ```rust
-// illustrative: crates/vxe-render/src/night.rs
+// illustrative: crates/svet-render/src/night.rs
 pub struct Night {
     pub celestial_to_world: [[f32; 3]; 3], // from celestial_to_world(sidereal, latitude)
     pub time_s: f32,                        // the game's time; drives the stars' twinkle only
@@ -1146,7 +1146,7 @@ miss is recorded with the profile measured. The ledger's "night sky" row in
    `cloud_sky_radiance` are plans' names, not code. If `cloud_reconstruct` cannot be bound to
    the aurora's buffers, `dev` factors its reprojection into a shared WGSL function and logs
    it.
-10. **Determinism.** Nothing touches `vxe-world`. The catalogue is generated on the CPU from
+10. **Determinism.** Nothing touches `svet-world`. The catalogue is generated on the CPU from
     integer hashes with `f64` arithmetic and pinned by its counts, not by bytes across
     platforms. A game that needs a star's or the moon's direction in server logic computes it
     there from its own ticks with the same formulas.

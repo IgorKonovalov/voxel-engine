@@ -4,6 +4,10 @@ Numbered, append-only records of decisions that have a rejected alternative wort
 Accepted ADRs are never edited in place. To change a decision, write a new ADR that supersedes
 the old one and update the status here.
 
+The engine was `voxel-engine`, with crates `vxe-*`, variables `VXE_*` and the WIT package
+`vxe:logic`, until Plan 0087 renamed it `svet` (v0.73.0); records from before keep those names,
+and `vxe-<x>` reads as `svet-<x>`.
+
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
@@ -85,7 +89,7 @@ the status.
 | [0068](0068-an-entitys-variants-are-recipes-in-its-model-a-volume-per-part-and-a-palette-per-variant-picked-per-instance.md) | An entity's variants are recipes in its model: a volume per part and a palette per variant, picked per instance by one index | proposed (Plan 0085) |
 | [0069](0069-a-posed-entity-enters-the-world-as-a-baked-prefab-clipped-to-air-through-the-stamp-op.md) | A posed entity enters the world as a baked prefab, clipped to air on the server, through the stamp op | proposed (Plan 0085) |
 | [0070](0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md) | Sky light is a visibility baked per brick direction, coloured by the sky at read; a long-history ray covers what the bake has not caught | accepted (Plan 0086), Outcomes 2026-11-19, 2026-11-20 (0094) |
-| [0071](0071-the-engine-takes-a-name-one-word-for-the-project-the-crate-prefix-the-repository-and-the-archive.md) | The engine takes a name: one word that is the project, the crate prefix, the repository and the archive | accepted (owner, 2026-11-17: `svet`; Plan 0087, draft) |
+| [0071](0071-the-engine-takes-a-name-one-word-for-the-project-the-crate-prefix-the-repository-and-the-archive.md) | The engine takes a name: one word that is the project, the crate prefix, the repository and the archive | accepted (owner, 2026-11-17: `svet`; Plan 0087, closed 2026-11-24, v0.73.0) |
 | [0072](0072-designer-authoring-is-a-layered-text-stack-text-files-a-separate-compiler-an-optional-editor.md) | Designer authoring is a layered text stack: text files, a separate compiler to the logic component, an optional editor over the same text | proposed 2026-11-17, unscheduled |
 | [0073](0073-deterministic-simulation-testing-is-an-in-tree-seeded-harness-at-the-seams-the-engine-has.md) | Deterministic simulation testing is an in-tree seeded harness at the seams the engine already has: a message-level simulated channel, a delta-debugging shrinker, no framework | proposed (Plan 0089, draft) |
 | [0074](0074-an-entity-instance-carries-a-mark-drawn-in-the-composite-as-an-outline-at-the-instance-edge-and-a-tint.md) | An entity carries a mark, drawn in the composite as an outline where the entity changes and a tint of its shaded colour | accepted (Plan 0077), Outcome |

@@ -54,7 +54,7 @@ Three facts shape the mechanism:
   showcase|outdoor|cave`, `--castle --castle-shot`, `--vox`, `--entities N --entities-walk
   on`, `--dig-at F`, `--time HH:MM`, `--hud`) and renders headless (`--headless --frames N
   --render WxH`), but it writes no image: its only frame readbacks are the `steps` view's
-  (`apps/flythrough/src/run/frame.rs`, `vxe_render::debug::read_rgba8` of `frame.target()`),
+  (`apps/flythrough/src/run/frame.rs`, `svet_render::debug::read_rgba8` of `frame.target()`),
   and it has no free camera flag. The `hero` example writes a PNG but knows the showcase, the
   level and the hills only, and the `clip` example knows a rig's clip. Growing the examples to
   the castle, structures, entities and the HUD would copy the fly-through's scene set-up a
@@ -119,11 +119,11 @@ flowchart LR
 
 Each phase ships as its own commit. `dev` implements the dev phases in order; Phase 5 and
 Phase 7 are the owner's. The lane starts after Plan 0087 (the rename) merges, since 0087
-rewrites `README.md`, every `docs/*.md`, `scripts/record-clip.sh` and the `VXE_*` names a new
+rewrites `README.md`, every `docs/*.md`, `scripts/record-clip.sh` and the `SVET_*` names a new
 script would otherwise be born with; it may run beside Plan 0089 (no file in common but
 `.github/workflows/ci.yml`, where each adds one step). It runs before Plan 0091, which edits
 `run/frame.rs`, the HUD and the report that Phase 1 touches. Names below are the tree's at
-901a9e26; after 0087 they read `svet` for `vxe`.
+901a9e26; after 0087 they read `svet` for the old prefix.
 
 ### Phase 1: The fly-through writes a still: `--still-at`, `--still-dir`, `--camera`, and the idempotence reading
 - **Owner skill:** dev
@@ -165,7 +165,7 @@ script would otherwise be born with; it may run beside Plan 0089 (no file in com
   `docs/images/light/*` (figures of closed light write-ups whose mechanism is gone; kept, never
   re-rendered). `scripts/shoot-images.mjs`: builds `flythrough` and the `clip` example once in
   release (memory-capped through `systemd-run` as `record-clip.sh` does), then per entry runs
-  the source under `flock .git/vxe-perf.lock`, keeps the PNG frames under `target/shots/<id>/`,
+  the source under `flock .git/svet-perf.lock`, keeps the PNG frames under `target/shots/<id>/`,
   encodes a still with ffmpeg `libwebp` (`-quality Q`, Q from the entry, 80 by default; the
   frame scaled to the entry's width with lanczos) or a loop with `libwebp_anim` (`-loop 0`,
   the entry's fps) into the file the entry names, and prints each file's bytes. Options:

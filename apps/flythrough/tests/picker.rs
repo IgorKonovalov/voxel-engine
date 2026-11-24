@@ -10,8 +10,8 @@ use flythrough::hud::menu::{
     Activated, MENU_COLS, MENU_ROWS, Menu, PageId, RouteInput, RunView, step, taken,
 };
 use flythrough::walker;
-use vxe_app::{Input, KeyCode};
-use vxe_render::{HudColour, Lighting, LightingResolution};
+use svet_app::{Input, KeyCode};
+use svet_render::{HudColour, Lighting, LightingResolution};
 
 /// A library of `a` (the committed walker), `b` (the walker broken on line 3) and `spider`
 /// (the committed spider) under the target's scratch directory (`picker-rows-<tag>`, one per
@@ -90,7 +90,7 @@ fn the_picker_draws_its_rows() {
     let want: Vec<(&str, HudColour)> = FIXTURE.to_vec();
     let have: Vec<(&str, HudColour)> = rows.iter().copied().zip(colours.iter().copied()).collect();
     assert_eq!(have, want, "{text}");
-    let tile = |row, index| vxe_render::HudTile { col: 2, row, index };
+    let tile = |row, index| svet_render::HudTile { col: 2, row, index };
     assert_eq!(
         paint.tiles,
         [tile(1, 0), tile(5, 2)],
@@ -99,7 +99,7 @@ fn the_picker_draws_its_rows() {
     // `b`'s reason, after its name padded to ten cells, is a red span over the rest of its
     // grey words row (Phase 9 (6)).
     let b = rows[10];
-    let reason = vxe_render::HudBox {
+    let reason = svet_render::HudBox {
         col: 19,
         row: 10,
         cols: (b.len() - 19) as u32,
@@ -119,7 +119,7 @@ fn the_picker_draws_its_rows() {
 /// them, as the overlay writes the cell words; a cell past its row's end reads its row's
 /// colour only when a span reaches it.
 fn cell_colours(text: &str, colours: &[HudColour], paint: &entities::belt::Paint) -> Vec<Vec<u32>> {
-    let cols = vxe_render::HUD_GRID_COLS as usize;
+    let cols = svet_render::HUD_GRID_COLS as usize;
     let rows = text.split('\n').count();
     let mut cells = vec![0u32; rows.max(45) * cols];
     for (r, line) in text.split('\n').enumerate() {

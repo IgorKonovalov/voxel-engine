@@ -9,8 +9,8 @@ mod support;
 use flythrough::cave::ROCK;
 use support::bake::Rig;
 use support::lights::*;
-use vxe_render::{Camera, Light, Lighting};
-use vxe_world::{EditOp, FIXED_ONE, Fixed3, Mode};
+use svet_render::{Camera, Light, Lighting};
+use svet_world::{EditOp, FIXED_ONE, Fixed3, Mode};
 
 /// The slot rule at sixteen (owner, 2026-11-14): with the lamp on, sixteen given keep fifteen
 /// and one is over; with it off all sixteen are kept; a seventeenth is over in both.
@@ -82,8 +82,8 @@ fn within(name: &str, got: f32, want: f32, tol: f32) {
 }
 
 /// The direct target's `a` (the direct luminance) per lighting texel.
-fn alpha(rig: &Rig, tex: &vxe_render::wgpu::Texture) -> Vec<f32> {
-    vxe_render::debug::read_float(&rig.device, &rig.queue, tex)
+fn alpha(rig: &Rig, tex: &svet_render::wgpu::Texture) -> Vec<f32> {
+    svet_render::debug::read_float(&rig.device, &rig.queue, tex)
         .iter()
         .map(|p| p[3])
         .collect()
@@ -91,10 +91,10 @@ fn alpha(rig: &Rig, tex: &vxe_render::wgpu::Texture) -> Vec<f32> {
 
 /// The texel's rgb of `tex` at the floor pixel nearest `(x, y)` on the last frame, and that
 /// pixel's hit.
-fn rgb_at(rig: &Rig, tex: &vxe_render::wgpu::Texture, x: f32, y: f32) -> ([f32; 3], [f32; 3]) {
+fn rgb_at(rig: &Rig, tex: &svet_render::wgpu::Texture, x: f32, y: f32) -> ([f32; 3], [f32; 3]) {
     let hits = floor_hits(rig);
     let (i, p) = nearest(&hits, x, y);
-    let v = vxe_render::debug::read_float(&rig.device, &rig.queue, tex)[i];
+    let v = svet_render::debug::read_float(&rig.device, &rig.queue, tex)[i];
     ([v[0], v[1], v[2]], p)
 }
 
@@ -221,7 +221,7 @@ fn a_light_beyond_its_reach_casts_no_shadow_ray() {
     };
     let camera = box_camera();
     let mut look = rig.frame.look();
-    look.view = vxe_render::ViewMode::Steps;
+    look.view = svet_render::ViewMode::Steps;
     rig.frame.set_look(look);
     let light = Light::point([10.0, 32.0, 49.0], 1200.0);
     rig.frame.set_lights(&[light]);
@@ -390,7 +390,7 @@ fn a_list_light_with_the_lamp_off_survives_the_lamp_off_skips() {
         return;
     };
     rig.frame
-        .set_resolution(&rig.device, vxe_render::LightingResolution::Half);
+        .set_resolution(&rig.device, svet_render::LightingResolution::Half);
     let camera = box_camera();
     let floor = rig.frame.lighting().light_floor;
     let light = Light::point([64.0, 32.0, 22.0], 1200.0);
@@ -399,13 +399,13 @@ fn a_list_light_with_the_lamp_off_survives_the_lamp_off_skips() {
     for f in 0..32 {
         step(&mut rig, &camera);
         // The lighting grid is half the frame's: its hit buffer is the light pass's.
-        let pos = vxe_render::debug::read_rgba32f(
+        let pos = svet_render::debug::read_rgba32f(
             &rig.device,
             &rig.queue,
             rig.frame.light_hit_positions(),
         );
         let acc = alpha(&rig, rig.frame.direct_accumulated());
-        let filt = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.filtered());
+        let filt = svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.filtered());
         let i = (0..pos.len())
             .filter(|&i| pos[i][3] > 0.0 && (pos[i][2] - FLOOR_Z).abs() < 1e-3)
             .min_by(|&a, &b| {
@@ -438,7 +438,7 @@ fn the_gradient_mode_holds_still_under_a_still_list() {
         return;
     };
     rig.frame.set_lighting(Lighting {
-        history: vxe_render::HistoryKill::Gradient,
+        history: svet_render::HistoryKill::Gradient,
         light_history: true,
         ..rig.frame.lighting()
     });
@@ -453,7 +453,7 @@ fn the_gradient_mode_holds_still_under_a_still_list() {
         step(&mut rig, &camera);
         assert!(!rig.frame.lights_changed());
         let strata =
-            vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, rig.frame.gradient_strata());
+            svet_render::debug::read_rgba16f(&rig.device, &rig.queue, rig.frame.gradient_strata());
         let lit = strata.iter().filter(|s| s[1] > 0.0).count();
         assert_eq!(
             lit,
@@ -566,7 +566,7 @@ fn the_atrous_count_follows_the_setting() {
             step(&mut rig, &camera);
         }
         assert_eq!(rig.frame.atrous_dispatches(), n, "at {n}");
-        images.push(vxe_render::debug::read_rgba8(
+        images.push(svet_render::debug::read_rgba8(
             &rig.device,
             &rig.queue,
             rig.frame.target(),
@@ -584,7 +584,7 @@ fn the_atrous_count_follows_the_setting() {
 
 /// Whether the CPU's exact walk (`World::raycast`) finds rock on the segment from `o` to `end`,
 /// and whether that rock holds `o` itself.
-fn cpu_blocked(world: &vxe_world::World, o: [f32; 3], end: [f32; 3]) -> (bool, bool) {
+fn cpu_blocked(world: &svet_world::World, o: [f32; 3], end: [f32; 3]) -> (bool, bool) {
     let origin = Fixed3(o.map(|v| (f64::from(v) * FIXED_ONE as f64).round() as i64));
     let dir: [i64; 3] =
         std::array::from_fn(|k| (f64::from(end[k] - o[k]) * FIXED_ONE as f64).round() as i64);
@@ -632,8 +632,8 @@ fn a_light_beside_steps_shadows_as_the_exact_ray_does() {
     let at = [116.0, 51.0, 20.0];
     rig.frame.set_lights(&[Light::point(at, 600.0)]);
     step(&mut rig, &camera);
-    let direct = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.direct());
-    let info = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let direct = svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.direct());
+    let info = svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     let eye = camera.position.to_array();
     let (mut checked, mut wrong) = (0, Vec::new());
     for (i, p, _) in hits_of(&rig, &rig.frame) {
@@ -685,12 +685,12 @@ fn a_light_beside_steps_shadows_as_the_exact_ray_does() {
 /// the dim light alone), native at 192 x 108 or FSR 2 at 1.5 from 128 x 72.
 fn ring_rig_image(rig: &Rig, native: bool, colour: Option<[f32; 3]>) -> Vec<u8> {
     let f = ring_rig_frame(rig, native, colour);
-    vxe_render::debug::read_rgba8(&rig.device, &rig.queue, f.target())
+    svet_render::debug::read_rgba8(&rig.device, &rig.queue, f.target())
 }
 
 /// [`ring_rig_image`]'s frame after its 32 still frames.
-fn ring_rig_frame(rig: &Rig, native: bool, colour: Option<[f32; 3]>) -> vxe_render::Frame {
-    use vxe_render::{Exposure, LightingResolution, ToneMap, UpscalerKind};
+fn ring_rig_frame(rig: &Rig, native: bool, colour: Option<[f32; 3]>) -> svet_render::Frame {
+    use svet_render::{Exposure, LightingResolution, ToneMap, UpscalerKind};
     let mut f = if native {
         box_frame(&rig.device, [192, 108], [192, 108], None)
     } else {
@@ -698,7 +698,7 @@ fn ring_rig_frame(rig: &Rig, native: bool, colour: Option<[f32; 3]>) -> vxe_rend
             &rig.device,
             [128, 72],
             [192, 108],
-            Some(UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default())),
+            Some(UpscalerKind::Fsr2(svet_render::Fsr2Settings::default())),
         )
     };
     f.set_resolution(&rig.device, LightingResolution::Half);
@@ -815,10 +815,10 @@ fn a_red_light_near_a_wall_draws_no_rings_under_fsr2() {
 fn a_pulsing_emitter_marks_only_where_its_light_lands() {
     use flythrough::cave::ORE;
     use support::bake::{fill, rig_on, test_counts};
-    use vxe_render::debug::{read_float, read_rgba8};
-    let world = vxe_world::World::generate(
-        vxe_world::ChunkExtent::new([0, 0, 0], [2, 1, 1]),
-        &vxe_world::UniformSource(ROCK),
+    use svet_render::debug::{read_float, read_rgba8};
+    let world = svet_world::World::generate(
+        svet_world::ChunkExtent::new([0, 0, 0], [2, 1, 1]),
+        &svet_world::UniformSource(ROCK),
         &support::cave_table(),
     );
     for (min, max) in [
@@ -849,7 +849,7 @@ fn a_pulsing_emitter_marks_only_where_its_light_lands() {
             &rig.device,
             [128, 72],
             [192, 108],
-            Some(vxe_render::UpscalerKind::Fsr2(Default::default())),
+            Some(svet_render::UpscalerKind::Fsr2(Default::default())),
         );
         rig.bake(&test_counts(256));
         rig.frame
@@ -870,7 +870,7 @@ fn a_pulsing_emitter_marks_only_where_its_light_lands() {
         rig.frame.accumulated().width() as i32,
         rig.frame.accumulated().height() as i32,
     ];
-    let info = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let info = svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     run(&mut rig, true);
     let mask = read_rgba8(
         &rig.device,
@@ -931,16 +931,16 @@ mod reading {
     /// at 1.5 with sharpening 0.5, or native: no upscaler, no jitter), the lamp off, exposure 8,
     /// 320 x 180, with one white light of 1200 two voxels over the floor where the centre ray
     /// meets it, and with none: the frame after 64 frames against the one after 512 (pixels
-    /// over 2/255 in any channel, the largest step). Runs on `VXE_TEST_ADAPTER`.
+    /// over 2/255 in any channel, the largest step). Runs on `SVET_TEST_ADAPTER`.
     #[test]
     #[ignore]
     fn reading_the_hall_at_64_against_512_frames() {
         use flythrough::showcase::{SHOTS, ShowcaseSource};
-        use vxe_render::{GpuWorld, MirrorConfig, Window};
+        use svet_render::{GpuWorld, MirrorConfig, Window};
         let table = flythrough::showcase_materials();
         let source = ShowcaseSource::new(1);
-        let world = vxe_world::World::generate(source.extent(), &source, &table);
-        let pool = flythrough::level_pool_units(&world, false) * vxe_render::internals::UNIT_BYTES;
+        let world = svet_world::World::generate(source.extent(), &source, &table);
+        let pool = flythrough::level_pool_units(&world, false) * svet_render::internals::UNIT_BYTES;
         let Some((device, queue, adapter)) = support::reading_device(pool) else {
             return;
         };
@@ -977,27 +977,27 @@ mod reading {
         for fsr in [false, true] {
             for lights in [&[light][..], &[]] {
                 let mut frame = if fsr {
-                    let mut f = vxe_render::Frame::with_sizes(
+                    let mut f = svet_render::Frame::with_sizes(
                         &device,
-                        vxe_render::RenderScale::OneHalf.internal(output),
+                        svet_render::RenderScale::OneHalf.internal(output),
                         output,
                     );
                     f.set_upscaler_kind(
                         &device,
-                        vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+                        svet_render::UpscalerKind::Fsr2(svet_render::Fsr2Settings {
                             sharpness: 0.5,
-                            ..vxe_render::Fsr2Settings::default()
+                            ..svet_render::Fsr2Settings::default()
                         }),
                     );
                     f
                 } else {
-                    let mut f = vxe_render::Frame::with_sizes(&device, output, output);
+                    let mut f = svet_render::Frame::with_sizes(&device, output, output);
                     f.set_jitter(&device, false);
                     f
                 };
                 frame.set_lighting(Lighting {
                     lamp: false,
-                    exposure: vxe_render::Exposure::Manual(8.0),
+                    exposure: svet_render::Exposure::Manual(8.0),
                     store_read: flythrough::DEFAULT_STORE_READ,
                     light_weights: flythrough::DEFAULT_LIGHT_WEIGHTS,
                     ..Lighting::default()
@@ -1010,13 +1010,13 @@ mod reading {
                         &queue,
                         &gpu,
                         &camera,
-                        &vxe_render::LightParams::headlamp(),
+                        &svet_render::LightParams::headlamp(),
                     );
                     if f == 64 {
-                        at64 = vxe_render::debug::read_rgba8(&device, &queue, frame.target());
+                        at64 = svet_render::debug::read_rgba8(&device, &queue, frame.target());
                     }
                 }
-                let at512 = vxe_render::debug::read_rgba8(&device, &queue, frame.target());
+                let at512 = svet_render::debug::read_rgba8(&device, &queue, frame.target());
                 let (mut over, mut worst) = (0usize, 0u8);
                 for (a, b) in at64.chunks(4).zip(at512.chunks(4)) {
                     let d = (0..3).map(|k| a[k].abs_diff(b[k])).max().unwrap_or(0);
@@ -1036,7 +1036,7 @@ mod reading {
 
     /// Whether the CPU's exact walk finds rock between `o` and `light` (the world's raycast),
     /// and whether that rock holds `o` itself (the walk starts inside it).
-    fn cpu_shadowed(world: &vxe_world::World, o: [f32; 3], light: [f32; 3]) -> (bool, bool) {
+    fn cpu_shadowed(world: &svet_world::World, o: [f32; 3], light: [f32; 3]) -> (bool, bool) {
         let origin = Fixed3(o.map(|v| (f64::from(v) * FIXED_ONE as f64).round() as i64));
         let dir: [i64; 3] =
             std::array::from_fn(|k| (f64::from(light[k] - o[k]) * FIXED_ONE as f64).round() as i64);
@@ -1055,7 +1055,7 @@ mod reading {
     #[ignore]
     #[allow(clippy::too_many_lines, reason = "a reading's arms in one place")]
     fn reading_near_a_light_clamps_spread_and_shadows() {
-        use vxe_render::{AutoExposure, Exposure, ShadowWalk, debug::read_rgba8};
+        use svet_render::{AutoExposure, Exposure, ShadowWalk, debug::read_rgba8};
         let Some(mut rig) = box_rig() else {
             return;
         };
@@ -1113,9 +1113,9 @@ mod reading {
                     step(&mut rig, &camera);
                     // The first frame's direct part: lit or not per pixel.
                     let direct =
-                        vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.direct());
+                        svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.direct());
                     let hits = hits_of(&rig, &rig.frame);
-                    let info = vxe_render::debug::read_rgba16u(
+                    let info = svet_render::debug::read_rgba16u(
                         &rig.device,
                         &rig.queue,
                         rig.frame.hit_records(),
@@ -1175,7 +1175,7 @@ mod reading {
                     for _ in 0..64 {
                         step(&mut rig, &camera);
                         frames.push(read_rgba8(&rig.device, &rig.queue, rig.frame.target()));
-                        let d = vxe_render::debug::read_float(
+                        let d = svet_render::debug::read_float(
                             &rig.device,
                             &rig.queue,
                             rig.frame.direct(),
@@ -1194,7 +1194,7 @@ mod reading {
                         flipping.iter().filter(|&&f| f).count()
                     );
                     let direct =
-                        vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.direct());
+                        svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.direct());
                     let peak = direct
                         .iter()
                         .map(|p| p[0].max(p[1]).max(p[2]))
@@ -1257,8 +1257,8 @@ mod reading {
     #[allow(clippy::too_many_lines, reason = "a reading's arms in one place")]
     fn reading_the_vein_bounce_and_pulse() {
         use support::stillness::{VEIN_POSE, vein_level};
-        use vxe_render::debug::{read_float, read_rgba8};
-        use vxe_render::{Exposure, Frame};
+        use svet_render::debug::{read_float, read_rgba8};
+        use svet_render::{Exposure, Frame};
         let Some(mut level) = vein_level() else {
             return;
         };
@@ -1304,7 +1304,7 @@ mod reading {
                 ..l
             }
         };
-        let rd = |level: &support::stillness::VeinLevel, t: &vxe_render::wgpu::Texture| {
+        let rd = |level: &support::stillness::VeinLevel, t: &svet_render::wgpu::Texture| {
             read_float(&level.device, &level.queue, t)
         };
         // 5d
@@ -1318,7 +1318,7 @@ mod reading {
                     &level.queue,
                     &level.gpu,
                     &camera,
-                    &vxe_render::LightParams::headlamp(),
+                    &svet_render::LightParams::headlamp(),
                 );
             }
             let ex = VEIN_POSE.exposure;
@@ -1401,7 +1401,7 @@ mod reading {
                     &level.queue,
                     &level.gpu,
                     &camera,
-                    &vxe_render::LightParams::headlamp(),
+                    &svet_render::LightParams::headlamp(),
                 );
             }
             stages.push([
@@ -1452,11 +1452,11 @@ mod reading {
     fn reading_what_the_ore_pulse_changes() {
         use flythrough::cave::ORE;
         use support::bake::{fill, rig_on, test_counts};
-        use vxe_render::debug::{read_float, read_rgba8};
+        use svet_render::debug::{read_float, read_rgba8};
         for native in [true, false] {
-            let world = vxe_world::World::generate(
-                vxe_world::ChunkExtent::new([0, 0, 0], [2, 1, 1]),
-                &vxe_world::UniformSource(ROCK),
+            let world = svet_world::World::generate(
+                svet_world::ChunkExtent::new([0, 0, 0], [2, 1, 1]),
+                &svet_world::UniformSource(ROCK),
                 &support::cave_table(),
             );
             world
@@ -1477,7 +1477,7 @@ mod reading {
                     &rig.device,
                     [128, 72],
                     [192, 108],
-                    Some(vxe_render::UpscalerKind::Fsr2(Default::default())),
+                    Some(svet_render::UpscalerKind::Fsr2(Default::default())),
                 )
             };
             rig.bake(&test_counts(256));
@@ -1497,7 +1497,7 @@ mod reading {
                     step(&mut rig, &camera);
                     changed += usize::from(rig.frame.lights_changed());
                 }
-                let rd = |t: &vxe_render::wgpu::Texture| read_float(&rig.device, &rig.queue, t);
+                let rd = |t: &svet_render::wgpu::Texture| read_float(&rig.device, &rig.queue, t);
                 let reactive = rig
                     .frame
                     .fsr2()
@@ -1569,13 +1569,13 @@ mod reading {
     #[test]
     #[ignore]
     fn reading_native_blue_against_white_on_the_ring_rig() {
-        use vxe_render::debug::{read_float, read_rgba8};
+        use svet_render::debug::{read_float, read_rgba8};
         let Some(rig) = box_rig() else {
             return;
         };
         let w = ring_rig_frame(&rig, true, Some([1.0; 3]));
         let b = ring_rig_frame(&rig, true, Some([0.0, 0.0, 1.0]));
-        let rd = |f: &vxe_render::Frame, t: &vxe_render::wgpu::Texture| -> Vec<[f32; 4]> {
+        let rd = |f: &svet_render::Frame, t: &svet_render::wgpu::Texture| -> Vec<[f32; 4]> {
             let _ = f;
             read_float(&rig.device, &rig.queue, t)
         };
@@ -1671,7 +1671,7 @@ mod reading {
     #[test]
     #[ignore]
     fn reading_a_saturated_light_near_a_wall_per_stage() {
-        use vxe_render::{
+        use svet_render::{
             AutoExposure, Exposure, LightingResolution, ToneMap, UpscalerKind,
             debug::{read_float, read_rgba8},
         };
@@ -1689,12 +1689,12 @@ mod reading {
             colour,
             ..Light::point(at, 600.0)
         };
-        let fsr = || UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default());
-        // `VXE_WIDE=1` widens the rig toward the window: manual exposure 16 (auto's +4 EV
+        let fsr = || UpscalerKind::Fsr2(svet_render::Fsr2Settings::default());
+        // `SVET_WIDE=1` widens the rig toward the window: manual exposure 16 (auto's +4 EV
         // limit, where the level settled), no light floor, and a dim white light of 30 at
         // (60, 32, 26) in every frame, so the wall's other channels are small but not zero
         // (the level's baked light in the window).
-        let wide = std::env::var("VXE_WIDE").as_deref() == Ok("1");
+        let wide = std::env::var("SVET_WIDE").as_deref() == Ok("1");
         let ambient = Light::point([60.0, 32.0, 26.0], 30.0);
         let run = |native: bool, res: LightingResolution, exposure: Exposure, lights: &[Light]| {
             let mut lights = lights.to_vec();
@@ -1754,7 +1754,7 @@ mod reading {
                     {
                         let c = run(native, res, Exposure::Manual(ex), &[make(colour)]);
                         println!(" {cname}:");
-                        let rd = |f: &vxe_render::Frame, t: &str| -> Vec<[f32; 4]> {
+                        let rd = |f: &svet_render::Frame, t: &str| -> Vec<[f32; 4]> {
                             let tex = match t {
                                 "direct" => f.direct(),
                                 "direct_acc" => f.direct_accumulated(),
@@ -1809,11 +1809,11 @@ mod reading {
     /// invalidated); the pixels it uncovered on the floor within 3 voxels of x 94 are the band.
     /// Per run frame after the carve, the display's rms against the frame 256 after it, over the
     /// band, relative to the band's mean (output 192 x 108, no upscaler, FSR 2 and ours at 1.5
-    /// from 128 x 72), under each `YoungFilter`. Runs on `VXE_TEST_ADAPTER`.
+    /// from 128 x 72), under each `YoungFilter`. Runs on `SVET_TEST_ADAPTER`.
     #[test]
     #[ignore]
     fn reading_a_shadow_edge_after_a_disocclusion() {
-        use vxe_render::{GpuWorld, MirrorConfig, UpscalerKind, Window, YoungFilter};
+        use svet_render::{GpuWorld, MirrorConfig, UpscalerKind, Window, YoungFilter};
         let pillar = ([104i64, 26, 2], [108i64, 38, 30]);
         let world = light_box();
         support::bake::fill(&world, [74, 2, 2], [76, 62, 14], ROCK);
@@ -1849,7 +1849,7 @@ mod reading {
         let kinds = [
             None,
             Some(support::rigs::fsr2_kind()),
-            Some(UpscalerKind::Own(vxe_render::Upscaler::default())),
+            Some(UpscalerKind::Own(svet_render::Upscaler::default())),
         ];
         let youngs = [YoungFilter::Luma, YoungFilter::Edges];
         for (kind, young) in kinds.into_iter().flat_map(|k| youngs.map(|y| (k, y))) {

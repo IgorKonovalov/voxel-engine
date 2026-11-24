@@ -4,11 +4,11 @@
 mod support;
 
 use support::*;
-use vxe_render::ExposureState;
-use vxe_render::{
+use svet_render::ExposureState;
+use svet_render::{
     AutoExposure, Exposure, Frame, GpuWorld, LightParams, Lighting, MirrorConfig, Window, wgpu,
 };
-use vxe_world::*;
+use svet_world::*;
 
 /// Frames with the lamp on, then with it off.
 const LAMP_ON: usize = 600;
@@ -36,7 +36,7 @@ fn level() -> Option<Level> {
         &source,
         &flythrough::with_emissive_ore(&flythrough::cave_materials()),
     );
-    let pool = flythrough::level_pool_units(&world, false) * vxe_render::internals::UNIT_BYTES;
+    let pool = flythrough::level_pool_units(&world, false) * svet_render::internals::UNIT_BYTES;
     let (device, queue) = software_device(pool)?;
     let cfg = MirrorConfig {
         budget_bytes: 256 << 20,
@@ -56,8 +56,8 @@ fn level() -> Option<Level> {
     })
 }
 
-fn camera(position: [f32; 3], yaw_deg: f32, pitch_deg: f32) -> vxe_render::Camera {
-    vxe_render::Camera {
+fn camera(position: [f32; 3], yaw_deg: f32, pitch_deg: f32) -> svet_render::Camera {
+    svet_render::Camera {
         position: position.into(),
         yaw: yaw_deg.to_radians(),
         pitch: pitch_deg.to_radians(),
@@ -70,7 +70,7 @@ fn camera(position: [f32; 3], yaw_deg: f32, pitch_deg: f32) -> vxe_render::Camer
 /// fly-through's lighting (indirect light on) and `exposure`.
 fn lamp_off_states(
     level: &Level,
-    camera: &vxe_render::Camera,
+    camera: &svet_render::Camera,
     exposure: Exposure,
 ) -> Vec<ExposureState> {
     let lit = Lighting {
@@ -88,7 +88,7 @@ fn lamp_off_states(
             frame.set_lighting(Lighting { lamp: false, ..lit });
         }
         frame.step(&level.device, &level.queue, &level.gpu, camera, &light);
-        states.push(ExposureState::from_bytes(&vxe_render::debug::read_buffer(
+        states.push(ExposureState::from_bytes(&svet_render::debug::read_buffer(
             &level.device,
             &level.queue,
             frame.exposure_state(),

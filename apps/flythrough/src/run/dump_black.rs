@@ -1,19 +1,19 @@
 //! `--dump-black`: the lighting pixels with no record value, by the chunk they hit.
 
 use crate::run::Run;
-use vxe_app::Gpu;
-use vxe_render::GpuWorld;
-use vxe_world::ChunkCoord;
+use svet_app::Gpu;
+use svet_render::GpuWorld;
+use svet_world::ChunkCoord;
 
 /// Which record a lighting pixel's hit reads in the store: `None` where its voxel's brick has a
 /// record, else whether its chunk holds a block (the brick then lacks a record).
-fn hit_without_record(store: &vxe_render::Store, hit: [f32; 4]) -> Option<(ChunkCoord, bool)> {
+fn hit_without_record(store: &svet_render::Store, hit: [f32; 4]) -> Option<(ChunkCoord, bool)> {
     let v = [0, 1, 2].map(|k| hit[k].floor() as i32);
     let c = ChunkCoord(v.map(|x| x.div_euclid(64)));
     let Some(words) = store.block_words(c) else {
         return Some((c, false));
     };
-    let slot = vxe_world::brick_slot(v.map(|x| x.rem_euclid(64) / 8));
+    let slot = svet_world::brick_slot(v.map(|x| x.rem_euclid(64) / 8));
     (words.get(slot).is_none_or(|&d| d == 0)).then_some((c, true))
 }
 
@@ -22,14 +22,14 @@ fn hit_without_record(store: &vxe_render::Store, hit: [f32; 4]) -> Option<(Chunk
 /// `missing`, of which the chain leaves `black` unlit), grouped by the chunk they hit, nearest
 /// the eye (`view.eye`) first, each with the chunk's distance in chunks, whether it holds a
 /// block, its queue tracks, the mirror's state, whether its reach crosses the full radius by
-/// the queue's test ([`vxe_render::reach_crosses`]) and
-/// the chunks that hold its columns from final ([`vxe_render::finality_blockers`]). A header
+/// the queue's test ([`svet_render::reach_crosses`]) and
+/// the chunks that hold its columns from final ([`svet_render::finality_blockers`]). A header
 /// line first.
 pub fn black_dump_lines(
     mirror: &GpuWorld,
-    frame: &vxe_render::Frame,
+    frame: &svet_render::Frame,
     hits: &[[f32; 4]],
-    view: &vxe_render::QueueView<'_>,
+    view: &svet_render::QueueView<'_>,
     at_frame: u32,
     black: u32,
 ) -> Vec<String> {
@@ -68,9 +68,9 @@ pub fn black_dump_lines(
     let q = frame.bake_queue();
     for (d, c, n, block) in rows {
         let cc = ChunkCoord(c);
-        let blockers = vxe_render::finality_blockers(mirror, cc, lr, view);
+        let blockers = svet_render::finality_blockers(mirror, cc, lr, view);
         let crosses = view.full_radius.map_or("no streamer".to_owned(), |r| {
-            vxe_render::reach_crosses(cc, e, lr, r).to_string()
+            svet_render::reach_crosses(cc, e, lr, r).to_string()
         });
         out.push(format!(
             "dump black: chunk {} {} {}: {n} px, {d:.1} chunks out, block {}, tracks {:?}, mirrored {} lod {} pending {}, reach crosses the full radius (the queue's test) {crosses}, {} blockers {:?}",
@@ -104,16 +104,16 @@ impl Run {
         let Some(gfx) = self.gfx.as_ref() else {
             return;
         };
-        let hits = vxe_render::debug::read_rgba32f(
+        let hits = svet_render::debug::read_rgba32f(
             &gpu.device,
             &gpu.queue,
             gfx.frame.light_hit_positions(),
         );
         let stream = self.stream.as_ref();
         let resident_fn = |c: ChunkCoord| {
-            stream.is_some_and(|s| s.streamer.tier(c) == Some(vxe_world::Tier::Full))
+            stream.is_some_and(|s| s.streamer.tier(c) == Some(svet_world::Tier::Full))
         };
-        let view = vxe_render::QueueView {
+        let view = svet_render::QueueView {
             eye: self.fly.camera.position.to_array(),
             forward: self.fly.camera.basis().0.to_array(),
             resident: stream

@@ -34,13 +34,13 @@ pub struct OutdoorArgs {
     pub(crate) leaf_shadow: crate::LeafShadow,
     /// `--penumbra disc|approach`: how the key light's shadow ray makes its penumbra; unset,
     /// [`crate::DEFAULT_PENUMBRA`].
-    pub(crate) penumbra: Option<vxe_render::Penumbra>,
+    pub(crate) penumbra: Option<svet_render::Penumbra>,
     /// `--key-far baked|ray`: where the key light's visibility comes from where a voxel is
     /// small on screen (ADR-0079).
-    pub(crate) key_far: vxe_render::KeyFar,
+    pub(crate) key_far: svet_render::KeyFar,
     /// `--key-far-mix blend|step`: how the store's key visibility joins the ray inside the far
     /// normal's band.
-    pub(crate) key_far_mix: vxe_render::KeyFarMix,
+    pub(crate) key_far_mix: svet_render::KeyFarMix,
     /// `--light-history on|off`: the light passes' screen history
     /// (`Lighting::light_history`); unset, the renderer's default.
     pub(crate) light_history: Option<bool>,
@@ -52,9 +52,9 @@ pub struct OutdoorArgs {
     pub(crate) source_fade: Option<bool>,
     /// `--dig-hold on|rays|off`: what a dig shows until its re-bake lands
     /// (`Lighting::dig_hold`); unset, the renderer's default.
-    pub(crate) dig_hold: Option<vxe_render::DigHold>,
+    pub(crate) dig_hold: Option<svet_render::DigHold>,
     /// `--sky-normal face|smoothed`: the normal the baked sky term reads its visibilities by.
-    pub(crate) sky_normal: vxe_render::SkyNormal,
+    pub(crate) sky_normal: svet_render::SkyNormal,
     /// `--sky-bounce B`: the baked sky term's bounce floor, 0 to 1.
     pub(crate) sky_bounce: f32,
     /// `--column-wait on|off`: the live queue's column wait (`Lighting::column_wait`).
@@ -69,30 +69,30 @@ pub struct OutdoorArgs {
     pub(crate) dump_black: bool,
     /// `--sky-anchor N|none`: the auto exposure's ceiling anchored `N` EV over the sunlit
     /// ground's exposure while a sky is set (`AutoExposure::sky_anchor_ev`), `Some(None)` for
-    /// none; unset, the preset's (`vxe_render::DEFAULT_SKY_ANCHOR_EV`).
+    /// none; unset, the preset's (`svet_render::DEFAULT_SKY_ANCHOR_EV`).
     pub(crate) sky_anchor: Option<Option<f32>>,
     /// `--sky-anchor-share X|off`: the share of the view that is sky at and over which the
     /// anchor holds in full (`AutoExposure::sky_anchor_share`), 0 for off; unset, the
-    /// preset's (`vxe_render::DEFAULT_SKY_ANCHOR_SHARE`).
+    /// preset's (`svet_render::DEFAULT_SKY_ANCHOR_SHARE`).
     pub(crate) sky_anchor_share: Option<f32>,
     /// `--sky-anchor-floor X|off`: the share of the hemisphere over the camera's floor that
     /// is open sky at and over which the anchor holds in full (`AutoExposure::
     /// sky_anchor_floor`, ADR-0081), 0 for off; unset, the preset's
-    /// (`vxe_render::DEFAULT_SKY_ANCHOR_FLOOR`).
+    /// (`svet_render::DEFAULT_SKY_ANCHOR_FLOOR`).
     pub(crate) sky_anchor_floor: Option<f32>,
     /// `--sky-anchor-lift L|off`: the most the released anchor opens over the anchored
     /// ceiling, in EV (`AutoExposure::sky_anchor_lift`, ADR-0081), `None` for off; unset, the
-    /// preset's (`vxe_render::DEFAULT_SKY_ANCHOR_LIFT`).
+    /// preset's (`svet_render::DEFAULT_SKY_ANCHOR_LIFT`).
     pub(crate) sky_anchor_lift: Option<Option<f32>>,
     /// `--exposure-max EV`: the auto exposure's constant ceiling in EV; unset, the start's
     /// ([`OUTDOOR_MAX`] outdoors, the preset's elsewhere).
     pub(crate) exposure_max_ev: Option<f32>,
     /// `--exposure-rate EV/s`: the auto exposure's rate cap (`AutoExposure::rate_ev_s`, 0 for
-    /// none); unset, the preset's (`vxe_render::DEFAULT_EXPOSURE_RATE_EV_S` for the eye).
+    /// none); unset, the preset's (`svet_render::DEFAULT_EXPOSURE_RATE_EV_S` for the eye).
     pub(crate) exposure_rate: Option<f32>,
     /// `--exposure-highlight P|off`: highlight protection's percentile
     /// (`AutoExposure::highlight_percentile`, 0 for off); unset, the preset's
-    /// (`vxe_render::DEFAULT_EXPOSURE_HIGHLIGHT`).
+    /// (`svet_render::DEFAULT_EXPOSURE_HIGHLIGHT`).
     pub(crate) exposure_highlight: Option<f32>,
 }
 
@@ -263,7 +263,7 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
         Flag::value(
             &["--sky"],
             "on|off",
-            "a sky over the world (vxe_render::Sky) [on for --source outdoor, else off]",
+            "a sky over the world (svet_render::Sky) [on for --source outdoor, else off]",
             |p: &mut Parsing, v| {
                 p.args.outdoor.sky = Some(v.on_off()?);
                 Ok(())
@@ -325,7 +325,7 @@ fn dig_hold_flag() -> Flag<Parsing> {
              re-bake [on]",
         |p: &mut Parsing, v| {
             p.args.outdoor.dig_hold =
-                Some(v.named(vxe_render::DigHold::from_name, "on, rays or off")?);
+                Some(v.named(svet_render::DigHold::from_name, "on, rays or off")?);
             Ok(())
         },
     )
@@ -341,7 +341,7 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
             "cosine-weighted sky rays a lighting pixel casts where no baked sky visibility \
                  is fresh, 0 (bake only) to 4 [1]",
             |p: &mut Parsing, v| {
-                let max = vxe_render::MAX_SKY_RAYS;
+                let max = svet_render::MAX_SKY_RAYS;
                 p.args.outdoor.sky_rays =
                     Some(v.parse_if(|n: &u32| (0..=max).contains(n), "0 to 4")?);
                 Ok(())
@@ -352,7 +352,7 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
             "N",
             "frames the sky rays' running mean holds at most, 1 to 1024 [64]",
             |p: &mut Parsing, v| {
-                let max = vxe_render::MAX_SKY_HISTORY;
+                let max = svet_render::MAX_SKY_HISTORY;
                 p.args.outdoor.sky_history =
                     Some(v.parse_if(|n: &u32| (1..=max).contains(n), "1 to 1024")?);
                 Ok(())
@@ -363,7 +363,7 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
             "N",
             "frames the key light's visibility mean holds at most, 1 to 1024 [256]",
             |p: &mut Parsing, v| {
-                let max = vxe_render::MAX_SKY_HISTORY;
+                let max = svet_render::MAX_SKY_HISTORY;
                 p.args.outdoor.key_history =
                     Some(v.parse_if(|n: &u32| (1..=max).contains(n), "1 to 1024")?);
                 Ok(())
@@ -377,7 +377,7 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
                  beside it, taken as the value with no history [disc]",
             |p: &mut Parsing, v| {
                 p.args.outdoor.penumbra =
-                    Some(v.named(vxe_render::Penumbra::from_name, "disc or approach")?);
+                    Some(v.named(svet_render::Penumbra::from_name, "disc or approach")?);
                 Ok(())
             },
         ),
@@ -390,7 +390,7 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
                  [column]",
             |p: &mut Parsing, v| {
                 p.args.outdoor.key_far =
-                    v.named(vxe_render::KeyFar::from_name, "baked, column or ray")?;
+                    v.named(svet_render::KeyFar::from_name, "baked, column or ray")?;
                 Ok(())
             },
         ),
@@ -402,7 +402,7 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
                  half [step]",
             |p: &mut Parsing, v| {
                 p.args.outdoor.key_far_mix =
-                    v.named(vxe_render::KeyFarMix::from_name, "blend or step")?;
+                    v.named(svet_render::KeyFarMix::from_name, "blend or step")?;
                 Ok(())
             },
         ),
@@ -446,7 +446,7 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
                  slope) [smoothed]",
             |p: &mut Parsing, v| {
                 p.args.outdoor.sky_normal =
-                    v.named(vxe_render::SkyNormal::from_name, "face or smoothed")?;
+                    v.named(svet_render::SkyNormal::from_name, "face or smoothed")?;
                 Ok(())
             },
         ),

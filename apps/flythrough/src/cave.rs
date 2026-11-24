@@ -15,8 +15,8 @@
 
 use std::sync::Arc;
 
-use vxe_world::hash::ValueNoise;
-use vxe_world::{
+use svet_world::hash::ValueNoise;
+use svet_world::{
     AIR, BRICK_EDGE, Brick, CHUNK_BRICKS, CHUNK_EDGE, Chunk, ChunkCoord, ChunkExtent, MaterialId,
     Prefab, Rot, StampedSource, VoxelCoord, WorldSource, brick_of_slot,
 };

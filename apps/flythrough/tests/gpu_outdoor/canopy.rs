@@ -5,7 +5,7 @@ mod canopy {
     pub(super) mod reading {
         use super::super::support;
         use support::terms::Rig;
-        use vxe_render::{Camera, Exposure, Frame, LightHooks, LightParams, Lighting};
+        use svet_render::{Camera, Exposure, Frame, LightHooks, LightParams, Lighting};
 
         const INTERNAL: [u32; 2] = [320, 180];
         const OUT: [u32; 2] = [480, 270];
@@ -128,7 +128,7 @@ mod canopy {
         /// store baked whole with `baked`, `sky_rays` 0 without.
         fn frame(
             rig: &mut Rig,
-            sky: Option<vxe_render::sky::Sky>,
+            sky: Option<svet_render::sky::Sky>,
             baked: bool,
             exposure: Exposure,
         ) -> Run {
@@ -138,7 +138,7 @@ mod canopy {
         /// [`frame`] from `internal` to `out`.
         pub(in super::super) fn frame_sized(
             rig: &mut Rig,
-            sky: Option<vxe_render::sky::Sky>,
+            sky: Option<svet_render::sky::Sky>,
             baked: bool,
             exposure: Exposure,
             internal: [u32; 2],
@@ -147,11 +147,11 @@ mod canopy {
             let mut f = Frame::with_sizes(&rig.device, internal, out);
             f.set_upscaler_kind(
                 &rig.device,
-                vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default()),
+                svet_render::UpscalerKind::Fsr2(svet_render::Fsr2Settings::default()),
             );
-            f.set_look(vxe_render::LookParams {
+            f.set_look(svet_render::LookParams {
                 far_normal: flythrough::LookPreset::DEFAULT.far_normal,
-                ..vxe_render::LookParams::default()
+                ..svet_render::LookParams::default()
             });
             f.set_material_styles(
                 &rig.queue,
@@ -176,7 +176,7 @@ mod canopy {
                     &mut rig.gpu,
                     &rig.world,
                     rig.world.extent(),
-                    &vxe_render::BakeSettings::default(),
+                    &svet_render::BakeSettings::default(),
                     &mut |_| {},
                 )
                 .expect("the store fits");
@@ -187,19 +187,19 @@ mod canopy {
 
         /// The settled exposure of the defaults under `sky` (or the headlamp alone): 64 frames
         /// under the outdoor auto exposure (instant, the default sky anchor).
-        fn settled_exposure(rig: &mut Rig, cam: &Camera, sky: Option<vxe_render::sky::Sky>) -> f32 {
-            let auto = Exposure::Auto(vxe_render::AutoExposure {
+        fn settled_exposure(rig: &mut Rig, cam: &Camera, sky: Option<svet_render::sky::Sky>) -> f32 {
+            let auto = Exposure::Auto(svet_render::AutoExposure {
                 min: flythrough::cli::OUTDOOR_MIN,
                 max: flythrough::cli::OUTDOOR_MAX,
-                sky_anchor_ev: Some(vxe_render::DEFAULT_SKY_ANCHOR_EV),
-                ..vxe_render::AutoExposure::instant()
+                sky_anchor_ev: Some(svet_render::DEFAULT_SKY_ANCHOR_EV),
+                ..svet_render::AutoExposure::instant()
             });
             let mut r = frame(rig, sky, sky.is_some(), auto);
             for _ in 0..64 {
                 r.step(rig, cam, &LightParams::headlamp());
             }
-            let st = vxe_render::debug::read_buffer(&rig.device, &rig.queue, r.f.exposure_state(), 0, 32);
-            vxe_render::ExposureState::from_bytes(&st).current
+            let st = svet_render::debug::read_buffer(&rig.device, &rig.queue, r.f.exposure_state(), 0, 32);
+            svet_render::ExposureState::from_bytes(&st).current
         }
 
         /// What a run's last frame reads: the display's largest channel, the class and the key
@@ -258,7 +258,7 @@ mod canopy {
             frames: u32,
             align: Option<(u32, u32)>,
         ) -> Read {
-            use vxe_render::debug::{read_rgba8, read_rgba16f, read_rgba32f};
+            use svet_render::debug::{read_rgba8, read_rgba16f, read_rgba32f};
             let out = r.out;
             r.f.set_light_hooks(hooks);
             r.f.set_count_store(true);
@@ -342,7 +342,7 @@ mod canopy {
         }
 
         /// The class of a lighting pixel's hit `h`.
-        fn class_of(world: &vxe_world::World, h: &[f32; 4]) -> Class {
+        fn class_of(world: &svet_world::World, h: &[f32; 4]) -> Class {
             use flythrough::outdoor::{BARK, is_leaf};
             if h[3] <= 0.0 || h[3] >= 1.0e30 || h[..3].iter().any(|v| v.is_nan()) {
                 return Class::Other;
@@ -353,7 +353,7 @@ mod canopy {
                     let o = if k >> a & 1 == 1 { 0.01 } else { -0.01 };
                     (h[a] + o).floor() as i32
                 });
-                match world.material_at(vxe_world::VoxelCoord(v)) {
+                match world.material_at(svet_world::VoxelCoord(v)) {
                     Some(m) if is_leaf(m) => leaf = true,
                     Some(m) if m == BARK => bark = true,
                     _ => {}
@@ -476,7 +476,7 @@ mod canopy {
         /// long reference ([`REFERENCE`] frames, both caps [`REFERENCE_HISTORY`]), then runs of
         /// 128 frames at the default key cap, 512 frames at key cap 256 and 512 frames at key cap
         /// 64, each aligned to the reference's jitter phase, each read by [`age_row`].
-        /// `VXE_TEST_ADAPTER` picks the adapter; `VXE_CANOPY_ARM` (0 to 2) runs one run alone
+        /// `SVET_TEST_ADAPTER` picks the adapter; `SVET_CANOPY_ARM` (0 to 2) runs one run alone
         /// after its own reference, so each run reads in a process of its own.
         #[test]
         #[ignore = "reading"]
@@ -484,7 +484,7 @@ mod canopy {
             let Some((mut rig, cam)) = support::terms::forest_rig() else {
                 return;
             };
-            let phases = vxe_render::Fsr2Settings::default().phases(INTERNAL[0], OUT[0]);
+            let phases = svet_render::Fsr2Settings::default().phases(INTERNAL[0], OUT[0]);
             println!("reading: the_canopy_ages on {}, {phases} jitter phases", rig.adapter);
             let t0 = std::time::Instant::now();
             let sky_cap = flythrough::default_lighting().sky_history;
@@ -511,7 +511,7 @@ mod canopy {
                 let off = LightHooks::default();
                 let refr = hold_capped(&rig, &cam, &mut r, off, REFERENCE_HISTORY, REFERENCE_HISTORY, REFERENCE, None);
                 let phase = r.steps % phases;
-                let only: Option<usize> = std::env::var("VXE_CANOPY_ARM").ok().and_then(|v| v.parse().ok());
+                let only: Option<usize> = std::env::var("SVET_CANOPY_ARM").ok().and_then(|v| v.parse().ok());
                 for (i, (frames, key)) in [(128, key_cap), (512, 256), (512, 64)].into_iter().enumerate() {
                     if only.is_some_and(|o| o != i) {
                         continue;
@@ -532,14 +532,14 @@ mod canopy {
         /// read at the same jitter phase): the residual's p99 and mean in display levels on the
         /// floor and the trunks, lit (the key mean over 0.5) and shadowed; and the pop share
         /// over 4 levels per frame pair over the run's last [`POP_PAIRS`] pairs, beside the
-        /// lamp-lit floor's. `VXE_TEST_ADAPTER` picks the adapter.
+        /// lamp-lit floor's. `SVET_TEST_ADAPTER` picks the adapter.
         #[test]
         #[ignore = "reading"]
         fn the_canopy_residual() {
             let Some((mut rig, cam)) = support::terms::forest_rig() else {
                 return;
             };
-            let phases = vxe_render::Fsr2Settings::default().phases(INTERNAL[0], OUT[0]);
+            let phases = svet_render::Fsr2Settings::default().phases(INTERNAL[0], OUT[0]);
             println!("reading: the_canopy_residual on {}, {phases} jitter phases", rig.adapter);
             // The lamp-lit floor: the headlamp alone, at its settled exposure.
             let e = settled_exposure(&mut rig, &cam, None);

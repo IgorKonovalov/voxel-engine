@@ -3,13 +3,13 @@
 #
 #   scripts/package-tester.sh linux|windows OUT_DIR [NOTICES]
 #
-# Takes target/release/vxe-tester and flythrough (.exe on Windows), dist/README-TESTER.txt with
-# its placeholders filled (@VERSION@ from the workspace's Cargo.toml, @COMMIT@ from VXE_COMMIT,
+# Takes target/release/svet-tester and flythrough (.exe on Windows), dist/README-TESTER.txt with
+# its placeholders filled (@VERSION@ from the workspace's Cargo.toml, @COMMIT@ from SVET_COMMIT,
 # @GLIBC_FLOOR@ from the Linux binaries' highest GLIBC_ symbol, `objdump -T`), LICENSE-MIT,
 # LICENSE-APACHE and NOTICES as THIRD-PARTY-NOTICES.txt (a placeholder line when not given;
 # the release workflow generates it with cargo-about, and appends dist/DXC-LICENSE.txt for
-# Windows). Writes OUT_DIR/vxe-tester-<version>-linux-x86_64.tar.gz or
-# OUT_DIR/vxe-tester-<version>-windows-x86_64.zip (7z, on the Windows runner), and prints its
+# Windows). Writes OUT_DIR/svet-tester-<version>-linux-x86_64.tar.gz or
+# OUT_DIR/svet-tester-<version>-windows-x86_64.zip (7z, on the Windows runner), and prints its
 # path last. Builds nothing.
 set -euo pipefail
 
@@ -18,7 +18,7 @@ out=${2:?the output folder}
 notices=${3:-}
 root=$(cd "$(dirname "$0")/.." && pwd)
 version=$(grep -m1 '^version = ' "$root/Cargo.toml" | sed 's/^version = "\(.*\)"/\1/')
-commit=${VXE_COMMIT:-unknown}
+commit=${SVET_COMMIT:-unknown}
 
 case $os in
   linux) exe="" ;;
@@ -26,7 +26,7 @@ case $os in
   *) echo "package-tester: linux or windows, not $os" >&2; exit 2 ;;
 esac
 
-name="vxe-tester-$version-$os-x86_64"
+name="svet-tester-$version-$os-x86_64"
 mkdir -p "$out"
 out=$(cd "$out" && pwd)
 stage=$(mktemp -d)
@@ -34,12 +34,12 @@ trap 'rm -rf "$stage"' EXIT
 dir="$stage/$name"
 mkdir -p "$dir"
 
-for bin in vxe-tester flythrough; do
+for bin in svet-tester flythrough; do
   cp "$root/target/release/$bin$exe" "$dir/"
 done
 
 if [ "$os" = linux ]; then
-  floor=$(objdump -T "$dir/vxe-tester" "$dir/flythrough" \
+  floor=$(objdump -T "$dir/svet-tester" "$dir/flythrough" \
     | grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -n 1)
   echo "glibc floor: GLIBC_$floor (the highest GLIBC_ symbol either binary needs)"
 else

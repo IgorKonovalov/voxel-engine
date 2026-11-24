@@ -35,7 +35,7 @@ the published bandwidth).
 
 Target: **60 fps at 1080p output** on the baseline, with the upscaler allowed (internal
 resolution between 720p and 1080p). The budget is held per render profile
-(`vxe_render::Profile`, ADR-0055; set at Plan 0069's close, 2026-11-17, from its readings, the
+(`svet_render::Profile`, ADR-0055; set at Plan 0069's close, 2026-11-17, from its readings, the
 owner's "take as is"):
 
 - **Floor** (the default; 1080p output, FSR 2 at internal scale 1.5): 16.6 ms, split as the
@@ -236,7 +236,7 @@ Every reading against these budgets, with its machine and commit, is in
   centre of a solid 4³-chunk world (every flood runs to the cap) under 1 ms; `drop_region` of
   the 9-cell test slab under 100 µs; `remove_region` of that slab with rubble 1/4 under
   200 µs; `drop_region` of a 4096-cell cube (2 097 152 voxels) under 20 ms (a guess at the
-  proposal). **Readings (dev reference, AMD Ryzen 9 5900HS, Linux, `cargo bench -p vxe-world
+  proposal). **Readings (dev reference, AMD Ryzen 9 5900HS, Linux, `cargo bench -p svet-world
   --bench collapse`, criterion medians, exclusive perf lock; at b0d5565 with 1-minute load
   4.57 falling to 2.18, and at 09556ed after the brick-array pool merge with load 11.75 falling
   to 4.18):** `find_unsupported` 327 to 396 µs; slab drop by 32 72 µs and by 10 (not a
@@ -268,7 +268,7 @@ Every reading against these budgets, with its machine and commit, is in
   8 per 64 voxels of mask: 8 716 for the 16³ vault), once per prefab however often it is
   stamped. A falling region re-sends its cells every tick it drops (129 bytes a tick for a
   9-cell slab, 131 as kind 5), and a fall that crushed anything adds one kind-6 pile entry at
-  its end. All asserted in `crates/vxe-world/tests/log.rs`.
+  its end. All asserted in `crates/svet-world/tests/log.rs`.
 - **Replay throughput:** no budget; a reading only, bound by the edit cost above (the ops
   dominate, not the decode).
   Readings in `docs/nfr/04-edits.md`.
@@ -330,7 +330,7 @@ Every reading against these budgets, with its machine and commit, is in
   runs, under the 500 ms proposal; max 1678 to 3669 ms, over it. The proposal stands as a p95
   figure; the tail is the streaming-CPU plan's.
 - An edited chunk that is evicted and later reloaded reproduces the edit.
-  **Asserted** headlessly by `crates/vxe-world/tests/persist.rs` (RAM, spill file, racing
+  **Asserted** headlessly by `crates/svet-world/tests/persist.rs` (RAM, spill file, racing
   eviction) and under motion by `flythrough --autopilot` (`return: 2 chunks, hash match`
   after flying 300 m out and back), Plan 0002 Phase 8.
 - **Reading under motion (dev reference, Plan 0002 Phase 8, headless `flythrough
@@ -407,8 +407,8 @@ Every reading against these budgets, with its machine and commit, is in
 
 ## 6. Determinism and headless operation
 
-- `vxe-world` builds and tests without a GPU, a window or a display server.
-- No wall-clock reads in `vxe-world` or in server-side code; `clippy.toml` enforces it.
+- `svet-world` builds and tests without a GPU, a window or a display server.
+- No wall-clock reads in `svet-world` or in server-side code; `clippy.toml` enforces it.
 - Everything the engine generates takes an explicit seed. There is no engine-owned global RNG.
 - Render tests run on the software adapter (lavapipe) in CI; golden baselines are blessed there
   and real-vendor readings are recorded separately, never substituted.
@@ -418,9 +418,9 @@ Every reading against these budgets, with its machine and commit, is in
   fixed forward.
 - Generation with prefab placements (`StampedSource`, Plan 0008) is independent of the thread
   count: `generate_with_threads` at 1 and 7 threads gives the same hash, and
-  `crates/vxe-world/tests/stamp.rs` pins it at `0x7ee7_eeb7_0956_d069`, blessed on Linux; the
+  `crates/svet-world/tests/stamp.rs` pins it at `0x7ee7_eeb7_0956_d069`, blessed on Linux; the
   stamp is integer-only, so the Windows arm must reproduce it.
-- The collapse course (`crates/vxe-world/tests/collapse.rs`, Plan 0009: a query, four per-tick
+- The collapse course (`crates/svet-world/tests/collapse.rs`, Plan 0009: a query, four per-tick
   drops and a removal, hashing every result and the world after each step; Plan 0022 adds a
   slab dropped through a sliver and its rubble pile) pins `0xd223_d848_c8fc_ca0f`, blessed on
   Linux; the Windows arm confirms it on the first CI run after the owner pushes `main`. The
@@ -428,18 +428,18 @@ Every reading against these budgets, with its machine and commit, is in
   integer-only, so a mismatch is a defect, fixed forward.
 - The op log (Plan 0007): the determinism vector's 24 ops encoded as an op log (1446 bytes)
   hash to `0x5ac8_737d_db0f_ccec` (`apps/flythrough/tests/determinism.rs`), and decoding and
-  replaying that log reproduces the vector hash; `vxe-net`'s re-simulation tests hold a seeded
+  replaying that log reproduces the vector hash; `svet-net`'s re-simulation tests hold a seeded
   logic to equal op-log bytes. **Asserted** on Linux, blessed at d77ef85; the Windows arm
   confirms it on the first CI run after a push of `main`.
 - Native versus component (Plan 0011): one logic linked natively and hosted as a WebAssembly
   component gives byte-equal op logs and equal world hashes from the same inputs. The echo
-  logic pins `0x8f7d_4016_15d9_5c4d` (`crates/vxe-script-wasm/tests/equality.rs`), and the
+  logic pins `0x8f7d_4016_15d9_5c4d` (`crates/svet-script-wasm/tests/equality.rs`), and the
   fly-through's dig logic is equal on the 20-dig replay fixture, the `Bench` input and a saved
   `--logic wasm` session replayed with `--logic native` (`0x86ca427a47e8908c`). **Asserted** on
   Linux; the Windows arm confirms it on the first CI run after a push of `main`.
 - Clip sampling (Plan 0063, ADR-0051): every tick of a committed three-part clip, sampled in
   Q14 and 1/256 voxel, hashes to `0xd1aa_d34b_0a23_3d09`
-  (`crates/vxe-entity/tests/determinism.rs`, `clip_poses_match_the_fixed_vectors`); degrees
+  (`crates/svet-entity/tests/determinism.rs`, `clip_poses_match_the_fixed_vectors`); degrees
   reach Q14 through a committed sine table, never the platform's `sin`. **Asserted** on Linux;
   the Windows arm confirms it on the CI run after the merge's push.
 
@@ -517,7 +517,7 @@ Every reading against these budgets, with its machine and commit, is in
   everyday loop does not compile crates a plan does not touch (`default-members`).
   **Reading (Plan 0011 Phase 4, dev reference, AMD Ryzen 9 5900HS, `CARGO_BUILD_JOBS=3`,
   exclusive perf lock, 1-minute load 1.99 to 1.91):** default-members `cargo build` after a
-  one-line change (a `pub const`) to `crates/vxe-world/src/lib.rs`, alternated three times:
+  one-line change (a `pub const`) to `crates/svet-world/src/lib.rs`, alternated three times:
   1.40 to 1.49 s on the tree before Plan 0011 (066d90e), 1.46 to 1.48 s at its tip (70b40ec
   plus the bench). The default members compile no `wasmtime`: `cargo tree -e normal,build`
   of them and `cargo tree -p flythrough -e normal` list none; `flythrough --features wasm`
@@ -525,12 +525,12 @@ Every reading against these budgets, with its machine and commit, is in
   still compiles no `wasmtime` or `tokio`.
   **Reading (Plan 0072 Phase 1, 2026-11-12, 5909af8, dev reference, rustc 1.97.1,
   `CARGO_BUILD_JOBS=4`, exclusive perf lock, quiet: 1-minute load 1.80 to 1.93 at the start):**
-  the same change, a `pub const` appended to `crates/vxe-world/src/lib.rs`, three runs:
+  the same change, a `pub const` appended to `crates/svet-world/src/lib.rs`, three runs:
   default-members `cargo build` **3.3, 4.3 and 4.4 s, the 10 s budget met** (the chain
-  `vxe-world` 0.6, `vxe-render` 0.9, `flythrough` lib 0.5, its bin 1.3 s; `vxe-tester` beside
+  `svet-world` 0.6, `svet-render` 0.9, `flythrough` lib 0.5, its bin 1.3 s; `svet-tester` beside
   it). The quick tier's test build for it (`cargo nextest run --workspace --profile quick
   --no-run`) 43.2, 41.0 and 64.5 s (the third ended at load 14.6), 167 to 251 s of units at
-  four jobs, the longest the `flythrough` and `vxe-script-wasm` test binaries (4.8 to 12.6 s
+  four jobs, the longest the `flythrough` and `svet-script-wasm` test binaries (4.8 to 12.6 s
   each). A fresh worktree's first test build is 455 to
   479 s at four jobs, a third of its unit time `wasmtime` and `cranelift`
   (`docs/plans/logs/0072.md`).
@@ -584,6 +584,7 @@ Every reading against these budgets, with its machine and commit, is in
   **Reading (Plan 0097 close review, 2026-11-22, the plan's tip `339e4f18` (main `ed2fb525` merged), dev reference on lavapipe, exclusive perf lock, 6G cap, 2 test threads, the gate's binaries built before the lock):** 1316 run, 1316 passed, 226 skipped, **1498.0 s, over the 19 min line** by 358 s; load 3.15 at the lock and 1.13 at the end with three lanes active, so **loaded, indicative**; 21 tests over the 10 s line, none of them this plan's (its gate tests are CPU tests under 0.1 s and one `gpu_exposure` test at 4.3 s, added by the fix pass and read apart). **The owner's acceptance of this wall is owed** (not assumed); the owner agreed on 2026-11-22 to the chore that reads the lavapipe group at two threads ([the backlog review](reviews/2026-11-22-backlog-review.md), answer 3).
   **Reading (Plan 0096 close review, 2026-11-23, the plan's tip `466460bd` (main `3e268ad0` merged), dev reference on lavapipe, exclusive perf lock, 16G cap, 12 build jobs, the gate's binaries built before the lock):** 1348 run, 1348 passed, 230 skipped, **1470.4 s, over the 19 min line** by 330 s; load 17.66 at the lock (the gate's own build just before) and 1.21 at the end, two lanes active, so **loaded, indicative**; 29.6 min serial, 27 tests over the 10 s line (6.0 min of it; `docs/backlog.md`, the gate entry). The first review's run at `05d0e6fe`: 1344 of 1344, 1463.3 s; the dev's tip run at `501bcd95`: 1437.1 s with one failure, fixed before the reviews. **The owner's acceptance of this wall is owed** (not assumed).
   **Reading (Plan 0098 close review, 2026-11-24, the plan's tip `1f08691b`, whose tree for the tests is the merge `c5af509a` (main `f08ccff1` merged), dev reference on lavapipe, exclusive perf lock, the lane's run, verified by the review and not repeated (the owner's rule: one gate a plan, on the tree that holds main)):** 1361 run, 1361 passed, 242 skipped, **2153.4 s, over the 19 min line** by 1013 s; load 21.6 at the lock (the gate's own build just before), so **loaded, indicative**; 42.4 min serial, 74 tests over the 10 s line (17.4 min of it). The lane's four earlier runs on this branch read 2011 to 2177 s (2011.1 s at `89222195` at a load of 2.2). **Not attributed to the plan:** against Plan 0096's lane gate of 2026-11-23 (`p9-gate3.log` in its archived `live/`, 1344 tests, 1437 s) the CPU tests this plan does not touch read 1.25 to 1.4 times longer in every one of the branch's logs (`determinism::castle_vector` 16.7 s there, 20.4 to 23.4 s here; `showcase_vector` 11.8 against 15.5 to 16.2), the same ratio as the GPU binaries (`gpu_walk`'s eight tests 41.9 s against 59.5 to 63.3; `gpu_sun` 147.6 against 204 to 219 with one test more), so the box's state between the two days explains the reading as well as the plan's shaders do; no baseline of main was read on the same day. The plan's own gate tests: `gpu_queue::a_dig_jumps_every_open_job_and_withdraws_its_stale_one` 9.4 s, `gpu_sun::the_defaults_near_key_shadow_is_the_column_horizon` 5.8 s, the CPU tests under 0.1 s; its image tests are soak marks. The backlog's gate entry takes the attribution (a quiet run of main and of this tip back to back).
+  **Reading (Plan 0087 close review, 2026-11-24, the plan's tip `27cb1c65` (main `db1f4471` merged; the commit after it is docs only), dev reference on lavapipe, exclusive perf lock, 16G cap, 12 build jobs, the gate's binaries built before the lock, the lane's run, verified by the review and not repeated):** 1363 run, 1363 passed, 242 skipped, **849.9 s, under the 19 min line**; load 1.89 at the lock and 3.07 at the end, quiet. **The first gate reading at the dev box's full CPU clock** since the cap of 2026-11-23 lifted, so it is the re-read the 1133.2 s below was owed, not a like comparison of the rename (which moves no test: main's 1361 plus two new CPU tests). 33.0 min serial, 31 tests over the 10 s line (6.5 min of it; the longest `run::structure_tests::the_spider_builds_on_every_source_castle` 18.1 s), none of them the plan's.
   **Reading (the gate-time chore, 2026-11-24, branch `chore-gate-time` from main `193cae15`, dev reference on lavapipe, exclusive perf lock, 16G cap, the gate's binaries built before the lock, each run started at a load under 2; the CPU capped at its 3.3 GHz base clock since the AC drop of 2026-11-23, so about 1.42 times slower than full clock):** before, `193cae15` with the lavapipe group at one thread: **2145.0 s**, 1361 of 1361 passed, load 1.83 at the start and 3.05 at the end; the wall is the group's serial sum (334 GPU tests, 2141.2 s), most of a GPU test being single-threaded pipeline compilation. After, `909a2552` with the group at two threads (the owner's go of 2026-11-22) and eight tests' independent arms overlapped on threads (no assertion changed): **1133.2 s, under the 19 min line**, 1361 of 1361 passed, load 1.98 at the start and 4.14 at the end. No test changed tier. The 2153 s of Plan 0098's close is the clock cap, not the plan (the shared tests' ratios against Plan 0096's run of 2026-11-23 match the cap). The attribution, the thread sweep (three threads: 889.7 s), the shortened tests, the ten tests still over the line and the sole mark: [`docs/nfr/07-startup-and-build.md`](nfr/07-startup-and-build.md).
   **Reading (CI after Plan 0072, 2026-11-13, GitHub-hosted runners):** run 43377881019 on 9c256bb (cold cache, the profile change): Linux 26 min 29 s, Windows 33 min 9 s; gate on Linux 844 passed, 78 skipped, 437.6 s. Run 43395622401 on 393ed45 (warm): **Linux 15 min 6 s, Windows 18 min 47 s**, over Plan 0072's under-10 and under-15 min proposals. **Accepted by the owner 2026-11-13 ("record this time as accepted, let it be")**: these walls are the CI line; no further cut is owed.
   **Reading (CI run 41332396750 on 929d1b3, 2026-11-01, the Linux arm, lavapipe, 745 tests,
@@ -622,7 +623,7 @@ Every reading against these budgets, with its machine and commit, is in
   load 6.15 to 14.11 (loaded): indirect 149.0 s, showcase 16.5 s.
 - Pipeline creation, one compute pipeline per pass the renderer builds (attrib, the march hit
   pass and the nine march-prefixed passes), read by
-  `cargo run -p vxe-render --release --example pipeline_times` (cold is the first creation on
+  `cargo run -p svet-render --release --example pipeline_times` (cold is the first creation on
   a fresh device, min the fastest of three). No budget; part of time to first frame.
   **Reading (Plan 0046 Phase 1, on ce62f0c, Linux on Vulkan, driver shader caches off with
   `MESA_SHADER_CACHE_DISABLE=true` and `__GL_SHADER_DISK_CACHE=0`, adapter by
@@ -650,24 +651,24 @@ Every reading against these budgets, with its machine and commit, is in
 
 ## 8. Collision and coarse grids
 
-Added at Plan 0004's close (2026-10-17). `vxe-sim` sweeps and the character controller,
-`vxe-world`'s coarse grid and walkable map. All of it is integer and joins §6: the controller
-course hash `0x0c80_8031_d14f_27eb` (`crates/vxe-sim/tests/course.rs`) is blessed on Linux and
+Added at Plan 0004's close (2026-10-17). `svet-sim` sweeps and the character controller,
+`svet-world`'s coarse grid and walkable map. All of it is integer and joins §6: the controller
+course hash `0x0c80_8031_d14f_27eb` (`crates/svet-sim/tests/course.rs`) is blessed on Linux and
 the Windows arm confirms it on the first `main` CI run after Plan 0004's merge.
 
 | Figure | Budget | Measured by |
 |---|---|---|
-| Controller tick, one body | 20 µs | `cargo bench -p vxe-sim --bench controller` |
+| Controller tick, one body | 20 µs | `cargo bench -p svet-sim --bench controller` |
 | Sweep, one body, one contact | 26.3 µs (the Plan 0004 close reading, accepted by the owner 2026-10-17; the proposal was 5 µs); a sweep profile is scheduled only when a scene sweeps more than about 100 bodies a tick | same bench, `1000 sweeps of the F2 wall case` |
-| Surface mover tick, one body, attached on a flat face (ADR-0062) | **proposal: 20 µs** (Plan 0079); read 0.43 µs, loaded (below) | `cargo bench -p vxe-sim --bench surface`, `one surface tick attached on the F1 floor` |
-| `World::solid_gradient` at `half` 6 (13³ voxels, at most 27 bricks) | **proposal: 5 µs** (Plan 0079); read 0.92 µs, loaded (below) | the `vxe-world` gradient bench case |
+| Surface mover tick, one body, attached on a flat face (ADR-0062) | **proposal: 20 µs** (Plan 0079); read 0.43 µs, loaded (below) | `cargo bench -p svet-sim --bench surface`, `one surface tick attached on the F1 floor` |
+| `World::solid_gradient` at `half` 6 (13³ voxels, at most 27 bricks) | **proposal: 5 µs** (Plan 0079); read 0.92 µs, loaded (below) | the `svet-world` gradient bench case |
 | Locomotion of 64 entities a tick in the fly-through (movers, probes, poses) | **guess: 1.5 ms a tick** (Plan 0079); read 0.35 ms (walkers) and 1.41 ms (spiders) in the room, 2.84 ms (spiders) on the showcase, loaded (below) | the HUD's `tick <us>`, `--entities 64 --entities-walk on --headless` |
-| Coarse grid update after a radius-1 m carve | 50 µs | `cargo bench -p vxe-world --bench coarse` |
+| Coarse grid update after a radius-1 m carve | 50 µs | `cargo bench -p svet-world --bench coarse` |
 | Walkable update after that change | 20 µs | same bench |
 | Coarse grid RAM | 4 B per brick, 2048 B per chunk | `world_budget --chunks` |
 
 **Readings (dev reference, quiet box, AMD Ryzen 9 5900HS laptop, Linux, commit b94622a (the
-merge of `main` into Plan 0004's branch; `vxe-sim` identical to cf3bbc6), `cargo bench`,
+merge of `main` into Plan 0004's branch; `svet-sim` identical to cf3bbc6), `cargo bench`,
 criterion median (low, high), exclusive perf lock, load average 1.7 to 2.3 at each start):**
 
 - **Controller tick:** `60 ticks of the F6 staircase, all on terrain` 156.01 µs (155.84,
@@ -692,7 +693,7 @@ criterion median (low, high), exclusive perf lock, load average 1.7 to 2.3 at ea
   807.17 µs (805.83, 808.64), **8.1 µs per update**. Both under their lines. Plan 0003's
   `mixed` world was not on the branch; the bench runs on the solid world.
 - **Coarse grid update on the server path (Plan 0018 Phase 5):** the server updates its grid
-  over each applied op's aabb, in op order on the server thread. `cargo bench -p vxe-net
+  over each applied op's aabb, in op order on the server thread. `cargo bench -p svet-net
   --bench tick` (100 radius-1 m carves on `solid3_world()` each followed by
   `CoarseGrid::update_aabb`, against the carves alone), AMD Ryzen 9 5900HS, Linux, a9014d0
   plus the phase's bench arm, exclusive perf lock, not quiet (1-minute load 14.46 falling to
@@ -707,12 +708,12 @@ criterion median (low, high), exclusive perf lock, load average 1.7 to 2.3 at ea
 loaded: indicative, not quiet; the plan's readings log `docs/plans/logs/0079.md` has the
 runs):**
 
-- **Surface mover tick** (`cargo bench -p vxe-sim --bench surface`, criterion median (low,
+- **Surface mover tick** (`cargo bench -p svet-sim --bench surface`, criterion median (low,
   high), commit 22d62f05 plus the Phase 1 tree, load 18.7 falling to 9.1): one tick attached on
   the F1 floor **431.19 ns** (429.17, 433.62); one tick rounding the cube's edge 870.92 ns
   (837.22, 912.82); one `probe_ahead` on F2 365.36 ns (350.12, 383.26). Under the 20 µs
   proposal.
-- **`solid_gradient`** (`cargo bench -p vxe-world --bench gradient`, commit 26f63d9b, load 3.64
+- **`solid_gradient`** (`cargo bench -p svet-world --bench gradient`, commit 26f63d9b, load 3.64
   falling to 2.96) on `Full` bricks: at `half` 2 333.92 ns (333.25, 334.61); at `half` 6
   **917.90 ns** (915.73, 920.44). Under the 5 µs proposal.
 - **Locomotion of 64 entities a tick** (Plan 0079 Phase 4, e1894054, release):
@@ -731,7 +732,7 @@ runs):**
 
 ## 9. Audio
 
-`vxe-audio` (Plan 0006 closed 2026-10-17, ADR-0006): 48 kHz stereo `f32`, 256-frame blocks
+`svet-audio` (Plan 0006 closed 2026-10-17, ADR-0006): 48 kHz stereo `f32`, 256-frame blocks
 (5.33 ms), mixed on the device callback. The baseline CPU is not on hand, so every reading is
 dev reference: Ryzen 9 5900HS laptop, release, the quiet-box protocol of Plan 0006's close
 (exclusive machine lock, 1-minute load average under 2, no other process above 7 % CPU),
@@ -739,7 +740,7 @@ dev reference: Ryzen 9 5900HS laptop, release, the quiet-box protocol of Plan 00
 plan's Close triggers as superseded figures.
 
 **Paired mixer readings (ADR-0020, 2026-10-21).** A plan's *relative* bound on `cargo bench -p
-vxe-audio --bench mixer` (within N percent of the parent's) is read with both builds compiled
+svet-audio --bench mixer` (within N percent of the parent's) is read with both builds compiled
 with `RUSTFLAGS="-C llvm-args=-align-loops=64"` and `CARGO_TARGET_DIR=target/aligned`. Each build
 gets three alternating runs in one exclusive perf-lock hold, with the 1-minute load and the top
 processes stated, and each case's median of the three criterion medians is compared. The
@@ -750,13 +751,13 @@ protocol above. Other benches keep default-flag paired readings unless their pla
 
 - **Mixer callback, 32 HRTF voices, one 256-frame block:** 1.0 ms on the baseline CPU
   (proposal; 32 x 2 x 128 x 256 = 2.1 million multiply-adds plus filters and taps).
-  **Reading (`cargo bench -p vxe-audio --bench mixer`, 32 voices of looping noise, each
+  **Reading (`cargo bench -p svet-audio --bench mixer`, 32 voices of looping noise, each
   low-passed and carrying 16 taps):** 0.3619 ms (0.3615 to 0.3623) static; 0.6667 ms (0.6659
   to 0.6673) with the listener yawing 90 degrees per block, every voice crossfading its HRIR.
   **Silent voices (Plan 0052 Phase 5, 14f3841).** The voice smoothers (own gain, send, gain,
   distance gain) settle on their target within `1e-7` at each block edge and the voice
   low-pass state flushes under reverb's `FLUSH_BELOW`, so a voice at gain 0 no longer decays
-  into subnormal floats. **Reading** (`cargo bench -p vxe-audio --bench mixer`,
+  into subnormal floats. **Reading** (`cargo bench -p svet-audio --bench mixer`,
   `mixer_block_silent`, dev box, exclusive perf lock, load 1.36 to 2.96, default build, not the
   ADR-0020 paired protocol): 64 voices at gain 0 after 10 s 1.7909 ms at the base (47 % over 64
   fresh voices' 1.2177 ms), 1.1721 ms at the tip, inside the fresh case's spread (1.1951 to
@@ -785,7 +786,7 @@ protocol above. Other benches keep default-flag paired readings unless their pla
   by the owner, 2026-10-17, `main` at 7e8b3d2, taken under `F1`, with 8 voices playing:**
   callback max 0.429 ms, 128 active taps.
 - **Determinism:** `World::trace_materials` is integer and its 500-ray hash is pinned in
-  `crates/vxe-world/tests/queries.rs` on both arms; nothing else in `vxe-audio` is
+  `crates/svet-world/tests/queries.rs` on both arms; nothing else in `svet-audio` is
   deterministic by contract (§6).
 - **Plan 0020 (the late tail, sixteen direction buses, the room fan, gliding taps; closed
   2026-10-21, v0.24.0).** Proposals: mixer block, 32 HRTF voices, static at most 0.6 ms and
@@ -800,10 +801,10 @@ protocol above. Other benches keep default-flag paired readings unless their pla
   lines 116 224 B per voice (7 438 336 B for the 64-voice pool, 600 ms), two tail networks
   3 616 768 B, the pre-delay line 39 424 B, buses 24 512 B, tap slots 8 192 B. **Earlier
   readings, dev box,
-  release, exclusive perf lock, vxe-audio and both benches as at d7eb1f8, 2026-10-20; the box
+  release, exclusive perf lock, svet-audio and both benches as at d7eb1f8, 2026-10-20; the box
   was not quiet (1-minute load average 1.87 to 2.98, and other processes above 7 % CPU: one at
   86 %, two at 37 %), so they read high against the protocol above:** mixer static 0.5078 ms
-  (0.5004 to 0.5162), turning 0.8786 ms (0.8700 to 0.8887) (`cargo bench -p vxe-audio --bench
+  (0.5004 to 0.5162), turning 0.8786 ms (0.8700 to 0.8887) (`cargo bench -p svet-audio --bench
   mixer`, 32 voices with 16 taps each into the buses, the 12 m room's tail running);
   `Acoustics::update` 0.8388 ms (0.8327 to 0.8463) (`cargo bench -p flythrough --bench
   acoustics`, the fan's first slice in every call; the fan's rays stop at the first solid

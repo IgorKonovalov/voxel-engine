@@ -4,9 +4,9 @@ mod support;
 
 use flythrough::cave_materials;
 use support::*;
-use vxe_render::{GpuWorld, MirrorConfig, Window};
-use vxe_render::{internals::LIGHT_SAMPLE_BYTES, internals::LightSample};
-use vxe_world::*;
+use svet_render::{GpuWorld, MirrorConfig, Window};
+use svet_render::{internals::LIGHT_SAMPLE_BYTES, internals::LightSample};
+use svet_world::*;
 
 /// The cave's table plus an emissive `glow` row and its non-emissive twin `dull`.
 fn glow_table() -> (MaterialTable, MaterialId, MaterialId) {
@@ -33,12 +33,12 @@ fn box_op(min: [i64; 3], max: [i64; 3], mode: Mode) -> EditOp {
 
 /// The samples of `range` read back from the buffer.
 fn read_samples(
-    device: &vxe_render::wgpu::Device,
-    queue: &vxe_render::wgpu::Queue,
+    device: &svet_render::wgpu::Device,
+    queue: &svet_render::wgpu::Queue,
     gpu: &GpuWorld,
     (start, len): (u32, u32),
 ) -> Vec<LightSample> {
-    let bytes = vxe_render::debug::read_buffer(
+    let bytes = svet_render::debug::read_buffer(
         device,
         queue,
         gpu.light_buffer(),
@@ -278,13 +278,13 @@ fn an_emissive_ceiling_gives_the_analytic_irradiance_at_the_floor_centre() {
             gpu.light_samples(),
             gpu.light_span()
         );
-        let mut frame = vxe_render::Frame::new(&device, 1, 1);
+        let mut frame = svet_render::Frame::new(&device, 1, 1);
         // The floor brick's 64 +z faces share a direction's samples: 4096 each.
-        let settings = vxe_render::BakeSettings {
+        let settings = svet_render::BakeSettings {
             brick_samples: 64 * 4096,
             keep_faces: true,
             filter: Some(std::sync::Arc::new(|v, f| v == [32, 32, 19] && f == 5)),
-            ..vxe_render::BakeSettings::default()
+            ..svet_render::BakeSettings::default()
         };
         let report = frame
             .bake_until(
@@ -323,14 +323,14 @@ struct FrameRead {
 }
 
 fn read_frame(
-    device: &vxe_render::wgpu::Device,
-    queue: &vxe_render::wgpu::Queue,
-    frame: &vxe_render::Frame,
+    device: &svet_render::wgpu::Device,
+    queue: &svet_render::wgpu::Queue,
+    frame: &svet_render::Frame,
 ) -> FrameRead {
     FrameRead {
-        pos: vxe_render::debug::read_rgba32f(device, queue, frame.hit_positions()),
-        info: vxe_render::debug::read_rgba16u(device, queue, frame.hit_records()),
-        age: vxe_render::debug::read_rgba16f(device, queue, frame.moments())
+        pos: svet_render::debug::read_rgba32f(device, queue, frame.hit_positions()),
+        info: svet_render::debug::read_rgba16u(device, queue, frame.hit_records()),
+        age: svet_render::debug::read_rgba16f(device, queue, frame.moments())
             .iter()
             .map(|m| m[2])
             .collect(),
@@ -340,7 +340,7 @@ fn read_frame(
 /// Turns the light history on (`Lighting::light_history`, off by default,
 /// ADR-0082): the tests of its ages and reprojection read it.
 fn with_light_history(rig: &mut LookRig) {
-    rig.frame.set_lighting(vxe_render::Lighting {
+    rig.frame.set_lighting(svet_render::Lighting {
         light_history: true,
         ..rig.frame.lighting()
     });
@@ -363,7 +363,7 @@ fn history_dies_in_the_edit_box_and_ages_elsewhere() {
     };
     with_light_history(&mut rig);
     let camera = cavity_camera();
-    let light = vxe_render::LightParams::headlamp();
+    let light = svet_render::LightParams::headlamp();
     for _ in 0..16 {
         rig.frame
             .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
@@ -409,7 +409,7 @@ fn history_dies_in_the_edit_box_and_ages_elsewhere() {
 /// dig in flight) and no more, under `dig_hold`: per frame from N + 1 to N + 8, the pair's x at
 /// every lighting pixel whose hit lies in the carve's bounds dilated by one voxel, and N - 1's
 /// largest x over the slab (the removed surface's).
-fn dig_held_frames(hold: vxe_render::DigHold) -> Option<(Vec<Vec<Option<f32>>>, f32)> {
+fn dig_held_frames(hold: svet_render::DigHold) -> Option<(Vec<Vec<Option<f32>>>, f32)> {
     use support::queue::{Setup, fill, rig};
     let world = World::generate(
         ChunkExtent::new([0, 0, 0], [1, 1, 1]),
@@ -419,14 +419,14 @@ fn dig_held_frames(hold: vxe_render::DigHold) -> Option<(Vec<Vec<Option<f32>>>, 
     fill(&world, [0, 0, 0], [63, 63, 31], flythrough::cave::ROCK);
     let eye = [32.5, 32.5, 50.0];
     let mut q = rig(world, &Setup::at(eye))?;
-    q.camera = vxe_render::Camera {
+    q.camera = svet_render::Camera {
         position: eye.into(),
         yaw: 0.0,
         pitch: -1.5,
         vfov: 70f32.to_radians(),
     };
-    q.frame.set_sky(Some(vxe_render::sky::Sky::uniform(1.0)));
-    q.frame.set_lighting(vxe_render::Lighting {
+    q.frame.set_sky(Some(svet_render::sky::Sky::uniform(1.0)));
+    q.frame.set_lighting(svet_render::Lighting {
         dig_hold: hold,
         ..q.frame.lighting()
     });
@@ -434,8 +434,8 @@ fn dig_held_frames(hold: vxe_render::DigHold) -> Option<(Vec<Vec<Option<f32>>>, 
     let read = |q: &mut support::queue::Q| {
         q.render();
         let pos =
-            vxe_render::debug::read_rgba32f(&q.device, &q.queue, q.frame.light_hit_positions());
-        let pair = vxe_render::debug::read_rgba16f(&q.device, &q.queue, q.frame.visibility_pair());
+            svet_render::debug::read_rgba32f(&q.device, &q.queue, q.frame.light_hit_positions());
+        let pair = svet_render::debug::read_rgba16f(&q.device, &q.queue, q.frame.visibility_pair());
         (pos, pair)
     };
     for _ in 0..4 {
@@ -483,7 +483,7 @@ fn dig_held_frames(hold: vxe_render::DigHold) -> Option<(Vec<Vec<Option<f32>>>, 
 #[test]
 #[ignore = "soak"]
 fn a_fresh_hole_holds_one_value_between_black_and_white() {
-    let Some((on, removed)) = dig_held_frames(vxe_render::DigHold::On) else {
+    let Some((on, removed)) = dig_held_frames(svet_render::DigHold::On) else {
         return;
     };
     let mut n = 0;
@@ -509,7 +509,7 @@ fn a_fresh_hole_holds_one_value_between_black_and_white() {
     }
     println!("held: {n} hole pixels, the removed surface's visibility {removed}");
     assert!(n > 0, "no hole pixel");
-    let (rays, _) = dig_held_frames(vxe_render::DigHold::Rays).expect("the adapter");
+    let (rays, _) = dig_held_frames(svet_render::DigHold::Rays).expect("the adapter");
     let moved = (0..rays[0].len())
         .filter(|&i| rays[0][i].is_some() && rays.iter().any(|f| f[i] != rays[0][i]))
         .count();
@@ -527,7 +527,7 @@ fn reprojection_holds_across_a_sideways_step_and_a_material_change_resets() {
         return;
     };
     with_light_history(&mut rig);
-    let light = vxe_render::LightParams::headlamp();
+    let light = svet_render::LightParams::headlamp();
     let mut camera = cavity_camera();
     rig.frame
         .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
@@ -686,7 +686,7 @@ fn light_ranges_follow_the_radius_and_evict_the_farthest() {
 
 /// The dark cave of `gpu_golden.rs` (the golden scene with its carve, the ore emissive, the pose
 /// facing a vein) with the lamp on and `history`, settled over 32 frames.
-fn lamp_cave(history: vxe_render::HistoryKill) -> Option<(LookRig, vxe_render::Camera)> {
+fn lamp_cave(history: svet_render::HistoryKill) -> Option<(LookRig, svet_render::Camera)> {
     let source = scene_source();
     let world = World::generate(
         source.extent,
@@ -701,12 +701,12 @@ fn lamp_cave(history: vxe_render::HistoryKill) -> Option<(LookRig, vxe_render::C
     }
     // The history kill's modes act on the light history, on here (off by default since Plan
     // 0098 Phase 4).
-    rig.frame.set_lighting(vxe_render::Lighting {
+    rig.frame.set_lighting(svet_render::Lighting {
         history,
         light_history: true,
-        ..vxe_render::Lighting::default()
+        ..svet_render::Lighting::default()
     });
-    let camera = vxe_render::Camera {
+    let camera = svet_render::Camera {
         position: [264.5, 120.5, 376.5].into(),
         yaw: 15f32.to_radians(),
         pitch: 0.0,
@@ -718,7 +718,7 @@ fn lamp_cave(history: vxe_render::HistoryKill) -> Option<(LookRig, vxe_render::C
             &rig.queue,
             &rig.gpu,
             &camera,
-            &vxe_render::LightParams::headlamp(),
+            &svet_render::LightParams::headlamp(),
         );
     }
     Some((rig, camera))
@@ -726,7 +726,7 @@ fn lamp_cave(history: vxe_render::HistoryKill) -> Option<(LookRig, vxe_render::C
 
 /// The luminance of `frame`'s filtered irradiance per pixel: what the composite shades with.
 fn accumulated_lum(rig: &LookRig) -> Vec<f64> {
-    vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, rig.frame.filtered())
+    svet_render::debug::read_rgba16f(&rig.device, &rig.queue, rig.frame.filtered())
         .iter()
         .map(|e| 0.2126 * f64::from(e[0]) + 0.7152 * f64::from(e[1]) + 0.0722 * f64::from(e[2]))
         .collect()
@@ -745,22 +745,22 @@ fn accumulated_lum(rig: &LookRig) -> Vec<f64> {
 #[test]
 #[ignore = "soak"]
 fn the_lamp_light_that_left_the_cone_drops_in_each_history_mode() {
-    let turned = vxe_render::LightParams {
+    let turned = svet_render::LightParams {
         turn: 30f32.to_radians(),
-        ..vxe_render::LightParams::headlamp()
+        ..svet_render::LightParams::headlamp()
     };
     // One emissive path since ADR-0043: the name labels the messages.
     {
         let sampler = "table";
         for history in [
-            vxe_render::HistoryKill::Gradient,
-            vxe_render::HistoryKill::Edits,
+            svet_render::HistoryKill::Gradient,
+            svet_render::HistoryKill::Edits,
         ] {
             let Some((mut rig, camera)) = lamp_cave(history) else {
                 return;
             };
             let lamp_part = |rig: &LookRig| -> Vec<f64> {
-                vxe_render::debug::read_float(
+                svet_render::debug::read_float(
                     &rig.device,
                     &rig.queue,
                     rig.frame.direct_accumulated(),
@@ -809,7 +809,7 @@ fn the_lamp_light_that_left_the_cone_drops_in_each_history_mode() {
                 share(&whole, &whole_before)
             );
             match history {
-                vxe_render::HistoryKill::Gradient => {
+                svet_render::HistoryKill::Gradient => {
                     let at2 = under(&after, &before, 1);
                     assert!(
                         at2 * 100 >= 99 * left.len(),
@@ -820,7 +820,7 @@ fn the_lamp_light_that_left_the_cone_drops_in_each_history_mode() {
                     let all_by = 9;
                     assert!(k <= all_by, "{sampler:?}, gradient: {k} frames");
                 }
-                vxe_render::HistoryKill::Edits => {
+                svet_render::HistoryKill::Edits => {
                     let at11 = under(&after, &before, 10);
                     assert!(
                         at11 * 100 >= 67 * left.len(),
@@ -842,13 +842,13 @@ fn the_gradient_keeps_history_where_nothing_changed() {
     // One emissive path since ADR-0043: the name labels the messages.
     {
         let sampler = "table";
-        let Some((rig, _)) = lamp_cave(vxe_render::HistoryKill::Gradient) else {
+        let Some((rig, _)) = lamp_cave(svet_render::HistoryKill::Gradient) else {
             return;
         };
         let info =
-            vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+            svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
         let ages: Vec<f32> =
-            vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, rig.frame.moments())
+            svet_render::debug::read_rgba16f(&rig.device, &rig.queue, rig.frame.moments())
                 .iter()
                 .zip(&info)
                 .filter(|(_, r)| r[3] & 1 == 1)
@@ -875,18 +875,18 @@ fn the_gradient_keeps_history_where_nothing_changed() {
 #[test]
 #[ignore = "soak"]
 fn a_moving_lamp_leaves_the_static_lights_history_alone() {
-    let turned = vxe_render::LightParams {
+    let turned = svet_render::LightParams {
         turn: 30f32.to_radians(),
-        ..vxe_render::LightParams::headlamp()
+        ..svet_render::LightParams::headlamp()
     };
     // One emissive path since ADR-0043: the name labels the messages.
     {
         let sampler = "table";
-        let Some((mut rig, camera)) = lamp_cave(vxe_render::HistoryKill::Edits) else {
+        let Some((mut rig, camera)) = lamp_cave(svet_render::HistoryKill::Edits) else {
             return;
         };
         let before = read_frame(&rig.device, &rig.queue, &rig.frame);
-        let acc = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.accumulated());
+        let acc = svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.accumulated());
         let lum = |e: &[f32; 4]| 0.2126 * e[0] + 0.7152 * e[1] + 0.0722 * e[2];
         let hit = |i: usize| before.info[i][3] & 1 == 1;
         let largest = (0..acc.len())
@@ -938,22 +938,22 @@ fn an_emission_step_settles_within_eleven_frames() {
     let world = ceiling_box(&table, glow);
     let mut gpu = GpuWorld::new(&device, world.extent());
     gpu.sync_now(&world, &device, &queue).unwrap();
-    let camera = vxe_render::Camera {
+    let camera = svet_render::Camera {
         position: [32.0, 32.0, 29.0].into(),
         yaw: 0.0,
         pitch: -std::f32::consts::FRAC_PI_2,
         vfov: 0.5,
     };
-    let mut frame = vxe_render::Frame::new(&device, 1, 1);
-    frame.set_resolution(&device, vxe_render::LightingResolution::Full);
-    frame.set_lighting(vxe_render::Lighting {
+    let mut frame = svet_render::Frame::new(&device, 1, 1);
+    frame.set_resolution(&device, svet_render::LightingResolution::Full);
+    frame.set_lighting(svet_render::Lighting {
         lamp: false,
         filter: false,
-        ..vxe_render::Lighting::default()
+        ..svet_render::Lighting::default()
     });
-    let light = vxe_render::LightParams::headlamp();
-    let read = |frame: &vxe_render::Frame| {
-        f64::from(vxe_render::debug::read_float(&device, &queue, frame.accumulated())[0][0])
+    let light = svet_render::LightParams::headlamp();
+    let read = |frame: &svet_render::Frame| {
+        f64::from(svet_render::debug::read_float(&device, &queue, frame.accumulated())[0][0])
     };
     // The store the floor's face reads.
     bake_around(

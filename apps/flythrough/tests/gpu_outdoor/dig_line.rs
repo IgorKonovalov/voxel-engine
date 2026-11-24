@@ -9,7 +9,7 @@ mod dig_line {
         use std::fmt::Write as _;
         use support::defects::{HoleFrame, Stepper, dig_along, hole_frame, queue_step};
         use support::terms::Rig;
-        use vxe_render::Camera;
+        use svet_render::Camera;
 
         /// The eye of the owner's dig on the RADV RENOIR at Portable (window 98d's run 3,
         /// `3-radeon-dig.png`'s HUD), voxels.
@@ -26,7 +26,7 @@ mod dig_line {
         /// queue's trace after each frame's step.
         pub(in super::super) struct LineRun {
             pub frames: Vec<HoleFrame>,
-            pub traces: Vec<vxe_render::DigTrace>,
+            pub traces: Vec<svet_render::DigTrace>,
             pub digs: Vec<(usize, [i64; 3], [i64; 3])>,
             pub out: [u32; 2],
             pub eye: [f32; 3],
@@ -87,17 +87,17 @@ mod dig_line {
             let cam = fl::pitched(&cam, fl::ABOVE_PITCH);
             let mut f = fl::flicker_frame_at(&rig, sky, None, false, flythrough::LeafShadow::Voxel, sizes);
             // The fly-through's queue flags (`BakeArgs`' defaults), and Portable's profile.
-            f.set_bake_budget(vxe_render::Budget::default());
-            f.set_bake_coarse(vxe_render::DEFAULT_COARSE_SAMPLES, vxe_render::DEFAULT_NEAR);
-            f.set_bake_tiers(vxe_render::DEFAULT_TIERS);
-            f.set_bake_drain(Some(vxe_render::DEFAULT_DRAIN));
-            f.set_bake_digs(vxe_render::DEFAULT_BAKE_EDIT_MS, true);
+            f.set_bake_budget(svet_render::Budget::default());
+            f.set_bake_coarse(svet_render::DEFAULT_COARSE_SAMPLES, svet_render::DEFAULT_NEAR);
+            f.set_bake_tiers(svet_render::DEFAULT_TIERS);
+            f.set_bake_drain(Some(svet_render::DEFAULT_DRAIN));
+            f.set_bake_digs(svet_render::DEFAULT_BAKE_EDIT_MS, true);
             if portable {
-                let p = vxe_render::RenderSettings::profile(vxe_render::Profile::Portable);
+                let p = svet_render::RenderSettings::profile(svet_render::Profile::Portable);
                 f.set_bake_budget(p.bake.budget);
                 f.set_bake_tiers(p.bake.tiers);
                 f.set_bake_drain(p.bake.drain);
-                f.set_lighting(vxe_render::Lighting {
+                f.set_lighting(svet_render::Lighting {
                     lamp_bounce: p.lighting.lamp_bounce,
                     ..f.lighting()
                 });
@@ -142,7 +142,7 @@ mod dig_line {
             let t = support::defects::march(&rig.world, eye, fwd, 400.0).expect("the view hits ground");
             let centre = [0, 1, 2].map(|k| eye[k] + fwd[k] * t);
             let (mut frames, mut traces, mut digs) = (Vec::new(), Vec::new(), Vec::new());
-            let read = |rig: &mut Rig, s: &mut Stepper, frames: &mut Vec<HoleFrame>, traces: &mut Vec<vxe_render::DigTrace>, label: String| {
+            let read = |rig: &mut Rig, s: &mut Stepper, frames: &mut Vec<HoleFrame>, traces: &mut Vec<svet_render::DigTrace>, label: String| {
                 let q = queue_step(rig, &mut s.frame, &cam);
                 traces.push(s.frame.bake_queue().expect("the live queue").dig_trace());
                 let path = png.map(|d| d.join(format!("{:03}-{label}.png", frames.len())));
@@ -238,7 +238,7 @@ mod dig_line {
                     t.in_flight, t.withdrawn, f.q.stages.total_ms, f.light_ms, f.temporal_ms, f.gpu_ms,
                     f.q.drain_waiting, f.q.depth, f.q.digs
                 );
-                let jobs: BTreeMap<[i32; 3], &vxe_render::DigTraceJob> = t.jobs.iter().map(|j| (j.coord, j)).collect();
+                let jobs: BTreeMap<[i32; 3], &svet_render::DigTraceJob> = t.jobs.iter().map(|j| (j.coord, j)).collect();
                 let mut seen = BTreeSet::new();
                 for &(c, near, slots, in_job) in &t.waiting {
                     seen.insert(c);
@@ -364,7 +364,7 @@ mod dig_line {
                 let _ = writeln!(out, "  cost D+0..8 (step / light / temporal / gpu ms): {}", cost.join(" "));
                 // The dig frame's step by stage, the stages over 0.5 ms.
                 let st = &run.frames[d0].q.stages;
-                let laps: Vec<String> = vxe_render::debug::STEP_STAGES
+                let laps: Vec<String> = svet_render::debug::STEP_STAGES
                     .iter()
                     .zip(st.ms)
                     .filter(|(_, ms)| *ms > 0.5)
@@ -386,23 +386,23 @@ mod dig_line {
             out
         }
 
-        /// Plan 0098 Phase 16 step 1's timeline: `VXE_LINE` is `SCENE/STATE/SEQ/ARM/DRAIN`
+        /// Plan 0098 Phase 16 step 1's timeline: `SVET_LINE` is `SCENE/STATE/SEQ/ARM/DRAIN`
         /// (`above` or `portable`, `drained` or `waiting`, `A` or `B`, `support::defects`'
         /// dig arm tokens, the most frames the queue drains); the text under
         /// `live/p16/<adapter>-<scene>-<state>-<seq>-<arm>.txt`, the frames' PNGs beside it with
-        /// `VXE_LINE_PNG` set.
+        /// `SVET_LINE_PNG` set.
         #[test]
         #[ignore = "reading"]
         fn dig_timeline() {
-            let v = std::env::var("VXE_LINE").unwrap_or_default();
+            let v = std::env::var("SVET_LINE").unwrap_or_default();
             let mut it = v.split('/');
             let mut part = |d: &str| it.next().filter(|s| !s.is_empty()).unwrap_or(d).to_string();
             let (scene, state, seq, arm) = (part("above"), part("drained"), part("A"), part("default"));
-            let drain: u32 = part("30000").parse().expect("VXE_LINE's drain");
-            let adapter = std::env::var("VXE_TEST_ADAPTER").unwrap_or_else(|_| "lavapipe".into());
+            let drain: u32 = part("30000").parse().expect("SVET_LINE's drain");
+            let adapter = std::env::var("SVET_TEST_ADAPTER").unwrap_or_else(|_| "lavapipe".into());
             let name = format!("{adapter}-{scene}-{state}-{seq}-{}", arm.replace([',', '='], "-"));
             let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../live/p16");
-            let png = std::env::var("VXE_LINE_PNG").is_ok().then(|| dir.join(&name));
+            let png = std::env::var("SVET_LINE_PNG").is_ok().then(|| dir.join(&name));
             if let Some(p) = &png {
                 std::fs::create_dir_all(p).expect("the stills' directory");
             }
@@ -420,10 +420,10 @@ mod dig_line {
             std::fs::write(dir.join(format!("{name}.txt")), text).expect("the timeline");
         }
 
-        /// A block's brick records by slot ([`vxe_render::internals::BRICK_WORDS`] words each,
+        /// A block's brick records by slot ([`svet_render::internals::BRICK_WORDS`] words each,
         /// the directory's run end in each slot's word).
         fn records(block: &[u32]) -> BTreeMap<usize, Vec<u32>> {
-            use vxe_render::internals::{BRICK_WORDS, SUMMARY_AT};
+            use svet_render::internals::{BRICK_WORDS, SUMMARY_AT};
             let mut out = BTreeMap::new();
             for (slot, &d) in block[..SUMMARY_AT as usize].iter().enumerate() {
                 if d != 0 {
@@ -437,7 +437,7 @@ mod dig_line {
         /// A record's means over its faces: the direction values' luminance, the sky and key
         /// visibilities, and its second sky word's flag bits (16 and up).
         fn record_means(r: &[u32]) -> [f64; 4] {
-            use vxe_render::internals::{record_key_visibility, record_visibility, rgb9e5_unpack};
+            use svet_render::internals::{record_key_visibility, record_visibility, rgb9e5_unpack};
             let (mut n, mut l, mut v, mut k) = (0.0, 0.0, 0.0, 0.0);
             for f in 0..6 {
                 if (r[6] >> (16 + f)) & 1 == 0 {
@@ -454,14 +454,14 @@ mod dig_line {
         }
 
         /// The blocks of the chunks with one within `pad` voxels of the box.
-        fn ring_blocks(f: &vxe_render::Frame, lo: [i64; 3], hi: [i64; 3], pad: i64) -> BTreeMap<[i32; 3], Vec<u32>> {
+        fn ring_blocks(f: &svet_render::Frame, lo: [i64; 3], hi: [i64; 3], pad: i64) -> BTreeMap<[i32; 3], Vec<u32>> {
             let mut out = BTreeMap::new();
             let a = lo.map(|v| (v - pad).div_euclid(64) as i32);
             let b = hi.map(|v| (v + pad).div_euclid(64) as i32);
             for z in a[2]..=b[2] {
                 for y in a[1]..=b[1] {
                     for x in a[0]..=b[0] {
-                        if let Some(w) = f.store().block_words(vxe_world::ChunkCoord([x, y, z])) {
+                        if let Some(w) = f.store().block_words(svet_world::ChunkCoord([x, y, z])) {
                             out.insert([x, y, z], w.to_vec());
                         }
                     }
@@ -554,7 +554,7 @@ mod dig_line {
                     let (ml, md) = (record_means(lw), record_means(dw));
                     let _ = writeln!(out, "{line} | lum {:.4} {:.4} sky {:.3} {:.3}", ml[0], md[0], ml[1], md[1]);
                 }
-                let head: Vec<usize> = (vxe_render::internals::SUMMARY_AT as usize..=vxe_render::internals::LANDED_AT as usize)
+                let head: Vec<usize> = (svet_render::internals::SUMMARY_AT as usize..=svet_render::internals::LANDED_AT as usize)
                     .filter(|&i| arms[0].3[&c].get(i) != arms[1].3[&c].get(i))
                     .collect();
                 let _ = writeln!(out, "records kept alike {kept}, only in land {new_rec}, differing per word {diff:?}; head words differing {head:?}");
@@ -605,7 +605,7 @@ mod dig_line {
                 queue_step(&mut rig, &mut s.frame, &cam);
                 s.run(&rig, &cam);
                 for (c, w) in ring_blocks(&s.frame, lo, hi, 32) {
-                    if s.frame.store().is_coarse(vxe_world::ChunkCoord(c)) && !out.contains_key(&c) {
+                    if s.frame.store().is_coarse(svet_world::ChunkCoord(c)) && !out.contains_key(&c) {
                         println!("coarse first: {c:?} at step {k}");
                         out.insert(c, w);
                     }
@@ -625,11 +625,11 @@ mod dig_line {
             let sky = clock.sky(flythrough::outdoor::BASE_Z as f32);
             let cam = fl::pitched(&cam, fl::ABOVE_PITCH);
             let mut f = fl::flicker_frame_at(&rig, sky, None, false, flythrough::LeafShadow::Voxel, [fl::INTERNAL, fl::OUT]);
-            f.set_bake_budget(vxe_render::Budget::default());
-            f.set_bake_coarse(vxe_render::DEFAULT_COARSE_SAMPLES, vxe_render::DEFAULT_NEAR);
-            f.set_bake_tiers(vxe_render::DEFAULT_TIERS);
-            f.set_bake_drain(Some(vxe_render::DEFAULT_DRAIN));
-            f.set_bake_digs(vxe_render::DEFAULT_BAKE_EDIT_MS, true);
+            f.set_bake_budget(svet_render::Budget::default());
+            f.set_bake_coarse(svet_render::DEFAULT_COARSE_SAMPLES, svet_render::DEFAULT_NEAR);
+            f.set_bake_tiers(svet_render::DEFAULT_TIERS);
+            f.set_bake_drain(Some(svet_render::DEFAULT_DRAIN));
+            f.set_bake_digs(svet_render::DEFAULT_BAKE_EDIT_MS, true);
             if !full_first {
                 f.set_bake_full_first(Some(-1));
             }
@@ -646,7 +646,7 @@ mod dig_line {
         use super::reading::{LineRun, line_run};
 
         /// The store's fade from a dig's held record to its job's, frames.
-        const DIG_FADE: usize = vxe_render::internals::DIG_FADE as usize;
+        const DIG_FADE: usize = svet_render::internals::DIG_FADE as usize;
 
         /// The levels the histogram reads the hole's excess at.
         const LEVELS: [i32; 4] = [8, 16, 32, 64];
@@ -790,7 +790,7 @@ mod dig_line {
         use super::claims;
 
         /// Plan 0098 Phase 17 step 1's histogram: [`claims`] of A and B on the waiting queue
-        /// under `VXE_DIG`'s arm (`support::defects::dig_spec`), printed, nothing asserted.
+        /// under `SVET_DIG`'s arm (`support::defects::dig_spec`), printed, nothing asserted.
         #[test]
         #[ignore = "reading"]
         fn hold_histogram() {
