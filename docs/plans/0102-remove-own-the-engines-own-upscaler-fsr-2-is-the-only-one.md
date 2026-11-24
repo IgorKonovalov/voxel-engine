@@ -1,6 +1,6 @@
 # 0102: Remove `own`, the engine's own upscaler: FSR 2 is the only one
 
-> **Status:** draft, awaits the owner's go. Drafted 2026-11-24 with no interview; the guesses
+> **Status:** approved (owner, 2026-11-24: "remove"). Drafted 2026-11-24 with no interview; the guesses
 > and the open questions are under "Risks & open questions", each with a recommended option.
 > **Order:** small and alone in `crates/vxe-render/src/frame/` and the fly-through's upscaler
 > files; it runs when no lane edits `frame/encode.rs`, `frame/pipelines.rs` or
@@ -302,6 +302,9 @@ table and the setter table.
 - **Other lanes.** Plan 0100 edits the light pass and `gpu_outdoor`; Plan 0099 the bake queue.
   Neither edits the upscaler's files. Plan 0098 left `frame/encode.rs` under its cap
   (1160 of 1200); this plan shrinks it.
+
+**Answered 2026-11-24 (owner):** question 1, remove `own` (option a). Questions 2 and 3 go
+by the recommended options unless he says otherwise.
 
 **Open owner questions**, each with the recommended option first:
 
