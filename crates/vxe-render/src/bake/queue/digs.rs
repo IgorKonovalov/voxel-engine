@@ -267,8 +267,18 @@ impl BakeQueue {
                 continue;
             };
             // A ring-1 chunk's first job: its ring-1 bricks; the rest wait for its placing, and
-            // open from this listing (the box touched no brick of theirs).
-            let split = !d.whole && !d.ring1.is_empty() && d.ring1.len() < d.slots.len();
+            // open from this listing (the box touched no brick of theirs). Only where the chunk
+            // already holds a block of the listing's size (the dig's provisional block took its
+            // place): the first job then lands into that place and frees its own, which the
+            // second takes, so the split asks the pool for no more than one job would. A chunk
+            // whose provisional block the pool refused re-bakes both rings in one job, as its
+            // landing must also free the old block before a second job of the new size fits.
+            let split = !d.whole
+                && !d.ring1.is_empty()
+                && d.ring1.len() < d.slots.len()
+                && self.listed.get(&c).is_some_and(|f| {
+                    store.blocks.get(&c).map(|b| b.1) == Some(layout(f, record).1)
+                });
             if split {
                 let rest: std::collections::BTreeSet<u16> =
                     d.slots.difference(&d.ring1).copied().collect();
