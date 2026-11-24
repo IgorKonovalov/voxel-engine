@@ -116,8 +116,9 @@ binaries` (seven test files, the `still` example and the `app` binary). The tree
 | an example marked `test = true` whose test module opens a device | `apps/app/examples/still.rs` | `apps/app/examples/still.rs -> its tests open a GPU device but the example \`app::example/still\` lacks the gpu_ prefix: ...` |
 | a binary's module whose test module opens a device | `apps/app/src/draw.rs`, declared by `src/main.rs` | `apps/app/src/draw.rs -> its tests open a GPU device inside the binary \`app::bin/app\`, which cannot carry the gpu_ prefix: ...` |
 | a profile that drifted | `[profile.ci-windows]`'s default-filter is `all()` | `.config/nextest.toml -> [profile.ci-windows] does not have default-filter 'not binary(/^gpu_/)'` |
-| an `#[ignore]` neither soak nor a reading | `apps/app/tests/cpu.rs`'s `stray`, `#[ignore = "slow"]` | `apps/app/tests/cpu.rs:12 -> an #[ignore] that is neither "soak" nor inside \`mod reading\`: ...` |
+| an `#[ignore]` neither soak nor a reading | `apps/app/tests/cpu.rs`'s `stray`, `#[ignore = "slow"]` | `apps/app/tests/cpu.rs:12 -> an #[ignore] that is neither "soak", "sole: <mechanism>" nor inside \`mod reading\`: ...` |
 | a file over the env-name cap | `apps/app/tests/env_five.rs` names five distinct `VXE_*` literals through a wrapper `env`, the first twice | `apps/app/tests/env_five.rs -> names 5 VXE_* environment variables, over the cap of 4: ... (VXE_FIVE, VXE_FOUR, VXE_ONE, VXE_THREE, VXE_TWO)` |
+| a sole mark naming its mechanism | `cpu.rs`'s `only_one` (`#[ignore = "sole: the fixture's one mechanism"]`) | not reported |
 | a soak mark, and readings | `cpu.rs`'s `slow_one` (`#[ignore = "soak"]`) and its `mod reading`, one test with a reason and one bare, braces inside a string between them; `#[ignore]` in a block comment | not reported |
 | a binary or example that opens a device outside its tests | `src/main.rs`'s and `still.rs`'s `main`, `examples/plain.rs` (no `test = true`) | not reported; only `#[cfg(test)]` items are read there |
 | `--headless` in a binary's own test module, nothing spawned | `src/main.rs`'s `parses` | not reported; there it counts only beside `Command::new` |

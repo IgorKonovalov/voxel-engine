@@ -27,8 +27,10 @@
 // reason, such as a shader compile check); only the converse is a finding.
 //
 // Every `#[ignore]` in a tracked `.rs` file under crates/ or apps/ (comments and string
-// literals blanked) must be `#[ignore = "soak"]`, a long series only the soak tier runs, or sit
-// inside a `mod reading` block, a measurement run by hand that soak and full leave out by
+// literals blanked) must be `#[ignore = "soak"]`, a long series only the soak tier runs,
+// `#[ignore = "sole: <mechanism>"]`, a test over the line that is the gate's only test of its
+// mechanism (soak runs it too, and `scripts/test-changed.mjs` whenever its package changes), or
+// sit inside a `mod reading` block, a measurement run by hand that soak and full leave out by
 // `test(/(^|::)reading::/)`. Any other ignored test would run in the soak tier unasked.
 //
 // A file under a crate's or app's `tests/` (its `support/` included) names at most
@@ -43,7 +45,7 @@
 // Usage:  node scripts/check-test-tiers.mjs [root]
 // Exit 0 = every device-opening test binary carries the prefix. Exit 1 = one line per finding:
 //   <file> -> opens a GPU device but its test binary `<id>` lacks the gpu_ prefix: rename it ...
-//   <file>:<line> -> an #[ignore] that is neither "soak" nor inside `mod reading`: ...
+//   <file>:<line> -> an #[ignore] that is neither "soak", "sole: <mechanism>" nor inside `mod reading`: ...
 //   <file> -> names N VXE_* environment variables, over the cap of 4: ...
 // The optional `root` scans another tree; scripts/fixtures/test-tiers is the seeded one, and
 // scripts/fixtures/README.md names its expected findings. Fixture trees are skipped by path
@@ -298,12 +300,12 @@ for (const file of files.filter((p) => /^(crates|apps)\/.*\.rs$/.test(p)).sort()
   }
   for (const m of src.matchAll(/#\[\s*ignore\b[^\]]*\]/g)) {
     ignores++;
-    const soak = /^#\[\s*ignore\s*=\s*"soak"\s*\]$/.test(text.slice(m.index, m.index + m[0].length));
+    const soak = /^#\[\s*ignore\s*=\s*"(soak|sole:\s*[^"\s][^"]*)"\s*\]$/.test(text.slice(m.index, m.index + m[0].length));
     const inReading = readings.some(([s, e]) => m.index > s && m.index < e);
     if (!soak && !inReading) {
       const line = src.slice(0, m.index).split("\n").length;
       findings.push(
-        `${file}:${line} -> an #[ignore] that is neither "soak" nor inside \`mod reading\`: mark a long series #[ignore = "soak"], or move a reading into the file's \`mod reading\``,
+        `${file}:${line} -> an #[ignore] that is neither "soak", "sole: <mechanism>" nor inside \`mod reading\`: mark a long series #[ignore = "soak"], or move a reading into the file's \`mod reading\``,
       );
     }
   }
@@ -328,5 +330,5 @@ if (findings.length) {
 }
 const gpuCount = testFiles.filter((f) => f.split("/").pop().startsWith(PREFIX)).length;
 console.log(
-  `test tiers: ${testFiles.length} test files (${gpuCount} ${PREFIX}) and ${units} example and binary test modules, every device behind the prefix; ${ignores} #[ignore]s, each soak or a reading; ${envFiles} files naming VXE_* variables, each at most ${ENV_CAP}`,
+  `test tiers: ${testFiles.length} test files (${gpuCount} ${PREFIX}) and ${units} example and binary test modules, every device behind the prefix; ${ignores} #[ignore]s, each soak, sole or a reading; ${envFiles} files naming VXE_* variables, each at most ${ENV_CAP}`,
 );

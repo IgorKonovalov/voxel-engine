@@ -17,6 +17,11 @@ fn stray() {}
 #[ignore = "soak"]
 fn slow_one() {}
 
+/// The only test of its mechanism, out of the gate: no finding.
+#[test]
+#[ignore = "sole: the fixture's one mechanism"]
+fn only_one() {}
+
 /// A measurement run by hand: no finding. Its braces in a string do not end the module.
 mod reading {
     #[test]

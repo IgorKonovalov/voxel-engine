@@ -457,16 +457,29 @@ fn uniform_chunks_render_identically_from_their_mips() {
     };
     let cam_chunk = ChunkCoord([0, 0, 0]);
     let lights = [LightParams::at_eye(), LightParams::headlamp()];
-    let want = render_with(&device, &queue, &full, &camera, &lights, forced(1));
+    let lod = World::generate(extent, &source, &cave_materials());
+    make_lod(&lod, |c| c != cam_chunk);
+    assert_eq!(lod.store().coords(), [cam_chunk]);
+    // The four renders are independent, each on its own thread (`support::joined`).
+    let (want, gots) = std::thread::scope(|s| {
+        let want = s.spawn(|| render_with(&device, &queue, &full, &camera, &lights, forced(1)));
+        let gots: Vec<_> = (1..=3)
+            .map(|level| {
+                let (device, queue, lod, camera, lights) =
+                    (&device, &queue, &lod, &camera, &lights);
+                s.spawn(move || render_with(device, queue, lod, camera, lights, forced(level)))
+            })
+            .collect();
+        (
+            joined(want),
+            gots.into_iter().map(joined).collect::<Vec<_>>(),
+        )
+    });
     let lit = want[0].chunks(4).filter(|p| p[..3] != [0, 0, 0]).count();
     println!("{lit} lit pixels of {}", WIDTH * HEIGHT);
     assert!(lit > (WIDTH * HEIGHT / 4) as usize, "{lit} lit pixels");
 
-    let lod = World::generate(extent, &source, &cave_materials());
-    make_lod(&lod, |c| c != cam_chunk);
-    assert_eq!(lod.store().coords(), [cam_chunk]);
-    for level in 1..=3 {
-        let got = render_with(&device, &queue, &lod, &camera, &lights, forced(level));
+    for (level, got) in (1..=3).zip(&gots) {
         for (i, (g, w)) in got.iter().zip(&want).enumerate() {
             let differing = g.iter().zip(w).filter(|(a, b)| a != b).count();
             assert_eq!(
@@ -681,25 +694,34 @@ fn hit_buffer_views_match_the_single_pass_march() {
         ("lod", &lod, scene_camera(), Some(lod_forced_1())),
         ("occluder", &occluder, occluder_camera(), None),
     ];
-    for (scene, world, camera, lod) in scenes {
-        let Some(mut rig) = LookRig::new(world, None) else {
-            return;
-        };
-        if let Some(lod) = lod {
-            rig.frame.set_lod(lod);
-        }
-        for view in [vxe_render::ViewMode::HitMask, vxe_render::ViewMode::Normals] {
-            let look = vxe_render::LookParams {
-                view,
-                ..vxe_render::LookParams::default()
-            };
-            let img = rig.render(&camera, &LightParams::headlamp(), look);
-            let name = format!("split_{}_{scene}.png", view.name());
-            let differing = differing_bytes(&img, &read_png(&golden_path(&name)).0);
-            println!("{name}: {differing} bytes differ");
-            assert_eq!(differing, 0, "{name}: {differing} bytes differ");
-        }
-    }
+    // The scenes are independent, each on its own thread (`support::joined`).
+    std::thread::scope(|s| {
+        let runs: Vec<_> = scenes
+            .into_iter()
+            .map(|(scene, world, camera, lod)| {
+                s.spawn(move || {
+                    let Some(mut rig) = LookRig::new(world, None) else {
+                        return;
+                    };
+                    if let Some(lod) = lod {
+                        rig.frame.set_lod(lod);
+                    }
+                    for view in [vxe_render::ViewMode::HitMask, vxe_render::ViewMode::Normals] {
+                        let look = vxe_render::LookParams {
+                            view,
+                            ..vxe_render::LookParams::default()
+                        };
+                        let img = rig.render(&camera, &LightParams::headlamp(), look);
+                        let name = format!("split_{}_{scene}.png", view.name());
+                        let differing = differing_bytes(&img, &read_png(&golden_path(&name)).0);
+                        println!("{name}: {differing} bytes differ");
+                        assert_eq!(differing, 0, "{name}: {differing} bytes differ");
+                    }
+                })
+            })
+            .collect();
+        runs.into_iter().for_each(joined);
+    });
 }
 
 /// With exposure 1, the identity tone map and the filter off the composite is the march's
@@ -1222,9 +1244,9 @@ fn half_resolution_dark_cave_golden_stays_near_the_full_one() {
 fn upscaled_cavity(sharpness: &[f32]) -> Option<(Vec<Vec<u8>>, History16)> {
     let world = cavity_world();
     let rig = LookRig::new(&world, None)?;
-    let mut out = Vec::new();
-    let mut history = Vec::new();
-    for &s in sharpness {
+    // One frame per sharpness, each on its own thread (`support::joined`); the history is the
+    // first's.
+    let shot = |s: f32, first: bool| {
         let mut frame = Frame::with_sizes(&rig.device, UPSCALED_INTERNAL, UPSCALED_OUTPUT);
         frame.set_jitter(&rig.device, true);
         frame.set_sharpness(&rig.queue, s);
@@ -1237,20 +1259,29 @@ fn upscaled_cavity(sharpness: &[f32]) -> Option<(Vec<Vec<u8>>, History16)> {
                 &LightParams::headlamp(),
             );
         }
-        if history.is_empty() {
-            history = vxe_render::debug::read_rgba16f(
+        let history = first.then(|| {
+            vxe_render::debug::read_rgba16f(
                 &rig.device,
                 &rig.queue,
                 frame.upscale_history().expect("the upscaler runs"),
-            );
-        }
-        out.push(vxe_render::debug::read_rgba8(
-            &rig.device,
-            &rig.queue,
-            frame.target(),
-        ));
-    }
-    Some((out, history))
+            )
+        });
+        let image = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, frame.target());
+        (image, history)
+    };
+    let shots: Vec<(Vec<u8>, Option<History16>)> = std::thread::scope(|sc| {
+        let runs: Vec<_> = sharpness
+            .iter()
+            .enumerate()
+            .map(|(i, &s)| sc.spawn(move || shot(s, i == 0)))
+            .collect();
+        runs.into_iter().map(joined).collect()
+    });
+    let history = shots
+        .first()
+        .and_then(|(_, h)| h.clone())
+        .unwrap_or_default();
+    Some((shots.into_iter().map(|(img, _)| img).collect(), history))
 }
 
 /// An rgba16float texture read back, texel by texel.
@@ -1671,8 +1702,8 @@ struct Fsr2Shot {
 fn fsr2_cavity(sharpness: &[f32]) -> Option<Vec<Fsr2Shot>> {
     let world = cavity_world();
     let rig = LookRig::new(&world, None)?;
-    let mut out = Vec::new();
-    for &s in sharpness {
+    // One frame per sharpness, each on its own thread (`support::joined`).
+    let shot = |s: f32| {
         let mut frame = Frame::with_sizes(&rig.device, UPSCALED_INTERNAL, UPSCALED_OUTPUT);
         frame.set_upscaler_kind(
             &rig.device,
@@ -1691,7 +1722,7 @@ fn fsr2_cavity(sharpness: &[f32]) -> Option<Vec<Fsr2Shot>> {
             );
         }
         let fsr = frame.fsr2().expect("FSR mode");
-        out.push(Fsr2Shot {
+        Fsr2Shot {
             image: vxe_render::debug::read_rgba8(&rig.device, &rig.queue, frame.target()),
             accumulated: vxe_render::debug::read_rgba16f(
                 &rig.device,
@@ -1700,9 +1731,15 @@ fn fsr2_cavity(sharpness: &[f32]) -> Option<Vec<Fsr2Shot>> {
             ),
             sharpened: fsr.sharpens(),
             lighting: frame.lighting(),
-        });
-    }
-    Some(out)
+        }
+    };
+    Some(std::thread::scope(|sc| {
+        let runs: Vec<_> = sharpness
+            .iter()
+            .map(|&s| sc.spawn(move || shot(s)))
+            .collect();
+        runs.into_iter().map(joined).collect()
+    }))
 }
 
 /// `fsr2.png`: FSR 2's golden at the fly-through's default sharpening (0.5) matches. At

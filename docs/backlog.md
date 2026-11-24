@@ -182,6 +182,14 @@ test that builds a frame compiles. Owed with the chore above: a quiet gate of ma
 Plan 0098's merge and of the merged tip, back to back, per-binary sums compared
 (`scripts/test-times.mjs`); if the shaders are the cause, the engine's pipeline cache entry
 below is the lever.
+**Taken 2026-11-24 by the gate-time chore** (branch `chore-gate-time`, `docs/nfr/07-startup-and-build.md`):
+the quiet base at `193cae15` read 2145.0 s, the lavapipe group's serial sum; the 1.25 to 1.44
+growth is the CPU's clock capped at its 3.3 GHz base since the AC drop of 2026-11-23 (no quiet
+run of main before Plan 0098 at the cap was taken; the ratios match the cap). The group at two
+threads and eight tests' independent arms on threads read **1133.2 s at `909a2552`, under the
+line**, no test moved tier. Left: the ten GPU tests over the line at full clock by the ratio,
+listed in that file, each the gate's only test of its mechanism; the per-test fixed cost
+(pipeline compilation) is the engine pipeline cache's.
 
 ### The light placement's eviction scan in a windowed glide
 
@@ -249,6 +257,23 @@ Found at the close ([Plan 0098](plans/done/0098-a-calm-light-by-default-no-scree
 - **Files near their caps:** `temporal.wgsl` 1169 of 1200 lines, `gpu_outdoor/flicker.rs`
   1966 of 2000, `bake/queue/mod.rs` 1060 and `bake/job_loop.rs` 1047 of 1200. Plans 0099 and
   0100 both add to them; new code goes to files of its own.
+
+### The weekly soak's underground eye: the surface reference reads 157.49 (2026-11-24)
+
+Read by the gate-time chore from the red weekly soak of 2026-11-23 (run 45165663078, main
+`123964e7`) and again on `909a2552` on the dev reference's lavapipe:
+`gpu_outdoor::the_underground_eye_reads_no_sky` fails at its surface reference, `surface stored
+157.49023807374985` against the bar's 149.7 within 5 % (+5.2 %; the reference was read at
+`2fe4598c`, Plan 0086), the same value on CI's and this box's lavapipe, so deterministic. The
+near-eye visibility bar passes; the underground parts after the reference are not reached. A
+real engine change, not a tier fault: some plan since Plan 0086 moved the stored sky light on
+the open surface. What it takes: find the commit (the reading `reading::underground_eye` at
+`r` 7 takes about 220 s on lavapipe), then either a fix or the reference re-read by the owner's
+rule for a moved reference. Read with it: of the run's other four failures, the wobble table is
+a reading since Plan 0098 (`c46fb41a`), and the two still-camera upscaler bars and the shutdown
+bound pass here (`docs/nfr/07-startup-and-build.md`); the next weekly run shows whether CI's
+older LLVM 21 lavapipe or its parallel GPU tests still trip them. The weekly soak is the only
+CI net for soak and sole marks, so a red run is owed a reading each week.
 
 ### Plan 0096's leftovers (close review's rulings and the close, 2026-11-23)
 
@@ -986,7 +1011,8 @@ least one fixture, or is listed as inert with its reason, and the banner marks a
 flag, the row's text follows; (4) the gate tier's wall time, now about 36 min on the lane's
 tree against the 19 min line (see "The gate tier is over its wall-time budget" below): a cut,
 not another acceptance. Size M. **Pick up** before the next plan that needs an owner window,
-ahead of the follow-on light plan's first window.
+ahead of the follow-on light plan's first window. Item (4) done 2026-11-24 on branch
+`chore-gate-time` (1133.2 s quiet, `docs/nfr/07-startup-and-build.md`); (1) to (3) remain.
 
 ### Two process-spawning GPU tests skip silently without lavapipe
 
@@ -1031,6 +1057,9 @@ of Plan 0058's own: `gpu_dynamic_lights::a_pulsing_emitter_marks_only_where_its_
 12.5 s (11.4 s in its log) and `gpu_fsr2::fsr2_marks_a_dropped_list_light` 10.8 s. The
 rings test renders three 32-frame images (no light, white, red); fewer still frames or the soak
 mark brings it under. Plan 0062 runs on these binaries next and can take them.
+Read 2026-11-24 (the gate-time chore, `docs/nfr/07-startup-and-build.md`): the rings test now
+renders its three images on threads (19.8 to 13.7 s in the quiet gate, at the clock cap); the
+others stay in the gate, the only tests of their mechanism, listed there.
 
 ### The lavapipe group at two threads (owner question)
 
@@ -1040,6 +1069,11 @@ against 656 s at 1 (six runs, 830 of 830 passing, `docs/plans/logs/0072.md` Phas
 in every run, so the plan's rule kept N at 1 (the close's default; the owner was asleep). The
 owner's call: take N = 2 (nearly half the gate) and accept or soak-mark that test, or keep 1.
 A one-line change in `.config/nextest.toml`; pick up on the owner's answer.
+**Done 2026-11-24** (owner's go 2026-11-22; the gate-time chore, `909a2552`): N = 2, the gate
+2145.0 s to 1190.3 s on its own, 1361 of 1361 passing; `a_dug_emitter_leaves_the_near_ring_at_once`
+no longer slows past twice; at 2 one test did (`a_reload_keeps_the_picture_steady`, 9.2 to
+23.4 s), at 3 another (`a_baked_view_is_final_on_its_first_frame`, 6.7 to 21.8 s; wall 889.7 s).
+Three threads is an owner question from that chore.
 
 ### `split-debuginfo` on Linux only (owner question)
 
@@ -1062,6 +1096,10 @@ name why `proc-macro2` and the like recompile. Pick it up only if CI time become
 
 ### The gate tier is over its wall-time budget
 
+**Met 2026-11-24** (the gate-time chore, `909a2552`): 1133.2 s quiet against the 19 min line,
+at the CPU's 3.3 GHz cap (`docs/nfr.md` section 7, `docs/nfr/07-startup-and-build.md`). The
+history below stays until the architect's clean-up.
+
 Read 2026-11-05 on 7cd77ad (`docs/nfr.md` section 7): 1313.4 s, about 22 minutes, loaded, against the 12 min proposal, with the two tests then over the 30 s line already on the soak list. `flythrough::settle` is the largest binary at 338 s. Ruled 2026-11-05 on the four tests over the line in that run: `the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose` split (the every-pose test on the soak list; the primary pose alone stays in the gate at 9.2 s), `castle_gate_golden` went back under with its warm-up removed (25.7 s cold, 7.4 s warm, alone), and `smoothed_normals_cut_the_normal_error_and_move_no_hit` and `a_face_hidden_from_every_eye_is_settled_before_it_is_seen` stay (23.9 s and 24.1 s alone). Those two move only if a gate run started on a quiet machine reads them over the line. Moving all four would save at most about 95 s of serial time, so this is not how the budget gets met. Still owed: either cut the slowest `settle` and `golden` tests or re-set the proposal. Much of `settle`'s time goes with the table at Plan 0059's deletion, so re-read then. `the_lamp_toggle_opens_the_light_window` read 98.0 s on CI's last red run, on an older tree, and reads 18.0 s here, so it stays in the gate; CI's next run shows whether it is still over the 60 s line. Pick up as a dev chore when the owner next wants the gate faster or CI green. Read 2026-11-12 (the architecture review, on `live/plan-0068/merge-gate.log`): 809 tests, 610 s; the 177 lavapipe tests sum to 610 s serial, the whole wall, the 632 CPU tests to 273 s beside them, so the lever is the lavapipe group's thread count or the GPU tests' pixels, not the CPU tests; [Plan 0072](plans/done/0072-development-speed-the-build-graph-a-narrowed-gate-and-one-compile-per-ci-profile.md) Phase 4 measures the group at 2 and 3 (drafted, awaiting go). Read 2026-11-09 at Plan 0059's close (`docs/nfr.md` section 7): 850.2 s with `settle` back in the gate and none over the 30 s line, still over the 12 min proposal; the re-read of the proposal stays owed. Read 2026-11-08 on CI's Linux arm, Mesa 26.2.6, the GPU tests in parallel: the same tests move 25 to 40 % between runs (`a_face_hidden_from_every_eye_is_settled_before_it_is_seen` 55.6 s on run 42470428595 and 77.6 s on 42477325818; `the_lamp_toggle_opens_the_light_window` 53.2 then 70.5; `fsr2_adds_little_flicker_on_a_still_vein` 49.8 then 62.8), with several more between 45 and 58 s, so moving tests one push at a time does not converge. Ruled 2026-11-08 (owner): CI's budget step warns per test over 60 s instead of failing the push, until the light work settles; a test that stays over moves to the soak list by hand. Still owed: the architect re-reads `docs/nfr.md` section 7's 60 s line (it says a test over the line moves to the soak list; CI no longer enforces it), at Plan 0059's deletion or when the owner next wants the gate faster. Also ruled 2026-11-08 (owner), from run 42477325818 (2972 s summed over 727 gate tests, 27 tests at 30 s or more holding 41 % of it): the whole `flythrough::settle` binary (34 tests, 746 s) moves to the soak list until Plan 0059's deletion phase decides the table, and CI's Windows arm runs every CPU test but only a GPU smoke set (the `ci-windows` profile: the shutdown and walk binaries and one golden), since WARP skips the image bars and runs a test 10 to 20 times slower than lavapipe. Both are tier moves, not deletions. **Read 2026-11-18 at Plan 0079's close** (`docs/nfr.md` section 7): 1208.2 s on 1174 tests, loaded (load 16.9 at the lock), over the 19 min line the owner set the same day; the plan's own tests add about 17 s outside the serial lavapipe group. A quiet re-read is owed before the line is judged again.
 
 ### `vxe-render::exposure` hangs on WARP since Plan 0057 Phase 7
@@ -1075,6 +1113,18 @@ Read 2026-11-06 to 2026-11-09 over seven CI runs; the full record with its table
 ### llvmpipe SIGSEGV on CI's Ubuntu since Plan 0057 Phase 7
 
 Done 2026-11-08 and 2026-11-09. The crash was Mesa 26.0.x's own: it reproduced on a local build of the 26.0.8 tarball against LLVM 21 and against LLVM 23, and Mesa 26.2.6 passes, so it was neither concurrency nor LLVM. Ruled 2026-11-08 (owner): no package source that cannot be pinned; CI's Linux arm and the weekly soak build lavapipe from the Mesa 26.2.6 release tarball, checked by its sha256 and cached by it, in the composite action `.github/actions/lavapipe`. **Left:** the build comes out once the runner image ships Mesa 26.2 or later. The bisect, the build options and the hashes are in this file's history at `193cae15`.
+
+### The dev box runs at its base clock since the AC drop of 2026-11-23
+
+Read 2026-11-24 by the gate-time chore: every core's `scaling_max_freq` is 3 301 000 kHz against
+`cpuinfo_max_freq` 4 683 471 (Ryzen 9 5900HS, amd-pstate-epp, boost flag 1). asusd switched to its
+quiet profile when the AC dropped at 2026-11-23 15:14 and the cap stayed after the AC came back.
+Every timing read since then, the gate's among them, is about 1.42 times slower in compute-bound
+work than the dev reference's figures before it (the shared tests of two gates a day apart read
+1.44 on the GPU tests). What it takes: the owner restores the cap (asusctl's profile or the
+sysfs value, root), and readings from 2026-11-23 15:14 until then say "at the 3.3 GHz cap".
+A check in the lane rules' power check (`scaling_max_freq` against `cpuinfo_max_freq`) would
+catch the next one.
 
 ### The RTX laptop's TSC is marked unstable: hot-loop timings since 2026-11-05 are inflated
 

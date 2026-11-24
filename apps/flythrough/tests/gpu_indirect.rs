@@ -468,29 +468,42 @@ fn the_channel_holds_the_lamps_bounce_only() {
     let (glow_world, _) = furnace_world();
     let mut glow = GpuWorld::new(&device, glow_world.extent());
     glow.sync_now(&glow_world, &device, &queue).unwrap();
-    let mut off = FloorProbe::wall_lamp(&device, BOX_MIN[0]);
-    off.frame.set_lighting(Lighting {
-        lamp: false,
-        ..off.frame.lighting()
-    });
-    for i in 0..64 {
-        off.run(&device, &queue, &glow, 1);
-        if i % 16 == 15 {
-            assert!(
-                words(&off).iter().all(|&w| w == 0.0),
-                "lamp off: a probe word moved by frame {}",
-                i + 1
-            );
-            assert_eq!(off.frame.traced_probe_rays(), 0);
-        }
-    }
     let dull_world = dull_box_world();
     let mut dull = GpuWorld::new(&device, dull_world.extent());
     dull.sync_now(&dull_world, &device, &queue).unwrap();
-    let mut lit = FloorProbe::wall_lamp(&device, BOX_MIN[0]);
-    let mut dark = FloorProbe::wall_lamp(&device, BOX_MIN[0]);
-    lit.run(&device, &queue, &glow, 64);
-    dark.run(&device, &queue, &dull, 64);
+    // The three runs are independent, each on its own thread (`support::joined`).
+    let (lit, dark) = std::thread::scope(|s| {
+        let off = s.spawn(|| {
+            let mut off = FloorProbe::wall_lamp(&device, BOX_MIN[0]);
+            off.frame.set_lighting(Lighting {
+                lamp: false,
+                ..off.frame.lighting()
+            });
+            for i in 0..64 {
+                off.run(&device, &queue, &glow, 1);
+                if i % 16 == 15 {
+                    assert!(
+                        words(&off).iter().all(|&w| w == 0.0),
+                        "lamp off: a probe word moved by frame {}",
+                        i + 1
+                    );
+                    assert_eq!(off.frame.traced_probe_rays(), 0);
+                }
+            }
+        });
+        let lit = s.spawn(|| {
+            let mut lit = FloorProbe::wall_lamp(&device, BOX_MIN[0]);
+            lit.run(&device, &queue, &glow, 64);
+            lit
+        });
+        let dark = s.spawn(|| {
+            let mut dark = FloorProbe::wall_lamp(&device, BOX_MIN[0]);
+            dark.run(&device, &queue, &dull, 64);
+            dark
+        });
+        support::joined(off);
+        (support::joined(lit), support::joined(dark))
+    });
     let v = lit.frame.probes();
     let origin = v.origin_for(lit.camera.position.to_array());
     let reach = lit.frame.lighting().lamp_reach;
