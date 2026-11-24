@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0104** (0101 the record by rule at every opening, drafted in its own worktree 2026-11-24; 0102 the removal of `own`, drafted 2026-11-24; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
+**Next free number: 0104** (0101 the record by rule at every opening, approved 2026-11-24; 0102 the removal of `own`, drafted 2026-11-24; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
 the sky around the camera; 0098 the calm light by default, closed 2026-11-24; 0099 the bake
 step off the main thread, drafted 2026-11-22; 0100 a sun fixed in the world, drafted 2026-11-23; ADRs are a separate sequence, see `../adrs/README.md` for its next
 free number). Plan 0095, the motion wobble (a calm key light in motion), closed 2026-11-21,
@@ -36,6 +36,7 @@ by default, closed 2026-11-24, v0.72.0.
 | [0093](0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) | The README rewrite with reproducible screenshots: a shot manifest, a shoot script, an image gate, the owner's picks | approved | M7 docs, no ADR. After 0087 merges, beside 0089, before 0091. |
 | [0099](0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) | The bake step off the main thread: a bake thread, write lists, the in-view drain | approved 11-22 | ADR-0083 (proposed). After 0087; 0098 closed. Re-read owed (the dig). |
 | [0100](0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md) | A sun fixed in the world: the key shadow a face at a time, the coarse tier held still, sun under cover | approved 11-24 | M10, ADR-0084 (proposed). Lane starts at 0098's merge, beside 0099. |
+| [0101](0101-the-record-by-rule-at-every-opening-an-audit-on-the-real-scenes-first-then-the-three-exclusions-lifted.md) | The record by rule at every opening: an audit first, then the exclusions lifted | approved 11-24 | ADR-0085 (proposed). After 0100 P2 and 0099's close. |
 | [0102](0102-remove-own-the-engines-own-upscaler-fsr-2-is-the-only-one.md) | Remove `own`, the engine's own upscaler: FSR 2 is the only one, `Off` renders at the output size | draft | ADR-0086 (proposed). Awaits go. Alone in the upscaler's files; not beside 0087. |
 | [0103](0103-a-pipeline-cache-for-the-renderer-bytes-the-consumer-keeps.md) | A pipeline cache for the renderer: the driver's cache through wgpu in an engine envelope, bytes the consumer keeps | draft | ADR-0087 (proposed). Awaits go. Not beside 0092 or 0102 (the pipeline builders). |
 <!-- roster:end -->
