@@ -1,18 +1,18 @@
 # 0102: Remove `own`, the engine's own upscaler: FSR 2 is the only one
 
-> **Status:** implemented (dev, 2026-11-25); the fresh close review (2026-11-25) found no blocker and no major and sends two findings back for one fix pass, after which the plan closes (section "The close review's rulings") (approved by the owner, 2026-11-24: "remove"). Drafted 2026-11-24 with no interview; the guesses
+> **Status:** done, closed 2026-11-25, v0.74.0: the fresh close review found no blocker and no major; its two findings (the shadow-wobble bar frozen from the removed upscaler, a dozen stale comments) were fixed in one pass (`c158260b`) and checked; ADR-0086 accepted with an Outcome. The gate 1358 of 1358 on lavapipe, loaded (section "The close review's rulings"). Before the close it read: implemented (dev, 2026-11-25) (approved by the owner, 2026-11-24: "remove"). Drafted 2026-11-24 with no interview; the guesses
 > and the open questions are under "Risks & open questions", each with a recommended option.
 > **Order:** small and alone in `crates/svet-render/src/frame/` and the fly-through's upscaler
 > files; it runs when no lane edits `frame/encode.rs`, `frame/pipelines.rs` or
 > `apps/flythrough/tests/gpu_fsr2.rs` (Plans 0099 and 0100 do not; Plan 0087, the rename, runs
 > alone either before or after it).
 > **Created:** 2026-11-24
-> **Milestone:** M2 (the upscaler's decision) in [`docs/roadmap.md`](../roadmap.md); cross-cutting
-> **Related ADRs:** [ADR-0086](../adrs/0086-fsr-2-is-the-only-upscaler-the-upscaler-of-our-own-is-removed.md)
+> **Milestone:** M2 (the upscaler's decision) in [`docs/roadmap.md`](../../roadmap.md); cross-cutting
+> **Related ADRs:** [ADR-0086](../../adrs/0086-fsr-2-is-the-only-upscaler-the-upscaler-of-our-own-is-removed.md)
 > (proposed with this plan; at acceptance it supersedes
-> [ADR-0024](../adrs/0024-own-temporal-upscaler-on-the-hit-buffer.md) and the "stays opt-in"
-> clause of [ADR-0034](../adrs/0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md)),
-> [ADR-0055](../adrs/0055-render-settings-are-one-struct-with-an-apply-class-per-field-and-profiles-are-named-values.md)
+> [ADR-0024](../../adrs/0024-own-temporal-upscaler-on-the-hit-buffer.md) and the "stays opt-in"
+> clause of [ADR-0034](../../adrs/0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md)),
+> [ADR-0055](../../adrs/0055-render-settings-are-one-struct-with-an-apply-class-per-field-and-profiles-are-named-values.md)
 
 ## TL;DR
 
@@ -414,6 +414,26 @@ deviations:
   and layout tests of `svet-render` (in the quick tier), `check-comment-hygiene`. No gate
   re-run: no gate test's code changes.
 
+### The close (2026-11-25, architect)
+
+The fix pass `c158260b` does what rulings 3 and 6 ask: the shadow-wobble test asserts the
+clean reference and FSR 2's own figures with 10 %, the still-vein test its absolute figures,
+and the review's `rg` finds only FSR 2's `jitter_phases`. Build, clippy, fmt and the scripts
+were run again on it; the two soak tests' pass is the dev's log (`live/fixpass-soak.log`),
+with the same figures the review read. Three things the fix pass left alone:
+
+- `SEED_STRIDE`'s doc in `apps/flythrough/tests/support/settle/runs.rs` ("a multiple of the
+  jitter's 16 phases") is true of the removed upscaler's sequence alone: under FSR 2 at 1.5
+  the sequence has 18 phases and 2^20 is not a multiple of 18. Whether the settle rig's seeds
+  must share their jitter offsets is the rig's question, routed to the backlog.
+- The words "former upscaler" in `gpu_look_field.rs` and `svet-render`'s `gpu_frame.rs`
+  stand: each is a step in the derivation of a pinned byte count from a figure read under
+  that upscaler, and the derivation needs the name.
+- The `WANDER_*` doc ("blocks of `WANDER_BLOCK` frames") stands.
+
+Routed to the backlog: the still shadow edge under FSR 2's jitter (with Plan 0100's
+terraces), the quiet re-read of the gate's saving, the settle rig's seed stride.
+
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
@@ -423,7 +443,7 @@ deviations:
 > resume notes go to the plan's readings log, `docs/plans/logs/0102.md`, and this section links
 > it once it exists.
 
-Readings: [`logs/0102.md`](logs/0102.md).
+Readings: [`logs/0102.md`](../logs/0102.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
@@ -486,4 +506,6 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 ## Followups
 
+- If FSR 2's light-change test needs tuning at run time: `CHANGE_REL`, `CHANGE_ABS` and
+  `CHANGE_FRAMES` return as `fsr2.*` fields of `RenderSettings` (ADR-0086's Outcome).
 - If a consumer asks for a resize without FSR 2: a bilinear pass as its own small plan.
