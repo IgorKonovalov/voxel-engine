@@ -1,6 +1,6 @@
 # 0102: Remove `own`, the engine's own upscaler: FSR 2 is the only one
 
-> **Status:** in-progress (approved by the owner, 2026-11-24: "remove"). Drafted 2026-11-24 with no interview; the guesses
+> **Status:** implemented (dev, 2026-11-25), awaits the fresh-session close review (approved by the owner, 2026-11-24: "remove"). Drafted 2026-11-24 with no interview; the guesses
 > and the open questions are under "Risks & open questions", each with a recommended option.
 > **Order:** small and alone in `crates/svet-render/src/frame/` and the fly-through's upscaler
 > files; it runs when no lane edits `frame/encode.rs`, `frame/pipelines.rs` or
@@ -343,8 +343,8 @@ Readings: [`logs/0102.md`](logs/0102.md).
 |---|---|---|---|
 | 1: The census and three readings | dev | done; readings loaded (three lanes) | `47fb7d1f` |
 | 2: `own` leaves `svet-render` | dev | done; carries the fly-through callers, tests and CLI refusals the compiler forced (see Notes) | `00b815d1` |
-| 3: The fly-through, the tests and the golden | dev | done; its code landed in `00b815d1`, this commit deletes `upscaled.png`; the shadow bar is renamed | committed with this row |
-| 4: Docs, the ledger, the gate's time | dev | not started | |
+| 3: The fly-through, the tests and the golden | dev | done; its code landed in `00b815d1`, this commit deletes `upscaled.png`; the shadow bar is renamed | `860c0ae6` |
+| 4: Docs, the ledger, the gate's time | dev | done; the gate saves 26.0 s (under the 30 s expected), both runs loaded | committed with this row |
 
 ### Notes
 
@@ -360,16 +360,42 @@ Readings: [`logs/0102.md`](logs/0102.md).
   tests, `gpu_upscale.rs`'s deletion); files outside both phases' lists: `run/*.rs`,
   `hud/stats.rs`, `run/menu_tests.rs`, the examples, `gpu_settings.rs`, `gpu_look_field.rs`,
   `gpu_settle.rs`, `fsr2/input.wgsl`, `layout_tests.rs`.
+- `fsr2_at_scale_1_5_moves_shadows_no_more_than_ours_on_a_still_camera` is renamed
+  `..._than_the_fixed_bar_...`; FSR 2 passes its scale-1.5 bar only against `own`'s figure
+  (1.419 against 1.765, 4.512 against 8.200). The backlog's two CI-failing soak tests: the
+  `gpu_upscale` one is deleted, the `gpu_fsr2` one lost its `own` assertion and is a reading.
+- The four inventory tests and the scale-1.5 sizes test moved to `svet-render`'s `gpu_frame`
+  (`gpu_fsr2.rs` sits at 1961 of 2000 lines); `frame_bytes_add_the_histories_...` is not kept,
+  its output-target growth asserted by FSR 2's re-pointed inventory test.
+- The gate saves 26.0 s (894.3 to 868.3 s), under the 30 s expected; both runs loaded with
+  three lanes open, 2 test threads.
 
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** a removal (the engine's own upscaler, its passes, shaders, settings and
+  tests); FSR 2 is the only upscaler.
+- **Public API changed:** `svet-render`: `UpscalerChoice::Own`, `UpscalerKind::Own`,
+  `Upscaler`, `RenderSettings::{jitter, sharpness, own}`, `Frame::{set_jitter, jitter,
+  set_sharpness, sharpness, set_upscaler, upscaler, upscale_history}`, `UPSCALE_WGSL`,
+  `SHARPEN_WGSL`, `internals::JITTER_PHASES` removed; `UpscalerChoice::kind` takes the FSR 2
+  settings alone; `RenderSettings::clamped` and `internals::{CHANGE_REL, CHANGE_ABS}` added;
+  `FRAME_PASSES` 24 to 22 entries; `fsr2/input.wgsl` binding 5 is `LightChange` (16 B);
+  under `Off` a frame renders at its output size. Fly-through: `--upscaler own` and `--jitter`
+  refused, `F10` cycles off and fsr2; examples `strip`, `hero`, `clip`, `settle` refuse their
+  `own` flags.
+- **Budget readings:** `docs/nfr.md` section 7, the gate at the base `be97152a` 894.3 s and at
+  the tip `860c0ae6` 868.3 s (1363 and 1358 tests, lavapipe, 2 threads, loaded); section 3,
+  FSR 2's frame at Portable 389 727 008 B at both (RTX 3080 Laptop); section 2, Phase 1's
+  Portable upscale readings (RTX `own` 0.380 against FSR 2 0.640 ms, RENOIR 1.790 against
+  4.077 ms, loaded). Pipelines per new frame 15 to 13 (lavapipe).
+- **Gate at the tip:** `cargo nextest run --workspace --profile gate --test-threads 2` 1358
+  run, 1358 passed, 233 skipped, exit 0; `test-changed --profile gate --sole --since main` no
+  sole test in reach, exit 0; `cargo test --doc --workspace` 10 passed; `cargo clippy
+  --workspace --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny check`
+  0; doc, tier, size, hygiene, index-row and plan-size scripts 0.
+- **Outstanding `human` phases:** none. The tag `archive/own-upscaler` (`be97152a`) is local.
 
 ## Followups
 
