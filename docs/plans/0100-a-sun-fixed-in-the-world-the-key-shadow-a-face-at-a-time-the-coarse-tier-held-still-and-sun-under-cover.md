@@ -2,7 +2,7 @@
 
 > **Status:** approved (owner, 2026-11-24; his answers to the five questions are under "Risks & open questions"). Drafted 2026-11-23 overnight with no interview:
 > the guesses and the open questions are under "Risks & open questions", each with a
-> recommended option). **Order:** its lane starts when Plan 0098 has merged (its base is the
+> recommended option. **Order:** its lane starts when Plan 0098 has merged (its base is the
 > calm defaults and Phase 14's dig); it runs **beside Plan 0099** (owner, 2026-11-23), which
 > owns `crates/vxe-render/src/bake/queue/`; where the two meet is under "Risks".
 > **Created:** 2026-11-23
