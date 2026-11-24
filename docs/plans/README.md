@@ -35,7 +35,7 @@ v0.70.0. Plan 0096, the bake queue's drain, closed 2026-11-23, v0.71.0.
 | [0093](0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) | The README rewrite with reproducible screenshots: a shot manifest, a shoot script, an image gate, the owner's picks | approved | M7 docs, no ADR. After 0087 merges, beside 0089, before 0091. |
 | [0098](0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md) | A calm light by default: no screen history, smooth sources to the mid range, the FSR 2 turn read first | approved 11-22 | M10, ADR-0082 (proposed). Needs `diag-edges`' switches. |
 | [0099](0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) | The bake step off the main thread: a bake thread, write lists, the in-view drain | approved 11-22 | ADR-0083 (proposed). After 0098, 0087. |
-| [0100](0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md) | A sun fixed in the world: the key shadow a face at a time, the coarse tier held still, sun under cover | draft 11-23 | M10, ADR-0084 (proposed). After 0098, beside 0099. |
+| [0100](0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md) | A sun fixed in the world: the key shadow a face at a time, the coarse tier held still, sun under cover | approved 11-24 | M10, ADR-0084 (proposed). After 0098, beside 0099. |
 <!-- roster:end -->
 
 ## Sequence
