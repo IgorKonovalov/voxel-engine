@@ -58,7 +58,7 @@ struct Fsr2InputTuning {
 
 @group(2) @binding(4) var<uniform> edits: Edits;
 
-// upscale.wgsl's `UpTuning`, field for field (`UpscaleUniform` in frame/upscale.rs).
+// The light-change thresholds, field for field `LightChangeUniform` in frame/upscale.rs.
 struct LightChange {
     change_rel: f32,
     change_abs: f32,
@@ -74,7 +74,7 @@ struct LightChange {
 
 // A motion that leaves the screen: FSR finds no history there.
 const OFF_SCREEN: vec2<f32> = vec2<f32>(-4.0, -4.0);
-// upscale.wgsl's CLIP_STILL: a pixel moving less than this many output pixels is still.
+// A pixel moving less than this many output pixels is still.
 const STILL_PX: f32 = 0.01;
 
 // Whether `a` is `b` but for the jitter: the same eye, basis, frustum and rectangle.
@@ -84,7 +84,8 @@ fn same_view(a: View, b: View) -> bool {
         && a.tan_up == b.tan_up && a.tan_down == b.tan_down && all(a.rect == b.rect);
 }
 
-// upscale.wgsl's `up_light_changed` at internal pixel `px`.
+// Whether the light at internal pixel `px` changed: an emitter's emission landed there, or the
+// sky's or the lamp list's light at the hit moved past `in_lamp`'s thresholds.
 fn light_changed(px: vec2<i32>, rec: HitRecord) -> bool {
     if ((params.lighting & LIGHTING_EMISSION_CHANGED) != 0u && emission_lands(in_emissive, px, rec)) {
         return true;

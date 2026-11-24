@@ -145,10 +145,8 @@ fn mirror_of(label: &str, name: &str) -> Option<Mirror> {
             reactive_light
         }),
         (_, "Fsr2Constants") => fsr2_constants(),
-        // Written as words: the a-trous strides (`[stride, last, 0, 0]`), the sharpen pass's
-        // `[con, 0, 0, 0]` and the bake's job.
+        // Written as words: the a-trous strides (`[stride, last, 0, 0]`) and the bake's job.
         (_, "Step") => raw("[u32; 4]", size_of::<[u32; 4]>()),
-        (_, "Sharpen") => raw("[f32; 4]", size_of::<[f32; 4]>()),
         (_, "BakeJob") => raw("bake::JOB_BYTES", crate::bake::JOB_BYTES as usize),
         _ => return None,
     })

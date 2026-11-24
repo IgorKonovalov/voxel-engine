@@ -475,7 +475,7 @@ pub fn long_run(
 }
 
 /// The wander's series after the toggle: `WANDER_FRAMES` still frames, read from
-/// `WANDER_FROM + 1` in blocks of `WANDER_BLOCK` (one jitter cycle, `JITTER_PHASES`).
+/// `WANDER_FROM + 1` in blocks of `WANDER_BLOCK` frames.
 pub const WANDER_FRAMES: usize = 8192;
 pub const WANDER_FROM: usize = 1024;
 pub const WANDER_BLOCK: usize = 16;

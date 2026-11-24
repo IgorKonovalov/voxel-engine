@@ -18,7 +18,7 @@ const UPLOAD_LINE_MS: f32 = 1.0;
 /// `nfr.md` §2's lighting and denoise lines.
 const LIGHTING_LINE_MS: f32 = 6.0;
 const DENOISE_LINE_MS: f32 = 3.0;
-/// `nfr.md` §2's upscale, tone map and post line: the composite, upscale and sharpen passes.
+/// `nfr.md` §2's upscale, tone map and post line: the composite and FSR 2's passes.
 const UPSCALE_LINE_MS: f32 = 1.5;
 /// Mirror pressure above which the fly-through lowers its full radius (ADR-0013); the
 /// pressure row turns yellow past it.

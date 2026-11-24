@@ -1,5 +1,5 @@
 // The frame's edit boxes, which a pass declares as `edits` at its own binding (temporal.wgsl,
-// upscale.wgsl, fsr2/input.wgsl), and the test of a point against them.
+// fsr2/input.wgsl), and the test of a point against them.
 
 // Up to MAX_EDITS boxes, inclusive voxel bounds: box i is `boxes[2 i]` to `boxes[2 i + 1]`.
 struct Edits {

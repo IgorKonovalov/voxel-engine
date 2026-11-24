@@ -345,9 +345,9 @@ fn a_resize_builds_both_parities_once() {
     );
 }
 
-/// The compute pipelines a new frame builds: 13 (15 before the upscale and sharpen passes went,
-/// read across `Frame::new` at the base of Plan 0102 on lavapipe), and neither pass is one of
-/// the frame's timed passes.
+/// The compute pipelines a new frame builds: 13, read across `Frame::new` on lavapipe, the
+/// frame's own with no upscaler (FSR 2 builds its pipelines when it is selected); and no
+/// timed pass of the frame is an `upscale` or a `sharpen` pass.
 #[test]
 fn a_new_frame_builds_thirteen_pipelines_and_no_upscale_or_sharpen_pass() {
     for pass in ["upscale", "sharpen"] {

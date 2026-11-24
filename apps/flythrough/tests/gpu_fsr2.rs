@@ -1185,17 +1185,11 @@ fn fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step() {
     assert!(failures.is_empty(), "{failures:?}");
 }
 
-/// The engine's former upscaler's flicker on the still vein at scale 1.5 with the jitter off,
-/// the stillest image Plan 0030 compared against: the mean step 0.0001/255 and 0.0000 % of
-/// values over 4/255, its last reading on lavapipe (`be97152a`, Plan 0102 Phase 1, exclusive
-/// perf lock, load 4.07; printed to four places).
-const STILL_VEIN_MEAN: f64 = 0.0001;
-const STILL_VEIN_OVER_PCT: f64 = 0.0;
-
 /// FSR 2's jitter adds little flicker: on the dark cave's still rig at scale 1.5 (320 x 180
-/// output), FSR 2's frames' mean step is at most 0.40/255 above `STILL_VEIN_MEAN` (0.4001/255)
-/// and its share of values over 4/255 at most 1.15 percentage points above
-/// `STILL_VEIN_OVER_PCT` (1.15 %).
+/// output), FSR 2's frames' mean step is at most 0.40/255 and its share of values over 4/255
+/// at most 1.15 %. Both are absolute figures, Plan 0030's margins over a still image of the
+/// same rig with the jitter off that read 0.0001/255 and 0.0000 % on lavapipe (`be97152a`), so
+/// they are the whole of the flicker FSR 2 may add.
 #[test]
 #[ignore = "soak"]
 fn fsr2_adds_little_flicker_on_a_still_vein() {
@@ -1203,18 +1197,13 @@ fn fsr2_adds_little_flicker_on_a_still_vein() {
         return;
     };
     println!(
-        "still vein at scale 1.5: FSR 2 mean {on_mean:.4}/255, {:.4} % over 4/255; the bars {:.4}/255 and {:.4} %",
-        on_over * 100.0,
-        STILL_VEIN_MEAN + 0.40,
-        STILL_VEIN_OVER_PCT + 1.15
+        "still vein at scale 1.5: FSR 2 mean {on_mean:.4}/255, {:.4} % over 4/255; the bars 0.40/255 and 1.15 %",
+        on_over * 100.0
     );
+    assert!(at_most(on_mean, 0.40), "mean {on_mean:.4} over 0.40");
     assert!(
-        on_mean <= STILL_VEIN_MEAN + 0.40,
-        "mean {on_mean:.4} against {STILL_VEIN_MEAN:.4} + 0.40"
-    );
-    assert!(
-        on_over * 100.0 <= STILL_VEIN_OVER_PCT + 1.15,
-        "{:.4} % against {STILL_VEIN_OVER_PCT:.4} % + 1.15",
+        at_most(on_over * 100.0, 1.15),
+        "{:.4} % over 1.15 %",
         on_over * 100.0
     );
 }
@@ -1355,25 +1344,33 @@ fn wobble(
     (all, edge, input)
 }
 
-/// The engine's former upscaler's shadow wobble on the level's spawn (lamp on, still, face
-/// look, over its 16-frame jitter cycle), its last reading on lavapipe (`be97152a`, Plan 0102
-/// Phase 1, exclusive perf lock, load 4.07): at scale 1.5 the mean per-pixel luminance range
-/// over the whole image and at the lamp-shadow boundary; at scale 1 the same, for the readings.
-const OWN_WOBBLE_U15: f64 = 1.765;
-const OWN_BOUNDARY_U15: f64 = 8.200;
-const OWN_WOBBLE_U1: f64 = 0.847;
-const OWN_BOUNDARY_U1: f64 = 3.863;
+/// The wobble the frame with no upscaler may show on the wobble rig: at most 0.001/255 over the
+/// whole image and at the lamp-shadow boundary (it reads 0.000 and 0.000 on lavapipe), so every
+/// level FSR 2 reads on the rig is the upscaler's.
+const STILL_REFERENCE: f64 = 0.001;
 
-/// Shadow wobble under a fixed bar at scale 1.5: on the level's spawn, lamp on, a still camera
-/// in the face look, over FSR 2's jitter cycle, its mean per-pixel luminance range at scale 1.5
-/// is at most `OWN_WOBBLE_U15` over the whole image and at most `OWN_BOUNDARY_U15` over the
-/// pixels within 2 output pixels of a lamp-shadow boundary. Scale 1 against `OWN_WOBBLE_U1`
-/// and `OWN_BOUNDARY_U1` is a `reading:` line (the same bar, missed with no port defect
-/// found); Plan 0024's frame and the composite's input under FSR 2 (the jittered lighting
-/// before the upscaler) are readings.
+/// FSR 2's shadow wobble at scale 1.5 on the wobble rig, its reading on lavapipe at `be97152a`
+/// and again at `eae4884f` (identical to three places): the mean per-pixel luminance range over
+/// the whole image and over the lamp-shadow boundary, in /255. The picture the owner accepted
+/// at Plan 0098's windows; the bar is these plus `WOBBLE_MARGIN`.
+const FSR2_WOBBLE_U15: f64 = 1.419;
+const FSR2_BOUNDARY_U15: f64 = 4.512;
+
+/// The margin over FSR 2's own reading, 10 %: for the lavapipe of another LLVM (CI's), not for
+/// noise (lavapipe renders the same bytes run to run).
+const WOBBLE_MARGIN: f64 = 1.1;
+
+/// FSR 2 holds its shadow wobble on a still camera, a regression bar: on the level's spawn,
+/// lamp on, a still camera in the face look, the frame with no upscaler wobbles at most
+/// `STILL_REFERENCE` over the whole image and at the boundary (the pixels within 2 output
+/// pixels of a lamp-shadow boundary), and over FSR 2's jitter cycle at scale 1.5 the mean
+/// per-pixel luminance range is at most `FSR2_WOBBLE_U15` x `WOBBLE_MARGIN` (1.561/255) over
+/// the whole image and `FSR2_BOUNDARY_U15` x `WOBBLE_MARGIN` (4.963/255) at the boundary.
+/// Scale 1 (it reads 1.346 and 5.098 on lavapipe) and the composite's input under FSR 2 (the
+/// jittered lighting before the upscaler) are printed readings with no bar.
 #[test]
 #[ignore = "soak"]
-fn fsr2_at_scale_1_5_moves_shadows_no_more_than_the_fixed_bar_on_a_still_camera() {
+fn fsr2_at_scale_1_5_holds_its_shadow_wobble_on_a_still_camera() {
     let (world, camera) = level();
     let Some((device, queue, gpu)) = level_rig(&world, &camera) else {
         return;
@@ -1395,6 +1392,17 @@ fn fsr2_at_scale_1_5_moves_shadows_no_more_than_the_fixed_bar_on_a_still_camera(
     );
     println!("reference: wobble {ra:.3}/255, at the boundary {re:.3}/255");
     let mut failures = Vec::new();
+    for (what, v) in [("wobble", ra), ("boundary wobble", re)] {
+        if !at_most(v, STILL_REFERENCE) {
+            failures.push(format!(
+                "Reference: {what} {v:.3} over {STILL_REFERENCE:.3}"
+            ));
+        }
+    }
+    let (wobble_bar, boundary_bar) = (
+        FSR2_WOBBLE_U15 * WOBBLE_MARGIN,
+        FSR2_BOUNDARY_U15 * WOBBLE_MARGIN,
+    );
     for pipe in [Pipe::U1, Pipe::U15] {
         let (fa, fe, fi) = wobble(&device, &queue, &gpu, &camera, pipe, fsr2_kind(), &boundary);
         println!(
@@ -1403,24 +1411,14 @@ fn fsr2_at_scale_1_5_moves_shadows_no_more_than_the_fixed_bar_on_a_still_camera(
             fi.unwrap_or(f64::NAN)
         );
         if pipe == Pipe::U1 {
-            reading(
-                "level, still, FSR 1 wobble",
-                &format!("{fa:.3}/255"),
-                &format!("at most {OWN_WOBBLE_U1:.3}/255"),
-            );
-            reading(
-                "level, still, FSR 1 wobble at the lamp-shadow boundary",
-                &format!("{fe:.3}/255"),
-                &format!("at most {OWN_BOUNDARY_U1:.3}/255"),
-            );
             continue;
         }
-        if !at_most(fa, OWN_WOBBLE_U15) {
-            failures.push(format!("{pipe:?}: wobble {fa:.3} over {OWN_WOBBLE_U15:.3}"));
+        if !at_most(fa, wobble_bar) {
+            failures.push(format!("{pipe:?}: wobble {fa:.3} over {wobble_bar:.3}"));
         }
-        if !at_most(fe, OWN_BOUNDARY_U15) {
+        if !at_most(fe, boundary_bar) {
             failures.push(format!(
-                "{pipe:?}: boundary wobble {fe:.3} over {OWN_BOUNDARY_U15:.3}"
+                "{pipe:?}: boundary wobble {fe:.3} over {boundary_bar:.3}"
             ));
         }
     }

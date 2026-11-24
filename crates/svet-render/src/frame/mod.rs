@@ -479,9 +479,8 @@ impl Frame {
     }
 
     /// The frame's `rgba8unorm` image: the composite's output, or with the upscaler (see
-    /// [`Frame::upscaling`]) the upscaled image at the output size. With the upscaler the
-    /// composite writes the internal image into its top-left pixels and the upscale pass's
-    /// sharpening pass overwrites the whole of it.
+    /// [`Frame::upscaling`]) FSR 2's image at the output size, which RCAS or FSR 2's tone pass
+    /// writes whole; the composite then writes linear radiance to its own target, not this one.
     pub fn target(&self) -> &wgpu::Texture {
         &self.targets.output
     }

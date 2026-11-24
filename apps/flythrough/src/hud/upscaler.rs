@@ -104,8 +104,8 @@ impl UpscalerBanner {
     }
 
     /// The sharpening is now `sharpen` (`Z`); the banner shows from `now_ms`. Under FSR 2 the
-    /// change is a settings change that keeps its history (`Frame::set_upscaler_kind`), and
-    /// under our upscaler a uniform write, so the image shows no history drop at the key.
+    /// change is a settings change that keeps its history (`Frame::set_upscaler_kind`), so the
+    /// image shows no history drop at the key.
     pub fn set_sharpen(&mut self, sharpen: f32, now_ms: f64) {
         self.sharpen = sharpen;
         self.shown_at = Some(now_ms);

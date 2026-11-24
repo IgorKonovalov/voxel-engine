@@ -62,7 +62,7 @@ pub fn fsr2_source(pass: &str, hdr: bool) -> String {
 }
 
 /// FSR 2's frame passes in encode order, each its own slot of [`crate::FRAME_PASSES`] after
-/// the composite, upscale and sharpen slots and before the exposure slot.
+/// the composite slot and before the exposure slot.
 pub const FSR2_PASSES: [&str; 9] = [
     "fsr2 input",
     "fsr2 spd",
