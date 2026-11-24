@@ -446,8 +446,9 @@ fn sky_held_term(v: vec3<i32>, base: f32, rec: HitRecord, nf: vec3<f32>) -> vec3
         for (var a = 0u; a < 3u; a++) {
             let w = n[a] * n[a];
             if (w >= 1e-4) {
-                var d = vec3<f32>(0.0);
-                d[a] = sign(n[a]);
+                // Axis `a`'s unit vector toward `n`, built by a mask: no store through a
+                // runtime vector index (the portability rule of `gpu_shader_portability`).
+                let d = select(vec3<f32>(0.0), vec3<f32>(sign(n[a])), vec3<u32>(0u, 1u, 2u) == vec3<u32>(a));
                 let dir = 2u * a + select(0u, 1u, n[a] > 0.0);
                 let vis = select(dig_held_sky(base, rec.p, d), own, all(d == nf));
                 sum += vis * sky_open_irradiance(dir) * w;
