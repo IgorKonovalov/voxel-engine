@@ -557,8 +557,8 @@ says otherwise; 3, 4 and 5, the recommended options.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The key shadow at the face's centre | dev | built; the stop rule holds (neither arm closes half the distance at a still camera at either pose); readings in [`logs/0100.md`](logs/0100.md) | committed with this row |
-| 2: The bake's key ray at its cap | dev | not started | |
+| 1: The key shadow at the face's centre | dev | built; the stop rule holds (neither arm closes half the distance at a still camera at either pose); readings in [`logs/0100.md`](logs/0100.md) | `569bb5f4` |
+| 2: The bake's key ray at its cap | dev | done: the closed cave's floor reads key 0 on 64 of 64, the open one 255 on 64, the slab's 64 lit before and after, the rule's 9 chunks equal the job's; no test's bytes moved | committed with this row |
 | 3: The coarse tier's wobble, a reading | dev | not started | |
 | 4: The coarse tier held still | dev | not started | |
 | 5: Sun under cover, the candidates read | dev | not started | |
@@ -591,6 +591,14 @@ each. Empty is fine.)_
 - Phase 1, the stop rule: neither `face` nor `face-smooth` closes half the distance from `calm`
   to `calm,native` at a still camera in every bin at either pose; nothing more is built for
   the terraces until the architect amends.
+- Phase 2: both tests live in `gpu_bake_rule.rs` beside the tall cave rig, not in `gpu_bake.rs`;
+  `a_key_ray_that_ends_in_air_under_a_roof_is_not_lit` is soak-marked (18.6 to 19.7 s on
+  lavapipe).
+- Phase 2: the reading hook `job.sky` bit 3 (any end is sky) now also makes any key ray's end
+  lit.
+- Phase 2: the drain was read loaded (load 12.32): in view 42.9 s and the residency 51.2 s after
+  the first world frame, against Plan 0096's quiet 36.5 and 49.1 s.
+- Phase 1's RENOIR pass times landed in the readings log with Phase 2's commit.
 
 ### Close triggers
 

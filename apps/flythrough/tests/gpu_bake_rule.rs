@@ -1,12 +1,15 @@
 //! The record by rule (ADR-0080 rule 1) through the live queue on the software adapter: the
 //! zero record of a chunk buried under the column map with no emitter in reach, a chunk with no
 //! exposed face, the stream workers' no-face verdict, and the re-listing of a zeroed chunk by a
-//! dig to the sky.
+//! dig to the sky. Beside them the bake's key ray at its end (ADR-0084): a key ray that ends in
+//! air under a roof is not lit, one that leaves the window's side above every top is.
 //!
 //! Every world here is the buried rig's 7 x 7 x 7 chunks at test counts; the rigs are
 //! `support::queue`'s.
 
 mod support;
+
+use std::collections::BTreeMap;
 
 use flythrough::cave::ROCK;
 use svet_world::{ChunkCoord, Mode};
@@ -176,103 +179,159 @@ fn a_dig_to_the_sky_the_step_after_the_rule_was_read_relists_the_cave() {
     }
 }
 
-mod reading {
-    use std::collections::BTreeMap;
+/// The chunk whose floor the key ray's tests read: wholly inside the tall cave's footprint, its
+/// air from z 80, the rock floor's `+z` faces on voxels z 79.
+const FLOOR: [i32; 3] = [3, 4, 1];
 
-    use super::*;
-
-    /// The chunk whose floor the reading prints: wholly inside the tall cave's footprint, its
-    /// air from z 80, the rock floor's `+z` faces on voxels z 79.
-    const FLOOR: [i32; 3] = [3, 4, 1];
-
-    /// The 7 x 7 x 7-chunk world of rock under air from z 320, with a closed cave of air over
-    /// x [190, 290), y [150, 322), z [80, 230) under a roof 90 voxels thick, no emitter; the
-    /// live queue at light radius 2 (a key ray's cap, `job.radius`, 128 voxels) over a sun at
-    /// elevation 40. From [`FLOOR`]'s floor a key ray toward the sun rises 82 voxels and runs
-    /// 93 along -y and 29 along +x within its cap, so every one ends in the cave's air, under
-    /// the roof and under every column's top (319). `rule` sets the queue's zero rule.
-    fn tall_cave_rig(rule: bool) -> Option<support::queue::Q> {
-        use support::queue::{Setup, box_op, rig, world_of};
-        let world = world_of([7, 7, 7], ROCK);
-        for (min, max) in [
-            ([0, 0, 320], [448, 448, 448]),
-            ([190, 150, 80], [290, 322, 230]),
-        ] {
-            world
-                .apply(&box_op(min, max, Mode::Carve))
-                .expect("the box is resident");
-        }
-        let mut q = rig(world, &Setup::at([224.0, 224.0, 400.0]))?;
-        q.frame.set_sky(Some(sun_sky(40.0)));
-        q.frame
-            .bake_queue_mut()
-            .expect("the queue started")
-            .zero_rule = rule;
-        Some(q)
+/// The 7 x 7 x 7-chunk world of rock under air from z 320, with a cave of air over x [190, 290),
+/// y [150, 322), z [80, 230) under a roof 90 voxels thick (`roof`; else the cave is open to the
+/// sky, its air up to the surface), no emitter; the live queue at light radius 2 (a key ray's
+/// cap, `job.radius`, 128 voxels) over a sun at elevation 40. From [`FLOOR`]'s floor a key ray
+/// toward the sun rises 82 voxels and runs 93 along -y and 29 along +x within its cap, so every
+/// one ends in the cave's air: under the roof and under every column's top (319), or with no
+/// roof above the floor's columns' tops (79). `rule` sets the queue's zero rule.
+fn tall_cave_rig(rule: bool, roof: bool) -> Option<support::queue::Q> {
+    use support::queue::{Setup, box_op, rig, world_of};
+    let world = world_of([7, 7, 7], ROCK);
+    let top = if roof { 230 } else { 320 };
+    for (min, max) in [
+        ([0, 0, 320], [448, 448, 448]),
+        ([190, 150, 80], [290, 322, top]),
+    ] {
+        world
+            .apply(&box_op(min, max, Mode::Carve))
+            .expect("the box is resident");
     }
+    let mut q = rig(world, &Setup::at([224.0, 224.0, 400.0]))?;
+    q.frame.set_sky(Some(sun_sky(40.0)));
+    q.frame
+        .bake_queue_mut()
+        .expect("the queue started")
+        .zero_rule = rule;
+    Some(q)
+}
 
-    /// [`FLOOR`]'s `+z` faces in `block`: their count, and how many read each key visibility
-    /// (`None` where the record holds no key words), with the records' raw key and sky words.
-    fn floor_key_words(block: &[u32]) -> (usize, BTreeMap<Option<u8>, usize>, Vec<[u32; 4]>) {
-        use svet_render::internals::{BRICK_WORDS, record_key_visibility};
-        let mut faces = 0;
-        let mut by_key = BTreeMap::new();
-        let mut raw = Vec::new();
-        for slot in 0..512usize {
-            let dir = block[slot];
-            if dir == 0 {
-                continue;
+/// The `+z` faces of chunk block `block`: their count, and how many read each key visibility
+/// (u8; `None` where the record holds no key words).
+fn up_faces_by_key(block: &[u32]) -> (usize, BTreeMap<Option<u8>, usize>) {
+    use svet_render::internals::{BRICK_WORDS, record_key_visibility};
+    let mut faces = 0;
+    let mut by_key = BTreeMap::new();
+    for slot in 0..512usize {
+        let dir = block[slot];
+        if dir == 0 {
+            continue;
+        }
+        let rec = &block[(dir >> 11) as usize - BRICK_WORDS..(dir >> 11) as usize];
+        if (rec[6] >> (16 + 5)) & 1 == 0 {
+            continue;
+        }
+        faces += 1;
+        let key = record_key_visibility(rec, 5).map(|v| (v * 255.0).round() as u8);
+        *by_key.entry(key).or_insert(0) += 1;
+    }
+    (faces, by_key)
+}
+
+/// ADR-0084 (Plan 0096 Phase 10c's defect): a key ray that ends in air at its cap under a roof
+/// is not lit. In the closed tall cave the GPU job's record (rule off) holds a key visibility of
+/// 0 on every one of [`FLOOR`]'s 64 `+z` faces, and every chunk the rule zeroes holds the job's
+/// bytes (Plan 0096 Phase 2 bar 1 with a cave taller than the radius: none differs, the floor
+/// among them). With no roof the same floor reads 255 on all 64: the clause does not darken an
+/// open sky. Soak: three settles of the 7 x 7 x 7-chunk rig, 19.7 s on lavapipe at load 14.
+#[test]
+#[ignore = "soak"]
+fn a_key_ray_that_ends_in_air_under_a_roof_is_not_lit() {
+    let Some(mut ruled) = tall_cave_rig(true, true) else {
+        return;
+    };
+    ruled.settle();
+    let Some(mut baked) = tall_cave_rig(false, true) else {
+        return;
+    };
+    baked.settle();
+    let floor = baked.target(FLOOR).expect("the floor chunk holds a block");
+    assert_eq!(
+        up_faces_by_key(&floor),
+        (64, BTreeMap::from([(Some(0), 64)]))
+    );
+    assert!(
+        ruled.q().zeroed(ChunkCoord(FLOOR)),
+        "the floor takes the rule"
+    );
+    let mut zeroed = Vec::new();
+    let mut differ = Vec::new();
+    for c in ruled.world.extent().coords() {
+        if ruled.q().zeroed(c) {
+            zeroed.push(c.0);
+            if ruled.target(c.0) != baked.target(c.0) {
+                differ.push(c.0);
             }
-            let rec = &block[(dir >> 11) as usize - BRICK_WORDS..(dir >> 11) as usize];
-            if (rec[6] >> (16 + 5)) & 1 == 0 {
-                continue;
-            }
-            faces += 1;
-            let key = record_key_visibility(rec, 5).map(|v| (v * 255.0).round() as u8);
-            *by_key.entry(key).or_insert(0) += 1;
-            raw.push([rec[9], rec[10], rec[7], rec[8]]);
         }
-        (faces, by_key, raw)
     }
+    println!("the rule zeroed {} chunks: {zeroed:?}", zeroed.len());
+    assert!(zeroed.contains(&FLOOR));
+    assert_eq!(
+        differ,
+        Vec::<[i32; 3]>::new(),
+        "the rule's records against the job's"
+    );
+    let Some(mut open) = tall_cave_rig(false, false) else {
+        return;
+    };
+    open.settle();
+    let floor = open.target(FLOOR).expect("the open floor holds a block");
+    assert_eq!(
+        up_faces_by_key(&floor),
+        (64, BTreeMap::from([(Some(255), 64)]))
+    );
+}
 
-    /// Plan 0096 Phase 10c: a key ray that ends in air at its cap under a roof. The tall cave's
-    /// floor chunk [`FLOOR`] is buried under the column map with no emitter in reach, so the
-    /// rule writes its zero record; with the rule off a GPU job bakes it. Prints, for both
-    /// records, the floor's `+z` face count, the faces by key visibility (u8, `None` with no
-    /// key words) and the distinct raw words (key 9, key 10, sky 7, sky 8). A reading: it
-    /// asserts only that both records exist.
-    #[test]
-    #[ignore = "reading"]
-    fn a_key_ray_that_ends_in_air_under_a_roof() {
-        let Some(mut ruled) = tall_cave_rig(true) else {
-            return;
-        };
-        let ruled_steps = ruled.settle();
-        let Some(mut baked) = tall_cave_rig(false) else {
-            return;
-        };
-        let baked_steps = baked.settle();
-        for (name, q, steps) in [("job", &baked, baked_steps), ("rule", &ruled, ruled_steps)] {
-            let block = q.target(FLOOR).expect("the floor chunk holds a block");
-            let (faces, by_key, raw) = floor_key_words(&block);
-            let mut distinct: Vec<[u32; 4]> = raw.clone();
-            distinct.sort_unstable();
-            distinct.dedup();
-            println!(
-                "{name}: zeroed {} after {steps} steps; {faces} floor +z faces; by key u8 \
-                 {by_key:?}; distinct raw words [key9, key10, sky7, sky8] (hex): {}",
-                q.q().zeroed(ChunkCoord(FLOOR)),
-                distinct
-                    .iter()
-                    .take(8)
-                    .map(|w| format!("{:08x} {:08x} {:08x} {:08x}", w[0], w[1], w[2], w[3]))
-                    .collect::<Vec<_>>()
-                    .join(" | ")
-            );
-        }
-        println!(
-            "the two blocks equal: {}",
-            ruled.target(FLOOR) == baked.target(FLOOR)
-        );
-    }
+/// The slab rig's floor chunk: x [64, 128), y [0, 64), its rock floor's `+z` faces on voxels z
+/// 63, the window's -y side at y 0.
+const SLAB_FLOOR: [i32; 3] = [1, 0, 0];
+
+/// The `+z` faces of [`SLAB_FLOOR`] that read lit (255) on the tree before the key ray took the
+/// column clause (ADR-0084), read there by this test with the count's assertion off.
+const SLAB_LIT: usize = 64;
+
+/// A 3 x 2 x 2-chunk world: rock floor to z 64, air over it, and a roof slab of rock over z
+/// [100, 110) on every column from y 8 on, so the floor is covered but along the window's -y
+/// side; no emitter, the live queue at light radius 2 (cap 128 voxels), the rule off, a sun at
+/// elevation 10 from -y. From [`SLAB_FLOOR`]'s floor a key ray runs at most 64 voxels across
+/// the ground (11.3 up) to the window's -y side, under the roof's edge, and leaves the window
+/// there at most at z 75, above the edge columns' top (63) and under the roof: every floor face
+/// of the chunk stays lit, [`SLAB_LIT`] of them, the count before the change.
+#[test]
+fn a_key_ray_that_leaves_the_windows_side_above_every_top_stays_lit() {
+    use support::queue::{Setup, box_op, fill, rig, world_of};
+    let world = world_of([3, 2, 2], ROCK);
+    world
+        .apply(&box_op([0, 0, 64], [192, 128, 128], Mode::Carve))
+        .expect("the box is resident");
+    fill(&world, [0, 8, 100], [192, 128, 110], ROCK);
+    let Some(mut q) = rig(world, &Setup::at([96.0, 4.0, 80.0])) else {
+        return;
+    };
+    let e = 10f32.to_radians();
+    q.frame.set_sky(Some(svet_render::sky::Sky::new(
+        svet_render::sky::Body::sun([0.0, -e.cos(), e.sin()]),
+        svet_render::sky::Body::moon([0.0, 0.0, -1.0]),
+    )));
+    q.frame
+        .bake_queue_mut()
+        .expect("the queue started")
+        .zero_rule = false;
+    q.settle();
+    let block = q
+        .target(SLAB_FLOOR)
+        .expect("the slab's floor holds a block");
+    let (faces, by_key) = up_faces_by_key(&block);
+    let lit = by_key.get(&Some(255)).copied().unwrap_or(0);
+    println!("the slab's floor: {faces} +z faces, by key u8 {by_key:?}");
+    assert_eq!(faces, 64);
+    assert_eq!(
+        lit, SLAB_LIT,
+        "lit faces against the count before the change"
+    );
 }
