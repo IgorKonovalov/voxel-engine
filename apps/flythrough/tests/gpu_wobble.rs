@@ -104,6 +104,9 @@ struct Arm {
     /// `Lighting::light_history_far` (`hfar`).
     far_light_wide: bool,
     light_history_far: bool,
+    /// Plan 0100 Phase 1's arms: where on a cube face the key light's column horizon is read
+    /// (`keyat=hit|face|face-smooth`).
+    key_at: svet_render::KeyAt,
 }
 
 impl Arm {
@@ -122,7 +125,8 @@ impl Arm {
     /// on), `fly=N` (the fly's frames) and
     /// `normals` (the normals view); Plan 0098 Phase 5's arms `wide` (`far_light_wide`) and
     /// `hfar` (`light_history_far`); Plan 0098 Phase 9's `hist` (`light_history` on, after
-    /// `calm`) and `baked` (`key_far baked`).
+    /// `calm`) and `baked` (`key_far baked`); Plan 0100 Phase 1's `keyat=hit|face|face-smooth`
+    /// (`Lighting::key_at`).
     fn parse() -> Self {
         Self::from_spec(&std::env::var("SVET_WOBBLE").unwrap_or_else(|_| "default".into()))
     }
@@ -174,6 +178,7 @@ impl Arm {
             normals: false,
             far_light_wide: false,
             light_history_far: false,
+            key_at: flythrough::default_lighting().key_at,
         };
         for t in spec.split(',') {
             let (k, v) = t.split_once('=').unwrap_or((t, ""));
@@ -243,6 +248,7 @@ impl Arm {
                 "wide" => a.far_light_wide = true,
                 "hfar" => a.light_history_far = true,
                 "fly" => a.fly = v.parse().unwrap(),
+                "keyat" => a.key_at = svet_render::KeyAt::from_name(v).expect("keyat=NAME"),
                 other => panic!("unknown arm token {other}"),
             }
         }
@@ -342,6 +348,7 @@ fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
         source_fade: arm.source_fade,
         far_light_wide: arm.far_light_wide,
         light_history_far: arm.light_history_far,
+        key_at: arm.key_at,
         store_read: if arm.store_read_face {
             svet_render::StoreRead::Face
         } else {

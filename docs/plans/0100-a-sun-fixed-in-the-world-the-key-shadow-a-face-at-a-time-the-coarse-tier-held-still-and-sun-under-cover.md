@@ -1,6 +1,6 @@
 # 0100: A sun fixed in the world: the key shadow a face at a time, the coarse tier held still, and sun under cover
 
-> **Status:** approved (owner, 2026-11-24; his answers to the five questions are under "Risks & open questions"). Drafted 2026-11-23 overnight with no interview:
+> **Status:** in-progress (approved by the owner 2026-11-24; his answers to the five questions are under "Risks & open questions"). Drafted 2026-11-23 overnight with no interview:
 > the guesses and the open questions are under "Risks & open questions", each with a
 > recommended option. **Order:** its lane starts when Plan 0098 has merged (its base is the
 > calm defaults and Phase 14's dig); it runs **beside Plan 0099** (owner, 2026-11-23), which
@@ -557,7 +557,7 @@ says otherwise; 3, 4 and 5, the recommended options.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The key shadow at the face's centre | dev | not started | |
+| 1: The key shadow at the face's centre | dev | built; the stop rule holds (neither arm closes half the distance at a still camera at either pose); readings in [`logs/0100.md`](logs/0100.md) | committed with this row |
 | 2: The bake's key ray at its cap | dev | not started | |
 | 3: The coarse tier's wobble, a reading | dev | not started | |
 | 4: The coarse tier held still | dev | not started | |
@@ -572,6 +572,25 @@ says otherwise; 3, 4 and 5, the recommended options.
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- Phase 1: `Params::lighting` has no free bit; `key_at` sets `Params::lighting2` bits 1 and 2
+  (`Lighting::flags2`), so `frame/encode.rs` (one line) and `frame/compose.rs` (two WGSL
+  constants) changed, outside the phase's files.
+- Phase 1: also outside the list: `lib.rs` (the `KeyAt` export), `apps/flythrough/src/cli/mod.rs`
+  (the start lighting's field), `apps/flythrough/tests/gpu_wobble.rs` (the `keyat=` token), the
+  two settings test files, and `apps/flythrough/src/toggles/cycle.rs` (new: `next_missing_light`
+  and `next_reach` moved out of `toggles.rs`, at 1199 of 1200 lines, so the `key at` switch fits).
+- Phase 1: the face's centre is the level-0 voxel's behind the hit; the hit record carries no LOD
+  level, so "at the level hit" is not read.
+- Phase 1: W3's still (`2-noon-settled.png`) is not on disk; the view at W3's eye is the rig's
+  rule (the ground 40 voxels down the slope's fall): yaw 34.5, pitch -46.2 degrees.
+- Phase 1: the pass times were read with the RTX at Floor 1920 x 1080 (Plan 0098 Phase 4's
+  table) and the RENOIR at Portable 1280 x 720.
+- Phase 1: the forest arms ran on the wobble rig's near class (all pixels under 6 m); the rig has
+  no shadow-edge class for the trunks.
+- Phase 1, the stop rule: neither `face` nor `face-smooth` closes half the distance from `calm`
+  to `calm,native` at a still camera in every bin at either pose; nothing more is built for
+  the terraces until the architect amends.
 
 ### Close triggers
 

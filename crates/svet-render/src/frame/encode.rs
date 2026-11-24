@@ -212,11 +212,7 @@ impl Frame {
             far_normal: self.state.look.far_normal,
             sky_bounce: self.state.lighting.sky_bounce.clamp(0.0, 1.0),
             key_cap: self.state.lighting.key_cap.max(0.0),
-            lighting2: if self.state.lighting.sky_down_skip {
-                LIGHTING2_SKY_DOWN_SKIP
-            } else {
-                0
-            },
+            lighting2: self.state.lighting.flags2(),
             window_size: e.size(),
             lamp: Light::headlamp(camera, light),
             lamp_pose: [light.offset_right, light.offset_down, light.turn],

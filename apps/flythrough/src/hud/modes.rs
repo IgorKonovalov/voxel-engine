@@ -739,6 +739,9 @@ impl Modes {
             let _ = write!(out, ", sky rays {}, ", l.sky_rays);
             out.push_str(self.leaf_shadow.words());
             self.write_key_far(out);
+            if l.key_at != svet_render::KeyAt::default() {
+                let _ = write!(out, "key at {}, ", l.key_at.name());
+            }
             if l.penumbra != crate::DEFAULT_PENUMBRA {
                 let _ = write!(out, "penumbra {}, ", l.penumbra.name());
             }

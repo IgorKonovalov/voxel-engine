@@ -116,3 +116,32 @@ impl DigHold {
         Self::ALL[(i + 1) % Self::ALL.len()]
     }
 }
+
+/// Where on a cube face the key light's column horizon (`column_key_visibility`) is read
+/// (Plan 0100 Phase 1's spike, ADR-0084).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum KeyAt {
+    /// At the hit: a point that moves with the frame's jitter across a face. The default.
+    #[default]
+    Hit,
+    /// At the centre of the hit's voxel face (the voxel's centre moved half a voxel along the
+    /// face normal): one value a face, fixed in the world.
+    Face,
+    /// At the four face centres of the face's plane nearest the hit, blended bilinearly by the
+    /// hit's place among them: a ramp one voxel wide, fixed in the world.
+    FaceSmooth,
+}
+
+named_enum!(KeyAt {
+    Hit => "hit",
+    Face => "face",
+    FaceSmooth => "face-smooth",
+});
+
+impl KeyAt {
+    /// The value after this one in [`KeyAt::ALL`], the first after the last.
+    pub fn next(self) -> Self {
+        let i = Self::ALL.iter().position(|&k| k == self).unwrap_or(0);
+        Self::ALL[(i + 1) % Self::ALL.len()]
+    }
+}

@@ -140,19 +140,8 @@ macro_rules! lighting {
     };
 }
 
-/// The missing-light mode after `m` in [`svet_render::MissingLight::ALL`].
-pub(crate) fn next_missing_light(m: svet_render::MissingLight) -> svet_render::MissingLight {
-    use svet_render::MissingLight;
-    let i = MissingLight::ALL.iter().position(|&x| x == m).unwrap_or(0);
-    MissingLight::ALL[(i + 1) % MissingLight::ALL.len()]
-}
-
-/// The reach mode after `m` in [`svet_render::ReachMode::ALL`].
-pub(crate) fn next_reach(m: svet_render::ReachMode) -> svet_render::ReachMode {
-    use svet_render::ReachMode;
-    let i = ReachMode::ALL.iter().position(|&x| x == m).unwrap_or(0);
-    ReachMode::ALL[(i + 1) % ReachMode::ALL.len()]
-}
+mod cycle;
+pub(crate) use cycle::{next_missing_light, next_reach};
 
 /// The budgets the menu's `bake budget` steps through: the default slice, 150 ms a second and 300 ms a
 /// second, each capped at a quarter of the frame.
@@ -1081,6 +1070,11 @@ pub static TOGGLES: &[Toggle] = &[
         |m| {
             m.diag.queue_frozen = !m.diag.queue_frozen;
         }
+    ),
+    diag!(
+        "key at",
+        |m| format!("key at {}", m.lighting.key_at.name()),
+        |m| m.lighting.key_at = m.lighting.key_at.next()
     ),
     Toggle {
         press: Press::Menu,

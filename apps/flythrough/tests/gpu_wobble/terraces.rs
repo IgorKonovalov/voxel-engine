@@ -10,7 +10,9 @@
 //! term's cosine or its hit, by over 5 %), else the sky's shown visibility (by over 0.02), else
 //! none (the upscaler's own). The protocol: 600 settle frames with the queue stepping, the
 //! exposure pinned at its settled value, the queue stopped, 32 still frames (the jitter's
-//! phases), then a fly of 120 frames at 0.5 m/s. Nothing is asserted.
+//! phases), then a fly of 120 frames at 0.5 m/s. Nothing is asserted. Plan 0100 Phase 1 adds
+//! window W3's noon pose (`terraces_w3`: the eye at x 496.0 y -648.7 z 456.7, looking down the
+//! slope) beside the spawn's.
 
 use super::*;
 
@@ -38,6 +40,55 @@ fn slope_rig() -> Option<(Rig, Camera)> {
     let p = eye.0.map(|v| v as f32 + 0.5);
     let d = facing.map(|v| v as f32);
     let cam = flythrough::camera_looking_at(p, [p[0] + d[0], p[1] + d[1], p[2] + d[2]]);
+    Some((rig, cam))
+}
+
+/// Window W3's noon eye in voxels (Plan 0100 Phase 1, the HUD's position of `2-noon-settled`).
+const W3_EYE: [f32; 3] = [496.0, -648.7, 456.7];
+
+/// How far ahead of W3's eye, in voxels across the ground, the camera looks down the slope.
+const W3_AHEAD: f32 = 40.0;
+
+/// The span in voxels either side of a column over which the slope's fall is read.
+const W3_SPAN: f32 = 16.0;
+
+/// The noon slope's source as [`slope_rig`]'s, the chunks within 4 of W3's eye's (2 down, 3 up),
+/// the camera at W3's eye looking at the ground [`W3_AHEAD`] voxels away down the slope's fall
+/// (the surface's height read [`W3_SPAN`] voxels either side of the eye's column).
+fn w3_rig() -> Option<(Rig, Camera)> {
+    use flythrough::outdoor::OutdoorSource;
+    use flythrough::trees::{ForestSource, LEAF_FILL, TreeDensity};
+    use svet_world::{ChunkExtent, VoxelCoord, World};
+    let source = ForestSource::new(OutdoorSource::new(1), TreeDensity::Sparse, LEAF_FILL);
+    let eye = VoxelCoord(W3_EYE.map(|v| v.floor() as i32));
+    let c = eye.chunk().0;
+    let extent = ChunkExtent::new(
+        [c[0] - 4, c[1] - 4, c[2] - 2],
+        [c[0] + 5, c[1] + 5, c[2] + 3],
+    );
+    let h = |x: f32, y: f32| source.base().height(x.round() as i32, y.round() as i32) as f32;
+    let [x, y, _] = W3_EYE;
+    let fall = [
+        h(x - W3_SPAN, y) - h(x + W3_SPAN, y),
+        h(x, y - W3_SPAN) - h(x, y + W3_SPAN),
+    ];
+    let len = (fall[0] * fall[0] + fall[1] * fall[1]).sqrt();
+    let d = if len > 0.0 {
+        fall.map(|v| v / len)
+    } else {
+        [1.0, 0.0]
+    };
+    let target = [x + d[0] * W3_AHEAD, y + d[1] * W3_AHEAD];
+    let ground = h(target[0], target[1]) + 1.0;
+    println!(
+        "w3: ground under the eye z {}, the target ({:.1}, {:.1}, {ground})",
+        h(x, y) + 1.0,
+        target[0],
+        target[1]
+    );
+    let world = World::generate(extent, &source, &flythrough::outdoor_materials());
+    let rig = support::terms::mirrored(world, eye)?;
+    let cam = flythrough::camera_looking_at(W3_EYE, [target[0], target[1], ground]);
     Some((rig, cam))
 }
 
@@ -233,11 +284,27 @@ mod reading {
     #[test]
     #[ignore = "reading"]
     fn terraces() {
-        let arm = Arm::parse();
         let Some((mut rig, cam0)) = slope_rig() else {
             return;
         };
-        let rig = &mut rig;
+        terraces_on(&mut rig, cam0, "");
+    }
+
+    /// [`terraces`] at window W3's pose ([`w3_rig`]), written to
+    /// `live/wobble/terraces/w3-<arm>.txt`.
+    #[test]
+    #[ignore = "reading"]
+    fn terraces_w3() {
+        let Some((mut rig, cam0)) = w3_rig() else {
+            return;
+        };
+        terraces_on(&mut rig, cam0, "w3-");
+    }
+
+    /// The protocol on `rig` from `cam0`, its files named `<prefix><arm>`.
+    fn terraces_on(rig: &mut Rig, cam0: Camera, prefix: &str) {
+        let arm = Arm::parse();
+        let name = format!("{prefix}{}", arm.name);
         let internal = if arm.upscaler == "off" { OUT } else { INTERNAL };
         let mut f = frame_for(rig, &arm);
         f.set_sky(Some(
@@ -270,13 +337,15 @@ mod reading {
             s.run(rig, &cam0);
         }
         let mut out = format!(
-            "terraces {} on {}: eye {:?}, exposure pinned {e:.3e}, the queue stopped\n",
-            arm.name,
+            "terraces {name} on {}: eye {:?} yaw {:.1} pitch {:.1} deg, exposure pinned {e:.3e}, \
+             the queue stopped\n",
             rig.adapter,
-            cam0.position.to_array()
+            cam0.position.to_array(),
+            cam0.yaw.to_degrees(),
+            cam0.pitch.to_degrees()
         );
         support::write_png(
-            &dir_of().join(format!("{}-still.png", arm.name)),
+            &dir_of().join(format!("{name}-still.png")),
             &reads_png(rig, &s),
             OUT[0],
             OUT[1],
@@ -309,6 +378,6 @@ mod reading {
         out.push('\n');
         print!("{out}");
         let dir = dir_of();
-        std::fs::write(dir.join(format!("{}.txt", arm.name)), out).expect("the table");
+        std::fs::write(dir.join(format!("{name}.txt")), out).expect("the table");
     }
 }

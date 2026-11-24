@@ -264,3 +264,21 @@ fn a_changed_value_names_its_field() {
     );
     assert_eq!(row(&a, "output_hint"), "Some([1920, 1080])");
 }
+
+/// Plan 0100 Phase 1: `lighting.key_at` is a row of its own, applied live, and every profile
+/// holds `hit` (the image before the setting) until the owner's pick.
+#[test]
+fn the_key_at_row_is_live_and_every_profile_reads_at_the_hit() {
+    assert_eq!(
+        RenderSettings::FIELDS
+            .iter()
+            .filter(|&&(n, _)| n == "lighting.key_at")
+            .map(|&(_, c)| c)
+            .collect::<Vec<_>>(),
+        [ApplyClass::Live]
+    );
+    for p in Profile::ALL {
+        let s = RenderSettings::profile(p);
+        assert_eq!(s.lighting.key_at, crate::frame::KeyAt::Hit, "{}", p.name());
+    }
+}

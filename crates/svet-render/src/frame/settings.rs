@@ -293,6 +293,14 @@ pub(crate) const LIGHTING_KEY_STEP: u32 = 1 << 26;
 /// points down.
 pub(crate) const LIGHTING2_SKY_DOWN_SKIP: u32 = 1;
 
+/// `Params::lighting2` bit ([`KeyAt::Face`]): a cube face's column horizon is read at the face's
+/// centre.
+pub(crate) const LIGHTING2_KEY_AT_FACE: u32 = 1 << 1;
+
+/// `Params::lighting2` bit ([`KeyAt::FaceSmooth`]): a cube face's column horizon is the bilinear
+/// blend of the four face centres of its plane nearest the hit.
+pub(crate) const LIGHTING2_KEY_AT_SMOOTH: u32 = 1 << 2;
+
 /// The light passes' reading hooks ([`Frame::set_light_hooks`]): switches that take a term or a
 /// test out of the frame to attribute what the image does to it. All off by default; each is
 /// a uniform branch on a `Params::lighting` bit.
@@ -952,6 +960,8 @@ pub struct Lighting {
     /// radius, before the live queue re-bakes the block's key visibilities alone (ADR-0079;
     /// default [`DEFAULT_KEY_STEP`]).
     pub key_step: f32,
+    /// Where on a cube face the key light's column horizon is read ([`KeyAt`]; default `Hit`).
+    pub key_at: KeyAt,
 }
 
 /// [`Lighting::key_step`] by default, in degrees (Plan 0095 Phase 8, a guess: 10 s of the
@@ -1013,6 +1023,7 @@ impl Default for Lighting {
             sky_down_skip: false,
             column_wait: false,
             key_step: DEFAULT_KEY_STEP,
+            key_at: KeyAt::Hit,
         }
     }
 }
@@ -1108,6 +1119,19 @@ impl Lighting {
             } else {
                 0
             }
+    }
+
+    /// The bits of `Params::lighting2`.
+    pub fn flags2(&self) -> u32 {
+        (if self.sky_down_skip {
+            LIGHTING2_SKY_DOWN_SKIP
+        } else {
+            0
+        }) | match self.key_at {
+            KeyAt::Hit => 0,
+            KeyAt::Face => LIGHTING2_KEY_AT_FACE,
+            KeyAt::FaceSmooth => LIGHTING2_KEY_AT_SMOOTH,
+        }
     }
 
     /// The manual exposure, or 1.0 in auto.
