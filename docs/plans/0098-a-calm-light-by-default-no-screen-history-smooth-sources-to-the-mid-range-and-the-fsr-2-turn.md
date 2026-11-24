@@ -28,6 +28,15 @@
 > tier's wobble and the sun under cover go to one follow-on plan, outlined there (the
 > architect's recommendation, owner confirm owed). **Order from here: 11, 12, 13, 14, 15, the
 > gate, the close.**
+> **Amended 2026-11-24 (owner)**, at window 98d (Phase 15; section "Amendment at window 98d"):
+> the dig under Phase 14's held value is not accepted on the RTX ("white inside and black
+> around when digging") and costs over Portable's frame line on the RENOIR; the plan stays
+> open for it. The owner's delay of the dig is answered there (feasible only with staged
+> mirror records, not taken first). Phase 16 (every dig's faces land within a few frames,
+> whatever the queue holds), Phase 17 (the held value is the store's record, and the image
+> test re-derived) and Phase 18 (the owner's look at digs in a row) are new; Phase 14 ends as
+> amended, Phase 15 is run and not accepted. **Order from here: 16, 17, 18, the gate, the
+> close.**
 > **Created:** 2026-11-21
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0082](../adrs/0082-the-light-pass-keeps-no-screen-history-by-default-and-reads-smooth-sources-to-the-mid-range.md)
@@ -671,6 +680,238 @@ next free plan number at drafting; one plan, three subjects, in this order):
    stays reachable as a value of `--dig-hold` for Phase 15's before-and-after and is
    removed at the close if the look passes (you rejected it at W3; it is not a cheap arm
    someone may want). The other option: keep it as a setting.
+
+## Amendment at window 98d (2026-11-24; owner)
+
+Phase 15 ran on 2026-11-24 (`live/session98d.sh`, `live/bin98f` at `d967db57`: Phase 14's
+held value from 12 near rays as the default; stills and the orchestrator's record under
+`live/window98d/`, the owner's words in [`logs/0098.md`](logs/0098.md), "Phase 15: window
+98d's verdicts"). **The verdicts and the decision to keep this plan open for the dig are the
+owner's. The mechanisms below are the architect's reading of the code at `f7c71266` and are
+suspects until Phase 16's step 1 reads them.**
+
+| run | the owner's words | what follows |
+|---|---|---|
+| 2: the RTX, the forest at `--sun 10,180`, the default, several digs in a row at x 0.5 y 640.5 z 579.5 | "it got better, but still - white inside and black around when digging" (`2-default-dig.png`; HUD: 101 in view waiting, all coarse, drain 2.5 s, queue depth 3411, digs +3 ms, 77 fps) | **not accepted. Phases 16 to 18, in this plan** |
+| 3: the RENOIR at Portable, the forest at 15:00, the default | "not bad" (`3-radeon-dig.png`; HUD while the dig is held: temporal 19.63 ms, light 5.40 ms, gpu 36.5 ms, 36.4 fps, 860 waiting, slice 15.73 ms) | the look passes there and **the cost does not**: the held value's rays put the frame over Portable's 33.3 ms line. Phase 17 |
+| 1: the before (`--dig-hold rays`) | no verdict given | none owed; `rays` stays the test's bite check |
+| his question | "Maybe we should fix it by delaying the dig a bit?" | answered below: feasible, not with the mirror as it is, and not the first step |
+
+**What happens to Phases 14 and 15.** Phase 14 ends as it stands: step 1 (the reading in
+the owner's pose) is done and kept; step 2's held value (`d967db57`, wip) is the base Phases
+16 and 17 change; its Done-when lines on the image test's first claim and on the readings
+"with the fix" are **replaced by Phase 17's**; its gate test of the mechanism and its CPU
+test stand, restated in Phase 17. Phase 15 is **run, not accepted**; Phase 18 is its
+successor. Nothing is renumbered.
+
+### Why the hole is still white and black: the wait, not only the value
+
+Phase 14 treated the fault as a wrong value shown while the bake is awaited, and looked for
+a better estimate. Its own readings say no estimate meets the bar (the best: white 16.9 %,
+black 22.0 % of the hole on lavapipe), and they hold the larger fact: **the first dig lands
+in 3 frames on the RTX and the second and third in 66** (the RENOIR 8 and 56, lavapipe 11
+and 74). The owner dug several times in a row with 101 chunks waiting. What he saw for a
+second or more is the estimate, and behind it earlier holes whose light had not landed
+(`3-radeon-dig.png`: "a large dark area to its left (an earlier dig, light not landed)").
+
+The queue already puts a dig ahead of every other job (`open_digs` pushes at the front and
+`promote`s). Read in `bake/queue/digs.rs`, `bake/queue/step.rs` and `bake/job_loop.rs`, five
+things can still hold a dug face back. **Suspects, in the order the code suggests; step 1's
+timeline names which bind:**
+
+- **S1. A re-dug chunk's job runs to its end and is thrown away.** `invalidate` and
+  `take_boxes` mark a chunk in a job stale; `Placement::place` releases its block when it
+  closes; `open_digs` skips every chunk still in a job (`!in_job`). So a dig made while an
+  earlier one is in flight waits for all of the earlier job's samples, which are wasted,
+  and only then opens the union. `JobLoop::withdraw` exists and is not used here.
+- **S2. A stale job that is not a dig's blocks the same way and is not promoted.** A first
+  pass or a refinement running in a ring chunk goes stale at the edit and keeps its place
+  behind the promoted jobs; the dig for its chunk waits until it ends. With a deep queue
+  (the still: depth 3411) the open slots hold such jobs. This fits the land arm's reading:
+  a sixteenth of the samples and nearly the same wait (49 against 66 frames), so the wait
+  is not the dig's own samples.
+- **S3. The hole lands with its ring.** One job a chunk bakes every dig brick of the chunk,
+  the touched bricks (ring 1, the box dilated by one voxel) together with every brick
+  within `DIG_REACH` (32 voxels, ring 2), and its block is placed when its last face ends.
+- **S4. Ring chunks open by the two-slice rule, one or a few a step** (`left >= 2 * cap`),
+  ring 1 first. The owner's pose is at a chunk corner (x 0.5, y 640.5 = 10 x 64), so the
+  hole itself spans several chunks.
+- **S5. A pending job needs a free table slot** (`QUEUE_SLOTS`, 16); a dig pushed at the
+  front waits in `pending` while every slot holds an open job.
+
+Not a suspect: the sample count for the sky. A brick direction draws `SKY_BAKE_RAYS` (256)
+sky rays at any count, so the land arm buys little for an outdoor hole.
+
+### The owner's delay: is it feasible?
+
+**Not with the mirror as it is. With staged records it is, at a cost this plan does not
+take first.**
+
+- **Why not today.** The mirror is one state: `GpuWorld::sync` rewrites a dug brick's slot
+  in place and flushes the chunk's record, the table and the column map's tops in the
+  frame's own encoder, ahead of the march. The bake's rays walk those same bindings
+  (bake.wgsl: group 0, the frame's shadow walk, `sky_ray_open` on the column's top). So the
+  bake can trace the edited geometry only once the march draws it. Holding the upload back
+  delays the bake by the same frames and gains nothing.
+- **What would allow it: staged records.** (1) `sync` writes a dug chunk to a fresh record
+  and its changed bricks to fresh slots, and keeps the old ones alive (it already gives a
+  chunk a new record on a tier change and frees the old one in the same sync); (2) the
+  table entry's flip waits D frames; (3) the bake's module takes one more replaced read
+  (`bake_source` already replaces the candidate table and the LOD origin): a chunk lookup
+  that consults a short list of staged chunks first; (4) the column map carries the staged
+  columns' new tops for the bake alone; (5) in those D frames the march, the light pass's
+  rays, the field pass and the emitter lists read the old state, while the world, its
+  collision and the edit's result are immediate and deterministic as today.
+- **Its cost.** VRAM: a record and the changed bricks' slots a dug chunk, for D frames,
+  inside ADR-0013's reservation (small). Code: a two-phase commit in `gpu_world` (frees
+  deferred, a dig onto a staged chunk, the band repair across chunk faces, the light
+  lists), under ADR-0013 and ADR-0022; that is an ADR and a plan of its own, in the crate's
+  most invariant-heavy file. **Latency:** D must cover the landing. The floor is the
+  readback (a submit, a poll, a place: 2 to 3 frames); the first dig today takes 3 frames
+  on the RTX and 6 to 8 on the RENOIR at 30 fps, which is 200 to 270 ms of visible lag
+  there, not 50. And while a later dig takes 66 frames no delay covers it.
+- **So the order is forced.** The delay is only worth anything once every dig lands within
+  a few frames, which is Phase 16. After that it would replace at most a handful of frames
+  of a held value with the old picture. Whether that is still wanted is the owner's eye at
+  Phase 18.
+
+Rejected, with the reason:
+
+- **Holding the edit's upload back** (the simple reading of "delay the dig"): the bake has
+  nothing to trace until the upload.
+- **A second whole mirror**: the live mirror is 343 MB at the owner's pose (the still).
+- **Freezing the screen's pixels in the dig's box**: a screen history, gone under a camera
+  move and rejected by ADR-0082.
+- **Blocking the frame on the dig's readback** so the light lands in the dig's frame: a
+  stall on the main thread, where the RTX already dips to about 30 fps at a dig.
+- **A full bake of the dug faces on the CPU against the world**: a second sampler to keep
+  equal to bake.wgsl (the walk, the absorbing materials, the column rule, the key disc, the
+  emitters). A small CPU *estimate* is taken in Phase 17; it is a held value, not the bake.
+- **The land arm as the route** (the coarse count for a dig): its wait is nearly the full
+  count's, and its landing darkens ring chunks for a cause not found. Step 1 reads the
+  cause because a dark landing may be a fault in the coarse tier at large (W3's wobble on
+  near trunks under the coarse record is the follow-on plan's); the arm itself goes.
+
+**No ADR now.** Nothing here supersedes a recorded decision: the jump is ADR-0046's rings
+and ADR-0080's "the queue bakes what the image reads" applied to the dig; the held value in
+the store is ADR-0076's rule 3. ADR-0082's Outcome at the close names the dig's rule as
+Phases 16 and 17 built it and this section's rejected lines. Staged records, if the owner
+asks for them after Phase 18, are a plan with its own ADR.
+
+### What the held value becomes
+
+It covers only the frames from the dig to the landing (Phase 16's bound) and the fade after
+it. For that span the 12 near rays a pixel are the wrong tool: on the RENOIR the temporal
+pass reads 3.1 ms at rest and 15.7 to 19.6 ms while a dig is held, and the Portable frame
+goes over its line. Phase 14's readings also say why the estimate never matched the landed
+picture: "the held face's own visibility lands near the landed record's, and the term does
+not": the landed term is read from brick-cell records, mixed over the cell's directions and
+bilinear over the cells about the face; the held one was a value a pixel in the temporal
+pass.
+
+**So the held value moves into the store.** At the edit, `provisional_block` writes each
+touched brick's directions an estimate made on the CPU against the world (the base Phase 14
+found: the removed surface's value, capped; times an openness from a few short rays, a
+dozen of 16 voxels, from a few of the direction's faces), and the light pass reads it as it
+reads any record: the same form as what lands, no ray cast, no pair kept, nothing added to
+the temporal pass. The landing is the store's own fade from the provisional block
+(`DIG_FADE`, the world's clock). The ring keeps Phase 8's hold (its stale record held; the
+readings have it clean: under 0.6 % at 4 levels). ADR-0076's two statements: **the
+history is the store's provisional record** (world space; no screen accumulation), and
+**one fade carries the switch** from the held record to the job's (the queue's `DIG_FADE`
+frames, linear a record, monotonic); the stale ring to its re-bake rides `FADE` as today.
+
+`--dig-hold` after Phase 17: `on` the store-held value (the default), `near` Phase 14's 12
+rays (kept through Phase 18 only: the owner called it "not bad" on the RENOIR, so the look
+compares the two; question 3), `rays` Phase 8's path (the bite check), `off`; `land` is
+removed.
+
+### The image test, re-derived (the owner has agreed the bar changes with the mechanism)
+
+The old claim was "the estimate is within 4 levels of the truth at 98 % of the hole in every
+frame". No estimate can be: the truth needs the bake. The new claim has two parts, both
+measured directly at the owner's pose, no arm as a baseline:
+
+1. **It lands.** Every dig's touched bricks hold their job's records within **N frames of
+   that dig's frame**, the third of three in a row and a dig made with 100 chunks waiting
+   included.
+2. **Until then, nothing is white or black.** In the frames before the landing and its
+   fade, the share of hole pixels more than **32 levels** above the larger of their own
+   `before` and `after`, or more than 32 below the smaller, is at most 2 %. After the
+   fade the original bar holds (4 levels, 2 %). The ring keeps the original bar in every
+   frame (it passes today, and a landing that darkens ring chunks fails it).
+
+32 levels is an eighth of the display range: the architect's figure for "a face that reads
+as white or as black beside its neighbours", against Phase 14's error table (the removed
+surface's value is off by 8.6 levels in the mean, 43 to 60 at the largest). It is not
+derived; step 1 of Phase 17 prints the excess's histogram so the owner sees where it sits
+(question 2). The `rays` arm must fail both parts.
+
+### Plan 0099 (the bake step off the main thread)
+
+It starts after this plan merges and owns `bake/queue/` from then. This amendment keeps its
+change to `digs.rs`, the sink in `step.rs` and the use of `JobLoop::withdraw`; it adds no
+stage to the step and no new store word. What 0099 inherits: ring 1 as a job of its own
+ahead of ring 2, a withdrawn (not awaited) stale job at a re-dig, the CPU estimate inside
+`take_boxes` (which moves to the bake thread with it), and **the bound of Phase 16 as the
+base of its "an edit's light" line** ("the dig's near ring within the base's frames plus
+2": with the thread on, a dig lands within this plan's N plus 2). The main-thread cost of a
+dig's step (the dip to about 30 fps) stays 0099's; this amendment may not raise it.
+
+### Budgets and risks this amendment adds
+
+- **`docs/nfr.md` section 2, Portable (33.3 ms, one line).** While a dig is held the
+  frame on the RADV RENOIR at Portable must cost no more than the same frame under
+  `--dig-hold off` plus 1.0 ms of GPU time, and the temporal pass no more than its rest
+  value plus 0.7 ms (Phase 8's reading: +0.66). Window 98d read +16.5 ms. Measured in
+  Phase 17 at the window's pose; the reading goes to `docs/nfr/02-frame-budget.md` at the
+  close.
+- **Section 2, Floor: denoise 2.0 ms, streaming 1.0 ms.** The temporal pass on the RTX
+  3080 Laptop while a dig is held: its rest value plus 0.1 ms (it read 0.25 at rest and
+  1.4 to 4.2 held). The bake step's main-thread time on a dig's frame: no more than
+  `d967db57`'s at the same pose plus 1.0 ms on either adapter (the estimate's rays and the
+  withdrawals are the new work; a guess of under 0.5 ms).
+- **Section 4, an edit's light.** N: 4 frames on the RTX 3080 Laptop, 6 on the RADV
+  RENOIR at Portable, 8 on lavapipe. **Guesses until Phase 16's step 1**: the floor is the
+  readback's 2 to 3 frames; the first dig with an idle queue reads 3, 6 to 8 and 4 to 11
+  today for ring 1 and ring 2 together.
+- **The bake's slice does not grow.** `edit_ms` (3 ms) stays; the jump changes the order
+  of the samples, not their number a frame.
+- **Section 7.** The image test stays soak (60 to 102 s on lavapipe); the gate grows by
+  Phase 16's queue test and Phase 17's CPU test (under 1 s each, guesses).
+- **Risk: the timeline names none of S1 to S5.** Then Phase 16 stops at its reading.
+- **Risk: ring 1 alone cannot land in N on the RENOIR or lavapipe** (the readback's
+  latency and the slice at that adapter's rate). The dev stops; the bound is restated by
+  the architect from the reading, and the owner's question 1 (the delay) is asked with the
+  real figure.
+- **Risk: the store-held estimate reads worse than the 12 rays a pixel.** A value a brick
+  direction is coarser than a value a pixel. The test's part 2 and the owner's run against
+  `near` say; if it fails part 2, the dev stops with the histogram.
+- **Risk: a faster landing shows more of the landing's step.** Four frames of fade from an
+  estimate off by tens of levels is a visible change, soon over. The test's "one fade"
+  claim stands; whether it reads as a flash is Phase 18's question.
+- **This plan now touches the bake queue**, which "What this plan does NOT do" excluded
+  (Plan 0096's ground, closed since). The exception is the dig's order and its provisional
+  block, nothing of the drain, the tiers or the slice.
+- Determinism: none touched. The world's edit and its result are as they were; the
+  estimate is render-side and need not be bit-equal across adapters.
+
+### Questions for the owner (each with the recommended option; the lane goes on by them)
+
+1. **The delay.** Recommended: not built now. Phase 16 makes every dig land within a few
+   frames and Phase 17 holds a calm value for those frames; you look at it in Phase 18. If
+   the few frames still read as a flash, staged records (the old picture held until the
+   light is ready, a lag of 3 frames on the RTX and about 6 on the Radeon) become the next
+   plan, with an ADR. The other option: draft that plan now, to run after this one whatever
+   Phase 18 says.
+2. **The bar before the landing: 32 levels at 2 % of the hole, and N of 4, 6 and 8
+   frames.** Recommended: yes, with the histogram of Phase 17's step 1 in front of you at
+   the window. The other option: a tighter level (16), which the estimate may not meet in
+   the first hole on open ground.
+3. **The 12-ray arm (`near`) after Phase 18.** Recommended: removed at the close if the
+   store-held value looks at least as good on the Radeon (it costs 16 ms a frame there
+   while a dig is held, so it cannot be Portable's default). The other option: keep it as
+   a setting for the fast adapter.
 
 ## Decision
 
@@ -1395,6 +1636,235 @@ cherry-picks it; the orchestrator's call.
 | the gate at the tip | dev | build, the gate tier on lavapipe under the perf lock, clippy, fmt, deny and the doc gates pass on the tree that holds 11 to 14 and main; the soak tests of Phases 11 and 14 pass by name |
 | the close review | architect, a fresh session | the review is clean; ADR-0082 is accepted with its Outcome (the picks as they are shown, the landing's step, the dig's rule as Phase 14 built it, the limits under cover, light history on rejected at W3); the backlog holds the follow-on plan's three subjects; the plan moves to `done/` |
 
+### Phase 16: Every dig's faces land within a few frames, whatever the queue holds
+- **Owner skill:** dev
+- **What** (added 2026-11-24, owner at window 98d; "Amendment at window 98d" has the
+  suspects S1 to S5 and the bound N). Not exploration. **Step 1 gates step 2.** No scene,
+  model, material, hole size or queue setting changes so that a check passes; the pose,
+  the flags and the digs are the owner's.
+  1. **Two readings at the owner's pose** (the forest at `--sun 10,180`, the eye at x 0.5
+     y 640.5 z 579.5 looking down, the fly-through's dig, the window's own queue flags as
+     `live/session98d.sh` passes them; RTX 3080 Laptop, RADV RENOIR at Portable at its
+     run-3 pose x 31.9 y 603.0 z 604.3 at 15:00, and lavapipe; `--dig-hold on` as
+     `d967db57` has it).
+     - **The queue in the window's state.** Phase 14's `coarse` arm held one coarse chunk
+       on the RTX and read as the drained one. The rig now digs with **at least 100 chunks
+       in view waiting** (the still's HUD: 101, all coarse, depth 3411): the queue is not
+       drained before the first dig; the dig is made at the first step where the count in
+       view is at or under 101 and over 0 after the window's own start, or after a turn
+       that brings waiting chunks into view. The log states the count and the depth at
+       each dig. **Stop rule:** if no start the dev can build holds 100 waiting at the dig
+       on the RTX headless, the dev stops and reports what it holds.
+     - **Two dig sequences**, each on the drained queue and on the waiting one: (A) Phase
+       14's three down one ray, the third with the second in flight; (B) **the owner's
+       several in a row**: five digs at the places `2-default-dig.png` shows about the
+       view's centre, eight frames apart, then a sixth into the first hole.
+     - **(a) The timeline.** For every dig and every chunk of its ring, a row a frame from
+       the dig's frame until its last brick lands: where the chunk is (in `boxes`, in
+       `digs`, pending, open, placed); what holds it if it waits (a stale dig job, a stale
+       job of another kind and that job's samples left, the two-slice rule, no free table
+       slot, the pool); the samples the frame's submit planned for ring 1's bricks, for
+       ring 2's and for other jobs, against its cap; the submits unread. And per dig: the
+       frame its **ring 1** records hold the job's values, the frame its ring 2 does, the
+       samples its ring 1 alone needs, and the samples of jobs thrown away.
+     - **(b) The land arm's dark chunks** (`--dig-hold land`; ring black 64.5 % on the RTX
+       at D1+2, hole x 0.027 against 0.079 landed). For one ring chunk that goes dark: the
+       block the land job placed against the block the same chunk's job places at the full
+       count, and against the block of a first coarse pass over that chunk (a whole job at
+       the coarse count, no kept brick), **word by word a brick record**: which records
+       differ (kept bricks, re-baked bricks, new bricks), which words (the sky's count and
+       its open rays, the direction words, the head's count and flags), and the first
+       stage that holds the difference (the job's face states at `JobCtx::open`: the
+       subset's faces and their `sky_n`; the close's mean; `Placement::place`'s flags and
+       `block_count`; the light pass's read of the table word). Named suspects, none read:
+       the subset draw (`brick_samples` on a few faces a direction) beside kept bricks
+       drawn at another count; a block count of 256 on a block that keeps 4,096-sample
+       records; the fade from the provisional block.
+     - **The frame's cost today**: the step's time and its digs' lap, the temporal and
+       light passes and the frame's GPU time on each dig's frame and the eight after, on
+       both adapters (the base for step 2 and for Phase 17).
+     **Stop rules:** if the timeline names none of S1 to S5 as what holds ring 1, the dev
+     stops and reports what does, and builds nothing. If (b)'s cause is not found in the
+     word-by-word read, the dev says so in the log with the differing words, **removes
+     the land arm in step 2 and goes on** (the route does not need it); if the cause is
+     one a first coarse pass shares (the coarse tier at large), the dev stops and reports:
+     that is a fault outside the dig and the architect routes it.
+  2. **The jump**, only the remedies whose suspect the timeline names, all in the dig's
+     own code:
+     - **S3: ring 1 is a job of its own, first.** A dug chunk's first job re-bakes the
+       bricks the box dilated by one voxel touches and keeps every other record (ring 2's
+       stale ones too, which the ring's hold shows); when it is placed, the chunk's ring 2
+       bricks open as a second job, as today. At the full near count: the sky's rays do
+       not fall with the count.
+     - **S1, S2: a stale job in a ring 1 chunk is withdrawn at the edit**
+       (`JobLoop::withdraw`), a dig's or not; its place is released, a dig's unlanded
+       bricks rejoin the chunk's digs, a first pass or refinement returns to the
+       candidates. A ring 1 brick that has landed stays landed unless a later box touches
+       it; where a later dig's reach covers it, it re-bakes with ring 2, its record held.
+     - **S4, S5: ring 1 jobs open in the step that reads the edit**, all of them, outside
+       the two-slice rule, each with a table slot (where none is free the last open job
+       that is not a dig's is withdrawn to the candidates). The submit plans their rounds
+       first, as `promote` already orders.
+     - `edit_ms` and the slice are not raised. The land arm (`DigHold::Land`,
+       `BakeQueue::dig_land`, `--dig-hold land`) is removed.
+  3. **The tests**, below.
+- **Files touched:** `crates/vxe-render/src/bake/queue/{digs,step,stats,tests}.rs`
+  (`mod.rs` is near the size gate: fields only), `crates/vxe-render/src/bake/job_loop.rs`
+  (no new mechanism: the withdraw's caller), `crates/vxe-render/src/frame/{baked,settings}.rs`
+  and `frame/settings/sky_light.rs` (the land arm out),
+  `apps/flythrough/tests/gpu_outdoor/flicker.rs`, `apps/flythrough/tests/support/defects.rs`,
+  `apps/flythrough/tests/gpu_queue.rs`, `apps/flythrough/src/cli/outdoor.rs` and its
+  tests, `docs/flythrough.md`, `docs/plans/logs/0098.md`.
+- **Done when:**
+  - Step 1's timeline and the land arm's word table are in the log for the three
+    adapters, both queue states and both sequences, with the suspects named or struck;
+    or a stop rule fired and the phase ends at its report.
+  - **A gate test of the order** (`bake::queue::tests` if the state is reachable without
+    a device, else `gpu_queue` on lavapipe; expected under 10 s, a guess, soak-marked and
+    said so if over): a store holding blocks, every table slot taken by an open job that
+    is not a dig's and jobs pending behind them; an edit in one chunk, then a second edit
+    in the same chunk one step later. It asserts: the first step after each edit's submit
+    plans ring 1's rounds ahead of every other job's; the second edit's step holds no
+    stale job for that chunk (its samples left are 0); ring 1's bricks of the first edit
+    that the second box does not touch keep their landed records; and ring 2's job opens
+    only after ring 1's block is placed.
+  - **The landing, read on the adapters** (the log; exclusive perf lock): at the owner's
+    pose, for every dig of sequences A and B on the drained queue and on the waiting one,
+    ring 1 lands within **4 frames of the dig's frame on the RTX 3080 Laptop** and
+    **within 6 on the RADV RENOIR at Portable**. If the reading says ring 1 cannot (the
+    readback's floor, the slice at that adapter's rate), the dev stops and reports the
+    frames and what bounds them; the architect restates N.
+  - **The frame's cost, both adapters, before and after**: the bake step's main-thread
+    time on a dig's frame is at most step 1's at the same pose plus 1.0 ms; the samples a
+    frame's submit draws do not exceed the cap they drew before. The dip itself is Plan
+    0099's and is not barred here.
+  - `flicker::a_dig_under_calm_neither_darkens_nor_flashes` still passes (a landing that
+    darkens the ring fails it).
+  - The phase's GPU run (lavapipe): `--binaries gpu_queue gpu_bake gpu_outdoor gpu_lights`,
+    tests run over 0, no golden re-blessed. Quick tier, clippy, fmt, the file-size gate.
+
+### Phase 17: The held value is the store's record, and the image test of the new claim
+- **Owner skill:** dev
+- **What** (added 2026-11-24; "What the held value becomes" and "The image test,
+  re-derived" above). Not exploration. After Phase 16 (its bound is this test's first
+  claim).
+  1. **The histogram.** On Phase 16's tree, `on` (the 12 rays, now `near`) and `rays`, at
+     the owner's pose, sequences A and B on the waiting queue: for the hole's pixels in
+     every frame from each dig to its landing plus `DIG_FADE`, the share over 8, 16, 32
+     and 64 levels above the larger of `before` and `after` and below the smaller; the
+     same for two settled frames. Printed in the log and shown to the owner at Phase 18.
+  2. **The value.** `provisional_block` gives every direction of a brick the dig touched
+     (new or kept) a held record: the base (the removed surface's value: the mean of the
+     records about it, or the kept record; a brick with none about it its chunk's
+     summary's) capped by the removed surface's, times an openness from short rays through
+     the world on the CPU (a dozen of 16 voxels in cosine shares, from the empty voxel
+     before a few of the direction's faces, a ray that does not rise closed: Phase 14's
+     form, a value a brick direction), at least a floor above black. The light pass reads
+     it as a record: under `on` no sky ray is cast at a hole pixel, no pair is kept for
+     it, and the temporal pass does nothing it does not do at rest but Phase 8's ring
+     hold. The landing is the store's fade (`DIG_FADE`). `DigHold`: `On` this value (the
+     default), `Near` Phase 14's rays a pixel (`--dig-hold near`; through Phase 18),
+     `Rays`, `Off`. **Profile rows:** `lighting.dig_hold`, `Live`, `on` in every profile
+     (unchanged). The banner, the HUD's lighting row and the debug page name `near`,
+     `rays` and `off`. With no dig in flight the image is today's byte for byte.
+  3. **The tests**, below.
+- **Files touched:** `crates/vxe-render/src/bake/summary.rs` (near the size gate: the
+  estimate in a file of its own beside it), `crates/vxe-render/src/bake/queue/{digs,tests}.rs`,
+  `crates/vxe-render/src/shaders/{temporal,pair}.wgsl`,
+  `crates/vxe-render/src/frame/{encode,settings}.rs`, `frame/settings/sky_light.rs`,
+  `crates/vxe-render/src/settings.rs`, `crates/vxe-render/tests/gpu_lights.rs` (or its
+  module), `apps/flythrough/tests/gpu_outdoor/flicker.rs`,
+  `apps/flythrough/tests/support/defects.rs`, `apps/flythrough/src/cli/outdoor.rs` and its
+  tests, `apps/flythrough/src/{toggles.rs,hud/modes.rs}`, `docs/flythrough.md`,
+  `docs/plans/logs/0098.md`.
+- **Done when:**
+  - **The image test** `flicker::a_fresh_hole_holds_its_value_until_its_light_lands`,
+    restated (`gpu_outdoor`, lavapipe, `#[ignore = "soak"]`: 60 to 102 s today, and it now
+    renders two sequences, so 3 to 4 min, a guess). The owner's pose, the waiting queue,
+    sequences A and B; every pixel against its own luma before its dig (`before`) and in
+    the settled last frame (`after`); no arm is a baseline. With L the frame a dig's
+    ring 1 lands:
+    - **it lands:** L is at most the dig's frame plus 8 for every dig, and no dig's L is
+      more than one frame later than the first dig's on the drained queue;
+    - **no white, no black before the landing:** in every frame from the dig's to
+      L + `DIG_FADE`, the share of the hole's pixels over 32 levels above the larger of
+      `before` and `after`, and the share over 32 below the smaller, are each at most 2 %;
+    - **settled after it:** from L + `DIG_FADE` + 1 until a later dig touches the pixel,
+      the same two shares at 4 levels are at most 2 %;
+    - **the ring:** in every frame the ring's two shares at 4 levels are at most 2 %;
+    - **no dots, nothing darkens, one fade:** as Phase 14 wrote them, unchanged.
+    **Stop rule:** if step 1's settled frames read over 0.5 % at 4 levels, or `on` fails
+    the claim before the landing with ring 1 landing in time, the dev stops with the
+    histogram (the bar or the estimate is the architect's and the owner's to move, not
+    the dev's). **The bite check: the same test under `--dig-hold rays` fails "it lands"
+    or "no white, no black", printed once in the log**; if it passes, the test does not
+    see the fault and the phase is not done.
+  - **The gate test of the mechanism**
+    `gpu_lights::a_fresh_hole_holds_one_value_between_black_and_white` (Phase 14's, soak
+    at 23 s) holds under the new `on`: the queue not stepped past the edit, the shown sky
+    visibility at every hole pixel the same on frames N + 1 to N + 8, strictly between 0
+    and 1 and at most the removed surface's; under `rays` it differs between frames.
+  - **CPU** (`bake::queue::tests` or the estimate's own module, under 1 s): a slab under
+    an open sky dug from above: a floor brick's up direction holds a value above the
+    floor and at most the removed surface's; a wall brick's sideways direction holds less
+    than the floor brick's up; a brick under a roof one voxel above it holds the floor; a
+    kept brick the box touches holds the estimate, not its old record; the held record is
+    replaced by the job's at the landing. `--dig-hold near` parses and the lighting row
+    names it; `land` is refused.
+  - **The cost, read on both adapters** (exclusive perf lock; the rig's timers at the
+    owner's pose and at the RENOIR's run-3 pose, sequences A and B): while a dig is held,
+    the temporal pass is at most its rest value plus 0.1 ms on the RTX 3080 Laptop and
+    plus 0.7 ms on the RADV RENOIR at Portable; the frame's GPU time on the RENOIR is at
+    most the same frame's under `--dig-hold off` plus 1.0 ms; the bake step's
+    main-thread time on a dig's frame is at most Phase 16's plus 0.5 ms. `near` beside
+    them as a reading.
+  - Phase 16's landing table again on this tree (the estimate must not move L).
+  - The phase's GPU run (lavapipe): `--binaries gpu_outdoor gpu_lights gpu_queue
+    gpu_outdoor_golden gpu_golden`, tests run over 0, every golden passing with no
+    re-bless; the soak tests of this phase by name with `--run-ignored only`. Quick tier,
+    clippy, fmt, the file-size gate.
+  - The rehearsal for Phase 18, headless on both adapters: for sequence B, stills of each
+    dig's frame, the frame after, L and L + `DIG_FADE` under `on`, `near` and `rays`,
+    under `live/window98e/rehearsal/`, looked at by the dev against the claims before the
+    owner is called (a white or black face in an `on` still is a stop, not a window).
+
+### Phase 18: The owner's look at digs in a row
+- **Owner skill:** human
+- **What** (added 2026-11-24; Phase 15's successor). One short session on Linux on the
+  binary that holds Phase 17, every mode on screen, after the rehearsal's stills are
+  clean:
+  1. The RTX, the forest at `--sun 10,180`, x 0.5 y 640.5 z 579.5, the default: dig
+     several times in a row as at window 98d, at once after arriving (chunks waiting) and
+     again once the HUD reads none waiting. White inside? Black around, or earlier holes
+     staying dark? Does each hole arrive in one soft change, or does the change read as a
+     flash?
+  2. The same with `--dig-hold near` (the 12 rays, what 98d's run 2 showed, now landing
+     as fast): which of the two looks better while digging?
+  3. The RENOIR at Portable, the forest at 15:00, the default, digs in a row; the HUD's
+     fps while digging against standing still. Then `--dig-hold near` beside it.
+  4. With step 1 of Phase 17's histogram at hand: is the hole before its light lands
+     calm enough, or should the old picture be held instead for those frames (the delay:
+     question 1 of "Amendment at window 98d")?
+- **Files touched:** `docs/plans/logs/0098.md` (the verdicts, in the owner's words).
+- **Done when:** the log holds a verdict per run and an answer to 4. "Good" on runs 1
+  and 3 sends the plan to its gate and close. Anything else is a fix pass that starts by
+  adding the pose and the sequence that showed it to the image test, with the still under
+  `live/`; an answer of "hold the old picture" closes this plan as it stands and opens
+  the staged-records plan.
+
+### The order to the close (restated 2026-11-24 after window 98d; it replaces the table above)
+
+| step | owner | done when |
+|---|---|---|
+| Phases 11 to 13 | dev | done |
+| Phase 14 | dev | ended as amended: the reading kept, its held value the base of 16 and 17, its image bar replaced by Phase 17's |
+| Phase 15 | human | run 2026-11-24, not accepted on the RTX, "not bad" on the RENOIR at a cost over Portable's line |
+| Phase 16 | dev | the timeline names what holds a dig's faces; ring 1 lands within 4 frames on the RTX and 6 on the RENOIR for every dig in a row, on a waiting queue too; the land arm's dark chunks are explained or the arm is gone |
+| Phase 17 | dev | the held value is a record in the store, no ray a pixel; the image test of "it lands, and nothing is white or black before" passes, and fails under `rays`; the hold costs under 1 ms on the RENOIR |
+| Phase 18 | human | the owner calls digs in a row good on the RTX and the RENOIR, or names what is left, or asks for the delay |
+| the gate at the tip | dev | build, the gate tier on lavapipe under the perf lock, clippy, fmt, deny and the doc gates pass on the tree that holds 11 to 17 and main; the soak tests of Phases 11, 14 and 17 pass by name |
+| the close review | architect, a fresh session | the review is clean; ADR-0082 is accepted with its Outcome (the picks as they are shown, the landing's step, the dig's rule as Phases 16 and 17 built it with the delay's rejected lines, the limits under cover, light history on rejected at W3); `docs/nfr/02-frame-budget.md` and `04-edits.md` hold the hold's cost and N; the backlog holds the follow-on plan's three subjects; the plan moves to `done/` |
+
 ## Data shapes
 
 ```rust
@@ -1520,6 +1990,7 @@ pub struct Lighting {
 | 12: The HUD's `light:` row names the queue's own tiers | dev | done; `bricks 8/NEAR,MID,FAR` and the coarse clause's near tier from `Args::bake.tiers`; the test in `run/menu_tests.rs` (`tests.rs` is near the 1200-line cap); window build in `live/bin98e` (session 98c ran on `bin98d`) | 4c61a3e8 |
 | 13: The unshown key ray not cast; the default's near key shadow has a test | dev | done; the skip kept (no golden or `gpu_sun` test moved, 61 of 61 on the named binaries); the clause reads `Params::history` bits 0 and 1 and also requires no sky jump (`LIGHTING_SKY_CHANGED`, not named in the phase); the test asserts the shown term equal over frames and the slot within 1/512 (its raw-slot form failed after the skip on the slot's tag step); light pass on the RENOIR 11.3 / 6.2 / 6.0 to 1.6 / 1.6 / 2.1 ms; readings in the log | 89222195 |
 | 14: A fresh hole shows a held world value until its bake lands | dev | stopped: step 1 shows the white hole headless and names its sources (the column's 0 and 1, the removed surface's record, the landing's fade carrying them); step 2 built as `wip`; the image test fails with the fix (white 14.8, black 18.9 % on lavapipe); readings and resume notes in the log | committed with this row |
+| 15: The owner's look at the dig | human | run 2026-11-24 (`live/session98d.sh`, `live/bin98f` at `d967db57`); not accepted on the RTX, "not bad" on the RENOIR; verdicts in the log, amendment in the plan | the amendment's commit |
 
 ### Notes
 
