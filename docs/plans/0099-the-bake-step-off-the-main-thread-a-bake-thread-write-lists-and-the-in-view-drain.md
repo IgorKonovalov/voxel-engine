@@ -86,8 +86,8 @@ takes the opening's candidate cap with it (Plan 0096's F2 reading: the per-secon
 **The rules this is held to** (owner): a stable image is the one priority, performance
 considered; no waiting for light (ADR-0076 rule 6; a minute's settle is unacceptable); a
 budget is measured on named hardware and a figure without a measurement says it is a guess;
-no scene or fixture is simplified so a bar passes; `vxe-world` stays headless and
-deterministic and GPU code lives in `vxe-render` only.
+no scene or fixture is simplified so a bar passes; `svet-world` stays headless and
+deterministic and GPU code lives in `svet-render` only.
 
 ## Decision
 
@@ -106,17 +106,17 @@ for a 28 ms step.
 
 ```mermaid
 flowchart LR
-    subgraph world [vxe-world]
+    subgraph world [svet-world]
         CH[chunks behind their own locks]
     end
-    subgraph render [vxe-render: the render thread, once a frame]
+    subgraph render [svet-render: the render thread, once a frame]
         SY[mirror sync]
         MSG[frame message: view, frame number,<br/>mirror changes, mapped read-backs]
         AP[apply write lists whole,<br/>under the byte cap]
         SUB[issue the prepared submit]
         LP[light pass reads pool and table]
     end
-    subgraph bake [vxe-render: the bake thread]
+    subgraph bake [svet-render: the bake thread]
         IN[inbox, coalescing]
         BK[the queue's books: order, opening, listing,<br/>rounds, accumulation, placement,<br/>fades, summaries]
         OUT[outbox, bounded]
@@ -210,9 +210,9 @@ are asserted equal, so no phase is exploration and no golden is expected to move
   `gpu_bake` test's rig); the edit's wait today (p99 of a dig op's wall while the queue is in
   regime B); the same RTX forest run pinned to 8 logical CPUs of 4 cores (`taskset`), labelled
   as the dev box's stand-in for the floor's CPU, not as the floor.
-- **Files touched:** `crates/vxe-render/src/bake/stages.rs`,
-  `crates/vxe-render/src/bake/queue/{step,stats}.rs`, `crates/vxe-render/src/bake/store.rs`,
-  `crates/vxe-render/src/bake/job_loop.rs`, `apps/flythrough/src/run/queue.rs`, the HUD's
+- **Files touched:** `crates/svet-render/src/bake/stages.rs`,
+  `crates/svet-render/src/bake/queue/{step,stats}.rs`, `crates/svet-render/src/bake/store.rs`,
+  `crates/svet-render/src/bake/job_loop.rs`, `apps/flythrough/src/run/queue.rs`, the HUD's
   queue row, `docs/flythrough.md`, `docs/plans/logs/0099.md` (new).
 - **Done when:** (1) `the_step_line_splits_render_and_movable_and_they_sum_to_the_step`
   (CPU, under 1 s): a step's stage record with known laps formats to a line whose `render`
@@ -243,11 +243,11 @@ are asserted equal, so no phase is exploration and no golden is expected to move
   late shows the fallback chain for an entering chunk, never another chunk's record; if the
   tree reads the table by the mirror's window, that is fixed here and noted. Public reads of
   the books (statistics, a block's words, the bake file) go through the bake half.
-- **Files touched:** `crates/vxe-render/src/bake/queue/` (the step and its neighbours, and
+- **Files touched:** `crates/svet-render/src/bake/queue/` (the step and its neighbours, and
   new files for the message, the write list and the shadow membership),
-  `crates/vxe-render/src/bake/{store,job_loop,summary,job}.rs`,
-  `crates/vxe-render/src/frame/baked.rs`, `crates/vxe-render/src/bake/queue/tests.rs`,
-  `crates/vxe-render/tests/gpu_queue.rs`.
+  `crates/svet-render/src/bake/{store,job_loop,summary,job}.rs`,
+  `crates/svet-render/src/frame/baked.rs`, `crates/svet-render/src/bake/queue/tests.rs`,
+  `crates/svet-render/tests/gpu_queue.rs`.
 - **Done when:** (1) `a_landing_is_applied_whole_or_not_at_all` (CPU, under 1 s): against a
   recording applier, three lists of 40, 40 and 40 KiB under a 64 KiB cap apply as one list a
   frame over three frames, in order; no frame holds a block's words without its table word;
@@ -281,14 +281,14 @@ are asserted equal, so no phase is exploration and no golden is expected to move
   and headless run that asserts bytes before the drain; the reading rigs pass `on`. A dig's
   ring is a priority message: the bake thread serves it before the opening. The world's
   chunks reach the thread through a handle the world already shares with its stream workers
-  (or one added to `vxe-world` that carries no bake concept); a read lock is held for one
+  (or one added to `svet-world` that carries no bake concept); a read lock is held for one
   chunk's listing at most. Dropping the renderer stops and joins the thread; a panic on it
   surfaces as the step's error on the next frame.
-- **Files touched:** `crates/vxe-render/src/bake/queue/` (the thread, the inbox and outbox),
-  `crates/vxe-render/src/frame/{baked,settings}.rs`, `crates/vxe-render/src/settings.rs`,
-  `crates/vxe-world/src/store.rs` only if a shareable handle is missing,
+- **Files touched:** `crates/svet-render/src/bake/queue/` (the thread, the inbox and outbox),
+  `crates/svet-render/src/frame/{baked,settings}.rs`, `crates/svet-render/src/settings.rs`,
+  `crates/svet-world/src/store.rs` only if a shareable handle is missing,
   `apps/flythrough/src/cli/` (the flag and its test), `apps/flythrough/src/hud/` (the row),
-  `apps/flythrough/src/run/queue.rs`, `crates/vxe-render/tests/gpu_queue.rs`,
+  `apps/flythrough/src/run/queue.rs`, `crates/svet-render/tests/gpu_queue.rs`,
   `docs/flythrough.md`.
 - **Done when:** (1) `the_render_side_returns_with_the_bake_side_stalled` (CPU, under 2 s):
   with the bake half held by a test hook, 100 frame calls return, apply nothing, and leave
@@ -329,9 +329,9 @@ are asserted equal, so no phase is exploration and no golden is expected to move
   the bake thread fills a mapped staging range and the render thread encodes copies
   (ADR-0022's mechanism, no new decision). No lever changes a record's bytes, a tier or the
   slice.
-- **Files touched:** `crates/vxe-render/src/bake/queue/{open,list,digs}.rs` and the thread's
-  files, `crates/vxe-render/src/bake/{order,budget,store}.rs`,
-  `crates/vxe-render/src/bake/queue/tests.rs`, `apps/flythrough/src/run/queue.rs`.
+- **Files touched:** `crates/svet-render/src/bake/queue/{open,list,digs}.rs` and the thread's
+  files, `crates/svet-render/src/bake/{order,budget,store}.rs`,
+  `crates/svet-render/src/bake/queue/tests.rs`, `apps/flythrough/src/run/queue.rs`.
 - **Done when:** (1) `the_opening_admits_until_the_projected_samples_cover_the_slice` (CPU,
   under 1 s): a synthetic pool whose jobs project 0.4 ms each under a 4.0 ms slice opens at
   least 10 and at most 11 a step (10 x 0.4 covers 4.0); under a 1.0 ms slice at least 3 and
@@ -452,7 +452,7 @@ keeping fade length"; the other four: "agreed on other recommended".
 
 **Risks.**
 
-- **Determinism.** `vxe-world` is read through its existing locks and gains nothing. The
+- **Determinism.** `svet-world` is read through its existing locks and gains nothing. The
   store's bytes are mode-independent and asserted so. What is lost is the frame a record
   lands in: any test that reads the undrained image with the thread on is flaky by
   construction, and the plan's rule (lockstep for such tests) is one a later plan can break

@@ -62,7 +62,7 @@ games draw night that way. The owner chose that look (2026-10-22).
 
 ## Decision
 
-**We draw the night sky in `vxe-render` on primary-miss pixels, behind the atmosphere's
+**We draw the night sky in `svet-render` on primary-miss pixels, behind the atmosphere's
 transmittance and under the clouds, from three analytic sources.**
 
 1. **Stars are a catalogue, binned on a cube and splatted by flux.** A `StarCatalogue` is a

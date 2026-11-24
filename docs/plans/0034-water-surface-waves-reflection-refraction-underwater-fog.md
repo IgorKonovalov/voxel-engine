@@ -63,7 +63,7 @@ Read at main 3b3986d0 (Plan 0032 closed, v0.61.0; Plan 0069 closed, v0.60.0) aga
 `plan-0080` lane (the menu) and Plans 0086, 0081 and 0033 (approved, ahead of this plan). The
 lane branches from main once Plan 0033 has merged; the tree's names win. The Decision and the
 phases stand except where this section says otherwise; `dev` reads it as the phases' errata.
-Crate names are `vxe-*`; if Plan 0087 has merged first they read `svet-*` through its map.
+Crate names are `svet-*`; if Plan 0087 has merged first they read `svet-*` through its map.
 
 ### Name mapping (the plan's name, then the tree's)
 
@@ -86,11 +86,11 @@ Crate names are `vxe-*`; if Plan 0087 has merged first they read `svet-*` throug
 | `apps/flythrough/src/` (the pond, the pool) | `outdoor.rs` (integer only; `determinism.rs` guards it: `outdoor_vector` hashes the 4 x 4 x 4 chunks around `MOUTH`, so a pond there re-pins `OUTDOOR_HASH` once, disclosed) and `scene.rs` `outdoor_materials` (the water row's floats, id 9; `castle_materials` requires exactly its five rows and cannot follow it) |
 | `apps/flythrough/src/main.rs` (the time, the flags, the keys) | `run/frame.rs` (`set_dt`, `set_sky`, the clock's `advance`: the waves' time is the fly-through's clock there), `cli/outdoor.rs` (`--liquid-reflection`, `--waves`, the `--spawn` values beside `outside\|inside\|forest`; `cli/flags.rs` is at 1190 lines), `cli/tests.rs`, `toggles.rs`, `docs/flythrough.md` (the root README links it) |
 | `hud.rs`, `hud::Modes` | `hud/modes.rs` (**1197 of 1200 lines**: the liquid words go in a new module or a split `dev` makes first), `hud/stats.rs` (`lighting_rows` already prints every `FRAME_PASSES` entry's time, so the liquid pass's time shows with no new row; the lighting line's colour sum gains it), `run/hud_feed.rs`, `run/pilot.rs` (the autopilot already prints p50 and p99 per `FRAME_PASSES` entry). The reflection-ray count needs a GPU counter on `temporal.wgsl`'s `counters` pattern |
-| `fsr2.rs`, `fsr2/input.wgsl` | `crates/vxe-render/src/fsr2/{mod,pipelines,prepare,resources,settings}.rs` (`reactive_translucent` in `settings.rs`; `InputUniform` has one free `_pad` word for `reactive_liquid`), `shaders/fsr2/input.wgsl` (the reactive mask from `layer.w * reactive_translucent`) |
+| `fsr2.rs`, `fsr2/input.wgsl` | `crates/svet-render/src/fsr2/{mod,pipelines,prepare,resources,settings}.rs` (`reactive_translucent` in `settings.rs`; `InputUniform` has one free `_pad` word for `reactive_liquid`), `shaders/fsr2/input.wgsl` (the reactive mask from `layer.w * reactive_translucent`) |
 | "if the `own` upscaler is still in the tree" | it is (`upscale.wgsl`, `frame/upscale.rs`, `UpscalerChoice::Own`, the `own.*` rows); the removal plan is not drafted. `upscale.wgsl` takes the surface point, as the plan says, and no bar reads it |
 | `apps/flythrough/tests/gpu_golden.rs` (the three goldens) | at 1885 of 2000 lines: `lake_noon`, `under_water` and `lava_pool` go in `gpu_outdoor_golden.rs` (the `Hills` rig, 534 lines) |
 | `gpu_fsr2.rs` (Phase 7) | at 1975 of 2000 lines: Phase 7's two FSR 2 tests and the reading go in a new `apps/flythrough/tests/gpu_liquid_history.rs`; `gpu_lights.rs` (859) keeps `a_refracted_floor_keeps_its_age` |
-| `gpu_frame.rs` `frame_bytes` test | `crates/vxe-render/tests/gpu_frame.rs` (401 lines), as named; `Frame::frame_bytes` in `frame/mod.rs` |
+| `gpu_frame.rs` `frame_bytes` test | `crates/svet-render/tests/gpu_frame.rs` (401 lines), as named; `Frame::frame_bytes` in `frame/mod.rs` |
 | `Frame::set_test_irradiance` | **none** (only `ProbeVolume::write_test_irradiance`); added here as a test hook listed in `NOT_SETTINGS` |
 | `Frame::set_liquid`, `Frame::bake_until`, `readback::read_rgba16f` | new; `frame/baked.rs`; `readback.rs`. Every new `pub fn set_*` is in `RenderSettings::SETTERS` or `NOT_SETTINGS` (`settings.rs`), or `every_setter_is_a_setting_or_an_input` fails |
 | the "re-bake a store file" mechanism | none (no `--bake-file` store exists; Plan 0032 Phase 10 found the flag refused), so Phase 1's note resolves: nothing on disk re-bakes |
@@ -220,7 +220,7 @@ What is settled, at main 82ea836 and in the plans ahead of this one:
 
 - **The world does not move for rendering.** An edit is a deterministic operation through the
   op log, and the mirror is uploaded from it (ADR-0002, ADR-0022). The game owns the clock:
-  `vxe-world` reads none, and `vxe-render` takes time as a parameter.
+  `svet-world` reads none, and `svet-render` takes time as a parameter.
 - **Emissive light is baked.** A cube-face hit reads the brick store (`reads_store`,
   `store_brick_value` in `temporal.wgsl`); the bake's shadow test treats a translucent voxel as
   air, and the bake writes cells for translucent faces too (ADR-0046, ADR-0047). The hit pass
@@ -250,7 +250,7 @@ rule), and section 3's "everything else" (the liquid targets).
 We build ADR-0029. **The liquid is a material class; its surface is the face where it meets a
 cell that is neither opaque nor the same liquid; the shading normal there is analytic.**
 
-1. **`vxe-world` gains a flag and five carried floats.** `MaterialFlags::LIQUID` and
+1. **`svet-world` gains a flag and five carried floats.** `MaterialFlags::LIQUID` and
    `Material::liquid: LiquidOptics` are renderer data carried by the table, as `albedo` is. No
    voxel data changes and no edit path reads a float.
 2. **The hit pass records the surface and bends the ray.** `translucent_march` stops at the
@@ -298,13 +298,13 @@ ADR-0029.
 
 ```mermaid
 flowchart LR
-    subgraph world [vxe-world]
+    subgraph world [svet-world]
         MT[material table\nLIQUID, LiquidOptics]
     end
     subgraph game [the consumer]
         LP[LiquidParams\ntime, 8 waves]
     end
-    subgraph render [vxe-render]
+    subgraph render [svet-render]
         H[hit pass\nliquid face, wave normal,\nbent ray to the floor] --> HB[(hit buffer\nrefracted hit)]
         H --> LR[(liquid record\nt, normal, span)]
         HB --> L[light pass\nper-frame shadow rays\napply liquid depth]
@@ -357,7 +357,7 @@ first). A toggle's done-when names the banner's mode word, and the README names 
 - **Owner skill:** dev
 - **What:** the walking skeleton. `MaterialFlags::LIQUID`, `LiquidOptics`, `Material::liquid`
   (a constructor that sets `TRANSLUCENT | LIQUID`) and `MaterialTable::is_liquid` in
-  `vxe-world`. The GPU material row grows from four `vec4` to six (`MATERIAL_FLOATS` 16 to 24,
+  `svet-world`. The GPU material row grows from four `vec4` to six (`MATERIAL_FLOATS` 16 to 24,
   and the `m * 4u` of `march.wgsl`'s row reads; see Data shapes) and carries the liquid bit and
   the optics. `translucent_march` stops at the first liquid face; a translucent solid in front
   of it keeps its filter, and a liquid voxel is never filtered as glass. The hit pass writes the
@@ -369,14 +369,14 @@ first). A toggle's done-when names the banner's mode word, and the README names 
   with a testbed water row to a fixed height), and its pinned hashes are re-pinned once with the
   reason in the log. Editing `march.wgsl` changes the bake's source: ADR-0047 says a store file
   is then re-baked once; the mechanism was not found in `bake.rs` at 82ea836 and is unverified.
-- **Files touched:** `crates/vxe-world/src/material.rs`, new
-  `crates/vxe-world/tests/liquid_material.rs`, `crates/vxe-render/src/gpu_world.rs` (the row
-  stride and the liquid bit), `crates/vxe-render/src/shaders/march.wgsl` (the walk's stop, the
-  record), new `crates/vxe-render/src/shaders/liquid.wgsl`, `composite.wgsl`,
-  `crates/vxe-render/src/marcher.rs` (the targets, the pass in `FRAME_PASSES`, `LiquidParams`
+- **Files touched:** `crates/svet-world/src/material.rs`, new
+  `crates/svet-world/tests/liquid_material.rs`, `crates/svet-render/src/gpu_world.rs` (the row
+  stride and the liquid bit), `crates/svet-render/src/shaders/march.wgsl` (the walk's stop, the
+  record), new `crates/svet-render/src/shaders/liquid.wgsl`, `composite.wgsl`,
+  `crates/svet-render/src/marcher.rs` (the targets, the pass in `FRAME_PASSES`, `LiquidParams`
   with its defaults), `lib.rs` (the shader source),
-  `crates/vxe-render/tests/gpu_shader_portability.rs` (the new pass), new
-  `crates/vxe-render/tests/gpu_liquid.rs`, `apps/flythrough/src/` (the outdoor source's pond),
+  `crates/svet-render/tests/gpu_shader_portability.rs` (the new pass), new
+  `crates/svet-render/tests/gpu_liquid.rs`, `apps/flythrough/src/` (the outdoor source's pond),
   `apps/flythrough/tests/determinism.rs`.
 - **Done when:**
   - `liquid_material.rs`, `a_liquid_row_is_translucent_and_liquid` (CPU, under 1 s):
@@ -553,8 +553,8 @@ first). A toggle's done-when names the banner's mode word, and the README names 
   a closed rock basin under a roof (dark), and the golden `lava_pool.png` (lamp off, the pool as
   the only light, `wave_speed` 0.2 and roughness 0.6 on the lava row, baked first,
   `SETTLE_FRAMES`) is blessed.
-- **Files touched:** `march.wgsl`, `liquid.wgsl`, `crates/vxe-render/src/gpu_world.rs`
-  (`exposed_emitters`), `crates/vxe-render/tests/gpu_mirror.rs` (the counts),
+- **Files touched:** `march.wgsl`, `liquid.wgsl`, `crates/svet-render/src/gpu_world.rs`
+  (`exposed_emitters`), `crates/svet-render/tests/gpu_mirror.rs` (the counts),
   `tests/gpu_liquid.rs`, `apps/flythrough/src/` (the pool), `apps/flythrough/tests/gpu_golden.rs`,
   new `apps/flythrough/tests/golden/lava_pool.png`.
 - **Done when:**
@@ -670,7 +670,7 @@ first). A toggle's done-when names the banner's mode word, and the README names 
 ## Data shapes
 
 ```rust
-// illustrative: vxe-world, carried by the table like albedo; read only with LIQUID
+// illustrative: svet-world, carried by the table like albedo; read only with LIQUID
 impl MaterialFlags { pub const LIQUID: Self = Self(/* next free bit */); } // with TRANSLUCENT only
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -683,7 +683,7 @@ pub struct LiquidOptics {
 }
 // Material gains `pub liquid: LiquidOptics` (Material::named: all zero, ior 1.0).
 
-// illustrative: vxe-render
+// illustrative: svet-render
 pub struct Wave { pub dir: [f32; 2], pub wavelength: f32, pub amplitude: f32, pub steepness: f32 }
 pub struct LiquidParams {
     pub time_s: f32,                  // the game's clock; the engine reads none
@@ -789,7 +789,7 @@ the owner picks the default in Phase 9 (`Sky`, or `Trace` without the reflected 
   outdoor source and `--spawn` (Plan 0032's Interface), and the `direct` target and
   `Frame::set_lights` (Plan 0058). If one is missing or shaped differently at the base commit,
   `dev` stops for an architect amendment before Phase 2.
-- **Determinism.** `vxe-world` changes only the table's shape: a flag and five carried fields,
+- **Determinism.** `svet-world` changes only the table's shape: a flag and five carried fields,
   no voxel data, no float in any edit path; the determinism hashes of existing worlds are pinned
   unchanged. Rendering is deterministic per adapter; goldens are blessed on lavapipe.
 - **Collision and audio.** Liquid voxels stay solid to every CPU reader (Plan 0015's rule): the
@@ -801,7 +801,7 @@ the owner picks the default in Phase 9 (`Sky`, or `Trace` without the reflected 
 ## What this plan does NOT do
 
 - **Flowing liquid.** Spreading, levelling and draining are a later deterministic simulation
-  plan in `vxe-world` (the owner, 2026-10-22); a carve into a lake here leaves a static hole.
+  plan in `svet-world` (the owner, 2026-10-22); a carve into a lake here leaves a static hole.
 - **Absorb baked light.** The store's emissive light reaches an underwater face unattenuated
   (Risks).
 - **Caustics, light shafts under water and refraction of light paths.** Shadow rays go straight
@@ -895,7 +895,7 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 ## Followups
 
-- Flowing liquids: a deterministic spread-and-level simulation in `vxe-world` with a passable
+- Flowing liquids: a deterministic spread-and-level simulation in `svet-world` with a passable
   collision class (the owner's "flow later").
 - The liquid's depth in the bake's shadow test, so baked light under water is absorbed.
 - `liquid_mul` folded into ADR-0047's `transmit` target once the numeric bars allow rgb9e5.

@@ -2,7 +2,7 @@
 
 > **Status:** approved (owner, 2026-11-24: "remove"). Drafted 2026-11-24 with no interview; the guesses
 > and the open questions are under "Risks & open questions", each with a recommended option.
-> **Order:** small and alone in `crates/vxe-render/src/frame/` and the fly-through's upscaler
+> **Order:** small and alone in `crates/svet-render/src/frame/` and the fly-through's upscaler
 > files; it runs when no lane edits `frame/encode.rs`, `frame/pipelines.rs` or
 > `apps/flythrough/tests/gpu_fsr2.rs` (Plans 0099 and 0100 do not; Plan 0087, the rename, runs
 > alone either before or after it).
@@ -38,7 +38,7 @@ keeping it.
 
 **What `own` is in the tree at `193cae15`:**
 
-- `crates/vxe-render`: `UpscalerKind::Own(Upscaler)` and `UpscalerChoice::Own`; the `Upscaler`
+- `crates/svet-render`: `UpscalerKind::Own(Upscaler)` and `UpscalerChoice::Own`; the `Upscaler`
   tuning struct (`own.alpha`, `own.alpha_moving`, `own.change_rel`, `own.change_abs`,
   `own.change_frames`); `RenderSettings::jitter` and `RenderSettings::sharpness`, which only
   `own` reads (FSR 2 jitters by its own sequence and sharpens by `fsr2.sharpness`); the passes
@@ -114,14 +114,14 @@ upscaler is two pictures to keep stable. ADR-0086 carries these.
 
 ```mermaid
 flowchart LR
-    subgraph before [vxe-render today]
+    subgraph before [svet-render today]
         C1[composite] --> U[upscale: own, or the resize under Off]
         U --> S[sharpen]
         C1 --> F1[FSR 2 passes]
         S --> O1[output]
         F1 --> O1
     end
-    subgraph after [vxe-render after Plan 0102]
+    subgraph after [svet-render after Plan 0102]
         C2[composite] -->|Off: internal = output| O2[output]
         C2 --> F2[FSR 2 passes]
         F2 --> O2
@@ -154,16 +154,16 @@ the goldens.
   base. **No stop rule:** the figures inform ADR-0086's Negative list; the owner's go on this
   plan is the decision (question 1).
 
-### Phase 2: `own` leaves `vxe-render`
+### Phase 2: `own` leaves `svet-render`
 - **Owner skill:** dev
 - **What:** The library has one upscaler. The variants, the tuning, the jitter and sharpness
   settings, the two passes, the two shaders and the history target are gone; `Off` renders at
   the output size.
-- **Files touched:** `crates/vxe-render/src/fsr2/settings.rs`, `settings.rs` (the fields, the
+- **Files touched:** `crates/svet-render/src/fsr2/settings.rs`, `settings.rs` (the fields, the
   class table, the setter table, the profile doc table), `frame/upscale.rs`,
   `frame/pipelines.rs`, `frame/encode.rs`, `frame/apply.rs`, `frame/compose.rs`,
   `frame/targets.rs`, `frame/mod.rs`, `lib.rs`; `shaders/upscale.wgsl` and
-  `shaders/sharpen.wgsl` deleted; `crates/vxe-render/tests/gpu_frame.rs`; the callers in
+  `shaders/sharpen.wgsl` deleted; `crates/svet-render/tests/gpu_frame.rs`; the callers in
   `apps/flythrough` changed only as far as they must to compile (Phase 3 finishes them).
 - **Done when:**
   - `rg 'UpscalerKind::Own|UpscalerChoice::Own|struct Upscaler\b' crates` finds nothing, and
@@ -265,7 +265,7 @@ the goldens.
 
 The close (architect) accepts ADR-0086, marks ADR-0024 superseded in the index, writes the
 `CHANGELOG.md` entry naming the removed API under a minor bump (a breaking change to
-`RenderSettings` and `Frame`), fixes `CLAUDE.md`'s `vxe-render` line ("FSR 2 and our
+`RenderSettings` and `Frame`), fixes `CLAUDE.md`'s `svet-render` line ("FSR 2 and our
 upscaler") in the harness repo, and turns the backlog entry into its pointer line.
 
 ## Data shapes
@@ -340,7 +340,7 @@ by the recommended options unless he says otherwise.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The census and three readings | dev | not started | |
-| 2: `own` leaves `vxe-render` | dev | not started | |
+| 2: `own` leaves `svet-render` | dev | not started | |
 | 3: The fly-through, the tests and the golden | dev | not started | |
 | 4: Docs, the ledger, the gate's time | dev | not started | |
 

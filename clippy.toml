@@ -1,5 +1,5 @@
 # Determinism gate (CLAUDE.md "The world is headless and deterministic"): the
-# world crate, the server and its tick in vxe-net, and anything the server runs
+# world crate, the server and its tick in svet-net, and anything the server runs
 # are pure functions of their inputs.
 # No wall-clock reads and no unseeded RNG. clippy config is per-run, not
 # per-crate, so the ban is global; the app shell's frame pacing reads carry a

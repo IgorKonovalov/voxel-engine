@@ -58,7 +58,7 @@ plan that implements them (see [`adrs/README.md`](adrs/README.md)).
 | Harness | Ritmolux-style: ADRs, phased plans, architect/dev skills, deny hooks, CI gates | CLAUDE.md + ADRs only |
 | Surface look (added 2026-10-16; decided 2026-11-01) | honest cubes (`face`) are the default and meet M2's goal, and the field surface is an opt-in look (`--look field`; ADR-0041, Plan 0054's close). The requirement as first set, kept as history: smooth and natural rock, not visible cubes, with the Sibenik cathedral figure of Laine & Karras 2010 (ESVO, Figure 1) as the quality reference: not photorealism, but that level of believable surface and soft light; the mechanism (per-voxel normal smoothing, per-voxel contour planes in the GPU mirror, procedural per-material surface detail, or another) is chosen by measurement after M1, balancing image, frame cost and simplicity | photorealism; the smooth surface as the default, on frame cost (owner, Plan 0054 answers 13 and 14). As first set: a blocky aesthetic; committing to ESVO-style contours before anything is on screen |
 | VR readiness (added 2026-10-16) | PC VR is a possible later target, so the renderer keeps three doors open from M2 on: a view is an asymmetric frustum (origin, basis, four tangent half-angles) and the frame renders N views, not one camera with a symmetric field of view; lighting is view-independent or shareable across views where the cost is equal; presentation is decoupled from the window surface. Actual VR support (OpenXR, 90 Hz, two eyes) is an unscheduled milestone with its own hardware floor, never a promise on the baseline GPU. See "Unscheduled: PC VR" below | building OpenXR support now; standalone headsets (mobile GPU, Android); treating VR as a mode of the baseline budget |
-| Physics (added 2026-10-16) | **voxel dynamics, not a rigid-body engine.** Collapse is emergent and authoritative: `vxe-world` answers which region lost its connection to the anchor after an edit, and deterministic ops decide what the world looks like afterwards. Fall damage is a controller event. Debris and falling pieces may be animated client-side by a rigid-body library as a cosmetic layer that never writes to the world. Revises M8 and the consumer's "scripted collapse only" wording | a general physics engine (`rapier`) in the authoritative world; scripted-only collapse; no collapse at all |
+| Physics (added 2026-10-16) | **voxel dynamics, not a rigid-body engine.** Collapse is emergent and authoritative: `svet-world` answers which region lost its connection to the anchor after an edit, and deterministic ops decide what the world looks like afterwards. Fall damage is a controller event. Debris and falling pieces may be animated client-side by a rigid-body library as a cosmetic layer that never writes to the world. Revises M8 and the consumer's "scripted collapse only" wording | a general physics engine (`rapier`) in the authoritative world; scripted-only collapse; no collapse at all |
 | Floor, profiles and scene scale (added 2026-10-17) | the GTX 1660-class floor of `nfr.md` §1 stays the 60 fps gate at 1080p with an upscaler; a named **portable profile** (Switch-2-class: about 1.7 to 3 TFLOPS, 68 to 102 GB/s, 9 GB shared) is a target of the quality settings (internal resolution, full-detail radius, translucent layers, lighting tier), at 720p and 30 to 60 fps; 120 fps is welcome where a fast machine reaches it through a performance profile, not a gate. Lighting has two tiers: direct light by one shadow ray per light at half resolution with blur and temporal reprojection on the floor, ReSTIR direct lighting where the budget allows, and, under ADR-0046 (accepted 2026-11-09, Plan 0059), emissive direct light from a per-chunk brick-level store baked at load and at edit, with no screen history; under ADR-0043, emissive indirect off and the probes a lamp-bounce channel (amended at Plans 0057's and 0059's closes; the rest of this row is the floor's plan). Glass, water and lava are translucent voxels in the brick map; mist, smoke and fire are a separate coarse volume. Open-sky and kilometre-scale scenes are in scope, so the far-field clipmap is a scheduled plan, not a maybe. The brick representation that serves all of this is ADR-0012 | Switch 1 (about 0.4 TFLOPS, 25.6 GB/s shared, no public graphics API for `wgpu`); raising the floor to the dev laptop; 120 fps as a budget; media as voxels in the brick map |
 | Baseline card (added 2026-10-21) | the GTX 1660-class card is **not acquired**. The floor stays the gate on paper, read as a projection from two readings taken on the dev box: the NVIDIA card (the dev reference) and the AMD Cezanne iGPU on RADV, named in `nfr.md` §1 as the **slow adapter** (about the portable profile's class, below the floor's). From Plan 0028 on, every render plan's close takes its GPU readings on both adapters and labels each by its adapter | buying or borrowing a GTX 1660 before M2 closes; projections from the NVIDIA card alone |
 | Outdoors (added 2026-10-22) | outdoors is a general engine capability (M10): a Hillaire atmosphere with a time of day the game sets, the sun's shadow as one per-pixel ray, a far-field clipmap to about 1 km, liquid surfaces on translucent voxels with flow later, volumetric clouds, and weather as cosmetic client state; terrain stays the game's source | a testbed-only showcase; near radius plus fog as the horizon; precomputed or analytic skies; shadow maps or heightmaps for the sun; a 2.5D cloud layer; weather written as voxels |
@@ -165,7 +165,7 @@ streaming line (render-thread CPU p50 about 7 ms, p99 52 to 61 ms against 1.0 ms
 rays in the streamed world (6.69 ms at 1080p against 3.0 ms), both on the dev reference. The
 budgets stand. The §4 edit-cost miss carries forward from Plan 0001 to Plan 0003 (closed 2026-10-17,
 v0.4.1), which cut the `worst` bench from 4.6 to 3.56 ms on a quiet dev box with no result or
-hash moved; the owner kept the 2 ms figure. Plan 0014 (closed 2026-10-17, v0.7.0) is the second pass: a brick-array pool, a sphere span walk and an analytic capsule row cut `worst` to 3.19-3.26 ms (3.03-3.05 ms with a warm pool) and `tool` from 8.05 to 6.78-6.80 ms. The §4 miss carries forward: the row write bounds the cost inside ADR-0002's representation, and the owner chose a representation: ADR-0012 (accepted 2026-10-17), whose CPU-format step is Plan 0021. Plan 0021 closed 2026-10-20 (v0.18.0): the planar edit kernel reads the warm worst case at 1.34 to 1.52 ms on the dev box (not quiet; 3.03 ms before) and the fly-through `B` line at 1.52 ms. The owner held the 2 ms figure on the dev box (2026-10-20), so the line is met there; there is no baseline-GPU reading. A quiet-box re-read the same day (2796062) did not reproduce those figures: `worst_warm` 1.79 ms, and the `B` line 2.06 to 2.09 ms, with an unchanged `vxe-world`. The owner raised the line to 2.2 ms on the dev box and planned one more optimization pass: [Plan 0031](plans/done/0031-edit-cost-third-pass.md) (closed 2026-10-21, v0.25.0) builds each brick's shape words straight from row spans solved once per op, and on a quiet dev box reads `worst_warm` 0.77 ms and the `B` line 0.99 to 1.00 ms (8dad5ca), so the owner returned the line to 2.0 ms on the dev box, met there; there is no baseline-GPU reading.
+hash moved; the owner kept the 2 ms figure. Plan 0014 (closed 2026-10-17, v0.7.0) is the second pass: a brick-array pool, a sphere span walk and an analytic capsule row cut `worst` to 3.19-3.26 ms (3.03-3.05 ms with a warm pool) and `tool` from 8.05 to 6.78-6.80 ms. The §4 miss carries forward: the row write bounds the cost inside ADR-0002's representation, and the owner chose a representation: ADR-0012 (accepted 2026-10-17), whose CPU-format step is Plan 0021. Plan 0021 closed 2026-10-20 (v0.18.0): the planar edit kernel reads the warm worst case at 1.34 to 1.52 ms on the dev box (not quiet; 3.03 ms before) and the fly-through `B` line at 1.52 ms. The owner held the 2 ms figure on the dev box (2026-10-20), so the line is met there; there is no baseline-GPU reading. A quiet-box re-read the same day (2796062) did not reproduce those figures: `worst_warm` 1.79 ms, and the `B` line 2.06 to 2.09 ms, with an unchanged `svet-world`. The owner raised the line to 2.2 ms on the dev box and planned one more optimization pass: [Plan 0031](plans/done/0031-edit-cost-third-pass.md) (closed 2026-10-21, v0.25.0) builds each brick's shape words straight from row spans solved once per op, and on a quiet dev box reads `worst_warm` 0.77 ms and the `B` line 0.99 to 1.00 ms (8dad5ca), so the owner returned the line to 2.0 ms on the dev box, met there; there is no baseline-GPU reading.
 
 **Before M2's lighting (both closed 2026-10-21):** a streaming-CPU plan (incremental queue, residency sweep and
 window shift; narrowing and staging on workers), drafted 2026-10-20 as
@@ -183,22 +183,22 @@ a finite source. Plan 0002 adds streaming, eviction and LOD mips on top. The sto
 written with Plan 0001 and already carries chunk addressing for paging, so Plan 0002 changes no
 layout.
 
-- `vxe-world` (Plan 0001): brick map and chunk store with the access model above; material
+- `svet-world` (Plan 0001): brick map and chunk store with the access model above; material
   table (id, name, albedo, roughness, emission, hardness, flags, opaque payload); `WorldSource`
   trait, `(seed, chunk coord) -> chunk`; the edit ops listed under "Storage shape" in integer
   math returning results; CPU raycast (DDA), point query and region material counts; dirty
   tracking for upload.
-- `vxe-world` (Plan 0002, ADR-0003): sphere residency around one or more focus points on a
+- `svet-world` (Plan 0002, ADR-0003): sphere residency around one or more focus points on a
   background thread pool, in two tiers: full detail inside `r_full`, and an LOD-only ring out
   to `r_lod` that keeps only mips (32³, 16³, 8³), not bricks. Edited chunks are persisted on
   eviction, in RAM with disk spill. Plan 0001's `Full` fraction reading (about 21 %, not 10 %)
   is why the ring replaces bricks instead of adding mips to every resident chunk.
-- `vxe-render`: incremental per-brick upload; primary-ray DDA in compute over the brick
+- `svet-render`: incremental per-brick upload; primary-ray DDA in compute over the brick
   occupancy masks; one spot light with a shadow ray; blit to the swapchain. Plan 0002
   (ADR-0004): a wrapped window following the camera, budgeted batched uploads, an 8-bit
   per-chunk palette, a pool sharded over up to four bindings, and a mip walk for LOD-only
   chunks.
-- `vxe-app`: window, keyboard and mouse, frame loop, surface resize.
+- `svet-app`: window, keyboard and mouse, frame loop, surface resize.
 - `apps/flythrough`: an integer-noise cave `WorldSource`; prints edit results.
 - **Headless proof:** a fixed op list on a fixed seed hashes to the same voxels and the same
   per-material counts on the Linux and Windows CI arms; a radius-10 carve in solid material
@@ -308,7 +308,7 @@ accepted with an Outcome): the queue sorts by a view score with the class kept a
 the jobs a flight has passed; at the window the order made no visible difference, because the slice's
 throughput, not the order, limits the far light (Plan 0067 takes it). Amended 2026-11-11 (owner): Plan
 0045 moves ahead of Plan 0058 and the rest of Plan 0044, once Plans 0061, 0067 and 0068 have merged. Plan
-0045 closed 2026-11-13 (v0.50.0): the mega files are directories of owned parts, `vxe-render`'s
+0045 closed 2026-11-13 (v0.50.0): the mega files are directories of owned parts, `svet-render`'s
 surface is a curated root with `debug` and `internals`, and two gates cap file and function size;
 no behaviour changed. Plan 0044 closed 2026-11-16 (v0.55.0): the audio callback frees nothing, the frame keeps its
 bind groups by what they bind, the march reads a material only at its hit, the render tests share one
@@ -572,19 +572,19 @@ work), and the light (real-time GI standing in for the baked occlusion).
 
 ### M3: Collision, character controller, coarse grids (Plan 0004; done 2026-10-17)
 
-Plan 0004 closed 2026-10-17 (v0.5.0): `vxe-sim` sweeps a vertical cylinder (ADR-0005, not a
+Plan 0004 closed 2026-10-17 (v0.5.0): `svet-sim` sweeps a vertical cylinder (ADR-0005, not a
 capsule) and drives a controller with step, slide, fall, jump and ledge climb, pinned by a
-course hash; `vxe-world` keeps the coarse grid and walkable map from edit results; the
+course hash; `svet-world` keeps the coarse grid and walkable map from edit results; the
 fly-through walks on the bounded level and the owner drove it by hand. Open: the sweep cost
 (`nfr.md` section 8, awaiting the owner's call) and wiring the grid to the streamer; Plan
 0004's Followups list them. Plan 0016 (closed 2026-10-18, v0.13.0) added depenetration to the
 controller (ADR-0005's Outcome addendum). Plan 0009 (collapse) is unblocked.
 
 
-- `vxe-sim`: capsule sweeps against bricks (the raycast stays in `vxe-world`, which owns all
+- `svet-sim`: capsule sweeps against bricks (the raycast stays in `svet-world`, which owns all
   primitive queries); a character controller with steps, slopes and climbing out of holes;
   shape queries for tool reach.
-- `vxe-world`: a one-cell-per-brick (0.8 m) occupancy and dominant-material grid, updated
+- `svet-world`: a one-cell-per-brick (0.8 m) occupancy and dominant-material grid, updated
   incrementally from touched chunks; region change notifications; walkable-space extraction.
 - **Headless proof:** a capsule walking a known course ends where the fixture says; a carve
   under its feet changes the coarse grid cell and emits one notification.
@@ -592,7 +592,7 @@ controller (ADR-0005's Outcome addendum). Plan 0009 (collapse) is unblocked.
 
 ### M4: Spatial audio (Plans 0006, v0.12.0, and 0020, v0.24.0, done)
 
-- `vxe-audio`: output through `cpal`, a mixer, HRTF spatialization, occlusion and transmission
+- `svet-audio`: output through `cpal`, a mixer, HRTF spatialization, occlusion and transmission
   by ray probes through the material table's acoustic triple, early reflections from ray probes,
   hooks for material-driven synthesis. Separate from any gameplay noise model, which a game
   builds on M3's coarse grid.
@@ -613,8 +613,8 @@ controller (ADR-0005's Outcome addendum). Plan 0009 (collapse) is unblocked.
 
 ### M5: Simulation split and the logic component (done: Plans 0007, v0.10.0, and 0011, v0.11.0)
 
-Plan 0007 closed 2026-10-17 (v0.10.0): `vxe-net` (byte channel, server tick, shared and
-owned clients with desync detection), `vxe-world`'s op and input logs, log file and wire, and
+Plan 0007 closed 2026-10-17 (v0.10.0): `svet-net` (byte channel, server tick, shared and
+owned clients with desync detection), `svet-world`'s op and input logs, log file and wire, and
 the fly-through's digs, fills and bench through a server, saved and replayed under `--level`
 (ADR-0007, accepted). Plan 0018 (closed 2026-10-20, v0.15.0) completed the split for
 every op: stamp, drop and remove are op kinds 2 to 4 through `submit`, the log, `Host::apply`
@@ -623,18 +623,18 @@ prefabs it names (ADR-0014, `LOG_FORMAT` 2). The server keeps a coarse grid and 
 `Host::unsupported`, and the fly-through's `P` and collapse run in `DigLogic`, saved and
 replayed. Plan 0016 (closed 2026-10-18, v0.13.0) replaced fail-stop with a capped
 restart from the seed (ADR-0010's Outcome addendum).
-Plan 0019 (closed 2026-10-20, v0.16.0) bounded and metered host-call work: `vxe-world`
+Plan 0019 (closed 2026-10-20, v0.16.0) bounded and metered host-call work: `svet-world`
 refuses out-of-range shapes, rays, box queries and region lists per world (`WorldLimits`,
 `EditError::OutOfRange`), and the host charges each import's work to the tick's fuel at
 `WorkRates`, list arguments by their bytes before any host work (ADR-0010's second Outcome
 addendum).
 
-Plan 0011 closed 2026-10-17 (v0.11.0): `vxe-script-wasm` hosts a logic component under
+Plan 0011 closed 2026-10-17 (v0.11.0): `svet-script-wasm` hosts a logic component under
 deterministic WASI (clocks fixed to the tick, always-ready timers, seeded entropy), fuel per
 call and a total memory cap, and stops a logic after its first failed call (ADR-0010,
 accepted). The fly-through's dig logic (`flythrough-logic`) runs natively or, with
 `--features wasm` and `--logic wasm`, as a component, to the same hash. Followups from the
-close: bounded or metered host-call work, with `vxe-world` range checks on shapes (done in
+close: bounded or metered host-call work, with `svet-world` range checks on shapes (done in
 Plan 0019); a component
 hash and the `WasmConfig` in the log header; batched query imports; a per-call measurement of
 a cheap query.
@@ -644,7 +644,7 @@ a cheap query.
   `Logic` behind a trait decides the edits through a `Host` handle; a client mirror fed by
   ops over an in-memory channel, sharing the world in solo; replay from seed plus ops, or
   re-simulation from seed plus inputs (ADR-0007, ADR-0010).
-- `vxe-script-wasm`: a `wasmtime` host implementing `Logic` for a component built from the
+- `svet-script-wasm`: a `wasmtime` host implementing `Logic` for a component built from the
   same crate as the native logic, with deterministic configuration (canonical NaNs, clocks
   and entropy from the tick, fuel per tick, a memory cap).
 - Deferred: a Lua host for client-side scripts, until a consumer asks. Follow-ups named by
@@ -655,10 +655,10 @@ a cheap query.
 - **ADRs:** ADR-0007 (log, channel, client modes) and ADR-0010 (logic as a component), both
   accepted at their plans' closes.
 
-### M6: Entities as voxel models (Plan 0008 closed the `.vox` import; Plan 0062 closed the render half's entities, v0.56.0: posed voxel models traced with the world, lit and shadowed by the list lights, a headless ray query; Plan 0063 closed rigs and clips, v0.57.0: keyframe clips sampled by tick in fixed point, a `.rig` text file beside the `.vox`, the fly-through as a model viewer that reloads on save, voxels drawn as text; Plan 0078 closed the pool's free, v0.59.0: models freed by handle into a coalescing free list, stable instance slots with a generation, a removed entity's shadow gone on the next frame; Plan 0077 closed the entity picker, v0.64.0: the entities library, a chooser with still icons, a belt of nine slots, a placement mode with a marked ghost, an outline and a tint per instance in the composite and image tiles in the overlay, ADR-0074 and ADR-0075; Plan 0079 closed entities aware of the floor and the walls, v0.65.0: a sphere surface mover beside the cylinder controller in `vxe-sim`, the solid-count gradient as the smoothed normal, `Quat::from_frame`, a `body` and a clip `stride` in the `.rig`, the fly-through's movers at a 60 Hz tick with a seeded wander, ADR-0062; Plan 0083 added a coarse grain per part, 1 to 16 world voxels per model voxel in the same integer arithmetic, v0.66.0, ADR-0078)
+### M6: Entities as voxel models (Plan 0008 closed the `.vox` import; Plan 0062 closed the render half's entities, v0.56.0: posed voxel models traced with the world, lit and shadowed by the list lights, a headless ray query; Plan 0063 closed rigs and clips, v0.57.0: keyframe clips sampled by tick in fixed point, a `.rig` text file beside the `.vox`, the fly-through as a model viewer that reloads on save, voxels drawn as text; Plan 0078 closed the pool's free, v0.59.0: models freed by handle into a coalescing free list, stable instance slots with a generation, a removed entity's shadow gone on the next frame; Plan 0077 closed the entity picker, v0.64.0: the entities library, a chooser with still icons, a belt of nine slots, a placement mode with a marked ghost, an outline and a tint per instance in the composite and image tiles in the overlay, ADR-0074 and ADR-0075; Plan 0079 closed entities aware of the floor and the walls, v0.65.0: a sphere surface mover beside the cylinder controller in `svet-sim`, the solid-count gradient as the smoothed normal, `Quat::from_frame`, a `body` and a clip `stride` in the `.rig`, the fly-through's movers at a 60 Hz tick with a seeded wander, ADR-0062; Plan 0083 added a coarse grain per part, 1 to 16 world voxels per model voxel in the same integer arithmetic, v0.66.0, ADR-0078)
 
-- `vxe-assets`: `.vox` import with material mapping. Done in Plan 0008 (v0.6.0).
-- `vxe-render`: instanced voxel volumes with transforms traced in the same pipeline (a small
+- `svet-assets`: `.vox` import with material mapping. Done in Plan 0008 (v0.6.0).
+- `svet-render`: instanced voxel volumes with transforms traced in the same pipeline (a small
   top-level structure of AABBs walked in compute), rigid-part rigs, consistent lighting and
   shadows, emissive entities. Plan 0024's temporal pass reprojects by hit position, so a
   moving entity ghosts until this milestone's entities write motion vectors into it.
@@ -671,7 +671,7 @@ a cheap query.
   holds; a posed entity baked onto the world grid and stamped through the op log, so a corpse
   is part of the map (Plan 0085, approved 2026-11-16; ADR-0068, ADR-0069).
   Per-entity voxel damage stays out (`docs/backlog.md`).
-- **ADRs:** ADR-0050 (entity representation; accepted at Plan 0062's close, with an Outcome), ADR-0051 (rigs and clips; accepted at Plan 0063's close, with an Outcome), ADR-0062 (surface locomotion as a kinematic sphere in `vxe-sim`; accepted at Plan 0079's close, with an Outcome); ADR-0064 (a part's scale and its children) with Plan 0082; ADR-0068 (variants as recipes) and ADR-0069 (the bake and the stamp) with Plan 0085.
+- **ADRs:** ADR-0050 (entity representation; accepted at Plan 0062's close, with an Outcome), ADR-0051 (rigs and clips; accepted at Plan 0063's close, with an Outcome), ADR-0062 (surface locomotion as a kinematic sphere in `svet-sim`; accepted at Plan 0079's close, with an Outcome); ADR-0064 (a part's scale and its children) with Plan 0082; ADR-0068 (variants as recipes) and ADR-0069 (the bake and the stamp) with Plan 0085.
 
 ### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0, and Plan 0016 its allocation-free refresh, v0.13.0; Plan 0025 closed the cutaway view, v0.20.0; the other debug views and the profiler across passes remain, and Plan 0068 closed the benchmark lane's first form, the tester build (camera paths, run reports, Linux and Windows archives; shipped in v0.54.0, the first release, 2026-11-15); Plan 0088 added its fourth scene, the outdoor hills, trees and tunnel on a computed path, v0.63.0, 2026-11-17; Plan 0026 closed gamepad flight, v0.21.0; Plan 0043 closed the test tiers, v0.29.1; Plan 0042 closed the generated castle, v0.30.0; Plan 0066 closed the 10 s soak line, 2026-11-11; Plan 0075 closed the loading screen, v0.58.0: start-up stepped on the app's frame loop behind an engine loading frame, 2026-11-16; Plan 0083 closed structures from any `.vox`, v0.66.0, 2026-11-19: every palette entry a material row and the table a text file reloaded live (ADR-0065), prefabs as bricks and a stamp that outlives residency as a placement (ADR-0066), a structure as a belt item placed under a coarse ghost of itself (ADR-0078))
 
@@ -679,7 +679,7 @@ a cheap query.
   coarse grids, flags); an in-app profiler overlay with GPU timestamps; a benchmark lane
   (`criterion` for CPU, timestamp queries for GPU) with readings committed per named machine.
 - The profiler across passes and threads: Plan 0091 (approved 2026-11-19, ADR-0077 accepted):
-  `profiling` facade scopes in `vxe-render` and the apps, none in `vxe-world`,
+  `profiling` facade scopes in `svet-render` and the apps, none in `svet-world`,
   collected by puffin only under the fly-through's `profiler` feature; a dump as a Chrome trace,
   a text tree and `run.json`'s `scopes_top` with a ranking script for agents; the GPU passes as
   a lane; budget scopes that count overruns against `docs/nfr.md`'s lines; allocation counting;
@@ -715,7 +715,7 @@ a cheap query.
   hit; owner's call, 2026-10-17), never as voxels in the brick map; short-lived particle
   debris from edits. Translucent solids (glass, water, lava) are voxels of a translucent
   material class instead, composited by Plan 0015's bounded walk.
-- **Support query** in `vxe-world`: after an edit, the set of coarse-grid cells (0.8 m, from
+- **Support query** in `svet-world`: after an edit, the set of coarse-grid cells (0.8 m, from
   M3) that are solid but no longer connected to the anchor (the indestructible shell, the
   world boundary, or an explicit anchor set the game supplies). A capped flood (ADR-0008)
   from the edit's changed cells over load-bearing cells, integer, deterministic and holding
@@ -744,7 +744,7 @@ a cheap query.
 - **Cosmetic rigid bodies**: a client-side layer, in its own optional crate, that animates the
   pieces of a collapsed region with a rigid-body library (`rapier` or similar) between the
   server's "region R fell at tick T" and the landed result, then fades the pieces into the
-  authoritative world. It never writes to `vxe-world` and nothing deterministic reads it.
+  authoritative world. It never writes to `svet-world` and nothing deterministic reads it.
 - **Headless proof:** carving the single pillar under a 3 × 3 cell slab returns that slab as
   one unsupported region with its exact material counts; the drop op lands it on the floor
   with every voxel in place and the same hash on both CI arms.
@@ -754,7 +754,7 @@ a cheap query.
 
 ### M9: Networking
 
-- `vxe-net`: a QUIC listen server (`quinn`), prediction and reconciliation for local edits,
+- `svet-net`: a QUIC listen server (`quinn`), prediction and reconciliation for local edits,
   entity replication with interest management, late join by seed plus compressed op log,
   positional voice as an audio source through M4's occlusion.
 - **ADRs expected:** transport; voice codec.
@@ -886,7 +886,7 @@ against the baked store: no probe or store term takes sun or sky light.
   desaturated night tint driven by scene luminance. After Plan 0036.
 - **The castle outdoors** (not drafted): Plan 0042's generated castle on open terrain under
   the sky, the owner's pick after its flight. After Plan 0032's outdoor source.
-- **Flowing liquids** (not drafted): a deterministic cellular flow in `vxe-world` whose steps
+- **Flowing liquids** (not drafted): a deterministic cellular flow in `svet-world` whose steps
   are ops through the log, a later plan with its own ADR.
 - **Headless proof:** each plan's goldens on lavapipe (noon, sunset, night, cave mouth, far
   field, lake, under water, lava, overcast, cloud shadow, rain at a cave mouth, snow cover,
@@ -906,7 +906,7 @@ VR-readiness decision keeps open stay open, and so the cost is on paper before a
   dispatch pattern over tiles rather than a vendor extension. HRTF audio (M4) is already
   head-relative. Voxel-model entities (M6) trace in the same pass, so there is no second
   pipeline to make stereo.
-- **What it would take.** A `vxe-xr` shell next to `vxe-app` that owns the OpenXR session and
+- **What it would take.** A `svet-xr` shell next to `svet-app` that owns the OpenXR session and
   swapchains (`openxr` crate, Vulkan handles exchanged through `wgpu-hal`), hands the renderer
   two views per frame and submits the textures with depth for the runtime's reprojection; a
   VR profile in `nfr.md` (two eyes, 90 Hz, a named high-end card) that is its own floor; and a
@@ -940,7 +940,7 @@ VR-readiness decision keeps open stay open, and so the cost is on paper before a
   bindless) is checked against the baseline adapter in M1, and any vendor path is an ADR.
 - **Determinism across platforms** rests on integer edit math, integer generation in anything
   the engine ships, and scripting hosts configured for it. Mitigation: CI asserts hashes on
-  both arms from M1 on, and `clippy.toml` can deny the platform transcendentals in `vxe-world`.
+  both arms from M1 on, and `clippy.toml` can deny the platform transcendentals in `svet-world`.
 - **The upscaler port (M2).** No WGSL port of FSR 2 exists. Mitigation: the M2 plan sizes the
   port as its own phase and names the TAA fallback. Plan 0030 shipped our own upscaler opt-in
   (2026-10-22); Plan 0041 (ADR-0034) ported FSR 2.2.1 and closed 2026-10-27 with FSR 2

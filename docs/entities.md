@@ -4,8 +4,8 @@ An entity is a voxel model on rigid parts that moves without touching the world'
 creature, a door, a prop that swings. The decisions are ADR-0050 (posed voxel volumes in their
 own pool, traced after the world march) and ADR-0051 (rigs and clips as text files, sampled in
 fixed point by tick); Plan 0062 built the entities and Plan 0063 the rigs, clips and the
-fly-through's model viewer. The code: `vxe-entity` (models, poses, clips, the ray query),
-`vxe-assets` (`.vox`, `.voxtext` and `.rig` to a model), `vxe-render` (the GPU mirror and
+fly-through's model viewer. The code: `svet-entity` (models, poses, clips, the ray query),
+`svet-assets` (`.vox`, `.voxtext` and `.rig` to a model), `svet-render` (the GPU mirror and
 tracing) and the fly-through's viewer (`apps/flythrough/src/viewer.rs`).
 
 ## The library
@@ -46,18 +46,18 @@ its picture arrives. `apps/flythrough/tests/icon.rs` pins the walker's and the s
 
 ### A model is rigid parts on a `.vox`
 
-A model is a list of parts. Each part is a voxel volume (a `vxe_world::Prefab`, one `.vox`
+A model is a list of parts. Each part is a voxel volume (a `svet_world::Prefab`, one `.vox`
 model), a parent part, a pivot and a `detail`: 1, 2 or 4 model voxels to a world voxel, so a
 part can be finer than the world. Parts are rigid: a part turns and moves as a whole, and no
-voxel moves inside it. The caps are `vxe_entity::MAX_PARTS` parts a model and
-`vxe_entity::MAX_EDGE` voxels a side a part, and the renderer draws at most
-`vxe_render::MAX_ENTITIES` entities and `vxe_render::MAX_ENTITY_PARTS` parts a frame (the
+voxel moves inside it. The caps are `svet_entity::MAX_PARTS` parts a model and
+`svet_entity::MAX_EDGE` voxels a side a part, and the renderer draws at most
+`svet_render::MAX_ENTITIES` entities and `svet_render::MAX_ENTITY_PARTS` parts a frame (the
 rest are counted and not drawn).
 
 ### The `.rig` file
 
 The rig is a text file beside its `.vox`, one statement a line, `#` a comment. The format's
-reference is the module doc of `crates/vxe-assets/src/rig.rs`; in short:
+reference is the module doc of `crates/svet-assets/src/rig.rs`; in short:
 
 ```text
 vox walker.vox                     # the .vox, relative to the rig
@@ -84,19 +84,19 @@ key 30 head rot x 10
   rest place). With `loop` the clip wraps at its length; without it the clip holds there.
   `stride D` on a clip is the distance one cycle carries the body (0, the default, in place).
 - **`body`**, at most one: `body ground radius R height H [step S]` (a cylinder for
-  `vxe_sim::CharacterController`) or `body surface radius R [reach A]` (a sphere for
-  `vxe_sim::SurfaceMover`, which crawls walls and ceilings; ADR-0062). Lengths are in the root
+  `svet_sim::CharacterController`) or `body surface radius R [reach A]` (a sphere for
+  `svet_sim::SurfaceMover`, which crawls walls and ceilings; ADR-0062). Lengths are in the root
   part's model voxels, like `stride`; the build gives them in world units on
   `RigModel::body` and `Clip::stride`. Which mover runs is the consumer's call.
 
 ### Poses in fixed point, drawn between ticks
 
 A pose places the entity's root with a fixed-point position and a Q14 quaternion, and each part
-relative to its parent. `vxe_entity::sample` gives a clip's pose at an integer tick: translation
+relative to its parent. `svet_entity::sample` gives a clip's pose at an integer tick: translation
 linear and rotation a normalised blend along the shorter arc, all in integers, so a server and
 its clients pose alike on every platform. Degrees become quaternions through a committed table
 of sines, never the platform's `sin`. A viewer draws between two ticks:
-`vxe_render::DisplayPose::between` blends the two ticks' placements in `f32` for the frame
+`svet_render::DisplayPose::between` blends the two ticks' placements in `f32` for the frame
 only, and every query reads the integer tick's pose.
 
 ### Drawn, lit, shadowed and queried
@@ -111,17 +111,17 @@ emissive light comes from its own sample of the emitters (`own`) or from the bak
 world faces around it (`world`): `--entity-light own|world` or `Insert` in the fly-through
 (`flythrough --help` names the default).
 
-The headless query is `vxe_entity::EntitySet::raycast`: it returns the entity, the part, the
+The headless query is `svet_entity::EntitySet::raycast`: it returns the entity, the part, the
 model voxel, the face and the distance, in integer arithmetic. It does not see the world; the
 consumer raycasts the world first and gives its distance as the entities' limit.
 
 ## Making a new one
 
 1. **Draw the voxels.** Either write a `.voxtext` (the format is the module doc of
-   `crates/vxe-assets/src/voxtext.rs`: `color <char> <index> r g b` lines, then per part a
+   `crates/svet-assets/src/voxtext.rs`: `color <char> <index> r g b` lines, then per part a
    `model <name> at x y z` and its `layer`s from the bottom up), or model it in MagicaVoxel with
    one model per part and name each transform node after its part. Turn either into the other
-   with `cargo run -p vxe-assets --example voxtext -- to-vox x.voxtext x.vox` (or `from-vox`).
+   with `cargo run -p svet-assets --example voxtext -- to-vox x.voxtext x.vox` (or `from-vox`).
    Keep each part within the size cap and z up; the library's models face -y.
 2. **Write the rig.** A `part` line per part with its pivot (where the joint is, in the part's
    voxels) and its `at` (where that joint sits on the parent's pivot); a `material` line for

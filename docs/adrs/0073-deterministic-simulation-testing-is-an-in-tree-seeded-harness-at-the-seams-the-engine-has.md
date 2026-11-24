@@ -12,10 +12,10 @@
 
 The owner asked (2026-11-17) what the engine should take from the article "Deterministic
 Simulation Testing" on martinfowler.com. The article's prerequisites are already this
-engine's rules, by design rather than retrofit: `vxe-world`, `vxe-sim` and `vxe-entity` are
+engine's rules, by design rather than retrofit: `svet-world`, `svet-sim` and `svet-entity` are
 headless and deterministic, `clippy.toml` denies the wall clock, every generator takes a seed
-(`SplitMix64` in `vxe-world::hash`), `vxe-net`'s `Server::tick` is a counter the caller
-advances, the logic component sees tick clocks and seeded entropy (`vxe-script-wasm::wasi`),
+(`SplitMix64` in `svet-world::hash`), `svet-net`'s `Server::tick` is a counter the caller
+advances, the logic component sees tick clocks and seeded entropy (`svet-script-wasm::wasi`),
 an op log replays from its seed to the same world hash (`LogFile::replay`,
 `Server::resimulate`), an owned client compares every result with the server's and raises
 `Desync`, and CI asserts the hash vectors on Linux and Windows. The one deliberately
@@ -43,7 +43,7 @@ our own over the scenario's step list.
 
 The dependency policy weighs here: exact pins, `cargo deny`, and "a new dependency is named
 in the plan that adds it". `proptest` brings about ten crates for a strategy and a shrinker;
-turmoil brings tokio's runtime into a crate that today depends on `vxe-world` alone.
+turmoil brings tokio's runtime into a crate that today depends on `svet-world` alone.
 
 ## Decision
 
@@ -74,12 +74,12 @@ The determinism rules become **fitness functions** where they are not yet: `clip
 not to leak carries an `#[expect]` with the reason), `disallowed-methods` gaining thread
 spawns and environment reads beside the clock (the worker pool and the scoped generation
 carry the grep-able `#[allow]` the app shell's pacing already uses), and a script gate that
-scans the edit, collapse, support, stamp, coarse, query and fixed-point sources of `vxe-world`
-and all of `vxe-sim` and `vxe-entity` for floating point, taking over the file list of the
+scans the edit, collapse, support, stamp, coarse, query and fixed-point sources of `svet-world`
+and all of `svet-sim` and `svet-entity` for floating point, taking over the file list of the
 fly-through's `generation_sources_contain_no_floating_point` test.
 
 No new dependency: the shrinker is `ddmin` over a `Vec<Step>` on the engine's RNG, and the
-harness depends on `vxe-world`, `vxe-net`, `vxe-sim` and `vxe-entity` alone.
+harness depends on `svet-world`, `svet-net`, `svet-sim` and `svet-entity` alone.
 
 ## Consequences
 
@@ -107,7 +107,7 @@ harness depends on `vxe-world`, `vxe-net`, `vxe-sim` and `vxe-entity` alone.
   moved past it, named in the test).
 - A dev-only crate is one more workspace member to keep building, and the rename (Plan 0087)
   renames it with the rest.
-- `iter_over_hash_type` bites on every `HashMap` iteration in `vxe-world`, including the ones
+- `iter_over_hash_type` bites on every `HashMap` iteration in `svet-world`, including the ones
   that collect and sort (`ChunkStore::coords`, `take_dirty`): each needs an `#[expect]` with
   its reason, a one-time pass of perhaps a dozen sites (a guess until the lint runs).
 - Gate time grows by the seeded batch; the plan budgets it under the 10 s line per test and
@@ -128,7 +128,7 @@ plan, not dropped.
 
 turmoil and madsim give a seeded network and clock to tokio programs by owning or patching the
 runtime; the engine's server is synchronous, tick-driven and already clock-free, so adopting
-one means wrapping a channel we own in a runtime we do not use, for `vxe-net`'s one dependency
+one means wrapping a channel we own in a runtime we do not use, for `svet-net`'s one dependency
 to become tokio's tree. Antithesis runs unmodified binaries under a deterministic hypervisor,
 the answer when a codebase has no seams; ours has them, and a hosted service runs nothing in
 this repository's CI or on the dev box. loom and shuttle explore thread schedules of

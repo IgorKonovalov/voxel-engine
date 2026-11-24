@@ -419,14 +419,14 @@ close compares it with the figure the lane read from `main` at its start.
 > resume notes go to the plan's readings log, `docs/plans/logs/0087.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
-Readings log: [`logs/0087.md`](logs/0087.md). Nested `.claude/` repository commits: Phase 1 `d0bf832` (the GPU lock path).
+Readings log: [`logs/0087.md`](logs/0087.md). Nested `.claude/` repository commits: Phase 1 `d0bf832` (the GPU lock path), Phase 4 `122d89d` (the rest of the harness).
 
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: the workspace | dev | done | b2759d75 |
 | 2: the environment variables and the WIT package | dev | done | 5f2a321d |
-| 3: the tester, its archive and the names a user sees | dev | done, except the manual `release.yml` run | committed with this row |
-| 4: the documents, the orientation map and the harness | dev | not started | |
+| 3: the tester, its archive and the names a user sees | dev | done, except the manual `release.yml` run | 865469be |
+| 4: the documents, the orientation map and the harness | dev | done (nested `122d89d`) | committed with this row |
 | 5: the repository takes the name | human | not started | |
 | 6: the version | dev | not started | |
 | 7: the final check | dev | not started | |
@@ -438,7 +438,7 @@ Readings log: [`logs/0087.md`](logs/0087.md). Nested `.claude/` repository commi
 - Phase 2: the `VXE_*` substitution also reached `README.md` (one line), one row of `docs/plans/README.md` and Plans 0090 and 0093's texts, outside the phase's Files touched, since its done-when grep covers the whole live tree; the host's load error gained a context line naming the served interface (`crates/svet-script-wasm/src/host.rs`), and the refusal test's pre-rename component is committed as `crates/svet-script-wasm/tests/fixtures/pre-rename-greedy.wasm` (68 KB).
 - Phase 3: the manual run of `release.yml` (`gh workflow run release.yml`, artifacts `svet-tester-linux-x86_64` and `svet-tester-windows-x86_64`) is not done: it needs the branch on the remote; owed after the merge and push, the owner's call. The local archive, unpack and `--system-json` steps are done (readings log).
 - Phase 3: the fly-through sets its own window title (`"flythrough"`, `apps/flythrough/src/setup.rs`) and keeps it; the shell's default title is `svet`, asserted by the new `crates/svet-app/tests/shell.rs`. `scripts/test-changed.test.mjs` and `scripts/fixtures/README.md` took `svet-tester` (outside the phase's Files touched); the `vxe-tester` mentions in `docs/backlog.md`, `docs/nfr.md` and Plan 0073 are left for Phase 4.
-- Followup for Phase 4 or 7: three live comment lines outside every phase's Files touched still say `vxe`: `.config/nextest.toml` (a quoted note naming `vxe-render::exposure`), `clippy.toml` (`vxe-net`) and `assets/architecture/README.md` (`vxe-assets`).
+- Phase 4: the three live comments outside every phase's Files touched (`.config/nextest.toml`, `clippy.toml`, `assets/architecture/README.md`) took `svet` here. `~/Work/vxe-live-archive` (a directory on disk, in `docs/backlog.md` and Plan 0102) is kept, so Phase 4's first grep lists those two files. Two sentences needing the old prefix were reworded to "the old prefix" (Plan 0087's index row, Plan 0093's naming note); `README.md`'s title became `# svet`.
 
 ### Close triggers
 

@@ -28,7 +28,7 @@ grass is the first user because Plan 0032's outdoor source has a `grass` row and
 
 Four facts of the tree shape the choice.
 
-- **The world is deterministic and the renderer is a mirror.** `vxe-world` is headless, does
+- **The world is deterministic and the renderer is a mirror.** `svet-world` is headless, does
   integer edit math, and every edit is a logged op (CLAUDE.md). A blade that existed as world
   data would be collided with, queried, logged, synced and baked. Nothing about a blade needs
   any of that: it is cosmetic. Plan 0055 removed ADR-0011's per-material procedural detail
@@ -65,10 +65,10 @@ blades (Wohllaib 2021). Grass fades to a tint with distance in every production 
 **Surface detail is a procedural shell over a face, marched in the hit pass where a primary
 ray meets a styled face, described per material in a render-side style table, drawn as a hit
 record and lit as one, and faded to the face's own albedo by the voxel's size on screen. It
-is cosmetic and client-only: nothing in `vxe-world`, the op log, the queries, the sync or the
+is cosmetic and client-only: nothing in `svet-world`, the op log, the queries, the sync or the
 bake knows it exists.** In detail:
 
-- **A style, not a thing.** `vxe-render` takes a table of `SurfaceDetail` styles from the
+- **A style, not a thing.** `svet-render` takes a table of `SurfaceDetail` styles from the
   consumer (`Frame::set_surface_details`): per style a shape primitive (`Stalk`, a tapered
   bendable segment; `Cap`, an ellipsoid on a stalk; `Pebble`, a hemisphere), the face
   directions it grows on, a count per face cell, a height range and a root width in voxels,
@@ -119,7 +119,7 @@ bake knows it exists.** In detail:
   and each is a row of a table the consumer owns. Plan 0036's snow cover can swap a face's
   style for a white `Cap` set as it recolours the face.
 - No world data, no op, no sync, no bake, no query changes: the determinism story of
-  `vxe-world` is untouched, and the server's hit test ignores the layer as it should.
+  `svet-world` is untouched, and the server's hit test ignores the layer as it should.
 - Edits are free: the layer is a function of the faces that exist this frame.
 - The layer is lit and denoised by the stages that exist, with the shadow rays and the baked
   light the face has, so it does not look pasted on.

@@ -14,7 +14,7 @@
 
 The owner asked for full dynamic weather (2026-10-22): rain, snow, wind, wet surfaces, snow
 cover and lightning, driven by the game through a small API, with time of day and weather as
-parameters the game sets. Two constraints frame it. `vxe-world` is headless and deterministic
+parameters the game sets. Two constraints frame it. `svet-world` is headless and deterministic
 and reads no wall clock (CLAUDE.md); the outdoor plans of this batch keep sky and weather on
 the rendering side, cosmetic and client-side unless a plan argues otherwise. And the first
 consumer is underground: the one property weather must get right is that a cave stays dry.
@@ -25,8 +25,8 @@ So every weather effect needs the same answer to one question: is this point rea
 falls from the sky? A particle under a ledge must vanish, a floor under a roof must stay dry,
 a cliff face on the windward side must get wet. The answer depends on the world's geometry,
 which changes at runtime (digging opens a roof, collapse closes one), and on the wind, which
-slants the fall. The world lives twice: authoritative in `vxe-world` (CPU, 10 cm voxels, a
-per-brick coarse grid at 0.8 m) and mirrored in `vxe-render` (the GPU brick pool, walked by the
+slants the fall. The world lives twice: authoritative in `svet-world` (CPU, 10 cm voxels, a
+per-brick coarse grid at 0.8 m) and mirrored in `svet-render` (the GPU brick pool, walked by the
 full walk at about 0.9 ms per million rays at 1080p on the dev box, Plan 0015).
 
 Snow cover could also be matter: voxels of a snow material stamped onto exposed tops. That
@@ -35,14 +35,14 @@ on every exposed chunk in the view.
 
 ## Decision
 
-Weather is cosmetic client state. `vxe-render`'s `weather` module holds a `WeatherState` the
+Weather is cosmetic client state. `svet-render`'s `weather` module holds a `WeatherState` the
 game sets as a target: rain and snow rates, a horizontal wind vector, wetness and snow-cover
 levels, the cloud coverage it hands to Plan 0035's clouds, and a lightning rate. A `Weather`
 value approaches that target linearly over a tick count the game names. The game advances it
 with `Weather::step(ticks)`, and the engine reads no clock. Lightning strikes are scheduled from
 an explicit seed and the tick number by an integer hash, and the game can also force a strike.
 `step` reports each strike as a `WeatherEvent::Lightning` with its direction, distance and
-intensity. Thunder is the game's sound, so no weather type names `vxe-audio`.
+intensity. Thunder is the game's sound, so no weather type names `svet-audio`.
 
 The renderer answers "reached by what falls?" with a **fall map**. The map is a camera-centred
 1024 x 1024 grid at 0.2 m, covering 204.8 m, in tiles of one chunk column. A compute pass traces
@@ -70,7 +70,7 @@ of ADR-0044's light list and is not stored in the direct-light target, the probe
 term). Weather never writes a voxel. A game that needs
 weather in gameplay (a sheltered check, snow that blocks, thunder that alerts) owns that state
 in its own deterministic logic and sends the targets and strikes to its clients. It queries
-`vxe-world` for gameplay facts and never reads the fall map, which is a cosmetic GPU artifact.
+`svet-world` for gameplay facts and never reads the fall map, which is a cosmetic GPU artifact.
 
 ## Consequences
 
@@ -82,7 +82,7 @@ in its own deterministic logic and sends the targets and strikes to its clients.
   frame re-traces up to 64 tiles (65 536 rays, a projected 0.06 ms on the dev box).
 - Particles need no buffer and no simulation. The same seed and tick give the same image, so
   goldens are stable and two clients with one seed see the same flashes at the same ticks.
-- `vxe-world`, the op log, edit persistence and the network are untouched. Weather adds no
+- `svet-world`, the op log, edit persistence and the network are untouched. Weather adds no
   bytes to a save and no ops to a log.
 
 ### Negative
@@ -112,7 +112,7 @@ in its own deterministic logic and sends the targets and strikes to its clients.
 
 ## Alternatives considered
 
-### Alternative A: snow and wetness as voxels in `vxe-world`
+### Alternative A: snow and wetness as voxels in `svet-world`
 A snowfall stamps snow-material voxels onto exposed tops, and wetness is a per-voxel flag.
 Accumulated snow becomes real terrain. It lost because it puts a cosmetic effect into the
 authoritative, deterministic, logged world. Every exposed chunk in a 200 m view becomes an
@@ -121,7 +121,7 @@ and the mirror's upload line (section 2's 1.0 ms streaming line, already a recor
 carry weather. A 10 cm voxel is also too coarse for a few centimetres of snow, which is the
 look the owner rejects. A game that wants drifts as terrain can stamp them with ops itself.
 
-### Alternative B: an exposure height map on the CPU from `vxe-world`'s coarse grid
+### Alternative B: an exposure height map on the CPU from `svet-world`'s coarse grid
 Derive each column's top occupied height from the per-brick coarse grid (Plan 0004) and upload
 it. It is deterministic and could serve gameplay. It lost on resolution and reach. A coarse cell
 is 0.8 m, so drip lines become a 0.8 m staircase. The grid is maintained only where the

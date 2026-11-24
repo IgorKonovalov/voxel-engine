@@ -1,6 +1,6 @@
-# voxel-engine
+# svet
 
-[![CI](https://github.com/IgorKonovalov/voxel-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/IgorKonovalov/voxel-engine/actions/workflows/ci.yml)
+[![CI](https://github.com/IgorKonovalov/svet/actions/workflows/ci.yml/badge.svg)](https://github.com/IgorKonovalov/svet/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
 ![A large dark voxel spider walking in place on the showcase cavern's floor, its eight legs stepping each on its own phase, glowing leg tips and eyes, silhouetted against a cluster of cyan crystals under a red dome](docs/images/spider-walk.gif)
@@ -27,7 +27,7 @@ own loop and entity model.
 > (lighting: baked emissive light, dynamic lights, a sun and a sky), M7 (tooling: the tester
 > build, the loading screen, render settings and named profiles), M8 (collapse) and M10
 > (outdoors: the sun and sky). v0.54.0 was the first tagged release; its tester archives are on
-> the [releases page](https://github.com/IgorKonovalov/voxel-engine/releases).
+> the [releases page](https://github.com/IgorKonovalov/svet/releases).
 > [`CHANGELOG.md`](CHANGELOG.md) says what has shipped, [`docs/roadmap.md`](docs/roadmap.md)
 > what comes next, and [`docs/plans/README.md`](docs/plans/README.md) what is in flight.
 
@@ -127,15 +127,15 @@ and says so.
 
 | Path | Owns |
 |------|------|
-| [`crates/vxe-world`](crates/vxe-world) | Voxel storage, materials, edit ops and results, spatial queries, prefabs and stamping, collapse, streaming, the op log and its wire encoding. Headless and deterministic: no GPU, no wall clock, no unseeded RNG. |
-| [`crates/vxe-render`](crates/vxe-render) | `wgpu`: the GPU mirror and its upload, compute ray marching, the baked light store and its live queue, the light list, the sun and sky, denoise, FSR 2 and our upscaler, exposure, voxel-model entities, the loading screen, the text overlay, render settings and profiles. All WGSL lives here. |
-| [`crates/vxe-app`](crates/vxe-app) | Thin, optional `winit` shell: window, input, surface, frame loop, a splash before the world loads. |
-| [`crates/vxe-sim`](crates/vxe-sim) | Cylinder sweeps and the character controller. Depends on `vxe-world` only. |
-| [`crates/vxe-assets`](crates/vxe-assets) | `.vox` parsing and writing and the palette-to-material map, producing `vxe-world` prefabs; `.rig` files to `vxe-entity` models and clips; voxels drawn as text (`.voxtext`). |
-| [`crates/vxe-net`](crates/vxe-net) | The byte channel, the server tick with its op and input logs, the `Logic` and `Host` traits, shared and owned clients. |
-| [`crates/vxe-script-wasm`](crates/vxe-script-wasm) | The `wasmtime` host for logic components; `guests/` holds the test components. Not in the default build. |
-| [`crates/vxe-audio`](crates/vxe-audio) | `cpal` output, the HRTF mixer on the device callback, occlusion and early reflections through the material table; the HRIR pack under `assets/`. Depends on `vxe-world` only. |
-| [`crates/vxe-entity`](crates/vxe-entity) | Voxel-model entities: rigid parts as prefabs, poses in fixed point and Q14 quaternions, clips sampled by tick, the entity ray query. Headless and deterministic; depends on `vxe-world` only. |
+| [`crates/svet-world`](crates/svet-world) | Voxel storage, materials, edit ops and results, spatial queries, prefabs and stamping, collapse, streaming, the op log and its wire encoding. Headless and deterministic: no GPU, no wall clock, no unseeded RNG. |
+| [`crates/svet-render`](crates/svet-render) | `wgpu`: the GPU mirror and its upload, compute ray marching, the baked light store and its live queue, the light list, the sun and sky, denoise, FSR 2 and our upscaler, exposure, voxel-model entities, the loading screen, the text overlay, render settings and profiles. All WGSL lives here. |
+| [`crates/svet-app`](crates/svet-app) | Thin, optional `winit` shell: window, input, surface, frame loop, a splash before the world loads. |
+| [`crates/svet-sim`](crates/svet-sim) | Cylinder sweeps and the character controller. Depends on `svet-world` only. |
+| [`crates/svet-assets`](crates/svet-assets) | `.vox` parsing and writing and the palette-to-material map, producing `svet-world` prefabs; `.rig` files to `svet-entity` models and clips; voxels drawn as text (`.voxtext`). |
+| [`crates/svet-net`](crates/svet-net) | The byte channel, the server tick with its op and input logs, the `Logic` and `Host` traits, shared and owned clients. |
+| [`crates/svet-script-wasm`](crates/svet-script-wasm) | The `wasmtime` host for logic components; `guests/` holds the test components. Not in the default build. |
+| [`crates/svet-audio`](crates/svet-audio) | `cpal` output, the HRTF mixer on the device callback, occlusion and early reflections through the material table; the HRIR pack under `assets/`. Depends on `svet-world` only. |
+| [`crates/svet-entity`](crates/svet-entity) | Voxel-model entities: rigid parts as prefabs, poses in fixed point and Q14 quaternions, clips sampled by tick, the entity ray query. Headless and deterministic; depends on `svet-world` only. |
 | [`apps/flythrough`](apps/flythrough) | The engine's own testbed binary; `logic/` is its dig logic, built natively or as a component; `assets/entities/` is the entities library. |
 | [`apps/tester`](apps/tester) | `svet-tester`, the tester build's launcher: a menu that runs the fly-through per scene and packs a report. |
 | [`dist/`](dist) | What the tester archives ship beside the binaries. |
@@ -223,7 +223,7 @@ layout; the mirror no longer holds one). The bounded run also times the coarse g
 per-chunk mip build. A `Full` brick is a packed mask, palette and bit planes (ADR-0012); the
 readings of the level's and the streamed defaults' RAM are in
 [`docs/nfr/03-memory.md`](docs/nfr/03-memory.md).
-`cargo bench -p vxe-world --bench brick_kernel` times the planar edit kernel against a row
+`cargo bench -p svet-world --bench brick_kernel` times the planar edit kernel against a row
 write on raw ids over the same brick-edits.
 
 ### Checks
@@ -250,7 +250,7 @@ node scripts/check-file-size.mjs
 node scripts/check-plan-size.mjs
 ```
 
-The guest crates under `crates/vxe-script-wasm/guests/` get the same wasm32 clippy. Locally,
+The guest crates under `crates/svet-script-wasm/guests/` get the same wasm32 clippy. Locally,
 `cargo nextest run --profile gate` is the gate tier and `node scripts/test-changed.mjs
 --profile quick` tests only the crates a change touched.
 

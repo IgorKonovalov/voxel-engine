@@ -4,6 +4,10 @@ Numbered, append-only records of decisions that have a rejected alternative wort
 Accepted ADRs are never edited in place. To change a decision, write a new ADR that supersedes
 the old one and update the status here.
 
+The engine was `voxel-engine`, with crates `vxe-*`, variables `VXE_*` and the WIT package
+`vxe:logic`, until Plan 0087 renamed it `svet` (v0.73.0); records from before keep those names,
+and `vxe-<x>` reads as `svet-<x>`.
+
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 

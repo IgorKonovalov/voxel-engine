@@ -54,8 +54,8 @@ classifier, a TOML baseline the test reads and `SVET_BLESS=1` lowers, and the sc
 measured wall time between the gate tier and soak. The thresholds start as named guesses and
 are fixed after one owner window on graded pops. We rejected a statistical bar per scene
 (ADR-0076 D: it hides "here and there"), a zero gate from day one (C: every scene is non-zero
-today), and a counter inside `vxe-render`'s own tests (the scenes are the fly-through's worlds,
-lights and camera paths, and `vxe-render` must not grow a world generator).
+today), and a counter inside `svet-render`'s own tests (the scenes are the fly-through's worlds,
+lights and camera paths, and `svet-render` must not grow a world generator).
 
 ## Architecture diagram
 
@@ -71,7 +71,7 @@ flowchart LR
         BL -->|over| FAIL[fail by scene and rule, sources named]
         BL -->|at or under| PASS[pass; SVET_BLESS lowers]
     end
-    subgraph vxe-render
+    subgraph svet-render
         F[Frame on lavapipe] --> RB
     end
     subgraph flythrough bin
@@ -125,8 +125,8 @@ The thresholds' starting guesses, until Phase 5: `T_still` 4 levels of 255 (the 
   window's change (the old statistics, printed beside, not asserted), and the wall time per
   frame on lavapipe in the log.
 - **Files touched:** `apps/flythrough/tests/gpu_pops.rs`, `tests/support/pops/mod.rs`,
-  `tests/support/pops/baseline.rs`, `tests/pops/baseline.toml`, `crates/vxe-world/src/material.rs`
-  (`MaterialFlags::FLICKERS`, bit 8, with its doc line), `crates/vxe-world/tests/` (the flag's
+  `tests/support/pops/baseline.rs`, `tests/pops/baseline.toml`, `crates/svet-world/src/material.rs`
+  (`MaterialFlags::FLICKERS`, bit 8, with its doc line), `crates/svet-world/tests/` (the flag's
   unit test), `docs/plans/logs/0090.md`.
 - **Done when:**
   1. **The count is a committed number.** `the_tunnel_at_rest_pops_no_more_than_its_baseline`
@@ -171,7 +171,7 @@ The thresholds' starting guesses, until Phase 5: `T_still` 4 levels of 255 (the 
   for the live frame to stdout, as `--dump-black` (Plan 0086 Phase 18) prints black cells; the
   read-back runs only under the flag.
 - **Files touched:** `tests/support/pops/attribute.rs`, `tests/support/defects.rs` (the
-  record-state read-back), `crates/vxe-render/src/frame/mod.rs` (a read-back of the hit
+  record-state read-back), `crates/svet-render/src/frame/mod.rs` (a read-back of the hit
   chunks' record words under a flag, if the store's words are not already reachable),
   `apps/flythrough/src/cli/`, `run/hud_feed.rs` (the dump), `hud/modes.rs` (the banner),
   `docs/flythrough.md`, `docs/plans/logs/0090.md`.
@@ -237,8 +237,8 @@ The thresholds' starting guesses, until Phase 5: `T_still` 4 levels of 255 (the 
   current `n` or `f`, so the owner reads the value as they see it. A uniform branch, nothing
   when off.
 - **Files touched:** `tests/support/pops/scenes.rs`, `apps/flythrough/tests/gpu_pops.rs`,
-  `tests/pops/baseline.toml`, `crates/vxe-render/src/shaders/composite.wgsl`,
-  `crates/vxe-render/src/frame/` (the probe's uniform and input), `apps/flythrough/src/cli/`,
+  `tests/pops/baseline.toml`, `crates/svet-render/src/shaders/composite.wgsl`,
+  `crates/svet-render/src/frame/` (the probe's uniform and input), `apps/flythrough/src/cli/`,
   `hud/modes.rs`, `docs/flythrough.md`, `docs/plans/logs/0090.md`.
 - **Done when:**
   1. **Turning away loses nothing, or the baseline says how much.**
@@ -327,7 +327,7 @@ local = 0
 pub enum Source { Store, Chain, SkyBake, SkyRay, SunRay, ListLight, Exposure }
 pub enum Transition { UnbakedToFallback, FallbackToBaked, StaleToRebaked, RayToBake, Tier, Young, Reset, Steady }
 pub struct Pop { pub px: u32, pub rule: u8, pub levels: u8, pub source: Source, pub transition: Transition, pub chunk: [i32; 3] }
-// crates/vxe-world/src/material.rs: MaterialFlags::FLICKERS = Self(1 << 8), a material whose
+// crates/svet-world/src/material.rs: MaterialFlags::FLICKERS = Self(1 << 8), a material whose
 // emission may vary in time; the renderer's stability rule excludes its pixels.
 ```
 
@@ -371,7 +371,7 @@ stillness tests at Phase 6; an exact ratchet; `FLICKERS` reserved now; Plan 0090
   clause for the light it adds, not for the sway.
 - **Rule 2 as written is strict**, and today's rays break it on every disoccluded pixel. The
   baseline records that; nothing in this plan fixes it.
-- **The `FLICKERS` flag is reserved unused.** `vxe-world` gains a bit for a renderer's rule
+- **The `FLICKERS` flag is reserved unused.** `svet-world` gains a bit for a renderer's rule
   with no material carrying it; the first consumer's torch is the first user.
 - **Gate headroom.** 30 s is what the budget allows; if Phase 4's reading says the five cheap
   scenes do not fit, the owner's call at Phase 5 (4) is either retiring the subsumed tests or a

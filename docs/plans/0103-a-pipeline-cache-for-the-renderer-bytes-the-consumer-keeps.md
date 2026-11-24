@@ -7,7 +7,7 @@
 > forced 1 MB NVIDIA limit left the second start two thirds cold). Pick up if a consumer or a
 > tester reports cold second starts. Drafted 2026-11-24 with no interview; the guesses
 > and the open questions are under "Risks & open questions", each with a recommended option.
-> **Order:** it edits `crates/vxe-render/src/gpu_util.rs`, the constructors of the frame, the
+> **Order:** it edits `crates/svet-render/src/gpu_util.rs`, the constructors of the frame, the
 > overlay, the loading frame and the presenter, and the fly-through's start-up
 > (`apps/flythrough/src/run/`). It does not run beside Plan 0092 (hot reload, the same
 > pipeline builders) or Plan 0102 (`frame/pipelines.rs`); after either is fine. Plans 0099 and
@@ -45,11 +45,11 @@ sec"). The driver's own disk cache usually hides this, until it does not: on 202
 NVIDIA cache was over its size limit, kept nothing new, and every start recompiled.
 
 **How pipelines are created today (the tree at `193cae15`).** Every compute pipeline of
-`vxe-render` goes through `gpu_util::compute_pipeline_with`; three render pipelines are
+`svet-render` goes through `gpu_util::compute_pipeline_with`; three render pipelines are
 created in `hud.rs`, `loading.rs` and `present.rs` with `cache: None`. A cache exists only as
-a test hook: `vxe_render::debug::set_pipeline_cache` sets one process-wide slot that
+a test hook: `svet_render::debug::set_pipeline_cache` sets one process-wide slot that
 `compute_pipeline_with` reads, "one device at a time, as a test process holds it", and the
-test support opens it per hardware adapter from a file under `target/vxe-pipeline-cache/`.
+test support opens it per hardware adapter from a file under `target/svet-pipeline-cache/`.
 The fly-through sets none and does not ask the device for the feature
 (`run::device_request_for` asks for timestamp queries only). Its default pipelines are built
 on the loading screen's worker (ADR-0059's Outcome), the arms' with them (Plan 0094 Phase 7a).
@@ -82,7 +82,7 @@ It serves `docs/nfr.md` section 7: "Time to first frame in `apps/flythrough` und
 
 ## Decision
 
-`vxe-render` gains one type, `ShaderCache`, made per device from optional bytes and handed
+`svet-render` gains one type, `ShaderCache`, made per device from optional bytes and handed
 explicitly to each object that builds pipelines. It wraps the driver's cache through wgpu
 inside an engine envelope (a magic, a key over the renderer's composed shader sources and the
 crate version, the payload's length and a checksum). `ShaderCache::bytes()` returns the
@@ -102,7 +102,7 @@ driver's disk cache) because it is the thing that failed.
 ```mermaid
 sequenceDiagram
     participant G as the game (the fly-through)
-    participant C as vxe-render ShaderCache
+    participant C as svet-render ShaderCache
     participant W as wgpu and the driver
     G->>G: read the file, or none
     G->>C: open(device, adapter info, bytes?)
@@ -124,14 +124,14 @@ phase needs a window: nothing on screen changes.
 
 ### Phase 1: `ShaderCache`, its envelope, and the reading through the public type
 - **Owner skill:** dev
-- **What:** The type, the envelope and its failure reasons in `vxe-render`, the frame taking
+- **What:** The type, the envelope and its failure reasons in `svet-render`, the frame taking
   it, and the hardware reading taken through it, so the figure the plan rests on is read on
   the API a game will use.
-- **Files touched:** `crates/vxe-render/src/shader_cache.rs` (new), `lib.rs`, `gpu_util.rs`,
+- **Files touched:** `crates/svet-render/src/shader_cache.rs` (new), `lib.rs`, `gpu_util.rs`,
   `frame/mod.rs` and the builders it calls (`frame/pipelines.rs`, `frame/marcher.rs`,
   `frame/sky.rs`, `frame/upscale.rs`, `bake/pipeline.rs`, `exposure.rs`, `field.rs`,
-  `fsr2/pipelines.rs`), `crates/vxe-render/tests/gpu_cache.rs` (new),
-  `crates/vxe-render/tests/gpu_frame.rs` (the reading), `docs/plans/logs/0103.md`.
+  `fsr2/pipelines.rs`), `crates/svet-render/tests/gpu_cache.rs` (new),
+  `crates/svet-render/tests/gpu_frame.rs` (the reading), `docs/plans/logs/0103.md`.
 - **Done when:**
   - **The envelope, CPU tests in `shader_cache.rs`, each under 1 s:** a round trip of a
     payload gives the payload back; bytes that are empty, shorter than the header, with a
@@ -166,15 +166,15 @@ phase needs a window: nothing on screen changes.
 - **Owner skill:** dev
 - **What:** The three render pipelines and their objects take the cache, and the cache is
   provably outside the frame.
-- **Files touched:** `crates/vxe-render/src/hud.rs`, `loading.rs`, `present.rs`, `lib.rs`,
-  `crates/vxe-render/tests/gpu_cache.rs`, `crates/vxe-render/src/settings.rs` (the setter
+- **Files touched:** `crates/svet-render/src/hud.rs`, `loading.rs`, `present.rs`, `lib.rs`,
+  `crates/svet-render/tests/gpu_cache.rs`, `crates/svet-render/src/settings.rs` (the setter
   gate's list, if a new `pub fn set_*` appears; none is planned).
 - **Done when:**
   - The overlay, the loading frame and the presenter each have a constructor taking
-    `&ShaderCache`, and `rg 'cache: None' crates/vxe-render/src` finds nothing.
+    `&ShaderCache`, and `rg 'cache: None' crates/svet-render/src` finds nothing.
   - `gpu_cache`: after the three objects and one trivial compute pipeline are built through
     one cache on lavapipe, `bytes()` is `Some` and opens `Warm` on a second device. About 4 s.
-  - `ShaderCache::bytes` is called by nothing under `crates/vxe-render/src/frame/` and its doc
+  - `ShaderCache::bytes` is called by nothing under `crates/svet-render/src/frame/` and its doc
     says it is a driver call for the end of loading, not for a frame. A CPU test greps the
     crate's sources for a call inside `frame/` and fails on one (derived from the source, not
     a pinned list).
@@ -191,7 +191,7 @@ phase needs a window: nothing on screen changes.
   `apps/flythrough/tests/gpu_loading.rs`, `docs/flythrough.md`, `dist/README-TESTER.txt`.
 - **Done when:**
   - `--pipeline-cache auto|off|PATH` parses; `auto` (the default) uses the cache on a
-    hardware Vulkan adapter only and resolves `<cache dir>/vxe-flythrough/<name>.bin`, where
+    hardware Vulkan adapter only and resolves `<cache dir>/svet-flythrough/<name>.bin`, where
     the cache dir is `$XDG_CACHE_HOME` or `$HOME/.cache` on Linux and `%LOCALAPPDATA%` on
     Windows, read from the environment with no new dependency, and `<name>` is
     `ShaderCache`'s suggested name (wgpu's adapter key and the engine key). `PATH` uses the
@@ -295,7 +295,7 @@ value per profile; it is an argument of construction.
 
 ## Risks & open questions
 
-- **Determinism:** none affected. `vxe-world`, `vxe-sim` and `vxe-entity` are not touched,
+- **Determinism:** none affected. `svet-world`, `svet-sim` and `svet-entity` are not touched,
   and a cached pipeline is the same program; Phase 1 asserts equal output bytes on lavapipe
   cold and warm, which is weak there (nothing is cached) and is a reading on hardware.
 - **Failure:** every bad input is a cold cache. The one `unsafe` call is wrapped in `open`
@@ -314,7 +314,7 @@ value per profile; it is an argument of construction.
   reports it, the `start-up:` line and `run.json` show warm bytes with a slow build.
 - **A stale file after a driver update** is wgpu's validation key; after an engine update,
   the engine's key. Both are cold starts that rewrite the file.
-- **The test hook stays.** `vxe_render::debug::set_pipeline_cache` keeps serving the test
+- **The test hook stays.** `svet_render::debug::set_pipeline_cache` keeps serving the test
   support; the explicit cache wins where both are present. Removing the hook means passing a
   cache through every test rig, which is not worth this plan.
 

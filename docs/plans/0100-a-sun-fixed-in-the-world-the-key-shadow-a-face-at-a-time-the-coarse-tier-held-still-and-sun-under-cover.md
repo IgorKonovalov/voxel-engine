@@ -4,7 +4,7 @@
 > the guesses and the open questions are under "Risks & open questions", each with a
 > recommended option. **Order:** its lane starts when Plan 0098 has merged (its base is the
 > calm defaults and Phase 14's dig); it runs **beside Plan 0099** (owner, 2026-11-23), which
-> owns `crates/vxe-render/src/bake/queue/`; where the two meet is under "Risks".
+> owns `crates/svet-render/src/bake/queue/`; where the two meet is under "Risks".
 > **Created:** 2026-11-23
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0084](../adrs/0084-the-key-lights-visibility-on-a-world-face-is-fixed-per-face-the-columns-horizon-where-lit-a-cover-source-where-shadowed.md)
@@ -87,7 +87,7 @@ has the first three with their reasons.
 
 ```mermaid
 flowchart LR
-    subgraph vxe-render
+    subgraph svet-render
         H[hit record: voxel, face] --> FC[face centre]
         FC --> C[column map horizon]
         C -->|reads 1: lit| K[key visibility, one value a face]
@@ -140,10 +140,10 @@ Every phase carries exactly one `**Owner skill:**`.
   phases and over the slow fly, against `calm` and `calm,native`. The same arms once on the
   forest at `--sun 10,180` for the near trunks' shadow edges (the wobble rig's near class),
   so a pick made on the slope is not blind in the forest.
-- **Files touched:** `crates/vxe-render/src/shaders/{pair,temporal}.wgsl` (or a new shader
+- **Files touched:** `crates/svet-render/src/shaders/{pair,temporal}.wgsl` (or a new shader
   file: `temporal.wgsl` is 31 lines under the size gate),
-  `crates/vxe-render/src/frame/settings.rs`, `crates/vxe-render/src/frame/settings/sky_light.rs`,
-  `crates/vxe-render/src/settings.rs`, `apps/flythrough/src/cli/outdoor.rs`,
+  `crates/svet-render/src/frame/settings.rs`, `crates/svet-render/src/frame/settings/sky_light.rs`,
+  `crates/svet-render/src/settings.rs`, `apps/flythrough/src/cli/outdoor.rs`,
   `apps/flythrough/src/cli/tests/outdoor.rs`, `apps/flythrough/src/toggles.rs`,
   `apps/flythrough/src/hud/modes.rs`, `apps/flythrough/tests/gpu_wobble/terraces.rs`,
   `docs/flythrough.md`, `docs/plans/logs/0100.md`.
@@ -177,8 +177,8 @@ Every phase carries exactly one `**Owner skill:**`.
   defaults no pixel reads the key record (`key far column`), so no golden moves; a test that
   pins record bytes or renders under `key far baked` may, and each is named in the log with
   what moved.
-- **Files touched:** `crates/vxe-render/src/shaders/bake.wgsl`,
-  `crates/vxe-render/src/bake/{job,pipeline}.rs` (only if the job needs a word it does not
+- **Files touched:** `crates/svet-render/src/shaders/bake.wgsl`,
+  `crates/svet-render/src/bake/{job,pipeline}.rs` (only if the job needs a word it does not
   carry), `apps/flythrough/tests/gpu_bake.rs`, `apps/flythrough/tests/gpu_bake_rule.rs`,
   `docs/plans/logs/0100.md`.
 - **Done when:**
@@ -243,11 +243,11 @@ Every phase carries exactly one `**Owner skill:**`.
   - **H3, the weights:** while a block is coarse the term reads the face's own direction.
   The landing from coarse to full stays the store's one fade. The arm is read on Phase 3's
   rig, held coarse.
-- **Files touched:** `crates/vxe-render/src/shaders/{temporal,pair}.wgsl` (or the new file),
-  `crates/vxe-render/src/frame/settings.rs`, `crates/vxe-render/src/settings.rs`,
+- **Files touched:** `crates/svet-render/src/shaders/{temporal,pair}.wgsl` (or the new file),
+  `crates/svet-render/src/frame/settings.rs`, `crates/svet-render/src/settings.rs`,
   `apps/flythrough/src/cli/outdoor.rs`, `apps/flythrough/src/cli/tests/outdoor.rs`,
   `apps/flythrough/src/toggles.rs`, `apps/flythrough/src/hud/modes.rs`, `docs/flythrough.md`,
-  `docs/plans/logs/0100.md`. **Not** `crates/vxe-render/src/bake/queue/` (Plan 0099's): a fix
+  `docs/plans/logs/0100.md`. **Not** `crates/svet-render/src/bake/queue/` (Plan 0099's): a fix
   that needs the queue or the coarse record's layout stops for an amendment and an ADR.
 - **Done when:** the log holds Phase 3's held-coarse share with the arm on beside off and
   beside landed (both adapters), the mean difference in display levels between the
@@ -304,9 +304,9 @@ Every phase carries exactly one `**Owner skill:**`.
   undone). `lighting.key_cover` needs the key bake on under `record` and `ray-record`; the
   phase says in the log whether the queue bakes key words under `key far column` today and
   turns them on with the setting if not.
-- **Files touched:** `crates/vxe-render/src/shaders/{shade,temporal,pair}.wgsl` (or the new
-  file), `crates/vxe-render/src/frame/{settings,encode}.rs`,
-  `crates/vxe-render/src/frame/settings/sky_light.rs`, `crates/vxe-render/src/settings.rs`,
+- **Files touched:** `crates/svet-render/src/shaders/{shade,temporal,pair}.wgsl` (or the new
+  file), `crates/svet-render/src/frame/{settings,encode}.rs`,
+  `crates/svet-render/src/frame/settings/sky_light.rs`, `crates/svet-render/src/settings.rs`,
   `apps/flythrough/src/cli/outdoor.rs`, `apps/flythrough/src/cli/tests/outdoor.rs`,
   `apps/flythrough/src/toggles.rs`, `apps/flythrough/src/hud/modes.rs`, `docs/flythrough.md`,
   `docs/plans/logs/0100.md`.
@@ -379,8 +379,8 @@ Every phase carries exactly one `**Owner skill:**`.
   unpicked arms stay settings, off. Then the tests that judge the image, written against the
   picks, the goldens re-blessed on lavapipe, the lines and the documents. Tests for an arm
   that was not picked are not written.
-- **Files touched:** `crates/vxe-render/src/frame/settings.rs`, `crates/vxe-render/src/settings.rs`
-  (the profile rows), `crates/vxe-render/tests/gpu_sun/key.rs`,
+- **Files touched:** `crates/svet-render/src/frame/settings.rs`, `crates/svet-render/src/settings.rs`
+  (the profile rows), `crates/svet-render/tests/gpu_sun/key.rs`,
   `apps/flythrough/tests/gpu_wobble.rs`, `apps/flythrough/tests/gpu_wobble/terraces.rs`,
   `apps/flythrough/tests/gpu_outdoor_golden.rs`, `apps/flythrough/tests/golden/`,
   `apps/flythrough/tests/menu.rs`, `apps/flythrough/src/cli/tests/outdoor.rs`,
@@ -484,7 +484,7 @@ Floor, Performance and High `face`, `ray-record`, the picked hold; Portable `fac
   in Phase 6 under the default day and reported.
 - **Phase 3's pose may not hold the fault headless** (Plan 0098's dig did not, at first).
   The stop rule is real: no fix from the code.
-- **Determinism.** Nothing here runs on the server side or in `vxe-world`. The record's
+- **Determinism.** Nothing here runs on the server side or in `svet-world`. The record's
   bytes stay a function of the world and the key direction; Plan 0099 asserts them equal
   across its modes, which Phase 2 does not disturb (the clause is in the shader both modes
   run).

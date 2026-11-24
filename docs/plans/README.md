@@ -3,6 +3,10 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
+The engine was `voxel-engine`, with crates `vxe-*`, variables `VXE_*` and the WIT package
+`vxe:logic`, until Plan 0087 renamed it `svet` (v0.73.0); records from before keep those names,
+and `vxe-<x>` reads as `svet-<x>`.
+
 **Next free number: 0104** (0101 the record by rule at every opening, approved 2026-11-24; 0102 the removal of `own`, drafted 2026-11-24; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
 the sky around the camera; 0098 the calm light by default, closed 2026-11-24; 0099 the bake
 step off the main thread, drafted 2026-11-22; 0100 a sun fixed in the world, drafted 2026-11-23; ADRs are a separate sequence, see `../adrs/README.md` for its next
@@ -126,7 +130,7 @@ Plan 0044's Phase 4; **Plan 0072** (development speed), closed 2026-11-13 (v0.51
 
 **Plan 0081** (a surface detail layer: a style table per material id on the render side, a procedural shell marched in the hit pass where a ray meets a styled face, lit as a hit, faded by the voxel's size on screen, swayed by a wind the game sets; drafted 2026-11-16 from the owner's "outdoors needs trees, grass and water" and "maybe this new layer can be used for something else as well", approved 2026-11-16 with every recommendation; ADR-0063 proposed): after Plan 0032 closes and merges, before Plan 0033; it does not wait for Plan 0036, whose wind it takes when 0036 lands. Plan 0032 was amended the same day: its trees are prefabs stamped at generation time.
 
-**Plan 0079** (entities aware of the floor and the walls: a sphere surface mover beside the cylinder controller in `vxe-sim`, the solid-count gradient as the smoothed normal in `vxe-world`, `Quat::from_frame` in `vxe-entity`, a `body` and a clip `stride` in the `.rig`, a seeded wander in the fly-through; drafted 2026-11-16 from the owner's request, approved 2026-11-16 with every recommendation; ADR-0062 proposed): **closed 2026-11-18, v0.65.0**, ADR-0062 accepted with an Outcome; every phase done, two course hashes pinned on both arms; the 64-spider frame CPU (+3.07 ms against a +1.5 ms guess) and the pathfinding plan are backlog entries. Phases 1 to 3 (`crates/` and the two library rigs) as a side lane once Plan 0063 and the clip-recorder chore merge, beside 0077; Phase 4 (the fly-through) after Plan 0077 merges, with the architect's re-read. **Re-read 2026-11-18** against 0077 as landed: the wander is the menu entry (`F11` is unbound), placing is 0077's belt and click, `belt::stand` branches on the body and the ghost of a surface body stands on the wall, the mover state is `Placed.mover`, the built-in walker keeps its circle, `hud_feed.rs` splits first; owner questions 9 to 11 (a key, the ghost on the wall, the words) took the recommendations (no key, the ghost on the wall, `wander`); the Phase 5 window asked for longer wander legs and an `Esc` confirmation, both in Phase 6.
+**Plan 0079** (entities aware of the floor and the walls: a sphere surface mover beside the cylinder controller in `svet-sim`, the solid-count gradient as the smoothed normal in `svet-world`, `Quat::from_frame` in `svet-entity`, a `body` and a clip `stride` in the `.rig`, a seeded wander in the fly-through; drafted 2026-11-16 from the owner's request, approved 2026-11-16 with every recommendation; ADR-0062 proposed): **closed 2026-11-18, v0.65.0**, ADR-0062 accepted with an Outcome; every phase done, two course hashes pinned on both arms; the 64-spider frame CPU (+3.07 ms against a +1.5 ms guess) and the pathfinding plan are backlog entries. Phases 1 to 3 (`crates/` and the two library rigs) as a side lane once Plan 0063 and the clip-recorder chore merge, beside 0077; Phase 4 (the fly-through) after Plan 0077 merges, with the architect's re-read. **Re-read 2026-11-18** against 0077 as landed: the wander is the menu entry (`F11` is unbound), placing is 0077's belt and click, `belt::stand` branches on the body and the ghost of a surface body stands on the wall, the mover state is `Placed.mover`, the built-in walker keeps its circle, `hud_feed.rs` splits first; owner questions 9 to 11 (a key, the ghost on the wall, the words) took the recommendations (no key, the ghost on the wall, `wander`); the Phase 5 window asked for longer wander legs and an `Esc` confirmation, both in Phase 6.
 
 **Plan 0082** (squash and stretch: a scale per axis per part in `PartPose` and in a clip's keys, `key 10 body scale 1.2 0.8 1.2` in the `.rig`, a slime with a bounce in the entities library; drafted 2026-11-16 from the owner's "jelly-like entities, slimes" question, approved 2026-11-16 with every recommendation; ADR-0064 proposed, a parent's scale moves its children's pivots and not their shapes): after Plan 0063, the clip-recorder chore, Plan 0078 and Plan 0079's Phases 1 to 3 merge (the owner's recommendation agreed: "squash-and-stretch plan after 0079"); it may run beside 0079's Phase 4 and 0077.
 
@@ -146,11 +150,11 @@ the owner's "a castle being built... part of the map", approved 2026-11-16 with 
 
 **Plan 0085** (entity variants: `variant` blocks in the `.rig` that hide a part, swap its volume for another `.vox` node or remap a material, picked per instance by one index and honoured by the picture and the headless query; `Playback::ended` on a one-shot clip that already holds; a posed entity baked onto the world grid in integers, clipped to air on the server and stamped through op kind 2; the spider gains `damaged` and `dead`; drafted 2026-11-16 from the owner's "healthy, damaged, dead: three entities or one with modes?", approved 2026-11-16 with every recommendation; ADR-0068 and ADR-0069 proposed): after Plan 0063, the clip-recorder chore and Plan 0078 merge, and after Plan 0082 (recommended; it edits the same files), beside Plans 0077 and 0079's Phase 4. Per-entity voxel damage is parked in `docs/backlog.md`.
 
-**Plan 0087** (the rename to `svet`, ADR-0071 accepted 2026-11-17 on the owner's "for renaming, I think svet is the best": `crates/svet-*`, `SVET_*` with no aliases, `svet:logic`, `svet-tester` and its archive, the documents and the harness, the owner's GitHub rename, a minor bump, a final grep; accepted ADRs, closed plans, logs, reviews and past CHANGELOG entries keep `vxe`; drafted 2026-11-17, approved 2026-11-17 on the owner's "Approve rename"): it touches every crate directory, so it runs **alone, when no lane is open**: after Plans 0069, 0032 and 0080 (and any other lane `git worktree list` shows then) merge, and after Plans 0077, 0079, 0083 and 0086 merge too (owner, 2026-11-17: "86 finish before").
+**Plan 0087** (the rename to `svet`, ADR-0071 accepted 2026-11-17 on the owner's "for renaming, I think svet is the best": `crates/svet-*`, `SVET_*` with no aliases, `svet:logic`, `svet-tester` and its archive, the documents and the harness, the owner's GitHub rename, a minor bump, a final grep; accepted ADRs, closed plans, logs, reviews and past CHANGELOG entries keep the old prefix; drafted 2026-11-17, approved 2026-11-17 on the owner's "Approve rename"): it touches every crate directory, so it runs **alone, when no lane is open**: after Plans 0069, 0032 and 0080 (and any other lane `git worktree list` shows then) merge, and after Plans 0077, 0079, 0083 and 0086 merge too (owner, 2026-11-17: "86 finish before").
 
-**Plan 0089** (deterministic simulation testing: a dev-only crate `vxe-dst` that draws a scenario
+**Plan 0089** (deterministic simulation testing: a dev-only crate `svet-dst` that draws a scenario
 from one seed, checks invariants after every step, shrinks a failing scenario by delta debugging
-and writes it as a text file and a JSON line; a message-level `SimNet` channel in `vxe-net` with
+and writes it as a text file and a JSON line; a message-level `SimNet` channel in `svet-net` with
 seeded drops, delays, duplicates, partitions and clogs and the owned client's `Lost` rule; a GPU
 mirror oracle against a fresh upload; a `SpillIo` seam with a simulated disk; `iter_over_hash_type`
 and a `check-determinism.mjs` gate; drafted 2026-11-17 from the owner's "yes draft it" on the
@@ -158,7 +162,7 @@ article "Deterministic Simulation Testing"; ADR-0073 proposed): approved 2026-11
 recommended answers except the timing: every phase runs after Plan 0087 (the rename) merges
 (owner). No new dependency.
 
-**Plan 0091** (the frame profiler: `profiling` facade scopes in `vxe-render` and the apps, puffin
+**Plan 0091** (the frame profiler: `profiling` facade scopes in `svet-render` and the apps, puffin
 behind the fly-through's `profiler` feature, `--profiler-dump` writing a Chrome trace, a text tree
 and `run.json`'s `scopes_top`, `scripts/profile-top.mjs` for agents, `PassTimer`'s passes as a
 `gpu` lane, budget scopes, allocation counting, a HUD ticker with a frozen frame; drafted
@@ -166,7 +170,7 @@ and `run.json`'s `scopes_top`, `scripts/profile-top.mjs` for agents, `PassTimer`
 **after Plans 0087 and 0089 and before Plan 0090** (2026-11-19). It touches the fly-through's
 HUD, report and run loop, so it does not run beside a lane that edits them.
 
-**Plan 0092** (WGSL hot reload in the fly-through: `Frame::reload_shaders` in `vxe-render`, an
+**Plan 0092** (WGSL hot reload in the fly-through: `Frame::reload_shaders` in `svet-render`, an
 mtime poll under `--watch-shaders`, the old pipelines kept and the error on the window on a
 compile failure; drafted and approved 2026-11-19, no ADR, no dependency): the owner placed it
 on the architect's recommendation, **right after Plan 0091 merges, before Plan 0090**, in the same lane, because
@@ -290,7 +294,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 | [0074](done/0074-the-syncs-light-stages-placement-spikes-attributed-and-exposed-emitters-by-masks.md) | The sync's light stages: `light_note` p99 8.3 to 2.5 ms by masks; placement index struck, then the window put the stagger in the eviction scan (backlog) | 2026-11-14, v0.53.0 |
 | [0070](done/0070-the-sync-off-the-frame-slot-words-packed-on-the-workers.md) | The sync in place: rescan set dense, light walks on change; sync p50 180 to 17 us, `update + poll + sync` p99 45 to 24 ms, over 16.6; worker packing deferred | 2026-11-13, v0.52.0 |
 | [0072](done/0072-development-speed-the-build-graph-a-narrowed-gate-and-one-compile-per-ci-profile.md) | Development speed: deps at line tables (cold build 455 to 403 s), `-p` gate and `--clippy`, reflink-seeded lanes (137 s); lavapipe stays at 1; CI readings owed | 2026-11-13, v0.51.0 |
-| [0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: GpuWorld 11 fields, Frame 15, main.rs 36 lines; vxe-render's root 100 names; file-size and fn-length gates; benches at the start's | 2026-11-13, v0.50.0 |
+| [0045](done/0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: GpuWorld 11 fields, Frame 15, main.rs 36 lines; svet-render's root 100 names; file-size and fn-length gates; benches at the start's | 2026-11-13, v0.50.0 |
 | [0067](done/0067-the-frames-cpu-a-cheap-queue-step-a-bake-budget-by-time-and-no-black-for-missing-light.md) | The frame's CPU: a still queue drains at 0.075 ms a step; missing light reads neighbour, then parent (`chain`); bake stays frame:1.5 | 2026-11-12, v0.49.0 |
 | [0061](done/0061-antialiasing-far-bands-under-the-baked-light-and-the-edges-left.md) | Antialiasing: the far store read by the shading normal and filters weighed by face; the owner: "no aliazing", a bit soft | 2026-11-11, v0.48.0 |
 | [0065](done/0065-the-baked-lights-waste-atomics-a-filter-of-zeros-and-a-scan-per-frame.md) | The baked light's waste: temporal 0.32 to 0.07 ms, lamp-off a-trous a third, FSR 2 0.8 ms less; images byte-identical | 2026-11-11, v0.47.0 |

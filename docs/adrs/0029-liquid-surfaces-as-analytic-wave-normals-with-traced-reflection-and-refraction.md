@@ -32,7 +32,7 @@ scale people read on water (decimetres to metres) is a few voxels high at most, 
 motion is in the normal, not the silhouette. The world must stay unchanged by rendering:
 edits are deterministic operations through the op log, and the GPU mirror is uploaded from
 them (ADR-0002, ADR-0022), so an animated surface may not be a stream of edits. The game owns
-the clock: `vxe-render` takes time as a parameter.
+the clock: `svet-render` takes time as a parameter.
 
 The denoiser filters albedo-demodulated irradiance on the primary surface with depth and
 normal edge-stopping (ADR-0018), and the upscaler reprojects by the primary hit's world
@@ -99,7 +99,7 @@ liquid (roughness 0.3 or more) traces no reflection.
 - Depth colour is physically consistent at any depth and from any angle, from one parameter
   set per material; a deeper lake reads darker without a layer cap.
 - No world data changes: the class is a table property, the waves are a render parameter, and
-  `vxe-world`'s determinism hashes do not move.
+  `svet-world`'s determinism hashes do not move.
 - Lava is the same mechanism with emission and a high absorption, plus one rule for opaque
   liquids; emissive lava becomes light samples for the bake through `exposed_emitters`.
 

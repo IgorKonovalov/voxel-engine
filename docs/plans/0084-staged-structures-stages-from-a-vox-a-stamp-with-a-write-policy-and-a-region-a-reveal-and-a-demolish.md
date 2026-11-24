@@ -26,7 +26,7 @@
 
 A building under construction is **part of the map**, not an entity: the owner's reading is
 right, and this plan builds it that way. A structure's `.vox` holds its **stages** as
-MagicaVoxel layers (foundation, walls, towers, keep); `vxe-assets` reads them in order, and
+MagicaVoxel layers (foundation, walls, towers, keep); `svet-assets` reads them in order, and
 each stage is applied to the world as **stamps with a write policy**: `IntoAir` writes only
 where the world holds air, so a player's hole and their rubble survive the next stage,
 `Overwrite` is today's authoring stamp, `Erase` removes only what the structure put there. A
@@ -46,7 +46,7 @@ and a carve into them leaves a hole the tower stage does not fill.
   (ADR-0050) are rigid, undiggable, uncollided but for the ray query, unlit by the bake and
   capped at 16 parts of 64 voxels; a castle fits none of that. World voxels are dug, collided
   with, baked, collapsed and logged. The structure belongs to the world.
-- A stamp today writes every masked voxel whatever stands there (`crates/vxe-world/src/stamp.rs`:
+- A stamp today writes every masked voxel whatever stands there (`crates/svet-world/src/stamp.rs`:
   "an authoring operation"). A stage applied over a damaged earlier stage, over the player's
   rubble or over a wall the player built, must decide per voxel, and the engine should not
   decide that for the game.
@@ -63,8 +63,8 @@ and a carve into them leaves a hole the tower stage does not fill.
 
 We give the stamp a write policy (`Overwrite`, `IntoAir`, `Erase`) and an optional region in
 the prefab's rotated frame, as wire kind 7 beside kind 2, and the result a `skipped` count.
-`vxe-assets` turns a `VoxScene`'s layers into ordered stages, each a list of prefabs and
-placements; `vxe-world` offers `reveal`, a pure function from a stage, a slab thickness, an
+`svet-assets` turns a `VoxScene`'s layers into ordered stages, each a list of prefabs and
+placements; `svet-world` offers `reveal`, a pure function from a stage, a slab thickness, an
 axis and a policy to the ops that stamp it slab by slab, and `demolish`, the same with
 `Erase` in reverse. The engine keeps no structure state: the game holds the cursor. The
 fly-through's Structures page drives a structure's stages and reveal at its tick, and runs
@@ -78,8 +78,8 @@ no consumer asks for it yet, and `Overwrite` of the earlier stage restores the d
 ```mermaid
 sequenceDiagram
     participant G as game (fly-through demo)
-    participant A as vxe-assets VoxScene
-    participant W as vxe-world
+    participant A as svet-assets VoxScene
+    participant W as svet-world
     participant S as server + log
     G->>A: stages(scene)
     A-->>G: [foundation, walls, towers] (prefabs, placements)
@@ -103,11 +103,11 @@ the owner's window and Phase 5 follows it.
 - **Owner skill:** dev
 - **What:** `Op::Stamp` gains `policy` and `region`, applied in the blit, logged as kind 7,
   reported with a `skipped` count.
-- **Files touched:** `crates/vxe-world/src/stamp.rs` (`StampPolicy`, the per-voxel branch in
+- **Files touched:** `crates/svet-world/src/stamp.rs` (`StampPolicy`, the per-voxel branch in
   `blit`, a `region` clip of the rotated box), `src/log.rs` (`Op::Stamp { policy, region }`,
   kind 2 when `Overwrite` and no region, kind 7 otherwise), `src/wire.rs`, `src/edit.rs`
-  (`EditResult::skipped`), `crates/vxe-world/tests/stamp.rs`, `tests/log.rs`,
-  `benches/stamp.rs` (`prefab64_mixed_into_air`), `crates/vxe-net/tests/` (kind 7 through the
+  (`EditResult::skipped`), `crates/svet-world/tests/stamp.rs`, `tests/log.rs`,
+  `benches/stamp.rs` (`prefab64_mixed_into_air`), `crates/svet-net/tests/` (kind 7 through the
   server), `docs/nfr/04-edits.md`.
 - **Done when:**
   1. `into_air_leaves_what_stands_there` (`tests/stamp.rs`, under 1 s): the 16³ vault stamped
@@ -128,14 +128,14 @@ the owner's window and Phase 5 follows it.
 ### Phase 2: stages from a `.vox`, and the planner
 - **Owner skill:** dev
 - **What:** `VoxScene::stages` orders a scene's layers (or `stage <n>` groups) into stages;
-  `vxe_world::reveal` and `demolish` plan a stage's ops.
-- **Files touched:** `crates/vxe-assets/src/scene.rs` (`Stage { name, placements }`;
+  `svet_world::reveal` and `demolish` plan a stage's ops.
+- **Files touched:** `crates/svet-assets/src/scene.rs` (`Stage { name, placements }`;
   `stages()`: layers in `LAYR` order, hidden layers skipped, a file without layers one stage;
   a top-level group named `stage <n> <name>` makes a stage when the file has no layers),
-  `crates/vxe-assets/tests/scene.rs`, `crates/vxe-world/src/stamp.rs` (`reveal(stage: &[(Arc<Prefab>,
+  `crates/svet-assets/tests/scene.rs`, `crates/svet-world/src/stamp.rs` (`reveal(stage: &[(Arc<Prefab>,
   VoxelCoord, Rot)], slab: u32, axis: Axis, policy) -> Vec<Op>`: per placement, regions of
   `slab` voxels from the rotated box's low end up, placements interleaved by world height so the
-  structure rises as one; `demolish` the reverse with `Erase`), `crates/vxe-world/tests/stamp.rs`,
+  structure rises as one; `demolish` the reverse with `Erase`), `crates/svet-world/tests/stamp.rs`,
   `apps/flythrough/assets/structures/chapel/chapel.voxtext` and `.vox` (three layers:
   `1 foundation`, `2 walls`, `3 tower`), `apps/flythrough/src/castle.rs` (the generated castle's
   tiles on four layers: foundation and curtain, towers, gatehouse, keep and dungeon).
@@ -196,7 +196,7 @@ the owner's window and Phase 5 follows it.
 ## Data shapes
 
 ```rust
-// illustrative, vxe-world
+// illustrative, svet-world
 pub enum StampPolicy { Overwrite, IntoAir, Erase }
 pub struct Op::Stamp { prefab: u64, origin: VoxelCoord, rot: Rot,
                        policy: StampPolicy, region: Option<([i32; 3], [i32; 3])> }  // rotated local
@@ -208,7 +208,7 @@ pub fn demolish(stage: &[(Arc<Prefab>, VoxelCoord, Rot)], slab: u32, axis: Axis)
 ```
 
 ```rust
-// illustrative, vxe-assets
+// illustrative, svet-assets
 pub struct Stage { pub name: String, pub placements: Vec<(usize, VoxelCoord, Rot)> }
 impl VoxScene { pub fn stages(&self) -> Vec<Stage>; }
 ```
@@ -217,7 +217,7 @@ impl VoxScene { pub fn stages(&self) -> Vec<Stage>; }
 
 | Figure | `nfr.md` | Expected | How the close reads it |
 |---|---|---|---|
-| Stamp cost with a policy | section 4 | `prefab64_mixed_into_air` within 15 % of `prefab64_mixed` (guess) | `cargo bench -p vxe-world --bench stamp`, dev reference |
+| Stamp cost with a policy | section 4 | `prefab64_mixed_into_air` within 15 % of `prefab64_mixed` (guess) | `cargo bench -p svet-world --bench stamp`, dev reference |
 | Log bytes per op | section 4 | kind 2 stays 34; kind 7 is 59 | `tests/log.rs` asserts the counts |
 | A reveal's ops per tick | section 4's per-frame edit line (2.0 ms for 100 carves) | one slab op a tick, far under it; a reading at `reveal 1` on the castle | the HUD's tick line in Phase 4 |
 | Determinism | section 6 | a pinned vector for the staged chapel on both arms | `a_reveal_covers_the_stage_once` |
@@ -244,7 +244,7 @@ impl VoxScene { pub fn stages(&self) -> Vec<Stage>; }
 
 1. **The engine's part.** Recommended: a stamp with a policy and a region, plus pure planners,
    and no structure state in the engine (ADR-0067); the game holds the cursor. Alternative: a
-   `Structure` object in `vxe-world` with a cursor and `advance()`, which puts a construction
+   `Structure` object in `svet-world` with a cursor and `advance()`, which puts a construction
    clock in the engine.
 2. **The default policy for a stage.** Recommended: `IntoAir` (a player's hole and rubble
    survive the next stage). Alternative: `Overwrite` (the design wins; today's stamp).

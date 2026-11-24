@@ -178,7 +178,7 @@ statements and runs the counter at the close; a plan whose counts rise does not 
 - A ratchet never rising means a plan that trades a large pop for many small ones under the
   threshold passes; the attribution table in the log is what the review reads against that.
 - Rule 1's `FLICKERS` flag is a material-table bit the engine reserves before any material uses
-  it; `vxe-world` gains a flag for a renderer's rule.
+  it; `svet-world` gains a flag for a renderer's rule.
 - Rule 2 is strict ("at once"), and today's rays will break it on every disoccluded pixel; the
   baseline records that, and the ratchet asks only that it not get worse.
 

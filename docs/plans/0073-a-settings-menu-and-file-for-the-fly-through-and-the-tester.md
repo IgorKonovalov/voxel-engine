@@ -77,11 +77,11 @@ through the existing overlay pass and builds its text only while open.
 Build ADR-0058 in the apps. `flythrough::settings` (library side, so the tester reuses it) holds
 the field table, the layers, the TOML reader and writer, the per-OS path and the menu's state;
 the fly-through and the tester draw the menu through `HudOverlay::set_lines`, as the tester's
-launcher menu does today. `vxe-render` does not change. The tester's existing menu keeps its rows;
+launcher menu does today. `svet-render` does not change. The tester's existing menu keeps its rows;
 its profile choice (Plan 0069 Phase 3) becomes the settings menu's profile row, so there is one
 profile control.
 
-We rejected name-keyed access in `vxe-render` (the string-keyed surface ADR-0055 kept out),
+We rejected name-keyed access in `svet-render` (the string-keyed surface ADR-0055 kept out),
 `serde` derives on `RenderSettings` (the dependency stays in the apps; owner), the file beside the
 executable or in the working directory (lost with each tester archive; the tester's children run
 in the report folder), and saving on every change or never (ADR-0058 has each).
@@ -90,7 +90,7 @@ in the report folder), and saving on every change or never (ADR-0058 has each).
 
 ```mermaid
 flowchart LR
-    subgraph render[vxe-render, unchanged]
+    subgraph render[svet-render, unchanged]
         P[RenderSettings::profile] 
         F[RenderSettings::FIELDS + classes]
         A[Frame::apply_settings]
@@ -108,7 +108,7 @@ flowchart LR
     M -->|window edits| L
     L --> A
     M -->|save| IO
-    subgraph tester[vxe-tester]
+    subgraph tester[svet-tester]
         TM[launcher menu + SettingsMenu] -->|run dir settings.toml, --config| C[fly-through child]
     end
     L --> TM
@@ -143,7 +143,7 @@ check`, the doc and tier gates. Readings and the window's notes go to `docs/plan
     list); a file `profile = "portable"` with `[render.look] translucent_layers = 3` gives
     Portable with 3; adding `--translucent-layers 4` gives 4; adding `--profile performance`
     gives Performance's values with 4, and `build.residency` (in no layer) equals Performance's.
-  - `cargo tree -i toml` lists `flythrough` (and `vxe-tester` from Phase 5) and no crate under
+  - `cargo tree -i toml` lists `flythrough` (and `svet-tester` from Phase 5) and no crate under
     `crates/`; `cargo deny check` exits 0.
   - `flythrough --config F --settings` prints one line per leaf with name, class, value and
     source; a test over the second bullet's fixture reads the source column of three rows as
@@ -169,9 +169,9 @@ check`, the doc and tier gates. Readings and the window's notes go to `docs/plan
   - `a_broken_file_is_ignored_with_its_line`: an unclosed table header on line 4 gives one
     warning naming line 4 and an empty file layer.
   - `the_config_path_per_os`: Linux with `XDG_CONFIG_HOME=/x` gives
-    `/x/vxe-flythrough/settings.toml`; Linux with only `HOME=/h` gives
-    `/h/.config/vxe-flythrough/settings.toml`; Windows with `APPDATA=C:\A` gives
-    `C:\A\vxe-flythrough\settings.toml`; neither variable gives no path and no warning.
+    `/x/svet-flythrough/settings.toml`; Linux with only `HOME=/h` gives
+    `/h/.config/svet-flythrough/settings.toml`; Windows with `APPDATA=C:\A` gives
+    `C:\A\svet-flythrough\settings.toml`; neither variable gives no path and no warning.
   - `only_windowed_runs_read_the_default_file`: with a default file present, the parsed
     arguments of a windowed run hold its file layer; `--headless`, `--tester` and `--no-config`
     hold none; `--headless --config F` holds F's. The goldens are untouched (they run headless).
@@ -237,7 +237,7 @@ check`, the doc and tier gates. Readings and the window's notes go to `docs/plan
   own file, and each run gets its settings as a file in its folder.
 - **Files touched:** `apps/tester/Cargo.toml`, `apps/tester/src/{menu,run,main}.rs`,
   `apps/tester/src/zip.rs` if the listing needs it.
-- **Shape:** the tester's file is `vxe-tester/settings.toml` in the config folder, with
+- **Shape:** the tester's file is `svet-tester/settings.toml` in the config folder, with
   `profile`, `[render]` and a `[tester]` table (scene, mode, output) its menu starts from and its
   save writes. The launcher has no frame: every class applies at the next run, and the menu still
   shows each field's class. Each run writes its effective settings to `<run_dir>/settings.toml`
@@ -285,7 +285,7 @@ impl Layers { pub fn effective(&self) -> RenderSettings; pub fn source(&self, le
 ```
 
 ```toml
-# illustrative: vxe-flythrough/settings.toml; keys are `flythrough --settings` names.
+# illustrative: svet-flythrough/settings.toml; keys are `flythrough --settings` names.
 profile = "portable"
 [render.look]
 translucent_layers = 3
@@ -307,7 +307,7 @@ round trip per kind and Phase 1's precedence test bound it, and the owner's wind
 A key toggle that keeps writing the struct directly bypasses the window layer and the menu shows a
 stale value: Phase 3's toggle test walks the key table. A user's file on the dev box leaking into
 a reading is closed by Phase 2's rule and test. No determinism risk: nothing here reaches
-`vxe-world`, and the file's floats are render settings.
+`svet-world`, and the file's floats are render settings.
 
 ## Open questions
 
@@ -337,13 +337,13 @@ All answered by the owner on 2026-11-12, each with its recommendation (first opt
 
 ## What this plan does NOT do
 
-- Give `vxe-render` a file, a `serde` feature or name-keyed access (ADR-0055, ADR-0058).
+- Give `svet-render` a file, a `serde` feature or name-keyed access (ADR-0055, ADR-0058).
 - Show a consumer doing the same in Plan 0071's render example: a followup there.
 - Rebuild the mirror or the streamer live: a `Rebuild` edit applies at the next start, as in
   Plan 0069.
 - Put the fly-through's debug views and non-setting toggles (cutaway, views, audio) in the menu
   or the file: they are not `RenderSettings` fields.
-- Add mouse pointing (the cursor's position over a row): `vxe-app` reports clicks and the wheel,
+- Add mouse pointing (the cursor's position over a row): `svet-app` reports clicks and the wheel,
   not the cursor's position, and the menu needs no more.
 - Add a game's options screen; a game draws its own.
 

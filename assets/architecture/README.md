@@ -1,7 +1,7 @@
 # Architecture assets
 
 Reusable buildings and structures as MagicaVoxel `.vox` files, for testbeds, showcases and
-stamping tests. Nothing here is engine code; a consumer loads a file through `vxe-assets`.
+stamping tests. Nothing here is engine code; a consumer loads a file through `svet-assets`.
 
 The `.vox` files are not committed (they are tens of MB each). Regenerate them:
 

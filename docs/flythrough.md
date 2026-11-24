@@ -458,8 +458,8 @@ stage's step time).
 
 | Flag | Does |
 |------|------|
-| `--settings` | Print every render setting the flags give (`vxe_render::RenderSettings`, ADR-0055), one line per field: its name, its apply class (`live`, `settle`, `rebuild`) and its value; then exit |
-| `--profile floor\|portable\|performance\|high` | The render profile (`vxe_render::Profile`) the other flags edit, whatever their order: floor (1080p, FSR 2 at 1.5), portable (720p, FSR 2 at 1.5, fewer layers and lights, no lamp bounce, a smaller residency), performance (the window's size, FSR 2 at 2) or high (1080p, FSR 2 at 1; not for the slow adapter); its output hint sizes a headless run with no `--render` and the window it opens; the portable profile's sizes its frame in a window too (`--render`). The HUD's first mode row reads `profile: portable +1` with one field edited [floor] |
+| `--settings` | Print every render setting the flags give (`svet_render::RenderSettings`, ADR-0055), one line per field: its name, its apply class (`live`, `settle`, `rebuild`) and its value; then exit |
+| `--profile floor\|portable\|performance\|high` | The render profile (`svet_render::Profile`) the other flags edit, whatever their order: floor (1080p, FSR 2 at 1.5), portable (720p, FSR 2 at 1.5, fewer layers and lights, no lamp bounce, a smaller residency), performance (the window's size, FSR 2 at 2) or high (1080p, FSR 2 at 1; not for the slow adapter); its output hint sizes a headless run with no `--render` and the window it opens; the portable profile's sizes its frame in a window too (`--render`). The HUD's first mode row reads `profile: portable +1` with one field edited [floor] |
 | `--light-cap N` | Slots of the list of lights shaded, the headlamp's included, 1 to 16 [the profile's] |
 | `--light-samples N` | The mirror's light-sample buffer in samples, 1024 to 1048576 (a reading lever: a smaller buffer fills and evicts) [1048576] |
 

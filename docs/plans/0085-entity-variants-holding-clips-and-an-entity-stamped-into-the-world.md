@@ -43,7 +43,7 @@ server's ray query both honour it (a hidden part is not hit, a remapped material
 hit reports). A one-shot clip already **holds** its last pose; this plan names it, tests it and
 lets a playback say it has **ended**. A whole-model change is Plan 0078's `replace` and
 `free_model`, documented here as the third route. And a posed entity can be **stamped into the
-world**: `vxe-entity` resamples it onto the world grid in integers, the server clips it to air
+world**: `svet-entity` resamples it onto the world grid in integers, the server clips it to air
 and stamps it through the op log as any prefab, so a corpse is dug, stood on and lit by the
 baked light at no entity cost. The sample: the spider gains `damaged` (one leg hidden, one
 swapped for a broken stump, its shell charred) and `dead` (a `death` clip that folds it and
@@ -121,7 +121,7 @@ polls `ended` on its tick, as it owns the playback (ADR-0051).
 `docs/entities.md`'s new section as the route for a change that is a different model.
 
 **A posed entity enters the world as a baked prefab, clipped to air, through the stamp op**
-(ADR-0069). `vxe_entity::bake(model, pose, variant, rule) -> Baked { prefab, origin }` samples
+(ADR-0069). `svet_entity::bake(model, pose, variant, rule) -> Baked { prefab, origin }` samples
 each drawn part's chosen volume at the sub-centres of every world voxel in the part's world box
 (detail cubed samples a voxel), in the integer map `part_raycast` already uses; `Coverage::Half`
 makes a voxel solid when at least half the samples are (1 of 1, 4 of 8, 32 of 64),
@@ -137,21 +137,21 @@ corpse an entity (ADR-0069 A to D).
 
 ```mermaid
 flowchart LR
-    subgraph vxe-assets
+    subgraph svet-assets
         R[.rig: variant blocks, a one-shot clip] --> B[Rig::build: alternates, variants, variant_names]
     end
-    subgraph vxe-entity [vxe-entity: headless, deterministic]
+    subgraph svet-entity [svet-entity: headless, deterministic]
         B --> M[Model: parts, alternates, variants]
         M --> S[EntitySet: pose + variant index per entity]
         S --> Q[raycast: skips hidden, walks the chosen volume, remaps the material]
         S --> K[bake: posed model sampled onto the world grid, a Prefab + origin]
         K --> C[clip_to_air against the World]
     end
-    subgraph vxe-world / vxe-net
+    subgraph svet-world / svet-net
         C --> G[PrefabRegistry] --> O[Op::Stamp through Server, the log, the host]
         O --> W[(bricks, dirty chunks, baked light, coarse grid)]
     end
-    subgraph vxe-render
+    subgraph svet-render
         M -- upload_model --> P[(pool: volumes, alternates, a palette per variant per volume)]
         S -- per frame --> I[(instances: volume word, palette word 31, HIDDEN bit)]
         I --> E[entity_part: skip hidden, read the instance's palette]
@@ -173,10 +173,10 @@ Phases 2 and 3 carry goldens because they draw a declared recipe, not a look the
 drop; the window (Phase 4) judges the authored spider and the solid rule, and Phase 5 re-blesses
 what its picks change.
 
-### Phase 1: variants in `vxe-entity` and the `.rig`, and a playback that says it ended (walking skeleton)
+### Phase 1: variants in `svet-entity` and the `.rig`, and a playback that says it ended (walking skeleton)
 - **Owner skill:** dev
 - **What:**
-  - **`vxe-entity`.** `Alternate { volume: Arc<Prefab>, pivot: [i32; 3] }` (at most 64 voxels
+  - **`svet-entity`.** `Alternate { volume: Arc<Prefab>, pivot: [i32; 3] }` (at most 64 voxels
     a side, like a part); `Variant { hidden: u16, volume: [u8; MAX_PARTS], remap: Vec<(MaterialId,
     MaterialId)> }` with `remap` sorted by `from`, no duplicate `from`; `Model::with_variants(parts,
     alternates, variants)` validates them (`MAX_ALTERNATES` 16, `MAX_VARIANTS` 16, an unknown
@@ -209,9 +209,9 @@ what its picks change.
     into `Variant`s and the swap targets into `Alternate`s (deduplicated by node);
     `Rig::write` prints them; `the_parser_never_panics` covers them through the sample's
     prefixes. `docs/entities.md`'s grammar section gains the block in four sentences.
-- **Files touched:** `crates/vxe-entity/src/model.rs`, `set.rs`, `raycast.rs`, `clip.rs`,
+- **Files touched:** `crates/svet-entity/src/model.rs`, `set.rs`, `raycast.rs`, `clip.rs`,
   `lib.rs`, `tests/raycast.rs`, `tests/clip.rs`, `tests/determinism.rs`,
-  `crates/vxe-assets/src/rig.rs`, `tests/rig.rs`, `docs/entities.md`,
+  `crates/svet-assets/src/rig.rs`, `tests/rig.rs`, `docs/entities.md`,
   `docs/plans/logs/0085.md` (new).
 - **Done when** (CPU, each under 1 s unless stated):
   1. `a_hidden_part_is_not_hit`: a two-part model of Plan 0062's 8 cubed cube of material 3
@@ -275,7 +275,7 @@ what its picks change.
     not emissive; the engine's table knows no spider). The library README and
     `docs/entities.md` gain a **Modes** section: clips that hold, variants, the model swap
     through `replace` and `free_model`, and (after Phase 3) the stamp.
-- **Files touched:** `crates/vxe-render/src/entities.rs` (or its split after Plan 0078),
+- **Files touched:** `crates/svet-render/src/entities.rs` (or its split after Plan 0078),
   `src/shaders/entity.wgsl`, `frame/compose.rs` (the new constant), `apps/flythrough/src/`
   (the viewer, the walkers, `cli/`, `hud/modes.rs`, `toggles.rs`, the material table),
   `apps/flythrough/assets/entities/spider/spider.voxtext`, `spider.vox`, `spider.rig`,
@@ -328,7 +328,7 @@ what its picks change.
     it holds at tick 36. `variant dead` remaps the eyes' emissive material (dev reads which row
     the `.voxtext` uses) to `shell`, so a dead spider's eyes stop glowing. The architect's
     first cut; the window re-reads it.
-  - **The bake** (`vxe-entity`, `bake.rs`): `pub fn bake(model, pose, variant: u8, rule:
+  - **The bake** (`svet-entity`, `bake.rs`): `pub fn bake(model, pose, variant: u8, rule:
     Coverage) -> Result<Baked, BakeError>`; `Baked { pub prefab: Prefab, pub origin:
     VoxelCoord }`; `Coverage::{Half, Any}`; `BakeError::{UnknownVariant, TooLarge { size },
     Pose(PoseError)}`, `TooLarge` past 256 voxels an axis (ADR-0014's largest model). The rule
@@ -344,7 +344,7 @@ what its picks change.
     is not kept) once the op has applied; the banner reads `into the world: <n> voxels, <m>
     clipped`; a `NotResident` or `TooLarge` is a red banner and the entity stays. Under
     `--tester` the action maps to none.
-- **Files touched:** `crates/vxe-entity/src/bake.rs` (new), `lib.rs`, `tests/bake.rs` (new),
+- **Files touched:** `crates/svet-entity/src/bake.rs` (new), `lib.rs`, `tests/bake.rs` (new),
   `tests/determinism.rs`, `apps/flythrough/src/` (the action, `edits.rs`, `cli/`,
   `hud/modes.rs`, `toggles.rs`), `apps/flythrough/assets/entities/spider/spider.rig`,
   `apps/flythrough/tests/entities.rs`, `tests/edits.rs` (or where the vault stamp's test
@@ -446,7 +446,7 @@ what its picks change.
 ## Data shapes
 
 ```rust
-// illustrative: vxe-entity
+// illustrative: svet-entity
 pub const MAX_ALTERNATES: usize = 16;
 pub const MAX_VARIANTS: usize = 16;
 pub struct Alternate { pub volume: Arc<Prefab>, pub pivot: [i32; 3] }   // at the part's detail
@@ -563,7 +563,7 @@ Asked at the draft, 2026-11-16; the recommended answer first.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: variants in `vxe-entity` and the `.rig`, a playback that ends | dev | not started | |
+| 1: variants in `svet-entity` and the `.rig`, a playback that ends | dev | not started | |
 | 2: the renderer draws the variant, the spider is damaged | dev | not started | |
 | 3: the death clip, the bake, a dead spider in the floor | dev | not started | |
 | 4: the owner's window | human | not started | |

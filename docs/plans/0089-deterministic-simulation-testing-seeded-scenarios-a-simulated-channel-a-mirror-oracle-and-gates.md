@@ -28,7 +28,7 @@
 > still exists under the name it uses (checked by grep: `ValueNoise`, `SplitMix64`,
 > `test_table`, `MemChannel`, `Endpoint`, `Server::{attach, submit, resimulate}`,
 > `Client::{shared, owned, desynced}`, `Host::{apply, unsupported}`, `TickReport`,
-> `Event::Desync`, `CharacterController`, `MoveInput`, `CharacterState`, `vxe_sim::overlaps`,
+> `Event::Desync`, `CharacterController`, `MoveInput`, `CharacterState`, `svet_sim::overlaps`,
 > `find_unsupported`, `drop_region_through`, `pile_rubble`, `remove_region`, `Rot`, `LogFile`,
 > `write_hash`, `voxel_hash`, `GpuWorld::sync`, `EMPTY_BIT`, `write_lock`, `mark_dirty`,
 > `StreamError::Spill { coord, kind }`, `SpillError::Corrupt`, `PersistConfig::ram_cap_bytes`,
@@ -38,7 +38,7 @@
 
 ## TL;DR
 
-A dev-only crate, `crates/vxe-dst`, draws a scenario from one seed (edits of every shape and
+A dev-only crate, `crates/svet-dst`, draws a scenario from one seed (edits of every shape and
 mode, stamps, collapses, logic inputs, controller moves, channel faults) and checks invariants
 after every step: an edit's per-material counts equal the actual voxel diff and nothing outside
 its reported region changed, the support query equals a brute-force flood over the coarse
@@ -46,9 +46,9 @@ grid, the log replays to the same hash, owned clients equal the server, the walk
 inside rock, the GPU mirror after an incremental schedule equals a fresh upload, an edited
 chunk survives the spill under disk faults. A failure prints its seed and step, shrinks the
 scenario to a minimal step list by delta debugging, and writes it as a text file plus one JSON
-line, so `cargo run -p vxe-dst -- --seed N` or `--scenario FILE` reproduces it for a person
+line, so `cargo run -p svet-dst -- --seed N` or `--scenario FILE` reproduces it for a person
 or an agent. A short batch of seeds runs in the gate on both CI arms (its combined hash is one
-more cross-platform vector), a long batch weekly in the soak tier. `vxe-net` gains a simulated
+more cross-platform vector), a long batch weekly in the soak tier. `svet-net` gains a simulated
 channel with seeded drops, delays, duplicates, partitions and clogs, and the owned client the
 smallest fail-safe rule against them. The determinism rules become gates: `iter_over_hash_type`
 denied in the deterministic crates, a script that scans them for thread spawns, environment
@@ -61,8 +61,8 @@ The article's prerequisites are this engine's rules already (ADR-0073's Context 
 their types), and every one is tested by a fixed vector: 24 ops in
 `apps/flythrough/tests/determinism.rs` (plus, since Plans 0083 and 0086, the castle, showcase,
 outdoor and forest generation vectors there), one collapse course, one hundred seeded carves in
-`crates/vxe-net/tests/owned.rs`, one incremental-versus-rebuild walk in
-`crates/vxe-world/tests/stream.rs`. A vector defends one path. The classes of bug the engine
+`crates/svet-net/tests/owned.rs`, one incremental-versus-rebuild walk in
+`crates/svet-world/tests/stream.rs`. A vector defends one path. The classes of bug the engine
 has actually had are schedule-shaped: a mirror that misses a dirty chunk under one order of
 edits and focus moves, a result that disagrees with the voxels for one shape at one boundary,
 a persistence race (`no_ok_edit_is_lost_to_a_racing_eviction` was written after one). Those are
@@ -86,8 +86,8 @@ touched: section 6 (a seeded batch joins the vectors) and section 7 (the gate's 
 
 ## Decision
 
-We build the harness in-tree, in a dev-only crate over the public APIs of `vxe-world`,
-`vxe-net`, `vxe-sim` and `vxe-entity`, with the engine's `SplitMix64` as its only randomness
+We build the harness in-tree, in a dev-only crate over the public APIs of `svet-world`,
+`svet-net`, `svet-sim` and `svet-entity`, with the engine's `SplitMix64` as its only randomness
 and a `ddmin` shrinker of our own (ADR-0073). The simulated channel is an implementation of the
 existing `Channel` trait at the message level; the byte-level seam is owed to M9's transport
 plan. We rejected a byte-level simulator now because there is no framing code to run; an
@@ -101,7 +101,7 @@ the harness checks. Renderer and audio determinism are out of scope.
 
 ```mermaid
 flowchart LR
-    subgraph dst["crates/vxe-dst (dev-only)"]
+    subgraph dst["crates/svet-dst (dev-only)"]
         S[seed] --> G[generator]
         G --> ST["steps: edit, stamp, collapse,\ninput, tick, move, fault"]
         ST --> R[runner]
@@ -109,11 +109,11 @@ flowchart LR
         I -->|fail| SH[ddmin shrinker]
         SH --> OUT["seed.dst text + JSON line"]
     end
-    subgraph world["vxe-world / vxe-sim"]
+    subgraph world["svet-world / svet-sim"]
         W[World + CoarseGrid + Streamer]
         C[CharacterController]
     end
-    subgraph net["vxe-net"]
+    subgraph net["svet-net"]
         SV[Server + Logic]
         SN["SimNet (Channel)"]
         CL["owned x2, shared x1"]
@@ -136,22 +136,22 @@ and can run beside any lane; Phases 4 to 7 edit engine crates and wait for the r
 **A finding against the engine** (a seed that fails an invariant because the engine is wrong,
 not the harness) is handled in the lane when the fix is local (a line or a function, under a
 day); otherwise it becomes a `docs/backlog.md` entry with the seed, the minimal scenario file
-committed under `crates/vxe-dst/scenarios/`, and the gate batch's seed range moved past the
+committed under `crates/svet-dst/scenarios/`, and the gate batch's seed range moved past the
 seed, the entry named in the test. Every finding is a line in the Implementation log's Notes.
 
 ### Phase 1: The walking skeleton: a seeded op scenario over one world, three invariants, a seed on failure
 - **Owner skill:** dev
 - **What:** The crate, the generator for world ops, the per-step invariants, a gate batch and
   the `--seed` command.
-- **Files touched:** `crates/vxe-dst/Cargo.toml` (depends on `vxe-world`, and `vxe-net` with
+- **Files touched:** `crates/svet-dst/Cargo.toml` (depends on `svet-world`, and `svet-net` with
   its `test-logic` feature for `test_table` and `SplitMix64`; no new external dependency),
-  `crates/vxe-dst/src/{lib,scenario,world_steps,invariants,report}.rs`,
-  `crates/vxe-dst/src/main.rs` (the `vxe-dst` binary), `crates/vxe-dst/tests/batch.rs`,
+  `crates/svet-dst/src/{lib,scenario,world_steps,invariants,report}.rs`,
+  `crates/svet-dst/src/main.rs` (the `svet-dst` binary), `crates/svet-dst/tests/batch.rs`,
   `Cargo.toml` (the `crates/*` glob already lists it; it is not a default member),
   `docs/nfr.md` section 6 (the batch as a vector, a proposal until the close reads it).
 - **The world:** `ChunkExtent::new([-1, -1, -1], [1, 1, 1])`, 8 chunks of 64^3 (2 097 152
   voxels), generated from a seeded value-noise source of the harness's own (`ValueNoise` in
-  `vxe_world::hash`; rock below a threshold, air above, a band of material 4 (indestructible in
+  `svet_world::hash`; rock below a threshold, air above, a band of material 4 (indestructible in
   `test_table`) and a vein of 5), so bricks of every packed class occur; boundary anchors on.
 - **The steps** (`Step::Edit`, `Step::Stamp`, `Step::Collapse`), drawn by `SplitMix64`:
   sphere, box, capsule and tool-along-ray shapes with radii 1 to 12 voxels in fixed point,
@@ -179,7 +179,7 @@ seed, the entry named in the test. Every finding is a line in the Implementation
   4. **Replay.** At the scenario's end the op log, encoded as a `LogFile` with the prefabs it
      names, decodes and replays on a fresh world from the same source and seed to the same
      `voxel_hash` and the same per-op results.
-- **The command:** `cargo run -p vxe-dst -- --seed N [--steps K] [--plant counts|locality|support]`
+- **The command:** `cargo run -p svet-dst -- --seed N [--steps K] [--plant counts|locality|support]`
   prints one line per step (`step 37 edit sphere c=(12,-40,7) r=9 carve -> {1: 1203, 5: 44}`)
   and the invariant results; `--plant` corrupts the named check's input at a seeded step (a
   count off by one, a changed voxel outside the box, a region cell dropped) so the check is
@@ -198,8 +198,8 @@ seed, the entry named in the test. Every finding is a line in the Implementation
 - **Owner skill:** dev
 - **What:** `ddmin` over the step list, then a parameter shrink per step; the text and JSON
   report; `--scenario FILE`.
-- **Files touched:** `crates/vxe-dst/src/{shrink,scenario_text,report}.rs`, `src/main.rs`,
-  `tests/shrink.rs`, `crates/vxe-dst/scenarios/README.md` (where committed findings live).
+- **Files touched:** `crates/svet-dst/src/{shrink,scenario_text,report}.rs`, `src/main.rs`,
+  `tests/shrink.rs`, `crates/svet-dst/scenarios/README.md` (where committed findings live).
 - **The shrink:** a trial regenerates the world (8 uniform-ish chunks, milliseconds) and
   applies a subset of the steps; `ddmin` removes halves, quarters and so on while the same
   invariant still fails at the same kind of step; then each surviving step's parameters move
@@ -220,8 +220,8 @@ seed, the entry named in the test. Every finding is a line in the Implementation
 - **Owner skill:** dev
 - **What:** The scenario drives a `Server` with a logic, two owned and one shared client over
   `MemChannel`, and a `CharacterController` walking the world.
-- **Files touched:** `crates/vxe-dst/src/{net_steps,sim_steps}.rs`, `src/scenario.rs`,
-  `tests/net.rs`, `tests/walker.rs`; `crates/vxe-dst/Cargo.toml` (`vxe-sim`).
+- **Files touched:** `crates/svet-dst/src/{net_steps,sim_steps}.rs`, `src/scenario.rs`,
+  `tests/net.rs`, `tests/walker.rs`; `crates/svet-dst/Cargo.toml` (`svet-sim`).
 - **The steps:** `Step::Input(client, bytes)` for `SeededLogic` (and the harness's own
   `DstLogic`, which turns an input into one of the Phase 1 ops through `Host::apply` and asks
   `Host::unsupported` after a carve), `Step::Tick`, `Step::Submit(op)` (the host-side path with
@@ -230,7 +230,7 @@ seed, the entry named in the test. Every finding is a line in the Implementation
 - **The invariants:** after every tick both owned clients' `voxel_hash` equal the server's and
   no `Desync` was raised; the shared client's events equal the server's `TickReport`; at the
   end `Server::resimulate(seed, ops, inputs)` returns a byte-equal op log and the `LogFile`
-  with both logs round-trips; after every `Move`, `vxe_sim::overlaps(world, body)` is false and
+  with both logs round-trips; after every `Move`, `svet_sim::overlaps(world, body)` is false and
   the walker's `CharacterState` after replaying the same world and inputs hashes equal.
 - **Done when:** four seeds of 64 ticks with up to 4 inputs a tick and a 64-move walk pass as
   four gate tests, each estimated under 3 s; the Phase 2 shrink works over these steps too (a
@@ -242,8 +242,8 @@ seed, the entry named in the test. Every finding is a line in the Implementation
 - **Owner skill:** dev
 - **What:** `#![deny(clippy::iter_over_hash_type)]` in the four deterministic crates and a
   script gate over their sources.
-- **Files touched:** `crates/vxe-world/src/lib.rs`, `crates/vxe-net/src/lib.rs`,
-  `crates/vxe-sim/src/lib.rs`, `crates/vxe-entity/src/lib.rs` (the attribute, and an
+- **Files touched:** `crates/svet-world/src/lib.rs`, `crates/svet-net/src/lib.rs`,
+  `crates/svet-sim/src/lib.rs`, `crates/svet-entity/src/lib.rs` (the attribute, and an
   `#[expect(clippy::iter_over_hash_type, reason = "...")]` at each iteration whose order is
   proven not to leak, such as `ChunkStore::coords` and `take_dirty`, which sort),
   `scripts/check-determinism.mjs`, `scripts/check-determinism.test.mjs`,
@@ -251,23 +251,23 @@ seed, the entry named in the test. Every finding is a line in the Implementation
   (a step beside the other doc gates), `apps/flythrough/tests/determinism.rs` (the
   `generation_sources_contain_no_floating_point` test's file list moves to the script and the
   test goes), `CLAUDE.md`'s scripts tree (one line).
-- **The script:** over the tracked `.rs` files of `crates/vxe-world/src`, `crates/vxe-net/src`,
-  `crates/vxe-sim/src` and `crates/vxe-entity/src`, comments and string literals blanked:
+- **The script:** over the tracked `.rs` files of `crates/svet-world/src`, `crates/svet-net/src`,
+  `crates/svet-sim/src` and `crates/svet-entity/src`, comments and string literals blanked:
   `thread::spawn`, `Builder::new().spawn`, `thread::scope` and `rayon` are findings except at
   the two sites the tree has today (pre-flight 2026-11-19: the worker spawn in
-  `vxe-world/src/stream/mod.rs`, not `workers.rs`, and the scoped generation in `store.rs`),
+  `svet-world/src/stream/mod.rs`, not `workers.rs`, and the scoped generation in `store.rs`),
   each carrying the grep-able `#[allow(clippy::disallowed_methods, reason = "...")]`-style
   marker line the script looks for (`// determinism: results independent of thread order,
   asserted by ...`); `std::env::` is a finding everywhere (none today); `f32`, `f64`, a float
   literal, `sin`, `cos`, `exp`, `powf` and `sqrt` are findings in **every file of
-  `vxe-world/src` except `material.rs`, `census.rs` and `stream/`** (pre-flight: the
+  `svet-world/src` except `material.rs`, `census.rs` and `stream/`** (pre-flight: the
   exclusion list replaces the drafted inclusion list, which left `brick.rs`, `packed/`,
   `prefab.rs`, `persist.rs`, `walkable.rs` and others unscanned; today those three areas are
   the only ones with a float: albedo, statistics and the residency's ratios are not edit
-  math), and in all of `vxe-sim` (now with the surface mover's `surface.rs` and `arc.rs`,
-  float-free) and `vxe-entity`, plus the fly-through's generation sources the old test named.
+  math), and in all of `svet-sim` (now with the surface mover's `surface.rs` and `arc.rs`,
+  float-free) and `svet-entity`, plus the fly-through's generation sources the old test named.
   Exit 1 with `file:line -> what`. Plan 0091, which runs after this plan, keeps the
-  `profiling` facade out of `vxe-world` (its streaming workers stay uninstrumented), so the
+  `profiling` facade out of `svet-world` (its streaming workers stay uninstrumented), so the
   scan's scope is unchanged by it.
 - **Done when:** `cargo clippy --workspace --all-targets -- -D warnings` passes with the four
   attributes in place and every `#[expect]` carrying a reason (an `#[expect]` that no longer
@@ -278,13 +278,13 @@ seed, the entry named in the test. Every finding is a line in the Implementation
 
 ### Phase 5: The simulated channel, and the owned client's fail-safe rule
 - **Owner skill:** dev
-- **What:** `SimNet` in `vxe-net` behind a `sim` feature, the `Channel` trait used
+- **What:** `SimNet` in `svet-net` behind a `sim` feature, the `Channel` trait used
   polymorphically, and the client's gap and duplicate rules; scenarios with faults.
-- **Files touched:** `crates/vxe-net/Cargo.toml` (feature `sim`), `crates/vxe-net/src/sim.rs`
+- **Files touched:** `crates/svet-net/Cargo.toml` (feature `sim`), `crates/svet-net/src/sim.rs`
   (new), `src/channel.rs`, `src/client.rs`, `src/server.rs` (`attach` and `Client::{shared,
   owned}` take `Box<dyn Channel + Send>`; `broadcast` over them), `src/lib.rs`,
-  `crates/vxe-net/tests/sim.rs`, `crates/vxe-dst/src/fault_steps.rs`, `tests/faults.rs`,
-  `crates/vxe-dst/Cargo.toml` (`vxe-net/sim`), `docs/nfr.md` section 6.
+  `crates/svet-net/tests/sim.rs`, `crates/svet-dst/src/fault_steps.rs`, `tests/faults.rs`,
+  `crates/svet-dst/Cargo.toml` (`svet-net/sim`), `docs/nfr.md` section 6.
 - **The channel:** `SimNet { tick, rng: SplitMix64, links, faults }` behind an `Arc<Mutex<_>>`
   the endpoints share; `SimNet::pair()` returns two `SimEndpoint`s; `send` draws the message's
   fate from the link's `Faults`: a delay in ticks from `[min, max]`, a drop with `drop_ppm`, a
@@ -320,11 +320,11 @@ seed, the entry named in the test. Every finding is a line in the Implementation
 - **What:** A gpu test that drives `GpuWorld::sync` with a small byte budget over a seeded
   schedule of edits, focus moves and polls, then compares the mirror's logical content with a
   fresh unbudgeted upload of the same world.
-- **Files touched:** `crates/vxe-render/tests/gpu_mirror_schedule.rs` (new gpu binary),
-  `crates/vxe-render/tests/support/` (a readback of records, table and slots into per-brick
-  logical words, if the mirror tests' support lacks one), `crates/vxe-render/Cargo.toml`
-  (`vxe-dst` as a dev-dependency for the generator; `vxe-dst` depends on no GPU crate),
-  `crates/vxe-dst/src/stream_steps.rs` (`Step::Focus(delta)`, `Step::Poll`, `Step::Sync`).
+- **Files touched:** `crates/svet-render/tests/gpu_mirror_schedule.rs` (new gpu binary),
+  `crates/svet-render/tests/support/` (a readback of records, table and slots into per-brick
+  logical words, if the mirror tests' support lacks one), `crates/svet-render/Cargo.toml`
+  (`svet-dst` as a dev-dependency for the generator; `svet-dst` depends on no GPU crate),
+  `crates/svet-dst/src/stream_steps.rs` (`Step::Focus(delta)`, `Step::Poll`, `Step::Sync`).
 - **The schedule:** a following window of side 3 (27 chunks) over a `Streamer` with two
   workers on the Phase 1 noise source at `r_full` 1 and `r_lod` 2; 64 steps of edits, one-chunk
   focus moves, `poll` and `sync` with a 256 KiB byte budget (a noisy chunk's bricks run to about
@@ -348,13 +348,13 @@ seed, the entry named in the test. Every finding is a line in the Implementation
 
 ### Phase 7: The simulated disk: the spill and the save under injected faults
 - **Owner skill:** dev
-- **What:** A `SpillIo` seam in `vxe-world`'s persistence with a `std` implementation that
+- **What:** A `SpillIo` seam in `svet-world`'s persistence with a `std` implementation that
   syncs before the rename, a `SimDisk` in the harness with visible and durable bytes and
   seeded failures, and the fly-through's save through the same write rule.
-- **Files touched:** `crates/vxe-world/src/persist.rs` (`pub trait SpillIo { write, read,
+- **Files touched:** `crates/svet-world/src/persist.rs` (`pub trait SpillIo { write, read,
   remove }`, `StdIo` as today plus `File::sync_all` before the rename), `src/stream/mod.rs`
   (`Streamer::set_spill_io(Arc<dyn SpillIo + Send + Sync>)`), `src/stream/workers.rs`,
-  `crates/vxe-world/tests/persist.rs`, `crates/vxe-dst/src/disk.rs`, `tests/disk.rs`,
+  `crates/svet-world/tests/persist.rs`, `crates/svet-dst/src/disk.rs`, `tests/disk.rs`,
   `apps/flythrough/src/run/edit.rs` (the save written to `<path>.tmp`, synced, renamed),
   `apps/flythrough/tests/` (the save leaves no `.tmp` and a cut file still replays its whole
   entries, the existing claim).
@@ -378,7 +378,7 @@ seed, the entry named in the test. Every finding is a line in the Implementation
 ## Data shapes
 
 ```rust
-// illustrative, crates/vxe-dst
+// illustrative, crates/svet-dst
 pub struct Scenario { pub seed: u64, pub world: WorldSpec, pub steps: Vec<Step> }
 pub enum Step {
     Edit(EditOp), Stamp { prefab: u8, rot: Rot, at: VoxelCoord }, Collapse(CollapseChoice),
@@ -387,13 +387,13 @@ pub enum Step {
 }
 pub enum Invariant { Counts, Locality, Support, Replay, Clients, Resim, Walker, Mirror, Spill }
 pub struct Failure { pub seed: u64, pub step: usize, pub invariant: Invariant, pub detail: String }
-// crates/vxe-net/src/sim.rs, all integers
+// crates/svet-net/src/sim.rs, all integers
 pub struct Faults {
     pub delay: (u32, u32), pub drop_ppm: u32, pub dup_ppm: u32,
     pub partition: Option<(u32, u32)>, pub clog: u32, pub ordered: bool,
 }
 pub enum Event { /* as today, plus */ Lost { expected: u32, got: u32 } }
-// crates/vxe-world/src/persist.rs
+// crates/svet-world/src/persist.rs
 pub trait SpillIo { fn write(&self, p: &Path, b: &[u8]) -> Result<(), SpillError>;
                     fn read(&self, p: &Path) -> Result<Vec<u8>, SpillError>;
                     fn remove(&self, p: &Path) -> Result<(), SpillError>; }
@@ -426,15 +426,15 @@ and an agent writes it; the JSON line is for the agent's loop.
 ## Where it sits
 
 As drafted (2026-11-17) the open lanes were Plans 0080, 0086, 0077 and 0088, then 0087 (the
-rename, alone); Phases 1 to 3 add `crates/vxe-dst` and edit `docs/nfr.md` only, Phases 4 to 7
-edit `vxe-world`, `vxe-net`, `vxe-sim`, `vxe-entity`, `vxe-render`'s tests, the fly-through's
+rename, alone); Phases 1 to 3 add `crates/svet-dst` and edit `docs/nfr.md` only, Phases 4 to 7
+edit `svet-world`, `svet-net`, `svet-sim`, `svet-entity`, `svet-render`'s tests, the fly-through's
 save and `ci.yml`. The owner chose the whole plan after 0087 (question 1 (b)).
 **Pre-flight 2026-11-19:** 0077, 0079, 0080, 0083 and 0088 have merged; 0086 is the one open
 code lane, then 0087 runs alone, then this plan starts on main. Plan 0093 (the README rewrite)
 runs beside it: no source file in common, but both add a step to `ci.yml`'s doc gates and a
 line to `scripts/fixtures/README.md`, a textual merge at whichever merges second. Plan 0091
 (the profiler) and 0092 (WGSL hot reload) run after both; 0091 adds `profiling` to
-`vxe-render` and the apps only, and 0092 edits `vxe-render`'s compose and the fly-through's
+`svet-render` and the apps only, and 0092 edits `svet-render`'s compose and the fly-through's
 CLI, neither a file this plan touches.
 
 ## Risks & open questions
@@ -448,7 +448,7 @@ CLI, neither a file this plan touches.
   which the brute force then reports at the next step. The harness uses a bounded world with
   every chunk resident in Phases 1 to 5, so no drop scans into a missing chunk; the streamed
   world of Phases 6 and 7 runs no collapse steps.
-- **`iter_over_hash_type` bites widely.** `vxe-world` iterates `HashMap`s in the store, the
+- **`iter_over_hash_type` bites widely.** `svet-world` iterates `HashMap`s in the store, the
   residency, the persistence map, the support flood and the coarse grid; most collect and sort
   or feed a set, not a result. Each site gets an `#[expect]` with its reason, perhaps a dozen (a
   guess); one that cannot justify its order is a finding the lane fixes (a `BTreeMap` or a sort).
@@ -472,9 +472,9 @@ the recommended option.
    crate and `docs/nfr.md`, no engine source), checkpoint, Phases 4 to 7 after Plan 0087
    merges. (b) The whole plan after 0087. (c) The whole plan now, accepting merge work in four
    crates against 0086, 0077 and 0088 and a rename of the lane's files under 0087.
-2. **The harness's home.** (a) **Recommended:** a dev-only crate `crates/vxe-dst`, not a default
-   member, with its binary; `vxe-render`'s mirror test takes it as a dev-dependency. (b)
-   Test-support modules behind features in each crate (as `vxe-net`'s `test-logic`): no new
+2. **The harness's home.** (a) **Recommended:** a dev-only crate `crates/svet-dst`, not a default
+   member, with its binary; `svet-render`'s mirror test takes it as a dev-dependency. (b)
+   Test-support modules behind features in each crate (as `svet-net`'s `test-logic`): no new
    crate, but the cross-crate invariants (clients, walker) need one crate's tests to see the
    others, and there is no command. (c) A tool under `apps/`: a binary, but the tests live there
    too, away from the crates they check.
@@ -490,16 +490,16 @@ the recommended option.
    day), otherwise a backlog entry with the seed, the minimal scenario committed, the batch's
    seeds moved past it and named in the test. (b) Every finding goes to the architect before
    any fix (slower, cleaner record).
-7. **(Pre-flight 2026-11-19; answered the same day: (a), the owner.) Default member or not.** Phase 1 makes `crates/vxe-dst`
+7. **(Pre-flight 2026-11-19; answered the same day: (a), the owner.) Default member or not.** Phase 1 makes `crates/svet-dst`
    a workspace member that is not in `default-members`. CI's gate and the close review run
    `cargo nextest run --workspace`, which reaches it, but the canonical tip command in
    `CLAUDE.md` is a bare `cargo nextest run --profile gate`, which builds and runs the default
-   members only (today that is how `vxe-script-wasm` and its `wasmtime` build stay out of the
-   everyday loop). (a) **Recommended:** list `crates/vxe-dst` in `default-members`: it depends
+   members only (today that is how `svet-script-wasm` and its `wasmtime` build stay out of the
+   everyday loop). (a) **Recommended:** list `crates/svet-dst` in `default-members`: it depends
    on the deterministic crates only, adds no external dependency and builds in seconds, and
    its gate tests then run under every form of the gate. (b) Keep it out, as drafted, and
    have Phase 1's done-when and the Implementation log say the gate at the tip runs
-   `--workspace`. **Answered 2026-11-19 (owner): (a), `crates/vxe-dst` is a default member.**
+   `--workspace`. **Answered 2026-11-19 (owner): (a), `crates/svet-dst` is a default member.**
 
 ## What this plan does NOT do
 
@@ -515,7 +515,7 @@ the recommended option.
 - **The worker pool stays nondeterministic**; its results are checked, its schedule is not
   explored. A loom or shuttle pass over the store lock and the eviction race is a later chore.
 - **The logic component is not driven by the generator.** `equality.rs` holds native and
-  component equal on fixed inputs; running the generator's inputs through `vxe-script-wasm` is
+  component equal on fixed inputs; running the generator's inputs through `svet-script-wasm` is
   a followup (it would pull `wasmtime` into the dev-only crate's build).
 - **No stress or load figures**: the harness measures nothing, it checks.
 
@@ -558,8 +558,8 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 - The byte-level channel seam, with M9's transport plan.
 - The baked-light store under the Phase 6 schedule, as a reading.
-- The generator's inputs through the logic component (`vxe-script-wasm`).
+- The generator's inputs through the logic component (`svet-script-wasm`).
 - A loom or shuttle pass over the store write lock and the eviction race.
-- Plan 0079's surface mover (`vxe-sim/src/surface.rs`) as a second walker in Phase 3's loop:
+- Plan 0079's surface mover (`svet-sim/src/surface.rs`) as a second walker in Phase 3's loop:
   the same `overlaps` invariant and state hash over a seeded crawl (pre-flight 2026-11-19; not
   added to the approved scope).

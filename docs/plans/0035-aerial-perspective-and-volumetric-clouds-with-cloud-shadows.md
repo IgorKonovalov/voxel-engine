@@ -63,7 +63,7 @@ Read at main 3b3986d0 (Plan 0032 closed, v0.61.0; Plan 0069 closed, v0.60.0) aga
 `plan-0080` lane (the menu) and Plans 0086, 0081, 0033 and 0034 (approved, ahead of this
 plan). The lane branches from main once Plan 0034 has merged; the tree's names win. The
 Decision and the phases stand except where this section says otherwise; `dev` reads it as
-the phases' errata. Crate names are `vxe-*`; if Plan 0087 has merged first they read `svet-*`
+the phases' errata. Crate names are `svet-*`; if Plan 0087 has merged first they read `svet-*`
 through its map.
 
 ### Name mapping (the plan's name, then the tree's)
@@ -76,7 +76,7 @@ through its map.
 | "Plan 0032's light-pass sky source" | `sky_light.wgsl`: `key_sample` is the one place the directional sample's visibility is computed (`sky_shadowed`), `sky_ray_sample` the sky ray's lookup; `shade.wgsl` (the light pass's entry) re-casts the key ray in the steps view and takes the multiplier too; `LIGHT_MODULES` (`frame/pipelines.rs`) composes them with `light.wgsl`, which the bake also compiles, so `cloud_light.wgsl` joins `LIGHT_MODULES` and the upscalers' input modules, never `bake_source()` (`bake/pipeline.rs`). The bake's layout is the shared `world_layout`, so a group 0 binding enters its layout and not its module |
 | the composite's miss site, the `media` section's place | `composite.wgsl`: the miss `c = (sky_radiance(d) + body_disc(d)) * ex`, then the hit's albedo, `lit_at` and emission, then the cracks view (which meters before the layer), then `c = layer * ex + T * c`, then `select(display(c), c, HDR_TARGET)` and `meter_of(c / ex)`. The media section sits after the hit's emission and before the translucent layer; the HDR variant is a text replacement of `HDR_TARGET` (`frame/upscale.rs` `composite_hdr_source`) and inherits it. The composite's group 2 uses bindings 0 to 10 (11 the next) and its layout is declared in **three** places that change together: `frame/pipelines.rs` (`PASSES` composite), `frame/upscale.rs` (`composite_hdr_pass`) and `frame/encode.rs` (the bind group) |
 | group 0's next free bindings | 19 and up (5 and 6 are also unused); a new storage buffer raises `STORAGE_BUFFERS_NEEDED` (13), textures and uniforms do not |
-| `fsr2.rs`, `fsr2/input.wgsl` | `crates/vxe-render/src/fsr2/{mod,pipelines,prepare,resources,settings}.rs`; `Fsr2Settings` (`reactive_translucent`), `InputUniform` with one free `_pad` word (`reactive_cloud`), `fsr2/input.wgsl` (`light_changed` calls `sky_light_changed` of `sky.wgsl`; a miss gets motion by ray direction only, where cloud reactivity enters). `upscale.wgsl` (`up_light_changed`) is the `own` upscaler's, still in the tree |
+| `fsr2.rs`, `fsr2/input.wgsl` | `crates/svet-render/src/fsr2/{mod,pipelines,prepare,resources,settings}.rs`; `Fsr2Settings` (`reactive_translucent`), `InputUniform` with one free `_pad` word (`reactive_cloud`), `fsr2/input.wgsl` (`light_changed` calls `sky_light_changed` of `sky.wgsl`; a miss gets motion by ray direction only, where cloud reactivity enters). `upscale.wgsl` (`up_light_changed`) is the `own` upscaler's, still in the tree |
 | `HDR_MAX` "65 504" | `common.wgsl` `HDR_MAX` = **60 000**; the direct and irradiance stores clamp to it |
 | the blue-noise texture | `blue_noise` at group 0 binding 12 (128 x 128 `r8unorm`, `common.wgsl`), read through `rand(px, dim)` or a direct load; `hash_u32` (lowbias32) exists, a PCG hash and a Bayer order do not |
 | `Frame::resize`, `set_resolution` | `frame/mod.rs`, both through `set_sizes` (rebuilds `Targets`); `Clouds` resizes there |
@@ -402,7 +402,7 @@ frame (the noise generation runs once at startup).
 - **Weather input.** `CloudWeather { coverage, cloud_type, precipitation, wind_m_s,
   wind_offset_m, evolution }` and `WeatherMap::{Procedural, Supplied}` are the whole input.
   `CloudWeather::scattered()` and `CloudWeather::overcast()` are the two presets, in
-  `vxe-render`, so the crate's own tests and the testbed read one set of values. The engine
+  `svet-render`, so the crate's own tests and the testbed read one set of values. The engine
   never advances `wind_offset_m` itself; `CloudWeather::advance(dt_s)` is a pure helper the
   caller (the testbed, or Plan 0036's `Weather::step`) calls with its own time.
 
@@ -418,7 +418,7 @@ flowchart LR
     subgraph game [consumer or Plan 0036]
         WX[CloudWeather\ncoverage type precip wind]
     end
-    subgraph render [vxe-render]
+    subgraph render [svet-render]
         N[cloud_noise.wgsl\nonce, from seed] --> NV[(base 128^3, detail 32^3,\ncurl, weather map)]
         A[Plan 0032 LUTs\ntransmittance, multiscatter,\nsky-view] --> CS
         A --> AP[sky_aerial.wgsl\nAP volume 32^3]
@@ -443,7 +443,7 @@ flowchart LR
 A name here is a contract; `dev` may add to it and does not rename it without an architect
 amendment.
 
-- **Rust, `vxe_render::clouds`.** `Clouds`, `CloudParams`, `CloudWeather` (with `advance`,
+- **Rust, `svet_render::clouds`.** `Clouds`, `CloudParams`, `CloudWeather` (with `advance`,
   `scattered()` and `overcast()`), `WeatherMap::{Procedural, Supplied}`,
   `CloudUpdate::{Every, OneInFour, OneInSixteen}`, `CloudLighting::{Octaves, BeerPowder}`,
   `CloudDebug`, `Clouds::set_weather`, `Clouds::set_weather_map`, `Clouds::bytes`,
@@ -480,9 +480,9 @@ clouds off and aerial off.
 `--profile gpu` under the perf lock; the tip gates on `cargo nextest run --profile gate`. A
 test that opens a GPU device lives in a `tests/gpu_*.rs` file; a CPU-only bar is a unit test
 in `src/clouds.rs`, so it stays in the quick tier. Tests on an empty world or a synthetic
-scene live in `crates/vxe-render/tests/gpu_clouds.rs` and `gpu_aerial.rs`; tests that need
+scene live in `crates/svet-render/tests/gpu_clouds.rs` and `gpu_aerial.rs`; tests that need
 the outdoor source or the far field live in `apps/flythrough/tests/gpu_clouds.rs` and
-`gpu_aerial.rs`, since `vxe-render` cannot reach the testbed's source. Each named test
+`gpu_aerial.rs`, since `svet-render` cannot reach the testbed's source. Each named test
 carries its expected wall time on lavapipe. **Every time below is an estimate: nothing was
 run.** `dev` reads each with `node scripts/test-times.mjs`; a test over 30 s on lavapipe
 (60 s on CI) is marked `#[ignore = "soak"]`, leaves the gate, and the phase keeps the smaller
@@ -496,7 +496,7 @@ is the word its banner shows, and a done-when asserts that word.
 
 ### Phase 1: The shell, a flat layer, and its front depth (walking skeleton)
 - **Owner skill:** dev
-- **What:** a `clouds` module in `vxe-render` with `Clouds`, `CloudParams` and a debug flat
+- **What:** a `clouds` module in `svet-render` with `Clouds`, `CloudParams` and a debug flat
   density (`density = effective coverage` everywhere in the shell, no noise); `clouds.wgsl`
   marches every internal pixel through the shell segment (camera-relative positions, the
   planet centre as an offset, altitude from `sky_altitude`), clipped at the hit buffer's `t`
@@ -506,12 +506,12 @@ is the word its banner shows, and a done-when asserts that word.
   select. `cloud_segment` exists twice, in WGSL and as a CPU reference in Rust; the
   fly-through gets a cloud toggle on a free key that cycles `off` and `flat overcast` with
   the mode banner.
-- **Files touched:** new `crates/vxe-render/src/clouds.rs`, new
-  `crates/vxe-render/src/shaders/clouds.wgsl`, `crates/vxe-render/src/marcher.rs` (the
+- **Files touched:** new `crates/svet-render/src/clouds.rs`, new
+  `crates/svet-render/src/shaders/clouds.wgsl`, `crates/svet-render/src/marcher.rs` (the
   `Frame` owns `Clouds`, a `clouds` timestamp in `FRAME_PASSES`),
-  `crates/vxe-render/src/shaders/composite.wgsl`, `crates/vxe-render/src/lib.rs`,
-  `crates/vxe-render/tests/gpu_shader_portability.rs`, new
-  `crates/vxe-render/tests/gpu_clouds.rs`, `apps/flythrough/src/main.rs`,
+  `crates/svet-render/src/shaders/composite.wgsl`, `crates/svet-render/src/lib.rs`,
+  `crates/svet-render/tests/gpu_shader_portability.rs`, new
+  `crates/svet-render/tests/gpu_clouds.rs`, `apps/flythrough/src/main.rs`,
   `apps/flythrough/src/hud.rs` (the mode line).
 - **Done when:**
   1. `cloud_segment_matches_the_sphere_table` (a unit test in `clouds.rs`, CPU, under 1 s):
@@ -546,10 +546,10 @@ is the word its banner shows, and a done-when asserts that word.
   scheme: base-only samples at twice the step until density appears, back one step, full
   samples until six consecutive empty ones. The cloud toggle's cycle gains `scattered` and
   `overcast`.
-- **Files touched:** new `crates/vxe-render/src/shaders/cloud_noise.wgsl`, new
-  `crates/vxe-render/src/shaders/cloud_weather.wgsl`, `clouds.wgsl`, `clouds.rs`,
-  `crates/vxe-render/tests/gpu_shader_portability.rs`,
-  `crates/vxe-render/tests/gpu_clouds.rs`, `apps/flythrough/src/main.rs` and `hud.rs`.
+- **Files touched:** new `crates/svet-render/src/shaders/cloud_noise.wgsl`, new
+  `crates/svet-render/src/shaders/cloud_weather.wgsl`, `clouds.wgsl`, `clouds.rs`,
+  `crates/svet-render/tests/gpu_shader_portability.rs`,
+  `crates/svet-render/tests/gpu_clouds.rs`, `apps/flythrough/src/main.rs` and `hud.rs`.
 - **Done when:**
   1. `the_noise_is_a_function_of_its_seed` (`gpu_clouds.rs`, about 8 s, the 2.4 million
      texels generated three times): two generations with seed 1 on one adapter read back
@@ -584,9 +584,9 @@ is the word its banner shows, and a done-when asserts that word.
   `cloud_ambient` reduction of the sky-view LUT; `CloudLighting::{Octaves, BeerPowder}` as a
   mode; the moon as the key light when the sky uniform says so, and ambient alone with no key
   light. A cloud-lighting toggle on a free key, with the banner.
-- **Files touched:** `clouds.wgsl`, new `crates/vxe-render/src/shaders/cloud_ambient.wgsl`,
-  `clouds.rs`, `crates/vxe-render/tests/gpu_shader_portability.rs`,
-  `crates/vxe-render/tests/gpu_clouds.rs`, `apps/flythrough/src/main.rs` and `hud.rs`.
+- **Files touched:** `clouds.wgsl`, new `crates/svet-render/src/shaders/cloud_ambient.wgsl`,
+  `clouds.rs`, `crates/svet-render/tests/gpu_shader_portability.rs`,
+  `crates/svet-render/tests/gpu_clouds.rs`, `apps/flythrough/src/main.rs` and `hud.rs`.
 - **Done when:**
   1. `clouds_scatter_forward` (`gpu_clouds.rs`, about 6 s): with `CloudWeather::scattered()`
      at seed 1 over an empty world and the sun at 20 degrees of elevation in front of the
@@ -618,10 +618,10 @@ is the word its banner shows, and a done-when asserts that word.
   `1 - transmittance` into its reactive mask, weighted by a `reactive_cloud` tuning (a
   starting value Phase 8 judges), as it does a translucent layer's
   (`reactive_translucent`). An update-mode toggle on a free key, with the banner.
-- **Files touched:** `clouds.wgsl`, new `crates/vxe-render/src/shaders/cloud_reconstruct.wgsl`,
+- **Files touched:** `clouds.wgsl`, new `crates/svet-render/src/shaders/cloud_reconstruct.wgsl`,
   `composite.wgsl`, `fsr2/input.wgsl`, `fsr2.rs`, `clouds.rs`, `marcher.rs`
-  (`cloud_reconstruct` in `FRAME_PASSES`), `crates/vxe-render/tests/gpu_shader_portability.rs`,
-  `crates/vxe-render/tests/gpu_clouds.rs`, `apps/flythrough/src/main.rs` and `hud.rs`.
+  (`cloud_reconstruct` in `FRAME_PASSES`), `crates/svet-render/tests/gpu_shader_portability.rs`,
+  `crates/svet-render/tests/gpu_clouds.rs`, `apps/flythrough/src/main.rs` and `hud.rs`.
 - **Done when:**
   1. `the_amortised_march_converges_on_the_full_one` (`gpu_clouds.rs`, about 20 s, three
      64-frame series at 320 x 180): with a still camera on `scattered()`, `OneInFour` and
@@ -656,21 +656,21 @@ is the word its banner shows, and a done-when asserts that word.
   of the variant select with the M8 slot named in its comment; an `--aerial on|off` flag and
   a toggle on a free key, with the banner; a brute-force mode that integrates the atmosphere
   per pixel along the view ray with the volume's own functions, for the test.
-- **Files touched:** new `crates/vxe-render/src/shaders/sky_aerial.wgsl`, `sky.rs` (the
+- **Files touched:** new `crates/svet-render/src/shaders/sky_aerial.wgsl`, `sky.rs` (the
   volume and its pass, in Plan 0032's module), `composite.wgsl`, `clouds.wgsl`, `marcher.rs`
-  (`sky_aerial` in `FRAME_PASSES`), `crates/vxe-render/tests/gpu_shader_portability.rs`, new
-  `crates/vxe-render/tests/gpu_aerial.rs`, new `apps/flythrough/tests/gpu_aerial.rs`,
+  (`sky_aerial` in `FRAME_PASSES`), `crates/svet-render/tests/gpu_shader_portability.rs`, new
+  `crates/svet-render/tests/gpu_aerial.rs`, new `apps/flythrough/tests/gpu_aerial.rs`,
   `apps/flythrough/tests/gpu_fsr2.rs` (the tone test's poses, if it lists them),
   `apps/flythrough/src/main.rs` and `hud.rs`.
 - **Done when:**
-  1. `the_volume_reads_sea_level_extinction_at_a_kilometre` (`vxe-render`'s `gpu_aerial.rs`,
+  1. `the_volume_reads_sea_level_extinction_at_a_kilometre` (`svet-render`'s `gpu_aerial.rs`,
      about 2 s): with Plan 0032's default `Atmosphere`, the camera at altitude 0 and the sun
      at noon, the volume's transmittance (the mean over rgb, Hillaire 2020's `a`) read at
      1 km along the horizon is 0.9784 within 0.002 (`exp(-1000 m * (rayleigh + mie
      extinction))` per channel at sea-level density: 0.98985, 0.98220 and 0.96319, mean
      0.97842; the 0.002 covers `rgba16float` and the interpolation between the slices ending
      at 0.781 and 1.125 km).
-  2. `a_hit_at_the_camera_keeps_its_radiance` (`vxe-render`'s `gpu_aerial.rs`, about 2 s): a
+  2. `a_hit_at_the_camera_keeps_its_radiance` (`svet-render`'s `gpu_aerial.rs`, about 2 s): a
      probe dispatch of the media function at `t = 0` returns its input radiance exactly, and
      its transmittance falls monotonically over 64 distances from 0 to 2 km.
   3. `the_volume_agrees_with_the_brute_force_march` (the fly-through's `gpu_aerial.rs`, about
@@ -679,7 +679,7 @@ is the word its banner shows, and a done-when asserts that word.
      over the near and far field, and along the centre row a pixel's transmittance does not
      rise with its hit distance. If its time reads over 30 s it is marked soak and the gate
      keeps the same comparison with the far field off.
-  4. `haze_and_cloud_are_metered` (`vxe-render`'s `gpu_aerial.rs`, about 4 s): over an empty
+  4. `haze_and_cloud_are_metered` (`svet-render`'s `gpu_aerial.rs`, about 4 s): over an empty
      world at noon with a fixed view, the meter's mean luminance equals the mean of the
      read-back composite's `c / ex` within 1 % with clouds off and with `overcast()`, and the
      two means differ by more than 5 %.
@@ -702,16 +702,16 @@ is the word its banner shows, and a done-when asserts that word.
   change and reactive mask gains the shadow's now-and-then pair (Decision). A cloud-shadow
   toggle on a free key, with the banner. Nothing in this phase touches `probe_update.wgsl`,
   `probes.rs`, `bake.rs` or `bake.wgsl`.
-- **Files touched:** new `crates/vxe-render/src/shaders/cloud_shadow.wgsl`, new
-  `crates/vxe-render/src/shaders/cloud_light.wgsl`, Plan 0032's light-pass sky source (the
+- **Files touched:** new `crates/svet-render/src/shaders/cloud_shadow.wgsl`, new
+  `crates/svet-render/src/shaders/cloud_light.wgsl`, Plan 0032's light-pass sky source (the
   directional sample's visibility and the sky ray's lookup; `dev` reads its path at the
   base), `fsr2/input.wgsl` and any other upscaler input the tree has at the base, `clouds.rs`,
   `marcher.rs` (`cloud_shadow` in `FRAME_PASSES`),
-  `crates/vxe-render/tests/gpu_shader_portability.rs`,
-  `crates/vxe-render/tests/gpu_clouds.rs`, new `apps/flythrough/tests/gpu_clouds.rs`,
+  `crates/svet-render/tests/gpu_shader_portability.rs`,
+  `crates/svet-render/tests/gpu_clouds.rs`, new `apps/flythrough/tests/gpu_clouds.rs`,
   `apps/flythrough/tests/gpu_bake.rs`, `apps/flythrough/src/main.rs` and `hud.rs`.
 - **Done when:**
-  1. `the_shadow_map_follows_the_light` (`vxe-render`'s `gpu_clouds.rs`, about 4 s): in the
+  1. `the_shadow_map_follows_the_light` (`svet-render`'s `gpu_clouds.rs`, about 4 s): in the
      flat debug density with a shell from 1.5 to 2.0 km, coverage 0.5 and the supplied 300 m
      disc map of Phase 2, the camera at the origin at ground altitude, a probe dispatch
      evaluates `cloud_sun_transmittance` at ground-altitude points (x, y). With the sun at
@@ -720,21 +720,21 @@ is the word its banner shows, and a done-when asserts that word.
      most 0.01 (its ray crosses the shell at x from -250 to +250 m, inside the disc; path
      707 m, optical depth 35) and (+300 m, 0) reads exactly 1.0 (its ray crosses at x from
      1.8 to 2.3 km). With no key light every point reads 1.0.
-  2. `no_cloud_no_shadow` (`vxe-render`'s `gpu_clouds.rs`, about 3 s): with coverage 0 the
+  2. `no_cloud_no_shadow` (`svet-render`'s `gpu_clouds.rs`, about 3 s): with coverage 0 the
      direct target is byte for byte that with the cloud shadow off.
-  3. `a_shadow_step_is_followed_within_eleven_frames` (`vxe-render`'s `gpu_clouds.rs`, about
+  3. `a_shadow_step_is_followed_within_eleven_frames` (`svet-render`'s `gpu_clouds.rs`, about
      5 s): on a lit level floor under the disc map, moving the disc 1 km in one frame, a
      floor pixel that goes from lit to shadowed reads within 10 % of its new direct value
      after eleven frames (the direct target's blend, Plan 0032's Interface), and no lighting
      change bit was set on any of those frames.
-  4. `a_moving_shadow_edge_trails_by_at_most_four_frames` (`vxe-render`'s `gpu_clouds.rs`,
+  4. `a_moving_shadow_edge_trails_by_at_most_four_frames` (`svet-render`'s `gpu_clouds.rs`,
      about 8 s): with the wind carrying the disc's shadow edge two shadow texels a frame
      across the floor for 32 frames, the half-value crossing of the accumulated direct target
      trails the map's edge by no more than four frames of motion (an exponential blend at
      Plan 0058's `ALPHA` of 0.2 puts a moving step's half value `ln 0.5 / ln 0.8 = 3.1`
      frames behind; `dev` reads `ALPHA` at the base and recomputes the bound if it differs).
      The test prints the lag.
-  5. `fsr2_marks_a_moved_cloud_shadow` (`vxe-render`'s `gpu_clouds.rs`, about 4 s): under
+  5. `fsr2_marks_a_moved_cloud_shadow` (`svet-render`'s `gpu_clouds.rs`, about 4 s): under
      FSR 2, on the frame after the 1 km move of done-when 3, the change and reactive mask is
      set on floor pixels whose shadow changed and 0 on floor pixels whose shadow did not; with
      the disc still it is 0 everywhere on the floor.
@@ -746,7 +746,7 @@ is the word its banner shows, and a done-when asserts that word.
      with clouds and the cloud shadow on and off, and Plan 0032's
      `a_baked_face_ignores_the_sky` stays green. `gpu_shader_portability.rs` still compiles
      the bake's module, which holds no cloud name.
-  8. `reading::cloud_sky_stillness` (`vxe-render`'s `gpu_clouds.rs`, a reading): on the level
+  8. `reading::cloud_sky_stillness` (`svet-render`'s `gpu_clouds.rs`, a reading): on the level
      floor under `scattered()` with a still camera and wind at 10 m/s, the frame-to-frame
      change of the sky ray's term in the direct target, beside the mask thresholds. **Stop
      rule:** if the 99th percentile is over `change_abs`, `dev` stops for an architect
@@ -813,7 +813,7 @@ is the word its banner shows, and a done-when asserts that word.
 ## Data shapes
 
 ```rust
-// illustrative: the inputs, all in vxe-render::clouds
+// illustrative: the inputs, all in svet-render::clouds
 pub struct CloudParams {
     pub seed: u32,
     pub base_km: f32, pub top_km: f32,      // 1.5, 4.0
@@ -978,7 +978,7 @@ The owner was away; each is the recommended option and each is the owner's to ov
 - Light shafts (crepuscular rays) through cloud gaps, cumulonimbus anvils, cloud-to-cloud
   shadows beyond the cone march, clouds below the camera's ground (fog banks in valleys), and
   any server-side or deterministic cloud state: clouds are cosmetic and client-side.
-- Any `vxe-world` change: this plan touches `vxe-render` and the fly-through only.
+- Any `svet-world` change: this plan touches `svet-render` and the fly-through only.
 
 References worth an annotated entry in `docs/references/` (not added by this plan): Schneider
 and Vos, "The Real-time Volumetric Cloudscapes of Horizon Zero Dawn" (SIGGRAPH 2015 Advances

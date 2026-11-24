@@ -28,7 +28,7 @@ default-members = [
 version = "0.72.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/IgorKonovalov/voxel-engine"
+repository = "https://github.com/IgorKonovalov/svet"
 rust-version = "1.97"
 
 # Baseline lints shared by every workspace member (opted in with
