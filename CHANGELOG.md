@@ -6,6 +6,12 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+## [0.73.0] - 2026-11-24
+
+Plan 0087 (a minor bump: the rename to `svet`, a breaking change in 0.x). Renamed: `vxe-*` to `svet-*` (crates; `vxe_*::` paths to `svet_*::`), `VXE_*` to `SVET_*` (environment variables, no aliases), `vxe:logic` to `svet:logic` (the WIT package; components built against the old package are refused), `vxe-tester` to `svet-tester` (the launcher, its archive `svet-tester-<version>-<os>-x86_64` and report folder), and the repository URL to `https://github.com/IgorKonovalov/svet`. Entries below keep the names they were written with.
+
+- **Changed: the crates moved to `crates/svet-*`; `git log --follow` reaches their history before the move.**
+- **Changed: the default window title of `svet-app`'s shell is `svet`.**
 - **Security (deps): `wasmtime` and `wasmtime-wasi` `=49.0.7` (were `=49.0.6`), the patched 49.x release for RUSTSEC-2026-0587 (a WASI filesystem sandbox escape on Windows); `cargo deny check` passes again (the wasmtime chore).**
 - **Security (deps): `wasmtime` and `wasmtime-wasi` `=49.0.6` (were `=49.0.5`), the patched 49.x release for RUSTSEC-2026-0566 to 0573; `cargo deny check` passes again (the wasmtime chore).**
 
