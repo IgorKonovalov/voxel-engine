@@ -414,7 +414,7 @@ impl BakeQueue {
                 self.lp.free.push(slot);
                 break;
             };
-            // A job with no live face closes at the next read back, its block to the sink.
+            // A job with no live face closes in this step's submit, its block to the sink.
             self.lp.open.push(ctx.open(job, slot));
         }
     }

@@ -364,6 +364,10 @@ impl BakeQueue {
                 self.lp.open.push(ctx.open(job, slot));
             }
             self.lp.promote(|c| ring1.contains(&c.0));
+            // A ring-1 job opened with no live face (every brick it re-bakes left faceless by
+            // the edit) has nothing to submit, so no read back would close it: it ends here,
+            // its block to the sink, as a pending job with nothing to draw ends at its opening.
+            self.lp.close_ended(run, store, &settings, &mut sink);
         }
         let room = self.lp.in_flight() < IN_FLIGHT;
         let in_flight_full = !room && !self.lp.idle();
