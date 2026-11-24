@@ -1126,6 +1126,14 @@ sysfs value, root), and readings from 2026-11-23 15:14 until then say "at the 3.
 A check in the lane rules' power check (`scaling_max_freq` against `cpuinfo_max_freq`) would
 catch the next one.
 
+**Restored 2026-11-24 evening (the owner).** What did not lift it: the profile set to Balanced
+and back, a root write of `scaling_max_freq`, the boost flag off and on, the charger out and
+in. What did: the driver re-registered (`passive` then `active` written to
+`/sys/devices/system/cpu/amd_pstate/status`, root), then the profile set again, since the
+re-register leaves the energy preference at `balance_performance`. Readings from 2026-11-23
+15:14 to then are at the cap; the gate's 1133.2 s is one of them and is owed a re-read at the
+full clock. The lane rules' check is still owed.
+
 ### The RTX laptop's TSC is marked unstable: hot-loop timings since 2026-11-05 are inflated
 
 Noted 2026-11-13 (Plan 0070 Phase 1, `docs/plans/logs/0070.md`). Every boot of the RTX laptop
