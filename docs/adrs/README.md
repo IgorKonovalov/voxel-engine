@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0085** (0079 accepted at Plan 0095's close, 2026-11-21; 0080 accepted at Plan 0096's close, 2026-11-23; 0081 is Plan 0097's; 0082 accepted at Plan 0098's close, 2026-11-24; 0083 is Plan 0099's; 0084 is Plan 0100's).
+**Next free number: 0088** (0085 is kept for Plan 0101's draft, in its own worktree; 0086 is Plan 0102's; 0087 is Plan 0103's; 0079 accepted at Plan 0095's close, 2026-11-21; 0080 accepted at Plan 0096's close, 2026-11-23; 0081 is Plan 0097's; 0082 accepted at Plan 0098's close, 2026-11-24; 0083 is Plan 0099's; 0084 is Plan 0100's).
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -99,6 +99,7 @@ the status.
 | [0082](0082-the-light-pass-keeps-no-screen-history-by-default-and-reads-smooth-sources-to-the-mid-range.md) | The light pass keeps no screen history by default and reads smooth sources to the mid range | accepted 2026-11-24 (Plan 0098), with an Outcome |
 | [0083](0083-the-live-bake-queue-runs-on-a-bake-thread-the-render-thread-applies-its-write-lists-and-issues-its-submits.md) | The live bake queue runs on a bake thread; the render thread applies its write lists and issues its submits | proposed (Plan 0099); extends ADR-0017 |
 | [0084](0084-the-key-lights-visibility-on-a-world-face-is-fixed-per-face-the-columns-horizon-where-lit-a-cover-source-where-shadowed.md) | The key light's visibility on a world face is fixed per face: the column's horizon where lit, a cover source where shadowed | proposed (Plan 0100) |
+| [0086](0086-fsr-2-is-the-only-upscaler-the-upscaler-of-our-own-is-removed.md) | FSR 2 is the engine's only upscaler; the upscaler of our own is removed | proposed (Plan 0102); at acceptance supersedes ADR-0024 and ADR-0034's opt-in clause |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded

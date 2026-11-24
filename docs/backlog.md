@@ -306,18 +306,7 @@ Pick up with the next start-up time plan, or when a tester reports long starts.
 
 ### Remove `own`, the engine's own upscaler
 
-Parked 2026-11-10 (owner, plan review). FSR 2 at 1.5 is the default (Plan 0056) and `own` is
-opt-in. Removing it deletes `Upscaler`'s pass, `upscale.wgsl`, the `own` arms of `gpu_upscale.rs`
-and its goldens, and re-bases the frame ledger's `own` line. That is a behaviour change, so it is
-its own small plan, not Plan 0045's, which only moves the code it finds. Accepted ADR-0024 and
-ADR-0034 still name Plan 0045 for it; the removal plan's ADR note corrects that. Draft after
-Plan 0061's picks; it runs after Plan 0069 (owner, 2026-11-11) and before M10.
-Noted 2026-11-10 (static performance review): `own` is the only upscaler on record under or near
-section 2's 1.5 ms upscale line (0.93 to 1.3 ms at the owner's window against FSR 2's 2.9 ms) and
-reads 6 to 7 ms less on the Radeon. Removing it before the profile plan arbitrates removes the
-slow adapter's cheaper arm; the removal plan should say what the portable profile uses instead.
-Answered 2026-11-11 (owner, Plan 0069's answer 2): Portable uses FSR 2 at 720p output, and the
-removal plan goes ahead after Plan 0069.
+Drafted 2026-11-24 as [Plan 0102](plans/0102-remove-own-the-engines-own-upscaler-fsr-2-is-the-only-one.md) with [ADR-0086](adrs/0086-fsr-2-is-the-only-upscaler-the-upscaler-of-our-own-is-removed.md) (proposed); awaits the owner's go. It recommends the removal: `own` is a second output path (two passes, a history target, its own settings, a test binary and a golden), not an arm that is cheap when off. Its Phase 1 reads what the Radeon loses at Portable before anything is deleted.
 
 ### The first near-lighting step stalls 130 to 210 ms on a cold driver cache
 
@@ -791,7 +780,7 @@ Most of this entry's lines found an owner; what is left is the last three items.
 - **Set at Plan 0069's close (2026-11-17):** the Floor split in `docs/nfr.md` section 2 was rebalanced: upscale (FSR 2), tone map and post 3.0 ms (from 1.5), denoise 2.0, a line for the live bake's slice. The Radeon at Portable reads FSR 2 at 4.06 to 4.08 ms against the 3.0 (`docs/nfr/02-frame-budget.md`, "The render profiles").
 - **Set at Plan 0096's close (2026-11-23):** the bake's drain and the queue's step have lines, pinned in section 2 with their misses; the step's is Plan 0099's.
 - **Streaming CPU p50, 1.0 ms:** 3.4 to 4.2 ms on record. Plan 0064 (closed 2026-11-11) left it where it was; see "Slot words packed on the workers".
-- **The frame ledger** (`docs/nfr/02-frame-budget.md`, "Frame ledger (2026-10-31)"): its scenario tables still read `own`, the table light and the probes, with no row for the list lights or the bake's slice. Rewrite them when `own` goes (the removal's plan) or at the next close that re-reads the split.
+- **The frame ledger** (`docs/nfr/02-frame-budget.md`, "Frame ledger (2026-10-31)"): its scenario tables still read `own`, the table light and the probes, with no row for the list lights or the bake's slice. Plan 0102 (the removal of `own`, a draft) only dates a note at the ledger's head; the rewrite is owed at the next close that re-reads the split.
 - **Time to first frame, 3 s** (section 7, a proposal): 7137 ms at the vein under the baked light when Plan 0060 read it; no plan owns the line. The pipeline-cache entry is its first lever.
 
 Sharpened 2026-11-19: Plan 0091's budget scopes (a scope that carries its `nfr.md` line and counts its overruns into `run.json`) make each line executable; a line with no owner then at least has a counter.

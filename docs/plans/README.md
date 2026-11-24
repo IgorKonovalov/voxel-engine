@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0101** (0096 the performance plan, closed; 0097 the exposure's anchor by
+**Next free number: 0104** (0101 the record by rule at every opening, drafted in its own worktree 2026-11-24; 0102 the removal of `own`, drafted 2026-11-24; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
 the sky around the camera; 0098 the calm light by default, closed 2026-11-24; 0099 the bake
 step off the main thread, drafted 2026-11-22; 0100 a sun fixed in the world, drafted 2026-11-23; ADRs are a separate sequence, see `../adrs/README.md` for its next
 free number). Plan 0095, the motion wobble (a calm key light in motion), closed 2026-11-21,
@@ -36,6 +36,7 @@ by default, closed 2026-11-24, v0.72.0.
 | [0093](0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) | The README rewrite with reproducible screenshots: a shot manifest, a shoot script, an image gate, the owner's picks | approved | M7 docs, no ADR. After 0087 merges, beside 0089, before 0091. |
 | [0099](0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) | The bake step off the main thread: a bake thread, write lists, the in-view drain | approved 11-22 | ADR-0083 (proposed). After 0087; 0098 closed. Re-read owed (the dig). |
 | [0100](0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md) | A sun fixed in the world: the key shadow a face at a time, the coarse tier held still, sun under cover | approved 11-24 | M10, ADR-0084 (proposed). Lane starts at 0098's merge, beside 0099. |
+| [0102](0102-remove-own-the-engines-own-upscaler-fsr-2-is-the-only-one.md) | Remove `own`, the engine's own upscaler: FSR 2 is the only one, `Off` renders at the output size | draft | ADR-0086 (proposed). Awaits go. Alone in the upscaler's files; not beside 0087. |
 <!-- roster:end -->
 
 ## Sequence
@@ -71,8 +72,8 @@ Each starts on main after the one before it closes, unless its line says otherwi
 5. **Plan 0044**, the hot-path pass: closed 2026-11-16 (v0.55.0); Phase 2 ran as Plan 0064's
    Phase 3, Phase 4 as Plan 0070.
 6. **Plan 0069, render settings and profiles**: closed 2026-11-17 (v0.60.0; ADR-0055 accepted with
-   an Outcome), then the owed plan removing the `own` upscaler (not drafted; owner, 2026-11-11:
-   Portable takes FSR 2, so the removal goes ahead).
+   an Outcome), then the owed plan removing the `own` upscaler (drafted 2026-11-24 as Plan 0102,
+   awaits go; owner, 2026-11-11: Portable takes FSR 2, so the removal goes ahead).
 7. **M6, entities: Plan 0062, then Plan 0063** (owner, 2026-11-10: ahead of M10,
    because the first consumer is a cave game). Plan 0062 closed 2026-11-16 (v0.56.0; ADR-0050
    accepted with an Outcome); Plan 0063 closed 2026-11-16 (v0.57.0; ADR-0051 accepted).
@@ -252,7 +253,7 @@ reads shadow, the bake's key ray at its cap; exploration to one owner window): *
 2026-11-24** (owner, with his five answers); its lane starts when Plan 0098 (closed 2026-11-24)
 has merged and runs beside Plan 0099's (owner, 2026-11-23).
 
-Every active plan is approved (Plan 0099 on 2026-11-22; Plans 0091, 0092 and 0093 on 2026-11-19; Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
+Every active plan but the drafts of 2026-11-24 (Plans 0101, 0102 and 0103, which await the owner's go) is approved (Plan 0099 on 2026-11-22; Plans 0091, 0092 and 0093 on 2026-11-19; Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Approval accepts the design; a plan's lane
 starts only when the plans its "Starts after" line names have closed and merged, and where that
 line asks for it, after the architect has re-read the plan against the new tip. The approved
