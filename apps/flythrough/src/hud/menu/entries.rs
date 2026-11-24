@@ -5,7 +5,7 @@ use super::{FIXED_KEYS, FIXED_ROWS, Group, RunView, key_name, pad_name};
 use crate::hud::Modes;
 use crate::toggles::{ACTIONS, Action, Bind, Press, TOGGLES, Toggle};
 use std::fmt::Write as _;
-use vxe_app::KeyCode;
+use svet_app::KeyCode;
 
 /// What an entry is: a toggle's row or an action's.
 #[derive(Clone, Copy)]

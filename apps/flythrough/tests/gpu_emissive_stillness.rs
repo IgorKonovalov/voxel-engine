@@ -5,7 +5,7 @@
 mod support;
 
 use support::stillness::*;
-use vxe_render::{HistoryKill, Lighting};
+use svet_render::{HistoryKill, Lighting};
 
 /// The off frame at which `the_vein_wall_patches_are_counted` halves the emission, inside
 /// patch step 5 (off frames 270 to 300).

@@ -5,11 +5,11 @@ use super::SyncNow;
 use super::cave_table;
 use flythrough::cave::{ORE, ROCK};
 use std::collections::BTreeMap;
-use vxe_render::LightingResolution;
-use vxe_render::{BakeSettings, QueueStats};
-use vxe_render::{Camera, Exposure, Frame, LightParams, Lighting, QueueView, wgpu};
-use vxe_render::{GpuWorld, MirrorConfig, Window};
-use vxe_world::{
+use svet_render::LightingResolution;
+use svet_render::{BakeSettings, QueueStats};
+use svet_render::{Camera, Exposure, Frame, LightParams, Lighting, QueueView, wgpu};
+use svet_render::{GpuWorld, MirrorConfig, Window};
+use svet_world::{
     AIR, ChunkCoord, ChunkExtent, EditOp, FIXED_ONE, Fixed3, Mode, UniformSource, VoxelCoord, World,
 };
 
@@ -21,13 +21,13 @@ pub fn box_op(min: [i64; 3], max: [i64; 3], mode: Mode) -> EditOp {
     )
 }
 
-pub fn fill(world: &World, min: [i64; 3], max: [i64; 3], m: vxe_world::MaterialId) {
+pub fn fill(world: &World, min: [i64; 3], max: [i64; 3], m: svet_world::MaterialId) {
     world
         .apply(&box_op(min, max, Mode::Fill(m)))
         .expect("the box is resident");
 }
 
-pub fn world_of(size: [i32; 3], m: vxe_world::MaterialId) -> World {
+pub fn world_of(size: [i32; 3], m: svet_world::MaterialId) -> World {
     World::generate(
         ChunkExtent::new([0, 0, 0], size),
         &UniformSource(m),
@@ -88,7 +88,7 @@ pub struct Setup {
     pub near: i32,
     pub slice_ms: f64,
     /// The queue's order; `None` keeps its default.
-    pub order: Option<vxe_render::QueueOrder>,
+    pub order: Option<svet_render::QueueOrder>,
     /// The queue's counts.
     pub counts: BakeSettings,
     /// The mirror's light radius in chunks.
@@ -103,7 +103,7 @@ impl Setup {
             pool_bytes: 16 << 20,
             sync_budget: u64::MAX,
             coarse: 0,
-            near: vxe_render::DEFAULT_NEAR,
+            near: svet_render::DEFAULT_NEAR,
             slice_ms: 1.5,
             order: None,
             counts: counts(),
@@ -208,7 +208,7 @@ impl Q {
             hold: None,
             half_angle: {
                 let [w, h] = self.frame.output_size();
-                vxe_render::internals::view_half_angle(self.camera.vfov, w as f32 / h as f32)
+                svet_render::internals::view_half_angle(self.camera.vfov, w as f32 / h as f32)
             },
             frustum: None,
             full_radius: self.full_radius,
@@ -241,7 +241,7 @@ impl Q {
         self.step_with(true)
     }
 
-    pub fn q(&self) -> &vxe_render::BakeQueue {
+    pub fn q(&self) -> &svet_render::BakeQueue {
         self.frame.bake_queue().expect("the queue started")
     }
 
@@ -328,7 +328,7 @@ impl Q {
             &self.camera,
             &LightParams::default(),
         );
-        vxe_render::debug::read_rgba8(&self.device, &self.queue, self.frame.target())
+        svet_render::debug::read_rgba8(&self.device, &self.queue, self.frame.target())
     }
 
     /// No two blocks of `chunks` share a pool word.
@@ -404,10 +404,10 @@ pub fn row(rocks: &[i64]) -> World {
 pub const ROW_EYE: [f32; 3] = [150.5, 32.5, 60.5];
 
 /// The score at angle weight `angle` and refine weight 2.
-pub fn score(angle: f32) -> vxe_render::QueueOrder {
-    vxe_render::QueueOrder::Score {
+pub fn score(angle: f32) -> svet_render::QueueOrder {
+    svet_render::QueueOrder::Score {
         angle,
-        refine: vxe_render::Refine::Weight(2.0),
+        refine: svet_render::Refine::Weight(2.0),
     }
 }
 

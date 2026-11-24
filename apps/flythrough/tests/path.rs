@@ -14,8 +14,8 @@ use flythrough::path::{
 use flythrough::report::{Recorder, RunReport, json};
 use flythrough::showcase::ShowcaseSource;
 use flythrough::trees::{ForestSource, LEAF_FILL, TreeDensity};
-use vxe_app::{KeyCode, MouseButton, PadButton};
-use vxe_world::{AIR, Chunk, ChunkCoord, MaterialId, VoxelCoord, WorldSource};
+use svet_app::{KeyCode, MouseButton, PadButton};
+use svet_world::{AIR, Chunk, ChunkCoord, MaterialId, VoxelCoord, WorldSource};
 
 /// Samples the air test reads along a path, seconds apart.
 const AIR_STEP_S: f32 = 0.25;
@@ -374,7 +374,7 @@ fn the_tester_filter_leaves_movement_look_help_and_esc() {
 /// look, `Esc` the end.
 #[test]
 fn the_window_input_reads_into_controls() {
-    let mut input = vxe_app::Input::default();
+    let mut input = svet_app::Input::default();
     assert_eq!(Controls::read(&input), NONE);
     input.key_down(KeyCode::KeyW);
     assert!(Controls::read(&input).moved);
@@ -399,7 +399,7 @@ fn the_window_input_reads_into_controls() {
 #[test]
 fn run_json_carries_the_streaming_stages() {
     let mut rec = Recorder::for_path(10.0);
-    let warm = vxe_render::SyncStats {
+    let warm = svet_render::SyncStats {
         select_us: 9000,
         size_us: 9000,
         pack_us: 9000,
@@ -414,7 +414,7 @@ fn run_json_carries_the_streaming_stages() {
     }
     for i in 0..100u64 {
         let k = (37 * i) % 100 + 1;
-        let s = vxe_render::SyncStats {
+        let s = svet_render::SyncStats {
             select_us: 1,
             size_us: 2 * k,
             pack_us: k,
@@ -507,7 +507,7 @@ fn the_sync_line_names_its_slowest_sync() {
     use flythrough::report::SyncSeries;
     let sync = |k: u64| {
         if k == 37 {
-            vxe_render::SyncStats {
+            svet_render::SyncStats {
                 select_us: 5000,
                 size_us: 8000,
                 light_us: 20_000,
@@ -532,7 +532,7 @@ fn the_sync_line_names_its_slowest_sync() {
                 ..Default::default()
             }
         } else {
-            vxe_render::SyncStats {
+            svet_render::SyncStats {
                 select_us: 100,
                 size_us: 200,
                 light_us: 300,

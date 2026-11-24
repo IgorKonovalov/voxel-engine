@@ -22,10 +22,10 @@ use crate::run::loading::fade_loading;
 use crate::setup::GfxSample;
 use crate::streaming::pressure_terms;
 use std::time::Instant;
-use vxe_app::{Flow, Gpu, Input, KeyCode, MouseButton, PadButton};
-use vxe_audio::Command;
-use vxe_render::debug::StepHistogram;
-use vxe_render::{LodParams, MarchTimer, PassTimer, ViewMode, wgpu};
+use svet_app::{Flow, Gpu, Input, KeyCode, MouseButton, PadButton};
+use svet_audio::Command;
+use svet_render::debug::StepHistogram;
+use svet_render::{LodParams, MarchTimer, PassTimer, ViewMode, wgpu};
 
 impl Run {
     /// One frame of streaming: update, poll, apply events and sync into the frame's `enc`,
@@ -303,7 +303,11 @@ impl Run {
     /// HUD's glyph scale (`entities::belt::append_belt`): to the banner's rows when `banner`,
     /// else the stats'. Gives the belt's backdrop box; `None`, and the rows untouched, out of
     /// the mode.
-    pub(crate) fn belt_rows(&mut self, size: [u32; 2], banner: bool) -> Option<vxe_render::HudBox> {
+    pub(crate) fn belt_rows(
+        &mut self,
+        size: [u32; 2],
+        banner: bool,
+    ) -> Option<svet_render::HudBox> {
         if !self.modes.walkers.belt.on {
             return None;
         }
@@ -328,7 +332,7 @@ impl Run {
     /// rows in the HUD's `overlay` buffers) for a `size` window at the menu's glyph scale, its
     /// frame on the selected slot, its tiles after the chooser's. Gives the belt's backdrop
     /// box; `None`, and the rows untouched, on any other page or closed.
-    pub(crate) fn chooser_belt(&mut self, size: [u32; 2]) -> Option<vxe_render::HudBox> {
+    pub(crate) fn chooser_belt(&mut self, size: [u32; 2]) -> Option<svet_render::HudBox> {
         use crate::hud::menu::PageId;
         if self.args.tester
             || !matches!(
@@ -437,7 +441,7 @@ impl Run {
             if !mic.period_printed && period > 0 {
                 println!(
                     "mic: period {period} frames ({:.1} ms)",
-                    period as f32 * 1e3 / vxe_audio::RATE as f32
+                    period as f32 * 1e3 / svet_audio::RATE as f32
                 );
                 mic.period_printed = true;
             }
@@ -728,10 +732,10 @@ impl Run {
             && self.modes.look.view == ViewMode::Steps
             && let Some(gfx) = &self.gfx
         {
-            let px = vxe_render::debug::read_rgba8(&gpu.device, &gpu.queue, gfx.frame.target());
+            let px = svet_render::debug::read_rgba8(&gpu.device, &gpu.queue, gfx.frame.target());
             let width = gfx.frame.target().width() as usize;
             let h = StepHistogram::from_rgba8(&px, width);
-            let key = vxe_render::debug::read_rgba16f(&gpu.device, &gpu.queue, gfx.frame.direct());
+            let key = svet_render::debug::read_rgba16f(&gpu.device, &gpu.queue, gfx.frame.direct());
             self.hud.steps = Some(hud::StepsSample {
                 key: key_ray_steps(&key).map(|(_, [mean, p99, _, _])| [mean as f32, p99 as f32]),
                 ..hud::StepsSample::from_histogram(&h)
@@ -835,7 +839,7 @@ impl Run {
         };
         gfx.frame.set_lights(&lights);
         gfx.frame.set_light_cap(self.args.light_cap);
-        if self.args.light_hooks != vxe_render::LightHooks::default() {
+        if self.args.light_hooks != svet_render::LightHooks::default() {
             gfx.frame.set_light_hooks(self.args.light_hooks);
         }
         if let Some(words) = crate::entities::feed(
@@ -923,16 +927,16 @@ impl Run {
         if self.modes.look.view == ViewMode::Steps
             && let Some(gfx) = &self.gfx
         {
-            let px = vxe_render::debug::read_rgba8(&gpu.device, &gpu.queue, gfx.frame.target());
+            let px = svet_render::debug::read_rgba8(&gpu.device, &gpu.queue, gfx.frame.target());
             let width = gfx.frame.target().width() as usize;
             println!("{}", steps_line(&StepHistogram::from_rgba8(&px, width)));
             let shadow =
-                vxe_render::debug::read_rgba16f(&gpu.device, &gpu.queue, gfx.frame.irradiance());
+                svet_render::debug::read_rgba16f(&gpu.device, &gpu.queue, gfx.frame.irradiance());
             println!(
                 "{}",
                 shadow_steps_line(&shadow, gfx.frame.lighting().shadow_walk)
             );
-            let key = vxe_render::debug::read_rgba16f(&gpu.device, &gpu.queue, gfx.frame.direct());
+            let key = svet_render::debug::read_rgba16f(&gpu.device, &gpu.queue, gfx.frame.direct());
             println!("{}", key_steps_line(&key, gfx.frame.lighting().shadow_walk));
         }
         if let Some(gfx) = &self.gfx {
@@ -1026,7 +1030,7 @@ pub(super) fn set_sky_and_styles(
     modes: &crate::hud::Modes,
     outdoor: bool,
     gpu: &Gpu,
-    frame: &mut vxe_render::Frame,
+    frame: &mut svet_render::Frame,
 ) {
     let sky = modes
         .sky

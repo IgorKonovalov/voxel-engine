@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 
 use flythrough::viewer::{Viewer, material};
 use flythrough::{RUBBLE, cave, showcase, showcase_materials, walker};
-use vxe_assets::{Rig, RigBody, VoxFile, VoxText, encode};
-use vxe_world::MaterialTable;
+use svet_assets::{Rig, RigBody, VoxFile, VoxText, encode};
+use svet_world::MaterialTable;
 
 fn library() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/entities")
@@ -82,7 +82,7 @@ fn the_spider_has_its_rows_parts_and_clips() {
     let rig = Rig::parse(&std::fs::read_to_string(&path).expect("reads")).expect("parses");
     let t = showcase_table();
     let (body_row, eye_row) = walker::rows(&t).expect("the walker's rows");
-    let mapped: Vec<(u8, Option<vxe_world::MaterialId>)> = rig
+    let mapped: Vec<(u8, Option<svet_world::MaterialId>)> = rig
         .materials
         .iter()
         .map(|m| (m.index, material(&t, &m.name)))
@@ -146,11 +146,11 @@ fn the_committed_library_builds() {
             Rig::parse(&std::fs::read_to_string(dir.join(format!("{name}.rig"))).unwrap()).unwrap();
         let vox = VoxFile::parse(&std::fs::read(dir.join(&rig.vox)).unwrap()).unwrap();
         let lookup = t.clone();
-        let mut rows = vxe_assets::PaletteRows::new(&mut t, vxe_assets::DEFAULT_EMISSION_FACTOR);
+        let mut rows = svet_assets::PaletteRows::new(&mut t, svet_assets::DEFAULT_EMISSION_FACTOR);
         rig.build(&vox, &|n| material(&lookup, n), &mut rows)
             .unwrap()
     };
-    let walk_stride = |m: &vxe_assets::RigModel| {
+    let walk_stride = |m: &svet_assets::RigModel| {
         m.clips
             .iter()
             .find(|(n, _)| n == "walk")
@@ -185,7 +185,7 @@ fn the_committed_library_builds() {
 fn the_walk_clip_follows_the_distance() {
     use flythrough::entities::mover::{Mover, walk_tick};
     use flythrough::viewer::Play;
-    use vxe_entity::{blend, sample};
+    use svet_entity::{blend, sample};
 
     let path = library().join("walker/walker.rig");
     let mut v = Viewer::open(&path, Some("walk".into())).expect("opens");

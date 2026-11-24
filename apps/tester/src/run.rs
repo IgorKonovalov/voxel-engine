@@ -54,7 +54,7 @@ impl Output {
     }
 }
 
-/// The render profile a run takes (`--profile`, `vxe_render::Profile`).
+/// The render profile a run takes (`--profile`, `svet_render::Profile`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Profile {
     Floor,

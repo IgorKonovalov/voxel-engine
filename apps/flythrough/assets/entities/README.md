@@ -4,7 +4,7 @@ The fly-through's predefined voxel-model entities, one directory per entry:
 
 ```
 <name>/<name>.voxtext   the source, voxels drawn as text
-<name>/<name>.vox       generated from it: cargo run -p vxe-assets --example voxtext -- to-vox <name>.voxtext <name>.vox
+<name>/<name>.vox       generated from it: cargo run -p svet-assets --example voxtext -- to-vox <name>.voxtext <name>.vox
 <name>/<name>.rig       the parts, their pivots, the palette's materials and the clips
 ```
 

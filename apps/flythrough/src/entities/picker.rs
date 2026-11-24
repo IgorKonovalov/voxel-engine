@@ -5,9 +5,9 @@
 
 use std::sync::Arc;
 
-use vxe_entity::{EntityId, Model, Pose};
-use vxe_render::MAX_ENTITIES;
-use vxe_world::MaterialTable;
+use svet_entity::{EntityId, Model, Pose};
+use svet_render::MAX_ENTITIES;
+use svet_world::MaterialTable;
 
 use super::library::{BUILTIN_NAME, Source, cut, extent, model_of};
 use super::mover::{Mover, Stance};
@@ -154,7 +154,7 @@ impl Walkers {
             self.clear_frame();
             return Err(full_words());
         }
-        let root = vxe_world::Fixed3(corner.map(|v| i64::from(v) * 256));
+        let root = svet_world::Fixed3(corner.map(|v| i64::from(v) * 256));
         if let Some(f) = &mut self.frame
             && f.key == key
         {

@@ -3,23 +3,23 @@
 //! still frames and its printed row, the key ray's steps, a region's mean display level.
 
 use super::stillness::change_stats;
-use vxe_render::{AutoExposure, Exposure, Frame, LightParams, Lighting};
+use svet_render::{AutoExposure, Exposure, Frame, LightParams, Lighting};
 
 /// A world mirrored whole for the term matrix: the device, the mirror and the adapter's
 /// name.
 pub struct Rig {
-    pub device: vxe_render::wgpu::Device,
-    pub queue: vxe_render::wgpu::Queue,
-    pub gpu: vxe_render::GpuWorld,
+    pub device: svet_render::wgpu::Device,
+    pub queue: svet_render::wgpu::Queue,
+    pub gpu: svet_render::GpuWorld,
     pub adapter: String,
-    pub world: vxe_world::World,
+    pub world: svet_world::World,
 }
 
 /// `world` mirrored whole (an absent chunk is sky to a lighting ray) with the focus at `eye`.
-pub fn mirrored(world: vxe_world::World, eye: vxe_world::VoxelCoord) -> Option<Rig> {
+pub fn mirrored(world: svet_world::World, eye: svet_world::VoxelCoord) -> Option<Rig> {
     use super::SyncNow;
-    use vxe_render::{GpuWorld, MirrorConfig, Window};
-    let pool = flythrough::level_pool_units(&world, false) * vxe_render::internals::UNIT_BYTES;
+    use svet_render::{GpuWorld, MirrorConfig, Window};
+    let pool = flythrough::level_pool_units(&world, false) * svet_render::internals::UNIT_BYTES;
     let (device, queue, adapter) = super::reading_device(pool)?;
     let cfg = MirrorConfig {
         budget_bytes: 512 << 20,
@@ -45,9 +45,9 @@ pub fn mirrored(world: vxe_world::World, eye: vxe_world::VoxelCoord) -> Option<R
 /// The tunnel of seed 1 (`--source outdoor --spawn inside`): 3 chunks around the spawn's
 /// chunk and on to 10 along +x and 4 down, the eye and its view out of the tunnel and into
 /// it.
-pub fn tunnel_rig() -> Option<(Rig, [(&'static str, vxe_render::Camera); 2])> {
+pub fn tunnel_rig() -> Option<(Rig, [(&'static str, svet_render::Camera); 2])> {
     use flythrough::outdoor::{OutdoorSource, Spawn};
-    use vxe_world::{ChunkExtent, World};
+    use svet_world::{ChunkExtent, World};
     let source = OutdoorSource::new(1);
     let (eye, facing) = source.spawn(Spawn::Inside);
     let c = eye.chunk().0;
@@ -66,9 +66,9 @@ pub fn tunnel_rig() -> Option<(Rig, [(&'static str, vxe_render::Camera); 2])> {
 
 /// The hills of seed 1 (`--source outdoor --spawn outside`, no trees): the chunks within 4 of
 /// the spawn's (2 in z), the spawn's camera facing the cave mouth.
-pub fn hills_rig() -> Option<(Rig, vxe_render::Camera)> {
+pub fn hills_rig() -> Option<(Rig, svet_render::Camera)> {
     use flythrough::outdoor::{OutdoorSource, Spawn};
-    use vxe_world::{ChunkExtent, World};
+    use svet_world::{ChunkExtent, World};
     let source = OutdoorSource::new(1);
     let (eye, facing) = source.spawn(Spawn::Outside);
     let c = eye.chunk().0;
@@ -86,10 +86,10 @@ pub fn hills_rig() -> Option<(Rig, vxe_render::Camera)> {
 
 /// The forest of seed 1 at `LEAF_FILL` (`--spawn forest --trees forest`): the chunks within
 /// 4 of the spawn's (2 in z), the spawn's camera.
-pub fn forest_rig() -> Option<(Rig, vxe_render::Camera)> {
+pub fn forest_rig() -> Option<(Rig, svet_render::Camera)> {
     use flythrough::outdoor::{OutdoorSource, Spawn};
     use flythrough::trees::{ForestSource, LEAF_FILL, TreeDensity};
-    use vxe_world::{ChunkExtent, World};
+    use svet_world::{ChunkExtent, World};
     let source = ForestSource::new(OutdoorSource::new(1), TreeDensity::Forest, LEAF_FILL);
     let (eye, facing) = source.base().spawn(Spawn::Forest);
     let c = eye.chunk().0;
@@ -110,7 +110,7 @@ pub fn forest_rig() -> Option<(Rig, vxe_render::Camera)> {
 pub fn forest_rig_about(about: [i32; 3]) -> Option<Rig> {
     use flythrough::outdoor::OutdoorSource;
     use flythrough::trees::{ForestSource, LEAF_FILL, TreeDensity};
-    use vxe_world::{ChunkExtent, VoxelCoord, World};
+    use svet_world::{ChunkExtent, VoxelCoord, World};
     let source = ForestSource::new(OutdoorSource::new(1), TreeDensity::Forest, LEAF_FILL);
     let eye = VoxelCoord(about);
     let c = eye.chunk().0;
@@ -125,8 +125,8 @@ pub fn forest_rig_about(about: [i32; 3]) -> Option<Rig> {
 /// The sky ray's hit rate per lighting pixel of a native 320 x 180 frame of `cam` (64 frames
 /// under `Sky::uniform(1.0)`, the filter and the key light off, exposure 1), `None` at a
 /// miss, and the grid's width.
-pub fn hit_rates(rig: &Rig, cam: &vxe_render::Camera) -> (Vec<Option<f64>>, usize) {
-    use vxe_render::sky::Sky;
+pub fn hit_rates(rig: &Rig, cam: &svet_render::Camera) -> (Vec<Option<f64>>, usize) {
+    use svet_render::sky::Sky;
     let mut f = Frame::new(&rig.device, 320, 180);
     f.set_lighting(Lighting {
         lamp: false,
@@ -149,13 +149,13 @@ pub fn hit_rates(rig: &Rig, cam: &vxe_render::Camera) -> (Vec<Option<f64>>, usiz
             &LightParams::headlamp(),
         );
         // The sky rays' share that reached the sky (ADR-0070), in r of 255.
-        let px = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, f.visibility_samples());
+        let px = svet_render::debug::read_rgba8(&rig.device, &rig.queue, f.visibility_samples());
         sum.resize(px.len() / 4, 0.0);
         for (s, p) in sum.iter_mut().zip(px.chunks(4)) {
             *s += f64::from(p[0]) / 255.0 / 64.0;
         }
     }
-    let hits = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, f.light_hit_positions());
+    let hits = svet_render::debug::read_rgba32f(&rig.device, &rig.queue, f.light_hit_positions());
     let rate = sum
         .iter()
         .zip(&hits)
@@ -186,7 +186,7 @@ pub struct Cell {
     /// (`--sky-anchor N`); `None` keeps `OUTDOOR_MAX`.
     pub anchor: Option<f32>,
     /// The baked sky term's normal (`--sky-normal`) and bounce floor (`--sky-bounce`).
-    pub sky_normal: vxe_render::SkyNormal,
+    pub sky_normal: svet_render::SkyNormal,
     pub sky_bounce: f32,
 }
 
@@ -227,16 +227,16 @@ pub struct CellReading {
 )]
 pub fn run_cell(
     rig: &mut Rig,
-    cam: &vxe_render::Camera,
-    sky: vxe_render::sky::Sky,
+    cam: &svet_render::Camera,
+    sky: svet_render::sky::Sky,
     cell: Cell,
 ) -> CellReading {
-    use vxe_render::{LightHooks, UpscalerKind};
+    use svet_render::{LightHooks, UpscalerKind};
     let mut f = if cell.fsr2 {
         let mut f = Frame::with_sizes(&rig.device, [320, 180], [480, 270]);
         f.set_upscaler_kind(
             &rig.device,
-            UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default()),
+            UpscalerKind::Fsr2(svet_render::Fsr2Settings::default()),
         );
         f
     } else {
@@ -247,9 +247,9 @@ pub fn run_cell(
         filter: cell.filter,
         sky_rays: if cell.term == "key" { 0 } else { 1 },
         penumbra: if cell.approach {
-            vxe_render::Penumbra::Approach
+            svet_render::Penumbra::Approach
         } else {
-            vxe_render::Penumbra::Disc
+            svet_render::Penumbra::Disc
         },
         sky_normal: cell.sky_normal,
         sky_bounce: cell.sky_bounce,
@@ -263,9 +263,9 @@ pub fn run_cell(
     });
     f.set_count_store(true);
     // The fly-through's default look: cubes with the far normal at [2, 6].
-    f.set_look(vxe_render::LookParams {
+    f.set_look(svet_render::LookParams {
         far_normal: flythrough::LookPreset::DEFAULT.far_normal,
-        ..vxe_render::LookParams::default()
+        ..svet_render::LookParams::default()
     });
     f.set_material_styles(&rig.queue, &flythrough::outdoor_styles(cell.leaf));
     f.set_lighting(Lighting {
@@ -287,7 +287,7 @@ pub fn run_cell(
                 &mut rig.gpu,
                 &rig.world,
                 rig.world.extent(),
-                &vxe_render::BakeSettings::default(),
+                &svet_render::BakeSettings::default(),
                 &mut |_| {},
             )
             .expect("the store fits");
@@ -307,14 +307,14 @@ pub fn run_cell(
     }
     // The state buffer read back blocking: the exposure the next frame uses (the readout's
     // ring returns an older frame's state).
-    let st = vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_state(), 0, 32);
-    let state = vxe_render::ExposureState::from_bytes(&st);
+    let st = svet_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_state(), 0, 32);
+    let state = svet_render::ExposureState::from_bytes(&st);
     let (exposure, ceiling, sky) = (state.current, state.ceiling, state.sky);
     f.set_lighting(Lighting {
         exposure: Exposure::Manual(exposure),
         ..base
     });
-    let read = |f: &Frame| vxe_render::debug::read_rgba8(&rig.device, &rig.queue, f.target());
+    let read = |f: &Frame| svet_render::debug::read_rgba8(&rig.device, &rig.queue, f.target());
     let mut last = read(&f);
     let mut changes: Vec<Vec<u8>> = vec![Vec::new(); last.len() / 4];
     let mut rejections = Vec::new();
@@ -327,15 +327,15 @@ pub fn run_cell(
         }
         last = now;
         rejections.push(f.read_history_rejections(&rig.device, &rig.queue));
-        let d = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, f.direct());
+        let d = svet_render::debug::read_rgba16f(&rig.device, &rig.queue, f.direct());
         samples.push(d.iter().map(|p| p[3]).collect());
     }
     let parts: [f64; 2];
     let stripe = {
         let hits =
-            vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, f.light_hit_positions());
-        let a = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, f.accumulated());
-        let d = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, f.direct_accumulated());
+            svet_render::debug::read_rgba32f(&rig.device, &rig.queue, f.light_hit_positions());
+        let a = svet_render::debug::read_rgba16f(&rig.device, &rig.queue, f.accumulated());
+        let d = svet_render::debug::read_rgba16f(&rig.device, &rig.queue, f.direct_accumulated());
         let on = |x: f32| (x - x.round()).abs() < 1e-3;
         let mut s = [(0.0, 0u32); 2];
         let lum = |p: &[f32; 4]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
@@ -397,7 +397,7 @@ pub fn cells() -> Vec<Cell> {
                         bake: false,
                         approach: false,
                         anchor: None,
-                        sky_normal: vxe_render::SkyNormal::Face,
+                        sky_normal: svet_render::SkyNormal::Face,
                         sky_bounce: 0.0,
                     });
                 }
@@ -477,7 +477,7 @@ pub fn default_cell(leaf: flythrough::LeafShadow) -> Cell {
         bake: false,
         approach: false,
         anchor: None,
-        sky_normal: vxe_render::SkyNormal::Face,
+        sky_normal: svet_render::SkyNormal::Face,
         sky_bounce: 0.0,
     }
 }
@@ -487,12 +487,12 @@ pub fn default_cell(leaf: flythrough::LeafShadow) -> Cell {
 /// the mean and the 99th percentile, and the mean storage loads, over 4 frames.
 pub fn key_steps(
     rig: &Rig,
-    cam: &vxe_render::Camera,
-    sky: vxe_render::sky::Sky,
+    cam: &svet_render::Camera,
+    sky: svet_render::sky::Sky,
     leaf: flythrough::LeafShadow,
-    penumbra: vxe_render::Penumbra,
+    penumbra: svet_render::Penumbra,
 ) -> (f64, f32, f64) {
-    use vxe_render::{LookParams, ViewMode};
+    use svet_render::{LookParams, ViewMode};
     let mut f = Frame::new(&rig.device, 320, 180);
     f.set_lighting(Lighting {
         lamp: false,
@@ -515,7 +515,7 @@ pub fn key_steps(
             cam,
             &LightParams::headlamp(),
         );
-        let d = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, f.direct());
+        let d = svet_render::debug::read_rgba16f(&rig.device, &rig.queue, f.direct());
         steps.extend(d.iter().filter(|p| p[3] > 0.5).map(|p| p[0]));
         loads += d
             .iter()

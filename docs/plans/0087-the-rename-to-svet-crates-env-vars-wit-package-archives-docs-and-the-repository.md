@@ -1,6 +1,6 @@
 # 0087: The rename to `svet`: the crates, the environment variables and the WIT package, the tester archive, the documents and the harness, the repository, one minor bump, one final grep
 
-> **Status:** approved (the owner's go, 2026-11-17: "Approve rename"; it runs last, see below)
+> **Status:** in-progress (the owner's go, 2026-11-17: "Approve rename"; order confirmed 2026-11-24)
 > **Created:** 2026-11-17
 > **Milestone:** cross-cutting; no milestone in [`docs/roadmap.md`](../roadmap.md) owns it
 > **Related ADRs:** [ADR-0071](../adrs/0071-the-engine-takes-a-name-one-word-for-the-project-the-crate-prefix-the-repository-and-the-archive.md)
@@ -419,9 +419,11 @@ close compares it with the figure the lane read from `main` at its start.
 > resume notes go to the plan's readings log, `docs/plans/logs/0087.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
+Readings log: [`logs/0087.md`](logs/0087.md). Nested `.claude/` repository commits: Phase 1 `d0bf832` (the GPU lock path).
+
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the workspace | dev | not started | |
+| 1: the workspace | dev | done | committed with this row |
 | 2: the environment variables and the WIT package | dev | not started | |
 | 3: the tester, its archive and the names a user sees | dev | not started | |
 | 4: the documents, the orientation map and the harness | dev | not started | |
@@ -431,9 +433,8 @@ close compares it with the figure the lane read from `main` at its start.
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Tree since pre-flight (lane start cfd2f97c, v0.72.0): the counts re-read at the start are in the readings log; the tree's names win over the plan's.
+- Phase 1: the tester's own names (`vxe-tester`, `vxe_tester`, `vxe-report`, the window title `"vxe"`, the zip test's `vxe` home folder) are left for Phase 3, so Phase 1's grep also lists those lines; the file-format magics `VXEL`, `VXECHNK` and `VXEH` (and the binary fixtures carrying them) are not renamed in any phase, and the case-insensitive grep lists them.
 
 ### Close triggers
 

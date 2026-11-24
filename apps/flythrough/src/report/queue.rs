@@ -6,20 +6,20 @@ use super::write_ms;
 
 /// The live queue's in-view drain as `run.json`'s `queue` and the `bake queue:` line read it:
 /// the queue's depth, the chunks in view waiting for their light by band and class
-/// ([`vxe_render::InViewWaiting`]), the samples they still need, the last second's samples a
+/// ([`svet_render::InViewWaiting`]), the samples they still need, the last second's samples a
 /// second, and `drain_s`, the need over that rate (`None` while nothing is drawn and something
 /// waits). Under `--queue-rule-reading`, the jobs the rule would have answered
-/// ([`vxe_render::RuleMissed`]; `None` while the reading has counted nothing).
+/// ([`svet_render::RuleMissed`]; `None` while the reading has counted nothing).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct QueueDrain {
     pub depth: u64,
-    pub waiting: vxe_render::InViewWaiting,
+    pub waiting: svet_render::InViewWaiting,
     pub samples_per_s: f64,
-    pub rule_missed: Option<vxe_render::RuleMissed>,
+    pub rule_missed: Option<svet_render::RuleMissed>,
 }
 
 impl QueueDrain {
-    /// The need over the rate ([`vxe_render::InViewWaiting::drain_s`]).
+    /// The need over the rate ([`svet_render::InViewWaiting::drain_s`]).
     pub fn drain_s(&self) -> Option<f64> {
         self.waiting.drain_s(self.samples_per_s)
     }
@@ -91,7 +91,7 @@ impl QueueDrain {
 /// The rule reading's text on the `bake queue:` line: the jobs (and samples) the rule would
 /// have answered by exclusion (provisional, partial, class 1), whole and before the in-view
 /// landing in view, against every job opened and those opened before the landing.
-pub fn rule_missed_text(r: &vxe_render::RuleMissed) -> String {
+pub fn rule_missed_text(r: &svet_render::RuleMissed) -> String {
     let [sj, ss] = r.before_shares();
     format!(
         "; rule missed jobs prov/partial/class1 {}/{}/{} ({:.3e}/{:.3e}/{:.3e} samples), before the in-view landing in view {}/{}/{} ({:.3e}/{:.3e}/{:.3e}), of {} jobs {:.3e} samples opened, {} jobs {:.3e} before the landing ({:.1} % of jobs, {:.1} % of samples), landed at step {}",

@@ -13,10 +13,10 @@ use crate::run::hud_feed::Hud;
 use crate::run::queue::QueueRun;
 use crate::{ScrollSteps, cave_materials};
 use std::sync::Arc;
-use vxe_net::Event;
-use vxe_render::glam::Vec3;
-use vxe_render::{Camera, LightParams};
-use vxe_world::{ChunkExtent, EditOp, FIXED_ONE, Fixed3, Mode, OpResult, World};
+use svet_net::Event;
+use svet_render::glam::Vec3;
+use svet_render::{Camera, LightParams};
+use svet_world::{ChunkExtent, EditOp, FIXED_ONE, Fixed3, Mode, OpResult, World};
 
 /// Bytes allocated on each thread, counted for the HUD's no-allocation test.
 pub(crate) mod counting {
@@ -166,7 +166,7 @@ pub(crate) fn bare_run(world: World) -> Run {
 pub(crate) fn carved_rock() -> World {
     let world = World::generate(
         ChunkExtent::new([-1, -1, -1], [1, 1, 1]),
-        &vxe_world::UniformSource(ROCK),
+        &svet_world::UniformSource(ROCK),
         &cave_materials(),
     );
     world

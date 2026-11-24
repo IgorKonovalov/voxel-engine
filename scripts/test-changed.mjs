@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Run a nextest tier, or clippy, narrowed to the crates a change touched and their dependents.
 //
-// The per-phase gate (dev skill, lane rules): a phase that edits vxe-sim should not wait for
+// The per-phase gate (dev skill, lane rules): a phase that edits svet-sim should not wait for
 // the audio or the net tests, nor build them. This script maps the changed files to workspace
 // packages, closes the set over the workspace packages that depend on them (normal, dev, build
 // and optional dependencies alike), and runs

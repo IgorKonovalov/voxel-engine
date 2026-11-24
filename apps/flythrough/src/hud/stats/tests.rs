@@ -237,7 +237,7 @@ fn the_steps_row_prints_the_last_frame_s_sample() {
 #[test]
 fn the_cracks_row_prints_the_last_frame_s_shares() {
     let stats = HudStats {
-        cracks: Some(vxe_render::CrackShares {
+        cracks: Some(svet_render::CrackShares {
             hits: 2000,
             leaks: 6,
         }),
@@ -356,7 +356,7 @@ fn fixed_stats_format_to_their_rows() {
 /// needing 6.0e7 samples at 1.5e7 a second drain in 4.0 s; nothing drawn reads `n/a`.
 #[test]
 fn the_queue_row_counts_the_view() {
-    let mut st = vxe_render::QueueStats::default();
+    let mut st = svet_render::QueueStats::default();
     st.in_view.chunks = [[3, 1], [2, 2], [2, 2]];
     st.in_view.samples = 60_000_000;
     assert_eq!(
@@ -367,7 +367,7 @@ fn the_queue_row_counts_the_view() {
         queue_row(&st, 0.0, 1.254, ""),
         "in view: 12 waiting (5 coarse), drain n/a, withdrawn 0, step 1.25 ms"
     );
-    let keyed = vxe_render::QueueStats { keys: 40, ..st };
+    let keyed = svet_render::QueueStats { keys: 40, ..st };
     assert_eq!(
         queue_row(&keyed, 1.5e7, 1.254, ""),
         "in view: 12 waiting (5 coarse), drain 4.0 s, withdrawn 0, step 1.25 ms, key 40"
@@ -396,7 +396,7 @@ fn the_store_row_reads_its_counts() {
         passes: vec![("light", 0.5)],
         light_samples: 7,
         live_probes: None,
-        store: Some(vxe_render::StoreStats {
+        store: Some(svet_render::StoreStats {
             chunks: 12,
             bytes: 3_400_000,
             missing: 56,
@@ -439,7 +439,7 @@ fn the_lighting_rows_follow_the_march_row() {
         ],
         light_samples: 18_522,
         live_probes: Some(9_876),
-        store: Some(vxe_render::StoreStats {
+        store: Some(svet_render::StoreStats {
             chunks: 806,
             bytes: 15_400_000,
             missing: 3,

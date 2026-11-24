@@ -15,8 +15,8 @@ use support::SyncNow;
 use support::queue::*;
 
 use flythrough::cave::{ORE, ROCK};
-use vxe_render::BakeSettings;
-use vxe_world::{AIR, ChunkCoord, Mode};
+use svet_render::BakeSettings;
+use svet_world::{AIR, ChunkCoord, Mode};
 
 /// The two-chunk box through the live queue, coarse pass on (chunk 1 lies beyond the near ring
 /// of 0, so it is lit coarse first and refined), until the queue is empty: every block is
@@ -185,7 +185,7 @@ fn the_score_blends_distance_and_the_view() {
         (score(4.0), [2, 3, 4, 5, 1, 0]),
         (score(1.0), [2, 3, 1, 4, 5, 0]),
         (score(0.0), [2, 3, 1, 4, 0, 5]),
-        (vxe_render::QueueOrder::Distance, [2, 3, 1, 4, 0, 5]),
+        (svet_render::QueueOrder::Distance, [2, 3, 1, 4, 0, 5]),
     ] {
         let Some(mut q) = rig(
             row(&[0, 1, 2, 3, 4, 5]),
@@ -207,20 +207,20 @@ fn the_score_blends_distance_and_the_view() {
 
 /// The three orders the blank-chunk tests run under: the score at angle weight 4 and refine
 /// weight 2, the score with the class as a tier, and the distance.
-fn three_orders() -> [vxe_render::QueueOrder; 3] {
+fn three_orders() -> [svet_render::QueueOrder; 3] {
     [
         score(4.0),
-        vxe_render::QueueOrder::Score {
+        svet_render::QueueOrder::Score {
             angle: 4.0,
-            refine: vxe_render::Refine::Tier,
+            refine: svet_render::Refine::Tier,
         },
-        vxe_render::QueueOrder::Distance,
+        svet_render::QueueOrder::Distance,
     ]
 }
 
 /// The row of [`row`] with the chunks `absent` taken out of the world before it is mirrored:
 /// no mirror, queue or store has seen them.
-fn row_without(rocks: &[i64], absent: &[i32]) -> vxe_world::World {
+fn row_without(rocks: &[i64], absent: &[i32]) -> svet_world::World {
     let world = row(rocks);
     for &x in absent {
         world.store().remove(ChunkCoord([x, 0, 0]));
@@ -288,7 +288,7 @@ fn a_chunk_an_edit_fills_is_a_dig_under_the_score() {
 }
 
 /// The rig and the claims of `a_chunk_an_edit_fills_is_a_dig_in_every_order` under `order`.
-fn edit_fills_is_a_dig(order: vxe_render::QueueOrder) {
+fn edit_fills_is_a_dig(order: svet_render::QueueOrder) {
     {
         let Some(mut q) = rig(
             row_without(&[0, 1, 2], &[4, 5]),
@@ -619,8 +619,8 @@ fn the_edge_of_the_view_does_not_churn() {
     ) else {
         return;
     };
-    let edge = vxe_render::internals::view_half_angle(70f32.to_radians(), 16.0 / 9.0)
-        + vxe_render::internals::QUEUE_VIEW_MARGIN_DEG.to_radians();
+    let edge = svet_render::internals::view_half_angle(70f32.to_radians(), 16.0 / 9.0)
+        + svet_render::internals::QUEUE_VIEW_MARGIN_DEG.to_radians();
     let mut out_of_view = 0;
     for n in 0..64 {
         let sign = if n % 2 == 0 { 1.0 } else { -1.0 };
@@ -633,10 +633,10 @@ fn the_edge_of_the_view_does_not_churn() {
             .jobs()
             .iter()
             .filter(|c| {
-                vxe_render::internals::angle_term(
+                svet_render::internals::angle_term(
                     c.0,
                     forward,
-                    edge - vxe_render::internals::QUEUE_VIEW_MARGIN_DEG.to_radians(),
+                    edge - svet_render::internals::QUEUE_VIEW_MARGIN_DEG.to_radians(),
                     0,
                 ) > 0.0
             })
@@ -695,17 +695,17 @@ fn still_rig() -> Option<Q> {
     }
     let half = {
         let [w, h] = q.frame.output_size();
-        vxe_render::internals::view_half_angle(q.camera.vfov, w as f32 / h as f32)
+        svet_render::internals::view_half_angle(q.camera.vfov, w as f32 / h as f32)
     };
-    let keep = half + vxe_render::internals::QUEUE_VIEW_MARGIN_DEG.to_radians();
+    let keep = half + svet_render::internals::QUEUE_VIEW_MARGIN_DEG.to_radians();
     let forward = q.camera.basis().0.to_array();
     assert!(
-        !vxe_render::internals::in_near_shell([-1, 0, 0], 0)
-            && vxe_render::internals::angle_term([-1, 0, 0], forward, keep, 0) > 0.0,
+        !svet_render::internals::in_near_shell([-1, 0, 0], 0)
+            && svet_render::internals::angle_term([-1, 0, 0], forward, keep, 0) > 0.0,
         "chunk 1 lies outside the near shell and the keep cone"
     );
     assert_eq!(
-        vxe_render::internals::angle_term([4, 0, 0], forward, half, 0),
+        svet_render::internals::angle_term([4, 0, 0], forward, half, 0),
         0.0,
         "chunk 6 lies in the view cone"
     );
@@ -838,7 +838,7 @@ fn a_turn_onto_unbaked_chunks_drains_without_a_census_request() {
     ) else {
         return;
     };
-    let drain = vxe_render::Drain {
+    let drain = svet_render::Drain {
         drain_ms: 0.2,
         line_ms: 0.1,
     };
@@ -892,7 +892,7 @@ fn a_turn_onto_unbaked_chunks_drains_without_a_census_request() {
 /// A block's brick records by directory slot, at the brick cell (`BRICK_WORDS` words each, the
 /// directory word's run end above bit 11).
 fn slot_records(block: &[u32]) -> std::collections::BTreeMap<usize, Vec<u32>> {
-    use vxe_render::internals::{BRICK_WORDS, SUMMARY_AT};
+    use svet_render::internals::{BRICK_WORDS, SUMMARY_AT};
     block[..SUMMARY_AT as usize]
         .iter()
         .enumerate()

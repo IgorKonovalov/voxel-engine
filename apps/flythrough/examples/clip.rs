@@ -38,9 +38,11 @@ use flythrough::cli::table::{Flag, Section, Table, Val};
 use flythrough::cli::{GONE_SINCE_0057, LightingArgs, gone_since_0057, lighting_flags};
 use flythrough::showcase::{SHOTS, Shot};
 use flythrough::viewer::{Viewer, placed};
-use vxe_entity::{EntitySet, sample};
-use vxe_render::{AutoExposure, Camera, DisplayPose, Exposure, LightParams, Lighting, RenderScale};
-use vxe_world::*;
+use svet_entity::{EntitySet, sample};
+use svet_render::{
+    AutoExposure, Camera, DisplayPose, Exposure, LightParams, Lighting, RenderScale,
+};
+use svet_world::*;
 
 #[path = "shared/still.rs"]
 mod still;
@@ -591,7 +593,7 @@ fn main() -> Result<(), String> {
         }
     }
 
-    let field = args.look.normal_mode == vxe_render::NormalMode::Contour;
+    let field = args.look.normal_mode == svet_render::NormalMode::Contour;
     let (device, queue, adapter_name) = still::open_device(args.adapter.as_deref(), field, &world)?;
     let mut gpu = still::fill_mirror(&world, &device, &queue, field, light_radius, &camera)?;
     let exposure = args.exposure.unwrap_or(Exposure::Manual(DEFAULT_EXPOSURE));
@@ -639,7 +641,7 @@ fn main() -> Result<(), String> {
         for _ in 0..steps {
             frame.step(&device, &queue, &gpu, &camera, &lamp);
         }
-        let rgba = vxe_render::debug::read_rgba8(&device, &queue, frame.target());
+        let rgba = svet_render::debug::read_rgba8(&device, &queue, frame.target());
         let path = out_dir.join(format!("frame-{n:05}.png"));
         write_png(&path, &rgba, args.size)?;
         if n == 0 || n + 1 == frames {

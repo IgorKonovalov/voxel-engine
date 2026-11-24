@@ -1,7 +1,7 @@
 //! The acoustics budget: one `Acoustics::update` probing 32 sources (7 occlusion rays each,
 //! 224, plus the listener's 16 reflection rays) with a room fan in progress (16 more rays) in
 //! the fly-through's seed-1 level cave. It
-//! lives with the fly-through because the cave does; the mixer's budget is in `vxe-audio`'s
+//! lives with the fly-through because the cave does; the mixer's budget is in `svet-audio`'s
 //! own `mixer` bench. Before it, the bench prints the occlusion a source at the spawn gets at
 //! every probe (each 0.1 m) of a 20 m walk from the spawn along `+x`, the fly-through's first
 //! heading: how the cave's own probes change the direct path under a walk.
@@ -11,8 +11,8 @@ use std::hint::black_box;
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS};
 use flythrough::cave_materials;
-use vxe_audio::*;
-use vxe_world::{ChunkExtent, Material, MaterialTable, World};
+use svet_audio::*;
+use svet_world::{ChunkExtent, Material, MaterialTable, World};
 
 const MPV: f32 = 0.1;
 const SOURCES: usize = 32;
@@ -111,7 +111,7 @@ fn walk_from_spawn(world: &World, table: &MaterialTable, spawn: [f32; 3]) {
         let o = occlusion(world, table, listener, spawn, MPV);
         let solid = world
             .material_at(listener.map(|c| c.floor() as i32))
-            .is_some_and(|m| m != vxe_world::AIR);
+            .is_some_and(|m| m != svet_world::AIR);
         lo = lo.min(o.gain);
         hi = hi.max(o.gain);
         if step % 10 == 0 {

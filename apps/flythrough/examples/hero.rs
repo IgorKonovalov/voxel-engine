@@ -44,10 +44,10 @@ use std::path::PathBuf;
 use flythrough::cli::table::{Flag, Section, Table};
 use flythrough::cli::{GONE_SINCE_0057, LightingArgs, gone_since_0057, lighting_flags};
 use flythrough::showcase::{SHOTS, Shot};
-use vxe_render::{
+use svet_render::{
     AutoExposure, Camera, Exposure, GpuWorld, LightParams, Lighting, RenderScale, wgpu,
 };
-use vxe_world::*;
+use svet_world::*;
 
 #[path = "shared/still.rs"]
 mod still;
@@ -409,7 +409,7 @@ struct Still {
 impl Args {
     /// The outdoor sky at `--time`, altitude 0 at the hills' mean height; `None` for the other
     /// sources.
-    fn sky(&self) -> Option<vxe_render::sky::Sky> {
+    fn sky(&self) -> Option<svet_render::sky::Sky> {
         (self.source == Source::Outdoor).then(|| {
             flythrough::daylight::Clock {
                 minutes: self.time.unwrap_or(flythrough::daylight::DEFAULT_TIME_MIN),
@@ -481,7 +481,7 @@ impl Args {
                     .map(|s| single(self.out_dir.join(format!("hero-{}.png", s.name)), s))
                     .collect();
                 let mut fine = single(self.out_dir.join("hero-hall-spacing16.png"), &SHOTS[0]);
-                fine.probe_spacing = vxe_render::DEFAULT_PROBE_SPACING;
+                fine.probe_spacing = svet_render::DEFAULT_PROBE_SPACING;
                 v.push(fine);
                 v
             }
@@ -555,7 +555,7 @@ fn render_still(
     for _ in 0..frames {
         frame.step(device, queue, gpu, &still.camera, &LightParams::headlamp());
     }
-    let rgba = vxe_render::debug::read_rgba8(device, queue, frame.target());
+    let rgba = svet_render::debug::read_rgba8(device, queue, frame.target());
     write_png(&still.path, &rgba, [w, h])?;
     println!(
         "wrote {}: adapter {adapter_name}, {} light samples, {frames} frames, exposure {}, probe spacing {}, mean sRGB luma {:.1}/255",
@@ -578,7 +578,7 @@ fn main() -> Result<(), String> {
     let light_radius = args.light.radius.unwrap_or(light_radius);
     let stills = args.stills(level_spawn);
     carve(&args, &world, &stills[0].camera)?;
-    let field = args.look.normal_mode == vxe_render::NormalMode::Contour;
+    let field = args.look.normal_mode == svet_render::NormalMode::Contour;
     let (device, queue, adapter_name) = still::open_device(args.adapter.as_deref(), field, &world)?;
     let mut gpu = still::fill_mirror(
         &world,
@@ -629,8 +629,8 @@ mod tests {
         );
         assert_eq!(fly.store_read, flythrough::DEFAULT_STORE_READ);
         assert_eq!(fly.light_weights, flythrough::DEFAULT_LIGHT_WEIGHTS);
-        assert_eq!(d.lighting().store_read, vxe_render::StoreRead::Normal);
-        assert_eq!(d.lighting().light_weights, vxe_render::LightWeights::Face);
+        assert_eq!(d.lighting().store_read, svet_render::StoreRead::Normal);
+        assert_eq!(d.lighting().light_weights, svet_render::LightWeights::Face);
         assert_eq!(d.look, flythrough::LookPreset::DEFAULT);
         assert_eq!(d.internal_scale, flythrough::cli::DEFAULT_SCALE);
         assert_eq!(d.sharpen, flythrough::cli::DEFAULT_SHARPEN);

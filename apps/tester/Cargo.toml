@@ -24,8 +24,8 @@ crc32fast.workspace = true
 env_logger.workspace = true
 flythrough = { path = "../flythrough" }
 log.workspace = true
-vxe-app.workspace = true
-vxe-render.workspace = true
+svet-app.workspace = true
+svet-render.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true

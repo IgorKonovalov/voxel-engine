@@ -12,31 +12,31 @@ publish = false
 workspace = true
 
 [features]
-# `--logic wasm`: hosts the logic component on `wasmtime` (`vxe-script-wasm`). Off by default,
+# `--logic wasm`: hosts the logic component on `wasmtime` (`svet-script-wasm`). Off by default,
 # so the everyday build does not compile `wasmtime`.
-wasm = ["dep:vxe-script-wasm"]
+wasm = ["dep:svet-script-wasm"]
 
 [dependencies]
 env_logger.workspace = true
 gilrs.workspace = true
 log.workspace = true
-vxe-world.workspace = true
-vxe-net.workspace = true
-vxe-sim.workspace = true
-vxe-render.workspace = true
-vxe-app.workspace = true
+svet-world.workspace = true
+svet-net.workspace = true
+svet-sim.workspace = true
+svet-render.workspace = true
+svet-app.workspace = true
 flythrough-logic = { path = "logic" }
-vxe-script-wasm = { workspace = true, features = ["host"], optional = true }
-vxe-audio.workspace = true
-vxe-assets.workspace = true
-vxe-entity.workspace = true
+svet-script-wasm = { workspace = true, features = ["host"], optional = true }
+svet-audio.workspace = true
+svet-assets.workspace = true
+svet-entity.workspace = true
 
 # The peak working set behind `run.json`'s `peak_rss_bytes` on Windows.
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true
 
 [dev-dependencies]
-vxe-render = { workspace = true, features = ["test-support"] }
+svet-render = { workspace = true, features = ["test-support"] }
 criterion.workspace = true
 png.workspace = true
 pollster.workspace = true

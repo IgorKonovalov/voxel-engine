@@ -1,0 +1,424 @@
+//! The chunk store and the world built on it.
+//!
+//! Access model (ADR-0002, ADR-0003): a map from `ChunkCoord` to `Arc<RwLock<Chunk>>`, itself
+//! behind a `RwLock` written only on insert and remove. An edit holds the map's read lock for
+//! its whole run and takes one chunk write lock at a time in ascending coordinate order, so
+//! no chunk can be inserted or removed between its residency check and its last write.
+//! Readers take short per-chunk read locks; a walk that reads many voxels (a raycast, a
+//! collapse scan, a grid update) holds the map's read lock for its run and keeps the read lock
+//! of the chunk it is in until it steps into another ([`ChunkReader`]).
+
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+
+use crate::brick::Brick;
+use crate::chunk::Chunk;
+use crate::coarse::CellCoord;
+use crate::coords::{ChunkCoord, ChunkExtent, VoxelCoord};
+use crate::limits::WorldLimits;
+use crate::material::{MaterialId, MaterialTable};
+use crate::mips::ChunkMips;
+use crate::packed::PackedStats;
+use crate::source::WorldSource;
+
+/// Read guard that survives a poisoned lock. A chunk is structurally valid at every point an
+/// edit can panic (bricks are replaced whole), so a panic elsewhere does not make it unsafe
+/// to read.
+pub(crate) fn read<T>(l: &RwLock<T>) -> RwLockReadGuard<'_, T> {
+    l.read().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Write guard that survives a poisoned lock; see [`read`].
+pub(crate) fn write<T>(l: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
+    l.write().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Resident chunks, keyed by coordinate, and the set of chunks with a dirty brick.
+///
+/// The dirty-chunk set has one consumer, the GPU mirror, which drains it on every sync and
+/// then visits only those chunks. Inserting a chunk and an edit that changes one add it;
+/// removing a chunk drops it. Code that changes a resident chunk's bricks by hand calls
+/// [`ChunkStore::mark_dirty`].
+#[derive(Default, Debug)]
+pub struct ChunkStore {
+    pub(crate) chunks: RwLock<ChunkMap>,
+    dirty: Mutex<HashSet<ChunkCoord>>,
+    /// The stamps' parts not yet written (ADR-0066): taken after the map's lock, by a stamp
+    /// under its read lock and by an insert under its write lock, so no chunk can be inserted
+    /// between a stamp finding it missing and the stamp keeping its placement.
+    pub(crate) pending: Mutex<crate::stamp::Pending>,
+}
+
+impl ChunkStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Inserts or replaces the chunk at `coord`, and marks it dirty.
+    pub fn insert(&self, coord: ChunkCoord, chunk: Chunk) {
+        self.write_lock()
+            .insert(coord, Arc::new(RwLock::new(chunk)));
+    }
+
+    /// Removes the chunk at `coord` and hands it back.
+    pub fn remove(&self, coord: ChunkCoord) -> Option<Arc<RwLock<Chunk>>> {
+        self.write_lock().remove(coord)
+    }
+
+    /// The map's write lock, for a batch of inserts and removals under one acquisition. While
+    /// the guard lives, edits wait (they hold the read lock for their whole run).
+    pub fn write_lock(&self) -> StoreWriteGuard<'_> {
+        StoreWriteGuard {
+            map: write(&self.chunks),
+            dirty: &self.dirty,
+        }
+    }
+
+    /// Adds `coord` to the dirty-chunk set.
+    pub fn mark_dirty(&self, coord: ChunkCoord) {
+        lock(&self.dirty).insert(coord);
+    }
+
+    /// Empties the dirty-chunk set and returns its coordinates, ascending.
+    pub fn take_dirty(&self) -> Vec<ChunkCoord> {
+        let mut v: Vec<_> = lock(&self.dirty).drain().collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// Chunks in the dirty-chunk set.
+    pub fn dirty_len(&self) -> usize {
+        lock(&self.dirty).len()
+    }
+
+    /// The chunk at `coord`, if resident.
+    pub fn get(&self, coord: ChunkCoord) -> Option<Arc<RwLock<Chunk>>> {
+        read(&self.chunks).get(&coord).cloned()
+    }
+
+    pub fn contains(&self, coord: ChunkCoord) -> bool {
+        read(&self.chunks).contains_key(&coord)
+    }
+
+    pub fn len(&self) -> usize {
+        read(&self.chunks).len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Resident coordinates in ascending order.
+    pub fn coords(&self) -> Vec<ChunkCoord> {
+        let mut v: Vec<_> = read(&self.chunks).keys().copied().collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// Stamps whose box meets a chunk not yet written (ADR-0066): each is applied to such a
+    /// chunk when the streamer inserts it, and dropped once every chunk it meets has been
+    /// written.
+    pub fn pending_placements(&self) -> usize {
+        lock(&self.pending).list.len()
+    }
+
+    /// Chunks a pending placement has been written into as the streamer inserted them, over the
+    /// store's life: one per placement and chunk.
+    pub fn placement_writes(&self) -> u64 {
+        lock(&self.pending).writes
+    }
+}
+
+/// The store's map from coordinate to chunk.
+pub(crate) type ChunkMap = HashMap<ChunkCoord, Arc<RwLock<Chunk>>>;
+
+#[cfg(test)]
+thread_local! {
+    /// Map lookups [`ChunkReader`] has made on this thread.
+    pub(crate) static READER_LOOKUPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Chunk reads over a held store map, with the current chunk's read lock kept between reads:
+/// a run of reads in one chunk costs one map lookup and one lock.
+pub(crate) struct ChunkReader<'m> {
+    map: &'m ChunkMap,
+    cur: Option<(ChunkCoord, RwLockReadGuard<'m, Chunk>)>,
+}
+
+impl<'m> ChunkReader<'m> {
+    pub(crate) fn new(map: &'m ChunkMap) -> Self {
+        Self { map, cur: None }
+    }
+
+    /// The chunk at `coord`, or `None` when it is not resident.
+    ///
+    /// The hit (the current chunk again) is one compare and stays inline in a caller's scan
+    /// loop; the miss (a map lookup and a lock) is the out-of-line [`ChunkReader::load`].
+    /// Inlined whole into the collapse ops' gap scan, the miss path cost that loop about 2 ms
+    /// of 8 on the 4096-cell cube drop bench.
+    #[inline]
+    pub(crate) fn chunk(&mut self, coord: ChunkCoord) -> Option<&Chunk> {
+        if self.cur.as_ref().is_none_or(|(k, _)| *k != coord) {
+            self.load(coord);
+        }
+        self.cur.as_ref().map(|(_, guard)| &**guard)
+    }
+
+    /// Replaces the held chunk with the one at `coord`, or with none when it is not resident.
+    #[cold]
+    #[inline(never)]
+    fn load(&mut self, coord: ChunkCoord) {
+        self.cur = None;
+        #[cfg(test)]
+        READER_LOOKUPS.with(|n| n.set(n.get() + 1));
+        if let Some(lock) = self.map.get(&coord) {
+            self.cur = Some((coord, read(lock)));
+        }
+    }
+
+    /// The brick of cell `c`, or its chunk's coordinate when that is not resident.
+    pub(crate) fn brick(&mut self, c: CellCoord) -> Result<&Brick, ChunkCoord> {
+        let (chunk, slot) = c.split();
+        Ok(self.chunk(chunk).ok_or(chunk)?.brick(slot))
+    }
+}
+
+pub(crate) fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The store map under its write lock; see [`ChunkStore::write_lock`].
+pub struct StoreWriteGuard<'a> {
+    map: RwLockWriteGuard<'a, HashMap<ChunkCoord, Arc<RwLock<Chunk>>>>,
+    dirty: &'a Mutex<HashSet<ChunkCoord>>,
+}
+
+impl StoreWriteGuard<'_> {
+    /// Inserts or replaces the chunk at `coord`, and marks it dirty.
+    pub fn insert(&mut self, coord: ChunkCoord, chunk: Arc<RwLock<Chunk>>) {
+        self.map.insert(coord, chunk);
+        lock(self.dirty).insert(coord);
+    }
+
+    /// Removes the chunk at `coord`, and drops it from the dirty-chunk set.
+    pub fn remove(&mut self, coord: ChunkCoord) -> Option<Arc<RwLock<Chunk>>> {
+        lock(self.dirty).remove(&coord);
+        self.map.remove(&coord)
+    }
+
+    pub fn contains(&self, coord: ChunkCoord) -> bool {
+        self.map.contains_key(&coord)
+    }
+
+    pub fn get(&self, coord: ChunkCoord) -> Option<Arc<RwLock<Chunk>>> {
+        self.map.get(&coord).cloned()
+    }
+}
+
+/// Brick counts over the resident world.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct WorldStats {
+    pub chunks: usize,
+    pub uniform_bricks: usize,
+    pub full_bricks: usize,
+}
+
+/// A world of resident chunks. [`World::generate`] makes a bounded one, every chunk of an
+/// extent generated up front and resident for good; [`World::new`] makes an empty, unbounded
+/// one that a [`crate::Streamer`] fills and empties around focus points.
+///
+/// Besides the full chunks of the store, a world holds the mips of its LOD-only chunks
+/// (ADR-0003). Edits, queries and raycasts see only the store, so to them a LOD-only chunk is
+/// not resident; the GPU mirror draws it from its mips.
+#[derive(Debug)]
+pub struct World {
+    pub(crate) store: ChunkStore,
+    lods: RwLock<HashMap<ChunkCoord, Arc<ChunkMips>>>,
+    extent: ChunkExtent,
+    pub(crate) materials: MaterialTable,
+    /// [`World::packed_stats`]: class changes, entry removals and renames, in that order.
+    packed: [AtomicU64; 3],
+    limits: WorldLimits,
+}
+
+impl World {
+    /// What the planar edit kernel has done to this world's bricks since it was made: summed
+    /// over every edit, read with relaxed ordering. A count of work, not a result.
+    pub fn packed_stats(&self) -> PackedStats {
+        let [c, e, r] = &self.packed;
+        PackedStats {
+            class_changes: c.load(Ordering::Relaxed),
+            entries_removed: e.load(Ordering::Relaxed),
+            renames: r.load(Ordering::Relaxed),
+        }
+    }
+
+    pub(crate) fn add_packed_stats(&self, st: &PackedStats) {
+        let [c, e, r] = &self.packed;
+        c.fetch_add(st.class_changes, Ordering::Relaxed);
+        e.fetch_add(st.entries_removed, Ordering::Relaxed);
+        r.fetch_add(st.renames, Ordering::Relaxed);
+    }
+
+    /// An empty, unbounded world. Its [`World::extent`] is empty.
+    pub fn new(table: &MaterialTable) -> Self {
+        Self {
+            store: ChunkStore::new(),
+            lods: RwLock::default(),
+            extent: ChunkExtent::new([0, 0, 0], [0, 0, 0]),
+            materials: table.clone(),
+            packed: Default::default(),
+            limits: WorldLimits::DEFAULT,
+        }
+    }
+
+    /// Generates every chunk of `extent` from `source`, in parallel over chunks with one
+    /// thread per available core. The result does not depend on the thread count.
+    pub fn generate<S: WorldSource + Sync>(
+        extent: ChunkExtent,
+        source: &S,
+        table: &MaterialTable,
+    ) -> Self {
+        let threads = std::thread::available_parallelism().map_or(1, usize::from);
+        Self::generate_with_threads(extent, source, table, threads)
+    }
+
+    /// [`World::generate`] on exactly `threads` threads (at least one).
+    pub fn generate_with_threads<S: WorldSource + Sync>(
+        extent: ChunkExtent,
+        source: &S,
+        table: &MaterialTable,
+        threads: usize,
+    ) -> Self {
+        let coords = extent.coords();
+        let threads = threads.clamp(1, coords.len().max(1));
+        let store = ChunkStore::new();
+        std::thread::scope(|s| {
+            let workers: Vec<_> = (0..threads)
+                .map(|t| {
+                    let coords = &coords;
+                    s.spawn(move || {
+                        coords
+                            .iter()
+                            .skip(t)
+                            .step_by(threads)
+                            .map(|&c| {
+                                let mut chunk = Chunk::default();
+                                source.chunk(c, &mut chunk);
+                                (c, chunk)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            for w in workers {
+                // A panicking source is a bug in the source; re-raise it on the caller.
+                let chunks = w.join().unwrap_or_else(|e| std::panic::resume_unwind(e));
+                for (c, chunk) in chunks {
+                    store.insert(c, chunk);
+                }
+            }
+        });
+        Self {
+            store,
+            lods: RwLock::default(),
+            extent,
+            materials: table.clone(),
+            packed: Default::default(),
+            limits: WorldLimits::DEFAULT,
+        }
+    }
+
+    /// The range of parameters this world's edits, rays, box queries and region ops accept;
+    /// [`WorldLimits::DEFAULT`] unless set by [`World::with_limits`].
+    pub fn limits(&self) -> WorldLimits {
+        self.limits
+    }
+
+    /// This world with `limits` in place of its own. Two worlds kept in step (a server's and
+    /// an owned client's) must hold the same limits, or they refuse different ops.
+    pub fn with_limits(mut self, limits: WorldLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// The extent generated up front; empty for a world made by [`World::new`].
+    pub fn extent(&self) -> ChunkExtent {
+        self.extent
+    }
+
+    /// The world's material table, shared and fixed for the world's life: no public path
+    /// reaches it mutably after `generate`, so a material's class (`TRANSLUCENT` and the rest
+    /// of its flags) cannot change under the renderer's mirror or an edit in flight.
+    ///
+    /// ```compile_fail
+    /// use svet_world::*;
+    /// let world = World::generate(
+    ///     ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+    ///     &UniformSource(AIR),
+    ///     &MaterialTable::new(),
+    /// );
+    /// world.materials().push(Material::named("glass"));
+    /// ```
+    pub fn materials(&self) -> &MaterialTable {
+        &self.materials
+    }
+
+    pub fn store(&self) -> &ChunkStore {
+        &self.store
+    }
+
+    /// The mips of LOD-only chunk `c`, if it is one.
+    pub fn lod(&self, c: ChunkCoord) -> Option<Arc<ChunkMips>> {
+        read(&self.lods).get(&c).cloned()
+    }
+
+    /// Makes `c` LOD-only with `mips`, and marks it in the dirty-chunk set so the mirror
+    /// uploads it. The streamer calls it; tests call it to build LOD scenes. A full chunk at
+    /// `c` should be removed from the store first: the mirror prefers the full chunk.
+    pub fn insert_lod(&self, c: ChunkCoord, mips: Arc<ChunkMips>) {
+        write(&self.lods).insert(c, mips);
+        self.store.mark_dirty(c);
+    }
+
+    /// Drops `c`'s mips.
+    pub fn remove_lod(&self, c: ChunkCoord) -> Option<Arc<ChunkMips>> {
+        write(&self.lods).remove(&c)
+    }
+
+    /// LOD-only chunks, ascending.
+    pub fn lod_coords(&self) -> Vec<ChunkCoord> {
+        let mut v: Vec<_> = read(&self.lods).keys().copied().collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// Chunk and brick counts, read one chunk lock at a time.
+    pub fn stats(&self) -> WorldStats {
+        let mut s = WorldStats::default();
+        for c in self.store.coords() {
+            let Some(chunk) = self.store.get(c) else {
+                continue;
+            };
+            let chunk = read(&chunk);
+            s.chunks += 1;
+            for b in chunk.bricks() {
+                if b.is_full() {
+                    s.full_bricks += 1;
+                } else {
+                    s.uniform_bricks += 1;
+                }
+            }
+        }
+        s
+    }
+
+    /// The material of voxel `v`, or `None` when its chunk is not resident.
+    pub fn material_at(&self, v: impl Into<VoxelCoord>) -> Option<MaterialId> {
+        let v = v.into();
+        let chunk = self.store.get(v.chunk())?;
+        let chunk = read(&chunk);
+        Some(chunk.brick(v.brick_slot()).get(v.index_in_brick()))
+    }
+}

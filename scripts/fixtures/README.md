@@ -162,7 +162,7 @@ under the line, one at exactly 10.000 s (on the line, not over it) and the one a
 
 `node --test scripts/test-changed.test.mjs` reads the workspace's own `cargo metadata --no-deps`
 rather than a fixture tree, since the package graph is what it checks: a change to
-`crates/vxe-sim/src/body.rs` resolves to `-p flythrough -p vxe-sim -p vxe-tester` for the tests
+`crates/svet-sim/src/body.rs` resolves to `-p flythrough -p svet-sim -p vxe-tester` for the tests
 and for `--clippy`, a root manifest change to `--workspace`, a docs and scripts change to
 nothing, and `--binaries gpu_exposure` to the two packages that own a binary of that name.
 

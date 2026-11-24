@@ -11,10 +11,10 @@ use flythrough::cave::ROCK;
 use flythrough::cave_materials;
 use flythrough::walker;
 use support::bake::{Rig, rig_on};
-use vxe_entity::{EntityId, EntitySet, Model, Part, Pose, Quat};
-use vxe_render::glam::Vec3;
-use vxe_render::{Camera, EntityMirror, EntityUploadError, ModelHandle, ViewMode};
-use vxe_world::{
+use svet_entity::{EntityId, EntitySet, Model, Part, Pose, Quat};
+use svet_render::glam::Vec3;
+use svet_render::{Camera, EntityMirror, EntityUploadError, ModelHandle, ViewMode};
+use svet_world::{
     ChunkExtent, EditOp, FIXED_ONE, Fixed3, Material, MaterialId, MaterialTable, Mode, Prefab,
     UniformSource, World,
 };
@@ -187,7 +187,7 @@ fn an_entity_hides_the_wall_behind_it() {
     );
     rig.step(&camera);
     let img = rig.display();
-    let pos = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let pos = svet_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
     let centre = pixel_of(&camera, [106.0, 32.0, 26.0]);
     near("centre", rgb(&img, centre), unorm(RED));
     let t = pos[centre][3];
@@ -203,10 +203,10 @@ fn an_entity_hides_the_wall_behind_it() {
     );
 }
 
-/// Plan 0062 Phase 6d: [`vxe_render::Frame::prepare_entities`] builds every pipeline a frame
+/// Plan 0062 Phase 6d: [`svet_render::Frame::prepare_entities`] builds every pipeline a frame
 /// that draws an entity uses, so the first frame that draws a part creates none, and
 /// `Frame::new` builds none of them itself. The process's compute-pipeline count
-/// (`debug::compute_pipelines_created`, which every compute pipeline of `vxe-render` passes):
+/// (`debug::compute_pipelines_created`, which every compute pipeline of `svet-render` passes):
 /// the call adds exactly the five it owns (the hit pass's three `ENTITIES`-true pipelines, the
 /// entity light pass and the no-entity light pass), none of which the frame's creation built.
 /// Then a frame with no entity, and the 8-voxel cube of `an_entity_hides_the_wall_behind_it`
@@ -217,9 +217,9 @@ fn the_first_frame_with_an_entity_builds_no_pipeline() {
     let Some((mut rig, red)) = rig() else {
         return;
     };
-    let made = vxe_render::debug::compute_pipelines_created();
+    let made = svet_render::debug::compute_pipelines_created();
     rig.frame.prepare_entities(&rig.device);
-    let prepared = vxe_render::debug::compute_pipelines_created();
+    let prepared = svet_render::debug::compute_pipelines_created();
     assert_eq!(
         prepared - made,
         5,
@@ -237,14 +237,14 @@ fn the_first_frame_with_an_entity_builds_no_pipeline() {
     );
     rig.step(&camera);
     rig.step(&camera);
-    let after = vxe_render::debug::compute_pipelines_created();
+    let after = svet_render::debug::compute_pipelines_created();
     println!(
         "compute pipelines: {made} at the frame's creation, {prepared} after the call, \
          {after} after the part's frames"
     );
     assert_eq!(after, prepared, "pipelines built after the call");
     assert_eq!(rig.frame.entity_mirror().parts_drawn(), 1);
-    let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let rec = svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     let centre = pixel_of(&camera, [106.0, 32.0, 26.0]);
     assert!(
         entity_hit(0)(&rec[centre]),
@@ -277,7 +277,7 @@ fn a_world_voxel_in_front_hides_the_entity() {
     );
     rig.step(&camera);
     let img = rig.display();
-    let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let rec = svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     let centre = pixel_of(&camera, [106.0, 32.0, 26.0]);
     let rock = cave_materials().get(ROCK).expect("rock").albedo;
     near("centre, behind the slab", rgb(&img, centre), unorm(rock));
@@ -337,7 +337,7 @@ fn the_picture_and_the_query_name_the_same_part() {
     pose.root_q = walker::turn(0, 0.35) * pose.root_q;
     let (set, _) = draw(&mut rig, &[(model, pose)]);
     rig.step(&camera);
-    let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let rec = svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     let gpu: Vec<Option<u16>> = (0..rec.len()).map(|i| instance_at(&rec, i)).collect();
     let covered: Vec<usize> = (0..gpu.len()).filter(|&i| gpu[i].is_some()).collect();
     assert!(
@@ -485,7 +485,7 @@ fn assert_golden_sized(name: &str, rgba: &[u8]) {
 
 // ---- Phase 3: light, shadow and emission ----
 
-use vxe_render::{Light, LightingResolution};
+use svet_render::{Light, LightingResolution};
 
 /// ADR-0044's term apart from the renderer: `PI * intensity * max(n . l, 0) / d^2` times the
 /// window `(1 - (d / r)^4)^2`, `r = sqrt(intensity / floor)`, at `p` with normal `n`.
@@ -513,8 +513,8 @@ fn within(name: &str, got: f32, want: f32, tol: f32) {
 
 /// The last frame's hits: (pixel, point, record) for every pixel that hit.
 fn hits(rig: &Rig) -> Vec<(usize, [f32; 3], [u16; 4])> {
-    let pos = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
-    let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let pos = svet_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let rec = svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     (0..pos.len())
         .filter(|&i| rec[i][3] & 1 != 0)
         .map(|i| (i, [pos[i][0], pos[i][1], pos[i][2]], rec[i]))
@@ -545,7 +545,7 @@ fn entity_hit(k: u16) -> impl Fn(&[u16; 4]) -> bool {
 
 /// The direct target's luminance (`a`) per pixel.
 fn direct(rig: &Rig) -> Vec<f32> {
-    vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.direct())
+    svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.direct())
         .iter()
         .map(|p| p[3])
         .collect()
@@ -766,7 +766,7 @@ fn an_entity_emitter_shows_as_a_world_emitter_does() {
 fn the_probes_and_the_bake_see_no_entity() {
     let run = |with: bool| {
         let (mut rig, red) = rig()?;
-        rig.frame.set_lighting(vxe_render::Lighting {
+        rig.frame.set_lighting(svet_render::Lighting {
             lamp_bounce: true,
             ..support::lights::box_lighting()
         });
@@ -872,7 +872,7 @@ fn walker_walk_golden() {
     let walk = &l.clips.iter().find(|(n, _)| n == "walk").expect("walk").1;
     let feet = [100.0, 32.0, 2.0];
     let yaw = walker::facing(feet, camera.position.to_array());
-    let at10 = vxe_entity::sample(&l.model, &l.rest, walk, 10);
+    let at10 = svet_entity::sample(&l.model, &l.rest, walk, 10);
     let pose = flythrough::viewer::placed(&at10, feet, yaw);
     draw(&mut rig, &[(l.model.clone(), pose)]);
     for _ in 0..8 {
@@ -913,8 +913,8 @@ fn walker_walk_golden() {
 #[test]
 fn an_entity_reads_the_baked_light_of_the_world_face_behind_it() {
     assert_eq!(
-        vxe_render::Lighting::default().entity_light,
-        vxe_render::EntityLight::World
+        svet_render::Lighting::default().entity_light,
+        svet_render::EntityLight::World
     );
     let (mut t, red) = table();
     let glow = t.push(Material {
@@ -933,7 +933,7 @@ fn an_entity_reads_the_baked_light_of_the_world_face_behind_it() {
     rig.frame.set_lighting(support::lights::box_lighting());
     assert_eq!(
         rig.frame.lighting().entity_light,
-        vxe_render::EntityLight::World
+        svet_render::EntityLight::World
     );
     rig.bake(&support::bake::test_counts(64));
     let cells = rig.cells();
@@ -959,7 +959,8 @@ fn an_entity_reads_the_baked_light_of_the_world_face_behind_it() {
         .collect();
     assert!(top.len() >= 100, "{} top-face pixels", top.len());
     let first = rig.accum();
-    let irradiance = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.irradiance());
+    let irradiance =
+        svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.irradiance());
     let (mut lo, mut hi) = (f32::MAX, 0f32);
     for &(i, p) in &top {
         let v = [p[0].floor() as i32, p[1].floor() as i32, 7];
@@ -991,12 +992,12 @@ fn an_entity_reads_the_baked_light_of_the_world_face_behind_it() {
         assert!(rig.accum() == first, "frame {n} against frame 1");
     }
 
-    rig.frame.set_lighting(vxe_render::Lighting {
-        entity_light: vxe_render::EntityLight::Own,
+    rig.frame.set_lighting(svet_render::Lighting {
+        entity_light: svet_render::EntityLight::Own,
         ..rig.frame.lighting()
     });
     rig.step(&camera);
-    let own = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.irradiance());
+    let own = svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.irradiance());
     let dark = top
         .iter()
         .filter(|&&(i, _)| own[i][..3].iter().any(|&c| c <= 0.0))
@@ -1075,11 +1076,11 @@ fn on_floor(p: [f32; 3]) -> bool {
 
 /// The temporal pass's accumulated direct part's luminance (`a`) per pixel.
 fn direct_acc(
-    device: &vxe_render::wgpu::Device,
-    queue: &vxe_render::wgpu::Queue,
-    frame: &vxe_render::Frame,
+    device: &svet_render::wgpu::Device,
+    queue: &svet_render::wgpu::Queue,
+    frame: &svet_render::Frame,
 ) -> Vec<f32> {
-    vxe_render::debug::read_float(device, queue, frame.direct_accumulated())
+    svet_render::debug::read_float(device, queue, frame.direct_accumulated())
         .iter()
         .map(|p| p[3])
         .collect()
@@ -1087,7 +1088,7 @@ fn direct_acc(
 
 /// The light pass's fresh bit (its irradiance's `a`) per pixel.
 fn fresh(rig: &Rig) -> Vec<bool> {
-    vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.irradiance())
+    svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.irradiance())
         .iter()
         .map(|p| p[3] > 0.5)
         .collect()
@@ -1097,7 +1098,7 @@ fn fresh(rig: &Rig) -> Vec<bool> {
 /// and handle.
 fn place(
     rig: &Rig,
-    frame: &mut vxe_render::Frame,
+    frame: &mut svet_render::Frame,
     model: &Arc<Model>,
     pose: Pose,
 ) -> (EntitySet, EntityId, ModelHandle) {
@@ -1295,8 +1296,8 @@ fn a_still_entity_marks_nothing_fresh() {
 /// point projects through `view` less the jitter `j`, less the pixel's centre.
 fn motion_and_want(
     rig: &Rig,
-    frame: &vxe_render::Frame,
-    view: &vxe_render::View,
+    frame: &svet_render::Frame,
+    view: &svet_render::View,
     j: [f32; 2],
     before: impl Fn(usize, [f32; 3], [u16; 4]) -> Option<[f32; 3]>,
 ) -> Vec<(usize, [f64; 2], [f64; 2])> {
@@ -1306,8 +1307,8 @@ fn motion_and_want(
         &rig.queue,
         frame.fsr2().expect("FSR 2").motion(),
     );
-    let pos = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, frame.hit_positions());
-    let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, frame.hit_records());
+    let pos = svet_render::debug::read_rgba32f(&rig.device, &rig.queue, frame.hit_positions());
+    let rec = svet_render::debug::read_rgba16u(&rig.device, &rig.queue, frame.hit_records());
     let mut out = Vec::new();
     for i in 0..pos.len() {
         if rec[i][3] & 1 == 0 {
@@ -1340,8 +1341,8 @@ fn fsr2_motion_follows_a_moving_part() {
         return;
     };
     let camera = level_camera(86.0, 26.0);
-    let view = vxe_render::View::of_camera(&camera, [0, 0, 128, 72]);
-    let light = vxe_render::LightParams::headlamp();
+    let view = svet_render::View::of_camera(&camera, [0, 0, 128, 72]);
+    let light = svet_render::LightParams::headlamp();
     let jitter = |rig: &mut Rig| rig.frame.params(&rig.gpu, &camera, &light).views[0].jitter;
 
     let cube = block([8; 3], red, 1);
@@ -1369,8 +1370,8 @@ fn fsr2_motion_follows_a_moving_part() {
             p
         })
     });
-    let pos = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
-    let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let pos = svet_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let rec = svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     let face = [106.0, 28.0, 26.0];
     let (centre, _) = all
         .iter()
@@ -1416,7 +1417,7 @@ fn fsr2_motion_follows_a_moving_part() {
     let all = motion_and_want(&rig, &rig.frame, &view, j, |_, p, r| {
         (r[3] & 32 != 0).then(|| back(p))
     });
-    let pos = vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let pos = svet_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
     // The tip: 7.5 voxels along the bar's long axis (y turned 30 degrees about x) on its near
     // face (x 108).
     let a = 3.0 * step;
@@ -1444,8 +1445,8 @@ fn fsr2_motion_follows_a_moving_part() {
 }
 
 /// The mean output luminance (0..255) over the 5 x 5 output pixels around `at`.
-fn luma_around(rig: &Rig, frame: &vxe_render::Frame, at: [usize; 2]) -> f64 {
-    let img = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, frame.target());
+fn luma_around(rig: &Rig, frame: &svet_render::Frame, at: [usize; 2]) -> f64 {
+    let img = svet_render::debug::read_rgba8(&rig.device, &rig.queue, frame.target());
     let mut s = 0.0;
     for y in at[1] - 2..=at[1] + 2 {
         for x in at[0] - 2..=at[0] + 2 {
@@ -1462,12 +1463,12 @@ fn luma_around(rig: &Rig, frame: &vxe_render::Frame, at: [usize; 2]) -> f64 {
 /// afresh as a new one does; only its pipelines (and FSR 2's, once made) are kept, which is
 /// what a new frame costs on lavapipe (a few seconds each). The tests that reset run on the
 /// rig's own frame, so they make no frame beyond it.
-fn reset_frame(rig: &mut Rig, internal: [u32; 2], kind: Option<vxe_render::UpscalerKind>) {
+fn reset_frame(rig: &mut Rig, internal: [u32; 2], kind: Option<svet_render::UpscalerKind>) {
     let (device, f) = (&rig.device, &mut rig.frame);
     f.set_entities(&rig.queue, &EntitySet::new(), &[]);
     f.set_lights(&[]);
     f.set_jitter(device, false);
-    f.set_upscaler_kind(device, kind.unwrap_or(vxe_render::UpscalerKind::Off));
+    f.set_upscaler_kind(device, kind.unwrap_or(svet_render::UpscalerKind::Off));
     f.set_resolution(device, LightingResolution::Full);
     f.set_sizes(device, internal, [W, H]);
     f.set_lighting(support::lights::box_lighting());
@@ -1477,7 +1478,7 @@ fn reset_frame(rig: &mut Rig, internal: [u32; 2], kind: Option<vxe_render::Upsca
 
 /// The rig's frame set up for the trail ([`reset_frame`]): FSR 2 or our upscaler at 1.5
 /// (`kind`), or with none the frame at the output size.
-fn trail_frame(rig: &mut Rig, kind: Option<vxe_render::UpscalerKind>) {
+fn trail_frame(rig: &mut Rig, kind: Option<svet_render::UpscalerKind>) {
     let internal = if kind.is_some() { [128, 72] } else { [W, H] };
     reset_frame(rig, internal, kind);
 }
@@ -1505,7 +1506,7 @@ fn place_on(rig: &mut Rig, model: &Arc<Model>, pose: Pose) -> (EntitySet, Entity
 fn trail_after_move(
     rig: &mut Rig,
     red: MaterialId,
-    kind: Option<vxe_render::UpscalerKind>,
+    kind: Option<svet_render::UpscalerKind>,
     at: [usize; 2],
     moves: usize,
     clear: usize,
@@ -1585,7 +1586,7 @@ fn trail_rule(moves: usize) {
     let native = native.expect("the frame at the output size settles");
     for kind in [
         support::rigs::fsr2_kind(),
-        vxe_render::UpscalerKind::Own(vxe_render::Upscaler::default()),
+        svet_render::UpscalerKind::Own(svet_render::Upscaler::default()),
     ] {
         let (s, step) = trail_after_move(&mut rig, red, Some(kind), at, moves, clear);
         println!(
@@ -1686,7 +1687,7 @@ fn entity_bytes_are_in_the_inventory() {
     let Some((device, _queue)) = support::software_device(64 << 20) else {
         return;
     };
-    let mut frame = vxe_render::Frame::with_sizes(&device, [W, H], [W, H]);
+    let mut frame = svet_render::Frame::with_sizes(&device, [W, H], [W, H]);
     assert_eq!(frame.entity_mirror().bytes(), 8_458_240);
     let with = frame.frame_bytes();
     frame.set_entity_mirror(EntityMirror::new(&device, 0));

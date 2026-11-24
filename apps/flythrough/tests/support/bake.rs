@@ -5,11 +5,11 @@
 use std::collections::{BTreeMap, HashMap};
 
 use flythrough::cave::{ORE, ROCK};
-use vxe_render::{
+use svet_render::{
     BakeSettings, Camera, Exposure, Frame, GpuWorld, LightParams, Lighting, LightingResolution,
     MirrorConfig, Window, wgpu,
 };
-use vxe_world::{
+use svet_world::{
     AIR, ChunkCoord, ChunkExtent, EditOp, FIXED_ONE, Fixed3, MaterialTable, Mode, UniformSource,
     World,
 };
@@ -26,7 +26,7 @@ pub struct Rig {
     pub cfg: MirrorConfig,
 }
 
-pub fn fill(world: &World, min: [i64; 3], max: [i64; 3], m: vxe_world::MaterialId) {
+pub fn fill(world: &World, min: [i64; 3], max: [i64; 3], m: svet_world::MaterialId) {
     world
         .apply(&EditOp::box_(
             Fixed3(min.map(|v| v * FIXED_ONE)),
@@ -86,7 +86,7 @@ pub fn new_frame(device: &wgpu::Device, size: [u32; 2]) -> Frame {
 }
 
 impl Rig {
-    pub fn bake(&mut self, settings: &BakeSettings) -> vxe_render::BakeReport {
+    pub fn bake(&mut self, settings: &BakeSettings) -> svet_render::BakeReport {
         let extent = self.world.extent();
         self.frame
             .bake_until(
@@ -117,7 +117,7 @@ impl Rig {
         &mut self,
         op: &EditOp,
         settings: &BakeSettings,
-    ) -> (vxe_render::DigReport, [[i32; 3]; 2]) {
+    ) -> (svet_render::DigReport, [[i32; 3]; 2]) {
         let r = self.world.apply(op).expect("the dig is resident");
         let (min, max) = r.aabb.expect("the dig changed voxels");
         self.gpu
@@ -177,7 +177,7 @@ impl Rig {
     }
 
     pub fn accum(&self) -> Vec<[f32; 4]> {
-        vxe_render::debug::read_float(&self.device, &self.queue, self.frame.accumulated())
+        svet_render::debug::read_float(&self.device, &self.queue, self.frame.accumulated())
     }
 }
 
@@ -215,8 +215,8 @@ pub fn cells_of(blocks: &BTreeMap<[i32; 3], Vec<u32>>) -> HashMap<([i32; 3], u8)
                 continue;
             }
             let rec = &block
-                [(dir >> 11) as usize - vxe_render::internals::BRICK_WORDS..(dir >> 11) as usize];
-            let b = vxe_world::brick_of_slot(slot);
+                [(dir >> 11) as usize - svet_render::internals::BRICK_WORDS..(dir >> 11) as usize];
+            let b = svet_world::brick_of_slot(slot);
             let g = [0, 1, 2].map(|k| c[k] * 8 + b[k]);
             for f in 0..6u8 {
                 if rec[6] >> (16 + f) & 1 != 0 {
@@ -234,7 +234,7 @@ pub type SkyCells = HashMap<([i32; 3], u8), Option<f32>>;
 /// Every held direction's sky visibility (ADR-0070) by brick and face, `None` where its record
 /// was baked with no sky; and the records' raw visibility words, by brick.
 pub fn sky_cells_of(blocks: &BTreeMap<[i32; 3], Vec<u32>>) -> (SkyCells, Vec<[u32; 2]>) {
-    let w = vxe_render::internals::BRICK_WORDS;
+    let w = svet_render::internals::BRICK_WORDS;
     let mut out = HashMap::new();
     let mut raw = Vec::new();
     for (&c, block) in blocks {
@@ -245,13 +245,13 @@ pub fn sky_cells_of(blocks: &BTreeMap<[i32; 3], Vec<u32>>) -> (SkyCells, Vec<[u3
             }
             let rec = &block[(dir >> 11) as usize - w..(dir >> 11) as usize];
             raw.push([rec[7], rec[8]]);
-            let b = vxe_world::brick_of_slot(slot);
+            let b = svet_world::brick_of_slot(slot);
             let g = [0, 1, 2].map(|k| c[k] * 8 + b[k]);
             for f in 0..6u8 {
                 if rec[6] >> (16 + f) & 1 != 0 {
                     out.insert(
                         (g, f),
-                        vxe_render::internals::record_visibility(rec, usize::from(f)),
+                        svet_render::internals::record_visibility(rec, usize::from(f)),
                     );
                 }
             }
@@ -284,7 +284,7 @@ pub fn brick_value(
         let wa = if oa == 1 { f[ta] } else { 1.0 - f[ta] };
         let wb = if ob == 1 { f[tb] } else { 1.0 - f[tb] };
         if let Some(c) = cells.get(&(b, face)) {
-            let x = vxe_render::internals::rgb9e5_unpack(c[0]);
+            let x = svet_render::internals::rgb9e5_unpack(c[0]);
             for k in 0..3 {
                 sum[k] += x[k] * (wa * wb);
             }
@@ -296,7 +296,7 @@ pub fn brick_value(
     }
     cells
         .get(&(own, face))
-        .map(|c| vxe_render::internals::rgb9e5_unpack(c[0]))
+        .map(|c| svet_render::internals::rgb9e5_unpack(c[0]))
 }
 
 impl Rig {
@@ -311,7 +311,7 @@ impl Rig {
     }
 
     pub fn display(&self) -> Vec<u8> {
-        vxe_render::debug::read_rgba8(&self.device, &self.queue, self.frame.target())
+        svet_render::debug::read_rgba8(&self.device, &self.queue, self.frame.target())
     }
 }
 
@@ -402,10 +402,10 @@ pub struct StairFrame {
 }
 
 pub struct StairArm {
-    pub read: vxe_render::StoreRead,
-    pub weights: vxe_render::LightWeights,
+    pub read: svet_render::StoreRead,
+    pub weights: svet_render::LightWeights,
     pub far_normal: [f32; 2],
-    pub mode: vxe_render::NormalMode,
+    pub mode: svet_render::NormalMode,
     pub resolution: LightingResolution,
 }
 
@@ -420,18 +420,18 @@ pub fn stair_frame(rig: &mut Rig, camera: &Camera, arm: &StairArm) -> StairFrame
         light_weights: arm.weights,
         ..Lighting::default()
     });
-    rig.frame.set_look(vxe_render::LookParams {
+    rig.frame.set_look(svet_render::LookParams {
         normal_mode: arm.mode,
         far_normal: arm.far_normal,
-        ..vxe_render::LookParams::default()
+        ..svet_render::LookParams::default()
     });
     // Two frames: the first after a setting change carries no history to differ by.
     rig.step(camera);
     rig.step(camera);
     StairFrame {
-        accum: vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.accumulated()),
-        pos: vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions()),
-        info: vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
+        accum: svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.accumulated()),
+        pos: svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions()),
+        info: svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
         display: rig.display(),
     }
 }

@@ -2,8 +2,8 @@
 //! goes off and on.
 
 use crate::percentile;
-use vxe_app::Gpu;
-use vxe_render::{Frame, wgpu};
+use svet_app::Gpu;
+use svet_render::{Frame, wgpu};
 
 /// `--fade-reading`'s digs along the camera ray, one a frame from the first.
 pub(crate) const FADE_DIGS: u32 = 5;
@@ -73,12 +73,12 @@ impl FadeSample {
             (0..edge * edge).map(|i| f(v[at(i)])).sum::<f64>() / f64::from(edge * edge)
         };
         let (dev, q) = (&gpu.device, &gpu.queue);
-        let filtered = vxe_render::debug::read_rgba16f(dev, q, frame.filtered());
-        let raw = vxe_render::debug::read_rgba16f(dev, q, frame.irradiance());
-        let lamp = vxe_render::debug::read_rgba16f(dev, q, frame.direct());
-        let indirect = vxe_render::debug::read_rgba16f(dev, q, frame.indirect_irradiance());
+        let filtered = svet_render::debug::read_rgba16f(dev, q, frame.filtered());
+        let raw = svet_render::debug::read_rgba16f(dev, q, frame.irradiance());
+        let lamp = svet_render::debug::read_rgba16f(dev, q, frame.direct());
+        let indirect = svet_render::debug::read_rgba16f(dev, q, frame.indirect_irradiance());
         let out_tex = frame.target();
-        let out: Vec<[f32; 4]> = vxe_render::debug::read_rgba8(dev, q, out_tex)
+        let out: Vec<[f32; 4]> = svet_render::debug::read_rgba8(dev, q, out_tex)
             .chunks(4)
             .map(|p| [0, 1, 2, 3].map(|k| f32::from(p[k]) / 255.0))
             .collect();

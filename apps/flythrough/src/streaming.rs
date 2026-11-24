@@ -3,10 +3,10 @@
 
 use crate::hud::{self};
 use std::collections::HashMap;
-use vxe_render::GpuWorld;
+use svet_render::GpuWorld;
 
 use crate::report::SyncSeries;
-use vxe_world::{ChunkCoord, Streamer, Tier};
+use svet_world::{ChunkCoord, Streamer, Tier};
 
 /// The pool size a streaming device's limits are requested for; capped at the adapter.
 pub(crate) const STREAM_POOL_BYTES: u64 = 2 << 30;
@@ -161,7 +161,7 @@ pub(crate) struct Stream {
     pub(crate) light_refused: u64,
     pub(crate) light_wait_ms: f64,
     /// The last frame's sync, `None` when it failed.
-    pub(crate) last_sync: Option<vxe_render::SyncStats>,
+    pub(crate) last_sync: Option<svet_render::SyncStats>,
     /// The syncs since the last `sync:` line ([`SYNC_LINE_SYNCS`] kept), and that line's time in
     /// milliseconds since start and frame.
     pub(crate) sync_line: SyncSeries,
@@ -172,7 +172,7 @@ pub(crate) struct Stream {
     /// The streamer's counters as `stream_step` last read them, once a frame: what the
     /// autopilot and the HUD read after it (and the autopilot's settle, before it, a frame
     /// late). `None` before the first step.
-    pub(crate) stats: Option<vxe_world::StreamStats>,
+    pub(crate) stats: Option<svet_world::StreamStats>,
 }
 
 impl Stream {
@@ -205,7 +205,7 @@ impl Stream {
 
     /// Records every chunk `loaded` full with its wanted tick, and moves the ones the mirror
     /// now holds full into `latency_ms`.
-    pub(crate) fn track(&mut self, ev: &vxe_world::StreamEvents, mirror: &GpuWorld) {
+    pub(crate) fn track(&mut self, ev: &svet_world::StreamEvents, mirror: &GpuWorld) {
         let tick = self.streamer.ticks();
         let full = ev.loaded.iter().filter(|(_, t)| *t == Tier::Full);
         for (&(c, _), &lat) in full.zip(&ev.latency_ticks) {
@@ -239,7 +239,7 @@ mod tests {
 
     use crate::RESIDENCY;
 
-    use vxe_world::{ChunkCoord, PersistConfig, StreamConfig, Streamer};
+    use svet_world::{ChunkCoord, PersistConfig, StreamConfig, Streamer};
 
     use crate::autopilot::NearRing;
     use crate::edits::ball;

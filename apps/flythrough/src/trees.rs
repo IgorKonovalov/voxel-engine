@@ -20,14 +20,14 @@
 //! `outside` spawn's column to the mouth, or within [`FOREST_CLEAR`] of [`FOREST`]. A tree's
 //! base is the surface height of its axis column. A chunk takes every placement whose box
 //! meets it, in cell order, a later placement winning where two overlap, as
-//! `vxe_world::StampedSource` writes its placements; unlike it the placements share the
+//! `svet_world::StampedSource` writes its placements; unlike it the placements share the
 //! rotated variants (64 prefabs, not one copy a placement).
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use vxe_world::hash::hash3;
-use vxe_world::{
+use svet_world::hash::hash3;
+use svet_world::{
     BRICK_EDGE, CHUNK_BRICKS, CHUNK_EDGE, Chunk, ChunkCoord, MaterialId, Prefab, Rot, WorldSource,
     brick_of_slot, index_in_brick,
 };
@@ -166,7 +166,7 @@ impl TreeShape {
 pub fn build_tree(shape: TreeShape, leaf_seed: u64, leaf_fill: u32, leaf: MaterialId) -> Prefab {
     let size = shape.size();
     let n = size.iter().map(|&s| s as usize).product::<usize>();
-    let mut voxels = vec![vxe_world::AIR; n];
+    let mut voxels = vec![svet_world::AIR; n];
     let mut mask = vec![0u64; n.div_ceil(64)];
     let mut i = 0usize;
     for z in 0..size[2] as i32 {

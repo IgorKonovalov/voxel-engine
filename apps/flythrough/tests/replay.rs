@@ -8,9 +8,9 @@ use std::sync::Arc;
 use flythrough::cave::CaveSource;
 use flythrough::logic::{BENCH_CARVES, DigInput, DigLogic};
 use flythrough::{Mode as Replay, ReplayError, cave_materials, replay_file};
-use vxe_net::{Client, Event, MemChannel, Server};
-use vxe_world::hash::Fnv1a;
-use vxe_world::*;
+use svet_net::{Client, Event, MemChannel, Server};
+use svet_world::hash::Fnv1a;
+use svet_world::*;
 
 #[path = "support/vectors.rs"]
 mod vectors;
@@ -274,14 +274,14 @@ fn session_ticks() -> Vec<Vec<DigInput>> {
 /// The session on a fresh level through `logic`, on a server set up as the fly-through's
 /// (the vault registered, the default support), with the log file `--save` writes, and the
 /// logic's broadcast lines by tick.
-fn run_session(logic: Box<dyn vxe_net::Logic>) -> (World, LogFile, Vec<(usize, String)>) {
+fn run_session(logic: Box<dyn svet_net::Logic>) -> (World, LogFile, Vec<(usize, String)>) {
     let world = Arc::new(level());
     let mut prefabs = PrefabRegistry::new();
     prefabs
         .register(Arc::new(flythrough::cave::vault()))
         .unwrap();
     let mut server = Server::with_prefabs(world.clone(), prefabs, logic, LEVEL_SEED);
-    server.set_support(vxe_net::DEFAULT_SUPPORT, &[]);
+    server.set_support(svet_net::DEFAULT_SUPPORT, &[]);
     let (near, far) = MemChannel::pair();
     server.attach(far);
     let mut client = Client::shared(world.clone(), near);

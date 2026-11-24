@@ -190,7 +190,7 @@ fn the_streamed_load_reports_its_stages_in_order_and_ends_at_one() {
 /// 130` at 64 x 36 on lavapipe, its report written to a scratch folder, with `screen`.
 fn bench_counts(screen: &str) -> Option<(f64, f64, f64)> {
     let dir = std::env::temp_dir().join(format!(
-        "vxe-gpu-loading-{}-bench-{screen}",
+        "svet-gpu-loading-{}-bench-{screen}",
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&dir);

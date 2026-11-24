@@ -3,7 +3,7 @@
 
 use flythrough::hud::{HudRow, HudStats, Modes};
 use flythrough::toggles::{TOGGLES, Toggle};
-use vxe_render::{Lighting, LightingResolution};
+use svet_render::{Lighting, LightingResolution};
 
 /// The modes a run starts with (the fly-through's penumbra, `flythrough::DEFAULT_PENUMBRA`), a
 /// pan running so `Period` has one to stop, a sky so the clock and the sky rays show, and one
@@ -109,7 +109,7 @@ fn every_toggle_shows_its_mode_in_the_hud_grid() {
 fn no_two_inputs_share_a_key() {
     use flythrough::hud::menu::FIXED_KEYS;
     use flythrough::toggles::{ACTIONS, Bind, KEY_DROP, KEY_FIRE, KEY_REMOVE, Press};
-    use vxe_app::KeyCode;
+    use svet_app::KeyCode;
     let mut keys: Vec<Bind> = TOGGLES
         .iter()
         .flat_map(|t| match t.press {

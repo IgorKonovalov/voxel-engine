@@ -15,7 +15,7 @@ use flythrough::report::json::{self, Value};
 #[test]
 #[ignore = "soak"]
 fn a_path_run_writes_its_report() {
-    let dir = std::env::temp_dir().join(format!("vxe-gpu-path-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("svet-gpu-path-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let scene = Scene::Outdoor;
     let mode = PathMode::Bench;

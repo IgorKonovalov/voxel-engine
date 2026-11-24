@@ -15,9 +15,9 @@ use crate::entities::library;
 use crate::hud::menu::{Activated, Group, PageId, Row};
 use crate::structures::{self as st, CLEAR_MARGIN};
 use crate::test_support::bare_run;
-use vxe_app::{Input, KeyCode, MouseButton};
-use vxe_assets::VoxScene;
-use vxe_world::{
+use svet_app::{Input, KeyCode, MouseButton};
+use svet_assets::VoxScene;
+use svet_world::{
     AIR, ChunkExtent, EditOp, FIXED_ONE, Fixed3, MaterialTable, Mode, Op, Prefab, Rot, VoxelCoord,
     World,
 };
@@ -39,7 +39,7 @@ pub(super) fn world_table() -> MaterialTable {
 pub(super) fn rock_box(table: &MaterialTable) -> World {
     let world = World::generate(
         ChunkExtent::new([-1, -1, -1], [2, 1, 1]),
-        &vxe_world::UniformSource(crate::cave::ROCK),
+        &svet_world::UniformSource(crate::cave::ROCK),
         table,
     );
     world
@@ -93,7 +93,7 @@ pub(super) fn click() -> Input {
 
 /// The camera at `at`, `pitch_deg` above the horizon, looking along +x.
 pub(super) fn look(run: &mut Run, at: [f32; 3], pitch_deg: f32) {
-    run.fly.camera.position = vxe_render::glam::Vec3::from_array(at);
+    run.fly.camera.position = svet_render::glam::Vec3::from_array(at);
     run.fly.camera.yaw = 0.0;
     run.fly.camera.pitch = pitch_deg.to_radians();
 }
@@ -193,7 +193,7 @@ fn the_belt_holds_a_structure() {
     assert!(w.set.get(id).is_some());
     assert!(w.placed.is_empty() && w.preview.is_none());
     w.refresh_displays();
-    let colour = vxe_render::MARK_COLOURS[0];
+    let colour = svet_render::MARK_COLOURS[0];
     assert!(
         w.marks()
             .iter()
@@ -338,7 +338,7 @@ fn a_structure_stands_by_the_box_rule() {
 
     let air = World::generate(
         ChunkExtent::new([-1, -1, -1], [2, 1, 1]),
-        &vxe_world::UniformSource(AIR),
+        &svet_world::UniformSource(AIR),
         &world_table(),
     );
     let mut dark = run_in(air);
@@ -364,7 +364,7 @@ fn belt_digits(run: &Run) -> (String, bool) {
     let line = text.lines().nth(row).unwrap_or("").to_owned();
     let yellow = line.find("free").is_some_and(|c| {
         paint.spans.iter().any(|(b, col)| {
-            *col == vxe_render::HudColour::Yellow && b.row as usize == row && b.col as usize == c
+            *col == svet_render::HudColour::Yellow && b.row as usize == row && b.col as usize == c
         })
     });
     (line, yellow)
@@ -416,7 +416,7 @@ fn the_snap_key_frees_the_ghost() {
     assert_eq!(corner(&run), ground);
 
     let mut up = Input::default();
-    up.pad_down(vxe_app::PadButton::DpadUp);
+    up.pad_down(svet_app::PadButton::DpadUp);
     frame_keys(&mut run, &up);
     assert_eq!(run.modes.snap, belt::Snap::Free);
     assert_eq!(corner(&run), free);
@@ -535,7 +535,7 @@ fn a_placed_structure_is_logged_stamps() {
         .clone();
     let offset = [0, 1, 2].map(|k| c[k] - scene.bounds.0[k]);
     let (lo, hi) = st::clear_box(&scene, offset, 0).unwrap();
-    let air = vxe_world::Prefab::uniform([0, 1, 2].map(|k| (hi[k] - lo[k] + 1) as u32), AIR);
+    let air = svet_world::Prefab::uniform([0, 1, 2].map(|k| (hi[k] - lo[k] + 1) as u32), AIR);
     let mut want = vec![air.id()];
     want.extend(
         scene
@@ -553,7 +553,7 @@ fn a_placed_structure_is_logged_stamps() {
             for x in lo[0]..=hi[0] {
                 let m = run
                     .world
-                    .material_at(vxe_world::VoxelCoord([x, y, z]))
+                    .material_at(svet_world::VoxelCoord([x, y, z]))
                     .unwrap();
                 if m >= base {
                     *counts.entry(m).or_default() += 1;
@@ -565,7 +565,10 @@ fn a_placed_structure_is_logged_stamps() {
     got.sort_unstable();
     assert_eq!(got, [16, 710, 804, 1728, 6724]);
     let mid = [c[0] - 5, c[1] + 16, c[2] + 20];
-    assert_eq!(run.world.material_at(vxe_world::VoxelCoord(mid)), Some(AIR));
+    assert_eq!(
+        run.world.material_at(svet_world::VoxelCoord(mid)),
+        Some(AIR)
+    );
     assert!(lo[0] == c[0] - CLEAR_MARGIN && hi[2] == c[2] + 39 + CLEAR_MARGIN);
 
     assert!(run.modes.walkers.belt.on);
@@ -663,7 +666,7 @@ fn the_belt_names_a_structure() {
     frame_keys(&mut run, &pressed(KeyCode::Digit4));
     let (name, _, colours) = draw(&run);
     assert_eq!(name, "castle: building");
-    assert_eq!(colours[45 - BELT_ROWS], vxe_render::HudColour::Grey);
+    assert_eq!(colours[45 - BELT_ROWS], svet_render::HudColour::Grey);
 }
 
 /// `Esc` on a structure's slot ends the mode and takes its frame out of the set; the run goes
@@ -868,7 +871,7 @@ fn the_built_castle_has_an_icon() {
 /// The written, non-air voxels of `scene` turned `quarters` quarter turns, with its box's
 /// minimum corner at the origin: each placement's prefab turned as placed
 /// (`Prefab::rotated`) at its place, a later placement's voxel over an earlier one's.
-fn placed_voxels(scene: &VoxScene, quarters: u8) -> BTreeMap<[i32; 3], vxe_world::MaterialId> {
+fn placed_voxels(scene: &VoxScene, quarters: u8) -> BTreeMap<[i32; 3], svet_world::MaterialId> {
     let (lo, _) = scene.turned_bounds(quarters);
     let mut out = BTreeMap::new();
     for (p, o, r) in scene.placed_at([0; 3], quarters) {
@@ -879,7 +882,7 @@ fn placed_voxels(scene: &VoxScene, quarters: u8) -> BTreeMap<[i32; 3], vxe_world
 }
 
 /// The written, non-air voxels of `p`, moved by `at`.
-fn voxels(p: &Prefab, at: [i32; 3]) -> BTreeMap<[i32; 3], vxe_world::MaterialId> {
+fn voxels(p: &Prefab, at: [i32; 3]) -> BTreeMap<[i32; 3], svet_world::MaterialId> {
     let s = p.size().map(|v| v as i32);
     let mut out = BTreeMap::new();
     for z in 0..s[2] {
@@ -930,7 +933,7 @@ fn the_ghost_is_a_coarse_copy_in_its_frame() {
     assert_eq!(f.corner, run.aim_corner([48, 32, 40]));
     let w = &mut run.modes.walkers;
     w.refresh_displays();
-    let colour = vxe_render::MARK_COLOURS[0];
+    let colour = svet_render::MARK_COLOURS[0];
     assert!(
         w.marks().iter().any(|(i, m)| *i == f.id
             && m.outline
@@ -1045,7 +1048,7 @@ fn assert_spider_builds(flags: &[&str], own: bool) {
         .expect("the spider");
     assert_eq!(lib.entries[spider].error(), None, "{flags:?}");
     let rig = std::fs::read_to_string(dir.join("spider/spider.rig")).expect("the rig");
-    let rig = vxe_assets::Rig::parse(&rig).expect("parses");
+    let rig = svet_assets::Rig::parse(&rig).expect("parses");
     let names: Vec<&str> = rig.materials.iter().map(|m| m.name.as_str()).collect();
     assert_eq!(names, SPIDER_ROWS);
     let id_of = |n: &str| crate::viewer::material(&table, n).map(usize::from);
@@ -1118,7 +1121,7 @@ mod reading {
     use super::*;
 
     /// The ghost's body: per case its size, `k`, pool bytes
-    /// (`vxe_render::EntityMirror::volume_bytes`) and make time (`structures::coarse_volume`,
+    /// (`svet_render::EntityMirror::volume_bytes`) and make time (`structures::coarse_volume`,
     /// the median of 5): the chapel at scales 1 and 4, the castle at scale 1. Printed, not
     /// asserted. Run by hand:
     /// `--run-ignored only -E 'test(=run::structure_tests::reading::the_ghost_body_costs)'`.
@@ -1159,7 +1162,7 @@ mod reading {
                 "ghost body {name}: {:?} at k {k}, {} B in the pool, made in {:.1} ms (median of \
                  5, min {:.1}, max {:.1})",
                 v.size(),
-                vxe_render::EntityMirror::volume_bytes(&v),
+                svet_render::EntityMirror::volume_bytes(&v),
                 ms[2],
                 ms[0],
                 ms[4]

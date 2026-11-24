@@ -12,8 +12,8 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use vxe_assets::MaterialFile;
-use vxe_world::{MaterialId, MaterialTable};
+use svet_assets::MaterialFile;
+use svet_world::{MaterialId, MaterialTable};
 
 use crate::setup::CrispRows;
 
@@ -177,7 +177,7 @@ impl Reload {
 }
 
 /// Whether a row emits: the bake's emitter lists are built from it at the start.
-fn emits(m: &vxe_world::Material) -> bool {
+fn emits(m: &svet_world::Material) -> bool {
     m.emission.iter().any(|&e| e != 0.0)
 }
 
@@ -308,8 +308,11 @@ pub fn append_named<'a>(
 }
 
 /// The chunks of `world` resident now that hold a voxel of a row in `rows`, ascending.
-pub fn chunks_holding(world: &vxe_world::World, rows: &[MaterialId]) -> Vec<vxe_world::ChunkCoord> {
-    use vxe_world::Brick;
+pub fn chunks_holding(
+    world: &svet_world::World,
+    rows: &[MaterialId],
+) -> Vec<svet_world::ChunkCoord> {
+    use svet_world::Brick;
     let mut out = Vec::new();
     for c in world.store().coords() {
         let Some(chunk) = world.store().get(c) else {

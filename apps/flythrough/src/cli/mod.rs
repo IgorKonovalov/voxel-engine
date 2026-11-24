@@ -79,7 +79,7 @@
 //! in its tone pass), each named in the banner's fsr2 line when set;
 //! `--frames` exits after N frames, printing the readings (`Enter`) over the last ones and the
 //! stats HUD's rows; `--pace free|compositor` (default `free`) picks whether the window
-//! asks the compositor for a frame callback before each present (`vxe_app::Pacing`): with it
+//! asks the compositor for a frame callback before each present (`svet_app::Pacing`): with it
 //! the next frame starts only after the compositor showed this one; `free` starts it at once.
 //! The banner's `pace` row names the mode for `hud::BANNER_MS` after the start.
 //! The stats HUD's `pace` row names the mode beside the wall, CPU and GPU time of a frame, and
@@ -115,7 +115,7 @@
 //! starts in a view (`shaded`, `normals`, `hitmask`, `steps`, `cracks`, `albedo`; with
 //! `--frames`, `steps` prints the last frame's mean and p99 steps per ray on exit, and `cracks`
 //! its leaks' share); `F9` cycles the views in that order, the banner naming the view
-//! and the stats HUD adding the cracks view's shares row (`vxe_render::ViewMode::Cracks`);
+//! and the stats HUD adding the cracks view's shares row (`svet_render::ViewMode::Cracks`);
 //! `--translucent-layers` sets how many translucent voxels are composited in front of the opaque
 //! hit (default 4, 0 ignores them). `--emissive-ore off` keeps the ore dark (by default it
 //! glows, `flythrough::ORE_EMISSION`, and lights the cave through the light pass's emissive
@@ -247,7 +247,7 @@
 //! (implies `--audio`) plays the default input device at the listener with its direct path
 //! off, so it is heard only off the walls and in the tail; wear headphones.
 //!
-//! The balance (`vxe_audio::MixSettings`) is live. The mixer sets the echo and tail levels by
+//! The balance (`svet_audio::MixSettings`) is live. The mixer sets the echo and tail levels by
 //! the room's mean free path through its default room curves; the menu's `echo trim` steps a trim on
 //! the echoes by 3 dB, `tail trim` one on the tail (each -24 to +12 dB), `pre-delay` the tail's
 //! pre-delay by 10 ms (0 to 200 ms), `tail lines` switches the tail's lines between handing over and
@@ -289,13 +289,13 @@ use crate::path::{CameraPath, PathMode};
 use crate::setup::CrispRows;
 use crate::showcase::Shot;
 use crate::{LogicChoice, LookPreset};
-use vxe_app::Pacing;
-use vxe_render::UpscalerKind;
-use vxe_render::{
+use svet_app::Pacing;
+use svet_render::UpscalerKind;
+use svet_render::{
     AutoExposure, Exposure, HistoryKill, Lighting, LightingResolution, LookParams, NormalMode,
     RenderScale, ShadowWalk, ViewMode,
 };
-use vxe_world::Residency;
+use svet_world::Residency;
 
 pub mod flags;
 mod loading;
@@ -407,13 +407,13 @@ pub struct LightingArgs {
     /// `--shadow-walk full|coarse`: the walk shadow rays take.
     pub shadow_walk: ShadowWalk,
     /// `--store-read face|normal`: how a cube face reads the store (ADR-0049; the menu's `store read`).
-    pub store_read: vxe_render::StoreRead,
+    pub store_read: svet_render::StoreRead,
     /// `--light-weights normal|face`: the normal the light's filters compare (the menu's `light weights`).
-    pub light_weights: vxe_render::LightWeights,
+    pub light_weights: svet_render::LightWeights,
     /// `--young-filter luma|edges`: the a-trous weights at a young pixel (the menu's `young filter`).
-    pub young_filter: vxe_render::YoungFilter,
+    pub young_filter: svet_render::YoungFilter,
     /// `--entity-light own|world`: where an entity's emissive light comes from (the menu's `entity light`).
-    pub entity_light: vxe_render::EntityLight,
+    pub entity_light: svet_render::EntityLight,
     /// `--filter on|off`: the a-trous filter runs.
     pub filter: bool,
     /// `--atrous-iterations 1|2|4`: the a-trous iterations a frame runs (the menu's `filter iterations`).
@@ -456,7 +456,7 @@ pub struct LightingArgs {
     /// floor, replaced.
     pub(crate) adapt: Option<[f32; 4]>,
     /// `--metering centre|average`: how the meter weights the frame (centre by default).
-    pub(crate) metering: vxe_render::Metering,
+    pub(crate) metering: svet_render::Metering,
     /// `--exposure-comp EV`: the auto exposure's compensation, or `None` for 0.
     pub(crate) exposure_comp: Option<f32>,
 }
@@ -490,7 +490,7 @@ impl LightingArgs {
             exposure: None,
             adaptation: hud::Adaptation::Eye,
             adapt: None,
-            metering: vxe_render::Metering::default(),
+            metering: svet_render::Metering::default(),
             exposure_comp: None,
         }
     }
@@ -500,9 +500,9 @@ impl LightingArgs {
         self.lamp.unwrap_or(true)
     }
 
-    /// The light radius: `--light-radius`, else `vxe_render::DEFAULT_LIGHT_RADIUS`.
+    /// The light radius: `--light-radius`, else `svet_render::DEFAULT_LIGHT_RADIUS`.
     pub fn radius(&self) -> i32 {
-        self.radius.unwrap_or(vxe_render::DEFAULT_LIGHT_RADIUS)
+        self.radius.unwrap_or(svet_render::DEFAULT_LIGHT_RADIUS)
     }
 
     /// `base` with the shared rows' switches, walks and probe counts applied.
@@ -567,38 +567,38 @@ pub struct LookArgs {
 #[derive(Clone)]
 pub struct BakeArgs {
     /// `--bake-tiers NEAR,MID,FAR`: the live queue's sample tiers a brick direction by band
-    /// (`vxe_render::Frame::set_bake_tiers`); the profile's by default.
+    /// (`svet_render::Frame::set_bake_tiers`); the profile's by default.
     pub(crate) tiers: [u32; 3],
     /// `--bake-drain off|DRAIN,LINE`: the slice's drain and line values
-    /// (`vxe_render::Frame::set_bake_drain`); the profile's by default.
-    pub(crate) drain: Option<vxe_render::Drain>,
+    /// (`svet_render::Frame::set_bake_drain`); the profile's by default.
+    pub(crate) drain: Option<svet_render::Drain>,
     /// `--bake-budget frame:MS|second:MS,CAP` (or `--bake-slice MS`, `frame:MS`): the live
-    /// queue's bake budget (default `frame:` `vxe_render::DEFAULT_BAKE_SLICE_MS`); key
+    /// queue's bake budget (default `frame:` `svet_render::DEFAULT_BAKE_SLICE_MS`); key
     /// The menu's `bake budget` cycles it through `BUDGET_CYCLE`.
-    pub(crate) budget: vxe_render::Budget,
+    pub(crate) budget: svet_render::Budget,
     /// `--coarse N`: the live queue's coarse pass, `N` samples a brick direction (0 none;
-    /// default `vxe_render::DEFAULT_COARSE_SAMPLES`).
+    /// default `svet_render::DEFAULT_COARSE_SAMPLES`).
     pub(crate) coarse: u32,
     /// `--near R`: the chunks within `R` (Chebyshev) of the camera's baked at the full count
-    /// before the first frame (default `vxe_render::DEFAULT_NEAR`).
+    /// before the first frame (default `svet_render::DEFAULT_NEAR`).
     pub(crate) near: i32,
     /// `--full-first off|N`: the live queue's full-first radius after the pre-roll
-    /// (`vxe_render::BakeQueue::full_first`); `None` follows `--near`. The menu's `full-first`
+    /// (`svet_render::BakeQueue::full_first`); `None` follows `--near`. The menu's `full-first`
     /// toggles it between `off` and `2`.
     pub(crate) full_first: Option<Option<i32>>,
     /// `--missing-light black|neighbour|parent|chain`: what a cube face with no baked value
     /// reads (ADR-0053); the menu's `missing light` cycles it.
-    pub(crate) missing_light: vxe_render::MissingLight,
+    pub(crate) missing_light: svet_render::MissingLight,
     /// `--reach full|partial`: whether a chunk whose reach crosses the streamer's full radius
-    /// bakes from the chunks resident full (`vxe_render::ReachMode`); the menu's `reach` toggles it.
-    pub(crate) reach: vxe_render::ReachMode,
+    /// bakes from the chunks resident full (`svet_render::ReachMode`); the menu's `reach` toggles it.
+    pub(crate) reach: svet_render::ReachMode,
     /// `--queue-order score|distance`: the live queue's order (ADR-0048's score by default, or
     /// the class and the distance first); the menu's `queue order` cycles score, score with the class as a tier,
     /// distance.
     pub(crate) queue_distance: bool,
     /// `--queue-weights A,R` or `A,tier`: the score's angle weight (the menu's `queue angle
     /// halved` and `doubled`) and its refine weight, or the class as the leading key (defaults
-    /// `vxe_render::QUEUE_ANGLE_WEIGHT` and the class as the tier, ADR-0046's
+    /// `svet_render::QUEUE_ANGLE_WEIGHT` and the class as the tier, ADR-0046's
     /// coarse-first rule; `QUEUE_REFINE_WEIGHT` is the refine weight `queue order` cycles to).
     pub(crate) queue_angle: f32,
     pub(crate) queue_refine: f32,
@@ -609,14 +609,14 @@ pub struct BakeArgs {
     /// `--queue-census`: the live queue reads its view census, the in-view ages and the angle
     /// weights at every opening (a reading; by default once a second, for the stdout line and
     /// the HUD's queue row, and no angle weights), and at its first live step the census of
-    /// its listing (`vxe_render::BakeQueue::listing_census`, the `bake queue census:` line).
+    /// its listing (`svet_render::BakeQueue::listing_census`, the `bake queue census:` line).
     pub(crate) queue_census: bool,
     /// `--queue-rule-reading`: the live queue counts the GPU jobs it opens for chunks its zero
     /// rule would answer at that opening, by what kept the rule from them
-    /// (`vxe_render::RuleMissed`), on the `bake queue:` line and in `run.json`'s `queue`.
+    /// (`svet_render::RuleMissed`), on the `bake queue:` line and in `run.json`'s `queue`.
     pub(crate) queue_rule_reading: bool,
     /// `--edit-ms MS`: the live queue's slice grows by `MS` a frame while a dig's bricks wait
-    /// (default `vxe_render::DEFAULT_BAKE_EDIT_MS`).
+    /// (default `svet_render::DEFAULT_BAKE_EDIT_MS`).
     pub(crate) edit_ms: f64,
     /// `--dig-reach on|off`: whether a dig that touched lit bricks re-bakes the chunks within the
     /// light radius (ring 3; on by default).
@@ -752,16 +752,16 @@ pub struct Args {
     /// `--keys`: print the key tree at the start modes (`hud::menu::keys_text`) and exit 0.
     pub keys: bool,
     /// `--profile NAME`: the render profile the other flags edit (`floor` by default).
-    pub(crate) profile: vxe_render::Profile,
+    pub(crate) profile: svet_render::Profile,
     /// `--light-cap N`: slots of the list of lights shaded, the headlamp's included
-    /// (`vxe_render::Frame::set_light_cap`); the profile's by default.
+    /// (`svet_render::Frame::set_light_cap`); the profile's by default.
     pub(crate) light_cap: u32,
     /// `--light-samples N`: the mirror's light-sample buffer in samples
-    /// (`vxe_render::MirrorConfig::light_samples`); `vxe_render::DEFAULT_LIGHT_SAMPLES` without.
+    /// (`svet_render::MirrorConfig::light_samples`); `svet_render::DEFAULT_LIGHT_SAMPLES` without.
     pub(crate) light_samples: Option<u32>,
-    /// `--light-hooks`: the light passes' reading hooks (`vxe_render::LightHooks`); none
+    /// `--light-hooks`: the light passes' reading hooks (`svet_render::LightHooks`); none
     /// without.
-    pub(crate) light_hooks: vxe_render::LightHooks,
+    pub(crate) light_hooks: svet_render::LightHooks,
     /// The output size of a headless run with no `--render`, and the window's first size:
     /// the `--profile`'s hint when one is given, else none (1280 x 720). The portable
     /// profile's renders in a window too ([`Args::fixed_output`]).
@@ -893,8 +893,8 @@ impl Args {
     }
 
     /// The live queue's order from `--queue-order` and `--queue-weights` (and their keys).
-    pub(crate) fn queue_order(&self) -> vxe_render::QueueOrder {
-        use vxe_render::{QueueOrder, Refine};
+    pub(crate) fn queue_order(&self) -> svet_render::QueueOrder {
+        use svet_render::{QueueOrder, Refine};
         if self.bake.queue_distance {
             QueueOrder::Distance
         } else {
@@ -988,17 +988,17 @@ impl Args {
             hud::UpscalerMode::Own => {
                 let jitter = !self.look.jitter_set || self.look.jitter;
                 (
-                    UpscalerKind::Own(vxe_render::Upscaler::default()),
+                    UpscalerKind::Own(svet_render::Upscaler::default()),
                     self.look.internal_scale,
                     jitter,
                 )
             }
             hud::UpscalerMode::Fsr2 => (
-                UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+                UpscalerKind::Fsr2(svet_render::Fsr2Settings {
                     sharpness: self.look.sharpen,
                     jitter_phases: self.look.jitter_phases,
                     dither: self.look.dither,
-                    ..vxe_render::Fsr2Settings::default()
+                    ..svet_render::Fsr2Settings::default()
                 }),
                 self.look.internal_scale,
                 false,
@@ -1022,15 +1022,15 @@ impl Args {
             sky_rays: self
                 .outdoor
                 .sky_rays
-                .unwrap_or(vxe_render::DEFAULT_SKY_RAYS),
+                .unwrap_or(svet_render::DEFAULT_SKY_RAYS),
             sky_history: self
                 .outdoor
                 .sky_history
-                .unwrap_or(vxe_render::DEFAULT_SKY_HISTORY),
+                .unwrap_or(svet_render::DEFAULT_SKY_HISTORY),
             key_history: self
                 .outdoor
                 .key_history
-                .unwrap_or(vxe_render::DEFAULT_KEY_HISTORY),
+                .unwrap_or(svet_render::DEFAULT_KEY_HISTORY),
             light_history: self
                 .outdoor
                 .light_history

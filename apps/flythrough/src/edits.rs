@@ -9,9 +9,9 @@ use crate::logic::{parse_region_line, parse_wedged_line};
 use crate::now;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
-use vxe_net::{Client, DEFAULT_SUPPORT, Logic, LogicError, MemChannel, Server};
-use vxe_render::glam::Vec3;
-use vxe_world::{
+use svet_net::{Client, DEFAULT_SUPPORT, Logic, LogicError, MemChannel, Server};
+use svet_render::glam::Vec3;
+use svet_world::{
     CellChange, ChunkCoord, CoarseGrid, EditResult, FIXED_ONE, Fixed3, MaterialId, MaterialTable,
     VoxelCoord, WalkableMap, WalkableParams, World,
 };
@@ -170,7 +170,7 @@ pub(crate) fn wedged_terminal_line(table: &MaterialTable, line: &str) -> Option<
 }
 
 /// The line for an applied removal: `removed: {rock: 4608}, 1152 rubble`.
-pub(crate) fn removed_line(table: &MaterialTable, r: &vxe_world::RemoveResult) -> String {
+pub(crate) fn removed_line(table: &MaterialTable, r: &svet_world::RemoveResult) -> String {
     format!(
         "removed: {{{}}}, {} rubble",
         counts_line(table, &r.removed),
@@ -203,7 +203,7 @@ impl Net {
     /// threshold the logic's drops yield below), and the shared client.
     pub(crate) fn new(world: &Arc<World>, logic: Box<dyn Logic>, seed: u64) -> Self {
         let vault = Arc::new(vault());
-        let mut prefabs = vxe_world::PrefabRegistry::new();
+        let mut prefabs = svet_world::PrefabRegistry::new();
         prefabs
             .register(vault.clone())
             .expect("an empty registry takes the vault");
@@ -277,7 +277,7 @@ impl Failure {
 
 /// The fixed-point centre of the voxel holding `p`.
 pub(crate) fn centre_fixed(p: Vec3) -> Fixed3 {
-    vxe_world::centre_of_voxel(voxel_of(p))
+    svet_world::centre_of_voxel(voxel_of(p))
 }
 
 /// The hit record's flag bit (word 3) for a hit: `hitrec.wgsl`'s `HIT_FOUND`.
@@ -325,11 +325,11 @@ mod tests {
 
     use crate::{LogicChoice, RESIDENCY, ScrollSteps, cave_materials};
 
-    use vxe_net::{Event, LogicError};
+    use svet_net::{Event, LogicError};
 
     use crate::app::ms_since;
     use crate::cave::SHELL;
-    use vxe_world::{
+    use svet_world::{
         ChunkCoord, ChunkExtent, CoarseGrid, EditOp, EditResult, FIXED_ONE, Fixed3, MaterialId,
         Mode, OpResult, PersistConfig, StreamConfig, Streamer, WalkableMap, World,
     };
@@ -406,7 +406,7 @@ mod tests {
     fn an_edit_keeps_the_coarse_grid_and_walkable_map_current() {
         let world = World::generate(
             ChunkExtent::new([-1, -1, -1], [1, 1, 1]),
-            &vxe_world::UniformSource(ROCK),
+            &svet_world::UniformSource(ROCK),
             &cave_materials(),
         );
         let mut c = Coarse::build(&world);
@@ -440,7 +440,7 @@ mod tests {
         let table = cave_materials();
         let world = Arc::new(World::generate(
             ChunkExtent::new([-1, -1, -1], [1, 1, 1]),
-            &vxe_world::UniformSource(ROCK),
+            &svet_world::UniformSource(ROCK),
             &table,
         ));
         world
@@ -477,7 +477,7 @@ mod tests {
             "stamped: rock 4096 (1 chunks, 0.50 ms)"
         );
         assert!(
-            matches!(&net.server.ops().entries()[0], vxe_world::LogEntry::Op { op: vxe_world::Op::Stamp { prefab, .. }, .. } if *prefab == vault().id())
+            matches!(&net.server.ops().entries()[0], svet_world::LogEntry::Op { op: svet_world::Op::Stamp { prefab, .. }, .. } if *prefab == vault().id())
         );
 
         // From inside rock at x = 51 the ray hits that voxel, and a vault there would reach
@@ -505,7 +505,7 @@ mod tests {
     fn ledge_world() -> World {
         let world = World::generate(
             ChunkExtent::new([0, 0, 0], [1, 1, 1]),
-            &vxe_world::UniformSource(vxe_world::AIR),
+            &svet_world::UniformSource(svet_world::AIR),
             &cave_materials(),
         );
         for (lo, hi) in [
@@ -592,7 +592,7 @@ mod tests {
         // `count_in_box` counts air too: 576 voxels in the layer, 32 of them rubble.
         assert_eq!(
             world.count_in_box([24, 24, 40], [47, 47, 40]).unwrap(),
-            [(vxe_world::AIR, 544), (crate::RUBBLE, 32)]
+            [(svet_world::AIR, 544), (crate::RUBBLE, 32)]
         );
         let kinds: Vec<u8> = net
             .server
@@ -700,7 +700,7 @@ mod tests {
     fn a_ledge_falling_out_of_the_world_is_refused_once() {
         let world = Arc::new(World::generate(
             ChunkExtent::new([0, 0, 0], [1, 1, 1]),
-            &vxe_world::UniformSource(vxe_world::AIR),
+            &svet_world::UniformSource(svet_world::AIR),
             &cave_materials(),
         ));
         let f = |v: [i32; 3]| Fixed3(v.map(|c| i64::from(c) * FIXED_ONE));
@@ -729,7 +729,7 @@ mod tests {
             events.iter().any(|e| matches!(
                 e,
                 Event::Refused {
-                    op: vxe_world::Op::Drop { .. },
+                    op: svet_world::Op::Drop { .. },
                     ..
                 }
             )),
@@ -855,7 +855,7 @@ mod tests {
             let source = CaveSource::new(1, ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS));
             let world = Arc::new(World::generate(source.extent, &source, &cave_materials()));
             let mut net = native_net(&world);
-            let origin = vxe_world::centre_of_voxel(source.spawn());
+            let origin = svet_world::centre_of_voxel(source.spawn());
             let f = FIXED_ONE;
             for dir in [
                 [f, 0, 0],

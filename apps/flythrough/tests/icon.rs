@@ -7,8 +7,8 @@ use std::sync::Arc;
 use flythrough::entities::icon::{ICON_PX, icon};
 use flythrough::entities::{self, library};
 use flythrough::{cave_materials, showcase_materials, walker};
-use vxe_entity::Model;
-use vxe_world::MaterialTable;
+use svet_entity::Model;
+use svet_world::MaterialTable;
 
 /// FNV-1a 64 over `bytes`.
 fn fnv(bytes: &[u8]) -> u64 {

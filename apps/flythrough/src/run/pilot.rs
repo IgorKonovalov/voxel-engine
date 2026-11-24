@@ -11,10 +11,10 @@ use crate::run::hud_lines::{belt_line, probe_bytes_line};
 use crate::setup::Gfx;
 use crate::streaming::pressure_terms;
 use crate::{chunks_hash, percentile};
-use vxe_app::Flow;
-use vxe_render::FRAME_PASSES;
-use vxe_render::glam::Vec3;
-use vxe_world::{EditOp, FIXED_ONE, Mode, Tier};
+use svet_app::Flow;
+use svet_render::FRAME_PASSES;
+use svet_render::glam::Vec3;
+use svet_world::{EditOp, FIXED_ONE, Mode, Tier};
 
 impl Run {
     /// Moves the camera along the autopilot's legs; returns `Flow::Exit` once it has printed

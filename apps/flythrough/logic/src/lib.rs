@@ -1,6 +1,6 @@
 //! The fly-through's server logic: digs, fills, stamps, the bench and the collapse that follows
 //! a dig, as inputs applied through the host (ADR-0010). Every edit it makes is an op the
-//! server logs, so a saved session replays all of it. It depends on `vxe-net`'s traits and `vxe-world` alone, nothing GPU, so
+//! server logs, so a saved session replays all of it. It depends on `svet-net`'s traits and `svet-world` alone, nothing GPU, so
 //! the same crate builds natively (the fly-through links it) and, with the `component`
 //! feature for `wasm32-wasip2`, as a logic component that exports [`DigLogic`]
 //! (`scripts/build-guests.sh` places it at `target/guests/flythrough-logic.wasm`).
@@ -16,7 +16,7 @@
 //! | `Crumble` | 5 | none                                                         | 1     |
 //!
 //! After every applied dig the logic asks the host which regions lost their support (over the
-//! cells of the dig's aabb, [`vxe_net::cells_in`]). In fall mode (the default) each region
+//! cells of the dig's aabb, [`svet_net::cells_in`]). In fall mode (the default) each region
 //! drops [`FALL_STEP`] voxels a tick, one `Drop` op per region per tick, through the cells
 //! under [`YIELD_BELOW`] solid voxels (ADR-0016), crushing what it passes, until a drop moves
 //! it less than a whole step; then, when the fall crushed anything, one `Pile` op puts the
@@ -45,10 +45,10 @@
 
 use std::collections::VecDeque;
 
-use vxe_net::{ClientInput, DEFAULT_SUPPORT, Host, Logic, TickOutput, cells_in};
-use vxe_world::hash::mix64;
-use vxe_world::wire::{Reader, WireError, put_fixed3};
-use vxe_world::{
+use svet_net::{ClientInput, DEFAULT_SUPPORT, Host, Logic, TickOutput, cells_in};
+use svet_world::hash::mix64;
+use svet_world::wire::{Reader, WireError, put_fixed3};
+use svet_world::{
     BRICK_EDGE, CellCoord, EditOp, FIXED_ONE, Fixed3, MaterialId, Mode, Op, OpResult, Region, Rot,
     VoxelCoord,
 };
@@ -703,7 +703,7 @@ impl Logic for DigLogic {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vxe_world::{DropResult, EditError, EditResult, Hit, PileResult};
+    use svet_world::{DropResult, EditError, EditResult, Hit, PileResult};
 
     /// A host that carves for any edit, reports one region after it, and answers drops and
     /// piles with the results it holds, of whatever kind.
@@ -858,4 +858,4 @@ mod tests {
 }
 
 #[cfg(feature = "component")]
-vxe_script_wasm::export_logic!(DigLogic);
+svet_script_wasm::export_logic!(DigLogic);

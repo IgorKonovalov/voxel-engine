@@ -362,8 +362,8 @@ dependencies = [
 name = "chatty-guest"
 version = "0.72.0"
 dependencies = [
- "vxe-net",
- "vxe-script-wasm",
+ "svet-net",
+ "svet-script-wasm",
 ]
 
 [[package]]
@@ -865,8 +865,8 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 name = "echo-guest"
 version = "0.72.0"
 dependencies = [
- "vxe-net",
- "vxe-script-wasm",
+ "svet-net",
+ "svet-script-wasm",
 ]
 
 [[package]]
@@ -974,15 +974,15 @@ dependencies = [
  "log",
  "png",
  "pollster",
- "vxe-app",
- "vxe-assets",
- "vxe-audio",
- "vxe-entity",
- "vxe-net",
- "vxe-render",
- "vxe-script-wasm",
- "vxe-sim",
- "vxe-world",
+ "svet-app",
+ "svet-assets",
+ "svet-audio",
+ "svet-entity",
+ "svet-net",
+ "svet-render",
+ "svet-script-wasm",
+ "svet-sim",
+ "svet-world",
  "windows-sys 0.61.2",
 ]
 
@@ -990,9 +990,9 @@ dependencies = [
 name = "flythrough-logic"
 version = "0.72.0"
 dependencies = [
- "vxe-net",
- "vxe-script-wasm",
- "vxe-world",
+ "svet-net",
+ "svet-script-wasm",
+ "svet-world",
 ]
 
 [[package]]
@@ -1235,9 +1235,9 @@ dependencies = [
 name = "greedy-guest"
 version = "0.72.0"
 dependencies = [
- "vxe-net",
- "vxe-script-wasm",
- "vxe-world",
+ "svet-net",
+ "svet-script-wasm",
+ "svet-world",
 ]
 
 [[package]]
@@ -1290,8 +1290,8 @@ checksum = "e17592d60ebacc7d5e169f4663c5f84f9161cc90328abcfe8456f41e4dfcb284"
 name = "hog-guest"
 version = "0.72.0"
 dependencies = [
- "vxe-net",
- "vxe-script-wasm",
+ "svet-net",
+ "svet-script-wasm",
 ]
 
 [[package]]
@@ -2390,8 +2390,8 @@ name = "probe-guest"
 version = "0.72.0"
 dependencies = [
  "getrandom 0.4.3",
- "vxe-net",
- "vxe-script-wasm",
+ "svet-net",
+ "svet-script-wasm",
 ]
 
 [[package]]
@@ -2848,8 +2848,8 @@ dependencies = [
 name = "spin-guest"
 version = "0.72.0"
 dependencies = [
- "vxe-net",
- "vxe-script-wasm",
+ "svet-net",
+ "svet-script-wasm",
 ]
 
 [[package]]
@@ -2872,6 +2872,99 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "svet-app"
+version = "0.72.0"
+dependencies = [
+ "log",
+ "pollster",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
+name = "svet-assets"
+version = "0.72.0"
+dependencies = [
+ "svet-entity",
+ "svet-world",
+]
+
+[[package]]
+name = "svet-audio"
+version = "0.72.0"
+dependencies = [
+ "cpal",
+ "criterion",
+ "sofar",
+ "svet-audio",
+ "svet-world",
+]
+
+[[package]]
+name = "svet-entity"
+version = "0.72.0"
+dependencies = [
+ "svet-world",
+]
+
+[[package]]
+name = "svet-net"
+version = "0.72.0"
+dependencies = [
+ "criterion",
+ "svet-net",
+ "svet-world",
+]
+
+[[package]]
+name = "svet-render"
+version = "0.72.0"
+dependencies = [
+ "bytemuck",
+ "criterion",
+ "glam",
+ "log",
+ "png",
+ "pollster",
+ "svet-entity",
+ "svet-render",
+ "svet-world",
+ "wgpu",
+]
+
+[[package]]
+name = "svet-script-wasm"
+version = "0.72.0"
+dependencies = [
+ "bytes",
+ "criterion",
+ "flythrough-logic",
+ "rand_core",
+ "svet-net",
+ "svet-world",
+ "tokio",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wit-bindgen 0.61.1",
+]
+
+[[package]]
+name = "svet-sim"
+version = "0.72.0"
+dependencies = [
+ "criterion",
+ "svet-world",
+]
+
+[[package]]
+name = "svet-world"
+version = "0.72.0"
+dependencies = [
+ "criterion",
+ "svet-world",
+]
 
 [[package]]
 name = "syn"
@@ -2965,8 +3058,8 @@ dependencies = [
 name = "timer-guest"
 version = "0.72.0"
 dependencies = [
- "vxe-net",
- "vxe-script-wasm",
+ "svet-net",
+ "svet-script-wasm",
  "wasip2",
 ]
 
@@ -3130,91 +3223,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
-name = "vxe-app"
-version = "0.72.0"
-dependencies = [
- "log",
- "pollster",
- "wgpu",
- "winit",
-]
-
-[[package]]
-name = "vxe-assets"
-version = "0.72.0"
-dependencies = [
- "vxe-entity",
- "vxe-world",
-]
-
-[[package]]
-name = "vxe-audio"
-version = "0.72.0"
-dependencies = [
- "cpal",
- "criterion",
- "sofar",
- "vxe-audio",
- "vxe-world",
-]
-
-[[package]]
-name = "vxe-entity"
-version = "0.72.0"
-dependencies = [
- "vxe-world",
-]
-
-[[package]]
-name = "vxe-net"
-version = "0.72.0"
-dependencies = [
- "criterion",
- "vxe-net",
- "vxe-world",
-]
-
-[[package]]
-name = "vxe-render"
-version = "0.72.0"
-dependencies = [
- "bytemuck",
- "criterion",
- "glam",
- "log",
- "png",
- "pollster",
- "vxe-entity",
- "vxe-render",
- "vxe-world",
- "wgpu",
-]
-
-[[package]]
-name = "vxe-script-wasm"
-version = "0.72.0"
-dependencies = [
- "bytes",
- "criterion",
- "flythrough-logic",
- "rand_core",
- "tokio",
- "vxe-net",
- "vxe-world",
- "wasmtime",
- "wasmtime-wasi",
- "wit-bindgen 0.61.1",
-]
-
-[[package]]
-name = "vxe-sim"
-version = "0.72.0"
-dependencies = [
- "criterion",
- "vxe-world",
-]
-
-[[package]]
 name = "vxe-tester"
 version = "0.72.0"
 dependencies = [
@@ -3222,17 +3230,9 @@ dependencies = [
  "env_logger",
  "flythrough",
  "log",
- "vxe-app",
- "vxe-render",
+ "svet-app",
+ "svet-render",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "vxe-world"
-version = "0.72.0"
-dependencies = [
- "criterion",
- "vxe-world",
 ]
 
 [[package]]

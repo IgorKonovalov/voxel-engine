@@ -20,13 +20,13 @@ use crate::{ScrollSteps, chunk_ram, level_mirror_budget, level_pool_units, mips_
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
-use vxe_app::{Flow, Gpu};
-use vxe_render::{
+use svet_app::{Flow, Gpu};
+use svet_render::{
     Camera, FRAME_PASSES, Frame, GpuWorld, HudOverlay, LightParams, Lighting, LightingResolution,
     LoadingScreen, LodParams, MarchTimer, MirrorConfig, PassTimer, Presenter, UpscalerKind, Window,
     wgpu,
 };
-use vxe_world::{MaterialTable, VoxelCoord, World};
+use svet_world::{MaterialTable, VoxelCoord, World};
 
 pub(crate) mod dump_black;
 pub(crate) mod edit;
@@ -136,14 +136,14 @@ pub(crate) struct Run {
 }
 
 /// The features and limits the fly-through asks of `adapter` for a brick pool of
-/// `pool_bytes`: the timestamp queries where offered, and [`vxe_render::limits_for`]'s limits.
+/// `pool_bytes`: the timestamp queries where offered, and [`svet_render::limits_for`]'s limits.
 pub(crate) fn device_request_for(
     adapter: &wgpu::Adapter,
     pool_bytes: u64,
 ) -> (wgpu::Features, wgpu::Limits) {
     // An adapter below the shaders' floor: name the limit, then request the floor, which the
     // device request refuses on the same limit and the shell reports as a setup error.
-    let limits = vxe_render::limits_for(adapter, pool_bytes).unwrap_or_else(|e| {
+    let limits = svet_render::limits_for(adapter, pool_bytes).unwrap_or_else(|e| {
         eprintln!("flythrough: {e}");
         *e.requested
     });
@@ -325,7 +325,7 @@ impl Run {
             STREAM_POOL_BYTES
         } else {
             level_pool_units(&self.world, self.args.field_surface())
-                * vxe_render::internals::UNIT_BYTES
+                * svet_render::internals::UNIT_BYTES
         };
         device_request_for(adapter, pool)
     }

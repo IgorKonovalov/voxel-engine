@@ -20,8 +20,8 @@ use std::path::PathBuf;
 
 use flythrough::cave::CaveSource;
 use flythrough::cave_materials;
-use vxe_render::{Camera, MirrorError, SyncStats, wgpu};
-use vxe_world::*;
+use svet_render::{Camera, MirrorError, SyncStats, wgpu};
+use svet_world::*;
 
 /// The exposure's buffers in `Frame::frame_bytes`: the state twice (32 B each), the
 /// highlight state (`ExposureHighlight`, 16 B), the pass's 128-byte uniform and the read-back
@@ -78,7 +78,7 @@ impl SyncNow for GpuWorld {
 /// With `VXE_REQUIRE_SOFTWARE_ADAPTER=1` a missing adapter panics instead, so a CI arm that
 /// promises image comparisons cannot pass by skipping them.
 pub fn software_device(pool_bytes: u64) -> Option<(wgpu::Device, wgpu::Queue)> {
-    vxe_render::test_support::software_device(pool_bytes, wgpu::Features::empty())
+    svet_render::test_support::software_device(pool_bytes, wgpu::Features::empty())
 }
 
 /// A device for a **reading-only** test, chosen by `VXE_TEST_ADAPTER` (lane rule 9c: iterate
@@ -123,7 +123,7 @@ pub fn adapter_device(
         panic!("{by}{want} matches no adapter; the adapters are {names:?}");
     };
     println!("chosen by {by}{want}");
-    let (device, queue) = vxe_render::test_support::device_on(
+    let (device, queue) = svet_render::test_support::device_on(
         &adapter,
         pool_bytes,
         // The per-pass readings time the frame where the adapter can.
@@ -294,8 +294,8 @@ pub fn assert_golden_ssim(name: &str, rgba: &[u8], floor: f64) {
 // ---- The surface-look harness (tests/gpu_look.rs) ----
 
 use flythrough::cave::ROCK;
-use vxe_render::glam::Vec3;
-use vxe_render::{Frame, GpuWorld, LightParams, LodParams, LookParams, MirrorConfig};
+use svet_render::glam::Vec3;
+use svet_render::{Frame, GpuWorld, LightParams, LodParams, LookParams, MirrorConfig};
 
 /// Rows 0 (air) and 1..=5, plain, row 3 with the cave's rock albedo: the solid material-3
 /// world of the cavity scene.
@@ -536,13 +536,13 @@ impl LookRig {
         cfg: Option<MirrorConfig>,
     ) -> Self {
         let cfg =
-            cfg.unwrap_or_else(|| MirrorConfig::new(vxe_render::Window::Fixed(world.extent())));
+            cfg.unwrap_or_else(|| MirrorConfig::new(svet_render::Window::Fixed(world.extent())));
         let mut gpu = GpuWorld::with_config(&device, cfg);
         gpu.sync_now(world, &device, &queue)
             .expect("mirror fits the adapter");
         let mut frame = Frame::new(&device, WIDTH, HEIGHT);
         // The walk and the look at full resolution: lighting at half would blur them.
-        frame.set_resolution(&device, vxe_render::LightingResolution::Full);
+        frame.set_resolution(&device, svet_render::LightingResolution::Full);
         Self {
             device,
             queue,
@@ -556,7 +556,7 @@ impl LookRig {
         self.frame.set_look(look);
         self.frame
             .render(&self.device, &self.queue, &self.gpu, camera, light);
-        vxe_render::debug::read_rgba8(&self.device, &self.queue, self.frame.target())
+        svet_render::debug::read_rgba8(&self.device, &self.queue, self.frame.target())
     }
 }
 
@@ -574,16 +574,16 @@ pub fn bake_around(
     centre: [i32; 3],
     radius: i32,
     samples: u32,
-) -> vxe_render::BakeReport {
+) -> svet_render::BakeReport {
     let w = world.extent();
     let size = w.size();
     let c = centre.map(|v| v.div_euclid(64));
     let lo = [0, 1, 2].map(|k| (c[k] - radius).max(w.min.0[k]));
     let hi = [0, 1, 2].map(|k| (c[k] + radius + 1).min(w.min.0[k] + size[k]).max(lo[k]));
-    let settings = vxe_render::BakeSettings {
+    let settings = svet_render::BakeSettings {
         round: 64,
         brick_samples: samples,
-        ..vxe_render::BakeSettings::default()
+        ..svet_render::BakeSettings::default()
     };
     frame
         .bake_until(
@@ -606,7 +606,7 @@ impl LookRig {
         centre: [i32; 3],
         radius: i32,
         samples: u32,
-    ) -> vxe_render::BakeReport {
+    ) -> svet_render::BakeReport {
         bake_around(
             &self.device,
             &self.queue,
@@ -638,8 +638,8 @@ pub fn centre_pixel(rgba: &[u8]) -> [u8; 3] {
 
 // ---- The field surface and the sharpness scenes (tests/gpu_look.rs, tests/sharpness.rs) ----
 
-use vxe_render::LightingResolution;
-use vxe_render::{internals::PAGE_UNITS, internals::UNIT_BYTES};
+use svet_render::LightingResolution;
+use svet_render::{internals::PAGE_UNITS, internals::UNIT_BYTES};
 
 /// Pool bytes a mirror with the field's band slots needs for `world`'s bricks, with a page of
 /// headroom for each bin's partly filled page.
@@ -657,7 +657,7 @@ pub fn field_mirror_rig_on(
 ) -> LookRig {
     let cfg = MirrorConfig {
         max_shard_units,
-        ..MirrorConfig::new(vxe_render::Window::Fixed(world.extent()))
+        ..MirrorConfig::new(svet_render::Window::Fixed(world.extent()))
     };
     let mut gpu = GpuWorld::with_field_surface(&device, cfg);
     gpu.sync_now(world, &device, &queue)

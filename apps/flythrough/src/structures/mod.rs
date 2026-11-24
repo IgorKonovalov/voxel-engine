@@ -12,11 +12,11 @@ pub use library::*;
 
 use std::path::{Path, PathBuf};
 
-use vxe_assets::{
+use svet_assets::{
     PaletteRows, SceneOptions, Slot, VoxFile, VoxMap, VoxMaterial, VoxMaterialKind, VoxScene,
     VoxText, decode_frame, resolve_existing,
 };
-use vxe_world::{
+use svet_world::{
     AIR, Brick, Chunk, ChunkCoord, MaterialTable, StampedSource, VoxelCoord, WorldSource,
 };
 
@@ -48,10 +48,10 @@ impl VoxArg {
                 let k: u32 = k
                     .parse()
                     .map_err(|_| format!("`*{k}`: a scale is a whole number from 1 to 4"))?;
-                if !(1..=vxe_assets::MAX_SCALE).contains(&k) {
+                if !(1..=svet_assets::MAX_SCALE).contains(&k) {
                     return Err(format!(
                         "scale {k} is outside 1..={}",
-                        vxe_assets::MAX_SCALE
+                        svet_assets::MAX_SCALE
                     ));
                 }
                 (r, k)
@@ -102,7 +102,7 @@ fn explicit() -> VoxMap {
 
 /// Adds a row to `table` for each palette entry of `file` (ADR-0065): the rows added.
 pub fn add_rows(file: &VoxFile, table: &mut MaterialTable) -> usize {
-    let mut rows = PaletteRows::new(table, vxe_assets::DEFAULT_EMISSION_FACTOR);
+    let mut rows = PaletteRows::new(table, svet_assets::DEFAULT_EMISSION_FACTOR);
     rows.resolve(file, &explicit());
     rows.added()
 }
@@ -149,8 +149,8 @@ impl<S: WorldSource> WorldSource for ClearedSource<S> {
         if (0..3).any(|k| lo[k] > hi[k]) {
             return;
         }
-        for slot in 0..vxe_world::CHUNK_BRICKS {
-            let b = vxe_world::brick_of_slot(slot);
+        for slot in 0..svet_world::CHUNK_BRICKS {
+            let b = svet_world::brick_of_slot(slot);
             let bmin = [0, 1, 2].map(|k| c[k] + b[k] * 8);
             let inside = |p: [i32; 3]| (0..3).all(|k| lo[k] <= p[k] && p[k] <= hi[k]);
             if (0..3).any(|k| bmin[k] + 7 < lo[k] || bmin[k] > hi[k]) {
@@ -162,7 +162,7 @@ impl<S: WorldSource> WorldSource for ClearedSource<S> {
                 if inside(p) {
                     AIR
                 } else {
-                    old.get(vxe_world::index_in_brick(l))
+                    old.get(svet_world::index_in_brick(l))
                 }
             });
             out.set_brick(slot, brick);
@@ -193,9 +193,9 @@ pub fn clear_box(scene: &VoxScene, offset: [i32; 3], quarters: u8) -> Option<([i
 pub struct VoxOps {
     /// The prefabs the stamps name, the air box's first when there is one, registered on the
     /// server and the client.
-    pub prefabs: Vec<std::sync::Arc<vxe_world::Prefab>>,
+    pub prefabs: Vec<std::sync::Arc<svet_world::Prefab>>,
     /// The air box's stamp when clear is on, then one stamp per placement.
-    pub ops: Vec<vxe_world::Op>,
+    pub ops: Vec<svet_world::Op>,
 }
 
 /// `scene` turned `quarters` quarter turns and moved by `offset` as ops: when `clear`, a stamp
@@ -203,7 +203,7 @@ pub struct VoxOps {
 /// residency finishes as the chunks arrive, ADR-0066), then a stamp per placement in order,
 /// as [`source`] writes them.
 pub fn ops(scene: &VoxScene, offset: [i32; 3], quarters: u8, clear: bool) -> VoxOps {
-    use vxe_world::{Op, Prefab, Rot, VoxelCoord};
+    use svet_world::{Op, Prefab, Rot, VoxelCoord};
     let mut ops = Vec::new();
     let mut prefabs = Vec::new();
     if clear && let Some((lo, hi)) = clear_box(scene, offset, quarters) {
@@ -266,7 +266,7 @@ pub fn chapel_vox(voxtext: &str) -> Result<VoxFile, String> {
     };
     // `to_vox_file` writes model k under transform 2 + 2k over shape 3 + 2k, under group 1.
     let (transept, scaffold) = (2 + 2, 2 + 2 * 3);
-    let Some(vxe_assets::Node::Transform { translation, .. }) = file.nodes.get(&transept).cloned()
+    let Some(svet_assets::Node::Transform { translation, .. }) = file.nodes.get(&transept).cloned()
     else {
         return Err("the chapel has no transept".into());
     };
@@ -274,7 +274,7 @@ pub fn chapel_vox(voxtext: &str) -> Result<VoxFile, String> {
     let (rot, _) = decode_frame(CHAPEL_MIRROR).map_err(|e| e.to_string())?;
     file.nodes.insert(
         mirror,
-        vxe_assets::Node::Transform {
+        svet_assets::Node::Transform {
             child: transept + 1,
             translation: [translation[0], -translation[1], translation[2]],
             rot,
@@ -282,14 +282,14 @@ pub fn chapel_vox(voxtext: &str) -> Result<VoxFile, String> {
     );
     file.reflected.insert(mirror, CHAPEL_MIRROR);
     file.names.insert(mirror, "transept mirrored".into());
-    if let Some(vxe_assets::Node::Group { children }) = file.nodes.get_mut(&1) {
+    if let Some(svet_assets::Node::Group { children }) = file.nodes.get_mut(&1) {
         children.push(mirror);
     }
     file.node_layers.insert(scaffold, 1);
-    file.layers.insert(0, vxe_assets::VoxLayer::default());
+    file.layers.insert(0, svet_assets::VoxLayer::default());
     file.layers.insert(
         1,
-        vxe_assets::VoxLayer {
+        svet_assets::VoxLayer {
             name: "scaffold".into(),
             hidden: true,
         },

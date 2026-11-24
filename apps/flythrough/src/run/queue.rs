@@ -6,9 +6,9 @@ use crate::now;
 use crate::percentile;
 use crate::run::Run;
 use crate::run::hud_feed::write_queue_banner_row;
-use vxe_app::Gpu;
-use vxe_render::wgpu;
-use vxe_world::ChunkCoord;
+use svet_app::Gpu;
+use svet_render::wgpu;
+use svet_world::ChunkCoord;
 
 /// Samples a step of the live queue's pre-roll draws: about one chunk's brick level at 4096, so
 /// the jobs it opens stay near the camera.
@@ -51,7 +51,7 @@ pub(crate) enum Drain {
 /// pending and no coarse block waiting for its refinement. The chunks still without a block are
 /// those it cannot take (their reach crosses the streamer's full radius, or they are not
 /// resident full).
-pub(crate) fn drain_idle(st: &vxe_render::QueueStats) -> bool {
+pub(crate) fn drain_idle(st: &svet_render::QueueStats) -> bool {
     st.jobs == 0 && st.coarse == 0
 }
 
@@ -60,7 +60,7 @@ pub(crate) fn drain_idle(st: &vxe_render::QueueStats) -> bool {
 pub(crate) fn write_drain_banner(
     out: &mut String,
     drain: Drain,
-    stats: Option<&vxe_render::QueueStats>,
+    stats: Option<&svet_render::QueueStats>,
     secs: f64,
     now_ms: f64,
 ) {
@@ -106,7 +106,7 @@ pub(crate) fn write_drain_banner(
 pub(crate) struct QueueRun {
     /// `--pre-roll-drain`'s state.
     pub(crate) drain: Drain,
-    pub(crate) prepared: Vec<(ChunkCoord, vxe_world::Prepared)>,
+    pub(crate) prepared: Vec<(ChunkCoord, svet_world::Prepared)>,
     /// Ms since the start at the last line, and the chunks baked and samples then.
     pub(crate) line_ms: f64,
     pub(crate) line_frame: u32,
@@ -116,7 +116,7 @@ pub(crate) struct QueueRun {
     /// The submits' ms since the last line.
     pub(crate) slices: Vec<f64>,
     pub(crate) emptied: bool,
-    pub(crate) stats: Option<vxe_render::QueueStats>,
+    pub(crate) stats: Option<svet_render::QueueStats>,
     pub(crate) failed: bool,
     /// Ms since the start at the last step, and the dig being watched.
     pub(crate) step_ms: Option<f64>,
@@ -126,13 +126,13 @@ pub(crate) struct QueueRun {
     pub(crate) last_step_cpu: f64,
     /// The steps' stages since the last line, and over the run by the regime of their second
     /// (the `frames:` summary's `queue step` lines).
-    pub(crate) line_stages: Vec<vxe_render::debug::StepStages>,
-    /// The queue's candidates scored at the last step line ([`vxe_render::QueueStats::visited_total`]).
+    pub(crate) line_stages: Vec<svet_render::debug::StepStages>,
+    /// The queue's candidates scored at the last step line ([`svet_render::QueueStats::visited_total`]).
     pub(crate) line_visited: u64,
-    pub(crate) tally: vxe_render::debug::StepTally,
+    pub(crate) tally: svet_render::debug::StepTally,
     /// The jobs and the openings at the last line, and the last line's step p50 (the HUD's).
     pub(crate) line_openings: u64,
-    /// [`vxe_render::QueueStats::starved_openings`] at the last line.
+    /// [`svet_render::QueueStats::starved_openings`] at the last line.
     pub(crate) line_starved: u64,
     pub(crate) line_step_p50: f64,
     /// The samples by view class and passed at the last line.
@@ -140,9 +140,9 @@ pub(crate) struct QueueRun {
     pub(crate) line_passed: u64,
     /// The samples a second over the last line's second: the in-view drain's rate.
     pub(crate) line_rate: f64,
-    /// [`vxe_render::QueueStats::class_samples`] and `class_ms` at the last line.
+    /// [`svet_render::QueueStats::class_samples`] and `class_ms` at the last line.
     pub(crate) line_class: ([u64; 2], [f64; 2]),
-    /// [`vxe_render::QueueStats::mirror_changes`] at the last line.
+    /// [`svet_render::QueueStats::mirror_changes`] at the last line.
     pub(crate) line_changes: u64,
     /// Whether the next step prints `--queue-census`'s listing census (set once at the hand-
     /// over to the live queue).
@@ -153,8 +153,8 @@ pub(crate) struct QueueRun {
 /// due ([`QueueRun::listing_due`]), once.
 fn print_listing_census(
     gfx: &mut crate::run::Gfx,
-    world: &vxe_world::World,
-    view: &vxe_render::QueueView<'_>,
+    world: &svet_world::World,
+    view: &svet_render::QueueView<'_>,
     q: &mut QueueRun,
 ) {
     if !std::mem::take(&mut q.listing_due) {
@@ -178,11 +178,11 @@ fn print_listing_census(
 }
 
 /// `--queue-census`'s `bake queue census:` line of a listing census.
-pub(crate) fn listing_census_line(c: &vxe_render::ListingCensus, depth: u64) -> String {
+pub(crate) fn listing_census_line(c: &svet_render::ListingCensus, depth: u64) -> String {
     let band = |k: usize| {
         format!(
             "{} {} ({} in view, {} reach-bound)",
-            vxe_render::Band::ALL[k].name(),
+            svet_render::Band::ALL[k].name(),
             c.surface[k][0] + c.surface[k][1],
             c.surface[k][1],
             c.reach_bound[k]
@@ -205,12 +205,12 @@ pub(crate) fn listing_census_line(c: &vxe_render::ListingCensus, depth: u64) -> 
 
 impl QueueRun {
     /// The in-view drain of `st` at the last line's rate.
-    pub(crate) fn drain_of(&self, st: &vxe_render::QueueStats) -> crate::report::QueueDrain {
+    pub(crate) fn drain_of(&self, st: &svet_render::QueueStats) -> crate::report::QueueDrain {
         crate::report::QueueDrain {
             depth: st.depth,
             waiting: st.in_view,
             samples_per_s: self.line_rate,
-            rule_missed: (st.rule_missed != vxe_render::RuleMissed::default())
+            rule_missed: (st.rule_missed != svet_render::RuleMissed::default())
                 .then_some(st.rule_missed),
         }
     }
@@ -238,14 +238,14 @@ pub(crate) fn class_ns_text(samples: [u64; 2], ms: [f64; 2]) -> String {
 /// `q`'s last line and takes its steps.
 pub(crate) fn queue_step_line(
     q: &mut QueueRun,
-    st: &vxe_render::QueueStats,
+    st: &svet_render::QueueStats,
     at_s: f64,
     secs: f64,
     bake_ms_per_s: f64,
-    reach: vxe_render::ReachMode,
+    reach: svet_render::ReachMode,
 ) -> String {
     use std::fmt::Write as _;
-    use vxe_render::{debug::Regime, debug::STEP_STAGES, internals::VIEW_IN};
+    use svet_render::{debug::Regime, debug::STEP_STAGES, internals::VIEW_IN};
     let samples = st.total_samples - q.line_samples;
     let baked = st.baked - q.line_baked;
     let regime = Regime::of(samples, baked);
@@ -324,20 +324,20 @@ pub(crate) struct DigWatch {
     /// rings 1 and 2 are baked (`--read-missing` only).
     pub(crate) missing_max: f64,
     pub(crate) rings_ms: Option<(f64, u32)>,
-    pub(crate) from: vxe_render::QueueStats,
+    pub(crate) from: svet_render::QueueStats,
 }
 
 /// The camera the run starts at: the castle's shot, the showcase's shot, `--pose`'s still
 /// camera, or the spawn facing +x.
 /// The live queue's view angles for a camera of `vfov` drawn at `size` (output pixels): the
 /// cone's half-angle (the wider of the two) and the frustum's horizontal and vertical ones;
-/// and the output's focal length in pixels ([`vxe_render::Bands::focal_px`]).
+/// and the output's focal length in pixels ([`svet_render::Bands::focal_px`]).
 pub(crate) fn queue_view_angles(vfov: f32, size: [u32; 2]) -> (f32, [f32; 2], f32) {
     let aspect = size[0].max(1) as f32 / size[1].max(1) as f32;
     (
-        vxe_render::internals::view_half_angle(vfov, aspect),
-        vxe_render::internals::view_half_angles(vfov, aspect),
-        vxe_render::Bands::focal_px(size[1], vfov),
+        svet_render::internals::view_half_angle(vfov, aspect),
+        svet_render::internals::view_half_angles(vfov, aspect),
+        svet_render::Bands::focal_px(size[1], vfov),
     )
 }
 
@@ -349,7 +349,7 @@ pub(crate) fn queue_view_angles(vfov: f32, size: [u32; 2]) -> (f32, [f32; 2], f3
 /// chunk ranks with the median blank one, and the census by class, distance band and angle
 /// band.
 pub(crate) fn queue_view_line(
-    st: &vxe_render::QueueStats,
+    st: &svet_render::QueueStats,
     line_view: [u64; 3],
     line_passed: u64,
     needs: &[f32],
@@ -457,7 +457,7 @@ impl Run {
         let (forward, _, _) = self.fly.camera.basis();
         let stream = self.stream.as_ref();
         let resident_fn = |c: ChunkCoord| {
-            stream.is_some_and(|s| s.streamer.tier(c) == Some(vxe_world::Tier::Full))
+            stream.is_some_and(|s| s.streamer.tier(c) == Some(svet_world::Tier::Full))
         };
         let resident: Option<&dyn Fn(ChunkCoord) -> bool> = stream
             .is_some()
@@ -466,7 +466,7 @@ impl Run {
             queue_view_angles(self.fly.camera.vfov, gfx.frame.output_size());
         let t_step = ms_since(self.start);
         let dt = self.queue.step_ms.replace(t_step).map(|at| t_step - at);
-        let view = vxe_render::QueueView {
+        let view = svet_render::QueueView {
             eye: self.fly.camera.position.to_array(),
             forward: forward.to_array(),
             resident,
@@ -572,7 +572,7 @@ impl Run {
                     && gfx
                         .frame
                         .bake_queue()
-                        .is_some_and(vxe_render::BakeQueue::empty)
+                        .is_some_and(svet_render::BakeQueue::empty)
                 {
                     self.queue.emptied = true;
                     println!(
@@ -604,7 +604,7 @@ impl Run {
             return;
         }
         if let Some(gfx) = self.gfx.as_mut() {
-            gfx.frame.set_bake_budget(vxe_render::Budget::PerFrame {
+            gfx.frame.set_bake_budget(svet_render::Budget::PerFrame {
                 ms: PRE_ROLL_DRAIN_MS,
             });
         }
@@ -673,8 +673,8 @@ impl Run {
             return;
         };
         let (d, q) = (&gpu.device, &gpu.queue);
-        let hits = vxe_render::debug::read_rgba32f(d, q, gfx.frame.light_hit_positions());
-        let moments = vxe_render::debug::read_rgba16f(d, q, gfx.frame.moments());
+        let hits = svet_render::debug::read_rgba32f(d, q, gfx.frame.light_hit_positions());
+        let moments = svet_render::debug::read_rgba16f(d, q, gfx.frame.moments());
         let eye = self.fly.camera.position.to_array();
         let far_voxels = DRAIN_FAR_M / crate::audio::METRES_PER_VOXEL;
         let (mut far, mut far_baked) = (0usize, 0usize);
@@ -720,7 +720,7 @@ impl Run {
             let (store_stats, store_age) = gfx
                 .frame
                 .try_store_stats(&gpu.device)
-                .map_or((vxe_render::StoreStats::default(), None), |(s, age)| {
+                .map_or((svet_render::StoreStats::default(), None), |(s, age)| {
                     (s, Some(age))
                 });
             // The workers' shells under their lock, once a line.
@@ -866,7 +866,7 @@ impl Run {
 /// The per-second `bake queue slice:` line: the slice granted and whether it was the drain's
 /// value (ADR-0080 rule 3), the chunks in view still waiting for their tier, the slices drawn,
 /// why the submits' plans stopped, and the reads of the in-view set with their mean and longest cost.
-fn print_slice_line(t: f64, st: &vxe_render::QueueStats, p50: f64) {
+fn print_slice_line(t: f64, st: &svet_render::QueueStats, p50: f64) {
     println!(
         "bake queue slice: at {:.1} s, granted {:.2} ms ({}, {} in view waiting for their tier), drawn p50 {:.2} ms, plans stopped at the cap {} at the batch {} out of rounds {}, steps with every submit slot unread {}, the in-view set read {} times, mean {:.3} ms, max {:.3} ms",
         t / 1e3,

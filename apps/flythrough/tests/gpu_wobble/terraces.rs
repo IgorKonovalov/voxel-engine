@@ -25,7 +25,7 @@ const FLY_M_S: f32 = 0.5;
 fn slope_rig() -> Option<(Rig, Camera)> {
     use flythrough::outdoor::{OutdoorSource, Spawn};
     use flythrough::trees::{ForestSource, LEAF_FILL, TreeDensity};
-    use vxe_world::{ChunkExtent, World};
+    use svet_world::{ChunkExtent, World};
     let source = ForestSource::new(OutdoorSource::new(1), TreeDensity::Sparse, LEAF_FILL);
     let (eye, facing) = source.base().spawn(Spawn::Outside);
     let c = eye.chunk().0;
@@ -57,7 +57,7 @@ struct Read {
 }
 
 fn read_frame(rig: &Rig, s: &mut Stepper, cam: &Camera, arm: &Arm, internal: [u32; 2]) -> Read {
-    use vxe_render::debug::{read_rgba8, read_rgba16f};
+    use svet_render::debug::{read_rgba8, read_rgba16f};
     let shot = s.step(rig, cam);
     let (d, q) = (&rig.device, &rig.queue);
     let f = &s.frame;
@@ -83,7 +83,7 @@ fn read_frame(rig: &Rig, s: &mut Stepper, cam: &Camera, arm: &Arm, internal: [u3
         1.0 - x * x * (3.0 - 2.0 * x)
     };
     let ms = |name: &str| {
-        vxe_render::FRAME_PASSES
+        svet_render::FRAME_PASSES
             .iter()
             .position(|&p| p == name)
             .and_then(|i| shot.passes.get(i).copied())
@@ -225,7 +225,7 @@ mod reading {
 
     /// The last frame's display.
     fn reads_png(rig: &Rig, s: &Stepper) -> Vec<u8> {
-        vxe_render::debug::read_rgba8(&rig.device, &rig.queue, s.frame.target())
+        svet_render::debug::read_rgba8(&rig.device, &rig.queue, s.frame.target())
     }
 
     /// The reading: the arm `VXE_WOBBLE` names on the noon slope, its still and fly lines and
@@ -253,16 +253,16 @@ mod reading {
             queue_step(rig, &mut s.frame, &cam0);
             s.run(rig, &cam0);
         }
-        let st = vxe_render::debug::read_buffer(
+        let st = svet_render::debug::read_buffer(
             &rig.device,
             &rig.queue,
             s.frame.exposure_state(),
             0,
             32,
         );
-        let e = vxe_render::ExposureState::from_bytes(&st).current;
-        s.frame.set_lighting(vxe_render::Lighting {
-            exposure: vxe_render::Exposure::Manual(e),
+        let e = svet_render::ExposureState::from_bytes(&st).current;
+        s.frame.set_lighting(svet_render::Lighting {
+            exposure: svet_render::Exposure::Manual(e),
             ..s.frame.lighting()
         });
         QUEUE_ON.with(|q| q.set(false));

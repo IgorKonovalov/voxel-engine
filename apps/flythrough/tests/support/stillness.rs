@@ -26,7 +26,7 @@
 //! nothing.
 
 use super::*;
-use vxe_render::{Exposure, Frame, GpuWorld, LightParams, Lighting, MirrorConfig, Window};
+use svet_render::{Exposure, Frame, GpuWorld, LightParams, Lighting, MirrorConfig, Window};
 
 /// Frames with the lamp on before it switches off.
 pub const LAMP_ON: usize = 120;
@@ -80,7 +80,7 @@ pub fn vein_level_on(
         &source,
         &flythrough::with_emissive_ore(&flythrough::cave_materials()),
     );
-    let pool = flythrough::level_pool_units(&world, false) * vxe_render::internals::UNIT_BYTES;
+    let pool = flythrough::level_pool_units(&world, false) * svet_render::internals::UNIT_BYTES;
     let (device, queue, adapter) = device(pool)?;
     let cfg = MirrorConfig {
         budget_bytes: 256 << 20,
@@ -116,7 +116,7 @@ pub fn outdoor_level_on(
         [c[0] + r + 1, c[1] + r + 1, c[2] + r / 2 + 1],
     );
     let world = World::generate(extent, &source, &flythrough::outdoor_materials());
-    let pool = flythrough::level_pool_units(&world, false) * vxe_render::internals::UNIT_BYTES;
+    let pool = flythrough::level_pool_units(&world, false) * svet_render::internals::UNIT_BYTES;
     let (device, queue, adapter) = device(pool)?;
     let cfg = MirrorConfig {
         budget_bytes: 256 << 20,
@@ -307,7 +307,7 @@ pub fn run_under_sky(
     pose: &Pose,
     lighting: Lighting,
     size: [u32; 2],
-    sky: vxe_render::sky::Sky,
+    sky: svet_render::sky::Sky,
 ) -> Reading {
     let dark = Lighting {
         lamp: false,
@@ -333,7 +333,7 @@ fn run_inner(
     lighting: Lighting,
     size: [u32; 2],
     halve_at: Option<usize>,
-    sky: Option<vxe_render::sky::Sky>,
+    sky: Option<svet_render::sky::Sky>,
 ) -> Reading {
     let (device, queue) = (&level.device, &level.queue);
     let lit = Lighting {
@@ -383,7 +383,7 @@ fn run_inner(
         if off < WINDOW.0 || off > WINDOW.1 {
             continue;
         }
-        let b = vxe_render::debug::read_buffer(
+        let b = svet_render::debug::read_buffer(
             device,
             queue,
             frame.exposure_tiles(),
@@ -403,9 +403,13 @@ fn run_inner(
         let acc = frame.accumulated();
         let grid = [acc.width(), acc.height()];
         let scale = size[0].div_ceil(grid[0]);
-        let e = vxe_render::debug::read_float(device, queue, acc);
+        let e = svet_render::debug::read_float(device, queue, acc);
         emissive.push(grid_tiles(&e, grid, size, scale, pose.exposure));
-        images.push(vxe_render::debug::read_rgba8(device, queue, frame.target()));
+        images.push(svet_render::debug::read_rgba8(
+            device,
+            queue,
+            frame.target(),
+        ));
     }
     if let Some(tag) = std::env::var("STILL_FILMSTRIP")
         .ok()

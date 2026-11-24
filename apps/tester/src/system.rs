@@ -9,7 +9,7 @@
 use std::fmt::Write as _;
 
 use flythrough::report::write_json_string;
-use vxe_app::wgpu;
+use svet_app::wgpu;
 
 /// The pool a streamed fly-through asks one storage binding and one buffer to hold
 /// (`STREAM_POOL_BYTES` in the fly-through, 2 GiB); an adapter offering less spreads the pool
@@ -29,7 +29,7 @@ pub struct AdapterRow {
     pub max_buffer_size: u64,
     pub max_storage_buffer_binding_size: u64,
     pub max_storage_buffers_per_shader_stage: u32,
-    /// The renderer's floor (`vxe_render::limits_within`) is met: the fly-through can start.
+    /// The renderer's floor (`svet_render::limits_within`) is met: the fly-through can start.
     pub meets_floor: bool,
     /// One binding holds the streamed pool whole, without shards.
     pub holds_pool: bool,
@@ -45,11 +45,11 @@ impl AdapterRow {
             device_type: format!("{:?}", info.device_type),
             driver: info.driver.clone(),
             driver_info: info.driver_info.clone(),
-            backend: vxe_app::backend_label(info.backend),
+            backend: svet_app::backend_label(info.backend),
             max_buffer_size: limits.max_buffer_size,
             max_storage_buffer_binding_size: limits.max_storage_buffer_binding_size,
             max_storage_buffers_per_shader_stage: limits.max_storage_buffers_per_shader_stage,
-            meets_floor: vxe_render::limits_within(limits, STREAM_POOL_BYTES).is_ok(),
+            meets_floor: svet_render::limits_within(limits, STREAM_POOL_BYTES).is_ok(),
             holds_pool: limits.max_buffer_size >= STREAM_POOL_BYTES
                 && limits.max_storage_buffer_binding_size >= STREAM_POOL_BYTES,
         }
@@ -391,10 +391,10 @@ mod os {
 /// loop that opens no window and exits at once. `None` where no event loop starts (no display
 /// server). One event loop per process: the launcher asks a child of itself for this.
 pub fn displays() -> Option<Vec<Display>> {
-    use vxe_app::winit::application::ApplicationHandler;
-    use vxe_app::winit::event::WindowEvent;
-    use vxe_app::winit::event_loop::{ActiveEventLoop, EventLoop};
-    use vxe_app::winit::window::WindowId;
+    use svet_app::winit::application::ApplicationHandler;
+    use svet_app::winit::event::WindowEvent;
+    use svet_app::winit::event_loop::{ActiveEventLoop, EventLoop};
+    use svet_app::winit::window::WindowId;
 
     struct Probe(Option<Vec<Display>>);
 

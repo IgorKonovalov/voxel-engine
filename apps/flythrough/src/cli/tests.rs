@@ -11,12 +11,12 @@ use crate::setup::{default_workers, shell_config};
 use crate::showcase::SHOTS;
 use crate::test_support::argv;
 use crate::{LogicChoice, LookPreset, RESIDENCY};
-use vxe_app::Pacing;
-use vxe_render::UpscalerKind;
+use svet_app::Pacing;
+use svet_render::UpscalerKind;
 mod exposure;
 mod outdoor;
 
-use vxe_render::{
+use svet_render::{
     AutoExposure, Exposure, HistoryKill, LightingResolution, NormalMode, RenderScale, ShadowWalk,
 };
 
@@ -209,7 +209,7 @@ fn exposure_flags_parse_and_refuse_bad_values() {
         [auto.tau_light, auto.tau_cone, auto.tau_rod, auto.cone_floor],
         [0.1, 0.5, 2.0, 0.01]
     );
-    assert_eq!(auto.metering, vxe_render::Metering::Average);
+    assert_eq!(auto.metering, svet_render::Metering::Average);
     assert_eq!(auto.key, 0.18);
     let i = parse_args_from(argv(&["--exposure", "auto", "--adaptation", "instant"])).unwrap();
     assert_eq!(
@@ -279,12 +279,12 @@ fn pad_parses_on_and_off() {
 #[test]
 fn the_window_takes_the_adapter_flag() {
     let args = parse_args_from(argv(&["--adapter", "Radeon"])).unwrap();
-    let config = shell_config(&args, [640, 360], vxe_app::Pacing::Unthrottled);
+    let config = shell_config(&args, [640, 360], svet_app::Pacing::Unthrottled);
     assert_eq!(config.adapter.as_deref(), Some("Radeon"));
     assert_eq!(config.size, [640, 360]);
     let none = parse_args_from(argv(&[])).unwrap();
     assert_eq!(
-        shell_config(&none, [640, 360], vxe_app::Pacing::Unthrottled).adapter,
+        shell_config(&none, [640, 360], svet_app::Pacing::Unthrottled).adapter,
         None
     );
     let names = [
@@ -294,10 +294,10 @@ fn the_window_takes_the_adapter_flag() {
         "AMD Radeon Graphics (RADV RENOIR) copy",
     ]
     .map(str::to_owned);
-    assert_eq!(vxe_app::pick_adapter(&names, "Radeon"), Some(1));
-    assert_eq!(vxe_app::pick_adapter(&names, "NVIDIA"), Some(0));
-    assert_eq!(vxe_app::pick_adapter(&names, "llvmpipe"), Some(2));
-    assert_eq!(vxe_app::pick_adapter(&names, "Intel"), None);
+    assert_eq!(svet_app::pick_adapter(&names, "Radeon"), Some(1));
+    assert_eq!(svet_app::pick_adapter(&names, "NVIDIA"), Some(0));
+    assert_eq!(svet_app::pick_adapter(&names, "llvmpipe"), Some(2));
+    assert_eq!(svet_app::pick_adapter(&names, "Intel"), None);
     let headless = parse_args_from(argv(&["--pad", "on", "--headless"])).unwrap();
     assert!(!headless.wants_pad());
     let pilot = parse_args_from(argv(&["--autopilot"])).unwrap();
@@ -403,7 +403,7 @@ fn source_showcase_parses_with_the_lamp_off_and_refuses_what_it_cannot_take() {
     assert!(parse_args_from(argv(&["--level", "--shot", "hall"])).is_err());
     let level = parse_args_from(argv(&["--source", "level"])).expect("parses");
     assert!(level.mode.is_level() && !level.mode.is_showcase() && level.light.lamp());
-    assert_eq!(level.light.radius(), vxe_render::DEFAULT_LIGHT_RADIUS);
+    assert_eq!(level.light.radius(), svet_render::DEFAULT_LIGHT_RADIUS);
     let cave = parse_args_from(argv(&["--level", "--source", "cave"])).expect("parses");
     assert!(!cave.mode.is_level() && !cave.mode.is_showcase() && cave.light.lamp());
     assert_eq!(
@@ -441,7 +441,7 @@ fn the_leaf_shadow_flag_parses() {
     let styles = crate::outdoor_styles(crate::LeafShadow::Brick);
     assert_eq!(styles.len(), usize::from(crate::outdoor::LEAF_3) + 1);
     for m in crate::outdoor::LEAF_ROWS {
-        assert_eq!(styles[usize::from(m)], vxe_render::SHADOW_AS_BRICK);
+        assert_eq!(styles[usize::from(m)], svet_render::SHADOW_AS_BRICK);
     }
     assert_eq!(styles.iter().filter(|&&w| w != 0).count(), 3);
     assert!(crate::outdoor_styles(crate::LeafShadow::Voxel).is_empty());
@@ -453,7 +453,7 @@ fn the_leaf_shadow_flag_parses() {
     for m in crate::outdoor::LEAF_ROWS {
         assert_eq!(
             styles[usize::from(m)],
-            vxe_render::SHADOW_ABSORB | (150 << vxe_render::SHADOW_SIGMA_SHIFT)
+            svet_render::SHADOW_ABSORB | (150 << svet_render::SHADOW_SIGMA_SHIFT)
         );
     }
     assert_eq!(styles.iter().filter(|&&w| w != 0).count(), 3);
@@ -528,8 +528,8 @@ fn the_outdoor_source_and_its_flags_parse() {
     );
     // The engine's own default stays the real sun.
     assert_eq!(
-        vxe_render::sky::Body::sun([0.0, 0.0, 1.0]).angular_radius,
-        vxe_render::sky::SUN_ANGULAR_RADIUS
+        svet_render::sky::Body::sun([0.0, 0.0, 1.0]).angular_radius,
+        svet_render::sky::SUN_ANGULAR_RADIUS
     );
     let r = parse_args_from(argv(&["--source", "outdoor", "--sky-rays", "4"])).unwrap();
     assert_eq!(r.start_lighting().sky_rays, 4);
@@ -575,10 +575,10 @@ fn the_outdoor_source_and_its_flags_parse() {
     assert!(parse_args_from(argv(&["--day-length", "0"])).is_err());
     assert!(parse_args_from(argv(&["--sky", "maybe"])).is_err());
     // The outdoor start exposure, unless `--exposure` or `--adaptation` is given.
-    let outdoor = vxe_render::AutoExposure {
+    let outdoor = svet_render::AutoExposure {
         min: 1e-4,
         max: 4.0,
-        ..vxe_render::AutoExposure::eye()
+        ..svet_render::AutoExposure::eye()
     };
     let start = |v: &[&str]| parse_args_from(argv(v)).unwrap().start_lighting().exposure;
     assert_eq!(start(&["--source", "outdoor"]), Exposure::Auto(outdoor));
@@ -588,9 +588,9 @@ fn the_outdoor_source_and_its_flags_parse() {
     );
     assert_eq!(
         start(&["--source", "outdoor", "--adaptation", "eye"]),
-        Exposure::Auto(vxe_render::AutoExposure::eye())
+        Exposure::Auto(svet_render::AutoExposure::eye())
     );
-    assert_eq!(start(&[]), Exposure::Auto(vxe_render::AutoExposure::eye()));
+    assert_eq!(start(&[]), Exposure::Auto(svet_render::AutoExposure::eye()));
     for extra in [
         &["--castle"][..],
         &["--vault"],
@@ -702,25 +702,25 @@ fn lighting_flags_parse_and_refuse_unknown_values() {
     // `--young-filter` reaches the frame's lighting; luma by default.
     assert_eq!(
         d.start_lighting().young_filter,
-        vxe_render::YoungFilter::Luma
+        svet_render::YoungFilter::Luma
     );
     assert_eq!(
         parse(&["--young-filter", "edges"])
             .unwrap()
             .start_lighting()
             .young_filter,
-        vxe_render::YoungFilter::Edges
+        svet_render::YoungFilter::Edges
     );
     assert_eq!(
         parse(&["--entity-light", "own"])
             .unwrap()
             .start_lighting()
             .entity_light,
-        vxe_render::EntityLight::Own
+        svet_render::EntityLight::Own
     );
     assert_eq!(
         d.start_lighting().entity_light,
-        vxe_render::EntityLight::World
+        svet_render::EntityLight::World
     );
     for (flag, err) in [
         ("--emissive-ore", "--emissive-ore takes on or off, not x"),
@@ -1045,12 +1045,12 @@ fn the_start_lighting_is_the_shared_default_lighting() {
         base
     );
     assert!(start.lamp && start.lamp_bounce);
-    assert_eq!(start.penumbra, vxe_render::Penumbra::Disc);
+    assert_eq!(start.penumbra, svet_render::Penumbra::Disc);
     assert_eq!(
         (start.store_read, start.light_weights),
         (
-            vxe_render::StoreRead::Normal,
-            vxe_render::LightWeights::Face
+            svet_render::StoreRead::Normal,
+            svet_render::LightWeights::Face
         )
     );
 }

@@ -21,8 +21,8 @@ use flythrough::cli::table::{Flag, Section, Table, Val};
 use support::settle::*;
 use support::stillness::{Pose, VEIN_POSE, VeinLevel, vein_level_on};
 use support::{SyncNow, adapter_device, stillness};
-use vxe_render::glam::Vec3;
-use vxe_render::{Camera, Exposure, Frame, LightParams, Lighting};
+use svet_render::glam::Vec3;
+use svet_render::{Camera, Exposure, Frame, LightParams, Lighting};
 
 /// The flags as read; a list left unset takes each reading's own default.
 struct Args {
@@ -844,9 +844,9 @@ fn strip_flight_dot_readings(args: &Args) {
 fn strip_path_readings(_: &Args) {
     let source = flythrough::cave::CaveSource::new(
         1,
-        vxe_world::ChunkExtent::new([0, 0, 0], flythrough::cave::LEVEL_CHUNKS),
+        svet_world::ChunkExtent::new([0, 0, 0], flythrough::cave::LEVEL_CHUNKS),
     );
-    let world = vxe_world::World::generate(
+    let world = svet_world::World::generate(
         source.extent,
         &source,
         &flythrough::with_emissive_ore(&flythrough::cave_materials()),
@@ -859,7 +859,7 @@ fn strip_path_readings(_: &Args) {
             camera.position += fwd * STRIP_SPEED / 60.0;
             camera.yaw += STRIP_YAW.to_radians() / 60.0;
             let v = camera.position.to_array().map(|c| c.floor() as i32);
-            let air = world.material_at(v) == Some(vxe_world::AIR);
+            let air = world.material_at(v) == Some(svet_world::AIR);
             if f % 12 == 0 {
                 line.push(if air { "air" } else { "rock" });
             }
@@ -1009,7 +1009,7 @@ fn flight_cost_readings(args: &Args) {
                 lamp: true,
                 lamp_bounce: indirect,
                 exposure: Exposure::Manual(pose.exposure),
-                probe_freeze: freeze.unwrap_or(vxe_render::DEFAULT_PROBE_FREEZE),
+                probe_freeze: freeze.unwrap_or(svet_render::DEFAULT_PROBE_FREEZE),
                 ..Lighting::default()
             };
             let Some(ms) = flight_cost(&level, &pose, lighting, KRun::Path, 120) else {
@@ -1045,7 +1045,7 @@ fn frozen_share_readings(args: &Args) {
         for setting in args.settings().into_iter().filter(|s| !s.auto) {
             let freeze = setting
                 .probe_freeze
-                .unwrap_or(vxe_render::DEFAULT_PROBE_FREEZE);
+                .unwrap_or(svet_render::DEFAULT_PROBE_FREEZE);
             let mut frame = make_frame(&level, &pose, setting);
             let light = LightParams::headlamp();
             let cam = pose.camera();
@@ -1083,8 +1083,8 @@ fn frozen_share_readings(args: &Args) {
 
 /// Air over chunks `[0, 2)^3`, a rock block at x, y in `[40, 64)`, z in `[40, 64)`, and an ore
 /// plate over it at z `[80, 84)`: the block's corner faces the camera, its faces lit from above.
-fn ore_box() -> (vxe_world::World, Camera) {
-    use vxe_world::*;
+fn ore_box() -> (svet_world::World, Camera) {
+    use svet_world::*;
     let table = flythrough::with_emissive_ore(&flythrough::cave_materials());
     let world = World::generate(
         ChunkExtent::new([0, 0, 0], [2, 2, 2]),
@@ -1130,11 +1130,11 @@ fn lamp_reach_readings(args: &Args) {
     };
     let (device, queue) = (&level.device, &level.queue);
     let (box_world, box_camera) = ore_box();
-    let mut box_gpu = vxe_render::GpuWorld::with_config(
+    let mut box_gpu = svet_render::GpuWorld::with_config(
         device,
-        vxe_render::MirrorConfig {
+        svet_render::MirrorConfig {
             budget_bytes: 64 << 20,
-            ..vxe_render::MirrorConfig::new(vxe_render::Window::Fixed(box_world.extent()))
+            ..svet_render::MirrorConfig::new(svet_render::Window::Fixed(box_world.extent()))
         },
     );
     for _ in 0..2 {
@@ -1152,13 +1152,13 @@ fn lamp_reach_readings(args: &Args) {
 }
 
 /// [`lamp_reach_readings`] at one camera over `gpu`.
-fn lamp_reach_at(level: &VeinLevel, name: &str, gpu: &vxe_render::GpuWorld, camera: Camera) {
+fn lamp_reach_at(level: &VeinLevel, name: &str, gpu: &svet_render::GpuWorld, camera: Camera) {
     let adapter = &level.adapter;
     let (device, queue) = (&level.device, &level.queue);
     let light = LightParams::headlamp();
     let size = [160u32, 90];
     let mut frame = Frame::new(device, size[0], size[1]);
-    frame.set_resolution(device, vxe_render::LightingResolution::Full);
+    frame.set_resolution(device, svet_render::LightingResolution::Full);
     frame.set_lighting(Lighting {
         lamp: true,
         candidates: 0,
@@ -1173,7 +1173,7 @@ fn lamp_reach_at(level: &VeinLevel, name: &str, gpu: &vxe_render::GpuWorld, came
     }
     let params = frame.params(gpu, &camera, &light);
     let lamp = Vec3::from(params.lamp.pos);
-    let irr = vxe_render::debug::read_float(device, queue, frame.direct());
+    let irr = svet_render::debug::read_float(device, queue, frame.direct());
     let (cx, cy) = (size[0] / 2, size[1] / 2);
     let mut d_sum = 0.0f64;
     for y in cy - 4..cy + 4 {
@@ -1203,9 +1203,9 @@ fn lamp_reach_at(level: &VeinLevel, name: &str, gpu: &vxe_render::GpuWorld, came
         probe_band[b] = probe_band[b].max(hi);
         probe_count[b] += 1;
     }
-    let pos = vxe_render::debug::read_float(device, queue, frame.hit_positions());
-    let info = vxe_render::debug::read_rgba16u(device, queue, frame.hit_records());
-    let gather = vxe_render::debug::read_float(device, queue, frame.indirect_irradiance());
+    let pos = svet_render::debug::read_float(device, queue, frame.hit_positions());
+    let info = svet_render::debug::read_rgba16u(device, queue, frame.hit_records());
+    let gather = svet_render::debug::read_float(device, queue, frame.indirect_irradiance());
     let mut hit_band = [0.0f64; REACH_BANDS];
     for ((p, i), g) in pos.iter().zip(&info).zip(&gather) {
         if i[3] & 1 == 0 {
@@ -1234,8 +1234,8 @@ fn lamp_reach_at(level: &VeinLevel, name: &str, gpu: &vxe_render::GpuWorld, came
 /// The gather's mean over the hit pixels.
 fn mean_gather(level: &VeinLevel, frame: &Frame) -> f64 {
     let (d, q) = (&level.device, &level.queue);
-    let g = vxe_render::debug::read_float(d, q, frame.indirect_irradiance());
-    let info = vxe_render::debug::read_rgba16u(d, q, frame.hit_records());
+    let g = svet_render::debug::read_float(d, q, frame.indirect_irradiance());
+    let info = svet_render::debug::read_rgba16u(d, q, frame.hit_records());
     let (mut sum, mut n) = (0.0f64, 0u32);
     for (g, i) in g.iter().zip(&info) {
         if i[3] & 1 != 0 {
@@ -1383,7 +1383,7 @@ fn still_lamp_at(args: &Args, level: &VeinLevel, pose: &Pose, bounce: bool) {
         frame.step(&level.device, &level.queue, &level.gpu, &cam, &light);
     }
     let read =
-        |frame: &Frame| vxe_render::debug::read_rgba8(&level.device, &level.queue, frame.target());
+        |frame: &Frame| svet_render::debug::read_rgba8(&level.device, &level.queue, frame.target());
     let mut last = read(&frame);
     let mut moved = Vec::new();
     let mut rays = 0u64;

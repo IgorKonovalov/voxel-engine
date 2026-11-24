@@ -153,7 +153,7 @@ mod flicker {
         use super::super::support;
         use support::defects::{Shot, Stepper, dig_ahead, grid_of, queue_step};
         use support::terms::Rig;
-        use vxe_render::Camera;
+        use svet_render::Camera;
 
         /// The strips' internal size; FSR 2 at 1.5 takes it to [`OUT`].
         pub(in super::super) const INTERNAL: [u32; 2] = [640, 360];
@@ -244,7 +244,7 @@ mod flicker {
             let cam = pitched(&cam, -30.0);
             let mut s = strip_frame(&mut rig, split_sky(), &cam);
             let arm = std::env::var("VXE_HOLE_ARM").unwrap_or_else(|_| "no-pool".into());
-            s.frame.set_light_hooks(vxe_render::LightHooks {
+            s.frame.set_light_hooks(svet_render::LightHooks {
                 pool: !arm.ends_with("no-pool"),
                 seed_stale_f: arm.starts_with("seed-f"),
                 ..Default::default()
@@ -273,7 +273,7 @@ mod flicker {
         /// queue in 6000 frames): the defaults under the auto exposure, the exposure pinned at
         /// its settled value, then pinned with `key_no_jitter`, and pinned with `key_off`.
         /// `VXE_TEST_ADAPTER` picks the adapter.
-        fn hills_at_rest(arm: &str, pin: bool, hooks: vxe_render::LightHooks) {
+        fn hills_at_rest(arm: &str, pin: bool, hooks: svet_render::LightHooks) {
             let Some((mut rig, cam)) = support::terms::hills_rig() else {
                 return;
             };
@@ -287,8 +287,8 @@ mod flicker {
             settle(&mut rig, &mut s, &cam, 240);
             if pin {
                 let e = s.frame.exposure_readout(&rig.device).map(|r| r.exposure).expect("a read-back");
-                s.frame.set_lighting(vxe_render::Lighting {
-                    exposure: vxe_render::Exposure::Manual(e),
+                s.frame.set_lighting(svet_render::Lighting {
+                    exposure: svet_render::Exposure::Manual(e),
                     ..s.frame.lighting()
                 });
             }
@@ -315,19 +315,19 @@ mod flicker {
         #[test]
         #[ignore = "reading"]
         fn hills_at_rest_auto() {
-            hills_at_rest("auto exposure", false, vxe_render::LightHooks::default());
+            hills_at_rest("auto exposure", false, svet_render::LightHooks::default());
         }
 
         #[test]
         #[ignore = "reading"]
         fn hills_at_rest_pinned() {
-            hills_at_rest("exposure pinned", true, vxe_render::LightHooks::default());
+            hills_at_rest("exposure pinned", true, svet_render::LightHooks::default());
         }
 
         #[test]
         #[ignore = "reading"]
         fn hills_at_rest_no_jitter() {
-            let hooks = vxe_render::LightHooks {
+            let hooks = svet_render::LightHooks {
                 key_no_jitter: true,
                 ..Default::default()
             };
@@ -337,7 +337,7 @@ mod flicker {
         #[test]
         #[ignore = "reading"]
         fn hills_at_rest_key_off() {
-            let hooks = vxe_render::LightHooks {
+            let hooks = svet_render::LightHooks {
                 key_off: true,
                 ..Default::default()
             };
@@ -463,7 +463,7 @@ mod flicker {
             let cam = pitched(&cam, -30.0);
             let mut s = strip_frame(&mut rig, split_sky(), &cam);
             let arm = std::env::var("VXE_HOLE_ARM").unwrap_or_else(|_| "no-pool".into());
-            s.frame.set_light_hooks(vxe_render::LightHooks {
+            s.frame.set_light_hooks(svet_render::LightHooks {
                 pool: !arm.ends_with("no-pool"),
                 key_off: arm == "key-off",
                 seed_stale_f: arm.starts_with("seed-f"),
@@ -477,7 +477,7 @@ mod flicker {
             }
             settle(&mut rig, &mut s, &cam, 240);
             let pair_of = |rig: &Rig, s: &Stepper| {
-                vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, s.frame.visibility_pair())
+                svet_render::debug::read_rgba16f(&rig.device, &rig.queue, s.frame.visibility_pair())
             };
             let mut shots: Vec<(Shot, Vec<[f32; 4]>)> = Vec::new();
             for _ in 0..MEAN_FRAMES {
@@ -534,7 +534,7 @@ mod flicker {
             let settled = &shots[(MEAN_FRAMES + landing + F + 16).min(shots.len() - 1)].1;
             // The a-trous passes' ms (the variance pass and its four iterations share the
             // slot): the 8 still frames, and the frames from N to the landing plus F.
-            let atrous = vxe_render::FRAME_PASSES.iter().position(|&n| n == "atrous");
+            let atrous = svet_render::FRAME_PASSES.iter().position(|&n| n == "atrous");
             let ms = |r: std::ops::Range<usize>| {
                 let v: Vec<f64> = shots[r]
                     .iter()
@@ -621,10 +621,10 @@ mod flicker {
         #[ignore = "reading"]
         fn flicker_dig_streamed() {
             use std::cell::RefCell;
-            use vxe_render::{GpuWorld, MirrorConfig, QueueView, Window};
-            use vxe_world::{ChunkCoord, PersistConfig, StreamConfig, Streamer, Tier, World};
+            use svet_render::{GpuWorld, MirrorConfig, QueueView, Window};
+            use svet_world::{ChunkCoord, PersistConfig, StreamConfig, Streamer, Tier, World};
             let residency = flythrough::RESIDENCY;
-            let budget = vxe_render::DEFAULT_BUDGET_BYTES;
+            let budget = svet_render::DEFAULT_BUDGET_BYTES;
             let Some((device, queue, adapter)) = support::reading_device(budget) else {
                 return;
             };
@@ -671,7 +671,7 @@ mod flicker {
             let cam = pitched(&cam, -30.0);
             let f = flicker_frame(&rig, split_sky(), None, false);
             let mut s = Stepper::new(&rig, f);
-            let mut tick = |rig: &mut Rig, f: &mut vxe_render::Frame, cam: &Camera| {
+            let mut tick = |rig: &mut Rig, f: &mut svet_render::Frame, cam: &Camera| {
                 let mut st = streamer.borrow_mut();
                 st.update(&rig.world, &[eye]);
                 rig.gpu.apply_events(&st.poll(&rig.world));
@@ -691,7 +691,7 @@ mod flicker {
                     hold: Some(residency.r_full + rig.gpu.light_radius() + 1),
                     half_angle: {
                         let [w, h] = f.output_size();
-                        vxe_render::internals::view_half_angle(cam.vfov, w as f32 / h as f32)
+                        svet_render::internals::view_half_angle(cam.vfov, w as f32 / h as f32)
                     },
                     frustum: None,
                     full_radius: Some(residency.r_full),
@@ -776,7 +776,7 @@ mod flicker {
         /// flash"); `pin` the
         /// exposure manual at its settled value from the settle's end; `hold=on|land|rays|off`
         /// (`Lighting::dig_hold`).
-        pub(in super::super) fn dig_arm(f: &mut vxe_render::Frame, arm: &str) -> bool {
+        pub(in super::super) fn dig_arm(f: &mut svet_render::Frame, arm: &str) -> bool {
             let mut l = f.lighting();
             let mut look = f.look();
             let mut pin = false;
@@ -785,26 +785,26 @@ mod flicker {
                     "default" => {}
                     "calm" => {
                         l.light_history = false;
-                        l.key_far = vxe_render::KeyFar::Column;
-                        l.key_far_mix = vxe_render::KeyFarMix::Step;
-                        l.penumbra = vxe_render::Penumbra::Disc;
+                        l.key_far = svet_render::KeyFar::Column;
+                        l.key_far_mix = svet_render::KeyFarMix::Step;
+                        l.penumbra = svet_render::Penumbra::Disc;
                         look.far_normal = [4.0, 8.0];
                     }
                     "before" => {
                         l.light_history = true;
-                        l.key_far = vxe_render::KeyFar::Baked;
-                        l.key_far_mix = vxe_render::KeyFarMix::Blend;
+                        l.key_far = svet_render::KeyFar::Baked;
+                        l.key_far_mix = svet_render::KeyFarMix::Blend;
                         look.far_normal = [2.0, 6.0];
-                        l.penumbra = vxe_render::Penumbra::Approach;
+                        l.penumbra = svet_render::Penumbra::Approach;
                     }
                     "hist" => l.light_history = true,
-                    "baked" => l.key_far = vxe_render::KeyFar::Baked,
-                    "blend" => l.key_far_mix = vxe_render::KeyFarMix::Blend,
+                    "baked" => l.key_far = svet_render::KeyFar::Baked,
+                    "blend" => l.key_far_mix = svet_render::KeyFarMix::Blend,
                     "band" => look.far_normal = [2.0, 6.0],
-                    "approach" => l.penumbra = vxe_render::Penumbra::Approach,
+                    "approach" => l.penumbra = svet_render::Penumbra::Approach,
                     "pin" => pin = true,
                     t if t.starts_with("hold=") => {
-                        l.dig_hold = vxe_render::DigHold::from_name(&t[5..]).expect("a hold");
+                        l.dig_hold = svet_render::DigHold::from_name(&t[5..]).expect("a hold");
                     }
                     other => panic!("unknown dig arm token {other}"),
                 }
@@ -854,10 +854,10 @@ mod flicker {
             );
             settle(&mut rig, &mut s, &cam, 240);
             if pin {
-                let st = vxe_render::debug::read_buffer(&rig.device, &rig.queue, s.frame.exposure_state(), 0, 32);
-                let e = vxe_render::ExposureState::from_bytes(&st).current;
-                s.frame.set_lighting(vxe_render::Lighting {
-                    exposure: vxe_render::Exposure::Manual(e),
+                let st = svet_render::debug::read_buffer(&rig.device, &rig.queue, s.frame.exposure_state(), 0, 32);
+                let e = svet_render::ExposureState::from_bytes(&st).current;
+                s.frame.set_lighting(svet_render::Lighting {
+                    exposure: svet_render::Exposure::Manual(e),
                     ..s.frame.lighting()
                 });
                 settle(&mut rig, &mut s, &cam, 8);
@@ -943,18 +943,18 @@ mod flicker {
             let mut f = flicker_frame_at(&rig, sky, None, false, flythrough::LeafShadow::Voxel, sizes);
             if portable {
                 // The Portable profile's queue and lamp (`RenderSettings::profile`).
-                let p = vxe_render::RenderSettings::profile(vxe_render::Profile::Portable);
+                let p = svet_render::RenderSettings::profile(svet_render::Profile::Portable);
                 f.set_bake_budget(p.bake.budget);
                 f.set_bake_tiers(p.bake.tiers);
                 f.set_bake_drain(p.bake.drain);
-                f.set_lighting(vxe_render::Lighting {
+                f.set_lighting(svet_render::Lighting {
                     lamp_bounce: p.lighting.lamp_bounce,
                     ..f.lighting()
                 });
             }
             let out = sizes[1];
             dig_arm(&mut f, arm);
-            let hold = f.lighting().dig_hold != vxe_render::DigHold::Off;
+            let hold = f.lighting().dig_hold != svet_render::DigHold::Off;
             let mut s = Stepper::new(&rig, f);
             let mut n = 0;
             loop {
@@ -1031,7 +1031,7 @@ mod flicker {
         }
 
         /// The split's sky: noon, or the clock at `VXE_SPLIT_TIME` (`HH:MM`).
-        fn split_sky() -> vxe_render::sky::Sky {
+        fn split_sky() -> svet_render::sky::Sky {
             let minutes = std::env::var("VXE_SPLIT_TIME").ok().and_then(|t| {
                 let (h, m) = t.split_once(':')?;
                 Some(h.parse::<f64>().ok()? * 60.0 + m.parse::<f64>().ok()?)
@@ -1064,8 +1064,8 @@ mod flicker {
             lights_changed: bool,
             store_chunks: u64,
             store_coarse: u64,
-            window: Option<vxe_world::ChunkExtent>,
-            q: vxe_render::QueueStats,
+            window: Option<svet_world::ChunkExtent>,
+            q: svet_render::QueueStats,
             /// Per lighting pixel: the stored part's, the direct part's and the filter's output
             /// luminance, the pair's sky mean and the stored flag (the moments' w).
             parts: Vec<[f32; 5]>,
@@ -1073,7 +1073,7 @@ mod flicker {
 
         /// A frame's queue step (and, on a streamed rig, the stream's poll and the mirror's
         /// sync before it).
-        type Tick<'a> = dyn FnMut(&mut Rig, &mut vxe_render::Frame, &Camera) -> vxe_render::QueueStats + 'a;
+        type Tick<'a> = dyn FnMut(&mut Rig, &mut svet_render::Frame, &Camera) -> svet_render::QueueStats + 'a;
 
         fn split_frame(rig: &mut Rig, s: &mut Stepper, cam: &Camera, tick: &mut Tick<'_>) -> SplitFrame {
             let q = tick(rig, &mut s.frame, cam);
@@ -1082,7 +1082,7 @@ mod flicker {
             let (history, lighting) = f.last_encoded_flags();
             let st = f.store().stats(0, 0, 0);
             let parts = {
-                use vxe_render::debug::read_rgba16f;
+                use svet_render::debug::read_rgba16f;
                 let (d, q) = (&rig.device, &rig.queue);
                 let lum = |p: &[f32; 4]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
                 let acc = read_rgba16f(d, q, f.accumulated());
@@ -1214,7 +1214,7 @@ mod flicker {
                     restarts: fr.restarts,
                 });
                 let ms = |name: &str| {
-                    vxe_render::FRAME_PASSES
+                    svet_render::FRAME_PASSES
                         .iter()
                         .position(|&p| p == name)
                         .and_then(|i| sh.passes.get(i).copied())
@@ -1357,21 +1357,21 @@ mod flicker {
         fn castle_arm(arm: &str, pin: Option<f32>, key_off: bool) -> Option<f32> {
             use flythrough::castle;
             use flythrough::outdoor::{OutdoorSource, Spawn};
-            use vxe_world::{ChunkExtent, VoxelCoord, World};
+            use svet_world::{ChunkExtent, VoxelCoord, World};
             let file = castle::castle_vox_where(8, |t| !t.dungeon());
             let mut table = flythrough::outdoor_materials();
-            let base = table.len() as vxe_world::MaterialId;
+            let base = table.len() as svet_world::MaterialId;
             let castle_rows = flythrough::castle_materials(&flythrough::cave_materials());
             for i in castle::STONE..=castle::TORCH {
                 let row = castle_rows.rows()[usize::from(castle::material(i))].clone();
-                assert_eq!(table.push(row), base + vxe_world::MaterialId::from(i) - 1);
+                assert_eq!(table.push(row), base + svet_world::MaterialId::from(i) - 1);
             }
-            let mut map = vxe_assets::VoxMap::new();
-            map.set(0, vxe_assets::Slot::Skip);
+            let mut map = svet_assets::VoxMap::new();
+            map.set(0, svet_assets::Slot::Skip);
             for i in castle::STONE..=castle::TORCH {
                 map.set(
                     i,
-                    vxe_assets::Slot::Material(base + vxe_world::MaterialId::from(i) - 1),
+                    svet_assets::Slot::Material(base + svet_world::MaterialId::from(i) - 1),
                 );
             }
             let source = OutdoorSource::new(1);
@@ -1392,7 +1392,7 @@ mod flicker {
                     )
                 })
                 .collect();
-            let edge = vxe_world::CHUNK_EDGE;
+            let edge = svet_world::CHUNK_EDGE;
             let lo = [o[0] - 64, o[1] - 64, o[2] - 96].map(|v| v.div_euclid(edge));
             let hi = [o[0] + 664, o[1] + 664, o[2] + 440].map(|v| v.div_euclid(edge) + 1);
             let extent = ChunkExtent::new(lo, hi);
@@ -1404,7 +1404,7 @@ mod flicker {
                 w.apply(&support::queue::box_op(
                     carve.0,
                     carve.1,
-                    vxe_world::Mode::Carve,
+                    svet_world::Mode::Carve,
                 ))
                 .expect("the box is resident");
                 let mut boxes = vec![(
@@ -1421,7 +1421,7 @@ mod flicker {
             let pool = {
                 let w = World::generate(extent, &source, &table);
                 place(&w);
-                flythrough::level_pool_units(&w, false) * vxe_render::internals::UNIT_BYTES
+                flythrough::level_pool_units(&w, false) * svet_render::internals::UNIT_BYTES
             };
             let world = World::generate(extent, &source, &table);
             let mut rig = mirrored_with(world, eye, pool * 5 / 4)?;
@@ -1432,7 +1432,7 @@ mod flicker {
             let d = [y.cos() * pt.cos(), y.sin() * pt.cos(), pt.sin()];
             let cam = flythrough::camera_looking_at(p, [p[0] + d[0], p[1] + d[1], p[2] + d[2]]);
             let mut s = strip_frame_with(&mut rig, noon(), &cam, pin, key_off);
-            s.frame.set_light_hooks(vxe_render::LightHooks {
+            s.frame.set_light_hooks(svet_render::LightHooks {
                 key_off,
                 column_prior: COLUMN_PRIOR.with(std::cell::Cell::get),
                 ..Default::default()
@@ -1483,7 +1483,7 @@ mod flicker {
                 let frame = std::time::Duration::from_micros(16_667);
                 std::thread::sleep(frame.saturating_sub(tf.elapsed()));
             }
-            let st = s.frame.bake_queue().map(vxe_render::BakeQueue::stats);
+            let st = s.frame.bake_queue().map(svet_render::BakeQueue::stats);
             println!(
                 "castle: the queue drained {} after {n} frames, {:.1} s; missing every 100 frames {missing:?}; digs {:?}, digs baked {:?}",
                 s.frame.bake_queue().is_some_and(|q| q.empty()),
@@ -1537,12 +1537,12 @@ mod flicker {
 
         /// [`support::terms::mirrored`] with the pool given.
         fn mirrored_with(
-            world: vxe_world::World,
-            eye: vxe_world::VoxelCoord,
+            world: svet_world::World,
+            eye: svet_world::VoxelCoord,
             pool: u64,
         ) -> Option<Rig> {
             use support::SyncNow;
-            use vxe_render::{GpuWorld, MirrorConfig, Window};
+            use svet_render::{GpuWorld, MirrorConfig, Window};
             let (device, queue, adapter) = support::reading_device(pool)?;
             let cfg = MirrorConfig {
                 budget_bytes: pool.max(512 << 20),
@@ -1565,7 +1565,7 @@ mod flicker {
             })
         }
 
-        fn noon() -> vxe_render::sky::Sky {
+        fn noon() -> svet_render::sky::Sky {
             flythrough::daylight::Clock::default().sky(flythrough::outdoor::BASE_Z as f32)
         }
 
@@ -1592,7 +1592,7 @@ mod flicker {
         /// off, the outdoor auto exposure with the sky anchor, FSR 2 at 1.5, the live queue at
         /// the fly-through's settings), `sky` set, the queue stepped until it drains (at most
         /// 30 000 frames).
-        fn strip_frame(rig: &mut Rig, sky: vxe_render::sky::Sky, cam: &Camera) -> Stepper {
+        fn strip_frame(rig: &mut Rig, sky: svet_render::sky::Sky, cam: &Camera) -> Stepper {
             strip_frame_with(rig, sky, cam, None, false)
         }
 
@@ -1600,7 +1600,7 @@ mod flicker {
         /// frame where given, the key light off with `key_off`.
         fn strip_frame_with(
             rig: &mut Rig,
-            sky: vxe_render::sky::Sky,
+            sky: svet_render::sky::Sky,
             cam: &Camera,
             pin: Option<f32>,
             key_off: bool,
@@ -1625,64 +1625,64 @@ mod flicker {
         /// frame stepped.
         fn flicker_frame(
             rig: &Rig,
-            sky: vxe_render::sky::Sky,
+            sky: svet_render::sky::Sky,
             pin: Option<f32>,
             key_off: bool,
-        ) -> vxe_render::Frame {
+        ) -> svet_render::Frame {
             flicker_frame_with(rig, sky, pin, key_off, flythrough::LeafShadow::Voxel)
         }
 
         /// [`flicker_frame`] with the leaves' shadow `leaf`.
         fn flicker_frame_with(
             rig: &Rig,
-            sky: vxe_render::sky::Sky,
+            sky: svet_render::sky::Sky,
             pin: Option<f32>,
             key_off: bool,
             leaf: flythrough::LeafShadow,
-        ) -> vxe_render::Frame {
+        ) -> svet_render::Frame {
             flicker_frame_at(rig, sky, pin, key_off, leaf, [INTERNAL, OUT])
         }
 
         /// [`flicker_frame_with`] at the internal and output sizes `sizes`.
         pub(in super::super) fn flicker_frame_at(
             rig: &Rig,
-            sky: vxe_render::sky::Sky,
+            sky: svet_render::sky::Sky,
             pin: Option<f32>,
             key_off: bool,
             leaf: flythrough::LeafShadow,
             sizes: [[u32; 2]; 2],
-        ) -> vxe_render::Frame {
-            let mut f = vxe_render::Frame::with_sizes(&rig.device, sizes[0], sizes[1]);
+        ) -> svet_render::Frame {
+            let mut f = svet_render::Frame::with_sizes(&rig.device, sizes[0], sizes[1]);
             f.set_upscaler_kind(
                 &rig.device,
-                vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default()),
+                svet_render::UpscalerKind::Fsr2(svet_render::Fsr2Settings::default()),
             );
             f.set_count_store(true);
-            f.set_look(vxe_render::LookParams {
+            f.set_look(svet_render::LookParams {
                 far_normal: flythrough::LookPreset::DEFAULT.far_normal,
-                ..vxe_render::LookParams::default()
+                ..svet_render::LookParams::default()
             });
             f.set_material_styles(
                 &rig.queue,
                 &flythrough::outdoor_styles(leaf),
             );
-            f.set_lighting(vxe_render::Lighting {
+            f.set_lighting(svet_render::Lighting {
                 lamp: false,
-                exposure: vxe_render::Exposure::Auto(vxe_render::AutoExposure {
+                exposure: svet_render::Exposure::Auto(svet_render::AutoExposure {
                     min: flythrough::cli::OUTDOOR_MIN,
                     max: flythrough::cli::OUTDOOR_MAX,
-                    ..vxe_render::AutoExposure::default()
+                    ..svet_render::AutoExposure::default()
                 }),
                 ..flythrough::default_lighting()
             });
             if let Some(e) = pin {
-                f.set_lighting(vxe_render::Lighting {
-                    exposure: vxe_render::Exposure::Manual(e),
+                f.set_lighting(svet_render::Lighting {
+                    exposure: svet_render::Exposure::Manual(e),
                     ..f.lighting()
                 });
             }
             if key_off {
-                f.set_light_hooks(vxe_render::LightHooks {
+                f.set_light_hooks(svet_render::LightHooks {
                     key_off: true,
                     ..Default::default()
                 });
@@ -1692,8 +1692,8 @@ mod flicker {
             f.start_bake_queue(
                 &rig.queue,
                 &rig.gpu,
-                vxe_render::queue_settings(),
-                vxe_render::DEFAULT_BAKE_SLICE_MS,
+                svet_render::queue_settings(),
+                svet_render::DEFAULT_BAKE_SLICE_MS,
             );
             f.set_bake_coarse(8, 2);
             f
@@ -1715,12 +1715,12 @@ mod flicker {
         }
 
         fn castle_parts(rig: &Rig, s: &Stepper) -> CastleParts {
-            use vxe_render::debug::{read_buffer, read_rgba16f};
+            use svet_render::debug::{read_buffer, read_rgba16f};
             let (d, q) = (&rig.device, &rig.queue);
             let lum = |p: &[f32; 4]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
             let st = read_buffer(d, q, s.frame.exposure_state(), 0, 32);
             CastleParts {
-                exposure: vxe_render::ExposureState::from_bytes(&st).previous,
+                exposure: svet_render::ExposureState::from_bytes(&st).previous,
                 stored: read_rgba16f(d, q, s.frame.accumulated()).iter().map(lum).collect(),
                 direct: read_rgba16f(d, q, s.frame.direct_accumulated()).iter().map(lum).collect(),
             }
@@ -1742,7 +1742,7 @@ mod flicker {
             use support::defects::{
                 SOURCE_NAMES, SOURCE_COLUMN, SOURCE_NONE, SOURCE_OWN_SUMMARY, SOURCE_RECORD,
             };
-            let base = flythrough::outdoor_materials().len() as vxe_world::MaterialId;
+            let base = flythrough::outdoor_materials().len() as svet_world::MaterialId;
             let n = (OUT[0] * OUT[1]) as usize;
             let gl = shots[0].hits.len();
             let gw = ((gl as f64 * f64::from(INTERNAL[0]) / f64::from(INTERNAL[1])).sqrt().round() as usize).max(1);
@@ -1752,7 +1752,7 @@ mod flicker {
                 }
                 (0..8).any(|k| {
                     let v: [i32; 3] = std::array::from_fn(|a| (h[a] + if k >> a & 1 == 1 { 0.5 } else { -0.5 }).floor() as i32);
-                    rig.world.material_at(vxe_world::VoxelCoord(v)).is_some_and(|m| m >= base)
+                    rig.world.material_at(svet_world::VoxelCoord(v)).is_some_and(|m| m >= base)
                 })
             };
             for bar in [4u8, 8] {

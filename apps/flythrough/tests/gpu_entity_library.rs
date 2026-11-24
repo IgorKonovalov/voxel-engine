@@ -11,9 +11,9 @@ use flythrough::cave::ROCK;
 use flythrough::entities::{self, library};
 use flythrough::{showcase_materials, walker};
 use support::bake::rig_on;
-use vxe_render::glam::Vec3;
-use vxe_render::{Camera, ViewMode};
-use vxe_world::{ChunkExtent, EditOp, FIXED_ONE, Fixed3, Mode, UniformSource, World};
+use svet_render::glam::Vec3;
+use svet_render::{Camera, ViewMode};
+use svet_world::{ChunkExtent, EditOp, FIXED_ONE, Fixed3, Mode, UniformSource, World};
 
 const W: u32 = 192;
 const H: u32 = 108;
@@ -94,10 +94,10 @@ fn two_models_draw_from_one_mirror() {
         None
     );
     rig.step(&camera);
-    let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let rec = svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
 
     let origin = Fixed3(eye.map(|v| (v * 256.0).round() as i64));
-    let cpu: Vec<Option<(vxe_entity::EntityId, u8)>> = (0..rec.len())
+    let cpu: Vec<Option<(svet_entity::EntityId, u8)>> = (0..rec.len())
         .map(|i| {
             let dir = pixel_dir(&camera, i)
                 .to_array()
@@ -156,7 +156,7 @@ struct Marked {
 
 /// The two walkers at `feet` on one rig: a frame drawn with no mark, then one with the first
 /// walker marked by `mark`.
-fn two_walkers(feet: [[f32; 3]; 2], mark: vxe_render::Mark) -> Option<[Marked; 2]> {
+fn two_walkers(feet: [[f32; 3]; 2], mark: svet_render::Mark) -> Option<[Marked; 2]> {
     let table = walker::with_walker(&showcase_materials());
     let world = World::generate(
         ChunkExtent::new([0, 0, 0], [3, 2, 1]),
@@ -199,10 +199,11 @@ fn two_walkers(feet: [[f32; 3]; 2], mark: vxe_render::Mark) -> Option<[Marked; 2
         entities::feed(&mut w, &rig.world, eye, &mut rig.frame, &rig.queue),
         None
     );
-    let mut frame = |marks: &[(vxe_entity::EntityId, vxe_render::Mark)]| {
+    let mut frame = |marks: &[(svet_entity::EntityId, svet_render::Mark)]| {
         rig.frame.entity_mirror_mut().set_marks(&rig.queue, marks);
         rig.step(&camera);
-        let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+        let rec =
+            svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
         let rgb = rig
             .display()
             .chunks(4)
@@ -242,15 +243,15 @@ fn near(a: [u8; 3], b: [f32; 3], tol: f32) -> bool {
 
 /// The mark colour as the marks buffer quantizes it, in 0..1.
 fn blue() -> [f32; 3] {
-    vxe_render::MARK_COLOURS[0].map(|v| (v * 255.0).round() / 255.0)
+    svet_render::MARK_COLOURS[0].map(|v| (v * 255.0).round() / 255.0)
 }
 
 fn mixed(c: [u8; 3], to: [f32; 3], t: f32) -> [f32; 3] {
     std::array::from_fn(|k| f32::from(c[k]) / 255.0 * (1.0 - t) + to[k] * t)
 }
 
-const BLUE_MARK: vxe_render::Mark = vxe_render::Mark {
-    colour: vxe_render::MARK_COLOURS[0],
+const BLUE_MARK: svet_render::Mark = svet_render::Mark {
+    colour: svet_render::MARK_COLOURS[0],
     outline: true,
     tint: 0.35,
 };
@@ -413,7 +414,7 @@ fn marks_hold_two_touching_instances_apart() {
 /// `VXE_TEST_ADAPTER` names (unset: lavapipe). They print and assert nothing.
 mod reading {
     use super::*;
-    use vxe_render::{
+    use svet_render::{
         FRAME_PASSES, Fsr2Settings, GpuWorld, MirrorConfig, PassTimer, UpscalerKind, Window,
     };
 
@@ -448,7 +449,7 @@ mod reading {
         for _ in 0..2 {
             support::SyncNow::sync_now(&mut gpu, &world, &device, &queue).expect("fits");
         }
-        let mut frame = vxe_render::Frame::with_sizes(&device, [1280, 720], [1920, 1080]);
+        let mut frame = svet_render::Frame::with_sizes(&device, [1280, 720], [1920, 1080]);
         frame.set_upscaler_kind(&device, UpscalerKind::Fsr2(Fsr2Settings::default()));
         frame.set_lighting(support::lights::box_lighting());
         frame.set_dt(1.0 / 60.0);
@@ -491,7 +492,7 @@ mod reading {
                 entities::feed(&mut w, &world, eye, &mut frame, &queue);
                 frame.entity_mirror_mut().set_marks(&queue, &marks);
                 frame.advance();
-                let params = frame.params(&gpu, &camera, &vxe_render::LightParams::default());
+                let params = frame.params(&gpu, &camera, &svet_render::LightParams::default());
                 let mut enc = device.create_command_encoder(&Default::default());
                 frame.encode(&device, &queue, &mut enc, &gpu, &params, Some(&timer));
                 timer.resolve(&mut enc);

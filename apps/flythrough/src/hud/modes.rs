@@ -77,11 +77,11 @@ impl Adaptation {
         Self::ALL.into_iter().find(|a| a.name() == name)
     }
 
-    pub fn preset(self) -> vxe_render::AutoExposure {
+    pub fn preset(self) -> svet_render::AutoExposure {
         match self {
-            Self::Eye => vxe_render::AutoExposure::eye(),
-            Self::Symmetric => vxe_render::AutoExposure::symmetric(1.5),
-            Self::Instant => vxe_render::AutoExposure::instant(),
+            Self::Eye => svet_render::AutoExposure::eye(),
+            Self::Symmetric => svet_render::AutoExposure::symmetric(1.5),
+            Self::Instant => svet_render::AutoExposure::instant(),
         }
     }
 }
@@ -104,8 +104,8 @@ pub struct Modes {
     /// The render profile's row (`profile: portable +2`, then `restart for: ...` while a
     /// rebuild is pending), written by the run when it changes; empty writes no row.
     pub profile: String,
-    pub lighting: vxe_render::Lighting,
-    pub resolution: vxe_render::LightingResolution,
+    pub lighting: svet_render::Lighting,
+    pub resolution: svet_render::LightingResolution,
     /// The ore's emission scale pulses.
     pub pulse: bool,
     /// The world source the line names first (`source showcase`), when it names one.
@@ -118,9 +118,9 @@ pub struct Modes {
     pub(crate) dump_black: bool,
     pub(crate) banner_at: f64,
     /// The auto exposure `Q` returns to, under its preset's name.
-    auto: (Adaptation, vxe_render::AutoExposure),
+    auto: (Adaptation, svet_render::AutoExposure),
     /// The exposure state as last read back.
-    readout: Option<vxe_render::ExposureReadout>,
+    readout: Option<svet_render::ExposureReadout>,
     /// The look's words, from the first [`Modes::show_look`]: the banner's first row on.
     look_words: Option<String>,
     /// The view's name after the look's words, from [`Modes::show_view`] with any view but
@@ -131,7 +131,7 @@ pub struct Modes {
     probe_spacing: u32,
     /// The look the frame takes: `N` steps its preset's normal mode and tuning, `V` its far
     /// normal, `F9` its view.
-    pub(crate) look: vxe_render::LookParams,
+    pub(crate) look: svet_render::LookParams,
     /// The preset `N` last chose, or `--look`'s with its part flags.
     pub(crate) preset: crate::LookPreset,
     /// The run's mirror holds the field's band slots, so `N` steps through the field look.
@@ -166,7 +166,7 @@ pub struct Modes {
     /// How a structure's box finds its base (`entities::belt::stand_box`).
     pub snap: crate::entities::belt::Snap,
     /// The most voxels an edit spans on one axis in the run's world
-    /// (`vxe_world::WorldLimits::edit_axis_max`): a structure's box over it is refused, and
+    /// (`svet_world::WorldLimits::edit_axis_max`): a structure's box over it is refused, and
     /// the belt says so (`crate::structures::Entry::refusal`).
     pub edit_axis_max: u32,
     /// The debug page's diagnosis switches: the light passes' hooks and the queue's freeze.
@@ -174,10 +174,10 @@ pub struct Modes {
 }
 
 /// The debug page's diagnosis switches, each free when off: the light passes' reading hooks
-/// (`vxe_render::LightHooks`; the run sets them every frame) and the live queue held still.
+/// (`svet_render::LightHooks`; the run sets them every frame) and the live queue held still.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Diag {
-    pub hooks: vxe_render::LightHooks,
+    pub hooks: svet_render::LightHooks,
     /// The live queue takes no step: no record lands or starts while it is on.
     pub queue_frozen: bool,
 }
@@ -194,10 +194,10 @@ pub struct QueueModes {
     pub angle: f32,
     pub refine: f32,
     pub withdraw: bool,
-    pub budget: vxe_render::Budget,
+    pub budget: svet_render::Budget,
     pub full_first: Option<i32>,
-    pub missing_light: vxe_render::MissingLight,
-    pub reach: vxe_render::ReachMode,
+    pub missing_light: svet_render::MissingLight,
+    pub reach: svet_render::ReachMode,
 }
 
 impl Default for QueueModes {
@@ -205,21 +205,21 @@ impl Default for QueueModes {
         QueueModes {
             distance: false,
             tier: true,
-            angle: vxe_render::QUEUE_ANGLE_WEIGHT,
-            refine: vxe_render::QUEUE_REFINE_WEIGHT,
+            angle: svet_render::QUEUE_ANGLE_WEIGHT,
+            refine: svet_render::QUEUE_REFINE_WEIGHT,
             withdraw: true,
-            budget: vxe_render::Budget::default(),
-            full_first: Some(vxe_render::DEFAULT_NEAR),
-            missing_light: vxe_render::MissingLight::Chain,
-            reach: vxe_render::ReachMode::Full,
+            budget: svet_render::Budget::default(),
+            full_first: Some(svet_render::DEFAULT_NEAR),
+            missing_light: svet_render::MissingLight::Chain,
+            reach: svet_render::ReachMode::Full,
         }
     }
 }
 
 impl QueueModes {
     /// The live queue's order.
-    pub fn order(&self) -> vxe_render::QueueOrder {
-        use vxe_render::{QueueOrder, Refine};
+    pub fn order(&self) -> svet_render::QueueOrder {
+        use svet_render::{QueueOrder, Refine};
         if self.distance {
             QueueOrder::Distance
         } else {
@@ -284,8 +284,8 @@ impl HudRow {
 impl Modes {
     /// The modes at the start, the banner shown from `now_ms`.
     pub fn new(
-        lighting: vxe_render::Lighting,
-        resolution: vxe_render::LightingResolution,
+        lighting: svet_render::Lighting,
+        resolution: svet_render::LightingResolution,
         now_ms: f64,
     ) -> Self {
         Self {
@@ -300,14 +300,14 @@ impl Modes {
             dump_black: false,
             banner_at: now_ms,
             auto: match lighting.exposure {
-                vxe_render::Exposure::Auto(a) => (Adaptation::Eye, a),
-                vxe_render::Exposure::Manual(_) => (Adaptation::Eye, Adaptation::Eye.preset()),
+                svet_render::Exposure::Auto(a) => (Adaptation::Eye, a),
+                svet_render::Exposure::Manual(_) => (Adaptation::Eye, Adaptation::Eye.preset()),
             },
             readout: None,
             look_words: None,
             view: None,
-            probe_spacing: vxe_render::DEFAULT_PROBE_SPACING,
-            look: vxe_render::LookParams::default(),
+            probe_spacing: svet_render::DEFAULT_PROBE_SPACING,
+            look: svet_render::LookParams::default(),
             preset: crate::LookPreset::DEFAULT,
             field_surface: false,
             upscaler: UpscalerBanner::new(UpscalerMode::Off, "1"),
@@ -324,7 +324,7 @@ impl Modes {
             clear_box: true,
             structure_scale: 1,
             snap: crate::entities::belt::Snap::Ground,
-            edit_axis_max: vxe_world::WorldLimits::DEFAULT.edit_axis_max,
+            edit_axis_max: svet_world::WorldLimits::DEFAULT.edit_axis_max,
             diag: Diag::default(),
         }
     }
@@ -400,7 +400,7 @@ impl Modes {
                 // allocates nothing after its first frame.
                 let _ = write!(out, "look {}, far normal ", self.preset.name);
                 let [lo, hi] = self.look.far_normal;
-                if self.look.normal_mode == vxe_render::NormalMode::Face && hi > lo {
+                if self.look.normal_mode == svet_render::NormalMode::Face && hi > lo {
                     let _ = write!(out, "{lo}..{hi}");
                 } else {
                     out.push_str("off");
@@ -424,16 +424,16 @@ impl Modes {
                 let q = &self.queue;
                 // `QueueOrder::words`, written in place.
                 match q.order() {
-                    vxe_render::QueueOrder::Score { angle, refine } => {
+                    svet_render::QueueOrder::Score { angle, refine } => {
                         let _ = write!(out, "queue order score, angle {angle}, refine ");
                         match refine {
-                            vxe_render::Refine::Weight(r) => {
+                            svet_render::Refine::Weight(r) => {
                                 let _ = write!(out, "{r}");
                             }
-                            vxe_render::Refine::Tier => out.push_str("tier"),
+                            svet_render::Refine::Tier => out.push_str("tier"),
                         }
                     }
-                    vxe_render::QueueOrder::Distance => out.push_str("queue order distance"),
+                    svet_render::QueueOrder::Distance => out.push_str("queue order distance"),
                 }
                 let _ = write!(
                     out,
@@ -460,7 +460,7 @@ impl Modes {
                     "cutaway {}, shadow ray {}, dig radius {:.1} m",
                     self.cutaway.name(),
                     on(self.shadow_ray),
-                    self.dig_radius as f64 / (10 * vxe_world::FIXED_ONE) as f64
+                    self.dig_radius as f64 / (10 * svet_world::FIXED_ONE) as f64
                 );
             }
             HudRow::Lights => self.lights.write_row(self.lighting.lamp, out),
@@ -490,23 +490,23 @@ impl Modes {
 
     /// The auto exposure `Q` returns to and its preset's name; the current exposure too while
     /// it is auto.
-    pub fn set_auto(&mut self, adaptation: Adaptation, auto: vxe_render::AutoExposure) {
+    pub fn set_auto(&mut self, adaptation: Adaptation, auto: svet_render::AutoExposure) {
         self.auto = (adaptation, auto);
-        if let vxe_render::Exposure::Auto(_) = self.lighting.exposure {
-            self.lighting.exposure = vxe_render::Exposure::Auto(auto);
+        if let svet_render::Exposure::Auto(_) = self.lighting.exposure {
+            self.lighting.exposure = svet_render::Exposure::Auto(auto);
         }
     }
 
     /// Keeps the latest exposure read-back for the banner, the row and `Q`'s manual hold.
-    pub fn set_readout(&mut self, readout: Option<vxe_render::ExposureReadout>) {
+    pub fn set_readout(&mut self, readout: Option<svet_render::ExposureReadout>) {
         if readout.is_some() {
             self.readout = readout;
         }
     }
 
     /// The auto symmetric preset `Q` passes through, with the start's metering and ceiling.
-    fn symmetric(&self) -> vxe_render::AutoExposure {
-        vxe_render::AutoExposure {
+    fn symmetric(&self) -> svet_render::AutoExposure {
+        svet_render::AutoExposure {
             metering: self.auto.1.metering,
             max: self.auto.1.max,
             sky_anchor_ev: self.auto.1.sky_anchor_ev,
@@ -535,14 +535,14 @@ impl Modes {
 
     /// Shows the banner from `now_ms` with `view NAME` after the look's words, or without it
     /// for the shaded view.
-    pub fn show_view(&mut self, view: vxe_render::ViewMode, now_ms: f64) {
-        self.view = (view != vxe_render::ViewMode::Shaded).then(|| view.name());
+    pub fn show_view(&mut self, view: svet_render::ViewMode, now_ms: f64) {
+        self.view = (view != svet_render::ViewMode::Shaded).then(|| view.name());
         self.banner_at = now_ms;
     }
 
     /// Switches the mode `key` changes and shows the banner from `now_ms`.
     pub fn press(&mut self, key: ModeKey, now_ms: f64) {
-        use vxe_render::{HistoryKill, LightingResolution, ShadowWalk};
+        use svet_render::{HistoryKill, LightingResolution, ShadowWalk};
         let symmetric = self.symmetric();
         let l = &mut self.lighting;
         match key {
@@ -573,46 +573,46 @@ impl Modes {
             }
             ModeKey::StoreRead => {
                 l.store_read = match l.store_read {
-                    vxe_render::StoreRead::Face => vxe_render::StoreRead::Normal,
-                    vxe_render::StoreRead::Normal => vxe_render::StoreRead::Face,
+                    svet_render::StoreRead::Face => svet_render::StoreRead::Normal,
+                    svet_render::StoreRead::Normal => svet_render::StoreRead::Face,
                 }
             }
             ModeKey::KeyFar => {
                 l.key_far = match l.key_far {
-                    vxe_render::KeyFar::Baked => vxe_render::KeyFar::Column,
-                    vxe_render::KeyFar::Column => vxe_render::KeyFar::Ray,
-                    vxe_render::KeyFar::Ray => vxe_render::KeyFar::Baked,
+                    svet_render::KeyFar::Baked => svet_render::KeyFar::Column,
+                    svet_render::KeyFar::Column => svet_render::KeyFar::Ray,
+                    svet_render::KeyFar::Ray => svet_render::KeyFar::Baked,
                 }
             }
             ModeKey::KeyFarMix => {
                 l.key_far_mix = match l.key_far_mix {
-                    vxe_render::KeyFarMix::Blend => vxe_render::KeyFarMix::Step,
-                    vxe_render::KeyFarMix::Step => vxe_render::KeyFarMix::Blend,
+                    svet_render::KeyFarMix::Blend => svet_render::KeyFarMix::Step,
+                    svet_render::KeyFarMix::Step => svet_render::KeyFarMix::Blend,
                 }
             }
             ModeKey::LightWeights => {
                 l.light_weights = match l.light_weights {
-                    vxe_render::LightWeights::Normal => vxe_render::LightWeights::Face,
-                    vxe_render::LightWeights::Face => vxe_render::LightWeights::Normal,
+                    svet_render::LightWeights::Normal => svet_render::LightWeights::Face,
+                    svet_render::LightWeights::Face => svet_render::LightWeights::Normal,
                 }
             }
             ModeKey::YoungFilter => {
                 l.young_filter = match l.young_filter {
-                    vxe_render::YoungFilter::Luma => vxe_render::YoungFilter::Edges,
-                    vxe_render::YoungFilter::Edges => vxe_render::YoungFilter::Luma,
+                    svet_render::YoungFilter::Luma => svet_render::YoungFilter::Edges,
+                    svet_render::YoungFilter::Edges => svet_render::YoungFilter::Luma,
                 }
             }
             ModeKey::EntityLight => {
                 l.entity_light = match l.entity_light {
-                    vxe_render::EntityLight::Own => vxe_render::EntityLight::World,
-                    vxe_render::EntityLight::World => vxe_render::EntityLight::Own,
+                    svet_render::EntityLight::Own => svet_render::EntityLight::World,
+                    svet_render::EntityLight::World => svet_render::EntityLight::Own,
                 }
             }
             ModeKey::Lamp => l.lamp = !l.lamp,
             ModeKey::LampBounce => l.lamp_bounce = !l.lamp_bounce,
             ModeKey::Pulse => self.pulse = !self.pulse,
             ModeKey::Exposure => {
-                use vxe_render::Exposure;
+                use svet_render::Exposure;
                 l.exposure = match l.exposure {
                     Exposure::Auto(a)
                         if a == self.auto.1 && self.auto.0 != Adaptation::Symmetric =>
@@ -638,12 +638,12 @@ impl Modes {
     /// Appends [`Modes::exposure_mode`]'s words to `out`.
     pub fn write_exposure_mode(&self, out: &mut String) {
         match self.lighting.exposure {
-            vxe_render::Exposure::Manual(_) => out.push_str("manual"),
-            vxe_render::Exposure::Auto(a) if a == self.auto.1 => {
+            svet_render::Exposure::Manual(_) => out.push_str("manual"),
+            svet_render::Exposure::Auto(a) if a == self.auto.1 => {
                 out.push_str("auto ");
                 out.push_str(self.auto.0.name());
             }
-            vxe_render::Exposure::Auto(_) => out.push_str("auto symmetric"),
+            svet_render::Exposure::Auto(_) => out.push_str("auto symmetric"),
         }
     }
 
@@ -664,14 +664,14 @@ impl Modes {
         row.scene_ev = scene;
         let ceiling = self.readout.map(|r| r.ceiling).filter(|&c| c > 0.0);
         (row.target_ev, row.ceiling) = match self.lighting.exposure {
-            vxe_render::Exposure::Auto(a) => {
+            svet_render::Exposure::Auto(a) => {
                 let c = ceiling.unwrap_or(a.max);
                 (
                     scene.map(|t| a.exposure_under(f64::from(t), c).log2() as f32),
                     Some((c.log2(), a.sky_anchor_ev.filter(|_| self.sky))),
                 )
             }
-            vxe_render::Exposure::Manual(_) => (None, None),
+            svet_render::Exposure::Manual(_) => (None, None),
         };
         (row.sky_share, row.floor_share) = match row.ceiling {
             Some((_, Some(_))) => self
@@ -681,11 +681,11 @@ impl Modes {
             _ => (None, None),
         };
         row.lift = match (row.ceiling, self.lighting.exposure) {
-            (Some((_, Some(_))), vxe_render::Exposure::Auto(a)) => Some(a.sky_anchor_lift),
+            (Some((_, Some(_))), svet_render::Exposure::Auto(a)) => Some(a.sky_anchor_lift),
             _ => None,
         };
         row.highlight = match self.lighting.exposure {
-            vxe_render::Exposure::Auto(a) if a.highlight_percentile > 0.0 => {
+            svet_render::Exposure::Auto(a) if a.highlight_percentile > 0.0 => {
                 self.readout.and_then(|r| r.highlight).map(f32::log2)
             }
             _ => None,
@@ -697,7 +697,7 @@ impl Modes {
     /// `key far baked, key far mix step, `; empty for the default.
     pub fn write_key_far(&self, out: &mut String) {
         let l = &self.lighting;
-        let d = vxe_render::Lighting::default();
+        let d = svet_render::Lighting::default();
         if (l.key_far, l.key_far_mix) == (d.key_far, d.key_far_mix) {
             return;
         }
@@ -742,7 +742,7 @@ impl Modes {
             if l.penumbra != crate::DEFAULT_PENUMBRA {
                 let _ = write!(out, "penumbra {}, ", l.penumbra.name());
             }
-            if l.sky_normal != vxe_render::SkyNormal::default() {
+            if l.sky_normal != svet_render::SkyNormal::default() {
                 let _ = write!(out, "sky normal {}, ", l.sky_normal.name());
             }
             if l.sky_bounce > 0.0 {
@@ -754,7 +754,7 @@ impl Modes {
             if l.sky_down_skip {
                 out.push_str("no sky ray looking down, ");
             }
-            if l.key_history != vxe_render::DEFAULT_KEY_HISTORY {
+            if l.key_history != svet_render::DEFAULT_KEY_HISTORY {
                 let _ = write!(out, "key history {}, ", l.key_history);
             }
             if l.column_wait {
@@ -763,16 +763,16 @@ impl Modes {
             if self.dump_black {
                 out.push_str("dump black, ");
             }
-            if let vxe_render::Exposure::Auto(a) = l.exposure {
+            if let svet_render::Exposure::Auto(a) = l.exposure {
                 match a.sky_anchor_ev {
                     None => out.push_str("sky anchor none, "),
-                    Some(n) if n != vxe_render::DEFAULT_SKY_ANCHOR_EV => {
+                    Some(n) if n != svet_render::DEFAULT_SKY_ANCHOR_EV => {
                         let _ = write!(out, "sky anchor {n}, ");
                     }
                     Some(_) => {}
                 }
                 if a.sky_anchor_ev.is_some()
-                    && a.sky_anchor_share != vxe_render::DEFAULT_SKY_ANCHOR_SHARE
+                    && a.sky_anchor_share != svet_render::DEFAULT_SKY_ANCHOR_SHARE
                 {
                     if a.sky_anchor_share > 0.0 {
                         let _ = write!(out, "sky anchor share {}, ", a.sky_anchor_share);
@@ -781,7 +781,7 @@ impl Modes {
                     }
                 }
                 if a.sky_anchor_ev.is_some()
-                    && a.sky_anchor_floor != vxe_render::DEFAULT_SKY_ANCHOR_FLOOR
+                    && a.sky_anchor_floor != svet_render::DEFAULT_SKY_ANCHOR_FLOOR
                 {
                     if a.sky_anchor_floor > 0.0 {
                         let _ = write!(out, "sky anchor floor {}, ", a.sky_anchor_floor);
@@ -792,7 +792,7 @@ impl Modes {
                 if a.sky_anchor_ev.is_some() {
                     match a.sky_anchor_lift {
                         None => out.push_str("sky anchor lift off, "),
-                        Some(l) if l != vxe_render::DEFAULT_SKY_ANCHOR_LIFT => {
+                        Some(l) if l != svet_render::DEFAULT_SKY_ANCHOR_LIFT => {
                             let _ = write!(out, "sky anchor lift {l}, ");
                         }
                         Some(_) => {}
@@ -800,13 +800,13 @@ impl Modes {
                 }
             }
         }
-        if let vxe_render::Exposure::Auto(a) = l.exposure
-            && a.rate_ev_s != vxe_render::DEFAULT_EXPOSURE_RATE_EV_S
+        if let svet_render::Exposure::Auto(a) = l.exposure
+            && a.rate_ev_s != svet_render::DEFAULT_EXPOSURE_RATE_EV_S
         {
             let _ = write!(out, "exposure rate {} EV/s, ", a.rate_ev_s);
         }
-        if let vxe_render::Exposure::Auto(a) = l.exposure
-            && a.highlight_percentile != vxe_render::DEFAULT_EXPOSURE_HIGHLIGHT
+        if let svet_render::Exposure::Auto(a) = l.exposure
+            && a.highlight_percentile != svet_render::DEFAULT_EXPOSURE_HIGHLIGHT
         {
             if a.highlight_percentile > 0.0 {
                 let _ = write!(out, "exposure highlight {}, ", a.highlight_percentile);
@@ -842,7 +842,7 @@ impl Modes {
         );
         self.write_exposure_mode(out);
         let _ = write!(out, " {:+.2} EV", self.exposure_ev());
-        if let vxe_render::Exposure::Auto(a) = self.lighting.exposure
+        if let svet_render::Exposure::Auto(a) = self.lighting.exposure
             && a.compensation_ev != 0.0
         {
             let _ = write!(out, ", exposure comp {:+.1} EV", a.compensation_ev);
@@ -902,8 +902,8 @@ impl Modes {
     /// last read-back's (1.0 before the first).
     pub fn exposure_ev(&self) -> f32 {
         match self.lighting.exposure {
-            vxe_render::Exposure::Manual(e) => e.log2(),
-            vxe_render::Exposure::Auto(_) => self.readout.map_or(0.0, |r| r.exposure.log2()),
+            svet_render::Exposure::Manual(e) => e.log2(),
+            svet_render::Exposure::Auto(_) => self.readout.map_or(0.0, |r| r.exposure.log2()),
         }
     }
 

@@ -8,8 +8,8 @@
 
 use std::sync::Arc;
 
-use vxe_entity::{Model, Part, PartPose, Pose, Q14_ONE, Quat};
-use vxe_world::{AIR, Fixed3, Material, MaterialId, MaterialTable, Prefab};
+use svet_entity::{Model, Part, PartPose, Pose, Q14_ONE, Quat};
+use svet_world::{AIR, Fixed3, Material, MaterialId, MaterialTable, Prefab};
 
 /// The walker's body row's name in the table ([`with_walker`]).
 pub const BODY_ROW: &str = "walker";

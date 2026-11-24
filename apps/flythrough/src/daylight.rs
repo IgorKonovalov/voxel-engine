@@ -1,15 +1,15 @@
 //! The testbed's time of day: a clock the frame loop advances by its `dt` (the engine holds
-//! none), turned into the frame's sky through [`vxe_render::sky::body_direction`] at latitude
+//! none), turned into the frame's sky through [`svet_render::sky::body_direction`] at latitude
 //! [`LATITUDE_DEG`] and declination [`DECLINATION`], an equinox: the sun rises at 06:00, sets
 //! at 18:00 and stands at 45 degrees in the south at 12:00. The moon is full, 12 hours from
-//! the sun, at `vxe_render::sky::MOON_OVER_SUN` of its illuminance.
+//! the sun, at `svet_render::sky::MOON_OVER_SUN` of its illuminance.
 //!
 //! The menu's world page (`toggles::TOGGLES`, `toggles::ACTIONS`) steps the clock an hour at
 //! a time, runs or pauses it at `--day-length`, switches the world source in process
 //! (`run::switch`), keeping the clock, and steps the outdoor trees.
 
 use std::fmt::Write as _;
-use vxe_render::sky::{Body, Sky, body_direction};
+use svet_render::sky::{Body, Sky, body_direction};
 
 /// The testbed's latitude in degrees.
 pub const LATITUDE_DEG: f32 = 45.0;
@@ -21,7 +21,7 @@ pub const DEFAULT_DAY_LENGTH_S: f32 = 1200.0;
 pub const DEFAULT_TIME_MIN: f64 = 720.0;
 const DAY_MIN: f64 = 1440.0;
 /// `--sun-radius` and `--moon-radius` by default, in degrees: the testbed draws both bodies
-/// wider than the real ones (`vxe_render::sky::SUN_ANGULAR_RADIUS`, the engine's default) so
+/// wider than the real ones (`svet_render::sky::SUN_ANGULAR_RADIUS`, the engine's default) so
 /// their discs read on screen and their shadows are soft.
 pub const BODY_RADIUS_DEG: f32 = 3.0;
 

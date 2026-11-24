@@ -1,5 +1,5 @@
 //! `--castle`: a gothic castle generated at startup as a multi-model MagicaVoxel scene, read
-//! back through `vxe-assets`' parser and palette map, and stamped into the unbounded cave by a
+//! back through `svet-assets`' parser and palette map, and stamped into the unbounded cave by a
 //! [`StampedSource`] over a [`HallSource`].
 //!
 //! The castle is drawn in its own frame `(u, v, w)`, whose origin is the world voxel
@@ -18,8 +18,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use vxe_assets::{Node, Slot, Unmapped, VoxFile, VoxMap, VoxModel};
-use vxe_world::{MaterialId, Prefab, Rot, StampedSource, VoxelCoord};
+use svet_assets::{Node, Slot, Unmapped, VoxFile, VoxMap, VoxModel};
+use svet_world::{MaterialId, Prefab, Rot, StampedSource, VoxelCoord};
 
 use crate::cave::HallSource;
 
@@ -853,7 +853,7 @@ pub fn castle_vox_where(threads: usize, keep: impl Fn(&Tile) -> bool) -> VoxFile
             },
         );
     }
-    let mut palette = vxe_assets::DEFAULT_PALETTE;
+    let mut palette = svet_assets::DEFAULT_PALETTE;
     palette[1..=8].copy_from_slice(&PALETTE_COLOURS);
     VoxFile {
         version: 200,

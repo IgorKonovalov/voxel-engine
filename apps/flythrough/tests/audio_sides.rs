@@ -4,9 +4,9 @@
 //! stream is opened with). A source on the camera's right must be louder and earlier in the
 //! right channel, the mirror on the left, and front and back must not collapse into one.
 
-use vxe_audio::{Command, Hrtf, Mixer, PlayParams, Sound, VoiceId};
-use vxe_render::Camera;
-use vxe_render::glam::Vec3;
+use svet_audio::{Command, Hrtf, Mixer, PlayParams, Sound, VoiceId};
+use svet_render::Camera;
+use svet_render::glam::Vec3;
 
 /// The fly-through's scale.
 const MPV: f32 = 0.1;

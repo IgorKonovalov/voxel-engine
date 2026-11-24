@@ -14,9 +14,9 @@ use crate::app::{Flythrough, Pending, diag, ms_since};
 use crate::cli::{Args, SOURCES, next_source, parse_args_from};
 use crate::outdoor::{GRASS, SOIL};
 use crate::setup::{Gfx, build_world, load_logic, start_camera};
-use vxe_app::Gpu;
-use vxe_render::{LoadingScreen, LoadingView, wgpu};
-use vxe_world::{BRICK_VOXELS, ChunkCoord, VoxelCoord, World};
+use svet_app::Gpu;
+use svet_render::{LoadingScreen, LoadingView, wgpu};
+use svet_world::{BRICK_VOXELS, ChunkCoord, VoxelCoord, World};
 
 /// The flags of `argv` with every world-picking flag (`--source NAME`, `--level`) dropped and
 /// `--source NAME` of `mode` appended.
@@ -170,9 +170,9 @@ fn rebuild_gfx(device: &wgpu::Device, queue: &wgpu::Queue, plan: GfxPlan, old: G
     set_plan(&mut frame, device, queue, &plan);
     frame.reset_history();
     frame.reset_exposure();
-    frame.set_entity_mirror(vxe_render::EntityMirror::new(
+    frame.set_entity_mirror(svet_render::EntityMirror::new(
         device,
-        vxe_render::DEFAULT_ENTITY_POOL_BYTES,
+        svet_render::DEFAULT_ENTITY_POOL_BYTES,
     ));
     let mut mirror = reserve_mirror(device, plan.mirror, plan.field);
     if let Some(focus) = plan.focus {

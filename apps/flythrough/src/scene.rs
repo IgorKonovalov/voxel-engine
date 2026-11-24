@@ -7,9 +7,9 @@ use crate::census::{around_guards, brick_counts};
 use crate::logic::RUBBLE;
 use crate::showcase;
 use crate::thin_rig;
-use vxe_audio::Listener;
-use vxe_render::Camera;
-use vxe_world::{Chunk, Material, MaterialFlags, MaterialId, MaterialTable, Residency};
+use svet_audio::Listener;
+use svet_render::Camera;
+use svet_world::{Chunk, Material, MaterialFlags, MaterialId, MaterialTable, Residency};
 
 /// A still camera on the bounded level (seed 1), with the manual exposure the stillness and
 /// settle rigs pin it at. `--level --pose NAME` starts the fly-through there.
@@ -110,33 +110,33 @@ pub const PRESSURE_LOW: f32 = 0.7;
 /// up), so the record term of the pressure stays under the restore line while the streamer
 /// keeps its radius. 93 239 at the defaults.
 pub fn stream_record_chunks(r: Residency) -> u64 {
-    let ball = vxe_world::chunks_in_ball(r.r_lod.max(r.r_full) + r.hysteresis);
+    let ball = svet_world::chunks_in_ball(r.r_lod.max(r.r_full) + r.hysteresis);
     (ball * 10).div_ceil(7)
 }
 
 /// The mirror budget of the streamed cave unless `--mirror-budget` sets one: the world line
 /// of `nfr.md` §3, 3 GiB, of which the residency's records take their share.
-pub const STREAM_MIRROR_BUDGET: u64 = vxe_render::DEFAULT_BUDGET_BYTES;
+pub const STREAM_MIRROR_BUDGET: u64 = svet_render::DEFAULT_BUDGET_BYTES;
 
 /// `Full` bricks of headroom beyond the bounded level's own, so digging has room: 64 Ki
 /// bricks, each at the largest slot the level's rock takes (6 units), and with the field a
-/// band slot of the most units ([`vxe_render::internals::MAX_BAND_UNITS`]) beside each.
+/// band slot of the most units ([`svet_render::internals::MAX_BAND_UNITS`]) beside each.
 pub const POOL_HEADROOM_BRICKS: u64 = 65_536;
 
 /// The pool units the bounded level `world` needs: each bin's `Full` bricks in whole pages
 /// of that bin, and when `field` each band brick's band slot and each uniform band brick's
 /// slot in pages of theirs (the band as [`band_census`] reads it), plus the headroom.
-pub fn level_pool_units(world: &vxe_world::World, field: bool) -> u64 {
-    use vxe_render::{
+pub fn level_pool_units(world: &svet_world::World, field: bool) -> u64 {
+    use svet_render::{
         internals::BIN_COUNT, internals::BINS, internals::PAGE_UNITS, internals::band_bin_of,
         internals::bin_of, internals::slot_units, internals::slots_per_page,
     };
-    use vxe_render::{internals::MAX_BAND_UNITS, internals::band_slot_units};
+    use svet_render::{internals::MAX_BAND_UNITS, internals::band_slot_units};
     let table = world.materials();
     let translucent = |m| {
         table
             .flags(m)
-            .contains(vxe_world::MaterialFlags::TRANSLUCENT)
+            .contains(svet_world::MaterialFlags::TRANSLUCENT)
     };
     let mut bins = [0u64; BIN_COUNT];
     for c in world.store().coords() {
@@ -159,7 +159,7 @@ pub fn level_pool_units(world: &vxe_world::World, field: bool) -> u64 {
             continue;
         };
         for (i, b) in chunk.bricks().iter().enumerate() {
-            if let vxe_world::Brick::Full(p) = b {
+            if let svet_world::Brick::Full(p) = b {
                 bins[bin_of(slot_units(p, translucent))] += 1;
             }
             if !field {
@@ -173,7 +173,7 @@ pub fn level_pool_units(world: &vxe_world::World, field: bool) -> u64 {
                 continue;
             }
             bins[band_bin_of(band_slot_units(n))] += 1;
-            if let vxe_world::Brick::Uniform(m) = b {
+            if let svet_world::Brick::Uniform(m) = b {
                 bins[bin_of(2 + u32::from(translucent(*m)))] += 1;
             }
         }
@@ -190,8 +190,8 @@ pub fn level_pool_units(world: &vxe_world::World, field: bool) -> u64 {
 /// The mirror budget of the bounded level unless `--mirror-budget` sets one: the pool
 /// [`level_pool_units`] needs and a record for each of its `chunks`, sized from the world it
 /// loads rather than the streamed default.
-pub fn level_mirror_budget(world: &vxe_world::World, chunks: u64, field: bool) -> u64 {
-    vxe_render::internals::budget_for(level_pool_units(world, field), chunks)
+pub fn level_mirror_budget(world: &svet_world::World, chunks: u64, field: bool) -> u64 {
+    svet_render::internals::budget_for(level_pool_units(world, field), chunks)
 }
 
 /// The audio listener for `camera`: its position (voxel units), its forward and its up. The
@@ -375,8 +375,8 @@ impl LeafShadow {
 /// `shadow_absorb(LEAF_SIGMA)` under [`LeafShadow::Absorb`], none under [`LeafShadow::Voxel`].
 pub fn outdoor_styles(leaf: LeafShadow) -> Vec<u32> {
     let word = match leaf {
-        LeafShadow::Brick => vxe_render::SHADOW_AS_BRICK,
-        LeafShadow::Absorb => vxe_render::shadow_absorb(LEAF_SIGMA),
+        LeafShadow::Brick => svet_render::SHADOW_AS_BRICK,
+        LeafShadow::Absorb => svet_render::shadow_absorb(LEAF_SIGMA),
         LeafShadow::Voxel => return Vec::new(),
     };
     let rows = crate::outdoor::LEAF_ROWS;
@@ -544,7 +544,7 @@ mod tests {
 
     #[test]
     fn the_streamed_mirror_reserves_records_for_the_residency_ball_over_the_restore_line() {
-        assert_eq!(vxe_world::chunks_in_ball(25), 65_267);
+        assert_eq!(svet_world::chunks_in_ball(25), 65_267);
         let n = stream_record_chunks(RESIDENCY);
         assert_eq!(n, 93_239);
         assert_eq!(n * 2624, 244_659_136);
@@ -641,7 +641,7 @@ mod tests {
         );
         // The built-in copy is the file.
         assert_eq!(
-            vxe_assets::MaterialFile::parse(crate::materials::BUILT_IN).unwrap(),
+            svet_assets::MaterialFile::parse(crate::materials::BUILT_IN).unwrap(),
             file
         );
     }

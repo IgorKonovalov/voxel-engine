@@ -13,7 +13,7 @@ use crate::cli::next_far_normal;
 use crate::edits::{DIG_RANGE, DIG_STEP};
 use crate::hud::menu::{AudioView, Group, RunView};
 use crate::hud::{self, HudRow, Modes};
-use vxe_app::{Input, KeyCode, PadButton};
+use svet_app::{Input, KeyCode, PadButton};
 
 /// What presses a toggle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -140,38 +140,38 @@ macro_rules! lighting {
     };
 }
 
-/// The missing-light mode after `m` in [`vxe_render::MissingLight::ALL`].
-pub(crate) fn next_missing_light(m: vxe_render::MissingLight) -> vxe_render::MissingLight {
-    use vxe_render::MissingLight;
+/// The missing-light mode after `m` in [`svet_render::MissingLight::ALL`].
+pub(crate) fn next_missing_light(m: svet_render::MissingLight) -> svet_render::MissingLight {
+    use svet_render::MissingLight;
     let i = MissingLight::ALL.iter().position(|&x| x == m).unwrap_or(0);
     MissingLight::ALL[(i + 1) % MissingLight::ALL.len()]
 }
 
-/// The reach mode after `m` in [`vxe_render::ReachMode::ALL`].
-pub(crate) fn next_reach(m: vxe_render::ReachMode) -> vxe_render::ReachMode {
-    use vxe_render::ReachMode;
+/// The reach mode after `m` in [`svet_render::ReachMode::ALL`].
+pub(crate) fn next_reach(m: svet_render::ReachMode) -> svet_render::ReachMode {
+    use svet_render::ReachMode;
     let i = ReachMode::ALL.iter().position(|&x| x == m).unwrap_or(0);
     ReachMode::ALL[(i + 1) % ReachMode::ALL.len()]
 }
 
 /// The budgets the menu's `bake budget` steps through: the default slice, 150 ms a second and 300 ms a
 /// second, each capped at a quarter of the frame.
-pub(crate) const BUDGET_CYCLE: [vxe_render::Budget; 3] = [
-    vxe_render::Budget::PerFrame {
-        ms: vxe_render::DEFAULT_BAKE_SLICE_MS,
+pub(crate) const BUDGET_CYCLE: [svet_render::Budget; 3] = [
+    svet_render::Budget::PerFrame {
+        ms: svet_render::DEFAULT_BAKE_SLICE_MS,
     },
-    vxe_render::Budget::PerSecond {
+    svet_render::Budget::PerSecond {
         ms_per_s: 150.0,
         cap: 0.25,
     },
-    vxe_render::Budget::PerSecond {
+    svet_render::Budget::PerSecond {
         ms_per_s: 300.0,
         cap: 0.25,
     },
 ];
 
 /// The budget after `b` in [`BUDGET_CYCLE`]; one not in it goes to the first.
-pub(crate) fn next_budget(b: vxe_render::Budget) -> vxe_render::Budget {
+pub(crate) fn next_budget(b: svet_render::Budget) -> svet_render::Budget {
     let i = BUDGET_CYCLE.iter().position(|&x| x == b);
     BUDGET_CYCLE[i.map_or(0, |i| (i + 1) % BUDGET_CYCLE.len())]
 }
@@ -903,7 +903,7 @@ pub static TOGGLES: &[Toggle] = &[
         flip: |m, _| {
             m.queue.full_first = match m.queue.full_first {
                 Some(_) => None,
-                None => Some(vxe_render::DEFAULT_NEAR),
+                None => Some(svet_render::DEFAULT_NEAR),
             };
         },
     },
@@ -994,7 +994,7 @@ pub static TOGGLES: &[Toggle] = &[
         "penumbra",
         |m| format!("penumbra {}", m.lighting.penumbra.name()),
         |m| {
-            use vxe_render::Penumbra;
+            use svet_render::Penumbra;
             m.lighting.penumbra = match m.lighting.penumbra {
                 Penumbra::Approach => Penumbra::Disc,
                 Penumbra::Disc => Penumbra::Approach,
@@ -1005,7 +1005,7 @@ pub static TOGGLES: &[Toggle] = &[
         "sky normal",
         |m| format!("sky normal {}", m.lighting.sky_normal.name()),
         |m| {
-            use vxe_render::SkyNormal;
+            use svet_render::SkyNormal;
             m.lighting.sky_normal = match m.lighting.sky_normal {
                 SkyNormal::Smoothed => SkyNormal::Face,
                 SkyNormal::Face => SkyNormal::Smoothed,
@@ -1119,16 +1119,16 @@ pub static TOGGLES: &[Toggle] = &[
         needs: Some(Needs::Sky),
         number: Some(Number {
             step: |m, d| {
-                let max = vxe_render::MAX_SKY_RAYS as i64;
+                let max = svet_render::MAX_SKY_RAYS as i64;
                 m.lighting.sky_rays =
                     (i64::from(m.lighting.sky_rays) + i64::from(d)).clamp(1, max) as u32;
             },
-            range: |_, _| format!("1..{}", vxe_render::MAX_SKY_RAYS),
+            range: |_, _| format!("1..{}", svet_render::MAX_SKY_RAYS),
         }),
         row: HudRow::Lighting,
         get: |m| format!("sky rays {}", m.lighting.sky_rays),
         flip: |m, _| {
-            m.lighting.sky_rays = m.lighting.sky_rays % vxe_render::MAX_SKY_RAYS + 1;
+            m.lighting.sky_rays = m.lighting.sky_rays % svet_render::MAX_SKY_RAYS + 1;
         },
     },
     Toggle {
@@ -1142,7 +1142,7 @@ pub static TOGGLES: &[Toggle] = &[
                     (m.dig_radius + i64::from(d) * DIG_STEP).clamp(DIG_RANGE.0, DIG_RANGE.1);
             },
             range: |_, _| {
-                let m = |r: i64| r as f64 / (10 * vxe_world::FIXED_ONE) as f64;
+                let m = |r: i64| r as f64 / (10 * svet_world::FIXED_ONE) as f64;
                 format!("{:.1}..{:.1} m", m(DIG_RANGE.0), m(DIG_RANGE.1))
             },
         }),
@@ -1150,7 +1150,7 @@ pub static TOGGLES: &[Toggle] = &[
         get: |m| {
             format!(
                 "dig radius {:.1} m",
-                m.dig_radius as f64 / (10 * vxe_world::FIXED_ONE) as f64
+                m.dig_radius as f64 / (10 * svet_world::FIXED_ONE) as f64
             )
         },
         flip: |m, _| m.dig_radius = (m.dig_radius + DIG_STEP).min(DIG_RANGE.1),
@@ -1195,5 +1195,5 @@ pub static TOGGLES: &[Toggle] = &[
 /// The `structures` group's snap toggle's name: its key's press says its row in the notice.
 pub const SNAP: &str = "snap";
 
-/// A structure's largest scale (`vxe_assets::MAX_SCALE`).
-const MAX_SCALE: i32 = vxe_assets::MAX_SCALE as i32;
+/// A structure's largest scale (`svet_assets::MAX_SCALE`).
+const MAX_SCALE: i32 = svet_assets::MAX_SCALE as i32;

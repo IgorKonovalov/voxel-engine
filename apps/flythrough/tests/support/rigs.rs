@@ -4,10 +4,10 @@
 //! the settle rig's poses, mirrored with the field's band slots.
 
 use super::*;
-use vxe_render::{
+use svet_render::{
     Frame, GpuWorld, LightParams, MirrorConfig, Presenter, UpscalerKind, Window, wgpu,
 };
-use vxe_world::*;
+use svet_world::*;
 
 /// The internal and output sizes of the upscaler's tests: scale 1.5.
 pub const INTERNAL: [u32; 2] = [256, 144];
@@ -18,7 +18,7 @@ pub const SETTLE: u32 = 32;
 
 /// The level the fly-through generates with `--level --seed 1`, its ore emissive (the
 /// fly-through's default), and its spawn pose.
-pub fn level() -> (World, vxe_render::Camera) {
+pub fn level() -> (World, svet_render::Camera) {
     let source = flythrough::cave::CaveSource::new(
         1,
         ChunkExtent::new([0, 0, 0], flythrough::cave::LEVEL_CHUNKS),
@@ -32,9 +32,9 @@ pub fn level() -> (World, vxe_render::Camera) {
 /// A device and the level's mirror on it, focused on `camera` with the light ranges written.
 pub fn level_rig(
     world: &World,
-    camera: &vxe_render::Camera,
+    camera: &svet_render::Camera,
 ) -> Option<(wgpu::Device, wgpu::Queue, GpuWorld)> {
-    let pool = flythrough::level_pool_units(world, true) * vxe_render::internals::UNIT_BYTES;
+    let pool = flythrough::level_pool_units(world, true) * svet_render::internals::UNIT_BYTES;
     let (device, queue) = software_device(pool)?;
     let cfg = MirrorConfig {
         budget_bytes: 256 << 20,
@@ -91,7 +91,7 @@ pub fn blit_texture(
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
     presenter.encode(device, &mut enc, source, &view);
     queue.submit([enc.finish()]);
-    vxe_render::debug::read_rgba8(device, queue, &target)
+    svet_render::debug::read_rgba8(device, queue, &target)
 }
 
 /// Mean absolute difference per channel (r, g, b) of two RGBA8 images, in 1/255.
@@ -174,7 +174,7 @@ pub const PHASES: u32 = 5;
 /// `dist` voxels in front of the wall, looking +x at it (the camera's right is -y, so the
 /// stripes run vertically on screen), moved `(phase + 0.5) / PHASES` output pixels along its
 /// right.
-pub fn stripe_camera(dist: f32, phase: u32) -> vxe_render::Camera {
+pub fn stripe_camera(dist: f32, phase: u32) -> svet_render::Camera {
     let shift = (phase as f32 + 0.5) / PHASES as f32 / px_per_voxel(dist);
     camera_looking_x([WALL_X as f32 - dist, 96.3 - shift, 96.4])
 }
@@ -225,7 +225,7 @@ pub fn luma(img: &[u8], x: usize, y: usize) -> f64 {
 /// is over 6 pixels wide. Gradient energy: the mean of the squared forward
 /// differences on both axes of luminance in 0..=1. Rim gradient: the mean of `|dx| + |dy|`
 /// of luminance over the pixels whose 3 x 3 spans 16/255 or more in a channel.
-pub fn sharpness(img: &[u8], camera: &vxe_render::Camera, dist: f32) -> Sharpness {
+pub fn sharpness(img: &[u8], camera: &svet_render::Camera, dist: f32) -> Sharpness {
     let [w, h] = OUTPUT.map(|n| n as usize);
     let (x0, x1, y0, y1) = (w / 4, 3 * w / 4, h / 4, 3 * h / 4);
     let (mut ge, mut n) = (0.0f64, 0usize);
@@ -263,7 +263,7 @@ pub fn sharpness(img: &[u8], camera: &vxe_render::Camera, dist: f32) -> Sharpnes
         let z = WALL_X as f32 - camera.position.x;
         // The boundary between voxel rows y = k - 1 and k, projected to a column.
         let col = |k: f32| {
-            let d = vxe_render::glam::Vec3::new(z, k - camera.position.y, 0.0);
+            let d = svet_render::glam::Vec3::new(z, k - camera.position.y, 0.0);
             ((d.dot(right) / z / (tan * aspect) + 1.0) * 0.5 * w as f32) as f64
         };
         let half = f64::from(s) / 4.0;
@@ -277,7 +277,7 @@ pub fn sharpness(img: &[u8], camera: &vxe_render::Camera, dist: f32) -> Sharpnes
                 // The boundary's point on the wall at this row lies inside the lamp's inner
                 // cone: the lamp's falloff leaves the step alone.
                 let up_t = (1.0 - 2.0 * (y as f32 + 0.5) / h as f32) * tan;
-                let p = vxe_render::glam::Vec3::new(
+                let p = svet_render::glam::Vec3::new(
                     WALL_X as f32,
                     k as f32,
                     camera.position.z + z * up_t,
@@ -376,7 +376,7 @@ pub fn stripe_image(
     rig: &StripeRig,
     image: Image,
     shot: Shot,
-) -> ([Vec<u8>; 2], vxe_render::Camera) {
+) -> ([Vec<u8>; 2], svet_render::Camera) {
     stripe_image_at(rig, image, shot, PAN_PX)
 }
 
@@ -386,7 +386,7 @@ pub fn stripe_image_at(
     image: Image,
     shot: Shot,
     pan_px: f32,
-) -> ([Vec<u8>; 2], vxe_render::Camera) {
+) -> ([Vec<u8>; 2], svet_render::Camera) {
     let (internal, output, jitter) = match image {
         Image::N => (OUTPUT, OUTPUT, false),
         Image::R => (OUTPUT.map(|n| 2 * n), OUTPUT.map(|n| 2 * n), false),
@@ -396,9 +396,9 @@ pub fn stripe_image_at(
     };
     let (device, queue) = (&rig.device, &rig.queue);
     let mut f = frame_of(device, internal, output, jitter);
-    f.set_lighting(vxe_render::Lighting {
-        exposure: vxe_render::Exposure::Manual(stripe_exposure(shot.dist)),
-        ..vxe_render::Lighting::default()
+    f.set_lighting(svet_render::Lighting {
+        exposure: svet_render::Exposure::Manual(stripe_exposure(shot.dist)),
+        ..svet_render::Lighting::default()
     });
     let fsr = matches!(image, Image::U1 | Image::U15) && shot.kind.is_fsr2();
     match shot.kind {
@@ -417,7 +417,7 @@ pub fn stripe_image_at(
         }
         f.step(device, queue, &rig.gpu, &camera, &light);
     }
-    let img = vxe_render::debug::read_rgba8(device, queue, f.target());
+    let img = svet_render::debug::read_rgba8(device, queue, f.target());
     let images = match image {
         Image::N => [img.clone(), img],
         Image::R => {
@@ -430,7 +430,8 @@ pub fn stripe_image_at(
         }
         Image::U1 | Image::U15 if fsr => [img.clone(), img],
         Image::U1 | Image::U15 => {
-            let hist = vxe_render::debug::read_rgba16f(device, queue, f.upscale_history().unwrap());
+            let hist =
+                svet_render::debug::read_rgba16f(device, queue, f.upscale_history().unwrap());
             let plain = hist
                 .iter()
                 .flat_map(|t| {
@@ -523,7 +524,7 @@ pub fn read_f32_texels(device: &wgpu::Device, queue: &wgpu::Queue, t: &wgpu::Tex
         t.size(),
     );
     queue.submit([enc.finish()]);
-    let bytes = vxe_render::debug::read_buffer(device, queue, &buffer, 0, buffer.size());
+    let bytes = svet_render::debug::read_buffer(device, queue, &buffer, 0, buffer.size());
     bytes
         .chunks(padded as usize)
         .flat_map(|r| r[..row as usize].chunks(4))
@@ -533,12 +534,12 @@ pub fn read_f32_texels(device: &wgpu::Device, queue: &wgpu::Queue, t: &wgpu::Tex
 
 /// FSR 2 at its default settings.
 pub fn fsr2_kind() -> UpscalerKind {
-    UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default())
+    UpscalerKind::Fsr2(svet_render::Fsr2Settings::default())
 }
 
 /// `p` projected through `v` to a fractional pixel of the target, pixel centres at integer +
 /// 0.5, the jitter ignored (`project_prev` in `hitrec.wgsl`); `None` behind the view.
-pub fn project(v: &vxe_render::View, p: [f32; 3]) -> Option<[f64; 2]> {
+pub fn project(v: &svet_render::View, p: [f32; 3]) -> Option<[f64; 2]> {
     let d: Vec<f64> = (0..3).map(|k| f64::from(p[k] - v.origin[k])).collect();
     let dot = |a: [f32; 3]| (0..3).map(|k| d[k] * f64::from(a[k])).sum::<f64>();
     let z = dot(v.fwd);
@@ -564,7 +565,7 @@ pub fn project(v: &vxe_render::View, p: [f32; 3]) -> Option<[f64; 2]> {
 /// `world`: the carve's `aabb` and its distance along the axis in voxels.
 pub fn carve_in_view(
     world: &World,
-    camera: &vxe_render::Camera,
+    camera: &svet_render::Camera,
 ) -> ((VoxelCoord, VoxelCoord), f64) {
     let o = Fixed3(
         camera
@@ -613,7 +614,7 @@ pub fn octa16_normal(u: u16, v: u16) -> [f32; 3] {
 /// The headlamp's unshadowed term of `params` at `p`, normal `n` (`light_term` in
 /// `common.wgsl` over slot 0): `intensity * cone * max(n.l, 0) / dist^2` times the window at
 /// the frame's light floor.
-pub fn lamp_term(params: &vxe_render::Params, p: [f32; 3], n: [f32; 3]) -> f32 {
+pub fn lamp_term(params: &svet_render::Params, p: [f32; 3], n: [f32; 3]) -> f32 {
     params.lamp.irradiance(params.light_floor, p, n) / std::f32::consts::PI
 }
 
@@ -651,14 +652,14 @@ pub fn translucent_world() -> World {
     world
 }
 
-pub fn translucent_camera() -> vxe_render::Camera {
+pub fn translucent_camera() -> svet_render::Camera {
     camera_looking_x([8.5, 64.5, 64.5])
 }
 
 /// `tone.wgsl`'s arithmetic on the CPU (the shaded view) on pre-exposed colour `c`: ACES unless
 /// the identity tone map, the 2.2 encode, rounded to a byte.
-pub fn tone_bytes(c: [f32; 4], lighting: &vxe_render::Lighting) -> [u8; 3] {
-    let identity = lighting.tone_map == vxe_render::ToneMap::Identity;
+pub fn tone_bytes(c: [f32; 4], lighting: &svet_render::Lighting) -> [u8; 3] {
+    let identity = lighting.tone_map == svet_render::ToneMap::Identity;
     [0, 1, 2].map(|k| {
         let x = c[k];
         let m = if identity {
@@ -693,16 +694,16 @@ pub enum Pipe {
 
 impl Pipe {
     /// The frames of one jitter cycle of the pipeline under `kind`: FSR 2's own count at the
-    /// pipeline's sizes, else [`vxe_render::internals::JITTER_PHASES`].
+    /// pipeline's sizes, else [`svet_render::internals::JITTER_PHASES`].
     pub fn phases(self, kind: UpscalerKind) -> u32 {
         match (self, kind) {
             (Pipe::U1, UpscalerKind::Fsr2(_)) => {
-                vxe_render::internals::jitter_phases(OUTPUT[0], OUTPUT[0])
+                svet_render::internals::jitter_phases(OUTPUT[0], OUTPUT[0])
             }
             (Pipe::U15, UpscalerKind::Fsr2(_)) => {
-                vxe_render::internals::jitter_phases(INTERNAL[0], OUTPUT[0])
+                svet_render::internals::jitter_phases(INTERNAL[0], OUTPUT[0])
             }
-            _ => vxe_render::internals::JITTER_PHASES,
+            _ => svet_render::internals::JITTER_PHASES,
         }
     }
 
@@ -716,9 +717,9 @@ impl Pipe {
         if self != Pipe::Reference {
             set_kind(device, &mut f, kind);
         }
-        f.set_lighting(vxe_render::Lighting {
+        f.set_lighting(svet_render::Lighting {
             lamp,
-            ..vxe_render::Lighting::default()
+            ..svet_render::Lighting::default()
         });
         f
     }
@@ -784,7 +785,7 @@ pub fn lamp_reading(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     gpu: &GpuWorld,
-    camera: &vxe_render::Camera,
+    camera: &svet_render::Camera,
     pipe: Pipe,
     kind: UpscalerKind,
     full: bool,
@@ -797,7 +798,7 @@ pub fn lamp_reading(
         }
         f
     };
-    let off = lumas(&vxe_render::debug::read_rgba8(
+    let off = lumas(&svet_render::debug::read_rgba8(
         device,
         queue,
         settled(false, 48).target(),
@@ -809,7 +810,7 @@ pub fn lamp_reading(
         swept.turn += SWEEP_RATE;
         f.step(device, queue, gpu, camera, &swept);
         if i >= 16 {
-            let lit = lumas(&vxe_render::debug::read_rgba8(device, queue, f.target()));
+            let lit = lumas(&svet_render::debug::read_rgba8(device, queue, f.target()));
             let (c, contribution) = lamp_centroid(&lit, &off);
             r.centroids.push(c);
             r.contributions.push(contribution);
@@ -820,10 +821,10 @@ pub fn lamp_reading(
     // temporal pass drops the lamp's history on the switch, so the first frame after it is
     // already near the settled image and cannot be the measure.
     let step = luma_mad(
-        &lumas(&vxe_render::debug::read_rgba8(device, queue, f.target())),
+        &lumas(&svet_render::debug::read_rgba8(device, queue, f.target())),
         &off,
     );
-    f.set_lighting(vxe_render::Lighting {
+    f.set_lighting(svet_render::Lighting {
         lamp: false,
         ..f.lighting()
     });
@@ -831,7 +832,7 @@ pub fn lamp_reading(
         .map(|_| {
             f.step(device, queue, gpu, camera, &light);
             luma_mad(
-                &lumas(&vxe_render::debug::read_rgba8(device, queue, f.target())),
+                &lumas(&svet_render::debug::read_rgba8(device, queue, f.target())),
                 &off,
             )
         })
@@ -846,14 +847,14 @@ pub fn lamp_reading(
     for _ in 0..64 {
         dim.step(device, queue, gpu, camera, &light);
     }
-    let target = lumas(&vxe_render::debug::read_rgba8(device, queue, dim.target()));
+    let target = lumas(&svet_render::debug::read_rgba8(device, queue, dim.target()));
     let mut f = settled(false, 64);
     f.set_emission_scale(queue, ore, 0.25);
     let series: Vec<f64> = (0..64)
         .map(|_| {
             f.step(device, queue, gpu, camera, &light);
             luma_mad(
-                &lumas(&vxe_render::debug::read_rgba8(device, queue, f.target())),
+                &lumas(&svet_render::debug::read_rgba8(device, queue, f.target())),
                 &target,
             )
         })
@@ -865,7 +866,7 @@ pub fn lamp_reading(
     let (mut lo, mut hi) = (vec![f64::MAX; n], vec![f64::MIN; n]);
     for _ in 0..pipe.phases(kind) {
         f.step(device, queue, gpu, camera, &light);
-        for (i, v) in lumas(&vxe_render::debug::read_rgba8(device, queue, f.target()))
+        for (i, v) in lumas(&svet_render::debug::read_rgba8(device, queue, f.target()))
             .into_iter()
             .enumerate()
         {
@@ -883,12 +884,12 @@ pub fn ideal_centroids(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     gpu: &GpuWorld,
-    camera: &vxe_render::Camera,
+    camera: &svet_render::Camera,
 ) -> Vec<f64> {
     let light = LightParams::headlamp();
     let off_frame = Pipe::Reference.frame(device, UpscalerKind::Off, false);
     off_frame.render(device, queue, gpu, camera, &light);
-    let off = lumas(&vxe_render::debug::read_rgba8(
+    let off = lumas(&svet_render::debug::read_rgba8(
         device,
         queue,
         off_frame.target(),
@@ -902,7 +903,7 @@ pub fn ideal_centroids(
             };
             on.render(device, queue, gpu, camera, &swept);
             lamp_centroid(
-                &lumas(&vxe_render::debug::read_rgba8(device, queue, on.target())),
+                &lumas(&svet_render::debug::read_rgba8(device, queue, on.target())),
                 &off,
             )
             .0
@@ -1000,7 +1001,7 @@ pub fn still_vein_flicker(jitter: bool, kind: UpscalerKind) -> Option<(f64, f64)
     );
     world.apply(&scene_carve(&world)).unwrap();
     let output = [WIDTH, HEIGHT];
-    let internal = vxe_render::RenderScale::OneHalf.internal(output);
+    let internal = svet_render::RenderScale::OneHalf.internal(output);
     assert_eq!(internal, [213, 120]);
     let full = world.stats().full_bricks as u64;
     let (device, queue) = software_device(((full + 4096) * 512).max(64 << 20))?;
@@ -1011,11 +1012,11 @@ pub fn still_vein_flicker(jitter: bool, kind: UpscalerKind) -> Option<(f64, f64)
     }
     let mut frame = frame_of(&device, internal, output, jitter);
     set_kind(&device, &mut frame, kind);
-    frame.set_lighting(vxe_render::Lighting {
+    frame.set_lighting(svet_render::Lighting {
         lamp: false,
-        ..vxe_render::Lighting::default()
+        ..svet_render::Lighting::default()
     });
-    let camera = vxe_render::Camera {
+    let camera = svet_render::Camera {
         position: [264.5, 120.5, 376.5].into(),
         yaw: 15f32.to_radians(),
         pitch: 0.0,
@@ -1029,13 +1030,13 @@ pub fn still_vein_flicker(jitter: bool, kind: UpscalerKind) -> Option<(f64, f64)
     let mut hits = Vec::new();
     for _ in 0..32 {
         frame.step(&device, &queue, &gpu, &camera, &light);
-        frames.push(vxe_render::debug::read_rgba8(
+        frames.push(svet_render::debug::read_rgba8(
             &device,
             &queue,
             frame.target(),
         ));
         if hits.is_empty() {
-            let rec = vxe_render::debug::read_rgba16u(&device, &queue, frame.hit_records());
+            let rec = svet_render::debug::read_rgba16u(&device, &queue, frame.hit_records());
             let j = frame.params(&gpu, &camera, &light).views[0].jitter;
             for y in 0..output[1] {
                 for x in 0..output[0] {
@@ -1128,7 +1129,7 @@ pub fn diagonal_slab_world(table: &MaterialTable) -> World {
 /// `(1, -1, 0)`, looking at the centre: nearly head-on, so every hit lies within about 40
 /// voxels of the centre and the window's faces, where the surface voxels' neighbourhoods are
 /// cut, stay out of the frame.
-pub fn diagonal_slab_camera() -> vxe_render::Camera {
+pub fn diagonal_slab_camera() -> svet_render::Camera {
     let n = Vec3::new(1.0, 1.0, 1.0).normalize();
     let t = Vec3::new(1.0, -1.0, 0.0).normalize();
     let p = Vec3::from(CRACK_CENTRE) + 30.0 * n + 5.0 * t;
@@ -1146,13 +1147,13 @@ pub fn wall_world(table: &MaterialTable) -> World {
 }
 
 /// The floor obliquely: 20 voxels above `(64, 64, 64)` and 30 back along `-x`, looking at it.
-pub fn floor_camera() -> vxe_render::Camera {
+pub fn floor_camera() -> svet_render::Camera {
     camera_toward([34.0, 64.0, 84.0], [64.0, 64.0, 64.0])
 }
 
 /// The wall obliquely: 20 voxels out from `(80, 64, 64)` along `-x` and 30 along `-y`,
 /// looking at it.
-pub fn wall_camera() -> vxe_render::Camera {
+pub fn wall_camera() -> svet_render::Camera {
     camera_toward([60.0, 34.0, 64.0], [80.0, 64.0, 64.0])
 }
 
@@ -1163,9 +1164,9 @@ pub fn corner_world(table: &MaterialTable) -> World {
 }
 
 /// At `position` looking at `target`, 70 degrees vertical field of view.
-pub fn camera_toward(position: [f32; 3], target: [f32; 3]) -> vxe_render::Camera {
+pub fn camera_toward(position: [f32; 3], target: [f32; 3]) -> svet_render::Camera {
     let d = Vec3::from(target) - Vec3::from(position);
-    vxe_render::Camera {
+    svet_render::Camera {
         position: position.into(),
         yaw: d.y.atan2(d.x),
         pitch: (d.z / d.length()).asin(),
@@ -1175,26 +1176,26 @@ pub fn camera_toward(position: [f32; 3], target: [f32; 3]) -> vxe_render::Camera
 
 /// 30 voxels out from [`CRACK_CENTRE`] along the slab's normal `n` and 20 along `t`, looking
 /// at the centre: an oblique view of the slab's surface.
-pub fn slab_camera(n: [f32; 3], t: [f32; 3]) -> vxe_render::Camera {
+pub fn slab_camera(n: [f32; 3], t: [f32; 3]) -> svet_render::Camera {
     let (n, t) = (Vec3::from(n).normalize(), Vec3::from(t).normalize());
     let p = Vec3::from(CRACK_CENTRE) + 30.0 * n + 20.0 * t;
     camera_toward(p.to_array(), CRACK_CENTRE)
 }
 
 /// The tilted slab from its air side, obliquely.
-pub fn tilted_slab_camera() -> vxe_render::Camera {
+pub fn tilted_slab_camera() -> svet_render::Camera {
     slab_camera([1.0, 2.0, 3.0], [2.0, -1.0, 0.0])
 }
 
 /// The 45-degree slab from its air side, obliquely.
-pub fn axis_slab_camera() -> vxe_render::Camera {
+pub fn axis_slab_camera() -> svet_render::Camera {
     slab_camera([1.0, 0.0, 1.0], [0.0, 1.0, 0.0])
 }
 
 /// Inside the corner, at `(50.5, 64.5, 82.5)` looking +x at a pitch of -30 degrees: the
 /// centre ray meets the floor at the foot of the wall.
-pub fn corner_camera() -> vxe_render::Camera {
-    vxe_render::Camera {
+pub fn corner_camera() -> svet_render::Camera {
+    svet_render::Camera {
         position: [50.5, 64.5, 82.5].into(),
         yaw: 0.0,
         pitch: (-30f32).to_radians(),
@@ -1222,7 +1223,7 @@ pub fn field_rig_on(
     }
     drain_field(&device, &queue, &mut gpu);
     let mut frame = Frame::new(&device, size[0], size[1]);
-    frame.set_resolution(&device, vxe_render::LightingResolution::Full);
+    frame.set_resolution(&device, svet_render::LightingResolution::Full);
     LookRig {
         device,
         queue,
@@ -1427,7 +1428,7 @@ impl Feature {
     /// pitch (`atan(20 / 30)` down) from 45 degrees off the x axis, so a long side, an end and
     /// the top show; the wall pillar along the wall camera's direction (level, `atan(30 /
     /// 20)` off the wall's normal).
-    pub fn camera(self) -> vxe_render::Camera {
+    pub fn camera(self) -> svet_render::Camera {
         let f = FEATURE_Z as f32;
         let (target, dir) = match self {
             Feature::WallPillar => (

@@ -5,8 +5,8 @@
 
 use flythrough::cave::SHELL;
 use flythrough::logic::DigInput;
-use vxe_world::hash::Fnv1a;
-use vxe_world::*;
+use svet_world::hash::Fnv1a;
+use svet_world::*;
 
 /// 24 ops covering every shape and mode, the shell, tool-along-ray, and one op that fails on
 /// a non-resident chunk.
@@ -118,7 +118,7 @@ pub fn hash_result(h: &mut Fnv1a, r: &Result<EditResult, EditError>) {
         }
         Err(e @ EditError::OutOfRange { .. }) => {
             let mut bytes = Vec::new();
-            vxe_world::wire::encode_error(&mut bytes, e);
+            svet_world::wire::encode_error(&mut bytes, e);
             h.write(&[4]);
             h.write(&bytes);
         }

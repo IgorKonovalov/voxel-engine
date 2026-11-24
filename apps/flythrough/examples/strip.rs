@@ -100,11 +100,11 @@ use flythrough::Pose;
 use flythrough::showcase::{SHOTS, ShowcaseSource};
 use support::aliasing::{self, ByClass, Hits, Mask};
 use support::{read_png, write_png};
-use vxe_render::{
+use svet_render::{
     Camera, Exposure, Frame, Fsr2Settings, LightParams, Lighting, LookParams, UpscalerKind, wgpu,
 };
-use vxe_render::{GpuWorld, MirrorConfig, Window, internals::UNIT_BYTES};
-use vxe_world::*;
+use svet_render::{GpuWorld, MirrorConfig, Window, internals::UNIT_BYTES};
+use svet_world::*;
 
 fn main() {
     let args = match args::parse(std::env::args().skip(1)) {
@@ -159,7 +159,7 @@ fn reading_device(
     let desc = wgpu::DeviceDescriptor {
         // The per-pass readings time the frame where the adapter can.
         required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
-        required_limits: vxe_render::limits_for(&adapter, pool_bytes)
+        required_limits: svet_render::limits_for(&adapter, pool_bytes)
             .expect("the frame's limits on the chosen adapter"),
         ..Default::default()
     };
@@ -447,15 +447,15 @@ fn magnify(rgba: &[u8], w: u32, h: u32, k: u32) -> Vec<u8> {
 /// The frame's internal hit buffer: positions with `t`, and records.
 fn read_hits(scene: &Scene, frame: &Frame) -> (Vec<[f32; 4]>, Vec<[u16; 4]>) {
     (
-        vxe_render::debug::read_float(&scene.device, &scene.queue, frame.hit_positions()),
-        vxe_render::debug::read_rgba16u(&scene.device, &scene.queue, frame.hit_records()),
+        svet_render::debug::read_float(&scene.device, &scene.queue, frame.hit_positions()),
+        svet_render::debug::read_rgba16u(&scene.device, &scene.queue, frame.hit_records()),
     )
 }
 
 /// The display image: the target, box-filtered down by `shrink` (`R`).
 fn display(scene: &Scene, frame: &Frame, shrink: u32) -> Vec<u8> {
     let t = frame.target();
-    let rgba = vxe_render::debug::read_rgba8(&scene.device, &scene.queue, t);
+    let rgba = svet_render::debug::read_rgba8(&scene.device, &scene.queue, t);
     if shrink > 1 {
         shrink_image(&rgba, t.width(), t.height(), shrink).0
     } else {
@@ -467,9 +467,9 @@ fn display(scene: &Scene, frame: &Frame, shrink: u32) -> Vec<u8> {
 /// into the store at `BakeSettings::default()` with rounds of 512 (`gpu_bake.rs`'s
 /// `brick_bake`), before any frame reads it.
 fn bake_view(scene: &mut Scene, frame: &mut Frame, radius: i32) {
-    let settings = vxe_render::BakeSettings {
+    let settings = svet_render::BakeSettings {
         round: 512,
-        ..vxe_render::BakeSettings::default()
+        ..svet_render::BakeSettings::default()
     };
     let world = scene.world.extent();
     let size = world.size();
@@ -1056,7 +1056,7 @@ impl FoldRead<'_> {
 /// level between closes around the corner.
 fn hall_floor_terraces() {
     use flythrough::showcase::FLOOR_Z;
-    let noise = vxe_world::hash::ValueNoise::new(1 ^ 0x5A0C_A5E0_0000_0002, 6);
+    let noise = svet_world::hash::ValueNoise::new(1 ^ 0x5A0C_A5E0_0000_0002, 6);
     let floor = |x: i32, y: i32| FLOOR_Z + (noise.sample([x, y, 0]) >> 11);
     let (x0, x1, y0, y1) = (192, 704, 192, 576);
     let mut runs = (0u64, 0u64);
@@ -1183,7 +1183,7 @@ fn make_frame(args: &Args, device: &wgpu::Device, queue: &wgpu::Queue) -> (Frame
         "fsr2" => frame
             .fsr2()
             .map_or(0, |f| f.settings().phases(internal[0], w)),
-        "own" => vxe_render::internals::JITTER_PHASES,
+        "own" => svet_render::internals::JITTER_PHASES,
         _ => 18,
     };
     (frame, args.phases.unwrap_or(phases))
@@ -1227,7 +1227,7 @@ fn light_frame(
         .unwrap_or(if args.light.is_some() && !baked {
             HERO_PROBE_SPACING
         } else {
-            vxe_render::DEFAULT_PROBE_SPACING
+            svet_render::DEFAULT_PROBE_SPACING
         });
     frame.set_probe_spacing(device, spacing);
     if let Some(r) = args.lighting {
@@ -1428,7 +1428,7 @@ fn strip_frames(args: &Args, scene: &mut Scene, run: &mut Run) {
         let (device, queue) = (&scene.device, &scene.queue);
         run.frame
             .step(device, queue, &scene.gpu, &run.camera, &run.light);
-        let rgba = vxe_render::debug::read_rgba8(device, queue, run.frame.target());
+        let rgba = svet_render::debug::read_rgba8(device, queue, run.frame.target());
         let y: Vec<f32> = rgba.chunks_exact(4).map(luma).collect();
         let mean = y.iter().sum::<f32>() / n as f32;
         let mut d_mean = 0.0;

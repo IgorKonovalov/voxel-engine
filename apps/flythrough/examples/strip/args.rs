@@ -6,7 +6,7 @@ use std::str::FromStr;
 
 use flythrough::LookPreset;
 use flythrough::cli::table::{Flag, Section, Table, Val};
-use vxe_render::{
+use svet_render::{
     AutoExposure, Exposure, LightWeights, LightingResolution, RenderScale, ShadowWalk, StoreRead,
     ViewMode,
 };

@@ -28,7 +28,7 @@
 //! evaluating its voxels; the rest are evaluated per voxel against only their bucket, from
 //! noise corners hashed once per brick.
 
-use vxe_world::{MaterialId, VoxelCoord};
+use svet_world::{MaterialId, VoxelCoord};
 
 mod field;
 mod source;

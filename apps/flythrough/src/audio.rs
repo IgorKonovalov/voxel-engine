@@ -5,12 +5,12 @@ use crate::app::ms_since;
 use crate::cave_materials;
 use crate::now;
 use std::time::Instant;
-use vxe_audio::{
+use svet_audio::{
     Acoustics, BlockClock, Command, Hrtf, MixSettings, Mixer, Output, PlayParams, ReverbSettings,
     RoomEstimate, RoomTargets, Sound, TailLines, VoiceId,
 };
-use vxe_world::MaterialTable;
-use vxe_world::hash::SplitMix64;
+use svet_world::MaterialTable;
+use svet_world::hash::SplitMix64;
 
 /// Metres per voxel, for the audio mixer's distances.
 pub(crate) const METRES_PER_VOXEL: f32 = 0.1;
@@ -42,18 +42,18 @@ pub(crate) fn knock() -> Sound {
 /// leaves gaps in which the echoes off far walls can be heard on their own.
 pub(crate) fn pulse() -> Sound {
     let mut samples = knock_samples();
-    samples.resize(vxe_audio::RATE as usize, 0.0);
+    samples.resize(svet_audio::RATE as usize, 0.0);
     Sound::new(samples)
 }
 
 /// The knock's samples.
 pub(crate) fn knock_samples() -> Vec<f32> {
     let mut rng = SplitMix64(KNOCK_SEED);
-    let len = (KNOCK_SECONDS * vxe_audio::RATE as f32) as usize;
+    let len = (KNOCK_SECONDS * svet_audio::RATE as f32) as usize;
     let samples: Vec<f32> = (0..len)
         .map(|n| {
             let noise = (rng.next_u64() >> 40) as f32 / (1u64 << 23) as f32 - 1.0;
-            let t = n as f32 / vxe_audio::RATE as f32;
+            let t = n as f32 / svet_audio::RATE as f32;
             0.8 * noise * (-t / KNOCK_DECAY_SECONDS).exp()
         })
         .collect();
@@ -65,7 +65,7 @@ pub(crate) fn knock_samples() -> Vec<f32> {
 pub(crate) fn acoustic_table(absorption: f32) -> MaterialTable {
     let mut t = MaterialTable::new();
     for row in cave_materials().rows().iter().skip(1) {
-        t.push(vxe_world::Material {
+        t.push(svet_world::Material {
             acoustic: [absorption, CAVE_ACOUSTIC[1], CAVE_ACOUSTIC[2]],
             ..row.clone()
         });
@@ -261,7 +261,7 @@ pub(crate) const MIC_VOICE: VoiceId = VoiceId(u32::MAX);
 
 /// `--mic`: the input stream and whether its period has been printed.
 pub(crate) struct Mic {
-    pub(crate) input: vxe_audio::Input,
+    pub(crate) input: svet_audio::Input,
     pub(crate) period_printed: bool,
     pub(crate) stream_errors: u64,
 }
@@ -287,9 +287,9 @@ impl RoomProbe {
 
 /// One second of a `J` hum at `hz`.
 pub(crate) fn hum(hz: u32) -> Sound {
-    let rate = vxe_audio::RATE as f32;
+    let rate = svet_audio::RATE as f32;
     Sound::new(
-        (0..vxe_audio::RATE)
+        (0..svet_audio::RATE)
             .map(|n| HUM_AMPLITUDE * (std::f32::consts::TAU * hz as f32 * n as f32 / rate).sin())
             .collect::<Vec<_>>(),
     )
@@ -351,7 +351,7 @@ impl Drop for Audio {
         match std::fs::write(AUDIO_DEBUG_WAV, wav_f32_stereo(&samples)) {
             Ok(()) => println!(
                 "audio-debug: wrote {:.1} s of the device's output to {AUDIO_DEBUG_WAV}",
-                samples.len() as f32 / 2.0 / vxe_audio::RATE as f32
+                samples.len() as f32 / 2.0 / svet_audio::RATE as f32
             ),
             Err(e) => println!("audio-debug: {AUDIO_DEBUG_WAV}: {e}"),
         }
@@ -361,7 +361,7 @@ impl Drop for Audio {
 /// A 32-bit float stereo WAV file of interleaved `samples` at the mixer's rate.
 pub(crate) fn wav_f32_stereo(samples: &[f32]) -> Vec<u8> {
     let data = (samples.len() * 4) as u32;
-    let rate = vxe_audio::RATE;
+    let rate = svet_audio::RATE;
     let mut b = Vec::with_capacity(44 + data as usize);
     b.extend_from_slice(b"RIFF");
     b.extend_from_slice(&(36 + data).to_le_bytes());
@@ -500,8 +500,8 @@ impl Audio {
 /// off; prints the device, or why it could not.
 pub(crate) fn open_mic(output: &Output) -> Option<Mic> {
     println!("mic: wear headphones: from speakers the microphone hears the tail and feeds it back");
-    let (writer, reader) = vxe_audio::Stream::new();
-    match vxe_audio::Input::open(writer) {
+    let (writer, reader) = svet_audio::Stream::new();
+    match svet_audio::Input::open(writer) {
         Ok(input) => {
             println!("mic: {}", input.device());
             let params = PlayParams {
@@ -529,7 +529,7 @@ pub(crate) fn open_mic(output: &Output) -> Option<Mic> {
 mod tests {
     use super::*;
 
-    use vxe_audio::{MixSettings, TailLines};
+    use svet_audio::{MixSettings, TailLines};
 
     use crate::cli::parse_args_from;
     use crate::test_support::argv;

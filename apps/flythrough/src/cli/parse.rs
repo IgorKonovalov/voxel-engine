@@ -17,9 +17,9 @@ use crate::showcase::SHOTS;
 use crate::streaming::SYNC_BUDGET_MIB;
 use crate::trees::{LEAF_FILL, TreeDensity};
 use crate::{LogicChoice, LookPreset, RESIDENCY};
-use vxe_app::Pacing;
-use vxe_render::{LookParams, ViewMode};
-use vxe_world::Residency;
+use svet_app::Pacing;
+use svet_render::{LookParams, ViewMode};
+use svet_world::Residency;
 
 /// `--keys`' row: print the key tree ([`crate::hud::menu::keys_text`]) and exit.
 pub(super) fn keys_flag() -> super::table::Flag<Parsing> {
@@ -105,10 +105,10 @@ impl Args {
             help: false,
             keys: false,
             settings: false,
-            profile: vxe_render::Profile::Floor,
-            light_cap: vxe_render::MAX_LIGHTS as u32,
+            profile: svet_render::Profile::Floor,
+            light_cap: svet_render::MAX_LIGHTS as u32,
             light_samples: None,
-            light_hooks: vxe_render::LightHooks::default(),
+            light_hooks: svet_render::LightHooks::default(),
             output_hint: None,
             audio: AudioArgs {
                 on: false,
@@ -120,7 +120,7 @@ impl Args {
             },
             light: LightingArgs {
                 lamp_bounce: true,
-                ..LightingArgs::from_lighting(&lighting, vxe_render::DEFAULT_PROBE_SPACING)
+                ..LightingArgs::from_lighting(&lighting, svet_render::DEFAULT_PROBE_SPACING)
             },
             look: LookArgs {
                 preset: LookPreset::DEFAULT,
@@ -139,22 +139,22 @@ impl Args {
                 upscaler: None,
             },
             bake: BakeArgs {
-                budget: vxe_render::Budget::default(),
-                coarse: vxe_render::DEFAULT_COARSE_SAMPLES,
-                tiers: vxe_render::DEFAULT_TIERS,
-                drain: Some(vxe_render::DEFAULT_DRAIN),
-                near: vxe_render::DEFAULT_NEAR,
+                budget: svet_render::Budget::default(),
+                coarse: svet_render::DEFAULT_COARSE_SAMPLES,
+                tiers: svet_render::DEFAULT_TIERS,
+                drain: Some(svet_render::DEFAULT_DRAIN),
+                near: svet_render::DEFAULT_NEAR,
                 full_first: None,
-                missing_light: vxe_render::MissingLight::Chain,
-                reach: vxe_render::ReachMode::Full,
+                missing_light: svet_render::MissingLight::Chain,
+                reach: svet_render::ReachMode::Full,
                 queue_distance: false,
-                queue_angle: vxe_render::QUEUE_ANGLE_WEIGHT,
-                queue_refine: vxe_render::QUEUE_REFINE_WEIGHT,
+                queue_angle: svet_render::QUEUE_ANGLE_WEIGHT,
+                queue_refine: svet_render::QUEUE_REFINE_WEIGHT,
                 queue_tier: true,
                 queue_withdraw: true,
                 queue_census: false,
                 queue_rule_reading: false,
-                edit_ms: vxe_render::DEFAULT_BAKE_EDIT_MS,
+                edit_ms: svet_render::DEFAULT_BAKE_EDIT_MS,
                 dig_reach: true,
                 read_missing: false,
                 pre_roll_drain: None,
@@ -222,7 +222,7 @@ fn settle(args: &mut Args, given: &Given) -> Result<(), String> {
     args.light.radius = Some(args.light.radius.unwrap_or(if mode.is_showcase() {
         SHOWCASE_LIGHT_RADIUS
     } else {
-        vxe_render::DEFAULT_LIGHT_RADIUS
+        svet_render::DEFAULT_LIGHT_RADIUS
     }));
     // The showcase starts at its shot's manual exposure unless `--exposure` is given.
     if mode.is_showcase() && !given.exposure {

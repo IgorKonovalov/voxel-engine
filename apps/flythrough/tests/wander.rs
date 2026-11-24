@@ -11,10 +11,10 @@ use flythrough::entities::library;
 use flythrough::entities::mover::{Mover, Stance};
 use flythrough::viewer::material;
 use flythrough::{showcase_materials, walker};
-use vxe_entity::{EntityId, Pose};
-use vxe_sim::SurfaceEvent;
-use vxe_world::hash::Fnv1a;
-use vxe_world::{
+use svet_entity::{EntityId, Pose};
+use svet_sim::SurfaceEvent;
+use svet_world::hash::Fnv1a;
+use svet_world::{
     AIR, ChunkExtent, EditOp, FIXED_ONE, Fixed3, FnSource, MaterialTable, Mode, World,
 };
 

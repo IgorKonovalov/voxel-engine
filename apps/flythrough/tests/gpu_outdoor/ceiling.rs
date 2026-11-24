@@ -4,7 +4,7 @@
 mod ceiling {
     use super::support;
     use support::terms::Rig;
-    use vxe_render::{AutoExposure, Camera, Exposure, Frame, LightParams, Lighting};
+    use svet_render::{AutoExposure, Camera, Exposure, Frame, LightParams, Lighting};
 
     /// What [`read`] reads at its last frame: the metered share of sky, the metered level
     /// (log2), the exposure in force (`eye`, log2), the exposure the meter settles at under the
@@ -21,7 +21,7 @@ mod ceiling {
         /// The misses' bounding box in pixels, `[x0, y0, x1, y1]`, and their count.
         pub misses: ([usize; 4], usize),
         /// The highlight's state after the last frame (Plan 0097 Phase 3a).
-        pub hi: vxe_render::ExposureHighlight,
+        pub hi: svet_render::ExposureHighlight,
         /// Over the whole view: the share of pixels whose brightest display byte is over the
         /// white point's (`HIGHLIGHT_WHITE` encoded, 249), the share at 255, and the 99th and
         /// 99.9th percentile of the brightest byte.
@@ -29,7 +29,7 @@ mod ceiling {
         pub at_255: f64,
         pub top: [u8; 2],
         /// The sunlit ground's irradiance the pass read at the last frame
-        /// (`vxe_render::ground_irradiance` over its `E_sky(+z)`), the anchor's `ground`.
+        /// (`svet_render::ground_irradiance` over its `E_sky(+z)`), the anchor's `ground`.
         pub ground: f32,
         /// The floor's sky share the frame fed the last pass, smoothed
         /// (`Frame::sky_floor`): the share the pass's ceiling target read.
@@ -67,7 +67,7 @@ mod ceiling {
 
     /// The scenes' times: noon, midnight and 17:45 (`outdoor_forest_sunset`'s clock), and the
     /// fixed sun 10 degrees up in the south.
-    pub(super) fn clock(minutes: f64, fixed_sun: Option<[f32; 2]>) -> vxe_render::sky::Sky {
+    pub(super) fn clock(minutes: f64, fixed_sun: Option<[f32; 2]>) -> svet_render::sky::Sky {
         flythrough::daylight::Clock {
             minutes,
             fixed_sun,
@@ -91,27 +91,27 @@ mod ceiling {
     /// `lamp`, the canopy shadowing as `leaf`, under [`auto`] at `share` and `dt` 1/60: 24
     /// frames, the exposure reset to the meter (the adapted level and the ceiling jump), then
     /// 24 more. No bake: the faces with no record take the no-ray prior.
-    pub(super) fn read(rig: &mut Rig, cam: &Camera, sky: vxe_render::sky::Sky, lamp: bool, leaf: flythrough::LeafShadow, share: f32) -> Read {
+    pub(super) fn read(rig: &mut Rig, cam: &Camera, sky: svet_render::sky::Sky, lamp: bool, leaf: flythrough::LeafShadow, share: f32) -> Read {
         read_with(rig, cam, sky, lamp, leaf, auto(share), false).0
     }
 
     /// [`read`] under the auto exposure `a`, the store first baked by `support::bake_around`
     /// at radius 1 and 256 samples about the camera's voxel when `bake`; with the sky over the
-    /// floor under the camera from the store after the frames (`vxe_render::sky_over_floor`).
+    /// floor under the camera from the store after the frames (`svet_render::sky_over_floor`).
     #[allow(clippy::too_many_arguments, reason = "the scene's parts, as `read` takes them")]
     pub(super) fn read_with(
         rig: &mut Rig,
         cam: &Camera,
-        sky: vxe_render::sky::Sky,
+        sky: svet_render::sky::Sky,
         lamp: bool,
         leaf: flythrough::LeafShadow,
         a: AutoExposure,
         bake: bool,
-    ) -> (Read, Option<(f32, vxe_render::AroundSource)>) {
+    ) -> (Read, Option<(f32, svet_render::AroundSource)>) {
         let mut f = Frame::new(&rig.device, 160, 90);
-        f.set_look(vxe_render::LookParams {
+        f.set_look(svet_render::LookParams {
             far_normal: flythrough::LookPreset::DEFAULT.far_normal,
-            ..vxe_render::LookParams::default()
+            ..svet_render::LookParams::default()
         });
         f.set_material_styles(&rig.queue, &flythrough::outdoor_styles(leaf));
         f.set_lighting(Lighting {
@@ -133,9 +133,9 @@ mod ceiling {
             }
             f.step(&rig.device, &rig.queue, &rig.gpu, cam, &light);
         }
-        let st = vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_state(), 0, 32);
-        let s = vxe_render::ExposureState::from_bytes(&st);
-        let px = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, f.target());
+        let st = svet_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_state(), 0, 32);
+        let s = svet_render::ExposureState::from_bytes(&st);
+        let px = svet_render::debug::read_rgba8(&rig.device, &rig.queue, f.target());
         let (w, h) = (160usize, 90usize);
         let (mut sum, mut n) = (0.0f64, 0usize);
         let mut centre = Vec::new();
@@ -147,9 +147,9 @@ mod ceiling {
                 centre.push([p[0], p[1], p[2]]);
             }
         }
-        let hb = vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_highlight(), 0, 16);
-        let hi = vxe_render::ExposureHighlight::from_bytes(&hb);
-        let white = (255.0 * vxe_render::HIGHLIGHT_WHITE.powf(1.0 / 2.2)).round() as u8;
+        let hb = svet_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_highlight(), 0, 16);
+        let hi = svet_render::ExposureHighlight::from_bytes(&hb);
+        let white = (255.0 * svet_render::HIGHLIGHT_WHITE.powf(1.0 / 2.2)).round() as u8;
         let mut tops: Vec<u8> = px.chunks_exact(4).map(|p| p[0].max(p[1]).max(p[2])).collect();
         let np = tops.len() as f64;
         let over_white = tops.iter().filter(|&&t| t > white).count() as f64 / np;
@@ -157,10 +157,10 @@ mod ceiling {
         tops.sort_unstable();
         let q = |p: f64| tops[((p * np) as usize).min(tops.len() - 1)];
         let top = [q(0.99), q(0.999)];
-        let b = vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.sky_irradiance(), 0, 96);
+        let b = svet_render::debug::read_buffer(&rig.device, &rig.queue, f.sky_irradiance(), 0, 96);
         let up: Vec<f32> = b[80..96].chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
-        let ground = vxe_render::ground_irradiance([up[0], up[1], up[2]], up[3]);
-        let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, f.hit_records());
+        let ground = svet_render::ground_irradiance([up[0], up[1], up[2]], up[3]);
+        let rec = svet_render::debug::read_rgba16u(&rig.device, &rig.queue, f.hit_records());
         let mut bb = [usize::MAX, usize::MAX, 0, 0];
         let mut nm = 0;
         for (i, r) in rec.iter().enumerate() {
@@ -186,7 +186,7 @@ mod ceiling {
             floor: f.sky_floor(),
             centre,
         };
-        (read, vxe_render::sky_over_floor(f.store(), eye))
+        (read, svet_render::sky_over_floor(f.store(), eye))
     }
 
     /// The tunnel rig with the inside spawn's view out (the cave mouth from inside) and the
@@ -250,7 +250,7 @@ mod ceiling {
         };
         let sun = clock(720.0, Some([10.0, 180.0]));
         let leaf = flythrough::LeafShadow::default();
-        let on = auto(vxe_render::DEFAULT_SKY_ANCHOR_SHARE);
+        let on = auto(svet_render::DEFAULT_SKY_ANCHOR_SHARE);
         let shade = w2_shade_camera();
         let (s, fs) = read_with(&mut rig, &shade, sun, false, leaf, on, true);
         let (k, fk) = read_with(&mut rig, &w2_camera(W2_SKY), sun, false, leaf, on, true);
@@ -312,7 +312,7 @@ mod ceiling {
             return;
         };
         let leaf = flythrough::LeafShadow::default();
-        let share = vxe_render::DEFAULT_SKY_ANCHOR_SHARE;
+        let share = svet_render::DEFAULT_SKY_ANCHOR_SHARE;
         let on = auto(share);
         let lift = on.sky_anchor_lift.expect("the default lift");
         let off = AutoExposure { sky_anchor_lift: None, ..on };
@@ -384,11 +384,11 @@ mod ceiling {
             yaw: spawn.yaw + 90f32.to_radians(),
             ..spawn
         };
-        let a = auto(vxe_render::DEFAULT_SKY_ANCHOR_SHARE);
+        let a = auto(svet_render::DEFAULT_SKY_ANCHOR_SHARE);
         let mut f = Frame::new(&rig.device, 160, 90);
-        f.set_look(vxe_render::LookParams {
+        f.set_look(svet_render::LookParams {
             far_normal: flythrough::LookPreset::DEFAULT.far_normal,
-            ..vxe_render::LookParams::default()
+            ..svet_render::LookParams::default()
         });
         f.set_material_styles(&rig.queue, &flythrough::outdoor_styles(flythrough::LeafShadow::default()));
         f.set_lighting(Lighting {
@@ -398,7 +398,7 @@ mod ceiling {
         });
         f.set_sky(Some(clock(720.0, Some([40.0, 200.0]))));
         f.set_dt(1.0 / 60.0);
-        f.start_bake_queue(&rig.queue, &rig.gpu, vxe_render::queue_settings(), vxe_render::DEFAULT_BAKE_SLICE_MS);
+        f.start_bake_queue(&rig.queue, &rig.gpu, svet_render::queue_settings(), svet_render::DEFAULT_BAKE_SLICE_MS);
         f.set_bake_coarse(8, 2);
         let light = LightParams::headlamp();
         let ahead = {
@@ -425,7 +425,7 @@ mod ceiling {
             if k + 2 < 120 + 20 {
                 continue;
             }
-            let st = vxe_render::ExposureState::from_bytes(&vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_state(), 0, 32));
+            let st = svet_render::ExposureState::from_bytes(&svet_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_state(), 0, 32));
             let used = f64::from(st.previous).log2();
             let label = k as i64 - 140;
             if let Some(p) = last {
@@ -454,14 +454,14 @@ mod ceiling {
     /// voxels a frame, facing along the leg pitched 10 degrees down, after 120 still frames at
     /// the start facing the first leg. Returns the walk's frames (the still ones left out),
     /// `c_a`, the anchored ceiling (log2) from the pass's own ground irradiance, and the wall
-    /// time of one `vxe_render::sky_over_floor` call on the frame's store at each frame's eye
+    /// time of one `svet_render::sky_over_floor` call on the frame's store at each frame's eye
     /// (the CPU walk the frame does once a frame).
     pub(super) fn canopy_walk(rig: &mut Rig, size: (u32, u32), step: f32) -> (CanopyTrace, f64, Vec<std::time::Duration>) {
-        let a = auto(vxe_render::DEFAULT_SKY_ANCHOR_SHARE);
+        let a = auto(svet_render::DEFAULT_SKY_ANCHOR_SHARE);
         let mut f = Frame::new(&rig.device, size.0, size.1);
-        f.set_look(vxe_render::LookParams {
+        f.set_look(svet_render::LookParams {
             far_normal: flythrough::LookPreset::DEFAULT.far_normal,
-            ..vxe_render::LookParams::default()
+            ..svet_render::LookParams::default()
         });
         f.set_material_styles(&rig.queue, &flythrough::outdoor_styles(flythrough::LeafShadow::default()));
         f.set_lighting(Lighting {
@@ -498,16 +498,16 @@ mod ceiling {
                 let c = cam(if back { 1.0 - t } else { t }, back);
                 f.step(&rig.device, &rig.queue, &rig.gpu, &c, &light);
                 let t0 = std::time::Instant::now();
-                std::hint::black_box(vxe_render::sky_over_floor(f.store(), c.position.to_array()));
+                std::hint::black_box(svet_render::sky_over_floor(f.store(), c.position.to_array()));
                 walk.push(t0.elapsed());
-                let st = vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_state(), 0, 32);
-                let st = vxe_render::ExposureState::from_bytes(&st);
+                let st = svet_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_state(), 0, 32);
+                let st = svet_render::ExposureState::from_bytes(&st);
                 trace.push((f.sky_floor(), st.sky, f64::from(st.ceiling).log2(), f64::from(st.current).log2()));
             }
         }
-        let b = vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.sky_irradiance(), 0, 96);
+        let b = svet_render::debug::read_buffer(&rig.device, &rig.queue, f.sky_irradiance(), 0, 96);
         let up: Vec<f32> = b[80..96].chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
-        let ground = vxe_render::ground_irradiance([up[0], up[1], up[2]], up[3]);
+        let ground = svet_render::ground_irradiance([up[0], up[1], up[2]], up[3]);
         (trace, f64::from(a.ceiling(Some(ground))).log2(), walk)
     }
 
@@ -547,7 +547,7 @@ mod ceiling {
         };
         let (trace, c_a, _) = canopy_walk(&mut rig, (160, 90), 1.0);
         let ((step, ks), (off, ko)) = canopy_worst(&trace, c_a);
-        let r_f = f64::from(vxe_render::DEFAULT_EXPOSURE_RATE_EV_S) / 60.0 + 1.0 / 256.0;
+        let r_f = f64::from(svet_render::DEFAULT_EXPOSURE_RATE_EV_S) / 60.0 + 1.0 / 256.0;
         println!(
             "reading: on {}: c_a {c_a:+.4} EV; the largest step {step:.4} EV at frame {ks} (bar {r_f:.4}); the ceiling at most {off:.4} EV from c_a at frame {ko}",
             rig.adapter
@@ -569,9 +569,9 @@ mod ceiling {
         let at = |t: f32| [0, 1, 2].map(|k| a[k] as f32 + 0.5 + (c[k] - a[k]) as f32 * t);
         let (deep, out) = (0.5f32, -0.15f32);
         let mut f = Frame::new(&rig.device, 320, 180);
-        f.set_look(vxe_render::LookParams {
+        f.set_look(svet_render::LookParams {
             far_normal: flythrough::LookPreset::DEFAULT.far_normal,
-            ..vxe_render::LookParams::default()
+            ..svet_render::LookParams::default()
         });
         f.set_material_styles(&rig.queue, &flythrough::outdoor_styles(flythrough::LeafShadow::default()));
         f.set_lighting(Lighting {
@@ -591,8 +591,8 @@ mod ceiling {
                 let ahead = at(t + if to < from { -0.05 } else { 0.05 });
                 let cam = flythrough::camera_looking_at(p, ahead);
                 f.step(&rig.device, &rig.queue, &rig.gpu, &cam, &light);
-                let st = vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_state(), 0, 32);
-                let st = vxe_render::ExposureState::from_bytes(&st);
+                let st = svet_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_state(), 0, 32);
+                let st = svet_render::ExposureState::from_bytes(&st);
                 trace.push((st.sky, st.metered_log2, f64::from(st.ceiling).log2(), f64::from(st.current).log2()));
             }
         }
@@ -615,7 +615,7 @@ mod ceiling {
                 return;
             };
             println!("reading: the_ceiling_by_hour on {}", rig.adapter);
-            let a = auto(vxe_render::DEFAULT_SKY_ANCHOR_SHARE);
+            let a = auto(svet_render::DEFAULT_SKY_ANCHOR_SHARE);
             let max = a.max.log2();
             let n = a.sky_anchor_ev.expect("the outdoor anchor");
             let mut f = Frame::new(&rig.device, 16, 9);
@@ -630,9 +630,9 @@ mod ceiling {
                 let minutes = f64::from(q) * 15.0;
                 f.set_sky(Some(clock(minutes, None)));
                 f.step(&rig.device, &rig.queue, &rig.gpu, &cam, &light);
-                let b = vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.sky_irradiance(), 0, 96);
+                let b = svet_render::debug::read_buffer(&rig.device, &rig.queue, f.sky_irradiance(), 0, 96);
                 let up: Vec<f32> = b[80..96].chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
-                let e = vxe_render::ground_irradiance([up[0], up[1], up[2]], up[3]);
+                let e = svet_render::ground_irradiance([up[0], up[1], up[2]], up[3]);
                 let ca = (n.exp2() * a.key * a.compensation_ev.exp2() / (0.5 * e / std::f32::consts::PI)).log2();
                 let (h, m) = (q * 15 / 60, q * 15 % 60);
                 println!("reading: {h:02}:{m:02} E {e:.4e}, c_a {ca:+.3} EV, max {max:+.3} EV{}", if ca > max { ", clamped" } else { "" });
@@ -656,7 +656,7 @@ mod ceiling {
         #[test]
         #[ignore = "reading"]
         fn the_sky_share_in_view() {
-            let shares = [vxe_render::DEFAULT_SKY_ANCHOR_SHARE, 0.0];
+            let shares = [svet_render::DEFAULT_SKY_ANCHOR_SHARE, 0.0];
             let voxel = flythrough::LeafShadow::Voxel;
             let leaf = flythrough::LeafShadow::default();
             if let Some((mut rig, out, inward)) = deep() {
@@ -700,7 +700,7 @@ mod ceiling {
         }
         /// Plan 0097 Phase 1 bars 2 and 4: per scene, [`read_with`] under the default share
         /// and the floor's term off (Phase 7b's exposure) with the store baked at radius 1 and 256 samples about the
-        /// eye: the sky over the floor (`vxe_render::sky_over_floor`) and its source beside
+        /// eye: the sky over the floor (`svet_render::sky_over_floor`) and its source beside
         /// the metered sky share, the metered level, the ceiling in force and the eye. The W2
         /// shade and 1 %-sky poses at the fixed sun 10,180 ([`w2_rig`]), the tunnel deep in
         /// at noon with the lamp on, 3 m inside the mouth facing in, the mouth from inside,
@@ -712,11 +712,11 @@ mod ceiling {
         #[test]
         #[ignore = "reading"]
         fn the_sky_over_the_floor() {
-            use vxe_render::AroundSource;
+            use svet_render::AroundSource;
             type Floor = Option<(f32, AroundSource)>;
             let a = AutoExposure {
                 sky_anchor_floor: 0.0,
-                ..auto(vxe_render::DEFAULT_SKY_ANCHOR_SHARE)
+                ..auto(svet_render::DEFAULT_SKY_ANCHOR_SHARE)
             };
             let leaf = flythrough::LeafShadow::default();
             let line = |scene: &str, r: &Read, fl: Floor| {
@@ -770,7 +770,7 @@ mod ceiling {
                     let t = k as f32 / 599.0;
                     let eye = [0, 1, 2].map(|i| W2_SHADE[i] + (W2_SKY[i] - W2_SHADE[i]) * t);
                     let t0 = std::time::Instant::now();
-                    let fl = std::hint::black_box(vxe_render::sky_over_floor(f.store(), std::hint::black_box(eye)));
+                    let fl = std::hint::black_box(svet_render::sky_over_floor(f.store(), std::hint::black_box(eye)));
                     let us = t0.elapsed().as_secs_f64() * 1e6;
                     total += us;
                     worst = worst.max(us);
@@ -831,10 +831,10 @@ mod ceiling {
         #[test]
         #[ignore = "reading"]
         fn the_anchor_by_the_floor() {
-            let on = auto(vxe_render::DEFAULT_SKY_ANCHOR_SHARE);
+            let on = auto(svet_render::DEFAULT_SKY_ANCHOR_SHARE);
             let arms = [("floor off", AutoExposure { sky_anchor_floor: 0.0, ..on }), ("floor 1/8", on)];
             let leaf = flythrough::LeafShadow::default();
-            let go = |rig: &mut Rig, scene: &str, cam: &Camera, sky: vxe_render::sky::Sky, lamp: bool| {
+            let go = |rig: &mut Rig, scene: &str, cam: &Camera, sky: svet_render::sky::Sky, lamp: bool| {
                 for (arm, a) in arms {
                     let (r, fl) = read_with(rig, cam, sky, lamp, leaf, a, true);
                     println!(
@@ -891,9 +891,9 @@ mod ceiling {
         #[ignore = "reading"]
         fn the_highlight_cap() {
             const W97_TUNNEL: [f32; 3] = [304.4, 8.8, 465.7];
-            let on = auto(vxe_render::DEFAULT_SKY_ANCHOR_SHARE);
+            let on = auto(svet_render::DEFAULT_SKY_ANCHOR_SHARE);
             let leaf = flythrough::LeafShadow::default();
-            let go_with = |rig: &mut Rig, scene: &str, cam: &Camera, sky: vxe_render::sky::Sky, lamp: bool, ps: &[f32], bake: bool| {
+            let go_with = |rig: &mut Rig, scene: &str, cam: &Camera, sky: svet_render::sky::Sky, lamp: bool, ps: &[f32], bake: bool| {
                 for &p in ps {
                     let a = AutoExposure { highlight_percentile: p, ..on };
                     let (r, fl) = read_with(rig, cam, sky, lamp, leaf, a, bake);
@@ -915,10 +915,10 @@ mod ceiling {
                     );
                 }
             };
-            let go = |rig: &mut Rig, scene: &str, cam: &Camera, sky: vxe_render::sky::Sky, lamp: bool, ps: &[f32]| {
+            let go = |rig: &mut Rig, scene: &str, cam: &Camera, sky: svet_render::sky::Sky, lamp: bool, ps: &[f32]| {
                 go_with(rig, scene, cam, sky, lamp, ps, true)
             };
-            let pair = [0.0, vxe_render::DEFAULT_EXPOSURE_HIGHLIGHT];
+            let pair = [0.0, svet_render::DEFAULT_EXPOSURE_HIGHLIGHT];
             let noon = clock(720.0, None);
             let sweep = [0.0, 95.0, 97.0, 98.0, 99.0, 99.5];
             if let Some((mut rig, _, inward)) = deep() {
@@ -976,12 +976,12 @@ mod ceiling {
         #[test]
         #[ignore = "reading"]
         fn the_lift_in_the_tunnel() {
-            let on = auto(vxe_render::DEFAULT_SKY_ANCHOR_SHARE);
+            let on = auto(svet_render::DEFAULT_SKY_ANCHOR_SHARE);
             let arms: [(&str, Option<f32>); 4] = [("off", None), ("6", Some(6.0)), ("4", Some(4.0)), ("2", Some(2.0))];
             let leaf = flythrough::LeafShadow::default();
             let max = f64::from(flythrough::cli::OUTDOOR_MAX).log2();
             // Per pose, the reads per arm in `arms`' order.
-            let run = |rig: &mut Rig, scene: &str, cam: &Camera, sky: vxe_render::sky::Sky, lamp: bool| -> Vec<Read> {
+            let run = |rig: &mut Rig, scene: &str, cam: &Camera, sky: svet_render::sky::Sky, lamp: bool| -> Vec<Read> {
                 let mut out = Vec::new();
                 for (arm, l) in arms {
                     let a = AutoExposure { sky_anchor_lift: l, ..on };
@@ -1069,7 +1069,7 @@ mod ceiling {
             let Some((mut rig, _, _)) = deep() else {
                 return;
             };
-            let f_full = vxe_render::DEFAULT_SKY_ANCHOR_SHARE;
+            let f_full = svet_render::DEFAULT_SKY_ANCHOR_SHARE;
             let trace = walk(&mut rig, f_full, 600);
             let before = walk(&mut rig, 0.0, 600);
             let anchored = before[24].2;
@@ -1080,7 +1080,7 @@ mod ceiling {
                     r.0, r.1, r.2, r.3, b.0, b.2, b.3
                 );
             }
-            let r_f = f64::from(vxe_render::DEFAULT_EXPOSURE_RATE_EV_S) / 60.0;
+            let r_f = f64::from(svet_render::DEFAULT_EXPOSURE_RATE_EV_S) / 60.0;
             let worst = trace.windows(2).map(|w| (w[1].3 - w[0].3).abs()).fold(0.0, f64::max);
             println!("reading: the largest one-frame step {worst:.4} EV against R_f {r_f:.4}");
             let max = f64::from(flythrough::cli::OUTDOOR_MAX).log2();
@@ -1123,7 +1123,7 @@ mod ceiling {
                 us.len()
             );
             let ((step, ks), (off, ko)) = canopy_worst(&trace, c_a);
-            let r_f = f64::from(vxe_render::DEFAULT_EXPOSURE_RATE_EV_S) / 60.0 + 1.0 / 256.0;
+            let r_f = f64::from(svet_render::DEFAULT_EXPOSURE_RATE_EV_S) / 60.0 + 1.0 / 256.0;
             println!(
                 "reading: the_canopy_walk_exposure on {}: c_a {c_a:+.4} EV; the largest step {step:.4} EV at frame {ks} (bar {r_f:.4}); the ceiling at most {off:.4} EV from c_a at frame {ko}; {} frames",
                 rig.adapter,

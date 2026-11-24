@@ -3,7 +3,7 @@
 use crate::app::peak_rss_bytes;
 use crate::report::{AdapterLine, RunReport, SurfaceLine};
 use crate::run::Run;
-use vxe_app::{Flow, Input};
+use svet_app::{Flow, Input};
 
 impl Run {
     /// Steps `--path`'s player by the frame's interval (1/60 s a headless frame, none on the
@@ -62,7 +62,7 @@ impl Run {
                 device_type: format!("{:?}", a.device_type),
                 driver: a.driver.clone(),
                 driver_info: a.driver_info.clone(),
-                backend: vxe_app::backend_label(a.backend),
+                backend: svet_app::backend_label(a.backend),
             }),
             surface: self.surface.map(|(format, space)| SurfaceLine {
                 format: format!("{format:?}"),

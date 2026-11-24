@@ -4,7 +4,7 @@
 /// `VXE_TEST_ADAPTER` names (unset: lavapipe). They print and assert nothing.
 mod reading {
     use super::*;
-    use vxe_render::{FRAME_PASSES, GpuWorld, MirrorConfig, PassTimer, Window};
+    use svet_render::{FRAME_PASSES, GpuWorld, MirrorConfig, PassTimer, Window};
 
     /// [`rig_on`]'s rig on the reading adapter, and the adapter's name.
     fn reading_rig(world: World) -> Option<(Rig, String)> {
@@ -65,7 +65,7 @@ mod reading {
             rig.step(&camera);
             let i =
                 *px.get_or_insert_with(|| nearest(&hits(&rig), [102.0, 32.0, 7.0], entity_hit(0)).0);
-            let a = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.accumulated())[i];
+            let a = svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.accumulated())[i];
             series.push(0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2]);
         }
         let diffs: Vec<f32> = series.windows(2).map(|w| w[1] - w[0]).collect();
@@ -119,7 +119,7 @@ mod reading {
                 rig.frame.advance();
                 let params = rig
                     .frame
-                    .params(&rig.gpu, &camera, &vxe_render::LightParams::headlamp());
+                    .params(&rig.gpu, &camera, &svet_render::LightParams::headlamp());
                 let mut enc = rig.device.create_command_encoder(&Default::default());
                 rig.frame.encode(
                     &rig.device,
@@ -250,7 +250,7 @@ mod reading {
 
     fn grain_shot(rig: &Rig, internal: [u32; 2]) -> Shot {
         let lum = |p: &[f32; 4]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
-        let rec = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+        let rec = svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
         let ent: Vec<bool> = rec
             .iter()
             .map(|r| r[3] & 1 != 0 && r[3] & 32 != 0)
@@ -260,7 +260,7 @@ mod reading {
             .map(|r| r[3] & 1 != 0 && r[3] & 32 == 0)
             .collect();
         let rd =
-            |t: &vxe_render::wgpu::Texture| vxe_render::debug::read_float(&rig.device, &rig.queue, t);
+            |t: &svet_render::wgpu::Texture| svet_render::debug::read_float(&rig.device, &rig.queue, t);
         let irr = rd(rig.frame.irradiance());
         let acc = rd(rig.frame.accumulated());
         let fil = rd(rig.frame.filtered());
@@ -297,8 +297,8 @@ mod reading {
         rig: &mut Rig,
         model: &Arc<Model>,
         (offset, walking): (u32, bool),
-        kind: Option<vxe_render::UpscalerKind>,
-        light: vxe_render::EntityLight,
+        kind: Option<svet_render::UpscalerKind>,
+        light: svet_render::EntityLight,
     ) -> Vec<Shot> {
         let camera = Camera {
             position: [78.0, 32.0, 16.0].into(),
@@ -309,7 +309,7 @@ mod reading {
         let internal = if kind.is_some() { [128, 72] } else { [W, H] };
         let mut frame = support::lights::box_frame(&rig.device, internal, [W, H], kind);
         frame.set_jitter(&rig.device, kind.is_some());
-        frame.set_lighting(vxe_render::Lighting {
+        frame.set_lighting(svet_render::Lighting {
             entity_light: light,
             ..support::lights::box_lighting()
         });
@@ -400,11 +400,11 @@ mod reading {
         let kinds = [
             None,
             Some(support::rigs::fsr2_kind()),
-            Some(vxe_render::UpscalerKind::Own(
-                vxe_render::Upscaler::default(),
+            Some(svet_render::UpscalerKind::Own(
+                svet_render::Upscaler::default(),
             )),
         ];
-        let lights = [vxe_render::EntityLight::Own, vxe_render::EntityLight::World];
+        let lights = [svet_render::EntityLight::Own, svet_render::EntityLight::World];
         // The still output-size runs' filtered means per walker pixel, `own` then `world`.
         let mut still: Vec<Vec<Option<f64>>> = Vec::new();
         for (kind, filter) in kinds.into_iter().flat_map(|k| lights.map(|y| (k, y))) {
@@ -499,15 +499,15 @@ mod reading {
             return;
         };
         for k in 0..3 {
-            let made = vxe_render::debug::compute_pipelines_created();
+            let made = svet_render::debug::compute_pipelines_created();
             let t0 = std::time::Instant::now();
-            let frame = vxe_render::Frame::new(&device, W, H);
+            let frame = svet_render::Frame::new(&device, W, H);
             let ms = t0.elapsed().as_secs_f64() * 1e3;
-            let n = vxe_render::debug::compute_pipelines_created() - made;
+            let n = svet_render::debug::compute_pipelines_created() - made;
             let t1 = std::time::Instant::now();
             frame.prepare_entities(&device);
             let prep = t1.elapsed().as_secs_f64() * 1e3;
-            let m = vxe_render::debug::compute_pipelines_created() - made - n;
+            let m = svet_render::debug::compute_pipelines_created() - made - n;
             println!(
                 "{adapter}: Frame::new {k}: {ms:.1} ms, {n} compute pipelines; \
                  prepare_entities: {prep:.1} ms, {m} more ({:.1} ms with the call)",

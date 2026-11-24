@@ -1,0 +1,21 @@
+[package]
+name = "echo-guest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "The echo test logic as a WebAssembly component"
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+test = false
+doctest = false
+
+[dependencies]
+svet-net = { workspace = true, features = ["test-logic"] }
+svet-script-wasm = { workspace = true, features = ["guest"] }

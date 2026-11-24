@@ -1095,7 +1095,7 @@ pub fn eye_exposure(level: &VeinLevel, pose: &Pose, setting: Setting, frames: us
     let mut frame = make_frame(level, pose, auto);
     render(level, &mut frame, &pose.camera(), frames);
     let st =
-        vxe_render::debug::read_buffer(&level.device, &level.queue, frame.exposure_state(), 0, 32);
+        svet_render::debug::read_buffer(&level.device, &level.queue, frame.exposure_state(), 0, 32);
     ExposureState::from_bytes(&st).previous
 }
 
@@ -1116,16 +1116,16 @@ pub fn eye_after_lamp_off(level: &VeinLevel, pose: &Pose, probe_move: Option<f32
     frame.set_lighting(lighting(pose, Setting { lamp: false, ..on }));
     render(level, &mut frame, &pose.camera(), 900);
     let st =
-        vxe_render::debug::read_buffer(&level.device, &level.queue, frame.exposure_state(), 0, 32);
+        svet_render::debug::read_buffer(&level.device, &level.queue, frame.exposure_state(), 0, 32);
     ExposureState::from_bytes(&st).previous
 }
 
 /// The probe volume's state at rest: of the slots holding their probe (traced), how many are
 /// inside rock.
 pub fn probe_census(level: &VeinLevel, frame: &Frame) -> (u32, u32) {
-    use vxe_render::internals::MAX_AGE;
+    use svet_render::internals::MAX_AGE;
     let v = frame.probes();
-    let b = vxe_render::debug::read_buffer(
+    let b = svet_render::debug::read_buffer(
         &level.device,
         &level.queue,
         v.data(),
@@ -1160,9 +1160,9 @@ pub fn freeze_census(
     camera: &Camera,
     freeze: u32,
 ) -> FreezeCensus {
-    use vxe_render::internals::MAX_AGE;
+    use svet_render::internals::MAX_AGE;
     let v = frame.probes();
-    let b = vxe_render::debug::read_buffer(
+    let b = svet_render::debug::read_buffer(
         &level.device,
         &level.queue,
         v.data(),
@@ -1210,7 +1210,7 @@ pub fn freeze_census(
 pub fn timed_step(
     level: &VeinLevel,
     frame: &mut Frame,
-    timer: &vxe_render::PassTimer,
+    timer: &svet_render::PassTimer,
     camera: &Camera,
 ) -> Vec<f64> {
     let light = LightParams::headlamp();
@@ -1241,13 +1241,13 @@ pub fn flight_cost(
     run: KRun,
     settle: usize,
 ) -> Option<Vec<(&'static str, f64)>> {
-    use vxe_render::FRAME_PASSES;
+    use svet_render::FRAME_PASSES;
     let (device, queue) = (&level.device, &level.queue);
-    let timer = vxe_render::PassTimer::with_passes(device, queue, FRAME_PASSES.len() as u32)?;
+    let timer = svet_render::PassTimer::with_passes(device, queue, FRAME_PASSES.len() as u32)?;
     let output = [1920, 1080];
     let mut frame = Frame::with_sizes(
         device,
-        vxe_render::RenderScale::OneHalf.internal(output),
+        svet_render::RenderScale::OneHalf.internal(output),
         output,
     );
     frame.set_upscaler_kind(device, start_upscaler());

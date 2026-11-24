@@ -5,7 +5,7 @@ use super::*;
 
 use std::collections::BTreeMap;
 
-use vxe_world::{AIR, BRICK_EDGE, Brick};
+use svet_world::{AIR, BRICK_EDGE, Brick};
 
 fn solid(m: MaterialId) -> bool {
     m != AIR && m != SHELL

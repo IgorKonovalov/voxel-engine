@@ -14,9 +14,9 @@ use support::rigs::{
     field_rig_on, floor_camera, floor_world, pose_level, pose_rig_on, pose_rig_with,
     tilted_slab_camera, tilted_slab_world, wall_camera, wall_world,
 };
-use vxe_render::{CrackShares, Exposure};
-use vxe_render::{LightParams, LookParams, NormalMode, ViewMode};
-use vxe_world::World;
+use svet_render::{CrackShares, Exposure};
+use svet_render::{LightParams, LookParams, NormalMode, ViewMode};
+use svet_world::World;
 
 /// Frames a crack reading renders in each view before it reads the last: the lamp's term is
 /// whole from the first frame; the level's emissive estimate needs a few.
@@ -52,7 +52,7 @@ struct CrackReading {
 /// rule keeps; without, every hit.
 fn crack_reading(
     rig: &mut LookRig,
-    camera: &vxe_render::Camera,
+    camera: &svet_render::Camera,
     light: &LightParams,
     look: LookParams,
     window: Option<[[f32; 3]; 2]>,
@@ -64,14 +64,15 @@ fn crack_reading(
             rig.frame
                 .render(&rig.device, &rig.queue, &rig.gpu, camera, light);
         }
-        vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target())
+        svet_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target())
     };
     let shaded = run(ViewMode::Shaded);
     run(ViewMode::Cracks);
-    let layers = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, rig.frame.layers());
-    let records = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let layers = svet_render::debug::read_rgba16f(&rig.device, &rig.queue, rig.frame.layers());
+    let records =
+        svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     let positions =
-        vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+        svet_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
     let pixels: Vec<Option<bool>> = layers
         .iter()
         .zip(&records)
@@ -127,8 +128,8 @@ const TILE_DEGREES: f64 = 15.0;
 /// Whether voxel `v` of `world` is solid (not air; outside the world is air).
 fn solid_at(world: &World, v: [i32; 3]) -> bool {
     world
-        .material_at(vxe_world::VoxelCoord(v))
-        .is_some_and(|m| m != vxe_world::AIR)
+        .material_at(svet_world::VoxelCoord(v))
+        .is_some_and(|m| m != svet_world::AIR)
 }
 
 /// The face neighbours of `v` that are air in `world`.
@@ -234,7 +235,7 @@ fn normal_angle(a: &[u8], b: &[u8]) -> f64 {
 fn box_reading(
     rig: &mut LookRig,
     world: &World,
-    camera: &vxe_render::Camera,
+    camera: &svet_render::Camera,
     light: &LightParams,
     look: LookParams,
     window: Option<[[f32; 3]; 2]>,
@@ -248,10 +249,11 @@ fn box_reading(
         rig.frame
             .render(&rig.device, &rig.queue, &rig.gpu, camera, light);
     }
-    let normals = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+    let normals = svet_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
     let positions =
-        vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
-    let records = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+        svet_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let records =
+        svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     let field = look.normal_mode == NormalMode::Contour;
     let cos_box = FIELD_BOX_DEGREES.to_radians().cos();
     let [w, h] = crack.size.map(|v| v as usize);
@@ -324,15 +326,15 @@ fn box_reading(
 /// The box reading of the level at `pose` in `look` (384 x 216, the pose's exposure, indirect
 /// off, lamp on or off), every hit counted.
 fn pose_box_reading(
-    device: &vxe_render::wgpu::Device,
-    queue: &vxe_render::wgpu::Queue,
+    device: &svet_render::wgpu::Device,
+    queue: &svet_render::wgpu::Queue,
     level: &World,
     pose: &flythrough::Pose,
     look: LookParams,
     lamp: bool,
 ) -> BoxReading {
     let mut rig = pose_rig_on(device.clone(), queue.clone(), level, pose);
-    rig.frame.set_lighting(vxe_render::Lighting {
+    rig.frame.set_lighting(svet_render::Lighting {
         exposure: Exposure::Manual(pose.exposure),
         lamp_bounce: false,
         lamp,
@@ -379,10 +381,10 @@ fn field_look(view: ViewMode) -> LookParams {
 /// size under the analytic window rule, the field's pool built when `look` walks the field,
 /// with the hit positions of its last frame.
 fn field_crack_reading(
-    device: &vxe_render::wgpu::Device,
-    queue: &vxe_render::wgpu::Queue,
+    device: &svet_render::wgpu::Device,
+    queue: &svet_render::wgpu::Queue,
     world: &World,
-    camera: &vxe_render::Camera,
+    camera: &svet_render::Camera,
     look: LookParams,
 ) -> (CrackReading, Vec<[f32; 4]>) {
     let mut rig = field_rig_on(device.clone(), queue.clone(), world, [WIDTH, HEIGHT]);
@@ -394,7 +396,7 @@ fn field_crack_reading(
         Some(analytic_window(world)),
     );
     let positions =
-        vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+        svet_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
     (r, positions)
 }
 
@@ -463,11 +465,11 @@ fn the_field_surface_lies_on_the_flat_faces() {
 /// hit and 0 leaks on lavapipe.
 #[test]
 fn a_carve_gives_the_exposed_air_brick_a_band_slot() {
-    use vxe_render::{
+    use svet_render::{
         internals::CLASS_MASK, internals::CLASS_SHIFT, internals::CLASS_UNIFORM,
         internals::FULL_BIT,
     };
-    use vxe_world::{Brick, ChunkCoord, EditOp, FIXED_ONE, Fixed3, Mode, brick_slot};
+    use svet_world::{Brick, ChunkCoord, EditOp, FIXED_ONE, Fixed3, Mode, brick_slot};
     let Some((device, queue)) = software_device(64 << 20) else {
         return;
     };
@@ -489,7 +491,7 @@ fn a_carve_gives_the_exposed_air_brick_a_band_slot() {
     {
         let chunk = world.store().get(c).unwrap();
         let chunk = chunk.read().unwrap();
-        assert!(matches!(chunk.brick(slot), Brick::Uniform(vxe_world::AIR)));
+        assert!(matches!(chunk.brick(slot), Brick::Uniform(svet_world::AIR)));
     }
     rig.gpu
         .sync_now(&world, &rig.device, &rig.queue)
@@ -498,7 +500,7 @@ fn a_carve_gives_the_exposed_air_brick_a_band_slot() {
     assert_ne!(after & FULL_BIT, 0);
     assert_eq!(after >> CLASS_SHIFT & CLASS_MASK, CLASS_UNIFORM);
     support::rigs::drain_field(&rig.device, &rig.queue, &mut rig.gpu);
-    let camera = vxe_render::Camera {
+    let camera = svet_render::Camera {
         position: [36.0, 36.0, 36.0].into(),
         yaw: 0.3,
         pitch: -0.2,
@@ -523,9 +525,9 @@ fn field_looks() -> [(&'static str, LookParams); 1] {
 
 /// The analytic scenes of the field readings: the one-voxel scenes (the box metric's), the
 /// tilted, 45-degree and diagonal slabs, the cavity and the pillar, each with its camera.
-fn field_scenes() -> Vec<(String, World, vxe_render::Camera)> {
+fn field_scenes() -> Vec<(String, World, svet_render::Camera)> {
     let table = flythrough::cave_materials();
-    let mut scenes: Vec<(String, World, vxe_render::Camera)> = Feature::ALL
+    let mut scenes: Vec<(String, World, svet_render::Camera)> = Feature::ALL
         .into_iter()
         .map(|f| (f.name().to_owned(), f.world(&table), f.camera()))
         .collect();
@@ -552,10 +554,10 @@ fn field_scenes() -> Vec<(String, World, vxe_render::Camera)> {
 /// The box reading of `world` from `camera` in `look` at the look rigs' size under the
 /// analytic window rule, lit by the headlamp, the field's pool built when `look` walks it.
 fn scene_box_reading(
-    device: &vxe_render::wgpu::Device,
-    queue: &vxe_render::wgpu::Queue,
+    device: &svet_render::wgpu::Device,
+    queue: &svet_render::wgpu::Queue,
     world: &World,
-    camera: &vxe_render::Camera,
+    camera: &svet_render::Camera,
     look: LookParams,
 ) -> BoxReading {
     let mut rig = field_rig_on(device.clone(), queue.clone(), world, [WIDTH, HEIGHT]);
@@ -651,7 +653,7 @@ const THIN_SLACK: f32 = 0.5;
 
 /// The thin rig ([`flythrough::thin_rig`]) under the start look's table with the rig's wood,
 /// its row carrying `flags` (`MaterialFlags::CRISP` as the fly-through has it).
-fn thin_rig_world(flags: vxe_world::MaterialFlags) -> World {
+fn thin_rig_world(flags: svet_world::MaterialFlags) -> World {
     let table = flythrough::with_wood_flags(&flythrough::cave_materials(), flags);
     let source = ThinRig {
         wood: flythrough::THIN_RIG_WOOD,
@@ -668,8 +670,8 @@ struct ThinReading {
 }
 
 fn thin_reading(
-    device: &vxe_render::wgpu::Device,
-    queue: &vxe_render::wgpu::Queue,
+    device: &svet_render::wgpu::Device,
+    queue: &svet_render::wgpu::Queue,
     world: &World,
     look: LookParams,
 ) -> ThinReading {
@@ -682,8 +684,9 @@ fn thin_reading(
         None,
     );
     let positions =
-        vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
-    let records = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+        svet_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let records =
+        svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     ThinReading {
         crack,
         positions,
@@ -757,8 +760,8 @@ fn thin_features_in_the_field_and_per_material() {
     let Some((device, queue)) = software_device(field_pool_bytes(&level).max(256 << 20)) else {
         return;
     };
-    let crisp = thin_rig_world(vxe_world::MaterialFlags::CRISP);
-    let smooth = thin_rig_world(vxe_world::MaterialFlags::empty());
+    let crisp = thin_rig_world(svet_world::MaterialFlags::CRISP);
+    let smooth = thin_rig_world(svet_world::MaterialFlags::empty());
     let face_look = preset_look(flythrough::LookPreset::FACE, ViewMode::Shaded);
     let field_look = preset_look(flythrough::LookPreset::FIELD, ViewMode::Shaded);
     let names = ["face", "field smooth wood", "field crisp wood"];
@@ -860,8 +863,8 @@ fn thin_features_in_the_field_and_per_material() {
 /// The thin rig's hit positions and records in the hit-mask view, `look` with or without the
 /// split walk (`Frame::set_field_split`).
 fn thin_records(
-    device: &vxe_render::wgpu::Device,
-    queue: &vxe_render::wgpu::Queue,
+    device: &svet_render::wgpu::Device,
+    queue: &svet_render::wgpu::Queue,
     world: &World,
     look: LookParams,
     split: bool,
@@ -878,8 +881,8 @@ fn thin_records(
         look,
     );
     (
-        vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions()),
-        vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
+        svet_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions()),
+        svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
     )
 }
 
@@ -901,22 +904,22 @@ fn the_split_walk_moves_no_hit_record() {
     };
     let field = preset_look(flythrough::LookPreset::FIELD, ViewMode::Shaded);
     let face = preset_look(flythrough::LookPreset::FACE, ViewMode::Shaded);
-    let wood = thin_rig_world(vxe_world::MaterialFlags::CRISP);
+    let wood = thin_rig_world(svet_world::MaterialFlags::CRISP);
     let split = thin_records(&device, &queue, &wood, field, true);
     let unsplit = thin_records(&device, &queue, &wood, field, false);
     let hits = split.1.iter().filter(|r| r[3] & 1 != 0).count();
     let wood_differ = records_differ(&split, &unsplit);
     println!("crisp wood: {hits} hits, split against unsplit {wood_differ} pixels differ");
     let base = flythrough::cave_materials();
-    let mut table = vxe_world::MaterialTable::new();
+    let mut table = svet_world::MaterialTable::new();
     for row in base.rows().iter().skip(1) {
         let mut row = row.clone();
         if !row.is_translucent() {
-            row.flags = row.flags | vxe_world::MaterialFlags::CRISP;
+            row.flags = row.flags | svet_world::MaterialFlags::CRISP;
         }
         table.push(row);
     }
-    let table = flythrough::with_wood_flags(&table, vxe_world::MaterialFlags::CRISP);
+    let table = flythrough::with_wood_flags(&table, svet_world::MaterialFlags::CRISP);
     let source = ThinRig {
         wood: flythrough::THIN_RIG_WOOD,
     };
@@ -967,15 +970,15 @@ fn only_a_split_frame_allocates_the_split_list() {
     let Some((device, queue)) = software_device(256 << 20) else {
         return;
     };
-    let wood = thin_rig_world(vxe_world::MaterialFlags::CRISP);
-    let mut gpu = vxe_render::GpuWorld::with_config(
+    let wood = thin_rig_world(svet_world::MaterialFlags::CRISP);
+    let mut gpu = svet_render::GpuWorld::with_config(
         &device,
-        vxe_render::MirrorConfig::new(vxe_render::Window::Fixed(wood.extent())),
+        svet_render::MirrorConfig::new(svet_render::Window::Fixed(wood.extent())),
     );
     gpu.sync_now(&wood, &device, &queue)
         .expect("mirror fits the adapter");
     assert!(!gpu.field_surface(), "a mirror without band slots");
-    let frame = vxe_render::Frame::with_sizes(&device, [1280, 720], [1920, 1080]);
+    let frame = svet_render::Frame::with_sizes(&device, [1280, 720], [1920, 1080]);
     let before = frame.frame_bytes();
     frame.render(
         &device,
@@ -1054,7 +1057,7 @@ fn the_default_look_reads_the_same_hit_records_with_and_without_band_slots() {
     };
     let source = flythrough::cave::CaveSource::new(
         1,
-        vxe_world::ChunkExtent::new([0, 0, 0], flythrough::cave::LEVEL_CHUNKS),
+        svet_world::ChunkExtent::new([0, 0, 0], flythrough::cave::LEVEL_CHUNKS),
     );
     let spawn = source.spawn().0.map(|v| v as f32 + 0.5);
     let spawn_pose = flythrough::Pose {
@@ -1078,8 +1081,8 @@ fn the_default_look_reads_the_same_hit_records_with_and_without_band_slots() {
         };
         let _ = rig.render(&camera, &LightParams::headlamp(), look);
         (
-            vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions()),
-            vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
+            svet_render::debug::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions()),
+            svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
         )
     };
     let default = preset_look(flythrough::LookPreset::DEFAULT, ViewMode::HitMask);
@@ -1252,10 +1255,10 @@ struct SeamReading {
 }
 
 fn seam_reading(
-    device: &vxe_render::wgpu::Device,
-    queue: &vxe_render::wgpu::Queue,
+    device: &svet_render::wgpu::Device,
+    queue: &svet_render::wgpu::Queue,
     world: &World,
-    camera: &vxe_render::Camera,
+    camera: &svet_render::Camera,
 ) -> SeamReading {
     let mut rig = field_rig_on(device.clone(), queue.clone(), world, [WIDTH, HEIGHT]);
     let crack = crack_reading(
@@ -1267,12 +1270,12 @@ fn seam_reading(
     );
     SeamReading {
         crack,
-        positions: vxe_render::debug::read_rgba32f(
+        positions: svet_render::debug::read_rgba32f(
             &rig.device,
             &rig.queue,
             rig.frame.hit_positions(),
         ),
-        records: vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
+        records: svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
     }
 }
 
@@ -1304,7 +1307,7 @@ impl SeamReading {
 
     /// Whether pixel `i`'s hit is a cube hit of `crisp`: not a field hit (record flag bit 1),
     /// material `crisp`, its normal along an axis.
-    fn cube_hit(&self, i: usize, crisp: vxe_world::MaterialId) -> bool {
+    fn cube_hit(&self, i: usize, crisp: svet_world::MaterialId) -> bool {
         let r = self.records[i];
         let n = support::rigs::octa16_normal(r[0], r[1]);
         r[3] & 2 == 0 && r[2] == crisp && n.iter().any(|c| c.abs() >= 0.9999)
@@ -1314,7 +1317,7 @@ impl SeamReading {
     /// lying on or just behind the seam's surface, so every such ray hits).
     fn leaks_and_misses(
         &self,
-        camera: &vxe_render::Camera,
+        camera: &svet_render::Camera,
         aabb: [[f32; 3]; 2],
     ) -> (u64, u64, u64) {
         let (mut n, mut leaks, mut misses) = (0, 0, 0);
@@ -1381,7 +1384,7 @@ fn seam_view(
     name: &'static str,
     eye: [f32; 3],
     target: [f32; 3],
-) -> (&'static str, vxe_render::Camera) {
+) -> (&'static str, svet_render::Camera) {
     (name, flythrough::camera_looking_at(eye, target))
 }
 
@@ -1426,16 +1429,16 @@ fn a_smooth_surface_meets_a_crisp_cube_without_a_gap() {
     let rock = flythrough::cave::ROCK;
     let table = flythrough::with_wood_flags(
         &flythrough::cave_materials(),
-        vxe_world::MaterialFlags::CRISP,
+        svet_world::MaterialFlags::CRISP,
     );
     let source = SeamRig { crisp: wood };
     let seam = World::generate(source.extent(), &source, &table);
-    let thin = thin_rig_world(vxe_world::MaterialFlags::CRISP);
+    let thin = thin_rig_world(svet_world::MaterialFlags::CRISP);
     let mut failures = Vec::new();
     // `leaks_barred`: whether the box's leaks are asserted or only printed.
     let check_box = |name: &str,
                      r: &SeamReading,
-                     cam: &vxe_render::Camera,
+                     cam: &svet_render::Camera,
                      aabb: [[f32; 3]; 2],
                      leaks_barred: bool,
                      failures: &mut Vec<String>| {
@@ -1599,7 +1602,7 @@ fn a_smooth_surface_meets_a_crisp_cube_without_a_gap() {
     }
 
     // The specks on the trunk face head-on, branches crisp and smooth.
-    let smooth = thin_rig_world(vxe_world::MaterialFlags::empty());
+    let smooth = thin_rig_world(svet_world::MaterialFlags::empty());
     let head_on = flythrough::camera_looking_at([face_x + 33.5, 64.5, 86.5], trunk_target);
     for (label, world) in [("crisp", &thin), ("smooth", &smooth)] {
         let r = seam_reading(&device, &queue, world, &head_on);

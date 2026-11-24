@@ -11,11 +11,11 @@ use crate::toggles::Press;
 #[test]
 fn the_banner_and_hud_name_the_colour_and_the_removal() {
     use crate::toggles::{KEY_REMOVE, TOGGLES};
-    let lamp_off = vxe_render::Lighting {
+    let lamp_off = svet_render::Lighting {
         lamp: false,
-        ..vxe_render::Lighting::default()
+        ..svet_render::Lighting::default()
     };
-    let mut m = Modes::new(lamp_off, vxe_render::LightingResolution::Half, 0.0);
+    let mut m = Modes::new(lamp_off, svet_render::LightingResolution::Half, 0.0);
     for _ in 0..3 {
         m.lights
             .drop_at(false, [0.0; 3], [1.0, 0.0, 0.0], None)
@@ -39,7 +39,7 @@ fn the_banner_and_hud_name_the_colour_and_the_removal() {
     assert_eq!(m.lights.lights[3].light.colour, [1.0, 0.0, 0.0]);
     assert_eq!(m.lights.lights[4].light.colour, [1.0, 0.0, 0.0]);
     // `4` on the three: `run::keys` removes the newest and shows the count.
-    assert_eq!(KEY_REMOVE, vxe_app::KeyCode::Digit4);
+    assert_eq!(KEY_REMOVE, svet_app::KeyCode::Digit4);
     m.lights.lights.truncate(3);
     m.lights.remove_newest();
     m.show_lights(m.lights.count_words(false), 30.0);
@@ -51,11 +51,11 @@ fn the_banner_and_hud_name_the_colour_and_the_removal() {
 #[test]
 fn the_banner_and_hud_name_the_bounce_flag() {
     use crate::toggles::TOGGLES;
-    let lamp_off = vxe_render::Lighting {
+    let lamp_off = svet_render::Lighting {
         lamp: false,
-        ..vxe_render::Lighting::default()
+        ..svet_render::Lighting::default()
     };
-    let mut m = Modes::new(lamp_off, vxe_render::LightingResolution::Half, 0.0);
+    let mut m = Modes::new(lamp_off, svet_render::LightingResolution::Half, 0.0);
     for _ in 0..2 {
         m.lights
             .drop_at(false, [0.0; 3], [1.0, 0.0, 0.0], None)
@@ -70,8 +70,8 @@ fn the_banner_and_hud_name_the_bounce_flag() {
         "lights 2/16 bounce * over 0 colour white"
     );
     assert_eq!(
-        m.lights.lights[1].light.flags & vxe_render::Light::BOUNCE,
-        vxe_render::Light::BOUNCE
+        m.lights.lights[1].light.flags & svet_render::Light::BOUNCE,
+        svet_render::Light::BOUNCE
     );
     (bounce.flip)(&mut m, 20.0);
     assert!(m.banner(20.0).unwrap().lines().any(|l| l == "bounce off"));
@@ -84,8 +84,8 @@ fn the_banner_and_hud_name_the_bounce_flag() {
 fn f4_steps_the_filters_iterations() {
     use crate::toggles::TOGGLES;
     let mut m = Modes::new(
-        vxe_render::Lighting::default(),
-        vxe_render::LightingResolution::Half,
+        svet_render::Lighting::default(),
+        svet_render::LightingResolution::Half,
         0.0,
     );
     let f4 = TOGGLES
@@ -109,11 +109,11 @@ fn f4_steps_the_filters_iterations() {
 fn the_banner_and_hud_name_the_lights() {
     use crate::lights::{FULL_LINE, TestLights};
     use crate::toggles::TOGGLES;
-    let lamp_off = vxe_render::Lighting {
+    let lamp_off = svet_render::Lighting {
         lamp: false,
-        ..vxe_render::Lighting::default()
+        ..svet_render::Lighting::default()
     };
-    let half = vxe_render::LightingResolution::Half;
+    let half = svet_render::LightingResolution::Half;
     let mut m = Modes::new(lamp_off, half, 0.0);
     for _ in 0..3 {
         m.lights
@@ -227,8 +227,8 @@ fn wrapping_in_place_matches_the_row_by_row_wrap() {
 #[test]
 fn the_banner_names_each_change_and_fades_after_three_seconds() {
     let mut m = Modes::new(
-        vxe_render::Lighting::default(),
-        vxe_render::LightingResolution::default(),
+        svet_render::Lighting::default(),
+        svet_render::LightingResolution::default(),
         0.0,
     );
     let start = m.banner(0.0).expect("the banner shows at the start");
@@ -272,14 +272,14 @@ fn the_banner_names_each_change_and_fades_after_three_seconds() {
     // `Q` from the default auto eye: auto symmetric, then manual holding the read-back's
     // exposure, then auto eye again, each with its EV.
     let mut q = Modes::new(
-        vxe_render::Lighting {
-            exposure: vxe_render::Exposure::Auto(vxe_render::AutoExposure::eye()),
-            ..vxe_render::Lighting::default()
+        svet_render::Lighting {
+            exposure: svet_render::Exposure::Auto(svet_render::AutoExposure::eye()),
+            ..svet_render::Lighting::default()
         },
-        vxe_render::LightingResolution::default(),
+        svet_render::LightingResolution::default(),
         0.0,
     );
-    q.set_readout(Some(vxe_render::ExposureReadout {
+    q.set_readout(Some(svet_render::ExposureReadout {
         exposure: 11.52,
         adapted_log2: -6.0,
         metered_log2: -6.0,
@@ -325,8 +325,8 @@ fn the_banner_names_each_change_and_fades_after_three_seconds() {
 fn the_banner_names_each_look_preset() {
     use crate::LookPreset;
     let mut m = Modes::new(
-        vxe_render::Lighting::default(),
-        vxe_render::LightingResolution::default(),
+        svet_render::Lighting::default(),
+        svet_render::LightingResolution::default(),
         0.0,
     );
     let lighting = m.banner(0.0).expect("the banner shows at the start");
@@ -375,10 +375,10 @@ fn the_banner_names_each_look_preset() {
 /// for `BANNER_MS`; the shaded view adds nothing.
 #[test]
 fn the_banner_names_the_view() {
-    use vxe_render::ViewMode;
+    use svet_render::ViewMode;
     let mut m = Modes::new(
-        vxe_render::Lighting::default(),
-        vxe_render::LightingResolution::default(),
+        svet_render::Lighting::default(),
+        svet_render::LightingResolution::default(),
         0.0,
     );
     let lighting = m.banner(0.0).expect("the banner shows at the start");
@@ -411,17 +411,17 @@ fn the_banner_names_the_view() {
 /// the model's `max`.
 #[test]
 fn the_banner_and_row_name_the_sky_anchor() {
-    let auto = vxe_render::AutoExposure {
+    let auto = svet_render::AutoExposure {
         max: 4.0,
         sky_anchor_ev: Some(4.0),
-        ..vxe_render::AutoExposure::eye()
+        ..svet_render::AutoExposure::eye()
     };
     let mut m = Modes::new(
-        vxe_render::Lighting {
-            exposure: vxe_render::Exposure::Auto(auto),
-            ..vxe_render::Lighting::default()
+        svet_render::Lighting {
+            exposure: svet_render::Exposure::Auto(auto),
+            ..svet_render::Lighting::default()
         },
-        vxe_render::LightingResolution::default(),
+        svet_render::LightingResolution::default(),
         0.0,
     );
     m.set_auto(Adaptation::Eye, auto);
@@ -430,7 +430,7 @@ fn the_banner_and_row_name_the_sky_anchor() {
     let mut two = m.clone();
     two.set_auto(
         Adaptation::Eye,
-        vxe_render::AutoExposure {
+        svet_render::AutoExposure {
             sky_anchor_ev: Some(2.0),
             ..auto
         },
@@ -444,7 +444,7 @@ fn the_banner_and_row_name_the_sky_anchor() {
         let mut f = m.clone();
         f.set_auto(
             Adaptation::Eye,
-            vxe_render::AutoExposure {
+            svet_render::AutoExposure {
                 sky_anchor_floor: floor,
                 ..auto
             },
@@ -459,13 +459,13 @@ fn the_banner_and_row_name_the_sky_anchor() {
         let mut f = m.clone();
         f.set_auto(
             Adaptation::Eye,
-            vxe_render::AutoExposure {
+            svet_render::AutoExposure {
                 sky_anchor_lift: lift,
                 ..auto
             },
         );
         assert!(f.line().contains(word), "{}", f.line());
-        f.set_readout(Some(vxe_render::ExposureReadout {
+        f.set_readout(Some(svet_render::ExposureReadout {
             exposure: 0.01,
             adapted_log2: 0.0,
             metered_log2: 0.0,
@@ -486,7 +486,7 @@ fn the_banner_and_row_name_the_sky_anchor() {
         );
     }
     assert_eq!(m.exposure_row().ceiling, Some((2.0, Some(4.0))));
-    m.set_readout(Some(vxe_render::ExposureReadout {
+    m.set_readout(Some(svet_render::ExposureReadout {
         exposure: 0.01,
         adapted_log2: 0.0,
         metered_log2: 0.0,
@@ -505,7 +505,7 @@ fn the_banner_and_row_name_the_sky_anchor() {
         "exposure auto eye -6.64 EV  scene +0.0 EV  settles -4.00 EV  ceiling -4.00 EV (anchor 4, \
          lift 4, sky 23 %, floor 12 %)"
     );
-    m.set_readout(Some(vxe_render::ExposureReadout {
+    m.set_readout(Some(svet_render::ExposureReadout {
         exposure: 0.01,
         adapted_log2: 0.0,
         metered_log2: 0.0,
@@ -524,7 +524,7 @@ fn the_banner_and_row_name_the_sky_anchor() {
         m.exposure_row()
     );
     m.press(ModeKey::Exposure, 0.0);
-    let vxe_render::Exposure::Auto(sym) = m.lighting.exposure else {
+    let svet_render::Exposure::Auto(sym) = m.lighting.exposure else {
         panic!("Q from auto eye is auto symmetric");
     };
     assert_eq!((sym.sky_anchor_ev, sym.max), (Some(4.0), 4.0));
@@ -552,11 +552,11 @@ fn the_banner_and_row_name_the_sky_anchor() {
 fn the_diagnosis_switches_name_their_mode_in_the_banner() {
     use crate::toggles::TOGGLES;
     let mut m = Modes::new(
-        vxe_render::Lighting {
+        svet_render::Lighting {
             penumbra: crate::DEFAULT_PENUMBRA,
-            ..vxe_render::Lighting::default()
+            ..svet_render::Lighting::default()
         },
-        vxe_render::LightingResolution::default(),
+        svet_render::LightingResolution::default(),
         0.0,
     );
     m.sky = true;

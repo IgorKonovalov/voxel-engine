@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use flythrough::path::{PathMode, Scene};
-use vxe_app::KeyCode;
+use svet_app::KeyCode;
 use vxe_tester::menu::{Command as MenuCommand, Menu};
 use vxe_tester::run::{
     Outcome, Output, Profile, ReportDir, RunSpec, TAIL_LINES, child_command, fly_args,

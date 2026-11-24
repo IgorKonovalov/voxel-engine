@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use flythrough::cave::CaveSource;
 use flythrough::structures::{self, CHAPEL_GLASS, CHAPEL_LAMP, VoxArg};
 use flythrough::{cave_materials, with_emissive_ore};
-use vxe_assets::{VoxFile, encode};
-use vxe_world::{ChunkExtent, MaterialId, VoxelCoord, World};
+use svet_assets::{VoxFile, encode};
+use svet_world::{ChunkExtent, MaterialId, VoxelCoord, World};
 
 fn chapel_dir() -> PathBuf {
     PathBuf::from(structures::LIBRARY).join("chapel")
@@ -44,7 +44,7 @@ fn the_library_lists_every_structure() {
     assert!(lib.entries[1].building() && lib.entries[1].error().is_none());
     assert!(lib.notes.is_empty(), "{:?}", lib.notes);
 
-    let scratch = std::env::temp_dir().join(format!("vxe-structures-{}", std::process::id()));
+    let scratch = std::env::temp_dir().join(format!("svet-structures-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     let bytes = std::fs::read(chapel_dir().join("chapel.vox")).expect("reads");
     for (name, content) in [("a", &bytes[..]), ("b", &bytes[..]), ("d", b"not a vox")] {
@@ -135,7 +135,7 @@ fn the_chapel_stands_at_the_spawn() {
     let world = World::generate(extent, &source, &table);
 
     let row = |i: u8| {
-        let name = vxe_assets::palette_row(&file, i, 0.0).name;
+        let name = svet_assets::palette_row(&file, i, 0.0).name;
         let id = table.rows().iter().position(|m| m.name == name).unwrap();
         id as MaterialId
     };
@@ -170,7 +170,7 @@ fn the_chapel_stands_at_the_spawn() {
     assert_eq!(got, want);
     // The box's margin is air: a voxel 5 beyond the box's low x side at mid height.
     let mid = [lo[0] - 5, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
-    assert_eq!(world.material_at(VoxelCoord(mid)), Some(vxe_world::AIR));
+    assert_eq!(world.material_at(VoxelCoord(mid)), Some(svet_world::AIR));
     assert_eq!(world.voxel_hash(), 0x62cc_2a8f_36d6_eaaf, "pinned on Linux");
 }
 
@@ -198,7 +198,7 @@ fn the_chapel_as_ops_equals_the_chapel_from_the_source() {
     let opped = World::generate(extent, &cave, &table);
     let v = structures::ops(&scene, offset, 0, true);
     assert_eq!(v.ops.len(), 1 + scene.placements.len());
-    let mut registry = vxe_world::PrefabRegistry::new();
+    let mut registry = svet_world::PrefabRegistry::new();
     for p in &v.prefabs {
         registry.register(p.clone()).expect("registers");
     }
@@ -214,7 +214,7 @@ mod reading {
 
     use flythrough::castle;
     use flythrough::cave::{HallSource, UNBOUNDED_SPAWN};
-    use vxe_world::{PersistConfig, Residency, StreamConfig, Streamer, World};
+    use svet_world::{PersistConfig, Residency, StreamConfig, Streamer, World};
 
     /// Plan 0083 Phase 5's reading: the castle's prefabs stamped at runtime, through the op
     /// path, into the hall streamed around the spawn at `r_full` (the fly-through's 16, then 6
@@ -285,7 +285,7 @@ mod reading {
             |_| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../live/castle.vox"),
             std::path::PathBuf::from,
         );
-        let bytes = vxe_assets::encode(&castle::castle_vox());
+        let bytes = svet_assets::encode(&castle::castle_vox());
         std::fs::write(&path, &bytes).expect("writes");
         println!(
             "reading: castle.vox {} B at {}",
@@ -343,7 +343,7 @@ mod reading {
 
         let size = [620, 620, 510];
         let t = flythrough::now();
-        let air = vxe_world::Prefab::uniform(size, vxe_world::AIR);
+        let air = svet_world::Prefab::uniform(size, svet_world::AIR);
         let build_ms = ms(t);
         let t = flythrough::now();
         let id = air.id();
@@ -374,7 +374,7 @@ mod reading {
         ];
         let t = flythrough::now();
         let r = world
-            .stamp(&air, at, vxe_world::Rot::IDENTITY)
+            .stamp(&air, at, svet_world::Rot::IDENTITY)
             .expect("applies");
         println!(
             "reading: air box stamped in {:.1} ms at r_full 6: {} chunks written now, {} \

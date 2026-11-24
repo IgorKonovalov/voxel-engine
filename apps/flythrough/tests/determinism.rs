@@ -5,8 +5,8 @@
 
 use flythrough::cave::{CaveSource, SHELL};
 use flythrough::cave_materials;
-use vxe_world::hash::Fnv1a;
-use vxe_world::*;
+use svet_world::hash::Fnv1a;
+use svet_world::*;
 
 #[path = "support/vectors.rs"]
 mod vectors;
@@ -178,7 +178,7 @@ fn generation_sources_contain_no_floating_point() {
         "src/showcase/field.rs",
         "src/showcase/source.rs",
         "src/showcase/tests.rs",
-        "../../crates/vxe-world/src/hash.rs",
+        "../../crates/svet-world/src/hash.rs",
     ] {
         let text = std::fs::read_to_string(format!("{root}/{path}")).unwrap();
         for word in text.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_')) {
@@ -232,7 +232,7 @@ fn the_unbounded_cave_matches_the_bounded_one_in_the_interior() {
 fn castle_vector() {
     use flythrough::castle;
     let file = castle::castle_vox();
-    let bytes = vxe_assets::encode(&file);
+    let bytes = svet_assets::encode(&file);
     let mut h = Fnv1a::default();
     h.write(&bytes);
     let vox = h.finish();

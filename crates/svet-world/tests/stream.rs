@@ -1,0 +1,778 @@
+//! Streaming residency: which chunks a `Streamer` loads and evicts around a focus, that a
+//! streamed chunk equals the generated one, and that edits and evictions exclude each other.
+
+mod support;
+
+use std::collections::{BTreeMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::TryRecvError;
+use std::sync::{Arc, Barrier, Mutex, mpsc};
+
+use support::*;
+use svet_world::*;
+
+fn config(r_full: i32, r_lod: i32, hysteresis: i32, workers: usize) -> StreamConfig {
+    StreamConfig {
+        residency: Residency {
+            r_full,
+            r_lod,
+            hysteresis,
+        },
+        workers,
+        persist: PersistConfig::default(),
+    }
+}
+
+fn solid3_streamer(workers: usize) -> (World, Streamer) {
+    (
+        World::new(&test_table()),
+        Streamer::new(Arc::new(UniformSource(3)), config(2, 2, 1, workers)),
+    )
+}
+
+/// Counts of each coordinate in `loaded`.
+fn tally(loaded: &[(ChunkCoord, Tier)], into: &mut BTreeMap<ChunkCoord, u32>) {
+    for &(c, tier) in loaded {
+        assert_eq!(tier, Tier::Full);
+        *into.entry(c).or_default() += 1;
+    }
+}
+
+#[test]
+fn a_radius_2_residency_loads_33_chunks_then_keeps_42_after_a_move() {
+    let (world, mut s) = solid3_streamer(4);
+    let mut loads = BTreeMap::new();
+
+    s.update(&world, &[VoxelCoord([0, 0, 0])]);
+    let ev = s.wait_idle(&world);
+    let first = ball([0, 0, 0], 4);
+    assert_eq!(first.len(), 33);
+    assert_eq!(world.store().coords(), first);
+    assert!(ev.evicted.is_empty());
+    tally(&ev.loaded, &mut loads);
+
+    s.update(&world, &[VoxelCoord([192, 0, 0])]);
+    let ev = s.wait_idle(&world);
+    tally(&ev.loaded, &mut loads);
+
+    let near = ball([3, 0, 0], 4);
+    let kept: Vec<ChunkCoord> = first
+        .iter()
+        .copied()
+        .filter(|c| !near.contains(c) && ball([3, 0, 0], 9).contains(c))
+        .collect();
+    assert_eq!(near.len(), 33);
+    assert_eq!(kept.len(), 9);
+    let mut expect: Vec<ChunkCoord> = near.iter().chain(&kept).copied().collect();
+    expect.sort_unstable();
+    assert_eq!(world.store().coords(), expect);
+    assert_eq!(world.store().len(), 42);
+
+    let mut evicted = ev.evicted.clone();
+    evicted.sort_unstable();
+    let far: Vec<ChunkCoord> = first
+        .iter()
+        .copied()
+        .filter(|c| !ball([3, 0, 0], 9).contains(c))
+        .collect();
+    assert_eq!(far.len(), 22);
+    assert_eq!(evicted, far);
+
+    // Every chunk resident now was loaded exactly once over both steps; so was every evicted
+    // one, and nothing else was loaded.
+    for c in &expect {
+        assert_eq!(loads.get(c), Some(&1), "{c:?}");
+    }
+    for c in &far {
+        assert_eq!(loads.get(c), Some(&1), "{c:?}");
+    }
+    assert_eq!(loads.len(), 42 + 22);
+    assert_eq!(s.stats().resident_full, 42);
+    assert_eq!(s.stats().in_flight, 0);
+}
+
+/// A hook that hands back the chunk's coordinate and its first brick's material.
+struct FirstBrick;
+
+impl ChunkPrep for FirstBrick {
+    fn prepare(&self, coord: ChunkCoord, chunk: &Chunk) -> Prepared {
+        let first = match chunk.brick(0) {
+            Brick::Uniform(m) => *m,
+            Brick::Full(_) => MaterialId::MAX,
+        };
+        Prepared(Arc::new((coord, first)))
+    }
+}
+
+#[test]
+fn the_workers_hand_back_the_hooks_result_for_each_full_load() {
+    let (world, mut s) = solid3_streamer(2);
+    s.set_prep(Some(Arc::new(FirstBrick)));
+    s.update(&world, &[VoxelCoord([0, 0, 0])]);
+    let ev = s.wait_idle(&world);
+    let full: Vec<ChunkCoord> = ev
+        .loaded
+        .iter()
+        .filter(|(_, t)| *t == Tier::Full)
+        .map(|(c, _)| *c)
+        .collect();
+    assert_eq!(full.len(), 33);
+    let got: Vec<ChunkCoord> = ev.prepared.iter().map(|(c, _)| *c).collect();
+    assert_eq!(got, full, "one result a full load, in the same order");
+    for (c, p) in &ev.prepared {
+        let v = p.0.clone().downcast::<(ChunkCoord, MaterialId)>().unwrap();
+        assert_eq!(*v, (*c, 3), "the hook saw the loaded chunk");
+    }
+    // Without the hook, a load carries none.
+    s.set_prep(None);
+    s.update(&world, &[VoxelCoord([192, 0, 0])]);
+    let ev = s.wait_idle(&world);
+    assert!(ev.loaded.iter().any(|(_, t)| *t == Tier::Full));
+    assert!(ev.prepared.is_empty());
+}
+
+#[test]
+fn streamed_chunks_equal_generated_chunks() {
+    let world = World::new(&test_table());
+    let mut s = Streamer::new(Arc::new(cave_like_source()), config(1, 1, 0, 4));
+    s.update(&world, &[VoxelCoord([10, 20, 30])]);
+    s.wait_idle(&world);
+    let coords = world.store().coords();
+    assert_eq!(coords, ball([0, 0, 0], 1));
+
+    let reference = World::generate(
+        ChunkExtent::new([-1, -1, -1], [2, 2, 2]),
+        &cave_like_source(),
+        &test_table(),
+    );
+    let mut mixed = 0;
+    for &c in &coords {
+        assert_eq!(
+            chunks_hash(&world, &[c]),
+            chunks_hash(&reference, &[c]),
+            "{c:?}"
+        );
+        let chunk = world.store().get(c).unwrap();
+        let chunk = chunk.read().unwrap();
+        mixed += usize::from(chunk.bricks().iter().any(Brick::is_full));
+    }
+    // The source is not trivially uniform: most chunks hold Full bricks.
+    assert!(mixed >= 4, "{mixed} chunks with Full bricks");
+}
+
+#[test]
+fn residency_hash_does_not_depend_on_worker_count() {
+    let hash = |workers| {
+        let world = World::new(&test_table());
+        let mut s = Streamer::new(Arc::new(cave_like_source()), config(2, 2, 1, workers));
+        s.update(&world, &[VoxelCoord([0, 0, 0])]);
+        s.wait_idle(&world);
+        assert_eq!(world.store().len(), 33);
+        world_hash(&world)
+    };
+    assert_eq!(hash(1), hash(8));
+}
+
+#[test]
+fn a_carve_on_an_evicted_chunk_is_refused_and_changes_nothing() {
+    let (world, mut s) = solid3_streamer(2);
+    s.update(&world, &[VoxelCoord([0, 0, 0])]);
+    s.wait_idle(&world);
+    s.update(&world, &[VoxelCoord([192, 0, 0])]);
+    let ev = s.wait_idle(&world);
+    let gone = ChunkCoord([-2, 0, 0]);
+    assert!(ev.evicted.contains(&gone));
+
+    let before = world_hash(&world);
+    let op = EditOp::sphere(centre_of_voxel([-96, 32, 32]), 4 * FIXED_ONE, Mode::Carve);
+    assert_eq!(world.apply(&op), Err(EditError::NotResident(gone)));
+    assert_eq!(world_hash(&world), before);
+}
+
+/// `apply` takes the store map's read lock: while another thread holds the write lock, an
+/// op does not run. The holder evicts the op's chunk before releasing, so an op that checked
+/// residency without waiting would have succeeded; one that waited is refused.
+#[test]
+fn apply_waits_for_the_store_write_lock() {
+    let (world, mut s) = solid3_streamer(2);
+    s.update(&world, &[VoxelCoord([0, 0, 0])]);
+    s.wait_idle(&world);
+    let world = Arc::new(world);
+    let target = ChunkCoord([0, 0, 0]);
+
+    let barrier = Arc::new(Barrier::new(2));
+    let (started_tx, started_rx) = mpsc::channel();
+    let (done_tx, done_rx) = mpsc::channel();
+    let mut guard = world.store().write_lock();
+    let editor = {
+        let world = world.clone();
+        let barrier = barrier.clone();
+        std::thread::spawn(move || {
+            barrier.wait();
+            started_tx.send(()).unwrap();
+            let r = world.apply(&EditOp::sphere(
+                centre_of_voxel([32, 32, 32]),
+                3 * FIXED_ONE,
+                Mode::Carve,
+            ));
+            done_tx.send(r).unwrap();
+        })
+    };
+    barrier.wait();
+    started_rx.recv().unwrap();
+    // The editor is running and cannot finish while the guard lives.
+    for _ in 0..10_000 {
+        std::thread::yield_now();
+        assert_eq!(done_rx.try_recv(), Err(TryRecvError::Empty));
+    }
+    assert!(guard.remove(target).is_some());
+    drop(guard);
+
+    let r = done_rx.recv().unwrap();
+    editor.join().unwrap();
+    assert_eq!(r, Err(EditError::NotResident(target)));
+}
+
+/// `apply` keeps the map read lock until its last write: a thread that takes the store's
+/// write lock never sees an op half done. The main thread holds the op's second chunk, so the
+/// op stalls after writing its first; were the map lock released before the writes, the
+/// locker would get in there and find the first chunk carved while the op is still stalled.
+#[test]
+fn the_store_write_lock_never_sees_half_an_op() {
+    let (world, mut s) = solid3_streamer(2);
+    s.update(&world, &[VoxelCoord([0, 0, 0])]);
+    s.wait_idle(&world);
+    let world = Arc::new(world);
+    let second = world.store().get(ChunkCoord([1, 0, 0])).unwrap();
+    let held = second.write().unwrap();
+    let released = Arc::new(AtomicBool::new(false));
+
+    let editor = {
+        let world = world.clone();
+        std::thread::spawn(move || {
+            world
+                .apply(&EditOp::sphere(
+                    centre_of_voxel([64, 32, 32]),
+                    4 * FIXED_ONE,
+                    Mode::Carve,
+                ))
+                .unwrap()
+        })
+    };
+    for _ in 0..10_000 {
+        std::thread::yield_now();
+    }
+    let locker = {
+        let (world, released) = (world.clone(), released.clone());
+        std::thread::spawn(move || {
+            let map = world.store().write_lock();
+            let chunk = map.get(ChunkCoord([0, 0, 0])).unwrap();
+            let chunk = chunk.read().unwrap();
+            let v = VoxelCoord([62, 32, 32]);
+            let first = chunk.brick(v.brick_slot()).get(v.index_in_brick());
+            (first, released.load(Ordering::SeqCst))
+        })
+    };
+    for _ in 0..10_000 {
+        std::thread::yield_now();
+    }
+    released.store(true, Ordering::SeqCst);
+    drop(held);
+    let r = editor.join().unwrap();
+    assert_eq!(r.touched, [ChunkCoord([0, 0, 0]), ChunkCoord([1, 0, 0])]);
+    let (first, was_released) = locker.join().unwrap();
+    assert!(
+        first == 3 || was_released,
+        "the locker saw the first chunk carved while the op was stalled on the second"
+    );
+}
+
+fn at_chunk(c: [i32; 3]) -> VoxelCoord {
+    VoxelCoord(c.map(|v| v * CHUNK_EDGE))
+}
+
+/// Air cells of level `n` of `mips`.
+fn air_cells(mips: &ChunkMips, n: usize) -> usize {
+    let e = 64 >> n;
+    (0..e * e * e)
+        .filter(|&i| mips.cell(n, [i % e, i / e % e, i / (e * e)]) == AIR)
+        .count()
+}
+
+#[test]
+fn a_lod_ring_holds_26_mip_only_chunks_that_edits_and_queries_cannot_see() {
+    let world = World::new(&test_table());
+    let mut s = Streamer::new(Arc::new(UniformSource(3)), config(1, 2, 0, 4));
+    s.update(&world, &[at_chunk([0, 0, 0])]);
+    let ev = s.wait_idle(&world);
+    let full = ball([0, 0, 0], 1);
+    let ring: Vec<ChunkCoord> = ball([0, 0, 0], 4)
+        .into_iter()
+        .filter(|c| !full.contains(c))
+        .collect();
+    assert_eq!((full.len(), ring.len()), (7, 26));
+    assert_eq!(world.store().coords(), full);
+    assert_eq!(world.lod_coords(), ring);
+    let lods = ev
+        .loaded
+        .iter()
+        .filter(|(_, t)| *t == Tier::LodOnly)
+        .count();
+    assert_eq!(lods, 26);
+    assert_eq!((s.stats().resident_full, s.stats().resident_lod), (7, 26));
+
+    for &c in &ring {
+        assert_eq!(s.tier(c), Some(Tier::LodOnly));
+        let v = c.min_voxel().0.map(|v| v + 5);
+        assert_eq!(world.material_at(v), None, "{c:?}");
+        let op = EditOp::sphere(centre_of_voxel(v), 2 * FIXED_ONE, Mode::Carve);
+        assert_eq!(world.apply(&op), Err(EditError::NotResident(c)));
+        assert!(world.count_in_box(v, v).unwrap().is_empty());
+    }
+}
+
+#[test]
+fn a_carved_chunk_demotes_to_its_mips_and_promotes_back_from_persistence() {
+    let world = World::new(&test_table());
+    let mut s = Streamer::new(Arc::new(UniformSource(3)), config(1, 2, 0, 4));
+    s.update(&world, &[at_chunk([0, 0, 0])]);
+    s.wait_idle(&world);
+    let carved = ChunkCoord([1, 0, 0]);
+    let r = world
+        .apply(&EditOp::sphere(
+            centre_of_voxel([96, 32, 32]),
+            10 * FIXED_ONE,
+            Mode::Carve,
+        ))
+        .unwrap();
+    assert_eq!(r.changed_from, [(3, 4169)]);
+    assert_eq!(r.touched, [carved]);
+    let after_carve = chunks_hash(&world, &[carved]);
+
+    // Squared distance 4 from [-1, 0, 0]: past r_full = 1, within r_lod = 2.
+    s.update(&world, &[at_chunk([-1, 0, 0])]);
+    let ev = s.wait_idle(&world);
+    assert!(ev.demoted.contains(&carved), "{:?}", ev.demoted);
+    assert_eq!(s.tier(carved), Some(Tier::LodOnly));
+    assert!(!world.store().contains(carved));
+    assert!(s.is_persisted(carved));
+    let mips = world.lod(carved).expect("demoted to its mips");
+    assert_eq!(
+        (
+            air_cells(&mips, 1),
+            air_cells(&mips, 2),
+            air_cells(&mips, 3)
+        ),
+        (410, 32, 0)
+    );
+
+    s.update(&world, &[at_chunk([0, 0, 0])]);
+    let ev = s.wait_idle(&world);
+    assert!(ev.loaded.contains(&(carved, Tier::Full)));
+    assert_eq!(s.tier(carved), Some(Tier::Full));
+    assert!(world.lod(carved).is_none());
+    assert!(!s.is_persisted(carved));
+    assert_eq!(chunks_hash(&world, &[carved]), after_carve);
+}
+
+/// `Full` bricks over the resident chunks.
+fn full_bricks(world: &World) -> usize {
+    world.stats().full_bricks
+}
+
+/// A streamer of the cave-like source with the 7 chunks within distance 1 of the origin
+/// resident (no LOD band).
+fn cave_residency() -> (World, Streamer) {
+    let world = World::new(&test_table());
+    let mut s = Streamer::new(Arc::new(cave_like_source()), config(1, 1, 0, 2));
+    s.update(&world, &[VoxelCoord([0, 0, 0])]);
+    s.wait_idle(&world);
+    assert_eq!(world.store().coords(), ball([0, 0, 0], 1));
+    (world, s)
+}
+
+/// Moves the focus 16 chunks away, so every chunk of [`cave_residency`] is evicted, and
+/// returns the evicted coordinates.
+fn move_away(world: &World, s: &mut Streamer) -> Vec<ChunkCoord> {
+    s.update(world, &[VoxelCoord([16 * 64, 0, 0])]);
+    let mut evicted = s.wait_idle(world).evicted;
+    evicted.sort_unstable();
+    evicted
+}
+
+/// An evicted chunk still held elsewhere keeps its bricks for its holder.
+#[test]
+fn an_evicted_chunk_held_elsewhere_keeps_its_bricks() {
+    let (world, mut s) = cave_residency();
+    let held: Vec<_> = world
+        .store()
+        .coords()
+        .into_iter()
+        .map(|c| (c, world.store().get(c).unwrap()))
+        .collect();
+    let f = full_bricks(&world);
+    move_away(&world, &mut s);
+    let mut still_full = 0;
+    for (c, chunk) in &held {
+        assert!(!world.store().contains(*c), "{c:?} still resident");
+        assert_eq!(Arc::strong_count(chunk), 1, "{c:?}");
+        still_full += chunk
+            .read()
+            .unwrap()
+            .bricks()
+            .iter()
+            .filter(|b| b.is_full())
+            .count();
+    }
+    assert_eq!(still_full, f);
+}
+
+/// Lowering `r_full` by one demotes the chunks at the old full edge to LOD-only within the
+/// next polls, at the same focus; raising it back promotes them, and an edited one among them
+/// comes back from persistence with the hash it had before the round trip.
+#[test]
+fn set_radii_demotes_the_full_edge_and_promotes_it_back() {
+    let world = World::new(&test_table());
+    let mut s = Streamer::new(Arc::new(UniformSource(3)), config(2, 3, 0, 4));
+    let focus = VoxelCoord([0, 0, 0]);
+    s.update(&world, &[focus]);
+    s.wait_idle(&world);
+    let full = ball([0, 0, 0], 4);
+    assert_eq!(world.store().coords(), full);
+    // The old edge: full at r_full 2, past r_full 1.
+    let edge: Vec<ChunkCoord> = full
+        .iter()
+        .copied()
+        .filter(|c| !ball([0, 0, 0], 1).contains(c))
+        .collect();
+    assert_eq!(edge.len(), 26);
+    let edited = ChunkCoord([2, 0, 0]);
+    assert!(edge.contains(&edited));
+    let r = world
+        .apply(&EditOp::sphere(
+            centre_of_voxel([160, 32, 32]),
+            10 * FIXED_ONE,
+            Mode::Carve,
+        ))
+        .unwrap();
+    assert_eq!(r.touched, [edited]);
+    let before: Vec<u64> = edge.iter().map(|&c| chunks_hash(&world, &[c])).collect();
+
+    s.set_radii(1, 3);
+    assert_eq!(s.config().residency.r_full, 1);
+    // The focus has not moved: the polls alone demote.
+    let ev = settle(&mut s, &world, chunks_in_ball(3));
+    assert!(ev.evicted.is_empty());
+    let mut demoted = ev.demoted;
+    demoted.sort_unstable();
+    assert_eq!(demoted, edge);
+    assert_eq!(world.store().coords(), ball([0, 0, 0], 1));
+    for &c in &edge {
+        assert_eq!(s.tier(c), Some(Tier::LodOnly), "{c:?}");
+        assert!(world.lod(c).is_some(), "{c:?}");
+    }
+    assert!(s.is_persisted(edited));
+
+    s.set_radii(2, 3);
+    s.update(&world, &[focus]);
+    let ev = settle(&mut s, &world, chunks_in_ball(3));
+    let mut promoted: Vec<ChunkCoord> = ev
+        .loaded
+        .iter()
+        .filter(|(_, t)| *t == Tier::Full)
+        .map(|&(c, _)| c)
+        .collect();
+    promoted.sort_unstable();
+    assert_eq!(promoted, edge);
+    assert_eq!(world.store().coords(), full);
+    assert!(!s.is_persisted(edited));
+    let after: Vec<u64> = edge.iter().map(|&c| chunks_hash(&world, &[c])).collect();
+    assert_eq!(after, before);
+    assert_eq!(world.material_at([160, 32, 32]), Some(AIR));
+}
+
+/// Polls until no job is queued or running, asserting after every poll that the resident
+/// chunks, full and LOD-only, number at most `bound`; returns the polls' events.
+fn settle(s: &mut Streamer, world: &World, bound: u64) -> StreamEvents {
+    let mut all = StreamEvents::default();
+    loop {
+        let ev = s.poll(world);
+        let resident = world.store().len() + world.lod_coords().len();
+        assert!(
+            resident as u64 <= bound,
+            "{resident} resident, bound {bound}"
+        );
+        all.loaded.extend(ev.loaded);
+        all.demoted.extend(ev.demoted);
+        all.evicted.extend(ev.evicted);
+        all.errors.extend(ev.errors);
+        let st = s.stats();
+        if st.in_flight == 0 && st.queued == 0 {
+            return all;
+        }
+        std::thread::yield_now();
+    }
+}
+
+/// The lattice balls the streamed mirror's record count is sized from.
+#[test]
+fn chunks_in_ball_counts_the_lattice_points() {
+    assert_eq!(chunks_in_ball(0), 1);
+    assert_eq!(chunks_in_ball(1), 7);
+    assert_eq!(chunks_in_ball(2), 33);
+    assert_eq!(chunks_in_ball(24), 57_777);
+    assert_eq!(chunks_in_ball(25), 65_267);
+    assert_eq!(chunks_in_ball(-1), 0);
+}
+
+/// A seeded 300-step walk of one focus: unit steps in all 26 directions, a 10-chunk jump
+/// every 60 steps, and new radii at step 150. With the incremental oracle on, every
+/// incremental queue update is compared, job for job with its in-flight and wanted-since
+/// state, with a full rebuild from the same state, and every incremental sweep's evictions
+/// and demotions with a full scan of residency; a difference panics.
+#[test]
+fn the_incremental_queue_and_sweep_equal_the_full_rebuild_over_a_walk() {
+    let world = World::new(&test_table());
+    let mut s = Streamer::new(Arc::new(UniformSource(3)), config(3, 5, 1, 2));
+    s.set_incremental_oracle(true);
+    let mut rng = SplitMix64(0x0023_0004);
+    let steps: Vec<[i32; 3]> = (0..27)
+        .map(|i| [i % 3 - 1, i / 3 % 3 - 1, i / 9 - 1])
+        .filter(|d| *d != [0; 3])
+        .collect();
+    assert_eq!(steps.len(), 26);
+    let mut at = [0i32; 3];
+    let mut unit = 0;
+    let mut seen = HashSet::new();
+    for step in 0..300 {
+        if step > 0 && step % 60 == 0 {
+            at[0] += 10;
+        } else if step > 0 {
+            let d = steps[rng.range(0, 25) as usize];
+            seen.insert(d);
+            at = [0, 1, 2].map(|k| at[k] + d[k]);
+            unit += 1;
+        }
+        if step == 150 {
+            s.set_radii(2, 4);
+        }
+        s.update(&world, &[VoxelCoord(at.map(|v| v * 64 + 5))]);
+        s.poll(&world);
+        if step % 7 == 0 {
+            s.wait_idle(&world);
+        }
+    }
+    s.wait_idle(&world);
+    let (queues, sweeps) = s.oracle_checks();
+    println!(
+        "{unit} unit steps, {} directions; {queues} queue and {sweeps} sweep checks",
+        seen.len()
+    );
+    assert_eq!(seen.len(), 26);
+    assert_eq!(queues, unit);
+    assert!(sweeps > 100, "{sweeps} incremental sweeps");
+}
+
+/// A uniform source of material 3 whose first `chunk` call reports its coordinate and blocks
+/// until released; every later call returns at once.
+struct GateSource {
+    entered: Mutex<Option<mpsc::Sender<ChunkCoord>>>,
+    release: Mutex<mpsc::Receiver<()>>,
+}
+
+impl WorldSource for GateSource {
+    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
+        if let Some(tx) = self.entered.lock().unwrap().take() {
+            tx.send(coord).unwrap();
+            self.release.lock().unwrap().recv().unwrap();
+        }
+        UniformSource(3).chunk(coord, out);
+    }
+}
+
+/// A full chunk whose focus jumps away while it loads lands past the full band (inside the
+/// LOD band) and is inserted anyway; the next poll, with the focus still, sweeps it out of the
+/// full tier, and its demotion completes as a `demoted` event.
+#[test]
+fn a_full_chunk_landing_outside_its_band_is_demoted_by_the_next_poll() {
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let source = GateSource {
+        entered: Mutex::new(Some(entered_tx)),
+        release: Mutex::new(release_rx),
+    };
+    let world = World::new(&test_table());
+    // keep_full2 = 1, keep_lod2 = 9.
+    let mut s = Streamer::new(Arc::new(source), config(1, 3, 0, 1));
+    s.set_incremental_oracle(true);
+    s.update(&world, &[VoxelCoord([5, 5, 5])]);
+    let held = entered_rx.recv().unwrap();
+    // Two chunks along x from the held chunk: past the full band, inside the LOD band.
+    let focus = ChunkCoord([held.0[0] + 2, held.0[1], held.0[2]]);
+    s.update(&world, &[VoxelCoord(focus.0.map(|c| c * 64 + 5))]);
+    release_tx.send(()).unwrap();
+
+    let mut landed = false;
+    for _ in 0..1_000_000 {
+        let ev = s.poll(&world);
+        if ev.loaded.contains(&(held, Tier::Full)) {
+            landed = true;
+            break;
+        }
+        std::thread::yield_now();
+    }
+    assert!(landed, "{held:?} never landed");
+    assert_eq!(s.tier(held), Some(Tier::Full));
+    assert!(world.store().contains(held));
+
+    // The first further poll sweeps it: it leaves the store and the full tier, its demotion
+    // queued.
+    let ev = s.poll(&world);
+    assert!(!ev.loaded.contains(&(held, Tier::Full)));
+    assert_ne!(s.tier(held), Some(Tier::Full));
+    assert!(!world.store().contains(held));
+    // The second further poll applies the demotion's result once the worker returns it.
+    let ev = s.wait_idle(&world);
+    assert!(
+        ev.demoted.contains(&held) || ev.evicted.contains(&held),
+        "{held:?} neither demoted nor evicted: {ev:?}"
+    );
+    assert_eq!(s.tier(held), Some(Tier::LodOnly));
+}
+
+/// The resident tiers counted by walking every chunk within `reach` chunks of the origin on
+/// each axis: `(full, LOD-only)`.
+fn walk_counts(s: &Streamer, reach: i32) -> (usize, usize) {
+    let mut counts = (0, 0);
+    for x in -reach..=reach {
+        for y in -reach..=reach {
+            for z in -reach..=reach {
+                match s.tier(ChunkCoord([x, y, z])) {
+                    Some(Tier::Full) => counts.0 += 1,
+                    Some(Tier::LodOnly) => counts.1 += 1,
+                    None => {}
+                }
+            }
+        }
+    }
+    counts
+}
+
+/// A seeded flight of 200 steps over a uniform world (radii 2 and 4, hysteresis 1, two
+/// workers): each step moves the focus up to two chunks on one axis inside a 6-chunk cube, and
+/// every 25th changes the full radius between 1 and 2 (demoting the full edge, then promoting
+/// it); every 10th step waits for the workers, the rest poll once, so loads, demotions and
+/// evictions land part-way. After every step `stats()`'s `resident_full` and `resident_lod`
+/// equal a walk over every chunk the residency can reach (the cube plus the LOD radius and the
+/// hysteresis).
+#[test]
+fn stats_counts_match_a_walk() {
+    let world = World::new(&test_table());
+    let mut s = Streamer::new(Arc::new(UniformSource(3)), config(2, 4, 1, 2));
+    let mut seed: u64 = 0x5eed_0064;
+    let mut next = || {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (seed >> 33) as i32
+    };
+    let mut focus = [0i32; 3];
+    let reach = 6 + 4 + 1 + 1;
+    let (mut demotions, mut evictions) = (0, 0);
+    for step in 0..200 {
+        let axis = (next() % 3) as usize;
+        focus[axis] = (focus[axis] + next() % 5 - 2).clamp(-6, 6);
+        if step % 25 == 24 {
+            let r_full = if s.config().residency.r_full == 2 {
+                1
+            } else {
+                2
+            };
+            s.set_radii(r_full, 4);
+        }
+        s.update(&world, &[VoxelCoord(focus.map(|c| c * CHUNK_EDGE))]);
+        let ev = if step % 10 == 9 {
+            s.wait_idle(&world)
+        } else {
+            s.poll(&world)
+        };
+        demotions += ev.demoted.len();
+        evictions += ev.evicted.len();
+        let st = s.stats();
+        assert_eq!(
+            (st.resident_full, st.resident_lod),
+            walk_counts(&s, reach),
+            "step {step}, focus {focus:?}"
+        );
+        assert_eq!(st.ticks, s.ticks());
+    }
+    println!("{demotions} demotions, {evictions} evictions over the flight");
+    assert!(
+        demotions > 0 && evictions > 0,
+        "the flight demoted and evicted"
+    );
+}
+
+/// A 192 x 10 x 10 prefab of material 2, a third of its voxels unwritten, so a stamp at x 128
+/// meets chunks 2, 3 and 4 along x.
+fn wide_prefab() -> Prefab {
+    Prefab::from_fn([192, 10, 10], |[x, y, z]| {
+        ((x + y + z) % 3 != 0).then_some(2)
+    })
+}
+
+/// Plan 0083 Phase 5 done-when 1: the 3-chunk-wide prefab stamped with its middle chunk not
+/// resident (two foci keep chunks 2 and 4 and leave 3 out) returns `Ok` with the two resident
+/// chunks' counts and one pending placement; once the streamer makes the middle chunk resident,
+/// the world's voxel hash equals a world where every chunk was resident at the stamp, and no
+/// placement is pending.
+#[test]
+fn a_stamp_past_residency_finishes_when_the_chunk_arrives() {
+    let ends = [VoxelCoord([0, 0, 0]), VoxelCoord([6 * 64, 0, 0])];
+    let all = [ends[0], VoxelCoord([3 * 64, 0, 0]), ends[1]];
+    let p = wide_prefab();
+    let origin = [128, 3, 3];
+
+    let world = World::new(&test_table());
+    let mut s = Streamer::new(Arc::new(UniformSource(3)), config(2, 2, 1, 2));
+    s.update(&world, &ends);
+    s.wait_idle(&world);
+    let middle = ChunkCoord([3, 0, 0]);
+    assert!(world.store().contains(ChunkCoord([2, 0, 0])));
+    assert!(world.store().contains(ChunkCoord([4, 0, 0])));
+    assert!(!world.store().contains(middle));
+    let r = world.stamp(&p, origin, Rot::IDENTITY).unwrap();
+    assert_eq!(r.touched, [ChunkCoord([2, 0, 0]), ChunkCoord([4, 0, 0])]);
+    // Every written voxel of the two end chunks changes rock (3) into material 2.
+    let written_in = |cx: i32| {
+        let mut n = 0u32;
+        for x in 0..192 {
+            if (origin[0] + x).div_euclid(64) != cx {
+                continue;
+            }
+            for y in 0..10 {
+                for z in 0..10 {
+                    n += u32::from(p.get([x, y, z]).is_some());
+                }
+            }
+        }
+        n
+    };
+    assert_eq!(r.changed_from, [(3, written_in(2) + written_in(4))]);
+    assert_eq!(world.store().pending_placements(), 1);
+
+    s.update(&world, &all);
+    s.wait_idle(&world);
+    assert!(world.store().contains(middle));
+    assert_eq!(world.store().pending_placements(), 0);
+    assert_eq!(world.store().placement_writes(), 1);
+
+    let whole = World::new(&test_table());
+    let mut t = Streamer::new(Arc::new(UniformSource(3)), config(2, 2, 1, 2));
+    t.update(&whole, &all);
+    t.wait_idle(&whole);
+    whole.stamp(&p, origin, Rot::IDENTITY).unwrap();
+    assert_eq!(whole.store().pending_placements(), 0);
+    assert_eq!(world.store().coords(), whole.store().coords());
+    assert_eq!(world.voxel_hash(), whole.voxel_hash());
+}

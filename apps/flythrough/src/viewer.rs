@@ -1,9 +1,9 @@
 //! The fly-through's model viewer (ADR-0051): `--model <file.rig>` loads a rig and the `.vox`
 //! it names, and `` ` `` (and `--entities N`'s ring) places that model in place of the
 //! built-in walker, playing a clip at the rig's rate from the frame's time step. The drawn
-//! pose is between two ticks ([`vxe_render::DisplayPose::between`]); the set the queries read
+//! pose is between two ticks ([`svet_render::DisplayPose::between`]); the set the queries read
 //! holds the integer tick's. A change of clip fades into the new one over [`CLIP_FADE_TICKS`]
-//! ([`vxe_entity::Player`]). The two files' modified times are read once a second and a change
+//! ([`svet_entity::Player`]). The two files' modified times are read once a second and a change
 //! reloads them, keeping every placed instance; a file that fails keeps the old model and
 //! shows the error (`rig line <n>: <message>`) in the banner, and keeps it on screen in red
 //! (the HUD's row, or a banner row with the HUD off) until a reload succeeds. The wall clock
@@ -13,10 +13,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use vxe_assets::{Rig, RigBody, VoxFile};
-use vxe_entity::{Clip, Model, Playback, Player, Pose, blend};
-use vxe_render::ModelHandle;
-use vxe_world::{MaterialId, MaterialTable};
+use svet_assets::{Rig, RigBody, VoxFile};
+use svet_entity::{Clip, Model, Playback, Player, Pose, blend};
+use svet_render::ModelHandle;
+use svet_world::{MaterialId, MaterialTable};
 
 /// Seconds between two reads of the files' modified times.
 pub const POLL_SECONDS: f64 = 1.0;
@@ -92,7 +92,7 @@ pub fn palette_rows(rig_path: &Path, table: &mut MaterialTable, k: f32) -> usize
     let Ok(explicit) = rig.explicit_map(&|n| material(&names, n)) else {
         return 0;
     };
-    let mut rows = vxe_assets::PaletteRows::new(table, k);
+    let mut rows = svet_assets::PaletteRows::new(table, k);
     rows.resolve(&vox, &explicit);
     rows.added()
 }
@@ -196,7 +196,7 @@ impl Viewer {
         // the start ([`palette_rows`]) and are found again by name.
         let built = rig
             .build_mapped(&vox, &|n| material(table, n), &mut |f, m| {
-                vxe_assets::resolve_existing(table, f, m)
+                svet_assets::resolve_existing(table, f, m)
             })
             .map_err(|e| e.to_string())?;
         let playing = self.clip_name().map(str::to_owned);
@@ -477,7 +477,7 @@ pub fn placed(pose: &Pose, feet: [f32; 3], yaw: f32) -> Pose {
 /// [`placed`] into `out`, reusing its parts' storage.
 pub fn place_into(out: &mut Pose, pose: &Pose, feet: [f32; 3], yaw: f32) {
     out.parts.clone_from(&pose.parts);
-    out.root = vxe_world::Fixed3(feet.map(|v| (v * 256.0).round() as i64));
+    out.root = svet_world::Fixed3(feet.map(|v| (v * 256.0).round() as i64));
     out.root_q = crate::walker::turn(2, yaw);
 }
 
@@ -508,11 +508,11 @@ mod tests {
         use crate::run::hud_lines::banner_colours;
         use crate::test_support::bare_run;
         use std::time::{Duration, SystemTime};
-        use vxe_render::HudColour;
+        use svet_render::HudColour;
 
         let assets =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/entities/walker");
-        let dir = std::env::temp_dir().join(format!("vxe-viewer-error-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("svet-viewer-error-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("dir");
         let rig = std::fs::read_to_string(assets.join("walker.rig")).expect("rig reads");
         std::fs::copy(assets.join("walker.vox"), dir.join("walker.vox")).expect("vox copied");
@@ -528,9 +528,9 @@ mod tests {
         };
         save(&rig, 5);
         let table = crate::walker::with_walker(&crate::cave_materials());
-        let world = vxe_world::World::generate(
-            vxe_world::ChunkExtent::new([-1, -1, -1], [1, 1, 1]),
-            &vxe_world::UniformSource(ROCK),
+        let world = svet_world::World::generate(
+            svet_world::ChunkExtent::new([-1, -1, -1], [1, 1, 1]),
+            &svet_world::UniformSource(ROCK),
             &table,
         );
         let mut run = bare_run(world);

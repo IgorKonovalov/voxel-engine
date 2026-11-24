@@ -7,11 +7,11 @@ use std::path::Path;
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS};
 use flythrough::outdoor::{OutdoorSource, Spawn};
 use flythrough::showcase::ShowcaseSource;
-use vxe_render::sky::Sky;
-use vxe_render::{
+use svet_render::sky::Sky;
+use svet_render::{
     Camera, Frame, GpuWorld, Lighting, LightingResolution, MirrorConfig, RenderScale, wgpu,
 };
-use vxe_world::*;
+use svet_world::*;
 
 /// The world a still or clip frames.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,7 +59,7 @@ pub fn build_world(
                 &rows(flythrough::outdoor_materials()),
             );
             let (eye, _) = source.spawn(Spawn::Outside);
-            (world, eye, vxe_render::DEFAULT_LIGHT_RADIUS)
+            (world, eye, svet_render::DEFAULT_LIGHT_RADIUS)
         }
         Source::Level => {
             let source = CaveSource::new(seed, ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS));
@@ -68,7 +68,7 @@ pub fn build_world(
                 &source,
                 &rows(flythrough::with_emissive_ore(&flythrough::cave_materials())),
             );
-            (world, source.spawn(), vxe_render::DEFAULT_LIGHT_RADIUS)
+            (world, source.spawn(), svet_render::DEFAULT_LIGHT_RADIUS)
         }
     }
 }
@@ -131,11 +131,12 @@ pub fn open_device(
     };
     let adapter_name = adapter.get_info().name;
     println!("rendering on {adapter_name}");
-    let pool_bytes = flythrough::level_pool_units(world, field) * vxe_render::internals::UNIT_BYTES;
+    let pool_bytes =
+        flythrough::level_pool_units(world, field) * svet_render::internals::UNIT_BYTES;
     let (device, queue) =
         pollster::block_on(
             adapter.request_device(&wgpu::DeviceDescriptor {
-                required_limits: vxe_render::limits_for(&adapter, pool_bytes)
+                required_limits: svet_render::limits_for(&adapter, pool_bytes)
                     .map_err(|e| format!("no device: {e}"))?,
                 ..Default::default()
             }),
@@ -159,7 +160,7 @@ pub fn fill_mirror(
     let cfg = MirrorConfig {
         budget_bytes: flythrough::level_mirror_budget(world, chunks, field),
         light_radius,
-        ..MirrorConfig::new(vxe_render::Window::Fixed(world.extent()))
+        ..MirrorConfig::new(svet_render::Window::Fixed(world.extent()))
     };
     let mut gpu = if field {
         GpuWorld::with_field_surface(device, cfg)
@@ -230,9 +231,9 @@ impl FrameSetup {
         if self.fsr2() {
             frame.set_upscaler_kind(
                 device,
-                vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+                svet_render::UpscalerKind::Fsr2(svet_render::Fsr2Settings {
                     sharpness: self.sharpen,
-                    ..vxe_render::Fsr2Settings::default()
+                    ..svet_render::Fsr2Settings::default()
                 }),
             );
         } else {
@@ -240,11 +241,11 @@ impl FrameSetup {
             frame.set_sharpness(queue, self.sharpen);
         }
         frame.set_lighting(self.lighting);
-        frame.set_look(vxe_render::LookParams {
+        frame.set_look(svet_render::LookParams {
             normal_mode: self.look.normal_mode,
             tuning: self.look.tuning,
             far_normal: self.look.far_normal,
-            ..vxe_render::LookParams::default()
+            ..svet_render::LookParams::default()
         });
         frame.set_resolution(device, self.resolution);
         frame.set_sky(self.sky);
@@ -255,7 +256,7 @@ impl FrameSetup {
                 gpu,
                 world,
                 world.extent(),
-                &vxe_render::queue_settings(),
+                &svet_render::queue_settings(),
                 &mut |_| {},
             )
             .map_err(|e| format!("bake: {e:?}"))?;

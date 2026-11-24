@@ -761,20 +761,20 @@ impl Mix {
 /// `E`'s lamp: at the eye, no offset and no shadow ray, its cone opened past the view (the
 /// half-diagonal at 16:9 and 70 degrees is 0.96 rad, so `inner` 1.2 and `outer` 1.5), at
 /// `intensity`.
-pub fn eye_lamp(intensity: f32) -> vxe_render::LightParams {
-    vxe_render::LightParams {
+pub fn eye_lamp(intensity: f32) -> svet_render::LightParams {
+    svet_render::LightParams {
         intensity,
         inner: 1.2,
         outer: 1.5,
-        ..vxe_render::LightParams::at_eye()
+        ..svet_render::LightParams::at_eye()
     }
 }
 
 /// `E`'s lighting over `base`: the lamp on, no indirect gather and no emissive candidates, so
 /// the light pass draws no emissive sample (the hall's eye chunk holds emitters, so the mirror's
 /// `light_radius` 0 alone leaves it samples). Emitters still glow, from the composite.
-pub fn eye_lighting(base: vxe_render::Lighting) -> vxe_render::Lighting {
-    vxe_render::Lighting {
+pub fn eye_lighting(base: svet_render::Lighting) -> svet_render::Lighting {
+    svet_render::Lighting {
         lamp: true,
         lamp_bounce: false,
         candidates: 0,

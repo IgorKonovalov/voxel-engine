@@ -12,8 +12,8 @@ use crate::path::{CameraPath, PathMode};
 use crate::setup::CrispRows;
 use crate::showcase::{SHOTS, Shot};
 use crate::{LogicChoice, LookPreset};
-use vxe_app::Pacing;
-use vxe_render::{HistoryKill, LightingResolution, RenderScale, ShadowWalk, ViewMode};
+use svet_app::Pacing;
+use svet_render::{HistoryKill, LightingResolution, RenderScale, ShadowWalk, ViewMode};
 
 /// What the rows write: the arguments, and the flags as given that [`super::parse::settle`]
 /// resolves against each other once every flag is read.
@@ -120,7 +120,8 @@ pub fn lighting_flags<T: 'static>(part: fn(&mut T) -> &mut LightingArgs) -> Vec<
             "face|normal",
             "how a cube face reads the store (ADR-0049)",
             move |t, v| {
-                part(t).store_read = v.named(vxe_render::StoreRead::from_name, "face or normal")?;
+                part(t).store_read =
+                    v.named(svet_render::StoreRead::from_name, "face or normal")?;
                 Ok(())
             },
         ),
@@ -130,7 +131,7 @@ pub fn lighting_flags<T: 'static>(part: fn(&mut T) -> &mut LightingArgs) -> Vec<
             "the normal the light's filters compare",
             move |t, v| {
                 part(t).light_weights =
-                    v.named(vxe_render::LightWeights::from_name, "normal or face")?;
+                    v.named(svet_render::LightWeights::from_name, "normal or face")?;
                 Ok(())
             },
         ),
@@ -206,7 +207,7 @@ pub fn lighting_flags<T: 'static>(part: fn(&mut T) -> &mut LightingArgs) -> Vec<
             "rays each updated probe traces, 1 to 64",
             move |t, v| {
                 part(t).probe_rays = v.parse_if(
-                    |n: &u32| (1..=vxe_render::internals::RAYS_PER_PROBE).contains(n),
+                    |n: &u32| (1..=svet_render::internals::RAYS_PER_PROBE).contains(n),
                     "1 to 64 rays",
                 )?;
                 Ok(())
@@ -237,7 +238,7 @@ fn entity_filter_flags<T: 'static>(part: fn(&mut T) -> &mut LightingArgs) -> Vec
             "the a-trous weights at a pixel younger than 4 frames: all, or plane and normal only (Delete)",
             move |t, v| {
                 part(t).young_filter =
-                    v.named(vxe_render::YoungFilter::from_name, "luma or edges")?;
+                    v.named(svet_render::YoungFilter::from_name, "luma or edges")?;
                 Ok(())
             },
         ),
@@ -247,7 +248,7 @@ fn entity_filter_flags<T: 'static>(part: fn(&mut T) -> &mut LightingArgs) -> Vec
             "an entity's emissive light: its own sample, or the baked light of the world faces around it (Insert)",
             move |t, v| {
                 part(t).entity_light =
-                    v.named(vxe_render::EntityLight::from_name, "own or world")?;
+                    v.named(svet_render::EntityLight::from_name, "own or world")?;
                 Ok(())
             },
         ),
@@ -874,8 +875,8 @@ fn light_flags() -> Vec<Flag<Parsing>> {
             |p: &mut Parsing, v| {
                 p.args.light.metering = v.word(
                     &[
-                        ("centre", vxe_render::Metering::default()),
-                        ("average", vxe_render::Metering::Average),
+                        ("centre", svet_render::Metering::default()),
+                        ("average", svet_render::Metering::Average),
                     ],
                     "centre or average",
                 )?;
@@ -895,7 +896,7 @@ fn bake_flags() -> Vec<Flag<Parsing>> {
             "the queue's slice a frame, 0.1 to 100 ms",
             |p: &mut Parsing, v| {
                 let ms = v.parse_if(|ms: &f64| (0.1..=100.0).contains(ms), "0.1 to 100 ms")?;
-                p.args.bake.budget = vxe_render::Budget::PerFrame { ms };
+                p.args.bake.budget = svet_render::Budget::PerFrame { ms };
                 Ok(())
             },
         ),
@@ -904,7 +905,7 @@ fn bake_flags() -> Vec<Flag<Parsing>> {
             "frame:MS|second:MS,CAP",
             "the queue's budget (ADR-0052)",
             |p: &mut Parsing, v| {
-                p.args.bake.budget = vxe_render::Budget::parse(v.text)?;
+                p.args.bake.budget = svet_render::Budget::parse(v.text)?;
                 Ok(())
             },
         ),
@@ -914,7 +915,7 @@ fn bake_flags() -> Vec<Flag<Parsing>> {
             "the coarse pass's samples a brick direction, 0 to 4096",
             |p: &mut Parsing, v| {
                 p.args.bake.coarse = v.parse_if(
-                    |n: &u32| *n <= vxe_render::QUEUE_BRICK_SAMPLES,
+                    |n: &u32| *n <= svet_render::QUEUE_BRICK_SAMPLES,
                     "0 to 4096 samples",
                 )?;
                 Ok(())
@@ -946,7 +947,7 @@ fn bake_flags() -> Vec<Flag<Parsing>> {
             "black|neighbour|parent|chain",
             "what a face with no baked value reads (ADR-0053)",
             |p: &mut Parsing, v| {
-                p.args.bake.missing_light = vxe_render::MissingLight::parse(v.text)?;
+                p.args.bake.missing_light = svet_render::MissingLight::parse(v.text)?;
                 Ok(())
             },
         ),
@@ -955,7 +956,7 @@ fn bake_flags() -> Vec<Flag<Parsing>> {
             "full|partial",
             "whether a near-band chunk waits for its whole light reach (mid and far: partial)",
             |p: &mut Parsing, v| {
-                p.args.bake.reach = vxe_render::ReachMode::parse(v.text)?;
+                p.args.bake.reach = svet_render::ReachMode::parse(v.text)?;
                 Ok(())
             },
         ),

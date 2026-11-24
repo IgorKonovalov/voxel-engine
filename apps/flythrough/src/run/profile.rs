@@ -2,7 +2,7 @@
 //! `F4` or the menu's `profile` entry cycling the profiles, applying each one's `Live` and `Settle` fields.
 
 use super::Run;
-use vxe_render::{Profile, RenderSettings, UpscalerChoice};
+use svet_render::{Profile, RenderSettings, UpscalerChoice};
 
 impl Run {
     /// The render settings the run holds now: the flags' with the keys' changes (the
@@ -68,7 +68,7 @@ impl Run {
     /// (FSR 2 at 1 is its antialiasing at native), applied from the next frame as a profile's
     /// scale is; the upscaler banner names it.
     pub(crate) fn cycle_scale(&mut self) {
-        use vxe_render::RenderScale;
+        use svet_render::RenderScale;
         let next = match self.args.look.internal_scale {
             RenderScale::OneHalf => RenderScale::One,
             RenderScale::One => RenderScale::Two,

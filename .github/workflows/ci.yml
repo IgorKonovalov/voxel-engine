@@ -126,17 +126,17 @@ jobs:
       - name: Pipeline times on DX12 under FXC (manual runs)
         if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch'
         shell: bash
-        run: WGPU_DX12_COMPILER=fxc cargo run -p vxe-render --release --example pipeline_times
+        run: WGPU_DX12_COMPILER=fxc cargo run -p svet-render --release --example pipeline_times
       - name: Pipeline times on DX12 under the default compiler
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          cargo run -p vxe-render --release --example pipeline_times
+          cargo run -p svet-render --release --example pipeline_times
           echo "target/debug/flythrough.exe: $(wc -c < target/debug/flythrough.exe) bytes"
           find target/debug/build -path '*mach-dxcompiler-rs-*' -name '*.lib' -exec wc -c {} + || true
       - name: Pipeline times on lavapipe
         if: runner.os == 'Linux'
-        run: cargo run -p vxe-render --release --example pipeline_times
+        run: cargo run -p svet-render --release --example pipeline_times
       # The fly-through's `wasm` feature (off in the workspace build) hosts its logic
       # component; its tests (`tests/component.rs`) need the feature and the built component.
       # Every other fly-through test ran in the workspace step, so only that binary runs here.
@@ -149,13 +149,13 @@ jobs:
       # covers both; the default set is still compiled by the gate step.
       - run: cargo clippy --workspace --all-targets --features flythrough/wasm -- -D warnings
       # The logic components build for wasm32-wasip2 only, which the workspace clippy does
-      # not check: every guest crate under crates/vxe-script-wasm/guests/, and the
+      # not check: every guest crate under crates/svet-script-wasm/guests/, and the
       # fly-through's logic as a component.
       - name: Clippy on the logic components
         shell: bash
         run: |
           packages=()
-          for manifest in crates/vxe-script-wasm/guests/*/Cargo.toml; do
+          for manifest in crates/svet-script-wasm/guests/*/Cargo.toml; do
             packages+=(-p "$(sed -n 's/^name *= *"\(.*\)"/\1/p' "$manifest" | head -n 1)")
           done
           cargo clippy "${packages[@]}" --target wasm32-wasip2 -- -D warnings

@@ -4,11 +4,11 @@
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use vxe_entity::{EntityId, EntitySet, Model, Pose};
+use svet_entity::{EntityId, EntitySet, Model, Pose};
 
 use crate::viewer::{Loaded, Play, Viewer, placed};
-use vxe_render::{MAX_ENTITIES, MAX_ENTITY_PARTS, ModelHandle};
-use vxe_world::MaterialTable;
+use svet_render::{MAX_ENTITIES, MAX_ENTITY_PARTS, ModelHandle};
+use svet_world::MaterialTable;
 
 use super::library::{Library, Source};
 use super::mover::{Mover, Stance};
@@ -119,14 +119,14 @@ pub struct Walkers {
     pub(crate) frame_stale: Vec<ModelHandle>,
     /// The frame's drawn parts, kept across frames ([`Walkers::refresh_displays`]): the first
     /// `shown` are this frame's, the rest storage kept for later frames.
-    displays: Vec<(EntityId, ModelHandle, vxe_render::DisplayPose)>,
+    displays: Vec<(EntityId, ModelHandle, svet_render::DisplayPose)>,
     shown: usize,
     /// The ghost's mark colour, the frame's first mark colour as the last
-    /// [`super::feed`] read it; `None` before, [`vxe_render::MARK_COLOURS`]' first.
+    /// [`super::feed`] read it; `None` before, [`svet_render::MARK_COLOURS`]' first.
     pub ghost_colour: Option<[f32; 3]>,
     /// The marks [`Walkers::refresh_displays`] last refreshed: the ghost's, when there is
     /// one, kept across frames.
-    marks: Vec<(EntityId, vxe_render::Mark)>,
+    marks: Vec<(EntityId, svet_render::Mark)>,
     /// A rig instance's two poses placed, reused instance to instance.
     rig_scratch: Option<(Pose, Pose)>,
 }
@@ -305,7 +305,7 @@ impl Walkers {
 
     /// Each rig's first build and its reload once a second (`now` in seconds;
     /// [`crate::viewer::Viewer::poll`]): on a new model every placed instance of that entry,
-    /// and of no other, takes it under its own id ([`vxe_entity::EntitySet::replace`]), its
+    /// and of no other, takes it under its own id ([`svet_entity::EntitySet::replace`]), its
     /// clip kept by name. The banner's words when anything was tried: `--model`'s as its
     /// viewer gives them, another entry's after its name.
     pub fn poll_viewer(&mut self, now: f64, table: &MaterialTable) -> Option<String> {
@@ -402,7 +402,7 @@ impl Walkers {
     /// Refreshes each listed entity's drawn parts ([`Walkers::displays`]): a built-in walker
     /// as the set poses it, a body between its mover's last two ticks at the tick's fraction
     /// ([`super::tick::Ticker::alpha`]), any other rig instance between its own clip's two
-    /// ticks around now ([`vxe_render::DisplayPose::between_into`]). The list and each entry's storage are kept
+    /// ticks around now ([`svet_render::DisplayPose::between_into`]). The list and each entry's storage are kept
     /// across frames, so built-in walkers allocate nothing per entity; a rig instance samples
     /// its own two poses.
     pub fn refresh_displays(&mut self) {
@@ -423,7 +423,7 @@ impl Walkers {
             };
             if n == self.displays.len() {
                 self.displays
-                    .push((p.id, handle, vxe_render::DisplayPose::default()));
+                    .push((p.id, handle, svet_render::DisplayPose::default()));
             }
             let slot = &mut self.displays[n];
             (slot.0, slot.1) = (p.id, handle);
@@ -453,7 +453,7 @@ impl Walkers {
         {
             if n == self.displays.len() {
                 self.displays
-                    .push((f.id, h, vxe_render::DisplayPose::default()));
+                    .push((f.id, h, svet_render::DisplayPose::default()));
             }
             let slot = &mut self.displays[n];
             (slot.0, slot.1) = (f.id, h);
@@ -461,12 +461,12 @@ impl Walkers {
         }
         self.shown = n;
         self.marks.clear();
-        let colour = self.ghost_colour.unwrap_or(vxe_render::MARK_COLOURS[0]);
+        let colour = self.ghost_colour.unwrap_or(svet_render::MARK_COLOURS[0]);
         let ghosts = self.preview.as_ref().map(|p| p.id);
         for id in ghosts.into_iter().chain(self.frame.as_ref().map(|f| f.id)) {
             self.marks.push((
                 id,
-                vxe_render::Mark {
+                svet_render::Mark {
                     colour,
                     outline: true,
                     tint: GHOST_TINT,
@@ -477,18 +477,18 @@ impl Walkers {
 
     /// The marks [`Walkers::refresh_displays`] last refreshed: the ghost's, outlined and
     /// tinted ([`GHOST_TINT`]) in the ghost colour, or none.
-    pub fn marks(&self) -> &[(EntityId, vxe_render::Mark)] {
+    pub fn marks(&self) -> &[(EntityId, svet_render::Mark)] {
         &self.marks
     }
 
     /// The drawn parts [`Walkers::refresh_displays`] last refreshed, in placement order.
-    pub fn displays(&self) -> &[(EntityId, ModelHandle, vxe_render::DisplayPose)] {
+    pub fn displays(&self) -> &[(EntityId, ModelHandle, svet_render::DisplayPose)] {
         &self.displays[..self.shown]
     }
 
     /// Each placed built-in walker's eye light, in placement order, while they are on: the
     /// frame takes those that fit the list's free slots.
-    pub fn eye_lights(&self) -> Vec<vxe_render::Light> {
+    pub fn eye_lights(&self) -> Vec<svet_render::Light> {
         if self.eye_lights_off {
             return Vec::new();
         }
@@ -499,9 +499,9 @@ impl Walkers {
                 let (model, pose) = self.set.get(p.id)?;
                 let at = pose.part_point(model, 1, EYE_LIGHT_AT)?;
                 let mut l =
-                    vxe_render::Light::point(at.0.map(|v| v as f32 / 256.0), EYE_LIGHT_INTENSITY);
+                    svet_render::Light::point(at.0.map(|v| v as f32 / 256.0), EYE_LIGHT_INTENSITY);
                 l.colour = EYE_LIGHT_COLOUR;
-                l.flags = vxe_render::Light::ON | vxe_render::Light::SHADOWS;
+                l.flags = svet_render::Light::ON | svet_render::Light::SHADOWS;
                 Some(l)
             })
             .collect()
@@ -736,7 +736,7 @@ mod tests {
     use super::super::sync_models;
     use super::super::walker::{WALK_RADIUS, WALK_SWING, model, pose, rows, with_walker};
     use super::*;
-    use vxe_entity::Q14_ONE;
+    use svet_entity::Q14_ONE;
 
     #[test]
     fn the_hud_row_and_the_banner_count_the_walkers() {
@@ -761,7 +761,7 @@ mod tests {
     #[test]
     fn write_allocates_nothing_after_warm_up() {
         use crate::test_support::counting;
-        use vxe_render::internals::{EntityInstances, VolumePool};
+        use svet_render::internals::{EntityInstances, VolumePool};
 
         let table = with_walker(&crate::cave_materials());
         let mut w = Walkers::default();
@@ -769,7 +769,7 @@ mod tests {
             let feet = [(i % 8) as f32 * 20.0, (i / 8) as f32 * 20.0, 2.0];
             assert!(w.place(&table, feet, [0.0, -9.0, 2.0]));
         }
-        let mut pool = VolumePool::new(vxe_render::DEFAULT_ENTITY_POOL_BYTES);
+        let mut pool = VolumePool::new(svet_render::DEFAULT_ENTITY_POOL_BYTES);
         assert_eq!(sync_models(&mut w, &mut pool, &table), None);
         w.toggle_walk();
         let mut inst = EntityInstances::new();
@@ -794,13 +794,13 @@ mod tests {
     /// (4156 B rounded up), and `pool 0/8192 KB` once the pool is cleared and read again.
     #[test]
     fn the_hud_row_shows_the_pool() {
-        use vxe_render::internals::VolumePool;
+        use svet_render::internals::VolumePool;
 
         let table = with_walker(&MaterialTable::new());
         let mut w = Walkers::default();
         assert!(w.place(&table, [0.0; 3], [0.0, -9.0, 0.0]));
         (w.drawn, w.parts, w.over) = (1, 4, 0);
-        let mut pool = VolumePool::new(vxe_render::DEFAULT_ENTITY_POOL_BYTES);
+        let mut pool = VolumePool::new(svet_render::DEFAULT_ENTITY_POOL_BYTES);
         assert_eq!(sync_models(&mut w, &mut pool, &table), None);
         assert_eq!(pool.used_bytes(), 4156);
         let row = |w: &Walkers| {
@@ -820,14 +820,14 @@ mod tests {
     fn the_banner_names_the_walkers_after_the_key() {
         let table = with_walker(&MaterialTable::new());
         let mut m = crate::hud::Modes::new(
-            vxe_render::Lighting::default(),
-            vxe_render::LightingResolution::Half,
+            svet_render::Lighting::default(),
+            svet_render::LightingResolution::Half,
             0.0,
         );
         let mut rows = String::new();
         m.write_rows(&mut rows);
         assert!(!rows.contains("entities"), "no walker, no row");
-        assert_eq!(crate::toggles::KEY_WALKER, vxe_app::KeyCode::Backquote);
+        assert_eq!(crate::toggles::KEY_WALKER, svet_app::KeyCode::Backquote);
         for x in [0.0, 9.0] {
             assert!(m.walkers.place(&table, [x, 0.0, 0.0], [0.0, -9.0, 0.0]));
         }
@@ -855,8 +855,8 @@ mod tests {
     fn the_walk_key_names_its_mode_and_walks_the_circle() {
         let table = with_walker(&MaterialTable::new());
         let mut m = crate::hud::Modes::new(
-            vxe_render::Lighting::default(),
-            vxe_render::LightingResolution::Half,
+            svet_render::Lighting::default(),
+            svet_render::LightingResolution::Half,
             0.0,
         );
         assert!(m.walkers.place(&table, [50.0, 40.0, 2.0], [50.0, 0.0, 8.0]));
@@ -998,8 +998,8 @@ mod tests {
     fn the_eye_light_key_names_its_mode() {
         let table = with_walker(&MaterialTable::new());
         let mut m = crate::hud::Modes::new(
-            vxe_render::Lighting::default(),
-            vxe_render::LightingResolution::Half,
+            svet_render::Lighting::default(),
+            svet_render::LightingResolution::Half,
             0.0,
         );
         // Facing -y: the eye at -y of the feet.
@@ -1011,7 +1011,10 @@ mod tests {
             (l.colour, l.intensity),
             (EYE_LIGHT_COLOUR, EYE_LIGHT_INTENSITY)
         );
-        assert_eq!(l.flags, vxe_render::Light::ON | vxe_render::Light::SHADOWS);
+        assert_eq!(
+            l.flags,
+            svet_render::Light::ON | svet_render::Light::SHADOWS
+        );
         // Legs 4, torso 6 and 1.75 up the head in world voxels over the feet; the face is 1.5
         // voxels in front of the feet's centre, the light half a voxel past it.
         assert_eq!(l.pos, [10.0, 18.0, 13.75]);
@@ -1034,7 +1037,7 @@ mod tests {
     #[test]
     fn refreshing_the_displays_allocates_nothing_per_entity() {
         use crate::test_support::counting;
-        use vxe_render::DisplayPose;
+        use svet_render::DisplayPose;
 
         let table = with_walker(&crate::cave_materials());
         let mut w = Walkers::default();
@@ -1042,7 +1045,7 @@ mod tests {
             assert!(w.place(&table, [i as f32 * 20.0, 0.0, 2.0], [0.0, -9.0, 2.0]));
         }
         // Two handles of a pool of the walker's model and one of the viewer's.
-        let mut pool = vxe_render::internals::VolumePool::new(1 << 20);
+        let mut pool = svet_render::internals::VolumePool::new(1 << 20);
         let (body, eye) = rows(&table).unwrap();
         let mut handle = || pool.upload(&model(body, eye), &table).unwrap().handle;
         let (h0, h1) = (handle(), handle());

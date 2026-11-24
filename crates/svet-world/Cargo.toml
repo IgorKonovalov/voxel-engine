@@ -1,0 +1,65 @@
+[package]
+name = "svet-world"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "placeholder; see docs/roadmap.md"
+
+[lints]
+workspace = true
+
+[features]
+# The edit bench's stage timer (`World::apply_staged`, `EditStages`): the only clock reads in
+# this crate. Off by default; `cargo bench -p svet-world --bench edits --features edit-stages`.
+edit-stages = []
+# The streamer's incremental-update oracle (`Streamer::set_incremental_oracle`,
+# `Streamer::oracle_checks`): every one-step queue shift and sweep recomputed the full way and
+# compared. For tests; this crate's own tests turn it on through the dev-dependency below.
+stream-oracle = []
+# The kernel bench's and the reference tests' internals: the row and planar reference writers
+# (`RowWriter`, `PlanarWriter`), `World::apply_capturing` and its `CapturedBrickEdit`,
+# `World::apply_counting_spans`, `RawBrick`, `Packed::reclass` and the collapse ops composed
+# over decoded voxels (`World::*_decoded`). Off by default; this crate's own tests and benches
+# turn it on through the dev-dependency below.
+bench-internals = []
+
+[dependencies]
+
+[dev-dependencies]
+criterion.workspace = true
+# This crate's tests and benches build it with its test features on.
+svet-world = { workspace = true, features = ["bench-internals", "stream-oracle"] }
+
+[[bench]]
+name = "edits"
+harness = false
+
+[[bench]]
+name = "coarse"
+harness = false
+
+[[bench]]
+name = "stamp"
+harness = false
+
+[[bench]]
+name = "collapse"
+harness = false
+
+[[bench]]
+name = "replay"
+harness = false
+
+[[bench]]
+name = "brick_kernel"
+harness = false
+
+[[bench]]
+name = "raycast"
+harness = false
+
+[[bench]]
+name = "gradient"
+harness = false

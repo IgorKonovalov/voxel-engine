@@ -10,11 +10,11 @@ mod support;
 
 use flythrough::hud::{CEILING_MS, HudStats, RING};
 use support::*;
-use vxe_render::{GpuWorld, HudBox, HudColour, HudOverlay, LightParams, wgpu};
+use svet_render::{GpuWorld, HudBox, HudColour, HudOverlay, LightParams, wgpu};
 
 /// Glyph cells are 8 pixels; the overlay is drawn at scale 1.
 const CELL: u32 = 8;
-/// The strip's height at scale 1 (`STRIP_PX` of `vxe-render`'s HUD).
+/// The strip's height at scale 1 (`STRIP_PX` of `svet-render`'s HUD).
 const STRIP: u32 = 64;
 
 /// `HudStats::fixed()` with the mode block the fly-through shows at its start: the five rows
@@ -23,8 +23,8 @@ const STRIP: u32 = 64;
 fn fixed_stats() -> HudStats {
     let mut stats = HudStats::fixed();
     flythrough::hud::Modes::new(
-        vxe_render::Lighting::default(),
-        vxe_render::LightingResolution::default(),
+        svet_render::Lighting::default(),
+        svet_render::LightingResolution::default(),
         0.0,
     )
     .write_rows(&mut stats.modes);
@@ -61,7 +61,7 @@ fn render(hud: bool) -> Option<Frame> {
 struct MenuText<'a> {
     text: &'a str,
     colours: &'a [HudColour],
-    paint: vxe_render::HudPaint<'a>,
+    paint: svet_render::HudPaint<'a>,
     tiles: &'a [(u32, Vec<u8>)],
 }
 
@@ -75,8 +75,8 @@ fn render_overlay(hud: bool, banner: Option<&str>, menu: Option<MenuText<'_>>) -
     let mut gpu = GpuWorld::new(&device, world.extent());
     gpu.sync_now(&world, &device, &queue)
         .expect("mirror fits the adapter");
-    let mut marcher = vxe_render::Frame::new(&device, WIDTH, HEIGHT);
-    marcher.set_resolution(&device, vxe_render::LightingResolution::Full);
+    let mut marcher = svet_render::Frame::new(&device, WIDTH, HEIGHT);
+    marcher.set_resolution(&device, svet_render::LightingResolution::Full);
     marcher.render(
         &device,
         &queue,
@@ -84,7 +84,7 @@ fn render_overlay(hud: bool, banner: Option<&str>, menu: Option<MenuText<'_>>) -
         &scene_camera(),
         &LightParams::at_eye(),
     );
-    let march = vxe_render::debug::read_rgba8(&device, &queue, marcher.target());
+    let march = svet_render::debug::read_rgba8(&device, &queue, marcher.target());
 
     let size = wgpu::Extent3d {
         width: WIDTH,
@@ -140,7 +140,7 @@ fn render_overlay(hud: bool, banner: Option<&str>, menu: Option<MenuText<'_>>) -
         overlay.encode(&mut encoder, &view, WIDTH, HEIGHT);
     }
     queue.submit([encoder.finish()]);
-    let composed = vxe_render::debug::read_rgba8(&device, &queue, &target);
+    let composed = svet_render::debug::read_rgba8(&device, &queue, &target);
     Some(Frame { march, composed })
 }
 
@@ -242,8 +242,8 @@ fn hud_off_is_the_primary_golden_byte_for_byte() {
 #[test]
 fn mode_banner_golden_shows_the_modes_with_the_hud_off() {
     let line = flythrough::hud::Modes::new(
-        vxe_render::Lighting::default(),
-        vxe_render::LightingResolution::default(),
+        svet_render::Lighting::default(),
+        svet_render::LightingResolution::default(),
         0.0,
     )
     .banner(0.0)
@@ -286,13 +286,13 @@ fn mode_banner_golden_shows_the_modes_with_the_hud_off() {
 fn menu_over_the_carved_view() {
     use flythrough::hud::menu::{Menu, Panel, RunView, place, step};
     let m = flythrough::hud::Modes::new(
-        vxe_render::Lighting::default(),
-        vxe_render::LightingResolution::default(),
+        svet_render::Lighting::default(),
+        svet_render::LightingResolution::default(),
         0.0,
     );
     let mut menu = Menu::default();
-    let mut input = vxe_app::Input::default();
-    input.key_down(vxe_app::KeyCode::Tab);
+    let mut input = svet_app::Input::default();
+    input.key_down(svet_app::KeyCode::Tab);
     step(&mut menu, &input, &m, &RunView::default());
     let (mut page, mut page_colours) = (String::new(), Vec::new());
     menu.write(&m, &RunView::default(), &mut page, &mut page_colours);
@@ -325,7 +325,7 @@ fn menu_over_the_carved_view() {
     let menu = MenuText {
         text: &text,
         colours: &colours,
-        paint: vxe_render::HudPaint {
+        paint: svet_render::HudPaint {
             backdrops: std::slice::from_ref(&backdrop),
             ..Default::default()
         },
@@ -352,7 +352,7 @@ fn menu_over_the_carved_view() {
             outside += 1;
         } else if pad.contains(&y) {
             for k in 0..3 {
-                let want = f32::from(q[k]) * (1.0 - vxe_render::BACKDROP_ALPHA);
+                let want = f32::from(q[k]) * (1.0 - svet_render::BACKDROP_ALPHA);
                 assert!(
                     (f32::from(p[k]) - want).abs() <= 1.0,
                     "row {y}: {p:?} over {q:?}"
@@ -384,8 +384,8 @@ fn the_belt_and_the_chooser_over_the_carved_view() {
     use flythrough::hud::menu::{Menu, PageId, Panel, RunView, place};
     let table = flythrough::walker::with_walker(&flythrough::showcase_materials());
     let mut m = flythrough::hud::Modes::new(
-        vxe_render::Lighting::default(),
-        vxe_render::LightingResolution::default(),
+        svet_render::Lighting::default(),
+        svet_render::LightingResolution::default(),
         0.0,
     );
     let lib = library::scan(std::path::Path::new(library::DEFAULT_DIR));
@@ -424,7 +424,7 @@ fn the_belt_and_the_chooser_over_the_carved_view() {
     let chooser = MenuText {
         text: &text,
         colours: &colours,
-        paint: vxe_render::HudPaint {
+        paint: svet_render::HudPaint {
             backdrops: std::slice::from_ref(&backdrop),
             tiles: &page_paint.tiles,
             ..Default::default()
@@ -486,8 +486,8 @@ fn the_structures_chooser() {
     let dir = std::path::Path::new(st::LIBRARY);
     st::add_library_rows(dir, None, &mut table);
     let mut m = flythrough::hud::Modes::new(
-        vxe_render::Lighting::default(),
-        vxe_render::LightingResolution::default(),
+        svet_render::Lighting::default(),
+        svet_render::LightingResolution::default(),
         0.0,
     );
     let lib = library::scan(std::path::Path::new(library::DEFAULT_DIR));
@@ -539,7 +539,7 @@ fn the_structures_chooser() {
     let chooser = MenuText {
         text: &text,
         colours: &colours,
-        paint: vxe_render::HudPaint {
+        paint: svet_render::HudPaint {
             backdrops: std::slice::from_ref(&backdrop),
             tiles: &page_paint.tiles,
             ..Default::default()
@@ -581,8 +581,8 @@ mod reading {
         };
         let mut overlay = HudOverlay::new(&device, wgpu::TextureFormat::Rgba8Unorm, 2);
         let m = flythrough::hud::Modes::new(
-            vxe_render::Lighting::default(),
-            vxe_render::LightingResolution::Half,
+            svet_render::Lighting::default(),
+            svet_render::LightingResolution::Half,
             0.0,
         );
         let v = RunView::default();

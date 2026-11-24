@@ -9,15 +9,15 @@
 mod support;
 
 use flythrough::cave::ROCK;
-use vxe_world::{ChunkCoord, Mode};
+use svet_world::{ChunkCoord, Mode};
 
 /// A sky over the buried rig whose sun is at elevation `el` degrees (the moon under the
 /// horizon).
-fn sun_sky(el: f32) -> vxe_render::sky::Sky {
+fn sun_sky(el: f32) -> svet_render::sky::Sky {
     let e = el.to_radians();
-    vxe_render::sky::Sky::new(
-        vxe_render::sky::Body::sun([0.3 * e.cos(), -(0.91f32).sqrt() * e.cos(), e.sin()]),
-        vxe_render::sky::Body::moon([0.0, 0.0, -1.0]),
+    svet_render::sky::Sky::new(
+        svet_render::sky::Body::sun([0.3 * e.cos(), -(0.91f32).sqrt() * e.cos(), e.sin()]),
+        svet_render::sky::Body::moon([0.0, 0.0, -1.0]),
     )
 }
 
@@ -94,7 +94,7 @@ fn a_chunk_with_no_exposed_face_holds_no_record() {
 }
 
 /// Plan 0096 Phase 2 as amended: the stream workers' no-face verdict. Every chunk of the buried
-/// rig's world goes through the workers' hook ([`vxe_render::internals::FacePrep`]) before the
+/// rig's world goes through the workers' hook ([`svet_render::internals::FacePrep`]) before the
 /// queue's first step, in slot order, so a chunk's neighbours arrive before and after it. The
 /// rock chunk (5, 5, 2), all six neighbours rock, is sealed by the verdicts and never listed
 /// (no `faceless` mark, no record); the corner chunk (0, 0, 0), whose three outer neighbours
@@ -103,12 +103,12 @@ fn a_chunk_with_no_exposed_face_holds_no_record() {
 /// record.
 #[test]
 fn the_workers_seal_a_chunk_with_no_face_and_an_edit_opens_it() {
-    use vxe_world::ChunkPrep;
+    use svet_world::ChunkPrep;
     let Some(mut q) = buried_rig(true) else {
         return;
     };
-    let prep = vxe_render::internals::FacePrep::new(std::sync::Arc::new(
-        vxe_render::internals::face_classes(q.world.materials()),
+    let prep = svet_render::internals::FacePrep::new(std::sync::Arc::new(
+        svet_render::internals::face_classes(q.world.materials()),
     ));
     let mut results = Vec::new();
     for z in 0..7 {
@@ -214,7 +214,7 @@ mod reading {
     /// [`FLOOR`]'s `+z` faces in `block`: their count, and how many read each key visibility
     /// (`None` where the record holds no key words), with the records' raw key and sky words.
     fn floor_key_words(block: &[u32]) -> (usize, BTreeMap<Option<u8>, usize>, Vec<[u32; 4]>) {
-        use vxe_render::internals::{BRICK_WORDS, record_key_visibility};
+        use svet_render::internals::{BRICK_WORDS, record_key_visibility};
         let mut faces = 0;
         let mut by_key = BTreeMap::new();
         let mut raw = Vec::new();

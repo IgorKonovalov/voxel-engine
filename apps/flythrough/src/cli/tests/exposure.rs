@@ -3,7 +3,7 @@
 use crate::cli::parse_args_from;
 use crate::hud;
 use crate::test_support::argv;
-use vxe_render::Exposure;
+use svet_render::Exposure;
 
 /// `--exposure-comp`: every source's auto exposure starts at 0 EV; the flag sets it on any
 /// source, refusing values past 4 EV; the banner names a compensation that is not 0

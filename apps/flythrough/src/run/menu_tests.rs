@@ -8,8 +8,8 @@ use crate::path::{TesterInput, tester_action};
 use crate::run::hud_feed::Overlay;
 use crate::test_support::{bare_run, carved_rock};
 use crate::toggles::Act;
-use vxe_app::{Flow, Input, KeyCode, MouseButton};
-use vxe_world::OpResult;
+use svet_app::{Flow, Input, KeyCode, MouseButton};
+use svet_world::OpResult;
 
 /// The ops one server tick of `run` applied.
 fn tick_ops(run: &mut Run) -> usize {
@@ -153,9 +153,9 @@ fn a_click_cancels_the_quit_question() {
     let words = "Esc again to quit";
     let asks = |run: &Run| run.banner().is_some_and(|b| b.lines().any(|l| l == words));
     let mut click = Input::default();
-    click.button_down(vxe_app::MouseButton::Left);
+    click.button_down(svet_app::MouseButton::Left);
     let mut south = Input::default();
-    south.pad_down(vxe_app::PadButton::South);
+    south.pad_down(svet_app::PadButton::South);
     for cancel in [click, south] {
         let mut run = bare_run(carved_rock());
         assert_eq!(frame_keys(&mut run, &pressed(KeyCode::Escape)), None);
@@ -477,7 +477,7 @@ fn a_shortcut_still_acts_and_shows() {
 #[test]
 fn the_pad_walks_the_menu() {
     use crate::hud::menu::Group;
-    use vxe_app::PadButton;
+    use svet_app::PadButton;
     let pad = |b: PadButton| {
         let mut i = Input::default();
         i.pad_down(b);
@@ -506,7 +506,7 @@ fn the_pad_walks_the_menu() {
 /// `moving` with no key.
 #[test]
 fn the_dig_radius_is_menu_only() {
-    use vxe_app::PadButton;
+    use svet_app::PadButton;
     let mut run = bare_run(carved_rock());
     let radius = run.modes.dig_radius;
     let mut wheel = Input::default();
@@ -601,7 +601,7 @@ fn the_readout_shows_with_the_menu_open() {
         assert!(row0.ends_with(READOUT), "{row0:?}");
         assert_eq!(row0.len(), 105, "ends at the last whole column: {row0:?}");
         assert_eq!(row0.trim_start(), READOUT);
-        assert_eq!(run.hud.overlay_colours[0], vxe_render::HudColour::White);
+        assert_eq!(run.hud.overlay_colours[0], svet_render::HudColour::White);
         assert_eq!(
             run.hud.overlay.lines().nth(6).map(str::trim_start),
             Some("menu")
@@ -624,7 +624,7 @@ fn the_readout_shows_with_the_menu_open() {
 // keys:typed-begin
 
 /// One frame with the pad button `b` pressed.
-fn pad(b: vxe_app::PadButton) -> Input {
+fn pad(b: svet_app::PadButton) -> Input {
     let mut i = Input::default();
     i.pad_down(b);
     i
@@ -667,14 +667,14 @@ fn select(run: &mut Run, e: &crate::hud::menu::Entry) {
 }
 
 /// The open menu's text: its rows and their colours.
-fn menu_text(run: &mut Run) -> (Vec<String>, Vec<vxe_render::HudColour>) {
+fn menu_text(run: &mut Run) -> (Vec<String>, Vec<svet_render::HudColour>) {
     run.write_menu();
     let rows = run.hud.text.lines().map(str::to_owned).collect();
     (rows, run.hud.colours.clone())
 }
 
 /// The selected row's text and colour.
-fn selected_row(run: &mut Run) -> (String, vxe_render::HudColour) {
+fn selected_row(run: &mut Run) -> (String, svet_render::HudColour) {
     let (rows, colours) = menu_text(run);
     let i = rows
         .iter()
@@ -690,7 +690,7 @@ fn footer_row(run: &mut Run) -> String {
 
 /// `dig radius` in metres as its row shows it.
 fn dig_m(run: &Run) -> i64 {
-    run.modes.dig_radius / vxe_world::FIXED_ONE
+    run.modes.dig_radius / svet_world::FIXED_ONE
 }
 
 /// `Tab`, `dig`, `Enter` edits the dig radius: its row reads `< 0.5 m >` and its range, the
@@ -706,7 +706,7 @@ fn enter_edits_a_number_and_the_arrows_step_it() {
     assert!(run.menu.editing());
     let (row, colour) = selected_row(&mut run);
     assert_eq!(row, "> dig radius  < 0.5 m >  0.1..3.0 m");
-    assert_eq!(colour, vxe_render::HudColour::Yellow);
+    assert_eq!(colour, svet_render::HudColour::Yellow);
     assert_eq!(footer_row(&mut run), "Up Down change  Enter Esc done");
     frame_keys(&mut run, &pressed(KeyCode::ArrowUp));
     frame_keys(&mut run, &pressed(KeyCode::ArrowUp));
@@ -836,14 +836,14 @@ fn an_unavailable_entry_says_why() {
             .unwrap_or_else(|| panic!("{label} on its page: {rows:?}"));
         assert_eq!(
             colours[i],
-            vxe_render::HudColour::Grey,
+            svet_render::HudColour::Grey,
             "{label}: {}",
             rows[i]
         );
         run.menu.close();
         select(&mut run, &e);
         let (row, colour) = selected_row(&mut run);
-        assert_eq!(colour, vxe_render::HudColour::Grey, "{label}: {row}");
+        assert_eq!(colour, svet_render::HudColour::Grey, "{label}: {row}");
         assert!(
             row.starts_with(&format!("> {}  ", e.group.name()))
                 && row.contains(&format!("  {why}")),
@@ -859,7 +859,7 @@ fn an_unavailable_entry_says_why() {
         let n = rows.len();
         assert_eq!(
             (rows[n - 2].as_str(), colours[n - 2]),
-            (why, vxe_render::HudColour::Yellow),
+            (why, svet_render::HudColour::Yellow),
             "{label}: the notice row"
         );
     }
@@ -872,7 +872,7 @@ fn an_unavailable_entry_says_why() {
         .position(|r| r.trim_start().starts_with("audio"))
         .unwrap();
     assert!(rows[i].ends_with("needs --audio"), "{}", rows[i]);
-    assert_eq!(colours[i], vxe_render::HudColour::Grey);
+    assert_eq!(colours[i], svet_render::HudColour::Grey);
     let tree = crate::hud::menu::keys_text(
         &crate::cli::parse_args_from(vec!["--keys".to_owned()]).unwrap(),
     );
@@ -976,7 +976,7 @@ fn an_action_answers_in_the_window() {
     );
     assert!(run.samples.is_none());
 
-    run.fly.camera.position = vxe_render::glam::Vec3::new(5000.0, 5000.0, 5000.0);
+    run.fly.camera.position = svet_render::glam::Vec3::new(5000.0, 5000.0, 5000.0);
     run.menu_act(Activated::Action(Act::Stamp));
     assert_eq!(notice(&run).as_deref(), Some("stamp: sent to the logic"));
     run.tick_server();
@@ -994,7 +994,7 @@ fn an_action_answers_in_the_window() {
 /// to 0.6 m; `East` leaves the mode; `DpadRight` on the row outside it changes nothing.
 #[test]
 fn the_pad_edits_a_number() {
-    use vxe_app::PadButton;
+    use svet_app::PadButton;
     let mut run = bare_run(carved_rock());
     frame_keys(&mut run, &pad(PadButton::Start));
     frame_keys(&mut run, &pad(PadButton::South));
@@ -1051,13 +1051,13 @@ fn queue_tiers(args: &crate::cli::Args) -> String {
 /// The `light:` row names the live queue's own tiers (Plan 0098 Phase 12): `--bake-tiers
 /// 2048,256,64` puts 2048, 256 and 64 in the row and no 4096 anywhere in it; `--profile
 /// portable` with no tier flag puts that profile's tiers; no flag puts
-/// `vxe_render::DEFAULT_TIERS`; after the menu's `profile` entry switches the profile, the next
+/// `svet_render::DEFAULT_TIERS`; after the menu's `profile` entry switches the profile, the next
 /// row holds the new profile's tiers.
 #[test]
 fn the_light_row_names_the_queues_own_tiers() {
     use crate::test_support::argv;
-    use vxe_render::{Profile, RenderSettings};
-    let cell = vxe_render::internals::BRICK_CELL;
+    use svet_render::{Profile, RenderSettings};
+    let cell = svet_render::internals::BRICK_CELL;
     let words = |t: [u32; 3]| format!("{cell}/{},{},{}", t[0], t[1], t[2]);
     let parse = |a: &[&str]| crate::cli::parse_args_from(argv(a)).expect("the flags parse");
 
@@ -1075,11 +1075,11 @@ fn the_light_row_names_the_queues_own_tiers() {
 
     let args = parse(&["--level", "--profile", "portable"]);
     let portable = RenderSettings::profile(Profile::Portable).bake.tiers;
-    assert_ne!(portable, vxe_render::DEFAULT_TIERS);
+    assert_ne!(portable, svet_render::DEFAULT_TIERS);
     assert_eq!(queue_tiers(&args), words(portable));
 
     let args = parse(&["--level"]);
-    assert_eq!(queue_tiers(&args), words(vxe_render::DEFAULT_TIERS));
+    assert_eq!(queue_tiers(&args), words(svet_render::DEFAULT_TIERS));
 
     let mut run = bare_run(carved_rock());
     let from = run.args.profile;

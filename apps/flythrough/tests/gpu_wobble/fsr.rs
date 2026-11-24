@@ -2,12 +2,12 @@
 //! arm on the wobble rig's forest: the settle, eight still frames whose render-size hits are
 //! compared phase to phase, a 60-degree turn over 40 frames whose last 10 have their motion
 //! vectors checked against the hits' exact reprojection, then a hold of 120 frames whose first
-//! 31 read the accumulate pass's stage code (`vxe_render::Fsr2Stage`) per display pixel. The
+//! 31 read the accumulate pass's stage code (`svet_render::Fsr2Stage`) per display pixel. The
 //! still's changed far hits are split by distance band and by leaf or other material. Each row
 //! is printed; nothing is asserted.
 
 use super::*;
-use vxe_render::{Fsr2Stage, View, wgpu};
+use svet_render::{Fsr2Stage, View, wgpu};
 
 /// The hold's frames whose stage code is read (+0 to +30).
 const STAGED: usize = 31;
@@ -272,8 +272,8 @@ pub(super) fn fsr_split(rig: &mut Rig, cam0: Camera, arm: &Arm) {
         queue_step(rig, &mut s.frame, &cam0);
         s.run(rig, &cam0);
         let hits =
-            vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, s.frame.hit_positions());
-        let recs = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, s.frame.hit_records());
+            svet_render::debug::read_rgba32f(&rig.device, &rig.queue, s.frame.hit_positions());
+        let recs = svet_render::debug::read_rgba16u(&rig.device, &rig.queue, s.frame.hit_records());
         if let Some((a, ra)) = &last {
             changes.push(hit_change(a, &hits, eye0));
             let f = flip_split((a, ra), (&hits, &recs), eye0);
@@ -306,11 +306,11 @@ pub(super) fn fsr_split(rig: &mut Rig, cam0: Camera, arm: &Arm) {
         if fsr && k > MOTION_FROM {
             let x = s.frame.fsr2().unwrap();
             let hits =
-                vxe_render::debug::read_rgba32f(&rig.device, &rig.queue, s.frame.hit_positions());
+                svet_render::debug::read_rgba32f(&rig.device, &rig.queue, s.frame.hit_positions());
             let mv = read_rg32f(rig, x.motion());
             let jitter = s
                 .frame
-                .params(&rig.gpu, &c, &vxe_render::LightParams::headlamp())
+                .params(&rig.gpu, &c, &svet_render::LightParams::headlamp())
                 .views[0]
                 .jitter;
             let rect = [0, 0, size[0], size[1]];
@@ -406,8 +406,8 @@ fn term_sums(rig: &mut Rig, cam0: Camera, arm: &Arm, exposure: Option<f32>) -> (
         .exposure_readout(&rig.device)
         .map(|r| r.exposure)
         .expect("a read-back");
-    s.frame.set_lighting(vxe_render::Lighting {
-        exposure: vxe_render::Exposure::Manual(exposure.unwrap_or(e)),
+    s.frame.set_lighting(svet_render::Lighting {
+        exposure: svet_render::Exposure::Manual(exposure.unwrap_or(e)),
         ..s.frame.lighting()
     });
     QUEUE_ON.with(|q| q.set(false));

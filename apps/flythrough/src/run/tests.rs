@@ -15,10 +15,10 @@ use crate::run::hud_lines::look_line;
 use crate::setup::{GfxSample, castle_camera, start_camera};
 use crate::test_support::{applied, argv, bare_run, carved_rock, counting};
 use crate::toggles::TOGGLES;
-use vxe_app::{Axis, Flow, Input, KeyCode, MouseButton, PadButton};
-use vxe_render::glam::Vec3;
-use vxe_render::{FRAME_PASSES, LightingResolution, ViewMode};
-use vxe_world::{ChunkCoord, EditOp, EditResult, FIXED_ONE, Fixed3, Mode, OpResult, VoxelCoord};
+use svet_app::{Axis, Flow, Input, KeyCode, MouseButton, PadButton};
+use svet_render::glam::Vec3;
+use svet_render::{FRAME_PASSES, LightingResolution, ViewMode};
+use svet_world::{ChunkCoord, EditOp, EditResult, FIXED_ONE, Fixed3, Mode, OpResult, VoxelCoord};
 
 /// A plain start's banner names the pacing, `pace free`, until the banner's time is up;
 /// `--pace compositor` names its word.
@@ -54,8 +54,8 @@ fn a_shown_hud_s_refresh_and_banner_allocate_nothing_after_the_first_frame() {
     let mut run = bare_run(carved_rock());
     run.hud = Hud::new(true);
     run.hud.pass_ms = Some((0..FRAME_PASSES.len()).map(|i| 0.1 * i as f64).collect());
-    run.hud.store = Some(vxe_render::StoreStats::default());
-    run.queue.stats = Some(vxe_render::QueueStats::default());
+    run.hud.store = Some(svet_render::StoreStats::default());
+    run.queue.stats = Some(svet_render::QueueStats::default());
     run.modes.pan = Some(hud::Pan::new(1.5, 0.0));
     run.modes.upscaler = hud::UpscalerBanner::shown_from(hud::UpscalerMode::Fsr2, "1.5", 0.0);
     let g = GfxSample {
@@ -100,7 +100,7 @@ fn a_failed_mirror_sync_ends_the_session_as_a_failure() {
     let mut run = bare_run(carved_rock());
     assert!(!run.failure.is_some());
     assert_eq!(session_outcome(&run.failure), Ok(()));
-    let e = vxe_render::MirrorError::PoolTooLarge {
+    let e = svet_render::MirrorError::PoolTooLarge {
         needed: 2 << 20,
         limit: 1 << 20,
     };
@@ -329,7 +329,7 @@ fn the_aliasing_toggles_show_in_the_banner() {
 /// half resolution; the start banner's mode rows and the aliasing row name all four.
 #[test]
 fn the_default_look_is_the_windows_pick() {
-    use vxe_render::{LightWeights, StoreRead};
+    use svet_render::{LightWeights, StoreRead};
     assert_eq!(LookPreset::DEFAULT.far_normal, [4.0, 8.0]);
     let d = parse_args_from(argv(&[])).expect("parses");
     let l = d.start_lighting();
@@ -372,7 +372,7 @@ fn the_default_look_is_the_windows_pick() {
 /// the row names the light's resolution, which `F6` changes.
 #[test]
 fn the_store_read_toggle_shows_in_the_banner() {
-    use vxe_render::{LightWeights, StoreRead};
+    use svet_render::{LightWeights, StoreRead};
     for (flag, modes) in [
         ("--store-read", ["face", "normal"]),
         ("--light-weights", ["normal", "face"]),
@@ -463,7 +463,7 @@ fn the_store_read_toggle_shows_in_the_banner() {
 /// banner and the HUD's queue row in the same frame.
 #[test]
 fn the_banner_names_the_queue_order_and_its_weights() {
-    use vxe_render::{QUEUE_ANGLE_WEIGHT as A, QUEUE_REFINE_WEIGHT as R};
+    use svet_render::{QUEUE_ANGLE_WEIGHT as A, QUEUE_REFINE_WEIGHT as R};
     let mut run = bare_run(carved_rock());
     let shown = |run: &mut Run, label: Option<&str>| {
         if let Some(label) = label {
@@ -518,7 +518,7 @@ fn the_banner_names_the_queue_order_and_its_weights() {
             format!("order score, angle {a}, refine {R}"),
         );
     }
-    use vxe_render::{QueueOrder, Refine};
+    use svet_render::{QueueOrder, Refine};
     let order = |args: &[&str]| parse_args_from(argv(args)).map(|a| a.queue_order());
     assert_eq!(
         order(&["--queue-order", "distance"]),
@@ -580,7 +580,7 @@ fn the_banner_names_the_withdrawal() {
             "{want}: {row}"
         );
     }
-    run.queue.stats = Some(vxe_render::QueueStats {
+    run.queue.stats = Some(svet_render::QueueStats {
         withdrawn: 7,
         ..Default::default()
     });
@@ -644,7 +644,7 @@ fn the_banner_names_the_full_first_radius() {
 /// the banner's queue row in the same frame.
 #[test]
 fn the_banner_names_the_missing_light() {
-    use vxe_render::MissingLight;
+    use svet_render::MissingLight;
     let mut run = bare_run(carved_rock());
     let banner = run.banner().expect("the queue's row is on the banner");
     assert!(
@@ -675,7 +675,7 @@ fn the_banner_names_the_missing_light() {
 /// in the same frame, the row adding the partial blocks under `partial`.
 #[test]
 fn the_banner_names_the_reach() {
-    use vxe_render::ReachMode;
+    use svet_render::ReachMode;
     let mut run = bare_run(carved_rock());
     run.refresh_hud_stats(None);
     let banner = run.banner().expect("the queue's row is on the banner");
@@ -714,7 +714,7 @@ fn the_banner_names_the_reach() {
 /// budget.
 #[test]
 fn the_banner_names_the_budget() {
-    use vxe_render::Budget;
+    use svet_render::Budget;
     let mut run = bare_run(carved_rock());
     run.refresh_hud_stats(None);
     let banner = run.banner().expect("the queue's row is on the banner");
@@ -724,7 +724,7 @@ fn the_banner_names_the_budget() {
     );
     let row = run.hud.stats.queue.clone().expect("the HUD's queue row");
     assert!(row.ends_with("; budget frame:1.5"), "{row}");
-    run.queue.stats = Some(vxe_render::QueueStats {
+    run.queue.stats = Some(svet_render::QueueStats {
         slice_ms: 2.3125,
         ..Default::default()
     });
@@ -1055,7 +1055,7 @@ fn a_benchmark_path_runs_with_the_lamp_off_and_its_report_says_so() {
     let lit = parse_args_from(argv(&["--path", "cave", "--lamp", "on"])).expect("parses");
     assert!(lit.light.lamp());
 
-    let dir = std::env::temp_dir().join(format!("vxe-bench-lamp-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("svet-bench-lamp-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let report = dir.display().to_string();
     let args = path_args(
@@ -1120,11 +1120,11 @@ fn the_clip_keys_name_the_clip_and_the_pause() {
         item: crate::entities::belt::Item::Entity(0),
     });
     let mut click = Input::default();
-    click.button_down(vxe_app::MouseButton::Left);
+    click.button_down(svet_app::MouseButton::Left);
     run.handle_input(&click);
     assert!(run.banner().unwrap().contains("placed walker #1 (idle)"));
     let mut click = Input::default();
-    click.button_down(vxe_app::MouseButton::Right);
+    click.button_down(svet_app::MouseButton::Right);
     run.handle_input(&click);
     assert!(!run.modes.walkers.belt.on);
     assert!(press(&mut run, KeyCode::ArrowRight).contains("walker #1 clip walk"));

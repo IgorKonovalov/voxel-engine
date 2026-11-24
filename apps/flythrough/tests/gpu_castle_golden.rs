@@ -4,12 +4,12 @@
 mod support;
 
 use flythrough::castle;
-use vxe_world::VoxelCoord;
+use svet_world::VoxelCoord;
 
 /// The gate golden's world: chunks x -1..4, y -4..5, z -1..4 around the spawn's view, built
 /// from only the castle tiles that meet them.
-fn gate_world() -> (vxe_world::World, usize) {
-    let extent = vxe_world::ChunkExtent::new([-1, -4, -1], [4, 5, 4]);
+fn gate_world() -> (svet_world::World, usize) {
+    let extent = svet_world::ChunkExtent::new([-1, -4, -1], [4, 5, 4]);
     let (lo, hi) = (extent.min.0.map(|c| c * 64), extent.max.0.map(|c| c * 64));
     let file = castle::castle_vox_where(4, castle::tiles_meeting(lo, hi));
     let tiles = castle::tiles()
@@ -23,7 +23,7 @@ fn gate_world() -> (vxe_world::World, usize) {
     drop(file);
     let table =
         flythrough::castle_materials(&flythrough::with_emissive_ore(&flythrough::cave_materials()));
-    (vxe_world::World::generate(extent, &src, &table), tiles)
+    (svet_world::World::generate(extent, &src, &table), tiles)
 }
 
 /// The process's peak resident set in bytes from `/proc/self/status`, where there is one.
@@ -67,25 +67,25 @@ fn castle_gate_golden() {
 /// as RGBA8; `None` without a software adapter. With `profile`, the frame renders at its
 /// internal scale through FSR 2 and applies its `Live` and `Settle` fields, the exposure kept
 /// at the golden's; its `Rebuild` fields do not reach the fixed mirror.
-fn gate_image(world: &vxe_world::World, profile: Option<vxe_render::Profile>) -> Option<Vec<u8>> {
+fn gate_image(world: &svet_world::World, profile: Option<svet_render::Profile>) -> Option<Vec<u8>> {
     use support::*;
     let mut rig = LookRig::new(world, None)?;
     if let Some(p) = profile {
-        let mut s = vxe_render::RenderSettings::profile(p);
-        s.lighting.exposure = vxe_render::Lighting::default().exposure;
+        let mut s = svet_render::RenderSettings::profile(p);
+        s.lighting.exposure = svet_render::Lighting::default().exposure;
         let output = [WIDTH, HEIGHT];
-        rig.frame = vxe_render::Frame::with_sizes(&rig.device, s.scale.internal(output), output);
+        rig.frame = svet_render::Frame::with_sizes(&rig.device, s.scale.internal(output), output);
         rig.frame.set_upscaler_kind(
             &rig.device,
-            vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+            svet_render::UpscalerKind::Fsr2(svet_render::Fsr2Settings {
                 sharpness: s.fsr2.sharpness,
-                ..vxe_render::Fsr2Settings::default()
+                ..svet_render::Fsr2Settings::default()
             }),
         );
         rig.frame.apply_settings(&rig.device, &rig.queue, &s);
     }
     let (eye, yaw, pitch) = castle::CastleShot::Gate.pose();
-    let camera = vxe_render::Camera {
+    let camera = svet_render::Camera {
         position: eye.map(|v| v as f32 + 0.5).into(),
         yaw: (yaw as f32).to_radians(),
         pitch: (pitch as f32).to_radians(),
@@ -105,10 +105,10 @@ fn gate_image(world: &vxe_world::World, profile: Option<vxe_render::Profile>) ->
             &rig.queue,
             &rig.gpu,
             &camera,
-            &vxe_render::LightParams::headlamp(),
+            &svet_render::LightParams::headlamp(),
         );
     }
-    let img = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+    let img = svet_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
     println!(
         "gate ({profile:?}): {} light samples, bins covering 1 %: {}",
         rig.gpu.light_samples(),
@@ -125,7 +125,7 @@ fn gate_image(world: &vxe_world::World, profile: Option<vxe_render::Profile>) ->
 #[ignore = "soak"]
 fn portable_profile_golden() {
     use support::*;
-    use vxe_render::Profile;
+    use svet_render::Profile;
     let (world, _) = gate_world();
     let Some(img) = gate_image(&world, Some(Profile::Portable)) else {
         return;

@@ -12,8 +12,8 @@ mod support;
 use support::settle::*;
 use support::stillness;
 use support::stillness::{VEIN_POSE, vein_level};
-use vxe_render::glam::Vec3;
-use vxe_render::{Camera, Exposure, Frame, LightParams, Lighting, RenderScale};
+use svet_render::glam::Vec3;
+use svet_render::{Camera, Exposure, Frame, LightParams, Lighting, RenderScale};
 
 /// Frames the window tests settle before their change.
 const WINDOW_SETTLE: usize = 64;
@@ -67,7 +67,7 @@ fn the_lamp_toggle_opens_the_light_window() {
         }
         println!("lamp {from} -> {}: window per frame {open:?}", !from);
         let want: Vec<bool> = (0..32)
-            .map(|i| !from && i < vxe_render::internals::WINDOW_FRAMES as usize)
+            .map(|i| !from && i < svet_render::internals::WINDOW_FRAMES as usize)
             .collect();
         assert_eq!(open, want, "lamp {from} -> {}", !from);
     }
@@ -126,12 +126,12 @@ fn the_rig_reads_the_default_look() {
     assert_eq!(look.normal_mode, want.normal_mode);
     assert_eq!(look.tuning.face_mix, want.tuning.face_mix);
     assert_eq!(look.far_normal, want.far_normal);
-    assert_eq!(look.view, vxe_render::ViewMode::Shaded);
+    assert_eq!(look.view, svet_render::ViewMode::Shaded);
     assert_eq!(
         frame.upscaler_kind(),
-        vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+        svet_render::UpscalerKind::Fsr2(svet_render::Fsr2Settings {
             sharpness: 0.5,
-            ..vxe_render::Fsr2Settings::default()
+            ..svet_render::Fsr2Settings::default()
         })
     );
     assert_eq!(frame.output_size(), OUTPUT);
@@ -231,7 +231,7 @@ fn steady_frame(level: &stillness::VeinLevel, lighting: Lighting) -> Frame {
 
 fn probe_words(level: &stillness::VeinLevel, frame: &Frame) -> Vec<u8> {
     let data = frame.probes().data();
-    vxe_render::debug::read_buffer(&level.device, &level.queue, data, 0, data.size())
+    svet_render::debug::read_buffer(&level.device, &level.queue, data, 0, data.size())
 }
 
 /// The slot of a traced probe outside rock, with light in it if `lit`, nearest the eye, of the
@@ -367,7 +367,7 @@ fn a_lamp_step_moves_the_probes_in_reach_only() {
     // Every probe, not one: each live probe well inside the reach of the lamp (before and
     // after the turn) restarted its age at 1, and each probe well beyond it kept every word.
     let all1 = support::lights::probe_words(&level.device, &level.queue, &frame);
-    let lamp = |c: &Camera| Vec3::from(vxe_render::Light::headlamp(c, &light).pos);
+    let lamp = |c: &Camera| Vec3::from(svet_render::Light::headlamp(c, &light).pos);
     let last = Camera {
         yaw: camera.yaw + 0.016,
         ..camera

@@ -12,9 +12,9 @@ mod support;
 use support::queue::*;
 
 use flythrough::cave::{ORE, ROCK};
-use vxe_render::LookParams;
-use vxe_render::internals::FADE;
-use vxe_world::{AIR, ChunkCoord, World};
+use svet_render::LookParams;
+use svet_render::internals::FADE;
+use svet_world::{AIR, ChunkCoord, World};
 
 /// The test tiers a brick direction: near, mid, far.
 const TIERS: [u32; 3] = [64, 32, 16];
@@ -38,13 +38,13 @@ fn tiered(world: World, setup: &Setup) -> Option<Q> {
 
 /// The tier bits of every brick record of `block` (`record_tier`), each once.
 fn tiers_of(block: &[u32]) -> Vec<u8> {
-    let w = vxe_render::internals::BRICK_WORDS;
+    let w = svet_render::internals::BRICK_WORDS;
     let mut t: Vec<u8> = block[..512]
         .iter()
         .filter(|&&d| d != 0)
         .map(|&d| {
             let end = (d >> 11) as usize;
-            vxe_render::internals::record_tier(&block[end - w..end])
+            svet_render::internals::record_tier(&block[end - w..end])
         })
         .collect();
     t.sort_unstable();
@@ -54,7 +54,7 @@ fn tiers_of(block: &[u32]) -> Vec<u8> {
 
 /// The sum of the luminance of `block`'s direction values (each surface brick's six words).
 fn light_of(block: &[u32]) -> f64 {
-    let w = vxe_render::internals::BRICK_WORDS;
+    let w = svet_render::internals::BRICK_WORDS;
     block[..512]
         .iter()
         .filter(|&&d| d != 0)
@@ -63,7 +63,7 @@ fn light_of(block: &[u32]) -> f64 {
             end - w..end - w + 6
         })
         .map(|i| {
-            let [r, g, b] = vxe_render::internals::rgb9e5_unpack(block[i]);
+            let [r, g, b] = svet_render::internals::rgb9e5_unpack(block[i]);
             f64::from(0.2126 * r + 0.7152 * g + 0.0722 * b)
         })
         .sum()
@@ -159,7 +159,7 @@ fn partial_rig(wall: bool, lod_wall: bool) -> Option<Q> {
     )?;
     q.resident = Some(if lod_wall { but_wall } else { every });
     q.full_radius = Some(0);
-    q.frame.set_bake_reach(vxe_render::ReachMode::Partial);
+    q.frame.set_bake_reach(svet_render::ReachMode::Partial);
     Some(q)
 }
 
@@ -231,7 +231,7 @@ fn a_lod_only_chunk_in_a_partial_reach_casts_from_its_mip() {
 /// the samples the dig's ring re-baked, and chunk 8's records' tier bits after it.
 fn dig_samples(near: u32) -> Option<(u64, Vec<u8>)> {
     let setup = Setup {
-        counts: vxe_render::BakeSettings {
+        counts: svet_render::BakeSettings {
             brick_samples: 128,
             ..counts()
         },
@@ -240,14 +240,14 @@ fn dig_samples(near: u32) -> Option<(u64, Vec<u8>)> {
     let mut q = tiered(far_row(), &setup)?;
     q.frame.set_bake_tiers([near, TIERS[1], TIERS[2]]);
     q.frame
-        .set_bake_digs(vxe_render::DEFAULT_BAKE_EDIT_MS, false);
+        .set_bake_digs(svet_render::DEFAULT_BAKE_EDIT_MS, false);
     q.settle();
     assert_eq!(tiers_of(&q.target([8, 0, 0])?), vec![2], "baked far first");
     let before = q.q().stats().total_samples;
     q.edit(&box_op(
         [520, 28, 28],
         [526, 36, 36],
-        vxe_world::Mode::Carve,
+        svet_world::Mode::Carve,
     ));
     q.settle();
     let st = q.q().stats();
@@ -292,9 +292,9 @@ mod reading {
             return;
         };
         let full = bake([4096; 3]).expect("an adapter");
-        let w = vxe_render::internals::BRICK_WORDS;
+        let w = svet_render::internals::BRICK_WORDS;
         let lum = |b: &[u32], i: usize| {
-            let [r, g, bl] = vxe_render::internals::rgb9e5_unpack(b[i]);
+            let [r, g, bl] = svet_render::internals::rgb9e5_unpack(b[i]);
             f64::from(0.2126 * r + 0.7152 * g + 0.0722 * bl)
         };
         let (mut sum, mut n) = (0.0, 0);

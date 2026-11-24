@@ -5,7 +5,7 @@
 mod support;
 
 use support::*;
-use vxe_render::{LightParams, LookParams, ViewMode};
+use svet_render::{LightParams, LookParams, ViewMode};
 
 /// A face-normal look in `view`, cutaway as given.
 fn look(view: ViewMode, cutaway: bool) -> LookParams {

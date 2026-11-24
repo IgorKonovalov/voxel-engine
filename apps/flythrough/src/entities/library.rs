@@ -10,8 +10,8 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use vxe_entity::{Model, Pose};
-use vxe_world::MaterialTable;
+use svet_entity::{Model, Pose};
+use svet_world::MaterialTable;
 
 use crate::viewer::Viewer;
 
@@ -276,14 +276,14 @@ pub fn extent(model: &Model, pose: &Pose) -> [f32; 3] {
 }
 
 /// The mirror's pool bytes `model`'s distinct volumes take
-/// ([`vxe_render::EntityMirror::volume_bytes`]).
+/// ([`svet_render::EntityMirror::volume_bytes`]).
 pub fn pool_bytes(model: &Model) -> u64 {
     let mut seen = Vec::new();
     let mut bytes = 0;
     for p in model.parts() {
         if !seen.contains(&p.volume.id()) {
             seen.push(p.volume.id());
-            bytes += vxe_render::EntityMirror::volume_bytes(&p.volume);
+            bytes += svet_render::EntityMirror::volume_bytes(&p.volume);
         }
     }
     bytes
@@ -376,7 +376,7 @@ pub fn rig_material_names(args: &crate::cli::Args) -> Vec<String> {
     for path in rigs {
         let Some(rig) = std::fs::read_to_string(&path)
             .ok()
-            .and_then(|t| vxe_assets::Rig::parse(&t).ok())
+            .and_then(|t| svet_assets::Rig::parse(&t).ok())
         else {
             continue;
         };

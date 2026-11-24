@@ -1,17 +1,17 @@
 //! Free flight and walking: mouse look and WASD movement of a camera in voxel units, z up, or
 //! a gamepad's sticks through the same `Input`. Flight moves the camera freely; walking moves
-//! a character body through the world with the `vxe-sim` controller at a fixed 60 Hz tick and
+//! a character body through the world with the `svet-sim` controller at a fixed 60 Hz tick and
 //! puts the camera at its eye.
 //!
 //! A stick passes a radial dead zone of [`DEAD_ZONE`] and a squared response: deflection `m`
 //! reads `((m - DEAD_ZONE) / (1 - DEAD_ZONE))^2` along the stick's direction, so the move
 //! stick sets the speed and the look stick the turn rate.
 
-use vxe_app::{Axis, Input, KeyCode, PadButton};
-use vxe_render::glam::{Vec2, Vec3};
-use vxe_render::{Camera, LookParams};
-use vxe_sim::{CharacterController, CharacterState, ControllerParams, MoveInput, overlaps};
-use vxe_world::{AIR, FIXED_ONE, Fixed3, World};
+use svet_app::{Axis, Input, KeyCode, PadButton};
+use svet_render::glam::{Vec2, Vec3};
+use svet_render::{Camera, LookParams};
+use svet_sim::{CharacterController, CharacterState, ControllerParams, MoveInput, overlaps};
+use svet_world::{AIR, FIXED_ONE, Fixed3, World};
 
 /// Radians of turn per unit of relative mouse motion.
 const LOOK_PER_COUNT: f32 = 0.0025;
@@ -312,7 +312,7 @@ mod tests {
     #[test]
     fn auto_cutaway_follows_the_camera_voxel() {
         use crate::cave::CaveSource;
-        let source = CaveSource::new(1, vxe_world::ChunkExtent::new([0, 0, 0], [4, 4, 2]));
+        let source = CaveSource::new(1, svet_world::ChunkExtent::new([0, 0, 0], [4, 4, 2]));
         let world = World::generate(source.extent, &source, &crate::cave_materials());
         let pocket = Vec3::from_array(source.spawn().0.map(|v| v as f32 + 0.5));
         // The shell: two voxels of indestructible rock inside each face of the extent.
@@ -465,20 +465,20 @@ mod tests {
 
     /// A floor of material 1 at `z < 0` over chunks `[-1, 1)³`.
     fn floor_world() -> World {
-        let mut t = vxe_world::MaterialTable::new();
-        let rock = t.push(vxe_world::Material::named("rock"));
+        let mut t = svet_world::MaterialTable::new();
+        let rock = t.push(svet_world::Material::named("rock"));
         struct Floor(u16);
-        impl vxe_world::WorldSource for Floor {
-            fn chunk(&self, c: vxe_world::ChunkCoord, out: &mut vxe_world::Chunk) {
+        impl svet_world::WorldSource for Floor {
+            fn chunk(&self, c: svet_world::ChunkCoord, out: &mut svet_world::Chunk) {
                 if c.0[2] < 0 {
-                    for slot in 0..vxe_world::CHUNK_BRICKS {
-                        out.set_brick(slot, vxe_world::Brick::Uniform(self.0));
+                    for slot in 0..svet_world::CHUNK_BRICKS {
+                        out.set_brick(slot, svet_world::Brick::Uniform(self.0));
                     }
                 }
             }
         }
         World::generate(
-            vxe_world::ChunkExtent::new([-1, -1, -1], [1, 1, 1]),
+            svet_world::ChunkExtent::new([-1, -1, -1], [1, 1, 1]),
             &Floor(rock),
             &t,
         )
@@ -519,7 +519,7 @@ mod tests {
     /// forward and `Space` until the body climbs out.
     #[test]
     fn a_body_falls_into_a_dug_hole_and_climbs_out_with_w_and_space() {
-        use vxe_world::{EditOp, Mode};
+        use svet_world::{EditOp, Mode};
         let world = floor_world();
         let mut walk = Walk {
             controller: CharacterController::new(walk_params()),
@@ -572,7 +572,7 @@ mod tests {
     /// the climb has to begin without the body being blocked.
     #[test]
     fn w_and_space_climb_out_of_a_trench_facing_its_wall_at_an_angle() {
-        use vxe_world::{EditOp, Mode};
+        use svet_world::{EditOp, Mode};
         let world = floor_world();
         world
             .apply(&EditOp::box_(
@@ -619,8 +619,8 @@ mod tests {
     #[test]
     fn random_walks_on_the_level_never_freeze_or_overlap() {
         use crate::cave::{CaveSource, LEVEL_CHUNKS};
-        use vxe_sim::sweep;
-        let source = CaveSource::new(1, vxe_world::ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS));
+        use svet_sim::sweep;
+        let source = CaveSource::new(1, svet_world::ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS));
         let world = World::generate(source.extent, &source, &crate::cave_materials());
         let c = CharacterController::new(walk_params());
         let mut st = CharacterState::new(Fixed3(source.spawn().0.map(|v| i64::from(v) * 256)));
@@ -642,10 +642,10 @@ mod tests {
         for walk in 0..800 {
             if walk % 50 == 0 {
                 let f = st.foot.0;
-                let r = world.apply(&vxe_world::EditOp::sphere(
+                let r = world.apply(&svet_world::EditOp::sphere(
                     Fixed3([f[0], f[1], f[2] + 256]),
                     768,
-                    vxe_world::Mode::Fill(crate::cave::ROCK),
+                    svet_world::Mode::Fill(crate::cave::ROCK),
                 ));
                 assert!(r.is_ok_and(|r| !r.changed_from.is_empty()), "walk {walk}");
                 assert!(overlaps(&world, &c.body(f)), "walk {walk}");
@@ -666,10 +666,10 @@ mod tests {
                     f[2] + off(30, 10) * 256,
                 ];
                 let radius = (5 + next() % 11) as i64 * 256;
-                let r = world.apply(&vxe_world::EditOp::sphere(
+                let r = world.apply(&svet_world::EditOp::sphere(
                     Fixed3(at),
                     radius,
-                    vxe_world::Mode::Carve,
+                    svet_world::Mode::Carve,
                 ));
                 digs += u32::from(r.is_ok());
             }

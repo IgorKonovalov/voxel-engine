@@ -7,9 +7,9 @@ use std::time::{Duration, SystemTime};
 
 use flythrough::viewer::Viewer;
 use flythrough::{cave, cave_materials, entities, walker};
-use vxe_assets::{Rig, VoxText, encode};
-use vxe_entity::{blend, sample};
-use vxe_world::MaterialTable;
+use svet_assets::{Rig, VoxText, encode};
+use svet_entity::{blend, sample};
+use svet_world::MaterialTable;
 
 fn assets() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/entities/walker")
@@ -281,13 +281,13 @@ fn a_missing_model_is_an_error_that_names_it() {
 #[test]
 fn a_reload_hands_back_the_old_handle() {
     use flythrough::entities::sync_models;
-    use vxe_render::internals::VolumePool;
-    use vxe_render::{DEFAULT_ENTITY_POOL_BYTES, EntityMirror, EntityUploadError};
+    use svet_render::internals::VolumePool;
+    use svet_render::{DEFAULT_ENTITY_POOL_BYTES, EntityMirror, EntityUploadError};
 
     let rig = std::fs::read_to_string(assets().join("walker.rig")).expect("rig reads");
     let vox = std::fs::read(assets().join("walker.vox")).expect("vox reads");
     let t = table();
-    let bytes = |m: &vxe_entity::Model| {
+    let bytes = |m: &svet_entity::Model| {
         let mut ids: Vec<u64> = Vec::new();
         let mut sum = 0;
         for p in m.parts() {
@@ -330,9 +330,9 @@ fn a_reload_hands_back_the_old_handle() {
 mod reading {
     use std::sync::Arc;
 
-    use vxe_entity::{Clip, Key, Model, Part, Pose, Quat, Track, sample};
-    use vxe_render::DisplayPose;
-    use vxe_world::{Fixed3, Prefab};
+    use svet_entity::{Clip, Key, Model, Part, Pose, Quat, Track, sample};
+    use svet_render::DisplayPose;
+    use svet_world::{Fixed3, Prefab};
 
     /// Plan 0078 Phase 2's reading: the CPU time of a reload's pool step for the sample walker,
     /// `free_model` of the old model plus the upload of the new (the bookkeeping and the
@@ -341,8 +341,8 @@ mod reading {
     #[test]
     #[ignore]
     fn the_reload_pool_step_cost() {
-        use vxe_render::DEFAULT_ENTITY_POOL_BYTES;
-        use vxe_render::internals::VolumePool;
+        use svet_render::DEFAULT_ENTITY_POOL_BYTES;
+        use svet_render::internals::VolumePool;
 
         let dir = super::assets();
         let rig = std::fs::read_to_string(dir.join("walker.rig")).expect("rig reads");
@@ -458,9 +458,9 @@ mod reading {
 #[test]
 fn a_rig_without_material_lines_builds() {
     use std::collections::BTreeSet;
-    use vxe_assets::{DEFAULT_EMISSION_FACTOR, Slot, VoxFile, VoxMap, palette_row};
+    use svet_assets::{DEFAULT_EMISSION_FACTOR, Slot, VoxFile, VoxMap, palette_row};
 
-    let dir = std::env::temp_dir().join(format!("vxe-viewer-palette-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("svet-viewer-palette-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("dir");
     let rig = std::fs::read_to_string(assets().join("walker.rig")).expect("rig reads");
     let bare: String = rig
@@ -495,7 +495,7 @@ fn a_rig_without_material_lines_builds() {
         .iter()
         .flat_map(|m| m.voxels.iter().map(|v| v[3]))
         .collect();
-    let map = vxe_assets::resolve_existing(&table, &vox, &VoxMap::new());
+    let map = svet_assets::resolve_existing(&table, &vox, &VoxMap::new());
     let want: BTreeSet<u16> = used
         .iter()
         .map(|&i| match map.get(i) {
@@ -581,9 +581,9 @@ fn each_entity_plays_its_own_clip() {
     let b = w
         .place_entry(&t, Some(i), [30.0, 0.0, 2.0], 0.0)
         .expect("placed");
-    let floor = vxe_world::World::generate(
-        vxe_world::ChunkExtent::new([-1, -1, -1], [1, 1, 1]),
-        &vxe_world::FnSource(|p: [i32; 3]| if p[2] < 2 { cave::ROCK } else { 0 }),
+    let floor = svet_world::World::generate(
+        svet_world::ChunkExtent::new([-1, -1, -1], [1, 1, 1]),
+        &svet_world::FnSource(|p: [i32; 3]| if p[2] < 2 { cave::ROCK } else { 0 }),
         &t,
     );
     for _ in 0..30 {
@@ -672,7 +672,7 @@ fn a_reload_moves_only_its_own_entry() {
 /// first's; with the ray on none, the newest's.
 #[test]
 fn the_clip_keys_follow_the_aim() {
-    use vxe_world::Fixed3;
+    use svet_world::Fixed3;
     let lib =
         entities::library::scan(&Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/entities"));
     let t = table();
@@ -710,8 +710,8 @@ fn the_clip_keys_follow_the_aim() {
 fn a_full_pool_refuses_one_entry_and_keeps_the_rest() {
     use flythrough::entities::library::pool_bytes;
     use flythrough::entities::sync_models;
-    use vxe_render::internals::VolumePool;
-    use vxe_world::Prefab;
+    use svet_render::internals::VolumePool;
+    use svet_world::Prefab;
 
     let (dir, t) = library_copy("pool");
     let fresh = || {
@@ -752,17 +752,17 @@ fn a_full_pool_refuses_one_entry_and_keeps_the_rest() {
     // A filler a little over half the spider's bytes ahead of the walker, freed: the free bytes
     // hold the spider, in two holes that each are smaller.
     let mut w = fresh();
-    let red = vxe_world::MaterialId::try_from(1usize).unwrap();
+    let red = svet_world::MaterialId::try_from(1usize).unwrap();
     let mut n = 1;
     let filler = loop {
         let p = Prefab::new([n; 3], vec![red; (n * n * n) as usize], None);
-        if 2 * vxe_render::EntityMirror::volume_bytes(&p) > sb {
+        if 2 * svet_render::EntityMirror::volume_bytes(&p) > sb {
             break p;
         }
         n += 1;
     };
-    let fb = vxe_render::EntityMirror::volume_bytes(&filler);
-    let filler = vxe_entity::Model::new(vec![vxe_entity::Part {
+    let fb = svet_render::EntityMirror::volume_bytes(&filler);
+    let filler = svet_entity::Model::new(vec![svet_entity::Part {
         volume: Arc::new(filler),
         parent: None,
         pivot: [0; 3],

@@ -20,7 +20,7 @@
 fn the_sky_ray_runs_only_where_stale() {
     use support::queue::{Setup, box_op, fill, rig, world_of};
     use support::rules::{F, MEAN_FRAMES, T_FADE};
-    use vxe_world::{AIR, Mode};
+    use svet_world::{AIR, Mode};
     let floor = |rays: u32| {
         let world = world_of([4, 4, 1], AIR);
         fill(&world, [0, 0, 0], [255, 255, 15], flythrough::cave::ROCK);
@@ -28,13 +28,13 @@ fn the_sky_ray_runs_only_where_stale() {
         let mut q = rig(world, &Setup::at(eye))?;
         q.camera.pitch = -60f32.to_radians();
         q.frame.set_count_store(true);
-        q.frame.set_lighting(vxe_render::Lighting {
+        q.frame.set_lighting(svet_render::Lighting {
             sky_rays: rays,
             ..q.frame.lighting()
         });
-        q.frame.set_sky(Some(vxe_render::sky::Sky {
+        q.frame.set_sky(Some(svet_render::sky::Sky {
             altitude_zero_z: 16.0,
-            ..vxe_render::sky::Sky::uniform(1.0)
+            ..svet_render::sky::Sky::uniform(1.0)
         }));
         Some(q)
     };
@@ -47,16 +47,16 @@ fn the_sky_ray_runs_only_where_stale() {
             q.step();
             q.render();
             let v =
-                vxe_render::debug::read_rgba8(&q.device, &q.queue, q.frame.visibility_samples());
+                svet_render::debug::read_rgba8(&q.device, &q.queue, q.frame.visibility_samples());
             let n = v.chunks(4).filter(|p| p[3] > 0).count();
-            let a = vxe_render::debug::read_rgba16f(&q.device, &q.queue, q.frame.accumulated());
+            let a = svet_render::debug::read_rgba16f(&q.device, &q.queue, q.frame.accumulated());
             let (w, h) = (
                 q.frame.accumulated().width() as usize,
                 q.frame.accumulated().height() as usize,
             );
             let c = (h / 2) * w + w / 2;
-            let m = vxe_render::debug::read_rgba16f(&q.device, &q.queue, q.frame.moments());
-            let p = vxe_render::debug::read_rgba16f(&q.device, &q.queue, q.frame.visibility_pair());
+            let m = svet_render::debug::read_rgba16f(&q.device, &q.queue, q.frame.moments());
+            let p = svet_render::debug::read_rgba16f(&q.device, &q.queue, q.frame.visibility_pair());
             let word = support::defects::source_of(m[c][3]);
             (n, a[c][1], word, p[c])
         };
@@ -237,7 +237,7 @@ fn a_still_camera_keeps_its_history() {
         &rig,
         &cam,
         &mut r,
-        vxe_render::LightHooks::default(),
+        svet_render::LightHooks::default(),
         base.sky_history,
         base.key_history,
         64,

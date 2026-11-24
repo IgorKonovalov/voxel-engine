@@ -4,8 +4,8 @@
 use std::collections::{HashMap, VecDeque};
 
 use flythrough::outdoor::*;
-use vxe_world::AIR;
-use vxe_world::hash::SplitMix64;
+use svet_world::AIR;
+use svet_world::hash::SplitMix64;
 
 /// The mouth leads in and the chamber is roofed: the tunnel's axis from the surface at the
 /// mouth to the chamber's centre is air; every column within 40 voxels of the chamber's centre
@@ -122,7 +122,7 @@ fn the_surface_is_grass_over_soil_at_the_formula_height() {
 /// deep under it.
 #[test]
 fn the_chunk_short_cuts_match_the_voxel_function() {
-    use vxe_world::{
+    use svet_world::{
         BRICK_EDGE, CHUNK_BRICKS, CHUNK_EDGE, Chunk, ChunkCoord, VoxelCoord, WorldSource,
         brick_of_slot,
     };
@@ -199,7 +199,7 @@ fn a_tree_is_what_the_formula_says() {
 #[test]
 fn no_tree_stands_at_the_mouth() {
     use flythrough::trees::{ForestSource, LEAF_FILL, TreeDensity};
-    use vxe_world::{CHUNK_EDGE, ChunkExtent, World};
+    use svet_world::{CHUNK_EDGE, ChunkExtent, World};
     let source = ForestSource::new(OutdoorSource::new(1), TreeDensity::Forest, LEAF_FILL);
     let r = 120;
     let [mx, my] = MOUTH;
@@ -223,7 +223,7 @@ fn no_tree_stands_at_the_mouth() {
                 continue;
             }
             for z in lo - 16..=hi + 130 {
-                let m = world.material_at(vxe_world::VoxelCoord([x, y, z]));
+                let m = world.material_at(svet_world::VoxelCoord([x, y, z]));
                 near += u64::from(m.is_some_and(|m| m == BARK || is_leaf(m)));
             }
         }
@@ -377,7 +377,7 @@ mod reading {
         }
     }
 
-    type MaterialIdAlias = vxe_world::MaterialId;
+    type MaterialIdAlias = svet_world::MaterialId;
 
     /// Plan 0086 Phase 8 diagnosis: the free path of the sky rays from the cavern's faces
     /// within 48 voxels of the run-12 eye (743, 131, 15), seed 1: 64 cosine-weighted rays a face

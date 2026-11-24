@@ -4,7 +4,7 @@
 mod still {
     use super::support;
     use support::terms::Rig;
-    use vxe_render::{
+    use svet_render::{
         AutoExposure, Camera, Exposure, Frame, LightParams, Lighting, UpscalerKind,
     };
 
@@ -46,15 +46,15 @@ mod still {
             let mut f = Frame::with_sizes(&rig.device, [320, 180], [480, 270]);
             f.set_upscaler_kind(
                 &rig.device,
-                UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default()),
+                UpscalerKind::Fsr2(svet_render::Fsr2Settings::default()),
             );
             f
         } else {
             Frame::new(&rig.device, 320, 180)
         };
-        f.set_look(vxe_render::LookParams {
+        f.set_look(svet_render::LookParams {
             far_normal: flythrough::LookPreset::DEFAULT.far_normal,
-            ..vxe_render::LookParams::default()
+            ..svet_render::LookParams::default()
         });
         let defaults = flythrough::default_lighting();
         let base = Lighting {
@@ -63,7 +63,7 @@ mod still {
             ..defaults
         };
         f.set_count_store(true);
-        f.set_light_hooks(vxe_render::LightHooks {
+        f.set_light_hooks(svet_render::LightHooks {
             key_off: arm.key_off,
             ..Default::default()
         });
@@ -94,12 +94,12 @@ mod still {
                 &mut rig.gpu,
                 &rig.world,
                 rig.world.extent(),
-                &vxe_render::BakeSettings::default(),
+                &svet_render::BakeSettings::default(),
                 &mut |_| {},
             )
             .expect("the store fits");
             if arm.chain_off {
-                f.set_missing_light(&rig.queue, vxe_render::MissingLight::Black);
+                f.set_missing_light(&rig.queue, svet_render::MissingLight::Black);
             }
         }
         f.set_dt(1.0 / 60.0);
@@ -107,13 +107,13 @@ mod still {
         for _ in 0..64 {
             f.step(&rig.device, &rig.queue, &rig.gpu, cam, &light);
         }
-        let st = vxe_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_state(), 0, 32);
-        let e = vxe_render::ExposureState::from_bytes(&st).current;
+        let st = svet_render::debug::read_buffer(&rig.device, &rig.queue, f.exposure_state(), 0, 32);
+        let e = svet_render::ExposureState::from_bytes(&st).current;
         f.set_lighting(Lighting {
             exposure: Exposure::Manual(e),
             ..base
         });
-        let read = |f: &Frame| vxe_render::debug::read_rgba8(&rig.device, &rig.queue, f.target());
+        let read = |f: &Frame| svet_render::debug::read_rgba8(&rig.device, &rig.queue, f.target());
         let mut last = read(&f);
         let mut per_px: Vec<Vec<u8>> = vec![Vec::new(); last.len() / 4];
         let mut rejections = Vec::new();
@@ -126,7 +126,7 @@ mod still {
             }
             last = now;
         }
-        let mom = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, f.moments());
+        let mom = svet_render::debug::read_rgba16f(&rig.device, &rig.queue, f.moments());
         Changes {
             px: per_px,
             width: f.target().width() as usize,

@@ -9,7 +9,7 @@
 
 use std::fmt::Write as _;
 
-use vxe_render::SyncStats;
+use svet_render::SyncStats;
 
 use crate::path::WARMUP_S;
 

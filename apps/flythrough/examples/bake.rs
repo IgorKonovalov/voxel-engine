@@ -26,11 +26,11 @@ use support::bake::{
 };
 use support::rigs::tone_bytes;
 use support::{SyncNow, cave_table};
-use vxe_render::{
+use svet_render::{
     BakeSettings, Camera, Exposure, Frame, GpuWorld, LightParams, Lighting, LightingResolution,
     MirrorConfig, Window, internals::UNIT_BYTES, wgpu,
 };
-use vxe_world::{ChunkExtent, EditOp, FIXED_ONE, Fixed3, Mode, World};
+use svet_world::{ChunkExtent, EditOp, FIXED_ONE, Fixed3, Mode, World};
 
 /// What the flags set.
 struct Args {
@@ -307,7 +307,7 @@ fn read_rig(scene: Scene, eye: [f32; 3], adapter: &str) -> ReadRig {
         ..MirrorConfig::new(Window::Fixed(world.extent()))
     };
     let mut gpu = GpuWorld::with_config(&device, cfg);
-    gpu.set_focus(vxe_world::VoxelCoord(eye.map(|v| v as i32)));
+    gpu.set_focus(svet_world::VoxelCoord(eye.map(|v| v as i32)));
     for _ in 0..8 {
         gpu.sync_now(&world, &device, &queue)
             .expect("the mirror fits the adapter");
@@ -424,7 +424,7 @@ fn view_rig(view: &ReadView, size: [u32; 2], adapter: &str) -> (ReadRig, ChunkEx
     };
     let mut gpu = GpuWorld::with_config(&device, cfg);
     let (_, centre_eye, radius) = file_of(view);
-    gpu.set_focus(vxe_world::VoxelCoord(view.eye.map(|v| v as i32)));
+    gpu.set_focus(svet_world::VoxelCoord(view.eye.map(|v| v as i32)));
     for _ in 0..8 {
         gpu.sync_now(&world, &device, &queue)
             .expect("the mirror fits the adapter");
@@ -483,7 +483,7 @@ fn view_camera(view: &ReadView) -> Camera {
 }
 
 /// One timed frame: the passes' milliseconds by name.
-fn timed_step(rig: &mut ReadRig, timer: &vxe_render::PassTimer, c: &Camera) -> Vec<f64> {
+fn timed_step(rig: &mut ReadRig, timer: &svet_render::PassTimer, c: &Camera) -> Vec<f64> {
     rig.frame.advance();
     let params = rig.frame.params(&rig.gpu, c, &LightParams::default());
     let mut enc = rig
@@ -504,7 +504,7 @@ fn timed_step(rig: &mut ReadRig, timer: &vxe_render::PassTimer, c: &Camera) -> V
 
 fn pass_line(sum: &[f64], frames: usize) -> String {
     let total: f64 = sum.iter().sum::<f64>() / frames as f64;
-    let mut parts: Vec<String> = vxe_render::FRAME_PASSES
+    let mut parts: Vec<String> = svet_render::FRAME_PASSES
         .iter()
         .zip(sum)
         .filter(|(_, ms)| **ms / frames as f64 >= 0.05)
@@ -573,7 +573,7 @@ fn adapter_records(args: &Args) {
             &mut rig.gpu,
             &rig.world,
             piece,
-            &vxe_render::queue_settings(),
+            &svet_render::queue_settings(),
             &mut |_| {},
         )
         .expect("the piece fits the pool");
@@ -624,8 +624,8 @@ fn adapter_records(args: &Args) {
     };
     let (ca, cb) = (cells_of(&a), cells_of(&b));
     let level = |w: u32| {
-        let v = vxe_render::internals::rgb9e5_unpack(w);
-        vxe_render::internals::tone_level(
+        let v = svet_render::internals::rgb9e5_unpack(w);
+        svet_render::internals::tone_level(
             0.2126 * f64::from(v[0]) + 0.7152 * f64::from(v[1]) + 0.0722 * f64::from(v[2]),
         )
     };
@@ -668,7 +668,7 @@ fn glass_readings(args: &Args) {
         .find(|v| v.name == "hall")
         .expect("the hall view");
     let (mut rig, _) = view_rig(&view, size, &args.adapter);
-    let glass = flythrough::showcase_materials().len() as vxe_world::MaterialId;
+    let glass = flythrough::showcase_materials().len() as svet_world::MaterialId;
     let camera = view_camera(&view);
     let (fwd, _, _) = camera.basis();
     let a = if fwd.x.abs() >= fwd.y.abs() { 0 } else { 1 };
@@ -705,9 +705,9 @@ fn glass_readings(args: &Args) {
         let b = tone_bytes([c[0], c[1], c[2], 1.0], &lighting);
         0.2126 * f32::from(b[0]) + 0.7152 * f32::from(b[1]) + 0.0722 * f32::from(b[2])
     };
-    let info = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
-    let layer = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.layers());
-    let shown = luma(&vxe_render::debug::read_rgba8(
+    let info = svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let layer = svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.layers());
+    let shown = luma(&svet_render::debug::read_rgba8(
         &rig.device,
         &rig.queue,
         rig.frame.target(),
@@ -754,7 +754,7 @@ fn glass_readings(args: &Args) {
 }
 
 /// The live queue's dig against a fresh bake (Plan 0059 Phase 8e): at the far pose, a radius-1
-/// piece baked at the queue's settings ([`vxe_render::queue_settings`], 8/4096), one 5-voxel carve at
+/// piece baked at the queue's settings ([`svet_render::queue_settings`], 8/4096), one 5-voxel carve at
 /// the view's centre, its ring re-baked to each arm's settings in turn (the same box each time,
 /// so each arm re-bakes the same bricks from the same edited world), then a fresh bake of the
 /// edited world at the queue's settings. For each arm, every ring brick's six direction values
@@ -787,7 +787,7 @@ fn queue_dig_readings(args: &Args) {
         let hi = [0, 1, 2].map(|k| (piece.min.0[k] + 3).min(world_extent.min.0[k] + s[k]));
         ChunkExtent::new(lo, hi)
     };
-    let queue_settings = vxe_render::queue_settings();
+    let queue_settings = svet_render::queue_settings();
     let t = std::time::Instant::now();
     let r = rig
         .frame
@@ -822,8 +822,8 @@ fn queue_dig_readings(args: &Args) {
     );
     // The hit in the view's central half nearest 30 voxels whose carve (radius 5, plus the
     // ring's voxel) lies inside the piece: the view's centre can hit past the level's edge.
-    let pos = vxe_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
-    let info = vxe_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let pos = svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let info = svet_render::debug::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     let dist = |p: &[f32; 3]| (0..3).map(|k| (p[k] - eye[k]).powi(2)).sum::<f32>().sqrt();
     let hit = (size[1] / 4..3 * size[1] / 4)
         .flat_map(|y| (size[0] / 4..3 * size[0] / 4).map(move |x| (y * size[0] + x) as usize))
@@ -843,7 +843,7 @@ fn queue_dig_readings(args: &Args) {
     rig.gpu
         .sync_now(&rig.world, &rig.device, &rig.queue)
         .expect("the mirror fits");
-    let ring = vxe_render::internals::dig_ring(&[dug], piece);
+    let ring = svet_render::internals::dig_ring(&[dug], piece);
     log.line(&format!(
     "queue dig: carve at {:?} ({:.1} voxels from the eye), box {:?}..{:?}, ring {} bricks in {} chunks",
     hit.map(|v| v.floor() as i32),
@@ -858,7 +858,7 @@ fn queue_dig_readings(args: &Args) {
         (
             "the queue's settings, round BAKE_ROUND",
             BakeSettings {
-                round: vxe_render::internals::BAKE_ROUND,
+                round: svet_render::internals::BAKE_ROUND,
                 ..queue_settings.clone()
             },
         ),
@@ -907,7 +907,7 @@ fn fresh_piece(
         ..MirrorConfig::new(Window::Fixed(rig.world.extent()))
     };
     let mut gpu = GpuWorld::with_config(&rig.device, cfg);
-    gpu.set_focus(vxe_world::VoxelCoord(eye.map(|v| v as i32)));
+    gpu.set_focus(svet_world::VoxelCoord(eye.map(|v| v as i32)));
     for _ in 0..8 {
         gpu.sync_now(&rig.world, &rig.device, &rig.queue)
             .expect("the mirror fits");
@@ -977,15 +977,15 @@ fn compare_ring(
                 let (ra, rf) = ((da >> 11) as usize, (df >> 11) as usize);
                 for d in 0..6 {
                     let (wa, wf) = (
-                        a[ra - vxe_render::internals::BRICK_WORDS + d],
-                        f[rf - vxe_render::internals::BRICK_WORDS + d],
+                        a[ra - svet_render::internals::BRICK_WORDS + d],
+                        f[rf - svet_render::internals::BRICK_WORDS + d],
                     );
                     if wa == wf {
                         equal += 1;
                     }
                     let (va, vf) = (
-                        vxe_render::internals::rgb9e5_unpack(wa),
-                        vxe_render::internals::rgb9e5_unpack(wf),
+                        svet_render::internals::rgb9e5_unpack(wa),
+                        svet_render::internals::rgb9e5_unpack(wf),
                     );
                     let step = |w: u32| 2f32.powi((w >> 27) as i32 - 24);
                     let ulp = step(wa).max(step(wf));
@@ -993,7 +993,7 @@ fn compare_ring(
                         one_step += 1;
                     }
                     let l = |v: [f32; 3]| {
-                        vxe_render::internals::tone_level(
+                        svet_render::internals::tone_level(
                             0.2126 * f64::from(v[0])
                                 + 0.7152 * f64::from(v[1])
                                 + 0.0722 * f64::from(v[2]),
@@ -1040,10 +1040,10 @@ fn resolution_readings(args: &Args) {
         }
         let (mut rig, _) = view_rig(&view, NATIVE, &args.adapter);
         let load_ms = brick_bake(&mut rig, &view);
-        let timer = vxe_render::PassTimer::with_passes(
+        let timer = svet_render::PassTimer::with_passes(
             &rig.device,
             &rig.queue,
-            vxe_render::FRAME_PASSES.len() as u32,
+            svet_render::FRAME_PASSES.len() as u32,
         )
         .expect("timestamps on the RTX");
         let still = view_camera(&view);
@@ -1053,12 +1053,12 @@ fn resolution_readings(args: &Args) {
         };
         let light = LightParams::default();
         let fsr = || {
-            vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+            svet_render::UpscalerKind::Fsr2(svet_render::Fsr2Settings {
                 sharpness: 0.5,
-                ..vxe_render::Fsr2Settings::default()
+                ..svet_render::Fsr2Settings::default()
             })
         };
-        let settings: [(&str, Option<vxe_render::UpscalerKind>, [f32; 2]); 3] = [
+        let settings: [(&str, Option<svet_render::UpscalerKind>, [f32; 2]); 3] = [
             ("native, no upscaler, far normal 1..2", None, [1.0, 2.0]),
             ("fsr2 at 1.5, far normal 1..2", Some(fsr()), [1.0, 2.0]),
             ("fsr2 at 1.5, far normal 2..6", Some(fsr()), [2.0, 6.0]),
@@ -1068,7 +1068,7 @@ fn resolution_readings(args: &Args) {
             match kind {
                 None => {
                     rig.frame
-                        .set_upscaler_kind(&rig.device, vxe_render::UpscalerKind::Off);
+                        .set_upscaler_kind(&rig.device, svet_render::UpscalerKind::Off);
                     rig.frame.set_jitter(&rig.device, false);
                     rig.frame.set_sizes(&rig.device, NATIVE, NATIVE);
                 }
@@ -1076,12 +1076,12 @@ fn resolution_readings(args: &Args) {
                     rig.frame.set_upscaler_kind(&rig.device, k);
                     rig.frame.set_sizes(
                         &rig.device,
-                        vxe_render::RenderScale::OneHalf.internal(NATIVE),
+                        svet_render::RenderScale::OneHalf.internal(NATIVE),
                         NATIVE,
                     );
                 }
             }
-            rig.frame.set_look(vxe_render::LookParams {
+            rig.frame.set_look(svet_render::LookParams {
                 far_normal: far,
                 ..rig.frame.look()
             });
@@ -1090,7 +1090,7 @@ fn resolution_readings(args: &Args) {
                 rig.frame
                     .step(&rig.device, &rig.queue, &rig.gpu, &still, &light);
             }
-            let img = luma(&vxe_render::debug::read_rgba8(
+            let img = luma(&svet_render::debug::read_rgba8(
                 &rig.device,
                 &rig.queue,
                 rig.frame.target(),
@@ -1117,7 +1117,7 @@ fn resolution_readings(args: &Args) {
                     )
                 }
             };
-            let mut sum = vec![0.0; vxe_render::FRAME_PASSES.len()];
+            let mut sum = vec![0.0; svet_render::FRAME_PASSES.len()];
             for _ in 0..120 {
                 for (s, ms) in sum.iter_mut().zip(timed_step(&mut rig, &timer, &still)) {
                     *s += ms;
@@ -1125,7 +1125,8 @@ fn resolution_readings(args: &Args) {
             }
             let passes = pass_line(&sum, 120);
             let dots = |rig: &ReadRig| -> f64 {
-                let px = vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+                let px =
+                    svet_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
                 support::aliasing::dots(&px, NATIVE[0], NATIVE[1])
                     .iter()
                     .filter(|d| **d)
@@ -1189,10 +1190,10 @@ fn rest_readings(args: &Args) {
         }
         let (mut rig, _) = view_rig(&view, size, &args.adapter);
         brick_bake(&mut rig, &view);
-        let timer = vxe_render::PassTimer::with_passes(
+        let timer = svet_render::PassTimer::with_passes(
             &rig.device,
             &rig.queue,
-            vxe_render::FRAME_PASSES.len() as u32,
+            svet_render::FRAME_PASSES.len() as u32,
         )
         .expect("timestamps on the adapter");
         let still = view_camera(&view);
@@ -1204,29 +1205,29 @@ fn rest_readings(args: &Args) {
                 if fsr {
                     rig.frame.set_upscaler_kind(
                         &rig.device,
-                        vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+                        svet_render::UpscalerKind::Fsr2(svet_render::Fsr2Settings {
                             sharpness: 0.5,
-                            ..vxe_render::Fsr2Settings::default()
+                            ..svet_render::Fsr2Settings::default()
                         }),
                     );
                     rig.frame.set_sizes(
                         &rig.device,
-                        vxe_render::RenderScale::OneHalf.internal(size),
+                        svet_render::RenderScale::OneHalf.internal(size),
                         size,
                     );
                 } else {
                     rig.frame
-                        .set_upscaler_kind(&rig.device, vxe_render::UpscalerKind::Off);
+                        .set_upscaler_kind(&rig.device, svet_render::UpscalerKind::Off);
                     rig.frame.set_jitter(&rig.device, false);
                     rig.frame.set_sizes(&rig.device, size, size);
                 }
-                rig.frame.set_look(vxe_render::LookParams {
+                rig.frame.set_look(svet_render::LookParams {
                     far_normal: [1.0, 2.0],
                     ..rig.frame.look()
                 });
                 rig.frame.reset_history();
                 let read = |rig: &ReadRig| {
-                    vxe_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target())
+                    svet_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target())
                 };
                 let mut at512 = Vec::new();
                 for f in 1..=1024 {
@@ -1258,14 +1259,14 @@ fn rest_readings(args: &Args) {
                 };
                 let one = change(&at1024, &at1025);
                 let drift = change(&at512, &at1024);
-                let mut sum = vec![0.0; vxe_render::FRAME_PASSES.len()];
+                let mut sum = vec![0.0; svet_render::FRAME_PASSES.len()];
                 for _ in 0..120 {
                     for (s, ms) in sum.iter_mut().zip(timed_step(&mut rig, &timer, &still)) {
                         *s += ms;
                     }
                 }
                 let of = |n: &str| {
-                    vxe_render::FRAME_PASSES
+                    svet_render::FRAME_PASSES
                         .iter()
                         .position(|p| *p == n)
                         .map_or(0.0, |i| sum[i] / 120.0)
@@ -1305,22 +1306,22 @@ fn pass_readings(args: &Args) {
         }
         let (mut rig, _) = view_rig(&view, NATIVE, &args.adapter);
         brick_bake(&mut rig, &view);
-        let timer = vxe_render::PassTimer::with_passes(
+        let timer = svet_render::PassTimer::with_passes(
             &rig.device,
             &rig.queue,
-            vxe_render::FRAME_PASSES.len() as u32,
+            svet_render::FRAME_PASSES.len() as u32,
         )
         .expect("timestamps on the adapter");
-        let internal = vxe_render::RenderScale::OneHalf.internal(NATIVE);
+        let internal = svet_render::RenderScale::OneHalf.internal(NATIVE);
         rig.frame.set_upscaler_kind(
             &rig.device,
-            vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+            svet_render::UpscalerKind::Fsr2(svet_render::Fsr2Settings {
                 sharpness: 0.5,
-                ..vxe_render::Fsr2Settings::default()
+                ..svet_render::Fsr2Settings::default()
             }),
         );
         rig.frame.set_sizes(&rig.device, internal, NATIVE);
-        rig.frame.set_look(vxe_render::LookParams {
+        rig.frame.set_look(svet_render::LookParams {
             far_normal: far,
             ..rig.frame.look()
         });
@@ -1330,9 +1331,9 @@ fn pass_readings(args: &Args) {
         // heading.
         let ahead = if view.name == "vein" {
             let (start, end) = support::settle::flight_path(&flythrough::VEIN_POSE);
-            (vxe_render::glam::Vec3::from(start) - vxe_render::glam::Vec3::from(end)).normalize()
+            (svet_render::glam::Vec3::from(start) - svet_render::glam::Vec3::from(end)).normalize()
         } else {
-            vxe_render::glam::Vec3::new(still.yaw.cos(), still.yaw.sin(), 0.0)
+            svet_render::glam::Vec3::new(still.yaw.cos(), still.yaw.sin(), 0.0)
         };
         let walk = |f: usize| {
             let t = (f % FRAMES) as f32;
@@ -1353,7 +1354,7 @@ fn pass_readings(args: &Args) {
                         rig.frame
                             .step(&rig.device, &rig.queue, &rig.gpu, &still, &light);
                     }
-                    let mut sum = vec![0.0; vxe_render::FRAME_PASSES.len()];
+                    let mut sum = vec![0.0; svet_render::FRAME_PASSES.len()];
                     for f in 0..FRAMES {
                         let c = if walking { walk(f) } else { still };
                         for (s, ms) in sum.iter_mut().zip(timed_step(&mut rig, &timer, &c)) {
@@ -1361,7 +1362,7 @@ fn pass_readings(args: &Args) {
                         }
                     }
                     let total: f64 = sum.iter().sum::<f64>() / FRAMES as f64;
-                    let passes: Vec<String> = vxe_render::FRAME_PASSES
+                    let passes: Vec<String> = svet_render::FRAME_PASSES
                         .iter()
                         .zip(&sum)
                         .filter(|(_, ms)| **ms > 0.0)
@@ -1436,10 +1437,10 @@ fn staircase_read(args: &Args) {
 
 /// `arm` of the staircase reading: (store read, far normal, look, weights, resolution).
 fn arm(
-    read: vxe_render::StoreRead,
+    read: svet_render::StoreRead,
     far_normal: [f32; 2],
-    mode: vxe_render::NormalMode,
-    weights: vxe_render::LightWeights,
+    mode: svet_render::NormalMode,
+    weights: svet_render::LightWeights,
     resolution: LightingResolution,
 ) -> StairArm {
     StairArm {
@@ -1454,7 +1455,7 @@ fn arm(
 /// Done-when 1 / 1b of the staircase reading at `size`: the far `camera`'s rock risers and
 /// treads past `line`, read on against ADR-0049's mix and read off against their face's value.
 fn stair_mix(log: &mut Log, rig: &mut Rig, camera: &Camera, size: [u32; 2], line: f32) {
-    use vxe_render::{LightWeights, NormalMode, StoreRead};
+    use svet_render::{LightWeights, NormalMode, StoreRead};
     let cells = rig.cells();
     let eye = camera.position.to_array();
     let full = LightingResolution::Full;
@@ -1558,7 +1559,7 @@ fn stair_mix(log: &mut Log, rig: &mut Rig, camera: &Camera, size: [u32; 2], line
 /// `t <= 64` with the read on and off, the far camera with the far normal off, the smooth
 /// looks' stored parts, and the face weights against the normal's.
 fn stair_near(log: &mut Log, rig: &mut Rig, [camera, near_camera]: [&Camera; 2], size: [u32; 2]) {
-    use vxe_render::{LightWeights, NormalMode, StoreRead};
+    use svet_render::{LightWeights, NormalMode, StoreRead};
     let full = LightingResolution::Full;
     let off = rig_frame(
         rig,

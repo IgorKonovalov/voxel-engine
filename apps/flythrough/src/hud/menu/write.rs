@@ -10,7 +10,7 @@ use super::page::{ITEM_LINES, Menu, PageId, Row};
 use crate::entities::belt::Item;
 use crate::hud::Modes;
 use std::fmt::Write as _;
-use vxe_render::{HudBox, HudColour};
+use svet_render::{HudBox, HudColour};
 
 /// The widest row, in cells.
 pub const MENU_COLS: usize = 80;
@@ -251,7 +251,7 @@ impl Menu {
                 colours.push(colour);
                 let tile = crate::entities::belt::tile_of(m, *i);
                 if m.walkers.icons.ready(tile) {
-                    paint.tiles.push(vxe_render::HudTile {
+                    paint.tiles.push(svet_render::HudTile {
                         col: 2,
                         row: (colours.len() - 1) as u32,
                         index: tile as u32,
@@ -285,7 +285,7 @@ impl Menu {
                 let col = ITEM_TEXT_COL + at;
                 let len = text.len() - start;
                 if len > col {
-                    let cell = vxe_render::HudBox {
+                    let cell = svet_render::HudBox {
                         col: col as u32,
                         row: (colours.len() - 1) as u32,
                         cols: (len - col) as u32,

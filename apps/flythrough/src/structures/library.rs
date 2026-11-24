@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 
-use vxe_assets::{SceneOptions, Slot, VoxFile, VoxMap, VoxScene};
-use vxe_entity::{MAX_COARSE, MAX_EDGE, MAX_PARTS, Model, Part};
-use vxe_world::{AIR, MaterialId, MaterialTable, Prefab, Rot};
+use svet_assets::{SceneOptions, Slot, VoxFile, VoxMap, VoxScene};
+use svet_entity::{MAX_COARSE, MAX_EDGE, MAX_PARTS, Model, Part};
+use svet_world::{AIR, MaterialId, MaterialTable, Prefab, Rot};
 
 /// The castle entry's name.
 pub const CASTLE_NAME: &str = "castle";

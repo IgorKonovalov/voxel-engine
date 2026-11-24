@@ -23,8 +23,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use flythrough::path::{PathMode, Scene};
 use flythrough::report::json::{self, Value};
-use vxe_app::{App, Flow, Gpu, Input, KeyCode, Pacing, ShellConfig, wgpu};
-use vxe_render::{HudColour, HudOverlay};
+use svet_app::{App, Flow, Gpu, Input, KeyCode, Pacing, ShellConfig, wgpu};
+use svet_render::{HudColour, HudOverlay};
 use vxe_tester::menu::{Command, Menu};
 use vxe_tester::run::{
     Outcome, Output, Profile, ReportDir, RunSpec, child_command, fly_args, flythrough_beside,
@@ -378,7 +378,7 @@ impl App for Launcher {
         let adapter = format!(
             "{} ({}), surface {:?} {:?}",
             info.name,
-            vxe_app::backend_label(info.backend),
+            svet_app::backend_label(info.backend),
             gpu.surface_format,
             gpu.surface_color_space.unwrap_or_default()
         );
@@ -471,7 +471,7 @@ fn launcher(auto: bool) {
         pacing: Pacing::Cap { hz: LAUNCHER_HZ },
         ..ShellConfig::default()
     };
-    let result = vxe_app::run(config, app);
+    let result = svet_app::run(config, app);
     // The window is gone; a run still going ends with its own window.
     drop(handle);
     let s = lock(&status);
