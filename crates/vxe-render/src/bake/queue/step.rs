@@ -296,6 +296,7 @@ impl BakeQueue {
             job_partial: &mut self.job_partial,
             provisional: &mut self.provisional,
             job_provisional: &mut self.job_provisional,
+            touched: &mut self.touched,
             entered: &mut self.entered,
             ages_first: &mut self.ages_first,
             ages_full: &mut self.ages_full,
@@ -493,6 +494,8 @@ struct Placement<'a> {
     job_partial: &'a mut ChunkSet,
     provisional: &'a mut ChunkSet,
     job_provisional: &'a mut ChunkSet,
+    /// [`BakeQueue::touched`]: a chunk whose job's block is thrown away is a candidate again.
+    touched: &'a mut ChunkSet,
     entered: &'a mut std::collections::HashMap<[i32; 3], (u64, bool)>,
     ages_first: &'a mut Vec<u32>,
     ages_full: &'a mut Vec<u32>,
@@ -520,6 +523,10 @@ impl Placement<'_> {
         let keyed = self.keys_open.remove(&coord.0);
         if self.stale.remove(&coord.0) || !self.gpu.is_mirrored(coord) {
             store.release(first, block.len() as u64);
+            // The pool reads its candidacy again: a job opened and ended between two of its
+            // reads is in neither job set it compares, and a chunk with no block is a
+            // candidate once its job is gone.
+            self.touched.insert(coord.0);
             // A dig job's bricks went back to the waiting digs at the edit; a whole chunk's
             // job that would have replaced a full block re-bakes whole.
             if dug.is_none()
