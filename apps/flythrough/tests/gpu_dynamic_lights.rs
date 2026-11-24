@@ -733,9 +733,17 @@ fn ring_rig_frame(rig: &Rig, native: bool, colour: Option<[f32; 3]>) -> vxe_rend
 /// pink in red, no magenta in blue); (2) its own channel equals the white frame's within 2/255
 /// at 99.9 % of pixels or more at native, within 4/255 at 99.5 % or more under FSR 2.
 fn no_rings(rig: &Rig, native: bool, name: &str, colour: [f32; 3], k: usize) -> Vec<String> {
-    let none = ring_rig_image(rig, native, None);
-    let white = ring_rig_image(rig, native, Some([1.0; 3]));
-    let c = ring_rig_image(rig, native, Some(colour));
+    // The three images are independent, each on its own thread (`support::joined`).
+    let (none, white, c) = std::thread::scope(|s| {
+        let none = s.spawn(|| ring_rig_image(rig, native, None));
+        let white = s.spawn(|| ring_rig_image(rig, native, Some([1.0; 3])));
+        let c = s.spawn(|| ring_rig_image(rig, native, Some(colour)));
+        (
+            support::joined(none),
+            support::joined(white),
+            support::joined(c),
+        )
+    });
     let px = c.len() / 4;
     let (mut other_max, mut other_n) = (0u8, 0usize);
     let (tol, share) = if native { (2, 99.9) } else { (4, 99.5) };

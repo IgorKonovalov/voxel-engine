@@ -3,12 +3,13 @@
 //! Headless fly-through runs on the software adapter (`--adapter llvmpipe`), skipped where the
 //! machine has none.
 
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
 
-/// The run's stdout and stderr: headless on lavapipe, a 12 m room (about 26 chunks) at 64 x 36, `--frames 3`,
-/// with `extra` arguments; `None` with a printed skip without the adapter.
-fn room_run(extra: &[&str]) -> Option<(String, String)> {
-    let out = Command::new(env!("CARGO_BIN_EXE_flythrough"))
+/// A headless run on lavapipe started and not waited on: a 12 m room (about 26 chunks) at
+/// 64 x 36, `--frames 3`, with `extra` arguments. [`room_wait`] collects it, so two runs can
+/// overlap: most of a run is single-threaded pipeline compilation.
+fn room_spawn(extra: &[&str]) -> Child {
+    Command::new(env!("CARGO_BIN_EXE_flythrough"))
         .args([
             "--headless",
             "--adapter",
@@ -22,8 +23,16 @@ fn room_run(extra: &[&str]) -> Option<(String, String)> {
         ])
         .args(extra)
         .env("RUST_LOG", "flythrough=info")
-        .output()
-        .expect("the fly-through runs");
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the fly-through starts")
+}
+
+/// [`room_spawn`]'s run's stdout and stderr once it exits; `None` with a printed skip without
+/// the adapter.
+fn room_wait(run: Child) -> Option<(String, String)> {
+    let out = run.wait_with_output().expect("the fly-through runs");
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     if !out.status.success() && stderr.contains("no adapter") {
@@ -74,11 +83,13 @@ fn world_frames(stderr: &str) -> usize {
 /// frames on in the pre-roll's stages, none off, and exactly 3 world frames in both.
 #[test]
 fn a_sliced_pre_roll_bakes_what_an_unsliced_one_bakes() {
-    let Some((off_out, off_err)) = room_run(&["--loading-screen", "off"]) else {
-        return;
-    };
-    let Some((on_out, on_err)) = room_run(&["--loading-screen", "on", "--load-slice", "0.05"])
-    else {
+    let off_run = room_spawn(&["--loading-screen", "off"]);
+    let on_run = room_spawn(&["--loading-screen", "on", "--load-slice", "0.05"]);
+    // Each run's pipes drained on its own thread, so neither blocks on a full pipe.
+    let on_done = std::thread::spawn(move || room_wait(on_run));
+    let off_done = room_wait(off_run);
+    let on_done = on_done.join().expect("the on run's reader");
+    let (Some((off_out, off_err)), Some((on_out, on_err))) = (off_done, on_done) else {
         return;
     };
     let off = pre_roll(&off_out);

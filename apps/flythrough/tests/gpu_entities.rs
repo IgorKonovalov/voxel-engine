@@ -797,7 +797,13 @@ fn the_probes_and_the_bake_see_no_entity() {
         rig.bake(&support::bake::test_counts(16));
         Some((probes, rig.blocks()))
     };
-    let (Some(without), Some(with)) = (run(false), run(true)) else {
+    // The two runs are independent, each on its own thread (`support::joined`).
+    let (without, with) = std::thread::scope(|s| {
+        let without = s.spawn(|| run(false));
+        let with = s.spawn(|| run(true));
+        (support::joined(without), support::joined(with))
+    });
+    let (Some(without), Some(with)) = (without, with) else {
         return;
     };
     assert!(!without.0.is_empty(), "the probe volume runs");

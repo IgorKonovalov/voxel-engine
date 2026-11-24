@@ -34,6 +34,14 @@ pub const EXPOSURE_BUFFERS: u64 = 2 * 32 + 16 + 128 + 3 * 256;
 /// highlight state's 16 B buffer.
 pub const EXPOSURE_GROWTH: u64 = (16 - 8) * 160 * 90 + (128 - 96) + 16;
 
+/// A scoped thread's result, its panic re-raised on the caller's thread with its own message.
+/// A test runs independent renders (each its own mirror and frame on the one device) on their
+/// own threads: on lavapipe most of a render's time is single-threaded pipeline compilation,
+/// which then overlaps.
+pub fn joined<T>(h: std::thread::ScopedJoinHandle<'_, T>) -> T {
+    h.join().unwrap_or_else(|e| std::panic::resume_unwind(e))
+}
+
 pub const WIDTH: u32 = 320;
 pub const HEIGHT: u32 = 180;
 
