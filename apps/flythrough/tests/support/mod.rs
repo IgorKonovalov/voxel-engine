@@ -75,13 +75,13 @@ impl SyncNow for GpuWorld {
 
 /// A device on the software Vulkan adapter (lavapipe), or `None` with a printed skip when the
 /// machine has none. Goldens are blessed on lavapipe, so no other adapter stands in for it.
-/// With `VXE_REQUIRE_SOFTWARE_ADAPTER=1` a missing adapter panics instead, so a CI arm that
+/// With `SVET_REQUIRE_SOFTWARE_ADAPTER=1` a missing adapter panics instead, so a CI arm that
 /// promises image comparisons cannot pass by skipping them.
 pub fn software_device(pool_bytes: u64) -> Option<(wgpu::Device, wgpu::Queue)> {
     svet_render::test_support::software_device(pool_bytes, wgpu::Features::empty())
 }
 
-/// A device for a **reading-only** test, chosen by `VXE_TEST_ADAPTER` (lane rule 9c: iterate
+/// A device for a **reading-only** test, chosen by `SVET_TEST_ADAPTER` (lane rule 9c: iterate
 /// on the fast adapter, prove on lavapipe), with the chosen adapter's name for the readings'
 /// labels:
 /// - unset, empty or `fallback`: lavapipe, exactly as [`software_device`] picks it (`None`
@@ -93,8 +93,8 @@ pub fn software_device(pool_bytes: u64) -> Option<(wgpu::Device, wgpu::Queue)> {
 /// reading naming the adapter, and assert nothing a gate runs. Asserted tests and goldens call
 /// [`software_device`] and stay on lavapipe, CI's adapter.
 pub fn reading_device(pool_bytes: u64) -> Option<(wgpu::Device, wgpu::Queue, String)> {
-    let want = std::env::var("VXE_TEST_ADAPTER").unwrap_or_default();
-    adapter_device(&want, "VXE_TEST_ADAPTER=", pool_bytes)
+    let want = std::env::var("SVET_TEST_ADAPTER").unwrap_or_default();
+    adapter_device(&want, "SVET_TEST_ADAPTER=", pool_bytes)
 }
 
 /// [`reading_device`] for the adapter `want` names (empty or `fallback`: lavapipe), as a
@@ -221,11 +221,11 @@ pub fn bins_covering(rgba: &[u8], share: f64) -> usize {
     bins.iter().filter(|&&c| c as f64 >= share * n).count()
 }
 
-/// Compares `rgba` with the golden `name`, or rewrites the golden when `VXE_BLESS=1`. At most
+/// Compares `rgba` with the golden `name`, or rewrites the golden when `SVET_BLESS=1`. At most
 /// 0.1 % of pixels may differ by more than 2/255 in any channel.
 pub fn assert_golden(name: &str, rgba: &[u8]) {
     let path = golden_path(name);
-    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
         write_png(&path, rgba, WIDTH, HEIGHT);
         println!("blessed {path:?}");
         return;
@@ -273,10 +273,10 @@ pub fn ssim(a: &[u8], b: &[u8], w: u32) -> f64 {
 }
 
 /// Compares `rgba` with the golden `name` by [`ssim`], at least `floor`, or rewrites the golden
-/// when `VXE_BLESS=1`; the share of pixels differing by more than 2/255 prints beside it.
+/// when `SVET_BLESS=1`; the share of pixels differing by more than 2/255 prints beside it.
 pub fn assert_golden_ssim(name: &str, rgba: &[u8], floor: f64) {
     let path = golden_path(name);
-    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
         write_png(&path, rgba, WIDTH, HEIGHT);
         println!("blessed {path:?}");
         return;

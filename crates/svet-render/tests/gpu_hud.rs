@@ -8,7 +8,7 @@ const CLEAR: [u8; 4] = [10, 20, 30, 255];
 const WHITE: [u8; 3] = [255, 255, 255];
 
 /// A device on the software Vulkan adapter, or `None` with a printed skip when the machine has
-/// none. With `VXE_REQUIRE_SOFTWARE_ADAPTER=1` a missing adapter panics instead.
+/// none. With `SVET_REQUIRE_SOFTWARE_ADAPTER=1` a missing adapter panics instead.
 fn software_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     svet_render::test_support::software_device(0, wgpu::Features::empty())
 }

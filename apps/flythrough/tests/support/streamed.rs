@@ -361,7 +361,7 @@ fn held_hits(
             *by.entry(c).or_default() += 1;
         }
     }
-    if let Ok(path) = std::env::var("VXE_HELD_PNG") {
+    if let Ok(path) = std::env::var("SVET_HELD_PNG") {
         // The display, and beside it the lighting grid: red where the hit's chunk holds no
         // block, grey where it does, black at a miss.
         let t = frame.target();

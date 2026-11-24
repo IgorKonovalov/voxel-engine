@@ -1,7 +1,7 @@
 //! The stats HUD over the golden scene on the software adapter (lavapipe): `primary.png`'s
 //! view after its carve, the overlay drawn from [`fixed_stats`] (`HudStats::fixed()` with the
 //! start's mode block) and a fixed 240-sample strip at scale 1, compared pixel-exact with
-//! `hud.png`. `VXE_BLESS=1` rewrites it.
+//! `hud.png`. `SVET_BLESS=1` rewrites it.
 //!
 //! The overlay is drawn onto a copy of the march target, the way the fly-through draws it
 //! onto the surface after the blit. Integer scale and no filtering make every pixel exact.
@@ -151,7 +151,7 @@ fn hud_golden_over_the_carved_view_is_pixel_exact() {
     };
     let img = &frame.composed;
     let path = golden_path("hud.png");
-    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
         write_png(&path, img, WIDTH, HEIGHT);
         println!("blessed {path:?}");
         return;
@@ -221,7 +221,7 @@ fn hud_golden_over_the_carved_view_is_pixel_exact() {
 /// march target and through the copy the HUD is drawn onto.
 #[test]
 fn hud_off_is_the_primary_golden_byte_for_byte() {
-    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
         return;
     }
     let Some(frame) = render(false) else {
@@ -253,7 +253,7 @@ fn mode_banner_golden_shows_the_modes_with_the_hud_off() {
     };
     let img = &frame.composed;
     let path = golden_path("mode_banner.png");
-    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
         write_png(&path, img, WIDTH, HEIGHT);
         println!("blessed {path:?}");
     } else {
@@ -336,7 +336,7 @@ fn menu_over_the_carved_view() {
     };
     let img = &frame.composed;
     let path = golden_path("menu.png");
-    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
         write_png(&path, img, WIDTH, HEIGHT);
         println!("blessed {path:?}");
     } else {
@@ -459,7 +459,7 @@ fn the_belt_and_the_chooser_over_the_carved_view() {
         };
         let img = &frame.composed;
         let path = golden_path(name);
-        if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+        if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
             write_png(&path, img, WIDTH, HEIGHT);
             println!("blessed {path:?}");
         } else {
@@ -551,7 +551,7 @@ fn the_structures_chooser() {
     };
     let img = &frame.composed;
     let path = golden_path("structures.png");
-    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
         write_png(&path, img, WIDTH, HEIGHT);
         println!("blessed {path:?}");
     } else {

@@ -1,7 +1,7 @@
 //! `chapel.png`: the chapel of the structures library placed in the dark cave ahead of the
 //! spawn (`--vox`'s path), lit by its own lamps and the headlamp, on the software adapter
 //! (lavapipe).
-//! `VXE_BLESS=1` rewrites it.
+//! `SVET_BLESS=1` rewrites it.
 
 mod support;
 

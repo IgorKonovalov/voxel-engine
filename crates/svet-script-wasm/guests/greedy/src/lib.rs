@@ -13,7 +13,7 @@
 //!   regions found as a `u32`.
 
 use svet_net::{ClientInput, Host, Logic, TickOutput};
-use svet_script_wasm::guest::bindings::vxe::logic::host as wit;
+use svet_script_wasm::guest::bindings::svet::logic::host as wit;
 use svet_world::{CellCoord, Fixed3, VoxelCoord};
 
 #[derive(Default)]

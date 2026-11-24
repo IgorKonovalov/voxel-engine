@@ -5,7 +5,7 @@ mod flicker {
     /// Plan 0086 Phase 24a bar 2 (ADR-0076 rule 4's form): a dig changes nothing outside its
     /// reach. `reading::dig_split`'s rig (the hills of seed 1 at noon, the spawn's view 30 degrees
     /// down, the fly-through's defaults, FSR 2 from 640 x 360 to 960 x 540, the live queue drained;
-    /// `VXE_SPLIT_TIME` another hour), the 1 m dig about 35 voxels ahead: over every frame pair
+    /// `SVET_SPLIT_TIME` another hour), the 1 m dig about 35 voxels ahead: over every frame pair
     /// from the one ending at the dig's frame N to N + 16, the share of display pixels outside
     /// the box dilated by 64 voxels whose largest channel changes by over 4 levels is at most
     /// the larger of 0.5 % and 1.5 times the still pairs' largest share over the same band
@@ -68,7 +68,7 @@ mod flicker {
     /// most the history arm's largest plus 2 points; the hole's share (hits inside the box
     /// dilated by one voxel) brighter than the settled frame by over 4 levels is at most the
     /// history arm's largest plus 2 points, and the hole's mean luma's excess over its settled
-    /// mean at most the history arm's largest plus 4 levels. `VXE_DIG`'s arm
+    /// mean at most the history arm's largest plus 4 levels. `SVET_DIG`'s arm
     /// (`support::defects::dig_spec`) replaces the defaults' arm: `forest/hold=off` is the
     /// fault the bar was written for. Its claim is the ring's: the hole's is defended by
     /// [`a_fresh_hole_holds_its_value_until_its_light_lands`], whose pose shows the white hole
@@ -114,7 +114,7 @@ mod flicker {
     /// smaller, are each at most 2 %; after that until the next dig, the same at 4 levels; the
     /// ring's at 4 levels in every frame; dots at most the settled frame's plus 1 point; the
     /// ring and the frame within 1 level of N - 1 until the first landing; and from each
-    /// group's landing no step away from its settled mean over 1 level. `VXE_DIG`'s arm
+    /// group's landing no step away from its settled mean over 1 level. `SVET_DIG`'s arm
     /// (`support::defects::dig_spec`; `hold=rays` the bite check) replaces the defaults'.
     #[test]
     #[ignore = "soak"]
@@ -168,7 +168,7 @@ mod flicker {
         /// queue drained, 240 settle frames, then [`STRIP`] frames. Each strip writes its
         /// frames, `diff.png` (the largest per-pixel change over the strip, times 8) and its
         /// counts under `live/flicker/<scene>/current/<strip>/`; the runner renames `current`.
-        /// `VXE_TEST_ADAPTER` picks the adapter.
+        /// `SVET_TEST_ADAPTER` picks the adapter.
         #[test]
         #[ignore = "reading"]
         fn flicker_hills() {
@@ -243,7 +243,7 @@ mod flicker {
             let (mut rig, cam) = support::terms::hills_rig()?;
             let cam = pitched(&cam, -30.0);
             let mut s = strip_frame(&mut rig, split_sky(), &cam);
-            let arm = std::env::var("VXE_HOLE_ARM").unwrap_or_else(|_| "no-pool".into());
+            let arm = std::env::var("SVET_HOLE_ARM").unwrap_or_else(|_| "no-pool".into());
             s.frame.set_light_hooks(svet_render::LightHooks {
                 pool: !arm.ends_with("no-pool"),
                 seed_stale_f: arm.starts_with("seed-f"),
@@ -272,7 +272,7 @@ mod flicker {
         /// arm a test, each in its own process (a second frame on one rig did not drain its
         /// queue in 6000 frames): the defaults under the auto exposure, the exposure pinned at
         /// its settled value, then pinned with `key_no_jitter`, and pinned with `key_off`.
-        /// `VXE_TEST_ADAPTER` picks the adapter.
+        /// `SVET_TEST_ADAPTER` picks the adapter.
         fn hills_at_rest(arm: &str, pin: bool, hooks: svet_render::LightHooks) {
             let Some((mut rig, cam)) = support::terms::hills_rig() else {
                 return;
@@ -351,7 +351,7 @@ mod flicker {
         /// the share of display pixels over `T_RETURN` at the return frame against the settled
         /// image, and the frames after the return until a pair's share over `T_STILL` is at or
         /// under the settled strip's largest (at most 600). The queue drains for at most 30 000
-        /// frames first; each leaf style runs in its own process. `VXE_TEST_ADAPTER` picks the
+        /// frames first; each leaf style runs in its own process. `SVET_TEST_ADAPTER` picks the
         /// adapter.
         #[test]
         #[ignore = "reading"]
@@ -439,7 +439,7 @@ mod flicker {
         }
 
         /// Plan 0094 Phase 2 bar 2: the dig's hole band. [`dig_split`]'s rig at
-        /// `VXE_SPLIT_TIME` (16:00 and 17:00 on the shadowed side), drained and
+        /// `SVET_SPLIT_TIME` (16:00 and 17:00 on the shadowed side), drained and
         /// settled, 8 frames read, the dig at N, then frames until the dig's job lands (the
         /// queue's `digs_baked` rises; at most 400) and `F + 16` more. The bands by the hit's
         /// distance from the dig's box at N: the hole band (within 8 voxels) and the ring's edge
@@ -450,9 +450,9 @@ mod flicker {
         /// contact shadow's seed against what the pixel settles to, frame `landing + F + 16`);
         /// and rule 3's class shares over the trace from N - 8 to the landing plus `F + 16`, the
         /// fade allowed `landing + F` frames; the a-trous pass's ms still and over the band's
-        /// frames. `VXE_HOLE_ARM`: `no-pool` (the default), `pool` (`LightHooks::pool`),
+        /// frames. `SVET_HOLE_ARM`: `no-pool` (the default), `pool` (`LightHooks::pool`),
         /// `key-off` (the pool with `LightHooks::key_off`), `seed-f` (the pool) and
-        /// `seed-f-no-pool` (those with `LightHooks::seed_stale_f`); [`dig_split`] reads it too. `VXE_TEST_ADAPTER` picks the adapter.
+        /// `seed-f-no-pool` (those with `LightHooks::seed_stale_f`); [`dig_split`] reads it too. `SVET_TEST_ADAPTER` picks the adapter.
         #[test]
         #[ignore = "reading"]
         fn hole_band() {
@@ -462,7 +462,7 @@ mod flicker {
             };
             let cam = pitched(&cam, -30.0);
             let mut s = strip_frame(&mut rig, split_sky(), &cam);
-            let arm = std::env::var("VXE_HOLE_ARM").unwrap_or_else(|_| "no-pool".into());
+            let arm = std::env::var("SVET_HOLE_ARM").unwrap_or_else(|_| "no-pool".into());
             s.frame.set_light_hooks(svet_render::LightHooks {
                 pool: !arm.ends_with("no-pool"),
                 key_off: arm == "key-off",
@@ -544,7 +544,7 @@ mod flicker {
             };
             println!(
                 "reading: hole band arm {arm} at {}: the a-trous pass {:.3} ms still, {:.3} ms from N to the landing + F ({})",
-                std::env::var("VXE_SPLIT_TIME").unwrap_or_else(|_| "12:00".into()),
+                std::env::var("SVET_SPLIT_TIME").unwrap_or_else(|_| "12:00".into()),
                 ms(0..MEAN_FRAMES),
                 ms(MEAN_FRAMES..(MEAN_FRAMES + landing + F).min(shots.len())),
                 rig.adapter
@@ -600,7 +600,7 @@ mod flicker {
                     "reading: hole band at {}, {name}: {px} px; landing at N + {landing}; pairs N..N+4 over 4: {over} px-pairs, \
                      cast {:.1} %, pair at the seed's age {:.1} %, history age 0 {:.1} %, sources [{}]; \
                      seeded at N {seeded} lighting px, mean |seed - settled| {:.4}; rule 3 classes [{}] ({})",
-                    std::env::var("VXE_SPLIT_TIME").unwrap_or_else(|_| "12:00".into()),
+                    std::env::var("SVET_SPLIT_TIME").unwrap_or_else(|_| "12:00".into()),
                     pc(cast),
                     pc(seed),
                     pc(age0),
@@ -616,7 +616,7 @@ mod flicker {
         /// seed 1 about the spawn at the fly-through's residency (`RESIDENCY`, full 16, LOD 24)
         /// and mirror (the default budget, `stream_record_chunks`, a following window), the
         /// streamer polled and the mirror synced every frame, the live queue stepped with the
-        /// streamer's residency; [`STREAM_SETTLE`] frames (`VXE_SPLIT_SETTLE`) before the split.
+        /// streamer's residency; [`STREAM_SETTLE`] frames (`SVET_SPLIT_SETTLE`) before the split.
         #[test]
         #[ignore = "reading"]
         fn flicker_dig_streamed() {
@@ -702,7 +702,7 @@ mod flicker {
                     .expect("the queue runs")
                     .expect("the queue's step")
             };
-            let settle_n: u32 = std::env::var("VXE_SPLIT_SETTLE")
+            let settle_n: u32 = std::env::var("SVET_SPLIT_SETTLE")
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(STREAM_SETTLE);
@@ -1011,7 +1011,7 @@ mod flicker {
             Some((support::defects::HoleRun { frames, n1: 1, digs, out, hold, eye }, rig))
         }
 
-        /// Plan 0098 Phase 14 step 1's reading ([`hole_run`]; `VXE_DIG`'s scene `above` or
+        /// Plan 0098 Phase 14 step 1's reading ([`hole_run`]; `SVET_DIG`'s scene `above` or
         /// `coarse`, its arm and drain): the frames under `live/flicker/dig-above/<scene>-<arm>/`
         /// and the tables (`support::defects::hole_tables`) in `tables.txt` beside them.
         #[test]
@@ -1030,9 +1030,9 @@ mod flicker {
             std::fs::write(dir.join("tables.txt"), text).expect("the tables");
         }
 
-        /// The split's sky: noon, or the clock at `VXE_SPLIT_TIME` (`HH:MM`).
+        /// The split's sky: noon, or the clock at `SVET_SPLIT_TIME` (`HH:MM`).
         fn split_sky() -> svet_render::sky::Sky {
-            let minutes = std::env::var("VXE_SPLIT_TIME").ok().and_then(|t| {
+            let minutes = std::env::var("SVET_SPLIT_TIME").ok().and_then(|t| {
                 let (h, m) = t.split_once(':')?;
                 Some(h.parse::<f64>().ok()? * 60.0 + m.parse::<f64>().ok()?)
             });
@@ -1329,13 +1329,13 @@ mod flicker {
         /// (b) with `LightHooks::key_off`. Each strip prints its per-frame series (the over-8
         /// count per pair, the store's missing and chained counts, the sky rays cast, the
         /// queue's `digs_baked`); the strips land under `<arm>-fresh` and `<arm>-settled`.
-        /// `VXE_CASTLE_ARM` runs one arm alone in its process: `a`, or `b:E` / `c:E` pinned at
+        /// `SVET_CASTLE_ARM` runs one arm alone in its process: `a`, or `b:E` / `c:E` pinned at
         /// exposure `E` (arm (a)'s printed one); a name ending in `B` (`aB`) reads the
         /// no-record prior's arm B (`LightHooks::column_prior`).
         #[test]
         #[ignore = "reading"]
         fn flicker_castle() {
-            if let Ok(v) = std::env::var("VXE_CASTLE_ARM") {
+            if let Ok(v) = std::env::var("SVET_CASTLE_ARM") {
                 let (arm, pin) = v.split_once(':').map_or((v.as_str(), None), |(a, e)| {
                     (a, Some(e.parse::<f32>().expect("an exposure")))
                 });

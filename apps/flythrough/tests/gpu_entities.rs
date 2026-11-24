@@ -1,7 +1,7 @@
 //! Plan 0062's entities on the software adapter (ADR-0050): voxel-model parts drawn in the
 //! hit pass after the world march, and the caps of the entity mirror. A closed rock box, its
 //! table the cave's plus the walker's rows and a red row, under a 192 x 108 frame with no
-//! jitter. `VXE_BLESS=1` rewrites the goldens here.
+//! jitter. `SVET_BLESS=1` rewrites the goldens here.
 
 mod support;
 
@@ -468,7 +468,7 @@ fn walker_albedo_golden() {
 /// [`support::assert_golden`]'s rule at 192 x 108.
 fn assert_golden_sized(name: &str, rgba: &[u8]) {
     let path = support::golden_path(name);
-    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
         support::write_png(&path, rgba, W, H);
         println!("blessed {path:?}");
         return;

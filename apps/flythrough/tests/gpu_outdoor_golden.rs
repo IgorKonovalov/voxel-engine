@@ -3,7 +3,7 @@
 //! (Plan 0095) the forest at 15:00 under ADR-0079's key light, each at the testbed's picks
 //! (both bodies at `daylight::BODY_RADIUS_DEG`, one sky ray, the half lighting tier, the
 //! outdoor auto exposure, `--trees sparse` at `LEAF_FILL` unless a test names another).
-//! Lavapipe, 320 x 180, blessed with `VXE_BLESS=1`.
+//! Lavapipe, 320 x 180, blessed with `SVET_BLESS=1`.
 
 mod support;
 

@@ -102,7 +102,7 @@ Noted 2026-11-17 by the Plan 0032 lane (Phase 6 readings): `--adapter radeon` an
 match no adapter name on the dev box and the fly-through runs on the RTX without a word; the
 iGPU needs `--adapter AMD`. A reading taken that way is labelled with the wrong machine. Fix as a
 chore: refuse (or print the adapters and exit) when no adapter matches, and accept the short
-names the tests' `VXE_TEST_ADAPTER` takes.
+names the tests' `SVET_TEST_ADAPTER` takes.
 
 ### A headless run at `--residency 3,4` hangs before its first frame
 
@@ -1018,7 +1018,7 @@ ahead of the follow-on light plan's first window. Item (4) done 2026-11-24 on br
 
 Found 2026-11-17 at Plan 0088's close review. `apps/flythrough/tests/gpu_path.rs`
 (`a_path_run_writes_its_report`, soak) and `gpu_frame_waits.rs` print "skipped: no adapter" and
-pass when the fly-through finds no adapter, without the `VXE_REQUIRE_SOFTWARE_ADAPTER=1` panic
+pass when the fly-through finds no adapter, without the `SVET_REQUIRE_SOFTWARE_ADAPTER=1` panic
 that `gpu_loading.rs`'s first helper has. `soak.yml` and `ci.yml`'s Linux arm set the variable,
 so a runner without lavapipe passes these tests green. What it takes: the same three-line check
 in both, or one helper in `tests/support/` they call. A dev chore of minutes.

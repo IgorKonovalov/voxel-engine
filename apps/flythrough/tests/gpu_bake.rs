@@ -1510,7 +1510,7 @@ fn a_small_far_staircase_reads_the_mix_and_matches_its_golden() {
         ),
     );
     let path = support::golden_path("far_staircase_store_normal.png");
-    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
         support::write_png(&path, &defaults.display, SIZE[0], SIZE[1]);
         println!("blessed {path:?}");
         return;

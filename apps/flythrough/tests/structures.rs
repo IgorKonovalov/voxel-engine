@@ -69,20 +69,20 @@ fn the_library_lists_every_structure() {
 }
 
 /// `chapel.vox` is `chapel.voxtext` with its materials, layers and mirror added
-/// (`structures::chapel_vox`). `VXE_BLESS_CHAPEL=1` writes it.
+/// (`structures::chapel_vox`). `SVET_BLESS_CHAPEL=1` writes it.
 #[test]
 fn the_chapel_assets_are_in_step() {
     let text = std::fs::read_to_string(chapel_dir().join("chapel.voxtext")).expect("reads");
     let file = structures::chapel_vox(&text).expect("builds");
     let bytes = encode(&file);
     let path = chapel_dir().join("chapel.vox");
-    if std::env::var_os("VXE_BLESS_CHAPEL").is_some() {
+    if std::env::var_os("SVET_BLESS_CHAPEL").is_some() {
         std::fs::write(&path, &bytes).expect("writes chapel.vox");
     }
     let committed = std::fs::read(&path).expect("chapel.vox reads");
     assert!(
         committed == bytes,
-        "chapel.vox is not chapel.voxtext's: VXE_BLESS_CHAPEL=1 writes it"
+        "chapel.vox is not chapel.voxtext's: SVET_BLESS_CHAPEL=1 writes it"
     );
     let back = VoxFile::parse(&committed).expect("parses");
     assert_eq!(back, file);
@@ -274,14 +274,14 @@ mod reading {
 
     /// Plan 0083 Phase 8's settle reading needs the castle as a `.vox` the fly-through's
     /// `--vox PATH --vox-op` places at runtime: writes `castle::castle_vox()` encoded to
-    /// `$VXE_CASTLE_VOX` (default `live/castle.vox` under the workspace). Its palette has no
+    /// `$SVET_CASTLE_VOX` (default `live/castle.vox` under the workspace). Its palette has no
     /// `MATL`, so its torches are plain rows there. Run by hand:
     /// `cargo nextest run -p flythrough --test structures --run-ignored only
     /// -E 'test(=reading::castle_as_a_vox_file)'`.
     #[test]
     #[ignore = "reading: writes the castle as a .vox for the settle reading, by hand"]
     fn castle_as_a_vox_file() {
-        let path = std::env::var("VXE_CASTLE_VOX").map_or_else(
+        let path = std::env::var("SVET_CASTLE_VOX").map_or_else(
             |_| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../live/castle.vox"),
             std::path::PathBuf::from,
         );

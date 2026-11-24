@@ -1,6 +1,6 @@
 //! Plan 0098 Phase 9: the sunlit terraces at noon, a reading. The window's noon slope
 //! (`--source outdoor`, trees sparse, `--time 12:00`, the outside spawn facing +x: x -299.5 y
-//! 0.5 z 549.5), the `VXE_WOBBLE` arm over the rig's frame. The class is the step shadows:
+//! 0.5 z 549.5), the `SVET_WOBBLE` arm over the rig's frame. The class is the step shadows:
 //! display pixels whose lighting pixel is on a face the key light falls on and whose 3 x 3
 //! lighting neighbours (each on such a face) hold key visibilities on both sides of one half
 //! (the key term's shadow edge, about 3 display pixels either way at 1.5 over a half-rate
@@ -228,7 +228,7 @@ mod reading {
         svet_render::debug::read_rgba8(&rig.device, &rig.queue, s.frame.target())
     }
 
-    /// The reading: the arm `VXE_WOBBLE` names on the noon slope, its still and fly lines and
+    /// The reading: the arm `SVET_WOBBLE` names on the noon slope, its still and fly lines and
     /// pass times printed and written to `live/wobble/terraces/<arm>.txt`.
     #[test]
     #[ignore = "reading"]

@@ -386,23 +386,23 @@ mod dig_line {
             out
         }
 
-        /// Plan 0098 Phase 16 step 1's timeline: `VXE_LINE` is `SCENE/STATE/SEQ/ARM/DRAIN`
+        /// Plan 0098 Phase 16 step 1's timeline: `SVET_LINE` is `SCENE/STATE/SEQ/ARM/DRAIN`
         /// (`above` or `portable`, `drained` or `waiting`, `A` or `B`, `support::defects`'
         /// dig arm tokens, the most frames the queue drains); the text under
         /// `live/p16/<adapter>-<scene>-<state>-<seq>-<arm>.txt`, the frames' PNGs beside it with
-        /// `VXE_LINE_PNG` set.
+        /// `SVET_LINE_PNG` set.
         #[test]
         #[ignore = "reading"]
         fn dig_timeline() {
-            let v = std::env::var("VXE_LINE").unwrap_or_default();
+            let v = std::env::var("SVET_LINE").unwrap_or_default();
             let mut it = v.split('/');
             let mut part = |d: &str| it.next().filter(|s| !s.is_empty()).unwrap_or(d).to_string();
             let (scene, state, seq, arm) = (part("above"), part("drained"), part("A"), part("default"));
-            let drain: u32 = part("30000").parse().expect("VXE_LINE's drain");
-            let adapter = std::env::var("VXE_TEST_ADAPTER").unwrap_or_else(|_| "lavapipe".into());
+            let drain: u32 = part("30000").parse().expect("SVET_LINE's drain");
+            let adapter = std::env::var("SVET_TEST_ADAPTER").unwrap_or_else(|_| "lavapipe".into());
             let name = format!("{adapter}-{scene}-{state}-{seq}-{}", arm.replace([',', '='], "-"));
             let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../live/p16");
-            let png = std::env::var("VXE_LINE_PNG").is_ok().then(|| dir.join(&name));
+            let png = std::env::var("SVET_LINE_PNG").is_ok().then(|| dir.join(&name));
             if let Some(p) = &png {
                 std::fs::create_dir_all(p).expect("the stills' directory");
             }
@@ -790,7 +790,7 @@ mod dig_line {
         use super::claims;
 
         /// Plan 0098 Phase 17 step 1's histogram: [`claims`] of A and B on the waiting queue
-        /// under `VXE_DIG`'s arm (`support::defects::dig_spec`), printed, nothing asserted.
+        /// under `SVET_DIG`'s arm (`support::defects::dig_spec`), printed, nothing asserted.
         #[test]
         #[ignore = "reading"]
         fn hold_histogram() {

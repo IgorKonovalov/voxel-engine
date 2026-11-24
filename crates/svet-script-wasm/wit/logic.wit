@@ -3,7 +3,7 @@
 // Compound values cross as `svet_world::wire` bytes, the encoding the op log and the channel
 // use; scalars cross typed. A logic exports `init` and `tick` and sees the world only through
 // the `host` imports, which answer from the server's authoritative world during those calls.
-package vxe:logic@0.1.0;
+package svet:logic@0.1.0;
 
 interface host {
     /// A fixed-point position or direction: 1/256 voxel per unit.

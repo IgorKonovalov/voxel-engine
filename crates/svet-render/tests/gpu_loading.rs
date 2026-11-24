@@ -1,13 +1,13 @@
 //! The engine's loading frame on the software adapter (lavapipe): the bar fills to its
 //! fraction, a second frame with new rows allocates nothing, and the frame matches its golden
-//! (`tests/golden/loading_screen.png`; `VXE_BLESS=1` rewrites it).
+//! (`tests/golden/loading_screen.png`; `SVET_BLESS=1` rewrites it).
 
 use svet_render::{
     LoadingScreen, LoadingView, loading_bar_inner, loading_bar_rect, loading_layout, wgpu,
 };
 
 /// A device on the software Vulkan adapter, or `None` with a printed skip when the machine has
-/// none. With `VXE_REQUIRE_SOFTWARE_ADAPTER=1` a missing adapter panics instead.
+/// none. With `SVET_REQUIRE_SOFTWARE_ADAPTER=1` a missing adapter panics instead.
 fn software_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::VULKAN,
@@ -21,8 +21,8 @@ fn software_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         Ok(a) if a.get_info().device_type == wgpu::DeviceType::Cpu => a,
         other => {
             let found = other.map_or_else(|e| format!("no adapter ({e})"), |a| a.get_info().name);
-            if std::env::var("VXE_REQUIRE_SOFTWARE_ADAPTER").as_deref() == Ok("1") {
-                panic!("VXE_REQUIRE_SOFTWARE_ADAPTER=1 but the fallback is {found}");
+            if std::env::var("SVET_REQUIRE_SOFTWARE_ADAPTER").as_deref() == Ok("1") {
+                panic!("SVET_REQUIRE_SOFTWARE_ADAPTER=1 but the fallback is {found}");
             }
             println!("skipped: no software adapter ({found})");
             return None;
@@ -225,7 +225,7 @@ fn the_loading_frame_allocates_nothing_after_the_first() {
 
 /// `tests/golden/loading_screen.png`: at 1280 x 720, progress 0.37, `seconds` 0.4 (the cube
 /// part-way through its turn), alpha 1, titled `castle - benchmark`, the stage and its count
-/// below; byte for byte. Blessed on lavapipe with `VXE_BLESS=1`.
+/// below; byte for byte. Blessed on lavapipe with `SVET_BLESS=1`.
 #[test]
 fn loading_screen_golden() {
     let Some((device, queue)) = software_device() else {
@@ -244,7 +244,7 @@ fn loading_screen_golden() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/golden")
         .join("loading_screen.png");
-    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
         std::fs::create_dir_all(path.parent().expect("a golden folder")).expect("golden folder");
         let file = std::fs::File::create(&path).expect("create golden");
         let mut enc = png::Encoder::new(std::io::BufWriter::new(file), size[0], size[1]);
@@ -275,7 +275,7 @@ mod reading {
     use super::*;
 
     /// The loading pass's GPU time at 1920 x 1080: 200 frames (the cube turning at 60 Hz),
-    /// the first 20 dropped, p50 and max printed. `VXE_TEST_ADAPTER=rtx` reads the first
+    /// the first 20 dropped, p50 and max printed. `SVET_TEST_ADAPTER=rtx` reads the first
     /// discrete adapter, unset lavapipe.
     #[test]
     #[ignore = "reading"]
@@ -284,7 +284,7 @@ mod reading {
             backends: wgpu::Backends::VULKAN,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
-        let want_rtx = std::env::var("VXE_TEST_ADAPTER").as_deref() == Ok("rtx");
+        let want_rtx = std::env::var("SVET_TEST_ADAPTER").as_deref() == Ok("rtx");
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             force_fallback_adapter: !want_rtx,

@@ -2,20 +2,20 @@
 //! `test-support` feature.
 //!
 //! One rule for every helper: an adapter it cannot find is a printed skip (`None`), unless
-//! `VXE_REQUIRE_SOFTWARE_ADAPTER=1`, where it panics; with that variable set the helpers for
+//! `SVET_REQUIRE_SOFTWARE_ADAPTER=1`, where it panics; with that variable set the helpers for
 //! asserting tests also take only the software Vulkan adapter (lavapipe, where goldens are
 //! blessed), so a CI arm that promises image comparisons cannot pass by skipping them or by
-//! running them elsewhere. `VXE_TEST_ADAPTER_FILTER`, when set, keeps only the adapters whose name holds
+//! running them elsewhere. `SVET_TEST_ADAPTER_FILTER`, when set, keeps only the adapters whose name holds
 //! it (ignoring case): a filter that matches nothing stands in for a machine without the
 //! adapter.
 
 /// The variable that turns a missing software adapter from a skip into a panic.
-pub const REQUIRE_SOFTWARE: &str = "VXE_REQUIRE_SOFTWARE_ADAPTER";
+pub const REQUIRE_SOFTWARE: &str = "SVET_REQUIRE_SOFTWARE_ADAPTER";
 
 /// The variable that keeps only the adapters whose name holds its value.
-pub const ADAPTER_FILTER: &str = "VXE_TEST_ADAPTER_FILTER";
+pub const ADAPTER_FILTER: &str = "SVET_TEST_ADAPTER_FILTER";
 
-/// Whether `VXE_REQUIRE_SOFTWARE_ADAPTER=1`.
+/// Whether `SVET_REQUIRE_SOFTWARE_ADAPTER=1`.
 pub fn software_required() -> bool {
     std::env::var(REQUIRE_SOFTWARE).as_deref() == Ok("1")
 }

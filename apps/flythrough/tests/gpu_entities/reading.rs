@@ -1,7 +1,7 @@
 // `gpu_entities`'s readings, included by `gpu_entities.rs` (kept apart for the file-size cap).
 
 /// Readings, run by hand (`--run-ignored only -E 'test(=reading::<name>)'`), on the adapter
-/// `VXE_TEST_ADAPTER` names (unset: lavapipe). They print and assert nothing.
+/// `SVET_TEST_ADAPTER` names (unset: lavapipe). They print and assert nothing.
 mod reading {
     use super::*;
     use svet_render::{FRAME_PASSES, GpuWorld, MirrorConfig, PassTimer, Window};

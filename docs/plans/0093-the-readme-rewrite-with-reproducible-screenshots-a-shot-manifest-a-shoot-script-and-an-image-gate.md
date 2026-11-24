@@ -119,7 +119,7 @@ flowchart LR
 
 Each phase ships as its own commit. `dev` implements the dev phases in order; Phase 5 and
 Phase 7 are the owner's. The lane starts after Plan 0087 (the rename) merges, since 0087
-rewrites `README.md`, every `docs/*.md`, `scripts/record-clip.sh` and the `VXE_*` names a new
+rewrites `README.md`, every `docs/*.md`, `scripts/record-clip.sh` and the `SVET_*` names a new
 script would otherwise be born with; it may run beside Plan 0089 (no file in common but
 `.github/workflows/ci.yml`, where each adds one step). It runs before Plan 0091, which edits
 `run/frame.rs`, the HUD and the report that Phase 1 touches. Names below are the tree's at

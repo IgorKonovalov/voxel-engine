@@ -493,14 +493,14 @@ pub(super) fn term_split(rig: &mut Rig, cam0: Camera, specs: &[&str]) {
 mod reading {
     use super::*;
 
-    /// Plan 0098 Phase 2's table: [`fsr_split`] over `VXE_WOBBLE_FSR` (arms separated by `;`,
+    /// Plan 0098 Phase 2's table: [`fsr_split`] over `SVET_WOBBLE_FSR` (arms separated by `;`,
     /// in [`Arm::from_spec`]'s tokens), by default the `calm` arm, its levers (the scale 1.3 and
     /// 1, 8 and 32 jitter phases, the far normal 2..6) and `albedo` at 1.5 and 1, on the
-    /// wobble rig's forest. `VXE_TEST_ADAPTER` picks the adapter.
+    /// wobble rig's forest. `SVET_TEST_ADAPTER` picks the adapter.
     #[test]
     #[ignore = "reading"]
     fn the_fsr2_stages_after_the_turn() {
-        let specs = std::env::var("VXE_WOBBLE_FSR").unwrap_or_else(|_| {
+        let specs = std::env::var("SVET_WOBBLE_FSR").unwrap_or_else(|_| {
             "calm;calm,scale=1.3;calm,scale=1;calm,phases=8;calm,phases=32;calm,farn=2/6;\
              albedo;albedo,scale=1"
                 .into()
@@ -513,15 +513,15 @@ mod reading {
         }
     }
 
-    /// Plan 0098 Phase 5's term split: [`term_split`] over `VXE_WOBBLE_TERMS` (arms separated
+    /// Plan 0098 Phase 5's term split: [`term_split`] over `SVET_WOBBLE_TERMS` (arms separated
     /// by `;`, the full arm first), by default `calm` (every term), `calm,keyoff` (the key
     /// light out: the sky term and the albedo), `albedo` (the albedo alone) and
     /// `calm,normals` (the normals view: the shading normal). The rig's forest has no lamp
-    /// (`lamp: false`), so the lamp terms read 0 here. `VXE_TEST_ADAPTER` picks the adapter.
+    /// (`lamp: false`), so the lamp terms read 0 here. `SVET_TEST_ADAPTER` picks the adapter.
     #[test]
     #[ignore = "reading"]
     fn the_far_flips_by_term() {
-        let specs = std::env::var("VXE_WOBBLE_TERMS")
+        let specs = std::env::var("SVET_WOBBLE_TERMS")
             .unwrap_or_else(|_| "calm;calm,keyoff;albedo;calm,normals".into());
         let Some((mut rig, cam0)) = forest_rig(8) else {
             return;

@@ -36,7 +36,7 @@ jobs:
           key: release
       - name: Build the release binaries
         env:
-          VXE_COMMIT: ${{ github.sha }}
+          SVET_COMMIT: ${{ github.sha }}
         run: |
           start=$(date +%s)
           cargo build --release --locked -p vxe-tester -p flythrough
@@ -49,7 +49,7 @@ jobs:
       - name: Pack the archive
         id: pack
         env:
-          VXE_COMMIT: ${{ github.sha }}
+          SVET_COMMIT: ${{ github.sha }}
         run: |
           archive=$(scripts/package-tester.sh linux target/dist target/THIRD-PARTY-NOTICES.txt | tail -n 1)
           echo "archive=$(basename "$archive")" >> "$GITHUB_OUTPUT"
@@ -101,7 +101,7 @@ jobs:
       - name: Build the release binaries
         shell: bash
         env:
-          VXE_COMMIT: ${{ github.sha }}
+          SVET_COMMIT: ${{ github.sha }}
         run: |
           start=$(date +%s)
           cargo build --release --locked -p vxe-tester -p flythrough
@@ -121,7 +121,7 @@ jobs:
       - name: Pack the archive
         shell: bash
         env:
-          VXE_COMMIT: ${{ github.sha }}
+          SVET_COMMIT: ${{ github.sha }}
         run: scripts/package-tester.sh windows target/dist target/THIRD-PARTY-NOTICES.txt
       - name: Unpack fresh and start both binaries
         shell: bash

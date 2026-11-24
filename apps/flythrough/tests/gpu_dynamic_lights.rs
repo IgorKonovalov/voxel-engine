@@ -931,7 +931,7 @@ mod reading {
     /// at 1.5 with sharpening 0.5, or native: no upscaler, no jitter), the lamp off, exposure 8,
     /// 320 x 180, with one white light of 1200 two voxels over the floor where the centre ray
     /// meets it, and with none: the frame after 64 frames against the one after 512 (pixels
-    /// over 2/255 in any channel, the largest step). Runs on `VXE_TEST_ADAPTER`.
+    /// over 2/255 in any channel, the largest step). Runs on `SVET_TEST_ADAPTER`.
     #[test]
     #[ignore]
     fn reading_the_hall_at_64_against_512_frames() {
@@ -1690,11 +1690,11 @@ mod reading {
             ..Light::point(at, 600.0)
         };
         let fsr = || UpscalerKind::Fsr2(svet_render::Fsr2Settings::default());
-        // `VXE_WIDE=1` widens the rig toward the window: manual exposure 16 (auto's +4 EV
+        // `SVET_WIDE=1` widens the rig toward the window: manual exposure 16 (auto's +4 EV
         // limit, where the level settled), no light floor, and a dim white light of 30 at
         // (60, 32, 26) in every frame, so the wall's other channels are small but not zero
         // (the level's baked light in the window).
-        let wide = std::env::var("VXE_WIDE").as_deref() == Ok("1");
+        let wide = std::env::var("SVET_WIDE").as_deref() == Ok("1");
         let ambient = Light::point([60.0, 32.0, 26.0], 30.0);
         let run = |native: bool, res: LightingResolution, exposure: Exposure, lights: &[Light]| {
             let mut lights = lights.to_vec();
@@ -1809,7 +1809,7 @@ mod reading {
     /// invalidated); the pixels it uncovered on the floor within 3 voxels of x 94 are the band.
     /// Per run frame after the carve, the display's rms against the frame 256 after it, over the
     /// band, relative to the band's mean (output 192 x 108, no upscaler, FSR 2 and ours at 1.5
-    /// from 128 x 72), under each `YoungFilter`. Runs on `VXE_TEST_ADAPTER`.
+    /// from 128 x 72), under each `YoungFilter`. Runs on `SVET_TEST_ADAPTER`.
     #[test]
     #[ignore]
     fn reading_a_shadow_edge_after_a_disocclusion() {

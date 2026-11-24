@@ -49,8 +49,8 @@ fn run(extra: &[&str], bound: Duration) -> Option<String> {
         String::from_utf8_lossy(&out.stderr).into_owned(),
     );
     if !out.status.success() && stderr.contains("no adapter") {
-        if std::env::var("VXE_REQUIRE_SOFTWARE_ADAPTER").as_deref() == Ok("1") {
-            panic!("VXE_REQUIRE_SOFTWARE_ADAPTER=1 but no adapter: {stderr}");
+        if std::env::var("SVET_REQUIRE_SOFTWARE_ADAPTER").as_deref() == Ok("1") {
+            panic!("SVET_REQUIRE_SOFTWARE_ADAPTER=1 but no adapter: {stderr}");
         }
         println!("skipped: no adapter ({})", stderr.trim());
         return None;
@@ -216,7 +216,7 @@ mod reading {
     /// `outside` spawn facing the mouth, 12:00, the day cycle off, the lamp off) under a manual
     /// exposure pinned at what the outdoor auto exposure (instant adaptation, the outdoor
     /// floor and ceiling) reads after 64 frames of the same pose. Prints them; no bar.
-    /// `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    /// `SVET_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
     fn outdoor_noon_stillness() {
@@ -352,7 +352,7 @@ mod reading {
     /// run under the same sun (held or drifting, so the lit floor's own lag reads no
     /// occlusion), the sun's elevation, and the centroids' distance in voxels (the bar at 60:
     /// under 0.5). Printed, with the drifting run's centroid against the held open floor.
-    /// `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    /// `SVET_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
     fn a_drift_lags_under_half_a_voxel() {
@@ -465,7 +465,7 @@ mod reading {
     /// positions, over floor pixels at least 4 voxels to either side of the shadow's axis; at
     /// 60/180 against (0.5, 46.98) and 30/270 against (139.93, 0.5); and the sum of `w` at 30 over
     /// 60 against `sin 60 / sin 30 = 1.732`, under each of `walks`: per walk the two centroids,
-    /// then `[ratio, 0]`. `None` without an adapter. `VXE_TEST_ADAPTER` picks the adapter (unset:
+    /// then `[ratio, 0]`. `None` without an adapter. `SVET_TEST_ADAPTER` picks the adapter (unset:
     /// lavapipe).
     pub(super) fn tree_shadow(
         walks: &[svet_render::ShadowWalk],
@@ -568,7 +568,7 @@ mod reading {
     }
 
     /// Plan 0032 Phase 8 bar 5 under the coarse walk, printed (the bar is on the full walk).
-    /// `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    /// `SVET_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
     fn a_tree_shadow_travels_with_the_sun_under_the_coarse_walk() {
@@ -584,7 +584,7 @@ mod reading {
     /// updates, polls and syncs the stream with no time budget, then renders. At
     /// frames 2, 30 and 120 it prints the direct target's mean luminance over the farthest
     /// third of the lighting grid's hit pixels (by `t`), with the mirrored chunk count. No
-    /// bar. `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    /// bar. `SVET_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
     fn the_far_ground_is_lit_while_the_stream_fills() {
@@ -701,7 +701,7 @@ mod reading {
     /// off, and with no sky and the lamp on, each settled 64 frames under its auto exposure
     /// (instant; the outdoor floor and ceiling under the sky) and then pinned there for 64 frames:
     /// the 99th percentile over each region of the per-pixel change of the displayed image between
-    /// consecutive frames (the largest channel, levels of 255). Prints them. `VXE_TEST_ADAPTER`
+    /// consecutive frames (the largest channel, levels of 255). Prints them. `SVET_TEST_ADAPTER`
     /// picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
@@ -857,7 +857,7 @@ mod reading {
     /// through `cells()`: per region (in the tunnel the rim band, the hits at a sky-ray rate of
     /// 0.3 to 0.6, and the far end, under 0.05; in the forest every hit) the p99 and mean
     /// frame-to-frame change of the display, the firefly rate, and the history's reset share
-    /// by cause. Prints the table and each region's hit rate. `VXE_TEST_ADAPTER` picks the
+    /// by cause. Prints the table and each region's hit rate. `SVET_TEST_ADAPTER` picks the
     /// adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
@@ -920,7 +920,7 @@ mod reading {
 
     /// Plan 0086 Phase 2 bar 5: in the forest, the key ray's steps at `--sun 10,180` and the
     /// stillness at `60,180` (the defaults' cell) with the leaf's SHADOW_AS_BRICK set and clear.
-    /// `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    /// `SVET_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
     fn forest_leaf_shadow() {
@@ -963,7 +963,7 @@ mod reading {
 
     /// Plan 0086 Phase 3 bar 4: the forest's statistics at `60,180` with the leaf's
     /// SHADOW_AS_BRICK set, with the far normal's stair rules hooked off (before the phase) and
-    /// on. `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    /// on. `SVET_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
     fn forest_stairs() {
@@ -999,7 +999,7 @@ mod reading {
     /// end by the sky ray's hit rate), the defaults' cell (FSR 2 at 1.5, the filter on): the
     /// ray alone as before (no bake), the store baked whole with `sky_rays` 0 (the bake only),
     /// and baked with the ray on (cast, and dropped where the store holds a visibility). Per
-    /// row Phase 1's statistics and each region's mean display level. `VXE_TEST_ADAPTER`
+    /// row Phase 1's statistics and each region's mean display level. `SVET_TEST_ADAPTER`
     /// picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
@@ -1054,7 +1054,7 @@ mod reading {
 
     /// Plan 0086 Phase 7 bar 2: the forest at `60,180` and `10,180` with the penumbra as the
     /// disc's and the closest approach's: the key ray's steps and loads, and the statistics of
-    /// the defaults' cell (the leaf's SHADOW_AS_BRICK set) at `60,180`. `VXE_TEST_ADAPTER` picks
+    /// the defaults' cell (the leaf's SHADOW_AS_BRICK set) at `60,180`. `SVET_TEST_ADAPTER` picks
     /// the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
@@ -1122,17 +1122,17 @@ mod reading {
 
     /// Plan 0086 Phase 8 diagnosis: the owner's run-12 eye underground (743, 131, 14.7; seed 1,
     /// no trees, caverns closed to the sky). The world generated whole over chunks
-    /// `x, y` within `VXE_UNDER_R` (default 3) of the eye's chunk and `z` -3..9 (over the
+    /// `x, y` within `SVET_UNDER_R` (default 3) of the eye's chunk and `z` -3..9 (over the
     /// surface at about 501), mirrored whole. Per view (six axes and a
     /// reference over the surface looking down): the sky ray's hit rate (`hit_rates`); then the
     /// store baked whole under the noon sky and the baked visibility of every brick face within
     /// 6 bricks of the eye's brick; then the noon frame at manual exposure 1 with the bake, at
     /// `sky_rays` 1 and 0, the mean luminance of the accumulated stored part and direct part at
-    /// the hits. Printed. `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    /// the hits. Printed. `SVET_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
     fn the_underground_eye() {
-        let r = std::env::var("VXE_UNDER_R")
+        let r = std::env::var("SVET_UNDER_R")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(3);
@@ -1290,9 +1290,9 @@ mod reading {
     }
 
     /// Plan 0086 Phase 8 diagnosis, streamed: the run-12 eye underground (743, 131, 14.7;
-    /// seed 1, no trees) reached as by a jump (`support::streamed::streamed`), `VXE_UNDER_R` full (default 6),
-    /// `sky_rays` `VXE_UNDER_RAYS` (default 1), facing +x, at 12:00. Printed at listed frames.
-    /// `VXE_TEST_ADAPTER` picks the adapter.
+    /// seed 1, no trees) reached as by a jump (`support::streamed::streamed`), `SVET_UNDER_R` full (default 6),
+    /// `sky_rays` `SVET_UNDER_RAYS` (default 1), facing +x, at 12:00. Printed at listed frames.
+    /// `SVET_TEST_ADAPTER` picks the adapter.
     #[test]
     #[ignore = "reading"]
     fn the_underground_eye_streamed() {
@@ -1303,8 +1303,8 @@ mod reading {
                 .unwrap_or(d)
         };
         underground_streamed(
-            env("VXE_UNDER_R", 6),
-            env("VXE_UNDER_RAYS", 1) as u32,
+            env("SVET_UNDER_R", 6),
+            env("SVET_UNDER_RAYS", 1) as u32,
             &[1, 3, 10, 30, 60, 120, 240, 480, 720, 960, 1440, 1920],
         );
     }
@@ -1395,7 +1395,7 @@ mod reading {
     /// sky at the defaults; at eleven stations along the tunnel's axis (fraction 0 at the mouth,
     /// 1 at the chamber's centre), the baked visibility of the brick faces within 4 bricks of
     /// the station, by face direction: count and mean. Printed. Run once as built and once with
-    /// the bake's sky cap raised by hand, to split the cap's share. `VXE_TEST_ADAPTER` picks the
+    /// the bake's sky cap raised by hand, to split the cap's share. `SVET_TEST_ADAPTER` picks the
     /// adapter.
     #[test]
     #[ignore = "reading"]
@@ -1452,7 +1452,7 @@ mod reading {
     /// the far end's mean display level), the hills at noon (`outside`; the whole frame's mean
     /// level) and the forest at 17:45 (`outdoor_forest_sunset`'s clock), with the metered sky
     /// share (Plan 0094 Phase 7b) beside each. Printed; the window
-    /// picks. `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    /// picks. `SVET_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
     fn the_tunnel_under_each_ceiling() {
@@ -1518,7 +1518,7 @@ mod reading {
     /// `sky_bounce` 0 and 0.3: the tunnel at noon out of and into it, and the hills at noon
     /// (`outside`). Per row Phase 1's statistics (`print_row`; the tunnel's rim band and far
     /// end, the hills' every hit) and the stripe metric: the treads' over the risers' mean
-    /// light within 48 voxels (`CellReading::stripe`). `VXE_TEST_ADAPTER` picks the adapter
+    /// light within 48 voxels (`CellReading::stripe`). `SVET_TEST_ADAPTER` picks the adapter
     /// (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
@@ -1586,7 +1586,7 @@ mod reading {
     /// lighting pixels whose direct sample changes between lit and 0 between two frames at
     /// least once (the key ray's flips; the key-alone rows), and the last frame's stored and
     /// direct parts' mean luminance; then the hills (`outside`) under both as the open
-    /// ground's. `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    /// ground's. `SVET_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "reading"]
     fn the_forest_floor_by_term() {
@@ -1795,7 +1795,7 @@ mod reading {
 
     /// Plan 0086 Phase 19 bar 3: [`forest_floor_run`] at rest at `60,180` and `10,180` and the
     /// headlamp alone at the same pose: the floor's and the canopy's p99 and mean change, each
-    /// the mean over the 64 read frames. Printed. `VXE_TEST_ADAPTER` picks the adapter (unset:
+    /// the mean over the 64 read frames. Printed. `SVET_TEST_ADAPTER` picks the adapter (unset:
     /// lavapipe).
     #[test]
     #[ignore = "reading"]

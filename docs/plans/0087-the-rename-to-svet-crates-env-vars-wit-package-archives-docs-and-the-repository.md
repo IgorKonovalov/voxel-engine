@@ -423,8 +423,8 @@ Readings log: [`logs/0087.md`](logs/0087.md). Nested `.claude/` repository commi
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the workspace | dev | done | committed with this row |
-| 2: the environment variables and the WIT package | dev | not started | |
+| 1: the workspace | dev | done | b2759d75 |
+| 2: the environment variables and the WIT package | dev | done | committed with this row |
 | 3: the tester, its archive and the names a user sees | dev | not started | |
 | 4: the documents, the orientation map and the harness | dev | not started | |
 | 5: the repository takes the name | human | not started | |
@@ -435,6 +435,7 @@ Readings log: [`logs/0087.md`](logs/0087.md). Nested `.claude/` repository commi
 
 - Tree since pre-flight (lane start cfd2f97c, v0.72.0): the counts re-read at the start are in the readings log; the tree's names win over the plan's.
 - Phase 1: the tester's own names (`vxe-tester`, `vxe_tester`, `vxe-report`, the window title `"vxe"`, the zip test's `vxe` home folder) are left for Phase 3, so Phase 1's grep also lists those lines; the file-format magics `VXEL`, `VXECHNK` and `VXEH` (and the binary fixtures carrying them) are not renamed in any phase, and the case-insensitive grep lists them.
+- Phase 2: the `VXE_*` substitution also reached `README.md` (one line), one row of `docs/plans/README.md` and Plans 0090 and 0093's texts, outside the phase's Files touched, since its done-when grep covers the whole live tree; the host's load error gained a context line naming the served interface (`crates/svet-script-wasm/src/host.rs`), and the refusal test's pre-rename component is committed as `crates/svet-script-wasm/tests/fixtures/pre-rename-greedy.wasm` (68 KB).
 
 ### Close triggers
 

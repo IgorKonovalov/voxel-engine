@@ -275,18 +275,18 @@ pub fn queue_step(rig: &mut Rig, f: &mut Frame, cam: &Camera) -> QueueStats {
         .expect("the queue's step")
 }
 
-/// Plan 0098 Phase 8's dig run, from `VXE_DIG` (`SCENE/ARM/DRAIN`, each part optional, else
+/// Plan 0098 Phase 8's dig run, from `SVET_DIG` (`SCENE/ARM/DRAIN`, each part optional, else
 /// the part of `default`): the scene (`hills` or `forest`), the arm's comma-separated tokens,
 /// and the most frames the queue drains before the settle.
 pub fn dig_spec(default: (&str, &str, u32)) -> (String, String, u32) {
-    let v = std::env::var("VXE_DIG").unwrap_or_default();
+    let v = std::env::var("SVET_DIG").unwrap_or_default();
     let mut it = v.split('/');
     let mut part = |d: &str| it.next().filter(|s| !s.is_empty()).unwrap_or(d).to_string();
     let scene = part(default.0);
     let arm = part(default.1);
     let drain = part(&default.2.to_string())
         .parse()
-        .expect("VXE_DIG's drain");
+        .expect("SVET_DIG's drain");
     (scene, arm, drain)
 }
 

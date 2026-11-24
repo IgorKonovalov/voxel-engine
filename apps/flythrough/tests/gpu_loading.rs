@@ -36,8 +36,10 @@ fn room_wait(run: Child) -> Option<(String, String)> {
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     if !out.status.success() && stderr.contains("no adapter") {
-        if std::env::var("VXE_REQUIRE_SOFTWARE_ADAPTER").as_deref() == Ok("1") {
-            panic!("VXE_REQUIRE_SOFTWARE_ADAPTER=1 but the fly-through found no adapter: {stderr}");
+        if std::env::var("SVET_REQUIRE_SOFTWARE_ADAPTER").as_deref() == Ok("1") {
+            panic!(
+                "SVET_REQUIRE_SOFTWARE_ADAPTER=1 but the fly-through found no adapter: {stderr}"
+            );
         }
         println!("skipped: no adapter ({})", stderr.trim());
         return None;

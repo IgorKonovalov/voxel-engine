@@ -170,8 +170,8 @@ fn headless_run(extra: &[&str]) -> Option<(std::process::ExitStatus, String)> {
     let err = reader.join().expect("stderr is read");
     let _ = out_reader.join();
     if !status.success() && err.contains("no adapter") {
-        if std::env::var("VXE_REQUIRE_SOFTWARE_ADAPTER").as_deref() == Ok("1") {
-            panic!("VXE_REQUIRE_SOFTWARE_ADAPTER=1 but the fly-through found no adapter: {err}");
+        if std::env::var("SVET_REQUIRE_SOFTWARE_ADAPTER").as_deref() == Ok("1") {
+            panic!("SVET_REQUIRE_SOFTWARE_ADAPTER=1 but the fly-through found no adapter: {err}");
         }
         println!("skipped: no adapter ({})", err.trim());
         return None;

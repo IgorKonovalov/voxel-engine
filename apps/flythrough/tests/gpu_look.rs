@@ -1,6 +1,6 @@
 //! The surface-look harness on the software adapter (lavapipe): normal error in a carved sphere,
 //! silhouette error of a rock ball, the far normal, every mode, and the look's flag bits leaving
-//! the goldens alone. `VXE_BLESS=1` rewrites the look goldens.
+//! the goldens alone. `SVET_BLESS=1` rewrites the look goldens.
 
 mod support;
 
@@ -60,7 +60,7 @@ fn a_wall_facing_minus_x_reads_minus_x_in_face_mode() {
 /// default: shaded, face normals.
 #[test]
 fn the_default_look_leaves_the_goldens_byte_for_byte() {
-    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
         return;
     }
     let default = LookParams {
@@ -209,7 +209,7 @@ type Scene<'a> = (&'a World, &'a [(&'a str, LightParams)], bool);
 #[test]
 #[ignore = "soak"]
 fn band_slots_leave_the_face_goldens_byte_for_byte() {
-    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
         return;
     }
     let face = LookParams::default();
@@ -295,7 +295,7 @@ fn contour_dark_specks_with_and_without_shadows() {
         shadows: false,
         ..LightParams::headlamp()
     };
-    if std::env::var("VXE_BLESS").as_deref() != Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() != Ok("1") {
         // The golden is drawn at the default walk.
         let on_img = rig.render(
             &scene_camera(),

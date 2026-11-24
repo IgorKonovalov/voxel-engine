@@ -32,7 +32,7 @@ mod bindings {
     });
 }
 
-use bindings::vxe::logic::host as wit;
+use bindings::svet::logic::host as wit;
 
 /// The limits and the clock step a component runs under.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -345,7 +345,7 @@ fn guarded<R>(call: impl FnOnce() -> wasmtime::Result<R>) -> wasmtime::Result<R>
 }
 
 /// The `host` interface of the `logic` world, as the component imports it.
-const HOST_INTERFACE: &str = "vxe:logic/host@0.1.0";
+const HOST_INTERFACE: &str = "svet:logic/host@0.1.0";
 
 /// Takes `cost` from the store's fuel; past the fuel left, the call ends as an out-of-fuel
 /// trap, as an instruction overrun does. A zero cost touches nothing.
@@ -616,7 +616,13 @@ impl WasmLogic {
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker).map_err(load)?;
         shadow_timers(&mut linker).map_err(load)?;
         add_host(&mut linker, config.rates, config.support_max_region).map_err(load)?;
-        let pre = linker.instantiate_pre(&component).map_err(load)?;
+        // A component built against another package (an older WIT namespace, say) imports an
+        // interface this linker does not define; the error names the one it does serve.
+        let pre = linker.instantiate_pre(&component).map_err(|e| {
+            load(e.context(format!(
+                "the host serves `{HOST_INTERFACE}`; rebuild the component against it"
+            )))
+        })?;
         let pre = bindings::LogicPre::new(pre).map_err(load)?;
         Ok(Self {
             pre,

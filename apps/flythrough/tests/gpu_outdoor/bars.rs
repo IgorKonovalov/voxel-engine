@@ -175,7 +175,7 @@ fn the_sky_ray_runs_only_where_stale() {
 /// alone: the floor's p99 change per frame from the turn's first frame, its value at rest (the
 /// mean of the last 16 frames), and the frames after the turn ends until it stays within 2
 /// display levels of that. Under each sun the floor settles within the headlamp's frames plus
-/// 16 (the pair's mean at age 16 steps by 1/17). `VXE_TEST_ADAPTER` picks the adapter (unset:
+/// 16 (the pair's mean at age 16 steps by 1/17). `SVET_TEST_ADAPTER` picks the adapter (unset:
 /// lavapipe).
 #[test]
 #[ignore = "soak"]

@@ -181,13 +181,13 @@ fn the_flythrough_accepts_every_choice() {
     assert_eq!(out.status.code(), Some(2));
 }
 
-/// The fake child: this test binary run again with `VXE_FAKE_CHILD` set (`ok`, `exit7`,
-/// `panic` or `nojson`) and `VXE_FAKE_DIR` the run folder. Without them it does nothing.
+/// The fake child: this test binary run again with `SVET_FAKE_CHILD` set (`ok`, `exit7`,
+/// `panic` or `nojson`) and `SVET_FAKE_DIR` the run folder. Without them it does nothing.
 #[test]
 fn fake_child() {
     let (Ok(mode), Ok(dir)) = (
-        std::env::var("VXE_FAKE_CHILD"),
-        std::env::var("VXE_FAKE_DIR"),
+        std::env::var("SVET_FAKE_CHILD"),
+        std::env::var("SVET_FAKE_DIR"),
     ) else {
         return;
     };
@@ -213,8 +213,8 @@ fn fake_child() {
 fn fake(mode: &str, dir: &Path) -> Command {
     let mut c = Command::new(std::env::current_exe().expect("test binary"));
     c.args(["fake_child", "--exact", "--nocapture", "--test-threads=1"])
-        .env("VXE_FAKE_CHILD", mode)
-        .env("VXE_FAKE_DIR", dir);
+        .env("SVET_FAKE_CHILD", mode)
+        .env("SVET_FAKE_DIR", dir);
     c
 }
 
@@ -359,7 +359,7 @@ fn the_saved_report_holds_no_absolute_path_of_its_base() {
     .to_vec();
     child_args.extend(args.iter().cloned());
     let mut cmd = child_command(&exe, &child_args, &report.root);
-    cmd.env("VXE_FAKE_CHILD", "ok").env("VXE_FAKE_DIR", &rel);
+    cmd.env("SVET_FAKE_CHILD", "ok").env("SVET_FAKE_DIR", &rel);
     let outcome = run_child(cmd, &dir).expect("runs");
     assert!(matches!(outcome, Outcome::Ok { .. }), "{outcome:?}");
 

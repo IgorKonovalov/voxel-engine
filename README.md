@@ -233,7 +233,7 @@ and DX12 pipeline creation on WARP):
 
 ```sh
 scripts/build-guests.sh
-VXE_REQUIRE_SOFTWARE_ADAPTER=1 cargo nextest run --workspace --profile ci   # the gate tier; ci-windows on Windows
+SVET_REQUIRE_SOFTWARE_ADAPTER=1 cargo nextest run --workspace --profile ci   # the gate tier; ci-windows on Windows
 cargo nextest run -p flythrough --features wasm --profile ci -E 'binary(component)'
 cargo test --workspace --doc
 cargo clippy --workspace --all-targets --features flythrough/wasm -- -D warnings

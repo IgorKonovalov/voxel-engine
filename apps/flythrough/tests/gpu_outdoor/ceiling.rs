@@ -240,7 +240,7 @@ mod ceiling {
     /// of 0, the anchor whatever is in view). With `F_floor` 0 (the before) the shade pose's
     /// ceiling releases to the release top under the default lift
     /// (`AutoExposure::release_top(c_a)`, `min(max, c_a 2^L)`) within 1/64 EV, and with the
-    /// lift off as well to `OUTDOOR_MAX` within 1/64 EV. `VXE_TEST_ADAPTER` picks the adapter
+    /// lift off as well to `OUTDOOR_MAX` within 1/64 EV. `SVET_TEST_ADAPTER` picks the adapter
     /// (unset: lavapipe).
     #[test]
     #[ignore = "soak"]
@@ -304,7 +304,7 @@ mod ceiling {
     /// unclipped) is `log2(c_a 2^L / max)` within 0.5 EV; where under 64 pixels are readable,
     /// the display luma at noon is at least 1 EV of display value under midnight's and the
     /// exposure in force noon over midnight is `c_a 2^L / max` within 1/64 EV, the form printed.
-    /// `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    /// `SVET_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "soak"]
     fn the_tunnel_exposes_for_its_walls_by_day() {
@@ -372,7 +372,7 @@ mod ceiling {
     /// In this rig the exposure holds at the anchored ceiling and every step reads 0 EV; the
     /// test is a guard: a jump on a stop frame (the sky set to midnight with the exposure reset
     /// to the meter at stop +5) fails it with a step of 8.6 EV at stop +6.
-    /// `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+    /// `SVET_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "soak"]
     fn the_eye_holds_the_rate_across_a_stop() {
@@ -537,7 +537,7 @@ mod ceiling {
     /// Plan 0097 Phase 4 bar 1, the lavapipe form: [`canopy_walk`] at 160 x 90 and 4 times
     /// the reading's speed (1 voxel a frame, 60 voxels a second; 142 frames each way): the
     /// ceiling in force within 0.5 EV of `c_a` on every frame and the largest one-frame step
-    /// of log2 exposure at or under `R_f + 1/256`. `VXE_TEST_ADAPTER` picks the adapter (unset:
+    /// of log2 exposure at or under `R_f + 1/256`. `SVET_TEST_ADAPTER` picks the adapter (unset:
     /// lavapipe).
     #[test]
     #[ignore = "soak"]
@@ -606,7 +606,7 @@ mod ceiling {
         /// `c_a = 2^4 key / (0.5 E / pi)` from the pass's own `E_sky(+z)` (its luminance plus
         /// the key light's `w`), against `OUTDOOR_MAX`, at the hills' spawn over the day in
         /// 15-minute steps (one frame each at 16 x 9; `E_sky` is the sky's, not the view's),
-        /// printed with the clock times `c_a` crosses `OUTDOOR_MAX`. `VXE_TEST_ADAPTER` picks
+        /// printed with the clock times `c_a` crosses `OUTDOOR_MAX`. `SVET_TEST_ADAPTER` picks
         /// the adapter (unset: lavapipe).
         #[test]
         #[ignore = "reading"]
@@ -651,7 +651,7 @@ mod ceiling {
         /// facing out (the cave mouth from inside) and facing in (deep), at noon and at
         /// midnight with the lamp on, deep at noon with the lamp off; the hills' spawn facing
         /// the mouth (the mouth from outside) and facing away (the hills) at noon; the forest
-        /// at the fixed sun 10,180 under `voxel` and at 17:45. `VXE_TEST_ADAPTER` picks the
+        /// at the fixed sun 10,180 under `voxel` and at 17:45. `SVET_TEST_ADAPTER` picks the
         /// adapter (unset: lavapipe).
         #[test]
         #[ignore = "reading"]
@@ -707,7 +707,7 @@ mod ceiling {
         /// the hills at noon facing away from the mouth, the forest spawn at 17:45. Then
         /// `F_floor`'s candidate (the largest power-of-two fraction under both W2 poses' share
         /// and over the deep tunnel's) and the walk's cost: 600 calls on the W2 store along the
-        /// line between the poses, mean and max microseconds. `VXE_TEST_ADAPTER` picks the
+        /// line between the poses, mean and max microseconds. `SVET_TEST_ADAPTER` picks the
         /// adapter (unset: lavapipe).
         #[test]
         #[ignore = "reading"]
@@ -827,7 +827,7 @@ mod ceiling {
         /// 10,180 and at 15:00, the W2 1 %-sky pose; the tunnel deep in at noon and at midnight
         /// and 3 m inside the mouth with the lamp on, the mouth from inside at noon; the hills
         /// facing away from the mouth at noon and at midnight; the forest spawn at 17:45.
-        /// `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+        /// `SVET_TEST_ADAPTER` picks the adapter (unset: lavapipe).
         #[test]
         #[ignore = "reading"]
         fn the_anchor_by_the_floor() {
@@ -886,7 +886,7 @@ mod ceiling {
         /// point and at 255 with its 99th and 99.9th percentile byte. Then bar 2's scenes, the
         /// cap off against the default: the W2 shade pose at 10,180 and at 15:00, the forest
         /// spawn at 15:00 and the open hills at midnight (the default spawn's view).
-        /// `VXE_TEST_ADAPTER` picks the adapter (the RTX for the reading).
+        /// `SVET_TEST_ADAPTER` picks the adapter (the RTX for the reading).
         #[test]
         #[ignore = "reading"]
         fn the_highlight_cap() {
@@ -972,7 +972,7 @@ mod ceiling {
         /// smoothed floor share in the default and the lift-off arm, and at least 2.0 EV under
         /// the lift-off arm's; the W2 eyes and the mouth's within 1/64 EV of
         /// the lift-off arm's; the midnight hills and the deep midnight tunnel's ceiling and eye
-        /// +2.000 in every arm. `VXE_TEST_ADAPTER` picks the adapter (unset: lavapipe).
+        /// +2.000 in every arm. `SVET_TEST_ADAPTER` picks the adapter (unset: lavapipe).
         #[test]
         #[ignore = "reading"]
         fn the_lift_in_the_tunnel() {
@@ -1062,7 +1062,7 @@ mod ceiling {
         /// log2 exposure at or under `R_f + 1/256`; from the frame the share first reaches `F`
         /// on the way out, the exposure in force at or under the anchored ceiling (plus 1/256)
         /// within `(log2 max - log2 anchored) / R_f + 2` frames and while the share stays at
-        /// or over `F`. `VXE_TEST_ADAPTER` picks the adapter (the RTX for the reading).
+        /// or over `F`. `SVET_TEST_ADAPTER` picks the adapter (the RTX for the reading).
         #[test]
         #[ignore = "reading"]
         fn the_cave_mouth_walk_exposure() {
@@ -1107,7 +1107,7 @@ mod ceiling {
         /// (a quarter voxel a frame, 565 frames each way): the trace in full (`trace` lines),
         /// the ceiling in force within 0.5 EV of `c_a` on every frame and the largest one-frame
         /// step of log2 exposure at or under `R_f + 1/256`; the floor walk's CPU time a frame
-        /// printed. `VXE_TEST_ADAPTER` picks the adapter (the RTX, release, for the reading).
+        /// printed. `SVET_TEST_ADAPTER` picks the adapter (the RTX, release, for the reading).
         #[test]
         #[ignore = "reading"]
         fn the_canopy_walk_exposure() {

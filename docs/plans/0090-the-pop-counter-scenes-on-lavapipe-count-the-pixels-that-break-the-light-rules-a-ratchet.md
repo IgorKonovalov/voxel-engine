@@ -50,7 +50,7 @@ and a new light-stability line in section 2 that this plan proposes and its clos
 We build the counter as a `gpu_*` test binary in the fly-through's test tree, over the rigs
 and read-backs Plan 0086 already built (`tests/support/defects.rs`'s stepper and per-frame
 shots, `support/rigs.rs`, `support/stillness.rs`), with a per-pixel rule check and a source
-classifier, a TOML baseline the test reads and `VXE_BLESS=1` lowers, and the scenes split by
+classifier, a TOML baseline the test reads and `SVET_BLESS=1` lowers, and the scenes split by
 measured wall time between the gate tier and soak. The thresholds start as named guesses and
 are fixed after one owner window on graded pops. We rejected a statistical bar per scene
 (ADR-0076 D: it hides "here and there"), a zero gate from day one (C: every scene is non-zero
@@ -69,7 +69,7 @@ flowchart LR
         AT --> CT[counts per scene and rule]
         CT --> BL{baseline.toml}
         BL -->|over| FAIL[fail by scene and rule, sources named]
-        BL -->|at or under| PASS[pass; VXE_BLESS lowers]
+        BL -->|at or under| PASS[pass; SVET_BLESS lowers]
     end
     subgraph vxe-render
         F[Frame on lavapipe] --> RB
@@ -119,7 +119,7 @@ The thresholds' starting guesses, until Phase 5: `T_still` 4 levels of 255 (the 
   exercised by a unit test on a constructed table). The baseline file
   `apps/flythrough/tests/pops/baseline.toml`: one `[scene.rule]` entry per count, the bless
   commit and the adapter name in its header. The ratchet: the test fails when a count is over
-  its entry; `VXE_BLESS=1` rewrites entries whose count fell and leaves the others, printing
+  its entry; `SVET_BLESS=1` rewrites entries whose count fell and leaves the others, printing
   a line for each count over its entry (a rise is a hand edit with a dated `raised = "..."`
   line in the file, which the test prints when present). The counts, the p99 and mean of the
   window's change (the old statistics, printed beside, not asserted), and the wall time per
@@ -147,8 +147,8 @@ The thresholds' starting guesses, until Phase 5: `T_still` 4 levels of 255 (the 
   4. **The flag is a flag.** `MaterialFlags::FLICKERS` is bit 8, `contains` and the table's
      round trip hold it (CPU, under 1 s); the mask of a lighting grid against a constructed
      table with one flagged material marks exactly that material's hit pixels.
-  5. `node scripts/check-test-tiers.mjs` passes (the file names at most four `VXE_*`
-     variables: `VXE_BLESS`, `VXE_TEST_ADAPTER` and no more).
+  5. `node scripts/check-test-tiers.mjs` passes (the file names at most four `SVET_*`
+     variables: `SVET_BLESS`, `SVET_TEST_ADAPTER` and no more).
 
 ### Phase 2: Attribution per pixel, and `--dump-pops` in the fly-through
 - **Owner skill:** dev

@@ -1,5 +1,5 @@
 //! `castle_gate.png`: the castle's gate golden on the software adapter (lavapipe), from a
-//! world built from only the castle tiles that meet its view. `VXE_BLESS=1` rewrites it.
+//! world built from only the castle tiles that meet its view. `SVET_BLESS=1` rewrites it.
 
 mod support;
 

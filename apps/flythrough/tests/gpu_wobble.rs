@@ -7,7 +7,7 @@
 //! fly-through's budget from the first frame), 120 settle frames, a still strip of 33, a fly of
 //! 180 at 1 m/s, a stop held 300, a 60-degree turn over 40, a hold of 300; `drain=N` is the
 //! drained control.
-//! `VXE_WOBBLE` names the arm (see `Arm::parse`), `VXE_TEST_ADAPTER` the adapter. Frames and
+//! `SVET_WOBBLE` names the arm (see `Arm::parse`), `SVET_TEST_ADAPTER` the adapter. Frames and
 //! maps go under `live/wobble/<arm>/`.
 #![allow(
     dead_code,
@@ -107,7 +107,7 @@ struct Arm {
 }
 
 impl Arm {
-    /// `VXE_WOBBLE`: comma-separated tokens over the defaults (`default` alone is the
+    /// `SVET_WOBBLE`: comma-separated tokens over the defaults (`default` alone is the
     /// fly-through's frame): `off1` (no upscaler, scale 1), `own` (ours at 1.5), `s0`
     /// (sharpen 0), `albedo`, `full`, `nofilter`, `farn0`, `pin`, `anyhist`, `keyoff`,
     /// `sky0`, `brick`, `sun=EL/AZ`, `speed=M_S`, `turn=DEG`, `drain=N`, `face` (store read
@@ -124,7 +124,7 @@ impl Arm {
     /// `hfar` (`light_history_far`); Plan 0098 Phase 9's `hist` (`light_history` on, after
     /// `calm`) and `baked` (`key_far baked`).
     fn parse() -> Self {
-        Self::from_spec(&std::env::var("VXE_WOBBLE").unwrap_or_else(|_| "default".into()))
+        Self::from_spec(&std::env::var("SVET_WOBBLE").unwrap_or_else(|_| "default".into()))
     }
 
     /// The arm `spec` names ([`Arm::parse`]'s tokens).
@@ -1045,20 +1045,20 @@ mod reading {
     use super::*;
 
     /// Plan 0097 Phase 3d bar 1: the auto exposure across a stop on the wobble rig's forest
-    /// (`forest_rig(8)`, the `VXE_WOBBLE` arm, `default` unset): 120 settle frames at the
-    /// spawn, a fly of `VXE_EYE_FLY` frames (20 unset) at the arm's speed, the stop held 30.
+    /// (`forest_rig(8)`, the `SVET_WOBBLE` arm, `default` unset): 120 settle frames at the
+    /// spawn, a fly of `SVET_EYE_FLY` frames (20 unset) at the arm's speed, the stop held 30.
     /// Per frame from the fly's last to stop +29: the exposure the frame used (`previous`,
     /// log2) and its step from the frame before, the next frame's (`current`), the adapted and
     /// metered levels, the exposure's target (`key / 2^metered`), the ceiling in force and
     /// its target (`AutoExposure::ceiling_target` over the pass's ground, the metered sky
     /// share and the smoothed floor share), the highlight's tail level, its smoothed level and
     /// cap, which bound sets `current`, and the display's near pixels over 4 levels against
-    /// the frame before. `VXE_TEST_ADAPTER` picks the adapter.
+    /// the frame before. `SVET_TEST_ADAPTER` picks the adapter.
     #[test]
     #[ignore = "reading"]
     fn the_eye_across_a_stop() {
         let arm = Arm::parse();
-        let fly_n: usize = std::env::var("VXE_EYE_FLY")
+        let fly_n: usize = std::env::var("SVET_EYE_FLY")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(20);
@@ -1180,7 +1180,7 @@ mod reading {
     /// instrument. Nothing is asserted: the claim it carried (the near does not go on settling
     /// after a stop, at most `albedo`'s plus 2 points) is asserted with the queue stopped and the
     /// exposure pinned, where nothing lands and the exposure takes no step, by
-    /// [`super::the_defaults_hold_still_at_rest_and_the_far_holds`]. `VXE_TEST_ADAPTER` picks
+    /// [`super::the_defaults_hold_still_at_rest_and_the_far_holds`]. `SVET_TEST_ADAPTER` picks
     /// the adapter (the RTX by hand; unset, lavapipe).
     #[test]
     #[ignore = "reading"]
@@ -1495,7 +1495,7 @@ const REST_NEAR_PAIR: f64 = 2.5;
 /// number fails. Printed, not barred: with the queue stepping (`default,pin`) and with no
 /// upscaler (`default,pin,native`, 1080p native, the distance left) the far +30 and +0, the
 /// queue's depth at the stop's end and every landing row with its frame: a landing's frame is
-/// the machine's pace, not the rig's (accepted by eye at window W2). `VXE_TEST_ADAPTER` picks
+/// the machine's pace, not the rig's (accepted by eye at window W2). `SVET_TEST_ADAPTER` picks
 /// the adapter (the RTX by hand; unset, lavapipe).
 #[test]
 #[ignore = "soak"]
@@ -1670,7 +1670,7 @@ fn gate_run(rig: &mut Rig, cam0: &Camera, arm: support::wobble::Arm, frozen: boo
 /// [`the_defaults_hold_still_at_rest_and_the_far_holds`]), and the same segments undrained with the queue's
 /// depth, the picks' +60 beside the before's (Plan 0096's far tiers re-read it). Far is a hit 6 m out or more
 /// ([`support::wobble::NEAR_M`]: the far normal's weight at least 0.996 at this width). Every
-/// figure prints. `VXE_TEST_ADAPTER` picks the adapter (unset, lavapipe).
+/// figure prints. `SVET_TEST_ADAPTER` picks the adapter (unset, lavapipe).
 #[test]
 #[ignore = "soak"]
 fn the_far_moves_no_worse_than_the_before() {

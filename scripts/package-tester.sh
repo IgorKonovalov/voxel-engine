@@ -4,7 +4,7 @@
 #   scripts/package-tester.sh linux|windows OUT_DIR [NOTICES]
 #
 # Takes target/release/vxe-tester and flythrough (.exe on Windows), dist/README-TESTER.txt with
-# its placeholders filled (@VERSION@ from the workspace's Cargo.toml, @COMMIT@ from VXE_COMMIT,
+# its placeholders filled (@VERSION@ from the workspace's Cargo.toml, @COMMIT@ from SVET_COMMIT,
 # @GLIBC_FLOOR@ from the Linux binaries' highest GLIBC_ symbol, `objdump -T`), LICENSE-MIT,
 # LICENSE-APACHE and NOTICES as THIRD-PARTY-NOTICES.txt (a placeholder line when not given;
 # the release workflow generates it with cargo-about, and appends dist/DXC-LICENSE.txt for
@@ -18,7 +18,7 @@ out=${2:?the output folder}
 notices=${3:-}
 root=$(cd "$(dirname "$0")/.." && pwd)
 version=$(grep -m1 '^version = ' "$root/Cargo.toml" | sed 's/^version = "\(.*\)"/\1/')
-commit=${VXE_COMMIT:-unknown}
+commit=${SVET_COMMIT:-unknown}
 
 case $os in
   linux) exe="" ;;

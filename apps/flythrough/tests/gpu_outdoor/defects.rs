@@ -9,21 +9,21 @@ mod defects {
         /// streamed about 21.png's eye (`-352.5 -30.2 671.8`, chunk `-6 -1 10`; the HUD hid the x
         /// to its last digit, so the chunk's middle), looking 30 degrees down, at the fly-through's
         /// residency (16, 24) and mirror (`support::streamed::Hold`), the column wait on
-        /// (`VXE_HELD_WAIT=0` off), the reach `full` (`VXE_HELD_REACH=partial`: Phase 18 bar 6),
-        /// 1800 frames (`VXE_HELD_FRAMES`): every 60 frames the store's counts and the queue's;
+        /// (`SVET_HELD_WAIT=0` off), the reach `full` (`SVET_HELD_REACH=partial`: Phase 18 bar 6),
+        /// 1800 frames (`SVET_HELD_FRAMES`): every 60 frames the store's counts and the queue's;
         /// at the end every unbaked chunk within the full radius and what holds its columns from
         /// final, and the fly-through's `--dump-black` lines; the first read frame whose black
-        /// count is under 1 % of the 57 600 lighting pixels. `VXE_TEST_ADAPTER` picks the
+        /// count is under 1 % of the 57 600 lighting pixels. `SVET_TEST_ADAPTER` picks the
         /// adapter.
         #[test]
         #[ignore = "reading"]
         fn the_hills_at_dusk_held() {
-            let wait = std::env::var("VXE_HELD_WAIT").as_deref() != Ok("0");
-            let reach = match std::env::var("VXE_HELD_REACH").as_deref() {
+            let wait = std::env::var("SVET_HELD_WAIT").as_deref() != Ok("0");
+            let reach = match std::env::var("SVET_HELD_REACH").as_deref() {
                 Ok("partial") => svet_render::ReachMode::Partial,
                 _ => svet_render::ReachMode::Full,
             };
-            let frames: u32 = std::env::var("VXE_HELD_FRAMES")
+            let frames: u32 = std::env::var("SVET_HELD_FRAMES")
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(1800);
@@ -116,7 +116,7 @@ mod defects {
         /// lighting pixel the sky term's source (the pair where the ray was cast, the chain's
         /// fallback, black, the store otherwise) and the cast pixels' mean visibility, under
         /// the column wait off and on with the reach `full`, and the wait off with `partial`.
-        /// `VXE_TEST_ADAPTER` picks the adapter.
+        /// `SVET_TEST_ADAPTER` picks the adapter.
         #[test]
         #[ignore = "reading"]
         fn the_tunnel_ray_region() {
@@ -169,7 +169,7 @@ mod defects {
         /// switch's frame: (ii)'s line), the mean and p99 of `|old - new|`, the mean
         /// `|old - new| / max(new, 8)`, and the step's sign (old under new, over). The
         /// frame-to-frame p99 over the cast pixels at frames 60 and 120. Printed.
-        /// `VXE_TEST_ADAPTER` picks the adapter.
+        /// `SVET_TEST_ADAPTER` picks the adapter.
         #[test]
         #[ignore = "reading"]
         fn the_ray_region_lands() {
@@ -472,7 +472,7 @@ mod defects {
         /// frames after the last light stops on), the share of its edge's lighting pixels whose
         /// direct sample is off its at-rest mean by over 75 % a frame, the light pass's ms, the
         /// sky rays cast and the store's black count. Arms: the sky at the defaults, `sky_rays` 0,
-        /// and no sky (the lights alone: Plan 0058's mechanism). `VXE_TEST_ADAPTER` picks the
+        /// and no sky (the lights alone: Plan 0058's mechanism). `SVET_TEST_ADAPTER` picks the
         /// adapter.
         #[test]
         #[ignore = "reading"]
@@ -665,7 +665,7 @@ mod defects {
         /// frame and over 2 times the 5 x 5 neighbourhood's mean there), the share changing by over
         /// 16 levels, the sky rays cast and the history's mean age over the region, and the
         /// queue's dig state. Arms: `sky_rays` 0, 1, 1 with `no_clamp`, and the sun off
-        /// (`key_off`). `VXE_TEST_ADAPTER` picks the adapter.
+        /// (`key_off`). `SVET_TEST_ADAPTER` picks the adapter.
         #[test]
         #[ignore = "reading"]
         #[allow(clippy::too_many_lines, reason = "a reading's arms in one place")]
@@ -844,7 +844,7 @@ mod defects {
         }
 
         /// Plan 0086 Phase 16 reading 4 (defect 6, the clipped treads): [`treads_clip`] over
-        /// 128 frames under `sky_anchor_ev` none and 4, printed. `VXE_TEST_ADAPTER` picks the
+        /// 128 frames under `sky_anchor_ev` none and 4, printed. `SVET_TEST_ADAPTER` picks the
         /// adapter.
         #[test]
         #[ignore = "reading"]

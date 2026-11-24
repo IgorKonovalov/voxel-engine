@@ -23,7 +23,7 @@ pub mod bindings {
     });
 }
 
-use bindings::vxe::logic::host as wit;
+use bindings::svet::logic::host as wit;
 
 /// A [`Host`] whose every call is one of the `host` imports.
 #[derive(Clone, Copy, Debug, Default)]

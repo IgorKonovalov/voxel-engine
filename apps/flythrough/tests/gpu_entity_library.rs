@@ -411,7 +411,7 @@ fn marks_hold_two_touching_instances_apart() {
 }
 
 /// Readings, run by hand (`--run-ignored only -E 'test(=reading::<name>)'`), on the adapter
-/// `VXE_TEST_ADAPTER` names (unset: lavapipe). They print and assert nothing.
+/// `SVET_TEST_ADAPTER` names (unset: lavapipe). They print and assert nothing.
 mod reading {
     use super::*;
     use svet_render::{

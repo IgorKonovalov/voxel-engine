@@ -476,7 +476,7 @@ mod canopy {
         /// long reference ([`REFERENCE`] frames, both caps [`REFERENCE_HISTORY`]), then runs of
         /// 128 frames at the default key cap, 512 frames at key cap 256 and 512 frames at key cap
         /// 64, each aligned to the reference's jitter phase, each read by [`age_row`].
-        /// `VXE_TEST_ADAPTER` picks the adapter; `VXE_CANOPY_ARM` (0 to 2) runs one run alone
+        /// `SVET_TEST_ADAPTER` picks the adapter; `SVET_CANOPY_ARM` (0 to 2) runs one run alone
         /// after its own reference, so each run reads in a process of its own.
         #[test]
         #[ignore = "reading"]
@@ -511,7 +511,7 @@ mod canopy {
                 let off = LightHooks::default();
                 let refr = hold_capped(&rig, &cam, &mut r, off, REFERENCE_HISTORY, REFERENCE_HISTORY, REFERENCE, None);
                 let phase = r.steps % phases;
-                let only: Option<usize> = std::env::var("VXE_CANOPY_ARM").ok().and_then(|v| v.parse().ok());
+                let only: Option<usize> = std::env::var("SVET_CANOPY_ARM").ok().and_then(|v| v.parse().ok());
                 for (i, (frames, key)) in [(128, key_cap), (512, 256), (512, 64)].into_iter().enumerate() {
                     if only.is_some_and(|o| o != i) {
                         continue;
@@ -532,7 +532,7 @@ mod canopy {
         /// read at the same jitter phase): the residual's p99 and mean in display levels on the
         /// floor and the trunks, lit (the key mean over 0.5) and shadowed; and the pop share
         /// over 4 levels per frame pair over the run's last [`POP_PAIRS`] pairs, beside the
-        /// lamp-lit floor's. `VXE_TEST_ADAPTER` picks the adapter.
+        /// lamp-lit floor's. `SVET_TEST_ADAPTER` picks the adapter.
         #[test]
         #[ignore = "reading"]
         fn the_canopy_residual() {

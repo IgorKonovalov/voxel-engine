@@ -1,4 +1,4 @@
-//! Golden images of the cave on the software adapter (lavapipe). `VXE_BLESS=1` rewrites them.
+//! Golden images of the cave on the software adapter (lavapipe). `SVET_BLESS=1` rewrites them.
 
 mod support;
 
@@ -110,7 +110,7 @@ fn the_walk_renders_the_same_bytes_with_every_skip_on_or_off() {
     let Some((device, queue)) = software_device(64 << 20) else {
         return;
     };
-    let bless = std::env::var("VXE_BLESS").as_deref() == Ok("1");
+    let bless = std::env::var("SVET_BLESS").as_deref() == Ok("1");
     let carved = carved_world();
     let lod = lod_scene();
     let scenes = [
@@ -314,7 +314,7 @@ fn translucent_golden_composites_the_slab_over_the_wall() {
         lod,
     );
     assert_golden("translucent.png", &glass[0]);
-    if std::env::var("VXE_BLESS").as_deref() != Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() != Ok("1") {
         let differing = differing_bytes(&glass[0], &read_png(&golden_path("translucent.png")).0);
         assert_eq!(
             differing, 0,
@@ -334,7 +334,7 @@ fn translucent_golden_composites_the_slab_over_the_wall() {
 /// over two to four: the mirror's layout changes no pixel. One scene, one device.
 #[test]
 fn goldens_match_bit_exactly_over_one_and_several_shards() {
-    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
         return;
     }
     let world = carved_world();
@@ -1307,7 +1307,7 @@ fn upscaled_golden_sharpens_within_the_neighbourhood() {
     let (plain, sharp) = (&images[0], &images[1]);
     let [w, h] = UPSCALED_OUTPUT.map(|n| n as usize);
     let path = golden_path("upscaled.png");
-    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
         write_png(&path, sharp, w as u32, h as u32);
         println!("blessed {path:?}");
     } else {
@@ -1759,7 +1759,7 @@ fn fsr2_golden_matches_and_rcas_is_bypassed_at_zero() {
     let (plain, sharp) = (&zero.image, &half.image);
     let [w, h] = UPSCALED_OUTPUT.map(|n| n as usize);
     let path = golden_path("fsr2.png");
-    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
         write_png(&path, sharp, w as u32, h as u32);
         println!("blessed {path:?}");
     } else {
@@ -1849,7 +1849,7 @@ fn lights_box_golden_holds_two_coloured_lights() {
     let rgba = svet_render::debug::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
     let (w, h) = (192, 108);
     let path = golden_path("lights_box.png");
-    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+    if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
         write_png(&path, &rgba, w, h);
         println!("blessed {path:?}");
         return;

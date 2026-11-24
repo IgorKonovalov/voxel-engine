@@ -194,7 +194,7 @@ tests, about 600 s of the gate) and three regressions against 0086's Phase 5 bar
 verdicts and its readings log, while 0086 is still open on its branch; no ADR, ADR-0076 rules
 2, 3 and 5 are its targets; proposed, awaits the go): **starts after Plan 0086 closes and
 merges**. The architect recommends it as the next lane, **before Plan 0087** (the owner's
-still-image priority; its rigs, hooks and `VXE_*` names are 0086's and the rename would owe a
+still-image priority; its rigs, hooks and `SVET_*` names are 0086's and the rename would owe a
 re-read; Plan 0090's first baseline then lands on the fixed tree); the alternative is after
 0087 beside 0093 and 0089. Owner question 1 of the plan. **2026-11-20:** its owner window
 (94a) is done; the forest and the castle read fixed, the dig and the forest at 15:00 not; the
