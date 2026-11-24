@@ -342,8 +342,8 @@ Readings: [`logs/0102.md`](logs/0102.md).
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The census and three readings | dev | done; readings loaded (three lanes) | `47fb7d1f` |
-| 2: `own` leaves `svet-render` | dev | done; carries the fly-through callers, tests and CLI refusals the compiler forced (see Notes) | committed with this row |
-| 3: The fly-through, the tests and the golden | dev | not started | |
+| 2: `own` leaves `svet-render` | dev | done; carries the fly-through callers, tests and CLI refusals the compiler forced (see Notes) | `00b815d1` |
+| 3: The fly-through, the tests and the golden | dev | done; its code landed in `00b815d1`, this commit deletes `upscaled.png`; the shadow bar is renamed | committed with this row |
 | 4: Docs, the ledger, the gate's time | dev | not started | |
 
 ### Notes

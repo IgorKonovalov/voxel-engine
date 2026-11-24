@@ -551,7 +551,7 @@ pub struct LookArgs {
     /// `--dither on|off`: FSR 2's tone pass adds its static one-level dither
     /// (`Fsr2Settings::dither`).
     pub(crate) dither: bool,
-    /// `--upscaler off|own|fsr2`, when given.
+    /// `--upscaler off|fsr2`, when given.
     pub(crate) upscaler: Option<hud::UpscalerMode>,
 }
 
