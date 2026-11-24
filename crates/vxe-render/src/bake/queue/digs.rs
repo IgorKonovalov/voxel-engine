@@ -10,10 +10,11 @@ impl BakeQueue {
     /// ring chunk, is withdrawn ([`BakeQueue::withdraw_at`]): a dig's bricks rejoin its chunk's
     /// digs, any other job's chunk is a candidate again. Each ring chunk with a block then takes
     /// its ring's bricks, its ring-1 bricks marked; a job still running in a ring chunk is
-    /// thrown away when it ends. A touched brick that held light opens ring 3. Each chunk holding a touched brick is listed again at once and takes a
-    /// provisional block ([`provisional_block`]): its kept bricks' records, and a brick the edit
-    /// opened its neighbours' mean, so no dug face reads no value while its job waits; the job
-    /// then fades from it.
+    /// thrown away when it ends. A touched brick that held light opens ring 3. Each chunk
+    /// holding a touched brick is listed again at once and takes a provisional block
+    /// ([`provisional_block`]): its kept bricks' records, and a brick the edit opened its
+    /// neighbours' mean, so no dug face reads no value while its job waits; the job then fades
+    /// from it.
     pub(in crate::bake) fn take_boxes(
         &mut self,
         run: &BakeRun<'_>,
@@ -184,10 +185,11 @@ impl BakeQueue {
     /// ring's hold shows); its other dig bricks wait in `digs` until it is placed, then open as
     /// a second job. Every ring-1 job opens in this step, outside the two slices, into a table
     /// slot (where none is free, the last open job that is not a dig's is withdrawn to the
-    /// candidates), and the submit plans its rounds first. The rest open while the loop holds
-    /// under two slices of `cap` samples (one at least). Each chunk is listed again on this
-    /// thread and keeps every brick record outside its job's bricks (a whole dig, which held no
-    /// block, keeps none and bakes every listed brick) and bakes them at the near tier's
+    /// candidates), and the submit plans its rounds first. The rest open in a step that opened
+    /// no ring-1 job, while the loop holds under two slices of `cap` samples (one at least).
+    /// Each chunk is listed again on this thread (a split chunk's second job reuses its first's
+    /// listing) and keeps every brick record outside its job's bricks (a whole dig, which held
+    /// no block, keeps none and bakes every listed brick) and bakes them at the near tier's
     /// count, whatever its band; a chunk left with no face drops its block.
     pub(in crate::bake) fn open_digs(
         &mut self,
@@ -223,15 +225,19 @@ impl BakeQueue {
         let mut first = 0;
         for (_, _, c) in order {
             let ring1 = self.digs.get(&c).is_some_and(|d| d.near);
-            if !ring1 && left >= 2 * cap && !jobs.is_empty() {
+            // A step that opens a ring-1 job opens no other dig's: their listings wait a step,
+            // so the edit's frame lists no more than before.
+            if !ring1 && (first > 0 || (left >= 2 * cap && !jobs.is_empty())) {
                 break;
             }
             self.touched.insert(c);
             let Some(mut d) = self.digs.remove(&c) else {
                 continue;
             };
-            // A ring-1 chunk's first job: its ring-1 bricks; the rest wait for its placing.
-            if !d.whole && !d.ring1.is_empty() && d.ring1.len() < d.slots.len() {
+            // A ring-1 chunk's first job: its ring-1 bricks; the rest wait for its placing, and
+            // open from this listing (the box touched no brick of theirs).
+            let split = !d.whole && !d.ring1.is_empty() && d.ring1.len() < d.slots.len();
+            if split {
                 let rest: std::collections::BTreeSet<u16> =
                     d.slots.difference(&d.ring1).copied().collect();
                 self.digs.insert(
@@ -300,6 +306,9 @@ impl BakeQueue {
                 }
                 Err(e) => return Err(e),
             };
+            if split {
+                self.listed.insert(c, faces.clone());
+            }
             self.job_coarse.insert(c, store.is_coarse(coord));
             left += samples;
             first += usize::from(d.near);
@@ -391,6 +400,7 @@ impl BakeQueue {
             return;
         }
         let record = self.record_words();
+        let mut candidate = false;
         for w in self.lp.withdraw(|c| chunks.contains(&c.0), record) {
             let c = w.coord.0;
             store.release(w.first_word, w.words);
@@ -408,12 +418,17 @@ impl BakeQueue {
                 e.ring1.extend(d.ring1);
                 e.near |= d.near;
                 e.whole |= d.whole;
+            } else {
+                candidate = true;
             }
             self.touched.insert(c);
         }
-        // The candidates are counted and sorted again this step.
-        self.counted_idle = false;
-        self.quiet_until = self.steps;
+        // A chunk back among the candidates is counted and sorted again this step; a dig's
+        // bricks wait in `digs`, which opens apart from the candidates.
+        if candidate {
+            self.counted_idle = false;
+            self.quiet_until = self.steps;
+        }
     }
 
     /// A brick record's words under the settings' cell.

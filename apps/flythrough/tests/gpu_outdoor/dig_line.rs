@@ -362,6 +362,15 @@ mod dig_line {
                     })
                     .collect();
                 let _ = writeln!(out, "  cost D+0..8 (step / light / temporal / gpu ms): {}", cost.join(" "));
+                // The dig frame's step by stage, the stages over 0.5 ms.
+                let st = &run.frames[d0].q.stages;
+                let laps: Vec<String> = vxe_render::debug::STEP_STAGES
+                    .iter()
+                    .zip(st.ms)
+                    .filter(|(_, ms)| *ms > 0.5)
+                    .map(|(n, ms)| format!("{n} {ms:.2}"))
+                    .collect();
+                let _ = writeln!(out, "  D+0 stages over 0.5 ms (opened {}): {}", st.opened, laps.join(", "));
             }
             let rest = &run.frames[..run.digs.first().map_or(run.frames.len(), |d| d.0)];
             let mean = |k: fn(&HoleFrame) -> f64| rest.iter().map(k).sum::<f64>() / rest.len().max(1) as f64;
