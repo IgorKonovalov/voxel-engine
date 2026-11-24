@@ -913,6 +913,31 @@ dig's step (the dip to about 30 fps) stays 0099's; this amendment may not raise 
    while a dig is held, so it cannot be Portable's default). The other option: keep it as
    a setting for the fast adapter.
 
+## Amendment after window 98e (2026-11-24; owner)
+
+Window 98e (Phase 18) accepted `--dig-hold on` on both adapters ("so much better, not ideal
+but acceptable"; a slight colour change at a landing, the same on the Radeon) and rejected
+`near`, which the fix pass removed. Two rulings from the fix pass's report, both the owner's
+word of 2026-11-24:
+
+1. **`gpu_sun::a_dig_rebakes_the_key_words_with_the_sky_ring`, the claim at the dig's
+   step, is restated for the held record.** The test asserted Phase 16's record shape: the
+   floor brick `SKY_STALE` with its +z key kept. Phase 17 writes every touched brick a held
+   record, so at the dig's step the claim is: the record is not stale (`VIS_BAKED`), a face
+   outside the dig's box dilated by one voxel keeps its own record's sky value (+z 1.0 on
+   the test's floor), and `KEY_BAKED` is clear, which `store_key_cell` answers as "none",
+   never as 0. Every later claim of the test stays as written (the key re-baked with ring
+   1's landing, `KEY_BAKED` set, +z 255; the stamp and `keys_baked` at the end). The dev
+   edits that one assertion and its doc comment, nothing else in the test. Rejected: keeping
+   the old key words in cells with no dug face (shown only under `--key-far baked`, and the
+   stale claim would still fail), and restoring `SKY_STALE` on held records (undoes Phase
+   17).
+2. **The dig frame's step time on the RTX after the fix pass is a reading, not a stop.**
+   Phase 17's bar was its own tree plus 0.5 ms; the fix tree read +2.1 ms (sequence A, four
+   runs a tree) and +1.1 ms (B), with a spread between runs larger than the difference; the
+   Radeon read +0.7 and -0.4. It goes to the readings log and to the close review, which
+   rules on it; Plan 0099 moves this step off the main thread and inherits the figure.
+
 ## Decision
 
 **Ship the combination the owner called calm as the default once W1 confirms it; read FSR 2
