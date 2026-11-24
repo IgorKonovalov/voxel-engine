@@ -19,6 +19,10 @@ pub(super) struct History {
     /// arrived.
     pub(super) edits: Vec<[[i32; 3]; 2]>,
     pub(super) overflow: bool,
+    /// The dig boxes held under `Lighting::dig_hold` and the frames left after the queue's
+    /// last dig landed (or after the last box, with no live queue).
+    pub(super) dig_held: Vec<[[i32; 3]; 2]>,
+    pub(super) dig_left: u32,
     /// The view mode changed since the last encode: the upscaler's history holds another
     /// view's image.
     pub(super) view_changed: bool,
@@ -175,7 +179,9 @@ pub(super) fn light_table(
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct EditsUniform {
     pub(crate) count: u32,
-    pub(crate) _pad: [u32; 3],
+    /// The held dig boxes (`Lighting::dig_hold`), after the `count` kill boxes.
+    pub(crate) held: u32,
+    pub(crate) _pad: [u32; 2],
     pub(crate) boxes: [[i32; 4]; 2 * MAX_EDITS],
 }
 

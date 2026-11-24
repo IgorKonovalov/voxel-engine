@@ -16,7 +16,10 @@ mod tiers;
 pub use self::open::in_view_census;
 use self::reach::reach_of;
 pub use self::stats::{
-    Band, Bands, InViewWaiting, ListingCensus, QueueStats, RuleMissed, chunk_nearest,
+    Band, Bands, DigTrace, DigTraceJob, InViewWaiting, LANDED_BARE, LANDED_FALLBACK,
+    LANDED_REFADED, LANDED_UNFADED, LANDING_DIRECTIONS, LANDING_KEY, LANDING_KEY_FLAG,
+    LANDING_RECORDS, LANDING_TAIL, LANDING_VIS, LANDING_VIS_FLAG, ListingCensus, QueueStats,
+    RuleMissed, chunk_nearest,
 };
 pub use self::tiers::DEFAULT_TIERS;
 
@@ -134,14 +137,18 @@ pub(super) struct Fade {
     pub(super) from: Vec<u32>,
     pub(super) frame: u32,
     pub(super) frames: u32,
+    /// The sky visibilities ride this fade ([`BakeQueue::landing_fade`] as it started).
+    pub(super) vis: bool,
 }
 
-/// A chunk's dig bricks (slots), and whether one of them is in ring 1. `whole`: a chunk the
-/// edit's box touched that held no block (a stamp into air), whose every listed brick is a dig
-/// brick, its slots filled at its opening.
+/// A chunk's dig bricks (slots), and whether one of them is in ring 1, and those that are
+/// (`ring1`: the bricks a box dilated by one voxel touches, re-baked by a job of their own
+/// ahead of the rest). `whole`: a chunk the edit's box touched that held no block (a stamp
+/// into air), whose every listed brick is a dig brick, its slots filled at its opening.
 #[derive(Clone, Debug, Default)]
 pub(super) struct DigChunk {
     pub(super) slots: std::collections::BTreeSet<u16>,
+    pub(super) ring1: std::collections::BTreeSet<u16>,
     pub(super) near: bool,
     pub(super) whole: bool,
 }
@@ -372,6 +379,17 @@ pub struct BakeQueue {
     /// its key visibilities alone once the key light has turned past it and its disc's radius
     /// from the light they were baked under ([`BakeQueue::mark_keys`]).
     pub key_step: f32,
+    /// [`crate::Lighting::landing_fade`], set by the frame each step: a landing block's sky
+    /// visibilities fade with its direction values ([`fade_mix`]).
+    pub landing_fade: bool,
+    /// `crate::DigHold::On`, set by the frame each step: a dig's touched bricks take held
+    /// records at the edit (`bake::held`), whose visibilities fade to the job's at its landing.
+    pub dig_store_hold: bool,
+    /// [`crate::Lighting::source_fade`] and the frame, set by the frame each step: `None` off
+    /// (every block's [`LANDED_AT`] word 0); else the word a chunk's first block writes there,
+    /// the frame plus one, or 0 for a block placed before the first frame (the pre-roll). A
+    /// later landing of the chunk keeps its block's word.
+    pub landed_word: Option<u32>,
     /// The key-only re-bakes waiting and in a job.
     pub(super) keys: keys::KeyJobs,
     /// Whether a candidate the rule answers ([`rule::buried`], no exposed emitter within the
@@ -571,6 +589,9 @@ impl BakeQueue {
             columns_final: Default::default(),
             column_wait: false,
             key_step: crate::frame::DEFAULT_KEY_STEP,
+            landing_fade: false,
+            dig_store_hold: true,
+            landed_word: None,
             keys: Default::default(),
             far_normal: [0.0; 2],
             zero_rule: true,

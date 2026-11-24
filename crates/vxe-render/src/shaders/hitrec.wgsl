@@ -22,6 +22,9 @@ const HIT_INSTANCE_SHIFT: u32 = 6u;
 // then each surface brick's record.
 // A block's summary record (`bake::SUMMARY_AT`): just past its 512-word directory.
 const STORE_SUMMARY_AT: u32 = 512u;
+// A block's landing word (`bake::LANDED_AT`): just past the summary, the frame its chunk's first
+// block landed plus one under `Lighting::source_fade`, 0 for none.
+const STORE_LANDED_AT: u32 = 523u;
 const STORE_ORIGIN: u32 = 4u;
 const STORE_SIZE: u32 = 8u;
 // The prelude's STORE_FLAGS is the flags word (`bake::STORE_FLAGS`): bit 1, the records' cells

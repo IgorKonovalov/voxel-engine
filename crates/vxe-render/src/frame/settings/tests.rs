@@ -58,7 +58,7 @@ fn the_key_far_ray_sets_no_key_bit() {
     assert_eq!(at(KeyFar::Column, KeyFarMix::Step), ray | keys);
     assert_eq!(
         (Lighting::default().key_far, Lighting::default().key_far_mix),
-        (KeyFar::Baked, KeyFarMix::Blend)
+        (KeyFar::Column, KeyFarMix::Step)
     );
     assert_eq!(KeyFar::ALL.map(KeyFar::name), ["baked", "column", "ray"]);
     for k in KeyFar::ALL {

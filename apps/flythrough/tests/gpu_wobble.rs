@@ -16,7 +16,11 @@
     reason = "a reading rig: its arms leave fields unread, its runs time themselves"
 )]
 
+#[path = "gpu_wobble/fsr.rs"]
+mod fsr;
 mod support;
+#[path = "gpu_wobble/terraces.rs"]
+mod terraces;
 
 use std::path::{Path, PathBuf};
 
@@ -81,6 +85,25 @@ struct Arm {
     leaves_absorb: bool,
     /// The turn's frames (`turnf=N`, 40 by default): 240 is a slow pan.
     turn_frames: usize,
+    /// The light passes' screen history (`Lighting::light_history`; `nohist` or `calm` clear it).
+    light_history: bool,
+    /// The upscaler's scale, output over internal width (`scale=X`, 1.5 by default); `off1`
+    /// renders at the output.
+    scale: f32,
+    /// `Lighting::landing_fade` (`lfade`): a landing block's sky visibilities ride the store's
+    /// fade.
+    landing_fade: bool,
+    /// `Lighting::source_fade` (`sfade`): a landing's switch of source fades by the block's
+    /// landing frame.
+    source_fade: bool,
+    /// The fly's frames (`fly=N`, 180 by default; 20 is the short fly of Plan 0097's finding).
+    fly: usize,
+    /// The normals view (`normals`): the shading normal as colour, for the term split.
+    normals: bool,
+    /// Plan 0098 Phase 5's arms: `Lighting::far_light_wide` (`wide`) and
+    /// `Lighting::light_history_far` (`hfar`).
+    far_light_wide: bool,
+    light_history_far: bool,
 }
 
 impl Arm {
@@ -92,7 +115,14 @@ impl Arm {
     /// (`key_far_mix step`), `column` (`key_far column`), `pre=MS` (the queue's budget through
     /// the drain, the default's after it), `approach` / `disc` (the penumbra; the fly-through's
     /// default unless named), `absorb` (the leaves absorb, `--leaf-shadow absorb`), `turnf=N`
-    /// (the turn's frames).
+    /// (the turn's frames), `nohist` (`light_history` off), `calm` (window W1's five
+    /// picks named, the fly-through's defaults (ADR-0082): `nohist`, `column`,
+    /// `step`, `disc` and the far normal 4..8), `native` (as `off1`), `scale=X` (the upscaler's scale), `farn=LO/HI` (the far
+    /// normal's band), `lfade` (`Lighting::landing_fade` on), `sfade` (`Lighting::source_fade`
+    /// on), `fly=N` (the fly's frames) and
+    /// `normals` (the normals view); Plan 0098 Phase 5's arms `wide` (`far_light_wide`) and
+    /// `hfar` (`light_history_far`); Plan 0098 Phase 9's `hist` (`light_history` on, after
+    /// `calm`) and `baked` (`key_far baked`).
     fn parse() -> Self {
         Self::from_spec(&std::env::var("VXE_WOBBLE").unwrap_or_else(|_| "default".into()))
     }
@@ -136,6 +166,14 @@ impl Arm {
             penumbra: flythrough::DEFAULT_PENUMBRA,
             leaves_absorb: false,
             turn_frames: 40,
+            light_history: flythrough::default_lighting().light_history,
+            scale: 1.5,
+            landing_fade: flythrough::default_lighting().landing_fade,
+            source_fade: flythrough::default_lighting().source_fade,
+            fly: 180,
+            normals: false,
+            far_light_wide: false,
+            light_history_far: false,
         };
         for t in spec.split(',') {
             let (k, v) = t.split_once('=').unwrap_or((t, ""));
@@ -183,6 +221,28 @@ impl Arm {
                 "disc" => a.penumbra = vxe_render::Penumbra::Disc,
                 "absorb" => a.leaves_absorb = true,
                 "turnf" => a.turn_frames = v.parse().unwrap(),
+                "nohist" => a.light_history = false,
+                "hist" => a.light_history = true,
+                "baked" => a.key_far = vxe_render::KeyFar::Baked,
+                "scale" => a.scale = v.parse().unwrap(),
+                "farn" => {
+                    let (lo, hi) = v.split_once('/').expect("farn=LO/HI");
+                    a.far_normal = [lo.parse().unwrap(), hi.parse().unwrap()];
+                }
+                "native" => a.upscaler = "off",
+                "calm" => {
+                    a.light_history = false;
+                    a.key_far = vxe_render::KeyFar::Column;
+                    a.key_far_mix = vxe_render::KeyFarMix::Step;
+                    a.penumbra = vxe_render::Penumbra::Disc;
+                    a.far_normal = [4.0, 8.0];
+                }
+                "lfade" => a.landing_fade = true,
+                "sfade" => a.source_fade = true,
+                "normals" => a.normals = true,
+                "wide" => a.far_light_wide = true,
+                "hfar" => a.light_history_far = true,
+                "fly" => a.fly = v.parse().unwrap(),
                 other => panic!("unknown arm token {other}"),
             }
         }
@@ -217,7 +277,13 @@ fn forest_rig(r: i32) -> Option<(Rig, Camera)> {
 }
 
 fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
-    let internal = if arm.upscaler == "off" { OUT } else { INTERNAL };
+    let internal = if arm.upscaler == "off" {
+        OUT
+    } else if arm.scale == 1.5 {
+        INTERNAL
+    } else {
+        OUT.map(|n| (n as f32 / arm.scale).round() as u32)
+    };
     let mut f = Frame::with_sizes(&rig.device, internal, OUT);
     match arm.upscaler {
         "fsr2" => f.set_upscaler_kind(
@@ -247,6 +313,8 @@ fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
         far_normal: arm.far_normal,
         view: if arm.albedo {
             vxe_render::ViewMode::Albedo
+        } else if arm.normals {
+            vxe_render::ViewMode::Normals
         } else {
             vxe_render::ViewMode::Shaded
         },
@@ -269,6 +337,11 @@ fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
         key_far: arm.key_far,
         key_far_mix: arm.key_far_mix,
         penumbra: arm.penumbra,
+        light_history: arm.light_history,
+        landing_fade: arm.landing_fade,
+        source_fade: arm.source_fade,
+        far_light_wide: arm.far_light_wide,
+        light_history_far: arm.light_history_far,
         store_read: if arm.store_read_face {
             vxe_render::StoreRead::Face
         } else {
@@ -424,6 +497,36 @@ const DIAG_AT: [usize; 6] = [0, 8, 30, 60, 120, 240];
 /// The frames after the drain (none by default) before the segments, for the exposure.
 const SETTLE: usize = 120;
 
+/// A frame pair's near share over 4 levels, in %, over which [`pop_line`] prints it.
+const POP_PRINT: f64 = 2.0;
+
+/// Prints a pair of segment `name` at frame `k` whose near share over 4 levels (`c`, from
+/// [`change_by_class`]) is over [`POP_PRINT`] %: that share, the near's mean |dY|, and the
+/// queue's blocks landed between the counters `a` and `b`.
+fn pop_line(
+    name: &str,
+    k: usize,
+    c: &[(f64, f64); 5],
+    a: &vxe_render::QueueStats,
+    b: &vxe_render::QueueStats,
+) {
+    if c[1].0 > POP_PRINT {
+        println!(
+            "    pop {name} +{k}: near {:.2} % / {:.3}; landed baked {} (how {})",
+            c[1].0,
+            c[1].1,
+            b.baked - a.baked,
+            (0..4)
+                .map(|i| (b.landings[i] - a.landings[i]).to_string())
+                .collect::<Vec<_>>()
+                .join("/")
+        );
+    }
+}
+
+/// The settle's first frames timed pass by pass: a fresh start, its chunks landing and fading.
+const FRESH: usize = 60;
+
 /// The far's key source over the far lighting pixels (hit over 15 m) where the key light falls:
 /// shares of the record, the horizon, a landing's fade and the ray (the light pass's sample's b
 /// says a ray was cast; else the key slot's tag, pair.wgsl's `key_slot_decode`).
@@ -466,8 +569,118 @@ fn fmt_sources(v: &[f64; 4]) -> String {
     )
 }
 
+/// A lighting pixel's state for the near class's source reading ([`SrcRow`]): its sky source
+/// word, whether the sky ray was cast, the visibility pair's mean, and whether its hit's chunk
+/// holds a block in the store.
+struct SrcState {
+    source: Vec<u8>,
+    cast: Vec<bool>,
+    pair: Vec<f32>,
+    block: Vec<bool>,
+}
+
+/// One stop pair's near sources (Plan 0098 Phase 6b's reading): over the near display pixels
+/// (this frame's classes) whose luma moved over 4 levels, how many; of them, those whose hit's
+/// chunk had no block the frame before and holds one now (in a landed chunk), and those whose
+/// sky source went from no value with the ray cast to the record; the pair's mean before and
+/// after over the moved pixels and its share at exactly 0 and 1 before (the column's answer);
+/// and over every lighting pixel that cast the sky ray this frame, the share whose pair is
+/// neither 0 nor 1 (a shown value other than the column's: a cast sample or a record).
+#[derive(Clone, Copy, Default)]
+struct SrcRow {
+    moved: usize,
+    landed: usize,
+    switched: usize,
+    vis_before: f64,
+    vis_after: f64,
+    before0: usize,
+    before1: usize,
+    cast: usize,
+    cast_other: usize,
+}
+
+/// The [`SrcState`] of `f`'s last frame: the shot's source and cast words, the pair read back,
+/// and each hit's chunk (the hit nudged along the view ray into the solid) looked up in the
+/// store.
+fn src_state(rig: &Rig, f: &Frame, shot: &support::defects::Shot, eye: [f32; 3]) -> SrcState {
+    let pair = vxe_render::debug::read_rgba16f(&rig.device, &rig.queue, f.visibility_pair());
+    let mut held = std::collections::HashMap::<[i32; 3], bool>::new();
+    let block = shot
+        .hits
+        .iter()
+        .map(|h| {
+            if h[3] > 1e30 || !h[3].is_finite() {
+                return false;
+            }
+            let d = [h[0] - eye[0], h[1] - eye[1], h[2] - eye[2]];
+            let l = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt().max(1e-6);
+            let c = [0, 1, 2].map(|k| ((h[k] + 0.01 * d[k] / l) / 64.0).floor() as i32);
+            *held
+                .entry(c)
+                .or_insert_with(|| f.store().block(vxe_world::ChunkCoord(c)).is_some())
+        })
+        .collect();
+    SrcState {
+        source: shot.source.clone(),
+        cast: shot.cast.clone(),
+        pair: pair.iter().map(|p| p[0]).collect(),
+        block,
+    }
+}
+
+/// The [`SrcRow`] of the pair `a` to `b` (display lumas) over classes `cls`, lighting states
+/// `pa` to `pb` on a grid `gw` wide.
+fn src_row(a: &[u8], b: &[u8], cls: &[u8], pa: &SrcState, pb: &SrcState, gw: usize) -> SrcRow {
+    let (dw, dh) = (OUT[0] as usize, OUT[1] as usize);
+    let gl = pb.source.len();
+    let mut r = SrcRow::default();
+    for i in 0..a.len() {
+        if cls[i] != 1 || a[i].abs_diff(b[i]) <= 4 {
+            continue;
+        }
+        let g = grid_of(i, dw, dh, gw, gl);
+        r.moved += 1;
+        r.landed += usize::from(!pa.block[g] && pb.block[g]);
+        r.switched += usize::from(
+            pa.source[g] == support::defects::SOURCE_NO_VALUE
+                && pa.cast[g]
+                && pb.source[g] == support::defects::SOURCE_RECORD,
+        );
+        r.vis_before += f64::from(pa.pair[g]);
+        r.vis_after += f64::from(pb.pair[g]);
+        r.before0 += usize::from(pa.pair[g] == 0.0);
+        r.before1 += usize::from(pa.pair[g] == 1.0);
+    }
+    for g in 0..gl {
+        if pb.cast[g] {
+            r.cast += 1;
+            r.cast_other += usize::from(pb.pair[g] != 0.0 && pb.pair[g] != 1.0);
+        }
+    }
+    r
+}
+
+fn fmt_src(r: &SrcRow) -> String {
+    let m = r.moved.max(1) as f64;
+    format!(
+        "near moved {}: in a landed chunk {:.1} %, no value (cast) to record {:.1} %; pair before {:.3} after {:.3}, before at 0 {:.1} % at 1 {:.1} %; cast px {} of them pair not 0 or 1 {:.2} %",
+        r.moved,
+        100.0 * r.landed as f64 / m,
+        100.0 * r.switched as f64 / m,
+        r.vis_before / m,
+        r.vis_after / m,
+        100.0 * r.before0 as f64 / m,
+        100.0 * r.before1 as f64 / m,
+        r.cast,
+        100.0 * r.cast_other as f64 / r.cast.max(1) as f64
+    )
+}
+
 struct Segment {
     name: &'static str,
+    /// Per frame of a kept segment, against the frame before (none at its first): the near
+    /// class's sources ([`SrcRow`]).
+    src: Vec<Option<SrcRow>>,
     /// Per pair: the change by class over 4 levels and the mean |dY|.
     pairs: Vec<[(f64, f64); 5]>,
     /// The per-pixel mean |dY| over the segment.
@@ -480,6 +693,8 @@ struct Segment {
     gw: usize,
     /// Per frame: the far's key sources ([`far_sources`]).
     sources: Vec<[f64; 4]>,
+    /// Per frame after its queue step: the live queue's counters (the default's with no queue).
+    queue: Vec<vxe_render::QueueStats>,
 }
 
 /// A sampled frame's diagnostic: its index, and per lighting pixel the age, the source word,
@@ -505,14 +720,18 @@ fn run_segment(
     let mut map = vec![0f64; n];
     let mut pairs = Vec::new();
     let mut last = prev;
-    let mut frames = Vec::new();
+    let mut frames: Vec<Vec<u8>> = Vec::new();
     let mut diag = Vec::new();
     let mut gw = 1usize;
     let mut k = 0usize;
     let mut sources = Vec::new();
     let mut sum_pass = Vec::<f64>::new();
+    let mut queue = Vec::new();
+    let mut src = Vec::new();
+    let mut src_prev: Option<SrcState> = None;
     for cam in cams {
         queue_step(rig, &mut s.frame, &cam);
+        queue.push(s.frame.bake_queue().map(|q| q.stats()).unwrap_or_default());
         let shot = s.step(rig, &cam);
         if sum_pass.len() < shot.passes.len() {
             sum_pass.resize(shot.passes.len(), 0.0);
@@ -537,6 +756,11 @@ fn run_segment(
         }
         if let Some(p) = &last {
             pairs.push(change_by_class(p, &y, &cls, 4));
+            if let (Some(a), Some(b)) =
+                (queue.len().checked_sub(2).map(|i| &queue[i]), queue.last())
+            {
+                pop_line(name, k, pairs.last().unwrap(), a, b);
+            }
             for i in 0..n {
                 map[i] += f64::from(p[i].abs_diff(y[i]));
             }
@@ -552,6 +776,13 @@ fn run_segment(
             );
         }
         if keep {
+            let now = src_state(rig, &s.frame, &shot, cam.position.to_array());
+            let row = match (&src_prev, frames.last()) {
+                (Some(pa), Some(a)) => Some(src_row(a, &y, &cls, pa, &now, gw)),
+                _ => None,
+            };
+            src.push(row);
+            src_prev = Some(now);
             frames.push(y.clone());
         }
         last = Some(y);
@@ -582,6 +813,7 @@ fn run_segment(
     );
     Segment {
         name,
+        src,
         pairs,
         map,
         last: last.unwrap(),
@@ -589,7 +821,64 @@ fn run_segment(
         diag,
         gw,
         sources,
+        queue,
     }
+}
+
+/// The stop's frames `LANDING` one by one, and every other frame of the stop in whose step a
+/// block landed or whose near pair is over [`LANDING_PAIR`]: the near class's over-4 share
+/// against the previous frame and against the segment's last, beside the queue's landings in
+/// that frame's step (chunks baked and key-only jobs ended; the blocks landed by how, refaded /
+/// over the fallback / another layout unfaded / bare unfaded; the landed cells whose words
+/// changed by read, directions / sky visibilities / sky flags / key visibilities / key flags /
+/// tail, then every cell they hold) and the blocks fading after it, each pair with its mean
+/// |dY|. Then the stop's largest near pair and its frame; [`landing_rows`] returns that pair.
+const LANDING: std::ops::RangeInclusive<usize> = 36..=64;
+
+/// A stop frame's near pair over 4 levels, in %, over which [`landing_rows`] prints it.
+const LANDING_PAIR: f64 = 0.5;
+
+fn landing_rows(seg: &Segment, cls: &[u8]) -> f64 {
+    let last = seg.frames.last().unwrap();
+    let mut max = (0.0f64, 0usize);
+    for i in 1..seg.frames.len() {
+        let (pair, mean) = change_by_class(&seg.frames[i - 1], &seg.frames[i], cls, 4)[1];
+        if pair > max.0 {
+            max = (pair, i);
+        }
+        let (a, b) = (&seg.queue[i - 1], &seg.queue[i]);
+        let landed = b.baked - a.baked + b.keys_baked - a.keys_baked;
+        if !LANDING.contains(&i) && landed == 0 && pair <= LANDING_PAIR {
+            continue;
+        }
+        let to_final = change_by_class(&seg.frames[i], last, cls, 4)[1].0;
+        let how: Vec<String> = (0..4)
+            .map(|k| (b.landings[k] - a.landings[k]).to_string())
+            .collect();
+        let cells: Vec<String> = (0..7)
+            .map(|k| (b.landing_cells[k] - a.landing_cells[k]).to_string())
+            .collect();
+        println!(
+            "    landing {} +{i}: pair near {pair:.2} % (mean |dY| {mean:.2}); to-final near {to_final:.2} %; landed baked {} keys {}; how {}; cells {}; fading {}",
+            seg.name,
+            b.baked - a.baked,
+            b.keys_baked - a.keys_baked,
+            how.join("/"),
+            cells.join("/"),
+            b.fading
+        );
+        if let Some(Some(r)) = seg.src.get(i) {
+            println!("      sources +{i}: {}", fmt_src(r));
+        }
+    }
+    println!(
+        "  {}: largest near pair {:.2} % at +{}",
+        seg.name, max.0, max.1
+    );
+    if let Some(Some(r)) = seg.src.get(max.1) {
+        println!("  {}: the largest pair's sources: {}", seg.name, fmt_src(r));
+    }
+    max.0
 }
 
 /// The live queue's depth in words: its jobs and the chunks it waits on.
@@ -883,6 +1172,30 @@ mod reading {
         );
     }
 
+    /// Plan 0095 Phase 10's soak reading, run by hand: the rig's protocol ([`wobble_on`]) for
+    /// Plan 0098 Phase 1's arm set `default`, `albedo`, `calm` and `calm,native` (the last with
+    /// no upscaler, at 1080p native), no drain, on one forest (`r` 8) at 1080p through FSR 2 at
+    /// 1.5: each arm's rows printed with the queue's depth and the far's key source split, and
+    /// the stop +0 near of each in one row, so a later plan re-reads the wobble with the same
+    /// instrument. Nothing is asserted: the claim it carried (the near does not go on settling
+    /// after a stop, at most `albedo`'s plus 2 points) is asserted with the queue stopped and the
+    /// exposure pinned, where nothing lands and the exposure takes no step, by
+    /// [`super::the_defaults_hold_still_at_rest_and_the_far_holds`]. `VXE_TEST_ADAPTER` picks
+    /// the adapter (the RTX by hand; unset, lavapipe).
+    #[test]
+    #[ignore = "reading"]
+    fn the_wobble_table_over_the_arm_set() {
+        let Some((mut rig, cam0)) = forest_rig(8) else {
+            return;
+        };
+        let mut near = Vec::new();
+        for spec in ["default", "albedo", "calm", "calm,native"] {
+            near.push((spec, wobble_on(&mut rig, cam0, &Arm::from_spec(spec)).near0));
+        }
+        let row: Vec<String> = near.iter().map(|(a, v)| format!("{a} {v:.2} %")).collect();
+        println!("stop +0 near on {}: {}", rig.adapter, row.join(", "));
+    }
+
     #[test]
     #[ignore = "reading"]
     fn wobble() {
@@ -894,11 +1207,23 @@ mod reading {
     }
 }
 
+/// What [`wobble_on`] reads of a run's stop, in % of the class's pixels over 4 levels: the near
+/// class from the stop's first frame to its last (`near0`), the stop's largest near pair
+/// (`near_pair`), the far class from the stop's first frame (`far0`) and 30 frames into it
+/// (`far30`) against its last, and the live queue's depth at the stop's end in words
+/// (`depth`). Every figure is NaN for a `probe` arm, which runs no stop.
+#[derive(Clone, Debug)]
+struct StopRead {
+    near0: f64,
+    near_pair: f64,
+    far0: f64,
+    far30: f64,
+    depth: String,
+}
+
 /// The rig's protocol for `arm` on `rig` from the spawn's camera `cam0`: the table's rows
-/// printed, frames and maps under `live/wobble/<arm>/`. Returns the stop's near +0 (the near
-/// class's over-4 share from the stop's first frame to its last; NaN for a `probe` arm, which
-/// runs no stop).
-fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> f64 {
+/// printed, frames and maps under `live/wobble/<arm>/`. Returns what it read of the stop.
+fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> StopRead {
     QUEUE_ON.with(|q| q.set(true));
     {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -942,7 +1267,13 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> f64 {
                     OUT[1],
                 );
             }
-            return f64::NAN;
+            return StopRead {
+                near0: f64::NAN,
+                near_pair: f64::NAN,
+                far0: f64::NAN,
+                far30: f64::NAN,
+                depth: depth(&s.frame),
+            };
         }
         if let Some(ms) = arm.pre_ms {
             s.frame.set_bake_budget(vxe_render::Budget::PerFrame { ms });
@@ -960,10 +1291,41 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> f64 {
             "  queue drained {drained} after {n} frames ({:.1} s)",
             t.elapsed().as_secs_f64()
         );
-        for _ in 0..SETTLE {
+        // The settle's first FRESH frames are timed (every chunk in view fading as it lands).
+        // Every settle frame is read: a near pair over POP_PRINT % is printed (the spawn's own
+        // chunks land here).
+        let mut fresh = Vec::<f64>::new();
+        let mut prev: Option<Vec<u8>> = None;
+        let mut q_prev = s.frame.bake_queue().map(|q| q.stats()).unwrap_or_default();
+        for k in 0..SETTLE {
             queue_step(rig, &mut s.frame, &cam0);
-            s.run(rig, &cam0);
+            let shot = s.step(rig, &cam0);
+            if k < FRESH {
+                fresh.resize(fresh.len().max(shot.passes.len()), 0.0);
+                for (a, b) in fresh.iter_mut().zip(&shot.passes) {
+                    *a += b / FRESH as f64;
+                }
+            }
+            let gw = s.frame.light_hit_positions().width() as usize;
+            let cls = classes(&shot.hits, &shot.source, gw, cam0.position.to_array());
+            let y = lumas(&shot.display);
+            let q = s.frame.bake_queue().map(|q| q.stats()).unwrap_or_default();
+            if let Some(p) = &prev {
+                pop_line("settle", k, &change_by_class(p, &y, &cls, 4), &q_prev, &q);
+            }
+            q_prev = q;
+            prev = Some(y);
         }
+        let fresh_ms: Vec<String> = vxe_render::FRAME_PASSES
+            .iter()
+            .zip(&fresh)
+            .filter(|(n, _)| ["light", "temporal", "atrous", "hit"].contains(n))
+            .map(|(n, v)| format!("{n} {v:.2}"))
+            .collect();
+        println!(
+            "  fresh start's first {FRESH} frames, pass ms: {}",
+            fresh_ms.join(", ")
+        );
         if arm.nqueue {
             QUEUE_ON.with(|q| q.set(false));
         }
@@ -1011,9 +1373,11 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> f64 {
             println!("  classes at the still: {}", share.join(", "));
         }
         let still_far_max = still.pairs.iter().map(|p| p[3].0).fold(0.0, f64::max);
-        // The slow fly: 180 frames forward.
+        // The slow fly: `arm.fly` frames forward (180 by default).
         let step = arm.speed_m_s / 60.0;
-        let fly_cams: Vec<Camera> = (1..=180).map(|k| moved(&cam0, step * k as f32)).collect();
+        let fly_cams: Vec<Camera> = (1..=arm.fly)
+            .map(|k| moved(&cam0, step * k as f32))
+            .collect();
         let cam1 = *fly_cams.last().unwrap();
         let fly = run_segment(
             rig,
@@ -1038,12 +1402,23 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> f64 {
             Some(fly.last.clone()),
         );
         summarise(&stop, "classes per frame");
-        let stop_near;
+        let stop_read;
         {
             let shot = support::defects::read(rig, &s.frame, None);
             let gw = s.frame.light_hit_positions().width() as usize;
             let cls = classes(&shot.hits, &shot.source, gw, cam1.position.to_array());
-            stop_near = hold_series(&stop, &cls, still_far_max);
+            let near0 = hold_series(&stop, &cls, still_far_max);
+            let near_pair = landing_rows(&stop, &cls);
+            let last = stop.frames.last().unwrap();
+            let far0 = change_by_class(&stop.frames[0], last, &cls, 4)[3].0;
+            let far30 = change_by_class(&stop.frames[30], last, &cls, 4)[3].0;
+            stop_read = StopRead {
+                near0,
+                near_pair,
+                far0,
+                far30,
+                depth: depth(&s.frame),
+            };
             support::write_png(&dir.join("stop-final.png"), &shot.display, OUT[0], OUT[1]);
         }
         // The turn: `turn_deg` over `turn_frames` frames, then the hold.
@@ -1087,36 +1462,95 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> f64 {
             );
         }
         println!("done: {}", dir.display());
-        stop_near
+        stop_read
     }
 }
 
-/// Plan 0095 Phase 10's soak reading: the rig's protocol ([`wobble_on`]) for the arm set
-/// `default`, `albedo`, `ray,disc`, `column` and `nqueue`, no drain, on one forest (`r` 8) at
-/// 1080p through FSR 2 at 1.5: each arm's rows printed with the queue's depth and the far's key
-/// source split, so a later plan re-reads the wobble with the same instrument. Plan 0095 Phase
-/// 10's near bar (as amended 2026-11-21): the `default` arm's (the picks') stop +0 near, the near
-/// class's over-4 share from the stop's first frame to its last, is at most the `albedo` arm's
-/// (lighting off) read in the same run plus 2 points. The bar is read at 1080p only: at the gate
-/// scene's 320-pixel grid the far normal's band starts at about 2.2 m and most near pixels read
-/// the far estimate. `VXE_TEST_ADAPTER` picks the adapter (the RTX by hand; unset, lavapipe).
+/// The far class's over-4 share 30 frames into the stop against its last at rest
+/// (`default,pin,nqueue`: the five picks, the exposure pinned, the queue stopped after the
+/// settle), at the fly of 180 frames and of 20: the largest of three readings on the RTX 3080
+/// Laptop (the readings log, Plan 0098 Phase 11: Phase 4's run and two more), which
+/// [`the_defaults_hold_still_at_rest_and_the_far_holds`] bars against plus 2 points.
+const REST_FAR30: [(usize, f64); 2] = [(180, REST_FAR30_180), (20, REST_FAR30_20)];
+const REST_FAR30_180: f64 = 9.98;
+const REST_FAR30_20: f64 = 11.39;
+
+/// The near class's over-4 share from the stop's first frame to its last at rest, at most:
+/// Plan 0095 Phase 10's bar as written, the lighting-off arm's (`albedo`) 0.05 % plus 2 points.
+const REST_NEAR0: f64 = 2.05;
+
+/// The largest near pair of the stop at rest, at most (the arm read 0.49, 0.08 and 0.01 % in
+/// Plan 0098 Phases 6 and 6b; the bar is the largest plus 2 points).
+const REST_NEAR_PAIR: f64 = 2.5;
+
+/// Plan 0098 Phase 4's bars as ruled at its findings (ADR-0082): the rig's protocol
+/// ([`wobble_on`]) on the forest (`r` 8) at 1080p through FSR 2 at 1.5, no drain, the exposure
+/// pinned after the settle, the defaults with no token (the five picks), at the fly of 180
+/// frames and of 20. Asserted at rest only, with the queue stopped after the settle
+/// (`default,pin,nqueue`), where nothing lands and the exposure takes no step: no frame pair
+/// of the stop moves more than [`REST_NEAR_PAIR`] of the near pixels over 4 levels, the near
+/// from the stop's first frame to its last moves at most [`REST_NEAR0`], and the far 30 frames
+/// into the stop against its last at most [`REST_FAR30`] plus 2 points. A figure that is not a
+/// number fails. Printed, not barred: with the queue stepping (`default,pin`) and with no
+/// upscaler (`default,pin,native`, 1080p native, the distance left) the far +30 and +0, the
+/// queue's depth at the stop's end and every landing row with its frame: a landing's frame is
+/// the machine's pace, not the rig's (accepted by eye at window W2). `VXE_TEST_ADAPTER` picks
+/// the adapter (the RTX by hand; unset, lavapipe).
 #[test]
 #[ignore = "soak"]
-fn the_wobble_table_over_the_arm_set() {
+fn the_defaults_hold_still_at_rest_and_the_far_holds() {
     let Some((mut rig, cam0)) = forest_rig(8) else {
         return;
     };
-    let mut near = Vec::new();
-    for spec in ["default", "albedo", "ray,disc", "column", "nqueue"] {
-        near.push((spec, wobble_on(&mut rig, cam0, &Arm::from_spec(spec))));
+    let mut fails = Vec::new();
+    for (fly, bar) in REST_FAR30 {
+        let mut read = |spec: &str| {
+            wobble_on(
+                &mut rig,
+                cam0,
+                &Arm::from_spec(&format!("{spec},fly={fly}")),
+            )
+        };
+        let rest = read("default,pin,nqueue");
+        let picks = read("default,pin");
+        let native = read("default,pin,native");
+        println!(
+            "fly {fly} on {}: at rest the largest stop near pair {:.2} % (bar {REST_NEAR_PAIR}), stop +0 near {:.2} % (bar {REST_NEAR0}), far +30 {:.2} % against {bar:.2} % + 2 (far +0 {:.2} %, {}); stepping (printed): far +30 {:.2} %, far +0 {:.2} %, the largest near pair {:.2} %, {}; native (printed): far +30 {:.2} %, far +0 {:.2} %, {}",
+            rig.adapter,
+            rest.near_pair,
+            rest.near0,
+            rest.far30,
+            rest.far0,
+            rest.depth,
+            picks.far30,
+            picks.far0,
+            picks.near_pair,
+            picks.depth,
+            native.far30,
+            native.far0,
+            native.depth,
+        );
+        // A figure that is not a number fails.
+        if rest.near_pair.is_nan() || rest.near_pair > REST_NEAR_PAIR {
+            fails.push(format!(
+                "fly {fly}: a stop pair at rest moves {:.2} % of the near over 4",
+                rest.near_pair
+            ));
+        }
+        if rest.near0.is_nan() || rest.near0 > REST_NEAR0 {
+            fails.push(format!(
+                "fly {fly}: the stop +0 near at rest {:.2} % against {REST_NEAR0} %",
+                rest.near0
+            ));
+        }
+        if rest.far30.is_nan() || rest.far30 > bar + 2.0 {
+            fails.push(format!(
+                "fly {fly}: far +30 at rest {:.2} % against {bar:.2} % + 2",
+                rest.far30
+            ));
+        }
     }
-    let row: Vec<String> = near.iter().map(|(a, v)| format!("{a} {v:.2} %")).collect();
-    println!("stop +0 near on {}: {}", rig.adapter, row.join(", "));
-    let (picks, off) = (near[0].1, near[1].1);
-    assert!(
-        picks <= off + 2.0,
-        "stop +0 near {picks:.2} % against the lighting-off {off:.2} % + 2"
-    );
+    assert!(fails.is_empty(), "{}", fails.join("; "));
 }
 
 /// One run of the gate scene's protocol: the share of far pixels over 4 levels on each
@@ -1231,8 +1665,8 @@ fn gate_run(rig: &mut Rig, cam0: &Camera, arm: support::wobble::Arm, frozen: boo
 /// hold's last frame at +30 and +60, each at or under the before's plus 1 point. Printed, not
 /// asserted (as amended 2026-11-21): the near class's stop +0 beside the lighting-off (albedo)
 /// run's (at this 320-pixel grid the far normal's band starts at about 2.2 m, so most near
-/// pixels read the far estimate; the near bar is the 1080p soak reading's,
-/// [`the_wobble_table_over_the_arm_set`]), and the same segments undrained with the queue's
+/// pixels read the far estimate; the near bar is the 1080p soak test's at rest,
+/// [`the_defaults_hold_still_at_rest_and_the_far_holds`]), and the same segments undrained with the queue's
 /// depth, the picks' +60 beside the before's (Plan 0096's far tiers re-read it). Far is a hit 6 m out or more
 /// ([`support::wobble::NEAR_M`]: the far normal's weight at least 0.996 at this width). Every
 /// figure prints. `VXE_TEST_ADAPTER` picks the adapter (unset, lavapipe).

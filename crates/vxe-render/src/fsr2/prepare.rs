@@ -118,7 +118,7 @@ impl Fsr2 {
             spd_work_groups: w.div_ceil(64) * h.div_ceil(64),
             // FsrRcasCon of `-2 sharpness + 2` stops.
             rcas_con: (-(2.0 - 2.0 * self.settings.sharpness.clamp(0.0, 1.0))).exp2(),
-            debug: u32::from(self.debug),
+            debug: u32::from(self.debug) << u32::from(self.stages),
             tone: u32::from(params.lighting & crate::frame::LIGHTING_IDENTITY_TONE_MAP != 0)
                 | u32::from((params.flags >> crate::frame::VIEW_SHIFT) & 7 == 0) << 1
                 | u32::from(params.dither != 0) << 2,

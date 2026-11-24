@@ -443,7 +443,8 @@ impl Run {
         let Some(gfx) = self.gfx.as_mut() else {
             return enc;
         };
-        if gfx.frame.bake_queue().is_none() {
+        // The debug page's `queue freeze`: no step, so no record lands or starts.
+        if gfx.frame.bake_queue().is_none() || self.modes.diag.queue_frozen {
             return enc;
         }
         gpu.queue.submit([enc.finish()]);

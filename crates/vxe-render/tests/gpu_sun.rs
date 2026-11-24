@@ -65,6 +65,11 @@ fn sky(sun: [f32; 3], moon: [f32; 3], e: [[f32; 3]; 2]) -> Sky {
     }
 }
 
+/// The rigs' frame: full-resolution lighting, the lamp and the filter off, the exposure 1, no
+/// sky ray, and the light history on with the key light's far baked and blended: the
+/// mechanisms these tests read (the running means, the key ray's penumbra, a record's fade)
+/// ride the light history, which is off by default (ADR-0082). A test
+/// of another configuration sets it over this one.
 fn frame(device: &wgpu::Device, size: [u32; 2], walk: ShadowWalk) -> Frame {
     let mut frame = Frame::new(device, size[0], size[1]);
     frame.set_resolution(device, LightingResolution::Full);
@@ -74,6 +79,9 @@ fn frame(device: &wgpu::Device, size: [u32; 2], walk: ShadowWalk) -> Frame {
         shadow_walk: walk,
         exposure: Exposure::Manual(1.0),
         sky_rays: 0,
+        light_history: true,
+        key_far: vxe_render::KeyFar::Baked,
+        key_far_mix: vxe_render::KeyFarMix::Blend,
         ..Lighting::default()
     });
     frame

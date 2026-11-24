@@ -2,6 +2,7 @@
 
 use super::rule::zero_block;
 use super::*;
+use crate::bake::job_loop::JobCtx;
 
 impl BakeQueue {
     /// One frame's step: follow the window, free the blocks of chunks the mirror dropped, open
@@ -269,6 +270,14 @@ impl BakeQueue {
         // submit's laps.
         let place_ms = std::cell::Cell::new(0.0f64);
         let ruled = std::mem::take(&mut self.ruled);
+        // The ring-1 dig jobs ([`BakeQueue::open_digs`]): opened into the slots the read back
+        // frees, and planned ahead of every other job.
+        let ring1: ChunkSet = self
+            .dig_open
+            .iter()
+            .filter(|(_, d)| d.near)
+            .map(|(c, _)| *c)
+            .collect();
         let (cell, clamp) = (self.settings.cell, self.settings.clamp);
         let mut placement = Placement {
             gpu: run.gpu,
@@ -287,11 +296,15 @@ impl BakeQueue {
             job_partial: &mut self.job_partial,
             provisional: &mut self.provisional,
             job_provisional: &mut self.job_provisional,
+            touched: &mut self.touched,
             entered: &mut self.entered,
             ages_first: &mut self.ages_first,
             ages_full: &mut self.ages_full,
             steps: self.steps,
             record: record_words(self.settings.cell),
+            landing_fade: self.landing_fade,
+            dig_store_hold: self.dig_store_hold,
+            landed_word: self.landed_word,
         };
         let mut sink = |store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>| {
             let t = stopwatch();
@@ -332,6 +345,31 @@ impl BakeQueue {
             laps.ms[S_PLACE] += p;
         };
         lap(&mut self.laps, S_COLLECT);
+        if !ring1.is_empty() {
+            let ctx = JobCtx {
+                run,
+                settings: &settings,
+                round: settings.round.max(1),
+                rounds_cap: 0,
+            };
+            while let Some(k) = self
+                .lp
+                .pending
+                .iter()
+                .position(|j| ring1.contains(&j.coord.0))
+            {
+                let Some(slot) = self.lp.free.pop() else {
+                    break;
+                };
+                let job = self.lp.pending.remove(k).expect("found above");
+                self.lp.open.push(ctx.open(job, slot));
+            }
+            self.lp.promote(|c| ring1.contains(&c.0));
+            // A ring-1 job opened with no live face (every brick it re-bakes left faceless by
+            // the edit) has nothing to submit, so no read back would close it: it ends here,
+            // its block to the sink, as a pending job with nothing to draw ends at its opening.
+            self.lp.close_ended(run, store, &settings, &mut sink);
+        }
         let room = self.lp.in_flight() < IN_FLIGHT;
         let in_flight_full = !room && !self.lp.idle();
         let sent = room
@@ -456,11 +494,20 @@ struct Placement<'a> {
     job_partial: &'a mut ChunkSet,
     provisional: &'a mut ChunkSet,
     job_provisional: &'a mut ChunkSet,
+    /// [`BakeQueue::touched`]: a chunk whose job's block is thrown away is a candidate again.
+    touched: &'a mut ChunkSet,
     entered: &'a mut std::collections::HashMap<[i32; 3], (u64, bool)>,
     ages_first: &'a mut Vec<u32>,
     ages_full: &'a mut Vec<u32>,
     steps: u64,
     record: usize,
+    /// [`BakeQueue::landing_fade`].
+    landing_fade: bool,
+    /// [`BakeQueue::dig_store_hold`]: a dig's landing fades its sky visibilities too, from the
+    /// held record.
+    dig_store_hold: bool,
+    /// [`BakeQueue::landed_word`].
+    landed_word: Option<u32>,
 }
 
 impl Placement<'_> {
@@ -476,6 +523,10 @@ impl Placement<'_> {
         let keyed = self.keys_open.remove(&coord.0);
         if self.stale.remove(&coord.0) || !self.gpu.is_mirrored(coord) {
             store.release(first, block.len() as u64);
+            // The pool reads its candidacy again: a job opened and ended between two of its
+            // reads is in neither job set it compares, and a chunk with no block is a
+            // candidate once its job is gone.
+            self.touched.insert(coord.0);
             // A dig job's bricks went back to the waiting digs at the edit; a whole chunk's
             // job that would have replaced a full block re-bakes whole.
             if dug.is_none()
@@ -488,6 +539,7 @@ impl Placement<'_> {
             }
             return;
         }
+        let mut block = block;
         if keyed {
             // A key-only job keeps the block's words but its key visibilities: its place,
             // reach and provisional flags stay; the light pass fades the key words' change.
@@ -500,6 +552,7 @@ impl Placement<'_> {
                     w.len() == block.len() && w[..CHUNK_BRICKS] == block[..CHUNK_BRICKS]
                 })
             {
+                block[LANDED_AT as usize] = landed_word(Some(&from), self.landed_word);
                 self.refade(store, coord, (first, f), from, block, false);
             } else {
                 store.release(first, block.len() as u64);
@@ -546,6 +599,9 @@ impl Placement<'_> {
             .blocks
             .get(&coord.0)
             .and_then(|&(f, _)| store.words.get(&coord.0).map(|w| (f, w.clone())));
+        // The chunk's landing word: kept from its block, else this frame's (a first block).
+        block[LANDED_AT as usize] =
+            landed_word(old.as_ref().map(|(_, w)| w.as_slice()), self.landed_word);
         match old {
             Some((f, from))
                 if from.len() == block.len() && from[..CHUNK_BRICKS] == block[..CHUNK_BRICKS] =>
@@ -553,6 +609,7 @@ impl Placement<'_> {
                 self.refade(store, coord, (first, f), from, block, dug);
             }
             Some((f, from)) => {
+                self.stats.landings[LANDED_UNFADED] += 1;
                 store.release(f, from.len() as u64);
                 self.fades.remove(&coord.0);
                 store.put(self.queue, coord, first, block);
@@ -561,7 +618,9 @@ impl Placement<'_> {
                 // A first block under a fallback mode fades from the chain's value, read
                 // before the block's own summary joins the chain (ADR-0053).
                 Some(chain) => {
-                    let mut from = fallback_block(&block, &chain, self.record);
+                    self.stats.landings[LANDED_FALLBACK] += 1;
+                    let mut from = fallback_block(&block, &chain, self.record, self.landing_fade);
+                    count_landing(&mut self.stats.landing_cells, &from, &block, self.record);
                     store.put(self.queue, coord, first, block);
                     store.show(self.queue, coord, first, &mut from);
                     self.fades.insert(
@@ -571,10 +630,14 @@ impl Placement<'_> {
                             from,
                             frame: 0,
                             frames: FADE,
+                            vis: self.landing_fade,
                         },
                     );
                 }
-                None => store.put(self.queue, coord, first, block),
+                None => {
+                    self.stats.landings[LANDED_BARE] += 1;
+                    store.put(self.queue, coord, first, block);
+                }
             },
         }
     }
@@ -602,11 +665,13 @@ impl Placement<'_> {
             {
                 let mut now = Vec::new();
                 let t = fd.frame as f32 / fd.frames as f32;
-                fade_mix(&mut now, &fd.from, &from, t, self.record);
+                fade_mix(&mut now, &fd.from, &from, t, self.record, fd.vis);
                 now
             }
             _ => from,
         };
+        self.stats.landings[LANDED_REFADED] += 1;
+        count_landing(&mut self.stats.landing_cells, &from, &block, self.record);
         store.release(first, block.len() as u64);
         store.put(self.queue, coord, f, block);
         store.show(self.queue, coord, f, &mut from);
@@ -617,7 +682,51 @@ impl Placement<'_> {
                 from,
                 frame: 0,
                 frames: if dug { DIG_FADE } else { FADE },
+                vis: self.landing_fade || (dug && self.dig_store_hold),
             },
         );
+    }
+}
+
+/// The landing word ([`LANDED_AT`]) of a block landing on a chunk whose block was `old`: under
+/// the switch (`word` the queue's [`BakeQueue::landed_word`]) the old block's where the chunk
+/// held one (a refinement, a key re-bake, a dig), else `word` (a first block over the
+/// missing-light chain or a bare one: the frame plus one, 0 in the pre-roll); 0 with the switch
+/// off.
+pub(super) fn landed_word(old: Option<&[u32]>, word: Option<u32>) -> u32 {
+    let Some(w) = word else {
+        return 0;
+    };
+    old.map_or(w, |b| b.get(LANDED_AT as usize).copied().unwrap_or(0))
+}
+
+/// Counts into `cells` ([`QueueStats::landing_cells`]) the cells of a landing block `to` whose
+/// words differ from `from`, what the pool shows as the fade starts, by read.
+fn count_landing(cells: &mut [u64; 7], from: &[u32], to: &[u32], record: usize) {
+    for &dir in &to[..CHUNK_BRICKS] {
+        if dir == 0 {
+            continue;
+        }
+        let run = (dir >> 11) as usize;
+        for cell in (run - record..run).step_by(BRICK_WORDS) {
+            let (a, b) = (
+                &from[cell..cell + BRICK_WORDS],
+                &to[cell..cell + BRICK_WORDS],
+            );
+            let (v, k) = (VIS_WORD, KEY_WORD);
+            let flags = |w: u32| w & !0xFFFF;
+            cells[LANDING_DIRECTIONS] += u64::from(a[..6] != b[..6]);
+            if flags(a[v + 1]) != flags(b[v + 1]) {
+                cells[LANDING_VIS_FLAG] += 1;
+            } else if a[v..v + 2] != b[v..v + 2] {
+                cells[LANDING_VIS] += 1;
+            }
+            let keyed = a[k + 1] & KEY_BAKED != 0 && b[k + 1] & KEY_BAKED != 0;
+            if a[k..k + 2] != b[k..k + 2] {
+                cells[if keyed { LANDING_KEY } else { LANDING_KEY_FLAG }] += 1;
+            }
+            cells[LANDING_TAIL] += u64::from(a[6] != b[6]);
+            cells[LANDING_RECORDS] += 1;
+        }
     }
 }

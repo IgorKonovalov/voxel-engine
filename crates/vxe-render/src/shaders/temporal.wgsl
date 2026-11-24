@@ -710,44 +710,6 @@ fn count_rejection(prev: HitRecord, rec: HitRecord, own_still: bool) {
     }
 }
 
-// The sky term's source at a hit, a reading's word (COUNT_STORE only), added to the moments'
-// w as `source / 16` (`source_fraction`): every reader of that w compares it against 0.5 or
-// 1.5, which a fraction under 0.5 leaves as it was. SOURCE_NONE: no store face, an entity or
-// the sky off; RECORD: the face's own cell holds a fresh record (no ray); RECORD_STALE: it
-// holds one marked stale (the ray cast); OWN_SUMMARY and COLUMN: no record, the prior's value
-// from the chunk's own summary or the column held (`store_sky_fallback`; no ray); NO_VALUE: no
-// record and no prior's value (the ray cast); MISMATCH: a prior's value where the ray was cast.
-const SOURCE_NONE: u32 = 0u;
-const SOURCE_RECORD: u32 = 1u;
-const SOURCE_RECORD_STALE: u32 = 2u;
-const SOURCE_OWN_SUMMARY: u32 = 3u;
-const SOURCE_COLUMN: u32 = 4u;
-const SOURCE_NO_VALUE: u32 = 5u;
-const SOURCE_MISMATCH: u32 = 6u;
-
-// The source word of face `face` of voxel `v`: `record` its own cell holds a record, `chained`
-// the chain gave a value, `ray` the light pass cast the sky ray there.
-fn sky_source(head: StoreHead, v: vec3<i32>, face: u32, record: bool, chained: bool, ray: bool) -> u32 {
-    if (record) {
-        return select(SOURCE_RECORD, SOURCE_RECORD_STALE, ray);
-    }
-    if (chained) {
-        if (ray) {
-            return SOURCE_MISMATCH;
-        }
-        return select(SOURCE_COLUMN, SOURCE_OWN_SUMMARY,
-            store_summary_sky(head, v >> vec3<u32>(6u), face).y > 0.0);
-    }
-    return SOURCE_NO_VALUE;
-}
-
-fn source_fraction(source: u32, on_entity: bool) -> f32 {
-    if (!COUNT_STORE || on_entity) {
-        return 0.0;
-    }
-    return f32(source) / 16.0;
-}
-
 const ALPHA: f32 = 0.2;
 // The age at which a fallback's emissive mean stops taking samples: 64 samples, its noise an
 // eighth of one sample's, then held until the pixel resets.
@@ -784,8 +746,8 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     var estimate = -1.0;
     // The normal the column test lifts the hit along: the store face's, else the shading one.
     var lift_n = rec.n;
-    // A cube face whose own cell holds a sky record: its voxel, face and face normal, for the
-    // cast path's term in the baked term's form.
+    // A cube face whose own cell holds a sky record (`rec_face`), and any store face's voxel,
+    // face and face normal, for the cast path's term in the baked term's form.
     var rec_face = false;
     var rec_voxel = vec3<i32>(0);
     var rec_dir = 0u;
@@ -866,16 +828,27 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         var sky_term = vec3<f32>(0.0);
         if (!on_entity && sky_on()) {
             let rv = store_sky_visibility(head, store_voxel(rec.p, nf), face);
+            rec_voxel = store_voxel(rec.p, nf);
+            rec_dir = face;
+            rec_nf = nf;
             if (rv.y > 0.0) {
                 estimate = rv.x;
                 rec_face = true;
-                rec_voxel = store_voxel(rec.p, nf);
-                rec_dir = face;
-                rec_nf = nf;
             }
             var sv = rv;
             if (sv.y == 0.0) {
                 sv = store_sky_fallback(head, store_voxel(rec.p, nf), face, rec.p, nf);
+            }
+            // `Params::history` bit 3 (`Lighting::far_light_wide`, a spike arm): the sky term
+            // skips the filter, so its own source widens instead: the face's visibility mixes
+            // toward its chunk summary's by the far normal's weight, so two hits a jitter step
+            // apart at the far read one value.
+            if ((params.history & 8u) != 0u && sv.y > 0.0) {
+                let cs = store_summary_sky(head, store_voxel(rec.p, nf) >> vec3<u32>(6u), face);
+                if (cs.y > 0.0) {
+                    let w = far_normal_weight(params.views[view_of(full_px(gid.xy))], rec.t);
+                    sv = vec2<f32>(mix(sv.x, cs.x, w), sv.y);
+                }
             }
             if (COUNT_STORE) {
                 source = sky_source(head, store_voxel(rec.p, nf), face, rv.y > 0.0, sv.y > 0.0, sky_cast);
@@ -895,11 +868,15 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         if ((params.lighting & LIGHTING_DIRECT) == 0u && (params.flags & FLAG_CUTAWAY) == 0u
             && view_mode() != VIEW_STEPS) {
             var held = 0.0;
-            if ((params.history & 1u) != 0u && !in_edit(rec.p)) {
+            if (light_history_at(gid.xy, rec) && !in_edit(rec.p)) {
                 held = min(floor(textureLoad(prev_moments_in, px, 0).z + 0.5) + 1.0, AGE_MAX);
             }
             // A face's pixel is never fresh here (no light, no shadow ray); a moved part's is.
             let fresh_w = select(0.0, 1.0, fresh);
+            if (no_ray && rec_face) {
+                // This return keeps no history: a record's switch of source fades here.
+                sky_term = source_faded(sky_term, head, nr_voxel, rec, nf);
+            }
             let lit = sample.xyz + sky_term * exposure_now();
             textureStore(accum_out, px, min(vec4<f32>(lit, fresh_w), vec4<f32>(HDR_MAX)));
             textureStore(direct_out, px, vec4<f32>(0.0));
@@ -922,9 +899,14 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     var a_direct = 1.0;
     var a_mom = 1.0;
     var m_hist = vec2<f32>(0.0);
-    if (rec.found && (params.history & 1u) != 0u && !in_edit(rec.p)) {
+    // The dig hold (`in_dig_hold`): a pixel with no light history in a held box reprojects the
+    // pair alone, taken in `pair_taken`.
+    let hist = light_history_at(gid.xy, rec);
+    let dig_pair = !hist && rec.found && in_dig_hold(rec.p);
+    var pair_taken = false;
+    if (rec.found && (hist || dig_pair) && !in_edit(rec.p)) {
         let vi = view_of(full_px(gid.xy));
-        if (!rec.entity && !rec.field && rec.axis >= 0 && normal_mode() == NORMAL_FACE
+        if (hist && !rec.entity && !rec.field && rec.axis >= 0 && normal_mode() == NORMAL_FACE
             && (params.lighting & LIGHTING_HOOK_NO_STAIR) == 0u) {
             stair_w = far_normal_weight(params.views[vi], rec.t);
         }
@@ -1004,7 +986,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 m = textureLoad(prev_moments_in, tap, 0).xyz;
             }
         }
-        if (COUNT_STORE) {
+        if (COUNT_STORE && hist) {
             atomicAdd(&counters[5], 1u);
             if (w_sum <= 1e-3) {
                 var prev = HitRecord();
@@ -1014,7 +996,10 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 count_rejection(prev, rec, still && all(near == px));
             }
         }
-        if (w_sum > 1e-3) {
+        if (w_sum > 1e-3 && dig_pair) {
+            hp = hp / w_sum;
+            pair_taken = true;
+        } else if (w_sum > 1e-3) {
             let ratio = exposure_ratio();
             h = h / w_sum * ratio;
             hd = hd / w_sum * ratio;
@@ -1074,15 +1059,26 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (estimate < 0.0) {
         estimate = column_estimate(rec.p, lift_n);
     }
-    var pair = select(seed, pair_step(vis.x, hp, accepted, estimate, seed_age), sky_cast);
+    let pair_ok = accepted || pair_taken;
+    var pair = select(seed, pair_step(vis.x, hp, pair_ok, estimate, seed_age), sky_cast);
+    if (sky_cast && rec_face && sky_on() && dig_ring_held(hist, rec.p)) {
+        // A stale ring face under the dig hold: its record's estimate at the cap, so the term
+        // below stays its record's baked term until the re-bake lands.
+        pair = vec4<f32>(estimate, 0.0, estimate, f32(max(sky.sky_history, 1u)));
+    }
     if (no_ray) {
         // The no-ray value rides one fade.
-        let fx = no_ray_fade(seed.x, hp, accepted, seed.w);
+        let fx = no_ray_fade(seed.x, hp, pair_ok, seed.w);
         pair = vec4<f32>(fx.x, pair.y, fx.x, fx.y);
     }
     if (no_ray) {
-        let t_nr = sky_baked_term(store_head(), nr_voxel, nr_face, pair.x, rec, nr_nf) * exposure_now();
-        accum = vec4<f32>(accum.xyz + t_nr, accum.w);
+        var t_nr = sky_baked_term(store_head(), nr_voxel, nr_face, pair.x, rec, nr_nf);
+        if (rec_face && !pair_ok) {
+            // A record's term at a pixel with no history: its switch of source fades
+            // (`source_faded`); a taken history keeps `no_ray_fade` alone.
+            t_nr = source_faded(t_nr, store_head(), nr_voxel, rec, lift_n);
+        }
+        accum = vec4<f32>(accum.xyz + t_nr * exposure_now(), accum.w);
     }
     var t_sky = sky_pair_term(sky_e, pair.x, vis.a, rec.n);
     // The moments' w: 0 a pixel the filter takes whole, 1 a stored pixel (its stored part passes
@@ -1093,7 +1089,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         // A stale ring face whose pair holds the record's estimate: its term in the baked
         // term's form with the pair's mean as the face's own visibility, carried by the stored
         // part as the baked term is. With the filter off the composite adds `sky_pair_term`
-        // from the pair, so the stored part carries the difference instead.
+        // from the pair, so the stored part carries the difference.
         let t_baked = sky_baked_term(store_head(), rec_voxel, rec_dir, pair.x, rec, rec_nf) * exposure_now();
         if ((params.lighting & LIGHTING_FILTER_OFF) != 0u) {
             accum = vec4<f32>(max(accum.xyz + t_baked - t_sky, vec3<f32>(0.0)), accum.w);

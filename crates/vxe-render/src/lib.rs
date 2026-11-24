@@ -52,10 +52,11 @@ pub mod debug {
 pub mod internals {
     pub use crate::bake::{
         BAKE_ROUND, BRICK_CELL, BRICK_WORDS, ChunkFaces, DIG_FADE, FADE, FacePrep, KEY_BAKE_RAYS,
-        KEY_SUN_AT, QUEUE_VIEW_MARGIN_DEG, SKY_BAKE_RAYS, STORE_COARSE_READS, SUMMARY_AT, VIEW_IN,
-        VIEW_OUT, VIEW_SHELL, angle_term, dig_ring, face_classes, in_near_shell, list_world_chunk,
-        record_key_visibility, record_sky_stale, record_tier, record_visibility, rgb9e5_unpack,
-        tone_level, unpack_direction, view_half_angle, view_half_angles,
+        KEY_SUN_AT, LANDED_AT, QUEUE_VIEW_MARGIN_DEG, SKY_BAKE_RAYS, STORE_COARSE_READS,
+        SUMMARY_AT, VIEW_IN, VIEW_OUT, VIEW_SHELL, angle_term, dig_ring, face_classes,
+        in_near_shell, list_world_chunk, record_key_visibility, record_sky_stale, record_tier,
+        record_visibility, rgb9e5_unpack, tone_level, unpack_direction, view_half_angle,
+        view_half_angles,
     };
     pub use crate::entities::{EntityInstances, PoolUpload, RangeAlloc, VolumePool};
     pub use crate::exposure::{METER_LOG2_LIMIT, STATE_HELD};
@@ -88,11 +89,14 @@ pub mod internals {
 pub use bake::{
     AROUND_REACH, AroundSource, BakeError, BakeProgress, BakeQueue, BakeReport, BakeSettings, Band,
     Bands, Budget, DEFAULT_BAKE_EDIT_MS, DEFAULT_BAKE_SLICE_MS, DEFAULT_COARSE_SAMPLES,
-    DEFAULT_DRAIN, DEFAULT_NEAR, DEFAULT_TIERS, DigReport, Drain, FaceOutcome, InViewWaiting,
-    ListingCensus, MissingLight, PreRoll, PreRollConfig, PreRollError, PreRollState,
-    PreRollSummary, QUEUE_ANGLE_WEIGHT, QUEUE_BRICK_SAMPLES, QUEUE_REFINE_WEIGHT, QueueOrder,
-    QueueStats, QueueView, ReachMode, Refine, RuleMissed, Store, StoreStats, chunk_nearest,
-    finality_blockers, in_view_census, queue_settings, reach_crosses, sky_over_floor,
+    DEFAULT_DRAIN, DEFAULT_NEAR, DEFAULT_TIERS, DigReport, DigTrace, DigTraceJob, Drain,
+    FaceOutcome, InViewWaiting, LANDED_BARE, LANDED_FALLBACK, LANDED_REFADED, LANDED_UNFADED,
+    LANDING_DIRECTIONS, LANDING_KEY, LANDING_KEY_FLAG, LANDING_RECORDS, LANDING_TAIL, LANDING_VIS,
+    LANDING_VIS_FLAG, ListingCensus, MissingLight, PreRoll, PreRollConfig, PreRollError,
+    PreRollState, PreRollSummary, QUEUE_ANGLE_WEIGHT, QUEUE_BRICK_SAMPLES, QUEUE_REFINE_WEIGHT,
+    QueueOrder, QueueStats, QueueView, ReachMode, Refine, RuleMissed, Store, StoreStats,
+    chunk_nearest, finality_blockers, in_view_census, queue_settings, reach_crosses,
+    sky_over_floor,
 };
 pub use camera::{Camera, View};
 pub use entities::{
@@ -112,12 +116,12 @@ pub use frame::{
     Upscaler, shadow_absorb,
 };
 pub use frame::{
-    CrackShares, EntityLight, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, KeyFar,
+    CrackShares, DigHold, EntityLight, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, KeyFar,
     KeyFarMix, LightHooks, LightWeights, Lighting, LightingResolution, LodParams, LookParams,
     MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher, NormalMode, PassTimer, Penumbra, RenderScale,
     ShadowWalk, SkyNormal, StoreRead, SurfaceTuning, ToneMap, ViewMode, YoungFilter, jitter_at,
 };
-pub use fsr2::{Fsr2, Fsr2Settings, UpscalerKind};
+pub use fsr2::{Fsr2, Fsr2Settings, Fsr2Stage, UpscalerKind};
 pub use gpu_world::{
     BELT_CHUNK_BYTES, BinStats, COLUMN_CELL, COLUMN_CELLS, COLUMN_NONE, DEFAULT_BUDGET_BYTES,
     DEFAULT_LIGHT_CHUNK_CAP, DEFAULT_LIGHT_RADIUS, DEFAULT_LIGHT_SAMPLES, GpuWorld, MirrorConfig,
@@ -135,7 +139,8 @@ pub use loading::{
 pub use present::Presenter;
 pub use probes::{DEFAULT_H_MOVE, DEFAULT_PROBE_SPACING, ProbeVolume};
 pub use settings::{
-    ApplyClass, BakeKnobs, BuildSettings, Profile, RenderSettings, SettingsChange, UpscalerChoice,
+    ApplyClass, BakeKnobs, BuildSettings, DEFAULT_FAR_NORMAL, Profile, RenderSettings,
+    SettingsChange, UpscalerChoice,
 };
 pub use {glam, wgpu};
 

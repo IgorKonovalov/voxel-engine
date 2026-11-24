@@ -120,6 +120,27 @@ loading screen at once, naming what loads (`loading outdoor, trees sparse`, `swi
 cave`), and loads behind it as start-up does; the run then comes back with the menu and the
 switch's notice.
 
+The `debug` page also holds the diagnosis switches, menu only and free while off, each named on
+the lighting row and in the banner when it is off its default: `penumbra` (disc, approach;
+`--penumbra`), `sky normal` (smoothed, face; `--sky-normal`), `filter` (the a-trous filter on
+or off; `--filter`), `light history` (on: the light passes read last frame's lighting through
+their history test; off, the default, every lighting pixel restarts each frame and the
+upscaler keeps its history; `--light-history`, a render setting), `landing fade` (on: a
+landing block's sky visibilities ride the store's fade with its light, so a landing arrives
+softly with no light history; `--landing-fade`, a render setting), `source fade` (on: where a
+pixel takes no light history, a face whose chunk's first block just landed mixes its sky term
+from the column's answer to the block's over 16 frames, so the switch of source is one fade;
+`--source-fade`, a render setting), `far light wide` (on: the
+a-trous filter's plane and normal edges relax by the far normal's weight, a far-trees spike arm),
+`light history far` (on, with light history off: the light passes keep their history where the
+far normal's weight is 1, a far-trees spike arm), `key jitter` (off: the key light's shadow ray runs along the
+disc's centre; it shows only where the ray's mean is shown, which under the defaults is an
+entity or a field surface, or with `light history` on), `stair rules` (off: the far normal's stair rules in the history test and the
+key and sky rays' lift) and `queue freeze` (on: the live queue takes no step, so no record
+lands). Two FSR 2 levers sit beside them, applied from the next frame and named in the
+upscaler's banner: `render scale` (1.5, 1, 2: FSR 2 at 1 is its antialiasing at native;
+`--scale`) and `jitter phases` (FSR 2's own count, 8, 32; `--jitter-phases`).
+
 The HUD's entities row reads `entities <n>/64 parts <m>/512 over <k> pool <used>/<total> KB`
 (then `tick <us>`, the movers' CPU a tick as the median over the last second, once a body has
 ticked, and `wander` while the wander is on): the entity pool's bytes in use, rounded up to
@@ -283,9 +304,13 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--sky-rays N` | Cosine-weighted sky rays a lighting pixel casts where no baked sky visibility is fresh, 0 (bake only) to 4; the banner names the count [1] |
 | `--sky-history N` | Frames the sky rays' running mean (the visibility pair) holds at most, 1 to 1024 [64] |
 | `--key-history N` | Frames the key light's visibility mean (the pair's `g`) holds at most, 1 to 1024 [256]; the banner names it when not the default |
-| `--key-far baked\|column\|ray` | The key light's visibility where a voxel is small on screen (ADR-0079), with no ray and no screen history: `baked` reads the store's baked value per brick direction over the sun's disc where fresh, else the column map's horizon toward the sun (softened by the disc's radius), a switch between the two riding one fade; `column` reads the horizon at every far face; the band is blended or stepped by `--key-far-mix` and a near pixel's restarted mean is seeded from the estimate; `ray` casts the per-pixel disc ray everywhere; the banner reads `key far column`, `key far ray` or `key far baked, key far mix step` with a sky set (nothing for the default), and the menu's lighting page switches both (`key far` cycles baked, column, ray; `key far mix`) [baked] |
-| `--key-far-mix blend\|step` | Inside the far normal's band under `--key-far baked` or `column`: the ray's mean blended to the far estimate by the band's weight, or the estimate from the weight's half [blend] |
-| `--penumbra disc\|approach` | The key light's penumbra near (ADR-0079): `approach` casts one shadow ray toward the sun's or moon's disc centre and scores how close it passes the rock beside it (a voxel of an absorbing material, such as `--leaf-shadow absorb`'s leaves, does not count), times the ray's transmittance, taken as the value with no history: the same every frame, on the lit side of an edge only; `disc` casts one ray a frame toward a random point of the disc and keeps its running mean; the banner reads `penumbra disc` with a sky set (nothing for the default) [approach] |
+| `--key-far baked\|column\|ray` | The key light's visibility where a voxel is small on screen (ADR-0079), with no ray and no screen history: `baked` reads the store's baked value per brick direction over the sun's disc where fresh, else the column map's horizon toward the sun (softened by the disc's radius), a switch between the two riding one fade; `column` reads the horizon at every far face; the band is blended or stepped by `--key-far-mix` and a near pixel's restarted mean is seeded from the estimate, so with `--light-history off` (the default) every world face shows the estimate at every distance: under `column` the sun's shadow is the column map's, with no penumbra but the horizon's ramp and no sun under cover (ADR-0082); `ray` casts the per-pixel disc ray everywhere; the banner reads `key far baked`, `key far ray` or `key far column, key far mix blend` with a sky set (nothing for the default), and the menu's lighting page switches both (`key far` cycles baked, column, ray; `key far mix`) [column] |
+| `--key-far-mix blend\|step` | Inside the far normal's band under `--key-far baked` or `column`: the ray's mean blended to the far estimate by the band's weight, or the estimate from the weight's half; with `--light-history off` both show the estimate alone and the choice only moves where the ray is cast [step] |
+| `--light-history on\|off` | The light passes read last frame's lighting through their history test (`Lighting::light_history`, ADR-0082); off, every lighting pixel is this frame's alone and the upscaler keeps its own history; the lighting row and the banner read `light history on` while it is on, and the debug page's `light history` switches it [off] |
+| `--landing-fade on\|off` | A landing block's sky visibilities ride the store's fade with its direction values and key visibilities (`Lighting::landing_fade`); off, they change in the frame the block lands and only the light history softens it; the banner reads `landing fade on`, and the debug page's `landing fade` switches it [off] |
+| `--source-fade on\|off` | A landing's switch of source fades (`Lighting::source_fade`): a block records the frame its chunk's first block landed, and where a pixel takes no light history its sky term mixes from the column's answer to the block's baked term over 16 frames; off, the term switches in the frame the block lands; the banner reads `source fade on`, and the debug page's `source fade` switches it [off] |
+| `--dig-hold on\|rays\|off` | What a dig shows until its re-bake lands where a pixel takes no light history (`Lighting::dig_hold`). Every edit box is held from its frame until the live queue holds no dig and 17 frames more. `on`: at the edit each brick the box dilated by one voxel touches takes a record in the light store made on the CPU against the world, a value per cell and direction: the up visibility of the nearest store record at or above the cell (the surface the dig cut through; else the chunk summary's), no more than the cell's own old record's, times the square root of the share of 12 fixed rays from the empty voxel before up to 8 of the cell's faces of that direction that leave 16 voxels without meeting an opaque voxel (a ray that does not rise is closed), at least 0.02; the light pass reads it as any record (no ray, no pair kept) and the store fades it to the bake's record over the dig's fade (4 frames) when the job lands; a ring face whose record the dig marked stale keeps its record's baked term. `rays`: the ring as `on`, and the box's sky visibility takes its pair's history over the cast rays, seeded by the stale record or the column's answer. `off`: the ring shows the cast ray's seed and the hole the seed's estimate until the re-bake lands. The banner reads `dig hold rays` or `dig hold off`, and the debug page's `dig hold` cycles it [on] |
+| `--penumbra disc\|approach` | The key light's penumbra near (ADR-0079): `approach` casts one shadow ray toward the sun's or moon's disc centre and scores how close it passes the rock beside it (a voxel of an absorbing material, such as `--leaf-shadow absorb`'s leaves, does not count), times the ray's transmittance, taken as the value with no history: the same every frame, on the lit side of an edge only; `disc` casts one ray a frame toward a random point of the disc and keeps its running mean, which is shown only where the mean has a history: with `--light-history off` and `--key-far baked` or `column` (the defaults) a world face shows the far estimate instead and no disc penumbra, and an entity or a field surface shows the frame's one sample; the banner reads `penumbra approach` with a sky set (nothing for the default) [disc] |
 | `--sky-normal face\|smoothed` | The normal a cube face's baked sky light reads its visibilities by: the face's own (the far normal's blend far off), or the 27-count gradient's at every distance, so a tread and a riser of a one-voxel stair read the slope's blend; the surface and the sun keep the face normal; the banner reads `sky normal face` with a sky set [smoothed] |
 | `--sky-bounce B` | The baked sky light's bounce floor, 0 to 1: this share of a face's visibility is its brick's six visibilities' mean weighted toward the normal (no ray); the banner reads `sky bounce B` with a sky set [0] |
 | `--key-cap V\|off` | The key light's shadow ray's length in voxels, past which a face counts lit (a slow adapter's lever, Plan 0096 Phase 6; 1536 its first guess); the banner reads `key cap V voxels`. Default off. |
@@ -322,7 +347,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 |------|------|
 | `--look PRESET` | The starting preset: `face` (honest cubes with the far normal; named here, with it off), `field` (the smooth surface, opt-in), `trilinear8`, `gradient27` [face] |
 | `--face-mix K` | The preset's face mix, 0 to 0.5 |
-| `--far-normal LO,HI` | Face mode's far normal band in pixels a voxel [2,6] |
+| `--far-normal LO,HI` | Face mode's far normal band in pixels a voxel (every profile's 4..8, ADR-0082); the menu's `far normal` steps 4..8, 8..12, 2..6, 1..2, off [4,8] |
 | `--band-census` | Print the field surface's band census |
 | `--view VIEW` | `shaded`, `normals`, `hitmask`, `steps`, `cracks` or `albedo` [shaded] |
 | `--translucent-layers N` | Translucent voxels composited before the hit [4; 0 ignores them] |
@@ -385,7 +410,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--missing-light black\|neighbour\|parent\|chain` | What a face with no baked value reads, ADR-0053 [chain] |
 | `--reach full\|partial` | Whether a near-band chunk waits for its whole light reach (a mid- or far-band chunk whose reach crosses the full radius bakes from the chunks resident either way, ADR-0080) [full] |
 | `--bake-drain off\|DRAIN,LINE` | The live queue's slice a frame in ms while a chunk in view waits for its tier's record (at least `--bake-budget`'s) and once none does, each 0.1 to 100; `off` is the budget alone. The `bake queue:` line names the slice `drain` or `line` [the profile's: 1.5,1 at floor, 6,1 at portable] |
-| `--bake-tiers NEAR,MID,FAR` | The live queue's samples a brick direction by a chunk's band on screen (the far-normal band at the output's focal length), each 16 to 65536 [the profile's: 4096,1024,256 at floor, 1024,256,256 at portable] |
+| `--bake-tiers NEAR,MID,FAR` | The live queue's samples a brick direction by a chunk's band on screen (the far-normal band at the output's focal length), each 16 to 65536; the HUD's `light:` row names the tiers in force as `bricks 8/NEAR,MID,FAR` (a profile switched in the menu brings its own) [the profile's: 4096,1024,256 at floor, 1024,256,256 at portable] |
 | `--queue-order score\|distance` | The live queue's order |
 | `--queue-weights A,R\|A,tier` | The score's angle and refine weights |
 | `--queue-withdraw on\|off` | Withdraw the jobs of chunks the camera passed |

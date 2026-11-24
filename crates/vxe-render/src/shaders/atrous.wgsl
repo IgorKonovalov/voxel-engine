@@ -98,7 +98,13 @@ fn eye_of(q: vec2<i32>) -> vec3<f32> {
 // `filter_normal`s (the shading normals, or with Params.lighting bit 15 a cube face's face
 // normal).
 fn edge_weight(a: HitRecord, b: HitRecord, eye: vec3<f32>) -> f32 {
-    let plane = abs(dot(a.n, b.p - a.p));
+    return edge_weight_relaxed(a, b, eye, 0.0);
+}
+
+// `edge_weight` with its plane and normal stops relaxed by `r` in [0, 1]: the plane distance
+// scaled by `1 - r`, the normal term mixed toward 1 by `r`; at 0 the weight as it is.
+fn edge_weight_relaxed(a: HitRecord, b: HitRecord, eye: vec3<f32>, r: f32) -> f32 {
+    let plane = abs(dot(a.n, b.p - a.p)) * (1.0 - r);
     // max(n.n', 0)^128 by seven squarings.
     var c = max(dot(filter_normal(a, eye), filter_normal(b, eye)), 0.0);
     c *= c;
@@ -108,7 +114,20 @@ fn edge_weight(a: HitRecord, b: HitRecord, eye: vec3<f32>) -> f32 {
     c *= c;
     c *= c;
     c *= c;
-    return exp(-plane / SIGMA_PLANE) * c;
+    return exp(-plane / SIGMA_PLANE) * mix(c, 1.0, r);
+}
+
+// The filter's edge relaxation at lighting pixel `q`'s hit `rec` under `Params::history` bit 3
+// (`Lighting::far_light_wide`, a spike arm): the far normal's weight (walk.wgsl
+// `far_normal_weight`, the same arithmetic), so the light of the two hits a jitter step finds
+// at the far is one spatial mean; 0 with the bit clear.
+fn far_wide(q: vec2<i32>, rec: HitRecord) -> f32 {
+    if ((params.history & 8u) == 0u || params.far_hi <= params.far_lo) {
+        return 0.0;
+    }
+    let v = params.views[view_of(full_px(vec2<u32>(q)))];
+    let px = f32(v.rect.z) / ((v.tan_left + v.tan_right) * max(rec.t, 1e-3));
+    return 1.0 - smoothstep(params.far_lo, params.far_hi, px);
 }
 
 @group(2) @binding(3) var moments_in: texture_2d<f32>;
@@ -319,6 +338,7 @@ fn atrous(@builtin(global_invocation_id) gid: vec3<u32>) {
     var v_sum = 0.0;
     let s = i32(step.size);
     let eye = eye_of(px);
+    let relax = far_wide(px, rec);
     for (var y = -2; y <= 2; y++) {
         for (var x = -2; x <= 2; x++) {
             let q = px + vec2<i32>(x, y) * s;
@@ -331,7 +351,7 @@ fn atrous(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
             let tap = textureLoad(src_in, q, 0);
             let k = KERNEL[x + 2] * KERNEL[y + 2];
-            var w = k * edge_weight(rec, other, eye);
+            var w = k * edge_weight_relaxed(rec, other, eye, relax);
             if (!edges_only) {
                 w *= exp(-abs(luminance(tap.xyz) - l) / sigma);
             }

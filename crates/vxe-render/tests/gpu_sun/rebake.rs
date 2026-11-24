@@ -312,9 +312,11 @@ fn a_key_rebakes_landing_at_the_far_is_one_fade() {
 /// Bar: a dig under a fully lit floor re-bakes the floor bricks' key words with the sky's
 /// ring: the floor of one chunk baked to rest under the sun at elevation 40, the sun turned 1
 /// degree (no key job), a box carved inside the rock under the floor (x and y 28..36, z
-/// 4..8): at the dig's step the floor brick over it (brick 4, 4, 1) is marked SKY_STALE with
-/// its key visibility kept; once the ring lands it is clear, its `+z` key level is 255 and the
-/// block's sun stamp is the turned sun, under which only the ring's job baked.
+/// 4..8): at the dig's step the floor brick over it (brick 4, 4, 1) holds its record: not
+/// stale (`VIS_BAKED`), its `+z` sky value kept at 1.0 (the face lies outside the dig's box
+/// dilated by one voxel), and `KEY_BAKED` clear, so its key reads as none, never as 0; once
+/// the ring lands it is clear, its `+z` key level is 255 and the block's sun stamp is the
+/// turned sun, under which only the ring's job baked.
 #[test]
 fn a_dig_rebakes_the_key_words_with_the_sky_ring() {
     let Some((device, queue)) = device() else {
@@ -351,11 +353,19 @@ fn a_dig_rebakes_the_key_words_with_the_sky_ring() {
     f.invalidate(a.0, b.0);
     key_step(&device, &queue, &mut f, &mut gpu, &world, &cam);
     let rec = floor_record(&f);
-    assert!(vxe_render::internals::record_sky_stale(&rec), "stale at the dig");
+    assert!(
+        !vxe_render::internals::record_sky_stale(&rec),
+        "held, not stale, at the dig"
+    );
+    assert_eq!(
+        vxe_render::internals::record_visibility(&rec, usize::from(UP)),
+        Some(1.0),
+        "the held record keeps its +z sky value (VIS_BAKED)"
+    );
     assert_eq!(
         vxe_render::internals::record_key_visibility(&rec, usize::from(UP)),
-        Some(1.0),
-        "the key word kept while stale"
+        None,
+        "KEY_BAKED clear at the dig"
     );
     let mut landed = false;
     for _ in 0..200 {

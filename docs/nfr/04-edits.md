@@ -219,3 +219,38 @@ in both.
 start and 1.41 at the end, one run, not paired with a parent):** 100 carves through the echo
 component 1.8005 ms against native `EchoLogic` 1.6445 ms, **1.56 µs per host call**; empty
 component tick 1.007 µs; `Bench` 1.8380 against 1.7269 ms, **1.064×**. Both lines hold.
+
+## An edit's light
+
+No budget line in `../nfr.md` yet: Plan 0099 sets it ("the dig's near ring within the base's
+frames plus 2") from the readings below, which are its base.
+
+**Ring 1's landing (Plan 0098 Phases 16 and 17 and its fix pass, 2026-11-24; ADR-0082's
+Outcome).** Frames from a dig's frame to the step that places its ring-1 job (the bricks the
+dig's box dilated by one voxel touches), `dig_line::reading::dig_timeline` on a release
+`gpu_outdoor` test binary at `b7df48b0`, exclusive perf lock, the owner's pose of window 98d
+(the forest at `--sun 10,180`, looking down) on the RTX 3080 Laptop and the forest at 15:00 on
+the RADV RENOIR at Portable; sequence A is three digs down one ray, B six digs eight frames
+apart: **1 or 2 frames for every dig on both adapters** (RTX A 1, 2, 1 and B 1 six times; RENOIR
+the same), on a drained queue and on one with over 100 chunks in view waiting (the RENOIR's rig
+never drains, so its runs are waiting queues). Before Phase 16 the first dig landed in 3 frames
+on the RTX and a second or third dig in 66 (the RENOIR 8 and 56). Lavapipe at `39354892`: 1 to
+4 frames; the soak image test's bar is 8. Every ring chunk (ring 2 too) lands 6 to 11 frames
+after the dig on the RTX and 7 to 23 on the RENOIR: the chunk's second job waits for ring 1's
+4-frame fade. No sample of a withdrawn job was thrown away in any run.
+
+**The bake step's main-thread time on a dig's frame (the same runs; a reading, ruled at Plan
+0098's close).** The step's wall on the dig's own frame, ms per dig, each run started at a
+1-minute load under 2, mains power. RTX 3080 Laptop, sequence A, four runs a tree alternated:
+Phase 17's tree (`39354892`) 11.7 30.2 34.4; 12.3 29.2 32.7; 16.5 22.2 25.2; 10.3 15.4 26.1 (mean
+23.8); the fix tree (`b7df48b0`) 11.6 40.2 37.1; 14.1 40.6 44.0; 9.5 14.5 19.6; 10.7 32.6 37.0
+(mean 25.9). Sequence B, two runs a tree: mean 13.3 against 14.5. RADV RENOIR at Portable, one
+run a tree: A 5.1 7.4 6.7 against 5.8 6.0 9.4, B 5.0 5.8 4.8 5.7 4.5 9.2 against 5.7 7.3 4.5 3.2
+6.4 5.6. Plan 0098's bar for the fix tree was Phase 17's tree plus 0.5 ms; the RTX's means read
++2.1 (A) and +1.1 (B) with a spread between runs of one tree of up to 30 ms, so the difference is
+not resolved. **Ruled a reading at the close (2026-11-24): the bar is retired.** The stage laps
+put the large frames in the listing, the collect and the submit, which the fix pass did not
+change; the stage it did change (`digs`) reads under 0.5 ms on both trees but once (0.64), and
+the held estimate's stage (`boxes`) 2.2 to 2.4 ms on both. A dig's frame on the RTX is over the
+16.6 ms frame by the step alone: a disclosed miss, Plan 0099's (the step off the main thread),
+which reads this figure again in its Phase 1 with at least eight alternated runs a tree.

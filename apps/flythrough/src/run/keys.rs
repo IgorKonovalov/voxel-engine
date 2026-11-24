@@ -379,6 +379,8 @@ impl Run {
             },
             Act::CoarsePrint => self.say(self.coarse_line()),
             Act::Profile => self.cycle_profile(),
+            Act::RenderScale => self.cycle_scale(),
+            Act::JitterPhases => self.cycle_jitter_phases(),
             Act::NextSource => {
                 self.switch = true;
                 self.say("switch: the next source, after this frame");

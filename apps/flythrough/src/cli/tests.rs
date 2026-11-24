@@ -889,17 +889,17 @@ fn upscaler_picks_the_kind_scale_and_jitter() {
     assert!(args.upscaler_settings(hud::UpscalerMode::Own).2);
 }
 
-/// The owner's picks (Plan 0055 Phase 4): no flag starts in face normals with the far
-/// normal at `[2, 6]`, in FSR 2 at scale 1.5 with sharpening 0.5.
+/// The owner's picks (Plan 0055 Phase 4, the far normal's band Plan 0098's): no flag starts in
+/// face normals with the far normal at `[4, 8]`, in FSR 2 at scale 1.5 with sharpening 0.5.
 #[test]
 fn the_start_look_and_upscaler_are_the_owners_picks() {
     let a = parse_args_from(argv(&[])).unwrap();
     let look = a.start_look();
     assert_eq!(look.normal_mode, NormalMode::Face);
-    assert_eq!(look.far_normal, [2.0, 6.0]);
+    assert_eq!(look.far_normal, [4.0, 8.0]);
     assert_eq!(
         look_line(&look, &a.look.preset),
-        "look face (normals face, face mix 0, far normal 2..6), view shaded"
+        "look face (normals face, face mix 0, far normal 4..8), view shaded"
     );
     let (kind, scale, jitter) = a.upscaler_settings(a.start_upscaler());
     assert_eq!(
@@ -1027,8 +1027,8 @@ fn help_lists_every_flag_the_parser_accepts() {
 
 /// Without flags the fly-through starts in `crate::default_lighting()`, the base the examples
 /// that render its image share: every field but the exposure (auto, the eye's), the lamp's
-/// bounce (on) and the key light's penumbra (`crate::DEFAULT_PENUMBRA`, approach; the base
-/// keeps the library's disc until the pick of Plan 0095's window) is that base's, so the store
+/// bounce (on) and the key light's penumbra (`crate::DEFAULT_PENUMBRA`, the library's disc,
+/// ADR-0082) is that base's, so the store
 /// is read by the shading normal and the filters weigh the face normal.
 #[test]
 fn the_start_lighting_is_the_shared_default_lighting() {
@@ -1045,7 +1045,7 @@ fn the_start_lighting_is_the_shared_default_lighting() {
         base
     );
     assert!(start.lamp && start.lamp_bounce);
-    assert_eq!(start.penumbra, vxe_render::Penumbra::Approach);
+    assert_eq!(start.penumbra, vxe_render::Penumbra::Disc);
     assert_eq!(
         (start.store_read, start.light_weights),
         (

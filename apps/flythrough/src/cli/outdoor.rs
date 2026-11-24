@@ -41,6 +41,18 @@ pub struct OutdoorArgs {
     /// `--key-far-mix blend|step`: how the store's key visibility joins the ray inside the far
     /// normal's band.
     pub(crate) key_far_mix: vxe_render::KeyFarMix,
+    /// `--light-history on|off`: the light passes' screen history
+    /// (`Lighting::light_history`); unset, the renderer's default.
+    pub(crate) light_history: Option<bool>,
+    /// `--landing-fade on|off`: a landing block's sky visibilities ride the store's fade
+    /// (`Lighting::landing_fade`); unset, the renderer's default.
+    pub(crate) landing_fade: Option<bool>,
+    /// `--source-fade on|off`: a landing's switch of source fades by the block's landing frame
+    /// (`Lighting::source_fade`); unset, the renderer's default.
+    pub(crate) source_fade: Option<bool>,
+    /// `--dig-hold on|rays|off`: what a dig shows until its re-bake lands
+    /// (`Lighting::dig_hold`); unset, the renderer's default.
+    pub(crate) dig_hold: Option<vxe_render::DigHold>,
     /// `--sky-normal face|smoothed`: the normal the baked sky term reads its visibilities by.
     pub(crate) sky_normal: vxe_render::SkyNormal,
     /// `--sky-bounce B`: the baked sky term's bounce floor, 0 to 1.
@@ -274,6 +286,8 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
         ),
     ];
     flags.extend(sky_light_flags());
+    flags.extend(ray_lever_flags());
+    flags.push(dig_hold_flag());
     flags.extend(ceiling_flags());
     vec![Section {
         title: "Outdoors and the sky",
@@ -297,8 +311,28 @@ pub(super) fn with_drain_flags(mut flags: Vec<Flag<Parsing>>) -> Vec<Flag<Parsin
     flags
 }
 
+/// `--dig-hold`: what a dig shows until its re-bake lands (`Lighting::dig_hold`).
+fn dig_hold_flag() -> Flag<Parsing> {
+    Flag::value(
+        &["--dig-hold"],
+        "on|rays|off",
+        "what a dig shows until its re-bake lands, with no light history: on, the store \
+             holds each touched brick a record made against the world at the edit (the \
+             surface's sky visibility the dig cut through times a near openness), read as any \
+             record, and fades to the bake's at the landing, while the ring keeps its records' \
+             term; rays, the ring keeps its records' term and the dug faces show their sky \
+             rays' running mean; off, the ring and the hole show the ray's seed until the \
+             re-bake [on]",
+        |p: &mut Parsing, v| {
+            p.args.outdoor.dig_hold =
+                Some(v.named(vxe_render::DigHold::from_name, "on, rays or off")?);
+            Ok(())
+        },
+    )
+}
+
 /// The section's flags of the sky's light at a hit: the sky rays, their history, the penumbra,
-/// the baked term's normal and bounce floor.
+/// the baked term's normal.
 fn sky_light_flags() -> Vec<Flag<Parsing>> {
     vec![
         Flag::value(
@@ -340,7 +374,7 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
             "disc|approach",
             "the key light's penumbra: a ray to a random point of its disc a frame and its \
                  running mean, or one ray to its centre scored by how close it passes the rock \
-                 beside it, taken as the value with no history [approach]",
+                 beside it, taken as the value with no history [disc]",
             |p: &mut Parsing, v| {
                 p.args.outdoor.penumbra =
                     Some(v.named(vxe_render::Penumbra::from_name, "disc or approach")?);
@@ -353,7 +387,7 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
             "the key light's visibility where a voxel is small on screen, with no ray and no \
                  history: the store's baked value where fresh, else the column map's horizon \
                  toward the sun; or the horizon alone; or the per-pixel disc ray everywhere \
-                 [baked]",
+                 [column]",
             |p: &mut Parsing, v| {
                 p.args.outdoor.key_far =
                     v.named(vxe_render::KeyFar::from_name, "baked, column or ray")?;
@@ -365,10 +399,42 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
             "blend|step",
             "inside the far normal's band under --key-far baked or column: the ray's mean \
                  blended to the far estimate by the band's weight, or the estimate from its \
-                 half [blend]",
+                 half [step]",
             |p: &mut Parsing, v| {
                 p.args.outdoor.key_far_mix =
                     v.named(vxe_render::KeyFarMix::from_name, "blend or step")?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--light-history"],
+            "on|off",
+            "the light passes read last frame's lighting through their history test; off, \
+                 every lighting pixel is this frame's alone (the upscaler keeps its own \
+                 history) [off]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.light_history = Some(v.on_off()?);
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--landing-fade"],
+            "on|off",
+            "a landing block's sky visibilities ride the store's fade with its light; off, \
+                 they change in the frame it lands and only the light history softens it [off]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.landing_fade = Some(v.on_off()?);
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--source-fade"],
+            "on|off",
+            "a landing's switch of source fades: where a pixel takes no light history, its sky \
+                 term mixes from the column's answer to the landed block's over the block's \
+                 fade, timed by the frame its chunk's first block landed [off]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.source_fade = Some(v.on_off()?);
                 Ok(())
             },
         ),
@@ -384,6 +450,14 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
                 Ok(())
             },
         ),
+    ]
+}
+
+/// The section's flags after the sky's light at a hit: the slow adapter's two levers on the
+/// rays (the key ray's cap, no sky ray from a face looking down) and the baked term's bounce
+/// floor.
+fn ray_lever_flags() -> Vec<Flag<Parsing>> {
+    vec![
         Flag::value(
             &["--key-cap"],
             "V|off",

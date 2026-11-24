@@ -484,6 +484,10 @@ pub(super) fn provisional_block(
     let (head, words) = layout(faces, record);
     let mut block = head;
     block.reserve(words as usize);
+    // The chunk's landing word stays its block's (a dig is a later landing).
+    if let Some(b) = store.words.get(&c) {
+        block[LANDED_AT as usize] = b[LANDED_AT as usize];
+    }
     let record_at = |chunk: [i32; 3], slot: usize| -> Option<&[u32]> {
         let b = store.words.get(&chunk)?;
         let d = b[slot];
@@ -567,10 +571,19 @@ pub(super) fn provisional_block(
 
 /// The block a first block fades from under a fallback mode (ADR-0053): `block`'s layout and
 /// tails, every cell's direction values the chain's `chain` for that direction (0 where the chain
-/// holds none).
-pub(super) fn fallback_block(block: &[u32], chain: &[u32; BRICK_WORDS], record: usize) -> Vec<u32> {
+/// holds none). Under `vis` (`Lighting::landing_fade`), where the chain and the cell both hold
+/// [`VIS_BAKED`] and neither is [`SKY_STALE`], the cell's six sky visibilities are the chain's
+/// (what the light pass read through `store_sky_fallback` before the block), its own flags
+/// kept, so the visibilities fade from there too.
+pub(super) fn fallback_block(
+    block: &[u32],
+    chain: &[u32; BRICK_WORDS],
+    record: usize,
+    vis: bool,
+) -> Vec<u32> {
     let mut from = block.to_vec();
     let mask = chain[6] >> 16;
+    let chain_vis = vis && vis_mixable(chain[VIS_WORD + 1]);
     for &dir in &block[..CHUNK_BRICKS] {
         if dir == 0 {
             continue;
@@ -580,17 +593,37 @@ pub(super) fn fallback_block(block: &[u32], chain: &[u32; BRICK_WORDS], record: 
             for f in 0..6 {
                 from[cell + f] = if mask & 1 << f != 0 { chain[f] } else { 0 };
             }
+            let v = cell + VIS_WORD;
+            if chain_vis && vis_mixable(from[v + 1]) {
+                from[v] = chain[VIS_WORD];
+                from[v + 1] = (from[v + 1] & !0xFFFF) | (chain[VIS_WORD + 1] & 0xFFFF);
+            }
         }
     }
     from
 }
 
+/// Whether a record's second sky visibility word holds visibilities a fade may mix: baked under
+/// a sky and not a dig's stale ring.
+fn vis_mixable(w: u32) -> bool {
+    w & VIS_BAKED != 0 && w & SKY_STALE == 0
+}
+
 /// A fade's block at `t` of the way from `from` to `to` (one layout): `to`'s words, each cell's
 /// direction values mixed in linear light and packed again, and where both hold [`KEY_BAKED`]
 /// its six key visibilities mixed and rounded to `u8` (a key re-bake's landing is one fade,
-/// ADR-0079). The fades write it each frame, and a block landing on a running fade starts its
-/// own from it.
-pub(super) fn fade_mix(shown: &mut Vec<u32>, from: &[u32], to: &[u32], t: f32, record: usize) {
+/// ADR-0079), and under `vis` (`Lighting::landing_fade`) where both hold [`VIS_BAKED`] and
+/// neither is [`SKY_STALE`] its six sky visibilities likewise (with no screen history the light
+/// pass shows their change in the frame the block lands, Plan 0098 Phase 6). The fades write it
+/// each frame, and a block landing on a running fade starts its own from it.
+pub(super) fn fade_mix(
+    shown: &mut Vec<u32>,
+    from: &[u32],
+    to: &[u32],
+    t: f32,
+    record: usize,
+    vis: bool,
+) {
     let lerp = |a: u32, b: u32| {
         let (x, y) = (rgb9e5_unpack(a), rgb9e5_unpack(b));
         rgb9e5_pack([0, 1, 2].map(|k| x[k] + (y[k] - x[k]) * t))
@@ -617,6 +650,13 @@ pub(super) fn fade_mix(shown: &mut Vec<u32>, from: &[u32], to: &[u32], t: f32, r
                 shown[k + 1] = (to[k + 1] & !0xFFFF)
                     | byte(from[k + 1], to[k + 1], 0)
                     | byte(from[k + 1], to[k + 1], 8);
+            }
+            let v = cell + VIS_WORD;
+            if vis && vis_mixable(from[v + 1]) && vis_mixable(to[v + 1]) {
+                shown[v] = (0..4).fold(0, |w, i| w | byte(from[v], to[v], 8 * i));
+                shown[v + 1] = (to[v + 1] & !0xFFFF)
+                    | byte(from[v + 1], to[v + 1], 0)
+                    | byte(from[v + 1], to[v + 1], 8);
             }
         }
     }
@@ -732,16 +772,21 @@ mod tests {
             glass: Vec::new(),
         };
         // The directory's 512 words, then the summary's 11 (ADR-0053; seven words, ADR-0070's
-        // two of sky visibility and ADR-0079's two of key visibility), then the records.
+        // two of sky visibility and ADR-0079's two of key visibility), then the landing word
+        // (`LANDED_AT`, Plan 0098 Phase 6b), then the records.
         let (d, words) = layout(&faces, record_words(8));
-        assert_eq!(d.len(), 512 + 11, "the head: directory and summary");
-        assert_eq!(d[3], (512 + 11 + 11) << 11);
-        assert_eq!(d[9], (512 + 11 + 22) << 11);
+        assert_eq!(
+            d.len(),
+            512 + 11 + 1,
+            "the head: directory, summary, landing word"
+        );
+        assert_eq!(d[3], (512 + 12 + 11) << 11);
+        assert_eq!(d[9], (512 + 12 + 22) << 11);
         assert_eq!(d[4], 0);
-        assert_eq!(words, 512 + 11 + 22);
+        assert_eq!(words, 512 + 12 + 22);
         let (d, words) = layout(&faces, record_words(4));
-        assert_eq!(d[9], (512 + 11 + 2 * 88) << 11);
-        assert_eq!(words, 512 + 11 + 2 * 88);
+        assert_eq!(d[9], (512 + 12 + 2 * 88) << 11);
+        assert_eq!(words, 512 + 12 + 2 * 88);
     }
 
     /// A fade mixes the key visibilities byte by byte where both blocks hold KEY_BAKED, keeping
@@ -761,7 +806,7 @@ mod tests {
         to[k..k + 2].copy_from_slice(&key_words([0.0, 1.0, 0.5, 1.0, 0.6, 1.0]));
         to[k + 1] |= SKY_STALE;
         let mut shown = Vec::new();
-        fade_mix(&mut shown, &from, &to, 0.25, BRICK_WORDS);
+        fade_mix(&mut shown, &from, &to, 0.25, BRICK_WORDS, false);
         let bytes = |w: &[u32]| {
             [
                 w[0] & 255,
@@ -779,7 +824,7 @@ mod tests {
             "the target's flags"
         );
         from[k + 1] &= !KEY_BAKED;
-        fade_mix(&mut shown, &from, &to, 0.25, BRICK_WORDS);
+        fade_mix(&mut shown, &from, &to, 0.25, BRICK_WORDS, false);
         assert_eq!(
             shown[k..k + 2],
             to[k..k + 2],
@@ -1060,6 +1105,7 @@ mod tests {
         let wgsl = include_str!("../shaders/temporal.wgsl");
         let hitrec = include_str!("../shaders/hitrec.wgsl");
         assert!(hitrec.contains(&format!("const STORE_SUMMARY_AT: u32 = {SUMMARY_AT}u;")));
+        assert!(hitrec.contains(&format!("const STORE_LANDED_AT: u32 = {LANDED_AT}u;")));
         assert!(wgsl.contains("(store[STORE_FLAGS] >> 2u) & 3u"));
         assert_eq!(FLAG_MISSING_SHIFT, 2);
         assert_eq!(MissingLight::Neighbour.bits(), 1);

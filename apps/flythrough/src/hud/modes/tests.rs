@@ -543,3 +543,52 @@ fn the_banner_and_row_name_the_sky_anchor() {
     m.sky = false;
     assert!(!m.line().contains("sky anchor"));
 }
+
+/// The debug page's diagnosis switches: each is menu only, its row reads its mode (`penumbra
+/// approach`, `light history on`), and a flip shows the banner again with the switch's words on
+/// the lighting line, which name it while it is off its default and not after the flip back.
+/// All off is the start: no hook and no freeze, the default penumbra and sky normal.
+#[test]
+fn the_diagnosis_switches_name_their_mode_in_the_banner() {
+    use crate::toggles::TOGGLES;
+    let mut m = Modes::new(
+        vxe_render::Lighting {
+            penumbra: crate::DEFAULT_PENUMBRA,
+            ..vxe_render::Lighting::default()
+        },
+        vxe_render::LightingResolution::default(),
+        0.0,
+    );
+    m.sky = true;
+    let start = m.clone();
+    assert_eq!(start.diag, Diag::default());
+    let line = |m: &Modes, t: f64| m.banner(t).map(|b| b.replace('\n', ", "));
+    let mut t = 10_000.0;
+    for (name, row, word) in [
+        ("penumbra", "penumbra approach", "penumbra approach, "),
+        ("sky normal", "sky normal face", "sky normal face, "),
+        ("filter", "filter off", "filter off"),
+        ("light history", "light history on", "light history on, "),
+        ("key jitter", "key jitter off", "key jitter off, "),
+        ("stair rules", "stair rules off", "stair rules off, "),
+        ("queue freeze", "queue freeze on", "queue freeze on, "),
+    ] {
+        let tog = TOGGLES.iter().find(|x| x.name == name).unwrap();
+        assert_eq!(tog.press, Press::Menu, "{name}");
+        assert_eq!(line(&m, t), None, "{name}: the banner has faded");
+        (tog.flip)(&mut m, t);
+        assert_eq!((tog.get)(&m), row);
+        let shown = line(&m, t).expect("a flip shows the banner");
+        assert!(shown.contains(word), "{name}: {shown}");
+        assert!(
+            m.row(HudRow::Lighting)
+                .contains(word.trim_end_matches(", "))
+        );
+        (tog.flip)(&mut m, t + BANNER_MS);
+        let back = line(&m, t + BANNER_MS).expect("a flip shows the banner");
+        assert!(!back.contains(word), "{name}: {back}");
+        t += 2.0 * BANNER_MS;
+    }
+    assert_eq!(m.diag, start.diag);
+    assert_eq!(m.lighting, start.lighting);
+}

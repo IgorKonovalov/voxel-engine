@@ -222,8 +222,8 @@ fn the_root_and_a_group_draw_their_rows() {
         ("ore pulse off", ""),
         ("exposure manual", ""),
         ("store read face", ""),
-        ("key far baked", ""),
-        ("key far mix blend", ""),
+        ("key far column", ""),
+        ("key far mix step", ""),
         ("light weights normal", ""),
         ("young filter: young luma", ""),
         ("entity light world", ""),
@@ -798,7 +798,7 @@ fn a_held_arrow_repeats() {
 }
 
 /// Plan 0095 Phase 4: the `key far` row cycles baked, column, ray and back, its words naming
-/// each, and the banner names the two that are not the default.
+/// each, and the banner names the two that are not the default (column, Plan 0098 Phase 4).
 #[test]
 fn the_key_far_row_cycles_its_three_sources() {
     let t = toggle("key far");
@@ -813,11 +813,11 @@ fn the_key_far_row_cycles_its_three_sources() {
         assert_eq!(
             words,
             match m.lighting.key_far {
-                vxe_render::KeyFar::Baked => String::new(),
+                vxe_render::KeyFar::Column => String::new(),
                 k => format!("key far {}, ", k.name()),
             }
         );
     }
     use vxe_render::KeyFar;
-    assert_eq!(seen, [KeyFar::Column, KeyFar::Ray, KeyFar::Baked]);
+    assert_eq!(seen, [KeyFar::Ray, KeyFar::Baked, KeyFar::Column]);
 }

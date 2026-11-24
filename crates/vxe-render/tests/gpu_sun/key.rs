@@ -270,6 +270,81 @@ fn the_far_horizon_is_the_same_every_frame() {
     assert_eq!(shots[1], shots[2]);
 }
 
+/// The default's near key shadow (ADR-0082): on the slab-edge rig at the near (the far normal's
+/// band off, its weight 0) under `Lighting::default()`'s light history, key far and key far mix
+/// (no history, `column`, `step`) with the disc's jitter on: the key light's term shown at every
+/// floor pixel (the direct target's rgb: the rig has no lamp, no list light and no sky ray) is
+/// the same f16 on frames 1, 2 and 3, and so is the key slot on frames 2 and 3; some pixel's
+/// slot value lies strictly between 0 and 1 (the horizon's ramp is in view); and every pixel's
+/// slot value on each frame is the same frame's on a fourth frame under the far estimate alone
+/// (the far normal's weight 1 at every pixel, as [`far_frame`]'s, no key ray cast). The slot
+/// values are compared within the slot's f16 step at 2 + v (1/512): a frame whose history is
+/// invalid (the first) leaves the value untagged in `[0, 1]`, a frame with no key ray tagged by
+/// its source at `2 + v`. The near key shadow is the column map's horizon, the same every frame.
+#[test]
+fn the_defaults_near_key_shadow_is_the_column_horizon() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let slab = floor_world([1, 1, 1], |p| p[2] < FLOOR + 10 && p[0] < 24);
+    let gpu = mirror(&device, &queue, &slab, None);
+    let mut near = far_frame(&device, vxe_render::KeyFar::Column, 40.0);
+    let d = Lighting::default();
+    assert!(!d.light_history && !d.light_history_far);
+    near.set_lighting(Lighting {
+        light_history: d.light_history,
+        key_far: d.key_far,
+        key_far_mix: d.key_far_mix,
+        penumbra: d.penumbra,
+        ..near.lighting()
+    });
+    near.set_look(vxe_render::LookParams {
+        far_normal: [0.0, 0.0],
+        ..near.look()
+    });
+    let mut shown = Vec::new();
+    let shots: Vec<Vec<(usize, f32)>> = (0..3)
+        .map(|_| {
+            let px = far_floor(&device, &queue, &mut near, &gpu);
+            let d = vxe_render::debug::read_rgba16f(&device, &queue, near.direct_accumulated());
+            shown.push(px.iter().map(|p| (p.0, d[p.0][0..3].to_vec())).collect::<Vec<_>>());
+            px.iter().map(|p| (p.0, key_slot(p.2).0)).collect()
+        })
+        .collect();
+    assert!(shots[0].len() > 10_000, "{} floor pixels", shots[0].len());
+    assert!(shots[0].iter().any(|p| p.1 > 0.0 && p.1 < 1.0), "no ramp in view");
+    assert!(
+        shown[0].iter().any(|p| p.1.iter().any(|c| *c > 0.0)),
+        "no key light shown"
+    );
+    assert_eq!(shown[0], shown[1]);
+    assert_eq!(shown[1], shown[2]);
+    assert_eq!(shots[1], shots[2]);
+    // The far estimate alone: the same frame with the far normal's weight 1 at every pixel (as
+    // in [`far_frame`]), where no key ray is cast.
+    near.set_look(vxe_render::LookParams {
+        far_normal: [1000.0, 2000.0],
+        ..near.look()
+    });
+    let far: std::collections::HashMap<usize, f32> = far_floor(&device, &queue, &mut near, &gpu)
+        .iter()
+        .map(|p| {
+            assert_eq!(p.3, 64, "a key ray at the far, x {}", p.1);
+            (p.0, key_slot(p.2).0)
+        })
+        .collect();
+    for (k, shot) in shots.iter().enumerate() {
+        for &(i, v) in shot {
+            let f = far[&i];
+            assert!(
+                (v - f).abs() <= 1.0 / 512.0 + 1e-6,
+                "frame {}, pixel {i}: near {v} against the far estimate's {f}",
+                k + 1
+            );
+        }
+    }
+}
+
 /// Rule 3 at a record's landing: on the slab-edge rig under `key_far baked`, 4 frames on the
 /// horizon, then the floor's `+z` faces of bricks x 3..6 (x 24..48) baked (their records land
 /// together, as one stepped job's would), then 20 frames: at every floor pixel that ends on a

@@ -4,7 +4,8 @@
 // Up to MAX_EDITS boxes, inclusive voxel bounds: box i is `boxes[2 i]` to `boxes[2 i + 1]`.
 struct Edits {
     count: u32,
-    _pad0: u32,
+    // The held dig boxes (temporal.wgsl `in_dig_hold`), after the `count` kill boxes.
+    held: u32,
     _pad1: u32,
     _pad2: u32,
     boxes: array<vec4<i32>, 2u * MAX_EDITS>,

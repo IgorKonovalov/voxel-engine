@@ -169,6 +169,17 @@ pub struct Modes {
     /// (`vxe_world::WorldLimits::edit_axis_max`): a structure's box over it is refused, and
     /// the belt says so (`crate::structures::Entry::refusal`).
     pub edit_axis_max: u32,
+    /// The debug page's diagnosis switches: the light passes' hooks and the queue's freeze.
+    pub(crate) diag: Diag,
+}
+
+/// The debug page's diagnosis switches, each free when off: the light passes' reading hooks
+/// (`vxe_render::LightHooks`; the run sets them every frame) and the live queue held still.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Diag {
+    pub hooks: vxe_render::LightHooks,
+    /// The live queue takes no step: no record lands or starts while it is on.
+    pub queue_frozen: bool,
 }
 
 /// The live queue's modes the keys step: `F` the order, `Tab` and `Slash` the score's angle
@@ -314,6 +325,7 @@ impl Modes {
             structure_scale: 1,
             snap: crate::entities::belt::Snap::Ground,
             edit_axis_max: vxe_world::WorldLimits::DEFAULT.edit_axis_max,
+            diag: Diag::default(),
         }
     }
 
@@ -802,6 +814,7 @@ impl Modes {
                 out.push_str("exposure highlight off, ");
             }
         }
+        self.write_diag(out);
         let _ = write!(
             out,
             "lighting {}, store read {}, weights {}, shadow walk {}, history {}, lamp {}, lamp bounce {} at {} rays 1/{}",
@@ -833,6 +846,46 @@ impl Modes {
             && a.compensation_ev != 0.0
         {
             let _ = write!(out, ", exposure comp {:+.1} EV", a.compensation_ev);
+        }
+    }
+
+    /// The rows off their default and the diagnosis switches that are on, in words, as the
+    /// line names them before the lighting's (`light history on, key jitter off, stair rules
+    /// off, queue freeze on, `); empty with all off.
+    pub fn write_diag(&self, out: &mut String) {
+        let h = &self.diag.hooks;
+        if self.lighting.light_history != crate::default_lighting().light_history {
+            out.push_str(if self.lighting.light_history {
+                "light history on, "
+            } else {
+                "light history off, "
+            });
+        }
+        if self.lighting.landing_fade {
+            out.push_str("landing fade on, ");
+        }
+        if self.lighting.source_fade {
+            out.push_str("source fade on, ");
+        }
+        if self.lighting.dig_hold != crate::default_lighting().dig_hold {
+            out.push_str("dig hold ");
+            out.push_str(self.lighting.dig_hold.name());
+            out.push_str(", ");
+        }
+        if self.lighting.light_history_far {
+            out.push_str("light history far on, ");
+        }
+        if self.lighting.far_light_wide {
+            out.push_str("far light wide on, ");
+        }
+        if h.key_no_jitter {
+            out.push_str("key jitter off, ");
+        }
+        if h.no_stair {
+            out.push_str("stair rules off, ");
+        }
+        if self.diag.queue_frozen {
+            out.push_str("queue freeze on, ");
         }
     }
 

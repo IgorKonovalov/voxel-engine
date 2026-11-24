@@ -1,49 +1,49 @@
-//! The outdoor section's lighting flags: the penumbra, the key light's far source, the sky
-//! term's normal and bounce, the exposure's ceiling.
+//! The outdoor section's lighting flags: the penumbra, the key light's far source, the defaults' picks,
+//! the sky term's normal and bounce, the exposure's ceiling.
 
 use crate::cli::parse_args_from;
 use crate::test_support::argv;
 use vxe_render::Exposure;
 
-/// `--penumbra`: approach unless named (Plan 0095 Phase 5, the fly-through's
-/// `DEFAULT_PENUMBRA`), which the banner leaves out; disc reaches the lighting and the banner.
+/// `--penumbra`: disc unless named (Plan 0098 Phase 4, the fly-through's `DEFAULT_PENUMBRA`),
+/// which the banner leaves out; approach reaches the lighting and the banner.
 #[test]
-fn penumbra_is_approach_unless_named() {
+fn penumbra_is_disc_unless_named() {
     let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
-    assert_eq!(r.start_lighting().penumbra, vxe_render::Penumbra::Approach);
-    assert!(!r.start_modes(0.0).line().contains("penumbra"));
-    let r = parse_args_from(argv(&["--source", "outdoor", "--penumbra", "disc"])).unwrap();
     assert_eq!(r.start_lighting().penumbra, vxe_render::Penumbra::Disc);
-    assert!(r.start_modes(0.0).line().contains("penumbra disc, "));
+    assert!(!r.start_modes(0.0).line().contains("penumbra"));
+    let r = parse_args_from(argv(&["--source", "outdoor", "--penumbra", "approach"])).unwrap();
+    assert_eq!(r.start_lighting().penumbra, vxe_render::Penumbra::Approach);
+    assert!(r.start_modes(0.0).line().contains("penumbra approach, "));
     assert!(parse_args_from(argv(&["--penumbra", "soft"])).is_err());
 }
 
-/// Plan 0095 Phases 2 and 4: `--key-far` is baked with the blend unless named, which the banner
-/// leaves out; `ray`, `column` and `--key-far-mix step` reach the lighting and the banner with a
-/// sky set.
+/// Plan 0095 Phases 2 and 4, the default Plan 0098 Phase 4's: `--key-far` is column with the
+/// step unless named, which the banner leaves out; `ray`, `baked` and `--key-far-mix blend`
+/// reach the lighting and the banner with a sky set.
 #[test]
-fn key_far_is_baked_blend_unless_named() {
+fn key_far_is_column_step_unless_named() {
     use vxe_render::{KeyFar, KeyFarMix};
     let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
     let l = r.start_lighting();
     assert_eq!(
         (l.key_far, l.key_far_mix),
-        (KeyFar::Baked, KeyFarMix::Blend)
+        (KeyFar::Column, KeyFarMix::Step)
     );
     assert!(!r.start_modes(0.0).line().contains("key far"));
-    let r = parse_args_from(argv(&["--source", "outdoor", "--key-far-mix", "step"])).unwrap();
-    assert_eq!(r.start_lighting().key_far_mix, KeyFarMix::Step);
+    let r = parse_args_from(argv(&["--source", "outdoor", "--key-far-mix", "blend"])).unwrap();
+    assert_eq!(r.start_lighting().key_far_mix, KeyFarMix::Blend);
     assert!(
         r.start_modes(0.0)
             .line()
-            .contains("key far baked, key far mix step, ")
+            .contains("key far column, key far mix blend, ")
     );
     let r = parse_args_from(argv(&["--source", "outdoor", "--key-far", "ray"])).unwrap();
     assert_eq!(r.start_lighting().key_far, KeyFar::Ray);
     assert!(r.start_modes(0.0).line().contains("key far ray, "));
-    let r = parse_args_from(argv(&["--source", "outdoor", "--key-far", "column"])).unwrap();
-    assert_eq!(r.start_lighting().key_far, KeyFar::Column);
-    assert!(r.start_modes(0.0).line().contains("key far column, "));
+    let r = parse_args_from(argv(&["--source", "outdoor", "--key-far", "baked"])).unwrap();
+    assert_eq!(r.start_lighting().key_far, KeyFar::Baked);
+    assert!(r.start_modes(0.0).line().contains("key far baked, "));
     assert!(parse_args_from(argv(&["--key-far", "far"])).is_err());
     assert!(parse_args_from(argv(&["--key-far-mix", "fade"])).is_err());
 }
@@ -425,4 +425,150 @@ fn the_sky_anchor_share_reaches_the_run() {
             "{bad}"
         );
     }
+}
+
+/// Plan 0098 Phase 4 (ADR-0082, window W2's picks): with no flag the start's lighting and look
+/// are the five picks (light history off, key far column, key far mix step, the disc penumbra,
+/// far normal 4..8) and the arms not picked are off (`landing fade`, `source fade`, `far light
+/// wide`, `light history far`); the lighting row and the banner name none of them. Each flag
+/// moves its row alone and is named: `--light-history on` reads `light history on`, `--key-far
+/// baked` and `--key-far-mix blend` read `key far baked, key far mix blend`, `--penumbra
+/// approach` reads `penumbra approach`, `--far-normal 2,6` sets the band. `--calm` is gone (the
+/// defaults are its combination).
+#[test]
+fn the_defaults_are_the_five_picks_and_a_flag_names_its_row() {
+    use crate::hud::HudRow;
+    use vxe_render::{KeyFar, KeyFarMix, Penumbra};
+    let base = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    let l = base.start_lighting();
+    assert_eq!(
+        (l.light_history, l.key_far, l.key_far_mix, l.penumbra),
+        (false, KeyFar::Column, KeyFarMix::Step, Penumbra::Disc)
+    );
+    assert_eq!(base.start_look().far_normal, [4.0, 8.0]);
+    assert_eq!(
+        (
+            l.landing_fade,
+            l.source_fade,
+            l.far_light_wide,
+            l.light_history_far
+        ),
+        (false, false, false, false)
+    );
+    let m = base.start_modes(0.0);
+    assert!(!m.row(HudRow::Lighting).contains("light history"));
+    let banner = m.banner(0.0).unwrap().replace('\n', ", ");
+    for word in [
+        "calm",
+        "light history",
+        "key far",
+        "penumbra",
+        "landing fade",
+    ] {
+        assert!(!banner.contains(word), "{word}: {banner}");
+    }
+
+    let r = parse_args_from(argv(&["--source", "outdoor", "--light-history", "on"])).unwrap();
+    assert_eq!(
+        r.start_lighting(),
+        vxe_render::Lighting {
+            light_history: true,
+            ..l
+        },
+        "--light-history on moves its row alone"
+    );
+    let m = r.start_modes(0.0);
+    let row = m.row(HudRow::Lighting);
+    assert!(row.contains("light history on, "), "{row}");
+    let banner = m.banner(0.0).unwrap().replace('\n', ", ");
+    assert!(banner.contains("light history on, "), "{banner}");
+
+    let r = parse_args_from(argv(&[
+        "--source",
+        "outdoor",
+        "--key-far",
+        "baked",
+        "--key-far-mix",
+        "blend",
+        "--penumbra",
+        "approach",
+        "--far-normal",
+        "2,6",
+    ]))
+    .unwrap();
+    let k = r.start_lighting();
+    assert_eq!(
+        (k.light_history, k.key_far, k.key_far_mix, k.penumbra),
+        (false, KeyFar::Baked, KeyFarMix::Blend, Penumbra::Approach)
+    );
+    assert_eq!(r.start_look().far_normal, [2.0, 6.0]);
+    let banner = r.start_modes(0.0).banner(0.0).unwrap().replace('\n', ", ");
+    assert!(
+        banner.contains("key far baked, key far mix blend, "),
+        "{banner}"
+    );
+    assert!(banner.contains("penumbra approach, "), "{banner}");
+
+    assert!(parse_args_from(argv(&["--source", "outdoor", "--calm"])).is_err());
+    assert!(parse_args_from(argv(&["--light-history", "maybe"])).is_err());
+    let r = parse_args_from(argv(&["--source", "outdoor", "--landing-fade", "on"])).unwrap();
+    assert!(r.start_lighting().landing_fade);
+    let banner = r.start_modes(0.0).banner(0.0).unwrap().replace('\n', ", ");
+    assert!(banner.contains("landing fade on, "), "{banner}");
+    assert!(parse_args_from(argv(&["--landing-fade", "maybe"])).is_err());
+}
+
+/// Plan 0098 Phase 6b: `--source-fade on` sets `Lighting::source_fade` and the lighting row reads
+/// `source fade on`; the defaults leave it off and the row does not name it.
+#[test]
+fn source_fade_parses_and_the_defaults_leave_it_off() {
+    let base = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert!(!base.start_lighting().source_fade);
+    let banner = base.start_modes(0.0).banner(0.0).unwrap();
+    assert!(!banner.contains("source fade"), "{banner}");
+    let r = parse_args_from(argv(&[
+        "--source",
+        "outdoor",
+        "--landing-fade",
+        "on",
+        "--source-fade",
+        "on",
+    ]))
+    .unwrap();
+    assert!(r.start_lighting().source_fade);
+    let banner = r.start_modes(0.0).banner(0.0).unwrap().replace('\n', ", ");
+    assert!(banner.contains("source fade on, "), "{banner}");
+    assert!(banner.contains("landing fade on, "), "{banner}");
+    let mut row = String::new();
+    r.start_modes(0.0).write_diag(&mut row);
+    assert!(row.contains("source fade on, "), "{row}");
+    assert!(parse_args_from(argv(&["--source-fade", "maybe"])).is_err());
+}
+
+/// Plan 0098 Phases 8, 14 and 17: `Lighting::dig_hold` is `on` by default and the row does
+/// not name it; `--dig-hold rays` and `--dig-hold off` set it and the lighting row and the
+/// banner name it; `--dig-hold land` and `--dig-hold near` are refused.
+#[test]
+fn dig_hold_is_on_rays_and_off_names_itself() {
+    use vxe_render::DigHold;
+    let base = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert_eq!(base.start_lighting().dig_hold, DigHold::On);
+    let banner = base.start_modes(0.0).banner(0.0).unwrap();
+    assert!(!banner.contains("dig hold"), "{banner}");
+    for gone in ["land", "near"] {
+        assert!(
+            parse_args_from(argv(&["--source", "outdoor", "--dig-hold", gone])).is_err(),
+            "{gone} is refused"
+        );
+    }
+    for (v, d) in [("rays", DigHold::Rays), ("off", DigHold::Off)] {
+        let r = parse_args_from(argv(&["--source", "outdoor", "--dig-hold", v])).unwrap();
+        assert_eq!(r.start_lighting().dig_hold, d);
+        let banner = r.start_modes(0.0).banner(0.0).unwrap().replace('\n', ", ");
+        assert!(banner.contains(&format!("dig hold {v}, ")), "{banner}");
+        let mut row = String::new();
+        r.start_modes(0.0).write_diag(&mut row);
+        assert!(row.contains(&format!("dig hold {v}, ")), "{row}");
+    }
+    assert!(parse_args_from(argv(&["--dig-hold", "maybe"])).is_err());
 }

@@ -18,7 +18,7 @@
 > (the coarse tier),
 > [ADR-0055](../adrs/0055-render-settings-are-one-struct-with-an-apply-class-per-field-and-profiles-are-named-values.md)
 > (the settings rows)
-> **Source:** [Plan 0098](0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md)'s
+> **Source:** [Plan 0098](done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md)'s
 > window W3 (2026-11-23) and its "Amendment at W3", which outlines this plan; the owner's
 > words are in [`logs/0098.md`](logs/0098.md) ("Phase 10: W3's verdicts"), the stills in that
 > lane's untracked `live/window98c/`.
@@ -493,7 +493,11 @@ Floor, Performance and High `face`, `ray-record`, the picked hold; Portable `fac
   lands first or after Plan 0099's Phase 2, the orchestrator's call; Phase 4 does not touch
   the queue.
 - **Plan 0098 Phase 14 is in flight** (a fresh hole's held value). This plan's base is the
-  tree that holds it; Phase 4's H2 reuses its estimate if it built one.
+  tree that holds it; Phase 4's H2 reuses its estimate if it built one. **2026-11-24 (the
+  architect, at Plan 0098's close, v0.72.0):** it landed as Phases 16 and 17: the held value
+  is a record in the store made on the CPU at the edit (`bake/held.rs`,
+  `held_visibilities`), read by the light pass as any record, and the per-pixel rays of
+  Phase 14 are gone; H2 reuses that estimate's form.
 - **`temporal.wgsl` is near the file-size gate.** New shader code goes to `pair.wgsl` or a
   file of its own.
 - **Threading and memory:** no new thread, no new allocation in the frame path.

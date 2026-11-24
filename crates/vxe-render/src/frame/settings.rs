@@ -28,6 +28,9 @@ macro_rules! named_enum {
 }
 pub(crate) use named_enum;
 
+mod sky_light;
+pub use self::sky_light::*;
+
 /// Workgroup edge in pixels; must match `@workgroup_size` in every frame shader.
 pub(crate) const WORKGROUP: u32 = 8;
 
@@ -659,87 +662,6 @@ named_enum!(ShadowWalk {
     Coarse => "coarse",
 });
 
-/// How the key light's shadow ray makes its penumbra (Plan 0086 Phase 7's spike).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Penumbra {
-    /// One ray toward a uniform point of the body's disc a pixel and frame: the penumbra is the
-    /// mean over frames and pixels. The default.
-    #[default]
-    Disc,
-    /// One ray toward the body's centre that keeps, along its walk, the smallest ratio of the
-    /// distance from the ray to a solid 2^3 block beside it (probed two voxels across the ray's
-    /// dominant axis, about every two voxels through cells of a brick's edge or less) to
-    /// `t tan r`, `r` the body's angular radius: the visibility is that ratio clamped to 1, 0
-    /// where the ray hits. The same every frame; a penumbra on the lit side of the edge only.
-    Approach,
-}
-
-named_enum!(Penumbra {
-    Disc => "disc",
-    Approach => "approach",
-});
-
-/// Where the key light's visibility comes from where a voxel is small on screen (ADR-0079).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum KeyFar {
-    /// The far estimate at a cube face: the store's baked key visibility where its cell holds
-    /// a fresh one (`KEY_BAKED`, not `SKY_STALE`), read bilinear, else the column map's horizon
-    /// toward the sun softened by the disc's radius. Where the far normal's weight is 1 (at and
-    /// over one half under [`KeyFarMix::Step`]) the estimate with no key ray and no screen
-    /// history, a switch of its source (the record's landing, a re-bake) riding one fade;
-    /// between the band's ends the ray's running mean and the estimate by [`KeyFarMix`]; and a
-    /// reset key mean seeded from the estimate. Anywhere else the ray. The default.
-    #[default]
-    Baked,
-    /// As [`KeyFar::Baked`] with the column map's horizon at every far face, record or not.
-    Column,
-    /// The per-pixel disc ray and its running mean at every distance (ADR-0027).
-    Ray,
-}
-
-named_enum!(KeyFar {
-    Baked => "baked",
-    Column => "column",
-    Ray => "ray",
-});
-
-/// How [`KeyFar::Baked`] joins the ray's mean and the store's value inside the far normal's
-/// band.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum KeyFarMix {
-    /// `mix(mean, store, w)`, `w` the far normal's weight. The default.
-    #[default]
-    Blend,
-    /// The store's value where `w` is at least one half, else the mean.
-    Step,
-}
-
-named_enum!(KeyFarMix {
-    Blend => "blend",
-    Step => "step",
-});
-
-/// The normal a cube face's baked sky term (ADR-0070) reads its visibilities by (Plan 0086
-/// Phase 13's arms).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SkyNormal {
-    /// The shading normal: the face's own direction near, the far normal's blend far.
-    Face,
-    /// The 27-count gradient's normal `g` at every distance: the face's term is the mix over
-    /// the directions `g` leans toward, `2a + (g_a > 0)` weighted `g_a^2`, of each direction's
-    /// baked visibility times the sky's irradiance above the horizon about it, over the
-    /// directions whose visibility is held; a tread and a riser of a one-voxel stair read the
-    /// slope's blend. The surface and the key light keep the face normal; a face whose sky
-    /// rays were cast (no fresh bake) keeps the shading normal. The default.
-    #[default]
-    Smoothed,
-}
-
-named_enum!(SkyNormal {
-    Face => "face",
-    Smoothed => "smoothed",
-});
-
 /// How a cube face's hit reads its emissive part from the store (ADR-0049).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum StoreRead {
@@ -977,13 +899,32 @@ pub struct Lighting {
     /// mean through a canopy holds four times the sky rays' frames while a 10-degree jump
     /// still resets it at once (the sky-change bit).
     pub key_history: u32,
+    /// The light passes read last frame's lighting (ADR-0082; default off): off, `Params::history`
+    /// bit 0 is clear and every lighting pixel resets (age 0) while the upscaler keeps its own.
+    pub light_history: bool,
+    /// A landing block's sky visibilities ride the store's fade with its other words (default
+    /// off): off, they change in the frame it lands, softened only by the no-ray fade's history.
+    pub landing_fade: bool,
+    /// A landing's switch of source fades (Plan 0098 Phase 6b, default off): a block records the
+    /// frame its chunk's first block landed, and where a pixel takes no light history its sky
+    /// term mixes from the column's answer to the block's baked term over that block's fade.
+    pub source_fade: bool,
+    /// What a dig shows until its re-bake lands with no light history ([`DigHold`]; default
+    /// `On`, a held value).
+    pub dig_hold: DigHold,
+    /// A spike arm (Plan 0098 Phase 5, default off): with no light history, keep it at the far.
+    pub light_history_far: bool,
+    /// A spike arm (Plan 0098 Phase 5, default off): by the far normal's weight the a-trous
+    /// filter's edge stops relax and the stored sky term (which skips the filter) reads toward
+    /// its chunk summary's, so two hits a jitter step apart light alike at the far.
+    pub far_light_wide: bool,
     /// How the key light's shadow ray makes its penumbra ([`Penumbra`]; default `Disc`).
     pub penumbra: Penumbra,
     /// Where the key light's visibility comes from where a voxel is small on screen
-    /// ([`KeyFar`]; default `Baked`).
+    /// ([`KeyFar`]; default `Column`).
     pub key_far: KeyFar,
     /// How the store's key visibility joins the ray's mean inside the far normal's band
-    /// ([`KeyFarMix`]; default `Blend`).
+    /// ([`KeyFarMix`]; default `Step`).
     pub key_far_mix: KeyFarMix,
     /// The normal a cube face's baked sky term reads its visibilities by ([`SkyNormal`];
     /// default `Smoothed`).
@@ -1057,9 +998,15 @@ impl Default for Lighting {
             sky_rays: DEFAULT_SKY_RAYS,
             sky_history: DEFAULT_SKY_HISTORY,
             key_history: DEFAULT_KEY_HISTORY,
+            light_history: false,
+            landing_fade: false,
+            source_fade: false,
+            dig_hold: DigHold::On,
+            light_history_far: false,
+            far_light_wide: false,
             penumbra: Penumbra::Disc,
-            key_far: KeyFar::Baked,
-            key_far_mix: KeyFarMix::Blend,
+            key_far: KeyFar::Column,
+            key_far_mix: KeyFarMix::Step,
             sky_normal: SkyNormal::Smoothed,
             sky_bounce: 0.0,
             key_cap: 0.0,

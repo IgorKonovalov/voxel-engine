@@ -407,22 +407,23 @@ pub(crate) fn write_budget_note(out: &mut String, budget: vxe_render::Budget, sl
 }
 
 /// Appends the live queue's banner row to `out`: the mode, its settings and slice, then
-/// `words` (its order and withdrawal) and its keys.
+/// `words` (its order and withdrawal) and its keys. The bricks' samples are the run's tiers
+/// (`Args::bake`'s: the profile's, `--bake-tiers`, or the profile the menu switched to), near,
+/// mid and far, as `bricks 8/4096,1024,256`.
 pub(crate) fn write_queue_banner_row(out: &mut String, args: &Args, words: &str) {
+    let [near, mid, far] = args.bake.tiers;
     let _ = write!(
         out,
-        "light: live queue, bricks {}/{}, ",
+        "light: live queue, bricks {}/{near},{mid},{far}, ",
         vxe_render::internals::BRICK_CELL,
-        vxe_render::QUEUE_BRICK_SAMPLES,
     );
     if args.bake.coarse > 0 {
         let _ = write!(
             out,
-            "coarse {}/{} first, near {} at {}",
+            "coarse {}/{} first, near {} at {near}",
             vxe_render::internals::BRICK_CELL,
             args.bake.coarse,
             args.bake.near,
-            vxe_render::QUEUE_BRICK_SAMPLES
         );
     } else {
         let _ = write!(out, "no coarse pass, near {}", args.bake.near);

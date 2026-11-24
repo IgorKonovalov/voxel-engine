@@ -55,15 +55,109 @@ mod flicker {
         assert_eq!(n.restarts, still[b - 1].restarts, "no restart at N");
     }
 
-    mod reading {
+    /// Plan 0098 Phase 8: a dig under the calm picks neither darkens its surround nor flashes.
+    /// `reading::dig_run`'s forest (the spawn at `--sun 10,180`, 30 degrees down, the
+    /// fly-through's frame, FSR 2 from 640 x 360 to 960 x 540, the live queue stepped through
+    /// [`DIG_DRAIN`] drain frames and a settle of 240), the 1 m dig ahead, read from N - 1 until its jobs
+    /// have landed plus 16 and [`reading::DIG_TAIL`] frames, under the defaults with no token
+    /// (`default`: the five picks, `Lighting::dig_hold` on; Plan 0098 Phase 4) against the
+    /// defaults before the picks with the light history on (`before`, window W2's run 5, "no
+    /// flash"). In every frame from N: the ring's share
+    /// (`support::defects::DigRow`: display pixels whose hit is outside the dug box and inside it
+    /// dilated by 64 voxels) darker by over 4 levels than both N - 1 and the settled frame is at
+    /// most the history arm's largest plus 2 points; the hole's share (hits inside the box
+    /// dilated by one voxel) brighter than the settled frame by over 4 levels is at most the
+    /// history arm's largest plus 2 points, and the hole's mean luma's excess over its settled
+    /// mean at most the history arm's largest plus 4 levels. `VXE_DIG`'s arm
+    /// (`support::defects::dig_spec`) replaces the defaults' arm: `forest/hold=off` is the
+    /// fault the bar was written for. Its claim is the ring's: the hole's is defended by
+    /// [`a_fresh_hole_holds_its_value_until_its_light_lands`], whose pose shows the white hole
+    /// this rig's does not and which reads no arm as its baseline.
+    #[test]
+    #[ignore = "soak"]
+    fn a_dig_under_calm_neither_darkens_nor_flashes() {
+        let (scene, arm, drain) = super::support::defects::dig_spec(("forest", "default", DIG_DRAIN));
+        let Some((_, base, n1)) = reading::dig_run(&scene, "before", drain) else {
+            return;
+        };
+        let (_, rows, _) = reading::dig_run(&scene, &arm, drain).expect("the adapter");
+        let worst = |rs: &[super::support::defects::DigRow], k: fn(&super::support::defects::DigRow) -> f64| {
+            rs[n1 + 1..].iter().map(k).fold(f64::MIN, f64::max)
+        };
+        let ring = (worst(&base, |r| r.ring_dark_both), worst(&rows, |r| r.ring_dark_both));
+        let hole = (worst(&base, |r| r.hole_bright), worst(&rows, |r| r.hole_bright));
+        let excess = (worst(&base, |r| r.hole_excess), worst(&rows, |r| r.hole_excess));
+        println!(
+            "dig {scene} {arm} against before: ring dark {:.2} % against {:.2} %, hole bright {:.2} % against {:.2} %, hole excess {:+.1} against {:+.1}",
+            ring.1, ring.0, hole.1, hole.0, excess.1, excess.0
+        );
+        assert!(ring.1 <= ring.0 + 2.0, "the ring darkens: {:.2} % against {:.2} % + 2", ring.1, ring.0);
+        assert!(hole.1 <= hole.0 + 2.0, "the hole flashes: {:.2} % against {:.2} % + 2", hole.1, hole.0);
+        assert!(excess.1 <= excess.0 + 4.0, "the hole's mean: {:+.1} against {:+.1} + 4", excess.1, excess.0);
+    }
+
+    /// Plan 0098 Phase 17: a fresh hole holds its value until its light lands, and the light
+    /// lands within a few frames. `dig_line::hold::claims`' runs (the owner's pose at window
+    /// 98d: the forest's spawn at `--sun 10,180`, looking steeply down; the fly-through's frame
+    /// and queue flags), sequence A (three digs down one ray, the third with the second in
+    /// flight) and B (five digs about the view's centre eight frames apart, a sixth into the
+    /// first) on the waiting queue (600 frames in: lavapipe's rig never drains, 161 chunks in
+    /// view waiting), and A at the queue's start for the reference landing. No arm is the
+    /// baseline: every display pixel is read against its own luma before its dig group
+    /// (`before`) and in the group's last frame (`after`), the groups taken at ring 1's
+    /// landing (a dig made by the one ahead's ring-1 landing joins its group), so `after` is
+    /// the frame before the next group's dig (B: the frame before the next dig; the owner's
+    /// pick, 2026-11-24, over the queue's landing of every job). With L the frame a dig's
+    /// ring 1 lands: L is at most the dig's frame plus 8 for every dig, and no later than the
+    /// reference's plus 1; from each dig's frame to L + `DIG_FADE` the hole's share over 32
+    /// levels above the larger of `before` and `after`, and its share over 32 below the
+    /// smaller, are each at most 2 %; after that until the next dig, the same at 4 levels; the
+    /// ring's at 4 levels in every frame; dots at most the settled frame's plus 1 point; the
+    /// ring and the frame within 1 level of N - 1 until the first landing; and from each
+    /// group's landing no step away from its settled mean over 1 level. `VXE_DIG`'s arm
+    /// (`support::defects::dig_spec`; `hold=rays` the bite check) replaces the defaults'.
+    #[test]
+    #[ignore = "soak"]
+    fn a_fresh_hole_holds_its_value_until_its_light_lands() {
+        use super::dig_line::hold::claims;
+        let (_, arm, _) = super::support::defects::dig_spec(("above", "default", 0));
+        let Some(reference) = claims("A", false, &arm) else {
+            return;
+        };
+        let reference = reference.land[0].expect("the reference dig lands");
+        for seq in ["A", "B"] {
+            let c = claims(seq, true, &arm).expect("the adapter");
+            println!(
+                "{}hole {seq} {arm}: ring 1 lands D+{:?} (reference D+{reference}); before the landing white {:.2} % black {:.2} % (32 levels), after white {:.2} % black {:.2} %, ring white {:.2} % black {:.2} %, dots {:.2} % (settled {:.2} %), shift {:.2}, away {:+.2}",
+                c.text, c.land, c.before[0], c.before[1], c.after[0], c.after[1], c.ring[0], c.ring[1], c.dots[0], c.dots[1], c.shift, c.away
+            );
+            for (k, l) in c.land.iter().enumerate() {
+                let l = l.unwrap_or_else(|| panic!("{seq} dig {} never lands", k + 1));
+                assert!(l <= 8 && l <= reference + 1, "{seq} dig {}: ring 1 lands D+{l} (reference D+{reference})", k + 1);
+            }
+            assert!(c.before[0] <= 2.0, "{seq}: the hole whitens before its light lands: {:.2} %", c.before[0]);
+            assert!(c.before[1] <= 2.0, "{seq}: the hole blackens before its light lands: {:.2} %", c.before[1]);
+            assert!(c.after[0] <= 2.0 && c.after[1] <= 2.0, "{seq}: not settled after the fade: {:?}", c.after);
+            assert!(c.ring[0] <= 2.0 && c.ring[1] <= 2.0, "{seq}: the ring: {:?}", c.ring);
+            assert!(c.dots[0] <= c.dots[1] + 1.0, "{seq}: dots {:.2} % against {:.2} % + 1", c.dots[0], c.dots[1]);
+            assert!(c.shift <= 1.0, "{seq}: the ring or the frame shifts before the landing: {:.2}", c.shift);
+            assert!(c.away <= 1.0, "{seq}: the landing is not one fade: {:+.2}", c.away);
+        }
+    }
+
+    /// The frames [`a_dig_under_calm_neither_darkens_nor_flashes`] drains its queue at most
+    /// before the settle: none (on lavapipe the view's records are in after the settle's 240).
+    const DIG_DRAIN: u32 = 0;
+
+    pub(super) mod reading {
         use super::super::support;
         use support::defects::{Shot, Stepper, dig_ahead, grid_of, queue_step};
         use support::terms::Rig;
         use vxe_render::Camera;
 
         /// The strips' internal size; FSR 2 at 1.5 takes it to [`OUT`].
-        const INTERNAL: [u32; 2] = [640, 360];
-        const OUT: [u32; 2] = [960, 540];
+        pub(in super::super) const INTERNAL: [u32; 2] = [640, 360];
+        pub(in super::super) const OUT: [u32; 2] = [960, 540];
         /// Frames a strip holds.
         const STRIP: usize = 32;
         /// The display levels a pixel's largest channel must change by between consecutive
@@ -627,6 +721,315 @@ mod flicker {
             split_frames(&mut rig, &mut s, &cam, "dig-streamed", &mut tick);
         }
 
+        /// Plan 0098 Phase 8 step 1: a dig's ring and hole under an arm, from N - 1 until every
+        /// dig job has landed (the queue's `digs` 0) plus its longest fade (16 frames) plus
+        /// [`DIG_TAIL`] frames. The scene, the arm and the drain from
+        /// `support::defects::dig_spec`: `hills` (seed 1 at noon, [`flicker_dig`]'s pose) or
+        /// `forest` (the forest's spawn at `--sun 10,180`, 30 degrees down), the arm's tokens
+        /// ([`dig_arm`]), and the most frames the queue drains before the settle. Per frame the ring's and the hole's display figures
+        /// (`support::defects::DigRow`) and their lighting pixels' sources, rays, shown
+        /// visibilities, key slots and parts; the table lands in
+        /// `live/flicker/dig-terms/<scene>-<arm>.txt`.
+        #[test]
+        #[ignore = "reading"]
+        fn dig_terms() {
+            let (scene, arm, drain) = support::defects::dig_spec(("hills", "default", 30_000));
+            let Some((frames, rows, n1)) = dig_run(&scene, &arm, drain) else {
+                return;
+            };
+            let mut out = String::new();
+            for (f, r) in frames.iter().zip(&rows) {
+                let line = support::defects::dig_line(f, r);
+                println!("{line}");
+                out.push_str(&line);
+                out.push('\n');
+            }
+            let after = &rows[n1 + 1..];
+            let worst = |k: fn(&support::defects::DigRow) -> f64| {
+                after.iter().map(k).fold(f64::MIN, f64::max)
+            };
+            let line = format!(
+                "dig {scene} {arm}: largest ring dark {:.2} % (both {:.2} %), hole bright {:.2} %, hole excess {:+.1}; frames {}",
+                worst(|r| r.ring_dark),
+                worst(|r| r.ring_dark_both),
+                worst(|r| r.hole_bright),
+                worst(|r| r.hole_excess),
+                frames.len()
+            );
+            println!("{line}");
+            out.push_str(&line);
+            let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../live/flicker/dig-terms");
+            std::fs::create_dir_all(&dir).expect("the reading's directory");
+            std::fs::write(dir.join(format!("{scene}-{}.txt", arm.replace([',', '='], "-"))), out)
+                .expect("the table");
+        }
+
+        /// Frames read after the dig's jobs have landed and their fades ended.
+        pub(in super::super) const DIG_TAIL: usize = 24;
+
+        /// The arm's tokens over the fly-through's defaults (the five picks of ADR-0082):
+        /// `calm` (the five picks named: light history off, key far column, key far
+        /// mix step, the band 4..8, the disc), then one put back each: `hist` (light history
+        /// on), `baked` (key far baked), `blend` (key far mix blend), `band` (the band 2..6),
+        /// `approach` (the approach penumbra); `before` (the fly-through's defaults before the
+        /// picks: `hist`, `baked`, `blend`, `band` and `approach`, window W2's run 5 "no
+        /// flash"); `pin` the
+        /// exposure manual at its settled value from the settle's end; `hold=on|land|rays|off`
+        /// (`Lighting::dig_hold`).
+        pub(in super::super) fn dig_arm(f: &mut vxe_render::Frame, arm: &str) -> bool {
+            let mut l = f.lighting();
+            let mut look = f.look();
+            let mut pin = false;
+            for t in arm.split(',') {
+                match t {
+                    "default" => {}
+                    "calm" => {
+                        l.light_history = false;
+                        l.key_far = vxe_render::KeyFar::Column;
+                        l.key_far_mix = vxe_render::KeyFarMix::Step;
+                        l.penumbra = vxe_render::Penumbra::Disc;
+                        look.far_normal = [4.0, 8.0];
+                    }
+                    "before" => {
+                        l.light_history = true;
+                        l.key_far = vxe_render::KeyFar::Baked;
+                        l.key_far_mix = vxe_render::KeyFarMix::Blend;
+                        look.far_normal = [2.0, 6.0];
+                        l.penumbra = vxe_render::Penumbra::Approach;
+                    }
+                    "hist" => l.light_history = true,
+                    "baked" => l.key_far = vxe_render::KeyFar::Baked,
+                    "blend" => l.key_far_mix = vxe_render::KeyFarMix::Blend,
+                    "band" => look.far_normal = [2.0, 6.0],
+                    "approach" => l.penumbra = vxe_render::Penumbra::Approach,
+                    "pin" => pin = true,
+                    t if t.starts_with("hold=") => {
+                        l.dig_hold = vxe_render::DigHold::from_name(&t[5..]).expect("a hold");
+                    }
+                    other => panic!("unknown dig arm token {other}"),
+                }
+            }
+            f.set_lighting(l);
+            f.set_look(look);
+            pin
+        }
+
+        /// [`dig_terms`]' run, the queue stepped at most `drain` frames before the settle
+        /// until it drains: the frames from N - 1 (index 0 is N - 2), their rows, and N - 1's
+        /// index; `None` without an adapter.
+        pub(in super::super) fn dig_run(
+            scene: &str,
+            arm: &str,
+            drain: u32,
+        ) -> Option<(Vec<support::defects::DigFrame>, Vec<support::defects::DigRow>, usize)> {
+            let (mut rig, cam, sky) = match scene {
+                "forest" => {
+                    let (rig, cam) = support::terms::forest_rig()?;
+                    let sky = flythrough::daylight::Clock {
+                        fixed_sun: Some([10.0, 180.0]),
+                        ..Default::default()
+                    }
+                    .sky(flythrough::outdoor::BASE_Z as f32);
+                    (rig, cam, sky)
+                }
+                _ => {
+                    let (rig, cam) = support::terms::hills_rig()?;
+                    (rig, cam, noon())
+                }
+            };
+            let cam = pitched(&cam, -30.0);
+            let mut f = flicker_frame(&rig, sky, None, false);
+            let pin = dig_arm(&mut f, arm);
+            let mut s = Stepper::new(&rig, f);
+            let mut n = 0;
+            while n < drain && !s.frame.bake_queue().is_some_and(|q| q.empty()) {
+                queue_step(&mut rig, &mut s.frame, &cam);
+                s.run(&rig, &cam);
+                n += 1;
+            }
+            println!(
+                "dig {scene} {arm}: adapter {}, drained {} after {n} frames",
+                rig.adapter,
+                s.frame.bake_queue().is_some_and(|q| q.empty())
+            );
+            settle(&mut rig, &mut s, &cam, 240);
+            if pin {
+                let st = vxe_render::debug::read_buffer(&rig.device, &rig.queue, s.frame.exposure_state(), 0, 32);
+                let e = vxe_render::ExposureState::from_bytes(&st).current;
+                s.frame.set_lighting(vxe_render::Lighting {
+                    exposure: vxe_render::Exposure::Manual(e),
+                    ..s.frame.lighting()
+                });
+                settle(&mut rig, &mut s, &cam, 8);
+            }
+            // The box is known only after the dig: the frames before it are read against the
+            // box `dig_ahead` will cut, found by the same march.
+            let fwd = cam.basis().0.to_array();
+            let eye = cam.position.to_array();
+            let t = support::defects::march(&rig.world, eye, fwd, 400.0).expect("the view hits ground");
+            let c = [0, 1, 2].map(|k| (eye[k] + fwd[k] * (t + 0.5)).floor() as i64);
+            let bx = (c.map(|v| v - 5), c.map(|v| v + 5));
+            let mut frames = Vec::new();
+            for k in [2, 1] {
+                let q = queue_step(&mut rig, &mut s.frame, &cam);
+                frames.push(support::defects::dig_frame(&rig, &mut s, &cam, q, bx, format!("N-{k}"), OUT));
+            }
+            let dug = dig_ahead(&mut rig, &mut s.frame, &cam);
+            assert_eq!(dug, bx, "the dig's box");
+            let mut tail = None;
+            for k in 0..1200usize {
+                let q = queue_step(&mut rig, &mut s.frame, &cam);
+                // Landed: no dig waits or runs; its fade is FADE frames at most.
+                let done = q.digs == 0 && k > 0;
+                frames.push(support::defects::dig_frame(&rig, &mut s, &cam, q, bx, format!("N+{k}"), OUT));
+                if done && tail.is_none() {
+                    tail = Some(k + 16 + DIG_TAIL);
+                }
+                if tail == Some(k) {
+                    break;
+                }
+            }
+            println!("dig {scene} {arm}: landed {}", tail.is_some());
+            let rows = support::defects::dig_rows(&frames, 1);
+            Some((frames, rows, 1))
+        }
+
+        /// The pitch of the dig from above (degrees, up positive): the owner's pose at W3
+        /// (`1b-dig2-during.png`: the forest's spawn, looking steeply down at open ground).
+        pub(in super::super) const ABOVE_PITCH: f32 = -65.0;
+
+        /// The eye of the owner's dig on the RADV RENOIR at Portable (W3's run 5,
+        /// `5-radeon-dig-dots.png`'s HUD), voxels.
+        const PORTABLE_EYE: [f32; 3] = [1501.0, 1245.5, 564.3];
+
+        /// Plan 0098 Phase 14 step 1: the fly-through's dig (`support::defects::dig_along`)
+        /// three times down one ray from above, in the owner's pose (the forest's spawn at
+        /// `--sun 10,180`, [`ABOVE_PITCH`]). The scene `above` steps the queue at most `drain`
+        /// frames until no chunk in view waits, then settles 240 frames; `coarse` digs at the
+        /// first step whose queue holds a coarse block with chunks in view waiting; `portable`
+        /// and `portable-coarse` likewise at [`PORTABLE_EYE`] facing +x, the forest at 15:00,
+        /// the Portable profile's march (853 x 480 to 1280 x 720) and queue. Frames N - 2
+        /// and N - 1, the first dig, frames until it lands plus 16 and [`DIG_TAIL`], the second
+        /// dig, one frame, the third (the second still in flight where the queue says so), and
+        /// frames until both land plus 16 and [`DIG_TAIL`]. With the rig after the digs; `None`
+        /// without an adapter.
+        pub(in super::super) fn hole_run(
+            scene: &str,
+            arm: &str,
+            drain: u32,
+            stages: bool,
+            png: Option<&std::path::Path>,
+        ) -> Option<(support::defects::HoleRun, Rig)> {
+            use support::defects::{HoleFrame, dig_along, hole_frame};
+            let portable = scene.starts_with("portable");
+            let (mut rig, cam, clock, sizes) = if portable {
+                let rig = support::terms::forest_rig_about(PORTABLE_EYE.map(|v| v as i32))?;
+                let cam = flythrough::camera_looking_at(PORTABLE_EYE, [PORTABLE_EYE[0] + 1.0, PORTABLE_EYE[1], PORTABLE_EYE[2]]);
+                let clock = flythrough::daylight::Clock {
+                    minutes: 15.0 * 60.0,
+                    ..Default::default()
+                };
+                (rig, cam, clock, [[853, 480], [1280, 720]])
+            } else {
+                let (rig, cam) = support::terms::forest_rig()?;
+                let clock = flythrough::daylight::Clock {
+                    fixed_sun: Some([10.0, 180.0]),
+                    ..Default::default()
+                };
+                (rig, cam, clock, [INTERNAL, OUT])
+            };
+            let sky = clock.sky(flythrough::outdoor::BASE_Z as f32);
+            let cam = pitched(&cam, ABOVE_PITCH);
+            let mut f = flicker_frame_at(&rig, sky, None, false, flythrough::LeafShadow::Voxel, sizes);
+            if portable {
+                // The Portable profile's queue and lamp (`RenderSettings::profile`).
+                let p = vxe_render::RenderSettings::profile(vxe_render::Profile::Portable);
+                f.set_bake_budget(p.bake.budget);
+                f.set_bake_tiers(p.bake.tiers);
+                f.set_bake_drain(p.bake.drain);
+                f.set_lighting(vxe_render::Lighting {
+                    lamp_bounce: p.lighting.lamp_bounce,
+                    ..f.lighting()
+                });
+            }
+            let out = sizes[1];
+            dig_arm(&mut f, arm);
+            let hold = f.lighting().dig_hold != vxe_render::DigHold::Off;
+            let mut s = Stepper::new(&rig, f);
+            let mut n = 0;
+            loop {
+                let q = queue_step(&mut rig, &mut s.frame, &cam);
+                s.run(&rig, &cam);
+                n += 1;
+                let done = match scene {
+                    "coarse" | "portable-coarse" => q.coarse > 0 && q.drain_waiting > 0,
+                    _ => q.drain_waiting == 0 && n > 1,
+                };
+                if done || n >= drain {
+                    println!(
+                        "hole {scene} {arm}: adapter {}, after {n} frames in view waiting {}, coarse {}, depth {}",
+                        rig.adapter, q.drain_waiting, q.coarse, q.depth
+                    );
+                    break;
+                }
+            }
+            if !scene.ends_with("coarse") {
+                settle(&mut rig, &mut s, &cam, 240);
+            }
+            let eye = cam.position.to_array();
+            let ground = support::defects::march(&rig.world, eye, cam.basis().0.to_array(), 400.0);
+            println!("hole {scene} {arm}: eye {eye:?}, ground {ground:?} voxels along the view");
+            let (mut frames, mut digs): (Vec<HoleFrame>, _) = (Vec::new(), Vec::new());
+            let read = |rig: &mut Rig, s: &mut Stepper, frames: &mut Vec<HoleFrame>, label: String| {
+                let q = queue_step(rig, &mut s.frame, &cam);
+                let path = png.map(|d| d.join(format!("{:03}-{label}.png", frames.len())));
+                frames.push(hole_frame(rig, s, &cam, q, label, out, stages, path.as_deref()));
+                q
+            };
+            for k in [2, 1] {
+                read(&mut rig, &mut s, &mut frames, format!("N-{k}"));
+            }
+            for d in 1..=3 {
+                let dug = dig_along(&mut rig, &mut s.frame, &cam).expect("the dig changed voxels");
+                digs.push((frames.len(), dug.0, dug.1));
+                let mut tail = None;
+                for k in 0..1200usize {
+                    let q = read(&mut rig, &mut s, &mut frames, format!("D{d}+{k}"));
+                    if d == 2 {
+                        println!("hole {scene} {arm}: the third dig with digs {} in flight", q.digs);
+                        break;
+                    }
+                    if q.digs == 0 && k > 0 && tail.is_none() {
+                        tail = Some(k + 16 + DIG_TAIL);
+                    }
+                    if tail == Some(k) {
+                        break;
+                    }
+                }
+            }
+            println!("hole {scene} {arm}: {} frames, digs {digs:?}", frames.len());
+            Some((support::defects::HoleRun { frames, n1: 1, digs, out, hold, eye }, rig))
+        }
+
+        /// Plan 0098 Phase 14 step 1's reading ([`hole_run`]; `VXE_DIG`'s scene `above` or
+        /// `coarse`, its arm and drain): the frames under `live/flicker/dig-above/<scene>-<arm>/`
+        /// and the tables (`support::defects::hole_tables`) in `tables.txt` beside them.
+        #[test]
+        #[ignore = "reading"]
+        fn dig_from_above() {
+            let (scene, arm, drain) = support::defects::dig_spec(("above", "default", 30_000));
+            let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../live/flicker/dig-above")
+                .join(format!("{scene}-{}", arm.replace([',', '='], "-")));
+            std::fs::create_dir_all(&dir).expect("the reading's directory");
+            let Some((run, rig)) = hole_run(&scene, &arm, drain, true, Some(&dir)) else {
+                return;
+            };
+            let text = support::defects::hole_tables(&run, &rig.world);
+            println!("{text}");
+            std::fs::write(dir.join("tables.txt"), text).expect("the tables");
+        }
+
         /// The split's sky: noon, or the clock at `VXE_SPLIT_TIME` (`HH:MM`).
         fn split_sky() -> vxe_render::sky::Sky {
             let minutes = std::env::var("VXE_SPLIT_TIME").ok().and_then(|t| {
@@ -1176,7 +1579,7 @@ mod flicker {
         }
 
         /// `cam` with its heading kept and its pitch set to `deg` (up positive).
-        fn pitched(cam: &Camera, deg: f32) -> Camera {
+        pub(in super::super) fn pitched(cam: &Camera, deg: f32) -> Camera {
             let p = cam.position.to_array();
             let f = cam.basis().0.to_array();
             let h = (f[0] * f[0] + f[1] * f[1]).sqrt().max(1e-6);
@@ -1237,7 +1640,19 @@ mod flicker {
             key_off: bool,
             leaf: flythrough::LeafShadow,
         ) -> vxe_render::Frame {
-            let mut f = vxe_render::Frame::with_sizes(&rig.device, INTERNAL, OUT);
+            flicker_frame_at(rig, sky, pin, key_off, leaf, [INTERNAL, OUT])
+        }
+
+        /// [`flicker_frame_with`] at the internal and output sizes `sizes`.
+        pub(in super::super) fn flicker_frame_at(
+            rig: &Rig,
+            sky: vxe_render::sky::Sky,
+            pin: Option<f32>,
+            key_off: bool,
+            leaf: flythrough::LeafShadow,
+            sizes: [[u32; 2]; 2],
+        ) -> vxe_render::Frame {
+            let mut f = vxe_render::Frame::with_sizes(&rig.device, sizes[0], sizes[1]);
             f.set_upscaler_kind(
                 &rig.device,
                 vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default()),
@@ -1284,7 +1699,7 @@ mod flicker {
             f
         }
 
-        fn settle(rig: &mut Rig, s: &mut Stepper, cam: &Camera, frames: u32) {
+        pub(in super::super) fn settle(rig: &mut Rig, s: &mut Stepper, cam: &Camera, frames: u32) {
             for _ in 0..frames {
                 queue_step(rig, &mut s.frame, cam);
                 s.run(rig, cam);

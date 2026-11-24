@@ -63,4 +63,50 @@ impl Run {
         self.modes.profile = self.args.profile_row(&self.live_settings(), &pending);
         self.say(self.modes.profile.clone());
     }
+
+    /// The debug page's `render scale`: the upscaler's internal scale steps 1.5, 1, 2 and back
+    /// (FSR 2 at 1 is its antialiasing at native), applied from the next frame as a profile's
+    /// scale is; the upscaler banner names it.
+    pub(crate) fn cycle_scale(&mut self) {
+        use vxe_render::RenderScale;
+        let next = match self.args.look.internal_scale {
+            RenderScale::OneHalf => RenderScale::One,
+            RenderScale::One => RenderScale::Two,
+            RenderScale::Two => RenderScale::OneHalf,
+        };
+        self.args.look.internal_scale = next;
+        self.modes.scale = next.name();
+        if self.modes.upscaler.mode != crate::hud::UpscalerMode::Off {
+            self.upscaler_changed = true;
+            let mode = self.modes.upscaler.mode;
+            self.modes
+                .upscaler
+                .change(mode, next.name(), crate::app::ms_since(self.start));
+        }
+        self.say(format!("render scale {}", next.name()));
+    }
+
+    /// The debug page's `jitter phases`: FSR 2's jitter phase count steps through its own
+    /// (`8 (display / render)^2`), 8 and 32, applied from the next frame; the upscaler banner
+    /// names a count that is set.
+    pub(crate) fn cycle_jitter_phases(&mut self) {
+        let next = match self.args.look.jitter_phases {
+            None => Some(8),
+            Some(8) => Some(32),
+            Some(_) => None,
+        };
+        self.args.look.jitter_phases = next;
+        self.modes.upscaler.fsr2_knobs = crate::hud::fsr2_knob_words(next, self.args.look.dither);
+        if self.modes.upscaler.mode == crate::hud::UpscalerMode::Fsr2 {
+            self.upscaler_changed = true;
+            let (mode, scale) = (self.modes.upscaler.mode, self.modes.upscaler.scale);
+            self.modes
+                .upscaler
+                .change(mode, scale, crate::app::ms_since(self.start));
+        }
+        self.say(format!(
+            "jitter phases {}",
+            next.map_or("fsr2's".to_owned(), |n| n.to_string())
+        ));
+    }
 }

@@ -1031,6 +1031,22 @@ impl Args {
                 .outdoor
                 .key_history
                 .unwrap_or(vxe_render::DEFAULT_KEY_HISTORY),
+            light_history: self
+                .outdoor
+                .light_history
+                .unwrap_or(crate::default_lighting().light_history),
+            landing_fade: self
+                .outdoor
+                .landing_fade
+                .unwrap_or(crate::default_lighting().landing_fade),
+            source_fade: self
+                .outdoor
+                .source_fade
+                .unwrap_or(crate::default_lighting().source_fade),
+            dig_hold: self
+                .outdoor
+                .dig_hold
+                .unwrap_or(crate::default_lighting().dig_hold),
             penumbra: self.outdoor.penumbra.unwrap_or(crate::DEFAULT_PENUMBRA),
             key_far: self.outdoor.key_far,
             key_far_mix: self.outdoor.key_far_mix,

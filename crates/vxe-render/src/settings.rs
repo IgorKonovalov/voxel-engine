@@ -278,6 +278,10 @@ crate::frame::named_enum!(Profile {
     High => "high",
 });
 
+/// The far normal's band every profile holds, in pixels a voxel (ADR-0082: window W1's pick, a
+/// part of the calm light by default).
+pub const DEFAULT_FAR_NORMAL: [f32; 2] = [4.0, 8.0];
+
 /// Bytes the fly-through's streamed mirror reserves for the floor's residency of 16 chunks
 /// full ([`crate::DEFAULT_BUDGET_BYTES`]).
 const FLOOR_MIRROR_BYTES: u64 = crate::gpu_world::DEFAULT_BUDGET_BYTES;
@@ -310,7 +314,7 @@ impl RenderSettings {
                 ..Lighting::default()
             },
             look: LookParams {
-                far_normal: [2.0, 6.0],
+                far_normal: DEFAULT_FAR_NORMAL,
                 ..LookParams::default()
             },
             lod: LodParams::default(),
@@ -470,6 +474,12 @@ impl RenderSettings {
         ("lighting.sky_rays", Live),
         ("lighting.sky_history", Live),
         ("lighting.key_history", Live),
+        ("lighting.light_history", Live),
+        ("lighting.landing_fade", Live),
+        ("lighting.source_fade", Live),
+        ("lighting.dig_hold", Live),
+        ("lighting.light_history_far", Live),
+        ("lighting.far_light_wide", Live),
         ("lighting.penumbra", Live),
         ("lighting.key_far", Live),
         ("lighting.key_far_mix", Live),
@@ -641,6 +651,10 @@ impl RenderSettings {
         (
             "set_debug",
             "a test hook on Fsr2: writes its history weight",
+        ),
+        (
+            "set_debug_stages",
+            "a reading hook on Fsr2: writes its accumulate stage code for the weight",
         ),
         (
             "set_sync_clock",
@@ -896,8 +910,8 @@ fn flip(b: &mut bool) {
 fn lighting_test_value(l: &mut Lighting, name: &str) -> bool {
     use crate::exposure::Exposure;
     use crate::frame::{
-        EntityLight, HistoryKill, KeyFar, KeyFarMix, LightWeights, Penumbra, ShadowWalk, SkyNormal,
-        StoreRead, ToneMap, YoungFilter,
+        DigHold, EntityLight, HistoryKill, KeyFar, KeyFarMix, LightWeights, Penumbra, ShadowWalk,
+        SkyNormal, StoreRead, ToneMap, YoungFilter,
     };
     match name {
         "exposure" => {
@@ -913,6 +927,12 @@ fn lighting_test_value(l: &mut Lighting, name: &str) -> bool {
         "key_history" => l.key_history = if l.key_history == 256 { 64 } else { 256 },
         "candidates" => l.candidates = if l.candidates == 4 { 8 } else { 4 },
         "shadow_walk" => other(&mut l.shadow_walk, ShadowWalk::Full, ShadowWalk::Coarse),
+        "light_history" => flip(&mut l.light_history),
+        "landing_fade" => flip(&mut l.landing_fade),
+        "source_fade" => flip(&mut l.source_fade),
+        "dig_hold" => other(&mut l.dig_hold, DigHold::On, DigHold::Rays),
+        "light_history_far" => flip(&mut l.light_history_far),
+        "far_light_wide" => flip(&mut l.far_light_wide),
         "penumbra" => other(&mut l.penumbra, Penumbra::Disc, Penumbra::Approach),
         "key_far" => other(&mut l.key_far, KeyFar::Baked, KeyFar::Ray),
         "key_far_mix" => other(&mut l.key_far_mix, KeyFarMix::Blend, KeyFarMix::Step),

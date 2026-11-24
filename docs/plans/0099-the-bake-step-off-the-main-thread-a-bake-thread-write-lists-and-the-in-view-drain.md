@@ -142,6 +142,47 @@ is as of `plan-0096`'s tip `33003841` and names a mechanism; where the tree diff
 follows the tree and notes it. Phase 1 re-reads the base, because Plan 0096's Phase 9 and
 Plan 0098 both move it.
 
+**Inherited from Plan 0098** (added 2026-11-24 by the architect at that plan's close, v0.72.0;
+facts of the base, no phase changed: **the architect's re-read of Phases 1 to 3 against them is
+owed before the lane starts**). Plan 0098 closed after this plan was approved and changed the
+dig's path through `bake/queue/`:
+
+- **A dig's ring 1 is a job of its own.** `open_digs` splits a dug chunk: the bricks the box
+  dilated by one voxel touches re-bake first, in a job opened in the edit's step into a table
+  slot (`open_now`; the last open job that is neither a dig's nor key-only is withdrawn where
+  none is free) and promoted ahead of every job; the chunk's other dig bricks open as a second
+  job once the first is placed **and its `DIG_FADE` fade has ended**. A chunk splits only where
+  its provisional block took the listing's size in the pool.
+- **Stale jobs are withdrawn at the edit**, not awaited (`take_boxes`, `withdraw_at`,
+  `JobLoop::withdraw`): a dig's bricks rejoin `digs`, another job's chunk returns to the
+  candidates. A ring-1 job with no live face closes in its step's submit
+  (`JobLoop::close_ended`); a placement that throws a stale job's block away marks its chunk
+  touched.
+- **The held record is made inside `take_boxes`** (`bake/held.rs`, through `list_dug` on
+  scoped listing threads): a CPU estimate against the world and the store's blocks as the
+  edit found them, written over the provisional block. It moves to the bake thread with the
+  step; it reads the world's chunks under their read locks (the "Risks" line on a dig's write
+  lock applies to it too).
+- **The base of "an edit's light"** (`docs/nfr/04-edits.md`, "An edit's light"): ring 1 lands 1
+  or 2 frames after the dig on the RTX 3080 Laptop and on the RADV RENOIR at Portable, on a
+  waiting queue too, so the Budgets table's line reads "within 4 frames" with the thread on;
+  the lavapipe image test's bar is 8 frames and "no later than the reference plus 1".
+- **The dig frame's step time is a reading this plan owns**: 25.9 ms (sequence A) and 14.5 ms
+  (B) in the means on the RTX, about 7 and 5.5 on the RENOIR, with a run-to-run spread of up
+  to 30 ms on the RTX. Phase 1 reads it again with at least eight alternated runs a tree
+  before any bar is held against it. The dig rig's queue never drains (its frames do not wait
+  on the device; `docs/backlog.md`, "Plan 0098's leftovers"), which Phase 1's base reading on
+  that rig must fix or avoid.
+- **Tests that pin this behaviour:** `gpu_queue::a_dig_jumps_every_open_job_and_withdraws_its_stale_one`,
+  `gpu_queue_reach::{a_fade_moves_a_record_by_its_share_a_frame, a_full_pool_keeps_the_queue_alive,
+  an_emitter_dug_away_darkens_what_it_lit}`, `gpu_sun::a_dig_rebakes_the_key_words_with_the_sky_ring`,
+  `bake::held::tests`, and the soak image test
+  `flicker::a_fresh_hole_holds_its_value_until_its_light_lands`. `open_digs` knows a dig's fade
+  by `frames == DIG_FADE`, which a fade paced by elapsed frames (Phase 2) must keep true or
+  replace with a flag.
+- **Files near the size gate:** `bake/queue/mod.rs` 1060 and `bake/job_loop.rs` 1047 of 1200
+  lines.
+
 **Test cost** (the rules Plans 0096 and 0098 run under): per phase,
 `node scripts/test-changed.mjs --profile quick` over the changed crates; the phase's GPU run
 is `--profile gpu --binaries` with the binaries the phase names, under the perf lock; clippy

@@ -1,6 +1,7 @@
-// The visibility pair (ADR-0070) of the temporal pass: its running means and the no-ray
-// value's fade. Compiled after `sky.wgsl` and before
-// `temporal.wgsl`, whose uniforms (`params`, `sky`) and helpers (`above_column`) it uses.
+// The visibility pair (ADR-0070) of the temporal pass: its running means, the no-ray value's
+// fade, the sky term's source words and a landing's switch of source's fade. Compiled after
+// `sky.wgsl` and before `temporal.wgsl`, whose uniforms (`params`, `sky`), bindings (`store`)
+// and helpers (`above_column`, the store's readers) it uses.
 
 // The visibility pair (ADR-0070). The short mean's frames, and the age past which a sample is
 // clamped.
@@ -298,3 +299,106 @@ fn no_ray_fade(t: f32, hp: vec4<f32>, accepted: bool, cap: f32) -> vec2<f32> {
 
 // A no-ray value's change under this is not faded: a stored byte's rounding.
 const FADE_EPS: f32 = 1.0 / 255.0;
+
+// The sky term's source at a hit, a reading's word (COUNT_STORE only), added to the moments'
+// w as `source / 16` (`source_fraction`): every reader of that w compares it against 0.5 or
+// 1.5, which a fraction under 0.5 leaves as it was. SOURCE_NONE: no store face, an entity or
+// the sky off; RECORD: the face's own cell holds a fresh record (no ray); RECORD_STALE: it
+// holds one marked stale (the ray cast); OWN_SUMMARY and COLUMN: no record, the prior's value
+// from the chunk's own summary or the column held (`store_sky_fallback`; no ray); NO_VALUE: no
+// record and no prior's value (the ray cast); MISMATCH: a prior's value where the ray was cast.
+const SOURCE_NONE: u32 = 0u;
+const SOURCE_RECORD: u32 = 1u;
+const SOURCE_RECORD_STALE: u32 = 2u;
+const SOURCE_OWN_SUMMARY: u32 = 3u;
+const SOURCE_COLUMN: u32 = 4u;
+const SOURCE_NO_VALUE: u32 = 5u;
+const SOURCE_MISMATCH: u32 = 6u;
+
+// The source word of face `face` of voxel `v`: `record` its own cell holds a record, `chained`
+// the chain gave a value, `ray` the light pass cast the sky ray there.
+fn sky_source(head: StoreHead, v: vec3<i32>, face: u32, record: bool, chained: bool, ray: bool) -> u32 {
+    if (record) {
+        return select(SOURCE_RECORD, SOURCE_RECORD_STALE, ray);
+    }
+    if (chained) {
+        if (ray) {
+            return SOURCE_MISMATCH;
+        }
+        return select(SOURCE_COLUMN, SOURCE_OWN_SUMMARY,
+            store_summary_sky(head, v >> vec3<u32>(6u), face).y > 0.0);
+    }
+    return SOURCE_NO_VALUE;
+}
+
+fn source_fraction(source: u32, on_entity: bool) -> f32 {
+    if (!COUNT_STORE || on_entity) {
+        return 0.0;
+    }
+    return f32(source) / 16.0;
+}
+
+// A landing's switch of source fades (`Params::history` bit 4, `Lighting::source_fade`; ADR-0076
+// rule 3): a face whose sky term comes from its own cell's record with no ray, at a pixel that
+// takes no light history, shows `term` (the record's baked term) mixed from what it showed
+// before its chunk held a block, the column's answer at the hit lifted along `n`
+// (`column_estimate`) times the sky's irradiance about the shading normal, by `(d + 1) /
+// FADE_F`, `d` the frames since the chunk's first block landed (its block's word at
+// STORE_LANDED_AT, that frame plus one; 0 none); `term` alone from FADE_F frames on, with no
+// word, or with the bit clear.
+fn source_faded(term: vec3<f32>, head: StoreHead, v: vec3<i32>, rec: HitRecord, n: vec3<f32>) -> vec3<f32> {
+    if ((params.history & 16u) == 0u) {
+        return term;
+    }
+    let block = store_table(head, v >> vec3<u32>(6u)) & ~TABLE_COARSE;
+    if (block == 0u) {
+        return term;
+    }
+    let w = store[block + STORE_LANDED_AT];
+    let d = params.frame - (w - 1u);
+    if (w == 0u || d >= u32(FADE_F) - 1u) {
+        return term;
+    }
+    let before = column_estimate(rec.p, n) * sky_open_by_normal(rec.n);
+    return mix(before, term, f32(d + 1u) / FADE_F);
+}
+
+// A dig holds its light (`Params::history` bit 5, `Lighting::dig_hold`; ADR-0082 with no light
+// history). Whether `p` lies in a held dig box dilated by one voxel (as `in_edit`): the edit
+// boxes the encode keeps after the kill boxes from the edit's frame until the live queue holds
+// no dig and a fade's frames more. There a pixel with no light history reprojects the sky's
+// visibility pair alone (`pair_step` over the cast rays, then `no_ray_fade` at the landing),
+// as a pixel with the history does; its other parts keep none. Under bit 7 (`DigHold::On`) no
+// box is held here: the store holds the box's value as a record (`bake::held`).
+fn in_dig_hold(p: vec3<f32>) -> bool {
+    if ((params.history & 32u) == 0u || (params.history & 128u) != 0u) {
+        return false;
+    }
+    for (var i = edits.count; i < edits.count + edits.held; i++) {
+        let lo = vec3<f32>(edits.boxes[2u * i].xyz - 1);
+        let hi = vec3<f32>(edits.boxes[2u * i + 1u].xyz + 2);
+        if (all(p >= lo) && all(p <= hi)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Whether a stale ring face's pair holds its record's estimate at the cap under the dig hold:
+// the bit set, the pixel with no light history (`hist`) and outside a held box. Its term is
+// then the record's baked term (temporal.wgsl's stale-ring path), the one it showed before the
+// dig marked the record stale, until the re-bake lands.
+fn dig_ring_held(hist: bool, p: vec3<f32>) -> bool {
+    return (params.history & 32u) != 0u && !hist && !in_dig_hold(p);
+}
+
+// Whether hit `rec` of lighting pixel `gid` reads the light passes' history: `Params::history`
+// bit 0, and under bit 2 (`Lighting::light_history_far`, a spike arm) only where the far
+// normal's weight is 1.
+fn light_history_at(gid: vec2<u32>, rec: HitRecord) -> bool {
+    if ((params.history & 1u) == 0u) {
+        return false;
+    }
+    return (params.history & 4u) == 0u
+        || far_normal_weight(params.views[view_of(full_px(gid))], rec.t) >= 1.0;
+}

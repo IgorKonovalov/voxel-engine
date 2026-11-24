@@ -446,8 +446,8 @@ fn centre(device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) -> [u8; 3] 
 }
 
 /// On the emissive-ceiling box (filter off, lamp off), a manual step from 1.0 to 4.0 at frame
-/// 64 kills no history: at frames 64 and 65 every hit pixel's age is the frame before's plus
-/// one, and the floor-centre pixel at frame 65 lies within 2/255 of a run at 4.0 throughout.
+/// 64 kills no history (the light history on): at frames 64 and 65 every hit pixel's age is
+/// the frame before's plus one, and the floor-centre pixel at frame 65 lies within 2/255 of a run at 4.0 throughout.
 #[test]
 fn history_survives_an_exposure_step() {
     let Some((device, queue)) = device() else {
@@ -456,7 +456,15 @@ fn history_survives_an_exposure_step() {
     let world = ceiling_box();
     let gpu = mirror(&device, &queue, &world);
     let light = LightParams::at_eye();
-    let mut stepped = ceiling_frame(&device, 1.0);
+    // The ages are the light history's, on here (off by default, ADR-0082).
+    let with_history = |mut f: Frame| {
+        f.set_lighting(Lighting {
+            light_history: true,
+            ..f.lighting()
+        });
+        f
+    };
+    let mut stepped = with_history(ceiling_frame(&device, 1.0));
     let mut prev_ages = Vec::new();
     for i in 0..66 {
         if i == 64 {
@@ -482,7 +490,7 @@ fn history_survives_an_exposure_step() {
         }
     }
     let got = centre(&device, &queue, &stepped);
-    let mut at_four = ceiling_frame(&device, 4.0);
+    let mut at_four = with_history(ceiling_frame(&device, 4.0));
     for _ in 0..66 {
         at_four.step(&device, &queue, &gpu, &floor_camera(), &light);
     }

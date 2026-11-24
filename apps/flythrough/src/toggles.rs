@@ -299,6 +299,12 @@ pub enum Act {
     NextSource,
     /// The outdoor hills' next tree density, rebuilt in process as the source switch is.
     Trees,
+    /// The upscaler's next internal scale (1.5, 1, 2), applied from the next frame
+    /// (`Run::cycle_scale`).
+    RenderScale,
+    /// FSR 2's next jitter phase count (its own, 8, 32), applied from the next frame
+    /// (`Run::cycle_jitter_phases`).
+    JitterPhases,
 }
 
 impl Act {
@@ -428,6 +434,31 @@ pub static ACTIONS: &[Action] = &[
         }),
         act: Act::Trees,
         needs: Some(Needs::Outdoor),
+        range: None,
+    },
+    Action {
+        binds: &[],
+        label: "render scale",
+        group: Group::Debug,
+        mode: Some(|m, _| format!("scale {}", m.scale)),
+        act: Act::RenderScale,
+        needs: None,
+        range: None,
+    },
+    Action {
+        binds: &[],
+        label: "jitter phases",
+        group: Group::Debug,
+        mode: Some(|m, _| {
+            let phases = m
+                .upscaler
+                .fsr2_knobs
+                .split(", ")
+                .find_map(|w| w.strip_prefix("phases "));
+            format!("jitter phases {}", phases.unwrap_or("fsr2's"))
+        }),
+        act: Act::JitterPhases,
+        needs: None,
         range: None,
     },
     Action {
@@ -647,6 +678,27 @@ fn step_queue_angle(m: &mut Modes, d: i32) {
         0.0
     } else {
         a * 0.5
+    };
+}
+
+/// A diagnosis switch of the debug page (menu only, free when off): its mode in words on the
+/// lighting row and in the banner, which a flip shows again from `now`.
+macro_rules! diag {
+    ($name:literal, $get:expr, $set:expr) => {
+        Toggle {
+            press: Press::Menu,
+            name: $name,
+            group: Group::Debug,
+            row: HudRow::Lighting,
+            get: $get,
+            flip: |m, now| {
+                let set: fn(&mut Modes) = $set;
+                set(m);
+                m.banner_at = now;
+            },
+            needs: None,
+            number: None,
+        }
     };
 }
 
@@ -938,6 +990,98 @@ pub static TOGGLES: &[Toggle] = &[
         get: |m| format!("shadow ray {}", on(m.shadow_ray)),
         flip: |m, _| m.shadow_ray = !m.shadow_ray,
     },
+    diag!(
+        "penumbra",
+        |m| format!("penumbra {}", m.lighting.penumbra.name()),
+        |m| {
+            use vxe_render::Penumbra;
+            m.lighting.penumbra = match m.lighting.penumbra {
+                Penumbra::Approach => Penumbra::Disc,
+                Penumbra::Disc => Penumbra::Approach,
+            };
+        }
+    ),
+    diag!(
+        "sky normal",
+        |m| format!("sky normal {}", m.lighting.sky_normal.name()),
+        |m| {
+            use vxe_render::SkyNormal;
+            m.lighting.sky_normal = match m.lighting.sky_normal {
+                SkyNormal::Smoothed => SkyNormal::Face,
+                SkyNormal::Face => SkyNormal::Smoothed,
+            };
+        }
+    ),
+    diag!(
+        "filter",
+        |m| format!("filter {}", on(m.lighting.filter)),
+        |m| {
+            m.lighting.filter = !m.lighting.filter;
+        }
+    ),
+    diag!(
+        "light history",
+        |m| format!("light history {}", on(m.lighting.light_history)),
+        |m| {
+            m.lighting.light_history = !m.lighting.light_history;
+        }
+    ),
+    diag!(
+        "landing fade",
+        |m| format!("landing fade {}", on(m.lighting.landing_fade)),
+        |m| {
+            m.lighting.landing_fade = !m.lighting.landing_fade;
+        }
+    ),
+    diag!(
+        "source fade",
+        |m| format!("source fade {}", on(m.lighting.source_fade)),
+        |m| {
+            m.lighting.source_fade = !m.lighting.source_fade;
+        }
+    ),
+    diag!(
+        "dig hold",
+        |m| format!("dig hold {}", m.lighting.dig_hold.name()),
+        |m| {
+            m.lighting.dig_hold = m.lighting.dig_hold.next();
+        }
+    ),
+    diag!(
+        "far light wide",
+        |m| format!("far light wide {}", on(m.lighting.far_light_wide)),
+        |m| {
+            m.lighting.far_light_wide = !m.lighting.far_light_wide;
+        }
+    ),
+    diag!(
+        "light history far",
+        |m| format!("light history far {}", on(m.lighting.light_history_far)),
+        |m| {
+            m.lighting.light_history_far = !m.lighting.light_history_far;
+        }
+    ),
+    diag!(
+        "key jitter",
+        |m| format!("key jitter {}", on(!m.diag.hooks.key_no_jitter)),
+        |m| {
+            m.diag.hooks.key_no_jitter = !m.diag.hooks.key_no_jitter;
+        }
+    ),
+    diag!(
+        "stair rules",
+        |m| format!("stair rules {}", on(!m.diag.hooks.no_stair)),
+        |m| {
+            m.diag.hooks.no_stair = !m.diag.hooks.no_stair;
+        }
+    ),
+    diag!(
+        "queue freeze",
+        |m| format!("queue freeze {}", on(m.diag.queue_frozen)),
+        |m| {
+            m.diag.queue_frozen = !m.diag.queue_frozen;
+        }
+    ),
     Toggle {
         press: Press::Menu,
         name: "time",
