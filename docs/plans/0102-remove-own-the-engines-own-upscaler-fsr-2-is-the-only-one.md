@@ -1,6 +1,6 @@
 # 0102: Remove `own`, the engine's own upscaler: FSR 2 is the only one
 
-> **Status:** approved (owner, 2026-11-24: "remove"). Drafted 2026-11-24 with no interview; the guesses
+> **Status:** in-progress (approved by the owner, 2026-11-24: "remove"). Drafted 2026-11-24 with no interview; the guesses
 > and the open questions are under "Risks & open questions", each with a recommended option.
 > **Order:** small and alone in `crates/svet-render/src/frame/` and the fly-through's upscaler
 > files; it runs when no lane edits `frame/encode.rs`, `frame/pipelines.rs` or
@@ -337,9 +337,11 @@ by the recommended options unless he says otherwise.
 > resume notes go to the plan's readings log, `docs/plans/logs/0102.md`, and this section links
 > it once it exists.
 
+Readings: [`logs/0102.md`](logs/0102.md).
+
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The census and three readings | dev | not started | |
+| 1: The census and three readings | dev | done; readings loaded (three lanes) | committed with this row |
 | 2: `own` leaves `svet-render` | dev | not started | |
 | 3: The fly-through, the tests and the golden | dev | not started | |
 | 4: Docs, the ledger, the gate's time | dev | not started | |
