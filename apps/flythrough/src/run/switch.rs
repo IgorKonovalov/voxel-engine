@@ -155,7 +155,7 @@ pub(crate) fn spawn_hash_line(world: &World, spawn: VoxelCoord) -> String {
 
 /// The kept `old` GPU objects under `plan`: the frame with `plan`'s settings, its histories,
 /// exposure and entity mirror started afresh, and a new mirror in place of the old one.
-fn rebuild_gfx(device: &wgpu::Device, queue: &wgpu::Queue, plan: GfxPlan, old: Gfx) -> Gfx {
+fn rebuild_gfx(device: &wgpu::Device, plan: GfxPlan, old: Gfx) -> Gfx {
     let Gfx {
         mirror,
         mut frame,
@@ -167,7 +167,7 @@ fn rebuild_gfx(device: &wgpu::Device, queue: &wgpu::Queue, plan: GfxPlan, old: G
     } = old;
     drop(mirror);
     frame.set_sizes(device, plan.internal, plan.output);
-    set_plan(&mut frame, device, queue, &plan);
+    set_plan(&mut frame, device, &plan);
     frame.reset_history();
     frame.reset_exposure();
     frame.set_entity_mirror(svet_render::EntityMirror::new(
@@ -200,7 +200,7 @@ impl Run {
         self.surface = Some((gpu.surface_format, gpu.surface_color_space));
         let plan = self.gfx_plan(gpu);
         println!("{}", self.modes.line());
-        self.gfx = Some(rebuild_gfx(&gpu.device, &gpu.queue, plan, old));
+        self.gfx = Some(rebuild_gfx(&gpu.device, plan, old));
         if self.args.loading.screen_on(self.args.headless) {
             let screen = screen
                 .unwrap_or_else(|| LoadingScreen::new(&gpu.device, gpu.surface_format, HUD_SCALE));

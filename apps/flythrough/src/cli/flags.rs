@@ -84,6 +84,17 @@ const GONE_SINCE_0059: &[&str] = &[
     "--preload-claim",
 ];
 
+/// The refusal of the engine's own upscaler's flags (`--jitter`, `--upscaler own`).
+pub fn gone_since_0102(flag: &str) -> String {
+    format!(
+        "{flag} is gone since Plan 0102: the engine's own upscaler is removed (ADR-0086); \
+         --upscaler takes off or fsr2"
+    )
+}
+
+/// The flags Plan 0102 removed, refused by the fly-through and its examples alike.
+pub const GONE_SINCE_0102: &[&str] = &["--jitter"];
+
 /// The lighting rows the fly-through and its examples share, writing the [`LightingArgs`]
 /// that `part` reaches in `T`.
 pub fn lighting_flags<T: 'static>(part: fn(&mut T) -> &mut LightingArgs) -> Vec<Flag<T>> {
@@ -704,19 +715,9 @@ fn look_flags() -> Vec<Flag<Parsing>> {
             },
         ),
         Flag::value(
-            &["--jitter"],
-            "on|off",
-            "the primary rays' sub-pixel jitter (selects own)",
-            |p: &mut Parsing, v| {
-                p.args.look.jitter = v.on_off()?;
-                p.args.look.jitter_set = true;
-                Ok(())
-            },
-        ),
-        Flag::value(
             &["--sharpen"],
             "S",
-            "the upscaler's sharpening, 0 to 1",
+            "FSR 2's sharpening, 0 to 1",
             |p: &mut Parsing, v| {
                 p.args.look.sharpen = v.parse_if(|s: &f32| (0.0..=1.0).contains(s), "0 to 1")?;
                 Ok(())
@@ -724,11 +725,13 @@ fn look_flags() -> Vec<Flag<Parsing>> {
         ),
         Flag::value(
             &["--upscaler"],
-            "off|own|fsr2",
+            "off|fsr2",
             "the upscaler",
             |p: &mut Parsing, v| {
-                p.args.look.upscaler =
-                    Some(v.named(hud::UpscalerMode::from_name, "off, own or fsr2")?);
+                if v.text == "own" {
+                    return Err(gone_since_0102("--upscaler own"));
+                }
+                p.args.look.upscaler = Some(v.named(hud::UpscalerMode::from_name, "off or fsr2")?);
                 Ok(())
             },
         ),
@@ -1000,6 +1003,7 @@ fn removed_flags() -> Vec<Flag<Parsing>> {
     vec![
         Flag::refused(GONE_SINCE_0057, gone_since_0057),
         Flag::refused(GONE_SINCE_0059, gone_since_0059),
+        Flag::refused(GONE_SINCE_0102, gone_since_0102),
     ]
 }
 

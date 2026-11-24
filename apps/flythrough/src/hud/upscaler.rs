@@ -4,23 +4,21 @@
 use super::*;
 use std::fmt::Write as _;
 
-/// The upscaler the window's `F10` cycles (`--upscaler`): Plan 0024's frame, the upscaler of
-/// ADR-0024, or FSR 2 (ADR-0034).
+/// The upscaler the window's `F10` cycles (`--upscaler`): none (the frame at the output size)
+/// or FSR 2 (ADR-0034).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UpscalerMode {
     Off,
-    Own,
     Fsr2,
 }
 
 impl UpscalerMode {
-    pub const ALL: [Self; 3] = [Self::Off, Self::Own, Self::Fsr2];
+    pub const ALL: [Self; 2] = [Self::Off, Self::Fsr2];
 
     /// The name `--upscaler` parses and the banner shows.
     pub fn name(self) -> &'static str {
         match self {
             Self::Off => "off",
-            Self::Own => "own",
             Self::Fsr2 => "fsr2",
         }
     }
@@ -29,11 +27,10 @@ impl UpscalerMode {
         Self::ALL.into_iter().find(|m| m.name() == name)
     }
 
-    /// The mode `F10` switches to: off, own, fsr2, then off again.
+    /// The mode `F10` switches to: off, fsr2, then off again.
     pub fn next(self) -> Self {
         match self {
-            Self::Off => Self::Own,
-            Self::Own => Self::Fsr2,
+            Self::Off => Self::Fsr2,
             Self::Fsr2 => Self::Off,
         }
     }
@@ -282,7 +279,7 @@ pub fn write_aliasing_row(
 mod tests {
     use super::*;
 
-    /// `F10` steps the banner's text through `off`, `own` and `fsr2`, each line fitting the
+    /// `F10` steps the banner's text through `fsr2` and `off`, each line fitting the
     /// banner's width; it shows after a change, or from the start when built with
     /// [`UpscalerBanner::shown_from`], for [`BANNER_MS`].
     #[test]
@@ -291,7 +288,7 @@ mod tests {
         assert_eq!(b.banner(0.0), None, "no banner before a change");
         let mut mode = UpscalerMode::Off;
         let mut seen = Vec::new();
-        for (i, scale) in ["1.5", "1.5", "1"].into_iter().enumerate() {
+        for (i, scale) in ["1.5", "1"].into_iter().enumerate() {
             mode = mode.next();
             let t = 1000.0 * i as f64;
             b.change(
@@ -310,13 +307,13 @@ mod tests {
         assert_eq!(
             seen,
             [
-                "upscaler own, scale 1.5, sharpen 0.5",
                 "upscaler fsr2, scale 1.5, sharpen 0.5",
                 "upscaler off, scale 1"
             ]
         );
-        assert!(b.banner(2000.0 + BANNER_MS - 1.0).is_some());
-        assert_eq!(b.banner(2000.0 + BANNER_MS), None);
+        assert_eq!(mode.next(), UpscalerMode::Fsr2, "F10 cycles two modes");
+        assert!(b.banner(1000.0 + BANNER_MS - 1.0).is_some());
+        assert_eq!(b.banner(1000.0 + BANNER_MS), None);
         let start = UpscalerBanner::shown_from(UpscalerMode::Fsr2, "1.5", 0.0);
         assert_eq!(
             start.banner(BANNER_MS - 1.0).as_deref(),
@@ -328,5 +325,6 @@ mod tests {
             assert_eq!(UpscalerMode::from_name(m.name()), Some(m));
         }
         assert_eq!(UpscalerMode::from_name("fsr"), None);
+        assert_eq!(UpscalerMode::from_name("own"), None);
     }
 }

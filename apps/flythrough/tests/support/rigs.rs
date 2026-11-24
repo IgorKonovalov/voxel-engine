@@ -51,17 +51,11 @@ pub fn level_rig(
     Some((device, queue, gpu))
 }
 
-/// A frame of `internal` pixels for an `output` image, jittered or not, at the Plan 0024
-/// defaults (lamp on, filter on, half-resolution lighting, coarse shadow walk, reuse).
-pub fn frame_of(
-    device: &wgpu::Device,
-    internal: [u32; 2],
-    output: [u32; 2],
-    jitter: bool,
-) -> Frame {
-    let mut frame = Frame::with_sizes(device, internal, output);
-    frame.set_jitter(device, jitter);
-    frame
+/// A frame for an `output` image that renders at `internal` pixels under FSR 2 (at `output`
+/// until FSR 2 is set), at the Plan 0024 defaults (lamp on, filter on, half-resolution
+/// lighting, coarse shadow walk, reuse).
+pub fn frame_of(device: &wgpu::Device, internal: [u32; 2], output: [u32; 2]) -> Frame {
+    Frame::with_sizes(device, internal, output)
 }
 
 /// The presenter's bilinear blit of `source` onto a fresh `rgba8unorm` texture of `size`.
@@ -347,14 +341,14 @@ pub enum Image {
     R,
     /// The bilinear blit of a 256 x 144 render, jitter off.
     B,
-    /// The upscaler at scale 1 (384 x 216 internal), jittered.
+    /// FSR 2 at scale 1 (384 x 216 internal).
     U1,
-    /// The upscaler at scale 1.5 (256 x 144 internal), jittered.
+    /// FSR 2 at scale 1.5 (256 x 144 internal).
     U15,
 }
 
-/// The settings of one stripe reading: the distance, the upscaler U1 and U15 run (ADR-0024's
-/// with its tuning, or FSR 2), the frames panned after the 32 still ones (0: still), and the
+/// The settings of one stripe reading: the distance, the upscaler U1 and U15 run (FSR 2 with
+/// its settings; N, R and B run none), the frames panned after the 32 still ones (0: still), and the
 /// sub-pixel phase.
 #[derive(Clone, Copy)]
 pub struct Shot {
@@ -369,9 +363,8 @@ pub const PAN_PX: f32 = 0.37;
 
 /// `image` of the stripe wall under the headlamp at the Plan 0024 defaults (the exposure
 /// [`stripe_exposure`]) after 32 still frames and `shot.pan` frames translating along the
-/// camera's right at [`PAN_PX`] output pixels a frame, read at sharpening 0 and 0.5 (the
-/// same for N, R and B; under FSR 2 both are its image at its settings' sharpness), with the
-/// last frame's camera.
+/// camera's right at [`PAN_PX`] output pixels a frame, the image twice (both FSR 2's at its
+/// settings' sharpness for U1 and U15), with the last frame's camera.
 pub fn stripe_image(
     rig: &StripeRig,
     image: Image,
@@ -387,26 +380,23 @@ pub fn stripe_image_at(
     shot: Shot,
     pan_px: f32,
 ) -> ([Vec<u8>; 2], svet_render::Camera) {
-    let (internal, output, jitter) = match image {
-        Image::N => (OUTPUT, OUTPUT, false),
-        Image::R => (OUTPUT.map(|n| 2 * n), OUTPUT.map(|n| 2 * n), false),
-        Image::B => (INTERNAL, INTERNAL, false),
-        Image::U1 => (OUTPUT, OUTPUT, true),
-        Image::U15 => (INTERNAL, OUTPUT, true),
+    let (internal, output) = match image {
+        Image::N => (OUTPUT, OUTPUT),
+        Image::R => (OUTPUT.map(|n| 2 * n), OUTPUT.map(|n| 2 * n)),
+        Image::B => (INTERNAL, INTERNAL),
+        Image::U1 => (OUTPUT, OUTPUT),
+        Image::U15 => (INTERNAL, OUTPUT),
     };
     let (device, queue) = (&rig.device, &rig.queue);
-    let mut f = frame_of(device, internal, output, jitter);
+    let mut f = frame_of(device, internal, output);
     f.set_lighting(svet_render::Lighting {
         exposure: svet_render::Exposure::Manual(stripe_exposure(shot.dist)),
         ..svet_render::Lighting::default()
     });
-    let fsr = matches!(image, Image::U1 | Image::U15) && shot.kind.is_fsr2();
-    match shot.kind {
-        UpscalerKind::Own(u) => f.set_upscaler(u),
-        k @ UpscalerKind::Fsr2(_) if fsr => f.set_upscaler_kind(device, k),
-        _ => {}
+    if matches!(image, Image::U1 | Image::U15) {
+        assert!(shot.kind.is_fsr2(), "U1 and U15 run FSR 2");
+        f.set_upscaler_kind(device, shot.kind);
     }
-    f.set_sharpness(queue, 0.5);
     let light = LightParams::headlamp();
     let mut camera = stripe_camera(shot.dist, shot.phase);
     let (_, right, _) = camera.basis();
@@ -428,21 +418,7 @@ pub fn stripe_image_at(
             let b = blit_texture(device, queue, f.target(), OUTPUT);
             [b.clone(), b]
         }
-        Image::U1 | Image::U15 if fsr => [img.clone(), img],
-        Image::U1 | Image::U15 => {
-            let hist =
-                svet_render::debug::read_rgba16f(device, queue, f.upscale_history().unwrap());
-            let plain = hist
-                .iter()
-                .flat_map(|t| {
-                    [t[0], t[1], t[2]]
-                        .map(|c| (c * 255.0).round() as u8)
-                        .into_iter()
-                        .chain([255])
-                })
-                .collect();
-            [plain, img]
-        }
+        Image::U1 | Image::U15 => [img.clone(), img],
     };
     (images, camera)
 }
@@ -672,19 +648,15 @@ pub fn tone_bytes(c: [f32; 4], lighting: &svet_render::Lighting) -> [u8; 3] {
     })
 }
 
-/// Puts `frame` under `kind`: ADR-0024's upscaler with its tuning (the jitter as the frame
-/// has it), FSR 2, or none.
+/// Puts `frame` under `kind`: FSR 2, or none.
 pub fn set_kind(device: &wgpu::Device, frame: &mut Frame, kind: UpscalerKind) {
-    match kind {
-        UpscalerKind::Own(u) => frame.set_upscaler(u),
-        k => frame.set_upscaler_kind(device, k),
-    }
+    frame.set_upscaler_kind(device, kind);
 }
 
 // ---- Light changes under a still camera: the headlamp's sweep and step, and flicker ----
 
-/// The pipelines the lamp bars compare: Plan 0024's frame (scale 1, jitter off) and the
-/// upscaler at scale 1 and 1.5, jittered, all at a 384 x 216 output.
+/// The pipelines the lamp bars compare: Plan 0024's frame (scale 1, no upscaler) and FSR 2 at
+/// scale 1 and 1.5, all at a 384 x 216 output.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Pipe {
     Reference,
@@ -694,7 +666,8 @@ pub enum Pipe {
 
 impl Pipe {
     /// The frames of one jitter cycle of the pipeline under `kind`: FSR 2's own count at the
-    /// pipeline's sizes, else [`svet_render::internals::JITTER_PHASES`].
+    /// pipeline's sizes, else 16 (an unjittered frame read over the frames the bars have
+    /// always used for it).
     pub fn phases(self, kind: UpscalerKind) -> u32 {
         match (self, kind) {
             (Pipe::U1, UpscalerKind::Fsr2(_)) => {
@@ -703,16 +676,16 @@ impl Pipe {
             (Pipe::U15, UpscalerKind::Fsr2(_)) => {
                 svet_render::internals::jitter_phases(INTERNAL[0], OUTPUT[0])
             }
-            _ => svet_render::internals::JITTER_PHASES,
+            _ => 16,
         }
     }
 
     /// The pipeline's frame under `kind` (Plan 0024's frame runs none), the lamp on or off.
     pub fn frame(self, device: &wgpu::Device, kind: UpscalerKind, lamp: bool) -> Frame {
         let mut f = match self {
-            Pipe::Reference => frame_of(device, OUTPUT, OUTPUT, false),
-            Pipe::U1 => frame_of(device, OUTPUT, OUTPUT, true),
-            Pipe::U15 => frame_of(device, INTERNAL, OUTPUT, true),
+            Pipe::Reference => frame_of(device, OUTPUT, OUTPUT),
+            Pipe::U1 => frame_of(device, OUTPUT, OUTPUT),
+            Pipe::U15 => frame_of(device, INTERNAL, OUTPUT),
         };
         if self != Pipe::Reference {
             set_kind(device, &mut f, kind);
@@ -987,12 +960,12 @@ pub fn lamp_readings(kind: UpscalerKind, label: &str, full: bool) -> Option<Vec<
 
 /// The dark cave's golden pose (the carved golden scene, ore emissive, voxel (264, 120, 376),
 /// 15 degrees of yaw) with the lamp off and the filter on at the Plan 0024 defaults, at a
-/// 320 x 180 output and scale 1.5 (213 x 120 internal), under `kind`, jittered or not (FSR 2
-/// always jitters): settled over 64
-/// still frames, then 32 more upscaled frames read back. Returns the mean over hit pixels
+/// 320 x 180 output and scale 1.5 (213 x 120 internal), under FSR 2 at `kind`'s settings:
+/// settled over 64 still frames, then 32 more upscaled frames read back. Returns the mean over hit pixels
 /// (output pixels whose nearest internal sample hit) and the 31 consecutive pairs of the
 /// largest channel difference, and the share of (pixel, pair) values above 4/255.
-pub fn still_vein_flicker(jitter: bool, kind: UpscalerKind) -> Option<(f64, f64)> {
+pub fn still_vein_flicker(kind: UpscalerKind) -> Option<(f64, f64)> {
+    assert!(kind.is_fsr2(), "the still vein renders at 1.5 under FSR 2");
     let source = scene_source();
     let world = World::generate(
         source.extent,
@@ -1010,7 +983,7 @@ pub fn still_vein_flicker(jitter: bool, kind: UpscalerKind) -> Option<(f64, f64)
     for _ in 0..4 {
         gpu.sync_now(&world, &device, &queue).unwrap();
     }
-    let mut frame = frame_of(&device, internal, output, jitter);
+    let mut frame = frame_of(&device, internal, output);
     set_kind(&device, &mut frame, kind);
     frame.set_lighting(svet_render::Lighting {
         lamp: false,

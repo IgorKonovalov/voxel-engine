@@ -341,14 +341,25 @@ Readings: [`logs/0102.md`](logs/0102.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The census and three readings | dev | done; readings loaded (three lanes) | committed with this row |
-| 2: `own` leaves `svet-render` | dev | not started | |
+| 1: The census and three readings | dev | done; readings loaded (three lanes) | `47fb7d1f` |
+| 2: `own` leaves `svet-render` | dev | done; carries the fly-through callers, tests and CLI refusals the compiler forced (see Notes) | committed with this row |
 | 3: The fly-through, the tests and the golden | dev | not started | |
 | 4: Docs, the ledger, the gate's time | dev | not started | |
 
 ### Notes
 
-_(Empty.)_
+- Questions 2 and 3 took the recommended options: `Off` renders at the output size
+  (`RenderSettings::clamped`; the frame keeps the asked internal size for FSR 2), and
+  `--upscaler own` and `--jitter` are refused with a line naming Plan 0102 and ADR-0086.
+- Not in the plan: FSR 2's input pass read its light-change thresholds from `own`'s tuning
+  buffer and the encode its older light list by `Upscaler::change_frames`. They became frame
+  constants at the same values (`CHANGE_REL`, `CHANGE_ABS`, `CHANGE_FRAMES`) in a 16-byte
+  uniform; the `own.*` rows go, so they are no longer a live setting.
+- Phase 2's commit carries the fly-through's source, examples and tests as far as the removed
+  API forced, which is most of Phase 3's code (the CLI refusals, the re-pointed and restated
+  tests, `gpu_upscale.rs`'s deletion); files outside both phases' lists: `run/*.rs`,
+  `hud/stats.rs`, `run/menu_tests.rs`, the examples, `gpu_settings.rs`, `gpu_look_field.rs`,
+  `gpu_settle.rs`, `fsr2/input.wgsl`, `layout_tests.rs`.
 
 ### Close triggers
 

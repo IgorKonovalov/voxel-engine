@@ -1107,7 +1107,6 @@ pub fn eye_after_lamp_off(level: &VeinLevel, pose: &Pose, probe_move: Option<f32
         indirect: true,
         auto: true,
         upscaler: true,
-        bridge: false,
         probe_freeze: None,
         probe_move,
     };

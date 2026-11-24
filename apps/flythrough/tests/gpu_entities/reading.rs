@@ -308,7 +308,6 @@ mod reading {
         };
         let internal = if kind.is_some() { [128, 72] } else { [W, H] };
         let mut frame = support::lights::box_frame(&rig.device, internal, [W, H], kind);
-        frame.set_jitter(&rig.device, kind.is_some());
         frame.set_lighting(svet_render::Lighting {
             entity_light: light,
             ..support::lights::box_lighting()
@@ -371,9 +370,9 @@ mod reading {
     /// Plan 0062 Phase 6 (e), the grain on walking walkers: eight walkers in a crowd beside a
     /// world emitter (the fallback rig), lamp off and no list light, still or walking (each a
     /// 6-voxel circle at 1 m/s, legs swinging), at the output size with no jitter, and under
-    /// FSR 2 and our upscaler at 1.5 with it. Each case runs twice from a fresh frame, the
-    /// second with its frame counter 1008 on (the jitter repeats every 16 frames, ours, and
-    /// 18, FSR 2's at 1.5), so the poses and the jitter match and only the random stream
+    /// FSR 2 at 1.5 with it. Each case runs twice from a fresh frame, the second with its
+    /// frame counter 1008 on (FSR 2's jitter repeats every 18 frames at 1.5), so the poses and
+    /// the jitter match and only the random stream
     /// differs; the noise of a stage is the rms of the two runs' difference over `sqrt 2`, over
     /// the walkers' pixels of frames 64 to 127, relative to their mean. The stages: the light
     /// pass's sample, the temporal pass's accumulation, the filter's output (split at age 8)
@@ -397,13 +396,7 @@ mod reading {
         };
         let (body, eye) = walker::rows(rig.world.materials()).expect("the walker's rows");
         let model = Arc::new(walker::model(body, eye));
-        let kinds = [
-            None,
-            Some(support::rigs::fsr2_kind()),
-            Some(svet_render::UpscalerKind::Own(
-                svet_render::Upscaler::default(),
-            )),
-        ];
+        let kinds = [None, Some(support::rigs::fsr2_kind())];
         let lights = [svet_render::EntityLight::Own, svet_render::EntityLight::World];
         // The still output-size runs' filtered means per walker pixel, `own` then `world`.
         let mut still: Vec<Vec<Option<f64>>> = Vec::new();

@@ -1241,131 +1241,12 @@ fn half_resolution_dark_cave_golden_stays_near_the_full_one() {
     assert!(mad.iter().all(|&d| d < 6.0), "{mad:?}");
 }
 
-/// The upscaler's golden scene: the cavity from its centre under the headlamp at 256 x 144
-/// internal and 384 x 216 output, jittered, after 32 frames, at each of `sharpness`; with the
-/// upscale pass's history (rgba16float) of the first.
-fn upscaled_cavity(sharpness: &[f32]) -> Option<(Vec<Vec<u8>>, History16)> {
-    let world = cavity_world();
-    let rig = LookRig::new(&world, None)?;
-    // One frame per sharpness, each on its own thread (`support::joined`); the history is the
-    // first's.
-    let shot = |s: f32, first: bool| {
-        let mut frame = Frame::with_sizes(&rig.device, UPSCALED_INTERNAL, UPSCALED_OUTPUT);
-        frame.set_jitter(&rig.device, true);
-        frame.set_sharpness(&rig.queue, s);
-        for _ in 0..32 {
-            frame.step(
-                &rig.device,
-                &rig.queue,
-                &rig.gpu,
-                &cavity_camera(),
-                &LightParams::headlamp(),
-            );
-        }
-        let history = first.then(|| {
-            svet_render::debug::read_rgba16f(
-                &rig.device,
-                &rig.queue,
-                frame.upscale_history().expect("the upscaler runs"),
-            )
-        });
-        let image = svet_render::debug::read_rgba8(&rig.device, &rig.queue, frame.target());
-        (image, history)
-    };
-    let shots: Vec<(Vec<u8>, Option<History16>)> = std::thread::scope(|sc| {
-        let runs: Vec<_> = sharpness
-            .iter()
-            .enumerate()
-            .map(|(i, &s)| sc.spawn(move || shot(s, i == 0)))
-            .collect();
-        runs.into_iter().map(joined).collect()
-    });
-    let history = shots
-        .first()
-        .and_then(|(_, h)| h.clone())
-        .unwrap_or_default();
-    Some((shots.into_iter().map(|(img, _)| img).collect(), history))
-}
-
 /// An rgba16float texture read back, texel by texel.
 type History16 = Vec<[f32; 4]>;
 
+/// The cavity's FSR 2 sizes (`fsr2.png`): scale 1.5 to a 384 x 216 output.
 const UPSCALED_INTERNAL: [u32; 2] = [256, 144];
 const UPSCALED_OUTPUT: [u32; 2] = [384, 216];
-
-/// `upscaled.png`: the upscaler's golden at the fly-through's default sharpening (0.5). At
-/// sharpening 0 the pass writes the upscale pass's output unchanged: each byte is its history's
-/// value times 255, rounded. The sharpened image's edge contrast (the mean absolute luminance
-/// gradient over the pixels whose unsharpened 3 x 3 spans at least 16/255, the cavity's voxel
-/// rims) is higher than the unsharpened one's, and no channel of a sharpened pixel exceeds its
-/// unsharpened 3 x 3 neighbourhood's maximum by more than 1/255.
-#[test]
-fn upscaled_golden_sharpens_within_the_neighbourhood() {
-    let Some((images, history)) = upscaled_cavity(&[0.0, 0.5]) else {
-        return;
-    };
-    let (plain, sharp) = (&images[0], &images[1]);
-    let [w, h] = UPSCALED_OUTPUT.map(|n| n as usize);
-    let path = golden_path("upscaled.png");
-    if std::env::var("SVET_BLESS").as_deref() == Ok("1") {
-        write_png(&path, sharp, w as u32, h as u32);
-        println!("blessed {path:?}");
-    } else {
-        let (golden, gw, gh) = read_png(&path);
-        assert_eq!((gw, gh), (w as u32, h as u32));
-        let f = fraction_differing(sharp, &golden, 2);
-        println!(
-            "upscaled.png: {:.4} % of pixels differ by more than 2/255",
-            f * 100.0
-        );
-        assert!(f <= 0.001, "{:.4} % of pixels differ", f * 100.0);
-    }
-    let identity = plain
-        .chunks(4)
-        .zip(&history)
-        .filter(|(p, t)| (0..3).any(|k| f32::from(p[k]) != (t[k] * 255.0).round()))
-        .count();
-    assert_eq!(identity, 0, "sharpening 0 changed {identity} pixels");
-    let lum = |img: &[u8], x: usize, y: usize| {
-        let p = &img[(y * w + x) * 4..];
-        0.2126 * f64::from(p[0]) + 0.7152 * f64::from(p[1]) + 0.0722 * f64::from(p[2])
-    };
-    let (mut rim, mut g_plain, mut g_sharp, mut over) = (0usize, 0.0f64, 0.0f64, 0usize);
-    for y in 1..h - 1 {
-        for x in 1..w - 1 {
-            let mut lo = [255u8; 3];
-            let mut hi = [0u8; 3];
-            for dy in 0..3 {
-                for dx in 0..3 {
-                    let p = &plain[((y + dy - 1) * w + x + dx - 1) * 4..];
-                    for k in 0..3 {
-                        lo[k] = lo[k].min(p[k]);
-                        hi[k] = hi[k].max(p[k]);
-                    }
-                }
-            }
-            let s = &sharp[(y * w + x) * 4..];
-            over += usize::from((0..3).any(|k| s[k] > hi[k].saturating_add(1)));
-            if (0..3).any(|k| hi[k] - lo[k] >= 16) {
-                rim += 1;
-                let grad = |img: &[u8]| {
-                    (lum(img, x + 1, y) - lum(img, x, y)).abs()
-                        + (lum(img, x, y + 1) - lum(img, x, y)).abs()
-                };
-                g_plain += grad(plain);
-                g_sharp += grad(sharp);
-            }
-        }
-    }
-    println!(
-        "rim pixels {rim}: mean absolute gradient unsharpened {:.3}, sharpened {:.3}; {over} pixels over their neighbourhood's maximum",
-        g_plain / rim as f64,
-        g_sharp / rim as f64
-    );
-    assert!(rim > 0);
-    assert!(g_sharp > g_plain, "{g_sharp} against {g_plain}");
-    assert_eq!(over, 0);
-}
 
 /// The showcase's `hall` shot at the golden's size after `frames` frames at the
 /// fly-through's defaults (indirect light on at the default probe spacing, FSR 2 at its default
@@ -1874,24 +1755,19 @@ fn lights_box_golden_holds_two_coloured_lights() {
 mod reading {
     use super::*;
 
-    /// The cavity rig of `upscaled.png` (`fsr2` false: the own upscaler, jittered) or
-    /// `fsr2.png` (FSR 2) at sharpening 0.5, its image after `frames` frames.
-    fn cavity_after(fsr2: bool, frames: u32) -> Option<Vec<u8>> {
+    /// The cavity rig of `fsr2.png` (FSR 2 at sharpening 0.5), its image after `frames`
+    /// frames.
+    fn cavity_after(frames: u32) -> Option<Vec<u8>> {
         let world = cavity_world();
         let rig = LookRig::new(&world, None)?;
         let mut frame = Frame::with_sizes(&rig.device, UPSCALED_INTERNAL, UPSCALED_OUTPUT);
-        if fsr2 {
-            frame.set_upscaler_kind(
-                &rig.device,
-                svet_render::UpscalerKind::Fsr2(svet_render::Fsr2Settings {
-                    sharpness: 0.5,
-                    ..Default::default()
-                }),
-            );
-        } else {
-            frame.set_jitter(&rig.device, true);
-            frame.set_sharpness(&rig.queue, 0.5);
-        }
+        frame.set_upscaler_kind(
+            &rig.device,
+            svet_render::UpscalerKind::Fsr2(svet_render::Fsr2Settings {
+                sharpness: 0.5,
+                ..Default::default()
+            }),
+        );
         for _ in 0..frames {
             frame.step(
                 &rig.device,
@@ -1923,18 +1799,19 @@ mod reading {
         (d[(n * 99 / 100).min(n - 1)], mean, over)
     }
 
-    /// Plan 0094 Phase 3 bar 5: the two upscaled goldens the still camera's own tap moves, read
+    /// Plan 0094 Phase 3 bar 5: the upscaled golden the still camera's own tap moves, read
     /// for magnitude and direction with the settle off: this tree's 32-frame image against the
     /// golden on disk, and each of the two against this tree's 512-frame image of the same rig
     /// (the reference). Lavapipe, where the goldens were blessed.
     #[test]
     #[ignore = "reading"]
     fn the_moved_upscaled_goldens() {
-        for (fsr2, name) in [(false, "upscaled.png"), (true, "fsr2.png")] {
-            let Some(new) = cavity_after(fsr2, 32) else {
+        {
+            let name = "fsr2.png";
+            let Some(new) = cavity_after(32) else {
                 return;
             };
-            let Some(reference) = cavity_after(fsr2, 512) else {
+            let Some(reference) = cavity_after(512) else {
                 return;
             };
             let (old, _, _) = read_png(&golden_path(name));

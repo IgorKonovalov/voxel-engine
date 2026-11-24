@@ -934,26 +934,16 @@ fn lighting_rows(
     if let Some(z) = l.sizes {
         let ([iw, ih], [ow, oh]) = (z.internal, z.output);
         let colour = if z.upscaling {
-            // Yellow when the composite, upscale and sharpen passes and FSR 2's exceed the
-            // upscale line. FSR 2's passes, when they ran, read as one total.
+            // Yellow when the composite and FSR 2's passes exceed the upscale line. FSR 2's
+            // passes read as one total.
             let fsr: f32 = l
                 .passes
                 .iter()
                 .filter(|(n, _)| n.starts_with("fsr2 "))
                 .map(|&(_, v)| v)
                 .sum();
-            let post = ms("composite") + ms("upscale") + ms("sharpen") + fsr;
-            if fsr > 0.0 {
-                write!(out, "fsr2 {fsr:.2} ms, {iw}x{ih} to {ow}x{oh}")?;
-            } else {
-                write!(
-                    out,
-                    "upscale {:.2} sharpen {:.2} ms, {iw}x{ih} to {ow}x{oh}",
-                    ms("upscale"),
-                    ms("sharpen")
-                )?;
-            }
-            over(post, UPSCALE_LINE_MS)
+            write!(out, "fsr2 {fsr:.2} ms, {iw}x{ih} to {ow}x{oh}")?;
+            over(ms("composite") + fsr, UPSCALE_LINE_MS)
         } else {
             write!(out, "frame {ow}x{oh}")?;
             HudColour::White

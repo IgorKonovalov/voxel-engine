@@ -16,8 +16,8 @@
 //!   still names the exposure.
 //! - `--view`: `shaded` (default), `normals`, `albedo`, `hitmask` or `steps`.
 //! - `--size`: the output size `WxH` (default `1920x1080`).
-//! - `--upscaler`: `fsr2` (default), `own` or `off`; `fsr2` and `own` at scale 1.5 with
-//!   sharpening 0.5, `off` at scale 1 with no jitter.
+//! - `--upscaler`: `fsr2` (default) or `off`; `fsr2` at scale 1.5 with sharpening 0.5, `off`
+//!   at scale 1 with no jitter.
 //! - `--look`: a `LookPreset` name (default: `LookPreset::DEFAULT`, the fly-through's start, far
 //!   normal `[2, 6]`; `face` is the same cubes with the far normal off).
 //! - `--far`: `LO,HI`, `LookParams::far_normal` (default: the preset's).
@@ -56,7 +56,7 @@
 //! - FSR 2's candidate knobs (`Fsr2Settings`): `--jitter-phases` (the jitter's phase count; the
 //!   fold's default follows it) and `--dither on` (the tone pass's static one-level dither).
 //! - `--read fold`: after the settle, `--frames` still frames folded over `--phases` (default:
-//!   `fsr2::jitter_phases`, `own`'s `JITTER_PHASES`, 18 for `off`): `T`, `L`, `J`
+//!   `fsr2::jitter_phases`, 18 for `off`): `T`, `L`, `J`
 //!   (`support::aliasing`), the guard's energy, the jumps by class and footprint over the first
 //!   cycle's mask, and `jumps.png` (T's jumps per pixel, white at `JUMPS_WHITE` jumps),
 //!   `jumps-l.png`, `mask.png`, `last.png` and `clusters.png` (the 8 worst 32-pixel tiles).
@@ -1148,7 +1148,7 @@ fn hall_floor_terraces() {
 }
 
 /// The strip's frame: its sizes and upscaler, with the jitter's phase count a fold reads.
-fn make_frame(args: &Args, device: &wgpu::Device, queue: &wgpu::Queue) -> (Frame, u32) {
+fn make_frame(args: &Args, device: &wgpu::Device) -> (Frame, u32) {
     let [w, h] = args.size;
     let output = args.size;
     let shrink = args.shrink;
@@ -1158,12 +1158,6 @@ fn make_frame(args: &Args, device: &wgpu::Device, queue: &wgpu::Queue) -> (Frame
     );
     let frame = match args.upscaler {
         "off" => Frame::new(device, w * shrink, h * shrink),
-        "own" => {
-            let mut f = Frame::with_sizes(device, args.scale.internal(output), output);
-            f.set_jitter(device, true);
-            f.set_sharpness(queue, args.sharpen);
-            f
-        }
         _ => {
             let mut f = Frame::with_sizes(device, args.scale.internal(output), output);
             f.set_upscaler_kind(
@@ -1183,7 +1177,6 @@ fn make_frame(args: &Args, device: &wgpu::Device, queue: &wgpu::Queue) -> (Frame
         "fsr2" => frame
             .fsr2()
             .map_or(0, |f| f.settings().phases(internal[0], w)),
-        "own" => svet_render::internals::JITTER_PHASES,
         _ => 18,
     };
     (frame, args.phases.unwrap_or(phases))
@@ -1277,7 +1270,7 @@ fn strip_run(args: &Args) {
             vfov: 70f32.to_radians(),
         };
     }
-    let (mut frame, phases) = make_frame(args, &scene.device, &scene.queue);
+    let (mut frame, phases) = make_frame(args, &scene.device);
     let (lighting, light, spacing) = light_frame(args, &scene, &mut frame, &preset);
     if args.light == Some(LightMode::Baked) {
         bake_view(&mut scene, &mut frame, args.bake_radius);

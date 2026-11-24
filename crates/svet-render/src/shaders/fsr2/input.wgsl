@@ -9,9 +9,9 @@
 //   2  texture_2d<f32>   in_layer        the hit pass's translucent layers (transmittance w)
 //   3  uniform           in_tuning       `InputUniform` in fsr2/prepare.rs
 //   4  uniform           edits           the frame's edit boxes (edits.wgsl's `Edits`)
-//   5  uniform           in_lamp         the upscale pass's tuning (`UpTuning` in
-//                                        upscale.wgsl): the change thresholds (the older list
-//                                        is `lights.old`, group 0)
+//   5  uniform           in_lamp         the light-change thresholds (`LightChangeUniform`
+//                                        in frame/upscale.rs; the older list is
+//                                        `lights.old`, group 0)
 //   6  storage texture   depth_out       r32float: inverted infinite device depth,
 //                                        `near / z_view`, 0 on a miss
 //   7  storage texture   motion_out      rg32float: motion to the previous frame, in UV
@@ -33,11 +33,10 @@
 //
 // Reactive: the largest of a translucent layer's `1 - transmittance` times
 // `in_tuning.reactive_translucent` (capped at 1), 1 where the hit lies in an edit box dilated
-// by one voxel, and `in_tuning.reactive_light` where the light at a still hit changed (the
-// upscale pass's light-change signal, which it too applies to still pixels alone: the hit moved
-// less than CLIP_STILL output pixels, and an emission scale changed where an emitter's light lands or the list of lights'
-// summed unshadowed term moved past the thresholds since the list of `change_frames` frames
-// before, or the sky's key light or scale moved past them since the frame before:
+// by one voxel, and `in_tuning.reactive_light` where the light at a still hit changed (still:
+// the hit moved less than STILL_PX output pixels; changed: an emission scale changed where an
+// emitter's light lands, or the list of lights' summed unshadowed term moved past the
+// thresholds since the list of `CHANGE_FRAMES` frames before, or the sky's key light or scale moved past them since the frame before:
 // `sky_light_changed`, which a jump trips and a drift does not). A moving
 // pixel's lamp term changes with the camera that carries the lamp; FSR's rectification takes
 // that, where the mask would take its history. A fresh pixel (light.wgsl: a shadow ray crossed
@@ -60,18 +59,14 @@ struct Fsr2InputTuning {
 @group(2) @binding(4) var<uniform> edits: Edits;
 
 // upscale.wgsl's `UpTuning`, field for field (`UpscaleUniform` in frame/upscale.rs).
-struct InLamp {
-    width: f32,
-    alpha: f32,
-    alpha_moving: f32,
-    clip_gamma: f32,
-    w_mean: f32,
+struct LightChange {
     change_rel: f32,
     change_abs: f32,
     _pad0: f32,
+    _pad1: f32,
 };
 
-@group(2) @binding(5) var<uniform> in_lamp: InLamp;
+@group(2) @binding(5) var<uniform> in_lamp: LightChange;
 @group(2) @binding(6) var depth_out: texture_storage_2d<r32float, write>;
 @group(2) @binding(7) var motion_out: texture_storage_2d<rg32float, write>;
 @group(2) @binding(8) var reactive_out: texture_storage_2d<rgba8unorm, write>;

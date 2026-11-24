@@ -200,8 +200,6 @@ pub fn fill_mirror(
 pub struct FrameSetup {
     pub size: [u32; 2],
     pub internal_scale: RenderScale,
-    /// `--jitter on|off` as given (our upscaler); unset, FSR 2 above scale 1.
-    pub jitter: Option<bool>,
     pub sharpen: f32,
     pub probe_spacing: u32,
     pub lighting: Lighting,
@@ -212,9 +210,9 @@ pub struct FrameSetup {
 }
 
 impl FrameSetup {
-    /// Whether the frame runs FSR 2: above scale 1 without `--jitter`, as the fly-through.
+    /// Whether the frame runs FSR 2: above scale 1, as the fly-through.
     pub fn fsr2(&self) -> bool {
-        self.jitter.is_none() && self.internal_scale != RenderScale::One
+        self.internal_scale != RenderScale::One
     }
 
     /// A frame set up so, with the whole world baked at the live queue's settings (ADR-0046).
@@ -236,9 +234,6 @@ impl FrameSetup {
                     ..svet_render::Fsr2Settings::default()
                 }),
             );
-        } else {
-            frame.set_jitter(device, self.jitter.unwrap_or(false));
-            frame.set_sharpness(queue, self.sharpen);
         }
         frame.set_lighting(self.lighting);
         frame.set_look(svet_render::LookParams {

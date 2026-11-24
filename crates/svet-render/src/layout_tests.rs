@@ -34,7 +34,7 @@ macro_rules! mirror {
 /// The Rust side of WGSL struct `name` in the source labelled `label`, or `None` for a struct
 /// no Rust struct fills.
 fn mirror_of(label: &str, name: &str) -> Option<Mirror> {
-    use crate::frame::{EditsUniform, Light, LightsUniform, UpscaleUniform};
+    use crate::frame::{EditsUniform, Light, LightChangeUniform, LightsUniform};
     let raw = |rust, size| Mirror {
         rust,
         size,
@@ -135,12 +135,7 @@ fn mirror_of(label: &str, name: &str) -> Option<Mirror> {
             key_history
         }),
         (_, "Edits") => mirror!(EditsUniform { count, held, boxes }),
-        (_, "UpTuning" | "InLamp") => mirror!(UpscaleUniform {
-            width,
-            alpha,
-            alpha_moving,
-            clip_gamma,
-            w_mean,
+        (_, "LightChange") => mirror!(LightChangeUniform {
             change_rel,
             change_abs
         }),

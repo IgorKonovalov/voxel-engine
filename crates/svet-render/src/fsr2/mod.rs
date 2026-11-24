@@ -7,7 +7,7 @@
 //! image atomics, core storage formats (each of AMD's 16- and 8-bit formats widened to one at
 //! least as precise), and four-tap loads for AMD's bilinear samples.
 
-use crate::frame::{Dispatch, Dispatches, Params, Upscaler, WORKGROUP};
+use crate::frame::{Dispatch, Dispatches, Params, WORKGROUP};
 use crate::gpu_util::*;
 
 mod pipelines;
@@ -313,6 +313,6 @@ mod tests {
         let n = crate::FRAME_PASSES.len() - 1 - FSR2_PASSES.len();
         assert_eq!(crate::FRAME_PASSES[n..n + FSR2_PASSES.len()], FSR2_PASSES);
         assert_eq!(crate::FRAME_PASSES.last(), Some(&"exposure"));
-        assert_eq!(crate::FRAME_PASSES[n - 2..n], ["upscale", "sharpen"]);
+        assert_eq!(crate::FRAME_PASSES[n - 1], "composite");
     }
 }

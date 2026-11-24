@@ -487,44 +487,6 @@ fn the_lighting_rows_follow_the_march_row() {
     );
 }
 
-/// While the upscaler runs a row follows the light samples: the upscale and sharpen
-/// passes' times and the two sizes, yellow when they and the composite pass 1.5 ms.
-#[test]
-fn the_upscale_row_follows_the_lighting_rows() {
-    let (mut out, mut colours) = (String::new(), Vec::new());
-    let mut s = HudStats::fixed();
-    s.lighting = Some(LightingRow {
-        passes: vec![("composite", 0.2), ("upscale", 0.5), ("sharpen", 0.12)],
-        light_samples: 0,
-        live_probes: None,
-        store: None,
-        store_note: String::new(),
-        missing_light: "",
-        modes: "lighting half".to_owned(),
-        sizes: Some(FrameSizes {
-            internal: [1280, 720],
-            output: [1920, 1080],
-            window: None,
-            upscaling: true,
-        }),
-    });
-    s.write_rows(&mut out, &mut colours);
-    let lines: Vec<&str> = out.lines().collect();
-    assert_eq!(lines.len(), 15);
-    assert_eq!(
-        lines[5],
-        "upscale 0.50 sharpen 0.12 ms, 1280x720 to 1920x1080"
-    );
-    assert_eq!(colours[5], HudColour::White);
-    s.lighting.as_mut().unwrap().passes[1].1 = 1.3;
-    s.write_rows(&mut out, &mut colours);
-    assert_eq!(
-        colours[5],
-        HudColour::Yellow,
-        "0.2 + 1.3 + 0.12 over 1.5 ms"
-    );
-}
-
 /// The exposure row follows the march row's block (here, with no lighting rows, the march
 /// row) and reads the mode, the exposure and the metered scene in EV; in auto, the
 /// settled exposure too.
@@ -575,8 +537,9 @@ fn the_exposure_row_names_the_mode_and_the_scene() {
     );
 }
 
-/// Under FSR 2 the upscale row reads its passes' total and the gpu row leaves them out;
-/// the total counts towards the 1.5 ms line.
+/// Under FSR 2 a row follows the light samples: FSR 2's passes' total and the two sizes, and
+/// the gpu row leaves the passes out; the total and the composite count towards the 1.5 ms
+/// line.
 #[test]
 fn the_upscale_row_sums_fsr2s_passes() {
     let (mut out, mut colours) = (String::new(), Vec::new());
@@ -584,8 +547,6 @@ fn the_upscale_row_sums_fsr2s_passes() {
     s.lighting = Some(LightingRow {
         passes: vec![
             ("composite", 0.2),
-            ("upscale", 0.0),
-            ("sharpen", 0.0),
             ("fsr2 input", 0.1),
             ("fsr2 accumulate", 0.4),
             ("fsr2 tone", 0.05),
@@ -608,7 +569,7 @@ fn the_upscale_row_sums_fsr2s_passes() {
     assert_eq!(lines[5], "fsr2 0.55 ms, 1280x720 to 1920x1080");
     assert_eq!(colours[5], HudColour::White);
     assert!(!out.contains("fsr2 input"), "{out}");
-    s.lighting.as_mut().unwrap().passes[4].1 = 1.4;
+    s.lighting.as_mut().unwrap().passes[2].1 = 1.4;
     s.write_rows(&mut out, &mut colours);
     assert_eq!(colours[5], HudColour::Yellow, "0.2 + 1.55 over 1.5 ms");
 }

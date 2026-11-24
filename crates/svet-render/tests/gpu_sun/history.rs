@@ -85,7 +85,6 @@ fn pair_run(
     let (device, queue) = device()?;
     let mut gpu = mirror(&device, &queue, world, None);
     let mut f = frame(&device, SIZE, ShadowWalk::Coarse);
-    f.set_jitter(&device, false);
     f.set_lighting(Lighting {
         sky_rays: 1,
         ..f.lighting()

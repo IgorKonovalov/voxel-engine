@@ -63,7 +63,6 @@ pub fn box_frame(
     kind: Option<UpscalerKind>,
 ) -> Frame {
     let mut frame = Frame::with_sizes(device, internal, output);
-    frame.set_jitter(device, false);
     if let Some(k) = kind {
         frame.set_upscaler_kind(device, k);
         frame.set_sizes(device, internal, output);

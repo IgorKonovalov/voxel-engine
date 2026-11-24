@@ -31,7 +31,7 @@
 //! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N]
 //! [--history edits|gradient] [--lighting full|half]
 //! [--lamp-bounce on|off] [--probe-spacing N] [--probe-rays N] [--probe-slices N]
-//! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S] [--upscaler off|own|fsr2] [--pan DEG_PER_S]
+//! [--internal-scale 1|1.5|2] [--sharpen S] [--upscaler off|fsr2] [--pan DEG_PER_S]
 //! [--jitter-phases N] [--dither on|off] [--pace free|compositor]
 //! [--exposure auto|E]
 //! [--adaptation eye|symmetric|instant] [--adapt LIGHT,CONE,ROD,FLOOR] [--metering centre|average]
@@ -57,20 +57,15 @@
 //! the mode and its exposure in EV, the stats HUD's exposure row adds the metered scene and the
 //! settled exposure, and stdout prints that row every half second while the exposure moves.
 //! `--render` fixes the frame's output resolution (the window scales it); `--internal-scale`
-//! renders at the output size divided by it on each edge (default 1.5: 720p for 1080p, through
-//! our upscaler); `--jitter on|off` moves every primary ray by the Halton (2, 3) sub-pixel
-//! jitter of the frame or through its pixel's centre, which the upscaler accumulates (our
-//! upscaler jitters unless `--jitter off`; with no upscaler it is off unless `--jitter on`);
-//! the upscaler runs when the scale is above 1 or the jitter is on; `--sharpen S` sets the
-//! upscaler's RCAS sharpening, 0 to 1 (default 0.5, 0 off); `--upscaler off|own|fsr2` picks
-//! the upscaler: `off` is Plan 0024's frame (scale 1, the jitter off), `own` the upscaler of
-//! ADR-0024 at `--internal-scale`, `fsr2` FSR 2 (ADR-0034) at `--internal-scale` with its own
-//! jitter; without it the upscaler is `off` at scale 1 with the jitter off, `own` when
-//! `--jitter` is given (only `own` takes it), else `fsr2`, so no flag starts in `fsr2` at 1.5
-//! and `--internal-scale 1` in `off`. The quality setting is FSR 2 at scale 1 with the far
-//! normal scaled to the same voxels, `--upscaler fsr2 --internal-scale 1 --far-normal 3,9`
-//! (about twice the default's march). In a
-//! window `F10` cycles off, own and fsr2, printing the mode and showing it in a banner, the
+//! renders at the output size divided by it on each edge under FSR 2 (default 1.5: 720p for
+//! 1080p); `--sharpen S` sets FSR 2's RCAS sharpening, 0 to 1 (default 0.5, 0 off);
+//! `--upscaler off|fsr2` picks the upscaler: `off` renders at the output size, unjittered,
+//! `fsr2` FSR 2 (ADR-0034) at `--internal-scale` with its own jitter; without it the upscaler
+//! is `off` at `--internal-scale 1`, else `fsr2`, so no flag starts in `fsr2` at 1.5.
+//! `--upscaler own` and `--jitter` are refused: the engine's own upscaler is removed. The
+//! quality setting is FSR 2 at scale 1 with the far normal scaled to the same voxels,
+//! `--upscaler fsr2 --internal-scale 1 --far-normal 3,9` (about twice the default's march). In
+//! a window `F10` cycles off and fsr2, printing the mode and showing it in a banner, the
 //! menu's `sharpen` cycles the sharpening (0.5, 0.25, 0; the upscaler keeps its history), its `far normal` the far normal
 //! (`[2, 6]`, `[1, 2]`, off), and `--pan DEG_PER_S` turns the camera at a constant yaw rate
 //! (positive to the left, by the frame's measured interval) that the menu's `pan` stops and starts;
@@ -306,7 +301,9 @@ mod queue_flags;
 mod settings;
 pub mod table;
 
-pub use flags::{GONE_SINCE_0057, gone_since_0057, help, lighting_flags};
+pub use flags::{
+    GONE_SINCE_0057, GONE_SINCE_0102, gone_since_0057, gone_since_0102, help, lighting_flags,
+};
 pub(crate) use loading::LoadingArgs;
 pub use outdoor::{OUTDOOR_MAX, OUTDOOR_MIN, OutdoorArgs, SOURCES, next_source};
 pub use parse::*;
@@ -545,12 +542,7 @@ pub struct LookArgs {
     pub(crate) band_census: bool,
     /// `--internal-scale 1|1.5|2`: the output size over the internal size, on each edge.
     pub(crate) internal_scale: RenderScale,
-    /// `--jitter on|off`: the primary rays move by the frame's sub-pixel jitter. Our
-    /// upscaler takes it only when given ([`LookArgs::jitter_set`]) and jitters otherwise.
-    pub(crate) jitter: bool,
-    /// `--jitter` was given.
-    pub(crate) jitter_set: bool,
-    /// `--sharpen S`: the upscaler's sharpening strength, 0 to 1.
+    /// `--sharpen S`: FSR 2's sharpening strength, 0 to 1.
     pub(crate) sharpen: f32,
     /// `--pan DEG_PER_S`: a constant yaw rate, degrees a second, positive to the left.
     pub(crate) pan: Option<f32>,
@@ -791,11 +783,7 @@ pub struct Args {
 /// Phase 7). `--upscaler off` or `--internal-scale 1` is Plan 0024's frame.
 pub const DEFAULT_SCALE: RenderScale = RenderScale::OneHalf;
 
-/// The jitter without an upscaler by default (`--jitter`): off. Our upscaler jitters unless
-/// `--jitter off` is given.
-pub(crate) const DEFAULT_JITTER: bool = false;
-
-/// The upscaler's sharpening strength by default (`--sharpen`).
+/// FSR 2's sharpening strength by default (`--sharpen`).
 pub const DEFAULT_SHARPEN: f32 = 0.5;
 
 /// The light radius of `--source showcase` unless `--light-radius` is given, in chunks: the
@@ -961,38 +949,23 @@ impl Args {
         m
     }
 
-    /// The upscaler the fly-through starts with: `--upscaler`, else `off` at scale 1 with the
-    /// jitter off, `own` when `--jitter` is given (FSR 2 jitters by its own sequence and
-    /// ignores it), else `fsr2`.
+    /// The upscaler the fly-through starts with: `--upscaler`, else `off` at scale 1, else
+    /// `fsr2`.
     pub(crate) fn start_upscaler(&self) -> hud::UpscalerMode {
-        self.look.upscaler.unwrap_or(
-            if self.look.internal_scale == RenderScale::One && !self.look.jitter {
+        self.look
+            .upscaler
+            .unwrap_or(if self.look.internal_scale == RenderScale::One {
                 hud::UpscalerMode::Off
-            } else if self.look.jitter_set {
-                hud::UpscalerMode::Own
             } else {
                 hud::UpscalerMode::Fsr2
-            },
-        )
+            })
     }
 
-    /// The frame's settings in upscaler `mode`: the upscaler, the internal scale and the
-    /// jitter. `off` renders at scale 1 with the jitter off; `own` jitters unless `--jitter
-    /// off`; FSR 2 jitters by its own sequence.
-    pub(crate) fn upscaler_settings(
-        &self,
-        mode: hud::UpscalerMode,
-    ) -> (UpscalerKind, RenderScale, bool) {
+    /// The frame's settings in upscaler `mode`: the upscaler and the internal scale. `off`
+    /// renders at the output size, unjittered; FSR 2 jitters by its own sequence.
+    pub(crate) fn upscaler_settings(&self, mode: hud::UpscalerMode) -> (UpscalerKind, RenderScale) {
         match mode {
-            hud::UpscalerMode::Off => (UpscalerKind::Off, RenderScale::One, false),
-            hud::UpscalerMode::Own => {
-                let jitter = !self.look.jitter_set || self.look.jitter;
-                (
-                    UpscalerKind::Own(svet_render::Upscaler::default()),
-                    self.look.internal_scale,
-                    jitter,
-                )
-            }
+            hud::UpscalerMode::Off => (UpscalerKind::Off, RenderScale::One),
             hud::UpscalerMode::Fsr2 => (
                 UpscalerKind::Fsr2(svet_render::Fsr2Settings {
                     sharpness: self.look.sharpen,
@@ -1001,7 +974,6 @@ impl Args {
                     ..svet_render::Fsr2Settings::default()
                 }),
                 self.look.internal_scale,
-                false,
             ),
         }
     }

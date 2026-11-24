@@ -1,16 +1,7 @@
-//! The engine's own upscaler and its sharpen pass, the view jitter, the lamp the upscaler
-//! reads back over, and the composite's FSR 2 variant; the frame's upscale setters.
+//! The view jitter, the light-change thresholds FSR 2's input pass reads, and the composite's
+//! FSR 2 variant; the frame's upscaler setters.
 
 use super::*;
-
-/// The upscale pass, compiled after the prelude, `common.wgsl`, `hitrec.wgsl` and `edits.wgsl`.
-pub const UPSCALE_WGSL: &str = include_str!("../shaders/upscale.wgsl");
-
-/// The sharpening pass (RCAS), compiled after the prelude and `common.wgsl`.
-pub const SHARPEN_WGSL: &str = include_str!("../shaders/sharpen.wgsl");
-
-/// Phases of the jitter sequence: frame `f` takes phase `f % JITTER_PHASES`.
-pub const JITTER_PHASES: u32 = 16;
 
 /// The radical inverse of `i` in base `b`: element `i` of the Halton sequence of that base.
 pub(super) fn halton(mut i: u32, b: u32) -> f32 {
@@ -25,117 +16,35 @@ pub(super) fn halton(mut i: u32, b: u32) -> f32 {
 
 /// The sub-pixel jitter of frame `frame` in a sequence of `phases`, in internal pixels:
 /// elements `1 ..= phases` of the Halton (2, 3) sequence by `frame % phases`, centred on zero,
-/// each component in `(-0.5, 0.5)`. The upscaler of ADR-0024 takes [`JITTER_PHASES`], FSR 2
-/// its own count (`fsr2::jitter_phases`).
+/// each component in `(-0.5, 0.5)`. FSR 2 takes its own count (`fsr2::jitter_phases`).
 pub fn jitter_at(frame: u32, phases: u32) -> [f32; 2] {
     let i = frame % phases.max(1) + 1;
     [halton(i, 2) - 0.5, halton(i, 3) - 0.5]
 }
 
-/// The upscale pass's tuning ([`Frame::set_upscaler`]). This frame's colour at an output
-/// pixel is reconstructed from the 3 x 3 internal samples around the nearest with the kernel
-/// `exp(-2.29 (d / width)^2)`, `d` a sample's distance from the output pixel's centre in
-/// output pixels: at width 1, Karis's Gaussian fit of a Blackman-Harris window of width 3.3
-/// ("High Quality Temporal Supersampling", 2014). Last frame's history is read at the
-/// reprojected position by Catmull-Rom over the 4 x 4 texels around it, held non-negative.
-/// The current colour's share of the blend where history is kept is the alpha times the
-/// nearest sample's kernel weight over the kernel's peak, divided by the nearest sample's
-/// mean kernel weight at the frame's scale (its sample uniform over one internal pixel
-/// around the centre), at most 1: a sample far from the output pixel's centre counts for
-/// less, and the current colour's mean share stays the alpha. A still pixel (one whose
-/// history moved less than 0.01 output pixels) keeps its history unclipped unless the light
-/// at its hit changed: the list of lights' summed unshadowed term moved past
-/// [`Upscaler::change_rel`] and [`Upscaler::change_abs`] since the list of
-/// [`Upscaler::change_frames`] frames before (ADR-0044), or
-/// an emission scale changed within [`EMISSION_CHANGE_FRAMES`]; such a pixel is clipped and
-/// blended as a moving one (ADR-0024).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Upscaler {
-    /// The current colour's weight in the blend where the history held still.
-    pub alpha: f32,
-    /// [`Upscaler::alpha`] where the history moved by 0.01 output pixels or more.
-    pub alpha_moving: f32,
-    /// A light change: the lamp's term moved by more than this share of the larger of the
-    /// two.
-    pub change_rel: f32,
-    /// ... and by more than this, in the lamp's irradiance units.
-    pub change_abs: f32,
-    /// The frames between the lamps compared, 1 to [`LAMP_FRAMES`].
-    pub change_frames: u32,
-}
+/// The light-change test FSR 2's input pass applies to a still pixel (`light_changed` in
+/// `fsr2/input.wgsl`): the list of lights' summed unshadowed term at the hit moved by more
+/// than [`CHANGE_REL`] of the larger of the two and by more than [`CHANGE_ABS`] since the
+/// list of [`CHANGE_FRAMES`] frames before (ADR-0044), or the sky's key light or scale moved
+/// past the same thresholds since the frame before.
+pub const CHANGE_REL: f32 = 0.1;
 
-/// The upscale pass's reconstruction kernel width ([`Upscaler`]).
-pub(crate) const UPSCALE_WIDTH: f32 = 0.6;
+/// ... and by more than this, in the lamp's irradiance units ([`CHANGE_REL`]).
+pub const CHANGE_ABS: f32 = 0.01;
 
-/// The upscale pass's clip box around the 3 x 3 samples' YCoCg mean, in standard deviations
-/// (inside their minimum and maximum).
-pub(crate) const UPSCALE_CLIP_GAMMA: f32 = 1.0;
+/// The frames between the light lists [`CHANGE_REL`] compares, 1 to [`LAMP_FRAMES`].
+pub(crate) const CHANGE_FRAMES: usize = 24;
 
-/// Frames of light lists the frame keeps for [`Upscaler::change_frames`].
+/// Frames of light lists the frame keeps for [`CHANGE_FRAMES`].
 pub(crate) const LAMP_FRAMES: usize = 32;
 
-impl Default for Upscaler {
-    /// The Gaussian of width 0.6 over the 3 x 3, the Catmull-Rom fetch and the
-    /// nearness-weighted blend, normalised to a mean share of 0.1 still and 0.2 in motion
-    /// (ADR-0024).
-    fn default() -> Self {
-        Self {
-            alpha: 0.1,
-            alpha_moving: 0.2,
-            change_rel: 0.1,
-            change_abs: 0.01,
-            change_frames: 24,
-        }
-    }
-}
-
-/// `UpTuning` in `upscale.wgsl`, field for field.
+/// `LightChange` in `fsr2/input.wgsl`, field for field: [`CHANGE_REL`] and [`CHANGE_ABS`].
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct UpscaleUniform {
-    pub(crate) width: f32,
-    pub(crate) alpha: f32,
-    pub(crate) alpha_moving: f32,
-    pub(crate) clip_gamma: f32,
-    pub(crate) w_mean: f32,
+pub(crate) struct LightChangeUniform {
     pub(crate) change_rel: f32,
     pub(crate) change_abs: f32,
-    pub(crate) _pad: f32,
-}
-
-impl Upscaler {
-    /// The reconstruction kernel at offset `(x, y)` output pixels, 1 at the centre
-    /// (`up_kernel` in `upscale.wgsl`).
-    pub(super) fn kernel(&self, x: f32, y: f32) -> f32 {
-        (-2.29 * (x * x + y * y) / (UPSCALE_WIDTH * UPSCALE_WIDTH)).exp()
-    }
-
-    /// The nearest sample's mean kernel weight at `scale` output pixels per internal pixel:
-    /// its offset uniform over the internal pixel around the output centre, a 32 x 32 grid.
-    pub(super) fn mean_weight(&self, scale: f32) -> f32 {
-        const N: usize = 32;
-        let at = |i: usize| ((i as f32 + 0.5) / N as f32 - 0.5) * scale;
-        let mut sum = 0.0;
-        for j in 0..N {
-            for i in 0..N {
-                sum += self.kernel(at(i), at(j));
-            }
-        }
-        sum / (N * N) as f32
-    }
-
-    pub(super) fn uniform(&self, scale: f32) -> UpscaleUniform {
-        UpscaleUniform {
-            width: UPSCALE_WIDTH,
-            alpha: self.alpha,
-            alpha_moving: self.alpha_moving,
-            clip_gamma: UPSCALE_CLIP_GAMMA,
-            w_mean: self.mean_weight(scale),
-            change_rel: self.change_rel,
-            change_abs: self.change_abs,
-            _pad: 0.0,
-        }
-    }
+    pub(crate) _pad: [f32; 2],
 }
 
 /// The source of the composite's variant for FSR 2: `HDR_TARGET` set and the target
@@ -206,62 +115,20 @@ pub(super) fn composite_hdr_pass(
 }
 
 impl Frame {
-    /// Jitters every view's rays by [`jitter_at`] of the frame index (off by default: each
-    /// ray through its pixel's centre). The upscaler runs when the frame jitters or the
-    /// internal size differs from the output size, so turning the jitter on or off at equal
-    /// sizes replaces the targets and drops the history.
-    pub fn set_jitter(&mut self, device: &wgpu::Device, on: bool) {
-        if on != self.up.jitter {
-            self.up.jitter = on;
-            self.set_sizes(device, self.internal_size(), self.output);
-        }
-    }
-
-    /// Sets the sharpening pass's strength in `0..=1` (clamped): 0 (the default) writes the
-    /// upscale pass's output unchanged, 1 is RCAS at full strength (0 stops), and between them
-    /// `2 (1 - s)` stops (`con = 2^-stops`). It runs with the upscaler.
-    pub fn set_sharpness(&mut self, queue: &wgpu::Queue, sharpness: f32) {
-        self.up.sharpness = sharpness.clamp(0.0, 1.0);
-        let con = if self.up.sharpness > 0.0 {
-            (-2.0 * (1.0 - self.up.sharpness)).exp2()
-        } else {
-            0.0
-        };
-        queue.write_buffer(
-            &self.up.sharpen_params,
-            0,
-            bytemuck::cast_slice(&[con, 0.0, 0.0, 0.0]),
-        );
-    }
-
-    pub fn sharpness(&self) -> f32 {
-        self.up.sharpness
-    }
-
-    /// Sets the upscale pass's reconstruction, history fetch and blend from the next frame on.
-    pub fn set_upscaler(&mut self, upscaler: Upscaler) {
-        self.up.upscaler = upscaler;
-    }
-
-    pub fn upscaler(&self) -> Upscaler {
-        self.up.upscaler
-    }
-
-    /// Whether an upscaler runs: FSR 2, or the frame jitters or renders below its output
-    /// size. Without one the composite's image is the frame's, byte for byte.
+    /// Whether FSR 2 runs. Without it the frame renders at its output size and the
+    /// composite's image is the frame's, byte for byte.
     pub fn upscaling(&self) -> bool {
-        self.up.fsr.is_some() || self.up.jitter || self.internal_size() != self.output
+        self.up.fsr.is_some()
     }
 
-    /// Selects the upscaler: `Off` turns the jitter off (at equal sizes no upscaler runs),
-    /// `Own` sets the tuning of ADR-0024's upscaler (the jitter as [`Frame::set_jitter`] left
-    /// it), and `Fsr2` runs FSR 2 with its own jitter sequence. A change of upscaler replaces
-    /// the targets and drops the history; a change of FSR's settings alone keeps them.
+    /// Selects the upscaler: `Off` renders at the output size (the internal size
+    /// [`Frame::set_sizes`] asked for is kept for FSR 2), and `Fsr2` runs FSR 2 at that
+    /// internal size with its own jitter sequence. A change of upscaler replaces the targets
+    /// and drops the history; a change of FSR's settings alone keeps them.
     pub fn set_upscaler_kind(&mut self, device: &wgpu::Device, kind: UpscalerKind) {
         let was_fsr = self.up.fsr.is_some();
         match kind {
-            UpscalerKind::Off => self.up.jitter = false,
-            UpscalerKind::Own(u) => self.up.upscaler = u,
+            UpscalerKind::Off => self.up.fsr = None,
             UpscalerKind::Fsr2(s) => {
                 self.up.fsr2 = s;
                 if let Some(f) = self.up.fsr.as_mut() {
@@ -270,7 +137,7 @@ impl Frame {
                     self.up.fsr = Some(Fsr2::new(
                         device,
                         &self.pipes.world_layout,
-                        self.internal_size(),
+                        self.up.requested,
                         self.output,
                         s,
                     ));
@@ -281,14 +148,11 @@ impl Frame {
                 }
             }
         }
-        if !kind.is_fsr2() {
-            self.up.fsr = None;
-        }
         let changed = std::mem::discriminant(&kind) != std::mem::discriminant(&self.up.kind)
             || was_fsr != self.up.fsr.is_some();
         self.up.kind = kind;
         if changed {
-            self.set_sizes(device, self.internal_size(), self.output);
+            self.set_sizes(device, self.up.requested, self.output);
         }
     }
 
@@ -305,66 +169,48 @@ impl Frame {
         self.up.fsr.as_mut()
     }
 
-    pub fn jitter(&self) -> bool {
-        self.up.jitter
-    }
-
     /// Drops the upscaler's history alone in the next encoded frame (the lighting's is kept),
     /// as a change of view does.
     pub fn reset_upscaler_history(&mut self) {
         self.restarts += 1;
         self.history().view_changed = true;
     }
-
-    /// The upscaler's history the next or last encode writes (rgba16float at the output size:
-    /// the upscaled image, display-encoded rgb), or `None` without the upscaler.
-    pub fn upscale_history(&self) -> Option<&wgpu::Texture> {
-        self.targets.history.as_ref().map(|h| &h[self.cur])
-    }
 }
 
-/// The upscaler's state: the engine's own upscaler and its sharpen pass's uniforms, the jitter,
-/// the upscaler the frame runs and, with FSR 2, its context and the composite's variant.
+/// The upscaler's state: the light-change thresholds FSR 2's input pass reads, the internal
+/// size asked for, the upscaler the frame runs and, with FSR 2, its context and the
+/// composite's variant.
 pub(super) struct UpscaleState {
-    pub(super) upscaler: Upscaler,
-    /// The upscale pass's tuning (`UpTuning` in `upscale.wgsl`).
-    pub(super) params: wgpu::Buffer,
-    /// The sharpening pass's `con` (`Sharpen` in `sharpen.wgsl`).
-    pub(super) sharpen_params: wgpu::Buffer,
-    pub(super) sharpness: f32,
-    /// The views' rays are jittered by [`jitter_at`] of the frame index.
-    pub(super) jitter: bool,
+    /// [`LightChangeUniform`], written once.
+    pub(super) light_change: wgpu::Buffer,
+    /// The internal size [`Frame::set_sizes`] last asked for: FSR 2 renders at it, and
+    /// without FSR 2 the frame renders at its output size.
+    pub(super) requested: [u32; 2],
     /// The upscaler the frame runs; with FSR 2, its context and the composite's variant
     /// that stores linear radiance (`HDR_TARGET` in composite.wgsl), built with it.
     pub(super) kind: UpscalerKind,
-    /// FSR 2's settings as last selected, kept while another upscaler runs.
+    /// FSR 2's settings as last selected, kept while no upscaler runs.
     pub(super) fsr2: crate::Fsr2Settings,
     pub(super) fsr: Option<Fsr2>,
     pub(super) composite_hdr: Option<(wgpu::BindGroupLayout, wgpu::ComputePipeline)>,
 }
 
 impl UpscaleState {
-    pub(super) fn new(device: &wgpu::Device) -> Self {
+    pub(super) fn new(device: &wgpu::Device, requested: [u32; 2]) -> Self {
         Self {
-            sharpen_params: wgpu::util::DeviceExt::create_buffer_init(
+            light_change: wgpu::util::DeviceExt::create_buffer_init(
                 device,
                 &wgpu::util::BufferInitDescriptor {
-                    label: Some("sharpen"),
-                    contents: bytemuck::cast_slice(&[0.0f32; 4]),
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    label: Some("light change"),
+                    contents: bytemuck::bytes_of(&LightChangeUniform {
+                        change_rel: CHANGE_REL,
+                        change_abs: CHANGE_ABS,
+                        _pad: [0.0; 2],
+                    }),
+                    usage: wgpu::BufferUsages::UNIFORM,
                 },
             ),
-            sharpness: 0.0,
-            params: wgpu::util::DeviceExt::create_buffer_init(
-                device,
-                &wgpu::util::BufferInitDescriptor {
-                    label: Some("upscale tuning"),
-                    contents: bytemuck::bytes_of(&Upscaler::default().uniform(1.0)),
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                },
-            ),
-            upscaler: Upscaler::default(),
-            jitter: false,
+            requested,
             kind: UpscalerKind::Off,
             fsr2: crate::Fsr2Settings::default(),
             fsr: None,
@@ -375,62 +221,27 @@ impl UpscaleState {
 
 #[cfg(test)]
 mod tests {
-    use super::{JITTER_PHASES, PASSES, jitter_at};
+    use super::jitter_at;
 
-    /// The composed source of the pass labelled `label` in [`PASSES`].
-    fn pass_source(label: &str) -> String {
-        PASSES
-            .iter()
-            .find(|p| p.label == label)
-            .unwrap_or_else(|| panic!("a {label} pass"))
-            .source()
-    }
+    /// The phase count the jitter test cycles through.
+    const TEST_PHASES: u32 = 16;
 
-    /// The jitter's sixteen phases are distinct points of `(-0.5, 0.5)^2` that repeat with
-    /// period 16 and average to within 1/16 of zero on each axis (-0.029 and -0.037).
+    /// The jitter's first sixteen phases are distinct points of `(-0.5, 0.5)^2` that repeat
+    /// with period 16 and average to within 1/16 of zero on each axis (-0.029 and -0.037).
     #[test]
     fn the_jitter_cycles_sixteen_distinct_centred_offsets() {
-        let phases: Vec<[f32; 2]> = (0..JITTER_PHASES)
-            .map(|f| jitter_at(f, JITTER_PHASES))
+        let phases: Vec<[f32; 2]> = (0..TEST_PHASES)
+            .map(|f| jitter_at(f, TEST_PHASES))
             .collect();
         for (i, p) in phases.iter().enumerate() {
             assert!(p.iter().all(|c| c.abs() < 0.5), "phase {i}: {p:?}");
-            assert_eq!(jitter_at(i as u32 + JITTER_PHASES, JITTER_PHASES), *p);
+            assert_eq!(jitter_at(i as u32 + TEST_PHASES, TEST_PHASES), *p);
             assert!(phases[..i].iter().all(|q| q != p), "phase {i} repeats");
         }
         assert_eq!(phases[0], [0.0, 1.0 / 3.0 - 0.5]);
         for k in 0..2 {
-            let mean = phases.iter().map(|p| p[k]).sum::<f32>() / JITTER_PHASES as f32;
+            let mean = phases.iter().map(|p| p[k]).sum::<f32>() / TEST_PHASES as f32;
             assert!(mean.abs() <= 1.0 / 16.0, "axis {k}: mean {mean}");
         }
-    }
-
-    /// The upscale pass parses and validates headless, compiled after the hit
-    /// pass.
-    #[test]
-    fn upscale_wgsl_validates_through_naga() {
-        let source = pass_source("upscale");
-        let module = wgpu::naga::front::wgsl::parse_str(&source)
-            .unwrap_or_else(|e| panic!("upscale.wgsl parses: {}", e.emit_to_string(&source)));
-        wgpu::naga::valid::Validator::new(
-            wgpu::naga::valid::ValidationFlags::all(),
-            wgpu::naga::valid::Capabilities::default(),
-        )
-        .validate(&module)
-        .unwrap_or_else(|e| panic!("upscale.wgsl validates: {e:?}"));
-    }
-
-    /// The sharpening pass parses and validates headless, compiled after the hit pass.
-    #[test]
-    fn sharpen_wgsl_validates_through_naga() {
-        let source = pass_source("sharpen");
-        let module = wgpu::naga::front::wgsl::parse_str(&source)
-            .unwrap_or_else(|e| panic!("sharpen.wgsl parses: {}", e.emit_to_string(&source)));
-        wgpu::naga::valid::Validator::new(
-            wgpu::naga::valid::ValidationFlags::all(),
-            wgpu::naga::valid::Capabilities::default(),
-        )
-        .validate(&module)
-        .unwrap_or_else(|e| panic!("sharpen.wgsl validates: {e:?}"));
     }
 }

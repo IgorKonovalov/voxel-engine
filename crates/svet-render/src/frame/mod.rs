@@ -112,9 +112,10 @@ impl Frame {
         Self::with_sizes(device, [width, height], [width, height])
     }
 
-    /// A frame rendering at `internal` pixels for an image presented at `output` pixels.
+    /// A frame for an image presented at `output` pixels that renders at `internal` pixels
+    /// under FSR 2 ([`Frame::set_upscaler_kind`]); without FSR 2 it renders at `output`.
     pub fn with_sizes(device: &wgpu::Device, internal: [u32; 2], output: [u32; 2]) -> Self {
-        let [width, height] = internal;
+        let [width, height] = output;
         Self {
             pipes: Pipelines::new(device),
             binds: BindCache::default(),
@@ -123,12 +124,11 @@ impl Frame {
                 width,
                 height,
                 LightingResolution::default().scale(),
-                (internal != output).then_some(output),
-                true,
+                None,
             ),
             baked: BakeLink::new(device),
             state: FrameState::new(device),
-            up: UpscaleState::new(device),
+            up: UpscaleState::new(device, internal),
             probe: ProbeChannel::new(),
             cur: 0,
             resolution: LightingResolution::default(),
@@ -710,25 +710,20 @@ impl Frame {
         self.set_sizes(device, [width, height], [width, height]);
     }
 
-    /// Replaces the targets with ones of `internal` pixels for an image presented at
-    /// `output` pixels and drops the history; the pipelines are kept.
+    /// Replaces the targets with ones for an image presented at `output` pixels and drops
+    /// the history; the pipelines are kept. Under FSR 2 the frame renders at `internal`
+    /// pixels; without it at `output`, and `internal` is kept for FSR 2.
     pub fn set_sizes(&mut self, device: &wgpu::Device, internal: [u32; 2], output: [u32; 2]) {
         self.output = output;
+        self.up.requested = internal;
         let fsr = self.up.fsr.is_some();
-        let upscaled = (fsr || self.up.jitter || internal != output).then_some(output);
-        self.targets = Targets::new(
-            device,
-            internal[0],
-            internal[1],
-            self.resolution.scale(),
-            upscaled,
-            !fsr,
-        );
+        let [w, h] = if fsr { internal } else { output };
+        self.targets = Targets::new(device, w, h, self.resolution.scale(), fsr.then_some(output));
         if let Some(f) = self.up.fsr.as_mut() {
             f.resize(device, internal, output);
         }
         if self.composite_capture.is_some() {
-            self.composite_capture = Some(composite_capture_texture(device, internal));
+            self.composite_capture = Some(composite_capture_texture(device, [w, h]));
         }
         self.binds.clear();
         self.reset_history();
@@ -739,7 +734,7 @@ impl Frame {
     pub fn set_resolution(&mut self, device: &wgpu::Device, resolution: LightingResolution) {
         if resolution != self.resolution {
             self.resolution = resolution;
-            self.set_sizes(device, self.internal_size(), self.output);
+            self.set_sizes(device, self.up.requested, self.output);
         }
     }
 

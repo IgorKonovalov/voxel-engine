@@ -4,7 +4,7 @@
 //! `cargo run --release -p flythrough --example hero -- [--source showcase|level|outdoor]
 //! [--time HH:MM] [--shot hall|chasm|crystals|all] [--seed N] [--size WxH] [--at X,Y,Z] [--yaw DEG]
 //! [--pitch DEG] [--exposure auto|E] [--carve R] [--out PATH] [--out-dir DIR] [--frames N]
-//! [--lamp-bounce on|off] [--probe-spacing N] [--internal-scale 1|1.5|2] [--jitter on|off]
+//! [--lamp-bounce on|off] [--probe-spacing N] [--internal-scale 1|1.5|2]
 //! [--sharpen S] [--light-radius N] [--adapter SUBSTRING] [--lighting full|half]
 //! [--shadow-walk full|coarse] [--history edits|gradient]
 //! [--lamp on|off] [--filter on|off] [--look PRESET]`.
@@ -27,8 +27,8 @@
 //! light is read from the store, the whole world baked at the live queue's settings before each
 //! still (ADR-0046; `--steady`, `--cache-read`, `--sampler`, `--emissive-history` and
 //! `--emissive-guard` are refused, naming Plan 0057), and the upscaler at
-//! the fly-through's defaults (`--internal-scale 1.5`: FSR 2; `--jitter` starts our upscaler,
-//! jittered or not; `--internal-scale 1` without `--jitter on` is the native frame).
+//! the fly-through's defaults (`--internal-scale 1.5`: FSR 2; `--internal-scale 1` is the
+//! native frame; `--jitter` is refused, naming Plan 0102).
 //! The look is a preset of `flythrough::LookPreset`, the fly-through's default (`face` with the
 //! far normal) unless
 //! `--look` names another; only `--look field` mirrors the
@@ -42,7 +42,10 @@
 use std::path::PathBuf;
 
 use flythrough::cli::table::{Flag, Section, Table};
-use flythrough::cli::{GONE_SINCE_0057, LightingArgs, gone_since_0057, lighting_flags};
+use flythrough::cli::{
+    GONE_SINCE_0057, GONE_SINCE_0102, LightingArgs, gone_since_0057, gone_since_0102,
+    lighting_flags,
+};
 use flythrough::showcase::{SHOTS, Shot};
 use svet_render::{
     AutoExposure, Camera, Exposure, GpuWorld, LightParams, Lighting, RenderScale, wgpu,
@@ -80,8 +83,6 @@ struct Args {
     /// The lighting rows the fly-through shares (`flythrough::cli::lighting_flags`).
     light: LightingArgs,
     internal_scale: RenderScale,
-    /// `--jitter on|off` as given, which selects our upscaler; unset, FSR 2 above scale 1.
-    jitter: Option<bool>,
     sharpen: f32,
     adapter: Option<String>,
     look: flythrough::LookPreset,
@@ -96,18 +97,11 @@ impl Args {
         self.light.apply(flythrough::default_lighting())
     }
 
-    /// The frame's jitter: `--jitter` when given (our upscaler), else off (FSR 2 jitters by
-    /// its own sequence, and scale 1 has no upscaler). The frame itself reads
+    /// Whether the frame runs FSR 2: above scale 1, as the fly-through. The frame itself reads
     /// `still::FrameSetup`.
     #[cfg(test)]
-    fn jitter(&self) -> bool {
-        self.jitter.unwrap_or(false)
-    }
-
-    /// Whether the frame runs FSR 2: above scale 1 without `--jitter`, as the fly-through.
-    #[cfg(test)]
     fn fsr2(&self) -> bool {
-        self.jitter.is_none() && self.internal_scale != RenderScale::One
+        self.internal_scale != RenderScale::One
     }
 }
 
@@ -207,15 +201,6 @@ fn camera_flags() -> Vec<Flag<Parsing>> {
             },
         ),
         Flag::value(
-            &["--jitter"],
-            "on|off",
-            "our upscaler, jittered or not",
-            |p: &mut Parsing, v| {
-                p.args.jitter = Some(v.on_off()?);
-                Ok(())
-            },
-        ),
-        Flag::value(
             &["--sharpen"],
             "S",
             "the upscaler's sharpening, 0 to 1",
@@ -241,6 +226,7 @@ fn camera_flags() -> Vec<Flag<Parsing>> {
 fn table() -> Table<Parsing> {
     let mut light = lighting_flags(|p: &mut Parsing| &mut p.args.light);
     light.push(Flag::refused(GONE_SINCE_0057, gone_since_0057));
+    light.push(Flag::refused(GONE_SINCE_0102, gone_since_0102));
     Table {
         usage: "hero [FLAGS]: renders the README's still (see the example's doc comment)",
         sections: vec![
@@ -370,7 +356,6 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             frames: 64,
             light,
             internal_scale: flythrough::cli::DEFAULT_SCALE,
-            jitter: None,
             sharpen: flythrough::cli::DEFAULT_SHARPEN,
             adapter: None,
             look: flythrough::LookPreset::DEFAULT,
@@ -540,7 +525,6 @@ fn render_still(
     let mut frame = still::FrameSetup {
         size: args.size,
         internal_scale: args.internal_scale,
-        jitter: args.jitter,
         sharpen: args.sharpen,
         probe_spacing: still.probe_spacing,
         lighting: Lighting {
@@ -634,7 +618,7 @@ mod tests {
         assert_eq!(d.look, flythrough::LookPreset::DEFAULT);
         assert_eq!(d.internal_scale, flythrough::cli::DEFAULT_SCALE);
         assert_eq!(d.sharpen, flythrough::cli::DEFAULT_SHARPEN);
-        assert!(d.fsr2() && !d.jitter());
+        assert!(d.fsr2());
     }
 
     /// The defaults are the showcase's `hall` shot at 1920 x 1080 with the lamp and its bounce
@@ -648,15 +632,15 @@ mod tests {
         assert_eq!(d.size, [1920, 1080]);
         assert!(!d.lighting().lamp && !d.lighting().lamp_bounce);
         assert!(parse(&["--light", "baked"]).is_err());
-        assert_eq!(
-            (d.internal_scale, d.jitter(), d.fsr2()),
-            (RenderScale::OneHalf, false, true)
-        );
+        assert_eq!((d.internal_scale, d.fsr2()), (RenderScale::OneHalf, true));
         assert_eq!(d.look, flythrough::LookPreset::DEFAULT);
         let native = parse(&["--internal-scale", "1"]).unwrap();
-        assert!(!native.jitter() && !native.fsr2());
-        let ours = parse(&["--jitter", "off"]).unwrap();
-        assert!(!ours.jitter() && !ours.fsr2());
+        assert!(!native.fsr2());
+        assert!(
+            parse(&["--jitter", "off"])
+                .err()
+                .is_some_and(|e| e.contains("Plan 0102"))
+        );
         // Each shot keeps its manual exposure; `--exposure auto` is the eye.
         for s in SHOTS {
             let one = parse(&["--shot", s.name]).unwrap();

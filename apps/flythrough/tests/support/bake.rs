@@ -72,7 +72,6 @@ pub fn rig_on(world: World, size: [u32; 2], light_radius: Option<i32>) -> Option
 
 pub fn new_frame(device: &wgpu::Device, size: [u32; 2]) -> Frame {
     let mut frame = Frame::new(device, size[0], size[1]);
-    frame.set_jitter(device, false);
     frame.set_resolution(device, LightingResolution::Full);
     frame.set_lighting(Lighting {
         lamp: false,

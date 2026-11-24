@@ -267,7 +267,7 @@ fn built(frame: &Frame) -> (u64, u64) {
     (frame.bind_groups_built(), frame.views_built())
 }
 
-/// Under each upscaler (none, the engine's own, FSR 2) and in each lighting mode, the two
+/// Under each upscaler (none, FSR 2) and in each lighting mode, the two
 /// frames after a switch may build the groups of both history parities; the two after those
 /// build no bind group and no view.
 #[test]
@@ -281,7 +281,6 @@ fn a_frame_after_the_second_builds_no_bind_group() {
     let light = LightParams::headlamp();
     for kind in [
         svet_render::UpscalerKind::Off,
-        svet_render::UpscalerKind::Own(svet_render::Upscaler::default()),
         svet_render::UpscalerKind::Fsr2(svet_render::Fsr2Settings::default()),
     ] {
         frame.set_upscaler_kind(&device, kind);
@@ -343,6 +342,245 @@ fn a_resize_builds_both_parities_once() {
         steps(&mut frame, 2),
         (0, 0),
         "frames 3 and 4 after a resize"
+    );
+}
+
+/// The compute pipelines a new frame builds: 13 (15 before the upscale and sharpen passes went,
+/// read across `Frame::new` at the base of Plan 0102 on lavapipe), and neither pass is one of
+/// the frame's timed passes.
+#[test]
+fn a_new_frame_builds_thirteen_pipelines_and_no_upscale_or_sharpen_pass() {
+    for pass in ["upscale", "sharpen"] {
+        assert!(
+            !svet_render::FRAME_PASSES.contains(&pass),
+            "{pass} is a frame pass"
+        );
+    }
+    let Some((device, _queue)) = device() else {
+        return;
+    };
+    let made = svet_render::debug::compute_pipelines_created();
+    let _frame = Frame::new(&device, 64, 48);
+    let built = svet_render::debug::compute_pipelines_created() - made;
+    println!("Frame::new built {built} compute pipelines");
+    assert_eq!(built, 13);
+}
+
+/// With no upscaler a frame renders at its output size: settings asking for scale 1.5 with
+/// the upscaler off read back scale 1, the internal size is the output size and the frame
+/// does not upscale; the same settings under FSR 2 render at 1.5 (43 x 24 for 64 x 36).
+#[test]
+fn off_renders_at_the_output_size() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let output = [64, 36];
+    let mut frame = Frame::new(&device, output[0], output[1]);
+    let mut s = frame.settings();
+    s.upscaler = svet_render::UpscalerChoice::Off;
+    s.scale = svet_render::RenderScale::OneHalf;
+    let change = frame.apply_settings(&device, &queue, &s);
+    assert!(change.is_empty(), "{change:?}");
+    assert_eq!(frame.settings().scale, svet_render::RenderScale::One);
+    assert_eq!(frame.internal_size(), output);
+    assert!(!frame.upscaling());
+    s.upscaler = svet_render::UpscalerChoice::Fsr2;
+    frame.apply_settings(&device, &queue, &s);
+    assert_eq!(frame.settings().scale, svet_render::RenderScale::OneHalf);
+    assert_eq!(frame.internal_size(), [43, 24]);
+    assert!(frame.upscaling());
+    let mut sized = Frame::with_sizes(&device, [43, 24], output);
+    assert_eq!(sized.internal_size(), output);
+    assert_eq!(sized.settings().scale, svet_render::RenderScale::One);
+    sized.set_upscaler_kind(
+        &device,
+        svet_render::UpscalerKind::Fsr2(svet_render::Fsr2Settings::default()),
+    );
+    assert_eq!(sized.internal_size(), [43, 24]);
+}
+
+// ---- The frame's inventory (`Frame::frame_bytes`) at equal sizes ----
+
+/// The entity mirror's bytes in `frame_bytes` at its default pool (ADR-0050): the tree 4096 B,
+/// the instances 65 536 B and the pool 8 MiB; and its marks buffer, 4096 B (ADR-0074).
+const ENTITY_MIRROR: u64 = 4096 + 65_536 + (8 << 20) + 4096;
+
+/// The exposure's buffers in `frame_bytes`: the state twice (32 B each), the highlight state
+/// (16 B), the pass's 128-byte uniform and the read-back ring (3 x 256 B): 976 B.
+const EXPOSURE_BUFFERS: u64 = 2 * 32 + 16 + 128 + 3 * 256;
+
+/// The exposure's growth over the figures main's frame held before the sky count and the
+/// highlight: the meter tile from 8 to 16 B over 160 x 90 tiles at 1280 x 720 internal, the
+/// pass's uniform from 96 to 128 B, and the highlight state's 16 B buffer.
+const EXPOSURE_GROWTH: u64 = (16 - 8) * 160 * 90 + (128 - 96) + 16;
+
+/// The visibility pair (two `rgba16float` targets, 8 B a lighting pixel each) and the light
+/// pass's visibility samples (`rgba8unorm`, 4 B) at 640 x 360 lighting pixels (ADR-0070).
+const VIS_PAIR: u64 = (2 * 8 + 4) * 640 * 360;
+
+fn software() -> Option<(wgpu::Device, wgpu::Queue)> {
+    svet_render::test_support::software_device(64 << 20, wgpu::Features::empty())
+}
+
+/// `frame_bytes` of a frame at 1280 x 720 with no upscaler (half-resolution lighting at
+/// 640 x 360, `Frame` alone) holds the store and no emissive history. The figure is derived
+/// from main's 130 267 216 B before ADR-0043, read at 1280 x 720 internal for a 1080p output
+/// under the engine's former upscaler: less the `rgba32float` accumulation pair's excess over
+/// `rgba16float` (2 x 8 B x 640 x 360 = 3 686 400 B, ADR-0036's figure), less the two
+/// `rgba32uint` reservoir textures (2 x 16 B x 640 x 360 = 7 372 800 B), plus the direct target
+/// and its accumulation pair (3 x 8 B x 640 x 360 = 5 529 600 B, ADR-0044): 124 737 616 B;
+/// less that upscaler's two 1080p `rgba16float` histories (2 x 8 B x 1920 x 1080 =
+/// 33 177 600 B) and its `rgba8unorm` output's growth from 1280 x 720 to 1080p (4 B x
+/// 1 152 000 = 4 608 000 B): 86 952 016 B; plus the entity mirror (8 458 240 B, ADR-0050),
+/// the exposure's growth (`EXPOSURE_GROWTH`, 115 248 B) and the visibility pair (`VIS_PAIR`)
+/// before the store's pool is allocated. The live queue's start allocates the pool at
+/// `Lighting::bake_pool_bytes` (256 MiB) under the adapter's storage binding, 128 MiB on
+/// lavapipe (134 217 728 B).
+#[test]
+fn frame_bytes_hold_the_store_and_no_emissive_history() {
+    let Some((device, queue)) = software() else {
+        return;
+    };
+    let mut frame = Frame::new(&device, 1280, 720);
+    let before = frame.frame_bytes();
+    let lighting = 640u64 * 360;
+    let base = 130_267_216 - 2 * 8 * lighting - 2 * 16 * lighting + 3 * 8 * lighting;
+    assert_eq!(base, 124_737_616);
+    let (out, int) = (1920u64 * 1080, 1280u64 * 720);
+    let base = base - 2 * 8 * out - 4 * (out - int);
+    assert_eq!(base, 86_952_016);
+    let pool = 128u64 << 20;
+    println!("frame_bytes at 1280x720: {before} B before the store, pool {pool} B");
+    let base = base + VIS_PAIR + ENTITY_MIRROR + EXPOSURE_GROWTH;
+    assert_eq!(before, base);
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        &UniformSource(AIR),
+        &MaterialTable::new(),
+    );
+    let mut gpu = GpuWorld::with_config(
+        &device,
+        svet_render::MirrorConfig {
+            budget_bytes: 64 << 20,
+            ..svet_render::MirrorConfig::new(svet_render::Window::Fixed(world.extent()))
+        },
+    );
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    gpu.sync(&world, &queue, &mut enc).expect("the mirror fits");
+    queue.submit([enc.finish()]);
+    frame.start_bake_queue(&queue, &gpu, svet_render::queue_settings(), 1.0);
+    let after = frame.frame_bytes();
+    println!("frame_bytes with the store: {after} B");
+    assert_eq!(after, base + pool);
+}
+
+/// The visibility pair and its samples in `frame_bytes`: at 1280 x 720 on the half tier, 20 B
+/// a lighting pixel, 4 608 000 B over the inventory with the direct pair
+/// (`frame_bytes_hold_the_direct_pair`).
+#[test]
+fn frame_bytes_hold_the_visibility_pair() {
+    let Some((device, _queue)) = software() else {
+        return;
+    };
+    let frame = Frame::new(&device, 1280, 720);
+    let lit = 640u64 * 360;
+    let pair = 2 * 8 * lit;
+    let samples = 4 * lit;
+    println!(
+        "frame_bytes at 1280x720, half tier: {} B, the pair {pair} B, the samples {samples} B",
+        frame.frame_bytes()
+    );
+    assert_eq!(pair + samples, VIS_PAIR);
+    assert_eq!(VIS_PAIR, 4_608_000);
+    assert_eq!(
+        frame.frame_bytes(),
+        with_direct_inventory(1280, 720) + VIS_PAIR
+    );
+}
+
+/// `frame_bytes`' inventory at `w` x `h` on the half tier, the direct pair in it and the
+/// visibility pair not (as `frame_bytes_hold_the_direct_pair` counts it).
+fn with_direct_inventory(w: u32, h: u32) -> u64 {
+    let px = u64::from(w) * u64::from(h);
+    let (lw, lh) = (w.div_ceil(2), h.div_ceil(2));
+    let lit = u64::from(lw) * u64::from(lh);
+    let strata = u64::from(lw.div_ceil(3)) * u64::from(lh.div_ceil(3));
+    let tiles = 16 * u64::from(w.div_ceil(8) * h.div_ceil(8));
+    px * (2 * (16 + 8) + 8)
+        + px * 4
+        + lit * (2 * (16 + 8) + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 8)
+        + strata * 8
+        + tiles
+        + 32
+        + 16
+        + EXPOSURE_BUFFERS
+        + ENTITY_MIRROR
+        + 3 * 8 * lit
+}
+
+/// The direct target and its accumulation pair (ADR-0044) in `frame_bytes`: at 1280 x 720 on
+/// the half tier (640 x 360 lighting pixels), three `rgba16float` targets of 8 B a lighting
+/// pixel, 5 529 600 B, the difference between the frame's count and its inventory without
+/// them (and without the visibility pair, `VIS_PAIR`).
+#[test]
+fn frame_bytes_hold_the_direct_pair() {
+    let Some((device, _queue)) = software() else {
+        return;
+    };
+    let frame = Frame::new(&device, 1280, 720);
+    let px = 1280u64 * 720;
+    let lit = 640u64 * 360;
+    // The inventory at the half tier: the hit buffers twice and the layers, transmittance; the
+    // output; the half grid's hit buffers twice; the irradiance, direct, two accumulations, two
+    // direct accumulations, two moments, two filters, the indirect; the strata; the tiles; the
+    // split walk's stub (32 B) and dispatch (16 B); the exposure's buffers (`EXPOSURE_BUFFERS`);
+    // and the entity mirror. A meter tile is 16 B.
+    let strata = 640u64.div_ceil(3) * 360u64.div_ceil(3);
+    let tiles = 16 * u64::from(1280u32.div_ceil(8) * 720u32.div_ceil(8));
+    let without_direct = px * (2 * (16 + 8) + 8)
+        + px * 4
+        + lit * (2 * (16 + 8) + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 8)
+        + strata * 8
+        + tiles
+        + 32
+        + 16
+        + EXPOSURE_BUFFERS
+        + ENTITY_MIRROR;
+    let direct = 3 * 8 * lit;
+    println!(
+        "frame_bytes at 1280x720, half tier: {} B, the direct pair {direct} B",
+        frame.frame_bytes()
+    );
+    assert_eq!(direct, 5_529_600);
+    assert_eq!(frame.frame_bytes(), without_direct + direct + VIS_PAIR);
+}
+
+/// At scale 1.5 under FSR 2 for a 384 x 216 output the hit pass runs on 256 x 144 pixels and
+/// the frame's image is 384 x 216.
+#[test]
+fn at_scale_one_and_a_half_under_fsr2_the_hit_pass_runs_on_256_by_144() {
+    let Some((device, queue)) = software() else {
+        return;
+    };
+    let gpu = mirrored(&device, &queue);
+    let output = [384, 216];
+    let internal = svet_render::RenderScale::OneHalf.internal(output);
+    assert_eq!(internal, [256, 144]);
+    let mut frame = Frame::with_sizes(&device, internal, output);
+    frame.set_upscaler_kind(
+        &device,
+        svet_render::UpscalerKind::Fsr2(svet_render::Fsr2Settings::default()),
+    );
+    frame.render(&device, &queue, &gpu, &camera(), &LightParams::headlamp());
+    let hits = frame.hit_positions();
+    assert_eq!([hits.width(), hits.height()], internal, "hit pass size");
+    assert_eq!(frame.internal_size(), internal);
+    assert_eq!(frame.output_size(), output);
+    let target = frame.target();
+    assert_eq!(
+        [target.width(), target.height()],
+        output,
+        "the frame's image"
     );
 }
 

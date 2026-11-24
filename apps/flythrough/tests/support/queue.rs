@@ -124,7 +124,6 @@ pub fn camera_at(eye: [f32; 3]) -> Camera {
 
 pub fn new_frame(device: &wgpu::Device, pool_bytes: u64) -> Frame {
     let mut frame = Frame::new(device, 32, 18);
-    frame.set_jitter(device, false);
     frame.set_resolution(device, LightingResolution::Full);
     frame.set_lighting(Lighting {
         lamp: false,

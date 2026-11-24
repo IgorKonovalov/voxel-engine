@@ -40,7 +40,7 @@ fn fsr_level_frame() -> Option<(
 )> {
     let (world, camera) = level();
     let (device, queue, gpu) = level_rig(&world, &camera)?;
-    let mut frame = frame_of(&device, INTERNAL, OUTPUT, false);
+    let mut frame = frame_of(&device, INTERNAL, OUTPUT);
     frame.set_upscaler_kind(&device, fsr2_kind());
     Some((device, queue, gpu, frame, camera))
 }
@@ -329,7 +329,7 @@ fn the_reactive_mask_marks_edits_light_changes_and_translucency() {
     // The lamp: off for the settle, on for one frame; with the probe volume's indirect light
     // on (the fly-through's default) and off. The mask follows the lamp's own term either way.
     let lamp_switched_on = |indirect: bool| -> Frame {
-        let mut frame = frame_of(&device, INTERNAL, OUTPUT, false);
+        let mut frame = frame_of(&device, INTERNAL, OUTPUT);
         frame.set_upscaler_kind(&device, UpscalerKind::Fsr2(settings));
         let lighting = svet_render::Lighting {
             lamp_bounce: indirect,
@@ -412,7 +412,7 @@ fn the_reactive_mask_marks_edits_light_changes_and_translucency() {
     let Some((device, queue, gpu)) = mirrored(&world) else {
         return;
     };
-    let mut frame = frame_of(&device, INTERNAL, OUTPUT, false);
+    let mut frame = frame_of(&device, INTERNAL, OUTPUT);
     frame.set_upscaler_kind(&device, UpscalerKind::Fsr2(settings));
     frame.step(&device, &queue, &gpu, &translucent_camera(), &light);
     let r: Vec<u8> =
@@ -456,7 +456,7 @@ fn doubling_the_exposure_reaches_fsr_the_same_frame() {
         exposure: svet_render::Exposure::Manual(exposure),
         ..svet_render::Lighting::default()
     };
-    let mut fsr = frame_of(device, OUTPUT, OUTPUT, false);
+    let mut fsr = frame_of(device, OUTPUT, OUTPUT);
     fsr.set_upscaler_kind(device, fsr2_kind());
     fsr.set_lighting(lighting(e));
     for _ in 0..SETTLE {
@@ -470,7 +470,7 @@ fn doubling_the_exposure_reaches_fsr_the_same_frame() {
     for _ in 0..SETTLE {
         fsr.step(device, queue, &rig.gpu, &camera, &light);
     }
-    let mut native = frame_of(device, OUTPUT, OUTPUT, false);
+    let mut native = frame_of(device, OUTPUT, OUTPUT);
     native.set_lighting(lighting(2.0 * e));
     for _ in 0..SETTLE {
         native.step(device, queue, &rig.gpu, &camera, &light);
@@ -499,9 +499,9 @@ fn fsr_follows_the_eyes_moving_exposure() {
         exposure: svet_render::Exposure::Auto(svet_render::AutoExposure::eye()),
         ..svet_render::Lighting::default()
     };
-    let mut fsr = frame_of(device, OUTPUT, OUTPUT, false);
+    let mut fsr = frame_of(device, OUTPUT, OUTPUT);
     fsr.set_upscaler_kind(device, fsr2_kind());
-    let mut native = frame_of(device, OUTPUT, OUTPUT, false);
+    let mut native = frame_of(device, OUTPUT, OUTPUT);
     for f in [&mut fsr, &mut native] {
         f.set_lighting(lighting);
         f.set_dt(1.0 / 60.0);
@@ -586,8 +586,8 @@ fn a_carve_leaves_no_ghost_under_fsr2() {
         return;
     };
     let light = LightParams::headlamp();
-    let mut kept = frame_of(&device, INTERNAL, OUTPUT, false);
-    let mut reset = frame_of(&device, INTERNAL, OUTPUT, false);
+    let mut kept = frame_of(&device, INTERNAL, OUTPUT);
+    let mut reset = frame_of(&device, INTERNAL, OUTPUT);
     for f in [&mut kept, &mut reset] {
         f.set_upscaler_kind(&device, fsr2_kind());
     }
@@ -792,7 +792,7 @@ fn locks_form_on_the_stripe_edges() {
     };
     let (device, queue) = (&rig.device, &rig.queue);
     let light = LightParams::headlamp();
-    let mut f = frame_of(device, INTERNAL, OUTPUT, false);
+    let mut f = frame_of(device, INTERNAL, OUTPUT);
     f.set_upscaler_kind(device, fsr2_kind());
     f.set_lighting(svet_render::Lighting {
         exposure: svet_render::Exposure::Manual(stripe_exposure(FAR)),
@@ -853,7 +853,7 @@ fn locks_form_on_the_stripe_edges() {
     let Some((device, queue, gpu)) = mirrored(&flat) else {
         return;
     };
-    let mut g = frame_of(&device, INTERNAL, OUTPUT, false);
+    let mut g = frame_of(&device, INTERNAL, OUTPUT);
     g.set_upscaler_kind(&device, fsr2_kind());
     g.set_lighting(svet_render::Lighting {
         exposure: svet_render::Exposure::Manual(stripe_exposure(FAR)),
@@ -895,20 +895,20 @@ fn reading(what: &str, value: &str, bar: &str) {
 }
 
 /// The stripe wall's sharpness, Plan 0030 Phase 6's images beside FSR 2's, in one run: N, R,
-/// B, our upscaler (sharpening 0 and 0.5) and FSR 2 (0 and 0.5) at scale 1 and 1.5, at both
-/// distances, still and panning 64 frames. Asserted, at sharpening 0, still, at arm's length:
-/// FSR at scale 1 has ES at most N's plus 0.53 px and GE at least 0.85 of R's. Printed as
-/// `reading:` lines: scale 1.5 at arm's length (GE at least `(GE(R) + GE(B)) / 2`, ES at most
-/// `(ES(R) + ES(B)) / 2`), the 88-voxel GE at both scales, the arm's-length pans at 0.37 px a
-/// frame against ours, and the 88-voxel pans at 0.37 and 0.5 px a frame. Sharpening 0.5 and the
-/// rim gradients are readings.
+/// B and FSR 2 (sharpening 0 and 0.5) at scale 1 and 1.5, at both distances, still and panning
+/// 64 frames. Asserted, at sharpening 0, still, at arm's length: FSR at scale 1 has ES at most
+/// N's plus 0.53 px and GE at least 0.85 of R's. Printed as `reading:` lines: scale 1.5 at
+/// arm's length (GE at least `(GE(R) + GE(B)) / 2`, ES at most `(ES(R) + ES(B)) / 2`), the
+/// 88-voxel GE at both scales, and the pans' ES and GE (0.37 px a frame at arm's length, 0.37
+/// and 0.5 at 88 voxels). Sharpening 0.5 and the rim gradients are readings.
 #[test]
 #[ignore = "soak"]
 fn fsr2_at_scale_1_keeps_stripe_edges_sharp_at_arms_length() {
     let Some(rig) = stripe_rig() else {
         return;
     };
-    let own = UpscalerKind::Own(svet_render::Upscaler::default());
+    // N, R and B run no upscaler.
+    let off = UpscalerKind::Off;
     let mut failures = Vec::new();
     for dist in [NEAR, FAR] {
         let near = dist == NEAR;
@@ -923,19 +923,17 @@ fn fsr2_at_scale_1_keeps_stripe_edges_sharp_at_arms_length() {
             "stripes at {dist} voxels ({:.3} px per voxel):",
             px_per_voxel(dist)
         );
-        let [n, _] = read(Image::N, still(own));
-        let [r, _] = read(Image::R, still(own));
-        let [b, _] = read(Image::B, still(own));
+        let [n, _] = read(Image::N, still(off));
+        let [r, _] = read(Image::R, still(off));
+        let [b, _] = read(Image::B, still(off));
         println!("  N    {n}\n  R    {r}\n  B    {b}");
         let mut fsr0 = [n; 2];
         for (k, (name, image)) in [("1", Image::U1), ("1.5", Image::U15)]
             .into_iter()
             .enumerate()
         {
-            let ours = read(image, still(own));
             let [f0, _] = read(image, still(fsr2_sharp(0.0)));
             let [f5, _] = read(image, still(fsr2_sharp(0.5)));
-            println!("  ours {name}: sharpen 0 {}; 0.5 {}", ours[0], ours[1]);
             println!("  FSR  {name}: sharpen 0 {f0}; 0.5 {f5}");
             fsr0[k] = f0;
         }
@@ -977,31 +975,19 @@ fn fsr2_at_scale_1_keeps_stripe_edges_sharp_at_arms_length() {
         for &px in speeds {
             for (name, image) in [("1", Image::U1), ("1.5", Image::U15)] {
                 let read_at = |kind| stripe_sharpness_at(&rig, image, pan(kind), px);
-                let [ours, ours5] = read_at(own);
                 let [f0, _] = read_at(fsr2_sharp(0.0));
                 let [f5, _] = read_at(fsr2_sharp(0.5));
-                println!(
-                    "  panning 64 frames at {px} px, scale {name}: ours sharpen 0 {ours}; 0.5 {ours5}"
-                );
                 println!(
                     "  panning 64 frames at {px} px, scale {name}: FSR  sharpen 0 {f0}; 0.5 {f5}"
                 );
                 let at = format!("{dist} voxels, panning at {px} px a frame, FSR {name}");
                 if near {
-                    reading(
-                        &format!("{at} ES"),
-                        &format!("{:.3} px", f0.es),
-                        &format!("below ours {:.3} px", ours.es),
-                    );
+                    println!("  reading: {at} ES {:.3} px", f0.es);
                 }
-                reading(
-                    &format!("{at} GE"),
-                    &format!("{:.5}", f0.ge),
-                    &format!("at least ours {:.5}", ours.ge),
-                );
+                println!("  reading: {at} GE {:.5}", f0.ge);
             }
         }
-        let [np, _] = read(Image::N, pan(own));
+        let [np, _] = read(Image::N, pan(off));
         println!("  N panning 64 frames: {np}");
     }
     for f in &failures {
@@ -1018,7 +1004,7 @@ fn fsr2_pan_ge(rig: &StripeRig, dist: f32, pan_px: f32) -> (f64, f64) {
     let light = LightParams::headlamp();
     let (mut still, mut last) = (0.0, 0.0);
     for phase in 0..PHASES {
-        let mut f = frame_of(device, INTERNAL, OUTPUT, true);
+        let mut f = frame_of(device, INTERNAL, OUTPUT);
         f.set_upscaler_kind(device, fsr2_sharp(0.0));
         f.set_lighting(svet_render::Lighting {
             exposure: svet_render::Exposure::Manual(stripe_exposure(dist)),
@@ -1088,77 +1074,6 @@ fn downsample_2x2_linear(big: &[u8]) -> Vec<u8> {
         .collect()
 }
 
-/// A still camera on the level (Plan 0024's defaults, 32 frames, scale 1.5), against the 2 x 2
-/// supersampled render averaged in linear light: our upscaler's image is nearer it than the
-/// bilinear blit is, in mean absolute difference per channel. Printed: FSR 2's distance as a
-/// `reading:` line (the bar: below the blit's), and every image's distance from the render
-/// averaged in display bytes, with its mean signed difference.
-#[test]
-#[ignore = "soak"]
-fn a_still_camera_under_our_upscaler_is_nearer_the_linear_supersampled_render_than_a_blit() {
-    let (world, camera) = level();
-    let Some((device, queue, gpu)) = level_rig(&world, &camera) else {
-        return;
-    };
-    let light = LightParams::headlamp();
-    let big = OUTPUT.map(|n| 2 * n);
-    let mut fsr = frame_of(&device, INTERNAL, OUTPUT, false);
-    fsr.set_upscaler_kind(&device, fsr2_kind());
-    let mut ours = frame_of(&device, INTERNAL, OUTPUT, true);
-    let mut low = frame_of(&device, INTERNAL, INTERNAL, false);
-    let mut ssaa = frame_of(&device, big, big, false);
-    for _ in 0..SETTLE {
-        for f in [&mut fsr, &mut ours, &mut low, &mut ssaa] {
-            f.step(&device, &queue, &gpu, &camera, &light);
-        }
-    }
-    let big_img = svet_render::debug::read_rgba8(&device, &queue, ssaa.target());
-    let truth = downsample_2x2_linear(&big_img);
-    let display_truth = downsample_2x2(&big_img, OUTPUT);
-    let mean = |m: [f64; 3]| m.iter().sum::<f64>() / 3.0;
-    let images = [
-        (
-            "FSR",
-            svet_render::debug::read_rgba8(&device, &queue, fsr.target()),
-        ),
-        (
-            "ours",
-            svet_render::debug::read_rgba8(&device, &queue, ours.target()),
-        ),
-        (
-            "bilinear",
-            blit_texture(&device, &queue, low.target(), OUTPUT),
-        ),
-    ];
-    let [f, o, b] = [0, 1, 2].map(|i| mean(mad(&images[i].1, &truth)));
-    println!(
-        "level, {SETTLE} frames, from 2 x 2 supersampled in linear light: FSR {f:.3}, ours {o:.3}, bilinear {b:.3}"
-    );
-    for (name, img) in &images {
-        let signed: f64 = img
-            .chunks(4)
-            .zip(display_truth.chunks(4))
-            .map(|(p, q)| {
-                (0..3)
-                    .map(|k| f64::from(p[k]) - f64::from(q[k]))
-                    .sum::<f64>()
-                    / 3.0
-            })
-            .sum::<f64>()
-            / (img.len() / 4) as f64;
-        println!(
-            "  {name}: from it averaged in display bytes {:.3}, mean signed difference {signed:+.3}",
-            mean(mad(img, &display_truth))
-        );
-    }
-    reading(
-        "level, still, FSR 1.5 from the linear supersampled render",
-        &format!("{f:.3}"),
-        &format!("below the bilinear blit's {b:.3}"),
-    );
-    assert!(o < b, "ours {o:.3} not below the blit's {b:.3}");
-}
-
 /// Per-pass readings of FSR 2 on a pan of the stripe wall: after 32 still frames, 64 frames
 /// translating at `PAN_PX` output pixels a frame, at `dist` and scale 1.5, sharpening 0;
 /// over the middle half, frame by frame: the output's gradient energy, the depth clip and the
@@ -1170,14 +1085,13 @@ fn pan_per_pass_readings(dist: f32, pan_px: f32) -> Vec<String> {
     };
     let (device, queue) = (&rig.device, &rig.queue);
     let light = LightParams::headlamp();
-    let mut f = frame_of(device, INTERNAL, OUTPUT, true);
+    let mut f = frame_of(device, INTERNAL, OUTPUT);
     f.set_upscaler_kind(device, fsr2_sharp(0.0));
     f.fsr2_mut().expect("FSR mode").set_debug(device, true);
     f.set_lighting(svet_render::Lighting {
         exposure: svet_render::Exposure::Manual(stripe_exposure(dist)),
         ..Default::default()
     });
-    f.set_sharpness(queue, 0.5);
     let mut camera = stripe_camera(dist, 0);
     let (_, right, _) = camera.basis();
     let step = right * (pan_px / px_per_voxel(dist));
@@ -1271,34 +1185,37 @@ fn fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step() {
     assert!(failures.is_empty(), "{failures:?}");
 }
 
+/// The engine's former upscaler's flicker on the still vein at scale 1.5 with the jitter off,
+/// the stillest image Plan 0030 compared against: the mean step 0.0001/255 and 0.0000 % of
+/// values over 4/255, its last reading on lavapipe (`be97152a`, Plan 0102 Phase 1, exclusive
+/// perf lock, load 4.07; printed to four places).
+const STILL_VEIN_MEAN: f64 = 0.0001;
+const STILL_VEIN_OVER_PCT: f64 = 0.0;
+
 /// FSR 2's jitter adds little flicker: on the dark cave's still rig at scale 1.5 (320 x 180
-/// output), FSR 2's frames' mean step is at most 0.40/255 above our upscaler's with the jitter
-/// off, and its share of values over 4/255 at most 1.15 percentage points above it (FSR 2
-/// always jitters; the jitter-off image is the stillest one Plan 0030 compared against).
+/// output), FSR 2's frames' mean step is at most 0.40/255 above `STILL_VEIN_MEAN` (0.4001/255)
+/// and its share of values over 4/255 at most 1.15 percentage points above
+/// `STILL_VEIN_OVER_PCT` (1.15 %).
 #[test]
 #[ignore = "soak"]
 fn fsr2_adds_little_flicker_on_a_still_vein() {
-    let own = UpscalerKind::Own(svet_render::Upscaler::default());
-    let Some((off_mean, off_over)) = still_vein_flicker(false, own) else {
+    let Some((on_mean, on_over)) = still_vein_flicker(fsr2_kind()) else {
         return;
     };
-    let (on_mean, on_over) = still_vein_flicker(true, fsr2_kind()).unwrap();
-    let (own_mean, own_over) = still_vein_flicker(true, own).unwrap();
     println!(
-        "still vein at scale 1.5: jitter off (ours) mean {off_mean:.4}/255, {:.4} % over 4/255; FSR 2 mean {on_mean:.4}/255, {:.4} %; ours jittered {own_mean:.4}/255, {:.4} %",
-        off_over * 100.0,
+        "still vein at scale 1.5: FSR 2 mean {on_mean:.4}/255, {:.4} % over 4/255; the bars {:.4}/255 and {:.4} %",
         on_over * 100.0,
-        own_over * 100.0
+        STILL_VEIN_MEAN + 0.40,
+        STILL_VEIN_OVER_PCT + 1.15
     );
     assert!(
-        on_mean <= off_mean + 0.40,
-        "mean {on_mean:.4} against {off_mean:.4}"
+        on_mean <= STILL_VEIN_MEAN + 0.40,
+        "mean {on_mean:.4} against {STILL_VEIN_MEAN:.4} + 0.40"
     );
     assert!(
-        on_over * 100.0 <= off_over * 100.0 + 1.15,
-        "{:.4} % against {:.4} %",
-        on_over * 100.0,
-        off_over * 100.0
+        on_over * 100.0 <= STILL_VEIN_OVER_PCT + 1.15,
+        "{:.4} % against {STILL_VEIN_OVER_PCT:.4} % + 1.15",
+        on_over * 100.0
     );
 }
 
@@ -1438,15 +1355,25 @@ fn wobble(
     (all, edge, input)
 }
 
-/// Shadow wobble no worse than ours at scale 1.5: on the level's spawn, lamp on, a still
-/// camera in the face look, over one jitter cycle (each pipeline's own), FSR 2's mean
-/// per-pixel luminance range at scale 1.5 is at most our upscaler's, over the whole image and
-/// over the pixels within 2 output pixels of a lamp-shadow boundary. Scale 1 against ours is a
-/// `reading:` line (the same bar, missed with no port defect found); Plan 0024's frame and the
-/// composite's input under FSR 2 (the jittered lighting before the upscaler) are readings.
+/// The engine's former upscaler's shadow wobble on the level's spawn (lamp on, still, face
+/// look, over its 16-frame jitter cycle), its last reading on lavapipe (`be97152a`, Plan 0102
+/// Phase 1, exclusive perf lock, load 4.07): at scale 1.5 the mean per-pixel luminance range
+/// over the whole image and at the lamp-shadow boundary; at scale 1 the same, for the readings.
+const OWN_WOBBLE_U15: f64 = 1.765;
+const OWN_BOUNDARY_U15: f64 = 8.200;
+const OWN_WOBBLE_U1: f64 = 0.847;
+const OWN_BOUNDARY_U1: f64 = 3.863;
+
+/// Shadow wobble under a fixed bar at scale 1.5: on the level's spawn, lamp on, a still camera
+/// in the face look, over FSR 2's jitter cycle, its mean per-pixel luminance range at scale 1.5
+/// is at most `OWN_WOBBLE_U15` over the whole image and at most `OWN_BOUNDARY_U15` over the
+/// pixels within 2 output pixels of a lamp-shadow boundary. Scale 1 against `OWN_WOBBLE_U1`
+/// and `OWN_BOUNDARY_U1` is a `reading:` line (the same bar, missed with no port defect
+/// found); Plan 0024's frame and the composite's input under FSR 2 (the jittered lighting
+/// before the upscaler) are readings.
 #[test]
 #[ignore = "soak"]
-fn fsr2_at_scale_1_5_moves_shadows_no_more_than_ours_on_a_still_camera() {
+fn fsr2_at_scale_1_5_moves_shadows_no_more_than_the_fixed_bar_on_a_still_camera() {
     let (world, camera) = level();
     let Some((device, queue, gpu)) = level_rig(&world, &camera) else {
         return;
@@ -1457,24 +1384,21 @@ fn fsr2_at_scale_1_5_moves_shadows_no_more_than_ours_on_a_still_camera() {
         boundary.iter().filter(|&&b| b).count(),
         boundary.len()
     );
-    let own = UpscalerKind::Own(svet_render::Upscaler::default());
     let (ra, re, _) = wobble(
         &device,
         &queue,
         &gpu,
         &camera,
         Pipe::Reference,
-        own,
+        UpscalerKind::Off,
         &boundary,
     );
     println!("reference: wobble {ra:.3}/255, at the boundary {re:.3}/255");
     let mut failures = Vec::new();
     for pipe in [Pipe::U1, Pipe::U15] {
-        let (oa, oe, _) = wobble(&device, &queue, &gpu, &camera, pipe, own, &boundary);
         let (fa, fe, fi) = wobble(&device, &queue, &gpu, &camera, pipe, fsr2_kind(), &boundary);
         println!(
-            "{pipe:?}: ours wobble {oa:.3}/255 over {} frames, at the boundary {oe:.3}/255; FSR 2 {fa:.3}/255 over {} frames, at the boundary {fe:.3}/255, its input there {:.3}/255",
-            pipe.phases(own),
+            "{pipe:?}: FSR 2 wobble {fa:.3}/255 over {} frames, at the boundary {fe:.3}/255, its input there {:.3}/255",
             pipe.phases(fsr2_kind()),
             fi.unwrap_or(f64::NAN)
         );
@@ -1482,21 +1406,21 @@ fn fsr2_at_scale_1_5_moves_shadows_no_more_than_ours_on_a_still_camera() {
             reading(
                 "level, still, FSR 1 wobble",
                 &format!("{fa:.3}/255"),
-                &format!("at most ours {oa:.3}/255"),
+                &format!("at most {OWN_WOBBLE_U1:.3}/255"),
             );
             reading(
                 "level, still, FSR 1 wobble at the lamp-shadow boundary",
                 &format!("{fe:.3}/255"),
-                &format!("at most ours {oe:.3}/255"),
+                &format!("at most {OWN_BOUNDARY_U1:.3}/255"),
             );
             continue;
         }
-        if !at_most(fa, oa) {
-            failures.push(format!("{pipe:?}: wobble {fa:.3} over ours {oa:.3}"));
+        if !at_most(fa, OWN_WOBBLE_U15) {
+            failures.push(format!("{pipe:?}: wobble {fa:.3} over {OWN_WOBBLE_U15:.3}"));
         }
-        if !at_most(fe, oe) {
+        if !at_most(fe, OWN_BOUNDARY_U15) {
             failures.push(format!(
-                "{pipe:?}: boundary wobble {fe:.3} over ours {oe:.3}"
+                "{pipe:?}: boundary wobble {fe:.3} over {OWN_BOUNDARY_U15:.3}"
             ));
         }
     }
@@ -1576,9 +1500,9 @@ fn fsr2_wobble_per_pass_readings() {
 
 // ---- The readings on both adapters ----
 
-/// `frame_bytes` in FSR mode at scale 1.5 and 1080p output is our upscaler's frame at those
-/// sizes, less its two output-size rgba16float histories (not allocated in FSR mode), plus
-/// FSR 2's inventory, resource by resource, and no more: at render size (1280 x 720) the
+/// `frame_bytes` in FSR mode at scale 1.5 and 1080p output is the frame with no upscaler at
+/// the render size (1280 x 720), less its rgba8unorm output at that size, plus the rgba8unorm
+/// output at 1080p and FSR 2's inventory, resource by resource, and no more: at render size (1280 x 720) the
 /// rgba32float colour input, the r32float depth, the rg32float motion, the rgba8unorm masks,
 /// the reconstructed-depth `u32` buffer, the r32float dilated depth, two rg32float dilated
 /// motions, the r32float lock luma, the rgba16float prepared colour and the rgba8unorm dilated
@@ -1587,28 +1511,28 @@ fn fsr2_wobble_per_pass_readings() {
 /// luminance pyramid's r32float mips 4 (40 x 22) and 5 (20 x 11); two rg32float 1 x 1
 /// auto-exposure texels, the rg32float exposure texel and the 1 x 1 r32float history weight.
 #[test]
-fn frame_bytes_under_fsr2_swap_the_histories_for_fsr2s_inventory() {
+fn frame_bytes_under_fsr2_add_fsr2s_inventory_and_the_output_target() {
     let Some((device, _queue)) = software_device(64 << 20) else {
         return;
     };
     let output = [1920u32, 1080];
     let internal = svet_render::RenderScale::OneHalf.internal(output);
     assert_eq!(internal, [1280, 720]);
-    let ours = Frame::with_sizes(&device, internal, output).frame_bytes();
+    let plain = Frame::new(&device, internal[0], internal[1]).frame_bytes();
     let mut f = Frame::with_sizes(&device, internal, output);
     f.set_upscaler_kind(&device, fsr2_kind());
     let fsr = f.frame_bytes();
     let px = |[w, h]: [u32; 2]| u64::from(w) * u64::from(h);
     let (r, d) = (px(internal), px(output));
-    let histories = 2 * 8 * d;
+    let targets = 4 * d - 4 * r;
     let render = (16 + 4 + 8 + 4 + 4 + 4 + 2 * 8 + 4 + 8 + 4) * r;
     let display = (2 * 8 + 2 * 8 + 2 * 4 + 4) * d;
     let tiny = 4 * px([40, 22]) + 4 * px([20, 11]) + 2 * 8 + 8 + 4;
     let inventory = render + display + tiny;
     println!(
-        "frame_bytes at 1080p output, scale 1.5: ours {ours} B, FSR 2 {fsr} B; histories {histories} B; FSR 2's inventory {inventory} B (render size {render}, output size {display}, the rest {tiny})"
+        "frame_bytes at 1080p output, scale 1.5: no upscaler at 1280 x 720 {plain} B, FSR 2 {fsr} B; the output target {targets} B more; FSR 2's inventory {inventory} B (render size {render}, output size {display}, the rest {tiny})"
     );
-    assert_eq!(fsr, ours - histories + inventory);
+    assert_eq!(fsr, plain + targets + inventory);
 }
 
 // ---- The list of analytic lights under FSR 2 (ADR-0044) ----
@@ -1629,7 +1553,8 @@ fn box_reactive(rig: &support::bake::Rig, frame: &Frame) -> Vec<u8> {
 /// `(floor hits within half the reach of now[0], of those marked, hits beyond every light's
 /// reach of `now` and `then`, of those marked, hits off the CPU's threshold test)`. The CPU's
 /// test marks a hit where the summed unshadowed term of `now` and `then` differ past the
-/// upscaler's `change_abs` and `change_rel` (`light_changed` in `fsr2/input.wgsl`); hits
+/// light-change thresholds `CHANGE_ABS` and `CHANGE_REL` (`light_changed` in
+/// `fsr2/input.wgsl`); hits
 /// within 10 % of either threshold are left out of the last count.
 fn mask_against(
     rig: &support::bake::Rig,
@@ -1637,7 +1562,6 @@ fn mask_against(
     now: &[Light],
     then: &[Light],
 ) -> [usize; 5] {
-    let up = svet_render::Upscaler::default();
     let floor = frame.lighting().light_floor;
     let r = box_reactive(rig, frame);
     let term = |ls: &[Light], p, n| {
@@ -1662,7 +1586,10 @@ fn mask_against(
         let n = octa16_normal(info[i][0], info[i][1]);
         let (a, b) = (term(now, p, n), term(then, p, n));
         let d = (a - b).abs();
-        let (abs, rel) = (up.change_abs, up.change_rel * a.max(b));
+        let (abs, rel) = (
+            svet_render::internals::CHANGE_ABS,
+            svet_render::internals::CHANGE_REL * a.max(b),
+        );
         let near = |x: f32, t: f32| (x - t).abs() < 0.1 * t;
         if near(d, abs) || near(d, rel) {
             continue;
@@ -1944,6 +1871,65 @@ fn fsr2_leaves_no_trail_behind_a_light_in_flight() {
 mod reading {
     use super::*;
 
+    /// A still camera on the level (Plan 0024's defaults, 32 frames, scale 1.5), against the
+    /// 2 x 2 supersampled render averaged in linear light: FSR 2's and the bilinear blit's
+    /// mean absolute difference per channel, and each image's distance from the render
+    /// averaged in display bytes, with its mean signed difference.
+    #[test]
+    #[ignore]
+    fn fsr2_from_the_linear_supersampled_render_on_a_still_camera() {
+        let (world, camera) = level();
+        let Some((device, queue, gpu)) = level_rig(&world, &camera) else {
+            return;
+        };
+        let light = LightParams::headlamp();
+        let big = OUTPUT.map(|n| 2 * n);
+        let mut fsr = frame_of(&device, INTERNAL, OUTPUT);
+        fsr.set_upscaler_kind(&device, fsr2_kind());
+        let mut low = frame_of(&device, INTERNAL, INTERNAL);
+        let mut ssaa = frame_of(&device, big, big);
+        for _ in 0..SETTLE {
+            for f in [&mut fsr, &mut low, &mut ssaa] {
+                f.step(&device, &queue, &gpu, &camera, &light);
+            }
+        }
+        let big_img = svet_render::debug::read_rgba8(&device, &queue, ssaa.target());
+        let truth = downsample_2x2_linear(&big_img);
+        let display_truth = downsample_2x2(&big_img, OUTPUT);
+        let mean = |m: [f64; 3]| m.iter().sum::<f64>() / 3.0;
+        let images = [
+            (
+                "FSR",
+                svet_render::debug::read_rgba8(&device, &queue, fsr.target()),
+            ),
+            (
+                "bilinear",
+                blit_texture(&device, &queue, low.target(), OUTPUT),
+            ),
+        ];
+        let [f, b] = [0, 1].map(|i| mean(mad(&images[i].1, &truth)));
+        println!(
+            "level, {SETTLE} frames, from 2 x 2 supersampled in linear light: FSR {f:.3}, bilinear {b:.3}"
+        );
+        for (name, img) in &images {
+            let signed: f64 = img
+                .chunks(4)
+                .zip(display_truth.chunks(4))
+                .map(|(p, q)| {
+                    (0..3)
+                        .map(|k| f64::from(p[k]) - f64::from(q[k]))
+                        .sum::<f64>()
+                        / 3.0
+                })
+                .sum::<f64>()
+                / (img.len() / 4) as f64;
+            println!(
+                "  {name}: from it averaged in display bytes {:.3}, mean signed difference {signed:+.3}",
+                mean(mad(img, &display_truth))
+            );
+        }
+    }
+
     /// A reading, no bar: the lamp, flicker and wobble rigs under FSR 2 for each reactive-mask
     /// tuning tried (the light-change value, the translucent weight). Run with `--ignored`.
     #[test]
@@ -1958,7 +1944,7 @@ mod reading {
             let kind = fsr2_reactive(light, translucent);
             let label = format!("light {light}, translucent {translucent}");
             lamp_readings(kind, &label, false);
-            let (m, o) = still_vein_flicker(true, kind).unwrap();
+            let (m, o) = still_vein_flicker(kind).unwrap();
             println!(
                 "[{label}] flicker at 1.5: {m:.4}/255, {:.4} % over 4/255",
                 o * 100.0
