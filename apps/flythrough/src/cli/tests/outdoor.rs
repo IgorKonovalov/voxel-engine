@@ -546,8 +546,8 @@ fn source_fade_parses_and_the_defaults_leave_it_off() {
 }
 
 /// Plan 0098 Phases 8, 14 and 17: `Lighting::dig_hold` is `on` by default and the row does
-/// not name it; `--dig-hold near`, `--dig-hold rays` and `--dig-hold off` set it and the
-/// lighting row and the banner name it; `--dig-hold land` is refused.
+/// not name it; `--dig-hold rays` and `--dig-hold off` set it and the lighting row and the
+/// banner name it; `--dig-hold land` and `--dig-hold near` are refused.
 #[test]
 fn dig_hold_is_on_rays_and_off_names_itself() {
     use vxe_render::DigHold;
@@ -555,15 +555,13 @@ fn dig_hold_is_on_rays_and_off_names_itself() {
     assert_eq!(base.start_lighting().dig_hold, DigHold::On);
     let banner = base.start_modes(0.0).banner(0.0).unwrap();
     assert!(!banner.contains("dig hold"), "{banner}");
-    assert!(
-        parse_args_from(argv(&["--source", "outdoor", "--dig-hold", "land"])).is_err(),
-        "land is refused"
-    );
-    for (v, d) in [
-        ("near", DigHold::Near),
-        ("rays", DigHold::Rays),
-        ("off", DigHold::Off),
-    ] {
+    for gone in ["land", "near"] {
+        assert!(
+            parse_args_from(argv(&["--source", "outdoor", "--dig-hold", gone])).is_err(),
+            "{gone} is refused"
+        );
+    }
+    for (v, d) in [("rays", DigHold::Rays), ("off", DigHold::Off)] {
         let r = parse_args_from(argv(&["--source", "outdoor", "--dig-hold", v])).unwrap();
         assert_eq!(r.start_lighting().dig_hold, d);
         let banner = r.start_modes(0.0).banner(0.0).unwrap().replace('\n', ", ");

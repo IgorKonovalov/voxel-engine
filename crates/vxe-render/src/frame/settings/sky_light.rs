@@ -96,11 +96,6 @@ pub enum DigHold {
     /// ring face holds its record's term, as under `Rays`. The default.
     #[default]
     On,
-    /// A face in a held box, and a stale ring face, shows one held sky visibility, the same
-    /// every frame and cast by no ray shown: the removed surface's times twelve near rays a
-    /// pixel (pair.wgsl's `dig_held_sky`). A ring face whose cell holds no record shows its
-    /// chunk's summary's, held. At the landing the value fades to the record's.
-    Near,
     /// A stale ring face holds its record's term; a face in a held box shows its sky rays'
     /// running mean, seeded by its stale record or the column's answer.
     Rays,
@@ -110,7 +105,6 @@ pub enum DigHold {
 
 named_enum!(DigHold {
     On => "on",
-    Near => "near",
     Rays => "rays",
     Off => "off",
 });
