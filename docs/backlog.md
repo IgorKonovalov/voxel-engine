@@ -295,14 +295,10 @@ Found at the close ([Plan 0083](plans/done/0083-anything-from-a-vox-palette-mate
 
 ### A pipeline cache owned by the engine, for the renderer's shaders
 
-Two entries merged 2026-11-24: the architecture review's (2026-11-12, section 1.4, under Tooling until now) and the start-up side's (2026-11-16, the NVIDIA GLCache overflow: over 1 GB, so nothing new was kept and every start recompiled). A `wgpu::PipelineCache` whose bytes the game keeps would make a warm start independent of the driver's own cache size and eviction. wgpu 30's cache is Vulkan-only and keyed by the driver, so it helps a second start on the same machine, not the first.
+Drafted 2026-11-24 as [Plan 0103](plans/0103-a-pipeline-cache-for-the-renderer-bytes-the-consumer-keeps.md) with [ADR-0087](adrs/0087-the-renderers-pipeline-cache-is-the-drivers-through-wgpu-as-bytes-the-consumer-keeps.md) (proposed); awaits the owner's go. A `ShaderCache` per device wraps the driver's cache through wgpu (Vulkan only in wgpu 30) in an engine envelope; the consumer passes bytes in and takes bytes out, the engine opens no file, and a bad cache is a cold start. The two entries merged here on 2026-11-24 (the architecture review's of 2026-11-12 and the start-up side's of 2026-11-16) and their readings are in the plan's context. What the plan does not take stays here:
 
-- **What exists (Plan 0094 Phase 2a):** a test hook. `vxe_render::debug::set_pipeline_cache` sets a process-wide cache every compute pipeline is created through, and the test support opens one per hardware adapter from a file under `target/vxe-pipeline-cache/`, keyed by wgpu's adapter key and a hash of the composed shader sources. The frame's own path sets none, and the three render pipelines (`hud.rs`, `loading.rs`, `present.rs`) pass `cache: None`.
-- **Readings:** cold creation of the eleven pipelines 1396 ms on the RTX, 458 ms on RADV, 299 ms on lavapipe (Plan 0046). `gpu_frame`'s `the_pipeline_cache_pays` (Plan 0094 Phase 2a, `docs/plans/logs/0094.md`): the RTX 29.4 s cold on an emptied driver cache, 0.24 s warm, 2.0 MB of data; lavapipe 5.85 s cold, 5.68 s warm, 84 B (no compiled code), so the cache pays on hardware adapters only. Plan 0094's windows: the RTX's light stage 16.5 to 18.1 s cold against 0.1 s warm; `--leaf-shadow absorb` 18.2 s on its first world frame cold (94a), and a 70 s cold start with the arms in the loading stage (94b; the owner: "start is slow, 70 sec").
-- **Routed to Plan 0096 (2026-11-20), which closed without it** (its "What this plan does NOT do"): an engine cache for hardware adapters in the app, and the default-off arms built in the background after the first world frame rather than inside the loading stage.
-- **Beside it, where the cache does not help:** the light pass's default-on compile cost on lavapipe (the fly-through's light-pass build stage 3.7 s against the base's 2.7, about 1.4 s a frame-building test of the gate); the next step there is a per-module compile reading (`pipeline_times` per `PASSES` row). Plan 0092's hot reload rebuilds a pass's pipeline from a file, a compile the cache has not seen, so the two are read together.
-
-Pick up with the next start-up time plan, or when a tester reports long starts.
+- **The default-off arms built in the background after the first world frame**, not inside the loading stage (routed to Plan 0096 on 2026-11-20, which closed without it; `absorb`'s cold start read 70 s at Plan 0094's window 94b). The plan's Phase 4 reads that start with a warm cache first (its owner question 4).
+- **The light pass's default-on compile cost on lavapipe**, where no cache helps (lavapipe keeps no compiled code): the fly-through's light-pass build stage 3.7 s against the base's 2.7, about 1.4 s a frame-building test of the gate. The next step is a per-module compile reading (`pipeline_times` per `PASSES` row) to name the module that grew.
 
 ### Remove `own`, the engine's own upscaler
 
@@ -781,7 +777,7 @@ Most of this entry's lines found an owner; what is left is the last three items.
 - **Set at Plan 0096's close (2026-11-23):** the bake's drain and the queue's step have lines, pinned in section 2 with their misses; the step's is Plan 0099's.
 - **Streaming CPU p50, 1.0 ms:** 3.4 to 4.2 ms on record. Plan 0064 (closed 2026-11-11) left it where it was; see "Slot words packed on the workers".
 - **The frame ledger** (`docs/nfr/02-frame-budget.md`, "Frame ledger (2026-10-31)"): its scenario tables still read `own`, the table light and the probes, with no row for the list lights or the bake's slice. Plan 0102 (the removal of `own`, a draft) only dates a note at the ledger's head; the rewrite is owed at the next close that re-reads the split.
-- **Time to first frame, 3 s** (section 7, a proposal): 7137 ms at the vein under the baked light when Plan 0060 read it; no plan owns the line. The pipeline-cache entry is its first lever.
+- **Time to first frame, 3 s** (section 7, a proposal): 7137 ms at the vein under the baked light when Plan 0060 read it; Plan 0103 (the pipeline cache, a draft) re-reads it in its Phase 4.
 
 Sharpened 2026-11-19: Plan 0091's budget scopes (a scope that carries its `nfr.md` line and counts its overruns into `run.json`) make each line executable; a line with no owner then at least has a counter.
 

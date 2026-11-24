@@ -100,6 +100,7 @@ the status.
 | [0083](0083-the-live-bake-queue-runs-on-a-bake-thread-the-render-thread-applies-its-write-lists-and-issues-its-submits.md) | The live bake queue runs on a bake thread; the render thread applies its write lists and issues its submits | proposed (Plan 0099); extends ADR-0017 |
 | [0084](0084-the-key-lights-visibility-on-a-world-face-is-fixed-per-face-the-columns-horizon-where-lit-a-cover-source-where-shadowed.md) | The key light's visibility on a world face is fixed per face: the column's horizon where lit, a cover source where shadowed | proposed (Plan 0100) |
 | [0086](0086-fsr-2-is-the-only-upscaler-the-upscaler-of-our-own-is-removed.md) | FSR 2 is the engine's only upscaler; the upscaler of our own is removed | proposed (Plan 0102); at acceptance supersedes ADR-0024 and ADR-0034's opt-in clause |
+| [0087](0087-the-renderers-pipeline-cache-is-the-drivers-through-wgpu-as-bytes-the-consumer-keeps.md) | The renderer's pipeline cache is the driver's, through wgpu, as bytes the consumer keeps | proposed (Plan 0103) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded
