@@ -22,12 +22,12 @@ Rules:
 From [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 10 (its section "Phase 10 after its reading"; readings in `docs/plans/logs/0096.md`, "Phase 10a"). A small plan of its own, to run ahead of Plan 0099's Phase 1 (ruled at Plan 0096's close, 2026-11-23, v0.71.0); not drafted.
 
 - **The reading:** ADR-0080 rule 1's zero record is applied only to a first bake with a full reach under final columns, so it answered 266, 241, 3 and 6 chunks on the four runs; of the jobs opened before the in-view landing it would have answered 11.4 % (RTX forest), 20.0 % (RTX hills), 12.0 % (RENOIR forest) and 10.1 % (RENOIR hills), and 5.1, 8.9, 5.1 and 6.5 % of the samples, mostly chunks with a partial reach. The win is bounded by those shares: about 1.4 s of the RENOIR forest's 27.3 and under 4 s of the RTX's 36.5 (arithmetic).
-- **First, the bake's key ray:** a key ray that reaches the job's radius without rock counts lit (`bake.wgsl`), so a floor under a closed cave taller than the radius would bake sunlit where the column clause says no sky. **Confirmed** by Plan 0096 Phase 10c (`7b24002f`, lavapipe: the job's record reads key 255 on 64 of 64 floor faces under a closed roof, the rule's 0). The fix is the column clause at the key ray's cap; it changes record bytes and what ADR-0079's bake writes, and ADR-0079 is accepted, so **it takes an ADR superseding that clause, drafted with this plan**. An image question: the owner's word on its place is owed (this plan's first phase, recommended, or a fix pass on Plan 0098). **2026-11-23:** [Plan 0100](plans/0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md) (draft) proposes to take the key ray's fix as its Phase 2 under ADR-0084, which supersedes that clause; this small plan then keeps the rule at every opening alone and starts from that commit. The owner's word is owed (Plan 0100's question 1).
+- **First, the bake's key ray:** a key ray that reaches the job's radius without rock counts lit (`bake.wgsl`), so a floor under a closed cave taller than the radius would bake sunlit where the column clause says no sky. **Confirmed** by Plan 0096 Phase 10c (`7b24002f`, lavapipe: the job's record reads key 255 on 64 of 64 floor faces under a closed roof, the rule's 0). The fix is the column clause at the key ray's cap; it changes record bytes and what ADR-0079's bake writes, and ADR-0079 is accepted, so **it takes an ADR superseding that clause, drafted with this plan**. An image question: the owner's word on its place is owed (this plan's first phase, recommended, or a fix pass on Plan 0098). **2026-11-23:** [Plan 0100](plans/0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md) (draft) proposes to take the key ray's fix as its Phase 2 under ADR-0084, which supersedes that clause; this small plan then keeps the rule at every opening alone and starts from that commit. **Answered 2026-11-24 (owner, Plan 0100's question 1):** the fix goes to Plan 0100 as its Phase 2.
 - **Then the rule at every opening:** Plan 0096's Phase 10b as written, cases (1), (2) and (3), with fact (i) restated (every change of a top is a mirror change the re-list reads; a full chunk arriving over its LOD can lower a top) and the audit on the real scenes (every ruled chunk also baked and compared, 0 differ). ADR-0080's rule 1 sentence on the column map's finality is superseded there.
 
 ### The sun's shadow near under the calm defaults: soft, true under cover, no screen history (2026-11-23)
 
-From [Plan 0098](plans/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md)'s "Amendment at Phase 4's findings" (architect, read in `temporal.wgsl` and `pair.wgsl`; the owner's word is owed on its questions 3 and 4). A design question for a plan of its own, not drafted; pick up when the owner asks for a penumbra, a sunbeam indoors, or a consumer renders with no bake.
+From [Plan 0098](plans/done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md)'s "Amendment at Phase 4's findings" (architect, read in `temporal.wgsl` and `pair.wgsl`; the owner's word is owed on its questions 3 and 4). A design question for a plan of its own, not drafted; pick up when the owner asks for a penumbra, a sunbeam indoors, or a consumer renders with no bake.
 
 - **What the defaults show:** with light history off the key light's visibility on a world face is the column map's horizon at every distance: a hard edge but for the horizon's ramp, 0 under any cover at any sun angle (a floor behind a window, a cave mouth, the ground under a canopy at a low sun). The owner accepted the forest so at W2; no rig or window has shown an interior with a low sun.
 - **Why it is not a switch:** a true ray near (`penumbra approach`) seams against the column where they disagree (W1: sun patches lost at a distance, the tunnel's blink), and a running mean is the history ADR-0082 removes. Candidates, none read: a baked key record near (ADR-0079's, fresh records only), a ray fixed per world position, a column test that walks the sun's slant under a cover.
@@ -36,7 +36,16 @@ From [Plan 0098](plans/0098-a-calm-light-by-default-no-screen-history-smooth-sou
 
 ### The plan after 0098: a sun fixed in the world (2026-11-23)
 
-**Drafted 2026-11-23 as [Plan 0100](plans/0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md) with ADR-0084 (proposed); awaits the owner's go. This entry leaves at its approval.** Outlined in [Plan 0098](plans/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md)'s "Amendment at W3" ("What closes this plan, and what the next plan takes"); not drafted, the owner's word on the split is owed. One plan, three subjects from window W3, in order: **(1) the noon terraces' key shadow under jitter**, a spike: the column map's horizon evaluated at the voxel face's centre (a value fixed per face in the world), then the map's answer filtered, read on Plan 0098 Phase 9's rig, picked in a window (Phase 9's route to the light history is void: the owner rejected that switch); **(2) near trunks and leaves wobble while a face holds its coarse record** and stop when the full record lands (owner, by watching): a reading, then a fix; hypotheses only so far (the coarse pass's 256 samples as a step between bricks, the chain's column answer where the coarse block holds none, the smoothed-normal mix's weights); **(3) the sun under cover**, the entry above.
+Taken by [Plan 0100](plans/0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md) and ADR-0084 (proposed), approved 2026-11-24 (owner); its lane starts once Plan 0098 (closed 2026-11-24, v0.72.0) has merged, beside Plan 0099's. Its three subjects: the noon terraces' key shadow under the jitter, the coarse tier's wobble on near trunks and leaves, the sun under cover.
+
+### A dig's landing: the slight colour change, and the dig delayed until its light is ready (owner, 2026-11-24)
+
+From [Plan 0098](plans/done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md)'s window 98e. Under `--dig-hold on` the owner accepts the dig on the RTX and on the Radeon at Portable ("so much better, not ideal but acceptable"; "change of color is there, but slight"; the Radeon "almost good", "same slight color change"). What is left is the held estimate's distance from the baked record, shown as one 4-frame fade when ring 1 lands one or two frames after the dig, and again smaller when the chunk's second job lands. Parked, not needed now (owner). Pick up if the owner asks for it or a consumer's digging reads as a flicker.
+
+- **The measured form of it:** the soak image test's sequence B against the queue's full landing (the form before the owner's pick of the groups at ring 1's landing) reads 3.01 % of the hole's pixels over 4 levels above and 4.72 % below their settled value in the two frames before the next dig; under 32 levels nothing (0.33 / 0.18 %). The histogram is in `docs/plans/logs/0098.md` ("Step 1: the histogram").
+- **Way 1, a held value nearer the landed one:** the estimate is a value a cell and direction from 12 short rays and the removed surface's record (`bake/held.rs`); more rays, the brick's own emitters, or the chunk's coarse answer as a second term. Cheap to try on the rig; the error table of Plan 0098's Phase 14 is the instrument.
+- **Way 2, the owner's delay (staged records):** the old picture is held until the dig's light is ready, a lag of 2 to 3 frames on the RTX and about 6 on the Radeon. Feasible only with staged mirror records (a dug chunk written to a fresh record and fresh slots, the table's flip delayed, the bake reading the staged chunks, the column map carrying the staged tops for the bake alone); a two-phase commit in `gpu_world` under ADR-0013 and ADR-0022, so a plan with its own ADR. The design and the five rejected lines are in Plan 0098's "Amendment at window 98d" and ADR-0082's Outcome.
+- **Beside it, two switches with no fade:** a new dig into a chunk whose dig fade still runs ends that fade with a step (`take_boxes`, `bake/queue/digs.rs`), and a stale ring record steps to its re-bake's in one frame (read under 4 levels in Plan 0098's Phase 8).
 
 ### The bake step off the main thread (2026-11-22)
 
@@ -193,6 +202,15 @@ would not; and two of `gpu_sun`'s sky tests the plan rewrote (Plan 0032's names,
 read over the line under the compile and go under it once the cache lands, or take the soak
 mark.
 
+Plan 0098's close (2026-11-24, `docs/nfr.md` section 7): 2153 s loaded, 2011 s at a load of 2.2
+on the same branch a day earlier, 74 tests over the line; Plan 0096's lane gate the day before
+read 1437 s. Not attributed: the CPU tests the plan does not touch read 1.25 to 1.4 times
+longer in the same logs, and the plan also grew `temporal.wgsl` and `pair.wgsl`, which every
+test that builds a frame compiles. Owed with the chore above: a quiet gate of main before
+Plan 0098's merge and of the merged tip, back to back, per-binary sums compared
+(`scripts/test-times.mjs`); if the shaders are the cause, the engine's pipeline cache entry
+below is the lever.
+
 ### The live queue's order and cancellation, after Plan 0059
 
 Taken 2026-11-10 by [Plan 0060](plans/done/0060-the-live-queue-by-the-view-and-withdrawing-passed-work.md) and [ADR-0048](adrs/0048-the-live-queue-orders-by-the-view-and-withdraws-the-work-a-flight-has-passed.md); the hall's aliasing goes to the antialiasing plan below.
@@ -305,6 +323,46 @@ Routed by the architect's amendment at the close review of [Plan 0096](plans/don
 - **The fixed output as a row of the engine's profile** (the close's ruling 2): `RenderSettings` carries a row true for Portable, the fly-through's `fixed_output` reads it, a CPU test reads the row per profile. With the aspect item above; the owner called the stretch itself acceptable at W2, so neither is urgent.
 - **The per-phase GPU run picks its binaries from the changed files** (the harness's; awaits the owner's go). Five tests in `gpu_queue` and `gpu_queue_reach` stayed red from Plan 0096's Phase 4 to its tip's gate, because the phases that changed `bake/queue/` did not name those binaries. `test-changed.mjs` adds, to the named binaries, every `gpu_*` binary whose test file or support module names a changed module's public items (or a path map kept beside the script), and the lane rules say a phase's named binaries are a floor.
 - **The RENOIR forest's one stalled drain** (37.6 s in view against 27.1 and 27.0; the drawn share fell to 0.180 once): no cause named. An open reading for Plan 0099, where the submit moves to the bake thread.
+
+### Plan 0098's leftovers (close review, 2026-11-24)
+
+Found at the close ([Plan 0098](plans/done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md), v0.72.0); none blocked it.
+- **The dig rig's queue never drains.** With the window's queue flags the rig holds 102 to 107
+  chunks in view waiting after 30 000 frames on the RTX and 126 to 129 after 3 000 on the
+  RENOIR, where the fly-through drains in 44 to 50 s: the rig's frames are submitted with no
+  wait on the device, so its job loop reads back one submit in about 190 frames on the RTX
+  (one in 15 on the RENOIR). "Drained" and "waiting" are the same state on the RENOIR's runs,
+  and the rehearsal's first dig falls in a chunk with no light. What it takes: the rig's
+  stepper polls the device a frame as the fly-through's loop does, then Plan 0098's landing
+  table read again on a truly drained queue. With Plan 0099's Phase 1, which reads the same
+  rig for its base.
+- **Sequence B's "settled after" claim is thin** (`dig_line::hold::claims`): with the groups
+  at ring 1's landing (the owner's pick) a dig of B has at most two frames after its fade and
+  their reference is the later of the two. Sequence A and the "before the landing" bars carry
+  the test. A form that bites: B's digs 16 frames apart, or the reference at the chunk's
+  second landing.
+- **No gate test renders a held record.** `gpu_lights::a_fresh_hole_holds_one_value_between_black_and_white`
+  is a soak mark (11 to 13 s on lavapipe); the gate reads the held record's words
+  (`bake::held::tests`, `gpu_sun::a_dig_rebakes_the_key_words_with_the_sky_ring`) and the
+  queue's order, not the light pass's read of them. A smaller rig under 10 s would close it.
+- **`every_profile_holds_the_calm_picks` does not read `dig_hold`** (Phase 17's profile row:
+  `on` in every profile); one more field in the test's tuple.
+- **`open_digs` knows a dig's fade by `frames == DIG_FADE`** (`bake/queue/digs.rs`): a value
+  compare that breaks without a failing test if `FADE` and `DIG_FADE` ever meet or a fade is
+  paced by elapsed frames (Plan 0099's Phase 2). A flag on `Fade` says it.
+- **`--dig-hold rays` stays as the image test's bite check.** The W3 amendment's question 3
+  recommended removing it at the close; the amendment at window 98d kept it for the test. The
+  owner rejected its picture at W3 and 98e, so it is a setting nobody would pick: remove it
+  once the image test has a bite check that needs no arm (the owner's call).
+- **Followups the plan carried:** under `key far baked` (not a pick) the key record still
+  steps at a landing with no history; `source fade` mixes in linear light from black, so its
+  first frames are large on the display (the readings log, "What the fade does"); the sky ray
+  cast where no record is fresh is never shown with the history off (the entry "The sun's
+  shadow near under the calm defaults" holds it; which of the dig's paths still need the cast
+  under `--dig-hold on` is to be read first: the ring's hold tests that the ray was cast).
+- **Files near their caps:** `temporal.wgsl` 1169 of 1200 lines, `gpu_outdoor/flicker.rs`
+  1966 of 2000, `bake/queue/mod.rs` 1060 and `bake/job_loop.rs` 1047 of 1200. Plans 0099 and
+  0100 both add to them; new code goes to files of its own.
 
 ### Plan 0097's leftovers (close review, 2026-11-23)
 
@@ -540,7 +598,7 @@ takes: a short look spike with two stills per arm at W2's poses and an owner win
 to the far-normal band is ADR-0063's table. Pick up after Plans 0095 and 0097; not Plan
 0097's.
 
-Taken 2026-11-21 by [Plan 0098](plans/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md) (option (a) through the widened band, judged at its window W1).
+Taken 2026-11-21 by [Plan 0098](plans/done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md) (option (a) through the widened band, judged at its window W1).
 
 ### Plan 0090 owes a stamp scene and a reading of the key mean's fade-in against `F`
 
@@ -1436,7 +1494,7 @@ with the ray instead of switched, read on the wobble rig (`gpu_wobble`'s soak re
 adapters; an owner window, since the far's shadows change where the ray gives way. **Pick up**
 with the hybrid far field above or Plan 0096's far tiers, whichever runs first.
 
-Taken 2026-11-21 by [Plan 0098](plans/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md) (`key far mix step` with the band widened, judged at its window W1).
+Taken 2026-11-21 by [Plan 0098](plans/done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md) (`key far mix step` with the band widened, judged at its window W1).
 
 ### The F9 steps view drops the window to about 14 fps
 

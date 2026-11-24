@@ -1183,3 +1183,26 @@ second run's light in brackets:
 On the RADV RENOIR the light pass falls 7.0, 3.8 and 2.9 times and is under the 4.0 ms lighting
 line in all three scenes; the RTX's GPU frame swings by its clock state run to run (5.5 to 8.0 ms
 before), so its frame column is not a gain.
+
+**The dig hold's cost (Plan 0098 Phase 17, 2026-11-24, ADR-0082's Outcome; `--dig-hold on`, the
+held record in the store).** The dig rig's timers (`dig_line::reading::dig_timeline`, a release
+`gpu_outdoor` test binary at `39354892`, exclusive perf lock, each run started at a 1-minute load
+under 2.1, mains power; sequences A, three digs down one ray, and B, six digs eight frames
+apart): the RTX 3080 Laptop at the owner's pose of window 98d (the forest at `--sun 10,180`,
+960 x 540 from 640 x 360) and the RADV RENOIR at Portable (the forest at 15:00, 1280 x 720 from
+853 x 480). The largest value over each dig's frame and the three after, against the frames
+before the first dig; temporal pass / GPU frame in ms:
+
+| adapter, sequence | rest | `on` | `off` |
+|---|---|---|---|
+| RTX, A | 0.26 / 1.26 | 0.27 / 2.8 | 0.26 / 2.0 |
+| RTX, B | 0.27 / 1.30 | 0.27 / 1.6 | 0.26 / 1.5 |
+| RENOIR Portable, A | 2.89 / 14.20 | 2.53 / 17.5 | 1.77 / 16.8 |
+| RENOIR Portable, B | 2.89 / 13.98 | 2.69 / 17.8 | 2.08 / 17.2 |
+
+Met: the temporal pass while a dig is held is at most its rest value plus 0.1 ms on the RTX and
+plus 0.7 ms on the RENOIR, and the RENOIR's GPU frame at most `off`'s plus 1.0 ms (the bars of
+Plan 0098's "Amendment at window 98d"). The arm it replaced (12 near rays a pixel while a dig is
+held, removed at `d6c58a04`) read 4.45 to 9.71 ms of temporal pass on the RENOIR and put its
+Portable frame over the 33.3 ms line at window 98d (temporal 19.63 ms, GPU 36.5 ms). The bake
+step's main-thread time on a dig's frame is in `04-edits.md` ("An edit's light").

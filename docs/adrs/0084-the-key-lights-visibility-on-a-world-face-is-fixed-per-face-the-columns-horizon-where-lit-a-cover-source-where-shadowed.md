@@ -5,7 +5,7 @@
 > Outcome at acceptance names what was picked)
 > **Date:** 2026-11-23
 > **Related plan(s):** [Plan 0100](../plans/0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md)
-> (builds it); [Plan 0098](../plans/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md)
+> (builds it); [Plan 0098](../plans/done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md)
 > (whose window W3 gave the requirement); [Plan 0096](../plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md)
 > (whose Phase 10c read the bake's key ray lit at its cap under a roof)
 > **Supersedes, at acceptance, two clauses of**

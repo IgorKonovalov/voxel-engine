@@ -1,6 +1,13 @@
 # 0098: A calm light by default: no screen history, smooth sources to the mid range, and the FSR 2 turn
 
-> **Status:** in-progress. **Amended 2026-11-22 (architect, owner confirm owed)**, at window W1's
+> **Status:** done. **Closed 2026-11-24** (the architect's close review in a fresh session, v0.72.0):
+> clean, no blocker. The calm picks are the defaults on every profile and accepted at windows W2
+> and W3; light history on is rejected; the dig under `--dig-hold on` is accepted at window 98e on
+> both adapters (a slight colour change at a landing, in the backlog with the parked staged
+> records); the dig frame's step time on the RTX after the fix pass is ruled a reading (the
+> section "The close review" under the Implementation log). ADR-0082 accepted with an Outcome. The
+> terraces, the coarse tier's wobble and the sun under cover are Plan 0100's; the bake step is
+> Plan 0099's. The amendments, in order: **Amended 2026-11-22 (architect, owner confirm owed)**, at window W1's
 > verdicts (section "Amendment at W1"): the picks are light history off, `key far column`,
 > `key far mix step`, the band `4..8` and `penumbra disc`; Phase 6 (a bake landing fades in the
 > store) and Phase 7 (the one further window, W2) are new; Phase 5 becomes a spike of
@@ -38,19 +45,19 @@
 > amended, Phase 15 is run and not accepted. **Order from here: 16, 17, 18, the gate, the
 > close.**
 > **Created:** 2026-11-21
-> **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
-> **Related ADRs:** [ADR-0082](../adrs/0082-the-light-pass-keeps-no-screen-history-by-default-and-reads-smooth-sources-to-the-mid-range.md)
+> **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../../roadmap.md)
+> **Related ADRs:** [ADR-0082](../../adrs/0082-the-light-pass-keeps-no-screen-history-by-default-and-reads-smooth-sources-to-the-mid-range.md)
 > (proposed with this plan),
-> [ADR-0079](../adrs/0079-the-key-lights-visibility-is-read-with-no-screen-history-the-record-or-the-column-maps-horizon-at-the-far-a-deterministic-penumbra-near.md)
+> [ADR-0079](../../adrs/0079-the-key-lights-visibility-is-read-with-no-screen-history-the-record-or-the-column-maps-horizon-at-the-far-a-deterministic-penumbra-near.md)
 > (the key light's far estimate and the approach penumbra this builds on),
-> [ADR-0042](../adrs/0042-the-far-shading-normal-blends-to-the-27-count-gradient-by-the-voxels-size-on-screen.md)
+> [ADR-0042](../../adrs/0042-the-far-shading-normal-blends-to-the-27-count-gradient-by-the-voxels-size-on-screen.md)
 > (the far normal's band, which this widens),
-> [ADR-0076](../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
+> [ADR-0076](../../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
 > (rule 6),
-> [ADR-0055](../adrs/0055-render-settings-are-one-struct-with-an-apply-class-per-field-and-profiles-are-named-values.md)
+> [ADR-0055](../../adrs/0055-render-settings-are-one-struct-with-an-apply-class-per-field-and-profiles-are-named-values.md)
 > (the settings row this adds)
 > **Source:** the owner's diagnosis window of 2026-11-21 (his words in
-> [`logs/0098.md`](logs/0098.md)) and the rule agreed that evening: no new wobble plan until
+> [`logs/0098.md`](../logs/0098.md)) and the rule agreed that evening: no new wobble plan until
 > one switch combination in the window reads calm, and the plan ships that combination.
 
 ## TL;DR
@@ -106,7 +113,7 @@ render scale.
 
 ## Amendment at W1 (2026-11-22; architect, owner confirm owed where marked)
 
-W1 ran in two sittings on 2026-11-22; the owner's words are in [`logs/0098.md`](logs/0098.md)
+W1 ran in two sittings on 2026-11-22; the owner's words are in [`logs/0098.md`](../logs/0098.md)
 ("Phase 3: W1's verdicts"), with the leak window's and the Plan 0097 lane's finding beside
 them. What they settle, and what they do not:
 
@@ -150,7 +157,7 @@ wobble rig's forest, its leaf fill and its fly lengths stay as they are.
 ## Amendment at the Phase 6 readings (2026-11-23; architect, owner confirm owed)
 
 Phase 6 built what it was written to build and the pop did not move
-([`logs/0098.md`](logs/0098.md), "Phase 6 readings"): `landing fade` changes no stop pair by
+([`logs/0098.md`](../logs/0098.md), "Phase 6 readings"): `landing fade` changes no stop pair by
 more than 0.07 points (`calm,pin` 15.57 % off, 15.59 % on; fly 20: 36.72 % both), every pop
 falls in a frame where one block lands over the fallback chain, and every such landing reads
 0 changed cells. The W1 amendment guessed the pop was a store word (the key words); that guess
@@ -206,7 +213,7 @@ reading agrees, the cast is cost with no image; skipping it is a followup, not t
 
 W2 ran on 2026-11-23 (`live/session98b.sh`, `live/bin98b` at `925859c9`; its runs 6 and 7 on
 Plan 0096's binary, which holds none of this plan's picks). The owner's words are in
-[`logs/0098.md`](logs/0098.md) ("Phase 7: W2's verdicts"). The verdicts are his; the causes
+[`logs/0098.md`](../logs/0098.md) ("Phase 7: W2's verdicts"). The verdicts are his; the causes
 named below are suspects until Phases 8 and 9 read them.
 
 | question | W2's answer | what follows |
@@ -283,7 +290,7 @@ is read before it is parked.
 
 ## Amendment at Phase 4's findings (2026-11-23; architect's rulings, owner confirm owed)
 
-Phases 8, 9 and 4 are in ([`logs/0098.md`](logs/0098.md), their sections). The dev agents
+Phases 8, 9 and 4 are in ([`logs/0098.md`](../logs/0098.md), their sections). The dev agents
 reported six findings. **Every ruling here is the architect's; the owner has not spoken on
 any of them.** The four that loosen or move a bar, or touch what the owner accepted by eye,
 are listed again under "Questions for the owner", each with a recommended option; the lane
@@ -465,7 +472,7 @@ for a broken sun.
 
 W3 ran on the evening of 2026-11-23 (`live/session98c.sh`, `live/bin98d` at `248d64db`: the
 calm picks as defaults, `dig hold` on; stills under `live/window98c/`). The owner's words are
-in [`logs/0098.md`](logs/0098.md) ("Phase 10: W3's verdicts"). **The verdicts are his and
+in [`logs/0098.md`](../logs/0098.md) ("Phase 10: W3's verdicts"). **The verdicts are his and
 binding. The mechanisms named below are the architect's reading of the code and are suspects
 until a reading names them** (Phase 14's step 1 for the dig, the follow-on plan's for the
 rest). The routing in "What closes this plan" is the architect's recommendation; the lane
@@ -685,7 +692,7 @@ next free plan number at drafting; one plan, three subjects, in this order):
 
 Phase 15 ran on 2026-11-24 (`live/session98d.sh`, `live/bin98f` at `d967db57`: Phase 14's
 held value from 12 near rays as the default; stills and the orchestrator's record under
-`live/window98d/`, the owner's words in [`logs/0098.md`](logs/0098.md), "Phase 15: window
+`live/window98d/`, the owner's words in [`logs/0098.md`](../logs/0098.md), "Phase 15: window
 98d's verdicts"). **The verdicts and the decision to keep this plan open for the dig are the
 owner's. The mechanisms below are the architect's reading of the code at `f7c71266` and are
 suspects until Phase 16's step 1 reads them.**
@@ -1996,7 +2003,7 @@ pub struct Lighting {
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
 > above are the contract. This section records what happened.** Observations, never
-> conclusions. Readings, attempts and resume notes go to [`logs/0098.md`](logs/0098.md).
+> conclusions. Readings, attempts and resume notes go to [`logs/0098.md`](../logs/0098.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
@@ -2010,7 +2017,7 @@ pub struct Lighting {
 | 7: The owner's window W2 | human | run 2026-11-23 (`live/session98b.sh`, `live/bin98b` at `925859c9`; runs 6 and 7 on Plan 0096's binary); verdicts in the log, amendment in the plan | the amendment's commit |
 | 8: A dig under the calm picks neither darkens nor flashes | dev | done (f4f52360); step 1: the pick is light history off for the ring's dip and the hole's flash (the sky term: the stale ring seeds its pair under the cap, the hole holds its stale seed until the landing); the fix is (a) for the ring and (b) for the hole under `Lighting::dig_hold` (default on); `--dig-hold`; files past the list: `frame/state.rs`, `edits.wgsl`, `layout_tests.rs`, `cli/mod.rs`; the test reads the forest (the hills' ring does not bite) and is soak (62 s); readings in the log | f4f52360 |
 | 9: The sunlit terraces at noon, a reading | dev | done; the reading `terraces::reading::terraces` (`gpu_wobble/terraces.rs`, wobble tokens `hist` and `baked` added); at a still camera the step shadows move 2.4 to 3.9 % a pair under `calm`, 0 % native; the light history closes over half (57 to 68 %), `light history far` the far bin alone; route (i), nothing built; `light history far` read beside the phase's arms; readings in the log | 2faa6e83 |
-| 10: The owner's look, window W3 | human | not started | |
+| 10: The owner's look, window W3 | human | run 2026-11-23 evening (`live/session98c.sh`, `live/bin98d` at `248d64db`); the defaults stand on both adapters, light history on rejected, the dig not accepted (Phases 14 to 18); verdicts in the log, amendment in the plan (row written by the architect at the close: it read "not started") | the amendment's commit |
 | 11: The soak bars read what holds still | dev | done; the at-rest arm read three times a fly (far +30 9.98 % thrice at fly 180, 11.39 / 11.36 / 11.36 % at fly 20; every stop +0 near under 2.05 %), bars 11.98 and 13.39 %; the soak test passed on the RTX (932 s); the dig test passed with `before` on approach (ring 1.63 % for the before, was 1.36); readings in the log | c46fb41a |
 | 12: The HUD's `light:` row names the queue's own tiers | dev | done; `bricks 8/NEAR,MID,FAR` and the coarse clause's near tier from `Args::bake.tiers`; the test in `run/menu_tests.rs` (`tests.rs` is near the 1200-line cap); window build in `live/bin98e` (session 98c ran on `bin98d`) | 4c61a3e8 |
 | 13: The unshown key ray not cast; the default's near key shadow has a test | dev | done; the skip kept (no golden or `gpu_sun` test moved, 61 of 61 on the named binaries); the clause reads `Params::history` bits 0 and 1 and also requires no sky jump (`LIGHTING_SKY_CHANGED`, not named in the phase); the test asserts the shown term equal over frames and the slot within 1/512 (its raw-slot form failed after the skip on the slot's tag step); light pass on the RENOIR 11.3 / 6.2 / 6.0 to 1.6 / 1.6 / 2.1 ms; readings in the log | 89222195 |
@@ -2034,13 +2041,62 @@ pub struct Lighting {
 
 ### Close triggers
 
-_(Facts for the architect.)_
+_(Facts for the architect. The dev left the block empty; filled by the architect at the close
+from the readings log, each line checked there.)_
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** the five calm picks as the defaults of `Lighting` and of every profile
+  (light history off, `key far column`, `key far mix step`, far normal `4..8`, `penumbra
+  disc`); the arms not picked as settings, off (`landing fade`, `source fade`, `far light
+  wide`, `light history far`, light history on, the approach penumbra, `key jitter off`, `key
+  far baked`); the unshown key ray not cast; the dig: ring 1 a job of its own that jumps the
+  queue, stale jobs withdrawn, the held record in the store (`bake/held.rs`), one `DIG_FADE`
+  fade a landing, `--dig-hold on|rays|off`; the HUD's `light:` row names the queue's tiers.
+- **Public API changed:** `Lighting::{light_history, landing_fade, source_fade,
+  far_light_wide, light_history_far, dig_hold}`, `DigHold`, `DEFAULT_FAR_NORMAL` `[4, 8]`,
+  the store's head word `LANDED_AT`, `internals::DIG_FADE`, `QueueStats::{dig_withdrawn,
+  dig_withdrawn_samples}`, the queue's dig trace; `LightHooks::no_history` is gone.
+- **Budget readings:** `docs/nfr/02-frame-budget.md` (the defaults' pass times, the unshown
+  key ray, the dig hold's cost) and `docs/nfr/04-edits.md` (ring 1's landing, the dig frame's
+  step), each with its machine and commit.
+- **Gate at the tip:** `c5af509a` (main `f08ccff1` merged): 1361 run, 1361 passed, 242
+  skipped, 2153 s, loaded (`live/merge-gate.log`); clippy, fmt and the doc scripts clean.
+- **Outstanding `human` phases:** none (Phases 3, 7, 10, 15 and 18 are run).
+
+### The close review (architect, 2026-11-24, a fresh session)
+
+Clean: no blocker, no major. The gate was not run again: the lane's run on the merged tree
+(`live/merge-gate.log`, ended 16 s before the tip's docs commit, which adds 16 lines to the
+readings log and nothing else) was checked line by line (1361 `PASS`, no other status; the
+plan's gate tests in it by name). The dig phases' tests were opened and read.
+
+- **The ruling on the dig frame's step time (the amendment after window 98e, 2).** A reading,
+  accepted; no stop, no fix pass. Phase 17's bar (its own tree plus 0.5 ms) is not shown met
+  and not shown broken: four alternated runs a tree spread 9.5 to 44 ms on one tree against a
+  difference of 2.1 ms in the means, and one fix run reads below every Phase 17 run. The fix
+  pass's four commits add a filter in `open_digs` (the `digs` stage reads under 0.5 ms on both
+  trees, once 0.64), a close of faceless ring-1 jobs and one set insert at a placement; the
+  large laps are the listing, the collect and the submit, whose code the fix pass did not
+  touch. The four commits repair a queue that never empties, a starved pool, a fade that left
+  its linear ramp and a chunk lost to the candidates: none is tradeable for a millisecond.
+  The bar is retired with this plan. **Plan 0099 inherits the figure as its base** (the RTX's
+  D+0 step: 25.9 ms mean over sequence A, 14.5 over B; the RENOIR at Portable about 7 and
+  5.5) and reads it again in its Phase 1 with at least eight alternated runs a tree before
+  it holds any bar against it.
+- **Minor, fixed at the close (docs):** `docs/flythrough.md`'s `--dig-hold` row said the
+  openness reads "up to two" of a cell's faces; the code reads up to 8 (`HELD_FACES`).
+- **Minor, to the backlog ("Plan 0098's leftovers"):** sequence B's "settled after" claim
+  reads at most two frames a dig against the later of them under the groups at ring 1's
+  landing (the owner's pick; A and the "before the landing" bars carry the claim);
+  `every_profile_holds_the_calm_picks` does not read `dig_hold`; the gate holds no test in
+  which the light pass reads a held record (the mechanism test is soak at 11 to 13 s);
+  `open_digs` knows a dig's fade by `frames == DIG_FADE`; a re-dig ends a running dig fade
+  with a step, and a stale ring record steps to its re-bake's (under 4 levels, Phase 8).
+- **The gate's wall, 2153 s against the 19 min line:** loaded, and the CPU tests this plan
+  did not touch read 1.25 to 1.4 times their time in Plan 0096's lane gate log of the day before on the same box
+  (`determinism::castle_vector` 16.7 to 21.6 s), so the reading does not attribute a growth
+  to this plan. A reading in `docs/nfr.md` section 7; the owner's standing acceptance.
+- **Files near their caps, for Plans 0099 and 0100:** `temporal.wgsl` 1169 of 1200,
+  `bake/queue/mod.rs` 1060, `bake/job_loop.rs` 1047, `gpu_outdoor/flicker.rs` 1966 of 2000.
 
 ## Followups
 

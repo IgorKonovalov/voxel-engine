@@ -4,11 +4,12 @@ The one-minute "what's in flight" view. Read this first each session instead of 
 state from `git log`. Completed plans move to `done/`.
 
 **Next free number: 0101** (0096 the performance plan, closed; 0097 the exposure's anchor by
-the sky around the camera; 0098 the calm light by default, drafted 2026-11-21; 0099 the bake
+the sky around the camera; 0098 the calm light by default, closed 2026-11-24; 0099 the bake
 step off the main thread, drafted 2026-11-22; 0100 a sun fixed in the world, drafted 2026-11-23; ADRs are a separate sequence, see `../adrs/README.md` for its next
 free number). Plan 0095, the motion wobble (a calm key light in motion), closed 2026-11-21,
 v0.69.0. Plan 0097, the exposure's anchor by the sky around the camera, closed 2026-11-23,
-v0.70.0. Plan 0096, the bake queue's drain, closed 2026-11-23, v0.71.0.
+v0.70.0. Plan 0096, the bake queue's drain, closed 2026-11-23, v0.71.0. Plan 0098, the calm light
+by default, closed 2026-11-24, v0.72.0.
 
 ## Active roster
 
@@ -33,9 +34,8 @@ v0.70.0. Plan 0096, the bake queue's drain, closed 2026-11-23, v0.71.0.
 | [0091](0091-the-frame-profiler-scopes-across-threads-a-gpu-lane-a-dump-for-agents-and-a-hud-ticker.md) | The frame profiler: scopes across the threads, a GPU lane, a dump the agent ranks, budget scopes, a HUD ticker | approved | M7, ADR-0077. After 0087 and 0089, before 0090 (owner). |
 | [0092](0092-wgsl-hot-reload-in-the-fly-through-an-mtime-poll-pipelines-rebuilt-and-the-old-ones-kept-on-an-error.md) | WGSL hot reload in the fly-through: an mtime poll, pipelines rebuilt from disk, the old kept on an error | approved | M7, no ADR. After 0091 in its lane, before 0090 (owner). |
 | [0093](0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) | The README rewrite with reproducible screenshots: a shot manifest, a shoot script, an image gate, the owner's picks | approved | M7 docs, no ADR. After 0087 merges, beside 0089, before 0091. |
-| [0098](0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md) | A calm light by default: no screen history, smooth sources to the mid range, the FSR 2 turn read first | in-progress, amended 11-24 (98d) | M10, ADR-0082 (proposed). Next: 16 (the dig lands), 17, 18. |
-| [0099](0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) | The bake step off the main thread: a bake thread, write lists, the in-view drain | approved 11-22 | ADR-0083 (proposed). After 0098, 0087. |
-| [0100](0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md) | A sun fixed in the world: the key shadow a face at a time, the coarse tier held still, sun under cover | approved 11-24 | M10, ADR-0084 (proposed). After 0098, beside 0099. |
+| [0099](0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) | The bake step off the main thread: a bake thread, write lists, the in-view drain | approved 11-22 | ADR-0083 (proposed). After 0087; 0098 closed. Re-read owed (the dig). |
+| [0100](0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md) | A sun fixed in the world: the key shadow a face at a time, the coarse tier held still, sun under cover | approved 11-24 | M10, ADR-0084 (proposed). Lane starts at 0098's merge, beside 0099. |
 <!-- roster:end -->
 
 ## Sequence
@@ -221,23 +221,36 @@ lift of 4 EV over the daylight anchor (window 97b: dark places stay dark), and h
 protection caps the eye under the view's bright tail. Three owner windows (97, 97b, 97c). The
 near jumps after a stop read with the exposure constant went to Plan 0098.
 
+**Plan 0098** (a calm light by default, ADR-0082 accepted with an Outcome) **closed 2026-11-24,
+v0.72.0**: the light passes keep no screen history on any profile, the sun's shadow on a world
+face is the column map's horizon at every distance (far normal `4..8`), and the arms not picked
+stay settings, off; five owner windows (W1, W2, W3, 98d, 98e: the defaults accepted on both
+adapters, light history on rejected). The dig was broken by the defaults and fixed inside the
+plan: a dig's ring 1 is a job of its own that jumps the queue (1 or 2 frames to its landing on
+both adapters), the hole holds a record in the store until then, one 4-frame fade a landing
+(window 98e: "so much better, not ideal but acceptable"). Left open: the slight colour change at
+a dig's landing and the staged-records delay (the backlog), the noon terraces, the coarse tier's
+wobble and the sun under cover (Plan 0100), the bake step on the main thread, a dig's frame at
+14 to 26 ms of step on the RTX (Plan 0099), the distant trees (the backlog, Plan 0033).
+
 **Plan 0099** (the bake step off the main thread, ADR-0083 proposed, extending ADR-0017: the
 live queue's books and per-job CPU work on one bake thread, the render thread applying write
 lists under a byte cap and issuing the submits, the same code in lockstep as a setting; from
 Plan 0096's Phase 8 window, the RTX at about 30 fps while the forest's queue drains, the step
 28.0 / 51.1 ms p50/p99; it takes 0096's step line, the in-view drain's line and the opening's
-candidate cap; six phases, a split reading first, one owner window): **draft, 2026-11-22,
-awaits the owner's go and five answers**; its lane runs after Plans 0096, 0098 and 0087
-(owner, 2026-11-22).
+candidate cap; six phases, a split reading first, one owner window): **approved 2026-11-22**;
+its lane runs after Plan 0087 (Plans 0096 and 0098 are closed; owner, 2026-11-22). **A re-read
+against Plan 0098's dig is owed before its lane starts** (the plan's section "Inherited from
+Plan 0098", added at that close).
 
 **Plan 0100** (a sun fixed in the world, ADR-0084 proposed, superseding two clauses of ADR-0079
 at acceptance; from Plan 0098's window W3, the three faults the calm defaults leave: the noon
 terraces' shadow edge under the jitter, near trunks and leaves under the coarse tier, no sun
 under cover; the key shadow evaluated at the face's centre, a reading then a fix for the coarse
 tier, a ray from the face's centre near and the baked key record far where the column map
-reads shadow, the bake's key ray at its cap; exploration to one owner window): **draft,
-2026-11-23, awaits the owner's go and five answers**; its lane starts when Plan 0098 has
-merged and runs beside Plan 0099's (owner, 2026-11-23).
+reads shadow, the bake's key ray at its cap; exploration to one owner window): **approved
+2026-11-24** (owner, with his five answers); its lane starts when Plan 0098 (closed 2026-11-24)
+has merged and runs beside Plan 0099's (owner, 2026-11-23).
 
 Every active plan is approved (Plan 0099 on 2026-11-22; Plans 0091, 0092 and 0093 on 2026-11-19; Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Approval accepts the design; a plan's lane
@@ -251,6 +264,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0098](done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md) | A calm light by default: no screen history, the column horizon's key shadow, far normal 4..8; a dig's ring 1 jumps the queue and holds a store record | 2026-11-24, v0.72.0 |
 | [0097](done/0097-the-exposures-anchor-by-the-sky-around-the-camera-the-floor-record-under-the-eye-a-time-constant-and-the-canopys-shade.md) | The exposure's anchor by the sky over the camera's floor, a lift over the daylight, highlight protection | 2026-11-23, v0.70.0 |
 | [0096](done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) | Performance: the bake queue lands (a record by rule, tiers by size on screen, a drain slice), the step off its depth, the eviction scan; misses disclosed | 2026-11-23, v0.71.0 |
 | [0095](done/0095-a-calm-key-light-in-motion-the-column-maps-horizon-at-the-far-the-baked-record-where-it-lands-a-deterministic-penumbra-near-no-pre-roll.md) | A calm key light: the far's record else the column horizon, the approach penumbra near, key re-bakes; RENOIR over the line | 2026-11-21, v0.69.0 |
