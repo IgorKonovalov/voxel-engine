@@ -19,7 +19,7 @@
 > **Sources:** [Deterministic simulation testing: external sources](../references/deterministic-simulation-testing.md).
 > **Starts after:** see "Where it sits" below; the recommendation is Phases 1 to 3 now as a
 > side lane (they add a crate and touch no engine source), Phases 4 to 7 after
-> [Plan 0087](0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md)
+> [Plan 0087](done/0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md)
 > (the rename) merges, since they edit four engine crates. The owner chose the whole plan after
 > 0087 (question 1 (b)). Crate paths below carry the prefix of the day they were written;
 > Plan 0087's Phase 4 substitutes the new one in every active plan, this one included, so the

@@ -20,7 +20,7 @@
 > the two share no file but `cli/parse.rs` (0086's Phase 7 adds a flag; this plan changes the
 > scene derivation, a different hunk), and an outdoor tester reading taken before 0086 lands is
 > the baseline its close compares against. This plan is a day's lane and merges before
-> [Plan 0087](../0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md)
+> [Plan 0087](0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md)
 > (the rename) starts; 0087's "Starts after" reads `git worktree list`, so this lane counts.
 
 ## TL;DR

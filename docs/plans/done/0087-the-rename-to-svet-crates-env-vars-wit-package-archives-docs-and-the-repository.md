@@ -1,18 +1,27 @@
 # 0087: The rename to `svet`: the crates, the environment variables and the WIT package, the tester archive, the documents and the harness, the repository, one minor bump, one final grep
 
-> **Status:** in-progress (the owner's go, 2026-11-17: "Approve rename"; order confirmed 2026-11-24)
+> **Status:** done. **Closed 2026-11-24** (the architect's close review in a fresh session, v0.73.0):
+> clean, no blocker, no major, nothing back to `dev`. The engine is `svet` in the crates, the
+> variables, the WIT package, the tester and its archive, the live documents and the harness. The
+> file-format magics `VXEL`, `VXECHNK` and `VXEH`, the refusal test's `vxe:logic` lines and the
+> on-disk `~/Work/vxe-live-archive` keep the old letters (the owner's ruling, 2026-11-24).
+> **Two things are owed after the close, both the owner's:** Phase 5 (the GitHub rename and the
+> remote URL, before the merge is pushed) and Phase 3's manual `release.yml` run (on main, after
+> that push); the commands are in the section "The close review" under the Implementation log
+> and in `docs/backlog.md`. Approved on the owner's go, 2026-11-17 ("Approve rename"); order
+> confirmed 2026-11-24.
 > **Created:** 2026-11-17
-> **Milestone:** cross-cutting; no milestone in [`docs/roadmap.md`](../roadmap.md) owns it
-> **Related ADRs:** [ADR-0071](../adrs/0071-the-engine-takes-a-name-one-word-for-the-project-the-crate-prefix-the-repository-and-the-archive.md)
+> **Milestone:** cross-cutting; no milestone in [`docs/roadmap.md`](../../roadmap.md) owns it
+> **Related ADRs:** [ADR-0071](../../adrs/0071-the-engine-takes-a-name-one-word-for-the-project-the-crate-prefix-the-repository-and-the-archive.md)
 > (accepted 2026-11-17: the engine is `svet`; its four smaller choices, recommended and taken
 > here as written, are the owner's to overturn)
 > **Source:** the owner, 2026-11-17: "for renaming, I think svet is the best".
 > **Starts after:** **every open lane has merged into main and no new one has started.** The
 > plan touches every crate directory and most tracked files, so a lane rebased across it pays
 > the whole rename in conflicts. Today that means after
-> [Plan 0069](done/0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md),
-> [Plan 0032](done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md) and
-> [Plan 0080](done/0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md)
+> [Plan 0069](0069-render-settings-one-surface-an-apply-class-per-field-and-named-quality-profiles.md),
+> [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md) and
+> [Plan 0080](0080-the-fly-throughs-menu-one-overlay-a-palette-and-the-minimal-key-set.md)
 > merge (and whichever of Plans 0079 and 0083 has a worktree at the time: `git worktree list`
 > is the source, not this line). **Amended 2026-11-17 (owner):** "lets finish everything that is
 > in progress, then rename" and "86 finish before": it runs after Plans 0032, 0080, 0077, 0079,
@@ -419,7 +428,7 @@ close compares it with the figure the lane read from `main` at its start.
 > resume notes go to the plan's readings log, `docs/plans/logs/0087.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
-Readings log: [`logs/0087.md`](logs/0087.md). Nested `.claude/` repository commits: Phase 1 `d0bf832` (the GPU lock path), Phase 4 `122d89d` (the rest of the harness).
+Readings log: [`logs/0087.md`](../logs/0087.md). Nested `.claude/` repository commits: Phase 1 `d0bf832` (the GPU lock path), Phase 4 `122d89d` (the rest of the harness).
 
 | phase | owner | state | commit |
 |---|---|---|---|
@@ -427,7 +436,7 @@ Readings log: [`logs/0087.md`](logs/0087.md). Nested `.claude/` repository commi
 | 2: the environment variables and the WIT package | dev | done | 5f2a321d |
 | 3: the tester, its archive and the names a user sees | dev | done, except the manual `release.yml` run | 865469be |
 | 4: the documents, the orientation map and the harness | dev | done (nested `122d89d`) | cbe9c6bf |
-| 5: the repository takes the name | human | not started (the owner's) | |
+| 5: the repository takes the name | human | not started (the owner's; owed after the close, see the close review) | |
 | 6: the version | dev | done | 27cb1c65 |
 | 7: the final check | dev | done, with three named grep exceptions | committed with this row |
 
@@ -452,6 +461,68 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **Budget readings:** `docs/nfr.md` section 7, the gate tier's wall time: 849.9 s at 27cb1c65, RTX 3080 Laptop dev box at full CPU clock (cap lifted 2026-11-24), exclusive perf lock, 1-minute load 1.89; main's 1133.2 s was at the 3.3 GHz cap. No frame, VRAM or edit figure touched.
 - **Gate at the tip (27cb1c65, the Phase 7 commit adds only docs):** `cargo build --workspace --locked` 0; `cargo nextest run --workspace --profile gate` 0, 1363 run, 1363 passed, 242 skipped (main 1361 + 2 new); `--sole --since main` selects none; doctests 0 (10 passed, 1 ignored); clippy 0; fmt 0; deny 0; `cargo doc` 109 warnings (109 before); the six doc and test-file gates 0; hooks 88 of 88.
 - **Outstanding `human` phases:** Phase 5 (the GitHub rename and `git remote set-url`); also owed, Phase 3's manual `release.yml` run, which needs the branch on the remote.
+
+### The close review (architect, 2026-11-24, a fresh session)
+
+Clean: no blocker, no major, no finding that needs code. The gate tier was not run again: the
+lane's run at `27cb1c65` on the tree that holds main (`live/p7-gate.log`; the commit after it
+is docs only) was checked: `--workspace`, 1363 `PASS` of 1363, no other status, 242 skipped,
+849.9 s at a load of 1.89, under the 19 min line. Run again by the review at `ff4bd9dc`, each
+exit 0: `cargo build --workspace --all-targets`, clippy with `-D warnings`, `cargo fmt --all
+--check`, `cargo deny check`, the six `scripts/check-*.mjs` gates and the index gate's
+self-test, the hooks' bite tests (88 of 88), `scripts/*.test.mjs` (7 of 7), and Phase 7's
+filtered grep (no output).
+
+- **The diff is the substitution and nothing else.** Every changed text file of
+  `cfd2f97c..ff4bd9dc` was compared with its old content under the rule; what is left over is
+  rustfmt's reflow of lines the longer name pushed past the width, the host's one context
+  line, the version and its nine pins, the repository URL, the README's title, the two index
+  sentences, the CHANGELOG entry and the two sentences reworded to "the old prefix" (this
+  plan's index row, Plan 0093's naming note; both read true). No path of this machine was
+  rewritten: `/home/igor/Work/voxel-engine` and `~/Work/voxel-roguelite` are spelled as before.
+- **The records are untouched.** Under `docs/adrs/` the twelve files that changed are all
+  `proposed`, plus the index (the mapping sentence); nothing under `docs/plans/done/`,
+  `docs/reviews/` or another plan's readings log changed; the CHANGELOG's past entries are as
+  they were.
+- **The three grep exceptions hide no live line** (the owner's ruling, 2026-11-24, the
+  recommended option): the nine magic lines are the constants, their doc tables and one
+  assertion; the three `vxe:logic` lines are the refusal test's; the two archive paths name a
+  directory that exists on disk.
+- **The new tests state their claims.** `svet-script-wasm::package` loads a component built
+  against `vxe:logic@0.1.0` and asserts a `LogicError::Load` whose text holds both
+  `svet:logic/host@0.1.0` and `vxe:logic/host@0.1.0`; `svet-app::shell` asserts the default
+  title equals `svet`. **Not a finding:** a pre-rename component that imports no host
+  interface still loads, since nothing in it names a package and its exports are the same
+  ABI at the same `0.1.0`; the plan's claim is about a component that names the old package.
+- **The harness commits** (`d0bf832`, `122d89d` in the nested repository) are the
+  substitution word for word; no rule's meaning changed.
+- **The CHANGELOG move** of the two `wasmtime` security entries from Unreleased into 0.73.0
+  is right: they ship in this version and Phase 6's done-when wants Unreleased empty.
+- **Nit, closes itself at the merge:** until this branch is in main, main's tracked
+  `scripts/record-clip.sh` (and any worktree cut from the old main) still locks
+  `.git/vxe-perf.lock` while the harness names `.git/svet-perf.lock`. Merge soon, and have
+  every open worktree merge main before its next GPU job.
+- **Nit, not acted on:** the Risks section says the tester README's first lines carry a line
+  on ignored `VXE_*` variables; no phase asks for it and `dist/README-TESTER.txt` names no
+  variable, so there is nothing for a tester to unlearn.
+- **The gate's time:** 31 tests over the 10 s line (6.5 min of 33.0 serial), none of them
+  this plan's; the reading is in `docs/nfr.md` section 7 and the count with the backlog's
+  test-time entry.
+
+**Owed after the close (the owner; nothing was pushed at the close).** In this order:
+
+1. Phase 5, before the merged main is pushed: rename `IgorKonovalov/voxel-engine` to `svet` in
+   GitHub's Settings (General, Repository name), then in the main checkout
+   `git remote set-url origin https://github.com/IgorKonovalov/svet.git`. Checks: `gh repo
+   view IgorKonovalov/svet --json name,url`, `git remote -v`, `git fetch origin`, and `curl
+   -sI https://github.com/IgorKonovalov/voxel-engine` answering `301` to `/IgorKonovalov/svet`.
+2. `git push origin main`, when the owner asks for it.
+3. Phase 3's manual run: `gh workflow run release.yml --ref main`, then `gh run watch` (or
+   `gh run view`): artifacts `svet-tester-linux-x86_64` and `svet-tester-windows-x86_64`,
+   both smoke steps green.
+
+The outputs go to `docs/plans/logs/0087.md`; the backlog entry "The rename's two owed steps"
+leaves when both are in.
 
 ## Followups
 

@@ -2,7 +2,7 @@
 
 > **Status:** accepted (owner, 2026-11-17: "for renaming, I think svet is the best")
 > **Date:** 2026-11-17
-> **Related plan(s):** [Plan 0087](../plans/0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md),
+> **Related plan(s):** [Plan 0087](../plans/done/0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md),
 > the rename (draft, awaits the owner's go)
 
 ## Context
@@ -537,3 +537,13 @@ files are the live tree the plan substitutes (257 `.rs`, the active plans and `d
 the WIT file, one WGSL comment). `VXE_*` names: 84 distinct. The harness repository under
 `.claude/` carries 41 more in 9 files. The first consumer's checkout (`~/Work/voxel-roguelite`)
 holds no `vxe` at all today, so there is nothing to update there.
+
+**2026-11-24, the rename is done** ([Plan 0087](../plans/done/0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md),
+closed, v0.73.0). The four smaller choices held as written: nothing published, no aliases, the
+records kept, no old archive re-published. Three things the Decision did not foresee keep the
+old letters, by the owner's ruling of the day: the file-format magics `VXEL`, `VXECHNK` and
+`VXEH` with their binary fixtures (renaming them changes the formats), the lines of the test
+that loads a component of the old WIT package and asserts its refusal, and a directory on the
+owner's disk that two documents cite. At the close the GitHub repository still carries the old
+name: the owner's rename and the first manual release run under the new archive name are owed,
+recorded in the plan's close review and in `docs/backlog.md`.

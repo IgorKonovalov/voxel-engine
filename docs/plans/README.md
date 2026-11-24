@@ -13,7 +13,9 @@ step off the main thread, drafted 2026-11-22; 0100 a sun fixed in the world, dra
 free number). Plan 0095, the motion wobble (a calm key light in motion), closed 2026-11-21,
 v0.69.0. Plan 0097, the exposure's anchor by the sky around the camera, closed 2026-11-23,
 v0.70.0. Plan 0096, the bake queue's drain, closed 2026-11-23, v0.71.0. Plan 0098, the calm light
-by default, closed 2026-11-24, v0.72.0.
+by default, closed 2026-11-24, v0.72.0. Plan 0087, the rename to `svet`, closed 2026-11-24,
+v0.73.0 (the GitHub rename and the manual release run are owed: the backlog's "The rename's two
+owed steps").
 
 ## Active roster
 
@@ -32,7 +34,6 @@ by default, closed 2026-11-24, v0.72.0.
 | [0082](0082-squash-and-stretch-a-scale-per-part-in-the-pose-and-the-clips.md) | Squash and stretch: a scale per axis per part in the pose and the clips, a slime in the library with a bounce | approved | M6, ADR-0064 (proposed). Approved 2026-11-16. After 0063, the clip chore, 0078 and 0079 P1-3. |
 | [0084](0084-staged-structures-stages-from-a-vox-a-stamp-with-a-write-policy-and-a-region-a-reveal-and-a-demolish.md) | Staged structures: stages from a `.vox`'s layers, a stamp with a write policy and a region, a reveal over ticks, a demolish | approved | M7, ADR-0067. Approved 2026-11-16. After Plan 0083 closes. |
 | [0085](0085-entity-variants-holding-clips-and-an-entity-stamped-into-the-world.md) | Entity variants (hide, swap, remap) from the `.rig`, a clip that holds, a posed entity stamped into the world | approved | M6, ADR-0068, ADR-0069 (proposed). Approved 2026-11-16. After 0063, the chore, 0078 and 0082. |
-| [0087](0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md) | The rename to `svet`: crates, `SVET_*`, the WIT package, the tester archive, docs, the repository, a minor bump | approved | ADR-0071. Alone, last: after 0086 merges (the rest have). Pre-flight 2026-11-19. |
 | [0089](0089-deterministic-simulation-testing-seeded-scenarios-a-simulated-channel-a-mirror-oracle-and-gates.md) | Deterministic simulation testing: seeded scenarios, a shrinker, a simulated channel, a mirror oracle, determinism gates | approved | ADR-0073. After 0087 (owner). Pre-flight 2026-11-19, q7 answered. |
 | [0090](0090-the-pop-counter-scenes-on-lavapipe-count-the-pixels-that-break-the-light-rules-a-ratchet.md) | The pop counter: fixed scenes on lavapipe count the pixels that break each light rule, by source; a baseline that only falls | approved | Cross-cutting, ADR-0076 (proposed). After 0086 closes, before 0081. |
 | [0091](0091-the-frame-profiler-scopes-across-threads-a-gpu-lane-a-dump-for-agents-and-a-hud-ticker.md) | The frame profiler: scopes across the threads, a GPU lane, a dump the agent ranks, budget scopes, a HUD ticker | approved | M7, ADR-0077. After 0087 and 0089, before 0090 (owner). |
@@ -150,7 +151,7 @@ the owner's "a castle being built... part of the map", approved 2026-11-16 with 
 
 **Plan 0085** (entity variants: `variant` blocks in the `.rig` that hide a part, swap its volume for another `.vox` node or remap a material, picked per instance by one index and honoured by the picture and the headless query; `Playback::ended` on a one-shot clip that already holds; a posed entity baked onto the world grid in integers, clipped to air on the server and stamped through op kind 2; the spider gains `damaged` and `dead`; drafted 2026-11-16 from the owner's "healthy, damaged, dead: three entities or one with modes?", approved 2026-11-16 with every recommendation; ADR-0068 and ADR-0069 proposed): after Plan 0063, the clip-recorder chore and Plan 0078 merge, and after Plan 0082 (recommended; it edits the same files), beside Plans 0077 and 0079's Phase 4. Per-entity voxel damage is parked in `docs/backlog.md`.
 
-**Plan 0087** (the rename to `svet`, ADR-0071 accepted 2026-11-17 on the owner's "for renaming, I think svet is the best": `crates/svet-*`, `SVET_*` with no aliases, `svet:logic`, `svet-tester` and its archive, the documents and the harness, the owner's GitHub rename, a minor bump, a final grep; accepted ADRs, closed plans, logs, reviews and past CHANGELOG entries keep the old prefix; drafted 2026-11-17, approved 2026-11-17 on the owner's "Approve rename"): it touches every crate directory, so it runs **alone, when no lane is open**: after Plans 0069, 0032 and 0080 (and any other lane `git worktree list` shows then) merge, and after Plans 0077, 0079, 0083 and 0086 merge too (owner, 2026-11-17: "86 finish before").
+**Plan 0087 closed 2026-11-24 (v0.73.0)**, so the lanes that waited on it (Plans 0089, 0091, 0093 and 0099) may start once it is merged; every open worktree merges main first. Its two owed steps, the owner's, are in the backlog ("The rename's two owed steps"). As it was sequenced: **Plan 0087** (the rename to `svet`, ADR-0071 accepted 2026-11-17 on the owner's "for renaming, I think svet is the best": `crates/svet-*`, `SVET_*` with no aliases, `svet:logic`, `svet-tester` and its archive, the documents and the harness, the owner's GitHub rename, a minor bump, a final grep; accepted ADRs, closed plans, logs, reviews and past CHANGELOG entries keep the old prefix; drafted 2026-11-17, approved 2026-11-17 on the owner's "Approve rename"): it touches every crate directory, so it runs **alone, when no lane is open**: after Plans 0069, 0032 and 0080 (and any other lane `git worktree list` shows then) merge, and after Plans 0077, 0079, 0083 and 0086 merge too (owner, 2026-11-17: "86 finish before").
 
 **Plan 0089** (deterministic simulation testing: a dev-only crate `svet-dst` that draws a scenario
 from one seed, checks invariants after every step, shrinks a failing scenario by delta debugging
@@ -271,6 +272,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0087](done/0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md) | The rename to `svet`: crates, `SVET_*`, `svet:logic`, `svet-tester` and its archive, the live docs, the harness; the GitHub rename and the manual release run owed | 2026-11-24, v0.73.0 |
 | [0098](done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md) | A calm light by default: no screen history, the column horizon's key shadow, far normal 4..8; a dig's ring 1 jumps the queue and holds a store record | 2026-11-24, v0.72.0 |
 | [0097](done/0097-the-exposures-anchor-by-the-sky-around-the-camera-the-floor-record-under-the-eye-a-time-constant-and-the-canopys-shade.md) | The exposure's anchor by the sky over the camera's floor, a lift over the daylight, highlight protection | 2026-11-23, v0.70.0 |
 | [0096](done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) | Performance: the bake queue lands (a record by rule, tiers by size on screen, a drain slice), the step off its depth, the eviction scan; misses disclosed | 2026-11-23, v0.71.0 |
