@@ -1,6 +1,6 @@
 # 0102: Remove `own`, the engine's own upscaler: FSR 2 is the only one
 
-> **Status:** implemented (dev, 2026-11-25), awaits the fresh-session close review (approved by the owner, 2026-11-24: "remove"). Drafted 2026-11-24 with no interview; the guesses
+> **Status:** implemented (dev, 2026-11-25); the fresh close review (2026-11-25) found no blocker and no major and sends two findings back for one fix pass, after which the plan closes (section "The close review's rulings") (approved by the owner, 2026-11-24: "remove"). Drafted 2026-11-24 with no interview; the guesses
 > and the open questions are under "Risks & open questions", each with a recommended option.
 > **Order:** small and alone in `crates/svet-render/src/frame/` and the fly-through's upscaler
 > files; it runs when no lane edits `frame/encode.rs`, `frame/pipelines.rs` or
@@ -327,6 +327,92 @@ by the recommended options unless he says otherwise.
 - It does not add a resize pass, a second upscaler or a per-adapter upscaler choice.
 - It does not touch the Radeon's walk speed (the backlog's "The slow adapter's walk-speed
   spike").
+
+## The close review's rulings (amendment, 2026-11-25, architect)
+
+The fresh close review read `eae4884f` with main merged in (`daba1202`). No blocker and no
+major: the removal is whole, the gate log reconciles (16 gate tests gone, 11 arrived, 1363 to
+1358; 10 ignored tests gone, 1 arrived, 242 to 233), the goldens match with no re-bless, and
+the refusals, the banner and the settings gate assert what the phases claim. Two findings go
+back to `dev` as one fix pass; the plan closes after it. The rulings on the disclosed
+deviations:
+
+1. **The light-change thresholds as constants: accepted.** `CHANGE_REL` 0.1, `CHANGE_ABS`
+   0.01 and `CHANGE_FRAMES` 24 are `Upscaler::default()`'s values at the base, and at the
+   base no profile, no flag and no key set `own.*` to anything else (`RenderSettings::profile`
+   and `cli/settings.rs` both passed the default), so every profile renders as before. The
+   16-byte uniform matches `LightChange` in `fsr2/input.wgsl` field for field and
+   `layout_tests.rs` mirrors it. ADR-0055's rule is about a mechanism a plan adds; none is
+   added, and three tuning values nobody set are not an arm in the sense of the owner's rule
+   of 2026-11-12. What is lost is recorded in ADR-0086's Outcome at the close: FSR 2's
+   light-change test is no longer tunable at run time; if a consumer needs it, the values
+   return as `fsr2.*` fields.
+2. **`Off` through `RenderSettings::clamped`: accepted.** Every path was read
+   (`apply_settings`, `set_upscaler_kind`, `set_sizes`, `set_resolution`, `with_sizes`): what
+   `Frame::settings()` reads back is what renders, in every state. The one thing a consumer
+   can trip on is documented on the field and held by two gate tests
+   (`gpu_frame::off_renders_at_the_output_size`, `gpu_settings`' `assert_classes`): settings
+   asking for `Off` with a scale other than 1 never read back equal to what was asked. The
+   internal size a frame was built with is kept for FSR 2 and is not a setting.
+3. **A constant frozen from the removed arm is not a bar (review finding 1).** This plan's
+   Phase 3 asked for it ("`own`'s last reading times the margin"), so `dev` built what was
+   written; the plan was wrong against the house rule (a comparison bar proves its baseline
+   is clean, or the test measures the picture directly) and against ADR-0086's own "FSR 2's
+   bars stand on absolute figures". The test's reference arm settles it: with no upscaler
+   the same picture reads 0.000/255 over the whole image and at the lamp-shadow boundary, so
+   `own`'s 1.765 and 8.200 were wobble of its own, and FSR 2 passing under them proves
+   nothing (at scale 1 it reads over `own`: 1.346 against 0.847, 5.098 against 3.863). The
+   claim the test makes after the fix pass, on lavapipe:
+   - the frame with no upscaler is still: its wobble is at most 0.001/255 over the whole
+     image and at the boundary (it reads 0.000 and 0.000), so every level FSR 2 reads is the
+     upscaler's;
+   - FSR 2 at scale 1.5 holds the picture the owner accepted at Plan 0098's windows: at most
+     its own reading plus 10 %, 1.419 x 1.1 = 1.561/255 over the whole image and 4.512 x 1.1
+     = 4.963/255 at the boundary. The readings are FSR 2's at `be97152a` and again at
+     `eae4884f` (the review's run, identical to three places: lavapipe renders the same
+     bytes); the 10 % is for CI's other LLVM, not for noise;
+   - scale 1 (1.346 and 5.098) stays a printed reading with no bar beside it.
+   This is a regression bar and says so. It does not claim that 4.5 levels at a still shadow
+   edge is good; that is the backlog's (a still-camera shadow edge under FSR 2's jitter
+   against ADR-0076's rule that nothing moves at rest), routed at the close.
+   `fsr2_adds_little_flicker_on_a_still_vein` keeps its figures, 0.40/255 and 1.15 %, as
+   absolute bars: its baseline read 0.0001 and 0.0000, so the margin was the whole bar
+   already. Both lose the constants and the words that name the removed upscaler.
+   `fsr2_at_scale_1_keeps_stripe_edges_sharp_at_arms_length` asserts against N and R, which
+   are frames with no upscaler, and stands as it is.
+4. **The coverage lost: none that was FSR 2's.** The output-target growth that
+   `frame_bytes_add_the_histories_and_the_output_target` held is asserted to the byte by the
+   gate's `gpu_fsr2::frame_bytes_under_fsr2_add_fsr2s_inventory_and_the_output_target`. The soak
+   test `a_still_camera_under_our_upscaler_...` asserted `own`'s distance alone; FSR 2's was
+   a printed line before and is a hand-run reading now. `hud::stats`' deleted upscale-row
+   test is covered by `the_upscale_row_sums_fsr2s_passes`.
+5. **Phase 2's commit carrying most of Phase 3, and the files outside the lists: accepted as
+   disclosed.** A tree that builds at every commit forced it; both logs say so.
+6. **Stale comments (review finding 2).** The phases' greps looked for identifiers, not for
+   prose, and about a dozen comments still describe the removed passes or point at
+   `upscale.wgsl`. The fix pass sweeps them.
+
+### What the dev does (one fix pass, one commit)
+
+- `apps/flythrough/tests/gpu_fsr2.rs`: the shadow-wobble test asserts ruling 3's three
+  claims and is renamed for what it claims; `OWN_*` and `STILL_VEIN_*` go; the still-vein
+  test asserts 0.40/255 and 1.15 % as its own figures. Each constant's doc states the
+  reading, the adapter and the commit. Run both under the perf lock on lavapipe
+  (`--run-ignored only`, the two by name; about 35 s) and put the four readings in the
+  readings log.
+- The comment sweep, no behaviour change: `shaders/fsr2/input.wgsl` (the lines above
+  `struct LightChange`, `STILL_PX` and `light_changed`), `shaders/edits.wgsl` line 2,
+  `shaders/common.wgsl` (`output_size`), `frame/mod.rs` (`Frame::target`'s doc),
+  `fsr2/prepare.rs` (`FrameInputs`' doc), `camera.rs` (`jitter`'s doc), `layout_tests.rs`
+  (the `Sharpen` arm and its comment, if no shader struct of that name is left),
+  `tests/gpu_frame.rs` (the pipeline count's doc: the count and why, no "before");
+  `apps/flythrough/src/hud/upscaler.rs` (`set_sharpen`'s doc), `hud/stats.rs`
+  (`UPSCALE_LINE_MS`'s doc), `tests/support/settle/runs.rs` (`JITTER_PHASES`). Then
+  `rg -n -i 'upscale\.wgsl|sharpen\.wgsl|upscale pass|sharpen pass|our upscaler|UpTuning|UpscaleUniform|JITTER_PHASES' crates apps`
+  finds only the refusal's words and FSR 2's own `jitter_phases`.
+- Gates: build, `node scripts/test-changed.mjs --profile quick`, `--clippy`, fmt, the naga
+  and layout tests of `svet-render` (in the quick tier), `check-comment-hygiene`. No gate
+  re-run: no gate test's code changes.
 
 ## Implementation log
 
