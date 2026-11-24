@@ -1,6 +1,11 @@
 # 0103: A pipeline cache for the renderer: bytes the consumer keeps
 
-> **Status:** draft, awaits the owner's go. Drafted 2026-11-24 with no interview; the guesses
+> **Status:** draft, parked (owner, 2026-11-24): not approved. A reading taken the same day
+> ([logs/0103.md](logs/0103.md)) shows the driver's own disk cache already makes a second start
+> warm on both adapters (pipeline creation 0.36 to 0.54 s against 35.5 to 36.7 s cold on the
+> RTX and 11.7 to 12.4 s on the Radeon); the plan pays only where the driver's cache fails (a
+> forced 1 MB NVIDIA limit left the second start two thirds cold). Pick up if a consumer or a
+> tester reports cold second starts. Drafted 2026-11-24 with no interview; the guesses
 > and the open questions are under "Risks & open questions", each with a recommended option.
 > **Order:** it edits `crates/vxe-render/src/gpu_util.rs`, the constructors of the frame, the
 > overlay, the loading frame and the presenter, and the fly-through's start-up

@@ -38,7 +38,7 @@ by default, closed 2026-11-24, v0.72.0.
 | [0100](0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md) | A sun fixed in the world: the key shadow a face at a time, the coarse tier held still, sun under cover | approved 11-24 | M10, ADR-0084 (proposed). Lane starts at 0098's merge, beside 0099. |
 | [0101](0101-the-record-by-rule-at-every-opening-an-audit-on-the-real-scenes-first-then-the-three-exclusions-lifted.md) | The record by rule at every opening: an audit first, then the exclusions lifted | approved 11-24 | ADR-0085 (proposed). After 0100 P2 and 0099's close. |
 | [0102](0102-remove-own-the-engines-own-upscaler-fsr-2-is-the-only-one.md) | Remove `own`, the engine's own upscaler: FSR 2 is the only one, `Off` renders at the output size | approved 11-24 | ADR-0086 (proposed). Alone in the upscaler's files; not beside 0087. |
-| [0103](0103-a-pipeline-cache-for-the-renderer-bytes-the-consumer-keeps.md) | A pipeline cache for the renderer: the driver's cache through wgpu in an engine envelope, bytes the consumer keeps | draft | ADR-0087 (proposed). Awaits go. Not beside 0092 or 0102 (the pipeline builders). |
+| [0103](0103-a-pipeline-cache-for-the-renderer-bytes-the-consumer-keeps.md) | A pipeline cache for the renderer: the driver's cache through wgpu in an engine envelope, bytes the consumer keeps | draft, parked 11-24 | ADR-0087 (proposed). Parked: the driver's cache already warms a second start (logs/0103.md). |
 <!-- roster:end -->
 
 ## Sequence

@@ -295,10 +295,24 @@ Found at the close ([Plan 0083](plans/done/0083-anything-from-a-vox-palette-mate
 
 ### A pipeline cache owned by the engine, for the renderer's shaders
 
-Drafted 2026-11-24 as [Plan 0103](plans/0103-a-pipeline-cache-for-the-renderer-bytes-the-consumer-keeps.md) with [ADR-0087](adrs/0087-the-renderers-pipeline-cache-is-the-drivers-through-wgpu-as-bytes-the-consumer-keeps.md) (proposed); awaits the owner's go. A `ShaderCache` per device wraps the driver's cache through wgpu (Vulkan only in wgpu 30) in an engine envelope; the consumer passes bytes in and takes bytes out, the engine opens no file, and a bad cache is a cold start. The two entries merged here on 2026-11-24 (the architecture review's of 2026-11-12 and the start-up side's of 2026-11-16) and their readings are in the plan's context. What the plan does not take stays here:
+Drafted 2026-11-24 as [Plan 0103](plans/0103-a-pipeline-cache-for-the-renderer-bytes-the-consumer-keeps.md) with [ADR-0087](adrs/0087-the-renderers-pipeline-cache-is-the-drivers-through-wgpu-as-bytes-the-consumer-keeps.md) (proposed); **parked by the owner 2026-11-24**: a reading the same day ([logs/0103.md](plans/logs/0103.md)) shows the driver's own disk cache already makes a second start warm on both adapters, so the plan pays only where that cache fails. A `ShaderCache` per device wraps the driver's cache through wgpu (Vulkan only in wgpu 30) in an engine envelope; the consumer passes bytes in and takes bytes out, the engine opens no file, and a bad cache is a cold start. The two entries merged here on 2026-11-24 (the architecture review's of 2026-11-12 and the start-up side's of 2026-11-16) and their readings are in the plan's context. What the plan does not take stays here:
 
 - **The default-off arms built in the background after the first world frame**, not inside the loading stage (routed to Plan 0096 on 2026-11-20, which closed without it; `absorb`'s cold start read 70 s at Plan 0094's window 94b). The plan's Phase 4 reads that start with a warm cache first (its owner question 4).
 - **The light pass's default-on compile cost on lavapipe**, where no cache helps (lavapipe keeps no compiled code): the fly-through's light-pass build stage 3.7 s against the base's 2.7, about 1.4 s a frame-building test of the gate. The next step is a per-module compile reading (`pipeline_times` per `PASSES` row) to name the module that grew.
+
+### The cold first start: 36 s of pipeline creation on the RTX, 12 s on the Radeon (2026-11-24)
+
+From the reading for Plan 0103 ([logs/0103.md](plans/logs/0103.md); loaded, indicative). A first-ever start (a tester's first run, a driver update, a cache over its limit) builds every pipeline cold: the pipeline span reads 35.5 to 36.7 s on the RTX 3080 Laptop and 11.7 to 12.4 s on the Radeon at Portable, and the first world frame about 46 s and 20 s. No cache helps a first start.
+
+- **What it would take:** a census of which pipelines the default start needs before its first world frame; the rest built after it or while the loading screen shows; a look at why the RTX takes three times the Radeon (the NVIDIA compiler's cost per shader, or pipelines the Radeon's profile does not build). The pre-roll also runs about 2.5 s longer cold than warm on the RTX (one step 1253 ms against 50), so some shader work lands there.
+- **Pick up:** before the next tester archive, or when the owner asks for a faster first start. Not drafted.
+
+### The light pre-roll holds the first frame 6 to 7 s on every start (2026-11-24)
+
+From the same reading: once the pipelines are warm, the first world frame comes at 6.5 to 9.5 s on the RTX and 6.8 to 7.1 s on the Radeon, of which 5.7 to 7 s is the two light pre-roll stages. `docs/nfr.md` section 7 proposes 3 s to the first frame.
+
+- **What it would take:** read what the pre-roll buys the first frame under the calm defaults (the coarse tier first, the rest after the frame shows), against the owner's rule of no waiting for light and no unlit first picture. Plan 0099 (the bake step off the main thread) changes what a pre-roll costs; read after it.
+- **Pick up:** after Plan 0099 closes. Not drafted.
 
 ### Remove `own`, the engine's own upscaler
 
