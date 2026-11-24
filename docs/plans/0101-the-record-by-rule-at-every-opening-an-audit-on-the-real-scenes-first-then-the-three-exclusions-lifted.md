@@ -1,6 +1,6 @@
 # 0101: The record by rule at every opening: an audit on the real scenes first, then the three exclusions lifted
 
-> **Status:** draft, awaits the owner's go (drafted 2026-11-24 with no interview; the guesses
+> **Status:** approved (owner, 2026-11-24: lane after Plan 0099 closes; drafted 2026-11-24 with no interview; the guesses
 > and the open questions are under "Risks & open questions", each with a recommended option).
 > **Order (recommended, question 1):** after Plan 0100's Phase 2 and **after Plan 0099 closes**,
 > not ahead of its Phase 1 as Plan 0096's close ruled; the reasons are under "The order".
@@ -393,6 +393,11 @@ each and the set's overhead); no VRAM change.
   queue's as today.
 - **Threading and memory:** no new thread; the audit's compare allocates only in audit mode.
 - **GPU features:** none.
+
+**Answered 2026-11-24 (owner): the recommended option on all three.** The plan is worth a
+plan and its lane starts after Plan 0099 closes (and after Plan 0100 Phase 2); a gate that
+stays shut in Phase 1 closes the plan as a reading; cleared cases are built and the others
+disclosed.
 
 **Questions for the owner** (the first option is the recommendation; the plan goes by it
 once he says go).
