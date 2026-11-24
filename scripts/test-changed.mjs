@@ -40,9 +40,23 @@
 // The whole gpu tier runs at a plan's tip. The soak line the tiers exclude is docs/nfr.md
 // section 7's: 10 s on the dev reference's lavapipe, 60 s on CI.
 //
+// The sole marks: a test over the soak line that is the gate's only test of its mechanism, and
+// cannot be shortened without weakening its claim, leaves the gate as
+// `#[ignore = "sole: <the mechanism it alone covers>"]` (owner, 2026-11-24). Being ignored, it
+// runs in the soak and full tiers as every soak mark does; this script also runs it whenever
+// its own package is in the changed set. After the quick, gpu or gate run it starts a second
+// nextest run, `--run-ignored only`, of the sole tests in the changed packages and their
+// dependents (with `--binaries`, still the changed packages', not only the named binaries'):
+// quick takes the CPU ones, gpu the ones in `tests/gpu_*` files, gate both. `--sole` runs that
+// second run alone, the form a plan's tip uses after `cargo nextest run --profile gate`
+// (`--profile gate --sole --since main`). `--list-sole` prints every sole test of the
+// workspace with its package and mechanism, read from the marks: the list docs/nfr.md section
+// 7 points at.
+//
 // Usage:  node scripts/test-changed.mjs [--profile quick|gpu|gate|soak|full] [--since <rev>]
-//                                       [--binaries gpu_a,gpu_b] [--clippy] [--dry-run]
+//                                       [--binaries gpu_a,gpu_b] [--clippy] [--sole] [--dry-run]
 //                                       [-- <more nextest or clippy arguments>]
+//         node scripts/test-changed.mjs --list-sole
 // Exit: nextest's or clippy's exit code; 0 with a message when nothing changed that a crate
 //       covers; 2 on a usage error (an unknown argument, a flag missing its value,
 //       `--binaries` outside the gpu tier or with `--clippy`, or a name that is no gpu test
@@ -50,6 +64,7 @@
 // Tests: `node --test scripts/test-changed.test.mjs`.
 
 import { execFileSync, spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { dirname, resolve, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -136,6 +151,53 @@ export function gpuTargets(metadata, root = ROOT) {
   );
 }
 
+const SOLE = /^[ \t]*#\[\s*ignore\s*=\s*"sole:\s*([^"]+?)\s*"\s*\]/gm;
+
+// Every sole-marked test of the workspace, from the tracked `.rs` files under crates/ and
+// apps/: { pkg, name, mechanism, file, gpu }, `name` the first `fn` after the mark and `gpu`
+// true for a file under a `tests/gpu_*` path (a gpu binary or a file it includes).
+export function soleTests(metadata, root = ROOT) {
+  const packages = packageDirs(metadata, root);
+  const files = execFileSync("git", ["ls-files", "-z", "--", "crates", "apps"], {
+    cwd: root,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer: 64 * 1024 * 1024,
+  })
+    .split("\0")
+    .filter((f) => f.endsWith(".rs"));
+  const out = [];
+  for (const file of files) {
+    const text = readFileSync(resolve(root, file), "utf8");
+    for (const m of text.matchAll(SOLE)) {
+      const name = /\bfn\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(text.slice(m.index + m[0].length))?.[1];
+      const pkg = packages.find((p) => file.startsWith(p.dir + "/"))?.name;
+      if (name && pkg) out.push({ pkg, name, mechanism: m[1], file, gpu: /\/tests\/gpu_/.test(file) });
+    }
+  }
+  return out.sort((a, b) => `${a.pkg} ${a.name}`.localeCompare(`${b.pkg} ${b.name}`));
+}
+
+// The second run's arguments: the sole tests of the changed packages and their dependents
+// that the tier keeps (quick the CPU ones, gpu the gpu ones, gate both), `--run-ignored only`.
+// null when the tier has none in the set or runs ignored tests already (soak, full).
+export function soleCommand({ metadata, files, profile, sole, passthrough = [], root = ROOT }) {
+  if (!["quick", "gpu", "gate"].includes(profile)) return null;
+  const { everything, selected } = selectPackages(metadata, files, root);
+  if (!everything && selected.size === 0) return null;
+  const reach = everything ? null : new Set(withDependents(metadata, [...selected]));
+  const keep = sole.filter(
+    (t) => (!reach || reach.has(t.pkg)) && (profile === "gate" || t.gpu === (profile === "gpu")),
+  );
+  if (keep.length === 0) return null;
+  const pkgs = [...new Set(keep.map((t) => t.pkg))].sort();
+  const expr = keep.map((t) => `(package(=${t.pkg}) & test(/(^|::)${t.name}$/))`).join(" | ");
+  return {
+    args: ["nextest", "run", ...pkgs.flatMap((p) => ["-p", p]), "--profile", profile, "--run-ignored", "only", "-E", expr, ...passthrough],
+    tests: keep,
+  };
+}
+
 // The cargo arguments for a change. Returns { args, notes } or { args: null, notes } when
 // nothing changed that a crate covers. `files` is a Set of repo-relative paths.
 export function buildCommand({ metadata, files, profile = "quick", binaries, clippy = false, passthrough = [], root = ROOT }) {
@@ -203,6 +265,8 @@ function main(argv) {
   let since;
   let dryRun = false;
   let clippy = false;
+  let soleOnly = false;
+  let listSole = false;
   let binaries;
   const passthrough = [];
   // The value after a flag; a flag that ends the arguments is a usage error.
@@ -225,6 +289,8 @@ function main(argv) {
     else if (a === "--binaries") binaries = value(i++);
     else if (a.startsWith("--binaries=")) binaries = a.slice("--binaries=".length);
     else if (a === "--clippy") clippy = true;
+    else if (a === "--sole") soleOnly = true;
+    else if (a === "--list-sole") listSole = true;
     else if (a === "--dry-run") dryRun = true;
     else {
       console.error(`test-changed: unknown argument ${a}`);
@@ -253,6 +319,16 @@ function main(argv) {
       .filter(Boolean);
 
   const metadata = readMetadata();
+  const sole = soleTests(metadata);
+  if (listSole) {
+    for (const t of sole) console.log(`${t.pkg}  ${t.name}  (${t.file}): ${t.mechanism}`);
+    console.log(`${sole.length} sole test(s): the gate's only test of each mechanism, run on a change to its package and in soak`);
+    process.exit(0);
+  }
+  if (soleOnly && (clippy || binaries !== undefined)) {
+    console.error("test-changed: --sole runs a tier's sole tests; it takes no --clippy or --binaries");
+    process.exit(2);
+  }
   if (binaries) {
     const targets = gpuTargets(metadata);
     const unknown = binaries.filter((b) => !targets.some((t) => t.name === b));
@@ -279,13 +355,28 @@ function main(argv) {
   }
   console.error(`test-changed: ${files.size} changed file(s), ${described}`);
 
-  const { args, notes } = buildCommand({ metadata, files, profile, binaries, clippy, passthrough });
-  for (const n of notes) console.error(`test-changed: ${n}`);
-  if (!args) process.exit(0);
-  console.error(`test-changed: cargo ${args.join(" ")}`);
-  if (dryRun) process.exit(0);
-  const run = spawnSync("cargo", args, { cwd: ROOT, stdio: "inherit" });
-  process.exit(run.status ?? 1);
+  const runs = [];
+  if (!soleOnly) {
+    const { args, notes } = buildCommand({ metadata, files, profile, binaries, clippy, passthrough });
+    for (const n of notes) console.error(`test-changed: ${n}`);
+    if (!args) process.exit(0);
+    runs.push(args);
+  }
+  const second = clippy ? null : soleCommand({ metadata, files, profile, sole, passthrough });
+  if (second) {
+    console.error(`test-changed: the sole tests in reach: ${second.tests.map((t) => `${t.pkg}::${t.name}`).join(", ")}`);
+    runs.push(second.args);
+  } else if (soleOnly) {
+    console.error(`test-changed: no sole test of the ${profile} tier in reach`);
+  }
+  let status = 0;
+  for (const args of runs) {
+    console.error(`test-changed: cargo ${args.join(" ")}`);
+    if (dryRun) continue;
+    const run = spawnSync("cargo", args, { cwd: ROOT, stdio: "inherit" });
+    if ((run.status ?? 1) !== 0 && status === 0) status = run.status ?? 1;
+  }
+  process.exit(status);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
