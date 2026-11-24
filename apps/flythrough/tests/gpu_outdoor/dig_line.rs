@@ -654,7 +654,8 @@ mod dig_line {
         /// One run's figures: each dig's ring-1 landing in frames from its own frame; the
         /// worst shares (%) of the hole's pixels over 32 levels whiter or blacker than both
         /// `before` and `after` from each dig's frame to its landing plus [`DIG_FADE`], and over
-        /// 4 levels after that until its group ends; the ring's at 4 levels in every frame from
+        /// 4 levels after that until its group ends (groups at ring 1's landing, `after` the
+        /// frame before the next group's dig); the ring's at 4 levels in every frame from
         /// the first dig; the dots against the settled frame's; the ring's and the frame's
         /// shift before the first landing; the largest step away from a group's settled mean
         /// after its landing; and the histogram's text.
@@ -701,10 +702,15 @@ mod dig_line {
             let hold = !arm.split(',').any(|t| t == "hold=off");
             let LineRun { frames, digs, out, eye, head, .. } = line;
             let run = HoleRun { frames, n1: 1, digs, out, hold, eye };
-            let groups = defects::hole_groups(&run);
+            // The groups at ring 1's landing (the owner's pick, 2026-11-24): a dig made at or
+            // before the ring-1 landing of the one ahead joins its group, so a dig's `after` is
+            // the frame before the next group's dig (B: the frame before the next dig), not the
+            // queue's landing of every dig job (ring 2's, D+10 to 50 on lavapipe, which put all
+            // of B in one group read against the run's last frame).
+            let groups = defects::hole_groups_at(&run, &land);
             let figs: Vec<Vec<HoleFigures>> = std::iter::once(4)
                 .chain(LEVELS)
-                .map(|l| defects::hole_figures_at(&run, l).0)
+                .map(|l| defects::hole_figures_in(&run, l, &groups).0)
                 .collect();
             let (f4, at) = (&figs[0], |l: i32| &figs[1 + LEVELS.iter().position(|&x| x == l).expect("a level")]);
             let last = run.frames.len() - 1;

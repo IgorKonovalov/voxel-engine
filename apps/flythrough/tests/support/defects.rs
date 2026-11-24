@@ -827,7 +827,12 @@ pub fn is_dot(luma: &[u8], w: usize, h: usize, i: usize) -> bool {
 /// The run's dig groups: from a dig's frame to the frame before the next group's dig (or the
 /// last frame); a dig made before the one ahead of it landed joins that one's group.
 pub fn hole_groups(run: &HoleRun) -> Vec<(usize, usize)> {
-    let landings = hole_landings(run);
+    hole_groups_at(run, &hole_landings(run))
+}
+
+/// [`hole_groups`] with each dig's landing (a frame index) given in place of the queue's: a
+/// dig made at or before the landing of the one ahead of it joins that one's group.
+pub fn hole_groups_at(run: &HoleRun, landings: &[Option<usize>]) -> Vec<(usize, usize)> {
     let mut groups = Vec::new();
     let mut open = None;
     for (k, d) in run.digs.iter().enumerate() {
@@ -878,16 +883,24 @@ pub fn hole_figures(run: &HoleRun) -> (Vec<HoleFigures>, Vec<Vec<u8>>) {
 
 /// [`hole_figures`] with white and black past `level` levels in place of 4.
 pub fn hole_figures_at(run: &HoleRun, level: i32) -> (Vec<HoleFigures>, Vec<Vec<u8>>) {
+    hole_figures_in(run, level, &hole_groups(run))
+}
+
+/// [`hole_figures_at`] with the dig groups (and so each frame's before and after) given.
+pub fn hole_figures_in(
+    run: &HoleRun,
+    level: i32,
+    groups: &[(usize, usize)],
+) -> (Vec<HoleFigures>, Vec<Vec<u8>>) {
     let classes: Vec<Vec<u8>> = run.frames.iter().map(|f| hole_classes(run, f).1).collect();
     let (w, h) = (run.out[0] as usize, run.out[1] as usize);
-    let groups = hole_groups(run);
     let figs = run
         .frames
         .iter()
         .zip(&classes)
         .enumerate()
         .map(|(fi, (f, c))| {
-            let (bi, ai) = before_after(run, &groups, fi);
+            let (bi, ai) = before_after(run, groups, fi);
             let (before, after) = (&run.frames[bi].luma, &run.frames[ai].luma);
             let (cb, ca) = (&classes[bi], &classes[ai]);
             let mut fig = HoleFigures::default();

@@ -104,7 +104,10 @@ mod flicker {
     /// first) on the waiting queue (600 frames in: lavapipe's rig never drains, 161 chunks in
     /// view waiting), and A at the queue's start for the reference landing. No arm is the
     /// baseline: every display pixel is read against its own luma before its dig group
-    /// (`before`) and in the group's settled last frame (`after`). With L the frame a dig's
+    /// (`before`) and in the group's last frame (`after`), the groups taken at ring 1's
+    /// landing (a dig made by the one ahead's ring-1 landing joins its group), so `after` is
+    /// the frame before the next group's dig (B: the frame before the next dig; the owner's
+    /// pick, 2026-11-24, over the queue's landing of every job). With L the frame a dig's
     /// ring 1 lands: L is at most the dig's frame plus 8 for every dig, and no later than the
     /// reference's plus 1; from each dig's frame to L + `DIG_FADE` the hole's share over 32
     /// levels above the larger of `before` and `after`, and its share over 32 below the
