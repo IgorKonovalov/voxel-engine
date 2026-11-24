@@ -1992,11 +1992,20 @@ pub struct Lighting {
 | 14: A fresh hole shows a held world value until its bake lands | dev | stopped: step 1 shows the white hole headless and names its sources (the column's 0 and 1, the removed surface's record, the landing's fade carrying them); step 2 built as `wip`; the image test fails with the fix (white 14.8, black 18.9 % on lavapipe); readings and resume notes in the log | committed with this row |
 | 15: The owner's look at the dig | human | run 2026-11-24 (`live/session98d.sh`, `live/bin98f` at `d967db57`); not accepted on the RTX, "not bad" on the RENOIR; verdicts in the log, amendment in the plan | the amendment's commit |
 | 16: Every dig's faces land within a few frames | dev | done; S1, S3, S4 and S5's wait named (S2 struck); ring 1 a job of its own, a stale job in the ring withdrawn, ring-1 jobs opened in the edit's step; ring 1 lands D+1 to 2 on the RTX and the RENOIR, D+1 to 4 on lavapipe; the quiet step time on dig frames under the base on both adapters after two fixes the first reading named (no other dig job listed in a ring-1 step; no candidate count at a dig job's withdrawal); the land arm removed (cause not found); `frame/encode.rs` and `lib.rs` past the files; readings in the log | 9f143788 |
-| 17: The held value is the store's record | dev | done (the code 5225c360); the held value is a record in the store (`bake/held.rs`, the dig's faces at the removed surface's times a near openness, the other faces at their record's), `near` kept; the image test's `after` moved to the frame before the next dig group's, the groups at ring 1's landing (the owner's pick, 2026-11-24; `hole_groups_at` in `support/defects.rs`): A and B pass, B's "settled after" 0.04 / 0.03 % (3.01 / 4.72 % against the queue's landing); the bite check fails under `rays`; a `select` in `temporal.wgsl` ran the held term's rays at every stale ring face under every hold (fixed); the rehearsal's stills in `live/window98e/rehearsal/`; files past the list and readings in the log | committed with this row |
+| 17: The held value is the store's record | dev | done (the code 5225c360); the held value is a record in the store (`bake/held.rs`, the dig's faces at the removed surface's times a near openness, the other faces at their record's), `near` kept; the image test's `after` moved to the frame before the next dig group's, the groups at ring 1's landing (the owner's pick, 2026-11-24; `hole_groups_at` in `support/defects.rs`): A and B pass, B's "settled after" 0.04 / 0.03 % (3.01 / 4.72 % against the queue's landing); the bite check fails under `rays`; a `select` in `temporal.wgsl` ran the held term's rays at every stale ring face under every hold (fixed); the rehearsal's stills in `live/window98e/rehearsal/`; files past the list and readings in the log | 39354892 |
+| 18: The owner's look at digs in a row | human | run 2026-11-24 (`live/session98e.sh`, `live/bin98g` at `b7df48b0`); `on` accepted on the RTX ("not ideal but acceptable", a slight colour change at the landing), "almost good" on the RENOIR at Portable; `near` rejected on both and removed (d6c58a04); the delay not wanted; verdicts in the log | committed with this row |
 
 ### Notes
 
-_(Empty.)_
+- Fix pass after the tip gate (`4ad8aed6`, 1356 of 1361): a ring-1 job with no live face
+  never closed (5e177d11); a dig split its rings where the ring-2 job needed a second place
+  the pool could not give (15e5c6e7); ring 2's landing restarted ring 1's dig fade
+  (b7df48b0); a stale-released job's chunk left the candidates (32f28e61; predates Phase 16).
+- `gpu_sun::a_dig_rebakes_the_key_words_with_the_sky_ring` fails at "stale at the dig": its
+  claim at the dig's step is Phase 16's record, not Phase 17's held one; not edited, a
+  question to the owner.
+- The dig frame's step on the RTX after the fix pass reads +2.1 ms (A) and +1.1 ms (B) in
+  the means against Phase 17's tree, over its +0.5 ms bar, with the runs' spread larger.
 
 ### Close triggers
 
