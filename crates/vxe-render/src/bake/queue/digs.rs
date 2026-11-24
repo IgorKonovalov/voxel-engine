@@ -1,7 +1,11 @@
 //! The queue's digs: the boxes to rebake, their opening, and the fades they start.
 
 use super::*;
+use crate::bake::held::{Opaque, apply_held, held_visibilities};
 use crate::bake::job_loop::JobCtx;
+
+/// A chunk's held visibilities ([`held_visibilities`]): by touched brick, a value a cell.
+type Held = Vec<(u16, Vec<Option<[f32; 6]>>)>;
 
 impl BakeQueue {
     /// Reads the edit boxes since the last step into the waiting digs, against the store as the
@@ -14,7 +18,9 @@ impl BakeQueue {
     /// holding a touched brick is listed again at once and takes a provisional block
     /// ([`provisional_block`]): its kept bricks' records, and a brick the edit opened its
     /// neighbours' mean, so no dug face reads no value while its job waits; the job then fades
-    /// from it.
+    /// from it. Under [`BakeQueue::dig_store_hold`] each touched brick's cells hold the held
+    /// visibilities instead ([`held_visibilities`]: the removed surface's times a near openness
+    /// read against the world), which the light pass reads as a record.
     pub(in crate::bake) fn take_boxes(
         &mut self,
         run: &BakeRun<'_>,
@@ -90,30 +96,8 @@ impl BakeQueue {
             }
         }
         let classes = self.classes(run.world.materials());
-        // A `B` press touches tens of chunks: listed across threads, as the pre-roll's are.
-        let threads = std::thread::available_parallelism()
-            .map_or(4, std::num::NonZero::get)
-            .clamp(1, 16);
-        let per = dug.len().div_ceil(threads).max(1);
-        let this = &*self;
-        let listed: Vec<ChunkFaces> = std::thread::scope(|scope| {
-            let handles: Vec<_> = dug
-                .chunks(per)
-                .map(|part| {
-                    let classes = &classes;
-                    scope.spawn(move || {
-                        part.iter()
-                            .map(|(c, _)| this.list(run.world, ChunkCoord(*c), classes).0)
-                            .collect::<Vec<_>>()
-                    })
-                })
-                .collect();
-            handles
-                .into_iter()
-                .flat_map(|h| h.join().expect("a listing thread panicked"))
-                .collect()
-        });
-        for ((c, near), faces) in dug.into_iter().zip(listed) {
+        let listed = self.list_dug(run, &store.words, &boxes, &dug, &classes);
+        for ((c, near), (faces, held)) in dug.into_iter().zip(listed) {
             let coord = ChunkCoord(c);
             if let Some(m) = self.prepared.remove(&c) {
                 self.prepared_bytes -= m.masks.bytes();
@@ -130,7 +114,8 @@ impl BakeQueue {
                 self.digs.remove(&c);
                 continue;
             }
-            let block = provisional_block(store, c, &faces, record, &near);
+            let mut block = provisional_block(store, c, &faces, record, &near);
+            apply_held(&mut block, &held, record);
             let len = block.len() as u64;
             // The old place is freed only once the new one is held: a refused place leaves the
             // old block where the chunk table points, and its dig waits in `digs`.
@@ -177,6 +162,53 @@ impl BakeQueue {
             }
         }
         Ok(())
+    }
+
+    /// The dug chunks' listings, across threads (a `B` press touches tens of chunks, listed as
+    /// the pre-roll's are), each with its touched bricks' held visibilities under
+    /// [`BakeQueue::dig_store_hold`] ([`held_visibilities`], made against the world from the
+    /// blocks as the edit found them, `words`), else none.
+    fn list_dug(
+        &self,
+        run: &BakeRun<'_>,
+        words: &BTreeMap<[i32; 3], Vec<u32>>,
+        boxes: &[[[i32; 3]; 2]],
+        dug: &[([i32; 3], Vec<u16>)],
+        classes: &Arc<Vec<u8>>,
+    ) -> Vec<(ChunkFaces, Held)> {
+        let threads = std::thread::available_parallelism()
+            .map_or(4, std::num::NonZero::get)
+            .clamp(1, 16);
+        let per = dug.len().div_ceil(threads).max(1);
+        let (cell, hold) = (self.settings.cell, self.dig_store_hold);
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = dug
+                .chunks(per)
+                .map(|part| {
+                    scope.spawn(move || {
+                        part.iter()
+                            .map(|(c, near)| {
+                                let faces = self.list(run.world, ChunkCoord(*c), classes).0;
+                                let held = if hold {
+                                    let mut solid =
+                                        Opaque::about(run.world, &classes[..], *c, near);
+                                    held_visibilities(
+                                        &mut solid, words, boxes, *c, &faces, near, cell,
+                                    )
+                                } else {
+                                    Vec::new()
+                                };
+                                (faces, held)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .flat_map(|h| h.join().expect("a listing thread panicked"))
+                .collect()
+        })
     }
 
     /// Opens jobs for the waiting dig chunks not in a job, ahead of every pending job: ring-1

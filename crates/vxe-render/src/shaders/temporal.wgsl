@@ -1110,8 +1110,14 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         // term in the baked term's form with the pair's mean as the face's own visibility,
         // carried by the stored part as the baked term is. With the filter off the composite
         // adds `sky_pair_term` from the pair, so the stored part carries the difference.
-        let t_baked = select(sky_baked_term(store_head(), rec_voxel, rec_dir, pair.x, rec, rec_nf),
-            sky_held_term(rec_voxel, held_base, rec, rec_nf), held_kind == 2u) * exposure_now();
+        // A branch, not `select`: both of a select's sides run, and the held term casts its
+        // near rays at every stale ring face.
+        var t_baked: vec3<f32>;
+        if (held_kind == 2u) {
+            t_baked = sky_held_term(rec_voxel, held_base, rec, rec_nf) * exposure_now();
+        } else {
+            t_baked = sky_baked_term(store_head(), rec_voxel, rec_dir, pair.x, rec, rec_nf) * exposure_now();
+        }
         if ((params.lighting & LIGHTING_FILTER_OFF) != 0u) {
             accum = vec4<f32>(max(accum.xyz + t_baked - t_sky, vec3<f32>(0.0)), accum.w);
         } else {

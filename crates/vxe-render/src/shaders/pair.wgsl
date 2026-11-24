@@ -368,9 +368,10 @@ fn source_faded(term: vec3<f32>, head: StoreHead, v: vec3<i32>, rec: HitRecord, 
 // boxes the encode keeps after the kill boxes from the edit's frame until the live queue holds
 // no dig and a fade's frames more. There a pixel with no light history reprojects the sky's
 // visibility pair alone (`pair_step` over the cast rays, then `no_ray_fade` at the landing),
-// as a pixel with the history does; its other parts keep none.
+// as a pixel with the history does; its other parts keep none. Under bit 7 (`DigHold::On`) no
+// box is held here: the store holds the box's value as a record (`bake::held`).
 fn in_dig_hold(p: vec3<f32>) -> bool {
-    if ((params.history & 32u) == 0u) {
+    if ((params.history & 32u) == 0u || (params.history & 128u) != 0u) {
         return false;
     }
     for (var i = edits.count; i < edits.count + edits.held; i++) {

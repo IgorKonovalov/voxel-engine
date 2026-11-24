@@ -2,7 +2,7 @@
 // (kept apart for the file-size cap).
 
 mod dig_line {
-    mod reading {
+    pub(crate) mod reading {
         use super::super::flicker::reading as fl;
         use super::super::support;
         use std::collections::{BTreeMap, BTreeSet};
@@ -636,6 +636,169 @@ mod dig_line {
             fl::dig_arm(&mut f, arm);
             let s = Stepper::new(&rig, f);
             Some((rig, s, cam))
+        }
+    }
+
+    /// Plan 0098 Phase 17's image test of a fresh hole ([`reading::line_run`]'s scene `above`,
+    /// the owner's pose): its claims' figures over one run.
+    pub(crate) mod hold {
+        use super::super::support::defects::{self, HoleFigures, HoleRun};
+        use super::reading::{LineRun, line_run};
+
+        /// The store's fade from a dig's held record to its job's, frames.
+        const DIG_FADE: usize = vxe_render::internals::DIG_FADE as usize;
+
+        /// The levels the histogram reads the hole's excess at.
+        const LEVELS: [i32; 4] = [8, 16, 32, 64];
+
+        /// One run's figures: each dig's ring-1 landing in frames from its own frame; the
+        /// worst shares (%) of the hole's pixels over 32 levels whiter or blacker than both
+        /// `before` and `after` from each dig's frame to its landing plus [`DIG_FADE`], and over
+        /// 4 levels after that until its group ends; the ring's at 4 levels in every frame from
+        /// the first dig; the dots against the settled frame's; the ring's and the frame's
+        /// shift before the first landing; the largest step away from a group's settled mean
+        /// after its landing; and the histogram's text.
+        pub(crate) struct Claims {
+            pub land: Vec<Option<usize>>,
+            pub before: [f64; 2],
+            pub after: [f64; 2],
+            pub ring: [f64; 2],
+            pub dots: [f64; 2],
+            pub shift: f64,
+            pub away: f64,
+            pub text: String,
+        }
+
+        /// Each dig's ring-1 landing: the first frame from its own whose queue trace holds no
+        /// live dig job with a brick within one voxel of its box and no waiting ring-1 chunk the
+        /// box dilated by one voxel reaches.
+        fn ring1_landings(run: &LineRun) -> Vec<Option<usize>> {
+            let near = |b: [i32; 3], lo: [i64; 3], hi: [i64; 3]| {
+                (0..3).all(|k| i64::from(b[k]) + 7 >= lo[k] - 1 && i64::from(b[k]) <= hi[k] + 1)
+            };
+            let reaches = |c: [i32; 3], lo: [i64; 3], hi: [i64; 3]| {
+                (0..3).all(|k| i64::from(c[k]) * 64 + 63 >= lo[k] - 1 && i64::from(c[k]) * 64 <= hi[k] + 1)
+            };
+            run.digs
+                .iter()
+                .map(|&(d0, lo, hi)| {
+                    (d0..run.traces.len()).find(|&f| {
+                        let t = &run.traces[f];
+                        !t.jobs.iter().any(|j| j.dig && !j.stale && j.bricks.iter().any(|b| near(b.0, lo, hi)))
+                            && !t.waiting.iter().any(|w| w.1 && reaches(w.0, lo, hi))
+                    })
+                })
+                .collect()
+        }
+
+        /// The run of `seq` (`A` or `B`) under `arm` at the image test's start (`waiting`
+        /// false: one frame and the settle) or after 600 frames (`waiting`), on the adapter
+        /// the test support opens, with its claims' figures.
+        pub(crate) fn claims(seq: &str, waiting: bool, arm: &str) -> Option<Claims> {
+            let drain = if waiting { 600 } else { 1 };
+            let (line, _rig) = line_run("above", waiting, seq, arm, drain, None)?;
+            let land = ring1_landings(&line);
+            let hold = !arm.split(',').any(|t| t == "hold=off");
+            let LineRun { frames, digs, out, eye, head, .. } = line;
+            let run = HoleRun { frames, n1: 1, digs, out, hold, eye };
+            let groups = defects::hole_groups(&run);
+            let figs: Vec<Vec<HoleFigures>> = std::iter::once(4)
+                .chain(LEVELS)
+                .map(|l| defects::hole_figures_at(&run, l).0)
+                .collect();
+            let (f4, at) = (&figs[0], |l: i32| &figs[1 + LEVELS.iter().position(|&x| x == l).expect("a level")]);
+            let last = run.frames.len() - 1;
+            // Each frame's span: before the landing and its fade (true) or after (false), by the
+            // latest dig at or before it.
+            let mut early = vec![None::<bool>; run.frames.len()];
+            for (k, &(d0, _, _)) in run.digs.iter().enumerate() {
+                let end = groups.iter().find(|g| d0 <= g.1).map_or(last, |g| g.1);
+                let fade_end = land[k].map_or(end, |l| (l + DIG_FADE).min(end));
+                for (fi, e) in early.iter_mut().enumerate().take(end + 1).skip(d0) {
+                    *e = Some(fi <= fade_end);
+                }
+            }
+            let worst = |fs: &[HoleFigures], pick: &dyn Fn(usize) -> bool, k: fn(&HoleFigures) -> f64| {
+                (0..fs.len()).filter(|&i| pick(i)).map(|i| k(&fs[i])).fold(0.0f64, f64::max)
+            };
+            let is_early = |i: usize| early[i] == Some(true);
+            let is_late = |i: usize| early[i] == Some(false);
+            let first = run.digs[0].0;
+            let from_first = |i: usize| i >= first;
+            let mut text = format!("{head}\n");
+            for &l in &LEVELS {
+                let fs = at(l);
+                text += &format!(
+                    "  over {l:>2} levels: before the landing + fade white {:.2} % black {:.2} %; settled (last two frames) white {:.2} % black {:.2} %\n",
+                    worst(fs, &is_early, |f| f.white_hole),
+                    worst(fs, &is_early, |f| f.black_hole),
+                    worst(fs, &|i| i + 1 >= last, |f| f.white_hole),
+                    worst(fs, &|i| i + 1 >= last, |f| f.black_hole)
+                );
+            }
+            // The frames whose ring or hole breaks a 4-level share of 2 %, by label.
+            let over: Vec<String> = (first..=last)
+                .filter(|&i| f4[i].white_ring.max(f4[i].black_ring) > 2.0 || (is_late(i) && f4[i].white_hole.max(f4[i].black_hole) > 2.0))
+                .map(|i| {
+                    let f = &f4[i];
+                    format!("{} ring {:.1}/{:.1} hole {:.1}/{:.1}", run.frames[i].label, f.white_ring, f.black_ring, f.white_hole, f.black_hole)
+                })
+                .collect();
+            text += &format!("  frames over 2 % at 4 levels: {}\n", over.join("; "));
+            let first_landing = land.iter().flatten().min().copied().unwrap_or(last);
+            let shift = f4[first..first_landing.max(first)]
+                .iter()
+                .map(|f| f.ring_shift.abs().max(f.out_shift.abs()))
+                .fold(0.0f64, f64::max);
+            // The one fade: the largest step away from a group's settled mean after its landing.
+            let mut away = 0.0f64;
+            for &(start, gend) in &groups {
+                let Some(l) = (0..run.digs.len())
+                    .filter(|&k| run.digs[k].0 >= start && run.digs[k].0 <= gend)
+                    .map(|k| land[k])
+                    .collect::<Option<Vec<_>>>()
+                    .and_then(|v| v.into_iter().max())
+                else {
+                    continue;
+                };
+                let settled = f4[gend].hole_mean;
+                for fi in l + 1..=gend {
+                    let step = (f4[fi].hole_mean - settled).abs() - (f4[fi - 1].hole_mean - settled).abs();
+                    away = away.max(step);
+                }
+            }
+            let land: Vec<Option<usize>> = land.iter().zip(&run.digs).map(|(l, d)| l.map(|l| l - d.0)).collect();
+            Some(Claims {
+                before: [worst(at(32), &is_early, |f| f.white_hole), worst(at(32), &is_early, |f| f.black_hole)],
+                after: [worst(f4, &is_late, |f| f.white_hole), worst(f4, &is_late, |f| f.black_hole)],
+                ring: [worst(f4, &from_first, |f| f.white_ring), worst(f4, &from_first, |f| f.black_ring)],
+                dots: [worst(f4, &from_first, |f| f.dots), f4[last].dots],
+                shift,
+                away,
+                land,
+                text,
+            })
+        }
+
+        mod reading {
+        use super::claims;
+
+        /// Plan 0098 Phase 17 step 1's histogram: [`claims`] of A and B on the waiting queue
+        /// under `VXE_DIG`'s arm (`support::defects::dig_spec`), printed, nothing asserted.
+        #[test]
+        #[ignore = "reading"]
+        fn hold_histogram() {
+            let (_, arm, _) = super::super::super::support::defects::dig_spec(("above", "default", 0));
+            for seq in ["A", "B"] {
+                let Some(c) = claims(seq, true, &arm) else {
+                    return;
+                };
+                println!(
+                    "{}hole {seq} {arm}: ring 1 lands D+{:?}; before the landing white {:.2} % black {:.2} % (32 levels), after white {:.2} % black {:.2} %, ring white {:.2} % black {:.2} %, dots {:.2} % (settled {:.2} %), shift {:.2}, away {:+.2}",
+                    c.text, c.land, c.before[0], c.before[1], c.after[0], c.after[1], c.ring[0], c.ring[1], c.dots[0], c.dots[1], c.shift, c.away
+                );
+            }
+        }
         }
     }
 }

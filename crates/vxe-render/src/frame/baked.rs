@@ -391,6 +391,7 @@ impl Frame {
         q.column_wait = self.state.lighting.column_wait;
         q.key_step = self.state.lighting.key_step;
         q.landing_fade = self.state.lighting.landing_fade;
+        q.dig_store_hold = self.state.lighting.dig_hold == crate::DigHold::On;
         // The frame's number into the queue for a first block's landing word (a pre-roll's
         // step, which draws a fixed sample count, writes 0).
         q.landed_word = self.state.lighting.source_fade.then(|| {

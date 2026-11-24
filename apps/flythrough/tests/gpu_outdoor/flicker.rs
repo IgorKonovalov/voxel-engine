@@ -96,74 +96,50 @@ mod flicker {
         assert!(excess.1 <= excess.0 + 4.0, "the hole's mean: {:+.1} against {:+.1} + 4", excess.1, excess.0);
     }
 
-    /// Plan 0098 Phase 14: a fresh hole holds its value until its light lands.
-    /// `reading::hole_run`'s scene `above` (the owner's pose at W3: the forest's spawn at
-    /// `--sun 10,180`, looking steeply down at open ground; the fly-through's frame, FSR 2 from
-    /// 640 x 360 to 960 x 540, the live queue stepped [`DIG_DRAIN`] frames and settled 240) and
-    /// the fly-through's dig three times down one ray, the third while the second is in flight,
-    /// under the defaults (`DigHold::On`). No arm is the baseline: every display pixel is read
-    /// against its own luma before its dig group (`before`) and in the group's settled last
-    /// frame (`after`; `support::defects::before_after`). In every frame from the first dig to
-    /// the last landing plus 24: the hole's share brighter than the larger of `before` and
-    /// `after` by over 4 levels, or darker than the smaller by over 4, is at most 2 %, and the
-    /// ring's likewise; the hole's and ring's share of dots (`support::defects::is_dot`) is at
-    /// most the settled frame's own plus 1 point; until the first landing the ring's mean luma
-    /// and the frame's outside the ring stay within 1 level of N - 1's over the same pixels;
-    /// from each group's landing the hole's mean is in no frame further from the group's
-    /// settled mean than in the frame before by over 1 level. `VXE_DIG`'s arm
-    /// (`support::defects::dig_spec`; `hold=rays` the tree before the fix) replaces the defaults'.
+    /// Plan 0098 Phase 17: a fresh hole holds its value until its light lands, and the light
+    /// lands within a few frames. `dig_line::hold::claims`' runs (the owner's pose at window
+    /// 98d: the forest's spawn at `--sun 10,180`, looking steeply down; the fly-through's frame
+    /// and queue flags), sequence A (three digs down one ray, the third with the second in
+    /// flight) and B (five digs about the view's centre eight frames apart, a sixth into the
+    /// first) on the waiting queue (600 frames in: lavapipe's rig never drains, 161 chunks in
+    /// view waiting), and A at the queue's start for the reference landing. No arm is the
+    /// baseline: every display pixel is read against its own luma before its dig group
+    /// (`before`) and in the group's settled last frame (`after`). With L the frame a dig's
+    /// ring 1 lands: L is at most the dig's frame plus 8 for every dig, and no later than the
+    /// reference's plus 1; from each dig's frame to L + `DIG_FADE` the hole's share over 32
+    /// levels above the larger of `before` and `after`, and its share over 32 below the
+    /// smaller, are each at most 2 %; after that until the next dig, the same at 4 levels; the
+    /// ring's at 4 levels in every frame; dots at most the settled frame's plus 1 point; the
+    /// ring and the frame within 1 level of N - 1 until the first landing; and from each
+    /// group's landing no step away from its settled mean over 1 level. `VXE_DIG`'s arm
+    /// (`support::defects::dig_spec`; `hold=rays` the bite check) replaces the defaults'.
     #[test]
     #[ignore = "soak"]
     fn a_fresh_hole_holds_its_value_until_its_light_lands() {
-        use super::support::defects::{hole_figures, hole_groups, hole_landings};
-        let (scene, arm, drain) = super::support::defects::dig_spec(("above", "default", DIG_DRAIN));
-        let Some((run, _)) = reading::hole_run(&scene, &arm, drain, false, None) else {
+        use super::dig_line::hold::claims;
+        let (_, arm, _) = super::support::defects::dig_spec(("above", "default", 0));
+        let Some(reference) = claims("A", false, &arm) else {
             return;
         };
-        let (figs, _) = hole_figures(&run);
-        let landings = hole_landings(&run);
-        let first = run.digs[0].0;
-        let last_landing = landings
-            .iter()
-            .map(|l| l.expect("every dig lands"))
-            .max()
-            .expect("three digs");
-        let end = (last_landing + 24).min(run.frames.len() - 1);
-        let settled_dots = figs[run.frames.len() - 1].dots;
-        let first_landing = landings.iter().flatten().min().copied().expect("a landing");
-        let span = &figs[first..=end];
-        let worst = |k: fn(&super::support::defects::HoleFigures) -> f64| span.iter().map(k).fold(0.0f64, f64::max);
-        let (wh, bh) = (worst(|f| f.white_hole), worst(|f| f.black_hole));
-        let (wr, br, dots) = (worst(|f| f.white_ring), worst(|f| f.black_ring), worst(|f| f.dots));
-        let shift = figs[first..first_landing]
-            .iter()
-            .map(|f| f.ring_shift.abs().max(f.out_shift.abs()))
-            .fold(0.0f64, f64::max);
-        // The one fade: the largest step away from the group's settled mean after its landing.
-        let mut away = 0.0f64;
-        for (g, &(start, gend)) in hole_groups(&run).iter().enumerate() {
-            let l = (0..run.digs.len())
-                .filter(|&k| run.digs[k].0 >= start && run.digs[k].0 <= gend)
-                .filter_map(|k| landings[k])
-                .max()
-                .expect("the group lands");
-            let settled = figs[gend].hole_mean;
-            for fi in l + 1..=gend {
-                let step = (figs[fi].hole_mean - settled).abs() - (figs[fi - 1].hole_mean - settled).abs();
-                away = away.max(step);
+        let reference = reference.land[0].expect("the reference dig lands");
+        for seq in ["A", "B"] {
+            let c = claims(seq, true, &arm).expect("the adapter");
+            println!(
+                "{}hole {seq} {arm}: ring 1 lands D+{:?} (reference D+{reference}); before the landing white {:.2} % black {:.2} % (32 levels), after white {:.2} % black {:.2} %, ring white {:.2} % black {:.2} %, dots {:.2} % (settled {:.2} %), shift {:.2}, away {:+.2}",
+                c.text, c.land, c.before[0], c.before[1], c.after[0], c.after[1], c.ring[0], c.ring[1], c.dots[0], c.dots[1], c.shift, c.away
+            );
+            for (k, l) in c.land.iter().enumerate() {
+                let l = l.unwrap_or_else(|| panic!("{seq} dig {} never lands", k + 1));
+                assert!(l <= 8 && l <= reference + 1, "{seq} dig {}: ring 1 lands D+{l} (reference D+{reference})", k + 1);
             }
-            println!("hole group {g}: frames {start}..={gend}, landed at {l}");
+            assert!(c.before[0] <= 2.0, "{seq}: the hole whitens before its light lands: {:.2} %", c.before[0]);
+            assert!(c.before[1] <= 2.0, "{seq}: the hole blackens before its light lands: {:.2} %", c.before[1]);
+            assert!(c.after[0] <= 2.0 && c.after[1] <= 2.0, "{seq}: not settled after the fade: {:?}", c.after);
+            assert!(c.ring[0] <= 2.0 && c.ring[1] <= 2.0, "{seq}: the ring: {:?}", c.ring);
+            assert!(c.dots[0] <= c.dots[1] + 1.0, "{seq}: dots {:.2} % against {:.2} % + 1", c.dots[0], c.dots[1]);
+            assert!(c.shift <= 1.0, "{seq}: the ring or the frame shifts before the landing: {:.2}", c.shift);
+            assert!(c.away <= 1.0, "{seq}: the landing is not one fade: {:+.2}", c.away);
         }
-        println!(
-            "hole {scene} {arm}: white hole {wh:.2} % ring {wr:.2} %, black hole {bh:.2} % ring {br:.2} %, dots {dots:.2} % (settled {settled_dots:.2} %), shift before the landing {shift:.2}, fade away {away:+.2}; frames {first}..={end}"
-        );
-        assert!(wh <= 2.0, "the hole whitens: {wh:.2} % of its pixels over 4 levels above before and after");
-        assert!(bh <= 2.0, "the hole blackens: {bh:.2} % of its pixels over 4 levels below before and after");
-        assert!(wr <= 2.0, "the ring whitens: {wr:.2} %");
-        assert!(br <= 2.0, "the ring blackens: {br:.2} %");
-        assert!(dots <= settled_dots + 1.0, "dots: {dots:.2} % against the settled {settled_dots:.2} % + 1");
-        assert!(shift <= 1.0, "the ring or the frame darkens before the landing: {shift:.2} levels");
-        assert!(away <= 1.0, "the landing is not one fade: a step {away:+.2} levels away from the settled mean");
     }
 
     /// The frames [`a_dig_under_calm_neither_darkens_nor_flashes`] drains its queue at most
@@ -824,9 +800,9 @@ mod flicker {
                     "band" => look.far_normal = [2.0, 6.0],
                     "approach" => l.penumbra = vxe_render::Penumbra::Approach,
                     "pin" => pin = true,
-                    "hold=on" => l.dig_hold = vxe_render::DigHold::On,
-                    "hold=rays" => l.dig_hold = vxe_render::DigHold::Rays,
-                    "hold=off" => l.dig_hold = vxe_render::DigHold::Off,
+                    t if t.starts_with("hold=") => {
+                        l.dig_hold = vxe_render::DigHold::from_name(&t[5..]).expect("a hold");
+                    }
                     other => panic!("unknown dig arm token {other}"),
                 }
             }

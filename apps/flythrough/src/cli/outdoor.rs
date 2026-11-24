@@ -50,7 +50,7 @@ pub struct OutdoorArgs {
     /// `--source-fade on|off`: a landing's switch of source fades by the block's landing frame
     /// (`Lighting::source_fade`); unset, the renderer's default.
     pub(crate) source_fade: Option<bool>,
-    /// `--dig-hold on|rays|off`: what a dig shows until its re-bake lands
+    /// `--dig-hold on|near|rays|off`: what a dig shows until its re-bake lands
     /// (`Lighting::dig_hold`); unset, the renderer's default.
     pub(crate) dig_hold: Option<vxe_render::DigHold>,
     /// `--sky-normal face|smoothed`: the normal the baked sky term reads its visibilities by.
@@ -315,15 +315,18 @@ pub(super) fn with_drain_flags(mut flags: Vec<Flag<Parsing>>) -> Vec<Flag<Parsin
 fn dig_hold_flag() -> Flag<Parsing> {
     Flag::value(
         &["--dig-hold"],
-        "on|rays|off",
-        "what a dig shows until its re-bake lands, with no light history: on, the dug faces \
-             show one held sky visibility, the surface's the dig cut through, and the ring \
-             keeps its records' or its chunk's value, then one fade at the landing; rays, the \
-             ring keeps its records' term and the dug faces show their sky rays' running \
-             mean; off, the ring and the hole show the ray's seed until the re-bake [on]",
+        "on|near|rays|off",
+        "what a dig shows until its re-bake lands, with no light history: on, the store \
+             holds each touched brick a record made against the world at the edit (the \
+             surface's sky visibility the dig cut through times a near openness), read as any \
+             record, and fades to the bake's at the landing, while the ring keeps its records' \
+             term; near, the dug faces show one held sky visibility from twelve near rays a \
+             pixel; rays, the ring keeps its records' term and the dug faces show their sky \
+             rays' running mean; off, the ring and the hole show the ray's seed until the \
+             re-bake [on]",
         |p: &mut Parsing, v| {
             p.args.outdoor.dig_hold =
-                Some(v.named(vxe_render::DigHold::from_name, "on, rays or off")?);
+                Some(v.named(vxe_render::DigHold::from_name, "on, near, rays or off")?);
             Ok(())
         },
     )

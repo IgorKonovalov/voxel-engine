@@ -84,17 +84,23 @@ named_enum!(SkyNormal {
     Smoothed => "smoothed",
 });
 
-/// What a dig shows until its re-bake lands with no light history (Plan 0098 Phases 8 and 14,
-/// ADR-0082): every edit box is held from its frame until the live queue holds no dig and a
+/// What a dig shows until its re-bake lands with no light history (Plan 0098 Phases 8, 14 and
+/// 17, ADR-0082): every edit box is held from its frame until the live queue holds no dig and a
 /// fade's frames more.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DigHold {
-    /// A face in a held box, and a stale ring face, shows one held sky visibility, the same
-    /// every frame and cast by no ray: the removed surface's (pair.wgsl's `dig_held_sky`). A
-    /// ring face whose cell holds no record shows its chunk's summary's, held. At the landing
-    /// the value fades to the record's. The default.
+    /// The store holds the value: at the edit each touched brick takes a held record made on the
+    /// CPU against the world (the removed surface's sky visibility times a near openness, at
+    /// least a floor; `bake::held`), which the light pass reads as any record (no ray cast, no
+    /// pair kept) and the store fades to the job's record at its landing (`DIG_FADE`). A stale
+    /// ring face holds its record's term, as under `Rays`. The default.
     #[default]
     On,
+    /// A face in a held box, and a stale ring face, shows one held sky visibility, the same
+    /// every frame and cast by no ray shown: the removed surface's times twelve near rays a
+    /// pixel (pair.wgsl's `dig_held_sky`). A ring face whose cell holds no record shows its
+    /// chunk's summary's, held. At the landing the value fades to the record's.
+    Near,
     /// A stale ring face holds its record's term; a face in a held box shows its sky rays'
     /// running mean, seeded by its stale record or the column's answer.
     Rays,
@@ -104,6 +110,7 @@ pub enum DigHold {
 
 named_enum!(DigHold {
     On => "on",
+    Near => "near",
     Rays => "rays",
     Off => "off",
 });

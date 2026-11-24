@@ -302,6 +302,7 @@ impl BakeQueue {
             steps: self.steps,
             record: record_words(self.settings.cell),
             landing_fade: self.landing_fade,
+            dig_store_hold: self.dig_store_hold,
             landed_word: self.landed_word,
         };
         let mut sink = |store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>| {
@@ -495,6 +496,9 @@ struct Placement<'a> {
     record: usize,
     /// [`BakeQueue::landing_fade`].
     landing_fade: bool,
+    /// [`BakeQueue::dig_store_hold`]: a dig's landing fades its sky visibilities too, from the
+    /// held record.
+    dig_store_hold: bool,
     /// [`BakeQueue::landed_word`].
     landed_word: Option<u32>,
 }
@@ -667,7 +671,7 @@ impl Placement<'_> {
                 from,
                 frame: 0,
                 frames: if dug { DIG_FADE } else { FADE },
-                vis: self.landing_fade,
+                vis: self.landing_fade || (dug && self.dig_store_hold),
             },
         );
     }

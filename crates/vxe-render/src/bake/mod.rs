@@ -58,6 +58,7 @@ use crate::gpu_world::{CHANGES_MAX, GpuWorld};
 mod around;
 mod budget;
 mod faces;
+mod held;
 mod job;
 mod job_loop;
 mod order;

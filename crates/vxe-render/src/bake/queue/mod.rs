@@ -382,6 +382,9 @@ pub struct BakeQueue {
     /// [`crate::Lighting::landing_fade`], set by the frame each step: a landing block's sky
     /// visibilities fade with its direction values ([`fade_mix`]).
     pub landing_fade: bool,
+    /// `crate::DigHold::On`, set by the frame each step: a dig's touched bricks take held
+    /// records at the edit (`bake::held`), whose visibilities fade to the job's at its landing.
+    pub dig_store_hold: bool,
     /// [`crate::Lighting::source_fade`] and the frame, set by the frame each step: `None` off
     /// (every block's [`LANDED_AT`] word 0); else the word a chunk's first block writes there,
     /// the frame plus one, or 0 for a block placed before the first frame (the pre-roll). A
@@ -587,6 +590,7 @@ impl BakeQueue {
             column_wait: false,
             key_step: crate::frame::DEFAULT_KEY_STEP,
             landing_fade: false,
+            dig_store_hold: true,
             landed_word: None,
             keys: Default::default(),
             far_normal: [0.0; 2],

@@ -873,6 +873,11 @@ pub struct HoleFigures {
 
 /// [`HoleFigures`] of every frame of `run`, with each frame's display classes.
 pub fn hole_figures(run: &HoleRun) -> (Vec<HoleFigures>, Vec<Vec<u8>>) {
+    hole_figures_at(run, 4)
+}
+
+/// [`hole_figures`] with white and black past `level` levels in place of 4.
+pub fn hole_figures_at(run: &HoleRun, level: i32) -> (Vec<HoleFigures>, Vec<Vec<u8>>) {
     let classes: Vec<Vec<u8>> = run.frames.iter().map(|f| hole_classes(run, f).1).collect();
     let (w, h) = (run.out[0] as usize, run.out[1] as usize);
     let groups = hole_groups(run);
@@ -892,8 +897,8 @@ pub fn hole_figures(run: &HoleRun) -> (Vec<HoleFigures>, Vec<Vec<u8>>) {
             for i in 0..f.luma.len() {
                 let l = i32::from(f.luma[i]);
                 let (b, a) = (i32::from(before[i]), i32::from(after[i]));
-                let white = l > b.max(a) + 4;
-                let black = l < b.min(a) - 4;
+                let white = l > b.max(a) + level;
+                let black = l < b.min(a) - level;
                 if c[i] == DIG_HOLE_CLASS {
                     hs += u64::from(f.luma[i]);
                 }
