@@ -3,10 +3,10 @@
 
 use std::path::PathBuf;
 
-use vxe_tester::zip::write_zip;
+use svet_tester::zip::write_zip;
 
 fn scratch(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("vxe-tester-{}-{name}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("svet-tester-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).expect("scratch folder");
     d
@@ -137,24 +137,25 @@ print("zipfile ok", len(names))
 /// to name one folder.
 #[test]
 fn the_scrub_writes_the_home_folder_as_a_tilde() {
-    use vxe_tester::zip::scrub_home;
+    use svet_tester::zip::scrub_home;
     let scrub = |text: &str, home: &str| {
         String::from_utf8(scrub_home(text.as_bytes(), home)).expect("UTF-8")
     };
 
-    let unix = "report: wrote /home/tester/vxe/reports/r/run.json\npanicked at /home/tester/x.rs\n";
+    let unix =
+        "report: wrote /home/tester/svet/reports/r/run.json\npanicked at /home/tester/x.rs\n";
     assert_eq!(
         scrub(unix, "/home/tester"),
-        "report: wrote ~/vxe/reports/r/run.json\npanicked at ~/x.rs\n"
+        "report: wrote ~/svet/reports/r/run.json\npanicked at ~/x.rs\n"
     );
     assert_eq!(scrub(unix, "/home/tester/"), scrub(unix, "/home/tester"));
     // A home given with the other separator still matches.
     assert_eq!(scrub(unix, "\\home\\tester"), scrub(unix, "/home/tester"));
 
-    let win = "cwd C:\\Users\\Tester\\vxe\nslash C:/Users/Tester/vxe\njson \"C:\\\\Users\\\\Tester\\\\vxe\"\n";
+    let win = "cwd C:\\Users\\Tester\\svet\nslash C:/Users/Tester/svet\njson \"C:\\\\Users\\\\Tester\\\\svet\"\n";
     assert_eq!(
         scrub(win, "C:\\Users\\Tester"),
-        "cwd ~\\vxe\nslash ~/vxe\njson \"~\\\\vxe\"\n"
+        "cwd ~\\svet\nslash ~/svet\njson \"~\\\\svet\"\n"
     );
     assert_eq!(
         scrub(win, "C:/Users/Tester"),

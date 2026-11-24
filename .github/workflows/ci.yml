@@ -116,7 +116,7 @@ jobs:
       - name: The tester's system report
         shell: bash
         run: |
-          target/debug/vxe-tester --system-json target/system.json > /dev/null
+          target/debug/svet-tester --system-json target/system.json > /dev/null
           cat target/system.json
       # Pipeline creation per compute pass (docs/nfr.md section 7), once per arm: lavapipe on
       # Linux, DX12 on WARP under the default compiler (static DXC, ADR-0035) on Windows. A

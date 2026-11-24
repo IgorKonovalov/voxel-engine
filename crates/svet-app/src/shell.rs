@@ -101,11 +101,11 @@ pub struct ShellConfig {
 }
 
 impl Default for ShellConfig {
-    /// A 1280 x 720 window titled `vxe`, cursor free, presenting without vsync on the
+    /// A 1280 x 720 window titled `svet`, cursor free, presenting without vsync on the
     /// high-performance adapter, a non-sRGB surface and unthrottled frames.
     fn default() -> Self {
         Self {
-            title: "vxe".to_owned(),
+            title: "svet".to_owned(),
             size: [1280, 720],
             lock_cursor: false,
             present_mode: wgpu::PresentMode::AutoNoVsync,

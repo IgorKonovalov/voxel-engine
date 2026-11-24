@@ -10,17 +10,17 @@ const pFlags = (args) => args.flatMap((a, i) => (args[i - 1] === "-p" ? [a] : []
 
 test("a_sim_change_builds_sim_and_its_dependents_only", () => {
   const files = new Set(["crates/svet-sim/src/body.rs"]);
-  assert.deepEqual(withDependents(metadata, ["svet-sim"]), ["flythrough", "svet-sim", "vxe-tester"]);
+  assert.deepEqual(withDependents(metadata, ["svet-sim"]), ["flythrough", "svet-sim", "svet-tester"]);
 
   const tests = buildCommand({ metadata, files, profile: "quick" }).args;
-  assert.deepEqual(pFlags(tests), ["flythrough", "svet-sim", "vxe-tester"]);
+  assert.deepEqual(pFlags(tests), ["flythrough", "svet-sim", "svet-tester"]);
   assert.equal(tests.filter((a) => a === "-p").length, 3);
   assert.ok(!tests.includes("--workspace"));
   assert.deepEqual(tests.slice(tests.indexOf("-E"), tests.indexOf("-E") + 2), ["-E", "rdeps(svet-sim)"]);
 
   const lint = buildCommand({ metadata, files, clippy: true }).args;
   assert.deepEqual(lint, [
-    "clippy", "-p", "flythrough", "-p", "svet-sim", "-p", "vxe-tester", "--all-targets", "--", "-D", "warnings",
+    "clippy", "-p", "flythrough", "-p", "svet-sim", "-p", "svet-tester", "--all-targets", "--", "-D", "warnings",
   ]);
 });
 
@@ -81,7 +81,7 @@ test("the_workspace_sole_marks_name_a_package_a_test_and_a_mechanism", () => {
 
 test("a_world_change_reaches_every_member_that_depends_on_it", () => {
   const set = withDependents(metadata, ["svet-world"]);
-  for (const p of ["svet-world", "svet-sim", "svet-render", "svet-net", "svet-script-wasm", "flythrough", "vxe-tester"]) {
+  for (const p of ["svet-world", "svet-sim", "svet-render", "svet-net", "svet-script-wasm", "flythrough", "svet-tester"]) {
     assert.ok(set.includes(p), p);
   }
   assert.ok(!set.includes("svet-app"));

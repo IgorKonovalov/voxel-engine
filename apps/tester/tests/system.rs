@@ -2,7 +2,7 @@
 //! nothing in it that names the person or the machine.
 
 use flythrough::report::json::{Value, parse};
-use vxe_tester::system::{AdapterRow, STREAM_POOL_BYTES, SystemInfo};
+use svet_tester::system::{AdapterRow, STREAM_POOL_BYTES, SystemInfo};
 
 fn fake_adapters() -> Vec<AdapterRow> {
     vec![

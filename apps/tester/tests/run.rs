@@ -7,14 +7,14 @@ use std::process::Command;
 
 use flythrough::path::{PathMode, Scene};
 use svet_app::KeyCode;
-use vxe_tester::menu::{Command as MenuCommand, Menu};
-use vxe_tester::run::{
+use svet_tester::menu::{Command as MenuCommand, Menu};
+use svet_tester::run::{
     Outcome, Output, Profile, ReportDir, RunSpec, TAIL_LINES, child_command, fly_args,
     flythrough_beside, logged_command, read_run, report_name, run_child, utc_stamp,
 };
 
 fn scratch(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("vxe-tester-{}-{name}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("svet-tester-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).expect("scratch folder");
     d
@@ -130,7 +130,7 @@ fn flythrough() -> PathBuf {
         .parent()
         .and_then(Path::parent)
         .expect("target/<profile>");
-    let fly = flythrough_beside(&profile.join("vxe-tester"));
+    let fly = flythrough_beside(&profile.join("svet-tester"));
     assert!(
         fly.exists(),
         "{} is missing: build it first (cargo build -p flythrough)",
@@ -222,7 +222,7 @@ fn fake(mode: &str, dir: &Path) -> Command {
 fn a_run_reads_ok_with_its_p50_or_failed_with_its_exit_and_tail_and_the_report_saves() {
     let base = scratch("runs");
     let name = report_name("0.0.0", "test", &utc_stamp(1_762_867_200));
-    assert_eq!(name, "vxe-report-0.0.0-test-20251111-132000");
+    assert_eq!(name, "svet-report-0.0.0-test-20251111-132000");
     let mut report = ReportDir::create(&[base.join("reports")], &name).expect("report folder");
     report.log("tester log line");
 
@@ -301,7 +301,7 @@ fn a_run_reads_ok_with_its_p50_or_failed_with_its_exit_and_tail_and_the_report_s
 
     let zip = report.zip().expect("the report saves after failed runs");
     assert_eq!(zip, base.join("reports").join(format!("{name}.zip")));
-    let files = vxe_tester::zip::collect(&report.root, &name).expect("collect");
+    let files = svet_tester::zip::collect(&report.root, &name).expect("collect");
     let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
     for want in [
         format!("{name}/tester.log"),
@@ -328,7 +328,7 @@ fn the_saved_report_holds_no_absolute_path_of_its_base() {
     let mut report = ReportDir::create(&[base.join("reports")], &name).expect("report folder");
 
     // The launcher's system child: logged by file name, its output file relative.
-    let tester = base.join("bin").join("vxe-tester");
+    let tester = base.join("bin").join("svet-tester");
     let sys_args = ["--system-json", "system.json", "--displays"].map(str::to_owned);
     report.log(&format!("system: {}", logged_command(&tester, &sys_args)));
 
@@ -369,7 +369,7 @@ fn the_saved_report_holds_no_absolute_path_of_its_base() {
     assert_eq!(
         tester_log,
         format!(
-            "system: vxe-tester --system-json system.json --displays\n\
+            "system: svet-tester --system-json system.json --displays\n\
              run: {fly_name} --source cave --lamp off --tester --path cave --path-mode bench --render 1280x720 \
              --profile floor --report {rel_s}\n"
         )
@@ -403,7 +403,7 @@ fn the_saved_report_holds_no_absolute_path_of_its_base() {
         "{scrubbed_root} not in the zip"
     );
     // The zip is stored, so its bytes hold every entry's text as written: the three files.
-    let files = vxe_tester::zip::collect(&report.root, &name).expect("collect");
+    let files = svet_tester::zip::collect(&report.root, &name).expect("collect");
     let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
     assert_eq!(
         names,

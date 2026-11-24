@@ -1,9 +1,9 @@
-vxe-tester @VERSION@ (commit @COMMIT@)
+svet-tester @VERSION@ (commit @COMMIT@)
 --------------------------------------
 
 Thank you for testing the voxel engine. This archive holds two programs:
 
-  vxe-tester    the launcher: a small window with a menu
+  svet-tester   the launcher: a small window with a menu
   flythrough    the engine's test scene viewer, which the launcher starts for each run
 
 Keep both in the same folder. Nothing is installed, and nothing is sent anywhere: you send
@@ -13,8 +13,8 @@ the report yourself (see "Sending the report").
 Running it
 ----------
 
-Linux:    unpack the archive, open a terminal in the folder and run ./vxe-tester
-Windows:  unpack the zip (right-click, "Extract All"), open the folder and run vxe-tester.exe
+Linux:    unpack the archive, open a terminal in the folder and run ./svet-tester
+Windows:  unpack the zip (right-click, "Extract All"), open the folder and run svet-tester.exe
 
 Windows warns about an unrecognised app ("Windows protected your PC"), because the programs
 are not code-signed. Click "More info", then "Run anyway".
@@ -65,7 +65,7 @@ A benchmark flies by itself; only Esc does anything there.
 What the report holds
 ---------------------
 
-The report is a folder named vxe-report-<version>-<os>-<date and time in UTC>, saved as a
+The report is a folder named svet-report-<version>-<os>-<date and time in UTC>, saved as a
 zip next to it, under "reports" in this folder (or in your system's temporary folder if this
 folder is not writable). The launcher's window shows both paths.
 
@@ -86,7 +86,7 @@ numbers. Every file is plain text: open any of them before you send them.
 Sending the report
 ------------------
 
-Attach the vxe-report-....zip to an email or a message to the person who sent you this
+Attach the svet-report-....zip to an email or a message to the person who sent you this
 archive. If a run failed, the launcher shows its last lines in red; the zip has the whole log.
 
 

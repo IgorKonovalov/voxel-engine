@@ -86,7 +86,7 @@ own loop and entity model.
   day, save and replay sessions, and print what each edit changed, behind an engine loading
   screen that keeps the window live while the world loads. Every toggle shows its mode in
   the window. Headless benchmarks, golden images and a clip recorder run without one.
-- **The tester build:** `vxe-tester` runs the fly-through once per scene along a fixed camera
+- **The tester build:** `svet-tester` runs the fly-through once per scene along a fixed camera
   path, as a timed benchmark or a tour, and packs the reports into one zip (ADR-0054).
   Release archives for Linux and Windows are built by CI.
 
@@ -137,7 +137,7 @@ and says so.
 | [`crates/vxe-audio`](crates/vxe-audio) | `cpal` output, the HRTF mixer on the device callback, occlusion and early reflections through the material table; the HRIR pack under `assets/`. Depends on `vxe-world` only. |
 | [`crates/vxe-entity`](crates/vxe-entity) | Voxel-model entities: rigid parts as prefabs, poses in fixed point and Q14 quaternions, clips sampled by tick, the entity ray query. Headless and deterministic; depends on `vxe-world` only. |
 | [`apps/flythrough`](apps/flythrough) | The engine's own testbed binary; `logic/` is its dig logic, built natively or as a component; `assets/entities/` is the entities library. |
-| [`apps/tester`](apps/tester) | `vxe-tester`, the tester build's launcher: a menu that runs the fly-through per scene and packs a report. |
+| [`apps/tester`](apps/tester) | `svet-tester`, the tester build's launcher: a menu that runs the fly-through per scene and packs a report. |
 | [`dist/`](dist) | What the tester archives ship beside the binaries. |
 | [`scripts/`](scripts) | Repository gates (doc links, comment hygiene, index rows, test tiers, file and plan size), the changed-crates test runner, the guest build, the clip recorder and the tester packaging. |
 | [`docs/`](docs) | [Roadmap](docs/roadmap.md), [budgets](docs/nfr.md), [ADRs](docs/adrs/README.md), [plans](docs/plans/README.md), [the fly-through's keys and flags](docs/flythrough.md), [the entities](docs/entities.md). |
@@ -211,7 +211,7 @@ Walking, the coarse grid and collapse run on the bounded worlds (`--source level
 frame's render-thread CPU, of `update + poll + sync`, and of the march's GPU time on the
 frames it was timed.
 
-The tester build's launcher, `cargo run --release -p vxe-tester`, opens a menu that runs the
+The tester build's launcher, `cargo run --release -p svet-tester`, opens a menu that runs the
 fly-through once per scene and packs the reports into a zip
 ([`dist/README-TESTER.txt`](dist/README-TESTER.txt)).
 

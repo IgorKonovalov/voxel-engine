@@ -6,7 +6,7 @@
 //! is killed, or leaves no readable `run.json` is a failed run, kept with its exit code and the
 //! log's last lines; the report still saves.
 //!
-//! The report folder is `vxe-report-<version>-<os>-<UTC yyyymmdd-hhmmss>/` holding
+//! The report folder is `svet-report-<version>-<os>-<UTC yyyymmdd-hhmmss>/` holding
 //! `system.json`, `tester.log` and `runs/NN-<scene>-<mode>/{log.txt, run.json}`; [`ReportDir`]
 //! zips it beside itself.
 
@@ -308,9 +308,9 @@ pub fn utc_stamp(secs: u64) -> String {
     )
 }
 
-/// The report folder's name: `vxe-report-<version>-<os>-<stamp>`.
+/// The report folder's name: `svet-report-<version>-<os>-<stamp>`.
 pub fn report_name(version: &str, os: &str, stamp: &str) -> String {
-    format!("vxe-report-{version}-{os}-{stamp}")
+    format!("svet-report-{version}-{os}-{stamp}")
 }
 
 /// A report folder being filled: its root, its `tester.log` and its run count.
