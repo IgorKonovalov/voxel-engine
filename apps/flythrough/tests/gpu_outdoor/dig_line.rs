@@ -32,6 +32,15 @@ mod dig_line {
             pub digs: Vec<(usize, [i64; 3], [i64; 3])>,
             /// Each dig's edit wall, ms ([`dig_along_timed`]).
             pub edit_ms: Vec<f64>,
+            /// Per frame: the wait for an edit's step in ms and the submits the frame issued
+            /// ([`svet_render::Frame::bake_frame_issue`]).
+            pub issue: Vec<(f64, u64)>,
+            /// Per frame from the first dig on, the newest dig's ring as the pool holds it: whether
+            /// every brick its box touches holds a stale-marked (held) record, and whether no
+            /// ring-1 brick does ([`pool_ring`]).
+            pub pool: Vec<Option<(bool, bool)>>,
+            /// Whether the queue's steps ran on the bake thread.
+            pub thread: bool,
             pub out: [u32; 2],
             pub eye: [f32; 3],
             pub head: String,
@@ -62,10 +71,12 @@ mod dig_line {
         /// first; `C`: `B`'s first, then its fourth alone [`C_GAP`] frames later. After the last,
         /// frames until no dig is left plus 16 and [`fl::DIG_TAIL`]. `wait`: the stepper's
         /// device-wait mode ([`Stepper::wait`]), the fly-through's pace; `stretch`: the queue's
-        /// ring-1 stretch ([`svet_render::Frame::set_bake_ring1_stretch`]).
+        /// ring-1 stretch ([`svet_render::Frame::set_bake_ring1_stretch`]); `thread`: the queue's
+        /// sliced steps on the bake thread ([`svet_render::Frame::set_bake_thread`], its books
+        /// carrying the dig trace), else lockstep.
         #[allow(
             clippy::too_many_arguments,
-            reason = "the run's scene, state, sequence, arm, drain, stills, pace and stretch are independent"
+            reason = "the run's scene, state, sequence, arm, drain, stills, pace, stretch and mode are independent"
         )]
         pub(in super::super) fn line_run(
             scene: &str,
@@ -76,6 +87,7 @@ mod dig_line {
             png: Option<&std::path::Path>,
             wait: bool,
             stretch: f64,
+            thread: bool,
         ) -> Option<(LineRun, Rig)> {
             let portable = scene == "portable";
             let facing = spawn_facing();
@@ -123,6 +135,11 @@ mod dig_line {
                 // candidate, so a sample's time is its rays' and its fixed part's.
                 f.set_bake_queue(|q| q.settings.candidates = 0);
             }
+            if thread {
+                f.share_bake_world(rig.world.clone());
+                f.set_bake_thread(&rig.queue, true);
+                f.set_bake_queue(|q| q.trace_digs = true);
+            }
             let mut s = Stepper::new(&rig, f);
             s.wait = wait;
             let mut n = 0;
@@ -137,9 +154,10 @@ mod dig_line {
                 };
                 if done || n >= drain {
                     break format!(
-                        "line {scene} {} {seq} {arm}{}: adapter {}, after {n} frames in view waiting {}, coarse {}, depth {}, jobs {}",
+                        "line {scene} {} {seq} {arm}{}{}: adapter {}, after {n} frames in view waiting {}, coarse {}, depth {}, jobs {}",
                         if waiting { "waiting" } else { "drained" },
                         if wait { " device-wait" } else { "" },
+                        if thread { " thread" } else { " lockstep" },
                         rig.adapter,
                         q.drain_waiting,
                         q.coarse,
@@ -163,15 +181,18 @@ mod dig_line {
             let t = support::defects::march(&rig.world, eye, fwd, 400.0).expect("the view hits ground");
             let centre = [0, 1, 2].map(|k| eye[k] + fwd[k] * t);
             let (mut frames, mut traces, mut digs, mut edit_ms) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-            let read = |rig: &mut Rig, s: &mut Stepper, frames: &mut Vec<HoleFrame>, traces: &mut Vec<svet_render::DigTrace>, label: String| {
+            let (mut issue, mut pool) = (Vec::new(), Vec::new());
+            let mut read = |rig: &mut Rig, s: &mut Stepper, frames: &mut Vec<HoleFrame>, traces: &mut Vec<svet_render::DigTrace>, label: String, dug: Option<([i64; 3], [i64; 3])>| {
                 let q = queue_step(rig, &mut s.frame, &cam);
+                issue.push(s.frame.bake_frame_issue());
+                pool.push(dug.map(|(lo, hi)| pool_ring(&s.frame, rig, lo, hi)));
                 traces.push(s.frame.bake_queue().expect("the live queue").dig_trace());
                 let path = png.map(|d| d.join(format!("{:03}-{label}.png", frames.len())));
                 frames.push(hole_frame(rig, s, &cam, q, label, out, false, path.as_deref()));
                 q
             };
             for k in [2, 1] {
-                read(&mut rig, &mut s, &mut frames, &mut traces, format!("N-{k}"));
+                read(&mut rig, &mut s, &mut frames, &mut traces, format!("N-{k}"), None);
             }
             let aims: Vec<(Camera, usize)> = match seq {
                 "A" => vec![(cam, usize::MAX), (cam, 1), (cam, usize::MAX)],
@@ -199,7 +220,7 @@ mod dig_line {
                 edit_ms.push(ms);
                 let mut tail = None;
                 for k in 0..1200usize {
-                    let q = read(&mut rig, &mut s, &mut frames, &mut traces, format!("D{}+{k}", d + 1));
+                    let q = read(&mut rig, &mut s, &mut frames, &mut traces, format!("D{}+{k}", d + 1), Some((dug.0, dug.1)));
                     if k + 1 == *gap {
                         break;
                     }
@@ -212,7 +233,40 @@ mod dig_line {
                     }
                 }
             }
-            Some((LineRun { frames, traces, digs, edit_ms, out, eye, head }, rig))
+            Some((LineRun { frames, traces, digs, edit_ms, issue, pool, thread, out, eye, head }, rig))
+        }
+
+        /// The ring of the box `lo ..= hi` as the pool holds it now, from the blocks the frame
+        /// reads (`Frame::read_store_block`, the bake thread's books' places with it on): whether
+        /// every brick the box touches holds a record marked stale (the second sky word's bit 17,
+        /// the dig's held record and ring mark), and whether no brick within a voxel of the box
+        /// does (ring 1 applied).
+        fn pool_ring(f: &svet_render::Frame, rig: &Rig, lo: [i64; 3], hi: [i64; 3]) -> (bool, bool) {
+            let (mut held, mut fresh, mut touched) = (true, true, 0);
+            let a = lo.map(|v| (v - 1).div_euclid(64) as i32);
+            let b = hi.map(|v| (v + 1).div_euclid(64) as i32);
+            for z in a[2]..=b[2] {
+                for y in a[1]..=b[1] {
+                    for x in a[0]..=b[0] {
+                        let Some(w) = f.read_store_block(&rig.device, &rig.queue, svet_world::ChunkCoord([x, y, z])) else {
+                            continue;
+                        };
+                        for (slot, r) in records(&w) {
+                            let b = [slot % 8, slot / 8 % 8, slot / 64].map(|v| v as i32 * 8);
+                            let b = [x * 64 + b[0], y * 64 + b[1], z * 64 + b[2]];
+                            let stale = r[8] & (1 << 17) != 0;
+                            if near_box(b, lo, hi, 0) {
+                                touched += 1;
+                                held &= stale;
+                            }
+                            if near_box(b, lo, hi, 1) {
+                                fresh &= !stale;
+                            }
+                        }
+                    }
+                }
+            }
+            (held && touched > 0, fresh)
         }
 
         /// Whether the brick whose lowest voxel is `b` lies within `pad` voxels of the box.
@@ -263,10 +317,12 @@ mod dig_line {
                 pool_full = Some(pf);
                 let _ = writeln!(
                     out,
-                    "{fi:4} {:8} cap {:7} sent {:7} | flight r1 {:6} r2 {:6} other {:7} | free {:2} pend {:3} open {:2} unread {} withdrawn {} pool+{pool} | read {:7} drawn {:7} in {} at {:.4} ms, ray {:.2}, ns {:.1} price {:.3} ms + {:.2} ns r1 {:.2} dig {:.2} | step {:6.3} ms light {:6.3} temporal {:6.3} gpu {:6.2} | waiting {} depth {} digs {} stretched {}",
+                    "{fi:4} {:8} cap {:7} sent {:7} | flight r1 {:6} r2 {:6} other {:7} | free {:2} pend {:3} open {:2} unread {} withdrawn {} pool+{pool} | read {:7} drawn {:7} in {} at {:.4} ms, ray {:.2}, ns {:.1} price {:.3} ms + {:.2} ns r1 {:.2} dig {:.2} | step {:6.3} ms light {:6.3} temporal {:6.3} gpu {:6.2} | waiting {} depth {} digs {} stretched {} | wait {:.3} ms submits {}",
                     f.label, f.q.cap, f.q.submitted, fl[0], fl[1], fl[2], t.free_slots, t.pending, t.open,
                     t.in_flight, t.withdrawn, f.q.samples, f.q.drawn, f.q.read_submits, f.q.ms, f.q.ray_len, f.q.ns_per_sample, f.q.fixed_ms, f.q.cost_ns, f.q.ring1_ns, f.q.dig_ns, f.q.stages.total_ms, f.light_ms, f.temporal_ms, f.gpu_ms,
-                    f.q.drain_waiting, f.q.depth, f.q.digs, u8::from(f.q.stretched)
+                    f.q.drain_waiting, f.q.depth, f.q.digs, u8::from(f.q.stretched),
+                    run.issue.get(fi).map_or(0.0, |i| i.0),
+                    run.issue.get(fi).map_or(0, |i| i.1)
                 );
                 let jobs: BTreeMap<[i32; 3], &svet_render::DigTraceJob> = t.jobs.iter().map(|j| (j.coord, j)).collect();
                 let mut seen = BTreeSet::new();
@@ -392,6 +448,28 @@ mod dig_line {
                     })
                     .collect();
                 let _ = writeln!(out, "  cost D+0..8 (step / light / temporal / gpu ms): {}", cost.join(" "));
+                // The pool's reads of this dig's ring, its frames to the next dig.
+                let end = run.digs.get(di + 1).map_or(run.frames.len(), |d| d.0);
+                let first_pool = |want: fn((bool, bool)) -> bool| {
+                    (d0..end).find(|&i| run.pool.get(i).copied().flatten().is_some_and(want)).map(|i| i - d0)
+                };
+                let held = first_pool(|p| p.0);
+                let fresh = first_pool(|p| p.1);
+                let step_at = |i: usize| run.frames[i].q.steps;
+                let took = |i: usize| i > 0 && i < run.frames.len() && step_at(i) > step_at(i - 1);
+                // A fade of 4 frames from ring 1's records applied: frames that took a step.
+                let fade = fresh.map(|r| (d0 + r..d0 + r + 4).filter(|&i| took(i)).count());
+                let unread = d0 > 0 && run.frames[d0].q.in_flight_full > run.frames[d0 - 1].q.in_flight_full;
+                let (wait, submits) = run.issue.get(d0).copied().unwrap_or((f64::NAN, 0));
+                let _ = writeln!(
+                    out,
+                    "  pool {}: held record D+{} ring-1 records fresh D+{}; D+0 wait {wait:.3} ms submits {submits}, every slot unread {}, fade steps {}/4",
+                    if run.thread { "thread" } else { "lockstep" },
+                    held.map_or("-".into(), |x| x.to_string()),
+                    fresh.map_or("-".into(), |x| x.to_string()),
+                    u8::from(unread),
+                    fade.map_or("-".into(), |n| n.to_string()),
+                );
                 // The dig frame's step by stage, the stages over 0.5 ms.
                 let st = &run.frames[d0].q.stages;
                 let laps: Vec<String> = svet_render::debug::STEP_STAGES
@@ -433,12 +511,14 @@ mod dig_line {
         }
 
         /// Plan 0098 Phase 16 step 1's timeline: `SVET_LINE` is
-        /// `SCENE/STATE/SEQ/ARM/DRAIN/PACE/STRETCH` (`above` or `portable`, `drained` or
+        /// `SCENE/STATE/SEQ/ARM/DRAIN/PACE/STRETCH/MODE` (`above` or `portable`, `drained` or
         /// `waiting`, `A`, `B` or `C`, `support::defects`' dig arm tokens, the most frames the
         /// queue drains, `wait` for the stepper's device-wait mode or `free`, the ring-1 stretch,
-        /// 1.0 by default, named `-sX` in the file's name otherwise); the text under
-        /// `live/p16/<adapter>-<scene>-<state>-<seq>-<arm>[-wait].txt`, the frames' PNGs beside
-        /// it with `SVET_LINE_PNG` set.
+        /// [`svet_render::DEFAULT_RING1_STRETCH`] by default, named `-sX` in the file's name
+        /// otherwise, and `thread` for the bake thread or `lock`, lockstep, by default, named
+        /// `-thread`); the text under
+        /// `live/p16/<adapter>-<scene>-<state>-<seq>-<arm>[-wait][-sX][-thread].txt`, the frames'
+        /// PNGs beside it with `SVET_LINE_PNG` set.
         #[test]
         #[ignore = "reading"]
         fn dig_timeline() {
@@ -452,28 +532,33 @@ mod dig_line {
                 "free" => false,
                 p => panic!("SVET_LINE's pace {p}: wait or free"),
             };
-            let stretch: f64 = part("1.0").parse().expect("SVET_LINE's stretch");
+            let stretch: f64 = part("1.5").parse().expect("SVET_LINE's stretch");
+            let thread = match part("lock").as_str() {
+                "thread" => true,
+                "lock" => false,
+                m => panic!("SVET_LINE's mode {m}: thread or lock"),
+            };
             let adapter = std::env::var("SVET_TEST_ADAPTER").unwrap_or_else(|_| "lavapipe".into());
             let name = format!(
                 "{adapter}-{scene}-{state}-{seq}-{}{}{}",
                 arm.replace([',', '='], "-"),
                 if wait { "-wait" } else { "" },
-                if stretch == 1.0 { String::new() } else { format!("-s{stretch}") }
-            );
+                if stretch == svet_render::DEFAULT_RING1_STRETCH { String::new() } else { format!("-s{stretch}") }
+            ) + if thread { "-thread" } else { "" };
             let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../live/p16");
             let png = std::env::var("SVET_LINE_PNG").is_ok().then(|| dir.join(&name));
             if let Some(p) = &png {
                 std::fs::create_dir_all(p).expect("the stills' directory");
             }
             std::fs::create_dir_all(&dir).expect("the reading's directory");
-            let Some((run, _rig)) = line_run(&scene, state == "waiting", &seq, &arm, drain, png.as_deref(), wait, stretch) else {
+            let Some((run, _rig)) = line_run(&scene, state == "waiting", &seq, &arm, drain, png.as_deref(), wait, stretch, thread) else {
                 return;
             };
             let text = line_text(&run);
             let summary: String = text
                 .lines()
                 .filter(|l| {
-                    l.starts_with("line ") || l.starts_with("dig ") || l.starts_with("  cost") || l.starts_with("  D+0 step") || l.starts_with("before")
+                    l.starts_with("line ") || l.starts_with("dig ") || l.starts_with("  cost") || l.starts_with("  pool") || l.starts_with("  D+0 step") || l.starts_with("before")
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
@@ -758,7 +843,7 @@ mod dig_line {
         /// the test support opens, with its claims' figures.
         pub(crate) fn claims(seq: &str, waiting: bool, arm: &str) -> Option<Claims> {
             let drain = if waiting { 600 } else { 1 };
-            let (line, _rig) = line_run("above", waiting, seq, arm, drain, None, false, 1.0)?;
+            let (line, _rig) = line_run("above", waiting, seq, arm, drain, None, false, svet_render::DEFAULT_RING1_STRETCH, false)?;
             let land = ring1_landings(&line);
             let hold = !arm.split(',').any(|t| t == "hold=off");
             let LineRun { frames, digs, out, eye, head, .. } = line;

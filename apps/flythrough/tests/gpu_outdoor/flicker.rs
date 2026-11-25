@@ -663,7 +663,7 @@ mod flicker {
                 queue,
                 gpu,
                 adapter,
-                world,
+                world: std::sync::Arc::new(world),
             };
             let p = eye.0.map(|v| v as f32 + 0.5);
             let d = facing.map(|v| v as f32);
@@ -1562,7 +1562,7 @@ mod flicker {
                 queue,
                 gpu,
                 adapter,
-                world,
+                world: std::sync::Arc::new(world),
             })
         }
 

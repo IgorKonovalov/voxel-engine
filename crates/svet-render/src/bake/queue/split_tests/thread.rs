@@ -503,7 +503,7 @@ fn a_waiting_box_ends_the_opening() {
 }
 
 /// Done when (2) of Plan 0099 Phase 2e, with the thread on. The rig starts at 1.0 (set by name
-/// before the thread takes the books: the default is 1.5 since Phase 3b). The stretch set to 1.5
+/// before the thread takes the books: the default is 1.5). The stretch set to 1.5
 /// between frames 3 and 4 goes into the mailbox: the books on the bake thread hold 1.0 when the
 /// step on message 4 starts (no setter writes the bake half directly), and that step plans by
 /// 1.5: its dig's ring 1 (280 samples in this rig) against a cap of 200 goes whole.

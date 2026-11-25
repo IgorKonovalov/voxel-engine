@@ -274,6 +274,10 @@ pub struct BakeQueue {
     /// than its priced cap and at most this many times it plans them whole, at that count
     /// (Plan 0099 Phase 2e). 1.0 is the priced cap alone; [`DEFAULT_RING1_STRETCH`] by default.
     pub ring1_stretch: f64,
+    /// Whether the bake thread's books carry the queue's [`DigTrace`] after each step, for a
+    /// reading's dig timeline ([`QueueRead::dig_trace`]); off by default. Lockstep reads the
+    /// queue itself.
+    pub trace_digs: bool,
     /// The order candidates open in.
     pub order: QueueOrder,
     /// Whether the queue withdraws the jobs of chunks the camera has passed (ADR-0048): at a
@@ -583,6 +587,7 @@ impl BakeQueue {
             edit_ms: DEFAULT_BAKE_EDIT_MS,
             reach_ring: true,
             ring1_stretch: DEFAULT_RING1_STRETCH,
+            trace_digs: false,
             order: QueueOrder::default(),
             withdraw: true,
             boxes: Vec::new(),

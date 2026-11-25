@@ -46,6 +46,8 @@ pub(crate) struct Books {
     pub(crate) around: BTreeMap<[i32; 3], Vec<u32>>,
     pub(crate) around_summary: Option<Summary>,
     pub(crate) cell: u32,
+    /// The queue's dig trace after the step, under [`BakeQueue::trace_digs`] (a reading).
+    pub(crate) dig_trace: Option<DigTrace>,
 }
 
 impl Books {
@@ -93,6 +95,7 @@ impl Books {
             around,
             around_summary,
             cell: store.cell,
+            dig_trace: q.trace_digs.then(|| q.dig_trace()),
         }
     }
 

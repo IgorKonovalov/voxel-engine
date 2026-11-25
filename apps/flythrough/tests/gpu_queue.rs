@@ -1020,32 +1020,7 @@ fn in_ring1(b: [i32; 3], lo: [i64; 3], hi: [i64; 3]) -> bool {
 /// stale flag). Settled, chunk 0 is bit-identical to a one-shot bake of the edited world.
 #[test]
 fn a_dig_jumps_every_open_job_and_withdraws_its_stale_one() {
-    let world = world_of([8, 6, 1], AIR);
-    for x in 0..8i64 {
-        for y in 0..6i64 {
-            if (x, y) != (0, 0) {
-                fill(
-                    &world,
-                    [x * 64 + 24, y * 64 + 24, 24],
-                    [x * 64 + 32, y * 64 + 32, 32],
-                    ROCK,
-                );
-            }
-        }
-    }
-    fill(&world, [0, 0, 24], [64, 64, 32], ROCK);
-    let Some(mut q) = rig(
-        world,
-        &Setup {
-            near: 0,
-            slice_ms: 1e-6,
-            counts: BakeSettings {
-                brick_samples: 4096,
-                ..counts()
-            },
-            ..Setup::at([32.5, 32.5, 50.5])
-        },
-    ) else {
+    let Some(mut q) = dig_rig() else {
         return;
     };
     let zero = ChunkCoord([0, 0, 0]);
@@ -1142,4 +1117,153 @@ fn a_dig_jumps_every_open_job_and_withdraws_its_stale_one() {
         q.fresh().get(&zero.0),
         "chunk 0 against a one-shot bake of the edited world"
     );
+}
+
+/// The dig rig of [`a_dig_jumps_every_open_job_and_withdraws_its_stale_one`]: forty-seven chunks
+/// of an 8^3 cube each and a 64 x 64 x 8 slab in chunk 0 (the camera's), at 4096 samples a brick
+/// direction, no coarse pass, near 0, the smallest slice.
+fn dig_rig() -> Option<Q> {
+    let world = world_of([8, 6, 1], AIR);
+    for x in 0..8i64 {
+        for y in 0..6i64 {
+            if (x, y) != (0, 0) {
+                fill(
+                    &world,
+                    [x * 64 + 24, y * 64 + 24, 24],
+                    [x * 64 + 32, y * 64 + 32, 32],
+                    ROCK,
+                );
+            }
+        }
+    }
+    fill(&world, [0, 0, 24], [64, 64, 32], ROCK);
+    rig(
+        world,
+        &Setup {
+            near: 0,
+            slice_ms: 1e-6,
+            counts: BakeSettings {
+                brick_samples: 4096,
+                ..counts()
+            },
+            ..Setup::at([32.5, 32.5, 50.5])
+        },
+    )
+}
+
+/// Three carves in [`dig_rig`]'s slab, apart.
+const DIG_BOXES: [([i64; 3], [i64; 3]); 3] = [
+    ([8, 8, 28], [11, 11, 31]),
+    ([40, 40, 28], [43, 43, 31]),
+    ([8, 40, 28], [11, 43, 31]),
+];
+
+/// What [`dig_reads`] read of one dig: chunk 0's ring-1 records in the pool after the edit's
+/// own frame, by slot, and the frames from the edit's frame (0) to the first whose pool holds
+/// no ring-1 record marked stale (ring 1 applied).
+struct DigRead {
+    held: std::collections::BTreeMap<usize, Vec<u32>>,
+    ring1: usize,
+}
+
+/// Whether a brick record is marked stale (the second sky word's bit 17: a dig's held record
+/// and its ring's mark until its job lands).
+fn marked(r: &[u32]) -> bool {
+    r[8] & (1 << 17) != 0
+}
+
+/// Chunk 0's ring-1 records of the box `lo ..= hi` in the pool, by slot.
+fn ring1_pool(q: &Q, lo: [i64; 3], hi: [i64; 3]) -> std::collections::BTreeMap<usize, Vec<u32>> {
+    slot_records(&q.shown([0, 0, 0]).expect("chunk 0's block"))
+        .into_iter()
+        .filter(|(slot, _)| {
+            let b = [slot % 8, slot / 8 % 8, slot / 64].map(|v| v as i32 * 8);
+            in_ring1(b, lo, hi)
+        })
+        .collect()
+}
+
+/// [`dig_rig`] with its sliced steps on the bake thread (`thread`) or in lockstep: chunk 0
+/// baked at a pre-roll's sample count (every other chunk's jobs still behind it), then sliced;
+/// before each of [`DIG_BOXES`] chunk 0 settled (its block at the full count, no dig waiting,
+/// then 16 more frames, so every fade has ended and the records are the same in either mode),
+/// the carve, the edit's frame, and frames until ring 1 is applied.
+fn dig_reads(thread: bool) -> Option<Vec<DigRead>> {
+    let mut q = dig_rig()?;
+    let zero = ChunkCoord([0, 0, 0]);
+    if thread {
+        q.frame.share_bake_world(q.world.clone());
+        q.frame.set_bake_thread(&q.queue, true);
+    }
+    q.samples = Some(1 << 20);
+    for n in 0.. {
+        q.step();
+        if q.shown(zero.0).is_some() {
+            break;
+        }
+        assert!(n < MAX_STEPS, "chunk 0 bakes");
+    }
+    q.samples = None;
+    let mut out = Vec::new();
+    for (lo, hi) in DIG_BOXES {
+        for n in 0.. {
+            q.step();
+            if q.q().settled(zero, false) && q.q().digs_settled() {
+                break;
+            }
+            assert!(n < MAX_STEPS, "chunk 0 settles before the dig");
+        }
+        for _ in 0..16 {
+            q.step();
+        }
+        assert_eq!(q.frame.bake_thread_running(), thread);
+        q.edit(&box_op(lo, [hi[0] + 1, hi[1] + 1, hi[2] + 1], Mode::Carve));
+        q.step();
+        let held = ring1_pool(&q, lo, hi);
+        let mut ring1 = 0;
+        while ring1_pool(&q, lo, hi).values().any(|r| marked(r)) {
+            q.step();
+            ring1 += 1;
+            assert!(ring1 < MAX_STEPS, "ring 1 lands");
+        }
+        out.push(DigRead { held, ring1 });
+    }
+    Some(out)
+}
+
+/// Plan 0099 Phase 3b, done-whens (4) and (5) (ADR-0083's one wait). [`dig_reads`] in lockstep
+/// and with the bake thread on, three digs each: with the thread on, the pool read back after
+/// the edit's own frame holds every ring-1 brick's record marked (the touched bricks' held
+/// records and the ring's mark), bit-identical to lockstep's after its edit's frame, where the
+/// dig's step runs in the frame; and ring 1 is applied within lockstep's frame count plus 2.
+#[test]
+fn the_edits_frame_holds_the_dig_and_ring_1_lands_in_either_mode() {
+    let Some(lock) = dig_reads(false) else {
+        return;
+    };
+    let thread = dig_reads(true).expect("the device opened once");
+    for (k, (l, t)) in lock.iter().zip(&thread).enumerate() {
+        println!(
+            "dig {}: ring-1 records {}, ring 1 applied D+{} lockstep, D+{} thread",
+            k + 1,
+            l.held.len(),
+            l.ring1,
+            t.ring1
+        );
+        assert!(!l.held.is_empty(), "dig {k}: chunk 0 holds ring-1 bricks");
+        assert!(
+            l.held.values().all(|r| marked(r)),
+            "dig {k}: lockstep's edit frame holds the held records"
+        );
+        assert_eq!(
+            t.held, l.held,
+            "dig {k}: the edit's frame with the thread on holds lockstep's held records"
+        );
+        assert!(
+            t.ring1 <= l.ring1 + 2,
+            "dig {k}: ring 1 applied at D+{} with the thread, D+{} in lockstep",
+            t.ring1,
+            l.ring1
+        );
+    }
 }

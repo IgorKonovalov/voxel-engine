@@ -12,7 +12,8 @@ pub struct Rig {
     pub queue: svet_render::wgpu::Queue,
     pub gpu: svet_render::GpuWorld,
     pub adapter: String,
-    pub world: svet_world::World,
+    /// Shared, so a reading can hand it to the bake thread (`Frame::share_bake_world`).
+    pub world: std::sync::Arc<svet_world::World>,
 }
 
 /// `world` mirrored whole (an absent chunk is sky to a lighting ray) with the focus at `eye`.
@@ -38,7 +39,7 @@ pub fn mirrored(world: svet_world::World, eye: svet_world::VoxelCoord) -> Option
         queue,
         gpu,
         adapter,
-        world,
+        world: std::sync::Arc::new(world),
     })
 }
 

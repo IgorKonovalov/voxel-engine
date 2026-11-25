@@ -44,6 +44,15 @@ impl std::ops::Deref for QueueRead<'_> {
 }
 
 impl QueueRead<'_> {
+    /// The queue's dig trace ([`BakeQueue::dig_trace`]); with the bake thread on, the one its
+    /// newest books taken carry under [`BakeQueue::trace_digs`] (empty without it).
+    pub fn dig_trace(&self) -> DigTrace {
+        match self.src {
+            Source::Live { queue, .. } => queue.dig_trace(),
+            Source::Books(b) => b.dig_trace.clone().unwrap_or_default(),
+        }
+    }
+
     /// Whether the books are the bake thread's snapshot.
     pub fn threaded(&self) -> bool {
         matches!(self.src, Source::Books(_))
