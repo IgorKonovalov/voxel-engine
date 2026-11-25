@@ -51,6 +51,13 @@ window's top-right corner reads `fps <n>  frame <median> ms p99 <ms>` while it i
 - **The notice row**, above the footer, holds the last line an action printed for 3 s, in
   yellow: `readings: sampling 30 frames` and then the frame line, the logic's `stamped: ...`,
   a refused entry's reason.
+- **An inert mark**: an entry whose settings row changes nothing under the run's live
+  settings ends `(inert: <reason>)`, and the notice of its change says the same
+  (`penumbra disc (inert: key far column)`, `sky rays 3 (inert: light history off)`,
+  `key far mix step (inert: light history off)`); the mark goes when the row it waits on
+  changes. The rows and their conditions are one table, `apps/flythrough/src/inert.rs`, which
+  `tests/gpu_settings_rows.rs` proves by rendering; a row inert for what the run cannot tell
+  (a rebuild, the live queue, motion) carries no mark.
 
 ### Fixed
 

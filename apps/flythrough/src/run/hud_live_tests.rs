@@ -95,12 +95,12 @@ const UNNAMED: &[(&str, &str)] = &[
 ];
 
 /// The flags of a bare run under the sky (`--level --sky on`), so the banner's sky words show.
-fn sky_args() -> crate::cli::Args {
+pub(super) fn sky_args() -> crate::cli::Args {
     crate::cli::parse_args_from(argv(&["--level", "--sky", "on"])).expect("parses")
 }
 
 /// A bare run started from `args`: its modes are the ones `args` starts.
-fn run_of(args: crate::cli::Args) -> Run {
+pub(super) fn run_of(args: crate::cli::Args) -> Run {
     let mut run = bare_run(carved_rock());
     run.modes = args.start_modes(0.0);
     run.args = args;
@@ -109,7 +109,7 @@ fn run_of(args: crate::cli::Args) -> Run {
 
 /// Writes `s` into the flags [`crate::cli::Args::render_settings`] reads, as the flags that
 /// set them would: what a run started with those flags holds.
-fn hold(a: &mut crate::cli::Args, s: &RenderSettings) {
+pub(super) fn hold(a: &mut crate::cli::Args, s: &RenderSettings) {
     use crate::hud::UpscalerMode;
     let l = &s.lighting;
     let base = a.start_lighting();
