@@ -15,7 +15,8 @@ RTX 3080 Laptop GPU (1280x720, 16 settle frames a pose, exposure 10, lamp off, e
 A game-agnostic voxel engine in Rust. A streaming world of small voxels (10 cm at the first
 consumer's scale) is ray-marched in compute shaders through [`wgpu`](https://wgpu.rs), edited at
 runtime with deterministic operations that report what they changed, and queried for collision,
-acoustics and navigation from the same data.
+acoustics and navigation from the same data. The name is the Slavic *svet* (свет): "light",
+and in the same languages "the world".
 
 It is a **library workspace, not a framework**. There is no ECS, no scene editor and no asset
 pipeline beyond voxel-model and rig import. A game composes the crates it needs and owns its
@@ -24,10 +25,11 @@ own loop and entity model.
 > **Status: pre-alpha.** Milestones M1 (fly-through with digging), M3 (collision and a
 > character controller), M4 (spatial audio), M5 (the simulation split and a WebAssembly logic
 > host) and M6 (entities as voxel models, with rigs and clips) have shipped, with parts of M2
-> (lighting: baked emissive light, dynamic lights, a sun and a sky), M7 (tooling: the tester
-> build, the loading screen, render settings and named profiles), M8 (collapse) and M10
-> (outdoors: the sun and sky). v0.54.0 was the first tagged release; its tester archives are on
-> the [releases page](https://github.com/IgorKonovalov/svet/releases).
+> (lighting: baked emissive light, dynamic lights), M7 (tooling: the tester build, the loading
+> screen, render settings and named profiles, the fly-through's menu, structures from any
+> `.vox`), M8 (collapse) and M10 (outdoors: the sun and sky, and a still outdoor light baked
+> into the same store). v0.54.0 was the first tagged release; its tester archives are on the
+> [releases page](https://github.com/IgorKonovalov/svet/releases).
 > [`CHANGELOG.md`](CHANGELOG.md) says what has shipped, [`docs/roadmap.md`](docs/roadmap.md)
 > what comes next, and [`docs/plans/README.md`](docs/plans/README.md) what is in flight.
 
@@ -42,12 +44,16 @@ own loop and entity model.
   math throughout, pinned by cross-platform hashes.
 - **Queries:** an integer raycast, point and box queries, brick occupancy masks, and a coarse
   per-brick grid with a walkable map that update incrementally from each edit's result.
-- **Prefabs:** MagicaVoxel `.vox` import with a palette-to-material map, and prefab stamping
-  in any of the 24 rotations, at generation time or at runtime, with the same edit result.
+- **Prefabs:** MagicaVoxel `.vox` import, every palette entry a material row (glass is
+  translucent, an emissive colour lights through the bake), with the material table a text
+  file. Prefabs are stored as bricks and stamped in any of the 24 rotations, at generation
+  time or at runtime, with the same edit result; a stamp larger than the resident world
+  finishes as its chunks arrive.
 - **Collapse:** a support query over the coarse grid finds regions an edit left unsupported;
   deterministic ops drop them as a rigid piece or turn them into rubble.
 - **Collision:** vertical-cylinder sweeps and a character controller with step-up, wall
-  slide, gravity, jumping and ledge climbing, in integer math.
+  slide, gravity, jumping and ledge climbing, and a surface mover that crawls on any face,
+  walls and ceilings included, all in integer math.
 - **The simulation split:** a server owns the world and an op log of every edit, stamp, drop
   and removal (a save carries the prefabs its stamps name); clients are shared or own a
   replica with desync detection; a session replays from seed plus log to the same hash.
@@ -59,21 +65,27 @@ own loop and entity model.
   class, a far shading normal that softens distant faces, and a stats overlay with a
   frame-time strip.
 - **Lighting that holds in the dark.** Emissive voxels are baked per chunk into a store of
-  one record a brick, filled by a live queue nearest the camera first and re-baked by digs
-  (ADR-0046). A list of analytic point and spot lights, the headlamp among them, is shaded
-  exactly with one shadow ray each (ADR-0044), with a probe channel for the lamp's bounce.
-  The direct part is denoised in a target of its own and the frame is upscaled by a WGSL
-  port of FSR 2 (the default, at 1.5), or with the upscaler off rendered at the output size.
+  one record a brick (ADR-0046), filled by a live queue that bakes each chunk at a sample
+  tier set by its size on screen (ADR-0080); a dig's bricks jump the queue. A list of
+  analytic point and spot lights, the headlamp among them, is shaded exactly with one shadow
+  ray each (ADR-0044), with a probe channel for the lamp's bounce. The light passes keep no
+  screen history by default, so the image right after a move is the image at rest
+  (ADR-0082). The frame is upscaled by a WGSL port of FSR 2 (the default, at 1.5), the only
+  upscaler; with it off the frame renders at the output size.
 - **A sun and a sky.** Hillaire's atmosphere as LUTs built on the GPU from a `Sky` the game
-  sets, a time of day the game steps, the sun or moon as one directional sample with a shadow
-  ray and the sky's light from a sky ray (ADR-0026, ADR-0027). A frame with no sky set builds
-  none of it.
+  sets and a time of day the game steps (ADR-0026). The sky's light at a face is a
+  visibility baked per brick direction into the same per-chunk store, times the sky's
+  irradiance read each frame, with a sky ray only where the bake is stale (ADR-0070). The
+  sun or moon is one directional sample, shadowed on world faces by the horizon of a column
+  map of the resident chunks. The auto exposure anchors on the sky around the camera, so a
+  tunnel at noon stays dark (ADR-0081). A frame with no sky set builds none of it.
 - **Entities as voxel models:** rigid parts on a rig, posed in fixed point so the entity
   ray query gives bit-identical hits on every platform, traced after the world march and lit
   and shadowed by the list lights. Clips are keyframes sampled by integer tick; a model's rig
   and clips live in a `.rig` text file beside its `.vox`, and `.voxtext` draws voxels as
-  text. The models uploaded to the GPU pool are freed by handle. [`docs/entities.md`](docs/entities.md)
-  has the library and how to make one.
+  text. A `.rig` can give a model a ground or a surface body, which moves over the floor
+  and the walls on the `svet-sim` movers. The models uploaded to the GPU pool are freed by
+  handle. [`docs/entities.md`](docs/entities.md) has the library and how to make one.
 - **Render settings as one surface:** every setting of the frame and the mirror in one
   `RenderSettings` value, each field with its apply class, and the named profiles `Floor`,
   `Portable`, `Performance` and `High` whose frame budgets are in `docs/nfr.md` section 2
@@ -82,10 +94,12 @@ own loop and entity model.
   transmission and early reflections probed through the same voxels and the material
   table's acoustic triple, and a late reverb sized by the room the listener sees.
 - **The fly-through** testbed: fly or walk, dig, fill and stamp, watch unsupported rock fall,
-  drop and carry lights, place entities and play their clips, switch worlds and the time of
-  day, save and replay sessions, and print what each edit changed, behind an engine loading
-  screen that keeps the window live while the world loads. Every toggle shows its mode in
-  the window. Headless benchmarks, golden images and a clip recorder run without one.
+  drop and carry lights, pick entities and `.vox` structures from a belt of slots and place
+  them under a ghost, switch worlds and the time of day, save and replay sessions, and print what
+  each edit changed, behind an engine loading screen that keeps the window live while the
+  world loads. One searchable menu holds every toggle with its live value, and every toggle
+  shows its mode in the window. Headless benchmarks, golden images and a clip recorder run
+  without one.
 - **The tester build:** `svet-tester` runs the fly-through once per scene along a fixed camera
   path, as a timed benchmark or a tour, and packs the reports into one zip (ADR-0054).
   Release archives for Linux and Windows are built by CI.
@@ -98,13 +112,14 @@ The figures behind these, met and missed, are in [`docs/nfr.md`](docs/nfr.md).
   chunk levels to about 1 km, liquid surfaces with waves, a reflection and a refraction ray,
   aerial perspective and clouds, weather as cosmetic client state, and the night sky; later,
   flowing liquids as deterministic ops through the log.
-- **Lighting (M2).** Steady outdoor light (sky visibility baked into the per-chunk store) and
-  a surface detail layer marched above styled faces are drafted; the mirror sync's cost in
-  flight is still over the frame line (`docs/nfr.md` section 2) and heads the backlog.
-- **Tooling (M7).** An in-game menu that takes over the fly-through's keys, a settings file,
-  an entity picker, the remaining debug views and a profiler across passes.
-- **Entities (M6).** Entities aware of the floor and the walls, squash and stretch, variants
-  per instance, and a posed entity entering the world as a prefab.
+- **Lighting (M2).** Approved and not yet shipped: the bake step moved off the main thread
+  (a dig's frame and the time a view takes to land are over their lines today, see
+  `docs/nfr.md`), a sun's shadow resolved a face at a time with sun under cover,
+  and a surface detail layer marched above styled faces.
+- **Tooling (M7).** A settings menu and a settings file, a frame profiler across the threads
+  and the GPU passes, WGSL hot reload, staged structures and the remaining debug views.
+- **Entities (M6).** Squash and stretch, variants per instance, and a posed entity entering
+  the world as a prefab.
 - **Volumetrics and debris (M8).** Dust, fog and smoke in a separate coarse volume, never as
   voxels; particle debris from edits and a cosmetic rigid-body layer.
 - **Networking (M9).** A QUIC transport over the channel abstraction, prediction and
@@ -130,8 +145,8 @@ and says so.
 | [`crates/svet-world`](crates/svet-world) | Voxel storage, materials, edit ops and results, spatial queries, prefabs and stamping, collapse, streaming, the op log and its wire encoding. Headless and deterministic: no GPU, no wall clock, no unseeded RNG. |
 | [`crates/svet-render`](crates/svet-render) | `wgpu`: the GPU mirror and its upload, compute ray marching, the baked light store and its live queue, the light list, the sun and sky, denoise, FSR 2, exposure, voxel-model entities, the loading screen, the text overlay, render settings and profiles. All WGSL lives here. |
 | [`crates/svet-app`](crates/svet-app) | Thin, optional `winit` shell: window, input, surface, frame loop, a splash before the world loads. |
-| [`crates/svet-sim`](crates/svet-sim) | Cylinder sweeps and the character controller. Depends on `svet-world` only. |
-| [`crates/svet-assets`](crates/svet-assets) | `.vox` parsing and writing and the palette-to-material map, producing `svet-world` prefabs; `.rig` files to `svet-entity` models and clips; voxels drawn as text (`.voxtext`). |
+| [`crates/svet-sim`](crates/svet-sim) | Cylinder sweeps, the character controller and the surface mover. Depends on `svet-world` only. |
+| [`crates/svet-assets`](crates/svet-assets) | `.vox` parsing and writing, palette entries as material rows and the material table file, `.vox` scenes to `svet-world` prefabs and placements; `.rig` files to `svet-entity` models and clips; voxels drawn as text (`.voxtext`). |
 | [`crates/svet-net`](crates/svet-net) | The byte channel, the server tick with its op and input logs, the `Logic` and `Host` traits, shared and owned clients. |
 | [`crates/svet-script-wasm`](crates/svet-script-wasm) | The `wasmtime` host for logic components; `guests/` holds the test components. Not in the default build. |
 | [`crates/svet-audio`](crates/svet-audio) | `cpal` output, the HRTF mixer on the device callback, occlusion and early reflections through the material table; the HRIR pack under `assets/`. Depends on `svet-world` only. |
@@ -191,7 +206,7 @@ cargo run --release -p flythrough -- --help                   # every flag
 |-------|------|
 | Mouse, `W` `A` `S` `D`, `Space` / `C` | Look and fly; hold `Shift` to go faster |
 | Left / right click | Dig / fill at the crosshair; the edit result prints to the terminal |
-| Scroll | Change the dig radius |
+| Scroll | Enter placement mode at the belt's selected slot, then step the slot; there the left click places the ghost and the right click leaves |
 | `Tab` | The menu: every toggle and action by group with its live value; type to search, `Enter` flips or runs |
 | `F1` | The Keys page: every menu entry and its key |
 | `F2` | Toggle the stats overlay |
@@ -199,11 +214,12 @@ cargo run --release -p flythrough -- --help                   # every flag
 | `F7` | Toggle the headlamp |
 | `F10` | Cycle the upscaler: off, fsr2 |
 | `G` | Toggle fly and walk mode (bounded worlds only); walking, `Space` jumps or climbs a ledge |
-| `Esc` | Close the menu (a page at a time); with it closed, quit |
+| `Esc` | Close the menu (a page at a time); with it closed, leave placement mode, else ask before quitting (`Esc again to quit`) |
 
-Everything else (the look presets, the lighting modes, the lights, the light queue, the
-entities, the sky and the world source, audio, the debug views) is an entry of the menu, and a
-gamepad walks the same menu (`Start`). [`docs/flythrough.md`](docs/flythrough.md) lists the
+Everything else (the dig radius, the look presets, the lighting modes, the lights, the light
+queue, the entities, the sky and the world source, audio, the debug views) is an entry of the
+menu; an entry the run cannot act on is grey with its reason, and a gamepad walks the same
+menu (`Start`). [`docs/flythrough.md`](docs/flythrough.md) lists the
 fixed keys, the shortcuts, the gamepad and every flag; `flythrough --keys` prints the whole
 tree. Every toggle shows its mode in a banner and in its menu row and prints it to stdout.
 Walking, the coarse grid and collapse run on the bounded worlds (`--source level` and
