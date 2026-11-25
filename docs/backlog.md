@@ -17,13 +17,6 @@ Rules:
 
 ## Next up
 
-### The rename's two owed steps: the GitHub repository and the manual release run (2026-11-24)
-
-From [Plan 0087](plans/done/0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md)'s close (v0.73.0, closed with both owed; nothing was pushed that night). Both are the owner's, in this order; the outputs go to `docs/plans/logs/0087.md` and this entry leaves when both are in.
-
-1. **Phase 5, before the merged main is pushed.** Rename `IgorKonovalov/voxel-engine` to `svet` in GitHub's Settings (General, Repository name), and make no repository under the old name (the redirect dies if one appears). Then in the main checkout: `git remote set-url origin https://github.com/IgorKonovalov/svet.git`. Checks: `gh repo view IgorKonovalov/svet --json name,url`; `git remote -v`; `git fetch origin`; `curl -sI https://github.com/IgorKonovalov/voxel-engine` answers `301` with a `location:` on `/IgorKonovalov/svet`. Until then the README's badge and releases link and `Cargo.toml`'s `repository` point at a URL that does not exist yet.
-2. **Phase 3's manual run, on main after the push the owner asks for** (`git push origin main`): `gh workflow run release.yml --ref main`, then `gh run watch`. Done when it uploads artifacts named `svet-tester-linux-x86_64` and `svet-tester-windows-x86_64` and both smoke steps are green (`gh run view`). It makes artifacts only, no Release and no tag; the next `v*` tag ships the first `svet-tester-*` archive.
-
 ### The record by rule at every opening, and the bake's key ray at its cap (2026-11-23)
 
 From [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 10 (its section "Phase 10 after its reading"; readings in `docs/plans/logs/0096.md`, "Phase 10a"). A small plan of its own, to run ahead of Plan 0099's Phase 1 (ruled at Plan 0096's close, 2026-11-23, v0.71.0). **Drafted 2026-11-24 as [Plan 0101](plans/0101-the-record-by-rule-at-every-opening-an-audit-on-the-real-scenes-first-then-the-three-exclusions-lifted.md) with [ADR-0085](adrs/0085-the-zero-record-is-ruled-on-the-mirror-as-it-stands-exact-by-the-re-list-not-by-the-columns-finality.md) (proposed); awaits the owner's go.** The draft carries the rule alone (the key ray is Plan 0100's Phase 2), puts the audit on the real scenes ahead of any behaviour change, and recommends running after Plan 0099 closes instead of ahead of its Phase 1 (its question 1); this entry leaves when the owner answers.
