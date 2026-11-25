@@ -565,7 +565,7 @@ says otherwise; 3, 4 and 5, the recommended options.
 | 5: Sun under cover, the candidates read | dev | read; the stop rule fires (the horizon reads 1 where the reference reads under 0.5 on more faces than the ramp holds: W1's pose 1 054 against 480, the slot 146 against 62; W3's 5 against 63); readings in [`logs/0100.md`](logs/0100.md) | committed with this row |
 | 5b: The horizon walked whole, the lift's hole read | dev | step 1 read (CPU); neither stop rule fires (the levelled walk's lit reads at most 3.25 times `march`'s, w3; both lift rows read new dark at the terraces); the contact rows are question 7's figures; readings in [`logs/0100.md`](logs/0100.md); step 2 built (`lighting.key_horizon march|walk`, the three-level walk, the coarse levels in rows under the column map): the shader's `walk` is the CPU's within 2/255 on 100 % of lighting pixels at slot and w3, 99.29 % at w1 (the march's mismatch kind again, 1 404 px); RENOIR temporal +0.10 to +0.16 ms; readings in [`logs/0100.md`](logs/0100.md) | committed with this row |
 | 6: Sun under cover, the arms | dev | built (`lighting.key_cover off\|ray\|record\|ray-record`, defaults unchanged: the golden binaries 66 of 66; the settings-rows walk reads it live at `ray-record`); read at Phase 5's three poses under `march` and `walk` off the rendered frames, still and after a turn, the record's landing, the pass times; readings in [`logs/0100.md`](logs/0100.md) | `3221f224`, the readings with this row |
-| 7: The window rehearsed headless | dev | not started | |
+| 7: The window rehearsed headless | dev | done: `live/session100.sh` (untracked draft, 17 launches) rehearsed on the RTX and the RENOIR off `live/bin7/flythrough` (`b36a5232`); no loud line on the final sheets; every launch at least 36 fps headless on its adapter; 1b moved to 1280 x 720, 3c and 4d dropped; readings in [`logs/0100.md`](logs/0100.md) | `b36a5232` (`--eye`), the readings committed with this row |
 | 8: The owner's window | human | not started | |
 | 9: The picks become the defaults | dev | not started | |
 
@@ -655,6 +655,17 @@ each. Empty is fine.)_
   upscaler's change from the key's.
 - Phase 6: "present at a distance" is the rig's fresh start under `record` (wall seconds,
   loaded), not the fly-through's drain, on the RTX only.
+- Phase 7: outside the phase's files: `apps/flythrough/src/{cli/outdoor.rs,setup.rs,cli/tests/outdoor.rs}`
+  and `docs/flythrough.md` (`--eye`, `b36a5232`), so the runs start at the owner's poses.
+- Phase 7: Phase 8's run 3 is not offered `ray` with `penumbra approach`: under `approach` the cover
+  ray is not reached near (`key_from_store`), the picture equals `approach` alone (0.007 %), its
+  light pass 5.2 ms on the RTX at Floor; `inert.rs` lists `lighting.penumbra` inert under key far
+  column without a cover ray, and `approach` alone moves 5.5 % of the pixels at W3's forest eye.
+- Phase 7: Phase 8's run 4 launches `off`, `ray` and `record`, not `ray-record` (4b's picture at the
+  slot, 0.249 %); run 5's arms on the RENOIR are `off`, `record` and `ray-record` at the canopy and
+  `march` and `walk` at the terraces.
+- Phase 7: run 1's native reference is `--upscaler off --render 1280x720` (1a's internal grid), not
+  the window's size.
 
 ### Close triggers
 
