@@ -874,7 +874,9 @@ against the baked store: no probe or store term takes sun or sky light.
   the near trunks under coarse light (no fault read or seen). Left open, to the follow-on
   plan (the backlog's "The sun's term at small faces"): the wobble, the tunnel slot's
   shimmer, the near shadow's hole, sun under cover as a default; it starts from clips the
-  owner judges, then a measure that ranks what he ranked.
+  owner judges, then a measure that ranks what he ranked. **Drafted 2026-11-25 as
+  [Plan 0104](plans/0104-the-wobble-anchored-to-the-owners-eye-clips-he-ranks-a-measure-that-ranks-them-then-the-remedy.md)**,
+  which awaits the owner's go: no remedy is built or picked before a clip is anchored.
 - **A surface detail layer** ([Plan 0081](plans/0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md),
   drafted 2026-11-16, awaits the owner's go; ADR-0063 proposed): grass, moss, strands,
   fungus caps, flowers, pebbles and snow tufts as a procedural shell marched in the hit pass
