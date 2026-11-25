@@ -9,7 +9,7 @@
 //! applies the lists under the cap, and sends the next message with the landing words and the
 //! read-backs that mapped. Nothing it calls waits on a step.
 
-use super::thread::{BakeThread, Weighed};
+use super::thread::{BakeThread, Picked, Weighed};
 use super::*;
 use std::collections::VecDeque;
 
@@ -117,6 +117,60 @@ pub(crate) struct Made {
     pub(crate) lists: Vec<WriteList>,
     pub(crate) stats: Result<QueueStats, BakeError>,
     pub(crate) books: Arc<Books>,
+    /// When the step ran (a reading of the edit's wait by its parts).
+    pub(crate) times: StepTimes,
+}
+
+/// When a step on the bake thread ran: when the thread was free and took its message, where
+/// the step's clock started, the step's milliseconds to the end of its `boxes` stage, the
+/// step's return and the end of the books' snapshot.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct StepTimes {
+    pub(crate) picked: Picked,
+    pub(crate) start: std::time::Instant,
+    pub(crate) boxes_ms: f64,
+    pub(crate) step_end: std::time::Instant,
+    pub(crate) books_end: std::time::Instant,
+}
+
+/// The parts of an edit's frame's wait, in ms (a reading, ADR-0083's one wait), in order: the
+/// rest of a step in progress at the send (the thread not free), the pick-up (from the send, or
+/// the thread free if later, to the dig's step taking its message), the step to the end of its
+/// `boxes` stage, the step's rest, the books' snapshot (which builds the dig trace under
+/// [`BakeQueue::trace_digs`]), and the hand-back (from the snapshot's end to the render thread
+/// holding the take).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct DigWaitParts {
+    pub(crate) ms: [f64; 6],
+}
+
+impl DigWaitParts {
+    /// The parts of a wait from `send` (just before the send) to `woke` (the take returned),
+    /// for the step whose times are `t`.
+    pub(crate) fn of(send: std::time::Instant, woke: std::time::Instant, t: &StepTimes) -> Self {
+        let ms = |a: std::time::Instant, b: std::time::Instant| {
+            b.saturating_duration_since(a).as_secs_f64() * 1e3
+        };
+        let ready = send.max(t.picked.free);
+        let boxes_end = t.start + std::time::Duration::from_secs_f64(t.boxes_ms.max(0.0) * 1e-3);
+        let boxes_end = boxes_end.min(t.step_end);
+        Self {
+            ms: [
+                ms(send, t.picked.free),
+                ms(ready, t.picked.took),
+                ms(t.picked.took.max(send), boxes_end),
+                ms(boxes_end, t.step_end),
+                ms(t.step_end, t.books_end),
+                ms(t.books_end, woke),
+            ],
+        }
+    }
+
+    /// The parts' sum.
+    #[cfg(test)]
+    pub(crate) fn sum(&self) -> f64 {
+        self.ms.iter().sum()
+    }
 }
 
 impl Weighed for Made {
@@ -136,10 +190,16 @@ impl Weighed for Made {
 
 /// One step on the bake thread: the message's read-backs into a recording half, the step, and
 /// the books' snapshot.
-pub(crate) fn bake_step(side: &mut BakeSide, mut m: ThreadMsg, cap: Option<usize>) -> Vec<Made> {
+pub(crate) fn bake_step(
+    side: &mut BakeSide,
+    mut m: ThreadMsg,
+    cap: Option<usize>,
+    picked: Picked,
+) -> Vec<Made> {
     // The step's laps read this thread's clock and `wgpu` call tally (thread-local): its start
     // is the bake thread's, taken when it picks the message up, not the render thread's send.
     m.msg.start = StepStart::now();
+    let start = m.msg.start.at;
     if let Some(s) = side.queue.box_signal.as_mut() {
         s.took(m.boxes);
     }
@@ -165,12 +225,26 @@ pub(crate) fn bake_step(side: &mut BakeSide, mut m: ThreadMsg, cap: Option<usize
         half.read_backs.is_empty(),
         "every read-back sent answers a submit the bake half planned"
     );
+    let step_end = stopwatch();
     let books = Arc::new(Books::of(&side.queue, &side.store, frame, eye));
+    // The stages from the step's start to the end of `boxes` are laps of one clock, in order;
+    // the summaries' later move out of `gone` and `rewindow` can only shorten this sum.
+    let boxes_ms = stats
+        .as_ref()
+        .map_or(0.0, |s| s.stages.ms[..=super::stages::S_BOXES].iter().sum());
+    let times = StepTimes {
+        picked,
+        start,
+        boxes_ms,
+        step_end,
+        books_end: stopwatch(),
+    };
     vec![Made {
         ops: half.ops,
         lists: half.lists,
         stats,
         books,
+        times,
     }]
 }
 
@@ -215,6 +289,8 @@ pub(crate) struct ThreadLink {
     pub(crate) issued_now: usize,
     /// Whether the last frame carried an edit's box, and so waited for its step.
     pub(crate) waited: bool,
+    /// The last edit's frame's wait by its parts ([`DigWaitParts`]); `None` before any.
+    pub(crate) parts: Option<DigWaitParts>,
 }
 
 /// The render side's laps in [`render_frame`]: the take (the previous books dropped with it),
@@ -241,8 +317,8 @@ impl ThreadLink {
         let last = side.queue.stats;
         let boxes = BoxSender::default();
         side.queue.box_signal = Some(boxes.signal());
-        let thread = BakeThread::start(side, outbox, ThreadMsg::coalesce, move |s, m| {
-            bake_step(s, m, cap)
+        let thread = BakeThread::start(side, outbox, ThreadMsg::coalesce, move |s, m, p| {
+            bake_step(s, m, cap, p)
         })?;
         Ok(Self {
             thread,
@@ -259,6 +335,7 @@ impl ThreadLink {
             round_trip: BakeRoundTrip::default(),
             issued_now: 0,
             waited: false,
+            parts: None,
         })
     }
 
@@ -276,8 +353,18 @@ impl ThreadLink {
     /// The edit's frame's take (ADR-0083's one wait): what the bake thread made, waiting until
     /// an entry made from the message of `frame` or a later one is among it. `Err` when the
     /// thread ended first (its panic).
-    pub(crate) fn take_waiting(&mut self, frame: u64) -> Result<Taken, BakeError> {
+    /// The wait's parts from `send`, the instant before the frame's send, are kept in
+    /// [`ThreadLink::parts`].
+    pub(crate) fn take_waiting(
+        &mut self,
+        frame: u64,
+        send: std::time::Instant,
+    ) -> Result<Taken, BakeError> {
         let (made, found) = self.thread.take_until(|m| m.books.frame >= frame);
+        let woke = stopwatch();
+        if let Some(m) = made.iter().find(|m| m.books.frame >= frame) {
+            self.parts = Some(DigWaitParts::of(send, woke, &m.times));
+        }
         let taken = self.absorb(made);
         if found {
             return Ok(taken);
@@ -518,9 +605,10 @@ pub(crate) fn render_frame(
         let read_backs = mapped(half);
         issued_at(link, &read_backs);
         mark(3);
+        let send = stopwatch();
         link.send(pending.take().expect("the frame's message"), read_backs);
         mark(4);
-        let taken = link.take_waiting(frame);
+        let taken = link.take_waiting(frame, send);
         mark(5);
         taken?
     } else {

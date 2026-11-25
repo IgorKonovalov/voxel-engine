@@ -485,7 +485,10 @@ impl Drop for Run {
             if let Some(line) = queue::render_laps_line(g.frame.bake_render_laps()) {
                 println!("frames: {line}");
             }
-            if let Some(line) = queue::dig_wait_line(g.frame.bake_dig_waits()) {
+            for line in queue::dig_wait_lines(&self.queue.dig_frames)
+                .into_iter()
+                .chain(queue::dig_call_lines(&self.queue.dig_frames))
+            {
                 println!("frames: {line}");
             }
             let [fading, stepped] = g.frame.bake_fade_frames();

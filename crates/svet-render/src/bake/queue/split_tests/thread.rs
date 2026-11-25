@@ -862,6 +862,60 @@ fn a_dig_into_a_fading_chunk_shows_its_held_block() {
     );
 }
 
+/// Done when (1) of Plan 0099 Phase 3d. The slab drained, the step before the dig's held 20 ms
+/// by the hook, and the box sent while it is held: the edit's frame's wait by its parts
+/// (`DigWaitParts`) sums to the wait lap within 0.5 ms, and the hold is in the first part (the
+/// rest of the step in progress at the send).
+#[test]
+fn the_waits_parts_sum_to_the_wait() {
+    use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
+    const HOLD_MS: f64 = 20.0;
+    let held = Arc::new(AtomicU64::new(u64::MAX));
+    let h = held.clone();
+    let hook: Hook = Box::new(move |_, m| {
+        if m.frame == h.load(SeqCst) {
+            std::thread::sleep(std::time::Duration::from_secs_f64(HOLD_MS * 1e-3));
+        }
+    });
+    let mut t = ThreadRig::new(Some(hook), OUTBOX_BYTES);
+    drain(&mut t);
+    held.store(t.rig.half.frame + 1, SeqCst);
+    let at = stopwatch();
+    t.frame().expect("the held step's message goes out");
+    assert!(
+        within(|| t.link.peek(|m| m.is_none())),
+        "the step took its message and is held"
+    );
+    t.carve([60, 20, 4], [67, 23, 7]);
+    let sent_after = seconds_since(at) * 1e3;
+    t.frame().expect("the edit's frame returns with its list");
+    let parts = t.link.parts.expect("the edit's frame's parts");
+    let wait = t.link.laps[5];
+    assert!(t.link.waited, "the edit's frame waited");
+    println!(
+        "wait {wait:.3} ms, parts {:?} sum {:.3}, sent {sent_after:.3} ms into the hold",
+        parts.ms,
+        parts.sum()
+    );
+    assert!(
+        (parts.sum() - wait).abs() < 0.5,
+        "the parts {:?} sum to {:.3} ms against the wait {wait:.3} ms",
+        parts.ms,
+        parts.sum()
+    );
+    assert!(
+        parts.ms[0] >= HOLD_MS - sent_after - 0.5 && parts.ms[0] <= HOLD_MS + 0.5,
+        "the hold's rest after the send ({:.3} ms sent at {sent_after:.3} ms) is the first part: {:?}",
+        HOLD_MS - sent_after,
+        parts.ms
+    );
+    assert!(
+        parts.ms[1..].iter().all(|p| *p < parts.ms[0]),
+        "no other part holds the hold: {:?}",
+        parts.ms
+    );
+}
+
 /// Done when (2) of Plan 0099 Phase 3b. A panic in the step that takes the box is the box
 /// frame's error, returned within 2 s, not a hang. With the outbox at its cap when the box is
 /// sent (the render side sending and not taking until the bake side stops stepping), the box

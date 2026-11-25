@@ -74,6 +74,16 @@ impl Frame {
         self.baked.last_issue
     }
 
+    /// The last live-queue frame's wait for an edit's step by its parts in ms, with the bake
+    /// thread on and when that frame carried a box (a reading): the rest of a step in progress at
+    /// the send, the pick-up, the dig's step to the end of its `boxes` stage, the step's rest,
+    /// the books' snapshot (with the dig trace when the queue traces digs) and the hand-back;
+    /// then the frame's issue lap (its submits). The parts sum to the wait and the send.
+    pub fn bake_frame_wait_parts(&self) -> Option<([f64; 6], f64)> {
+        let link = self.baked.thread.as_ref().filter(|l| l.waited)?;
+        Some((link.parts?.ms, link.laps[1]))
+    }
+
     /// The last live-queue frame's apply in ms (with the bake thread on, the render thread's
     /// apply lap; in lockstep the step's apply stage) and the bytes it applied over the frame's
     /// cap (a reading).

@@ -463,9 +463,16 @@ The one exception is an edit's frame: it waits for the step that read its box, a
 held block in that frame, and issues the dig's submit behind any carried one, so it may issue
 two. Write lists apply in the order the bake thread made them, so the edit's frame applies
 every list made before the edit's with it, whatever the frame's byte cap. The teardown's
-`frames: bake thread dig wait:` line reads those frames, the wait's p50, p99 and max in ms,
-the dig frames that issued two submits, and the frames that applied bytes over the cap with
-those bytes' p50 and max; the `bake thread render laps:` line's `wait` lap is the same wait.
+`frames: bake thread dig wait:` lines, one while chunks in view wait for their tier and one
+after, read those frames: the wait's p50, p99 and max in ms; its parts' p50 and p99 (`rest`,
+the step in progress at the send; `pickup`, to the dig's step taking its message; `boxes`, the
+step to its edit's box taken; `step_rest`, the step's rest; `snapshot`, the books handed back,
+with the dig trace when the queue traces digs; `handback`, to the render thread's take); the
+frame's issue and apply laps; the dig frames by the submits they issued (1, 2, 3 or more); and
+the frames that applied bytes over the cap with those bytes' p50 and max. The `bake thread
+render laps:` line's `wait` lap is the same wait. In either mode the `frames: bake dig call:`
+lines read the dig frames by the same two states, the bake call's p50, p99 and max in ms
+(lockstep's step, or the thread's frame call with its wait) beside the wait.
 
 ### Audio
 

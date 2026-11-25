@@ -10,6 +10,16 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::JoinHandle;
+use std::time::Instant;
+
+/// When the bake thread took a message: `free` is when it was last ready for one (its start, or
+/// the end of the previous step's hand-in to the outbox) and `took` when it took this one from
+/// the inbox (a reading of the edit's wait by its parts).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Picked {
+    pub(crate) free: Instant,
+    pub(crate) took: Instant,
+}
 
 /// What the outbox weighs an entry by.
 pub(crate) trait Weighed {
@@ -71,12 +81,13 @@ where
     /// Starts the thread on `side`: each message it takes is stepped with `step`, whose entries
     /// go to the outbox, which holds at most `cap` bytes before the thread waits (an entry
     /// larger than the cap goes alone into an empty outbox). `coalesce` merges a waiting
-    /// message with a newer one.
+    /// message with a newer one. The step is told when the thread was free and when it took the
+    /// message ([`Picked`]).
     pub(crate) fn start(
         mut side: S,
         cap: usize,
         coalesce: fn(M, M) -> M,
-        mut step: impl FnMut(&mut S, M) -> Vec<O> + Send + 'static,
+        mut step: impl FnMut(&mut S, M, Picked) -> Vec<O> + Send + 'static,
     ) -> std::io::Result<Self> {
         let shared = Arc::new(Shared {
             inbox: Mutex::new(None),
@@ -98,6 +109,7 @@ where
                 // Wakes a render thread waiting on an entry when the thread ends, by its stop or
                 // by a panic (dropped as the panic unwinds).
                 let _ended = Ended(&*sh);
+                let mut free = crate::bake::stopwatch();
                 loop {
                     let msg = {
                         let mut slot = Shared::<M, O>::lock(&sh.inbox);
@@ -111,7 +123,8 @@ where
                             slot = sh.wake.wait(slot).unwrap_or_else(PoisonError::into_inner);
                         }
                     };
-                    let out = step(&mut side, msg);
+                    let took = crate::bake::stopwatch();
+                    let out = step(&mut side, msg, Picked { free, took });
                     sh.steps.fetch_add(1, Ordering::Release);
                     let bytes: usize = out.iter().map(Weighed::bytes).sum();
                     let mut ob = Shared::<M, O>::lock(&sh.outbox);
@@ -127,6 +140,7 @@ where
                     ob.entries.extend(out);
                     drop(ob);
                     sh.made.notify_all();
+                    free = crate::bake::stopwatch();
                 }
             })?;
         Ok(Self {
@@ -320,7 +334,7 @@ mod tests {
                 a.extend(b);
                 a
             },
-            move |seen, m| {
+            move |seen, m, _| {
                 let _ = gate.lock().expect("one step at a time").recv();
                 seen.push(m);
                 vec![Entry(1)]
@@ -352,7 +366,7 @@ mod tests {
     /// rising; a take makes room and the steps go on.
     #[test]
     fn the_outbox_stops_at_its_cap_and_the_bake_thread_waits() {
-        let t = BakeThread::start((), 1000, |_a: u32, b: u32| b, |_, _| vec![Entry(300)])
+        let t = BakeThread::start((), 1000, |_a: u32, b: u32| b, |_, _, _| vec![Entry(300)])
             .expect("spawned");
         for _ in 0..10 {
             t.send(0);
@@ -385,7 +399,7 @@ mod tests {
                 self.0.store(false, Ordering::Release);
             }
         }
-        let t = BakeThread::start(Flag(a), 10, |_a: u32, b: u32| b, |_, _| vec![Entry(10)])
+        let t = BakeThread::start(Flag(a), 10, |_a: u32, b: u32| b, |_, _, _| vec![Entry(10)])
             .expect("spawned");
         t.send(0);
         assert!(within(|| t.steps() == 1));
@@ -400,7 +414,7 @@ mod tests {
             (),
             10,
             |_a: u32, b: u32| b,
-            |_, m: u32| {
+            |_, m: u32, _| {
                 assert!(m < 3, "message {m} breaks the step");
                 Vec::<Entry>::new()
             },
