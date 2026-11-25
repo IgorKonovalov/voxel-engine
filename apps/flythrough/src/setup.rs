@@ -357,8 +357,16 @@ pub(crate) fn start_camera(args: &Args, spawn: VoxelCoord) -> Camera {
 }
 
 /// `--spawn`'s camera on the outdoor source of `args.seed`: the eye voxel's centre, facing
-/// the spawn's direction.
+/// the spawn's direction; `--eye`'s point and view in its place when given.
 pub(crate) fn outdoor_camera(args: &Args) -> Camera {
+    if let Some([x, y, z, yaw, pitch]) = args.outdoor.eye {
+        return Camera {
+            position: [x, y, z].into(),
+            yaw: yaw.to_radians(),
+            pitch: pitch.to_radians(),
+            vfov: 70f32.to_radians(),
+        };
+    }
     let (eye, d) = OutdoorSource::new(args.seed).spawn(args.outdoor.spawn);
     let [x, y, z] = d.map(|v| v as f32);
     Camera {
@@ -647,7 +655,10 @@ fn streamed_world(args: &Args) -> (VoxelCoord, Pending) {
 /// as the cave is, over the same [`world_table`] as every other source.
 fn outdoor_world(args: &Args) -> (VoxelCoord, Pending) {
     let hills = OutdoorSource::new(args.seed);
-    let (spawn, _) = hills.spawn(args.outdoor.spawn);
+    let spawn = match args.outdoor.eye {
+        Some([x, y, z, ..]) => VoxelCoord([x, y, z].map(|v| v.floor() as i32)),
+        None => hills.spawn(args.outdoor.spawn).0,
+    };
     let trees = args.outdoor.trees();
     let workers = args.workers.unwrap_or_else(default_workers);
     let world = World::new(&world_table(args, &materials(args)));

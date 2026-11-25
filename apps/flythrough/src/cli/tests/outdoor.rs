@@ -686,3 +686,25 @@ fn key_cover_is_off_unless_named() {
         assert_eq!((tog.get)(&m), want);
     }
 }
+
+/// `--eye`: the outdoor camera starts at the named point and view in place of the spawn's;
+/// unset, the spawn's camera; a wrong count or a pitch past 89 degrees is refused.
+#[test]
+fn eye_places_the_outdoor_camera() {
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert_eq!(r.outdoor.eye, None);
+    let r = parse_args_from(argv(&[
+        "--source",
+        "outdoor",
+        "--eye",
+        "496.0,-648.7,456.7,34.5,-46.2",
+    ]))
+    .unwrap();
+    let cam = crate::setup::outdoor_camera(&r);
+    assert_eq!(<[f32; 3]>::from(cam.position), [496.0, -648.7, 456.7]);
+    assert_eq!(cam.yaw, 34.5f32.to_radians());
+    assert_eq!(cam.pitch, (-46.2f32).to_radians());
+    assert!(parse_args_from(argv(&["--eye", "1,2,3,4"])).is_err());
+    assert!(parse_args_from(argv(&["--eye", "1,2,3,4,90"])).is_err());
+    assert!(parse_args_from(argv(&["--eye", "1,2,x,4,5"])).is_err());
+}

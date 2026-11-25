@@ -13,6 +13,9 @@ use crate::trees::{LEAF_FILL, TreeDensity};
 pub struct OutdoorArgs {
     /// `--spawn outside|inside`: where `--source outdoor` stands the camera.
     pub(crate) spawn: Spawn,
+    /// `--eye X,Y,Z,YAW,PITCH`: the camera's start in voxels and its view in degrees, in place
+    /// of the spawn's camera; the streamer centres on its voxel.
+    pub(crate) eye: Option<[f32; 5]>,
     /// `--time` and `--day-length`: the clock the run starts with, its cycle paused.
     pub(crate) clock: Clock,
     /// `--sky on|off`: a sky is set; unset, on for `--source outdoor` alone.
@@ -162,6 +165,33 @@ pub(super) fn source_flags() -> Vec<Flag<Parsing>> {
     )]
 }
 
+/// `--eye`: the outdoor camera's start point and view.
+fn eye_flag() -> Flag<Parsing> {
+    Flag::value(
+        &["--eye"],
+        "X,Y,Z,YAW,PITCH",
+        "with --source outdoor, start the camera at this point in voxels (as the HUD \
+             reads it), facing YAW degrees (counter-clockwise from +x, 90 north) and \
+             PITCH degrees up, in place of --spawn's camera; the streamer centres on it",
+        |p: &mut Parsing, v| {
+            let n: Vec<f32> = v
+                .text
+                .split(',')
+                .map(|s| s.trim().parse::<f32>())
+                .collect::<Result<_, _>>()
+                .map_err(|_| v.takes("five numbers X,Y,Z,YAW,PITCH"))?;
+            let eye: [f32; 5] = n
+                .try_into()
+                .map_err(|_| v.takes("five numbers X,Y,Z,YAW,PITCH"))?;
+            if eye.iter().any(|f| !f.is_finite()) || eye[4].abs() > 89.0 {
+                return Err(v.takes("finite numbers, the pitch within 89 degrees"));
+            }
+            p.args.outdoor.eye = Some(eye);
+            Ok(())
+        },
+    )
+}
+
 /// The outdoor testbed's section.
 pub(super) fn sections() -> Vec<Section<Parsing>> {
     let mut flags = vec![
@@ -177,6 +207,7 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
                 Ok(())
             },
         ),
+        eye_flag(),
         Flag::value(
             &["--trees"],
             "none|sparse|forest",
