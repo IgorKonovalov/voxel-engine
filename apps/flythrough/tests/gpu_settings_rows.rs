@@ -117,6 +117,8 @@ const INERT: &[(&str, Why)] = &[
     ("bake.dig_reach", Why::Queue),
     ("bake.tiers", Why::Queue),
     ("bake.drain", Why::Queue),
+    // The thread moves when a list lands, not what it holds: the image at rest is the same.
+    ("bake_thread", Why::Queue),
     (
         "build.mirror_budget_bytes",
         Why::Rebuild("the mirror's reservation"),

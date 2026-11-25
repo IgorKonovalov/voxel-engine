@@ -223,6 +223,9 @@ pub struct RenderSettings {
     pub missing_light: MissingLight,
     /// The live queue's knobs; `Live`.
     pub bake: BakeKnobs,
+    /// Whether the live queue's sliced steps run on the bake thread, off being lockstep
+    /// (ADR-0083; [`crate::Frame::set_bake_thread`]); `Live`, off in every profile.
+    pub bake_thread: bool,
     /// The mirror's, the streamer's and the entity pool's creation values; `Rebuild`.
     pub build: BuildSettings,
     /// The output size the profile is stated at. The engine never applies it: the consumer
@@ -322,6 +325,7 @@ impl RenderSettings {
             probe_axis: None,
             missing_light: MissingLight::default(),
             bake: BakeKnobs::default(),
+            bake_thread: false,
             build: BuildSettings {
                 mirror_budget_bytes: FLOOR_MIRROR_BYTES,
                 sync_budget_bytes: 2 << 20,
@@ -508,6 +512,7 @@ impl RenderSettings {
         ("bake.dig_reach", Live),
         ("bake.tiers", Live),
         ("bake.drain", Live),
+        ("bake_thread", Live),
         ("build.mirror_budget_bytes", Rebuild),
         ("build.record_chunks", Rebuild),
         ("build.light_samples", Rebuild),
@@ -548,6 +553,7 @@ impl RenderSettings {
         ("set_bake_digs", &["bake.edit_ms", "bake.dig_reach"]),
         ("set_bake_tiers", &["bake.tiers"]),
         ("set_bake_drain", &["bake.drain"]),
+        ("set_bake_thread", &["bake_thread"]),
         ("set_entity_mirror", &["build.entity_pool_bytes"]),
         ("set_field_surface", &["build.field_surface"]),
         ("set_sync_budget_time", &["build.sync_budget_time"]),
@@ -557,10 +563,6 @@ impl RenderSettings {
     /// Each `pub fn set_*` of the crate that is not a setting, and why.
     pub const NOT_SETTINGS: &'static [(&'static str, &'static str)] = &[
         ("set_dt", "a per-frame input: the frame's step in seconds"),
-        (
-            "set_bake_thread",
-            "wip (Plan 0099 Phase 3a): the bake thread's switch, until its settings row lands",
-        ),
         (
             "set_bake_queue",
             "the route a caller's write to the live queue's books takes (a rig's order or rule \
@@ -823,6 +825,7 @@ impl RenderSettings {
                 }
             }
             "mark_colours" => s.mark_colours.swap(0, 1),
+            "bake_thread" => flip(&mut s.bake_thread),
             _ => return None,
         }
         Some(s)

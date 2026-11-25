@@ -1,4 +1,5 @@
-//! The live queue's own rows: its order, its weights, the withdrawal and the reading switches.
+//! The live queue's own rows: its order, its weights, the withdrawal, the bake thread and the
+//! reading switches.
 
 use super::flags::Parsing;
 use super::table::Flag;
@@ -48,6 +49,15 @@ pub(super) fn queue_flags() -> Vec<Flag<Parsing>> {
             "withdraw the jobs of chunks the camera passed",
             |p: &mut Parsing, v| {
                 p.args.bake.queue_withdraw = v.on_off()?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--bake-thread"],
+            "on|off",
+            "run the live queue's sliced steps on the bake thread",
+            |p: &mut Parsing, v| {
+                p.args.bake.thread = v.on_off()?;
                 Ok(())
             },
         ),

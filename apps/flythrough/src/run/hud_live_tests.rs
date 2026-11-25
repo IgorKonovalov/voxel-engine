@@ -186,6 +186,7 @@ pub(super) fn hold(a: &mut crate::cli::Args, s: &RenderSettings) {
     b.dig_reach = s.bake.dig_reach;
     b.tiers = s.bake.tiers;
     b.drain = s.bake.drain;
+    b.thread = s.bake_thread;
     b.missing_light = s.missing_light;
     a.mirror_budget = Some(s.build.mirror_budget_bytes);
     a.sync_budget = s.build.sync_budget_bytes;
@@ -326,4 +327,37 @@ fn every_entry_that_changes_the_settings_moves_the_hud() {
         "entries the HUD does not follow: {silent:?}"
     );
     assert!(moved > 10, "{moved} entries changed the settings");
+}
+
+/// `--bake-thread off` and `on` parse to the mode they name, and the HUD's queue row and the
+/// banner's queue row name it; unset it reads `off` (Plan 0099 Phase 3a, done-when 6).
+#[test]
+fn the_flag_and_the_row_name_the_mode() {
+    let parse = |extra: &[&str]| {
+        let mut v = vec!["--level", "--sky", "on"];
+        v.extend_from_slice(extra);
+        crate::cli::parse_args_from(argv(&v)).expect("parses")
+    };
+    for (extra, on) in [
+        (&["--bake-thread", "off"][..], false),
+        (&["--bake-thread", "on"][..], true),
+        (&[][..], false),
+    ] {
+        let args = parse(extra);
+        assert_eq!(args.bake.thread, on, "{extra:?}");
+        assert_eq!(args.render_settings().bake_thread, on, "{extra:?}");
+        let word = if on { "on" } else { "off" };
+        let mut banner = String::new();
+        crate::run::hud_feed::write_queue_banner_row(&mut banner, &args, "");
+        assert!(
+            banner.contains(&format!(", bake thread {word};")),
+            "{extra:?}: {banner}"
+        );
+        let hud = hud_text(&mut run_of(args));
+        assert!(
+            hud.contains(&format!("; bake thread {word}")),
+            "{extra:?}: {hud}"
+        );
+    }
+    assert!(crate::cli::parse_args_from(argv(&["--bake-thread", "maybe"])).is_err());
 }

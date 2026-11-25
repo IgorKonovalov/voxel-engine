@@ -161,6 +161,7 @@ impl Args {
         self.bake.budget = s.bake.budget;
         self.bake.tiers = s.bake.tiers;
         self.bake.drain = s.bake.drain;
+        self.bake.thread = s.bake_thread;
         self.light_cap = s.light_cap;
         self.output_hint = s.output_hint;
     }
@@ -275,6 +276,7 @@ impl Args {
                 tiers: b.tiers,
                 drain: b.drain,
             },
+            bake_thread: b.thread,
             build: BuildSettings {
                 mirror_budget_bytes: self
                     .mirror_budget

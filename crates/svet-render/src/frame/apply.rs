@@ -33,6 +33,7 @@ impl Frame {
             probe_axis: self.probe.axis_fixed,
             missing_light: self.missing_light(),
             bake: self.bake_knobs(),
+            bake_thread: self.bake_thread(),
             build: self.build,
             output_hint: self.output_hint,
             mark_colours: self.mark_colours,
@@ -128,6 +129,9 @@ impl Frame {
             self.set_bake_digs(b.edit_ms, b.dig_reach);
             self.set_bake_tiers(b.tiers);
             self.set_bake_drain(b.drain);
+        }
+        if any("bake_thread") {
+            self.set_bake_thread(queue, s.bake_thread);
         }
         out
     }

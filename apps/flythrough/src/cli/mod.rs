@@ -146,7 +146,8 @@
 //! HUD's queue row and the `bake queue step:` line name it); a dig re-bakes its rings in the queue, ahead of
 //! every other job, the slice growing by `--edit-ms MS` (default 3) while they wait, and
 //! `--dig-reach off` turns off ring 3 (the chunks within the light radius of a dig that touched
-//! lit bricks); a `dig settled:` line when a dig's rings are baked; `--light`, `--cut`, `--show`,
+//! lit bricks); `--bake-thread on` runs the live queue's sliced steps on the bake thread (default
+//! `off`, lockstep; the banner's queue row and the HUD's queue row name it); a `dig settled:` line when a dig's rings are baked; `--light`, `--cut`, `--show`,
 //! `--reference`, `--bake-file`, `--queue-file`, `--bake-radius`, `--blend`, `--preload` and
 //! `--preload-claim` are refused, naming Plan 0059; `--glide V` moves the
 //! camera along its heading at `V` voxels a second (`--pose vein-flight` starts the settle rig's
@@ -615,6 +616,9 @@ pub struct BakeArgs {
     /// `--dig-reach on|off`: whether a dig that touched lit bricks re-bakes the chunks within the
     /// light radius (ring 3; on by default).
     pub(crate) dig_reach: bool,
+    /// `--bake-thread on|off`: whether the live queue's sliced steps run on the bake thread
+    /// (`svet_render::Frame::set_bake_thread`, ADR-0083); off, lockstep, by default.
+    pub(crate) thread: bool,
     /// `--read-missing`: while a dig's rings 1 and 2 wait, the store's no-value count is read back
     /// each frame (blocking) for the `dig settled:` line.
     pub(crate) read_missing: bool,
