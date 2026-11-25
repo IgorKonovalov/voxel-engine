@@ -230,6 +230,10 @@ Taken 2026-11-10 by [Plan 0060](plans/done/0060-the-live-queue-by-the-view-and-w
 
 ## Engine mechanisms
 
+### The RENOIR's line slice is mostly a dispatch's fixed cost (2026-11-25)
+
+From the architect's code reading in [Plan 0099](plans/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md)'s readings log (`docs/plans/logs/0099.md`, "Architect's code reading"). Derived from the dig rig's caps, not read directly: a bake dispatch costs the RADV RENOIR about 0.8 ms before its first sample, so Portable's 1.0 ms line buys about 20 000 samples a frame once the view has drained (the RTX: about 0.5 to 0.9 million under the same line). Plan 0099 Phase 2b reads the fixed part directly and fixes the cap's pricing; it does not change the line. What it would take: one submit every few frames under the line, sized to the frames it stands for, or a line per profile. Pick up when Phase 2b's reading confirms the fixed part and the RENOIR's whole-residency drain is next looked at.
+
 ### Plan 0098's leftovers (close review, 2026-11-24)
 
 Found at the close ([Plan 0098](plans/done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md), v0.72.0); none blocked it.
