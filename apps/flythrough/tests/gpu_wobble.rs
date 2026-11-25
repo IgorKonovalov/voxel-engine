@@ -16,6 +16,8 @@
     reason = "a reading rig: its arms leave fields unread, its runs time themselves"
 )]
 
+#[path = "gpu_wobble/coarse.rs"]
+mod coarse;
 #[path = "gpu_wobble/fsr.rs"]
 mod fsr;
 mod support;
@@ -107,6 +109,13 @@ struct Arm {
     /// Plan 0100 Phase 1's arms: where on a cube face the key light's column horizon is read
     /// (`keyat=hit|face|face-smooth`).
     key_at: svet_render::KeyAt,
+    /// Plan 0100 Phase 3's arms, read by `coarse::reading` alone: the coarse pass's samples a
+    /// brick direction (`coarse=N`, the fly-through's by default), the full-first radius
+    /// (`ff=N|none`, the fly-through's by default) and the baked sky term read by the face's
+    /// own normal (`skyface`, `--sky-normal face`).
+    coarse: u32,
+    full_first: Option<i32>,
+    sky_face: bool,
 }
 
 impl Arm {
@@ -126,7 +135,7 @@ impl Arm {
     /// `normals` (the normals view); Plan 0098 Phase 5's arms `wide` (`far_light_wide`) and
     /// `hfar` (`light_history_far`); Plan 0098 Phase 9's `hist` (`light_history` on, after
     /// `calm`) and `baked` (`key_far baked`); Plan 0100 Phase 1's `keyat=hit|face|face-smooth`
-    /// (`Lighting::key_at`).
+    /// (`Lighting::key_at`); Plan 0100 Phase 3's `coarse=N`, `ff=N|none` and `skyface`.
     fn parse() -> Self {
         Self::from_spec(&std::env::var("SVET_WOBBLE").unwrap_or_else(|_| "default".into()))
     }
@@ -179,6 +188,9 @@ impl Arm {
             far_light_wide: false,
             light_history_far: false,
             key_at: flythrough::default_lighting().key_at,
+            coarse: svet_render::DEFAULT_COARSE_SAMPLES,
+            full_first: Some(svet_render::DEFAULT_NEAR),
+            sky_face: false,
         };
         for t in spec.split(',') {
             let (k, v) = t.split_once('=').unwrap_or((t, ""));
@@ -249,6 +261,9 @@ impl Arm {
                 "hfar" => a.light_history_far = true,
                 "fly" => a.fly = v.parse().unwrap(),
                 "keyat" => a.key_at = svet_render::KeyAt::from_name(v).expect("keyat=NAME"),
+                "coarse" => a.coarse = v.parse().unwrap(),
+                "ff" => a.full_first = (v != "none").then(|| v.parse().unwrap()),
+                "skyface" => a.sky_face = true,
                 other => panic!("unknown arm token {other}"),
             }
         }
@@ -349,6 +364,11 @@ fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
         far_light_wide: arm.far_light_wide,
         light_history_far: arm.light_history_far,
         key_at: arm.key_at,
+        sky_normal: if arm.sky_face {
+            svet_render::SkyNormal::Face
+        } else {
+            flythrough::default_lighting().sky_normal
+        },
         store_read: if arm.store_read_face {
             svet_render::StoreRead::Face
         } else {

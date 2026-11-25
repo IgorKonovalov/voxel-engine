@@ -559,8 +559,8 @@ says otherwise; 3, 4 and 5, the recommended options.
 |---|---|---|---|
 | 1: The key shadow at the face's centre | dev | built; the stop rule holds (neither arm closes half the distance at a still camera at either pose); readings in [`logs/0100.md`](logs/0100.md) | `569bb5f4` |
 | 2: The bake's key ray at its cap | dev | done: the closed cave's floor reads key 0 on 64 of 64, the open one 255 on 64, the slab's 64 lit before and after, the rule's 9 chunks equal the job's; no test's bytes moved | committed with this row |
-| 3: The coarse tier's wobble, a reading | dev | not started | |
-| 4: The coarse tier held still | dev | not started | |
+| 3: The coarse tier's wobble, a reading | dev | read; the stop rule holds (held coarse 0.01 % at weight 0 a still pair, landed 0.00 %, both adapters; what moves is the landings); readings in [`logs/0100.md`](logs/0100.md) | committed with this row |
+| 4: The coarse tier held still | dev | not built: Phase 3's stop rule (the pose does not hold the fault) | |
 | 5: Sun under cover, the candidates read | dev | not started | |
 | 6: Sun under cover, the arms | dev | not started | |
 | 7: The window rehearsed headless | dev | not started | |
@@ -599,6 +599,18 @@ each. Empty is fine.)_
 - Phase 2: the drain was read loaded (load 12.32): in view 42.9 s and the residency 51.2 s after
   the first world frame, against Plan 0096's quiet 36.5 and 49.1 s.
 - Phase 1's RENOIR pass times landed in the readings log with Phase 2's commit.
+- Phase 3: the reading steps the queue with the fly-through's view (focal length, frustum) and
+  bake knobs (coarse 256, full-first 2, the tiers), not the wobble rig's `queue_step` and
+  `set_bake_coarse(8, 2)`; the held-coarse state of the plan needs `ff=none` (under the
+  fly-through's full-first 2 the weight-0 pixels hold full records at the hold, 0.2 % coarse).
+- Phase 3: H1's arm is a coarse pass of 4095 samples (`coarse=4095`): at the near tier's 4096
+  the queue takes no coarse pass at all.
+- Phase 3: the smoothed normal's direction weights are not read back (no debug target holds
+  them); H3's arm alone answers for them.
+- Phase 3: the RENOIR ran the rig's sizes (1280 x 720 to 1920 x 1080), not Portable's.
+- Phase 3: two of the RTX rows (H1, H3) and the RENOIR `ff=none` row landed by an earlier drain
+  rule (600 frames with no block landed), before every weight-0 block refined; their held rows
+  stand, their landed rows are partial and say so.
 
 ### Close triggers
 
