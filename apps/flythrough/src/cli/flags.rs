@@ -1105,7 +1105,10 @@ pub(crate) fn table() -> Table<Parsing> {
     let mut sections = vec![
         Section {
             title: "Run",
-            flags: run_flags(),
+            flags: run_flags()
+                .into_iter()
+                .chain(super::still::still_flags())
+                .collect(),
         },
         Section {
             title: "Session",

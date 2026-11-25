@@ -269,6 +269,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--bench N` | Send `N` bench inputs on the first frame |
 | `--dig-at F,..` | Dig at each of these frames |
 | `--bench-at F,..` | A bench input at each of these frames |
+| `--still PATH`, `--mode-text PATH` | With `--headless` and `--frames`: write the last frame's output (no HUD) as a binary PPM, and the first frame's banner, the mode banner as it shows at its start, the mode rows and the stats HUD's rows as text; `scripts/rehearse-window.mjs` renders a live session's runs with them before the window opens |
 | `--sync-budget MIB` | The mirror's upload bytes a frame |
 | `--sync-ms MS` | The mirror's upload time a frame [none; 0 is none] |
 | `--workers N` | The streamer's generation workers, at least 1 [half the logical cores] |

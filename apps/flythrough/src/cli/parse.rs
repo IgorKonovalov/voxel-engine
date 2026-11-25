@@ -2,7 +2,7 @@
 //! ([`super::flags`]) into [`Args`], then settles the defaults that depend on other flags.
 
 use super::flags::{Given, Parsing, table};
-use super::{AudioArgs, BakeArgs, LightingArgs, LoadingArgs, LookArgs, RunMode};
+use super::{AudioArgs, BakeArgs, LightingArgs, LoadingArgs, LookArgs, RunMode, StillArgs};
 use crate::audio::{CAVE_ACOUSTIC, Mix};
 use crate::castle;
 use crate::cli::{
@@ -99,6 +99,7 @@ impl Args {
             path: None,
             path_mode: PathMode::Bench,
             report: None,
+            still: StillArgs::default(),
             tester: false,
             check_args: false,
             help: false,
@@ -280,6 +281,7 @@ fn settle(args: &mut Args, given: &Given) -> Result<(), String> {
     }
     args.audio.mix.check()?;
     check_path(args, given.path_mode)?;
+    args.still.check(args.headless, args.frames)?;
     Ok(())
 }
 

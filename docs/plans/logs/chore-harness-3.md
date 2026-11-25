@@ -66,14 +66,34 @@ independent renders, as their docs say).
 **Time:** the walk 16.0 s on lavapipe (load 2.5 at the lock), fixture and bake 4.9 s. Checks:
 quick tier 554/554, `test-changed --clippy`, fmt, the six check gates.
 
-### Piece B notes (not started)
+### Piece B: the window rehearsal (2026-11-25)
 
-No flag writes a still today. The headless target
-(`svet_app::run_headless`) is RENDER_ATTACHMENT only; the frame's output is readable with
-`svet_render::debug::read_rgba8(&device, &queue, gfx.frame.target())` (the HUD overlay is not
-in it). `png` is a dev-dependency of the fly-through only: write a binary PPM from the binary
-and let the node script encode PNG with `node:zlib` (node 26 has `zlib.crc32`). Text: the
-mode rows from `Modes::write_rows` and the banner from `Run::compose_banner`. The exit point
-is `frame.rs` where `args.frames` ends the run (`print_exit_readings`). Plan 0098's
-rehearsals used GPU test rigs (`dig_line::reading::dig_timeline` with `VXE_LINE_PNG`,
-`docs/plans/logs/0098.md` "The rehearsal for Phase 18"), not the binary.
+**The fly-through.** `--still PATH` and `--mode-text PATH` (`src/cli/still.rs`, `src/run/still.rs`),
+with `--headless` and `--frames` only. The still is `svet_render::debug::read_rgba8` of
+`gfx.frame.target()` at the end of `print_exit_readings`, written as a binary PPM (no HUD). The
+text: the banner `compose_banner` gives at the first frame (written before that frame's draw),
+the mode banner as at its start (`Modes::write_banner(banner_at)`: a headless first frame can
+come after the window's 3 s), then at the exit the mode rows and the stats HUD's rows. The dig:
+the existing `--dig-at F,..` (the camera ray, the left click's dig) is enough; nothing new. Both
+hooks sit outside `draw()`, which is at clippy's 150-line cap. `tests/gpu_still.rs`: 7.1 s on
+lavapipe (exclusive perf lock, load 2.8): the closed 12 m room at 64 x 36, 3 frames, 2225 of 2304
+pixels differ from the first.
+
+**The script.** `scripts/rehearse-window.mjs` with `node --test scripts/rehearse-window.test.mjs`
+(15 tests; the one through the real lib skips where the harness repo is absent, as in CI). A
+runner's runs are read by running it with `LIVE_LIST` set: the lib's `run` records label and
+command line and `live_end` exits, so shell variables expand as in the window. The lib's
+`REHEARSE=<dir>` execs the script (no session lock; the script locks per run, so other lanes'
+jobs interleave). The mode-text check asks only flags in `--help`'s mode sections, minus a list
+of world and reading flags (`NOT_MODES`); `--named-ok` extends it.
+
+**End to end** (lavapipe, `target/release/flythrough` at d1636aac plus this change, 320 x 180,
+20 frames, load 2.5 to 7.8, each run about 9 s held). Through the lib (`live/rehearse-e2e.sh`,
+sheet `live/rehearsal-e2e/index.md`), four runs on the level: `field` (`--look field`) against
+`base` 31703 pixels (55.0 %); `twin` (base's flags) 0 pixels, **the same-picture line fired**,
+exit 1; `dig` (`dig=5`) 18111 pixels (31.4 %), `carved: rock 319, ore 10 (4 chunks, 0.55 ms)`.
+A first pass on the showcase at 30 frames: 94.7 % black (the store still baking, lamp off), and
+its dig at the spawn carved nothing (the ray reaches no wall), which is why a dig that carves
+nothing is now a loud line. A list (`live/rehearse-list.txt`): the cave's dig carved rock 241,
+11.4 % of pixels. The level's spawn faces a lamp-lit wall: a bright disc under the near-white
+line (240), so 0.0 % near white.
