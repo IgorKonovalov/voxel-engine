@@ -906,6 +906,199 @@ it: the largest cut read is 26 468 samples of 225 725 (12 %), and under Phase 2d
 over still lands at 2, and the line says so as in (a). A few lines at the cap, built at the
 answer.
 
+## Amended 2026-11-25 (architect, ruling on Phase 2d's stop)
+
+Read against `243c1f2b`: `bake.wgsl` (`bake_round`), `emissive.wgsl` (`candidate`,
+`draw_candidates`), `JobCtx::open` and `plan`, `JobLoop::plan_rounds` and `collect`
+(`bake/job_loop.rs`), `DigCost` and `SampleCost` (`bake/budget.rs`), `priced_cap` and
+`read_stats` (`bake/queue/step.rs`), `open_digs` (`bake/queue/digs.rs`), `bake/held.rs`, the
+Portable profile (`settings.rs`), and Phase 2d's timelines and summaries (`live/p2dd/`,
+`live/p2d-{B,A}.txt`). The long form, with the per-dig ratios, is in
+[`logs/0099.md`](logs/0099.md), "Architect's ruling on Phase 2d's stop". Where this section
+differs from the text above it wins. Nothing was built or run. **This is the third pricing fix
+to miss its bar, so this ruling builds no fourth price: it reads why a price cannot hold this
+bar, and puts a bound where the prediction was.**
+
+**1. A sample is the estimator's unit, not the GPU's (code).** On the RENOIR at Portable a dig
+job bakes at the near tier's 1 024 samples a brick direction (`settings.rs`, `near_count`),
+drawn on 16 of the direction's faces, 64 a face, one entry each (`JobCtx::open`, the subset
+rule; a direction with fewer faces draws more on each). Of a face's 64 samples the first 16
+also cast a sky ray and the first 4 a key ray (`sky_n`, `key_n`: 256 and 64 a direction). In
+`bake_round` a sky ray is walked only where its drawn direction rises (`d.z > 0`: every one of
+an up face's, half of a side face's, none of a down face's) and a key ray only where the face
+looks at the light. Every sample then draws 32 candidates (`KEPT_CANDIDATES`), each of which
+returns at an empty table's header. In this scene nothing comes of them: every row of every
+timeline prints `ray 0.00`, the count of emitter shadow rays, so no sample of any dig kept a
+candidate. **So a dig sample here is 44 empty candidate loops in 64 and at most 20 rays, and
+its time is the rays' walk through whatever stands over the hole plus a per-sample part.** The
+faces, their directions and the ray counts are known on the CPU when a round is planned
+(`FaceState`); how far a ray walks is not, and next to a lamp (Phase 5 (c)) the same sample
+also weighs 32 real candidates and casts a shadow ray. "ns a sample by class" names none of
+this: ring 1 and ring 2 differ by where their faces are, not by what a sample is. **Not
+determinable from code and logs:** how the time splits between the walks and the empty loops
+(no row prints the sky or key rays; the read-back's `rays` words are the emitter's alone), so
+whether a count the CPU holds would price a submit better than its samples do. Phase 2e (5)
+reads the split.
+
+**2. No price holds this bar, whatever it is built from (log).** The same submit read in six
+quiet runs, B's dig 4 at D+0, the first 190 979 to 198 397 samples of the one job of 225 725:
+**2.82 to 3.73 ms (14.3 to 18.9 ns a sample)**; dig 2's D+0 submit, its caps within 6 %, 2.67
+to 3.64 ms. That is the adapter's own spread, about a seventh either way, and nothing known
+before the cap is taken removes it. Between digs the medians read 16.3, 17.5 and 20.6 ns (B)
+and 15.9 and 17.1 (A): the size of the spread within one dig. Against that, **every ring this
+rig digs after the first costs 3.0 to 4.9 ms whole against a grant of 4.0**: by each dig's own
+median, dig 3's 205 407 costs 4.24 ms, dig 4's 3.67, dig 6's 3.80, A's dig 2's 3.78 and A's
+dig 3's 275 022 4.38. A cap priced from the dig before lands these on either side of the grant
+by chance. Phases 2b, 2c and 2d each moved the cap by 3 to 8 % and each moved the count: that
+is what a threshold inside the noise does. **Predicting a dig's price from an earlier dig's
+read-back is sound for work an eighth or more under the grant and for sizing ring 2's
+submits; it cannot decide a ring at the grant, and the feedback being a dig late is the
+smaller half of why.**
+
+**3. Did Phase 2d make it worse: yes at the edge, and it stays.** Its caps at digs 3, 4 and 6
+read 170 357 to 208 889 against Phase 2c's 199 229 to 214 445, for the two reasons the dev
+named and the code confirms: ring 1 unread takes the dig's figure (`DigCost::ns`), which is
+ring 2's 20.0 to 21.5 ns all in, and ring 1's first reading is the costliest dig's (dig 3,
+20.6) and moves a fifth a reading after. Ten digs of 48 moved from D+1 to D+2 and A's re-dug
+job from two runs of eight to seven, a frame each, on rings ruling 2 calls a coin toss.
+**(a), the drawn count, is a correctness fix and stays. (b) and (c), the figures and the cap
+by class, stay as built: not for the edge, where Phase 2e makes them moot, but because they
+are kept between digs.** A dig that follows other work is priced by that work's 8 to 11 ns
+and draws 4.9 to 8.1 ms against 4.0 on D+0 to D+2 (dig 1 of every run: the stop's fifth and
+sixth counts); with the figures kept, that is a session's first dig and not every dig after a
+pause. **By construction, not read:** the rig's digs come 8 frames apart. Phase 2e (4) reads
+it, and if a dig after a pause draws as a first dig does, the architect cuts (b) and (c) back
+to (a) at Phase 6. No revert phase now.
+
+**4. The stop's six counts.** Faults 9, edge 15 and A's seven of eight: the grant's edge
+under ruling 2; the split into "fault" and "edge" priced the cut samples by the figure in
+question and is withdrawn. B's one D+3 (run 2): a disturbed run (its fixed part read 3.07 to
+3.57 ms from dig 3 on); not retaken, kept in the log as read. D+0 over 5.0 ms (8, all dig
+1's) and dig work over 6.0 ms at D1+2: the named limit of ruling 3, a frame longer than the
+Phase 2c ruling said because D1+1's read-back arrives after D1+2's cap is taken. **None of
+the six is over this plan's own line**: Budgets holds the dig's near ring to the base's
+frames plus 2, the drained RENOIR's base is 1, 2, 2 (Phase 2b), and Plan 0098 accepted "ring
+1 within 6 frames on the RENOIR at Portable". The stops were tripwires on a prediction.
+**The stop is lifted; it no longer holds Phase 3b's dig readings.**
+
+**5. What the owner sees, either way (ADR-0076, `bake/held.rs`, `DIG_FADE`).** At the dig's
+frame the dug bricks take the held record (made on the CPU, never under `HELD_FLOOR`; no
+frame is without it); when ring 1 lands the store fades to the baked record over 4 frames,
+the "slight colour change at a landing" of window 98e. Ring 1 at D+2 in place of D+1 starts
+that fade one frame later: at the RENOIR's 30 fps the change ends about 200 ms after the dig
+in place of about 170, and A's re-dug D+3 at about 230. No black frame, no pop and no dip in
+either. The base this plan started from (Phase 1, the tree as Plan 0098 left it) read D+3
+and D+4 there. **Nobody has looked at D+1 against D+2 side by side**; Phase 5 (d) now does.
+
+**6. The design: a bound for ring 1, the price for the rest.** Ring 1 is what the eye is
+on, it is one frame's work by the rule's intent, and its size is bounded by the edit's. So
+ring 1 goes whole in the edit's submit while it is within a stated stretch of the cap, and
+the cap prices everything else as today. The stretch is in samples against the priced cap,
+so it absorbs the price's error and the adapter's spread instead of chasing them. **Option
+(e)'s eighth is too small, by the readings:** ring over cap read 1.03 to 1.10 at dig 3, 1.04
+to 1.20 at dig 6, **1.14 to 1.33 at dig 4 in all seven quiet runs**, and 1.21 to 1.30 at A's
+dig 3; the dev's "32 751 of 225 725" is a share of the ring, 17 % of the cap it met. A
+stretch of 1.5 is over every quiet ratio read, with an eighth to spare; it is not over run
+2's (2.1, the disturbed one). It is built as a setting at today's value, so the owner picks
+by eye and the grant is not loosened before he does.
+
+### Phase 2e: Ring 1 goes whole in the edit's submit within a stretch of the cap
+- **Owner skill:** dev
+- **What:** In lockstep, in the bake half, at the tip; exploration (readings, no image test).
+  (a) A queue knob, the ring-1 stretch, 1.0 to 2.0, **default 1.0 (today's cap)**: a render
+  setting `bake.ring1_stretch` (live), a setter beside `Frame::set_bake_digs` that reaches the
+  bake side in the frame's message as `edit_ms` does, the fly-through's `--bake-ring1-stretch`,
+  and the HUD's queue row and the banner naming the value whenever it is not 1.0. (b) At the
+  submit, once the step's ring-1 dig jobs are open and ahead (`submit`, before `dispatch`):
+  where the samples those jobs have left to plan are over the cap and at most the stretch
+  times the cap, the submit's cap is that count, so ring 1 is planned whole and no other job
+  takes a round. Over the stretch, or with no ring-1 job, the cap is `priced_cap`'s. The
+  price, `edit_ms`, the order, the two-slice rule, the withdrawals and every record are
+  unchanged; Phase 2d stays as built. (c) The rig's row prints the cap sent and whether it was
+  stretched; `dig_timeline` takes the stretch, and gains sequence C: B's dig 1, then B's dig 4
+  alone 64 frames later.
+- **Files touched:** `crates/svet-render/src/settings.rs` and its tests,
+  `crates/svet-render/src/frame/baked.rs`,
+  `crates/svet-render/src/bake/queue/{mod,step,stats,message}.rs`,
+  `bake/queue/split_tests.rs` (not `tests.rs`, which is near the size gate),
+  `apps/flythrough/src/cli/{flags,parse,settings}.rs`,
+  `apps/flythrough/src/run/{queue,hud_feed}.rs` and the HUD's tests,
+  `apps/flythrough/tests/gpu_outdoor/dig_line.rs`, `docs/flythrough.md`,
+  `docs/plans/logs/0099.md`.
+- **Done when:** (1) `ring_one_within_the_stretch_goes_whole` (CPU, under 1 s, the
+  device-less rig): a ring-1 job of 240 000 samples ahead of an open job that is not a dig's
+  with 4 000 000 left, a cap of 200 000. At 1.0 and at 1.125 (225 000) the submit plans
+  200 000 of ring 1, at most one round over, and none of the other job; at 1.5 (300 000) it
+  plans all 240 000 and none of the other. Two ring-1 jobs of 160 000 and 96 000 at 1.5: both
+  whole, 256 000. A ring-1 job with 144 000 left under the same cap at 1.5: the cap stays
+  200 000 and the other job takes 56 000, at most one round over. (2)
+  `the_stretch_reaches_the_bake_side_in_the_next_message` (CPU, under 1 s): set to 1.5 between
+  frames 3 and 4, the step that reads message 4 plans by it, and with the thread on no setter
+  writes the bake half directly; the settings' rows walk lists `bake.ring1_stretch`; the HUD
+  row's text holds `stretch 1.5` at 1.5 and no such word at 1.0. (3) Every CPU test of Phases
+  2b, 2c and 2d passes unchanged at the default; the 5 x 5 x 5 store test reads bit-identical
+  at 1.0 and at 1.5; `--binaries gpu_queue gpu_queue_reach gpu_bake` (lavapipe, about 135 s
+  together, as at Phase 2d). (4) **Quiet** (as Phase 2c (6)), RENOIR drained B and drained A,
+  eight runs each at 1.5 alternated with eight at 1.0; RTX drained A and RENOIR waiting A,
+  four runs each at 1.5. **The claim, per row:** at 1.5 every dig whose ring-1 samples are at
+  most 1.5 times the cap it met sends them whole at D+0 and lands at D+1, or at D+2 where the
+  next frame digs its chunk again; a row that breaks it is reported with its timeline. RTX
+  and waiting: 1, 2, 1. Reported beside it, no bar: the rings over 1.5 caps (none expected on
+  a quiet run, by ruling 6's ratios), each D+0 submit's ms at both values (arithmetic: about
+  4.9 ms at most, A's 275 022), and sequence C on the drained RENOIR, four runs: the second
+  dig's D+0 to D+2 submits' ms against the first's and against 4.0. (5) **Reading, the split
+  of a dig submit's time** (a rig-only arm; no setting or flag is added, and if it needs one
+  the dev reports that instead): drained A on the RENOIR, four runs with the bake's candidates
+  at 0 against four as is: the D+0 and the ring-2 submits' ns a sample. Reported to the
+  architect before Phase 4 starts. No stop in this phase.
+
+**Phase 3b.** Its dig readings are taken against lockstep at Phase 2c's order, Phase 2d's
+price and Phase 2e's stretch at the value question 7's answer sets (1.0 until then). It
+waits for question 6 alone. **Phase 4.** Lever (a) projects an opened job's time by the
+general price (`SampleCost`; a job that is not a dig's has no class figure), with the
+tolerance its done-when (1) already carries, one job. If Phase 2e (5) reads the empty
+candidate loops at a third or more of a dig submit's time, the architect amends Phase 4
+before it starts with a lever the drain's bar may need more than the dig does: a job whose
+candidate table is empty draws each face's ray samples and stops (a guess until read; the
+store's bit-identity is the constraint). The two readings the Phase 2b and 2c rulings gave
+Phase 4 (5) stand. **Phase 5 (d)** gains: on the RENOIR at Portable, the forest at 15:00,
+the view landed, a few digs with `--bake-ring1-stretch 1.5` and the same without, the value
+on the HUD; the owner's words on whether he sees a difference. **Phase 6** pins the dig's
+line with question 7's answer, and names as limits the first dig after other work (ruling 3)
+and the adapter's spread of a seventh on one submit's time (ruling 2).
+
+### Owner question 7, restated on the code reading (open)
+
+This text replaces question 7 above. **The reading changes its options: (d) is false, (e) is
+too small to do what it was offered for, and the choice is now one number, the stretch, or
+(c).** It is a budget question, not image stability: every option fades the same way, none
+shows a black frame, and all are inside the picture window 98e accepted. Phase 5 (d) lets
+the owner answer by eye; Phase 6 pins the line with the answer.
+**How far over the edit's grant may a dig's ring 1 go so that it lands in one frame?**
+Portable's grant on the drained RENOIR is 4.0 ms (the line's 1.0 and `edit_ms` 3); this rig's
+rings cost 3.0 to 4.9 ms whole and one submit's time spreads by a seventh, so at the grant a
+ring lands at D+1 or D+2 by chance (read: D+2 in 14 to 24 of 48, a re-dug job at D+3 in two
+to seven runs of eight).
+(f) **Recommended: the stretch at 1.5.** A ring 1 within one and a half caps goes whole in
+the edit's submit: up to 2.0 ms over the grant by the price, on the dig's frame alone, on an
+adapter whose frame reads a median of 14.3 ms of GPU in this rig's rows (21.4 at most; the
+rig's size, not a window's) against Portable's 33.3. Expected, by arithmetic over the ratios
+read, and read in Phase 2e: every ring here at D+1 (D+2 re-dug), the largest submit about
+4.9 ms. A ring over 1.5 caps (a larger edit, a disturbed frame) lands a frame later, and the
+line says so.
+(a) **The stretch stays 1.0: the grant is the grant.** The line reads "ring 1 lands within 2
+frames of the dig on the slow adapter, 3 where the next frame digs the same chunk again".
+No frame's cost moves and nothing more is built. What is given up is one frame, about 33 ms,
+before a four-frame fade starts, on a drained RENOIR.
+(b) **No bound: ring 1 whole whatever the cap.** As (f) on this rig; a large edit's ring
+costs its whole size on the dig's frame.
+(c) **Portable's `edit_ms` from 3 to 5 ms.** The same landings as (f) by arithmetic, for up
+to 2 ms more on every frame while a dig's rings bake (D+0 to about D+14), not the dig's
+frame alone. Dominated by (f).
+(e) **Withdrawn as an answer:** an eighth carries dig 3 and most of dig 6 and none of dig 4
+(1.14 to 1.33 caps). (d) **Withdrawn:** the sentence without a condition is not true of what
+was read.
+
 ## Data shapes
 
 ```rust
