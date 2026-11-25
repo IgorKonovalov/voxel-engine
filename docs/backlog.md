@@ -270,7 +270,7 @@ Found at the close ([Plan 0098](plans/done/0098-a-calm-light-by-default-no-scree
   1966 of 2000, `bake/queue/mod.rs` 1060 and `bake/job_loop.rs` 1047 of 1200. Plans 0099 and
   0100 both add to them; new code goes to files of its own.
 
-### The weekly soak's underground eye: the surface reference reads 157.49 (2026-11-24)
+### The weekly soak's underground eye: the surface reference reads 157.49 (2026-11-24, done 2026-11-25)
 
 Read by the gate-time chore from the red weekly soak of 2026-11-23 (run 45165663078, main
 `123964e7`) and again on `909a2552` on the dev reference's lavapipe:
@@ -278,10 +278,14 @@ Read by the gate-time chore from the red weekly soak of 2026-11-23 (run 45165663
 157.49023807374985` against the bar's 149.7 within 5 % (+5.2 %; the reference was read at
 `2fe4598c`, Plan 0086), the same value on CI's and this box's lavapipe, so deterministic. The
 near-eye visibility bar passes; the underground parts after the reference are not reached. A
-real engine change, not a tier fault: some plan since Plan 0086 moved the stored sky light on
-the open surface. What it takes: find the commit (the reading `reading::underground_eye` at
-`r` 7 takes about 220 s on lavapipe), then either a fix or the reference re-read by the owner's
-rule for a moved reference. Read with it: of the run's other four failures, the wobble table is
+real engine change, not a tier fault. **Done 2026-11-25 (chore-underground-eye, readings in
+`docs/plans/logs/chore-underground-eye.md`):** Plan 0086 Phase 17 (`ceb9dd0e`) moved it, on
+purpose: the smoothed sky normal as the default (`SkyNormal::Smoothed`, `sky_baked_term` in
+`temporal.wgsl`) reads 157.49 there and on main, the face normal 149.68 on both; Phase 17
+re-blessed the goldens but did not re-read this soak reference. The underground parts pass on
+main (all 0.0000). The stored reference moved to 157.49 by lane rule 2a, the bar and claim as
+written. Left open: the surface's direct part reads 1396.5 on main against the reference's
+1345 (+3.8 %, inside the 5 %), moved by a commit after Plan 0086 not looked for. Read with it: of the run's other four failures, the wobble table is
 a reading since Plan 0098 (`c46fb41a`), and the two still-camera upscaler bars and the shutdown
 bound pass here (since Plan 0102, 2026-11-25, neither bar exists: `gpu_upscale`'s test went with
 the engine's own upscaler, and `gpu_fsr2`'s asserted that upscaler alone and is the hand-run
