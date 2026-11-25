@@ -677,7 +677,7 @@ fn key_cover_is_off_unless_named() {
     }
 }
 
-/// Plan 0100 Phase 9: every profile keeps the key light's settings of this plan at their
+/// Plan 0100 Phase 9: every profile keeps `key at`, `key horizon` and `key cover` at their
 /// defaults (`key at hit`, `key horizon march`, `key cover off`), and `--profile` gives them as
 /// the profile holds them.
 #[test]
