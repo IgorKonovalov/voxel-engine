@@ -173,6 +173,82 @@ pub fn census(rig: &Rig, f: &Frame, cam: &Camera) -> Census {
     }
 }
 
+/// The store's tally over every resident chunk of the rig's world, in view or not: chunks,
+/// those settled, those holding a block (coarse or full), and one FNV-1a digest over each
+/// chunk's coordinate, state and block words (the store's own copy) in ascending coordinate
+/// order. Two settles stored the same records when their tallies are equal.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Tally {
+    pub chunks: usize,
+    pub settled: usize,
+    pub coarse: usize,
+    pub full: usize,
+    pub digest: u64,
+    /// One line a chunk (`x y z settled coarse|full|none words digest`), for a diff of two runs.
+    pub rows: Vec<String>,
+}
+
+impl Tally {
+    pub fn line(&self) -> String {
+        format!(
+            "tally {} chunks, settled {}, coarse {}, full {}, digest {:016x}",
+            self.chunks, self.settled, self.coarse, self.full, self.digest
+        )
+    }
+}
+
+fn fnv(h: &mut u64, w: u32) {
+    for b in w.to_le_bytes() {
+        *h ^= u64::from(b);
+        *h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+}
+
+/// [`Tally`] of `f`'s store over `world`'s resident chunks.
+pub fn tally(world: &svet_world::World, f: &Frame) -> Tally {
+    let mut t = Tally {
+        digest: 0xcbf2_9ce4_8422_2325,
+        ..Tally::default()
+    };
+    let Some(q) = f.bake_queue() else {
+        return t;
+    };
+    let store = f.store();
+    for c in world.store().coords() {
+        let settled = q.settled(store, c, false);
+        let words = store.block_words(c);
+        let tier = match (words.is_some(), store.is_coarse(c)) {
+            (false, _) => 0u32,
+            (true, true) => 1,
+            (true, false) => 2,
+        };
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        for w in words.unwrap_or(&[]) {
+            fnv(&mut h, *w);
+        }
+        for w in c.0.map(|v| v as u32) {
+            fnv(&mut t.digest, w);
+        }
+        fnv(&mut t.digest, u32::from(settled) | tier << 1);
+        fnv(&mut t.digest, h as u32);
+        fnv(&mut t.digest, (h >> 32) as u32);
+        t.chunks += 1;
+        t.settled += usize::from(settled);
+        t.coarse += usize::from(tier == 1);
+        t.full += usize::from(tier == 2);
+        t.rows.push(format!(
+            "{} {} {} {} {} {} {h:016x}",
+            c.0[0],
+            c.0[1],
+            c.0[2],
+            u8::from(settled),
+            ["none", "coarse", "full"][tier as usize],
+            words.map_or(0, <[u32]>::len)
+        ));
+    }
+    t
+}
+
 /// What [`settle`] ended on.
 #[derive(Clone, Debug)]
 pub struct Settled {
@@ -183,13 +259,14 @@ pub struct Settled {
     pub cap: u64,
     pub census: Census,
     pub stats: QueueStats,
+    pub tally: Tally,
 }
 
 impl Settled {
-    /// The settle as one line, the census last.
+    /// The settle as one line, the census and the store's tally last.
     pub fn line(&self) -> String {
         format!(
-            "settled {} frames, {:.1} s, {} samples (cap at most {}): depth {} jobs {} fading {} waiting in view {}; {}",
+            "settled {} frames, {:.1} s, {} samples (cap at most {}): depth {} jobs {} fading {} waiting in view {}; {}; {}",
             self.frames,
             self.secs,
             self.samples,
@@ -198,7 +275,8 @@ impl Settled {
             self.stats.jobs,
             self.stats.fading,
             self.stats.drain_waiting,
-            self.census.line()
+            self.census.line(),
+            self.tally.line()
         )
     }
 }
@@ -253,8 +331,13 @@ pub fn settle(rig: &mut Rig, f: &mut Frame, cam: &Camera, min: usize, label: &st
                 cap,
                 census: c,
                 stats: q,
+                tally: tally(&rig.world, f),
             };
             println!("{label}: {}", s.line());
+            if let Ok(path) = std::env::var("SVET_TALLY_OUT") {
+                std::fs::write(&path, s.tally.rows.join("\n") + "\n")
+                    .expect("the tally's rows are written");
+            }
             return s;
         }
     }

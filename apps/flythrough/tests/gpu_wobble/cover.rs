@@ -430,6 +430,9 @@ mod reading {
         let gw = s.frame.light_hit_positions().width() as usize;
         let (mut checked, mut agree) = (0usize, 0usize);
         let mut mismatches = Vec::new();
+        // Every compared pixel by the key slot's source, agree or mismatch, and the hit's
+        // distance band (t under 32, 32..128, 128..512, 512 on).
+        let mut by_src = [[[0usize; 4]; 2]; 5];
         for (g, h) in shot.hits.iter().enumerate() {
             if h[3] >= 1e30 || !h[3].is_finite() {
                 continue;
@@ -455,6 +458,9 @@ mod reading {
             };
             checked += 1;
             agree += usize::from((gpu - cpu).abs() <= 2.0 / 255.0);
+            let t = (0..3).map(|k| (p[k] - eye[k]).powi(2)).sum::<f32>().sqrt();
+            let band = [32.0, 128.0, 512.0].iter().filter(|&&b| t >= b).count();
+            by_src[src][usize::from((gpu - cpu).abs() > 2.0 / 255.0)][band] += 1;
             if (gpu - cpu).abs() > 2.0 / 255.0 {
                 mismatches.push(walked::Mismatch {
                     p,
@@ -469,6 +475,12 @@ mod reading {
             "the CPU horizon ({}) at the lighting pixel's hit against the GPU's key value: {agree} of {checked} within 2/255 (grid {gw} wide)\n",
             arm.key_horizon.name()
         ));
+        for (src, rows) in by_src.iter().enumerate() {
+            out.push_str(&format!(
+                "  key slot source {src}: agree t<32 {} 32..128 {} 128..512 {} 512+ {}; mismatch {} {} {} {}\n",
+                rows[0][0], rows[0][1], rows[0][2], rows[0][3], rows[1][0], rows[1][1], rows[1][2], rows[1][3]
+            ));
+        }
         // The faces, and the CPU pass.
         let mut index = std::collections::HashMap::new();
         let mut faces = Vec::new();

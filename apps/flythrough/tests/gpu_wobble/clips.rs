@@ -20,8 +20,8 @@
 //! off at 1280 x 720, stretched to the window by the present's bilinear blit) or `ray` (`C`
 //! only: `--key-cover ray`); `stem` the output under `live/anchor/` (the subject and arm when
 //! not given). Frames stream to `ffmpeg` (`libx264rgb -qp 0`, Matroska) as `<stem>.mkv`; beside
-//! it `<stem>.txt` (a frame a line: eye, yaw, pitch, exposure), frame 1 as `<stem>-f1.png` and
-//! raw `<stem>-f1.rgb`. `SVET_CLIP=search` picks the canopy start (see [`search`]).
+//! it `<stem>.txt` (a frame a line: eye, yaw, pitch, exposure, the queue's chunks baked so far
+//! and blocks fading), frame 1 as `<stem>-f1.png` and raw `<stem>-f1.rgb`. `SVET_CLIP=search` picks the canopy start (see [`search`]).
 
 use super::owner_move::{FLY_VOX_S, POSES, Pose, camera_of, class_map, clear};
 use super::*;
@@ -467,11 +467,11 @@ fn clip(subject: &str, arm_name: &str, stem: &str) {
         WINDOW[0], WINDOW[1]
     );
     let mut side = header.clone();
-    side.push_str("frame eye_x eye_y eye_z yaw pitch exposure\n");
+    side.push_str("frame eye_x eye_y eye_z yaw pitch exposure baked fading\n");
     let mut sh = Vec::new();
     let t1 = std::time::Instant::now();
     for (i, cam) in path.cams.iter().enumerate() {
-        frame_at(rig, &mut s, cam);
+        let q = frame_at(rig, &mut s, cam);
         let rgba = match &presenter {
             Some(p) => presented(rig, p, s.frame.target()),
             None => svet_render::debug::read_rgba8(&rig.device, &rig.queue, s.frame.target()),
@@ -497,12 +497,14 @@ fn clip(subject: &str, arm_name: &str, stem: &str) {
         let e = svet_render::ExposureState::from_bytes(&st).current;
         let p = cam.position.to_array();
         side.push_str(&format!(
-            "{i} {:.3} {:.3} {:.3} {:.3} {:.3} {e:.6e}\n",
+            "{i} {:.3} {:.3} {:.3} {:.3} {:.3} {e:.6e} {} {}\n",
             p[0],
             p[1],
             p[2],
             cam.yaw.to_degrees(),
-            cam.pitch.to_degrees()
+            cam.pitch.to_degrees(),
+            q.baked,
+            q.fading
         ));
         if i % 55 == 0 {
             sh.push(shares(rig, &s.frame, cam, &arm, internal));
