@@ -569,7 +569,7 @@ says otherwise; 3, 4 and 5, the recommended options.
 | 8: The owner's window | human | ran 2026-11-25: no pick on the terraces, the trunks closed with no change, `ray-record` rejected, the rest in "Amended 2026-11-25 (architect, after the window)"; verdicts in [`logs/0100.md`](logs/0100.md) | |
 | 8b: The wobble in the owner's move, split by stage | dev | three poses read; ordering 1 shown only at the canopy (terraces: shadowed over sunlit; the still's pose: no sunlit pixel under `calm`), orderings 2 and 3 not shown; the canopy's rows name the hard term at the internal rate (`full` closes 22 % flying); the slot's pose (amendment) left, resume notes in [`logs/0100.md`](logs/0100.md) | committed with this row |
 | 8c: The slot's blink, a reading | dev | not started | |
-| 9: The close on what the window picked (rewritten) | dev | not started; waits for question 8 and ADR-0084's rewrite | |
+| 9: The close on what the window picked (rewritten) | dev | done under question 8 (c): no default moved, no golden re-blessed; `ray-record` and `centre` withdrawn; the penumbra under `key far column` built through `key_approach_at` (wider than item 3's one clause, which fails frame 1: disclosed in [`logs/0100.md`](logs/0100.md)); the length check an equality; tip gate 1385 passed, 1419.6 s loaded | `29d08395`, `bd222fe4`, `c5316ca7`, `52f504e7` |
 
 ### Notes
 
