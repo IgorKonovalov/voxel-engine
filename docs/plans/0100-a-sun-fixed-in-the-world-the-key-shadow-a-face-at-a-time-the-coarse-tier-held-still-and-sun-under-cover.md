@@ -625,3 +625,119 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 ## Followups
 
 _(Empty at draft time.)_
+
+## Amended 2026-11-25 (architect, code reading after Phase 1's stop)
+
+Phase 1 met its stop rule. By the house rule (owner, 2026-11-24) this is a reading of what the
+mechanism waits on and what the bar measures, not a further variant. The long form, with file
+and line, is in [`logs/0100.md`](logs/0100.md), "The architect's code reading after Phase 1's
+stop". Nothing was run; each expectation is a guess until Phase 1b reads it.
+
+**Findings.**
+
+- **The premise was wrong.** The column horizon was already fixed in the world under `hit`: it
+  is a function of the position alone, with a ramp the sun's disc wide. `face` moved that step
+  at most half a voxel, hence 0.10 % of the display. The fault is the sampling, not the function.
+- **The mechanism.** The hit pass's rays are jittered (as FSR 2 asks). The lighting grid is
+  half the internal resolution on each edge (640 x 360 under 1280 x 720: a quarter of the
+  pixels FSR 2 is fed), fixed on screen, and copies one jittered hit of each 2 x 2. The
+  temporal pass reads the horizon at that hit, so a lighting pixel near the edge flips with
+  the phase. The key term then passes through the a-trous filter, which with no light history
+  takes its variance from the 7 x 7 around a pixel and so treats the hard edge as noise, and
+  through the composite's upsample, which gives three internal pixels in four light from
+  neighbours. FSR 2 gets an edge that jumps by up to 3 display pixels a phase with motion 0
+  and no mask, and cannot converge on it.
+- **The bar.** The rig's "none at the lighting pixel" is read before the filter and the
+  upsample: it holds the filter, the upsample, the internal pixel's own hit and FSR 2 together,
+  and is not a measure of FSR 2. The class is 3 lighting pixels wide on whatever grid the arm
+  runs, so shares on different grids are not of the same pixels. W3's w 0 bin is judged on
+  about 3 moved pixels a pair.
+- **`calm,native` reads 0.00 because nothing depends on the frame index without the jitter**
+  (the half-rate grid and the filter are in that arm too). Plan 0102's close review found the
+  same under a lamp (`gpu_fsr2`'s shadow-wobble test: 4.5 levels at the boundary under the
+  jitter, 0.000 without); it is this mechanism, and against ADR-0076's rule that nothing varies
+  at rest.
+- **A figure corrected.** "The key term at the full rate (2.25 times the pixels of the light
+  pass)" under Decision: the internal grid holds 4 times the lighting grid's pixels; 2.25 is the
+  display over the internal. The horizon is the temporal pass's, not the light pass's.
+- **Ruled out by the code:** a stable edge through the upsample alone (it has only samples
+  that already flip), and a reactive or composition mask for FSR 2 (it would trade the wobble
+  for an unaccumulated edge).
+
+### Phase 1b: The split of "none", and the key shadow read at the pixel's centre (exploration)
+- **Owner skill:** dev
+- **What:** In this order.
+  1. **The split, with no production code.** The terraces rig as it stands, both poses, RTX,
+     the rows `calm,nofilter`, `calm,full` and `calm,full,nofilter` beside `calm` and
+     `calm,native` (the tokens exist). The rig gains one figure a row: the count of display
+     pixels over 4 levels a pair over the whole display, the figure rows on different grids
+     are compared on. `nofilter` reads what the filter adds; `full,nofilter` is the ceiling of
+     any change that keeps the jittered read (every light term at the internal rate,
+     unfiltered).
+  2. **`lighting.key_at` gains `centre`** (default stays `hit`): the horizon is read at the
+     point where the lighting pixel's ray with no jitter (through its internal pixel's centre)
+     meets the plane of the face the jittered hit lies on, with that face's normal. One value a
+     lighting pixel whatever the phase, while the hit stays on one plane. A hit with no face
+     axis reads the hit. The cosine, the face's direction and everything but the horizon's
+     point stay the jittered hit's.
+  3. **`lighting.key_filter`** (`filtered`, the default, today's image to the byte; `around`):
+     where the light pass cast no key ray and the pixel takes no light history, the key term
+     joins the stored part the filter passes around, and its luminance stays out of the
+     moments. **Built only if** step 1 reads `calm,nofilter`'s whole-display count at a still
+     camera at most three quarters of `calm`'s at either pose; else the log says the filter is
+     not in it and the setting is not built.
+  Then the table with `calm,keyat=centre`, and `calm,keyat=centre,keyfilter=around` if built.
+  The banner and the HUD's lighting row name `key at centre` and `key filter around`; the debug
+  page's `key at` cycles the four values and a `key filter` row flips.
+- **Files touched:** `crates/svet-render/src/shaders/{pair,temporal,atrous}.wgsl` (`temporal.wgsl`
+  is near the size gate: the new code goes to `pair.wgsl`),
+  `crates/svet-render/src/frame/{settings,encode,compose}.rs`,
+  `crates/svet-render/src/frame/settings/{sky_light,tests}.rs`,
+  `crates/svet-render/src/{settings,lib}.rs`, `crates/svet-render/src/settings/tests.rs`,
+  `apps/flythrough/src/cli/{mod,outdoor}.rs`, `apps/flythrough/src/cli/tests/outdoor.rs`,
+  `apps/flythrough/src/toggles.rs`, `apps/flythrough/src/toggles/cycle.rs`,
+  `apps/flythrough/src/hud/modes.rs`, `apps/flythrough/tests/gpu_wobble.rs`,
+  `apps/flythrough/tests/gpu_wobble/terraces.rs`, `docs/flythrough.md`, `docs/plans/logs/0100.md`.
+- **Done when:**
+  - The log holds Phase 1's table at both poses with the new rows (RTX; still and flying; the
+    three weights; the moved split by term; the whole-display count), a still of each built arm
+    under `live/`, and one line an arm: the share of the distance from `calm` to `calm,native`
+    it closes at a still camera, whether the "key" share of the moved fell (under `centre` it
+    is expected near 0), and the still's difference from `calm`'s (how much softer or more
+    stepped the edge is).
+  - **The stop rule**, restated: an arm passes if it closes half the distance in every bin
+    that moves at least 50 display pixels a pair under `calm` (W3's w 0, about 3, is printed
+    and not judged). If `centre`, alone or with `around`, passes, it goes to Phase 8's run 1
+    beside `hit`, `face` and `face-smooth`, and Phase 9's "one value a face" claim is rewritten
+    for it by the architect at the pick. **If none passes, the dev reports the table and builds
+    nothing more**; question 6 below opens with the readings.
+  - The forest at `--sun 10,180` once with each built arm (the wobble rig's near class), as
+    Phase 1 read it.
+  - The temporal and a-trous passes' times a built arm, RTX at Floor and RENOIR at Portable,
+    Phase 1's three scenes (a guess: no change for `centre`; `around` the same or less).
+  - CPU (under 1 s): `--key-at centre` and `--key-filter filtered|around` parse; the settings
+    table lists `lighting.key_at` and, if built, `lighting.key_filter` (`Live`), every profile
+    at `hit` and `filtered`; the lighting row names each off its default.
+  - Quick tier, clippy, fmt, the file-size gate over the changed crates. Order: before Phase 7;
+    independent of Phases 3 to 6.
+
+**Risks.** Under `centre` the shadow edge is not supersampled by the jitter: it is as sharp
+as the lighting grid, a stepped ramp of up to 3 display pixels (`native`'s is 2); the stills
+show it before the window. At a step's silhouette the point lies on the hit face's plane beyond
+its edge; the horizon is defined there, and the lighting pixel still changes when its jittered
+hit changes plane, which is geometry for FSR 2. While flying nothing is expected to change.
+
+**Question for the owner, 6 (opens only if Phase 1b's stop rule fires).** No half-rate arm
+holds the terraces' shadow still. What then?
+  - (a) The key term at the internal rate (read in the composite at every internal pixel's own
+    hit) on Floor, Performance and High; Portable keeps the half-rate read. Only if
+    `calm,full,nofilter` itself passed the stop rule. Cost, guesses from Phase 1's
+    `face-smooth` rows (the same three added marches a pixel): +0.2 to +0.5 ms on the RTX at
+    Floor.
+  - (b) The same on every profile: +0.57 to +1.45 ms on the RENOIR at Portable (a guess),
+    beside a light and temporal pass that read 0.81 and 3.05 ms there (the lighting line is
+    4.0 ms).
+  - (c) The terraces go to the window as they are, `native` beside them for the eye, and the
+    fault goes to the backlog naming FSR 2's resolve; the plan's other two subjects go on.
+  - **Recommended:** (a) if `calm,full,nofilter` passed, else (c). Not (b): the slow adapter
+    has the least room under the lighting line.
