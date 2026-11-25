@@ -1338,6 +1338,204 @@ thread at all yet.
   flag), labelled a reading of what the order holds, pinning nothing. (5) Phase 3's share and
   wall bars still hold. `--binaries gpu_queue gpu_bake`, the store test by name.
 
+## Amended 2026-11-25 (owner: questions 6 and 7 answered)
+
+Read against `11840dc5`: `render_frame`, `replay_a_frame`, `ThreadLink::send` and `take`
+(`bake/link.rs`), the thread's loop and its two locks (`bake/thread.rs`), `BoxSender`
+(`bake/queue/box_signal.rs`), `RenderSettings::profile` and `BakeKnobs::default`
+(`settings.rs`), `DEFAULT_RING1_STRETCH` (`bake/budget.rs`), and the log's Phase 2e and
+"For Phase 2d and Phase 3b". Where this section differs from the text above it wins. Nothing
+was built or run.
+
+**The answers.**
+
+- **Question 6 (the dig's held record with the bake thread on): (a) the edit's frame waits for
+  the dig.** A frame that carries a box does not return from the bake call until the bake side
+  has served it, and applies that list in the same frame, as lockstep does. (owner, 2026-11-25)
+- **Question 7 (how far over the edit's grant a dig's ring 1 may go): (f) the stretch at 1.5.**
+  Phase 2e built `bake.ring1_stretch` (default 1.0) and read 1.5 on the RENOIR drained: ring 1
+  at D+1 in 48 of 48 against 26 of 48 at 1.0, the largest whole ring-1 submit 4.64 ms. (owner,
+  2026-11-25)
+
+**What they close.** Question 6 under "Risks & open questions" and the Status line's "question
+6 is open with the owner"; "does not start the dig clause before the answer" (Phase 3,
+amended) and "Phase 3b (dev; waits for question 6)" (Phase 3, split); the branches written for
+answers (b) and (c) in done-when (5c) and in the split are dead. Question 7 in all three of its
+texts ("restated on the readings", "on the quiet readings", "on the code reading"); the last
+one's options (a), (b), (c) are not taken. The risk "The dig's ring ... stays a lockstep call"
+is superseded by the wait below. The Phase 2d ruling's reserve (ruling 3: cut (b) and (c) back
+if a dig after a pause draws as a first dig) is closed by sequence C: the second dig, 64 frames
+on, drew as a later dig does; the figures stay.
+
+### Ruling 1: what the edit's frame waits for, and what it issues
+
+- **The wait.** A frame whose message holds a box sends that message first (with the read-backs
+  mapped so far), then waits for an outbox entry made from that message's frame or later (the
+  rule Phase 3's split kept: every list names the newest message it was made from), then
+  replays and applies as any frame does. That is the rest of the step in progress, which admits
+  no further candidate once the box is stamped (Phase 3a's signal), plus the dig's own step.
+  The wait takes the outbox as it waits, so a full outbox cannot hold the bake thread against
+  it. It ends on the entry, on the thread's panic and on the stop; **there is no timeout**: one
+  would show the hole without its held record on exactly the frames that run late, the picture
+  question 6 (a) was picked to rule out.
+- **The dig's submit goes out in the edit's frame, behind a carried one.** Phase 4c holds a
+  frame to one submit and carries the rest. On the edit's frame a submit carried from an
+  earlier frame is issued first, in order, and the dig step's after it: two submits in that
+  frame, at most one cap more of GPU (the drain's: 1.5 ms at Floor, 6.0 ms at Portable), on
+  dig frames only. The other choice, the dig's submit a frame later whenever a carry happens to
+  sit in front, makes ring 1's frame a matter of timing. Counted and read (done-when (8)).
+- **Only the box's frame waits.** Ring 1's read-back still crosses as every read-back does: it
+  maps a frame or more after its submit, leaves with that frame's message, and its landing is
+  applied from a later frame's take. **By this reading of `render_frame`, not read on a rig:
+  with the thread on ring 1 is applied one frame later than lockstep's** (two where the map
+  misses the next poll, which Phase 4c reads on the RTX at 134 fps), inside the Budgets line
+  (the base's frames plus 2). No second wait is built; Phase 3b reads it in frames and in ms
+  and Phase 5 (c) is its judge.
+
+### Phase 3b: The edit's frame waits for the dig, the window's default, the stretch at 1.5
+- **Owner skill:** dev
+- **What:** At Phase 4c's tip, before Phase 4d (the order is below).
+  (a) Ruling 1 in `render_frame` and the thread's handle: the box frame's order (collect,
+  send, wait, take, replay, apply), a waiting take beside `BakeThread::take`, the carried
+  submit and the dig's both issued. What the frame's apply reports (`landed`) goes with the
+  next frame's message. Phase 2's rule "an edit's writes are never carried" holds with the
+  thread on: the dig step's sky-stale marks and held blocks are applied in the edit's frame
+  whatever the byte cap.
+  (b) The wait is a lap of its own (`RENDER_LAPS` gains it, so the render thread's share on a
+  dig frame is honest) and a teardown line, `frames: bake thread dig wait:`: the dig frames,
+  the wait's p50, p99 and max in ms, the dig frames that issued two submits.
+  (c) **The window's default is `on`.** `RenderSettings::bake_thread` stays `false` in every
+  profile: a profile is what a headless consumer and every test start from, and lockstep is
+  the mode that keeps them reproducible (question 1 (a)). The fly-through resolves an unset
+  `--bake-thread` to `on` where it opens a window (the tester's child windows with it) and to
+  `off` under `--headless`; a settings-file row or the flag wins; a profile picked in the menu
+  keeps the session's mode (today it sets it back to the profile's `off`). The HUD's row and
+  the banner name the mode as they do.
+  (d) **The stretch's default is 1.5** (ruling 2 below): `DEFAULT_RING1_STRETCH`, its doc
+  lines, `docs/flythrough.md`. The HUD's row and the banner name the stretch whenever it is
+  not the default.
+  (e) `dig_timeline` and `gpu_queue`'s dig rig take the mode as a parameter (Phase 3,
+  amended); the timeline's row gains the wait's ms and the submits issued in the frame.
+- **Files touched:** `crates/svet-render/src/bake/{thread,link}.rs`,
+  `bake/queue/box_signal.rs` only if the wait needs the count, `bake/queue/stats.rs`,
+  `bake/queue/split_tests/{thread,stretch}.rs`, `bake/budget.rs` (the default),
+  `crates/svet-render/src/settings.rs` (doc lines and its tests; no row is added),
+  `crates/svet-render/src/frame/{baked,bake_thread}.rs`,
+  `apps/flythrough/src/cli/{parse,queue_flags,settings,mod}.rs`,
+  `apps/flythrough/src/run/{queue,hud_feed,hud_live_tests,loading}.rs` and the menu's profile
+  switch, `apps/flythrough/tests/{gpu_queue,gpu_settings_rows}.rs`,
+  `apps/flythrough/tests/gpu_outdoor/dig_line.rs`, `tests/support/defects.rs`,
+  `docs/flythrough.md`, `docs/plans/logs/0099.md`. `settings.rs` is at 1 047 lines and
+  `hud_feed.rs` at 1 011 of 1 200: new code goes to new files.
+- **Done when:**
+  (1) `the_edits_frame_waits_for_its_list_and_no_other_frame_does` (CPU, under 2 s, the
+  threaded device-less rig): with the bake half held by the hook and released from a second
+  thread, a frame whose message holds a box returns only after the step that read that
+  message, with the held block's words and its table word for every touched chunk applied in
+  that frame and that step's submit issued in it; Phase 3's (1) holds unchanged beside it (100
+  frames with no box return with the bake half held and apply nothing).
+  (2) `a_wait_ends_on_a_panic_and_a_full_outbox_does_not_hold_it` (CPU, under 2 s): a panic
+  in the step that takes the box is the box frame's error, returned, not a hang; with the
+  outbox at its cap when the box is sent, the box frame returns with the dig's list applied.
+  (3) `a_dig_frame_issues_a_carried_submit_and_its_own_in_order` (CPU, under 1 s, the
+  recording half): a carried (tables A, issue A) and the dig's step (tables B, issue B) replay
+  as all four in that frame, in order; the same two with no box replay as Phase 4c's (1) has
+  them, one submit a frame.
+  (4) **(5c), answer (a):** on `gpu_queue`'s dig rig, thread on (lavapipe, at the wall the
+  tree's dig test has, about 10 s; the gate if under the soak line, else born
+  `#[ignore = "soak"]` and run by name): the pool read back after the edit's own frame holds
+  the held block for every touched brick, over at least three digs.
+  (5) **(5b):** on the same rig, thread on: ring 1's block is applied within lockstep's frame
+  count on that rig plus 2, lockstep read in the same test.
+  (6) **(6) as first written**, `the_flag_and_the_row_name_the_mode` (CPU, under 1 s): unset
+  with a window the mode parses `on` and the row reads `bake thread on`; unset under
+  `--headless` it is `off`; `--bake-thread off` in a window is lockstep; a profile switch in
+  the menu leaves the mode as it was; `RenderSettings::profile` reads `false` in all four.
+  (7) **The stretch at 1.5.** `DEFAULT_RING1_STRETCH` is 1.5; the settings' rows walk
+  (`gpu_settings_rows`, `Why::Queue`; its test value becomes 2.0, inside the range) passes;
+  `the_stretch_is_named_on_the_row_when_not_one` restated: no `stretch` word unset or at 1.5,
+  `stretch 1.0` at 1.0; `the_stretch_reaches_the_bake_side_in_the_next_message` and its thread
+  twin set 1.0 before they set 1.5, so the cut they compare against is still read (ring 1 of
+  280 against a cap of 200 goes whole at the new default); the quick tier is run at the new
+  default and **a CPU test of Phases 2b to 2e that reads a ring cut at the cap sets 1.0 by
+  name and keeps its figures**; none is re-valued.
+  (8) **Readings, quiet (as Phase 2c (6)), at the defaults (stretch 1.5), eight runs a side,
+  thread on alternated with lockstep, sequences A and B:** the forest in regime B (the waiting
+  queue) on the RTX at Floor and the RENOIR at Portable, and RENOIR drained B (where the
+  stretch acts). Per dig: the frames from the dig to its held record applied; the frames and
+  the ms from the dig to ring 1 applied; the wait in ms; the dig frame's wall against
+  lockstep's; the submits issued in the frame; whether the dig's step found every slot unread;
+  the share of dig fades that moved in all 4 of their frames; the dig op's wall p99 against
+  Phase 1's 0.04 to 0.09 ms plus one chunk's listing (the pool now lists beside the edit).
+  **The claim, per dig: the held record is applied 0 frames after the dig with the thread
+  on.** **The wait's bound is a reading with stops** (the plan's 3 to 6 ms on the RTX is a
+  guess: the rest of a step, movable p50 2.5 ms after lever (b) and 5.1 in its experiment,
+  and the dig's `boxes` and `digs`, 2.0 to 2.6 ms in Phase 1's means). Reported to the
+  architect before Phase 4d, each with its timelines: a held record later than the dig's
+  frame; the wait on the RTX over 6.0 ms at p50 or 12.0 ms at p99; a dig frame's wall p50
+  with the thread on over lockstep's on the same rig, either adapter (the wait stands in for
+  lockstep's dig step, 10.8 to 24.6 ms in Phase 1's RTX means and 2.7 to 5.1 on the RENOIR,
+  and must not cost more); ring 1 applied later than lockstep's frames plus 2; more than 1
+  dig frame in 8 with two submits on the RENOIR.
+  (9) Phase 3's (7) bars hold on a run with no edit at this tip (one RTX forest run; Phase 4d
+  reads them in full). `--binaries gpu_queue gpu_queue_reach gpu_bake gpu_sun
+  gpu_settings_rows`; for the stretch's new default in lockstep, once each: the soak image
+  test `flicker::a_fresh_hole_holds_its_value_until_its_light_lands` by name and the golden
+  binaries (`gpu_golden`, `gpu_outdoor_golden`, `gpu_castle_golden`, `gpu_hud_golden`). **A
+  golden that moves is reported with the frame and the dig it follows, not re-blessed**: a
+  ring that lands a frame sooner is the one way this plan may move one, and the architect
+  rules on it.
+
+### Ruling 2: where the 1.5 lands
+
+**Profile rows.** `bake.ring1_stretch`, `Live` (unchanged): Floor 1.5, Portable 1.5,
+Performance 1.5, High 1.5, from `BakeKnobs::default`; the same in all four, so
+`PROFILE_PICKS` gains no row. `bake_thread`, `Live`: `false` in all four, unchanged (Phase 3b
+(c)). Read on the RENOIR at Portable only. On the RTX the stretch never acted (Phase 2e: its
+caps are 2 to 36 times its rings); where it does, the most it adds is half a grant on the
+dig's frame (arithmetic from `DEFAULT_BAKE_EDIT_MS` and the line, not read at Floor).
+
+**Phase 3b makes the change, not Phase 6.** The owner has answered, 3b's dig readings are
+owed at the answered value, and Phase 5's window should show what ships; Phase 6 comes after
+the window and pins lines. Tests that move are in 3b's done-when (7) and (9).
+
+**The line Phase 6 pins** (`docs/nfr/04-edits.md`, "An edit's light"; the slow adapter at
+Portable, lockstep, as Phase 2e read it): **ring 1 within 1.5 caps goes whole in the edit's
+submit and lands at D+1, D+2 where the next frame digs the same chunk; a ring over 1.5 caps
+lands a frame later.** With the thread on the same sentence is pinned at the frames Phase 3b
+reads (expected one more, ruling 1), each with its mode. **Named limits, beside it:** (1) **a
+session's first dig** is priced by other work: its D+0 submit read 4.76 to 6.14 ms and its
+D+1 and D+2 5.81 to 7.87 ms against 4.0, at both values of the stretch; (2) **the D+2 submit,
+ring 2 at the dig's figure, reads over 4.0 ms** (3.93 to 5.92 in sequences B and C); and the
+adapter's spread of a seventh on one submit's time (the Phase 2d ruling), which the stretch
+absorbs for ring 1 and nothing absorbs for ring 2.
+
+**Phase 5.** (c) gains: is there a hitch on the frame of a dig with the thread on that is not
+there with it off. (d)'s RENOIR run digs a few times at the default, which is now 1.5 and
+costs no launch. **The side-by-side at 1.0 is kept as a check only**: one more launch
+(`--bake-ring1-stretch 1.0`, the value on the HUD), run if the owner wants to see what he
+picked against; it reopens nothing unless he says 1.5 looks worse.
+
+### The order: 4c, then 3b, then 4d
+
+Phase 4c (running) and Phase 3b both edit `render_frame`, `replay_a_frame` and the carry in
+`bake/link.rs`, `frame/{baked,bake_thread}.rs`, `bake/queue/{stats,split_tests}`,
+`apps/flythrough/src/run/queue.rs` and `docs/flythrough.md`, and 3b's ruling on the dig's
+submit is written on 4c's carry and depth. **4c finishes first, untouched; 3b is not started
+beside it.** Phase 4d edits `bake/queue/stats.rs` and `run/{queue,frame}.rs` too (its `fed`
+line beside 3b's `dig wait` line) and builds no mechanism: it goes last, so its bars and
+Phase 3's share and wall bars are read once, on the tree Phase 5 shows, with the wait and
+both defaults in. Its bar runs pass `--bake-thread on` by name as before; its lockstep dig
+reading (RENOIR drained B's withdrawn samples) passes `--bake-ring1-stretch` by name at the
+value its row states. One lane, one dev at a time: 4c, 3b, 4d, then Phase 5.
+
+### ADR-0083
+
+Still `proposed` in this branch, so it is amended in place with this section: the wait is in
+its Decision (the one exception to "never waits", and the edit's frame's second submit),
+question 6's (b) and (c) are among its alternatives. Nothing is owed to its Outcome for this
+at the close.
+
 ## Data shapes
 
 ```rust

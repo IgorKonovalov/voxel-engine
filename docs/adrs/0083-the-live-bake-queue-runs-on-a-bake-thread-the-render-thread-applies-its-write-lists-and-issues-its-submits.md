@@ -1,6 +1,7 @@
 # ADR-0083: The live bake queue runs on a bake thread; the render thread applies its write lists and issues its submits
 
-> **Status:** proposed (2026-11-22, with Plan 0099; awaits the owner's go)
+> **Status:** proposed (2026-11-22, with Plan 0099; amended while proposed, 2026-11-25: the
+> edit's frame waits, the owner's answer to that plan's question 6)
 > **Date:** 2026-11-22
 > **Related plan(s):** [Plan 0099](../plans/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md).
 > Extends [ADR-0017](0017-mirror-cpu-work-bounded-in-the-frame-loop-narrowing-on-stream-workers.md)
@@ -62,6 +63,15 @@ does them at one fixed point in the frame, from lists the bake thread prepared.*
   own shadow of the mirror's membership from those changes; it never reads the mirror. The
   inbox coalesces: a newer view replaces an older one and change lists append, so a stalled
   bake thread costs the render thread nothing and the inbox is bounded by the residency.
+- **One exception: the edit's frame waits for the dig** (owner, 2026-11-25). A frame whose
+  message carries an edit's box does not return from the bake call until the bake thread has
+  served that message, and applies that list in the same frame, as lockstep does: the dug
+  bricks' held record is in the store before that frame's light pass reads it, so no frame
+  shows a hole without it. The wait is the rest of the step in progress, which admits no
+  further candidate once a box is sent, plus the dig's own step. It has no timeout; it ends on
+  the list, on the thread's panic or on the stop. That frame also issues the dig's submit
+  behind any submit carried from an earlier frame, so it may issue two. No other frame waits,
+  and a dig's read-back crosses as every read-back does.
 - **Results cross as write lists.** One bake step emits one ordered list of buffer writes
   (a block's words, its table word, the summary and parent words, a fade's shown words, the
   store's window when it moves) and at most one prepared submit (the planned rounds and the
@@ -112,6 +122,9 @@ does them at one fixed point in the frame, from lists the bake thread prepared.*
 - A frame of latency, or more under load, between a mirror change and the queue's reaction to
   it, and between a block being ready and the image reading it. Rule 6's coarse answer covers
   the wait; a dig's ring is the case where it shows, and it gets a priority path and a bar.
+- A dig's frame is longer by the edit's wait, on the render thread, and a bake thread that
+  stalls stalls that frame with it. The wait is read and bounded by stops in the plan, not by
+  a timeout.
 - The store splits into books on the bake thread and buffers on the render thread. Every
   public read of the books (statistics, a block's words, the bake file, Plan 0089's mirror
   oracle) becomes a snapshot request or a lockstep call. That is an API change.
@@ -179,6 +192,17 @@ Run the step on a second thread while the render thread syncs and encodes, and j
 the frame's submit. No protocol, no latency, the frame stays deterministic. It lost because
 the frame still waits for the step: a 28 ms step joined in a frame is a 28 ms frame. It
 overlaps a few milliseconds of sync and no more.
+
+### Alternative F: an edit's box takes the path every message takes
+
+The render thread never waits, with no exception: the box goes out with the frame's message
+and the held record comes back in a later frame's list. No hitch on a dig. It lost on image
+stability: until that list is applied the hole's new faces read the old block, which holds no
+record for them, the picture the owner rejected before the held record existed (Plan 0098's
+windows 98c and 98d), for a few frames a dig. Its sibling, **the whole step back in lockstep
+while a dig waits or bakes**, keeps the picture and lost on cost: about 28 ms a frame in a deep
+queue for as long as the dig's rings take, where the wait is one frame's few milliseconds
+(a guess of 3 to 6 on the RTX 3080 Laptop until Plan 0099 Phase 3b reads it).
 
 ## Outcome
 
