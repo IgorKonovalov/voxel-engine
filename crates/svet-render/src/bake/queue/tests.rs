@@ -858,3 +858,93 @@ fn the_rule_reading_splits_the_jobs_by_exclusion_and_the_landing() {
     assert_eq!((r.opened, r.opened_before), ([4, 190], [3, 160]));
     assert_eq!(r.before_shares(), [1.0 / 3.0, 100.0 / 160.0]);
 }
+
+/// A submit's GPU ms under Plan 0099 Phase 2b's priced cost: 0.85 ms a dispatch and 12 ns a
+/// sample (the RENOIR's fit by arithmetic, near).
+fn priced_ms(samples: u64) -> f64 {
+    0.85 + 12e-6 * samples as f64
+}
+
+/// Plan 0099 Phase 2b (1): 40 submits each of the size its cap gave under a 6.0 ms slice,
+/// then 200 under a 1.0 ms slice, at `priced_ms`. The cap for a 4.0 ms slice is within 10 %
+/// of `(4.0 - 0.85) / 12 ns` = 262 500 (the mean's rule gives about 63 000), and the first
+/// cap under the 1.0 ms slice is at most 20 000 (the mean's rule gives about 71 000).
+#[test]
+fn a_grown_slice_is_priced_by_the_cost_a_sample_not_the_mean() {
+    let mut c = SampleCost::new(20.0);
+    let mut mean = 20.0f64;
+    let mut feed = |c: &mut SampleCost, slice: f64| {
+        let n = c.cap(slice);
+        c.read(1, n, priced_ms(n));
+        mean = 0.8 * mean + 0.2 * priced_ms(n) * 1e6 / n as f64;
+    };
+    for _ in 0..40 {
+        feed(&mut c, 6.0);
+    }
+    let first = c.cap(1.0);
+    let by_mean = (1.0e6 / c.mean_ns) as u64;
+    eprintln!("after 6.0 ms: first cap at 1.0 ms {first} (the mean's rule {by_mean})");
+    assert!(
+        first <= 20_000,
+        "first cap under 1.0 ms {first} (the mean's rule {by_mean})"
+    );
+    assert!(by_mean > 60_000, "the mean's rule {by_mean}");
+    for _ in 0..200 {
+        feed(&mut c, 1.0);
+    }
+    let grown = c.cap(4.0);
+    let by_mean = (4.0e6 / c.mean_ns) as u64;
+    eprintln!(
+        "first cap at 1.0 ms {first}; cap at 4.0 ms {grown} (the mean's rule {by_mean}), price {:?}",
+        c.price()
+    );
+    assert!(
+        (grown as f64 / 262_500.0 - 1.0).abs() < 0.10,
+        "cap for 4.0 ms {grown} (fixed {:.3} ms, {:.2} ns; the mean's rule {by_mean})",
+        c.price().0,
+        c.price().1
+    );
+    assert!(by_mean < 70_000, "the mean's rule {by_mean}");
+    assert!(
+        (c.mean_ns - mean).abs() < 1e-9,
+        "the printed mean is the mean"
+    );
+}
+
+/// Plan 0099 Phase 2b (2): 200 submits at one slice with no earlier spread draw what the
+/// mean's rule draws, within 1 %. Two cases: the queue's start (20 ns) at 6.0 ms, the sizes
+/// its own caps give; and submits of one size (20 000 samples, the ms 3 % either way) after
+/// which the fixed part is still 0 and the cap is the mean's rule's.
+#[test]
+fn a_steady_slice_draws_what_the_mean_drew() {
+    let mut c = SampleCost::new(20.0);
+    for _ in 0..200 {
+        let n = c.cap(6.0);
+        c.read(1, n, priced_ms(n));
+    }
+    let by_mean = 6.0e6 / c.mean_ns;
+    let cap = c.cap(6.0) as f64;
+    eprintln!("6.0 ms from 20 ns: cap {cap}, the mean's rule {by_mean:.0}");
+    assert!(
+        (cap / by_mean - 1.0).abs() < 0.01,
+        "cap {cap}, the mean's rule {by_mean}"
+    );
+
+    let mut c = SampleCost::new(20.0);
+    for i in 0..200 {
+        let jitter = [1.0, 1.03, 0.97][i % 3];
+        c.read(1, 20_000, priced_ms(20_000) * jitter);
+    }
+    assert_eq!(
+        c.price(),
+        (0.0, c.mean_ns),
+        "no spread, no fixed part: the mean"
+    );
+    let by_mean = 1.0e6 / c.mean_ns;
+    let cap = c.cap(1.0) as f64;
+    eprintln!("one size: cap {cap}, the mean's rule {by_mean:.0}");
+    assert!(
+        (cap / by_mean - 1.0).abs() < 0.01,
+        "cap {cap}, the mean's rule {by_mean}"
+    );
+}

@@ -1,4 +1,6 @@
-//! The live queue's time budget and its slice constants.
+//! The live queue's time budget, its slice constants and its price of a submit.
+
+use std::collections::VecDeque;
 
 /// The live queue's slice by default, in milliseconds of a frame.
 pub const DEFAULT_BAKE_SLICE_MS: f64 = 1.5;
@@ -142,6 +144,138 @@ impl std::fmt::Display for Drain {
 /// Milliseconds a frame the live queue's slice grows by while a dig's bricks wait (ADR-0046's
 /// edit cap, by time on the slice's own ns a sample).
 pub const DEFAULT_BAKE_EDIT_MS: f64 = 3.0;
+
+/// The least submit the live queue's cap sends, in samples.
+pub(crate) const CAP_FLOOR_SAMPLES: u64 = 16_384;
+
+/// Read-backs the fit of [`SampleCost`] spans: about a second, so a dig's ring and the small
+/// submits after it fall in one span.
+const COST_FIT: usize = 64;
+
+/// The spread of the dispatches' sizes in the fit's span (the largest over the smallest) from
+/// which a fit is taken at all: submits of one size cannot tell a dispatch's fixed part from
+/// its samples' cost.
+const COST_SPREAD: f64 = 1.25;
+
+/// The spread at which a fit replaces one taken over a wider span: the small submits under a
+/// steady slice spread by up to about 2 with the estimate's noise, and their local slope is
+/// not the cost of a grown slice; a slice's change (a dig, the drain's end) spreads them by 5
+/// or more.
+const COST_WIDE: f64 = 3.0;
+
+/// The most a fit's slope may be off by its standard error, as a share of the slope.
+const COST_SLOPE_ERROR: f64 = 0.1;
+
+/// The decay a read-back of the sums the line's level is read from, as the mean's.
+const COST_DECAY: f64 = 0.8;
+
+/// The live queue's price of a submit on the GPU (Plan 0099 Phase 2b): a dispatch's fixed
+/// milliseconds and the nanoseconds a sample, both from the submits read back. A cap sized by
+/// the mean ns a sample alone prices a slice of another size by the old submits' share of the
+/// fixed part: where that part is near the slice (a slow adapter under a 1 ms line), a slice
+/// that grows (a dig's `edit_ms`) buys a fraction of what it could, and one that shrinks (the
+/// drain's end) overdraws. The steady state is the same under either.
+///
+/// The ns a sample is the slope of a least-squares line over the last [`COST_FIT`]
+/// read-backs' dispatches, taken when their sizes have spread by [`COST_SPREAD`] (and by the
+/// last taken fit's spread up to [`COST_WIDE`]) and its standard error is within
+/// [`COST_SLOPE_ERROR`]; between such spreads it is kept. The fixed part is then where a line
+/// of that slope through the recent read-backs (decayed [`COST_DECAY`] a read-back) meets no
+/// samples: under a steady slice the cap draws what the mean draws, and the level the noisy
+/// small submits read well is re-read every step. Where that level is under 0 the price is the
+/// recent read-backs' ms over their samples, and with no slope yet it is the mean.
+#[derive(Clone, Debug)]
+pub(crate) struct SampleCost {
+    /// The mean ns a sample of the read-backs, `0.8 * old + 0.2 * new`: the cap's price while
+    /// no slope is known, and the queue's printed `ns a sample`.
+    pub(crate) mean_ns: f64,
+    /// The last taken fit's ns a sample and its span's spread.
+    slope_ns: Option<f64>,
+    spread: f64,
+    /// The recent read-backs' dispatches, samples and ms, decayed [`COST_DECAY`] a read-back.
+    recent: [f64; 3],
+    /// The fit's span: a read-back's samples and ms a dispatch.
+    fit: VecDeque<(f64, f64)>,
+}
+
+impl SampleCost {
+    /// An estimate that prices a sample at `ns` until the first read-back.
+    pub(crate) fn new(ns: f64) -> Self {
+        Self {
+            mean_ns: ns,
+            slope_ns: None,
+            spread: 0.0,
+            recent: [0.0; 3],
+            fit: VecDeque::with_capacity(COST_FIT + 1),
+        }
+    }
+
+    /// One step's read-back: `dispatches` submits that drew `samples` in `ms` on the GPU.
+    pub(crate) fn read(&mut self, dispatches: u64, samples: u64, ms: f64) {
+        if dispatches == 0 || samples == 0 {
+            return;
+        }
+        self.mean_ns = 0.8 * self.mean_ns + 0.2 * (ms * 1e6 / samples as f64);
+        let n = dispatches as f64;
+        let r = &mut self.recent;
+        let d = COST_DECAY;
+        *r = [d * r[0] + n, d * r[1] + samples as f64, d * r[2] + ms];
+        self.fit.push_back((samples as f64 / n, ms / n));
+        if self.fit.len() > COST_FIT {
+            self.fit.pop_front();
+        }
+        let (lo, hi) = self
+            .fit
+            .iter()
+            .fold((f64::MAX, 0.0f64), |(lo, hi), p| (lo.min(p.0), hi.max(p.0)));
+        let spread = hi / lo;
+        if self.fit.len() < 3 || spread < COST_SPREAD.max(self.spread.min(COST_WIDE)) {
+            return;
+        }
+        let k = self.fit.len() as f64;
+        let (mx, my) = self
+            .fit
+            .iter()
+            .fold((0.0, 0.0), |(x, y), p| (x + p.0 / k, y + p.1 / k));
+        let (mut sxx, mut sxy, mut syy) = (0.0, 0.0, 0.0);
+        for &(x, y) in &self.fit {
+            sxx += (x - mx) * (x - mx);
+            sxy += (x - mx) * (y - my);
+            syy += (y - my) * (y - my);
+        }
+        let slope = sxy / sxx;
+        let residual = (syy - slope * sxy).max(0.0) / (k - 2.0);
+        if slope <= 0.0 || (residual / sxx).sqrt() > COST_SLOPE_ERROR * slope {
+            return;
+        }
+        self.slope_ns = Some(slope * 1e6);
+        self.spread = spread;
+    }
+
+    /// The price a cap is sized by: a dispatch's fixed ms and the ns a sample beyond it.
+    pub(crate) fn price(&self) -> (f64, f64) {
+        let [n, s, ms] = self.recent;
+        match self.slope_ns {
+            Some(per) if s > 0.0 => {
+                let fixed = (ms - per * 1e-6 * s) / n;
+                if fixed > 0.0 {
+                    (fixed, per)
+                } else {
+                    (0.0, ms * 1e6 / s)
+                }
+            }
+            _ => (0.0, self.mean_ns),
+        }
+    }
+
+    /// The samples a submit draws in `ms` of the GPU: `(ms - fixed) / ns a sample`, at least
+    /// [`CAP_FLOOR_SAMPLES`] and at most [`crate::bake::SUBMIT_SAMPLES`].
+    pub(crate) fn cap(&self, ms: f64) -> u64 {
+        let (fixed, per) = self.price();
+        (((ms - fixed).max(0.0) * 1e6 / per.max(0.1)) as u64)
+            .clamp(CAP_FLOOR_SAMPLES, super::SUBMIT_SAMPLES)
+    }
+}
 
 #[cfg(test)]
 mod tests {

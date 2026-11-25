@@ -296,7 +296,7 @@ impl BakeQueue {
             let slice = self.step_slice(view.interval_s);
             self.stats.slice_ms = slice;
             let ms = slice + if dig { self.edit_ms } else { 0.0 };
-            ((ms * 1e6 / self.stats.ns_per_sample.max(0.1)) as u64).clamp(16_384, SUBMIT_SAMPLES)
+            self.cost.cap(ms)
         });
         self.withdraw_passed(run, store, view);
         self.laps.lap(S_WITHDRAW);
@@ -479,10 +479,16 @@ impl BakeQueue {
             if let Some(ms) = w.gpu_ms {
                 *d.gpu_ms.get_or_insert(0.0) += ms;
             }
+            d.timed += w.timed;
             d.class_samples = [0, 1].map(|k| d.class_samples[k] + w.class_samples[k]);
             d.class_ms = [0, 1].map(|k| d.class_ms[k] + w.class_ms[k]);
             lap(&mut self.laps, S_COLLECT);
         }
+        self.read_stats(&d, cap, submitted, in_flight_full);
+    }
+
+    /// The submit stage's stats, and the price of a submit fed with what was read back.
+    fn read_stats(&mut self, d: &SubmitDone, cap: u64, submitted: u64, in_flight_full: bool) {
         // The slice is sized by the GPU's own time for the submits read back, a frame or two
         // late; without timestamps it stays at the first guess, a fixed count.
         self.stats.cap = cap;
@@ -491,6 +497,7 @@ impl BakeQueue {
         self.stats.in_flight_full += u64::from(in_flight_full);
         self.stats.samples = d.samples;
         self.stats.ms = d.gpu_ms.unwrap_or(d.seconds * 1e3);
+        self.stats.read_submits = d.timed;
         self.stats.total_samples += d.samples;
         let st = &mut self.stats;
         st.class_samples = [0, 1].map(|k| st.class_samples[k] + d.class_samples[k]);
@@ -498,8 +505,9 @@ impl BakeQueue {
         if let Some(ms) = d.gpu_ms
             && d.samples >= 4096
         {
-            let ns = ms * 1e6 / d.samples as f64;
-            self.stats.ns_per_sample = 0.8 * self.stats.ns_per_sample + 0.2 * ns;
+            self.cost.read(d.timed, d.samples, ms);
+            self.stats.ns_per_sample = self.cost.mean_ns;
+            (self.stats.fixed_ms, self.stats.cost_ns) = self.cost.price();
         }
     }
 

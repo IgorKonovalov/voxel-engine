@@ -18,6 +18,8 @@ pub(crate) struct SubmitDone {
     pub seconds: f64,
     /// The dispatch's milliseconds on the GPU's timestamps, where the loop times its submits.
     pub gpu_ms: Option<f64>,
+    /// The submits read back whose time is in `gpu_ms`.
+    pub timed: u64,
     /// Of `samples`, those of jobs at the full count and those at a job's own count (the
     /// coarse pass), and `gpu_ms` split between them by those samples: an attribution of the
     /// dispatch's time by its share of the samples, not a measurement of each class.
@@ -564,6 +566,7 @@ impl JobLoop {
             out.seconds += seconds;
             if let Some(ms) = gpu_ms {
                 *out.gpu_ms.get_or_insert(0.0) += ms;
+                out.timed += 1;
                 let all = class_samples[0] + class_samples[1];
                 for ((s, m), &n) in out
                     .class_samples

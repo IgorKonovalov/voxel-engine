@@ -428,6 +428,12 @@ written a step p50/p99 by buffer (`pool`, `table`, `summary`, `job`), and each s
 with its render share in brackets; the `frames:` summary's `queue step` lines carry the same
 split by regime.
 
+The `bake queue:` line's `N ns a sample (price F ms a dispatch + P ns)` is the mean cost a
+sample of the submits read back and the price the next submit's sample cap is sized by: a
+dispatch's fixed part `F` and the cost `P` of each sample beyond it, so a slice that grows (a
+dig's `--edit-ms`) or shrinks (the drain's end) draws what it buys. With no spread of submit
+sizes read yet the price is the mean (`F` 0).
+
 ### Audio
 
 | Flag | Does |

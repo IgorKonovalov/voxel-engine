@@ -356,6 +356,8 @@ pub struct BakeQueue {
     /// in-view landing is the first empty set after it, [`RuleMissed::landed_at`]).
     pub(super) waiting_armed: bool,
     pub(super) stats: QueueStats,
+    /// The price of a submit the cap is sized by ([`SampleCost`]).
+    pub(super) cost: SampleCost,
     /// The current step's stage laps.
     pub(super) laps: Laps,
     /// The candidates, kept between steps: every full chunk in the mirror with no block, a
@@ -592,8 +594,10 @@ impl BakeQueue {
             waiting_armed: false,
             stats: QueueStats {
                 ns_per_sample: 20.0,
+                cost_ns: 20.0,
                 ..QueueStats::default()
             },
+            cost: SampleCost::new(20.0),
             laps: Laps::new(StepStart::now()),
             pool: Default::default(),
             touched: Default::default(),

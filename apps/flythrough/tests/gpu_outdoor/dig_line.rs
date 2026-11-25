@@ -131,9 +131,9 @@ mod dig_line {
                         q.depth,
                         q.jobs
                     ) + &format!(
-                        "; baked {} coarse opened {} keys baked {} withdrawn {} retiered {} reach {} partial {} provisional {} waiting reach {} lights {} unbaked {}; samples read {} total {} in {:.3} ms, ns a sample {:.3}, slice {:.2} ms, draining {}",
+                        "; baked {} coarse opened {} keys baked {} withdrawn {} retiered {} reach {} partial {} provisional {} waiting reach {} lights {} unbaked {}; samples read {} total {} in {:.3} ms, ns a sample {:.3} (price {:.3} ms + {:.3} ns), slice {:.2} ms, draining {}",
                         q.baked, q.coarse_opened, q.keys_baked, q.withdrawn, q.retiered, q.reach, q.partial,
-                        q.provisional, q.waiting_reach, q.waiting_lights, q.unbaked, q.samples, q.total_samples, q.ms, q.ns_per_sample, q.slice_ms, q.draining
+                        q.provisional, q.waiting_reach, q.waiting_lights, q.unbaked, q.samples, q.total_samples, q.ms, q.ns_per_sample, q.fixed_ms, q.cost_ns, q.slice_ms, q.draining
                     );
                 }
             };
@@ -240,9 +240,9 @@ mod dig_line {
                 pool_full = Some(pf);
                 let _ = writeln!(
                     out,
-                    "{fi:4} {:8} cap {:7} sent {:7} | flight r1 {:6} r2 {:6} other {:7} | free {:2} pend {:3} open {:2} unread {} withdrawn {} pool+{pool} | step {:6.3} ms light {:6.3} temporal {:6.3} gpu {:6.2} | waiting {} depth {} digs {}",
+                    "{fi:4} {:8} cap {:7} sent {:7} | flight r1 {:6} r2 {:6} other {:7} | free {:2} pend {:3} open {:2} unread {} withdrawn {} pool+{pool} | read {:7} in {} at {:.4} ms, ns {:.1} price {:.3} ms + {:.2} ns | step {:6.3} ms light {:6.3} temporal {:6.3} gpu {:6.2} | waiting {} depth {} digs {}",
                     f.label, f.q.cap, f.q.submitted, fl[0], fl[1], fl[2], t.free_slots, t.pending, t.open,
-                    t.in_flight, t.withdrawn, f.q.stages.total_ms, f.light_ms, f.temporal_ms, f.gpu_ms,
+                    t.in_flight, t.withdrawn, f.q.samples, f.q.read_submits, f.q.ms, f.q.ns_per_sample, f.q.fixed_ms, f.q.cost_ns, f.q.stages.total_ms, f.light_ms, f.temporal_ms, f.gpu_ms,
                     f.q.drain_waiting, f.q.depth, f.q.digs
                 );
                 let jobs: BTreeMap<[i32; 3], &svet_render::DigTraceJob> = t.jobs.iter().map(|j| (j.coord, j)).collect();

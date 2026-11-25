@@ -773,6 +773,7 @@ Readings, gate counts and attempts: [`logs/0099.md`](logs/0099.md).
 |---|---|---|---|
 | 1: the step's split on the line, the base readings | dev | done; render p50 0.690 ms on the quiet RTX forest (the stop did not fire); the drained rig reaches 0 in view waiting on both adapters; RENOIR drained A's ring 1 lands D+3 or D+4 for digs 2 and 3 (reported); most readings loaded, quiet re-reads owed (log) | committed with this row |
 | 2: the queue in two halves, in lockstep | dev | done; done-whens 1 to 5 and 7 to 10 pass; (6) re-read at the last commit at load 1.94 at the start, 2.25 at the end: step p50 10.73 ms against Phase 1's 13.77; the frame message carries boxes and masks through a mailbox the public reads consult; the knob setters stay direct writes (log) | `f0d06f1a` |
+| 2b: the cap prices a slice by a fixed part and a sample's cost | dev | done; (a) RENOIR fit 0.823 ms + 12.61 ns (the stop did not fire), RTX no fixed part resolvable; RENOIR drained A ring 1 before 1, 4, 3 (D+1 8, D+3 8, D+4 8), after 1, 2, 2 (D+1 9, D+2 15), every dig-2/3 cap over the floor; RTX drained and RENOIR waiting 1, 2, 1 before and after; the drain's end still overdraws; the estimate keeps the slope and re-reads the level (a deviation, Notes) (log) | committed with this row |
 | 3: the bake half on its own thread | dev | not started | |
 | 4: the bake thread keeps the slice fed | dev | not started | |
 | 5: the owner's window | human | not started | |
@@ -808,6 +809,19 @@ Readings, gate counts and attempts: [`logs/0099.md`](logs/0099.md).
 - (dev, Phase 2) The knob setters (`Frame::set_bake_*`) and the app's `bake_queue_mut` writes
   are not in the frame's message: they are set at load or by a key, not each step. Phase 3
   routes them.
+- (dev, Phase 2b) The estimate keeps the two figures the amendment names but holds the other
+  one fixed between spreads: the ns a sample is the slope of a fit over the last 64
+  read-backs, kept between spreads, and the fixed part is re-read every step as the level of
+  that slope through the recent read-backs. The amendment's letter (the fixed part kept, the
+  ns a sample re-read) was built first and read once on the RENOIR: dig 2's cap 217 495
+  against the floor 226 755, the ns a sample swinging 13 to 21 under the line. The readings
+  and replays are in the log.
+- (dev, Phase 2b) Files outside the phase's list: `crates/svet-render/src/bake/job_loop.rs`
+  (`SubmitDone::timed`, the dispatches a step read back) and `bake/queue/mod.rs` (the
+  estimate's field).
+- (dev, Phase 2b) Not met: the first steps after the view drains still overdraw the line (N-2
+  caps 69 979 to 93 314 against 62 132 to 84 554 before): the drain's submits are all large,
+  and they read the fixed part badly. Reported to the architect.
 - (architect, at the draft) The backlog entry "The bake step off the main thread" exists on
   `plan-0096` only; at that plan's merge it is marked taken by this plan.
 

@@ -22,6 +22,9 @@ pub struct QueueStats {
     /// (submit to readback where there are none).
     pub samples: u64,
     pub ms: f64,
+    /// The submits read back in the last step whose GPU time is in `ms` (0 where none was
+    /// timed).
+    pub read_submits: u64,
     /// The last sliced step's slice in milliseconds, from the budget ([`Budget::slice_ms`]),
     /// before a dig's growth.
     pub slice_ms: f64,
@@ -47,8 +50,12 @@ pub struct QueueStats {
     /// Of the depth, the chunks with no block yet, but those whose reach or lights were not ready
     /// at a recent check.
     pub unbaked: u64,
-    /// The ns a sample the slice is sized by.
+    /// The mean ns a sample of the submits read back.
     pub ns_per_sample: f64,
+    /// The price the cap is sized by: a dispatch's fixed ms (0 until the submits' sizes first
+    /// spread) and the ns a sample beyond it ([`SampleCost`]).
+    pub fixed_ms: f64,
+    pub cost_ns: f64,
     /// Chunks with dig bricks waiting or in a job, and chunks waiting to re-bake whole (ring 3).
     pub digs: u64,
     pub reach: u64,
