@@ -2174,6 +2174,218 @@ closed by this section: the snapshot's by Phase 3f, the wait's by the bar above.
 Amended in place (still `proposed`): the edit's frame's wait ends on the step's lists; the
 books' snapshot follows as its own entry, and the mailbox answers by the older of the two.
 
+## Amended 2026-11-26 (architect, after Phase 4c2)
+
+Read against `a338f8c7`: the step (`submit`, `open_step`, `bake/queue/step.rs`), the loop
+(`dispatch`, `plan_rounds`, `fill_entries`, `collect`, `close_ended`, `samples_left`,
+`JobCtx::plan`, `bake/job_loop.rs`), the bound and the projection (`in_flight_bound`,
+`projection`, `bake/queue/lister.rs`), the snapshot (`Books::of`, `QueueStats::after`,
+`bake/queue/books.rs`), the hand-over (`bake_step`, `absorb`, `bake/link.rs`; the loop of
+`BakeThread::start`, `bake/thread.rs`), the dig's opening (`open_now`, `bake/queue/digs.rs`),
+the per-second line's feed (`QueueRun::note_step`, `apps/flythrough/src/run/queue.rs`), the
+parser (`live/p4c-parse.py`) and the raw rows (`live/p4c2r`, `live/p4c2-check.out`,
+`live/p3d-check.out`). The evidence by file, line and row is in the log ("Architect's ruling
+after Phase 4c2"). Where this section differs from the text above it wins. Nothing was built
+or run. **No new mechanism. The count returns to 16; the feed stops here as a disclosed
+miss; Phases 3f and 4d are restated; one owner question is added to Phase 5.**
+
+### What the readings are, and what they are not
+
+- **Known: at 32 rows and more, every step sends a submit, at the cap.** While in view
+  waits, the slice line's own counters read 1 252 plans in 1 252 steps and 1 212 in 1 212
+  at 32 (48: 1 262 and 1 217, all; 64: 1 248 of 1 249, 1 253 of 1 253), 12 to 20 of them a
+  run out of rounds, none blocked. At 16: 437 of 470 and 1 509 of 1 563, with 39 to 42 %
+  of the steps out of rounds for a row. The round trip is one frame at p99. So at 32 the
+  submits a frame **are** the steps a frame, 0.65, and nothing else holds them.
+- **The table's "fed 0.55" and "submits 0.53 a frame" are the parser's, and low.** The
+  per-second line pushes one figure a **frame** that read anything back (`note_step`), and
+  that frame's stats sum the read-backs of every step it took (`after`). The parser
+  multiplies the count of such frames by their median. At 32, 1 015 and 982 frames stand
+  for 1 252 and 1 212 submits (0.81); the median, 1.05 to 1.09 of the grant, is of sums.
+  This is the product of medians Phase 4d's line was written to replace.
+- **Derived, not read: fed is about 0.65 to 0.70 at every count, and the rows bought 0.01
+  to 0.03.** Two ways, from the same logs: 0.65 submits a frame, each at least a cap; and
+  the samples read back a frame while in view waits, 426 000 at 16 (run 2), 432 000 to
+  457 000 at 32 to 64, against a cap of about 630 000 to 650 000 (1.5 ms at the printed
+  price). The slots ruling projected 0.70; by this it was near, and in view moved as far
+  as that gives (17.3 to 17.6 s against 18.0 and Phase 4c's 18.8 to 19.2). Phase 4d's line
+  reads it; until then 0.65 to 0.70 is a derivation.
+- **Known: a step's stages grew with the samples it moves, not with the jobs open.** The
+  jobs open at the draw read 16 to 17 in the median at every count. What changed at 32 is
+  that no step is short: every one plans a whole cap and reads a whole cap back, about
+  10 000 entries each way (a round is 64 samples, `QUEUE_ROUND`). `submit` and `collect`
+  are loops over entries (`fill_entries`, `collect`) and grew 0.6 to 0.7 ms each.
+  **Not shown:** how those two stages split between the entries and the walks of every
+  open job (`JobCtx::plan` over each open job's live faces, `close_ended`'s pass a
+  read-back, `samples_left` three times a step); nothing times them apart.
+- **Known: the steps a frame are the bound, and the stage table does not hold all of a
+  step.** At 32: frame 8.5 ms p50 over 0.652 steps a frame is 13.0 ms from one step's
+  start to the next. The stages' mean is 9.8 ms (regime B, the whole run); the snapshot is
+  1.2 to 1.4 (Phase 3d's reading; it follows the residency). **About 1.9 ms is not read**
+  (16: 1.2 and 2.6): the stage mean is not taken while in view waits, and nothing times
+  the thread between a snapshot's end and the next message.
+
+### Ruling 1: the bake thread ships 16 rows; `--bake-slots` stays a reading's knob
+
+`THREAD_SLOTS` returns to 16 (the knob's default with it); the reserve of 64, the knob and
+its range, the rows by mode and the join's return stay as built and cost nothing.
+
+- **What 32 bought:** 0.01 to 0.03 of feed by the derivation above, and in view 0.4 to
+  0.7 s sooner than the one comparable 16-row run (17.3 to 17.6 s against 18.0).
+- **What 32 cost, on the same rig Phase 3d read at 16:** ring 1 later by 87 ms on waiting A
+  dig 3 (217 against 130) and by 40 to 65 ms on waiting B digs 4 to 6; one dig's ring 1 at
+  D+14; the edit's wait p50 47.3 ms against 27.7 (A) and 15.9 against 12.4 (B), `step_rest`
+  28.1 against 9.6 on A. No dig is over its ms bar, and held is at D+0 in every one.
+  **Not shown: why.** The rig's trace is in the snapshot part (9.3 against 4.5) and is not
+  the product's; the rest is in the dig's own step, and `open_now` reads nothing by the
+  count but the free rows. **Not read: the dig's frame at the window's pace at 32**; every
+  figure the owner is told at Phase 5 (c) was read at 16.
+- **So:** the dig's frame and ring 1 are what his eye meets, they read worse at 32 where
+  read, the count they were accepted at is 16, and the gain is a second of eighteen.
+  Stable image first.
+
+**Rejected.** *Ship 32 as picked:* the pick's rule (2 % of steps out of rounds for a row)
+measured the rows, not the feed, and stop (b) says the rows are not the bound. *Read the
+fly-through's dig frames at 32 first, then choose:* one more run for at most 0.03 of feed.
+*48 or 64:* the same feed, the same step. *Free a row at the job's last issue* (the slots
+ruling's next thing to weigh "if 64 still binds"): 64 does not bind and the feed did not
+move, so it is not weighed. **At 16 the 39 to 42 % of steps out of rounds for a row stand
+as a disclosed reading**, with this section as its cause and cost.
+
+### Ruling 2: the feed is bounded by the step against the frame; the plan stops there
+
+**The bound, by the code.** A step plans at most one submit (`submit`: one `dispatch`
+while `in_flight() < bound`); a frame issues at most one (Phase 4c); a frame with no step
+loses its slice (the ruling of 2026-11-25). So fed a frame is at most the steps a frame
+times a cap, and at 32 it is exactly that. The step is longer than the frame on this
+adapter (13.0 ms against 8.5), and the frame is short because this plan made it so. On the
+RENOIR the step is 1.3 ms against 24 and fed reads 0.994.
+
+**No one fix the code supports reaches 0.85.** At one cap a step the bar needs 10.0 ms
+from one step to the next, 3.0 ms less than read. What a step holds is seven parts of
+0.9 to 2.8 ms (submit 2.8, collect 2.2, checks 2.0, the snapshot 1.3, candidates 1.25,
+fades 0.85, and the 1.9 not read), each its own change with an unread yield. The largest
+single part removed whole gives about 0.83; the snapshot removed whole, about 0.73. Three
+fixes on this feed missed their derivations (the level, the depth, the rows). A fourth is
+not written.
+
+**Ruled: the 0.85 bar is pinned as a disclosed miss on the RTX at Floor**, with the bound
+named: the bake step's time from start to start against the frame. It is read by Phase
+4d's line, at 16 rows; no slice, tier, level, depth or count is changed for it. **The 10 s
+line stays the disclosed miss the ruling of 2026-11-25 made it**, with three holders now:
+the feed, the order (below) and the 1.5 ms slice it was not derived at. The plan closes on
+what it has: the bake step off the render thread (share p50 0.8 ms), frames of 8.4 ms
+against lockstep's 21.8 while in view waits, in view at 17 to 19 s against lockstep's 31,
+the queue empty at 37 s against 51, the RENOIR's bars held.
+
+**Named for a follow-on, in `docs/backlog.md` ("The bake thread's feed on the RTX"), none
+built here:**
+1. **A reading first:** the thread's cycle by its parts while in view waits (Phase 4d
+   prints it), and `submit` and `collect` split into their entry loops and their walks of
+   the open jobs.
+2. **A step that plans a submit for each frame it spanned**, up to the depth, the frame
+   still issuing one. The only lever that removes the bound instead of trimming it:
+   derived at about 5 ms a cap and 8 ms a step, two caps a step feed about 0.9. **Its
+   cost is the edit's:** the step in progress at a dig's send grows with it, and that is
+   the wait's `rest` part. An image-side trade, so the owner's, on a reading.
+3. **The snapshot's sets kept between steps** (the ruling after Phase 3d named it).
+4. **The walks of the open jobs** made once a step, and the opening's walk (candidates
+   and checks, 3.25 ms) not run on every step.
+
+**Rejected.** *Lever 2 as Phase 4e now:* the most promising and the least read, and it
+lengthens the one part of the dig frame Phase 3f cannot shorten. *Lever 3 as Phase 4e:*
+safe, and misses the bar by construction. *Raise the slice so 0.65 of it draws 1.5 ms:*
+it spends the frame (question 3 (c), not taken). *Hold the plan open for the feed:* the
+frame rate was the window's complaint, and it is met.
+
+### Phase 3f, amended: the count first, then the fix, read at 16
+
+Phase 3f stands as written, with these changes.
+- **A first commit: `THREAD_SLOTS` 16** (`crates/svet-render/src/bake/budget.rs`, the
+  knob's default in `docs/flythrough.md`); Phase 4c2's tests name their counts and stand;
+  `the_threaded_queue_drains_to_the_lockstep_store` by name at 16, bit-identical. Then
+  the fix, its own commit.
+- **Its readings (5) and (6) are at 16 rows.** (6) gains two runs of RTX waiting A. A
+  stop beside the others: at 16 at this tip, ring 1's p50 on waiting A dig 3 or waiting B
+  digs 4 to 6 over Phase 3d's by more than 20 ms means the rows were not the cause, and is
+  reported with its rows.
+- (5)'s rows replace Phase 3d's in what the owner is told at Phase 5 (c).
+
+### Phase 4d, restated: two lines and one batch of runs
+
+- **Owner skill:** dev
+- **What:** After Phase 3f. No mechanism. (a) The teardown line `frames: queue fed:` as
+  Phase 4d (1) defines it: the samples planned into submits over the caps granted, summed
+  over the frames while in view waits, with submits a frame and the drawn share a submit.
+  (b) A teardown line `bake thread cycle:`, over the steps while in view waits, p50 and
+  mean: the wait for a message, the step, the snapshot, the hand-over, and their sum
+  against the frame's wall (the instants `Picked` and `StepTimes` already carry). (c) One
+  batch, quiet, thread on, 16 rows, depth 3, each run its own lock hold, none near 20
+  minutes: RTX Floor 1080p forest twice; the same twice with `--queue-weights 4,2`; RTX
+  hills at 17:00 twice; RENOIR Portable 720p forest once and hills once. (d) The log's
+  resume notes deleted, the Implementation log's Phase 4 row written.
+- **Files touched:** `crates/svet-render/src/bake/queue/stats.rs`,
+  `crates/svet-render/src/bake/link.rs` (the cycle's figures only),
+  `crates/svet-render/src/frame/bake_thread.rs`, `apps/flythrough/src/run/{queue,frame,mod}.rs`,
+  `docs/flythrough.md`, `docs/plans/logs/0099.md`, the plan's Implementation log row.
+- **Done when:** (1) `the_fed_line_is_the_samples_planned_over_the_caps_granted` as
+  written (0.54, 0.60, 0.90). (2) `the_cycle_parts_sum_to_the_time_between_two_steps`
+  (CPU, under 1 s, the threaded device-less rig): the four parts of a step sum to the time
+  from its pick-up's `free` to the next step's within 0.1 ms. (3) **Read, per run:** the
+  fed line and its factors; the cycle line; in view 0 from the first world frame and,
+  beside it, when the in-view chunks with no block had landed and how many coarse blocks
+  in view then waited; the queue empty; Phase 3's share and wall. (4) **Pinned:** RTX
+  forest and hills, fed against 0.85 and in view against 10 s, each met or a disclosed
+  miss with the bound of ruling 2 and the cycle's parts; RENOIR fed at least 0.95 and in
+  view within 30 s, both scenes; Phase 3's bars hold. (5) The weights pair is labelled a
+  reading of what the order holds and pins nothing. `--binaries gpu_queue gpu_bake`, the
+  store test by name. **Stops, reported, none chased:** the fed line on the RTX forest
+  under 0.60 or over 0.75 (the derivation above is wrong); a RENOIR bar or a Phase 3 bar
+  missed.
+- **Not this phase's:** levers (c) and (d) and the four named above. The other readings
+  of the old (4) (`second:150,0.25`, the `taskset` arm, the ten steps after the view
+  drains, the RENOIR drained B's withdrawn samples) move to Phase 6 (1): one run each, or
+  named as not read with the reason.
+
+### Phase 5, restated: what the owner is told and asked
+
+At 16 rows, release at Phase 4d's tip. **Told before he looks** (RTX 3080 Laptop, Floor
+1080p, forest, headless, quiet): frames 8.4 ms with the thread on against 21.8 off while
+in view waits; in view lit at 17 to 19 s against 31; the queue empty at about 37 s against
+51; a dig's frame as Phase 3f (5) reads it (before it: about 28 ms on against 25 off while
+the queue is deep, 6 to 8 ms either way once drained).
+- (a), (b) and (d) as written; (c) as the ruling after Phase 3d restated it (the light
+  follows the dig; does the dig's frame hitch).
+- **(e), new, the order (question 9).** On the forest fresh start the chunks in view with
+  no light have landed about 7 s after the first frame; 31 chunks in view that hold a
+  coarse block then wait 9 to 11 s more behind about 4 400 chunks out of view. Read: the
+  one run whose pre-roll left no coarse block in view (16 rows, run 1) had its view done
+  at 6.9 s, the seven others at 16.9 to 18.0. He is asked, in his words: **does he see
+  those chunks refine late, and does it matter?** Phase 4d's weights pair is beside it.
+
+**Question 9 (owner; image side, so no answer in his place; it holds no phase).** Whether
+an in-view refinement opens ahead of out-of-view chunks with no block.
+(a) **A follow-on plan, a reading first** (recommended): the order is ADR-0048's and
+ADR-0080 rule 3's, and what a turn of the camera then meets (chunks with no block) is the
+image side nobody has read. It could bring in view to about 7 s at today's feed.
+(b) **Leave the order:** nothing out of view is later; the 17 to 19 s stands.
+(c) **Amend the order inside this plan:** the fastest, and it reopens a plan that is
+closing on an unread image question.
+
+### The order from here
+
+One lane, one dev at a time, one fix or one reading a phase: **Phase 3f** (the count,
+then the fix, read at 16); **Phase 4d** (the two lines, the batch); **Phase 5** (the
+owner's window); **Phase 6** (the pins, the moved readings, the backlog, the gate); the
+fresh-session close review. **The tip gate** read past 20 minutes under the lock in one
+hold; Phase 6 runs it in parts, the `gpu_*` binaries in one hold and the rest outside the
+lock, each part under the line, and reports if the tiers cannot be split so.
+
+### ADR-0083
+
+Not amended: it names no row count and no feed bar. At the close its Outcome takes the
+feed's bound (ruling 2) and the bake thread's 16 rows as readings.
+
 ## Data shapes
 
 ```rust

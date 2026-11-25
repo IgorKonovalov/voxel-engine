@@ -230,6 +230,16 @@ Taken 2026-11-10 by [Plan 0060](plans/done/0060-the-live-queue-by-the-view-and-w
 
 ## Engine mechanisms
 
+### The bake thread's feed on the RTX: the step against the frame (2026-11-26)
+
+From [Plan 0099](plans/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md)'s section "Amended 2026-11-26 (architect, after Phase 4c2)" and its readings log ("Architect's ruling after Phase 4c2"). With the bake thread on, the RTX at Floor feeds about 0.65 to 0.70 of the drain slice a frame (a derivation until that plan's Phase 4d line reads it) against a bar of 0.85, because a step plans one submit and takes about 13 ms from start to start against a frame of 8.5 ms; the forest's view is lit at 17 to 19 s against a line of 10 s. Three fixes missed their derivations there (the opening's level, the depth in flight, the table rows), so the plan stops with the miss disclosed. A follow-on plan starts with a reading, not a fix.
+
+- **The reading first:** the thread's cycle by its parts while in view waits (Plan 0099 Phase 4d prints it; about 1.9 ms of the 13 is in no stage today), and the `submit` and `collect` stages split into their loops over a submit's entries and their walks of every open job.
+- **A step that plans a submit for each frame it spanned**, up to the depth in flight, the frame still issuing one: the one lever that removes the bound. Derived at about 5 ms a cap and 8 ms a step, two caps a step feed about 0.9. It lengthens the step in progress when a dig is sent, which is the `rest` part of the edit's wait: an image-side trade the owner decides on a reading.
+- **The snapshot's sets kept between steps** (1.2 to 1.4 ms a step on the RTX, by the residency; removed whole it gives about 0.73 steps a frame).
+- **The walks of the open jobs made once a step** (`JobCtx::plan` over every open job's live faces, `close_ended` once a read-back, `samples_left` three times), and the opening's walk (candidates and checks, 3.25 ms p50) not run on every step.
+- **The order** is a separate question (Plan 0099's question 9 and its Followups): 31 in-view refinements wait 9 to 11 s behind the out-of-view chunks with no block.
+
 ### The RENOIR's line slice is mostly a dispatch's fixed cost (2026-11-25)
 
 From the architect's code reading in [Plan 0099](plans/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md)'s readings log (`docs/plans/logs/0099.md`, "Architect's code reading"). Derived from the dig rig's caps, not read directly: a bake dispatch costs the RADV RENOIR about 0.8 ms before its first sample, so Portable's 1.0 ms line buys about 20 000 samples a frame once the view has drained (the RTX: about 0.5 to 0.9 million under the same line). Plan 0099 Phase 2b reads the fixed part directly and fixes the cap's pricing; it does not change the line. What it would take: one submit every few frames under the line, sized to the frames it stands for, or a line per profile. Pick up when Phase 2b's reading confirms the fixed part and the RENOIR's whole-residency drain is next looked at.
