@@ -77,13 +77,13 @@ fn the_key_mean_holds_256_frames_by_default() {
 
 /// Plan 0100 Phase 1: `key_at` is `hit` by default, which sets no `lighting2` bit, so the
 /// default's second word of switches is the frame's before the setting (`sky_down_skip` alone);
-/// `face`, `face-smooth` and `centre` each set their own bit, and nothing else of either word moves; every
-/// value round-trips through its name and `next` cycles the four.
+/// `face` and `face-smooth` each set their own bit, and nothing else of either word moves; every
+/// value round-trips through its name and `next` cycles the three; the withdrawn `centre` (Plan
+/// 0100 Phase 9) is no name.
 #[test]
 fn the_key_at_hit_sets_no_bit() {
     use super::{
-        KeyAt, LIGHTING2_KEY_AT_CENTRE, LIGHTING2_KEY_AT_FACE, LIGHTING2_KEY_AT_SMOOTH,
-        LIGHTING2_SKY_DOWN_SKIP, Lighting,
+        KeyAt, LIGHTING2_KEY_AT_FACE, LIGHTING2_KEY_AT_SMOOTH, LIGHTING2_SKY_DOWN_SKIP, Lighting,
     };
     let d = Lighting::default();
     assert_eq!(d.key_at, KeyAt::Hit);
@@ -96,18 +96,15 @@ fn the_key_at_hit_sets_no_bit() {
     let at = |key_at| Lighting { key_at, ..d };
     assert_eq!(at(KeyAt::Face).flags2(), LIGHTING2_KEY_AT_FACE);
     assert_eq!(at(KeyAt::FaceSmooth).flags2(), LIGHTING2_KEY_AT_SMOOTH);
-    assert_eq!(at(KeyAt::Centre).flags2(), LIGHTING2_KEY_AT_CENTRE);
     for k in KeyAt::ALL {
         assert_eq!(at(k).flags(), d.flags(), "{}", k.name());
         assert_eq!(KeyAt::from_name(k.name()), Some(k));
     }
-    assert_eq!(
-        KeyAt::ALL.map(KeyAt::name),
-        ["hit", "face", "face-smooth", "centre"]
-    );
+    assert_eq!(KeyAt::ALL.map(KeyAt::name), ["hit", "face", "face-smooth"]);
+    assert_eq!(KeyAt::from_name("centre"), None);
     assert_eq!(
         KeyAt::ALL.map(KeyAt::next),
-        [KeyAt::Face, KeyAt::FaceSmooth, KeyAt::Centre, KeyAt::Hit]
+        [KeyAt::Face, KeyAt::FaceSmooth, KeyAt::Hit]
     );
 }
 
@@ -136,8 +133,8 @@ fn the_key_horizon_march_sets_no_bit() {
 }
 
 /// Plan 0100 Phase 6: `key_cover` is `off` by default, which sets no bit; `ray` and `record` set
-/// their bit alone, `ray-record` both, and none touches the first word; the names round-trip and
-/// `next` cycles.
+/// their bit alone, and none touches the first word; the names round-trip and `next` cycles; the
+/// withdrawn `ray-record` (Plan 0100 Phase 9) is no name.
 #[test]
 fn the_key_cover_off_sets_no_bit() {
     use super::{KeyCover, LIGHTING2_KEY_COVER_RAY, LIGHTING2_KEY_COVER_RECORD, Lighting};
@@ -151,27 +148,15 @@ fn the_key_cover_off_sets_no_bit() {
     });
     assert_eq!(
         bits,
-        [
-            0,
-            LIGHTING2_KEY_COVER_RAY,
-            LIGHTING2_KEY_COVER_RECORD,
-            LIGHTING2_KEY_COVER_RAY | LIGHTING2_KEY_COVER_RECORD
-        ]
+        [0, LIGHTING2_KEY_COVER_RAY, LIGHTING2_KEY_COVER_RECORD]
     );
-    assert_eq!(
-        KeyCover::ALL.map(KeyCover::name),
-        ["off", "ray", "record", "ray-record"]
-    );
+    assert_eq!(KeyCover::ALL.map(KeyCover::name), ["off", "ray", "record"]);
+    assert_eq!(KeyCover::from_name("ray-record"), None);
     for k in KeyCover::ALL {
         assert_eq!(KeyCover::from_name(k.name()), Some(k));
     }
     assert_eq!(
         KeyCover::ALL.map(KeyCover::next),
-        [
-            KeyCover::Ray,
-            KeyCover::Record,
-            KeyCover::RayRecord,
-            KeyCover::Off
-        ]
+        [KeyCover::Ray, KeyCover::Record, KeyCover::Off]
     );
 }

@@ -9,11 +9,10 @@
 use super::*;
 
 /// The arms in the order rendered; `off` first, the base every leak is read against.
-const ARMS: [svet_render::KeyCover; 4] = [
+const ARMS: [svet_render::KeyCover; 3] = [
     svet_render::KeyCover::Off,
     svet_render::KeyCover::Ray,
     svet_render::KeyCover::Record,
-    svet_render::KeyCover::RayRecord,
 ];
 
 /// Frame pairs the still camera's change is read over, and the frames the turn holds away.
@@ -306,7 +305,7 @@ mod reading {
             ));
         }
         // Before the record lands: `record`'s shown share at each census (the fresh start ran
-        // under it; `ray-record` shows the same far and the ray near from the first frame).
+        // under it).
         let fin = shown(&keys[2], &keys[0], &refs);
         let mut at90 = None;
         out.push_str("record during the fresh start (frame, s, shown under cover):");

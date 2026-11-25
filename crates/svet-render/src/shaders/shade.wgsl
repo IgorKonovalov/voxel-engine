@@ -279,7 +279,7 @@ fn shade_px(gid: vec3<u32>) {
                 if (any(key_light_at(rec.p, n) > vec3<f32>(0.0))
                     && (params.lighting & LIGHTING_HOOK_KEY_OFF) == 0u) {
                     vis = vec4<f32>(0.0, 0.0, KEY_FROM_STORE, 0.0);
-                    let c = key_cover_near(rec, ns, view_here, full_px(gid.xy));
+                    let c = key_cover_near(rec, ns, view_here);
                     if (c >= 0.0) {
                         vis = vec4<f32>(0.0, c, KEY_COVER, 0.0);
                     }

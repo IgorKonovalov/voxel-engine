@@ -927,13 +927,13 @@ fn lighting_test_value(l: &mut Lighting, name: &str) -> bool {
         "key_step" => l.key_step = if l.key_step == 3.0 { 6.0 } else { 3.0 },
         "key_at" => l.key_at = l.key_at.next(),
         "key_horizon" => l.key_horizon = l.key_horizon.next(),
-        // Both sources: `ray` alone acts only where a voxel spans more than the far normal's
-        // band, which a small image may not hold.
+        // The record acts at every distance; `ray` alone acts only where a voxel spans more
+        // than the far normal's band, which a small image may not hold.
         "key_cover" => {
-            l.key_cover = if l.key_cover == crate::frame::KeyCover::RayRecord {
+            l.key_cover = if l.key_cover == crate::frame::KeyCover::Record {
                 crate::frame::KeyCover::Off
             } else {
-                crate::frame::KeyCover::RayRecord
+                crate::frame::KeyCover::Record
             }
         }
         "filter" => flip(&mut l.filter),

@@ -111,11 +111,11 @@ struct Arm {
     far_light_wide: bool,
     light_history_far: bool,
     /// Plan 0100 Phase 1's arms: where on a cube face the key light's column horizon is read
-    /// (`keyat=hit|face|face-smooth|centre`).
+    /// (`keyat=hit|face|face-smooth`).
     key_at: svet_render::KeyAt,
     /// Plan 0100 Phase 5b's arm: how the column horizon reads the map (`keyhorizon=march|walk`).
     key_horizon: svet_render::KeyHorizon,
-    /// Plan 0100 Phase 6's arm: the source under cover (`keycover=off|ray|record|ray-record`).
+    /// Plan 0100 Phase 6's arm: the source under cover (`keycover=off|ray|record`).
     key_cover: svet_render::KeyCover,
     /// Plan 0100 Phase 3's arms, read by `coarse::reading` alone: the coarse pass's samples a
     /// brick direction (`coarse=N`, the fly-through's by default), the full-first radius
@@ -146,8 +146,8 @@ impl Arm {
     /// `normals` (the normals view); Plan 0098 Phase 5's arms `wide` (`far_light_wide`) and
     /// `hfar` (`light_history_far`); Plan 0098 Phase 9's `hist` (`light_history` on, after
     /// `calm`) and `baked` (`key_far baked`); Plan 0100 Phase 1's `keyat=hit|face|face-smooth`
-    /// (`Lighting::key_at`; Phase 1b's `centre`); Plan 0100 Phase 3's `coarse=N`, `ff=N|none` and `skyface`; Phase 5b's
-    /// `keyhorizon=march|walk`; Phase 6's `keycover=off|ray|record|ray-record`; Phase 8b's `out=WxH`.
+    /// (`Lighting::key_at`); Plan 0100 Phase 3's `coarse=N`, `ff=N|none` and `skyface`; Phase 5b's
+    /// `keyhorizon=march|walk`; Phase 6's `keycover=off|ray|record`; Phase 8b's `out=WxH`.
     fn parse() -> Self {
         Self::from_spec(&std::env::var("SVET_WOBBLE").unwrap_or_else(|_| "default".into()))
     }

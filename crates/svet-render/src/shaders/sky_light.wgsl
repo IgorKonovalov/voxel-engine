@@ -100,26 +100,23 @@ fn key_visibility(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>, px: vec2<u32>) -> f
 // front, so a caster a voxel from the face shades it (SHADOW_OFFSET's half voxel steps past it).
 const KEY_COVER_OFFSET: f32 = 0.01;
 
-// The near cover source (`Lighting::key_cover` `ray` or `ray-record`, Plan 0100 Phase 6,
-// ADR-0084) at cube-face hit `rec`, shadow normal `ns`, seen by view `v` at lighting pixel `px`:
-// where the far normal's weight is under one half (under `ray-record` with LIGHTING_KEY_STEP
-// clear, under 1, so the band blends it with the record), the column horizon at `key_at`'s point
+// The near cover source (`Lighting::key_cover` `ray`, Plan 0100 Phase 6, ADR-0084) at cube-face
+// hit `rec`, shadow normal `ns`, seen by view `v`: where the far normal's
+// weight is under one half, the column horizon at `key_at`'s point
 // (`key_horizon_at`, the temporal pass's own read) and, where that reads under 1, the larger of
 // it and one ray from the face's centre (the level-0 voxel's behind the hit, half a voxel along
 // `ns`) toward the disc's centre, times its transmittance; under LIGHTING_PENUMBRA_APPROACH the
 // ray's closest-approach score. No random number, no history: a function of the face and the
 // frame's key direction. -1 where the arm is off or the face is past the near.
-fn key_cover_near(rec: HitRecord, ns: vec3<f32>, v: View, px: vec2<u32>) -> f32 {
+fn key_cover_near(rec: HitRecord, ns: vec3<f32>, v: View) -> f32 {
     if ((params.lighting2 & LIGHTING2_KEY_COVER_RAY) == 0u || rec.axis < 0 || rec.entity
         || rec.field) {
         return -1.0;
     }
-    let both = (params.lighting2 & LIGHTING2_KEY_COVER_RECORD) != 0u;
-    let at = select(0.5, 1.0, both && (params.lighting & LIGHTING_KEY_STEP) == 0u);
-    if (far_normal_weight(v, rec.t) >= at) {
+    if (far_normal_weight(v, rec.t) >= 0.5) {
         return -1.0;
     }
-    let h = key_horizon_at(rec.p, ns, rec.axis, px);
+    let h = key_horizon_at(rec.p, ns, rec.axis);
     if (h >= 1.0) {
         return h;
     }

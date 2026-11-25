@@ -39,15 +39,10 @@ fn no_light_history(s: &RenderSettings) -> bool {
     !s.lighting.light_history && cubes(s)
 }
 
-/// Under key far column with no cover ray (`KeyCover::Ray`, `RayRecord`): no key ray at a cube
-/// face, the penumbra's included.
+/// Under key far column with no cover ray (`KeyCover::Ray`): no key ray at a cube face, the
+/// penumbra's included; under the cover ray `approach` scores that ray.
 fn key_column_no_cover_ray(s: &RenderSettings) -> bool {
-    key_column(s) && !matches!(s.lighting.key_cover, KeyCover::Ray | KeyCover::RayRecord)
-}
-
-/// With no light history and no `ray-record` cover, whose band the key far mix switches.
-fn no_light_history_no_ray_record(s: &RenderSettings) -> bool {
-    no_light_history(s) && s.lighting.key_cover != KeyCover::RayRecord
+    key_column(s) && s.lighting.key_cover != KeyCover::Ray
 }
 
 fn key_ray(s: &mut RenderSettings) {
@@ -92,13 +87,7 @@ pub static INERT_WHEN: &[InertRow] = &[
     },
     history("lighting.sky_rays", Some("sky rays"), light_history),
     history("lighting.sky_history", None, key_ray_and_history),
-    InertRow {
-        row: "lighting.key_far_mix",
-        entry: Some("key far mix"),
-        reason: "light history off",
-        holds: no_light_history_no_ray_record,
-        live_under: Some(light_history),
-    },
+    history("lighting.key_far_mix", Some("key far mix"), light_history),
     // Under the auto exposure its preset's own weights meter; under a manual one the meter
     // feeds the exposure readout alone.
     InertRow {

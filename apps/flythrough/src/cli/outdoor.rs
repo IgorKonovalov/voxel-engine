@@ -97,13 +97,13 @@ pub struct OutdoorArgs {
     /// (`AutoExposure::highlight_percentile`, 0 for off); unset, the preset's
     /// (`svet_render::DEFAULT_EXPOSURE_HIGHLIGHT`).
     pub(crate) exposure_highlight: Option<f32>,
-    /// `--key-at hit|face|face-smooth|centre`: where on a cube face the key light's column horizon is
+    /// `--key-at hit|face|face-smooth`: where on a cube face the key light's column horizon is
     /// read (`Lighting::key_at`).
     pub(crate) key_at: svet_render::KeyAt,
     /// `--key-horizon march|walk`: how the key light's column horizon reads the map
     /// (`Lighting::key_horizon`).
     pub(crate) key_horizon: svet_render::KeyHorizon,
-    /// `--key-cover off|ray|record|ray-record`: the source that adds the key light back where
+    /// `--key-cover off|ray|record`: the source that adds the key light back where
     /// the horizon reads shadow (`Lighting::key_cover`).
     pub(crate) key_cover: svet_render::KeyCover,
 }
@@ -500,16 +500,13 @@ fn key_face_flags() -> Vec<Flag<Parsing>> {
     vec![
         Flag::value(
             &["--key-at"],
-            "hit|face|face-smooth|centre",
+            "hit|face|face-smooth",
             "where on a cube face the key light's column horizon is read: at the hit, at the \
-                 centre of the hit's voxel face (one value a face), blended from the four face \
-                 centres nearest the hit (a ramp a voxel wide), or where the pixel's ray with no \
-                 jitter meets the hit's face plane (one value a pixel) [hit]",
+                 centre of the hit's voxel face (one value a face), or blended from the four \
+                 face centres nearest the hit (a ramp a voxel wide) [hit]",
             |p: &mut Parsing, v| {
-                p.args.outdoor.key_at = v.named(
-                    svet_render::KeyAt::from_name,
-                    "hit, face, face-smooth or centre",
-                )?;
+                p.args.outdoor.key_at =
+                    v.named(svet_render::KeyAt::from_name, "hit, face or face-smooth")?;
                 Ok(())
             },
         ),
@@ -527,16 +524,14 @@ fn key_face_flags() -> Vec<Flag<Parsing>> {
         ),
         Flag::value(
             &["--key-cover"],
-            "off|ray|record|ray-record",
+            "off|ray|record",
             "the source that adds the key light back on a cube face where its horizon reads \
                  shadow, the larger of the two shown: one ray from the face's centre toward \
-                 the sun's disc centre near, the face's own baked key record at every \
-                 distance, or the ray near and the record far [off]",
+                 the sun's disc centre near, or the face's own baked key record at every \
+                 distance [off]",
             |p: &mut Parsing, v| {
-                p.args.outdoor.key_cover = v.named(
-                    svet_render::KeyCover::from_name,
-                    "off, ray, record or ray-record",
-                )?;
+                p.args.outdoor.key_cover =
+                    v.named(svet_render::KeyCover::from_name, "off, ray or record")?;
                 Ok(())
             },
         ),

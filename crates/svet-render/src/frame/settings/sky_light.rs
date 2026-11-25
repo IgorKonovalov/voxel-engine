@@ -130,18 +130,12 @@ pub enum KeyAt {
     /// At the four face centres of the face's plane nearest the hit, blended bilinearly by the
     /// hit's place among them: a ramp one voxel wide, fixed in the world.
     FaceSmooth,
-    /// Where the ray of the hit's internal pixel through its centre, with no jitter, meets the
-    /// plane of the face the jittered hit lies on: one point a pixel whatever the jitter's phase
-    /// while the hit stays on one plane (Plan 0100 Phase 1b). A hit with no face axis reads the
-    /// hit.
-    Centre,
 }
 
 named_enum!(KeyAt {
     Hit => "hit",
     Face => "face",
     FaceSmooth => "face-smooth",
-    Centre => "centre",
 });
 
 impl KeyAt {
@@ -196,17 +190,12 @@ pub enum KeyCover {
     /// At every distance, the store's baked key visibility where the face's own cell holds a
     /// fresh one, else the horizon alone; a landing rides the key slot's fade.
     Record,
-    /// `Ray` near and `Record` far, switched at the band by [`KeyFarMix`]: at one half under
-    /// `Step`, blended by the far normal's weight under `Blend` (the ray then cast to the band's
-    /// end).
-    RayRecord,
 }
 
 named_enum!(KeyCover {
     Off => "off",
     Ray => "ray",
     Record => "record",
-    RayRecord => "ray-record",
 });
 
 impl KeyCover {

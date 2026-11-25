@@ -38,25 +38,20 @@ fn column_estimate(p: vec3<f32>, n: vec3<f32>) -> f32 {
 
 // The far estimate where no record answers (Plan 0100 Phase 6, ADR-0084, `Lighting::key_cover`)
 // in x, its source (KEY_SRC_HORIZON or _RECORD) in y: the column horizon at `key_at`'s point
-// (`key_horizon_at` of hit `p`, face normal `nf`, `axis`, pixel `px`), and with the cover arms
+// (`key_horizon_at` of hit `p`, face normal `nf`, `axis`), and with the cover arms
 // the larger of it and a source. `near` is the light pass's near cover answer (`key_cover_near`,
-// already the larger of the horizon and its ray), -1 where it read none; it is the value but in
-// the band of `ray-record` under the blend (LIGHTING_KEY_STEP clear), where it is mixed toward the
-// far answer by the far normal's weight `w`. The far answer under LIGHTING2_KEY_COVER_RECORD is
-// the larger of the horizon and `own`, the face's own cell's fresh baked key visibility (`own.y`
-// 1), tagged as the record so its landing rides the slot's fade; else the horizon.
-fn key_cover_far(p: vec3<f32>, nf: vec3<f32>, axis: i32, px: vec2<u32>, near: f32, own: vec2<f32>, w: f32) -> vec2<f32> {
-    let record = (params.lighting2 & LIGHTING2_KEY_COVER_RECORD) != 0u;
-    if (near >= 0.0 && (!record || w <= 0.0 || (params.lighting & LIGHTING_KEY_STEP) != 0u)) {
+// already the larger of the horizon and its ray), -1 where it read none; where it read one it is
+// the value. Under LIGHTING2_KEY_COVER_RECORD the answer is the larger of the horizon and `own`,
+// the face's own cell's fresh baked key visibility (`own.y` 1), tagged as the record so its
+// landing rides the slot's fade; else the horizon.
+fn key_cover_far(p: vec3<f32>, nf: vec3<f32>, axis: i32, near: f32, own: vec2<f32>) -> vec2<f32> {
+    if (near >= 0.0) {
         return vec2<f32>(near, f32(KEY_SRC_HORIZON));
     }
-    let h = key_horizon_at(p, nf, axis, px);
+    let h = key_horizon_at(p, nf, axis);
     var far = vec2<f32>(h, f32(KEY_SRC_HORIZON));
-    if (record && own.y > 0.0) {
+    if ((params.lighting2 & LIGHTING2_KEY_COVER_RECORD) != 0u && own.y > 0.0) {
         far = vec2<f32>(max(h, own.x), f32(KEY_SRC_RECORD));
-    }
-    if (near >= 0.0) {
-        far.x = mix(near, far.x, w);
     }
     return far;
 }

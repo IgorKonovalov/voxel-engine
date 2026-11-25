@@ -1121,7 +1121,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             k_far = key_store.x;
             if (key_store.y == 0.0) {
                 let near = select(-1.0, vis.y, vis.z < 2.0 * KEY_FROM_STORE && vis.z > 1.25 * KEY_FROM_STORE);
-                let f = key_cover_far(rec.p, lift_n, rec.axis, full_px(gid.xy), near, key_own, w);
+                let f = key_cover_far(rec.p, lift_n, rec.axis, near, key_own);
                 k_far = f.x;
                 far_src = u32(f.y);
             }

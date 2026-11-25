@@ -574,8 +574,9 @@ fn dig_hold_is_on_rays_and_off_names_itself() {
 }
 
 /// Plan 0100 Phase 1: `--key-at` is `hit` unless named, which the lighting row and the banner
-/// leave out; `face` and `face-smooth` reach the lighting, the row and the banner; the debug
-/// page's `key at` cycles hit, face, face-smooth, centre and its row reads the value.
+/// leave out; `face` and `face-smooth` reach the lighting, the row and the banner; the withdrawn
+/// `centre` is refused (Plan 0100 Phase 9); the debug page's `key at` cycles hit, face,
+/// face-smooth and its row reads the value.
 #[test]
 fn key_at_is_hit_unless_named() {
     use crate::hud::HudRow;
@@ -585,11 +586,7 @@ fn key_at_is_hit_unless_named() {
     let m = r.start_modes(0.0);
     assert!(!m.row(HudRow::Lighting).contains("key at"));
     assert!(!m.banner(0.0).unwrap().contains("key at"));
-    for (name, k) in [
-        ("face", KeyAt::Face),
-        ("face-smooth", KeyAt::FaceSmooth),
-        ("centre", KeyAt::Centre),
-    ] {
+    for (name, k) in [("face", KeyAt::Face), ("face-smooth", KeyAt::FaceSmooth)] {
         let r = parse_args_from(argv(&["--source", "outdoor", "--key-at", name])).unwrap();
         assert_eq!(r.start_lighting().key_at, k);
         let m = r.start_modes(0.0);
@@ -600,18 +597,14 @@ fn key_at_is_hit_unless_named() {
         assert!(banner.contains(&word), "{banner}");
     }
     assert!(parse_args_from(argv(&["--key-at", "center"])).is_err());
+    assert!(parse_args_from(argv(&["--key-at", "centre"])).is_err());
     let tog = crate::toggles::TOGGLES
         .iter()
         .find(|t| t.name == "key at")
         .unwrap();
     let mut m = r.start_modes(0.0);
     m.lighting.key_at = KeyAt::Hit;
-    for want in [
-        "key at face",
-        "key at face-smooth",
-        "key at centre",
-        "key at hit",
-    ] {
+    for want in ["key at face", "key at face-smooth", "key at hit"] {
         (tog.flip)(&mut m, 0.0);
         assert_eq!((tog.get)(&m), want);
     }
@@ -649,8 +642,9 @@ fn key_horizon_is_march_unless_named() {
 }
 
 /// Plan 0100 Phase 6: `--key-cover` is `off` unless named, which the lighting row and the banner
-/// leave out; each arm reaches the lighting, the row and the banner; the debug page's `key
-/// cover` cycles the four and its row reads the value.
+/// leave out; each arm reaches the lighting, the row and the banner; the withdrawn `ray-record`
+/// is refused (Plan 0100 Phase 9); the debug page's `key cover` cycles the three and its row
+/// reads the value.
 #[test]
 fn key_cover_is_off_unless_named() {
     use crate::hud::HudRow;
@@ -660,7 +654,7 @@ fn key_cover_is_off_unless_named() {
     let m = r.start_modes(0.0);
     assert!(!m.row(HudRow::Lighting).contains("key cover"));
     assert!(!m.banner(0.0).unwrap().contains("key cover"));
-    for k in [KeyCover::Ray, KeyCover::Record, KeyCover::RayRecord] {
+    for k in [KeyCover::Ray, KeyCover::Record] {
         let r = parse_args_from(argv(&["--source", "outdoor", "--key-cover", k.name()])).unwrap();
         assert_eq!(r.start_lighting().key_cover, k);
         let m = r.start_modes(0.0);
@@ -671,19 +665,40 @@ fn key_cover_is_off_unless_named() {
         assert!(banner.contains(&want), "{banner}");
     }
     assert!(parse_args_from(argv(&["--key-cover", "both"])).is_err());
+    assert!(parse_args_from(argv(&["--key-cover", "ray-record"])).is_err());
     let tog = crate::toggles::TOGGLES
         .iter()
         .find(|t| t.name == "key cover")
         .unwrap();
     let mut m = r.start_modes(0.0);
-    for want in [
-        "key cover ray",
-        "key cover record",
-        "key cover ray-record",
-        "key cover off",
-    ] {
+    for want in ["key cover ray", "key cover record", "key cover off"] {
         (tog.flip)(&mut m, 0.0);
         assert_eq!((tog.get)(&m), want);
+    }
+}
+
+/// Plan 0100 Phase 9: every profile keeps the key light's settings of this plan at their
+/// defaults (`key at hit`, `key horizon march`, `key cover off`), and `--profile` gives them as
+/// the profile holds them.
+#[test]
+fn the_profiles_keep_the_key_defaults() {
+    use svet_render::{KeyAt, KeyCover, KeyHorizon, Profile, RenderSettings};
+    for p in Profile::ALL {
+        let want = RenderSettings::profile(p).lighting;
+        assert_eq!(
+            (want.key_at, want.key_horizon, want.key_cover),
+            (KeyAt::Hit, KeyHorizon::March, KeyCover::Off),
+            "{}",
+            p.name()
+        );
+        let r = parse_args_from(argv(&["--source", "outdoor", "--profile", p.name()])).unwrap();
+        let l = r.render_settings().lighting;
+        assert_eq!(
+            (l.key_at, l.key_horizon, l.key_cover),
+            (want.key_at, want.key_horizon, want.key_cover),
+            "{}",
+            p.name()
+        );
     }
 }
 
