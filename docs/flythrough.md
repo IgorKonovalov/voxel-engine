@@ -444,6 +444,12 @@ dispatch's fixed part `F` and the cost `P` of each sample beyond it, so a slice 
 dig's `--edit-ms`) or shrinks (the drain's end) draws what it buys. With no spread of submit
 sizes read yet the price is the mean (`F` 0).
 
+With the bake thread on, the `bake queue slice:` line ends with `projected at the draw p50 X
+caps` (the loop's samples left and the listing pool's estimates over the cap at each submit,
+`NaN` in lockstep), `fill world W masks M` (the samples the pool's returned listings pushed
+over their bounds, for chunks listed from the world and from prepared masks; 1 until 16 of a
+kind returned) and `pool guard G` (the openings stopped by the pool's limit of 64 candidates).
+
 ### Audio
 
 | Flag | Does |

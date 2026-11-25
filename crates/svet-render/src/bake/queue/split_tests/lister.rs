@@ -54,3 +54,210 @@ fn the_listing_pool_drains_to_the_blocks_the_step_lists() {
     pool.queue.stop_lister();
     assert!(!pool.queue.lists_off_the_loop());
 }
+
+/// The world of `n` chunks along x, each holding a lone rock voxel at the middle of each of its
+/// first `k` bricks: every such brick lists six directions of one face each, so a job's samples
+/// are `6 k` times its count, and the listing bound from the chunk's prepared masks is exact.
+fn lone_voxels(n: i32, k: usize) -> World {
+    let mut t = MaterialTable::new();
+    let rock = t.push(Material::named("rock"));
+    let w = World::generate(
+        ChunkExtent::new([0, 0, 0], [n, 1, 1]),
+        &UniformSource(AIR),
+        &t,
+    );
+    for x in 0..n {
+        for slot in 0..k {
+            let b = svet_world::brick_of_slot(slot);
+            let v = [64 * x + b[0] * 8 + 3, b[1] * 8 + 3, b[2] * 8 + 3].map(i64::from);
+            // A box holds the voxels whose centres lie in `min..max`.
+            w.apply(&box_op(v, v.map(|c| c + 1), Mode::Fill(rock)))
+                .expect("resident");
+        }
+    }
+    w
+}
+
+/// A sliced rig over [`lone_voxels`]`(n, k)` listing through the pool, its jobs at `count` a
+/// brick in rounds of one face's count, no coarse pass, a slice of `slice_ms` a frame; with
+/// `masks`, every chunk's prepared masks held as the stream workers would hand them.
+fn pooled_rig(n: i32, k: usize, count: u32, slice_ms: f64, masks: bool) -> Rig {
+    let mut rig = Rig::sized(None, n, n);
+    rig.world = lone_voxels(n, k);
+    rig.queue.settings.brick_samples = count;
+    rig.queue.settings.round = count;
+    rig.queue.coarse_samples = 0;
+    rig.queue.budget = Budget::PerFrame { ms: slice_ms };
+    if masks {
+        let classes = rig.queue.classes(rig.world.materials());
+        for c in rig.world.store().coords() {
+            let chunk = rig.world.store().get(c).expect("resident");
+            let chunk = chunk.read().expect("unpoisoned");
+            let m = PreparedMasks {
+                classes: classes.clone(),
+                masks: ChunkMasks::of(&chunk, &classes),
+                ns: 0,
+                seal_ns: 0,
+                verdicts: Vec::new(),
+                shells: Default::default(),
+            };
+            rig.queue.prepared_bytes += m.masks.bytes();
+            rig.queue.prepared.insert(c.0, Arc::new(m));
+        }
+    }
+    rig.queue
+        .start_lister(Arc::new(lone_voxels(n, k)))
+        .expect("the pool's threads start");
+    rig
+}
+
+/// One frame at a price of 2 ns a sample and no fixed part, then the wait for every listing the
+/// step sent: the candidates it sent and whether it opened.
+fn pooled_step(rig: &mut Rig) -> (u64, bool) {
+    rig.queue.cost = SampleCost::new(2.0);
+    let (seq, openings) = (rig.queue.listing_seq, rig.queue.stats.openings);
+    rig.step();
+    rig.queue.wait_listed();
+    (
+        rig.queue.listing_seq - seq,
+        rig.queue.stats.openings > openings,
+    )
+}
+
+/// A lone-voxel chunk of 53 bricks at 625 a brick: 198 750 samples, its bound exact.
+const LONE: (usize, u32) = (53, 625);
+
+/// Done when (1) of Plan 0099 Phase 4b. Candidates of 198 750 samples (the rig's nearest to
+/// 200 000 with exact bounds: a job's samples are six faces a lone voxel), a price of 2 ns and
+/// no fixed part. Under a 4.0 ms slice (cap 2 000 000, level 6 000 000) an empty loop's opening
+/// sends 31 (30 x 198 750 is under the level), more than `QUEUE_CHECKS`, in the walk's order
+/// from its start; each later opening, the loop's samples left one cap lower, sends 10 or 11.
+/// Under 1.0 ms (cap 500 000, level 1 500 000) the first sends 8 or 9 and the next ten send 2
+/// to 4 each and 25 or 26 together.
+#[test]
+fn the_opening_admits_until_the_projected_samples_cover_the_slice() {
+    let (k, count) = LONE;
+    let samples = 6 * k as u64 * u64::from(count);
+    assert_eq!(samples, 198_750);
+    // Enough chunks that the walk never runs out in these steps.
+    let mut rig = pooled_rig(120, k, count, 4.0, true);
+    let (sent, opened) = pooled_step(&mut rig);
+    assert!(opened, "an empty loop opens");
+    assert!((30..=31).contains(&sent), "the first opening sends {sent}");
+    assert!(sent > QUEUE_CHECKS as u64);
+    let order = rig.queue.listing_order();
+    let walk: Vec<[i32; 3]> = (0..sent as i32).map(|x| [x, 0, 0]).collect();
+    assert_eq!(
+        order, walk,
+        "the candidates sent are the walk's order from its start"
+    );
+    let mut later = Vec::new();
+    for _ in 0..6 {
+        let (sent, opened) = pooled_step(&mut rig);
+        if opened {
+            later.push(sent);
+        }
+    }
+    assert!(later.len() >= 3, "later openings {later:?}");
+    assert!(
+        later.iter().all(|s| (10..=11).contains(s)),
+        "each later opening sends 10 or 11: {later:?}"
+    );
+    assert_eq!(rig.queue.fill.of(true), 1.0, "exact bounds fill 1");
+    rig.queue.stop_lister();
+
+    let mut rig = pooled_rig(48, k, count, 1.0, true);
+    let (sent, opened) = pooled_step(&mut rig);
+    assert!(
+        opened && (8..=9).contains(&sent),
+        "the first opening at 1.0 ms sends {sent}"
+    );
+    let mut later = Vec::new();
+    for _ in 0..40 {
+        if later.len() == 10 {
+            break;
+        }
+        let (sent, opened) = pooled_step(&mut rig);
+        if opened {
+            later.push(sent);
+        }
+    }
+    assert_eq!(later.len(), 10, "ten later openings: {later:?}");
+    assert!(later.iter().all(|s| (2..=4).contains(s)), "{later:?}");
+    let total: u64 = later.iter().sum();
+    assert!(
+        (25..=26).contains(&total),
+        "the ten send {total}: {later:?}"
+    );
+    rig.queue.stop_lister();
+}
+
+/// Done when (2) of Plan 0099 Phase 4b. Chunks listed from the world (no masks) count
+/// `512 x 6` directions at 261 a brick: a bound of 801 792. Before 16 listings have returned,
+/// an empty loop under a cap of 2 000 000 sends 8 (7 x 801 792 is under the level of
+/// 6 000 000). Chunks of 128 lone voxels list a quarter of that bound; once 64 of them have
+/// returned through the pool, an empty loop holding that fill sends 30 (30 x 801 792 x 0.25
+/// covers the level, 29 do not).
+#[test]
+fn a_pooled_candidate_counts_its_bound_times_the_fill() {
+    const COUNT: u32 = 261;
+    let bound = CHUNK_BRICKS as u64 * 6 * u64::from(COUNT);
+    assert_eq!(bound, 801_792);
+    let mut rig = pooled_rig(100, 128, COUNT, 4.0, false);
+    let (sent, opened) = pooled_step(&mut rig);
+    assert!(opened);
+    assert_eq!(sent, 8, "before 16 have returned the bound counts whole");
+    for _ in 0..40 {
+        if rig.queue.listing_seq >= 64 + 8 {
+            break;
+        }
+        pooled_step(&mut rig);
+    }
+    // One step more pushes the last of them.
+    rig.queue.cost = SampleCost::new(2.0);
+    rig.step();
+    assert!(rig.queue.listing_seq >= 64, "64 listings returned");
+    assert_eq!(
+        rig.queue.fill.of(false),
+        0.25,
+        "each listed a quarter of its bound"
+    );
+    rig.queue.stop_lister();
+    let mut empty = pooled_rig(48, 128, COUNT, 4.0, false);
+    empty.queue.fill = std::mem::take(&mut rig.queue.fill);
+    let (sent, opened) = pooled_step(&mut empty);
+    assert!(opened);
+    assert_eq!(sent, 30, "at the measured fill");
+    empty.queue.stop_lister();
+}
+
+/// Done when (3) of Plan 0099 Phase 4b. An empty idle loop, the mirror unchanged, an opening
+/// that sends its four candidates to the pool and pushes nothing: it is not quiet, and their
+/// jobs are in the loop after the next step, not eight steps on.
+#[test]
+fn an_opening_that_only_sends_is_not_quiet() {
+    let mut rig = Rig::sized(None, 4, 4);
+    rig.queue
+        .start_lister(Arc::new(world_of(4)))
+        .expect("the pool's threads start");
+    let mut sent = 0;
+    for _ in 0..20 {
+        let before = rig.queue.listing_seq;
+        rig.step();
+        sent = rig.queue.listing_seq - before;
+        if sent > 0 {
+            break;
+        }
+    }
+    assert_eq!(sent, 4, "the opening sends the four");
+    assert_eq!(rig.queue.lp.chunks().count(), 0, "and pushes nothing");
+    assert!(rig.queue.quiet_until <= rig.queue.steps, "not quiet");
+    rig.queue.wait_listed();
+    rig.step();
+    assert_eq!(
+        rig.queue.lp.chunks().count(),
+        4,
+        "the jobs after the next step"
+    );
+    rig.queue.stop_lister();
+}

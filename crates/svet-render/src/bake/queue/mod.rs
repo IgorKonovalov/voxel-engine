@@ -383,6 +383,8 @@ pub struct BakeQueue {
     pub(in crate::bake) listing: std::collections::HashMap<[i32; 3], lister::Listing>,
     /// The last listing sent's number.
     pub(in crate::bake) listing_seq: u64,
+    /// The listings' measured fill of their bounds ([`lister::Fill`]).
+    pub(in crate::bake) fill: lister::Fill,
     /// A test's hook, run after each candidate the opening lists into the loop.
     #[cfg(test)]
     pub(in crate::bake) listed_hook: Option<Box<dyn FnMut() + Send + Sync>>,
@@ -631,6 +633,7 @@ impl BakeQueue {
             lister: None,
             listing: Default::default(),
             listing_seq: 0,
+            fill: Default::default(),
             #[cfg(test)]
             listed_hook: None,
             pool: Default::default(),

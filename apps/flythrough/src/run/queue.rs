@@ -115,6 +115,9 @@ pub(crate) struct QueueRun {
     pub(crate) line_prepared: u64,
     /// The submits' ms since the last line.
     pub(crate) slices: Vec<f64>,
+    /// The projection over the cap at each draw since the last line, with the bake thread's
+    /// listing pool (`QueueStats::projected`).
+    pub(crate) projected: Vec<f64>,
     pub(crate) emptied: bool,
     pub(crate) stats: Option<svet_render::QueueStats>,
     pub(crate) failed: bool,
@@ -580,6 +583,9 @@ impl Run {
                 if st.samples > 0 {
                     self.queue.slices.push(st.ms);
                 }
+                if st.projected > 0.0 {
+                    self.queue.projected.push(st.projected);
+                }
                 self.queue.line_stages.push(st.stages);
                 self.queue.tally.push(st.stages);
                 if let Some(w) = self.queue.dig.as_mut() {
@@ -859,7 +865,8 @@ impl Run {
                 self.queue.drain_of(&st).text(),
                 class_ns,
             );
-            print_slice_line(t, &st, p50);
+            let mut projected = std::mem::take(&mut self.queue.projected);
+            print_slice_line(t, &st, p50, percentile(&mut projected, 50.0));
             // The next second's line and the HUD's row read the next opening's census: asked
             // through the frame's message, so the bake thread's queue takes it too.
             gfx.frame
@@ -922,10 +929,13 @@ impl Run {
 
 /// The per-second `bake queue slice:` line: the slice granted and whether it was the drain's
 /// value (ADR-0080 rule 3), the chunks in view still waiting for their tier, the slices drawn,
-/// why the submits' plans stopped, and the reads of the in-view set with their mean and longest cost.
-fn print_slice_line(t: f64, st: &svet_render::QueueStats, p50: f64) {
+/// why the submits' plans stopped, and the reads of the in-view set with their mean and longest
+/// cost; with the bake thread's listing pool, the projection over the cap at the draws (p50),
+/// the listing bounds' two fills (from the world, from prepared masks) and the openings the
+/// pool's guard stopped.
+fn print_slice_line(t: f64, st: &svet_render::QueueStats, p50: f64, projected: f64) {
     println!(
-        "bake queue slice: at {:.1} s, granted {:.2} ms ({}, {} in view waiting for their tier), drawn p50 {:.2} ms, plans stopped at the cap {} at the batch {} out of rounds {}, steps with every submit slot unread {}, the in-view set read {} times, mean {:.3} ms, max {:.3} ms",
+        "bake queue slice: at {:.1} s, granted {:.2} ms ({}, {} in view waiting for their tier), drawn p50 {:.2} ms, plans stopped at the cap {} at the batch {} out of rounds {}, steps with every submit slot unread {}, the in-view set read {} times, mean {:.3} ms, max {:.3} ms, projected at the draw p50 {:.2} caps, fill world {:.3} masks {:.3}, pool guard {}",
         t / 1e3,
         st.slice_ms,
         if st.draining { "drain" } else { "line" },
@@ -938,6 +948,10 @@ fn print_slice_line(t: f64, st: &svet_render::QueueStats, p50: f64) {
         st.waiting_reads,
         st.waiting_ms / st.waiting_reads.max(1) as f64,
         st.waiting_max_ms,
+        projected,
+        st.fill[0],
+        st.fill[1],
+        st.pool_guard,
     );
 }
 

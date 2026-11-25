@@ -196,6 +196,13 @@ pub struct QueueStats {
     /// having broken the rule.
     pub zeroed: u64,
     pub zero_relisted: u64,
+    /// With the bake thread's listing pool (Plan 0099 Phase 4b): the projection (the loop's
+    /// samples left and the pool's estimates) over the cap at the last step's draw, 0 where
+    /// the step drew nothing; the two fills of the listing bounds, listed from the world and
+    /// from prepared masks; and the openings the pool's guard of 64 candidates stopped.
+    pub projected: f64,
+    pub fill: [f64; 2],
+    pub pool_guard: u64,
     /// The jobs the rule would have answered, while [`BakeQueue::rule_reading`] is on.
     pub rule_missed: RuleMissed,
     /// Blocks whose band changed as the camera's chunk changed (their candidacy read again),

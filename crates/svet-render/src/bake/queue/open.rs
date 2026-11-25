@@ -1,11 +1,16 @@
 //! The queue's job opening, its view census and the withdrawal of passed faces.
 
+use super::lister::POOLED_LEVEL;
 use super::*;
 use crate::gpu_world::COLUMN_NONE;
 
 impl BakeQueue {
     /// Opens jobs in [`BakeQueue::order`] while the open ones hold under two slices of `cap`
-    /// samples: each a ready candidate's faces at the brick level.
+    /// samples: each a ready candidate's faces at the brick level. A pooled opening (the bake
+    /// thread's, [`BakeQueue::lists_off_the_loop`]) admits while the projection (the loop's
+    /// samples left and the pool's estimates, [`BakeQueue::projection`]) is under
+    /// [`POOLED_LEVEL`] caps, each candidate at its bound times the measured fill, and counts
+    /// only the candidates found not ready against its checks.
     pub(in crate::bake) fn open(
         &mut self,
         run: &BakeRun<'_>,
@@ -16,9 +21,6 @@ impl BakeQueue {
         let gpu = run.mirror;
         let eye = view.eye.map(|v| (v / 64.0).floor() as i32);
         let order = self.order;
-        // With the bake thread on, what the listing pool finished since the last opening is
-        // pushed first ([`BakeQueue::take_listed`]).
-        self.take_listed(store, eye)?;
         self.score_and_census(run, store, view, eye);
         let steps = self.steps;
         let recent = |at: Option<&u64>| at.is_some_and(|&at| steps - at < QUEUE_RECHECK);
@@ -52,9 +54,14 @@ impl BakeQueue {
         // A sliced opening on the bake thread hands its batches to the listing pool and does not
         // wait for them: they count as open at their bounds until they are pushed.
         let off_loop = !parallel && self.lists_off_the_loop();
+        let level = if off_loop {
+            POOLED_LEVEL * cap
+        } else {
+            2 * cap
+        };
         let mut ready: Vec<(u8, [i32; 3])> = Vec::new();
         // The loop's samples left, read once (it walks every open face) and then counted on.
-        let mut left = self.lp.samples_left() + self.listing_samples();
+        let mut left = self.projection();
         let angle_needs = self.census_every_opening;
         let nearest_in_view = angle_needs
             .then(|| self.nearest_in_view(eye, view))
@@ -73,9 +80,9 @@ impl BakeQueue {
         let mut full_blank = false;
         let stops = |left: u64, checked: &[usize; 2], class: u8, ready0: usize| {
             if tiered {
-                left >= 2 * cap || checked[1] >= checks || (class == 1 && ready0 > 0)
+                left >= level || checked[1] >= checks || (class == 1 && ready0 > 0)
             } else {
-                left >= 2 * cap || checked[0] >= checks
+                left >= level || checked[0] >= checks
             }
         };
         while let Some(Cand {
@@ -90,7 +97,7 @@ impl BakeQueue {
             if self.pool.get(&c) != Some(&(class, coarse)) || self.in_listing(c) {
                 continue;
             }
-            if stops(est, &checked, class, ready0) {
+            if stops(est, &checked, class, ready0) || self.pool_guard_full(off_loop, batch.len()) {
                 if batch.is_empty() {
                     next -= 1;
                     break;
@@ -102,7 +109,7 @@ impl BakeQueue {
                 ready0 -= pushed.refused0;
                 full_blank |= pushed.full_blank;
                 est = left;
-                if stops(est, &checked, class, ready0) {
+                if stops(est, &checked, class, ready0) || self.pool_guard_full(off_loop, 0) {
                     next -= 1;
                     break;
                 }
@@ -130,29 +137,11 @@ impl BakeQueue {
                 continue;
             }
             self.blocked.remove(&c);
-            if partial {
-                self.partial_checked.insert(c);
-            } else {
-                self.partial_checked.remove(&c);
+            if off_loop {
+                // A pooled opening's checks count the candidates found not ready.
+                checked[if tiered { usize::from(class) } else { 0 }] -= 1;
             }
-            if provisional {
-                self.provisional_checked.insert(c);
-            } else {
-                self.provisional_checked.remove(&c);
-            }
-            if self.zero_rule
-                && class == 0
-                && !partial
-                && !provisional
-                && self.rule_holds(gpu, coord, lr)
-            {
-                self.ruled_checked.insert(c);
-            } else {
-                self.ruled_checked.remove(&c);
-                if self.rule_reading && self.zero_rule {
-                    self.note_rule_missed(gpu, view, eye, c, class, partial, provisional);
-                }
-            }
+            self.note_checked(gpu, view, eye, c, class, (partial, provisional));
             if class == 0 {
                 ready0 += 1;
             }
@@ -163,10 +152,15 @@ impl BakeQueue {
                 ready.push((class, c));
                 continue;
             }
-            est += self.listing_bound(c, class, eye);
+            est += if off_loop {
+                self.pooled_bound(c, class, eye)
+            } else {
+                self.listing_bound(c, class, eye)
+            };
             batch.push((class, c));
         }
         self.laps.lap(S_CHECKS);
+        self.stats.pool_guard += u64::from(self.pool_guard_full(off_loop, batch.len()));
         if !batch.is_empty() {
             let pushed = self.list_batch(run, store, eye, &classes, &mut batch, off_loop)?;
             full_blank |= pushed.full_blank;
@@ -188,6 +182,43 @@ impl BakeQueue {
         self.ruled_checked.clear();
         self.rule_missed_checked.clear();
         Ok(())
+    }
+
+    /// Notes what a ready candidate's checks found, for its listing: whether its place is
+    /// `partial` or `provisional`, and whether the rule answers it with a zero record.
+    fn note_checked(
+        &mut self,
+        gpu: &Shadow,
+        view: &QueueView,
+        eye: [i32; 3],
+        c: [i32; 3],
+        class: u8,
+        (partial, provisional): (bool, bool),
+    ) {
+        if partial {
+            self.partial_checked.insert(c);
+        } else {
+            self.partial_checked.remove(&c);
+        }
+        if provisional {
+            self.provisional_checked.insert(c);
+        } else {
+            self.provisional_checked.remove(&c);
+        }
+        let lr = gpu.light_radius();
+        if self.zero_rule
+            && class == 0
+            && !partial
+            && !provisional
+            && self.rule_holds(gpu, ChunkCoord(c), lr)
+        {
+            self.ruled_checked.insert(c);
+        } else {
+            self.ruled_checked.remove(&c);
+            if self.rule_reading && self.zero_rule {
+                self.note_rule_missed(gpu, view, eye, c, class, partial, provisional);
+            }
+        }
     }
 
     /// Lists `batch` in this step ([`BakeQueue::push_batch`]), or `off_loop` hands it to the

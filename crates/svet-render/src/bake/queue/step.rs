@@ -1,5 +1,6 @@
 //! The queue's step: one frame's run over every stage.
 
+use super::lister::POOLED_LEVEL;
 use super::rule::zero_block;
 use super::*;
 use crate::bake::job_loop::JobCtx;
@@ -308,13 +309,22 @@ impl BakeQueue {
         self.open_keys(run, store, view, cap)?;
         self.open_digs(run, store, cap)?;
         self.laps.lap(S_DIGS);
+        // With the bake thread on, what the listing pool finished is pushed every step, ahead
+        // of the gate that reads it ([`BakeQueue::take_listed`]).
+        self.take_listed(store, view.eye.map(|v| (v / 64.0).floor() as i32))?;
+        self.laps.lap(S_LIST);
+        let pooled = view.samples.is_none() && self.lists_off_the_loop();
+        let level = if pooled { POOLED_LEVEL * cap } else { 2 * cap };
         let mut opened_step = false;
-        if self.lp.samples_left() < 2 * cap && self.steps >= self.quiet_until {
+        if self.projection() < level && self.steps >= self.quiet_until {
             opened_step = true;
             self.stats.openings += 1;
-            let opened = self.lp.chunks().count();
+            let (opened, sent) = (self.lp.chunks().count(), self.listing_seq);
             self.open(run, store, view, cap)?;
-            if self.lp.chunks().count() == opened && self.lp.idle() {
+            // An opening that sent to the listing pool, or a pool that holds a candidate, is
+            // not quiet: its jobs join the loop at a later step's take.
+            let pool_busy = self.listing_seq != sent || !self.listing.is_empty();
+            if self.lp.chunks().count() == opened && self.lp.idle() && !pool_busy {
                 // Nothing was ready: the candidates are sorted again a few frames on.
                 self.quiet_until = self.steps + QUEUE_QUIET;
             }
@@ -375,6 +385,7 @@ impl BakeQueue {
         } else {
             IN_FLIGHT
         };
+        let pooled = view.samples.is_none() && self.lists_off_the_loop();
         half.poll();
         self.laps.lap(S_POLL);
         // The sink's own time, the blocks' placement, taken out of the collect's and the
@@ -491,6 +502,11 @@ impl BakeQueue {
             self.lp.close_ended(run, store, &settings, &mut sink);
         }
         let (cap, stretched) = ring1_cap(&self.lp, self.ring1_stretch, cap, &ring1);
+        // The projection the draw meets ([`BakeQueue::projection`]), for the pooled opening's
+        // reading.
+        let projected = pooled.then(|| {
+            self.lp.samples_left() + super::lister::estimate_of(&self.listing, &self.fill)
+        });
         let room = self.lp.in_flight() < IN_FLIGHT;
         let in_flight_full = !room && !self.lp.idle();
         let sent = room
@@ -510,6 +526,9 @@ impl BakeQueue {
         }
         self.read_stats(&d, cap, submitted, in_flight_full);
         self.stats.stretched = stretched;
+        self.stats.projected = projected
+            .filter(|_| sent)
+            .map_or(0.0, |p| p as f64 / cap.max(1) as f64);
     }
 
     /// The submit stage's stats, and the price of a submit fed with what was read back: the
