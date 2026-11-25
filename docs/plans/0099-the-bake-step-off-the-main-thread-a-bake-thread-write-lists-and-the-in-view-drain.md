@@ -753,6 +753,159 @@ frame, which Plan 0098's window already read over Portable's 33.3 ms line while 
 (d) **Leave the sentence without the condition.** True of everything read; an edit larger than
 this rig's breaks it unsaid.
 
+## Amended 2026-11-25 (architect, ruling on Phase 2c's stop)
+
+Read against `b13311a2`: `SampleCost` (`bake/budget.rs`), `JobLoop::collect` and `withdraw`
+(`bake/job_loop.rs`), the cap and `read_stats` (`bake/queue/step.rs`), `take_boxes`,
+`open_digs`, `open_pushed`, `open_now` (`bake/queue/digs.rs`), and Phase 2c's quiet timelines
+(`live/p2cd/`). The long form, with the lines, the per-dig table and the fits, is in
+[`logs/0099.md`](logs/0099.md), "Architect's ruling on Phase 2c's stop". Where this section
+differs from the text above it wins. Nothing was built or run; the fits are the architect's,
+over the rows the rig already prints.
+
+**1. Both, and mostly the grant's edge.** A sample's cost on the RENOIR depends on whose it is.
+Fitted over the row's `flight r1 / r2 / other` columns against the next row's read-back (quiet
+B, 709 read-backs): **0.805 ms a dispatch, 14.64 ns a ring-1 sample, 16.35 ns a ring-2 sample,
+7.95 ns any other job's**, R squared 0.940 (one price: 0.878); drained A reads 0.751, 12.09,
+16.34, 8.90. The one price follows what was drawn last, and under Phase 2c that is ring 2 (18.7
+to 20.0 ns all in), so the edit's cap read 199 000 to 214 000 at the 14 where ring 1's own cost
+buys about 218 000. **Of the 14: an exact ring-1 price lands 6 to 9 at D+1; 5 to 8 stay at D+2** (by the
+fit dig 4's ring of 225 725 costs 4.11 ms, every run; by each dig's own read-back five cost 4.01
+to 4.33 ms). The same submit's time varies by 0.4 ms (rms), and three of B's six rings cost 3.81
+to 4.11 ms: the grant sits on this rig's rings. That part is question 7, not a defect.
+Drained A's two 1, 3, 2 are the price's: its cap of 225 445 was priced at 0.571 ms + 15.21 ns
+(the row prints the price after its own read-back; the cap is taken before it), where A's
+ring 1 costs 12.09 ns and the grant buys 268 700.
+
+**2. (b) is a correctness fix, built in Phase 2d.** `SubmitDone::samples` counts the samples
+kept; `gpu_ms` is the whole dispatch's. A round of a withdrawn job, a round past a face's stop
+and a round of an unmapped read-back are all drawn and not kept. The estimate reads the samples
+drawn. **Ruling 1's third limit above ("one slow small submit") is withdrawn:** it was a
+read-back of 219 679 drawn samples counted as 36 916. A read-back with nothing kept is read too
+(today it is skipped, 40 in the eight quiet B runs).
+
+**3. (a) as worded cannot be built on `class_samples`; a price by the job's class is built
+instead.** `class_samples` splits by whether a job draws its own count (the coarse pass), not
+by ring: both of a dig's rings are one class. `class_ms` is the dispatch's ms shared by samples,
+so both classes read the same ns in any one dispatch; it holds no cost of a class. The cost by
+class is real (fit above, the same in four sets of runs); why is not read (ray length is the
+candidate, and the read-back carries it). Rule: **a dig's two classes each keep the ns a sample
+all in, read from the read-backs that are theirs, and a step's cap is priced by the class of
+the job planned first.** All in, not net of the fixed part: a dig's submits all go out under one
+grant, and the general price's fixed part swings 0 to 1.2 ms between a class's read-backs. One
+read-back a dig is enough for ring 1 (it is kept between digs; the first sets it); a class not
+read yet takes the other dig class's, then the general price. A step with no dig is priced as
+today.
+
+**Also read: dig work overdraws the grant when it follows other work.** At dig 1, D+1 and D+2
+go out at a cap priced on other jobs' 8 to 11 ns and draw ring 2 at 16: 323 000 to 396 000
+samples in **5.6 to 8.1 ms against 4.0**, in all 16 quiet runs; on the waiting RENOIR D1+1
+reads 14.7 to 15.7 ms against 9.0. Not new with Phase 2c (Phase 2b read the same when ring 2
+opened, at D+8 to D+21); Phase 2c moved it to the two frames after the dig. Rule 3 prices it
+from a session's second dig on; the first dig's D+1 has no dig read-back to price by and stays
+a named limit.
+
+**4. The withdrawn rounds: Plan 0098's rule, right, and left; a reading for Phase 4.**
+`take_boxes` withdraws every dig job in the new dig's ring chunks: their rounds read the world
+before the edit and would be staled at their end anyway. Phase 2c did not add the rule; it put
+ring 2 in flight when the next dig comes (Phase 2b: 16 such read-backs in eight runs, now 40,
+3.8 to 5.4 ms each, inside the grant, not on top of it). The larger fact in B: a dig every 8
+frames into the same chunks lets no ring chunk land until 12 frames after the last dig (D+52,
+44, 36, 28, 20, 12), with the grant raised throughout. "Ring 2 after ring 1 lands" saves
+nothing (ring 1 lands at D+1 or 2, the next dig is at D+8). A wait of some frames after the
+last box would, and would put a lone dig's ring 2 that much later, which Phase 2c just fixed
+and the owner has not judged. **Phase 4 (5) gains a reading:** RENOIR drained B, the dig
+samples an edit withdrew (`dig_withdrawn_samples`) over the dig samples drawn, and the GPU ms
+of D+1 to D+7. Over a half withdrawn, the architect rules there on the candidate (a ring-2 job
+waits N frames after the last box in its ring, the grant not raised for a job that only waits),
+with Phase 5's window as its judge.
+
+**5. Phase 2d below. It follows Phase 3a and precedes Phase 3b and Phase 4.** The estimate is
+the bake half's and reads the same in lockstep and on the thread; Phase 3a is being built over
+the same files, and nothing of 3a's done-whens reads a dig. Phase 3b's dig readings are taken
+"against lockstep at Phase 2c's order **and Phase 2d's price**"; Phase 4's lever (a) projects a
+job's time by its class's price.
+
+### Phase 2d: The estimate reads what was drawn, and a dig's cap is priced by its class
+- **Owner skill:** dev
+- **What:** In lockstep, in the bake half, at Phase 3a's tip. (a) `SubmitDone` gains the samples
+  drawn by the dispatches whose time is in `gpu_ms` (kept or not), and those of ring-1 dig jobs
+  and of other dig jobs among them; the queue's estimate reads the drawn count and no longer
+  skips a read-back with nothing kept. `samples` keeps its meaning. (b) Beside `SampleCost`,
+  two figures: the ns a sample all in of ring-1 work and of other dig work. A read-back at
+  least 0.9 ring 1's by drawn samples moves ring 1's (`0.8 old + 0.2 new`; the first sets it);
+  one at least 0.9 dig work and not ring 1's moves the dig's. (c) The step's cap: a ring-1 dig
+  waiting or open prices `slice + edit_ms` by ring 1's figure; else a dig job open, by the
+  dig's; else `SampleCost::cap` as today. A figure not read takes the other's, then the general
+  price. The clamp, `edit_ms`, the two-slice rule, the order and every record are unchanged.
+  (d) The rig's row prints the two figures and the read-back's mean ray length.
+- **Files touched:** `crates/svet-render/src/bake/budget.rs` (the figures, no GPU),
+  `bake/job_loop.rs` (`SubmitDone`, the job's class), `bake/queue/{step,digs,stats}.rs`,
+  `bake/queue/{tests,split_tests}.rs`, `apps/flythrough/tests/gpu_outdoor/dig_line.rs`,
+  `docs/flythrough.md` if the queue's line changes, `docs/plans/logs/0099.md`.
+- **Done when:** (1) `a_withdrawn_round_counts_in_what_the_estimate_reads` (CPU, under 1 s, the
+  device-less rig): a submit of one job's 200 000 samples and another's 20 000, the first
+  withdrawn before the read-back, read back in 4.0 ms: `samples` is 20 000, the drawn count
+  220 000, and an estimate started at 20 ns reads a mean of 19.64 (kept samples give 56.0);
+  with both withdrawn `samples` is 0 and the mean is again 19.64. (2)
+  `a_dig_cap_is_priced_by_its_class` (CPU, under 1 s): costs of 0.8 ms a dispatch and 14.6,
+  16.4 and 8.0 ns a ring-1, ring-2 and other sample; 100 other read-backs at their caps under
+  1.0 ms, then ten digs under 4.0 ms, each one ring-1 read-back and seven ring-2, each of the
+  size its cap gave: ring 1's cap is within 10 % of 219 178, the dig's within 10 % of 195 122;
+  before the first ring-2 read-back the dig's cap is ring 1's; a 1.0 ms step with no dig is
+  sized by `SampleCost::cap(1.0)`. (3) `a_step_prices_its_cap_by_the_first_jobs_class` (CPU):
+  figures of 16.0 and 20.0 ns and a general price of 10.0 ns, a 1.0 ms slice, `edit_ms` 3: the
+  caps are 250 000 with a ring-1 dig waiting, 200 000 with only a ring-2 job open, 100 000 with
+  no dig. (4) Phase 2b's and 2c's CPU tests pass unchanged; the 5 x 5 x 5 store test reads
+  bit-identical; `--binaries gpu_queue gpu_queue_reach gpu_bake`. (5) **Quiet** (as Phase 2c
+  (6)): RENOIR drained B and drained A, eight runs each, with each dig's ring-1 jobs, cap,
+  figures, D+0 submit's read-back and landing, and every dig-work read-back's ms from D+1 on.
+  RTX drained A and RENOIR waiting A, four runs each: ring 1 at D+1, 2, 1. **The stop,
+  re-based.** A D+2 in B is **the grant's edge** where its D+0 submit's ms plus the ring-1
+  samples cut at ring 1's figure is over `slice + edit_ms`, and **a fault** where it is not.
+  Reported to the architect with each row: more than 3 faults of 48; more than 10 at the
+  grant's edge (today 5 to 8); a ring 1 at D+3 or later in B; more than one 1, 3, 2 in A's
+  eight; a D+0 submit over 5.0 ms in more than 4 of 48; a dig-work read-back over 6.0 ms sent
+  later than a session's first D+1 (today 5.6 to 8.1 ms at D1+1 and D1+2). It holds Phase 3b's
+  dig readings and nothing else.
+
+### Owner question 7, restated on the quiet readings (open)
+
+This text replaces question 7 above. Phase 6's line waits on it, and option (e)'s few lines.
+How "an edit's light" is stated where a dig's ring 1 does not fit one frame's grant. **Read**
+(Phase 2c, quiet, lockstep): on the drained RENOIR at Portable the grant is 4.0 ms (the line's
+1.0 and `edit_ms` 3) and this rig's rings sit on it. By the fit a ring-1 sample costs 12.1 to
+14.6 ns over a dispatch's 0.75 to 0.81 ms, so 4.0 ms buys 218 000 to 269 000 samples; four of
+the nine digs' rings cost 3.81 to 4.11 ms, and the same submit's time varies by 0.4 ms.
+Sequence B landed **D+1 34, D+2 14 of 48** (Phase 2b, loaded: 6; Phase 1: 3): dig 4 in all
+eight runs, dig 6 in five, dig 3 in one. Phase 2d's price is expected to move 6 to 9 of them;
+5 to 8 stay under any honest price. Sequence A landed 1, 2, 2 in six runs of eight and
+**1, 3, 2 in two**: D+1 8, D+2 14, D+3 2 of 24. **"Nothing read is later than D+2" no longer
+holds:** a dig re-dug the next frame lands with the second dig, and where that one's ring is
+cut (by 337 and 1 514 samples here) it lands at D+3. The RTX and the waiting RENOIR: 1, 2, 1 in
+all 8 runs. **Plainly: Portable's 3 ms edit grant does not carry this rig's rings in one frame
+on the drained RENOIR with any margin. Whether it should is the owner's budget.**
+(a) **The grant stays, the line says what it buys.** Ring 1 lands 1 frame after the dig while
+its samples fit the grant (about 220 000 on the RENOIR at Portable); 2 where they do not, or
+where the next frame digs the same chunk again; 3 where both. Pinned as Phase 2d reads it. No
+code. The no-cost answer, and no longer the one the readings favour: a third of this rig's
+digs land on the condition.
+(b) **Ring 1 goes whole in the edit's submit whatever the cap.** Every landing read becomes 1
+(2 re-dug). The largest ring read at a dig (275 022) costs 4.1 to 4.8 ms by the fits, with no
+bound but the edit's size.
+(c) **Portable's `edit_ms` goes from 3 to 5 ms.** 6.0 ms buys about 355 000 ring-1 samples,
+over every ring read with a fifth to spare. Up to 2 ms more on every frame while a dig's rings
+bake (D+0 to about D+14 here, not the dig's frame alone), on the adapter Plan 0098's window
+read over Portable's 33.3 ms line while a dig is held.
+(d) **Leave the sentence as it is.** No longer true of what was read (D+3 twice).
+(e) **New, and what the readings favour: the grant stretches by an eighth for ring 1 alone.**
+Ring-1 jobs within 1.125 of the cap go whole in the edit's submit: at most 0.5 ms over the
+grant at Portable, on the dig's frame only. The readings are rings at the grant, not far over
+it: the largest cut read is 26 468 samples of 225 725 (12 %), and under Phase 2d's price about
+4 %. Expected to carry every ring read in B and A's re-dug job (to be read); a ring further
+over still lands at 2, and the line says so as in (a). A few lines at the cap, built at the
+answer.
+
 ## Data shapes
 
 ```rust
