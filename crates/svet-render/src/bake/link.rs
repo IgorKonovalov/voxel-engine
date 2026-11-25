@@ -199,7 +199,16 @@ pub(crate) struct ThreadLink {
     last: QueueStats,
     /// Counts the messages sent with a box, for the bake thread's opening.
     boxes: BoxSender,
+    /// The last frame's render-side laps in ms ([`RENDER_LAPS`]), the steps it took, and the
+    /// blocks fading in the books it held before it took them (a reading).
+    pub(crate) laps: [f64; RENDER_LAPS.len()],
+    pub(crate) took: usize,
+    pub(crate) fading_before: u64,
 }
+
+/// The render side's laps in [`render_frame`]: the take (the previous books dropped with it),
+/// the submits issued, the lists applied under the cap, the read-backs collected, the send.
+pub(crate) const RENDER_LAPS: [&str; 5] = ["take", "issue", "apply", "collect", "send"];
 
 impl ThreadLink {
     /// Starts the bake thread on `side`, its lists made under `cap`, its outbox holding
@@ -230,6 +239,9 @@ impl ThreadLink {
             settings,
             last,
             boxes,
+            laps: [0.0; RENDER_LAPS.len()],
+            took: 0,
+            fading_before: 0,
         })
     }
 
@@ -359,7 +371,17 @@ pub(crate) fn render_frame(
     if let Some(e) = link.failed() {
         return Err(e);
     }
+    let mut lap = stopwatch();
+    let mut laps = [0.0; RENDER_LAPS.len()];
+    let mut mark = |k: usize| {
+        let now = stopwatch();
+        laps[k] += now.duration_since(lap).as_secs_f64() * 1e3;
+        lap = now;
+    };
+    link.fading_before = link.last.fading;
     let taken = link.take();
+    link.took = taken.steps.len();
+    mark(0);
     let frame = msg.frame;
     let mut all_empty = None;
     for (step, (ops, made)) in taken.steps.into_iter().enumerate() {
@@ -370,6 +392,7 @@ pub(crate) fn render_frame(
         let ok = lists.take(made);
         debug_assert!(ok.is_ok(), "a write list over the frame's cap");
     }
+    mark(1);
     // A first block's landing word is this frame's plus one, as lockstep writes it.
     let at = msg
         .settings
@@ -377,6 +400,7 @@ pub(crate) fn render_frame(
         .filter(|w| *w != 0)
         .map_or(0, |w| u64::from(w) - 1);
     let _ = lists.apply(at, out);
+    mark(2);
     // The mailbox answers from the books once the lists made from its messages are applied; a
     // step that made none answers its message once nothing waits.
     let mut answered = lists.newest;
@@ -387,7 +411,10 @@ pub(crate) fn render_frame(
     }
     inbox.answered(answered);
     let read_backs = mapped(half);
+    mark(3);
     msg.landed.extend(lists.report(frame));
     link.send(msg, read_backs);
+    mark(4);
+    link.laps = laps;
     taken.stats.unwrap_or_else(|| Ok(link.idle_stats()))
 }

@@ -10,6 +10,9 @@ use crate::bake::{
 };
 use std::sync::Arc;
 
+/// The frames [`Frame::bake_render_laps`] keeps, about two minutes at 500 fps.
+const READING_FRAMES: usize = 1 << 16;
+
 impl Frame {
     /// Whether the live queue's sliced steps run on the bake thread (off: lockstep, each step
     /// to completion inside [`Frame::bake_queue_step`]). The pre-roll and the one-shot bakes run
@@ -30,9 +33,24 @@ impl Frame {
 
     /// The frames encoded while the bake thread ran, those whose eye lay past the reach of the
     /// books' snapshot of the words under the step's eye, and those where the sky over the
-    /// floor read nothing at the encode's eye but an answer at the step's (a reading).
-    pub fn bake_snapshot_reach(&self) -> [u64; 3] {
+    /// floor read nothing at the encode's eye but an answer at the step's, and the longest run
+    /// of consecutive frames past the reach (a reading).
+    pub fn bake_snapshot_reach(&self) -> [u64; 4] {
         self.baked.snapshot_reach.read()
+    }
+
+    /// The render thread's laps in each frame the bake thread ran, in ms (a reading): the
+    /// message's build; the take, the submits issued, the lists applied, the read-backs
+    /// collected and the send; then the frame call's whole.
+    pub fn bake_render_laps(&self) -> &[[f32; 7]] {
+        &self.baked.render_laps
+    }
+
+    /// Of the live queue's frames whose newest books held a block fading, those that applied
+    /// a bake step's output (each step moves every fade): lockstep's step runs in its frame,
+    /// the bake thread's arrive when they arrive (a reading).
+    pub fn bake_fade_frames(&self) -> [u64; 2] {
+        self.baked.fade_frames
     }
 
     /// Whether the bake thread runs now (on, started, not stopped by a panic).
@@ -202,6 +220,25 @@ impl Frame {
         stats.stages.total_ms = wall;
         stats.stages.render_ms = [0.0; crate::bake::STEP_STAGES.len()];
         stats.stages.render_ms[crate::bake::S_APPLY] = wall;
+        if let Some(link) = &self.baked.thread {
+            let l = link.laps;
+            let in_call: f64 = l.iter().sum();
+            if self.baked.render_laps.len() < READING_FRAMES {
+                self.baked.render_laps.push([
+                    (wall - in_call) as f32,
+                    l[0] as f32,
+                    l[1] as f32,
+                    l[2] as f32,
+                    l[3] as f32,
+                    l[4] as f32,
+                    wall as f32,
+                ]);
+            }
+            if link.fading_before > 0 {
+                self.baked.fade_frames[0] += 1;
+                self.baked.fade_frames[1] += u64::from(link.took > 0);
+            }
+        }
         Ok(stats)
     }
 }

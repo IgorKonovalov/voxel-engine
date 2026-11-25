@@ -108,6 +108,9 @@ pub(super) struct BakeLink {
     pub(super) failed: Option<crate::bake::BakeError>,
     /// The encode's reads of the books' snapshot while the thread runs.
     pub(super) snapshot_reach: crate::bake::SnapshotReach,
+    /// The readings [`Frame::bake_render_laps`] and [`Frame::bake_fade_frames`] return.
+    pub(super) render_laps: Vec<[f32; 7]>,
+    pub(super) fade_frames: [u64; 2],
 }
 
 /// The bake pool's buffer of `bytes`.
@@ -164,6 +167,8 @@ impl BakeLink {
             leftover: None,
             failed: None,
             snapshot_reach: Default::default(),
+            render_laps: Vec::new(),
+            fade_frames: [0; 2],
         }
     }
 }
@@ -522,8 +527,9 @@ impl Frame {
         };
         // A sliced step with the setting on runs on the bake thread, once a stopped one's
         // leftovers have gone through a lockstep step.
+        let sliced = view.samples.is_none();
         if self.baked.unissued.is_empty() && self.baked.leftover.is_none() {
-            self.start_bake_thread(world, view.samples.is_none());
+            self.start_bake_thread(world, sliced);
         }
         if self.baked.thread.is_some() {
             return Some(self.thread_frame(device, queue, &*gpu, params, &world_bind, msg));
@@ -558,6 +564,11 @@ impl Frame {
             timer.as_ref(),
         );
         let q = self.baked.queue.as_mut()?;
+        // The fade reading counts the sliced steps only, as the thread runs no other.
+        if q.stats().fading > 0 && sliced {
+            self.baked.fade_frames[0] += 1;
+            self.baked.fade_frames[1] += 1;
+        }
         let out = q.step(
             &mut self.baked.shadow,
             world,

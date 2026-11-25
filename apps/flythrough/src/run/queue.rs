@@ -860,14 +860,14 @@ impl Run {
                 class_ns,
             );
             print_slice_line(t, &st, p50);
+            // The next second's line and the HUD's row read the next opening's census: asked
+            // through the frame's message, so the bake thread's queue takes it too.
+            gfx.frame
+                .set_bake_queue(svet_render::BakeQueue::request_census);
             let needs = gfx
                 .frame
                 .bake_queue_mut()
-                .map(|q| {
-                    // The next second's line and the HUD's row read the next opening's census.
-                    q.request_census();
-                    q.take_angle_needs()
-                })
+                .map(svet_render::BakeQueue::take_angle_needs)
                 .unwrap_or_default();
             let (first, full) = gfx
                 .frame
@@ -939,4 +939,32 @@ fn print_slice_line(t: f64, st: &svet_render::QueueStats, p50: f64) {
         st.waiting_ms / st.waiting_reads.max(1) as f64,
         st.waiting_max_ms,
     );
+}
+
+/// The render thread's laps in the bake thread's frames (a reading, the teardown's
+/// `bake thread render laps:` line): each lap's p50 / p99 / max, then the frames whose whole
+/// call took over 4.0 ms with the lap that was largest in each and each lap's mean over them.
+pub(crate) fn render_laps_line(laps: &[[f32; 7]]) -> Option<String> {
+    const NAMES: [&str; 7] = [
+        "build", "take", "issue", "apply", "collect", "send", "total",
+    ];
+    if laps.is_empty() {
+        return None;
+    }
+    let mut out = format!("bake thread render laps: {} frames;", laps.len());
+    for (k, name) in NAMES.iter().enumerate() {
+        let mut v: Vec<f64> = laps.iter().map(|l| f64::from(l[k])).collect();
+        let p50 = crate::report::percentile(&mut v, 50.0);
+        let p99 = crate::report::percentile(&mut v, 99.0);
+        let max = v.last().copied().unwrap_or(0.0);
+        out += &format!(" {name} {p50:.3}/{p99:.3}/{max:.3}");
+    }
+    let over: Vec<&[f32; 7]> = laps.iter().filter(|l| l[6] > 4.0).collect();
+    out += &format!("; over 4.0 ms {} frames, largest lap", over.len());
+    for (k, name) in NAMES[..6].iter().enumerate() {
+        let n = over.iter().filter(|l| (0..6).all(|j| l[k] >= l[j])).count();
+        let mean = over.iter().map(|l| f64::from(l[k])).sum::<f64>() / over.len().max(1) as f64;
+        out += &format!(" {name} {n} (mean {mean:.3})");
+    }
+    Some(out)
 }

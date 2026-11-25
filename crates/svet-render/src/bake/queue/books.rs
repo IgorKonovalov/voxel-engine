@@ -192,9 +192,11 @@ impl QueueStats {
 /// The encode's reads of the books' snapshot while the bake thread runs (a reading): frames,
 /// frames whose eye lay past [`Books::reaches`], and frames whose sky over the floor read
 /// nothing at the encode's eye but an answer at the step's.
+/// The fourth count is the longest run of consecutive frames past the reach, the fifth the
+/// current run.
 #[derive(Default)]
 pub(crate) struct SnapshotReach {
-    counts: [std::sync::atomic::AtomicU64; 3],
+    counts: [std::sync::atomic::AtomicU64; 5],
 }
 
 impl SnapshotReach {
@@ -202,17 +204,23 @@ impl SnapshotReach {
     pub(crate) fn note(&self, books: &Books, eye: [f32; 3]) {
         use std::sync::atomic::Ordering::Relaxed;
         self.counts[0].fetch_add(1, Relaxed);
-        if !books.reaches(eye) {
+        if books.reaches(eye) {
+            self.counts[4].store(0, Relaxed);
+        } else {
             self.counts[1].fetch_add(1, Relaxed);
+            let run = self.counts[4].fetch_add(1, Relaxed) + 1;
+            self.counts[3].fetch_max(run, Relaxed);
         }
         if books.sky_over_floor(eye).is_none() && books.sky_over_floor(books.eye).is_some() {
             self.counts[2].fetch_add(1, Relaxed);
         }
     }
 
-    pub(crate) fn read(&self) -> [u64; 3] {
-        self.counts
+    pub(crate) fn read(&self) -> [u64; 4] {
+        let c = self
+            .counts
             .each_ref()
-            .map(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+            .map(|c| c.load(std::sync::atomic::Ordering::Relaxed));
+        [c[0], c[1], c[2], c[3]]
     }
 }

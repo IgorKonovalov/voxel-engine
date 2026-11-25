@@ -474,12 +474,24 @@ impl Drop for Run {
         if let Some(line) = self.queue.split_line() {
             println!("frames: {line}");
         }
-        if let Some([n, past, lost]) = self.gfx.as_ref().map(|g| g.frame.bake_snapshot_reach())
+        if let Some([n, past, lost, run]) = self.gfx.as_ref().map(|g| g.frame.bake_snapshot_reach())
             && n > 0
         {
             println!(
-                "frames: bake thread snapshot: {n} frames, eye past its reach {past}, sky over the floor lost {lost}"
+                "frames: bake thread snapshot: {n} frames, eye past its reach {past} (longest run {run}), sky over the floor lost {lost}"
             );
+        }
+        if let Some(g) = self.gfx.as_ref() {
+            if let Some(line) = queue::render_laps_line(g.frame.bake_render_laps()) {
+                println!("frames: {line}");
+            }
+            let [fading, stepped] = g.frame.bake_fade_frames();
+            if fading > 0 {
+                println!(
+                    "frames: fade steps: {stepped} of {fading} frames while a block faded ({:.4})",
+                    stepped as f64 / fading as f64
+                );
+            }
         }
         if let Some(line) = self.hud.run.line() {
             println!("{line}");
