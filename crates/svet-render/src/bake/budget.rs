@@ -159,12 +159,13 @@ pub const DEFAULT_RING1_STRETCH: f64 = 1.5;
 /// a face's samples are drawn in sample order and a round past its stop is discarded.
 pub const THREAD_DEPTH: usize = 3;
 
-/// The live queue's table slots on the bake thread (ADR-0083): a job's rounds are all planned
-/// at its opening and it holds its slot three to four steps to its last read-back, so 16 slots
-/// (lockstep's) hold fewer jobs than the thread's depth of caps: 32, the least of 32, 48 and 64
-/// at which few plans run out of rounds with no slot free (Plan 0099 Phase 4c2). Lockstep and
-/// the pre-roll keep 16. The count changes no record.
-pub const THREAD_SLOTS: usize = 32;
+/// The live queue's table slots on the bake thread (ADR-0083): 16, lockstep's count. A job's
+/// rounds are all planned at its opening and it holds its slot three to four steps to its last
+/// read-back, so at 16 a share of the plans run out of rounds with no slot free; more rows
+/// (`--bake-slots`, up to the reserve of 64) take that away but not the feed, which is bounded
+/// by the step's time against the frame, and they read a later ring 1 on a dig (Plan 0099
+/// Phase 4c2). The count changes no record.
+pub const THREAD_SLOTS: usize = 16;
 
 /// The values the ring-1 stretch takes; a value outside is clamped into it.
 pub const RING1_STRETCH_RANGE: std::ops::RangeInclusive<f64> = 1.0..=2.0;

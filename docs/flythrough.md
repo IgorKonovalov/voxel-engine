@@ -423,7 +423,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--queue-withdraw on\|off` | Withdraw the jobs of chunks the camera passed |
 | `--bake-thread on\|off` | Run the live queue's sliced steps on the bake thread (ADR-0083; the pre-roll and the one-shot bakes stay lockstep); the banner's queue row and the HUD's queue row read `bake thread on` or `off`; a profile does not set it, every profile's being `off` [on in a window, off under `--headless`] |
 | `--bake-depth N` | The submits the bake thread's steps hold unread at most, 1 to 8 (a reading's knob; lockstep, the pre-roll and the one-shot bakes hold two whatever it is) [3] |
-| `--bake-slots N` | The live queue's table slots the bake thread's steps open jobs into, 16 to 64 (a reading's knob; lockstep and the pre-roll keep 16 whatever it is) [32] |
+| `--bake-slots N` | The live queue's table slots the bake thread's steps open jobs into, 16 to 64 (a reading's knob; lockstep and the pre-roll keep 16 whatever it is) [16] |
 | `--queue-census` | Read the queue's view census at every opening, its listing once |
 | `--queue-rule-reading` | Count the jobs opened for chunks the zero rule would answer (a reading) |
 | `--edit-ms MS` | The slice's growth while a dig waits, 0 to 100 ms [3] |
