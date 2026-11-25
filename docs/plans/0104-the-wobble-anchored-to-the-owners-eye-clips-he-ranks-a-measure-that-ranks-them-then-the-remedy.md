@@ -493,7 +493,7 @@ his 2026-11-12 rule that cheap unpicked modes stay settings, for these settings)
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 0: the wobble rigs read a baked store | dev | done: the shared settle (`support/baked.rs`); both soak tests pass on a whole census on the RTX, the gate test on lavapipe (the forest test on lavapipe running); W1 unexplained; readings in [`logs/0104.md`](logs/0104.md) | 565bdee2, this commit |
+| 0: the wobble rigs read a baked store | dev | done: the shared settle (`support/baked.rs`); both soak tests pass on a whole census on the RTX and lavapipe (the forest one 12 538 s on lavapipe); W1 unexplained; readings in [`logs/0104.md`](logs/0104.md) | 565bdee2, this commit |
 | 1: the owner's move as clips | dev | done: six files under `live/anchor/`, readings in [`logs/0104.md`](logs/0104.md) | this commit |
 | 2: the owner watches the clips | human | done: T, C, S anchored; T and C orders confirmed blind; answers in [`logs/0104.md`](logs/0104.md) | this commit |
 | 3: the owner's own flight, recorded and rendered again (only for a subject not shown) | dev | not started | |
