@@ -1986,6 +1986,194 @@ Amended in place (still `proposed`): lists are applied in the order made and an 
 takes the lists made before it with it; the edit's frame issues the dig's submit behind up
 to the depth less one. Question 8's answer, if (b), is one more line in its Decision.
 
+## Amended 2026-11-26 (architect, after Phase 3d)
+
+Read against `8158f508`: `Books::of` and `around` (`bake/queue/books.rs`), `bake_step`,
+`StepTimes`, `DigWaitParts`, `take_waiting`, `absorb`, `render_frame` (`bake/link.rs`), the
+thread's loop and `take_until` (`bake/thread.rs`), `submit` (`bake/queue/step.rs`),
+`in_flight_bound` (`bake/queue/lister.rs`), `Inbox::answered` (`bake/queue/message.rs`),
+`dig_trace` (`bake/queue/stats.rs`), the books' readers under `frame/`, and the lane's raw
+rows (`live/p3dd`, `live/p3dr`, `live/p3d-check.out`). The evidence by file and row is in the
+log ("Architect's ruling after Phase 3d"). Where this section differs from the text above it
+wins. Nothing was built or run. **One new part, Phase 3f (a fix), after Phase 4c2 and before
+Phase 4d; one bar restated; no owner question.** ("3e" stays the name of question 8's option
+(b), which is not written.)
+
+### Ruling 1: the snapshot copies every per-chunk set of the books, and the edit's frame does not need it
+
+**What it copies.** `Books::of` builds, from nothing, on every step: the store's block map
+(a clone, one entry a baked chunk); `lesser` (a walk of every block with a count lookup);
+`faceless`, `sealed` (a walk of every worker verdict), `blocked` and `busy` (the jobs' chunks,
+the digs, ring 3 and both due sets) as new hash sets, none sized; the store's counters (a sum
+over every block); both age lists; the block words of up to 27 chunks about the eye; and it
+takes the stream workers' shell lock for two counts (`BakeQueue::shells`, whose own comment
+says the step never takes it). Under `trace_digs` (the timeline rigs only) it adds the dig
+trace, which walks every open job's face states, and a clone of the coarse set.
+
+**Why 1.2 to 4.5 ms.** Every part is the size of the residency or of the store, and none is
+kept from the step before. Read: 1.15 to 1.38 ms on the RTX at Floor (17 077 full chunks),
+0.31 to 0.47 on the RENOIR at Portable (7 153). It barely moves with the store (RTX 1.2 ms at
+2 200 to 3 200 blocks, 1.35 at about 14 000), so the larger share follows the residency (the verdicts,
+the faceless set, the due sets), not the block map. **Not shown:** which set; nothing times
+them apart. The timelines' 1.4 to 4.5 ms is this plus the trace, which no product run builds.
+
+**Must it sit inside the wait: no.** The edit's frame takes from the dig's step its ops and
+its lists; `render_frame` replays and applies those and nothing in the picture reads the
+books. The books serve the public reads and the mailbox (`inbox.answered`: a box leaves the
+mailbox once the books that took it are the ones read). The step's results and its snapshot
+are one outbox entry only because `bake_step` returns them together.
+
+**Ruled: a step's lists and its submit are handed back when the step returns; the snapshot
+follows as its own entry, and the edit's frame waits for the lists.** What stays is the
+snapshot's cost on the bake thread, **disclosed: 1.2 to 1.4 ms a step on the RTX forest at
+Floor, about 15 % of a regime B step's 8.0 ms p50** (0.3 to 0.5 ms on the RENOIR). It is
+outside the step's stage table today, so the feed's readings have not seen it; Phase 4d
+reads it (below).
+
+**Rejected.** *Make the snapshot cheap in place* (each set shared with the step before and
+remade only when its source changed): the right lever for the thread's own cycle, but every
+set needs a change mark at each of its writers, which set costs is not read, and a dig's
+step changes several of them, so the dig's frame would still pay; named for Phase 4d by
+reading, not built here. *Leave it and disclose it:* it is the one part of the wait the
+picture does not need, and the ruling of 2026-11-25 made a hand-off part over 0.5 ms a stop.
+*No snapshot on a dig's step:* the same change to the hand-off, and the public reads then lag
+two steps. *Time the trace apart and keep the code:* the runs with no trace still read 1.15
+to 1.38 ms.
+
+### Phase 3f: The edit's frame waits for the step's lists, not for its books
+- **Owner skill:** dev
+- **What:** At Phase 4c2's tip, before Phase 4d. (a) The bake thread hands a step's ops,
+  lists and stats to the outbox when the step returns, then makes the snapshot and hands it
+  in as an entry of its own (no op, no list). (b) The render thread keeps the newest books
+  it has taken, and answers the mailbox up to the older of the lists applied and the books
+  held, so no read finds a box in neither. (c) The edit's frame waits for the entry that
+  holds the lists made from its message. Where the queue traces digs (the rigs) it waits for
+  that step's books too, so the timelines' D+0 rows read what they read today. (d) The
+  wait's `snapshot` part reads 0 without the trace; the snapshot's ms a step go on the
+  teardown's `bake thread snapshot:` line (p50, p99). No other mechanism: `Books::of` copies
+  what it copies today, and no frame but an edit's waits.
+- **Files touched:** `crates/svet-render/src/bake/{link,thread}.rs`,
+  `bake/queue/split_tests/thread.rs`, `crates/svet-render/src/frame/bake_thread.rs`,
+  `apps/flythrough/src/run/{queue,mod}.rs`, `docs/flythrough.md`, `docs/plans/logs/0099.md`.
+- **Done when:**
+  (1) `the_edits_frame_does_not_wait_for_the_books` (CPU, under 1 s, the threaded
+  device-less rig, a hook that holds the snapshot until the test lets it go): the edit's
+  frame returns while the snapshot is held, with the held block's words applied; the books
+  it holds are the step before's; a read of the dug chunk still finds the box in the
+  mailbox. The snapshot let go, the next frame holds the dig's books and the mailbox has
+  answered.
+  (2) `the_mailbox_answers_by_the_older_of_lists_and_books` (CPU, under 1 s): a frame with
+  no edit that takes step 6's lists before its books keeps message 6 unanswered; the frame
+  that takes the books answers it. A stop between the two hands lockstep the step's lists,
+  applied once.
+  (3) `the_waits_parts_sum_to_the_wait` restated: the `snapshot` part 0, the sum within
+  0.5 ms. With the trace on, the edit's frame returns holding the dig's books.
+  (4) `the_threaded_queue_drains_to_the_lockstep_store` by name, bit-identical;
+  `--binaries gpu_queue gpu_bake`.
+  (5) **Reading, quiet, the fly-through headless as Phase 3d's (3):** RTX Floor 1080p
+  forest, the same `--dig-at` frames, thread on twice and off once; one RENOIR Portable
+  pair. Each run its own lock hold, none over 20 minutes. **The bar (ruling 2): the wait's
+  p50 less its `rest` part is at most lockstep's call p50 in the same state, on both
+  adapters; the `snapshot` part reads 0.** Expected by Phase 3d's rows less the snapshot, a
+  derivation and not a bar: RTX 26 to 27 ms while in view waits and 5.0 to 6.4 after, RENOIR
+  11.5 and 4.6.
+  (6) **Timelines, quiet, thread on, two runs each: RTX waiting B and RENOIR drained B.**
+  Held at D+0 in every dig; ring 1 within Phase 3d's ms bar (lockstep's rows stand).
+  **Stops, each reported with its rows, none tuned around:** a dig whose held block is not
+  told at D+0; (5)'s bar missed in a state; a reader other than the rigs' trace that needs
+  the dig's books in the edit's frame.
+
+### Ruling 2: the timeline's step is not lockstep's step; the wait's bar is read at the fly-through's pace
+
+**Less the snapshot, one miss goes and two shrink.** RTX waiting A about 23.3 against 25.4
+(held); RTX drained B about 9.6 against 9.4 (over by 0.25 ms); RENOIR drained B about 4.2
+against 3.2 (over by 1.0).
+
+**Why the step's stages differ: the work differs.** The thread's steps hold up to its depth
+unread, 3 (`in_flight_bound`), where lockstep holds 2 (`IN_FLIGHT`), and a step collects
+every read-back its message carries. The timeline's frame is 20 to 55 ms (a step, the pool
+read-backs, a render with a device wait), so by the edit every submit in flight has mapped:
+the dig's step reads back the whole depth at once and its frame issues three submits (22 of
+24 on RTX drained B). The stage rows say so: on RTX drained B `collect` 1.8 to 2.5 ms against
+lockstep's 0.6 to 1.1, `candidates` 0.9 to 1.4 against at most 0.6, `refresh` 1.2 against
+under 0.5, `submit` 1.6 to 3.9 against 1.8 to 2.3, while lockstep's `list` (2.2 to 3.3) is on
+the pool with the thread. The sums meet (9.7 against 9.4) by chance of the rig, not by the
+bar's derivation, which took the thread's step for lockstep's less its `wgpu` calls.
+**On the RENOIR** `submit` (0.55 to 0.78 ms, under 0.5 in lockstep) and the stages under
+0.5 ms carry about half of the 1.0 ms the same way; the rest is `boxes` and `refresh`, each
+about 0.2 ms over. **Not shown:** why. It is not the
+render thread (it is blocked in the wait while the step runs). A thread woken from its
+condvar after about 45 ms idle is the candidate, and only this rig idles it that long.
+
+**At the pace the product runs, the thread's dig step is under lockstep's in every state
+read.** Phase 3d's fly-through rows, `boxes` plus `step_rest` against lockstep's call, p50:
+RTX while in view waits 21.0 and 20.2 against 25.2 and 24.8; after 6.0 and 4.6 against 8.0
+and 6.3; RENOIR 11.2 against 11.8 and 3.8 against 5.9. What puts the RTX's wait over
+lockstep's while the queue is deep (28.4 and 27.6 against 25) is the step in progress at the
+send, 4.8 and 6.9 ms p50: the part the ruling of 2026-11-25 derived as "up to a step".
+
+**The bar, restated.** *At the fly-through's pace, on both adapters and in both states, the
+wait's p50 less its `rest` part is at most lockstep's call p50 on the same frames.* It holds
+on Phase 3d's rows with the snapshot still in (RTX 23.7 and 20.7 against 25.2 and 24.8; 7.7
+and 6.4 against 8.0 and 6.3, within lockstep's own spread between two runs; RENOIR 11.8
+against 11.8, 5.1 against 5.9) and Phase 3f (5) reads it again. **The `rest` part is a
+disclosed cost, not a bar:** 4.8 to 6.9 ms p50 and up to 11.3 ms on the RTX while the queue
+is deep, 0 at p50 once drained. **On the timeline rigs the wait against lockstep's step is a
+reading from here**, printed with its parts; the two misses stand as read, with their cause.
+
+**Rejected.** *Stop the step in progress when a box is sent:* a step's books are half
+written between stages, and a point to leave it at is question 8's option (b) by another
+door. *Hold the thread's dig step to lockstep's depth:* it shortens a rig's row and delays
+the read-backs the dig's ring waits behind. *Pad or pace the timeline to the window's
+frame:* the rig's pace was ruled fair for what it asserts (the held block, ring 1); the
+fly-through reads the wait. *Keep the thread warm:* a spin for a rig's 0.4 ms.
+
+### Ruling 3: what the owner is told at Phase 5 (c), and question 8
+
+**Told, beside the window** (RTX 3080 Laptop, Floor 1080p, the forest, headless, six dig
+frames a state and two runs a mode; quiet at the lock):
+- **While the queue is deep a dig stalls its frame about 28 ms with the thread on, about
+  25 ms with it off** (worst of twelve 38 against 44). The stall is nearly the same; what
+  differs is the frames around it: 8.4 ms with the thread on, 21.8 ms with it off. **With
+  the thread on a dig is one frame of about three frames' time; with it off it was one
+  frame among frames as long.** Phase 3f takes about 1.3 ms off it.
+- **Once the queue has drained: 6.4 to 7.7 ms either way**, under one frame; about 5 to 6.4
+  after Phase 3f.
+- RENOIR, Portable: 11.8 ms deep and 5.1 drained, against lockstep's 11.8 and 5.9. On the
+  RTX the dig's frame also issues up to three bake submits where lockstep issues one
+  (the ruling of 2026-11-25, 5).
+
+**Question 8 is not reopened.** The owner picked (a) on "12 to 16 ms p50, about what
+lockstep's dig frame costs" and on "in a window a step in progress adds to it". The figure
+at the window's pace is twice that, and lockstep's on the same frames grew with it (25 ms):
+the relation he accepted holds within 3 ms at p50, and the wait's worst is under
+lockstep's. He chose to judge the stall by eye and the window is where he does. **He is
+told the 28 ms, and that the frames around it are now short, before he looks.** If he sees
+it, option (b) is the fix pass, written on his word; by Phase 3d's parts it would wait 9 to
+11 ms p50 while the queue is deep (the step in progress and a `boxes` stage that reads
+4.3 ms there, not the 3 to 4 ms derived on the timeline) and about 2.2 ms once drained.
+
+**Phase 5 (c), restated:** the digs are made with the thread on and then off, while the
+queue is deep and again once the HUD reads it drained. The owner is asked two things in
+his words: does the light follow the dig as it does with the thread off, and does the dig's
+frame hitch. The second is an image-stability item and takes no answer in his place.
+
+### The order: 4c2, 3f, 4d, then Phase 5
+
+One lane, one dev at a time. **Phase 4c2 goes on as it is**: it does not touch `bake/link.rs`
+or the thread's loop, and its (7) reads its dig runs beside Phase 3d's as written. **Phase
+3f next**, so Phase 4d's readings and the window see the final dig frame. **Phase 4d gains
+one reading in its (4):** the snapshot's ms a step beside the bake step's regime B p50 and
+the steps a frame. Where its bar (2) is missed with the steps a frame as the bound, the
+snapshot is named with the stages; the sets remade only on a change is then a lever by a
+ruling, as levers (c) and (d) are, and is not built in Phase 4d. Phase 3d's stops are
+closed by this section: the snapshot's by Phase 3f, the wait's by the bar above.
+
+### ADR-0083
+
+Amended in place (still `proposed`): the edit's frame's wait ends on the step's lists; the
+books' snapshot follows as its own entry, and the mailbox answers by the older of the two.
+
 ## Data shapes
 
 ```rust
