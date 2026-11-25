@@ -430,3 +430,50 @@ impl Q {
         panic!("chunk {x} never opened");
     }
 }
+
+/// The second sky word of a brick record (`VIS_WORD + 1`) and its flags: the baked visibility
+/// and the ring's stale mark (ADR-0070).
+const SKY_WORD: usize = 8;
+const VIS_BAKED: u32 = 1 << 16;
+const SKY_STALE: u32 = 1 << 17;
+
+/// Whether a brick record is marked stale: a dig's ring whose re-bake has not landed.
+pub fn ring_marked(r: &[u32]) -> bool {
+    r[SKY_WORD] & SKY_STALE != 0
+}
+
+/// Whether a dig's step has placed its block over the ring-1 records `pre` (read in the pool
+/// after the edit, before any step read its box): `cur` holds the step's provisional record for
+/// every brick of `pre`. The step keeps a touched brick's record with every direction it held
+/// none for filled, all six in the mask (`fill_directions`, a record that holds light); a baked
+/// sky visibility it marks stale and then writes its held cells over (`apply_held`: the two sky
+/// words baked without the stale mark, the two key words cleared, all six directions in the
+/// mask). So each record that held light has all six directions, each baked visibility is
+/// stale or held, and one record not already stale before the edit differs from its old one
+/// (else the dig's block is not told from the old).
+pub fn dig_held<K: Ord>(pre: &BTreeMap<K, Vec<u32>>, cur: &BTreeMap<K, Vec<u32>>) -> bool {
+    let all = |r: &[u32]| r[6] >> 16 == 0x3F;
+    let held_shape = |r: &[u32]| {
+        r[SKY_WORD] & VIS_BAKED != 0 && r[SKY_WORD + 1] == 0 && r[SKY_WORD + 2] == 0 && all(r)
+    };
+    let mut told = false;
+    for (slot, p) in pre {
+        let Some(c) = cur.get(slot) else {
+            return false;
+        };
+        if p[6] >> 16 != 0 && !all(c) {
+            return false;
+        }
+        if p[SKY_WORD] & VIS_BAKED != 0 && !(ring_marked(c) || held_shape(c)) {
+            return false;
+        }
+        told |= !ring_marked(p) && c != p;
+    }
+    told
+}
+
+/// Whether ring 1's re-bake has landed over the dig's block `held` (the ring-1 records the
+/// edit's step placed): no record is marked stale and the records differ from the step's.
+pub fn ring1_landed<K: Ord>(held: &BTreeMap<K, Vec<u32>>, cur: &BTreeMap<K, Vec<u32>>) -> bool {
+    cur != held && !cur.values().any(|r| ring_marked(r))
+}

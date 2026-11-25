@@ -36,8 +36,9 @@ mod dig_line {
             /// ([`svet_render::Frame::bake_frame_issue`]).
             pub issue: Vec<(f64, u64)>,
             /// Per frame from the first dig on, the newest dig's ring as the pool holds it: whether
-            /// every brick its box touches holds a stale-marked (held) record, and whether no
-            /// ring-1 brick does ([`pool_ring`]).
+            /// its ring-1 records have held the dig's block ([`support::queue::dig_held`] against
+            /// the pool read after the edit, before a step), and whether ring 1's re-bake has
+            /// landed over that block ([`support::queue::ring1_landed`]).
             pub pool: Vec<Option<(bool, bool)>>,
             /// Whether the queue's steps ran on the bake thread.
             pub thread: bool,
@@ -182,10 +183,17 @@ mod dig_line {
             let centre = [0, 1, 2].map(|k| eye[k] + fwd[k] * t);
             let (mut frames, mut traces, mut digs, mut edit_ms) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
             let (mut issue, mut pool) = (Vec::new(), Vec::new());
-            let mut read = |rig: &mut Rig, s: &mut Stepper, frames: &mut Vec<HoleFrame>, traces: &mut Vec<svet_render::DigTrace>, label: String, dug: Option<([i64; 3], [i64; 3])>| {
+            let mut read = |rig: &mut Rig, s: &mut Stepper, frames: &mut Vec<HoleFrame>, traces: &mut Vec<svet_render::DigTrace>, label: String, ring: Option<&mut Ring>| {
                 let q = queue_step(rig, &mut s.frame, &cam);
                 issue.push(s.frame.bake_frame_issue());
-                pool.push(dug.map(|(lo, hi)| pool_ring(&s.frame, rig, lo, hi)));
+                pool.push(ring.map(|ring| {
+                    let cur = pool_ring(&s.frame, rig, ring.lo, ring.hi);
+                    if ring.held.is_none() && support::queue::dig_held(&ring.pre, &cur) {
+                        ring.held = Some(cur.clone());
+                    }
+                    let fresh = ring.held.as_ref().is_some_and(|h| support::queue::ring1_landed(h, &cur));
+                    (ring.held.is_some(), fresh)
+                }));
                 traces.push(s.frame.bake_queue().expect("the live queue").dig_trace());
                 let path = png.map(|d| d.join(format!("{:03}-{label}.png", frames.len())));
                 frames.push(hole_frame(rig, s, &cam, q, label, out, false, path.as_deref()));
@@ -218,9 +226,11 @@ mod dig_line {
                 };
                 digs.push((frames.len(), dug.0, dug.1));
                 edit_ms.push(ms);
+                // The ring as the pool holds it before any step has read the box.
+                let mut ring = Ring { lo: dug.0, hi: dug.1, pre: pool_ring(&s.frame, &rig, dug.0, dug.1), held: None };
                 let mut tail = None;
                 for k in 0..1200usize {
-                    let q = read(&mut rig, &mut s, &mut frames, &mut traces, format!("D{}+{k}", d + 1), Some((dug.0, dug.1)));
+                    let q = read(&mut rig, &mut s, &mut frames, &mut traces, format!("D{}+{k}", d + 1), Some(&mut ring));
                     if k + 1 == *gap {
                         break;
                     }
@@ -236,13 +246,23 @@ mod dig_line {
             Some((LineRun { frames, traces, digs, edit_ms, issue, pool, thread, out, eye, head }, rig))
         }
 
-        /// The ring of the box `lo ..= hi` as the pool holds it now, from the blocks the frame
-        /// reads (`Frame::read_store_block`, the bake thread's books' places with it on): whether
-        /// every brick the box touches holds a record marked stale (the second sky word's bit 17,
-        /// the dig's held record and ring mark), and whether no brick within a voxel of the box
-        /// does (ring 1 applied).
-        fn pool_ring(f: &svet_render::Frame, rig: &Rig, lo: [i64; 3], hi: [i64; 3]) -> (bool, bool) {
-            let (mut held, mut fresh, mut touched) = (true, true, 0);
+        /// A dig's ring-1 records as the pool held them after the edit, before a step read its box,
+        /// and as it held them in the first frame that held the dig's block.
+        struct Ring {
+            lo: [i64; 3],
+            hi: [i64; 3],
+            pre: RingRecords,
+            held: Option<RingRecords>,
+        }
+
+        /// Brick records by chunk and slot.
+        type RingRecords = BTreeMap<([i32; 3], usize), Vec<u32>>;
+
+        /// The ring-1 records of the box `lo ..= hi` (every brick within a voxel of it) as the
+        /// pool holds them now, by chunk and slot, from the blocks the frame reads
+        /// (`Frame::read_store_block`, the bake thread's books' places with it on).
+        fn pool_ring(f: &svet_render::Frame, rig: &Rig, lo: [i64; 3], hi: [i64; 3]) -> RingRecords {
+            let mut out = BTreeMap::new();
             let a = lo.map(|v| (v - 1).div_euclid(64) as i32);
             let b = hi.map(|v| (v + 1).div_euclid(64) as i32);
             for z in a[2]..=b[2] {
@@ -254,19 +274,14 @@ mod dig_line {
                         for (slot, r) in records(&w) {
                             let b = [slot % 8, slot / 8 % 8, slot / 64].map(|v| v as i32 * 8);
                             let b = [x * 64 + b[0], y * 64 + b[1], z * 64 + b[2]];
-                            let stale = r[8] & (1 << 17) != 0;
-                            if near_box(b, lo, hi, 0) {
-                                touched += 1;
-                                held &= stale;
-                            }
                             if near_box(b, lo, hi, 1) {
-                                fresh &= !stale;
+                                out.insert(([x, y, z], slot), r);
                             }
                         }
                     }
                 }
             }
-            (held && touched > 0, fresh)
+            out
         }
 
         /// Whether the brick whose lowest voxel is `b` lies within `pad` voxels of the box.

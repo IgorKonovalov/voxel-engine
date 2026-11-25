@@ -1158,18 +1158,31 @@ const DIG_BOXES: [([i64; 3], [i64; 3]); 3] = [
     ([8, 40, 28], [11, 43, 31]),
 ];
 
-/// What [`dig_reads`] read of one dig: chunk 0's ring-1 records in the pool after the edit's
-/// own frame, by slot, and the frames from the edit's frame (0) to the first whose pool holds
-/// no ring-1 record marked stale (ring 1 applied).
+/// What [`dig_reads`] read of one dig: chunk 0's ring-1 records in the pool after the edit and
+/// before any step read its box (`pre`) and after the edit's own frame (`held`), by slot, and the
+/// frames from the edit's frame (0) to the first whose pool holds ring 1's re-bake
+/// ([`support::queue::ring1_landed`]), each paced to [`FRAME`].
 struct DigRead {
+    pre: std::collections::BTreeMap<usize, Vec<u32>>,
     held: std::collections::BTreeMap<usize, Vec<u32>>,
     ring1: usize,
+    /// The wall from the edit's frame's start to ring 1 applied, ms.
+    ms: f64,
 }
 
-/// Whether a brick record is marked stale (the second sky word's bit 17: a dig's held record
-/// and its ring's mark until its job lands).
-fn marked(r: &[u32]) -> bool {
-    r[8] & (1 << 17) != 0
+/// A window's frame at 60 Hz: from the edit's frame on, [`dig_reads`] pads each frame to it in
+/// either mode, so a frame with the thread on, which runs no step, is a frame and not a
+/// fraction of the bake thread's step (unpaced, a threaded frame here costs about 0.1 ms and
+/// twenty of them pass inside one step on lavapipe).
+const FRAME: std::time::Duration = std::time::Duration::from_micros(16_667);
+
+/// The wall clock of [`dig_reads`]' pacing.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the rig paces its frames to a window's"
+)]
+fn clock() -> std::time::Instant {
+    std::time::Instant::now()
 }
 
 /// Chunk 0's ring-1 records of the box `lo ..= hi` in the pool, by slot.
@@ -1187,7 +1200,8 @@ fn ring1_pool(q: &Q, lo: [i64; 3], hi: [i64; 3]) -> std::collections::BTreeMap<u
 /// baked at a pre-roll's sample count (every other chunk's jobs still behind it), then sliced;
 /// before each of [`DIG_BOXES`] chunk 0 settled (its block at the full count, no dig waiting,
 /// then 16 more frames, so every fade has ended and the records are the same in either mode),
-/// the carve, the edit's frame, and frames until ring 1 is applied.
+/// the carve, the pool read before a step, the edit's frame, and frames until ring 1 is applied,
+/// paced to [`FRAME`] from the edit's frame on.
 fn dig_reads(thread: bool) -> Option<Vec<DigRead>> {
     let mut q = dig_rig()?;
     let zero = ChunkCoord([0, 0, 0]);
@@ -1218,24 +1232,39 @@ fn dig_reads(thread: bool) -> Option<Vec<DigRead>> {
         }
         assert_eq!(q.frame.bake_thread_running(), thread);
         q.edit(&box_op(lo, [hi[0] + 1, hi[1] + 1, hi[2] + 1], Mode::Carve));
-        q.step();
+        let pre = ring1_pool(&q, lo, hi);
+        let t0 = clock();
+        let paced = |q: &mut Q, n: u32| {
+            q.step();
+            if let Some(rest) = (FRAME * n).checked_sub(clock().duration_since(t0)) {
+                std::thread::sleep(rest);
+            }
+        };
+        paced(&mut q, 1);
         let held = ring1_pool(&q, lo, hi);
         let mut ring1 = 0;
-        while ring1_pool(&q, lo, hi).values().any(|r| marked(r)) {
-            q.step();
+        while !ring1_landed(&held, &ring1_pool(&q, lo, hi)) {
             ring1 += 1;
+            paced(&mut q, ring1 as u32 + 1);
             assert!(ring1 < MAX_STEPS, "ring 1 lands");
         }
-        out.push(DigRead { held, ring1 });
+        let ms = clock().duration_since(t0).as_secs_f64() * 1e3;
+        out.push(DigRead {
+            pre,
+            held,
+            ring1,
+            ms,
+        });
     }
     Some(out)
 }
 
 /// Plan 0099 Phase 3b, done-whens (4) and (5) (ADR-0083's one wait). [`dig_reads`] in lockstep
-/// and with the bake thread on, three digs each: with the thread on, the pool read back after
-/// the edit's own frame holds every ring-1 brick's record marked (the touched bricks' held
-/// records and the ring's mark), bit-identical to lockstep's after its edit's frame, where the
-/// dig's step runs in the frame; and ring 1 is applied within lockstep's frame count plus 2.
+/// and with the bake thread on, three digs each: the pool read back after the edit's own frame
+/// holds the dig's block over every ring-1 brick ([`support::queue::dig_held`]: each record the
+/// step's, stale or held, and changed from the pool's before the step) in lockstep, where the
+/// dig's step runs in the frame, and with the thread on, bit-identical to lockstep's; and ring 1
+/// is applied within lockstep's frame count plus 2, the frames paced to a window's ([`FRAME`]).
 #[test]
 fn the_edits_frame_holds_the_dig_and_ring_1_lands_in_either_mode() {
     let Some(lock) = dig_reads(false) else {
@@ -1244,16 +1273,22 @@ fn the_edits_frame_holds_the_dig_and_ring_1_lands_in_either_mode() {
     let thread = dig_reads(true).expect("the device opened once");
     for (k, (l, t)) in lock.iter().zip(&thread).enumerate() {
         println!(
-            "dig {}: ring-1 records {}, ring 1 applied D+{} lockstep, D+{} thread",
+            "dig {}: ring-1 records {}, ring 1 applied D+{} ({:.1} ms) lockstep, D+{} ({:.1} ms) thread",
             k + 1,
             l.held.len(),
             l.ring1,
-            t.ring1
+            l.ms,
+            t.ring1,
+            t.ms
         );
         assert!(!l.held.is_empty(), "dig {k}: chunk 0 holds ring-1 bricks");
         assert!(
-            l.held.values().all(|r| marked(r)),
+            dig_held(&l.pre, &l.held),
             "dig {k}: lockstep's edit frame holds the held records"
+        );
+        assert!(
+            dig_held(&t.pre, &t.held),
+            "dig {k}: the edit's frame with the thread on holds the held records"
         );
         assert_eq!(
             t.held, l.held,
