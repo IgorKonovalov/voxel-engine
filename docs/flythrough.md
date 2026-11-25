@@ -421,7 +421,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--queue-order score\|distance` | The live queue's order |
 | `--queue-weights A,R\|A,tier` | The score's angle and refine weights |
 | `--queue-withdraw on\|off` | Withdraw the jobs of chunks the camera passed |
-| `--bake-thread on\|off` | Run the live queue's sliced steps on the bake thread (ADR-0083; the pre-roll and the one-shot bakes stay lockstep); the banner's queue row and the HUD's queue row read `bake thread on` or `off` [off] |
+| `--bake-thread on\|off` | Run the live queue's sliced steps on the bake thread (ADR-0083; the pre-roll and the one-shot bakes stay lockstep); the banner's queue row and the HUD's queue row read `bake thread on` or `off`; a profile does not set it, every profile's being `off` [on in a window, off under `--headless`] |
 | `--bake-depth N` | The submits the bake thread's steps hold unread at most, 1 to 8 (a reading's knob; lockstep, the pre-roll and the one-shot bakes hold two whatever it is) [3] |
 | `--queue-census` | Read the queue's view census at every opening, its listing once |
 | `--queue-rule-reading` | Count the jobs opened for chunks the zero rule would answer (a reading) |
@@ -459,6 +459,11 @@ With the bake thread on, a frame issues at most one submit and carries any later
 next frame; the teardown's `frames: bake round trip:` line reads the submits issued and read,
 their round trip in frames from the issue to the frame whose message carried the read-back
 (p50, p99, max), the frames that carried a submit and the issuer's peak readback buffers.
+The one exception is an edit's frame: it waits for the step that read its box, applies the
+held block in that frame, and issues the dig's submit behind any carried one, so it may issue
+two. The teardown's `frames: bake thread dig wait:` line reads those frames, the wait's p50,
+p99 and max in ms and the dig frames that issued two submits; the `bake thread render laps:`
+line's `wait` lap is the same wait.
 
 ### Audio
 

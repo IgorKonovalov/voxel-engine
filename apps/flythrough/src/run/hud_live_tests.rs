@@ -187,7 +187,7 @@ pub(super) fn hold(a: &mut crate::cli::Args, s: &RenderSettings) {
     b.ring1_stretch = s.bake.ring1_stretch;
     b.tiers = s.bake.tiers;
     b.drain = s.bake.drain;
-    b.thread = s.bake_thread;
+    b.thread = Some(s.bake_thread);
     b.missing_light = s.missing_light;
     a.mirror_budget = Some(s.build.mirror_budget_bytes);
     a.sync_budget = s.build.sync_budget_bytes;
@@ -331,7 +331,9 @@ fn every_entry_that_changes_the_settings_moves_the_hud() {
 }
 
 /// `--bake-thread off` and `on` parse to the mode they name, and the HUD's queue row and the
-/// banner's queue row name it; unset it reads `off` (Plan 0099 Phase 3a, done-when 6).
+/// banner's queue row name it; unset it reads `on` in a window and `off` under `--headless`; a
+/// profile picked in the menu leaves the mode as it was; every profile's is `off` (Plan 0099
+/// Phase 3b, done-when 6, as Phase 3's (6) was first written).
 #[test]
 fn the_flag_and_the_row_name_the_mode() {
     let parse = |extra: &[&str]| {
@@ -342,10 +344,12 @@ fn the_flag_and_the_row_name_the_mode() {
     for (extra, on) in [
         (&["--bake-thread", "off"][..], false),
         (&["--bake-thread", "on"][..], true),
-        (&[][..], false),
+        (&[][..], true),
+        (&["--headless"][..], false),
+        (&["--headless", "--bake-thread", "on"][..], true),
     ] {
         let args = parse(extra);
-        assert_eq!(args.bake.thread, on, "{extra:?}");
+        assert_eq!(args.bake_thread(), on, "{extra:?}");
         assert_eq!(args.render_settings().bake_thread, on, "{extra:?}");
         let word = if on { "on" } else { "off" };
         let mut banner = String::new();
@@ -354,10 +358,36 @@ fn the_flag_and_the_row_name_the_mode() {
             banner.contains(&format!(", bake thread {word};")),
             "{extra:?}: {banner}"
         );
-        let hud = hud_text(&mut run_of(args));
+        let mut run = run_of(args);
+        let hud = hud_text(&mut run);
         assert!(
             hud.contains(&format!("; bake thread {word}")),
             "{extra:?}: {hud}"
+        );
+        // The menu's profile entry, through every profile: the mode stays.
+        for _ in svet_render::Profile::ALL {
+            run.cycle_profile();
+            assert_eq!(
+                run.args.bake_thread(),
+                on,
+                "{extra:?} after a profile switch"
+            );
+            assert!(
+                !run.modes.profile.contains("bake_thread"),
+                "{extra:?}: {}",
+                run.modes.profile
+            );
+            let hud = hud_text(&mut run);
+            assert!(
+                hud.contains(&format!("; bake thread {word}")),
+                "{extra:?} after a profile switch: {hud}"
+            );
+        }
+    }
+    for p in svet_render::Profile::ALL {
+        assert!(
+            !svet_render::RenderSettings::profile(p).bake_thread,
+            "{p:?}: lockstep in every profile"
         );
     }
     assert!(crate::cli::parse_args_from(argv(&["--bake-thread", "maybe"])).is_err());

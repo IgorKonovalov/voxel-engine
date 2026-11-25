@@ -670,7 +670,7 @@ impl Run {
         frame.set_bake_tiers(self.args.bake.tiers);
         frame.set_bake_drain(self.args.bake.drain);
         frame.share_bake_world(self.world.clone());
-        frame.set_bake_thread(&gpu.queue, self.args.bake.thread);
+        frame.set_bake_thread(&gpu.queue, self.args.bake_thread());
         frame.set_bake_depth(self.args.bake.depth);
         if frame.bake_queue().is_some() {
             let (order, withdraw) = (self.args.queue_order(), self.args.bake.queue_withdraw);

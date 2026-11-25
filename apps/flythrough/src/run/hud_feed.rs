@@ -438,7 +438,7 @@ pub(crate) fn write_queue_banner_row(out: &mut String, args: &Args, words: &str)
         args.bake.edit_ms,
         StretchWords(args.bake.ring1_stretch, ", "),
         if args.bake.dig_reach { "on" } else { "off" },
-        if args.bake.thread { "on" } else { "off" },
+        if args.bake_thread() { "on" } else { "off" },
     );
 }
 
@@ -598,7 +598,7 @@ impl Run {
                 self.queue.line_split_p50[1],
             ],
         );
-        queue.push_str(if args.bake.thread {
+        queue.push_str(if args.bake_thread() {
             "; bake thread on"
         } else {
             "; bake thread off"

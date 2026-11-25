@@ -484,7 +484,7 @@ fn the_banner_names_the_queue_order_and_its_weights() {
         assert_eq!(
             row,
             format!(
-                "in view: 0 waiting (0 coarse), drain 0.0 s, withdrawn 0, step 0.00 ms (render 0.00, movable 0.00); bake thread off; {want}; withdraw on; full-first 2; reach full; budget frame:1.5"
+                "in view: 0 waiting (0 coarse), drain 0.0 s, withdrawn 0, step 0.00 ms (render 0.00, movable 0.00); bake thread on; {want}; withdraw on; full-first 2; reach full; budget frame:1.5"
             )
         );
     };

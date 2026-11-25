@@ -31,7 +31,9 @@ impl Run {
             .position(|&p| p == self.args.profile)
             .unwrap_or(0);
         let next = Profile::ALL[(i + 1) % Profile::ALL.len()];
-        let to = RenderSettings::profile(next);
+        let mut to = RenderSettings::profile(next);
+        // A profile does not set the bake thread's mode: the session keeps its own.
+        to.bake_thread = self.args.bake_thread();
         let fixed = self.args.fixed_output();
         self.args.profile = next;
         self.args.look.translucent_layers = to.look.translucent_layers;

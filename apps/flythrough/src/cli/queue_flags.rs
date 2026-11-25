@@ -57,7 +57,7 @@ pub(super) fn queue_flags() -> Vec<Flag<Parsing>> {
             "on|off",
             "run the live queue's sliced steps on the bake thread",
             |p: &mut Parsing, v| {
-                p.args.bake.thread = v.on_off()?;
+                p.args.bake.thread = Some(v.on_off()?);
                 Ok(())
             },
         ),
