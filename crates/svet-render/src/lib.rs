@@ -129,7 +129,7 @@ pub use gpu_world::{
     BELT_CHUNK_BYTES, BinStats, COLUMN_BLOCK, COLUMN_BLOCKS, COLUMN_CELL, COLUMN_CELLS,
     COLUMN_NONE, DEFAULT_BUDGET_BYTES, DEFAULT_LIGHT_CHUNK_CAP, DEFAULT_LIGHT_RADIUS,
     DEFAULT_LIGHT_SAMPLES, GpuWorld, MirrorConfig, MirrorError, ShardLayout, SyncClock, SyncPoint,
-    SyncStats, Window,
+    SyncStats, Window, column_coarse_texel,
 };
 pub use hud::{
     BACKDROP_ALPHA, GRID_COLS as HUD_GRID_COLS, HudBox, HudColour, HudOverlay, HudPaint, HudTile,

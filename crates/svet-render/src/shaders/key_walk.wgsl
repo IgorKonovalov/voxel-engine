@@ -25,18 +25,19 @@ fn column_cell_in_window(c: vec2<i32>) -> bool {
 }
 
 // A coarse level's height (the largest top's z plus 1, -1e9 for none) over block `b` (global,
-// in blocks): `per` blocks a tile per axis, COLUMN_BLOCKS the block map's and 1 the chunk
-// map's. `b` lies in the window's footprint.
+// in blocks): `per` blocks a tile per axis, COLUMN_BLOCKS for the 8 x 8-cell blocks and 1 for
+// the tile's own. `b` lies in the window's footprint. The texel is
+// `gpu_world::column_coarse_texel`'s, under the map's rows.
 fn column_coarse_height(b: vec2<i32>, per: i32) -> f32 {
     let w = params.window_size.xy;
     let k = key_walk_div(b, per);
-    let at = ((k % w) + w) % w * per + (b - k * per);
-    var top: i32;
-    if (per == 1) {
-        top = textureLoad(column_chunks, at, 0).x;
-    } else {
-        top = textureLoad(column_blocks, at, 0).x;
-    }
+    let tile = ((k % w) + w) % w;
+    let slot = tile.x + w.x * tile.y;
+    let n = COLUMN_BLOCKS * COLUMN_BLOCKS;
+    let local = b - k * per;
+    let lin = select(w.x * w.y * n + slot, slot * n + local.x + COLUMN_BLOCKS * local.y, per > 1);
+    let width = w.x * COLUMN_CELLS;
+    let top = textureLoad(column_map, vec2<i32>(lin % width, w.y * COLUMN_CELLS + lin / width), 0).x;
     return select(f32(top) + 1.0, -1.0e9, top == COLUMN_NONE_I);
 }
 

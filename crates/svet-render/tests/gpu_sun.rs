@@ -561,7 +561,10 @@ fn the_column_map_is_the_top_of_solid() {
     let side = 3 * svet_render::COLUMN_CELLS;
     let read = |gpu: &GpuWorld| svet_render::debug::read_r32i(&device, &queue, gpu.column_map());
     let map = read(&gpu);
-    assert_eq!(map.len(), (side * side) as usize);
+    assert!(
+        map.len() >= (side * side) as usize,
+        "the map's rows, then its coarse levels'"
+    );
     let mut checked = [0u32; 3];
     for j in 0..side {
         for i in 0..side {
@@ -653,42 +656,34 @@ fn the_column_coarse_levels_are_the_maps_maximum() {
         queue.submit([enc.finish()]);
     };
     let check = |gpu: &GpuWorld, when: &str| -> i32 {
-        let read = |t: &wgpu::Texture| svet_render::debug::read_r32i(&device, &queue, t);
-        let [blocks_t, chunks_t] = gpu.column_coarse();
-        let (map, blocks, chunks) = (read(gpu.column_map()), read(blocks_t), read(chunks_t));
-        let tiles = [chunks_t.width() as i32, chunks_t.height() as i32];
+        let map = svet_render::debug::read_r32i(&device, &queue, gpu.column_map());
+        let tiles = gpu.column_tiles();
         let (b, e, cells) = (
             svet_render::COLUMN_BLOCKS,
             svet_render::COLUMN_BLOCK,
             svet_render::COLUMN_CELLS,
         );
-        for ty in 0..tiles[1] * b {
-            for tx in 0..tiles[0] * b {
-                let want = (0..e * e)
-                    .map(|j| {
-                        let (x, y) = (tx * e + j % e, ty * e + j / e);
-                        map[(y * tiles[0] * cells + x) as usize]
-                    })
-                    .max()
-                    .expect("cells");
-                let got = blocks[(ty * tiles[0] * b + tx) as usize];
-                assert_eq!(got, want, "{when}: block texel {tx} {ty}");
-            }
-        }
+        let w = tiles[0] * cells;
+        let at = |t: [u32; 2]| map[(t[1] as i32 * w + t[0] as i32) as usize];
+        let mut top = svet_render::COLUMN_NONE;
         for ty in 0..tiles[1] {
             for tx in 0..tiles[0] {
-                let want = (0..b * b)
-                    .map(|j| blocks[((ty * b + j / b) * tiles[0] * b + tx * b + j % b) as usize])
-                    .max()
-                    .expect("blocks");
-                assert_eq!(
-                    chunks[(ty * tiles[0] + tx) as usize],
-                    want,
-                    "{when}: chunk {tx} {ty}"
-                );
+                let slot = tx + tiles[0] * ty;
+                let coarse = |j| at(svet_render::column_coarse_texel(tiles, slot, j));
+                let mut tile_max = svet_render::COLUMN_NONE;
+                for j in 0..b * b {
+                    let (bx, by) = (tx * b + j % b, ty * b + j / b);
+                    let want = (0..e * e)
+                        .map(|i| map[((by * e + i / e) * w + bx * e + i % e) as usize])
+                        .max()
+                        .expect("cells");
+                    assert_eq!(coarse(j), want, "{when}: tile {tx} {ty} block {j}");
+                    tile_max = tile_max.max(want);
+                }
+                assert_eq!(coarse(b * b), tile_max, "{when}: tile {tx} {ty}");
+                top = top.max(tile_max);
             }
         }
-        let top = chunks.iter().copied().max().expect("tiles");
         assert_eq!(
             gpu.column_top_max(),
             top,
@@ -719,7 +714,11 @@ fn the_column_coarse_levels_are_the_maps_maximum() {
         ))
         .expect("the stamp");
     sync(&mut gpu);
-    assert_eq!(check(&gpu, "the stamp"), 151, "the stamp tops the window");
+    assert_eq!(
+        check(&gpu, "the stamp"),
+        150,
+        "the stamp (voxel z 150) tops the window"
+    );
     gpu.set_focus(VoxelCoord([300, 280, 64]));
     for i in 0..4 {
         sync(&mut gpu);

@@ -13,10 +13,11 @@
 //! wrapped by the window size, so a moving window reuses the tiles of the columns it leaves;
 //! a tile whose wrapped slot now names another column is written again at the next flush.
 //!
-//! Beside the map, written with each tile (Plan 0100 Phase 5b, `KeyHorizon::Walk`): the
-//! largest top of each [`COLUMN_BLOCK`] x [`COLUMN_BLOCK`] map cells ([`COLUMN_BLOCKS`]^2
-//! texels a tile, the block map) and of each tile (one texel, the chunk map), addressed by the
-//! same wrapped tile coordinate, and the window's highest top (the largest chunk texel).
+//! Below the map, in rows of the same texture (a binding of its own would pass the light
+//! passes' 16 sampled textures), written with each tile (`KeyHorizon::Walk`): the coarse
+//! levels, the largest top of each [`COLUMN_BLOCK`] x [`COLUMN_BLOCK`] map cells
+//! ([`COLUMN_BLOCKS`]^2 texels a tile) and of each tile (one texel), placed by
+//! [`column_coarse_texel`]; and on the CPU the window's highest top (the largest tile texel).
 
 use std::collections::{HashMap, HashSet};
 
@@ -39,14 +40,37 @@ const SHEET_NONE: u8 = 0xFF;
 /// A chunk's sheet: per cell, x fastest, the highest opaque voxel's local `z`.
 type Sheet = Box<[u8; SHEET_CELLS]>;
 
+/// Texels of the coarse levels a tile: its blocks, then the tile's own.
+const COARSE_TEXELS: i32 = COLUMN_BLOCKS * COLUMN_BLOCKS + 1;
+
+/// The texel of the column map's texture (x, y) that holds coarse texel `j` of tile slot `slot`
+/// (`x + W_x y` of the tile's wrapped coordinate) for a window of `tiles` chunks along x and
+/// y: `j` below [`COLUMN_BLOCKS`]^2 is block `j` (x fastest) at linear index
+/// `slot COLUMN_BLOCKS^2 + j`, and `j` = `COLUMN_BLOCKS^2` the tile's own after every block, at
+/// `W_x W_y COLUMN_BLOCKS^2 + slot`; the linear index runs along rows of the map's width from
+/// the first row under the map. A tile's blocks share one row (the width is a multiple of
+/// `COLUMN_BLOCKS^2`).
+pub fn column_coarse_texel(tiles: [i32; 2], slot: i32, j: i32) -> [u32; 2] {
+    let per = COLUMN_BLOCKS * COLUMN_BLOCKS;
+    let lin = if j < per {
+        slot * per + j
+    } else {
+        tiles[0] * tiles[1] * per + slot
+    };
+    let w = tiles[0] * COLUMN_CELLS;
+    [(lin % w) as u32, (tiles[1] * COLUMN_CELLS + lin / w) as u32]
+}
+
+/// The rows under the map that hold the coarse levels of a window `tiles` chunks wide in x and y.
+fn coarse_rows(tiles: [i32; 2]) -> i32 {
+    let w = tiles[0] * COLUMN_CELLS;
+    (tiles[0] * tiles[1] * COARSE_TEXELS + w - 1) / w
+}
+
 pub(super) struct ColumnMap {
     texture: wgpu::Texture,
-    /// The block map, `(W_x COLUMN_BLOCKS) x (W_y COLUMN_BLOCKS)` texels.
-    blocks: wgpu::Texture,
-    /// The chunk map, `W_x x W_y` texels.
-    chunks: wgpu::Texture,
-    /// Per tile slot, the chunk texel written there (0, as the zeroed textures read, before
-    /// its first write).
+    /// Per tile slot, the tile's coarse texel as written (0, as the zeroed texture reads,
+    /// before its first write).
     slot_tops: Vec<i32>,
     /// The window's size in chunks along x and y: the tiles per axis.
     tiles: [i32; 2],
@@ -63,28 +87,24 @@ pub(super) struct ColumnMap {
 impl ColumnMap {
     pub(super) fn new(device: &wgpu::Device, window_size: [i32; 3]) -> Self {
         let tiles = [window_size[0].max(1), window_size[1].max(1)];
-        let make = |label, per: i32| {
-            device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d {
-                    width: (tiles[0] * per) as u32,
-                    height: (tiles[1] * per) as u32,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::R32Sint,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::COPY_DST
-                    | wgpu::TextureUsages::COPY_SRC,
-                view_formats: &[],
-            })
-        };
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("column map"),
+            size: wgpu::Extent3d {
+                width: (tiles[0] * COLUMN_CELLS) as u32,
+                height: (tiles[1] * COLUMN_CELLS + coarse_rows(tiles)) as u32,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R32Sint,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
         Self {
-            texture: make("column map", COLUMN_CELLS),
-            blocks: make("column block map", COLUMN_BLOCKS),
-            chunks: make("column chunk map", 1),
+            texture,
             slot_tops: vec![0; (tiles[0] * tiles[1]) as usize],
             tiles,
             sheets: HashMap::new(),
@@ -98,9 +118,9 @@ impl ColumnMap {
         &self.texture
     }
 
-    /// The block map and the chunk map.
-    pub(super) fn coarse(&self) -> [&wgpu::Texture; 2] {
-        [&self.blocks, &self.chunks]
+    /// The window's size in chunks along x and y.
+    pub(super) fn tiles(&self) -> [i32; 2] {
+        self.tiles
     }
 
     /// The window's highest top as the maps hold it: the largest chunk texel.
@@ -108,14 +128,14 @@ impl ColumnMap {
         self.slot_tops.iter().copied().max().unwrap_or(COLUMN_NONE)
     }
 
-    /// The texture's bytes.
+    /// The texture's bytes, the coarse levels' rows included.
     pub(super) fn bytes(&self) -> u64 {
-        texture_bytes(&self.texture)
+        u64::from(self.texture.width()) * u64::from(self.texture.height()) * 4
     }
 
-    /// The block map's and the chunk map's bytes.
+    /// The bytes of the rows that hold the coarse levels.
     pub(super) fn coarse_bytes(&self) -> u64 {
-        texture_bytes(&self.blocks) + texture_bytes(&self.chunks)
+        u64::from(self.texture.width()) * coarse_rows(self.tiles) as u64 * 4
     }
 
     /// Sets `coord`'s sheet from its bricks: `bricks(i)` is brick `i` (x + 8 y + 64 z) of a
@@ -198,12 +218,20 @@ impl ColumnMap {
             tile_of(&self.sheets, c, z_range.clone(), &mut texels);
             let s = self.slot(c);
             self.held[s] = Some(c);
-            let tile = [0, 1].map(|k| c[k].rem_euclid(t[k]));
+            let tile = [0, 1].map(|k| (c[k].rem_euclid(t[k]) * COLUMN_CELLS) as u32);
             let (blocks, top) = coarse_of(&texels);
             self.slot_tops[s] = top;
-            write_tile(queue, &self.texture, tile, COLUMN_CELLS, &texels);
-            write_tile(queue, &self.blocks, tile, COLUMN_BLOCKS, &blocks);
-            write_tile(queue, &self.chunks, tile, 1, &[top]);
+            let per = COLUMN_CELLS as u32;
+            write_texels(queue, &self.texture, tile, [per, per], &texels);
+            let at = |j| column_coarse_texel(t, s as i32, j);
+            write_texels(
+                queue,
+                &self.texture,
+                at(0),
+                [blocks.len() as u32, 1],
+                &blocks,
+            );
+            write_texels(queue, &self.texture, at(COARSE_TEXELS - 1), [1, 1], &[top]);
             n += 1;
         }
         self.tiles_written += n as u64;
@@ -216,16 +244,12 @@ impl ColumnMap {
     }
 }
 
-fn texture_bytes(t: &wgpu::Texture) -> u64 {
-    u64::from(t.width()) * u64::from(t.height()) * 4
-}
-
-/// Writes `texels` (`per` x `per`, x fastest) at tile slot `tile` of `texture`.
-fn write_tile(
+/// Writes `texels` (`size` texels, x fastest) at texel `origin` of `texture`.
+fn write_texels(
     queue: &wgpu::Queue,
     texture: &wgpu::Texture,
-    tile: [i32; 2],
-    per: i32,
+    origin: [u32; 2],
+    size: [u32; 2],
     texels: &[i32],
 ) {
     queue.write_texture(
@@ -233,8 +257,8 @@ fn write_tile(
             texture,
             mip_level: 0,
             origin: wgpu::Origin3d {
-                x: (tile[0] * per) as u32,
-                y: (tile[1] * per) as u32,
+                x: origin[0],
+                y: origin[1],
                 z: 0,
             },
             aspect: wgpu::TextureAspect::All,
@@ -242,12 +266,12 @@ fn write_tile(
         bytemuck::cast_slice(texels),
         wgpu::TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some((per * 4) as u32),
-            rows_per_image: Some(per as u32),
+            bytes_per_row: Some(size[0] * 4),
+            rows_per_image: Some(size[1]),
         },
         wgpu::Extent3d {
-            width: per as u32,
-            height: per as u32,
+            width: size[0],
+            height: size[1],
             depth_or_array_layers: 1,
         },
     );
@@ -562,6 +586,31 @@ mod tests {
         }
         assert_eq!(blocks[3], COLUMN_NONE, "a block of none");
         assert_eq!(top, 23 * 7 + 31 * 3 - 50);
+    }
+
+    /// The coarse texels of every tile slot land on distinct texels under the map, a tile's
+    /// blocks on one row, all inside the texture's rows.
+    #[test]
+    fn the_coarse_texels_fit_under_the_map() {
+        for tiles in [[1, 1], [3, 3], [39, 39], [51, 51], [5, 2]] {
+            let h = tiles[1] * COLUMN_CELLS + coarse_rows(tiles);
+            let mut seen = HashSet::new();
+            for slot in 0..tiles[0] * tiles[1] {
+                let first = column_coarse_texel(tiles, slot, 0);
+                for j in 0..COARSE_TEXELS {
+                    let t = column_coarse_texel(tiles, slot, j);
+                    assert!(
+                        t[0] < (tiles[0] * COLUMN_CELLS) as u32,
+                        "{tiles:?} {slot} {j}"
+                    );
+                    assert!((tiles[1] * COLUMN_CELLS) as u32 <= t[1] && t[1] < h as u32);
+                    if j < COARSE_TEXELS - 1 {
+                        assert_eq!(t, [first[0] + j as u32, first[1]], "{tiles:?} {slot} {j}");
+                    }
+                    assert!(seen.insert(t), "{tiles:?} {slot} {j} twice");
+                }
+            }
+        }
     }
 
     /// The streamed window's first flush computes every column's tile (the defaults' side is
