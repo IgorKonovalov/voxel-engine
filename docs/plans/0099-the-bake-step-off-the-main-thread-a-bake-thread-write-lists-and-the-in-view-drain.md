@@ -678,7 +678,7 @@ Readings, gate counts and attempts: [`logs/0099.md`](logs/0099.md).
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: the step's split on the line, the base readings | dev | done; render p50 0.690 ms on the quiet RTX forest (the stop did not fire); the drained rig reaches 0 in view waiting on both adapters; RENOIR drained A's ring 1 lands D+3 or D+4 for digs 2 and 3 (reported); most readings loaded, quiet re-reads owed (log) | committed with this row |
-| 2: the queue in two halves, in lockstep | dev | not started | |
+| 2: the queue in two halves, in lockstep | dev | in progress: write lists, the fade clock and the mirror's shadow landed (done-whens 1, 3, 4, 5, 8, 9); the submit's stamp, the prepared submit and (6), (7), (10) left (log, resume notes) | `39ef163b` (wip) |
 | 3: the bake half on its own thread | dev | not started | |
 | 4: the bake thread keeps the slice fed | dev | not started | |
 | 5: the owner's window | human | not started | |
