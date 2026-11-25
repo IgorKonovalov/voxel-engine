@@ -564,7 +564,7 @@ says otherwise; 3, 4 and 5, the recommended options.
 | 4: The coarse tier held still | dev | not built: Phase 3's stop rule (the pose does not hold the fault) | |
 | 5: Sun under cover, the candidates read | dev | read; the stop rule fires (the horizon reads 1 where the reference reads under 0.5 on more faces than the ramp holds: W1's pose 1 054 against 480, the slot 146 against 62; W3's 5 against 63); readings in [`logs/0100.md`](logs/0100.md) | committed with this row |
 | 5b: The horizon walked whole, the lift's hole read | dev | step 1 read (CPU); neither stop rule fires (the levelled walk's lit reads at most 3.25 times `march`'s, w3; both lift rows read new dark at the terraces); the contact rows are question 7's figures; readings in [`logs/0100.md`](logs/0100.md); step 2 built (`lighting.key_horizon march|walk`, the three-level walk, the coarse levels in rows under the column map): the shader's `walk` is the CPU's within 2/255 on 100 % of lighting pixels at slot and w3, 99.29 % at w1 (the march's mismatch kind again, 1 404 px); RENOIR temporal +0.10 to +0.16 ms; readings in [`logs/0100.md`](logs/0100.md) | committed with this row |
-| 6: Sun under cover, the arms | dev | not started | |
+| 6: Sun under cover, the arms | dev | built (`lighting.key_cover off\|ray\|record\|ray-record`, defaults unchanged: the golden binaries 66 of 66; the settings-rows walk reads it live at `ray-record`); read at Phase 5's three poses under `march` and `walk` off the rendered frames, still and after a turn, the record's landing, the pass times; readings in [`logs/0100.md`](logs/0100.md) | `3221f224`, the readings with this row |
 | 7: The window rehearsed headless | dev | not started | |
 | 8: The owner's window | human | not started | |
 | 9: The picks become the defaults | dev | not started | |
@@ -635,6 +635,26 @@ each. Empty is fine.)_
   each candidate.
 - Phase 5: the landing of the key words is the rig's frames with the queue stepped every frame,
   in wall seconds, not the fly-through's drain.
+- Merge of main (`a37265a3`): `023bb342`, no conflicts; `hud_live_tests.rs`'s `hold` gained
+  `key_at` and `key_horizon` (`3b33279c`); both rows live in the settings-rows walk.
+- Phase 6: also outside the list: `shaders/key_horizon.wgsl` (new: the horizon's functions out
+  of `pair.wgsl`, composed into the light pass too), `shaders/common.wgsl` (`KEY_COVER`),
+  `frame/{compose,pipelines,mod}.rs`, `lib.rs`, `apps/flythrough/src/{inert.rs,cli/mod.rs,
+  run/hud_live_tests.rs,toggles/cycle.rs}`, `apps/flythrough/tests/gpu_wobble{.rs,/cover.rs,
+  /cover_arms.rs}`, both settings test files.
+- Phase 6: the near ray starts 0.01 voxel off the face's centre, not at `shadow_origin`'s half
+  voxel (which lit the slot's stepped wall the reference holds dark).
+- Phase 6: the near cover value reaches the temporal pass through the light pass's rgba8unorm
+  sample, so it is quantized to 1/255.
+- Phase 6: `lighting.key_cover`'s test value is `ray-record`, not the next value `ray`: `ray`
+  read 0 px in the settings-rows walk's 128 x 72 image (every face there past the far
+  normal's half).
+- Phase 6: the leak is read off the frames as the amendment says; "steady" is read on an edge
+  class of the arm's own patch, against `off` and `light history on` on the same pixels, not
+  through the wobble rig and not against `calm,native`; "after a turn" does not split the
+  upscaler's change from the key's.
+- Phase 6: "present at a distance" is the rig's fresh start under `record` (wall seconds,
+  loaded), not the fly-through's drain, on the RTX only.
 
 ### Close triggers
 
