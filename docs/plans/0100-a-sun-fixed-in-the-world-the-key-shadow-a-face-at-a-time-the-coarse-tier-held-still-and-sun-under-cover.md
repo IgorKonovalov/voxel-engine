@@ -566,8 +566,10 @@ says otherwise; 3, 4 and 5, the recommended options.
 | 5b: The horizon walked whole, the lift's hole read | dev | step 1 read (CPU); neither stop rule fires (the levelled walk's lit reads at most 3.25 times `march`'s, w3; both lift rows read new dark at the terraces); the contact rows are question 7's figures; readings in [`logs/0100.md`](logs/0100.md); step 2 built (`lighting.key_horizon march|walk`, the three-level walk, the coarse levels in rows under the column map): the shader's `walk` is the CPU's within 2/255 on 100 % of lighting pixels at slot and w3, 99.29 % at w1 (the march's mismatch kind again, 1 404 px); RENOIR temporal +0.10 to +0.16 ms; readings in [`logs/0100.md`](logs/0100.md) | committed with this row |
 | 6: Sun under cover, the arms | dev | built (`lighting.key_cover off\|ray\|record\|ray-record`, defaults unchanged: the golden binaries 66 of 66; the settings-rows walk reads it live at `ray-record`); read at Phase 5's three poses under `march` and `walk` off the rendered frames, still and after a turn, the record's landing, the pass times; readings in [`logs/0100.md`](logs/0100.md) | `3221f224`, the readings with this row |
 | 7: The window rehearsed headless | dev | done: `live/session100.sh` (untracked draft, 17 launches) rehearsed on the RTX and the RENOIR off `live/bin7/flythrough` (`b36a5232`); no loud line on the final sheets; every launch at least 36 fps headless on its adapter; 1b moved to 1280 x 720, 3c and 4d dropped; readings in [`logs/0100.md`](logs/0100.md) | `b36a5232` (`--eye`), the readings committed with this row |
-| 8: The owner's window | human | not started | |
-| 9: The picks become the defaults | dev | not started | |
+| 8: The owner's window | human | ran 2026-11-25: no pick on the terraces, the trunks closed with no change, `ray-record` rejected, the rest in "Amended 2026-11-25 (architect, after the window)"; verdicts in [`logs/0100.md`](logs/0100.md) | |
+| 8b: The wobble in the owner's move, split by stage | dev | not started | |
+| 8c: The slot's blink, a reading | dev | not started | |
+| 9: The close on what the window picked (rewritten) | dev | not started; waits for question 8 and ADR-0084's rewrite | |
 
 ### Notes
 
@@ -933,3 +935,271 @@ What should close it?
     the slot and the terraces beside it, picked there by eye. Not (a). A stable image is the
     first priority, the missing shadow is steady, and (b)'s edges are not yet.
   - **Before he answers** the lane builds Phase 5b's steps 1 and 2 and Phase 6; step 3 waits.
+
+## Amended 2026-11-25 (architect, after the window)
+
+Phase 8 ran. **The wobble this plan was written to remove is still there, and no arm of this
+plan removes it.** The plan stops building variants: two readings with no production code
+(Phases 8b and 8c), then a close on what the window picked (Phase 9, rewritten below). The
+wobble and the missing near shadow go to a follow-on plan the architect drafts from Phase
+8b's table. The owner's words, verbatim, and the code reading behind every line here are in
+[`logs/0100.md`](logs/0100.md), "Phase 8: The owner's window" and "The architect's code
+reading after the window". Nothing was run for this amendment.
+
+### What the window said, by subject
+
+| subject | the owner | what follows |
+|---|---|---|
+| 1. noon terraces | the defaults "little wobble"; no upscaler "more wobble on the trees and terrase"; `key horizon walk` "wobble" | no pick. The upscaler is not the cause. To the follow-on plan, by question 4's answer |
+| 2. near trunks, fresh start | "no wobble on slop" | closed with no change: Phase 3 read none either; no arm exists. The landings are Plan 0099's |
+| 3. sun under the canopy | `off`: "the wobble is located only on sunned parts"; `ray`: "less wobble, almost none on slopes, some on trees", and "3b was the best"; `record`: "sun spots looks nice, a bit squary but I guess fine for now"; `ray-record`: "not acceptable, big change in sun spots when I come near" | `ray-record` rejected. Between `ray`, `record` and `off` his two records differ: question 8 |
+| 4. the tunnel's slot | "blinking on all 3. shadow missing. I guesss 4a was best" | not this plan's fault (below); Phase 8c reads it; question 9 |
+| 5. the RENOIR at Portable | `record`: "when I move image was better"; "i believe last one is the best, however wobble is hard" | "the last one" is not resolved: question 10 |
+
+A new rule (owner): **never hold the camera in a window run.** `--pre-roll-drain` at a launch
+is out of every runner.
+
+### Findings
+
+- **Why only the sunlit parts (established from the code).** The sun's term is the one light
+  term in the default frame that is hard-edged and large: `max(n.l, 0)` by the face's own
+  normal near (a step at every edge between two faces) times a visibility that is 0 or 1 but
+  for the disc's ramp, read at a point lifted along that face's normal (so two faces of one
+  step read it 3.5 voxels apart). It is evaluated once for each 2 x 2 internal pixels, at a
+  hit the jitter moves at rest and the camera moves in flight, then spread by the filter and
+  by an upsample that falls back to the nearest tap's light when no tap shares the face. On a
+  face the sun does not reach the visibility is 0 at every sample: the same stages run and
+  have no edge to misplace.
+- **Why worse with no upscaler (established as a mechanism, its size unread).** With no
+  jitter a still frame cannot change, and the owner never held still. In motion the camera
+  moves every hit across those edges and nothing accumulates; an edge of the sun's term
+  advances a lighting pixel at a time. FSR 2 is the frame's only antialiasing and hides part
+  of it. Also, **run 1b was not a like-for-like reference:** the window is 2530 x 1378 (1687
+  x 919 internal under FSR 2), and 1b drew 1280 x 720 into it, 58 % of 1a's internal pixels.
+- **The half-rate grid is not most of it at rest.** Phase 1b's ceiling arm (every light term
+  at the internal rate, unfiltered) left 51 % of the moved display pixels at W2's pose and 92
+  % at the terraces eye; under `centre` 97 to 99 % of the key's moves were a hit that changed
+  face. What remains is the hard sun term itself under the jitter. Phase 1's amendment named
+  the right mechanism and the wrong remedy: no point the horizon is read at removes a hit
+  that lands on another face. **In motion no reading exists**: the rig's fly figures hold the
+  picture's true motion. This is the gap Phase 8b closes.
+- **The picture on a stepped slope is wrong where it holds still.** Phase 5b: at the terraces
+  eye the horizon lights 16.4 % of the key-lit pixels where the reference reads shadow (a
+  caster within the 2.5-voxel lift). The owner's "shadow missing" at the slot is that hole.
+- **Why `ray` read calmer is not established.** By the code it can only calm faces the
+  horizon part-shadows and a ray from the face's centre lights (the march's speckle under a
+  canopy, the ramp). The runs were not blind and no reading has it.
+- **The slot's blinking is not this plan's.** `off` is main's picture to the byte (no default
+  moved in any phase). The owner saw a blinking wall in this tunnel at window 97b and at Plan
+  0098's W1. The code offers three sources under `off` (the sun term at the own-cell rule's
+  edge across the mouth's faces; the sky term's source switching while blocks land; the
+  exposure metering a frame half tunnel, half sunlit cut) and does not choose between them.
+- **Every reading of this plan ran at 1920 x 1080.** The owner's window is 1.32 times that on
+  each edge; the far normal's band sits 1.32 times farther off there.
+
+### Rulings
+
+- **`ray-record` is withdrawn** (the owner: "not acceptable"): the value, its band blend and
+  its rows leave in Phase 9, unless question 10's answer is (a), in which case it stays a
+  setting, off, never a default.
+- **`ray` and `record` stay** as values of `lighting.key_cover`; the default is question 8's.
+- **`key horizon walk` stays a setting, default `march`.** It is not inert (3.4 % of the
+  canopy's pixels, 0.35 % of the terraces'), it is the form that reads every cell (W1's breaks
+  990 to 252 faces), and the owner's "1c wobbles" does not rank it under 1a ("little wobble"
+  against "wobble", one launch each). It is not offered again as a remedy for the wobble. Its
+  cost when off (the coarse rows' bytes and upload) stays; Phase 7 read it at +1.41 ms of
+  temporal pass on the RENOIR at the terraces eye, so no profile takes it without a reading.
+- **`key at`:** `centre` is withdrawn (it moved 70 and 93 % more display pixels than `hit` on
+  this plan's own bar and was never shown); `face` and `face-smooth` stay settings, default
+  `hit`, not offered again for the wobble.
+- **`coarse hold` is not built**; Phase 4 is dropped.
+- **`penumbra approach` under `key far column` (the wiring fault).** `key_from_store`
+  (`shade.wgsl`) excludes the approach penumbra from its no-history clause, so under the calm
+  defaults a near face casts the per-pixel approach ray at the hit (5.2 ms of light pass at
+  the canopy eye, 5.5 % of its pixels), `key_cover_near`'s approach branch is never reached,
+  and `inert.rs` calls the row inert, which holds only in the walk's fixture, where every face
+  is far. Ruled: **under `key far column` no key ray is cast at a cube face for the penumbra;
+  `approach` scores the cover ray where one is cast and changes nothing else.** That is what
+  the menu already says, and what the owner picked at Plan 0098's W1 (one source at every
+  distance over a true ray near). Rejected: keeping the near approach ray and correcting the
+  table to "live near". The other key far modes are untouched.
+- **`the_column_map_is_the_top_of_solid`'s length check** returns to an equality: the map's
+  texels plus the coarse rows', computed from the layout's own functions, not "at least".
+- **ADR-0084 stays proposed and is rewritten by the architect at question 8's answer**, before
+  Phase 9 starts. What stands: a cover source only adds; the bake's key ray takes the column
+  clause (Phase 2, landed); the walk as a form of the horizon; the penumbra's ruling above.
+  What falls: the face's centre as the horizon's point, and the ray near with the record far.
+- **Questions 6 and 7.** Question 6 is withdrawn: (a) and (b) needed the ceiling arm to pass
+  and it did not, (c) is what the window did, and its "naming FSR 2's resolve" is wrong (the
+  picture is worse without FSR 2). Question 7 is folded into the follow-on plan: the owner has
+  now seen the missing shadow, so its contact ray is an arm there, read beside the wobble it
+  may add, not a question here.
+
+### Phase 8b: The wobble in the owner's move, split by stage (exploration, a reading)
+- **Owner skill:** dev
+- **What:** No production code. The wobble rig, in the owner's move and at his window's size,
+  with a measure that sees a flicker and not the picture's motion.
+  - **The move:** the fly-through's unshifted fly speed forward for 5 s, a stop held 5 s, a
+    turn of 60 degrees, held 5 s (frame counts scaled if the dev says by how much). Segments
+    read apart: flying, the first 30 frames after the stop, held, turning, held after.
+  - **The size:** 2530 x 1378 out under FSR 2 at 1.5 (the rig gains a size token); the RTX.
+  - **The poses:** the terraces eye (x 496.0 y -648.7 z 456.7, yaw 34.5, pitch -46.2, 12:00);
+    the canopy eye (x -9.5 y 915.1 z 595.8, yaw 90.0, pitch -31.8, 15:00, trees forest); the
+    still's pose (x -414.7 y 1036.3 z 520.0, 15:00, trees forest, the view set to match the
+    owner's still of the sun patch between two trunks, the angles recorded).
+  - **The measure:** a display pixel **reverses** at frame t if its luma moved by over 4
+    levels from t-1 to t and by over 4 the other way from t to t+1. The share of a class that
+    reverses, a frame, mean and largest over a segment. Classes from the middle frame's
+    lighting pixel: sunlit (the key light falls on the face and its key value is at least
+    0.5), shadowed (it falls and the value is under 0.5), turned away; each split by ground,
+    trunk and leaf (the hit's material) and by the far normal's weight 0, between, 1.
+  - **It first shows the fault, in the owner's three orderings**, under `calm`: the sunlit
+    class reverses more than the shadowed one at each pose; at the terraces `calm,native`
+    reverses at least as much as `calm` while flying (read at 1687 x 919 and at 1280 x 720,
+    apart); at the canopy `calm,keycover=ray` reverses less than `calm` on sunlit ground.
+  - **Then one row a stage**, each against `calm`: `keyoff` (no sun: the floor for anything
+    done to the sun's term); `albedo` (geometry alone); the far normal's band widened until
+    its weight is 1 at every hit (the cosine by the smooth normal); `full`; `full,nofilter`;
+    `nofilter`; `wnormal`; `keyhorizon=walk`; `keycover=ray`; `keycover=record` (at the still's
+    pose also flown toward the patch from 20 m, the record's own change on approach).
+- **Files touched:** `apps/flythrough/tests/gpu_wobble.rs` (the size token),
+  `apps/flythrough/tests/gpu_wobble/` (a sibling `mod reading`),
+  `apps/flythrough/tests/support/defects.rs`, `docs/plans/logs/0100.md`.
+- **Done when:** the log holds the table (pose, row, segment, class: the share reversing),
+  the three orderings each marked shown or not, a still of each pose under the untracked
+  `live/`, the load beside each run, and one line a row: the share of the gap between `calm`
+  and `keyoff` it closes on the sunlit class, flying and in the first 30 frames after the
+  stop. Then one line naming where the sunlit class's reversals come from in motion: the hard
+  term at the internal rate (`full` closes under half), the half-rate grid (`full` closes
+  half or more), the cosine's step (the widened band does), the horizon's sampling (`walk` or
+  `ray` does), or none of these. **Stop rule:** if the first ordering is not shown (the
+  sunlit class does not reverse more than the shadowed one) at a pose, the measure does not
+  see what the owner saw there; the dev reports the table for that pose and reads no stage
+  rows on it. Readings only, run by filter with `--run-ignored only` under the perf lock;
+  quick tier, clippy, fmt over the changed test files.
+
+### Phase 8c: The slot's blink, a reading (exploration)
+- **Owner skill:** dev
+- **What:** No production code. The slot as the owner had it (`--source outdoor --spawn
+  inside --time 12:00`, the defaults, `key cover off`; the eye Phase 5 recorded), at 2530 x
+  1378, the RTX, **from a fresh start with the queue stepping as the fly-through steps it and
+  no hold**: 60 s of frames at the spawn's view, then Phase 8b's move. An **event** is a
+  connected area of at least 400 display pixels whose mean luma moves by over 8 levels within
+  30 frames; it is a blink if it returns within 120 frames, a step if it does not. Per event:
+  the frame, the area, where on screen, and at its lighting pixels what moved: the key value
+  and its slot's source tag, the sky term's source word and the record's value, whether a
+  block landed or was re-baked in that step, and the frame's exposure against the frame
+  before. The exposure's trace is printed for the whole run. Then the same run under
+  `keycover=ray` and `keycover=record`, events only.
+- **Files touched:** `apps/flythrough/tests/gpu_wobble/` (a sibling `mod reading`),
+  `apps/flythrough/tests/support/defects.rs`, `docs/plans/logs/0100.md`.
+- **Done when:** the log holds the events' table for the three runs, a pair of frames under
+  the untracked `live/` for the largest blink (or the line "no event in 60 s and the move"),
+  and one line naming what blinks under `off`: the sun's term at an edge, the sky term's
+  source, the exposure, or nothing shown headless. **Stop rule:** nothing shown is a result;
+  the dev builds nothing and the fault waits for the owner's answer to question 9 and a still
+  at his next window. Whatever it names, the fix is not this plan's: it goes to the backlog
+  under Plan 0098's leftovers, or to the follow-on plan if it is the sun's term.
+
+### Phase 9, rewritten: The close on what the window picked
+- **Owner skill:** dev
+- **What:** Not exploration. It replaces Phase 9 as first written (its terraces, one-value-a-
+  face and coarse-tier claims are dropped with their subjects). It starts after question 8 is
+  answered and ADR-0084 is rewritten; it does not wait for Phases 8b and 8c.
+  1. **The default** of `lighting.key_cover` by question 8's answer, in `Lighting::default()`
+     and each profile's row; every other setting of this plan keeps its default.
+  2. **Withdrawn:** `KeyCover::RayRecord` (unless question 10 keeps it) with its band blend in
+     `key_cover_near` and `key_cover_far`, its flag value, its inert condition and its menu
+     and banner words; `lighting.key_cover`'s test value in the settings-rows walk becomes
+     `record`. `KeyAt::Centre` with `key_centre_point`, its flag bit, flag value and words.
+  3. **The penumbra's ruling:** under `key far column` `key_from_store`'s no-history clause
+     no longer excludes the approach penumbra; `key_cover_near`'s approach branch is then
+     reached.
+  4. **The length check** of `the_column_map_is_the_top_of_solid` as ruled.
+  5. **The image tests of the picked default only**, the goldens it moves re-blessed on
+     lavapipe, the frame-budget rows if a default moved.
+- **Files touched:** `crates/svet-render/src/shaders/{shade,sky_light,pair,key_horizon,common}.wgsl`,
+  `crates/svet-render/src/frame/{settings,encode,compose}.rs`,
+  `crates/svet-render/src/frame/settings/{sky_light,tests}.rs`,
+  `crates/svet-render/src/{settings,lib}.rs`, `crates/svet-render/src/settings/tests.rs`,
+  `crates/svet-render/tests/gpu_sun/`, `apps/flythrough/src/{inert,toggles}.rs`,
+  `apps/flythrough/src/toggles/cycle.rs`, `apps/flythrough/src/cli/{mod,outdoor}.rs`,
+  `apps/flythrough/src/cli/tests/outdoor.rs`, `apps/flythrough/src/hud/modes.rs`,
+  `apps/flythrough/src/run/hud_live_tests.rs`, `apps/flythrough/tests/{menu,gpu_settings_rows}.rs`,
+  `apps/flythrough/tests/gpu_wobble.rs` and `gpu_wobble/` (the withdrawn tokens),
+  `apps/flythrough/tests/gpu_outdoor_golden.rs` and `golden/` (only if a default moved),
+  `docs/flythrough.md`, `docs/nfr.md` and `docs/nfr/02-frame-budget.md` (only if a default
+  moved), `docs/plans/logs/0100.md`.
+- **Done when:**
+  - **The penumbra under the column** (`gpu_sun`, lavapipe, under 10 s, a guess from its
+    sibling `the_defaults_near_key_shadow_is_the_column_horizon` at 5.5 to 7.0 s): on the
+    slab-edge rig at a near pose (the far normal's weight 0 on the floor), under the defaults
+    the key term with `penumbra approach` equals the one with `disc` at every pixel on frames
+    1, 2 and 3; under `key cover ray` the two differ at some floor pixel under the slab and
+    are equal where the horizon reads 1 (if the rig holds no face the cover ray lights
+    beside the slab's edge, the dev says so and uses the slot rig below). CPU: the inert table's `lighting.penumbra` row holds
+    under `key far column` without a cover ray and is live under `ray`.
+  - **The length check:** the test asserts the read-back length equal to the map's texels
+    plus the coarse rows' by `column_coarse_texel`'s layout, at both window sizes it runs.
+  - **If `ray` is the default** (`gpu_sun`, lavapipe, under 10 s each, guesses): *sun through
+    a slot*, a slab roof with a slot over a floor at a near pose, the sun slanted so the patch
+    lies under the roof's column tops: the floor faces a ray from their centres reaches show a
+    key term over 0 on frame 1 and the same on frames 2 and 3; every other floor face shows
+    the horizon's value; with `key cover off` the patch is 0. *A turn loses nothing*: the
+    frame after a 90-degree turn away and back equals the settled frame's key term at every
+    floor pixel within 1/512. The profile rows are asserted from the profiles.
+  - **If `record` is the default** (the same rig at the far normal's weight 1): the patch is
+    0 before the key words land and over 0 after, reached in one monotonic fade of at most
+    `FADE` frames; a face whose cell holds no fresh word shows the horizon's value.
+  - **If `off` stays:** no image test is added; the golden-holding binaries pass unchanged.
+  - CPU (under 1 s each): `--key-cover` and `--key-at` refuse the withdrawn names; the
+    settings table, the menu's cycle, the banner and `docs/flythrough.md` hold no withdrawn
+    value; `menu.rs` and the CLI tests pin the defaults from the profiles.
+  - Goldens re-blessed on lavapipe only if a default moved, each named in the log with before
+    and after stills under `live/`; then `docs/nfr/02-frame-budget.md` holds the light and
+    temporal rows under the new default, the three scenes, both adapters, machine and commit,
+    against section 2's 4.0 ms.
+  - The gate tier and the whole gpu tier at the tip (lavapipe, exclusive perf lock), the
+    `sole` tests of the changed packages, clippy, fmt, deny, the doc gates. The gate's wall
+    time against section 7's line with the count of tests this plan added to it.
+
+### After Phase 9
+
+The close review runs in a fresh session. The follow-on plan (the sun's term at small faces:
+the wobble in motion, the near shadow's hole, sun under cover near) is drafted by the
+architect from Phase 8b's table, with question 7's contact ray as an arm; its Phase 1 is not
+written before that table exists. Its window launches with the camera free and renders its
+no-upscaler reference at the window's own internal size.
+
+### Questions for the owner
+
+**8. Sun under cover: which becomes the default?** The runner note says "3b was the best"
+(`ray`); the chat says of `record` "sun spots looks nice, a bit squary but I guess fine for
+now"; at the tunnel "I guesss 4a was best" (`off`).
+  - (a) `ray` on Floor, Performance and High; Portable stays `off`. The calmest by the note,
+    and it adds almost no light in true shadow in the forest. Patches exist only within about 6 m, so they appear as the camera
+    comes up to them. +0.55 to +0.78 ms of light pass on the RTX in the forests.
+  - (b) `record` on every profile. Spots at every distance, the same near and far, at no
+    measured cost. 0.8 m squares; they land 13 to 19 s after a fresh start (the rig's time)
+    and fade in; at the tunnel it lights about half of the truly shadowed pixels by over 16
+    levels.
+  - (c) `off` stays the default everywhere; `ray` and `record` stay settings a flag away; sun
+    under cover goes to the follow-on plan with the near shadow.
+  - **Recommended:** (c). No arm held at every subject: at the tunnel `off` was his guess for
+    the best, `ray`'s patches arrive with the camera (the complaint this subject began with),
+    and `record` lights shadow. The follow-on plan reworks the near sun, so a default picked
+    now is re-blessed twice. If sun under the canopy is wanted now, (a).
+
+**9. At the tunnel, "blinking on all 3": what blinked?**
+  - (a) an area of wall or floor going bright and dark again;
+  - (b) the edges and dots of shadows shimmering (the wobble's kind);
+  - (c) the whole picture's brightness;
+  - (d) something that changed once and stayed.
+  - **No recommendation:** it is what he saw. Phase 8c runs whatever the answer; the answer
+    says which of its events is the one.
+
+**10. On the RENOIR, "i believe last one is the best, however wobble is hard": which run?**
+  - (a) 5c, the canopy under `ray-record`;
+  - (b) 5e, the terraces under `key horizon walk` (5d was skipped, so it had no before).
+  - **Recommended reading:** (b), the last launch; then Portable takes nothing from it and
+    `ray-record` is withdrawn. Under (a) `ray-record` stays a setting, off.
