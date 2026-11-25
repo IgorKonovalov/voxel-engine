@@ -691,7 +691,9 @@ impl ExposurePass {
             &wgpu::util::BufferInitDescriptor {
                 label: Some("exposure highlight"),
                 contents: bytemuck::bytes_of(&ExposureHighlight::default()),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
             },
         );
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
@@ -729,6 +731,16 @@ impl ExposurePass {
 
     pub(crate) fn state(&self) -> &wgpu::Buffer {
         &self.state
+    }
+
+    /// Writes a new pass's state, its copy the frame passes read and its highlight state.
+    #[cfg(feature = "test-support")]
+    pub(crate) fn restore_initial(&self, queue: &wgpu::Queue) {
+        let s = ExposureState::initial();
+        queue.write_buffer(&self.state, 0, bytemuck::bytes_of(&s));
+        queue.write_buffer(&self.state_uniform, 0, bytemuck::bytes_of(&s));
+        let h = ExposureHighlight::default();
+        queue.write_buffer(&self.highlight, 0, bytemuck::bytes_of(&h));
     }
 
     pub(crate) fn state_uniform(&self) -> &wgpu::Buffer {

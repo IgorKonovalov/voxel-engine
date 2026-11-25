@@ -34,13 +34,9 @@ fn key_column(s: &RenderSettings) -> bool {
 }
 
 /// With no light history a face's sky term is its record's or the column's: no sky ray shows.
+/// The key far mix changes nothing there either, as the settings-rows walk reads it.
 fn no_light_history(s: &RenderSettings) -> bool {
     !s.lighting.light_history && cubes(s)
-}
-
-/// Only key far baked blends the store's key visibility in the band.
-fn key_not_baked(s: &RenderSettings) -> bool {
-    s.lighting.key_far != KeyFar::Baked && cubes(s)
 }
 
 fn key_ray(s: &mut RenderSettings) {
@@ -51,8 +47,11 @@ fn light_history(s: &mut RenderSettings) {
     s.lighting.light_history = true;
 }
 
-fn key_baked(s: &mut RenderSettings) {
-    s.lighting.key_far = KeyFar::Baked;
+/// The light history with the key ray: where the settings-rows walk reads the sky history
+/// changing the image (under the light history alone it changes too few pixels to count).
+fn key_ray_and_history(s: &mut RenderSettings) {
+    key_ray(s);
+    light_history(s);
 }
 
 /// A row of the key ray's, inert under key far column.
@@ -66,32 +65,28 @@ const fn key(row: &'static str, entry: Option<&'static str>) -> InertRow {
     }
 }
 
-/// A row of the sky rays', inert with no light history.
-const fn sky(row: &'static str, entry: Option<&'static str>) -> InertRow {
+/// A row that acts through the light history alone, inert with none; `live_under` an
+/// arrangement it acts under.
+const fn history(
+    row: &'static str,
+    entry: Option<&'static str>,
+    live_under: fn(&mut RenderSettings),
+) -> InertRow {
     InertRow {
         row,
         entry,
         reason: "light history off",
         holds: no_light_history,
-        live_under: Some(light_history),
+        live_under: Some(live_under),
     }
 }
 
 /// The table: one line per row.
 pub static INERT_WHEN: &[InertRow] = &[
     key("lighting.penumbra", Some("penumbra")),
-    key("lighting.key_cap", None),
-    key("lighting.key_history", None),
-    sky("lighting.sky_rays", Some("sky rays")),
-    sky("lighting.sky_history", None),
-    sky("lighting.sky_down_skip", None),
-    InertRow {
-        row: "lighting.key_far_mix",
-        entry: Some("key far mix"),
-        reason: "key far not baked",
-        holds: key_not_baked,
-        live_under: Some(key_baked),
-    },
+    history("lighting.sky_rays", Some("sky rays"), light_history),
+    history("lighting.sky_history", None, key_ray_and_history),
+    history("lighting.key_far_mix", Some("key far mix"), light_history),
     // Under the auto exposure its preset's own weights meter; under a manual one the meter
     // feeds the exposure readout alone.
     InertRow {

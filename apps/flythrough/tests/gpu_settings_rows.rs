@@ -72,12 +72,29 @@ const INERT: &[(&str, Why)] = &[
     ("lighting.column_wait", Why::Queue),
     ("lighting.dig_hold", Why::Queue),
     (
+        "lighting.key_cap",
+        Why::Absent("a key ray past its test value's 1536 voxels: the world is 128 long"),
+    ),
+    (
+        "lighting.key_history",
+        Why::Absent("frames past its test value's 64: in 8 the key mean counts under 64 samples"),
+    ),
+    (
+        "lighting.sky_down_skip",
+        Why::Open("no pixel under key far ray, key far baked or the light history, or both"),
+    ),
+    ("lighting.entity_light", Why::Absent("an entity in view")),
+    (
         "lighting.candidates",
         Why::Open("no pixel here, under the defaults or with the light history on"),
     ),
     ("lighting.key_step", Why::Queue),
     (
         "look.tuning.face_mix",
+        Why::Absent("the field look, whose mirror holds the field's band slots (a rebuild)"),
+    ),
+    (
+        "field_split",
         Why::Absent("the field look, whose mirror holds the field's band slots (a rebuild)"),
     ),
     ("lod.r_full", Why::Absent("chunks past 16 from the camera")),
@@ -290,9 +307,12 @@ fn new_frame(fx: &mut Fixture, s: &RenderSettings) -> Frame {
     f
 }
 
-/// `FRAMES` frames under `s` from a reset (the history, the exposure, the frame index, and the
-/// lamp channel: a frame with the bounce off over a volume rebuilt at another spacing), the
-/// last one's image.
+/// `FRAMES` frames under `s` from a reset: the frame's temporal state as a new frame holds it
+/// (`Frame::restart_as_new`: the history with the light lists the upscaler's light-change test
+/// reads, the exposure the first frame's passes use, the frame index) and the lamp channel (a
+/// frame with the bounce off over a volume rebuilt at another spacing); the last frame's image.
+/// `Frame::reset_history` and `Frame::reset_exposure` alone are not such a reset: a row's
+/// count would depend on the rows rendered before it.
 fn render(fx: &Fixture, f: &mut Frame, s: &RenderSettings) -> Vec<u8> {
     let mut other = s.clone();
     other.probe_spacing = if s.probe_spacing == 8 { 16 } else { 8 };
@@ -306,9 +326,7 @@ fn render(fx: &Fixture, f: &mut Frame, s: &RenderSettings) -> Vec<u8> {
         &LightParams::headlamp(),
     );
     f.apply_settings(&fx.device, &fx.queue, s);
-    f.reset_history();
-    f.reset_exposure();
-    f.set_frame_index(0);
+    f.restart_as_new(&fx.queue);
     for _ in 0..FRAMES {
         f.step(
             &fx.device,
@@ -336,9 +354,10 @@ fn differing(a: &[u8], b: &[u8]) -> usize {
 /// defaults. A table row with settings it acts under (`live_under`) changes at least
 /// `MIN_PIXELS` pixels there, where its condition does not hold, so the window's mark and
 /// the walk cannot disagree. The defaults' image repeats to the byte from a reset, before and
-/// after the walk, so a difference is the row's.
+/// after the walk, and each `live_under` image after its row's (key far ray, the light
+/// history), so a difference is the row's and not the order of the walk's.
 ///
-/// About 14 s on lavapipe (13.7 s at a load of 5.5), over the 10 s soak line and the gate's only test of the rule, so
+/// About 16 s on lavapipe (16.0 s at a load of 2.5), over the 10 s soak line and the gate's only test of the rule, so
 /// it runs whenever the crate changes rather than in the gate. A new row fails it until it
 /// changes the image here or joins `INERT` with its reason.
 #[test]
@@ -402,15 +421,13 @@ fn every_settings_row_changes_the_image_or_is_listed_inert() {
         live(&mut on);
         assert!(!(r.holds)(&on), "{} holds under its live_under", r.row);
         let s = on.with_test_value(r.row).expect("a test value");
-        // Under these rows the frame keeps state its resets do not clear (the light and key
-        // histories), so both images follow a render under `on`: a difference is the row's,
-        // not the previous render's.
-        render(&fx, &mut f, &on);
         let reference = render(&fx, &mut f, &on);
         let d = differing(&reference, &render(&fx, &mut f, &s));
-        let carried = differing(&reference, &render(&fx, &mut f, &on));
-        println!(
-            "reading: {:32} {d:6} under its live_under ({carried} carried from the row's render)",
+        println!("reading: {:32} {d:6} under its live_under", r.row);
+        assert_eq!(
+            differing(&reference, &render(&fx, &mut f, &on)),
+            0,
+            "{}: the image under its live_under repeats after the row's",
             r.row
         );
         if d < MIN_PIXELS {
