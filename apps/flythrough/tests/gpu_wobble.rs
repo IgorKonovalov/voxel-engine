@@ -22,6 +22,8 @@ mod coarse;
 mod cover;
 #[path = "gpu_wobble/fsr.rs"]
 mod fsr;
+#[path = "gpu_wobble/owner_move.rs"]
+mod owner_move;
 mod support;
 #[path = "gpu_wobble/terraces.rs"]
 mod terraces;
@@ -122,6 +124,9 @@ struct Arm {
     coarse: u32,
     full_first: Option<i32>,
     sky_face: bool,
+    /// Plan 0100 Phase 8b's size token: the output size (`out=WxH`, [`OUT`] by default); the
+    /// internal size is it over the scale.
+    out: [u32; 2],
 }
 
 impl Arm {
@@ -142,7 +147,7 @@ impl Arm {
     /// `hfar` (`light_history_far`); Plan 0098 Phase 9's `hist` (`light_history` on, after
     /// `calm`) and `baked` (`key_far baked`); Plan 0100 Phase 1's `keyat=hit|face|face-smooth`
     /// (`Lighting::key_at`; Phase 1b's `centre`); Plan 0100 Phase 3's `coarse=N`, `ff=N|none` and `skyface`; Phase 5b's
-    /// `keyhorizon=march|walk`; Phase 6's `keycover=off|ray|record|ray-record`.
+    /// `keyhorizon=march|walk`; Phase 6's `keycover=off|ray|record|ray-record`; Phase 8b's `out=WxH`.
     fn parse() -> Self {
         Self::from_spec(&std::env::var("SVET_WOBBLE").unwrap_or_else(|_| "default".into()))
     }
@@ -200,6 +205,7 @@ impl Arm {
             coarse: svet_render::DEFAULT_COARSE_SAMPLES,
             full_first: Some(svet_render::DEFAULT_NEAR),
             sky_face: false,
+            out: OUT,
         };
         for t in spec.split(',') {
             let (k, v) = t.split_once('=').unwrap_or((t, ""));
@@ -278,6 +284,10 @@ impl Arm {
                 "coarse" => a.coarse = v.parse().unwrap(),
                 "ff" => a.full_first = (v != "none").then(|| v.parse().unwrap()),
                 "skyface" => a.sky_face = true,
+                "out" => {
+                    let (w, h) = v.split_once('x').expect("out=WxH");
+                    a.out = [w.parse().unwrap(), h.parse().unwrap()];
+                }
                 other => panic!("unknown arm token {other}"),
             }
         }
@@ -313,13 +323,13 @@ fn forest_rig(r: i32) -> Option<(Rig, Camera)> {
 
 fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
     let internal = if arm.upscaler == "off" {
-        OUT
-    } else if arm.scale == 1.5 {
+        arm.out
+    } else if arm.scale == 1.5 && arm.out == OUT {
         INTERNAL
     } else {
-        OUT.map(|n| (n as f32 / arm.scale).round() as u32)
+        arm.out.map(|n| (n as f32 / arm.scale).round() as u32)
     };
-    let mut f = Frame::with_sizes(&rig.device, internal, OUT);
+    let mut f = Frame::with_sizes(&rig.device, internal, arm.out);
     match arm.upscaler {
         "fsr2" => f.set_upscaler_kind(
             &rig.device,
