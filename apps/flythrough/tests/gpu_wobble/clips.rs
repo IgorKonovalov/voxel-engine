@@ -16,9 +16,9 @@
 //! not); a stop held 3 s; a turn of 60 degrees over 40 frames; held 3 s. The frame step is 1/55 s.
 //!
 //! `SVET_CLIP=<subject>:<arm>[:<stem>]`: subject `T` (the terraces eye), `C` (the canopy start
-//! [`CANOPY_START`]) or `S` (the tunnel's slot); arm `default`, `native` (`T` only: the upscaler
-//! off at 1280 x 720, stretched to the window by the present's bilinear blit) or `ray` (`C`
-//! only: `--key-cover ray`); `stem` the output under `live/anchor/` (the subject and arm when
+//! [`CANOPY_START`]) or `S` (the tunnel's slot); arm `default`, `native` (`T` and `S` only: the
+//! upscaler off at [`native_size`], stretched to the window by the present's bilinear blit) or
+//! `ray` (`C` only: `--key-cover ray`); `stem` the output under `live/anchor/` (the subject and arm when
 //! not given). Frames stream to `ffmpeg` (`libx264rgb -qp 0`, Matroska) as `<stem>.mkv`; beside
 //! it `<stem>.txt` (a frame a line: eye, yaw, pitch, exposure, the queue's chunks baked so far
 //! and blocks fading), frame 1 as `<stem>-f1.png` and raw `<stem>-f1.rgb`. `SVET_CLIP=search` picks the canopy start (see [`search`]).
@@ -67,6 +67,7 @@ fn window_flags(subject: &str, arm: &str) -> Vec<&'static str> {
     match (subject, arm) {
         (_, "default") => {}
         ("T", "native") => v.extend(["--upscaler", "off", "--render", "1280x720"]),
+        ("S", "native") => v.extend(["--upscaler", "off", "--render", "1687x919"]),
         ("C", "ray") => v.extend(["--key-cover", "ray"]),
         _ => panic!("arm {arm} is not one of subject {subject}'s"),
     }
@@ -277,11 +278,23 @@ fn shares(rig: &Rig, f: &Frame, cam: &Camera, arm: &Arm, internal: [u32; 2]) -> 
     ]
 }
 
+/// The `native` arm's internal size: `T`'s 1280 x 720 (Plan 0100 Phase 8's native run); `S`'s
+/// the default arm's internal size at the window (1687 x 919, the window over the scale of 1.5),
+/// so the two differ only by the upscaler.
+fn native_size(subject: &str) -> [u32; 2] {
+    match subject {
+        "T" => [1280, 720],
+        "S" => [1687, 919],
+        other => panic!("subject {other} has no native arm"),
+    }
+}
+
 /// The rig's frame for `subject` and `arm`, the window's settings applied over it; the fields
 /// that changed.
 fn window_frame(rig: &Rig, pose: &Pose, subject: &str, arm_name: &str) -> (Frame, Arm, String) {
     let spec = if arm_name == "native" {
-        "off1,out=1280x720".to_owned()
+        let [w, h] = native_size(subject);
+        format!("off1,out={w}x{h}")
     } else {
         format!("default,out={}x{}", WINDOW[0], WINDOW[1])
     };
