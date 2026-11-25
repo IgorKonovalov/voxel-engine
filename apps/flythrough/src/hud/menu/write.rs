@@ -383,14 +383,14 @@ fn write_row(
             let keys = e.keys();
             let keys = if keys.is_empty() { "menu" } else { &keys };
             let _ = write!(text, "  {keys:<18}");
-            push_words(text, &e.words(m, v), why, MENU_COLS - 22);
+            push_words(text, &e.shown(m, v), why, MENU_COLS - 22);
         }
         Row::Entry(e) => {
             if searching {
                 let _ = write!(text, "{}  ", e.group.name());
             }
             let room = (KEY_COL - 2).saturating_sub(text.len() - start);
-            push_words(text, &e.words(m, v), why, room);
+            push_words(text, &e.shown(m, v), why, room);
             pad_to(text, start, KEY_COL);
             text.push_str(&e.keys());
         }

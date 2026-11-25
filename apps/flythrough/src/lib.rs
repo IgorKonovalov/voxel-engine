@@ -17,6 +17,7 @@ pub(crate) mod edits;
 pub mod entities;
 mod fly;
 pub mod hud;
+pub mod inert;
 pub mod lights;
 mod look;
 pub mod materials;
