@@ -22,6 +22,9 @@
 use super::*;
 use support::cover::{Columns, Records, Solid, disc_direction, octa16_decode};
 
+#[path = "walked.rs"]
+mod walked;
+
 /// Voxels north of W3's eye at which its camera looks at the ground.
 const AHEAD: f32 = 40.0;
 const W3_EYE: [f32; 3] = [-9.5, 915.1, 595.8];
@@ -88,7 +91,7 @@ fn slot_pose() -> Option<(Rig, Camera)> {
 
 /// Every internal pixel's hit cube face (voxel, face) whose normal faces the key light `l`, with
 /// its hit and shading normal; `None` elsewhere.
-type PixelFace = Option<([i32; 3], u8, [f32; 3], [f32; 3])>;
+pub(super) type PixelFace = Option<([i32; 3], u8, [f32; 3], [f32; 3])>;
 
 fn pixel_faces(rig: &Rig, f: &Frame, eye: [f32; 3], l: [f32; 3]) -> Vec<PixelFace> {
     let pos = svet_render::debug::read_rgba32f(&rig.device, &rig.queue, f.hit_positions());
@@ -106,7 +109,7 @@ fn pixel_faces(rig: &Rig, f: &Frame, eye: [f32; 3], l: [f32; 3]) -> Vec<PixelFac
         .collect()
 }
 
-fn face_normal(face: u8) -> [f32; 3] {
+pub(super) fn face_normal(face: u8) -> [f32; 3] {
     let mut n = [0.0; 3];
     n[usize::from(face / 2)] = if face % 2 == 1 { 1.0 } else { -1.0 };
     n
@@ -161,15 +164,15 @@ fn census(rig: &Rig, f: &Frame, eye: [f32; 3], l: [f32; 3]) -> [usize; 3] {
 
 /// One face's CPU values.
 #[derive(Clone, Copy, Default)]
-struct FaceRow {
-    reference: f32,
-    disc: f32,
-    approach: f32,
-    horizon: f32,
+pub(super) struct FaceRow {
+    pub(super) reference: f32,
+    pub(super) disc: f32,
+    pub(super) approach: f32,
+    pub(super) horizon: f32,
     /// The horizon with every map cell walked (`Columns::horizon_exact`).
-    exact: f32,
-    under_top: bool,
-    own: Option<f32>,
+    pub(super) exact: f32,
+    pub(super) under_top: bool,
+    pub(super) own: Option<f32>,
 }
 
 fn face_rows(
@@ -230,7 +233,7 @@ fn face_rows(
 }
 
 /// The `q` quantile of `v` (sorted in place); 0 for none.
-fn quantile(v: &mut [f32], q: f64) -> f32 {
+pub(super) fn quantile(v: &mut [f32], q: f64) -> f32 {
     if v.is_empty() {
         return 0.0;
     }
@@ -239,7 +242,7 @@ fn quantile(v: &mut [f32], q: f64) -> f32 {
 }
 
 /// The candidates' names, in the order of [`candidates`].
-const CANDIDATES: [&str; 6] = [
+pub(super) const CANDIDATES: [&str; 6] = [
     "horizon at the hit",
     "horizon at the face's centre",
     "disc (centre ray)",
@@ -250,7 +253,7 @@ const CANDIDATES: [&str; 6] = [
 
 /// A pixel's candidate values: the two horizons bare, the cover sources as the larger of each
 /// and the horizon at the face's centre.
-fn candidates(r: &FaceRow, h_hit: f32, blend: Option<f32>) -> [f32; 6] {
+pub(super) fn candidates(r: &FaceRow, h_hit: f32, blend: Option<f32>) -> [f32; 6] {
     let h = r.horizon;
     [
         h_hit,
@@ -280,7 +283,8 @@ mod reading {
         let (minutes, built) = match pose.as_str() {
             "w3" | "w1" => (15.0 * 60.0, forest_pose(&pose)),
             "slot" => (12.0 * 60.0, slot_pose()),
-            other => panic!("SVET_COVER={other}: w3, w1 or slot"),
+            "terr" => (12.0 * 60.0, terraces::w3_rig()),
+            other => panic!("SVET_COVER={other}: w3, w1, slot or terr"),
         };
         let Some((mut rig, cam)) = built else {
             return;
@@ -408,6 +412,7 @@ mod reading {
         // horizon at its hit) against the CPU's horizon at that hit.
         let gw = s.frame.light_hit_positions().width() as usize;
         let (mut checked, mut agree) = (0usize, 0usize);
+        let mut mismatches = Vec::new();
         for (g, h) in shot.hits.iter().enumerate() {
             if h[3] >= 1e30 || !h[3].is_finite() {
                 continue;
@@ -429,6 +434,9 @@ mod reading {
             let cpu = cols.horizon(p, nf, l, radius);
             checked += 1;
             agree += usize::from((gpu - cpu).abs() <= 2.0 / 255.0);
+            if (gpu - cpu).abs() > 2.0 / 255.0 {
+                mismatches.push(walked::Mismatch { p, nf, gpu, cpu });
+            }
         }
         out.push_str(&format!(
             "the CPU horizon at the lighting pixel's hit against the GPU's key value: {agree} of {checked} within 2/255 (grid {gw} wide)\n"
@@ -710,7 +718,30 @@ mod reading {
                 100.0 * over as f64 / n.max(1) as f64
             ));
         }
+        let coarse: std::collections::HashSet<[i32; 3]> = faces
+            .iter()
+            .map(|(v, _)| v.map(|x| x >> 6))
+            .filter(|c| s.frame.store().is_coarse(svet_world::ChunkCoord(*c)))
+            .collect();
+        let (text, unequal) = walked::read(&walked::Input {
+            faces: &faces,
+            rows: &rows,
+            px: &px,
+            px_face: &px_face,
+            h_hit: &h_hit,
+            blend: &blend,
+            cols: &cols,
+            solid: &solid,
+            l,
+            radius,
+            eye,
+            vfov: cam.vfov,
+            coarse: &coarse,
+            mismatches: &mismatches,
+        });
+        out.push_str(&text);
         print!("{out}");
         std::fs::write(dir_of().join(format!("{pose}.txt")), out).expect("the table");
+        assert_eq!(unequal, 0, "the levelled walk differs from the walk");
     }
 }

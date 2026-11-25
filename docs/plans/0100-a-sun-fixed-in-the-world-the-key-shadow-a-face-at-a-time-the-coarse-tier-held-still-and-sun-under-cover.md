@@ -563,6 +563,7 @@ says otherwise; 3, 4 and 5, the recommended options.
 | 3: The coarse tier's wobble, a reading | dev | read; the stop rule holds (held coarse 0.01 % at weight 0 a still pair, landed 0.00 %, both adapters; what moves is the landings); readings in [`logs/0100.md`](logs/0100.md) | committed with this row |
 | 4: The coarse tier held still | dev | not built: Phase 3's stop rule (the pose does not hold the fault) | |
 | 5: Sun under cover, the candidates read | dev | read; the stop rule fires (the horizon reads 1 where the reference reads under 0.5 on more faces than the ramp holds: W1's pose 1 054 against 480, the slot 146 against 62; W3's 5 against 63); readings in [`logs/0100.md`](logs/0100.md) | committed with this row |
+| 5b: The horizon walked whole, the lift's hole read | dev | step 1 read (CPU); neither stop rule fires (the levelled walk's lit reads at most 3.25 times `march`'s, w3; both lift rows read new dark at the terraces); the contact rows are question 7's figures; readings in [`logs/0100.md`](logs/0100.md) | committed with this row |
 | 6: Sun under cover, the arms | dev | not started | |
 | 7: The window rehearsed headless | dev | not started | |
 | 8: The owner's window | human | not started | |

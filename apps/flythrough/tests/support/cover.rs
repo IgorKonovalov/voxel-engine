@@ -289,8 +289,8 @@ pub struct Columns {
 }
 
 /// pair.wgsl's constants.
-const COLUMN_CELL: i32 = 2;
-const COLUMN_CELLS: i32 = 32;
+pub(super) const COLUMN_CELL: i32 = 2;
+pub(super) const COLUMN_CELLS: i32 = 32;
 const COLUMN_KEY_STEPS: u32 = 12;
 const COLUMN_KEY_D0: f32 = 4.0;
 const COLUMN_KEY_D1: f32 = 512.0;
@@ -329,7 +329,7 @@ impl Columns {
         own < 1.0e38 && own > q[2]
     }
 
-    fn cell_entry(q: [f32; 2], u: [f32; 2], c: [i32; 2]) -> f32 {
+    pub(super) fn cell_entry(q: [f32; 2], u: [f32; 2], c: [i32; 2]) -> f32 {
         let t = [0, 1].map(|k| {
             let lo = (c[k] * COLUMN_CELL) as f32;
             let near = if u[k] > 0.0 {
@@ -349,9 +349,22 @@ impl Columns {
     /// pair.wgsl's `column_key_visibility` at `p` with face normal `n`, the key light toward
     /// unit `l` of angular radius `radius`.
     pub fn horizon(&self, p: [f32; 3], n: [f32; 3], l: [f32; 3], radius: f32) -> f32 {
+        self.horizon_counted(p, n, l, radius).0
+    }
+
+    /// [`Columns::horizon`] and the map texels it read (a texel outside the window is not a
+    /// read: the shader tests the window's bounds first).
+    pub fn horizon_counted(
+        &self,
+        p: [f32; 3],
+        n: [f32; 3],
+        l: [f32; 3],
+        radius: f32,
+    ) -> (f32, u32) {
         if l[2] <= 0.0 {
-            return 0.0;
+            return (0.0, 0);
         }
+        let mut reads = 1u32;
         let q = [0, 1, 2].map(|k| p[k] + n[k] * SEED_LIFT);
         let flat = (l[0] * l[0] + l[1] * l[1]).sqrt();
         let tan_e = l[2] / flat.max(1.0e-6);
@@ -368,7 +381,7 @@ impl Columns {
         };
         let own = self.cell_height(cell(q[0], q[1]));
         if own < 1.0e38 && own > q[2] {
-            return 0.0;
+            return (0.0, reads);
         }
         let mut tan_h = -3.0e38f32;
         let ratio = (COLUMN_KEY_D1 / COLUMN_KEY_D0).powf(1.0 / (COLUMN_KEY_STEPS - 1) as f32);
@@ -382,6 +395,7 @@ impl Columns {
             if h > 1.0e38 {
                 break;
             }
+            reads += 1;
             let t = Self::cell_entry([q[0], q[1]], u, c).max(0.5);
             tan_h = tan_h.max((h - q[2]) / t);
             let score = (h - q[2]) / d_prev;
@@ -412,6 +426,7 @@ impl Columns {
                 if h > 1.0e38 {
                     break;
                 }
+                reads += 1;
                 if t > 0.5 {
                     tan_h = tan_h.max((h - q[2]) / t);
                 }
@@ -433,17 +448,29 @@ impl Columns {
             }
         }
         let r = radius.tan().max(1.0e-4);
-        ((tan_e - tan_h) / (2.0 * r) + 0.5).clamp(0.0, 1.0)
+        (((tan_e - tan_h) / (2.0 * r) + 0.5).clamp(0.0, 1.0), reads)
     }
 
     /// [`Columns::horizon`] with every map cell along the sun's horizontal direction walked
     /// to the window's side (no coarse march, no refinement cap): what the heightfield itself
     /// answers at the same lift.
     pub fn horizon_exact(&self, p: [f32; 3], n: [f32; 3], l: [f32; 3], radius: f32) -> f32 {
+        self.walk_at(p, n, l, radius, SEED_LIFT).0
+    }
+
+    /// [`Columns::horizon_exact`] at the point lifted `lift` along `n`, and the texels it read.
+    pub fn walk_at(
+        &self,
+        p: [f32; 3],
+        n: [f32; 3],
+        l: [f32; 3],
+        radius: f32,
+        lift: f32,
+    ) -> (f32, u32) {
         if l[2] <= 0.0 {
-            return 0.0;
+            return (0.0, 0);
         }
-        let q = [0, 1, 2].map(|k| p[k] + n[k] * SEED_LIFT);
+        let q = [0, 1, 2].map(|k| p[k] + n[k] * lift);
         let flat = (l[0] * l[0] + l[1] * l[1]).sqrt();
         let tan_e = l[2] / flat.max(1.0e-6);
         let u = if flat > 1.0e-6 {
@@ -455,10 +482,11 @@ impl Columns {
         let mut c = [(q[0] / cs).floor() as i32, (q[1] / cs).floor() as i32];
         let own = self.cell_height(c);
         if own < 1.0e38 && own > q[2] {
-            return 0.0;
+            return (0.0, 1);
         }
         let s = u.map(|x| if x > 0.0 { 1 } else { -1 });
         let mut tan_h = -3.0e38f32;
+        let mut reads = 1u32;
         loop {
             let far = [0, 1].map(|k| (c[k] as f32 + if u[k] > 0.0 { 1.0 } else { 0.0 }) * cs);
             let tx = [0, 1].map(|k| {
@@ -477,13 +505,14 @@ impl Columns {
             if h > 1.0e38 {
                 break;
             }
+            reads += 1;
             let t = Self::cell_entry([q[0], q[1]], u, c);
             if t > 0.5 {
                 tan_h = tan_h.max((h - q[2]) / t);
             }
         }
         let r = radius.tan().max(1.0e-4);
-        ((tan_e - tan_h) / (2.0 * r) + 0.5).clamp(0.0, 1.0)
+        (((tan_e - tan_h) / (2.0 * r) + 0.5).clamp(0.0, 1.0), reads)
     }
 }
 

@@ -55,7 +55,7 @@ const W3_SPAN: f32 = 16.0;
 /// The noon slope's source as [`slope_rig`]'s, the chunks within 4 of W3's eye's (2 down, 3 up),
 /// the camera at W3's eye looking at the ground [`W3_AHEAD`] voxels away down the slope's fall
 /// (the surface's height read [`W3_SPAN`] voxels either side of the eye's column).
-fn w3_rig() -> Option<(Rig, Camera)> {
+pub(super) fn w3_rig() -> Option<(Rig, Camera)> {
     use flythrough::outdoor::OutdoorSource;
     use flythrough::trees::{ForestSource, LEAF_FILL, TreeDensity};
     use svet_world::{ChunkExtent, VoxelCoord, World};
