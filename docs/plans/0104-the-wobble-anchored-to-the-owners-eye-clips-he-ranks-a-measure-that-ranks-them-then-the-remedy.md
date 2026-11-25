@@ -572,6 +572,63 @@ bars are met (113 to 146 s on the RTX, 250 to 255 s on lavapipe quiet).
   rule adds for it, so the constant is not moved to follow them. The half frame reads
   higher than 1080p (8.99 against about 5.5), which is why the bar is a constant a size.
 
+### Phase 4 steps 1 and 2, ruled (architect, 2026-11-25, after the readings)
+
+From the log's "Phase 4"; no run stands behind this note.
+
+- **Lever 2 stands, closed.** The store's tallies with and without it are equal byte for
+  byte (1 445 chunks, one digest, equal samples). The 58 against 59 was the frame's census.
+- **The W1 mismatch: exit (a), and exit (b) with it.**
+  - **(a), by its second clause.** Every mismatch is source 0 and the horizon source has 0
+    mismatches of 180 532, so the port agrees with the shader wherever the shader reads
+    what the port models. Source 0 is the running mean of the key ray's samples (one
+    jittered disc ray a pixel a frame, where `key_from_store` is false), a filtered value
+    the port does not model. The nine-tenths clause is not met (10.2 % of source 0
+    mismatches in the band) and is not needed. **The W1 line is closed as a difference of
+    sources:** the port's comparison is restricted to pixels of source 2, and the W1 figure
+    is 0 of 180 532. Plan 0100's 1 404 to 1 906 were never a fault of the horizon.
+  - **(b) as a seventh candidate in "After Phase 4": the key ray's history mean where the
+    store is not read.** Its value at a fixed world point can change between frames by
+    construction: the ray is jittered, the mean starts at the column horizon when the
+    history resets (a view change) and moves to the rays' mean as the history is taken,
+    and it sits in the 32 to 512 voxel band, where the owner puts the brightness of
+    distant sunlit trees. What it would change, its cost and its control arm are the
+    remedy amendment's to write, not this note's; nothing is built for it now. What would
+    falsify it is step 3's reading below.
+  - **What step 3 shows for it** (on the renders of `C a`, `C b`, `T a` and `S` it makes
+    anyway; the key slot read back with the hits): (1) a map a frame of the lighting
+    pixels by key slot source, laid as the candidates' maps are; (2) source 0's share of
+    the lighting pixels in the owner's region in his moment against its share of the
+    picture, as a ratio (line (a)'s form: twice or more is "lies on his place"); (3) the
+    slot's value on units fixed in the world, its mean change a frame at source 0 against
+    source 2, in his moment and in the first 40 frames of each hold; (4) of the tiles in
+    the top tenth by candidate 1, the share of their lighting pixels that are source 0.
+    **Candidate 7 is dropped at the stop** if (2) is under 1 at both `C` clips or (3) shows
+    source 0 changing no more than source 2. `C b` runs `key cover ray`, whose slot may
+    hold other sources: the rows are printed by source as read, with none merged.
+- **`S`'s shadow change: split in two, the control under a pinned exposure.** The owner's
+  frame (413, the hold after the turn) has no landing and no exposure step, inside an
+  exposure ramp that is flat by about frame 432. It is neither named cause exactly, so the
+  rule "a landing or an exposure step goes out" does not settle it.
+  - **The whole-picture part is the exposure ramp after a turn.** It is its own line at
+    the stop ("Carried to the amendment" already holds the exposure as a source at `S`)
+    and is in neither candidate. Both candidates already divide by the frame's exposure or
+    must: candidate 2's lit and shadowed levels are taken on luma over the exposure.
+  - **The part on the outlines of the sunlit patches is not classed out.** A uniform gain
+    does not change outlines more than faces, and the frames after a turn are also where
+    the key ray's history mean leaves its seed (candidate 7). One control reading names
+    it: `S`'s track rendered once more with the exposure pinned at the value of the turn's
+    last frame (397), and the difference of frames 398 and 440 beside the unpinned one
+    (about 70 s on the RTX by the log's re-render). Outlines still changing under the pin
+    is light, and step 3 scores `S`'s window 398 to 440 with both candidates and the
+    source map, as a reading. Outlines flat under the pin is the exposure alone, and the
+    window is left out.
+  - **Either way the window is in no candidate's lines (a) and (b).** He did not class it
+    as either artifact, and one clip with no pair cannot fail or hold a candidate. `S`'s
+    line for artifact A stays the slopes in the turn.
+
+No new question for the owner: question 4 stands as asked.
+
 ### Question for the owner (added)
 
 4. **After Phase 4, does a remedy follow?** You called the defaults "almost good, esp Tb".
