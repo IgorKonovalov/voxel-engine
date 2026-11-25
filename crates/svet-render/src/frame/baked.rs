@@ -109,8 +109,14 @@ pub(super) struct BakeLink {
     /// The encode's reads of the books' snapshot while the thread runs.
     pub(super) snapshot_reach: crate::bake::SnapshotReach,
     /// The readings [`Frame::bake_render_laps`] and [`Frame::bake_fade_frames`] return.
-    pub(super) render_laps: Vec<[f32; 7]>,
+    pub(super) render_laps: Vec<[f32; 8]>,
     pub(super) fade_frames: [u64; 2],
+    /// The edit's frames with the bake thread on: the wait for the dig's step in ms and the
+    /// submits the frame issued ([`Frame::bake_dig_waits`]).
+    pub(super) dig_waits: Vec<[f32; 2]>,
+    /// The last live-queue frame's wait for an edit's step in ms (0 with none, or in lockstep)
+    /// and the submits it issued ([`Frame::bake_frame_issue`]).
+    pub(super) last_issue: (f64, u64),
     /// The bake thread's depth in flight ([`Frame::set_bake_depth`]).
     pub(super) thread_depth: usize,
     /// The reading [`Frame::bake_round_trip`] returns.
@@ -173,6 +179,8 @@ impl BakeLink {
             snapshot_reach: Default::default(),
             render_laps: Vec::new(),
             fade_frames: [0; 2],
+            dig_waits: Vec::new(),
+            last_issue: (0.0, 0),
             thread_depth: crate::THREAD_DEPTH,
             round_trip: Default::default(),
         }
@@ -478,6 +486,30 @@ impl Frame {
         if let Some(e) = self.baked.failed.take() {
             return Some(Err(e));
         }
+        let issued_before = self.baked.issuer.issued;
+        let out = self.bake_queue_frame(device, queue, gpu, world, view, t0);
+        if out.is_some() {
+            let wait = self
+                .baked
+                .thread
+                .as_ref()
+                .filter(|l| l.waited)
+                .map_or(0.0, |l| l.laps[5]);
+            self.baked.last_issue = (wait, self.baked.issuer.issued - issued_before);
+        }
+        out
+    }
+
+    /// [`Frame::bake_queue_step`]'s body, after a panic read outside a step.
+    fn bake_queue_frame(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        gpu: &mut GpuWorld,
+        world: &svet_world::World,
+        view: &crate::bake::QueueView,
+        t0: crate::bake::StepStart,
+    ) -> Option<Result<crate::bake::QueueStats, crate::bake::BakeError>> {
         let settings = match (&self.baked.queue, &self.baked.thread) {
             (Some(q), _) => q.settings.clone(),
             (None, Some(link)) => link.settings.clone(),

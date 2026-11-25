@@ -100,6 +100,8 @@ pub(crate) struct Issuer {
     pub(super) returned: VecDeque<ReadBack>,
     /// The most readback buffers held at once, free and in flight (a reading).
     pub(crate) peak_buffers: usize,
+    /// Submits issued so far (a reading: [`crate::Frame::bake_frame_issue`]).
+    pub(crate) issued: u64,
 }
 
 impl Issuer {
@@ -159,6 +161,7 @@ impl RenderHalf for GpuHalf<'_> {
 
     fn issue(&mut self, p: Prepared) {
         self.start_timer();
+        self.issuer.issued += 1;
         self.send(p);
     }
 

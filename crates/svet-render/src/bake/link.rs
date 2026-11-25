@@ -211,11 +211,16 @@ pub(crate) struct ThreadLink {
     issued_at: VecDeque<u64>,
     /// The round trips read since the frame last took them ([`BakeRoundTrip`]).
     pub(crate) round_trip: BakeRoundTrip,
+    /// The submits the last frame issued.
+    pub(crate) issued_now: usize,
+    /// Whether the last frame carried an edit's box, and so waited for its step.
+    pub(crate) waited: bool,
 }
 
 /// The render side's laps in [`render_frame`]: the take (the previous books dropped with it),
-/// the submits issued, the lists applied under the cap, the read-backs collected, the send.
-pub(crate) const RENDER_LAPS: [&str; 5] = ["take", "issue", "apply", "collect", "send"];
+/// the submits issued, the lists applied under the cap, the read-backs collected, the send, and
+/// on an edit's frame the wait for its step (the take then holds only what came after it).
+pub(crate) const RENDER_LAPS: [&str; 6] = ["take", "issue", "apply", "collect", "send", "wait"];
 
 impl ThreadLink {
     /// Starts the bake thread on `side`, its lists made under `cap`, its outbox holding
@@ -252,6 +257,8 @@ impl ThreadLink {
             carried: Vec::new(),
             issued_at: VecDeque::new(),
             round_trip: BakeRoundTrip::default(),
+            issued_now: 0,
+            waited: false,
         })
     }
 
@@ -262,8 +269,28 @@ impl ThreadLink {
 
     /// Takes what the bake thread made since the last call; never waits on a step.
     pub(crate) fn take(&mut self) -> Taken {
+        let made = self.thread.take();
+        self.absorb(made)
+    }
+
+    /// The edit's frame's take (ADR-0083's one wait): what the bake thread made, waiting until
+    /// an entry made from the message of `frame` or a later one is among it. `Err` when the
+    /// thread ended first (its panic).
+    pub(crate) fn take_waiting(&mut self, frame: u64) -> Result<Taken, BakeError> {
+        let (made, found) = self.thread.take_until(|m| m.books.frame >= frame);
+        let taken = self.absorb(made);
+        if found {
+            return Ok(taken);
+        }
+        Err(self
+            .failed()
+            .unwrap_or_else(|| BakeError::Thread("the bake thread ended in a wait".into())))
+    }
+
+    /// The steps `made` holds as a frame's take, the newest books and stats kept.
+    fn absorb(&mut self, made: Vec<Made>) -> Taken {
         let mut out = Taken::default();
-        for m in self.thread.take() {
+        for m in made {
             out.frames.push(m.books.frame);
             self.books = m.books;
             out.stats = Some(match (out.stats.take(), m.stats) {
@@ -327,6 +354,12 @@ impl ThreadLink {
         self.thread.outbox_bytes()
     }
 
+    /// The render side's count of messages sent with a box, shared.
+    #[cfg(test)]
+    pub(crate) fn box_sender(&self) -> BoxSender {
+        self.boxes.clone()
+    }
+
     /// The message waiting for the bake thread, read in place.
     #[cfg(test)]
     pub(crate) fn peek<R>(&self, read: impl FnOnce(Option<&ThreadMsg>) -> R) -> R {
@@ -355,25 +388,50 @@ pub(crate) fn replay(
 /// A frame's replay with the bake thread on: `carried` (the ops an earlier frame left) and then
 /// each step's ops, in order, replayed on `half` up to and with the first submit (ADR-0083: a
 /// frame issues at most one prepared submit); the ops past it are left in `carried`, in order,
-/// for the next frame. Whether a submit was issued.
+/// for the next frame. On an edit's frame `dig` is the index of the step that took the box: when
+/// that step planned a submit, the replay goes on in order up to and with it, so the dig's
+/// submit goes out in the edit's frame behind whatever was before it (ADR-0083's second
+/// submit). The submits issued.
 pub(crate) fn replay_a_frame(
     carried: &mut Vec<Op>,
     steps: Vec<Vec<Op>>,
     half: &mut dyn RenderHalf,
     timer: Option<&Arc<crate::frame::PassTimer>>,
-) -> bool {
+    dig: Option<usize>,
+) -> usize {
+    let dig = dig.filter(|&d| {
+        steps
+            .get(d)
+            .is_some_and(|ops| ops.iter().any(|o| matches!(o, Op::Issue(_))))
+    });
+    // Each op with its step's index; the carried ops are before every step.
     let mut ops = std::mem::take(carried)
         .into_iter()
-        .chain(steps.into_iter().flatten());
-    for op in ops.by_ref() {
+        .map(|o| (None, o))
+        .chain(
+            steps
+                .into_iter()
+                .enumerate()
+                .flat_map(|(k, ops)| ops.into_iter().map(move |o| (Some(k), o))),
+        );
+    let mut issued = 0;
+    for (step, op) in ops.by_ref() {
         let issue = matches!(op, Op::Issue(_));
         replay_op(op, half, timer);
-        if issue {
-            carried.extend(ops);
-            return true;
+        if !issue {
+            continue;
+        }
+        issued += 1;
+        let at_end = match dig {
+            Some(d) => step == Some(d),
+            None => true,
+        };
+        if at_end {
+            break;
         }
     }
-    false
+    carried.extend(ops.map(|(_, o)| o));
+    issued
 }
 
 /// A stopped thread's steps not taken, the ops a frame carried ahead of them.
@@ -411,17 +469,22 @@ pub(crate) fn mapped(half: &mut dyn RenderHalf) -> Vec<ReadBack> {
 /// The render half's frame with the bake thread on: its panic, if it ended by one; else the
 /// calls the last frame carried and each step's, replayed on `half` in order up to and with the
 /// first submit (the rest carried to the next frame), each step's lists taken, the lists
-/// applied under the cap into `out`, the
-/// mailbox answered up to what the applied lists were made from, and `msg` sent with the
-/// landing words written and the read-backs that mapped. The stats are the steps' taken, or
-/// the newest's with no per-step count when none was.
+/// applied under the cap into `out`, the mailbox answered up to what the applied lists were
+/// made from, and `msg` sent with the landing words written and the read-backs that mapped. The
+/// stats are the steps' taken, or the newest's with no per-step count when none was.
+///
+/// A frame whose message holds an edit's box (ADR-0083's one wait) sends first, with the
+/// read-backs mapped so far, then waits for a list made from that message or a later one, and
+/// replays and applies as any frame does, the dig step's submit with it (behind any carried):
+/// the box's held block is in the pool when the frame returns. The landing words it writes go
+/// with the next frame's message.
 pub(crate) fn render_frame(
     link: &mut ThreadLink,
     half: &mut dyn RenderHalf,
     lists: &mut Lists,
     out: &mut dyn Applier,
     inbox: &mut Inbox,
-    mut msg: FrameMessage,
+    msg: FrameMessage,
 ) -> Result<QueueStats, BakeError> {
     if let Some(e) = link.failed() {
         return Err(e);
@@ -434,11 +497,41 @@ pub(crate) fn render_frame(
         lap = now;
     };
     link.fading_before = link.last.fading;
-    let taken = link.take();
+    let frame = msg.frame;
+    let holds_box = msg.arrivals.iter().any(|a| matches!(a, Arrival::Box(_)));
+    link.waited = holds_box;
+    // A first block's landing word is this frame's plus one, as lockstep writes it.
+    let landed_at = msg
+        .settings
+        .landed_word
+        .filter(|w| *w != 0)
+        .map_or(0, |w| u64::from(w) - 1);
+    let mut pending = Some(msg);
+    let issued_at = |link: &mut ThreadLink, read_backs: &[ReadBack]| {
+        for _ in read_backs {
+            if let Some(at) = link.issued_at.pop_front() {
+                link.round_trip.count(frame.saturating_sub(at));
+            }
+        }
+    };
+    let taken = if holds_box {
+        let read_backs = mapped(half);
+        issued_at(link, &read_backs);
+        mark(3);
+        link.send(pending.take().expect("the frame's message"), read_backs);
+        mark(4);
+        let taken = link.take_waiting(frame);
+        mark(5);
+        taken?
+    } else {
+        link.take()
+    };
     link.took = taken.steps.len();
     mark(0);
-    let frame = msg.frame;
     let mut all_empty = None;
+    let dig = holds_box
+        .then(|| taken.frames.iter().position(|f| *f >= frame))
+        .flatten();
     let mut ops = Vec::with_capacity(taken.steps.len());
     for (step, (step_ops, made)) in taken.steps.into_iter().enumerate() {
         ops.push(step_ops);
@@ -448,19 +541,14 @@ pub(crate) fn render_frame(
         let ok = lists.take(made);
         debug_assert!(ok.is_ok(), "a write list over the frame's cap");
     }
-    if replay_a_frame(&mut link.carried, ops, half, link.timer.as_ref()) {
+    link.issued_now = replay_a_frame(&mut link.carried, ops, half, link.timer.as_ref(), dig);
+    for _ in 0..link.issued_now {
         link.issued_at.push_back(frame);
         link.round_trip.issued += 1;
     }
     link.round_trip.carried += u64::from(link.carried.iter().any(|o| matches!(o, Op::Issue(_))));
     mark(1);
-    // A first block's landing word is this frame's plus one, as lockstep writes it.
-    let at = msg
-        .settings
-        .landed_word
-        .filter(|w| *w != 0)
-        .map_or(0, |w| u64::from(w) - 1);
-    let _ = lists.apply(at, out);
+    let _ = lists.apply(landed_at, out);
     mark(2);
     // The mailbox answers from the books once the lists made from its messages are applied; a
     // step that made none answers its message once nothing waits.
@@ -471,16 +559,14 @@ pub(crate) fn render_frame(
         answered = answered.max(f);
     }
     inbox.answered(answered);
-    let read_backs = mapped(half);
-    for _ in &read_backs {
-        if let Some(at) = link.issued_at.pop_front() {
-            link.round_trip.count(frame.saturating_sub(at));
-        }
+    if let Some(mut msg) = pending.take() {
+        let read_backs = mapped(half);
+        issued_at(link, &read_backs);
+        mark(3);
+        msg.landed.extend(lists.report(frame));
+        link.send(msg, read_backs);
+        mark(4);
     }
-    mark(3);
-    msg.landed.extend(lists.report(frame));
-    link.send(msg, read_backs);
-    mark(4);
     link.laps = laps;
     taken.stats.unwrap_or_else(|| Ok(link.idle_stats()))
 }

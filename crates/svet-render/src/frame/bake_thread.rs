@@ -56,9 +56,21 @@ impl Frame {
 
     /// The render thread's laps in each frame the bake thread ran, in ms (a reading): the
     /// message's build; the take, the submits issued, the lists applied, the read-backs
-    /// collected and the send; then the frame call's whole.
-    pub fn bake_render_laps(&self) -> &[[f32; 7]] {
+    /// collected, the send and an edit's frame's wait for its step; then the frame call's whole.
+    pub fn bake_render_laps(&self) -> &[[f32; 8]] {
         &self.baked.render_laps
+    }
+
+    /// The edit's frames with the bake thread on (ADR-0083's one wait), each the wait for the
+    /// dig's step in ms and the submits the frame issued (a reading).
+    pub fn bake_dig_waits(&self) -> &[[f32; 2]] {
+        &self.baked.dig_waits
+    }
+
+    /// The last live-queue frame's wait for an edit's step in ms (0 when it carried no box, and
+    /// in lockstep) and the submits it issued, the carried ones with them (a reading).
+    pub fn bake_frame_issue(&self) -> (f64, u64) {
+        self.baked.last_issue
     }
 
     /// Of the live queue's frames whose newest books held a block fading, those that applied
@@ -187,8 +199,8 @@ impl Frame {
 
     /// The render thread's frame with the bake thread on: take what it made, issue its submits
     /// and calls through the frame's render half, apply the lists under the cap, collect what
-    /// mapped without waiting, and send `msg` with the landing words and the read-backs. Never
-    /// waits on a step.
+    /// mapped without waiting, and send `msg` with the landing words and the read-backs. Waits on
+    /// a step only when `msg` carries an edit's box ([`crate::bake::render_frame`]).
     #[allow(
         clippy::too_many_arguments,
         reason = "the device and queue, the mirror, the bake's parameters and group, and the message are independent"
@@ -257,8 +269,14 @@ impl Frame {
                     l[2] as f32,
                     l[3] as f32,
                     l[4] as f32,
+                    l[5] as f32,
                     wall as f32,
                 ]);
+            }
+            if link.waited && self.baked.dig_waits.len() < READING_FRAMES {
+                self.baked
+                    .dig_waits
+                    .push([l[5] as f32, link.issued_now as f32]);
             }
             if link.fading_before > 0 {
                 self.baked.fade_frames[0] += 1;

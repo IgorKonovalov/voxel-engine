@@ -25,6 +25,12 @@ impl BoxSender {
         }
     }
 
+    /// The messages sent with a box so far.
+    #[cfg(test)]
+    pub(crate) fn sent(&self) -> u64 {
+        self.sent.load(Ordering::Acquire)
+    }
+
     /// The bake side's half, reading this sender's count.
     pub(crate) fn signal(&self) -> BoxSignal {
         BoxSignal {

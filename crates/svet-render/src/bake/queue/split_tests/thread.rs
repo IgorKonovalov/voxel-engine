@@ -404,13 +404,21 @@ fn first_opening(post: bool) -> Opening {
                 .is_ok()
             {
                 // The step that listed twice waits (not yet counted): an edit, and the frame's
-                // message sent.
+                // message sent. The edit's frame waits for the box's step (Phase 3b), so the
+                // step is let go from a second thread once the box is stamped.
                 let steps = t.link.steps();
+                let sender = t.link.box_sender();
+                let before = sender.sent();
+                let ack = ack.clone();
+                let release = std::thread::spawn(move || {
+                    assert!(within(|| sender.sent() > before), "the box is sent");
+                    ack.send(()).expect("the hook waits");
+                });
+                applied_before_box = t.applied.len();
                 t.carve([20, 20, 4], [23, 23, 7]);
                 t.frame().expect("the frame returns");
-                applied_before_box = t.applied.len();
                 box_frame = Some(t.rig.half.frame);
-                ack.send(()).expect("the hook waits");
+                release.join().expect("released");
                 assert!(
                     within(|| t.link.steps() >= steps + 2),
                     "the cut step and the box's step run"
@@ -583,19 +591,21 @@ fn a_frame_issues_one_submit_and_carries_the_rest_in_order() {
     let mut calls = Calls::default();
     let mut carried = Vec::new();
     calls.frame = 1;
-    assert!(replay_a_frame(
-        &mut carried,
-        vec![step_ops(1), step_ops(2)],
-        &mut calls,
-        None
-    ));
+    assert_eq!(
+        replay_a_frame(
+            &mut carried,
+            vec![step_ops(1), step_ops(2)],
+            &mut calls,
+            None,
+            None
+        ),
+        1
+    );
     calls.frame = 2;
-    assert!(replay_a_frame(
-        &mut carried,
-        vec![step_ops(3)],
-        &mut calls,
-        None
-    ));
+    assert_eq!(
+        replay_a_frame(&mut carried, vec![step_ops(3)], &mut calls, None, None),
+        1
+    );
     assert_eq!(
         calls.log,
         ["1 tables 1", "1 issue 1", "2 tables 2", "2 issue 2"],
@@ -603,18 +613,28 @@ fn a_frame_issues_one_submit_and_carries_the_rest_in_order() {
     );
     // A frame that took nothing issues what it carried.
     calls.frame = 3;
-    assert!(replay_a_frame(&mut carried, Vec::new(), &mut calls, None));
+    assert_eq!(
+        replay_a_frame(&mut carried, Vec::new(), &mut calls, None, None),
+        1
+    );
     assert!(carried.is_empty());
-    assert!(!replay_a_frame(&mut carried, Vec::new(), &mut calls, None));
+    assert_eq!(
+        replay_a_frame(&mut carried, Vec::new(), &mut calls, None, None),
+        0
+    );
     // A join: the carried submit first, then the steps the thread had not handed over, all
     // replayed by the next lockstep step.
     calls.frame = 4;
-    assert!(replay_a_frame(
-        &mut carried,
-        vec![step_ops(4), step_ops(5)],
-        &mut calls,
-        None
-    ));
+    assert_eq!(
+        replay_a_frame(
+            &mut carried,
+            vec![step_ops(4), step_ops(5)],
+            &mut calls,
+            None,
+            None
+        ),
+        1
+    );
     calls.frame = 5;
     for (ops, _) in carried_first(
         std::mem::take(&mut carried),
@@ -644,4 +664,206 @@ fn a_frame_issues_one_submit_and_carries_the_rest_in_order() {
             .count();
         assert_eq!(n, 1, "frame {f} issues one");
     }
+}
+
+/// A hook that holds every step whose message's frame is `from` or later until the sender is
+/// dropped; `from` is set at run time (`u64::MAX`: none held).
+fn hold_armed() -> (Hook, Arc<std::sync::atomic::AtomicU64>, mpsc::Sender<()>) {
+    use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
+    let from = Arc::new(AtomicU64::new(u64::MAX));
+    let (tx, rx) = mpsc::channel::<()>();
+    let rx = Mutex::new(rx);
+    let f = from.clone();
+    let hook: Hook = Box::new(move |_, m| {
+        if m.frame >= f.load(SeqCst) {
+            let _ = rx.lock().expect("one step at a time").recv();
+        }
+    });
+    (hook, from, tx)
+}
+
+/// Frames until the queue's books read idle with no list waiting (at most 400).
+fn drain(t: &mut ThreadRig) {
+    for s in 1..=400 {
+        t.frame_stepped(s);
+        if t.link.books.idle && t.lists.waiting.is_empty() {
+            break;
+        }
+    }
+    t.frame().expect("the last step taken");
+    assert!(t.link.books.idle, "the queue drains within 400 frames");
+}
+
+/// Whether the writes since `from` hold `c`'s block's words (the books' place) and its table
+/// word.
+fn block_and_table(t: &ThreadRig, from: usize, c: [i32; 3]) -> bool {
+    let (first, words) = *t
+        .link
+        .books
+        .blocks
+        .get(&c)
+        .expect("the chunk keeps a block");
+    let mut table = Store::new(64 << 20);
+    table.start_queue(t.rig.mirror.window(), t.rig.queue.settings.cell);
+    let table = table.table_word(ChunkCoord(c)) * 4;
+    let applied = &t.applied[from..];
+    applied
+        .iter()
+        .any(|a| a.kind == W_POOL && a.offset == first * 4 && a.bytes as u64 == words * 4)
+        && applied
+            .iter()
+            .any(|a| a.kind == W_TABLE && a.offset == table && a.bytes == 4)
+}
+
+/// Done when (1) of Plan 0099 Phase 3b (ADR-0083's one wait). The slab drained, then every
+/// step held by a hook: 100 frames with no box return within 2 s and apply nothing (Phase 3's
+/// (1) beside it). A box across chunks 0 and 1 is then carved and the hook let go from a second
+/// thread 100 ms on: the box's frame returns only after that, with the books of the step that
+/// read its message taken, both chunks' held blocks and table words applied in that frame, and
+/// that step's submit issued in it.
+#[test]
+fn the_edits_frame_waits_for_its_list_and_no_other_frame_does() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let (hook, from, gate) = hold_armed();
+    let mut t = ThreadRig::new(Some(hook), OUTBOX_BYTES);
+    drain(&mut t);
+    from.store(t.rig.half.frame + 1, SeqCst);
+    t.frame().expect("the held step's message goes out");
+    assert!(
+        within(|| t.link.peek(|m| m.is_none())),
+        "the step took its message and is held"
+    );
+    t.frame().expect("the frame returns");
+    let applied = t.applied.len();
+    let at = stopwatch();
+    for f in 0..100 {
+        t.rig.mirror.changed.push(ChunkCoord([f % 2, 0, 0]));
+        t.frame().expect("the frame returns");
+    }
+    assert!(seconds_since(at) < 2.0, "100 frames within 2 s");
+    assert_eq!(t.applied.len(), applied, "nothing applied while held");
+    let (before, issued) = (t.applied.len(), t.rig.half.issued.len());
+    t.carve([60, 20, 4], [67, 23, 7]);
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        drop(gate);
+    });
+    let at = stopwatch();
+    t.frame().expect("the edit's frame returns with its list");
+    let waited = seconds_since(at);
+    release.join().expect("released");
+    let box_frame = t.rig.half.frame;
+    assert!(waited >= 0.1, "returned after the release: {waited} s");
+    assert!(
+        t.link.books.frame >= box_frame,
+        "the box's step taken: books of message {} at frame {box_frame}",
+        t.link.books.frame
+    );
+    for c in [[0, 0, 0], [1, 0, 0]] {
+        assert!(
+            block_and_table(&t, before, c),
+            "chunk {c:?}'s held block and table word in the edit's frame"
+        );
+    }
+    assert!(
+        t.rig.half.issued[issued..]
+            .iter()
+            .any(|(f, _)| *f == box_frame),
+        "the dig's submit issued in the edit's frame: {:?}",
+        t.rig.half.issued[issued..]
+            .iter()
+            .map(|(f, s)| (*f, s.len()))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Done when (2) of Plan 0099 Phase 3b. A panic in the step that takes the box is the box
+/// frame's error, returned within 2 s, not a hang. With the outbox at its cap when the box is
+/// sent (the render side sending and not taking until the bake side stops stepping), the box
+/// frame returns with the dig's held block and table word applied.
+#[test]
+fn a_wait_ends_on_a_panic_and_a_full_outbox_does_not_hold_it() {
+    use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
+    let from = Arc::new(AtomicU64::new(u64::MAX));
+    let f = from.clone();
+    let hook: Hook =
+        Box::new(move |_, m| assert!(m.frame < f.load(SeqCst), "the dig's step breaks"));
+    let mut t = ThreadRig::new(Some(hook), OUTBOX_BYTES);
+    drain(&mut t);
+    from.store(t.rig.half.frame + 1, SeqCst);
+    t.carve([0, 20, 4], [3, 23, 7]);
+    let at = stopwatch();
+    let got = t.frame();
+    assert!(seconds_since(at) < 2.0);
+    assert_eq!(
+        got.err(),
+        Some(BakeError::Thread("the dig's step breaks".into()))
+    );
+
+    const CAP: usize = 16 << 10;
+    let mut t = ThreadRig::new(None, CAP);
+    drain(&mut t);
+    let mut last = u64::MAX;
+    let mut flat = 0;
+    let at = stopwatch();
+    while flat < 200 {
+        assert!(seconds_since(at) < 1.8, "the steps stop within 1.8 s");
+        let msg = t.rig.message();
+        t.link.send(msg, Vec::new());
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        let s = t.link.steps();
+        flat = if s == last { flat + 1 } else { 0 };
+        last = s;
+    }
+    assert!(t.link.outbox_bytes() > CAP / 2, "the outbox is at its cap");
+    let before = t.applied.len();
+    t.carve([0, 20, 4], [3, 23, 7]);
+    let at = stopwatch();
+    t.frame().expect("the edit's frame returns");
+    assert!(seconds_since(at) < 2.0);
+    assert!(
+        t.link.books.frame >= t.rig.half.frame,
+        "the box's step taken"
+    );
+    assert!(
+        block_and_table(&t, before, [0, 0, 0]),
+        "the dig's held block and table word applied"
+    );
+}
+
+/// Done when (3) of Plan 0099 Phase 3b. A carried submit (tables A, issue A) and the dig's step
+/// (tables B, issue B) replay as all four in the edit's frame, in order; the same two with no
+/// box replay as Phase 4c's (1) has them, one submit a frame.
+#[test]
+fn a_dig_frame_issues_a_carried_submit_and_its_own_in_order() {
+    let mut calls = Calls::default();
+    let mut carried = step_ops(1);
+    calls.frame = 1;
+    assert_eq!(
+        replay_a_frame(&mut carried, vec![step_ops(2)], &mut calls, None, Some(0)),
+        2
+    );
+    assert!(carried.is_empty());
+    assert_eq!(
+        calls.log,
+        ["1 tables 1", "1 issue 1", "1 tables 2", "1 issue 2"],
+        "the carried submit, then the dig's, in the edit's frame"
+    );
+    let mut calls = Calls::default();
+    let mut carried = step_ops(1);
+    calls.frame = 1;
+    assert_eq!(
+        replay_a_frame(&mut carried, vec![step_ops(2)], &mut calls, None, None),
+        1
+    );
+    calls.frame = 2;
+    assert_eq!(
+        replay_a_frame(&mut carried, Vec::new(), &mut calls, None, None),
+        1
+    );
+    assert_eq!(
+        calls.log,
+        ["1 tables 1", "1 issue 1", "2 tables 2", "2 issue 2"],
+        "with no box one submit a frame"
+    );
 }

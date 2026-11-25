@@ -26,7 +26,11 @@ struct Shared<M, O> {
     outbox: Mutex<Outbox<O>>,
     /// The bake thread's wait: a message arrived, room was made, or the stop.
     wake: Condvar,
+    /// The render thread's wait ([`BakeThread::take_until`]): an entry made, or the thread ended.
+    made: Condvar,
     stop: AtomicBool,
+    /// Set as the bake thread ends, by its stop or a panic, under the outbox's lock.
+    ended: AtomicBool,
     cap: usize,
     /// Steps the bake thread has run.
     steps: AtomicU64,
@@ -81,7 +85,9 @@ where
                 bytes: 0,
             }),
             wake: Condvar::new(),
+            made: Condvar::new(),
             stop: AtomicBool::new(false),
+            ended: AtomicBool::new(false),
             cap,
             steps: AtomicU64::new(0),
         });
@@ -89,6 +95,9 @@ where
         let handle = std::thread::Builder::new()
             .name("svet bake".into())
             .spawn(move || {
+                // Wakes a render thread waiting on an entry when the thread ends, by its stop or
+                // by a panic (dropped as the panic unwinds).
+                let _ended = Ended(&*sh);
                 loop {
                     let msg = {
                         let mut slot = Shared::<M, O>::lock(&sh.inbox);
@@ -116,6 +125,8 @@ where
                     }
                     ob.bytes += bytes;
                     ob.entries.extend(out);
+                    drop(ob);
+                    sh.made.notify_all();
                 }
             })?;
         Ok(Self {
@@ -147,6 +158,35 @@ where
         out
     }
 
+    /// What the bake half made since the last call, in order, waiting until an entry for which
+    /// `done` holds is among them or the thread has ended (by a panic, read with
+    /// [`BakeThread::failed`]). The outbox is taken as it fills, so the bake thread never waits on
+    /// its cap against this wait. `true` when such an entry was taken.
+    pub(crate) fn take_until(&self, mut done: impl FnMut(&O) -> bool) -> (Vec<O>, bool) {
+        let mut out = Vec::new();
+        let mut ob = Shared::<M, O>::lock(&self.shared.outbox);
+        loop {
+            if !ob.entries.is_empty() {
+                ob.bytes = 0;
+                let took = std::mem::take(&mut ob.entries);
+                let found = took.iter().any(&mut done);
+                out.extend(took);
+                self.shared.wake.notify_all();
+                if found {
+                    return (out, true);
+                }
+            }
+            if self.shared.ended.load(Ordering::Acquire) {
+                return (out, false);
+            }
+            ob = self
+                .shared
+                .made
+                .wait(ob)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+
     /// The bytes waiting in the outbox.
     #[cfg(test)]
     pub(crate) fn outbox_bytes(&self) -> usize {
@@ -167,7 +207,13 @@ where
 
     /// `Some` once the bake thread has ended by a panic: its message. The handle is spent then.
     pub(crate) fn failed(&mut self) -> Option<String> {
-        if !self.handle.as_ref().is_some_and(JoinHandle::is_finished) {
+        // Ended is set as the thread unwinds: the join below waits out the rest of it.
+        let ended = self.shared.ended.load(Ordering::Acquire);
+        if !self
+            .handle
+            .as_ref()
+            .is_some_and(|h| ended || h.is_finished())
+        {
             return None;
         }
         match self.handle.take()?.join() {
@@ -213,6 +259,18 @@ impl<S, M, O> Drop for BakeThread<S, M, O> {
         if let Some(h) = self.handle.take() {
             let _ = h.join();
         }
+    }
+}
+
+/// The bake thread's guard: sets [`Shared::ended`] and wakes the render thread's wait as the
+/// thread ends.
+struct Ended<'a, M, O>(&'a Shared<M, O>);
+
+impl<M, O> Drop for Ended<'_, M, O> {
+    fn drop(&mut self) {
+        let _ob = Shared::<M, O>::lock(&self.0.outbox);
+        self.0.ended.store(true, Ordering::Release);
+        self.0.made.notify_all();
     }
 }
 

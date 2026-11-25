@@ -982,10 +982,11 @@ pub(crate) fn round_trip_line(r: &svet_render::BakeRoundTrip) -> Option<String> 
 /// The render thread's laps in the bake thread's frames (a reading, the teardown's
 /// `bake thread render laps:` line): each lap's p50 / p99 / max, then the frames whose whole
 /// call took over 4.0 ms with the lap that was largest in each and each lap's mean over them.
-pub(crate) fn render_laps_line(laps: &[[f32; 7]]) -> Option<String> {
-    const NAMES: [&str; 7] = [
-        "build", "take", "issue", "apply", "collect", "send", "total",
+pub(crate) fn render_laps_line(laps: &[[f32; 8]]) -> Option<String> {
+    const NAMES: [&str; 8] = [
+        "build", "take", "issue", "apply", "collect", "send", "wait", "total",
     ];
+    const TOTAL: usize = NAMES.len() - 1;
     if laps.is_empty() {
         return None;
     }
@@ -997,12 +998,33 @@ pub(crate) fn render_laps_line(laps: &[[f32; 7]]) -> Option<String> {
         let max = v.last().copied().unwrap_or(0.0);
         out += &format!(" {name} {p50:.3}/{p99:.3}/{max:.3}");
     }
-    let over: Vec<&[f32; 7]> = laps.iter().filter(|l| l[6] > 4.0).collect();
+    let over: Vec<&[f32; 8]> = laps.iter().filter(|l| l[TOTAL] > 4.0).collect();
     out += &format!("; over 4.0 ms {} frames, largest lap", over.len());
-    for (k, name) in NAMES[..6].iter().enumerate() {
-        let n = over.iter().filter(|l| (0..6).all(|j| l[k] >= l[j])).count();
+    for (k, name) in NAMES[..TOTAL].iter().enumerate() {
+        let n = over
+            .iter()
+            .filter(|l| (0..TOTAL).all(|j| l[k] >= l[j]))
+            .count();
         let mean = over.iter().map(|l| f64::from(l[k])).sum::<f64>() / over.len().max(1) as f64;
         out += &format!(" {name} {n} (mean {mean:.3})");
     }
     Some(out)
+}
+
+/// The edit's frames with the bake thread on (a reading, the teardown's `bake thread dig wait:`
+/// line): the dig frames, the wait for the dig's step p50 / p99 / max in ms, and the dig frames
+/// that issued two submits or more. `None` with no dig frame.
+pub(crate) fn dig_wait_line(waits: &[[f32; 2]]) -> Option<String> {
+    if waits.is_empty() {
+        return None;
+    }
+    let mut v: Vec<f64> = waits.iter().map(|w| f64::from(w[0])).collect();
+    let p50 = crate::report::percentile(&mut v, 50.0);
+    let p99 = crate::report::percentile(&mut v, 99.0);
+    let max = v.last().copied().unwrap_or(0.0);
+    let two = waits.iter().filter(|w| w[1] >= 2.0).count();
+    Some(format!(
+        "bake thread dig wait: {} dig frames, wait p50 {p50:.3} p99 {p99:.3} max {max:.3} ms, two submits {two}",
+        waits.len()
+    ))
 }
