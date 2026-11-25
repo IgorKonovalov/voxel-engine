@@ -36,24 +36,24 @@ const AFTER_STOP: usize = 30;
 /// The turn in degrees.
 const TURN_DEG: f32 = 60.0;
 /// The fly-through's unshifted fly speed (`fly.rs`'s `SPEED`), voxels a second.
-const FLY_VOX_S: f32 = 30.0;
+pub(super) const FLY_VOX_S: f32 = 30.0;
 /// The approach's length in voxels (20 m) and the hold after it.
 const APPROACH_VOX: f32 = 200.0;
 const APPROACH_HOLD: usize = 60;
 
 /// A pose: the eye in voxels, yaw and pitch in degrees, the clock's minutes, the trees.
-struct Pose {
-    name: &'static str,
-    eye: [f32; 3],
-    yaw: f32,
-    pitch: f32,
-    minutes: f32,
-    forest: bool,
+pub(super) struct Pose {
+    pub(super) name: &'static str,
+    pub(super) eye: [f32; 3],
+    pub(super) yaw: f32,
+    pub(super) pitch: f32,
+    pub(super) minutes: f32,
+    pub(super) forest: bool,
 }
 
 /// The poses Phase 8b names. The still's view angles were set by eye against the owner's still
 /// (`live/window100/3d-record-sunspots.png`, the HUD gives no angles).
-const POSES: [Pose; 3] = [
+pub(super) const POSES: [Pose; 3] = [
     Pose {
         name: "terraces",
         eye: [496.0, -648.7, 456.7],
@@ -84,7 +84,7 @@ const POSES: [Pose; 3] = [
 const STILL_YAW: f32 = 200.0;
 const STILL_PITCH: f32 = -44.0;
 
-fn camera_of(eye: [f32; 3], yaw: f32, pitch: f32) -> Camera {
+pub(super) fn camera_of(eye: [f32; 3], yaw: f32, pitch: f32) -> Camera {
     Camera {
         position: eye.into(),
         yaw: yaw.to_radians(),
@@ -133,10 +133,10 @@ fn path(cam0: &Camera, mv: &str, fly: usize, approach: usize) -> (Camera, Vec<Ca
 }
 
 /// The clearance the fly keeps from every solid voxel, in voxels (a box this far each way).
-const CLEAR_VOX: i32 = 8;
+pub(super) const CLEAR_VOX: i32 = 8;
 
 /// Whether no solid voxel of `world` lies within [`CLEAR_VOX`] of `cam`'s eye.
-fn clear(world: &svet_world::World, cam: &Camera) -> bool {
+pub(super) fn clear(world: &svet_world::World, cam: &Camera) -> bool {
     let e = cam.position.to_array().map(|v| v.floor() as i32);
     let r = CLEAR_VOX;
     (-r..=r).all(|dz| {
@@ -217,7 +217,13 @@ fn pose_rig(pose: &Pose, cams: &[Camera], start: &Camera) -> Option<Rig> {
 const NCLS: usize = 27;
 
 /// One frame's class map over `calm`'s lighting grid.
-fn class_map(rig: &Rig, f: &Frame, cam: &Camera, arm: &Arm, internal: [u32; 2]) -> Vec<u8> {
+pub(super) fn class_map(
+    rig: &Rig,
+    f: &Frame,
+    cam: &Camera,
+    arm: &Arm,
+    internal: [u32; 2],
+) -> Vec<u8> {
     use flythrough::outdoor::{BARK, LEAF, LEAF_2, LEAF_3};
     use svet_render::debug::{read_rgba8, read_rgba16f, read_rgba32f};
     let (d, q) = (&rig.device, &rig.queue);

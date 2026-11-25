@@ -1,6 +1,7 @@
 # 0104: The wobble anchored to the owner's eye: clips he ranks, a measure that ranks them, then the remedy
 
-> **Status:** approved (owner's go, 2026-11-25; drafted the same day with no interview from
+> **Status:** in progress: Phase 1 landed (2026-11-25), Phase 2 (the owner's viewing) next,
+> Phase 0 to follow; approved (owner's go, 2026-11-25; drafted the same day with no interview from
 > Plan 0100's close; questions 1 to 3 answered (a), (a), (a), recorded under "Risks & open
 > questions"). **Order (owner, question 1 (a)):** Phases 0 to 2 and 4 run as a lane beside
 > Plan 0099 now; Phase 3 and every remedy phase start on a main that holds Plan 0099.
@@ -493,7 +494,7 @@ his 2026-11-12 rule that cheap unpicked modes stay settings, for these settings)
 | phase | owner | state | commit |
 |---|---|---|---|
 | 0: the wobble rigs read a baked store | dev | not started | |
-| 1: the owner's move as clips | dev | not started | |
+| 1: the owner's move as clips | dev | done: six files under `live/anchor/`, readings in [`logs/0104.md`](logs/0104.md) | this commit |
 | 2: the owner watches the clips | human | not started | |
 | 3: the owner's own flight, recorded and rendered again (only for a subject not shown) | dev | not started | |
 | 4: a measure that ranks what the owner ranked | dev | not started | |
@@ -504,6 +505,19 @@ his 2026-11-12 rule that cheap unpicked modes stay settings, for these settings)
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- Phase 1: Phase 0's settle does not exist yet; the clips use their own (a device wait every
+  frame, then a census of hit chunks against `BakeQueue::settled`), whole on every clip.
+- Phase 1: no canopy start within 30 m holds 10 / 5 / 20 % (800 read); the nearest to holding
+  them is used (sunlit ground 5.3 %, leaf 2.4 %, shadowed 68.4 %); its fly is 1.85 s, cut by the
+  clearance rule, and no 15-degree turn of the level leg fits 4 s. The slot's fly is 3.51 s, the
+  same way. Where no turn fits, the heading stays as it was.
+- Phase 1: the level leg's clearance is the Phase 8b rule (no solid within 8 voxels of the eye);
+  a heading turn moves the eye along the turned heading and leaves the camera's yaw.
+- Phase 1: `libx264rgb` stores `gbrp` (planar RGB) from the `rgb24` input; frame 1 decodes back
+  byte-identical on all five clips.
+- Phase 1: `play.sh` adds `--input-conf` (`[` half speed, `]` normal, Enter next) and a
+  screenshot directory to the plan's `mpv` line.
 
 ### Close triggers
 

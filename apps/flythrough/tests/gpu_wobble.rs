@@ -16,6 +16,8 @@
     reason = "a reading rig: its arms leave fields unread, its runs time themselves"
 )]
 
+#[path = "gpu_wobble/clips.rs"]
+mod clips;
 #[path = "gpu_wobble/coarse.rs"]
 mod coarse;
 #[path = "gpu_wobble/cover.rs"]
