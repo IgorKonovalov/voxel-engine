@@ -2,7 +2,8 @@
 
 > **Status:** proposed (2026-11-22, with Plan 0099; amended while proposed, 2026-11-25: the
 > edit's frame waits, the owner's answer to that plan's question 6; lists apply in the order
-> made, an edit's with those before it)
+> made, an edit's with those before it; 2026-11-26: the wait ends on the step's lists, the
+> books' snapshot follows)
 > **Date:** 2026-11-22
 > **Related plan(s):** [Plan 0099](../plans/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md).
 > Extends [ADR-0017](0017-mirror-cpu-work-bounded-in-the-frame-loop-narrowing-on-stream-workers.md)
@@ -73,7 +74,12 @@ does them at one fixed point in the frame, from lists the bake thread prepared.*
   the list, on the thread's panic or on the stop. That frame also issues the dig's submit
   behind every submit planned before it and not yet issued (the one the step before planned,
   and one carried from an earlier frame), so it issues two as a rule and at most the thread's
-  depth. No other frame waits, and a dig's read-back crosses as every read-back does.
+  depth. No other frame waits, and a dig's read-back crosses as every read-back does. The
+  wait ends on that step's lists and submit: the snapshot of the books the public reads
+  consult is made after them and crosses as its own entry, and the render thread's mailbox
+  answers by the older of the lists applied and the books held (amended 2026-11-26: the
+  snapshot read 1.2 to 1.4 ms of the wait on the RTX, and nothing in the frame's picture
+  reads it).
 - **Results cross as write lists.** One bake step emits one ordered list of buffer writes
   (a block's words, its table word, the summary and parent words, a fade's shown words, the
   store's window when it moves) and at most one prepared submit (the planned rounds and the
