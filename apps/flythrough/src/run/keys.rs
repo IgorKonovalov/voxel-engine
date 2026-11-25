@@ -805,7 +805,7 @@ impl Run {
                 match self.modes.lights.drop_at(lamp, eye, fwd, hit) {
                     Ok(()) => {
                         self.modes.walkers.newest.push(false);
-                        self.modes.lights.count_words(lamp)
+                        self.modes.lights.count_words(lamp, self.modes.light_cap)
                     }
                     Err(line) => line.to_owned(),
                 }
@@ -832,7 +832,7 @@ impl Run {
                     self.modes.walkers.count_words()
                 } else {
                     self.modes.lights.remove_newest();
-                    self.modes.lights.count_words(lamp)
+                    self.modes.lights.count_words(lamp, self.modes.light_cap)
                 }
             }
             Act::FireLight => {
@@ -840,7 +840,10 @@ impl Run {
                 match self.modes.lights.fire(lamp, eye, fwd, hit) {
                     Ok(()) => {
                         self.modes.walkers.newest.push(false);
-                        format!("fire, {}", self.modes.lights.count_words(lamp))
+                        format!(
+                            "fire, {}",
+                            self.modes.lights.count_words(lamp, self.modes.light_cap)
+                        )
                     }
                     Err(line) => line.to_owned(),
                 }

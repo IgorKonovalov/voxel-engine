@@ -1055,7 +1055,27 @@ flag, the row's text follows; (4) the gate tier's wall time, now about 36 min on
 tree against the 19 min line (see "The gate tier is over its wall-time budget" below): a cut,
 not another acceptance. Size M. **Pick up** before the next plan that needs an owner window,
 ahead of the follow-on light plan's first window. Item (4) done 2026-11-24 on branch
-`chore-gate-time` (1133.2 s quiet, `docs/nfr/07-startup-and-build.md`); (1) to (3) remain.
+`chore-gate-time` (1133.2 s quiet, `docs/nfr/07-startup-and-build.md`); Items (2) and (3) done
+2026-11-25 on branch `chore-harness-2`: `apps/flythrough/tests/gpu_settings_rows.rs` (sole-marked,
+about 14 s on lavapipe) walks every row from the fly-through's outdoor defaults over a small
+fixture, its `INERT` list holding each row that changes under 0.1 % of the image with its reason
+(a row listed as needing other rows is proven live under them); `apps/flythrough/src/run/hud_live_tests.rs`
+walks every row a flag sets and every menu entry against the HUD's text. (1) remains, and the
+banner half of (2) (marking an inert row) waits on the owner's choice of form.
+**Findings of the walk** (rows inert under the defaults, as the walk read them; none "fixed"):
+the key ray's rows `lighting.penumbra`, `key_cap` and `key_history` (under key far column a cube
+face's key light is the column map's; each live under key far ray, the penumbra on 18525 of
+20736 pixels); the sky rays' rows `lighting.sky_rays`, `sky_history` and `sky_down_skip` (with no
+light history a face's sky term is its record's or the column's; live with the light history on,
+`sky_history` on only 22 pixels); `lighting.key_far_mix` (3 pixels; live under key far baked);
+`lighting.candidates` (no pixel under the defaults or with the light history on: what it needs is
+open); `metering` (under the auto exposure the preset's own weights meter, under a manual one the
+meter feeds only the readout: no arrangement changes the image); `lighting.history`'s gradient
+(a light change under a light history); `look.tuning.face_mix` (the field look alone). Two rows
+change the image where their docs say they should not: `lighting.entity_light` (6062 pixels with
+no entity in view) and `field_split` (7938 pixels in the face look). The HUD walk found the lights
+row counting against 16 whatever the frame's light cap (now the cap) and an unnamed sky history
+(now named).
 
 ### Two process-spawning GPU tests skip silently without lavapipe
 

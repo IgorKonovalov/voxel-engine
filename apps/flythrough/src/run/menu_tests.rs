@@ -22,7 +22,7 @@ fn tick_ops(run: &mut Run) -> usize {
 }
 
 /// One frame's input step on `run`: the key step, then interactive flight with what passed.
-fn frame_keys(run: &mut Run, input: &Input) -> Option<Flow> {
+pub(super) fn frame_keys(run: &mut Run, input: &Input) -> Option<Flow> {
     let (pass, exit) = run.key_step(input);
     if exit.is_none() {
         run.flight_step(pass.input(), 1.0 / 60.0);
@@ -30,7 +30,7 @@ fn frame_keys(run: &mut Run, input: &Input) -> Option<Flow> {
     exit
 }
 
-fn pressed(k: KeyCode) -> Input {
+pub(super) fn pressed(k: KeyCode) -> Input {
     let mut i = Input::default();
     i.key_down(k);
     i
@@ -379,7 +379,7 @@ fn a_shortcut_still_acts_and_shows() {
         assert!(after.contains(closed_word), "{k:?}: {after}");
     }
     assert_eq!(run.modes.profile, "profile: floor");
-    let count = |run: &Run| run.modes.lights.count_words(true);
+    let count = |run: &Run| run.modes.lights.count_words(true, run.modes.light_cap);
     let start = count(&run);
     frame_keys(&mut run, &pressed(KeyCode::Digit1));
     let dropped = count(&run);
@@ -650,7 +650,7 @@ fn search(run: &mut Run, words: &str) {
 }
 
 /// The palette at `e`'s label with the selection on `e`.
-fn select(run: &mut Run, e: &crate::hud::menu::Entry) {
+pub(super) fn select(run: &mut Run, e: &crate::hud::menu::Entry) {
     use crate::hud::menu::Row;
     search(run, e.label);
     let v = run.run_view();
