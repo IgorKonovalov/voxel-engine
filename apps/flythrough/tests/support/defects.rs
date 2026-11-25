@@ -688,7 +688,6 @@ pub fn hole_frame(
             .previous;
     let lum = |p: &[f32; 4]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
     let pair = read_rgba16f(d, qu, f.visibility_pair());
-    let store = f.store();
     let table = shot
         .hits
         .iter()
@@ -697,7 +696,10 @@ pub fn hole_frame(
                 return 0;
             }
             let c = svet_world::ChunkCoord([0, 1, 2].map(|k| (h[k].floor() as i32).div_euclid(64)));
-            match (store.block(c).is_some(), store.is_coarse(c)) {
+            let holds = f
+                .store_holds(c)
+                .expect("the store's marks (with the bake thread, its dig trace on)");
+            match holds {
                 (_, true) => 2,
                 (true, false) => 1,
                 _ => 0,

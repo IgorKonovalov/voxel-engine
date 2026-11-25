@@ -80,6 +80,25 @@ impl Frame {
         self.baked.fade_frames
     }
 
+    /// Whether the store holds a block for `coord` and whether it is the coarse pass's, in either
+    /// mode (a reading): lockstep's copy, else the bake thread's newest books, whose coarse marks
+    /// are carried only under [`crate::bake::BakeQueue::trace_digs`] (`None` without it).
+    pub fn store_holds(&self, coord: svet_world::ChunkCoord) -> Option<(bool, bool)> {
+        match &self.baked.thread {
+            Some(link) => {
+                let coarse = link.books.coarse.as_ref()?;
+                Some((
+                    link.books.blocks.contains_key(&coord.0),
+                    coarse.contains(&coord.0),
+                ))
+            }
+            None => {
+                let store = &self.baked.store;
+                Some((store.block(coord).is_some(), store.is_coarse(coord)))
+            }
+        }
+    }
+
     /// Whether the bake thread runs now (on, started, not stopped by a panic).
     pub fn bake_thread_running(&self) -> bool {
         self.baked.thread.is_some()
