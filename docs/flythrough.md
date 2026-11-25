@@ -51,6 +51,13 @@ window's top-right corner reads `fps <n>  frame <median> ms p99 <ms>` while it i
 - **The notice row**, above the footer, holds the last line an action printed for 3 s, in
   yellow: `readings: sampling 30 frames` and then the frame line, the logic's `stamped: ...`,
   a refused entry's reason.
+- **An inert mark**: an entry whose settings row changes nothing under the run's live
+  settings ends `(inert: <reason>)`, and the notice of its change says the same
+  (`penumbra disc (inert: key far column)`, `sky rays 3 (inert: light history off)`,
+  `key far mix step (inert: light history off)`); the mark goes when the row it waits on
+  changes. The rows and their conditions are one table, `apps/flythrough/src/inert.rs`, which
+  `tests/gpu_settings_rows.rs` proves by rendering; a row inert for what the run cannot tell
+  (a rebuild, the live queue, motion) carries no mark.
 
 ### Fixed
 
@@ -262,6 +269,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--bench N` | Send `N` bench inputs on the first frame |
 | `--dig-at F,..` | Dig at each of these frames |
 | `--bench-at F,..` | A bench input at each of these frames |
+| `--still PATH`, `--mode-text PATH` | With `--headless` and `--frames`: write the last frame's output (no HUD) as a binary PPM, and the first frame's banner, the mode banner as it shows at its start, the mode rows and the stats HUD's rows as text; `scripts/rehearse-window.mjs` renders a live session's runs with them before the window opens |
 | `--sync-budget MIB` | The mirror's upload bytes a frame |
 | `--sync-ms MS` | The mirror's upload time a frame [none; 0 is none] |
 | `--workers N` | The streamer's generation workers, at least 1 [half the logical cores] |

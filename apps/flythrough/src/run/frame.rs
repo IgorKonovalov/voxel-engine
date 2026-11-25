@@ -235,6 +235,9 @@ impl Run {
         {
             self.samples = Some(Samples::default());
         }
+        if self.frame == 0 {
+            self.write_start_text();
+        }
         self.draw(gpu, surface, t0, dt)
     }
 
@@ -903,7 +906,8 @@ impl Run {
     }
 
     /// `--frames`' readings at the exit: the walk's foot, the coarse grid, the cracks or steps
-    /// view's line, the mirror's belt, the lamp toggle's windows and the stats HUD's rows.
+    /// view's line, the mirror's belt, the lamp toggle's windows and the stats HUD's rows; then
+    /// `--still` and `--mode-text`'s files.
     fn print_exit_readings(&mut self, gpu: &Gpu) {
         if let Some(w) = &self.walk {
             println!(
@@ -952,6 +956,7 @@ impl Run {
         let mut stats = self.hud.stats.clone();
         stats.world.age_frames = 0;
         println!("hud:\n{stats}");
+        self.write_still(gpu);
     }
 
     /// Files this frame's times into the readings' samples (`Enter`), when they are being

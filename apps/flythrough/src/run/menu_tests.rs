@@ -674,7 +674,7 @@ fn menu_text(run: &mut Run) -> (Vec<String>, Vec<svet_render::HudColour>) {
 }
 
 /// The selected row's text and colour.
-fn selected_row(run: &mut Run) -> (String, svet_render::HudColour) {
+pub(super) fn selected_row(run: &mut Run) -> (String, svet_render::HudColour) {
     let (rows, colours) = menu_text(run);
     let i = rows
         .iter()

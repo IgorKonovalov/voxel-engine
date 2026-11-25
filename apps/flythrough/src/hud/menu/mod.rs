@@ -124,6 +124,9 @@ pub struct RunView {
     pub placed: bool,
     pub streaming: bool,
     pub coarse: bool,
+    /// The settings rows inert under the run's live settings: an entry that changes one is
+    /// marked (`crate::inert`).
+    pub inert: crate::inert::Inert,
 }
 
 /// The audio's switches and mix as the audio entries show them.

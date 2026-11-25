@@ -175,6 +175,31 @@ impl Frame {
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
+    /// Puts the frame's temporal state back as a new frame holds it, for tests that compare
+    /// several settings rendered from one frame: the history whole (its validity, and the
+    /// light lists, light and bounce keys, light-change window and held dig boxes that
+    /// [`Frame::reset_history`] keeps), the frame index, and the exposure (the pass's state,
+    /// the exposure the next frame's passes use, its highlight state and the floor's smoothed
+    /// sky share, with [`Frame::reset_exposure`]'s jump). [`Frame::reset_history`] and
+    /// [`Frame::reset_exposure`] alone leave two renders from one frame differing by what
+    /// rendered before them: the upscaler's light-change test compares against the light
+    /// list `CHANGE_FRAMES` encodes back, and the exposure's jump lands at the end of the
+    /// next frame, whose passes use the exposure the frames before left. The lamp channel's
+    /// probes are the caller's (a frame with the channel off restarts them).
+    #[cfg(feature = "test-support")]
+    pub fn restart_as_new(&mut self, queue: &wgpu::Queue) {
+        self.restarts += 1;
+        *self.history() = History::default();
+        self.state.frame = 0;
+        self.exposure.restore_initial(queue);
+        self.around
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .0
+            .reset();
+        self.reset_exposure();
+    }
+
     /// Sets how the exposure pass weights the meter's tiles under a manual exposure
     /// (centre-weighted by default); in auto, [`crate::AutoExposure::metering`] does.
     pub fn set_metering(&mut self, metering: Metering) {

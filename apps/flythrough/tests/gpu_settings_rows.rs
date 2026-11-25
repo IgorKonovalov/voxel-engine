@@ -6,6 +6,7 @@
 
 mod support;
 
+use flythrough::inert::INERT_WHEN;
 use svet_render::{Camera, Frame, GpuWorld, Light, LightParams, RenderSettings, wgpu};
 use svet_world::{AIR, ChunkExtent, FnSource, Material, MaterialFlags, World};
 
@@ -17,20 +18,17 @@ const FRAMES: usize = 8;
 /// output's.
 const MIN_PIXELS: usize = (OUT[0] * OUT[1] / 1000) as usize;
 
-/// Why a row's flip changes under `MIN_PIXELS` pixels of the walk's image.
+/// Why a row's flip changes under `MIN_PIXELS` pixels of the walk's image, for what the run
+/// cannot tell from its settings. A row inert under the settings that hold it is
+/// `flythrough::inert::INERT_WHEN`'s, which the window reads too.
 #[derive(Clone, Copy, Debug)]
 enum Why {
-    /// It is read only while other rows hold values the defaults do not: under the settings
-    /// the function gives, its flip changes at least `MIN_PIXELS` pixels (the walk checks it).
-    Needs(fn(&mut RenderSettings), &'static str),
     /// It acts on the live queue (when light lands, what it costs), which the walk replaces
     /// with a whole bake: a queue's wall-clock slice is not deterministic.
     Queue,
     /// A `Rebuild` row: the frame leaves it to the caller, who recreates the mirror, the
     /// streamer or the entity pool; the walk rebuilds nothing.
     Rebuild(&'static str),
-    /// It feeds a reading, not the image.
-    Reading(&'static str),
     /// Inert in every arrangement the walk tried, what it needs not found: a finding
     /// (`docs/backlog.md`, the harness chore's entry).
     Open(&'static str),
@@ -43,11 +41,7 @@ impl Why {
     /// The reason in words.
     fn words(self) -> &'static str {
         match self {
-            Why::Needs(_, w)
-            | Why::Rebuild(w)
-            | Why::Reading(w)
-            | Why::Open(w)
-            | Why::Absent(w) => w,
+            Why::Rebuild(w) | Why::Open(w) | Why::Absent(w) => w,
             Why::Queue => "the live queue",
         }
     }
@@ -73,66 +67,34 @@ const INERT: &[(&str, Why)] = &[
         "lighting.bake_pool_bytes",
         Why::Rebuild("the store's pool, allocated by the first bake"),
     ),
+    ("lighting.landing_fade", Why::Queue),
+    ("lighting.source_fade", Why::Queue),
+    ("lighting.column_wait", Why::Queue),
+    ("lighting.dig_hold", Why::Queue),
     (
-        "lighting.sky_rays",
-        Why::Needs(
-            light_history,
-            "with no light history a face's sky term is its record's or the column's",
-        ),
-    ),
-    (
-        "lighting.sky_history",
-        Why::Needs(
-            light_history,
-            "the sky rays' mean, which only a light history keeps",
-        ),
+        "lighting.key_cap",
+        Why::Absent("a key ray past its test value's 1536 voxels: the world is 128 long"),
     ),
     (
         "lighting.key_history",
-        Why::Needs(
-            key_ray,
-            "the key ray's mean; under key far column a cube face's key light is the column map's",
-        ),
-    ),
-    ("lighting.landing_fade", Why::Queue),
-    ("lighting.source_fade", Why::Queue),
-    (
-        "lighting.penumbra",
-        Why::Needs(
-            key_ray,
-            "the key ray's disc; under key far column a cube face's key light is the column map's",
-        ),
-    ),
-    (
-        "lighting.key_cap",
-        Why::Needs(
-            key_ray,
-            "the key ray's length; under key far column no key ray is cast at a cube face",
-        ),
+        Why::Absent("frames past its test value's 64: in 8 the key mean counts under 64 samples"),
     ),
     (
         "lighting.sky_down_skip",
-        Why::Needs(
-            light_history,
-            "the sky rays, which only a light history shows",
-        ),
+        Why::Open("no pixel under key far ray, key far baked or the light history, or both"),
     ),
-    ("lighting.column_wait", Why::Queue),
-    ("lighting.dig_hold", Why::Queue),
+    ("lighting.entity_light", Why::Absent("an entity in view")),
     (
         "lighting.candidates",
         Why::Open("no pixel here, under the defaults or with the light history on"),
     ),
-    (
-        "lighting.key_far_mix",
-        Why::Needs(
-            key_baked,
-            "the band's blend of the store's key visibility, which key far column reads by the column",
-        ),
-    ),
     ("lighting.key_step", Why::Queue),
     (
         "look.tuning.face_mix",
+        Why::Absent("the field look, whose mirror holds the field's band slots (a rebuild)"),
+    ),
+    (
+        "field_split",
         Why::Absent("the field look, whose mirror holds the field's band slots (a rebuild)"),
     ),
     ("lod.r_full", Why::Absent("chunks past 16 from the camera")),
@@ -145,12 +107,6 @@ const INERT: &[(&str, Why)] = &[
     (
         "fsr2.jitter_phases",
         Why::Absent("frames past the first 16 phases, which both sequences share"),
-    ),
-    (
-        "metering",
-        Why::Reading(
-            "the meter's weights under a manual exposure feed the exposure readout, not the image",
-        ),
     ),
     ("bake.budget", Why::Queue),
     ("bake.coarse_samples", Why::Queue),
@@ -209,21 +165,6 @@ const INERT: &[(&str, Why)] = &[
     ),
     ("mark_colours", Why::Absent("a marked entity")),
 ];
-
-/// The light history on.
-fn light_history(s: &mut RenderSettings) {
-    s.lighting.light_history = true;
-}
-
-/// The key light's visibility from its ray at every face.
-fn key_ray(s: &mut RenderSettings) {
-    s.lighting.key_far = svet_render::KeyFar::Ray;
-}
-
-/// The key light's far visibility from the store.
-fn key_baked(s: &mut RenderSettings) {
-    s.lighting.key_far = svet_render::KeyFar::Baked;
-}
 
 /// The walk's world and its view.
 struct Fixture {
@@ -366,9 +307,12 @@ fn new_frame(fx: &mut Fixture, s: &RenderSettings) -> Frame {
     f
 }
 
-/// `FRAMES` frames under `s` from a reset (the history, the exposure, the frame index, and the
-/// lamp channel: a frame with the bounce off over a volume rebuilt at another spacing), the
-/// last one's image.
+/// `FRAMES` frames under `s` from a reset: the frame's temporal state as a new frame holds it
+/// (`Frame::restart_as_new`: the history with the light lists the upscaler's light-change test
+/// reads, the exposure the first frame's passes use, the frame index) and the lamp channel (a
+/// frame with the bounce off over a volume rebuilt at another spacing); the last frame's image.
+/// `Frame::reset_history` and `Frame::reset_exposure` alone are not such a reset: a row's
+/// count would depend on the rows rendered before it.
 fn render(fx: &Fixture, f: &mut Frame, s: &RenderSettings) -> Vec<u8> {
     let mut other = s.clone();
     other.probe_spacing = if s.probe_spacing == 8 { 16 } else { 8 };
@@ -382,9 +326,7 @@ fn render(fx: &Fixture, f: &mut Frame, s: &RenderSettings) -> Vec<u8> {
         &LightParams::headlamp(),
     );
     f.apply_settings(&fx.device, &fx.queue, s);
-    f.reset_history();
-    f.reset_exposure();
-    f.set_frame_index(0);
+    f.restart_as_new(&fx.queue);
     for _ in 0..FRAMES {
         f.step(
             &fx.device,
@@ -407,11 +349,15 @@ fn differing(a: &[u8], b: &[u8]) -> usize {
 
 /// Every row of `RenderSettings::FIELDS` (the rows Plan 0069's tests walk), flipped alone from
 /// the fly-through's outdoor defaults: its image differs from the defaults' in at least
-/// `MIN_PIXELS` pixels, or the row is in `INERT` with its reason and changes fewer; a row listed as needing other rows changes at least `MIN_PIXELS`
-/// pixels under them. The defaults' image repeats to the byte from a reset, before and
-/// after the walk, so a difference is the row's.
+/// `MIN_PIXELS` pixels, or the row is listed inert with its reason and changes fewer: in
+/// `INERT`, or in `flythrough::inert::INERT_WHEN` with its condition holding under the
+/// defaults. A table row with settings it acts under (`live_under`) changes at least
+/// `MIN_PIXELS` pixels there, where its condition does not hold, so the window's mark and
+/// the walk cannot disagree. The defaults' image repeats to the byte from a reset, before and
+/// after the walk, and each `live_under` image after its row's (key far ray, the light
+/// history), so a difference is the row's and not the order of the walk's.
 ///
-/// About 14 s on lavapipe (13.7 s at a load of 5.5), over the 10 s soak line and the gate's only test of the rule, so
+/// About 16 s on lavapipe (16.0 s at a load of 2.5), over the 10 s soak line and the gate's only test of the rule, so
 /// it runs whenever the crate changes rather than in the gate. A new row fails it until it
 /// changes the image here or joins `INERT` with its reason.
 #[test]
@@ -436,8 +382,17 @@ fn every_settings_row_changes_the_image_or_is_listed_inert() {
     for &(name, _) in RenderSettings::FIELDS {
         let s = base.with_test_value(name).expect("a test value");
         let d = differing(&a, &render(&fx, &mut f, &s));
-        let listed = INERT.iter().find(|(n, _)| *n == name).map(|&(_, w)| w);
-        println!("reading: {name:32} {d:6} {}", listed.map_or("", Why::words));
+        let listed = INERT
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|&(_, w)| w.words())
+            .or_else(|| {
+                INERT_WHEN
+                    .iter()
+                    .find(|r| r.row == name && (r.holds)(&base))
+                    .map(|r| r.reason)
+            });
+        println!("reading: {name:32} {d:6} {}", listed.unwrap_or(""));
         match listed {
             Some(_) if d >= MIN_PIXELS => live_inert.push((name, d)),
             None if d < MIN_PIXELS => weak.push((name, d)),
@@ -450,15 +405,33 @@ fn every_settings_row_changes_the_image_or_is_listed_inert() {
         "the defaults repeat after"
     );
     let mut unproven = Vec::new();
-    for &(name, why) in INERT {
-        let Why::Needs(enable, _) = why else { continue };
+    for r in INERT_WHEN {
+        assert!(
+            (r.holds)(&base),
+            "{} is not inert under the defaults",
+            r.row
+        );
+        assert!(
+            INERT.iter().all(|(n, _)| *n != r.row),
+            "{} is listed twice",
+            r.row
+        );
+        let Some(live) = r.live_under else { continue };
         let mut on = base.clone();
-        enable(&mut on);
-        let s = on.with_test_value(name).expect("a test value");
-        let d = differing(&render(&fx, &mut f, &on), &render(&fx, &mut f, &s));
-        println!("reading: {name:32} {d:6} under its needs");
+        live(&mut on);
+        assert!(!(r.holds)(&on), "{} holds under its live_under", r.row);
+        let s = on.with_test_value(r.row).expect("a test value");
+        let reference = render(&fx, &mut f, &on);
+        let d = differing(&reference, &render(&fx, &mut f, &s));
+        println!("reading: {:32} {d:6} under its live_under", r.row);
+        assert_eq!(
+            differing(&reference, &render(&fx, &mut f, &on)),
+            0,
+            "{}: the image under its live_under repeats after the row's",
+            r.row
+        );
         if d < MIN_PIXELS {
-            unproven.push((name, d));
+            unproven.push((r.row, d));
         }
     }
     println!("reading: walk {:.1} s", t.elapsed().as_secs_f64());
@@ -472,10 +445,13 @@ fn every_settings_row_changes_the_image_or_is_listed_inert() {
     );
     assert!(
         unproven.is_empty(),
-        "rows listed as needing other rows that change under {MIN_PIXELS} pixels there too: \
-         {unproven:?}"
+        "rows that change under {MIN_PIXELS} pixels under their live_under too: {unproven:?}"
     );
-    for (n, _) in INERT {
+    for n in INERT
+        .iter()
+        .map(|(n, _)| *n)
+        .chain(INERT_WHEN.iter().map(|r| r.row))
+    {
         assert!(RenderSettings::class_of(n).is_some(), "{n} is no row");
     }
 }

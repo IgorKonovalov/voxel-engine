@@ -274,7 +274,7 @@ Found at the close ([Plan 0098](plans/done/0098-a-calm-light-by-default-no-scree
   1966 of 2000, `bake/queue/mod.rs` 1060 and `bake/job_loop.rs` 1047 of 1200. Plans 0099 and
   0100 both add to them; new code goes to files of its own.
 
-### The weekly soak's underground eye: the surface reference reads 157.49 (2026-11-24)
+### The weekly soak's underground eye: the surface reference reads 157.49 (2026-11-24, done 2026-11-25)
 
 Read by the gate-time chore from the red weekly soak of 2026-11-23 (run 45165663078, main
 `123964e7`) and again on `909a2552` on the dev reference's lavapipe:
@@ -282,10 +282,14 @@ Read by the gate-time chore from the red weekly soak of 2026-11-23 (run 45165663
 157.49023807374985` against the bar's 149.7 within 5 % (+5.2 %; the reference was read at
 `2fe4598c`, Plan 0086), the same value on CI's and this box's lavapipe, so deterministic. The
 near-eye visibility bar passes; the underground parts after the reference are not reached. A
-real engine change, not a tier fault: some plan since Plan 0086 moved the stored sky light on
-the open surface. What it takes: find the commit (the reading `reading::underground_eye` at
-`r` 7 takes about 220 s on lavapipe), then either a fix or the reference re-read by the owner's
-rule for a moved reference. Read with it: of the run's other four failures, the wobble table is
+real engine change, not a tier fault. **Done 2026-11-25 (chore-underground-eye, readings in
+`docs/plans/logs/chore-underground-eye.md`):** Plan 0086 Phase 17 (`ceb9dd0e`) moved it, on
+purpose: the smoothed sky normal as the default (`SkyNormal::Smoothed`, `sky_baked_term` in
+`temporal.wgsl`) reads 157.49 there and on main, the face normal 149.68 on both; Phase 17
+re-blessed the goldens but did not re-read this soak reference. The underground parts pass on
+main (all 0.0000). The stored reference moved to 157.49 by lane rule 2a, the bar and claim as
+written. Left open: the surface's direct part reads 1396.5 on main against the reference's
+1345 (+3.8 %, inside the 5 %), moved by a commit after Plan 0086 not looked for. Read with it: of the run's other four failures, the wobble table is
 a reading since Plan 0098 (`c46fb41a`), and the two still-camera upscaler bars and the shutdown
 bound pass here (since Plan 0102, 2026-11-25, neither bar exists: `gpu_upscale`'s test went with
 the engine's own upscaler, and `gpu_fsr2`'s asserted that upscaler alone and is the hand-run
@@ -1064,20 +1068,38 @@ ahead of the follow-on light plan's first window. Item (4) done 2026-11-24 on br
 about 14 s on lavapipe) walks every row from the fly-through's outdoor defaults over a small
 fixture, its `INERT` list holding each row that changes under 0.1 % of the image with its reason
 (a row listed as needing other rows is proven live under them); `apps/flythrough/src/run/hud_live_tests.rs`
-walks every row a flag sets and every menu entry against the HUD's text. (1) remains, and the
-banner half of (2) (marking an inert row) waits on the owner's choice of form.
+walks every row a flag sets and every menu entry against the HUD's text. The banner half of (2)
+done 2026-11-25 on branch `chore-harness-3`: a menu entry whose row is inert under the run's live
+settings ends `(inert: <reason>)`, from one table (`apps/flythrough/src/inert.rs`) the walk proves.
+Item (1) done 2026-11-25 on branch `chore-harness-3`: the fly-through's `--still` and `--mode-text` (a headless run's last frame and its banner, mode and stats rows) and `scripts/rehearse-window.mjs` (a runner's runs, or a list, rendered headless into one sheet with loud lines; the live-runner lib's `REHEARSE=`). **The walk's renders were not independent** until then: `Frame::reset_exposure`
+jumps the adapted level at the end of the next frame, whose passes still use the exposure the
+render before left, and that frame stays in the upscaler's history, so a row's count depended on
+the row rendered before it (the same settings twice in a row differed by up to 1654 pixels under
+key far ray), and a light row's change reached the renders after it (the upscaler's
+light-change test compares the light list 24 encodes back, about three renders, which
+`Frame::reset_history` keeps). The walk now restarts its frame as a new one before each render
+(the test-support `Frame::restart_as_new`: the whole history and the exposure state), asserts
+the byte-repeat, and reads the same count for every row walked forward and reversed. In the
+window both are the frame working as designed (the auto exposure adapting, the upscaler not
+ghosting a light change), not stale state: no `Live` row needs a settle for them. Open: whether
+`reset_exposure` itself should set the exposure the next frame's passes use, so a caller's reset
+(a jump of the view) has no first frame at the old exposure. Counts below are from that walk.
 **Findings of the walk** (rows inert under the defaults, as the walk read them; none "fixed"):
-the key ray's rows `lighting.penumbra`, `key_cap` and `key_history` (under key far column a cube
-face's key light is the column map's; each live under key far ray, the penumbra on 18525 of
-20736 pixels); the sky rays' rows `lighting.sky_rays`, `sky_history` and `sky_down_skip` (with no
-light history a face's sky term is its record's or the column's; live with the light history on,
-`sky_history` on only 22 pixels); `lighting.key_far_mix` (3 pixels; live under key far baked);
-`lighting.candidates` (no pixel under the defaults or with the light history on: what it needs is
-open); `metering` (under the auto exposure the preset's own weights meter, under a manual one the
+`lighting.penumbra` (under key far column a cube face's key light is the column map's; live under
+key far ray, 18708 of 20736 pixels); `lighting.sky_rays`, `sky_history` and `key_far_mix` (with no
+light history; live with it on, `sky_rays` 224 pixels, `key_far_mix` 2297, `sky_history` 10 under
+the light history alone, under the walk's 20-pixel floor, and 60 with key far ray too);
+`lighting.key_cap` (its test value, 1536 voxels, is past every key ray in the walk's 128-voxel
+world), `key_history` (its test value, 64, is past the key mean's count in the walk's 8 frames),
+both read at 0 pixels under key far ray, key far baked and the light history, alone or together,
+and so not "live under key far ray" as this entry said before; `lighting.sky_down_skip` (0 pixels
+in every one of those arrangements: what it needs is open); `lighting.candidates` (no pixel under
+the defaults or with the light history on: what it needs is open); `metering` (under the auto exposure the preset's own weights meter, under a manual one the
 meter feeds only the readout: no arrangement changes the image); `lighting.history`'s gradient
-(a light change under a light history); `look.tuning.face_mix` (the field look alone). Two rows
-change the image where their docs say they should not: `lighting.entity_light` (6062 pixels with
-no entity in view) and `field_split` (7938 pixels in the face look). The HUD walk found the lights
+(a light change under a light history); `look.tuning.face_mix` and `field_split` (the field look
+alone); `lighting.entity_light` (an entity in view). The two rows this entry once said change the
+image where their docs say they should not (`lighting.entity_light`, `field_split`) change
+nothing with independent renders: their counts were the rows' before them. The HUD walk found the lights
 row counting against 16 whatever the frame's light cap (now the cap) and an unnamed sky history
 (now named).
 
