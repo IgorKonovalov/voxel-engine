@@ -1326,3 +1326,235 @@ new source, and whether the key bake runs with no reader); `walk` as a default. 
 drafted from Phase 8b's table, the slot's pose included. Left for the close ceremony: the
 file name of ADR-0084 still spells its first title (kept so the links hold); the architect
 renames it, or leaves it, when the plan's own move repairs the links.
+
+## Amended 2026-11-25 (architect, Phase 8b did not reproduce the window)
+
+**Phase 8b's measure does not see what the owner saw, so nothing is drafted from its table.
+The slot's pose is not run. Plan 0100 closes on Phase 9 alone, and the wobble goes to the
+follow-on plan, whose first phases are written here: a clip of the owner's move that he
+watches and answers "yes, that is it, there" or "no", and only then a measure, built on the
+frames he judged.** Nothing was run for this section. The table and the dev's cautions are in
+[`logs/0100.md`](logs/0100.md), "Phase 8b"; the rig is
+`apps/flythrough/tests/gpu_wobble/owner_move.rs`; the stills cited are under the lane's
+untracked `live/p8b/stills/`.
+
+By the stop rule the phase stopped at two of three poses, and the third (the canopy) passed on
+a class of 3 133 pixels (0.09 % of the display). Two of the owner's three orderings came out
+reversed or flat. The best-practice rule applies as written: a rig that cannot show the fault
+tunes no fix.
+
+### Why the measure and the eye disagree
+
+"Wobble" is the owner's word. Across five subjects it may name two or three artifacts (an
+edge of light stepping along a surface as he moves, dots sparkling at leaves, a patch
+changing shape, the dash rows of a terraced slope crawling). No reading has asked him which.
+What follows is from the rig's code and the stills; each line says how sure.
+
+1. **The measure counts a two-frame flip and nothing slower (established from the code).**
+   `reversals` asks for a move of over 4 levels from frame t-1 to t and back from t to t+1: a
+   period of two frames, 30 Hz at the rig's step. The eye is least sensitive there and most
+   between about 2 and 15 Hz. An edge that advances a lighting pixel every few frames, a patch
+   that changes over a quarter second and a dash row that crawls are monotonic over three
+   frames and count as nothing. FSR 2's jitter is a source of exactly the two-frame flip. So
+   ordering 2 came out reversed for a reason that is the measure's: with no upscaler nothing
+   flips (0.000 stopped) and everything steps.
+2. **It counts pixels over a threshold, not contrast by area (established).** A change of 5
+   levels and one of 120 count the same. FSR 2 spreads a change over several display pixels
+   and frames at lower amplitude: more pixels over 4, less to see. Run 1b's pixels were 1280 x
+   720 stretched to the window, each 3.9 window pixels in area and unsmoothed; the rig read
+   `native` at its own size, never stretched.
+3. **The classes cut the picture where the eye does not (established from the stills).** At
+   the terraces the whole view is a sunlit slope ruled with dark riser dashes one or two
+   pixels wide (`terraces-owner-calm`). The rig calls the dashes "shadowed" and "away" (188 k
+   pixels flying) and finds them reversing three to four times the treads. To the owner the
+   dashes are the sunlit slope's texture: his "only on sunned parts" was said at the canopy
+   (3a), and this plan stretched it to every pose. Ordering 1 at the terraces was not his.
+4. **Ordering 3 was read where the two arms are the same picture (established).** `key cover
+   ray` changes only faces the horizon shadows and a ray lights; the classes are `calm`'s, so
+   "sunlit ground" holds only faces `ray` leaves alone. The first 30 frames after the stop read
+   10.370 % under both. Where `ray` does act (the shadowed class) the count doubled (0.155 to
+   0.323 %), which may be patches the owner liked.
+5. **The rig did not look at what he looked at (likely; not checkable).** He flew freely for
+   30 to 90 s a run; only one still records where. The canopy's launch view holds one sun
+   patch (`canopy-owner-calm`), the still's pose none under the defaults. The rig flew level
+   along the heading, not along the view as W does, and was cut at 245 and 66 frames.
+6. **The picture's own motion is in the count (established: the dev's caution).** With no
+   light at all (`albedo`) the canopy's sunlit class reverses 25 % of its pixels a frame while
+   turning, `keyoff` 49 %. Nothing in the measure removes what the camera does to fine
+   geometry.
+7. **The rig is not the window (established in part).** It pins the exposure after the
+   settle; the window meters every frame. It steps 1/60 s a frame; the window ran near 66
+   frames a second with the HUD. Nine attempts were discarded before its bake ran as the
+   fly-through's does. None of these explains a reversed ordering; each is a reason a clip
+   from the rig may not look like the window.
+
+What stands from Phase 8b: with the camera held and the store settled almost nothing flips
+(0.002 to 0.008 % at the terraces), as Phase 1 read; and at the canopy `keyoff` and `albedo`
+remove the sunlit class's flips, so there the two-frame flicker is the sun's term. The stage
+rows' "gap closed" figures rank stages by a quantity not shown to be the fault: they are
+readings, not a basis for a remedy.
+
+### Rulings
+
+- **Phase 8b's slot pose is not run.** Its stop rule takes the canopy's shadowed class as
+  "where the owner saw no wobble", its fly would be cut to a few frames in the tunnel, and
+  its line would name a source by a measure that failed at two poses of three. The slot
+  becomes clip S below. The dev marks the Implementation log's rows (8b: three poses read,
+  the slot's pose withdrawn by this section; 8c: replaced, not run) and removes the log's
+  resume notes for the slot pose.
+- **Plan 0100 closes on Phase 9.** Phase 9 is untouched by this section. The close review
+  runs fresh after it; its verdict says in plain words that the wobble the plan was written
+  to remove is still there and that no reading of this plan shows it. ADR-0084 is accepted as
+  rewritten.
+- **"Drafted from Phase 8b's table" is withdrawn** ("After Phase 9" and "After Phase 9,
+  restated"). The follow-on plan is drafted from the phases below; its remedy phases are not
+  written before Phase F2's answer and Phase F4's result exist.
+- **For the close review (a finding to check, not ruled here):** the dev reports that every
+  earlier rig of this plan stepped the bake queue with no device wait, under which the queue
+  sent almost no submit. The review names which tables of Phases 3, 5, 6 and 7 were read on a
+  store that had not baked, and whether any line of Phase 9 or ADR-0084 leans on one.
+- **A standing rule for the follow-on plan:** a measure is called a measure of the wobble
+  only after it ranks clips the owner has ranked by eye. Until then its figures are readings.
+
+### The follow-on plan's first phases
+
+Written in full here; the architect carries them into the follow-on plan's file unchanged
+when it is drafted (the backlog's "The sun's term at small faces"), and the owner's go
+starts them. They touch `apps/flythrough/tests/gpu_wobble/`, which Phase 9 edits, so they
+start on the lane's tip after Phase 9 is committed. All are exploration (the owner's eye is
+the gate; no gpu tier a step).
+
+#### Phase F1: The owner's move as clips he can watch (exploration)
+- **Owner skill:** dev
+- **What:** No production code. The Phase 8b rig renders the move to lossless video at the
+  window's size, as the window drew it.
+  - **As the window:** 2530 x 1378, the RTX, the fly-through's bake, the queue stepping with a
+    device wait a frame, **the exposure not pinned** (metered as the window meters it), no
+    HUD. The settle as Phase 8b's.
+  - **The move** (`SVET_MOVE=window`): W as the fly-through flies it, along the view with its
+    pitch, until the first solid along the view ray is 60 voxels off or 2 s have passed; then
+    level along the heading to 5 s in all; a stop held 3 s; a turn of 60 degrees over 40
+    frames; held 3 s. If the clearance rule cuts the fly under 4 s the dev turns the level
+    leg's heading by 15-degree steps until 5 s fit, and records the heading. About 12 s.
+  - **The frame step is 1/55 s** (three refreshes of the owner's 165 Hz panel a frame, so
+    the playback's cadence is even). A guess that an even cadence is the fairer one to judge
+    by; the window's own was uneven.
+  - **The clips** (five):
+    - `T`: the terraces eye, a pair. The defaults, and run 1b as the window drew it:
+      upscaler off at 1280 x 720, stretched to 2530 x 1378 by the filter the fly-through's
+      present uses (the dev reads which and names it).
+    - `C`: the canopy, a pair, the defaults and `key cover ray`. From a start within 30 m of
+      the canopy eye that the dev picks by `calm`'s class map so that the view through the
+      move holds at least 10 % sunlit ground, 5 % sunlit leaf and 20 % shadowed pixels; the
+      eye and angles recorded. If no such start exists the nearest is used and its shares
+      said.
+    - `S`: the tunnel's slot under the defaults (`--source outdoor --spawn inside --time
+      12:00`, Phase 5's eye), one clip.
+  - **Blind pairs:** each pair's two files are named `a` and `b` by a coin the runner throws;
+    the key goes to `key.txt`, which the owner is not shown until he has answered.
+  - **The format:** frames to `ffmpeg` (`libx264rgb -qp 0 -preset ultrafast`, Matroska):
+    lossless, RGB, no scaling, so nothing the encoder does can hide or add a shimmer. A GIF
+    at this size is not watchable, and `scripts/record-clip.sh`'s MP4 is 4:2:0 and lossy. If
+    the decode is too slow the fallback is `-crf 6 -pix_fmt yuv444p -tune fastdecode`, said
+    in the log. A sixth file, `card`: 3 s of a one-pixel checkerboard at 2530 x 1378.
+  - **The runner and the player**, under the untracked `live/anchor/`: `run.sh` (each clip
+    under the perf lock, as `live/p8b/run.sh`), `play.sh` (`mpv --fs --video-unscaled=yes
+    --loop-file=inf --video-sync=display-resample --interpolation=no` over the files in the
+    order card, T a, T b, C a, C b, S), `ask.txt` (Phase F2's questions and the keys).
+  - **Kept for Phase F4:** each clip's camera a frame (eye, yaw, pitch) as text beside it.
+- **Files touched:** `apps/flythrough/tests/gpu_wobble.rs`,
+  `apps/flythrough/tests/gpu_wobble/owner_move.rs` (or a sibling), the follow-on plan's log.
+- **Done when:** the six files exist; `ffprobe` reads 2530 x 1378 at 55 frames a second and
+  an RGB pixel format on each; `ffmpeg -benchmark -i <clip> -f null -` decodes each at twice
+  real time or more on the dev box (else the fallback, said); frame 1 of each clip decoded
+  back equals the rig's own frame byte for byte; the dev has read one decoded frame of each
+  clip by eye and says what it shows (the sun's patches there, no unbaked black); the log
+  holds the commands of `run.sh` and `play.sh` verbatim, each clip's eye, angles, fly length
+  and sunlit share, the stretch filter's name, and the load beside each run. Quick tier,
+  clippy and fmt over the changed test files.
+
+#### Phase F2: The owner watches the clips
+- **Owner skill:** human
+- **What:** The orchestrator runs `live/anchor/play.sh` in the owner's terminal (a video
+  player, not a window run of the engine: no camera to hold). Five to ten minutes. Keys:
+  Enter the next clip, Space pause, `.` and `,` a frame on and back, `[` half speed, `s` a
+  screenshot, `i` the player's statistics.
+  - **First, the card:** it shows an even fine grey with no bands, and `i` reads no dropped
+    frames. Bands mean the player is scaling; the orchestrator fixes the player before any
+    answer is taken.
+  - **Asked of each clip** (T a, T b, C a, C b, S): (1) Is the wobble you saw in the window
+    in this clip: yes, partly, or no, the window showed something this does not? (2) If yes
+    or partly: pause where it is clearest, press `s`, and say where in the picture and when
+    (flying, at the stop, turning, held). (3) Which words fit: an edge of light stepping or
+    crawling along a surface; dots sparkling; a patch changing shape or brightness; the
+    whole picture's brightness; something else.
+  - **Asked of each pair:** which of `a` and `b` wobbles more, or the same?
+- **Done when:** the follow-on plan's log holds his answers verbatim, the screenshots'
+  paths, and `key.txt` opened after. Then one line a subject:
+  - **anchored** (a yes or partly with a place): that clip, place and moment are what every
+    later measure must rank;
+  - **not shown** (a no): Phase F3 runs for that subject;
+  - for a pair, the window's ordering **confirmed blind**, **not confirmed** (the same, or
+    the other way: that ordering is dropped as never established, and said so), or void (the
+    subject not shown).
+  If no subject is anchored, Phase F4 does not start.
+
+#### Phase F3: The owner's own flight, recorded and rendered again (exploration; only for a subject Phase F2 marks not shown)
+- **Owner skill:** dev
+- **What:** The fly-through gains `--track-out FILE` (in a window: every frame's eye, yaw,
+  pitch and frame time, and a mark at each press of a key the dev picks, shown on the HUD's
+  mode row) and `--track FILE` with `--frames-dir DIR` (headless: the same binary flies the
+  recorded cameras with the recorded frame times and writes every frame). No engine crate
+  changes. Then one window run a subject not shown, launched with the camera free from the
+  first frame, a minute each: the owner flies as he did and presses the key when he sees the
+  wobble. The dev renders 5 s each side of every mark from the track, encodes as Phase F1,
+  and Phase F2's questions are asked of those clips.
+- **Files touched:** `apps/flythrough/src/cli/`, `apps/flythrough/src/run/`,
+  `apps/flythrough/src/path.rs` (or a sibling), `docs/flythrough.md`, the follow-on plan's
+  log.
+- **Done when:** CPU (under 1 s each): a written track parses back equal; `--track` with no
+  `--headless` and `--frames-dir` with no `--track` are refused. GPU (lavapipe, under 10 s, a
+  guess): a 30-frame track rendered twice headless gives the same last frame where no bake
+  lands. The log holds the window's launch lines, the marks, the clips, and the owner's
+  answers verbatim with **anchored** or **not shown headless** a subject. A subject not shown
+  from his own track is the result: the difference is then between the window's present and
+  the headless frame, and the architect is called before anything else is built.
+
+#### Phase F4: A measure that ranks what the owner ranked (exploration, a reading)
+- **Owner skill:** dev
+- **What:** No production code. Two candidate measures, each computed on the decoded frames
+  of the anchored clips (the files the owner judged) with each clip's camera track and the
+  rig's world. Neither is known to work; each is a guess at what the eye follows.
+  - **Candidate 1, the light of a world point over time.** Points fixed in the world: the
+    centres of the faces visible in a clip's first frame, re-seeded each second. Each frame a
+    point is projected with the frame's camera, kept while a ray from the eye reaches it,
+    and the display's luma is read there, divided by the frame's exposure. On a face under a
+    fixed sun that series is flat; the camera's motion is removed by construction. Its
+    energy between 1 and 15 Hz, as a contrast against its own mean, is the point's score.
+    Scores are summed into screen tiles of 64 x 64 pixels by the area the points cover, and
+    printed as a map over a frame and as a total a segment.
+  - **Candidate 2, a lit edge's place on its face.** For every face that covers at least 16
+    display pixels for at least 30 frames: the share of its pixels over the mid luma between
+    the clip's lit and shadowed levels, a frame. Under a fixed sun that share changes only
+    with the angle of view, slowly. Its changes of over a tenth between frames a quarter
+    second apart are counted, weighted by the face's pixels, a tile and a segment.
+  - **Shown as maps the owner's screenshots can be laid on.**
+- **Files touched:** `apps/flythrough/tests/gpu_wobble/` (a sibling reading), the follow-on
+  plan's log.
+- **Done when:** the log holds, a candidate and a clip, the map (under `live/`) and the
+  totals by segment, and for each anchored subject three lines, each **holds** or **fails**:
+  (a) the place the owner named is among the top tenth of tiles by score at the moment he
+  named; (b) every pair he ranked blind is ranked the same way by the clip totals, and a
+  pair he called the same differs by under a fifth; (c) a clip he answered "no" to scores
+  under every clip he answered "yes" to at the same subject. **A candidate that fails one
+  line at an anchored subject is not the measure**, and its stage rows are not read. If one
+  holds everywhere it is the follow-on plan's measure, the architect writes the stage split
+  and the remedy phases against it, and Phase 8b's stage rows are read again under it. If
+  both fail the dev reports both tables and the owner's words beside them, and the architect
+  is called: the follow-on plan then gates its remedies on clips and the owner's eye alone,
+  with no figure.
+
+### What is not asked of the owner now
+
+No question waits on him before Phase 9 or the close. The viewing step is the ask, when the
+follow-on plan reaches it.
