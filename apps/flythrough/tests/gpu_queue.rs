@@ -776,13 +776,7 @@ fn a_still_camera_drains_and_withdraws_nothing() {
 /// one-shot bake of the same world at the same counts, whose order is the job list's.
 #[test]
 fn images_are_unchanged_by_the_incremental_order() {
-    let world = world_of([5, 5, 5], AIR);
-    fill(&world, [0, 0, 0], [319, 319, 70], ROCK);
-    for (x, y) in [(60, 60), (60, 250), (250, 60), (250, 250)] {
-        fill(&world, [x, y, 71], [x + 12, y + 12, 260], ROCK);
-    }
-    fill(&world, [60, 60, 200], [262, 72, 212], ORE);
-    let eye = [160.5, 160.5, 140.5];
+    let (world, eye) = pillars();
     let Some(mut q) = rig(world, &Setup::at(eye)) else {
         return;
     };
@@ -805,6 +799,110 @@ fn images_are_unchanged_by_the_incremental_order() {
     let fresh = q.fresh();
     assert_eq!(got.len(), fresh.len());
     for (c, b) in &got {
+        assert_eq!(Some(b), fresh.get(c), "{c:?} against a one-shot bake");
+    }
+}
+
+/// The 5 x 5 x 5 world of [`images_are_unchanged_by_the_incremental_order`]: a floor, four
+/// pillars and an ore beam, and its eye.
+fn pillars() -> (svet_world::World, [f32; 3]) {
+    let world = world_of([5, 5, 5], AIR);
+    fill(&world, [0, 0, 0], [319, 319, 70], ROCK);
+    for (x, y) in [(60, 60), (60, 250), (250, 60), (250, 250)] {
+        fill(&world, [x, y, 71], [x + 12, y + 12, 260], ROCK);
+    }
+    fill(&world, [60, 60, 200], [262, 72, 212], ORE);
+    (world, [160.5, 160.5, 140.5])
+}
+
+/// Frames a threaded drain may take: the render side's frames return while the bake thread
+/// works, so a drain takes more of them than lockstep's steps.
+const THREAD_FRAMES: usize = 20_000;
+
+/// Plan 0099 Phase 3a (4) and (12)'s frame half (ADR-0083). [`pillars`] drained through the
+/// frame's own step with the bake thread on, the camera turning a quarter every 8 frames: once
+/// the books read empty for 8 frames running the thread is turned off, which joins it and
+/// applies what it made. Every block is then bit-identical to the same world drained in
+/// lockstep and to a one-shot bake, with no lockstep step between the join and the read. On the
+/// way, with the thread running, `bake_queue_mut` is `None`, and a knob set
+/// (`set_bake_digs`) reaches the books only through the next message: joined before a step
+/// reads it, the books hold the old value until that step.
+#[test]
+#[ignore = "soak"]
+fn the_threaded_queue_drains_to_the_lockstep_store() {
+    let (world, eye) = pillars();
+    let Some(mut lock) = rig(world, &Setup::at(eye)) else {
+        return;
+    };
+    let lockstep = {
+        lock.settle();
+        lock.blocks()
+    };
+    drop(lock);
+    let (world, eye) = pillars();
+    let mut q = rig(world, &Setup::at(eye)).expect("the device opened once");
+    q.frame.share_bake_world(q.world.clone());
+    q.frame.set_bake_thread(&q.queue, true);
+    // (12)'s frame half: the thread starts at the first sliced step; a knob set while it runs
+    // waits in the message until a step reads it.
+    q.step();
+    assert!(q.frame.bake_thread_running(), "the thread runs");
+    assert!(q.frame.bake_queue_mut().is_none(), "no direct write");
+    let old = q.frame.bake_knobs().edit_ms;
+    q.frame.set_bake_digs(old + 5.0, true);
+    q.frame.set_bake_thread(&q.queue, false);
+    assert_eq!(
+        q.frame.bake_queue_mut().expect("lockstep").edit_ms,
+        old,
+        "joined before a step read the message: the books hold the old value"
+    );
+    q.step();
+    assert_eq!(
+        q.frame.bake_queue_mut().expect("lockstep").edit_ms,
+        old + 5.0,
+        "the next step reads the knob set"
+    );
+    q.frame.set_bake_digs(old, true);
+    q.frame.set_bake_thread(&q.queue, true);
+    let mut quiet = 0;
+    let mut frames = 0;
+    for n in 0..THREAD_FRAMES {
+        q.camera.yaw = ((n / 8) % 4) as f32 * std::f32::consts::FRAC_PI_2;
+        q.step();
+        frames = n + 1;
+        assert!(
+            q.frame.bake_thread_running(),
+            "the thread runs at frame {n}"
+        );
+        quiet = if n > 32 && q.q().empty() {
+            quiet + 1
+        } else {
+            0
+        };
+        if quiet >= 8 {
+            break;
+        }
+    }
+    println!("threaded drain: {frames} frames");
+    assert!(quiet >= 8, "the threaded queue drains: {:?}", q.q().stats());
+    q.frame.set_bake_thread(&q.queue, false);
+    assert!(!q.frame.bake_thread_running(), "off joins");
+    assert!(
+        q.q().empty(),
+        "the joined books are empty: {:?}",
+        q.q().stats()
+    );
+    let got = q.blocks();
+    let fresh = q.fresh();
+    assert!(
+        got.len() >= 25,
+        "the floor's chunks hold blocks: {}",
+        got.len()
+    );
+    assert_eq!(got.len(), lockstep.len());
+    assert_eq!(got.len(), fresh.len());
+    for (c, b) in &got {
+        assert_eq!(Some(b), lockstep.get(c), "{c:?} against the lockstep store");
         assert_eq!(Some(b), fresh.get(c), "{c:?} against a one-shot bake");
     }
 }

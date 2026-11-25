@@ -54,7 +54,8 @@ pub struct Q {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub gpu: GpuWorld,
-    pub world: World,
+    /// Shared, so a rig can hand it to the bake thread (`Frame::share_bake_world`).
+    pub world: std::sync::Arc<World>,
     pub frame: Frame,
     pub cfg: MirrorConfig,
     pub camera: Camera,
@@ -166,7 +167,7 @@ pub fn rig(world: World, setup: &Setup) -> Option<Q> {
         device,
         queue,
         gpu,
-        world,
+        world: std::sync::Arc::new(world),
         frame,
         cfg,
         camera: camera_at(setup.eye),

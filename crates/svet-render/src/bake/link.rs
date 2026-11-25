@@ -133,7 +133,10 @@ impl Weighed for Made {
 
 /// One step on the bake thread: the message's read-backs into a recording half, the step, and
 /// the books' snapshot.
-pub(crate) fn bake_step(side: &mut BakeSide, m: ThreadMsg, cap: Option<usize>) -> Vec<Made> {
+pub(crate) fn bake_step(side: &mut BakeSide, mut m: ThreadMsg, cap: Option<usize>) -> Vec<Made> {
+    // The step's laps read this thread's clock and `wgpu` call tally (thread-local): its start
+    // is the bake thread's, taken when it picks the message up, not the render thread's send.
+    m.msg.start = StepStart::now();
     #[cfg(test)]
     if let Some(hook) = side.hook.as_mut() {
         hook(&side.queue, &m.msg);
