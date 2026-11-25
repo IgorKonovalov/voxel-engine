@@ -14,8 +14,16 @@
 //! (`BakeQueue::settled`: the block at its tier's count with nothing pending, or a chunk with no
 //! face to bake); the coarse blocks among them counted apart. A census is whole when every chunk in
 //! view is settled.
+//!
+//! **The settle's pace.** While it settles, [`settle`] raises the queue's budget to
+//! [`SETTLE_SLICE_MS`] a frame, so a step's sample cap (the slice over the queue's ns a sample,
+//! clamped between a floor and the submit's own samples) is the submit's own on any adapter
+//! (on one with no GPU timestamps the queue's ns a sample is not measured, and the fly-through's
+//! slice would hold the cap near its floor: thousands of drawn frames a store). The knobs that
+//! decide what is baked (coarse samples, near and full-first radii, tiers by size on screen) are
+//! the fly-through's; the budget before is restored at the settle's end.
 
-use svet_render::{Camera, Frame, QueueStats, wgpu};
+use svet_render::{Budget, Camera, Frame, QueueStats, wgpu};
 
 use super::terms::Rig;
 
@@ -26,6 +34,15 @@ pub const INTERVAL_S: f64 = 1.0 / 60.0;
 /// waiting (a bounded world's edge chunks can keep it waiting for good), and the most frames.
 pub const CENSUS_EVERY: usize = 600;
 pub const SETTLE_MAX: usize = 36_000;
+
+/// The queue's budget a frame while [`settle`] runs, in ms: long enough that the sample cap it
+/// gives is the submit's own at any ns a sample the queue holds (10 million samples at 100 µs a
+/// sample is 10^6 ms).
+pub const SETTLE_SLICE_MS: f64 = 1e6;
+
+/// Frames between two progress lines of [`settle`] (frames, seconds, samples drawn), from which
+/// a run projects the settle's length.
+pub const PROGRESS_EVERY: usize = 100;
 
 /// The fly-through's bake knobs on the frame's queue: the coarse pass's samples and the near
 /// radius, the full-first radius, the tiers by size on screen and the pre-roll drain's radius
@@ -161,6 +178,9 @@ pub fn census(rig: &Rig, f: &Frame, cam: &Camera) -> Census {
 pub struct Settled {
     pub frames: usize,
     pub secs: f64,
+    /// Samples the queue drew during the settle, and the largest sample cap a step had.
+    pub samples: u64,
+    pub cap: u64,
     pub census: Census,
     pub stats: QueueStats,
 }
@@ -169,9 +189,11 @@ impl Settled {
     /// The settle as one line, the census last.
     pub fn line(&self) -> String {
         format!(
-            "settled {} frames, {:.1} s: depth {} jobs {} fading {} waiting in view {}; {}",
+            "settled {} frames, {:.1} s, {} samples (cap at most {}): depth {} jobs {} fading {} waiting in view {}; {}",
             self.frames,
             self.secs,
+            self.samples,
+            self.cap,
             self.stats.depth,
             self.stats.jobs,
             self.stats.fading,
@@ -185,17 +207,35 @@ impl Settled {
 /// then on until no job is open and no block fades and the census is whole. The census is read
 /// when the queue reports nothing waiting in view, else every [`CENSUS_EVERY`] frames; at
 /// [`SETTLE_MAX`] frames the settle ends whatever the census, and its line says NOT WHOLE.
-/// Prints the line ([`Settled::line`]) under `label`.
+/// The queue's budget is [`SETTLE_SLICE_MS`] meanwhile (the module's doc). Prints a progress
+/// line every [`PROGRESS_EVERY`] frames and the end's line ([`Settled::line`]) under `label`.
 #[allow(
     clippy::disallowed_methods,
     reason = "the settle prints its own wall time, a reading only"
 )]
 pub fn settle(rig: &mut Rig, f: &mut Frame, cam: &Camera, min: usize, label: &str) -> Settled {
     let t0 = std::time::Instant::now();
+    let before = f.bake_queue().map(|q| q.budget);
+    f.set_bake_budget(Budget::PerFrame {
+        ms: SETTLE_SLICE_MS,
+    });
+    let samples0 = f.bake_queue().map_or(0, |q| q.stats().total_samples);
+    let mut cap = 0u64;
     let mut n = 0usize;
     loop {
         let q = frame(rig, f, cam);
         n += 1;
+        cap = cap.max(q.cap);
+        if n.is_multiple_of(PROGRESS_EVERY) {
+            println!(
+                "{label}: +{n} frames, {:.1} s, {} samples, depth {} jobs {} waiting in view {}",
+                t0.elapsed().as_secs_f64(),
+                q.total_samples - samples0,
+                q.depth,
+                q.jobs,
+                q.drain_waiting
+            );
+        }
         let quiet = q.fading == 0 && q.jobs == 0;
         let drained = quiet && q.drain_waiting == 0 && !q.draining;
         if n < min || !(drained || n.is_multiple_of(CENSUS_EVERY) || n >= SETTLE_MAX) {
@@ -203,9 +243,14 @@ pub fn settle(rig: &mut Rig, f: &mut Frame, cam: &Camera, min: usize, label: &st
         }
         let c = census(rig, f, cam);
         if (quiet && c.whole()) || n >= SETTLE_MAX {
+            if let Some(b) = before {
+                f.set_bake_budget(b);
+            }
             let s = Settled {
                 frames: n,
                 secs: t0.elapsed().as_secs_f64(),
+                samples: q.total_samples - samples0,
+                cap,
                 census: c,
                 stats: q,
             };

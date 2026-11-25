@@ -1,7 +1,7 @@
 # 0104: The wobble anchored to the owner's eye: clips he ranks, a measure that ranks them, then the remedy
 
-> **Status:** in progress: Phases 0, 1 and 2 landed (2026-11-25); Phase 0b, then Phase 4 as
-> amended, next ("Amended 2026-11-25 (architect, after Phases 0 and 2)"; Phase 3 does not
+> **Status:** in progress: Phases 0, 1, 2 and 0b landed (2026-11-25); Phase 4 as
+> amended next ("Amended 2026-11-25 (architect, after Phases 0 and 2)"; Phase 3 does not
 > run: every subject anchored); approved (owner's go, 2026-11-25; drafted the same day with no interview from
 > Plan 0100's close; questions 1 to 3 answered (a), (a), (a), recorded under "Risks & open
 > questions"). **Order (owner, question 1 (a)):** Phases 0 to 2 and 4 run as a lane beside
@@ -689,10 +689,10 @@ his 2026-11-12 rule that cheap unpicked modes stay settings, for these settings)
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 0: the wobble rigs read a baked store | dev | done: the shared settle (`support/baked.rs`); both soak tests pass on a whole census on the RTX and lavapipe (the forest one 12 538 s on lavapipe); W1 unexplained; readings in [`logs/0104.md`](logs/0104.md) | 565bdee2, this commit |
-| 1: the owner's move as clips | dev | done: six files under `live/anchor/`, readings in [`logs/0104.md`](logs/0104.md) | this commit |
-| 2: the owner watches the clips | human | done: T, C, S anchored; T and C orders confirmed blind; answers in [`logs/0104.md`](logs/0104.md) | this commit |
-| 0b: the forest soak test asserts on one baked store ("Amended 2026-11-25") | dev | not started | |
+| 0: the wobble rigs read a baked store | dev | done: the shared settle (`support/baked.rs`); both soak tests pass on a whole census on the RTX and lavapipe (the forest one 12 538 s on lavapipe); W1 unexplained; readings in [`logs/0104.md`](logs/0104.md) | 565bdee2, 0bc94eb4, e42f5e8a |
+| 1: the owner's move as clips | dev | done: six files under `live/anchor/`, readings in [`logs/0104.md`](logs/0104.md) | 31d18c4e |
+| 2: the owner watches the clips | human | done: T, C, S anchored; T and C orders confirmed blind; answers in [`logs/0104.md`](logs/0104.md) | f8dd1fac, a183ddd6 |
+| 0b: the forest soak test asserts on one baked store ("Amended 2026-11-25") | dev | done: one store, two rest protocols; settle at the submit's cap; half frame on lavapipe; 113 to 146 s RTX, 250 to 255 s lavapipe (410 s loaded); far +30 bars 5.52 / 4.88 (1080p), 8.99 / 8.30 (960x540); readings in [`logs/0104.md`](logs/0104.md) | committed with this row |
 | 3: the owner's own flight, recorded and rendered again (only for a subject not shown) | dev | does not run: every subject anchored ("Amended 2026-11-25"; row marked by the architect) | |
 | 4: a measure that ranks what the owner ranked | dev | not started | |
 | the stop: the architect's amendment (the remedy phases) | - | not written | |
@@ -713,6 +713,14 @@ each. Empty is fine.)_
   a heading turn moves the eye along the turned heading and leaves the camera's yaw.
 - Phase 1: `libx264rgb` stores `gbrp` (planar RGB) from the `rgb24` input; frame 1 decodes back
   byte-identical on all five clips.
+- Phase 0b: the RTX census at the settle's end reads 59/59 (53 coarse), 61/61 (55) and 60/60
+  (54) on three runs with lever 2, and 61/61 (55) on one without it, the samples drawn equal
+  (346 782 647) on all four: the done-when's "equals Phase 0's 60/60 with 54 coarse" is met on
+  one run of three. On lavapipe (960x540) it reads 58/58 (54) on every run with lever 2 and
+  59/59 (55) without, equal samples (236 349 415). Lever 2 is kept; the architect rules.
+- Phase 0b: the second rest protocol keeps the exposure pinned by the first (read once after
+  the settle) and runs its 32 frames at the spawn; the test runs no read frames before the
+  settle (at least 120 unread frames instead).
 - Phase 1: `play.sh` adds `--input-conf` (`[` half speed, `]` normal, Enter next) and a
   screenshot directory to the plan's `mpv` line.
 
