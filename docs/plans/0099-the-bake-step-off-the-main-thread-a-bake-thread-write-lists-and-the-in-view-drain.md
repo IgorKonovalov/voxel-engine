@@ -1,6 +1,6 @@
 # 0099: The bake step off the main thread: a bake thread, write lists the render thread applies, and the in-view drain
 
-> **Status:** in-progress (Phases 1 and 2 landed 2026-11-25); approved (owner, 2026-11-22; his answers are under "Risks & open questions":
+> **Status:** in-progress (Phases 1, 2, 2b and 2c landed 2026-11-25); approved (owner, 2026-11-22; his answers are under "Risks & open questions":
 > the recommended option in each, question 2 by his own words). **After: 0096, 0098, 0087** (owner, 2026-11-22:
 > drafted now, the lane after the rename; then 0089 and 0093, 0091, ...).
 > **Re-read 2026-11-24** after Plan 0098 (v0.72.0) and the rename (v0.73.0): Phases 1 to 3 are
@@ -910,6 +910,7 @@ Readings, gate counts and attempts: [`logs/0099.md`](logs/0099.md).
 | 1: the step's split on the line, the base readings | dev | done; render p50 0.690 ms on the quiet RTX forest (the stop did not fire); the drained rig reaches 0 in view waiting on both adapters; RENOIR drained A's ring 1 lands D+3 or D+4 for digs 2 and 3 (reported); most readings loaded, quiet re-reads owed (log) | committed with this row |
 | 2: the queue in two halves, in lockstep | dev | done; done-whens 1 to 5 and 7 to 10 pass; (6) re-read at the last commit at load 1.94 at the start, 2.25 at the end: step p50 10.73 ms against Phase 1's 13.77; the frame message carries boxes and masks through a mailbox the public reads consult; the knob setters stay direct writes (log) | `f0d06f1a` |
 | 2b: the cap prices a slice by a fixed part and a sample's cost | dev | done; (a) RENOIR fit 0.823 ms + 12.61 ns (the stop did not fire), RTX no fixed part resolvable; RENOIR drained A ring 1 before 1, 4, 3 (D+1 8, D+3 8, D+4 8), after 1, 2, 2 (D+1 9, D+2 15), every dig-2/3 cap over the floor; RTX drained and RENOIR waiting 1, 2, 1 before and after; the drain's end still overdraws; the estimate keeps the slope and re-reads the level (a deviation, Notes) (log) | committed with this row |
+| 2c: a dig job takes a free slot ahead of every other job's rounds | dev | done; (1), (2), (4), (5) pass; (3) no row with `other` in flight while a dig job waits with a slot free, digs 2 and 3's ring chunks D+11 to 14 (before 20 to 26), ring 1 1, 2, 2 in six of eight and 1, 3, 2 in two; (6) quiet RENOIR fit 0.630 ms + 15.18 ns, drained B ring 1 D+2 14 of 48: **the stop fired**, reported to the architect (log) | committed with this row |
 | 3: the bake half on its own thread | dev | not started | |
 | 4: the bake thread keeps the slice fed | dev | not started | |
 | 5: the owner's window | human | not started | |
@@ -955,6 +956,8 @@ Readings, gate counts and attempts: [`logs/0099.md`](logs/0099.md).
 - (dev, Phase 2b) Files outside the phase's list: `crates/svet-render/src/bake/job_loop.rs`
   (`SubmitDone::timed`, the dispatches a step read back) and `bake/queue/mod.rs` (the
   estimate's field).
+- (dev, Phase 2c) The test of done-when (1) is in `bake/queue/split_tests.rs` (the device-less
+  rig's recording render half), not `tests.rs`; the opening's tail is `BakeQueue::open_pushed`.
 - (dev, Phase 2b) Not met: the first steps after the view drains still overdraw the line (N-2
   caps 69 979 to 93 314 against 62 132 to 84 554 before): the drain's submits are all large,
   and they read the fixed part badly. Reported to the architect.

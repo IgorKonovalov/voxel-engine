@@ -217,8 +217,10 @@ impl BakeQueue {
     /// ring's hold shows); its other dig bricks wait in `digs` until it is placed, then open as
     /// a second job. Every ring-1 job opens in this step, outside the two slices, into a table
     /// slot (where none is free, the last open job that is not a dig's is withdrawn to the
-    /// candidates), and the submit plans its rounds first. The rest open in a step that opened
-    /// no ring-1 job, while the loop holds under two slices of `cap` samples (one at least).
+    /// candidates), and the submit plans its rounds first. The rest are made in a step that
+    /// opened no ring-1 job, while the loop holds under two slices of `cap` samples (one at
+    /// least), and open into the free slots in that step, ahead of every other job's rounds
+    /// (ADR-0046, ADR-0048); with no slot free one stays first of the pending ones.
     /// Each chunk is listed again on this thread (a split chunk's second job reuses its first's
     /// listing) and keeps every brick record outside its job's bricks (a whole dig, which held
     /// no block, keeps none and bakes every listed brick) and bakes them at the near tier's
@@ -372,28 +374,46 @@ impl BakeQueue {
             });
             self.dig_open.insert(c, d);
         }
+        self.open_pushed(run, store, jobs, first);
+        Ok(())
+    }
+
+    /// Puts the dig jobs [`BakeQueue::open_digs`] made (in its order, the `first` ring-1 jobs
+    /// ahead) at the front of the pending ones and opens every one of them into a table slot
+    /// in this step ([`BakeQueue::open_now`]; only ring 1 withdraws for a slot), then orders
+    /// the open jobs digs first, ring 1 ahead: the submit plans a dig's rounds ahead of every
+    /// other job's, whatever that job has left to draw.
+    pub(super) fn open_pushed(
+        &mut self,
+        run: &BakeRun<'_>,
+        store: &mut Store,
+        jobs: Vec<Job>,
+        first: usize,
+    ) {
+        let n = jobs.len();
         // Pushed at the front in reverse, so the pending jobs start in `order`.
         for job in jobs.into_iter().rev() {
             self.lp.push_front(job);
         }
-        self.open_now(run, store, first);
+        self.open_now(run, store, n, first);
         let dig_open = &self.dig_open;
         self.lp.promote(|c| dig_open.contains_key(&c.0));
         self.lp
             .promote(|c| dig_open.get(&c.0).is_some_and(|d| d.near));
-        Ok(())
     }
 
-    /// Opens the first `n` pending jobs (the ring-1 jobs [`BakeQueue::open_digs`] pushed) into
-    /// table slots now: where too few are free, the last open jobs that are neither a dig's nor
-    /// key-only are withdrawn to the candidates, those with no rounds in flight first (a job's
-    /// slot with rounds in flight frees once they are read back). A job not opened for want of
-    /// a slot stays at the front of the pending ones, which the next submit opens first.
-    fn open_now(&mut self, run: &BakeRun<'_>, store: &mut Store, n: usize) {
+    /// Opens the first `n` pending jobs (the dig jobs [`BakeQueue::open_digs`] pushed, the
+    /// `withdraw_for` ring-1 jobs first) into table slots now. Where fewer than `withdraw_for`
+    /// are free, the last open jobs that are neither a dig's nor key-only are withdrawn to the
+    /// candidates, those with no rounds in flight first (a job's slot with rounds in flight
+    /// frees once they are read back); a ring-2 job takes a free slot and withdraws nothing. A
+    /// job not opened for want of a slot stays at the front of the pending ones, which the
+    /// next submit opens first once a slot frees.
+    fn open_now(&mut self, run: &BakeRun<'_>, store: &mut Store, n: usize, withdraw_for: usize) {
         if n == 0 {
             return;
         }
-        let want = n.saturating_sub(self.lp.free.len());
+        let want = withdraw_for.saturating_sub(self.lp.free.len());
         if want > 0 {
             let (dig_open, keys) = (&self.dig_open, &self.keys.open);
             let mut out: Vec<(bool, usize, [i32; 3])> = self

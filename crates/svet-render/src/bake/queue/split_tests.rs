@@ -505,3 +505,131 @@ fn an_edit_reads_unsettled_before_the_next_step() {
         "the same dig bricks"
     );
 }
+
+/// Done when (1) of Plan 0099 Phase 2c. One open job that is not a dig's with 4 000 000 samples
+/// left, 15 table slots free, a ring-2 dig job of 100 000 samples made in this step, a cap of
+/// 250 000: the dig job opens into a free slot in the step and the submit plans its 100 000
+/// first, then no more than 150 000 and one round of the other's. With no slot free the dig job
+/// stays first of the pending ones and no job is withdrawn.
+#[test]
+fn a_dig_job_is_planned_ahead_of_an_open_job_that_is_not_a_digs() {
+    use crate::bake::job_loop::JobCtx;
+    const ROUND: u32 = 1000;
+    const CAP: u64 = 250_000;
+    const DIG: [i32; 3] = [0, 0, 0];
+    const OTHER: [i32; 3] = [1, 0, 0];
+    // `bricks` bricks of five directions, one face each: each face draws `brick_samples`.
+    let job = |c: [i32; 3], bricks: u16| {
+        let faces = ChunkFaces {
+            bricks: (0..bricks).map(|b| (b, (0..5u16).collect())).collect(),
+            glass: Vec::new(),
+        };
+        let samples = faces.faces() as u64 * 2000;
+        Job {
+            coord: ChunkCoord(c),
+            faces,
+            first_word: 0,
+            kept_bricks: KeptBricks::default(),
+            samples,
+            brick_samples: None,
+            key_only: false,
+            tier: 0,
+        }
+    };
+    let samples_of = |j: &OpenJob| j.states.iter().map(|s| u64::from(s.queued)).sum::<u64>();
+    for free in [15usize, 0] {
+        let mut rig = Rig::new(None);
+        rig.queue.settings.round = ROUND;
+        rig.queue.settings.brick_samples = 2000;
+        let settings = rig.queue.settings.clone();
+        let run = BakeRun {
+            mirror: &rig.shadow,
+            world: &rig.world,
+            sky: 0,
+            key: None,
+        };
+        let ctx = JobCtx {
+            run: &run,
+            settings: &settings,
+            round: ROUND,
+            rounds_cap: 0,
+        };
+        let other = job(OTHER, 400);
+        assert_eq!(other.samples, 4_000_000);
+        rig.queue.lp.open = vec![ctx.open(other, 0)];
+        rig.queue.lp.free = (1..=free).rev().collect();
+        rig.queue.lp.pending.clear();
+        let dig = job(DIG, 10);
+        assert_eq!(dig.samples, 100_000);
+        rig.queue.dig_open.insert(
+            DIG,
+            DigChunk {
+                slots: (0..10).collect(),
+                ..DigChunk::default()
+            },
+        );
+        rig.queue.open_pushed(&run, &mut rig.store, vec![dig], 0);
+        assert_eq!(
+            rig.queue.stats.dig_withdrawn, 0,
+            "free {free}: no job withdrawn"
+        );
+        assert!(
+            rig.queue.lp.open.iter().any(|j| j.coord.0 == OTHER),
+            "free {free}: the other job stays open"
+        );
+        if free == 0 {
+            assert_eq!(
+                rig.queue.lp.pending.front().map(|j| j.coord.0),
+                Some(DIG),
+                "no slot free: the dig job is first of the pending ones"
+            );
+            assert_eq!(rig.queue.lp.open.len(), 1);
+            continue;
+        }
+        assert!(
+            rig.queue.lp.pending.is_empty(),
+            "the dig job opened in its step"
+        );
+        assert_eq!(rig.queue.lp.free.len(), free - 1);
+        let slot = |c: [i32; 3]| {
+            rig.queue
+                .lp
+                .open
+                .iter()
+                .find(|j| j.coord.0 == c)
+                .map(|j| j.slot as u32)
+        };
+        let (dig_slot, other_slot) = (slot(DIG).expect("dig open"), slot(OTHER).expect("open"));
+        rig.queue.lp.dispatch(
+            &run,
+            &mut rig.half,
+            &mut rig.store,
+            &settings,
+            CAP,
+            &mut |_: &mut Store, _, _, _, _| {},
+            &mut |_| {},
+        );
+        let drawn = |c: [i32; 3]| {
+            rig.queue
+                .lp
+                .open
+                .iter()
+                .find(|j| j.coord.0 == c)
+                .map_or(0, samples_of)
+        };
+        assert_eq!(drawn(DIG), 100_000, "the dig job's samples whole");
+        let other_drawn = drawn(OTHER);
+        assert!(
+            other_drawn <= CAP - 100_000 + u64::from(ROUND),
+            "the other job drew {other_drawn}"
+        );
+        let (_, slots) = rig.half.issued.last().expect("a submit");
+        let last_dig = slots.iter().rposition(|s| *s == dig_slot);
+        let first_other = slots.iter().position(|s| *s == other_slot);
+        assert!(last_dig.is_some(), "the dig job in the submit");
+        assert!(
+            first_other.is_none_or(|o| last_dig.is_some_and(|d| d < o)),
+            "the dig job's rounds ahead of the other's"
+        );
+    }
+}
