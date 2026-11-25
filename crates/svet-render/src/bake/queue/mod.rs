@@ -3,6 +3,7 @@
 use super::*;
 
 mod books;
+mod box_signal;
 mod digs;
 mod fade_clock;
 mod keys;
@@ -19,8 +20,9 @@ mod step;
 mod tiers;
 
 pub(crate) use self::books::Books;
+pub(crate) use self::box_signal::{BoxSender, BoxSignal};
 pub use self::message::Residency;
-pub(crate) use self::message::{FrameMessage, Inbox, StepSettings};
+pub(crate) use self::message::{Arrival, FrameMessage, Inbox, StepSettings};
 pub use self::open::in_view_census;
 use self::reach::reach_of;
 pub use self::reads::QueueRead;
@@ -365,6 +367,12 @@ pub struct BakeQueue {
     pub(super) cost: SampleCost,
     /// The current step's stage laps.
     pub(super) laps: Laps,
+    /// On the bake thread, whether a box waits in a message not yet taken: the opening then
+    /// admits no further candidate. `None` in lockstep.
+    pub(in crate::bake) box_signal: Option<BoxSignal>,
+    /// A test's hook, run after each candidate the opening lists into the loop.
+    #[cfg(test)]
+    pub(in crate::bake) listed_hook: Option<Box<dyn FnMut() + Send + Sync>>,
     /// The candidates, kept between steps: every full chunk in the mirror with no block, a
     /// coarse one or a whole re-bake waiting (ring 3), not known faceless, not in a job and
     /// not a dig's, with its class (1 when it holds a block) and whether its block is coarse.
@@ -604,6 +612,9 @@ impl BakeQueue {
             },
             cost: SampleCost::new(20.0),
             laps: Laps::new(StepStart::now()),
+            box_signal: None,
+            #[cfg(test)]
+            listed_hook: None,
             pool: Default::default(),
             touched: Default::default(),
             pool_stale: true,

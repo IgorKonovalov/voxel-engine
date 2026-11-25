@@ -22,9 +22,22 @@ struct ThreadRig {
 
 impl ThreadRig {
     fn new(hook: Option<Hook>, outbox: usize) -> Self {
-        let mut rig = Rig::new(None);
-        let world = Arc::new(super::world());
+        Self::sized(hook, outbox, CHUNKS[0], CHUNKS[0], |_| {})
+    }
+
+    /// The rig over [`world_of`]`(size)`, its first `held` chunks in the mirror, with `prep`
+    /// run on the queue before the thread takes it.
+    fn sized(
+        hook: Option<Hook>,
+        outbox: usize,
+        size: i32,
+        held: i32,
+        prep: impl FnOnce(&mut BakeQueue),
+    ) -> Self {
+        let mut rig = Rig::sized(None, size, held);
+        let world = Arc::new(world_of(size));
         let settings = rig.queue.settings.clone();
+        prep(&mut rig.queue);
         let side = BakeSide {
             queue: std::mem::replace(&mut rig.queue, BakeQueue::new(settings, 4.0)),
             store: std::mem::replace(&mut rig.store, Store::new(64 << 20)),
@@ -301,5 +314,182 @@ fn a_knob_set_reaches_the_bake_thread_in_the_next_message() {
         st.cap,
         cost.cap(st.slice_ms + old),
         "and not with the old value"
+    );
+}
+
+/// What [`first_opening`] read: the rig after the box's step (or the opening's, with no box),
+/// the candidates the first step that listed any pushed into the loop, and the box's message.
+struct Opening {
+    t: ThreadRig,
+    listed: usize,
+    /// The frame of the message the step after that one read.
+    next_frame: u64,
+    applied_before_box: usize,
+    box_frame: Option<u64>,
+}
+
+/// Chunks of [`a_waiting_box_ends_the_opening`]'s world: three held from the start, 32 that
+/// stream in once those are baked.
+const OPENING_SIZE: i32 = 35;
+const OPENING_HELD: i32 = 3;
+
+/// The slab of [`OPENING_SIZE`] chunks with the first [`OPENING_HELD`] in the mirror, drained;
+/// then the other 32 arrive, every one a ready candidate. With `post`, a hook on the bake
+/// thread stops the first opening after its second listing until the render side has carved
+/// chunk 0's slab top and sent that frame's message (its box), as an edit in the window does
+/// while a step runs; then both steps are run and taken.
+fn first_opening(post: bool) -> Opening {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
+    let listed = Arc::new(AtomicUsize::new(0));
+    let armed = Arc::new(AtomicBool::new(false));
+    // At each step's start once armed: the frame of the message it reads, and the candidates
+    // the step before it listed.
+    let counts = Arc::new(Mutex::new(Vec::<(u64, usize)>::new()));
+    let (ask, asked) = mpsc::channel::<()>();
+    let (ack, acked) = mpsc::channel::<()>();
+    let acked = Mutex::new(acked);
+    let (l, a) = (listed.clone(), armed.clone());
+    let once = AtomicBool::new(post);
+    let on_list = move || {
+        if a.load(SeqCst) && l.fetch_add(1, SeqCst) + 1 == 2 && once.swap(false, SeqCst) {
+            ask.send(()).expect("the test listens");
+            acked.lock().expect("one listing").recv().expect("acked");
+        }
+    };
+    let (l, a, c) = (listed.clone(), armed.clone(), counts.clone());
+    let on_step: Hook = Box::new(move |_, m| {
+        if a.load(SeqCst) {
+            c.lock()
+                .expect("one step")
+                .push((m.frame, l.swap(0, SeqCst)));
+        }
+    });
+    let mut t = ThreadRig::sized(
+        Some(on_step),
+        OUTBOX_BYTES,
+        OPENING_SIZE,
+        OPENING_HELD,
+        move |q| q.listed_hook = Some(Box::new(on_list)),
+    );
+    let drained = |t: &ThreadRig| {
+        let b = &t.link.books;
+        b.idle && (0..OPENING_HELD).all(|x| b.blocks.contains_key(&[x, 0, 0]))
+    };
+    for _ in 0..400 {
+        if drained(&t) {
+            break;
+        }
+        t.frame().expect("the step runs");
+        within(|| t.link.peek(|m| m.is_none()));
+    }
+    assert!(drained(&t), "the held chunks drain");
+    armed.store(true, SeqCst);
+    t.rig.mirror.held = OPENING_SIZE;
+    t.rig
+        .mirror
+        .changed
+        .extend((OPENING_HELD..OPENING_SIZE).map(|x| ChunkCoord([x, 0, 0])));
+    let mut box_frame = None;
+    let mut applied_before_box = 0;
+    // The first step that listed: its count, and the frame the step after it read.
+    let first = |c: &Arc<Mutex<Vec<(u64, usize)>>>| {
+        let c = c.lock().expect("read");
+        c.iter().find(|&&(_, n)| n > 0).map(|&(f, n)| (n, f))
+    };
+    for _ in 0..400 {
+        t.frame().expect("the step runs");
+        if post {
+            if asked
+                .recv_timeout(std::time::Duration::from_millis(50))
+                .is_ok()
+            {
+                // The step that listed twice waits (not yet counted): an edit, and the frame's
+                // message sent.
+                let steps = t.link.steps();
+                t.carve([20, 20, 4], [23, 23, 7]);
+                t.frame().expect("the frame returns");
+                applied_before_box = t.applied.len();
+                box_frame = Some(t.rig.half.frame);
+                ack.send(()).expect("the hook waits");
+                assert!(
+                    within(|| t.link.steps() >= steps + 2),
+                    "the cut step and the box's step run"
+                );
+                // A step counts before its results reach the outbox: frames until the box's
+                // step's books are taken.
+                for _ in 0..400 {
+                    t.frame().expect("the frame takes both");
+                    if t.link.books.frame >= box_frame.unwrap_or(0) {
+                        break;
+                    }
+                    std::thread::yield_now();
+                }
+                break;
+            }
+        } else {
+            within(|| t.link.peek(|m| m.is_none()));
+            // A step's count is filed at the next step's start.
+            if first(&counts).is_some() {
+                break;
+            }
+        }
+    }
+    let (listed, next_frame) = first(&counts).expect("an opening listed the arrivals");
+    Opening {
+        t,
+        listed,
+        next_frame,
+        applied_before_box,
+        box_frame,
+    }
+}
+
+/// Done when (5a) of Plan 0099 Phase 3 as amended (Phase 3a). 32 candidates ready and a hook
+/// that posts a box after the opening's second listing: that step lists at most 3, and the
+/// next step takes the box, its list holding chunk 0's held block's words and its table word.
+/// With no box the same opening lists more than 3.
+#[test]
+fn a_waiting_box_ends_the_opening() {
+    let control = first_opening(false);
+    assert!(
+        control.listed > 3,
+        "with no box the opening lists {} of the 32",
+        control.listed
+    );
+    let control_listed = control.listed;
+    drop(control);
+    let o = first_opening(true);
+    assert!(
+        o.listed <= 3,
+        "the step lists {} with a box waiting",
+        o.listed
+    );
+    println!(
+        "listed: {} with no box, {} with one",
+        control_listed, o.listed
+    );
+    let box_frame = o.box_frame.expect("the box was sent");
+    let books = &o.t.link.books;
+    assert_eq!(
+        o.next_frame, box_frame,
+        "the next step read the box's message"
+    );
+    assert!(!books.boxes, "and took the box");
+    let (first, words) = *books.blocks.get(&A).expect("chunk 0 keeps a block");
+    let mut table = Store::new(64 << 20);
+    table.start_queue(o.t.rig.mirror.window(), o.t.rig.queue.settings.cell);
+    let table = table.table_word(ChunkCoord(A)) * 4;
+    let applied = &o.t.applied[o.applied_before_box..];
+    assert!(
+        applied
+            .iter()
+            .any(|a| a.kind == W_POOL && a.offset == first * 4 && a.bytes as u64 == words * 4),
+        "the held block's words"
+    );
+    assert!(
+        applied
+            .iter()
+            .any(|a| a.kind == W_TABLE && a.offset == table && a.bytes == 4),
+        "its table word"
     );
 }

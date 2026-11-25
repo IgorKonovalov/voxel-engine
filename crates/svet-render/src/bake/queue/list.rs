@@ -15,9 +15,15 @@ impl BakeQueue {
         dirs * u64::from(brick_samples)
     }
 
+    /// Whether a box waits for the bake thread in a message its step has not taken
+    /// ([`BoxSignal`]); never in lockstep.
+    pub(in crate::bake) fn box_waits(&self) -> bool {
+        self.box_signal.as_ref().is_some_and(BoxSignal::waits)
+    }
+
     /// Lists `batch`'s chunks (across scoped threads when there are several) and pushes their
-    /// jobs in the batch's order ([`BakeQueue::push_listed`]); a chunk the pool refuses waits.
-    /// Empties `batch`.
+    /// jobs in the batch's order ([`BakeQueue::push_listed`]); a chunk the pool refuses waits,
+    /// and once a box waits ([`BakeQueue::box_waits`]) the rest wait. Empties `batch`.
     pub(in crate::bake) fn push_batch(
         &mut self,
         run: &BakeRun<'_>,
@@ -53,8 +59,16 @@ impl BakeQueue {
         };
         let mut out = Pushed::default();
         for ((class, c), l) in batch.drain(..).zip(listed) {
+            // A box waiting: the candidates listed and not pushed stay in the pool.
+            if self.box_waits() {
+                break;
+            }
             match self.push_listed(store, eye, class, ChunkCoord(c), l) {
                 Ok(samples) => {
+                    #[cfg(test)]
+                    if let Some(hook) = self.listed_hook.as_mut() {
+                        hook();
+                    }
                     out.samples += samples;
                     out.full_blank |= class == 0
                         && samples > 0

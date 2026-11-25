@@ -76,6 +76,9 @@ impl BakeQueue {
             class, coarse, c, ..
         }) = self.walk_next(&mut lead, &mut next, tiered, checked[0] >= checks)
         {
+            if self.box_waits() {
+                break;
+            }
             // A kept candidate pushed, or listed faceless, since the order was scored has left
             // the pool; a class change re-scores the order before the walk.
             if self.pool.get(&c) != Some(&(class, coarse)) {

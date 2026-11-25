@@ -17,13 +17,21 @@ fn box_op(min: [i64; 3], max: [i64; 3], mode: Mode) -> EditOp {
     )
 }
 
-fn world() -> World {
+/// The slab world `n` chunks along x.
+fn world_of(n: i32) -> World {
     let mut t = MaterialTable::new();
     let rock = t.push(Material::named("rock"));
-    let w = World::generate(ChunkExtent::new([0, 0, 0], CHUNKS), &UniformSource(AIR), &t);
-    let max = [64 * i64::from(CHUNKS[0]) - 1, 63, i64::from(SLAB_TOP) - 1];
-    w.apply(&box_op([0, 0, 0], max, Mode::Fill(rock)))
-        .expect("resident");
+    let w = World::generate(
+        ChunkExtent::new([0, 0, 0], [n, 1, 1]),
+        &UniformSource(AIR),
+        &t,
+    );
+    // One box a chunk: an edit's extent is bounded.
+    for x in 0..i64::from(n) {
+        let max = [64 * x + 63, 63, i64::from(SLAB_TOP) - 1];
+        w.apply(&box_op([64 * x, 0, 0], max, Mode::Fill(rock)))
+            .expect("resident");
+    }
     w
 }
 
@@ -31,25 +39,29 @@ fn world() -> World {
 /// done, no light.
 struct Mirror {
     changed: Vec<ChunkCoord>,
+    /// The window's chunks along x.
+    size: i32,
+    /// The chunks held, `0 .. held` along x; the rest not yet streamed in.
+    held: i32,
 }
 
 impl MirrorRead for Mirror {
     fn window(&self) -> ChunkExtent {
-        ChunkExtent::new([0, 0, 0], CHUNKS)
+        ChunkExtent::new([0, 0, 0], [self.size, 1, 1])
     }
     fn light_radius(&self) -> i32 {
         2
     }
-    fn chunk_note(&self, _: ChunkCoord) -> ChunkNote {
+    fn chunk_note(&self, c: ChunkCoord) -> ChunkNote {
         ChunkNote {
-            mirrored: true,
+            mirrored: c.0[0] < self.held,
             lod: false,
             pending: false,
         }
     }
     fn chunks(&self) -> Vec<ChunkCoord> {
         let mut out = Vec::new();
-        for x in 0..CHUNKS[0] {
+        for x in 0..self.held {
             out.push(ChunkCoord([x, 0, 0]));
         }
         out
@@ -158,6 +170,11 @@ struct Rig {
 
 impl Rig {
     fn new(cap: Option<usize>) -> Self {
+        Self::sized(cap, CHUNKS[0], CHUNKS[0])
+    }
+
+    /// The rig over [`world_of`]`(size)`, its first `held` chunks in the mirror.
+    fn sized(cap: Option<usize>, size: i32, held: i32) -> Self {
         let settings = BakeSettings {
             round: 64,
             brick_samples: 64,
@@ -166,6 +183,8 @@ impl Rig {
         let mut store = Store::new(64 << 20);
         let mirror = Mirror {
             changed: Vec::new(),
+            size,
+            held,
         };
         store.start_queue(mirror.window(), settings.cell);
         let _ = store.take_direct();
@@ -181,7 +200,7 @@ impl Rig {
             far_normal: queue.far_normal,
         };
         Self {
-            world: world(),
+            world: world_of(size),
             mirror,
             shadow: Shadow::default(),
             seen: (None, None),

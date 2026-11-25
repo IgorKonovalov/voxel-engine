@@ -93,6 +93,8 @@ pub(crate) type Hook = Box<dyn FnMut(&BakeQueue, &FrameMessage) + Send>;
 pub(crate) struct ThreadMsg {
     pub(crate) msg: FrameMessage,
     pub(crate) read_backs: Vec<ReadBack>,
+    /// The render side's count of messages sent with a box, as of this one ([`BoxSender`]).
+    pub(crate) boxes: u64,
 }
 
 impl ThreadMsg {
@@ -103,6 +105,7 @@ impl ThreadMsg {
         ThreadMsg {
             msg: self.msg.coalesce(newer.msg),
             read_backs,
+            boxes: self.boxes.max(newer.boxes),
         }
     }
 }
@@ -137,6 +140,9 @@ pub(crate) fn bake_step(side: &mut BakeSide, mut m: ThreadMsg, cap: Option<usize
     // The step's laps read this thread's clock and `wgpu` call tally (thread-local): its start
     // is the bake thread's, taken when it picks the message up, not the render thread's send.
     m.msg.start = StepStart::now();
+    if let Some(s) = side.queue.box_signal.as_mut() {
+        s.took(m.boxes);
+    }
     #[cfg(test)]
     if let Some(hook) = side.hook.as_mut() {
         hook(&side.queue, &m.msg);
@@ -191,6 +197,8 @@ pub(crate) struct ThreadLink {
     pub(crate) settings: BakeSettings,
     /// The newest stats taken, given again (per-step counts zeroed) on a frame that takes none.
     last: QueueStats,
+    /// Counts the messages sent with a box, for the bake thread's opening.
+    boxes: BoxSender,
 }
 
 impl ThreadLink {
@@ -210,6 +218,8 @@ impl ThreadLink {
             [f32::NAN; 3],
         ));
         let last = side.queue.stats;
+        let boxes = BoxSender::default();
+        side.queue.box_signal = Some(boxes.signal());
         let thread = BakeThread::start(side, outbox, ThreadMsg::coalesce, move |s, m| {
             bake_step(s, m, cap)
         })?;
@@ -219,6 +229,7 @@ impl ThreadLink {
             timer,
             settings,
             last,
+            boxes,
         })
     }
 
@@ -253,7 +264,13 @@ impl ThreadLink {
 
     /// Hands the bake thread the frame's message; it merges with one not taken yet.
     pub(crate) fn send(&self, msg: FrameMessage, read_backs: Vec<ReadBack>) {
-        self.thread.send(ThreadMsg { msg, read_backs });
+        let holds_box = msg.arrivals.iter().any(|a| matches!(a, Arrival::Box(_)));
+        let boxes = self.boxes.stamp(holds_box);
+        self.thread.send(ThreadMsg {
+            msg,
+            read_backs,
+            boxes,
+        });
     }
 
     /// Stops and joins the bake thread: what it owns, the message it had not taken (merged into
@@ -263,6 +280,8 @@ impl ThreadLink {
         let timer = self.timer;
         let (mut side, msg, made) = self.thread.stop_all().map_err(BakeError::Thread)?;
         side.queue.settings.timer = timer;
+        // Lockstep's box is in its step's own message.
+        side.queue.box_signal = None;
         Ok(Stopped {
             side,
             msg,
