@@ -523,6 +523,100 @@ later unless question 6 is answered (a).
   of dig fades that moved in all 4 of their frames. (7)'s bars are read on runs with no edit.
   `--binaries gpu_queue gpu_queue_reach gpu_bake gpu_sun`.
 
+## Amended 2026-11-25 (architect, code reading of the RENOIR's ring-1 landing)
+
+Read against `1f2960bf` and Phase 1's 64 timelines (`live/p1d/`); the long form, with the lines
+and the arithmetic, is in [`logs/0099.md`](logs/0099.md), "Architect's code reading". Where this
+section differs from a phase's text it wins. **Phase 2 builds what it was going to build.**
+
+**What ring 1 waits on: the submit's sample cap, and nothing else.** On the drained RENOIR at the
+dig the loop has 14 of 16 slots free, one submit unread (room under `IN_FLIGHT`), the read-back
+a frame on (the rig waits on the device once a frame, on both adapters), and no fade or ring-2
+job in the way: ring 1 never waits for a fade (`open_digs`), and the edit withdraws every dig
+job in its ring (`take_boxes`). The job is cut by the cap (`open_step`, `bake/queue/step.rs`):
+`(slice + edit_ms) / ns_per_sample`, where `ns_per_sample` is a running mean of a read-back
+submit's GPU ms over its samples. Drained, the slice is the line's 1.0 ms and the submits are
+18 000 to 35 000 samples; the mean then reads **28 to 55 ns** against 10 to 16 at the first dig
+and 9 to 10 on the waiting queue, so the dig's 4.0 ms buys 73 000 to 143 000 samples a frame and
+a ring 1 of 221 595 and 275 022 samples goes out over 2 to 4 frames. Every run's landing is
+`ceil(ring-1 samples / cap)` submits and one frame's read-back.
+
+**Why the mean is wrong for it (derived from the logged caps, not read directly).** The caps
+invert to each submit's ms; on the RENOIR they fit **about 0.8 ms a dispatch plus 11 to 13 ns a
+sample** (RTX: about 0.4 to 0.6 ms plus 1 ns). A slice that grows from 1.0 to 4.0 ms is priced
+at the small submits' mean, most of which is the fixed part; the mean takes about ten steps to
+come down. The same holds in reverse: the first steps after the view drains are priced at the
+large submits' mean and overdraw the line. The steady state is the same either way; only a
+change of slice is mispriced. The RTX's cap at a dig is 2.1 to 4.7 million samples against a
+ring 1 of at most 246 497, and the waiting RENOIR's is 0.6 to 1.0 million: neither is cut.
+
+**What the bar measures.** `dig_timeline` reads the queue's books after each step: ring 1 has
+landed in the first frame whose step leaves the chunk with no live dig job holding a ring-1
+brick, the step that placed it; D+0 is the frame whose step reads the edit. **Sequence A's dig 2
+reads D+2 at best by the rig's making**: dig 3 comes one frame later into the same chunk and
+withdraws dig 2's job, so dig 2 lands with dig 3. `docs/nfr/04-edits.md`'s "1 or 2 frames" was
+never read on a drained RENOIR (its text says that rig never drained); Phase 1 is the first.
+
+**Verdict: a defect in the cap's pricing, not the dig's mechanism and not the rig.** Plan 0098's
+jump, withdrawal and slots do what they say. Phase 2b below fixes the pricing after Phase 2 has
+moved the code; `edit_ms` stays 3 ms. **With honest pricing the RENOIR's 4.0 ms still buys about
+260 000 to 330 000 samples (arithmetic)**, at the edge of this rig's largest ring 1, so its
+drained A may read 1, 3, 2: that is owner question 7.
+
+**Phase 2: nothing changes.** The estimate's update and the cap's formula move to the bake half
+as they are (the GPU times are in the message already); dev does not correct them there, and
+the dig tests pass unchanged in lockstep as (10) asks.
+
+### Phase 2b: The cap prices a slice by a dispatch's fixed cost and a sample's cost
+- **Owner skill:** dev
+- **What:** After Phase 2 and before Phase 3, in the bake half, in lockstep. (a) **The reading
+  first.** `dig_timeline`'s row gains the read-back's samples and GPU ms
+  (`QueueStats::samples`, `ms`); one drained A run on the RENOIR and one on the RTX; the ms
+  fitted over the samples. **A stop:** if the RENOIR's fit holds no fixed part of at least
+  0.3 ms, dev reports to the architect and builds nothing of (b). (b) **The estimate is two
+  figures**, a dispatch's fixed ms and the ns a sample, both from the submits read back, and
+  the cap is `(slice + edit_ms - fixed) / ns a sample` under the clamp it has. The fixed part
+  is kept while the submits' sizes do not spread (a steady slice cannot separate the two) and
+  is 0 until they first have. The printed `ns a sample` stays the mean; the two figures print
+  beside it. No slice, `edit_ms`, tier, order or record changes.
+- **Files touched:** `crates/svet-render/src/bake/budget.rs` (the estimate, a type with no
+  GPU), the bake half's step and `bake/queue/stats.rs`, `bake/queue/tests.rs`,
+  `apps/flythrough/src/run/queue.rs` (the line), `apps/flythrough/tests/gpu_outdoor/dig_line.rs`,
+  `docs/flythrough.md`, `docs/plans/logs/0099.md`.
+- **Done when:** (1) `a_grown_slice_is_priced_by_the_cost_a_sample_not_the_mean` (CPU, under
+  1 s): the estimate fed 40 submits costing `0.85 ms + 12 ns x samples`, each of the size its
+  cap gave under a 6.0 ms slice, then 200 under a 1.0 ms slice: the cap for a 4.0 ms slice is
+  within 10 % of 262 500 (the mean's rule gives about 63 000), and the first cap under the
+  1.0 ms slice is at most 20 000 (the mean's rule gives about 71 000). (2)
+  `a_steady_slice_draws_what_the_mean_drew` (CPU, under 1 s): 200 submits at one slice with no
+  earlier spread: the cap is the mean's rule's within 1 %. (3) The RENOIR, drained, sequence A,
+  eight runs alternated with drained B: each dig's D+0 submit carries its ring 1 whole or the
+  whole cap, the cap at least 0.9 of `(4.0 ms - fixed) / ns a sample` at (a)'s fit; ring 1's
+  landing per dig logged and reported to the architect. No bar on its frames until question 7
+  is answered. (4) RTX drained A and RENOIR waiting A, four runs each: ring 1 at D+1, 2, 1. (5)
+  The 5 x 5 x 5 store test reads bit-identical; `--binaries gpu_queue gpu_queue_reach gpu_bake`.
+  (6) Reading: the RENOIR forest fresh start against Phase 1's row (in view 0, drain 0, the
+  drawn share).
+
+**Phase 3's base, restated.** "Base plus 2" is held against the same rig and state read in
+lockstep at Phase 3's own tip, not against the nfr's sentence: (5b) on `gpu_queue`'s lavapipe
+rig; (8) on the forest in regime B, a waiting queue, where the base is D+1 (D+2 for a dig
+re-dug the next frame) on both adapters. The drained RENOIR's base is Phase 2b (3)'s reading.
+**Phase 4's lever (a)** projects a job's time with Phase 2b's two figures, not the mean.
+
+**Owner question 7 (open; Phase 2, 2b and 3 run on before the answer; Phase 6 pins the line
+with it).** How "an edit's light" is stated where a dig's ring 1 does not fit one frame's
+grant, which today is only the drained RENOIR. (a) **Recommended: the grant stays, the line
+says what it buys.** Ring 1 lands 1 frame after the dig (2 where the next frame digs the same
+chunk again) while its samples fit `slice + edit_ms`; a larger ring takes a frame more per
+grant. The RENOIR's drained A is pinned as Phase 2b reads it (expected 1, 3, 2). (b) **Ring 1
+goes whole in the edit's submit whatever the cap.** 1 or 2 frames on every adapter; the dig
+frame's GPU grows by the whole ring (about 4.2 ms here on the RENOIR by arithmetic, more for a
+larger edit, with no bound but the edit's size). (c) **Portable's `edit_ms` goes from 3 to
+5 ms.** Fits this rig's digs; 2 ms more on the RENOIR's dig frames, which Plan 0098's window
+already read over Portable's 33.3 ms line while a dig is held. (d) **Leave it:** the line reads
+1 to 4 frames on a drained RENOIR.
+
 ## Data shapes
 
 ```rust
