@@ -217,7 +217,7 @@ impl<S, M, O> Drop for BakeThread<S, M, O> {
 }
 
 /// A panic's payload as text.
-fn panic_text(p: &(dyn std::any::Any + Send)) -> String {
+pub(crate) fn panic_text(p: &(dyn std::any::Any + Send)) -> String {
     p.downcast_ref::<&str>()
         .map(|s| (*s).to_owned())
         .or_else(|| p.downcast_ref::<String>().cloned())

@@ -16,6 +16,9 @@ impl BakeQueue {
         let gpu = run.mirror;
         let eye = view.eye.map(|v| (v / 64.0).floor() as i32);
         let order = self.order;
+        // With the bake thread on, what the listing pool finished since the last opening is
+        // pushed first ([`BakeQueue::take_listed`]).
+        self.take_listed(store, eye)?;
         self.score_and_census(run, store, view, eye);
         let steps = self.steps;
         let recent = |at: Option<&u64>| at.is_some_and(|&at| steps - at < QUEUE_RECHECK);
@@ -46,9 +49,12 @@ impl BakeQueue {
         // across threads; a sliced step lists them in batches and stops at two slices of
         // samples.
         let parallel = view.samples.is_some();
+        // A sliced opening on the bake thread hands its batches to the listing pool and does not
+        // wait for them: they count as open at their bounds until they are pushed.
+        let off_loop = !parallel && self.lists_off_the_loop();
         let mut ready: Vec<(u8, [i32; 3])> = Vec::new();
         // The loop's samples left, read once (it walks every open face) and then counted on.
-        let mut left = self.lp.samples_left();
+        let mut left = self.lp.samples_left() + self.listing_samples();
         let angle_needs = self.census_every_opening;
         let nearest_in_view = angle_needs
             .then(|| self.nearest_in_view(eye, view))
@@ -81,7 +87,7 @@ impl BakeQueue {
             }
             // A kept candidate pushed, or listed faceless, since the order was scored has left
             // the pool; a class change re-scores the order before the walk.
-            if self.pool.get(&c) != Some(&(class, coarse)) {
+            if self.pool.get(&c) != Some(&(class, coarse)) || self.in_listing(c) {
                 continue;
             }
             if stops(est, &checked, class, ready0) {
@@ -90,7 +96,7 @@ impl BakeQueue {
                     break;
                 }
                 self.laps.lap(S_CHECKS);
-                let pushed = self.push_batch(run, store, eye, &classes, &mut batch)?;
+                let pushed = self.list_batch(run, store, eye, &classes, &mut batch, off_loop)?;
                 self.laps.lap(S_LIST);
                 left += pushed.samples;
                 ready0 -= pushed.refused0;
@@ -162,7 +168,7 @@ impl BakeQueue {
         }
         self.laps.lap(S_CHECKS);
         if !batch.is_empty() {
-            let pushed = self.push_batch(run, store, eye, &classes, &mut batch)?;
+            let pushed = self.list_batch(run, store, eye, &classes, &mut batch, off_loop)?;
             full_blank |= pushed.full_blank;
             self.laps.lap(S_LIST);
         }
@@ -182,6 +188,28 @@ impl BakeQueue {
         self.ruled_checked.clear();
         self.rule_missed_checked.clear();
         Ok(())
+    }
+
+    /// Lists `batch` in this step ([`BakeQueue::push_batch`]), or `off_loop` hands it to the
+    /// listing pool ([`BakeQueue::send_batch`]): the samples it adds to the open ones, at their
+    /// bounds while the pool holds them.
+    fn list_batch(
+        &mut self,
+        run: &BakeRun<'_>,
+        store: &mut Store,
+        eye: [i32; 3],
+        classes: &[u8],
+        batch: &mut Vec<(u8, [i32; 3])>,
+        off_loop: bool,
+    ) -> Result<Pushed, BakeError> {
+        if off_loop {
+            Ok(Pushed {
+                samples: self.send_batch(eye, classes, batch),
+                ..Pushed::default()
+            })
+        } else {
+            self.push_batch(run, store, eye, classes, batch)
+        }
     }
 
     /// The opening's next candidate in the kept order, `next` past it: lead `lead`'s, or once

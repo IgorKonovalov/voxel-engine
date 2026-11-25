@@ -8,6 +8,7 @@ mod digs;
 mod fade_clock;
 mod keys;
 mod list;
+mod lister;
 mod message;
 mod open;
 mod reach;
@@ -376,6 +377,12 @@ pub struct BakeQueue {
     /// On the bake thread, whether a box waits in a message not yet taken: the opening then
     /// admits no further candidate. `None` in lockstep.
     pub(in crate::bake) box_signal: Option<BoxSignal>,
+    /// The listing pool, with the bake thread on ([`lister::Lister`]); `None` in lockstep.
+    pub(in crate::bake) lister: Option<lister::Lister>,
+    /// The candidates in the listing pool's hands, by chunk.
+    pub(in crate::bake) listing: std::collections::HashMap<[i32; 3], lister::Listing>,
+    /// The last listing sent's number.
+    pub(in crate::bake) listing_seq: u64,
     /// A test's hook, run after each candidate the opening lists into the loop.
     #[cfg(test)]
     pub(in crate::bake) listed_hook: Option<Box<dyn FnMut() + Send + Sync>>,
@@ -621,6 +628,9 @@ impl BakeQueue {
             dig_cost: DigCost::default(),
             laps: Laps::new(StepStart::now()),
             box_signal: None,
+            lister: None,
+            listing: Default::default(),
+            listing_seq: 0,
             #[cfg(test)]
             listed_hook: None,
             pool: Default::default(),

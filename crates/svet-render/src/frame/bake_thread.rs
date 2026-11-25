@@ -82,7 +82,9 @@ impl Frame {
         match link.stop() {
             Err(e) => self.end_failed(e),
             Ok(st) => {
-                b.queue = Some(st.side.queue);
+                let mut books = st.side.queue;
+                books.stop_lister();
+                b.queue = Some(books);
                 b.store = st.side.store;
                 b.shadow = st.side.shadow;
                 for (ops, lists) in st.steps {
@@ -140,9 +142,14 @@ impl Frame {
             std::ptr::eq(Arc::as_ptr(&shared), world),
             "the shared world is the one stepped"
         );
-        let Some(queue) = b.queue.take() else {
+        let Some(mut queue) = b.queue.take() else {
             return;
         };
+        // The bake thread's openings list through a kept pool and do not wait for it.
+        if let Err(e) = queue.start_lister(shared.clone()) {
+            self.end_failed(BakeError::Thread(format!("spawn: {e}")));
+            return;
+        }
         let mut stand_in = crate::bake::Store::new(b.store.capacity());
         stand_in.keep_missing_light(b.store.missing_light());
         let side = BakeSide {

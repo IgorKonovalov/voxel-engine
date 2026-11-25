@@ -313,6 +313,9 @@ impl BakeQueue {
             self.faceless.remove(&c);
             self.touched.insert(c);
             self.blocked.remove(&c);
+            // A listing in the pool's hands read the world before the box: dropped, and the
+            // chunk is listed again as a touched candidate.
+            self.listing.remove(&c);
             if self.lp.chunks().any(|j| j.0 == c) {
                 // The box is in this step's message: it stales a job stamped before that.
                 self.stale.insert(c, self.frame);
