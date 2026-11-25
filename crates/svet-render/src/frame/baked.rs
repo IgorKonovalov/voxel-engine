@@ -52,8 +52,12 @@ pub(super) fn hold_reach(
 /// The frame's link to the loaded light: the store, the bake's pipeline, the dig boxes, the
 /// live queue and its world group, and the store's read counters and their readback.
 pub(super) struct BakeLink {
-    /// The store (minimal until the first bake or live queue, [`Lighting::bake_pool_bytes`]).
+    /// The store's books (minimal until the first bake or live queue,
+    /// [`Lighting::bake_pool_bytes`]).
     pub(super) store: crate::bake::Store,
+    /// The pool the store's writes land in: the render half's buffer (ADR-0083), the store's
+    /// capacity in size.
+    pub(super) pool: wgpu::Buffer,
     /// The bake's pipeline, built on the first bake.
     pub(super) pipeline: Option<crate::bake::BakePipeline>,
     /// The edit boxes since the last dig re-bake ([`Frame::rebake_digs`]), every one, while the
@@ -64,6 +68,9 @@ pub(super) struct BakeLink {
     /// The render half's write lists waiting to apply (ADR-0083); in lockstep with no cap a
     /// step's lists apply in its own frame and none waits.
     pub(super) lists: crate::bake::Lists,
+    /// The live queue's submits as the render half holds them: readback buffers, the loop's
+    /// timer, the submits in flight.
+    pub(super) issuer: crate::bake::Issuer,
     /// The bake half's shadow of the mirror, and the window and light key of its last notes
     /// (ADR-0083).
     pub(super) shadow: crate::bake::Shadow,
@@ -83,14 +90,36 @@ pub(super) struct BakeLink {
     pub(super) ring: ReadbackRing,
 }
 
+/// The bake pool's buffer of `bytes`.
+fn pool_buffer(device: &wgpu::Device, bytes: u64) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("bake pool"),
+        size: bytes,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
 impl BakeLink {
+    /// Writes the store's direct writes ([`crate::bake::Store::take_direct`]) into the pool,
+    /// in order: the render half's, before the pool is next read.
+    pub(super) fn flush(&mut self, queue: &wgpu::Queue) {
+        for w in self.store.take_direct() {
+            crate::bake::write(queue, &self.pool, w.offset, &w.data, w.kind);
+        }
+    }
+
     pub(super) fn new(device: &wgpu::Device) -> Self {
         Self {
-            store: crate::bake::Store::new(device, crate::bake::MINIMAL_POOL_BYTES),
+            store: crate::bake::Store::new(crate::bake::MINIMAL_POOL_BYTES),
+            pool: pool_buffer(device, crate::bake::MINIMAL_POOL_BYTES),
             pipeline: None,
             dig_boxes: Vec::new(),
             queue: None,
             lists: crate::bake::Lists::default(),
+            issuer: crate::bake::Issuer::timed(),
             shadow: crate::bake::Shadow::default(),
             shadow_seen: (None, None),
             world_bind: None,
@@ -176,19 +205,31 @@ impl Frame {
         // A one-shot bake reads no queue books, so no shadow of the mirror.
         let none = crate::bake::Shadow::default();
         let run = crate::bake::BakeRun {
+            mirror: &none,
+            world,
+            sky: self.bake_sky(),
+            key: self.bake_key(),
+        };
+        let gpu_run = crate::bake::GpuRun {
             device,
             queue,
             gpu,
-            mirror: &none,
-            world,
             pipeline: self.baked.pipeline.as_ref().expect("built above"),
             world_bind: &world_bind,
             params_buffer: &self.state.params,
             params,
-            sky: self.bake_sky(),
-            key: self.bake_key(),
+            pool: &self.baked.pool,
         };
-        crate::bake::run(&run, &mut self.baked.store, extent, settings, progress)
+        let report = crate::bake::run(
+            &run,
+            &gpu_run,
+            &mut self.baked.store,
+            extent,
+            settings,
+            progress,
+        );
+        self.baked.flush(queue);
+        report
     }
 
     /// Starts the live queue (ADR-0046's scheduler): the store emptied for `gpu`'s window, every
@@ -203,10 +244,11 @@ impl Frame {
         slice_ms: f64,
     ) {
         self.fit_store(true);
-        self.baked
-            .store
-            .start_queue(queue, gpu.window(), settings.cell);
+        self.baked.store.start_queue(gpu.window(), settings.cell);
+        self.baked.flush(queue);
         self.baked.dig_boxes.clear();
+        // A new queue's loop has nothing in flight: the old one's submits are dropped with it.
+        self.baked.issuer = crate::bake::Issuer::timed();
         let mut q = crate::bake::BakeQueue::new(settings, slice_ms);
         let k = &mut self.baked.knobs;
         k.budget = q.budget;
@@ -395,17 +437,25 @@ impl Frame {
         *last_window = notes.window;
         self.baked.shadow.take(&notes);
         let run = crate::bake::BakeRun {
+            mirror: &self.baked.shadow,
+            world,
+            sky: self.bake_sky(),
+            key: self.bake_key(),
+        };
+        let gpu_run = crate::bake::GpuRun {
             device,
             queue,
             gpu,
-            mirror: &self.baked.shadow,
-            world,
             pipeline: self.baked.pipeline.as_ref().expect("built above"),
             world_bind: &world_bind,
             params_buffer: &self.state.params,
             params,
-            sky: self.bake_sky(),
-            key: self.bake_key(),
+            pool: &self.baked.pool,
+        };
+        let mut half = crate::bake::GpuHalf {
+            run: &gpu_run,
+            issuer: &mut self.baked.issuer,
+            lists: &mut self.baked.lists,
         };
         let q = self.baked.queue.as_mut()?;
         q.changes_in = notes.changed;
@@ -423,7 +473,7 @@ impl Frame {
             }
         });
         q.far_normal = self.state.look.far_normal;
-        Some(q.step(&run, &mut self.baked.store, view, t0, &mut self.baked.lists))
+        Some(q.step(&run, &mut self.baked.store, view, t0, &mut half))
     }
 
     /// The bake's sky-ray bits ([`crate::bake::BakeRun::sky`]): none with no sky set, else on
@@ -517,25 +567,31 @@ impl Frame {
         // A one-shot bake reads no queue books, so no shadow of the mirror.
         let none = crate::bake::Shadow::default();
         let run = crate::bake::BakeRun {
+            mirror: &none,
+            world,
+            sky: self.bake_sky(),
+            key: self.bake_key(),
+        };
+        let gpu_run = crate::bake::GpuRun {
             device,
             queue,
             gpu,
-            mirror: &none,
-            world,
             pipeline: self.baked.pipeline.as_ref().expect("built above"),
             world_bind: &world_bind,
             params_buffer: &self.state.params,
             params,
-            sky: self.bake_sky(),
-            key: self.bake_key(),
+            pool: &self.baked.pool,
         };
-        Some(crate::bake::rebake(
+        let report = crate::bake::rebake(
             &run,
+            &gpu_run,
             &mut self.baked.store,
             &boxes,
             settings,
             progress,
-        ))
+        );
+        self.baked.flush(queue);
+        Some(report)
     }
 
     /// The edit boxes waiting for [`Frame::rebake_digs`], `min ..= max` in voxels.
@@ -629,7 +685,8 @@ impl Frame {
     /// What a cube face with no brick value reads (ADR-0053); [`crate::bake::MissingLight::Chain`]
     /// by default.
     pub fn set_missing_light(&mut self, queue: &wgpu::Queue, mode: crate::bake::MissingLight) {
-        self.baked.store.set_missing_light(queue, mode);
+        self.baked.store.set_missing_light(mode);
+        self.baked.flush(queue);
     }
 
     /// What a cube face with no brick value reads.
@@ -657,13 +714,8 @@ impl Frame {
         coord: ChunkCoord,
     ) -> Option<Vec<u32>> {
         let (first, words) = self.baked.store.block(coord)?;
-        let bytes = crate::readback::read_buffer(
-            device,
-            queue,
-            self.baked.store.pool(),
-            first * 4,
-            words * 4,
-        );
+        let bytes =
+            crate::readback::read_buffer(device, queue, &self.baked.pool, first * 4, words * 4);
         Some(bytemuck::pod_collect_to_vec(&bytes))
     }
 
@@ -671,7 +723,7 @@ impl Frame {
     /// within the device's storage binding, once `allocate` or a bake has allocated it; a minimal
     /// one before.
     pub(super) fn fit_store(&mut self, allocate: bool) {
-        if !allocate && self.baked.store.pool().size() <= crate::bake::MINIMAL_POOL_BYTES {
+        if !allocate && self.baked.store.capacity() <= crate::bake::MINIMAL_POOL_BYTES {
             return;
         }
         let limits = self.device.limits();
@@ -682,9 +734,10 @@ impl Frame {
             .min(limits.max_storage_buffer_binding_size)
             .min(limits.max_buffer_size)
             & !3;
-        if bytes != self.baked.store.pool().size() {
+        if bytes != self.baked.store.capacity() {
             let missing = self.baked.store.missing_light();
-            self.baked.store = crate::bake::Store::new(&self.device, bytes);
+            self.baked.store = crate::bake::Store::new(bytes);
+            self.baked.pool = pool_buffer(&self.device, bytes);
             // The new pool's header, the flags with it, is written at its first reset.
             self.baked.store.keep_missing_light(missing);
         }

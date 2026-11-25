@@ -470,7 +470,7 @@ impl BakeQueue {
             .map(|(c, d)| (*c, d.near, d.slots.len(), in_job.contains(c)))
             .collect();
         let watched = |c: &[i32; 3]| {
-            self.digs.contains_key(c) || self.dig_open.contains_key(c) || self.stale.contains(c)
+            self.digs.contains_key(c) || self.dig_open.contains_key(c) || self.stale.contains_key(c)
         };
         let mut t = DigTrace {
             waiting,
@@ -512,7 +512,7 @@ impl BakeQueue {
                 open: true,
                 at,
                 dig: self.dig_open.contains_key(&c),
-                stale: self.stale.contains(&c),
+                stale: self.stale.contains_key(&c),
                 bricks,
             });
         }
@@ -548,7 +548,7 @@ impl BakeQueue {
                 open: false,
                 at,
                 dig: self.dig_open.contains_key(&c),
-                stale: self.stale.contains(&c),
+                stale: self.stale.contains_key(&c),
                 bricks,
             });
         }

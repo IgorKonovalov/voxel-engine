@@ -696,8 +696,8 @@ impl Frame {
             + self.exposure.bytes()
             + self.sky.bytes()
             + self.up.fsr.as_ref().map_or(0, Fsr2::bytes)
-            + if self.baked.store.pool().size() > crate::bake::MINIMAL_POOL_BYTES {
-                self.baked.store.pool().size()
+            + if self.baked.store.capacity() > crate::bake::MINIMAL_POOL_BYTES {
+                self.baked.store.capacity()
             } else {
                 0
             }

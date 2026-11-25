@@ -552,7 +552,7 @@ impl Frame {
                 Res::Buf(split_list),
                 Res::Buf(&t.split_args),
                 Res::Tex(&t.transmit),
-                Res::Buf(self.baked.store.pool()),
+                Res::Buf(&self.baked.pool),
             ],
         );
         let half = t.half_pos.is_some();
@@ -576,7 +576,7 @@ impl Frame {
                 Res::Tex(t.lit_info(c)),
                 Res::Tex(&t.irradiance),
                 Res::Tex(&t.direct),
-                Res::Buf(self.baked.store.pool()),
+                Res::Buf(&self.baked.pool),
                 Res::Tex(&t.vis),
             ],
         );
@@ -595,7 +595,7 @@ impl Frame {
                 Res::Tex(&t.moments[c]),
                 Res::Buf(&self.state.edits),
                 Res::Tex(&t.strata),
-                Res::Buf(self.baked.store.pool()),
+                Res::Buf(&self.baked.pool),
                 Res::Buf(&self.baked.counters),
                 Res::Tex(&t.direct),
                 Res::Tex(&t.direct_accum[q]),

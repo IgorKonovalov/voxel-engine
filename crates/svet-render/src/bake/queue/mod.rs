@@ -301,8 +301,9 @@ pub struct BakeQueue {
     /// The stream workers' no-face verdicts ([`crate::bake::seal`]), each with its point of the
     /// shells' order, and their handle once a result brought it ([`sealed::Sealed`]).
     pub(super) sealed: sealed::Sealed,
-    /// Chunks an edit touched while their job ran: the job's block is thrown away.
-    pub(super) stale: std::collections::HashSet<[i32; 3]>,
+    /// Chunks an edit touched while their job ran, each with the frame message that carried
+    /// the edit: a job stamped before it ([`JobLoop::stamps`]) throws its block away.
+    pub(super) stale: std::collections::HashMap<[i32; 3], u64>,
     /// Candidates not ready at a check, and the step that checked them.
     pub(super) blocked: std::collections::HashMap<[i32; 3], u64>,
     pub(super) fades: BTreeMap<[i32; 3], Fade>,
@@ -557,7 +558,7 @@ impl BakeQueue {
             listed: Default::default(),
             job_coarse: Default::default(),
             lp: {
-                let mut lp = JobLoop::new(Vec::new(), LOOP_SLOTS..OPEN_JOBS).timed();
+                let mut lp = JobLoop::new(Vec::new(), LOOP_SLOTS..OPEN_JOBS);
                 lp.ended = Some(Vec::new());
                 lp
             },
@@ -910,7 +911,7 @@ impl BakeQueue {
             ("sealed", self.sealed.holds(c)),
             ("blocked", self.blocked.contains_key(&c)),
             ("job_coarse", self.job_coarse.contains_key(&c)),
-            ("stale", self.stale.contains(&c)),
+            ("stale", self.stale.contains_key(&c)),
             ("partial", self.partial.contains(&c)),
             ("job_partial", self.job_partial.contains(&c)),
             ("partial_due", self.partial_due.contains(&c)),
@@ -1059,7 +1060,8 @@ impl BakeQueue {
                     self.touched.insert(c);
                     self.blocked.remove(&c);
                     if self.lp.chunks().any(|j| j.0 == c) {
-                        self.stale.insert(c);
+                        // The box goes in the next frame message.
+                        self.stale.insert(c, self.steps + 1);
                     }
                 }
             }

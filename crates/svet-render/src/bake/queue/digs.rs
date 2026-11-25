@@ -59,13 +59,13 @@ impl BakeQueue {
         for (c, slots) in ring {
             // The ring's visibilities predate the edit: the light pass casts the sky rays at
             // their faces until the re-bake lands.
-            store.mark_sky_stale(run.queue, ChunkCoord(c), &slots, record);
+            store.mark_sky_stale(ChunkCoord(c), &slots, record);
             let near: Vec<u16> = slots.iter().copied().filter(|&s| touches(c, s)).collect();
             if !lit && let Some(block) = store.words.get(&c) {
                 lit = near.iter().any(|&s| brick_lit(block, s, record));
             }
             if in_job.contains(&c) {
-                self.stale.insert(c);
+                self.stale.insert(c, self.lp.stamp);
             }
             if !store.blocks.contains_key(&c) {
                 // A chunk the box touched that holds no block (air before a stamp) is a whole
@@ -107,7 +107,7 @@ impl BakeQueue {
             };
             if faces.faces() == 0 {
                 self.fades.remove(&c);
-                store.remove(run.queue, coord);
+                store.remove(coord);
                 self.block_count.remove(&c);
                 self.faceless.insert(c);
                 self.touched.insert(c);
@@ -136,7 +136,7 @@ impl BakeQueue {
                 }
             };
             self.fades.remove(&c);
-            store.put(run.queue, coord, at, block);
+            store.put(coord, at, block);
             self.listed.insert(c, faces);
         }
         if !(lit && self.reach_ring) {
@@ -318,7 +318,7 @@ impl BakeQueue {
                 self.prepared_bytes -= m.masks.bytes();
             }
             if faces.faces() == 0 {
-                store.remove(run.queue, coord);
+                store.remove(coord);
                 self.block_count.remove(&c);
                 self.fades.remove(&c);
                 self.faceless.insert(c);
@@ -431,6 +431,7 @@ impl BakeQueue {
                 break;
             };
             // A job with no live face closes in this step's submit, its block to the sink.
+            self.lp.new_tables.push((slot, job.coord));
             self.lp.open.push(ctx.open(job, slot));
         }
     }
@@ -487,12 +488,7 @@ impl BakeQueue {
     /// Moves every fade a frame on: each record's direction values at
     /// `frame / FADE` of the way from what it showed to the store's copy; the last frame writes
     /// the copy itself.
-    pub(in crate::bake) fn advance_fades(
-        &mut self,
-        queue: &wgpu::Queue,
-        store: &mut Store,
-        record: usize,
-    ) {
+    pub(in crate::bake) fn advance_fades(&mut self, store: &mut Store, record: usize) {
         let mut ended = Vec::new();
         let mut shown = std::mem::take(&mut self.fade_scratch);
         let now = self.steps;
@@ -519,13 +515,13 @@ impl BakeQueue {
             if f.frame >= f.frames {
                 shown.clear();
                 shown.extend_from_slice(to);
-                store.show(queue, ChunkCoord(*c), f.first, &mut shown);
+                store.show(ChunkCoord(*c), f.first, &mut shown);
                 ended.push(*c);
                 continue;
             }
             let t = f.frame as f32 / f.frames as f32;
             fade_mix(&mut shown, &f.from, to, t, record, f.vis);
-            store.show(queue, ChunkCoord(*c), f.first, &mut shown);
+            store.show(ChunkCoord(*c), f.first, &mut shown);
         }
         self.fade_scratch = shown;
         for c in ended {
