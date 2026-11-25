@@ -1,8 +1,8 @@
 # 0104: The wobble anchored to the owner's eye: clips he ranks, a measure that ranks them, then the remedy
 
-> **Status:** draft (2026-11-25, drafted with no interview from Plan 0100's close; awaits the
-> owner's go; the open questions are under "Risks & open questions", each with a recommended
-> option). **Order (recommended, question 1):** Phases 0 to 2 and 4 run as a lane beside
+> **Status:** approved (owner's go, 2026-11-25; drafted the same day with no interview from
+> Plan 0100's close; questions 1 to 3 answered (a), (a), (a), recorded under "Risks & open
+> questions"). **Order (owner, question 1 (a)):** Phases 0 to 2 and 4 run as a lane beside
 > Plan 0099 now; Phase 3 and every remedy phase start on a main that holds Plan 0099.
 > **Created:** 2026-11-25
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
@@ -417,6 +417,12 @@ frame dt_ms eye_x eye_y eye_z yaw pitch mark
   subject in a window and the same questions again.
 
 ## Risks & open questions
+
+**Answered 2026-11-25 (owner, "go with recommended + 3a"):** question 1 **(a)**: Phases 0 to 2
+and 4 start now beside Plan 0099; Phase 3 and the remedy phases start on a main that holds
+Plan 0099. Question 2 **(a)**: the clips cover the RTX at Floor only. Question 3 **(a)**: a
+Plan 0100 setting this plan does not pick is removed at its close (the owner chose this over
+his 2026-11-12 rule that cheap unpicked modes stay settings, for these settings).
 
 - **The clip does not show it either** (likely for at least one subject: the rig is not the
   window). That is Phase 3's reason to exist, and a "not shown headless" there is a result:

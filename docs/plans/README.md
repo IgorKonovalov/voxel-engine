@@ -7,7 +7,7 @@ The engine was `voxel-engine`, with crates `vxe-*`, variables `VXE_*` and the WI
 `vxe:logic`, until Plan 0087 renamed it `svet` (v0.73.0); records from before keep those names,
 and `vxe-<x>` reads as `svet-<x>`.
 
-**Next free number: 0105** (0104 the wobble anchored to the owner's eye, drafted 2026-11-25; 0101 the record by rule at every opening, approved 2026-11-24; 0102 the removal of `own`, closed 2026-11-25; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
+**Next free number: 0105** (0104 the wobble anchored to the owner's eye, approved 2026-11-25; 0101 the record by rule at every opening, approved 2026-11-24; 0102 the removal of `own`, closed 2026-11-25; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
 the sky around the camera; 0098 the calm light by default, closed 2026-11-24; 0099 the bake
 step off the main thread, drafted 2026-11-22; 0100 a sun fixed in the world, closed 2026-11-25; ADRs are a separate sequence, see `../adrs/README.md` for its next
 free number). Plan 0095, the motion wobble (a calm key light in motion), closed 2026-11-21,
@@ -17,7 +17,7 @@ by default, closed 2026-11-24, v0.72.0. Plan 0087, the rename to `svet`, closed 
 v0.73.0 (the GitHub rename and the manual release run are owed: the backlog's "The rename's two
 owed steps"). Plan 0102, the removal of `own` (FSR 2 is the only upscaler), closed
 2026-11-25, v0.74.0. Plan 0100, a sun fixed in the world, closed 2026-11-25, v0.75.0, with the
-wobble it was written for still there; its follow-on is Plan 0104 (draft).
+wobble it was written for still there; its follow-on is Plan 0104 (approved 2026-11-25).
 
 ## Active roster
 
@@ -44,7 +44,7 @@ wobble it was written for still there; its follow-on is Plan 0104 (draft).
 | [0099](0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) | The bake step off the main thread: a bake thread, write lists, the in-view drain | approved 11-22 | ADR-0083 (proposed). After 0087; 0098 closed. Re-read owed (the dig). |
 | [0101](0101-the-record-by-rule-at-every-opening-an-audit-on-the-real-scenes-first-then-the-three-exclusions-lifted.md) | The record by rule at every opening: an audit first, then the exclusions lifted | approved 11-24 | ADR-0085 (proposed). After 0100 P2 and 0099's close. |
 | [0103](0103-a-pipeline-cache-for-the-renderer-bytes-the-consumer-keeps.md) | A pipeline cache for the renderer: the driver's cache through wgpu in an engine envelope, bytes the consumer keeps | draft, parked 11-24 | ADR-0087 (proposed). Parked: the driver's cache already warms a second start (logs/0103.md). |
-| [0104](0104-the-wobble-anchored-to-the-owners-eye-clips-he-ranks-a-measure-that-ranks-them-then-the-remedy.md) | The wobble anchored to the owner's eye: clips he ranks, a measure, then the remedy | draft 11-25 | Awaits go. Follows 0100. P0-2, 4 beside 0099; P3 and remedy after it. |
+| [0104](0104-the-wobble-anchored-to-the-owners-eye-clips-he-ranks-a-measure-that-ranks-them-then-the-remedy.md) | The wobble anchored to the owner's eye: clips he ranks, a measure, then the remedy | approved 11-25 | Follows 0100. P0-2, 4 beside 0099; P3 and remedy after it. |
 <!-- roster:end -->
 
 ## Sequence
