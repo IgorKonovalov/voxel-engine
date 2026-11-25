@@ -156,6 +156,7 @@ impl Args {
                 dig_reach: true,
                 ring1_stretch: svet_render::DEFAULT_RING1_STRETCH,
                 thread: false,
+                depth: svet_render::THREAD_DEPTH,
                 read_missing: false,
                 pre_roll_drain: None,
             },

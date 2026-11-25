@@ -198,6 +198,21 @@ impl BakeQueue {
         self.lister.is_some()
     }
 
+    /// The submits a step holds unread at most: the bake thread's depth while the pool runs
+    /// (the bake thread's steps), [`IN_FLIGHT`] in lockstep, the pre-roll and the one-shot bakes.
+    pub(in crate::bake) fn in_flight_bound(&self) -> usize {
+        if self.lists_off_the_loop() {
+            self.thread_depth.max(1)
+        } else {
+            IN_FLIGHT
+        }
+    }
+
+    /// Sets the bake thread's depth ([`BakeQueue::in_flight_bound`]), at least 1.
+    pub(crate) fn set_thread_depth(&mut self, depth: usize) {
+        self.thread_depth = depth.max(1);
+    }
+
     /// Whether `c` is in the pool's hands.
     pub(in crate::bake) fn in_listing(&self, c: [i32; 3]) -> bool {
         self.listing.contains_key(&c)

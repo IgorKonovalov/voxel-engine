@@ -492,6 +492,9 @@ impl Drop for Run {
                     stepped as f64 / fading as f64
                 );
             }
+            if let Some(line) = queue::round_trip_line(&g.frame.bake_round_trip()) {
+                println!("frames: {line}");
+            }
         }
         if let Some(line) = self.hud.run.line() {
             println!("{line}");

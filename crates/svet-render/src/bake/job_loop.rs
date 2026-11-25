@@ -85,7 +85,8 @@ pub(crate) const BAKE_LANES: u32 = 64;
 /// Workgroups a dispatch row holds (`BAKE_ROW` in bake.wgsl): the entries span x then y.
 pub(crate) const BAKE_ROW: u32 = 32_768;
 
-/// Submits a loop holds unread at most ([`JobLoop::dispatch`]).
+/// Submits a loop holds unread at most ([`JobLoop::dispatch`]) in lockstep, the pre-roll and
+/// the one-shot bakes.
 pub(crate) const IN_FLIGHT: usize = 2;
 
 /// Bytes at the head of a submit's readback: its dispatch's two timestamps.
@@ -125,6 +126,8 @@ pub(crate) struct JobLoop {
     /// The dispatches' plans that stopped at the sample cap, at the entries' batch, and out of
     /// rounds to plan, since the loop started.
     pub plan_stops: [u64; 3],
+    /// Of the plans out of rounds, those that found no table slot free.
+    pub slotless_stops: u64,
     /// Each ended job's chunk and the samples its faces drew, where the loop keeps them
     /// (`Some`); the owner drains it.
     pub ended: Option<Vec<(ChunkCoord, u64)>>,
@@ -156,6 +159,7 @@ impl JobLoop {
             stamps: Default::default(),
             last_samples: 0,
             plan_stops: [0; 3],
+            slotless_stops: 0,
             ended: None,
         }
     }
@@ -393,6 +397,7 @@ impl JobLoop {
             2
         };
         self.plan_stops[stop] += 1;
+        self.slotless_stops += u64::from(stop == 2 && self.free.is_empty());
         let (input, entries, jobs_in) = self.fill_entries(&plan, round, budget.entries);
         self.report.max_jobs_in_submit = self.report.max_jobs_in_submit.max(jobs_in);
         half.issue(Prepared {

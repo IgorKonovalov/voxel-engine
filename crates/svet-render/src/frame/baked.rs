@@ -111,6 +111,10 @@ pub(super) struct BakeLink {
     /// The readings [`Frame::bake_render_laps`] and [`Frame::bake_fade_frames`] return.
     pub(super) render_laps: Vec<[f32; 7]>,
     pub(super) fade_frames: [u64; 2],
+    /// The bake thread's depth in flight ([`Frame::set_bake_depth`]).
+    pub(super) thread_depth: usize,
+    /// The reading [`Frame::bake_round_trip`] returns.
+    pub(super) round_trip: crate::BakeRoundTrip,
 }
 
 /// The bake pool's buffer of `bytes`.
@@ -169,6 +173,8 @@ impl BakeLink {
             snapshot_reach: Default::default(),
             render_laps: Vec::new(),
             fade_frames: [0; 2],
+            thread_depth: crate::THREAD_DEPTH,
+            round_trip: Default::default(),
         }
     }
 }

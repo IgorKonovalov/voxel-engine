@@ -151,6 +151,12 @@ pub const DEFAULT_BAKE_EDIT_MS: f64 = 3.0;
 /// alone. A setting takes 1.0 to 2.0 ([`RING1_STRETCH_RANGE`]).
 pub const DEFAULT_RING1_STRETCH: f64 = 1.0;
 
+/// Submits the live queue's steps hold unread at most on the bake thread (ADR-0083): a slot
+/// turns once in two frames at best there, issued at a frame's take and read in a later
+/// frame's message, so two slots cannot feed a submit every frame. The depth changes no record:
+/// a face's samples are drawn in sample order and a round past its stop is discarded.
+pub const THREAD_DEPTH: usize = 3;
+
 /// The values the ring-1 stretch takes; a value outside is clamped into it.
 pub const RING1_STRETCH_RANGE: std::ops::RangeInclusive<f64> = 1.0..=2.0;
 

@@ -575,6 +575,11 @@ impl RenderSettings {
              switch); the bake knobs that are settings have setters of their own",
         ),
         (
+            "set_bake_depth",
+            "a reading's knob: the bake thread's submits in flight, picked by reading \
+             (Plan 0099 Phase 4c); lockstep holds two whatever it is",
+        ),
+        (
             "set_pipeline_cache",
             "a test hook: the pipeline cache the test devices build through",
         ),

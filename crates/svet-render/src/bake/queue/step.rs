@@ -377,13 +377,15 @@ impl BakeQueue {
         cap: u64,
     ) {
         // Nothing waits on the GPU in a sliced step: the submits read back are those whose
-        // results are mapped by now, and a new one goes out while fewer than IN_FLIGHT are
-        // unread. A step without a slice (the pre-roll) waits for its oldest submit once
-        // IN_FLIGHT are out, so the CPU lists and plans while the GPU draws.
+        // results are mapped by now, and a new one goes out while fewer than the bound are
+        // unread ([`BakeQueue::in_flight_bound`]). A step without a slice (the pre-roll) waits
+        // for its oldest submit once the bound is out, so the CPU lists and plans while the GPU
+        // draws.
+        let bound = self.in_flight_bound();
         let unread = if view.samples.is_some() {
-            IN_FLIGHT - 1
+            bound - 1
         } else {
-            IN_FLIGHT
+            bound
         };
         let pooled = view.samples.is_none() && self.lists_off_the_loop();
         half.poll();
@@ -453,15 +455,9 @@ impl BakeQueue {
             },
             ..self.settings.clone()
         };
-        let mut d = self.lp.collect(
-            run,
-            half,
-            store,
-            &settings,
-            &mut sink,
-            &mut |_| {},
-            IN_FLIGHT,
-        );
+        let mut d = self
+            .lp
+            .collect(run, half, store, &settings, &mut sink, &mut |_| {}, bound);
         // Each lap's placement moves from its stage to the placement's, its `wgpu` calls with
         // it.
         let (mut placed, mut placed_render) = (0.0, 0.0);
@@ -507,7 +503,7 @@ impl BakeQueue {
         let projected = pooled.then(|| {
             self.lp.samples_left() + super::lister::estimate_of(&self.listing, &self.fill)
         });
-        let room = self.lp.in_flight() < IN_FLIGHT;
+        let room = self.lp.in_flight() < bound;
         let in_flight_full = !room && !self.lp.idle();
         let sent = room
             && self
@@ -515,7 +511,7 @@ impl BakeQueue {
                 .dispatch(run, half, store, &settings, cap, &mut sink, &mut |_| {});
         lap(&mut self.laps, S_SUBMIT);
         let submitted = if sent { self.lp.last_samples } else { 0 };
-        if unread < IN_FLIGHT {
+        if unread < bound {
             // With nothing left to send, the pre-roll waits out what is in flight.
             let left = if sent { unread } else { 0 };
             let w = self
@@ -545,6 +541,8 @@ impl BakeQueue {
         self.stats.cap = cap;
         self.stats.submitted = submitted;
         self.stats.plan_stops = self.lp.plan_stops;
+        self.stats.slotless_stops = self.lp.slotless_stops;
+        self.stats.steps = self.steps;
         self.stats.in_flight_full += u64::from(in_flight_full);
         self.stats.samples = d.samples;
         self.stats.ms = d.gpu_ms.unwrap_or(d.seconds * 1e3);

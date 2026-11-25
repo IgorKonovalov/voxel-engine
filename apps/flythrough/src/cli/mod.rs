@@ -623,6 +623,10 @@ pub struct BakeArgs {
     /// `--bake-thread on|off`: whether the live queue's sliced steps run on the bake thread
     /// (`svet_render::Frame::set_bake_thread`, ADR-0083); off, lockstep, by default.
     pub(crate) thread: bool,
+    /// `--bake-depth N`: the submits the bake thread's steps hold unread at most, 1 to 8
+    /// (`svet_render::Frame::set_bake_depth`; default `svet_render::THREAD_DEPTH`); lockstep
+    /// holds two whatever it is.
+    pub(crate) depth: usize,
     /// `--read-missing`: while a dig's rings 1 and 2 wait, the store's no-value count is read back
     /// each frame (blocking) for the `dig settled:` line.
     pub(crate) read_missing: bool,

@@ -61,6 +61,20 @@ pub(super) fn queue_flags() -> Vec<Flag<Parsing>> {
                 Ok(())
             },
         ),
+        Flag::value(
+            &["--bake-depth"],
+            "N",
+            "the bake thread's submits in flight, 1 to 8",
+            |p: &mut Parsing, v| {
+                p.args.bake.depth = v
+                    .text
+                    .parse()
+                    .ok()
+                    .filter(|d| (1..=8).contains(d))
+                    .ok_or_else(|| v.takes("1 to 8"))?;
+                Ok(())
+            },
+        ),
         Flag::switch(
             &["--queue-census"],
             "read the queue's view census at every opening, its listing once",

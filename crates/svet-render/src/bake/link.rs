@@ -204,6 +204,13 @@ pub(crate) struct ThreadLink {
     pub(crate) laps: [f64; RENDER_LAPS.len()],
     pub(crate) took: usize,
     pub(crate) fading_before: u64,
+    /// The ops taken past a frame's first submit, in order: the next frame replays them first
+    /// (ADR-0083: a frame issues at most one prepared submit).
+    pub(crate) carried: Vec<Op>,
+    /// The frame each submit issued and not yet read back went out in, oldest first.
+    issued_at: VecDeque<u64>,
+    /// The round trips read since the frame last took them ([`BakeRoundTrip`]).
+    pub(crate) round_trip: BakeRoundTrip,
 }
 
 /// The render side's laps in [`render_frame`]: the take (the previous books dropped with it),
@@ -242,6 +249,9 @@ impl ThreadLink {
             laps: [0.0; RENDER_LAPS.len()],
             took: 0,
             fading_before: 0,
+            carried: Vec::new(),
+            issued_at: VecDeque::new(),
+            round_trip: BakeRoundTrip::default(),
         })
     }
 
@@ -290,6 +300,7 @@ impl ThreadLink {
     /// that ended it.
     pub(crate) fn stop(self) -> Result<Stopped, BakeError> {
         let timer = self.timer;
+        let carried = self.carried;
         let (mut side, msg, made) = self.thread.stop_all().map_err(BakeError::Thread)?;
         side.queue.settings.timer = timer;
         // Lockstep's box is in its step's own message.
@@ -297,7 +308,10 @@ impl ThreadLink {
         Ok(Stopped {
             side,
             msg,
-            steps: made.into_iter().map(|m| (m.ops, m.lists)).collect(),
+            steps: carried_first(
+                carried,
+                made.into_iter().map(|m| (m.ops, m.lists)).collect(),
+            ),
         })
     }
 
@@ -334,16 +348,56 @@ pub(crate) fn replay(
     timer: Option<&Arc<crate::frame::PassTimer>>,
 ) {
     for op in ops {
-        match op {
-            Op::Tables(t) => half.tables(&t),
-            Op::Refresh(t) => half.refresh_tables(&t),
-            Op::Params => half.write_params(),
-            Op::Issue(mut p) => {
-                if p.timer.is_none() {
-                    p.timer = timer.cloned();
-                }
-                half.issue(p);
+        replay_op(op, half, timer);
+    }
+}
+
+/// A frame's replay with the bake thread on: `carried` (the ops an earlier frame left) and then
+/// each step's ops, in order, replayed on `half` up to and with the first submit (ADR-0083: a
+/// frame issues at most one prepared submit); the ops past it are left in `carried`, in order,
+/// for the next frame. Whether a submit was issued.
+pub(crate) fn replay_a_frame(
+    carried: &mut Vec<Op>,
+    steps: Vec<Vec<Op>>,
+    half: &mut dyn RenderHalf,
+    timer: Option<&Arc<crate::frame::PassTimer>>,
+) -> bool {
+    let mut ops = std::mem::take(carried)
+        .into_iter()
+        .chain(steps.into_iter().flatten());
+    for op in ops.by_ref() {
+        let issue = matches!(op, Op::Issue(_));
+        replay_op(op, half, timer);
+        if issue {
+            carried.extend(ops);
+            return true;
+        }
+    }
+    false
+}
+
+/// A stopped thread's steps not taken, the ops a frame carried ahead of them.
+pub(crate) fn carried_first(
+    carried: Vec<Op>,
+    made: Vec<(Vec<Op>, Vec<WriteList>)>,
+) -> Vec<(Vec<Op>, Vec<WriteList>)> {
+    std::iter::once((carried, Vec::new()))
+        .filter(|(ops, _)| !ops.is_empty())
+        .chain(made)
+        .collect()
+}
+
+/// Replays one render-half call on `half`, a submit timed on `timer`.
+fn replay_op(op: Op, half: &mut dyn RenderHalf, timer: Option<&Arc<crate::frame::PassTimer>>) {
+    match op {
+        Op::Tables(t) => half.tables(&t),
+        Op::Refresh(t) => half.refresh_tables(&t),
+        Op::Params => half.write_params(),
+        Op::Issue(mut p) => {
+            if p.timer.is_none() {
+                p.timer = timer.cloned();
             }
+            half.issue(p);
         }
     }
 }
@@ -354,9 +408,10 @@ pub(crate) fn mapped(half: &mut dyn RenderHalf) -> Vec<ReadBack> {
     std::iter::from_fn(|| half.collect(usize::MAX)).collect()
 }
 
-/// The render half's frame with the bake thread on: its panic, if it ended by one; else each
-/// step's calls replayed
-/// on `half` in order and its lists taken, the lists applied under the cap into `out`, the
+/// The render half's frame with the bake thread on: its panic, if it ended by one; else the
+/// calls the last frame carried and each step's, replayed on `half` in order up to and with the
+/// first submit (the rest carried to the next frame), each step's lists taken, the lists
+/// applied under the cap into `out`, the
 /// mailbox answered up to what the applied lists were made from, and `msg` sent with the
 /// landing words written and the read-backs that mapped. The stats are the steps' taken, or
 /// the newest's with no per-step count when none was.
@@ -384,14 +439,20 @@ pub(crate) fn render_frame(
     mark(0);
     let frame = msg.frame;
     let mut all_empty = None;
-    for (step, (ops, made)) in taken.steps.into_iter().enumerate() {
-        replay(ops, half, link.timer.as_ref());
+    let mut ops = Vec::with_capacity(taken.steps.len());
+    for (step, (step_ops, made)) in taken.steps.into_iter().enumerate() {
+        ops.push(step_ops);
         if made.is_empty() {
             all_empty = Some(taken.frames[step]);
         }
         let ok = lists.take(made);
         debug_assert!(ok.is_ok(), "a write list over the frame's cap");
     }
+    if replay_a_frame(&mut link.carried, ops, half, link.timer.as_ref()) {
+        link.issued_at.push_back(frame);
+        link.round_trip.issued += 1;
+    }
+    link.round_trip.carried += u64::from(link.carried.iter().any(|o| matches!(o, Op::Issue(_))));
     mark(1);
     // A first block's landing word is this frame's plus one, as lockstep writes it.
     let at = msg
@@ -411,6 +472,11 @@ pub(crate) fn render_frame(
     }
     inbox.answered(answered);
     let read_backs = mapped(half);
+    for _ in &read_backs {
+        if let Some(at) = link.issued_at.pop_front() {
+            link.round_trip.count(frame.saturating_sub(at));
+        }
+    }
     mark(3);
     msg.landed.extend(lists.report(frame));
     link.send(msg, read_backs);

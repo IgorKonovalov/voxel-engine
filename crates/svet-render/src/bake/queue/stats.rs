@@ -40,9 +40,13 @@ pub struct QueueStats {
     pub waiting_max_ms: f64,
     /// Since the queue started: the submits' plans that stopped at the sample cap, at the
     /// entries' batch, and out of rounds to plan; and the steps that sent no submit because
-    /// [`crate::bake::IN_FLIGHT`] were unread.
+    /// the loop's bound were unread ([`crate::bake::IN_FLIGHT`] in lockstep, the bake thread's
+    /// depth with it on); and of the plans out of rounds, those that found no table slot free.
     pub plan_stops: [u64; 3],
     pub in_flight_full: u64,
+    pub slotless_stops: u64,
+    /// Steps since the queue started.
+    pub steps: u64,
     /// Samples since the queue started.
     pub total_samples: u64,
     /// Chunks whose block is the coarse pass, waiting for their refinement.
@@ -578,5 +582,62 @@ impl BakeQueue {
             });
         }
         t
+    }
+}
+
+/// The bake thread's submits on the render side (a reading, ADR-0083): each submit's round trip
+/// in frames, from the frame that issued it to the frame whose message carried its read-back;
+/// the submits issued; the frames that carried a submit past them (a frame issues at most one);
+/// and the most readback buffers the issuer held at once.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BakeRoundTrip {
+    /// Read-backs by their round trip in frames: index `k` counts those of `k` frames, the
+    /// last index those of that many or more.
+    pub frames: Vec<u64>,
+    pub issued: u64,
+    pub carried: u64,
+    pub peak_buffers: usize,
+}
+
+impl BakeRoundTrip {
+    /// The longest round trip [`BakeRoundTrip::frames`] tells apart.
+    pub const FRAMES: usize = 64;
+
+    /// Counts a read-back of `frames` frames.
+    pub(crate) fn count(&mut self, frames: u64) {
+        if self.frames.is_empty() {
+            self.frames = vec![0; Self::FRAMES + 1];
+        }
+        self.frames[(frames as usize).min(Self::FRAMES)] += 1;
+    }
+
+    /// `other`'s counts added to `self`'s; the peak is the larger.
+    pub(crate) fn merge(&mut self, other: &BakeRoundTrip) {
+        if self.frames.is_empty() {
+            self.frames = vec![0; Self::FRAMES + 1];
+        }
+        for (k, n) in other.frames.iter().enumerate() {
+            self.frames[k] += n;
+        }
+        self.issued += other.issued;
+        self.carried += other.carried;
+        self.peak_buffers = self.peak_buffers.max(other.peak_buffers);
+    }
+
+    /// The round trip at percentile `p` (0 to 100), in frames; 0 with none read.
+    pub fn percentile(&self, p: f64) -> u64 {
+        let n: u64 = self.frames.iter().sum();
+        if n == 0 {
+            return 0;
+        }
+        let rank = ((p / 100.0) * n as f64).ceil().max(1.0) as u64;
+        let mut seen = 0;
+        for (k, c) in self.frames.iter().enumerate() {
+            seen += c;
+            if seen >= rank {
+                return k as u64;
+            }
+        }
+        Self::FRAMES as u64
     }
 }

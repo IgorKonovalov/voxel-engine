@@ -98,6 +98,8 @@ pub(crate) struct Issuer {
     /// Read-backs collected for a bake thread that stopped before it read them: handed out
     /// first, in order, by the next collect.
     pub(super) returned: VecDeque<ReadBack>,
+    /// The most readback buffers held at once, free and in flight (a reading).
+    pub(crate) peak_buffers: usize,
 }
 
 impl Issuer {
@@ -373,6 +375,9 @@ impl GpuHalf<'_> {
             timer: p.timer,
             t,
         });
+        issuer.peak_buffers = issuer
+            .peak_buffers
+            .max(issuer.staging.len() + issuer.in_flight.len());
     }
 }
 

@@ -30,7 +30,7 @@ pub use self::reads::QueueRead;
 pub(crate) use self::reads::Source as ReadSource;
 pub(crate) use self::shadow::{LightNote, Shadow, notes};
 pub use self::stats::{
-    Band, Bands, DigTrace, DigTraceJob, InViewWaiting, LANDED_BARE, LANDED_FALLBACK,
+    BakeRoundTrip, Band, Bands, DigTrace, DigTraceJob, InViewWaiting, LANDED_BARE, LANDED_FALLBACK,
     LANDED_REFADED, LANDED_UNFADED, LANDING_DIRECTIONS, LANDING_KEY, LANDING_KEY_FLAG,
     LANDING_RECORDS, LANDING_TAIL, LANDING_VIS, LANDING_VIS_FLAG, ListingCensus, QueueStats,
     RuleMissed, chunk_nearest,
@@ -385,6 +385,8 @@ pub struct BakeQueue {
     pub(in crate::bake) listing_seq: u64,
     /// The listings' measured fill of their bounds ([`lister::Fill`]).
     pub(in crate::bake) fill: lister::Fill,
+    /// The submits the bake thread's steps hold unread at most ([`BakeQueue::in_flight_bound`]).
+    pub(in crate::bake) thread_depth: usize,
     /// A test's hook, run after each candidate the opening lists into the loop.
     #[cfg(test)]
     pub(in crate::bake) listed_hook: Option<Box<dyn FnMut() + Send + Sync>>,
@@ -634,6 +636,7 @@ impl BakeQueue {
             listing: Default::default(),
             listing_seq: 0,
             fill: Default::default(),
+            thread_depth: THREAD_DEPTH,
             #[cfg(test)]
             listed_hook: None,
             pool: Default::default(),

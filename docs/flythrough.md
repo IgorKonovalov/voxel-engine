@@ -422,6 +422,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--queue-weights A,R\|A,tier` | The score's angle and refine weights |
 | `--queue-withdraw on\|off` | Withdraw the jobs of chunks the camera passed |
 | `--bake-thread on\|off` | Run the live queue's sliced steps on the bake thread (ADR-0083; the pre-roll and the one-shot bakes stay lockstep); the banner's queue row and the HUD's queue row read `bake thread on` or `off` [off] |
+| `--bake-depth N` | The submits the bake thread's steps hold unread at most, 1 to 8 (a reading's knob; lockstep, the pre-roll and the one-shot bakes hold two whatever it is) [3] |
 | `--queue-census` | Read the queue's view census at every opening, its listing once |
 | `--queue-rule-reading` | Count the jobs opened for chunks the zero rule would answer (a reading) |
 | `--edit-ms MS` | The slice's growth while a dig waits, 0 to 100 ms [3] |
@@ -449,6 +450,13 @@ caps` (the loop's samples left and the listing pool's estimates over the cap at 
 `NaN` in lockstep), `fill world W masks M` (the samples the pool's returned listings pushed
 over their bounds, for chunks listed from the world and from prepared masks; 1 until 16 of a
 kind returned) and `pool guard G` (the openings stopped by the pool's limit of 64 candidates).
+Its `out of rounds N (K with no table slot free)` counts the submits whose plan ran out of
+rounds, and of them those planned with all 16 table slots held; `steps with every submit slot
+unread B of S` the steps that could send no submit for the bound in flight, of the steps taken.
+With the bake thread on, a frame issues at most one submit and carries any later one to the
+next frame; the teardown's `frames: bake round trip:` line reads the submits issued and read,
+their round trip in frames from the issue to the frame whose message carried the read-back
+(p50, p99, max), the frames that carried a submit and the issuer's peak readback buffers.
 
 ### Audio
 

@@ -935,7 +935,7 @@ impl Run {
 /// pool's guard stopped.
 fn print_slice_line(t: f64, st: &svet_render::QueueStats, p50: f64, projected: f64) {
     println!(
-        "bake queue slice: at {:.1} s, granted {:.2} ms ({}, {} in view waiting for their tier), drawn p50 {:.2} ms, plans stopped at the cap {} at the batch {} out of rounds {}, steps with every submit slot unread {}, the in-view set read {} times, mean {:.3} ms, max {:.3} ms, projected at the draw p50 {:.2} caps, fill world {:.3} masks {:.3}, pool guard {}",
+        "bake queue slice: at {:.1} s, granted {:.2} ms ({}, {} in view waiting for their tier), drawn p50 {:.2} ms, plans stopped at the cap {} at the batch {} out of rounds {} ({} with no table slot free), steps with every submit slot unread {} of {}, the in-view set read {} times, mean {:.3} ms, max {:.3} ms, projected at the draw p50 {:.2} caps, fill world {:.3} masks {:.3}, pool guard {}",
         t / 1e3,
         st.slice_ms,
         if st.draining { "drain" } else { "line" },
@@ -944,7 +944,9 @@ fn print_slice_line(t: f64, st: &svet_render::QueueStats, p50: f64, projected: f
         st.plan_stops[0],
         st.plan_stops[1],
         st.plan_stops[2],
+        st.slotless_stops,
         st.in_flight_full,
+        st.steps,
         st.waiting_reads,
         st.waiting_ms / st.waiting_reads.max(1) as f64,
         st.waiting_max_ms,
@@ -953,6 +955,26 @@ fn print_slice_line(t: f64, st: &svet_render::QueueStats, p50: f64, projected: f
         st.fill[1],
         st.pool_guard,
     );
+}
+
+/// The bake thread's submits on the render side (a reading, the teardown's `bake round trip:`
+/// line): the submits issued, their round trip in frames from the issue to the message that
+/// carried the read-back (p50 / p99 / max), the frames that carried a submit past them, and the
+/// issuer's peak readback buffers. `None` when no submit was issued on the thread.
+pub(crate) fn round_trip_line(r: &svet_render::BakeRoundTrip) -> Option<String> {
+    if r.issued == 0 {
+        return None;
+    }
+    let read: u64 = r.frames.iter().sum();
+    let max = r.frames.iter().rposition(|n| *n > 0).unwrap_or(0);
+    Some(format!(
+        "bake round trip: {} submits issued, {read} read, frames p50 {} p99 {} max {max}, frames that carried a submit {}, issuer peak buffers {}",
+        r.issued,
+        r.percentile(50.0),
+        r.percentile(99.0),
+        r.carried,
+        r.peak_buffers,
+    ))
 }
 
 /// The render thread's laps in the bake thread's frames (a reading, the teardown's

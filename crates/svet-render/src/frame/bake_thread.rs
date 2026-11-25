@@ -31,6 +31,21 @@ impl Frame {
         self.baked.thread_on
     }
 
+    /// The submits the bake thread's steps hold unread at most, at least 1 (a reading's knob;
+    /// [`crate::THREAD_DEPTH`] by default). Lockstep, the pre-roll and the one-shot bakes hold
+    /// two whatever it is. It takes hold at the thread's next start.
+    pub fn set_bake_depth(&mut self, depth: usize) {
+        self.baked.thread_depth = depth.max(1);
+    }
+
+    /// The bake thread's submits on the render side since the frame was made (a reading,
+    /// [`crate::BakeRoundTrip`]).
+    pub fn bake_round_trip(&self) -> crate::BakeRoundTrip {
+        let mut r = self.baked.round_trip.clone();
+        r.peak_buffers = r.peak_buffers.max(self.baked.issuer.peak_buffers);
+        r
+    }
+
     /// The frames encoded while the bake thread ran, those whose eye lay past the reach of the
     /// books' snapshot of the words under the step's eye, and those where the sky over the
     /// floor read nothing at the encode's eye but an answer at the step's, and the longest run
@@ -145,7 +160,9 @@ impl Frame {
         let Some(mut queue) = b.queue.take() else {
             return;
         };
-        // The bake thread's openings list through a kept pool and do not wait for it.
+        // The bake thread's openings list through a kept pool and do not wait for it, and its
+        // steps hold its depth of submits unread.
+        queue.set_thread_depth(b.thread_depth);
         if let Err(e) = queue.start_lister(shared.clone()) {
             self.end_failed(BakeError::Thread(format!("spawn: {e}")));
             return;
@@ -227,7 +244,9 @@ impl Frame {
         stats.stages.total_ms = wall;
         stats.stages.render_ms = [0.0; crate::bake::STEP_STAGES.len()];
         stats.stages.render_ms[crate::bake::S_APPLY] = wall;
-        if let Some(link) = &self.baked.thread {
+        if let Some(link) = self.baked.thread.as_mut() {
+            let trip = std::mem::take(&mut link.round_trip);
+            self.baked.round_trip.merge(&trip);
             let l = link.laps;
             let in_call: f64 = l.iter().sum();
             if self.baked.render_laps.len() < READING_FRAMES {

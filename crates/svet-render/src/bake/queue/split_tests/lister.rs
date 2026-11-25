@@ -82,6 +82,15 @@ fn lone_voxels(n: i32, k: usize) -> World {
 /// brick in rounds of one face's count, no coarse pass, a slice of `slice_ms` a frame; with
 /// `masks`, every chunk's prepared masks held as the stream workers would hand them.
 fn pooled_rig(n: i32, k: usize, count: u32, slice_ms: f64, masks: bool) -> Rig {
+    let mut rig = sliced_rig(n, k, count, slice_ms, masks);
+    rig.queue
+        .start_lister(Arc::new(lone_voxels(n, k)))
+        .expect("the pool's threads start");
+    rig
+}
+
+/// [`pooled_rig`] in lockstep: the openings list inside the step.
+fn sliced_rig(n: i32, k: usize, count: u32, slice_ms: f64, masks: bool) -> Rig {
     let mut rig = Rig::sized(None, n, n);
     rig.world = lone_voxels(n, k);
     rig.queue.settings.brick_samples = count;
@@ -105,9 +114,6 @@ fn pooled_rig(n: i32, k: usize, count: u32, slice_ms: f64, masks: bool) -> Rig {
             rig.queue.prepared.insert(c.0, Arc::new(m));
         }
     }
-    rig.queue
-        .start_lister(Arc::new(lone_voxels(n, k)))
-        .expect("the pool's threads start");
     rig
 }
 
@@ -260,4 +266,51 @@ fn an_opening_that_only_sends_is_not_quiet() {
         "the jobs after the next step"
     );
     rig.queue.stop_lister();
+}
+
+/// Done when (2) of Plan 0099 Phase 4c. With every read-back withheld, the bake thread's half
+/// (the listing pool on) plans as many submits as its depth and counts each step after the
+/// last as blocked, every slot unread; lockstep's plans two whatever the depth is set to. The
+/// slice is 1.0 ms (a cap of 500 000), so the 16 table slots hold more than four caps.
+#[test]
+fn the_thread_plans_to_its_depth_and_lockstep_to_two() {
+    let (k, count) = LONE;
+    const STEPS: u64 = 12;
+    // The steps a rig takes to plan its first `bound` submits, then its submits and blocked
+    // steps after `STEPS`.
+    let run = |rig: &mut Rig, bound: usize| {
+        rig.half.hold = true;
+        let mut full_at = None;
+        for step in 1..=STEPS {
+            pooled_step(rig);
+            if full_at.is_none() && rig.half.issued.len() == bound {
+                full_at = Some(step);
+            }
+        }
+        (
+            full_at,
+            rig.half.issued.len(),
+            rig.queue.stats.in_flight_full,
+        )
+    };
+    for depth in [2, 3, 4] {
+        let mut rig = pooled_rig(40, k, count, 1.0, true);
+        rig.queue.set_thread_depth(depth);
+        assert_eq!(rig.queue.in_flight_bound(), depth);
+        let (full_at, issued, blocked) = run(&mut rig, depth);
+        let full_at = full_at.expect("the depth is planned");
+        assert_eq!(issued, depth, "depth {depth}: as many submits as the depth");
+        assert_eq!(
+            blocked,
+            STEPS - full_at,
+            "depth {depth}: every step after the last is blocked"
+        );
+        rig.queue.stop_lister();
+        assert_eq!(rig.queue.in_flight_bound(), IN_FLIGHT, "lockstep again");
+    }
+    let mut rig = sliced_rig(40, k, count, 1.0, true);
+    rig.queue.set_thread_depth(4);
+    let (full_at, issued, blocked) = run(&mut rig, IN_FLIGHT);
+    assert_eq!(issued, 2, "lockstep plans two");
+    assert_eq!(blocked, STEPS - full_at.expect("two are planned"));
 }

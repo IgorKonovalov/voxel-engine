@@ -4,8 +4,8 @@
 
 use super::*;
 use crate::bake::{
-    BakeSide, Hook, OUTBOX_BYTES, THREAD_LIST_CAP, ThreadLink, render_frame, seconds_since,
-    stopwatch,
+    BakeSide, Hook, OUTBOX_BYTES, Op, THREAD_LIST_CAP, ThreadLink, carried_first, render_frame,
+    replay, replay_a_frame, seconds_since, stopwatch,
 };
 use std::sync::Mutex;
 use std::sync::mpsc;
@@ -526,4 +526,122 @@ fn the_stretch_reaches_the_bake_thread_in_the_next_message() {
     let st = books.stats;
     assert_eq!((st.cap, st.stretched), (280, true), "the step plans by 1.5");
     assert_eq!(st.submitted, 280, "ring 1 whole");
+}
+
+/// A render half that logs its calls by frame: `"F tables S"` and `"F issue S"`, the slot
+/// the call names (a submit's, its seed).
+#[derive(Default)]
+struct Calls {
+    frame: u64,
+    log: Vec<String>,
+}
+
+impl RenderHalf for Calls {
+    fn poll(&mut self) {}
+    fn tables(&mut self, opened: &[(usize, ChunkCoord)]) {
+        for (slot, _) in opened {
+            self.log.push(format!("{} tables {slot}", self.frame));
+        }
+    }
+    fn refresh_tables(&mut self, _: &[(usize, ChunkCoord)]) {}
+    fn write_params(&mut self) {}
+    fn issue(&mut self, p: Prepared) {
+        self.log.push(format!("{} issue {}", self.frame, p.seed));
+    }
+    fn collect(&mut self, _: usize) -> Option<ReadBack> {
+        None
+    }
+    fn cap(&self) -> Option<usize> {
+        None
+    }
+    fn apply(&mut self, _: Vec<WriteList>, _: u64) -> Vec<([i32; 3], u32)> {
+        Vec::new()
+    }
+}
+
+/// A step's ops: job slot `s`'s table, then a submit for it.
+fn step_ops(s: u32) -> Vec<Op> {
+    vec![
+        Op::Tables(vec![(s as usize, ChunkCoord([0, 0, 0]))]),
+        Op::Issue(Prepared {
+            input: Vec::new(),
+            seed: s,
+            clamp: false,
+            sky: 0,
+            key: None,
+            timer: None,
+        }),
+    ]
+}
+
+/// Done when (1) of Plan 0099 Phase 4c. Two steps taken in one frame (tables A, issue A,
+/// tables B, issue B) replay as tables A, issue A in that frame and tables B, issue B in the
+/// next, ahead of that frame's own step; no frame issues two; a join with a submit carried
+/// issues it, ahead of the steps it had not taken.
+#[test]
+fn a_frame_issues_one_submit_and_carries_the_rest_in_order() {
+    let mut calls = Calls::default();
+    let mut carried = Vec::new();
+    calls.frame = 1;
+    assert!(replay_a_frame(
+        &mut carried,
+        vec![step_ops(1), step_ops(2)],
+        &mut calls,
+        None
+    ));
+    calls.frame = 2;
+    assert!(replay_a_frame(
+        &mut carried,
+        vec![step_ops(3)],
+        &mut calls,
+        None
+    ));
+    assert_eq!(
+        calls.log,
+        ["1 tables 1", "1 issue 1", "2 tables 2", "2 issue 2"],
+        "B in the next frame, ahead of its own step"
+    );
+    // A frame that took nothing issues what it carried.
+    calls.frame = 3;
+    assert!(replay_a_frame(&mut carried, Vec::new(), &mut calls, None));
+    assert!(carried.is_empty());
+    assert!(!replay_a_frame(&mut carried, Vec::new(), &mut calls, None));
+    // A join: the carried submit first, then the steps the thread had not handed over, all
+    // replayed by the next lockstep step.
+    calls.frame = 4;
+    assert!(replay_a_frame(
+        &mut carried,
+        vec![step_ops(4), step_ops(5)],
+        &mut calls,
+        None
+    ));
+    calls.frame = 5;
+    for (ops, _) in carried_first(
+        std::mem::take(&mut carried),
+        vec![(step_ops(6), Vec::new())],
+    ) {
+        replay(ops, &mut calls, None);
+    }
+    assert_eq!(
+        calls.log[4..],
+        [
+            "3 tables 3",
+            "3 issue 3",
+            "4 tables 4",
+            "4 issue 4",
+            "5 tables 5",
+            "5 issue 5",
+            "5 tables 6",
+            "5 issue 6"
+        ]
+    );
+    // No threaded frame (1 to 4) issued two.
+    for f in 1..=4 {
+        let n = calls
+            .log
+            .iter()
+            .filter(|l| l.starts_with(&format!("{f} issue")))
+            .count();
+        assert_eq!(n, 1, "frame {f} issues one");
+    }
 }
