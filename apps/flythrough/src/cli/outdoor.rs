@@ -94,7 +94,7 @@ pub struct OutdoorArgs {
     /// (`AutoExposure::highlight_percentile`, 0 for off); unset, the preset's
     /// (`svet_render::DEFAULT_EXPOSURE_HIGHLIGHT`).
     pub(crate) exposure_highlight: Option<f32>,
-    /// `--key-at hit|face|face-smooth`: where on a cube face the key light's column horizon is
+    /// `--key-at hit|face|face-smooth|centre`: where on a cube face the key light's column horizon is
     /// read (`Lighting::key_at`).
     pub(crate) key_at: svet_render::KeyAt,
 }
@@ -455,13 +455,16 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
         ),
         Flag::value(
             &["--key-at"],
-            "hit|face|face-smooth",
+            "hit|face|face-smooth|centre",
             "where on a cube face the key light's column horizon is read: at the hit, at the \
-                 centre of the hit's voxel face (one value a face), or blended from the four \
-                 face centres nearest the hit (a ramp a voxel wide) [hit]",
+                 centre of the hit's voxel face (one value a face), blended from the four face \
+                 centres nearest the hit (a ramp a voxel wide), or where the pixel's ray with no \
+                 jitter meets the hit's face plane (one value a pixel) [hit]",
             |p: &mut Parsing, v| {
-                p.args.outdoor.key_at =
-                    v.named(svet_render::KeyAt::from_name, "hit, face or face-smooth")?;
+                p.args.outdoor.key_at = v.named(
+                    svet_render::KeyAt::from_name,
+                    "hit, face, face-smooth or centre",
+                )?;
                 Ok(())
             },
         ),

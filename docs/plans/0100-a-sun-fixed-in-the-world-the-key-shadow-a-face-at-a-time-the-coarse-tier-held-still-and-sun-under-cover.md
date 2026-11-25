@@ -558,6 +558,7 @@ says otherwise; 3, 4 and 5, the recommended options.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The key shadow at the face's centre | dev | built; the stop rule holds (neither arm closes half the distance at a still camera at either pose); readings in [`logs/0100.md`](logs/0100.md) | `569bb5f4` |
+| 1b: The split of "none", the key shadow at the pixel's centre | dev | built (`centre`); `key_filter` not built by step 1's rule; the restated stop rule holds (no arm, `calm,full,nofilter` included, closes half the distance in every judged bin); readings in [`logs/0100.md`](logs/0100.md) | committed with this row |
 | 2: The bake's key ray at its cap | dev | done: the closed cave's floor reads key 0 on 64 of 64, the open one 255 on 64, the slab's 64 lit before and after, the rule's 9 chunks equal the job's; no test's bytes moved | committed with this row |
 | 3: The coarse tier's wobble, a reading | dev | read; the stop rule holds (held coarse 0.01 % at weight 0 a still pair, landed 0.00 %, both adapters; what moves is the landings); readings in [`logs/0100.md`](logs/0100.md) | committed with this row |
 | 4: The coarse tier held still | dev | not built: Phase 3's stop rule (the pose does not hold the fault) | |
@@ -611,6 +612,16 @@ each. Empty is fine.)_
 - Phase 3: two of the RTX rows (H1, H3) and the RENOIR `ff=none` row landed by an earlier drain
   rule (600 frames with no block landed), before every weight-0 block refined; their held rows
   stand, their landed rows are partial and say so.
+- Merge of main (`bc426d6e`, v0.74.0) into the lane: `60560e14`, no conflicts, committed by git
+  with its default message (`Merge branch 'main' into plan-0100`), not `merge: main into
+  plan-0100 (...)`; no amend.
+- Phase 1b: also outside the list: `crates/svet-render/src/shaders/common.wgsl`
+  (`pixel_ray_offset`; `pixel_ray` calls it with the view's jitter).
+- Phase 1b: the terraces rig also gained a reading-only split of the key-moved pixels by whether
+  the jittered hit stayed on one face plane (`key on one plane`), not named by the amendment.
+- Phase 1b: `lighting.key_filter` not built: `calm,nofilter`'s display count read 0.82 (W2) and
+  1.91 (W3) of `calm`'s, over the three quarters the amendment sets.
+- Phase 1b: every terraces row was read loaded (3.9 to 15.1); no quiet row was taken.
 
 ### Close triggers
 

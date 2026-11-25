@@ -414,8 +414,14 @@ fn view_of(px: vec2<u32>) -> u32 {
 // `((2 u - 1) tan) aspect`; two views of one aspect whose rectangles cover the same pixels of
 // the same frustum (a view and its left half over half the pixels) take bit-identical rays.
 fn pixel_ray(px: vec2<u32>) -> Ray {
+    return pixel_ray_offset(px, params.views[view_of(px)].jitter);
+}
+
+// The primary ray of pixel `px` through the centre of the pixel moved by `off` internal pixels:
+// `pixel_ray` with the view's jitter, the pixel's own centre with zero.
+fn pixel_ray_offset(px: vec2<u32>, off: vec2<f32>) -> Ray {
     let v = params.views[view_of(px)];
-    let u = (vec2<f32>(px - v.rect.xy) + 0.5 + v.jitter) / vec2<f32>(v.rect.zw);
+    let u = (vec2<f32>(px - v.rect.xy) + 0.5 + off) / vec2<f32>(v.rect.zw);
     let hv = (v.tan_up + v.tan_down) * 0.5;
     let cv = (v.tan_up - v.tan_down) * 0.5;
     let nx = u.x * v.unit_scale - v.unit_offset;

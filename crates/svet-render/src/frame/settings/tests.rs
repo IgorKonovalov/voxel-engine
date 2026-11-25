@@ -77,12 +77,13 @@ fn the_key_mean_holds_256_frames_by_default() {
 
 /// Plan 0100 Phase 1: `key_at` is `hit` by default, which sets no `lighting2` bit, so the
 /// default's second word of switches is the frame's before the setting (`sky_down_skip` alone);
-/// `face` and `face-smooth` each set their own bit, and nothing else of either word moves; every
-/// value round-trips through its name and `next` cycles the three.
+/// `face`, `face-smooth` and `centre` each set their own bit, and nothing else of either word moves; every
+/// value round-trips through its name and `next` cycles the four.
 #[test]
 fn the_key_at_hit_sets_no_bit() {
     use super::{
-        KeyAt, LIGHTING2_KEY_AT_FACE, LIGHTING2_KEY_AT_SMOOTH, LIGHTING2_SKY_DOWN_SKIP, Lighting,
+        KeyAt, LIGHTING2_KEY_AT_CENTRE, LIGHTING2_KEY_AT_FACE, LIGHTING2_KEY_AT_SMOOTH,
+        LIGHTING2_SKY_DOWN_SKIP, Lighting,
     };
     let d = Lighting::default();
     assert_eq!(d.key_at, KeyAt::Hit);
@@ -95,13 +96,17 @@ fn the_key_at_hit_sets_no_bit() {
     let at = |key_at| Lighting { key_at, ..d };
     assert_eq!(at(KeyAt::Face).flags2(), LIGHTING2_KEY_AT_FACE);
     assert_eq!(at(KeyAt::FaceSmooth).flags2(), LIGHTING2_KEY_AT_SMOOTH);
+    assert_eq!(at(KeyAt::Centre).flags2(), LIGHTING2_KEY_AT_CENTRE);
     for k in KeyAt::ALL {
         assert_eq!(at(k).flags(), d.flags(), "{}", k.name());
         assert_eq!(KeyAt::from_name(k.name()), Some(k));
     }
-    assert_eq!(KeyAt::ALL.map(KeyAt::name), ["hit", "face", "face-smooth"]);
+    assert_eq!(
+        KeyAt::ALL.map(KeyAt::name),
+        ["hit", "face", "face-smooth", "centre"]
+    );
     assert_eq!(
         KeyAt::ALL.map(KeyAt::next),
-        [KeyAt::Face, KeyAt::FaceSmooth, KeyAt::Hit]
+        [KeyAt::Face, KeyAt::FaceSmooth, KeyAt::Centre, KeyAt::Hit]
     );
 }

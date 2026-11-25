@@ -158,11 +158,17 @@ fn column_key_visibility(p: vec3<f32>, n: vec3<f32>) -> f32 {
 // hit's voxel face (the voxel's centre half a voxel along `nf`), one value a face whatever the
 // jitter; under LIGHTING2_KEY_AT_SMOOTH the bilinear blend of the horizons at the four face
 // centres of the face's plane nearest the hit (the lattice at half-integer coordinates across
-// the plane), a ramp one voxel wide fixed in the world. A hit with no face axis reads the hit.
-fn key_horizon_at(p: vec3<f32>, nf: vec3<f32>, axis: i32) -> f32 {
-    let bits = params.lighting2 & (LIGHTING2_KEY_AT_FACE | LIGHTING2_KEY_AT_SMOOTH);
+// the plane), a ramp one voxel wide fixed in the world; under LIGHTING2_KEY_AT_CENTRE where the
+// ray of internal pixel `px` with no jitter meets the hit's face plane (`key_centre_point`). A
+// hit with no face axis reads the hit.
+fn key_horizon_at(p: vec3<f32>, nf: vec3<f32>, axis: i32, px: vec2<u32>) -> f32 {
+    let bits = params.lighting2
+        & (LIGHTING2_KEY_AT_FACE | LIGHTING2_KEY_AT_SMOOTH | LIGHTING2_KEY_AT_CENTRE);
     if (bits == 0u || axis < 0) {
         return column_key_visibility(p, nf);
+    }
+    if ((bits & LIGHTING2_KEY_AT_CENTRE) != 0u) {
+        return column_key_visibility(key_centre_point(p, axis, px), nf);
     }
     let along = axis_mask(axis);
     let centre = vec3<f32>(store_voxel(p, nf)) + 0.5 + 0.5 * nf;
@@ -185,6 +191,26 @@ fn key_horizon_at(p: vec3<f32>, nf: vec3<f32>, axis: i32) -> f32 {
     let k01 = column_key_visibility(lo + eb, nf);
     let k11 = column_key_visibility(lo + ea + eb, nf);
     return mix(mix(k00, k10, fa), mix(k01, k11, fa), fb);
+}
+
+// The point where internal pixel `px`'s ray through its centre (no jitter) meets the plane of
+// the face hit at `p` on `axis`: one point a pixel whatever the jitter's phase, while the
+// jittered hit stays on one plane. The plane's coordinate is the hit's own, bit for bit. A ray
+// parallel to the plane or meeting it behind the eye reads the hit.
+fn key_centre_point(p: vec3<f32>, axis: i32, px: vec2<u32>) -> vec3<f32> {
+    let ray = pixel_ray_offset(px, vec2<f32>(0.0));
+    let along = axis_mask(axis);
+    let one = vec3<f32>(1.0);
+    let den = dot(select(vec3<f32>(0.0), ray.d, along), one);
+    let num = dot(select(vec3<f32>(0.0), p - ray.o, along), one);
+    if (abs(den) < 1.0e-6) {
+        return p;
+    }
+    let t = num / den;
+    if (!(t > 0.0)) {
+        return p;
+    }
+    return select(ray.o + ray.d * t, p, along);
 }
 
 // The key slot (the pair's g) at a pixel where the light pass cast no key ray holds the far

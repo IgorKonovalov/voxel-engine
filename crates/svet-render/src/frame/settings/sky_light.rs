@@ -130,12 +130,18 @@ pub enum KeyAt {
     /// At the four face centres of the face's plane nearest the hit, blended bilinearly by the
     /// hit's place among them: a ramp one voxel wide, fixed in the world.
     FaceSmooth,
+    /// Where the ray of the hit's internal pixel through its centre, with no jitter, meets the
+    /// plane of the face the jittered hit lies on: one point a pixel whatever the jitter's phase
+    /// while the hit stays on one plane (Plan 0100 Phase 1b). A hit with no face axis reads the
+    /// hit.
+    Centre,
 }
 
 named_enum!(KeyAt {
     Hit => "hit",
     Face => "face",
     FaceSmooth => "face-smooth",
+    Centre => "centre",
 });
 
 impl KeyAt {

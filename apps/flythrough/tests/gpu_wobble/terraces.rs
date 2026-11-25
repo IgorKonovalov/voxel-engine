@@ -101,6 +101,7 @@ struct Read {
     direct: Vec<f32>,
     sky: Vec<f32>,
     w: Vec<f32>,
+    hit: Vec<[f32; 4]>,
     luma: Vec<u8>,
     gw: usize,
     light_ms: f64,
@@ -152,6 +153,7 @@ fn read_frame(rig: &Rig, s: &mut Stepper, cam: &Camera, arm: &Arm, internal: [u3
             .collect(),
         sky: pair.iter().map(|p| p[0]).collect(),
         w: shot.hits.iter().map(weight).collect(),
+        hit: shot.hits.clone(),
         luma: lumas(&shot.display),
         gw,
         light_ms: ms("light"),
@@ -199,12 +201,20 @@ fn edge_class(r: &Read) -> Vec<u8> {
 }
 
 /// A pair's figures per weight bin: the class's display pixels, those over 4 levels, and of
-/// those the term that moved (key, direct, sky, none).
+/// those the term that moved (key, direct, sky, none); and the display pixels over 4 levels
+/// anywhere on the display, the figure arms on different lighting grids compare on.
 #[derive(Clone, Copy, Default)]
 struct PairRow {
     n: [u64; 3],
     over: [u64; 3],
     by: [[u64; 4]; 3],
+    key_plane: [u64; 3],
+    display: u64,
+}
+
+/// Whether two hits lie on one voxel face plane: a coordinate both hold at the same integer.
+fn one_plane(a: &[f32; 4], b: &[f32; 4]) -> bool {
+    (0..3).any(|k| (a[k] - a[k].round()).abs() < 1e-3 && (a[k] - b[k]).abs() < 1e-3)
 }
 
 fn pair_row(a: &Read, b: &Read) -> PairRow {
@@ -213,6 +223,9 @@ fn pair_row(a: &Read, b: &Read) -> PairRow {
     let gl = a.key.len();
     let mut r = PairRow::default();
     for i in 0..dw * dh {
+        if a.luma[i].abs_diff(b.luma[i]) > 4 {
+            r.display += 1;
+        }
         let g = grid_of(i, dw, dh, a.gw, gl);
         let c = cls[g];
         if c == 255 {
@@ -236,6 +249,9 @@ fn pair_row(a: &Read, b: &Read) -> PairRow {
             3
         };
         r.by[c][k] += 1;
+        if k == 0 && one_plane(&a.hit[g], &b.hit[g]) {
+            r.key_plane[c] += 1;
+        }
     }
     r
 }
@@ -249,9 +265,11 @@ fn segment_line(name: &str, rows: &[PairRow]) -> String {
         let n: u64 = rows.iter().map(|r| r.n[c]).sum();
         let over: u64 = rows.iter().map(|r| r.over[c]).sum();
         let by: [u64; 4] = std::array::from_fn(|k| rows.iter().map(|r| r.by[c][k]).sum());
+        let plane: u64 = rows.iter().map(|r| r.key_plane[c]).sum();
         let m = over.max(1) as f64;
         out.push_str(&format!(
-            " {}: {:.2} % of {} px a pair (key {:.0} %, direct {:.0} %, sky {:.0} %, none {:.0} %);",
+            " {}: {:.2} % of {} px a pair (key {:.0} %, direct {:.0} %, sky {:.0} %, none {:.0} %; \
+             key on one plane {:.0} %);",
             bin,
             100.0 * over as f64 / n.max(1) as f64,
             n / rows.len().max(1) as u64,
@@ -259,8 +277,15 @@ fn segment_line(name: &str, rows: &[PairRow]) -> String {
             100.0 * by[1] as f64 / m,
             100.0 * by[2] as f64 / m,
             100.0 * by[3] as f64 / m,
+            100.0 * plane as f64 / by[0].max(1) as f64,
         ));
     }
+    let moved: u64 = rows.iter().map(|r| r.display).sum();
+    out.push_str(&format!(
+        " display: {:.1} px a pair over 4 ({:.4} %);",
+        moved as f64 / rows.len().max(1) as f64,
+        100.0 * moved as f64 / (rows.len().max(1) as f64 * f64::from(OUT[0] * OUT[1])),
+    ));
     out
 }
 

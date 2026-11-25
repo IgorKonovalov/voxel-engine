@@ -1115,7 +1115,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (far_on && (!key_cast || w > 0.0 || reset)) {
             k_far = key_store.x;
             if (key_store.y == 0.0) {
-                k_far = key_horizon_at(rec.p, lift_n, rec.axis);
+                k_far = key_horizon_at(rec.p, lift_n, rec.axis, full_px(gid.xy));
                 far_src = KEY_SRC_HORIZON;
             }
         }

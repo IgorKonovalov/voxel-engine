@@ -575,7 +575,7 @@ fn dig_hold_is_on_rays_and_off_names_itself() {
 
 /// Plan 0100 Phase 1: `--key-at` is `hit` unless named, which the lighting row and the banner
 /// leave out; `face` and `face-smooth` reach the lighting, the row and the banner; the debug
-/// page's `key at` cycles hit, face, face-smooth and its row reads the value.
+/// page's `key at` cycles hit, face, face-smooth, centre and its row reads the value.
 #[test]
 fn key_at_is_hit_unless_named() {
     use crate::hud::HudRow;
@@ -585,7 +585,11 @@ fn key_at_is_hit_unless_named() {
     let m = r.start_modes(0.0);
     assert!(!m.row(HudRow::Lighting).contains("key at"));
     assert!(!m.banner(0.0).unwrap().contains("key at"));
-    for (name, k) in [("face", KeyAt::Face), ("face-smooth", KeyAt::FaceSmooth)] {
+    for (name, k) in [
+        ("face", KeyAt::Face),
+        ("face-smooth", KeyAt::FaceSmooth),
+        ("centre", KeyAt::Centre),
+    ] {
         let r = parse_args_from(argv(&["--source", "outdoor", "--key-at", name])).unwrap();
         assert_eq!(r.start_lighting().key_at, k);
         let m = r.start_modes(0.0);
@@ -595,14 +599,19 @@ fn key_at_is_hit_unless_named() {
         let banner = m.banner(0.0).unwrap().replace('\n', ", ");
         assert!(banner.contains(&word), "{banner}");
     }
-    assert!(parse_args_from(argv(&["--key-at", "centre"])).is_err());
+    assert!(parse_args_from(argv(&["--key-at", "center"])).is_err());
     let tog = crate::toggles::TOGGLES
         .iter()
         .find(|t| t.name == "key at")
         .unwrap();
     let mut m = r.start_modes(0.0);
     m.lighting.key_at = KeyAt::Hit;
-    for want in ["key at face", "key at face-smooth", "key at hit"] {
+    for want in [
+        "key at face",
+        "key at face-smooth",
+        "key at centre",
+        "key at hit",
+    ] {
         (tog.flip)(&mut m, 0.0);
         assert_eq!((tog.get)(&m), want);
     }

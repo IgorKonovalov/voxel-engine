@@ -301,6 +301,10 @@ pub(crate) const LIGHTING2_KEY_AT_FACE: u32 = 1 << 1;
 /// blend of the four face centres of its plane nearest the hit.
 pub(crate) const LIGHTING2_KEY_AT_SMOOTH: u32 = 1 << 2;
 
+/// `Params::lighting2` bit ([`KeyAt::Centre`]): a cube face's column horizon is read where the
+/// pixel's ray with no jitter meets the hit's face plane.
+pub(crate) const LIGHTING2_KEY_AT_CENTRE: u32 = 1 << 3;
+
 /// The light passes' reading hooks ([`Frame::set_light_hooks`]): switches that take a term or a
 /// test out of the frame to attribute what the image does to it. All off by default; each is
 /// a uniform branch on a `Params::lighting` bit.
@@ -1131,6 +1135,7 @@ impl Lighting {
             KeyAt::Hit => 0,
             KeyAt::Face => LIGHTING2_KEY_AT_FACE,
             KeyAt::FaceSmooth => LIGHTING2_KEY_AT_SMOOTH,
+            KeyAt::Centre => LIGHTING2_KEY_AT_CENTRE,
         }
     }
 
