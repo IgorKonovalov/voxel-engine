@@ -1099,6 +1099,245 @@ frame alone. Dominated by (f).
 (1.14 to 1.33 caps). (d) **Withdrawn:** the sentence without a condition is not true of what
 was read.
 
+## Amended 2026-11-25 (architect, Phase 4 after lever (b))
+
+Read against `7a456701`: the opening (`BakeQueue::open`, `bake/queue/open.rs`), the pool
+(`send_batch`, `take_listed`, `listing_samples`, `bake/queue/lister.rs`), the bound
+(`listing_bound`, `bake/queue/list.rs`), the step's gate and its submit (`open_step`, `submit`,
+`bake/queue/step.rs`), the loop (`JobLoop::dispatch`, `plan_rounds`, `samples_left`,
+`bake/job_loop.rs`), the render half (`GpuHalf::send`, `collect`, `bake/issue.rs`), the frame
+(`render_frame`, `mapped`, `replay`, `bake/link.rs`), the thread (`bake/thread.rs`) and the
+price (`SampleCost`, `Drain`, `bake/budget.rs`); and the once-a-second lines of
+`live/p3ar/rtx-forest-{on,off}-*.log` and `live/p4r/{b,x}-*.log`. Where this section differs
+from Phase 4's text it wins. Lever (b) (`514c9a71`) stands as built, with one defect (ruling 1).
+**Phase 4's remaining work is Phases 4b, 4c and 4d below, in that order, one brief each.**
+
+**A figure in this plan that is stale.** The Floor profile's drain slice is **1.5 ms**
+(`DEFAULT_DRAIN`, Plan 0096 Phase 9's sweep), not the 4.0 ms the Context and Phase 4 name; every
+log line of these runs reads `granted 1.50 ms`. Portable's is 6.0 ms. Done-when (1)'s 4.0 and
+1.0 ms are a synthetic's and stand. The 10 s line was derived at 4.0 ms (ruling 3).
+
+### Ruling 1: the pooled opening admits to a level, and a pooled candidate counts at its bound times the measured fill
+
+**What the code does.** `open` walks the order and stops once `left >= 2 * cap`, where `left`
+is `lp.samples_left()` plus `listing_samples()`, the sum of `listing_bound` over the candidates
+in the pool's hands: the mask directions' bound times the tier's count, or
+`CHUNK_BRICKS x 6 x count` where no masks arrived. In lockstep a batch is listed inside the
+walk and `left` continues from what `push_batch` pushed, so the bound is corrected in the same
+step. With the pool the correction comes a step later (`take_listed`, at the next opening), so
+the walk stops on the bounds, two or three candidates in, and the submit that follows runs out
+of rounds (read: 4 to 5 jobs open, 0.45 of the cap drawn, `out of rounds` 651 to 1443). Counted
+as 0 (the experiment) nothing bounds the pool but `QUEUE_CHECKS` sends a step.
+
+**Ruled.**
+- **Scope: the pooled opening only** (`lists_off_the_loop()`, the bake thread). Lockstep's
+  sliced opening, the pre-roll and the one-shot bakes keep today's rule to the letter, so every
+  lockstep test and golden that reads before the drain is unchanged by construction; lockstep
+  feeds 0.99 a frame on the forest as it is. Plan 0096's F2 entry (the `QUEUE_CHECKS` cap)
+  closes for the thread's mode and stays a disclosed reading for lockstep.
+- **A pooled candidate counts `bound x fill`.** The fill is the samples the returned listings
+  pushed over their bounds, kept over about the last 64 listings returned, one figure for
+  candidates with prepared masks and one for those without (the bound's two formulas); a
+  faceless or zero-by-rule listing counts its 0, a listing the pool refused is not counted.
+  Until 16 of a kind have returned the fill is 1 (the bound). A kept mean a tier would drop what
+  the bound knows of the chunk; the bound alone and 0 are the two readings above. The estimate
+  lives one step: `take_listed` replaces it with the job's own samples.
+- **The level is three slices.** The opening admits while the projection
+  (`lp.samples_left()` plus the pooled estimates) is under `3 x cap`, the step's priced cap
+  (`priced_cap`, `SampleCost` and the dig classes as they are). The opening runs before the
+  step's submit, and what it sends is pushed a step later, so with a level `L` before the draw
+  and a draw `d` of at most one cap the next step holds `L - d + (3 cap - L)`, at least two
+  caps: lockstep's two slices at every draw. The walk stops at the first candidate past the
+  level: **one job of overshoot, never a count.** The backlog is bounded by the level itself,
+  re-read from the loop every step.
+- **`QUEUE_CHECKS` bounds the candidates found not ready** (reach, lights) in a pooled opening,
+  per class as today, not the candidates admitted. Which opens first does not change: the
+  order, the class rule and the re-check stay.
+- **A guard, counted:** at most 64 candidates in the pool's hands; a step it stops is counted
+  on the `bake queue slice:` line. It is not the rule; if it stops steps on the forest, dev
+  reports it.
+- **The step's gate reads the same projection and level**, and `take_listed` runs every step
+  ahead of it (today both sit behind `lp.samples_left() < 2 * cap`).
+- **A defect of lever (b), fixed here.** `open_step` sets `quiet_until` (`QUEUE_QUIET`, 8
+  steps) when an opening leaves the loop's chunk count unchanged and the loop idle. A pooled
+  opening on an empty loop sends and pushes nothing, so it reads as quiet and the listings wait
+  eight steps unless the mirror changes (`follow_window` resets it, which hides it during a
+  fresh start). An opening that sent, or a pool that holds a candidate, is not quiet.
+- **"At the frame rate read" means one slice a frame, never carried.** A step that reads a
+  coalesced message plans one submit of one cap. A frame with no step loses its slice: making
+  it up would put two slices in one frame's GPU time. So the feed's ceiling is the steps a
+  frame (0.91 after lever (b)) times the drawn share a submit.
+- **Done-when (1), restated** (the claim kept: admit until the projected work covers the
+  level, one job of overshoot, never a fixed count): in Phase 4b.
+
+### Ruling 2: the in-flight bound is what holds the submits under one a frame; the thread plans to a depth of 3 or 4, and a frame issues one submit
+
+**The round trip, by the code.** A bake step plans a submit while `lp.in_flight() < IN_FLIGHT`
+(`submit`). The frame that takes that step issues it (`replay`, `GpuHalf::send`: the submit and
+`map_async`) and, in the same call, polls without waiting and collects what has mapped
+(`mapped`): never the submit it just issued. The read-back leaves with a frame's message
+(`link.send`), the next frame's at the earliest; the step that reads that message frees the
+slot (`lp.collect`) and plans again; a later frame issues it. **A slot turns once in two
+frames at best**, in three when the map is not ready at the next frame's poll (the frame is
+GPU-bound at 134 fps, CPU 1.5 ms of 7.8) or the step's output misses the next take. Two slots
+give 1.0 a frame at best and 0.67 with one slip; read 0.59 to 0.77, with 430 to 446 steps
+finding both unread. The RENOIR's 24 ms frame covers the trip: 1.00 a frame, 0 such steps.
+"Free the slot earlier" is not an option the code offers: the render side already collects at
+the first poll that finds the map and sends it in that frame's message, and a slot the bake
+side frees before its read-back is a deeper bound by another name.
+
+**Ruled.**
+- **The thread's depth is 3 or 4, by reading; lockstep, the pre-roll and the one-shot bakes
+  stay at `IN_FLIGHT` 2**, bit-identical. The least of 3 and 4 at which the steps with every
+  slot unread are at most 2 % of the steps while in view waits (Phase 4c); if neither, 4 and a
+  report. A face's samples are drawn in sample order and a round past its stop is discarded
+  (`JobLoop::collect`), so the depth changes no record; Phase 3's store test asserts it.
+- **A frame issues at most one submit.** ADR-0083 says so ("at most one prepared submit");
+  `render_frame` replays every step it took, and two steps' outputs can land in one take. The
+  ops past the frame's first `Op::Issue` are carried, in order, to the next frame; the lists
+  are applied as today. A frame's bake on the GPU is then at most one cap at any depth, as in
+  lockstep, so the depth spends no frame time the slice did not grant: no owner question.
+- **What the depth costs.** A readback buffer each (`STAMP_BYTES + BAKE_BATCH_FACES x
+  FACE_BYTES`, 5.5 MiB, host-mapped, made on demand): 11.0 MiB at 2, 16.5 at 3, 22.0 at 4;
+  Phase 6 pins the peak beside the outbox. Bake work the GPU can hold queued when it runs
+  behind: the depth in caps (Floor's drain 4.5 or 6.0 ms against 3.0; Portable's 18 or 24
+  against 12, reached only if its trip grows, which it does not today). Rounds planned before
+  an earlier submit's stop is read are waste: a reading in Phase 4c, not a bar.
+- **Not ruled, a stop:** the loop's 16 table slots (`QUEUE_SLOTS`) hold a job until its last
+  read-back, a frame longer per unit of depth. If Phase 4c reads submits out of rounds with no
+  slot free, dev reports it; the slot count is not raised without an amendment.
+
+### Ruling 3: the RTX forest's 10 s is not reachable by feeding, and dev does not chase it
+
+**Arithmetic over the logs** (the drawn slice summed to the line that reads `in view 0`, by the
+submits a second times their p50; the frames from the same lines):
+
+| run | fed a frame | drawn slice to in view 0 | of it, the in-view chunks with no block | in view 0 |
+|---|---|---|---|---|
+| thread, Phase 3a (`on-1`) | 0.42 | 1.95 s | 0.74 s, at 11.0 s | 24.5 s |
+| thread, lever (b), two runs | 0.37, 0.40 | 1.91, 2.00 s | 0.73, 0.69 s, at 11.8, 10.8 s | 27.3, 26.6 s |
+| thread, the experiment (loaded) | 0.58 | 1.89 s | 0.75 s, at 8.4 s | 18.4 s |
+| lockstep (`off-1`, `off-3`) | 0.99 | 2.47, 2.21 s | 0.99 s, at 14.2, 16.5 s | 31.4, 33.2 s |
+
+The view costs 1.89 to 2.00 s of slice with the thread, 1 260 to 1 330 frames fully fed at
+1.5 ms. **At 0.85 fed that is 1 480 to 1 570 frames: 11.6 to 12.3 s at the 7.83 ms frame
+read, 12.6 to 13.3 s at 8.5 ms** (the frame is GPU-bound and grows by the bake it is fed; a
+derivation). Fed whole it is 9.8 to 11.6 s. At lockstep's cost it is 14.7 to 16.5 s at 0.85;
+why lockstep's view costs a quarter more slice is not read.
+
+**What holds it, named now as done-when (6) asks.** (1) **The slice**: the line's arithmetic
+(22.3 s x 30 / 70) was made at 4.0 ms a frame; at 1.5 ms it is not owed. (2) **The order**:
+`QueueOrder::default()` is `Refine::Tier` (ADR-0048's Outcome), so every chunk with no block
+opens before any refinement, in view or out. In every run the in-view chunks with no block
+have landed at 0.69 to 0.75 s of slice, and the count then stands at 31 (pre-roll blocks at 3
+to 5 chunks, coarse for their band) while about 4 400 chunks out of view bake; the 31 then take
+0.14 to 0.21 s. Were they not behind the out-of-view work, the same arithmetic gives 5 to
+6.5 s at 0.85. The order is not this plan's ("What this plan does NOT do"; done-when (2)); it
+is a Followup below. The RENOIR at Portable is not held by it (12.9 s read, no in-view
+refinement waiting; its bar is 30 s).
+
+**Ruled.** The bar dev works to is the feed: **at least 0.85 of the granted drain slice a
+frame** (the product the log's `live/p4-fed.py` reads, not the slice line's share a submit,
+which read 0.97 while 58 % of the frames went unfed). The RTX's 10 s is read and pinned as a
+disclosed miss with the two holders above unless it is met; no lever, depth or level is tuned
+for it. The hills and the RENOIR's bars stand as written; the hills are not read with the
+thread at all yet.
+
+### Phase 4b: The pooled opening admits to three slices at the measured fill
+- **Owner skill:** dev
+- **What:** Ruling 1, in the bake half, the pooled opening only. The projection and its level
+  in a helper beside `list_batch` (`open` is at clippy's line limit); the fill's two figures
+  kept by `take_listed`; `QUEUE_CHECKS` counting the not-ready; the guard of 64; the step's
+  gate and `take_listed` every step; the quiet rule. The `bake queue slice:` line gains the
+  projection over the cap at the draw (p50), the two fills and the guard's count. Lockstep's
+  opening is not edited.
+- **Files touched:** `crates/svet-render/src/bake/queue/{open,lister,list,step,stats}.rs`,
+  `bake/queue/split_tests/lister.rs`, `bake/queue/tests.rs`,
+  `apps/flythrough/src/run/queue.rs`, `docs/flythrough.md`, `docs/plans/logs/0099.md`.
+- **Done when:** (1) `the_opening_admits_until_the_projected_samples_cover_the_slice` (CPU,
+  under 1 s, the device-less rig with the pool): candidates of 200 000 samples, bounds exact,
+  a price of 2 ns and no fixed part. Under a 4.0 ms slice (cap 2 000 000, level 6 000 000) an
+  empty loop's opening sends 30 or 31 (30 x 200 000 is the level), more than `QUEUE_CHECKS`;
+  each later opening, the loop's samples left one cap lower, sends 10 or 11. Under 1.0 ms (cap
+  500 000, level 1 500 000) the first sends 8 or 9 (7 x 200 000 is under it) and the next ten
+  send 2 to 4 each and 25 or 26 together. (2)
+  `a_pooled_candidate_counts_its_bound_times_the_fill` (CPU, under 1 s): after 64 listings
+  returned at a quarter of their bounds, an empty loop under a cap of 2 000 000 sends 30
+  candidates of bound 800 000 (30 x 800 000 x 0.25); before 16 have returned it sends 8 (7 x
+  800 000 is under the level). (3) `an_opening_that_only_sends_is_not_quiet` (CPU, under 1 s):
+  an empty idle loop, the mirror unchanged, an opening that sends 4: their jobs are in the
+  loop after the next step, not eight steps on. (4)
+  `the_opened_jobs_are_the_nearest_of_their_band_whatever_the_depth` holds, and with the pool
+  the candidates sent are the walk's order from its start. (5) Lockstep is untouched:
+  `--binaries gpu_queue gpu_bake` pass, and `the_threaded_queue_drains_to_the_lockstep_store`
+  by name reads bit-identical. (6) Reading, two quiet runs, RTX Floor 1080p forest, thread on,
+  the depth still 2: the drawn share a submit (expected about 0.98, the experiment's), `out of
+  rounds`, jobs, the projection at the draw, fed a frame, the bake step's movable p50 and p99
+  by stage. **A stop:** a drawn share a submit under 0.9 with two caps or more projected at
+  the draw is not the level's doing; dev reports it with the free slots at the stops before
+  Phase 4c.
+
+### Phase 4c: One submit a frame, and the thread's depth in flight
+- **Owner skill:** dev
+- **What:** Ruling 2. (a) `render_frame` issues at most one submit a frame and carries the ops
+  past it in order (the carry the join already keeps, `unissued`); the join and the stop
+  replay it as they do today. (b) The bound `submit` reads is the bake half's own: `IN_FLIGHT`
+  in lockstep, the pre-roll and the one-shot bakes, the thread's depth with the thread on, set
+  where the pool is started; a knob for the reading (whether it stays a setting is dev's call:
+  it costs nothing off). (c) The render side notes each submit's frame of issue and the frame
+  its read-back left in: the round trip in frames, on a teardown line with the issuer's peak
+  buffers and the frames that carried a submit.
+- **Files touched:** `crates/svet-render/src/bake/{link,issue,job_loop}.rs`,
+  `bake/queue/{step,stats,split_tests}.rs`, `crates/svet-render/src/frame/{baked,bake_thread}.rs`,
+  `apps/flythrough/src/run/queue.rs`, `docs/flythrough.md`, `docs/plans/logs/0099.md`.
+- **Done when:** (1) `a_frame_issues_one_submit_and_carries_the_rest_in_order` (CPU, under
+  1 s, the recording half): two steps taken in one frame (tables A, issue A, tables B, issue
+  B) replay as tables A, issue A in that frame and tables B, issue B in the next, ahead of
+  the next frame's own step; no frame issues two; a join with a submit carried issues it. (2)
+  `the_thread_plans_to_its_depth_and_lockstep_to_two` (CPU, under 1 s): with every read-back
+  withheld the threaded bake half plans as many submits as its depth and counts the steps
+  after as blocked; lockstep's plans two. (3)
+  `the_threaded_queue_drains_to_the_lockstep_store` by name, at the depth chosen:
+  bit-identical; `--binaries gpu_queue gpu_bake`. (4) Reading, quiet, RTX Floor 1080p forest,
+  thread on, two runs each at depths 2, 3 and 4, alternated: the steps with every slot unread
+  over the steps while in view waits, submits a frame, fed a frame, the round trip's frames
+  (p50, p99), wasted samples over drawn, `out of rounds` with no slot free, the issuer's peak
+  buffers, the frame's wall p50 and p99 while in view waits. **The depth is the least of 3
+  and 4 that reads at most 2 % of steps blocked**; neither: 4, and a report to the architect
+  with the round trip. (5) At that depth Phase 3's bars hold on the RTX forest (share p50 at
+  most 1.0 ms, p99 at most 4.0 ms, wall p50 at most 16.6 ms), and one RENOIR Portable forest
+  run reads a wall p50 while in view waits not over Phase 3a's 24.29 ms by more than 2 %.
+
+### Phase 4d: The feed's bar, the drain's readings, and levers (c) and (d) by reading
+- **Owner skill:** dev
+- **What:** No mechanism unless a reading names one. A teardown line `frames: queue fed:`:
+  the samples planned into submits over the caps granted, summed over the frames while in
+  view waits (a frame with no step counts the newest cap), with its two factors, submits a
+  frame and the drawn share a submit; it replaces the parser's product of medians. Phase 4's
+  done-whens (4) to (6) as restated here, and its readings (5) with the two the Phase 2b and
+  2c rulings added. Levers (c) and (d) are built only if the feed's bar is missed and the
+  bake step's stages name the fades, or the lists carried past a frame name the byte cap; by
+  the readings so far neither is in the way (fades 0.62 ms p50; Phase 1's stop did not fire).
+  The log's resume notes are deleted and the Implementation log's Phase 4 row written.
+- **Files touched:** `crates/svet-render/src/bake/queue/stats.rs`,
+  `apps/flythrough/src/run/{queue,frame}.rs`, `docs/flythrough.md`, `docs/plans/logs/0099.md`,
+  the plan's Implementation log row; a lever's files only if it is taken.
+- **Done when:** (1) `the_fed_line_is_the_samples_planned_over_the_caps_granted` (CPU, under
+  1 s): ten frames at a cap of 1 000, six with a submit of 900 and four with none, print fed
+  0.54, submits a frame 0.60, drawn a submit 0.90. (2) **The bar, thread on, quiet, four runs
+  a scene, from the first world frame:** on the RTX at Floor 1080p, the forest and the hills,
+  **fed a frame at least 0.85** while in view waits; missed, it is disclosed with the stage
+  that holds the steps a frame or the drawn share, and no slice, tier, level or depth is
+  changed for it. (3) In view landed: read on both scenes and both adapters; the RENOIR at
+  Portable within 30 s; the RTX against 10 s, pinned as met or as the disclosed miss of
+  ruling 3, with the time the in-view chunks with no block landed beside it. (4) Readings: the
+  whole-residency drain on both adapters; `second:150,0.25`; the bake thread's busy share and
+  the runnable threads against the logical cores, with the `taskset` arm; the ten steps after
+  the view drains; the RENOIR drained B's withdrawn samples (lockstep, a dig rig); one pair of
+  RTX forest runs with `--queue-weights 4,2` (the blended order ADR-0048 keeps as a comparison
+  flag), labelled a reading of what the order holds, pinning nothing. (5) Phase 3's share and
+  wall bars still hold. `--binaries gpu_queue gpu_bake`, the store test by name.
+
 ## Data shapes
 
 ```rust
@@ -1348,4 +1587,11 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 ## Followups
 
-- (empty at draft time)
+- (architect, 2026-11-25) **The in-view refinements wait behind every chunk with no block,
+  in view or out** (`Refine::Tier`, ADR-0048's Outcome; the section "Amended 2026-11-25
+  (architect, Phase 4 after lever (b))", ruling 3). On the RTX forest it holds "in view
+  landed" at about twice the slice the in-view work itself costs. Whether a refinement the
+  drain's set waits for opens ahead of out-of-view chunks with no block is an order decision
+  (ADR-0048, ADR-0080 rule 3) with an image side (Plan 0060 Phase 2's stop was read on the
+  blended score); Phase 4d reads `--queue-weights 4,2` beside it. Its own amendment or plan,
+  at the owner's word.
