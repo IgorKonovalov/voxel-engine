@@ -39,6 +39,7 @@ pub(crate) mod loading;
 pub(crate) mod pilot;
 pub(crate) mod profile;
 pub(crate) mod queue;
+pub(crate) mod still;
 pub(crate) mod switch;
 pub(crate) mod tour;
 
@@ -495,6 +496,10 @@ impl Drop for Run {
     }
 }
 
+#[cfg(test)]
+mod hud_live_tests;
+#[cfg(test)]
+mod inert_tests;
 #[cfg(test)]
 mod menu_tests;
 #[cfg(test)]

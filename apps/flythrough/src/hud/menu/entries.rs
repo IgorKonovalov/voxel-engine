@@ -52,6 +52,12 @@ impl Entry {
         }
     }
 
+    /// The words the menu's row shows: [`Entry::words`], marked `(inert: why)` while the
+    /// settings row the entry changes is inert under the run's live settings (`v.inert`).
+    pub fn shown(&self, m: &Modes, v: &RunView) -> String {
+        crate::inert::marked(&self.words(m, v), v.inert.entry(self.label))
+    }
+
     /// `Ok` when the entry acts at `m` and `v`, else why not in words (`needs --audio`): an
     /// unavailable entry shows grey with its reason and `Enter` on it changes nothing.
     pub fn available(&self, m: &Modes, v: &RunView) -> Result<(), &'static str> {
@@ -177,6 +183,7 @@ pub fn keys_text(args: &crate::cli::Args) -> String {
         placed: false,
         streaming,
         coarse: !streaming,
+        inert: crate::inert::Inert::default(),
     };
     let mut out = String::new();
     write_tree(&m, &v, &mut out);

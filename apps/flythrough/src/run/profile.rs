@@ -39,6 +39,7 @@ impl Run {
         self.args.light.lamp_bounce = to.lighting.lamp_bounce;
         self.modes.lighting.lamp_bounce = to.lighting.lamp_bounce;
         self.args.light_cap = to.light_cap;
+        self.modes.light_cap = to.light_cap;
         self.args.output_hint = to.output_hint;
         // The portable profile's output is its hint in a window too: a change resizes the
         // frame with the upscaler's rebuild.

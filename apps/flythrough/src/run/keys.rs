@@ -128,6 +128,8 @@ impl Run {
             let line = press(t, &mut self.modes, now);
             if t.name == crate::toggles::SNAP {
                 self.say((t.get)(&self.modes));
+            } else if let Some(why) = self.inert_now(t.name) {
+                self.say(crate::inert::marked(&line, Some(why)));
             } else {
                 println!("{line}");
             }
@@ -145,7 +147,9 @@ impl Run {
             Activated::Toggle(t) => {
                 let before = self.modes.clone();
                 let line = press(t, &mut self.modes, ms_since(self.start));
-                if (t.get)(&self.modes) == (t.get)(&before) {
+                if let Some(why) = self.inert_now(t.name) {
+                    self.say(crate::inert::marked(&line, Some(why)));
+                } else if (t.get)(&self.modes) == (t.get)(&before) {
                     self.say(line);
                 } else {
                     println!("{line}");
@@ -157,7 +161,11 @@ impl Run {
                 if let Some(n) = t.number {
                     (n.step)(&mut self.modes, d);
                 }
-                println!("{}", self.modes.row(t.row));
+                let line = self.modes.row(t.row);
+                match self.inert_now(t.name) {
+                    Some(why) => self.say(crate::inert::marked(&line, Some(why))),
+                    None => println!("{line}"),
+                }
                 self.apply_modes(&before);
             }
             Activated::Action(act) => self.act(act),
@@ -185,6 +193,12 @@ impl Run {
         }
     }
 
+    /// Why the entry `label` changes nothing under the run's live settings, when the row it
+    /// changes is inert there (`crate::inert`): its notice says so.
+    fn inert_now(&self, label: &str) -> Option<&'static str> {
+        crate::inert::Inert::of(&self.live_settings()).entry(label)
+    }
+
     /// Prints `line` and shows it in the menu's notice row from now: what an action answers
     /// in the window.
     pub(crate) fn say(&mut self, line: impl Into<String>) {
@@ -210,6 +224,7 @@ impl Run {
             placed: !self.modes.walkers.placed.is_empty(),
             streaming: self.stream.is_some(),
             coarse: self.coarse.is_some(),
+            inert: crate::inert::Inert::of(&self.live_settings()),
         }
     }
 
@@ -805,7 +820,7 @@ impl Run {
                 match self.modes.lights.drop_at(lamp, eye, fwd, hit) {
                     Ok(()) => {
                         self.modes.walkers.newest.push(false);
-                        self.modes.lights.count_words(lamp)
+                        self.modes.lights.count_words(lamp, self.modes.light_cap)
                     }
                     Err(line) => line.to_owned(),
                 }
@@ -832,7 +847,7 @@ impl Run {
                     self.modes.walkers.count_words()
                 } else {
                     self.modes.lights.remove_newest();
-                    self.modes.lights.count_words(lamp)
+                    self.modes.lights.count_words(lamp, self.modes.light_cap)
                 }
             }
             Act::FireLight => {
@@ -840,7 +855,10 @@ impl Run {
                 match self.modes.lights.fire(lamp, eye, fwd, hit) {
                     Ok(()) => {
                         self.modes.walkers.newest.push(false);
-                        format!("fire, {}", self.modes.lights.count_words(lamp))
+                        format!(
+                            "fire, {}",
+                            self.modes.lights.count_words(lamp, self.modes.light_cap)
+                        )
                     }
                     Err(line) => line.to_owned(),
                 }

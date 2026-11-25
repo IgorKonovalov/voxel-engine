@@ -299,6 +299,7 @@ mod outdoor;
 mod parse;
 mod queue_flags;
 mod settings;
+mod still;
 pub mod table;
 
 pub use flags::{
@@ -308,6 +309,7 @@ pub(crate) use loading::LoadingArgs;
 pub use outdoor::{OUTDOOR_MAX, OUTDOOR_MIN, OutdoorArgs, SOURCES, next_source};
 pub use parse::*;
 pub use settings::settings_lines;
+pub(crate) use still::StillArgs;
 
 /// The world a run builds; the flags that pick one (`--source`, `--level`, `--room`,
 /// `--thin-rig`, `--seam-rig`) exclude each other.
@@ -736,6 +738,8 @@ pub struct Args {
     pub(crate) path_mode: PathMode,
     /// `--report DIR`: where the path run writes `run.json`.
     pub(crate) report: Option<std::path::PathBuf>,
+    /// `--still PATH` and `--mode-text PATH`: what a headless run writes at its last frame.
+    pub(crate) still: StillArgs,
     /// `--check-args`: parse the arguments, print `arguments ok` and exit 0 (the tester
     /// build's launcher test checks its command lines with it).
     pub check_args: bool,
@@ -913,6 +917,7 @@ impl Args {
         m.clock = self.outdoor.clock;
         m.leaf_shadow = self.outdoor.leaf_shadow;
         m.dump_black = self.outdoor.dump_black;
+        m.light_cap = self.light_cap;
         m.profile = self.profile_row(&self.render_settings(), &[]);
         m.set_auto(self.light.adaptation, self.start_auto());
         m.show_look(&self.look.preset, self.look.preset.far_normal, now_ms);

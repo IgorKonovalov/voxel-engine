@@ -51,6 +51,13 @@ window's top-right corner reads `fps <n>  frame <median> ms p99 <ms>` while it i
 - **The notice row**, above the footer, holds the last line an action printed for 3 s, in
   yellow: `readings: sampling 30 frames` and then the frame line, the logic's `stamped: ...`,
   a refused entry's reason.
+- **An inert mark**: an entry whose settings row changes nothing under the run's live
+  settings ends `(inert: <reason>)`, and the notice of its change says the same
+  (`penumbra disc (inert: key far column)`, `sky rays 3 (inert: light history off)`,
+  `key far mix step (inert: light history off)`); the mark goes when the row it waits on
+  changes. The rows and their conditions are one table, `apps/flythrough/src/inert.rs`, which
+  `tests/gpu_settings_rows.rs` proves by rendering; a row inert for what the run cannot tell
+  (a rebuild, the live queue, motion) carries no mark.
 
 ### Fixed
 
@@ -85,7 +92,7 @@ row showing the new value.
 | upscaler | `F10` | Cycle the upscaler: off, fsr2 |
 | upscaler | `F4` | The next render profile: floor, portable, performance, high (`--profile`) |
 | lighting | `F7` | Toggle the headlamp |
-| lights | `1` | Drop a point light of the picked colour (intensity 600) 2 voxels off the looked-at surface (20 voxels ahead on a miss); the banner names `lights <n>/16`. Sixteen slots, the headlamp's among them while it is on; a drop into a full list prints a line and adds nothing |
+| lights | `1` | Drop a point light of the picked colour (intensity 600) 2 voxels off the looked-at surface (20 voxels ahead on a miss); the banner names `lights <n>/<cap>`, `cap` the frame's light cap (16, the portable profile's 4). Sixteen slots, the headlamp's among them while it is on; a drop into a full list prints a line and adds nothing |
 | lights | `4` | Remove the newest light or walker, whichever was added last (in placement mode `4` is the belt's slot 4) |
 | lights | `6` | Fire a point light of the picked colour (intensity 600) along the view ray at 20 m/s; it stops 2 voxels short of the first surface (or after 40 m) and stays there as a dropped light |
 | entities | `` ` `` | `choose an entity`: the chooser (also the `entities` page's first row). Four rows per library entry beside its icon: a blank row, its name, parts and size on the cursor's row (an entry in error: its name grey, its error red), then its clips (the one a placement starts on marked `*`) and the belt's slot that holds it. `Enter` (or the left click, or the pad's `South`, or `` ` ``) on an entry puts it in the belt's selected slot (or selects the slot already holding it), closes the menu and enters placement mode; a digit `1`..`9` puts it in that slot and the chooser stays open; letters search the menu as on any page |
@@ -264,6 +271,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--bench N` | Send `N` bench inputs on the first frame |
 | `--dig-at F,..` | Dig at each of these frames |
 | `--bench-at F,..` | A bench input at each of these frames |
+| `--still PATH`, `--mode-text PATH` | With `--headless` and `--frames`: write the last frame's output (no HUD) as a binary PPM, and the first frame's banner, the mode banner as it shows at its start, the mode rows and the stats HUD's rows as text; `scripts/rehearse-window.mjs` renders a live session's runs with them before the window opens |
 | `--sync-budget MIB` | The mirror's upload bytes a frame |
 | `--sync-ms MS` | The mirror's upload time a frame [none; 0 is none] |
 | `--workers N` | The streamer's generation workers, at least 1 [half the logical cores] |
@@ -304,7 +312,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--sun-radius DEG` | The sun's angular radius, 0.05 to 10 degrees: a wider disc softens every sun shadow (the real sun's is 0.2665) [3] |
 | `--moon-radius DEG` | The moon's angular radius, 0.05 to 10 degrees: its disc in the sky and its shadows' softness [3] |
 | `--sky-rays N` | Cosine-weighted sky rays a lighting pixel casts where no baked sky visibility is fresh, 0 (bake only) to 4; the banner names the count [1] |
-| `--sky-history N` | Frames the sky rays' running mean (the visibility pair) holds at most, 1 to 1024 [64] |
+| `--sky-history N` | Frames the sky rays' running mean (the visibility pair) holds at most, 1 to 1024 [64]; the banner names it when not the default |
 | `--key-history N` | Frames the key light's visibility mean (the pair's `g`) holds at most, 1 to 1024 [256]; the banner names it when not the default |
 | `--key-far baked\|column\|ray` | The key light's visibility where a voxel is small on screen (ADR-0079), with no ray and no screen history: `baked` reads the store's baked value per brick direction over the sun's disc where fresh, else the column map's horizon toward the sun (softened by the disc's radius), a switch between the two riding one fade; `column` reads the horizon at every far face; the band is blended or stepped by `--key-far-mix` and a near pixel's restarted mean is seeded from the estimate, so with `--light-history off` (the default) every world face shows the estimate at every distance: under `column` the sun's shadow is the column map's, with no penumbra but the horizon's ramp and no sun under cover (ADR-0082); `ray` casts the per-pixel disc ray everywhere; the banner reads `key far baked`, `key far ray` or `key far column, key far mix blend` with a sky set (nothing for the default), and the menu's lighting page switches both (`key far` cycles baked, column, ray; `key far mix`) [column] |
 | `--key-far-mix blend\|step` | Inside the far normal's band under `--key-far baked` or `column`: the ray's mean blended to the far estimate by the band's weight, or the estimate from the weight's half; with `--light-history off` both show the estimate alone and the choice only moves where the ray is cast [step] |
